@@ -1,1 +1,8 @@
+# 基础依赖
 pywebview>=4.0.0
+pywin32>=305
+
+# 微信数据库解密依赖
+# 注意：pysqlcipher3 需要手动编译安装，详见 backend/INSTALL_PYSQLCIPHER3.md
+# pysqlcipher3>=1.2.0  # Windows 需手动安装
+pycryptodome>=3.20.0  # 备用方案：纯 Python 解密

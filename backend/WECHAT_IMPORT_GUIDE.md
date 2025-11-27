@@ -106,7 +106,7 @@ pip install -r requirements.txt
 ```
 
 主要依赖：
-- `pysqlcipher3>=1.2.0` - 用于解密微信数据库
+- `pycryptodome>=3.20.0` - 用于解密微信数据库(纯 Python 实现)
 - `pywin32>=305` - 用于读取Windows注册表
 
 ### 2. 启动应用
@@ -144,9 +144,11 @@ python app_dev.py
 ```
 backend/app/services/wechat/
 ├── path_finder.py      # 自动寻址微信数据库路径
-├── db_decryptor.py     # 数据库解密（pysqlcipher3）
-├── parser.py           # 数据库解析（Contact/Message）
-└── ingest_service.py   # 导入服务（整合流程）
+├── db_decryptor_v2.py  # 数据库解密(纯 Python 实现)
+├── db/v4/              # V4 数据库解析
+│   ├── contact.py      # 联系人数据库
+│   └── message.py      # 消息数据库
+└── ingest_service.py   # 导入服务(整合流程)
 ```
 
 ### 工作流程

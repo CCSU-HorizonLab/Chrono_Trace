@@ -10,6 +10,10 @@ type PyWebViewApi = {
   generate_suggestion: (intent: string, context: Record<string, any>) => Promise<any>
   get_settings: () => Promise<any>
   set_settings: (payload: Record<string, any>) => Promise<any>
+  // 文件/目录选择
+  select_file: (title?: string, file_types?: string) => Promise<any>
+  select_directory: (title?: string) => Promise<any>
+  scan_wechat_directory: (wechat_dir: string) => Promise<any>
 }
 
 function getApi(): PyWebViewApi {

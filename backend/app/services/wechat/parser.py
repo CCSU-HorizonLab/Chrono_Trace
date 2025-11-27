@@ -1,7 +1,7 @@
-"""微信数据库解析模块"""
-from typing import List, Dict, Any, Optional, Generator
+"""微信V4数据库解析模块 (仅支持4.0+版本)"""
+from typing import List, Optional, Generator
 from dataclasses import dataclass
-import hashlib
+import sqlite3
 
 
 @dataclass
@@ -16,7 +16,7 @@ class Contact:
     
     @property
     def display_name(self) -> str:
-        """显示名称（备注 > 昵称 > username）"""
+        """显示名称(备注 > 昵称 > username)"""
         return self.remark or self.nickname or self.username
 
 
@@ -24,22 +24,22 @@ class Contact:
 class Message:
     """消息数据结构"""
     local_id: int
-    talker: str              # 对话对象username（群聊时为群ID）
-    sender: Optional[str]    # 实际发送者username（群聊时有效）
+    talker: str              # 对话对象username
+    sender: Optional[str]    # 实际发送者username
     is_sender: bool          # 是否为本人发送
     message_type: int        # 消息类型
     content: str             # 消息内容
-    timestamp: int           # Unix时间戳（秒）
+    timestamp: int           # Unix时间戳(秒)
     media_path: Optional[str] = None
     
     @property
     def conversation_id(self) -> str:
-        """会话标识符（用于分组）"""
+        """会话标识符"""
         return self.talker
 
 
 class WeChatDBParser:
-    """微信数据库解析器"""
+    """微信V4数据库解析器"""
     
     # 消息类型枚举
     MSG_TYPE_TEXT = 1
@@ -55,14 +55,17 @@ class WeChatDBParser:
         
         Args:
             conn: 数据库连接
-            my_wxid: 当前用户wxid（用于判断is_sender）
+            my_wxid: 当前用户wxid
         """
         self.conn = conn
         self.my_wxid = my_wxid
     
     def parse_contacts(self, limit: Optional[int] = None) -> List[Contact]:
         """
-        解析联系人表
+        解析联系人表 (V4标准结构)
+        
+        表名: contact
+        字段: username, nick_name, remark, alias, local_type
         
         Args:
             limit: 限制数量
@@ -71,32 +74,43 @@ class WeChatDBParser:
             List[Contact]: 联系人列表
         """
         sql = """
-            SELECT username, nick_name, remark, alias, phone_number, type
+            SELECT 
+                username,
+                nick_name,
+                remark,
+                alias,
+                local_type
             FROM contact
-            WHERE delete_flag = 0
-            ORDER BY remark, nick_name
+            WHERE local_type IN (1, 2, 5)
+            ORDER BY 
+                CASE 
+                    WHEN remark_quan_pin = '' THEN quan_pin
+                    ELSE remark_quan_pin
+                END ASC
         """
         
         if limit:
             sql += f" LIMIT {limit}"
         
-        cursor = self.conn.execute(sql)
-        contacts = []
-        
-        for row in cursor:
-            # 判断是否为好友（type字段bit 0x1表示好友）
-            is_friend = bool(row['type'] & 0x1) if row['type'] else False
+        try:
+            cursor = self.conn.execute(sql)
+            contacts = []
             
-            contacts.append(Contact(
-                username=row['username'],
-                nickname=row['nick_name'],
-                remark=row['remark'],
-                alias=row['alias'],
-                phone=row['phone_number'] if 'phone_number' in row.keys() else None,
-                is_friend=is_friend
-            ))
-        
-        return contacts
+            for row in cursor:
+                row_dict = dict(row)
+                contacts.append(Contact(
+                    username=row_dict.get('username', ''),
+                    nickname=row_dict.get('nick_name'),
+                    remark=row_dict.get('remark'),
+                    alias=row_dict.get('alias'),
+                    phone=None,  # V4不直接存储电话
+                    is_friend=row_dict.get('local_type') == 1
+                ))
+            
+            return contacts
+        except sqlite3.OperationalError as e:
+            print(f"解析联系人失败: {e}")
+            return []
     
     def parse_messages(
         self,
@@ -105,106 +119,115 @@ class WeChatDBParser:
         offset: int = 0
     ) -> Generator[Message, None, None]:
         """
-        解析消息表（生成器，避免大量数据OOM）
+        解析消息表 (V4标准结构)
+        
+        表名格式: Msg_{MD5(username)}
+        字段: local_id, real_sender_id, local_type, create_time, message_content
+        辅助表: Name2Id (real_sender_id <-> user_name映射)
         
         Args:
-            table_name: 消息表名（如 Msg_{md5}）
+            table_name: 消息表名
             limit: 限制数量
             offset: 偏移量
             
         Yields:
             Message: 消息对象
         """
+        # 检查表是否存在
+        try:
+            cursor = self.conn.execute(
+                f"SELECT name FROM sqlite_master WHERE type='table' AND name='{table_name}'"
+            )
+            if not cursor.fetchone():
+                print(f"警告: 表 {table_name} 不存在")
+                return
+        except:
+            return
+        
+        # V4标准SQL
         sql = f"""
             SELECT 
-                m.local_id,
-                m.real_sender_id,
-                m.local_type,
-                m.message_content,
-                m.compress_content,
-                m.create_time,
-                n.user_name AS sender_username
-            FROM {table_name} m
-            LEFT JOIN Name2Id n ON m.real_sender_id = n.rowid
-            ORDER BY m.create_time DESC
+                msg.local_id,
+                msg.local_type,
+                msg.create_time,
+                msg.message_content,
+                msg.compress_content,
+                Name2Id.user_name AS sender_username
+            FROM {table_name} AS msg
+            LEFT JOIN Name2Id ON msg.real_sender_id = Name2Id.rowid
+            ORDER BY msg.create_time DESC
         """
         
         if limit:
             sql += f" LIMIT {limit} OFFSET {offset}"
         
-        cursor = self.conn.execute(sql)
-        
-        for row in cursor:
-            # 判断是否为本人发送
-            is_sender = False
-            if self.my_wxid and row['sender_username']:
-                is_sender = (row['sender_username'] == self.my_wxid)
+        try:
+            cursor = self.conn.execute(sql)
             
-            # 提取消息内容
-            content = row['message_content'] or row['compress_content'] or ""
-            
-            # 从表名推断对话对象（Msg_{md5} -> username）
-            # 注意：实际使用中需要从 Name2Id 表反查，这里简化处理
+            # 从表名推断talker
             talker = self._extract_talker_from_table(table_name)
             
-            yield Message(
-                local_id=row['local_id'],
-                talker=talker,
-                sender=row['sender_username'],
-                is_sender=is_sender,
-                message_type=row['local_type'],
-                content=content,
-                timestamp=row['create_time']
-            )
+            for row in cursor:
+                row_dict = dict(row)
+                
+                # 判断是否为本人发送
+                sender_username = row_dict.get('sender_username')
+                is_sender = False
+                if self.my_wxid and sender_username:
+                    is_sender = (sender_username == self.my_wxid)
+                
+                # 提取消息内容
+                content = row_dict.get('message_content') or ''
+                if not content and row_dict.get('compress_content'):
+                    # 尝试解码压缩内容
+                    try:
+                        content = row_dict['compress_content'].decode('utf-8', errors='ignore')
+                    except:
+                        content = '[媒体消息]'
+                
+                yield Message(
+                    local_id=row_dict['local_id'],
+                    talker=talker,
+                    sender=sender_username,
+                    is_sender=is_sender,
+                    message_type=row_dict.get('local_type', 1),
+                    content=content,
+                    timestamp=row_dict['create_time']
+                )
+        except sqlite3.OperationalError as e:
+            print(f"解析消息失败: {e}")
+            return
     
-    def get_conversation_table_name(self, username: str) -> Optional[str]:
+    def get_all_message_tables(self) -> List[str]:
         """
-        根据username查找对应的消息表名
+        获取所有消息表名
         
-        Args:
-            username: 对话对象username
-            
         Returns:
-            str: 表名（如 Msg_xxx），未找到返回None
+            List[str]: 消息表名列表
         """
-        # 计算username的MD5
-        md5_hash = hashlib.md5(username.encode()).hexdigest()
-        expected_table = f"Msg_{md5_hash}"
-        
-        # 检查表是否存在
         cursor = self.conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Msg_%'"
+            """SELECT name FROM sqlite_master 
+               WHERE type='table' 
+               AND name LIKE 'Msg_%'
+               ORDER BY name"""
         )
-        
         tables = [row[0] for row in cursor]
-        
-        # 精确匹配
-        if expected_table in tables:
-            return expected_table
-        
-        # 模糊匹配（大小写、前缀）
-        for table in tables:
-            if table.lower() == expected_table.lower():
-                return table
-        
-        return None
+        return tables
     
     def get_message_count(self, table_name: str) -> int:
         """获取消息表的消息总数"""
-        cursor = self.conn.execute(f"SELECT COUNT(*) FROM {table_name}")
-        return cursor.fetchone()[0]
+        try:
+            cursor = self.conn.execute(f"SELECT COUNT(*) FROM {table_name}")
+            return cursor.fetchone()[0]
+        except:
+            return 0
     
     def _extract_talker_from_table(self, table_name: str) -> str:
-        """
-        从消息表名推断对话对象（简化处理）
-        实际应从 Name2Id 表反查
-        """
-        # 简化：直接返回表名作为标识
+        """从消息表名推断对话对象"""
+        # 简化:直接返回表名作为标识
         return table_name.replace("Msg_", "")
     
-    def get_all_message_tables(self) -> List[str]:
-        """获取所有消息表名"""
-        cursor = self.conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Msg_%'"
-        )
-        return [row[0] for row in cursor]
+    def close(self):
+        """关闭连接"""
+        if self.conn:
+            self.conn.close()

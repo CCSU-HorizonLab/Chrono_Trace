@@ -1,4 +1,4 @@
-"""微信数据库路径自动寻址模块"""
+"""微信数据库路径自动寻址模块 (仅支持V4)"""
 import os
 import winreg
 from pathlib import Path
@@ -6,7 +6,7 @@ from typing import Optional, Dict, List
 
 
 class WeChatPathFinder:
-    """微信数据库路径查找器"""
+    """微信数据库路径查找器 (仅支持微信4.0+版本)"""
     
     @staticmethod
     def find_wechat_install_path() -> Optional[str]:
@@ -14,10 +14,9 @@ class WeChatPathFinder:
         从Windows注册表获取微信安装路径
         
         Returns:
-            str: 微信安装路径，失败返回None
+            str: 微信安装路径,失败返回None
         """
         try:
-            # 尝试从注册表获取微信安装路径
             key_path = r"Software\Tencent\WeChat"
             key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path)
             install_path, _ = winreg.QueryValueEx(key, "InstallPath")
@@ -29,13 +28,13 @@ class WeChatPathFinder:
     @staticmethod
     def find_wechat_data_path() -> Optional[str]:
         """
-        查找微信数据目录（WeChat Files）
+        查找微信数据目录(支持新版xwechat_files和旧版WeChat Files)
         
         Returns:
             str: 微信数据目录路径
         """
         try:
-            # 方法1：从注册表获取
+            # 方法1:从注册表获取
             key_path = r"Software\Tencent\WeChat"
             key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path)
             data_path, _ = winreg.QueryValueEx(key, "FileSavePath")
@@ -46,12 +45,24 @@ class WeChatPathFinder:
         except Exception:
             pass
         
-        # 方法2：默认路径
-        documents = Path.home() / "Documents"
-        default_path = documents / "WeChat Files"
+        # 方法2:尝试多个可能的路径
+        # 新版微信使用 xwechat_files (4.0+)
+        try:
+            username = os.getlogin()
+            possible_paths = [
+                Path(f"C:/Users/{username}/xwechat_files"),  # 新版
+                Path.home() / "xwechat_files",  # 新版(用户目录)
+                Path.home() / "Documents" / "WeChat Files",  # 旧版(保留以防万一)
+            ]
+        except Exception:
+            possible_paths = [
+                Path.home() / "xwechat_files",
+                Path.home() / "Documents" / "WeChat Files",
+            ]
         
-        if default_path.exists():
-            return str(default_path)
+        for path in possible_paths:
+            if path.exists():
+                return str(path)
         
         return None
     
@@ -64,12 +75,12 @@ class WeChatPathFinder:
             data_path: 微信数据目录
             
         Returns:
-            str: wxid（如 wxid_xxx），按修改时间选择最近使用的
+            str: wxid(如 wxid_xxx),按修改时间选择最近使用的
         """
         if not data_path or not os.path.exists(data_path):
             return None
         
-        # 扫描所有子目录，筛选出wxid格式的目录
+        # 扫描所有子目录,筛选出wxid格式的目录
         user_dirs = []
         
         for item in os.listdir(data_path):
@@ -82,11 +93,11 @@ class WeChatPathFinder:
             if item in ["All Users", "Applet", "WMPF"]:
                 continue
             
-            # 检查是否为有效wxid（通常以wxid_开头）
+            # 检查是否为有效wxid(通常以wxid_开头)
             if item.startswith("wxid_"):
                 user_dirs.append((item, os.path.getmtime(item_path)))
         
-        # 按修改时间排序，返回最近的
+        # 按修改时间排序,返回最近的
         if user_dirs:
             user_dirs.sort(key=lambda x: x[1], reverse=True)
             return user_dirs[0][0]
@@ -96,7 +107,7 @@ class WeChatPathFinder:
     @staticmethod
     def find_databases(wxid: str, data_path: str) -> Dict[str, List[str]]:
         """
-        查找指定wxid的所有数据库文件
+        查找指定wxid的所有数据库文件(仅支持V4版本)
         
         Args:
             wxid: 微信用户ID
@@ -110,54 +121,92 @@ class WeChatPathFinder:
                 "contact": "contact.db路径"
             }
         """
-        user_dir = Path(data_path) / wxid
+        user_dir = Path(data_path) / wxid / "db_storage"
+        print(f"[DEBUG PathFinder] db_storage路径: {user_dir}")
+        print(f"[DEBUG PathFinder] db_storage存在: {user_dir.exists()}")
         
         if not user_dir.exists():
+            print(f"[DEBUG PathFinder] ❌ db_storage目录不存在!")
             return {"message": [], "session": None, "contact": None}
         
+        # 列出db_storage下的子目录
+        if user_dir.exists():
+            subdirs = [d.name for d in user_dir.iterdir() if d.is_dir()]
+            print(f"[DEBUG PathFinder] db_storage子目录: {subdirs}")
+        
+        return WeChatPathFinder._find_databases_v4(user_dir)
+    
+    @staticmethod
+    def _find_databases_v4(db_storage_dir: Path) -> Dict[str, List[str]]:
+        """
+        查找 V4 版本数据库
+        
+        目录结构 (db_storage/):
+        - contact/*.db
+        - message/*.db
+        - session/*.db
+        """
         result = {
             "message": [],
             "session": None,
             "contact": None
         }
         
-        # 查找消息数据库（可能分片：MSG0.db, MSG1.db...或 MicroMsg.db）
-        msg_dir = user_dir / "Msg"
-        if msg_dir.exists():
-            for file in msg_dir.iterdir():
-                if file.suffix.lower() == ".db":
-                    file_name_lower = file.name.lower()
-                    
-                    # 匹配消息库
-                    if file_name_lower.startswith("msg") or file_name_lower == "micromsg.db":
-                        result["message"].append(str(file))
-                    
-                    # 匹配会话库
-                    elif file_name_lower == "session.db":
-                        result["session"] = str(file)
-                    
-                    # 匹配媒体消息库（可选）
-                    elif file_name_lower == "mediamsg.db":
-                        pass  # 暂不处理媒体库
-        
         # 查找联系人数据库
-        contact_dir = user_dir / "Contact"
+        contact_dir = db_storage_dir / "contact"
+        print(f"[DEBUG PathFinder] 检查contact目录: {contact_dir} (存在:{contact_dir.exists()})")
+        
         if contact_dir.exists():
-            contact_db = contact_dir / "Contact.db"
-            if contact_db.exists():
-                result["contact"] = str(contact_db)
+            db_files = [f.name for f in contact_dir.iterdir() if f.suffix.lower() == ".db"]
+            print(f"[DEBUG PathFinder] contact下的.db文件: {db_files}")
+            
+            for file in contact_dir.iterdir():
+                if file.suffix.lower() == ".db":
+                    result["contact"] = str(file)
+                    print(f"[DEBUG PathFinder] ✅ 找到contact.db: {file}")
+                    break
+        
+        # 查找消息数据库(可能有多个分片)
+        message_dir = db_storage_dir / "message"
+        print(f"[DEBUG PathFinder] 检查message目录: {message_dir} (存在:{message_dir.exists()})")
+        
+        if message_dir.exists():
+            db_files = [f.name for f in message_dir.iterdir() if f.suffix.lower() == ".db"]
+            print(f"[DEBUG PathFinder] message下的.db文件: {db_files}")
+            
+            for file in message_dir.iterdir():
+                if file.suffix.lower() == ".db":
+                    result["message"].append(str(file))
+            
+            # 按文件名排序
+            result["message"].sort()
+            print(f"[DEBUG PathFinder] ✅ 找到 {len(result['message'])} 个消息数据库")
+        
+        # 查找会话数据库
+        session_dir = db_storage_dir / "session"
+        print(f"[DEBUG PathFinder] 检查session目录: {session_dir} (存在:{session_dir.exists()})")
+        
+        if session_dir.exists():
+            db_files = [f.name for f in session_dir.iterdir() if f.suffix.lower() == ".db"]
+            print(f"[DEBUG PathFinder] session下的.db文件: {db_files}")
+            
+            for file in session_dir.iterdir():
+                if file.suffix.lower() == ".db":
+                    result["session"] = str(file)
+                    print(f"[DEBUG PathFinder] ✅ 找到session.db: {file}")
+                    break
         
         return result
     
     @classmethod
     def find_all_wechat_dbs(cls) -> Optional[Dict]:
         """
-        完整流程：自动查找微信数据库路径
+        完整流程:自动查找微信数据库路径
         
         Returns:
             dict: 数据库信息
             {
-                "wechat_dir": "C:/Users/xxx/Documents/WeChat Files",
+                "wechat_dir": "C:/Users/xxx/xwechat_files",
                 "current_user": "wxid_xxx",
                 "databases": {
                     "message": [...],
@@ -166,18 +215,31 @@ class WeChatPathFinder:
                 }
             }
         """
+        print(f"\n[DEBUG PathFinder] === 开始查找微信数据库 ===")
+        
         # 1. 查找微信数据目录
         data_path = cls.find_wechat_data_path()
+        print(f"[DEBUG PathFinder] 数据目录: {data_path}")
+        
         if not data_path:
+            print(f"[DEBUG PathFinder] ❌ 未找到微信数据目录")
             return None
         
         # 2. 查找当前用户
         wxid = cls.find_current_user_wxid(data_path)
+        print(f"[DEBUG PathFinder] 当前用户wxid: {wxid}")
+        
         if not wxid:
+            print(f"[DEBUG PathFinder] ❌ 未找到用户wxid")
             return None
         
         # 3. 查找数据库文件
+        print(f"[DEBUG PathFinder] 开始查找数据库文件...")
         databases = cls.find_databases(wxid, data_path)
+        print(f"[DEBUG PathFinder] 数据库查找结果:")
+        print(f"  - contact: {databases.get('contact')}")
+        print(f"  - message: {databases.get('message')}")
+        print(f"  - session: {databases.get('session')}")
         
         return {
             "wechat_dir": data_path,

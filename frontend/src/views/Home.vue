@@ -21,40 +21,69 @@
       <!-- 微信数据导入 -->
       <CtCard title="微信数据导入">
         <div class="form">
-          <!-- 步骤1：获取密钥提示 -->
+          <!-- 提示信息 -->
           <div class="hint-box">
-            <p><strong>步骤 1：</strong> 使用 <a href="https://github.com/ycccccccy/wx_key" target="_blank">wx_key 工具</a> 获取微信数据库密钥</p>
-            <p><strong>步骤 2：</strong> 将获取的32位hex密钥粘贴到下方输入框</p>
-            <p><strong>步骤 3：</strong> 点击"开始导入"按钮</p>
+            <p><strong>📌 操作流程：</strong></p>
+            <p>1️⃣ 使用 <a href="https://github.com/ycccccccy/wx_key" target="_blank">wx_key 工具</a> 获取微信数据库密钥</p>
+            <p>2️⃣ 输入密钥后点击"验证并解包"</p>
+            <p>3️⃣ 如果自动检测失败，可手动选择微信数据目录</p>
           </div>
 
+          <!-- 密钥输入 -->
           <label class="row">
             <div class="lab">数据库密钥</div>
             <CtField 
               v-model="wechatForm.dbKey" 
-              placeholder="输入32位hex密钥 (例如: 1a2b3c4d...)" 
+              placeholder="输入64位hex密钥 (例如: 1a2b3c4d...)" 
               type="password"
             />
           </label>
 
-          <div class="row">
-            <div class="lab">导入选项</div>
-            <div class="options">
-              <label>
-                <input type="checkbox" v-model="wechatForm.importContacts" />
-                导入联系人
-              </label>
-              <label>
-                <input type="checkbox" v-model="wechatForm.importMessages" />
-                导入消息
-              </label>
+          <!-- 路径状态显示 -->
+          <div v-if="pathInfo" class="path-info">
+            <div class="info-item">
+              <span class="label">数据源：</span>
+              <span class="value">{{ pathInfo.source === 'custom' ? '自定义路径' : '自动检测' }}</span>
+            </div>
+            <div v-if="pathInfo.wechat_dir" class="info-item">
+              <span class="label">微信目录：</span>
+              <span class="value">{{ pathInfo.wechat_dir }}</span>
+            </div>
+            <div v-if="pathInfo.current_user" class="info-item">
+              <span class="label">当前用户：</span>
+              <span class="value">{{ pathInfo.current_user }}</span>
             </div>
           </div>
 
+          <!-- 自定义路径选择（仅在自动检测失败时显示） -->
+          <div v-if="showCustomPath" class="custom-path-box">
+            <p class="warning">⚠️ 自动检测失败，请手动选择微信数据目录</p>
+            <div class="path-input-group">
+              <CtField 
+                v-model="customWechatDir" 
+                placeholder="微信数据目录 (如: C:\Users\xxx\Documents\WeChat Files)" 
+                readonly
+              />
+              <CtButton variant="ghost" @click.stop.prevent="selectCustomPath">选择目录</CtButton>
+            </div>
+          </div>
+
+          <!-- 操作按钮 -->
           <div class="actions">
-            <CtButton :loading="wechatImporting" @click="onWeChatImport">开始导入</CtButton>
-            <CtButton variant="ghost" :loading="verifying" @click="verifyKey">验证密钥</CtButton>
-            <CtButton variant="ghost" @click="checkPaths">查看路径</CtButton>
+            <CtButton 
+              :loading="verifying || wechatImporting" 
+              :disabled="!wechatForm.dbKey.trim()"
+              @click.stop.prevent="onVerifyAndUnpack"
+            >
+              {{ pathInfo ? '开始导入' : '验证并解包' }}
+            </CtButton>
+            <CtButton 
+              v-if="pathInfo" 
+              variant="ghost" 
+              @click.stop.prevent="resetFlow"
+            >
+              重新配置
+            </CtButton>
           </div>
 
           <!-- 进度显示 -->
@@ -107,7 +136,7 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { reactive, ref, onMounted } from 'vue'
 import { bridgeReady, api } from '@/api/bridge'
 import CtCard from '@/components/base/CtCard.vue'
 import CtField from '@/components/base/CtField.vue'
@@ -132,6 +161,11 @@ const wechatImporting = ref(false)
 const verifying = ref(false)
 const importProgress = ref<{ status: string; percent: number } | null>(null)
 
+// 路径信息
+const pathInfo = ref<any>(null)
+const showCustomPath = ref(false)
+const customWechatDir = ref('')
+
 // 日志
 const logs = ref<{ ts: string; msg: string }[]>([])
 
@@ -140,8 +174,47 @@ function addLog(msg: string) {
   logs.value.unshift({ ts, msg })
 }
 
-// 微信导入功能
-async function onWeChatImport() {
+// 页面加载时尝试恢复保存的路径配置
+async function loadSavedPaths() {
+  try {
+    await bridgeReady()
+    const settings = await api.get_settings()
+    console.log('[DEBUG] 加载已保存的设置:', settings)
+    
+    // 🔥 修复：只要有路径数据就恢复（不再要求wechat_use_custom_path必须为true）
+    if (settings.wechat_data_dir && settings.wechat_user_wxid) {
+      pathInfo.value = {
+        wechat_dir: settings.wechat_data_dir,
+        current_user: settings.wechat_user_wxid,
+        databases: {
+          message: settings.wechat_msg_db ? [settings.wechat_msg_db] : [],
+          contact: settings.wechat_contact_db || null
+        },
+        source: settings.wechat_use_custom_path ? 'custom' : 'auto'
+      }
+      addLog('✅ 已恢复上次保存的路径配置')
+      console.log('[DEBUG] 已恢复路径信息:', pathInfo.value)
+    } else {
+      console.log('[DEBUG] 未找到已保存的路径配置')
+    }
+  } catch (e) {
+    console.error('[ERROR] 加载设置失败:', e)
+  }
+}
+
+// 组件挂载时加载保存的路径
+onMounted(() => {
+  loadSavedPaths()
+})
+
+// 核心流程：验证并解包
+async function onVerifyAndUnpack() {
+  // 防止重复触发
+  if (verifying.value || wechatImporting.value) {
+    console.log('[DEBUG] 操作进行中，忽略重复点击')
+    return
+  }
+
   wechatErr.value = ''
   wechatOk.value = ''
   importProgress.value = null
@@ -151,14 +224,78 @@ async function onWeChatImport() {
     return
   }
 
+  // 如果已经有路径信息，直接开始导入
+  if (pathInfo.value) {
+    await startImport()
+    return
+  }
+
+  // 否则先验证密钥和路径
+  verifying.value = true
+  addLog('正在验证密钥和查找微信数据...')
+
+  try {
+    await bridgeReady()
+    
+    // 1. 验证密钥
+    importProgress.value = { status: '验证密钥...', percent: 10 }
+    const verifyRes = await api.verify_wechat_key(wechatForm.dbKey)
+    
+    if (!verifyRes.ok) {
+      wechatErr.value = verifyRes.error || '密钥验证失败'
+      addLog('密钥验证失败: ' + wechatErr.value)
+      importProgress.value = null
+      verifying.value = false
+      return
+    }
+
+    addLog('✅ 密钥验证成功')
+    
+    // 2. 获取微信路径
+    importProgress.value = { status: '查找微信数据路径...', percent: 30 }
+    const pathRes = await api.get_wechat_paths()
+    
+    if (pathRes.ok && pathRes.data) {
+      // 自动检测成功
+      pathInfo.value = pathRes.data
+      addLog('✅ 自动检测到微信数据路径')
+      wechatOk.value = '解包成功！检测到微信数据，可以开始导入'
+      importProgress.value = null
+      
+      // 保存自动检测到的路径
+      await savePathsToSettings(pathRes.data, false)
+    } else {
+      // 自动检测失败，提示用户手动选择
+      addLog('⚠️ 自动检测失败，请手动选择微信数据目录')
+      showCustomPath.value = true
+      wechatErr.value = '未能自动检测到微信路径，请手动选择数据目录'
+      importProgress.value = null
+    }
+  } catch (e: any) {
+    wechatErr.value = e?.message || '验证异常'
+    addLog('验证异常: ' + wechatErr.value)
+    importProgress.value = null
+  } finally {
+    verifying.value = false
+  }
+}
+
+// 开始导入
+async function startImport() {
+  if (wechatImporting.value) {
+    console.log('[DEBUG] 导入进行中，忽略重复点击')
+    return
+  }
+
   wechatImporting.value = true
+  wechatErr.value = ''
+  wechatOk.value = ''
   addLog('开始导入微信数据...')
 
   try {
     await bridgeReady()
     
-    // 模拟进度（实际应从后端获取）
-    importProgress.value = { status: '正在解密数据库...', percent: 10 }
+    importProgress.value = { status: '正在解密数据库...', percent: 20 }
     
     const res = await api.import_wechat_data(wechatForm.dbKey, {
       import_contacts: wechatForm.importContacts,
@@ -169,75 +306,110 @@ async function onWeChatImport() {
 
     if (res.ok) {
       const stats = res.stats || {}
-      wechatOk.value = `导入成功！联系人: ${stats.contacts || 0}, 消息: ${stats.messages || 0}, 会话: ${stats.conversations || 0}`
+      wechatOk.value = `✅ 导入成功！联系人: ${stats.contacts || 0}, 消息: ${stats.messages || 0}, 会话: ${stats.conversations || 0}`
       addLog(wechatOk.value)
     } else {
       wechatErr.value = res.error || '导入失败'
-      addLog('导入失败: ' + wechatErr.value)
+      addLog('❌ 导入失败: ' + wechatErr.value)
     }
   } catch (e: any) {
     wechatErr.value = e?.message || '导入异常'
-    addLog('导入异常: ' + wechatErr.value)
-    importProgress.value = null
+    addLog('❌ 导入异常: ' + wechatErr.value)
   } finally {
+    importProgress.value = null
     wechatImporting.value = false
   }
 }
 
-async function verifyKey() {
-  wechatErr.value = ''
-  wechatOk.value = ''
-
-  if (!wechatForm.dbKey.trim()) {
-    wechatErr.value = '请输入密钥'
-    return
-  }
-
-  verifying.value = true
-  addLog('验证密钥...')
-
+// 选择自定义路径
+async function selectCustomPath() {
   try {
     await bridgeReady()
-    const res = await api.verify_wechat_key(wechatForm.dbKey)
-
-    if (res.ok) {
-      wechatOk.value = '密钥验证成功！'
-      addLog('密钥验证成功')
-    } else {
-      wechatErr.value = res.error || '密钥验证失败'
-      addLog('密钥验证失败')
+    const result = await api.select_directory('选择微信数据目录 (WeChat Files)')
+    
+    if (result && result.path) {
+      customWechatDir.value = result.path
+      addLog('已选择目录: ' + result.path)
+      
+      // 自动扫描该目录
+      await scanAndSetCustomPath(result.path)
     }
   } catch (e: any) {
-    wechatErr.value = e?.message || '验证异常'
-    addLog('验证异常')
-  } finally {
-    verifying.value = false
+    wechatErr.value = '选择目录失败: ' + (e?.message || '未知错误')
   }
 }
 
-async function checkPaths() {
+// 保存路径到设置
+async function savePathsToSettings(paths: any, isCustom: boolean) {
+  try {
+    const settingsToSave = {
+      wechat_use_custom_path: isCustom,
+      wechat_data_dir: paths.wechat_dir || '',
+      wechat_user_wxid: paths.current_user || '',
+      wechat_msg_db: (paths.databases?.message && paths.databases.message.length > 0) 
+        ? paths.databases.message[0] 
+        : '',
+      wechat_contact_db: paths.databases?.contact || ''
+    }
+    
+    console.log('[DEBUG] 保存路径到设置:', settingsToSave)
+    await api.set_settings(settingsToSave)
+    addLog('✅ 路径配置已保存')
+  } catch (e: any) {
+    console.error('[ERROR] 保存设置失败:', e)
+  }
+}
+
+// 扫描并设置自定义路径
+async function scanAndSetCustomPath(wechatDir: string) {
+  try {
+    addLog('扫描微信目录...')
+    const scanResult = await api.scan_wechat_directory(wechatDir)
+    
+    if (!scanResult.ok || !scanResult.wxids || scanResult.wxids.length === 0) {
+      wechatErr.value = '未在该目录下找到微信数据（wxid_ 文件夹）'
+      addLog('扫描失败: 未找到wxid')
+      return
+    }
+    
+    // 获取第一个wxid的数据
+    const firstWxid = scanResult.wxids[0]
+    const databases = scanResult.databases[firstWxid]
+    
+    // 设置路径信息
+    const newPathInfo = {
+      wechat_dir: wechatDir,
+      current_user: firstWxid,
+      databases: {
+        message: databases.msg_dbs || [],
+        contact: databases.contact_db
+      },
+      source: 'custom'
+    }
+    
+    pathInfo.value = newPathInfo
+    
+    // 保存到设置
+    await savePathsToSettings(newPathInfo, true)
+    
+    showCustomPath.value = false
+    wechatOk.value = `✅ 扫描成功！找到 ${scanResult.wxids.length} 个账号，已设置为：${firstWxid}`
+    addLog(wechatOk.value)
+  } catch (e: any) {
+    wechatErr.value = '扫描失败: ' + (e?.message || '未知错误')
+    addLog('扫描失败: ' + wechatErr.value)
+  }
+}
+
+// 重置流程
+function resetFlow() {
+  pathInfo.value = null
+  showCustomPath.value = false
+  customWechatDir.value = ''
   wechatErr.value = ''
   wechatOk.value = ''
-  addLog('查询微信路径...')
-
-  try {
-    await bridgeReady()
-    const res = await api.get_wechat_paths()
-
-    if (res.ok) {
-      const data = res.data
-      const msg = `微信目录: ${data.wechat_dir}
-当前用户: ${data.current_user}`
-      alert(msg)
-      addLog('路径查询成功')
-    } else {
-      wechatErr.value = res.error || '路径查询失败'
-      addLog('路径查询失败')
-    }
-  } catch (e: any) {
-    wechatErr.value = e?.message || '查询异常'
-    addLog('查询异常')
-  }
+  importProgress.value = null
+  addLog('已重置配置')
 }
 
 // 通用导入功能
@@ -294,6 +466,50 @@ async function ping() {
 .hint-box a { color: var(--ct-color-primary); text-decoration: underline; }
 .options { display: flex; gap: 16px; }
 .options label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+
+/* 路径信息显示 */
+.path-info { 
+  background: #f5f5f5; 
+  padding: 12px; 
+  border-radius: 8px; 
+  margin: 8px 0;
+}
+.info-item { 
+  display: flex; 
+  margin: 4px 0; 
+  font-size: 14px;
+}
+.info-item .label { 
+  color: #666; 
+  min-width: 100px;
+}
+.info-item .value { 
+  color: #333; 
+  font-family: monospace;
+  word-break: break-all;
+}
+
+/* 自定义路径选择 */
+.custom-path-box {
+  background: #fff3cd;
+  border-left: 3px solid #ffc107;
+  padding: 12px;
+  margin: 8px 0;
+}
+.custom-path-box .warning {
+  margin: 0 0 8px 0;
+  color: #856404;
+  font-size: 14px;
+}
+.path-input-group {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.path-input-group .ct-field {
+  flex: 1;
+}
+
 .progress-box { margin-top: 12px; }
 .progress-box p { margin: 0 0 6px; font-size: 14px; color: #555; }
 .progress-bar { width: 100%; height: 8px; background: #e0e0e0; border-radius: 4px; overflow: hidden; }

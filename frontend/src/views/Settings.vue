@@ -2,9 +2,10 @@
   <section class="settings-page">
     <header class="page-title">
       <h1>设置</h1>
-      <div class="_actions">
-        <CtButton variant="ghost" :loading="loading" @click="onLoad">读取</CtButton>
-        <CtButton :loading="saving" @click="onSave">保存</CtButton>
+      <div class="auto-save-status">
+        <span v-if="saving" class="saving">💾 保存中...</span>
+        <span v-else-if="lastSaveTime" class="saved">✅ 已保存 {{ lastSaveTime }}</span>
+        <span v-else class="idle">⚙️ 自动保存已启用</span>
       </div>
     </header>
 
@@ -34,6 +35,63 @@
         </template>
       </CtCard>
 
+      <!-- 微信数据库路径配置 -->
+      <CtCard title="微信数据库路径">
+        <div class="form">
+          <div class="hint-box info">
+            <p>💡 <strong>提示：</strong>如果自动检测的微信路径不正确，可以在此手动指定数据库文件位置</p>
+          </div>
+
+          <label class="row">
+            <div class="lab">使用自定义路径</div>
+            <input v-model="form.wechat_use_custom_path" type="checkbox" />
+          </label>
+
+          <template v-if="form.wechat_use_custom_path">
+            <div class="row">
+              <div class="lab">微信数据目录</div>
+              <div class="path-input">
+                <CtField 
+                  v-model="form.wechat_data_dir" 
+                  placeholder="例如: C:\Users\YourName\Documents\WeChat Files" 
+                />
+                <CtButton variant="ghost" :loading="scanning" @click.stop.prevent="selectWeChatDir">浏览并扫描</CtButton>
+              </div>
+            </div>
+
+            <div class="row">
+              <div class="lab">微信用户ID (wxid)</div>
+              <CtField 
+                v-model="form.wechat_user_wxid" 
+                placeholder="例如: wxid_abc123def456 (浏览目录后自动填充)" 
+              />
+            </div>
+
+            <div class="row">
+              <div class="lab">消息数据库路径</div>
+              <div class="path-input">
+                <CtField 
+                  v-model="form.wechat_msg_db" 
+                  placeholder="例如: ...\Msg\MSG0.db (浏览目录后自动填充)" 
+                />
+                <CtButton variant="ghost" @click.stop.prevent="selectMsgDb">手动选择</CtButton>
+              </div>
+            </div>
+
+            <div class="row">
+              <div class="lab">联系人数据库路径</div>
+              <div class="path-input">
+                <CtField 
+                  v-model="form.wechat_contact_db" 
+                  placeholder="例如: ...\Msg\MicroMsg.db (浏览目录后自动填充)" 
+                />
+                <CtButton variant="ghost" @click.stop.prevent="selectContactDb">手动选择</CtButton>
+              </div>
+            </div>
+          </template>
+        </div>
+      </CtCard>
+
       <!-- 消息抓取与监听 -->
       <CtCard title="消息抓取与监听">
         <div class="form">
@@ -58,7 +116,7 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref, onMounted } from 'vue'
+import { reactive, ref, onMounted, watch } from 'vue'
 import { bridgeReady, api } from '@/api/bridge'
 import CtCard from '@/components/base/CtCard.vue'
 import CtField from '@/components/base/CtField.vue'
@@ -66,12 +124,32 @@ import CtButton from '@/components/base/CtButton.vue'
 
 const loading = ref(false)
 const saving = ref(false)
-const form = reactive<{ model: string; api_token: string; interval_minutes: number; batch_size: number; realtime_enabled: boolean }>({
+const scanning = ref(false)
+const autoSaveTimer = ref<number | null>(null)
+const lastSaveTime = ref<string>('')
+
+const form = reactive<{ 
+  model: string
+  api_token: string
+  interval_minutes: number
+  batch_size: number
+  realtime_enabled: boolean
+  wechat_use_custom_path: boolean
+  wechat_data_dir: string
+  wechat_user_wxid: string
+  wechat_msg_db: string
+  wechat_contact_db: string
+}>({
   model: 'local',
   api_token: '',
   interval_minutes: 15,
   batch_size: 100,
   realtime_enabled: true,
+  wechat_use_custom_path: false,
+  wechat_data_dir: '',
+  wechat_user_wxid: '',
+  wechat_msg_db: '',
+  wechat_contact_db: '',
 })
 
 async function onLoad() {
@@ -79,37 +157,205 @@ async function onLoad() {
   try {
     await bridgeReady()
     const s = await api.get_settings()
+    console.log('[DEBUG] 从后端加载的设置:', s)
+    
     if (s && typeof s === 'object') {
       form.model = s.model ?? form.model
       form.api_token = s.api_token ?? form.api_token
       form.interval_minutes = Number(s.interval_minutes ?? form.interval_minutes)
       form.batch_size = Number(s.batch_size ?? form.batch_size)
       form.realtime_enabled = Boolean(s.realtime_enabled ?? form.realtime_enabled)
+      
+      // 微信路径配置
+      form.wechat_use_custom_path = Boolean(s.wechat_use_custom_path ?? false)
+      form.wechat_data_dir = s.wechat_data_dir ?? ''
+      form.wechat_user_wxid = s.wechat_user_wxid ?? ''
+      form.wechat_msg_db = s.wechat_msg_db ?? ''
+      form.wechat_contact_db = s.wechat_contact_db ?? ''
+      
+      console.log('[DEBUG] 设置已加载到表单')
     }
   } catch (e) {
-    console.error(e)
+    console.error('加载设置失败:', e)
   } finally {
     loading.value = false
   }
 }
 
+// 自动保存（防抖）
+async function autoSave() {
+  // 清除之前的定时器
+  if (autoSaveTimer.value) {
+    clearTimeout(autoSaveTimer.value)
+  }
+  
+  // 500ms 后自动保存
+  autoSaveTimer.value = window.setTimeout(async () => {
+    await onSave()
+  }, 500)
+}
+
 async function onSave() {
+  // 如果正在保存，跳过
+  if (saving.value) return
+  
   saving.value = true
   try {
     await bridgeReady()
-    await api.set_settings({
+    
+    const settingsToSave = {
       model: form.model,
       api_token: form.api_token,
       interval_minutes: form.interval_minutes,
       batch_size: form.batch_size,
       realtime_enabled: form.realtime_enabled,
-    })
+      wechat_use_custom_path: form.wechat_use_custom_path,
+      wechat_data_dir: form.wechat_data_dir,
+      wechat_user_wxid: form.wechat_user_wxid,
+      wechat_msg_db: form.wechat_msg_db,
+      wechat_contact_db: form.wechat_contact_db,
+    }
+    
+    console.log('[DEBUG] 自动保存设置:', settingsToSave)
+    
+    const result = await api.set_settings(settingsToSave)
+    console.log('[DEBUG] 保存结果:', result)
+    
+    // 更新保存时间
+    const now = new Date()
+    lastSaveTime.value = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`
   } catch (e) {
-    console.error(e)
+    console.error('保存设置失败:', e)
   } finally {
     saving.value = false
   }
 }
+
+// 文件选择功能
+async function selectWeChatDir() {
+  // 防止重复点击
+  if (scanning.value) {
+    console.log('[DEBUG] 扫描进行中，忽略重复点击')
+    return
+  }
+
+  scanning.value = true
+
+  try {
+    await bridgeReady()
+    console.log('[DEBUG] 调用 select_directory API')
+    const result = await api.select_directory('选择微信数据目录 (WeChat Files)')
+    console.log('[DEBUG] select_directory 返回:', result)
+    
+    if (result && result.path) {
+      form.wechat_data_dir = result.path
+      console.log('[DEBUG] 已设置微信数据目录:', result.path)
+      
+      // 自动扫描该目录下的wxid和数据库
+      await scanWeChatDirectory(result.path)
+    } else if (result && result.error) {
+      alert('选择目录失败：' + result.error)
+    } else {
+      console.log('[DEBUG] 用户取消选择或未选择')
+    }
+  } catch (e) {
+    console.error('选择目录异常:', e)
+    alert('选择目录出错：' + (e as Error).message)
+  } finally {
+    scanning.value = false
+  }
+}
+
+// 扫描微信目录
+async function scanWeChatDirectory(wechatDir: string) {
+  try {
+    console.log('[DEBUG] 开始扫描微信目录:', wechatDir)
+    const scanResult = await api.scan_wechat_directory(wechatDir)
+    console.log('[DEBUG] 扫描结果:', scanResult)
+    
+    if (!scanResult.ok) {
+      alert('扫描失败：' + (scanResult.error || '未知错误'))
+      return
+    }
+    
+    // 如果找到wxid，自动填充第一个
+    if (scanResult.wxids && scanResult.wxids.length > 0) {
+      const firstWxid = scanResult.wxids[0]
+      form.wechat_user_wxid = firstWxid
+      console.log('[DEBUG] 自动设置wxid:', firstWxid)
+      
+      // 自动填充该wxid的数据库路径
+      const databases = scanResult.databases[firstWxid]
+      if (databases) {
+        if (databases.msg_dbs && databases.msg_dbs.length > 0) {
+          form.wechat_msg_db = databases.msg_dbs[0]
+          console.log('[DEBUG] 自动设置消息数据库:', databases.msg_dbs[0])
+        }
+        
+        if (databases.contact_db) {
+          form.wechat_contact_db = databases.contact_db
+          console.log('[DEBUG] 自动设置联系人数据库:', databases.contact_db)
+        }
+      }
+      
+      alert(`扫描成功！
+找到 ${scanResult.wxids.length} 个微信账号
+已自动设置第一个账号：${firstWxid}`)
+    } else {
+      alert('未在该目录下找到微信数据（wxid_ 开头的文件夹）')
+    }
+  } catch (e) {
+    console.error('扫描异常:', e)
+    alert('扫描出错：' + (e as Error).message)
+  }
+}
+
+async function selectMsgDb() {
+  try {
+    await bridgeReady()
+    console.log('[DEBUG] 调用 select_file API (消息数据库)')
+    const result = await api.select_file('选择微信消息数据库 (MSG0.db)', '*.db')
+    console.log('[DEBUG] select_file 返回:', result)
+    
+    if (result && result.path) {
+      form.wechat_msg_db = result.path
+      console.log('[DEBUG] 已设置消息数据库:', result.path)
+    } else if (result && result.error) {
+      alert('选择文件失败：' + result.error)
+    } else {
+      console.log('[DEBUG] 用户取消选择或未选择')
+    }
+  } catch (e) {
+    console.error('选择文件异常:', e)
+    alert('选择文件出错：' + (e as Error).message)
+  }
+}
+
+async function selectContactDb() {
+  try {
+    await bridgeReady()
+    console.log('[DEBUG] 调用 select_file API (联系人数据库)')
+    const result = await api.select_file('选择微信联系人数据库 (Contact.db)', '*.db')
+    console.log('[DEBUG] select_file 返回:', result)
+    
+    if (result && result.path) {
+      form.wechat_contact_db = result.path
+      console.log('[DEBUG] 已设置联系人数据库:', result.path)
+    } else if (result && result.error) {
+      alert('选择文件失败：' + result.error)
+    } else {
+      console.log('[DEBUG] 用户取消选择或未选择')
+    }
+  } catch (e) {
+    console.error('选择文件异常:', e)
+    alert('选择文件出错：' + (e as Error).message)
+  }
+}
+
+// 监听表单变化，自动保存
+watch(form, () => {
+  autoSave()
+}, { deep: true })
 
 onMounted(() => { onLoad() })
 </script>
@@ -118,11 +364,46 @@ onMounted(() => { onLoad() })
 .settings-page { display: flex; flex-direction: column; gap: 16px; }
 .page-title { display: flex; align-items: center; justify-content: space-between; }
 .page-title h1 { margin: 0; color: var(--ct-color-primary); }
-._actions { display: inline-flex; gap: 8px; }
+
+/* 自动保存状态 */
+.auto-save-status { 
+  display: flex; 
+  align-items: center; 
+  gap: 8px;
+  font-size: 14px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  background: #f5f5f5;
+}
+.auto-save-status .saving {
+  color: #1976d2;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+.auto-save-status .saved {
+  color: #0c7c3a;
+}
+.auto-save-status .idle {
+  color: #666;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
 
 .grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
 .form { display: flex; flex-direction: column; gap: 12px; }
 .row { display: grid; grid-template-columns: 160px 1fr; gap: 12px; align-items: center; }
 .lab { color: #555; }
 .hint { color: #666; }
+
+.hint-box.info { 
+  background: #f0f7ff; 
+  border-left: 3px solid var(--ct-color-primary); 
+  padding: 12px; 
+  margin-bottom: 8px; 
+}
+.hint-box p { margin: 4px 0; font-size: 14px; }
+.path-input { display: flex; gap: 8px; align-items: center; }
+.path-input .ct-field { flex: 1; }
 </style>

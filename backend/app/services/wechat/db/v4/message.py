@@ -229,10 +229,10 @@ class MessageDBV4(WeChatDBBase):
         """
         获取所有对话的username列表
         
-        通过扫描 Name2Id 表实现
+        通过扫描 Name2Id 表实现,并过滤群聊和公众号
         
         Returns:
-            List[str]: username列表
+            List[str]: username列表(不包括群聊和公众号)
         """
         usernames = set()
         
@@ -240,8 +240,11 @@ class MessageDBV4(WeChatDBBase):
             try:
                 cursor = conn.execute("SELECT user_name FROM Name2Id")
                 for row in cursor:
-                    if row['user_name']:
-                        usernames.add(row['user_name'])
+                    username = row['user_name']
+                    if username:
+                        # 过滤群聊和公众号
+                        if '@chatroom' not in username and not username.startswith('gh_'):
+                            usernames.add(username)
             except:
                 continue
         

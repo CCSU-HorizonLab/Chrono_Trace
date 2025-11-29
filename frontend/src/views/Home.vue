@@ -174,22 +174,26 @@ function addLog(msg: string) {
   logs.value.unshift({ ts, msg })
 }
 
-// 页面加载时尝试恢复保存的路径配置
+// 页面加载时尝试恢复保存的路径配置和密钥
 async function loadSavedPaths() {
   try {
     await bridgeReady()
     const settings = await api.get_settings()
     console.log('[DEBUG] 加载已保存的设置:', settings)
     
-    // 🔥 修复：只要有路径数据就恢复（不再要求wechat_use_custom_path必须为true）
+    // 恢复密钥
+    if (settings.wechat_db_key) {
+      wechatForm.dbKey = settings.wechat_db_key
+      addLog('✅ 已恢复上次保存的数据库密钥')
+      console.log('[DEBUG] 已恢复密钥')
+    }
+    
+    // 恢复路径信息
     if (settings.wechat_data_dir && settings.wechat_user_wxid) {
       pathInfo.value = {
         wechat_dir: settings.wechat_data_dir,
         current_user: settings.wechat_user_wxid,
-        databases: {
-          message: settings.wechat_msg_db ? [settings.wechat_msg_db] : [],
-          contact: settings.wechat_contact_db || null
-        },
+        databases: {},
         source: settings.wechat_use_custom_path ? 'custom' : 'auto'
       }
       addLog('✅ 已恢复上次保存的路径配置')
@@ -346,15 +350,12 @@ async function savePathsToSettings(paths: any, isCustom: boolean) {
       wechat_use_custom_path: isCustom,
       wechat_data_dir: paths.wechat_dir || '',
       wechat_user_wxid: paths.current_user || '',
-      wechat_msg_db: (paths.databases?.message && paths.databases.message.length > 0) 
-        ? paths.databases.message[0] 
-        : '',
-      wechat_contact_db: paths.databases?.contact || ''
+      wechat_db_key: wechatForm.dbKey  // 保存密钥
     }
     
-    console.log('[DEBUG] 保存路径到设置:', settingsToSave)
+    console.log('[DEBUG] 保存路径和密钥到设置')
     await api.set_settings(settingsToSave)
-    addLog('✅ 路径配置已保存')
+    addLog('✅ 路径和密钥配置已保存')
   } catch (e: any) {
     console.error('[ERROR] 保存设置失败:', e)
   }

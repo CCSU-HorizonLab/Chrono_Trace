@@ -48,8 +48,6 @@ class Bridge:
         if self.settings.get("wechat_use_custom_path"):
             wechat_dir = self.settings.get("wechat_data_dir", "")
             wxid = self.settings.get("wechat_user_wxid", "")
-            msg_db = self.settings.get("wechat_msg_db", "")
-            contact_db = self.settings.get("wechat_contact_db", "")
             
             # 验证路径是否完整
             if not wechat_dir or not wxid:
@@ -59,10 +57,7 @@ class Bridge:
             custom_paths = {
                 "wechat_dir": wechat_dir,
                 "current_user": wxid,
-                "databases": {
-                    "message": [msg_db] if msg_db else [],
-                    "contact": contact_db,
-                },
+                "databases": {},  # 数据库会在导入时自动查找
                 "source": "custom"
             }
             return {"ok": True, "data": custom_paths}

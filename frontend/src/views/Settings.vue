@@ -39,8 +39,17 @@
       <CtCard title="微信数据库路径">
         <div class="form">
           <div class="hint-box info">
-            <p>💡 <strong>提示：</strong>如果自动检测的微信路径不正确，可以在此手动指定数据库文件位置</p>
+            <p>💡 <strong>提示:</strong>如果自动检测的微信路径不正确,可以在此手动指定数据库文件位置</p>
           </div>
+
+          <label class="row">
+            <div class="lab">数据库密钥</div>
+            <CtField 
+              v-model="form.wechat_db_key" 
+              type="password"
+              placeholder="输入64位hex密钥 (可保存以便下次使用)" 
+            />
+          </label>
 
           <label class="row">
             <div class="lab">使用自定义路径</div>
@@ -65,28 +74,6 @@
                 v-model="form.wechat_user_wxid" 
                 placeholder="例如: wxid_abc123def456 (浏览目录后自动填充)" 
               />
-            </div>
-
-            <div class="row">
-              <div class="lab">消息数据库路径</div>
-              <div class="path-input">
-                <CtField 
-                  v-model="form.wechat_msg_db" 
-                  placeholder="例如: ...\Msg\MSG0.db (浏览目录后自动填充)" 
-                />
-                <CtButton variant="ghost" @click.stop.prevent="selectMsgDb">手动选择</CtButton>
-              </div>
-            </div>
-
-            <div class="row">
-              <div class="lab">联系人数据库路径</div>
-              <div class="path-input">
-                <CtField 
-                  v-model="form.wechat_contact_db" 
-                  placeholder="例如: ...\Msg\MicroMsg.db (浏览目录后自动填充)" 
-                />
-                <CtButton variant="ghost" @click.stop.prevent="selectContactDb">手动选择</CtButton>
-              </div>
             </div>
           </template>
         </div>
@@ -137,8 +124,7 @@ const form = reactive<{
   wechat_use_custom_path: boolean
   wechat_data_dir: string
   wechat_user_wxid: string
-  wechat_msg_db: string
-  wechat_contact_db: string
+  wechat_db_key: string
 }>({
   model: 'local',
   api_token: '',
@@ -148,8 +134,7 @@ const form = reactive<{
   wechat_use_custom_path: false,
   wechat_data_dir: '',
   wechat_user_wxid: '',
-  wechat_msg_db: '',
-  wechat_contact_db: '',
+  wechat_db_key: '',
 })
 
 async function onLoad() {
@@ -170,8 +155,7 @@ async function onLoad() {
       form.wechat_use_custom_path = Boolean(s.wechat_use_custom_path ?? false)
       form.wechat_data_dir = s.wechat_data_dir ?? ''
       form.wechat_user_wxid = s.wechat_user_wxid ?? ''
-      form.wechat_msg_db = s.wechat_msg_db ?? ''
-      form.wechat_contact_db = s.wechat_contact_db ?? ''
+      form.wechat_db_key = s.wechat_db_key ?? ''
       
       console.log('[DEBUG] 设置已加载到表单')
     }
@@ -212,8 +196,7 @@ async function onSave() {
       wechat_use_custom_path: form.wechat_use_custom_path,
       wechat_data_dir: form.wechat_data_dir,
       wechat_user_wxid: form.wechat_user_wxid,
-      wechat_msg_db: form.wechat_msg_db,
-      wechat_contact_db: form.wechat_contact_db,
+      wechat_db_key: form.wechat_db_key,
     }
     
     console.log('[DEBUG] 自动保存设置:', settingsToSave)
@@ -251,7 +234,7 @@ async function selectWeChatDir() {
       form.wechat_data_dir = result.path
       console.log('[DEBUG] 已设置微信数据目录:', result.path)
       
-      // 自动扫描该目录下的wxid和数据库
+      // 自动扫描该目录下的wxid
       await scanWeChatDirectory(result.path)
     } else if (result && result.error) {
       alert('选择目录失败：' + result.error)
@@ -284,71 +267,16 @@ async function scanWeChatDirectory(wechatDir: string) {
       form.wechat_user_wxid = firstWxid
       console.log('[DEBUG] 自动设置wxid:', firstWxid)
       
-      // 自动填充该wxid的数据库路径
-      const databases = scanResult.databases[firstWxid]
-      if (databases) {
-        if (databases.msg_dbs && databases.msg_dbs.length > 0) {
-          form.wechat_msg_db = databases.msg_dbs[0]
-          console.log('[DEBUG] 自动设置消息数据库:', databases.msg_dbs[0])
-        }
-        
-        if (databases.contact_db) {
-          form.wechat_contact_db = databases.contact_db
-          console.log('[DEBUG] 自动设置联系人数据库:', databases.contact_db)
-        }
-      }
-      
       alert(`扫描成功！
 找到 ${scanResult.wxids.length} 个微信账号
-已自动设置第一个账号：${firstWxid}`)
+已自动设置第一个账号：${firstWxid}
+数据库将在导入时自动检测`)
     } else {
       alert('未在该目录下找到微信数据（wxid_ 开头的文件夹）')
     }
   } catch (e) {
     console.error('扫描异常:', e)
     alert('扫描出错：' + (e as Error).message)
-  }
-}
-
-async function selectMsgDb() {
-  try {
-    await bridgeReady()
-    console.log('[DEBUG] 调用 select_file API (消息数据库)')
-    const result = await api.select_file('选择微信消息数据库 (MSG0.db)', '*.db')
-    console.log('[DEBUG] select_file 返回:', result)
-    
-    if (result && result.path) {
-      form.wechat_msg_db = result.path
-      console.log('[DEBUG] 已设置消息数据库:', result.path)
-    } else if (result && result.error) {
-      alert('选择文件失败：' + result.error)
-    } else {
-      console.log('[DEBUG] 用户取消选择或未选择')
-    }
-  } catch (e) {
-    console.error('选择文件异常:', e)
-    alert('选择文件出错：' + (e as Error).message)
-  }
-}
-
-async function selectContactDb() {
-  try {
-    await bridgeReady()
-    console.log('[DEBUG] 调用 select_file API (联系人数据库)')
-    const result = await api.select_file('选择微信联系人数据库 (Contact.db)', '*.db')
-    console.log('[DEBUG] select_file 返回:', result)
-    
-    if (result && result.path) {
-      form.wechat_contact_db = result.path
-      console.log('[DEBUG] 已设置联系人数据库:', result.path)
-    } else if (result && result.error) {
-      alert('选择文件失败：' + result.error)
-    } else {
-      console.log('[DEBUG] 用户取消选择或未选择')
-    }
-  } catch (e) {
-    console.error('选择文件异常:', e)
-    alert('选择文件出错：' + (e as Error).message)
   }
 }
 

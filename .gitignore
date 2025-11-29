@@ -3,3 +3,4 @@ frontend/dist/
 .env
 __pycache__/
 *.pyc
+backend/data

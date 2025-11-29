@@ -92,6 +92,8 @@ class ContactDBV4(WeChatDBBase):
                 quan_pin
             FROM contact
             WHERE local_type IN (1, 2, 5)
+            AND username NOT LIKE '%@chatroom%'
+            AND username NOT LIKE 'gh_%'
             ORDER BY 
                 CASE 
                     WHEN remark_quan_pin = '' THEN quan_pin

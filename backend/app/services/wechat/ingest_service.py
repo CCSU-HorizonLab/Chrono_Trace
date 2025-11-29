@@ -235,14 +235,22 @@ class WeChatIngestService:
             
             # 批量插入联系人
             inserted = 0
+            skipped = 0
             for contact_dict in contacts_data:
+                username = contact_dict['username']
+                
+                # 过滤群聊和公众号
+                if '@chatroom' in username or username.startswith('gh_'):
+                    skipped += 1
+                    continue
+                
                 try:
                     self.db.execute("""
                         INSERT OR REPLACE INTO contacts 
                         (username, nickname, remark, alias, phone, is_friend, updated_at)
                         VALUES (?, ?, ?, ?, ?, ?, ?)
                     """, (
-                        contact_dict['username'],
+                        username,
                         contact_dict['nickname'],
                         contact_dict['remark'],
                         contact_dict['alias'],
@@ -256,7 +264,7 @@ class WeChatIngestService:
                     pass  # 忽略单条错误
             
             self.db.commit()
-            print(f"[DEBUG] 成功插入 {inserted} 个联系人")
+            print(f"[DEBUG] 成功插入 {inserted} 个联系人, 跳过 {skipped} 个群聊/公众号")
             return inserted
         finally:
             contact_db.close()
@@ -276,6 +284,7 @@ class WeChatIngestService:
         
         total_messages = 0
         conversations_set = set()
+        skipped_conversations = 0
         
         message_db = MessageDBV4(message_db_paths, db_key, my_wxid=wxid)
         
@@ -289,8 +298,13 @@ class WeChatIngestService:
             
             if len(all_usernames) > 0:
                 print(f"[DEBUG] 前3个会话: {all_usernames[:3]}")
-            
+             
             for idx, username in enumerate(all_usernames):
+                # 过滤群聊、公众号、商业号
+                if '@chatroom' in username or '@openim' in username or username.startswith('gh_'):
+                    skipped_conversations += 1
+                    continue
+                
                 if progress_callback:
                     progress = 30 + int((idx / max(len(all_usernames), 1)) * 60)
                     progress_callback(f"导入对话 {idx+1}/{len(all_usernames)}...", progress, 100)
@@ -333,26 +347,30 @@ class WeChatIngestService:
             message_db.close()
         
         print(f"[DEBUG] 消息导入完成: 总计 {total_messages} 条, {len(conversations_set)} 个会话")
+        print(f"[DEBUG] 跳过 {skipped_conversations} 个群聊/公众号会话")
         
-        return {
-            "total": total_messages,
-            "conversations": len(conversations_set)
-        }
+        return {"total": total_messages,"conversations": len(conversations_set)}  
     
-    def _insert_message_batch(self, messages: list, wxid: str):
+    def _insert_message_batch(self, messages: list, wxid: str):  # pyright: ignore[reportMissingTypeArgument]
         """批量插入消息"""
         for msg in messages:
             try:
-                # 确保会话存在
-                self.db.execute("""
-                    INSERT OR IGNORE INTO conversations (name, platform, created_at)
-                    VALUES (?, 'wechat', ?)
-                """, (msg['talker'], int(time.time())))
+                talker = msg['talker']
                 
-                # 获取conversation_id
+                # 再次过滤群聊和公众号(双重保险)
+                if '@chatroom' in talker or talker.startswith('gh_'):
+                    continue
+                
+                # 确保会话存在 (修复: 使用 username 字段而不是 name)
+                self.db.execute("""
+                    INSERT OR IGNORE INTO conversations (username, display_name, platform, created_at, updated_at, message_count)
+                    VALUES (?, ?, 'wechat', ?, ?, 0)
+                """, (talker, talker, int(time.time()), int(time.time())))
+                
+                # 获取conversation_id (修复: 使用 username 字段)
                 cursor = self.db.execute(
-                    "SELECT id FROM conversations WHERE name = ? AND platform = 'wechat'",
-                    (msg['talker'],)
+                    "SELECT id FROM conversations WHERE username = ? AND platform = 'wechat'",
+                    (talker,)
                 )
                 row = cursor.fetchone()
                 if not row:
@@ -360,21 +378,34 @@ class WeChatIngestService:
                 
                 conversation_id = row[0]
                 
-                # 插入消息
-                role = "assistant" if msg['is_sender'] else "user"
+                # 插入消息 (修复: 添加必需的字段)
+                is_sender = 1 if msg['is_sender'] else 0
                 
                 self.db.execute("""
                     INSERT OR IGNORE INTO messages 
-                    (conversation_id, role, ts, content, source)
-                    VALUES (?, ?, ?, ?, 'long')
-                """, (
+                    (conversation_id, talker, sender, is_sender, message_type, content, timestamp, source, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 'long', ?)
+                """, (  
                     conversation_id,
-                    role,
+                    talker,
+                    msg.get('sender', ''),
+                    is_sender,
+                    msg.get('message_type', 1),
+                    msg['content'],
                     msg['timestamp'],
-                    msg['content']
+                    int(time.time())
                 ))
+                # 更新会话消息计数和更新时间
+                self.db.execute(""" 
+                    UPDATE conversations 
+                    SET message_count = message_count + 1,
+                        updated_at = ?
+                    WHERE id = ?
+                """, 
+                (msg['timestamp'], conversation_id)) # pyright: ignore[reportUnusedCallResult]
             
-            except Exception:
+            except Exception as e:
+                print(f"[DEBUG] 插入消息失败: {e}")
                 pass  # 忽略单条错误
         
         self.db.commit()
@@ -386,7 +417,7 @@ class WeChatIngestService:
             VALUES ('wechat_full', 'pending', ?)
         """, (int(time.time()),))
         self.db.commit()
-        return cursor.lastrowid
+        return cursor.lastrowid  # pyright: ignore[reportReturnType]
     
     def _update_import_record(
         self,

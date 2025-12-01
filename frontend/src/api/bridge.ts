@@ -14,6 +14,11 @@ type PyWebViewApi = {
   select_file: (title?: string, file_types?: string) => Promise<any>
   select_directory: (title?: string) => Promise<any>
   scan_wechat_directory: (wechat_dir: string) => Promise<any>
+  // 实时监听
+  start_realtime_monitor: (talker_display_name: string) => Promise<any>
+  stop_realtime_monitor: () => Promise<any>
+  get_realtime_status: () => Promise<any>
+  get_realtime_messages: (batch_id: string) => Promise<any>
 }
 
 function getApi(): PyWebViewApi {

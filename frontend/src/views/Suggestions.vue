@@ -4,6 +4,93 @@
       <h1>AI 建议</h1>
     </header>
 
+    <!-- 实时监听控制区 -->
+    <div class="card realtime-monitor">
+      <div class="card-hd collapsible" @click="toggleMonitorPanel">
+        <span>实时监听控制</span>
+        <span class="icon">{{ monitorPanelExpanded ? '▼' : '▶' }}</span>
+      </div>
+      
+      <div v-show="monitorPanelExpanded" class="card-bd">
+        <!-- 重要提示 -->
+        <div class="alert warning">
+          <div class="alert-title">⚠️ 重要提示</div>
+          <ul class="alert-list">
+            <li>确保微信 4.0.5 已启动并登录</li>
+            <li><strong>微信窗口的搜索栏必须在屏幕上显示</strong>（wxauto 限制）</li>
+            <li><strong>只能监听主窗口聊天（单击联系人），不能监听独立弹窗（双击联系人）</strong></li>
+            <li>输入的昵称必须与微信中显示的完全一致（备注名优先）</li>
+            <li>同时只能监听一个对象</li>
+          </ul>
+        </div>
+
+        <!-- 监听控制 -->
+        <div class="monitor-control">
+          <div class="input-group">
+            <label>监听对象:</label>
+            <input 
+              v-model="realtimeState.talkerName" 
+              type="text" 
+              placeholder="输入联系人昵称或备注名"
+              :disabled="realtimeState.isMonitoring"
+            />
+          </div>
+          
+          <div class="button-group">
+            <button 
+              class="ct-btn" 
+              :class="{ primary: !realtimeState.isMonitoring, danger: realtimeState.isMonitoring }"
+              :disabled="realtimeState.status === 'searching' || realtimeState.status === 'stopping'"
+              @click="toggleMonitoring"
+            >
+              <span v-if="!realtimeState.isMonitoring">开始监听</span>
+              <span v-else-if="realtimeState.status === 'stopping'">停止中...</span>
+              <span v-else>停止监听</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- 监听状态 -->
+        <div class="monitor-status">
+          <div class="status-indicator">
+            <span 
+              class="dot" 
+              :class="{
+                idle: !realtimeState.isMonitoring,
+                active: realtimeState.isMonitoring
+              }"
+            ></span>
+            <span class="status-text">
+              {{ realtimeState.isMonitoring ? '监听中' : '未监听' }}
+              <span v-if="realtimeState.talkerName && realtimeState.isMonitoring">
+                - {{ realtimeState.talkerName }}
+              </span>
+            </span>
+          </div>
+
+          <!-- 进度步骤 -->
+          <div class="progress-steps">
+            <div 
+              v-for="(step, idx) in progressSteps" 
+              :key="idx" 
+              class="step"
+              :class="step.status"
+            >
+              <span class="step-icon">
+                <template v-if="step.status === 'completed'">✓</template>
+                <template v-else-if="step.status === 'active'">●</template>
+                <template v-else>○</template>
+              </span>
+              <span class="step-label">{{ step.label }}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 错误提示 -->
+        <div v-if="realtimeError" class="error">{{ realtimeError }}</div>
+      </div>
+    </div>
+
     <div class="grid">
       <div class="left">
         <!-- 1) 发展走向选择卡 -->
@@ -97,9 +184,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch, onBeforeUnmount, computed } from 'vue'
+import { ref, onMounted, watch, onBeforeUnmount, computed, reactive } from 'vue'
 import { bridgeReady, api } from '@/api/bridge'
 import * as echarts from 'echarts'
+import CtButton from '@/components/base/CtButton.vue'
 
 type Message = { role: 'ai' | 'user'; content: string }
 
@@ -109,6 +197,152 @@ const error = ref('')
 const suggestion = ref<{ summary?: string; speech?: string[] } | null>(null)
 const messages = ref<Message[]>([])
 const userInput = ref('')
+
+// ========== 实时监听状态 ==========
+const monitorPanelExpanded = ref(true)
+
+const realtimeState = reactive({
+  isMonitoring: false,
+  talkerName: '',
+  batchId: '',
+  messageCount: 0,
+  status: 'idle' as 'idle' | 'searching' | 'monitoring' | 'stopping' | 'stopped'
+})
+
+const realtimeError = ref('')
+let statusTimer: any = null
+
+// 进度步骤计算
+const progressSteps = computed(() => {
+  return [
+    {
+      label: '正在搜索联系人...',
+      status: realtimeState.status === 'searching' ? 'active' : 
+              ['monitoring', 'stopping', 'stopped'].includes(realtimeState.status) ? 'completed' : 'pending'
+    },
+    {
+      label: `正在监听 (已抓取 ${realtimeState.messageCount} 条消息)`,
+      status: realtimeState.status === 'monitoring' ? 'active' : 
+              realtimeState.status === 'stopped' ? 'completed' : 'pending'
+    },
+    {
+      label: '监听已结束',
+      status: realtimeState.status === 'stopped' ? 'completed' : 'pending'
+    }
+  ]
+})
+
+// 切换面板展开
+function toggleMonitorPanel() {
+  monitorPanelExpanded.value = !monitorPanelExpanded.value
+}
+
+// 切换监听状态
+async function toggleMonitoring() {
+  if (realtimeState.isMonitoring) {
+    await stopMonitoring()
+  } else {
+    await startMonitoring()
+  }
+}
+
+// 启动监听
+async function startMonitoring() {
+  const talkerName = realtimeState.talkerName.trim()
+  
+  if (!talkerName) {
+    realtimeError.value = '请输入监听对象昵称'
+    return
+  }
+  
+  realtimeError.value = ''
+  realtimeState.status = 'searching'
+  
+  try {
+    await bridgeReady()
+    const result = await api.start_realtime_monitor(talkerName)
+    
+    if (result.success || result.ok) {
+      realtimeState.batchId = result.batch_id
+      realtimeState.status = 'monitoring'
+      realtimeState.isMonitoring = true
+      startStatusPolling()
+    } else {
+      realtimeState.status = 'idle'
+      realtimeError.value = result.error || result.message || '启动监听失败'
+    }
+  } catch (e: any) {
+    realtimeState.status = 'idle'
+    realtimeError.value = e?.message || '启动监听异常'
+  }
+}
+
+// 停止监听
+async function stopMonitoring() {
+  realtimeState.status = 'stopping'
+  realtimeError.value = ''
+  
+  try {
+    await bridgeReady()
+    const result = await api.stop_realtime_monitor()
+    
+    stopStatusPolling()
+    
+    if (result.success || result.ok) {
+      realtimeState.status = 'stopped'
+      realtimeState.isMonitoring = false
+      
+      // 3秒后重置状态
+      setTimeout(() => {
+        if (realtimeState.status === 'stopped') {
+          realtimeState.status = 'idle'
+          realtimeState.messageCount = 0
+        }
+      }, 3000)
+    } else {
+      realtimeState.status = 'monitoring'
+      realtimeError.value = result.error || result.message || '停止监听失败'
+    }
+  } catch (e: any) {
+    realtimeState.status = 'monitoring'
+    realtimeError.value = e?.message || '停止监听异常'
+  }
+}
+
+// 开始状态轮询（每 2 秒）
+function startStatusPolling() {
+  stopStatusPolling()
+  
+  statusTimer = setInterval(async () => {
+    try {
+      await bridgeReady()
+      const status = await api.get_realtime_status()
+      
+      if (status.ok) {
+        realtimeState.isMonitoring = status.is_monitoring
+        realtimeState.messageCount = status.message_count || 0
+        
+        // 如果后端状态变为未监听，同步前端
+        if (!status.is_monitoring && realtimeState.status === 'monitoring') {
+          stopStatusPolling()
+          realtimeState.status = 'idle'
+        }
+      }
+    } catch (e) {
+      console.error('状态轮询失败:', e)
+    }
+  }, 2000)
+}
+
+// 停止状态轮询
+function stopStatusPolling() {
+  if (statusTimer) {
+    clearInterval(statusTimer)
+    statusTimer = null
+  }
+}
+
+// ========== 原有逻辑 ==========
 
 // 临时占位：对象信息与情绪数据（后端接好前可替换）
 const profile = ref<{ name?: string; tags?: string[]; stats?: any; note?: string }>({
@@ -167,6 +401,30 @@ async function send() {
     loading.value = false
   }
 }
+
+// 组件挂载时恢复监听状态
+onMounted(async () => {
+  try {
+    await bridgeReady()
+    const status = await api.get_realtime_status()
+    
+    if (status.ok && status.is_monitoring) {
+      realtimeState.isMonitoring = true
+      realtimeState.status = 'monitoring'
+      realtimeState.talkerName = status.talker_display_name || ''
+      realtimeState.batchId = status.batch_id || ''
+      realtimeState.messageCount = status.message_count || 0
+      startStatusPolling()
+    }
+  } catch (e) {
+    console.error('恢复监听状态失败:', e)
+  }
+})
+
+// 组件卸载时清理
+onBeforeUnmount(() => {
+  stopStatusPolling()
+})
 </script>
 
 <style scoped>
@@ -179,7 +437,7 @@ async function send() {
 .card-hd { padding: 12px 14px; font-weight: 600; color: var(--ct-color-primary); border-bottom: 1px solid rgba(0,0,0,0.06); }
 .card-bd { padding: 14px; }
 .hint { color: #666; font-size: 12px; padding: 0 14px 12px; margin: 0; }
-.error { color: #b00020; background: #fde7eb; margin: 8px 14px 14px; padding: 8px 10px; border-radius: 8px; font-size: 13px; }
+.error { color: #b00020; background: #fde7eb; margin: 8px 0 0; padding: 8px 10px; border-radius: 8px; font-size: 13px; }
 
 .intent-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .seg { display: flex; gap: 12px; background: var(--ct-color-primary-50); padding: 8px 10px; border-radius: 10px; }
@@ -210,7 +468,217 @@ async function send() {
 
 .pie { width: 100%; height: 260px; }
 
+/* ========== 实时监听样式 ========== */
+.realtime-monitor {
+  margin-bottom: 16px;
+}
+
+.collapsible {
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  transition: background 0.2s;
+}
+
+.collapsible:hover {
+  background: rgba(0,0,0,0.02);
+}
+
+.icon {
+  color: #999;
+  font-size: 12px;
+  transition: transform 0.2s;
+}
+
+/* 警告提示框 */
+.alert {
+  padding: 12px;
+  border-radius: 8px;
+  margin-bottom: 16px;
+}
+
+.alert.warning {
+  background: #fff3cd;
+  border-left: 3px solid #ffc107;
+}
+
+.alert-title {
+  font-weight: 600;
+  color: #856404;
+  margin-bottom: 8px;
+  font-size: 14px;
+}
+
+.alert-list {
+  margin: 0;
+  padding-left: 20px;
+  color: #856404;
+}
+
+.alert-list li {
+  margin: 4px 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.alert-list strong {
+  color: #d9534f;
+  font-weight: 600;
+}
+
+/* 监听控制 */
+.monitor-control {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+  margin-bottom: 16px;
+}
+
+.input-group {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.input-group label {
+  font-size: 13px;
+  color: #555;
+  font-weight: 500;
+}
+
+.input-group input {
+  padding: 8px 12px;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  font-size: 14px;
+  transition: border-color 0.2s;
+}
+
+.input-group input:focus {
+  outline: none;
+  border-color: var(--ct-color-primary);
+}
+
+.input-group input:disabled {
+  background: #f5f5f5;
+  cursor: not-allowed;
+  color: #999;
+}
+
+.button-group {
+  display: flex;
+  gap: 8px;
+}
+
+.ct-btn.primary {
+  background: var(--ct-color-primary);
+  color: white;
+}
+
+.ct-btn.primary:hover:not(:disabled) {
+  background: var(--ct-color-primary-dark, #5a7fa8);
+}
+
+.ct-btn.danger {
+  background: #d9534f;
+  color: white;
+}
+
+.ct-btn.danger:hover:not(:disabled) {
+  background: #c9302c;
+}
+
+.ct-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* 监听状态 */
+.monitor-status {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.status-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+}
+
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  transition: background 0.3s;
+}
+
+.dot.idle {
+  background: #999;
+}
+
+.dot.active {
+  background: #28a745;
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.status-text {
+  font-size: 14px;
+  color: #333;
+  font-weight: 500;
+}
+
+/* 进度步骤 */
+.progress-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-left: 20px;
+}
+
+.step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #666;
+  transition: color 0.3s;
+}
+
+.step.active {
+  color: var(--ct-color-primary);
+  font-weight: 500;
+}
+
+.step.completed {
+  color: #28a745;
+}
+
+.step.pending {
+  color: #ccc;
+}
+
+.step-icon {
+  width: 20px;
+  text-align: center;
+  font-weight: bold;
+}
+
+.step-label {
+  flex: 1;
+}
+
 @media (max-width: 1024px) {
   .grid { grid-template-columns: 1fr; }
+  .monitor-control { flex-direction: column; align-items: stretch; }
 }
 </style>

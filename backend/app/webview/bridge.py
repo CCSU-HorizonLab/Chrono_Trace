@@ -351,3 +351,151 @@ class Bridge:
                 "databases": {}
             }
 
+    # ==================== 实时监听相关 ====================
+    
+    def start_realtime_monitor(self, talker_display_name: str) -> dict[str, Any]:
+        """
+        启动实时消息监听
+        
+        Args:
+            talker_display_name: 监听对象的昵称/备注名
+            
+        Returns:
+            {
+                "ok": True/False,
+                "success": True/False,
+                "batch_id": "uuid",
+                "message": "提示信息",
+                "error": "错误信息"
+            }
+        """
+        try:
+            from ..services.realtime.monitor_service import RealtimeMonitorService
+            
+            print(f"[Bridge] 启动实时监听: {talker_display_name}")
+            monitor_service = RealtimeMonitorService()
+            result = monitor_service.start_monitoring(
+                talker_username="",  # wxauto4 自动处理
+                talker_display_name=talker_display_name
+            )
+            
+            return {
+                "ok": result['success'],
+                "success": result['success'],
+                "batch_id": result.get('batch_id'),
+                "message": result.get('message'),
+                "error": result.get('error')
+            }
+        except Exception as e:
+            import traceback
+            print(f"[Bridge] 启动实时监听异常: {e}")
+            traceback.print_exc()
+            return {
+                "ok": False,
+                "success": False,
+                "error": str(e)
+            }
+    
+    def stop_realtime_monitor(self) -> dict[str, Any]:
+        """
+        停止实时消息监听
+        
+        Returns:
+            {
+                "ok": True/False,
+                "success": True/False,
+                "batch_id": "uuid",
+                "message_count": 123,
+                "message": "提示信息"
+            }
+        """
+        try:
+            from ..services.realtime.monitor_service import RealtimeMonitorService
+            
+            print("[Bridge] 停止实时监听")
+            monitor_service = RealtimeMonitorService()
+            result = monitor_service.stop_monitoring()
+            
+            return {
+                "ok": result['success'],
+                "success": result['success'],
+                "batch_id": result.get('batch_id'),
+                "message_count": result.get('message_count', 0),
+                "message": result.get('message')
+            }
+        except Exception as e:
+            import traceback
+            print(f"[Bridge] 停止实时监听异常: {e}")
+            traceback.print_exc()
+            return {
+                "ok": False,
+                "success": False,
+                "error": str(e)
+            }
+    
+    def get_realtime_status(self) -> dict[str, Any]:
+        """
+        获取实时监听状态
+        
+        Returns:
+            {
+                "ok": True,
+                "is_monitoring": True/False,
+                "talker_display_name": "张三",
+                "batch_id": "uuid",
+                "message_count": 10
+            }
+        """
+        try:
+            from ..services.realtime.monitor_service import RealtimeMonitorService
+            
+            monitor_service = RealtimeMonitorService()
+            status = monitor_service.get_status()
+            
+            return {
+                "ok": True,
+                "is_monitoring": status['is_monitoring'],
+                "talker_display_name": status.get('talker_display_name'),
+                "batch_id": status.get('batch_id'),
+                "message_count": status.get('message_count', 0)
+            }
+        except Exception as e:
+            print(f"[Bridge] 获取实时监听状态异常: {e}")
+            return {
+                "ok": False,
+                "error": str(e),
+                "is_monitoring": False,
+                "message_count": 0
+            }
+    
+    def get_realtime_messages(self, batch_id: str) -> dict[str, Any]:
+        """
+        获取批次消息列表
+        
+        Args:
+            batch_id: 批次ID
+            
+        Returns:
+            {
+                "ok": True,
+                "messages": [...]
+            }
+        """
+        try:
+            from ..services.realtime.monitor_service import RealtimeMonitorService
+            
+            monitor_service = RealtimeMonitorService()
+            messages = monitor_service.message_buffer.get_batch_messages(batch_id)
+            
+            return {
+                "ok": True,
+                "messages": messages
+            }
+        except Exception as e:
+            print(f"[Bridge] 获取批次消息异常: {e}")
+            return {
+                "ok": False,
+                "error": str(e),
+                "messages": []
+            }
+

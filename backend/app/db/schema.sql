@@ -161,3 +161,39 @@ CREATE TABLE IF NOT EXISTS import_records (
 
 CREATE INDEX IF NOT EXISTS idx_import_records_status ON import_records(status);
 CREATE INDEX IF NOT EXISTS idx_import_records_started_at ON import_records(started_at DESC);
+
+
+-- ========================================
+-- 9. 实时消息暂存表
+-- ========================================
+-- 用于临时存储实时监听到的消息,会话结束后可处理迁移
+CREATE TABLE IF NOT EXISTS realtime_message_buffer (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    
+    -- 监听对象信息
+    talker_username TEXT NOT NULL,          -- 对话对象username
+    talker_display_name TEXT NOT NULL,      -- 对话对象显示名称
+    
+    -- 消息内容
+    message_hash TEXT,                      -- 消息哈希值(wxauto4提供,用于去重)
+    runtime_id TEXT,                        -- wxauto4消息运行时ID
+    sender_attr TEXT NOT NULL,              -- 发送者属性: self(本人), friend(对方), system(系统)
+    content TEXT,                           -- 消息内容
+    message_type TEXT,                      -- 消息类型(text/image/voice等)
+    
+    -- 时间信息
+    timestamp INTEGER NOT NULL,             -- 消息时间戳(秒)
+    captured_at INTEGER NOT NULL,           -- 抓取时间(秒)
+    
+    -- 状态管理
+    is_processed INTEGER DEFAULT 0,         -- 是否已处理(0=未处理, 1=已处理)
+    batch_id TEXT,                          -- 批次ID(同一次监听的消息共享,用于批量处理)
+    
+    created_at INTEGER NOT NULL             -- 记录创建时间
+);
+
+CREATE INDEX IF NOT EXISTS idx_realtime_buffer_talker ON realtime_message_buffer(talker_username);
+CREATE INDEX IF NOT EXISTS idx_realtime_buffer_batch ON realtime_message_buffer(batch_id);
+CREATE INDEX IF NOT EXISTS idx_realtime_buffer_processed ON realtime_message_buffer(is_processed);
+CREATE INDEX IF NOT EXISTS idx_realtime_buffer_timestamp ON realtime_message_buffer(timestamp);
+CREATE INDEX IF NOT EXISTS idx_realtime_buffer_hash ON realtime_message_buffer(message_hash);

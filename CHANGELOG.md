@@ -430,6 +430,19 @@ table_name = f"MSG_{hashlib.md5(username.encode('utf-8')).hexdigest()}"
 
 ---
 
+## 🔄 实时监听功能（实验特性）
+
+- 新增基于 `wxauto4` 的单会话实时监听能力，用于捕获当前聊天窗口的新消息。
+- 后端新增 `RealtimeMonitorService` 与 `MessageBuffer`，通过轮询线程每 1 秒主动从微信主窗口拉取消息并写入暂存表 `realtime_message_buffer`。
+- 前端通过 Bridge 暴露的接口调用：
+  - `start_realtime_monitor(display_name)`：开始监听指定联系人
+  - `stop_realtime_monitor()`：停止当前监听
+  - `get_realtime_status()` / `get_realtime_messages(batch_id)`：查询监听状态与本次会话的实时消息
+- 当前限制：
+  - 仅支持 Windows + 微信 4.0.5 客户端
+  - 仅支持微信主窗口的单聊会话（单击联系人显示的聊天区域），不支持独立弹窗与多开
+  - 单实例单会话：同一时间只监听一个对象
+
 **文档维护者**: CAN  
-**最后更新**: 2025-11-27  
-**版本**: 1.0.0
+**最后更新**: 2025-12-01  
+**版本**: 1.1.0

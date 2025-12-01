@@ -4,3 +4,9 @@ pywin32>=305
 
 # 微信数据库解密依赖
 pycryptodome>=3.20.0  # 纯 Python 实现的 SQLCipher 4 解密
+
+# 实时消息监听依赖
+# wxauto4>=40.1.1
+# 注意：wxauto4 在 PyPI 不可用，需手动安装
+# 安装方法：pip install "下载的zip文件路径"
+# 下载地址：https://github.com/AngeCoo/wxauto-4.0/archive/refs/heads/main.zip

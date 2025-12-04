@@ -1,6 +1,7 @@
 # 基础依赖
 pywebview>=4.0.0
 pywin32>=305
+jieba>=0.42.1
 
 # 微信数据库解密依赖
 pycryptodome>=3.20.0  # 纯 Python 实现的 SQLCipher 4 解密

@@ -5,9 +5,11 @@
     </header>
 
     <FiltersBar
-      :subject-name="subject?.name || '未选择对象'"
+      :conversations="conversations"
+      :selected-conversation-id="selectedConversationId"
       :dates="dates"
       :loading="loading"
+      @update:conversation-id="onConversationChange"
       @update:dates="onDatesChange"
       @refresh="loadAnalysis"
     />
@@ -63,10 +65,22 @@ import SubjectCard from '@/components/analytics/SubjectCard.vue'
 import EmotionLineChart from '@/components/charts/EmotionLineChart.vue'
 import WordCloud from '@/components/charts/WordCloud.vue'
 
+type Conversation = {
+  id: number
+  name: string
+  username: string
+  message_count: number
+  last_message_time: string
+}
+
 type TimeseriesPoint = { ts: string; score: number; positive?: number; negative?: number }
 type SubjectStats = { msgCount: number; avgScore: number; maxDay?: string; minDay?: string }
 type Subject = { id?: string | number; name: string; avatar?: string; stats?: SubjectStats }
 type Analysis = { subject?: Subject; timeseries: TimeseriesPoint[]; wordcloud: { word: string; weight: number }[] }
+
+// 联系人列表
+const conversations = ref<Conversation[]>([])
+const selectedConversationId = ref<number | null>(null)
 
 const dates = reactive({ from: '', to: '' })
 const loading = ref(false)
@@ -82,6 +96,28 @@ function setDefaultDates(days = 7) {
   dates.to = to.toISOString().slice(0, 10)
 }
 
+// 加载联系人列表
+async function loadConversations() {
+  try {
+    await bridgeReady()
+    const res = await api.get_conversation_list()
+    if (res.ok) {
+      conversations.value = res.conversations
+      // 不自动选择联系人，由用户手动选择
+    } else {
+      console.error('加载联系人列表失败:', res.error)
+    }
+  } catch (e: any) {
+    console.error('加载联系人列表异常:', e)
+  }
+}
+
+// 联系人切换
+function onConversationChange(conversationId: number) {
+  selectedConversationId.value = conversationId
+  loadAnalysis()
+}
+
 function onDatesChange(newDates: { from: string; to: string }) {
   dates.from = newDates.from
   dates.to = newDates.to
@@ -89,11 +125,26 @@ function onDatesChange(newDates: { from: string; to: string }) {
 }
 
 async function loadAnalysis() {
+  if (!selectedConversationId.value) {
+    error.value = '请先选择联系人'
+    return
+  }
+
   loading.value = true
   error.value = ''
   try {
     await bridgeReady()
-    const res = await api.get_analysis({ from: dates.from, to: dates.to })
+    const res = await api.get_analysis({
+      conversation_id: selectedConversationId.value,
+      from: dates.from,
+      to: dates.to
+    })
+
+    if (res.error) {
+      error.value = res.error
+      return
+    }
+
     // 允许后端返回更丰富结构；做兼容合并
     analysis.timeseries = res?.timeseries ?? []
     analysis.wordcloud = res?.wordcloud ?? []
@@ -110,9 +161,9 @@ function onWordSelect(word: string) {
   console.debug('selected word:', word)
 }
 
-onMounted(() => {
+onMounted(async () => {
   if (!dates.from || !dates.to) setDefaultDates(7)
-  loadAnalysis()
+  await loadConversations()  // 加载联系人列表，等待用户选择
 })
 </script>
 

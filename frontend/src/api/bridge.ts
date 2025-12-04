@@ -6,7 +6,8 @@ type PyWebViewApi = {
   import_wechat_data: (db_key: string, options?: Record<string, any>) => Promise<any>
   // 通用导入与分析
   ingest_data: (file_path: string, options?: Record<string, any>) => Promise<any>
-  get_analysis: (date_range: { from: string; to: string }) => Promise<any>
+  get_conversation_list: () => Promise<any>
+  get_analysis: (params: { conversation_id: number; from: string; to: string }) => Promise<any>
   generate_suggestion: (intent: string, context: Record<string, any>) => Promise<any>
   get_settings: () => Promise<any>
   set_settings: (payload: Record<string, any>) => Promise<any>

@@ -117,12 +117,73 @@ class Bridge:
     def ingest_data(self, file_path: str, options: dict[str, Any] | None = None) -> dict[str, Any]:
         return {"ok": True, "file_path": file_path, "options": options or {}}
 
+    # ==================== 历史数据分析相关 ====================
+    
+    def get_conversation_list(self) -> dict[str, Any]:
+        """
+        获取联系人列表（用于前端下拉选择）
+        
+        Returns:
+            {
+                "ok": True,
+                "conversations": [
+                    {"id": 1, "name": "张三", "message_count": 1234, ...},
+                    ...
+                ]
+            }
+        """
+        from ..services.analysis.analysis_service import AnalysisService
+        
+        service = AnalysisService()
+        return service.get_conversation_list()
+    
     def get_analysis(self, date_range: dict[str, str]) -> dict[str, Any]:
-        return {
-            "emotion": {"labels": ["2025-01-01", "2025-01-02"], "values": [0.2, 0.6]},
-            "frequency": {"labels": ["Mon", "Tue"], "values": [12, 8]},
-            "wordcloud": [{"text": "聊天", "weight": 10}, {"text": "建议", "weight": 6}],
-        }
+        """
+        获取历史数据分析（词云 + 统计）
+        
+        Args:
+            date_range: {
+                "conversation_id": 15,        # 必填：会话ID
+                "from": "2025-01-01",         # 必填：开始日期
+                "to": "2025-01-07"            # 必填：结束日期
+            }
+        
+        Returns:
+            {
+                "subject": {...},
+                "timeseries": [],
+                "wordcloud": [...]
+            }
+        """
+        from ..services.analysis.analysis_service import AnalysisService
+        
+        conversation_id = date_range.get("conversation_id")
+        from_date = date_range.get("from")
+        to_date = date_range.get("to")
+        
+        # 参数校验
+        if not conversation_id:
+            return {
+                "error": "缺少参数: conversation_id",
+                "subject": None,
+                "timeseries": [],
+                "wordcloud": []
+            }
+        
+        if not from_date or not to_date:
+            return {
+                "error": "缺少日期参数",
+                "subject": None,
+                "timeseries": [],
+                "wordcloud": []
+            }
+        
+        service = AnalysisService()
+        return service.get_analysis(
+            conversation_id=int(conversation_id),
+            from_date=from_date,
+            to_date=to_date
+        )
 
     def generate_suggestion(self, intent: str, context: dict[str, Any]) -> dict[str, Any]:
         return {

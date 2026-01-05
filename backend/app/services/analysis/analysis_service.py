@@ -3,6 +3,7 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime
 from ...db.connection import get_db
 from .wordcloud_generator import WordCloudGenerator
+from .preprocessing_service import PreprocessingService
 
 
 class AnalysisService:
@@ -11,6 +12,7 @@ class AnalysisService:
     def __init__(self):
         self.db = get_db()
         self.wordcloud_gen = WordCloudGenerator()
+        self.preprocessor = PreprocessingService()
     
     def get_conversation_list(self) -> Dict[str, Any]:
         """
@@ -123,14 +125,21 @@ class AnalysisService:
             
             print(f"[DEBUG] 会话详情: {subject_info}")
             
-            # 3. 查询消息内容
-            messages = self._get_messages(conversation_id, from_ts, to_ts)
-            msg_count = len(messages)
+            # 3. 使用预处理服务获取清洗后的消息（默认使用缓存）
+            preprocessed = self.preprocessor.preprocess_conversation(
+                conversation_id, from_ts, to_ts, use_cache=True
+            )
             
-            print(f"[DEBUG] 查询到 {msg_count} 条消息")
+            msg_count = preprocessed["total_messages"]
+            valid_count = preprocessed["valid_messages"]
             
-            # 4. 生成词云
-            wordcloud = self.wordcloud_gen.generate(messages, top_n=50)
+            print(f"[DEBUG] 查询到 {msg_count} 条消息, 有效消息 {valid_count} 条")
+            print(f"[DEBUG] 预处理统计: {preprocessed['stats']}")
+            print(f"[DEBUG] 缓存命中率: {preprocessed['stats'].get('cache_hit_rate', 0) * 100}%")
+            
+            # 4. 生成词云（使用清洗后的文本）
+            cleaned_texts = [msg["cleaned_content"] for msg in preprocessed["cleaned_messages"]]
+            wordcloud = self.wordcloud_gen.generate(cleaned_texts, top_n=50)
             
             print(f"[DEBUG] 生成词云: {len(wordcloud)} 个词")
             
@@ -142,6 +151,9 @@ class AnalysisService:
                     "avatar": subject_info.get("avatar"),
                     "stats": {
                         "msgCount": msg_count,
+                        "validMsgCount": valid_count,
+                        "avgCharCount": preprocessed["stats"]["avg_char_count"],
+                        "avgWordCount": preprocessed["stats"]["avg_word_count"],
                         "avgScore": 0.0,  # 暂不实现情绪分析
                         "maxDay": None,
                         "minDay": None

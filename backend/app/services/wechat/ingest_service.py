@@ -6,6 +6,7 @@ from .db_decryptor import WeChatDBDecryptor
 from .db.v4.contact import ContactDBV4
 from .db.v4.message import MessageDBV4
 from ...db.connection import get_db
+from ..analysis.preprocessing_service import PreprocessingService
 
 
 class WeChatIngestService:
@@ -13,6 +14,7 @@ class WeChatIngestService:
     
     def __init__(self):
         self.db = get_db()
+        self.preprocessor = PreprocessingService()
     
     def get_wechat_paths(self) -> Dict[str, Any]:
         """
@@ -202,7 +204,16 @@ class WeChatIngestService:
             
             print(f"\n[DEBUG] 最终统计: {stats}")
             
-            # 4. 更新导入记录
+            # 4. 自动预处理消息
+            if stats["messages"] > 0 and import_messages:
+                if progress_callback:
+                    progress_callback("预处理消息数据...", 95, 100)
+                
+                preprocessed_count = self._auto_preprocess_messages(progress_callback)
+                stats["preprocessed"] = preprocessed_count
+                print(f"[DEBUG] 预处理完成: {preprocessed_count} 条消息")
+            
+            # 5. 更新导入记录
             self._update_import_record(import_id, "success", stats)
             
             if progress_callback:
@@ -409,6 +420,67 @@ class WeChatIngestService:
                 pass  # 忽略单条错误
         
         self.db.commit()
+    
+    def _auto_preprocess_messages(
+        self,
+        progress_callback: Optional[Callable] = None
+    ) -> int:
+        """
+        自动预处理新导入的消息
+        
+        Returns:
+            预处理的消息数量
+        """
+        try:
+            print(f"\n[预处理] 开始自动预处理新导入的消息...")
+            
+            # 查找未预处理的消息（不在缓存表中的消息）
+            cursor = self.db.execute("""
+                SELECT m.id, m.conversation_id
+                FROM messages m
+                LEFT JOIN message_preprocessed mp ON m.id = mp.message_id
+                WHERE mp.id IS NULL
+                    AND m.message_type = 1
+                    AND m.content IS NOT NULL
+                    AND m.content != ''
+                ORDER BY m.conversation_id, m.timestamp
+            """)
+            
+            unprocessed = cursor.fetchall()
+            
+            if not unprocessed:
+                print(f"[预处理] 没有需要预处理的消息")
+                return 0
+            
+            print(f"[预处理] 找到 {len(unprocessed)} 条未预处理的消息")
+            
+            # 按会话分组
+            conv_messages = {}
+            for msg_id, conv_id in unprocessed:
+                if conv_id not in conv_messages:
+                    conv_messages[conv_id] = []
+                conv_messages[conv_id].append(msg_id)
+            
+            print(f"[预处理] 涉及 {len(conv_messages)} 个会话")
+            
+            # 批量预处理（每个会话独立处理）
+            total_processed = 0
+            for idx, (conv_id, message_ids) in enumerate(conv_messages.items()):
+                if progress_callback:
+                    progress = 95 + int((idx / len(conv_messages)) * 4)
+                    progress_callback(f"预处理会话 {idx+1}/{len(conv_messages)}...", progress, 100)
+                
+                count = self.preprocessor.preprocess_message_batch(conv_id, message_ids)
+                total_processed += count
+            
+            print(f"[预处理] 完成! 共预处理 {total_processed} 条消息")
+            return total_processed
+        
+        except Exception as e:
+            print(f"[预处理] 自动预处理失败: {e}")
+            import traceback
+            traceback.print_exc()
+            return 0
     
     def _create_import_record(self) -> int:
         """创建导入记录"""

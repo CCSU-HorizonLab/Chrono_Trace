@@ -197,3 +197,36 @@ CREATE INDEX IF NOT EXISTS idx_realtime_buffer_batch ON realtime_message_buffer(
 CREATE INDEX IF NOT EXISTS idx_realtime_buffer_processed ON realtime_message_buffer(is_processed);
 CREATE INDEX IF NOT EXISTS idx_realtime_buffer_timestamp ON realtime_message_buffer(timestamp);
 CREATE INDEX IF NOT EXISTS idx_realtime_buffer_hash ON realtime_message_buffer(message_hash);
+
+
+-- ========================================
+-- 10. 消息预处理缓存表
+-- ========================================
+-- 存储清洗后的消息内容和统计信息，避免重复处理
+CREATE TABLE IF NOT EXISTS message_preprocessed (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id INTEGER NOT NULL UNIQUE,         -- 关联 messages.id
+    conversation_id INTEGER NOT NULL,           -- 关联 conversations.id (冗余字段，便于查询)
+    
+    -- 清洗后的内容
+    cleaned_content TEXT,                       -- 清洗后的文本内容
+    
+    -- 统计信息
+    char_count INTEGER DEFAULT 0,               -- 字符数（不含空格）
+    word_count INTEGER DEFAULT 0,               -- 词数（jieba分词）
+    is_valid INTEGER DEFAULT 0,                 -- 是否为有效消息（1=有效，0=无效）
+    
+    -- 元数据标记
+    has_xml INTEGER DEFAULT 0,                  -- 是否包含XML系统消息
+    has_media INTEGER DEFAULT 0,                -- 是否包含媒体标签
+    
+    -- 时间戳
+    created_at INTEGER NOT NULL,                -- 预处理时间
+    
+    FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE,
+    FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_preprocessed_message ON message_preprocessed(message_id);
+CREATE INDEX IF NOT EXISTS idx_preprocessed_conversation ON message_preprocessed(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_preprocessed_valid ON message_preprocessed(is_valid);

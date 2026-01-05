@@ -58,6 +58,8 @@ python app_dev.py
 
 | 文档 | 说明 |
 |------|------|
+| [项目总览](PROJECT.md) | 项目概述、技术架构与核心功能 |
+| [开发待办](TODO.md) | 开发进度与任务规划 |
 | [安装与配置](docs/SETUP.md) | 快速上手指南 |
 | [开发文档](docs/DEVELOPMENT.md) | 技术架构与API说明 |
 | [更新日志](CHANGELOG.md) | 版本历史与变更记录 |

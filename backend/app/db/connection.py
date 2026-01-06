@@ -103,3 +103,53 @@ class DatabaseConnection:
 def get_db() -> sqlite3.Connection:
     """快捷方法：获取数据库连接"""
     return DatabaseConnection.get_connection()
+
+
+def batch_insert(table: str, columns: list, data: list, db: sqlite3.Connection = None) -> int:
+    """
+    批量插入数据
+
+    Args:
+        table: 表名
+        columns: 列名列表
+        data: 数据列表，每个元素是一个元组
+        db: 数据库连接（可选，默认使用get_db()）
+
+    Returns:
+        int: 插入的行数
+    """
+    if db is None:
+        db = get_db()
+
+    if not data:
+        return 0
+
+    placeholders = ', '.join(['?'] * len(columns))
+    sql = f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({placeholders})"
+
+    cursor = db.executemany(sql, data)
+    return cursor.rowcount
+
+
+def execute_transaction(operations: list, db: sqlite3.Connection = None) -> bool:
+    """
+    执行事务（一组操作，全部成功或全部回滚）
+
+    Args:
+        operations: 操作列表，每个元素是 (sql, params) 元组
+        db: 数据库连接（可选，默认使用get_db()）
+
+    Returns:
+        bool: 是否成功
+    """
+    if db is None:
+        db = get_db()
+
+    try:
+        for sql, params in operations:
+            db.execute(sql, params)
+        db.commit()
+        return True
+    except Exception as e:
+        db.rollback()
+        raise e

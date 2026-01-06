@@ -7,12 +7,15 @@ from .preprocessing_service import PreprocessingService
 
 
 class AnalysisService:
-    """历史数据分析服务"""
-    
+    """历史数据分析服务（统一分析入口）"""
+
     def __init__(self):
         self.db = get_db()
         self.wordcloud_gen = WordCloudGenerator()
         self.preprocessor = PreprocessingService()
+
+        # 延迟加载特征提取服务（避免循环导入）
+        self._feature_service = None
     
     def get_conversation_list(self) -> Dict[str, Any]:
         """
@@ -226,3 +229,263 @@ class AnalysisService:
         
         messages = [row[0] for row in cursor.fetchall()]
         return messages
+
+    # =========================================================================
+    # 特征提取服务集成
+    # =========================================================================
+
+    def _get_feature_service(self):
+        """延迟加载特征提取服务"""
+        if self._feature_service is None:
+            from .feature_extraction_service import FeatureExtractionService
+            self._feature_service = FeatureExtractionService()
+        return self._feature_service
+
+    def extract_features(self, conversation_id: int, config: Optional[Dict] = None) -> Dict[str, Any]:
+        """
+        提取对话特征（会话切分、响应时间、主动性、字数统计）
+
+        Args:
+            conversation_id: 对话ID
+            config: 可选配置参数
+
+        Returns:
+            特征提取结果
+        """
+        service = self._get_feature_service()
+        return service.extract_features(conversation_id)
+
+    def get_feature_extraction_progress(self, task_id: str) -> Dict[str, Any]:
+        """
+        查询特征提取任务进度
+
+        Args:
+            task_id: 任务ID
+
+        Returns:
+            任务进度信息
+        """
+        service = self._get_feature_service()
+        return service.get_task_progress(task_id)
+
+    def get_sessions(
+        self,
+        conversation_id: int,
+        limit: int = 50,
+        offset: int = 0
+    ) -> List[Dict[str, Any]]:
+        """
+        获取会话列表
+
+        Args:
+            conversation_id: 对话ID
+            limit: 每页数量
+            offset: 偏移量
+
+        Returns:
+            会话列表
+        """
+        service = self._get_feature_service()
+
+        # 从数据库查询会话
+        cursor = self.db.execute("""
+            SELECT id, conversation_id, start_time, end_time, message_count, initiator, source
+            FROM sessions
+            WHERE conversation_id = ?
+            ORDER BY start_time DESC
+            LIMIT ? OFFSET ?
+        """, (conversation_id, limit, offset))
+
+        sessions = []
+        for row in cursor.fetchall():
+            sessions.append({
+                "id": row[0],
+                "conversation_id": row[1],
+                "start_time": row[2],
+                "end_time": row[3],
+                "message_count": row[4],
+                "initiator": row[5],
+                "source": row[6]
+            })
+
+        return sessions
+
+    def get_response_time_stats(self, conversation_id: int) -> Dict[str, Any]:
+        """
+        获取响应时间统计
+
+        Args:
+            conversation_id: 对话ID
+
+        Returns:
+            响应时间统计数据
+        """
+        cursor = self.db.execute("""
+            SELECT
+                COUNT(*) as count,
+                AVG(response_time_seconds) as avg,
+                MIN(response_time_seconds) as min,
+                MAX(response_time_seconds) as max
+            FROM response_times
+            WHERE conversation_id = ?
+                AND is_abnormal = 0
+        """, (conversation_id,))
+
+        row = cursor.fetchone()
+
+        # 计算中位数
+        cursor = self.db.execute("""
+            SELECT response_time_seconds
+            FROM response_times
+            WHERE conversation_id = ?
+                AND is_abnormal = 0
+            ORDER BY response_time_seconds
+        """, (conversation_id,))
+        all_times = [row[0] for row in cursor.fetchall()]
+        median = all_times[len(all_times) // 2] if all_times else None
+
+        # 统计异常值数量
+        cursor = self.db.execute("""
+            SELECT COUNT(*)
+            FROM response_times
+            WHERE conversation_id = ?
+                AND is_abnormal = 1
+        """, (conversation_id,))
+        abnormal_count = cursor.fetchone()[0]
+
+        return {
+            "count": row[0] or 0,
+            "avg": row[1],
+            "median": median,
+            "min": row[2],
+            "max": row[3],
+            "stddev": None,  # 暂不计算标准差
+            "abnormal_count": abnormal_count
+        }
+
+    def get_initiative_stats(self, conversation_id: int) -> Dict[str, Any]:
+        """
+        获取主动性统计
+
+        Args:
+            conversation_id: 对话ID
+
+        Returns:
+            主动性统计数据
+        """
+        cursor = self.db.execute("""
+            SELECT total_sessions, user_initiated_sessions, other_initiated_sessions, initiative_rate
+            FROM initiative_stats
+            WHERE conversation_id = ?
+        """, (conversation_id,))
+
+        row = cursor.fetchone()
+        if not row:
+            return {
+                "total_sessions": 0,
+                "user_initiated_sessions": 0,
+                "other_initiated_sessions": 0,
+                "initiative_rate": 0.0,
+                "interpretation": "无数据"
+            }
+
+        return {
+            "total_sessions": row[0],
+            "user_initiated_sessions": row[1],
+            "other_initiated_sessions": row[2],
+            "initiative_rate": row[3],
+            "interpretation": f"对方主动发起{row[3] * 100:.1f}%的会话"
+        }
+
+    def get_word_counts(self, conversation_id: int, by_session: bool = False) -> Dict[str, Any]:
+        """
+        获取字数统计
+
+        Args:
+            conversation_id: 对话ID
+            by_session: 是否按会话统计
+
+        Returns:
+            字数统计数据
+        """
+        if by_session:
+            # 按会话统计
+            cursor = self.db.execute("""
+                SELECT
+                    session_id,
+                    user_char_count,
+                    other_char_count,
+                    char_ratio
+                FROM word_counts
+                WHERE conversation_id = ?
+                    AND session_id IS NOT NULL
+                ORDER BY session_id
+            """, (conversation_id,))
+
+            by_session_data = []
+            for row in cursor.fetchall():
+                by_session_data.append({
+                    "session_id": row[0],
+                    "user_char_count": row[1],
+                    "other_char_count": row[2],
+                    "char_ratio": row[3]
+                })
+
+            return {
+                "overall": {},
+                "by_session": by_session_data
+            }
+        else:
+            # 整体统计
+            cursor = self.db.execute("""
+                SELECT
+                    user_char_count,
+                    other_char_count,
+                    char_ratio
+                FROM word_counts
+                WHERE conversation_id = ?
+                    AND session_id IS NULL
+            """, (conversation_id,))
+
+            row = cursor.fetchone()
+            if not row:
+                return {
+                    "overall": {
+                        "user_char_count": 0,
+                        "other_char_count": 0,
+                        "char_ratio": 0.0,
+                        "interpretation": "无数据"
+                    },
+                    "by_session": []
+                }
+
+            ratio = row[2] or 0
+            if ratio >= 1:
+                interpretation = f"对方投入的字数是您的{ratio:.2f}倍"
+            else:
+                interpretation = f"您投入的字数是对方的{1/ratio:.2f}倍" if ratio > 0 else "无对比数据"
+
+            return {
+                "overall": {
+                    "user_char_count": row[0],
+                    "other_char_count": row[1],
+                    "char_ratio": ratio,
+                    "interpretation": interpretation
+                },
+                "by_session": []
+            }
+
+    def reanalyze(self, conversation_id: int) -> Dict[str, Any]:
+        """
+        重新分析对话（删除旧数据+重新提取特征）
+
+        Args:
+            conversation_id: 对话ID
+
+        Returns:
+            重新分析结果
+        """
+        service = self._get_feature_service()
+        service.delete_analysis_data(conversation_id)
+        return service.extract_features(conversation_id)
+

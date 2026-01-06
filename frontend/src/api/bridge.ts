@@ -11,6 +11,8 @@ type PyWebViewApi = {
   generate_suggestion: (intent: string, context: Record<string, any>) => Promise<any>
   get_settings: () => Promise<any>
   set_settings: (payload: Record<string, any>) => Promise<any>
+  // 仪表板统计
+  get_dashboard_stats: () => Promise<any>
   // 文件/目录选择
   select_file: (title?: string, file_types?: string) => Promise<any>
   select_directory: (title?: string) => Promise<any>
@@ -20,6 +22,14 @@ type PyWebViewApi = {
   stop_realtime_monitor: () => Promise<any>
   get_realtime_status: () => Promise<any>
   get_realtime_messages: (batch_id: string) => Promise<any>
+  // 特征提取
+  extract_features: (conversation_id: number, config?: Record<string, any>) => Promise<any>
+  get_extraction_progress: (task_id: string) => Promise<any>
+  get_sessions: (conversation_id: number, limit?: number, offset?: number) => Promise<any>
+  get_response_times: (conversation_id: number) => Promise<any>
+  get_initiative_stats: (conversation_id: number) => Promise<any>
+  get_word_counts: (conversation_id: number, by_session?: boolean) => Promise<any>
+  reanalyze: (conversation_id: number) => Promise<any>
 }
 
 function getApi(): PyWebViewApi {

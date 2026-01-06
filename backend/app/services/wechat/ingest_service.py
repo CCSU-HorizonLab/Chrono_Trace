@@ -208,12 +208,21 @@ class WeChatIngestService:
             if stats["messages"] > 0 and import_messages:
                 if progress_callback:
                     progress_callback("预处理消息数据...", 95, 100)
-                
+
                 preprocessed_count = self._auto_preprocess_messages(progress_callback)
                 stats["preprocessed"] = preprocessed_count
                 print(f"[DEBUG] 预处理完成: {preprocessed_count} 条消息")
-            
-            # 5. 更新导入记录
+
+            # 5. 自动提取特征
+            if stats["conversations"] > 0:
+                if progress_callback:
+                    progress_callback("提取对话特征...", 97, 100)
+
+                feature_stats = self._auto_extract_features(progress_callback)
+                stats["features"] = feature_stats
+                print(f"[DEBUG] 特征提取完成: {feature_stats}")
+
+            # 6. 更新导入记录
             self._update_import_record(import_id, "success", stats)
             
             if progress_callback:
@@ -475,12 +484,101 @@ class WeChatIngestService:
             
             print(f"[预处理] 完成! 共预处理 {total_processed} 条消息")
             return total_processed
-        
+
         except Exception as e:
             print(f"[预处理] 自动预处理失败: {e}")
             import traceback
             traceback.print_exc()
             return 0
+
+    def _auto_extract_features(
+        self,
+        progress_callback: Optional[Callable] = None
+    ) -> Dict[str, Any]:
+        """
+        自动提取所有会话的特征（会话切分、响应时间、主动性、字数统计）
+
+        Returns:
+            特征提取统计信息
+        """
+        try:
+            print(f"\n[特征提取] 开始自动特征提取...")
+
+            # 延迟导入特征提取服务（避免循环导入）
+            from ..analysis.feature_extraction_service import FeatureExtractionService
+
+            # 查找所有有消息的会话
+            cursor = self.db.execute("""
+                SELECT id, display_name, message_count
+                FROM conversations
+                WHERE message_count > 0
+                ORDER BY message_count DESC
+            """)
+
+            conversations = cursor.fetchall()
+
+            if not conversations:
+                print(f"[特征提取] 没有找到会话")
+                return {
+                    "total_conversations": 0,
+                    "processed": 0,
+                    "failed": 0
+                }
+
+            print(f"[特征提取] 找到 {len(conversations)} 个会话")
+
+            # 初始化特征提取服务
+            feature_service = FeatureExtractionService()
+
+            # 批量提取特征
+            stats = {
+                "total_conversations": len(conversations),
+                "processed": 0,
+                "failed": 0,
+                "skipped": 0
+            }
+
+            for idx, (conv_id, name, msg_count) in enumerate(conversations):
+                try:
+                    if progress_callback:
+                        progress = 97 + int((idx / len(conversations)) * 3)
+                        progress_callback(f"提取特征 {idx+1}/{len(conversations)}: {name}", progress, 100)
+
+                    # 检查是否已经提取过特征
+                    cursor = self.db.execute("""
+                        SELECT COUNT(*) FROM sessions WHERE conversation_id = ?
+                    """, (conv_id,))
+                    session_count = cursor.fetchone()[0]
+
+                    if session_count > 0:
+                        print(f"[特征提取] 会话 {conv_id} ({name}) 已有特征，跳过")
+                        stats["skipped"] += 1
+                        continue
+
+                    # 执行特征提取
+                    print(f"[特征提取] 正在提取会话 {conv_id} ({name}) 的特征，{msg_count}条消息")
+                    feature_service.extract_features(conv_id)
+                    stats["processed"] += 1
+                    print(f"[特征提取] 会话 {conv_id} 完成")
+
+                except Exception as e:
+                    print(f"[特征提取] 会话 {conv_id} 提取失败: {e}")
+                    stats["failed"] += 1
+                    continue
+
+            print(f"[特征提取] 完成! 处理={stats['processed']}, 跳过={stats['skipped']}, 失败={stats['failed']}")
+            return stats
+
+        except Exception as e:
+            print(f"[特征提取] 自动特征提取失败: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                "total_conversations": 0,
+                "processed": 0,
+                "failed": 0,
+                "error": str(e)
+            }
     
     def _create_import_record(self) -> int:
         """创建导入记录"""

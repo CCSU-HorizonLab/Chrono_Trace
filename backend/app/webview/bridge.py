@@ -12,6 +12,9 @@ class Bridge:
         self.settings_file = Path(__file__).parent.parent.parent / "data" / "settings.json"
         self._load_settings()
 
+        # 延迟加载特征提取服务（避免循环导入）
+        self._feature_service = None
+
     def _load_settings(self):
         """加载设置"""
         if self.settings_file.exists():
@@ -558,5 +561,456 @@ class Bridge:
                 "ok": False,
                 "error": str(e),
                 "messages": []
+            }
+
+    # ==================== 特征提取分析相关 ====================
+
+    def _get_feature_service(self):
+        """延迟加载特征提取服务"""
+        if self._feature_service is None:
+            from ..services.analysis.feature_extraction_service import FeatureExtractionService
+            self._feature_service = FeatureExtractionService()
+        return self._feature_service
+
+    def extract_features(self, conversation_id: int, config: dict = None) -> dict:
+        """
+        执行完整的特征提取流程
+
+        Args:
+            conversation_id: 对话ID
+            config: 可选配置参数
+
+        Returns:
+            {
+                "success": True,
+                "data": {
+                    "task_id": "extract_42_xxx",
+                    "status": "started",
+                    "message": "Feature extraction started"
+                }
+            }
+        """
+        try:
+            print(f"[Bridge] 开始特征提取: conversation_id={conversation_id}")
+
+            # 如果提供了自定义配置，更新服务配置
+            if config:
+                from ..services.analysis.feature_extraction_config import FeatureExtractionConfig
+                service_config = FeatureExtractionConfig(**config)
+                service = FeatureExtractionService(service_config)
+            else:
+                service = self._get_feature_service()
+
+            # 执行特征提取（异步任务）
+            result = service.extract_features(conversation_id)
+
+            return {
+                "success": True,
+                "data": {
+                    "task_id": result["task_id"],
+                    "status": "completed",
+                    "message": "Feature extraction completed"
+                }
+            }
+        except Exception as e:
+            import traceback
+            print(f"[Bridge] 特征提取失败: {e}")
+            traceback.print_exc()
+            return {
+                "success": False,
+                "error": str(e)
+            }
+
+    def get_extraction_progress(self, task_id: str) -> dict:
+        """
+        查询特征提取任务进度
+
+        Args:
+            task_id: 任务ID
+
+        Returns:
+            {
+                "success": True,
+                "data": {
+                    "task_id": "extract_42_xxx",
+                    "status": "in_progress",
+                    "progress": 45.5,
+                    "current_step": "Calculating response times",
+                    "message": "Processing 25,000 / 50,000 messages"
+                }
+            }
+        """
+        try:
+            service = self._get_feature_service()
+            progress = service.get_task_progress(task_id)
+
+            return {
+                "success": True,
+                "data": progress
+            }
+        except Exception as e:
+            print(f"[Bridge] 查询任务进度失败: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
+
+    def get_sessions(self, conversation_id: int, limit: int = 50, offset: int = 0) -> dict:
+        """
+        获取会话列表
+
+        Args:
+            conversation_id: 对话ID
+            limit: 返回数量限制
+            offset: 分页偏移量
+
+        Returns:
+            {
+                "success": True,
+                "data": {
+                    "sessions": [...],
+                    "total": 150,
+                    "limit": 50,
+                    "offset": 0
+                }
+            }
+        """
+        try:
+            from ..db.connection import get_db
+
+            db = get_db()
+
+            # 查询总数
+            count_cursor = db.execute(
+                "SELECT COUNT(*) as total FROM sessions WHERE conversation_id = ?",
+                (conversation_id,)
+            )
+            total = count_cursor.fetchone()["total"]
+
+            # 查询会话列表
+            cursor = db.execute("""
+                SELECT id, conversation_id, start_time, end_time, message_count, initiator, source
+                FROM sessions
+                WHERE conversation_id = ?
+                ORDER BY start_time DESC
+                LIMIT ? OFFSET ?
+            """, (conversation_id, limit, offset))
+
+            rows = cursor.fetchall()
+            sessions = [dict(row) for row in rows]
+
+            # 添加duration字段（分钟）
+            for session in sessions:
+                duration_seconds = session["end_time"] - session["start_time"]
+                session["duration_minutes"] = round(duration_seconds / 60, 1)
+
+            return {
+                "success": True,
+                "data": {
+                    "sessions": sessions,
+                    "total": total,
+                    "limit": limit,
+                    "offset": offset
+                }
+            }
+        except Exception as e:
+            print(f"[Bridge] 获取会话列表失败: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
+
+    def get_response_times(self, conversation_id: int) -> dict:
+        """
+        获取响应时间统计
+
+        Args:
+            conversation_id: 对话ID
+
+        Returns:
+            {
+                "success": True,
+                "data": {
+                    "count": 250,
+                    "avg": 180.5,
+                    "median": 120.0,
+                    "min": 15.0,
+                    "max": 3600.0,
+                    "stddev": 300.2,
+                    "abnormal_count": 5
+                }
+            }
+        """
+        try:
+            from ..db.connection import get_db
+
+            db = get_db()
+
+            # 查询统计
+            cursor = db.execute("""
+                SELECT
+                    COUNT(*) as count,
+                    AVG(response_time_seconds) as avg,
+                    MIN(response_time_seconds) as min,
+                    MAX(response_time_seconds) as max
+                FROM response_times
+                WHERE conversation_id = ? AND is_abnormal = 0
+            """, (conversation_id,))
+
+            row = cursor.fetchone()
+
+            # 计算中位数
+            cursor2 = db.execute("""
+                SELECT response_time_seconds
+                FROM response_times
+                WHERE conversation_id = ? AND is_abnormal = 0
+                ORDER BY response_time_seconds
+            """, (conversation_id,))
+
+            values = [r["response_time_seconds"] for r in cursor2.fetchall()]
+            median = values[len(values) // 2] if values else None
+
+            # 查询异常数量
+            abnormal_cursor = db.execute("""
+                SELECT COUNT(*) as abnormal_count
+                FROM response_times
+                WHERE conversation_id = ? AND is_abnormal = 1
+            """, (conversation_id,))
+
+            abnormal_row = abnormal_cursor.fetchone()
+
+            return {
+                "success": True,
+                "data": {
+                    "count": row["count"],
+                    "avg": round(row["avg"], 1) if row["avg"] else None,
+                    "median": median,
+                    "min": row["min"],
+                    "max": row["max"],
+                    "stddev": 0,  # 简化处理
+                    "abnormal_count": abnormal_row["abnormal_count"]
+                }
+            }
+        except Exception as e:
+            print(f"[Bridge] 获取响应时间统计失败: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
+
+    def get_initiative_stats(self, conversation_id: int) -> dict:
+        """
+        获取主动性统计
+
+        Args:
+            conversation_id: 对话ID
+
+        Returns:
+            {
+                "success": True,
+                "data": {
+                    "total_sessions": 100,
+                    "user_initiated_sessions": 55,
+                    "other_initiated_sessions": 45,
+                    "initiative_rate": 0.45,
+                    "interpretation": "对方主动发起45%的会话，您更主动"
+                }
+            }
+        """
+        try:
+            from ..db.connection import get_db
+
+            db = get_db()
+
+            cursor = db.execute("""
+                SELECT total_sessions, user_initiated_sessions, other_initiated_sessions, initiative_rate
+                FROM initiative_stats
+                WHERE conversation_id = ?
+            """, (conversation_id,))
+
+            row = cursor.fetchone()
+
+            if not row:
+                return {
+                    "success": True,
+                    "data": {
+                        "total_sessions": 0,
+                        "user_initiated_sessions": 0,
+                        "other_initiated_sessions": 0,
+                        "initiative_rate": 0.0,
+                        "interpretation": "无会话数据"
+                    }
+                }
+
+            initiative_rate = row["initiative_rate"]
+            if initiative_rate > 0.5:
+                interpretation = f"对方主动发起{initiative_rate:.1%}的会话，对方更主动"
+            elif initiative_rate < 0.5:
+                interpretation = f"对方主动发起{initiative_rate:.1%}的会话，您更主动"
+            else:
+                interpretation = f"对方主动发起{initiative_rate:.1%}的会话，双方平衡"
+
+            return {
+                "success": True,
+                "data": {
+                    "total_sessions": row["total_sessions"],
+                    "user_initiated_sessions": row["user_initiated_sessions"],
+                    "other_initiated_sessions": row["other_initiated_sessions"],
+                    "initiative_rate": initiative_rate,
+                    "interpretation": interpretation
+                }
+            }
+        except Exception as e:
+            print(f"[Bridge] 获取主动性统计失败: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
+
+    def get_word_counts(self, conversation_id: int, by_session: bool = False) -> dict:
+        """
+        获取字数统计
+
+        Args:
+            conversation_id: 对话ID
+            by_session: 是否按会话分组
+
+        Returns:
+            {
+                "success": True,
+                "data": {
+                    "overall": {
+                        "user_char_count": 10000,
+                        "other_char_count": 15000,
+                        "char_ratio": 1.5,
+                        "interpretation": "对方投入的字数是您的1.5倍"
+                    },
+                    "by_session": [...]
+                }
+            }
+        """
+        try:
+            from ..db.connection import get_db
+
+            db = get_db()
+
+            # 查询整体统计
+            overall_cursor = db.execute("""
+                SELECT user_char_count, other_char_count, char_ratio
+                FROM word_counts
+                WHERE conversation_id = ? AND session_id IS NULL
+            """, (conversation_id,))
+
+            overall_row = overall_cursor.fetchone()
+
+            if not overall_row:
+                return {
+                    "success": True,
+                    "data": {
+                        "overall": {
+                            "user_char_count": 0,
+                            "other_char_count": 0,
+                            "char_ratio": 0,
+                            "interpretation": "无字数数据"
+                        },
+                        "by_session": []
+                    }
+                }
+
+            user_chars = overall_row["user_char_count"]
+            other_chars = overall_row["other_char_count"]
+            char_ratio = overall_row["char_ratio"]
+
+            if char_ratio >= 1:
+                interpretation = f"对方投入的字数是您的{char_ratio:.2f}倍"
+            else:
+                interpretation = f"您投入的字数是对方的{1/char_ratio:.2f}倍"
+
+            result = {
+                "success": True,
+                "data": {
+                    "overall": {
+                        "user_char_count": user_chars,
+                        "other_char_count": other_chars,
+                        "char_ratio": round(char_ratio, 2),
+                        "interpretation": interpretation
+                    },
+                    "by_session": []
+                }
+            }
+
+            # 如果需要按会话统计
+            if by_session:
+                session_cursor = db.execute("""
+                    SELECT session_id, user_char_count, other_char_count, char_ratio
+                    FROM word_counts
+                    WHERE conversation_id = ? AND session_id IS NOT NULL
+                    ORDER BY session_id ASC
+                """, (conversation_id,))
+
+                session_rows = session_cursor.fetchall()
+                result["data"]["by_session"] = [
+                    {
+                        "session_id": row["session_id"],
+                        "word_count": {
+                            "user_char_count": row["user_char_count"],
+                            "other_char_count": row["other_char_count"],
+                            "char_ratio": round(row["char_ratio"], 2)
+                        }
+                    }
+                    for row in session_rows
+                ]
+
+            return result
+        except Exception as e:
+            print(f"[Bridge] 获取字数统计失败: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
+
+    def reanalyze(self, conversation_id: int) -> dict:
+        """
+        重新分析对话（删除旧数据+重新提取特征）
+
+        Args:
+            conversation_id: 对话ID
+
+        Returns:
+            {
+                "success": True,
+                "data": {
+                    "task_id": "extract_42_xxx",
+                    "status": "started",
+                    "message": "Re-analysis started"
+                }
+            }
+        """
+        try:
+            print(f"[Bridge] 重新分析: conversation_id={conversation_id}")
+
+            service = self._get_feature_service()
+
+            # 删除旧数据
+            service.delete_analysis_data(conversation_id)
+
+            # 重新提取
+            result = service.extract_features(conversation_id)
+
+            return {
+                "success": True,
+                "data": {
+                    "task_id": result["task_id"],
+                    "status": "completed",
+                    "message": "Re-analysis completed"
+                }
+            }
+        except Exception as e:
+            import traceback
+            print(f"[Bridge] 重新分析失败: {e}")
+            traceback.print_exc()
+            return {
+                "success": False,
+                "error": str(e)
             }
 

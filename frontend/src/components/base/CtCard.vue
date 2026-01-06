@@ -20,6 +20,54 @@ const props = defineProps<{ title?: string }>()
 const hasHeader = computed(() => !!props.title || !!useSlots().header || !!useSlots().actions)
 </script>
 <style scoped>
-.ct-card-ft { padding: 12px 14px; border-top: var(--ct-border); }
-._actions { margin-left: auto; display: inline-flex; gap: 8px; }
+.ct-card {
+  background: var(--ct-bg-elevated);
+  border: 1px solid var(--ct-border-color);
+  border-radius: var(--ct-radius-lg);
+  box-shadow: var(--ct-shadow-sm);
+  color: var(--ct-text-primary);
+  padding: var(--ct-space-lg);
+  transition: transform var(--ct-transition-normal) var(--ct-ease-out),
+              box-shadow var(--ct-transition-normal) var(--ct-ease-out),
+              border-color var(--ct-transition-normal) var(--ct-ease-out);
+}
+
+.ct-card:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--ct-shadow-lg);
+  border-color: var(--ct-border-color-hover);
+}
+
+.ct-card-hd {
+  display: flex;
+  align-items: center;
+  gap: var(--ct-space-md);
+  padding-bottom: var(--ct-space-md);
+  margin-bottom: var(--ct-space-md);
+  border-bottom: 1px solid var(--ct-border-color);
+  font-family: var(--ct-font-display);
+  font-size: var(--ct-text-lg);
+  font-weight: var(--ct-font-semibold);
+  color: var(--ct-text-primary);
+}
+
+.ct-card-bd {
+  flex: 1;
+  color: var(--ct-text-secondary);
+  line-height: var(--ct-leading-normal);
+}
+
+.ct-card-ft {
+  padding: var(--ct-space-md) 0;
+  border-top: 1px solid var(--ct-border-color);
+  margin-top: var(--ct-space-md);
+  color: var(--ct-text-tertiary);
+  font-size: var(--ct-text-sm);
+}
+
+._actions {
+  margin-left: auto;
+  display: inline-flex;
+  gap: var(--ct-space-sm);
+}
 </style>

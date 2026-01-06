@@ -289,29 +289,29 @@ onMounted(() => { onLoad() })
 </script>
 
 <style scoped>
-.settings-page { display: flex; flex-direction: column; gap: 16px; }
+.settings-page { display: flex; flex-direction: column; gap: var(--ct-space-lg); }
 .page-title { display: flex; align-items: center; justify-content: space-between; }
 .page-title h1 { margin: 0; color: var(--ct-color-primary); }
 
 /* 自动保存状态 */
-.auto-save-status { 
-  display: flex; 
-  align-items: center; 
-  gap: 8px;
-  font-size: 14px;
-  padding: 6px 12px;
-  border-radius: 6px;
-  background: #f5f5f5;
+.auto-save-status {
+  display: flex;
+  align-items: center;
+  gap: var(--ct-space-sm);
+  font-size: var(--ct-text-sm);
+  padding: 6px var(--ct-space-md);
+  border-radius: var(--ct-radius-sm);
+  background: var(--ct-bg-secondary);
 }
 .auto-save-status .saving {
-  color: #1976d2;
-  animation: pulse 1.5s ease-in-out infinite;
+  color: var(--ct-color-info);
+  animation: pulse 1.5s var(--ct-ease-in-out) infinite;
 }
 .auto-save-status .saved {
-  color: #0c7c3a;
+  color: var(--ct-color-success);
 }
 .auto-save-status .idle {
-  color: #666;
+  color: var(--ct-text-secondary);
 }
 
 @keyframes pulse {
@@ -319,19 +319,20 @@ onMounted(() => { onLoad() })
   50% { opacity: 0.5; }
 }
 
-.grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
-.form { display: flex; flex-direction: column; gap: 12px; }
-.row { display: grid; grid-template-columns: 160px 1fr; gap: 12px; align-items: center; }
-.lab { color: #555; }
-.hint { color: #666; }
+.grid { display: grid; grid-template-columns: 1fr; gap: var(--ct-space-lg); }
+.form { display: flex; flex-direction: column; gap: var(--ct-space-md); }
+.row { display: grid; grid-template-columns: 160px 1fr; gap: var(--ct-space-md); align-items: center; }
+.lab { color: var(--ct-text-secondary); }
+.hint { color: var(--ct-text-secondary); }
 
-.hint-box.info { 
-  background: #f0f7ff; 
-  border-left: 3px solid var(--ct-color-primary); 
-  padding: 12px; 
-  margin-bottom: 8px; 
+.hint-box.info {
+  background: var(--ct-color-info-light);
+  border-left: 3px solid var(--ct-color-info);
+  padding: var(--ct-space-md);
+  margin-bottom: var(--ct-space-sm);
+  border-radius: var(--ct-radius-sm);
 }
-.hint-box p { margin: 4px 0; font-size: 14px; }
-.path-input { display: flex; gap: 8px; align-items: center; }
+.hint-box p { margin: var(--ct-space-xs) 0; font-size: var(--ct-text-sm); }
+.path-input { display: flex; gap: var(--ct-space-sm); align-items: center; }
 .path-input .ct-field { flex: 1; }
 </style>

@@ -1,0 +1,484 @@
+/* ========================================
+   Chrono Trace - "Data Poetry" Design System
+   A warm, sophisticated aesthetic for emotional data analysis
+
+   Color Philosophy:
+   - Primary: Warm Amber/Terracotta - represents emotional warmth
+   - Accent: Deep Teal - provides sophisticated contrast
+   - Typography: Literary-inspired pairing of serif and sans-serif
+
+   Design References:
+   - Editorial design (The Economist, Monocle)
+   - Data journalism (NYT, The Pudding)
+   - Luxury SaaS (Linear, Arc)
+   ======================================== */
+
+/* ========================================
+   IMPORT FONTS
+   ======================================== */
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+
+/* ========================================
+   LIGHT THEME - Default
+   Inspired by: Warm paper, vintage data viz, editorial design
+   ======================================== */
+:root {
+  /* === Primary Colors - Warm Amber/Terracotta === */
+  --ct-color-primary: #c45d26;
+  --ct-color-primary-hover: #a84d1e;
+  --ct-color-primary-light: #fef3ee;
+  --ct-color-primary-muted: rgba(196, 93, 38, 0.08);
+
+  /* === Accent Colors - Deep Teal === */
+  --ct-color-accent: #0d5c63;
+  --ct-color-accent-hover: #0a4a50;
+  --ct-color-accent-light: #e6f4f5;
+
+  /* === Functional Colors === */
+  --ct-color-success: #058f6b;
+  --ct-color-warning: #d97706;
+  --ct-color-error: #c53030;
+  --ct-color-info: #0369a1;
+
+  /* === Backgrounds - Warm White Palette === */
+  --ct-bg-primary: #fefcfb;
+  --ct-bg-secondary: #f8f6f4;
+  --ct-bg-tertiary: #f1efe9;
+  --ct-bg-elevated: #ffffff;
+
+  /* === Text Colors === */
+  --ct-text-primary: #1c1917;
+  --ct-text-secondary: #57534e;
+  --ct-text-tertiary: #a8a29e;
+  --ct-text-inverse: #fefcfb;
+
+  /* === Borders === */
+  --ct-border-color: #e7e5e4;
+  --ct-border-color-hover: #d6d3d1;
+  --ct-border-color-focus: var(--ct-color-primary);
+
+  /* === Shadows - Warm, Subtle === */
+  --ct-shadow-sm: 0 1px 2px 0 rgba(28, 25, 23, 0.04);
+  --ct-shadow-md: 0 4px 8px -2px rgba(28, 25, 23, 0.08);
+  --ct-shadow-lg: 0 12px 24px -4px rgba(28, 25, 23, 0.12);
+  --ct-shadow-xl: 0 24px 48px -8px rgba(28, 25, 23, 0.16);
+
+  /* === Border Radius === */
+  --ct-radius-sm: 8px;
+  --ct-radius-md: 12px;
+  --ct-radius-lg: 16px;
+  --ct-radius-xl: 24px;
+  --ct-radius-full: 9999px;
+
+  /* === Spacing Scale === */
+  --ct-space-xs: 4px;
+  --ct-space-sm: 8px;
+  --ct-space-md: 12px;
+  --ct-space-lg: 16px;
+  --ct-space-xl: 24px;
+  --ct-space-2xl: 32px;
+  --ct-space-3xl: 48px;
+
+  /* === Typography === */
+  --ct-font-display: 'Playfair Display', Georgia, serif;
+  --ct-font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --ct-font-mono: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+
+  --ct-text-xs: 12px;
+  --ct-text-sm: 14px;
+  --ct-text-base: 16px;
+  --ct-text-lg: 18px;
+  --ct-text-xl: 20px;
+  --ct-text-2xl: 24px;
+  --ct-text-3xl: 32px;
+  --ct-text-4xl: 48px;
+
+  --ct-leading-tight: 1.2;
+  --ct-leading-normal: 1.5;
+  --ct-leading-relaxed: 1.75;
+
+  /* === Transitions === */
+  --ct-transition-fast: 150ms ease;
+  --ct-transition-normal: 250ms ease;
+  --ct-transition-slow: 400ms ease;
+}
+
+/* ========================================
+   DARK THEME - Deep, Rich, Sophisticated
+   Inspired by: Late-night reading, premium analytics tools
+   ======================================== */
+.dark-theme {
+  /* === Primary Colors - Rich Amber === */
+  --ct-color-primary: #e07b39;
+  --ct-color-primary-hover: #f08c4d;
+  --ct-color-primary-light: #3d2818;
+  --ct-color-primary-muted: rgba(224, 123, 57, 0.15);
+
+  /* === Accent Colors - Bright Teal === */
+  --ct-color-accent: #2dd4bf;
+  --ct-color-accent-hover: #5eead4;
+  --ct-color-accent-light: #1a3d38;
+
+  /* === Functional Colors === */
+  --ct-color-success: #34d399;
+  --ct-color-warning: #fbbf24;
+  --ct-color-error: #f87171;
+  --ct-color-info: #60a5fa;
+
+  /* === Backgrounds - Deep Warm Grays === */
+  --ct-bg-primary: #0f0e0d;
+  --ct-bg-secondary: #1a1816;
+  --ct-bg-tertiary: #262420;
+  --ct-bg-elevated: #1a1816;
+
+  /* === Text Colors === */
+  --ct-text-primary: #fafaf9;
+  --ct-text-secondary: #a8a29e;
+  --ct-text-tertiary: #78716c;
+  --ct-text-inverse: #0f0e0d;
+
+  /* === Borders === */
+  --ct-border-color: #292524;
+  --ct-border-color-hover: #44403c;
+  --ct-border-color-focus: var(--ct-color-primary);
+
+  /* === Shadows - Deep, Rich === */
+  --ct-shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.4);
+  --ct-shadow-md: 0 4px 8px -2px rgba(0, 0, 0, 0.5);
+  --ct-shadow-lg: 0 12px 24px -4px rgba(0, 0, 0, 0.6);
+  --ct-shadow-xl: 0 24px 48px -8px rgba(0, 0, 0, 0.7);
+}
+
+/* ========================================
+   GLOBAL TRANSITIONS
+   ======================================== */
+*,
+*::before,
+*::after {
+  transition-property: color, background-color, border-color, box-shadow, opacity, transform;
+  transition-timing-function: ease;
+  transition-duration: var(--ct-transition-normal);
+}
+
+/* Disable transitions for theme switching */
+*.no-transition,
+*.no-transition *,
+*.no-transition *::before,
+*.no-transition *::after {
+  transition: none !important;
+}
+
+/* ========================================
+   BASE STYLES
+   ======================================== */
+body {
+  background-color: var(--ct-bg-primary);
+  color: var(--ct-text-primary);
+  font-family: var(--ct-font-body);
+  font-size: var(--ct-text-base);
+  line-height: var(--ct-leading-normal);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* === Typography === */
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--ct-font-display);
+  font-weight: 600;
+  line-height: var(--ct-leading-tight);
+  color: var(--ct-text-primary);
+  margin: 0;
+}
+
+h1 { font-size: var(--ct-text-4xl); }
+h2 { font-size: var(--ct-text-3xl); }
+h3 { font-size: var(--ct-text-2xl); }
+h4 { font-size: var(--ct-text-xl); }
+h5 { font-size: var(--ct-text-lg); }
+h6 { font-size: var(--ct-text-base); }
+
+p {
+  margin: 0 0 var(--ct-space-md) 0;
+  color: var(--ct-text-secondary);
+}
+
+a {
+  color: var(--ct-color-primary);
+  text-decoration: none;
+  transition: color var(--ct-transition-fast);
+}
+
+a:hover {
+  color: var(--ct-color-primary-hover);
+  text-decoration: underline;
+}
+
+/* === Focus States === */
+:focus-visible {
+  outline: 2px solid var(--ct-border-color-focus);
+  outline-offset: 2px;
+}
+
+/* === Scrollbar === */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--ct-bg-secondary);
+  border-radius: var(--ct-radius-full);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--ct-border-color-hover);
+  border-radius: var(--ct-radius-full);
+  border: 2px solid var(--ct-bg-secondary);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--ct-text-tertiary);
+}
+
+/* ========================================
+   UTILITY CLASSES
+   ======================================== */
+
+/* === Cards === */
+.ct-card,
+.card {
+  background: var(--ct-bg-elevated);
+  border: 1px solid var(--ct-border-color);
+  border-radius: var(--ct-radius-lg);
+  box-shadow: var(--ct-shadow-sm);
+  color: var(--ct-text-primary);
+  transition: box-shadow var(--ct-transition-normal), border-color var(--ct-transition-normal);
+}
+
+.ct-card:hover,
+.card:hover {
+  box-shadow: var(--ct-shadow-md);
+  border-color: var(--ct-border-color-hover);
+}
+
+/* === Buttons === */
+.ct-btn,
+button {
+  font-family: var(--ct-font-body);
+  font-weight: 500;
+  font-size: var(--ct-text-sm);
+  padding: var(--ct-space-sm) var(--ct-space-lg);
+  border-radius: var(--ct-radius-md);
+  border: none;
+  background: var(--ct-color-primary);
+  color: var(--ct-text-inverse);
+  cursor: pointer;
+  transition: all var(--ct-transition-fast);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ct-space-sm);
+}
+
+.ct-btn:hover:not(:disabled),
+button:hover:not(:disabled) {
+  background: var(--ct-color-primary-hover);
+  transform: translateY(-1px);
+  box-shadow: var(--ct-shadow-md);
+}
+
+.ct-btn:active:not(:disabled),
+button:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.ct-btn:disabled,
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* Button Variants */
+.ct-btn.variant-ghost,
+button.variant-ghost {
+  background: transparent;
+  color: var(--ct-text-secondary);
+  border: 1px solid var(--ct-border-color);
+}
+
+.ct-btn.variant-ghost:hover,
+button.variant-ghost:hover {
+  background: var(--ct-bg-secondary);
+  border-color: var(--ct-border-color-hover);
+  color: var(--ct-text-primary);
+}
+
+.ct-btn.variant-text,
+button.variant-text {
+  background: transparent;
+  color: var(--ct-color-primary);
+  padding: var(--ct-space-sm) var(--ct-space-md);
+}
+
+.ct-btn.variant-text:hover,
+button.variant-text:hover {
+  background: var(--ct-color-primary-light);
+}
+
+/* === Inputs === */
+input,
+select,
+textarea,
+.ct-field {
+  font-family: var(--ct-font-body);
+  font-size: var(--ct-text-sm);
+  background: var(--ct-bg-elevated);
+  border: 1px solid var(--ct-border-color);
+  color: var(--ct-text-primary);
+  border-radius: var(--ct-radius-md);
+  padding: var(--ct-space-sm) var(--ct-space-md);
+  width: 100%;
+  transition: all var(--ct-transition-fast);
+}
+
+input:hover,
+select:hover,
+textarea:hover,
+.ct-field:hover {
+  border-color: var(--ct-border-color-hover);
+}
+
+input:focus,
+select:focus,
+textarea:focus,
+.ct-field:focus {
+  outline: none;
+  border-color: var(--ct-border-color-focus);
+  box-shadow: 0 0 0 3px var(--ct-color-primary-light);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--ct-text-tertiary);
+}
+
+input:disabled,
+select:disabled,
+textarea:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: var(--ct-bg-tertiary);
+}
+
+/* === Badges & Tags === */
+.badge,
+.tag {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--ct-space-xs) var(--ct-space-sm);
+  font-size: var(--ct-text-xs);
+  font-weight: 500;
+  border-radius: var(--ct-radius-full);
+  background: var(--ct-bg-tertiary);
+  color: var(--ct-text-secondary);
+}
+
+.badge.primary,
+.tag.primary {
+  background: var(--ct-color-primary-light);
+  color: var(--ct-color-primary);
+}
+
+.badge.success,
+.tag.success {
+  background: rgba(5, 143, 107, 0.1);
+  color: var(--ct-color-success);
+}
+
+.badge.warning,
+.tag.warning {
+  background: rgba(217, 119, 6, 0.1);
+  color: var(--ct-color-warning);
+}
+
+.badge.error,
+.tag.error {
+  background: rgba(197, 48, 48, 0.1);
+  color: var(--ct-color-error);
+}
+
+/* === Alerts === */
+.alert,
+.hint-box {
+  padding: var(--ct-space-md);
+  border-radius: var(--ct-radius-md);
+  border-left: 4px solid;
+  margin: var(--ct-space-md) 0;
+}
+
+.alert.info,
+.hint-box.info {
+  background: var(--ct-color-accent-light);
+  border-color: var(--ct-color-accent);
+  color: var(--ct-color-accent);
+}
+
+.alert.warning,
+.hint-box.warning {
+  background: rgba(217, 119, 6, 0.1);
+  border-color: var(--ct-color-warning);
+  color: #92400e;
+}
+
+.alert.error {
+  background: rgba(197, 48, 48, 0.1);
+  border-color: var(--ct-color-error);
+  color: var(--ct-color-error);
+}
+
+.alert.success {
+  background: rgba(5, 143, 107, 0.1);
+  border-color: var(--ct-color-success);
+  color: var(--ct-color-success);
+}
+
+/* === Divider === */
+.divider,
+hr {
+  border: none;
+  border-top: 1px solid var(--ct-border-color);
+  margin: var(--ct-space-lg) 0;
+}
+
+/* === Code Blocks === */
+code,
+pre {
+  font-family: var(--ct-font-mono);
+  font-size: 0.9em;
+}
+
+code {
+  background: var(--ct-bg-tertiary);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+pre {
+  background: var(--ct-bg-secondary);
+  padding: var(--ct-space-md);
+  border-radius: var(--ct-radius-md);
+  overflow-x: auto;
+  border: 1px solid var(--ct-border-color);
+}
+
+pre code {
+  background: none;
+  padding: 0;
+}
+
+/* === Selection === */
+::selection {
+  background: var(--ct-color-primary);
+  color: var(--ct-text-inverse);
+}

@@ -28,15 +28,49 @@ defineProps<{ subject?: Subject }>()
 </script>
 
 <style scoped>
-.card { background: #fff; border-radius: 12px; box-shadow: 0 4px 14px rgba(0,0,0,0.06); padding: 16px; }
-.header { display: flex; align-items: center; gap: 12px; }
+.card {
+  background: var(--ct-bg-elevated);
+  border: 1px solid var(--ct-border-color);
+  border-radius: var(--ct-radius-lg);
+  box-shadow: var(--ct-shadow-md);
+  padding: var(--ct-space-lg);
+  transition: transform var(--ct-transition-normal) var(--ct-ease-out),
+              box-shadow var(--ct-transition-normal) var(--ct-ease-out),
+              border-color var(--ct-transition-normal) var(--ct-ease-out);
+}
+
+.card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--ct-shadow-lg);
+  border-color: var(--ct-border-color-hover);
+}
+
+.header { display: flex; align-items: center; gap: var(--ct-space-md); }
 .header img { width: 44px; height: 44px; border-radius: 50%; object-fit: cover; }
-.avatar-fallback { width: 44px; height: 44px; border-radius: 50%; background: #eef2ff; color: #6366f1; display: inline-flex; align-items: center; justify-content: center; font-weight: 700; }
-.title .name { font-size: 16px; font-weight: 700; }
-.title .sub { color: #6b7280; font-size: 12px; }
-.stats { margin-top: 12px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
-.stat { background: #f9fafb; border: 1px solid #eef0f3; border-radius: 8px; padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; }
-.stat .k { color: #6b7280; font-size: 12px; }
-.stat .v { font-weight: 700; }
-.empty { color: #6b7280; margin-top: 8px; }
+.avatar-fallback {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--ct-color-primary-light);
+  color: var(--ct-color-primary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: var(--ct-font-bold);
+}
+.title .name { font-size: var(--ct-text-base); font-weight: var(--ct-font-bold); color: var(--ct-text-primary); }
+.title .sub { color: var(--ct-text-secondary); font-size: var(--ct-text-xs); }
+.stats { margin-top: var(--ct-space-md); display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--ct-space-sm); }
+.stat {
+  background: var(--ct-bg-secondary);
+  border: 1px solid var(--ct-border-color);
+  border-radius: var(--ct-radius-md);
+  padding: var(--ct-space-sm) var(--ct-space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--ct-space-xs);
+}
+.stat .k { color: var(--ct-text-secondary); font-size: var(--ct-text-xs); }
+.stat .v { font-weight: var(--ct-font-bold); color: var(--ct-text-primary); }
+.empty { color: var(--ct-text-secondary); margin-top: var(--ct-space-sm); }
 </style>

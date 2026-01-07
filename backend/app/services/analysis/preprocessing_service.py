@@ -373,7 +373,7 @@ class PreprocessingService:
                 print(f"[预处理] 缓存消息 {msg['message_id']} 失败: {e}")
         
         self.db.commit()
-        print(f"[预处理] 已缓存 {len(messages)} 条消息")
+       # print(f"[预处理] 已缓存 {len(messages)} 条消息")
     
     def preprocess_message_batch(
         self,
@@ -393,7 +393,7 @@ class PreprocessingService:
         if not message_ids:
             return 0
         
-        print(f"\n[预处理] 批量预处理 {len(message_ids)} 条消息 (conversation_id={conversation_id})")
+        # print(f"\n[预处理] 批量预处理 {len(message_ids)} 条消息 (conversation_id={conversation_id})")
         
         # 查询消息内容
         placeholders = ','.join('?' * len(message_ids))

@@ -2,8 +2,11 @@
 
 import sqlite3
 import hashlib
-from typing import List, Optional, Tuple
+import re
+from typing import List, Optional, Tuple, Dict, Set
 from ..base import WeChatDBBase
+
+
 
 
 class MessageDBV4(WeChatDBBase):
@@ -26,10 +29,29 @@ class MessageDBV4(WeChatDBBase):
         self.db_paths = db_paths if isinstance(db_paths, list) else [db_paths]
         self.db_key = db_key
         self.my_wxid = my_wxid
+        self._my_wxid_candidates = self._build_my_wxid_candidates(my_wxid)
         self.connections = []
+        self._table_columns_cache: Dict[str, Set[str]] = {}
         self._connect_all()
+
     
+    def _build_my_wxid_candidates(self, wxid: Optional[str]) -> List[str]:
+        """生成 my_wxid 可能的别名列表，处理目录名带后缀的情况"""
+        candidates: List[str] = []
+        if not wxid:
+            return candidates
+        candidates.append(wxid)
+        # 兼容目录名形如 wxid_xxx_9cc7，去掉最后一段下划线+4~6位字母数字
+        m = re.match(r"^(wxid_[a-z0-9]+)_([a-z0-9]{4,6})$", wxid)
+        if m:
+            base = m.group(1)
+            if base not in candidates:
+                candidates.append(base)
+        return candidates
+
     def _connect_all(self):
+
+
         """连接所有数据库分片"""
         import tempfile
         
@@ -67,7 +89,26 @@ class MessageDBV4(WeChatDBBase):
             
             self.connections.append(conn)
     
+    def _get_table_columns(self, conn: sqlite3.Connection, table_name: str) -> Set[str]:
+        """获取指定表的列名集合（缓存）"""
+        cache_key = f"{id(conn)}::{table_name}"
+        if cache_key in self._table_columns_cache:
+            return self._table_columns_cache[cache_key]
+
+        cols: Set[str] = set()
+        try:
+            cursor = conn.execute(f"PRAGMA table_info('{table_name}')")
+            for row in cursor:
+                # row[1] 是列名
+                cols.add(str(row[1]).lower())
+        except Exception as e:
+            print(f"[MessageDB Warning] 获取表结构失败 {table_name}: {e}")
+
+        self._table_columns_cache[cache_key] = cols
+        return cols
+    
     def get_table_name(self, username: str) -> str:
+
         """
         生成消息表名
         
@@ -139,13 +180,53 @@ class MessageDBV4(WeChatDBBase):
         从单个数据库查询消息
         
         核心SQL逻辑:
-        - JOIN Name2Id 表获取发送者username
+        - 优先使用微信原始表 isSend/is_sender 字段判定本人发送
+        - 回退 Name2Id 表获取发送者 username 判定
         - 通过 create_time 过滤时间范围
         - 按 sort_seq 排序
         """
-        # 构建SQL
+        # 检查可用列
+        cols = self._get_table_columns(conn, table_name)
+        has = lambda name: name.lower() in cols
+
+        # 选择可用的 isSend 字段（支持多别名，使用 COALESCE 统一）
+        candidate_cols = []
+        for name in [
+            "isSend",
+            "is_send",
+            "is_sender",
+            "is_sender_",
+            "is_send_",
+            "computed_is_send",
+            "issender",
+        ]:
+            if has(name):
+                candidate_cols.append(name)
+
+        is_send_select = "NULL AS is_send_flag"
+        if candidate_cols:
+            joined = ", ".join([f"msg.{col}" for col in candidate_cols])
+            is_send_select = f"COALESCE({joined}) AS is_send_flag"
+
+
+        # 解析 my_wxid 在当前库的 rowid（支持别名）
+        my_rowid: Optional[int] = None
+        if self._my_wxid_candidates:
+            placeholders = ",".join(["?"] * len(self._my_wxid_candidates))
+            try:
+                cur = conn.execute(
+                    f"SELECT rowid FROM Name2Id WHERE user_name IN ({placeholders}) LIMIT 1",
+                    self._my_wxid_candidates,
+                )
+                row = cur.fetchone()
+                if row and 'rowid' in row.keys():
+                    my_rowid = row['rowid']
+            except Exception:
+                my_rowid = None
+
+        # 构建SQL（加入 computed_is_send 以回退 Name2Id rowid 比对）
         sql = f"""
-            SELECT 
+            SELECT
                 msg.local_id,
                 msg.server_id,
                 msg.local_type,
@@ -154,6 +235,13 @@ class MessageDBV4(WeChatDBBase):
                 msg.create_time,
                 msg.message_content,
                 msg.compress_content,
+                {is_send_select},
+                CASE
+                    WHEN ? IS NOT NULL THEN (
+                        CASE WHEN msg.real_sender_id = ? THEN 1 ELSE 0 END
+                    )
+                    ELSE NULL
+                END AS computed_is_send,
                 Name2Id.user_name AS sender_username
             FROM {table_name} AS msg
             LEFT JOIN Name2Id ON msg.real_sender_id = Name2Id.rowid
@@ -162,6 +250,10 @@ class MessageDBV4(WeChatDBBase):
         # 添加时间过滤
         conditions = []
         params = []
+        
+        # computed_is_send 依赖 my_rowid，占用前两个参数
+        params.extend([my_rowid, my_rowid])
+
         
         if time_range:
             start_ts, end_ts = time_range
@@ -176,16 +268,58 @@ class MessageDBV4(WeChatDBBase):
         
         if limit:
             sql += f" LIMIT {limit}"
+
         
         # 执行查询
         cursor = conn.execute(sql, params)
         messages = []
         
         for row in cursor:
-            # 判断是否为本人发送
             sender_username = row['sender_username'] or ''
-            is_sender = (sender_username == self.my_wxid) if self.my_wxid else False
-            
+            raw_flag = row['is_send_flag']
+            computed_raw = row['computed_is_send']
+
+            def _normalize_flag(value: Optional[object]) -> Optional[int]:
+                if value is None:
+                    return None
+                if isinstance(value, bool):
+                    return 1 if value else 0
+                try:
+                    return int(value)
+                except Exception:
+                    return None
+
+            is_send_flag: Optional[int] = _normalize_flag(raw_flag)
+            computed_flag: Optional[int] = _normalize_flag(computed_raw)
+
+            # 判定本人发送优先级：isSend 标记 > computed_is_send (real_sender_id 对比) > Name2Id username 比对 > 简单回退
+            if is_send_flag is not None:
+                is_sender = is_send_flag != 0
+            elif computed_flag is not None:
+                is_sender = computed_flag != 0
+            elif sender_username:
+                if self._my_wxid_candidates:
+                    is_sender = sender_username in self._my_wxid_candidates
+                elif self.my_wxid:
+                    is_sender = (sender_username == self.my_wxid)
+                else:
+                    # 无 my_wxid 时，若发送者不是对话对象，推断为本人
+                    is_sender = (sender_username != username)
+            else:
+                # 无法判定，保守为接收
+                is_sender = False
+
+
+            # 调试：仅记录第一条消息的判断信息
+            if len(messages) == 0:
+                print(
+                    f"[MessageDB] 首条消息: real_sender_id={row['real_sender_id']}, "
+                    f"sender_username='{sender_username}', is_send_flag={raw_flag}, "
+                    f"computed_is_send={computed_raw}, my_wxid='{self.my_wxid}', is_sender={is_sender}"
+                )
+
+
+
             # 提取内容
             content = row['message_content'] or ''
             
@@ -197,7 +331,7 @@ class MessageDBV4(WeChatDBBase):
                 'local_id': row['local_id'],
                 'talker': username,
                 'sender': sender_username,
-                'is_sender': is_sender,
+                'is_sender': 1 if is_sender else 0,
                 'message_type': row['local_type'],
                 'content': content,
                 'timestamp': row['create_time'],
@@ -207,6 +341,7 @@ class MessageDBV4(WeChatDBBase):
             messages.append(message)
         
         return messages
+
     
     def _parse_compress_content(self, buffer: bytes) -> str:
         """

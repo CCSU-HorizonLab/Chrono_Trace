@@ -337,7 +337,7 @@ class WeChatIngestService:
                         limit=limit if limit > 0 else None
                     )
                     
-                    print(f"[DEBUG] 会话 {username}: 读取到 {len(messages_data)} 条消息")
+                   # print(f"[DEBUG] 会话 {username}: 读取到 {len(messages_data)} 条消息")
                     
                     # 批量插入
                     batch = []
@@ -525,7 +525,7 @@ class WeChatIngestService:
                     "failed": 0
                 }
 
-            print(f"[特征提取] 找到 {len(conversations)} 个会话")
+            # print(f"[特征提取] 找到 {len(conversations)} 个会话")
 
             # 初始化特征提取服务
             feature_service = FeatureExtractionService()
@@ -556,17 +556,17 @@ class WeChatIngestService:
                         continue
 
                     # 执行特征提取
-                    print(f"[特征提取] 正在提取会话 {conv_id} ({name}) 的特征，{msg_count}条消息")
+                   # print(f"[特征提取] 正在提取会话 {conv_id} ({name}) 的特征，{msg_count}条消息")
                     feature_service.extract_features(conv_id)
                     stats["processed"] += 1
-                    print(f"[特征提取] 会话 {conv_id} 完成")
+                   # print(f"[特征提取] 会话 {conv_id} 完成")
 
                 except Exception as e:
                     print(f"[特征提取] 会话 {conv_id} 提取失败: {e}")
                     stats["failed"] += 1
                     continue
 
-            print(f"[特征提取] 完成! 处理={stats['processed']}, 跳过={stats['skipped']}, 失败={stats['failed']}")
+           # print(f"[特征提取] 完成! 处理={stats['processed']}, 跳过={stats['skipped']}, 失败={stats['failed']}")
             return stats
 
         except Exception as e:

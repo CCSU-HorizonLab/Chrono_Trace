@@ -18,8 +18,10 @@
 import { computed } from 'vue'
 import { useTheme } from '@/composables/useTheme'
 
-const { theme, toggleTheme, isDark } = useTheme()
+const { theme, toggleTheme, isDark: isDarkFn } = useTheme()
 
+// 将 isDark 函数转换为 computed 属性
+const isDark = computed(() => isDarkFn())
 const currentTheme = computed(() => theme.value)
 </script>
 

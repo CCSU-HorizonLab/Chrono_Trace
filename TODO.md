@@ -67,34 +67,41 @@
 
 ## 数据分析模块
 
-### 模块 2：特征提取服务 🔴 高优先级
+### ✅ 模块 2：特征提取服务（已完成）
 
 **文件**：`backend/app/services/analysis/feature_extraction_service.py`
 
 **功能清单**：
 
-- [ ] **Session 会话切割**
-  - [ ] 实现时间间隔判断（1800 秒阈值）
-  - [ ] 实现睡眠时间判断（00:00-07:00）
-  - [ ] 跨越睡眠时间强制切割
-  - [ ] 输出会话起止时间、消息数、时长
-  - [ ] 参考 PyWxDump 算法
+- [x] **Session 会话切割**
+  - [x] 实现时间间隔判断（1800 秒阈值）
+  - [x] 实现睡眠时间判断（00:00-07:00）
+  - [x] 跨越睡眠时间强制切割
+  - [x] 输出会话起止时间、消息数、时长
+  - [x] 自动判断会话发起者
+  - [x] 数据持久化到 sessions 表
 
-- [ ] **响应时间计算**
-  - [ ] 计算我发消息 → 对方回复的时间差
-  - [ ] 排除负数响应时间
-  - [ ] 排除超过 24 小时的异常值
-  - [ ] 睡眠时间处理（调整到次日 07:00）
-  - [ ] 统计平均值、中位数、最快/最慢响应
+- [x] **响应时间计算**
+  - [x] 计算我发消息 → 对方回复的时间差
+  - [x] 排除负数响应时间
+  - [x] 排除超过 24 小时的异常值
+  - [x] 睡眠时间处理（自动扣除 00:00-07:00）
+  - [x] 统计平均值、中位数、最快/最慢响应
+  - [x] 异常值标记与统计
+  - [x] 数据持久化到 response_times 表
 
-- [ ] **主动率统计**
-  - [ ] 计算对方主动发起的 Session 占比
-  - [ ] 计算连续主动发送消息数
-  - [ ] 判断每个 Session 的发起者
+- [x] **主动性统计**
+  - [x] 计算对方主动发起的 Session 占比
+  - [x] 统计用户/对方发起的会话数
+  - [x] 生成主动率指标
+  - [x] 数据持久化到 initiative_stats 表
 
-- [ ] **字数投入比**
-  - [ ] 计算对方总字数 / 我的总字数
-  - [ ] 按 Session 分别统计
+- [x] **字数投入比**
+  - [x] 计算对方总字数 / 我的总字数
+  - [x] 按整体统计
+  - [x] 按会话统计（可选）
+  - [x] 生成可读解读文本
+  - [x] 数据持久化到 word_counts 表
 
 **配置参数**：
 ```python
@@ -104,17 +111,21 @@ SLEEP_END_HOUR = 7           # 07:00
 MAX_RESPONSE_TIME = 86400    # 24小时
 ```
 
-**预期输出**：
-```json
-{
-  "sessions": [...],
-  "response_time": {"avg": 180.5, "median": 120, ...},
-  "initiative_rate": 0.45,
-  "word_ratio": 1.2
-}
-```
+**API 接口**：
+- `bridge.extract_features(conversation_id)` - 一键提取所有特征
+- `bridge.get_sessions(conversation_id, limit, offset)` - 查询会话列表
+- `bridge.get_response_times(conversation_id)` - 获取响应时间统计
+- `bridge.get_initiative_stats(conversation_id)` - 获取主动性统计
+- `bridge.get_word_counts(conversation_id, by_session)` - 获取字数统计
+- `bridge.reanalyze(conversation_id)` - 重新分析
 
-**依赖**：`PreprocessingService`（已完成）
+**验证状态**：✅ 生产环境验证通过
+
+**关键文件**：
+- `backend/app/services/analysis/feature_extraction_service.py`
+- `backend/app/services/analysis/feature_extraction_config.py`
+- `backend/app/services/analysis/analysis_service.py`
+- `backend/app/db/schema.sql` (sessions, response_times, initiative_stats, word_counts)
 
 ---
 
@@ -383,13 +394,35 @@ SCORING_WEIGHTS = {
 
 ---
 
-### 📊 数据展示优化 🟡 中优先级
+### 📊 数据展示优化 🔴 高优先级
 
-- [ ] **分析页面**
-  - [ ] 展示 Session 分布图
-  - [ ] 展示响应时间分布
-  - [ ] 展示语言风格匹配度
-  - [ ] 展示综合评分卡片
+- [ ] **分析页面 - 特征数据可视化**
+  - [ ] 会话分布时间轴（Sessions Timeline）
+    - [ ] 展示所有会话的起止时间
+    - [ ] 标记会话发起者（用户/对方）
+    - [ ] 显示每个会话的消息密度
+    - [ ] 时间轴缩放与拖拽
+
+  - [ ] 响应时间分析面板
+    - [ ] 响应时间统计卡片（平均值、中位数、最快/最慢）
+    - [ ] 响应时间分布直方图
+    - [ ] 响应时间趋势折线图
+    - [ ] 异常值标记与列表
+
+  - [ ] 主动性统计卡片
+    - [ ] 对方主动率仪表盘
+    - [ ] 会话发起者对比饼图
+    - [ ] 解读文本展示
+
+  - [ ] 字数投入比分析
+    - [ ] 字数对比条形图（用户 vs 对方）
+    - [ ] 字数投入比指标
+    - [ ] 按会话的字数趋势图
+
+  - [ ] 功能按钮
+    - [ ] "提取特征"按钮（触发 extract_features）
+    - [ ] "重新分析"按钮（触发 reanalyze）
+    - [ ] 进度条展示
 
 - [ ] **建议页面**
   - [ ] 实时建议流展示
@@ -399,6 +432,7 @@ SCORING_WEIGHTS = {
 - [ ] **设置页面**
   - [ ] API Key 配置表单
   - [ ] 模型选择器
+  - [ ] 特征提取参数配置（会话切分阈值、睡眠时间等）
   - [ ] 隐私选项配置
 
 ---
@@ -601,10 +635,10 @@ wxauto4>=0.1.0            # 实时监听（可选）
 
 ## 开发进度总览
 
-### 数据分析模块：14% (1/7)
+### 数据分析模块：28.5% (2/7)
 
 - [x] 模块 1：数据预处理（100%）
-- [ ] 模块 2：特征提取（0%）
+- [x] **模块 2：特征提取（100%）** ✅ 新完成
 - [ ] 模块 3：语言风格匹配（0%）
 - [ ] 模块 4：情感分析（0%）
 - [ ] 模块 5：综合评分（0%）

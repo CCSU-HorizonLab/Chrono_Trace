@@ -48,7 +48,7 @@ class FeatureExtractionService:
         Returns:
             提取结果字典，包含sessions, response_times, initiative_stats, word_counts
         """
-        logger.info(f"开始特征提取: conversation_id={conversation_id}")
+        #logger.info(f"开始特征提取: conversation_id={conversation_id}")
 
         task_id = f"extract_{conversation_id}_{int(time.time())}"
         self._task_status[task_id] = {
@@ -76,8 +76,6 @@ class FeatureExtractionService:
             word_counts = self.calculate_word_counts(conversation_id, sessions)
 
             self._update_task_status(task_id, 100, "completed", "completed")
-
-            logger.info(f"特征提取完成: conversation_id={conversation_id}")
 
             return {
                 "task_id": task_id,
@@ -123,12 +121,12 @@ class FeatureExtractionService:
         Returns:
             会话列表
         """
-        logger.info(f"提取会话: conversation_id={conversation_id}")
+        # logger.info(f"提取会话: conversation_id={conversation_id}")
 
         # 1. 读取消息
         messages = self._fetch_messages(conversation_id)
         if not messages:
-            logger.warning(f"无消息数据: conversation_id={conversation_id}")
+            # logger.warning(f"无消息数据: conversation_id={conversation_id}")
             return []
 
         # 2. 切分会话
@@ -156,7 +154,7 @@ class FeatureExtractionService:
         batch_insert("sessions", columns, data_tuples, self.db)
         self.db.commit()
 
-        logger.info(f"会话提取完成: {len(sessions_data)}个会话")
+        #logger.info(f"会话提取完成: {len(sessions_data)}个会话")
         return sessions_data
 
     def _fetch_messages(self, conversation_id: int, limit: int = None, offset: int = 0) -> List[Dict]:
@@ -266,7 +264,9 @@ class FeatureExtractionService:
             return "user"
 
         first_msg = session[0]
-        return "user" if first_msg["is_sender"] == 1 else "other"
+        initiator = "user" if first_msg["is_sender"] == 1 else "other"
+
+        return initiator
 
     # =========================================================================
     # User Story 2: 响应时间计算
@@ -282,7 +282,7 @@ class FeatureExtractionService:
         Returns:
             响应时间统计字典
         """
-        logger.info(f"计算响应时间: conversation_id={conversation_id}")
+        # logger.info(f"计算响应时间: conversation_id={conversation_id}")
 
         # 1. 读取消息
         messages = self._fetch_messages(conversation_id)
@@ -344,7 +344,6 @@ class FeatureExtractionService:
         stats = self._calculate_response_time_stats(valid_response_times)
         stats["abnormal_count"] = len([d for d in response_times_data if d["is_abnormal"]])
 
-        logger.info(f"响应时间计算完成: {len(valid_response_times)}个有效, {stats['abnormal_count']}个异常")
         return stats
 
     def _calculate_response_time(self, sent_ts: int, reply_ts: int,
@@ -547,10 +546,9 @@ class FeatureExtractionService:
         Returns:
             字数统计字典
         """
-        logger.info(f"计算字数统计: conversation_id={conversation_id}")
-
         # 1. 整体统计
         messages = self._fetch_messages(conversation_id)
+
         overall_user_chars = 0
         overall_other_chars = 0
 
@@ -623,7 +621,6 @@ class FeatureExtractionService:
             "by_session": session_counts
         }
 
-        logger.info(f"字数统计完成: 整体用户={overall_user_chars}, 对方={overall_other_chars}")
         return result
 
     def _get_message_char_count(self, message: Dict) -> int:

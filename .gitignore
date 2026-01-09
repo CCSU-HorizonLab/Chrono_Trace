@@ -60,7 +60,6 @@ frontend/.vite/
 frontend/dist-ssr/
 
 # Temporary documentation and specs
-specs/
 CARD_FIX*.md
 DARK_MODE_FIX*.md
 IMPLEMENTATION_SUMMARY.md

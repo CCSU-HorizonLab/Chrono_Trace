@@ -93,63 +93,105 @@
 
 ### Functional Requirements
 
-**预处理阶段**:
+**预处理阶段 (Preprocessing Layer)**:
+
+*目标：一次遍历收集所有统计常量，避免后续维度重复计算，确保 O(N) 复杂度*
+
+**Phase 0: 配置准备 (Configuration Setup)**:
+
+- **FR-000**: System MUST allow users to provide contact labels (e.g., "colleague", "close friend") which influence session splitting thresholds
+- **FR-000**: System MUST prepare keyword libraries before preprocessing: positive words, negative words, exclusive nicknames, privacy sharing keywords, holiday greetings, empathy keywords, soothing keywords, preference keywords
+- **FR-000**: System MUST support user customization of keyword libraries after initialization, allowing dynamic extension without reprocessing
+
+**Phase 1: 数据准备 (Data Preparation)**:
 
 - **FR-001**: System MUST sort all messages by timestamp for each conversation in ascending order
-- **FR-002**: System MUST analyze sentiment for each message, generating three outputs: polarity (-1 for negative, 0 for neutral, 1 for positive), intensity score (from -1 to 1), and sentence embedding vector
+- **FR-002**: System MUST analyze sentiment for each message in batches (32 messages/batch), generating three outputs: polarity (-1 for negative, 0 for neutral, 1 for positive), intensity score (from -1 to 1), and sentence embedding vector
+
+**Phase 2: 会话划分 (Session Splitting)**:
+
 - **FR-003**: System MUST split conversations into sessions based on semantic similarity valleys using sliding window algorithm, where similarity below threshold marks topic boundary
 - **FR-004**: System MUST support user-configurable sliding window size (number of messages) and similarity threshold for session splitting
-- **FR-005**: System MUST merge consecutive messages into "speech units" if time gap < 5 minutes
-- **FR-006**: System MUST construct "interaction pairs" from one person's speech unit to the other person's next speech unit (bidirectional)
-- **FR-007**: System MUST pre-calculate and cache basic statistics: total messages, total sessions, total interaction pairs, message counts by polarity (positive/negative/neutral), conversation duration in days, message count distribution by sender
+- **FR-005**: System MUST combine semantic similarity with time interval fallback: if time gap > 30 minutes, force split regardless of similarity
+- **FR-006**: System MUST record session initiator as the sender of the first message in each session
+
+**Phase 3: 交互对构建与统计收集 (Interaction Pair Construction & Statistics Collection)**:
+
+- **FR-007**: System MUST merge consecutive messages from same person into "speech units" if time gap < 5 minutes
+- **FR-008**: System MUST record message IDs contained in each speech unit for traceability
+- **FR-009**: System MUST construct "interaction pairs" from one person's speech unit to the other person's next speech unit (bidirectional)
+- **FR-010**: System MUST collect all statistics in a single pass through all interaction pairs and sessions (O(N) complexity)
+
+**基础常量统计 (Basic Statistics)**:
+
+- **FR-011**: System MUST pre-calculate message statistics: total_message_count, user_message_count, other_message_count, total_character_count, avg_message_length, long_text_message_count (>100 chars)
+- **FR-012**: System MUST pre-calculate sentiment statistics: total_positive_count (polarity=1), total_negative_count (polarity=-1), total_neutral_count (polarity=0)
+- **FR-013**: System MUST pre-calculate time statistics: conversation_duration_days (date difference between first and last message)
+- **FR-014**: System MUST pre-calculate session statistics: total_session_count, user_initiated_session_count, other_initiated_session_count (from Phase 2 session initiators)
+- **FR-015**: System MUST pre-calculate interaction pair statistics: total_pair_count, user_initiated_pair_count, other_initiated_pair_count, same_polarity_pair_count, positive_positive_pair_count, negative_initiated_by_user_count
+- **FR-016**: System MUST calculate resolved_negative_pair_count by checking if response has positive polarity AND contains soothing keywords
+
+**态度倾向统计 (Attitude Tendency Statistics)**:
+
+- **FR-017**: System MUST count messages containing emoji in single pass through interaction pairs
+- **FR-018**: System MUST count voice messages and video call messages in single pass through interaction pairs
+- **FR-019**: System MUST count messages containing exclusive nicknames in single pass through interaction pairs
+- **FR-020**: System MUST count messages containing privacy sharing keywords in single pass through interaction pairs
+- **FR-021**: System MUST count messages containing holiday greetings and track unique holidays sent (deduplicated) in single pass
+- **FR-022**: System MUST mark sessions that mention preference keywords at session level (not message level) during single pass
+
+**Phase 4: 后处理统计 (Post-Processing)**:
+
+- **FR-023**: System MUST analyze high-response time periods based on timestamp distribution of interaction pairs after main preprocessing completes
+- **FR-024**: System MUST cache all preprocessing results to database tables: sentiment_cache, speech_units, interaction_pairs, and aggregated statistics tables
+- **FR-025**: System MUST provide unified interface for four dimensions to query preprocessed statistics without re-computation
 
 **情感共振率维度 (30%权重)**:
 
-- **FR-008**: System MUST calculate bidirectional positive emotion response rate = (number of positive-positive interaction pairs / total positive messages) × 100%
-- **FR-009**: System MUST calculate emotion polarity consistency score = (proportion of same-polarity interaction pairs) × (average semantic similarity of same-polarity pairs)
-- **FR-010**: System MUST calculate emotion intensity matching degree = reciprocal of average absolute difference in intensity scores between paired messages, using formula 1/(mean_abs_diff + 0.1) and clamping to 0-1 range with tanh if needed
-- **FR-011**: System MUST calculate empathy intent recognition rate = (messages containing empathy keywords / total messages) × 100%
-- **FR-012**: System MUST calculate negative emotion collaborative resolution rate = (empathetic responses / negative-initiated pairs) × 100%, where empathetic response requires positive polarity AND containing soothing keywords
-- **FR-013**: System MUST generate weighted composite score for emotional resonance with weights: bidirectional positive response (20%), polarity consistency (15%), intensity matching (10%), empathy recognition (30%), negative resolution (25%)
+- **FR-026**: System MUST calculate bidirectional positive emotion response rate = (number of positive-positive interaction pairs / total positive messages) × 100%
+- **FR-027**: System MUST calculate emotion polarity consistency score = (proportion of same-polarity interaction pairs) × (average semantic similarity of same-polarity pairs)
+- **FR-028**: System MUST calculate emotion intensity matching degree = reciprocal of average absolute difference in intensity scores between paired messages, using formula 1/(mean_abs_diff + 0.1) and clamping to 0-1 range with tanh if needed
+- **FR-029**: System MUST calculate empathy intent recognition rate = (messages containing empathy keywords / total messages) × 100%
+- **FR-030**: System MUST calculate negative emotion collaborative resolution rate = (empathetic responses / negative-initiated pairs) × 100%, where empathetic response requires positive polarity AND containing soothing keywords
+- **FR-031**: System MUST generate weighted composite score for emotional resonance with weights: bidirectional positive response (20%), polarity consistency (15%), intensity matching (10%), empathy recognition (30%), negative resolution (25%)
 
 **聊天积极度维度 (30%权重)**:
 
-- **FR-014**: System MUST calculate daily average message count = (total messages / conversation duration in days)
-- **FR-015**: System MUST calculate reply timeliness rate = (interaction pairs with response time ≤ user-specified threshold / total interaction pairs) × 100%
-- **FR-016**: System MUST support user-configurable reply timeliness threshold (e.g., 5 minutes, 1 hour, 1 day)
-- **FR-017**: System MUST calculate average message length in characters
-- **FR-018**: System MUST calculate long text ratio = (messages with >100 characters / total messages) × 100%
-- **FR-019**: System MUST calculate topic continuity score based on semantic similarity, averaging scores of sessions within user-specified time window
-- **FR-020**: System MUST support user-configurable time window for topic continuity (minimum 1 day)
-- **FR-021**: System MUST calculate active initiation rate = (counterpart-initiated interaction pairs / total initiated interaction pairs) × 100%
-- **FR-022**: System MUST determine initiation using two-step logic: if gap ≤ threshold → same topic (not initiated); if gap > threshold → calculate similarity, if <0.4 → initiated (new topic)
-- **FR-023**: System MUST generate weighted composite score for chat positivity with weights: daily messages (10%), reply timeliness (20%), avg length (10%), long text ratio (15%), topic continuity (20%), active initiation (25%)
+- **FR-032**: System MUST calculate daily average message count = (total messages / conversation duration in days)
+- **FR-033**: System MUST calculate reply timeliness rate = (interaction pairs with response time ≤ user-specified threshold / total interaction pairs) × 100%
+- **FR-034**: System MUST support user-configurable reply timeliness threshold (e.g., 5 minutes, 1 hour, 1 day)
+- **FR-035**: System MUST calculate average message length in characters
+- **FR-036**: System MUST calculate long text ratio = (messages with >100 characters / total messages) × 100%
+- **FR-037**: System MUST calculate topic continuity score based on semantic similarity, averaging scores of sessions within user-specified time window
+- **FR-038**: System MUST support user-configurable time window for topic continuity (minimum 1 day)
+- **FR-039**: System MUST calculate active initiation rate using session initiators from preprocessing: (other_initiated_session_count / total_session_count) × 100%
+- **FR-040**: System MUST generate weighted composite score for chat positivity with weights: daily messages (10%), reply timeliness (20%), avg length (10%), long text ratio (15%), topic continuity (20%), active initiation (25%)
 
 **态度倾向维度 (20%权重)**:
 
-- **FR-024**: System MUST calculate positive word frequency = (messages containing positive words / total messages) × 100%
-- **FR-025**: System MUST calculate negative word frequency = (messages containing negative words / total messages) × 100% and deduct from score (reverse scoring with -20% weight)
-- **FR-026**: System MUST calculate multimedia usage ratio = (messages with emoji/voice/video / total messages) × 100%, with internal weights 0.3:0.2:0.5 for emoji:voice:video
-- **FR-027**: System MUST calculate exclusive nickname frequency = (messages containing nicknames / total messages) × 100%
-- **FR-028**: System MUST calculate privacy sharing ratio = (messages containing privacy keywords / total messages) × 100%
-- **FR-029**: System MUST calculate holiday greeting frequency = (messages containing holiday greetings / total messages) × 100%
-- **FR-030**: System MUST generate weighted composite score for attitude tendency with weights: positive words (25%), negative words (-20%), multimedia (10%), nickname (25%), privacy (20%), holiday (10%)
+- **FR-041**: System MUST calculate positive word frequency using preprocessed statistics: (messages containing positive words / total messages) × 100%
+- **FR-042**: System MUST calculate negative word frequency using preprocessed statistics: (messages containing negative words / total messages) × 100% and deduct from score (reverse scoring with -20% weight)
+- **FR-043**: System MUST calculate multimedia usage ratio using preprocessed statistics: (emoji_message_count + voice_message_count + video_message_count) / total messages × 100%, with internal weights 0.3:0.2:0.5 for emoji:voice:video
+- **FR-044**: System MUST calculate exclusive nickname frequency using preprocessed statistics: (nickname_message_count / total messages) × 100%
+- **FR-045**: System MUST calculate privacy sharing ratio using preprocessed statistics: (privacy_message_count / total messages) × 100%
+- **FR-046**: System MUST calculate holiday greeting frequency using optimized formula: (holidays_sent_count / total_holiday_count) × 100%, where holidays_sent_count is unique holidays sent (deduplicated) and total_holiday_count is total number of holidays in calendar
+- **FR-047**: System MUST generate weighted composite score for attitude tendency with weights: positive words (25%), negative words (-20%), multimedia (10%), nickname (25%), privacy (20%), holiday (10%)
 
 **喜好维度 (20%权重)**:
 
-- **FR-031**: System MUST allow users to input custom preference keywords (e.g., hobbies, interests)
-- **FR-032**: System MUST calculate topic mention frequency = (sessions mentioning preference keywords / total sessions) × 100%
-- **FR-033**: System MUST calculate preference topic continuity score = average of internal continuity scores for all sessions mentioning preferences
-- **FR-034**: System MUST generate weighted composite score for preference compatibility with weights: topic mention frequency (40%), preference topic continuity (60%)
+- **FR-048**: System MUST allow users to input custom preference keywords (e.g., hobbies, interests)
+- **FR-049**: System MUST calculate topic mention frequency using preprocessed statistics: (preference_session_count / total_session_count) × 100%
+- **FR-050**: System MUST calculate preference topic continuity score = average of internal continuity scores for all sessions mentioning preferences
+- **FR-051**: System MUST generate weighted composite score for preference compatibility with weights: topic mention frequency (40%), preference topic continuity (60%)
 
 **综合评分与配置**:
 
-- **FR-035**: System MUST calculate overall affinity score = (emotional resonance × 0.3) + (chat positivity × 0.3) + (attitude tendency × 0.2) + (preference compatibility × 0.2)
-- **FR-036**: System MUST allow users to customize dimension weights (default: 30%, 30%, 20%, 20%)
-- **FR-037**: System MUST allow users to configure: reply timeliness threshold, topic continuity time window, similarity threshold for initiation, sliding window size
-- **FR-038**: System MUST allow users to customize keyword libraries: positive words, negative words, empathy words, soothing words, privacy keywords, holiday greetings
-- **FR-039**: System MUST provide text interpretation for scores (e.g., "Strong emotional resonance, highly synchronized emotions" for scores >80)
-- **FR-040**: System MUST support re-analysis when configuration or keywords change, invalidating cached results
+- **FR-052**: System MUST calculate overall affinity score = (emotional resonance × 0.3) + (chat positivity × 0.3) + (attitude tendency × 0.2) + (preference compatibility × 0.2)
+- **FR-053**: System MUST allow users to customize dimension weights (default: 30%, 30%, 20%, 20%)
+- **FR-054**: System MUST allow users to configure: reply timeliness threshold, topic continuity time window, similarity threshold for session splitting, sliding window size
+- **FR-055**: System MUST allow users to customize keyword libraries: positive words, negative words, empathy words, soothing words, privacy keywords, holiday greetings
+- **FR-056**: System MUST provide text interpretation for scores (e.g., "Strong emotional resonance, highly synchronized emotions" for scores >80)
+- **FR-057**: System MUST support re-analysis when configuration or keywords change, invalidating cached preprocessing results
 
 ### Key Entities
 

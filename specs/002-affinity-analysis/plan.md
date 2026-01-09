@@ -18,14 +18,17 @@ This feature implements a comprehensive 4-dimensional affinity analysis system f
 - sentence-transformers for semantic similarity (384-dim embeddings)
 - SQLite for caching sentiment results, interaction pairs, and affinity scores
 - Keyword libraries for pattern matching (user-customizable)
+- **Preprocessing-first architecture** - O(N) single-pass collection of 29 statistics before dimension calculations
 - Lazy evaluation with caching strategy (analyze on-demand, persist results)
 
 **Key Design Decisions**:
+- **⚠️ PREPROCESSING PRIORITY**: Extract preprocessing as independent Phase 2.5 layer before any dimension work
 - Speech unit merging (5-min threshold) to reduce computation
 - Interaction pair construction as basic analysis unit
-- Multi-level caching (sentiment → pairs → scores) for performance
+- Multi-level caching (sentiment → pairs → preprocessing → scores) for performance
 - Hierarchical configuration (global → per-conversation → per-analysis)
 - 阿澄ful degradation (fallback to neutral on analysis failures)
+- **Performance optimization**: O(N) preprocessing vs O(6N) for attitude tendency (6x speedup)
 
 ## Technical Context
 
@@ -92,34 +95,45 @@ backend/
 ├── app/
 │   ├── services/
 │   │   └── analysis/
-│   │       ├── sentiment_service.py                # NEW - SnowNLP integration
-│   │       ├── interaction_pair_builder.py         # NEW - Speech unit + pair construction
-│   │       ├── emotional_resonance_service.py      # NEW - Dimension 1
-│   │       ├── chat_positivity_service.py          # NEW - Dimension 2
-│   │       ├── attitude_tendency_service.py        # NEW - Dimension 3
-│   │       ├── preference_compatibility_service.py # NEW - Dimension 4
-│   │       ├── affinity_analysis_service.py        # NEW - Main orchestrator
+│   │       ├── sentiment_service.py                # NEW - SnowNLP integration (Phase 2.5)
+│   │       ├── preprocessing_service.py            # NEW - Basic statistics collection (Phase 2.5)
+│   │       ├── session_manager.py                  # NEW - Session splitting logic (Phase 2.5)
+│   │       ├── preprocessing_orchestrator.py       # NEW - Coordinates all preprocessing (Phase 2.5)
+│   │       ├── interaction_pair_builder.py         # NEW - Speech unit + pair construction (Phase 2.5)
+│   │       ├── keyword_libraries.py                # NEW - Keyword CRUD (Phase 2.5)
+│   │       ├── emotional_resonance_service.py      # NEW - Dimension 1 (uses preprocessing)
+│   │       ├── chat_positivity_service.py          # NEW - Dimension 2 (uses preprocessing)
+│   │       ├── attitude_tendency_service.py        # NEW - Dimension 3 (uses preprocessing)
+│   │       ├── preference_compatibility_service.py # NEW - Dimension 4 (uses preprocessing)
+│   │       ├── affinity_analysis_service.py        # NEW - Main orchestrator (calls preprocessing first)
 │   │       ├── affinity_config.py                  # NEW - Config management
-│   │       ├── keyword_libraries.py                # NEW - Keyword CRUD
-│   │       ├── preprocessing_service.py            # EXISTING - Will use
 │   │       └── analysis_service.py                 # EXISTING - Will extend
 │   ├── db/
 │   │   ├── schema.sql                               # EXISTING - Will extend
 │   │   └── migrations/
-│   │       ├── sentiment_cache.sql                  # NEW
-│   │       ├── speech_units.sql                     # NEW
-│   │       ├── interaction_pairs.sql                # NEW
-│   │       ├── affinity_config.sql                  # NEW
-│   │       ├── keyword_libraries.sql                # NEW
-│   │       └── affinity_scores.sql                  # NEW
+│   │       ├── sentiment_cache.sql                  # NEW (Phase 2)
+│   │       ├── speech_units.sql                     # NEW (Phase 2.5)
+│   │       ├── interaction_pairs.sql                # NEW (Phase 2.5)
+│   │       ├── session_data.sql                     # NEW (Phase 2.5)
+│   │       ├── preprocessed_statistics.sql          # NEW (Phase 2.5)
+│   │       ├── affinity_config.sql                  # NEW (Phase 2)
+│   │       ├── keyword_libraries.sql                # NEW (Phase 2)
+│   │       └── affinity_scores.sql                  # NEW (Phase 2)
 │   └── webview/
-│       └── bridge.py                                # EXISTING - Will extend (add 8 endpoints)
+│       └── bridge.py                                # EXISTING - Will extend (add 10 endpoints)
 ├── scripts/
 │   └── populate_default_keywords.py                 # NEW - Seed default keywords
 └── tests/
-    ├── test_sentiment_service.py                    # NEW
-    ├── test_interaction_pairs.py                    # NEW
-    ├── test_affinity_analysis.py                    # NEW
+    ├── test_sentiment_service.py                    # NEW (Phase 2.5)
+    ├── test_preprocessing_orchestrator.py           # NEW (Phase 2.5)
+    ├── test_keyword_libraries.py                    # NEW (Phase 2.5)
+    ├── test_attitude_preprocessing.py               # NEW (Phase 2.5)
+    ├── test_interaction_pairs.py                    # NEW (Phase 2.5)
+    ├── test_emotional_resonance.py                  # NEW (Phase 3)
+    ├── test_chat_positivity.py                      # NEW (Phase 4)
+    ├── test_attitude_tendency.py                    # NEW (Phase 5)
+    ├── test_preference_compatibility.py             # NEW (Phase 6)
+    ├── test_affinity_analysis_integration.py        # NEW (Phase 10)
     └── fixtures/
         └── conversation_*.json                       # NEW - Test data
 
@@ -131,6 +145,7 @@ frontend/
 │   │   └── affinity/
 │   │       ├── AffinityScoreCard.vue                # NEW - Score display
 │   │       ├── DimensionRadar.vue                   # NEW - Radar chart
+│   │       ├── SubScoreBreakdown.vue                # NEW - Detailed breakdown
 │   │       ├── ConfigPanel.vue                      # NEW - Configuration form
 │   │       └── KeywordEditor.vue                    # NEW - Keyword management
 │   └── api/
@@ -143,8 +158,9 @@ frontend/
 **Rationale**:
 - Chrono Trace is a PyWebView desktop app with Vue 3 frontend
 - Backend Python services handle all analysis logic
+- **⚠️ PREPROCESSING LAYER**: Three new services (preprocessing_service.py, session_manager.py, preprocessing_orchestrator.py) collect 29 statistics in O(N) single pass
 - Frontend Vue components display results and configuration UI
-- Clear separation: analysis in backend, presentation in frontend
+- Clear separation: preprocessing → dimensions → orchestrator → API → frontend
 
 ## Complexity Tracking
 
@@ -181,15 +197,17 @@ All design decisions follow standard industry practices for Python + Vue web app
    - Semantic similarity valleys identify topic boundaries
    - Fallback to time gap (>30 min) for robustness
 
-6. **Database Schema**: 6 new tables
+6. **Database Schema**: 9 new tables (updated from 6)
    - sentiment_cache, speech_units, interaction_pairs
+   - session_data, preprocessed_statistics (NEW for preprocessing layer)
    - affinity_config, keyword_libraries, affinity_scores
    - Estimated storage: ~16.8 MB per 10K-message conversation
 
-7. **Performance Optimization**: Multi-level caching
+7. **Performance Optimization**: Multi-level caching + Preprocessing-first architecture
+   - **⚠️ PREPROCESSING LAYER**: O(N) single-pass collection of 29 statistics (reduces attitude tendency from O(6N) → O(1), 6x speedup)
    - Sentence embeddings: LRU cache (max 10K entries)
    - Sentiment results: Database cache (persisted)
-   - Interaction pairs: Database cache (rebuild on config change)
+   - Preprocessed statistics: Database cache (invalidate on config/keyword change)
    - Dimension scores: Database cache (invalidate on config/keyword change)
 
 8. **Configuration Management**: Hierarchical
@@ -290,92 +308,174 @@ All design decisions follow standard industry practices for Python + Vue web app
 
 ---
 
-## Phase 2: Task Breakdown (NEXT STEP)
+## Phase 2: Task Breakdown ✅ COMPLETE
 
-**Command**: Run `/speckit.tasks` to generate detailed task list
+**Output**: [tasks.md](tasks.md)
 
-**Expected Output**: [tasks.md](tasks.md)
+**Task Categories Updated**:
 
-**Task Categories**:
-1. **Database Migration** (3 tasks)
-   - Create migration scripts for 6 tables
-   - Populate default keywords
+1. **Database Migration** (7 tasks)
+   - Create migration scripts for 9 tables (including 2 new preprocessing tables)
+   - Populate default keywords (6 categories)
    - Test migration on fresh database
 
-2. **Backend Core Services** (12 tasks)
-   - juitar: sentiment_service.py, interaction_pair_builder.py
-   - juitar: emotional_resonance_service.py (Dimension 1)
-   - ting: keyword_libraries.py, affinity_config.py
-   - ting: chat_positivity_service.py (Dimension 2)
-   - ting: attitude_tendency_service.py (Dimension 3)
-   - ting: preference_compatibility_service.py (Dimension 4)
-   - joint: affinity_analysis_service.py (orchestrator)
+2. **⚠️ PREPROCESSING LAYER (Phase 2.5)** (11 tasks) **CRITICAL PATH - BLOCKS ALL DIMENSIONS**
+   - **Week 1: Preprocessing Implementation (juitar || ting fully parallel)**
+   - juitar (7 tasks):
+     - T016-T019: SentimentService + tests + caching
+     - T020-A/B/C: BasicPreprocessingService + PairPreprocessingService + SessionManager
+   - ting (3 tasks):
+     - T021-T022: KeywordLibraries + tests
+     - T023-T024: AttitudePreprocessingService + tests
+   - joint (1 task):
+     - T025-T026: PreprocessingOrchestrator + integration tests
+   - **Summary**: Collect 29 statistics in O(N) single pass, cache to database
 
-3. **Backend API Integration** (2 tasks)
-   - Update bridge.py with 8 endpoints
+3. **Backend Core Services - 4 Dimensions** (14 tasks, fully parallel after preprocessing)
+   - ting (2 tasks): T027-T028 - Emotional Resonance Service (Dimension 1)
+   - juitar (2 tasks): T029-T032 - Chat Positivity Service (Dimension 2)
+   - ting (2 tasks): T033-T036 - Attitude Tendency Service (Dimension 3)
+   - juitar (2 tasks): T037-T040 - Preference Compatibility Service (Dimension 4)
+   - **All dimensions use preprocessed statistics** (O(1) lookup vs O(N) iteration)
+
+4. **Orchestrator & Scoring** (3 tasks)
+   - juitar: T041-T042 - AffinityAnalysisService (calls preprocessing first)
+   - ting: T043 - Interpretation text generation
+
+5. **Backend API Integration** (10 tasks)
+   - Update bridge.py with 10 endpoints (analyze, progress, scores, config, keywords, preferences)
    - Add error handling and validation
 
-4. **Frontend Implementation** (5 tasks)
-   - ting: AffinityView.vue (main page)
-   - ting: AffinityScoreCard.vue, DimensionRadar.vue
-   - ting: ConfigPanel.vue, KeywordEditor.vue
-   - ting: affinity.ts (API client)
+6. **Frontend Implementation** (9 tasks)
+   - ting: AffinityView.vue (main page) + 4 components (ScoreCard, Radar, Breakdown, KeywordEditor)
+   - juitar: ConfigPanel.vue + KeywordEditor.vue + Router integration
 
-5. **Testing** (4 tasks)
-   - Unit tests for all services
-   - Integration test for full pipeline
+7. **Testing** (12 tasks)
+   - Unit tests for all preprocessing and dimension services
+   - Integration test for full pipeline (including preprocessing O(N) validation)
    - E2E test for UI workflow
    - Performance test (100K messages)
 
-6. **Documentation & Polish** (2 tasks)
-   - Update user documentation
+8. **Documentation & Polish** (14 tasks)
+   - Update user documentation with preprocessing architecture
    - Performance optimization & profiling
+   - Code quality validation
 
-**Total Estimated Tasks**: ~28 tasks over 5 weeks (see COLLABORATION_GUIDE.md for timeline)
+**Total Tasks**: 88 tasks (reduced from 99 by consolidating)
 
 **Developer Assignment**:
-- **juitar**: ~12 tasks (sentiment, interaction pairs, Dimension 1, orchestration, testing)
-- **ting**: ~14 tasks (Dimensions 2-4, keywords, config, frontend UI, docs)
-- **joint**: ~2 tasks (API integration, integration testing, final polish)
+- **juitar**: ~38 tasks (preprocessing core + Dimensions 2/4 + orchestrator + API + frontend components)
+- **ting**: ~38 tasks (preprocessing attitude + Dimensions 1/3 + frontend main + tests + docs)
+- **joint**: ~12 tasks (preprocessing orchestrator + integration tests + final polish)
+
+**Week-by-Week Timeline**:
+- **Week 1**: Preprocessing Layer (Phase 2.5) - ⚠️ CRITICAL GATE
+  - Day 1-2: juitar (SentimentService) || ting (KeywordLibraries)
+  - Day 3-4: juitar (Basic/Pair/Session preprocessing) || ting (Attitude preprocessing)
+  - Day 5: joint (PreprocessingOrchestrator + tests)
+- **Week 2-3**: 4 Dimensions (Fully Parallel)
+  - juitar: US1 + US2 + US4 + Orchestrator
+  - ting: US3 + Backend API
+- **Week 4**: Frontend (juitar || ting fully parallel)
+- **Week 5**: Testing + Polish (joint work)
 
 ---
 
 ## Dependencies & Execution Order
 
-### Phase Dependencies
+### Phase Dependencies (Updated with Preprocessing-First Architecture)
 
 ```
 Phase 0 (Research) ✅ COMPLETE
   ↓
 Phase 1 (Design) ✅ COMPLETE
   ↓
-Phase 2 (Tasks) ← NEXT STEP
+Phase 2 (Tasks) ✅ COMPLETE
   ↓
-Phase 3 (Implementation)
+Phase 2.5 (Preprocessing Layer) ⚠️ CRITICAL PATH - BLOCKS ALL DIMENSIONS
   ↓
-Phase 4 (Testing & Polish)
+Phase 3-6 (4 Dimensions - Fully Parallel after preprocessing)
+  ↓
+Phase 7 (Orchestrator)
+  ↓
+Phase 8 (Backend API)
+  ↓
+Phase 9 (Frontend)
+  ↓
+Phase 10-11 (Testing & Polish)
 ```
 
-### Within Phase 2 (Task Level)
+### Within Phase 2.5 (Preprocessing Layer - Critical Path)
 
-**Critical Path** (must be sequential):
-1. Database migration (blocks all analysis code)
-2. sentiment_service.py (blocks interaction_pair_builder, all dimensions)
-3. interaction_pair_builder.py (blocks all dimensions)
-4. affinity_analysis_service.py (orchestrator, requires all dimensions)
-5. Bridge API integration (blocks frontend)
-6. Frontend UI (depends on API)
+**Week 1: Preprocessing (juitar || ting fully parallel)**
 
-**Parallel Opportunities**:
-- ting can implement keyword_libraries.py while juitar implements sentiment_service.py
-- ting can implement Dimensions 2-4 in parallel (after dependencies ready)
-- Frontend components can be built in parallel (after API contracts defined)
+```
+Day 1-2:
+  juitar: T016-T019 (SentimentService + tests + caching)
+  ting: T021-T022 (KeywordLibraries + tests)
+  ↓
+Day 3-4:
+  juitar: T020-A/B/C (Basic/Pair/Session preprocessing)
+  ting: T023-T024 (Attitude preprocessing + tests)
+  ↓
+Day 5:
+  joint: T025-T026 (PreprocessingOrchestrator + integration tests)
+  ↓
+⚠️ GATE: Preprocessing complete, ALL 29 statistics available, dimensions can begin
+```
 
-**Collaboration Points**:
-- juitar provides semantic similarity function → ting uses for topic continuity
-- ting provides keyword libraries → juitar uses for emotional resonance
-- ting provides config management → joint uses for all dimensions
-- Both work on integration testing → verify end-to-end pipeline
+**Preprocessing Architecture Benefits**:
+- **Performance**: O(N) preprocessing vs O(6N) for attitude tendency (6x speedup)
+- **Parallel Development**: Week 1 preprocessing enables Week 2-3 fully parallel dimension work
+- **Code Reusability**: All dimensions reuse same 29 preprocessed statistics
+- **Cache Efficiency**: Single preprocessing pass cached for all dimensions
+
+**29 Preprocessed Statistics**:
+1. **Message Statistics (4)**: total_message_count, total_positive_count, total_negative_count, total_neutral_count
+2. **Time Statistics (4)**: conversation_start_timestamp, conversation_end_timestamp, conversation_duration_days, chat_days_count
+3. **Length Statistics (2)**: total_characters, average_message_length
+4. **Pair Statistics (3)**: total_interaction_pairs, bidirectional_pairs, same_parity_pairs
+5. **Session Statistics (3)**: total_sessions, average_session_length, average_session_gap, session_initiators (array)
+6. **Attitude Statistics (6)**: emoji_message_count, voice_message_count, video_message_count, nickname_message_count, privacy_message_count, holiday_message_count, holidays_sent_count
+7. **Derived Statistics (7)**: Calculated by orchestrator using above 22 raw statistics
+
+### Within Phases 3-6 (4 Dimensions - Fully Parallel)
+
+**After Preprocessing Complete**:
+```
+Week 2-3 (juitar || ting fully parallel):
+  juitar: T027-T028 (US1 Emotional Resonance) + T031-T032 (US2 Chat Positivity)
+  ting: T033-T036 (US3 Attitude Tendency)
+
+Week 3 (juitar || ting fully parallel):
+  juitar: T037-T040 (US4 Preference Compatibility) + T041-T043 (Orchestrator)
+  ting: T044-T053 (Backend API - 10 endpoints)
+```
+
+**All Dimensions Use Preprocessed Statistics**:
+- US1 (Emotional Resonance): Uses total_positive_count, total_interaction_pairs, sentiment_cache embeddings
+- US2 (Chat Positivity): Uses total_message_count, conversation_duration_days, average_message_length, session_initiators
+- US3 (Attitude Tendency): Uses emoji_message_count, voice_message_count, video_message_count, nickname_message_count, privacy_message_count, holidays_sent_count (O(1) lookup vs O(6N) iteration)
+- US4 (Preference Compatibility): Uses total_sessions, session semantic similarities
+
+### Collaboration Points (Updated)
+
+**Week 1 (Preprocessing)**:
+- juitar provides SentimentService → both use for sentiment analysis
+- ting provides KeywordLibraries → juitar uses for preprocessing attitude statistics
+- joint creates PreprocessingOrchestrator → coordinates all preprocessing services
+
+**Week 2-3 (Dimensions - Fully Parallel)**:
+- **NO COLLABORATION BOTTLENECKS** - all dimensions run independently using preprocessed statistics
+- juitar implements US1/US2/US4 + Orchestrator
+- ting implements US3 + Backend API
+
+**Week 4 (Frontend)**:
+- juitar implements ConfigPanel + Router integration
+- ting implements AffinityView + 4 components
+
+**Week 5 (Testing)**:
+- joint work on integration testing, performance validation, final polish
 
 ---
 
@@ -430,23 +530,182 @@ Phase 4 (Testing & Polish)
 
 ---
 
-## Next Steps
+## Preprocessing Architecture Design Decision
 
-1. **Immediate**: Run `/speckit.tasks` to generate detailed task breakdown
-2. **Week 1**: juitar - sentiment service + interaction pairs
-   ting - keyword libraries + config management
-3. **Week 2-3**: juitar - Dimension 1 (emotional resonance)
-   ting - Dimension 2 (chat positivity)
-4. **Week 4**: ting - Dimensions 3-4 (attitude + preference)
-   juitar - Orchestrator service
-5. **Week 5**: Joint - Integration testing, frontend UI, polish
+**Problem**: Original architecture had preprocessing logic scattered across individual dimension tasks, creating serial dependency bottlenecks where ting's dimension work (US2-US4) depended on juitar completing US1 first.
 
-**Ready for Implementation**: ✅ YES
+**Solution**: Extract preprocessing as independent Phase 2.5 layer with dedicated services that collect all 29 statistics in a single O(N) pass through the conversation data.
 
-All planning artifacts complete, technology decisions finalized, contracts defined, developer onboarding materials ready. Proceed to Phase 2 (task breakdown) and begin implementation.
+**Architecture Change**:
+
+**Before** (Serial Bottleneck):
+```
+Week 1-2: juitar works on US1 (Emotional Resonance)
+  ├─ SentimentService
+  ├─ InteractionPairBuilder (contains embedded preprocessing)
+  └─ EmotionalResonanceService
+  ↓
+Week 3-4: ting blocked, waiting for US1 to complete
+  ├─ ChatPositivityService (depends on InteractionPairBuilder)
+  ├─ AttitudeTendencyService (repeats preprocessing - O(6N) complexity)
+  └─ PreferenceCompatibilityService (depends on sessions)
+  ↓
+Week 5: Orchestrator + API + Frontend
+```
+
+**After** (Parallel Development):
+```
+Week 1: Preprocessing Layer (juitar || ting fully parallel)
+  juitar:
+    ├─ T016-T019: SentimentService + tests + caching
+    └─ T020-A/B/C: Basic/Pair/Session preprocessing
+  ting:
+    ├─ T021-T022: KeywordLibraries + tests
+    └─ T023-T024: Attitude preprocessing
+  joint:
+    └─ T025-T026: PreprocessingOrchestrator + integration tests
+  ↓
+⚠️ GATE: All 29 statistics collected and cached
+  ↓
+Week 2-3: 4 Dimensions (Fully Parallel)
+  juitar:
+    ├─ US1 (Emotional Resonance) - uses preprocessed statistics
+    ├─ US2 (Chat Positivity) - uses preprocessed statistics
+    ├─ US4 (Preference Compatibility) - uses preprocessed statistics
+    └─ Orchestrator
+  ting:
+    ├─ US3 (Attitude Tendency) - uses preprocessed statistics
+    └─ Backend API (10 endpoints)
+  ↓
+Week 4: Frontend (juitar || ting fully parallel)
+Week 5: Testing + Polish (joint work)
+```
+
+**New Service Structure**:
+
+1. **SentimentService** (juitar - Phase 2.5)
+   - SnowNLP integration for polarity + intensity
+   - Sentence embedding generation (384-dim vectors)
+   - Batch processing (32 messages/batch)
+   - Database caching (sentiment_cache table)
+
+2. **BasicPreprocessingService** (juitar - Phase 2.5)
+   - collect_message_statistics() - 4 basic constants
+   - collect_time_statistics() - 4 time constants
+   - collect_length_statistics() - 2 length constants
+   - All in O(N) single pass
+
+3. **PairPreprocessingService** (juitar - Phase 2.5)
+   - build_speech_units() - merge consecutive messages (< 5 min gap)
+   - build_interaction_pairs() - create alternating pairs
+   - collect_pair_statistics() - 3 pair constants
+   - Database caching (speech_units, interaction_pairs tables)
+
+4. **SessionManager** (juitar - Phase 2.5)
+   - split_sessions() - semantic similarity valleys (sliding window algorithm)
+   - calculate_semantic_similarity() - cosine similarity on embeddings
+   - collect_session_statistics() - 3 session constants
+   - identify_session_initiators() - mark session initiators (for active initiation)
+   - Database caching (session_data table)
+
+5. **KeywordLibraries** (ting - Phase 2.5)
+   - get_keywords(category) - retrieve keywords
+   - add_keywords(category, keywords) - add custom keywords
+   - remove_keywords(category, keywords) - remove keywords
+   - check_keywords_in_text(text, keywords) - pattern matching
+   - Database persistence (keyword_libraries table)
+
+6. **AttitudePreprocessingService** (ting - Phase 2.5)
+   - collect_attitude_statistics() - single-pass collection of 6 attitude message counts
+   - O(N) vs O(6N) complexity (6x speedup for attitude tendency)
+   - Uses KeywordLibraries for pattern matching
+
+7. **PreprocessingOrchestrator** (joint - Phase 2.5)
+   - orchestrate_preprocessing() - main entry point
+   - Coordinates all 4 preprocessing services (basic, pairs, sessions, attitude)
+   - Validates cached data before preprocessing
+   - Invalidates cache on config/keyword change
+   - Returns all 29 statistics as PreprocessedStatistics dataclass
+
+**Performance Improvements**:
+
+1. **Attitude Tendency**: O(6N) → O(1) lookup (6x speedup)
+   - Before: 6 iterations through messages for 6 keyword categories
+   - After: Single preprocessing iteration, dimensions use O(1) lookup
+
+2. **Active Initiation**: Simplified from O(N) → O(1) lookup
+   - Before: Traverse interaction pairs to determine initiation type
+   - After: Use session_initiators array from preprocessing
+
+3. **Holiday Greeting**: Improved accuracy
+   - Before: holiday_message_count / total_message_count (inaccurate)
+   - After: holidays_sent_count / total_holiday_count (accurate coverage)
+
+**Database Schema Changes**:
+
+**New Tables** (9 total, up from 6):
+1. sentiment_cache (Phase 2) - SnowNLP + embedding results
+2. speech_units (Phase 2.5) - Merged consecutive messages
+3. interaction_pairs (Phase 2.5) - Alternating speech unit pairs
+4. session_data (Phase 2.5) - NEW: Session boundaries + semantic similarities
+5. preprocessed_statistics (Phase 2.5) - NEW: All 29 constants cached
+6. affinity_config (Phase 2) - Per-conversation configuration
+7. keyword_libraries (Phase 2) - Global keyword sets
+8. affinity_scores (Phase 2) - Computed dimension + overall scores
+
+**Impact Summary**:
+
+✅ **Benefits**:
+- **Performance**: 6x speedup for attitude tendency (O(6N) → O(1))
+- **Parallel Development**: Week 1 preprocessing enables Week 2-3 fully parallel dimension work
+- **Code Reusability**: All dimensions reuse same 29 preprocessed statistics
+- **Maintainability**: Clear separation: preprocessing → dimensions → orchestrator
+- **Cache Efficiency**: Single preprocessing pass cached for all dimensions
+
+⚠️ **Risks Mitigated**:
+- Serial dependency bottleneck (ting blocked by juitar) → Fully parallel after Week 1
+- Code duplication (preprocessing in each dimension) → Single preprocessing layer
+- Performance degradation (O(6N) for attitude) → O(N) preprocessing + O(1) lookup
+
+**Implementation Effort**:
+- **Additional Tasks**: 11 preprocessing tasks (was scattered across dimensions)
+- **Additional Services**: 3 new preprocessing services (BasicPreprocessingService, SessionManager, PreprocessingOrchestrator)
+- **Additional Tables**: 2 new preprocessing tables (session_data, preprocessed_statistics)
+- **Net Impact**: +11 tasks but enables fully parallel Week 2-3 (net time savings)
 
 ---
 
-**Plan Status**: ✅ COMPLETE (Phase 0 + Phase 1)
-**Last Updated**: 2026-01-08
-**Next Command**: `/speckit.tasks` (generate task list)
+## Next Steps
+
+1. **Immediate**: ✅ COMPLETE - All planning artifacts (spec.md, plan.md, tasks.md) updated with preprocessing-first architecture
+2. **Week 1**: Preprocessing Layer (Phase 2.5) - ⚠️ CRITICAL PATH
+   - juitar: T016-T020 (SentimentService + Basic/Pair/Session preprocessing)
+   - ting: T021-T024 (KeywordLibraries + Attitude preprocessing)
+   - joint: T025-T026 (PreprocessingOrchestrator + tests)
+3. **Week 2-3**: 4 Dimensions (Fully Parallel)
+   - juitar: US1 + US2 + US4 + Orchestrator
+   - ting: US3 + Backend API
+4. **Week 4**: Frontend (juitar || ting fully parallel)
+5. **Week 5**: Testing + Polish (joint work)
+
+**Ready for Implementation**: ✅ YES
+
+All planning artifacts complete and synchronized:
+- ✅ spec.md - Updated with Phase 0-4 preprocessing requirements (FR-000 to FR-025)
+- ✅ plan.md - Updated with preprocessing architecture, Week 1-5 timeline
+- ✅ tasks.md - Updated with 88 tasks, Phase 2.5 preprocessing as critical path
+- ✅ history_analyze.md - Updated with 6-step preprocessing flow
+
+Preprocessing-first architecture maximizes parallel development efficiency for 2-person team (juitar + ting).
+
+---
+
+**Plan Status**: ✅ COMPLETE (Phase 0 + Phase 1 + Phase 2)
+**Last Updated**: 2026-01-09 (Updated with preprocessing-first architecture)
+**Next Action**: Begin Week 1 - Preprocessing Layer implementation
+
+---
+
+**Plan Status**: ✅ COMPLETE (Phase 0 + Phase 1 + Phase 2)
+**Last Updated**: 2026-01-09 (Updated with preprocessing-first architecture)
+**Next Action**: Begin Week 1 - Preprocessing Layer implementation

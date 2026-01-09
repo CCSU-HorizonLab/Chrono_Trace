@@ -54,15 +54,27 @@ python app_dev.py
 
 ---
 
-## 📖 文档
+## 📖 文档导航
 
-| 文档 | 说明 |
-|------|------|
-| [项目总览](PROJECT.md) | 项目概述、技术架构与核心功能 |
-| [开发待办](TODO.md) | 开发进度与任务规划 |
-| [安装与配置](docs/SETUP.md) | 快速上手指南 |
-| [开发文档](docs/DEVELOPMENT.md) | 技术架构与API说明 |
-| [更新日志](CHANGELOG.md) | 版本历史与变更记录 |
+### 🚀 快速入门
+- 📖 **[本文档](Readme.md)** - 项目介绍和快速开始
+- 📖 **[安装指南](docs/SETUP.md)** - 环境搭建和配置步骤
+- 🏗️ **[架构说明](docs/DEVELOPMENT.md)** - 技术架构和目录结构
+
+### 👥 开发团队
+- 📋 **[协作流程](docs/SIMPLE_WORKFLOW.md)** - Git工作流和提交规范
+- 📋 **[juitar的任务](docs/JUITAR_TASKS.md)** - juitar负责的36个任务
+- 🤖 **[AI助手上下文](docs/CLAUDE.md)** - Claude Code的配置
+
+### 📊 功能规格 (002-affinity-analysis)
+- 📝 **[好感度需求](docs/history_analyze.md)** - 4维度分析算法说明
+- 📦 **[规格文档](specs/002-affinity-analysis/spec.md)** - 完整功能规格（40个需求）
+- ✅ **[任务清单](specs/002-affinity-analysis/tasks.md)** - 84个开发任务
+- 📚 **[开发指南](specs/002-affinity-analysis/quickstart.md)** - 代码示例和数据库设计
+- 🔌 **[API规范](specs/002-affinity-analysis/contracts/bridge_api.yaml)** - 8个RESTful端点
+
+### 📝 其他
+- **[更新日志](CHANGELOG.md)** - 版本历史与变更记录
 
 ---
 

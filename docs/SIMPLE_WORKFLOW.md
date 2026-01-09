@@ -4,6 +4,8 @@
 **功能**: Conversation Affinity Analysis System
 **开发者**: juitar & ting
 **创建日期**: 2026-01-08
+**最后更新**: 2026-01-09
+**架构**: 预处理优先 (Preprocessing-First)
 **分支策略**: **直接在master上开发** (适合2人小团队)
 
 ---
@@ -44,14 +46,20 @@ git branch
 ### 2. 查看文档 (必需!)
 
 ```bash
-# 查看任务列表
+# 查看任务列表 (88个任务，预处理优先架构)
 cat specs/002-affinity-analysis/tasks.md
 
 # 查看快速入门指南
 cat specs/002-affinity-analysis/quickstart.md
 
-# 查看合作分工
-cat specs/002-affinity-analysis/COLLABORATION_GUIDE.md
+# 查看功能规格 (包含FR-000到FR-025预处理需求)
+cat specs/002-affinity-analysis/spec.md
+
+# 查看实施计划 (包含预处理架构设计决策)
+cat specs/002-affinity-analysis/plan.md
+
+# 查看技术研究
+cat specs/002-affinity-analysis/research.md
 ```
 
 ### 3. 日常开发流程
@@ -192,108 +200,277 @@ git show v0.1.0-mvp
 
 ---
 
-## 📊 任务分工概览
+## 📊 任务分工概览 (预处理优先架构)
 
-### juitar 的任务 (~36个任务)
+### 任务分配统计
 
-**Phase 1-2** (基础, 共同完成):
-- T001-T015: 依赖安装、数据库迁移、测试数据
+| 开发者 | 任务数量 | 主要负责 |
+|--------|---------|---------|
+| **juitar** | 38任务 | 预处理核心 + 维度1/2/4 + 编排器 + API + 前端组件 |
+| **ting** | 38任务 | 预处理态度 + 维度3 + 前端主视图 + 测试 + 文档 |
+| **joint** | 12任务 | 预处理编排器 + 集成测试 + 最终优化 |
+| **总计** | 88任务 | - |
 
-**Phase 3** (情感共振率, 9个任务):
-- T016-T021: SnowNLP集成、交互对构建、5个子维度
-- 核心算法实现
-
-**Phase 7** (编排服务, 3个任务):
-- T037-T039: 主分析服务、总分计算、进度跟踪
-
-**Phase 8** (后端API, 一半端点):
-- T040, T041, T043, T045, T047, T049
-
-**Phase 10-11** (测试优化, 共同完成):
-- 所有集成测试和性能测试
-
-**预计时间**: 3-4周
-
-### ting 的任务 (~40个任务)
-
-**Phase 1-2** (基础, 共同完成):
-- T001-T015: 依赖安装、数据库迁移、测试数据
-
-**Phase 4** (聊天积极度, 4个任务):
-- T025-T027: 5个子维度计算
-
-**Phase 5** (态度倾向, 6个任务):
-- T029-T032: 5个子维度计算、关键词集成
-
-**Phase 6** (喜好维度, 6个任务):
-- T033-T036: 2个子维度计算、配置集成
-
-**Phase 9** (前端UI, 8个任务):
-- T050-T058: API客户端、主页面、5个组件、路由集成
-
-**Phase 10-11** (测试优化, 共同完成):
-- 所有集成测试和性能测试
-
-**预计时间**: 3-4周
+**关键架构**: 预处理优先 - Week 1完成29个统计的O(N)单次遍历收集，Week 2-3四维度完全并行
 
 ---
 
-## 🗓️ 5周时间表 (简化版)
+## 📅 详细周计划 (预处理优先架构)
 
-### Week 1: 基础 + 核心算法
+### Week 1: 预处理层 (⚠️ CRITICAL PATH)
 
-**juitar**:
-- T001-T003: 依赖安装
-- T004-T015: 数据库迁移(共同)
-- T016-T021: 情感共振率实现
+**目标**: 完成预处理层，收集29个统计常量，**阻塞所有维度工作**
 
-**ting**:
-- T001-T003: 依赖安装
-- T004-T015: 数据库迁移(共同)
-- T022: 关键词库实现
-- T029-T032: 态度倾向实现(开始)
+#### Day 1-2 (juitar || ting 完全并行)
 
-**目标**: 完成基础设施和US1
+**juitar (7任务)**:
+- **T016**: 创建 `test_sentiment_service.py` - SnowNLP准确性测试
+- **T017**: 创建 `test_interaction_pairs.py` - 发言单位合并和交互对构建测试
+- **T018**: 实现 `SentimentService` 类
+  - 文件: `backend/app/services/analysis/sentiment_service.py`
+  - 功能: SnowNLP集成，批量情感分析（32条/批次）
+  - 输出: 极性(-1/0/1)、强度(-1到1)、句向量(384维)
+- **T019**: 实现情感缓存
+  - 功能: 写入/读取 `sentiment_cache` 表
+  - 批量插入优化
 
-### Week 2: 评分系统 + UI基础
+**ting (2任务)**:
+- **T021**: 实现 `KeywordLibraries` 类
+  - 文件: `backend/app/services/analysis/keyword_libraries.py`
+  - 功能: 关键词CRUD操作
+  - 支持6个分类: positive, negative, empathy, soothing, privacy, holiday
+- **T022**: 创建 `test_keyword_libraries.py` - CRUD操作测试
 
-**juitar**:
-- T037-T039: 编排服务实现
+#### Day 3-4 (juitar || ting 完全并行)
 
-**ting**:
-- T033-T036: 喜好维度实现
-- T050-T054: 前端API客户端和部分组件
+**juitar (3任务)**:
+- **T020-A**: 实现 `BasicPreprocessingService` (Part 1: 基础统计)
+  - 文件: `backend/app/services/analysis/preprocessing_service.py`
+  - `collect_message_statistics()` - 4个基础常量
+  - `collect_time_statistics()` - 4个时间常量
+  - `collect_length_statistics()` - 2个长度常量
+  - **O(N) 单次遍历**
 
-**目标**: 完成US3-US4和前端基础
+- **T020-B**: 实现 `PairPreprocessingService` (Part 2: 交互对)
+  - `build_speech_units()` - 合并连续消息 (< 5分钟)
+  - `build_interaction_pairs()` - 构建交替交互对
+  - `collect_pair_statistics()` - 3个交互对常量
+  - 缓存到 `speech_units`, `interaction_pairs` 表
 
-### Week 3: API集成
+- **T020-C**: 实现 `SessionManager` (Part 3: 会话)
+  - 文件: `backend/app/services/analysis/session_manager.py`
+  - `split_sessions()` - 语义相似度谷值检测
+  - `calculate_semantic_similarity()` - 余弦相似度
+  - `collect_session_statistics()` - 3个会话常量
+  - `identify_session_initiators()` - 标记会话发起人
+  - 缓存到 `session_data` 表
 
-**juitar**:
-- T040-T049: 后端API实现(一半)
+**ting (2任务)**:
+- **T023**: 实现 `AttitudePreprocessingService` (Part 4: 态度统计)
+  - 文件: `backend/app/services/analysis/preprocessing_service.py`
+  - `collect_attitude_statistics()` - 单次遍历收集6类态度消息数
+  - **O(N) vs O(6N) 复杂度** (6倍加速)
+  - 使用 `KeywordLibraries` 进行模式匹配
 
-**ting**:
-- T025-T027: 聊天积极度实现(US2)
-- T055-T058: 前端组件完成
+- **T024**: 创建 `test_attitude_preprocessing.py` - 单次遍历态度统计验证
 
-**目标**: 完成US2和所有API
+#### Day 5 (joint 协作)
 
-### Week 4: 测试验证
+**joint (1任务)**:
+- **T025**: 实现 `PreprocessingOrchestrator` - 预处理编排器
+  - 文件: `backend/app/services/analysis/preprocessing_orchestrator.py`
+  - `orchestrate_preprocessing()` - 主入口，协调所有预处理服务
+  - `_validate_cached_data()` - 验证缓存有效性
+  - `_collect_all_statistics()` - 调用4个预处理服务
+  - `invalidate_cache()` - 配置/关键词变更时失效缓存
+  - `get_preprocessed_statistics()` - 返回29个常量
 
-**共同**:
-- T059-T069: 单元测试和集成测试
-- T070: 边缘案例测试
-- 修复发现的bug
+- **T026**: 创建 `test_preprocessing_orchestrator.py` - 端到端预处理管道测试
+  - 测试1: 小对话(1,000消息) - 所有29个统计正确收集
+  - 测试2: 缓存命中/未命中行为
+  - 测试3: 缓存失效
+  - 测试4: O(N)复杂度验证
 
-**目标**: 所有测试通过
+**Checkpoint**: ⚠️ CRITICAL GATE - 预处理完成，ALL 29统计可用
 
-### Week 5: 优化上线
+---
 
-**共同**:
-- T071-T084: 性能优化、错误处理、文档编写
-- 代码审查和清理
-- 最终验证
+### Week 2: 四个维度 (完全并行)
 
-**目标**: 生产就绪
+**目标**: 所有4个维度同时开发，**无协作瓶颈**
+
+#### juitar (5任务) - 维度1 + 维度2
+
+**维度1: 情感共振率 (30%权重)**:
+- **T027**: 创建 `test_emotional_resonance.py` - 5个子维度测试
+- **T028**: 实现 `EmotionalResonanceService` 类
+  - 文件: `backend/app/services/analysis/emotional_resonance_service.py`
+  - **使用预处理统计** (O(1)查找)
+  - `calculate_bidirectional_positive_response()` (20%) - 使用 `total_positive_count`, `total_interaction_pairs`
+  - `calculate_polarity_consistency()` (15%) - 使用 `sentiment_cache` 嵌入
+  - `calculate_intensity_matching()` (10%) - 使用 `sentiment_cache` 强度
+  - `calculate_empathy_recognition()` (30%) - 使用关键词库
+  - `calculate_negative_resolution()` (25%) - 使用 `interaction_pairs`
+
+**维度2: 聊天积极度 (30%权重)**:
+- **T029**: 创建 `test_chat_positivity.py` - 5个子维度测试
+- **T030**: 添加回复及时率边界案例测试
+- **T031**: 实现 `ChatPositivityService` 类
+  - 文件: `backend/app/services/analysis/chat_positivity_service.py`
+  - **使用预处理统计** (O(1)查找)
+  - `calculate_daily_message_count()` (10%) - 使用 `total_message_count`, `conversation_duration_days`
+  - `calculate_reply_timeliness()` (20%) - 使用 `interaction_pairs`
+  - `calculate_avg_message_length()` (10%) - 使用 `average_message_length`
+  - `calculate_long_text_ratio()` (15%) - 使用 `long_text_message_count`
+  - `calculate_topic_continuity()` (20%) - 使用 `sessions` (session_manager.split_sessions)
+  - `calculate_active_initiation()` (25%) - **简化**: 使用 `session_initiators` 数组
+
+- **T032**: 扩展 `affinity_config` 表使用
+  - 文件: `backend/app/services/analysis/affinity_config.py`
+  - `get_config()` - 获取配置
+  - `update_config()` - 保存用户覆盖
+  - `validate_config()` - 验证权重和为1.0
+
+#### ting (4任务) - 维度3
+
+**维度3: 态度倾向 (20%权重)**:
+- **T033**: 创建 `test_attitude_tendency.py` - 5个子维度测试
+- **T034**: 添加关键词匹配准确性测试
+- **T035**: 实现 `AttitudeTendencyService` 类
+  - 文件: `backend/app/services/analysis/attitude_tendency_service.py`
+  - **使用预处理统计** (O(1)查找 vs O(6N)遍历)
+  - `calculate_positive_word_frequency()` (25%) - 使用 `total_positive_count`, `total_message_count`
+  - `calculate_negative_word_frequency()` (-20%) - 使用 `total_negative_count`, `total_message_count`
+  - `calculate_multimedia_usage()` (10%) - **优化**: 使用 `emoji_message_count`, `voice_message_count`, `video_message_count`
+  - `calculate_nickname_frequency()` (25%) - 使用 `nickname_message_count`
+  - `calculate_privacy_sharing()` (20%) - 使用 `privacy_message_count`
+  - `calculate_holiday_greeting()` (10%) - **简化**: 使用 `holidays_sent_count`, `total_holiday_count`
+
+- **T036**: 集成 `KeywordLibraries`
+  - **注意**: KeywordLibraries已在预处理中实现(T021)，直接导入使用
+  - 缺失关键词分类时优雅处理
+
+---
+
+### Week 3: 维度4 + 编排器 + API (完全并行)
+
+#### juitar (4任务) - 维度4 + 编排器
+
+**维度4: 喜好兼容度 (20%权重)**:
+- **T037**: 创建 `test_preference_compatibility.py` - 2个子维度测试
+- **T038**: 添加空喜好关键词测试
+- **T039**: 实现 `PreferenceCompatibilityService` 类
+  - 文件: `backend/app/services/analysis/preference_compatibility_service.py`
+  - **使用预处理统计** (O(1)查找)
+  - `calculate_topic_mention_frequency()` (40%) - 使用 `total_sessions`
+  - `calculate_preference_topic_continuity()` (60%) - **优化**: 重用会话语义相似度
+  - `identify_preference_sessions()` - 查找包含喜好关键词的会话
+  - `calculate_session_continuity()` - **优化**: 重用语义相似度逻辑
+
+- **T040**: 添加喜好关键词到 `affinity_config`
+  - 更新 `get_config()` 包含 `preference_keywords_json` 字段
+  - 更新 `update_config()` 处理喜好关键词数组
+  - 验证喜好关键词为非空字符串
+
+**编排器**:
+- **T041**: 实现 `AffinityAnalysisService` 编排器
+  - 文件: `backend/app/services/analysis/affinity_analysis_service.py`
+  - **关键**: 调用 `preprocessing_orchestrator.orchestrate_preprocessing()` 在任何维度计算之前
+  - `analyze()` - 主入口，触发完整分析管道
+  - `_preprocess_conversation()` - 确保预处理编排器完成
+  - `_calculate_all_dimensions()` - 调用所有4个维度服务（现在完全并行，无串行依赖）
+  - `_calculate_overall_score()` - 加权求和
+  - `reanalyze()` - 失效预处理缓存并重新分析
+  - `_generate_progress_updates()` - 发出进度事件
+
+- **T042**: 实现任务跟踪和进度报告
+  - 生成唯一 `task_id`
+  - 存储任务进度到内存或 `backend/data/analysis_tasks.json`
+  - 处理任务取消和错误恢复
+
+#### ting (10任务) - 后端API
+
+**Bridge API 端点**:
+- **T047**: 添加 `GET /affinity/config/{conversation_id}` 端点
+- **T048**: 添加 `PUT /affinity/config/{conversation_id}` 端点
+- **T049**: 添加 `GET /affinity/keywords` 端点
+- **T050**: 添加 `POST /affinity/keywords` 端点
+- **T051**: 添加 `DELETE /affinity/keywords` 端点
+- **T052**: 添加 `GET /affinity/preference-keywords/{conversation_id}` 端点
+- **T053**: 添加 `PUT /affinity/preference-keywords/{conversation_id}` 端点
+
+**文本生成**:
+- **T043**: 添加解释文本生成
+  - `generate_overall_interpretation()` - 总分解释
+  - `aggregate_dimension_interpretations()` - 组合所有维度的解释
+  - `format_score_breakdown()` - 结构化子分数JSON
+
+---
+
+### Week 4: 前端 (juitar || ting 完全并行)
+
+#### ting (6任务) - 主视图 + 4个组件
+
+- **T054**: 创建 `frontend/src/api/affinity.ts` API客户端
+- **T055**: 创建 `frontend/src/views/AffinityView.vue` 主页面
+- **T056**: 创建 `frontend/src/components/affinity/AffinityScoreCard.vue` 组件
+- **T057**: 创建 `frontend/src/components/affinity/DimensionRadar.vue` 组件
+- **T058**: 创建 `frontend/src/components/affinity/SubScoreBreakdown.vue` 组件
+- **T059**: 创建 `frontend/src/components/affinity/KeywordEditor.vue` 组件
+
+#### juitar (3任务) - 配置面板 + 路由集成
+
+- **T060**: 创建 `frontend/src/components/affinity/ConfigPanel.vue` 组件
+- **T061**: 添加 `AffinityView` 到路由
+- **T062**: 在 `ConversationView.vue` 添加"好感度分析"标签/链接
+
+---
+
+### Week 5: 测试 + 优化 (joint 协作)
+
+#### Day 1-2: 所有测试 (joint)
+
+- **T063-T070**: 完成所有单元测试
+- **T071**: 创建 `test_affinity_analysis_integration.py` - 完整管道测试
+- **T072**: 运行性能基准测试 (10,000消息) - 目标: < 2分钟
+- **T073**: 运行性能压力测试 (100,000消息) - 目标: < 5分钟
+- **T074**: 创建 `test_edge_cases.py` - 覆盖所有边界案例
+
+#### Day 3: 性能优化 (juitar)
+
+- **T075**: 实现批处理优化
+- **T076**: 添加句子嵌入的LRU缓存
+- **T077**: 实现数据库查询优化
+
+#### Day 4: 错误处理 + 日志 (ting)
+
+- **T078**: 添加全面错误处理
+- **T079**: 添加结构化日志
+
+#### Day 4: 文档 (ting)
+
+- **T080**: 更新 `backend/README.md` 添加好感度分析部分
+- **T081**: 创建 `frontend/src/views/AffinityView.md` 组件文档
+- **T082**: 更新 `CLAUDE.md` 添加002-affinity-analysis实现注释
+
+#### Day 5: 代码质量 + 验证 (joint)
+
+- **T083-T088**: Linter、格式化、测试验证、quickstart验证
+
+---
+
+## 📦 文档位置
+
+所有规划文档都在 `specs/002-affinity-analysis/` 目录:
+
+- [tasks.md](specs/002-affinity-analysis/tasks.md) - **必读! 88个任务列表 (预处理优先架构)**
+- [quickstart.md](specs/002-affinity-analysis/quickstart.md) - 快速入门指南
+- [spec.md](specs/002-affinity-analysis/spec.md) - 功能规格 (包含FR-000到FR-025预处理需求)
+- [plan.md](specs/002-affinity-analysis/plan.md) - 实施计划 (包含预处理架构设计决策)
+- [research.md](specs/002-affinity-analysis/research.md) - 技术研究 (SnowNLP、sentence-transformers选择)
+
+**当前工作流文档**:
+- [SIMPLE_WORKFLOW.md](docs/SIMPLE_WORKFLOW.md) - **本文档! 2人协作Git工作流 + 详细周计划 (预处理优先)**
 
 ---
 
@@ -446,37 +623,44 @@ git push
 
 ---
 
-## 🎯 成功标准
+## 🎯 成功标准 (预处理优先架构)
 
-### Week 1结束
-- ✅ 情感共振率可运行
-- ✅ 态度倾向可运行
-- ✅ 关键词库可使用
+### Week 1结束 (预处理层)
+- ✅ 所有29个预处理统计收集完成
+- ✅ SentimentService + KeywordLibraries可用
+- ✅ BasicPreprocessingService + PairPreprocessingService + SessionManager + AttitudePreprocessingService完成
+- ✅ PreprocessingOrchestrator集成测试通过
+- ⚠️ **关键检查点**: 预处理缓存可用，所有维度可开始
 
-### Week 2结束
-- ✅ 喜好维度可运行
-- ✅ 编排服务完成
-- ✅ 前端UI基础完成
+### Week 2结束 (维度并行)
+- ✅ 维度1(情感共振率)可运行 - 使用预处理统计O(1)查找
+- ✅ 维度2(聊天积极度)可运行 - 使用预处理统计O(1)查找
+- ✅ 维度3(态度倾向)可运行 - O(1)查找 vs O(6N)遍历 (6倍加速)
+- ✅ AffinityConfig配置管理完成
 
-### Week 3结束
-- ✅ 聊天积极度可运行
-- ✅ 所有API端点完成
-- ✅ 前端UI完成
+### Week 3结束 (编排器 + API)
+- ✅ 维度4(喜好兼容度)可运行 - 使用预处理统计O(1)查找
+- ✅ AffinityAnalysisService编排器完成 - 调用预处理编排器
+- ✅ 所有Bridge API端点完成 (7个端点)
 
-### Week 4结束
-- ✅ 所有单元测试通过
-- ✅ 集成测试通过
+### Week 4结束 (前端)
+- ✅ 前端API客户端完成
+- ✅ AffinityView主页面 + 5个组件完成
+- ✅ 路由集成完成
+
+### Week 5结束 (测试优化)
+- ✅ 所有单元测试通过 (>90%通过率)
+- ✅ 集成测试通过 - 验证预处理O(N)复杂度
+- ✅ 性能目标达成: < 2分钟(10K消息), < 5分钟(100K消息)
 - ✅ 边缘情况处理完善
-
-### Week 5结束
-- ✅ 性能优化完成
 - ✅ 文档齐全
 - ✅ 可以发布v1.0.0
 
 ---
 
-**最后更新**: 2026-01-08
+**最后更新**: 2026-01-09
 **推荐使用**: ✅ 是 (适合2人小团队)
 **复杂度**: ⭐⭐ (比功能分支简单得多)
+**架构**: 预处理优先 - Week 1收集29个统计，Week 2-3四维度完全并行
 
 祝开发顺利! 🚀

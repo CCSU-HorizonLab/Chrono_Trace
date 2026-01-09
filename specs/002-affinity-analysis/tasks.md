@@ -87,6 +87,7 @@
 
 - [ ] T020 [US1] Implement InteractionPairBuilder class in backend/app/services/analysis/interaction_pair_builder.py
   - build_speech_units() method to merge consecutive messages (< 5 min gap) from same sender
+  - split_sessions() method to split conversations by semantic similarity valleys (sliding window + valley detection algorithm)
   - build_interaction_pairs() method to create alternating pairs from speech units
   - calculate_semantic_similarity() helper using cosine similarity on embeddings
   - Handle edge cases: single message sessions, empty conversations, odd-numbered speech units

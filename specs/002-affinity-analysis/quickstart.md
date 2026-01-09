@@ -357,7 +357,420 @@ pytest tests/test_sentiment_service.py -v
 
 ---
 
-### 2. ting's First Task: Keyword Libraries
+### 2. juitar's Second Task: Interaction Pairs & Session Splitting
+
+**Branch**: `juitar-interaction-pairs`
+
+Create `backend/app/services/analysis/interaction_pair_builder.py`:
+```python
+import logging
+import pickle
+from typing import Dict, List, Optional
+from datetime import datetime, timedelta
+import numpy as np
+from sklearn.metrics.pairwise import cosine_similarity
+
+from app.db.connection import get_connection
+
+logger = logging.getLogger(__name__)
+
+class InteractionPairBuilder:
+    """
+    构建发言单位和交互对
+
+    核心功能:
+    1. 构建发言单位 (合并5分钟内连续消息)
+    2. 会话切割 (基于语义相似度谷值检测)
+    3. 构建交互对 (交替发言)
+    """
+
+    def __init__(self, sentiment_service):
+        """
+        Args:
+            sentiment_service: SentimentService 实例 (用于句向量)
+        """
+        self.sentiment_service = sentiment_service
+
+    def build_speech_units(self, messages: List[Dict]) -> List[Dict]:
+        """
+        构建发言单位
+
+        规则:
+        1. 同一发送者的连续消息
+        2. 时间间隔 < 5 分钟
+        3. 合并内容 (用空格连接)
+
+        Args:
+            messages: 消息列表,格式: [{id, sender_id, content, timestamp}, ...]
+
+        Returns:
+            发言单位列表: [{id, sender_id, content, timestamp, message_ids}, ...]
+        """
+        if not messages:
+            return []
+
+        # 按时间排序
+        sorted_messages = sorted(messages, key=lambda m: m['timestamp'])
+
+        speech_units = []
+        current_unit = {
+            'sender_id': sorted_messages[0]['sender_id'],
+            'message_ids': [sorted_messages[0]['id']],
+            'content': sorted_messages[0]['content'],
+            'timestamp': sorted_messages[0]['timestamp']
+        }
+
+        for msg in sorted_messages[1:]:
+            time_gap = (msg['timestamp'] - current_unit['timestamp']).total_seconds()
+
+            # 如果是同一发送者且时间间隔 < 5分钟，合并
+            if (msg['sender_id'] == current_unit['sender_id'] and
+                time_gap < 300):  # 5 分钟
+                current_unit['message_ids'].append(msg['id'])
+                current_unit['content'] += ' ' + msg['content']
+                current_unit['timestamp'] = msg['timestamp']  # 更新为最新时间
+            else:
+                # 保存当前单位，开始新单位
+                speech_units.append(current_unit)
+                current_unit = {
+                    'sender_id': msg['sender_id'],
+                    'message_ids': [msg['id']],
+                    'content': msg['content'],
+                    'timestamp': msg['timestamp']
+                }
+
+        # 添加最后一个单位
+        speech_units.append(current_unit)
+
+        # 分配 ID
+        for i, unit in enumerate(speech_units):
+            unit['id'] = i + 1
+
+        logger.info(f"Built {len(speech_units)} speech units from {len(messages)} messages")
+        return speech_units
+
+    def split_sessions(self, messages: List[Dict],
+                      window_size: int = 5,
+                      similarity_threshold: float = 0.4,
+                      time_gap_threshold: int = 1800) -> List[Dict]:
+        """
+        基于语义相似度谷值检测切割会话
+
+        算法: 滑动窗口 + 谷值检测
+        1. 计算所有消息的句向量
+        2. 使用滑动窗口计算局部相似度
+        3. 找到相似度谷值 (局部最小值) 作为会话边界
+        4. 如果时间间隔 > 30分钟，强制切分
+
+        Args:
+            messages: 消息列表
+            window_size: 滑动窗口大小 (默认 5 条消息)
+            similarity_threshold: 相似度阈值 (默认 0.4)
+            time_gap_threshold: 时间间隔阈值 (默认 1800 秒 = 30 分钟)
+
+        Returns:
+            会话列表: [{messages, start, end, message_count}, ...]
+        """
+        if len(messages) < window_size:
+            # 消息太少，作为单个会话
+            return [{
+                'messages': messages,
+                'start': messages[0]['timestamp'],
+                'end': messages[-1]['timestamp'],
+                'message_count': len(messages)
+            }]
+
+        logger.info(f"Splitting {len(messages)} messages into sessions (window_size={window_size}, threshold={similarity_threshold})")
+
+        # 生成句向量 (使用 SentimentService)
+        embeddings = []
+        for msg in messages:
+            sentiment_result = self.sentiment_service.analyze_sentiment(msg['content'])
+            embeddings.append(sentiment_result['embedding'])
+
+        embeddings = np.array(embeddings)
+
+        # 计算滑动窗口相似度
+        similarities = []
+        for i in range(len(messages) - window_size):
+            window_embeddings = embeddings[i:i+window_size]
+
+            # 计算窗口内相邻消息的平均相似度
+            window_sims = []
+            for j in range(window_size - 1):
+                sim = cosine_similarity(
+                    [window_embeddings[j]],
+                    [window_embeddings[j+1]]
+                )[0][0]
+                window_sims.append(sim)
+
+            similarities.append(np.mean(window_sims))
+
+        # 找到谷值 (局部最小值且低于阈值)
+        session_boundaries = [0]
+
+        for i in range(1, len(similarities) - 1):
+            is_valley = (
+                similarities[i] < similarities[i-1] and
+                similarities[i] < similarities[i+1] and
+                similarities[i] < similarity_threshold
+            )
+
+            # 检查时间间隔
+            time_gap = (messages[i + window_size]['timestamp'] -
+                       messages[i]['timestamp']).total_seconds() > time_gap_threshold
+
+            if is_valley or time_gap:
+                session_boundaries.append(i + window_size)
+                logger.debug(f"Session boundary at index {i + window_size}: "
+                           f"similarity={similarities[i]:.3f}, "
+                           f"is_valley={is_valley}, time_gap={time_gap}")
+
+        session_boundaries.append(len(messages))
+
+        # 创建会话
+        sessions = []
+        for i in range(len(session_boundaries) - 1):
+            start_idx = session_boundaries[i]
+            end_idx = session_boundaries[i + 1]
+            session_messages = messages[start_idx:end_idx]
+
+            sessions.append({
+                'messages': session_messages,
+                'start': session_messages[0]['timestamp'],
+                'end': session_messages[-1]['timestamp'],
+                'message_count': len(session_messages)
+            })
+
+        logger.info(f"Split into {len(sessions)} sessions")
+        return sessions
+
+    def build_interaction_pairs(self, speech_units: List[Dict]) -> List[Dict]:
+        """
+        构建交互对
+
+        规则:
+        1. 交替发言 (A -> B -> A ...)
+        2. 忽略奇数个发言单位 (最后一个落单)
+        3. 预计算语义相似度
+
+        Args:
+            speech_units: 发言单位列表
+
+        Returns:
+            交互对列表: [{id, unit_a_id, unit_b_id, semantic_similarity}, ...]
+        """
+        if len(speech_units) < 2:
+            return []
+
+        pairs = []
+        pair_id = 1
+
+        for i in range(0, len(speech_units) - 1, 2):
+            unit_a = speech_units[i]
+            unit_b = speech_units[i + 1]
+
+            # 确保是不同发送者
+            if unit_a['sender_id'] != unit_b['sender_id']:
+                # 计算语义相似度
+                similarity = self.calculate_semantic_similarity(
+                    unit_a['content'],
+                    unit_b['content']
+                )
+
+                pairs.append({
+                    'id': pair_id,
+                    'unit_a_id': unit_a['id'],
+                    'unit_b_id': unit_b['id'],
+                    'semantic_similarity': similarity
+                })
+
+                pair_id += 1
+            else:
+                # 同一发送者，跳过
+                logger.debug(f"Skipping pair {i}: same sender")
+
+        logger.info(f"Built {len(pairs)} interaction pairs from {len(speech_units)} speech units")
+        return pairs
+
+    def calculate_semantic_similarity(self, text_a: str, text_b: str) -> float:
+        """
+        计算两个文本的语义相似度 (余弦相似度)
+
+        Args:
+            text_a: 文本 A
+            text_b: 文本 B
+
+        Returns:
+            相似度 (0 到 1)
+        """
+        try:
+            sentiment_a = self.sentiment_service.analyze_sentiment(text_a)
+            sentiment_b = self.sentiment_service.analyze_sentiment(text_b)
+
+            embedding_a = np.array(sentiment_a['embedding']).reshape(1, -1)
+            embedding_b = np.array(sentiment_b['embedding']).reshape(1, -1)
+
+            similarity = cosine_similarity(embedding_a, embedding_b)[0][0]
+            return float(similarity)
+
+        except Exception as e:
+            logger.error(f"Failed to calculate semantic similarity: {e}")
+            return 0.0
+
+    def save_speech_units(self, conversation_id: int, speech_units: List[Dict]):
+        """保存发言单位到数据库"""
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            for unit in speech_units:
+                cursor.execute('''
+                    INSERT OR REPLACE INTO speech_units
+                    (id, conversation_id, sender_id, content, timestamp, message_ids)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ''', (
+                    unit['id'],
+                    conversation_id,
+                    unit['sender_id'],
+                    unit['content'],
+                    unit['timestamp'].isoformat(),
+                    pickle.dumps(unit['message_ids'])
+                ))
+
+            conn.commit()
+            logger.info(f"Saved {len(speech_units)} speech units to database")
+
+        except Exception as e:
+            logger.error(f"Failed to save speech units: {e}")
+
+    def save_interaction_pairs(self, conversation_id: int, pairs: List[Dict]):
+        """保存交互对到数据库"""
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            for pair in pairs:
+                cursor.execute('''
+                    INSERT OR REPLACE INTO interaction_pairs
+                    (id, conversation_id, unit_a_id, unit_b_id, semantic_similarity)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (
+                    pair['id'],
+                    conversation_id,
+                    pair['unit_a_id'],
+                    pair['unit_b_id'],
+                    pair['semantic_similarity']
+                ))
+
+            conn.commit()
+            logger.info(f"Saved {len(pairs)} interaction pairs to database")
+
+        except Exception as e:
+            logger.error(f"Failed to save interaction pairs: {e}")
+
+    def load_cached_pairs(self, conversation_id: int) -> Optional[List[Dict]]:
+        """从数据库加载缓存的交互对"""
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute('''
+                SELECT id, unit_a_id, unit_b_id, semantic_similarity
+                FROM interaction_pairs
+                WHERE conversation_id = ?
+                ORDER BY id
+            ''', (conversation_id,))
+
+            rows = cursor.fetchall()
+            if rows:
+                pairs = [{
+                    'id': row[0],
+                    'unit_a_id': row[1],
+                    'unit_b_id': row[2],
+                    'semantic_similarity': row[3]
+                } for row in rows]
+
+                logger.info(f"Loaded {len(pairs)} cached interaction pairs")
+                return pairs
+
+            return None
+
+        except Exception as e:
+            logger.error(f"Failed to load cached pairs: {e}")
+            return None
+```
+
+**Test**:
+```python
+# backend/tests/test_interaction_pairs.py
+import pytest
+from datetime import datetime, timedelta
+from app.services.analysis.interaction_pair_builder import InteractionPairBuilder
+from app.services.analysis.sentiment_service import SentimentService
+
+def test_build_speech_units():
+    """测试: 合并5分钟内连续消息"""
+    builder = InteractionPairBuilder(SentimentService())
+
+    now = datetime.now()
+    messages = [
+        {'id': 1, 'sender_id': 1, 'content': 'Hello', 'timestamp': now},
+        {'id': 2, 'sender_id': 1, 'content': 'World', 'timestamp': now + timedelta(minutes=2)},
+        {'id': 3, 'sender_id': 2, 'content': 'Hi', 'timestamp': now + timedelta(minutes=3)},
+    ]
+
+    units = builder.build_speech_units(messages)
+
+    assert len(units) == 2
+    assert units[0]['sender_id'] == 1
+    assert 'Hello World' in units[0]['content']
+    assert len(units[0]['message_ids']) == 2
+
+def test_split_sessions():
+    """测试: 基于语义相似度切割会话"""
+    builder = InteractionPairBuilder(SentimentService())
+
+    now = datetime.now()
+    messages = [
+        {'id': 1, 'sender_id': 1, 'content': '今天天气真好', 'timestamp': now},
+        {'id': 2, 'sender_id': 2, 'content': '是啊，很适合出门', 'timestamp': now + timedelta(minutes=1)},
+        {'id': 3, 'sender_id': 1, 'content': '你喜欢吃苹果吗', 'timestamp': now + timedelta(minutes=2)},
+    ]
+
+    sessions = builder.split_sessions(messages, window_size=2, similarity_threshold=0.5)
+
+    assert len(sessions) >= 1
+    assert all('messages' in s for s in sessions)
+
+def test_build_interaction_pairs():
+    """测试: 构建交替交互对"""
+    builder = InteractionPairBuilder(SentimentService())
+
+    now = datetime.now()
+    units = [
+        {'id': 1, 'sender_id': 1, 'content': 'Hi', 'timestamp': now},
+        {'id': 2, 'sender_id': 2, 'content': 'Hello', 'timestamp': now + timedelta(minutes=1)},
+        {'id': 3, 'sender_id': 1, 'content': 'How are you?', 'timestamp': now + timedelta(minutes=2)},
+    ]
+
+    pairs = builder.build_interaction_pairs(units)
+
+    assert len(pairs) == 1
+    assert pairs[0]['unit_a_id'] == 1
+    assert pairs[0]['unit_b_id'] == 2
+    assert 0 <= pairs[0]['semantic_similarity'] <= 1
+```
+
+Run tests:
+```bash
+cd backend
+pytest tests/test_interaction_pairs.py -v
+```
+
+---
+
+### 3. ting's First Task: Keyword Libraries
 
 **Branch**: `ting-keyword-libraries`
 

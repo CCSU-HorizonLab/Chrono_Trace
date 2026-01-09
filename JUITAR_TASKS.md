@@ -13,13 +13,13 @@
 
 ### 任务分工概览
 
-| Phase | 内容 | 你的任务 | ting 的任务 |
-|-------|------|----------|-------------|
-| Week 1 | Phase 1-2 | ✅ 一起完成 | ✅ 一起完成 |
-| Week 1-2 | Phase 3 | ✅ **US1 情感共振** (9 任务) | Phase 5-6 |
-| Week 2-3 | Phase 7 | ✅ **Orchestrator** (3 任务) | Phase 4 |
-| Week 3 | Phase 8 | ✅ **Backend API** (10 任务) | Phase 9 |
-| Week 4-5 | Phase 10-11 | ✅ **测试和优化** (联合) | ✅ **测试和优化** (联合) |
+| Phase    | 内容        | 你的任务                          | ting 的任务                   |
+| -------- | ----------- | --------------------------------- | ----------------------------- |
+| Week 1   | Phase 1-2   | ✅ 一起完成                       | ✅ 一起完成                   |
+| Week 1-2 | Phase 3     | ✅**US1 情感共振** (9 任务) | Phase 5-6                     |
+| Week 2-3 | Phase 7     | ✅**Orchestrator** (3 任务) | Phase 4                       |
+| Week 3   | Phase 8     | ✅**Backend API** (10 任务) | Phase 9                       |
+| Week 4-5 | Phase 10-11 | ✅**测试和优化** (联合)     | ✅**测试和优化** (联合) |
 
 ---
 
@@ -28,9 +28,11 @@
 ### Phase 1: Setup (3 任务) - **与 ting 一起完成**
 
 #### T001: 添加依赖
+
 **文件**: `backend/requirements.txt`
 
 **操作**:
+
 ```bash
 # 添加以下依赖到 backend/requirements.txt
 snownlp>=0.12.3
@@ -41,18 +43,23 @@ pytest>=7.0.0
 ```
 
 **上下文文档**:
+
 - [research.md#L10-L50](specs/002-affinity-analysis/research.md#L10-L50) - 技术选型理由
 - [quickstart.md#L20-L40](specs/002-affinity-analysis/quickstart.md#L20-L40) - 依赖说明
 
 #### T002: 安装依赖
+
 **操作**:
+
 ```bash
 cd backend
 pip install -r requirements.txt
 ```
 
 #### T003: 下载模型
+
 **操作**:
+
 ```bash
 # 下载 sentence-transformers 模型到缓存
 python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')"
@@ -63,7 +70,9 @@ python -c "from sentence_transformers import SentenceTransformer; SentenceTransf
 ### Phase 2: Foundational (15 任务) - **与 ting 一起完成**
 
 #### T004-T009: 数据库迁移脚本
+
 **文件**:
+
 - `backend/app/db/migrations/sentiment_cache.sql`
 - `backend/app/db/migrations/speech_units.sql`
 - `backend/app/db/migrations/interaction_pairs.sql`
@@ -72,10 +81,12 @@ python -c "from sentence_transformers import SentenceTransformer; SentenceTransf
 - `backend/app/db/migrations/affinity_scores.sql`
 
 **上下文文档**:
+
 - [data-model.md#L50-L400](specs/002-affinity-analysis/data-model.md#L50-L400) - 6 个表的完整定义
 - [data-model.md#L400-L450](specs/002-affinity-analysis/data-model.md#L400-L450) - 迁移策略
 
 **每个迁移脚本格式**:
+
 ```sql
 -- 文件: backend/app/db/migrations/sentiment_cache.sql
 CREATE TABLE IF NOT EXISTS sentiment_cache (
@@ -95,20 +106,25 @@ CREATE INDEX IF NOT EXISTS idx_sentiment_cache_conversation_id ON sentiment_cach
 ```
 
 #### T010: 运行迁移
+
 **操作**:
+
 ```bash
 cd backend
 python -c "from app.db.connection import get_connection; conn = get_connection(); [exec(open(f'app/db/migrations/{f}').read()) for f in ['sentiment_cache.sql', 'speech_units.sql', 'interaction_pairs.sql', 'affinity_config.sql', 'keyword_libraries.sql', 'affinity_scores.sql']]"
 ```
 
 #### T011-T012: 关键词库初始化
+
 **文件**: `backend/scripts/populate_default_keywords.py`
 
 **上下文文档**:
+
 - [research.md#L100-L150](specs/002-affinity-analysis/research.md#L100-L150) - 关键词库设计
 - [data-model.md#L250-L300](specs/002-affinity-analysis/data-model.md#L250-L300) - keyword_libraries 表结构
 
 **代码示例**:
+
 ```python
 # backend/scripts/populate_default_keywords.py
 import sys
@@ -152,13 +168,16 @@ if __name__ == '__main__':
 ### Phase 3: User Story 1 - Emotional Resonance Analysis (9 任务) - **你单独负责**
 
 #### 🔥 T016: 编写情感分析测试
+
 **文件**: `backend/tests/test_sentiment_service.py`
 
 **上下文文档**:
+
 - [spec.md#L30-L50](specs/002-affinity-analysis/spec.md#L30-L50) - FR-001 到 FR-010 情感分析需求
 - [research.md#L30-L80](specs/002-affinity-analysis/research.md#L30-L80) - SnowNLP 准确率目标
 
 **测试要求**:
+
 ```python
 # backend/tests/test_sentiment_service.py
 import pytest
@@ -206,28 +225,35 @@ class TestSentimentService:
 ```
 
 #### 🔥 T017: 编写交互对测试
+
 **文件**: `backend/tests/test_interaction_pairs.py`
 
 **上下文文档**:
+
 - [spec.md#L50-L70](specs/002-affinity-analysis/spec.md#L50-L70) - 发言单位和交互对定义
 - [research.md#L150-L200](specs/002-affinity-analysis/research.md#L150-L200) - 两阶段算法
 
 #### 🔥 T018: 编写情感共振测试
+
 **文件**: `backend/tests/test_emotional_resonance.py`
 
 **上下文文档**:
+
 - [spec.md#L70-L90](specs/002-affinity-analysis/spec.md#L70-L90) - FR-011 到 FR-020 情感共振需求
 
 #### 🔥 T019: 实现 SentimentService 类
+
 **文件**: `backend/app/services/analysis/sentiment_service.py`
 
 **上下文文档**:
+
 - [spec.md](specs/002-affinity-analysis/spec.md) - 完整功能规格
 - [research.md#L30-L100](specs/002-affinity-analysis/research.md#L30-L100) - SnowNLP 集成方案
 - [quickstart.md#L100-L200](specs/002-affinity-analysis/quickstart.md#L100-L200) - 完整代码示例
 - [data-model.md#L50-L100](specs/002-affinity-analysis/data-model.md#L50-L100) - sentiment_cache 表
 
 **完整实现要求**:
+
 ```python
 # backend/app/services/analysis/sentiment_service.py
 """
@@ -397,6 +423,7 @@ class SentimentService:
 ```
 
 **验收标准**:
+
 - ✅ 所有测试用例通过 (T016)
 - ✅ SnowNLP 准确率 > 85%
 - ✅ 句向量维度 = 384
@@ -404,14 +431,19 @@ class SentimentService:
 - ✅ 降级处理正常 (返回中性情感)
 
 #### 🔥 T020: 实现 InteractionPairBuilder 类
+
 **文件**: `backend/app/services/analysis/interaction_pair_builder.py`
 
 **上下文文档**:
+
 - [spec.md#L50-L70](specs/002-affinity-analysis/spec.md#L50-L70) - 交互对定义
-- [research.md#L150-L220](specs/002-affinity-analysis/research.md#L150-L220) - 两阶段算法
+- [spec.md#L158](specs/002-affinity-analysis/spec.md#L158) - Session 定义 (基于语义相似度)
+- [research.md#L178-L243](specs/002-affinity-analysis/research.md#L178-L243) - **滑动窗口 + 谷值检测算法**
 - [data-model.md#L100-L200](specs/002-affinity-analysis/data-model.md#L100-L200) - speech_units 和 interaction_pairs 表
+- [quickstart.md#L360-L770](specs/002-affinity-analysis/quickstart.md#L360-L770) - **完整代码示例**
 
 **关键方法**:
+
 ```python
 class InteractionPairBuilder:
     def build_speech_units(self, messages: List[Dict]) -> List[Dict]:
@@ -431,6 +463,37 @@ class InteractionPairBuilder:
                     'content': str,
                     'timestamp': datetime,
                     'message_ids': List[int]
+                }
+            ]
+        """
+        pass
+
+    def split_sessions(self, messages: List[Dict],
+                       window_size: int = 5,
+                       similarity_threshold: float = 0.4,
+                       time_gap_threshold: int = 1800) -> List[Dict]:
+        """
+        🔥 核心: 基于语义相似度谷值检测切割会话
+
+        算法: 滑动窗口 + 谷值检测
+        1. 计算所有消息的句向量
+        2. 使用滑动窗口计算局部相似度
+        3. 找到相似度谷值 (局部最小值) 作为会话边界
+        4. 如果时间间隔 > 30分钟，强制切分
+
+        Args:
+            messages: 消息列表
+            window_size: 滑动窗口大小 (默认 5 条消息)
+            similarity_threshold: 相似度阈值 (默认 0.4)
+            time_gap_threshold: 时间间隔阈值 (默认 1800 秒 = 30 分钟)
+
+        Returns:
+            [
+                {
+                    'messages': List[Dict],
+                    'start': datetime,
+                    'end': datetime,
+                    'message_count': int
                 }
             ]
         """
@@ -463,13 +526,16 @@ class InteractionPairBuilder:
 ```
 
 #### 🔥 T021: 实现 EmotionalResonanceService 类
+
 **文件**: `backend/app/services/analysis/emotional_resonance_service.py`
 
 **上下文文档**:
+
 - [spec.md#L70-L100](specs/002-affinity-analysis/spec.md#L70-L100) - FR-011 到 FR-020
 - [history_analyze.md#L50-L150](history_analyze.md#L50-L150) - 完整算法公式
 
 **5 个子维度实现**:
+
 ```python
 class EmotionalResonanceService:
     def calculate_bidirectional_positive_response(self, pairs: List[Dict]) -> float:
@@ -555,6 +621,7 @@ class EmotionalResonanceService:
 #### T022: 实现 KeywordLibraries 类 - **跳过** (ting 会做)
 
 #### T023-T024: 数据库集成
+
 **文件**: 在 T019 和 T020 中已包含
 
 ---
@@ -564,13 +631,16 @@ class EmotionalResonanceService:
 ### Phase 7: Orchestrator (3 任务) - **你负责**
 
 #### 🔥 T037: 实现 AffinityAnalysisService 编排器
+
 **文件**: `backend/app/services/analysis/affinity_analysis_service.py`
 
 **上下文文档**:
+
 - [spec.md#L100-L150](specs/002-affinity-analysis/spec.md#L100-L150) - FR-030 到 FR-035
 - [contracts/bridge_api.yaml](specs/002-affinity-analysis/contracts/bridge_api.yaml) - API 契约
 
 **关键方法**:
+
 ```python
 class AffinityAnalysisService:
     def analyze(self, conversation_id: int, force_reanalyze: bool = False, config_overrides: Dict = None) -> str:
@@ -600,9 +670,11 @@ class AffinityAnalysisService:
 ```
 
 #### T038: 任务跟踪和进度报告
+
 **文件**: 在 T037 中集成
 
 #### T039: 解释文本生成
+
 **文件**: 在 T037 中集成
 
 ---
@@ -610,13 +682,16 @@ class AffinityAnalysisService:
 ### Phase 8: Backend API (10 任务) - **你负责**
 
 #### 🔥 T040-T049: 实现 8 个 API 端点
+
 **文件**: `backend/app/webview/bridge.py`
 
 **上下文文档**:
+
 - [contracts/bridge_api.yaml](specs/002-affinity-analysis/contracts/bridge_api.yaml) - 完整 API 规范
 - [quickstart.md#L300-L500](specs/002-affinity-analysis/quickstart.md#L300-L500) - 集成示例
 
 **端点清单**:
+
 ```python
 # T040: POST /affinity/analyze
 @app.route('/affinity/analyze', methods=['POST'])
@@ -689,9 +764,13 @@ def update_preference_keywords(conversation_id):
 ### Phase 10-11: Testing & Polish - **与 ting 一起完成**
 
 #### T059-T066: 单元测试 - **你负责后端测试**
+
 #### T067-T069: 集成和性能测试 - **联合**
+
 #### T070: 边界情况测试 - **你负责**
+
 #### T071-T073: 性能优化 - **你负责**
+
 #### T074-T078: 文档和代码质量 - **联合**
 
 ---
@@ -720,16 +799,16 @@ git push
 
 ### 关键文档链接
 
-| 文档 | 用途 |
-|------|------|
-| [tasks.md](specs/002-affinity-analysis/tasks.md) | 完整 84 任务清单 |
-| [spec.md](specs/002-affinity-analysis/spec.md) | 功能规格 (40 个需求) |
-| [research.md](specs/002-affinity-analysis/research.md) | 技术选型和算法 |
-| [data-model.md](specs/002-affinity-analysis/data-model.md) | 数据库设计 |
-| [quickstart.md](specs/002-affinity-analysis/quickstart.md) | 代码示例 |
-| [contracts/bridge_api.yaml](specs/002-affinity-analysis/contracts/bridge_api.yaml) | API 规范 |
-| [history_analyze.md](history_analyze.md) | 原始算法公式 |
-| [SIMPLE_WORKFLOW.md](SIMPLE_WORKFLOW.md) | 协作流程 |
+| 文档                                                                            | 用途                 |
+| ------------------------------------------------------------------------------- | -------------------- |
+| [tasks.md](specs/002-affinity-analysis/tasks.md)                                   | 完整 84 任务清单     |
+| [spec.md](specs/002-affinity-analysis/spec.md)                                     | 功能规格 (40 个需求) |
+| [research.md](specs/002-affinity-analysis/research.md)                             | 技术选型和算法       |
+| [data-model.md](specs/002-affinity-analysis/data-model.md)                         | 数据库设计           |
+| [quickstart.md](specs/002-affinity-analysis/quickstart.md)                         | 代码示例             |
+| [contracts/bridge_api.yaml](specs/002-affinity-analysis/contracts/bridge_api.yaml) | API 规范             |
+| [history_analyze.md](history_analyze.md)                                           | 原始算法公式         |
+| [SIMPLE_WORKFLOW.md](SIMPLE_WORKFLOW.md)                                           | 协作流程             |
 
 ### 代码质量检查清单
 

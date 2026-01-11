@@ -2,23 +2,25 @@
 
 **功能**: 002-affinity-analysis
 **更新时间**: 2026-01-11
-**状态**: 准备开始
+**状态**: 进行中 (阶段2: 基础设施)
 
 ---
 
 ## 📋 任务概览
 
-| 阶段 | 任务数 | 预计工作量 |
-|------|--------|------------|
-| 1. 数据库设置 | 0 | - |
-| 2. 基础设施 | 4 | 简单 |
-| 3. 预处理层 | 4 | 中等 |
-| 4. 维度分析 | 7 | 中等 |
-| 5. 编排器 | 1 | 简单 |
-| 6. 后端API | 7 | 中等 |
-| 7. 前端实现 | 5 | 中等 |
-| 8. 测试与优化 | 6 | 简单 |
-| **总计** | **34** | **约2-3周** |
+| 阶段 | 任务数 | 已完成 | 预计工作量 |
+|------|--------|--------|------------|
+| 1. 数据库设置 | 1 | 1 | - |
+| 2. 基础设施 | 4 | 4 | 简单 |
+| 3. 预处理层 | 4 | 1 | 中等 |
+| 4. 维度分析 | 7 | 0 | 中等 |
+| 5. 编排器 | 1 | 0 | 简单 |
+| 6. 后端API | 7 | 0 | 中等 |
+| 7. 前端实现 | 5 | 0 | 中等 |
+| 8. 测试与优化 | 6 | 0 | 简单 |
+| **总计** | **35** | **6** | **约2-3周** |
+
+**进度**: 6/35 已完成 (17%)
 
 ---
 
@@ -26,23 +28,37 @@
 
 **说明**: 数据库表已由juitar在T001中统一添加到schema.sql
 
+### T000: 添加默认关键词到schema.sql ✅
+- [x] 在 `backend/app/db/schema.sql` 的 `keyword_libraries` 表创建后添加60条默认关键词
+- [x] 每个分类10个关键词 (positive, negative, empathy, soothing, privacy, holiday)
+- [x] 所有关键词标记为 `is_custom=0` (不可删除)
+- [x] 使用 `strftime('%s', 'now')` 自动生成时间戳
+
+**完成时间**: 2026-01-11
+
 ---
 
 ## 阶段2: 基础设施 (与juitar并行)
 
-### T001: 添加Python依赖
-- [ ] 在 `backend/requirements.txt` 中添加依赖:
+### T001: 添加Python依赖 ✅
+- [x] 在 `backend/requirements.txt` 中添加依赖:
   - snownlp>=0.12.3
   - sentence-transformers>=2.2.0
   - scikit-learn>=1.3.0
   - torch>=2.0.0
 
-### T002: 安装Python依赖
-- [ ] 运行 `pip install -r backend/requirements.txt`
+**完成时间**: 2026-01-11
 
-### T003: 下载sentence-transformers模型
-- [ ] 下载模型 paraphrase-multilingual-MiniLM-L12-v2 到本地缓存
-- [ ] 加快首次启动速度
+### T002: 安装Python依赖 ✅
+- [x] 运行 `pip install -r backend/requirements.txt`
+
+**完成时间**: 2026-01-11
+
+### T003: 下载sentence-transformers模型 ✅
+- [x] 下载模型 paraphrase-multilingual-MiniLM-L12-v2 到本地缓存
+- [x] 加快首次启动速度
+
+**完成时间**: 2026-01-11
 
 ### T004: 创建测试数据
 - [ ] 创建 `backend/tests/fixtures/conversation_medium.json` (10,000条消息)
@@ -54,14 +70,16 @@
 
 **重要性**: 必须先完成预处理,才能开始任何维度分析
 
-### T005: 实现关键词库服务
+### T005: 实现关键词库服务 ✅
 **文件**: `backend/app/services/analysis/keyword_libraries.py`
 
-- [ ] KeywordLibraries.get_keywords(category) - 获取指定分类的关键词
-- [ ] KeywordLibraries.add_keywords(category, keywords) - 添加自定义关键词
-- [ ] KeywordLibraries.remove_keywords(category, keywords) - 删除关键词
-- [ ] KeywordLibraries.get_all_keywords() - 获取全部6个分类的字典
-- [ ] KeywordLibraries.check_keywords_in_text(text, keywords) - 文本关键词匹配辅助方法
+- [x] KeywordLibraries.get_keywords(category) - 获取指定分类的关键词
+- [x] KeywordLibraries.add_keywords(category, keywords) - 添加自定义关键词
+- [x] KeywordLibraries.remove_keywords(category, keywords) - 删除关键词
+- [x] KeywordLibraries.get_all_keywords() - 获取全部6个分类的字典
+- [x] KeywordLibraries.check_keywords_in_text(text, keywords) - 文本关键词匹配辅助方法
+- [x] 内存缓存机制 (首次加载,后续从内存读取)
+- [x] 数据库CRUD操作 (使用现有get_db()连接)
 
 **6个关键词分类**:
 - positive (正面词)
@@ -70,6 +88,8 @@
 - soothing (安抚词)
 - privacy (隐私词)
 - holiday (节日祝福)
+
+**完成时间**: 2026-01-11
 
 ### T006: 关键词库测试
 - [ ] 创建 `backend/tests/test_keyword_libraries.py`

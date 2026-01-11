@@ -445,6 +445,80 @@ CREATE TABLE IF NOT EXISTS keyword_libraries (
 
 CREATE INDEX IF NOT EXISTS idx_keyword_libraries_category ON keyword_libraries(category);
 
+-- 填充默认关键词 (is_custom=0, 不可删除)
+INSERT INTO keyword_libraries (category, keyword, is_custom, created_at) VALUES
+-- Positive (正面词) - 10个
+('positive', '哈哈', 0, strftime('%s', 'now')),
+('positive', '谢谢', 0, strftime('%s', 'now')),
+('positive', '开心', 0, strftime('%s', 'now')),
+('positive', '高兴', 0, strftime('%s', 'now')),
+('positive', '棒', 0, strftime('%s', 'now')),
+('positive', '赞', 0, strftime('%s', 'now')),
+('positive', '喜欢', 0, strftime('%s', 'now')),
+('positive', '爱', 0, strftime('%s', 'now')),
+('positive', '幸福', 0, strftime('%s', 'now')),
+('positive', '满足', 0, strftime('%s', 'now')),
+
+-- Negative (负面词) - 10个
+('negative', '讨厌', 0, strftime('%s', 'now')),
+('negative', '烦', 0, strftime('%s', 'now')),
+('negative', '生气', 0, strftime('%s', 'now')),
+('negative', '难过', 0, strftime('%s', 'now')),
+('negative', '伤心', 0, strftime('%s', 'now')),
+('negative', '痛苦', 0, strftime('%s', 'now')),
+('negative', '失望', 0, strftime('%s', 'now')),
+('negative', '厌恶', 0, strftime('%s', 'now')),
+('negative', '恨', 0, strftime('%s', 'now')),
+('negative', '郁闷', 0, strftime('%s', 'now')),
+
+-- Empathy (共情词) - 10个
+('empathy', '理解', 0, strftime('%s', 'now')),
+('empathy', '心疼', 0, strftime('%s', 'now')),
+('empathy', '懂你', 0, strftime('%s', 'now')),
+('empathy', '不容易', 0, strftime('%s', 'now')),
+('empathy', '辛苦', 0, strftime('%s', 'now')),
+('empathy', '委屈', 0, strftime('%s', 'now')),
+('empathy', '抱歉', 0, strftime('%s', 'now')),
+('empathy', '同情', 0, strftime('%s', 'now')),
+('empathy', '担心', 0, strftime('%s', 'now')),
+('empathy', '安慰', 0, strftime('%s', 'now')),
+
+-- Soothing (安抚词) - 10个
+('soothing', '没事', 0, strftime('%s', 'now')),
+('soothing', '别担心', 0, strftime('%s', 'now')),
+('soothing', '会好的', 0, strftime('%s', 'now')),
+('soothing', '支持你', 0, strftime('%s', 'now')),
+('soothing', '陪着你', 0, strftime('%s', 'now')),
+('soothing', '相信你', 0, strftime('%s', 'now')),
+('soothing', '加油', 0, strftime('%s', 'now')),
+('soothing', '放心', 0, strftime('%s', 'now')),
+('soothing', '有我在', 0, strftime('%s', 'now')),
+('soothing', '慢慢来', 0, strftime('%s', 'now')),
+
+-- Privacy (隐私词) - 10个
+('privacy', '秘密', 0, strftime('%s', 'now')),
+('privacy', '私密', 0, strftime('%s', 'now')),
+('privacy', '隐私', 0, strftime('%s', 'now')),
+('privacy', '只告诉你', 0, strftime('%s', 'now')),
+('privacy', '别告诉别人', 0, strftime('%s', 'now')),
+('privacy', '保密', 0, strftime('%s', 'now')),
+('privacy', '悄悄说', 0, strftime('%s', 'now')),
+('privacy', '只有你知道', 0, strftime('%s', 'now')),
+('privacy', '不告诉别人', 0, strftime('%s', 'now')),
+('privacy', '偷偷说', 0, strftime('%s', 'now')),
+
+-- Holiday (节日词) - 10个
+('holiday', '新年快乐', 0, strftime('%s', 'now')),
+('holiday', '春节快乐', 0, strftime('%s', 'now')),
+('holiday', '圣诞快乐', 0, strftime('%s', 'now')),
+('holiday', '生日快乐', 0, strftime('%s', 'now')),
+('holiday', '节日快乐', 0, strftime('%s', 'now')),
+('holiday', '国庆快乐', 0, strftime('%s', 'now')),
+('holiday', '中秋快乐', 0, strftime('%s', 'now')),
+('holiday', '五一快乐', 0, strftime('%s', 'now')),
+('holiday', '元旦快乐', 0, strftime('%s', 'now')),
+('holiday', '情人节快乐', 0, strftime('%s', 'now'));
+
 
 -- ========================================
 -- 20. 好感度分析：评分结果表

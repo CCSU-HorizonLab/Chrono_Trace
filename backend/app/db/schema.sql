@@ -319,3 +319,165 @@ CREATE TABLE IF NOT EXISTS word_counts (
 CREATE INDEX IF NOT EXISTS idx_word_counts_conversation ON word_counts(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_word_counts_session ON word_counts(session_id);
 
+
+-- ========================================
+-- 15. 好感度分析：情感缓存表
+-- ========================================
+-- 缓存情感分析结果,避免重复计算
+CREATE TABLE IF NOT EXISTS sentiment_cache (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id INTEGER NOT NULL UNIQUE,          -- 关联 messages.id
+    polarity INTEGER NOT NULL,                   -- -1 (负面), 0 (中性), 1 (正面)
+    intensity REAL NOT NULL,                     -- -1.0 到 1.0
+    embedding_vector BLOB,                       -- 384维向量 (序列化为字节)
+    created_at INTEGER NOT NULL,                 -- 缓存时间戳
+    FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE,
+    CHECK (polarity IN (-1, 0, 1)),
+    CHECK (intensity >= -1.0 AND intensity <= 1.0)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sentiment_cache_message ON sentiment_cache(message_id);
+
+
+-- ========================================
+-- 16. 好感度分析：发言单元表
+-- ========================================
+-- 存储合并后的发言单元 (连续5分钟内同一发送者的消息)
+CREATE TABLE IF NOT EXISTS speech_units (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id INTEGER NOT NULL,
+    message_ids TEXT NOT NULL,                   -- 逗号分隔的消息ID列表 (如 "123,124,125")
+    sender TEXT NOT NULL,                        -- 'user' 或 'other'
+    first_message_timestamp INTEGER NOT NULL,    -- 发言单元第一条消息时间戳
+    last_message_timestamp INTEGER NOT NULL,     -- 发言单元最后一条消息时间戳
+    message_count INTEGER NOT NULL,              -- 发言单元包含的消息数
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+    CHECK (sender IN ('user', 'other')),
+    CHECK (message_count >= 1),
+    CHECK (first_message_timestamp <= last_message_timestamp)
+);
+
+CREATE INDEX IF NOT EXISTS idx_speech_units_conversation ON speech_units(conversation_id, first_message_timestamp);
+
+
+-- ========================================
+-- 17. 好感度分析：交互对表
+-- ========================================
+-- 存储构建的交互对 (speech_unit_A → speech_unit_B)
+CREATE TABLE IF NOT EXISTS interaction_pairs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id INTEGER NOT NULL,
+    from_speech_unit_id INTEGER NOT NULL,        -- 发起方发言单元ID
+    to_speech_unit_id INTEGER NOT NULL,          -- 响应方发言单元ID
+    time_gap INTEGER NOT NULL,                   -- 两个发言单元之间的时间间隔 (秒)
+    semantic_similarity REAL,                    -- 余弦相似度 (可选,稍后计算)
+    from_polarity INTEGER NOT NULL,              -- 发起方情感极性 (-1, 0, 1)
+    to_polarity INTEGER NOT NULL,                -- 响应方情感极性 (-1, 0, 1)
+    from_intensity REAL NOT NULL,                -- 发起方情感强度 (-1.0 到 1.0)
+    to_intensity REAL NOT NULL,                  -- 响应方情感强度 (-1.0 到 1.0)
+    is_negative_initiation INTEGER DEFAULT 0,    -- 是否为负面情绪发起 (1=是)
+    is_empathetic_response INTEGER DEFAULT 0,    -- 是否为共情响应 (1=是)
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+    FOREIGN KEY (from_speech_unit_id) REFERENCES speech_units(id) ON DELETE CASCADE,
+    FOREIGN KEY (to_speech_unit_id) REFERENCES speech_units(id) ON DELETE CASCADE,
+    CHECK (time_gap >= 0),
+    CHECK (from_polarity IN (-1, 0, 1)),
+    CHECK (to_polarity IN (-1, 0, 1)),
+    CHECK (from_intensity >= -1.0 AND from_intensity <= 1.0),
+    CHECK (to_intensity >= -1.0 AND to_intensity <= 1.0),
+    CHECK (is_negative_initiation IN (0, 1)),
+    CHECK (is_empathetic_response IN (0, 1))
+);
+
+CREATE INDEX IF NOT EXISTS idx_interaction_pairs_conversation ON interaction_pairs(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_interaction_pairs_from_unit ON interaction_pairs(from_speech_unit_id);
+CREATE INDEX IF NOT EXISTS idx_interaction_pairs_to_unit ON interaction_pairs(to_speech_unit_id);
+
+
+-- ========================================
+-- 18. 好感度分析：配置表
+-- ========================================
+-- 存储每个对话的配置 (权重、阈值、关键词)
+CREATE TABLE IF NOT EXISTS affinity_config (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id INTEGER NOT NULL UNIQUE,
+    config_version INTEGER DEFAULT 1,
+    -- 维度权重 (必须总和为1.0)
+    weight_emotional_resonance REAL DEFAULT 0.30,
+    weight_chat_positivity REAL DEFAULT 0.30,
+    weight_attitude_tendency REAL DEFAULT 0.20,
+    weight_preference_compatibility REAL DEFAULT 0.20,
+    -- 阈值配置
+    reply_timeliness_threshold INTEGER DEFAULT 3600,            -- 回复及时阈值 (秒, 默认1小时)
+    topic_continuity_time_window INTEGER DEFAULT 604800,        -- 话题延续时间窗口 (秒, 默认7天)
+    similarity_threshold_initiation REAL DEFAULT 0.40,          -- 相似度阈值 (用于判定新话题)
+    sliding_window_size INTEGER DEFAULT 5,                      -- 滑动窗口大小
+    -- 关键词自定义 (JSON格式)
+    custom_keywords_json TEXT,                                 -- 自定义关键词覆盖
+    preference_keywords_json TEXT,                             -- 用户提供的喜好关键词
+    -- 元数据
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+    CHECK (reply_timeliness_threshold > 0),
+    CHECK (topic_continuity_time_window >= 86400),
+    CHECK (similarity_threshold_initiation >= 0.0 AND similarity_threshold_initiation <= 1.0),
+    CHECK (sliding_window_size >= 3)
+);
+
+CREATE INDEX IF NOT EXISTS idx_affinity_config_conversation ON affinity_config(conversation_id);
+
+
+-- ========================================
+-- 19. 好感度分析：关键词库表
+-- ========================================
+-- 存储全局关键词库 (默认集合 + 用户扩展)
+CREATE TABLE IF NOT EXISTS keyword_libraries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    category TEXT NOT NULL,                     -- 'positive', 'negative', 'empathy', 'soothing', 'privacy', 'holiday'
+    keyword TEXT NOT NULL,
+    is_custom INTEGER DEFAULT 0,                -- 1=用户添加, 0=默认关键词
+    created_at INTEGER NOT NULL,
+    UNIQUE(category, keyword)
+);
+
+CREATE INDEX IF NOT EXISTS idx_keyword_libraries_category ON keyword_libraries(category);
+
+
+-- ========================================
+-- 20. 好感度分析：评分结果表
+-- ========================================
+-- 存储计算的维度评分和总体好感度评分
+CREATE TABLE IF NOT EXISTS affinity_scores (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id INTEGER NOT NULL,
+    analysis_version INTEGER DEFAULT 1,         -- 分析版本号 (重新分析时递增)
+    -- 总体评分
+    overall_score REAL NOT NULL,                -- 0.0 到 100.0
+    -- 各维度评分
+    emotional_resonance_score REAL NOT NULL,    -- 情感共振率评分
+    chat_positivity_score REAL NOT NULL,        -- 聊天积极度评分
+    attitude_tendency_score REAL NOT NULL,      -- 态度倾向评分
+    preference_compatibility_score REAL NOT NULL, -- 喜好兼容度评分
+    -- 子维度详细分数 (JSON格式)
+    sub_scores_json TEXT,                       -- 各维度子分数详细分解
+    -- 元数据
+    message_count INTEGER NOT NULL,             -- 消息总数
+    interaction_pair_count INTEGER NOT NULL,    -- 交互对总数
+    config_snapshot TEXT,                       -- 配置快照 (用于检测配置变化)
+    analysis_duration_ms INTEGER,               -- 分析耗时 (毫秒)
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+    CHECK (overall_score >= 0.0 AND overall_score <= 100.0),
+    CHECK (emotional_resonance_score >= 0.0 AND emotional_resonance_score <= 100.0),
+    CHECK (chat_positivity_score >= 0.0 AND chat_positivity_score <= 100.0),
+    CHECK (attitude_tendency_score >= 0.0 AND attitude_tendency_score <= 100.0),
+    CHECK (preference_compatibility_score >= 0.0 AND preference_compatibility_score <= 100.0),
+    CHECK (message_count >= 0),
+    CHECK (interaction_pair_count >= 0)
+);
+
+CREATE INDEX IF NOT EXISTS idx_affinity_scores_conversation ON affinity_scores(conversation_id, created_at DESC);
+

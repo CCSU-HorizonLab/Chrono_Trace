@@ -1,7 +1,7 @@
 # Ting 的任务清单 - 好感度分析功能
 
 **功能**: 002-affinity-analysis
-**更新时间**: 2026-01-11
+**更新时间**: 2026-01-13
 **状态**: 进行中 (阶段2: 基础设施)
 
 ---
@@ -60,9 +60,18 @@
 
 **完成时间**: 2026-01-11
 
-### T004: 创建测试数据
-- [ ] 创建 `backend/tests/fixtures/conversation_medium.json` (10,000条消息)
-- [ ] 创建 `backend/tests/fixtures/conversation_labeled.json` (手动标注情感数据)
+### T004: 创建测试数据 ✅
+- [x] 创建 `backend/tests/fixtures/conversation_medium.json` (4,320条真实文本消息)
+- [x] 创建 `backend/tests/fixtures/conversation_labeled.json` (100条手动标注情感数据)
+- [x] 创建 `backend/tests/fixtures/conversation_annotation_template.csv` (标注模板)
+- [x] 创建 `docs/AFFINITY_TEST_DATA.md` (测试数据说明文档)
+
+**完成时间**: 2026-01-13
+
+**备注**:
+- 使用真实对话ID 1773的数据,共4,320条文本消息
+- 手工标注100条消息用于验证SnowNLP准确率
+- 创建转换脚本(已删除,不保留在代码库中)
 
 ---
 

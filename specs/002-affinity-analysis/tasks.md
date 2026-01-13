@@ -57,8 +57,10 @@
 ### Test Data Preparation
 
 - [ ] T013 [P] [Setup] [juitar] Create backend/tests/fixtures/conversation_small.json with 1,000 test messages
-- [ ] T014 [P] [Setup] [ting] Create backend/tests/fixtures/conversation_medium.json with 10,000 test messages
-- [ ] T015 [P] [Setup] [ting] Create backend/tests/fixtures/conversation_labeled.json with manually labeled sentiment data
+- [x] T014 [P] [Setup] [ting] Create backend/tests/fixtures/conversation_medium.json with 4,320 real text messages ✅
+- [x] T015 [P] [Setup] [ting] Create backend/tests/fixtures/conversation_labeled.json with 100 manually labeled sentiment messages ✅
+  - Completed: 2026-01-13
+  - Notes: Used real conversation ID 1773, created annotation template and documentation at docs/AFFINITY_TEST_DATA.md
 
 **Checkpoint**: Foundation ready - user story implementation can now begin in parallel
 

@@ -446,7 +446,8 @@ CREATE TABLE IF NOT EXISTS keyword_libraries (
 CREATE INDEX IF NOT EXISTS idx_keyword_libraries_category ON keyword_libraries(category);
 
 -- 填充默认关键词 (is_custom=0, 不可删除)
-INSERT INTO keyword_libraries (category, keyword, is_custom, created_at) VALUES
+-- 使用 INSERT OR IGNORE 避免重复插入
+INSERT OR IGNORE INTO keyword_libraries (category, keyword, is_custom, created_at) VALUES
 -- Positive (正面词) - 10个
 ('positive', '哈哈', 0, strftime('%s', 'now')),
 ('positive', '谢谢', 0, strftime('%s', 'now')),

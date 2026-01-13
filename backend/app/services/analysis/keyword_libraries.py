@@ -4,9 +4,11 @@
 """
 
 from typing import List, Dict
-from app.db.connection import get_db
 import sqlite3
 import time
+
+# 使用相对导入避免循环依赖
+from ...db.connection import get_db
 
 
 class KeywordLibraries:

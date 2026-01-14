@@ -172,8 +172,8 @@ type Message = {
 
 type Session = {
   id: number
-  start_time: string
-  end_time: string
+  start_time: string | number
+  end_time: string | number
   duration: number
   message_count: number
   messages: Message[]
@@ -186,7 +186,7 @@ const props = defineProps<{
 const currentView = ref<'date' | 'session' | 'stats'>('date')
 const expandedSessions = ref<Set<number>>(new Set())
 
-const viewModes = [
+const viewModes: { key: 'date' | 'session' | 'stats'; label: string }[] = [
   { key: 'date', label: '按日期' },
   { key: 'session', label: '按会话' },
   { key: 'stats', label: '统计' }
@@ -274,7 +274,7 @@ function toggleSession(sessionId: number) {
   expandedSessions.value = new Set(expandedSessions.value)
 }
 
-function formatDate(dateStr: string): string {
+function formatDate(dateStr: string | number): string {
   const date = new Date(dateStr)
   const today = new Date()
   const yesterday = new Date(today)
@@ -294,7 +294,7 @@ function formatDate(dateStr: string): string {
   })
 }
 
-function formatTime(dateStr: string): string {
+function formatTime(dateStr: string | number): string {
   const date = new Date(dateStr)
   return date.toLocaleTimeString('zh-CN', {
     hour: '2-digit',
@@ -302,7 +302,7 @@ function formatTime(dateStr: string): string {
   })
 }
 
-function formatDateTime(dateStr: string): string {
+function formatDateTime(dateStr: string | number): string {
   const date = new Date(dateStr)
   return date.toLocaleString('zh-CN', {
     month: 'short',

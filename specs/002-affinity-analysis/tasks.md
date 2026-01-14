@@ -78,26 +78,36 @@
 
 #### Preprocessing Core Services (juitar - 19 tasks)
 
-- [ ] T016 [P] [Preprocessing] [juitar] Create backend/tests/test_sentiment_service.py with SnowNLP accuracy tests (polarity classification, intensity mapping)
-- [ ] T017 [P] [Preprocessing] [juitar] Create backend/tests/test_interaction_pairs.py with speech unit merging and pair construction tests
-- [ ] T018 [Preprocessing] [juitar] Implement SentimentService class in backend/app/services/analysis/sentiment_service.py with SnowNLP integration
+- [x] T016 [P] [Preprocessing] [juitar] Create backend/tests/test_sentiment_service.py with SnowNLP accuracy tests (polarity classification, intensity mapping) ✅
+  - Completed: 2026-01-13
+  - 20+ test cases covering polarity, intensity, and embedding generation
+- [x] T017 [P] [Preprocessing] [juitar] Create backend/tests/test_interaction_pairs.py with speech unit merging and pair construction tests ✅
+  - Completed: 2026-01-13
+  - 15+ test cases covering speech unit merging and pair construction
+- [x] T018 [Preprocessing] [juitar] Implement SentimentService class in backend/app/services/analysis/sentiment_service.py with SnowNLP integration ✅
+  - Completed: 2026-01-13
   - Lazy load SnowNLP and sentence-transformers models
   - analyze_sentiment() method returning polarity (-1/0/1), intensity (-1 to 1), embedding (384-dim vector)
   - analyze_batch() method for batch processing (32 messages per batch)
   - Fallback to neutral (0, 0, zero vector) on analysis failure
 
-- [ ] T019 [Preprocessing] [juitar] Implement sentiment caching in backend/app/services/analysis/sentiment_service.py
+- [x] T019 [Preprocessing] [juitar] Implement sentiment caching in backend/app/services/analysis/sentiment_service.py ✅
+  - Completed: 2026-01-13
   - cache_sentiment_result() method - write to sentiment_cache table
   - get_sentiment_from_cache() method - read from cache before analysis
   - batch_cache_sentiments() method - bulk insert for performance
+  - LRU cache with 10,000 capacity for sentence embeddings
+  - get_cache_stats() method for monitoring cache hit rate
 
-- [ ] T020-A [Preprocessing] [juitar] Implement BasicPreprocessingService in backend/app/services/analysis/preprocessing_service.py (Part 1: Basic Statistics)
+- [x] T020-A [Preprocessing] [juitar] Implement BasicPreprocessingService in backend/app/services/analysis/preprocessing_service.py (Part 1: Basic Statistics) ✅
+  - Completed: 2026-01-13
   - collect_message_statistics() method - collect 4 basic constants: total_message_count, total_positive_count, total_negative_count, total_neutral_count
   - collect_time_statistics() method - collect 4 time constants: conversation_start_timestamp, conversation_end_timestamp, conversation_duration_days, chat_days_count
   - collect_length_statistics() method - collect 2 length constants: total_characters, average_message_length
   - All statistics in O(N) single pass through messages
 
-- [ ] T020-B [Preprocessing] [juitar] Implement PairPreprocessingService in backend/app/services/analysis/preprocessing_service.py (Part 2: Interaction Pairs)
+- [x] T020-B [Preprocessing] [juitar] Implement PairPreprocessingService in backend/app/services/analysis/preprocessing_service.py (Part 2: Interaction Pairs) ✅
+  - Completed: 2026-01-13
   - build_speech_units() method - merge consecutive messages (< 5 min gap) from same sender
   - build_interaction_pairs() method - create alternating pairs from speech units (bidirectional)
   - collect_pair_statistics() method - collect 3 pair constants: total_interaction_pairs, bidirectional_pairs, same_parity_pairs
@@ -105,8 +115,10 @@
   - save_interaction_pairs() method - write to interaction_pairs table with pre-computed semantic similarities
   - load_cached_pairs() method - read from cache before rebuilding
 
-- [ ] T020-C [Preprocessing] [juitar] Implement SessionManager in backend/app/services/analysis/session_manager.py (Part 3: Sessions)
+- [x] T020-C [Preprocessing] [juitar] Implement SessionManager in backend/app/services/analysis/preprocessing_service.py (Part 3: Sessions) ✅
+  - Completed: 2026-01-13
   - split_sessions() method - split conversations by semantic similarity valleys (sliding window + valley detection algorithm)
+  - Enhanced with three-way splitting: sleep time + time gap + semantic similarity
   - calculate_semantic_similarity() helper - using cosine similarity on embeddings
   - collect_session_statistics() method - collect 3 session constants: total_sessions, average_session_length, average_session_gap
   - identify_session_initiators() method - mark which person initiated each session (for active initiation calculation)

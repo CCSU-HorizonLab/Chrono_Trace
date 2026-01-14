@@ -215,7 +215,7 @@
     </div>
 
     <!-- 特征分析区域 - 新增 -->
-    <div v-if="hasFeatures && !loading" class="features-grid">
+    <div v-if="hasFeatures" class="features-grid">
       <!-- 响应时间分析 -->
       <div class="feature-card response-time">
         <header class="feature-header">
@@ -570,8 +570,11 @@ function formatNumber(num: number): string {
 }
 
 // 格式化时间
+// 格式化时间
 function formatTime(seconds: number): string {
-  if (!seconds) return '-'
+  if (seconds === undefined || seconds === null) return '-'
+  if (seconds < 1 && seconds > 0) return '<1s'
+  if (seconds === 0) return '0s'
   if (seconds < 60) return `${Math.round(seconds)}s`
   if (seconds < 3600) return `${Math.round(seconds / 60)}m`
   return `${(seconds / 3600).toFixed(1)}h`
@@ -606,12 +609,29 @@ function onConversationChange(conversationId: number) {
   hasFeatures.value = false
   loadAnalysis()
   loadSessions()
+  tryLoadExistingFeatures() // 尝试加载已有的特征数据
 }
 
 function onDatesChange(newDates: { from: string; to: string }) {
   dates.from = newDates.from
   dates.to = newDates.to
   loadAnalysis()
+}
+
+async function tryLoadExistingFeatures() {
+  if (!selectedConversationId.value) return
+  
+  try {
+    // 尝试获取响应时间统计，看是否有数据
+    const res = await api.get_response_times(selectedConversationId.value)
+    if (res.success && res.data && res.data.count > 0) {
+      hasFeatures.value = true
+      await loadFeatureData()
+    }
+  } catch (e) {
+    // 忽略错误，仅仅是不显示特征区域
+    console.log('未检测到特征数据或加载失败') 
+  }
 }
 
 async function loadAnalysis() {
@@ -644,7 +664,7 @@ async function loadAnalysis() {
       const totalSentiment = analysis.timeseries.reduce((sum: number, point: any) => sum + (point.score || 0), 0)
       stats.value = {
         totalMessages: subject.value?.stats?.msgCount || 0,
-        avgSentiment: (totalSentiment / analysis.timeseries.length).toFixed(2),
+        avgSentiment: parseFloat((totalSentiment / analysis.timeseries.length).toFixed(2)),
         activeDays: analysis.timeseries.length,
         sessionCount: sessions.value.length
       }
@@ -665,8 +685,13 @@ async function loadSessions() {
     await bridgeReady()
     const res = await api.get_sessions(selectedConversationId.value, 50, 0)
 
-    if (res.ok && res.sessions) {
-      sessions.value = res.sessions
+    // 修复：后端返回格式为 { success: true, data: { sessions: [], ... } }
+    if (res.success && res.data && res.data.sessions) {
+      // 手动计算 duration (end_time - start_time)，防止前端显示 NaN
+      sessions.value = res.data.sessions.map((s: any) => ({
+        ...s,
+        duration: (s.end_time || 0) - (s.start_time || 0)
+      }))
       await nextTick()
       renderTimelineChart()
     }
@@ -1093,7 +1118,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: var(--ct-space-3xl);
-  max-width: 1400px;
+  max-width: 100%;
   margin: 0 auto;
   padding: var(--ct-space-2xl) var(--ct-space-lg);
 }

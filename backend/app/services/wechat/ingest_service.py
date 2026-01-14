@@ -540,6 +540,9 @@ class WeChatIngestService:
 
             for idx, (conv_id, name, msg_count) in enumerate(conversations):
                 try:
+                    # 显示详细进度（明确是"联系人"而不是"会话"）
+                    print(f"[特征提取] 联系人 {idx+1}/{len(conversations)} - {name} ({msg_count}条消息)")
+
                     if progress_callback:
                         progress = 97 + int((idx / len(conversations)) * 3)
                         progress_callback(f"提取特征 {idx+1}/{len(conversations)}: {name}", progress, 100)
@@ -551,22 +554,28 @@ class WeChatIngestService:
                     session_count = cursor.fetchone()[0]
 
                     if session_count > 0:
-                        print(f"[特征提取] 会话 {conv_id} ({name}) 已有特征，跳过")
+                        print(f"  → 已有 {session_count} 个会话记录，跳过")
                         stats["skipped"] += 1
                         continue
 
-                    # 执行特征提取
-                   # print(f"[特征提取] 正在提取会话 {conv_id} ({name}) 的特征，{msg_count}条消息")
-                    feature_service.extract_features(conv_id)
+                    # 执行特征提取（切分会话）
+                    result = feature_service.extract_features(conv_id)
+
+                    # 显示生成的会话数量
+                    if result and "sessions" in result:
+                        num_sessions = len(result["sessions"])
+                        print(f"  → 切分完成，生成 {num_sessions} 个会话")
+
                     stats["processed"] += 1
-                   # print(f"[特征提取] 会话 {conv_id} 完成")
 
                 except Exception as e:
                     print(f"[特征提取] 会话 {conv_id} 提取失败: {e}")
                     stats["failed"] += 1
                     continue
 
-           # print(f"[特征提取] 完成! 处理={stats['processed']}, 跳过={stats['skipped']}, 失败={stats['failed']}")
+            # 显示完成信息
+            print(f"[特征提取] 完成! 处理={stats['processed']}, 跳过={stats['skipped']}, 失败={stats['failed']}")
+
             return stats
 
         except Exception as e:

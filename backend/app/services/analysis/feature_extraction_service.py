@@ -31,6 +31,10 @@ class FeatureExtractionService:
         self.db = get_db()
         self.preprocessor = PreprocessingService()
 
+        # 缓存预处理服务实例（避免重复加载模型）
+        self._pair_service = None
+        self._session_manager = None
+
         # 任务状态管理（用于进度查询）
         self._task_status: Dict[str, Dict] = {}
 
@@ -114,6 +118,7 @@ class FeatureExtractionService:
     def extract_sessions(self, conversation_id: int) -> List[Dict[str, Any]]:
         """
         提取会话（User Story 1核心方法）
+        使用新的 SessionManager：睡眠时间+时间间隔+语义相似度三重切分
 
         Args:
             conversation_id: 对话ID
@@ -129,30 +134,63 @@ class FeatureExtractionService:
             # logger.warning(f"无消息数据: conversation_id={conversation_id}")
             return []
 
-        # 2. 切分会话
-        session_groups = self._split_sessions(messages)
+        # 2. 使用新的预处理服务构建发言单元和切分会话
+        from .preprocessing_service import PairPreprocessingService, SessionManager
 
-        # 3. 批量写入数据库
+        # 使用缓存的实例（避免重复加载模型）
+        if self._pair_service is None:
+            self._pair_service = PairPreprocessingService()
+
+        if self._session_manager is None:
+            self._session_manager = SessionManager()
+
+        # 2.1 构建发言单元（合并5分钟内同发送者的消息）
+        speech_units = self._pair_service.build_speech_units(messages)
+
+        if not speech_units:
+            return []
+
+        # 2.2 使用新的 SessionManager 切分会话（睡眠+时间+语义）
+        session_result = self._session_manager.split_sessions(speech_units)
+
+        # 3. 转换为数据库格式
         sessions_data = []
-        for group in session_groups:
+        for session in session_result:
+            # 找到会话范围内的发言单元
+            start_idx = session.get("start_unit_id", 0) - 1  # 转换为索引
+            end_idx = session.get("end_unit_id", 0) - 1
+
+            # 确保索引在有效范围内
+            start_idx = max(0, min(start_idx, len(speech_units) - 1))
+            end_idx = max(0, min(end_idx, len(speech_units) - 1))
+
+            # 计算消息数量（通过发言单元的 message_count）
+            message_count = sum(speech_units[i].get("message_count", 1)
+                              for i in range(start_idx, end_idx + 1))
+
+            # 判断发起者
+            initiator_is_sender = session.get("initiator_is_sender", 0)
+            initiator = "user" if initiator_is_sender == 1 else "other"
+
             sessions_data.append({
                 "conversation_id": conversation_id,
-                "start_time": group[0]["timestamp"],
-                "end_time": group[-1]["timestamp"],
-                "message_count": len(group),
-                "initiator": self._identify_session_initiator(group),
-                "source": group[0].get("source", "long"),
+                "start_time": session["start_timestamp"],
+                "end_time": session["end_timestamp"],
+                "message_count": message_count,
+                "initiator": initiator,
+                "source": messages[0].get("source", "long"),  # 使用消息的来源
                 "created_at": int(time.time())
             })
 
-        # 批量插入
-        columns = ["conversation_id", "start_time", "end_time", "message_count", "initiator", "source", "created_at"]
-        data_tuples = [(d["conversation_id"], d["start_time"], d["end_time"],
-                       d["message_count"], d["initiator"], d["source"], d["created_at"])
-                      for d in sessions_data]
+        # 4. 批量插入数据库
+        if sessions_data:
+            columns = ["conversation_id", "start_time", "end_time", "message_count", "initiator", "source", "created_at"]
+            data_tuples = [(d["conversation_id"], d["start_time"], d["end_time"],
+                          d["message_count"], d["initiator"], d["source"], d["created_at"])
+                         for d in sessions_data]
 
-        batch_insert("sessions", columns, data_tuples, self.db)
-        self.db.commit()
+            batch_insert("sessions", columns, data_tuples, self.db)
+            self.db.commit()
 
         #logger.info(f"会话提取完成: {len(sessions_data)}个会话")
         return sessions_data

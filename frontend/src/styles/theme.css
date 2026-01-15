@@ -556,12 +556,7 @@ pre code {
   }
 }
 
-@media (min-width: 1280px) {
-  body {
-    max-width: 1400px;
-    margin: 0 auto;
-  }
-}
+
 
 @media (max-width: 640px) {
   h1 { font-size: var(--ct-text-3xl); }

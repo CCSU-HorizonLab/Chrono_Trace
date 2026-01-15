@@ -244,17 +244,17 @@
               <span class="stat-value">{{ formatTime(responseTimeStats.median) }}</span>
             </div>
             <div class="response-stat">
-              <span class="stat-label">最快</span>
-              <span class="stat-value highlight fast">{{ formatTime(responseTimeStats.min) }}</span>
+              <span class="stat-label">最早</span>
+               <span class="stat-value highlight fast">{{ formatTime(responseTimeStats.min) }}</span>
             </div>
             <div class="response-stat">
-              <span class="stat-label">最慢</span>
-              <span class="stat-value highlight slow">{{ formatTime(responseTimeStats.max) }}</span>
+              <span class="stat-label">最晚</span>
+               <span class="stat-value highlight slow">{{ formatTime(responseTimeStats.max) }}</span>
             </div>
           </div>
 
-          <!-- 响应时间分布图 -->
-          <div class="feature-chart">
+          <!-- 响应时间分布图 (仅当有分布数据时显示) -->
+          <div v-if="responseTimeStats.distribution" class="feature-chart">
             <div ref="responseTimeChart" class="chart-mount"></div>
           </div>
 
@@ -418,8 +418,8 @@
               </svg>
             </div>
             <div>
-              <h3>会话分布时间轴</h3>
-              <p class="feature-subtitle">所有会话的时间线视图</p>
+              <h3>活跃度日历</h3>
+              <p class="feature-subtitle">每日对话活跃度热力分布</p>
             </div>
           </div>
           <div class="header-actions">
@@ -519,7 +519,9 @@ const responseTimeStats = ref({
   min: 0,
   max: 0,
   abnormalCount: 0,
-  count: 0
+  count: 0,
+  distribution: null as Record<string, number> | null,
+  distributionKeys: ['<1m', '1m-10m', '10m-30m', '30m-1h', '1h-6h', '6h-24h', '>1d']
 })
 
 const initiativeStats = ref({
@@ -577,7 +579,8 @@ function formatTime(seconds: number): string {
   if (seconds === 0) return '0s'
   if (seconds < 60) return `${Math.round(seconds)}s`
   if (seconds < 3600) return `${Math.round(seconds / 60)}m`
-  return `${(seconds / 3600).toFixed(1)}h`
+  if (seconds < 86400) return `${(seconds / 3600).toFixed(1)}h`
+  return `${(seconds / 86400).toFixed(1)}d`
 }
 
 function setDefaultDates(days = 7) {
@@ -790,6 +793,10 @@ async function loadFeatureData() {
       responseTimeStats.value = responseTimeData.data
       featureStats.value.avgResponseTime = responseTimeData.data.avg
       featureStats.value.medianResponseTime = responseTimeData.data.median
+      // 加载直方图数据
+      if (responseTimeData.data.distribution) {
+        responseTimeStats.value.distribution = responseTimeData.data.distribution
+      }
       await nextTick()
       renderResponseTimeChart()
     }
@@ -826,26 +833,31 @@ async function loadFeatureData() {
   }
 }
 
-// 渲染响应时间图表
+// 渲染响应时间图表 (直方图)
 function renderResponseTimeChart() {
-  if (!responseTimeChart.value) return
+  if (!responseTimeChart.value || !responseTimeStats.value.distribution) return
 
   if (responseTimeChartInstance) {
     responseTimeChartInstance.dispose()
   }
 
   responseTimeChartInstance = echarts.init(responseTimeChart.value)
+  
+  const dist = responseTimeStats.value.distribution
+  const keys = responseTimeStats.value.distributionKeys
+  const data = keys.map(k => dist[k] || 0)
 
   const option: echarts.EChartsOption = {
     backgroundColor: 'transparent',
     tooltip: {
       trigger: 'axis',
+      axisPointer: { type: 'shadow' },
       backgroundColor: 'rgba(20, 20, 30, 0.9)',
       borderColor: 'rgba(99, 102, 241, 0.3)',
       textStyle: { color: '#e2e8f0', fontSize: 13 },
       formatter: (params: any) => {
         const value = params[0]
-        return `${value.name}<br/><span style="color:#818cf8">●</span> ${formatTime(value.value)}`
+        return `${value.name}<br/><span style="color:#818cf8">●</span> ${value.value} 条消息`
       }
     },
     grid: {
@@ -857,62 +869,40 @@ function renderResponseTimeChart() {
     },
     xAxis: {
       type: 'category',
-      data: ['平均', '中位数', '最快', '最慢'],
+      data: keys,
       axisLine: { lineStyle: { color: 'rgba(255,255,255,0.1)' } },
-      axisLabel: { color: 'rgba(255,255,255,0.6)', fontSize: 12 }
+      axisLabel: { 
+        color: 'rgba(255,255,255,0.6)', 
+        fontSize: 11,
+        interval: 0
+      }
     },
     yAxis: {
       type: 'value',
       axisLine: { show: false },
       axisLabel: {
-        color: 'rgba(255,255,255,0.6)',
-        formatter: (value: number) => `${Math.round(value / 60)}m`
+        color: 'rgba(255,255,255,0.6)'
       },
       splitLine: { lineStyle: { color: 'rgba(255,255,255,0.05)', type: 'dashed' } }
     },
     series: [
       {
         type: 'bar',
-        data: [
-          {
-            value: responseTimeStats.value.avg,
-            itemStyle: {
-              color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-                { offset: 0, color: '#818cf8' },
-                { offset: 1, color: '#6366f1' }
-              ])
-            }
-          },
-          {
-            value: responseTimeStats.value.median,
-            itemStyle: {
-              color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-                { offset: 0, color: '#34d399' },
-                { offset: 1, color: '#10b981' }
-              ])
-            }
-          },
-          {
-            value: responseTimeStats.value.min,
-            itemStyle: {
-              color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-                { offset: 0, color: '#f472b6' },
-                { offset: 1, color: '#ec4899' }
-              ])
-            }
-          },
-          {
-            value: responseTimeStats.value.max,
-            itemStyle: {
-              color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-                { offset: 0, color: '#fbbf24' },
-                { offset: 1, color: '#f59e0b' }
-              ])
-            }
-          }
-        ],
-        barWidth: '50%',
-        itemStyle: { borderRadius: [6, 6, 0, 0] }
+        data: data,
+        barWidth: '60%',
+        itemStyle: {
+          borderRadius: [4, 4, 0, 0],
+          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+            { offset: 0, color: '#818cf8' },
+            { offset: 1, color: '#6366f1' }
+          ])
+        },
+        label: {
+          show: true,
+          position: 'top',
+          color: 'rgba(255,255,255,0.7)',
+          fontSize: 11
+        }
       }
     ]
   }
@@ -920,7 +910,7 @@ function renderResponseTimeChart() {
   responseTimeChartInstance.setOption(option)
 }
 
-// 渲染会话时间轴
+// 渲染活跃度日历热力图 (GitHub 贡献图风格)
 function renderTimelineChart() {
   if (!timelineChart.value || !sessions.value.length) return
 
@@ -930,68 +920,141 @@ function renderTimelineChart() {
 
   timelineChartInstance = echarts.init(timelineChart.value)
 
-  const userSessions = sessions.value.filter(s => s.initiator === 'user')
-  const otherSessions = sessions.value.filter(s => s.initiator === 'other')
+  // 1. 聚合每天的消息数量 (区分我/对方)
+  const dailyData: Record<string, { total: number, user: number, other: number }> = {}
+  let maxCount = 0
+  
+  sessions.value.forEach(s => {
+    const d = new Date(s.start_time * 1000)
+    const dateStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
+    
+    if (!dailyData[dateStr]) {
+      dailyData[dateStr] = { total: 0, user: 0, other: 0 }
+    }
+    
+    dailyData[dateStr].total += s.message_count
+    if (s.initiator === 'user') {
+      dailyData[dateStr].user += s.message_count
+    } else {
+      dailyData[dateStr].other += s.message_count
+    }
+    
+    maxCount = Math.max(maxCount, dailyData[dateStr].total)
+  })
+
+  // 2. 转换为 ECharts 格式 [date, value, user_count, other_count]
+  const data = Object.entries(dailyData).map(([date, stats]) => [
+    date, 
+    stats.total,
+    stats.user,
+    stats.other
+  ])
+
+  // 3. 获取数据的年份范围
+  const years = [...new Set(Object.keys(dailyData).map(d => d.split('-')[0]))]
+  const displayYear = years.length > 0 ? parseInt(years[years.length - 1]) : new Date().getFullYear()
 
   const option: echarts.EChartsOption = {
     backgroundColor: 'transparent',
-    tooltip: {
-      trigger: 'axis',
-      backgroundColor: 'rgba(20, 20, 30, 0.9)',
-      borderColor: 'rgba(99, 102, 241, 0.3)',
-      textStyle: { color: '#e2e8f0', fontSize: 13 },
-      formatter: (params: any) => {
-        const data = params[0]
-        const date = new Date(data.value[0] * 1000).toLocaleString('zh-CN')
-        return `${date}<br/>消息数: ${data.value[2]}<br/>发起者: ${data.value[3] === 'user' ? '我' : '对方'}`
+    title: {
+      text: `${displayYear}年活跃度`,
+      left: 20,
+      top: 10,
+      textStyle: {
+        color: '#94a3b8', // Slate-400: 适配深色/浅色模式
+        fontSize: 14,
+        fontWeight: 'bold'
       }
     },
-    grid: {
-      left: '5%',
-      right: '3%',
-      bottom: '5%',
-      top: '5%',
-      containLabel: true
+    tooltip: {
+      position: 'top',
+      backgroundColor: 'rgba(15, 23, 42, 0.95)', // 深色背景
+      borderColor: 'rgba(255,255,255,0.1)',
+      borderWidth: 1,
+      textStyle: { color: '#e2e8f0', fontSize: 13 },
+      padding: [12, 16],
+      extraCssText: 'box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3); backdrop-filter: blur(4px);',
+      formatter: (params: any) => {
+        const date = params.value[0]
+        const total = params.value[1]
+        const user = params.value[2]
+        const other = params.value[3]
+        
+        const weekDay = new Date(date).toLocaleDateString('zh-CN', { weekday: 'long' })
+
+        return `
+          <div style="font-weight:600; margin-bottom:6px; color:#f1f5f9; font-size:14px">${date} <span style="font-size:12px; opacity:0.7; margin-left:4px">${weekDay}</span></div>
+          <div style="display:flex; justify-content:space-between; margin-bottom:6px; align-items:center">
+            <span style="color:#94a3b8">总消息</span>
+            <span style="font-weight:600; color:#fff; font-size:15px">${total}</span>
+          </div>
+          <div style="width:100%; height:1px; background:rgba(255,255,255,0.1); margin:6px 0"></div>
+          <div style="display:flex; align-items:center; gap:8px; font-size:12px; margin-bottom:4px">
+            <span style="width:8px; height:8px; border-radius:50%; background:#818cf8"></span>
+            <span style="color:#cbd5e1">我</span>
+            <span style="font-weight:500; color:#fff; margin-left:auto">${user}</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px; font-size:12px">
+            <span style="width:8px; height:8px; border-radius:50%; background:#f472b6"></span>
+            <span style="color:#cbd5e1">对方</span>
+            <span style="font-weight:500; color:#fff; margin-left:auto">${other}</span>
+          </div>
+        `
+      }
     },
-    xAxis: {
-      type: 'time',
-      axisLine: { lineStyle: { color: 'rgba(255,255,255,0.1)' } },
-      axisLabel: { color: 'rgba(255,255,255,0.6)', fontSize: 11 },
-      splitLine: { lineStyle: { color: 'rgba(255,255,255,0.05)' } }
+    visualMap: {
+      min: 0,
+      max: Math.max(maxCount, 1),
+      calculable: false,
+      orient: 'horizontal',
+      right: 20,
+      top: 10,
+      itemWidth: 10,
+      itemHeight: 10,
+      textStyle: { color: '#94a3b8', fontSize: 11 },
+      inRange: {
+        color: ['rgba(255,255,255,0.05)', '#818cf8', '#6366f1', '#4f46e5', '#312e81'] 
+      },
+      controller: {
+        inRange: { color: ['#818cf8', '#312e81'] } // 仅图例显示有色
+      },
+      text: ['多', '少']
     },
-    yAxis: {
-      type: 'category',
-      data: ['对方发起', '我发起'],
-      axisLine: { lineStyle: { color: 'rgba(255,255,255,0.1)' } },
-      axisLabel: { color: 'rgba(255,255,255,0.6)', fontSize: 12 }
+    calendar: {
+      top: 60,
+      left: 40,
+      right: 20,
+      bottom: 20,
+      cellSize: ['auto', 14],
+      range: displayYear,
+      itemStyle: {
+        borderWidth: 2,
+        borderColor: 'rgba(0,0,0,0)', // 透明边框，利用 margin 效果
+        color: 'rgba(255,255,255,0.02)' // 极淡的背景，仅稍微提亮
+      },
+      dayLabel: {
+        firstDay: 1, 
+        color: '#64748b',
+        fontSize: 10,
+        nameMap: ['日', '一', '二', '三', '四', '五', '六']
+      },
+      monthLabel: {
+        color: '#64748b',
+        fontSize: 12,
+        nameMap: 'cn'
+      },
+      yearLabel: { show: false },
+      splitLine: { show: false }
     },
     series: [
       {
-        name: '我发起',
-        type: 'scatter',
-        data: userSessions.map(s => [s.start_time, 1, s.message_count, s.initiator]),
-        symbolSize: (data: number[]) => Math.sqrt(data[2]) * 10,
+        type: 'heatmap',
+        coordinateSystem: 'calendar',
+        data: data,
         itemStyle: {
-          color: new echarts.graphic.RadialGradient(0.4, 0.3, 1, [
-            { offset: 0, color: 'rgba(99, 102, 241, 0.8)' },
-            { offset: 1, color: 'rgba(99, 102, 241, 0.3)' }
-          ]),
-          shadowBlur: 10,
-          shadowColor: 'rgba(99, 102, 241, 0.5)'
-        }
-      },
-      {
-        name: '对方发起',
-        type: 'scatter',
-        data: otherSessions.map(s => [s.start_time, 0, s.message_count, s.initiator]),
-        symbolSize: (data: number[]) => Math.sqrt(data[2]) * 10,
-        itemStyle: {
-          color: new echarts.graphic.RadialGradient(0.4, 0.3, 1, [
-            { offset: 0, color: 'rgba(236, 72, 153, 0.8)' },
-            { offset: 1, color: 'rgba(236, 72, 153, 0.3)' }
-          ]),
-          shadowBlur: 10,
-          shadowColor: 'rgba(236, 72, 153, 0.5)'
+          borderRadius: 3,
+          borderColor: 'transparent',
+          borderWidth: 2 
         }
       }
     ]

@@ -353,6 +353,38 @@ class AnalysisService:
         """, (conversation_id,))
         abnormal_count = cursor.fetchone()[0]
 
+        # 计算分布直方图
+        # 分段: <1m, 1-10m, 10-30m, 30m-1h, 1h-6h, 6h-24h, >1d
+        distribution = {
+            "<1m": 0, "1m-10m": 0, "10m-30m": 0, "30m-1h": 0,
+            "1h-6h": 0, "6h-24h": 0, ">1d": 0
+        }
+
+        # 为了更准确的分布，我们需要再次查询所有数据进行分桶
+        # 注意: 如果可以，最好使用 SQL Case When 在数据库层面做统计，但 SQLite/MySQL 语法略有不同
+        # 这里为了兼容性和简单起见，利用 Python 处理 (假设数据量不是特别巨大，或者复用上面的 all_times)
+        
+        # 如果上面计算中位数没有获取 all_times (比如 row[0] 为 0)，需要处理空情况
+        if not all_times:
+            # 尝试重新获取一次，或者确定上面逻辑已覆盖
+            pass 
+        
+        for t in all_times:
+            if t < 60:
+                distribution["<1m"] += 1
+            elif t < 600:
+                distribution["1m-10m"] += 1
+            elif t < 1800:
+                distribution["10m-30m"] += 1
+            elif t < 3600:
+                distribution["30m-1h"] += 1
+            elif t < 21600:
+                distribution["1h-6h"] += 1
+            elif t < 86400:
+                distribution["6h-24h"] += 1
+            else:
+                distribution[">1d"] += 1
+
         return {
             "count": row[0] or 0,
             "avg": row[1],
@@ -360,7 +392,8 @@ class AnalysisService:
             "min": row[2],
             "max": row[3],
             "stddev": None,  # 暂不计算标准差
-            "abnormal_count": abnormal_count
+            "abnormal_count": abnormal_count,
+            "distribution": distribution
         }
 
     def get_initiative_stats(self, conversation_id: int) -> Dict[str, Any]:

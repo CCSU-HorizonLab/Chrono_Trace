@@ -1169,6 +1169,35 @@ class SessionManager:
                 "initiator_is_sender": unit["is_sender"]
             }]
 
+        # ================================================================
+        # 第一步：强制执行时间间隔和睡眠时间切分（保底机制）
+        # 这些切分点是必须的，不依赖于语义相似度计算
+        # ================================================================
+        mandatory_split_points = set()
+        
+        for i in range(len(speech_units) - 1):
+            time_gap = speech_units[i + 1]["start_timestamp"] - speech_units[i]["end_timestamp"]
+            
+            # 优先级1: 睡眠时间切分 - 跨越午夜或00:00-07:00时段
+            if self._check_crosses_sleep_time(
+                speech_units[i]["end_timestamp"],
+                speech_units[i + 1]["start_timestamp"]
+            ):
+                mandatory_split_points.add(i + 1)
+                continue
+            
+            # 优先级2: 时间间隔切分 - 如果时间间隔 > 30分钟,强制切分
+            if time_gap > self.TIME_GAP_THRESHOLD:
+                mandatory_split_points.add(i + 1)
+                continue
+        
+        print(f"[会话管理器] 强制切分点（时间/睡眠）: {len(mandatory_split_points)} 个")
+
+        # ================================================================
+        # 第二步：尝试计算语义相似度进行更细粒度的切分（可选增强）
+        # ================================================================
+        semantic_split_points = set()
+        
         # 计算相邻发言单元的语义相似度（批量计算，性能优化）
         # 对于超大对话（>1000个单元），使用间隔采样+回溯策略
         LARGE_CONVERSATION_THRESHOLD = 1000
@@ -1288,24 +1317,12 @@ class SessionManager:
                 )
                 similarities.append(sim)
 
-        # 使用滑动窗口检测谷值（相似度骤降点）
-        split_points = []
+        # 使用滑动窗口检测谷值（相似度骤降点）- 仅用于语义切分
+        # 时间间隔和睡眠时间切分已在上面的 mandatory_split_points 中处理
 
         for i in range(len(similarities)):
-            # 计算时间间隔
-            time_gap = speech_units[i + 1]["start_timestamp"] - speech_units[i]["end_timestamp"]
-
-            # 优先级1: 睡眠时间切分 - 跨越午夜或00:00-07:00时段
-            if self._check_crosses_sleep_time(
-                speech_units[i]["end_timestamp"],
-                speech_units[i + 1]["start_timestamp"]
-            ):
-                split_points.append(i + 1)
-                continue
-
-            # 优先级2: 时间间隔切分 - 如果时间间隔 > 30分钟,强制切分
-            if time_gap > self.TIME_GAP_THRESHOLD:
-                split_points.append(i + 1)
+            # 跳过已经在强制切分点中的位置
+            if (i + 1) in mandatory_split_points:
                 continue
 
             # 优先级3: 语义相似度切分 - 检查是否为谷值（局部最小值）
@@ -1321,10 +1338,17 @@ class SessionManager:
             if similarities[i] == min(window):
                 # 检查是否低于阈值
                 if similarities[i] < self.SIMILARITY_THRESHOLD:
-                    split_points.append(i + 1)  # 在这个位置切分
+                    semantic_split_points.add(i + 1)  # 在这个位置切分
+
+        print(f"[会话管理器] 语义切分点: {len(semantic_split_points)} 个")
+
+        # 合并所有切分点
+        all_split_points = sorted(mandatory_split_points | semantic_split_points)
+        
+        print(f"[会话管理器] 总切分点: {len(all_split_points)} 个")
 
         # 如果没有检测到切分点,整个对话作为一个会话
-        if not split_points:
+        if not all_split_points:
             return [{
                 "id": None,
                 "conversation_id": None,
@@ -1340,7 +1364,7 @@ class SessionManager:
         sessions = []
         start_idx = 0
 
-        for split_idx in split_points:
+        for split_idx in all_split_points:
             end_idx = split_idx - 1
 
             session_units = speech_units[start_idx:end_idx + 1]
@@ -1373,7 +1397,7 @@ class SessionManager:
             })
 
         # 合并过于碎片化的会话（小于 MIN_SESSION_UNITS 个单元的会话与相邻会话合并）
-        # 只对语义切分产生的小会话进行合并，不影响睡眠/时间间隔切分
+        # 重要：只有当两个会话之间的时间间隔小于阈值时才合并，防止跨越大间隙
         if len(sessions) > 1:
             merged_sessions = []
             i = 0
@@ -1385,25 +1409,41 @@ class SessionManager:
                     # 尝试与下一个会话合并
                     if i + 1 < len(sessions):
                         next_session = sessions[i + 1]
-                        # 合并两个会话
-                        merged = {
-                            "id": None,
-                            "conversation_id": None,
-                            "start_unit_id": current["start_unit_id"],
-                            "end_unit_id": next_session["end_unit_id"],
-                            "start_timestamp": current["start_timestamp"],
-                            "end_timestamp": next_session["end_timestamp"],
-                            "unit_count": current["unit_count"] + next_session["unit_count"],
-                            "initiator_is_sender": current["initiator_is_sender"]
-                        }
-                        merged_sessions.append(merged)
-                        i += 2  # 跳过已合并的两个会话
+                        
+                        # 计算两个会话之间的时间间隔
+                        time_gap = next_session["start_timestamp"] - current["end_timestamp"]
+                        
+                        # 只有时间间隔小于阈值时才合并，否则保留小会话
+                        if time_gap <= self.TIME_GAP_THRESHOLD:
+                            # 合并两个会话
+                            merged = {
+                                "id": None,
+                                "conversation_id": None,
+                                "start_unit_id": current["start_unit_id"],
+                                "end_unit_id": next_session["end_unit_id"],
+                                "start_timestamp": current["start_timestamp"],
+                                "end_timestamp": next_session["end_timestamp"],
+                                "unit_count": current["unit_count"] + next_session["unit_count"],
+                                "initiator_is_sender": current["initiator_is_sender"]
+                            }
+                            merged_sessions.append(merged)
+                            i += 2  # 跳过已合并的两个会话
+                        else:
+                            # 时间间隔太大，保留小会话
+                            merged_sessions.append(current)
+                            i += 1
                     elif merged_sessions:
-                        # 如果没有下一个会话，与上一个合并
+                        # 如果没有下一个会话，检查能否与上一个合并
                         prev = merged_sessions[-1]
-                        prev["end_unit_id"] = current["end_unit_id"]
-                        prev["end_timestamp"] = current["end_timestamp"]
-                        prev["unit_count"] += current["unit_count"]
+                        time_gap = current["start_timestamp"] - prev["end_timestamp"]
+                        
+                        if time_gap <= self.TIME_GAP_THRESHOLD:
+                            prev["end_unit_id"] = current["end_unit_id"]
+                            prev["end_timestamp"] = current["end_timestamp"]
+                            prev["unit_count"] += current["unit_count"]
+                        else:
+                            # 时间间隔太大，保留小会话
+                            merged_sessions.append(current)
                         i += 1
                     else:
                         # 只有一个小会话，保留
@@ -1416,7 +1456,7 @@ class SessionManager:
             sessions = merged_sessions
             print(f"[会话管理器] 合并碎片化会话后: {len(sessions)} 个会话")
 
-        print(f"[会话管理器] 检测到 {len(sessions)} 个会话 (睡眠时间+时间间隔+语义相似度), 切分点: {split_points}")
+        print(f"[会话管理器] 检测到 {len(sessions)} 个会话 (睡眠时间+时间间隔+语义相似度), 切分点: {all_split_points}")
         return sessions
 
     def collect_session_statistics(

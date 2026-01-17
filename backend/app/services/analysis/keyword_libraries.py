@@ -14,15 +14,16 @@ from ...db.connection import get_db
 class KeywordLibraries:
     """关键词库管理类"""
 
-    # 6个关键词分类常量
+    # 7个关键词分类常量
     POSITIVE = 'positive'
     NEGATIVE = 'negative'
     EMPATHY = 'empathy'
     SOOTHING = 'soothing'
     PRIVACY = 'privacy'
     HOLIDAY = 'holiday'
+    NICKNAME = 'nickname'
 
-    CATEGORIES = [POSITIVE, NEGATIVE, EMPATHY, SOOTHING, PRIVACY, HOLIDAY]
+    CATEGORIES = [POSITIVE, NEGATIVE, EMPATHY, SOOTHING, PRIVACY, HOLIDAY, NICKNAME]
 
     def __init__(self):
         """初始化关键词库服务"""
@@ -107,7 +108,7 @@ class KeywordLibraries:
 
     def remove_keywords(self, category: str, keywords: List[str]) -> int:
         """
-        从指定分类删除关键词
+        从指定分类删除关键词(包括默认关键词)
 
         Args:
             category: 分类名称
@@ -122,13 +123,13 @@ class KeywordLibraries:
         if not keywords:
             return 0
 
-        # 只能删除自定义关键词(is_custom=1),不能删除默认关键词
+        # 可以删除任何关键词(包括默认关键词is_custom=0)
         conn = get_db()
         cursor = conn.cursor()
 
         placeholders = ','.join(['?'] * len(keywords))
         cursor.execute(
-            f"DELETE FROM keyword_libraries WHERE category = ? AND keyword IN ({placeholders}) AND is_custom = 1",
+            f"DELETE FROM keyword_libraries WHERE category = ? AND keyword IN ({placeholders})",
             [category] + keywords
         )
 
@@ -143,7 +144,7 @@ class KeywordLibraries:
 
     def get_all_keywords(self) -> Dict[str, List[str]]:
         """
-        获取全部6个分类的关键词字典
+        获取全部7个分类的关键词字典
 
         Returns:
             Dict[str, List[str]]: {category: [keywords]}

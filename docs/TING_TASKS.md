@@ -2,7 +2,7 @@
 
 **功能**: 002-affinity-analysis
 **更新时间**: 2026-01-13
-**状态**: 进行中 (阶段2: 基础设施)
+**状态**: 进行中 (阶段3: 预处理层)
 
 ---
 
@@ -100,32 +100,44 @@
 
 **完成时间**: 2026-01-11
 
-### T006: 关键词库测试
-- [ ] 创建 `backend/tests/test_keyword_libraries.py`
-- [ ] 测试CRUD操作 (增删改查)
-- [ ] 测试关键词匹配功能
+### T006: 关键词库测试 ✅
+- [x] 创建 `backend/tests/test_keyword_libraries.py`
+- [x] 测试CRUD操作 (增删改查)
+- [x] 测试关键词匹配功能
 
-### T007: 实现态度预处理服务
+**完成时间**: 2026-01-13
+
+**备注**:
+- 修改 remove_keywords() 允许删除默认关键词(is_custom=0)
+- 添加 nickname 分类(第7个关键词分类)
+- 测试数量: 26个测试用例
+
+### T007: 实现态度预处理服务 ✅
 **文件**: `backend/app/services/analysis/preprocessing_service.py`
 
-- [ ] AttitudePreprocessingService.collect_attitude_statistics()
+- [x] AttitudePreprocessingService.collect_attitude_statistics()
   - 单次遍历收集6种态度消息计数 (O(N) vs O(6N))
-  - emoji_message_count - 包含表情包的消息数
+  - emoji_message_count - 表情包消息数
   - voice_message_count - 语音消息数
   - video_message_count - 视频通话消息数
-  - nickname_message_count - 包含专属称呼的消息数
-  - privacy_message_count - 包含隐私分享关键词的消息数
-  - holiday_message_count - 包含节日祝福的消息数
-  - holidays_sent_count - 发送的独立节日日期数 (去重)
+  - nickname_message_count - 专属称呼消息数
+  - privacy_message_count - 隐私分享消息数
+  - holiday_message_count - 节日祝福消息数
+  - holidays_sent_count - 独立节日日期数(去重)
 
 **实现要点**:
-- 使用 keyword_libraries.get_all_keywords() 加载所有6个分类
+- 使用 keyword_libraries.get_all_keywords() 加载所有7个分类
 - 使用 keyword_libraries.check_keywords_in_text() 进行模式匹配
+- 新增 AttitudeStatistics 数据类
 
-### T008: 态度预处理测试
-- [ ] 创建 `backend/tests/test_attitude_preprocessing.py`
-- [ ] 测试单次遍历统计验证
-- [ ] 验证O(N)复杂度 (不重复遍历)
+**完成时间**: 2026-01-13
+
+### T008: 态度预处理测试 ✅
+- [x] 创建 `backend/tests/test_attitude_preprocessing.py`
+- [x] 测试单次遍历统计验证 (12个测试用例)
+- [x] 验证O(N)复杂度 (不重复遍历)
+
+**完成时间**: 2026-01-13
 
 ---
 

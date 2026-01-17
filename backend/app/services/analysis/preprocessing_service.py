@@ -1590,3 +1590,140 @@ class SessionManager:
         except Exception as e:
             print(f"[会话管理器] 读取缓存失败: {e}")
             return []
+
+
+# ============================================================
+# 态度预处理服务 - 收集态度倾向统计
+# ============================================================
+
+from dataclasses import dataclass
+
+
+@dataclass
+class AttitudeStatistics:
+    """态度统计数据结构"""
+    emoji_message_count: int = 0          # 表情包消息数
+    voice_message_count: int = 0          # 语音消息数
+    video_message_count: int = 0          # 视频通话消息数
+    nickname_message_count: int = 0       # 专属称呼消息数
+    privacy_message_count: int = 0        # 隐私分享消息数
+    holiday_message_count: int = 0        # 节日祝福消息数
+    holidays_sent_count: int = 0          # 独立节日日期数(去重)
+
+
+class AttitudePreprocessingService:
+    """态度预处理服务 - 单次遍历统计 O(N)"""
+
+    # 微信消息类型常量
+    MESSAGE_TYPE_TEXT = 1
+    MESSAGE_TYPE_IMAGE = 3
+    MESSAGE_TYPE_VOICE = 34
+    MESSAGE_TYPE_VIDEO = 43
+    MESSAGE_TYPE_EMOJI = 47
+
+    def __init__(self, keyword_lib=None):
+        """
+        初始化服务
+
+        Args:
+            keyword_lib: 关键词库实例(可选,默认创建新实例)
+        """
+        from .keyword_libraries import KeywordLibraries
+        self.keyword_lib = keyword_lib or KeywordLibraries()
+        self._keywords_cache = None
+
+    def collect_attitude_statistics(self, messages):
+        """
+        单次遍历收集态度统计数据 (O(N))
+
+        Args:
+            messages: 消息列表,每条消息格式:
+                {
+                    'content': str,        # 消息内容
+                    'message_type': int,   # 消息类型
+                    'timestamp': int,      # 时间戳
+                    'is_sender': int       # 0=对方,1=用户
+                }
+
+        Returns:
+            AttitudeStatistics: 态度统计结果
+        """
+        # 延迟加载关键词(只在第一次调用时加载)
+        if self._keywords_cache is None:
+            self._keywords_cache = self.keyword_lib.get_all_keywords()
+
+        stats = AttitudeStatistics()
+        holidays_seen = set()  # 用于去重节日日期
+
+        for msg in messages:
+            content = msg.get('content', '')
+            msg_type = msg.get('message_type', self.MESSAGE_TYPE_TEXT)
+            timestamp = msg.get('timestamp', 0)
+
+            # 1. 统计表情包消息 (message_type=47)
+            if msg_type == self.MESSAGE_TYPE_EMOJI:
+                stats.emoji_message_count += 1
+
+            # 2. 统计语音消息 (message_type=34)
+            elif msg_type == self.MESSAGE_TYPE_VOICE:
+                stats.voice_message_count += 1
+
+            # 3. 统计视频通话 (message_type=43)
+            elif msg_type == self.MESSAGE_TYPE_VIDEO:
+                stats.video_message_count += 1
+
+            # 只对文本消息进行关键词匹配
+            if msg_type == self.MESSAGE_TYPE_TEXT and content:
+                # 4. 统计专属称呼 (nickname关键词)
+                if self._check_keywords(content, 'nickname'):
+                    stats.nickname_message_count += 1
+
+                # 5. 统计隐私分享 (privacy关键词)
+                if self._check_keywords(content, 'privacy'):
+                    stats.privacy_message_count += 1
+
+                # 6. 统计节日祝福 (holiday关键词) + 提取日期去重
+                if self._check_keywords(content, 'holiday'):
+                    stats.holiday_message_count += 1
+                    # 提取节日日期(从时间戳)
+                    holiday_date = self._extract_date_from_timestamp(timestamp)
+                    if holiday_date:
+                        holidays_seen.add(holiday_date)
+
+        # 计算独立节日日期数
+        stats.holidays_sent_count = len(holidays_seen)
+
+        return stats
+
+    def _check_keywords(self, text, category):
+        """
+        检查文本是否包含指定分类的关键词
+
+        Args:
+            text: 文本内容
+            category: 关键词分类
+
+        Returns:
+            bool: 是否包含
+        """
+        keywords = self._keywords_cache.get(category, [])
+        return self.keyword_lib.check_keywords_in_text(text, keywords)
+
+    def _extract_date_from_timestamp(self, timestamp):
+        """
+        从时间戳提取日期字符串
+
+        Args:
+            timestamp: Unix时间戳
+
+        Returns:
+            str: 日期字符串 "YYYY-MM-DD"
+        """
+        if not timestamp:
+            return ""
+
+        try:
+            dt = datetime.fromtimestamp(timestamp)
+            return dt.strftime("%Y-%m-%d")
+        except (ValueError, OSError):
+            return ""

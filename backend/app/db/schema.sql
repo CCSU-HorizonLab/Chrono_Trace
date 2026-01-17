@@ -518,7 +518,19 @@ INSERT OR IGNORE INTO keyword_libraries (category, keyword, is_custom, created_a
 ('holiday', '中秋快乐', 0, strftime('%s', 'now')),
 ('holiday', '五一快乐', 0, strftime('%s', 'now')),
 ('holiday', '元旦快乐', 0, strftime('%s', 'now')),
-('holiday', '情人节快乐', 0, strftime('%s', 'now'));
+('holiday', '情人节快乐', 0, strftime('%s', 'now')),
+
+-- Nickname (专属称呼) - 10个
+('nickname', '宝宝', 0, strftime('%s', 'now')),
+('nickname', '宝贝', 0, strftime('%s', 'now')),
+('nickname', '亲爱的', 0, strftime('%s', 'now')),
+('nickname', '老公', 0, strftime('%s', 'now')),
+('nickname', '老婆', 0, strftime('%s', 'now')),
+('nickname', '姐妹', 0, strftime('%s', 'now')),
+('nickname', '闺蜜', 0, strftime('%s', 'now')),
+('nickname', '兄弟', 0, strftime('%s', 'now')),
+('nickname', '宝贝儿', 0, strftime('%s', 'now')),
+('nickname', '亲爱的宝贝', 0, strftime('%s', 'now'));
 
 
 -- ========================================

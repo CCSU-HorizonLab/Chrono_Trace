@@ -130,15 +130,19 @@
 - [x] T021 [P] [Preprocessing] [ting] Implement KeywordLibraries class in backend/app/services/analysis/keyword_libraries.py ✅
   - get_keywords(category) method - retrieve all keywords for a category
   - add_keywords(category, keywords) method - add custom keywords to library
-  - remove_keywords(category, keywords) method - remove keywords from library
-  - get_all_keywords() method - retrieve all 6 categories as dict
+  - remove_keywords(category, keywords) method - remove keywords from library (including default keywords)
+  - get_all_keywords() method - retrieve all 7 categories as dict (added nickname category)
   - check_keywords_in_text(text, keywords) helper method
   - Memory cache mechanism for performance
   - Database CRUD integration using existing get_db() connection
   - Completed: 2026-01-11
+  - Updated: 2026-01-13 (added nickname category, removed deletion restriction)
 
-- [ ] T022 [P] [Preprocessing] [ting] Create backend/tests/test_keyword_libraries.py with CRUD operation tests
-- [ ] T023 [Preprocessing] [ting] Implement AttitudePreprocessingService in backend/app/services/analysis/preprocessing_service.py (Part 4: Attitude Statistics)
+- [x] T022 [P] [Preprocessing] [ting] Create backend/tests/test_keyword_libraries.py with CRUD operation tests ✅
+  - Completed: 2026-01-13
+  - Notes: 26 test cases covering all CRUD operations + keyword matching + 7 categories (added nickname)
+
+- [x] T023 [Preprocessing] [ting] Implement AttitudePreprocessingService in backend/app/services/analysis/preprocessing_service.py (Part 4: Attitude Statistics) ✅
   - collect_attitude_statistics() method - single-pass collection of 6 attitude message counts (O(N) vs O(6N))
   - emoji_message_count - messages containing emoji stickers
   - voice_message_count - voice messages
@@ -148,9 +152,13 @@
   - holiday_message_count - messages with holiday greetings
   - holidays_sent_count - unique holiday dates sent (for accurate coverage calculation)
   - Use keyword_libraries.get_all_keywords() to load all 6 categories
+  - Use keyword_libraries.get_all_keywords() to load all 7 categories (added nickname)
   - Use keyword_libraries.check_keywords_in_text() for pattern matching
+  - Completed: 2026-01-13
 
-- [ ] T024 [Preprocessing] [ting] Create backend/tests/test_attitude_preprocessing.py with single-pass attitude statistics validation
+- [x] T024 [Preprocessing] [ting] Create backend/tests/test_attitude_preprocessing.py with single-pass attitude statistics validation ✅
+  - Completed: 2026-01-13
+  - Notes: 12 test cases covering all 6 message types + O(N) complexity validation
 
 #### Preprocessing Orchestrator & Tests (joint - 1 task)
 

@@ -325,12 +325,18 @@ All design decisions follow standard industry practices for Python + Vue web app
      - T016-T019: SentimentService + tests + caching
      - T020-A/B/C: BasicPreprocessingService + PairPreprocessingService + SessionManager
    - ting (3 tasks):
-     - T021-T022: KeywordLibraries ✅ + tests
-     - T023-T024: AttitudePreprocessingService + tests
+     - T021-T022: KeywordLibraries ✅ + tests ✅
+     - T023-T024: AttitudePreprocessingService ✅ + tests ✅
    - joint (1 task):
      - T025-T026: PreprocessingOrchestrator + integration tests
    - **Summary**: Collect 29 statistics in O(N) single pass, cache to database
-   - **Progress**: T021 (KeywordLibraries) completed 2026-01-11, T014-T015 (test data) completed 2026-01-13
+   - **Progress**:
+     - T021 (KeywordLibraries) completed 2026-01-11
+     - T022 (test_keyword_libraries) completed 2026-01-13 (26 test cases)
+     - T023 (AttitudePreprocessingService) completed 2026-01-13
+     - T024 (test_attitude_preprocessing) completed 2026-01-13 (12 test cases)
+     - **Total: 38 tests passing (26+12)**
+     - **Note**: Added nickname as 7th keyword category, removed default keyword deletion restriction
 
 3. **Backend Core Services - 4 Dimensions** (14 tasks, fully parallel after preprocessing)
    - ting (2 tasks): T027-T028 - Emotional Resonance Service (Dimension 1)

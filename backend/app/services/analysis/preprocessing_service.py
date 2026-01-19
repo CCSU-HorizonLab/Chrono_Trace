@@ -1620,6 +1620,13 @@ class AttitudePreprocessingService:
     MESSAGE_TYPE_VOICE = 34
     MESSAGE_TYPE_VIDEO = 43
     MESSAGE_TYPE_EMOJI = 47
+    
+    # 消息类型到统计字段的映射(优化:减少if-elif链)
+    TYPE_TO_FIELD = {
+        47: 'emoji_message_count',   # MESSAGE_TYPE_EMOJI
+        34: 'voice_message_count',   # MESSAGE_TYPE_VOICE
+        43: 'video_message_count',   # MESSAGE_TYPE_VIDEO
+    }
 
     def __init__(self, keyword_lib=None):
         """
@@ -1629,7 +1636,10 @@ class AttitudePreprocessingService:
             keyword_lib: 关键词库实例(可选,默认创建新实例)
         """
         from .keyword_libraries import KeywordLibraries
+        from .holiday_library import HolidayLibrary
+        
         self.keyword_lib = keyword_lib or KeywordLibraries()
+        self.holiday_lib = HolidayLibrary()
         self._keywords_cache = None
 
     def collect_attitude_statistics(self, messages):
@@ -1648,66 +1658,117 @@ class AttitudePreprocessingService:
         Returns:
             AttitudeStatistics: 态度统计结果
         """
+        # 验证输入
+        if not messages:
+            return AttitudeStatistics()
+        
         # 延迟加载关键词(只在第一次调用时加载)
         if self._keywords_cache is None:
             self._keywords_cache = self.keyword_lib.get_all_keywords()
 
         stats = AttitudeStatistics()
-        holidays_seen = set()  # 用于去重节日日期
+        holidays_seen = set()  # 用于去重节日(格式: "节日名-年份")
 
-        for msg in messages:
-            content = msg.get('content', '')
-            msg_type = msg.get('message_type', self.MESSAGE_TYPE_TEXT)
-            timestamp = msg.get('timestamp', 0)
+        for i, msg in enumerate(messages):
+            try:
+                # 验证消息格式
+                if not isinstance(msg, dict):
+                    print(f"[警告] 消息 #{i} 格式无效,跳过")
+                    continue
+                
+                content = msg.get('content', '')
+                msg_type = msg.get('message_type', self.MESSAGE_TYPE_TEXT)
+                timestamp = msg.get('timestamp', 0)
 
-            # 1. 统计表情包消息 (message_type=47)
-            if msg_type == self.MESSAGE_TYPE_EMOJI:
-                stats.emoji_message_count += 1
+                # 优化1: 使用字典映射处理消息类型统计
+                if msg_type in self.TYPE_TO_FIELD:
+                    field = self.TYPE_TO_FIELD[msg_type]
+                    setattr(stats, field, getattr(stats, field) + 1)
 
-            # 2. 统计语音消息 (message_type=34)
-            elif msg_type == self.MESSAGE_TYPE_VOICE:
-                stats.voice_message_count += 1
+                # 只对文本消息进行关键词匹配
+                if msg_type == self.MESSAGE_TYPE_TEXT and content:
+                    # 优化2: 一次性检查所有关键词类别
+                    keyword_matches = self._check_all_keywords(content)
+                    
+                    # 统计专属称呼
+                    if keyword_matches.get('nickname'):
+                        stats.nickname_message_count += 1
 
-            # 3. 统计视频通话 (message_type=43)
-            elif msg_type == self.MESSAGE_TYPE_VIDEO:
-                stats.video_message_count += 1
+                    # 统计隐私分享
+                    if keyword_matches.get('privacy'):
+                        stats.privacy_message_count += 1
 
-            # 只对文本消息进行关键词匹配
-            if msg_type == self.MESSAGE_TYPE_TEXT and content:
-                # 4. 统计专属称呼 (nickname关键词)
-                if self._check_keywords(content, 'nickname'):
-                    stats.nickname_message_count += 1
+                    # 优化3: 改进节日祝福统计 - 基于节日名称+日期匹配
+                    if keyword_matches.get('holiday'):
+                        stats.holiday_message_count += 1
+                        
+                        # 提取节日名称并验证日期
+                        holiday_name = self._extract_holiday_name(content)
+                        if holiday_name and timestamp:
+                            msg_date = self._extract_date_from_timestamp(timestamp)
+                            if msg_date:
+                                # 检查消息日期是否在节日当天(容错±1天)
+                                if self.holiday_lib.is_holiday_date(msg_date, holiday_name, tolerance_days=1):
+                                    # 使用"节日名-年份"作为唯一标识
+                                    year = datetime.fromtimestamp(timestamp).year
+                                    holiday_key = f"{holiday_name}-{year}"
+                                    holidays_seen.add(holiday_key)
+                                else:
+                                    # 如果日期不匹配,仍然记录(可能是提前祝福)
+                                    # 但使用消息日期作为标识
+                                    holidays_seen.add(msg_date)
+            
+            except Exception as e:
+                # 优化4: 添加异常处理,确保单条消息异常不影响整体统计
+                print(f"[错误] 处理消息 #{i} 时出错: {e}")
+                continue
 
-                # 5. 统计隐私分享 (privacy关键词)
-                if self._check_keywords(content, 'privacy'):
-                    stats.privacy_message_count += 1
-
-                # 6. 统计节日祝福 (holiday关键词) + 提取日期去重
-                if self._check_keywords(content, 'holiday'):
-                    stats.holiday_message_count += 1
-                    # 提取节日日期(从时间戳)
-                    holiday_date = self._extract_date_from_timestamp(timestamp)
-                    if holiday_date:
-                        holidays_seen.add(holiday_date)
-
-        # 计算独立节日日期数
+        # 计算独立节日数
         stats.holidays_sent_count = len(holidays_seen)
 
         return stats
 
-    def _check_keywords(self, text, category):
+    def _check_all_keywords(self, text):
         """
-        检查文本是否包含指定分类的关键词
+        一次性检查文本中的所有关键词类别(优化:减少重复遍历)
 
         Args:
             text: 文本内容
-            category: 关键词分类
 
         Returns:
-            bool: 是否包含
+            dict: {category: bool} 各类别是否匹配
         """
-        keywords = self._keywords_cache.get(category, [])
-        return self.keyword_lib.check_keywords_in_text(text, keywords)
+        results = {
+            'nickname': False,
+            'privacy': False,
+            'holiday': False
+        }
+        
+        if not text:
+            return results
+        
+        # 使用优化后的正则预编译方法
+        for category in results.keys():
+            results[category] = self.keyword_lib.check_keywords_in_text_by_category(text, category)
+        
+        return results
+    
+    def _extract_holiday_name(self, text):
+        """
+        从文本中提取节日名称
+
+        Args:
+            text: 文本内容
+
+        Returns:
+            str: 节日名称,如果没有匹配则返回None
+        """
+        # 确保关键词缓存已初始化
+        if self._keywords_cache is None:
+            self._keywords_cache = self.keyword_lib.get_all_keywords()
+
+        holiday_keywords = self._keywords_cache.get('holiday', [])
+        return self.holiday_lib.extract_holiday_from_keywords(text, holiday_keywords)
 
     def _extract_date_from_timestamp(self, timestamp):
         """

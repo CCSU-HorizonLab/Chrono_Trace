@@ -3,9 +3,10 @@
 管理6个类别的关键词: positive, negative, empathy, soothing, privacy, holiday
 """
 
-from typing import List, Dict
+from typing import List, Dict, Optional
 import sqlite3
 import time
+import re
 
 # 使用相对导入避免循环依赖
 from ...db.connection import get_db
@@ -29,6 +30,7 @@ class KeywordLibraries:
         """初始化关键词库服务"""
         self._cache: Dict[str, List[str]] = {}  # 内存缓存
         self._cache_loaded = False
+        self._regex_cache: Dict[str, Optional[re.Pattern]] = {}  # 正则表达式缓存
 
     # ===== 核心CRUD方法 =====
 
@@ -103,6 +105,8 @@ class KeywordLibraries:
 
         # 更新缓存
         self._cache[category].extend(new_keywords)
+        # 清除对应的正则缓存,下次使用时重新编译
+        self._regex_cache.pop(category, None)
 
         return len(new_keywords)
 
@@ -139,6 +143,8 @@ class KeywordLibraries:
         # 更新缓存
         if deleted_count > 0:
             self._load_cache()  # 重新加载缓存
+            # 清空所有正则缓存
+            self._regex_cache.clear()
 
         return deleted_count
 
@@ -179,11 +185,62 @@ class KeywordLibraries:
         """强制重新加载缓存(用于外部更新后刷新)"""
         self._cache_loaded = False
         self._load_cache()
+        # 清空正则缓存
+        self._regex_cache.clear()
+
+    def _compile_regex(self, category: str) -> Optional[re.Pattern]:
+        """
+        将指定分类的关键词编译为正则表达式
+
+        Args:
+            category: 分类名称
+
+        Returns:
+            编译后的正则表达式,如果没有关键词则返回None
+        """
+        keywords = self._cache.get(category, [])
+        if not keywords:
+            return None
+        
+        # 转义特殊字符并用 | 连接(不区分大小写)
+        pattern = '|'.join(re.escape(kw) for kw in keywords if kw)
+        if not pattern:
+            return None
+        
+        return re.compile(pattern, re.IGNORECASE)
+
+    def check_keywords_in_text_by_category(self, text: str, category: str) -> bool:
+        """
+        检查文本中是否包含指定分类的关键词(使用正则预编译优化)
+
+        Args:
+            text: 要检查的文本
+            category: 关键词分类
+
+        Returns:
+            bool: 如果文本包含该分类的任意关键词则返回True
+        """
+        if not text:
+            return False
+        
+        # 确保缓存已加载
+        if not self._cache_loaded:
+            self._load_cache()
+        
+        # 检查正则缓存
+        if category not in self._regex_cache:
+            self._regex_cache[category] = self._compile_regex(category)
+        
+        regex = self._regex_cache[category]
+        if not regex:
+            return False
+        
+        return bool(regex.search(text))
 
     @staticmethod
     def check_keywords_in_text(text: str, keywords: List[str]) -> bool:
         """
-        检查文本中是否包含任意关键词
+        检查文本中是否包含任意关键词(静态方法,用于向后兼容)
 
         Args:
             text: 要检查的文本
@@ -195,16 +252,13 @@ class KeywordLibraries:
         if not text or not keywords:
             return False
 
-        text_lower = text.lower()
-
-        for keyword in keywords:
-            if not keyword:
-                continue
-            # 简单子串匹配
-            if keyword.lower() in text_lower:
-                return True
-
-        return False
+        # 使用正则表达式优化
+        pattern = '|'.join(re.escape(kw) for kw in keywords if kw)
+        if not pattern:
+            return False
+        
+        regex = re.compile(pattern, re.IGNORECASE)
+        return bool(regex.search(text))
 
     def check_text(self, text: str, category: str) -> bool:
         """

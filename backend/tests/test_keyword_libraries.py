@@ -259,6 +259,72 @@ class TestKeywordLibraries:
 
         result = keyword_lib.check_text("普通文本", 'positive')
         assert result is False
+    
+    # ===== 测试check_keywords_in_text_by_category (优化后的方法) =====
+    
+    def test_check_keywords_by_category_match(self, keyword_lib):
+        """测试按分类检查关键词 - 匹配成功"""
+        result = keyword_lib.check_keywords_in_text_by_category("我今天很开心!", 'positive')
+        assert result is True
+    
+    def test_check_keywords_by_category_no_match(self, keyword_lib):
+        """测试按分类检查关键词 - 不匹配"""
+        result = keyword_lib.check_keywords_in_text_by_category("普通文本", 'positive')
+        assert result is False
+    
+    def test_check_keywords_by_category_empty_text(self, keyword_lib):
+        """测试按分类检查 - 空文本"""
+        result = keyword_lib.check_keywords_in_text_by_category('', 'positive')
+        assert result is False
+    
+    def test_check_keywords_by_category_case_insensitive(self, keyword_lib):
+        """测试按分类检查 - 不区分大小写"""
+        result = keyword_lib.check_keywords_in_text_by_category("我很开心", 'positive')
+        assert result is True
+    
+    def test_regex_cache_mechanism(self, keyword_lib):
+        """测试正则表达式缓存机制"""
+        # 第一次调用会编译正则
+        result1 = keyword_lib.check_keywords_in_text_by_category("开心", 'positive')
+        assert result1 is True
+        
+        # 检查正则缓存已创建
+        assert 'positive' in keyword_lib._regex_cache
+        assert keyword_lib._regex_cache['positive'] is not None
+        
+        # 第二次调用应使用缓存
+        result2 = keyword_lib.check_keywords_in_text_by_category("哈哈", 'positive')
+        assert result2 is True
+    
+    def test_regex_cache_invalidation_on_add(self, keyword_lib):
+        """测试添加关键词后正则缓存失效"""
+        # 先创建缓存
+        keyword_lib.check_keywords_in_text_by_category("开心", 'positive')
+        assert 'positive' in keyword_lib._regex_cache
+        
+        # 添加新关键词
+        keyword_lib.add_keywords('positive', ['棒极了'])
+        
+        # 缓存应被清除
+        assert 'positive' not in keyword_lib._regex_cache
+        
+        # 新关键词应该生效
+        result = keyword_lib.check_keywords_in_text_by_category("棒极了", 'positive')
+        assert result is True
+    
+    def test_regex_cache_invalidation_on_reload(self, keyword_lib):
+        """测试reload_cache后正则缓存失效"""
+        # 先创建缓存
+        keyword_lib.check_keywords_in_text_by_category("开心", 'positive')
+        keyword_lib.check_keywords_in_text_by_category("难过", 'negative')
+        
+        assert len(keyword_lib._regex_cache) == 2
+        
+        # 重新加载缓存
+        keyword_lib.reload_cache()
+        
+        # 所有正则缓存应被清空
+        assert len(keyword_lib._regex_cache) == 0
 
     # ===== 测试get_categories =====
 

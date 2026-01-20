@@ -9,6 +9,7 @@ from .preprocessing_service import (
 )
 from .sentiment_service import SentimentService
 from .keyword_libraries import KeywordLibraries
+from .preprocessing_orchestrator import PreprocessingOrchestrator, PreprocessedStatistics
 
 __all__ = [
     'AnalysisService',
@@ -19,4 +20,6 @@ __all__ = [
     'SessionManager',
     'SentimentService',
     'KeywordLibraries',
+    'PreprocessingOrchestrator',
+    'PreprocessedStatistics',
 ]

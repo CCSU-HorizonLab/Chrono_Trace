@@ -1,0 +1,446 @@
+"""好感度分析编排器 - 协调4个维度服务并计算综合评分
+
+功能:
+- analyze(): 主入口，触发完整分析流程
+- get_scores(): 获取缓存分数
+- reanalyze(): 重新分析（清除缓存）
+
+维度权重:
+- 情感共振率: 30%
+- 聊天积极度: 30%
+- 态度倾向: 20%
+- 喜好兼容度: 20%
+"""
+
+import time
+import json
+import logging
+from dataclasses import dataclass, asdict, field
+from typing import Optional, Dict, Any, List
+
+from ...db.connection import get_db
+from .preprocessing_orchestrator import PreprocessingOrchestrator, PreprocessedStatistics
+from .chat_positivity_service import ChatPositivityService, ChatPositivityResult
+from .preference_compatibility_service import PreferenceCompatibilityService, PreferenceCompatibilityResult
+from .affinity_config import AffinityConfigService, AffinityConfig
+
+# 配置日志
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class DimensionScore:
+    """维度评分"""
+    name: str = ""
+    score: float = 0.0
+    weight: float = 0.0
+    weighted_score: float = 0.0
+    interpretation: str = ""
+    sub_scores: Dict[str, float] = field(default_factory=dict)
+
+
+@dataclass
+class AffinityAnalysisResult:
+    """好感度分析结果"""
+    
+    # 综合评分 (0-100)
+    overall_score: float = 0.0
+    overall_interpretation: str = ""
+    
+    # 4个维度评分
+    emotional_resonance: Optional[DimensionScore] = None
+    chat_positivity: Optional[DimensionScore] = None
+    attitude_tendency: Optional[DimensionScore] = None
+    preference_compatibility: Optional[DimensionScore] = None
+    
+    # 元数据
+    conversation_id: int = 0
+    analysis_timestamp: int = 0
+    analysis_duration_ms: int = 0
+    task_id: str = ""
+    
+    # 状态
+    status: str = "pending"  # pending, running, completed, failed
+    progress_percent: int = 0
+    current_step: str = ""
+    error: Optional[str] = None
+
+
+class AffinityAnalysisService:
+    """好感度分析编排器"""
+    
+    # 默认维度权重
+    DEFAULT_WEIGHT_EMOTIONAL = 0.30
+    DEFAULT_WEIGHT_POSITIVITY = 0.30
+    DEFAULT_WEIGHT_ATTITUDE = 0.20
+    DEFAULT_WEIGHT_PREFERENCE = 0.20
+    
+    def __init__(self):
+        self.db = get_db()
+        
+        # 初始化所有服务
+        self.preprocessing = PreprocessingOrchestrator()
+        self.config_service = AffinityConfigService()
+        self.positivity_service = ChatPositivityService()
+        self.preference_service = PreferenceCompatibilityService()
+        
+        # 任务状态存储
+        self._task_status: Dict[str, AffinityAnalysisResult] = {}
+    
+    def analyze(
+        self,
+        conversation_id: int,
+        force_reanalyze: bool = False,
+        config_overrides: Optional[Dict[str, Any]] = None
+    ) -> AffinityAnalysisResult:
+        """
+        主入口 - 触发完整分析流程
+        
+        Args:
+            conversation_id: 会话 ID
+            force_reanalyze: 是否强制重新分析
+            config_overrides: 配置覆盖
+            
+        Returns:
+            AffinityAnalysisResult: 分析结果
+        """
+        start_time = time.time()
+        
+        # 生成任务 ID
+        task_id = f"affinity_{conversation_id}_{int(start_time)}"
+        
+        # 初始化结果
+        result = AffinityAnalysisResult()
+        result.conversation_id = conversation_id
+        result.task_id = task_id
+        result.status = "running"
+        result.current_step = "初始化"
+        
+        self._task_status[task_id] = result
+        
+        try:
+            # 1. 检查缓存
+            if not force_reanalyze:
+                cached = self._load_cached_scores(conversation_id)
+                if cached:
+                    logger.info(f"使用缓存的分析结果 (会话 {conversation_id})")
+                    return cached
+            
+            # 2. 加载配置
+            result.current_step = "加载配置"
+            result.progress_percent = 10
+            config = self._load_config(conversation_id, config_overrides)
+            
+            # 3. 执行预处理
+            result.current_step = "预处理数据"
+            result.progress_percent = 20
+            stats = self._preprocess_conversation(conversation_id, force_reanalyze)
+            
+            # 4. 计算各维度
+            result.current_step = "计算维度评分"
+            result.progress_percent = 40
+            self._calculate_all_dimensions(result, conversation_id, stats, config)
+            
+            # 5. 计算综合评分
+            result.current_step = "计算综合评分"
+            result.progress_percent = 80
+            self._calculate_overall_score(result, config)
+            
+            # 6. 生成解释
+            result.overall_interpretation = self._generate_overall_interpretation(
+                result.overall_score
+            )
+            
+            # 7. 保存结果
+            result.current_step = "保存结果"
+            result.progress_percent = 90
+            self._save_results(conversation_id, result)
+            
+            # 完成
+            result.status = "completed"
+            result.progress_percent = 100
+            result.current_step = "完成"
+            result.analysis_timestamp = int(time.time())
+            result.analysis_duration_ms = int((time.time() - start_time) * 1000)
+            
+            logger.info(
+                f"好感度分析完成: {result.overall_score:.1f} 分, "
+                f"耗时 {result.analysis_duration_ms}ms (会话 {conversation_id})"
+            )
+            
+        except Exception as e:
+            result.status = "failed"
+            result.error = str(e)
+            logger.error(f"好感度分析失败: {e}", exc_info=True)
+        
+        self._task_status[task_id] = result
+        return result
+    
+    def get_scores(self, conversation_id: int) -> Optional[AffinityAnalysisResult]:
+        """
+        获取缓存的分析结果
+        
+        Args:
+            conversation_id: 会话 ID
+            
+        Returns:
+            AffinityAnalysisResult 或 None
+        """
+        return self._load_cached_scores(conversation_id)
+    
+    def reanalyze(self, conversation_id: int) -> AffinityAnalysisResult:
+        """
+        重新分析（清除缓存）
+        
+        Args:
+            conversation_id: 会话 ID
+            
+        Returns:
+            AffinityAnalysisResult: 分析结果
+        """
+        # 清除预处理缓存
+        self.preprocessing.invalidate_cache(conversation_id)
+        
+        # 清除分析结果缓存
+        self._invalidate_cache(conversation_id)
+        
+        # 重新分析
+        return self.analyze(conversation_id, force_reanalyze=True)
+    
+    def get_progress(self, task_id: str) -> Optional[AffinityAnalysisResult]:
+        """
+        获取任务进度
+        
+        Args:
+            task_id: 任务 ID
+            
+        Returns:
+            AffinityAnalysisResult 或 None
+        """
+        return self._task_status.get(task_id)
+    
+    # ========================================
+    # 内部方法
+    # ========================================
+    
+    def _load_config(
+        self,
+        conversation_id: int,
+        overrides: Optional[Dict[str, Any]] = None
+    ) -> AffinityConfig:
+        """加载配置"""
+        config = self.config_service.get_config(conversation_id)
+        
+        if overrides:
+            for key, value in overrides.items():
+                if hasattr(config, key):
+                    setattr(config, key, value)
+        
+        return config
+    
+    def _preprocess_conversation(
+        self,
+        conversation_id: int,
+        force_reprocess: bool = False
+    ) -> PreprocessedStatistics:
+        """执行预处理"""
+        return self.preprocessing.orchestrate_preprocessing(
+            conversation_id, force_reprocess
+        )
+    
+    def _calculate_all_dimensions(
+        self,
+        result: AffinityAnalysisResult,
+        conversation_id: int,
+        stats: PreprocessedStatistics,
+        config: AffinityConfig
+    ):
+        """计算所有维度评分"""
+        
+        # 1. 情感共振率 (30%)
+        # TODO: 等待 ting 实现 EmotionalResonanceService
+        result.emotional_resonance = DimensionScore(
+            name="情感共振率",
+            score=0.0,
+            weight=config.weight_emotional_resonance,
+            weighted_score=0.0,
+            interpretation="待实现",
+            sub_scores={}
+        )
+        logger.warning("EmotionalResonanceService 未实现，使用占位值")
+        
+        # 2. 聊天积极度 (30%)
+        self.positivity_service.timeliness_threshold = config.reply_timeliness_threshold_seconds
+        positivity_result = self.positivity_service.calculate_scores(
+            conversation_id, stats
+        )
+        result.chat_positivity = DimensionScore(
+            name="聊天积极度",
+            score=positivity_result.overall_score,
+            weight=config.weight_chat_positivity,
+            weighted_score=positivity_result.overall_score * config.weight_chat_positivity,
+            interpretation=positivity_result.interpretation,
+            sub_scores={
+                "daily_message": positivity_result.daily_message_score,
+                "reply_timeliness": positivity_result.reply_timeliness_score,
+                "avg_length": positivity_result.avg_length_score,
+                "long_text_ratio": positivity_result.long_text_ratio_score,
+                "topic_continuity": positivity_result.topic_continuity_score,
+                "active_initiation": positivity_result.active_initiation_score,
+            }
+        )
+        
+        # 3. 态度倾向 (20%)
+        # TODO: 等待 ting 实现 AttitudeTendencyService
+        result.attitude_tendency = DimensionScore(
+            name="态度倾向",
+            score=0.0,
+            weight=config.weight_attitude_tendency,
+            weighted_score=0.0,
+            interpretation="待实现",
+            sub_scores={}
+        )
+        logger.warning("AttitudeTendencyService 未实现，使用占位值")
+        
+        # 4. 喜好兼容度 (20%)
+        self.preference_service.set_preference_keywords(config.preference_keywords)
+        preference_result = self.preference_service.calculate_scores(
+            conversation_id, stats
+        )
+        result.preference_compatibility = DimensionScore(
+            name="喜好兼容度",
+            score=preference_result.overall_score,
+            weight=config.weight_preference_compatibility,
+            weighted_score=preference_result.overall_score * config.weight_preference_compatibility,
+            interpretation=preference_result.interpretation,
+            sub_scores={
+                "topic_mention": preference_result.topic_mention_score,
+                "topic_continuity": preference_result.topic_continuity_score,
+            }
+        )
+    
+    def _calculate_overall_score(
+        self,
+        result: AffinityAnalysisResult,
+        config: AffinityConfig
+    ):
+        """计算综合评分"""
+        # 收集所有维度的加权分数
+        total_weighted = 0.0
+        total_weight = 0.0
+        
+        dimensions = [
+            result.emotional_resonance,
+            result.chat_positivity,
+            result.attitude_tendency,
+            result.preference_compatibility,
+        ]
+        
+        for dim in dimensions:
+            if dim and dim.score > 0:
+                total_weighted += dim.score * dim.weight
+                total_weight += dim.weight
+        
+        # 如果有未实现的维度，按比例调整权重
+        if total_weight > 0:
+            result.overall_score = round(total_weighted / total_weight * (total_weight / 1.0), 2)
+        else:
+            result.overall_score = 0.0
+    
+    def _generate_overall_interpretation(self, score: float) -> str:
+        """生成综合解释"""
+        if score >= 80:
+            return "总体好感度非常高，对方对这段关系非常重视，表现出强烈的情感投入"
+        elif score >= 60:
+            return "总体好感度较高，对方对这段关系较为重视，愿意投入时间和精力"
+        elif score >= 40:
+            return "总体好感度一般，对方态度较为平淡，可能需要更多互动来培养感情"
+        elif score >= 20:
+            return "总体好感度较低，对方可能兴趣不大，建议观察更多互动信号"
+        else:
+            return "总体好感度很低，对方可能对这段关系不太感兴趣"
+    
+    def _save_results(self, conversation_id: int, result: AffinityAnalysisResult):
+        """保存分析结果到数据库"""
+        try:
+            # 序列化结果
+            result_dict = {
+                "overall_score": result.overall_score,
+                "overall_interpretation": result.overall_interpretation,
+                "emotional_resonance": asdict(result.emotional_resonance) if result.emotional_resonance else None,
+                "chat_positivity": asdict(result.chat_positivity) if result.chat_positivity else None,
+                "attitude_tendency": asdict(result.attitude_tendency) if result.attitude_tendency else None,
+                "preference_compatibility": asdict(result.preference_compatibility) if result.preference_compatibility else None,
+                "conversation_id": result.conversation_id,
+                "analysis_timestamp": result.analysis_timestamp,
+                "analysis_duration_ms": result.analysis_duration_ms,
+                "task_id": result.task_id,
+                "status": result.status,
+            }
+            
+            result_json = json.dumps(result_dict, ensure_ascii=False)
+            key = f"affinity_scores_{conversation_id}"
+            
+            self.db.execute("""
+                INSERT OR REPLACE INTO settings (key, value, updated_at)
+                VALUES (?, ?, ?)
+            """, (key, result_json, int(time.time())))
+            
+            self.db.commit()
+            logger.debug(f"分析结果已保存 (会话 {conversation_id})")
+            
+        except Exception as e:
+            logger.error(f"保存分析结果失败: {e}")
+    
+    def _load_cached_scores(
+        self,
+        conversation_id: int
+    ) -> Optional[AffinityAnalysisResult]:
+        """从缓存加载分析结果"""
+        try:
+            key = f"affinity_scores_{conversation_id}"
+            cursor = self.db.execute("""
+                SELECT value FROM settings WHERE key = ?
+            """, (key,))
+            
+            row = cursor.fetchone()
+            if not row:
+                return None
+            
+            result_dict = json.loads(row[0])
+            
+            # 重建结果对象
+            result = AffinityAnalysisResult()
+            result.overall_score = result_dict.get("overall_score", 0.0)
+            result.overall_interpretation = result_dict.get("overall_interpretation", "")
+            result.conversation_id = result_dict.get("conversation_id", 0)
+            result.analysis_timestamp = result_dict.get("analysis_timestamp", 0)
+            result.analysis_duration_ms = result_dict.get("analysis_duration_ms", 0)
+            result.task_id = result_dict.get("task_id", "")
+            result.status = result_dict.get("status", "completed")
+            
+            # 重建维度分数
+            for dim_name in ["emotional_resonance", "chat_positivity", 
+                           "attitude_tendency", "preference_compatibility"]:
+                dim_dict = result_dict.get(dim_name)
+                if dim_dict:
+                    dim = DimensionScore(**dim_dict)
+                    setattr(result, dim_name, dim)
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"加载缓存失败: {e}")
+            return None
+    
+    def _invalidate_cache(self, conversation_id: int):
+        """清除分析结果缓存"""
+        try:
+            key = f"affinity_scores_{conversation_id}"
+            self.db.execute("""
+                DELETE FROM settings WHERE key = ?
+            """, (key,))
+            self.db.commit()
+            logger.debug(f"分析缓存已清除 (会话 {conversation_id})")
+        except Exception as e:
+            logger.error(f"清除缓存失败: {e}")

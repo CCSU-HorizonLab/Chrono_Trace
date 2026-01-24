@@ -227,7 +227,7 @@ class PreprocessingOrchestrator:
     
     def _load_messages(self, conversation_id: int) -> List[Dict[str, Any]]:
         """
-        加载会话的所有消息
+        加载会话的所有消息（仅文本消息）
         
         Args:
             conversation_id: 会话ID
@@ -239,14 +239,18 @@ class PreprocessingOrchestrator:
             SELECT id, content, is_sender, timestamp, message_type
             FROM messages
             WHERE conversation_id = ?
+              AND message_type = 1  -- 只加载文本消息
             ORDER BY timestamp ASC
         """, (conversation_id,))
         
         messages = []
         for row in cursor.fetchall():
+            # 确保 content 不为 None
+            content = row[1] if row[1] is not None else ""
+            
             messages.append({
                 "id": row[0],
-                "content": row[1],
+                "content": content,
                 "is_sender": row[2],
                 "timestamp": row[3],
                 "message_type": row[4]
@@ -294,7 +298,7 @@ class PreprocessingOrchestrator:
         for msg, result in zip(messages_to_analyze, results):
             cache_data.append({
                 "message_id": msg["id"],
-                "conversation_id": conversation_id,
+                # conversation_id 已移除（数据库表中不存在此列）
                 "polarity": result["polarity"],
                 "intensity": result["intensity"],
                 "embedding": result["embedding"]

@@ -251,6 +251,20 @@ class KeywordLibraries:
         """
         if not text or not keywords:
             return False
+        
+        # 处理 bytes 类型
+        if isinstance(text, bytes):
+            try:
+                text = text.decode('utf-8', errors='replace')
+            except:
+                return False
+        
+        # 确保是字符串
+        if not isinstance(text, str):
+            try:
+                text = str(text)
+            except:
+                return False
 
         # 使用正则表达式优化
         pattern = '|'.join(re.escape(kw) for kw in keywords if kw)

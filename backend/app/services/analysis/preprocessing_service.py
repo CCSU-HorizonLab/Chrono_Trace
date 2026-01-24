@@ -676,6 +676,59 @@ class PairPreprocessingService:
     def __init__(self):
         self.db = get_db()
 
+    def _get_sentiment_for_unit(self, message_ids: List[int]) -> Dict[str, Any]:
+        """
+        获取发言单元的平均情感数据
+        
+        Args:
+            message_ids: 消息ID列表
+        
+        Returns:
+            {
+                "polarity": 平均极性（-1, 0, 1），
+                "intensity": 平均强度（-1.0 到 1.0）
+            }
+        """
+        if not message_ids:
+            return {"polarity": 0, "intensity": 0.0}
+        
+        try:
+            # 将消息ID列表转换为逗号分隔的字符串
+            if isinstance(message_ids, str):
+                import json
+                message_ids = json.loads(message_ids)
+            
+            # 查询这些消息的情感数据
+            placeholders = ','.join('?' * len(message_ids))
+            cursor = self.db.execute(f"""
+                SELECT polarity, intensity
+                FROM sentiment_cache
+                WHERE message_id IN ({placeholders})
+            """, message_ids)
+            
+            sentiments = cursor.fetchall()
+            
+            if not sentiments:
+                return {"polarity": 0, "intensity": 0.0}
+            
+            # 计算平均值
+            avg_polarity = sum(s[0] for s in sentiments) / len(sentiments)
+            avg_intensity = sum(s[1] for s in sentiments) / len(sentiments)
+            
+            # 极性取四舍五入
+            polarity = round(avg_polarity)
+            # 确保极性在 -1, 0, 1 范围内
+            polarity = max(-1, min(1, polarity))
+            
+            return {
+                "polarity": polarity,
+                "intensity": round(avg_intensity, 2)
+            }
+        
+        except Exception as e:
+            print(f"[交互对预处理] 获取情感数据失败: {e}")
+            return {"polarity": 0, "intensity": 0.0}
+    
     def build_speech_units(
         self,
         messages: List[Dict[str, Any]]
@@ -801,7 +854,6 @@ class PairPreprocessingService:
             return []
 
         interaction_pairs = []
-        pair_index = 1
 
         for i in range(len(speech_units) - 1):
             first_unit = speech_units[i]
@@ -813,32 +865,30 @@ class PairPreprocessingService:
 
             # 计算时间间隔
             time_gap = second_unit["start_timestamp"] - first_unit["end_timestamp"]
-
-            # 判断方向
-            if first_unit["is_sender"] == 1:
-                direction = "sender_to_contact"
-            else:
-                direction = "contact_to_sender"
-
-            # 判断奇偶性 (奇数对为奇偶,偶数对为同奇或同偶)
-            is_same_parity = 1 if (pair_index % 2 == 1) else 0
+            
+            # 获取情感数据
+            first_sentiment = self._get_sentiment_for_unit(first_unit["message_ids"])
+            second_sentiment = self._get_sentiment_for_unit(second_unit["message_ids"])
 
             pair = {
                 "id": None,  # 稍后分配
                 "conversation_id": None,
                 "first_unit_id": first_unit["id"],
                 "second_unit_id": second_unit["id"],
-                "is_bidirectional": 1,  # 所有交互对都是双向的
-                "direction": direction,
-                "pair_index": pair_index,
-                "is_same_parity": is_same_parity,
                 "time_gap_seconds": time_gap,
-                "time_gap_minutes": round(time_gap / 60.0, 2),
-                "semantic_similarity": None  # 稍后计算
+                "semantic_similarity": None,  # 稍后计算
+                # 情感数据
+                "from_polarity": first_sentiment["polarity"],
+                "to_polarity": second_sentiment["polarity"],
+                "from_intensity": first_sentiment["intensity"],
+                "to_intensity": second_sentiment["intensity"],
+                # 负面情绪发起标记
+                "is_negative_initiation": 1 if first_sentiment["polarity"] == -1 else 0,
+                # 共情响应标记（简化版：负面发起+积极响应）
+                "is_empathetic_response": 1 if (first_sentiment["polarity"] == -1 and second_sentiment["polarity"] == 1) else 0
             }
 
             interaction_pairs.append(pair)
-            pair_index += 1
 
         return interaction_pairs
 
@@ -852,8 +902,8 @@ class PairPreprocessingService:
         Returns:
             {
                 "total_interaction_pairs": 123,
-                "bidirectional_pairs": 123,
-                "same_parity_pairs": 62,
+                "bidirectional_pairs": 123,  # 保留以兼容现有代码，值等于 total
+                "same_parity_pairs": 0,      # 保留以兼容现有代码，固定为0
                 "avg_time_gap_seconds": 180.5,
                 "avg_time_gap_minutes": 3.0
             }
@@ -868,15 +918,12 @@ class PairPreprocessingService:
             }
 
         total_pairs = len(interaction_pairs)
-        bidirectional_pairs = sum(1 for p in interaction_pairs if p["is_bidirectional"] == 1)
-        same_parity_pairs = sum(1 for p in interaction_pairs if p["is_same_parity"] == 1)
-
         avg_time_gap = sum(p["time_gap_seconds"] for p in interaction_pairs) / total_pairs
 
         return {
             "total_interaction_pairs": total_pairs,
-            "bidirectional_pairs": bidirectional_pairs,
-            "same_parity_pairs": same_parity_pairs,
+            "bidirectional_pairs": total_pairs,  # 所有交互对都是双向的
+            "same_parity_pairs": 0,  # 已废弃，保留字段以兼容
             "avg_time_gap_seconds": round(avg_time_gap, 2),
             "avg_time_gap_minutes": round(avg_time_gap / 60.0, 2)
         }
@@ -888,20 +935,21 @@ class PairPreprocessingService:
     ) -> int:
         """写入发言单元到数据库"""
         try:
+            import time
             for unit in speech_units:
                 self.db.execute("""
                     INSERT OR REPLACE INTO speech_units
-                    (conversation_id, is_sender, content, start_timestamp,
-                     end_timestamp, message_count, message_ids)
+                    (conversation_id, sender, first_message_timestamp,
+                     last_message_timestamp, message_count, message_ids, created_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                 """, (
                     conversation_id,
-                    unit["is_sender"],
-                    unit["content"],
-                    int(unit["start_timestamp"]),
-                    int(unit["end_timestamp"]),
+                    'user' if unit["is_sender"] == 1 else 'other',  # 转换为 sender
+                    int(unit["start_timestamp"]),  # 映射到 first_message_timestamp
+                    int(unit["end_timestamp"]),    # 映射到 last_message_timestamp
                     unit["message_count"],
-                    json.dumps(unit["message_ids"])
+                    json.dumps(unit["message_ids"]),
+                    int(time.time())
                 ))
 
             self.db.commit()
@@ -919,24 +967,28 @@ class PairPreprocessingService:
     ) -> int:
         """写入交互对到数据库"""
         try:
+            import time
             for pair in interaction_pairs:
                 self.db.execute("""
                     INSERT OR REPLACE INTO interaction_pairs
-                    (conversation_id, first_unit_id, second_unit_id, is_bidirectional,
-                     direction, pair_index, is_same_parity, time_gap_seconds,
-                     time_gap_minutes, semantic_similarity)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (conversation_id, from_speech_unit_id, to_speech_unit_id, 
+                     time_gap, semantic_similarity, from_polarity, to_polarity,
+                     from_intensity, to_intensity, is_negative_initiation, 
+                     is_empathetic_response, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     conversation_id,
-                    pair["first_unit_id"],
-                    pair["second_unit_id"],
-                    pair["is_bidirectional"],
-                    pair["direction"],
-                    pair["pair_index"],
-                    pair["is_same_parity"],
-                    pair["time_gap_seconds"],
-                    pair["time_gap_minutes"],
-                    pair.get("semantic_similarity")
+                    pair["first_unit_id"],  # 映射到 from_speech_unit_id
+                    pair["second_unit_id"], # 映射到 to_speech_unit_id
+                    pair["time_gap_seconds"],  # 映射到 time_gap
+                    pair.get("semantic_similarity"),
+                    pair.get("from_polarity", 0),
+                    pair.get("to_polarity", 0),
+                    pair.get("from_intensity", 0.0),
+                    pair.get("to_intensity", 0.0),
+                    pair.get("is_negative_initiation", 0),
+                    pair.get("is_empathetic_response", 0),
+                    int(time.time())
                 ))
 
             self.db.commit()
@@ -981,27 +1033,26 @@ class PairPreprocessingService:
 
             # 读取交互对
             cursor = self.db.execute("""
-                SELECT id, first_unit_id, second_unit_id, is_bidirectional,
-                       direction, pair_index, is_same_parity, time_gap_seconds,
-                       time_gap_minutes, semantic_similarity
+                SELECT id, from_speech_unit_id, to_speech_unit_id, time_gap,
+                       semantic_similarity, from_polarity, to_polarity,
+                       from_intensity, to_intensity
                 FROM interaction_pairs
                 WHERE conversation_id = ?
-                ORDER BY pair_index ASC
+                ORDER BY id ASC
             """, (conversation_id,))
 
             interaction_pairs = []
             for row in cursor.fetchall():
                 interaction_pairs.append({
                     "id": row[0],
-                    "first_unit_id": row[1],
-                    "second_unit_id": row[2],
-                    "is_bidirectional": row[3],
-                    "direction": row[4],
-                    "pair_index": row[5],
-                    "is_same_parity": row[6],
-                    "time_gap_seconds": row[7],
-                    "time_gap_minutes": row[8],
-                    "semantic_similarity": row[9]
+                    "first_unit_id": row[1],  # 从 from_speech_unit_id 读取
+                    "second_unit_id": row[2], # 从 to_speech_unit_id 读取
+                    "time_gap_seconds": row[3],  # 从 time_gap 读取
+                    "semantic_similarity": row[4],
+                    "from_polarity": row[5],
+                    "to_polarity": row[6],
+                    "from_intensity": row[7],
+                    "to_intensity": row[8]
                 })
 
             print(f"[交互对预处理] 从缓存读取: {len(speech_units)} 个发言单元, {len(interaction_pairs)} 个交互对")
@@ -1123,7 +1174,8 @@ class SessionManager:
 
     def split_sessions(
         self,
-        speech_units: List[Dict[str, Any]]
+        speech_units: List[Dict[str, Any]],
+        conversation_id: int = None  # 添加可选参数，保持向后兼容
     ) -> List[Dict[str, Any]]:
         """
         通过时间间隔+睡眠时间+语义相似度切分会话
@@ -1534,20 +1586,21 @@ class SessionManager:
     ) -> int:
         """写入会话到数据库"""
         try:
+            import time
             for session in sessions:
                 self.db.execute("""
                     INSERT OR REPLACE INTO sessions
-                    (conversation_id, start_unit_id, end_unit_id, start_timestamp,
-                     end_timestamp, unit_count, initiator_is_sender)
+                    (conversation_id, start_time, end_time, message_count,
+                     initiator, source, created_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                 """, (
                     conversation_id,
-                    session["start_unit_id"],
-                    session["end_unit_id"],
-                    int(session["start_timestamp"]),
-                    int(session["end_timestamp"]),
-                    session["unit_count"],
-                    session["initiator_is_sender"]
+                    session["start_timestamp"],  # 映射到 start_time
+                    session["end_timestamp"],    # 映射到 end_time
+                    session["unit_count"],       # 映射到 message_count
+                    'user' if session["initiator_is_sender"] == 1 else 'other',  # 转换为 initiator
+                    'long',
+                    int(time.time())
                 ))
 
             self.db.commit()

@@ -23,6 +23,7 @@ from .preprocessing_orchestrator import PreprocessingOrchestrator, PreprocessedS
 from .chat_positivity_service import ChatPositivityService, ChatPositivityResult
 from .preference_compatibility_service import PreferenceCompatibilityService, PreferenceCompatibilityResult
 from .emotional_resonance_service import EmotionalResonanceService
+from .attitude_tendency_service import AttitudeTendencyService
 from .affinity_config import AffinityConfigService, AffinityConfig
 
 # 配置日志
@@ -84,6 +85,7 @@ class AffinityAnalysisService:
         self.config_service = AffinityConfigService()
         self.resonance_service = EmotionalResonanceService()
         self.positivity_service = ChatPositivityService()
+        self.attitude_service = AttitudeTendencyService()
         self.preference_service = PreferenceCompatibilityService()
 
         # 任务状态存储
@@ -301,16 +303,25 @@ class AffinityAnalysisService:
         )
         
         # 3. 态度倾向 (20%)
-        # TODO: 等待 ting 实现 AttitudeTendencyService
+        attitude_result = self.attitude_service.calculate_overall_attitude(
+            conversation_id
+        )
         result.attitude_tendency = DimensionScore(
             name="态度倾向",
-            score=0.0,
+            score=attitude_result['overall_score'],
             weight=config.weight_attitude_tendency,
-            weighted_score=0.0,
-            interpretation="待实现",
-            sub_scores={}
+            weighted_score=attitude_result['overall_score'] * config.weight_attitude_tendency,
+            interpretation=attitude_result['interpretation'],
+            sub_scores={
+                "positive_word_frequency": attitude_result['sub_scores']['positive_word_frequency'],
+                "negative_word_frequency": attitude_result['sub_scores']['negative_word_frequency'],
+                "multimedia_usage": attitude_result['sub_scores']['multimedia_usage'],
+                "nickname_frequency": attitude_result['sub_scores']['nickname_frequency'],
+                "privacy_sharing": attitude_result['sub_scores']['privacy_sharing'],
+                "holiday_greeting": attitude_result['sub_scores']['holiday_greeting'],
+            }
         )
-        logger.warning("AttitudeTendencyService 未实现，使用占位值")
+        logger.info(f"态度倾向计算完成: {attitude_result['overall_score']:.1f}分")
         
         # 4. 喜好兼容度 (20%)
         self.preference_service.set_preference_keywords(config.preference_keywords)

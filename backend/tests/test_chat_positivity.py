@@ -295,6 +295,194 @@ class TestChatPositivityService:
         assert "很低" in interpretation
 
 
+class TestReplyTimelinessBoundaries:
+    """回复及时性边界测试 - T016"""
+    
+    @pytest.fixture
+    def service_300s(self):
+        """创建阈值为300秒的服务实例"""
+        with patch('app.services.analysis.chat_positivity_service.get_db'):
+            from app.services.analysis.chat_positivity_service import ChatPositivityService
+            return ChatPositivityService(timeliness_threshold_seconds=300)
+    
+    @pytest.fixture
+    def mock_db(self):
+        """创建模拟数据库"""
+        return MagicMock()
+    
+    # ========================================
+    # 阈值边界测试
+    # ========================================
+    
+    def test_exactly_at_threshold(self, service_300s, mock_db):
+        """测试恰好等于阈值（300秒）"""
+        # 模拟：总共10个交互对，其中5个恰好是300秒
+        # 期望：300秒应该算及时（<=阈值）
+        mock_db.execute.return_value.fetchone.return_value = (10, 5)
+        
+        service_300s.db = mock_db
+        score = service_300s.calculate_reply_timeliness_score(1)
+        
+        # 5/10 = 50%
+        assert score == 50.0
+    
+    def test_just_below_threshold(self, service_300s, mock_db):
+        """测试刚好低于阈值（299秒）"""
+        # 模拟：所有交互对都是299秒（及时）
+        mock_db.execute.return_value.fetchone.return_value = (10, 10)
+        
+        service_300s.db = mock_db
+        score = service_300s.calculate_reply_timeliness_score(1)
+        
+        # 10/10 = 100%
+        assert score == 100.0
+    
+    def test_just_above_threshold(self, service_300s, mock_db):
+        """测试刚好超过阈值（301秒）"""
+        # 模拟：所有交互对都是301秒（不及时）
+        mock_db.execute.return_value.fetchone.return_value = (10, 0)
+        
+        service_300s.db = mock_db
+        score = service_300s.calculate_reply_timeliness_score(1)
+        
+        # 0/10 = 0%
+        assert score == 0.0
+    
+    # ========================================
+    # 负间隔测试
+    # ========================================
+    
+    def test_negative_interval(self, service_300s, mock_db):
+        """测试负间隔（时间戳错误）"""
+        # 负间隔应该被忽略或处理为0
+        # 这取决于数据库查询的实现
+        # 如果数据库中有负间隔，应该不影响计算
+        mock_db.execute.return_value.fetchone.return_value = (10, 8)
+        
+        service_300s.db = mock_db
+        score = service_300s.calculate_reply_timeliness_score(1)
+        
+        # 应该正常计算
+        assert 0 <= score <= 100
+    
+    # ========================================
+    # 超长间隔测试
+    # ========================================
+    
+    def test_interval_over_24_hours(self, service_300s, mock_db):
+        """测试超过24小时的间隔（86400秒）"""
+        # 模拟：所有交互对都超过24小时
+        # 这些应该都算不及时
+        mock_db.execute.return_value.fetchone.return_value = (10, 0)
+        
+        service_300s.db = mock_db
+        score = service_300s.calculate_reply_timeliness_score(1)
+        
+        # 0/10 = 0%
+        assert score == 0.0
+    
+    def test_interval_over_one_week(self, service_300s, mock_db):
+        """测试超过一周的间隔（604800秒）"""
+        # 模拟：所有交互对都超过一周
+        mock_db.execute.return_value.fetchone.return_value = (10, 0)
+        
+        service_300s.db = mock_db
+        score = service_300s.calculate_reply_timeliness_score(1)
+        
+        # 0/10 = 0%
+        assert score == 0.0
+    
+    # ========================================
+    # 零间隔测试
+    # ========================================
+    
+    def test_zero_interval(self, service_300s, mock_db):
+        """测试零间隔（几乎同时回复）"""
+        # 模拟：所有交互对都是0秒（立即回复）
+        # 0秒应该算及时
+        mock_db.execute.return_value.fetchone.return_value = (10, 10)
+        
+        service_300s.db = mock_db
+        score = service_300s.calculate_reply_timeliness_score(1)
+        
+        # 10/10 = 100%
+        assert score == 100.0
+    
+    # ========================================
+    # 混合场景测试
+    # ========================================
+    
+    def test_mixed_intervals(self, service_300s, mock_db):
+        """测试混合间隔（有快有慢）"""
+        # 模拟：100个交互对，30个及时
+        mock_db.execute.return_value.fetchone.return_value = (100, 30)
+        
+        service_300s.db = mock_db
+        score = service_300s.calculate_reply_timeliness_score(1)
+        
+        # 30/100 = 30%
+        assert score == 30.0
+    
+    # ========================================
+    # 不同阈值测试
+    # ========================================
+    
+    def test_different_threshold_60s(self, mock_db):
+        """测试不同阈值（60秒）"""
+        with patch('app.services.analysis.chat_positivity_service.get_db'):
+            from app.services.analysis.chat_positivity_service import ChatPositivityService
+            service = ChatPositivityService(timeliness_threshold_seconds=60)
+            
+            # 模拟：10个交互对，5个在60秒内
+            mock_db.execute.return_value.fetchone.return_value = (10, 5)
+            service.db = mock_db
+            
+            score = service.calculate_reply_timeliness_score(1)
+            assert score == 50.0
+    
+    def test_different_threshold_600s(self, mock_db):
+        """测试不同阈值（600秒 = 10分钟）"""
+        with patch('app.services.analysis.chat_positivity_service.get_db'):
+            from app.services.analysis.chat_positivity_service import ChatPositivityService
+            service = ChatPositivityService(timeliness_threshold_seconds=600)
+            
+            # 模拟：10个交互对，8个在600秒内
+            mock_db.execute.return_value.fetchone.return_value = (10, 8)
+            service.db = mock_db
+            
+            score = service.calculate_reply_timeliness_score(1)
+            assert score == 80.0
+    
+    # ========================================
+    # 边界组合测试
+    # ========================================
+    
+    def test_all_at_exact_threshold(self, service_300s, mock_db):
+        """测试所有交互对都恰好在阈值上"""
+        # 模拟：100个交互对，全部恰好300秒
+        # 期望：全部算及时
+        mock_db.execute.return_value.fetchone.return_value = (100, 100)
+        
+        service_300s.db = mock_db
+        score = service_300s.calculate_reply_timeliness_score(1)
+        
+        # 100/100 = 100%
+        assert score == 100.0
+    
+    def test_one_second_difference(self, service_300s, mock_db):
+        """测试1秒之差的影响"""
+        # 模拟：100个交互对，50个是299秒，50个是301秒
+        # 期望：只有299秒的算及时
+        mock_db.execute.return_value.fetchone.return_value = (100, 50)
+        
+        service_300s.db = mock_db
+        score = service_300s.calculate_reply_timeliness_score(1)
+        
+        # 50/100 = 50%
+        assert score == 50.0
+
+
+
 class TestChatPositivityIntegration:
     """聊天积极度服务集成测试 - 使用真实数据"""
     

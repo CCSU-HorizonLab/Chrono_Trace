@@ -1014,3 +1014,215 @@ class Bridge:
                 "error": str(e)
             }
 
+    # ==================== 好感度分析相关 ====================
+
+    def get_affinity_config(self, conversation_id: int) -> dict[str, Any]:
+        """获取好感度分析配置 (T018)"""
+        try:
+            from ..services.analysis.affinity_config import AffinityConfigService
+            from dataclasses import asdict
+            
+            service = AffinityConfigService()
+            config = service.get_config(conversation_id)
+            
+            return {
+                "ok": True,
+                "config": asdict(config)
+            }
+        except Exception as e:
+            print(f"[Bridge] 获取好感度配置失败: {e}")
+            return {
+                "ok": False,
+                "error": str(e)
+            }
+
+    def update_affinity_config(self, conversation_id: int, config: dict) -> dict[str, Any]:
+        """更新好感度分析配置 (T019)"""
+        try:
+            from ..services.analysis.affinity_config import AffinityConfigService
+            from dataclasses import asdict
+            
+            service = AffinityConfigService()
+            updated_config = service.update_config(conversation_id, **config)
+            
+            return {
+                "ok": True,
+                "config": asdict(updated_config),
+                "message": "配置已更新"
+            }
+        except ValueError as e:
+            print(f"[Bridge] 配置验证失败: {e}")
+            return {
+                "ok": False,
+                "error": str(e)
+            }
+        except Exception as e:
+            print(f"[Bridge] 更新好感度配置失败: {e}")
+            return {
+                "ok": False,
+                "error": str(e)
+            }
+
+    def get_affinity_keywords(self) -> dict[str, Any]:
+        """获取所有关键词分类 (T020)"""
+        try:
+            from ..services.analysis.keyword_libraries import KeywordLibraries
+            
+            service = KeywordLibraries()
+            keywords = service.get_all_keywords()
+            
+            return {
+                "ok": True,
+                "keywords": keywords
+            }
+        except Exception as e:
+            print(f"[Bridge] 获取关键词失败: {e}")
+            return {
+                "ok": False,
+                "error": str(e),
+                "keywords": {}
+            }
+
+    def add_affinity_keywords(self, category: str, keywords: list) -> dict[str, Any]:
+        """添加自定义关键词 (T021)"""
+        try:
+            from ..services.analysis.keyword_libraries import KeywordLibraries
+            
+            valid_categories = ["positive", "negative", "empathy", "soothing", 
+                              "privacy", "holiday", "nickname"]
+            if category not in valid_categories:
+                return {
+                    "ok": False,
+                    "error": f"无效的分类: {category}，有效值: {valid_categories}"
+                }
+            
+            service = KeywordLibraries()
+            added_count = service.add_keywords(category, keywords)
+            updated_keywords = service.get_keywords(category)
+            
+            return {
+                "ok": True,
+                "added_count": added_count,
+                "keywords": updated_keywords
+            }
+        except Exception as e:
+            print(f"[Bridge] 添加关键词失败: {e}")
+            return {
+                "ok": False,
+                "error": str(e),
+                "added_count": 0
+            }
+
+    def remove_affinity_keywords(self, category: str, keywords: list) -> dict[str, Any]:
+        """删除关键词 (T022)"""
+        try:
+            from ..services.analysis.keyword_libraries import KeywordLibraries
+            
+            valid_categories = ["positive", "negative", "empathy", "soothing", 
+                              "privacy", "holiday", "nickname"]
+            if category not in valid_categories:
+                return {
+                    "ok": False,
+                    "error": f"无效的分类: {category}"
+                }
+            
+            service = KeywordLibraries()
+            removed_count = service.remove_keywords(category, keywords)
+            updated_keywords = service.get_keywords(category)
+            
+            return {
+                "ok": True,
+                "removed_count": removed_count,
+                "keywords": updated_keywords
+            }
+        except Exception as e:
+            print(f"[Bridge] 删除关键词失败: {e}")
+            return {
+                "ok": False,
+                "error": str(e),
+                "removed_count": 0
+            }
+
+    def get_preference_keywords(self, conversation_id: int) -> dict[str, Any]:
+        """获取喜好关键词 (T023)"""
+        try:
+            from ..services.analysis.affinity_config import AffinityConfigService
+            
+            service = AffinityConfigService()
+            keywords = service.get_preference_keywords(conversation_id)
+            
+            return {
+                "ok": True,
+                "keywords": keywords or []
+            }
+        except Exception as e:
+            print(f"[Bridge] 获取喜好关键词失败: {e}")
+            return {
+                "ok": False,
+                "error": str(e),
+                "keywords": []
+            }
+
+    def update_preference_keywords(self, conversation_id: int, keywords: list) -> dict[str, Any]:
+        """更新喜好关键词 (T024)"""
+        try:
+            from ..services.analysis.affinity_config import AffinityConfigService
+            
+            service = AffinityConfigService()
+            updated_keywords = service.update_preference_keywords(conversation_id, keywords)
+            
+            return {
+                "ok": True,
+                "keywords": updated_keywords,
+                "message": "喜好关键词已更新"
+            }
+        except Exception as e:
+            print(f"[Bridge] 更新喜好关键词失败: {e}")
+            return {
+                "ok": False,
+                "error": str(e)
+            }
+
+    def analyze_affinity(self, conversation_id: int, force_reanalyze: bool = False, config_overrides: dict = None) -> dict[str, Any]:
+        """执行好感度分析"""
+        try:
+            from ..services.analysis.affinity_analysis_service import AffinityAnalysisService
+            from dataclasses import asdict
+            
+            service = AffinityAnalysisService()
+            result = service.analyze(conversation_id, force_reanalyze, config_overrides)
+            
+            return {
+                "ok": True,
+                "result": asdict(result)
+            }
+        except Exception as e:
+            print(f"[Bridge] 好感度分析失败: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                "ok": False,
+                "error": str(e)
+            }
+
+    def get_affinity_scores(self, conversation_id: int) -> dict[str, Any]:
+        """获取好感度分析结果"""
+        try:
+            from ..services.analysis.affinity_analysis_service import AffinityAnalysisService
+            from dataclasses import asdict
+            
+            service = AffinityAnalysisService()
+            result = service.get_scores(conversation_id)
+            
+            return {
+                "ok": True,
+                "result": asdict(result) if result else None
+            }
+        except Exception as e:
+            print(f"[Bridge] 获取好感度结果失败: {e}")
+            return {
+                "ok": False,
+                "error": str(e)
+            }
+
+

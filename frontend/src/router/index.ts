@@ -38,7 +38,8 @@ const router = createRouter({
     { path: '/', component: lazy(() => import('@/views/Home.vue')) },
     { path: '/analytics', component: lazy(() => import('@/views/Analytics.vue')) },
     { path: '/suggestions', component: lazy(() => import('@/views/Suggestions.vue')) },
-    { path: '/settings', component: lazy(() => import('@/views/Settings.vue')) }
+    { path: '/settings', component: lazy(() => import('@/views/Settings.vue')) },
+    { path: '/affinity', component: lazy(() => import('@/views/AffinityView.vue')) }
   ]
 })
 

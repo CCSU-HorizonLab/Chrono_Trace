@@ -22,6 +22,7 @@ from ...db.connection import get_db
 from .preprocessing_orchestrator import PreprocessingOrchestrator, PreprocessedStatistics
 from .chat_positivity_service import ChatPositivityService, ChatPositivityResult
 from .preference_compatibility_service import PreferenceCompatibilityService, PreferenceCompatibilityResult
+from .emotional_resonance_service import EmotionalResonanceService
 from .affinity_config import AffinityConfigService, AffinityConfig
 
 # 配置日志
@@ -77,13 +78,14 @@ class AffinityAnalysisService:
     
     def __init__(self):
         self.db = get_db()
-        
+
         # 初始化所有服务
         self.preprocessing = PreprocessingOrchestrator()
         self.config_service = AffinityConfigService()
+        self.resonance_service = EmotionalResonanceService()
         self.positivity_service = ChatPositivityService()
         self.preference_service = PreferenceCompatibilityService()
-        
+
         # 任务状态存储
         self._task_status: Dict[str, AffinityAnalysisResult] = {}
     
@@ -258,16 +260,24 @@ class AffinityAnalysisService:
         """计算所有维度评分"""
         
         # 1. 情感共振率 (30%)
-        # TODO: 等待 ting 实现 EmotionalResonanceService
+        resonance_result = self.resonance_service.calculate_overall_resonance(
+            conversation_id
+        )
         result.emotional_resonance = DimensionScore(
             name="情感共振率",
-            score=0.0,
+            score=resonance_result['overall_score'],
             weight=config.weight_emotional_resonance,
-            weighted_score=0.0,
-            interpretation="待实现",
-            sub_scores={}
+            weighted_score=resonance_result['overall_score'] * config.weight_emotional_resonance,
+            interpretation=resonance_result['interpretation'],
+            sub_scores={
+                "bidirectional_positive": resonance_result['sub_scores']['bidirectional_positive_response'],
+                "polarity_consistency": resonance_result['sub_scores']['polarity_consistency'],
+                "intensity_matching": resonance_result['sub_scores']['intensity_matching'],
+                "empathy_recognition": resonance_result['sub_scores']['empathy_recognition'],
+                "negative_resolution": resonance_result['sub_scores']['negative_resolution'],
+            }
         )
-        logger.warning("EmotionalResonanceService 未实现，使用占位值")
+        logger.info(f"情感共振率计算完成: {resonance_result['overall_score']:.1f}分")
         
         # 2. 聊天积极度 (30%)
         self.positivity_service.timeliness_threshold = config.reply_timeliness_threshold_seconds

@@ -19,6 +19,11 @@ const props = defineProps<{
 const chartRef = ref<HTMLElement | null>(null)
 let chartInstance: echarts.ECharts | null = null
 
+// Helper to get CSS variable value
+const getCssVar = (name: string) => {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+}
+
 const getOption = (): EChartsOption => {
   const scores = [
     props.dimensionScores.emotional_resonance?.score || 0,
@@ -27,13 +32,22 @@ const getOption = (): EChartsOption => {
     props.dimensionScores.attitude_tendency?.score || 0
   ]
 
+  const primaryColor = getCssVar('--ct-color-primary') || '#5b6be0'
+  const textColor = getCssVar('--ct-text-secondary') || '#666'
+  const splitLineColor = getCssVar('--ct-border-color') || '#eee'
+  const splitAreaColor1 = getCssVar('--ct-bg-secondary') || '#f9fafb'
+  const splitAreaColor2 = getCssVar('--ct-bg-tertiary') || '#f3f4f6'
+  const tooltipBg = getCssVar('--ct-bg-elevated') || 'rgba(255, 255, 255, 0.9)'
+  const tooltipBorder = getCssVar('--ct-border-color') || '#eee'
+  const tooltipText = getCssVar('--ct-text-primary') || '#333'
+
   return {
     tooltip: {
       trigger: 'item',
-      backgroundColor: 'rgba(255, 255, 255, 0.9)',
-      borderColor: '#eee',
+      backgroundColor: tooltipBg,
+      borderColor: tooltipBorder,
       textStyle: {
-        color: '#333'
+        color: tooltipText
       }
     },
     radar: {
@@ -43,30 +57,30 @@ const getOption = (): EChartsOption => {
         { name: '喜好\n兼容度', max: 100 },
         { name: '态度\n倾向', max: 100 }
       ],
-      center: ['50%', '50%'],
+      center: ['50%', '55%'],
       radius: '65%',
       splitNumber: 4,
       axisName: {
-        color: '#6b7280',
-        fontSize: 13,
+        color: textColor,
+        fontSize: 12,
         fontWeight: 600,
-        fontFamily: 'Inter, system-ui, sans-serif'
+        fontFamily: 'var(--ct-font-body)'
       },
       splitArea: {
         areaStyle: {
-          color: ['#f9fafb', '#f3f4f6', '#f9fafb', '#f3f4f6'],
+          color: [splitAreaColor1, splitAreaColor2, splitAreaColor1, splitAreaColor2],
           shadowColor: 'rgba(0, 0, 0, 0.02)',
           shadowBlur: 5
         }
       },
       axisLine: {
         lineStyle: {
-          color: '#e5e7eb'
+          color: splitLineColor
         }
       },
       splitLine: {
         lineStyle: {
-          color: '#e5e7eb',
+          color: splitLineColor,
           type: 'dashed'
         }
       }
@@ -82,21 +96,22 @@ const getOption = (): EChartsOption => {
             symbol: 'circle',
             symbolSize: 6,
             itemStyle: {
-              color: '#3b82f6',
+              color: primaryColor,
               borderColor: '#fff',
               borderWidth: 2,
-              shadowColor: 'rgba(59, 130, 246, 0.5)',
+              shadowColor: primaryColor,
               shadowBlur: 5
             },
             areaStyle: {
               color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-                { offset: 0, color: 'rgba(59, 130, 246, 0.4)' },
-                { offset: 1, color: 'rgba(59, 130, 246, 0.1)' }
-              ])
+                { offset: 0, color: primaryColor },
+                { offset: 1, color: 'rgba(255,255,255,0.1)' }
+              ]),
+              opacity: 0.4
             },
             lineStyle: {
               width: 3,
-              color: '#3b82f6'
+              color: primaryColor
             }
           }
         ]
@@ -111,14 +126,11 @@ const initChart = () => {
   chartInstance = echarts.init(chartRef.value)
   chartInstance.setOption(getOption())
   
-  // Use ResizeObserver for better responsiveness
   const resizeObserver = new ResizeObserver(() => {
     chartInstance?.resize()
   })
   resizeObserver.observe(chartRef.value)
 }
-
-// ... (keep handleResize if needed or rely on observer)
 
 watch(() => props.dimensionScores, () => {
   chartInstance?.setOption(getOption())
@@ -127,11 +139,14 @@ watch(() => props.dimensionScores, () => {
 onMounted(() => {
   nextTick(() => {
     initChart()
+    // Listen for theme changes or window resize if needed
+    window.addEventListener('resize', () => chartInstance?.resize())
   })
 })
 
 onUnmounted(() => {
   chartInstance?.dispose()
+  window.removeEventListener('resize', () => chartInstance?.resize())
 })
 </script>
 

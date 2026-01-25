@@ -31,7 +31,8 @@ const percentage = computed(() => {
 
 const colorClass = computed(() => {
   const p = percentage.value
-  if (p >= 70) return 'green'
+  if (p >= 80) return 'green'
+  if (p >= 60) return 'blue'
   if (p >= 40) return 'yellow'
   return 'red'
 })
@@ -41,63 +42,67 @@ defineEmits(['click'])
 
 <style scoped>
 .score-card {
-  background: var(--card-bg, #fff);
-  border-radius: 12px;
-  padding: 16px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+  background: var(--ct-bg-elevated);
+  border: 1px solid var(--ct-border-color);
+  border-radius: var(--ct-radius-md);
+  padding: var(--ct-space-lg);
+  box-shadow: var(--ct-shadow-sm);
   cursor: pointer;
-  transition: transform 0.2s, box-shadow 0.2s;
-  border: 1px solid rgba(0,0,0,0.05);
+  transition: transform var(--ct-transition-fast), box-shadow var(--ct-transition-fast);
 }
 
 .score-card:hover {
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--ct-shadow-md);
+  border-color: var(--ct-border-color-hover);
 }
 
 .header {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  margin-bottom: 12px;
+  margin-bottom: var(--ct-space-md);
 }
 
 .title {
   font-weight: 600;
-  font-size: 1rem;
-  color: var(--text-primary, #333);
+  font-size: var(--ct-text-sm);
+  color: var(--ct-text-primary);
 }
 
 .score-text {
   font-size: 1.5rem;
   font-weight: 700;
-  color: var(--score-color, #333);
+  color: var(--score-color);
+  font-family: var(--ct-font-display);
 }
 
 .max-score {
-  font-size: 0.875rem;
-  color: #999;
+  font-size: var(--ct-text-xs);
+  color: var(--ct-text-tertiary);
   font-weight: 400;
+  margin-left: 2px;
 }
 
 .progress-container {
-  height: 8px;
-  background: #f0f0f0;
-  border-radius: 4px;
+  height: 6px;
+  background: var(--ct-bg-tertiary);
+  border-radius: var(--ct-radius-full);
   overflow: hidden;
-  margin-bottom: 12px;
+  margin-bottom: var(--ct-space-md);
 }
 
 .progress-bar {
   height: 100%;
-  border-radius: 4px;
+  border-radius: var(--ct-radius-full);
+  background: var(--score-color);
   transition: width 0.5s ease-out;
 }
 
 .interpretation {
-  font-size: 0.875rem;
-  color: #666;
-  line-height: 1.4;
+  font-size: var(--ct-text-xs);
+  color: var(--ct-text-secondary);
+  line-height: var(--ct-leading-normal);
   overflow: hidden;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -105,41 +110,8 @@ defineEmits(['click'])
 }
 
 /* Color Themes */
-.score-card.green {
-  --score-color: #52c41a;
-}
-.score-card.green .progress-bar {
-  background: #52c41a;
-}
-
-.score-card.yellow {
-  --score-color: #faad14;
-}
-.score-card.yellow .progress-bar {
-  background: #faad14;
-}
-
-.score-card.red {
-  --score-color: #ff4d4f;
-}
-.score-card.red .progress-bar {
-  background: #ff4d4f;
-}
-
-/* Dark Mode Support (Basic) */
-@media (prefers-color-scheme: dark) {
-  .score-card {
-    background: #1f1f1f;
-    border-color: #333;
-  }
-  .title {
-    color: #e0e0e0;
-  }
-  .progress-container {
-    background: #333;
-  }
-  .interpretation {
-    color: #aaa;
-  }
-}
+.score-card.green { --score-color: var(--ct-color-success); }
+.score-card.blue { --score-color: var(--ct-color-info); }
+.score-card.yellow { --score-color: var(--ct-color-warning); }
+.score-card.red { --score-color: var(--ct-color-error); }
 </style>

@@ -27,7 +27,7 @@
 </template>
 
 <script setup lang="ts">
-import { defineProps } from 'vue'
+
 
 const props = defineProps<{
   title: string
@@ -60,7 +60,6 @@ const LABELS: Record<string, string> = {
 
   // Preference Compatibility
   topic_mention: '共同话题提及',
-  // topic_continuity is duplicated, using same label
 }
 
 const getLabel = (key: string): string => {
@@ -88,21 +87,21 @@ const getBadgeClass = (score: number): string => {
 
 <style scoped>
 .sub-score-breakdown {
-  background: var(--card-bg, #fff);
-  border-radius: 12px;
-  padding: 16px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
-  border: 1px solid rgba(0,0,0,0.05);
+  background: var(--ct-bg-elevated);
+  border: 1px solid var(--ct-border-color);
+  border-radius: var(--ct-radius-md);
+  padding: var(--ct-space-lg);
+  box-shadow: var(--ct-shadow-sm);
 }
 
 .breakdown-title {
   margin-top: 0;
-  margin-bottom: 16px;
-  font-size: 1rem;
+  margin-bottom: var(--ct-space-md);
+  font-size: var(--ct-text-sm);
   font-weight: 600;
-  color: var(--text-primary, #333);
-  padding-left: 8px;
-  border-left: 4px solid var(--primary-color, #1890ff);
+  color: var(--ct-text-primary);
+  padding-left: var(--ct-space-sm);
+  border-left: 3px solid var(--ct-color-primary);
 }
 
 .table-container {
@@ -112,20 +111,22 @@ const getBadgeClass = (score: number): string => {
 .score-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.875rem;
+  font-size: var(--ct-text-sm);
 }
 
 .score-table th,
 .score-table td {
-  padding: 10px 8px;
+  padding: var(--ct-space-sm) var(--ct-space-md);
   text-align: left;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid var(--ct-border-color);
+  color: var(--ct-text-secondary);
 }
 
 .score-table th {
-  color: #999;
+  color: var(--ct-text-tertiary);
   font-weight: 500;
-  border-bottom: 2px solid #f0f0f0;
+  border-bottom: 1px solid var(--ct-border-color);
+  font-size: var(--ct-text-xs);
 }
 
 .score-table tr:last-child td {
@@ -133,63 +134,39 @@ const getBadgeClass = (score: number): string => {
 }
 
 .score-cell {
-  font-family: monospace;
-  font-weight: 600;
+  font-family: var(--ct-font-mono);
+  font-weight: 500;
+  color: var(--ct-text-primary) !important;
 }
 
 .badge {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   padding: 2px 8px;
-  border-radius: 4px;
-  font-size: 0.75rem;
+  border-radius: var(--ct-radius-full);
+  font-size: var(--ct-text-xs);
   font-weight: 500;
+  line-height: 1.2;
 }
 
 .badge-success {
-  background: #f6ffed;
-  color: #52c41a;
-  border: 1px solid #b7eb8f;
+  background: var(--ct-color-success-light);
+  color: var(--ct-color-success-dark);
 }
 
 .badge-info {
-  background: #e6f7ff;
-  color: #1890ff;
-  border: 1px solid #91d5ff;
+  background: var(--ct-color-info-light);
+  color: var(--ct-color-info-dark);
 }
 
 .badge-warning {
-  background: #fffbe6;
-  color: #faad14;
-  border: 1px solid #ffe58f;
+  background: var(--ct-color-warning-light);
+  color: var(--ct-color-warning-dark);
 }
 
 .badge-danger {
-  background: #fff1f0;
-  color: #ff4d4f;
-  border: 1px solid #ffa39e;
-}
-
-/* Dark Mode */
-@media (prefers-color-scheme: dark) {
-  .sub-score-breakdown {
-    background: #1f1f1f;
-    border-color: #333;
-  }
-  .breakdown-title {
-    color: #e0e0e0;
-  }
-  .score-table th {
-    color: #666;
-    border-bottom-color: #333;
-  }
-  .score-table td {
-    border-bottom-color: #333;
-    color: #ccc;
-  }
-  
-  .badge-success { background: #135200; border-color: #237804; color: #52c41a; }
-  .badge-info { background: #003a8c; border-color: #096dd9; color: #40a9ff; }
-  .badge-warning { background: #614700; border-color: #d4b106; color: #ffc53d; }
-  .badge-danger { background: #5c0011; border-color: #a8071a; color: #ff4d4f; }
+  background: var(--ct-color-error-light);
+  color: var(--ct-color-error-dark);
 }
 </style>

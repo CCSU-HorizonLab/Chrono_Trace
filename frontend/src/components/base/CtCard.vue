@@ -15,7 +15,7 @@
   </section>
 </template>
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, useSlots } from 'vue'
 const props = defineProps<{ title?: string }>()
 const hasHeader = computed(() => !!props.title || !!useSlots().header || !!useSlots().actions)
 </script>

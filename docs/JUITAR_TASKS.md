@@ -1,8 +1,8 @@
 # Juitar 的任务清单 - 好感度分析功能
 
 **功能**: 002-affinity-analysis
-**更新时间**: 2026-01-13
-**状态**: 阶段2进行中 (预处理层 85% 完成,会话切分逻辑已合并优化)
+**更新时间**: 2026-01-25
+**状态**: 阶段2-4完成 (预处理层 100%, 主编排器完成, 2个维度服务完成)
 
 ---
 
@@ -257,20 +257,46 @@
 
 ## 🎯 下一步工作
 
-### 立即需要 (阻塞维度分析)
+### ✅ 已完成的重要里程碑
 
-1. ~~**合并会话切分逻辑**~~ ✅ 已完成
+1. ~~**合并会话切分逻辑**~~ ✅ 已完成 (2026-01-13)
    - 已将 FeatureExtractionService 的睡眠时间切分合并到 SessionManager
-   - 完成时间: 2026-01-13
 
-2. **等待 ting 完成**:
-   - T022: 关键词库测试
-   - T023: 态度预处理服务
-
-3. **联合实现** (T025):
-   - PreprocessingOrchestrator
+2. ~~**预处理编排器**~~ ✅ 已完成 (2026-01-19)
+   - T025-T026: PreprocessingOrchestrator 实现
    - 协调所有预处理服务
    - 收集29个统计常量
+
+3. ~~**聊天积极度服务**~~ ✅ 已完成 (2026-01-19)
+   - T031: ChatPositivityService 实现
+   - 5个子维度全部实现
+
+4. ~~**喜好兼容度服务**~~ ✅ 已完成 (2026-01-19)
+   - T037-T040: PreferenceCompatibilityService 实现
+   - 2个子维度全部实现
+
+5. ~~**主编排器**~~ ✅ 已完成 (2026-01-19)
+   - T041-T043: AffinityAnalysisService 实现
+   - 4个维度服务协调
+   - 总分计算和解释生成
+
+### 待完成工作
+
+1. **情感共振服务** (T027-T028, ting 负责)
+   - 5个子维度未实现
+   - 阻塞: 无前置依赖
+
+2. **态度倾向服务** (T033-T036, ting 负责)
+   - 5个子维度未实现
+   - 阻塞: 无前置依赖
+
+3. **后端API** (T044-T053)
+   - 10个API端点未实现
+   - 阻塞: 主编排器已完成
+
+4. **前端实现** (T054-T062)
+   - UI组件未实现
+   - 阻塞: 后端API
 
 ---
 
@@ -278,51 +304,66 @@
 
 **依赖**: 必须完成阶段2 (预处理层)
 
-### T008: 实现聊天积极度服务
+### T008: 实现聊天积极度服务 ✅
 
 **文件**: `backend/app/services/analysis/chat_positivity_service.py`
 
-- [ ] calculate_daily_message_count() (10%权重)
-- [ ] calculate_reply_timeliness() (20%权重)
-- [ ] calculate_avg_message_length() (10%权重)
-- [ ] calculate_long_text_ratio() (15%权重)
-- [ ] calculate_topic_continuity() (20%权重) - 使用会话管理器的sessions
-- [ ] calculate_active_initiation() (25%权重) - 简化版:使用预处理层的session_initiators
-- [ ] calculate_overall_positivity() - 加权总分 (0-100)
-- [ ] generate_interpretation() - 生成解释文本
+- [x] calculate_daily_message_count() (10%权重)
+- [x] calculate_reply_timeliness() (20%权重)
+- [x] calculate_avg_message_length() (10%权重)
+- [x] calculate_long_text_ratio() (15%权重)
+- [x] calculate_topic_continuity() (20%权重) - 使用会话管理器的sessions
+- [x] calculate_active_initiation() (25%权重) - 简化版:使用预处理层的session_initiators
+- [x] calculate_overall_positivity() - 加权总分 (0-100)
+- [x] generate_interpretation() - 生成解释文本
 
-### T009: 扩展配置表使用
+**完成时间**: 2026-01-19
+**提交**: ca2f165
+
+### T009: 扩展配置表使用 ✅
 
 **文件**: `backend/app/services/analysis/affinity_config.py`
 
-- [ ] get_config() - 获取配置(含默认值)
-- [ ] update_config() - 保存用户覆盖
-- [ ] validate_config() - 验证权重和为1.0, 阈值在有效范围
+- [x] get_config() - 获取配置(含默认值)
+- [x] update_config() - 保存用户覆盖
+- [x] validate_config() - 验证权重和为1.0, 阈值在有效范围
 
-### T010: 实现喜好兼容度服务
+**完成时间**: 2026-01-19
+**提交**: 776001a (作为主编排器的一部分)
+
+### T010: 实现喜好兼容度服务 ✅
 
 **文件**: `backend/app/services/analysis/preference_compatibility_service.py`
 
-- [ ] calculate_topic_mention_frequency() (40%权重)
-- [ ] calculate_preference_topic_continuity() (60%权重) - 优化:复用预处理的语义相似度
-- [ ] identify_preference_sessions() - 找到包含喜好关键词的会话
-- [ ] calculate_session_continuity() - 优化:复用预处理的相似度逻辑
-- [ ] calculate_overall_compatibility() - 加权总分 (0-100)
-- [ ] generate_interpretation() - 生成解释文本
+- [x] calculate_topic_mention_frequency() (40%权重)
+- [x] calculate_preference_topic_continuity() (60%权重) - 优化:复用预处理的语义相似度
+- [x] identify_preference_sessions() - 找到包含喜好关键词的会话
+- [x] calculate_session_continuity() - 优化:复用预处理的相似度逻辑
+- [x] calculate_overall_compatibility() - 加权总分 (0-100)
+- [x] generate_interpretation() - 生成解释文本
 
-### T011: 喜好关键词配置集成
+**完成时间**: 2026-01-19
+**提交**: 776001a
+
+### T011: 喜好关键词配置集成 ✅
 
 **文件**: `backend/app/services/analysis/affinity_config.py`
 
-- [ ] 更新get_config()包含preference_keywords_json字段
-- [ ] 更新update_config()处理喜好关键词数组
-- [ ] 验证关键词为非空字符串
+- [x] 更新get_config()包含preference_keywords_json字段
+- [x] 更新update_config()处理喜好关键词数组
+- [x] 验证关键词为非空字符串
 
-### T012: 喜好兼容度测试
+**完成时间**: 2026-01-19
+**提交**: 776001a (作为主编排器的一部分)
 
-- [ ] 创建 `backend/tests/test_preference_compatibility.py`
-- [ ] 测试2个子维度计算
-- [ ] 测试空喜好关键词场景
+### T012: 喜好兼容度测试 ✅
+
+- [x] 创建 `backend/tests/test_preference_compatibility.py`
+- [x] 测试2个子维度计算
+- [x] 测试空喜好关键词场景
+
+**完成时间**: 2026-01-19
+**提交**: 776001a
 
 ---
 
@@ -330,33 +371,39 @@
 
 **依赖**: 所有4个维度服务完成
 
-### T013: 实现主分析服务编排器
+### T013: 实现主分析服务编排器 ✅
 
 **文件**: `backend/app/services/analysis/affinity_analysis_service.py`
 
-- [ ] analyze() 方法 - 主入口点
+- [x] analyze() 方法 - 主入口点
   - **关键**: 先调用preprocessing_orchestrator.orchestrate_preprocessing()
   - 触发完整分析流程
-- [ ] _preprocess_conversation() - 确保预处理完成
-- [ ] _calculate_all_dimensions() - 调用4个维度服务(现在完全并行)
-- [ ] _calculate_overall_score() - 加权总分
+- [x] _preprocess_conversation() - 确保预处理完成
+- [x] _calculate_all_dimensions() - 调用4个维度服务(现在完全并行)
+- [x] _calculate_overall_score() - 加权总分
   - emotional_resonance × 0.3
   - chat_positivity × 0.3
   - attitude_tendency × 0.2
   - preference_compatibility × 0.2
-- [ ] _save_results() - 写入affinity_scores表
-- [ ] get_scores() - 获取缓存分数
-- [ ] reanalyze() - 使缓存失效并重新分析
-- [ ] _generate_progress_updates() - 发送进度事件
+- [x] _save_results() - 写入affinity_scores表
+- [x] get_scores() - 获取缓存分数
+- [x] reanalyze() - 使缓存失效并重新分析
+- [x] _generate_progress_updates() - 发送进度事件
 
-### T014: 实现任务跟踪和进度报告
+**完成时间**: 2026-01-19
+**提交**: 776001a
+
+### T014: 实现任务跟踪和进度报告 ✅
 
 **文件**: `backend/app/services/analysis/affinity_analysis_service.py`
 
-- [ ] 为每次分析生成唯一task_id (格式: "affinity_{conversation_id}_{timestamp}")
-- [ ] 存储任务进度到内存或 `backend/data/analysis_tasks.json`
-- [ ] 更新progress_percent (0-100) 和current_step描述
-- [ ] 处理任务取消和错误恢复
+- [x] 为每次分析生成唯一task_id (格式: "affinity_{conversation_id}_{timestamp}")
+- [x] 存储任务进度到内存或 `backend/data/analysis_tasks.json`
+- [x] 更新progress_percent (0-100) 和current_step描述
+- [x] 处理任务取消和错误恢复
+
+**完成时间**: 2026-01-19
+**提交**: 776001a
 
 ---
 

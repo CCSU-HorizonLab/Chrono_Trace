@@ -250,7 +250,8 @@
 
 **Core Services (juitar - fully parallel with ting on US1)**:
 
-- [ ] T031 [US2] [juitar] Implement ChatPositivityService class in backend/app/services/analysis/chat_positivity_service.py
+- [x] T031 [US2] [juitar] Implement ChatPositivityService class in backend/app/services/analysis/chat_positivity_service.py ✅
+  - Completed: 2026-01-19
   - **CRITICAL**: Use preprocessed_statistics from Phase 2.5 (T025) instead of recalculating
   - calculate_daily_message_count() method (10% weight) - use total_message_count, conversation_duration_days from preprocessing
   - calculate_reply_timeliness() method (20% weight) - use interaction_pairs from preprocessing
@@ -263,7 +264,8 @@
 
 **Database Integration**:
 
-- [ ] T032 [US2] [juitar] Extend affinity_config table usage in backend/app/services/analysis/affinity_config.py
+- [x] T032 [US2] [juitar] Extend affinity_config table usage in backend/app/services/analysis/affinity_config.py ✅
+  - Completed: 2026-01-19
   - get_config() method - retrieve configuration for conversation (with defaults)
   - update_config() method - save user overrides (weights, thresholds)
   - validate_config() helper method - ensure weights sum to 1.0, thresholds in valid ranges
@@ -320,14 +322,17 @@
 
 ### Tests for User Story 4
 
-- [ ] T037 [P] [US4] [juitar] Create backend/tests/test_preference_compatibility.py with both sub-dimensions tests
-- [ ] T038 [US4] [juitar] Add empty preference keywords test (should return 0 score and handle gracefully)
+- [x] T037 [P] [US4] [juitar] Create backend/tests/test_preference_compatibility.py with both sub-dimensions tests ✅
+  - Completed: 2026-01-19
+- [x] T038 [US4] [juitar] Add empty preference keywords test (should return 0 score and handle gracefully) ✅
+  - Completed: 2026-01-19
 
 ### Implementation for User Story 4
 
 **Core Services (juitar - fully parallel with ting on US3)**:
 
-- [ ] T039 [US4] [juitar] Implement PreferenceCompatibilityService class in backend/app/services/analysis/preference_compatibility_service.py
+- [x] T039 [US4] [juitar] Implement PreferenceCompatibilityService class in backend/app/services/analysis/preference_compatibility_service.py ✅
+  - Completed: 2026-01-19
   - **CRITICAL**: Use preprocessed_statistics.sessions from Phase 2.5 (T025) instead of recalculating
   - calculate_topic_mention_frequency() method (40% weight) - use total_sessions from preprocessing
   - calculate_preference_topic_continuity() method (60% weight) - **OPTIMIZED**: reuse session semantic similarities from preprocessing
@@ -338,7 +343,8 @@
 
 **Configuration Integration**:
 
-- [ ] T040 [US4] [juitar] Add preference keywords to affinity_config in backend/app/services/analysis/affinity_config.py
+- [x] T040 [US4] [juitar] Add preference keywords to affinity_config in backend/app/services/analysis/affinity_config.py ✅
+  - Completed: 2026-01-19
   - Update get_config() to include preference_keywords_json field
   - Update update_config() to handle preference keywords array
   - Validate preference keywords are non-empty strings
@@ -353,7 +359,8 @@
 
 ### Implementation for Orchestrator
 
-- [ ] T041 [Orchestrator] [juitar] Implement AffinityAnalysisService orchestrator in backend/app/services/analysis/affinity_analysis_service.py
+- [x] T041 [Orchestrator] [juitar] Implement AffinityAnalysisService orchestrator in backend/app/services/analysis/affinity_analysis_service.py ✅
+  - Completed: 2026-01-19
   - **CRITICAL**: Call preprocessing_orchestrator.orchestrate_preprocessing() before any dimension calculations
   - analyze() method - main entry point, triggers full analysis pipeline
   - _preprocess_conversation() helper method - ensure preprocessing orchestrator has completed
@@ -364,13 +371,15 @@
   - reanalyze() method - invalidate preprocessing cache and re-run analysis
   - _generate_progress_updates() helper method - emit progress events for UI polling
 
-- [ ] T042 [Orchestrator] [juitar] Implement task tracking and progress reporting in backend/app/services/analysis/affinity_analysis_service.py
+- [x] T042 [Orchestrator] [juitar] Implement task tracking and progress reporting in backend/app/services/analysis/affinity_analysis_service.py ✅
+  - Completed: 2026-01-19
   - Generate unique task_id for each analysis run (format: "affinity_{conversation_id}_{timestamp}")
   - Store task progress in memory or backend/data/analysis_tasks.json
   - Update progress_percent (0-100) and current_step description
   - Handle task cancellation and error recovery
 
-- [ ] T043 [Orchestrator] [ting] Add interpretation text generation in backend/app/services/analysis/affinity_analysis_service.py
+- [x] T043 [Orchestrator] [ting] Add interpretation text generation in backend/app/services/analysis/affinity_analysis_service.py ✅
+  - Completed: 2026-01-19
   - generate_overall_interpretation() method - overall score interpretation (e.g., "总体好感度较高,对方对这段关系较为重视" for scores >70)
   - aggregate_dimension_interpretations() method - combine interpretations from all 4 dimension services
   - format_score_breakdown() method - structure sub-scores JSON for frontend display

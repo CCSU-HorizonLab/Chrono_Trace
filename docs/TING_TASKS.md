@@ -12,15 +12,15 @@
 |------|--------|--------|------------|
 | 1. 数据库设置 | 1 | 1 | - |
 | 2. 基础设施 | 4 | 4 | 简单 |
-| 3. 预处理层 | 4 | 1 | 中等 |
-| 4. 维度分析 | 7 | 0 | 中等 |
+| 3. 预处理层 | 4 | 4 | 中等 |
+| 4. 维度分析 | 7 | 7 | 中等 |
 | 5. 编排器 | 1 | 0 | 简单 |
 | 6. 后端API | 7 | 0 | 中等 |
 | 7. 前端实现 | 5 | 0 | 中等 |
 | 8. 测试与优化 | 6 | 0 | 简单 |
-| **总计** | **35** | **6** | **约2-3周** |
+| **总计** | **35** | **16** | **约2-3周** |
 
-**进度**: 6/35 已完成 (17%)
+**进度**: 16/35 已完成 (46%)
 
 ---
 
@@ -145,65 +145,85 @@
 
 **依赖**: 必须完成阶段3 (预处理层)
 
-### T009: 情感共振率测试
-- [ ] 创建 `backend/tests/test_emotional_resonance.py`
-- [ ] 测试5个子维度计算正确性
+### T009: 情感共振率测试 ✅
+- [x] 创建 `backend/tests/test_emotional_resonance.py`
+- [x] 测试5个子维度计算正确性
 
-### T010: 实现情感共振率服务
+**完成时间**: 2026-01-22
+
+### T010: 实现情感共振率服务 ✅
 **文件**: `backend/app/services/analysis/emotional_resonance_service.py`
 
-- [ ] calculate_bidirectional_positive_response() (20%权重)
+- [x] calculate_bidirectional_positive_response() (20%权重)
   - 使用预处理的 total_positive_count, total_interaction_pairs
-- [ ] calculate_polarity_consistency() (15%权重)
+- [x] calculate_polarity_consistency() (15%权重)
   - 使用预处理的 sentiment_cache embeddings
-- [ ] calculate_intensity_matching() (10%权重)
+- [x] calculate_intensity_matching() (10%权重)
   - 使用预处理的 sentiment_cache intensities
-- [ ] calculate_empathy_recognition() (30%权重)
+- [x] calculate_empathy_recognition() (30%权重)
   - 使用 keyword_libraries.get_keywords('empathy')
-- [ ] calculate_negative_resolution() (25%权重)
+- [x] calculate_negative_resolution() (25%权重)
   - 使用预处理的 interaction_pairs
-- [ ] calculate_overall_resonance() - 加权总分 (0-100)
-- [ ] generate_interpretation() - 生成解释文本
+- [x] calculate_overall_resonance() - 加权总分 (0-100)
+- [x] generate_interpretation() - 生成解释文本
 
 **关键**: 使用预处理的统计信息,不要重新计算!
 
-### T011: 态度倾向测试
-- [ ] 创建 `backend/tests/test_attitude_tendency.py`
-- [ ] 测试5个子维度计算
+**完成时间**: 2026-01-22
 
-### T012: 关键词匹配边界测试
-- [ ] 添加关键词匹配准确率测试
-- [ ] 测试边界情况 (部分匹配、大小写、标点符号)
+### T011: 态度倾向测试 ✅
+- [x] 创建 `backend/tests/test_attitude_tendency.py`
+- [x] 测试6个子维度计算
 
-### T013: 实现态度倾向服务
+**完成时间**: 2026-01-25
+
+### T012: 关键词匹配边界测试 ✅
+- [x] 添加关键词匹配准确率测试
+- [x] 测试边界情况 (部分匹配、大小写、标点符号)
+- [x] 添加13个边界测试用例到 `test_keyword_libraries.py`
+
+**完成时间**: 2026-01-25
+
+### T013: 实现态度倾向服务 ✅
 **文件**: `backend/app/services/analysis/attitude_tendency_service.py`
 
-- [ ] calculate_positive_word_frequency() (25%权重)
+- [x] calculate_positive_word_frequency() (25%权重)
   - 使用预处理的 total_positive_count, total_message_count
-- [ ] calculate_negative_word_frequency() (-20%权重,反向计分)
+- [x] calculate_negative_word_frequency() (-20%权重,反向计分)
   - 使用预处理的 total_negative_count, total_message_count
-- [ ] calculate_multimedia_usage() (10%权重)
+- [x] calculate_multimedia_usage() (15%权重) **权重已调整**
   - **优化**: 使用预处理的 emoji_message_count, voice_message_count, video_message_count (O(1) vs O(N))
-- [ ] calculate_nickname_frequency() (25%权重)
+- [x] calculate_nickname_frequency() (25%权重)
   - 使用预处理的 nickname_message_count
-- [ ] calculate_privacy_sharing() (20%权重)
+- [x] calculate_privacy_sharing() (20%权重)
   - 使用预处理的 privacy_message_count
-- [ ] calculate_holiday_greeting() (10%权重)
-  - **简化**: 使用预处理的 holidays_sent_count, total_holiday_count
-- [ ] calculate_overall_attitude() - 加权总分 (0-100)
-- [ ] generate_interpretation() - 生成解释文本
+- [x] calculate_holiday_greeting() (15%权重) **权重已调整**
+  - **简化**: 使用预处理的 holidays_sent_count, chat_days_count
+- [x] calculate_overall_attitude() - 加权总分 (0-100)
+- [x] generate_interpretation() - 生成解释文本
 
 **关键**: 使用预处理的统计信息,O(1)查找 vs O(6N)遍历 (6倍提速)
+**权重调整**: 多媒体使用率和节日祝福频率各增加5%,确保正向权重总和为100%
 
-### T014: 关键词库集成
+**完成时间**: 2026-01-25
+
+### T014: 关键词库集成 ✅
 **文件**: `backend/app/services/analysis/attitude_tendency_service.py`
 
-- [ ] 集成KeywordLibraries (预处理中已实现,直接导入使用)
-- [ ] 优雅处理缺失关键词分类 (跳过该维度,重新分配权重)
+- [x] 集成KeywordLibraries (预处理中已实现,直接导入使用)
+- [x] 优雅处理缺失关键词分类 (跳过该维度,重新分配权重)
 
-### T015: 聊天积极度测试
-- [ ] 创建 `backend/tests/test_chat_positivity.py`
-- [ ] 测试5个子维度计算
+**完成时间**: 2026-01-25
+
+### T015: 聊天积极度测试 ✅
+- [x] 创建 `backend/tests/test_chat_positivity.py`
+- [x] 测试5个子维度计算
+
+**完成时间**: 2026-01-25
+
+**备注**:
+- 测试文件包含400行代码
+- 覆盖日均消息数、回复及时性、消息长度、话题连续性、主动发起等5个子维度
 
 ### T016: 回复及时性边界测试
 - [ ] 添加边界值测试 (阈值边界、负间隔、>24小时间隔)

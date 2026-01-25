@@ -5,7 +5,13 @@
 
 import pytest
 import sqlite3
+import sys
+from pathlib import Path
 from unittest.mock import Mock, patch
+
+# 添加项目根目录到 Python 路径
+backend_root = Path(__file__).parent.parent
+sys.path.insert(0, str(backend_root))
 
 from app.services.analysis.keyword_libraries import KeywordLibraries
 
@@ -388,3 +394,123 @@ class TestKeywordLibraries:
         # 验证新词已加载
         keywords = keyword_lib.get_keywords('negative')
         assert '新负面词' in keywords
+
+
+class TestKeywordMatchingBoundaries:
+    """关键词匹配边界测试 - T012"""
+    
+    @pytest.fixture
+    def keyword_lib(self):
+        """创建KeywordLibraries实例用于边界测试"""
+        return KeywordLibraries()
+    
+    def test_partial_match(self, keyword_lib):
+        """测试部分匹配"""
+        keywords = ["开心"]
+        
+        # 应该匹配
+        assert keyword_lib.check_keywords_in_text("我很开心", keywords)
+        assert keyword_lib.check_keywords_in_text("开心啊", keywords)
+        assert keyword_lib.check_keywords_in_text("真开心", keywords)
+        
+        # 不应该匹配（部分字符）
+        assert not keyword_lib.check_keywords_in_text("我很开", keywords)
+        assert not keyword_lib.check_keywords_in_text("心情好", keywords)
+    
+    def test_case_sensitivity(self, keyword_lib):
+        """测试大小写敏感性"""
+        keywords = ["Happy"]
+        
+        # 应该匹配（不区分大小写）
+        assert keyword_lib.check_keywords_in_text("I'm happy", keywords)
+        assert keyword_lib.check_keywords_in_text("HAPPY day", keywords)
+        assert keyword_lib.check_keywords_in_text("HaPpY", keywords)
+        assert keyword_lib.check_keywords_in_text("very Happy", keywords)
+    
+    def test_punctuation_handling(self, keyword_lib):
+        """测试标点符号处理"""
+        keywords = ["开心"]
+        
+        # 应该匹配（忽略标点）
+        assert keyword_lib.check_keywords_in_text("我很开心！", keywords)
+        assert keyword_lib.check_keywords_in_text("开心，真的", keywords)
+        assert keyword_lib.check_keywords_in_text("【开心】", keywords)
+        assert keyword_lib.check_keywords_in_text("开心...", keywords)
+        assert keyword_lib.check_keywords_in_text("开心？", keywords)
+    
+    def test_whitespace_handling(self, keyword_lib):
+        """测试空白字符处理"""
+        keywords = ["开心"]
+        
+        # 应该匹配
+        assert keyword_lib.check_keywords_in_text("  开心  ", keywords)
+        assert keyword_lib.check_keywords_in_text("我 开心", keywords)
+        assert keyword_lib.check_keywords_in_text("开心 啊", keywords)
+    
+    def test_multiple_keywords(self, keyword_lib):
+        """测试多个关键词"""
+        keywords = ["开心", "高兴", "快乐"]
+        
+        # 任意一个匹配即可
+        assert keyword_lib.check_keywords_in_text("我很开心", keywords)
+        assert keyword_lib.check_keywords_in_text("真高兴", keywords)
+        assert keyword_lib.check_keywords_in_text("快乐每一天", keywords)
+        
+        # 都不匹配
+        assert not keyword_lib.check_keywords_in_text("今天天气不错", keywords)
+    
+    def test_empty_text(self, keyword_lib):
+        """测试空文本"""
+        keywords = ["开心"]
+        
+        assert not keyword_lib.check_keywords_in_text("", keywords)
+        assert not keyword_lib.check_keywords_in_text("   ", keywords)
+        assert not keyword_lib.check_keywords_in_text(None, keywords)
+    
+    def test_empty_keywords(self, keyword_lib):
+        """测试空关键词列表"""
+        assert not keyword_lib.check_keywords_in_text("我很开心", [])
+        assert not keyword_lib.check_keywords_in_text("我很开心", None)
+    
+    def test_special_characters(self, keyword_lib):
+        """测试特殊字符"""
+        keywords = ["开心"]
+        
+        # 应该匹配（忽略特殊字符）
+        assert keyword_lib.check_keywords_in_text("我@很#开心$", keywords)
+        assert keyword_lib.check_keywords_in_text("开心😊", keywords)  # emoji
+        assert keyword_lib.check_keywords_in_text("开心~", keywords)
+    
+    def test_regex_special_chars_in_keywords(self, keyword_lib):
+        """测试关键词中的正则表达式特殊字符"""
+        # 关键词中包含正则特殊字符，应该被转义
+        keywords = ["(开心)", "[快乐]", "高兴+"]
+        
+        assert keyword_lib.check_keywords_in_text("我很(开心)", keywords)
+        assert keyword_lib.check_keywords_in_text("真[快乐]", keywords)
+        assert keyword_lib.check_keywords_in_text("高兴+1", keywords)
+    
+    def test_chinese_english_mixed(self, keyword_lib):
+        """测试中英文混合"""
+        keywords = ["happy", "开心"]
+        
+        assert keyword_lib.check_keywords_in_text("I'm happy today", keywords)
+        assert keyword_lib.check_keywords_in_text("我很开心", keywords)
+        assert keyword_lib.check_keywords_in_text("happy开心", keywords)
+    
+    def test_numbers_in_text(self, keyword_lib):
+        """测试包含数字的文本"""
+        keywords = ["开心"]
+        
+        assert keyword_lib.check_keywords_in_text("开心123", keywords)
+        assert keyword_lib.check_keywords_in_text("123开心", keywords)
+        assert keyword_lib.check_keywords_in_text("开心100分", keywords)
+    
+    def test_bytes_type_handling(self, keyword_lib):
+        """测试bytes类型处理"""
+        keywords = ["开心"]
+        
+        # bytes类型应该被正确解码
+        text_bytes = "我很开心".encode('utf-8')
+        assert keyword_lib.check_keywords_in_text(text_bytes, keywords)
+

@@ -1010,25 +1010,25 @@ class PairPreprocessingService:
             (speech_units, interaction_pairs)
         """
         try:
-            # 读取发言单元
+            # 读取发言单元（使用数据库实际的列名）
             cursor = self.db.execute("""
-                SELECT id, is_sender, content, start_timestamp, end_timestamp,
+                SELECT id, sender, first_message_timestamp, last_message_timestamp,
                        message_count, message_ids
                 FROM speech_units
                 WHERE conversation_id = ?
-                ORDER BY start_timestamp ASC
+                ORDER BY first_message_timestamp ASC
             """, (conversation_id,))
 
             speech_units = []
             for row in cursor.fetchall():
                 speech_units.append({
                     "id": row[0],
-                    "is_sender": row[1],
-                    "content": row[2],
-                    "start_timestamp": row[3],
-                    "end_timestamp": row[4],
-                    "message_count": row[5],
-                    "message_ids": json.loads(row[6])
+                    "is_sender": 1 if row[1] == 'user' else 0,  # 转换 sender 为 is_sender
+                    "start_timestamp": row[2],  # 从 first_message_timestamp 读取
+                    "end_timestamp": row[3],    # 从 last_message_timestamp 读取
+                    "message_count": row[4],
+                    "message_ids": json.loads(row[5])
+                    # 注意：不包含 content 字段，需要时从 messages 表查询
                 })
 
             # 读取交互对

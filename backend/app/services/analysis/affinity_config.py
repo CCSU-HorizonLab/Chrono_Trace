@@ -22,10 +22,11 @@ class AffinityConfig:
     """好感度分析配置"""
     
     # 维度权重 (总和必须为 1.0)
-    weight_emotional_resonance: float = 0.30
-    weight_chat_positivity: float = 0.30
+    # 注: 这是有喜好关键词时的默认权重
+    weight_emotional_resonance: float = 0.35
+    weight_chat_positivity: float = 0.35
     weight_attitude_tendency: float = 0.20
-    weight_preference_compatibility: float = 0.20
+    weight_preference_compatibility: float = 0.10
     
     # 阈值参数
     reply_timeliness_threshold_seconds: int = 300  # 5 分钟
@@ -212,3 +213,45 @@ class AffinityConfigService:
         )
         
         return config.preference_keywords
+    
+    def get_dimension_weights(self, conversation_id: int) -> dict:
+        """
+        根据是否有喜好关键词,动态返回维度权重
+        
+        有喜好关键词时:
+        - 情感共振率: 35%
+        - 聊天积极度: 35%
+        - 态度倾向: 20%
+        - 喜好兼容度: 10%
+        
+        无喜好关键词时:
+        - 情感共振率: 40%
+        - 聊天积极度: 35%
+        - 态度倾向: 25%
+        - 喜好兼容度: 0%
+        
+        Args:
+            conversation_id: 会话 ID
+            
+        Returns:
+            包含各维度权重的字典
+        """
+        config = self.get_config(conversation_id)
+        has_preference_keywords = bool(config.preference_keywords)
+        
+        if has_preference_keywords:
+            # 有喜好关键词时的权重
+            return {
+                'emotional_resonance': 0.35,
+                'chat_positivity': 0.35,
+                'attitude_tendency': 0.20,
+                'preference_compatibility': 0.10,
+            }
+        else:
+            # 无喜好关键词时的权重(喜好维度权重为0)
+            return {
+                'emotional_resonance': 0.40,
+                'chat_positivity': 0.35,
+                'attitude_tendency': 0.25,
+                'preference_compatibility': 0.00,
+            }

@@ -9,10 +9,10 @@ import type { EChartsOption } from 'echarts'
 
 const props = defineProps<{
   dimensionScores: {
-    emotional_resonance?: { score: number }
-    chat_positivity?: { score: number }
-    attitude_tendency?: { score: number }
-    preference_compatibility?: { score: number }
+    emotional_resonance?: { score: number; weight: number }
+    chat_positivity?: { score: number; weight: number }
+    attitude_tendency?: { score: number; weight: number }
+    preference_compatibility?: { score: number; weight: number }
   }
 }>()
 
@@ -25,12 +25,50 @@ const getCssVar = (name: string) => {
 }
 
 const getOption = (): EChartsOption => {
-  const scores = [
-    props.dimensionScores.emotional_resonance?.score || 0,
-    props.dimensionScores.chat_positivity?.score || 0,
-    props.dimensionScores.preference_compatibility?.score || 0,
-    props.dimensionScores.attitude_tendency?.score || 0
+  // 定义所有维度的配置
+  const allDimensions = [
+    {
+      key: 'emotional_resonance',
+      name: '情感\n共振率',
+      fullName: '情感共振率',
+      score: props.dimensionScores.emotional_resonance?.score || 0,
+      weight: props.dimensionScores.emotional_resonance?.weight || 0
+    },
+    {
+      key: 'chat_positivity',
+      name: '聊天\n积极度',
+      fullName: '聊天积极度',
+      score: props.dimensionScores.chat_positivity?.score || 0,
+      weight: props.dimensionScores.chat_positivity?.weight || 0
+    },
+    {
+      key: 'preference_compatibility',
+      name: '喜好\n兼容度',
+      fullName: '喜好兼容度',
+      score: props.dimensionScores.preference_compatibility?.score || 0,
+      weight: props.dimensionScores.preference_compatibility?.weight || 0
+    },
+    {
+      key: 'attitude_tendency',
+      name: '态度\n倾向',
+      fullName: '态度倾向',
+      score: props.dimensionScores.attitude_tendency?.score || 0,
+      weight: props.dimensionScores.attitude_tendency?.weight || 0
+    }
   ]
+
+  // 过滤掉权重为0的维度
+  const activeDimensions = allDimensions.filter(dim => dim.weight > 0)
+  
+  // 生成indicator和data
+  const indicators = activeDimensions.map(dim => ({
+    name: dim.name,
+    max: 100
+  }))
+  
+  const scores = activeDimensions.map(dim => dim.score)
+  const dimensionNames = activeDimensions.map(dim => dim.fullName)
+  const weights = activeDimensions.map(dim => dim.weight)
 
   const primaryColor = getCssVar('--ct-color-primary') || '#5b6be0'
   const textColor = getCssVar('--ct-text-secondary') || '#666'
@@ -48,17 +86,18 @@ const getOption = (): EChartsOption => {
       borderColor: tooltipBorder,
       textStyle: {
         color: tooltipText
+      },
+      formatter: (params: any) => {
+        const index = params.dataIndex
+        const weight = weights[index]
+        const weightText = weight !== undefined ? ` (权重: ${Math.round(weight * 100)}%)` : ''
+        return `${dimensionNames[index]}${weightText}<br/>分数: ${params.value}`
       }
     },
     radar: {
-      indicator: [
-        { name: '情感\n共振率', max: 100 },
-        { name: '聊天\n积极度', max: 100 },
-        { name: '喜好\n兼容度', max: 100 },
-        { name: '态度\n倾向', max: 100 }
-      ],
-      center: ['50%', '55%'],
-      radius: '65%',
+      indicator: indicators,
+      center: ['50%', '50%'],
+      radius: '60%',
       splitNumber: 4,
       axisName: {
         color: textColor,
@@ -68,7 +107,7 @@ const getOption = (): EChartsOption => {
       },
       splitArea: {
         areaStyle: {
-          color: [splitAreaColor1, splitAreaColor2, splitAreaColor1, splitAreaColor2],
+          color: [splitAreaColor1, splitAreaColor2],
           shadowColor: 'rgba(0, 0, 0, 0.02)',
           shadowBlur: 5
         }
@@ -105,9 +144,8 @@ const getOption = (): EChartsOption => {
             areaStyle: {
               color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
                 { offset: 0, color: primaryColor },
-                { offset: 1, color: 'rgba(255,255,255,0.1)' }
-              ]),
-              opacity: 0.4
+                { offset: 1, color: 'rgba(91, 107, 224, 0.1)' }
+              ])
             },
             lineStyle: {
               width: 3,
@@ -125,34 +163,39 @@ const initChart = () => {
   
   chartInstance = echarts.init(chartRef.value)
   chartInstance.setOption(getOption())
-  
-  const resizeObserver = new ResizeObserver(() => {
-    chartInstance?.resize()
-  })
-  resizeObserver.observe(chartRef.value)
 }
 
-watch(() => props.dimensionScores, () => {
-  chartInstance?.setOption(getOption())
-}, { deep: true })
+const updateChart = () => {
+  if (chartInstance) {
+    chartInstance.setOption(getOption())
+  }
+}
 
 onMounted(() => {
   nextTick(() => {
     initChart()
-    // Listen for theme changes or window resize if needed
-    window.addEventListener('resize', () => chartInstance?.resize())
+  })
+  
+  window.addEventListener('resize', () => {
+    chartInstance?.resize()
   })
 })
 
 onUnmounted(() => {
   chartInstance?.dispose()
-  window.removeEventListener('resize', () => chartInstance?.resize())
+  window.removeEventListener('resize', () => {
+    chartInstance?.resize()
+  })
 })
+
+watch(() => props.dimensionScores, () => {
+  updateChart()
+}, { deep: true })
 </script>
 
 <style scoped>
 .radar-chart {
   width: 100%;
-  height: 320px;
+  height: 400px;
 }
 </style>

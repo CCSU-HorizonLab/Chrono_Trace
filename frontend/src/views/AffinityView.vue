@@ -24,6 +24,13 @@
 
         <div class="actions">
           <CtButton 
+            @click="showKeywordsDialog = true" 
+            variant="ghost"
+            :disabled="!selectedConversationId"
+          >
+            配置喜好关键词
+          </CtButton>
+          <CtButton 
             @click="startAnalysis(false)" 
             :loading="isAnalyzing"
             :disabled="!selectedConversationId"
@@ -76,7 +83,10 @@
               </svg>
             </div>
             
-            <div class="card-label">总体好感度</div>
+            <div class="card-label-row">
+              <div class="card-label">总体好感度</div>
+              <WeightInfoTooltip :has-preference-keywords="hasPreferenceKeywords" />
+            </div>
             
             <div class="score-ring-container">
               <svg viewBox="0 0 120 120" class="circular-chart">
@@ -128,6 +138,7 @@
             title="情感共振率"
             :score="analysisResult.emotional_resonance.score"
             :max-score="100"
+            :weight="analysisResult.emotional_resonance.weight"
             :interpretation="analysisResult.emotional_resonance.interpretation"
             @click="scrollToDetails('emotional')"
           />
@@ -136,6 +147,7 @@
             title="聊天积极度"
             :score="analysisResult.chat_positivity.score"
             :max-score="100"
+            :weight="analysisResult.chat_positivity.weight"
             :interpretation="analysisResult.chat_positivity.interpretation"
             @click="scrollToDetails('positivity')"
           />
@@ -144,6 +156,7 @@
             title="态度倾向"
             :score="analysisResult.attitude_tendency.score"
             :max-score="100"
+            :weight="analysisResult.attitude_tendency.weight"
             :interpretation="analysisResult.attitude_tendency.interpretation"
              @click="scrollToDetails('attitude')"
           />
@@ -152,8 +165,10 @@
             title="喜好兼容度"
             :score="analysisResult.preference_compatibility.score"
             :max-score="100"
+            :weight="analysisResult.preference_compatibility.weight"
             :interpretation="analysisResult.preference_compatibility.interpretation"
              @click="scrollToDetails('preference')"
+             @disabled-click="handlePreferenceDisabledClick"
           />
         </div>
 
@@ -186,6 +201,14 @@
         </div>
       </div>
     </div>
+    
+    <!-- Preference Keywords Dialog -->
+    <PreferenceKeywordsDialog
+      v-if="selectedConversationId"
+      v-model="showKeywordsDialog"
+      :conversation-id="selectedConversationId"
+      @updated="handleKeywordsUpdated"
+    />
   </div>
 </template>
 
@@ -198,6 +221,8 @@ import CtButton from '@/components/base/CtButton.vue'
 import AffinityScoreCard from '../components/affinity/AffinityScoreCard.vue'
 import DimensionRadar from '../components/affinity/DimensionRadar.vue'
 import SubScoreBreakdown from '../components/affinity/SubScoreBreakdown.vue'
+import WeightInfoTooltip from '../components/affinity/WeightInfoTooltip.vue'
+import PreferenceKeywordsDialog from '../components/affinity/PreferenceKeywordsDialog.vue'
 
 interface Conversation {
   id: number
@@ -212,6 +237,13 @@ const progressPercent = ref(0)
 const progressStep = ref('')
 const analysisResult = ref<AffinityAnalysisResult | null>(null)
 const displayScore = ref(0) // Animated score
+const showKeywordsDialog = ref(false)
+
+// 计算是否有喜好关键词
+const hasPreferenceKeywords = computed(() => {
+  return analysisResult.value?.preference_compatibility?.weight !== undefined && 
+         analysisResult.value.preference_compatibility.weight > 0
+})
 
 // Computed property for Radar Chart
 const allDimensions = computed(() => {
@@ -337,6 +369,17 @@ const strokeDashoffset = computed(() => {
 const scrollToDetails = (idSuffix: string) => {
   const el = document.getElementById(`detail-${idSuffix}`)
   el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+const handlePreferenceDisabledClick = () => {
+  showKeywordsDialog.value = true
+}
+
+const handleKeywordsUpdated = async () => {
+  // 关键词更新后重新分析
+  if (selectedConversationId.value) {
+    await startAnalysis(true)
+  }
 }
 </script>
 
@@ -501,6 +544,14 @@ const scrollToDetails = (idSuffix: string) => {
   color: var(--ct-text-secondary);
   margin-bottom: var(--ct-space-xl);
   font-weight: 600;
+}
+
+.card-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ct-space-sm);
+  margin-bottom: var(--ct-space-xl);
 }
 
 .score-ring-container {

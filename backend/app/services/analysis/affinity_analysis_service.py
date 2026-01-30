@@ -5,11 +5,18 @@
 - get_scores(): 获取缓存分数
 - reanalyze(): 重新分析（清除缓存）
 
-维度权重:
-- 情感共振率: 30%
-- 聊天积极度: 30%
+维度权重(动态调整):
+有喜好关键词时:
+- 情感共振率: 35%
+- 聊天积极度: 35%
 - 态度倾向: 20%
-- 喜好兼容度: 20%
+- 喜好兼容度: 10%
+
+无喜好关键词时:
+- 情感共振率: 40%
+- 聊天积极度: 35%
+- 态度倾向: 25%
+- 喜好兼容度: 0%
 """
 
 import time
@@ -71,11 +78,12 @@ class AffinityAnalysisResult:
 class AffinityAnalysisService:
     """好感度分析编排器"""
     
-    # 默认维度权重
-    DEFAULT_WEIGHT_EMOTIONAL = 0.30
-    DEFAULT_WEIGHT_POSITIVITY = 0.30
+    # 默认维度权重(已废弃,使用动态权重)
+    # 实际权重由 AffinityConfigService.get_dimension_weights() 动态返回
+    DEFAULT_WEIGHT_EMOTIONAL = 0.35
+    DEFAULT_WEIGHT_POSITIVITY = 0.35
     DEFAULT_WEIGHT_ATTITUDE = 0.20
-    DEFAULT_WEIGHT_PREFERENCE = 0.20
+    DEFAULT_WEIGHT_PREFERENCE = 0.10
     
     def __init__(self):
         self.db = get_db()
@@ -177,7 +185,18 @@ class AffinityAnalysisService:
             result.error = str(e)
             logger.error(f"好感度分析失败: {e}", exc_info=True)
         
-        self._task_status[task_id] = result
+        # 添加调试日志
+        logger.info(f"=== 好感度分析结果 ===")
+        logger.info(f"总分: {result.overall_score:.1f}")
+        if result.emotional_resonance:
+            logger.info(f"情感共振率: score={result.emotional_resonance.score:.1f}, weight={result.emotional_resonance.weight}, weighted={result.emotional_resonance.weighted_score:.1f}")
+        if result.chat_positivity:
+            logger.info(f"聊天积极度: score={result.chat_positivity.score:.1f}, weight={result.chat_positivity.weight}, weighted={result.chat_positivity.weighted_score:.1f}")
+        if result.attitude_tendency:
+            logger.info(f"态度倾向: score={result.attitude_tendency.score:.1f}, weight={result.attitude_tendency.weight}, weighted={result.attitude_tendency.weighted_score:.1f}")
+        if result.preference_compatibility:
+            logger.info(f"喜好兼容度: score={result.preference_compatibility.score:.1f}, weight={result.preference_compatibility.weight}, weighted={result.preference_compatibility.weighted_score:.1f}")
+        
         return result
     
     def get_scores(self, conversation_id: int) -> Optional[AffinityAnalysisResult]:
@@ -261,15 +280,19 @@ class AffinityAnalysisService:
     ):
         """计算所有维度评分"""
         
-        # 1. 情感共振率 (30%)
+        # 获取动态权重
+        weights = self.config_service.get_dimension_weights(conversation_id)
+        logger.info(f"使用动态权重: {weights}")
+        
+        # 1. 情感共振率
         resonance_result = self.resonance_service.calculate_overall_resonance(
             conversation_id
         )
         result.emotional_resonance = DimensionScore(
             name="情感共振率",
             score=resonance_result['overall_score'],
-            weight=config.weight_emotional_resonance,
-            weighted_score=resonance_result['overall_score'] * config.weight_emotional_resonance,
+            weight=weights['emotional_resonance'],
+            weighted_score=resonance_result['overall_score'] * weights['emotional_resonance'],
             interpretation=resonance_result['interpretation'],
             sub_scores={
                 "bidirectional_positive": resonance_result['sub_scores']['bidirectional_positive_response'],
@@ -279,9 +302,9 @@ class AffinityAnalysisService:
                 "negative_resolution": resonance_result['sub_scores']['negative_resolution'],
             }
         )
-        logger.info(f"情感共振率计算完成: {resonance_result['overall_score']:.1f}分")
+        logger.info(f"情感共振率计算完成: {resonance_result['overall_score']:.1f}分 (权重: {weights['emotional_resonance']*100}%)")
         
-        # 2. 聊天积极度 (30%)
+        # 2. 聊天积极度
         self.positivity_service.timeliness_threshold = config.reply_timeliness_threshold_seconds
         positivity_result = self.positivity_service.calculate_scores(
             conversation_id, stats
@@ -289,8 +312,8 @@ class AffinityAnalysisService:
         result.chat_positivity = DimensionScore(
             name="聊天积极度",
             score=positivity_result.overall_score,
-            weight=config.weight_chat_positivity,
-            weighted_score=positivity_result.overall_score * config.weight_chat_positivity,
+            weight=weights['chat_positivity'],
+            weighted_score=positivity_result.overall_score * weights['chat_positivity'],
             interpretation=positivity_result.interpretation,
             sub_scores={
                 "daily_message": positivity_result.daily_message_score,
@@ -301,16 +324,17 @@ class AffinityAnalysisService:
                 "active_initiation": positivity_result.active_initiation_score,
             }
         )
+        logger.info(f"聊天积极度计算完成: {positivity_result.overall_score:.1f}分 (权重: {weights['chat_positivity']*100}%)")
         
-        # 3. 态度倾向 (20%)
+        # 3. 态度倾向
         attitude_result = self.attitude_service.calculate_overall_attitude(
             conversation_id
         )
         result.attitude_tendency = DimensionScore(
             name="态度倾向",
             score=attitude_result['overall_score'],
-            weight=config.weight_attitude_tendency,
-            weighted_score=attitude_result['overall_score'] * config.weight_attitude_tendency,
+            weight=weights['attitude_tendency'],
+            weighted_score=attitude_result['overall_score'] * weights['attitude_tendency'],
             interpretation=attitude_result['interpretation'],
             sub_scores={
                 "positive_word_frequency": attitude_result['sub_scores']['positive_word_frequency'],
@@ -321,9 +345,9 @@ class AffinityAnalysisService:
                 "holiday_greeting": attitude_result['sub_scores']['holiday_greeting'],
             }
         )
-        logger.info(f"态度倾向计算完成: {attitude_result['overall_score']:.1f}分")
+        logger.info(f"态度倾向计算完成: {attitude_result['overall_score']:.1f}分 (权重: {weights['attitude_tendency']*100}%)")
         
-        # 4. 喜好兼容度 (20%)
+        # 4. 喜好兼容度
         self.preference_service.set_preference_keywords(config.preference_keywords)
         preference_result = self.preference_service.calculate_scores(
             conversation_id, stats
@@ -331,24 +355,24 @@ class AffinityAnalysisService:
         result.preference_compatibility = DimensionScore(
             name="喜好兼容度",
             score=preference_result.overall_score,
-            weight=config.weight_preference_compatibility,
-            weighted_score=preference_result.overall_score * config.weight_preference_compatibility,
+            weight=weights['preference_compatibility'],
+            weighted_score=preference_result.overall_score * weights['preference_compatibility'],
             interpretation=preference_result.interpretation,
             sub_scores={
                 "topic_mention": preference_result.topic_mention_score,
                 "topic_continuity": preference_result.topic_continuity_score,
             }
         )
+        logger.info(f"喜好兼容度计算完成: {preference_result.overall_score:.1f}分 (权重: {weights['preference_compatibility']*100}%)")
     
     def _calculate_overall_score(
         self,
         result: AffinityAnalysisResult,
         config: AffinityConfig
     ):
-        """计算综合评分"""
+        """计算综合评分(使用动态权重)"""
         # 收集所有维度的加权分数
         total_weighted = 0.0
-        total_weight = 0.0
         
         dimensions = [
             result.emotional_resonance,
@@ -357,16 +381,13 @@ class AffinityAnalysisService:
             result.preference_compatibility,
         ]
         
+        # 直接累加加权分数(权重已在维度计算时设置)
         for dim in dimensions:
-            if dim and dim.score > 0:
-                total_weighted += dim.score * dim.weight
-                total_weight += dim.weight
+            if dim:
+                total_weighted += dim.weighted_score
         
-        # 如果有未实现的维度，按比例调整权重
-        if total_weight > 0:
-            result.overall_score = round(total_weighted / total_weight * (total_weight / 1.0), 2)
-        else:
-            result.overall_score = 0.0
+        result.overall_score = round(total_weighted, 2)
+        logger.info(f"综合评分计算完成: {result.overall_score:.1f}分")
     
     def _generate_overall_interpretation(self, score: float) -> str:
         """生成综合解释"""

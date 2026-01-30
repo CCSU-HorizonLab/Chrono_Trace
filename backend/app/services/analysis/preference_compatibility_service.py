@@ -83,8 +83,8 @@ class PreferenceCompatibilityService:
         
         # 如果没有喜好关键词，返回 0 分
         if not self.preference_keywords:
-            logger.warning(f"没有设置喜好关键词，返回 0 分 (会话 {conversation_id})")
-            result.interpretation = "未设置喜好关键词，无法计算喜好兼容度"
+            logger.info(f"未设置喜好关键词,喜好维度权重为 0 (会话 {conversation_id})")
+            result.interpretation = "未设置喜好关键词,该维度不参与好感度评分"
             return result
         
         # 识别包含喜好关键词的会话

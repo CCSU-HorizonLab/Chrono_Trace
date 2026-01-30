@@ -94,7 +94,7 @@ def main():
         print(f"dev server 已就绪：{dev_url}")
 
     webview.create_window(DEV_WINDOW_TITLE, url=dev_url, js_api=bridge, frameless=False)
-    webview.start()
+    webview.start(debug=True)
 
     # 关闭窗口后也清理一次（双保险）
     cleanup_proc_tree(npm_proc)

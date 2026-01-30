@@ -164,7 +164,7 @@ class ChatPositivityService:
             cursor = self.db.execute("""
                 SELECT 
                     COUNT(*) as total,
-                    SUM(CASE WHEN time_gap_seconds <= ? AND time_gap_seconds >= 0 THEN 1 ELSE 0 END) as timely
+                    SUM(CASE WHEN time_gap <= ? AND time_gap >= 0 THEN 1 ELSE 0 END) as timely
                 FROM interaction_pairs
                 WHERE conversation_id = ?
             """, (self.timeliness_threshold, conversation_id))

@@ -21,7 +21,7 @@ type PyWebViewApi = {
   start_realtime_monitor: (talker_display_name: string) => Promise<any>
   stop_realtime_monitor: () => Promise<any>
   get_realtime_status: () => Promise<any>
-  get_realtime_messages: (batch_id: string) => Promise<any>
+  get_realtime_messages: (batch_id: string, limit?: number) => Promise<any>
   // 特征提取
   extract_features: (conversation_id: number, config?: Record<string, any>) => Promise<any>
   get_extraction_progress: (task_id: string) => Promise<any>

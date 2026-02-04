@@ -91,6 +91,57 @@
       </div>
     </div>
 
+    <!-- 实时消息列表 -->
+    <div v-if="realtimeState.isMonitoring" class="card realtime-messages">
+      <div class="card-hd">
+        <span>实时消息 ({{ realtimeState.messages.length }}条)</span>
+      </div>
+      
+      <div class="card-bd">
+        <div v-if="!realtimeState.messages.length" class="empty">
+          等待消息中...
+        </div>
+        
+        <div v-else class="messages-list">
+          <div 
+            v-for="msg in realtimeState.messages" 
+            :key="msg.id" 
+            class="message-item"
+            :class="msg.sender"
+          >
+            <!-- 消息头部 -->
+            <div class="message-header">
+              <span class="sender-badge" :class="msg.sender">
+                {{ msg.sender === 'self' ? '我' : msg.sender === 'friend' ? '对方' : '系统' }}
+              </span>
+              <span class="timestamp">{{ formatTime(msg.timestamp) }}</span>
+            </div>
+            
+            <!-- 消息内容 -->
+            <div class="message-content">
+              {{ msg.content }}
+            </div>
+            
+            <!-- 情感分析结果 -->
+            <div v-if="msg.sentiment" class="sentiment-result">
+              <span class="sentiment-badge" :class="getSentimentClass(msg.sentiment.polarity)">
+                {{ getSentimentText(msg.sentiment.polarity) }}
+              </span>
+              <span class="sentiment-intensity">
+                强度: {{ msg.sentiment.intensity.toFixed(2) }}
+              </span>
+              <span class="sentiment-confidence">
+                置信度: {{ (msg.sentiment.confidence * 100).toFixed(0) }}%
+              </span>
+              <span v-if="msg.sentiment.rules && msg.sentiment.rules.length" class="sentiment-rules">
+                规则: {{ msg.sentiment.rules.join(', ') }}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div class="grid">
       <div class="left">
         <!-- 1) 发展走向选择卡 -->
@@ -206,11 +257,13 @@ const realtimeState = reactive({
   talkerName: '',
   batchId: '',
   messageCount: 0,
-  status: 'idle' as 'idle' | 'searching' | 'monitoring' | 'stopping' | 'stopped'
+  status: 'idle' as 'idle' | 'searching' | 'loading_model' | 'monitoring' | 'stopping' | 'stopped',
+  messages: [] as any[]  // 新增:消息列表
 })
 
 const realtimeError = ref('')
 let statusTimer: any = null
+let messagesTimer: any = null  // 新增:消息轮询定时器
 
 // 进度步骤计算
 const progressSteps = computed(() => {
@@ -218,6 +271,11 @@ const progressSteps = computed(() => {
     {
       label: '正在搜索联系人...',
       status: realtimeState.status === 'searching' ? 'active' : 
+              ['loading_model', 'monitoring', 'stopping', 'stopped'].includes(realtimeState.status) ? 'completed' : 'pending'
+    },
+    {
+      label: '正在加载AI模型...',
+      status: realtimeState.status === 'loading_model' ? 'active' : 
               ['monitoring', 'stopping', 'stopped'].includes(realtimeState.status) ? 'completed' : 'pending'
     },
     {
@@ -264,9 +322,18 @@ async function startMonitoring() {
     
     if (result.success || result.ok) {
       realtimeState.batchId = result.batch_id
-      realtimeState.status = 'monitoring'
+      realtimeState.status = 'loading_model'  // 先设为加载模型
       realtimeState.isMonitoring = true
+      
+      // 延迟切换到monitoring状态(模拟模型加载时间)
+      setTimeout(() => {
+        if (realtimeState.status === 'loading_model') {
+          realtimeState.status = 'monitoring'
+        }
+      }, 5000)  // 5秒后切换
+      
       startStatusPolling()
+      startMessagesPolling()  // 新增:开始消息轮询
     } else {
       realtimeState.status = 'idle'
       realtimeError.value = result.error || result.message || '启动监听失败'
@@ -287,6 +354,7 @@ async function stopMonitoring() {
     const result = await api.stop_realtime_monitor()
     
     stopStatusPolling()
+    stopMessagesPolling()  // 新增:停止消息轮询
     
     if (result.success || result.ok) {
       realtimeState.status = 'stopped'
@@ -297,6 +365,7 @@ async function stopMonitoring() {
         if (realtimeState.status === 'stopped') {
           realtimeState.status = 'idle'
           realtimeState.messageCount = 0
+          realtimeState.messages = []  // 清空消息列表
         }
       }, 3000)
     } else {
@@ -339,6 +408,34 @@ function stopStatusPolling() {
   if (statusTimer) {
     clearInterval(statusTimer)
     statusTimer = null
+  }
+}
+
+// 开始消息轮询
+function startMessagesPolling() {
+  stopMessagesPolling()
+  
+  messagesTimer = setInterval(async () => {
+    if (!realtimeState.batchId) return
+    
+    try {
+      await bridgeReady()
+      const result = await api.get_realtime_messages(realtimeState.batchId, 50)
+      
+      if (result.ok) {
+        realtimeState.messages = result.messages || []
+      }
+    } catch (e) {
+      console.error('消息轮询失败:', e)
+    }
+  }, 3000)  // 每3秒更新一次
+}
+
+// 停止消息轮询
+function stopMessagesPolling() {
+  if (messagesTimer) {
+    clearInterval(messagesTimer)
+    messagesTimer = null
   }
 }
 
@@ -424,7 +521,41 @@ onMounted(async () => {
 // 组件卸载时清理
 onBeforeUnmount(() => {
   stopStatusPolling()
+  stopMessagesPolling()  // 新增:清理消息轮询
 })
+
+// ========== 辅助函数 ==========
+
+// 格式化时间
+function formatTime(timestamp: number): string {
+  const date = new Date(timestamp * 1000)
+  const now = new Date()
+  const diff = now.getTime() - date.getTime()
+  
+  if (diff < 60000) {
+    return '刚刚'
+  } else if (diff < 3600000) {
+    return `${Math.floor(diff / 60000)}分钟前`
+  } else if (date.toDateString() === now.toDateString()) {
+    return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+  } else {
+    return date.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+  }
+}
+
+// 获取情感类名
+function getSentimentClass(polarity: number): string {
+  if (polarity > 0) return 'positive'
+  if (polarity < 0) return 'negative'
+  return 'neutral'
+}
+
+// 获取情感文本
+function getSentimentText(polarity: number): string {
+  if (polarity > 0) return '正面'
+  if (polarity < 0) return '负面'
+  return '中性'
+}
 </script>
 
 <style scoped>
@@ -699,5 +830,120 @@ onBeforeUnmount(() => {
 @media (max-width: 1024px) {
   .grid { grid-template-columns: 1fr; }
   .monitor-control { flex-direction: column; align-items: stretch; }
+}
+
+/* ========== 实时消息列表样式 ========== */
+.realtime-messages {
+  margin-bottom: var(--ct-space-lg);
+}
+
+.messages-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ct-space-md);
+  max-height: 500px;
+  overflow-y: auto;
+  padding: var(--ct-space-sm);
+}
+
+.message-item {
+  padding: var(--ct-space-md);
+  border-radius: var(--ct-radius-md);
+  border: 1px solid var(--ct-border-color);
+  background: var(--ct-bg-elevated);
+  transition: all var(--ct-transition-fast);
+}
+
+.message-item:hover {
+  border-color: var(--ct-color-primary);
+  box-shadow: var(--ct-shadow-sm);
+}
+
+.message-item.system {
+  opacity: 0.7;
+  background: var(--ct-bg-tertiary);
+}
+
+.message-header {
+  display: flex;
+  align-items: center;
+  gap: var(--ct-space-sm);
+  margin-bottom: var(--ct-space-sm);
+  font-size: var(--ct-text-xs);
+}
+
+.sender-badge {
+  padding: 2px 8px;
+  border-radius: var(--ct-radius-sm);
+  font-weight: var(--ct-font-medium);
+  font-size: var(--ct-text-xs);
+}
+
+.sender-badge.self {
+  background: var(--ct-color-primary-light);
+  color: var(--ct-color-primary);
+}
+
+.sender-badge.friend {
+  background: #e3f2fd;
+  color: #2196f3;
+}
+
+.sender-badge.system {
+  background: var(--ct-bg-tertiary);
+  color: var(--ct-text-tertiary);
+}
+
+.timestamp {
+  color: var(--ct-text-tertiary);
+  font-size: var(--ct-text-xs);
+}
+
+.message-content {
+  padding: var(--ct-space-sm) 0;
+  color: var(--ct-text-primary);
+  line-height: var(--ct-leading-relaxed);
+  word-break: break-word;
+}
+
+.sentiment-result {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ct-space-sm);
+  margin-top: var(--ct-space-sm);
+  padding-top: var(--ct-space-sm);
+  border-top: 1px dashed var(--ct-border-color);
+  font-size: var(--ct-text-xs);
+}
+
+.sentiment-badge {
+  padding: 2px 8px;
+  border-radius: var(--ct-radius-sm);
+  font-weight: var(--ct-font-semibold);
+}
+
+.sentiment-badge.positive {
+  background: #e8f5e9;
+  color: #4caf50;
+}
+
+.sentiment-badge.negative {
+  background: var(--ct-color-error-light);
+  color: var(--ct-color-error);
+}
+
+.sentiment-badge.neutral {
+  background: var(--ct-bg-tertiary);
+  color: var(--ct-text-secondary);
+}
+
+.sentiment-intensity,
+.sentiment-confidence,
+.sentiment-rules {
+  color: var(--ct-text-secondary);
+}
+
+.sentiment-rules {
+  font-style: italic;
 }
 </style>

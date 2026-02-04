@@ -7,6 +7,7 @@ import time
 import uuid
 import threading
 from .message_buffer import MessageBuffer
+from .realtime_sentiment_service import RealtimeSentimentService
 
 def _print(*args, **kwargs):
     """强制刷新的打印函数"""
@@ -41,6 +42,8 @@ class RealtimeMonitorService:
             self.seen_hashes = set()            # 消息去重集合
             self.polling_thread = None          # 轮询线程
             self.stop_polling = False           # 停止轮询标志
+            # 新增:实时情感分析服务
+            self.sentiment_service = RealtimeSentimentService()
             self._initialized = True
             _print("[RealtimeMonitorService] 服务已初始化")
     
@@ -103,7 +106,7 @@ class RealtimeMonitorService:
             self.is_monitoring = True
             _print(f"✅ 监听已启动！批次ID: {self.current_batch_id[:8]}...")
             
-            # 6. 启动轮询线程（因为 wxauto4 的回调在 webview 环境下可能不工作）
+            # 7. 启动轮询线程（因为 wxauto4 的回调在 webview 环境下可能不工作）
             _print(f"🔄 启动消息轮询线程（每1秒检查一次新消息）...")
             self.stop_polling = False
             self.polling_thread = threading.Thread(target=self._polling_loop, daemon=True)
@@ -112,7 +115,7 @@ class RealtimeMonitorService:
             _print(f"💡 使用轮询模式获取消息（替代回调函数）")
             _print(f"💡 请在微信主窗口中发送消息（单击联系人显示的聊天区域，不要双击弹窗）")
             
-            # 6. 记录事件到运行时事件表
+            # 8. 记录事件到运行时事件表
             self._log_runtime_event('realtime_monitor_start', {
                 'batch_id': self.current_batch_id,
                 'talker_username': talker_username,
@@ -147,6 +150,15 @@ class RealtimeMonitorService:
         except Exception as e:
             _print(f"❌ 切换聊天窗口失败: {e}")
             return
+        
+        # 预加载情感分析模型(在切换窗口后,开始抓取前)
+        _print(f"\n🤖 正在预加载情感分析模型...")
+        try:
+            self.sentiment_service.analyze("测试")
+            _print(f"✅ 情感分析模型加载完成\n")
+        except Exception as e:
+            _print(f"⚠️ 情感分析模型加载失败: {e}")
+            _print(f"💡 将继续监听,但情感分析功能可能不可用\n")
         
         while not self.stop_polling and self.is_monitoring:
             try:
@@ -229,6 +241,21 @@ class RealtimeMonitorService:
                 # 记录哈希
                 if message_hash:
                     self.seen_hashes.add(message_hash)
+                
+                # 新增:自动进行实时情感分析(排除系统消息)
+                if sender_attr != 'system' and message_data['content'] and str(message_data['content']).strip():
+                    try:
+                        # 获取保存的message_id(需要从message_buffer获取)
+                        # 这里简化处理,实际应该从save_message返回message_id
+                        self.sentiment_service.analyze_and_cache(
+                            message_id=message_hash,  # 临时使用hash作为id
+                            text=str(message_data['content'])
+                        )
+                        _print(f"💭 情感分析完成")
+                    except Exception as e:
+                        _print(f"⚠️ 情感分析失败: {e}")
+                        import traceback
+                        traceback.print_exc()
                 
                 # 显示统计
                 _print(f"✅ 已保存！累计: {len(self.seen_hashes)} 条\n")

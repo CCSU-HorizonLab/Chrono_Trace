@@ -532,12 +532,13 @@ class Bridge:
                 "message_count": 0
             }
     
-    def get_realtime_messages(self, batch_id: str) -> dict[str, Any]:
+    def get_realtime_messages(self, batch_id: str, limit: int = 50) -> dict[str, Any]:
         """
-        获取批次消息列表
+        获取批次消息列表(带情感分析结果)
         
         Args:
             batch_id: 批次ID
+            limit: 返回消息数量限制
             
         Returns:
             {
@@ -546,17 +547,18 @@ class Bridge:
             }
         """
         try:
-            from ..services.realtime.monitor_service import RealtimeMonitorService
+            from ..services.realtime.message_query import get_messages_with_sentiment
             
-            monitor_service = RealtimeMonitorService()
-            messages = monitor_service.message_buffer.get_batch_messages(batch_id)
+            messages = get_messages_with_sentiment(batch_id, limit)
             
             return {
                 "ok": True,
                 "messages": messages
             }
         except Exception as e:
+            import traceback
             print(f"[Bridge] 获取批次消息异常: {e}")
+            traceback.print_exc()
             return {
                 "ok": False,
                 "error": str(e),

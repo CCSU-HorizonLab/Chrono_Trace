@@ -204,23 +204,14 @@ class WeChatIngestService:
             
             print(f"\n[DEBUG] 最终统计: {stats}")
             
-            # 4. 自动预处理消息
-            if stats["messages"] > 0 and import_messages:
-                if progress_callback:
-                    progress_callback("预处理消息数据...", 95, 100)
-
-                preprocessed_count = self._auto_preprocess_messages(progress_callback)
-                stats["preprocessed"] = preprocessed_count
-                print(f"[DEBUG] 预处理完成: {preprocessed_count} 条消息")
-
-            # 5. 自动提取特征
-            if stats["conversations"] > 0:
-                if progress_callback:
-                    progress_callback("提取对话特征...", 97, 100)
-
-                feature_stats = self._auto_extract_features(progress_callback)
-                stats["features"] = feature_stats
-                print(f"[DEBUG] 特征提取完成: {feature_stats}")
+            # 4. 预处理和特征提取已改为懒加载模式
+            # 不再在导入时自动执行,而是在用户点击"开始分析"时按需处理
+            # 优点:
+            # - 导入速度快,用户无需等待
+            # - 按联系人独立处理,数据量小,不易中断
+            # - 用户可选择性分析感兴趣的联系人
+            # 注: 如需批量预处理,可调用 _auto_preprocess_messages() 和 _auto_extract_features()
+            print(f"[INFO] 数据导入完成,预处理将在首次分析时自动执行")
 
             # 6. 更新导入记录
             self._update_import_record(import_id, "success", stats)

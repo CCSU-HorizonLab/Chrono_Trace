@@ -66,7 +66,8 @@
     <!-- Empty State -->
     <div v-if="!analysisResult && !isAnalyzing" class="empty-state">
       <div class="empty-icon">📊</div>
-      <p>请选择会话并开始分析，探索你们的亲密关系维度。</p>
+      <p>请选择会话并开始分析,探索你们的亲密关系维度。</p>
+      <p class="empty-hint">💡 首次分析需要1-2分钟进行数据预处理,请耐心等待</p>
     </div>
 
     <!-- Results Dashboard -->
@@ -300,8 +301,10 @@ const startAnalysis = async (force: boolean) => {
     const timer = setInterval(() => {
       if (progressPercent.value < 90) {
         progressPercent.value += 5
-        if (progressPercent.value < 30) progressStep.value = '正在预处理数据...'
-        else if (progressPercent.value < 60) progressStep.value = '计算各项维度评分...'
+        if (progressPercent.value < 20) progressStep.value = '正在预处理数据(首次分析)...'
+        else if (progressPercent.value < 40) progressStep.value = '分析情感共振...'
+        else if (progressPercent.value < 60) progressStep.value = '计算聊天积极度...'
+        else if (progressPercent.value < 80) progressStep.value = '评估态度倾向...'
         else progressStep.value = '生成综合分析报告...'
       }
     }, 500)
@@ -472,6 +475,13 @@ const handleKeywordsUpdated = async () => {
   font-size: 48px;
   margin-bottom: var(--ct-space-lg);
   opacity: 0.5;
+}
+
+.empty-hint {
+  font-size: var(--ct-text-xs);
+  color: var(--ct-text-tertiary);
+  margin-top: var(--ct-space-sm);
+  opacity: 0.8;
 }
 
 .dashboard-grid {

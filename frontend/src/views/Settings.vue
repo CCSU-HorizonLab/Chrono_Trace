@@ -10,29 +10,58 @@
     </header>
 
     <div class="grid">
-      <!-- 通用配置 -->
-      <CtCard title="通用配置">
-        <template #default>
-          <div class="form">
-            <label class="row">
-              <div class="lab">模型</div>
-              <select v-model="form.model" class="ct-field">
-                <option value="local">本地/内置</option>
-                <option value="openai-gpt-4o">OpenAI · GPT-4o</option>
-                <option value="qwen">阿里 · 通义千问</option>
-                <option value="moonshot">Moonshot</option>
-              </select>
-            </label>
-
-            <label class="row">
-              <div class="lab">API Token</div>
-              <CtField v-model="form.api_token" placeholder="用于访问所选模型的 API Token（保存在本地）" />
-            </label>
+      <!-- 模型配置（合并原通用配置 + LLM 模型管理） -->
+      <CtCard title="🤖 模型配置">
+        <div class="form">
+          <div class="hint-box info">
+            <p>💡 配置 LLM 模型后，AI 建议将使用大语言模型生成更智能的话术。支持远程 API（DeepSeek/OpenAI）和本地推理（Ollama/LM Studio）。</p>
           </div>
-        </template>
-        <template #footer>
-          <small class="hint">提示：不同模型供应商可能需要在后端设置额外 Base URL 或代理；本页仅保存 Token 与模型类型。</small>
-        </template>
+
+          <!-- 建议引擎切换 -->
+          <div class="row">
+            <div class="lab">建议引擎</div>
+            <div class="engine-toggle">
+              <label :class="{ active: suggestionEngine === 'template' }">
+                <input type="radio" v-model="suggestionEngine" value="template" @change="onEngineChange" />
+                模板（默认）
+              </label>
+              <label :class="{ active: suggestionEngine === 'llm' }">
+                <input type="radio" v-model="suggestionEngine" value="llm" @change="onEngineChange" />
+                LLM
+              </label>
+            </div>
+          </div>
+
+          <!-- 模型列表 -->
+          <div class="model-list">
+            <div v-if="!llmModels.length" class="empty-models">
+              暂无模型配置，点击下方按钮添加
+            </div>
+            <div v-for="m in llmModels" :key="m.id" class="model-card" :class="{ active: m.is_active }">
+              <div class="model-header">
+                <div class="model-info">
+                  <span class="model-name">{{ m.name }}</span>
+                  <span class="model-provider">{{ providerLabel(m.provider) }}</span>
+                  <span v-if="m.is_active" class="badge active">✅ 激活</span>
+                </div>
+                <div class="model-actions">
+                  <button v-if="!m.is_active" class="mini-btn" @click="activateModel(m)">激活</button>
+                  <button class="mini-btn" @click="editModel(m)">编辑</button>
+                  <button class="mini-btn danger" @click="removeModel(m.id)">删除</button>
+                </div>
+              </div>
+              <div class="model-detail">
+                <span>模型: {{ m.model_id }}</span>
+                <span>URL: {{ m.api_base_url }}</span>
+                <span v-if="m.api_key_masked">Key: {{ m.api_key_masked }}</span>
+              </div>
+            </div>
+          </div>
+
+          <button class="ct-btn primary add-model-btn" @click="resetEditingModel(); showModelForm = true">
+            + 添加模型
+          </button>
+        </div>
       </CtCard>
 
       <!-- 微信数据库路径配置 -->
@@ -99,11 +128,63 @@
         </div>
       </CtCard>
     </div>
+
+    <!-- 模型表单弹窗（放在根级别，避免 CtCard 内定位闪烁） -->
+    <Teleport to="body">
+      <div v-if="showModelForm" class="model-form-overlay" @click.self="showModelForm = false">
+        <div class="model-form-dialog">
+          <h3>{{ editingModel.id ? '编辑模型' : '添加模型' }}</h3>
+          <div class="form">
+            <label class="row">
+              <div class="lab">名称</div>
+              <input v-model="editingModel.name" class="ct-field" placeholder="如: DeepSeek V3" />
+            </label>
+            <label class="row">
+              <div class="lab">供应商</div>
+              <select v-model="editingModel.provider" class="ct-field">
+                <option value="deepseek">DeepSeek</option>
+                <option value="openai">OpenAI</option>
+                <option value="ollama">Ollama（本地）</option>
+                <option value="custom">自定义</option>
+              </select>
+            </label>
+            <label class="row">
+              <div class="lab">模型 ID</div>
+              <input v-model="editingModel.model_id" class="ct-field" :placeholder="modelIdPlaceholder" />
+            </label>
+            <label class="row">
+              <div class="lab">API Base URL</div>
+              <input v-model="editingModel.api_base_url" class="ct-field" :placeholder="apiUrlPlaceholder" />
+            </label>
+            <label class="row">
+              <div class="lab">API Key</div>
+              <input v-model="editingModel.api_key" class="ct-field" type="password" placeholder="本地推理可留空" />
+            </label>
+            <label class="row">
+              <div class="lab">温度</div>
+              <input v-model.number="editingModel.temperature" class="ct-field" type="number" min="0" max="2" step="0.1" />
+            </label>
+            <label class="row">
+              <div class="lab">Max Tokens</div>
+              <input v-model.number="editingModel.max_tokens" class="ct-field" type="number" min="64" step="64" />
+            </label>
+            <label class="row">
+              <div class="lab">设为激活</div>
+              <input v-model="editingModel.is_active" type="checkbox" />
+            </label>
+          </div>
+          <div class="form-actions">
+            <button class="ct-btn" @click="showModelForm = false">取消</button>
+            <button class="ct-btn primary" @click="saveModel" :disabled="!editingModel.name || !editingModel.model_id || !editingModel.api_base_url">保存</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </section>
 </template>
 
 <script setup lang="ts">
-import { reactive, ref, onMounted, watch } from 'vue'
+import { reactive, ref, onMounted, watch, computed } from 'vue'
 import { bridgeReady, api } from '@/api/bridge'
 import CtCard from '@/components/base/CtCard.vue'
 import CtField from '@/components/base/CtField.vue'
@@ -116,8 +197,6 @@ const autoSaveTimer = ref<number | null>(null)
 const lastSaveTime = ref<string>('')
 
 const form = reactive<{ 
-  model: string
-  api_token: string
   interval_minutes: number
   batch_size: number
   realtime_enabled: boolean
@@ -126,8 +205,6 @@ const form = reactive<{
   wechat_user_wxid: string
   wechat_db_key: string
 }>({
-  model: 'local',
-  api_token: '',
   interval_minutes: 15,
   batch_size: 100,
   realtime_enabled: true,
@@ -145,8 +222,6 @@ async function onLoad() {
     console.log('[DEBUG] 从后端加载的设置:', s)
     
     if (s && typeof s === 'object') {
-      form.model = s.model ?? form.model
-      form.api_token = s.api_token ?? form.api_token
       form.interval_minutes = Number(s.interval_minutes ?? form.interval_minutes)
       form.batch_size = Number(s.batch_size ?? form.batch_size)
       form.realtime_enabled = Boolean(s.realtime_enabled ?? form.realtime_enabled)
@@ -188,8 +263,6 @@ async function onSave() {
     await bridgeReady()
     
     const settingsToSave = {
-      model: form.model,
-      api_token: form.api_token,
       interval_minutes: form.interval_minutes,
       batch_size: form.batch_size,
       realtime_enabled: form.realtime_enabled,
@@ -285,7 +358,166 @@ watch(form, () => {
   autoSave()
 }, { deep: true })
 
-onMounted(() => { onLoad() })
+// ========== LLM 模型管理 ==========
+const llmModels = ref<any[]>([])
+const showModelForm = ref(false)
+const suggestionEngine = ref('template')
+const editingModel = reactive({
+  id: null as number | null,
+  name: '',
+  provider: 'deepseek',
+  model_id: '',
+  api_base_url: '',
+  api_key: '',
+  is_active: false,
+  temperature: 0.7,
+  max_tokens: 512,
+})
+
+const modelIdPlaceholder = computed(() => {
+  const map: Record<string, string> = {
+    deepseek: 'deepseek-chat',
+    openai: 'gpt-4o-mini',
+    ollama: 'qwen2.5:7b',
+    custom: '模型标识',
+  }
+  return map[editingModel.provider] || '模型标识'
+})
+
+const apiUrlPlaceholder = computed(() => {
+  const map: Record<string, string> = {
+    deepseek: 'https://api.deepseek.com/v1',
+    openai: 'https://api.openai.com/v1',
+    ollama: 'http://localhost:11434/v1',
+    custom: 'https://your-api.com/v1',
+  }
+  return map[editingModel.provider] || 'https://api.example.com/v1'
+})
+
+function providerLabel(p: string) {
+  const map: Record<string, string> = {
+    deepseek: 'DeepSeek',
+    openai: 'OpenAI',
+    ollama: 'Ollama',
+    custom: '自定义',
+  }
+  return map[p] || p
+}
+
+async function loadLLMModels() {
+  try {
+    await bridgeReady()
+    const r = await api.get_llm_models()
+    if (r.ok) llmModels.value = r.models || []
+  } catch (e) {
+    console.error('加载模型列表失败:', e)
+  }
+}
+
+async function loadSuggestionEngine() {
+  try {
+    await bridgeReady()
+    const r = await api.get_suggestion_config()
+    if (r.ok && r.config) {
+      suggestionEngine.value = r.config.engine_type || 'template'
+    }
+  } catch (e) {
+    console.error('加载引擎配置失败:', e)
+  }
+}
+
+async function onEngineChange() {
+  try {
+    await bridgeReady()
+    await api.set_suggestion_config({ engine_type: suggestionEngine.value })
+  } catch (e) {
+    console.error('切换引擎失败:', e)
+  }
+}
+
+function editModel(m: any) {
+  editingModel.id = m.id
+  editingModel.name = m.name
+  editingModel.provider = m.provider
+  editingModel.model_id = m.model_id
+  editingModel.api_base_url = m.api_base_url
+  editingModel.api_key = '' // 编辑时不回显密钥
+  editingModel.is_active = !!m.is_active
+  editingModel.temperature = m.temperature ?? 0.7
+  editingModel.max_tokens = m.max_tokens ?? 512
+  showModelForm.value = true
+}
+
+function resetEditingModel() {
+  editingModel.id = null
+  editingModel.name = ''
+  editingModel.provider = 'deepseek'
+  editingModel.model_id = ''
+  editingModel.api_base_url = ''
+  editingModel.api_key = ''
+  editingModel.is_active = false
+  editingModel.temperature = 0.7
+  editingModel.max_tokens = 512
+}
+
+async function saveModel() {
+  try {
+    await bridgeReady()
+    const r = await api.save_llm_model({ ...editingModel })
+    if (r.ok) {
+      showModelForm.value = false
+      resetEditingModel()
+      await loadLLMModels()
+    } else {
+      alert('保存失败: ' + (r.error || '未知错误'))
+    }
+  } catch (e) {
+    console.error('保存模型失败:', e)
+  }
+}
+
+async function activateModel(m: any) {
+  try {
+    await bridgeReady()
+    await api.save_llm_model({ ...m, is_active: true })
+    await loadLLMModels()
+    // 自动切换引擎到 LLM
+    suggestionEngine.value = 'llm'
+    await onEngineChange()
+  } catch (e) {
+    console.error('激活模型失败:', e)
+  }
+}
+
+async function removeModel(id: number) {
+  if (!confirm('确定删除此模型配置？')) return
+  try {
+    await bridgeReady()
+    const r = await api.delete_llm_model(id)
+    if (r.ok) await loadLLMModels()
+  } catch (e) {
+    console.error('删除模型失败:', e)
+  }
+}
+
+// 监听供应商变化，自动填充 URL
+watch(() => editingModel.provider, (p) => {
+  if (!editingModel.id) {
+    // 新建时自动填充
+    const urlMap: Record<string, string> = {
+      deepseek: 'https://api.deepseek.com/v1',
+      openai: 'https://api.openai.com/v1',
+      ollama: 'http://localhost:11434/v1',
+    }
+    if (urlMap[p]) editingModel.api_base_url = urlMap[p]
+  }
+})
+
+onMounted(() => {
+  onLoad()
+  loadLLMModels()
+  loadSuggestionEngine()
+})
 </script>
 
 <style scoped>
@@ -335,4 +567,99 @@ onMounted(() => { onLoad() })
 .hint-box p { margin: var(--ct-space-xs) 0; font-size: var(--ct-text-sm); }
 .path-input { display: flex; gap: var(--ct-space-sm); align-items: center; }
 .path-input .ct-field { flex: 1; }
+
+/* 引擎切换 */
+.engine-toggle {
+  display: flex;
+  gap: var(--ct-space-sm);
+  background: var(--ct-bg-tertiary);
+  padding: 4px;
+  border-radius: var(--ct-radius-md);
+}
+.engine-toggle label {
+  display: flex;
+  align-items: center;
+  gap: var(--ct-space-xs);
+  padding: 6px var(--ct-space-md);
+  border-radius: var(--ct-radius-sm);
+  cursor: pointer;
+  font-size: var(--ct-text-sm);
+  transition: all var(--ct-transition-fast);
+}
+.engine-toggle label.active {
+  background: var(--ct-color-primary);
+  color: #fff;
+}
+.engine-toggle input[type="radio"] { display: none; }
+
+/* 模型列表 */
+.model-list { display: flex; flex-direction: column; gap: var(--ct-space-sm); }
+.empty-models { color: var(--ct-text-tertiary); text-align: center; padding: var(--ct-space-lg); font-size: var(--ct-text-sm); }
+
+.model-card {
+  border: 1px solid var(--ct-border-color);
+  border-radius: var(--ct-radius-md);
+  padding: var(--ct-space-md);
+  transition: all var(--ct-transition-fast);
+}
+.model-card.active {
+  border-color: var(--ct-color-primary);
+  background: var(--ct-color-primary-light);
+}
+.model-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--ct-space-xs);
+}
+.model-info { display: flex; align-items: center; gap: var(--ct-space-sm); }
+.model-name { font-weight: var(--ct-font-semibold); }
+.model-provider { font-size: var(--ct-text-xs); color: var(--ct-text-secondary); background: var(--ct-bg-tertiary); padding: 2px 6px; border-radius: var(--ct-radius-sm); }
+.badge.active { font-size: var(--ct-text-xs); }
+.model-actions { display: flex; gap: var(--ct-space-xs); }
+.mini-btn {
+  border: 1px solid var(--ct-border-color);
+  background: transparent;
+  color: var(--ct-text-secondary);
+  padding: 3px 8px;
+  border-radius: var(--ct-radius-sm);
+  font-size: var(--ct-text-xs);
+  cursor: pointer;
+  transition: all var(--ct-transition-fast);
+}
+.mini-btn:hover { background: var(--ct-bg-tertiary); color: var(--ct-text-primary); }
+.mini-btn.danger:hover { background: var(--ct-color-error-light); color: var(--ct-color-error); border-color: var(--ct-color-error); }
+.model-detail { display: flex; flex-wrap: wrap; gap: var(--ct-space-sm); font-size: var(--ct-text-xs); color: var(--ct-text-tertiary); }
+
+.add-model-btn { align-self: flex-start; }
+</style>
+
+<!-- 非 scoped 样式：Teleport 到 body 的弹窗需要全局样式 -->
+<style>
+.model-form-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+}
+.model-form-dialog {
+  background: var(--ct-bg-primary);
+  border-radius: var(--ct-radius-lg);
+  padding: var(--ct-space-xl);
+  width: min(480px, 90vw);
+  box-shadow: var(--ct-shadow-lg);
+}
+.model-form-dialog h3 { margin: 0 0 var(--ct-space-md); color: var(--ct-color-primary); }
+.model-form-dialog .form { display: flex; flex-direction: column; gap: var(--ct-space-md); }
+.model-form-dialog .row { display: grid; grid-template-columns: 120px 1fr; gap: var(--ct-space-md); align-items: center; }
+.model-form-dialog .lab { color: var(--ct-text-secondary); }
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--ct-space-sm);
+  margin-top: var(--ct-space-lg);
+}
 </style>

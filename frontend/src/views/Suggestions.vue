@@ -4,7 +4,7 @@
       <h1>AI 建议</h1>
     </header>
 
-    <!-- 实时监听控制区 -->
+    <!-- 实时监听控制区 (全宽) -->
     <div class="card realtime-monitor">
       <div class="card-hd collapsible" @click="toggleMonitorPanel">
         <span>实时监听控制</span>
@@ -26,14 +26,40 @@
 
         <!-- 监听控制 -->
         <div class="monitor-control">
-          <div class="input-group">
+          <div class="input-group contact-picker">
             <label>监听对象:</label>
-            <input 
-              v-model="realtimeState.talkerName" 
-              type="text" 
-              placeholder="输入联系人昵称或备注名"
-              :disabled="realtimeState.isMonitoring"
-            />
+            <div class="picker-wrapper">
+              <input 
+                v-model="contactSearch" 
+                type="text" 
+                placeholder="搜索联系人..."
+                :disabled="realtimeState.isMonitoring"
+                @focus="showContactDropdown = true"
+                @input="onContactSearchInput"
+                @keydown.down.prevent="highlightNext"
+                @keydown.up.prevent="highlightPrev"
+                @keydown.enter.prevent="selectHighlighted"
+                @keydown.escape="showContactDropdown = false"
+                autocomplete="off"
+              />
+              <div v-if="showContactDropdown && !realtimeState.isMonitoring" class="contact-dropdown">
+                <div v-if="contactsLoading" class="dropdown-empty">加载中...</div>
+                <div v-else-if="!filteredContacts.length" class="dropdown-empty">无匹配联系人</div>
+                <div v-else class="dropdown-list">
+                  <div 
+                    v-for="(c, idx) in filteredContacts" 
+                    :key="c.id"
+                    class="dropdown-item"
+                    :class="{ highlighted: idx === highlightedIndex }"
+                    @mousedown.prevent="selectContact(c)"
+                    @mouseenter="highlightedIndex = idx"
+                  >
+                    <span class="contact-name">{{ c.name }}</span>
+                    <span class="contact-count">{{ c.message_count }} 条消息</span>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
           
           <div class="button-group">
@@ -91,60 +117,174 @@
       </div>
     </div>
 
-    <!-- 实时消息列表 -->
-    <div v-if="realtimeState.isMonitoring" class="card realtime-messages">
-      <div class="card-hd">
-        <span>实时消息 ({{ realtimeState.messages.length }}条)</span>
-      </div>
-      
-      <div class="card-bd">
-        <div v-if="!realtimeState.messages.length" class="empty">
-          等待消息中...
+    <!-- ====== 左右分栏布局 ====== -->
+    <div v-if="realtimeState.isMonitoring" class="split-layout">
+
+      <!-- 📱 左侧：实时消息流 -->
+      <div class="pane pane-left">
+        <div class="card pane-card">
+          <div class="card-hd">
+            <span>📱 实时消息 ({{ realtimeState.messages.length }}条)</span>
+          </div>
+          <div class="card-bd messages-scroll" ref="messagesScrollRef">
+            <div v-if="!realtimeState.messages.length" class="empty">
+              等待消息中...
+            </div>
+            <div v-else class="messages-list">
+              <div 
+                v-for="msg in realtimeState.messages" 
+                :key="msg.id" 
+                class="message-item"
+                :class="msg.sender"
+              >
+                <div class="message-header">
+                  <span class="sender-badge" :class="msg.sender">
+                    {{ msg.sender === 'self' ? '我' : msg.sender === 'friend' ? '对方' : '系统' }}
+                  </span>
+                  <span class="timestamp">{{ formatTime(msg.timestamp) }}</span>
+                </div>
+                <div class="message-content">{{ msg.content }}</div>
+                <div v-if="msg.sentiment" class="sentiment-result">
+                  <span class="sentiment-badge" :class="getSentimentClass(msg.sentiment.polarity)">
+                    {{ getSentimentText(msg.sentiment.polarity) }}
+                  </span>
+                  <span class="sentiment-intensity">
+                    强度: {{ msg.sentiment.intensity.toFixed(2) }}
+                  </span>
+                  <span class="sentiment-confidence">
+                    置信度: {{ (msg.sentiment.confidence * 100).toFixed(0) }}%
+                  </span>
+                  <span v-if="msg.sentiment.rules && msg.sentiment.rules.length" class="sentiment-rules">
+                    规则: {{ msg.sentiment.rules.join(', ') }}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
-        
-        <div v-else class="messages-list">
-          <div 
-            v-for="msg in realtimeState.messages" 
-            :key="msg.id" 
-            class="message-item"
-            :class="msg.sender"
-          >
-            <!-- 消息头部 -->
-            <div class="message-header">
-              <span class="sender-badge" :class="msg.sender">
-                {{ msg.sender === 'self' ? '我' : msg.sender === 'friend' ? '对方' : '系统' }}
-              </span>
-              <span class="timestamp">{{ formatTime(msg.timestamp) }}</span>
+      </div>
+
+      <!-- 💡 右侧：AI 建议面板 -->
+      <div class="pane pane-right">
+        <!-- 情绪态势指示 -->
+        <div class="card emotion-pulse-card">
+          <div class="card-hd">💡 情绪态势</div>
+          <div class="card-bd">
+            <div v-if="emotionSummary" class="emotion-pulse">
+              <div class="pulse-trend" :class="emotionSummary.trend">
+                <span class="trend-icon">
+                  {{ emotionSummary.trend === 'positive' ? '😊' : emotionSummary.trend === 'negative' ? '😟' : '😐' }}
+                </span>
+                <span class="trend-label">
+                  {{ emotionSummary.trend === 'positive' ? '正面' : emotionSummary.trend === 'negative' ? '负面' : '中性' }}
+                </span>
+              </div>
+              <div class="pulse-stats">
+                <div class="stat">
+                  <span class="stat-label">窗口消息</span>
+                  <span class="stat-value">{{ emotionSummary.window_size }}</span>
+                </div>
+                <div class="stat">
+                  <span class="stat-label">平均极性</span>
+                  <span class="stat-value" :class="emotionSummary.avg_polarity > 0 ? 'positive' : emotionSummary.avg_polarity < 0 ? 'negative' : ''">
+                    {{ emotionSummary.avg_polarity.toFixed(2) }}
+                  </span>
+                </div>
+              </div>
+              <div class="polarity-bar">
+                <div v-for="(p, idx) in emotionSummary.recent_polarities" :key="idx"
+                     class="polarity-dot" :class="p > 0 ? 'pos' : p < 0 ? 'neg' : 'neu'">
+                </div>
+              </div>
             </div>
-            
-            <!-- 消息内容 -->
-            <div class="message-content">
-              {{ msg.content }}
+            <div v-else class="empty">监听开始后将显示情绪态势</div>
+          </div>
+        </div>
+
+        <!-- 设置：触发模式 + 走向 -->
+        <div class="card config-card">
+          <div class="card-hd">⚙️ 建议设置</div>
+          <div class="card-bd">
+            <div class="config-row">
+              <label>触发模式</label>
+              <div class="seg-control">
+                <button :class="{ active: triggerMode === 'full_auto' }" @click="setTriggerMode('full_auto')">全自动</button>
+                <button :class="{ active: triggerMode === 'semi_auto' }" @click="setTriggerMode('semi_auto')">半自动</button>
+                <button :class="{ active: triggerMode === 'manual' }" @click="setTriggerMode('manual')">手动</button>
+              </div>
             </div>
-            
-            <!-- 情感分析结果 -->
-            <div v-if="msg.sentiment" class="sentiment-result">
-              <span class="sentiment-badge" :class="getSentimentClass(msg.sentiment.polarity)">
-                {{ getSentimentText(msg.sentiment.polarity) }}
-              </span>
-              <span class="sentiment-intensity">
-                强度: {{ msg.sentiment.intensity.toFixed(2) }}
-              </span>
-              <span class="sentiment-confidence">
-                置信度: {{ (msg.sentiment.confidence * 100).toFixed(0) }}%
-              </span>
-              <span v-if="msg.sentiment.rules && msg.sentiment.rules.length" class="sentiment-rules">
-                规则: {{ msg.sentiment.rules.join(', ') }}
-              </span>
+            <div class="config-row">
+              <label>发展走向</label>
+              <div class="seg-control">
+                <button :class="{ active: intent === 'intimate' }" @click="setIntent('intimate')">🔥 亲密</button>
+                <button :class="{ active: intent === 'maintain' }" @click="setIntent('maintain')">⚖️ 维持</button>
+                <button :class="{ active: intent === 'distance' }" @click="setIntent('distance')">❄️ 疏远</button>
+              </div>
+            </div>
+            <button class="ct-btn primary manual-btn" @click="manualGenerate" :disabled="loading">
+              <span v-if="!loading">🎯 手动生成建议</span>
+              <span v-else>生成中…</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- 触发提示卡片列表 -->
+        <div class="card suggestions-card">
+          <div class="card-hd">
+            <span>📋 建议列表</span>
+            <span class="badge" v-if="pendingSuggestions.length">{{ pendingSuggestions.length }}</span>
+          </div>
+          <div class="card-bd">
+            <div v-if="!pendingSuggestions.length && !manualSuggestion" class="empty">
+              {{ triggerMode === 'manual' ? '点击上方「手动生成建议」获取分析' : '等待触发条件满足…' }}
+            </div>
+
+            <!-- 手动生成的建议 -->
+            <div v-if="manualSuggestion" class="trigger-card" :class="manualSuggestion.severity">
+              <div class="trigger-header" @click="manualSuggestionExpanded = !manualSuggestionExpanded">
+                <span class="trigger-icon">🎯</span>
+                <span class="trigger-summary">{{ manualSuggestion.summary }}</span>
+                <span class="expand-icon">{{ manualSuggestionExpanded ? '▼' : '▶' }}</span>
+              </div>
+              <div v-show="manualSuggestionExpanded" class="trigger-body">
+                <ul class="speech-list">
+                  <li v-for="(sp, i) in manualSuggestion.speeches" :key="i">
+                    <span class="speech-text">{{ sp }}</span>
+                    <button class="copy-btn" @click="copyText(sp)">复制</button>
+                  </li>
+                </ul>
+              </div>
+            </div>
+
+            <!-- 自动/半自动触发的建议 -->
+            <div v-for="s in pendingSuggestions" :key="s.id" class="trigger-card" :class="s.severity">
+              <div class="trigger-header" @click="toggleSuggestion(s.id)">
+                <span class="trigger-icon">
+                  {{ getTriggerIcon(s.trigger_type) }}
+                </span>
+                <span class="trigger-summary">{{ s.summary }}</span>
+                <span class="trigger-time">{{ formatTime(s.created_at) }}</span>
+                <span class="expand-icon">{{ expandedSuggestions.has(s.id) ? '▼' : '▶' }}</span>
+              </div>
+              <div v-show="expandedSuggestions.has(s.id)" class="trigger-body">
+                <ul class="speech-list">
+                  <li v-for="(sp, i) in s.speeches" :key="i">
+                    <span class="speech-text">{{ sp }}</span>
+                    <button class="copy-btn" @click="copyText(sp)">复制</button>
+                  </li>
+                </ul>
+                <button class="dismiss-btn" @click="dismissSuggestion(s.id)">✕ 关闭</button>
+              </div>
             </div>
           </div>
         </div>
       </div>
     </div>
 
-    <div class="grid">
+    <!-- ====== 未监听时的默认视图（保留原有功能） ====== -->
+    <div v-if="!realtimeState.isMonitoring" class="grid">
       <div class="left">
-        <!-- 1) 发展走向选择卡 -->
+        <!-- 发展走向选择卡 -->
         <div class="card">
           <div class="ct-card-hd">发展走向</div>
           <div class="card-bd intent-row">
@@ -168,7 +308,7 @@
           <p v-if="error" class="error">{{ error }}</p>
         </div>
 
-        <!-- 2) AI 建议与对话卡 -->
+        <!-- AI 建议与对话卡 -->
         <div class="ct-card chat">
           <div class="card-hd tools">
             <div class="title">建议与对话</div>
@@ -179,13 +319,13 @@
             </div>
           </div>
           <div class="card-bd chat-body">
-            <div v-if="!suggestion && !loading" class="empty">暂无建议，点击上方“生成建议”。</div>
+            <div v-if="!suggestion && !loading" class="empty">暂无建议，点击上方"生成建议"。</div>
             <div v-if="loading" class="skeleton">AI 正在思考…</div>
             <template v-if="suggestion">
               <div class="bubble ai">
                 <div class="summary" v-if="suggestion.summary">{{ suggestion.summary }}</div>
-                <ul class="speech" v-if="suggestion.speech && suggestion.speech.length">
-                  <li v-for="(sp, i) in suggestion.speech" :key="i">
+                <ul class="speech" v-if="suggestion.speeches && suggestion.speeches.length">
+                  <li v-for="(sp, i) in suggestion.speeches" :key="i">
                     <span>{{ sp }}</span>
                     <button class="mini" @click="copyText(sp)">复制</button>
                   </li>
@@ -202,7 +342,7 @@
       </div>
 
       <div class="right">
-        <!-- 3) 对象信息卡 -->
+        <!-- 对象信息卡 -->
         <div class="card">
           <div class="ct-card-hd">对象信息</div>
           <div class="card-bd profile">
@@ -221,7 +361,7 @@
           <div class="note" v-if="profile.note">{{ profile.note }}</div>
         </div>
 
-        <!-- 4) 情绪分析（饼图） -->
+        <!-- 情绪分析（饼图） -->
         <div class="card">
           <div class="ct-card-hd">情绪占比（近期）</div>
           <div class="card-bd">
@@ -235,7 +375,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch, onBeforeUnmount, computed, reactive } from 'vue'
+import { ref, onMounted, watch, onBeforeUnmount, computed, reactive, nextTick } from 'vue'
 import { bridgeReady, api } from '@/api/bridge'
 import * as echarts from 'echarts'
 import CtButton from '@/components/base/CtButton.vue'
@@ -245,7 +385,7 @@ type Message = { role: 'ai' | 'user'; content: string }
 const intent = ref<'intimate' | 'maintain' | 'distance'>('maintain')
 const loading = ref(false)
 const error = ref('')
-const suggestion = ref<{ summary?: string; speech?: string[] } | null>(null)
+const suggestion = ref<{ summary?: string; speeches?: string[] } | null>(null)
 const messages = ref<Message[]>([])
 const userInput = ref('')
 
@@ -258,12 +398,90 @@ const realtimeState = reactive({
   batchId: '',
   messageCount: 0,
   status: 'idle' as 'idle' | 'searching' | 'loading_model' | 'monitoring' | 'stopping' | 'stopped',
-  messages: [] as any[]  // 新增:消息列表
+  messages: [] as any[]
 })
 
 const realtimeError = ref('')
 let statusTimer: any = null
-let messagesTimer: any = null  // 新增:消息轮询定时器
+let messagesTimer: any = null
+let suggestionsTimer: any = null  // 建议轮询定时器
+
+// ========== AI 建议状态 ==========
+const triggerMode = ref<'full_auto' | 'semi_auto' | 'manual'>('semi_auto')
+const pendingSuggestions = ref<any[]>([])
+const expandedSuggestions = reactive(new Set<number>())
+const manualSuggestion = ref<any>(null)
+const manualSuggestionExpanded = ref(true)
+const emotionSummary = ref<any>(null)
+const messagesScrollRef = ref<HTMLElement | null>(null)
+
+// ========== 联系人列表 ==========
+const contactSearch = ref('')
+const contacts = ref<any[]>([])
+const contactsLoading = ref(false)
+const showContactDropdown = ref(false)
+const highlightedIndex = ref(-1)
+
+const filteredContacts = computed(() => {
+  const q = contactSearch.value.trim().toLowerCase()
+  if (!q) return contacts.value
+  return contacts.value.filter(c => 
+    c.name?.toLowerCase().includes(q)
+  )
+})
+
+async function loadContacts() {
+  contactsLoading.value = true
+  try {
+    await bridgeReady()
+    const r = await api.get_conversation_list()
+    if (r.ok && r.conversations) {
+      contacts.value = r.conversations
+    }
+  } catch (e) {
+    console.error('加载联系人列表失败:', e)
+  } finally {
+    contactsLoading.value = false
+  }
+}
+
+function onContactSearchInput() {
+  showContactDropdown.value = true
+  highlightedIndex.value = 0
+}
+
+function selectContact(c: any) {
+  realtimeState.talkerName = c.name
+  contactSearch.value = c.name
+  showContactDropdown.value = false
+  highlightedIndex.value = -1
+}
+
+function highlightNext() {
+  if (!showContactDropdown.value) { showContactDropdown.value = true; return }
+  if (highlightedIndex.value < filteredContacts.value.length - 1) highlightedIndex.value++
+}
+
+function highlightPrev() {
+  if (highlightedIndex.value > 0) highlightedIndex.value--
+}
+
+function selectHighlighted() {
+  const list = filteredContacts.value
+  if (highlightedIndex.value >= 0 && highlightedIndex.value < list.length) {
+    selectContact(list[highlightedIndex.value])
+  } else if (contactSearch.value.trim()) {
+    // 允许手动输入不在列表中的名称
+    realtimeState.talkerName = contactSearch.value.trim()
+    showContactDropdown.value = false
+  }
+}
+
+// 点击外部关闭下拉
+function onClickOutside(e: MouseEvent) {
+  const el = (e.target as HTMLElement)?.closest('.contact-picker')
+  if (!el) showContactDropdown.value = false
+}
 
 // 进度步骤计算
 const progressSteps = computed(() => {
@@ -309,7 +527,7 @@ async function startMonitoring() {
   const talkerName = realtimeState.talkerName.trim()
   
   if (!talkerName) {
-    realtimeError.value = '请输入监听对象昵称'
+    realtimeError.value = '请选择或输入监听对象'
     return
   }
   
@@ -322,18 +540,21 @@ async function startMonitoring() {
     
     if (result.success || result.ok) {
       realtimeState.batchId = result.batch_id
-      realtimeState.status = 'loading_model'  // 先设为加载模型
+      realtimeState.status = 'loading_model'
       realtimeState.isMonitoring = true
       
-      // 延迟切换到monitoring状态(模拟模型加载时间)
       setTimeout(() => {
         if (realtimeState.status === 'loading_model') {
           realtimeState.status = 'monitoring'
         }
-      }, 5000)  // 5秒后切换
+      }, 5000)
       
       startStatusPolling()
-      startMessagesPolling()  // 新增:开始消息轮询
+      startMessagesPolling()
+      startSuggestionsPolling()  // 开始建议轮询
+
+      // 加载配置
+      loadSuggestionConfig()
     } else {
       realtimeState.status = 'idle'
       realtimeError.value = result.error || result.message || '启动监听失败'
@@ -354,18 +575,21 @@ async function stopMonitoring() {
     const result = await api.stop_realtime_monitor()
     
     stopStatusPolling()
-    stopMessagesPolling()  // 新增:停止消息轮询
+    stopMessagesPolling()
+    stopSuggestionsPolling()
     
     if (result.success || result.ok) {
       realtimeState.status = 'stopped'
       realtimeState.isMonitoring = false
       
-      // 3秒后重置状态
       setTimeout(() => {
         if (realtimeState.status === 'stopped') {
           realtimeState.status = 'idle'
           realtimeState.messageCount = 0
-          realtimeState.messages = []  // 清空消息列表
+          realtimeState.messages = []
+          pendingSuggestions.value = []
+          emotionSummary.value = null
+          manualSuggestion.value = null
         }
       }, 3000)
     } else {
@@ -378,20 +602,86 @@ async function stopMonitoring() {
   }
 }
 
-// 开始状态轮询（每 2 秒）
+// ========== 建议配置 ==========
+
+async function loadSuggestionConfig() {
+  try {
+    const r = await api.get_suggestion_config()
+    if (r.ok && r.config) {
+      triggerMode.value = r.config.trigger_mode || 'semi_auto'
+      intent.value = r.config.intent || 'maintain'
+    }
+  } catch (e) {
+    console.error('加载建议配置失败:', e)
+  }
+}
+
+async function setTriggerMode(mode: string) {
+  triggerMode.value = mode as any
+  try {
+    await api.set_suggestion_config({ trigger_mode: mode })
+  } catch (e) {
+    console.error('设置触发模式失败:', e)
+  }
+}
+
+async function setIntent(newIntent: string) {
+  intent.value = newIntent as any
+  try {
+    await api.set_suggestion_config({ intent: newIntent })
+  } catch (e) {
+    console.error('设置走向失败:', e)
+  }
+}
+
+// 手动生成建议
+async function manualGenerate() {
+  loading.value = true
+  try {
+    await bridgeReady()
+    const r = await api.generate_suggestion(intent.value, {})
+    if (r.ok && r.suggestion) {
+      manualSuggestion.value = r.suggestion
+      manualSuggestionExpanded.value = true
+    }
+  } catch (e: any) {
+    console.error('手动生成失败:', e)
+  } finally {
+    loading.value = false
+  }
+}
+
+// 展开/折叠建议卡片
+function toggleSuggestion(id: number) {
+  if (expandedSuggestions.has(id)) {
+    expandedSuggestions.delete(id)
+  } else {
+    expandedSuggestions.add(id)
+  }
+}
+
+// 关闭建议
+async function dismissSuggestion(id: number) {
+  try {
+    await api.dismiss_suggestion(id)
+    pendingSuggestions.value = pendingSuggestions.value.filter(s => s.id !== id)
+    expandedSuggestions.delete(id)
+  } catch (e) {
+    console.error('关闭建议失败:', e)
+  }
+}
+
+// ========== 轮询 ==========
+
 function startStatusPolling() {
   stopStatusPolling()
-  
   statusTimer = setInterval(async () => {
     try {
       await bridgeReady()
       const status = await api.get_realtime_status()
-      
       if (status.ok) {
         realtimeState.isMonitoring = status.is_monitoring
         realtimeState.messageCount = status.message_count || 0
-        
-        // 如果后端状态变为未监听，同步前端
         if (!status.is_monitoring && realtimeState.status === 'monitoring') {
           stopStatusPolling()
           realtimeState.status = 'idle'
@@ -403,45 +693,61 @@ function startStatusPolling() {
   }, 2000)
 }
 
-// 停止状态轮询
 function stopStatusPolling() {
-  if (statusTimer) {
-    clearInterval(statusTimer)
-    statusTimer = null
-  }
+  if (statusTimer) { clearInterval(statusTimer); statusTimer = null }
 }
 
-// 开始消息轮询
 function startMessagesPolling() {
   stopMessagesPolling()
-  
   messagesTimer = setInterval(async () => {
     if (!realtimeState.batchId) return
-    
     try {
       await bridgeReady()
       const result = await api.get_realtime_messages(realtimeState.batchId, 50)
-      
       if (result.ok) {
+        const prevLen = realtimeState.messages.length
         realtimeState.messages = result.messages || []
+        // 新消息时自动滚动到底部
+        if (realtimeState.messages.length > prevLen && messagesScrollRef.value) {
+          nextTick(() => {
+            messagesScrollRef.value!.scrollTop = messagesScrollRef.value!.scrollHeight
+          })
+        }
       }
     } catch (e) {
       console.error('消息轮询失败:', e)
     }
-  }, 3000)  // 每3秒更新一次
+  }, 3000)
 }
 
-// 停止消息轮询
 function stopMessagesPolling() {
-  if (messagesTimer) {
-    clearInterval(messagesTimer)
-    messagesTimer = null
-  }
+  if (messagesTimer) { clearInterval(messagesTimer); messagesTimer = null }
+}
+
+// 建议轮询（每 3 秒）
+function startSuggestionsPolling() {
+  stopSuggestionsPolling()
+  suggestionsTimer = setInterval(async () => {
+    if (!realtimeState.batchId) return
+    try {
+      await bridgeReady()
+      const result = await api.get_pending_suggestions(realtimeState.batchId)
+      if (result.ok) {
+        pendingSuggestions.value = result.suggestions || []
+        emotionSummary.value = result.emotion_summary || null
+      }
+    } catch (e) {
+      console.error('建议轮询失败:', e)
+    }
+  }, 3000)
+}
+
+function stopSuggestionsPolling() {
+  if (suggestionsTimer) { clearInterval(suggestionsTimer); suggestionsTimer = null }
 }
 
 // ========== 原有逻辑 ==========
 
-// 临时占位：对象信息与情绪数据（后端接好前可替换）
 const profile = ref<{ name?: string; tags?: string[]; stats?: any; note?: string }>({
   name: '对方昵称',
   tags: ['朋友'],
@@ -456,14 +762,17 @@ const emotions = ref<{ name: string; value: number }[]>([
   { name: '消极', value: 25 }
 ])
 
-
 async function gen() {
   loading.value = true
   error.value = ''
   try {
     await bridgeReady()
     const r = await api.generate_suggestion(intent.value, { recent: [] })
-    suggestion.value = r || null
+    if (r.ok && r.suggestion) {
+      suggestion.value = r.suggestion
+    } else {
+      suggestion.value = r || null
+    }
   } catch (e: any) {
     error.value = e?.message || '生成失败，请重试'
   } finally {
@@ -476,7 +785,7 @@ function onClear() { suggestion.value = null; messages.value = []; userInput.val
 function copyText(text: string) { navigator.clipboard?.writeText(text) }
 function copyAll() {
   if (!suggestion.value) return
-  const txt = [suggestion.value.summary || '', ...(suggestion.value.speech || [])].filter(Boolean).join('\n')
+  const txt = [suggestion.value.summary || '', ...(suggestion.value.speeches || [])].filter(Boolean).join('\n')
   navigator.clipboard?.writeText(txt)
 }
 
@@ -490,8 +799,13 @@ async function send() {
   try {
     await bridgeReady()
     const r = await api.generate_suggestion(intent.value, { recent: messages.value })
-    suggestion.value = r || null
-    messages.value.push({ role: 'ai', content: r?.summary || '已更新建议，请查看上方内容。' })
+    if (r.ok && r.suggestion) {
+      suggestion.value = r.suggestion
+      messages.value.push({ role: 'ai', content: r.suggestion.summary || '已更新建议。' })
+    } else {
+      suggestion.value = r || null
+      messages.value.push({ role: 'ai', content: r?.summary || '已更新建议，请查看上方内容。' })
+    }
   } catch (e: any) {
     error.value = e?.message || '发送失败，请重试'
   } finally {
@@ -501,6 +815,11 @@ async function send() {
 
 // 组件挂载时恢复监听状态
 onMounted(async () => {
+  // 加载联系人列表
+  loadContacts()
+  // 点击外部关闭下拉
+  document.addEventListener('click', onClickOutside)
+
   try {
     await bridgeReady()
     const status = await api.get_realtime_status()
@@ -512,6 +831,9 @@ onMounted(async () => {
       realtimeState.batchId = status.batch_id || ''
       realtimeState.messageCount = status.message_count || 0
       startStatusPolling()
+      startMessagesPolling()
+      startSuggestionsPolling()
+      loadSuggestionConfig()
     }
   } catch (e) {
     console.error('恢复监听状态失败:', e)
@@ -521,12 +843,13 @@ onMounted(async () => {
 // 组件卸载时清理
 onBeforeUnmount(() => {
   stopStatusPolling()
-  stopMessagesPolling()  // 新增:清理消息轮询
+  stopMessagesPolling()
+  stopSuggestionsPolling()
+  document.removeEventListener('click', onClickOutside)
 })
 
 // ========== 辅助函数 ==========
 
-// 格式化时间
 function formatTime(timestamp: number): string {
   const date = new Date(timestamp * 1000)
   const now = new Date()
@@ -543,24 +866,267 @@ function formatTime(timestamp: number): string {
   }
 }
 
-// 获取情感类名
 function getSentimentClass(polarity: number): string {
   if (polarity > 0) return 'positive'
   if (polarity < 0) return 'negative'
   return 'neutral'
 }
 
-// 获取情感文本
 function getSentimentText(polarity: number): string {
   if (polarity > 0) return '正面'
   if (polarity < 0) return '负面'
   return '中性'
+}
+
+function getTriggerIcon(type: string): string {
+  const icons: Record<string, string> = {
+    negative_streak: '🔴',
+    emotion_shift: '⚡',
+    perfunctory: '💤',
+    silence: '🔇',
+    positive_window: '🟢',
+    topic_cooling: '🧊',
+  }
+  return icons[type] || '📌'
 }
 </script>
 
 <style scoped>
 .suggs { display: flex; flex-direction: column; gap: var(--ct-space-lg); }
 .page-title h1 { margin: 0 0 var(--ct-space-sm); color: var(--ct-color-primary); }
+
+/* ====== 左右分栏布局 ====== */
+.split-layout {
+  display: grid;
+  grid-template-columns: 1fr 380px;
+  gap: var(--ct-space-lg);
+  min-height: 500px;
+}
+
+.pane-left, .pane-right { display: flex; flex-direction: column; gap: var(--ct-space-lg); }
+
+.pane-card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.messages-scroll {
+  flex: 1;
+  max-height: 600px;
+  overflow-y: auto;
+  padding: var(--ct-space-sm);
+}
+
+/* 情绪态势指示 */
+.emotion-pulse {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ct-space-md);
+}
+
+.pulse-trend {
+  display: flex;
+  align-items: center;
+  gap: var(--ct-space-sm);
+  font-size: var(--ct-text-lg);
+  font-weight: var(--ct-font-semibold);
+}
+
+.pulse-trend.positive { color: #4caf50; }
+.pulse-trend.negative { color: var(--ct-color-error); }
+.pulse-trend.neutral { color: var(--ct-text-secondary); }
+
+.trend-icon { font-size: 1.5em; }
+
+.pulse-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--ct-space-sm);
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--ct-space-sm);
+  background: var(--ct-bg-tertiary);
+  border-radius: var(--ct-radius-md);
+}
+
+.stat-label { font-size: var(--ct-text-xs); color: var(--ct-text-secondary); }
+.stat-value { font-weight: var(--ct-font-semibold); font-size: var(--ct-text-sm); }
+.stat-value.positive { color: #4caf50; }
+.stat-value.negative { color: var(--ct-color-error); }
+
+.polarity-bar {
+  display: flex;
+  gap: 4px;
+  padding: var(--ct-space-xs) 0;
+}
+
+.polarity-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  transition: all var(--ct-transition-fast);
+}
+
+.polarity-dot.pos { background: #4caf50; }
+.polarity-dot.neg { background: var(--ct-color-error); }
+.polarity-dot.neu { background: var(--ct-text-tertiary); }
+
+/* 建议设置 */
+.config-card .card-bd {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ct-space-md);
+}
+
+.config-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ct-space-xs);
+}
+
+.config-row label {
+  font-size: var(--ct-text-xs);
+  color: var(--ct-text-secondary);
+  font-weight: var(--ct-font-medium);
+}
+
+.seg-control {
+  display: flex;
+  gap: 0;
+  border-radius: var(--ct-radius-md);
+  overflow: hidden;
+  border: 1px solid var(--ct-border-color);
+}
+
+.seg-control button {
+  flex: 1;
+  padding: var(--ct-space-xs) var(--ct-space-sm);
+  border: none;
+  background: var(--ct-bg-elevated);
+  color: var(--ct-text-secondary);
+  font-size: var(--ct-text-xs);
+  cursor: pointer;
+  transition: all var(--ct-transition-fast);
+}
+
+.seg-control button:not(:last-child) {
+  border-right: 1px solid var(--ct-border-color);
+}
+
+.seg-control button.active {
+  background: var(--ct-color-primary);
+  color: var(--ct-text-inverse);
+  font-weight: var(--ct-font-semibold);
+}
+
+.seg-control button:hover:not(.active) {
+  background: var(--ct-bg-tertiary);
+}
+
+.manual-btn {
+  width: 100%;
+  margin-top: var(--ct-space-xs);
+}
+
+/* 触发卡片 */
+.suggestions-card .badge {
+  background: var(--ct-color-error);
+  color: white;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: var(--ct-text-xs);
+  margin-left: var(--ct-space-sm);
+}
+
+.trigger-card {
+  border: 1px solid var(--ct-border-color);
+  border-radius: var(--ct-radius-md);
+  margin-bottom: var(--ct-space-sm);
+  overflow: hidden;
+  transition: all var(--ct-transition-fast);
+}
+
+.trigger-card.high { border-left: 3px solid var(--ct-color-error); }
+.trigger-card.medium { border-left: 3px solid var(--ct-color-warning); }
+.trigger-card.low { border-left: 3px solid #4caf50; }
+
+.trigger-header {
+  display: flex;
+  align-items: center;
+  gap: var(--ct-space-sm);
+  padding: var(--ct-space-sm) var(--ct-space-md);
+  cursor: pointer;
+  transition: background var(--ct-transition-fast);
+}
+
+.trigger-header:hover {
+  background: var(--ct-bg-tertiary);
+}
+
+.trigger-icon { font-size: 1.1em; flex-shrink: 0; }
+.trigger-summary { flex: 1; font-size: var(--ct-text-sm); font-weight: var(--ct-font-medium); }
+.trigger-time { font-size: var(--ct-text-xs); color: var(--ct-text-tertiary); flex-shrink: 0; }
+.expand-icon { color: var(--ct-text-tertiary); font-size: var(--ct-text-xs); flex-shrink: 0; }
+
+.trigger-body {
+  padding: var(--ct-space-sm) var(--ct-space-md) var(--ct-space-md);
+  border-top: 1px solid var(--ct-border-color);
+  background: var(--ct-bg-secondary);
+}
+
+.speech-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ct-space-sm);
+}
+
+.speech-list li {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--ct-space-sm);
+  padding: var(--ct-space-sm);
+  background: var(--ct-bg-elevated);
+  border-radius: var(--ct-radius-sm);
+}
+
+.speech-text {
+  flex: 1;
+  font-size: var(--ct-text-sm);
+  line-height: var(--ct-leading-relaxed);
+}
+
+.copy-btn {
+  border: none;
+  background: transparent;
+  color: var(--ct-color-primary);
+  cursor: pointer;
+  font-size: var(--ct-text-xs);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.dismiss-btn {
+  border: none;
+  background: transparent;
+  color: var(--ct-text-tertiary);
+  cursor: pointer;
+  font-size: var(--ct-text-xs);
+  margin-top: var(--ct-space-sm);
+  padding: var(--ct-space-xs) var(--ct-space-sm);
+}
+
+.dismiss-btn:hover { color: var(--ct-color-error); }
+
+/* ====== 原有布局样式 ====== */
 .grid { display: grid; grid-template-columns: 1fr 360px; gap: var(--ct-space-lg); }
 .left, .right { display: flex; flex-direction: column; gap: var(--ct-space-lg); }
 
@@ -581,7 +1147,7 @@ function getSentimentText(polarity: number): string {
   border-color: var(--ct-border-color-hover);
 }
 
-.card-hd { padding: var(--ct-space-md) var(--ct-space-lg); font-weight: var(--ct-font-semibold); color: var(--ct-color-primary); border-bottom: 1px solid var(--ct-border-color); }
+.card-hd { padding: var(--ct-space-md) var(--ct-space-lg); font-weight: var(--ct-font-semibold); color: var(--ct-color-primary); border-bottom: 1px solid var(--ct-border-color); display: flex; align-items: center; }
 .card-bd { padding: var(--ct-space-lg); }
 .hint { color: var(--ct-text-secondary); font-size: var(--ct-text-xs); padding: 0 var(--ct-space-lg) var(--ct-space-md); margin: 0; }
 .error { color: var(--ct-color-error); background: var(--ct-color-error-light); margin: var(--ct-space-sm) 0 0; padding: var(--ct-space-sm) var(--ct-space-md); border-radius: var(--ct-radius-md); font-size: var(--ct-text-sm); }
@@ -589,7 +1155,6 @@ function getSentimentText(polarity: number): string {
 .intent-row { display: flex; align-items: center; justify-content: space-between; gap: var(--ct-space-md); }
 .seg { display: flex; gap: var(--ct-space-md); background: var(--ct-color-primary-light); padding: var(--ct-space-sm) var(--ct-space-md); border-radius: var(--ct-radius-lg); }
 .seg label { display: flex; align-items: center; gap: var(--ct-space-sm); }
-
 
 .mini { border: none; background: transparent; color: var(--ct-color-primary); cursor: pointer; }
 
@@ -616,334 +1181,134 @@ function getSentimentText(polarity: number): string {
 .pie { width: 100%; height: 260px; }
 
 /* ========== 实时监听样式 ========== */
-.realtime-monitor {
-  margin-bottom: var(--ct-space-lg);
-}
+.realtime-monitor { margin-bottom: var(--ct-space-lg); }
 
 .collapsible {
-  cursor: pointer;
-  user-select: none;
+  cursor: pointer; user-select: none;
+  display: flex; justify-content: space-between; align-items: center;
+  transition: background var(--ct-transition-fast);
+}
+.collapsible:hover { background: var(--ct-bg-tertiary); }
+.icon { color: var(--ct-text-tertiary); font-size: var(--ct-text-xs); transition: transform var(--ct-transition-fast); }
+
+.alert { padding: var(--ct-space-md); border-radius: var(--ct-radius-md); margin-bottom: var(--ct-space-lg); }
+.alert.warning { background: var(--ct-color-warning-light); border-left: 3px solid var(--ct-color-warning); }
+.alert-title { font-weight: var(--ct-font-semibold); color: var(--ct-color-warning); margin-bottom: var(--ct-space-sm); font-size: var(--ct-text-sm); }
+.alert-list { margin: 0; padding-left: 20px; color: var(--ct-color-warning); }
+.alert-list li { margin: var(--ct-space-xs) 0; font-size: var(--ct-text-sm); line-height: var(--ct-leading-normal); }
+.alert-list strong { color: var(--ct-color-error); font-weight: var(--ct-font-semibold); }
+
+.monitor-control { display: flex; gap: var(--ct-space-md); align-items: flex-end; margin-bottom: var(--ct-space-lg); }
+.input-group { flex: 1; display: flex; flex-direction: column; gap: var(--ct-space-sm); }
+.input-group label { font-size: var(--ct-text-sm); color: var(--ct-text-secondary); font-weight: var(--ct-font-medium); }
+.input-group input {
+  padding: var(--ct-space-sm) var(--ct-space-md); border: 1px solid var(--ct-border-color);
+  border-radius: var(--ct-radius-md); font-size: var(--ct-text-sm);
+  transition: border-color var(--ct-transition-fast); background: var(--ct-bg-elevated); color: var(--ct-text-primary);
+}
+.input-group input:focus { outline: none; border-color: var(--ct-color-primary); box-shadow: 0 0 0 3px var(--ct-color-primary-light); }
+.input-group input:disabled { background: var(--ct-bg-tertiary); cursor: not-allowed; color: var(--ct-text-tertiary); }
+.button-group { display: flex; gap: var(--ct-space-sm); }
+
+.ct-btn.primary { background: var(--ct-color-primary); color: var(--ct-text-inverse); }
+.ct-btn.primary:hover:not(:disabled) { background: var(--ct-color-primary-hover); }
+.ct-btn.danger { background: var(--ct-color-error); color: var(--ct-text-inverse); }
+.ct-btn.danger:hover:not(:disabled) { background: var(--ct-color-error-hover, #c9302c); }
+.ct-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.monitor-status { display: flex; flex-direction: column; gap: var(--ct-space-md); }
+.status-indicator { display: flex; align-items: center; gap: var(--ct-space-sm); padding: var(--ct-space-sm) 0; }
+.dot { width: 10px; height: 10px; border-radius: 50%; transition: background var(--ct-transition-normal); }
+.dot.idle { background: var(--ct-text-tertiary); }
+.dot.active { background: var(--ct-color-success); animation: pulse 2s infinite; }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+.status-text { font-size: var(--ct-text-sm); color: var(--ct-text-primary); font-weight: var(--ct-font-medium); }
+
+.progress-steps { display: flex; flex-direction: column; gap: var(--ct-space-sm); padding-left: 20px; }
+.step { display: flex; align-items: center; gap: var(--ct-space-sm); font-size: var(--ct-text-sm); color: var(--ct-text-secondary); transition: color var(--ct-transition-normal); }
+.step.active { color: var(--ct-color-primary); font-weight: var(--ct-font-medium); }
+.step.completed { color: var(--ct-color-success); }
+.step.pending { color: var(--ct-border-color-hover); }
+.step-icon { width: 20px; text-align: center; font-weight: var(--ct-font-bold); }
+.step-label { flex: 1; }
+
+/* 消息列表 */
+.messages-list { display: flex; flex-direction: column; gap: var(--ct-space-md); }
+.message-item { padding: var(--ct-space-md); border-radius: var(--ct-radius-md); border: 1px solid var(--ct-border-color); background: var(--ct-bg-elevated); transition: all var(--ct-transition-fast); }
+.message-item:hover { border-color: var(--ct-color-primary); box-shadow: var(--ct-shadow-sm); }
+.message-item.system { opacity: 0.7; background: var(--ct-bg-tertiary); }
+.message-header { display: flex; align-items: center; gap: var(--ct-space-sm); margin-bottom: var(--ct-space-sm); font-size: var(--ct-text-xs); }
+.sender-badge { padding: 2px 8px; border-radius: var(--ct-radius-sm); font-weight: var(--ct-font-medium); font-size: var(--ct-text-xs); }
+.sender-badge.self { background: var(--ct-color-primary-light); color: var(--ct-color-primary); }
+.sender-badge.friend { background: #e3f2fd; color: #2196f3; }
+.sender-badge.system { background: var(--ct-bg-tertiary); color: var(--ct-text-tertiary); }
+.timestamp { color: var(--ct-text-tertiary); font-size: var(--ct-text-xs); }
+.message-content { padding: var(--ct-space-sm) 0; color: var(--ct-text-primary); line-height: var(--ct-leading-relaxed); word-break: break-word; }
+.sentiment-result { display: flex; flex-wrap: wrap; gap: var(--ct-space-sm); margin-top: var(--ct-space-sm); padding-top: var(--ct-space-sm); border-top: 1px dashed var(--ct-border-color); font-size: var(--ct-text-xs); }
+.sentiment-badge { padding: 2px 8px; border-radius: var(--ct-radius-sm); font-weight: var(--ct-font-semibold); }
+.sentiment-badge.positive { background: #e8f5e9; color: #4caf50; }
+.sentiment-badge.negative { background: var(--ct-color-error-light); color: var(--ct-color-error); }
+.sentiment-badge.neutral { background: var(--ct-bg-tertiary); color: var(--ct-text-secondary); }
+.sentiment-intensity, .sentiment-confidence, .sentiment-rules { color: var(--ct-text-secondary); }
+.sentiment-rules { font-style: italic; }
+
+/* 联系人搜索下拉 */
+.contact-picker { position: relative; }
+.picker-wrapper { position: relative; width: 100%; }
+.picker-wrapper input { width: 100%; box-sizing: border-box; }
+
+.contact-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  max-height: 240px;
+  overflow-y: auto;
+  background: var(--ct-bg-elevated);
+  border: 1px solid var(--ct-border-color);
+  border-top: none;
+  border-radius: 0 0 var(--ct-radius-md) var(--ct-radius-md);
+  box-shadow: var(--ct-shadow-md);
+}
+
+.dropdown-empty {
+  padding: var(--ct-space-md);
+  text-align: center;
+  color: var(--ct-text-tertiary);
+  font-size: var(--ct-text-sm);
+}
+
+.dropdown-item {
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  justify-content: space-between;
+  padding: var(--ct-space-sm) var(--ct-space-md);
+  cursor: pointer;
   transition: background var(--ct-transition-fast);
 }
 
-.collapsible:hover {
-  background: var(--ct-bg-tertiary);
+.dropdown-item:hover,
+.dropdown-item.highlighted {
+  background: var(--ct-color-primary-light);
 }
 
-.icon {
-  color: var(--ct-text-tertiary);
+.contact-name {
+  font-size: var(--ct-text-sm);
+  font-weight: var(--ct-font-medium);
+  color: var(--ct-text-primary);
+}
+
+.contact-count {
   font-size: var(--ct-text-xs);
-  transition: transform var(--ct-transition-fast);
-}
-
-/* 警告提示框 */
-.alert {
-  padding: var(--ct-space-md);
-  border-radius: var(--ct-radius-md);
-  margin-bottom: var(--ct-space-lg);
-}
-
-.alert.warning {
-  background: var(--ct-color-warning-light);
-  border-left: 3px solid var(--ct-color-warning);
-}
-
-.alert-title {
-  font-weight: var(--ct-font-semibold);
-  color: var(--ct-color-warning);
-  margin-bottom: var(--ct-space-sm);
-  font-size: var(--ct-text-sm);
-}
-
-.alert-list {
-  margin: 0;
-  padding-left: 20px;
-  color: var(--ct-color-warning);
-}
-
-.alert-list li {
-  margin: var(--ct-space-xs) 0;
-  font-size: var(--ct-text-sm);
-  line-height: var(--ct-leading-normal);
-}
-
-.alert-list strong {
-  color: var(--ct-color-error);
-  font-weight: var(--ct-font-semibold);
-}
-
-/* 监听控制 */
-.monitor-control {
-  display: flex;
-  gap: var(--ct-space-md);
-  align-items: flex-end;
-  margin-bottom: var(--ct-space-lg);
-}
-
-.input-group {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: var(--ct-space-sm);
-}
-
-.input-group label {
-  font-size: var(--ct-text-sm);
-  color: var(--ct-text-secondary);
-  font-weight: var(--ct-font-medium);
-}
-
-.input-group input {
-  padding: var(--ct-space-sm) var(--ct-space-md);
-  border: 1px solid var(--ct-border-color);
-  border-radius: var(--ct-radius-md);
-  font-size: var(--ct-text-sm);
-  transition: border-color var(--ct-transition-fast);
-  background: var(--ct-bg-elevated);
-  color: var(--ct-text-primary);
-}
-
-.input-group input:focus {
-  outline: none;
-  border-color: var(--ct-color-primary);
-  box-shadow: 0 0 0 3px var(--ct-color-primary-light);
-}
-
-.input-group input:disabled {
-  background: var(--ct-bg-tertiary);
-  cursor: not-allowed;
   color: var(--ct-text-tertiary);
+  flex-shrink: 0;
 }
 
-.button-group {
-  display: flex;
-  gap: var(--ct-space-sm);
-}
-
-.ct-btn.primary {
-  background: var(--ct-color-primary);
-  color: var(--ct-text-inverse);
-}
-
-.ct-btn.primary:hover:not(:disabled) {
-  background: var(--ct-color-primary-hover);
-}
-
-.ct-btn.danger {
-  background: var(--ct-color-error);
-  color: var(--ct-text-inverse);
-}
-
-.ct-btn.danger:hover:not(:disabled) {
-  background: var(--ct-color-error-hover, #c9302c);
-}
-
-.ct-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-/* 监听状态 */
-.monitor-status {
-  display: flex;
-  flex-direction: column;
-  gap: var(--ct-space-md);
-}
-
-.status-indicator {
-  display: flex;
-  align-items: center;
-  gap: var(--ct-space-sm);
-  padding: var(--ct-space-sm) 0;
-}
-
-.dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  transition: background var(--ct-transition-normal);
-}
-
-.dot.idle {
-  background: var(--ct-text-tertiary);
-}
-
-.dot.active {
-  background: var(--ct-color-success);
-  animation: pulse 2s infinite;
-}
-
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
-}
-
-.status-text {
-  font-size: var(--ct-text-sm);
-  color: var(--ct-text-primary);
-  font-weight: var(--ct-font-medium);
-}
-
-/* 进度步骤 */
-.progress-steps {
-  display: flex;
-  flex-direction: column;
-  gap: var(--ct-space-sm);
-  padding-left: 20px;
-}
-
-.step {
-  display: flex;
-  align-items: center;
-  gap: var(--ct-space-sm);
-  font-size: var(--ct-text-sm);
-  color: var(--ct-text-secondary);
-  transition: color var(--ct-transition-normal);
-}
-
-.step.active {
-  color: var(--ct-color-primary);
-  font-weight: var(--ct-font-medium);
-}
-
-.step.completed {
-  color: var(--ct-color-success);
-}
-
-.step.pending {
-  color: var(--ct-border-color-hover);
-}
-
-.step-icon {
-  width: 20px;
-  text-align: center;
-  font-weight: var(--ct-font-bold);
-}
-
-.step-label {
-  flex: 1;
-}
-
-@media (max-width: 1024px) {
+/* 响应式 */
+@media (max-width: 1000px) {
+  .split-layout { grid-template-columns: 1fr; }
   .grid { grid-template-columns: 1fr; }
   .monitor-control { flex-direction: column; align-items: stretch; }
-}
-
-/* ========== 实时消息列表样式 ========== */
-.realtime-messages {
-  margin-bottom: var(--ct-space-lg);
-}
-
-.messages-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--ct-space-md);
-  max-height: 500px;
-  overflow-y: auto;
-  padding: var(--ct-space-sm);
-}
-
-.message-item {
-  padding: var(--ct-space-md);
-  border-radius: var(--ct-radius-md);
-  border: 1px solid var(--ct-border-color);
-  background: var(--ct-bg-elevated);
-  transition: all var(--ct-transition-fast);
-}
-
-.message-item:hover {
-  border-color: var(--ct-color-primary);
-  box-shadow: var(--ct-shadow-sm);
-}
-
-.message-item.system {
-  opacity: 0.7;
-  background: var(--ct-bg-tertiary);
-}
-
-.message-header {
-  display: flex;
-  align-items: center;
-  gap: var(--ct-space-sm);
-  margin-bottom: var(--ct-space-sm);
-  font-size: var(--ct-text-xs);
-}
-
-.sender-badge {
-  padding: 2px 8px;
-  border-radius: var(--ct-radius-sm);
-  font-weight: var(--ct-font-medium);
-  font-size: var(--ct-text-xs);
-}
-
-.sender-badge.self {
-  background: var(--ct-color-primary-light);
-  color: var(--ct-color-primary);
-}
-
-.sender-badge.friend {
-  background: #e3f2fd;
-  color: #2196f3;
-}
-
-.sender-badge.system {
-  background: var(--ct-bg-tertiary);
-  color: var(--ct-text-tertiary);
-}
-
-.timestamp {
-  color: var(--ct-text-tertiary);
-  font-size: var(--ct-text-xs);
-}
-
-.message-content {
-  padding: var(--ct-space-sm) 0;
-  color: var(--ct-text-primary);
-  line-height: var(--ct-leading-relaxed);
-  word-break: break-word;
-}
-
-.sentiment-result {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--ct-space-sm);
-  margin-top: var(--ct-space-sm);
-  padding-top: var(--ct-space-sm);
-  border-top: 1px dashed var(--ct-border-color);
-  font-size: var(--ct-text-xs);
-}
-
-.sentiment-badge {
-  padding: 2px 8px;
-  border-radius: var(--ct-radius-sm);
-  font-weight: var(--ct-font-semibold);
-}
-
-.sentiment-badge.positive {
-  background: #e8f5e9;
-  color: #4caf50;
-}
-
-.sentiment-badge.negative {
-  background: var(--ct-color-error-light);
-  color: var(--ct-color-error);
-}
-
-.sentiment-badge.neutral {
-  background: var(--ct-bg-tertiary);
-  color: var(--ct-text-secondary);
-}
-
-.sentiment-intensity,
-.sentiment-confidence,
-.sentiment-rules {
-  color: var(--ct-text-secondary);
-}
-
-.sentiment-rules {
-  font-style: italic;
 }
 </style>

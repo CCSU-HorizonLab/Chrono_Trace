@@ -189,11 +189,58 @@ class Bridge:
         )
 
     def generate_suggestion(self, intent: str, context: dict[str, Any]) -> dict[str, Any]:
-        return {
-            "intent": intent,
-            "summary": "示例建议：保持耐心与共情表达。",
-            "speech": ["我理解你的感受，我们一起看怎么改善。"],
-        }
+        """
+        手动生成 AI 建议（Manual 模式或用户主动请求）
+
+        Args:
+            intent: 发展走向 (intimate/maintain/distance)
+            context: 附加上下文 {"trigger_type": "...", ...}
+
+        Returns:
+            {"ok": True, "suggestion": {...}} 或 {"ok": False, "error": "..."}
+        """
+        try:
+            from ..services.realtime.suggestion_engine import SuggestionEngineFactory
+            from ..services.realtime.monitor_service import RealtimeMonitorService
+
+            # 获取引擎类型（默认 template）
+            engine_type = self.settings.get("suggestion_engine", "template")
+            engine = SuggestionEngineFactory.create(engine_type)
+
+            # 获取触发类型，默认通过 tracker 状态推断
+            trigger_type = context.get("trigger_type")
+            if not trigger_type:
+                # 从 Tracker 获取当前情绪摘要来推断
+                monitor = RealtimeMonitorService()
+                if hasattr(monitor, 'emotion_tracker') and monitor.emotion_tracker:
+                    summary = monitor.emotion_tracker.get_emotion_summary()
+                    if summary['trend'] == 'negative':
+                        trigger_type = "negative_streak"
+                    elif summary['trend'] == 'positive':
+                        trigger_type = "positive_window"
+                    else:
+                        trigger_type = "topic_cooling"
+                else:
+                    trigger_type = "topic_cooling"
+
+            result = engine.generate(trigger_type, intent, context)
+
+            return {
+                "ok": True,
+                "suggestion": {
+                    "trigger_type": result.trigger_type,
+                    "intent": result.intent,
+                    "summary": result.summary,
+                    "speeches": result.speeches,
+                    "severity": result.severity,
+                    "confidence": result.confidence,
+                }
+            }
+        except Exception as e:
+            import traceback
+            print(f"[Bridge] 生成建议失败: {e}")
+            traceback.print_exc()
+            return {"ok": False, "error": str(e)}
 
     def get_settings(self) -> dict[str, Any]:
         """获取设置"""
@@ -564,6 +611,298 @@ class Bridge:
                 "error": str(e),
                 "messages": []
             }
+
+    # ==================== AI 建议相关 ====================
+
+    def get_pending_suggestions(self, batch_id: str) -> dict[str, Any]:
+        """
+        获取当前批次的待处理 AI 建议
+
+        Args:
+            batch_id: 监听批次 ID
+
+        Returns:
+            {"ok": True, "suggestions": [...], "emotion_summary": {...}}
+        """
+        try:
+            from ..db.connection import get_db
+            from ..services.realtime.monitor_service import RealtimeMonitorService
+
+            conn = get_db()
+
+            # 确保表存在
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS realtime_suggestions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    batch_id TEXT NOT NULL,
+                    trigger_type TEXT NOT NULL,
+                    intent TEXT NOT NULL,
+                    severity TEXT DEFAULT 'medium',
+                    summary TEXT NOT NULL,
+                    speeches TEXT NOT NULL,
+                    confidence REAL DEFAULT 1.0,
+                    status TEXT DEFAULT 'pending',
+                    engine_type TEXT DEFAULT 'template',
+                    trigger_context TEXT,
+                    created_at INTEGER NOT NULL,
+                    read_at INTEGER,
+                    dismissed_at INTEGER
+                )
+            ''')
+
+            # 查询 pending 状态的建议
+            cursor = conn.execute('''
+                SELECT id, trigger_type, intent, severity, summary, speeches,
+                       confidence, engine_type, trigger_context, status, created_at
+                FROM realtime_suggestions
+                WHERE batch_id = ? AND status = 'pending'
+                ORDER BY created_at DESC
+                LIMIT 20
+            ''', (batch_id,))
+
+            suggestions = []
+            for row in cursor.fetchall():
+                import json
+                suggestions.append({
+                    'id': row['id'],
+                    'trigger_type': row['trigger_type'],
+                    'intent': row['intent'],
+                    'severity': row['severity'],
+                    'summary': row['summary'],
+                    'speeches': json.loads(row['speeches']),
+                    'confidence': row['confidence'],
+                    'engine_type': row['engine_type'],
+                    'trigger_context': json.loads(row['trigger_context']) if row['trigger_context'] else None,
+                    'status': row['status'],
+                    'created_at': row['created_at'],
+                })
+
+            # 获取情绪摘要
+            emotion_summary = None
+            monitor = RealtimeMonitorService()
+            if monitor.emotion_tracker:
+                emotion_summary = monitor.emotion_tracker.get_emotion_summary()
+
+            return {
+                "ok": True,
+                "suggestions": suggestions,
+                "emotion_summary": emotion_summary,
+            }
+        except Exception as e:
+            import traceback
+            print(f"[Bridge] 获取待处理建议失败: {e}")
+            traceback.print_exc()
+            return {"ok": False, "error": str(e), "suggestions": []}
+
+    def dismiss_suggestion(self, suggestion_id: int) -> dict[str, Any]:
+        """
+        标记建议为已关闭
+
+        Args:
+            suggestion_id: 建议记录 ID
+        """
+        try:
+            import time as _time
+            from ..db.connection import get_db
+
+            conn = get_db()
+            conn.execute('''
+                UPDATE realtime_suggestions
+                SET status = 'dismissed', dismissed_at = ?
+                WHERE id = ?
+            ''', (int(_time.time()), suggestion_id))
+            conn.commit()
+
+            return {"ok": True}
+        except Exception as e:
+            print(f"[Bridge] 关闭建议失败: {e}")
+            return {"ok": False, "error": str(e)}
+
+    def get_suggestion_config(self) -> dict[str, Any]:
+        """获取 AI 建议配置（触发模式、走向等）"""
+        try:
+            from ..services.realtime.monitor_service import RealtimeMonitorService
+            monitor = RealtimeMonitorService()
+            return {"ok": True, "config": monitor.get_suggestion_config()}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def set_suggestion_config(self, config: dict[str, Any]) -> dict[str, Any]:
+        """
+        更新 AI 建议配置
+
+        Args:
+            config: {"trigger_mode": "semi_auto", "intent": "intimate", ...}
+        """
+        try:
+            from ..services.realtime.monitor_service import RealtimeMonitorService
+            monitor = RealtimeMonitorService()
+            monitor.set_suggestion_config(config)
+            return {"ok": True, "config": monitor.get_suggestion_config()}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    # ==================== LLM 模型管理 ====================
+
+    def get_llm_models(self) -> dict[str, Any]:
+        """获取所有已配置的 LLM 模型列表"""
+        try:
+            from ..db.connection import get_db
+            import time as _time
+
+            conn = get_db()
+
+            # 确保表存在
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS llm_models (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    model_id TEXT NOT NULL,
+                    api_base_url TEXT NOT NULL,
+                    api_key TEXT,
+                    is_active INTEGER DEFAULT 0,
+                    max_tokens INTEGER DEFAULT 512,
+                    temperature REAL DEFAULT 0.7,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                )
+            ''')
+
+            cursor = conn.execute(
+                'SELECT id, name, provider, model_id, api_base_url, '
+                'api_key, is_active, max_tokens, temperature, '
+                'created_at, updated_at FROM llm_models ORDER BY is_active DESC, updated_at DESC'
+            )
+
+            models = []
+            for row in cursor.fetchall():
+                m = dict(row)
+                # API Key 脱敏展示：只显示前4和后4个字符
+                key = m.get('api_key') or ''
+                if len(key) > 10:
+                    m['api_key_masked'] = f"{key[:4]}{'*' * (len(key) - 8)}{key[-4:]}"
+                elif key:
+                    m['api_key_masked'] = '****'
+                else:
+                    m['api_key_masked'] = ''
+                models.append(m)
+
+            return {"ok": True, "models": models}
+        except Exception as e:
+            print(f"[Bridge] 获取模型列表失败: {e}")
+            return {"ok": False, "error": str(e), "models": []}
+
+    def save_llm_model(self, model: dict[str, Any]) -> dict[str, Any]:
+        """
+        新增或更新 LLM 模型配置
+
+        Args:
+            model: {
+                "id": int (可选，有则更新),
+                "name": str,
+                "provider": str,
+                "model_id": str,
+                "api_base_url": str,
+                "api_key": str (可选),
+                "is_active": bool,
+                "max_tokens": int,
+                "temperature": float
+            }
+        """
+        try:
+            import time as _time
+            from ..db.connection import get_db
+
+            conn = get_db()
+            now = int(_time.time())
+
+            model_id = model.get('id')
+
+            # 如果设为激活，先把其他所有模型设为非激活
+            if model.get('is_active'):
+                conn.execute('UPDATE llm_models SET is_active = 0')
+
+            if model_id:
+                # 更新
+                # 如果 api_key 为空字符串或 None，保留原值
+                if model.get('api_key'):
+                    conn.execute('''
+                        UPDATE llm_models SET
+                            name = ?, provider = ?, model_id = ?,
+                            api_base_url = ?, api_key = ?, is_active = ?,
+                            max_tokens = ?, temperature = ?, updated_at = ?
+                        WHERE id = ?
+                    ''', (
+                        model['name'], model['provider'], model['model_id'],
+                        model['api_base_url'], model['api_key'],
+                        1 if model.get('is_active') else 0,
+                        model.get('max_tokens', 512),
+                        model.get('temperature', 0.7),
+                        now, model_id
+                    ))
+                else:
+                    conn.execute('''
+                        UPDATE llm_models SET
+                            name = ?, provider = ?, model_id = ?,
+                            api_base_url = ?, is_active = ?,
+                            max_tokens = ?, temperature = ?, updated_at = ?
+                        WHERE id = ?
+                    ''', (
+                        model['name'], model['provider'], model['model_id'],
+                        model['api_base_url'],
+                        1 if model.get('is_active') else 0,
+                        model.get('max_tokens', 512),
+                        model.get('temperature', 0.7),
+                        now, model_id
+                    ))
+            else:
+                # 新增
+                conn.execute('''
+                    INSERT INTO llm_models
+                    (name, provider, model_id, api_base_url, api_key,
+                     is_active, max_tokens, temperature, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    model['name'], model['provider'], model['model_id'],
+                    model['api_base_url'], model.get('api_key', ''),
+                    1 if model.get('is_active') else 0,
+                    model.get('max_tokens', 512),
+                    model.get('temperature', 0.7),
+                    now, now
+                ))
+
+            conn.commit()
+
+            # 如果激活了 LLM 模型，同步更新建议引擎类型
+            if model.get('is_active'):
+                try:
+                    from ..services.realtime.monitor_service import RealtimeMonitorService
+                    monitor = RealtimeMonitorService()
+                    monitor.set_suggestion_config({'engine_type': 'llm'})
+                except Exception:
+                    pass
+
+            return {"ok": True}
+        except Exception as e:
+            print(f"[Bridge] 保存模型配置失败: {e}")
+            import traceback
+            traceback.print_exc()
+            return {"ok": False, "error": str(e)}
+
+    def delete_llm_model(self, model_id: int) -> dict[str, Any]:
+        """删除 LLM 模型配置"""
+        try:
+            from ..db.connection import get_db
+
+            conn = get_db()
+            conn.execute('DELETE FROM llm_models WHERE id = ?', (model_id,))
+            conn.commit()
+
+            return {"ok": True}
+        except Exception as e:
+            print(f"[Bridge] 删除模型失败: {e}")
+            return {"ok": False, "error": str(e)}
 
     # ==================== 特征提取分析相关 ====================
 

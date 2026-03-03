@@ -22,6 +22,15 @@ type PyWebViewApi = {
   stop_realtime_monitor: () => Promise<any>
   get_realtime_status: () => Promise<any>
   get_realtime_messages: (batch_id: string, limit?: number) => Promise<any>
+  // AI 建议
+  get_pending_suggestions: (batch_id: string) => Promise<any>
+  dismiss_suggestion: (suggestion_id: number) => Promise<any>
+  get_suggestion_config: () => Promise<any>
+  set_suggestion_config: (config: Record<string, any>) => Promise<any>
+  // LLM 模型管理
+  get_llm_models: () => Promise<any>
+  save_llm_model: (model: Record<string, any>) => Promise<any>
+  delete_llm_model: (model_id: number) => Promise<any>
   // 特征提取
   extract_features: (conversation_id: number, config?: Record<string, any>) => Promise<any>
   get_extraction_progress: (task_id: string) => Promise<any>

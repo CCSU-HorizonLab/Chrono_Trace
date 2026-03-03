@@ -568,3 +568,48 @@ CREATE TABLE IF NOT EXISTS affinity_scores (
 
 CREATE INDEX IF NOT EXISTS idx_affinity_scores_conversation ON affinity_scores(conversation_id, created_at DESC);
 
+
+-- ========================================
+-- 21. 实时 AI 建议表
+-- ========================================
+-- 存储实时监听期间由情绪触发引擎生成的建议
+CREATE TABLE IF NOT EXISTS realtime_suggestions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    batch_id TEXT NOT NULL,                      -- 监听批次ID
+    trigger_type TEXT NOT NULL,                  -- 触发类型: negative_streak, emotion_shift, perfunctory, silence, positive_window, topic_cooling
+    intent TEXT NOT NULL,                        -- 走向: intimate, maintain, distance
+    severity TEXT DEFAULT 'medium',              -- 严重度: high, medium, low
+    summary TEXT NOT NULL,                       -- 建议摘要
+    speeches TEXT NOT NULL,                      -- 话术列表JSON: ["话术1", "话术2", ...]
+    confidence REAL DEFAULT 1.0,                 -- 置信度 (0-1)
+    status TEXT DEFAULT 'pending',               -- 状态: pending, read, dismissed
+    engine_type TEXT DEFAULT 'template',         -- 引擎类型: template, llm
+    trigger_context TEXT,                        -- 触发上下文JSON
+    created_at INTEGER NOT NULL,                 -- 生成时间戳（秒）
+    read_at INTEGER,                             -- 阅读时间戳
+    dismissed_at INTEGER                         -- 关闭时间戳
+);
+
+CREATE INDEX IF NOT EXISTS idx_realtime_suggestions_batch ON realtime_suggestions(batch_id, status);
+CREATE INDEX IF NOT EXISTS idx_realtime_suggestions_created ON realtime_suggestions(created_at DESC);
+
+
+-- ========================================
+-- 22. LLM 模型配置表
+-- ========================================
+-- 管理 LLM 模型的 API Key、Base URL 等配置，支持远程 API 和本地推理
+CREATE TABLE IF NOT EXISTS llm_models (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,                          -- 用户自定义名称（如 "DeepSeek V3"）
+    provider TEXT NOT NULL,                      -- 供应商: openai, deepseek, ollama, custom
+    model_id TEXT NOT NULL,                      -- 模型标识（如 'deepseek-chat', 'qwen2.5:7b'）
+    api_base_url TEXT NOT NULL,                  -- API 地址（如 'https://api.deepseek.com/v1'）
+    api_key TEXT,                                -- API Key（本地推理可为空）
+    is_active INTEGER DEFAULT 0,                 -- 是否为当前激活模型（只允许一个为 1）
+    max_tokens INTEGER DEFAULT 512,              -- 最大生成 token 数
+    temperature REAL DEFAULT 0.7,                -- 温度参数
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_llm_models_active ON llm_models(is_active);

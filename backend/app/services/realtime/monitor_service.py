@@ -496,7 +496,8 @@ class RealtimeMonitorService:
                 'talker_username': self.current_talker,
                 'talker_display_name': self.current_display_name,
                 'batch_id': self.current_batch_id,
-                'message_count': message_count
+                'message_count': message_count,
+                'model_ready': self.sentiment_service.is_ready()
             }
             
         except Exception as e:

@@ -65,46 +65,45 @@ class RealtimeSentimentService:
             
         except Exception as e:
             print(f"[实时情感分析] 创建表失败: {e}")
+            
+    def is_ready(self) -> bool:
+        """模型是否已准备就绪"""
+        return self._model is not None
     
     def _load_model(self):
-        """延迟加载RoBERTa模型"""
+        """延迟加载已训练好的中文情感分析模型"""
         if self._model is None:
             try:
                 from transformers import AutoTokenizer, AutoModelForSequenceClassification
                 import torch
                 
-                print("[实时情感分析] 正在加载 RoBERTa-small 模型...")
+                print("[实时情感分析] 正在加载预训练情感分析模型...")
                 
-                # 使用中文RoBERTa-small模型
-                model_name = "hfl/chinese-roberta-wwm-ext"
+                # 使用已经训练好的中文情感分析模型
+                # 模型信息:
+                # - 名称: Erlangshen-Roberta-110M-Sentiment
+                # - 参数量: 110M (约450MB)
+                # - 任务: 中文情感三分类(负面/中性/正面)
+                # - 来源: IDEA研究院
+                model_name = "IDEA-CCNL/Erlangshen-Roberta-110M-Sentiment"
                 
+                print(f"[实时情感分析] 下载模型 (首次使用约450MB,后续从缓存加载)...")
                 self._tokenizer = AutoTokenizer.from_pretrained(model_name)
-                self._model = AutoModelForSequenceClassification.from_pretrained(
-                    model_name,
-                    num_labels=3,  # 3分类:负面/中性/正面
-                    ignore_mismatched_sizes=True  # 忽略分类头大小不匹配
-                )
+                self._model = AutoModelForSequenceClassification.from_pretrained(model_name)
                 
                 # 设置为评估模式
                 self._model.eval()
                 
-                # 检测GPU
-                if torch.cuda.is_available():
-                    self._model = self._model.cuda()
-                    device = "cuda"
-                    print(f"[实时情感分析] 使用GPU: {torch.cuda.get_device_name(0)}")
-                else:
-                    device = "cpu"
-                    print("[实时情感分析] 使用CPU模式")
-                
-                print(f"[实时情感分析] 模型加载成功: {model_name} (设备: {device})")
+                print(f"[实时情感分析] 模型加载成功: {model_name}")
+                print(f"[实时情感分析] 设备: CPU | 参数量: 110M")
                 
             except ImportError:
                 print("[实时情感分析] 警告: transformers未安装")
-                print("请运行: pip install transformers")
+                print("请运行: pip install transformers torch")
                 raise
             except Exception as e:
                 print(f"[实时情感分析] 模型加载失败: {e}")
+                print("提示: 首次使用需要下载模型,请确保网络连接正常")
                 raise
     
     # ========== 预处理 ==========
@@ -216,7 +215,10 @@ class RealtimeSentimentService:
     # ========== 模型推理 ==========
     
     def _model_predict(self, text: str) -> Dict[str, Any]:
-        """使用RoBERTa模型进行预测
+        """使用Erlangshen模型进行预测
+        
+        注意: Erlangshen模型是2分类(0=负面, 1=正面)
+        需要映射到3分类系统(-1/0/1)
         
         Returns:
             {
@@ -241,10 +243,6 @@ class RealtimeSentimentService:
                 padding=True
             )
             
-            # 移动到GPU(如果可用)
-            if torch.cuda.is_available():
-                inputs = {k: v.cuda() for k, v in inputs.items()}
-            
             # 推理
             with torch.no_grad():
                 outputs = self._model(**inputs)
@@ -254,26 +252,60 @@ class RealtimeSentimentService:
             # 转换为numpy
             probs = probabilities.cpu().numpy().tolist()
             
-            # 获取预测类别(0=负面, 1=中性, 2=正面)
-            predicted_class = probabilities.argmax().item()
-            confidence = probabilities.max().item()
-            
-            # 转换为-1/0/1
-            polarity_map = {0: -1, 1: 0, 2: 1}
-            polarity = polarity_map[predicted_class]
-            
-            # 计算原始分数(-1到1)
-            raw_score = probs[2] - probs[0]  # 正面概率 - 负面概率
+            # Erlangshen模型是2分类: [负面概率, 正面概率]
+            # 需要映射到3分类系统
+            if len(probs) == 2:
+                # 2分类模型
+                neg_prob = probs[0]  # 负面概率
+                pos_prob = probs[1]  # 正面概率
+                
+                # 计算原始分数(-1到1)
+                raw_score = pos_prob - neg_prob
+                
+                # 确定极性
+                # 如果差异不明显(阈值0.3),判定为中性
+                if abs(raw_score) < 0.3:
+                    polarity = 0  # 中性
+                    confidence = 1.0 - abs(raw_score) / 0.3  # 越接近0.3,置信度越低
+                elif raw_score > 0:
+                    polarity = 1  # 正面
+                    confidence = pos_prob
+                else:
+                    polarity = -1  # 负面
+                    confidence = neg_prob
+                
+                # 构造3分类概率(用于兼容性)
+                neu_prob = max(0, 0.3 - abs(raw_score)) / 0.3  # 中性概率
+                probs_3class = [
+                    neg_prob * (1 - neu_prob),  # 负面
+                    neu_prob,                     # 中性
+                    pos_prob * (1 - neu_prob)     # 正面
+                ]
+                
+            else:
+                # 3分类模型(备用逻辑)
+                predicted_class = probabilities.argmax().item()
+                confidence = probabilities.max().item()
+                
+                # 转换为-1/0/1
+                polarity_map = {0: -1, 1: 0, 2: 1}
+                polarity = polarity_map.get(predicted_class, 0)
+                
+                # 计算原始分数(-1到1)
+                raw_score = probs[2] - probs[0] if len(probs) >= 3 else 0.0
+                probs_3class = probs
             
             return {
                 'polarity': polarity,
                 'raw_score': raw_score,
                 'confidence': confidence,
-                'probabilities': probs
+                'probabilities': probs_3class
             }
             
         except Exception as e:
             print(f"[实时情感分析] 模型推理失败: {e}")
+            import traceback
+            traceback.print_exc()
             # 失败时返回中性
             return {
                 'polarity': 0,

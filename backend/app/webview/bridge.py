@@ -568,7 +568,8 @@ class Bridge:
                 "is_monitoring": status['is_monitoring'],
                 "talker_display_name": status.get('talker_display_name'),
                 "batch_id": status.get('batch_id'),
-                "message_count": status.get('message_count', 0)
+                "message_count": status.get('message_count', 0),
+                "model_ready": status.get('model_ready', False)
             }
         except Exception as e:
             print(f"[Bridge] 获取实时监听状态异常: {e}")

@@ -543,18 +543,8 @@ async function startMonitoring() {
       realtimeState.status = 'loading_model'
       realtimeState.isMonitoring = true
       
-      setTimeout(() => {
-        if (realtimeState.status === 'loading_model') {
-          realtimeState.status = 'monitoring'
-        }
-      }, 5000)
-      
       startStatusPolling()
-      startMessagesPolling()
-      startSuggestionsPolling()  // 开始建议轮询
-
-      // 加载配置
-      loadSuggestionConfig()
+      startMessagesPolling()  // 新增:开始消息轮询
     } else {
       realtimeState.status = 'idle'
       realtimeError.value = result.error || result.message || '启动监听失败'
@@ -682,6 +672,13 @@ function startStatusPolling() {
       if (status.ok) {
         realtimeState.isMonitoring = status.is_monitoring
         realtimeState.messageCount = status.message_count || 0
+        
+        // 根据后端模型就绪状态更新前端状态
+        if (realtimeState.status === 'loading_model' && status.model_ready) {
+          realtimeState.status = 'monitoring'
+        }
+        
+        // 如果后端状态变为未监听，同步前端
         if (!status.is_monitoring && realtimeState.status === 'monitoring') {
           stopStatusPolling()
           realtimeState.status = 'idle'

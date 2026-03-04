@@ -53,11 +53,23 @@ class RealtimeMonitorService:
                 'trigger_mode': 'semi_auto',    # full_auto / semi_auto / manual
                 'intent': 'maintain',           # intimate / maintain / distance
                 'auto_rate_limit': 10,          # 全自动模式更新频率上限（秒）
-                'engine_type': 'template',      # template / local_llm / cloud_api
+                'engine_type': 'template',      # template / llm
             }
+            # 检查数据库是否有已激活的 LLM 模型，自动切换引擎类型
+            try:
+                from ...db.connection import get_db
+                conn = get_db()
+                row = conn.execute(
+                    'SELECT id FROM llm_models WHERE is_active = 1 LIMIT 1'
+                ).fetchone()
+                if row:
+                    self._suggestion_config['engine_type'] = 'llm'
+                    _print("[RealtimeMonitorService] 检测到已激活 LLM 模型，引擎类型设为 llm")
+            except Exception:
+                pass  # 表不存在或数据库未就绪，保持默认 template
             self._last_auto_suggestion_time = 0
             self._initialized = True
-            _print("[RealtimeMonitorService] 服务已初始化")
+            _print(f"[RealtimeMonitorService] 服务已初始化，引擎类型: {self._suggestion_config['engine_type']}")
     
     def start_monitoring(
         self, 

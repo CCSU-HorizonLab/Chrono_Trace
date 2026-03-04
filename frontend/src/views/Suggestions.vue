@@ -544,7 +544,9 @@ async function startMonitoring() {
       realtimeState.isMonitoring = true
       
       startStatusPolling()
-      startMessagesPolling()  // 新增:开始消息轮询
+      startMessagesPolling()
+      startSuggestionsPolling()  // 启动建议轮询（每3秒查询待处理建议）
+      loadSuggestionConfig()    // 加载建议配置（触发模式、走向等）
     } else {
       realtimeState.status = 'idle'
       realtimeError.value = result.error || result.message || '启动监听失败'

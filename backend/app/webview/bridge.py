@@ -203,15 +203,31 @@ class Bridge:
             from ..services.realtime.suggestion_engine import SuggestionEngineFactory
             from ..services.realtime.monitor_service import RealtimeMonitorService
 
-            # 获取引擎类型（默认 template）
-            engine_type = self.settings.get("suggestion_engine", "template")
+            monitor = RealtimeMonitorService()
+
+            # 从 MonitorService 的配置中读取引擎类型（而非 settings.json）
+            engine_type = monitor._suggestion_config.get('engine_type', 'template')
             engine = SuggestionEngineFactory.create(engine_type)
+
+            print(f"[Bridge] generate_suggestion: engine_type={engine_type}, intent={intent}")
+
+            # 自动补充上下文：情绪摘要
+            if 'emotion_summary' not in context and monitor.emotion_tracker:
+                context['emotion_summary'] = monitor.emotion_tracker.get_emotion_summary()
+
+            # 自动补充上下文：最近消息
+            if 'recent_messages' not in context and monitor.current_batch_id:
+                try:
+                    from ..services.realtime.message_query import get_messages_with_sentiment
+                    recent = get_messages_with_sentiment(monitor.current_batch_id, 50)
+                    context['recent_messages'] = recent
+                except Exception as e:
+                    print(f"[Bridge] 获取最近消息失败: {e}")
 
             # 获取触发类型，默认通过 tracker 状态推断
             trigger_type = context.get("trigger_type")
             if not trigger_type:
                 # 从 Tracker 获取当前情绪摘要来推断
-                monitor = RealtimeMonitorService()
                 if hasattr(monitor, 'emotion_tracker') and monitor.emotion_tracker:
                     summary = monitor.emotion_tracker.get_emotion_summary()
                     if summary['trend'] == 'negative':

@@ -87,36 +87,52 @@ class LLMSuggestionEngine(SuggestionEngine):
         """
         context = context or {}
 
+        _print(f"\n{'='*60}")
+        _print(f"[LLM Engine] 开始生成建议 | 触发: {trigger_type} | 走向: {intent}")
+        _print(f"{'='*60}")
+
         # 获取激活的模型配置
         model_config = self._get_active_model()
         if not model_config:
-            _print("[LLM Engine] 未配置激活模型，降级到模板引擎")
+            _print("❌ [LLM Engine] 未配置激活模型！请在设置页添加并激活一个 LLM 模型")
+            _print("❌ [LLM Engine] 降级使用模板引擎")
             return self._fallback(trigger_type, intent, context)
+
+        _print(f"[LLM Engine] 使用模型: {model_config.get('name')} ({model_config.get('model_id')})")
+        _print(f"[LLM Engine] API URL: {model_config.get('api_base_url')}")
 
         # 构造 prompt
         user_prompt = self._build_prompt(trigger_type, intent, context)
+        _print(f"[LLM Engine] 📤 发送 prompt ({len(user_prompt)} 字符)")
 
         try:
             # 调用 API
             response_text = self._call_api(model_config, user_prompt)
+            _print(f"[LLM Engine] 📥 收到响应 ({len(response_text)} 字符):")
+            _print(f"[LLM Engine] 响应内容: {response_text[:300]}")
 
             # 解析响应
             result = self._parse_response(response_text, trigger_type, intent)
             if result:
-                _print(f"[LLM Engine] ✅ 生成成功: {result.summary[:30]}...")
+                _print(f"[LLM Engine] ✅ LLM 生成成功!")
+                _print(f"[LLM Engine] 摘要: {result.summary}")
+                _print(f"[LLM Engine] 话术: {result.speeches}")
+                _print(f"{'='*60}\n")
                 return result
             else:
-                _print("[LLM Engine] ⚠️ 响应解析失败，降级到模板引擎")
+                _print("❌ [LLM Engine] 响应解析失败 → 降级模板引擎")
                 return self._fallback(trigger_type, intent, context)
 
         except urllib.error.URLError as e:
-            _print(f"[LLM Engine] ⚠️ 网络错误: {e}，降级到模板引擎")
+            _print(f"❌ [LLM Engine] 网络错误: {e} → 降级模板引擎")
             return self._fallback(trigger_type, intent, context)
         except TimeoutError:
-            _print(f"[LLM Engine] ⚠️ 请求超时({self.timeout}s)，降级到模板引擎")
+            _print(f"❌ [LLM Engine] 请求超时({self.timeout}s) → 降级模板引擎")
             return self._fallback(trigger_type, intent, context)
         except Exception as e:
-            _print(f"[LLM Engine] ⚠️ 未知错误: {e}，降级到模板引擎")
+            _print(f"❌ [LLM Engine] 错误: {e} → 降级模板引擎")
+            import traceback
+            traceback.print_exc()
             return self._fallback(trigger_type, intent, context)
 
     def _get_active_model(self) -> Optional[dict]:
@@ -237,10 +253,16 @@ class LLMSuggestionEngine(SuggestionEngine):
 
         req = urllib.request.Request(url, data=data, headers=headers, method="POST")
 
-        _print(f"[LLM Engine] 调用 {model_config['name']} ({model_id})...")
+        _print(f"[LLM Engine] 📤 POST {url}")
+        _print(f"[LLM Engine] 📤 model={model_id}, temp={temperature}, max_tokens={max_tokens}")
 
+        start_time = time.time()
         with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            status_code = resp.status
             body = json.loads(resp.read().decode("utf-8"))
+        elapsed = time.time() - start_time
+
+        _print(f"[LLM Engine] 📥 HTTP {status_code} ({elapsed:.2f}s)")
 
         # 提取生成文本
         choices = body.get("choices", [])
@@ -250,8 +272,9 @@ class LLMSuggestionEngine(SuggestionEngine):
         content = choices[0].get("message", {}).get("content", "")
         usage = body.get("usage", {})
         _print(
-            f"[LLM Engine] tokens: prompt={usage.get('prompt_tokens', '?')}, "
-            f"completion={usage.get('completion_tokens', '?')}"
+            f"[LLM Engine] 📥 tokens: prompt={usage.get('prompt_tokens', '?')}, "
+            f"completion={usage.get('completion_tokens', '?')}, "
+            f"total={usage.get('total_tokens', '?')}"
         )
 
         return content.strip()

@@ -707,7 +707,7 @@ function startMessagesPolling() {
         // 新消息时自动滚动到底部
         if (realtimeState.messages.length > prevLen && messagesScrollRef.value) {
           nextTick(() => {
-            messagesScrollRef.value!.scrollTop = messagesScrollRef.value!.scrollHeight
+            messagesScrollRef.value!.scrollTop = 0
           })
         }
       }

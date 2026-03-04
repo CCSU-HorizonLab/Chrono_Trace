@@ -31,7 +31,7 @@ def get_messages_with_sentiment(batch_id: str, limit: int = 50):
             s.rules_applied
         FROM realtime_message_buffer m
         LEFT JOIN realtime_sentiment_cache s ON m.message_hash = s.message_id
-        WHERE m.batch_id = ?
+        WHERE m.batch_id = ? AND m.sender_attr != 'system'
         ORDER BY m.timestamp DESC
         LIMIT ?
     """, (batch_id, limit))

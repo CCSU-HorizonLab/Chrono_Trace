@@ -71,31 +71,41 @@ class RealtimeSentimentService:
         return self._model is not None
     
     def _load_model(self):
-        """延迟加载已训练好的中文情感分析模型"""
+        """延迟加载微调后的中文情感3分类模型"""
         if self._model is None:
             try:
                 from transformers import AutoTokenizer, AutoModelForSequenceClassification
                 import torch
+                from pathlib import Path
                 
-                print("[实时情感分析] 正在加载预训练情感分析模型...")
+                print("[实时情感分析] 正在加载情感分析模型...")
                 
-                # 使用已经训练好的中文情感分析模型
+                # 微调后的3分类中文情感模型
                 # 模型信息:
-                # - 名称: Erlangshen-Roberta-110M-Sentiment
-                # - 参数量: 110M (约450MB)
-                # - 任务: 中文情感三分类(负面/中性/正面)
-                # - 来源: IDEA研究院
-                model_name = "IDEA-CCNL/Erlangshen-Roberta-110M-Sentiment"
+                # - 基座: hfl/chinese-roberta-wwm-ext
+                # - 参数量: 102M (约400MB)
+                # - 任务: 中文情感三分类(0=负面, 1=正面, 2=中性)
+                # - 训练数据: 微信聊天风格文本
+                # - 托管: HuggingFace Hub (首次自动下载,后续从缓存加载)
                 
-                print(f"[实时情感分析] 下载模型 (首次使用约450MB,后续从缓存加载)...")
-                self._tokenizer = AutoTokenizer.from_pretrained(model_name)
-                self._model = AutoModelForSequenceClassification.from_pretrained(model_name)
+                # 加载优先级: 本地训练目录 > HuggingFace Hub(自动缓存)
+                local_model_dir = Path(__file__).parent.parent.parent.parent / 'data' / 'models' / 'sentiment_3class'
+                
+                if local_model_dir.exists():
+                    model_path = str(local_model_dir)
+                    print(f"[实时情感分析] 使用本地模型: {model_path}")
+                else:
+                    model_path = "tingting11/chrono-trace-sentiment"
+                    print(f"[实时情感分析] 从HuggingFace加载模型 (首次约400MB,后续秒开)")
+                
+                self._tokenizer = AutoTokenizer.from_pretrained(model_path)
+                self._model = AutoModelForSequenceClassification.from_pretrained(model_path)
                 
                 # 设置为评估模式
                 self._model.eval()
                 
-                print(f"[实时情感分析] 模型加载成功: {model_name}")
-                print(f"[实时情感分析] 设备: CPU | 参数量: 110M")
+                num_labels = self._model.config.num_labels
+                print(f"[实时情感分析] 模型加载成功 | 分类数: {num_labels} | 设备: CPU")
                 
             except ImportError:
                 print("[实时情感分析] 警告: transformers未安装")
@@ -103,7 +113,6 @@ class RealtimeSentimentService:
                 raise
             except Exception as e:
                 print(f"[实时情感分析] 模型加载失败: {e}")
-                print("提示: 首次使用需要下载模型,请确保网络连接正常")
                 raise
     
     # ========== 预处理 ==========
@@ -252,48 +261,23 @@ class RealtimeSentimentService:
             # 转换为numpy
             probs = probabilities.cpu().numpy().tolist()
             
-            # Erlangshen模型是2分类: [负面概率, 正面概率]
-            # 需要映射到3分类系统
-            if len(probs) == 2:
-                # 2分类模型
-                neg_prob = probs[0]  # 负面概率
-                pos_prob = probs[1]  # 正面概率
-                
-                # 计算原始分数(-1到1)
-                raw_score = pos_prob - neg_prob
-                
-                # 确定极性
-                # 如果差异不明显(阈值0.3),判定为中性
-                if abs(raw_score) < 0.3:
-                    polarity = 0  # 中性
-                    confidence = 1.0 - abs(raw_score) / 0.3  # 越接近0.3,置信度越低
-                elif raw_score > 0:
-                    polarity = 1  # 正面
-                    confidence = pos_prob
-                else:
-                    polarity = -1  # 负面
-                    confidence = neg_prob
-                
-                # 构造3分类概率(用于兼容性)
-                neu_prob = max(0, 0.3 - abs(raw_score)) / 0.3  # 中性概率
-                probs_3class = [
-                    neg_prob * (1 - neu_prob),  # 负面
-                    neu_prob,                     # 中性
-                    pos_prob * (1 - neu_prob)     # 正面
-                ]
-                
+            # 3分类模型: [负面(0), 正面(1), 中性(2)]
+            predicted_class = probabilities.argmax().item()
+            confidence = probabilities.max().item()
+            
+            # 映射到极性: 0→-1(负面), 1→1(正面), 2→0(中性)
+            polarity_map = {0: -1, 1: 1, 2: 0}
+            polarity = polarity_map.get(predicted_class, 0)
+            
+            # 计算原始分数(-1到1)
+            # 正面概率 - 负面概率,中性不参与计算
+            if len(probs) >= 3:
+                raw_score = probs[1] - probs[0]
             else:
-                # 3分类模型(备用逻辑)
-                predicted_class = probabilities.argmax().item()
-                confidence = probabilities.max().item()
-                
-                # 转换为-1/0/1
-                polarity_map = {0: -1, 1: 0, 2: 1}
-                polarity = polarity_map.get(predicted_class, 0)
-                
-                # 计算原始分数(-1到1)
-                raw_score = probs[2] - probs[0] if len(probs) >= 3 else 0.0
-                probs_3class = probs
+                raw_score = 0.0
+            
+            # 归一化为标准3分类概率格式 [负面, 中性, 正面]
+            probs_3class = [probs[0], probs[2] if len(probs) >= 3 else 0.0, probs[1] if len(probs) >= 2 else 0.0]
             
             return {
                 'polarity': polarity,

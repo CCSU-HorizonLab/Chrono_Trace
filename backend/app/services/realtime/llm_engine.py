@@ -183,6 +183,26 @@ class LLMSuggestionEngine(SuggestionEngine):
         intent_desc = INTENT_DESCRIPTIONS.get(intent, intent)
         parts.append(f"【用户目标】{intent_desc}")
 
+        # 联系人画像（如有）
+        profile = context.get("contact_profile")
+        if profile:
+            parts.append("【联系人画像】")
+            tags = profile.get("personality_tags", [])
+            if tags:
+                parts.append(f"  性格标签: {', '.join(tags)}")
+            style = profile.get("chat_style", "")
+            if style:
+                parts.append(f"  聊天风格: {style}")
+            interests = profile.get("interests", [])
+            if interests:
+                parts.append(f"  兴趣话题: {', '.join(interests)}")
+            tips = profile.get("communication_tips", "")
+            if tips:
+                parts.append(f"  沟通注意: {tips}")
+            note = profile.get("relationship_note", "")
+            if note:
+                parts.append(f"  关系状态: {note}")
+
         # 情绪摘要
         emotion = context.get("emotion_summary")
         if emotion:

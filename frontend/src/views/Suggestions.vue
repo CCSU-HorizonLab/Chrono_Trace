@@ -349,16 +349,46 @@
             <div class="avatar" aria-hidden="true">{{ profileInitial }}</div>
             <div class="meta">
               <div class="name">{{ profile.name || '未命名对象' }}</div>
-              <div class="tags" v-if="profile.tags && profile.tags.length">
-                <span v-for="t in profile.tags" :key="t">{{ t }}</span>
+              <!-- AI 画像标签 -->
+              <div class="tags" v-if="profile.personality_tags?.length">
+                <span v-for="t in profile.personality_tags" :key="t">{{ t }}</span>
               </div>
-              <div class="stats">
-                <div>近7天互动：{{ profile.stats?.interactions7d ?? '-' }}</div>
-                <div>平均响应：{{ profile.stats?.avgLatency ?? '-' }}</div>
+              <!-- 无画像时的旧标签 -->
+              <div class="tags" v-else-if="profile.tags?.length">
+                <span v-for="t in profile.tags" :key="t">{{ t }}</span>
               </div>
             </div>
           </div>
-          <div class="note" v-if="profile.note">{{ profile.note }}</div>
+          <!-- AI 画像详情 -->
+          <div v-if="profile.chat_style" class="profile-detail">
+            <div class="detail-item">
+              <span class="detail-label">💬 聊天风格</span>
+              <span class="detail-text">{{ profile.chat_style }}</span>
+            </div>
+            <div class="detail-item" v-if="profile.interests?.length">
+              <span class="detail-label">🎯 兴趣话题</span>
+              <span class="detail-text">{{ profile.interests.join('、') }}</span>
+            </div>
+            <div class="detail-item" v-if="profile.communication_tips">
+              <span class="detail-label">📌 沟通注意</span>
+              <span class="detail-text">{{ profile.communication_tips }}</span>
+            </div>
+            <div class="detail-item" v-if="profile.relationship_note">
+              <span class="detail-label">💡 关系状态</span>
+              <span class="detail-text">{{ profile.relationship_note }}</span>
+            </div>
+          </div>
+          <!-- 无画像提示 -->
+          <div v-else-if="!profileLoading" class="profile-empty">
+            <span>暂无 AI 画像</span>
+            <button
+              v-if="realtimeState.talkerName"
+              class="btn-sm"
+              @click="showProfileDialog = true"
+              :disabled="profileLoading"
+            >生成画像</button>
+          </div>
+          <div v-if="profileLoading" class="profile-loading">画像生成中...</div>
         </div>
 
         <!-- 情绪分析（饼图） -->
@@ -372,6 +402,44 @@
       </div>
     </div>
   </section>
+
+  <!-- 画像生成确认弹窗 -->
+  <Teleport to="body">
+    <div v-if="showProfileDialog" class="ct-modal-overlay" @click.self="showProfileDialog = false">
+      <div class="ct-modal-dialog">
+        <div class="modal-title">🧠 生成联系人画像</div>
+        <div class="modal-desc">
+          将使用 LLM 分析「{{ realtimeState.talkerName }}」的历史聊天，生成对方画像。
+        </div>
+        <div class="modal-field">
+          <label>Token 预算档位</label>
+          <div class="budget-options">
+            <label v-for="opt in [
+              { value: 'low', label: '低 (~2K)', desc: '粗略画像' },
+              { value: 'medium', label: '中 (~4K)', desc: '推荐' },
+              { value: 'high', label: '高 (~8K)', desc: '精细画像' },
+              { value: 'custom', label: '自定义', desc: '' },
+            ]" :key="opt.value" class="budget-option" :class="{ active: profileBudgetLevel === opt.value }">
+              <input type="radio" :value="opt.value" v-model="profileBudgetLevel" />
+              <span class="budget-label">{{ opt.label }}</span>
+              <span class="budget-desc" v-if="opt.desc">{{ opt.desc }}</span>
+            </label>
+          </div>
+          <div v-if="profileBudgetLevel === 'custom'" class="custom-budget">
+            <input type="number" v-model.number="profileCustomBudget" min="500" max="50000" step="500" />
+            <span class="unit">tokens</span>
+          </div>
+        </div>
+        <div class="modal-info">
+          预估消耗: ~{{ profileEstimatedTokens || '计算中' }} tokens
+        </div>
+        <div class="modal-actions">
+          <button class="ct-btn variant-ghost" @click="showProfileDialog = false">取消</button>
+          <button class="ct-btn primary" @click="generateContactProfile">确认生成</button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
@@ -545,8 +613,9 @@ async function startMonitoring() {
       
       startStatusPolling()
       startMessagesPolling()
-      startSuggestionsPolling()  // 启动建议轮询（每3秒查询待处理建议）
-      loadSuggestionConfig()    // 加载建议配置（触发模式、走向等）
+      startSuggestionsPolling()  // 启动建议轮询
+      loadSuggestionConfig()    // 加载建议配置
+      checkContactProfile(talkerName)  // 检查联系人画像
     } else {
       realtimeState.status = 'idle'
       realtimeError.value = result.error || result.message || '启动监听失败'
@@ -747,13 +816,70 @@ function stopSuggestionsPolling() {
 
 // ========== 原有逻辑 ==========
 
-const profile = ref<{ name?: string; tags?: string[]; stats?: any; note?: string }>({
+const profile = ref<any>({
   name: '对方昵称',
-  tags: ['朋友'],
-  stats: { interactions7d: 12, avgLatency: '15m' },
-  note: '最近工作压力大，回复不稳定。'
+  tags: [],
 })
 const profileInitial = computed(() => (profile.value.name ? profile.value.name[0] : 'N'))
+const profileLoading = ref(false)
+const showProfileDialog = ref(false)
+const profileBudgetLevel = ref('medium')
+const profileCustomBudget = ref(4000)
+const profileEstimatedTokens = ref(0)
+
+// 检查联系人画像
+async function checkContactProfile(displayName: string) {
+  try {
+    await bridgeReady()
+    const r = await api.get_contact_profile(displayName)
+    if (r.ok) {
+      profileEstimatedTokens.value = r.estimated_tokens || 0
+      if (r.has_profile && !r.expired) {
+        // 有有效缓存 → 直接展示
+        profile.value = { name: displayName, ...r.profile }
+      } else {
+        // 无缓存或已过期 → 弹窗询问
+        profile.value = { name: displayName, tags: [] }
+        showProfileDialog.value = true
+      }
+    }
+  } catch (e) {
+    console.error('检查画像失败:', e)
+  }
+}
+
+// 生成联系人画像
+async function generateContactProfile() {
+  showProfileDialog.value = false
+  profileLoading.value = true
+  try {
+    await bridgeReady()
+    const r = await api.generate_contact_profile(
+      realtimeState.talkerName,
+      profileBudgetLevel.value,
+      profileBudgetLevel.value === 'custom' ? profileCustomBudget.value : 0
+    )
+    if (r.ok && r.profile) {
+      profile.value = { name: realtimeState.talkerName, ...r.profile }
+    } else {
+      console.error('画像生成失败:', r.error)
+      profile.value = {
+        name: realtimeState.talkerName,
+        tags: [],
+        relationship_note: `⚠️ ${r.error || '画像生成失败'}`,
+      }
+    }
+  } catch (e: any) {
+    console.error('生成画像失败:', e)
+    profile.value = {
+      name: realtimeState.talkerName,
+      tags: [],
+      relationship_note: `⚠️ ${e?.message || '画像生成异常'}`,
+    }
+  } finally {
+    profileLoading.value = false
+  }
+}
 
 const emotions = ref<{ name: string; value: number }[]>([
   { name: '积极', value: 40 },
@@ -1310,4 +1436,167 @@ function getTriggerIcon(type: string): string {
   .grid { grid-template-columns: 1fr; }
   .monitor-control { flex-direction: column; align-items: stretch; }
 }
+
+/* 画像详情 */
+.profile-detail {
+  padding: var(--ct-space-sm) var(--ct-space-md);
+  border-top: 1px solid var(--ct-border);
+}
+.detail-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--ct-space-xs) 0;
+}
+.detail-item + .detail-item { border-top: 1px solid var(--ct-border-light, rgba(255,255,255,0.04)); }
+.detail-label {
+  font-size: var(--ct-text-xs);
+  color: var(--ct-text-tertiary);
+  font-weight: var(--ct-font-medium);
+}
+.detail-text {
+  font-size: var(--ct-text-sm);
+  color: var(--ct-text-secondary);
+  line-height: 1.5;
+}
+.profile-empty {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--ct-space-sm) var(--ct-space-md);
+  font-size: var(--ct-text-sm);
+  color: var(--ct-text-tertiary);
+}
+.profile-loading {
+  padding: var(--ct-space-sm) var(--ct-space-md);
+  font-size: var(--ct-text-sm);
+  color: var(--ct-color-primary);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+.btn-sm {
+  padding: 4px 12px;
+  font-size: var(--ct-text-xs);
+  border-radius: var(--ct-radius-sm);
+  border: 1px solid var(--ct-color-primary);
+  color: var(--ct-color-primary);
+  background: transparent;
+  cursor: pointer;
+  transition: all var(--ct-transition-fast);
+}
+.btn-sm:hover { background: var(--ct-color-primary-light); }
+.btn-sm:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* 弹窗 */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(4px);
+}
+.modal-box {
+  background: var(--ct-bg-card, #1e1e2e);
+  border: 1px solid var(--ct-border);
+  border-radius: var(--ct-radius-lg, 12px);
+  padding: var(--ct-space-lg, 24px);
+  width: min(420px, 90vw);
+  box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+}
+.modal-title {
+  font-size: var(--ct-text-lg, 18px);
+  font-weight: var(--ct-font-semibold, 600);
+  margin-bottom: var(--ct-space-sm, 8px);
+}
+.modal-desc {
+  font-size: var(--ct-text-sm);
+  color: var(--ct-text-secondary);
+  margin-bottom: var(--ct-space-md, 16px);
+  line-height: 1.5;
+}
+.modal-field { margin-bottom: var(--ct-space-md, 16px); }
+.modal-field > label {
+  display: block;
+  font-size: var(--ct-text-sm);
+  font-weight: var(--ct-font-medium);
+  margin-bottom: var(--ct-space-xs, 4px);
+  color: var(--ct-text-secondary);
+}
+.budget-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--ct-space-xs, 6px);
+}
+.budget-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: var(--ct-radius-sm, 6px);
+  border: 1px solid var(--ct-border);
+  cursor: pointer;
+  transition: all var(--ct-transition-fast);
+  font-size: var(--ct-text-sm);
+}
+.budget-option:hover { border-color: var(--ct-color-primary); }
+.budget-option.active {
+  border-color: var(--ct-color-primary);
+  background: var(--ct-color-primary-light);
+}
+.budget-option input[type="radio"] { display: none; }
+.budget-label { font-weight: var(--ct-font-medium); }
+.budget-desc { font-size: var(--ct-text-xs); color: var(--ct-text-tertiary); }
+.custom-budget {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: var(--ct-space-xs, 6px);
+}
+.custom-budget input {
+  width: 120px;
+  padding: 6px 10px;
+  border-radius: var(--ct-radius-sm, 6px);
+  border: 1px solid var(--ct-border);
+  background: var(--ct-bg-input, rgba(255,255,255,0.06));
+  color: var(--ct-text-primary);
+  font-size: var(--ct-text-sm);
+}
+.custom-budget .unit { font-size: var(--ct-text-xs); color: var(--ct-text-tertiary); }
+.modal-info {
+  font-size: var(--ct-text-sm);
+  color: var(--ct-text-tertiary);
+  margin-bottom: var(--ct-space-md, 16px);
+}
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--ct-space-sm, 8px);
+}
+.btn-cancel {
+  padding: 8px 20px;
+  border-radius: var(--ct-radius-sm, 6px);
+  border: 1px solid var(--ct-border);
+  background: transparent;
+  color: var(--ct-text-secondary);
+  cursor: pointer;
+  font-size: var(--ct-text-sm);
+}
+.btn-cancel:hover { background: rgba(255,255,255,0.05); }
+.btn-confirm {
+  padding: 8px 20px;
+  border-radius: var(--ct-radius-sm, 6px);
+  border: none;
+  background: var(--ct-color-primary);
+  color: white;
+  cursor: pointer;
+  font-size: var(--ct-text-sm);
+  font-weight: var(--ct-font-medium);
+}
+.btn-confirm:hover { filter: brightness(1.1); }
 </style>

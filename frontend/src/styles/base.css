@@ -38,3 +38,50 @@ body { margin: 0; background: var(--ct-bg); color: var(--ct-text); font-family: 
 .grid-1 { display: grid; grid-template-columns: 1fr; gap: 16px; }
 
 @media (max-width: 1024px) { .grid-2 { grid-template-columns: 1fr; } }
+
+/* ========================================
+   Teleport Modals
+   ======================================== */
+.ct-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+  backdrop-filter: blur(2px);
+}
+.ct-modal-dialog {
+  background: var(--ct-bg-primary);
+  border-radius: var(--ct-radius-lg);
+  padding: var(--ct-space-xl);
+  width: min(480px, 90vw);
+  box-shadow: var(--ct-shadow-lg);
+  display: flex;
+  flex-direction: column;
+}
+.ct-modal-dialog h3, .ct-modal-dialog .modal-title {
+  margin: 0 0 var(--ct-space-md);
+  color: var(--ct-color-primary);
+  font-size: var(--ct-text-lg);
+  font-weight: var(--ct-font-semibold);
+}
+.ct-modal-dialog .form, .ct-modal-dialog .modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ct-space-md);
+}
+.ct-modal-dialog .row, .ct-modal-dialog .modal-field {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: var(--ct-space-md);
+  align-items: center;
+}
+.ct-modal-dialog .lab { color: var(--ct-text-secondary); font-weight: var(--ct-font-medium); }
+.ct-modal-dialog .modal-actions, .ct-modal-dialog .form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--ct-space-sm);
+  margin-top: var(--ct-space-lg);
+}

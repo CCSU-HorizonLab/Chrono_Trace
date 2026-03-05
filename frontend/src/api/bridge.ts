@@ -31,6 +31,9 @@ type PyWebViewApi = {
   get_llm_models: () => Promise<any>
   save_llm_model: (model: Record<string, any>) => Promise<any>
   delete_llm_model: (model_id: number) => Promise<any>
+  // 联系人画像
+  get_contact_profile: (display_name: string) => Promise<any>
+  generate_contact_profile: (display_name: string, budget_level?: string, custom_budget?: number) => Promise<any>
   // 特征提取
   extract_features: (conversation_id: number, config?: Record<string, any>) => Promise<any>
   get_extraction_progress: (task_id: string) => Promise<any>

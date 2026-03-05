@@ -131,8 +131,8 @@
 
     <!-- 模型表单弹窗（放在根级别，避免 CtCard 内定位闪烁） -->
     <Teleport to="body">
-      <div v-if="showModelForm" class="model-form-overlay" @click.self="showModelForm = false">
-        <div class="model-form-dialog">
+      <div v-if="showModelForm" class="ct-modal-overlay" @click.self="showModelForm = false">
+        <div class="ct-modal-dialog">
           <h3>{{ editingModel.id ? '编辑模型' : '添加模型' }}</h3>
           <div class="form">
             <label class="row">
@@ -634,32 +634,3 @@ onMounted(() => {
 .add-model-btn { align-self: flex-start; }
 </style>
 
-<!-- 非 scoped 样式：Teleport 到 body 的弹窗需要全局样式 -->
-<style>
-.model-form-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 10000;
-}
-.model-form-dialog {
-  background: var(--ct-bg-primary);
-  border-radius: var(--ct-radius-lg);
-  padding: var(--ct-space-xl);
-  width: min(480px, 90vw);
-  box-shadow: var(--ct-shadow-lg);
-}
-.model-form-dialog h3 { margin: 0 0 var(--ct-space-md); color: var(--ct-color-primary); }
-.model-form-dialog .form { display: flex; flex-direction: column; gap: var(--ct-space-md); }
-.model-form-dialog .row { display: grid; grid-template-columns: 120px 1fr; gap: var(--ct-space-md); align-items: center; }
-.model-form-dialog .lab { color: var(--ct-text-secondary); }
-.form-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--ct-space-sm);
-  margin-top: var(--ct-space-lg);
-}
-</style>

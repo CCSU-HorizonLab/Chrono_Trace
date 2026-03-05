@@ -33,11 +33,13 @@ class RealtimeSentimentService:
     - rules_applied: 应用的规则列表
     """
     
-    def __init__(self):
+    def __init__(self, skip_db_init=False):
         self.db = get_db()
         self._model = None
         self._tokenizer = None
-        self._ensure_table_exists()
+        # 作为子服务调用时跳过建表，避免commit干扰主连接上的其他查询
+        if not skip_db_init:
+            self._ensure_table_exists()
         print("[实时情感分析] 服务已初始化")
     
     def _ensure_table_exists(self):
@@ -99,7 +101,10 @@ class RealtimeSentimentService:
                     print(f"[实时情感分析] 从HuggingFace加载模型 (首次约400MB,后续秒开)")
                 
                 self._tokenizer = AutoTokenizer.from_pretrained(model_path)
-                self._model = AutoModelForSequenceClassification.from_pretrained(model_path)
+                self._model = AutoModelForSequenceClassification.from_pretrained(
+                    model_path,
+                    low_cpu_mem_usage=False
+                ).to("cpu")
                 
                 # 设置为评估模式
                 self._model.eval()

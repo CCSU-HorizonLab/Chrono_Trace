@@ -12,6 +12,15 @@ from typing import List, Optional, Set
 from ...db.connection import get_db
 from .preprocessing_orchestrator import PreprocessedStatistics
 
+# ===== 调试开关：设为True时输出详细跟踪日志 =====
+DEBUG_TRACE = True
+
+def debug_log(msg: str):
+    """专门用于记录分析调试的物理日志"""
+    if DEBUG_TRACE:
+        from .affinity_debug_logger import affinity_debug_log
+        affinity_debug_log(msg)
+
 # 配置日志
 logger = logging.getLogger(__name__)
 
@@ -81,8 +90,13 @@ class PreferenceCompatibilityService:
         result = PreferenceCompatibilityResult()
         result.total_session_count = stats.total_sessions
         
+        debug_log(f"\n{'*'*40}")
+        debug_log(f"【喜好兼容度】开始计分 (会话 ID {conversation_id})")
+        debug_log(f"*[注] 该项占总分20%权重，自身包含2个子维度*")
+        
         # 如果没有喜好关键词，返回 0 分
         if not self.preference_keywords:
+            debug_log(f"[喜好兼容度调试] 未设置喜好关键词({conversation_id})，该维度不参与好感度评分(权重降为0)")
             logger.info(f"未设置喜好关键词,喜好维度权重为 0 (会话 {conversation_id})")
             result.interpretation = "未设置喜好关键词,该维度不参与好感度评分"
             return result
@@ -93,6 +107,9 @@ class PreferenceCompatibilityService:
         )
         result.preference_session_count = len(preference_sessions)
         result.matched_keywords = matched_keywords
+        debug_log(f"[喜好兼容度调试] 当前配置的喜好关键词: {self.preference_keywords}")
+        debug_log(f"[喜好兼容度调试] 命中喜好的会话数: {result.preference_session_count} / 总会话数: {stats.total_sessions}")
+        debug_log(f"[喜好兼容度调试] 实际匹配到的关键词: {matched_keywords}")
         
         # 1. 话题提及频率 (40%)
         result.topic_mention_frequency = self._calculate_topic_mention_raw(
@@ -101,6 +118,8 @@ class PreferenceCompatibilityService:
         result.topic_mention_score = self.calculate_topic_mention_score(
             len(preference_sessions), stats.total_sessions
         )
+        debug_log(f"\n[喜好兼容度调试] --- 1. 话题提及频率 (权重40%) ---")
+        debug_log(f"占比(频率): {result.topic_mention_frequency*100:.1f}% -> 得分: {result.topic_mention_score}")
         
         # 2. 喜好话题延续性 (60%)
         result.avg_continuity = self._calculate_topic_continuity_raw(
@@ -109,6 +128,8 @@ class PreferenceCompatibilityService:
         result.topic_continuity_score = self.calculate_topic_continuity_score(
             conversation_id, preference_sessions
         )
+        debug_log(f"\n[喜好兼容度调试] --- 2. 喜好话题延续性 (权重60%) ---")
+        debug_log(f"包含喜好的会话的平均相关度: {result.avg_continuity:.3f} -> 得分: {result.topic_continuity_score}")
         
         # 综合评分
         result.overall_score = self._calculate_overall_score(result)
@@ -140,20 +161,55 @@ class PreferenceCompatibilityService:
             return [], []
         
         try:
-            # 从 speech_units 表查找包含关键词的内容
-            # 然后关联到会话
+            import json
+            
             preference_session_ids: Set[int] = set()
             matched_keywords: Set[str] = set()
             
-            # 获取所有会话的发言单元
+            # 第一步：获取所有发言单元的 message_ids
             cursor = self.db.execute("""
-                SELECT su.id, su.content, su.start_timestamp
+                SELECT su.id, su.message_ids, su.first_message_timestamp
                 FROM speech_units su
                 WHERE su.conversation_id = ?
-                ORDER BY su.start_timestamp ASC
+                ORDER BY su.first_message_timestamp ASC
             """, (conversation_id,))
-            
             speech_units = cursor.fetchall()
+            
+            # 第二步：收集所有 message_id 并批量查消息内容
+            all_msg_ids = []
+            unit_msg_map = {}  # {unit_id: [msg_id, ...]}
+            for unit in speech_units:
+                try:
+                    msg_ids = json.loads(unit[1])
+                    if msg_ids:
+                        unit_msg_map[unit[0]] = msg_ids
+                        all_msg_ids.extend(msg_ids)
+                except:
+                    pass
+            
+            # 批量查询消息内容
+            msg_content_map = {}
+            if all_msg_ids:
+                placeholders = ','.join('?' * len(all_msg_ids))
+                cursor = self.db.execute(f"""
+                    SELECT id, content FROM messages WHERE id IN ({placeholders})
+                """, all_msg_ids)
+                for row in cursor.fetchall():
+                    content = row[1]
+                    if isinstance(content, bytes):
+                        try:
+                            content = content.decode('utf-8', errors='replace')
+                        except:
+                            content = ""
+                    msg_content_map[row[0]] = content or ""
+            
+            # 第三步：组装发言单元内容并匹配关键词
+            unit_contents = {}  # {unit_id: "拼接后的内容"}
+            for unit in speech_units:
+                unit_id = unit[0]
+                msg_ids = unit_msg_map.get(unit_id, [])
+                content = " ".join(msg_content_map.get(mid, "") for mid in msg_ids)
+                unit_contents[unit_id] = content
             
             # 获取会话边界信息
             cursor = self.db.execute("""
@@ -161,39 +217,29 @@ class PreferenceCompatibilityService:
                 FROM sessions
                 WHERE conversation_id = ?
             """, (conversation_id,))
-            
             sessions = cursor.fetchall()
             
             # 如果没有会话表，使用简化逻辑
             if not sessions:
-                # 直接检查发言单元内容
-                for unit in speech_units:
-                    unit_id, content, _ = unit
-                    content_lower = (content or "").lower()
-                    
+                for unit_id, content in unit_contents.items():
+                    content_lower = content.lower()
                     for keyword in self.preference_keywords:
                         if keyword.lower() in content_lower:
-                            # 使用发言单元 ID 作为会话标识
                             preference_session_ids.add(unit_id)
                             matched_keywords.add(keyword)
-                
                 return list(preference_session_ids), list(matched_keywords)
             
-            # 有会话表，检查每个会话的发言单元
+            # 有会话表，检查每个会话
             for session in sessions:
                 session_id, start_unit_id, end_unit_id = session
-                
-                # 获取该会话内的发言单元
-                for unit in speech_units:
-                    unit_id, content, _ = unit
+                for unit_id, content in unit_contents.items():
                     if start_unit_id <= unit_id <= end_unit_id:
-                        content_lower = (content or "").lower()
-                        
+                        content_lower = content.lower()
                         for keyword in self.preference_keywords:
                             if keyword.lower() in content_lower:
                                 preference_session_ids.add(session_id)
                                 matched_keywords.add(keyword)
-                                break  # 找到一个关键词就标记该会话
+                                break
             
             return list(preference_session_ids), list(matched_keywords)
             

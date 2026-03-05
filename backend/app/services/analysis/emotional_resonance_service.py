@@ -6,6 +6,9 @@
 3. 情绪强度匹配度 (10%权重)
 4. 共情意图识别率 (30%权重)
 5. 负面情绪协同化解率 (25%权重)
+
+注意: 负面化解率现在考虑负面方向判定，
+"对他人"的负面倾诉不计入需要化解的分母。
 """
 
 import math
@@ -13,6 +16,16 @@ from typing import Dict, Any, List, Optional
 from ...db.connection import get_db
 from .preprocessing_orchestrator import PreprocessingOrchestrator
 from .keyword_libraries import KeywordLibraries
+from .negative_direction_service import NegativeDirectionService
+
+# ===== 调试开关：设为True时输出详细跟踪日志 =====
+DEBUG_TRACE = True
+
+def debug_log(msg: str):
+    """专门用于记录分析调试的物理日志"""
+    if DEBUG_TRACE:
+        from .affinity_debug_logger import affinity_debug_log
+        affinity_debug_log(msg)
 
 
 class EmotionalResonanceService:
@@ -22,6 +35,7 @@ class EmotionalResonanceService:
         self.db = get_db()
         self.orchestrator = PreprocessingOrchestrator()
         self.keyword_lib = KeywordLibraries()
+        self.direction_service = NegativeDirectionService()
     
     def calculate_bidirectional_positive_response(
         self,
@@ -55,6 +69,11 @@ class EmotionalResonanceService:
         )
         
         rate = (positive_positive_count / total_positive_count) * 100
+        
+        debug_log(f"\n[情感共振调试] --- 1. 双向积极情感响应率 (权重20%) ---")
+        debug_log(f"总积极消息数: {total_positive_count}, 积极-积极响应对数: {positive_positive_count}")
+        debug_log(f"响应率: {rate:.1f}%")
+        
         return round(rate, 2)
     
     def calculate_polarity_consistency(
@@ -98,6 +117,10 @@ class EmotionalResonanceService:
         # 极性一致性得分
         score = ratio * avg_similarity
         
+        debug_log(f"\n[情感共振调试] --- 2. 情感极性一致性 (权重15%) ---")
+        debug_log(f"同极性交互对数: {len(same_polarity_pairs)} / 交互对总数: {len(pairs)} (比例: {ratio*100:.1f}%)")
+        debug_log(f"同极性平均语义相似度: {avg_similarity:.3f} -> 一致性得分: {score*100:.2f}")
+        
         # 转换为百分制
         return round(score * 100, 2)
     
@@ -134,6 +157,9 @@ class EmotionalResonanceService:
         
         # 使用tanh归一化到0-1
         normalized_score = math.tanh(raw_score)
+        
+        debug_log(f"\n[情感共振调试] --- 3. 情绪强度匹配度 (权重10%) ---")
+        debug_log(f"平均强度差异(mean_abs_diff): {mean_abs_diff:.3f} -> 归一化得分: {normalized_score*100:.2f}")
         
         # 转换为百分制
         return round(normalized_score * 100, 2)
@@ -173,6 +199,11 @@ class EmotionalResonanceService:
         )
         
         rate = (empathy_count / total_messages) * 100
+        
+        debug_log(f"\n[情感共振调试] --- 4. 共情意图识别率 (权重30%) ---")
+        debug_log(f"包含共情关键词消息数: {empathy_count} / 总消息数: {total_messages}")
+        debug_log(f"识别率: {rate:.1f}%")
+        
         return round(rate, 2)
     
     def calculate_negative_resolution(
@@ -182,8 +213,13 @@ class EmotionalResonanceService:
         """
         计算负面情绪协同化解率 (25%权重)
         
-        公式: (共情回复数 / 负面发起的交互对数) × 100%
+        公式: (共情回复数 / 需要化解的负面交互对数) × 100%
         共情回复定义: 积极极性 AND 包含安抚关键词
+        
+        注意: 现在考虑负面方向判定：
+        - "对我"方向的负面需要化解
+        - "模糊"方向的负面也纳入化解统计
+        - "对他人"方向的负面是信任倾诉，不需要化解，不计入分母
         
         Args:
             conversation_id: 会话ID
@@ -202,6 +238,22 @@ class EmotionalResonanceService:
         if not negative_pairs:
             return 0.0
         
+        # 使用方向判定过滤：只保留"对我"和"模糊"方向的负面
+        # "对他人"的负面是倾诉行为，不需要化解
+        needs_resolution_pairs = []
+        for pair in negative_pairs:
+            from_content = pair.get('from_content', '')
+            if from_content:
+                direction_result = self.direction_service.classify(from_content)
+                if direction_result.direction != "to_others":
+                    needs_resolution_pairs.append(pair)
+            else:
+                # 无法获取内容时保守处理，纳入化解统计
+                needs_resolution_pairs.append(pair)
+        
+        if not needs_resolution_pairs:
+            return 100.0  # 所有负面都是倾诉性质，化解率满分
+        
         # 获取安抚关键词
         soothing_keywords = self.keyword_lib.get_keywords('soothing')
         
@@ -210,13 +262,18 @@ class EmotionalResonanceService:
         
         # 计算共情回复数
         empathetic_count = 0
-        for pair in negative_pairs:
+        for pair in needs_resolution_pairs:
             # 检查回复是否为积极 + 包含安抚词
             if pair['to_polarity'] == 1:
                 if self._contains_keywords(pair['to_content'], soothing_keywords):
                     empathetic_count += 1
         
-        rate = (empathetic_count / len(negative_pairs)) * 100
+        rate = (empathetic_count / len(needs_resolution_pairs)) * 100
+        
+        debug_log(f"\n[情感共振调试] --- 5. 负面情绪协同化解率 (权重25%) ---")
+        debug_log(f"需要化解的负面交互对数(排除'对他人'): {len(needs_resolution_pairs)}")
+        debug_log(f"其中包含安抚词的积极回复数: {empathetic_count} -> 化解率: {rate:.1f}%")
+        
         return round(rate, 2)
     
     def calculate_overall_resonance(
@@ -249,6 +306,11 @@ class EmotionalResonanceService:
                 "interpretation": 解释文本
             }
         """
+        
+        debug_log(f"\n{'*'*40}")
+        debug_log(f"【情感共振率】开始计分 (会话 ID {conversation_id})")
+        debug_log(f"*[注] 该项占总分30%权重，自身包含5个子维度*")
+        
         # 计算5个子维度
         bidirectional_rate = self.calculate_bidirectional_positive_response(conversation_id)
         polarity_score = self.calculate_polarity_consistency(conversation_id)
@@ -327,26 +389,103 @@ class EmotionalResonanceService:
                 from_intensity, 
                 to_intensity,
                 semantic_similarity,
-                to_speech_unit_id
+                to_speech_unit_id,
+                from_speech_unit_id
             FROM interaction_pairs
             WHERE conversation_id = ?
         """, (conversation_id,))
         
+        # 先把所有行取出来，避免后续嵌套查询导致游标冲突
+        rows = cursor.fetchall()
+        
+        # 收集所有需要查询的 speech_unit_id
+        all_unit_ids = set()
+        for row in rows:
+            if row[5]:  # to_speech_unit_id
+                all_unit_ids.add(row[5])
+            if row[6]:  # from_speech_unit_id
+                all_unit_ids.add(row[6])
+        
+        # 批量加载所有 speech_unit 的内容
+        unit_content_map = self._batch_get_speech_unit_contents(all_unit_ids)
+        
         pairs = []
-        for row in cursor.fetchall():
-            # 获取to_content (需要从speech_units表查询)
-            to_content = self._get_speech_unit_content(row[5])
-            
+        for row in rows:
             pairs.append({
                 'from_polarity': row[0],
                 'to_polarity': row[1],
                 'from_intensity': row[2],
                 'to_intensity': row[3],
                 'semantic_similarity': row[4],
-                'to_content': to_content
+                'to_content': unit_content_map.get(row[5], ""),
+                'from_content': unit_content_map.get(row[6], ""),
             })
         
         return pairs
+    
+    def _batch_get_speech_unit_contents(self, unit_ids: set) -> dict:
+        """
+        批量获取多个发言单元的内容
+        
+        避免在循环中逐条查询导致SQLite游标冲突
+        
+        Args:
+            unit_ids: 发言单元ID集合
+        
+        Returns:
+            {unit_id: content_text} 映射字典
+        """
+        import json
+        
+        if not unit_ids:
+            return {}
+        
+        result_map = {}
+        unit_id_list = list(unit_ids)
+        
+        # 第一步：批量获取所有 speech_unit 的 message_ids
+        placeholders = ','.join('?' * len(unit_id_list))
+        cursor = self.db.execute(f"""
+            SELECT id, message_ids FROM speech_units WHERE id IN ({placeholders})
+        """, unit_id_list)
+        
+        unit_msg_map = {}  # {unit_id: [msg_id1, msg_id2, ...]}
+        all_msg_ids = set()
+        
+        for row in cursor.fetchall():
+            try:
+                msg_ids = json.loads(row[1])
+                if msg_ids:
+                    unit_msg_map[row[0]] = msg_ids
+                    all_msg_ids.update(msg_ids)
+            except:
+                pass
+        
+        # 第二步：批量获取所有消息内容
+        msg_content_map = {}  # {msg_id: content}
+        if all_msg_ids:
+            msg_id_list = list(all_msg_ids)
+            placeholders = ','.join('?' * len(msg_id_list))
+            cursor = self.db.execute(f"""
+                SELECT id, content FROM messages WHERE id IN ({placeholders})
+            """, msg_id_list)
+            
+            for row in cursor.fetchall():
+                content = row[1]
+                if isinstance(content, bytes):
+                    try:
+                        content = content.decode('utf-8', errors='replace')
+                    except:
+                        content = ""
+                msg_content_map[row[0]] = content or ""
+        
+        # 第三步：组装结果
+        for unit_id in unit_id_list:
+            msg_ids = unit_msg_map.get(unit_id, [])
+            contents = [msg_content_map.get(mid, "") for mid in msg_ids]
+            result_map[unit_id] = " ".join(contents)
+        
+        return result_map
     
     def _get_speech_unit_content(self, speech_unit_id: int) -> str:
         """

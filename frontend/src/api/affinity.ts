@@ -1,6 +1,48 @@
 import { api } from './bridge'
 
-// Types
+// ===== 关系上下文 =====
+
+export interface RelationshipContext {
+    relationship_type: string
+    interaction_duration: string
+    communication_style: string
+    conversation_id: number
+    updated_at: number
+}
+
+export interface FieldOption {
+    value: string
+    label: string
+}
+
+export interface FieldOptions {
+    relationship_types: FieldOption[]
+    interaction_durations: FieldOption[]
+    communication_styles: FieldOption[]
+}
+
+/** 获取会话的关系上下文 */
+export async function getRelationshipContext(conversationId: number): Promise<{ context: RelationshipContext | null, has_context: boolean }> {
+    const res = await api.get_relationship_context(conversationId)
+    if (!res.ok) throw new Error(res.error || 'Failed to get relationship context')
+    return { context: res.context, has_context: res.has_context }
+}
+
+/** 保存关系上下文 */
+export async function saveRelationshipContext(conversationId: number, context: Partial<RelationshipContext>): Promise<RelationshipContext> {
+    const res = await api.save_relationship_context(conversationId, context)
+    if (!res.ok) throw new Error(res.error || 'Failed to save relationship context')
+    return res.context
+}
+
+/** 获取表单字段选项 */
+export async function getRelationshipFieldOptions(): Promise<FieldOptions> {
+    const res = await api.get_relationship_field_options()
+    if (!res.ok) throw new Error(res.error || 'Failed to get field options')
+    return res.options
+}
+
+// ===== 好感度分析 =====
 export interface SubScore {
     [key: string]: number
 }

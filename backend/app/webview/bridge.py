@@ -1459,6 +1459,72 @@ class Bridge:
 
     # ==================== 好感度分析相关 ====================
 
+    # -- 关系上下文 --
+
+    def get_relationship_context(self, conversation_id: int) -> dict[str, Any]:
+        """获取会话的关系上下文信息"""
+        try:
+            from ..services.analysis.relationship_context_service import (
+                RelationshipContextService
+            )
+            from dataclasses import asdict
+
+            service = RelationshipContextService()
+            ctx = service.get_context(conversation_id)
+
+            return {
+                "ok": True,
+                "context": asdict(ctx) if ctx else None,
+                "has_context": ctx is not None,
+            }
+        except Exception as e:
+            print(f"[Bridge] 获取关系上下文失败: {e}")
+            return {"ok": False, "error": str(e)}
+
+    def save_relationship_context(
+        self, conversation_id: int, context: dict
+    ) -> dict[str, Any]:
+        """保存会话的关系上下文信息"""
+        try:
+            from ..services.analysis.relationship_context_service import (
+                RelationshipContextService
+            )
+            from dataclasses import asdict
+
+            service = RelationshipContextService()
+            ctx = service.save_context(
+                conversation_id=conversation_id,
+                relationship_type=context.get("relationship_type", "friend"),
+                interaction_duration=context.get("interaction_duration", "1_to_6_months"),
+                communication_style=context.get("communication_style", "normal"),
+            )
+
+            return {
+                "ok": True,
+                "context": asdict(ctx),
+                "message": "关系信息已保存",
+            }
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
+        except Exception as e:
+            print(f"[Bridge] 保存关系上下文失败: {e}")
+            return {"ok": False, "error": str(e)}
+
+    def get_relationship_field_options(self) -> dict[str, Any]:
+        """获取关系信息表单的字段选项"""
+        try:
+            from ..services.analysis.relationship_context_service import (
+                RelationshipContextService
+            )
+
+            options = RelationshipContextService.get_field_options()
+            return {"ok": True, "options": options}
+        except Exception as e:
+            print(f"[Bridge] 获取字段选项失败: {e}")
+            return {"ok": False, "error": str(e)}
+
+    # -- 好感度配置 --
+
     def get_affinity_config(self, conversation_id: int) -> dict[str, Any]:
         """获取好感度分析配置 (T018)"""
         try:

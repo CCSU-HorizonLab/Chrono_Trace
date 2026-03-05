@@ -24,6 +24,13 @@
 
         <div class="actions">
           <CtButton 
+            @click="showContextForm = true" 
+            variant="ghost"
+            :disabled="!selectedConversationId"
+          >
+            关系信息
+          </CtButton>
+          <CtButton 
             @click="showKeywordsDialog = true" 
             variant="ghost"
             :disabled="!selectedConversationId"
@@ -31,7 +38,7 @@
             配置喜好关键词
           </CtButton>
           <CtButton 
-            @click="startAnalysis(false)" 
+            @click="handleStartAnalysis(false)" 
             :loading="isAnalyzing"
             :disabled="!selectedConversationId"
           >
@@ -40,7 +47,7 @@
           <CtButton 
             v-if="analysisResult"
             variant="ghost"
-            @click="startAnalysis(true)" 
+            @click="handleStartAnalysis(true)" 
             :disabled="!selectedConversationId || isAnalyzing"
           >
             重新分析
@@ -210,13 +217,21 @@
       :conversation-id="selectedConversationId"
       @updated="handleKeywordsUpdated"
     />
+
+    <!-- Relationship Context Form -->
+    <RelationshipContextForm
+      v-if="selectedConversationId"
+      v-model="showContextForm"
+      :conversation-id="selectedConversationId"
+      @saved="handleContextSaved"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { api } from '../api/bridge'
-import { analyzeAffinity, getAffinityScores, type AffinityAnalysisResult } from '../api/affinity'
+import { analyzeAffinity, getAffinityScores, getRelationshipContext, type AffinityAnalysisResult } from '../api/affinity'
 import CtCard from '@/components/base/CtCard.vue'
 import CtButton from '@/components/base/CtButton.vue'
 import AffinityScoreCard from '../components/affinity/AffinityScoreCard.vue'
@@ -224,6 +239,7 @@ import DimensionRadar from '../components/affinity/DimensionRadar.vue'
 import SubScoreBreakdown from '../components/affinity/SubScoreBreakdown.vue'
 import WeightInfoTooltip from '../components/affinity/WeightInfoTooltip.vue'
 import PreferenceKeywordsDialog from '../components/affinity/PreferenceKeywordsDialog.vue'
+import RelationshipContextForm from '../components/affinity/RelationshipContextForm.vue'
 
 interface Conversation {
   id: number
@@ -239,6 +255,8 @@ const progressStep = ref('')
 const analysisResult = ref<AffinityAnalysisResult | null>(null)
 const displayScore = ref(0) // Animated score
 const showKeywordsDialog = ref(false)
+const showContextForm = ref(false)
+const pendingAnalysisForce = ref(false) // 记录待执行分析的force参数
 
 // 计算是否有喜好关键词
 const hasPreferenceKeywords = computed(() => {
@@ -288,6 +306,31 @@ const onConversationChange = async () => {
     console.error('Failed to load scores', e)
     analysisResult.value = null
   }
+}
+
+// 点击"开始分析"时先检查是否填写了关系信息
+const handleStartAnalysis = async (force: boolean) => {
+  if (!selectedConversationId.value) return
+  
+  try {
+    const { has_context } = await getRelationshipContext(selectedConversationId.value)
+    if (!has_context) {
+      // 首次未填写 → 弹出表单
+      pendingAnalysisForce.value = force
+      showContextForm.value = true
+      return
+    }
+  } catch (e) {
+    console.warn('检查关系上下文失败，继续分析', e)
+  }
+  
+  // 已填写或检查失败 → 直接分析
+  startAnalysis(force)
+}
+
+// 关系信息表单保存后触发分析
+const handleContextSaved = () => {
+  startAnalysis(pendingAnalysisForce.value)
 }
 
 const startAnalysis = async (force: boolean) => {

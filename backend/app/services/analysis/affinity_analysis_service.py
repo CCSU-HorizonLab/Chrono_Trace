@@ -32,6 +32,7 @@ from .preference_compatibility_service import PreferenceCompatibilityService, Pr
 from .emotional_resonance_service import EmotionalResonanceService
 from .attitude_tendency_service import AttitudeTendencyService
 from .affinity_config import AffinityConfigService, AffinityConfig
+from .affinity_debug_logger import affinity_debug_log
 
 # 配置日志
 logger = logging.getLogger(__name__)
@@ -337,11 +338,10 @@ class AffinityAnalysisService:
             weighted_score=attitude_result['overall_score'] * weights['attitude_tendency'],
             interpretation=attitude_result['interpretation'],
             sub_scores={
-                "positive_word_frequency": attitude_result['sub_scores']['positive_word_frequency'],
-                "negative_word_frequency": attitude_result['sub_scores']['negative_word_frequency'],
+                "positive_emotion_frequency": attitude_result['sub_scores']['positive_emotion_frequency'],
+                "negative_emotion_frequency": attitude_result['sub_scores']['negative_emotion_frequency'],
                 "multimedia_usage": attitude_result['sub_scores']['multimedia_usage'],
                 "nickname_frequency": attitude_result['sub_scores']['nickname_frequency'],
-                "privacy_sharing": attitude_result['sub_scores']['privacy_sharing'],
                 "holiday_greeting": attitude_result['sub_scores']['holiday_greeting'],
             }
         )
@@ -388,6 +388,41 @@ class AffinityAnalysisService:
         
         result.overall_score = round(total_weighted, 2)
         logger.info(f"综合评分计算完成: {result.overall_score:.1f}分")
+        
+        # 统一输出四大维度的明细日志到文件
+        self._log_debug_summary(result)
+        
+    def _log_debug_summary(self, result: AffinityAnalysisResult):
+        """将好感度四大维度的详细得分输出到独立的物理日志文件"""
+        affinity_debug_log(f"\n{'='*80}")
+        affinity_debug_log(f"好感度分析结果汇总 (总分: {result.overall_score:.2f})")
+        affinity_debug_log(f"{'='*80}")
+        
+        dimensions = [
+            result.emotional_resonance,
+            result.chat_positivity,
+            result.attitude_tendency,
+            result.preference_compatibility,
+        ]
+        
+        for dim in dimensions:
+            if not dim:
+                continue
+            affinity_debug_log(f"► 【{dim.name}】: {dim.score:.2f}分 | 权重: {dim.weight*100:.0f}% -> 最终贡献: {dim.weighted_score:.2f}分")
+            
+            # 输出子维度
+            if dim.sub_scores:
+                affinity_debug_log(f"  ├─ [子维度详情]")
+                for sub_key, sub_val in dim.sub_scores.items():
+                    if isinstance(sub_val, (int, float)):
+                        affinity_debug_log(f"  │  ├─ {sub_key}: {sub_val:.2f}")
+                    else:
+                        affinity_debug_log(f"  │  ├─ {sub_key}: {sub_val}")
+            
+            # 输出解释
+            affinity_debug_log(f"  └─ [解释]: {dim.interpretation}\n")
+            
+        affinity_debug_log(f"{'='*80}\n")
     
     def _generate_overall_interpretation(self, score: float) -> str:
         """生成综合解释"""

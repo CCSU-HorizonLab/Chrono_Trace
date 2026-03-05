@@ -29,25 +29,33 @@ class SentimentService:
 
     def __init__(self):
         self.db = get_db()
-        self._snownlp_model = None
+        self._realtime_service = None
         self._embedding_model = None
+        self._embedding_load_failed = False  # 标记模型加载是否失败过
         self._embedding_cache = {}  # LRU缓存: {text: embedding}
+        
+        # 提前加载实时情感分析服务，避免在批量读取缓存过程中建表导致SQLite状态冲突
+        try:
+            self._load_realtime_service()
+        except Exception as e:
+            print(f"[情感服务] 警告: 实时分析服务预加载失败: {e}")
 
     # ========== 模型加载 (延迟加载) ==========
 
-    def _load_snownlp(self):
-        """延迟加载SnowNLP模型"""
-        if self._snownlp_model is None:
-            try:
-                from snownlp import SnowNLP
-                self._snownlp_model = SnowNLP
-                print("[情感服务] SnowNLP模型加载成功")
-            except ImportError:
-                print("[情感服务] 警告: SnowNLP未安装,请运行 pip install snownlp")
-                raise
+    def _load_realtime_service(self):
+        """延迟加载实时情感分析服务(包含微调的RoBERTa三分类模型+规则引擎)"""
+        if self._realtime_service is None:
+            # 引入实时分析服务（跳过建表避免commit干扰主连接查询）
+            from ..realtime.realtime_sentiment_service import RealtimeSentimentService
+            self._realtime_service = RealtimeSentimentService(skip_db_init=True)
+            print("[情感服务] 实时分析服务(RoBERTa)加载成功")
 
     def _load_embedding_model(self):
         """延迟加载sentence-transformers模型（自动检测GPU）"""
+        # 如果之前加载失败过，不再重复尝试（避免反复报错）
+        if self._embedding_load_failed:
+            return
+        
         if self._embedding_model is None:
             try:
                 from sentence_transformers import SentenceTransformer
@@ -64,16 +72,25 @@ class SentimentService:
                 
                 # 使用轻量级中文模型 (384维)
                 model_name = "shibing624/text2vec-base-chinese"
-                self._embedding_model = SentenceTransformer(model_name, device=device)
+                self._embedding_model = SentenceTransformer(
+                    model_name, 
+                    device=device,
+                    model_kwargs={"low_cpu_mem_usage": False}  # 规避 meta tensor 在某些环境下的加载Bug
+                )
                 print(f"[情感服务] 向量模型加载成功: {model_name} (设备: {device})")
             except ImportError:
                 print("[情感服务] 警告: sentence-transformers未安装")
                 print("请运行: pip install sentence-transformers")
+                self._embedding_load_failed = True
                 raise
+            except Exception as e:
+                print(f"[情感服务] 向量模型加载失败: {e}")
+                print("[情感服务] 将使用零向量替代，不影响核心分析")
+                self._embedding_load_failed = True
 
     # ========== 情感分析 ==========
 
-    def analyze_sentiment(self, text: str) -> Dict[str, Any]:
+    def analyze_sentiment(self, text) -> Dict[str, Any]:
         """
         分析单条文本的情感
 
@@ -87,6 +104,15 @@ class SentimentService:
                 "embedding": [0.1, 0.2, ...]  # 384维向量
             }
         """
+        # 类型防护：将bytes/int等非字符串转为str
+        if isinstance(text, bytes):
+            try:
+                text = text.decode('utf-8', errors='replace')
+            except Exception:
+                text = ""
+        elif not isinstance(text, str):
+            text = str(text) if text is not None else ""
+        
         # 处理空字符串
         if not text or not text.strip():
             return {
@@ -96,31 +122,13 @@ class SentimentService:
             }
 
         try:
-            # 加载SnowNLP模型
-            self._load_snownlp()
+            # 加载新版高精度RoBERTa情感分析服务
+            self._load_realtime_service()
 
-            # 情感分类
-            snlp = self._snownlp_model(text)
-            sentiment_score = snlp.sentiments  # 0到1之间的浮点数
-
-            # 转换为三元分类 (-1/0/1)
-            if sentiment_score >= 0.6:
-                polarity = 1  # 正面
-            elif sentiment_score <= 0.4:
-                polarity = -1  # 负面
-            else:
-                polarity = 0  # 中性
-
-            # 计算强度 (-1.0 到 1.0)
-            # polarity=1时: intensity = sentiment_score (0.6~1.0)
-            # polarity=-1时: intensity = -(1 - sentiment_score) (-1.0~-0.6)
-            # polarity=0时: intensity = (sentiment_score - 0.5) * 2 (-0.2~0.2)
-            if polarity == 1:
-                intensity = sentiment_score
-            elif polarity == -1:
-                intensity = -(1.0 - sentiment_score)
-            else:
-                intensity = (sentiment_score - 0.5) * 2
+            # 使用实时服务进行情感极性和强度打分
+            rt_result = self._realtime_service.analyze(text)
+            polarity = rt_result['polarity']
+            intensity = rt_result['intensity']
 
             # 生成向量嵌入
             embedding = self._get_embedding(text)
@@ -197,7 +205,11 @@ class SentimentService:
         try:
             # 加载embedding模型
             self._load_embedding_model()
-
+            
+            # 模型加载失败时直接返回零向量
+            if self._embedding_model is None:
+                return [0.0] * 384
+            
             # 生成向量（禁用进度条）
             embedding = self._embedding_model.encode(
                 text,
@@ -291,8 +303,15 @@ class SentimentService:
             if not row:
                 return None
 
-            # 反序列化向量
-            embedding = pickle.loads(row[2])
+            # 反序列化向量（防护None和损坏数据）
+            embedding_data = row[2]
+            if embedding_data is None:
+                embedding = [0.0] * 384
+            else:
+                try:
+                    embedding = pickle.loads(embedding_data)
+                except Exception:
+                    embedding = [0.0] * 384
 
             return {
                 "polarity": row[0],

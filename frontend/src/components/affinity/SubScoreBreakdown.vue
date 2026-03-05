@@ -15,8 +15,8 @@
             <td>{{ getLabel(key as string) }}</td>
             <td class="score-cell">{{ formatScore(score) }}</td>
             <td>
-              <span class="badge" :class="getBadgeClass(score)">
-                {{ getRating(score) }}
+              <span class="badge" :class="getBadgeClass(score, key as string)">
+                {{ getRating(score, key as string) }}
               </span>
             </td>
           </tr>
@@ -51,11 +51,14 @@ const LABELS: Record<string, string> = {
   active_initiation: '主动发起',
 
   // Attitude Tendency
-  positive_word_frequency: '正面词频率',
-  negative_word_frequency: '负面词频率',
+  positive_emotion_frequency: '正面情绪出现频率',
+  negative_emotion_frequency: '负面情绪出现频率',
+  positive_word_frequency: '正面情绪出现频率',
+  negative_word_frequency: '负面情绪出现频率',
+  effective_negative_frequency: '有效负面频率',
+  trust_sharing_bonus: '信任倾诉加分',
   multimedia_usage: '多媒体互动',
   nickname_frequency: '专属昵称',
-  privacy_sharing: '隐私分享',
   holiday_greeting: '节日祝福',
 
   // Preference Compatibility
@@ -70,14 +73,34 @@ const formatScore = (score: number): string => {
   return score.toFixed(1)
 }
 
-const getRating = (score: number): string => {
+// 负面频率字段需要反转评级（频率低 = 好）
+const INVERSE_KEYS = new Set([
+  'negative_emotion_frequency',
+  'negative_word_frequency',
+])
+
+const getRating = (score: number, key?: string): string => {
+  if (key && INVERSE_KEYS.has(key)) {
+    // 反转：频率越低越好
+    if (score <= 5) return '优'
+    if (score <= 15) return '良'
+    if (score <= 30) return '中'
+    return '差'
+  }
   if (score >= 80) return '优'
   if (score >= 60) return '良'
   if (score >= 40) return '中'
   return '差'
 }
 
-const getBadgeClass = (score: number): string => {
+const getBadgeClass = (score: number, key?: string): string => {
+  if (key && INVERSE_KEYS.has(key)) {
+    // 反转：频率越低越好
+    if (score <= 5) return 'badge-success'
+    if (score <= 15) return 'badge-info'
+    if (score <= 30) return 'badge-warning'
+    return 'badge-danger'
+  }
   if (score >= 80) return 'badge-success'
   if (score >= 60) return 'badge-info'
   if (score >= 40) return 'badge-warning'

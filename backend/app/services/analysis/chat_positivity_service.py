@@ -16,6 +16,15 @@ from typing import Optional
 from ...db.connection import get_db
 from .preprocessing_orchestrator import PreprocessedStatistics
 
+# ===== 调试开关：设为True时输出详细跟踪日志 =====
+DEBUG_TRACE = True
+
+def debug_log(msg: str):
+    """专门用于记录分析调试的物理日志"""
+    if DEBUG_TRACE:
+        from .affinity_debug_logger import affinity_debug_log
+        affinity_debug_log(msg)
+
 # 配置日志
 logger = logging.getLogger(__name__)
 
@@ -90,29 +99,46 @@ class ChatPositivityService:
         """
         result = ChatPositivityResult()
         
+        debug_log(f"\n{'*'*40}")
+        debug_log(f"【聊天积极度】开始计分 (会话 ID {conversation_id})")
+        debug_log(f"*[注] 该项占总分30%权重，自身包含6个子维度*")
+        
         # 1. 日均消息数 (10%)
         result.daily_message_count = self._calculate_daily_message_count_raw(stats)
         result.daily_message_score = self.calculate_daily_message_score(stats)
+        debug_log(f"\n[聊天积极度调试] --- 1. 日均消息数 (权重10%) ---")
+        debug_log(f"总消息数: {stats.total_message_count}, 持续天数: {stats.conversation_duration_days:.1f}")
+        debug_log(f"日均消息数: {result.daily_message_count:.2f} (满分基准: {self.DAILY_MESSAGE_BASELINE}) -> 得分: {result.daily_message_score}")
         
         # 2. 回复及时率 (20%)
         result.reply_timeliness_rate = self._calculate_reply_timeliness_raw(conversation_id)
         result.reply_timeliness_score = self.calculate_reply_timeliness_score(conversation_id)
+        debug_log(f"\n[聊天积极度调试] --- 2. 回复及时率 (权重20%) ---")
+        debug_log(f"及时回复比例: {result.reply_timeliness_rate*100:.1f}% -> 得分: {result.reply_timeliness_score}")
         
         # 3. 平均消息长度 (10%)
         result.avg_message_length = stats.average_message_length
         result.avg_length_score = self.calculate_avg_length_score(stats)
+        debug_log(f"\n[聊天积极度调试] --- 3. 平均消息长度 (权重10%) ---")
+        debug_log(f"平均字符数: {result.avg_message_length:.1f} (满分基准: {self.AVG_LENGTH_BASELINE}) -> 得分: {result.avg_length_score}")
         
         # 4. 长文本占比 (15%)
         result.long_text_ratio = self._calculate_long_text_ratio_raw(conversation_id, stats)
         result.long_text_ratio_score = self.calculate_long_text_ratio_score(conversation_id, stats)
+        debug_log(f"\n[聊天积极度调试] --- 4. 长文本占比 (权重15%) ---")
+        debug_log(f"长文本(>100字)占比: {result.long_text_ratio*100:.1f}% (满分基准: 30.0%) -> 得分: {result.long_text_ratio_score}")
         
         # 5. 话题延续性 (20%)
         result.topic_continuity_avg = self._calculate_topic_continuity_raw(conversation_id)
         result.topic_continuity_score = self.calculate_topic_continuity_score(conversation_id)
+        debug_log(f"\n[聊天积极度调试] --- 5. 话题延续性 (权重20%) ---")
+        debug_log(f"平均语义相似度: {result.topic_continuity_avg:.3f} -> 得分: {result.topic_continuity_score}")
         
         # 6. 主动发起率 (25%)
         result.active_initiation_rate = self._calculate_active_initiation_raw(stats)
         result.active_initiation_score = self.calculate_active_initiation_score(stats)
+        debug_log(f"\n[聊天积极度调试] --- 6. 主动发起率 (权重25%) ---")
+        debug_log(f"对方发起的会话比例: {result.active_initiation_rate*100:.1f}% (发起次数:{stats.contact_initiated_count} / 总会话:{stats.total_sessions}) -> 得分: {result.active_initiation_score}")
         
         # 综合评分
         result.overall_score = self._calculate_overall_score(result)
@@ -176,6 +202,7 @@ class ChatPositivityService:
             if total == 0:
                 return 0.0
             
+            debug_log(f"[聊天积极度调试深入] 交互对总数: {total}, 及时回复(<={self.timeliness_threshold}s)数: {timely}")
             return timely / total
             
         except Exception as e:

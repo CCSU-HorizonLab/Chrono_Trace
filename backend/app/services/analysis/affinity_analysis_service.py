@@ -47,6 +47,7 @@ class DimensionScore:
     weighted_score: float = 0.0
     interpretation: str = ""
     sub_scores: Dict[str, float] = field(default_factory=dict)
+    bonus_scores: Dict[str, float] = field(default_factory=dict)
 
 
 @dataclass
@@ -340,10 +341,8 @@ class AffinityAnalysisService:
             sub_scores={
                 "positive_emotion_frequency": attitude_result['sub_scores']['positive_emotion_frequency'],
                 "negative_emotion_frequency": attitude_result['sub_scores']['negative_emotion_frequency'],
-                "multimedia_usage": attitude_result['sub_scores']['multimedia_usage'],
-                "nickname_frequency": attitude_result['sub_scores']['nickname_frequency'],
-                "holiday_greeting": attitude_result['sub_scores']['holiday_greeting'],
-            }
+            },
+            bonus_scores=attitude_result.get('bonus_scores', {})
         )
         logger.info(f"态度倾向计算完成: {attitude_result['overall_score']:.1f}分 (权重: {weights['attitude_tendency']*100}%)")
         
@@ -412,12 +411,21 @@ class AffinityAnalysisService:
             
             # 输出子维度
             if dim.sub_scores:
-                affinity_debug_log(f"  ├─ [子维度详情]")
+                affinity_debug_log(f"  ├─ [基础维度详情]")
                 for sub_key, sub_val in dim.sub_scores.items():
                     if isinstance(sub_val, (int, float)):
                         affinity_debug_log(f"  │  ├─ {sub_key}: {sub_val:.2f}")
                     else:
                         affinity_debug_log(f"  │  ├─ {sub_key}: {sub_val}")
+                        
+            # 输出附加加分项
+            if hasattr(dim, 'bonus_scores') and dim.bonus_scores:
+                affinity_debug_log(f"  ├─ [额外加分详情 (已计算入该维度得分)]")
+                for sub_key, sub_val in dim.bonus_scores.items():
+                    if isinstance(sub_val, (int, float)):
+                        affinity_debug_log(f"  │  ├─ {sub_key}: +{sub_val:.2f}")
+                    else:
+                        affinity_debug_log(f"  │  ├─ {sub_key}: +{sub_val}")
             
             # 输出解释
             affinity_debug_log(f"  └─ [解释]: {dim.interpretation}\n")

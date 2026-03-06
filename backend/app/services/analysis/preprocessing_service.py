@@ -693,11 +693,12 @@ class PairPreprocessingService:
             return {"polarity": 0, "intensity": 0.0}
         
         try:
-            # 将消息ID列表转换为逗号分隔的字符串
-            if isinstance(message_ids, str):
-                import json
-                message_ids = json.loads(message_ids)
-            
+            # 如果 message_ids 内部变成了 dict 列表，提取 ID
+            if message_ids and isinstance(message_ids[0], dict):
+                try:
+                    message_ids = [m.get('id', m) for m in message_ids]
+                except Exception:
+                    pass
             # 查询这些消息的情感数据
             placeholders = ','.join('?' * len(message_ids))
             cursor = self.db.execute(f"""
@@ -711,9 +712,16 @@ class PairPreprocessingService:
             if not sentiments:
                 return {"polarity": 0, "intensity": 0.0}
             
+            # 过滤掉为 None 的情况
+            valid_polarities = [s[0] for s in sentiments if s[0] is not None]
+            valid_intensities = [s[1] for s in sentiments if s[1] is not None]
+            
+            if not valid_polarities or not valid_intensities:
+                return {"polarity": 0, "intensity": 0.0}
+            
             # 计算平均值
-            avg_polarity = sum(s[0] for s in sentiments) / len(sentiments)
-            avg_intensity = sum(s[1] for s in sentiments) / len(sentiments)
+            avg_polarity = sum(valid_polarities) / len(valid_polarities)
+            avg_intensity = sum(valid_intensities) / len(valid_intensities)
             
             # 极性取四舍五入
             polarity = round(avg_polarity)
@@ -1662,6 +1670,13 @@ class AttitudeStatistics:
     privacy_message_count: int = 0        # 隐私分享消息数
     holiday_message_count: int = 0        # 节日祝福消息数
     holidays_sent_count: int = 0          # 独立节日日期数(去重)
+    
+    # 新增：用于强化主动性和深夜语境分析的字段
+    # 这部分不在这里直接聚合情感词频率（因为在基础统计中），但是我们需要基础情感消息数按语境区分
+    # 为了避免重复造轮子，这里只记录深夜产生的特殊行为（如深度分享、专属称呼）
+    late_night_nickname_count: int = 0    # 深夜说的专属称呼
+    late_night_privacy_count: int = 0     # 深夜说的隐私分享
+    late_night_message_count: int = 0     # 深夜消息总数
 
 
 class AttitudePreprocessingService:
@@ -1732,6 +1747,10 @@ class AttitudePreprocessingService:
                 content = msg.get('content', '')
                 msg_type = msg.get('message_type', self.MESSAGE_TYPE_TEXT)
                 timestamp = msg.get('timestamp', 0)
+                
+                # 修复: sqlite可能会返回bytes
+                if isinstance(content, bytes):
+                    content = content.decode('utf-8', errors='replace')
 
                 # 优化1: 使用字典映射处理消息类型统计
                 if msg_type in self.TYPE_TO_FIELD:
@@ -1740,35 +1759,52 @@ class AttitudePreprocessingService:
 
                 # 只对文本消息进行关键词匹配
                 if msg_type == self.MESSAGE_TYPE_TEXT and content:
+                    # 判断是否为深夜 (23:00 - 05:00)
+                    is_late_night = False
+                    if timestamp:
+                        msg_dt = datetime.fromtimestamp(timestamp)
+                        if msg_dt.hour >= 23 or msg_dt.hour < 5:
+                            is_late_night = True
+                            stats.late_night_message_count += 1
+                    
                     # 优化2: 一次性检查所有关键词类别
                     keyword_matches = self._check_all_keywords(content)
                     
                     # 统计专属称呼
                     if keyword_matches.get('nickname'):
                         stats.nickname_message_count += 1
+                        if is_late_night:
+                            stats.late_night_nickname_count += 1
 
                     # 统计隐私分享
                     if keyword_matches.get('privacy'):
                         stats.privacy_message_count += 1
+                        if is_late_night:
+                            stats.late_night_privacy_count += 1
 
                     # 优化3: 改进节日祝福统计 - 基于节日名称+日期匹配
                     if keyword_matches.get('holiday'):
+                        # 双方任何一方发送了节日祝福都计入统计
                         stats.holiday_message_count += 1
                         
                         # 提取节日名称并验证日期
                         holiday_name = self._extract_holiday_name(content)
-                        if holiday_name and timestamp:
+                        if timestamp:
                             msg_date = self._extract_date_from_timestamp(timestamp)
                             if msg_date:
-                                # 检查消息日期是否在节日当天(容错±1天)
-                                if self.holiday_lib.is_holiday_date(msg_date, holiday_name, tolerance_days=1):
-                                    # 使用"节日名-年份"作为唯一标识
-                                    year = datetime.fromtimestamp(timestamp).year
-                                    holiday_key = f"{holiday_name}-{year}"
-                                    holidays_seen.add(holiday_key)
+                                if holiday_name:
+                                    # 检查消息日期是否在节日当天(容错±1天)
+                                    if self.holiday_lib.is_holiday_date(msg_date, holiday_name, tolerance_days=1):
+                                        # 使用"节日名-年份"作为唯一标识
+                                        year = datetime.fromtimestamp(timestamp).year
+                                        holiday_key = f"{holiday_name}-{year}"
+                                        holidays_seen.add(holiday_key)
+                                    else:
+                                        # 如果日期不匹配,仍然记录(可能是提前祝福)
+                                        # 但使用消息日期作为标识
+                                        holidays_seen.add(msg_date)
                                 else:
-                                    # 如果日期不匹配,仍然记录(可能是提前祝福)
-                                    # 但使用消息日期作为标识
+                                    # 未提取到具体节日名（比如只说了"节日快乐"），按日期记录
                                     holidays_seen.add(msg_date)
             
             except Exception as e:

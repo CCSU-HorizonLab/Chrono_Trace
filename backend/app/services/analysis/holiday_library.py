@@ -172,8 +172,15 @@ class HolidayLibrary:
                       list(HolidayLibrary.FLOATING_HOLIDAYS.keys())
         
         for holiday in all_holidays:
+            # 完整匹配，例如 "中秋节"
             if holiday in text or holiday.lower() in text_lower:
                 return holiday
+            
+            # 部分匹配，去掉最后一个"节"字，例如 "中秋"
+            if holiday.endswith("节"):
+                short_name = holiday[:-1]
+                if short_name in text or short_name.lower() in text_lower:
+                    return holiday
         
         # 如果没有直接匹配,返回None
         return None

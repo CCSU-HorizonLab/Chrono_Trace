@@ -1,15 +1,16 @@
 """态度倾向服务 - 计算对方对关系的态度倾向
 
-包含 6 个子维度：
-1. 正面情绪出现频率 (20%权重)
-2. 负面情绪出现频率 (20%权重，反向计分)
-3. 多媒体使用率 (15%权重)
-4. 专属称呼频率 (20%权重)
-5. 隐私分享频率 (15%权重)
-6. 节日祝福频率 (10%权重)
+包含 2 个基础子维度：
+1. 正面情绪出现频率 (50%权重)
+2. 负面情绪出现频率 (50%权重，反向计分)
 
 额外加分项（不在前端显示）：
 - 信任倾诉加分：对方向你倾诉对他人的负面情绪，视为信任信号
+- 多媒体(通话)加分：基于月均语音/视频通话频率
+- 节日祝福加分：双方都发了或者一方发了，都有额外加分
+- 专属称呼加分：如果对方在会话中主动叫了专属称呼，视为极高亲密度的加分项
+- 节日祝福加分：双方都发了或者一方发了，都有额外加分
+- 专属称呼加分：如果对方在会话中主动叫了专属称呼，视为极高亲密度的加分项
 
 注意：
 - 负面方向判定：区分"对我"、"对他人"、"模糊"
@@ -51,21 +52,49 @@ class AttitudeTendencyService:
         conversation_id: int
     ) -> float:
         """
-        计算正面情绪出现频率 (20%权重)
+        计算正面情绪出现频率 (30%权重)
         
-        公式: (正面消息数 / 总消息数) × 100%
+        引入“语境主动性”：如果是对方主动发起的会话中，对方表达的正面情绪，赋予 1.5 倍权重。
+        其余情况按 1.0 倍计算。
+        
+        公式: (加权正面消息数 / (正面消息数 + 负面消息数)) × 100%
         """
         stats = self.orchestrator.get_preprocessed_statistics(conversation_id)
         
-        if stats.total_message_count == 0:
+        total_emotional = stats.total_positive_count + stats.total_negative_count
+        if total_emotional == 0:
             return 0.0
+            
+        # 查询属于“对方主动发起的会话”中的由“对方发送”的正面情绪消息数
+        # 由于 orchestrator.get_preprocessed_statistics 已经包含了全部的正面情绪数量，我们还需要进一步细分
+        cursor = self.db.execute("""
+            SELECT COUNT(*) 
+            FROM messages m
+            INNER JOIN sentiment_cache sc ON m.id = sc.message_id
+            INNER JOIN sessions s ON m.timestamp BETWEEN s.start_time AND s.end_time AND m.conversation_id = s.conversation_id
+            WHERE m.conversation_id = ?
+              AND m.is_sender = 0
+              AND m.message_type = 1
+              AND sc.polarity = 1
+              AND s.initiator = 'other'
+        """, (conversation_id,))
         
-        frequency = (stats.total_positive_count / stats.total_message_count) * 100
+        other_initiated_positive_count = cursor.fetchone()[0] or 0
+        normal_positive_count = stats.total_positive_count - other_initiated_positive_count
+        
+        # 对方主动找我时的正面情绪，乘以1.5倍系数
+        weighted_positive_count = normal_positive_count + (other_initiated_positive_count * 1.5)
+        
+        frequency = (weighted_positive_count / total_emotional) * 100
         
         if DEBUG_TRACE:
-            debug_log("\n[态度调试] === 正面情绪频率 ===")
-            debug_log(f"[态度调试] 正面消息数: {stats.total_positive_count}")
-            debug_log(f"[态度调试] 总消息数: {stats.total_message_count}")
+            debug_log("\n[态度调试] === 正面情绪频率（含语境主动性） ===")
+            debug_log(f"[态度调试] 全部正面消息数: {stats.total_positive_count}")
+            debug_log(f"[态度调试] 其中对方主动发起会话时的正面数: {other_initiated_positive_count} (权重x1.5)")
+            debug_log(f"[态度调试] 其中其他情况的正面数: {normal_positive_count} (权重x1.0)")
+            debug_log(f"[态度调试] 加权后的正面得分基数: {weighted_positive_count:.2f}")
+            debug_log(f"[态度调试] 负面消息数: {stats.total_negative_count}")
+            debug_log(f"[态度调试] 有效情绪总数(原始正+负): {total_emotional}")
             debug_log(f"[态度调试] 频率: {frequency:.2f}%")
         
         return min(100.0, frequency)
@@ -168,23 +197,39 @@ class AttitudeTendencyService:
         conversation_id: int
     ) -> float:
         """
-        计算多媒体使用率 (15%权重)
+        计算多媒体使用加分 (最高 20 分)
         
-        公式: ((表情包数 + 语音数 + 视频数) / 总消息数) × 100%
+        基于通话频率计算（仅针对语音和视频通话）：
+        公式: 平均每月通话次数 / 满分阈值(4次/月) * 20.0 加分
         """
         stats = self.orchestrator.get_preprocessed_statistics(conversation_id)
         
         if stats.total_message_count == 0:
             return 0.0
         
-        multimedia_count = (
-            stats.emoji_message_count +
+        # 仅统计语音和视频通话
+        call_count = (
             stats.voice_message_count +
             stats.video_message_count
         )
         
-        usage_rate = (multimedia_count / stats.total_message_count) * 100
-        return min(100.0, usage_rate)
+        # 按自然日计算月份跨度（至少按1个月算）
+        total_months = max(1.0, stats.chat_days_count / 30.0)
+        calls_per_month = call_count / total_months
+        
+        # 优化算法：以一个月为周期。
+        # 每月4次通话（约每周1次）即视为非常频繁，达到满分。
+        # 恋人或密切家人间这个数字很容易达到，普通朋友较难，能有效区分亲密度。
+        bonus_score = min(20.0, (calls_per_month / 4.0) * 20.0)
+        
+        if DEBUG_TRACE:
+            debug_log("\n[态度调试] === 多媒体(通话)使用加分 ===")
+            debug_log(f"[态度调试] 聊天总跨度(按天折算月): {total_months:.2f} 月")
+            debug_log(f"[态度调试] 语音/视频通话总数: {call_count} 次")
+            debug_log(f"[态度调试] 月均通话频率: {calls_per_month:.2f} 次/月 (满分阈值: 4次/月)")
+            debug_log(f"[态度调试] 最终附加加分: +{bonus_score:.2f} 分")
+            
+        return bonus_score
     
     def calculate_nickname_frequency(
         self,
@@ -193,32 +238,124 @@ class AttitudeTendencyService:
         """
         计算专属称呼频率 (20%权重)
         
-        公式: (专属称呼消息数 / 总消息数) × 100%
+        优化思路3: 计算“涵盖专属称呼的对方参与会话数 / 总会话数”
+        引入深夜机制: 深夜(23:00-05:00)提及专属称呼的会话, 权重 × 1.5
         """
-        stats = self.orchestrator.get_preprocessed_statistics(conversation_id)
+        # 获取总会话数
+        cursor = self.db.execute(
+            "SELECT COUNT(*) FROM sessions WHERE conversation_id = ?",
+            (conversation_id,)
+        )
+        total_sessions = cursor.fetchone()[0] or 0
         
-        if stats.total_message_count == 0:
+        if total_sessions == 0:
             return 0.0
+            
+        # 考虑到预处理阶段没有落库单条消息的专属称呼标记，
+        # 我们这里取全量由对方发送的消息，并联表获取它们所属的session_id
+        cursor = self.db.execute("""
+            SELECT 
+                s.id as session_id,
+                m.content,
+                m.timestamp
+            FROM sessions s
+            INNER JOIN messages m ON m.timestamp BETWEEN s.start_time AND s.end_time 
+                                 AND m.conversation_id = s.conversation_id
+            WHERE s.conversation_id = ?
+              AND m.is_sender = 0
+              AND m.message_type = 1
+        """, (conversation_id,))
         
-        frequency = (stats.nickname_message_count / stats.total_message_count) * 100
-        return min(100.0, frequency)
+        # 这个字典记录每个遇到专属称呼的session，是否在深夜发生过
+        # 结构: { session_id: is_late_night_boolean }
+        nickname_sessions = {}
+        
+        keywords = self.keyword_lib.get_all_keywords().get('nickname', [])
+        
+        for row in cursor.fetchall():
+            session_id = row[0]
+            content = row[1]
+            timestamp = row[2]
+            
+            # 如果这个session已经被标记为含专属且且为深夜了，可以跳过（已达最高分）
+            if nickname_sessions.get(session_id) is True:
+                continue
+                
+            # 检查是否包含称呼
+            has_nickname = False
+            if content and isinstance(content, str):
+                for kw in keywords:
+                    if kw in content:
+                        has_nickname = True
+                        break
+                        
+            if has_nickname:
+                # 检查是否深夜
+                is_late_night = False
+                if timestamp:
+                    from datetime import datetime
+                    msg_dt = datetime.fromtimestamp(timestamp)
+                    if msg_dt.hour >= 23 or msg_dt.hour < 5:
+                        is_late_night = True
+                
+                # 更新字典：如果没记录过，直接存入。如果记录过且这次是深夜，升级为True
+                if session_id not in nickname_sessions:
+                    nickname_sessions[session_id] = is_late_night
+                elif is_late_night:
+                    nickname_sessions[session_id] = True
+                    
+        # 结算
+        weighted_nickname_session_count = 0.0
+        for s_id, is_late in nickname_sessions.items():
+            if is_late:
+                weighted_nickname_session_count += 1.5
+            else:
+                weighted_nickname_session_count += 1.0
+                
+        # 放大系数：只要包含一次就非常重要。假设20%的会话含有称呼即可拿满15分附加分。
+        frequency_ratio = weighted_nickname_session_count / total_sessions
+        bonus_score = min(15.0, (frequency_ratio / 0.2) * 15.0)
+        
+        if DEBUG_TRACE:
+            debug_log("\n[态度调试] === 专属称呼会话加分（思路3） ===")
+            debug_log(f"[态度调试] 总会话数: {total_sessions}")
+            debug_log(f"[态度调试] 包含专属称呼的会话数: {len(nickname_sessions)}")
+            debug_log(f"[态度调试] 加权后会话数: {weighted_nickname_session_count:.2f} (包含深夜1.5倍机制)")
+            debug_log(f"[态度调试] 计算得出附加加分: +{bonus_score:.2f} 分")
+            
+        return bonus_score
     
     def calculate_holiday_greeting(
         self,
         conversation_id: int
     ) -> float:
         """
-        计算节日祝福频率 (10%权重)
+        计算节日祝福附加分
         
-        公式: (独立节日日期数 / 总聊天天数) × 100%
+        只要包含节日祝福即可加分，满分为 10 分附加分，根据 (独立节日日期数 / 总节日数) 的比例计算
         """
+        from .holiday_library import HolidayLibrary
         stats = self.orchestrator.get_preprocessed_statistics(conversation_id)
         
-        if stats.chat_days_count == 0:
+        total_holidays = (
+            len(HolidayLibrary.FIXED_HOLIDAYS) +
+            len(HolidayLibrary.LUNAR_HOLIDAYS_RANGE) +
+            len(HolidayLibrary.FLOATING_HOLIDAYS)
+        )
+        if total_holidays == 0:
             return 0.0
         
-        frequency = (stats.holidays_sent_count / stats.chat_days_count) * 100
-        return min(100.0, frequency)
+        # 将节日祝福频率映射为最高 10 分的附加分
+        frequency_ratio = stats.holidays_sent_count / total_holidays
+        bonus_score = min(10.0, frequency_ratio * 10 * 3) # 放大系数3，让附加分更容易获得
+        
+        if DEBUG_TRACE:
+            debug_log("\n[态度调试] === 节日祝福加分 ===")
+            debug_log(f"[态度调试] 独立互动节日总数: {stats.holidays_sent_count}")
+            debug_log(f"[态度调试] 系统内置总节日数: {total_holidays}")
+            debug_log(f"[态度调试] 计算得出附加加分: +{bonus_score:.2f} 分")
+            
+        return bonus_score
     
     def calculate_overall_attitude(
         self,
@@ -227,15 +364,15 @@ class AttitudeTendencyService:
         """
         计算态度倾向总分
         
-        权重分配（5个显示维度，剔除隐私分享并将15%权重平分给其他维度）：
-        - 正面情绪出现频率: 25% (+5%)
-        - 负面情绪得分: 25% (+5%) (反向计分)
-        - 多媒体使用率: 15%
-        - 专属称呼频率: 25% (+5%)
-        - 节日祝福频率: 10%
+        权重分配（2个显示维度，剔除专属称呼、假日、隐私和多媒体后的100%均分）：
+        - 正面情绪出现频率: 50%
+        - 负面情绪得分: 50% (反向计分)
         
         额外加分（不显示）：
         - 信任倾诉加分: 直接加到总分
+        - 多媒体通话加分: 直接加到总分
+        - 节日祝福加分: 直接加到总分
+        - 专属称呼加分: 直接加到总分
         
         sub_scores 中所有值都是原始频率/比率（0-100）：
         - 正面情绪: 越高越好
@@ -248,48 +385,56 @@ class AttitudeTendencyService:
         # 计算各子维度
         positive_freq = self.calculate_positive_word_frequency(conversation_id)
         
-        # 负面方向判定
+        # 负面方向判定（含深夜信任倾诉加成）
         negative_info = self.calculate_negative_with_direction(conversation_id)
         negative_score = negative_info["negative_score"]  # 反向得分，参与加权
-        trust_bonus = negative_info["trust_bonus"]         # 独立加分
+        # 信任倾诉及专属称呼、节日加分（独立加到总分上）
+        attitude_stats = self.orchestrator.get_preprocessed_statistics(conversation_id)
         
-        multimedia = self.calculate_multimedia_usage(conversation_id)
-        nickname = self.calculate_nickname_frequency(conversation_id)
-        holiday = self.calculate_holiday_greeting(conversation_id)
+        # 基础信任加分
+        base_trust_bonus = min(20.0, negative_info["trust_bonus"])
         
-        # 5个维度加权 (25 + 25 + 15 + 25 + 10 = 100)
+        # 深夜隐私倾诉额外加分 (最高 10 分)
+        late_night_privacy_bonus = min(10.0, attitude_stats.privacy_message_count * 2.0)
+        trust_bonus = min(30.0, base_trust_bonus + late_night_privacy_bonus)
+        
+        multimedia_bonus = self.calculate_multimedia_usage(conversation_id) # 现为附加分
+        nickname_bonus = self.calculate_nickname_frequency(conversation_id) # 现为附加分
+        holiday_bonus = self.calculate_holiday_greeting(conversation_id) # 获取附加加分
+        
+        # 2个主维度加权 (50 + 50 = 100)
         weighted_total = (
-            positive_freq * 0.25 +
-            negative_score * 0.25 +
-            multimedia * 0.15 +
-            nickname * 0.25 +
-            holiday * 0.10
+            positive_freq * 0.50 +
+            negative_score * 0.50
         )
         
-        # 信任倾诉加分（独立加到总分上）
-        overall_score = weighted_total + trust_bonus
+        # 信任倾诉、多媒体、专属称呼、节日加分（独立加到总分上）
+        overall_score = weighted_total + trust_bonus + holiday_bonus + nickname_bonus + multimedia_bonus
         overall_score = max(0.0, min(100.0, overall_score))
         
         debug_log(f"\n[态度调试] === 最终加权计算 ===")
-        debug_log(f"[态度调试] 正面情绪频率: {positive_freq:.2f} × 0.25 = {positive_freq*0.25:.2f}")
-        debug_log(f"[态度调试] 负面情绪得分: {negative_score:.2f} × 0.25 = {negative_score*0.25:.2f}")
-        debug_log(f"[态度调试] 多媒体使用率: {multimedia:.2f} × 0.15 = {multimedia*0.15:.2f}")
-        debug_log(f"[态度调试] 专属称呼频率: {nickname:.2f} × 0.25 = {nickname*0.25:.2f}")
-        debug_log(f"[态度调试] 节日祝福频率: {holiday:.2f} × 0.10 = {holiday*0.10:.2f}")
-        debug_log(f"[态度调试] 5维度加权合计: {weighted_total:.2f}")
+        debug_log(f"[态度调试] 正面情绪频率: {positive_freq:.2f} × 0.50 = {positive_freq*0.50:.2f}")
+        debug_log(f"[态度调试] 负面情绪得分: {negative_score:.2f} × 0.50 = {negative_score*0.50:.2f}")
+        debug_log(f"[态度调试] 2主维度加权合计: {weighted_total:.2f}")
         debug_log(f"[态度调试] + 信任倾诉加分: {trust_bonus:.2f}")
+        debug_log(f"[态度调试] + 多媒体(通话)加分: {multimedia_bonus:.2f}")
+        debug_log(f"[态度调试] + 节日互动加分: {holiday_bonus:.2f}")
+        debug_log(f"[态度调试] + 专属称呼加分: {nickname_bonus:.2f}")
         debug_log(f"[态度调试] === 总分: {overall_score:.2f} ===")
         debug_log(f"{'='*60}\n")
         
         return {
             "overall_score": round(overall_score, 2),
             "sub_scores": {
-                # 所有值均为原始频率（0-100），前端直接显示
+                # 仅保留基础维度，移除 bonus 类维度
                 "positive_emotion_frequency": round(positive_freq, 2),
                 "negative_emotion_frequency": round(negative_info["raw_frequency"], 2),
-                "multimedia_usage": round(multimedia, 2),
-                "nickname_frequency": round(nickname, 2),
-                "holiday_greeting": round(holiday, 2),
+            },
+            "bonus_scores": {
+                "trust_bonus": round(trust_bonus, 2),
+                "multimedia_bonus": round(multimedia_bonus, 2),
+                "holiday_bonus": round(holiday_bonus, 2),
+                "nickname_bonus": round(nickname_bonus, 2),
             },
             "negative_direction_detail": {
                 "to_me_count": negative_info["to_me_count"],

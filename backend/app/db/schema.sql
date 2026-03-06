@@ -508,7 +508,7 @@ INSERT OR IGNORE INTO keyword_libraries (category, keyword, is_custom, created_a
 ('privacy', '不告诉别人', 0, strftime('%s', 'now')),
 ('privacy', '偷偷说', 0, strftime('%s', 'now')),
 
--- Holiday (节日词) - 10个
+-- Holiday (节日词) - 16个
 ('holiday', '新年快乐', 0, strftime('%s', 'now')),
 ('holiday', '春节快乐', 0, strftime('%s', 'now')),
 ('holiday', '圣诞快乐', 0, strftime('%s', 'now')),
@@ -519,6 +519,12 @@ INSERT OR IGNORE INTO keyword_libraries (category, keyword, is_custom, created_a
 ('holiday', '五一快乐', 0, strftime('%s', 'now')),
 ('holiday', '元旦快乐', 0, strftime('%s', 'now')),
 ('holiday', '情人节快乐', 0, strftime('%s', 'now')),
+('holiday', '端午快乐', 0, strftime('%s', 'now')),
+('holiday', '十五快乐', 0, strftime('%s', 'now')),
+('holiday', '元宵快乐', 0, strftime('%s', 'now')),
+('holiday', '腊八快乐', 0, strftime('%s', 'now')),
+('holiday', '七夕快乐', 0, strftime('%s', 'now')),
+('holiday', '除夕快乐', 0, strftime('%s', 'now')),
 
 -- Nickname (专属称呼) - 10个
 ('nickname', '宝宝', 0, strftime('%s', 'now')),

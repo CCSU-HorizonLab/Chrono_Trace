@@ -117,17 +117,22 @@
       </div>
     </div>
 
-    <!-- ====== 左右分栏布局 ====== -->
-    <div v-if="realtimeState.isMonitoring" class="split-layout">
+    <!-- ====== 左右分栏布局（统一视图） ====== -->
+    <div class="split-layout">
 
-      <!-- 📱 左侧：实时消息流 -->
+      <!-- 📱 左侧：消息与对话 -->
       <div class="pane pane-left">
+        
+        <!-- 实时消息卡片 -->
         <div class="card pane-card">
           <div class="card-hd">
             <span>📱 实时消息 ({{ realtimeState.messages.length }}条)</span>
           </div>
           <div class="card-bd messages-scroll" ref="messagesScrollRef">
-            <div v-if="!realtimeState.messages.length" class="empty">
+            <div v-if="!realtimeState.isMonitoring" class="empty">
+              尚未开始监听，请在上方选择对象并开始监听。
+            </div>
+            <div v-else-if="!realtimeState.messages.length" class="empty">
               等待消息中...
             </div>
             <div v-else class="messages-list">
@@ -162,10 +167,92 @@
             </div>
           </div>
         </div>
+
+        <!-- AI 建议与对话卡片（原默认视图左下） -->
+        <div class="ct-card chat">
+          <div class="card-hd tools">
+            <div class="title">建议与对话</div>
+            <div class="actions">
+              <CtButton variant="ghost" @click="onRefresh" :disabled="loading">刷新</CtButton>
+              <CtButton variant="ghost" @click="onClear">清空</CtButton>
+              <CtButton variant="ghost" @click="copyAll" :disabled="!suggestion">复制</CtButton>
+            </div>
+          </div>
+          <div class="card-bd chat-body">
+            <div v-if="!suggestion && !loading" class="empty">暂无对话建议。</div>
+            <div v-if="loading" class="skeleton">AI 正在思考…</div>
+            <template v-if="suggestion">
+              <div class="bubble ai">
+                <div class="summary" v-if="suggestion.summary">{{ suggestion.summary }}</div>
+                <ul class="speech" v-if="suggestion.speeches && suggestion.speeches.length">
+                  <li v-for="(sp, i) in suggestion.speeches" :key="i">
+                    <span>{{ sp }}</span>
+                    <button class="mini" @click="copyText(sp)">复制</button>
+                  </li>
+                </ul>
+              </div>
+              <div v-for="(m, i) in messages" :key="i" :class="['bubble', m.role]">{{ m.content }}</div>
+            </template>
+          </div>
+          <div class="chat-input">
+            <input v-model="userInput" type="text" placeholder="补充你的背景/需求，回车发送" @keydown.enter.exact.prevent="send" />
+            <button class="ct-btn" @click="send" :disabled="!userInput.trim() || loading">发送</button>
+          </div>
+        </div>
+
       </div>
 
-      <!-- 💡 右侧：AI 建议面板 -->
+      <!-- 💡 右侧：对象信息与建议面板 -->
       <div class="pane pane-right">
+        <!-- 对象信息卡 -->
+        <div class="card">
+          <div class="ct-card-hd">对象信息</div>
+          <div class="card-bd profile">
+            <div class="avatar" aria-hidden="true">{{ profileInitial }}</div>
+            <div class="meta">
+              <div class="name">{{ profile.name || realtimeState.talkerName || '未选择对象' }}</div>
+              <!-- AI 画像标签 -->
+              <div class="tags" v-if="profile.personality_tags?.length">
+                <span v-for="t in profile.personality_tags" :key="t">{{ t }}</span>
+              </div>
+              <!-- 无画像时的旧标签 -->
+              <div class="tags" v-else-if="profile.tags?.length">
+                <span v-for="t in profile.tags" :key="t">{{ t }}</span>
+              </div>
+            </div>
+          </div>
+          <!-- AI 画像详情 -->
+          <div v-if="profile.chat_style" class="profile-detail">
+            <div class="detail-item">
+              <span class="detail-label">💬 聊天风格</span>
+              <span class="detail-text">{{ profile.chat_style }}</span>
+            </div>
+            <div class="detail-item" v-if="profile.interests?.length">
+              <span class="detail-label">🎯 兴趣话题</span>
+              <span class="detail-text">{{ profile.interests.join('、') }}</span>
+            </div>
+            <div class="detail-item" v-if="profile.communication_tips">
+              <span class="detail-label">📌 沟通注意</span>
+              <span class="detail-text">{{ profile.communication_tips }}</span>
+            </div>
+            <div class="detail-item" v-if="profile.relationship_note">
+              <span class="detail-label">💡 关系状态</span>
+              <span class="detail-text">{{ profile.relationship_note }}</span>
+            </div>
+          </div>
+          <!-- 无画像提示 -->
+          <div v-else-if="!profileLoading" class="profile-empty">
+            <span>暂无 AI 画像</span>
+            <button
+              v-if="realtimeState.talkerName"
+              class="btn-sm"
+              @click="showProfileDialog = true"
+              :disabled="profileLoading"
+            >生成画像</button>
+          </div>
+          <div v-if="profileLoading" class="profile-loading">画像生成中...</div>
+        </div>
+
         <!-- 情绪态势指示 -->
         <div class="card emotion-pulse-card">
           <div class="card-hd">💡 情绪态势</div>
@@ -281,126 +368,7 @@
       </div>
     </div>
 
-    <!-- ====== 未监听时的默认视图（保留原有功能） ====== -->
-    <div v-if="!realtimeState.isMonitoring" class="grid">
-      <div class="left">
-        <!-- 发展走向选择卡 -->
-        <div class="card">
-          <div class="ct-card-hd">发展走向</div>
-          <div class="card-bd intent-row">
-            <div class="seg">
-              <label>
-                <input type="radio" value="intimate" v-model="intent" /> 亲密
-              </label>
-              <label>
-                <input type="radio" value="maintain" v-model="intent" /> 维持
-              </label>
-              <label>
-                <input type="radio" value="distance" v-model="intent" /> 疏远
-              </label>
-            </div>
-            <button class="ct-btn" :disabled="loading" @click="gen">
-              <span v-if="!loading">生成建议</span>
-              <span v-else>生成中…</span>
-            </button>
-          </div>
-          <p class="hint">将根据你的目标倾向，给出更贴合的沟通策略。</p>
-          <p v-if="error" class="error">{{ error }}</p>
-        </div>
 
-        <!-- AI 建议与对话卡 -->
-        <div class="ct-card chat">
-          <div class="card-hd tools">
-            <div class="title">建议与对话</div>
-            <div class="actions">
-              <CtButton variant="ghost" @click="onRefresh" :disabled="loading">刷新</CtButton>
-              <CtButton variant="ghost" @click="onClear">清空</CtButton>
-              <CtButton variant="ghost" @click="copyAll" :disabled="!suggestion">复制</CtButton>
-            </div>
-          </div>
-          <div class="card-bd chat-body">
-            <div v-if="!suggestion && !loading" class="empty">暂无建议，点击上方"生成建议"。</div>
-            <div v-if="loading" class="skeleton">AI 正在思考…</div>
-            <template v-if="suggestion">
-              <div class="bubble ai">
-                <div class="summary" v-if="suggestion.summary">{{ suggestion.summary }}</div>
-                <ul class="speech" v-if="suggestion.speeches && suggestion.speeches.length">
-                  <li v-for="(sp, i) in suggestion.speeches" :key="i">
-                    <span>{{ sp }}</span>
-                    <button class="mini" @click="copyText(sp)">复制</button>
-                  </li>
-                </ul>
-              </div>
-              <div v-for="(m, i) in messages" :key="i" :class="['bubble', m.role]">{{ m.content }}</div>
-            </template>
-          </div>
-          <div class="chat-input">
-            <input v-model="userInput" type="text" placeholder="补充你的背景/需求，回车发送" @keydown.enter.exact.prevent="send" />
-            <button class="ct-btn" @click="send" :disabled="!userInput.trim() || loading">发送</button>
-          </div>
-        </div>
-      </div>
-
-      <div class="right">
-        <!-- 对象信息卡 -->
-        <div class="card">
-          <div class="ct-card-hd">对象信息</div>
-          <div class="card-bd profile">
-            <div class="avatar" aria-hidden="true">{{ profileInitial }}</div>
-            <div class="meta">
-              <div class="name">{{ profile.name || '未命名对象' }}</div>
-              <!-- AI 画像标签 -->
-              <div class="tags" v-if="profile.personality_tags?.length">
-                <span v-for="t in profile.personality_tags" :key="t">{{ t }}</span>
-              </div>
-              <!-- 无画像时的旧标签 -->
-              <div class="tags" v-else-if="profile.tags?.length">
-                <span v-for="t in profile.tags" :key="t">{{ t }}</span>
-              </div>
-            </div>
-          </div>
-          <!-- AI 画像详情 -->
-          <div v-if="profile.chat_style" class="profile-detail">
-            <div class="detail-item">
-              <span class="detail-label">💬 聊天风格</span>
-              <span class="detail-text">{{ profile.chat_style }}</span>
-            </div>
-            <div class="detail-item" v-if="profile.interests?.length">
-              <span class="detail-label">🎯 兴趣话题</span>
-              <span class="detail-text">{{ profile.interests.join('、') }}</span>
-            </div>
-            <div class="detail-item" v-if="profile.communication_tips">
-              <span class="detail-label">📌 沟通注意</span>
-              <span class="detail-text">{{ profile.communication_tips }}</span>
-            </div>
-            <div class="detail-item" v-if="profile.relationship_note">
-              <span class="detail-label">💡 关系状态</span>
-              <span class="detail-text">{{ profile.relationship_note }}</span>
-            </div>
-          </div>
-          <!-- 无画像提示 -->
-          <div v-else-if="!profileLoading" class="profile-empty">
-            <span>暂无 AI 画像</span>
-            <button
-              v-if="realtimeState.talkerName"
-              class="btn-sm"
-              @click="showProfileDialog = true"
-              :disabled="profileLoading"
-            >生成画像</button>
-          </div>
-          <div v-if="profileLoading" class="profile-loading">画像生成中...</div>
-        </div>
-
-        <!-- 情绪分析（饼图） -->
-        <div class="card">
-          <div class="ct-card-hd">情绪占比（近期）</div>
-          <div class="card-bd">
-            <div v-if="!emotions.length" class="empty">暂无数据，待导入或等待实时生成</div>
-            <div v-else ref="pieRef" class="pie"></div>
-          </div>
-        </div>
-      </div>
-    </div>
   </section>
 
   <!-- 画像生成确认弹窗 -->
@@ -523,6 +491,9 @@ function selectContact(c: any) {
   contactSearch.value = c.name
   showContactDropdown.value = false
   highlightedIndex.value = -1
+
+  // 选择联系人后自动检查并加载画像
+  checkContactProfile(c.name)
 }
 
 function highlightNext() {
@@ -542,6 +513,7 @@ function selectHighlighted() {
     // 允许手动输入不在列表中的名称
     realtimeState.talkerName = contactSearch.value.trim()
     showContactDropdown.value = false
+    checkContactProfile(realtimeState.talkerName)
   }
 }
 
@@ -615,7 +587,6 @@ async function startMonitoring() {
       startMessagesPolling()
       startSuggestionsPolling()  // 启动建议轮询
       loadSuggestionConfig()    // 加载建议配置
-      checkContactProfile(talkerName)  // 检查联系人画像
     } else {
       realtimeState.status = 'idle'
       realtimeError.value = result.error || result.message || '启动监听失败'
@@ -1490,56 +1461,30 @@ function getTriggerIcon(type: string): string {
 .btn-sm:hover { background: var(--ct-color-primary-light); }
 .btn-sm:disabled { opacity: 0.5; cursor: not-allowed; }
 
-/* 弹窗 */
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 9999;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  backdrop-filter: blur(4px);
-}
-.modal-box {
-  background: var(--ct-bg-card, #1e1e2e);
-  border: 1px solid var(--ct-border);
-  border-radius: var(--ct-radius-lg, 12px);
-  padding: var(--ct-space-lg, 24px);
-  width: min(420px, 90vw);
-  box-shadow: 0 20px 60px rgba(0,0,0,0.4);
-}
-.modal-title {
-  font-size: var(--ct-text-lg, 18px);
-  font-weight: var(--ct-font-semibold, 600);
-  margin-bottom: var(--ct-space-sm, 8px);
-}
+/* 弹窗内部特有样式 */
 .modal-desc {
   font-size: var(--ct-text-sm);
   color: var(--ct-text-secondary);
-  margin-bottom: var(--ct-space-md, 16px);
   line-height: 1.5;
+  margin-bottom: var(--ct-space-md);
 }
-.modal-field { margin-bottom: var(--ct-space-md, 16px); }
 .modal-field > label {
-  display: block;
   font-size: var(--ct-text-sm);
   font-weight: var(--ct-font-medium);
-  margin-bottom: var(--ct-space-xs, 4px);
   color: var(--ct-text-secondary);
 }
 .budget-options {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: var(--ct-space-xs, 6px);
+  gap: var(--ct-space-xs);
 }
 .budget-option {
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 8px 10px;
-  border-radius: var(--ct-radius-sm, 6px);
-  border: 1px solid var(--ct-border);
+  border-radius: var(--ct-radius-sm);
+  border: 1px solid var(--ct-border-color);
   cursor: pointer;
   transition: all var(--ct-transition-fast);
   font-size: var(--ct-text-sm);
@@ -1552,18 +1497,20 @@ function getTriggerIcon(type: string): string {
 .budget-option input[type="radio"] { display: none; }
 .budget-label { font-weight: var(--ct-font-medium); }
 .budget-desc { font-size: var(--ct-text-xs); color: var(--ct-text-tertiary); }
+
 .custom-budget {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-top: var(--ct-space-xs, 6px);
+  margin-top: var(--ct-space-xs);
+  grid-column: 1 / -1;
 }
 .custom-budget input {
   width: 120px;
   padding: 6px 10px;
-  border-radius: var(--ct-radius-sm, 6px);
-  border: 1px solid var(--ct-border);
-  background: var(--ct-bg-input, rgba(255,255,255,0.06));
+  border-radius: var(--ct-radius-sm);
+  border: 1px solid var(--ct-border-color);
+  background: var(--ct-bg-elevated);
   color: var(--ct-text-primary);
   font-size: var(--ct-text-sm);
 }
@@ -1571,32 +1518,6 @@ function getTriggerIcon(type: string): string {
 .modal-info {
   font-size: var(--ct-text-sm);
   color: var(--ct-text-tertiary);
-  margin-bottom: var(--ct-space-md, 16px);
+  margin-top: var(--ct-space-sm);
 }
-.modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--ct-space-sm, 8px);
-}
-.btn-cancel {
-  padding: 8px 20px;
-  border-radius: var(--ct-radius-sm, 6px);
-  border: 1px solid var(--ct-border);
-  background: transparent;
-  color: var(--ct-text-secondary);
-  cursor: pointer;
-  font-size: var(--ct-text-sm);
-}
-.btn-cancel:hover { background: rgba(255,255,255,0.05); }
-.btn-confirm {
-  padding: 8px 20px;
-  border-radius: var(--ct-radius-sm, 6px);
-  border: none;
-  background: var(--ct-color-primary);
-  color: white;
-  cursor: pointer;
-  font-size: var(--ct-text-sm);
-  font-weight: var(--ct-font-medium);
-}
-.btn-confirm:hover { filter: brightness(1.1); }
 </style>

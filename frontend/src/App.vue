@@ -1,6 +1,6 @@
 <template>
-  <div class="ct-layout">
-    <aside class="ct-sidebar">
+  <div class="ct-layout" :class="{ 'floating-mode': isFloatingMode }">
+    <aside v-show="!isFloatingMode" class="ct-sidebar">
       <!-- Logo区域 -->
       <div class="sidebar-brand">
         <div class="brand-logo">
@@ -73,16 +73,22 @@
       </div>
     </aside>
 
-    <main class="ct-content">
+    <main class="ct-content" :class="{ 'floating-content': isFloatingMode }">
       <router-view />
     </main>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { onMounted, computed } from 'vue'
+import { useRoute } from 'vue-router'
 import ThemeToggle from '@/components/base/ThemeToggle.vue'
 import { initTheme } from '@/composables/useTheme'
+
+const route = useRoute()
+
+// 悬浮模式下隐藏侧边栏
+const isFloatingMode = computed(() => route.path === '/floating')
 
 onMounted(() => {
   initTheme()
@@ -299,5 +305,15 @@ onMounted(() => {
 
 .ct-sidebar::-webkit-scrollbar-thumb:hover {
   background: var(--ct-border-color-hover);
+}
+
+/* 悬浮模式：隐藏侧边栏，内容占满窗口 */
+.ct-layout.floating-mode {
+  grid-template-columns: 1fr;
+}
+
+.ct-content.floating-content {
+  padding: 0;
+  overflow: hidden;
 }
 </style>

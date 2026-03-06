@@ -230,6 +230,24 @@ class LLMSuggestionEngine(SuggestionEngine):
             if ctx_items:
                 parts.append(f"【触发详情】{', '.join(ctx_items)}")
 
+        # 用户自定义需求/上下文（悬浮模式下用户输入的想法和反馈）
+        user_context = context.get("user_context")
+        if user_context:
+            if isinstance(user_context, list):
+                # 对话历史格式: [{role: 'user', content: '...'}, ...]
+                parts.append("【用户需求与反馈】")
+                for msg in user_context[-6:]:  # 最多取最近 6 轮
+                    role_label = "用户" if msg.get("role") == "user" else "AI"
+                    parts.append(f"  {role_label}：{msg.get('content', '')[:200]}")
+            elif isinstance(user_context, str):
+                parts.append(f"【用户需求】{user_context[:500]}")
+
+        # 历史聊天分析摘要（如请求包含历史数据）
+        if context.get("include_history"):
+            history_summary = context.get("history_summary")
+            if history_summary:
+                parts.append(f"【历史关系分析】{history_summary[:500]}")
+
         # 最近对话
         recent = context.get("recent_messages", [])
         if recent:

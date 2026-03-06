@@ -8,6 +8,7 @@ from .message_buffer import MessageBuffer
 from .emotion_state_tracker import EmotionStateTracker
 from .suggestion_engine import SuggestionEngineFactory
 from .llm_engine import LLMSuggestionEngine
+from .floating_window_service import FloatingWindowService
 
 __all__ = [
     'RealtimeMonitorService',
@@ -15,4 +16,5 @@ __all__ = [
     'EmotionStateTracker',
     'SuggestionEngineFactory',
     'LLMSuggestionEngine',
+    'FloatingWindowService',
 ]

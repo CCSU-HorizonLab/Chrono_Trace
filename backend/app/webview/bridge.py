@@ -15,6 +15,11 @@ class Bridge:
         # 延迟加载特征提取服务（避免循环导入）
         self._feature_service = None
 
+        # 悬浮窗管理服务
+        from ..services.realtime.floating_window_service import FloatingWindowService
+        self._floating_service = FloatingWindowService()
+        self._webview_window = None  # 由 app_dev.py 注入
+
     def _load_settings(self):
         """加载设置"""
         if self.settings_file.exists():
@@ -252,6 +257,16 @@ class Bridge:
 
             result = engine.generate(trigger_type, intent, context)
 
+            # 提取 AI 实际参考的聊天记录（最多 10 条）
+            recent_used = context.get('recent_messages', [])
+            recent_for_display = []
+            for msg in recent_used[-10:]:
+                recent_for_display.append({
+                    'sender': '我' if msg.get('sender_attr') == 'self' else '对方',
+                    'content': (msg.get('content') or '')[:120],
+                    'timestamp': msg.get('timestamp', 0),
+                })
+
             return {
                 "ok": True,
                 "suggestion": {
@@ -261,6 +276,10 @@ class Bridge:
                     "speeches": result.speeches,
                     "severity": result.severity,
                     "confidence": result.confidence,
+                },
+                "context_used": {
+                    "recent_messages": recent_for_display,
+                    "message_count": len(recent_used),
                 }
             }
         except Exception as e:
@@ -1456,6 +1475,56 @@ class Bridge:
                 "success": False,
                 "error": str(e)
             }
+
+    # ==================== 悬浮窗管理 ====================
+
+    def set_webview_window(self, window):
+        """设置 PyWebView 窗口引用（由 app_dev.py 启动后注入）"""
+        self._webview_window = window
+        self._floating_service.set_webview_window(window)
+
+    def enter_floating_mode(self) -> dict[str, Any]:
+        """
+        进入悬浮窗模式：窗口变为紧凑悬浮面板，跟随微信窗口
+
+        Returns:
+            {"ok": True, "message": "...", "wechat_found": True/False}
+        """
+        try:
+            return self._floating_service.enter_floating_mode()
+        except Exception as e:
+            print(f"[Bridge] 进入悬浮模式失败: {e}")
+            import traceback
+            traceback.print_exc()
+            return {'ok': False, 'error': str(e)}
+
+    def exit_floating_mode(self) -> dict[str, Any]:
+        """
+        退出悬浮窗模式：恢复原始窗口尺寸和位置
+
+        Returns:
+            {"ok": True, "message": "..."}
+        """
+        try:
+            return self._floating_service.exit_floating_mode()
+        except Exception as e:
+            print(f"[Bridge] 退出悬浮模式失败: {e}")
+            import traceback
+            traceback.print_exc()
+            return {'ok': False, 'error': str(e)}
+
+    def get_floating_status(self) -> dict[str, Any]:
+        """
+        获取悬浮窗状态
+
+        Returns:
+            {"ok": True, "is_floating": bool, "wechat_found": bool}
+        """
+        try:
+            return self._floating_service.get_status()
+        except Exception as e:
+            print(f"[Bridge] 获取悬浮状态失败: {e}")
+            return {'ok': False, 'error': str(e)}
 
     # ==================== 好感度分析相关 ====================
 

@@ -93,8 +93,13 @@ def main():
         wait_for_dev_server(dev_url, timeout_sec=90)
         print(f"dev server 已就绪：{dev_url}")
 
-    webview.create_window(DEV_WINDOW_TITLE, url=dev_url, js_api=bridge, frameless=False)
-    webview.start(debug=True)
+    window = webview.create_window(DEV_WINDOW_TITLE, url=dev_url, js_api=bridge, frameless=False)
+
+    def on_started():
+        """窗口启动后，将窗口引用注入 Bridge（供悬浮窗服务使用）"""
+        bridge.set_webview_window(window)
+
+    webview.start(func=on_started, debug=True)
 
     # 关闭窗口后也清理一次（双保险）
     cleanup_proc_tree(npm_proc)

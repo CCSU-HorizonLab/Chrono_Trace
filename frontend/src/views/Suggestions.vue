@@ -412,9 +412,12 @@
 
 <script setup lang="ts">
 import { ref, onMounted, watch, onBeforeUnmount, computed, reactive, nextTick } from 'vue'
+import { useRouter } from 'vue-router'
 import { bridgeReady, api } from '@/api/bridge'
 import * as echarts from 'echarts'
 import CtButton from '@/components/base/CtButton.vue'
+
+const router = useRouter()
 
 type Message = { role: 'ai' | 'user'; content: string }
 
@@ -587,6 +590,14 @@ async function startMonitoring() {
       startMessagesPolling()
       startSuggestionsPolling()  // 启动建议轮询
       loadSuggestionConfig()    // 加载建议配置
+
+      // 进入悬浮窗模式并跳转
+      try {
+        await api.enter_floating_mode()
+        router.push('/floating')
+      } catch (e) {
+        console.warn('进入悬浮模式失败，保持当前页面:', e)
+      }
     } else {
       realtimeState.status = 'idle'
       realtimeError.value = result.error || result.message || '启动监听失败'

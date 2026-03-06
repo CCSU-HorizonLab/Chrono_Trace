@@ -42,6 +42,10 @@ type PyWebViewApi = {
   get_initiative_stats: (conversation_id: number) => Promise<any>
   get_word_counts: (conversation_id: number, by_session?: boolean) => Promise<any>
   reanalyze: (conversation_id: number) => Promise<any>
+  // 悬浮窗管理
+  enter_floating_mode: () => Promise<any>
+  exit_floating_mode: () => Promise<any>
+  get_floating_status: () => Promise<any>
 }
 
 function getApi(): PyWebViewApi {

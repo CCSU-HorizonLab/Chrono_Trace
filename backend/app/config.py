@@ -1,4 +1,5 @@
 import os
+import locale
 
 # 项目根目录（本文件位于 backend/app/config.py，向上两层即为项目根）
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -9,9 +10,20 @@ FRONTEND_DIR = os.path.join(PROJECT_ROOT, 'frontend')
 # 默认开发期本地地址（可被环境变量 DEV_URL 覆盖）
 DEV_URL_DEFAULT = 'http://localhost:5173'
 
-# 窗口标题（统一管理）
-PROD_WINDOW_TITLE = 'Chrono_Trace'
-DEV_WINDOW_TITLE = 'Chrono_Trace (DEV)'
+# 窗口标题（根据系统语言自动选择）
+def _get_window_name() -> str:
+    """中文系统显示「时痕」，英文系统显示「Chrono Trace」"""
+    try:
+        lang = locale.getdefaultlocale()[0] or ''
+        if lang.startswith('zh'):
+            return '时痕'
+    except Exception:
+        pass
+    return 'Chrono Trace'
+
+_APP_NAME = _get_window_name()
+PROD_WINDOW_TITLE = _APP_NAME
+DEV_WINDOW_TITLE = f'{_APP_NAME} (DEV)'
 
 
 def get_dist_index_path() -> str:

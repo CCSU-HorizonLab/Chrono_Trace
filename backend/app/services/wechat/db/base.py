@@ -1,9 +1,11 @@
 """微信数据库基类定义"""
+import logging
 
 from abc import ABC, abstractmethod
 from typing import List, Optional, Tuple
 
 
+logger = logging.getLogger(__name__)
 class WeChatDBBase(ABC):
     """微信数据库基类 - 定义统一的接口"""
     

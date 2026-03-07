@@ -11,6 +11,7 @@
 import pickle
 import time
 import os
+import logging
 from typing import Dict, Any, List, Optional
 from ...db.connection import get_db
 
@@ -18,6 +19,7 @@ from ...db.connection import get_db
 os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
 
 
+logger = logging.getLogger(__name__)
 class SentimentService:
     """情感分析服务
 
@@ -38,7 +40,7 @@ class SentimentService:
         try:
             self._load_realtime_service()
         except Exception as e:
-            print(f"[情感服务] 警告: 实时分析服务预加载失败: {e}")
+            logger.error(f"[情感服务] 警告: 实时分析服务预加载失败: {e}")
 
     # ========== 模型加载 (延迟加载) ==========
 
@@ -48,7 +50,7 @@ class SentimentService:
             # 引入实时分析服务（跳过建表避免commit干扰主连接查询）
             from ..realtime.realtime_sentiment_service import RealtimeSentimentService
             self._realtime_service = RealtimeSentimentService(skip_db_init=True)
-            print("[情感服务] 实时分析服务(RoBERTa)加载成功")
+            logger.debug("[情感服务] 实时分析服务(RoBERTa)加载成功")
 
     def _load_embedding_model(self):
         """延迟加载sentence-transformers模型（自动检测GPU）"""
@@ -65,10 +67,10 @@ class SentimentService:
                 if torch.cuda.is_available():
                     device = "cuda"
                     gpu_name = torch.cuda.get_device_name(0)
-                    print(f"[情感服务] 检测到GPU: {gpu_name}")
+                    logger.debug(f"[情感服务] 检测到GPU: {gpu_name}")
                 else:
                     device = "cpu"
-                    print("[情感服务] 未检测到GPU，使用CPU模式")
+                    logger.debug("[情感服务] 未检测到GPU，使用CPU模式")
                 
                 # 使用轻量级中文模型 (384维)
                 model_name = "shibing624/text2vec-base-chinese"
@@ -77,15 +79,15 @@ class SentimentService:
                     device=device,
                     model_kwargs={"low_cpu_mem_usage": False}  # 规避 meta tensor 在某些环境下的加载Bug
                 )
-                print(f"[情感服务] 向量模型加载成功: {model_name} (设备: {device})")
+                logger.info(f"[情感服务] 向量模型加载成功: {model_name} (设备: {device})")
             except ImportError:
-                print("[情感服务] 警告: sentence-transformers未安装")
-                print("请运行: pip install sentence-transformers")
+                logger.warning("[情感服务] 警告: sentence-transformers未安装")
+                logger.debug("请运行: pip install sentence-transformers")
                 self._embedding_load_failed = True
                 raise
             except Exception as e:
-                print(f"[情感服务] 向量模型加载失败: {e}")
-                print("[情感服务] 将使用零向量替代，不影响核心分析")
+                logger.error(f"[情感服务] 向量模型加载失败: {e}")
+                logger.debug("[情感服务] 将使用零向量替代，不影响核心分析")
                 self._embedding_load_failed = True
 
     # ========== 情感分析 ==========
@@ -140,7 +142,7 @@ class SentimentService:
             }
 
         except Exception as e:
-            print(f"[情感服务] 分析失败: {e}, 文本: '{text[:50]}...'")
+            logger.error(f"[情感服务] 分析失败: {e}, 文本: '{text[:50]}...'")
             # 失败时回退到中性值
             return {
                 "polarity": 0,
@@ -176,7 +178,7 @@ class SentimentService:
                     result = self.analyze_sentiment(text)
                     results.append(result)
                 except Exception as e:
-                    print(f"[情感服务] 批处理失败: {e}")
+                    logger.error(f"[情感服务] 批处理失败: {e}")
                     # 失败时回退到中性值
                     results.append({
                         "polarity": 0,
@@ -231,7 +233,7 @@ class SentimentService:
             return embedding_list
 
         except Exception as e:
-            print(f"[情感服务] 向量生成失败: {e}")
+            logger.error(f"[情感服务] 向量生成失败: {e}")
             # 失败时返回零向量
             return [0.0] * 384
 
@@ -274,7 +276,7 @@ class SentimentService:
             self.db.commit()
 
         except Exception as e:
-            print(f"[情感服务] 缓存写入失败 (message_id={message_id}): {e}")
+            logger.error(f"[情感服务] 缓存写入失败 (message_id={message_id}): {e}")
 
     def get_sentiment_from_cache(self, message_id: int) -> Optional[Dict[str, Any]]:
         """
@@ -320,7 +322,7 @@ class SentimentService:
             }
 
         except Exception as e:
-            print(f"[情感服务] 缓存读取失败 (message_id={message_id}): {e}")
+            logger.error(f"[情感服务] 缓存读取失败 (message_id={message_id}): {e}")
             return None
 
     def batch_cache_sentiments(self, results: List[Dict[str, Any]]):
@@ -357,10 +359,10 @@ class SentimentService:
                 ))
 
             self.db.commit()
-            print(f"[情感服务] 批量缓存写入成功: {len(results)} 条")
+            logger.info(f"[情感服务] 批量缓存写入成功: {len(results)} 条")
 
         except Exception as e:
-            print(f"[情感服务] 批量缓存写入失败: {e}")
+            logger.error(f"[情感服务] 批量缓存写入失败: {e}")
 
     # ========== 缓存统计 ==========
 
@@ -399,7 +401,7 @@ class SentimentService:
             }
 
         except Exception as e:
-            print(f"[情感服务] 缓存统计失败: {e}")
+            logger.error(f"[情感服务] 缓存统计失败: {e}")
             return {
                 "total_cached": 0,
                 "memory_cache_size": 0,
@@ -411,4 +413,4 @@ class SentimentService:
     def clear_memory_cache(self):
         """清空内存缓存"""
         self._embedding_cache.clear()
-        print("[情感服务] 内存缓存已清空")
+        logger.debug("[情感服务] 内存缓存已清空")

@@ -1,5 +1,6 @@
 """微信V4数据导入服务 (仅支持4.0+版本)"""
 import time
+import logging
 from typing import Dict, Any, Optional, Callable
 from .path_finder import WeChatPathFinder
 from .db_decryptor import WeChatDBDecryptor
@@ -9,6 +10,7 @@ from ...db.connection import get_db
 from ..analysis.preprocessing_service import PreprocessingService
 
 
+logger = logging.getLogger(__name__)
 class WeChatIngestService:
     """微信V4数据导入服务"""
     
@@ -137,19 +139,19 @@ class WeChatIngestService:
             if progress_callback:
                 progress_callback("查找数据库路径...", 0, 100)
             
-            print(f"\n[DEBUG] === 开始导入流程 ===")
-            print(f"[DEBUG] custom_paths: {custom_paths}")
+            logger.info(f"\n[DEBUG] === 开始导入流程 ===")
+            logger.debug(f"[DEBUG] custom_paths: {custom_paths}")
             
             if custom_paths and custom_paths.get("wechat_dir") and custom_paths.get("current_user"):
                 # 使用自定义路径,但重新查找数据库文件
                 wechat_dir = custom_paths["wechat_dir"]
                 wxid = custom_paths["current_user"]
-                print(f"[DEBUG] 使用自定义路径: {wechat_dir}")
-                print(f"[DEBUG] 用户wxid: {wxid}")
+                logger.debug(f"[DEBUG] 使用自定义路径: {wechat_dir}")
+                logger.debug(f"[DEBUG] 用户wxid: {wxid}")
                 
                 # 重新查找该wxid下的所有数据库文件
                 databases = WeChatPathFinder.find_databases(wxid, wechat_dir)
-                print(f"[DEBUG] 重新查找到的数据库: {databases}")
+                logger.debug(f"[DEBUG] 重新查找到的数据库: {databases}")
                 
                 paths = {
                     "wechat_dir": wechat_dir,
@@ -158,9 +160,9 @@ class WeChatIngestService:
                 }
             else:
                 # 自动检测
-                print(f"[DEBUG] 开始自动检测微信路径...")
+                logger.info(f"[DEBUG] 开始自动检测微信路径...")
                 paths = WeChatPathFinder.find_all_wechat_dbs()
-                print(f"[DEBUG] 自动检测结果: {paths}")
+                logger.debug(f"[DEBUG] 自动检测结果: {paths}")
                 
                 if not paths:
                     raise Exception("未找到微信数据库,请在设置中手动指定路径")
@@ -168,11 +170,11 @@ class WeChatIngestService:
                 wxid = paths["current_user"]
                 databases = paths["databases"]
             
-            print(f"[DEBUG] wxid: {wxid}")
-            print(f"[DEBUG] databases: {databases}")
+            logger.debug(f"[DEBUG] wxid: {wxid}")
+            logger.debug(f"[DEBUG] databases: {databases}")
             
             # 2. 导入联系人
-            print(f"\n[DEBUG] import_contacts={import_contacts}, has contact db={databases.get('contact')}")
+            logger.debug(f"\n[DEBUG] import_contacts={import_contacts}, has contact db={databases.get('contact')}")
             if import_contacts and databases.get("contact"):
                 if progress_callback:
                     progress_callback("导入联系人...", 10, 100)
@@ -182,10 +184,10 @@ class WeChatIngestService:
                     db_key
                 )
                 stats["contacts"] = contact_count
-                print(f"[DEBUG] 联系人导入结果: {contact_count}")
+                logger.debug(f"[DEBUG] 联系人导入结果: {contact_count}")
             
             # 3. 导入消息
-            print(f"\n[DEBUG] import_messages={import_messages}, message dbs={databases.get('message')}")
+            logger.debug(f"\n[DEBUG] import_messages={import_messages}, message dbs={databases.get('message')}")
             if import_messages and databases.get("message"):
                 if progress_callback:
                     progress_callback("导入消息...", 30, 100)
@@ -200,9 +202,9 @@ class WeChatIngestService:
                 
                 stats["messages"] = message_stats["total"]
                 stats["conversations"] = message_stats["conversations"]
-                print(f"[DEBUG] 消息导入结果: {message_stats}")
+                logger.debug(f"[DEBUG] 消息导入结果: {message_stats}")
             
-            print(f"\n[DEBUG] 最终统计: {stats}")
+            logger.debug(f"\n[DEBUG] 最终统计: {stats}")
             
             # 4. 预处理和特征提取已改为懒加载模式
             # 不再在导入时自动执行,而是在用户点击"开始分析"时按需处理
@@ -211,7 +213,7 @@ class WeChatIngestService:
             # - 按联系人独立处理,数据量小,不易中断
             # - 用户可选择性分析感兴趣的联系人
             # 注: 如需批量预处理,可调用 _auto_preprocess_messages() 和 _auto_extract_features()
-            print(f"[INFO] 数据导入完成,预处理将在首次分析时自动执行")
+            logger.info(f"[INFO] 数据导入完成,预处理将在首次分析时自动执行")
 
             # 6. 更新导入记录
             self._update_import_record(import_id, "success", stats)
@@ -235,14 +237,14 @@ class WeChatIngestService:
     
     def _import_contacts_v4(self, contact_db_path: str, db_key: str) -> int:
         """导入联系人(V4版本)"""
-        print(f"\n[DEBUG] 开始导入联系人")
-        print(f"[DEBUG] 联系人数据库路径: {contact_db_path}")
+        logger.info(f"\n[DEBUG] 开始导入联系人")
+        logger.debug(f"[DEBUG] 联系人数据库路径: {contact_db_path}")
         
         contact_db = ContactDBV4(contact_db_path, db_key)
         
         try:
             contacts_data = contact_db.get_contacts()
-            print(f"[DEBUG] 从数据库读取到 {len(contacts_data)} 个联系人")
+            logger.debug(f"[DEBUG] 从数据库读取到 {len(contacts_data)} 个联系人")
             
             # 批量插入联系人
             inserted = 0
@@ -271,11 +273,11 @@ class WeChatIngestService:
                     ))
                     inserted += 1
                 except Exception as e:
-                    print(f"[DEBUG] 插入联系人失败: {e}")
+                    logger.error(f"[DEBUG] 插入联系人失败: {e}")
                     pass  # 忽略单条错误
             
             self.db.commit()
-            print(f"[DEBUG] 成功插入 {inserted} 个联系人, 跳过 {skipped} 个群聊/公众号")
+            logger.info(f"[DEBUG] 成功插入 {inserted} 个联系人, 跳过 {skipped} 个群聊/公众号")
             return inserted
         finally:
             contact_db.close()
@@ -289,9 +291,9 @@ class WeChatIngestService:
         progress_callback: Optional[Callable] = None
     ) -> Dict:
         """导入消息(V4版本)"""
-        print(f"\n[DEBUG] 开始导入消息")
-        print(f"[DEBUG] 消息数据库数量: {len(message_db_paths)}")
-        print(f"[DEBUG] 我的wxid: {wxid}")
+        logger.info(f"\n[DEBUG] 开始导入消息")
+        logger.debug(f"[DEBUG] 消息数据库数量: {len(message_db_paths)}")
+        logger.debug(f"[DEBUG] 我的wxid: {wxid}")
         
         total_messages = 0
         conversations_set = set()
@@ -305,10 +307,10 @@ class WeChatIngestService:
             
             # 获取所有对话username
             all_usernames = message_db.get_all_conversation_usernames()
-            print(f"[DEBUG] 找到 {len(all_usernames)} 个会话")
+            logger.debug(f"[DEBUG] 找到 {len(all_usernames)} 个会话")
             
             if len(all_usernames) > 0:
-                print(f"[DEBUG] 前3个会话: {all_usernames[:3]}")
+                logger.debug(f"[DEBUG] 前3个会话: {all_usernames[:3]}")
              
             for idx, username in enumerate(all_usernames):
                 # 过滤群聊、公众号、商业号
@@ -328,7 +330,7 @@ class WeChatIngestService:
                         limit=limit if limit > 0 else None
                     )
                     
-                   # print(f"[DEBUG] 会话 {username}: 读取到 {len(messages_data)} 条消息")
+                   # logger.debug(f"[DEBUG] 会话 {username}: 读取到 {len(messages_data)} 条消息")
                     
                     # 批量插入
                     batch = []
@@ -349,7 +351,7 @@ class WeChatIngestService:
                 
                 except Exception as e:
                     # 某个对话导入失败,跳过继续
-                    print(f"[DEBUG] 导入对话 {username} 失败: {e}")
+                    logger.error(f"[DEBUG] 导入对话 {username} 失败: {e}")
                     import traceback
                     traceback.print_exc()
                     continue
@@ -357,8 +359,8 @@ class WeChatIngestService:
         finally:
             message_db.close()
         
-        print(f"[DEBUG] 消息导入完成: 总计 {total_messages} 条, {len(conversations_set)} 个会话")
-        print(f"[DEBUG] 跳过 {skipped_conversations} 个群聊/公众号会话")
+        logger.info(f"[DEBUG] 消息导入完成: 总计 {total_messages} 条, {len(conversations_set)} 个会话")
+        logger.debug(f"[DEBUG] 跳过 {skipped_conversations} 个群聊/公众号会话")
         
         return {"total": total_messages,"conversations": len(conversations_set)}  
     
@@ -416,7 +418,7 @@ class WeChatIngestService:
                 (msg['timestamp'], conversation_id)) # pyright: ignore[reportUnusedCallResult]
             
             except Exception as e:
-                print(f"[DEBUG] 插入消息失败: {e}")
+                logger.error(f"[DEBUG] 插入消息失败: {e}")
                 pass  # 忽略单条错误
         
         self.db.commit()
@@ -432,7 +434,7 @@ class WeChatIngestService:
             预处理的消息数量
         """
         try:
-            print(f"\n[预处理] 开始自动预处理新导入的消息...")
+            logger.info(f"\n[预处理] 开始自动预处理新导入的消息...")
             
             # 查找未预处理的消息（不在缓存表中的消息）
             cursor = self.db.execute("""
@@ -449,10 +451,10 @@ class WeChatIngestService:
             unprocessed = cursor.fetchall()
             
             if not unprocessed:
-                print(f"[预处理] 没有需要预处理的消息")
+                logger.debug(f"[预处理] 没有需要预处理的消息")
                 return 0
             
-            print(f"[预处理] 找到 {len(unprocessed)} 条未预处理的消息")
+            logger.debug(f"[预处理] 找到 {len(unprocessed)} 条未预处理的消息")
             
             # 按会话分组
             conv_messages = {}
@@ -461,7 +463,7 @@ class WeChatIngestService:
                     conv_messages[conv_id] = []
                 conv_messages[conv_id].append(msg_id)
             
-            print(f"[预处理] 涉及 {len(conv_messages)} 个会话")
+            logger.debug(f"[预处理] 涉及 {len(conv_messages)} 个会话")
             
             # 批量预处理（每个会话独立处理）
             total_processed = 0
@@ -473,11 +475,11 @@ class WeChatIngestService:
                 count = self.preprocessor.preprocess_message_batch(conv_id, message_ids)
                 total_processed += count
             
-            print(f"[预处理] 完成! 共预处理 {total_processed} 条消息")
+            logger.info(f"[预处理] 完成! 共预处理 {total_processed} 条消息")
             return total_processed
 
         except Exception as e:
-            print(f"[预处理] 自动预处理失败: {e}")
+            logger.error(f"[预处理] 自动预处理失败: {e}")
             import traceback
             traceback.print_exc()
             return 0
@@ -493,7 +495,7 @@ class WeChatIngestService:
             特征提取统计信息
         """
         try:
-            print(f"\n[特征提取] 开始自动特征提取...")
+            logger.info(f"\n[特征提取] 开始自动特征提取...")
 
             # 延迟导入特征提取服务（避免循环导入）
             from ..analysis.feature_extraction_service import FeatureExtractionService
@@ -509,14 +511,14 @@ class WeChatIngestService:
             conversations = cursor.fetchall()
 
             if not conversations:
-                print(f"[特征提取] 没有找到会话")
+                logger.debug(f"[特征提取] 没有找到会话")
                 return {
                     "total_conversations": 0,
                     "processed": 0,
                     "failed": 0
                 }
 
-            # print(f"[特征提取] 找到 {len(conversations)} 个会话")
+            # logger.debug(f"[特征提取] 找到 {len(conversations)} 个会话")
 
             # 初始化特征提取服务
             feature_service = FeatureExtractionService()
@@ -532,7 +534,7 @@ class WeChatIngestService:
             for idx, (conv_id, name, msg_count) in enumerate(conversations):
                 try:
                     # 显示详细进度（明确是"联系人"而不是"会话"）
-                    print(f"[特征提取] 联系人 {idx+1}/{len(conversations)} - {name} ({msg_count}条消息)")
+                    logger.debug(f"[特征提取] 联系人 {idx+1}/{len(conversations)} - {name} ({msg_count}条消息)")
 
                     if progress_callback:
                         progress = 97 + int((idx / len(conversations)) * 3)
@@ -545,7 +547,7 @@ class WeChatIngestService:
                     session_count = cursor.fetchone()[0]
 
                     if session_count > 0:
-                        print(f"  → 已有 {session_count} 个会话记录，跳过")
+                        logger.debug(f"  → 已有 {session_count} 个会话记录，跳过")
                         stats["skipped"] += 1
                         continue
 
@@ -555,22 +557,22 @@ class WeChatIngestService:
                     # 显示生成的会话数量
                     if result and "sessions" in result:
                         num_sessions = len(result["sessions"])
-                        print(f"  → 切分完成，生成 {num_sessions} 个会话")
+                        logger.info(f"  → 切分完成，生成 {num_sessions} 个会话")
 
                     stats["processed"] += 1
 
                 except Exception as e:
-                    print(f"[特征提取] 会话 {conv_id} 提取失败: {e}")
+                    logger.error(f"[特征提取] 会话 {conv_id} 提取失败: {e}")
                     stats["failed"] += 1
                     continue
 
             # 显示完成信息
-            print(f"[特征提取] 完成! 处理={stats['processed']}, 跳过={stats['skipped']}, 失败={stats['failed']}")
+            logger.error(f"[特征提取] 完成! 处理={stats['processed']}, 跳过={stats['skipped']}, 失败={stats['failed']}")
 
             return stats
 
         except Exception as e:
-            print(f"[特征提取] 自动特征提取失败: {e}")
+            logger.error(f"[特征提取] 自动特征提取失败: {e}")
             import traceback
             traceback.print_exc()
             return {

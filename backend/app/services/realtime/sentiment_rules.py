@@ -1,4 +1,5 @@
 """实时消息情感分析 - 规则库和词典
+import logging
 
 包含:
 - 表情符号映射
@@ -197,6 +198,7 @@ PERFUNCTORY_WORDS = [
 ]
 
 
+logger = logging.getLogger(__name__)
 def get_emoji_sentiment(emoji: str) -> dict:
     """获取表情符号的情感
     

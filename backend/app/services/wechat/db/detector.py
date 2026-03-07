@@ -1,8 +1,10 @@
 """微信数据库版本检测器 (仅支持V4)"""
 
 import os
+import logging
 
 
+logger = logging.getLogger(__name__)
 def detect_wechat_version(wechat_dir: str) -> str:
     """
     检测微信数据库版本 (仅支持V4)

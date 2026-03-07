@@ -1,8 +1,10 @@
 """中文词云生成器（基于jieba分词）"""
 from typing import List, Dict, Any
 from collections import Counter
+import logging
 
 
+logger = logging.getLogger(__name__)
 class WordCloudGenerator:
     """中文词云生成器"""
     
@@ -70,7 +72,7 @@ class WordCloudGenerator:
         try:
             import jieba
         except ImportError:
-            print("[ERROR] jieba未安装，请执行: pip install jieba")
+            logger.error("[ERROR] jieba未安装，请执行: pip install jieba")
             return []
         
         if not texts:

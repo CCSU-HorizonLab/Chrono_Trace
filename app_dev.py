@@ -3,10 +3,13 @@ import time
 import atexit
 import signal
 import subprocess
+import logging
 import webview
 import requests
 from backend.app.webview.bridge import Bridge
 from backend.app.config import FRONTEND_DIR, DEV_URL_DEFAULT, DEV_WINDOW_TITLE
+
+logger = logging.getLogger(__name__)
 
 
 def cleanup_proc_tree(proc: subprocess.Popen):
@@ -81,17 +84,17 @@ def main():
     try:
         if wait_for_dev_server(dev_url, timeout_sec=2):
             already_running = True
-            print(f"检测到已有 dev server：{dev_url}，跳过启动 npm。")
+            logger.info(f"检测到已有 dev server：{dev_url}，跳过启动 npm。")
     except Exception:
         pass
 
     npm_proc = None
     if not already_running:
-        print("正在启动前端 dev server (npm run dev)...")
+        logger.info("正在启动前端 dev server (npm run dev)...")
         npm_proc = start_frontend_dev(frontend_dir)
         atexit.register(lambda: cleanup_proc_tree(npm_proc))
         wait_for_dev_server(dev_url, timeout_sec=90)
-        print(f"dev server 已就绪：{dev_url}")
+        logger.info(f"dev server 已就绪：{dev_url}")
 
     window = webview.create_window(DEV_WINDOW_TITLE, url=dev_url, js_api=bridge, frameless=False)
 

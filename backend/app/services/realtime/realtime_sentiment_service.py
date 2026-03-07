@@ -5,6 +5,7 @@
 """
 
 import os
+import logging
 import re
 import time
 import json
@@ -22,6 +23,7 @@ from ...db.connection import get_db
 os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
 
 
+logger = logging.getLogger(__name__)
 class RealtimeSentimentService:
     """实时消息情感分析服务
     
@@ -40,7 +42,7 @@ class RealtimeSentimentService:
         # 作为子服务调用时跳过建表，避免commit干扰主连接上的其他查询
         if not skip_db_init:
             self._ensure_table_exists()
-        print("[实时情感分析] 服务已初始化")
+        logger.debug("[实时情感分析] 服务已初始化")
     
     def _ensure_table_exists(self):
         """确保数据库表存在"""
@@ -66,7 +68,7 @@ class RealtimeSentimentService:
             self.db.commit()
             
         except Exception as e:
-            print(f"[实时情感分析] 创建表失败: {e}")
+            logger.error(f"[实时情感分析] 创建表失败: {e}")
             
     def is_ready(self) -> bool:
         """模型是否已准备就绪"""
@@ -80,7 +82,7 @@ class RealtimeSentimentService:
                 import torch
                 from pathlib import Path
                 
-                print("[实时情感分析] 正在加载情感分析模型...")
+                logger.debug("[实时情感分析] 正在加载情感分析模型...")
                 
                 # 微调后的3分类中文情感模型
                 # 模型信息:
@@ -95,10 +97,10 @@ class RealtimeSentimentService:
                 
                 if local_model_dir.exists():
                     model_path = str(local_model_dir)
-                    print(f"[实时情感分析] 使用本地模型: {model_path}")
+                    logger.debug(f"[实时情感分析] 使用本地模型: {model_path}")
                 else:
                     model_path = "tingting11/chrono-trace-sentiment"
-                    print(f"[实时情感分析] 从HuggingFace加载模型 (首次约400MB,后续秒开)")
+                    logger.debug(f"[实时情感分析] 从HuggingFace加载模型 (首次约400MB,后续秒开)")
                 
                 self._tokenizer = AutoTokenizer.from_pretrained(model_path)
                 self._model = AutoModelForSequenceClassification.from_pretrained(
@@ -110,14 +112,14 @@ class RealtimeSentimentService:
                 self._model.eval()
                 
                 num_labels = self._model.config.num_labels
-                print(f"[实时情感分析] 模型加载成功 | 分类数: {num_labels} | 设备: CPU")
+                logger.info(f"[实时情感分析] 模型加载成功 | 分类数: {num_labels} | 设备: CPU")
                 
             except ImportError:
-                print("[实时情感分析] 警告: transformers未安装")
-                print("请运行: pip install transformers torch")
+                logger.warning("[实时情感分析] 警告: transformers未安装")
+                logger.debug("请运行: pip install transformers torch")
                 raise
             except Exception as e:
-                print(f"[实时情感分析] 模型加载失败: {e}")
+                logger.error(f"[实时情感分析] 模型加载失败: {e}")
                 raise
     
     # ========== 预处理 ==========
@@ -292,7 +294,7 @@ class RealtimeSentimentService:
             }
             
         except Exception as e:
-            print(f"[实时情感分析] 模型推理失败: {e}")
+            logger.error(f"[实时情感分析] 模型推理失败: {e}")
             import traceback
             traceback.print_exc()
             # 失败时返回中性
@@ -466,7 +468,7 @@ class RealtimeSentimentService:
                 result = self.analyze(text)
                 results.append(result)
             except Exception as e:
-                print(f"[实时情感分析] 批量分析失败: {e}")
+                logger.error(f"[实时情感分析] 批量分析失败: {e}")
                 results.append({
                     'polarity': 0,
                     'intensity': 0.0,
@@ -525,10 +527,10 @@ class RealtimeSentimentService:
                     rules_text += '...'
                 output_parts.append(f"规则=[{rules_text}]")
             
-            print(' | '.join(output_parts))
+            logger.debug(' | '.join(output_parts))
             
         except Exception as e:
-            print(f"[实时情感分析] 缓存失败 (message_id={message_id}): {e}")
+            logger.error(f"[实时情感分析] 缓存失败 (message_id={message_id}): {e}")
     
     def get_from_cache(self, message_id: int) -> Optional[Dict[str, Any]]:
         """从缓存读取情感分析结果
@@ -562,5 +564,5 @@ class RealtimeSentimentService:
             }
             
         except Exception as e:
-            print(f"[实时情感分析] 缓存读取失败 (message_id={message_id}): {e}")
+            logger.error(f"[实时情感分析] 缓存读取失败 (message_id={message_id}): {e}")
             return None

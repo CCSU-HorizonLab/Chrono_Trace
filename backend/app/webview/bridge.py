@@ -1,9 +1,11 @@
 from typing import Any
 import json
 import os
+import logging
 from pathlib import Path
 from ..services.wechat.ingest_service import WeChatIngestService
 
+logger = logging.getLogger(__name__)
 class Bridge:
     """PyWebView JS API Bridge: 暴露给前端调用的方法。"""
 
@@ -38,7 +40,7 @@ class Bridge:
             with open(self.settings_file, "w", encoding="utf-8") as f:
                 json.dump(self.settings, f, indent=2, ensure_ascii=False)
         except Exception as e:
-            print(f"保存设置失败: {e}")
+            logger.error(f"保存设置失败: {e}")
 
     def ping(self) -> str:
         return "pong"
@@ -59,7 +61,7 @@ class Bridge:
             
             # 验证路径是否完整
             if not wechat_dir or not wxid:
-                print("[WARN] 自定义路径配置不完整，尝试自动检测")
+                logger.warning("[WARN] 自定义路径配置不完整，尝试自动检测")
                 return self.wechat_service.get_wechat_paths()
             
             custom_paths = {
@@ -114,9 +116,9 @@ class Bridge:
                 "wechat_dir": wechat_dir,
                 "current_user": wxid
             }
-            print(f"[DEBUG Bridge] 使用自定义路径: {custom_paths}")
+            logger.debug(f"[DEBUG Bridge] 使用自定义路径: {custom_paths}")
         else:
-            print(f"[DEBUG Bridge] 未配置自定义路径,将使用自动检测")
+            logger.debug(f"[DEBUG Bridge] 未配置自定义路径,将使用自动检测")
         
         return self.wechat_service.import_wechat_data(db_key, options or {}, custom_paths)
 
@@ -214,7 +216,7 @@ class Bridge:
             engine_type = monitor._suggestion_config.get('engine_type', 'template')
             engine = SuggestionEngineFactory.create(engine_type)
 
-            print(f"[Bridge] generate_suggestion: engine_type={engine_type}, intent={intent}")
+            logger.debug(f"[Bridge] generate_suggestion: engine_type={engine_type}, intent={intent}")
 
             # 自动补充上下文：情绪摘要
             if 'emotion_summary' not in context and monitor.emotion_tracker:
@@ -227,7 +229,7 @@ class Bridge:
                     recent = get_messages_with_sentiment(monitor.current_batch_id, 50)
                     context['recent_messages'] = recent
                 except Exception as e:
-                    print(f"[Bridge] 获取最近消息失败: {e}")
+                    logger.error(f"[Bridge] 获取最近消息失败: {e}")
 
             # 自动补充上下文：联系人画像
             if 'contact_profile' not in context and monitor.current_display_name:
@@ -238,7 +240,7 @@ class Bridge:
                     if cached and not cached['expired']:
                         context['contact_profile'] = cached['profile']
                 except Exception as e:
-                    print(f"[Bridge] 获取联系人画像失败: {e}")
+                    logger.error(f"[Bridge] 获取联系人画像失败: {e}")
 
             # 获取触发类型，默认通过 tracker 状态推断
             trigger_type = context.get("trigger_type")
@@ -284,7 +286,7 @@ class Bridge:
             }
         except Exception as e:
             import traceback
-            print(f"[Bridge] 生成建议失败: {e}")
+            logger.error(f"[Bridge] 生成建议失败: {e}")
             traceback.print_exc()
             return {"ok": False, "error": str(e)}
 
@@ -312,11 +314,11 @@ class Bridge:
         try:
             import webview
             
-            print(f"[DEBUG] 打开文件选择对话框: title={title}, file_types={file_types}")
+            logger.debug(f"[DEBUG] 打开文件选择对话框: title={title}, file_types={file_types}")
             
             # 获取当前窗口
             if not webview.windows or len(webview.windows) == 0:
-                print("[ERROR] 没有可用的 webview 窗口")
+                logger.error("[ERROR] 没有可用的 webview 窗口")
                 return {"path": None, "error": "No webview window available"}
             
             window = webview.windows[0]
@@ -328,7 +330,7 @@ class Bridge:
             else:
                 file_filter = ("所有文件 (*.*)", "*.*")
             
-            print(f"[DEBUG] 调用 create_file_dialog, filter={file_filter}")
+            logger.debug(f"[DEBUG] 调用 create_file_dialog, filter={file_filter}")
             
             # 调用文件选择对话框
             result = window.create_file_dialog(
@@ -337,22 +339,22 @@ class Bridge:
                 file_types=(file_filter,)
             )
             
-            print(f"[DEBUG] 文件选择结果: {result}")
+            logger.debug(f"[DEBUG] 文件选择结果: {result}")
             
             if result and len(result) > 0:
                 selected_path = result[0]
-                print(f"[DEBUG] 已选择文件: {selected_path}")
+                logger.debug(f"[DEBUG] 已选择文件: {selected_path}")
                 return {"path": selected_path}
             
-            print("[DEBUG] 用户取消选择")
+            logger.debug("[DEBUG] 用户取消选择")
             return {"path": None}
             
         except Exception as e:
             import traceback
             error_detail = traceback.format_exc()
-            print(f"[ERROR] 文件选择失败: {e}")
-            print("[ERROR] 详细错误:")
-            print(error_detail)
+            logger.error(f"[ERROR] 文件选择失败: {e}")
+            logger.error("[ERROR] 详细错误:")
+            logger.error(error_detail)
             return {"path": None, "error": str(e)}
     
     def select_directory(self, title: str = "选择目录") -> dict[str, Any]:
@@ -368,38 +370,38 @@ class Bridge:
         try:
             import webview
             
-            print(f"[DEBUG] 打开目录选择对话框: title={title}")
+            logger.debug(f"[DEBUG] 打开目录选择对话框: title={title}")
             
             # 获取当前窗口
             if not webview.windows or len(webview.windows) == 0:
-                print("[ERROR] 没有可用的 webview 窗口")
+                logger.error("[ERROR] 没有可用的 webview 窗口")
                 return {"path": None, "error": "No webview window available"}
             
             window = webview.windows[0]
             
-            print("[DEBUG] 调用 create_file_dialog (FOLDER_DIALOG)")
+            logger.debug("[DEBUG] 调用 create_file_dialog (FOLDER_DIALOG)")
             
             # 调用目录选择对话框
             result = window.create_file_dialog(
                 webview.FOLDER_DIALOG
             )
             
-            print(f"[DEBUG] 目录选择结果: {result}")
+            logger.debug(f"[DEBUG] 目录选择结果: {result}")
             
             if result and len(result) > 0:
                 selected_path = result[0]
-                print(f"[DEBUG] 已选择目录: {selected_path}")
+                logger.debug(f"[DEBUG] 已选择目录: {selected_path}")
                 return {"path": selected_path}
             
-            print("[DEBUG] 用户取消选择")
+            logger.debug("[DEBUG] 用户取消选择")
             return {"path": None}
             
         except Exception as e:
             import traceback
             error_detail = traceback.format_exc()
-            print(f"[ERROR] 目录选择失败: {e}")
-            print("[ERROR] 详细错误:")
-            print(error_detail)
+            logger.error(f"[ERROR] 目录选择失败: {e}")
+            logger.error("[ERROR] 详细错误:")
+            logger.error(error_detail)
             return {"path": None, "error": str(e)}
     
     def scan_wechat_directory(self, wechat_dir: str) -> dict[str, Any]:
@@ -424,7 +426,7 @@ class Bridge:
         try:
             import os
             
-            print(f"[DEBUG] 开始扫描目录: {wechat_dir}")
+            logger.info(f"[DEBUG] 开始扫描目录: {wechat_dir}")
             
             if not os.path.exists(wechat_dir):
                 return {
@@ -441,9 +443,9 @@ class Bridge:
             }
             
             # 扫描所有子目录，查找 wxid_ 开头的文件夹
-            print(f"[DEBUG] 列举目录内容...")
+            logger.debug(f"[DEBUG] 列举目录内容...")
             entries = os.listdir(wechat_dir)
-            print(f"[DEBUG] 找到 {len(entries)} 个条目")
+            logger.debug(f"[DEBUG] 找到 {len(entries)} 个条目")
             
             for entry in entries:
                 # 只处理 wxid_ 开头的目录名
@@ -454,11 +456,11 @@ class Bridge:
                 
                 # 跳过非目录
                 if not os.path.isdir(entry_path):
-                    print(f"[DEBUG] 跳过非目录: {entry}")
+                    logger.debug(f"[DEBUG] 跳过非目录: {entry}")
                     continue
                 
                 wxid = entry
-                print(f"[DEBUG] 找到wxid: {wxid}")
+                logger.debug(f"[DEBUG] 找到wxid: {wxid}")
                 result["wxids"].append(wxid)
                 
                 # 查找该用户的数据库文件
@@ -470,7 +472,7 @@ class Bridge:
                 # 查找消息数据库 (Msg/Multi/MSG*.db)
                 msg_dir = os.path.join(entry_path, "Msg")
                 if os.path.isdir(msg_dir):
-                    print(f"[DEBUG] 扫描消息目录: {msg_dir}")
+                    logger.debug(f"[DEBUG] 扫描消息目录: {msg_dir}")
                     # 限制扫描深度，避免过深的递归
                     for root, dirs, files in os.walk(msg_dir):
                         # 只扫描Msg和Msg/Multi两层
@@ -483,24 +485,24 @@ class Bridge:
                             if file.startswith("MSG") and file.endswith(".db"):
                                 db_path = os.path.join(root, file)
                                 user_data["msg_dbs"].append(db_path)
-                                print(f"[DEBUG] 找到消息数据库: {file}")
+                                logger.debug(f"[DEBUG] 找到消息数据库: {file}")
                 
                 # 查找联系人数据库 (Msg/MicroMsg.db)
                 micromsg_path = os.path.join(entry_path, "Msg", "MicroMsg.db")
                 if os.path.exists(micromsg_path):
                     user_data["contact_db"] = micromsg_path
-                    print(f"[DEBUG] 找到联系人数据库: MicroMsg.db")
+                    logger.debug(f"[DEBUG] 找到联系人数据库: MicroMsg.db")
                 
                 result["databases"][wxid] = user_data
             
-            print(f"[DEBUG] 扫描完成，找到 {len(result['wxids'])} 个wxid")
+            logger.info(f"[DEBUG] 扫描完成，找到 {len(result['wxids'])} 个wxid")
             return result
             
         except Exception as e:
             import traceback
             error_detail = traceback.format_exc()
-            print(f"[ERROR] 扫描微信目录失败: {e}")
-            print(error_detail)
+            logger.error(f"[ERROR] 扫描微信目录失败: {e}")
+            logger.error(error_detail)
             return {
                 "ok": False,
                 "error": str(e),
@@ -529,7 +531,7 @@ class Bridge:
         try:
             from ..services.realtime.monitor_service import RealtimeMonitorService
             
-            print(f"[Bridge] 启动实时监听: {talker_display_name}")
+            logger.debug(f"[Bridge] 启动实时监听: {talker_display_name}")
             monitor_service = RealtimeMonitorService()
             result = monitor_service.start_monitoring(
                 talker_username="",  # wxauto4 自动处理
@@ -545,7 +547,7 @@ class Bridge:
             }
         except Exception as e:
             import traceback
-            print(f"[Bridge] 启动实时监听异常: {e}")
+            logger.error(f"[Bridge] 启动实时监听异常: {e}")
             traceback.print_exc()
             return {
                 "ok": False,
@@ -569,7 +571,7 @@ class Bridge:
         try:
             from ..services.realtime.monitor_service import RealtimeMonitorService
             
-            print("[Bridge] 停止实时监听")
+            logger.debug("[Bridge] 停止实时监听")
             monitor_service = RealtimeMonitorService()
             result = monitor_service.stop_monitoring()
             
@@ -582,7 +584,7 @@ class Bridge:
             }
         except Exception as e:
             import traceback
-            print(f"[Bridge] 停止实时监听异常: {e}")
+            logger.error(f"[Bridge] 停止实时监听异常: {e}")
             traceback.print_exc()
             return {
                 "ok": False,
@@ -618,7 +620,7 @@ class Bridge:
                 "model_ready": status.get('model_ready', False)
             }
         except Exception as e:
-            print(f"[Bridge] 获取实时监听状态异常: {e}")
+            logger.error(f"[Bridge] 获取实时监听状态异常: {e}")
             return {
                 "ok": False,
                 "error": str(e),
@@ -651,7 +653,7 @@ class Bridge:
             }
         except Exception as e:
             import traceback
-            print(f"[Bridge] 获取批次消息异常: {e}")
+            logger.error(f"[Bridge] 获取批次消息异常: {e}")
             traceback.print_exc()
             return {
                 "ok": False,
@@ -737,7 +739,7 @@ class Bridge:
             }
         except Exception as e:
             import traceback
-            print(f"[Bridge] 获取待处理建议失败: {e}")
+            logger.error(f"[Bridge] 获取待处理建议失败: {e}")
             traceback.print_exc()
             return {"ok": False, "error": str(e), "suggestions": []}
 
@@ -762,7 +764,7 @@ class Bridge:
 
             return {"ok": True}
         except Exception as e:
-            print(f"[Bridge] 关闭建议失败: {e}")
+            logger.error(f"[Bridge] 关闭建议失败: {e}")
             return {"ok": False, "error": str(e)}
 
     def get_suggestion_config(self) -> dict[str, Any]:
@@ -837,7 +839,7 @@ class Bridge:
 
             return {"ok": True, "models": models}
         except Exception as e:
-            print(f"[Bridge] 获取模型列表失败: {e}")
+            logger.error(f"[Bridge] 获取模型列表失败: {e}")
             return {"ok": False, "error": str(e), "models": []}
 
     def save_llm_model(self, model: dict[str, Any]) -> dict[str, Any]:
@@ -932,7 +934,7 @@ class Bridge:
 
             return {"ok": True}
         except Exception as e:
-            print(f"[Bridge] 保存模型配置失败: {e}")
+            logger.error(f"[Bridge] 保存模型配置失败: {e}")
             import traceback
             traceback.print_exc()
             return {"ok": False, "error": str(e)}
@@ -948,7 +950,7 @@ class Bridge:
 
             return {"ok": True}
         except Exception as e:
-            print(f"[Bridge] 删除模型失败: {e}")
+            logger.error(f"[Bridge] 删除模型失败: {e}")
             return {"ok": False, "error": str(e)}
 
     # ==================== 联系人画像相关 ====================
@@ -992,7 +994,7 @@ class Bridge:
                     'estimated_tokens': estimate.get('estimated_total_tokens', 0),
                 }
         except Exception as e:
-            print(f"[Bridge] 获取联系人画像失败: {e}")
+            logger.error(f"[Bridge] 获取联系人画像失败: {e}")
             import traceback
             traceback.print_exc()
             return {'ok': False, 'error': str(e)}
@@ -1020,7 +1022,7 @@ class Bridge:
             result = profiler.generate_profile(display_name, budget_level, custom_budget)
             return result
         except Exception as e:
-            print(f"[Bridge] 生成联系人画像失败: {e}")
+            logger.error(f"[Bridge] 生成联系人画像失败: {e}")
             import traceback
             traceback.print_exc()
             return {'ok': False, 'error': str(e)}
@@ -1053,7 +1055,7 @@ class Bridge:
             }
         """
         try:
-            print(f"[Bridge] 开始特征提取: conversation_id={conversation_id}")
+            logger.info(f"[Bridge] 开始特征提取: conversation_id={conversation_id}")
 
             # 如果提供了自定义配置，更新服务配置
             if config:
@@ -1076,7 +1078,7 @@ class Bridge:
             }
         except Exception as e:
             import traceback
-            print(f"[Bridge] 特征提取失败: {e}")
+            logger.error(f"[Bridge] 特征提取失败: {e}")
             traceback.print_exc()
             return {
                 "success": False,
@@ -1111,7 +1113,7 @@ class Bridge:
                 "data": progress
             }
         except Exception as e:
-            print(f"[Bridge] 查询任务进度失败: {e}")
+            logger.error(f"[Bridge] 查询任务进度失败: {e}")
             return {
                 "success": False,
                 "error": str(e)
@@ -1176,7 +1178,7 @@ class Bridge:
                 }
             }
         except Exception as e:
-            print(f"[Bridge] 获取会话列表失败: {e}")
+            logger.error(f"[Bridge] 获取会话列表失败: {e}")
             return {
                 "success": False,
                 "error": str(e)
@@ -1254,7 +1256,7 @@ class Bridge:
                 }
             }
         except Exception as e:
-            print(f"[Bridge] 获取响应时间统计失败: {e}")
+            logger.error(f"[Bridge] 获取响应时间统计失败: {e}")
             return {
                 "success": False,
                 "error": str(e)
@@ -1323,7 +1325,7 @@ class Bridge:
                 }
             }
         except Exception as e:
-            print(f"[Bridge] 获取主动性统计失败: {e}")
+            logger.error(f"[Bridge] 获取主动性统计失败: {e}")
             return {
                 "success": False,
                 "error": str(e)
@@ -1425,7 +1427,7 @@ class Bridge:
 
             return result
         except Exception as e:
-            print(f"[Bridge] 获取字数统计失败: {e}")
+            logger.error(f"[Bridge] 获取字数统计失败: {e}")
             return {
                 "success": False,
                 "error": str(e)
@@ -1449,7 +1451,7 @@ class Bridge:
             }
         """
         try:
-            print(f"[Bridge] 重新分析: conversation_id={conversation_id}")
+            logger.debug(f"[Bridge] 重新分析: conversation_id={conversation_id}")
 
             service = self._get_feature_service()
 
@@ -1469,7 +1471,7 @@ class Bridge:
             }
         except Exception as e:
             import traceback
-            print(f"[Bridge] 重新分析失败: {e}")
+            logger.error(f"[Bridge] 重新分析失败: {e}")
             traceback.print_exc()
             return {
                 "success": False,
@@ -1493,7 +1495,7 @@ class Bridge:
         try:
             return self._floating_service.enter_floating_mode()
         except Exception as e:
-            print(f"[Bridge] 进入悬浮模式失败: {e}")
+            logger.error(f"[Bridge] 进入悬浮模式失败: {e}")
             import traceback
             traceback.print_exc()
             return {'ok': False, 'error': str(e)}
@@ -1508,7 +1510,7 @@ class Bridge:
         try:
             return self._floating_service.exit_floating_mode()
         except Exception as e:
-            print(f"[Bridge] 退出悬浮模式失败: {e}")
+            logger.error(f"[Bridge] 退出悬浮模式失败: {e}")
             import traceback
             traceback.print_exc()
             return {'ok': False, 'error': str(e)}
@@ -1523,7 +1525,7 @@ class Bridge:
         try:
             return self._floating_service.get_status()
         except Exception as e:
-            print(f"[Bridge] 获取悬浮状态失败: {e}")
+            logger.error(f"[Bridge] 获取悬浮状态失败: {e}")
             return {'ok': False, 'error': str(e)}
 
     # ==================== 好感度分析相关 ====================
@@ -1547,7 +1549,7 @@ class Bridge:
                 "has_context": ctx is not None,
             }
         except Exception as e:
-            print(f"[Bridge] 获取关系上下文失败: {e}")
+            logger.error(f"[Bridge] 获取关系上下文失败: {e}")
             return {"ok": False, "error": str(e)}
 
     def save_relationship_context(
@@ -1576,7 +1578,7 @@ class Bridge:
         except ValueError as e:
             return {"ok": False, "error": str(e)}
         except Exception as e:
-            print(f"[Bridge] 保存关系上下文失败: {e}")
+            logger.error(f"[Bridge] 保存关系上下文失败: {e}")
             return {"ok": False, "error": str(e)}
 
     def get_relationship_field_options(self) -> dict[str, Any]:
@@ -1589,7 +1591,7 @@ class Bridge:
             options = RelationshipContextService.get_field_options()
             return {"ok": True, "options": options}
         except Exception as e:
-            print(f"[Bridge] 获取字段选项失败: {e}")
+            logger.error(f"[Bridge] 获取字段选项失败: {e}")
             return {"ok": False, "error": str(e)}
 
     # -- 好感度配置 --
@@ -1608,7 +1610,7 @@ class Bridge:
                 "config": asdict(config)
             }
         except Exception as e:
-            print(f"[Bridge] 获取好感度配置失败: {e}")
+            logger.error(f"[Bridge] 获取好感度配置失败: {e}")
             return {
                 "ok": False,
                 "error": str(e)
@@ -1629,13 +1631,13 @@ class Bridge:
                 "message": "配置已更新"
             }
         except ValueError as e:
-            print(f"[Bridge] 配置验证失败: {e}")
+            logger.error(f"[Bridge] 配置验证失败: {e}")
             return {
                 "ok": False,
                 "error": str(e)
             }
         except Exception as e:
-            print(f"[Bridge] 更新好感度配置失败: {e}")
+            logger.error(f"[Bridge] 更新好感度配置失败: {e}")
             return {
                 "ok": False,
                 "error": str(e)
@@ -1654,7 +1656,7 @@ class Bridge:
                 "keywords": keywords
             }
         except Exception as e:
-            print(f"[Bridge] 获取关键词失败: {e}")
+            logger.error(f"[Bridge] 获取关键词失败: {e}")
             return {
                 "ok": False,
                 "error": str(e),
@@ -1684,7 +1686,7 @@ class Bridge:
                 "keywords": updated_keywords
             }
         except Exception as e:
-            print(f"[Bridge] 添加关键词失败: {e}")
+            logger.error(f"[Bridge] 添加关键词失败: {e}")
             return {
                 "ok": False,
                 "error": str(e),
@@ -1714,7 +1716,7 @@ class Bridge:
                 "keywords": updated_keywords
             }
         except Exception as e:
-            print(f"[Bridge] 删除关键词失败: {e}")
+            logger.error(f"[Bridge] 删除关键词失败: {e}")
             return {
                 "ok": False,
                 "error": str(e),
@@ -1734,7 +1736,7 @@ class Bridge:
                 "keywords": keywords or []
             }
         except Exception as e:
-            print(f"[Bridge] 获取喜好关键词失败: {e}")
+            logger.error(f"[Bridge] 获取喜好关键词失败: {e}")
             return {
                 "ok": False,
                 "error": str(e),
@@ -1755,7 +1757,7 @@ class Bridge:
                 "message": "喜好关键词已更新"
             }
         except Exception as e:
-            print(f"[Bridge] 更新喜好关键词失败: {e}")
+            logger.error(f"[Bridge] 更新喜好关键词失败: {e}")
             return {
                 "ok": False,
                 "error": str(e)
@@ -1775,7 +1777,7 @@ class Bridge:
                 "result": asdict(result)
             }
         except Exception as e:
-            print(f"[Bridge] 好感度分析失败: {e}")
+            logger.error(f"[Bridge] 好感度分析失败: {e}")
             import traceback
             traceback.print_exc()
             return {
@@ -1797,7 +1799,7 @@ class Bridge:
                 "result": asdict(result) if result else None
             }
         except Exception as e:
-            print(f"[Bridge] 获取好感度结果失败: {e}")
+            logger.error(f"[Bridge] 获取好感度结果失败: {e}")
             return {
                 "ok": False,
                 "error": str(e)

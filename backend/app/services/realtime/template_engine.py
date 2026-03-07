@@ -1,5 +1,6 @@
 """
 规则模板建议引擎
+import logging
 
 基于触发类型 × 发展走向查表匹配预设建议模板，
 不依赖任何外部服务，延迟 < 10ms。
@@ -10,6 +11,7 @@ from .suggestion_engine import SuggestionEngine, SuggestionResult
 from .suggestion_templates import TEMPLATES, VALID_TRIGGER_TYPES, VALID_INTENTS
 
 
+logger = logging.getLogger(__name__)
 class TemplateSuggestionEngine(SuggestionEngine):
     """
     模板建议引擎

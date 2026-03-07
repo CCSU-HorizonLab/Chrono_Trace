@@ -2,8 +2,10 @@
 from typing import List, Optional, Generator
 from dataclasses import dataclass
 import sqlite3
+import logging
 
 
+logger = logging.getLogger(__name__)
 @dataclass
 class Contact:
     """联系人数据结构"""
@@ -109,7 +111,7 @@ class WeChatDBParser:
             
             return contacts
         except sqlite3.OperationalError as e:
-            print(f"解析联系人失败: {e}")
+            logger.error(f"解析联系人失败: {e}")
             return []
     
     def parse_messages(
@@ -139,7 +141,7 @@ class WeChatDBParser:
                 f"SELECT name FROM sqlite_master WHERE type='table' AND name='{table_name}'"
             )
             if not cursor.fetchone():
-                print(f"警告: 表 {table_name} 不存在")
+                logger.warning(f"警告: 表 {table_name} 不存在")
                 return
         except:
             return
@@ -195,7 +197,7 @@ class WeChatDBParser:
                     timestamp=row_dict['create_time']
                 )
         except sqlite3.OperationalError as e:
-            print(f"解析消息失败: {e}")
+            logger.error(f"解析消息失败: {e}")
             return
     
     def get_all_message_tables(self) -> List[str]:

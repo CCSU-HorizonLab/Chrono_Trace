@@ -96,55 +96,32 @@ class TestChatPositivityService:
         assert score == 0.0
 
     # ========================================
-    # 平均消息长度测试
+    # 长文本占比加分测试
     # ========================================
 
-    def test_avg_length_score_normal(self, service, mock_stats):
-        """测试正常消息长度"""
-        mock_stats.average_message_length = 25.0
-        # 25 / 50 * 100 = 50
-        score = service.calculate_avg_length_score(mock_stats)
-        assert score == 50.0
-
-    def test_avg_length_score_max(self, service, mock_stats):
-        """测试长消息"""
-        mock_stats.average_message_length = 100.0
-        score = service.calculate_avg_length_score(mock_stats)
-        assert score == 100.0
-
-    def test_avg_length_score_zero(self, service, mock_stats):
-        """测试零长度"""
-        mock_stats.average_message_length = 0.0
-        score = service.calculate_avg_length_score(mock_stats)
-        assert score == 0.0
-
-    # ========================================
-    # 长文本占比测试
-    # ========================================
-
-    def test_long_text_ratio_high(self, service, mock_db, mock_stats):
-        """测试高长文本占比"""
-        # 30% 长文本 = 满分
+    def test_long_text_bonus_high(self, service, mock_db, mock_stats):
+        """测试高长文本占比加分"""
+        # 30% 长文本 = 满分10分
         mock_db.execute.return_value.fetchone.return_value = (300,)
         mock_stats.total_message_count = 1000
         
-        score = service.calculate_long_text_ratio_score(1, mock_stats)
-        assert score == 100.0
+        score = service.calculate_long_text_bonus(1, mock_stats)
+        assert score == 10.0
 
-    def test_long_text_ratio_low(self, service, mock_db, mock_stats):
-        """测试低长文本占比"""
+    def test_long_text_bonus_low(self, service, mock_db, mock_stats):
+        """测试低长文本占比加分"""
         # 10% 长文本
         mock_db.execute.return_value.fetchone.return_value = (100,)
         mock_stats.total_message_count = 1000
         
-        score = service.calculate_long_text_ratio_score(1, mock_stats)
-        assert 33 <= score <= 34
+        score = service.calculate_long_text_bonus(1, mock_stats)
+        assert 3.3 <= score <= 3.4
 
-    def test_long_text_ratio_zero_messages(self, service, mock_db, mock_stats):
+    def test_long_text_bonus_zero_messages(self, service, mock_db, mock_stats):
         """测试零消息"""
         mock_stats.total_message_count = 0
         
-        score = service.calculate_long_text_ratio_score(1, mock_stats)
+        score = service.calculate_long_text_bonus(1, mock_stats)
         assert score == 0.0
 
     # ========================================
@@ -156,14 +133,14 @@ class TestChatPositivityService:
         mock_db.execute.return_value.fetchone.return_value = (0.8,)
         
         score = service.calculate_topic_continuity_score(1)
-        assert score == 80.0
+        assert score == 100.0
 
     def test_topic_continuity_low(self, service, mock_db):
         """测试低话题延续性"""
         mock_db.execute.return_value.fetchone.return_value = (0.3,)
         
         score = service.calculate_topic_continuity_score(1)
-        assert score == 30.0
+        assert score == 60.0
 
     def test_topic_continuity_null(self, service, mock_db):
         """测试无相似度数据"""
@@ -182,7 +159,7 @@ class TestChatPositivityService:
         mock_stats.contact_initiated_count = 80
         
         score = service.calculate_active_initiation_score(mock_stats)
-        assert score == 80.0
+        assert score == 100.0
 
     def test_active_initiation_low(self, service, mock_stats):
         """测试低主动发起率"""
@@ -190,7 +167,7 @@ class TestChatPositivityService:
         mock_stats.contact_initiated_count = 20
         
         score = service.calculate_active_initiation_score(mock_stats)
-        assert score == 20.0
+        assert score == 40.0
 
     def test_active_initiation_zero_sessions(self, service, mock_stats):
         """测试零会话"""
@@ -211,10 +188,9 @@ class TestChatPositivityService:
         result = ChatPositivityResult()
         result.daily_message_score = 100
         result.reply_timeliness_score = 100
-        result.avg_length_score = 100
-        result.long_text_ratio_score = 100
         result.topic_continuity_score = 100
         result.active_initiation_score = 100
+        result.long_text_bonus = 0
         
         overall = service._calculate_overall_score(result)
         # 所有子维度都是 100，所以综合评分应该是 100
@@ -227,13 +203,13 @@ class TestChatPositivityService:
         result = ChatPositivityResult()
         result.daily_message_score = 50
         result.reply_timeliness_score = 50
-        result.avg_length_score = 50
-        result.long_text_ratio_score = 50
         result.topic_continuity_score = 50
         result.active_initiation_score = 50
+        result.long_text_bonus = 5
         
         overall = service._calculate_overall_score(result)
-        assert overall == 50.0
+        # 50 + 5加分
+        assert overall == 55.0
     
     def test_overall_score_weights_sum_to_100(self, service):
         """测试权重总和为100%"""
@@ -241,8 +217,6 @@ class TestChatPositivityService:
         total_weight = (
             service.WEIGHT_DAILY_MESSAGE +
             service.WEIGHT_REPLY_TIMELINESS +
-            service.WEIGHT_AVG_LENGTH +
-            service.WEIGHT_LONG_TEXT_RATIO +
             service.WEIGHT_TOPIC_CONTINUITY +
             service.WEIGHT_ACTIVE_INITIATION
         )
@@ -256,22 +230,19 @@ class TestChatPositivityService:
         # 设置不同的分数
         result.daily_message_score = 80
         result.reply_timeliness_score = 60
-        result.avg_length_score = 70
-        result.long_text_ratio_score = 50
         result.topic_continuity_score = 90
         result.active_initiation_score = 40
+        result.long_text_bonus = 8
         
         overall = service._calculate_overall_score(result)
         
         # 手动计算期望值
         expected = (
-            80 * 0.10 +  # 8
-            60 * 0.20 +  # 12
-            70 * 0.10 +  # 7
-            50 * 0.15 +  # 7.5
-            90 * 0.20 +  # 18
-            40 * 0.25    # 10
-        )  # = 62.5
+            80 * 0.15 +  # 12
+            60 * 0.25 +  # 15
+            90 * 0.25 +  # 22.5
+            40 * 0.35    # 14
+        ) + 8  # = 63.5 + 8 = 71.5
         
         assert abs(overall - expected) < 0.1
 
@@ -546,20 +517,18 @@ class TestChatPositivityIntegration:
         assert hasattr(result, 'overall_score')
         assert hasattr(result, 'daily_message_score')
         assert hasattr(result, 'reply_timeliness_score')
-        assert hasattr(result, 'avg_length_score')
-        assert hasattr(result, 'long_text_ratio_score')
         assert hasattr(result, 'topic_continuity_score')
         assert hasattr(result, 'active_initiation_score')
+        assert hasattr(result, 'long_text_bonus')
         assert hasattr(result, 'interpretation')
         
         # 验证分数范围
         assert 0 <= result.overall_score <= 100
         assert 0 <= result.daily_message_score <= 100
         assert 0 <= result.reply_timeliness_score <= 100
-        assert 0 <= result.avg_length_score <= 100
-        assert 0 <= result.long_text_ratio_score <= 100
         assert 0 <= result.topic_continuity_score <= 100
         assert 0 <= result.active_initiation_score <= 100
+        assert 0 <= result.long_text_bonus <= 10
         
         # 验证解释文本
         assert isinstance(result.interpretation, str)
@@ -571,12 +540,11 @@ class TestChatPositivityIntegration:
         print(f"  总分: {result.overall_score:.2f}")
         print(f"  解释: {result.interpretation}")
         print("\n  子维度得分:")
-        print(f"    - 日均消息数 (10%):    {result.daily_message_score:.2f} (日均: {result.daily_message_count:.2f})")
-        print(f"    - 回复及时率 (20%):    {result.reply_timeliness_score:.2f} (及时率: {result.reply_timeliness_rate:.2%})")
-        print(f"    - 平均消息长度 (10%):  {result.avg_length_score:.2f} (平均: {result.avg_message_length:.2f}字)")
-        print(f"    - 长文本占比 (15%):    {result.long_text_ratio_score:.2f} (占比: {result.long_text_ratio:.2%})")
-        print(f"    - 话题延续性 (20%):    {result.topic_continuity_score:.2f} (相似度: {result.topic_continuity_avg:.2f})")
-        print(f"    - 主动发起率 (25%):    {result.active_initiation_score:.2f} (发起率: {result.active_initiation_rate:.2%})")
+        print(f"    - 日均消息数 (15%):    {result.daily_message_score:.2f} (日均: {result.daily_message_count:.2f})")
+        print(f"    - 回复及时率 (25%):    {result.reply_timeliness_score:.2f} (及时率: {result.reply_timeliness_rate:.2%})")
+        print(f"    - 话题延续性 (25%):    {result.topic_continuity_score:.2f} (相似度: {result.topic_continuity_avg:.2f})")
+        print(f"    - 主动发起率 (35%):    {result.active_initiation_score:.2f} (发起率: {result.active_initiation_rate:.2%})")
+        print(f"    [加分项] 长文本占比 (最高+10分):    +{result.long_text_bonus:.2f} (占比: {result.long_text_ratio:.2%})")
         print("-" * 60)
         
         print("\n✓ 集成测试通过")

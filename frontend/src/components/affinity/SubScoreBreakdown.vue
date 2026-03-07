@@ -45,8 +45,6 @@ const LABELS: Record<string, string> = {
   // Chat Positivity
   daily_message: '日均消息量',
   reply_timeliness: '回复及时性',
-  avg_length: '平均消息长度',
-  long_text_ratio: '长文比例',
   topic_continuity: '话题连续性',
   active_initiation: '主动发起',
 

@@ -320,10 +320,11 @@ class AffinityAnalysisService:
             sub_scores={
                 "daily_message": positivity_result.daily_message_score,
                 "reply_timeliness": positivity_result.reply_timeliness_score,
-                "avg_length": positivity_result.avg_length_score,
-                "long_text_ratio": positivity_result.long_text_ratio_score,
                 "topic_continuity": positivity_result.topic_continuity_score,
                 "active_initiation": positivity_result.active_initiation_score,
+            },
+            bonus_scores={
+                "long_text_bonus": positivity_result.long_text_bonus
             }
         )
         logger.info(f"聊天积极度计算完成: {positivity_result.overall_score:.1f}分 (权重: {weights['chat_positivity']*100}%)")

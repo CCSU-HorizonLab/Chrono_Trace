@@ -43,13 +43,45 @@ class TestAffinityAnalysisService:
              patch('app.services.analysis.affinity_analysis_service.PreprocessingOrchestrator') as MockPreprocessing, \
              patch('app.services.analysis.affinity_analysis_service.AffinityConfigService') as MockConfig, \
              patch('app.services.analysis.affinity_analysis_service.ChatPositivityService') as MockPositivity, \
-             patch('app.services.analysis.affinity_analysis_service.PreferenceCompatibilityService') as MockPreference:
+             patch('app.services.analysis.affinity_analysis_service.PreferenceCompatibilityService') as MockPreference, \
+             patch('app.services.analysis.affinity_analysis_service.EmotionalResonanceService') as MockResonance, \
+             patch('app.services.analysis.affinity_analysis_service.AttitudeTendencyService') as MockAttitude:
             
             # 配置 mock
             MockPreprocessing.return_value.orchestrate_preprocessing.return_value = mock_stats
             
             from app.services.analysis.affinity_config import AffinityConfig
             MockConfig.return_value.get_config.return_value = AffinityConfig()
+            MockConfig.return_value.get_dimension_weights.return_value = {
+                'emotional_resonance': 0.35,
+                'chat_positivity': 0.35,
+                'attitude_tendency': 0.20,
+                'preference_compatibility': 0.10
+            }
+            
+            MockResonance.return_value.calculate_overall_resonance.return_value = {
+                'overall_score': 80.0,
+                'interpretation': '共振良好',
+                'sub_scores': {
+                    'bidirectional_positive_response': 80.0,
+                    'polarity_consistency': 80.0,
+                    'intensity_matching': 80.0,
+                    'empathy_recognition': 80.0,
+                    'negative_resolution': 80.0
+                }
+            }
+            
+            MockAttitude.return_value.calculate_overall_attitude.return_value = {
+                'overall_score': 70.0,
+                'interpretation': '态度良好',
+                'sub_scores': {
+                    'positive_emotion_frequency': 70.0,
+                    'negative_emotion_frequency': 10.0
+                },
+                'bonus_scores': {
+                    'multimedia_usage': 5.0
+                }
+            }
             
             from app.services.analysis.chat_positivity_service import ChatPositivityResult
             positivity_result = ChatPositivityResult()

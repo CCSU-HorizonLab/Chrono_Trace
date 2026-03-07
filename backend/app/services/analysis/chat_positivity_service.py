@@ -3,10 +3,11 @@
 包含 5 个子维度计算：
 1. 日均消息数 (10% 权重)
 2. 回复及时率 (20% 权重)
-3. 平均消息长度 (10% 权重)
-4. 长文本占比 (15% 权重)
-5. 话题延续性 (20% 权重)
-6. 主动发起率 (25% 权重)
+3. 话题延续性 (25% 权重)
+4. 主动发起率 (35% 权重)
+
+包含 1 个加分项：
+- 长文本占比 (最高加 10 分)
 """
 
 import logging
@@ -36,8 +37,7 @@ class ChatPositivityResult:
     # 子维度分数 (0-100)
     daily_message_score: float = 0.0
     reply_timeliness_score: float = 0.0
-    avg_length_score: float = 0.0
-    long_text_ratio_score: float = 0.0
+    long_text_bonus: float = 0.0
     topic_continuity_score: float = 0.0
     active_initiation_score: float = 0.0
     
@@ -50,7 +50,6 @@ class ChatPositivityResult:
     # 原始值 (用于调试和展示)
     daily_message_count: float = 0.0
     reply_timeliness_rate: float = 0.0
-    avg_message_length: float = 0.0
     long_text_ratio: float = 0.0
     topic_continuity_avg: float = 0.0
     active_initiation_rate: float = 0.0
@@ -60,17 +59,14 @@ class ChatPositivityService:
     """聊天积极度服务 - 计算聊天积极度维度"""
     
     # 子维度权重
-    WEIGHT_DAILY_MESSAGE = 0.10
-    WEIGHT_REPLY_TIMELINESS = 0.20
-    WEIGHT_AVG_LENGTH = 0.10
-    WEIGHT_LONG_TEXT_RATIO = 0.15
-    WEIGHT_TOPIC_CONTINUITY = 0.20
-    WEIGHT_ACTIVE_INITIATION = 0.25
+    WEIGHT_DAILY_MESSAGE = 0.15
+    WEIGHT_REPLY_TIMELINESS = 0.25
+    WEIGHT_TOPIC_CONTINUITY = 0.25
+    WEIGHT_ACTIVE_INITIATION = 0.35
     
     # 评分标准化参数
     DAILY_MESSAGE_BASELINE = 10.0  # 日均 10 条消息为满分基准
-    AVG_LENGTH_BASELINE = 50.0      # 平均 50 字符为满分基准
-    LONG_TEXT_THRESHOLD = 100       # 长文本阈值 (字符数)
+    LONG_TEXT_THRESHOLD = 50       # 长文本阈值 (字符数)
     
     def __init__(self, timeliness_threshold_seconds: int = 300):
         """
@@ -116,29 +112,23 @@ class ChatPositivityService:
         debug_log(f"\n[聊天积极度调试] --- 2. 回复及时率 (权重20%) ---")
         debug_log(f"及时回复比例: {result.reply_timeliness_rate*100:.1f}% -> 得分: {result.reply_timeliness_score}")
         
-        # 3. 平均消息长度 (10%)
-        result.avg_message_length = stats.average_message_length
-        result.avg_length_score = self.calculate_avg_length_score(stats)
-        debug_log(f"\n[聊天积极度调试] --- 3. 平均消息长度 (权重10%) ---")
-        debug_log(f"平均字符数: {result.avg_message_length:.1f} (满分基准: {self.AVG_LENGTH_BASELINE}) -> 得分: {result.avg_length_score}")
-        
-        # 4. 长文本占比 (15%)
-        result.long_text_ratio = self._calculate_long_text_ratio_raw(conversation_id, stats)
-        result.long_text_ratio_score = self.calculate_long_text_ratio_score(conversation_id, stats)
-        debug_log(f"\n[聊天积极度调试] --- 4. 长文本占比 (权重15%) ---")
-        debug_log(f"长文本(>100字)占比: {result.long_text_ratio*100:.1f}% (满分基准: 30.0%) -> 得分: {result.long_text_ratio_score}")
-        
-        # 5. 话题延续性 (20%)
+        # 3. 话题延续性 (25%)
         result.topic_continuity_avg = self._calculate_topic_continuity_raw(conversation_id)
         result.topic_continuity_score = self.calculate_topic_continuity_score(conversation_id)
-        debug_log(f"\n[聊天积极度调试] --- 5. 话题延续性 (权重20%) ---")
-        debug_log(f"平均语义相似度: {result.topic_continuity_avg:.3f} -> 得分: {result.topic_continuity_score}")
+        debug_log(f"\n[聊天积极度调试] --- 3. 话题延续性 (权重25%) ---")
+        debug_log(f"平均语义相似度: {result.topic_continuity_avg:.3f} (满分基准: 0.5) -> 得分: {result.topic_continuity_score}")
         
-        # 6. 主动发起率 (25%)
+        # 4. 主动发起率 (35%)
         result.active_initiation_rate = self._calculate_active_initiation_raw(stats)
         result.active_initiation_score = self.calculate_active_initiation_score(stats)
-        debug_log(f"\n[聊天积极度调试] --- 6. 主动发起率 (权重25%) ---")
-        debug_log(f"对方发起的会话比例: {result.active_initiation_rate*100:.1f}% (发起次数:{stats.contact_initiated_count} / 总会话:{stats.total_sessions}) -> 得分: {result.active_initiation_score}")
+        debug_log(f"\n[聊天积极度调试] --- 4. 主动发起率 (权重35%) ---")
+        debug_log(f"对方发起的会话比例: {result.active_initiation_rate*100:.1f}% (满分基准: 50.0%) -> 得分: {result.active_initiation_score}")
+
+        # 5. 加分项: 长文本占比 (最高 10 分)
+        result.long_text_ratio = self._calculate_long_text_ratio_raw(conversation_id, stats)
+        result.long_text_bonus = self.calculate_long_text_bonus(conversation_id, stats)
+        debug_log(f"\n[聊天积极度调试] --- 5. 加分项: 长文本占比 ---")
+        debug_log(f"长文本(>{self.LONG_TEXT_THRESHOLD}字)占比: {result.long_text_ratio*100:.1f}% (满分基准: 30.0%) -> 加分: +{result.long_text_bonus}")
         
         # 综合评分
         result.overall_score = self._calculate_overall_score(result)
@@ -209,31 +199,19 @@ class ChatPositivityService:
             logger.error(f"计算回复及时率失败: {e}")
             return 0.0
     
-    def calculate_avg_length_score(self, stats: PreprocessedStatistics) -> float:
-        """
-        计算平均消息长度得分 (0-100)
-        
-        公式: min(平均长度 / 基准值 * 100, 100)
-        基准值: 50 字符
-        """
-        avg_length = stats.average_message_length
-        score = min((avg_length / self.AVG_LENGTH_BASELINE) * 100, 100)
-        return round(score, 2)
-    
-    def calculate_long_text_ratio_score(
+    def calculate_long_text_bonus(
         self,
         conversation_id: int,
         stats: PreprocessedStatistics
     ) -> float:
         """
-        计算长文本占比得分 (0-100)
+        计算长文本占比加分 (0-10)
         
-        公式: (长文本消息数 / 总消息数) × 100
-        长文本: >100 字符
+        公式: min((长文本占比 / 0.3) * 10, 10.0)
         """
         ratio = self._calculate_long_text_ratio_raw(conversation_id, stats)
-        # 长文本占比 30% 以上为满分
-        score = min((ratio / 0.30) * 100, 100)
+        # 长文本占比 30% 以上为满分10分
+        score = min((ratio / 0.30) * 10.0, 10.0)
         return round(score, 2)
     
     def _calculate_long_text_ratio_raw(
@@ -266,11 +244,12 @@ class ChatPositivityService:
         """
         计算话题延续性得分 (0-100)
         
-        基于会话内交互对的语义相似度平均值
+        公式: min((平均语义相似度 / 0.5) * 100, 100)
         """
         continuity = self._calculate_topic_continuity_raw(conversation_id)
-        # 相似度直接映射到 0-100
-        return round(continuity * 100, 2)
+        # 满分阈值为 0.5
+        score = min((continuity / 0.5) * 100, 100)
+        return round(score, 2)
     
     def _calculate_topic_continuity_raw(self, conversation_id: int) -> float:
         """
@@ -299,11 +278,11 @@ class ChatPositivityService:
         """
         计算主动发起率得分 (0-100)
         
-        公式: (对方发起会话数 / 总会话数) × 100
-        使用预处理的 session_initiators 数据
+        公式: min((对方发起会话数 / 总会话数 / 0.5) * 100, 100)
         """
         rate = self._calculate_active_initiation_raw(stats)
-        return round(rate * 100, 2)
+        score = min((rate / 0.5) * 100, 100)
+        return round(score, 2)
     
     def _calculate_active_initiation_raw(self, stats: PreprocessedStatistics) -> float:
         """
@@ -328,22 +307,21 @@ class ChatPositivityService:
         计算综合评分 (加权平均)
         
         权重:
-        - 日均消息数: 10%
-        - 回复及时率: 20%
-        - 平均消息长度: 10%
-        - 长文本占比: 15%
-        - 话题延续性: 20%
-        - 主动发起率: 25%
+        - 日均消息数: 15%
+        - 回复及时率: 25%
+        - 话题延续性: 25%
+        - 主动发起率: 35%
+        加分:
+        - 长文本占比加分 (最高10分)
         """
         overall = (
             result.daily_message_score * self.WEIGHT_DAILY_MESSAGE +
             result.reply_timeliness_score * self.WEIGHT_REPLY_TIMELINESS +
-            result.avg_length_score * self.WEIGHT_AVG_LENGTH +
-            result.long_text_ratio_score * self.WEIGHT_LONG_TEXT_RATIO +
             result.topic_continuity_score * self.WEIGHT_TOPIC_CONTINUITY +
             result.active_initiation_score * self.WEIGHT_ACTIVE_INITIATION
         )
-        return round(overall, 2)
+        overall += result.long_text_bonus
+        return min(round(overall, 2), 100.0)
     
     def generate_interpretation(self, score: float) -> str:
         """

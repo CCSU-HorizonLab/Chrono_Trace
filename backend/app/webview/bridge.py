@@ -647,6 +647,14 @@ class Bridge:
             
             messages = get_messages_with_sentiment(batch_id, limit)
             
+            # 只在消息数量变化时打印（避免每 3 秒重复刷屏）
+            count = len(messages) if messages else 0
+            cache_key = f"_last_msg_count_{batch_id[:8]}"
+            last_count = getattr(self, cache_key, 0)
+            if count != last_count:
+                setattr(self, cache_key, count)
+                print(f"[Bridge] 消息轮询: batch={batch_id[:8]}..., 当前共 {count} 条消息", flush=True)
+            
             return {
                 "ok": True,
                 "messages": messages

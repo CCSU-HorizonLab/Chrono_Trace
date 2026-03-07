@@ -105,7 +105,10 @@ class LLMSuggestionEngine(SuggestionEngine):
 
         # 构造 prompt
         user_prompt = self._build_prompt(trigger_type, intent, context)
-        _print(f"[LLM Engine] 📤 发送 prompt ({len(user_prompt)} 字符)")
+        _print(f"[LLM Engine] 📤 发送 prompt ({len(user_prompt)} 字符):")
+        _print(f"{'─'*50}")
+        _print(user_prompt)
+        _print(f"{'─'*50}")
 
         try:
             # 调用 API

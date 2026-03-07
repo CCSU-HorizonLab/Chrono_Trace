@@ -15,7 +15,7 @@ from .emotion_state_tracker import EmotionStateTracker
 logger = logging.getLogger(__name__)
 def _print(*args, **kwargs):
     """强制刷新的打印函数"""
-    logger.debug(*args, **kwargs)
+    print(*args, **kwargs, flush=True)
 
 
 class RealtimeMonitorService:
@@ -41,6 +41,8 @@ class RealtimeMonitorService:
             self.current_talker = None          # 当前监听对象username
             self.current_display_name = None    # 当前监听对象显示名
             self.is_monitoring = False          # 监听状态
+            self._chat_ready = False            # ChatWith 是否完成
+            self._chat_error = ''               # ChatWith 出错信息
             self.message_buffer = MessageBuffer()
             self.seen_hashes = set()            # 消息去重集合
             self.polling_thread = None          # 轮询线程
@@ -125,27 +127,19 @@ class RealtimeMonitorService:
             self.emotion_tracker = EmotionStateTracker()
             _print(f"[RealtimeMonitorService] 情绪追踪器已创建")
             
-            # 自动将微信窗口置顶到前台
-            self._bring_wechat_to_front()
-            
             _print(f"[RealtimeMonitorService] 开始监听: {talker_display_name} (batch_id: {self.current_batch_id})")
             
-            # 4. 不再使用 AddListenChat，改用轮询模式主动获取消息
-            _print(f"\n👂 启动轮询监听（不使用回调），目标: {talker_display_name}")
-            _print(f"💡 微信窗口已自动激活到前台")
-            
-            # 5. 更新状态
+            # 4. 立即设置状态（让前端可以先进入悬浮模式）
             self.is_monitoring = True
+            self._chat_ready = False
+            self._chat_error = ''
             _print(f"✅ 监听已启动！批次ID: {self.current_batch_id[:8]}...")
             
-            # 7. 启动轮询线程（因为 wxauto4 的回调在 webview 环境下可能不工作）
-            _print(f"🔄 启动消息轮询线程（每1秒检查一次新消息）...")
+            # 5. 启动轮询线程（ChatWith 和模型预加载在线程中异步执行）
+            _print(f"🔄 启动消息轮询线程...")
             self.stop_polling = False
             self.polling_thread = threading.Thread(target=self._polling_loop, daemon=True)
             self.polling_thread.start()
-            
-            _print(f"💡 使用轮询模式获取消息（替代回调函数）")
-            _print(f"💡 请在微信主窗口中发送消息（单击联系人显示的聊天区域，不要双击弹窗）")
             
             # 8. 记录事件到运行时事件表
             self._log_runtime_event('realtime_monitor_start', {
@@ -235,25 +229,56 @@ class RealtimeMonitorService:
             return False
 
     def _polling_loop(self):
-        """轮询线程：定期检查新消息"""
+        """轮询线程：先完成 ChatWith 和模型预加载，再开始抓取消息"""
         _print(f"🔄 轮询线程已启动")
         
-        # 在循环外切换一次聊天窗口
+        # -- 1. 将微信窗口置顶 --
+        self._bring_wechat_to_front()
+        
+        # -- 2. 切换聊天窗口（带超时检测） --
+        _print(f"👂 切换到聊天窗口: {self.current_display_name}")
         try:
-            self.wx.ChatWith(self.current_display_name)
-            _print(f"✅ 已切换到聊天窗口: {self.current_display_name}")
+            # 用子线程执行 ChatWith，主轮询线程等待最多 15 秒
+            chat_result = [False, '']
+            def do_chat():
+                try:
+                    self.wx.ChatWith(self.current_display_name)
+                    chat_result[0] = True
+                except Exception as e:
+                    chat_result[1] = str(e)
+            
+            chat_thread = threading.Thread(target=do_chat, daemon=True)
+            chat_thread.start()
+            chat_thread.join(timeout=15)
+            
+            if chat_thread.is_alive():
+                self._chat_error = '切换聊天窗口超时（15秒），请检查微信窗口是否正常'
+                _print(f"⚠️ ChatWith 超时！{self._chat_error}")
+                return
+            elif not chat_result[0]:
+                self._chat_error = f'切换聊天窗口失败: {chat_result[1]}'
+                _print(f"❌ {self._chat_error}")
+                return
+            else:
+                _print(f"✅ 已切换到聊天窗口: {self.current_display_name}")
         except Exception as e:
-            _print(f"❌ 切换聊天窗口失败: {e}")
+            self._chat_error = f'切换聊天窗口异常: {e}'
+            _print(f"❌ {self._chat_error}")
             return
         
-        # 预加载情感分析模型(在切换窗口后,开始抓取前)
-        _print(f"\n🤖 正在预加载情感分析模型...")
+        # -- 3. 预加载情感分析模型 --
+        _print(f"🤖 正在预加载情感分析模型...")
         try:
             self.sentiment_service.analyze("测试")
-            _print(f"✅ 情感分析模型加载完成\n")
+            _print(f"✅ 情感分析模型加载完成")
         except Exception as e:
             _print(f"⚠️ 情感分析模型加载失败: {e}")
-            _print(f"💡 将继续监听,但情感分析功能可能不可用\n")
+            _print(f"💡 将继续监听,但情感分析功能可能不可用")
+        
+        # -- 4. 标记就绪 --
+        self._chat_ready = True
+        self._chat_error = ''
+        _print(f"🟢 准备就绪，开始抓取消息...")
         
         while not self.stop_polling and self.is_monitoring:
             try:
@@ -510,7 +535,9 @@ class RealtimeMonitorService:
                 'talker_display_name': self.current_display_name,
                 'batch_id': self.current_batch_id,
                 'message_count': message_count,
-                'model_ready': self.sentiment_service.is_ready()
+                'model_ready': self.sentiment_service.is_ready(),
+                'chat_ready': self._chat_ready,
+                'chat_error': self._chat_error,
             }
             
         except Exception as e:

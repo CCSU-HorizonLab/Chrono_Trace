@@ -579,6 +579,16 @@ async function startMonitoring() {
   
   try {
     await bridgeReady()
+    
+    // 先进入悬浮窗模式（让用户立刻看到 UI，不阻塞等待 ChatWith）
+    try {
+      await api.enter_floating_mode()
+      router.push('/floating')
+    } catch (e) {
+      console.warn('进入悬浮模式失败，保持当前页面:', e)
+    }
+    
+    // 再启动监听（ChatWith 在后台异步执行，不阻塞前端）
     const result = await api.start_realtime_monitor(talkerName)
     
     if (result.success || result.ok) {
@@ -590,14 +600,6 @@ async function startMonitoring() {
       startMessagesPolling()
       startSuggestionsPolling()  // 启动建议轮询
       loadSuggestionConfig()    // 加载建议配置
-
-      // 进入悬浮窗模式并跳转
-      try {
-        await api.enter_floating_mode()
-        router.push('/floating')
-      } catch (e) {
-        console.warn('进入悬浮模式失败，保持当前页面:', e)
-      }
     } else {
       realtimeState.status = 'idle'
       realtimeError.value = result.error || result.message || '启动监听失败'

@@ -11,7 +11,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 # 悬浮窗默认参数
-FLOATING_WIDTH = 520           # 加宽以展示建议内容
+FLOATING_WIDTH = 650           # 足够展示建议内容
 FLOATING_MIN_HEIGHT = 700
 TRACKING_INTERVAL_MS = 300     # 缩短到 300ms 让跟随更流畅
 WECHAT_WINDOW_CLASS = 'WeChatMainWndForPC'
@@ -19,8 +19,8 @@ FLOATING_GAP = 6               # 悬浮窗与微信窗口之间的间距（像�
 
 
 def _log(msg: str):
-    """同时输出到 logger 和 stdout（确保开发模式可见）"""
-    logger.debug(f"[FloatingWindow] {msg}")
+    """同时输出到 stdout 和 logger（确保开发控制台可见）"""
+    print(f"[FloatingWindow] {msg}", flush=True)
     logger.info(msg)
 
 
@@ -163,20 +163,37 @@ class FloatingWindowService:
 
     # ==================== Win32 直接操作 ====================
 
-    def _win32_move_resize(self, x: int, y: int, w: int, h: int) -> bool:
-        """使用 Win32 API 直接移动和调整窗口大小（比 PyWebView API 更可靠）"""
+    def _win32_move_resize(self, x: int, y: int, w: int, h: int, scale_height: bool = False) -> bool:
+        """
+        使用 Win32 API 直接移动和调整窗口大小。
+        宽度 w 总是按 DPI 缩放（因为 FLOATING_WIDTH 是 CSS 逻辑像素）。
+        高度 h 默认不缩放（因为通常来自 GetWindowRect，已经是物理像素）。
+        """
         try:
             import win32gui
             import win32con
+            import ctypes
 
             hwnd = self._webview_hwnd or self._get_webview_hwnd()
             if not hwnd:
                 _log("无法获取 HWND，跳过 Win32 移动")
                 return False
 
+            # 获取 DPI 缩放比例（如 150% → scale=1.5）
+            try:
+                dpi = ctypes.windll.user32.GetDpiForWindow(hwnd)
+                scale = dpi / 96.0
+            except AttributeError:
+                scale = 1.0
+
+            # 宽度始终缩放（FLOATING_WIDTH 是 CSS 像素）
+            scaled_w = int(w * scale)
+            # 高度默认不缩放（来自 GetWindowRect 的已经是物理像素）
+            final_h = int(h * scale) if scale_height else h
+
             # SWP_NOZORDER: 不改变 Z 序（置顶由 _set_on_top 单独处理）
             win32gui.SetWindowPos(
-                hwnd, 0, x, y, w, h,
+                hwnd, 0, x, y, scaled_w, final_h,
                 win32con.SWP_NOZORDER | win32con.SWP_NOACTIVATE
             )
             return True
@@ -401,15 +418,12 @@ class FloatingWindowService:
                     wechat_h = rect[3] - rect[1]
                     height = max(wechat_h, FLOATING_MIN_HEIGHT)
 
-                    # 直接用 Win32 API 移动（更快、更可靠）
+                    # 直接用 Win32 API 移动（包含 DPI 缩放计算）
+                    # _win32_move_resize 内部使用了 SWP_NOZORDER，因此能保持原有的 TOPMOST 置顶状态
                     webview_hwnd = self._webview_hwnd or self._get_webview_hwnd()
                     if webview_hwnd:
                         try:
-                            win32gui.SetWindowPos(
-                                webview_hwnd, win32con.HWND_TOPMOST,
-                                x, y, FLOATING_WIDTH, height,
-                                win32con.SWP_NOACTIVATE
-                            )
+                            self._win32_move_resize(x, y, FLOATING_WIDTH, height)
                         except Exception as e:
                             _log(f'移动悬浮窗失败: {e}')
 

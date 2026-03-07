@@ -12,6 +12,12 @@
       </div>
     </header>
 
+    <!-- ChatWith 超时/错误提示 -->
+    <div v-if="chatError" class="fp-chat-error">
+      <span>⚠️ {{ chatError }}</span>
+      <button class="fp-btn small" @click="exitFloating">重新开始</button>
+    </div>
+
     <!-- 监听对象信息 -->
     <div class="fp-contact">
       <div class="fp-avatar">{{ profileInitial }}</div>
@@ -182,6 +188,8 @@ const realtimeState = reactive({
   messages: [] as any[]
 })
 
+const chatError = ref('')
+
 const intent = ref<'intimate' | 'maintain' | 'distance'>('maintain')
 const triggerMode = ref<'full_auto' | 'semi_auto' | 'manual'>('semi_auto')
 const loading = ref(false)
@@ -203,7 +211,7 @@ const contextUsed = ref<{ sender: string; content: string; timestamp: number }[]
 const conversationHistory = ref<{ role: string; content: string }[]>([])
 
 // 情绪历史数据（用于曲线图）
-const emotionHistory = ref<{ time: string; polarity: number }[]>([])
+const emotionHistory = ref<{ time: string; polarity: number; sender: string; content: string }[]>([])
 
 // ECharts 引用
 const chartRef = ref<HTMLElement | null>(null)
@@ -254,10 +262,10 @@ const allSuggestions = computed(() => {
 
 // ========== 生命周期 ==========
 onMounted(async () => {
-  // 尝试恢复监听状态（带重试，因为可能刚从 Suggestions 跳转，后端需要时间）
+  // 尝试恢复监听状态（带重试，因为现在悬浮模式先于监听启动）
   let status: any = null
-  const MAX_RETRIES = 3
-  const RETRY_DELAY = 800 // ms
+  const MAX_RETRIES = 5
+  const RETRY_DELAY = 1000 // ms
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
@@ -281,6 +289,10 @@ onMounted(async () => {
     realtimeState.talkerName = status.talker_display_name || ''
     realtimeState.batchId = status.batch_id || ''
     realtimeState.messageCount = status.message_count || 0
+    // 检查 chat_error
+    if (status.chat_error) {
+      chatError.value = status.chat_error
+    }
 
     startPolling()
     loadSuggestionConfig()
@@ -391,9 +403,17 @@ function initChart() {
       textStyle: { color: '#f1f5f9', fontSize: 12 },
       formatter: (params: any) => {
         const p = params[0]
+        const idx = p.dataIndex
         const v = p.data as number
         const label = v > 0 ? '正面' : v < 0 ? '负面' : '中性'
-        return `${p.name}<br/>情绪: ${label} (${v.toFixed(2)})`
+        const item = emotionHistory.value[idx]
+        let html = `<b>${p.name}</b><br/>情绪: ${label} (${v.toFixed(2)})`
+        if (item) {
+          const sender = item.sender === 'self' ? '我' : '对方'
+          const content = item.content.length > 25 ? item.content.slice(0, 25) + '…' : item.content
+          html += `<br/><span style="color:#94a3b8">${sender}：${content}</span>`
+        }
+        return html
       },
     },
   }
@@ -430,6 +450,12 @@ function startPolling() {
       if (s.ok) {
         realtimeState.isMonitoring = s.is_monitoring
         realtimeState.messageCount = s.message_count || 0
+        // 检测 ChatWith 错误
+        if (s.chat_error) {
+          chatError.value = s.chat_error
+        } else if (s.chat_ready) {
+          chatError.value = ''
+        }
         if (!s.is_monitoring) {
           notMonitoringCount++
           // 连续 2 次检测到未在监听才退出（避免偶发抖动）
@@ -492,7 +518,7 @@ function stopPolling() {
 // ========== 情绪历史更新 ==========
 function updateEmotionHistory() {
   const msgs = realtimeState.messages
-  const newHistory: { time: string; polarity: number }[] = []
+  const newHistory: { time: string; polarity: number; sender: string; content: string }[] = []
 
   for (const msg of msgs) {
     if (msg.sentiment) {
@@ -500,6 +526,8 @@ function updateEmotionHistory() {
       newHistory.push({
         time: date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
         polarity: msg.sentiment.polarity || 0,
+        sender: msg.sender_attr || 'friend',
+        content: msg.content || '',
       })
     }
   }
@@ -1265,5 +1293,30 @@ async function generateProfile() {
 .fp-suggestions::-webkit-scrollbar-thumb {
   background: var(--ct-border-color);
   border-radius: 2px;
+}
+
+/* ==================== ChatWith 错误提示 ==================== */
+.fp-chat-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #fef3c7;
+  border-bottom: 1px solid #f59e0b;
+  color: #92400e;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.fp-chat-error .fp-btn.small {
+  background: #f59e0b;
+  color: white;
+  border: none;
+  padding: 3px 10px;
+  border-radius: var(--ct-radius-md);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
 }
 </style>

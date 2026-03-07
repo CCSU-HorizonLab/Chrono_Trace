@@ -47,6 +47,7 @@ import { computed } from 'vue'
 type Conversation = {
   id: number
   name: string
+  username?: string
   message_count: number
 }
 

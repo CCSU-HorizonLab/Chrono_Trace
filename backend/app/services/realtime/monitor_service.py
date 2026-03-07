@@ -50,26 +50,30 @@ class RealtimeMonitorService:
             # 实时情感分析服务
             self.sentiment_service = RealtimeSentimentService()
             # 情绪状态追踪器（每次 start_monitoring 时重建）
-            self.emotion_tracker = None
-            # AI 建议配置
-            self._suggestion_config = {
-                'trigger_mode': 'semi_auto',    # full_auto / semi_auto / manual
-                'intent': 'maintain',           # intimate / maintain / distance
-                'auto_rate_limit': 10,          # 全自动模式更新频率上限（秒）
-                'engine_type': 'template',      # template / llm
-            }
-            # 检查数据库是否有已激活的 LLM 模型，自动切换引擎类型
+            # AI 建议配置: 从 global settings.json 中读取
             try:
-                from ...db.connection import get_db
-                conn = get_db()
-                row = conn.execute(
-                    'SELECT id FROM llm_models WHERE is_active = 1 LIMIT 1'
-                ).fetchone()
-                if row:
-                    self._suggestion_config['engine_type'] = 'llm'
-                    _print("[RealtimeMonitorService] 检测到已激活 LLM 模型，引擎类型设为 llm")
-            except Exception:
-                pass  # 表不存在或数据库未就绪，保持默认 template
+                from pathlib import Path
+                import json
+                settings_file = Path(__file__).parent.parent.parent.parent / "data" / "settings.json"
+                if settings_file.exists():
+                    with open(settings_file, "r", encoding="utf-8") as f:
+                        settings = json.load(f)
+                else:
+                    settings = {}
+                self._suggestion_config = {
+                    'trigger_mode': settings.get('trigger_mode', 'semi_auto'),
+                    'intent': settings.get('intent', 'maintain'),
+                    'auto_rate_limit': int(settings.get('auto_rate_limit', 10)),
+                    'engine_type': 'llm',           # llm
+                }
+            except Exception as e:
+                _print(f"[RealtimeMonitorService] 获取全局设置失败: {e}")
+                self._suggestion_config = {
+                    'trigger_mode': 'semi_auto',    # full_auto / semi_auto / manual
+                    'intent': 'maintain',           # intimate / maintain / distance
+                    'auto_rate_limit': 10,          # 全自动模式更新频率上限（秒）
+                    'engine_type': 'llm',           # llm
+                }
             self._last_auto_suggestion_time = 0
             self._initialized = True
             _print(f"[RealtimeMonitorService] 服务已初始化，引擎类型: {self._suggestion_config['engine_type']}")
@@ -595,7 +599,7 @@ class RealtimeMonitorService:
                 
                 # 生成建议
                 from .suggestion_engine import SuggestionEngineFactory
-                engine_type = self._suggestion_config.get('engine_type', 'template')
+                engine_type = self._suggestion_config.get('engine_type', 'llm')
                 engine = SuggestionEngineFactory.create(engine_type)
                 result = engine.generate(
                     trigger.trigger_type, intent, trigger.context
@@ -638,7 +642,7 @@ class RealtimeMonitorService:
             from .suggestion_engine import SuggestionEngineFactory
             from .emotion_state_tracker import TriggerEvent
             engine = SuggestionEngineFactory.create(
-                self._suggestion_config.get('engine_type', 'template')
+                self._suggestion_config.get('engine_type', 'llm')
             )
             result = engine.generate(trigger_type, intent)
             
@@ -675,7 +679,7 @@ class RealtimeMonitorService:
                     speeches TEXT NOT NULL,
                     confidence REAL DEFAULT 1.0,
                     status TEXT DEFAULT 'pending',
-                    engine_type TEXT DEFAULT 'template',
+                    engine_type TEXT DEFAULT 'llm',
                     trigger_context TEXT,
                     created_at INTEGER NOT NULL,
                     read_at INTEGER,
@@ -696,7 +700,7 @@ class RealtimeMonitorService:
                 result.summary,
                 json.dumps(result.speeches, ensure_ascii=False),
                 result.confidence,
-                self._suggestion_config.get('engine_type', 'template'),
+                self._suggestion_config.get('engine_type', 'llm'),
                 json.dumps(trigger.context, ensure_ascii=False) if trigger.context else None,
                 int(time.time()),
             ))

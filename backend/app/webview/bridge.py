@@ -776,27 +776,40 @@ class Bridge:
             return {"ok": False, "error": str(e)}
 
     def get_suggestion_config(self) -> dict[str, Any]:
-        """获取 AI 建议配置（触发模式、走向等）"""
+        """获取 AI 建议配置（从系统设置读取）"""
         try:
-            from ..services.realtime.monitor_service import RealtimeMonitorService
-            monitor = RealtimeMonitorService()
-            return {"ok": True, "config": monitor.get_suggestion_config()}
+            return {
+                "ok": True, 
+                "config": {
+                    "trigger_mode": self.settings.get("trigger_mode", "semi_auto"),
+                    "intent": self.settings.get("intent", "maintain"),
+                    "auto_rate_limit": int(self.settings.get("auto_rate_limit", 10)),
+                    "engine_type": "llm",
+                }
+            }
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
     def set_suggestion_config(self, config: dict[str, Any]) -> dict[str, Any]:
-        """
-        更新 AI 建议配置
-
-        Args:
-            config: {"trigger_mode": "semi_auto", "intent": "intimate", ...}
-        """
+        """更新并持久化 AI 建议配置"""
         try:
-            from ..services.realtime.monitor_service import RealtimeMonitorService
-            monitor = RealtimeMonitorService()
-            monitor.set_suggestion_config(config)
-            return {"ok": True, "config": monitor.get_suggestion_config()}
+            # 1. 更新通用设置文件
+            for key in ('trigger_mode', 'intent', 'auto_rate_limit'):
+                if key in config:
+                    self.settings[key] = config[key]
+            self._save_settings()
+
+            # 2. 同时热更新给运行中的 RealtimeMonitorService
+            try:
+                from ..services.realtime.monitor_service import RealtimeMonitorService
+                monitor = RealtimeMonitorService()
+                monitor.set_suggestion_config(config)
+            except Exception as inner_e:
+                logger.debug(f"[Bridge] 热更新 MonitorService 失败（可能未运行）: {inner_e}")
+
+            return {"ok": True, "config": self.get_suggestion_config().get("config", {})}
         except Exception as e:
+            logger.error(f"[Bridge] 设置建议配置失败: {e}")
             return {"ok": False, "error": str(e)}
 
     # ==================== LLM 模型管理 ====================

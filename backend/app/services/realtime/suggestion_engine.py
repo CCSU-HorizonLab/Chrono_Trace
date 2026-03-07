@@ -47,15 +47,13 @@ class SuggestionEngineFactory:
     _engine_cache: dict[str, SuggestionEngine] = {}
 
     @classmethod
-    def create(cls, engine_type: str = "template") -> SuggestionEngine:
+    def create(cls, engine_type: str = "llm") -> SuggestionEngine:
         """
         创建或获取建议引擎实例
 
         Args:
             engine_type: 引擎类型
-                - 'template': 规则模板引擎（默认）
-                - 'local_llm': 本地 LLM 引擎（暂未实现）
-                - 'cloud_api': 云端 API 引擎（暂未实现）
+                - 'llm', 'local_llm', 'cloud_api': LLM 引擎
 
         Returns:
             SuggestionEngine 实例
@@ -66,10 +64,7 @@ class SuggestionEngineFactory:
         if engine_type in cls._engine_cache:
             return cls._engine_cache[engine_type]
 
-        if engine_type == "template":
-            from .template_engine import TemplateSuggestionEngine
-            engine = TemplateSuggestionEngine()
-        elif engine_type in ("llm", "local_llm", "cloud_api"):
+        if engine_type in ("llm", "local_llm", "cloud_api"):
             from .llm_engine import LLMSuggestionEngine
             engine = LLMSuggestionEngine()
         else:

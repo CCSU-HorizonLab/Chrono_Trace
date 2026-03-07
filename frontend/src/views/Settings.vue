@@ -17,20 +17,7 @@
             <p>💡 配置 LLM 模型后，AI 建议将使用大语言模型生成更智能的话术。支持远程 API（DeepSeek/OpenAI）和本地推理（Ollama/LM Studio）。</p>
           </div>
 
-          <!-- 建议引擎切换 -->
-          <div class="row">
-            <div class="lab">建议引擎</div>
-            <div class="engine-toggle">
-              <label :class="{ active: suggestionEngine === 'template' }">
-                <input type="radio" v-model="suggestionEngine" value="template" @change="onEngineChange" />
-                模板（默认）
-              </label>
-              <label :class="{ active: suggestionEngine === 'llm' }">
-                <input type="radio" v-model="suggestionEngine" value="llm" @change="onEngineChange" />
-                LLM
-              </label>
-            </div>
-          </div>
+          <!-- 引擎固定为 LLM -->
 
           <!-- 模型列表 -->
           <div class="model-list">
@@ -42,10 +29,16 @@
                 <div class="model-info">
                   <span class="model-name">{{ m.name }}</span>
                   <span class="model-provider">{{ providerLabel(m.provider) }}</span>
-                  <span v-if="m.is_active" class="badge active">✅ 激活</span>
+                  <button 
+                    class="badge toggle-badge" 
+                    :class="{ active: m.is_active }"
+                    @click="toggleModelActive(m)"
+                    title="点击切换激活状态"
+                  >
+                    {{ m.is_active ? '✅ 已激活' : '未激活' }}
+                  </button>
                 </div>
                 <div class="model-actions">
-                  <button v-if="!m.is_active" class="mini-btn" @click="activateModel(m)">激活</button>
                   <button class="mini-btn" @click="editModel(m)">编辑</button>
                   <button class="mini-btn danger" @click="removeModel(m.id)">删除</button>
                 </div>
@@ -167,10 +160,6 @@
             <label class="row">
               <div class="lab">Max Tokens</div>
               <input v-model.number="editingModel.max_tokens" class="ct-field" type="number" min="64" step="64" />
-            </label>
-            <label class="row">
-              <div class="lab">设为激活</div>
-              <input v-model="editingModel.is_active" type="checkbox" />
             </label>
           </div>
           <div class="form-actions">
@@ -361,7 +350,6 @@ watch(form, () => {
 // ========== LLM 模型管理 ==========
 const llmModels = ref<any[]>([])
 const showModelForm = ref(false)
-const suggestionEngine = ref('template')
 const editingModel = reactive({
   id: null as number | null,
   name: '',
@@ -414,26 +402,7 @@ async function loadLLMModels() {
   }
 }
 
-async function loadSuggestionEngine() {
-  try {
-    await bridgeReady()
-    const r = await api.get_suggestion_config()
-    if (r.ok && r.config) {
-      suggestionEngine.value = r.config.engine_type || 'template'
-    }
-  } catch (e) {
-    console.error('加载引擎配置失败:', e)
-  }
-}
 
-async function onEngineChange() {
-  try {
-    await bridgeReady()
-    await api.set_suggestion_config({ engine_type: suggestionEngine.value })
-  } catch (e) {
-    console.error('切换引擎失败:', e)
-  }
-}
 
 function editModel(m: any) {
   editingModel.id = m.id
@@ -455,7 +424,6 @@ function resetEditingModel() {
   editingModel.model_id = ''
   editingModel.api_base_url = ''
   editingModel.api_key = ''
-  editingModel.is_active = false
   editingModel.temperature = 0.7
   editingModel.max_tokens = 512
 }
@@ -476,16 +444,14 @@ async function saveModel() {
   }
 }
 
-async function activateModel(m: any) {
+async function toggleModelActive(m: any) {
   try {
     await bridgeReady()
-    await api.save_llm_model({ ...m, is_active: true })
+    // 反转当前的激活状态
+    await api.save_llm_model({ ...m, is_active: !m.is_active })
     await loadLLMModels()
-    // 自动切换引擎到 LLM
-    suggestionEngine.value = 'llm'
-    await onEngineChange()
   } catch (e) {
-    console.error('激活模型失败:', e)
+    console.error('切换激活状态失败:', e)
   }
 }
 
@@ -516,7 +482,6 @@ watch(() => editingModel.provider, (p) => {
 onMounted(() => {
   onLoad()
   loadLLMModels()
-  loadSuggestionEngine()
 })
 </script>
 
@@ -568,29 +533,7 @@ onMounted(() => {
 .path-input { display: flex; gap: var(--ct-space-sm); align-items: center; }
 .path-input .ct-field { flex: 1; }
 
-/* 引擎切换 */
-.engine-toggle {
-  display: flex;
-  gap: var(--ct-space-sm);
-  background: var(--ct-bg-tertiary);
-  padding: 4px;
-  border-radius: var(--ct-radius-md);
-}
-.engine-toggle label {
-  display: flex;
-  align-items: center;
-  gap: var(--ct-space-xs);
-  padding: 6px var(--ct-space-md);
-  border-radius: var(--ct-radius-sm);
-  cursor: pointer;
-  font-size: var(--ct-text-sm);
-  transition: all var(--ct-transition-fast);
-}
-.engine-toggle label.active {
-  background: var(--ct-color-primary);
-  color: #fff;
-}
-.engine-toggle input[type="radio"] { display: none; }
+
 
 /* 模型列表 */
 .model-list { display: flex; flex-direction: column; gap: var(--ct-space-sm); }
@@ -615,7 +558,24 @@ onMounted(() => {
 .model-info { display: flex; align-items: center; gap: var(--ct-space-sm); }
 .model-name { font-weight: var(--ct-font-semibold); }
 .model-provider { font-size: var(--ct-text-xs); color: var(--ct-text-secondary); background: var(--ct-bg-tertiary); padding: 2px 6px; border-radius: var(--ct-radius-sm); }
-.badge.active { font-size: var(--ct-text-xs); }
+.badge.toggle-badge { 
+  font-size: var(--ct-text-xs); 
+  padding: 2px 8px; 
+  border-radius: var(--ct-radius-sm); 
+  border: 1px solid var(--ct-border-color);
+  background: var(--ct-bg-secondary);
+  color: var(--ct-text-secondary);
+  cursor: pointer;
+  transition: all var(--ct-transition-fast);
+}
+.badge.toggle-badge:hover {
+  background: var(--ct-bg-tertiary);
+}
+.badge.toggle-badge.active { 
+  background: var(--ct-color-success-light, #e8f5e9); 
+  color: var(--ct-color-success, #4caf50); 
+  border-color: var(--ct-color-success, #4caf50);
+}
 .model-actions { display: flex; gap: var(--ct-space-xs); }
 .mini-btn {
   border: 1px solid var(--ct-border-color);

@@ -120,87 +120,7 @@
     <!-- ====== 左右分栏布局（统一视图） ====== -->
     <div class="split-layout">
 
-      <!-- 📱 左侧：消息与对话 -->
-      <div class="pane pane-left">
-        
-        <!-- 实时消息卡片 -->
-        <div class="card pane-card">
-          <div class="card-hd">
-            <span>📱 实时消息 ({{ realtimeState.messages.length }}条)</span>
-          </div>
-          <div class="card-bd messages-scroll" ref="messagesScrollRef">
-            <div v-if="!realtimeState.isMonitoring" class="empty">
-              尚未开始监听，请在上方选择对象并开始监听。
-            </div>
-            <div v-else-if="!realtimeState.messages.length" class="empty">
-              等待消息中...
-            </div>
-            <div v-else class="messages-list">
-              <div 
-                v-for="msg in realtimeState.messages" 
-                :key="msg.id" 
-                class="message-item"
-                :class="msg.sender"
-              >
-                <div class="message-header">
-                  <span class="sender-badge" :class="msg.sender">
-                    {{ msg.sender === 'self' ? '我' : msg.sender === 'friend' ? '对方' : '系统' }}
-                  </span>
-                  <span class="timestamp">{{ formatTime(msg.timestamp) }}</span>
-                </div>
-                <div class="message-content">{{ msg.content }}</div>
-                <div v-if="msg.sentiment" class="sentiment-result">
-                  <span class="sentiment-badge" :class="getSentimentClass(msg.sentiment.polarity)">
-                    {{ getSentimentText(msg.sentiment.polarity) }}
-                  </span>
-                  <span class="sentiment-intensity">
-                    强度: {{ msg.sentiment.intensity.toFixed(2) }}
-                  </span>
-                  <span class="sentiment-confidence">
-                    置信度: {{ (msg.sentiment.confidence * 100).toFixed(0) }}%
-                  </span>
-                  <span v-if="msg.sentiment.rules && msg.sentiment.rules.length" class="sentiment-rules">
-                    规则: {{ msg.sentiment.rules.join(', ') }}
-                  </span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
 
-        <!-- AI 建议与对话卡片（原默认视图左下） -->
-        <div class="ct-card chat">
-          <div class="card-hd tools">
-            <div class="title">建议与对话</div>
-            <div class="actions">
-              <CtButton variant="ghost" @click="onRefresh" :disabled="loading">刷新</CtButton>
-              <CtButton variant="ghost" @click="onClear">清空</CtButton>
-              <CtButton variant="ghost" @click="copyAll" :disabled="!suggestion">复制</CtButton>
-            </div>
-          </div>
-          <div class="card-bd chat-body">
-            <div v-if="!suggestion && !loading" class="empty">暂无对话建议。</div>
-            <div v-if="loading" class="skeleton">AI 正在思考…</div>
-            <template v-if="suggestion">
-              <div class="bubble ai">
-                <div class="summary" v-if="suggestion.summary">{{ suggestion.summary }}</div>
-                <ul class="speech" v-if="suggestion.speeches && suggestion.speeches.length">
-                  <li v-for="(sp, i) in suggestion.speeches" :key="i">
-                    <span>{{ sp }}</span>
-                    <button class="mini" @click="copyText(sp)">复制</button>
-                  </li>
-                </ul>
-              </div>
-              <div v-for="(m, i) in messages" :key="i" :class="['bubble', m.role]">{{ m.content }}</div>
-            </template>
-          </div>
-          <div class="chat-input">
-            <input v-model="userInput" type="text" placeholder="补充你的背景/需求，回车发送" @keydown.enter.exact.prevent="send" />
-            <button class="ct-btn" @click="send" :disabled="!userInput.trim() || loading">发送</button>
-          </div>
-        </div>
-
-      </div>
 
       <!-- 💡 右侧：对象信息与建议面板 -->
       <div class="pane pane-right">
@@ -253,41 +173,6 @@
           <div v-if="profileLoading" class="profile-loading">画像生成中...</div>
         </div>
 
-        <!-- 情绪态势指示 -->
-        <div class="card emotion-pulse-card">
-          <div class="card-hd">💡 情绪态势</div>
-          <div class="card-bd">
-            <div v-if="emotionSummary" class="emotion-pulse">
-              <div class="pulse-trend" :class="emotionSummary.trend">
-                <span class="trend-icon">
-                  {{ emotionSummary.trend === 'positive' ? '😊' : emotionSummary.trend === 'negative' ? '😟' : '😐' }}
-                </span>
-                <span class="trend-label">
-                  {{ emotionSummary.trend === 'positive' ? '正面' : emotionSummary.trend === 'negative' ? '负面' : '中性' }}
-                </span>
-              </div>
-              <div class="pulse-stats">
-                <div class="stat">
-                  <span class="stat-label">窗口消息</span>
-                  <span class="stat-value">{{ emotionSummary.window_size }}</span>
-                </div>
-                <div class="stat">
-                  <span class="stat-label">平均极性</span>
-                  <span class="stat-value" :class="emotionSummary.avg_polarity > 0 ? 'positive' : emotionSummary.avg_polarity < 0 ? 'negative' : ''">
-                    {{ emotionSummary.avg_polarity.toFixed(2) }}
-                  </span>
-                </div>
-              </div>
-              <div class="polarity-bar">
-                <div v-for="(p, idx) in emotionSummary.recent_polarities" :key="idx"
-                     class="polarity-dot" :class="p > 0 ? 'pos' : p < 0 ? 'neg' : 'neu'">
-                </div>
-              </div>
-            </div>
-            <div v-else class="empty">监听开始后将显示情绪态势</div>
-          </div>
-        </div>
-
         <!-- 设置：触发模式 + 走向 -->
         <div class="card config-card">
           <div class="card-hd">⚙️ 建议设置</div>
@@ -315,56 +200,6 @@
           </div>
         </div>
 
-        <!-- 触发提示卡片列表 -->
-        <div class="card suggestions-card">
-          <div class="card-hd">
-            <span>📋 建议列表</span>
-            <span class="badge" v-if="pendingSuggestions.length">{{ pendingSuggestions.length }}</span>
-          </div>
-          <div class="card-bd">
-            <div v-if="!pendingSuggestions.length && !manualSuggestion" class="empty">
-              {{ triggerMode === 'manual' ? '点击上方「手动生成建议」获取分析' : '等待触发条件满足…' }}
-            </div>
-
-            <!-- 手动生成的建议 -->
-            <div v-if="manualSuggestion" class="trigger-card" :class="manualSuggestion.severity">
-              <div class="trigger-header" @click="manualSuggestionExpanded = !manualSuggestionExpanded">
-                <span class="trigger-icon">🎯</span>
-                <span class="trigger-summary">{{ manualSuggestion.summary }}</span>
-                <span class="expand-icon">{{ manualSuggestionExpanded ? '▼' : '▶' }}</span>
-              </div>
-              <div v-show="manualSuggestionExpanded" class="trigger-body">
-                <ul class="speech-list">
-                  <li v-for="(sp, i) in manualSuggestion.speeches" :key="i">
-                    <span class="speech-text">{{ sp }}</span>
-                    <button class="copy-btn" @click="copyText(sp)">复制</button>
-                  </li>
-                </ul>
-              </div>
-            </div>
-
-            <!-- 自动/半自动触发的建议 -->
-            <div v-for="s in pendingSuggestions" :key="s.id" class="trigger-card" :class="s.severity">
-              <div class="trigger-header" @click="toggleSuggestion(s.id)">
-                <span class="trigger-icon">
-                  {{ getTriggerIcon(s.trigger_type) }}
-                </span>
-                <span class="trigger-summary">{{ s.summary }}</span>
-                <span class="trigger-time">{{ formatTime(s.created_at) }}</span>
-                <span class="expand-icon">{{ expandedSuggestions.has(s.id) ? '▼' : '▶' }}</span>
-              </div>
-              <div v-show="expandedSuggestions.has(s.id)" class="trigger-body">
-                <ul class="speech-list">
-                  <li v-for="(sp, i) in s.speeches" :key="i">
-                    <span class="speech-text">{{ sp }}</span>
-                    <button class="copy-btn" @click="copyText(sp)">复制</button>
-                  </li>
-                </ul>
-                <button class="dismiss-btn" @click="dismissSuggestion(s.id)">✕ 关闭</button>
-              </div>
-            </div>
-          </div>
-        </div>
       </div>
     </div>
 
@@ -408,6 +243,22 @@
       </div>
     </div>
   </Teleport>
+  <!-- LLM 未激活提示弹窗 -->
+  <Teleport to="body">
+    <div v-if="showLlmWarningDialog" class="ct-modal-overlay" @click.self="showLlmWarningDialog = false">
+      <div class="ct-modal-dialog">
+        <div class="modal-title">⚠️ 尚未配置大模型</div>
+        <div class="modal-desc">
+          尚未配置或激活 LLM 模型。AI 建议需要使用大语言模型才能运作。<br/>
+          是否前往设置页面进行配置？
+        </div>
+        <div class="modal-actions">
+          <CtButton variant="ghost" @click="showLlmWarningDialog = false">取消</CtButton>
+          <CtButton class="primary" @click="goToSettings">前往设置</CtButton>
+        </div>
+      </div>
+    </div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
@@ -421,12 +272,9 @@ const router = useRouter()
 
 type Message = { role: 'ai' | 'user'; content: string }
 
-const intent = ref<'intimate' | 'maintain' | 'distance'>('maintain')
+const intent = ref<any>('maintain')
 const loading = ref(false)
 const error = ref('')
-const suggestion = ref<{ summary?: string; speeches?: string[] } | null>(null)
-const messages = ref<Message[]>([])
-const userInput = ref('')
 
 // ========== 实时监听状态 ==========
 const monitorPanelExpanded = ref(true)
@@ -443,16 +291,18 @@ const realtimeState = reactive({
 const realtimeError = ref('')
 let statusTimer: any = null
 let messagesTimer: any = null
-let suggestionsTimer: any = null  // 建议轮询定时器
 
 // ========== AI 建议状态 ==========
-const triggerMode = ref<'full_auto' | 'semi_auto' | 'manual'>('semi_auto')
-const pendingSuggestions = ref<any[]>([])
-const expandedSuggestions = reactive(new Set<number>())
+const triggerMode = ref<any>('semi_auto')
 const manualSuggestion = ref<any>(null)
 const manualSuggestionExpanded = ref(true)
-const emotionSummary = ref<any>(null)
-const messagesScrollRef = ref<HTMLElement | null>(null)
+
+const showLlmWarningDialog = ref(false)
+
+function goToSettings() {
+  showLlmWarningDialog.value = false
+  router.push('/settings')
+}
 
 // ========== 联系人列表 ==========
 const contactSearch = ref('')
@@ -574,11 +424,18 @@ async function startMonitoring() {
     return
   }
   
-  realtimeError.value = ''
-  realtimeState.status = 'searching'
-  
   try {
     await bridgeReady()
+    
+    // 检查 LLM 模型是否激活
+    const llmRes = await api.get_llm_models()
+    if (!llmRes.ok || !llmRes.models || !llmRes.models.some((m: any) => m.is_active)) {
+      showLlmWarningDialog.value = true
+      return
+    }
+
+    realtimeError.value = ''
+    realtimeState.status = 'searching'
     
     // 先进入悬浮窗模式（让用户立刻看到 UI，不阻塞等待 ChatWith）
     try {
@@ -598,7 +455,6 @@ async function startMonitoring() {
       
       startStatusPolling()
       startMessagesPolling()
-      startSuggestionsPolling()  // 启动建议轮询
       loadSuggestionConfig()    // 加载建议配置
     } else {
       realtimeState.status = 'idle'
@@ -621,7 +477,6 @@ async function stopMonitoring() {
     
     stopStatusPolling()
     stopMessagesPolling()
-    stopSuggestionsPolling()
     
     if (result.success || result.ok) {
       realtimeState.status = 'stopped'
@@ -632,8 +487,6 @@ async function stopMonitoring() {
           realtimeState.status = 'idle'
           realtimeState.messageCount = 0
           realtimeState.messages = []
-          pendingSuggestions.value = []
-          emotionSummary.value = null
           manualSuggestion.value = null
         }
       }, 3000)
@@ -696,25 +549,6 @@ async function manualGenerate() {
   }
 }
 
-// 展开/折叠建议卡片
-function toggleSuggestion(id: number) {
-  if (expandedSuggestions.has(id)) {
-    expandedSuggestions.delete(id)
-  } else {
-    expandedSuggestions.add(id)
-  }
-}
-
-// 关闭建议
-async function dismissSuggestion(id: number) {
-  try {
-    await api.dismiss_suggestion(id)
-    pendingSuggestions.value = pendingSuggestions.value.filter(s => s.id !== id)
-    expandedSuggestions.delete(id)
-  } catch (e) {
-    console.error('关闭建议失败:', e)
-  }
-}
 
 // ========== 轮询 ==========
 
@@ -757,14 +591,7 @@ function startMessagesPolling() {
       await bridgeReady()
       const result = await api.get_realtime_messages(realtimeState.batchId, 50)
       if (result.ok) {
-        const prevLen = realtimeState.messages.length
         realtimeState.messages = result.messages || []
-        // 新消息时自动滚动到底部
-        if (realtimeState.messages.length > prevLen && messagesScrollRef.value) {
-          nextTick(() => {
-            messagesScrollRef.value!.scrollTop = 0
-          })
-        }
       }
     } catch (e) {
       console.error('消息轮询失败:', e)
@@ -776,27 +603,6 @@ function stopMessagesPolling() {
   if (messagesTimer) { clearInterval(messagesTimer); messagesTimer = null }
 }
 
-// 建议轮询（每 3 秒）
-function startSuggestionsPolling() {
-  stopSuggestionsPolling()
-  suggestionsTimer = setInterval(async () => {
-    if (!realtimeState.batchId) return
-    try {
-      await bridgeReady()
-      const result = await api.get_pending_suggestions(realtimeState.batchId)
-      if (result.ok) {
-        pendingSuggestions.value = result.suggestions || []
-        emotionSummary.value = result.emotion_summary || null
-      }
-    } catch (e) {
-      console.error('建议轮询失败:', e)
-    }
-  }, 3000)
-}
-
-function stopSuggestionsPolling() {
-  if (suggestionsTimer) { clearInterval(suggestionsTimer); suggestionsTimer = null }
-}
 
 // ========== 原有逻辑 ==========
 
@@ -865,62 +671,7 @@ async function generateContactProfile() {
   }
 }
 
-const emotions = ref<{ name: string; value: number }[]>([
-  { name: '积极', value: 40 },
-  { name: '中性', value: 35 },
-  { name: '消极', value: 25 }
-])
-
-async function gen() {
-  loading.value = true
-  error.value = ''
-  try {
-    await bridgeReady()
-    const r = await api.generate_suggestion(intent.value, { recent: [] })
-    if (r.ok && r.suggestion) {
-      suggestion.value = r.suggestion
-    } else {
-      suggestion.value = r || null
-    }
-  } catch (e: any) {
-    error.value = e?.message || '生成失败，请重试'
-  } finally {
-    loading.value = false
-  }
-}
-
-function onRefresh() { if (!loading.value) gen() }
-function onClear() { suggestion.value = null; messages.value = []; userInput.value = '' }
 function copyText(text: string) { navigator.clipboard?.writeText(text) }
-function copyAll() {
-  if (!suggestion.value) return
-  const txt = [suggestion.value.summary || '', ...(suggestion.value.speeches || [])].filter(Boolean).join('\n')
-  navigator.clipboard?.writeText(txt)
-}
-
-async function send() {
-  const content = userInput.value.trim()
-  if (!content) return
-  messages.value.push({ role: 'user', content })
-  userInput.value = ''
-  loading.value = true
-  error.value = ''
-  try {
-    await bridgeReady()
-    const r = await api.generate_suggestion(intent.value, { recent: messages.value })
-    if (r.ok && r.suggestion) {
-      suggestion.value = r.suggestion
-      messages.value.push({ role: 'ai', content: r.suggestion.summary || '已更新建议。' })
-    } else {
-      suggestion.value = r || null
-      messages.value.push({ role: 'ai', content: r?.summary || '已更新建议，请查看上方内容。' })
-    }
-  } catch (e: any) {
-    error.value = e?.message || '发送失败，请重试'
-  } finally {
-    loading.value = false
-  }
-}
 
 // 组件挂载时恢复监听状态
 onMounted(async () => {
@@ -941,7 +692,6 @@ onMounted(async () => {
       realtimeState.messageCount = status.message_count || 0
       startStatusPolling()
       startMessagesPolling()
-      startSuggestionsPolling()
       loadSuggestionConfig()
     }
   } catch (e) {
@@ -953,7 +703,6 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   stopStatusPolling()
   stopMessagesPolling()
-  stopSuggestionsPolling()
   document.removeEventListener('click', onClickOutside)
 })
 

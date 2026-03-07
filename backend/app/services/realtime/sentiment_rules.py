@@ -197,7 +197,6 @@ PERFUNCTORY_WORDS = [
 ]
 
 
-logger = logging.getLogger(__name__)
 def get_emoji_sentiment(emoji: str) -> dict:
     """获取表情符号的情感
     

@@ -1,10 +1,6 @@
 """特征提取配置类"""
 from dataclasses import dataclass
 from typing import Optional
-import logging
-
-
-logger = logging.getLogger(__name__)
 @dataclass
 class FeatureExtractionConfig:
     """特征提取配置"""

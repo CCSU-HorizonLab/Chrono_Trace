@@ -7,13 +7,9 @@ from typing import List, Dict, Optional
 import sqlite3
 import time
 import re
-import logging
 
 # 使用相对导入避免循环依赖
 from ...db.connection import get_db
-
-
-logger = logging.getLogger(__name__)
 class KeywordLibraries:
     """关键词库管理类"""
 

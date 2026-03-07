@@ -6,13 +6,9 @@
 """
 
 import time
-import logging
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Optional
-
-
-logger = logging.getLogger(__name__)
 @dataclass
 class TriggerEvent:
     """触发事件"""

@@ -3,11 +3,7 @@
 提供消息列表查询功能,联合查询消息和情感分析结果
 """
 import json
-import logging
 from ...db.connection import get_db
-
-
-logger = logging.getLogger(__name__)
 def get_messages_with_sentiment(batch_id: str, limit: int = 50, exclude_system: bool = True, order_desc: bool = True):
     """获取消息及其情感分析结果
 

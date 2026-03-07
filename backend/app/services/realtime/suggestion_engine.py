@@ -1,6 +1,5 @@
 """
 建议引擎抽象层
-import logging
 
 定义 SuggestionEngine ABC 和 SuggestionResult 数据类，
 提供统一的建议生成接口和工厂类。
@@ -8,9 +7,6 @@ import logging
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-
-
-logger = logging.getLogger(__name__)
 @dataclass
 class SuggestionResult:
     """建议生成结果"""

@@ -2,14 +2,9 @@
 节日日期库 - 管理常见节日的日期映射
 支持公历节日和农历节日的日期计算
 """
-import logging
-
 from datetime import datetime, timedelta
 from typing import Dict, Optional, Tuple
 import calendar
-
-
-logger = logging.getLogger(__name__)
 class HolidayLibrary:
     """节日日期库"""
     

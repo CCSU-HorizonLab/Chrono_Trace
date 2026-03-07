@@ -12,11 +12,8 @@
 """
 
 import math
-import logging
 from typing import Dict, Any, List, Optional
 from ...db.connection import get_db
-
-logger = logging.getLogger(__name__)
 from .preprocessing_orchestrator import PreprocessingOrchestrator
 from .keyword_libraries import KeywordLibraries
 from .negative_direction_service import NegativeDirectionService

@@ -1,8 +1,6 @@
 """特征提取配置类"""
 from dataclasses import dataclass
 from typing import Optional
-
-
 @dataclass
 class FeatureExtractionConfig:
     """特征提取配置"""

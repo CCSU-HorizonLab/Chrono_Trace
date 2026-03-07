@@ -3,12 +3,14 @@
 import sqlite3
 import hashlib
 import re
+import logging
 from typing import List, Optional, Tuple, Dict, Set
 from ..base import WeChatDBBase
 
 
 
 
+logger = logging.getLogger(__name__)
 class MessageDBV4(WeChatDBBase):
     """微信 V4 消息数据库访问类
     
@@ -58,7 +60,7 @@ class MessageDBV4(WeChatDBBase):
         self.temp_db_paths = []  # 存储临时文件路径
         
         for idx, db_path in enumerate(self.db_paths):
-            print(f"[DEBUG MessageDB] 连接数据库 {idx+1}/{len(self.db_paths)}: {db_path}")
+            logger.debug(f"[DEBUG MessageDB] 连接数据库 {idx+1}/{len(self.db_paths)}: {db_path}")
             
             if self.db_key:
                 # 使用新的纯Python解密器
@@ -67,18 +69,18 @@ class MessageDBV4(WeChatDBBase):
                 
                 # 验证密钥
                 if not decryptor.verify_key_from_file(db_path, self.db_key):
-                    print(f"[WARN] 跳过: 密钥验证失败 {db_path}")
+                    logger.error(f"[WARN] 跳过: 密钥验证失败 {db_path}")
                     continue
                 
-                print(f"[DEBUG MessageDB] ✅ 密钥验证成功")
+                logger.info(f"[DEBUG MessageDB] ✅ 密钥验证成功")
                 
                 # 解密到临时文件
                 temp_path = tempfile.mktemp(suffix=f'_message_{idx}.db')
                 self.temp_db_paths.append(temp_path)
                 
-                print(f"[DEBUG MessageDB] 解密到: {temp_path}")
+                logger.debug(f"[DEBUG MessageDB] 解密到: {temp_path}")
                 decryptor.decrypt_database(db_path, temp_path, self.db_key)
-                print(f"[DEBUG MessageDB] ✅ 解密完成")
+                logger.info(f"[DEBUG MessageDB] ✅ 解密完成")
                 
                 # 连接解密后的数据库
                 conn = sqlite3.connect(temp_path)
@@ -102,7 +104,7 @@ class MessageDBV4(WeChatDBBase):
                 # row[1] 是列名
                 cols.add(str(row[1]).lower())
         except Exception as e:
-            print(f"[MessageDB Warning] 获取表结构失败 {table_name}: {e}")
+            logger.error(f"[MessageDB Warning] 获取表结构失败 {table_name}: {e}")
 
         self._table_columns_cache[cache_key] = cols
         return cols
@@ -312,7 +314,7 @@ class MessageDBV4(WeChatDBBase):
 
             # 调试：仅记录第一条消息的判断信息
             if len(messages) == 0:
-                print(
+                logger.debug(
                     f"[MessageDB] 首条消息: real_sender_id={row['real_sender_id']}, "
                     f"sender_username='{sender_username}', is_send_flag={raw_flag}, "
                     f"computed_is_send={computed_raw}, my_wxid='{self.my_wxid}', is_sender={is_sender}"
@@ -430,6 +432,6 @@ class MessageDBV4(WeChatDBBase):
             for temp_path in self.temp_db_paths:
                 try:
                     os.remove(temp_path)
-                    print(f"[DEBUG MessageDB] 已删除临时文件: {temp_path}")
+                    logger.debug(f"[DEBUG MessageDB] 已删除临时文件: {temp_path}")
                 except Exception as e:
-                    print(f"[DEBUG MessageDB] 删除临时文件失败: {e}")
+                    logger.error(f"[DEBUG MessageDB] 删除临时文件失败: {e}")

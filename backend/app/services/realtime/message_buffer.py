@@ -3,15 +3,16 @@
 负责消息的增删改查操作
 """
 import sys
+import logging
 import time
 import threading
 from typing import List, Dict, Optional
 from ...db.connection import get_db
 
+logger = logging.getLogger(__name__)
 def _print(*args, **kwargs):
     """强制刷新的打印函数"""
-    print(*args, **kwargs)
-    sys.stdout.flush()
+    logger.debug(*args, **kwargs)
 
 
 class MessageBuffer:
@@ -158,7 +159,7 @@ class MessageBuffer:
             return messages
             
         except Exception as e:
-            print(f"[MessageBuffer] 获取批次消息失败: {e}")
+            logger.error(f"[MessageBuffer] 获取批次消息失败: {e}")
             return []
     
     def get_batch_count(self, batch_id: str) -> int:
@@ -185,7 +186,7 @@ class MessageBuffer:
             return count
             
         except Exception as e:
-            print(f"[MessageBuffer] 获取批次消息数量失败: {e}")
+            logger.error(f"[MessageBuffer] 获取批次消息数量失败: {e}")
             return 0
     
     def mark_as_processed(self, batch_id: str) -> int:
@@ -213,7 +214,7 @@ class MessageBuffer:
                 return cursor.rowcount
                 
             except Exception as e:
-                print(f"[MessageBuffer] 标记批次为已处理失败: {e}")
+                logger.error(f"[MessageBuffer] 标记批次为已处理失败: {e}")
                 return 0
     
     def delete_batch(self, batch_id: str) -> int:
@@ -240,7 +241,7 @@ class MessageBuffer:
                 return cursor.rowcount
                 
             except Exception as e:
-                print(f"[MessageBuffer] 删除批次消息失败: {e}")
+                logger.error(f"[MessageBuffer] 删除批次消息失败: {e}")
                 return 0
     
     def get_recent_batches(self, limit: int = 10) -> List[Dict]:
@@ -290,7 +291,7 @@ class MessageBuffer:
             return batches
             
         except Exception as e:
-            print(f"[MessageBuffer] 获取批次列表失败: {e}")
+            logger.error(f"[MessageBuffer] 获取批次列表失败: {e}")
             return []
     
     def message_exists(self, message_hash: str) -> bool:
@@ -319,7 +320,7 @@ class MessageBuffer:
             return result[0] > 0 if result else False
             
         except Exception as e:
-            print(f"[MessageBuffer] 检查消息是否存在失败: {e}")
+            logger.error(f"[MessageBuffer] 检查消息是否存在失败: {e}")
             return False
     
     def clear_old_batches(self, days: int = 30) -> int:
@@ -348,5 +349,5 @@ class MessageBuffer:
                 return cursor.rowcount
                 
             except Exception as e:
-                print(f"[MessageBuffer] 清理旧批次失败: {e}")
+                logger.error(f"[MessageBuffer] 清理旧批次失败: {e}")
                 return 0

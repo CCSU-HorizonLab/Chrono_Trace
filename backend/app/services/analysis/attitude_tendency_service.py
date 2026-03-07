@@ -18,15 +18,12 @@
 - 前端显示原始频率值（低负面频率 = 好）
 """
 
-import logging
 import os
 from typing import Dict, Any, List
 from ...db.connection import get_db
 from .preprocessing_orchestrator import PreprocessingOrchestrator
 from .keyword_libraries import KeywordLibraries
 from .negative_direction_service import NegativeDirectionService
-
-logger = logging.getLogger(__name__)
 
 # ===== 调试开关：设为True时输出详细跟踪日志 =====
 DEBUG_TRACE = True

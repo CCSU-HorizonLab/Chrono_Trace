@@ -9,8 +9,6 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Optional
-
-
 @dataclass
 class TriggerEvent:
     """触发事件"""

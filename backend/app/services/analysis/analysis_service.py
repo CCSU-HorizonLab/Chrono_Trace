@@ -4,8 +4,10 @@ from datetime import datetime
 from ...db.connection import get_db
 from .wordcloud_generator import WordCloudGenerator
 from .preprocessing_service import PreprocessingService
+import logging
 
 
+logger = logging.getLogger(__name__)
 class AnalysisService:
     """历史数据分析服务（统一分析入口）"""
 
@@ -70,14 +72,14 @@ class AnalysisService:
                     "last_message_time": datetime.fromtimestamp(row[5]).strftime("%Y-%m-%d %H:%M")
                 })
             
-            print(f"[DEBUG] 查询到 {len(conversations)} 个联系人")
+            logger.debug(f"[DEBUG] 查询到 {len(conversations)} 个联系人")
             
             return {
                 "ok": True,
                 "conversations": conversations
             }
         except Exception as e:
-            print(f"[ERROR] 获取联系人列表失败: {e}")
+            logger.error(f"[ERROR] 获取联系人列表失败: {e}")
             import traceback
             traceback.print_exc()
             return {
@@ -108,13 +110,13 @@ class AnalysisService:
             }
         """
         try:
-            print(f"[DEBUG] 开始分析: conversation_id={conversation_id}, from={from_date}, to={to_date}")
+            logger.info(f"[DEBUG] 开始分析: conversation_id={conversation_id}, from={from_date}, to={to_date}")
             
             # 1. 转换日期为时间戳
             from_ts = int(datetime.strptime(from_date, "%Y-%m-%d").timestamp())
             to_ts = int(datetime.strptime(to_date + " 23:59:59", "%Y-%m-%d %H:%M:%S").timestamp())
             
-            print(f"[DEBUG] 时间戳范围: {from_ts} - {to_ts}")
+            logger.debug(f"[DEBUG] 时间戳范围: {from_ts} - {to_ts}")
             
             # 2. 获取会话详情
             subject_info = self._get_subject_info(conversation_id)
@@ -126,7 +128,7 @@ class AnalysisService:
                     "wordcloud": []
                 }
             
-            print(f"[DEBUG] 会话详情: {subject_info}")
+            logger.info(f"[DEBUG] 会话详情: {subject_info}")
             
             # 3. 使用预处理服务获取清洗后的消息（默认使用缓存）
             preprocessed = self.preprocessor.preprocess_conversation(
@@ -136,15 +138,15 @@ class AnalysisService:
             msg_count = preprocessed["total_messages"]
             valid_count = preprocessed["valid_messages"]
             
-            print(f"[DEBUG] 查询到 {msg_count} 条消息, 有效消息 {valid_count} 条")
-            print(f"[DEBUG] 预处理统计: {preprocessed['stats']}")
-            print(f"[DEBUG] 缓存命中率: {preprocessed['stats'].get('cache_hit_rate', 0) * 100}%")
+            logger.debug(f"[DEBUG] 查询到 {msg_count} 条消息, 有效消息 {valid_count} 条")
+            logger.debug(f"[DEBUG] 预处理统计: {preprocessed['stats']}")
+            logger.debug(f"[DEBUG] 缓存命中率: {preprocessed['stats'].get('cache_hit_rate', 0) * 100}%")
             
             # 4. 生成词云（使用清洗后的文本）
             cleaned_texts = [msg["cleaned_content"] for msg in preprocessed["cleaned_messages"]]
             wordcloud = self.wordcloud_gen.generate(cleaned_texts, top_n=50)
             
-            print(f"[DEBUG] 生成词云: {len(wordcloud)} 个词")
+            logger.debug(f"[DEBUG] 生成词云: {len(wordcloud)} 个词")
             
             # 5. 组装返回数据
             return {
@@ -167,7 +169,7 @@ class AnalysisService:
             }
         
         except Exception as e:
-            print(f"[ERROR] 分析失败: {e}")
+            logger.error(f"[ERROR] 分析失败: {e}")
             import traceback
             traceback.print_exc()
             return {

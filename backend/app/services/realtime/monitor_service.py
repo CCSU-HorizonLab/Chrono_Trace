@@ -3,6 +3,7 @@
 基于 wxauto4 实现单对象消息监听
 """
 import sys
+import logging
 import time
 import uuid
 import json
@@ -11,10 +12,10 @@ from .message_buffer import MessageBuffer
 from .realtime_sentiment_service import RealtimeSentimentService
 from .emotion_state_tracker import EmotionStateTracker
 
+logger = logging.getLogger(__name__)
 def _print(*args, **kwargs):
     """强制刷新的打印函数"""
-    print(*args, **kwargs)
-    sys.stdout.flush()
+    logger.debug(*args, **kwargs)
 
 
 class RealtimeMonitorService:
@@ -160,7 +161,7 @@ class RealtimeMonitorService:
             }
             
         except Exception as e:
-            print(f"[RealtimeMonitorService] 启动监听异常: {e}")
+            logger.error(f"[RealtimeMonitorService] 启动监听异常: {e}")
             import traceback
             traceback.print_exc()
             
@@ -474,7 +475,7 @@ class RealtimeMonitorService:
             }
             
         except Exception as e:
-            print(f"[RealtimeMonitorService] 停止监听异常: {e}")
+            logger.error(f"[RealtimeMonitorService] 停止监听异常: {e}")
             import traceback
             traceback.print_exc()
             
@@ -513,7 +514,7 @@ class RealtimeMonitorService:
             }
             
         except Exception as e:
-            print(f"[RealtimeMonitorService] 获取状态失败: {e}")
+            logger.error(f"[RealtimeMonitorService] 获取状态失败: {e}")
             return {
                 'is_monitoring': False,
                 'error': str(e)
@@ -542,7 +543,7 @@ class RealtimeMonitorService:
             conn.commit()
             
         except Exception as e:
-            print(f"[RealtimeMonitorService] 记录运行时事件失败: {e}")
+            logger.error(f"[RealtimeMonitorService] 记录运行时事件失败: {e}")
     
     def _handle_trigger_events(self, triggers):
         """
@@ -702,7 +703,7 @@ class RealtimeMonitorService:
                 except:
                     pass
             
-            print("[RealtimeMonitorService] 服务已关闭")
+            logger.debug("[RealtimeMonitorService] 服务已关闭")
             
         except Exception as e:
-            print(f"[RealtimeMonitorService] 关闭服务异常: {e}")
+            logger.error(f"[RealtimeMonitorService] 关闭服务异常: {e}")

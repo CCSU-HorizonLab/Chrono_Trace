@@ -20,7 +20,7 @@ FLOATING_GAP = 6               # 悬浮窗与微信窗口之间的间距（像�
 
 def _log(msg: str):
     """同时输出到 logger 和 stdout（确保开发模式可见）"""
-    print(f"[FloatingWindow] {msg}", flush=True)
+    logger.debug(f"[FloatingWindow] {msg}")
     logger.info(msg)
 
 

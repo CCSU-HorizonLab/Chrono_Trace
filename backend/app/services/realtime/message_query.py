@@ -4,8 +4,6 @@
 """
 import json
 from ...db.connection import get_db
-
-
 def get_messages_with_sentiment(batch_id: str, limit: int = 50, exclude_system: bool = True, order_desc: bool = True):
     """获取消息及其情感分析结果
 

@@ -1,10 +1,12 @@
 """微信 V4 版本 - 联系人数据库"""
+import logging
 
 import sqlite3
 from typing import List, Optional
 from ..base import WeChatDBBase
 
 
+logger = logging.getLogger(__name__)
 class ContactDBV4(WeChatDBBase):
     """微信 V4 联系人数据库访问类
     
@@ -31,7 +33,7 @@ class ContactDBV4(WeChatDBBase):
         import os
         
         if self.db_key:
-            print(f"[DEBUG ContactDB] 开始解密联系人数据库: {self.db_path}")
+            logger.info(f"[DEBUG ContactDB] 开始解密联系人数据库: {self.db_path}")
             
             # 使用新的纯Python解密器
             from ...db_decryptor_v2 import WeChatDBDecryptorV2
@@ -41,14 +43,14 @@ class ContactDBV4(WeChatDBBase):
             if not decryptor.verify_key_from_file(self.db_path, self.db_key):
                 raise ValueError(f"密钥验证失败: {self.db_path}")
             
-            print(f"[DEBUG ContactDB] ✅ 密钥验证成功")
+            logger.info(f"[DEBUG ContactDB] ✅ 密钥验证成功")
             
             # 解密到临时文件
             self.temp_db_path = tempfile.mktemp(suffix='.db')
-            print(f"[DEBUG ContactDB] 解密到临时文件: {self.temp_db_path}")
+            logger.debug(f"[DEBUG ContactDB] 解密到临时文件: {self.temp_db_path}")
             
             decryptor.decrypt_database(self.db_path, self.temp_db_path, self.db_key)
-            print(f"[DEBUG ContactDB] ✅ 解密完成")
+            logger.info(f"[DEBUG ContactDB] ✅ 解密完成")
             
             # 连接解密后的数据库
             self.conn = sqlite3.connect(self.temp_db_path)
@@ -202,6 +204,6 @@ class ContactDBV4(WeChatDBBase):
             import os
             try:
                 os.remove(self.temp_db_path)
-                print(f"[DEBUG ContactDB] 已删除临时文件: {self.temp_db_path}")
+                logger.debug(f"[DEBUG ContactDB] 已删除临时文件: {self.temp_db_path}")
             except Exception as e:
-                print(f"[DEBUG ContactDB] 删除临时文件失败: {e}")
+                logger.error(f"[DEBUG ContactDB] 删除临时文件失败: {e}")

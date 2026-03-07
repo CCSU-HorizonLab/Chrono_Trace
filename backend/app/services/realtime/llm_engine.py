@@ -7,6 +7,7 @@ LLM 建议引擎
 """
 
 import json
+import logging
 import time
 import urllib.request
 import urllib.error
@@ -45,9 +46,10 @@ INTENT_DESCRIPTIONS = {
 }
 
 
+logger = logging.getLogger(__name__)
 def _print(msg: str):
     """统一打印"""
-    print(msg, flush=True)
+    logger.debug(msg)
 
 
 class LLMSuggestionEngine(SuggestionEngine):

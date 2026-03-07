@@ -1,6 +1,8 @@
 """微信数据库解密模块（兼容性包装器）"""
+import logging
 
 
+logger = logging.getLogger(__name__)
 class WeChatDBDecryptor:
     """微信数据库解密器（包装 WeChatDBDecryptorV2）"""
     
@@ -21,7 +23,7 @@ class WeChatDBDecryptor:
             decryptor = WeChatDBDecryptorV2()
             return decryptor.verify_key_from_file(db_path, key_hex)
         except Exception as e:
-            print(f"[DEBUG] 密钥验证失败: {e}")
+            logger.error(f"[DEBUG] 密钥验证失败: {e}")
             return False
     
     @staticmethod

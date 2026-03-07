@@ -13,11 +13,8 @@
 """
 
 import re
-import logging
 from typing import Dict, Any, List, Tuple
 from dataclasses import dataclass
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass

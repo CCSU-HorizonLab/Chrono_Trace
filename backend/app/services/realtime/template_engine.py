@@ -8,8 +8,6 @@
 import random
 from .suggestion_engine import SuggestionEngine, SuggestionResult
 from .suggestion_templates import TEMPLATES, VALID_TRIGGER_TYPES, VALID_INTENTS
-
-
 class TemplateSuggestionEngine(SuggestionEngine):
     """
     模板建议引擎

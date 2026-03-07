@@ -7,12 +7,14 @@
 """
 import re
 import json
+import logging
 import time
 from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
 from ...db.connection import get_db
 
 
+logger = logging.getLogger(__name__)
 class PreprocessingService:
     """消息预处理服务"""
     
@@ -178,7 +180,7 @@ class PreprocessingService:
                 }
             }
         """
-        print(f"\n[预处理] 开始处理会话 {conversation_id} (use_cache={use_cache}, force={force_reprocess})")
+        logger.info(f"\n[预处理] 开始处理会话 {conversation_id} (use_cache={use_cache}, force={force_reprocess})")
         
         # 构建查询SQL
         sql = """
@@ -205,7 +207,7 @@ class PreprocessingService:
         cursor = self.db.execute(sql, tuple(params))
         messages = cursor.fetchall()
         
-        print(f"[预处理] 查询到 {len(messages)} 条文本消息")
+        logger.debug(f"[预处理] 查询到 {len(messages)} 条文本消息")
         
         # 初始化统计
         total_messages = len(messages)
@@ -315,10 +317,10 @@ class PreprocessingService:
         avg_word_count = round(total_word_count / valid_messages, 2) if valid_messages > 0 else 0
         cache_hit_rate = round(cache_hits / total_messages, 2) if total_messages > 0 else 0
         
-        print(f"[预处理] 有效消息: {valid_messages}/{total_messages}")
-        print(f"[预处理] XML消息: {xml_count}, 媒体消息: {media_count}")
-        print(f"[预处理] 平均字符数: {avg_char_count}, 平均词数: {avg_word_count}")
-        print(f"[预处理] 缓存命中率: {cache_hit_rate * 100}% ({cache_hits}/{total_messages})")
+        logger.debug(f"[预处理] 有效消息: {valid_messages}/{total_messages}")
+        logger.debug(f"[预处理] XML消息: {xml_count}, 媒体消息: {media_count}")
+        logger.debug(f"[预处理] 平均字符数: {avg_char_count}, 平均词数: {avg_word_count}")
+        logger.debug(f"[预处理] 缓存命中率: {cache_hit_rate * 100}% ({cache_hits}/{total_messages})")
         
         return {
             "conversation_id": conversation_id,
@@ -379,10 +381,10 @@ class PreprocessingService:
                     int(time.time())
                 ))
             except Exception as e:
-                print(f"[预处理] 缓存消息 {msg['message_id']} 失败: {e}")
+                logger.error(f"[预处理] 缓存消息 {msg['message_id']} 失败: {e}")
         
         self.db.commit()
-       # print(f"[预处理] 已缓存 {len(messages)} 条消息")
+       # logger.debug(f"[预处理] 已缓存 {len(messages)} 条消息")
     
     def preprocess_message_batch(
         self,
@@ -402,7 +404,7 @@ class PreprocessingService:
         if not message_ids:
             return 0
         
-        # print(f"\n[预处理] 批量预处理 {len(message_ids)} 条消息 (conversation_id={conversation_id})")
+        # logger.debug(f"\n[预处理] 批量预处理 {len(message_ids)} 条消息 (conversation_id={conversation_id})")
         
         # 查询消息内容
         placeholders = ','.join('?' * len(message_ids))
@@ -734,7 +736,7 @@ class PairPreprocessingService:
             }
         
         except Exception as e:
-            print(f"[交互对预处理] 获取情感数据失败: {e}")
+            logger.error(f"[交互对预处理] 获取情感数据失败: {e}")
             return {"polarity": 0, "intensity": 0.0}
     
     def build_speech_units(
@@ -961,11 +963,11 @@ class PairPreprocessingService:
                 ))
 
             self.db.commit()
-            print(f"[交互对预处理] 已保存 {len(speech_units)} 个发言单元")
+            logger.debug(f"[交互对预处理] 已保存 {len(speech_units)} 个发言单元")
             return len(speech_units)
 
         except Exception as e:
-            print(f"[交互对预处理] 保存发言单元失败: {e}")
+            logger.error(f"[交互对预处理] 保存发言单元失败: {e}")
             return 0
 
     def save_interaction_pairs(
@@ -1000,11 +1002,11 @@ class PairPreprocessingService:
                 ))
 
             self.db.commit()
-            print(f"[交互对预处理] 已保存 {len(interaction_pairs)} 个交互对")
+            logger.debug(f"[交互对预处理] 已保存 {len(interaction_pairs)} 个交互对")
             return len(interaction_pairs)
 
         except Exception as e:
-            print(f"[交互对预处理] 保存交互对失败: {e}")
+            logger.error(f"[交互对预处理] 保存交互对失败: {e}")
             return 0
 
     def load_cached_pairs(
@@ -1063,11 +1065,11 @@ class PairPreprocessingService:
                     "to_intensity": row[8]
                 })
 
-            print(f"[交互对预处理] 从缓存读取: {len(speech_units)} 个发言单元, {len(interaction_pairs)} 个交互对")
+            logger.debug(f"[交互对预处理] 从缓存读取: {len(speech_units)} 个发言单元, {len(interaction_pairs)} 个交互对")
             return speech_units, interaction_pairs
 
         except Exception as e:
-            print(f"[交互对预处理] 读取缓存失败: {e}")
+            logger.error(f"[交互对预处理] 读取缓存失败: {e}")
             return [], []
 
 
@@ -1140,7 +1142,7 @@ class SessionManager:
             return float(similarity)
 
         except Exception as e:
-            print(f"[会话管理器] 计算相似度失败: {e}")
+            logger.error(f"[会话管理器] 计算相似度失败: {e}")
             return 0.0
 
     def _check_crosses_sleep_time(
@@ -1177,7 +1179,7 @@ class SessionManager:
             return False
 
         except Exception as e:
-            print(f"[会话管理器] 检查睡眠时间失败: {e}")
+            logger.error(f"[会话管理器] 检查睡眠时间失败: {e}")
             return False
 
     def split_sessions(
@@ -1251,7 +1253,7 @@ class SessionManager:
                 mandatory_split_points.add(i + 1)
                 continue
         
-        print(f"[会话管理器] 强制切分点（时间/睡眠）: {len(mandatory_split_points)} 个")
+        logger.debug(f"[会话管理器] 强制切分点（时间/睡眠）: {len(mandatory_split_points)} 个")
 
         # ================================================================
         # 第二步：尝试计算语义相似度进行更细粒度的切分（可选增强）
@@ -1266,9 +1268,9 @@ class SessionManager:
         use_sampling = len(speech_units) > LARGE_CONVERSATION_THRESHOLD
         
         if use_sampling:
-            print(f"[会话管理器] 超大对话 ({len(speech_units)} 个单元)，启用间隔采样策略")
+            logger.debug(f"[会话管理器] 超大对话 ({len(speech_units)} 个单元)，启用间隔采样策略")
         else:
-            print(f"[会话管理器] 开始计算 {len(speech_units)} 个发言单元的语义相似度...")
+            logger.info(f"[会话管理器] 开始计算 {len(speech_units)} 个发言单元的语义相似度...")
 
         try:
             from .sentiment_service import SentimentService
@@ -1289,7 +1291,7 @@ class SessionManager:
                     sample_indices.append(len(speech_units) - 1)
                 
                 sample_texts = [speech_units[i]["content"] for i in sample_indices]
-                print(f"[会话管理器] 第一阶段：粗采样 {len(sample_texts)} 个文本...")
+                logger.debug(f"[会话管理器] 第一阶段：粗采样 {len(sample_texts)} 个文本...")
                 
                 sample_embeddings = self._sentiment_service._embedding_model.encode(
                     sample_texts,
@@ -1312,7 +1314,7 @@ class SessionManager:
                         end = sample_indices[i + 1]
                         candidate_regions.append((start, end))
                 
-                print(f"[会话管理器] 发现 {len(candidate_regions)} 个候选切分区域")
+                logger.debug(f"[会话管理器] 发现 {len(candidate_regions)} 个候选切分区域")
                 
                 # 第二阶段：对候选区域进行精细检测
                 # 初始化 similarities 数组（默认高相似度，不切分）
@@ -1333,7 +1335,7 @@ class SessionManager:
                         similarity = float(np.dot(vec1, vec2) / (np.linalg.norm(vec1) * np.linalg.norm(vec2)))
                         similarities[start + i] = similarity
                 
-                print(f"[会话管理器] 精细检测完成")
+                logger.info(f"[会话管理器] 精细检测完成")
                 
             else:
                 # === 常规全量计算 ===
@@ -1364,10 +1366,10 @@ class SessionManager:
 
                     similarities.append(similarity)
 
-            print(f"[会话管理器] 语义相似度计算完成 ({len(similarities)} 个相似度)")
+            logger.info(f"[会话管理器] 语义相似度计算完成 ({len(similarities)} 个相似度)")
 
         except Exception as e:
-            print(f"[会话管理器] 批量计算语义相似度失败，回退到逐个计算: {e}")
+            logger.error(f"[会话管理器] 批量计算语义相似度失败，回退到逐个计算: {e}")
             # 回退到逐个计算
             similarities = []
             for i in range(len(speech_units) - 1):
@@ -1400,12 +1402,12 @@ class SessionManager:
                 if similarities[i] < self.SIMILARITY_THRESHOLD:
                     semantic_split_points.add(i + 1)  # 在这个位置切分
 
-        print(f"[会话管理器] 语义切分点: {len(semantic_split_points)} 个")
+        logger.debug(f"[会话管理器] 语义切分点: {len(semantic_split_points)} 个")
 
         # 合并所有切分点
         all_split_points = sorted(mandatory_split_points | semantic_split_points)
         
-        print(f"[会话管理器] 总切分点: {len(all_split_points)} 个")
+        logger.debug(f"[会话管理器] 总切分点: {len(all_split_points)} 个")
 
         # 如果没有检测到切分点,整个对话作为一个会话
         if not all_split_points:
@@ -1514,9 +1516,9 @@ class SessionManager:
                     i += 1
             
             sessions = merged_sessions
-            print(f"[会话管理器] 合并碎片化会话后: {len(sessions)} 个会话")
+            logger.debug(f"[会话管理器] 合并碎片化会话后: {len(sessions)} 个会话")
 
-        print(f"[会话管理器] 检测到 {len(sessions)} 个会话 (睡眠时间+时间间隔+语义相似度), 切分点: {all_split_points}")
+        logger.debug(f"[会话管理器] 检测到 {len(sessions)} 个会话 (睡眠时间+时间间隔+语义相似度), 切分点: {all_split_points}")
         return sessions
 
     def collect_session_statistics(
@@ -1612,11 +1614,11 @@ class SessionManager:
                 ))
 
             self.db.commit()
-            print(f"[会话管理器] 已保存 {len(sessions)} 个会话")
+            logger.debug(f"[会话管理器] 已保存 {len(sessions)} 个会话")
             return len(sessions)
 
         except Exception as e:
-            print(f"[会话管理器] 保存会话失败: {e}")
+            logger.error(f"[会话管理器] 保存会话失败: {e}")
             return 0
 
     def load_cached_sessions(
@@ -1645,11 +1647,11 @@ class SessionManager:
                     "initiator_is_sender": row[6]
                 })
 
-            print(f"[会话管理器] 从缓存读取 {len(sessions)} 个会话")
+            logger.debug(f"[会话管理器] 从缓存读取 {len(sessions)} 个会话")
             return sessions
 
         except Exception as e:
-            print(f"[会话管理器] 读取缓存失败: {e}")
+            logger.error(f"[会话管理器] 读取缓存失败: {e}")
             return []
 
 
@@ -1741,7 +1743,7 @@ class AttitudePreprocessingService:
             try:
                 # 验证消息格式
                 if not isinstance(msg, dict):
-                    print(f"[警告] 消息 #{i} 格式无效,跳过")
+                    logger.warning(f"[警告] 消息 #{i} 格式无效,跳过")
                     continue
                 
                 content = msg.get('content', '')
@@ -1809,7 +1811,7 @@ class AttitudePreprocessingService:
             
             except Exception as e:
                 # 优化4: 添加异常处理,确保单条消息异常不影响整体统计
-                print(f"[错误] 处理消息 #{i} 时出错: {e}")
+                logger.error(f"[错误] 处理消息 #{i} 时出错: {e}")
                 continue
 
         # 计算独立节日数

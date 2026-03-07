@@ -6,8 +6,10 @@ from pathlib import Path
 from typing import Optional, Tuple
 from Crypto.Cipher import AES
 from Crypto.Protocol.KDF import PBKDF2
+import logging
 
 
+logger = logging.getLogger(__name__)
 class WeChatDBDecryptorV2:
     """微信V4数据库解密器 (纯Python实现)"""
     
@@ -168,7 +170,7 @@ class WeChatDBDecryptorV2:
             
             return self.validate_key(first_page, key)
         except Exception as e:
-            print(f"[DEBUG Decryptor] 验证密钥失败: {e}")
+            logger.error(f"[DEBUG Decryptor] 验证密钥失败: {e}")
             return False
     
     def decrypt_database(
@@ -226,7 +228,7 @@ class WeChatDBDecryptorV2:
                         decrypted = self.decrypt_page(page_buf, enc_key, mac_key, page_num)
                         output_file.write(decrypted)
                     except Exception as e:
-                        print(f"[WARN] 解密页面 {page_num} 失败: {e}")
+                        logger.error(f"[WARN] 解密页面 {page_num} 失败: {e}")
                         # 写入原始数据
                         output_file.write(page_buf)
                     

@@ -7,8 +7,6 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-
-
 @dataclass
 class SuggestionResult:
     """建议生成结果"""

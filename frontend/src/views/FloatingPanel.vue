@@ -136,11 +136,11 @@
     <!-- 用户交互输入区 -->
     <div class="fp-input-area">
       <!-- 快捷按钮 -->
-      <div class="fp-quick-btns">
+      <transition-group name="fp-quick-list" tag="div" class="fp-quick-btns">
         <button v-for="q in quickPrompts" :key="q"
           class="fp-quick-btn"
           @click="sendQuickPrompt(q)">{{ q }}</button>
-      </div>
+      </transition-group>
       <div class="fp-input-row">
         <input
           v-model="userInput"
@@ -236,12 +236,12 @@ const intents = [
   { value: 'distance', icon: '❄️' },
 ]
 
-const quickPrompts = [
+const quickPrompts = ref<string[]>([
   '拉近距离',
   '化解尴尬',
   '延续话题',
   '表达关心',
-]
+])
 
 // ========== 计算属性 ==========
 const profileInitial = computed(() => {
@@ -436,6 +436,8 @@ function startPolling() {
   stopPolling()
 
   let notMonitoringCount = 0  // 连续未在监听的计数
+  let lastMessageCount = -1   // 记录上次的消息数量
+  let unchangedCount = 0      // 消息数量未变的轮询次数
 
   // 状态轮询
   statusTimer = setInterval(async () => {
@@ -488,6 +490,29 @@ function startPolling() {
         if (realtimeState.messages.length > prevLen) {
           updateEmotionHistory()
         }
+
+        // --- 动态联想词逻辑 ---
+        if (lastMessageCount !== -1) {
+          if (realtimeState.messages.length > lastMessageCount) {
+            // 有新消息，重置停顿计数
+            unchangedCount = 0
+          } else {
+            // 消息数量没变，增加停顿计数
+            unchangedCount++
+          }
+          
+          // 如果停顿了 2 次轮询（约 6 秒），并且之前有新消息触发，则请求新的联想词
+          if (unchangedCount === 2) {
+             const promptRes = await api.get_dynamic_quick_prompts(realtimeState.batchId)
+             if (promptRes.ok && promptRes.prompts && promptRes.prompts.length > 0) {
+               // 避免不必要的更新
+               if (quickPrompts.value.join('') !== promptRes.prompts.join('')) {
+                 quickPrompts.value = promptRes.prompts
+               }
+             }
+          }
+        }
+        lastMessageCount = realtimeState.messages.length
       }
     } catch (e) { console.error('消息轮询失败:', e) }
   }, 3000)
@@ -796,6 +821,22 @@ async function generateProfile() {
   gap: 4px;
   flex-wrap: wrap;
   margin-top: 3px;
+}
+
+/* ==================== 快捷按钮动画 ==================== */
+.fp-quick-list-move,
+.fp-quick-list-enter-active,
+.fp-quick-list-leave-active {
+  transition: all 0.4s ease;
+}
+.fp-quick-list-enter-from {
+  opacity: 0;
+  transform: translateY(10px);
+}
+.fp-quick-list-leave-to {
+  opacity: 0;
+  transform: translateY(-10px);
+  position: absolute;
 }
 
 .fp-tag {

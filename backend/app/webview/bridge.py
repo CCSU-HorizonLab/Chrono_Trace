@@ -790,6 +790,61 @@ class Bridge:
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
+    def get_dynamic_quick_prompts(self, batch_id: str) -> dict[str, Any]:
+        """
+        获取动态快捷回复联想词（最近聊天上下文生成）
+        
+        Args:
+            batch_id: 当前监听批次 ID
+            
+        Returns:
+            {"ok": True, "prompts": ["短语1", "短语2", "短语3", "短语4"]}
+        """
+        try:
+            from ..services.realtime.monitor_service import RealtimeMonitorService
+            from ..services.realtime.message_query import get_messages_with_sentiment
+            from ..services.realtime.suggestion_engine import SuggestionEngineFactory
+
+            # 获取最近消息
+            recent_messages = get_messages_with_sentiment(batch_id, 10)
+            
+            # 使用配置中的引擎（通常是 llm）
+            monitor = RealtimeMonitorService()
+            engine_type = monitor._suggestion_config.get('engine_type', 'llm')
+            
+            # 这里如果强行只用 llm，可能用户没配置。为了保险，如果不是 llm，回退默认
+            if engine_type != 'llm':
+                return {"ok": True, "prompts": ['拉近距离', '化解尴尬', '延续话题', '表达关心']}
+
+            engine = SuggestionEngineFactory.create("llm")
+            
+            context = {
+                "recent_messages": recent_messages
+            }
+            
+            # 加入联系人画像提升质量
+            if monitor.current_display_name:
+                try:
+                    from ..services.realtime.contact_profiler import ContactProfiler
+                    profiler = ContactProfiler()
+                    cached = profiler.get_profile(monitor.current_display_name)
+                    if cached and not cached['expired']:
+                        context['contact_profile'] = cached['profile']
+                except Exception as e:
+                    logger.error(f"[Bridge] 获取画像失败(联想词阶段): {e}")
+
+            # 调用特化的生成方法
+            if hasattr(engine, 'generate_quick_prompts'):
+                prompts = engine.generate_quick_prompts(context)
+            else:
+                prompts = ['拉近距离', '化解尴尬', '延续话题', '表达关心']
+
+            return {"ok": True, "prompts": prompts}
+
+        except Exception as e:
+            logger.error(f"[Bridge] 获取动态联想词失败: {e}")
+            return {"ok": False, "error": str(e), "prompts": ['拉近距离', '化解尴尬', '延续话题', '表达关心']}
+
     def set_suggestion_config(self, config: dict[str, Any]) -> dict[str, Any]:
         """更新并持久化 AI 建议配置"""
         try:

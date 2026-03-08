@@ -365,3 +365,74 @@ class LLMSuggestionEngine(SuggestionEngine):
         """降级到模板引擎"""
         from .template_engine import TemplateSuggestionEngine
         return TemplateSuggestionEngine().generate(trigger_type, intent, context)
+
+    def generate_quick_prompts(self, context: dict | None = None) -> list[str]:
+        """
+        根据当前聊天上下文生成 4 个动态快捷回复联想词（简短的、以行动为导向的短语）。
+        
+        Args:
+            context: 附加上下文（包含 recent_messages 等）
+            
+        Returns:
+            list[str]: 4个联想词组成的数组，如果失败则返回默认列表。
+        """
+        default_prompts = ['拉近距离', '化解尴尬', '延续话题', '表达关心']
+        context = context or {}
+
+        _print(f"\n{'='*60}")
+        _print(f"[LLM Engine] 开始生成动态联想词")
+        _print(f"{'='*60}")
+
+        model_config = self._get_active_model()
+        if not model_config:
+            _print("❌ [LLM Engine] 未配置激活模型！使用默认联想词。")
+            return default_prompts
+
+        prompt = "你是一个高情商聊天助手。请阅读以下双方的最新聊天记录，推测用户（‘我’）下一步最可能想发起的话题方向或对话策略。\n"
+        prompt += "要求：给出 4 个选项；每个选项必须是简短的动宾短语（限 4 个字内，如‘顺着话题’、‘转移话题’、‘约她吃饭’、‘表达心疼’）；只返回一个 JSON 格式的字符串数组，不要其他废话。\n\n"
+
+        recent = context.get("recent_messages", [])
+        if recent:
+            prompt += "【最近对话】\n"
+            for msg in recent[-8:]:  # 最多取最近 8 条
+                sender = "我" if msg.get("sender_attr") == "self" else "对方"
+                content = msg.get("content", "")[:100]
+                prompt += f"{sender}：{content}\n"
+        else:
+            prompt += "【最近对话】暂无。\n"
+
+        _print(f"[LLM Engine] 📤 联想词 prompt ({len(prompt)} 字符):")
+        _print(prompt)
+
+        try:
+            response_text = self._call_api(model_config, prompt)
+            _print(f"[LLM Engine] 📥 收到联想词响应: {response_text}")
+
+            # 解析 JSON 数组
+            cleaned = response_text
+            if "```json" in cleaned:
+                cleaned = cleaned.split("```json", 1)[1]
+                cleaned = cleaned.split("```", 1)[0]
+            elif "```" in cleaned:
+                cleaned = cleaned.split("```", 1)[1]
+                cleaned = cleaned.split("```", 1)[0]
+            
+            prompts = json.loads(cleaned.strip())
+            
+            if isinstance(prompts, list) and len(prompts) > 0:
+                # 过滤掉非字符串，限制长度，并只取前 4 个
+                valid_prompts = [str(p).strip()[:8] for p in prompts if isinstance(p, str) and str(p).strip()]
+                if len(valid_prompts) >= 4:
+                    return valid_prompts[:4]
+                elif len(valid_prompts) > 0:
+                    # 数量不足时用默认词补充
+                    return (valid_prompts + default_prompts)[:4]
+            
+            _print("❌ [LLM Engine] 联想词解析出来的不是有效数组或为空。")
+            return default_prompts
+
+        except Exception as e:
+            _print(f"❌ [LLM Engine] 生成联想词时出错: {e}")
+            import traceback
+            traceback.print_exc()
+            return default_prompts

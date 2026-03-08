@@ -26,7 +26,8 @@ type PyWebViewApi = {
   get_pending_suggestions: (batch_id: string) => Promise<any>
   dismiss_suggestion: (suggestion_id: number) => Promise<any>
   get_suggestion_config: () => Promise<any>
-  set_suggestion_config: (config: Record<string, any>) => Promise<any>
+  set_suggestion_config: (config: any) => Promise<any>
+  get_dynamic_quick_prompts: (batch_id: string) => Promise<any>
   // LLM 模型管理
   get_llm_models: () => Promise<any>
   save_llm_model: (model: Record<string, any>) => Promise<any>

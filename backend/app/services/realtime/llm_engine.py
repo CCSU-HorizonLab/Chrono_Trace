@@ -26,7 +26,11 @@ SYSTEM_PROMPT = """你是一个专业的聊天沟通顾问。你的任务是根�
 4. 话术数量 2-3 条
 
 输出格式（纯 JSON，无 markdown）：
-{"summary": "一句话建议摘要", "speeches": ["话术1", "话术2", "话术3"]}"""
+{
+  "thought_process": "用一两句话简述你是如何推断对方的情感以及为什么提供以下建议的",
+  "summary": "一句话建议摘要", 
+  "speeches": ["话术1", "话术2", "话术3"]
+}"""
 
 # 触发类型的中文描述
 TRIGGER_DESCRIPTIONS = {
@@ -96,9 +100,8 @@ class LLMSuggestionEngine(SuggestionEngine):
         # 获取激活的模型配置
         model_config = self._get_active_model()
         if not model_config:
-            _print("❌ [LLM Engine] 未配置激活模型！请在设置页添加并激活一个 LLM 模型")
-            _print("❌ [LLM Engine] 降级使用模板引擎")
-            return self._fallback(trigger_type, intent, context)
+            _print("❌ [LLM Engine] 未配置激活模型！")
+            raise ValueError("未配置激活模型！请在设置页添加并激活一个 LLM 模型")
 
         _print(f"[LLM Engine] 使用模型: {model_config.get('name')} ({model_config.get('model_id')})")
         _print(f"[LLM Engine] API URL: {model_config.get('api_base_url')}")
@@ -120,25 +123,26 @@ class LLMSuggestionEngine(SuggestionEngine):
             result = self._parse_response(response_text, trigger_type, intent)
             if result:
                 _print(f"[LLM Engine] ✅ LLM 生成成功!")
+                _print(f"[LLM Engine] 思考过程: {result.thought_process}")
                 _print(f"[LLM Engine] 摘要: {result.summary}")
                 _print(f"[LLM Engine] 话术: {result.speeches}")
                 _print(f"{'='*60}\n")
                 return result
             else:
-                _print("❌ [LLM Engine] 响应解析失败 → 降级模板引擎")
-                return self._fallback(trigger_type, intent, context)
+                _print("❌ [LLM Engine] 响应解析失败")
+                raise ValueError("大模型响应解析失败，请重试或更换模型")
 
         except urllib.error.URLError as e:
-            _print(f"❌ [LLM Engine] 网络错误: {e} → 降级模板引擎")
-            return self._fallback(trigger_type, intent, context)
+            _print(f"❌ [LLM Engine] 网络错误: {e}")
+            raise ConnectionError(f"大模型网络连接失败: {e}")
         except TimeoutError:
-            _print(f"❌ [LLM Engine] 请求超时({self.timeout}s) → 降级模板引擎")
-            return self._fallback(trigger_type, intent, context)
+            _print(f"❌ [LLM Engine] 请求超时({self.timeout}s)")
+            raise TimeoutError(f"大模型请求超时 ({self.timeout}s)")
         except Exception as e:
-            _print(f"❌ [LLM Engine] 错误: {e} → 降级模板引擎")
+            _print(f"❌ [LLM Engine] 错误: {e}")
             import traceback
             traceback.print_exc()
-            return self._fallback(trigger_type, intent, context)
+            raise e
 
     def _get_active_model(self) -> Optional[dict]:
         """从数据库获取当前激活的 LLM 模型配置"""
@@ -253,16 +257,22 @@ class LLMSuggestionEngine(SuggestionEngine):
             if history_summary:
                 parts.append(f"【历史关系分析】{history_summary[:500]}")
 
-        # 最近对话
+        # 最近对话 (考虑传入的 window_size 控制的情绪窗口内最近聊天)
         recent = context.get("recent_messages", [])
         if recent:
             parts.append("【最近对话】")
-            for msg in recent[-8:]:  # 最多取最近 8 条
+            # 窗口大小默认为 8，如果有 emotion summary 的 window size，可采用，但不完全限制
+            window_size = 5 # 根据用户要求修改为 5 条作为窗口基础
+            if emotion and emotion.get('window_size'):
+                window_size = int(emotion.get('window_size', 5))
+            
+            # 但最多还是取最近 8~10 条，避免 prompt 太长，这里先限制最多8条，如果要求5条也可以这里调整。
+            for msg in recent[-8:]:  
                 sender = "我" if msg.get("sender_attr") == "self" else "对方"
                 content = msg.get("content", "")[:100]
                 parts.append(f"  {sender}：{content}")
 
-        parts.append("\n请根据以上信息生成沟通建议（纯 JSON 输出）：")
+        parts.append("\n请根据以上信息生成思考过程和沟通建议（纯 JSON 输出）：")
 
         return "\n".join(parts)
 
@@ -338,6 +348,7 @@ class LLMSuggestionEngine(SuggestionEngine):
 
             data = json.loads(cleaned.strip())
 
+            thought_process = data.get("thought_process", "").strip()
             summary = data.get("summary", "").strip()
             speeches = data.get("speeches", [])
 
@@ -354,17 +365,11 @@ class LLMSuggestionEngine(SuggestionEngine):
                 speeches=speeches,
                 severity="medium",
                 confidence=0.9,
+                thought_process=thought_process or None
             )
         except (json.JSONDecodeError, KeyError, IndexError) as e:
             _print(f"[LLM Engine] JSON 解析失败: {e}, 原始文本: {text[:200]}")
             return None
-
-    def _fallback(
-        self, trigger_type: str, intent: str, context: dict | None = None
-    ) -> SuggestionResult:
-        """降级到模板引擎"""
-        from .template_engine import TemplateSuggestionEngine
-        return TemplateSuggestionEngine().generate(trigger_type, intent, context)
 
     def generate_quick_prompts(self, context: dict | None = None) -> list[str]:
         """
@@ -385,8 +390,8 @@ class LLMSuggestionEngine(SuggestionEngine):
 
         model_config = self._get_active_model()
         if not model_config:
-            _print("❌ [LLM Engine] 未配置激活模型！使用默认联想词。")
-            return default_prompts
+            _print("❌ [LLM Engine] 未配置激活模型！")
+            raise ValueError("未配置激活模型")
 
         prompt = "你是一个高情商聊天助手。请阅读以下双方的最新聊天记录，推测用户（‘我’）下一步最可能想发起的话题方向或对话策略。\n"
         prompt += "要求：给出 4 个选项；每个选项必须是简短的动宾短语（限 4 个字内，如‘顺着话题’、‘转移话题’、‘约她吃饭’、‘表达心疼’）；只返回一个 JSON 格式的字符串数组，不要其他废话。\n\n"
@@ -429,10 +434,10 @@ class LLMSuggestionEngine(SuggestionEngine):
                     return (valid_prompts + default_prompts)[:4]
             
             _print("❌ [LLM Engine] 联想词解析出来的不是有效数组或为空。")
-            return default_prompts
+            raise ValueError("大模型响应解析失败，未能生成有效联想词")
 
         except Exception as e:
             _print(f"❌ [LLM Engine] 生成联想词时出错: {e}")
             import traceback
             traceback.print_exc()
-            return default_prompts
+            raise e

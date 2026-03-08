@@ -125,6 +125,12 @@
           <span class="fp-sug-expand">{{ isSuggestionExpanded(s) ? '▼' : '▶' }}</span>
         </div>
         <div v-show="isSuggestionExpanded(s)" class="fp-sug-body">
+          <div v-if="s.thought_process" class="fp-thought-process">
+            <details>
+              <summary>🤔 AI 思考过程</summary>
+              <div class="fp-thought-content">{{ s.thought_process }}</div>
+            </details>
+          </div>
           <div v-for="(sp, i) in s.speeches" :key="i" class="fp-speech-item">
             <span class="fp-speech-text">{{ sp }}</span>
             <button class="fp-btn copy" @click="copyText(sp)">📋</button>
@@ -145,12 +151,23 @@
         <input
           v-model="userInput"
           type="text"
-          placeholder="告诉 AI 你的想法…"
+          :placeholder="llmError ? '⚠️ 模型暂时不可用' : '告诉 AI 你的想法…'"
+          :disabled="!!llmError"
           @keydown.enter.exact.prevent="sendUserContext"
         />
-        <button class="fp-btn send" @click="sendUserContext" :disabled="!userInput.trim() || loading">
+        <button class="fp-btn send" @click="sendUserContext" :disabled="!userInput.trim() || loading || !!llmError">
           ↑
         </button>
+      </div>
+      <!-- 模型选择栏 -->
+      <div class="fp-model-row" v-if="llmModels.length > 0">
+        <span class="fp-model-label">⚙️ 模型:</span>
+        <select v-model="activeModelId" class="fp-model-select" @change="switchModel">
+          <option v-for="m in llmModels" :key="m.id" :value="m.id" :disabled="disabledModels.has(m.id)">
+            {{ m.name }} {{ disabledModels.has(m.id) ? '(不可用)' : '' }}
+          </option>
+        </select>
+        <div v-if="llmError" class="fp-model-error" :title="llmError">❌ {{ llmError }}</div>
       </div>
     </div>
   </div>
@@ -189,6 +206,11 @@ const realtimeState = reactive({
 })
 
 const chatError = ref('')
+
+const llmModels = ref<any[]>([])
+const activeModelId = ref<number | null>(null)
+const disabledModels = ref<Set<number>>(new Set())
+const llmError = ref('')
 
 const intent = ref<'intimate' | 'maintain' | 'distance'>('maintain')
 const triggerMode = ref<'full_auto' | 'semi_auto' | 'manual'>('semi_auto')
@@ -296,6 +318,7 @@ onMounted(async () => {
 
     startPolling()
     loadSuggestionConfig()
+    loadLlmModels()
     checkContactProfile(realtimeState.talkerName)
   } else {
     // 多次重试后仍未在监听状态，退回
@@ -502,13 +525,17 @@ function startPolling() {
           }
           
           // 如果停顿了 2 次轮询（约 6 秒），并且之前有新消息触发，则请求新的联想词
-          if (unchangedCount === 2) {
+          if (unchangedCount === 2 && !llmError.value) {
              const promptRes = await api.get_dynamic_quick_prompts(realtimeState.batchId)
              if (promptRes.ok && promptRes.prompts && promptRes.prompts.length > 0) {
+               llmError.value = ''
                // 避免不必要的更新
                if (quickPrompts.value.join('') !== promptRes.prompts.join('')) {
                  quickPrompts.value = promptRes.prompts
                }
+             } else if (!promptRes.ok && promptRes.error) {
+               console.error('[FloatingPanel] 动态联想词获取失败:', promptRes.error)
+               handleLlmError(promptRes.error)
              }
           }
         }
@@ -585,9 +612,47 @@ async function setIntent(newIntent: string) {
   catch (e) { console.error('设置走向失败:', e) }
 }
 
+// ========== 模型配置 ==========
+async function loadLlmModels() {
+  try {
+    const res = await api.get_llm_models()
+    if (res.ok && res.models) {
+      llmModels.value = res.models
+      const active = res.models.find((m: any) => m.is_active)
+      if (active) {
+        activeModelId.value = active.id
+      }
+    }
+  } catch (e) {
+    console.error('加载 LLM 模型列表失败:', e)
+  }
+}
+
+async function switchModel() {
+  if (!activeModelId.value) return
+  try {
+    await api.save_llm_model({ id: activeModelId.value, is_active: 1 })
+    llmError.value = '' // 切换模型后清除错误状态
+    // 如果有快速联想失败的，重试一次
+    // 注意：lastMessageCount 是局部变量，这里我们只需清空历史就可以强制重新触发
+    conversationHistory.value = []
+  } catch (e) {
+    console.error('切换模型失败:', e)
+  }
+}
+
+function handleLlmError(errorMsg: string) {
+  llmError.value = errorMsg
+  if (activeModelId.value) {
+    disabledModels.value.add(activeModelId.value)
+    disabledModels.value = new Set(disabledModels.value)
+  }
+}
+
 // ========== AI 建议操作 ==========
 async function manualGenerate() {
   loading.value = true
+  llmError.value = ''
   try {
     await bridgeReady()
     const r = await api.generate_suggestion(intent.value, {
@@ -597,12 +662,19 @@ async function manualGenerate() {
       manualSuggestion.value = r.suggestion
       expandedIds.value.add('manual')
       expandedIds.value = new Set(expandedIds.value)
+    } else {
+      loading.value = false
+      handleLlmError(r.error || '生成失败')
+      return
     }
     // 保存 AI 参考的聊天记录
     if (r.context_used?.recent_messages) {
       contextUsed.value = r.context_used.recent_messages
     }
-  } catch (e) { console.error('手动生成失败:', e) }
+  } catch (e: any) { 
+    console.error('手动生成失败:', e) 
+    handleLlmError(e.message || '网络错误')
+  }
   finally { loading.value = false }
 }
 
@@ -640,11 +712,12 @@ function getTriggerIcon(type: string): string {
 // ========== 用户交互 ==========
 async function sendUserContext() {
   const content = userInput.value.trim()
-  if (!content || loading.value) return
+  if (!content || loading.value || !!llmError.value) return
 
   conversationHistory.value.push({ role: 'user', content })
   userInput.value = ''
   loading.value = true
+  llmError.value = ''
 
   try {
     await bridgeReady()
@@ -657,6 +730,9 @@ async function sendUserContext() {
       expandedIds.value.add('manual')
       expandedIds.value = new Set(expandedIds.value)
       conversationHistory.value.push({ role: 'ai', content: r.suggestion.summary || '已生成建议' })
+    } else {
+      conversationHistory.value.push({ role: 'ai', content: `[生成失败] ${r.error || '未知错误'}` })
+      handleLlmError(r.error || '生成失败')
     }
     // 保存 AI 参考的聊天记录
     if (r.context_used?.recent_messages) {
@@ -664,6 +740,8 @@ async function sendUserContext() {
     }
   } catch (e: any) {
     console.error('发送失败:', e)
+    conversationHistory.value.push({ role: 'ai', content: `[系统错误] ${e.message || '网络或接口故障'}` })
+    handleLlmError(e.message || '系统错误')
   } finally {
     loading.value = false
   }
@@ -837,6 +915,85 @@ async function generateProfile() {
   opacity: 0;
   transform: translateY(-10px);
   position: absolute;
+}
+
+/* ==================== 思维链 CoT ==================== */
+.fp-thought-process {
+  margin-bottom: 8px;
+  background: var(--ct-bg-elevated);
+  border-radius: 6px;
+  border: 1px dashed var(--ct-border-color);
+}
+
+.fp-thought-process details {
+  padding: 6px 10px;
+}
+
+.fp-thought-process summary {
+  font-size: 11px;
+  color: var(--ct-text-secondary);
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  outline: none;
+}
+
+.fp-thought-process summary::marker {
+  color: var(--ct-text-tertiary);
+}
+
+.fp-thought-content {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--ct-border-color);
+  font-size: 12px;
+  color: var(--ct-text-secondary);
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+/* ==================== 模型选择区 ==================== */
+.fp-model-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 0 4px;
+}
+
+.fp-model-label {
+  font-size: 11px;
+  color: var(--ct-text-secondary);
+}
+
+.fp-model-select {
+  background: var(--ct-bg-elevated);
+  border: 1px solid var(--ct-border-color);
+  color: var(--ct-text-primary);
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  outline: none;
+  cursor: pointer;
+}
+
+.fp-model-select:focus {
+  border-color: var(--ct-color-primary);
+}
+
+.fp-model-select option:disabled {
+  color: var(--ct-text-tertiary);
+  font-style: italic;
+}
+
+.fp-model-error {
+  font-size: 11px;
+  color: var(--ct-color-danger);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 150px;
 }
 
 .fp-tag {

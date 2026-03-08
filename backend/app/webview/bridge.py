@@ -278,6 +278,7 @@ class Bridge:
                     "speeches": result.speeches,
                     "severity": result.severity,
                     "confidence": result.confidence,
+                    "thought_process": getattr(result, "thought_process", None),
                 },
                 "context_used": {
                     "recent_messages": recent_for_display,
@@ -812,9 +813,8 @@ class Bridge:
             monitor = RealtimeMonitorService()
             engine_type = monitor._suggestion_config.get('engine_type', 'llm')
             
-            # 这里如果强行只用 llm，可能用户没配置。为了保险，如果不是 llm，回退默认
             if engine_type != 'llm':
-                return {"ok": True, "prompts": ['拉近距离', '化解尴尬', '延续话题', '表达关心']}
+                return {"ok": False, "error": f"当前配置的引擎为 {engine_type}，动态联想词需要配置 llm 引擎才能使用"}
 
             engine = SuggestionEngineFactory.create("llm")
             
@@ -837,13 +837,13 @@ class Bridge:
             if hasattr(engine, 'generate_quick_prompts'):
                 prompts = engine.generate_quick_prompts(context)
             else:
-                prompts = ['拉近距离', '化解尴尬', '延续话题', '表达关心']
+                return {"ok": False, "error": "当前引擎不支持动态联想词"}
 
             return {"ok": True, "prompts": prompts}
 
         except Exception as e:
             logger.error(f"[Bridge] 获取动态联想词失败: {e}")
-            return {"ok": False, "error": str(e), "prompts": ['拉近距离', '化解尴尬', '延续话题', '表达关心']}
+            return {"ok": False, "error": str(e), "prompts": []}
 
     def set_suggestion_config(self, config: dict[str, Any]) -> dict[str, Any]:
         """更新并持久化 AI 建议配置"""
@@ -948,54 +948,31 @@ class Bridge:
             if model.get('is_active'):
                 conn.execute('UPDATE llm_models SET is_active = 0')
 
-            if model_id:
-                # 更新
-                # 如果 api_key 为空字符串或 None，保留原值
-                if model.get('api_key'):
-                    conn.execute('''
-                        UPDATE llm_models SET
-                            name = ?, provider = ?, model_id = ?,
-                            api_base_url = ?, api_key = ?, is_active = ?,
-                            max_tokens = ?, temperature = ?, updated_at = ?
-                        WHERE id = ?
-                    ''', (
-                        model['name'], model['provider'], model['model_id'],
-                        model['api_base_url'], model['api_key'],
-                        1 if model.get('is_active') else 0,
-                        model.get('max_tokens', 512),
-                        model.get('temperature', 0.7),
-                        now, model_id
-                    ))
+            if 'id' in model:
+                # 只更新状态，其他字段保持不变
+                if len(model) == 2 and 'is_active' in model:
+                    conn.execute(
+                        'UPDATE llm_models SET is_active = ?, updated_at = ? WHERE id = ?',
+                        (1 if model['is_active'] else 0, _time.time(), model['id'])
+                    )
                 else:
-                    conn.execute('''
-                        UPDATE llm_models SET
-                            name = ?, provider = ?, model_id = ?,
-                            api_base_url = ?, is_active = ?,
-                            max_tokens = ?, temperature = ?, updated_at = ?
-                        WHERE id = ?
-                    ''', (
-                        model['name'], model['provider'], model['model_id'],
-                        model['api_base_url'],
-                        1 if model.get('is_active') else 0,
-                        model.get('max_tokens', 512),
-                        model.get('temperature', 0.7),
-                        now, model_id
-                    ))
+                    conn.execute(
+                        '''UPDATE llm_models SET name = ?, provider = ?, model_id = ?, 
+                           api_base_url = ?, api_key = ?, is_active = ?, max_tokens = ?, 
+                           temperature = ?, updated_at = ? WHERE id = ?''',
+                        (model.get('name', ''), model.get('provider', ''), model.get('model_id', ''),
+                         model.get('api_base_url', ''), model.get('api_key', ''), 1 if model.get('is_active') else 0,
+                         model.get('max_tokens', 512), model.get('temperature', 0.7), _time.time(), model['id'])
+                    )
             else:
-                # 新增
-                conn.execute('''
-                    INSERT INTO llm_models
-                    (name, provider, model_id, api_base_url, api_key,
-                     is_active, max_tokens, temperature, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    model['name'], model['provider'], model['model_id'],
-                    model['api_base_url'], model.get('api_key', ''),
-                    1 if model.get('is_active') else 0,
-                    model.get('max_tokens', 512),
-                    model.get('temperature', 0.7),
-                    now, now
-                ))
+                conn.execute(
+                    '''INSERT INTO llm_models (name, provider, model_id, api_base_url, 
+                       api_key, is_active, max_tokens, temperature, created_at, updated_at) 
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                    (model.get('name', ''), model.get('provider', ''), model.get('model_id', ''),
+                     model.get('api_base_url', ''), model.get('api_key', ''), 1 if model.get('is_active') else 0,
+                     model.get('max_tokens', 512), model.get('temperature', 0.7), _time.time(), _time.time())
+                )
 
             conn.commit()
 

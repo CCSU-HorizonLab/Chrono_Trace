@@ -11,7 +11,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 # 悬浮窗默认参数
-FLOATING_WIDTH = 650           # 足够展示建议内容
+FLOATING_WIDTH = 660           # 足够展示建议内容
 FLOATING_MIN_HEIGHT = 700
 TRACKING_INTERVAL_MS = 300     # 缩短到 300ms 让跟随更流畅
 WECHAT_WINDOW_CLASS = 'WeChatMainWndForPC'

@@ -9,13 +9,14 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 @dataclass
 class SuggestionResult:
-    """建议生成结果"""
-    trigger_type: str             # 触发类型标识
-    intent: str                   # intimate / maintain / distance
-    summary: str                  # 建议摘要（一句话）
-    speeches: list[str] = field(default_factory=list)  # 具体话术列表
-    severity: str = "medium"      # high / medium / low
-    confidence: float = 1.0       # 置信度 0-1
+    """建议结果"""
+    trigger_type: str        # 触发该建议的原因
+    intent: str              # 该建议的走向目标
+    summary: str             # 一句话摘要（如“拉近距离，分享日常”）
+    speeches: list[str] = field(default_factory=list)      # 具体话术选项（2-3条）
+    severity: str = "medium" # 严重程度: low, medium, high, critical
+    confidence: float = 1.0  # 置信度 (0.0 - 1.0)
+    thought_process: str | None = None # AI 思考过程 (CoT)
 
 
 class SuggestionEngine(ABC):

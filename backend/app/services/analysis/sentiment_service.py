@@ -11,11 +11,35 @@
 import pickle
 import time
 import logging
+import threading
 from typing import Dict, Any, List, Optional
+
 from ...db.connection import get_db
 
+def _safe_disable_dynamo(fn):
+    """安全地禁用 PyTorch 2.x 的图编译功能，防止变长序列导致缓存溢出和 meta 错误"""
+    try:
+        import torch._dynamo
+        if hasattr(torch._dynamo, "disable"):
+            return torch._dynamo.disable(fn)
+    except Exception:
+        pass
+    return fn
+
+def singleton(cls):
+    instances = {}
+    import threading
+    lock = threading.Lock()
+    def get_instance(*args, **kwargs):
+        with lock:
+            if cls not in instances:
+                instances[cls] = cls(*args, **kwargs)
+        return instances[cls]
+    return get_instance
 
 logger = logging.getLogger(__name__)
+
+@singleton
 class SentimentService:
     """情感分析服务
 
@@ -30,6 +54,7 @@ class SentimentService:
         self._embedding_model = None
         self._embedding_load_failed = False  # 标记模型加载是否失败过
         self._embedding_cache = {}  # LRU缓存: {text: embedding}
+        self._lock = threading.Lock()  # 保护推导与挂载的安全防暴锁
         
         # 提前加载实时情感分析服务，避免在批量读取缓存过程中建表导致SQLite状态冲突
         try:
@@ -54,38 +79,43 @@ class SentimentService:
             return
         
         if self._embedding_model is None:
-            try:
-                from sentence_transformers import SentenceTransformer
-                import torch
-                
-                # 自动检测GPU
-                if torch.cuda.is_available():
-                    device = "cuda"
-                    gpu_name = torch.cuda.get_device_name(0)
-                    logger.debug(f"[情感服务] 检测到GPU: {gpu_name}")
-                else:
-                    device = "cpu"
-                    logger.debug("[情感服务] 未检测到GPU，使用CPU模式")
+            with self._lock:
+                if self._embedding_model is None:
+                    try:
+                        from sentence_transformers import SentenceTransformer
+                        import torch
+                        
+                        # 自动检测GPU
+                        if torch.cuda.is_available():
+                            device = "cuda"
+                            gpu_name = torch.cuda.get_device_name(0)
+                            logger.debug(f"[情感服务] 检测到GPU: {gpu_name}")
+                        else:
+                            device = "cpu"
+                            logger.debug("[情感服务] 未检测到GPU，使用CPU模式")
                 
                 # 使用轻量级中文模型 (384维)
                 # 由 sentence-transformers 自动管理缓存（首次下载后存在 ~/.cache/huggingface/）
-                # 显式关闭 low_cpu_mem_usage 防止环境冲突导致的 meta tensor 报错
-                model_name = "shibing624/text2vec-base-chinese"
-                self._embedding_model = SentenceTransformer(
-                    model_name, 
-                    device=device,
-                    model_kwargs={"low_cpu_mem_usage": False}
-                )
-                logger.info(f"[情感服务] 向量模型加载成功: {model_name} (设备: {device})")
-            except ImportError:
-                logger.warning("[情感服务] 警告: sentence-transformers未安装")
-                logger.debug("请运行: pip install sentence-transformers")
-                self._embedding_load_failed = True
-                raise
-            except Exception as e:
-                logger.error(f"[情感服务] 向量模型加载失败: {e}")
-                logger.debug("[情感服务] 将使用零向量替代，不影响核心分析")
-                self._embedding_load_failed = True
+                        # 显式关闭 low_cpu_mem_usage 和 use_safetensors 防止环境冲突导致的 meta tensor 报错
+                        model_name = "shibing624/text2vec-base-chinese"
+                        self._embedding_model = SentenceTransformer(
+                            model_name, 
+                            device=device,
+                            model_kwargs={
+                                "low_cpu_mem_usage": False,
+                                "use_safetensors": False,
+                                "torch_dtype": torch.float32
+                            }
+                        )
+                        logger.info(f"[情感服务] 向量模型加载成功: {model_name} (设备: {device})")
+                    except ImportError:
+                        logger.warning("[情感服务] 警告: sentence-transformers未安装")
+                        logger.debug("请运行: pip install sentence-transformers")
+                        self._embedding_load_failed = True
+                    except Exception as e:
+                        logger.error(f"[情感服务] 向量模型加载失败: {e}")
+                        logger.debug("[情感服务] 将使用零向量替代，不影响核心分析")
+                        self._embedding_load_failed = True
 
     # ========== 情感分析 ==========
 
@@ -187,6 +217,7 @@ class SentimentService:
 
     # ========== 向量生成 ==========
 
+    @_safe_disable_dynamo
     def _get_embedding(self, text: str) -> List[float]:
         """
         生成文本的384维向量嵌入
@@ -209,12 +240,13 @@ class SentimentService:
             if self._embedding_model is None:
                 return [0.0] * 384
             
-            # 生成向量（禁用进度条）
-            embedding = self._embedding_model.encode(
-                text,
-                normalize_embeddings=True,  # 归一化为单位向量
-                show_progress_bar=False  # 禁用进度条
-            )
+            # 生成向量（禁用进度条），严格枷锁以防高并发导致 transformers 的 meta 缓存漏包
+            with self._lock:
+                embedding = self._embedding_model.encode(
+                    text,
+                    normalize_embeddings=True,  # 归一化为单位向量
+                    show_progress_bar=False  # 禁用进度条
+                )
 
             # 转换为列表
             embedding_list = embedding.tolist()

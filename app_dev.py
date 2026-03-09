@@ -1,4 +1,5 @@
 import os
+os.environ["TORCH_COMPILE_DISABLE"] = "1"
 import time
 import atexit
 import signal

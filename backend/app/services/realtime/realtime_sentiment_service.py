@@ -12,6 +12,8 @@ import json
 import pickle
 from typing import Dict, Any, List, Optional
 import jieba
+import os
+
 import torch
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 from .sentiment_rules import (
@@ -22,8 +24,30 @@ from .sentiment_rules import (
 from ...db.connection import get_db
 from ..model_manager import ModelManager
 
+def _safe_disable_dynamo(fn):
+    """安全地禁用 PyTorch 2.x 的图编译功能，防止变长序列导致缓存溢出和 meta 错误"""
+    try:
+        import torch._dynamo
+        if hasattr(torch._dynamo, "disable"):
+            return torch._dynamo.disable(fn)
+    except Exception:
+        pass
+    return fn
+
+def singleton(cls):
+    instances = {}
+    import threading
+    lock = threading.Lock()
+    def get_instance(*args, **kwargs):
+        with lock:
+            if cls not in instances:
+                instances[cls] = cls(*args, **kwargs)
+        return instances[cls]
+    return get_instance
 
 logger = logging.getLogger(__name__)
+
+@singleton
 class RealtimeSentimentService:
     """实时消息情感分析服务
     
@@ -235,6 +259,7 @@ class RealtimeSentimentService:
     
     # ========== 模型推理 ==========
     
+    @_safe_disable_dynamo
     def _model_predict(self, text: str) -> Dict[str, Any]:
         """使用Erlangshen模型进行预测
         
@@ -263,12 +288,12 @@ class RealtimeSentimentService:
                 max_length=512,
                 padding=True
             )
-            
-            # 推理
+            # 推理，全局锁定防高并发导致 transformers 的内部算子产生元图崩溃及争锁
             with torch.no_grad():
-                outputs = self._model(**inputs)
-                logits = outputs.logits
-                probabilities = torch.softmax(logits, dim=1)[0]
+                with self._lock:
+                    outputs = self._model(**inputs)
+                    logits = outputs.logits
+                    probabilities = torch.softmax(logits, dim=1)[0]
             
             # 转换为numpy
             probs = probabilities.cpu().numpy().tolist()

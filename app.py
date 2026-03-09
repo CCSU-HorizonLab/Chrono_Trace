@@ -1,4 +1,5 @@
 import os
+os.environ["TORCH_COMPILE_DISABLE"] = "1"
 import webview
 import logging
 from backend.app.webview.bridge import Bridge

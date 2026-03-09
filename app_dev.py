@@ -8,8 +8,12 @@ import webview
 import requests
 from backend.app.webview.bridge import Bridge
 from backend.app.config import FRONTEND_DIR, DEV_URL_DEFAULT, DEV_WINDOW_TITLE
+from backend.app.logging_config import setup_logging, get_logger
 
-logger = logging.getLogger(__name__)
+# 配置全局日志（开发模式也写入文件）
+setup_logging(level=logging.DEBUG)
+
+logger = get_logger(__name__)
 
 
 def cleanup_proc_tree(proc: subprocess.Popen):
@@ -96,7 +100,7 @@ def main():
         wait_for_dev_server(dev_url, timeout_sec=90)
         logger.info(f"dev server 已就绪：{dev_url}")
 
-    window = webview.create_window(DEV_WINDOW_TITLE, url=dev_url, js_api=bridge, frameless=False)
+    window = webview.create_window(DEV_WINDOW_TITLE, url=dev_url, js_api=bridge, frameless=False,width=950,height=800)
 
     def on_started():
         """窗口启动后，将窗口引用注入 Bridge（供悬浮窗服务使用）"""

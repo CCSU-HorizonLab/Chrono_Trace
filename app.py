@@ -1,11 +1,18 @@
 import os
 import webview
+import logging
 from backend.app.webview.bridge import Bridge
 from backend.app.config import get_dist_index_path, PROD_WINDOW_TITLE
+from backend.app.logging_config import setup_logging, get_logger
 
+# 配置全局日志
+setup_logging(level=logging.INFO)
+
+logger = get_logger(__name__)
 
 
 def main():
+    logger.info("启动 Chrono Trace 应用程序")
     bridge = Bridge()
     dist_index = get_dist_index_path()
     if not dist_index:

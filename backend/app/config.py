@@ -7,6 +7,19 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..
 # 前端目录
 FRONTEND_DIR = os.path.join(PROJECT_ROOT, 'frontend')
 
+# 数据目录
+DATA_DIR = os.path.join(PROJECT_ROOT, 'backend', 'data')
+
+# 日志目录
+LOG_DIR = os.path.join(DATA_DIR, 'logs')
+
+# 确保日志目录存在
+if not os.path.exists(LOG_DIR):
+    os.makedirs(LOG_DIR, exist_ok=True)
+
+# 主日志文件路径
+MAIN_LOG_FILE = os.path.join(LOG_DIR, 'chrono_trace.log')
+
 # 默认开发期本地地址（可被环境变量 DEV_URL 覆盖）
 DEV_URL_DEFAULT = 'http://localhost:5173'
 

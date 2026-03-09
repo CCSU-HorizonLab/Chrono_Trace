@@ -65,7 +65,7 @@ class PreferenceCompatibilityService:
         Args:
             preference_keywords: 喜好关键词列表 (如 ["篮球", "电影", "旅行"])
         """
-        self.db = get_db()
+        pass  # get_db() removed for thread safety
         self.preference_keywords = preference_keywords or []
         
     def set_preference_keywords(self, keywords: List[str]):
@@ -167,7 +167,7 @@ class PreferenceCompatibilityService:
             matched_keywords: Set[str] = set()
             
             # 第一步：获取所有发言单元的 message_ids
-            cursor = self.db.execute("""
+            cursor = get_db().execute("""
                 SELECT su.id, su.message_ids, su.first_message_timestamp
                 FROM speech_units su
                 WHERE su.conversation_id = ?
@@ -191,7 +191,7 @@ class PreferenceCompatibilityService:
             msg_content_map = {}
             if all_msg_ids:
                 placeholders = ','.join('?' * len(all_msg_ids))
-                cursor = self.db.execute(f"""
+                cursor = get_db().execute(f"""
                     SELECT id, content FROM messages WHERE id IN ({placeholders})
                 """, all_msg_ids)
                 for row in cursor.fetchall():
@@ -212,7 +212,7 @@ class PreferenceCompatibilityService:
                 unit_contents[unit_id] = content
             
             # 获取会话边界信息
-            cursor = self.db.execute("""
+            cursor = get_db().execute("""
                 SELECT id, start_unit_id, end_unit_id
                 FROM sessions
                 WHERE conversation_id = ?
@@ -311,7 +311,7 @@ class PreferenceCompatibilityService:
         
         try:
             # 获取所有交互对的语义相似度
-            cursor = self.db.execute("""
+            cursor = get_db().execute("""
                 SELECT AVG(semantic_similarity)
                 FROM interaction_pairs
                 WHERE conversation_id = ?

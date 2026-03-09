@@ -39,7 +39,7 @@ class AttitudeTendencyService:
     """态度倾向服务"""
     
     def __init__(self):
-        self.db = get_db()
+        pass  # get_db() removed for thread safety
         self.orchestrator = PreprocessingOrchestrator()
         self.keyword_lib = KeywordLibraries()
         self.direction_service = NegativeDirectionService()
@@ -64,7 +64,7 @@ class AttitudeTendencyService:
             
         # 查询属于“对方主动发起的会话”中的由“对方发送”的正面情绪消息数
         # 由于 orchestrator.get_preprocessed_statistics 已经包含了全部的正面情绪数量，我们还需要进一步细分
-        cursor = self.db.execute("""
+        cursor = get_db().execute("""
             SELECT COUNT(*) 
             FROM messages m
             INNER JOIN sentiment_cache sc ON m.id = sc.message_id
@@ -239,7 +239,7 @@ class AttitudeTendencyService:
         引入深夜机制: 深夜(23:00-05:00)提及专属称呼的会话, 权重 × 1.5
         """
         # 获取总会话数
-        cursor = self.db.execute(
+        cursor = get_db().execute(
             "SELECT COUNT(*) FROM sessions WHERE conversation_id = ?",
             (conversation_id,)
         )
@@ -250,7 +250,7 @@ class AttitudeTendencyService:
             
         # 考虑到预处理阶段没有落库单条消息的专属称呼标记，
         # 我们这里取全量由对方发送的消息，并联表获取它们所属的session_id
-        cursor = self.db.execute("""
+        cursor = get_db().execute("""
             SELECT 
                 s.id as session_id,
                 m.content,
@@ -461,7 +461,7 @@ class AttitudeTendencyService:
         """
         获取对方发送的负面消息列表
         """
-        cursor = self.db.execute("""
+        cursor = get_db().execute("""
             SELECT m.id, m.content
             FROM messages m
             INNER JOIN sentiment_cache sc ON m.id = sc.message_id

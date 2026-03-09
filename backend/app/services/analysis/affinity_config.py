@@ -47,7 +47,7 @@ class AffinityConfigService:
     """好感度分析配置服务"""
     
     def __init__(self):
-        self.db = get_db()
+        pass  # get_db() removed for thread safety
     
     def get_config(self, conversation_id: int) -> AffinityConfig:
         """
@@ -61,7 +61,7 @@ class AffinityConfigService:
         """
         try:
             key = f"affinity_config_{conversation_id}"
-            cursor = self.db.execute("""
+            cursor = get_db().execute("""
                 SELECT value FROM settings WHERE key = ?
             """, (key,))
             
@@ -117,12 +117,12 @@ class AffinityConfigService:
             key = f"affinity_config_{conversation_id}"
             config_json = json.dumps(asdict(config), ensure_ascii=False)
             
-            self.db.execute("""
+            get_db().execute("""
                 INSERT OR REPLACE INTO settings (key, value, updated_at)
                 VALUES (?, ?, ?)
             """, (key, config_json, config.updated_at))
             
-            self.db.commit()
+            get_db().commit()
             logger.info(f"配置已更新 (会话 {conversation_id})")
             
         except Exception as e:

@@ -5,16 +5,26 @@ from pathlib import Path
 from typing import Optional
 
 
+import threading
+
 class DatabaseConnection:
     """数据库连接管理器"""
     
-    _instance: Optional[sqlite3.Connection] = None
+    _local = threading.local()
     _db_path: Optional[str] = None
     
     @classmethod
+    def _get_instance(cls) -> Optional[sqlite3.Connection]:
+        return getattr(cls._local, 'instance', None)
+        
+    @classmethod
+    def _set_instance(cls, conn: sqlite3.Connection):
+        cls._local.instance = conn
+
+    @classmethod
     def initialize(cls, db_path: Optional[str] = None) -> sqlite3.Connection:
         """
-        初始化数据库连接（单例模式）
+        初始化数据库连接（按线程本地单例）
         
         Args:
             db_path: 数据库文件路径，默认为 backend/data/chrono_trace.db
@@ -22,8 +32,8 @@ class DatabaseConnection:
         Returns:
             sqlite3.Connection: 数据库连接对象
         """
-        if cls._instance is not None:
-            return cls._instance
+        if cls._get_instance() is not None:
+            return cls._get_instance()
         
         # 确定数据库路径
         if db_path is None:
@@ -35,13 +45,14 @@ class DatabaseConnection:
         cls._db_path = db_path
         
         # 创建连接
-        cls._instance = sqlite3.connect(db_path, check_same_thread=False)
-        cls._instance.row_factory = sqlite3.Row  # 支持字典式访问
+        conn = sqlite3.connect(db_path, check_same_thread=False)
+        conn.row_factory = sqlite3.Row  # 支持字典式访问
+        cls._set_instance(conn)
         
         # 执行建表SQL
         cls._create_tables()
         
-        return cls._instance
+        return conn
     
     @classmethod
     def _create_tables(cls):
@@ -55,22 +66,23 @@ class DatabaseConnection:
             schema_sql = f.read()
         
         # 执行所有建表语句
-        with cls._instance:
-            cls._instance.executescript(schema_sql)
+        with cls._get_instance():
+            cls._get_instance().executescript(schema_sql)
     
     @classmethod
     def get_connection(cls) -> sqlite3.Connection:
-        """获取数据库连接"""
-        if cls._instance is None:
-            return cls.initialize()
-        return cls._instance
+        """获取当前线程的数据库连接"""
+        if cls._get_instance() is None:
+            return cls.initialize(cls._db_path)
+        return cls._get_instance()
     
     @classmethod
     def close(cls):
-        """关闭数据库连接"""
-        if cls._instance:
-            cls._instance.close()
-            cls._instance = None
+        """关闭当前线程的数据库连接"""
+        conn = cls._get_instance()
+        if conn:
+            conn.close()
+            cls._set_instance(None)
     
     @classmethod
     def execute(cls, sql: str, params: tuple = ()) -> sqlite3.Cursor:

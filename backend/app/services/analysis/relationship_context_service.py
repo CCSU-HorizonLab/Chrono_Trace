@@ -86,7 +86,7 @@ class RelationshipContextService:
     """关系上下文服务"""
 
     def __init__(self):
-        self.db = get_db()
+        pass  # get_db() removed for thread safety
 
     def get_context(self, conversation_id: int) -> Optional[RelationshipContext]:
         """
@@ -100,7 +100,7 @@ class RelationshipContextService:
         """
         try:
             key = f"relationship_context_{conversation_id}"
-            cursor = self.db.execute("""
+            cursor = get_db().execute("""
                 SELECT value FROM settings WHERE key = ?
             """, (key,))
 
@@ -157,12 +157,12 @@ class RelationshipContextService:
             key = f"relationship_context_{conversation_id}"
             ctx_json = json.dumps(asdict(ctx), ensure_ascii=False)
 
-            self.db.execute("""
+            get_db().execute("""
                 INSERT OR REPLACE INTO settings (key, value, updated_at)
                 VALUES (?, ?, ?)
             """, (key, ctx_json, ctx.updated_at))
 
-            self.db.commit()
+            get_db().commit()
             logger.info(f"关系上下文已保存 (会话 {conversation_id})")
 
         except Exception as e:

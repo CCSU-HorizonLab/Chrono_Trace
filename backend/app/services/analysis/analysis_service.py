@@ -12,7 +12,7 @@ class AnalysisService:
     """历史数据分析服务（统一分析入口）"""
 
     def __init__(self):
-        self.db = get_db()
+        pass  # get_db() removed for thread safety
         self.wordcloud_gen = WordCloudGenerator()
         self.preprocessor = PreprocessingService()
 
@@ -41,7 +41,7 @@ class AnalysisService:
         try:
             # 查询所有会话，关联联系人表获取备注名/昵称
             # 优先级: contacts.remark > contacts.nickname > conversations.display_name > conversations.username
-            cursor = self.db.execute("""
+            cursor = get_db().execute("""
                 SELECT 
                     c.id,
                     c.username,
@@ -181,7 +181,7 @@ class AnalysisService:
     
     def _get_subject_info(self, conversation_id: int) -> Optional[Dict]:
         """获取会话详情"""
-        cursor = self.db.execute("""
+        cursor = get_db().execute("""
             SELECT 
                 c.id,
                 c.username,
@@ -217,7 +217,7 @@ class AnalysisService:
         limit: int = 10000
     ) -> List[str]:
         """获取消息内容列表"""
-        cursor = self.db.execute("""
+        cursor = get_db().execute("""
             SELECT content
             FROM messages
             WHERE conversation_id = ?
@@ -290,7 +290,7 @@ class AnalysisService:
         service = self._get_feature_service()
 
         # 从数据库查询会话
-        cursor = self.db.execute("""
+        cursor = get_db().execute("""
             SELECT id, conversation_id, start_time, end_time, message_count, initiator, source
             FROM sessions
             WHERE conversation_id = ?
@@ -322,7 +322,7 @@ class AnalysisService:
         Returns:
             响应时间统计数据
         """
-        cursor = self.db.execute("""
+        cursor = get_db().execute("""
             SELECT
                 COUNT(*) as count,
                 AVG(response_time_seconds) as avg,
@@ -336,7 +336,7 @@ class AnalysisService:
         row = cursor.fetchone()
 
         # 计算中位数
-        cursor = self.db.execute("""
+        cursor = get_db().execute("""
             SELECT response_time_seconds
             FROM response_times
             WHERE conversation_id = ?
@@ -347,7 +347,7 @@ class AnalysisService:
         median = all_times[len(all_times) // 2] if all_times else None
 
         # 统计异常值数量
-        cursor = self.db.execute("""
+        cursor = get_db().execute("""
             SELECT COUNT(*)
             FROM response_times
             WHERE conversation_id = ?
@@ -408,7 +408,7 @@ class AnalysisService:
         Returns:
             主动性统计数据
         """
-        cursor = self.db.execute("""
+        cursor = get_db().execute("""
             SELECT total_sessions, user_initiated_sessions, other_initiated_sessions, initiative_rate
             FROM initiative_stats
             WHERE conversation_id = ?
@@ -445,7 +445,7 @@ class AnalysisService:
         """
         if by_session:
             # 按会话统计
-            cursor = self.db.execute("""
+            cursor = get_db().execute("""
                 SELECT
                     session_id,
                     user_char_count,
@@ -472,7 +472,7 @@ class AnalysisService:
             }
         else:
             # 整体统计
-            cursor = self.db.execute("""
+            cursor = get_db().execute("""
                 SELECT
                     user_char_count,
                     other_char_count,

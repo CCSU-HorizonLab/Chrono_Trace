@@ -19,7 +19,7 @@ class PreprocessingService:
     """消息预处理服务"""
     
     def __init__(self):
-        self.db = get_db()
+        pass  # get_db() removed for thread safety
         self._compile_patterns()
     
     def _compile_patterns(self):
@@ -204,7 +204,7 @@ class PreprocessingService:
         params.append(limit)
         
         # 查询消息
-        cursor = self.db.execute(sql, tuple(params))
+        cursor = get_db().execute(sql, tuple(params))
         messages = cursor.fetchall()
         
         logger.debug(f"[预处理] 查询到 {len(messages)} 条文本消息")
@@ -339,7 +339,7 @@ class PreprocessingService:
     
     def _get_cached_message(self, message_id: int) -> Optional[Dict[str, Any]]:
         """从缓存读取预处理结果"""
-        cursor = self.db.execute("""
+        cursor = get_db().execute("""
             SELECT cleaned_content, char_count, word_count, is_valid, has_xml, has_media
             FROM message_preprocessed
             WHERE message_id = ?
@@ -364,7 +364,7 @@ class PreprocessingService:
         
         for msg in messages:
             try:
-                self.db.execute("""
+                get_db().execute("""
                     INSERT OR REPLACE INTO message_preprocessed
                     (message_id, conversation_id, cleaned_content, char_count, word_count, 
                      is_valid, has_xml, has_media, created_at)
@@ -383,7 +383,7 @@ class PreprocessingService:
             except Exception as e:
                 logger.error(f"[预处理] 缓存消息 {msg['message_id']} 失败: {e}")
         
-        self.db.commit()
+        get_db().commit()
        # logger.debug(f"[预处理] 已缓存 {len(messages)} 条消息")
     
     def preprocess_message_batch(
@@ -408,7 +408,7 @@ class PreprocessingService:
         
         # 查询消息内容
         placeholders = ','.join('?' * len(message_ids))
-        cursor = self.db.execute(f"""
+        cursor = get_db().execute(f"""
             SELECT id, content
             FROM messages
             WHERE id IN ({placeholders})
@@ -492,7 +492,7 @@ class BasicPreprocessingService:
     """基础预处理服务 - 收集消息和时间统计"""
 
     def __init__(self):
-        self.db = get_db()
+        pass  # get_db() removed for thread safety
 
     def collect_message_statistics(
         self,
@@ -529,7 +529,7 @@ class BasicPreprocessingService:
             params.append(to_ts)
 
         # 总消息数
-        cursor = self.db.execute(sql, tuple(params))
+        cursor = get_db().execute(sql, tuple(params))
         total_message_count = cursor.fetchone()[0]
 
         # 从情感缓存获取统计
@@ -553,7 +553,7 @@ class BasicPreprocessingService:
             sql += " AND m.timestamp <= ?"
             params.append(to_ts)
 
-        cursor = self.db.execute(sql, tuple(params))
+        cursor = get_db().execute(sql, tuple(params))
         row = cursor.fetchone()
 
         return {
@@ -599,7 +599,7 @@ class BasicPreprocessingService:
             sql += " AND timestamp <= ?"
             params.append(to_ts)
 
-        cursor = self.db.execute(sql, tuple(params))
+        cursor = get_db().execute(sql, tuple(params))
         row = cursor.fetchone()
 
         start_ts = row[0]
@@ -653,7 +653,7 @@ class BasicPreprocessingService:
             sql += " AND m.timestamp <= ?"
             params.append(to_ts)
 
-        cursor = self.db.execute(sql, tuple(params))
+        cursor = get_db().execute(sql, tuple(params))
         row = cursor.fetchone()
 
         total_chars = row[0] or 0
@@ -676,7 +676,7 @@ class PairPreprocessingService:
     MERGE_TIME_THRESHOLD = 300  # 5分钟
 
     def __init__(self):
-        self.db = get_db()
+        pass  # get_db() removed for thread safety
 
     def _get_sentiment_for_unit(self, message_ids: List[int]) -> Dict[str, Any]:
         """
@@ -703,7 +703,7 @@ class PairPreprocessingService:
                     pass
             # 查询这些消息的情感数据
             placeholders = ','.join('?' * len(message_ids))
-            cursor = self.db.execute(f"""
+            cursor = get_db().execute(f"""
                 SELECT polarity, intensity
                 FROM sentiment_cache
                 WHERE message_id IN ({placeholders})
@@ -947,7 +947,7 @@ class PairPreprocessingService:
         try:
             import time
             for unit in speech_units:
-                self.db.execute("""
+                get_db().execute("""
                     INSERT OR REPLACE INTO speech_units
                     (conversation_id, sender, first_message_timestamp,
                      last_message_timestamp, message_count, message_ids, created_at)
@@ -962,7 +962,7 @@ class PairPreprocessingService:
                     int(time.time())
                 ))
 
-            self.db.commit()
+            get_db().commit()
             logger.debug(f"[交互对预处理] 已保存 {len(speech_units)} 个发言单元")
             return len(speech_units)
 
@@ -979,7 +979,7 @@ class PairPreprocessingService:
         try:
             import time
             for pair in interaction_pairs:
-                self.db.execute("""
+                get_db().execute("""
                     INSERT OR REPLACE INTO interaction_pairs
                     (conversation_id, from_speech_unit_id, to_speech_unit_id, 
                      time_gap, semantic_similarity, from_polarity, to_polarity,
@@ -1001,7 +1001,7 @@ class PairPreprocessingService:
                     int(time.time())
                 ))
 
-            self.db.commit()
+            get_db().commit()
             logger.debug(f"[交互对预处理] 已保存 {len(interaction_pairs)} 个交互对")
             return len(interaction_pairs)
 
@@ -1021,7 +1021,7 @@ class PairPreprocessingService:
         """
         try:
             # 读取发言单元（使用数据库实际的列名）
-            cursor = self.db.execute("""
+            cursor = get_db().execute("""
                 SELECT id, sender, first_message_timestamp, last_message_timestamp,
                        message_count, message_ids
                 FROM speech_units
@@ -1042,7 +1042,7 @@ class PairPreprocessingService:
                 })
 
             # 读取交互对
-            cursor = self.db.execute("""
+            cursor = get_db().execute("""
                 SELECT id, from_speech_unit_id, to_speech_unit_id, time_gap,
                        semantic_similarity, from_polarity, to_polarity,
                        from_intensity, to_intensity
@@ -1096,7 +1096,7 @@ class SessionManager:
     SLEEP_END_HOUR = 7  # 早上7点结束睡眠
 
     def __init__(self):
-        self.db = get_db()
+        pass  # get_db() removed for thread safety
         self._sentiment_service = None  # 缓存 SentimentService 实例
 
     def calculate_semantic_similarity(
@@ -1598,7 +1598,7 @@ class SessionManager:
         try:
             import time
             for session in sessions:
-                self.db.execute("""
+                get_db().execute("""
                     INSERT OR REPLACE INTO sessions
                     (conversation_id, start_time, end_time, message_count,
                      initiator, source, created_at)
@@ -1613,7 +1613,7 @@ class SessionManager:
                     int(time.time())
                 ))
 
-            self.db.commit()
+            get_db().commit()
             logger.debug(f"[会话管理器] 已保存 {len(sessions)} 个会话")
             return len(sessions)
 
@@ -1627,7 +1627,7 @@ class SessionManager:
     ) -> List[Dict[str, Any]]:
         """从缓存读取会话"""
         try:
-            cursor = self.db.execute("""
+            cursor = get_db().execute("""
                 SELECT id, start_unit_id, end_unit_id, start_timestamp,
                        end_timestamp, unit_count, initiator_is_sender
                 FROM sessions

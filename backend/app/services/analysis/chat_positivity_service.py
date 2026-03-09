@@ -75,7 +75,7 @@ class ChatPositivityService:
         Args:
             timeliness_threshold_seconds: 回复及时阈值 (秒)，默认 5 分钟
         """
-        self.db = get_db()
+        pass  # get_db() removed for thread safety
         self.timeliness_threshold = timeliness_threshold_seconds
         
     def calculate_scores(
@@ -177,7 +177,7 @@ class ChatPositivityService:
         从交互对表中统计在阈值时间内回复的比例
         """
         try:
-            cursor = self.db.execute("""
+            cursor = get_db().execute("""
                 SELECT 
                     COUNT(*) as total,
                     SUM(CASE WHEN time_gap <= ? AND time_gap >= 0 THEN 1 ELSE 0 END) as timely
@@ -224,7 +224,7 @@ class ChatPositivityService:
             return 0.0
         
         try:
-            cursor = self.db.execute("""
+            cursor = get_db().execute("""
                 SELECT COUNT(*) 
                 FROM message_preprocessed mp
                 JOIN messages m ON mp.message_id = m.id
@@ -258,7 +258,7 @@ class ChatPositivityService:
         使用交互对的语义相似度平均值
         """
         try:
-            cursor = self.db.execute("""
+            cursor = get_db().execute("""
                 SELECT AVG(semantic_similarity)
                 FROM interaction_pairs
                 WHERE conversation_id = ?

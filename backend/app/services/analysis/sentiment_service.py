@@ -10,13 +10,9 @@
 
 import pickle
 import time
-import os
 import logging
 from typing import Dict, Any, List, Optional
 from ...db.connection import get_db
-
-# 配置HuggingFace镜像站（解决SSL证书问题）
-os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
 
 
 logger = logging.getLogger(__name__)
@@ -30,7 +26,6 @@ class SentimentService:
     """
 
     def __init__(self):
-        self.db = get_db()
         self._realtime_service = None
         self._embedding_model = None
         self._embedding_load_failed = False  # 标记模型加载是否失败过
@@ -73,11 +68,13 @@ class SentimentService:
                     logger.debug("[情感服务] 未检测到GPU，使用CPU模式")
                 
                 # 使用轻量级中文模型 (384维)
+                # 由 sentence-transformers 自动管理缓存（首次下载后存在 ~/.cache/huggingface/）
+                # 显式关闭 low_cpu_mem_usage 防止环境冲突导致的 meta tensor 报错
                 model_name = "shibing624/text2vec-base-chinese"
                 self._embedding_model = SentenceTransformer(
                     model_name, 
                     device=device,
-                    model_kwargs={"low_cpu_mem_usage": False}  # 规避 meta tensor 在某些环境下的加载Bug
+                    model_kwargs={"low_cpu_mem_usage": False}
                 )
                 logger.info(f"[情感服务] 向量模型加载成功: {model_name} (设备: {device})")
             except ImportError:
@@ -261,7 +258,8 @@ class SentimentService:
             # 序列化向量为字节
             embedding_bytes = pickle.dumps(embedding)
 
-            self.db.execute("""
+            db = get_db()
+            db.execute("""
                 INSERT OR REPLACE INTO sentiment_cache
                 (message_id, polarity, intensity, embedding_vector, created_at)
                 VALUES (?, ?, ?, ?, ?)
@@ -273,7 +271,7 @@ class SentimentService:
                 int(time.time())
             ))
 
-            self.db.commit()
+            db.commit()
 
         except Exception as e:
             logger.error(f"[情感服务] 缓存写入失败 (message_id={message_id}): {e}")
@@ -294,7 +292,8 @@ class SentimentService:
             或 None (如果缓存不存在)
         """
         try:
-            cursor = self.db.execute("""
+            db = get_db()
+            cursor = db.execute("""
                 SELECT polarity, intensity, embedding_vector
                 FROM sentiment_cache
                 WHERE message_id = ?
@@ -342,11 +341,12 @@ class SentimentService:
             ]
         """
         try:
+            db = get_db()
             for result in results:
                 # 序列化向量
                 embedding_bytes = pickle.dumps(result["embedding"])
 
-                self.db.execute("""
+                db.execute("""
                     INSERT OR REPLACE INTO sentiment_cache
                     (message_id, polarity, intensity, embedding_vector, created_at)
                     VALUES (?, ?, ?, ?, ?)
@@ -358,7 +358,7 @@ class SentimentService:
                     int(time.time())
                 ))
 
-            self.db.commit()
+            db.commit()
             logger.info(f"[情感服务] 批量缓存写入成功: {len(results)} 条")
 
         except Exception as e:
@@ -380,8 +380,9 @@ class SentimentService:
             }
         """
         try:
+            db = get_db()
             # 统计数据库缓存
-            cursor = self.db.execute("""
+            cursor = db.execute("""
                 SELECT
                     COUNT(*) as total,
                     SUM(CASE WHEN polarity = 1 THEN 1 ELSE 0 END) as positive,

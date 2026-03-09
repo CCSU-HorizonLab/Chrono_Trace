@@ -32,7 +32,7 @@ class EmotionalResonanceService:
     """情感共振率服务"""
     
     def __init__(self):
-        self.db = get_db()
+        pass  # get_db() removed for thread safety
         self.orchestrator = PreprocessingOrchestrator()
         self.keyword_lib = KeywordLibraries()
         self.direction_service = NegativeDirectionService()
@@ -382,7 +382,7 @@ class EmotionalResonanceService:
         Returns:
             交互对列表
         """
-        cursor = self.db.execute("""
+        cursor = get_db().execute("""
             SELECT 
                 from_polarity, 
                 to_polarity,
@@ -445,7 +445,7 @@ class EmotionalResonanceService:
         
         # 第一步：批量获取所有 speech_unit 的 message_ids
         placeholders = ','.join('?' * len(unit_id_list))
-        cursor = self.db.execute(f"""
+        cursor = get_db().execute(f"""
             SELECT id, message_ids FROM speech_units WHERE id IN ({placeholders})
         """, unit_id_list)
         
@@ -466,7 +466,7 @@ class EmotionalResonanceService:
         if all_msg_ids:
             msg_id_list = list(all_msg_ids)
             placeholders = ','.join('?' * len(msg_id_list))
-            cursor = self.db.execute(f"""
+            cursor = get_db().execute(f"""
                 SELECT id, content FROM messages WHERE id IN ({placeholders})
             """, msg_id_list)
             
@@ -498,7 +498,7 @@ class EmotionalResonanceService:
             内容文本
         """
         # 先获取发言单元的 message_ids
-        cursor = self.db.execute("""
+        cursor = get_db().execute("""
             SELECT message_ids FROM speech_units WHERE id = ?
         """, (speech_unit_id,))
         
@@ -518,7 +518,7 @@ class EmotionalResonanceService:
         
         # 从 messages 表查询内容
         placeholders = ','.join('?' * len(message_ids))
-        cursor = self.db.execute(f"""
+        cursor = get_db().execute(f"""
             SELECT content FROM messages WHERE id IN ({placeholders})
         """, message_ids)
         
@@ -550,7 +550,7 @@ class EmotionalResonanceService:
         Returns:
             消息数量
         """
-        cursor = self.db.execute("""
+        cursor = get_db().execute("""
             SELECT content FROM messages 
             WHERE conversation_id = ? AND message_type = 1
         """, (conversation_id,))

@@ -88,7 +88,7 @@ class AffinityAnalysisService:
     DEFAULT_WEIGHT_PREFERENCE = 0.10
     
     def __init__(self):
-        self.db = get_db()
+        pass  # get_db() removed for thread safety
 
         # 初始化所有服务
         self.preprocessing = PreprocessingOrchestrator()
@@ -467,12 +467,12 @@ class AffinityAnalysisService:
             result_json = json.dumps(result_dict, ensure_ascii=False)
             key = f"affinity_scores_{conversation_id}"
             
-            self.db.execute("""
+            get_db().execute("""
                 INSERT OR REPLACE INTO settings (key, value, updated_at)
                 VALUES (?, ?, ?)
             """, (key, result_json, int(time.time())))
             
-            self.db.commit()
+            get_db().commit()
             logger.debug(f"分析结果已保存 (会话 {conversation_id})")
             
         except Exception as e:
@@ -485,7 +485,7 @@ class AffinityAnalysisService:
         """从缓存加载分析结果"""
         try:
             key = f"affinity_scores_{conversation_id}"
-            cursor = self.db.execute("""
+            cursor = get_db().execute("""
                 SELECT value FROM settings WHERE key = ?
             """, (key,))
             
@@ -523,10 +523,10 @@ class AffinityAnalysisService:
         """清除分析结果缓存"""
         try:
             key = f"affinity_scores_{conversation_id}"
-            self.db.execute("""
+            get_db().execute("""
                 DELETE FROM settings WHERE key = ?
             """, (key,))
-            self.db.commit()
+            get_db().commit()
             logger.debug(f"分析缓存已清除 (会话 {conversation_id})")
         except Exception as e:
             logger.error(f"清除缓存失败: {e}")

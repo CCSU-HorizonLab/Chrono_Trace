@@ -15,7 +15,7 @@ class WeChatIngestService:
     """微信V4数据导入服务"""
     
     def __init__(self):
-        self.db = get_db()
+        pass  # get_db() removed for thread safety
         self.preprocessor = PreprocessingService()
     
     def get_wechat_paths(self) -> Dict[str, Any]:
@@ -258,7 +258,7 @@ class WeChatIngestService:
                     continue
                 
                 try:
-                    self.db.execute("""
+                    get_db().execute("""
                         INSERT OR REPLACE INTO contacts 
                         (username, nickname, remark, alias, phone, is_friend, updated_at)
                         VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -276,7 +276,7 @@ class WeChatIngestService:
                     logger.error(f"[DEBUG] 插入联系人失败: {e}")
                     pass  # 忽略单条错误
             
-            self.db.commit()
+            get_db().commit()
             logger.info(f"[DEBUG] 成功插入 {inserted} 个联系人, 跳过 {skipped} 个群聊/公众号")
             return inserted
         finally:
@@ -375,13 +375,13 @@ class WeChatIngestService:
                     continue
                 
                 # 确保会话存在 (修复: 使用 username 字段而不是 name)
-                self.db.execute("""
+                get_db().execute("""
                     INSERT OR IGNORE INTO conversations (username, display_name, platform, created_at, updated_at, message_count)
                     VALUES (?, ?, 'wechat', ?, ?, 0)
                 """, (talker, talker, int(time.time()), int(time.time())))
                 
                 # 获取conversation_id (修复: 使用 username 字段)
-                cursor = self.db.execute(
+                cursor = get_db().execute(
                     "SELECT id FROM conversations WHERE username = ? AND platform = 'wechat'",
                     (talker,)
                 )
@@ -394,7 +394,7 @@ class WeChatIngestService:
                 # 插入消息 (修复: 添加必需的字段)
                 is_sender = 1 if msg['is_sender'] else 0
                 
-                self.db.execute("""
+                get_db().execute("""
                     INSERT OR IGNORE INTO messages 
                     (conversation_id, talker, sender, is_sender, message_type, content, timestamp, source, created_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?, 'long', ?)
@@ -409,7 +409,7 @@ class WeChatIngestService:
                     int(time.time())
                 ))
                 # 更新会话消息计数和更新时间
-                self.db.execute(""" 
+                get_db().execute(""" 
                     UPDATE conversations 
                     SET message_count = message_count + 1,
                         updated_at = ?
@@ -421,7 +421,7 @@ class WeChatIngestService:
                 logger.error(f"[DEBUG] 插入消息失败: {e}")
                 pass  # 忽略单条错误
         
-        self.db.commit()
+        get_db().commit()
     
     def _auto_preprocess_messages(
         self,
@@ -437,7 +437,7 @@ class WeChatIngestService:
             logger.info(f"\n[预处理] 开始自动预处理新导入的消息...")
             
             # 查找未预处理的消息（不在缓存表中的消息）
-            cursor = self.db.execute("""
+            cursor = get_db().execute("""
                 SELECT m.id, m.conversation_id
                 FROM messages m
                 LEFT JOIN message_preprocessed mp ON m.id = mp.message_id
@@ -501,7 +501,7 @@ class WeChatIngestService:
             from ..analysis.feature_extraction_service import FeatureExtractionService
 
             # 查找所有有消息的会话
-            cursor = self.db.execute("""
+            cursor = get_db().execute("""
                 SELECT id, display_name, message_count
                 FROM conversations
                 WHERE message_count > 0
@@ -541,7 +541,7 @@ class WeChatIngestService:
                         progress_callback(f"提取特征 {idx+1}/{len(conversations)}: {name}", progress, 100)
 
                     # 检查是否已经提取过特征
-                    cursor = self.db.execute("""
+                    cursor = get_db().execute("""
                         SELECT COUNT(*) FROM sessions WHERE conversation_id = ?
                     """, (conv_id,))
                     session_count = cursor.fetchone()[0]
@@ -584,11 +584,11 @@ class WeChatIngestService:
     
     def _create_import_record(self) -> int:
         """创建导入记录"""
-        cursor = self.db.execute("""
+        cursor = get_db().execute("""
             INSERT INTO import_records (import_type, status, started_at)
             VALUES ('wechat_full', 'pending', ?)
         """, (int(time.time()),))
-        self.db.commit()
+        get_db().commit()
         return cursor.lastrowid  # pyright: ignore[reportReturnType]
     
     def _update_import_record(
@@ -601,7 +601,7 @@ class WeChatIngestService:
         """更新导入记录"""
         import json
         
-        self.db.execute("""
+        get_db().execute("""
             UPDATE import_records
             SET status = ?,
                 total_messages = ?,
@@ -619,4 +619,4 @@ class WeChatIngestService:
             json.dumps(stats),
             import_id
         ))
-        self.db.commit()
+        get_db().commit()

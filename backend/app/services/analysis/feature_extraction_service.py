@@ -28,7 +28,7 @@ class FeatureExtractionService:
         self.config = config or FeatureExtractionConfig.from_settings()
         self.config.validate()
 
-        self.db = get_db()
+        pass  # get_db() removed for thread safety
         self.preprocessor = PreprocessingService()
 
         # 缓存预处理服务实例（避免重复加载模型）
@@ -189,8 +189,8 @@ class FeatureExtractionService:
                           d["message_count"], d["initiator"], d["source"], d["created_at"])
                          for d in sessions_data]
 
-            batch_insert("sessions", columns, data_tuples, self.db)
-            self.db.commit()
+            batch_insert("sessions", columns, data_tuples, get_db())
+            get_db().commit()
 
         #logger.info(f"会话提取完成: {len(sessions_data)}个会话")
         return sessions_data
@@ -217,7 +217,7 @@ class FeatureExtractionService:
         if limit:
             sql += f" LIMIT {limit} OFFSET {offset}"
 
-        cursor = self.db.execute(sql, (conversation_id,))
+        cursor = get_db().execute(sql, (conversation_id,))
         rows = cursor.fetchall()
 
         return [dict(row) for row in rows]
@@ -375,8 +375,8 @@ class FeatureExtractionService:
             data_tuples = [(d["conversation_id"], d["sent_message_id"], d["reply_message_id"],
                            d["response_time_seconds"], d["is_abnormal"], d["abnormal_reason"],
                            d["source"], d["created_at"]) for d in response_times_data]
-            batch_insert("response_times", columns, data_tuples, self.db)
-            self.db.commit()
+            batch_insert("response_times", columns, data_tuples, get_db())
+            get_db().commit()
 
         # 4. 计算统计数据
         stats = self._calculate_response_time_stats(valid_response_times)
@@ -559,13 +559,13 @@ class FeatureExtractionService:
         }
 
         # 写入数据库
-        self.db.execute("""
+        get_db().execute("""
             INSERT OR REPLACE INTO initiative_stats
             (conversation_id, total_sessions, user_initiated_sessions, other_initiated_sessions, initiative_rate, last_updated)
             VALUES (?, ?, ?, ?, ?, ?)
         """, (conversation_id, stats["total_sessions"], stats["user_initiated_sessions"],
               stats["other_initiated_sessions"], stats["initiative_rate"], int(time.time())))
-        self.db.commit()
+        get_db().commit()
 
         return stats
 
@@ -600,7 +600,7 @@ class FeatureExtractionService:
         overall_ratio = overall_other_chars / overall_user_chars if overall_user_chars > 0 else 0
 
         # 2. 写入整体统计
-        self.db.execute("""
+        get_db().execute("""
             INSERT OR REPLACE INTO word_counts
             (conversation_id, session_id, user_char_count, other_char_count, char_ratio, last_updated)
             VALUES (?, NULL, ?, ?, ?, ?)
@@ -633,9 +633,9 @@ class FeatureExtractionService:
             data_tuples = [(d["conversation_id"], d["session_id"], d["user_char_count"],
                            d["other_char_count"], d["char_ratio"], d["last_updated"])
                           for d in session_counts]
-            batch_insert("word_counts", columns, data_tuples, self.db)
+            batch_insert("word_counts", columns, data_tuples, get_db())
 
-        self.db.commit()
+        get_db().commit()
 
         # 生成解读文本
         if overall_user_chars == 0 and overall_other_chars == 0:
@@ -695,14 +695,14 @@ class FeatureExtractionService:
             是否成功
         """
         try:
-            self.db.execute("DELETE FROM sessions WHERE conversation_id = ?", (conversation_id,))
-            self.db.execute("DELETE FROM response_times WHERE conversation_id = ?", (conversation_id,))
-            self.db.execute("DELETE FROM initiative_stats WHERE conversation_id = ?", (conversation_id,))
-            self.db.execute("DELETE FROM word_counts WHERE conversation_id = ?", (conversation_id,))
-            self.db.commit()
+            get_db().execute("DELETE FROM sessions WHERE conversation_id = ?", (conversation_id,))
+            get_db().execute("DELETE FROM response_times WHERE conversation_id = ?", (conversation_id,))
+            get_db().execute("DELETE FROM initiative_stats WHERE conversation_id = ?", (conversation_id,))
+            get_db().execute("DELETE FROM word_counts WHERE conversation_id = ?", (conversation_id,))
+            get_db().commit()
             logger.info(f"删除分析数据完成: conversation_id={conversation_id}")
             return True
         except Exception as e:
             logger.error(f"删除分析数据失败: {e}")
-            self.db.rollback()
+            get_db().rollback()
             return False

@@ -83,7 +83,7 @@ class PreprocessingOrchestrator:
     """预处理编排器 - 协调所有预处理服务"""
     
     def __init__(self):
-        self.db = get_db()
+        pass  # get_db() removed for thread safety
         
         # 初始化所有服务
         self.sentiment_service = SentimentService()
@@ -235,7 +235,7 @@ class PreprocessingOrchestrator:
         Returns:
             消息列表
         """
-        cursor = self.db.execute("""
+        cursor = get_db().execute("""
             SELECT id, content, is_sender, timestamp, message_type
             FROM messages
             WHERE conversation_id = ?
@@ -326,12 +326,12 @@ class PreprocessingOrchestrator:
         key = f"preprocessing_stats_{conversation_id}"
         
         try:
-            self.db.execute("""
+            get_db().execute("""
                 INSERT OR REPLACE INTO settings (key, value, updated_at)
                 VALUES (?, ?, ?)
             """, (key, stats_json, int(time.time())))
             
-            self.db.commit()
+            get_db().commit()
             logger.debug(f"统计数据已保存到数据库 (会话 {conversation_id})")
 
         except Exception as e:
@@ -353,7 +353,7 @@ class PreprocessingOrchestrator:
         key = f"preprocessing_stats_{conversation_id}"
         
         try:
-            cursor = self.db.execute("""
+            cursor = get_db().execute("""
                 SELECT value FROM settings WHERE key = ?
             """, (key,))
             
@@ -381,11 +381,11 @@ class PreprocessingOrchestrator:
         key = f"preprocessing_stats_{conversation_id}"
         
         try:
-            self.db.execute("""
+            get_db().execute("""
                 DELETE FROM settings WHERE key = ?
             """, (key,))
             
-            self.db.commit()
+            get_db().commit()
             logger.debug(f"缓存已清除 (会话 {conversation_id})")
 
         except Exception as e:

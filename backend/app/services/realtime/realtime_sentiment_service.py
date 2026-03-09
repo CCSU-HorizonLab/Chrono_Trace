@@ -12,15 +12,15 @@ import json
 import pickle
 from typing import Dict, Any, List, Optional
 import jieba
+import torch
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
 from .sentiment_rules import (
     get_emoji_sentiment, get_slang_info, is_degree_word,
     is_negation_word, is_transition_word, contains_sarcasm,
     is_perfunctory, get_sentiment_word_score, EMOJI_SENTIMENT
 )
 from ...db.connection import get_db
-
-# 配置HuggingFace镜像站
-os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
+from ..model_manager import ModelManager
 
 
 logger = logging.getLogger(__name__)
@@ -36,18 +36,32 @@ class RealtimeSentimentService:
     """
     
     def __init__(self, skip_db_init=False):
-        self.db = get_db()
+        import threading
+        pass  # get_db() removed for thread safety
         self._model = None
         self._tokenizer = None
+        self._lock = threading.Lock()
+        
+        # 初始化模型版本管理器
+        from pathlib import Path
+        local_model_dir = Path(__file__).parent.parent.parent.parent / 'data' / 'models' / 'sentiment_3class'
+        self._model_manager = ModelManager(
+            model_dir=str(local_model_dir),
+            repo_id="tingting11/chrono-trace-sentiment"
+        )
+        
         # 作为子服务调用时跳过建表，避免commit干扰主连接上的其他查询
         if not skip_db_init:
             self._ensure_table_exists()
+        
+        # 后台检查云端模型更新（不阻塞启动）
+        self._model_manager.check_and_update_async()
         logger.debug("[实时情感分析] 服务已初始化")
     
     def _ensure_table_exists(self):
         """确保数据库表存在"""
         try:
-            self.db.execute("""
+            get_db().execute("""
                 CREATE TABLE IF NOT EXISTS realtime_sentiment_cache (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     message_id INTEGER NOT NULL UNIQUE,
@@ -60,12 +74,12 @@ class RealtimeSentimentService:
                 )
             """)
             
-            self.db.execute("""
+            get_db().execute("""
                 CREATE INDEX IF NOT EXISTS idx_realtime_sentiment_message 
                 ON realtime_sentiment_cache(message_id)
             """)
             
-            self.db.commit()
+            get_db().commit()
             
         except Exception as e:
             logger.error(f"[实时情感分析] 创建表失败: {e}")
@@ -75,52 +89,43 @@ class RealtimeSentimentService:
         return self._model is not None
     
     def _load_model(self):
-        """延迟加载微调后的中文情感3分类模型"""
+        """延迟加载微调后的中文情感3分类模型（纯本地加载）"""
         if self._model is None:
-            try:
-                from transformers import AutoTokenizer, AutoModelForSequenceClassification
-                import torch
-                from pathlib import Path
-                
-                logger.debug("[实时情感分析] 正在加载情感分析模型...")
-                
-                # 微调后的3分类中文情感模型
-                # 模型信息:
-                # - 基座: hfl/chinese-roberta-wwm-ext
-                # - 参数量: 102M (约400MB)
-                # - 任务: 中文情感三分类(0=负面, 1=正面, 2=中性)
-                # - 训练数据: 微信聊天风格文本
-                # - 托管: HuggingFace Hub (首次自动下载,后续从缓存加载)
-                
-                # 加载优先级: 本地训练目录 > HuggingFace Hub(自动缓存)
-                local_model_dir = Path(__file__).parent.parent.parent.parent / 'data' / 'models' / 'sentiment_3class'
-                
-                if local_model_dir.exists():
-                    model_path = str(local_model_dir)
-                    logger.debug(f"[实时情感分析] 使用本地模型: {model_path}")
-                else:
-                    model_path = "tingting11/chrono-trace-sentiment"
-                    logger.debug(f"[实时情感分析] 从HuggingFace加载模型 (首次约400MB,后续秒开)")
-                
-                self._tokenizer = AutoTokenizer.from_pretrained(model_path)
-                self._model = AutoModelForSequenceClassification.from_pretrained(
-                    model_path,
-                    low_cpu_mem_usage=False
-                ).to("cpu")
-                
-                # 设置为评估模式
-                self._model.eval()
-                
-                num_labels = self._model.config.num_labels
-                logger.info(f"[实时情感分析] 模型加载成功 | 分类数: {num_labels} | 设备: CPU")
-                
-            except ImportError:
-                logger.warning("[实时情感分析] 警告: transformers未安装")
-                logger.debug("请运行: pip install transformers torch")
-                raise
-            except Exception as e:
-                logger.error(f"[实时情感分析] 模型加载失败: {e}")
-                raise
+            with self._lock:
+                if self._model is None:
+                    try:
+                        logger.debug("[实时情感分析] 正在加载情感分析模型...")
+                        
+                        # 检查本地模型是否可用
+                        if not self._model_manager.ensure_model_exists():
+                            raise FileNotFoundError(
+                                f"本地模型不存在: {self._model_manager.model_dir}\n"
+                                "请先运行训练脚本生成模型，或将模型文件放置到该目录"
+                            )
+                        
+                        model_path = str(self._model_manager.model_dir)
+                        logger.debug(f"[实时情感分析] 使用本地模型: {model_path}")
+                        
+                        # 纯本地加载，显式关闭 low_cpu_mem_usage 防止 accelerate 在多线程下因延迟初始化导致 meta tensor 残留
+                        self._tokenizer = AutoTokenizer.from_pretrained(model_path)
+                        self._model = AutoModelForSequenceClassification.from_pretrained(
+                            model_path, 
+                            low_cpu_mem_usage=False
+                        )
+                        
+                        # 设置为评估模式
+                        self._model.eval()
+                        
+                        num_labels = self._model.config.num_labels
+                        logger.info(f"[实时情感分析] 模型加载成功 | 分类数: {num_labels} | 设备: CPU")
+                        
+                    except ImportError:
+                        logger.warning("[实时情感分析] 警告: transformers未安装")
+                        logger.debug("请运行: pip install transformers torch")
+                        raise
+                    except Exception as e:
+                        logger.error(f"[实时情感分析] 模型加载失败: {e}")
+                        raise
     
     # ========== 预处理 ==========
     
@@ -492,7 +497,7 @@ class RealtimeSentimentService:
             rules_json = json.dumps(result['rules_applied'], ensure_ascii=False)
             
             # 保存到数据库
-            self.db.execute("""
+            get_db().execute("""
                 INSERT OR REPLACE INTO realtime_sentiment_cache
                 (message_id, polarity, intensity, confidence, raw_score, rules_applied, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -506,7 +511,7 @@ class RealtimeSentimentService:
                 int(time.time())
             ))
             
-            self.db.commit()
+            get_db().commit()
             
             # 格式化输出
             polarity_text = {-1: '负面', 0: '中性', 1: '正面'}[result['polarity']]
@@ -542,7 +547,7 @@ class RealtimeSentimentService:
             结果字典或None
         """
         try:
-            cursor = self.db.execute("""
+            cursor = get_db().execute("""
                 SELECT polarity, intensity, confidence, rules_applied
                 FROM realtime_sentiment_cache
                 WHERE message_id = ?

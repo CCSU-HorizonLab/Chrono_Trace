@@ -22,20 +22,6 @@ class Bridge:
         self._floating_service = FloatingWindowService()
         self._webview_window = None  # 由 app_dev.py 注入
 
-        # 👑【防御性预热核心修复】在主线程提前预设并下发深度学习内存池
-        # 原因：Py WebView 每处理一次前端请求，都会新建一个毫无环境继承的 Thread。
-        # HuggingFace 的 transformers 和 PyTorch 底层在非主线程进行“首次”显存/内存图分配时，
-        # 会因获取不到正确的 TLS 上下文而触发 RuntimeError: moving module from meta...
-        try:
-            logger.info("[Bridge] 正在主线程中提前挂载并解冻深度学习模型，以免疫子线程环境池污染...")
-            from ..services.analysis.sentiment_service import SentimentService
-            # 得益于此时已注入的 `@singleton` 单例装饰器，在此处的第一次实例化就会永久驻留于全局环境
-            _warmup = SentimentService()
-            _warmup._load_embedding_model() # 强行把 SentenceTransformer 拉入现实
-            logger.info("[Bridge] 模型挂载完成，系统已进入全保护模式！")
-        except Exception as e:
-            logger.error(f"[Bridge] 模型挂载预热异常: {e}")
-
     def _load_settings(self):
         """加载设置"""
         if self.settings_file.exists():

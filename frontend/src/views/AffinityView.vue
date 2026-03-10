@@ -38,6 +38,7 @@
             配置喜好关键词
           </CtButton>
           <CtButton 
+            v-if="!analysisResult"
             @click="handleStartAnalysis(false)" 
             :loading="isAnalyzing"
             :disabled="!selectedConversationId"
@@ -48,9 +49,10 @@
             v-if="analysisResult"
             variant="ghost"
             @click="handleStartAnalysis(true)" 
-            :disabled="!selectedConversationId || isAnalyzing"
+            :loading="isAnalyzing"
+            :disabled="!selectedConversationId"
           >
-            重新分析
+            {{ isAnalyzing ? '分析中...' : '重新分析' }}
           </CtButton>
         </div>
       </div>

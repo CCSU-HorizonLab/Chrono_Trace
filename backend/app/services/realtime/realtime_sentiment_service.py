@@ -64,6 +64,7 @@ class RealtimeSentimentService:
         pass  # get_db() removed for thread safety
         self._model = None
         self._tokenizer = None
+        self._device = 'cpu'  # 实际推理设备，_load_model 时决定
         self._lock = threading.Lock()
         
         # 初始化模型版本管理器
@@ -113,7 +114,7 @@ class RealtimeSentimentService:
         return self._model is not None
     
     def _load_model(self):
-        """延迟加载微调后的中文情感3分类模型（纯本地加载）"""
+        """延迟加载微调后的中文情感3分类模型（纯本地加载，自动检测 GPU）"""
         if self._model is None:
             with self._lock:
                 if self._model is None:
@@ -137,11 +138,27 @@ class RealtimeSentimentService:
                             low_cpu_mem_usage=False
                         )
                         
+                        # Bug 4: 自动检测 CUDA 并迁移模型到 GPU
+                        if torch.cuda.is_available():
+                            try:
+                                gpu_name = torch.cuda.get_device_name(0)
+                                self._model = self._model.to('cuda')
+                                self._device = 'cuda'
+                                logger.info(f"[实时情感分析] ✅ 模型已迁移到 GPU: {gpu_name}")
+                            except Exception as gpu_err:
+                                self._device = 'cpu'
+                                logger.warning(f"[实时情感分析] ⚠️ GPU 迁移失败，回退到 CPU: {gpu_err}")
+                        else:
+                            self._device = 'cpu'
+                        
                         # 设置为评估模式
                         self._model.eval()
                         
                         num_labels = self._model.config.num_labels
-                        logger.info(f"[实时情感分析] 模型加载成功 | 分类数: {num_labels} | 设备: CPU")
+                        device_display = self._device.upper()
+                        if self._device == 'cuda':
+                            device_display = f"CUDA:0 ({torch.cuda.get_device_name(0)})"
+                        logger.info(f"[实时情感分析] 模型加载成功 | 分类数: {num_labels} | 设备: {device_display}")
                         
                     except ImportError:
                         logger.warning("[实时情感分析] 警告: transformers未安装")
@@ -288,6 +305,9 @@ class RealtimeSentimentService:
                 max_length=512,
                 padding=True
             )
+            # Bug 4: 将输入迁移到与模型相同的设备
+            if self._device != 'cpu':
+                inputs = {k: v.to(self._device) for k, v in inputs.items()}
             # 推理，全局锁定防高并发导致 transformers 的内部算子产生元图崩溃及争锁
             with torch.no_grad():
                 with self._lock:

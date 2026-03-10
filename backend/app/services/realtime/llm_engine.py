@@ -67,12 +67,15 @@ class LLMSuggestionEngine(SuggestionEngine):
     失败时自动降级到模板引擎。
     """
 
-    def __init__(self, timeout: int = 15):
+    def __init__(self, timeout: int = 60):
         """
         Args:
             timeout: API 请求超时时间（秒）
         """
         self.timeout = timeout
+        # model_id 可用模型缓存: {base_url: (timestamp, [model_ids])}
+        self._models_cache: dict[str, tuple[float, list[str]]] = {}
+        self._cache_ttl = 300  # 缓存 TTL 5 分钟
 
     def generate(
         self,
@@ -276,6 +279,76 @@ class LLMSuggestionEngine(SuggestionEngine):
 
         return "\n".join(parts)
 
+    def _fetch_available_models(self, base_url: str, api_key: str = "") -> list[str] | None:
+        """查询厂商 /models 端点获取可用模型列表，带缓存"""
+        # 检查缓存
+        cached = self._models_cache.get(base_url)
+        if cached:
+            ts, model_ids = cached
+            if time.time() - ts < self._cache_ttl:
+                return model_ids
+        
+        url = f"{base_url.rstrip('/')}/models"
+        headers = {"Content-Type": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        
+        try:
+            req = urllib.request.Request(url, headers=headers, method="GET")
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                body = json.loads(resp.read().decode("utf-8"))
+            
+            # OpenAI 兼容格式: {"data": [{"id": "model-name", ...}, ...]}
+            models_data = body.get("data", [])
+            if isinstance(models_data, list):
+                model_ids = [m.get("id", "") for m in models_data if isinstance(m, dict) and m.get("id")]
+                self._models_cache[base_url] = (time.time(), model_ids)
+                _print(f"[LLM Engine] 📋 查询到 {len(model_ids)} 个可用模型: {model_ids[:10]}")
+                return model_ids
+            
+            return None
+        except Exception as e:
+            _print(f"[LLM Engine] ⚠️ 查询可用模型列表失败 ({url}): {e}")
+            return None
+    
+    def _validate_model_id(self, model_id: str, base_url: str, api_key: str = "") -> str:
+        """校验 model_id 是否在厂商可用列表中，不在则模糊匹配修正"""
+        available = self._fetch_available_models(base_url, api_key)
+        if available is None:
+            # 查询失败，保持原值
+            return model_id
+        
+        # 精确匹配
+        if model_id in available:
+            return model_id
+        
+        # 模糊匹配：找到包含 model_id 的模型（如 "deepseek" 匹配 "deepseek-chat"）
+        model_id_lower = model_id.lower().strip()
+        candidates = []
+        for m in available:
+            m_lower = m.lower()
+            if model_id_lower in m_lower or m_lower.startswith(model_id_lower):
+                candidates.append(m)
+        
+        if len(candidates) == 1:
+            corrected = candidates[0]
+            _print(f"[LLM Engine] ⚠️ model_id \"{model_id}\" 已自动修正为 \"{corrected}\"")
+            return corrected
+        elif len(candidates) > 1:
+            # 多个匹配，优先选 chat 类型的
+            for c in candidates:
+                if 'chat' in c.lower():
+                    _print(f"[LLM Engine] ⚠️ model_id \"{model_id}\" 有多个匹配 {candidates}，选择 \"{c}\"")
+                    return c
+            # 没有 chat 类型，选第一个
+            corrected = candidates[0]
+            _print(f"[LLM Engine] ⚠️ model_id \"{model_id}\" 有多个匹配 {candidates}，选择 \"{corrected}\"")
+            return corrected
+        
+        # 没有匹配，保持原值（可能是自定义/私有部署模型）
+        _print(f"[LLM Engine] ⚠️ model_id \"{model_id}\" 不在可用列表中，保持原值（可用: {available[:5]}...）")
+        return model_id
+
     def _call_api(self, model_config: dict, user_prompt: str) -> str:
         """调用 OpenAI 兼容 API"""
         base_url = model_config["api_base_url"].rstrip("/")
@@ -283,6 +356,9 @@ class LLMSuggestionEngine(SuggestionEngine):
         model_id = model_config["model_id"]
         max_tokens = model_config.get("max_tokens", 512)
         temperature = model_config.get("temperature", 0.7)
+
+        # Bug 2: 动态校验并修正 model_id
+        model_id = self._validate_model_id(model_id, base_url, api_key)
 
         url = f"{base_url}/chat/completions"
 

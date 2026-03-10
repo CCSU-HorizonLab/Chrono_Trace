@@ -232,6 +232,30 @@ class RealtimeMonitorService:
             _print(f"⚠️ 自动置顶微信窗口失败: {e}，请手动切换")
             return False
 
+    def _try_chat_with(self) -> bool:
+        """尝试执行 ChatWith，带 15 秒超时。成功返回 True，失败设置 _chat_error 并返回 False"""
+        chat_result = [False, '']
+        def do_chat():
+            try:
+                self.wx.ChatWith(self.current_display_name)
+                chat_result[0] = True
+            except Exception as e:
+                chat_result[1] = str(e)
+        
+        chat_thread = threading.Thread(target=do_chat, daemon=True)
+        chat_thread.start()
+        chat_thread.join(timeout=15)
+        
+        if chat_thread.is_alive():
+            self._chat_error = '切换聊天窗口超时（15秒），请检查微信窗口是否正常'
+            return False
+        elif not chat_result[0]:
+            self._chat_error = f'切换聊天窗口失败: {chat_result[1]}'
+            return False
+        else:
+            self._chat_error = ''
+            return True
+
     def _polling_loop(self):
         """轮询线程：先完成 ChatWith 和模型预加载，再开始抓取消息"""
         _print(f"🔄 轮询线程已启动")
@@ -239,36 +263,55 @@ class RealtimeMonitorService:
         # -- 1. 将微信窗口置顶 --
         self._bring_wechat_to_front()
         
-        # -- 2. 切换聊天窗口（带超时检测） --
+        # -- 2. 切换聊天窗口（带重试循环，最多 3 次） --
         _print(f"👂 切换到聊天窗口: {self.current_display_name}")
-        try:
-            # 用子线程执行 ChatWith，主轮询线程等待最多 15 秒
-            chat_result = [False, '']
-            def do_chat():
+        MAX_CHAT_RETRIES = 3
+        CHAT_RETRY_DELAY = 5  # 秒
+        chat_connected = False
+        
+        for attempt in range(1, MAX_CHAT_RETRIES + 1):
+            if self.stop_polling or not self.is_monitoring:
+                _print(f"🛑 收到停止信号，中止 ChatWith 重试")
+                return
+            
+            _print(f"🔄 ChatWith 尝试 {attempt}/{MAX_CHAT_RETRIES}...")
+            if attempt > 1:
+                self._bring_wechat_to_front()
+            
+            try:
+                if self._try_chat_with():
+                    _print(f"✅ 已切换到聊天窗口: {self.current_display_name}")
+                    chat_connected = True
+                    break
+                else:
+                    _print(f"⚠️ 第 {attempt} 次 ChatWith 失败: {self._chat_error}")
+            except Exception as e:
+                self._chat_error = f'切换聊天窗口异常: {e}'
+                _print(f"❌ 第 {attempt} 次 ChatWith 异常: {e}")
+            
+            if attempt < MAX_CHAT_RETRIES:
+                _print(f"⏳ {CHAT_RETRY_DELAY} 秒后重试...")
+                time.sleep(CHAT_RETRY_DELAY)
+        
+        # 重试 3 次仍失败 → 进入「等待恢复」模式，而不是终止线程
+        if not chat_connected:
+            _print(f"⚠️ ChatWith 初始连接 {MAX_CHAT_RETRIES} 次尝试均失败，进入等待恢复模式...")
+            RECOVERY_INTERVAL = 10  # 每 10 秒重试一次
+            while not self.stop_polling and self.is_monitoring:
+                time.sleep(RECOVERY_INTERVAL)
+                _print(f"🔄 [等待恢复] 重试 ChatWith...")
+                self._bring_wechat_to_front()
                 try:
-                    self.wx.ChatWith(self.current_display_name)
-                    chat_result[0] = True
+                    if self._try_chat_with():
+                        _print(f"✅ [恢复成功] 已切换到聊天窗口: {self.current_display_name}")
+                        chat_connected = True
+                        break
                 except Exception as e:
-                    chat_result[1] = str(e)
+                    _print(f"⚠️ [等待恢复] ChatWith 仍然失败: {e}")
             
-            chat_thread = threading.Thread(target=do_chat, daemon=True)
-            chat_thread.start()
-            chat_thread.join(timeout=15)
-            
-            if chat_thread.is_alive():
-                self._chat_error = '切换聊天窗口超时（15秒），请检查微信窗口是否正常'
-                _print(f"⚠️ ChatWith 超时！{self._chat_error}")
+            if not chat_connected:
+                _print(f"🛑 等待恢复被中断（收到停止信号），轮询线程退出")
                 return
-            elif not chat_result[0]:
-                self._chat_error = f'切换聊天窗口失败: {chat_result[1]}'
-                _print(f"❌ {self._chat_error}")
-                return
-            else:
-                _print(f"✅ 已切换到聊天窗口: {self.current_display_name}")
-        except Exception as e:
-            self._chat_error = f'切换聊天窗口异常: {e}'
-            _print(f"❌ {self._chat_error}")
-            return
         
         # -- 3. 预加载情感分析模型 --
         _print(f"🤖 正在预加载情感分析模型...")
@@ -284,13 +327,35 @@ class RealtimeMonitorService:
         self._chat_error = ''
         _print(f"🟢 准备就绪，开始抓取消息...")
         
+        gdi_fail_count = 0  # GDI 异常连续失败计数（Bug 3）
+        GDI_MAX_CONSECUTIVE = 5  # 连续 GDI 失败上限
+        
         while not self.stop_polling and self.is_monitoring:
             try:
                 if not self.wx or not self.current_display_name:
                     break
                 
                 # 获取当前窗口的所有消息（通过去重逻辑只处理新消息）
-                new_messages = self.wx.GetAllMessage()
+                try:
+                    new_messages = self.wx.GetAllMessage()
+                    gdi_fail_count = 0  # 成功则重置计数
+                except Exception as gdi_err:
+                    err_msg = str(gdi_err)
+                    # Bug 3: GDI 截图异常专项捕获
+                    if 'CreateCompatibleDC' in err_msg or 'GDI' in err_msg.upper() or 'ScreenShot' in err_msg:
+                        gdi_fail_count += 1
+                        if gdi_fail_count <= GDI_MAX_CONSECUTIVE:
+                            _print(f"⚠️ GDI 截图异常 ({gdi_fail_count}/{GDI_MAX_CONSECUTIVE}): {err_msg}")
+                            time.sleep(2)  # 等待 GDI 资源释放
+                            continue
+                        else:
+                            self._chat_error = f'GDI 截图连续失败 {gdi_fail_count} 次，消息获取暂时不可用'
+                            _print(f"❌ {self._chat_error}")
+                            gdi_fail_count = 0  # 重置后继续尝试
+                            time.sleep(5)
+                            continue
+                    else:
+                        raise  # 非 GDI 异常，交给外层处理
                 
                 if new_messages:
                     # 处理每条消息
@@ -533,6 +598,12 @@ class RealtimeMonitorService:
             if self.is_monitoring and self.current_batch_id:
                 message_count = self.message_buffer.get_batch_count(self.current_batch_id)
             
+            # 检测轮询线程是否仍然存活
+            polling_alive = (
+                self.polling_thread is not None 
+                and self.polling_thread.is_alive()
+            )
+            
             return {
                 'is_monitoring': self.is_monitoring,
                 'talker_username': self.current_talker,
@@ -542,6 +613,7 @@ class RealtimeMonitorService:
                 'model_ready': self.sentiment_service.is_ready(),
                 'chat_ready': self._chat_ready,
                 'chat_error': self._chat_error,
+                'polling_alive': polling_alive,
             }
             
         except Exception as e:

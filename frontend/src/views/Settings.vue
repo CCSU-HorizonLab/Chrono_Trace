@@ -51,7 +51,7 @@
             </div>
           </div>
 
-          <button class="ct-btn primary add-model-btn" @click="resetEditingModel(); showModelForm = true">
+          <button class="ct-btn primary add-model-btn" @click.prevent="resetEditingModel(); showModelForm = true">
             + 添加模型
           </button>
         </div>
@@ -135,15 +135,43 @@
             <label class="row">
               <div class="lab">供应商</div>
               <select v-model="editingModel.provider" class="ct-field">
+                <option value="" disabled hidden>请选择供应商...</option>
                 <option value="deepseek">DeepSeek</option>
                 <option value="openai">OpenAI</option>
+                <option value="zhipu">智谱 GLM</option>
+                <option value="moonshot">Kimi (月之暗面)</option>
+                <option value="minimax">MiniMax</option>
                 <option value="ollama">Ollama（本地）</option>
                 <option value="custom">自定义</option>
               </select>
             </label>
             <label class="row">
               <div class="lab">模型 ID</div>
-              <input v-model="editingModel.model_id" class="ct-field" :placeholder="modelIdPlaceholder" />
+              <div style="display: flex; gap: var(--ct-space-xs); align-items: stretch; flex: 1; position: relative;" @click.stop>
+                <input 
+                  v-model="editingModel.model_id" 
+                  class="ct-field" 
+                  :placeholder="modelIdPlaceholder" 
+                  style="flex: 1;" 
+                  @focus="showModelDropdown = true"
+                  @click="showModelDropdown = true"
+                />
+                <button class="ct-btn" @click.stop.prevent="fetchAvailableModels" :disabled="fetchingModels" title="从接口获取可用模型列表" style="white-space: nowrap; padding: 0 12px; font-size: 13px;">
+                  {{ fetchingModels ? '获取中...' : '获取列表' }}
+                </button>
+                
+                <!-- 自定义下拉列表 -->
+                <ul v-show="showModelDropdown && availableModels.length > 0" class="ct-custom-dropdown">
+                  <li 
+                    v-for="m in availableModels" 
+                    :key="m" 
+                    @click="selectModel(m)"
+                    class="dropdown-item"
+                  >
+                    {{ m }}
+                  </li>
+                </ul>
+              </div>
             </label>
             <label class="row">
               <div class="lab">API Base URL</div>
@@ -164,7 +192,7 @@
           </div>
           <div class="form-actions">
             <button class="ct-btn" @click="showModelForm = false">取消</button>
-            <button class="ct-btn primary" @click="saveModel" :disabled="!editingModel.name || !editingModel.model_id || !editingModel.api_base_url">保存</button>
+            <button class="ct-btn primary" @click="saveModel" :disabled="!editingModel.name || !editingModel.provider || !editingModel.model_id || !editingModel.api_base_url">保存</button>
           </div>
         </div>
       </div>
@@ -173,7 +201,7 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref, onMounted, watch, computed } from 'vue'
+import { reactive, ref, onMounted, watch, computed, onUnmounted } from 'vue'
 import { bridgeReady, api } from '@/api/bridge'
 import CtCard from '@/components/base/CtCard.vue'
 import CtField from '@/components/base/CtField.vue'
@@ -353,7 +381,7 @@ const showModelForm = ref(false)
 const editingModel = reactive({
   id: null as number | null,
   name: '',
-  provider: 'deepseek',
+  provider: '',
   model_id: '',
   api_base_url: '',
   api_key: '',
@@ -362,30 +390,62 @@ const editingModel = reactive({
   max_tokens: 512,
 })
 
+const fetchingModels = ref(false)
+const availableModels = ref<string[]>([])
+const showModelDropdown = ref(false)
+
+function selectModel(m: string) {
+  editingModel.model_id = m
+  showModelDropdown.value = false
+}
+
+function handleDropdownClickOutside() {
+  if (showModelDropdown.value) {
+    showModelDropdown.value = false
+  }
+}
+
+onMounted(() => {
+  document.addEventListener('click', handleDropdownClickOutside)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('click', handleDropdownClickOutside)
+})
+
 const modelIdPlaceholder = computed(() => {
   const map: Record<string, string> = {
     deepseek: 'deepseek-chat',
     openai: 'gpt-4o-mini',
+    zhipu: 'glm-4-flash',
+    moonshot: 'moonshot-v1-8k',
+    minimax: 'abab6.5s-chat',
     ollama: 'qwen2.5:7b',
     custom: '模型标识',
   }
-  return map[editingModel.provider] || '模型标识'
+  return editingModel.provider ? (map[editingModel.provider] || '模型标识') : '请先选择供应商'
 })
 
 const apiUrlPlaceholder = computed(() => {
   const map: Record<string, string> = {
     deepseek: 'https://api.deepseek.com/v1',
     openai: 'https://api.openai.com/v1',
+    zhipu: 'https://open.bigmodel.cn/api/paas/v4',
+    moonshot: 'https://api.moonshot.cn/v1',
+    minimax: 'https://api.minimax.chat/v1',
     ollama: 'http://localhost:11434/v1',
     custom: 'https://your-api.com/v1',
   }
-  return map[editingModel.provider] || 'https://api.example.com/v1'
+  return editingModel.provider ? (map[editingModel.provider] || 'https://api.example.com/v1') : '请先选择供应商'
 })
 
 function providerLabel(p: string) {
   const map: Record<string, string> = {
     deepseek: 'DeepSeek',
     openai: 'OpenAI',
+    zhipu: '智谱 GLM',
+    moonshot: 'Kimi',
+    minimax: 'MiniMax',
     ollama: 'Ollama',
     custom: '自定义',
   }
@@ -402,9 +462,37 @@ async function loadLLMModels() {
   }
 }
 
-
+async function fetchAvailableModels() {
+  if (!editingModel.api_base_url) {
+    alert('请先输入 API Base URL')
+    return
+  }
+  fetchingModels.value = true
+  try {
+    await bridgeReady()
+    const r = await api.fetch_provider_models(editingModel.api_base_url, editingModel.api_key || '')
+    if (r.ok) {
+      availableModels.value = r.models || []
+      if (availableModels.value.length === 0) {
+        alert('获取成功，但该地址没有返回任何模型列表')
+      } else {
+        if (!editingModel.model_id) {
+          editingModel.model_id = availableModels.value[0]
+        }
+      }
+    } else {
+      alert('获取失败: ' + (r.error || '未知错误'))
+    }
+  } catch (e) {
+    console.error('获取模型列表失败:', e)
+    alert('请求异常: ' + (e as Error).message)
+  } finally {
+    fetchingModels.value = false
+  }
+}
 
 function editModel(m: any) {
+  availableModels.value = []
   editingModel.id = m.id
   editingModel.name = m.name
   editingModel.provider = m.provider
@@ -418,9 +506,10 @@ function editModel(m: any) {
 }
 
 function resetEditingModel() {
+  availableModels.value = []
   editingModel.id = null
   editingModel.name = ''
-  editingModel.provider = 'deepseek'
+  editingModel.provider = ''
   editingModel.model_id = ''
   editingModel.api_base_url = ''
   editingModel.api_key = ''
@@ -475,7 +564,13 @@ watch(() => editingModel.provider, (p) => {
       openai: 'https://api.openai.com/v1',
       ollama: 'http://localhost:11434/v1',
     }
+    const modelMap: Record<string, string> = {
+      deepseek: 'deepseek-chat',
+      openai: 'gpt-4o-mini',
+      ollama: 'qwen2.5:7b',
+    }
     if (urlMap[p]) editingModel.api_base_url = urlMap[p]
+    if (modelMap[p]) editingModel.model_id = modelMap[p]
   }
 })
 
@@ -592,5 +687,45 @@ onMounted(() => {
 .model-detail { display: flex; flex-wrap: wrap; gap: var(--ct-space-sm); font-size: var(--ct-text-xs); color: var(--ct-text-tertiary); }
 
 .add-model-btn { align-self: flex-start; }
-</style>
 
+.ct-custom-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  width: 100%;
+  max-height: 200px;
+  overflow-y: auto;
+  background-color: var(--ct-bg-1, #ffffff);
+  border: 1px solid var(--ct-border);
+  border-radius: var(--ct-radius-md);
+  padding: 0;
+  margin: 0;
+  list-style: none;
+  z-index: 99999;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.ct-custom-dropdown::-webkit-scrollbar {
+  width: 6px;
+}
+.ct-custom-dropdown::-webkit-scrollbar-track {
+  background: transparent;
+}
+.ct-custom-dropdown::-webkit-scrollbar-thumb {
+  background-color: var(--ct-border);
+  border-radius: 3px;
+}
+
+.ct-custom-dropdown .dropdown-item {
+  padding: 8px 12px;
+  font-size: 14px;
+  color: var(--ct-text-1);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.ct-custom-dropdown .dropdown-item:hover {
+  background-color: var(--ct-bg-hover);
+  color: var(--ct-primary);
+}
+</style>

@@ -285,6 +285,10 @@ class Bridge:
                     "message_count": len(recent_used),
                 }
             }
+        except TimeoutError as e:
+            # 超时是正常情况，不需要打印完整堆栈
+            logger.warning(f"[Bridge] 生成建议超时: {e}")
+            return {"ok": False, "error": str(e)}
         except Exception as e:
             import traceback
             logger.error(f"[Bridge] 生成建议失败: {e}")
@@ -618,7 +622,10 @@ class Bridge:
                 "talker_display_name": status.get('talker_display_name'),
                 "batch_id": status.get('batch_id'),
                 "message_count": status.get('message_count', 0),
-                "model_ready": status.get('model_ready', False)
+                "model_ready": status.get('model_ready', False),
+                "chat_ready": status.get('chat_ready', False),
+                "chat_error": status.get('chat_error', ''),
+                "polling_alive": status.get('polling_alive', True),
             }
         except Exception as e:
             logger.error(f"[Bridge] 获取实时监听状态异常: {e}")
@@ -948,7 +955,7 @@ class Bridge:
             if model.get('is_active'):
                 conn.execute('UPDATE llm_models SET is_active = 0')
 
-            if 'id' in model:
+            if model.get('id') is not None:
                 # 只更新状态，其他字段保持不变
                 if len(model) == 2 and 'is_active' in model:
                     conn.execute(
@@ -1006,7 +1013,27 @@ class Bridge:
             logger.error(f"[Bridge] 删除模型失败: {e}")
             return {"ok": False, "error": str(e)}
 
-    # ==================== 联系人画像相关 ====================
+    def fetch_provider_models(self, base_url: str, api_key: str = "") -> dict[str, Any]:
+        """查询厂商 API 可用的模型列表（通过 GET /models 端点）
+        
+        Args:
+            base_url: API 基址址 (e.g. https://api.deepseek.com/v1)
+            api_key: API 密钥
+            
+        Returns:
+            {"ok": True, "models": ["deepseek-chat", "deepseek-reasoner", ...]}
+        """
+        try:
+            from ..services.realtime.llm_engine import LLMSuggestionEngine
+            engine = LLMSuggestionEngine()
+            model_ids = engine._fetch_available_models(base_url, api_key)
+            if model_ids is not None:
+                return {"ok": True, "models": model_ids}
+            else:
+                return {"ok": False, "error": "无法查询可用模型，请检查 API 地址和密钥", "models": []}
+        except Exception as e:
+            logger.error(f"[Bridge] 查询厂商模型失败: {e}")
+            return {"ok": False, "error": str(e), "models": []}
 
     def get_contact_profile(self, display_name: str) -> dict[str, Any]:
         """

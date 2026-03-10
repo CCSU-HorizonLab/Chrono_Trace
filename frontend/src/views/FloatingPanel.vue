@@ -12,8 +12,13 @@
       </div>
     </header>
 
+    <div v-if="connectionLost" class="fp-connection-lost">
+      <span>⚠️ 连接已断开，等待重新连接…</span>
+      <button class="fp-btn small" @click="retryConnection">🔄 重试</button>
+    </div>
+
     <!-- ChatWith 超时/错误提示 -->
-    <div v-if="chatError" class="fp-chat-error">
+    <div v-if="chatError && !connectionLost" class="fp-chat-error">
       <span>⚠️ {{ chatError }}</span>
       <button class="fp-btn small" @click="exitFloating">重新开始</button>
     </div>
@@ -114,7 +119,7 @@
 
       <div v-if="loading" class="fp-loading">
         <div class="fp-loading-bar"></div>
-        <span>AI 正在思考…</span>
+        <span>AI 正在思考 (已思考 {{ thinkingSeconds }} 秒)…</span>
       </div>
 
       <!-- 建议卡片 -->
@@ -211,6 +216,8 @@ const llmModels = ref<any[]>([])
 const activeModelId = ref<number | null>(null)
 const disabledModels = ref<Set<number>>(new Set())
 const llmError = ref('')
+const connectionLost = ref(false)  // 断流感知状态
+let pollFailCount = 0  // 连续轮询失败计数
 
 const intent = ref<'intimate' | 'maintain' | 'distance'>('maintain')
 const triggerMode = ref<'full_auto' | 'semi_auto' | 'manual'>('semi_auto')
@@ -475,6 +482,15 @@ function startPolling() {
       if (s.ok) {
         realtimeState.isMonitoring = s.is_monitoring
         realtimeState.messageCount = s.message_count || 0
+        pollFailCount = 0  // 成功则重置失败计数
+
+        // 检测断流：polling_alive 为 false 表示后端轮询线程已死亡
+        if (s.polling_alive === false && s.is_monitoring) {
+          connectionLost.value = true
+        } else if (s.polling_alive !== false) {
+          connectionLost.value = false
+        }
+
         // 检测 ChatWith 错误
         if (s.chat_error) {
           chatError.value = s.chat_error
@@ -490,6 +506,11 @@ function startPolling() {
           }
         } else {
           notMonitoringCount = 0
+        }
+      } else {
+        pollFailCount++
+        if (pollFailCount >= 3) {
+          connectionLost.value = true
         }
       }
     } catch (e) { console.error('状态轮询失败:', e) }
@@ -650,8 +671,27 @@ function handleLlmError(errorMsg: string) {
 }
 
 // ========== AI 建议操作 ==========
+const thinkingSeconds = ref(0)
+let thinkingTimer: any = null
+
+function __startThinkingTimer() {
+  thinkingSeconds.value = 0
+  if (thinkingTimer) clearInterval(thinkingTimer)
+  thinkingTimer = setInterval(() => {
+    thinkingSeconds.value++
+  }, 1000)
+}
+
+function __stopThinkingTimer() {
+  if (thinkingTimer) {
+    clearInterval(thinkingTimer)
+    thinkingTimer = null
+  }
+}
+
 async function manualGenerate() {
   loading.value = true
+  __startThinkingTimer()
   llmError.value = ''
   try {
     await bridgeReady()
@@ -664,6 +704,7 @@ async function manualGenerate() {
       expandedIds.value = new Set(expandedIds.value)
     } else {
       loading.value = false
+      __stopThinkingTimer()
       handleLlmError(r.error || '生成失败')
       return
     }
@@ -675,7 +716,10 @@ async function manualGenerate() {
     console.error('手动生成失败:', e) 
     handleLlmError(e.message || '网络错误')
   }
-  finally { loading.value = false }
+  finally { 
+    loading.value = false
+    __stopThinkingTimer()
+  }
 }
 
 function toggleSuggestion(s: any) {
@@ -717,6 +761,7 @@ async function sendUserContext() {
   conversationHistory.value.push({ role: 'user', content })
   userInput.value = ''
   loading.value = true
+  __startThinkingTimer()
   llmError.value = ''
 
   try {
@@ -744,6 +789,7 @@ async function sendUserContext() {
     handleLlmError(e.message || '系统错误')
   } finally {
     loading.value = false
+    __stopThinkingTimer()
   }
 }
 
@@ -757,6 +803,30 @@ function formatMsgTime(ts: number): string {
 function sendQuickPrompt(prompt: string) {
   userInput.value = prompt
   sendUserContext()
+}
+
+/** 断流后重试连接 */
+async function retryConnection() {
+  connectionLost.value = false
+  pollFailCount = 0
+  chatError.value = ''
+  try {
+    await bridgeReady()
+    const s = await api.get_realtime_status()
+    if (s.ok && s.is_monitoring) {
+      realtimeState.isMonitoring = true
+      realtimeState.messageCount = s.message_count || 0
+      if (s.chat_error) {
+        chatError.value = s.chat_error
+      }
+    } else {
+      // 监听已完全停止，退回建议页
+      goBackToSuggestions()
+    }
+  } catch (e) {
+    console.error('重试连接失败:', e)
+    connectionLost.value = true
+  }
 }
 
 // ========== 画像 ==========
@@ -1491,6 +1561,38 @@ async function generateProfile() {
 .fp-suggestions::-webkit-scrollbar-thumb {
   background: var(--ct-border-color);
   border-radius: 2px;
+}
+
+/* ==================== 断流感知横幅 ==================== */
+.fp-connection-lost {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  background: linear-gradient(135deg, #fecaca 0%, #fde2e2 100%);
+  border-bottom: 1px solid #ef4444;
+  color: #991b1b;
+  font-size: 12px;
+  font-weight: 600;
+  flex-shrink: 0;
+  animation: fp-pulse-bg 2s ease-in-out infinite;
+}
+
+@keyframes fp-pulse-bg {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.75; }
+}
+
+.fp-connection-lost .fp-btn.small {
+  background: #ef4444;
+  color: white;
+  border: none;
+  padding: 3px 10px;
+  border-radius: var(--ct-radius-md);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 /* ==================== ChatWith 错误提示 ==================== */

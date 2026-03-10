@@ -57,6 +57,17 @@ def setup_logging(level=logging.INFO, console_only=False):
         except Exception as e:
             root_logger.warning(f"无法配置文件日志，将只输出到控制台: {e}")
 
+    # 抑制第三方库的冗余日志
+    logging.getLogger("transformers").setLevel(logging.ERROR)
+    logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
+    logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
+    logging.getLogger("jieba").setLevel(logging.ERROR)
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+    
+    # Hugging Face 彻底静默控制台输出的环境变量预设（可选的保险保障）
+    os.environ["TRANSFORMERS_VERBOSITY"] = "error"
+    os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
+
     return root_logger
 
 

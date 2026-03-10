@@ -433,3 +433,4 @@ class FloatingWindowService:
             self._stop_tracking.wait(interval)
 
         _log('跟踪循环退出')
+ 

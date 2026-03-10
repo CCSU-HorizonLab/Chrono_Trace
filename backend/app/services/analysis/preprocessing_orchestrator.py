@@ -109,13 +109,13 @@ class PreprocessingOrchestrator:
             PreprocessedStatistics: 包含所有29个统计常量的数据类
         """
         start_time = time.time()
-        logger.info(f"开始预处理会话 {conversation_id} (force={force_reprocess})")
+        logger.debug(f"开始预处理会话 {conversation_id} (force={force_reprocess})")
         
         # 1. 检查缓存
         if not force_reprocess:
             cached_stats = self._load_cached_statistics(conversation_id)
             if cached_stats:
-                logger.info(f"使用缓存的统计数据 (会话 {conversation_id})")
+                logger.debug(f"使用缓存的统计数据 (会话 {conversation_id})")
                 return cached_stats
         
         # 2. 收集所有统计数据

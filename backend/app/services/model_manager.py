@@ -25,6 +25,9 @@ logger = logging.getLogger(__name__)
 # 版本信息文件名
 VERSION_FILE = "model_version.json"
 
+# 全局追踪已经启动更新检查的 repo，避免不同实例重复发请求
+_global_update_started = set()
+
 
 class ModelManager:
     """模型版本管理器
@@ -136,9 +139,12 @@ class ModelManager:
         不阻塞主线程。如果已有更新任务在运行，则跳过。
         更新完成后，新模型在下次启动时生效。
         """
-        if self._updating:
+        global _global_update_started
+        if self._updating or self.repo_id in _global_update_started:
             logger.debug("[模型管理] 已有更新任务在运行，跳过")
             return
+            
+        _global_update_started.add(self.repo_id)
         
         self._update_thread = threading.Thread(
             target=self._check_and_update,
@@ -156,6 +162,9 @@ class ModelManager:
             logger.error(f"[模型管理] 后台更新检查失败: {e}")
         finally:
             self._updating = False
+            global _global_update_started
+            if self.repo_id in _global_update_started:
+                _global_update_started.remove(self.repo_id)
     
     def _do_check_and_update(self):
         """执行实际的更新检查和下载逻辑"""

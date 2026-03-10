@@ -231,7 +231,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { api } from '../api/bridge'
-import { analyzeAffinity, getAffinityScores, getRelationshipContext, type AffinityAnalysisResult } from '../api/affinity'
+import { analyzeAffinity, getAffinityScores, getAffinityProgress, getRelationshipContext, type AffinityAnalysisResult } from '../api/affinity'
 import CtCard from '@/components/base/CtCard.vue'
 import CtButton from '@/components/base/CtButton.vue'
 import AffinityScoreCard from '../components/affinity/AffinityScoreCard.vue'
@@ -341,23 +341,45 @@ const startAnalysis = async (force: boolean) => {
   progressStep.value = '准备中...'
   
   try {
-    const timer = setInterval(() => {
-      if (progressPercent.value < 90) {
-        progressPercent.value += 5
-        if (progressPercent.value < 20) progressStep.value = '正在预处理数据(首次分析)...'
-        else if (progressPercent.value < 40) progressStep.value = '分析情感共振...'
-        else if (progressPercent.value < 60) progressStep.value = '计算聊天积极度...'
-        else if (progressPercent.value < 80) progressStep.value = '评估态度倾向...'
-        else progressStep.value = '生成综合分析报告...'
-      }
-    }, 500)
+    // 1. 启动异步分析，获取 task_id
+    const taskId = await analyzeAffinity(selectedConversationId.value, force)
     
-    const result = await analyzeAffinity(selectedConversationId.value, force)
+    // 2. 轮询后端真实进度
+    await new Promise<void>((resolve, reject) => {
+      const pollTimer = setInterval(async () => {
+        try {
+          const progress = await getAffinityProgress(taskId)
+          
+          if (progress.ok) {
+            // 更新进度条
+            progressPercent.value = progress.progress_percent
+            progressStep.value = progress.current_step || '分析中...'
+            
+            if (progress.status === 'completed') {
+              clearInterval(pollTimer)
+              // 使用轮询返回的完整结果
+              if (progress.result) {
+                analysisResult.value = progress.result as AffinityAnalysisResult
+              } else {
+                // 兜底：从缓存获取结果
+                const scores = await getAffinityScores(selectedConversationId.value!)
+                if (scores) analysisResult.value = scores
+              }
+              resolve()
+            } else if (progress.status === 'failed') {
+              clearInterval(pollTimer)
+              reject(new Error(progress.error || '分析失败'))
+            }
+          }
+        } catch (pollErr) {
+          console.error('轮询进度失败', pollErr)
+          // 轮询出错不立即停止，可能是暂时性网络问题
+        }
+      }, 500)
+    })
     
-    clearInterval(timer)
     progressPercent.value = 100
     progressStep.value = '分析完成'
-    analysisResult.value = result
     
     setTimeout(() => {
       isAnalyzing.value = false
@@ -366,7 +388,9 @@ const startAnalysis = async (force: boolean) => {
   } catch (e) {
     console.error('Analysis failed', e)
     progressStep.value = '分析失败: ' + (e instanceof Error ? e.message : String(e))
-    isAnalyzing.value = false
+    setTimeout(() => {
+      isAnalyzing.value = false
+    }, 2000)
   }
 }
 

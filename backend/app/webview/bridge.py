@@ -1817,25 +1817,115 @@ class Bridge:
             }
 
     def analyze_affinity(self, conversation_id: int, force_reanalyze: bool = False, config_overrides: dict = None) -> dict[str, Any]:
-        """执行好感度分析"""
+        """执行好感度分析（异步，立即返回 task_id 供轮询）"""
         try:
+            import threading
+            import time as _time
             from ..services.analysis.affinity_analysis_service import AffinityAnalysisService
-            from dataclasses import asdict
-            
+
             service = AffinityAnalysisService()
-            result = service.analyze(conversation_id, force_reanalyze, config_overrides)
-            
+            # 保存服务实例引用，供 get_affinity_progress 查询进度
+            self._affinity_service = service
+
+            # 预生成 task_id，与 service.analyze 内部生成的保持一致
+            task_id = f"affinity_{conversation_id}_{int(_time.time())}"
+
+            def _run_analysis():
+                try:
+                    service.analyze(conversation_id, force_reanalyze, config_overrides)
+                except Exception as e:
+                    logger.error(f"[Bridge] 异步好感度分析失败: {e}")
+                    import traceback
+                    traceback.print_exc()
+
+            t = threading.Thread(target=_run_analysis, daemon=True)
+            t.start()
+
+            # 等一小段时间让 service.analyze 初始化 task_id
+            _time.sleep(0.1)
+
+            # 从 service._task_status 中找到真正的 task_id
+            real_task_id = None
+            for tid in service._task_status:
+                if tid.startswith(f"affinity_{conversation_id}_"):
+                    real_task_id = tid
+                    break
+
             return {
                 "ok": True,
-                "result": asdict(result)
+                "task_id": real_task_id or task_id
             }
         except Exception as e:
-            logger.error(f"[Bridge] 好感度分析失败: {e}")
+            logger.error(f"[Bridge] 好感度分析启动失败: {e}")
             import traceback
             traceback.print_exc()
             return {
                 "ok": False,
                 "error": str(e)
+            }
+
+    def get_affinity_progress(self, task_id: str) -> dict[str, Any]:
+        """
+        查询好感度分析进度
+
+        Args:
+            task_id: 从 analyze_affinity 返回的任务 ID
+
+        Returns:
+            {
+                "ok": True,
+                "status": "running" | "completed" | "failed",
+                "progress_percent": 40,
+                "current_step": "计算维度评分",
+                "result": {...}  // 仅当 status == "completed" 时返回完整结果
+            }
+        """
+        try:
+            from dataclasses import asdict
+
+            service = getattr(self, '_affinity_service', None)
+            if not service:
+                return {
+                    "ok": False,
+                    "error": "分析服务未初始化",
+                    "status": "failed",
+                    "progress_percent": 0,
+                    "current_step": ""
+                }
+
+            progress = service.get_progress(task_id)
+            if not progress:
+                return {
+                    "ok": True,
+                    "status": "pending",
+                    "progress_percent": 0,
+                    "current_step": "等待启动..."
+                }
+
+            response = {
+                "ok": True,
+                "status": progress.status,
+                "progress_percent": progress.progress_percent,
+                "current_step": progress.current_step
+            }
+
+            # 分析完成时，返回完整结果
+            if progress.status == "completed":
+                response["result"] = asdict(progress)
+
+            # 分析失败时，返回错误信息
+            if progress.status == "failed":
+                response["error"] = progress.error or "未知错误"
+
+            return response
+        except Exception as e:
+            logger.error(f"[Bridge] 查询好感度进度失败: {e}")
+            return {
+                "ok": False,
+                "error": str(e),
+                "status": "failed",
+                "progress_percent": 0,
+                "current_step": ""
             }
 
     def get_affinity_scores(self, conversation_id: int) -> dict[str, Any]:

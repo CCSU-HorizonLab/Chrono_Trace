@@ -85,17 +85,35 @@ export interface AffinityConfig {
 
 // API Functions
 
+/** 进度查询结果 */
+export interface AffinityProgressResult {
+    ok: boolean
+    status: 'pending' | 'running' | 'completed' | 'failed'
+    progress_percent: number
+    current_step: string
+    result?: AffinityAnalysisResult
+    error?: string
+}
+
 /**
- * Trigger full affinity analysis
+ * 启动好感度分析（异步，返回 task_id 供轮询）
  */
 export async function analyzeAffinity(
     conversationId: number,
     forceReanalyze: boolean = false,
     configOverrides?: Partial<AffinityConfig>
-): Promise<AffinityAnalysisResult> {
+): Promise<string> {
     const res = await api.analyze_affinity(conversationId, forceReanalyze, configOverrides)
     if (!res.ok) throw new Error(res.error || 'Analysis failed')
-    return res.result
+    return res.task_id
+}
+
+/**
+ * 查询好感度分析进度
+ */
+export async function getAffinityProgress(taskId: string): Promise<AffinityProgressResult> {
+    const res = await api.get_affinity_progress(taskId)
+    return res
 }
 
 /**

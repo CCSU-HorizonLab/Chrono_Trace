@@ -669,12 +669,34 @@ class RealtimeMonitorService:
             try:
                 _print(f"🔔 触发事件: {trigger.trigger_type} (severity={trigger.severity})")
                 
+                # 构建完整的 context (融合 trigger.context 和 画外特征)
+                ctx = trigger.context.copy() if trigger.context else {}
+                
+                if self.current_display_name:
+                    try:
+                        from .contact_profiler import ContactProfiler
+                        from .self_profiler import SelfProfiler
+                        
+                        # 对方画像
+                        c_profiler = ContactProfiler()
+                        c_cached = c_profiler.get_profile(self.current_display_name)
+                        if c_cached and not c_cached['expired']:
+                            ctx['contact_profile'] = c_cached['profile']
+                            
+                        # 我方本体画像
+                        s_profiler = SelfProfiler()
+                        s_cached = s_profiler.get_profile(self.current_display_name)
+                        if s_cached and not s_cached['expired']:
+                            ctx['self_profile'] = s_cached['profile']
+                    except Exception as prof_e:
+                        _print(f"⚠️ 提取画像失败: {prof_e}")
+
                 # 生成建议
                 from .suggestion_engine import SuggestionEngineFactory
                 engine_type = self._suggestion_config.get('engine_type', 'llm')
                 engine = SuggestionEngineFactory.create(engine_type)
                 result = engine.generate(
-                    trigger.trigger_type, intent, trigger.context
+                    trigger.trigger_type, intent, ctx
                 )
                 
                 # 存入数据库
@@ -716,7 +738,29 @@ class RealtimeMonitorService:
             engine = SuggestionEngineFactory.create(
                 self._suggestion_config.get('engine_type', 'llm')
             )
-            result = engine.generate(trigger_type, intent)
+            
+            # 构建完整的 context (包含画像)
+            ctx = {'mode': 'full_auto'}
+            if self.current_display_name:
+                try:
+                    from .contact_profiler import ContactProfiler
+                    from .self_profiler import SelfProfiler
+                    
+                    # 对方画像
+                    c_profiler = ContactProfiler()
+                    c_cached = c_profiler.get_profile(self.current_display_name)
+                    if c_cached and not c_cached['expired']:
+                        ctx['contact_profile'] = c_cached['profile']
+                        
+                    # 我方本体画像
+                    s_profiler = SelfProfiler()
+                    s_cached = s_profiler.get_profile(self.current_display_name)
+                    if s_cached and not s_cached['expired']:
+                        ctx['self_profile'] = s_cached['profile']
+                except Exception as prof_e:
+                    _print(f"⚠️ 提取画像失败: {prof_e}")
+                    
+            result = engine.generate(trigger_type, intent, ctx)
             
             trigger = TriggerEvent(
                 trigger_type=trigger_type,

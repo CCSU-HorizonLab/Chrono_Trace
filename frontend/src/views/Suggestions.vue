@@ -173,6 +173,38 @@
           <div v-if="profileLoading" class="profile-loading">画像生成中...</div>
         </div>
 
+        <!-- 本体克隆信息卡 -->
+        <div class="card config-card">
+          <div class="card-hd">👤 我的克隆画像 (送给AI的模仿样本)</div>
+          <div class="card-bd">
+            <div v-if="selfProfile.typing_style" class="profile-detail">
+              <div class="detail-item">
+                <span class="detail-label">✍️ 排版风格</span>
+                <span class="detail-text">{{ selfProfile.typing_style }}</span>
+              </div>
+              <div class="detail-item" v-if="selfProfile.frequent_catchphrases?.length">
+                <span class="detail-label">🗣️ 常用词汇</span>
+                <span class="detail-text">{{ selfProfile.frequent_catchphrases.join('、') }}</span>
+              </div>
+              <div class="detail-item" v-if="selfProfile.attitude_and_role">
+                <span class="detail-label">🎭 我的态度</span>
+                <span class="detail-text">{{ selfProfile.attitude_and_role }}</span>
+              </div>
+            </div>
+            <!-- 无画像提示 -->
+            <div v-else-if="!selfProfileLoading" class="profile-empty">
+              <span>系统暂未提取你对TA的专属聊天风格</span>
+              <button
+                v-if="realtimeState.talkerName"
+                class="btn-sm"
+                @click="showSelfProfileDialog = true"
+                :disabled="selfProfileLoading"
+              >立即扫描克隆</button>
+            </div>
+            <div v-if="selfProfileLoading" class="profile-loading">特征扫描提取中 (约15-30秒)...</div>
+          </div>
+        </div>
+
         <!-- 设置：触发模式 + 走向 -->
         <div class="card config-card">
           <div class="card-hd">⚙️ 建议设置</div>
@@ -239,6 +271,39 @@
         <div class="modal-actions">
           <button class="ct-btn variant-ghost" @click="showProfileDialog = false">取消</button>
           <button class="ct-btn primary" @click="generateContactProfile">确认生成</button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
+
+  <!-- 本体画像生成确认弹窗 -->
+  <Teleport to="body">
+    <div v-if="showSelfProfileDialog" class="ct-modal-overlay" @click.self="showSelfProfileDialog = false">
+      <div class="ct-modal-dialog">
+        <div class="modal-title">🎭 克隆我的专属风格</div>
+        <div class="modal-desc">
+          将分析过去你发送给「{{ realtimeState.talkerName }}」的聊天记录，提取属于你的打字排版习惯与常用口头禅。<br/>
+          <strong>此举能大幅消除预设的"AI 机器味"，让生成的回复更像你自己。</strong>
+        </div>
+        <div class="modal-field">
+          <label>扫描提取深度</label>
+          <div class="budget-options">
+            <label v-for="opt in [
+              { value: 'medium', label: '标准 (~4K)', desc: '推荐深度' },
+              { value: 'high', label: '深度 (~8K)', desc: '消耗较多' }
+            ]" :key="opt.value" class="budget-option" :class="{ active: selfProfileBudgetLevel === opt.value }">
+              <input type="radio" :value="opt.value" v-model="selfProfileBudgetLevel" />
+              <span class="budget-label">{{ opt.label }}</span>
+              <span class="budget-desc" v-if="opt.desc">{{ opt.desc }}</span>
+            </label>
+          </div>
+        </div>
+        <div class="modal-info">
+          预估消耗: ~{{ selfProfileEstimatedTokens || '计算中' }} tokens
+        </div>
+        <div class="modal-actions">
+          <button class="ct-btn variant-ghost" @click="showSelfProfileDialog = false">取消</button>
+          <button class="ct-btn primary" @click="generateSelfProfile">确认提取</button>
         </div>
       </div>
     </div>
@@ -347,6 +412,7 @@ function selectContact(c: any) {
 
   // 选择联系人后自动检查并加载画像
   checkContactProfile(c.name)
+  checkSelfProfile(c.name)
 }
 
 function highlightNext() {
@@ -367,6 +433,7 @@ function selectHighlighted() {
     realtimeState.talkerName = contactSearch.value.trim()
     showContactDropdown.value = false
     checkContactProfile(realtimeState.talkerName)
+    checkSelfProfile(realtimeState.talkerName)
   }
 }
 
@@ -606,6 +673,52 @@ function stopMessagesPolling() {
 
 // ========== 原有逻辑 ==========
 
+const selfProfile = ref<any>({})
+const selfProfileLoading = ref(false)
+const showSelfProfileDialog = ref(false)
+const selfProfileBudgetLevel = ref('medium')
+const selfProfileEstimatedTokens = ref(0)
+
+async function checkSelfProfile(displayName: string) {
+  try {
+    await bridgeReady()
+    const r = await api.get_self_profile(displayName)
+    if (r.ok) {
+      selfProfileEstimatedTokens.value = r.estimated_tokens || 0
+      if (r.has_profile && !r.expired) {
+        selfProfile.value = r.profile
+      } else {
+        selfProfile.value = {}
+      }
+    }
+  } catch (e) {
+    console.error('检查克隆画像失败:', e)
+  }
+}
+
+async function generateSelfProfile() {
+  showSelfProfileDialog.value = false
+  selfProfileLoading.value = true
+  try {
+    await bridgeReady()
+    const r = await api.generate_self_profile(
+      realtimeState.talkerName,
+      selfProfileBudgetLevel.value,
+      0
+    )
+    if (r.ok && r.profile) {
+      selfProfile.value = r.profile
+    } else {
+      console.error('画像克隆失败:', r.error)
+    }
+  } catch (e: any) {
+    console.error('提取克隆画像失败:', e)
+  } finally {
+    selfProfileLoading.value = false
+  }
+}
+
+
 const profile = ref<any>({
   name: '对方昵称',
   tags: [],
@@ -693,6 +806,11 @@ onMounted(async () => {
       startStatusPolling()
       startMessagesPolling()
       loadSuggestionConfig()
+
+      if (realtimeState.talkerName) {
+        checkContactProfile(realtimeState.talkerName)
+        checkSelfProfile(realtimeState.talkerName)
+      }
     }
   } catch (e) {
     console.error('恢复监听状态失败:', e)

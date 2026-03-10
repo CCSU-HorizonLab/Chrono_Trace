@@ -60,7 +60,7 @@ PROFILE_SYSTEM_PROMPT = """你是一个社交关系分析师。根据提供的�
 class ContactProfiler:
     """联系人画像服务"""
 
-    def __init__(self, timeout: int = 30):
+    def __init__(self, timeout: int = 120):
         self.timeout = timeout
 
     def get_profile(self, display_name: str) -> Optional[dict]:
@@ -198,8 +198,8 @@ class ContactProfiler:
             user_prompt = self._build_profile_prompt(display_name, conv, features, sample)
             _print(f"[ContactProfiler] Prompt 长度: {len(user_prompt)} 字符")
 
-            # 5. 调用 LLM
-            profile_data = self._call_llm(user_prompt)
+            # 5. 调用 LLM，传入预算以动态决定输出额度
+            profile_data = self._call_llm(user_prompt, budget)
             if not profile_data:
                 return {'ok': False, 'error': 'LLM 返回解析失败'}
 
@@ -603,7 +603,7 @@ class ContactProfiler:
 
         return "\n".join(parts)
 
-    def _call_llm(self, user_prompt: str) -> Optional[dict]:
+    def _call_llm(self, user_prompt: str, sample_budget: int) -> Optional[dict]:
         """调用 LLM 生成画像"""
         import urllib.request
         import urllib.error
@@ -638,14 +638,17 @@ class ContactProfiler:
         base_url = model_config['api_base_url'].rstrip('/')
         url = f"{base_url}/chat/completions"
 
+        # 根据输入的采样预算动态决定输出上限 (至少 4096，若预算极高则成比例放大，比如预算是 8000 时，输出上限放到 8000 以给足 reasoning 空间)
+        dynamic_max_tokens = max(4096, sample_budget)
+
         payload = {
             'model': model_config['model_id'],
             'messages': [
                 {'role': 'system', 'content': PROFILE_SYSTEM_PROMPT},
                 {'role': 'user', 'content': user_prompt},
             ],
-            # 画像生成和可能的推理过程需要较多 token，强制设定 4096 防止截断
-            'max_tokens': max(model_config.get('max_tokens', 4096), 4096),
+            # 画像生成和可能的推理过程需要较多 token，使用动态计算的上限
+            'max_tokens': max(model_config.get('max_tokens', 4096), dynamic_max_tokens),
             'temperature': 0.5,  # 画像生成用较低温度
         }
 

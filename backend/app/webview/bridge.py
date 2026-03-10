@@ -231,16 +231,25 @@ class Bridge:
                 except Exception as e:
                     logger.error(f"[Bridge] 获取最近消息失败: {e}")
 
-            # 自动补充上下文：联系人画像
-            if 'contact_profile' not in context and monitor.current_display_name:
+            # 自动补充上下文：联系人画像与本体画像
+            if monitor.current_display_name:
                 try:
                     from ..services.realtime.contact_profiler import ContactProfiler
-                    profiler = ContactProfiler()
-                    cached = profiler.get_profile(monitor.current_display_name)
-                    if cached and not cached['expired']:
-                        context['contact_profile'] = cached['profile']
+                    from ..services.realtime.self_profiler import SelfProfiler
+                    
+                    if 'contact_profile' not in context:
+                        profiler = ContactProfiler()
+                        cached = profiler.get_profile(monitor.current_display_name)
+                        if cached and not cached['expired']:
+                            context['contact_profile'] = cached['profile']
+                            
+                    if 'self_profile' not in context:
+                        s_profiler = SelfProfiler()
+                        s_cached = s_profiler.get_profile(monitor.current_display_name)
+                        if s_cached and not s_cached['expired']:
+                            context['self_profile'] = s_cached['profile']
                 except Exception as e:
-                    logger.error(f"[Bridge] 获取联系人画像失败: {e}")
+                    logger.error(f"[Bridge] 获取画像失败: {e}")
 
             # 获取触发类型，默认通过 tracker 状态推断
             trigger_type = context.get("trigger_type")
@@ -1103,6 +1112,57 @@ class Bridge:
             return result
         except Exception as e:
             logger.error(f"[Bridge] 生成联系人画像失败: {e}")
+            import traceback
+            traceback.print_exc()
+            return {'ok': False, 'error': str(e)}
+
+    def get_self_profile(self, display_name: str) -> dict[str, Any]:
+        """获取用户本人的专属克隆画像缓存"""
+        try:
+            from ..services.realtime.self_profiler import SelfProfiler
+            profiler = SelfProfiler()
+
+            cached = profiler.get_profile(display_name)
+            estimate = profiler.estimate_tokens(display_name)
+
+            if cached:
+                return {
+                    'ok': True,
+                    'has_profile': True,
+                    'expired': cached['expired'],
+                    'profile': cached['profile'],
+                    'created_at': cached['created_at'],
+                    'expires_at': cached['expires_at'],
+                    'estimated_tokens': estimate.get('estimated_total_tokens', 0),
+                }
+            else:
+                return {
+                    'ok': True,
+                    'has_profile': False,
+                    'expired': False,
+                    'profile': None,
+                    'estimated_tokens': estimate.get('estimated_total_tokens', 0),
+                }
+        except Exception as e:
+            logger.error(f"[Bridge] 获取本体克隆画像失败: {e}")
+            import traceback
+            traceback.print_exc()
+            return {'ok': False, 'error': str(e)}
+
+    def generate_self_profile(
+        self,
+        display_name: str,
+        budget_level: str = 'medium',
+        custom_budget: int = 0
+    ) -> dict[str, Any]:
+        """生成用户本体的聊天克隆画像"""
+        try:
+            from ..services.realtime.self_profiler import SelfProfiler
+            profiler = SelfProfiler()
+            result = profiler.generate_profile(display_name, budget_level, custom_budget)
+            return result
+        except Exception as e:
+            logger.error(f"[Bridge] 生成本体画像失败: {e}")
             import traceback
             traceback.print_exc()
             return {'ok': False, 'error': str(e)}

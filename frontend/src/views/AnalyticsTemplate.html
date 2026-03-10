@@ -1,0 +1,440 @@
+<section class="analytics-page">
+  <header class="page-header">
+    <div class="header-content">
+      <h1 class="page-title">{{ currentContactName }}</h1>
+      <p class="page-meta">
+        <span class="meta-item">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+            <line x1="16" y1="2" x2="16" y2="6"></line>
+            <line x1="8" y1="2" x2="8" y2="6"></line>
+            <line x1="3" y1="10" x2="21" y2="10"></line>
+          </svg>
+          {{ dates.from }} ~ {{ dates.to }}
+        </span>
+      </p>
+    </div>
+    <FiltersBar :conversations="conversations" :selected-conversation-id="selectedConversationId" :dates="dates"
+      :loading="loading" @update:conversation-id="onConversationChange" @update:dates="onDatesChange"
+      @refresh="loadAnalysis" />
+  </header>
+
+  <!-- Global Action Bar -->
+  <div v-if="selectedConversationId" class="feature-actions">
+    <div class="action-info">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="10"></circle>
+        <line x1="12" y1="16" x2="12" y2="12"></line>
+        <line x1="12" y1="8" x2="12.01" y2="8"></line>
+      </svg>
+      <span>全方位洞察：从大模型关系推理到客观互动特征分析</span>
+    </div>
+    <div class="action-buttons">
+      <CtButton variant="ghost" @click="showContextForm = true" :disabled="isGlobalAnalyzing">关系信息</CtButton>
+      <CtButton variant="ghost" @click="showKeywordsDialog = true" :disabled="isGlobalAnalyzing">配置喜好</CtButton>
+      <button @click="handleStartGlobalAnalysis(false)" :disabled="isGlobalAnalyzing" class="action-btn primary">
+        <template v-if="!isGlobalAnalyzing">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+          </svg>
+        </template>
+        <template v-else>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            class="spin">
+            <path d="M21 12a9 9 0 1 1-6.219-8.56"></path>
+          </svg>
+        </template>
+        {{ isGlobalAnalyzing ? '分析中...' : ((hasFeatures || analysisResult) ? '重新全面分析' : '开始全面分析') }}
+      </button>
+    </div>
+  </div>
+
+  <!-- Global Progress -->
+  <div v-if="isGlobalAnalyzing" class="extraction-progress">
+    <div class="progress-bar">
+      <div class="progress-fill" :style="{ width: `${globalProgressPercent}%` }"></div>
+    </div>
+    <div class="progress-text">{{ globalProgressPercent.toFixed(1) }}% - {{ globalProgressStep }}</div>
+  </div>
+
+  <!-- Tabs Navigation -->
+  <div v-if="selectedConversationId" class="tabs-nav">
+    <button class="tab-btn" :class="{ active: currentTab === 'affinity' }"
+      @click="currentTab = 'affinity'">关系洞察</button>
+    <button class="tab-btn" :class="{ active: currentTab === 'features' }"
+      @click="currentTab = 'features'">互动特征</button>
+    <button class="tab-btn" :class="{ active: currentTab === 'content' }"
+      @click="currentTab = 'content'">内容与时间线</button>
+  </div>
+
+  <!-- TAB 1: Affinity -->
+  <div v-show="currentTab === 'affinity' && selectedConversationId" class="tab-content fade-in">
+    <div v-if="!analysisResult && !isGlobalAnalyzing" class="empty-state">
+      <div class="empty-icon">📊</div>
+      <p>请点击"开始全面分析"探索你们的亲密关系维度。</p>
+      <p class="empty-hint">💡 首次分析需要1-2分钟进行数据特征提取和模型推理,请耐心等待</p>
+    </div>
+
+    <!-- Affinity Dashboard -->
+    <div v-if="analysisResult" class="dashboard-grid">
+      <!-- Left Column -->
+      <div class="col-left">
+        <CtCard class="overall-card">
+          <div class="overall-content">
+            <div class="bg-decoration">
+              <svg width="100%" height="100%" viewBox="0 0 24 24" fill="currentColor">
+                <path
+                  d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
+              </svg>
+            </div>
+            <div class="card-label-row">
+              <div class="card-label">总体好感度</div>
+              <WeightInfoTooltip :has-preference-keywords="hasPreferenceKeywords" />
+            </div>
+            <div class="score-ring-container">
+              <svg viewBox="0 0 120 120" class="circular-chart">
+                <defs>
+                  <linearGradient id="score-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                    <stop offset="0%" :stop-color="getScoreColor(displayScore)" stop-opacity="0.8" />
+                    <stop offset="100%" :stop-color="getScoreColor(displayScore)" />
+                  </linearGradient>
+                </defs>
+                <path class="circle-bg" d="M60 10 a 50 50 0 0 1 0 100 a 50 50 0 0 1 0 -100" />
+                <path class="circle" :stroke-dasharray="circumference + ', ' + circumference"
+                  :style="{ strokeDashoffset: strokeDashoffset, stroke: 'url(#score-gradient)' }"
+                  d="M60 10 a 50 50 0 0 1 0 100 a 50 50 0 0 1 0 -100" />
+              </svg>
+              <div class="score-text-overlay">
+                <span class="score-number">{{ Math.round(displayScore) }}</span>
+                <span class="score-label-small">OUT OF 100</span>
+              </div>
+            </div>
+            <div class="interpretation-box" :style="{ borderLeftColor: getScoreColor(displayScore) }">
+              <p class="interpretation-text">{{ analysisResult.overall_interpretation }}</p>
+            </div>
+          </div>
+        </CtCard>
+
+        <!-- Radar Chart -->
+        <CtCard title="维度分布">
+          <DimensionRadar :dimension-scores="allDimensions" />
+        </CtCard>
+      </div>
+
+      <!-- Right Column -->
+      <div class="col-right">
+        <div class="cards-grid">
+          <AffinityScoreCard v-if="analysisResult.emotional_resonance" title="情感共振率"
+            :score="analysisResult.emotional_resonance.score" :max-score="100"
+            :weight="analysisResult.emotional_resonance.weight"
+            :interpretation="analysisResult.emotional_resonance.interpretation" @click="scrollToDetails('emotional')" />
+          <AffinityScoreCard v-if="analysisResult.chat_positivity" title="聊天积极度"
+            :score="analysisResult.chat_positivity.score" :max-score="100"
+            :weight="analysisResult.chat_positivity.weight"
+            :interpretation="analysisResult.chat_positivity.interpretation" @click="scrollToDetails('positivity')" />
+          <AffinityScoreCard v-if="analysisResult.attitude_tendency" title="态度倾向"
+            :score="analysisResult.attitude_tendency.score" :max-score="100"
+            :weight="analysisResult.attitude_tendency.weight"
+            :interpretation="analysisResult.attitude_tendency.interpretation" @click="scrollToDetails('attitude')" />
+          <AffinityScoreCard v-if="analysisResult.preference_compatibility" title="喜好兼容度"
+            :score="analysisResult.preference_compatibility.score" :max-score="100"
+            :weight="analysisResult.preference_compatibility.weight"
+            :interpretation="analysisResult.preference_compatibility.interpretation"
+            @click="scrollToDetails('preference')" @disabled-click="handlePreferenceDisabledClick" />
+        </div>
+
+        <div class="breakdowns-list">
+          <SubScoreBreakdown id="detail-emotional" v-if="analysisResult.emotional_resonance" title="情感共振率"
+            :sub-scores="analysisResult.emotional_resonance.sub_scores" />
+          <SubScoreBreakdown id="detail-positivity" v-if="analysisResult.chat_positivity" title="聊天积极度"
+            :sub-scores="analysisResult.chat_positivity.sub_scores" />
+          <SubScoreBreakdown id="detail-attitude" v-if="analysisResult.attitude_tendency" title="态度倾向"
+            :sub-scores="analysisResult.attitude_tendency.sub_scores" />
+          <SubScoreBreakdown id="detail-preference" v-if="analysisResult.preference_compatibility" title="喜好兼容度"
+            :sub-scores="analysisResult.preference_compatibility.sub_scores" />
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB 2: Features -->
+  <div v-show="currentTab === 'features' && selectedConversationId" class="tab-content fade-in">
+    <!-- Basic Stats -->
+    <div v-if="!loading && stats" class="stats-section">
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-icon messages">💬</div>
+          <div class="stat-content">
+            <div class="stat-value">{{ formatNumber(stats.totalMessages) }}</div>
+            <div class="stat-label">消息总数</div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon sentiment">💝</div>
+          <div class="stat-content">
+            <div class="stat-value">{{ stats.avgSentiment }}</div>
+            <div class="stat-label">平均情感值</div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon days">📅</div>
+          <div class="stat-content">
+            <div class="stat-value">{{ stats.activeDays }}</div>
+            <div class="stat-label">互动天数</div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon sessions">⚡</div>
+          <div class="stat-content">
+            <div class="stat-value">{{ stats.sessionCount }}</div>
+            <div class="stat-label">会话数量</div>
+          </div>
+        </div>
+        <!-- Default Features Stats -->
+        <div class="stat-card feature">
+          <div class="stat-icon response">⏱️</div>
+          <div class="stat-content">
+            <div class="stat-value">{{ formatTime(featureStats.avgResponseTime) }}</div>
+            <div class="stat-label">平均响应</div>
+          </div>
+        </div>
+        <div class="stat-card feature">
+          <div class="stat-icon initiative">🎯</div>
+          <div class="stat-content">
+            <div class="stat-value">{{ (featureStats.initiativeRate * 100).toFixed(1) }}%</div>
+            <div class="stat-label">对方主动率</div>
+          </div>
+        </div>
+        <div class="stat-card feature">
+          <div class="stat-icon words">📊</div>
+          <div class="stat-content">
+            <div class="stat-value">{{ featureStats.wordRatio.toFixed(2) }}x</div>
+            <div class="stat-label">字数投入比</div>
+          </div>
+        </div>
+        <div class="stat-card feature">
+          <div class="stat-icon median">📈</div>
+          <div class="stat-content">
+            <div class="stat-value">{{ formatTime(featureStats.medianResponseTime) }}</div>
+            <div class="stat-label">响应中位数</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Feature Analysis Grid -->
+    <div v-if="hasFeatures" class="features-grid">
+      <!-- Response Time -->
+      <div class="feature-card response-time">
+        <header class="feature-header">
+          <div class="header-left">
+            <div class="feature-icon">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"></circle>
+                <polyline points="12 6 12 12 16 14"></polyline>
+              </svg>
+            </div>
+            <div>
+              <h3>响应时间分析</h3>
+              <p class="feature-subtitle">对方回复速度的深度洞察</p>
+            </div>
+          </div>
+        </header>
+        <div class="feature-body">
+          <div class="response-stats">
+            <div class="response-stat"><span class="stat-label">平均响应</span><span class="stat-value">{{
+                formatTime(responseTimeStats.avg) }}</span></div>
+            <div class="response-stat"><span class="stat-label">中位数</span><span class="stat-value">{{
+                formatTime(responseTimeStats.median) }}</span></div>
+            <div class="response-stat"><span class="stat-label">最早</span><span class="stat-value highlight fast">{{
+                formatTime(responseTimeStats.min) }}</span></div>
+            <div class="response-stat"><span class="stat-label">最晚</span><span class="stat-value highlight slow">{{
+                formatTime(responseTimeStats.max) }}</span></div>
+          </div>
+          <div v-if="responseTimeStats.distribution" class="feature-chart">
+            <div ref="responseTimeChart" class="chart-mount"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Initiative -->
+      <div class="feature-card initiative">
+        <header class="feature-header">
+          <div class="header-left">
+            <div class="feature-icon">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"></circle>
+                <circle cx="12" cy="12" r="6"></circle>
+              </svg>
+            </div>
+            <div>
+              <h3>主动性分析</h3>
+              <p class="feature-subtitle">谁更主动发起对话？</p>
+            </div>
+          </div>
+        </header>
+        <div class="feature-body">
+          <div class="initiative-visual">
+            <div class="initiative-ring">
+              <svg viewBox="0 0 100 100" class="ring-chart">
+                <circle cx="50" cy="50" r="40" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="8" />
+                <circle cx="50" cy="50" r="40" fill="none"
+                  :stroke-dasharray="`${initiativeStats.initiativeRate * 251.2} 251.2`"
+                  stroke="url(#initiativeGradient)" stroke-width="8" stroke-linecap="round"
+                  transform="rotate(-90 50 50)" class="ring-progress" />
+                <defs>
+                  <linearGradient id="initiativeGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                    <stop offset="0%" stop-color="#818cf8" />
+                    <stop offset="100%" stop-color="#c084fc" />
+                  </linearGradient>
+                </defs>
+              </svg>
+              <div class="ring-center">
+                <span class="ring-value">{{ (initiativeStats.initiativeRate * 100).toFixed(1) }}%</span>
+                <span class="ring-label">对方主动率</span>
+              </div>
+            </div>
+          </div>
+          <div class="initiative-details">
+            <div class="initiative-stat">
+              <div class="stat-bar user">
+                <div class="bar-fill" :style="{ width: `${(1 - initiativeStats.initiativeRate) * 100}%` }"></div>
+              </div>
+              <div class="stat-info"><span class="stat-name">我发起</span><span class="stat-count">{{
+                  initiativeStats.userInitiatedSessions }} 次</span></div>
+            </div>
+            <div class="initiative-stat">
+              <div class="stat-bar other">
+                <div class="bar-fill" :style="{ width: `${initiativeStats.initiativeRate * 100}%` }"></div>
+              </div>
+              <div class="stat-info"><span class="stat-name">对方发起</span><span class="stat-count">{{
+                  initiativeStats.otherInitiatedSessions }} 次</span></div>
+            </div>
+          </div>
+          <div class="initiative-interpretation">{{ initiativeStats.interpretation }}</div>
+        </div>
+      </div>
+
+      <!-- Word Count -->
+      <div class="feature-card word-count">
+        <header class="feature-header">
+          <div class="header-left">
+            <div class="feature-icon"><svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="4" y1="21" x2="4" y2="14"></line>
+                <line x1="4" y1="10" x2="4" y2="3"></line>
+                <line x1="12" y1="21" x2="12" y2="12"></line>
+                <line x1="12" y1="8" x2="12" y2="3"></line>
+                <line x1="20" y1="21" x2="20" y2="16"></line>
+                <line x1="20" y1="12" x2="20" y2="3"></line>
+                <line x1="1" y1="14" x2="7" y2="14"></line>
+                <line x1="9" y1="8" x2="15" y2="8"></line>
+                <line x1="17" y1="16" x2="23" y2="16"></line>
+              </svg></div>
+            <div>
+              <h3>字数投入分析</h3>
+              <p class="feature-subtitle">双方文字投入的对比</p>
+            </div>
+          </div>
+        </header>
+        <div class="feature-body">
+          <div class="word-chart">
+            <div ref="wordCountChart" class="chart-mount"></div>
+          </div>
+          <div class="word-stats-grid">
+            <div class="word-stat-item user"><span class="stat-label">我的字数</span><span class="stat-value">{{
+                formatNumber(wordCountsStats.userCharCount) }}</span></div>
+            <div class="word-stat-item ratio"><span class="stat-label">投入比</span><span class="stat-value">{{
+                wordCountsStats.charRatio.toFixed(2) }}x</span></div>
+            <div class="word-stat-item other"><span class="stat-label">对方字数</span><span class="stat-value">{{
+                formatNumber(wordCountsStats.otherCharCount) }}</span></div>
+          </div>
+          <div class="word-interpretation">{{ wordCountsStats.interpretation }}</div>
+        </div>
+      </div>
+
+      <!-- Heatmap/Timeline Calendar -->
+      <div class="feature-card timeline">
+        <header class="feature-header">
+          <div class="header-left">
+            <div class="feature-icon"><svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg></div>
+            <div>
+              <h3>活跃度日历</h3>
+              <p class="feature-subtitle">每日对话活跃度热力分布</p>
+            </div>
+          </div>
+          <div class="header-actions"><button class="icon-btn" @click="loadSessions"
+              :disabled="loadingSessions">刷新</button></div>
+        </header>
+        <div class="feature-body">
+          <div ref="timelineChart" class="chart-mount timeline-mount"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Empty State for Features -->
+    <div v-else class="feature-empty-state">
+      <div class="empty-icon">📊</div>
+      <h3>暂无互动特征数据</h3>
+      <p>点击上方“开始/重新分析”按钮，从您的聊天记录中提取响应时间、主动性、字数比例等深层互动特征。</p>
+      <div class="empty-actions">
+        <CtButton type="primary" size="large" @click="handleStartGlobalAnalysis(false)" :loading="isGlobalAnalyzing">
+          立即开始提取
+        </CtButton>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB 3: Content & Timeline -->
+  <div v-show="currentTab === 'content' && selectedConversationId" class="tab-content fade-in">
+    <div class="main-content">
+      <div class="chart-card primary">
+        <header class="card-header">
+          <div class="header-left">
+            <h2>历史情绪曲线</h2>
+          </div>
+          <div class="header-actions"><button class="icon-btn" @click="loadAnalysis" :disabled="loading"
+              title="刷新">刷新</button></div>
+        </header>
+        <div class="card-body">
+          <div class="chart-container">
+            <EmotionLineChart :timeseries="analysis.timeseries" />
+          </div>
+        </div>
+      </div>
+
+      <div class="chart-card secondary">
+        <header class="card-header">
+          <div class="header-left">
+            <h2>聊天词云</h2>
+          </div>
+        </header>
+        <div class="card-body">
+          <div class="wordcloud-container">
+            <WordCloud :words="analysis.wordcloud" @select="onWordSelect" />
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="subject-section">
+      <SubjectCard :subject="subject" />
+    </div>
+
+    <div class="timeline-section">
+      <div class="section-header">
+        <h3>对话时间线</h3>
+        <p class="section-subtitle">按时间顺序展开的交流记录</p>
+      </div>
+      <ConversationTimeline :sessions="sessions" :loading="loadingSessions" />
+    </div>
+  </div>
+
+  <!-- Dialogs -->
+  <PreferenceKeywordsDialog v-if="selectedConversationId" v-model="showKeywordsDialog"
+    :conversation-id="selectedConversationId" @updated="handleKeywordsUpdated" />
+  <RelationshipContextForm v-if="selectedConversationId" v-model="showContextForm"
+    :conversation-id="selectedConversationId" @saved="handleContextSaved" />
+</section>

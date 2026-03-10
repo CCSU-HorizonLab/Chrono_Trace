@@ -51,8 +51,15 @@
                 </div>
               </div>
               <div v-if="expandedSessions.has(session.id)" class="session-messages">
+                <div v-if="loadingMessages.has(session.id)" class="loading-state">
+                  <span class="loading-text">加载消息中...</span>
+                </div>
+                <div v-else-if="!sessionMessages[session.id] || sessionMessages[session.id].length === 0" class="empty-state">
+                  没有可用的消息记录。
+                </div>
                 <div
-                  v-for="msg in session.messages"
+                  v-else
+                  v-for="msg in sessionMessages[session.id]"
                   :key="msg.id"
                   class="message-item"
                   :class="{ 'is-me': msg.is_me }"
@@ -96,9 +103,15 @@
             </div>
           </div>
           <div v-if="expandedSessions.has(session.id)" class="session-body">
-            <div class="messages-container">
+            <div v-if="loadingMessages.has(session.id)" class="loading-state">
+              <span class="loading-text">加载消息中...</span>
+            </div>
+            <div v-else-if="!sessionMessages[session.id] || sessionMessages[session.id].length === 0" class="empty-state">
+              没有可用的消息记录。
+            </div>
+            <div v-else class="messages-container">
               <div
-                v-for="msg in session.messages"
+                v-for="msg in sessionMessages[session.id]"
                 :key="msg.id"
                 class="message-bubble"
                 :class="{ 'is-me': msg.is_me }"
@@ -161,6 +174,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import CtButton from '@/components/base/CtButton.vue'
+import { api } from '@/api/bridge'
 
 type Message = {
   id: number
@@ -264,14 +278,34 @@ const maxDailyCount = computed(() => {
   return Math.max(...dailySessionCount.value.map(d => d.count), 1)
 })
 
-function toggleSession(sessionId: number) {
+const sessionMessages = ref<Record<number, Message[]>>({})
+const loadingMessages = ref<Set<number>>(new Set())
+
+async function toggleSession(sessionId: number) {
   if (expandedSessions.value.has(sessionId)) {
     expandedSessions.value.delete(sessionId)
+    expandedSessions.value = new Set(expandedSessions.value)
   } else {
     expandedSessions.value.add(sessionId)
+    expandedSessions.value = new Set(expandedSessions.value)
+    
+    if (!sessionMessages.value[sessionId] && !loadingMessages.value.has(sessionId)) {
+      loadingMessages.value.add(sessionId)
+      try {
+        const res = await api.get_session_messages(sessionId)
+        if (res.success && res.data && res.data.messages) {
+          sessionMessages.value[sessionId] = res.data.messages.map((m: any) => ({
+            ...m,
+            create_time: m.create_time * 1000 // Convert seconds to ms
+          }))
+        }
+      } catch (e) {
+        console.error('Failed to load session messages:', e)
+      } finally {
+        loadingMessages.value.delete(sessionId)
+      }
+    }
   }
-  // 触发响应式更新
-  expandedSessions.value = new Set(expandedSessions.value)
 }
 
 function formatDate(dateStr: string | number): string {
@@ -689,5 +723,31 @@ function formatDuration(seconds: number): string {
   .simple-chart {
     height: 150px;
   }
+
+  .loading-state, .empty-state {
+    padding: 20px;
+    text-align: center;
+    color: var(--text-secondary);
+  }
+}
+
+.loading-state, .empty-state {
+  padding: 24px;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  background-color: var(--bg-primary);
+  border-radius: 8px;
+  margin-top: 12px;
+}
+
+.loading-text {
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0% { opacity: 0.6; }
+  50% { opacity: 1; }
+  100% { opacity: 0.6; }
 }
 </style>

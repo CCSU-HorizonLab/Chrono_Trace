@@ -40,6 +40,7 @@ type PyWebViewApi = {
   extract_features: (conversation_id: number, config?: Record<string, any>) => Promise<any>
   get_extraction_progress: (task_id: string) => Promise<any>
   get_sessions: (conversation_id: number, limit?: number, offset?: number) => Promise<any>
+  get_session_messages: (session_id: number) => Promise<any>
   get_response_times: (conversation_id: number) => Promise<any>
   get_initiative_stats: (conversation_id: number) => Promise<any>
   get_word_counts: (conversation_id: number, by_session?: boolean) => Promise<any>

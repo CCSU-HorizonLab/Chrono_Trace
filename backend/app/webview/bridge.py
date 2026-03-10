@@ -1264,6 +1264,62 @@ class Bridge:
                 "error": str(e)
             }
 
+    def get_session_messages(self, session_id: int) -> dict:
+        """
+        获取特定会话的消息列表
+        """
+        try:
+            from ..db.connection import get_db
+            db = get_db()
+            
+            # 查询会话信息以获得时间范围和conversation_id
+            session_cursor = db.execute(
+                "SELECT conversation_id, start_time, end_time FROM sessions WHERE id = ?",
+                (session_id,)
+            )
+            session = session_cursor.fetchone()
+            if not session:
+                return {"success": False, "error": "会话不存在"}
+                
+            # 查询该时间范围内的消息
+            cursor = db.execute("""
+                SELECT id, sender, is_sender, content, timestamp as create_time
+                FROM messages
+                WHERE conversation_id = ? AND timestamp >= ? AND timestamp <= ?
+                ORDER BY timestamp ASC
+            """, (session["conversation_id"], session["start_time"], session["end_time"]))
+            
+            rows = cursor.fetchall()
+            messages = []
+            for row in rows:
+                msg = dict(row)
+                # 处理 sender_name
+                is_me = msg["is_sender"] == 1
+                sender_name = msg.get("sender")
+                if not sender_name:
+                    sender_name = "我" if is_me else "对方"
+                
+                messages.append({
+                    "id": msg["id"],
+                    "sender_name": sender_name,
+                    "content": msg["content"],
+                    "create_time": msg["create_time"],
+                    "is_me": is_me
+                })
+                
+            return {
+                "success": True,
+                "data": {
+                    "messages": messages
+                }
+            }
+        except Exception as e:
+            logger.error(f"[Bridge] 获取会话消息失败: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
+
     def get_response_times(self, conversation_id: int) -> dict:
         """
         获取响应时间统计

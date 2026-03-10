@@ -32,6 +32,7 @@ TIME_BUCKETS = [
     (7 * 86400, 0.50),     # 最近 7 天 → 50% 预算
     (30 * 86400, 0.30),    # 8-30 天 → 30% 预算
     (90 * 86400, 0.20),    # 31-90 天 → 20% 预算
+    (None, 0.0),           # 90天以前 → 兜底回收所有被顺延的剩余预算
 ]
 
 # 缓存有效期（秒）
@@ -428,21 +429,24 @@ class ContactProfiler:
         self, conn, conversation_id: int, token_budget: int
     ) -> list[dict]:
         """
-        token 预算制对话轮次采样
-
-        按时间分桶（7天/30天/90天），每桶按比例分配 token 预算，
+        token 预算制对话轮次采样（含动态顺延剩余预算）
+        
+        按时间分桶（7天/30天/90天/更早），将上一桶未消耗尽的预算顺延到下一桶，
         桶内随机选取完整对话轮次。
         """
         now = int(time.time())
         all_samples = []
+        carry_over_budget = 0
+        prev_bucket_end = now
 
         for max_age_seconds, weight in TIME_BUCKETS:
-            bucket_budget = int(token_budget * weight)
-            bucket_start = now - max_age_seconds
-
-            # 前一个桶的结束时间作为当前桶的开始时间
-            prev_bucket_end = now - TIME_BUCKETS[TIME_BUCKETS.index((max_age_seconds, weight)) - 1][0] \
-                if TIME_BUCKETS.index((max_age_seconds, weight)) > 0 else now
+            # 基础预算再加上一个桶顺延下来的没用完的预算
+            bucket_budget = int(token_budget * weight) + carry_over_budget
+            
+            if max_age_seconds is not None:
+                bucket_start = now - max_age_seconds
+            else:
+                bucket_start = 0
 
             # 查询该时间桶内所有文本消息
             cursor = conn.execute(
@@ -456,7 +460,12 @@ class ContactProfiler:
             )
             messages = [dict(r) for r in cursor.fetchall()]
 
+            # 更新结束时间给下一次迭代使用
+            prev_bucket_end = bucket_start
+
             if not messages:
+                # 整个桶完全没有消息，预算全额顺延
+                carry_over_budget = bucket_budget
                 continue
 
             # 构建对话轮次（连续的一来一回）
@@ -472,6 +481,9 @@ class ContactProfiler:
                     break
                 all_samples.extend(turn)
                 bucket_tokens += turn_tokens
+            
+            # 将没用完的预算顺延给更早的时间桶
+            carry_over_budget = bucket_budget - bucket_tokens
 
         # 按时间排序最终采样
         all_samples.sort(key=lambda m: m['timestamp'])
@@ -632,7 +644,8 @@ class ContactProfiler:
                 {'role': 'system', 'content': PROFILE_SYSTEM_PROMPT},
                 {'role': 'user', 'content': user_prompt},
             ],
-            'max_tokens': model_config.get('max_tokens', 512),
+            # 画像生成和可能的推理过程需要较多 token，强制设定 4096 防止截断
+            'max_tokens': max(model_config.get('max_tokens', 4096), 4096),
             'temperature': 0.5,  # 画像生成用较低温度
         }
 
@@ -652,7 +665,15 @@ class ContactProfiler:
             elapsed = time.time() - start
             _print(f"[ContactProfiler] 📥 HTTP {resp.status} ({elapsed:.2f}s)")
 
-            content = body.get('choices', [{}])[0].get('message', {}).get('content', '')
+            message_obj = body.get('choices', [{}])[0].get('message', {})
+            content = message_obj.get('content', '')
+            reasoning = message_obj.get('reasoning_content', '')
+            
+            # 部分模型（如 deepseek-reasoner）可能将内容放在 reasoning_content 中，或者由于 max_tokens 限制没能输出 content
+            if not content and reasoning:
+                content = reasoning
+                _print("[ContactProfiler] ⚠️ 最终 content 为空，尝试回退使用 reasoning_content")
+
             usage = body.get('usage', {})
             _print(
                 f"[ContactProfiler] 📥 tokens: prompt={usage.get('prompt_tokens', '?')}, "

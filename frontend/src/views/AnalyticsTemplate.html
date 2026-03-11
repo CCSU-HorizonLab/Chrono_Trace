@@ -2,21 +2,9 @@
   <header class="page-header">
     <div class="header-content">
       <h1 class="page-title">{{ currentContactName }}</h1>
-      <p class="page-meta">
-        <span class="meta-item">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
-            <line x1="16" y1="2" x2="16" y2="6"></line>
-            <line x1="8" y1="2" x2="8" y2="6"></line>
-            <line x1="3" y1="10" x2="21" y2="10"></line>
-          </svg>
-          {{ dates.from }} ~ {{ dates.to }}
-        </span>
-      </p>
     </div>
-    <FiltersBar :conversations="conversations" :selected-conversation-id="selectedConversationId" :dates="dates"
-      :loading="loading" @update:conversation-id="onConversationChange" @update:dates="onDatesChange"
-      @refresh="loadAnalysis" />
+    <FiltersBar :conversations="conversations" :selected-conversation-id="selectedConversationId" :loading="loading"
+      @update:conversation-id="onConversationChange" />
   </header>
 
   <!-- Global Action Bar -->
@@ -389,6 +377,9 @@
 
   <!-- TAB 3: Content & Timeline -->
   <div v-show="currentTab === 'content' && selectedConversationId" class="tab-content fade-in">
+    <DateRangeFilter :dates="dates" :loading="loading" @update:dates="onDatesChange" @refresh="loadAnalysis"
+      @export="handleExport" />
+
     <div class="main-content">
       <div class="chart-card primary">
         <header class="card-header">

@@ -4,6 +4,7 @@ import { bridgeReady, api } from '@/api/bridge'
 import { analyzeAffinity, getAffinityScores, getAffinityProgress, getRelationshipContext, type AffinityAnalysisResult } from '@/api/affinity'
 
 import FiltersBar from '@/components/analytics/FiltersBar.vue'
+import DateRangeFilter from '@/components/analytics/DateRangeFilter.vue'
 import SubjectCard from '@/components/analytics/SubjectCard.vue'
 import EmotionLineChart from '@/components/charts/EmotionLineChart.vue'
 import WordCloud from '@/components/charts/WordCloud.vue'
@@ -27,7 +28,7 @@ type Analysis = { subject?: Subject; timeseries: TimeseriesPoint[]; wordcloud: {
 
 export default {
     components: {
-        FiltersBar, SubjectCard, EmotionLineChart, WordCloud, ConversationTimeline,
+        FiltersBar, DateRangeFilter, SubjectCard, EmotionLineChart, WordCloud, ConversationTimeline,
         AffinityScoreCard, DimensionRadar, SubScoreBreakdown, WeightInfoTooltip,
         PreferenceKeywordsDialog, RelationshipContextForm, CtCard, CtButton
     },
@@ -147,6 +148,12 @@ export default {
             dates.from = newDates.from
             dates.to = newDates.to
             loadAnalysis()
+        }
+
+        const handleExport = () => {
+            // Note: export function might just redirect or emit. Assuming an unimplemented function for now
+            console.warn('Export to CSV is clicked.')
+            alert('导出功能尚未实现。')
         }
 
         async function tryLoadAffinityScores() {
@@ -425,7 +432,7 @@ export default {
             analysisResult, displayScore, showKeywordsDialog, showContextForm, pendingAnalysisForce, isGlobalAnalyzing, globalProgressPercent, globalProgressStep,
             hasFeatures, featureStats, responseTimeStats, initiativeStats, wordCountsStats,
             responseTimeChart, timelineChart, wordCountChart, stats, currentContactName, hasPreferenceKeywords, allDimensions,
-            circumference, strokeDashoffset, formatNumber, formatTime, onConversationChange, onDatesChange, handleStartGlobalAnalysis, handleContextSaved, handleKeywordsUpdated,
+            circumference, strokeDashoffset, formatNumber, formatTime, onConversationChange, onDatesChange, handleExport, handleStartGlobalAnalysis, handleContextSaved, handleKeywordsUpdated,
             getScoreColor, scrollToDetails, handlePreferenceDisabledClick, onWordSelect, loadAnalysis, loadSessions
         }
     }

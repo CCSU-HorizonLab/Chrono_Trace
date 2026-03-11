@@ -63,6 +63,10 @@ class FeatureExtractionService:
         }
 
         try:
+            # 0. 清理旧数据，防止重复插入
+            self._update_task_status(task_id, 5, "Clearing old data")
+            self.delete_analysis_data(conversation_id)
+
             # 1. 会话切分
             self._update_task_status(task_id, 10, "Splitting sessions")
             sessions = self.extract_sessions(conversation_id)

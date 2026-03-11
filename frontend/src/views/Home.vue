@@ -99,25 +99,7 @@
         </div>
       </CtCard>
 
-      <!-- 通用数据导入（保留原功能） -->
-      <CtCard title="通用数据导入">
-        <div class="form">
-          <label class="row">
-            <div class="lab">对象名称</div>
-            <CtField v-model="form.subject" placeholder="例如：小林 / Alex" />
-          </label>
-          <label class="row">
-            <div class="lab">数据源路径</div>
-            <CtField v-model="form.data_path" placeholder="例如：C:/data/chat/history.json 或导出目录" />
-          </label>
-          <div class="actions">
-            <CtButton :loading="importing" @click="onImport">导入数据</CtButton>
-            <CtButton variant="ghost" :loading="pinging" @click="ping">测试桥接</CtButton>
-          </div>
-          <p v-if="err" class="error">{{ err }}</p>
-          <p v-if="ok" class="ok">{{ ok }}</p>
-        </div>
-      </CtCard>
+
 
       <!-- 运行日志 -->
       <CtCard title="运行日志">
@@ -142,12 +124,7 @@ import CtCard from '@/components/base/CtCard.vue'
 import CtField from '@/components/base/CtField.vue'
 import CtButton from '@/components/base/CtButton.vue'
 
-// 通用导入表单
-const form = reactive({ subject: '', data_path: '' })
-const err = ref('')
-const ok = ref('')
-const importing = ref(false)
-const pinging = ref(false)
+
 
 // 微信导入表单
 const wechatForm = reactive({
@@ -413,39 +390,7 @@ function resetFlow() {
   addLog('已重置配置')
 }
 
-// 通用导入功能
-async function onImport() {
-  err.value = ''
-  ok.value = ''
-  if (!form.data_path.trim()) { err.value = '请填写数据源路径'; return }
-  importing.value = true
-  try {
-    await bridgeReady()
-    const res = await api.ingest_data(form.data_path, { subject: form.subject || '默认对象' })
-    addLog('导入完成')
-    ok.value = typeof res === 'string' ? res : '导入成功'
-  } catch (e: any) {
-    err.value = e?.message || '导入失败'
-    addLog('导入失败')
-  } finally {
-    importing.value = false
-  }
-}
 
-const pong = ref('')
-async function ping() {
-  pinging.value = true
-  try {
-    await bridgeReady()
-    pong.value = await api.ping()
-    addLog('桥接可用: ' + pong.value)
-  } catch (e: any) {
-    err.value = e?.message || '桥接失败'
-    addLog('桥接失败')
-  } finally {
-    pinging.value = false
-  }
-}
 </script>
 
 <style scoped>

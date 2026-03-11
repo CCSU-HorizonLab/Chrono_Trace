@@ -251,6 +251,10 @@ class Bridge:
                 except Exception as e:
                     logger.error(f"[Bridge] 获取画像失败: {e}")
 
+            # 传递联系人名称以便查询调教规则
+            if monitor.current_display_name:
+                context['display_name'] = monitor.current_display_name
+
             # 获取触发类型，默认通过 tracker 状态推断
             trigger_type = context.get("trigger_type")
             if not trigger_type:
@@ -267,6 +271,51 @@ class Bridge:
                     trigger_type = "topic_cooling"
 
             result = engine.generate(trigger_type, intent, context)
+
+            # 将手动生成的建议也写入 DB（供隐式反馈对比使用）
+            try:
+                import time as _time
+                from ..db.connection import get_db
+                conn = get_db()
+                conn.execute('''
+                    CREATE TABLE IF NOT EXISTS realtime_suggestions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        batch_id TEXT NOT NULL,
+                        trigger_type TEXT NOT NULL,
+                        intent TEXT NOT NULL,
+                        severity TEXT DEFAULT 'medium',
+                        summary TEXT NOT NULL,
+                        speeches TEXT NOT NULL,
+                        confidence REAL DEFAULT 1.0,
+                        status TEXT DEFAULT 'pending',
+                        engine_type TEXT DEFAULT 'llm',
+                        trigger_context TEXT,
+                        created_at INTEGER NOT NULL,
+                        read_at INTEGER,
+                        dismissed_at INTEGER
+                    )
+                ''')
+                conn.execute('''
+                    INSERT INTO realtime_suggestions
+                    (batch_id, trigger_type, intent, severity, summary, speeches,
+                     confidence, status, engine_type, trigger_context, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 'displayed', ?, ?, ?)
+                ''', (
+                    monitor.current_batch_id or 'manual',
+                    result.trigger_type,
+                    result.intent,
+                    result.severity,
+                    result.summary,
+                    json.dumps(result.speeches, ensure_ascii=False),
+                    result.confidence,
+                    engine_type,
+                    json.dumps({'source': 'manual_generate'}, ensure_ascii=False),
+                    int(_time.time()),
+                ))
+                conn.commit()
+                logger.debug("[Bridge] 手动建议已写入 realtime_suggestions 表")
+            except Exception as db_e:
+                logger.error(f"[Bridge] 写入建议到DB失败: {db_e}")
 
             # 提取 AI 实际参考的聊天记录（最多 10 条）
             recent_used = context.get('recent_messages', [])

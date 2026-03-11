@@ -472,6 +472,10 @@ class RealtimeMonitorService:
                         and sender_attr == 'friend'):
                     self._handle_full_auto_suggestion(sentiment_result)
                 
+                # 隐式反馈：用户自己发了消息 → 对比最近的 AI 建议
+                if sender_attr == 'self' and message_data['content']:
+                    self._check_feedback(message_data['content'])
+                
                 # 显示统计
                 _print(f"✅ 已保存！累计: {len(self.seen_hashes)} 条\n")
             else:
@@ -691,6 +695,9 @@ class RealtimeMonitorService:
                     except Exception as prof_e:
                         _print(f"⚠️ 提取画像失败: {prof_e}")
 
+                # 传递联系人名称以便查询调教规则
+                ctx['display_name'] = self.current_display_name
+
                 # 生成建议
                 from .suggestion_engine import SuggestionEngineFactory
                 engine_type = self._suggestion_config.get('engine_type', 'llm')
@@ -759,6 +766,10 @@ class RealtimeMonitorService:
                         ctx['self_profile'] = s_cached['profile']
                 except Exception as prof_e:
                     _print(f"⚠️ 提取画像失败: {prof_e}")
+
+            # 传递联系人名称以便查询调教规则
+            if self.current_display_name:
+                ctx['display_name'] = self.current_display_name
                     
             result = engine.generate(trigger_type, intent, ctx)
             
@@ -835,6 +846,65 @@ class RealtimeMonitorService:
             if key in config:
                 self._suggestion_config[key] = config[key]
         _print(f"[RealtimeMonitorService] 建议配置已更新: {self._suggestion_config}")
+
+    def _check_feedback(self, user_message: str):
+        """
+        隐式反馈：将用户实际发送的消息与最近的 AI 建议进行对比，
+        提取调教规则。
+        """
+        try:
+            from ...db.connection import get_db
+            conn = get_db()
+
+            # 查询最近 5 分钟内尚未反馈的建议（pending=自动生成, displayed=手动生成）
+            cutoff = int(time.time()) - 300
+            cursor = conn.execute('''
+                SELECT id, speeches FROM realtime_suggestions
+                WHERE batch_id = ? AND status IN ('pending', 'displayed') AND created_at >= ?
+                ORDER BY created_at DESC LIMIT 1
+            ''', (self.current_batch_id, cutoff))
+
+            row = cursor.fetchone()
+            if not row:
+                return  # 没有待处理建议，跳过
+
+            suggestion_id = row['id']
+            speeches = json.loads(row['speeches'])
+
+            _print(f"\ud83d\udd0d [隐式反馈] 检测到用户发消息，开始对比 AI 建议 (id={suggestion_id})")
+
+            # 调用规则提取器
+            from .feedback_rule_extractor import FeedbackRuleExtractor
+            extractor = FeedbackRuleExtractor()
+
+            # 在后台线程中执行（避免阻塞消息轮询）
+            import threading
+            def do_extract():
+                try:
+                    result = extractor.compare_and_extract(
+                        ai_speeches=speeches,
+                        user_actual_message=user_message,
+                        display_name=self.current_display_name or '',
+                        suggestion_id=suggestion_id,
+                    )
+                    if result:
+                        _print(f"\ud83d\udcdd [隐式反馈] 提取到新规则: {result.get('rule', '')}")
+                    
+                    # 标记建议为已反馈
+                    conn2 = get_db()
+                    conn2.execute(
+                        "UPDATE realtime_suggestions SET status = 'feedback_collected' WHERE id = ?",
+                        (suggestion_id,)
+                    )
+                    conn2.commit()
+                except Exception as e:
+                    _print(f"⚠️ [隐式反馈] 提取失败: {e}")
+
+            t = threading.Thread(target=do_extract, daemon=True)
+            t.start()
+
+        except Exception as e:
+            _print(f"⚠️ [隐式反馈] 检查失败: {e}")
 
     def shutdown(self):
         """

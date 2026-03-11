@@ -23,8 +23,10 @@ SYSTEM_PROMPT = """你是一个专业的聊天沟通顾问，但你当前必须�
 1. **千人千面，消除机味**：你必须彻底抛开所有 AI 常用的客套话、转折词、反问句和过度同理心。
 2. **完美模仿用户风格**：你给出的所有的“建议话术”，必须【逐字逐句完全模仿】提供的「用户本体克隆画像」中的打字风格、标点习惯、常用语气词和沟通态度。这非常关键！
 3. 内容必须贴合当前情境和已有的关系进度，严禁空泛。
-4. 严格按 JSON 格式输出，严格禁止输出除此之外的任何引导语或 Markdown。
-5. 话术数量 2-3 条。
+4. **身份区分**："我"是用户本人（发建议的人），"对方"是聊天对象。在引用记忆/事实时，严禁混淆谁做了什么。
+5. **时效性**：优先利用近期记忆和事件，避免引用太久远的事情。如果记忆标注了时间，请根据新鲜度判断是否适合当前话题。
+6. 严格按 JSON 格式输出，严格禁止输出除此之外的任何引导语或 Markdown。
+7. 话术数量 2-3 条。
 
 输出格式（纯 JSON，无 markdown）：
 {
@@ -231,7 +233,7 @@ class LLMSuggestionEngine(SuggestionEngine):
                 parts.append(f"  本关系里的态度与角色: {attitude}")
             shared_mem = self_profile.get("shared_memories", [])
             if shared_mem:
-                parts.append(f"  与对方共有的记忆常识: {', '.join(shared_mem)}")
+                parts.append(f"  与对方共有的记忆常识(注意谁做了什么，优先使用近期事件): {', '.join(shared_mem)}")
             donts = self_profile.get("do_and_donts", "")
             if donts:
                 parts.append(f"  模仿禁忌: {donts}")
@@ -295,6 +297,19 @@ class LLMSuggestionEngine(SuggestionEngine):
                 sender = "我" if msg.get("sender_attr") == "self" else "对方"
                 content = msg.get("content", "")[:100]
                 parts.append(f"  {sender}：{content}")
+
+        # 用户调教规则（最高优先级）
+        display_name = context.get("display_name")
+        if display_name:
+            try:
+                from .feedback_rule_extractor import FeedbackRuleExtractor
+                rules = FeedbackRuleExtractor().get_active_rules(display_name)
+                if rules:
+                    parts.append("\n【用户调教规则（绝对最高戒律！每一条都必须严格遵守）】")
+                    for i, rule in enumerate(rules, 1):
+                        parts.append(f"  规则{i}: {rule}")
+            except Exception as e:
+                _print(f"[LLM Engine] 加载调教规则失败: {e}")
 
         parts.append("\n请根据以上信息生成思考过程和沟通建议（纯 JSON 输出）：")
 

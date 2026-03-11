@@ -21,17 +21,21 @@ SYSTEM_PROMPT = """你是一个专业的聊天沟通顾问，但你当前必须�
 
 【核心克隆规则】
 1. **千人千面，消除机味**：你必须彻底抛开所有 AI 常用的客套话、转折词、反问句和过度同理心。
-2. **完美模仿用户风格**：你给出的所有的“建议话术”，必须【逐字逐句完全模仿】提供的「用户本体克隆画像」中的打字风格、标点习惯、常用语气词和沟通态度。这非常关键！
+2. **完美模仿用户风格**：你给出的所有的"建议话术"，必须【逐字逐句完全模仿】提供的「用户本体克隆画像」中的打字风格、标点习惯、常用语气词和沟通态度。这非常关键！
 3. 内容必须贴合当前情境和已有的关系进度，严禁空泛。
 4. **身份区分**："我"是用户本人（发建议的人），"对方"是聊天对象。在引用记忆/事实时，严禁混淆谁做了什么。
 5. **时效性**：优先利用近期记忆和事件，避免引用太久远的事情。如果记忆标注了时间，请根据新鲜度判断是否适合当前话题。
-6. 严格按 JSON 格式输出，严格禁止输出除此之外的任何引导语或 Markdown。
-7. 话术数量 2-3 条。
+6. **回应用户与纯对话**：如果【用户需求与反馈】中有用户的提问或想法，你必须在 reply 字段中用简短自然的口吻直接回应他的问题。
+7. **【极其重要】判定模式机制**：
+   - 模式 A（纯聊天/指令/修改规则）：如果用户输入只是打招呼（如“你好”）、闲聊、或是要求修改你的回复规则，你**绝对不可提供任何对话建议**！你只能在 `reply` 字段内回答他，同时**必须**将 `summary` 设为空字符串 `""`，`speeches` 设为空数组 `[]`！禁止硬凑无关紧要的建议卡片！
+   - 模式 B（请求指导/冷场）：只有在用户明确请教怎么回复对方、或者你检测到聊天即将冷场必须介入时，才能提供 `summary` 和 `speeches`。
+8. 严格按 JSON 格式输出，禁止输出引导语或 Markdown。
 
 输出格式（纯 JSON，无 markdown）：
 {
+  "reply": "（如果用户有提问或反馈，在这里直接简短回应用户的话；如果没有用户输入，此字段留空字符串）",
   "thought_process": "用一两句话简述你是如何推断对方的情感以及为什么提供以下建议的",
-  "summary": "一句话建议摘要", 
+  "summary": "一句话建议摘要（若无须提供建议则留空）", 
   "speeches": ["话术1", "话术2", "话术3"]
 }"""
 
@@ -67,7 +71,6 @@ class LLMSuggestionEngine(SuggestionEngine):
     - 远程 API：DeepSeek / OpenAI / Claude（需配置 api_key）
     - 本地推理：Ollama / LM Studio（无需 api_key）
 
-    失败时自动降级到模板引擎。
     """
 
     def __init__(self, timeout: int = 60):
@@ -311,6 +314,22 @@ class LLMSuggestionEngine(SuggestionEngine):
             except Exception as e:
                 _print(f"[LLM Engine] 加载调教规则失败: {e}")
 
+        # 被唤醒的长期记忆（RAG）
+        relevant_memories = context.get("relevant_memories", [])
+        if relevant_memories:
+            parts.append("\n【被唤醒的历史记忆（你们过去聊过的相关事件）】")
+            for mem in relevant_memories[:3]:
+                summary = mem.get('summary', '')
+                # 计算时间距离
+                import time as _time
+                created = mem.get('created_at', 0)
+                age_hours = int((_time.time() - created) / 3600) if created else 0
+                if age_hours < 24:
+                    time_label = f"{age_hours}小时前"
+                else:
+                    time_label = f"{age_hours // 24}天前"
+                parts.append(f"  {time_label}: {summary}")
+
         parts.append("\n请根据以上信息生成思考过程和沟通建议（纯 JSON 输出）：")
 
         return "\n".join(parts)
@@ -463,9 +482,14 @@ class LLMSuggestionEngine(SuggestionEngine):
             thought_process = data.get("thought_process", "").strip()
             summary = data.get("summary", "").strip()
             speeches = data.get("speeches", [])
+            reply = data.get("reply", "").strip()
 
-            if not summary:
+            if not summary and not reply:
                 return None
+
+            # 若 summary 为空，给一个默认标记防止报错，前端可根据此标记隐藏卡片
+            if not summary and reply:
+                summary = "[PURE_CHAT]"
 
             # 确保 speeches 是字符串列表
             speeches = [str(s).strip() for s in speeches if s]
@@ -477,7 +501,8 @@ class LLMSuggestionEngine(SuggestionEngine):
                 speeches=speeches,
                 severity="medium",
                 confidence=0.9,
-                thought_process=thought_process or None
+                thought_process=thought_process or None,
+                reply=reply or None
             )
         except (json.JSONDecodeError, KeyError, IndexError) as e:
             _print(f"[LLM Engine] JSON 解析失败: {e}, 原始文本: {text[:200]}")

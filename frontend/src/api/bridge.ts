@@ -53,6 +53,9 @@ type PyWebViewApi = {
   get_floating_status: () => Promise<any>
   // 好感度分析进度
   get_affinity_progress: (task_id: string) => Promise<any>
+  // 会话线程归档与继承
+  get_latest_thread: (display_name: string) => Promise<any>
+  load_thread_context: (thread_id: number) => Promise<any>
 }
 
 function getApi(): PyWebViewApi {

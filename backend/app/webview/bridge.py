@@ -337,6 +337,7 @@ class Bridge:
                     "severity": result.severity,
                     "confidence": result.confidence,
                     "thought_process": getattr(result, "thought_process", None),
+                    "reply": getattr(result, "reply", None),
                 },
                 "context_used": {
                     "recent_messages": recent_for_display,
@@ -636,6 +637,13 @@ class Bridge:
             
             logger.debug("[Bridge] 停止实时监听")
             monitor_service = RealtimeMonitorService()
+
+            # 停止前自动归档会话线程
+            try:
+                self._archive_current_session(monitor_service)
+            except Exception as arch_e:
+                logger.error(f"[Bridge] 会话归档失败: {arch_e}")
+
             result = monitor_service.stop_monitoring()
             
             return {
@@ -2141,3 +2149,77 @@ class Bridge:
             }
 
 
+    # ==================== 会话线程归档与继承 ====================
+
+    def _archive_current_session(self, monitor_service):
+        """内部方法：将当前监听会话归档为线程"""
+        if not monitor_service.is_monitoring:
+            return
+
+        batch_id = monitor_service.current_batch_id
+        display_name = monitor_service.current_display_name
+        if not batch_id or not display_name:
+            return
+
+        from ..services.realtime.session_thread_service import SessionThreadService
+        from ..services.realtime.message_buffer import MessageBuffer
+
+        # 读取消息
+        buffer = MessageBuffer()
+        messages = buffer.get_batch_messages(batch_id)
+
+        # 读取建议
+        suggestions = []
+        try:
+            from ..db.connection import get_db
+            conn = get_db()
+            rows = conn.execute(
+                'SELECT * FROM realtime_suggestions WHERE batch_id = ? ORDER BY created_at',
+                (batch_id,)
+            ).fetchall()
+            suggestions = [dict(r) for r in rows]
+        except Exception:
+            pass
+
+        if not messages and not suggestions:
+            return
+
+        # 归档（后台线程避免阻塞 UI）
+        import threading
+        svc = SessionThreadService()
+        t = threading.Thread(
+            target=svc.archive_thread,
+            args=(batch_id, display_name, messages, suggestions),
+            daemon=True
+        )
+        t.start()
+        logger.debug(f"[Bridge] 会话归档已启动 (batch={batch_id[:8]}...)")
+
+    def get_latest_thread(self, display_name: str) -> dict[str, Any]:
+        """获取该联系人最近的会话线程（24 小时内）"""
+        try:
+            from ..services.realtime.session_thread_service import SessionThreadService
+            svc = SessionThreadService()
+            thread = svc.get_latest_thread(display_name)
+            return {
+                "ok": True,
+                "has_thread": thread is not None,
+                "thread": thread
+            }
+        except Exception as e:
+            logger.error(f"[Bridge] 获取最近线程失败: {e}")
+            return {"ok": False, "error": str(e)}
+
+    def load_thread_context(self, thread_id: int) -> dict[str, Any]:
+        """加载线程的完整上下文（用于继续上次指导）"""
+        try:
+            from ..services.realtime.session_thread_service import SessionThreadService
+            svc = SessionThreadService()
+            ctx = svc.load_thread_context(thread_id)
+            return {
+                "ok": True,
+                "context": ctx
+            }
+        except Exception as e:
+            logger.error(f"[Bridge] 加载线程上下文失败: {e}")
+            return {"ok": False, "error": str(e)}

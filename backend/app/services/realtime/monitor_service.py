@@ -698,6 +698,19 @@ class RealtimeMonitorService:
                 # 传递联系人名称以便查询调教规则
                 ctx['display_name'] = self.current_display_name
 
+                # RAG：检索相关历史记忆
+                try:
+                    from .session_thread_service import SessionThreadService
+                    thread_svc = SessionThreadService()
+                    recent = ctx.get('recent_messages', [])
+                    memories = thread_svc.retrieve_relevant_memories(
+                        self.current_display_name, recent
+                    )
+                    if memories:
+                        ctx['relevant_memories'] = memories
+                except Exception as rag_e:
+                    _print(f"⚠️ RAG 检索失败: {rag_e}")
+
                 # 生成建议
                 from .suggestion_engine import SuggestionEngineFactory
                 engine_type = self._suggestion_config.get('engine_type', 'llm')
@@ -770,6 +783,20 @@ class RealtimeMonitorService:
             # 传递联系人名称以便查询调教规则
             if self.current_display_name:
                 ctx['display_name'] = self.current_display_name
+
+            # RAG：检索相关历史记忆
+            if self.current_display_name:
+                try:
+                    from .session_thread_service import SessionThreadService
+                    thread_svc = SessionThreadService()
+                    recent = ctx.get('recent_messages', [])
+                    memories = thread_svc.retrieve_relevant_memories(
+                        self.current_display_name, recent
+                    )
+                    if memories:
+                        ctx['relevant_memories'] = memories
+                except Exception as rag_e:
+                    _print(f"⚠️ RAG 检索失败: {rag_e}")
                     
             result = engine.generate(trigger_type, intent, ctx)
             

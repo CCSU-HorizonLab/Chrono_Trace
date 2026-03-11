@@ -87,6 +87,16 @@
       </div>
     </div>
 
+    <!-- 继续上次指导横幅 -->
+    <div v-if="lastThread" class="fp-thread-banner" @click="loadLastThread">
+      <span class="fp-thread-icon">📎</span>
+      <div class="fp-thread-info">
+        <span class="fp-thread-label">继续上次指导</span>
+        <span class="fp-thread-summary">{{ lastThread.summary }}</span>
+      </div>
+      <button class="fp-btn tiny" @click.stop="lastThread = null">×</button>
+    </div>
+
     <!-- AI 建议列表 -->
     <div class="fp-section fp-suggestions" ref="suggestionsRef">
       <div class="fp-section-hd">
@@ -122,12 +132,25 @@
         <span>AI 正在思考 (已思考 {{ thinkingSeconds }} 秒)…</span>
       </div>
 
-      <!-- 建议卡片 -->
-      <div v-for="s in allSuggestions" :key="s.id || 'manual'" class="fp-suggestion-card" :class="s.severity">
-        <div class="fp-sug-header" @click="toggleSuggestion(s)">
-          <span class="fp-sug-icon">{{ getTriggerIcon(s.trigger_type) }}</span>
-          <span class="fp-sug-summary">{{ s.summary }}</span>
-          <span class="fp-sug-expand">{{ isSuggestionExpanded(s) ? '▼' : '▶' }}</span>
+      <!-- 自包含列表滚动区 -->
+      <div class="fp-suggestions-list">
+        <!-- 建议卡片及对话气泡混排 -->
+        <div v-for="s in allSuggestions" :key="s.id || s._tempId"
+          :class="{
+            'fp-suggestion-card': s._type === 'suggestion',
+            [s.severity || 'medium']: s._type === 'suggestion',
+            'fp-chat-bubble': s._type === 'chat',
+            'user': s._type === 'chat' && s.role === 'user',
+            'ai': s._type === 'chat' && s.role === 'ai'
+          }">
+          
+          <!-- AI 建议形态 -->
+          <template v-if="s._type === 'suggestion'">
+            <div class="fp-sug-header" @click="toggleSuggestion(s)">
+              <span class="fp-sug-icon">{{ getTriggerIcon(s.trigger_type) }}</span>
+              <span class="fp-sug-summary">{{ s.summary }}</span>
+              <span class="fp-sug-time">{{ s.created_at ? formatMsgTime(s.created_at) : '刚才' }}</span>
+              <span class="fp-sug-expand">{{ isSuggestionExpanded(s) ? '▼' : '▶' }}</span>
         </div>
         <div v-show="isSuggestionExpanded(s)" class="fp-sug-body">
           <div v-if="s.thought_process" class="fp-thought-process">
@@ -136,10 +159,21 @@
               <div class="fp-thought-content">{{ s.thought_process }}</div>
             </details>
           </div>
-          <div v-for="(sp, i) in s.speeches" :key="i" class="fp-speech-item">
-            <span class="fp-speech-text">{{ sp }}</span>
-            <button class="fp-btn copy" @click="copyText(sp)">📋</button>
+            <div v-for="(sp, i) in s.speeches" :key="i" class="fp-speech-item">
+              <span class="fp-speech-text">{{ sp }}</span>
+              <button class="fp-btn copy" @click="copyText(sp)">📋</button>
+            </div>
           </div>
+          </template>
+
+          <!-- 对话历史气泡形态 -->
+          <template v-else-if="s._type === 'chat'">
+            <div class="fp-chat-content">
+              <span class="fp-chat-avatar">{{ s.role === 'user' ? '我' : 'AI' }}</span>
+              <span class="fp-chat-text">{{ s.content }}</span>
+            </div>
+            <span class="fp-chat-time">{{ formatMsgTime(s.created_at) }}</span>
+          </template>
         </div>
       </div>
     </div>
@@ -236,8 +270,11 @@ const expandedIds = ref<Set<string>>(new Set(['manual']))  // 展开状态管理
 const showContext = ref(false)  // 是否展示 AI 参考记录
 const contextUsed = ref<{ sender: string; content: string; timestamp: number }[]>([])  // AI 参考的聊天记录
 
-// AI 对话历史
-const conversationHistory = ref<{ role: string; content: string }[]>([])
+// 会话线程继承
+const lastThread = ref<any>(null)
+
+// AI 对话历史 (带有时间戳)
+const conversationHistory = ref<{ role: string; content: string; ts: number }[]>([])
 
 // 情绪历史数据（用于曲线图）
 const emotionHistory = ref<{ time: string; polarity: number; sender: string; content: string }[]>([])
@@ -280,12 +317,38 @@ const profileInitial = computed(() => {
 
 const allSuggestions = computed(() => {
   const list: any[] = []
+  const seenSummaries = new Set<string>()
+
+  // 手动建议优先
   if (manualSuggestion.value) {
-    list.push({ ...manualSuggestion.value, id: 'manual' })
+    if (manualSuggestion.value.summary !== '[PURE_CHAT]') {
+      list.push({ ...manualSuggestion.value, id: manualSuggestion.value.id || 'manual', _type: 'suggestion' })
+      if (manualSuggestion.value.summary) {
+        seenSummaries.add(manualSuggestion.value.summary)
+      }
+    }
   }
+
+  // 轮询建议：跳过与手动建议 summary 相同的重复项，且跳过纯对话
   for (const s of pendingSuggestions.value) {
-    list.push({ ...s })
+    if (s.summary === '[PURE_CHAT]') continue
+    if (s.summary && seenSummaries.has(s.summary)) continue
+    seenSummaries.add(s.summary || '')
+    list.push({ ...s, _type: 'suggestion' })
   }
+
+  // 对话历史
+  conversationHistory.value.forEach((c, idx) => {
+    list.push({ ...c, _type: 'chat', _tempId: `chat_${idx}`, created_at: c.ts })
+  })
+
+  // 按时间升序排序（旧的在上，新的在下，像聊天软件）
+  list.sort((a, b) => {
+    const timeA = a.created_at || Math.floor(Date.now() / 1000)
+    const timeB = b.created_at || Math.floor(Date.now() / 1000)
+    return timeA - timeB
+  })
+
   return list
 })
 
@@ -327,6 +390,9 @@ onMounted(async () => {
     loadSuggestionConfig()
     loadLlmModels()
     checkContactProfile(realtimeState.talkerName)
+
+    // 查询是否有上次会话线程
+    checkLastThread(realtimeState.talkerName)
   } else {
     // 多次重试后仍未在监听状态，退回
     console.error('[FloatingPanel] 无法恢复监听状态，退出悬浮模式')
@@ -572,11 +638,17 @@ function startPolling() {
       await bridgeReady()
       const r = await api.get_pending_suggestions(realtimeState.batchId)
       if (r.ok) {
+        const prevCount = pendingSuggestions.value.length
         pendingSuggestions.value = (r.suggestions || []).map((s: any) => ({
           ...s,
           _expanded: pendingSuggestions.value.find((ps: any) => ps.id === s.id)?._expanded || false
         }))
         emotionSummary.value = r.emotion_summary || null
+        // 有新建议时自动滚底
+        if (pendingSuggestions.value.length > prevCount) {
+          await nextTick()
+          scrollToBottom()
+        }
       }
     } catch (e) { console.error('建议轮询失败:', e) }
   }, 3000)
@@ -670,6 +742,50 @@ function handleLlmError(errorMsg: string) {
   }
 }
 
+// ========== 会话线程继承 ==========
+async function checkLastThread(displayName: string) {
+  if (!displayName) return
+  try {
+    await bridgeReady()
+    const res = await api.get_latest_thread(displayName)
+    if (res.ok && res.has_thread && res.thread) {
+      lastThread.value = res.thread
+    }
+  } catch (e) {
+    console.error('查询历史线程失败:', e)
+  }
+}
+
+async function loadLastThread() {
+  if (!lastThread.value?.id) return
+  try {
+    await bridgeReady()
+    const res = await api.load_thread_context(lastThread.value.id)
+    if (res.ok && res.context) {
+      // 将上次线程的总结作为建议卡片展示
+      const ctx = res.context
+      manualSuggestion.value = {
+        trigger_type: 'thread_resume',
+        intent: 'maintain',
+        summary: `📂 上次指导回顾：${ctx.summary}`,
+        speeches: ctx.suggestions?.slice(-2)?.flatMap(
+          (s: any) => {
+            let sp = s.speeches
+            if (typeof sp === 'string') {
+              try { sp = JSON.parse(sp) } catch { sp = [sp] }
+            }
+            return sp || []
+          }
+        )?.slice(-3) || ['（无历史话术）'],
+        thought_process: `这是上次指导的延续，共 ${ctx.message_count || 0} 条消息`,
+      }
+      lastThread.value = null  // 隐藏横幅
+    }
+  } catch (e) {
+    console.error('加载历史线程失败:', e)
+  }
+}
+
 // ========== AI 建议操作 ==========
 const thinkingSeconds = ref(0)
 let thinkingTimer: any = null
@@ -719,6 +835,16 @@ async function manualGenerate() {
   finally { 
     loading.value = false
     __stopThinkingTimer()
+    await nextTick()
+    scrollToBottom()
+  }
+}
+
+/** 自动滚动建议列表到底部 */
+function scrollToBottom() {
+  const listEl = suggestionsRef.value?.querySelector('.fp-suggestions-list')
+  if (listEl) {
+    listEl.scrollTop = listEl.scrollHeight
   }
 }
 
@@ -758,7 +884,7 @@ async function sendUserContext() {
   const content = userInput.value.trim()
   if (!content || loading.value || !!llmError.value) return
 
-  conversationHistory.value.push({ role: 'user', content })
+  conversationHistory.value.push({ role: 'user', content, ts: Math.floor(Date.now() / 1000) })
   userInput.value = ''
   loading.value = true
   __startThinkingTimer()
@@ -767,16 +893,19 @@ async function sendUserContext() {
   try {
     await bridgeReady()
     const r = await api.generate_suggestion(intent.value, {
-      user_context: conversationHistory.value,
+      user_context: conversationHistory.value.map(c => ({ role: c.role, content: c.content })),
       include_history: true,
     })
     if (r.ok && r.suggestion) {
+      // 如果 AI 返回了 reply（回应用户的话），插入对话流
+      if (r.suggestion.reply) {
+        conversationHistory.value.push({ role: 'ai', content: r.suggestion.reply, ts: Math.floor(Date.now() / 1000) })
+      }
       manualSuggestion.value = r.suggestion
-      expandedIds.value.add('manual')
+      expandedIds.value.add(String(r.suggestion.id || 'manual'))
       expandedIds.value = new Set(expandedIds.value)
-      conversationHistory.value.push({ role: 'ai', content: r.suggestion.summary || '已生成建议' })
     } else {
-      conversationHistory.value.push({ role: 'ai', content: `[生成失败] ${r.error || '未知错误'}` })
+      conversationHistory.value.push({ role: 'ai', content: `[生成失败] ${r.error || '未知错误'}`, ts: Math.floor(Date.now() / 1000) })
       handleLlmError(r.error || '生成失败')
     }
     // 保存 AI 参考的聊天记录
@@ -785,11 +914,14 @@ async function sendUserContext() {
     }
   } catch (e: any) {
     console.error('发送失败:', e)
-    conversationHistory.value.push({ role: 'ai', content: `[系统错误] ${e.message || '网络或接口故障'}` })
+    conversationHistory.value.push({ role: 'ai', content: `[系统错误] ${e.message || '网络或接口故障'}`, ts: Math.floor(Date.now() / 1000) })
     handleLlmError(e.message || '系统错误')
   } finally {
     loading.value = false
     __stopThinkingTimer()
+    // 自动滚动到底部
+    await nextTick()
+    scrollToBottom()
   }
 }
 
@@ -858,6 +990,49 @@ async function generateProfile() {
 </script>
 
 <style scoped>
+/* ==================== 会话线程横幅 ==================== */
+.fp-thread-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  margin: 4px 8px;
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.12), rgba(139, 92, 246, 0.08));
+  border: 1px solid rgba(99, 102, 241, 0.25);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.fp-thread-banner:hover { background: rgba(99, 102, 241, 0.18); }
+.fp-thread-icon { font-size: 16px; flex-shrink: 0; }
+.fp-thread-info { flex: 1; min-width: 0; }
+.fp-thread-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ct-accent-primary, #818cf8);
+  margin-bottom: 1px;
+}
+.fp-thread-summary {
+  display: block;
+  font-size: 10px;
+  color: var(--ct-text-secondary, #94a3b8);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fp-btn.tiny {
+  padding: 0 4px;
+  font-size: 14px;
+  line-height: 1;
+  background: none;
+  border: none;
+  color: var(--ct-text-tertiary, #64748b);
+  cursor: pointer;
+  opacity: 0.6;
+}
+.fp-btn.tiny:hover { opacity: 1; }
+
 /* ==================== 悬浮面板全局 ==================== */
 .fp {
   display: flex;
@@ -870,7 +1045,66 @@ async function generateProfile() {
   color: var(--ct-text-primary);
 }
 
-/* ==================== 顶部栏 ==================== */
+/* ==================== 顶部栏 ====================*/
+/* 对话气泡美化样式 */
+.fp-chat-bubble {
+  display: flex;
+  flex-direction: column;
+  align-self: flex-start;
+  max-width: 88%;
+  background: var(--ct-bg-elevated);
+  border: 1px solid var(--ct-border-color);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+  padding: 10px 14px;
+  border-radius: 12px;
+  border-top-left-radius: 4px;
+  transition: all 0.2s ease;
+}
+.fp-chat-bubble.user {
+  align-self: flex-end;
+  background-color: #4f46e5; /* fallback */
+  background: linear-gradient(135deg, var(--ct-color-primary, #6366f1) 0%, var(--ct-accent-primary, #4f46e5) 100%);
+  border: none;
+  box-shadow: 0 2px 5px rgba(99, 102, 241, 0.2);
+  color: #ffffff;
+  border-radius: 12px;
+  border-top-right-radius: 4px;
+  border-top-left-radius: 12px;
+}
+.fp-chat-content {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  letter-spacing: 0.2px;
+}
+.fp-chat-avatar {
+  font-size: 11px;
+  opacity: 0.9;
+  font-weight: 600;
+  padding: 2px 6px;
+  background: rgba(0,0,0,0.05);
+  border-radius: 4px;
+  margin-top: 1px;
+}
+.user .fp-chat-avatar {
+  background: rgba(255,255,255,0.2);
+}
+.fp-chat-text {
+  flex: 1;
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+.fp-chat-time {
+  margin-top: 6px;
+  font-size: 10px;
+  opacity: 0.5;
+  text-align: right;
+  font-weight: 500;
+}
+.user .fp-chat-time { color: rgba(255, 255, 255, 0.9); opacity: 0.8; }
+
 .fp-header {
   display: flex;
   align-items: center;

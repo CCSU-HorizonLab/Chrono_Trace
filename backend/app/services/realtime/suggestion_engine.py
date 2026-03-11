@@ -17,6 +17,7 @@ class SuggestionResult:
     severity: str = "medium" # 严重程度: low, medium, high, critical
     confidence: float = 1.0  # 置信度 (0.0 - 1.0)
     thought_process: str | None = None # AI 思考过程 (CoT)
+    reply: str | None = None  # AI 对用户输入的自然语言回应
 
 
 class SuggestionEngine(ABC):

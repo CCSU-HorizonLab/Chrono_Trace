@@ -1,73 +1,43 @@
 <template>
   <div class="ct-layout" :class="{ 'floating-mode': isFloatingMode }">
-    <aside v-show="!isFloatingMode" class="ct-sidebar">
-      <!-- Logo区域 -->
-      <div class="sidebar-brand">
-        <div class="brand-logo">
-          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="12" cy="12" r="10"></circle>
-            <polyline points="12 6 12 12 16 14"></polyline>
-          </svg>
-        </div>
-        <div>
-          <h1 class="brand-title">Chrono Trace</h1>
-          <p class="brand-tagline">对话年轮 · 心动间距</p>
+    <!-- 顶部导航栏 -->
+    <header class="ct-topbar" v-show="!isFloatingMode">
+      <!-- Logo与标题区域 -->
+      <div class="topbar-brand">
+        <!-- 暂时取消实际Logo图片或复杂图标，保留文字排版 -->
+        <div class="brand-text">
+          <h1 class="brand-title">Chrono_Trace</h1>
+          <p class="brand-tagline">镌刻对话年轮，丈量心动间距</p>
         </div>
       </div>
 
-      <!-- 导航菜单 -->
+      <!-- 居中导航菜单 -->
       <nav class="ct-menu">
-        <router-link to="/" class="menu-item">
-          <span class="menu-icon">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
-              <polyline points="9 22 9 12 15 12 15 22"></polyline>
-            </svg>
-          </span>
-          <span class="menu-label">首页</span>
-        </router-link>
-
-        <router-link to="/analytics" class="menu-item">
-          <span class="menu-icon">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <line x1="18" y1="20" x2="18" y2="10"></line>
-              <line x1="12" y1="20" x2="12" y2="4"></line>
-              <line x1="6" y1="20" x2="6" y2="14"></line>
-            </svg>
-          </span>
-          <span class="menu-label">历史数据</span>
-        </router-link>
-
-
-
-        <router-link to="/suggestions" class="menu-item">
-          <span class="menu-icon">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-            </svg>
-          </span>
-          <span class="menu-label">AI 建议</span>
-        </router-link>
-
-        <router-link to="/settings" class="menu-item">
-          <span class="menu-icon">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="12" cy="12" r="3"></circle>
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
-            </svg>
-          </span>
-          <span class="menu-label">设置</span>
-        </router-link>
+        <router-link to="/" class="menu-item">首页</router-link>
+        <router-link to="/analytics" class="menu-item">历史数据</router-link>
+        <router-link to="/suggestions" class="menu-item">AI建议</router-link>
+        <router-link to="/settings" class="menu-item">设置</router-link>
       </nav>
 
-      <!-- 底部工具区 -->
-      <div class="sidebar-footer">
-        <ThemeToggle />
+      <!-- 右侧用户区 -->
+      <div class="topbar-user">
+        <!-- 头像占位符 -->
+        <div class="user-avatar">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+            <circle cx="12" cy="7" r="4"></circle>
+          </svg>
+        </div>
+        <!-- 可以在下拉菜单里放ThemeToggle或者直接放这里，此处先简化 -->
+        <ThemeToggle class="theme-toggle-btn" />
       </div>
-    </aside>
+    </header>
 
+    <!-- 主内容区 -->
     <main class="ct-content" :class="{ 'floating-content': isFloatingMode }">
-      <router-view />
+      <div class="main-container">
+        <router-view />
+      </div>
     </main>
   </div>
 </template>
@@ -80,7 +50,7 @@ import { initTheme } from '@/composables/useTheme'
 
 const route = useRoute()
 
-// 悬浮模式下隐藏侧边栏
+// 悬浮模式下隐藏顶部导航
 const isFloatingMode = computed(() => route.path === '/floating')
 
 onMounted(() => {
@@ -90,138 +60,129 @@ onMounted(() => {
 
 <style>
 /* ========================================
-   Global Layout - Editorial & Sophisticated
+   Global Layout - Full width Topbar
    ======================================== */
 
 .ct-layout {
-  display: grid;
-  grid-template-columns: 280px 1fr;
+  display: flex;
+  flex-direction: column;
   min-height: 100vh;
-  background: var(--ct-bg-primary);
 }
 
 /* ========================================
-   Sidebar - Premium Navigation
+   Topbar - Premium Header
    ======================================== */
 
-.ct-sidebar {
-  background: var(--ct-bg-elevated);
-  border-right: 1px solid var(--ct-border-color);
+.ct-topbar {
   display: flex;
-  flex-direction: column;
-  padding: var(--ct-space-lg);
-  position: sticky;
-  top: 0;
-  height: 100vh;
-  overflow-y: auto;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--ct-space-xl);
+  height: 64px;
+  background: linear-gradient(100deg, var(--ct-color-primary) 0%, #a855f7 100%);
+  flex-shrink: 0;
+  position: relative;
+  z-index: 10;
   box-shadow: var(--ct-shadow-sm);
 }
 
 /* Logo区域 */
-.sidebar-brand {
+.topbar-brand {
   display: flex;
   align-items: center;
-  gap: var(--ct-space-md);
-  padding: var(--ct-space-lg) 0;
-  margin-bottom: var(--ct-space-xl);
-  border-bottom: 1px solid var(--ct-border-color);
+  gap: var(--ct-space-sm);
+  width: 300px;
 }
 
-.brand-logo {
-  width: 48px;
-  height: 48px;
-  border-radius: var(--ct-radius-lg);
-  background: linear-gradient(135deg, var(--ct-color-primary), var(--ct-color-accent));
+.brand-text {
   display: flex;
-  align-items: center;
+  flex-direction: column;
   justify-content: center;
-  color: var(--ct-text-inverse);
-  flex-shrink: 0;
-  box-shadow: var(--ct-shadow-md);
 }
 
 .brand-title {
   font-family: var(--ct-font-display);
-  font-size: var(--ct-text-lg);
+  font-size: var(--ct-text-xl);
   font-weight: 700;
-  color: var(--ct-text-primary);
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.1);
   margin: 0;
   line-height: 1.2;
-  letter-spacing: -0.02em;
 }
 
 .brand-tagline {
-  font-size: var(--ct-text-xs);
-  color: var(--ct-text-tertiary);
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.9);
   margin: 0;
   margin-top: 2px;
-  letter-spacing: 0.05em;
 }
 
-/* 导航菜单 */
+/* 导航菜单 - 胶囊状 */
 .ct-menu {
   display: flex;
-  flex-direction: column;
-  gap: var(--ct-space-xs);
-  flex: 1;
+  align-items: center;
+  gap: var(--ct-space-sm);
+  background: rgba(255, 255, 255, 0.2);
+  padding: 4px;
+  border-radius: var(--ct-radius-full);
+  backdrop-filter: blur(10px);
 }
 
 .menu-item {
-  display: flex;
-  align-items: center;
-  gap: var(--ct-space-md);
-  padding: var(--ct-space-md) var(--ct-space-lg);
-  border-radius: var(--ct-radius-md);
-  color: var(--ct-text-secondary);
+  padding: 6px 20px;
+  border-radius: var(--ct-radius-full);
+  color: rgba(255, 255, 255, 0.9);
   text-decoration: none;
   font-size: var(--ct-text-sm);
   font-weight: 500;
   transition: all var(--ct-transition-fast);
-  position: relative;
 }
 
 .menu-item:hover {
-  background: var(--ct-bg-secondary);
-  color: var(--ct-text-primary);
-  transform: translateX(2px);
+  color: #fff;
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .menu-item.router-link-active {
-  background: var(--ct-color-primary-light);
+  background: #ffffff;
   color: var(--ct-color-primary);
   font-weight: 600;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
 
-.menu-item.router-link-active::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 3px;
-  height: 60%;
-  background: var(--ct-color-primary);
-  border-radius: 0 var(--ct-radius-sm) var(--ct-radius-sm) 0;
+/* 右侧用户区 */
+.topbar-user {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--ct-space-md);
+  width: 300px;
 }
 
-.menu-icon {
+.user-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: #a5b4fc;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
-  flex-shrink: 0;
+  color: #fff;
+  border: 2px solid rgba(255,255,255,0.3);
+  overflow: hidden;
 }
 
-.menu-label {
-  flex: 1;
+.user-avatar svg {
+  width: 18px;
+  height: 18px;
 }
 
-/* 底部工具区 */
-.sidebar-footer {
-  margin-top: auto;
-  padding-top: var(--ct-space-lg);
-  border-top: 1px solid var(--ct-border-color);
+.theme-toggle-btn {
+  color: #fff;
+  opacity: 0.8;
+}
+.theme-toggle-btn:hover {
+  opacity: 1;
 }
 
 /* ========================================
@@ -229,84 +190,33 @@ onMounted(() => {
    ======================================== */
 
 .ct-content {
-  padding: var(--ct-space-xl);
-  overflow: auto;
-  min-height: 100vh;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  z-index: 1;
 }
 
-/* 响应式设计 */
+.main-container {
+  width: 100%;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 响应式 */
 @media (max-width: 1024px) {
-  .ct-layout {
-    grid-template-columns: 240px 1fr;
-  }
-
-  .ct-sidebar {
-    padding: var(--ct-space-md);
-  }
-
-  .brand-logo {
-    width: 40px;
-    height: 40px;
-  }
-
-  .brand-title {
-    font-size: var(--ct-text-base);
-  }
-
-  .brand-tagline {
-    display: none;
-  }
+  .ct-topbar { padding: 0 var(--ct-space-lg); }
+  .topbar-brand, .topbar-user { width: auto; }
+  .brand-tagline { display: none; }
 }
 
 @media (max-width: 768px) {
-  .ct-layout {
-    grid-template-columns: 1fr;
-  }
-
-  .ct-sidebar {
-    position: fixed;
-    left: -100%;
-    top: 0;
-    width: 280px;
-    z-index: 1000;
-    transition: left var(--ct-transition-normal);
-  }
-
-  .ct-sidebar.open {
-    left: 0;
-    box-shadow: var(--ct-shadow-xl);
-  }
-
-  .ct-content {
+  .ct-topbar {
+    flex-direction: column;
+    height: auto;
     padding: var(--ct-space-md);
+    gap: var(--ct-space-md);
   }
-}
-
-/* 滚动条美化 */
-.ct-sidebar::-webkit-scrollbar {
-  width: 6px;
-}
-
-.ct-sidebar::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.ct-sidebar::-webkit-scrollbar-thumb {
-  background: var(--ct-border-color);
-  border-radius: var(--ct-radius-full);
-}
-
-.ct-sidebar::-webkit-scrollbar-thumb:hover {
-  background: var(--ct-border-color-hover);
-}
-
-/* 悬浮模式：隐藏侧边栏，内容占满窗口 */
-.ct-layout.floating-mode {
-  grid-template-columns: 1fr;
-}
-
-.ct-content.floating-content {
-  padding: 0;
-  overflow: hidden;
 }
 </style>

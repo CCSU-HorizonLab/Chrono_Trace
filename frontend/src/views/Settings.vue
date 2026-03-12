@@ -1,15 +1,18 @@
 <template>
-  <section class="settings-page">
-    <header class="page-title">
-      <h1>设置</h1>
-      <div class="auto-save-status">
-        <span v-if="saving" class="saving">💾 保存中...</span>
-        <span v-else-if="lastSaveTime" class="saved">✅ 已保存 {{ lastSaveTime }}</span>
-        <span v-else class="idle">⚙️ 自动保存已启用</span>
-      </div>
-    </header>
+  <section class="home-page">
+    <div class="home-section">
+      <h2 class="section-title">
+        <div style="display:flex;align-items:center;">
+          <span class="dot purple"></span>设置
+        </div>
+        <div class="auto-save-status" style="margin-left: auto;">
+          <span v-if="saving" class="saving">💾 保存中...</span>
+          <span v-else-if="lastSaveTime" class="saved">✅ 已保存 {{ lastSaveTime }}</span>
+          <span v-else class="idle">⚙️ 自动保存已启用</span>
+        </div>
+      </h2>
 
-    <div class="grid">
+      <div class="grid">
       <!-- 模型配置（合并原通用配置 + LLM 模型管理） -->
       <CtCard title="🤖 模型配置">
         <div class="form">
@@ -120,6 +123,7 @@
           </label>
         </div>
       </CtCard>
+      </div>
     </div>
 
     <!-- 模型表单弹窗（放在根级别，避免 CtCard 内定位闪烁） -->
@@ -581,10 +585,6 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.settings-page { display: flex; flex-direction: column; gap: var(--ct-space-lg); }
-.page-title { display: flex; align-items: center; justify-content: space-between; }
-.page-title h1 { margin: 0; color: var(--ct-color-primary); }
-
 /* 自动保存状态 */
 .auto-save-status {
   display: flex;

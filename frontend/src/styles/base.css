@@ -3,15 +3,7 @@
 html, body, #app { height: 100%; }
 body { margin: 0; background: var(--ct-bg); color: var(--ct-text); font-family: system-ui, -apple-system, Segoe UI, Roboto, 'Helvetica Neue', Arial; }
 
-/* layout helpers */
-.ct-layout { display: grid; grid-template-columns: 240px 1fr; height: 100vh; }
-.ct-sidebar { border-right: 1px solid var(--ct-border-color); padding: 16px; background: var(--ct-color-primary); color: var(--ct-text-inverse); }
-.ct-brand { margin: 0 0 16px; font-size: 18px; }
-.ct-menu { display: flex; flex-direction: column; gap: 8px; }
-.ct-menu a { color: var(--ct-text-inverse); text-decoration: none; padding: 8px 10px; border-radius: 6px; opacity: 0.9; }
-.ct-menu a:hover { opacity: 1; background: var(--ct-bg-secondary-hover); }
-.ct-menu a.router-link-active { background: var(--ct-color-accent); color: var(--ct-text-primary); }
-.ct-content { padding: 16px; overflow: auto; }
+/* layout helpers (legacy sidebar removed) */
 
 /* card */
 .ct-card { background: var(--ct-bg-elevated); border: var(--ct-border); border-radius: var(--ct-radius); box-shadow: var(--ct-shadow); }
@@ -85,3 +77,43 @@ body { margin: 0; background: var(--ct-bg); color: var(--ct-text); font-family: 
   gap: var(--ct-space-sm);
   margin-top: var(--ct-space-lg);
 }
+
+/* ========================================
+   Common Page Layout (Shared with Home, Settings, Suggestions, etc.)
+   ======================================== */
+.home-page { 
+  display: flex; 
+  flex-direction: column; 
+  gap: 40px;
+  padding: 40px var(--ct-space-xl);
+  max-width: 1200px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.home-section {
+  display: flex;
+  flex-direction: column;
+}
+
+.section-title {
+  display: flex;
+  align-items: center;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--ct-text-primary);
+  margin-bottom: 20px;
+}
+
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 10px;
+  flex-shrink: 0;
+}
+.dot.pink { background-color: #ff8a8a; }
+.dot.green { background-color: #8ce1a7; }
+.dot.blue { background-color: #60a5fa; }
+.dot.purple { background-color: #a855f7; }
+.dot.orange { background-color: #f97316; }

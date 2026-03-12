@@ -13,11 +13,11 @@
 
 /* LIGHT THEME */
 :root {
-  /* Primary Colors - Blue-Purple */
-  --ct-color-primary: #5b6be0;
-  --ct-color-primary-hover: #4a5ad1;
-  --ct-color-primary-light: #e8eaf9;
-  --ct-color-primary-muted: rgba(91, 107, 224, 0.1);
+  /* Primary Colors - Purple/Blue */
+  --ct-color-primary: #7c4dff;
+  --ct-color-primary-hover: #651fff;
+  --ct-color-primary-light: #f0e6ff;
+  --ct-color-primary-muted: rgba(124, 77, 255, 0.1);
 
   /* Accent Colors - Warm Orange */
   --ct-color-accent: #f5a623;
@@ -37,6 +37,7 @@
   --ct-color-info-light: rgba(59, 130, 246, 0.1);
 
   /* Backgrounds */
+  --ct-bg-app: #ffffff; /* Global white background */
   --ct-bg-primary: #ffffff;
   --ct-bg-secondary: #f8fafc;
   --ct-bg-tertiary: #f1f5f9;
@@ -185,7 +186,7 @@ html {
 
 /* BASE STYLES */
 body {
-  background-color: var(--ct-bg-primary);
+  background-color: var(--ct-bg-app);
   color: var(--ct-text-primary);
   font-family: var(--ct-font-body);
   font-size: var(--ct-text-base);

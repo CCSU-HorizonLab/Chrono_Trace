@@ -1,17 +1,15 @@
 <template>
-  <section class="suggs">
-    <header class="page-title">
-      <h1>AI 建议</h1>
-    </header>
-
+  <section class="home-page">
     <!-- 实时监听控制区 (全宽) -->
-    <div class="card realtime-monitor">
-      <div class="card-hd collapsible" @click="toggleMonitorPanel">
-        <span>实时监听控制</span>
-        <span class="icon">{{ monitorPanelExpanded ? '▼' : '▶' }}</span>
-      </div>
-      
-      <div v-show="monitorPanelExpanded" class="card-bd">
+    <div class="home-section">
+      <h2 class="section-title"><span class="dot pink"></span>AI 建议 & 实时监听</h2>
+      <div class="card realtime-monitor">
+        <div class="card-hd collapsible" @click="toggleMonitorPanel">
+          <span>实时监听控制</span>
+          <span class="icon">{{ monitorPanelExpanded ? '▼' : '▶' }}</span>
+        </div>
+        
+        <div v-show="monitorPanelExpanded" class="card-bd">
         <!-- 重要提示 -->
         <div class="alert warning">
           <div class="alert-title">⚠️ 重要提示</div>
@@ -116,9 +114,12 @@
         <div v-if="realtimeError" class="error">{{ realtimeError }}</div>
       </div>
     </div>
+    </div> <!-- end of first home-section -->
 
     <!-- ====== 左右分栏布局（统一视图） ====== -->
-    <div class="split-layout">
+    <div class="home-section">
+      <h2 class="section-title"><span class="dot blue"></span>配置与建议面板</h2>
+      <div class="split-layout">
 
 
 
@@ -234,6 +235,7 @@
 
       </div>
     </div>
+    </div> <!-- end of second home-section -->
 
 
   </section>
@@ -868,9 +870,6 @@ function getTriggerIcon(type: string): string {
 </script>
 
 <style scoped>
-.suggs { display: flex; flex-direction: column; gap: var(--ct-space-lg); }
-.page-title h1 { margin: 0 0 var(--ct-space-sm); color: var(--ct-color-primary); }
-
 /* ====== 左右分栏布局 ====== */
 .split-layout {
   display: grid;

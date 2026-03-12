@@ -43,6 +43,7 @@ class RealtimeMonitorService:
             self.is_monitoring = False          # 监听状态
             self._chat_ready = False            # ChatWith 是否完成
             self._chat_error = ''               # ChatWith 出错信息
+            self._start_time = 0                # 开始监听时间戳
             self.message_buffer = MessageBuffer()
             self.seen_hashes = set()            # 消息去重集合
             self.polling_thread = None          # 轮询线程
@@ -137,6 +138,8 @@ class RealtimeMonitorService:
             self.is_monitoring = True
             self._chat_ready = False
             self._chat_error = ''
+            import time
+            self._start_time = int(time.time())
             _print(f"✅ 监听已启动！批次ID: {self.current_batch_id[:8]}...")
             
             # 5. 启动轮询线程（ChatWith 和模型预加载在线程中异步执行）
@@ -837,15 +840,20 @@ class RealtimeMonitorService:
                     trigger_context TEXT,
                     created_at INTEGER NOT NULL,
                     read_at INTEGER,
-                    dismissed_at INTEGER
+                    dismissed_at INTEGER,
+                    reply TEXT
                 )
             ''')
+            try:
+                conn.execute("ALTER TABLE realtime_suggestions ADD COLUMN reply TEXT")
+            except:
+                pass
             
             conn.execute('''
                 INSERT INTO realtime_suggestions
                 (batch_id, trigger_type, intent, severity, summary, speeches,
-                 confidence, engine_type, trigger_context, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 confidence, engine_type, trigger_context, created_at, reply)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 self.current_batch_id,
                 result.trigger_type,
@@ -857,6 +865,7 @@ class RealtimeMonitorService:
                 self._suggestion_config.get('engine_type', 'llm'),
                 json.dumps(trigger.context, ensure_ascii=False) if trigger.context else None,
                 int(time.time()),
+                getattr(result, 'reply', None)
             ))
             conn.commit()
             

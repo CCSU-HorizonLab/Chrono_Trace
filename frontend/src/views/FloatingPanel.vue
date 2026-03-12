@@ -253,6 +253,8 @@ const llmError = ref('')
 const connectionLost = ref(false)  // 断流感知状态
 let pollFailCount = 0  // 连续轮询失败计数
 
+const processedSuggestionIds = new Set<number>()
+
 const intent = ref<'intimate' | 'maintain' | 'distance'>('maintain')
 const triggerMode = ref<'full_auto' | 'semi_auto' | 'manual'>('semi_auto')
 const loading = ref(false)
@@ -303,10 +305,7 @@ const intents = [
 ]
 
 const quickPrompts = ref<string[]>([
-  '拉近距离',
-  '化解尴尬',
-  '延续话题',
-  '表达关心',
+  '加载中...',
 ])
 
 // ========== 计算属性 ==========
@@ -317,23 +316,22 @@ const profileInitial = computed(() => {
 
 const allSuggestions = computed(() => {
   const list: any[] = []
-  const seenSummaries = new Set<string>()
+  const seenIds = new Set<string>()
 
   // 手动建议优先
   if (manualSuggestion.value) {
-    if (manualSuggestion.value.summary !== '[PURE_CHAT]') {
-      list.push({ ...manualSuggestion.value, id: manualSuggestion.value.id || 'manual', _type: 'suggestion' })
-      if (manualSuggestion.value.summary) {
-        seenSummaries.add(manualSuggestion.value.summary)
-      }
+    if (manualSuggestion.value.summary !== '[PURE_CHAT]' && manualSuggestion.value.summary !== '[SILENT]') {
+      const id = manualSuggestion.value.id || 'manual'
+      list.push({ ...manualSuggestion.value, id: id, _type: 'suggestion' })
+      seenIds.add(String(id))
     }
   }
 
-  // 轮询建议：跳过与手动建议 summary 相同的重复项，且跳过纯对话
+  // 轮询建议：跳过纯对话和静默回应，以及跳过已被手动首选加载的高亮建议的同一id
   for (const s of pendingSuggestions.value) {
-    if (s.summary === '[PURE_CHAT]') continue
-    if (s.summary && seenSummaries.has(s.summary)) continue
-    seenSummaries.add(s.summary || '')
+    if (s.summary === '[PURE_CHAT]' || s.summary === '[SILENT]') continue
+    if (s.id && seenIds.has(String(s.id))) continue
+    if (s.id) seenIds.add(String(s.id))
     list.push({ ...s, _type: 'suggestion' })
   }
 
@@ -392,7 +390,14 @@ onMounted(async () => {
     checkContactProfile(realtimeState.talkerName)
 
     // 查询是否有上次会话线程
-    checkLastThread(realtimeState.talkerName)
+    try {
+      const tRes = await api.get_latest_thread(realtimeState.talkerName)
+      if (tRes.ok && tRes.thread) {
+        lastThread.value = tRes.thread
+      }
+    } catch (e) {
+      console.error('查询历史线程失败:', e)
+    }
   } else {
     // 多次重试后仍未在监听状态，退回
     console.error('[FloatingPanel] 无法恢复监听状态，退出悬浮模式')
@@ -416,9 +421,11 @@ onBeforeUnmount(() => {
 async function exitFloating() {
   try {
     await bridgeReady()
-    // 停止监听
+    // 停止监听并保存当前的对话记录
     if (realtimeState.isMonitoring) {
-      await api.stop_realtime_monitor()
+      // 通过 JSON 序列化反序列化可以去除 proxy 对象包装，确保传给后端的是普通对象数组
+      const historyToSave = JSON.parse(JSON.stringify(conversationHistory.value))
+      await api.stop_realtime_monitor(historyToSave)
     }
     stopPolling()
     // 退出悬浮模式（恢复窗口尺寸）
@@ -638,14 +645,33 @@ function startPolling() {
       await bridgeReady()
       const r = await api.get_pending_suggestions(realtimeState.batchId)
       if (r.ok) {
-        const prevCount = pendingSuggestions.value.length
-        pendingSuggestions.value = (r.suggestions || []).map((s: any) => ({
-          ...s,
-          _expanded: pendingSuggestions.value.find((ps: any) => ps.id === s.id)?._expanded || false
-        }))
+        let addedNew = false
+        const revSuggestions = [...(r.suggestions || [])].reverse()
+        
+        revSuggestions.forEach((s: any) => {
+          if (s.id && processedSuggestionIds.has(s.id)) return
+          if (s.id) processedSuggestionIds.add(s.id)
+          
+          if (s.summary === '[SILENT]') return
+          
+          addedNew = true
+          // 分拣气泡与卡片
+          if (s.summary === '[PURE_CHAT]') {
+             if (s.reply) {
+               conversationHistory.value.push({ role: 'ai', content: s.reply, ts: Math.floor(new Date(s.created_at || Date.now()).getTime()/1000) })
+             }
+          } else {
+             const parsedSpeeches = typeof s.speeches === 'string' ? JSON.parse(s.speeches) : (s.speeches || [])
+             pendingSuggestions.value.push({ ...s, speeches: parsedSpeeches, _expanded: false, _type: 'suggestion' })
+             if (s.reply) {
+               conversationHistory.value.push({ role: 'ai', content: s.reply, ts: Math.floor(new Date(s.created_at || Date.now()).getTime()/1000) })
+             }
+          }
+        })
+        
         emotionSummary.value = r.emotion_summary || null
         // 有新建议时自动滚底
-        if (pendingSuggestions.value.length > prevCount) {
+        if (addedNew) {
           await nextTick()
           scrollToBottom()
         }
@@ -742,50 +768,6 @@ function handleLlmError(errorMsg: string) {
   }
 }
 
-// ========== 会话线程继承 ==========
-async function checkLastThread(displayName: string) {
-  if (!displayName) return
-  try {
-    await bridgeReady()
-    const res = await api.get_latest_thread(displayName)
-    if (res.ok && res.has_thread && res.thread) {
-      lastThread.value = res.thread
-    }
-  } catch (e) {
-    console.error('查询历史线程失败:', e)
-  }
-}
-
-async function loadLastThread() {
-  if (!lastThread.value?.id) return
-  try {
-    await bridgeReady()
-    const res = await api.load_thread_context(lastThread.value.id)
-    if (res.ok && res.context) {
-      // 将上次线程的总结作为建议卡片展示
-      const ctx = res.context
-      manualSuggestion.value = {
-        trigger_type: 'thread_resume',
-        intent: 'maintain',
-        summary: `📂 上次指导回顾：${ctx.summary}`,
-        speeches: ctx.suggestions?.slice(-2)?.flatMap(
-          (s: any) => {
-            let sp = s.speeches
-            if (typeof sp === 'string') {
-              try { sp = JSON.parse(sp) } catch { sp = [sp] }
-            }
-            return sp || []
-          }
-        )?.slice(-3) || ['（无历史话术）'],
-        thought_process: `这是上次指导的延续，共 ${ctx.message_count || 0} 条消息`,
-      }
-      lastThread.value = null  // 隐藏横幅
-    }
-  } catch (e) {
-    console.error('加载历史线程失败:', e)
-  }
-}
-
 // ========== AI 建议操作 ==========
 const thinkingSeconds = ref(0)
 let thinkingTimer: any = null
@@ -816,6 +798,12 @@ async function manualGenerate() {
     })
     if (r.ok && r.suggestion) {
       manualSuggestion.value = r.suggestion
+      // 将手动生成的卡片同步加入待处理池以将其驻留，防止下次 manual_generate 覆盖致其屏幕消失
+      if (r.suggestion.summary !== '[PURE_CHAT]' && r.suggestion.summary !== '[SILENT]') {
+         const parsedSpeeches = typeof r.suggestion.speeches === 'string' ? JSON.parse(r.suggestion.speeches) : (r.suggestion.speeches || [])
+         pendingSuggestions.value.push({ ...r.suggestion, speeches: parsedSpeeches })
+      }
+      
       expandedIds.value.add('manual')
       expandedIds.value = new Set(expandedIds.value)
     } else {
@@ -902,6 +890,12 @@ async function sendUserContext() {
         conversationHistory.value.push({ role: 'ai', content: r.suggestion.reply, ts: Math.floor(Date.now() / 1000) })
       }
       manualSuggestion.value = r.suggestion
+      // 同步插入历史建议池
+      if (r.suggestion.summary !== '[PURE_CHAT]' && r.suggestion.summary !== '[SILENT]') {
+         const parsedSpeeches = typeof r.suggestion.speeches === 'string' ? JSON.parse(r.suggestion.speeches) : (r.suggestion.speeches || [])
+         pendingSuggestions.value.push({ ...r.suggestion, speeches: parsedSpeeches })
+      }
+      
       expandedIds.value.add(String(r.suggestion.id || 'manual'))
       expandedIds.value = new Set(expandedIds.value)
     } else {
@@ -986,6 +980,55 @@ async function generateProfile() {
     }
   } catch (e) { console.error('生成画像失败:', e) }
   finally { profileLoading.value = false }
+}
+
+// ========== 继承上次会话 ==========
+async function loadLastThread() {
+  if (!lastThread.value) return
+  try {
+    await bridgeReady()
+    const r = await api.load_thread_context(lastThread.value.id)
+    // 兼容后端可能返回 r.data 或 r.context
+    const threadData = r.data || r.context
+    if (r.ok && threadData) {
+      if (threadData.suggestions && threadData.suggestions.length > 0) {
+        // 分拣
+        const loadedSuggs: any[] = []
+        const loadedChats: any[] = []
+        threadData.suggestions.forEach((s: any) => {
+          if (s.id) processedSuggestionIds.add(s.id)
+          if (s.summary === '[SILENT]') return
+          
+          if (s.summary !== '[PURE_CHAT]') {
+             const parsedSpeeches = typeof s.speeches === 'string' ? JSON.parse(s.speeches) : (s.speeches || [])
+             loadedSuggs.push({ ...s, speeches: parsedSpeeches, _type: 'suggestion' })
+          }
+        })
+        
+        pendingSuggestions.value = loadedSuggs
+        // 直接从快照恢复完整的与 AI 聊天气泡记录
+        if (threadData.user_chat_history && Array.isArray(threadData.user_chat_history)) {
+          conversationHistory.value = threadData.user_chat_history
+        } else {
+          conversationHistory.value = []
+        }
+        
+        if (threadData.messages && threadData.messages.length > 0) {
+          contextUsed.value = threadData.messages
+        }
+      }
+      
+      // 取消横幅
+      lastThread.value = null
+      setTimeout(scrollToBottom, 200)
+    } else {
+      lastThread.value = null
+      console.warn('[loadLastThread] 接口返回失败:', r)
+    }
+  } catch (e: any) {
+    console.error('加载上次会话失败:', e)
+    lastThread.value = null
+  }
 }
 </script>
 

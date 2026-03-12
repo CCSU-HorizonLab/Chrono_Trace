@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Optional
 import json
 import os
 import logging
@@ -126,6 +126,52 @@ class Bridge:
 
     def ingest_data(self, file_path: str, options: dict[str, Any] | None = None) -> dict[str, Any]:
         return {"ok": True, "file_path": file_path, "options": options or {}}
+    # ==================== 长程对话继承 ====================
+    def get_latest_thread(self, display_name: str) -> dict[str, Any]:
+        """获取联系人最近的一次会话归档，用于“继续上次指导”"""
+        try:
+            from ..services.realtime.session_thread_service import SessionThreadService
+            thread = SessionThreadService().get_latest_thread(display_name)
+            if thread:
+                return {"ok": True, "thread": thread}
+            return {"ok": False}
+        except Exception as e:
+            logger.error(f"[Bridge] 获取最近线程异常: {e}")
+            return {"ok": False, "error": str(e)}
+
+    def load_thread_context(self, thread_id: int) -> dict[str, Any]:
+        """加载历史线程的完整对话上下文与建议"""
+        try:
+            from ..services.realtime.session_thread_service import SessionThreadService
+            data = SessionThreadService().load_thread_context(thread_id)
+            if data:
+                # 确保所有值都是 JSON 可序列化的
+                safe_data = {}
+                for k, v in data.items():
+                    if isinstance(v, bytes):
+                        safe_data[k] = v.decode('utf-8', errors='replace')
+                    elif isinstance(v, (dict, list, str, int, float, bool)) or v is None:
+                        safe_data[k] = v
+                    else:
+                        safe_data[k] = str(v)
+                
+                result = {"ok": True, "data": safe_data}
+                # 预检序列化
+                try:
+                    import json as _json
+                    test = _json.dumps(result, ensure_ascii=False)
+                    logger.info(f"[Bridge] load_thread_context 返回成功: keys={list(safe_data.keys())}, "
+                               f"suggestions={len(safe_data.get('suggestions', []))}, "
+                               f"messages={len(safe_data.get('messages', []))}, "
+                               f"json_size={len(test)}")
+                except Exception as je:
+                    logger.error(f"[Bridge] load_thread_context 序列化预检失败: {je}")
+                    return {"ok": False, "error": f"序列化失败: {je}"}
+                return result
+            return {"ok": False, "error": "未找到上下文"}
+        except Exception as e:
+            logger.error(f"[Bridge] 加载线程上下文异常: {e}")
+            return {"ok": False, "error": str(e)}
 
     # ==================== 历史数据分析相关 ====================
     
@@ -292,14 +338,21 @@ class Bridge:
                         trigger_context TEXT,
                         created_at INTEGER NOT NULL,
                         read_at INTEGER,
-                        dismissed_at INTEGER
+                        dismissed_at INTEGER,
+                        reply TEXT
                     )
                 ''')
-                conn.execute('''
+                try:
+                    conn.execute("ALTER TABLE realtime_suggestions ADD COLUMN reply TEXT")
+                except:
+                    pass
+                now_time = int(_time.time())
+                cursor = conn.cursor()
+                cursor.execute('''
                     INSERT INTO realtime_suggestions
                     (batch_id, trigger_type, intent, severity, summary, speeches,
-                     confidence, status, engine_type, trigger_context, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 'displayed', ?, ?, ?)
+                     confidence, status, engine_type, trigger_context, created_at, reply)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 'displayed', ?, ?, ?, ?)
                 ''', (
                     monitor.current_batch_id or 'manual',
                     result.trigger_type,
@@ -309,12 +362,19 @@ class Bridge:
                     json.dumps(result.speeches, ensure_ascii=False),
                     result.confidence,
                     engine_type,
-                    json.dumps({'source': 'manual_generate'}, ensure_ascii=False),
-                    int(_time.time()),
+                    json.dumps({
+                        'source': 'manual_generate',
+                        'user_context': context.get('user_context'),
+                    }, ensure_ascii=False),
+                    now_time,
+                    getattr(result, 'reply', None),
                 ))
+                inserted_id = cursor.lastrowid
                 conn.commit()
-                logger.debug("[Bridge] 手动建议已写入 realtime_suggestions 表")
+                logger.debug(f"[Bridge] 手动建议已写入 realtime_suggestions 表, id={inserted_id}")
             except Exception as db_e:
+                inserted_id = None
+                now_time = int(_time.time())
                 logger.error(f"[Bridge] 写入建议到DB失败: {db_e}")
 
             # 提取 AI 实际参考的聊天记录（最多 10 条）
@@ -330,6 +390,7 @@ class Bridge:
             return {
                 "ok": True,
                 "suggestion": {
+                    "id": inserted_id,
                     "trigger_type": result.trigger_type,
                     "intent": result.intent,
                     "summary": result.summary,
@@ -338,6 +399,7 @@ class Bridge:
                     "confidence": result.confidence,
                     "thought_process": getattr(result, "thought_process", None),
                     "reply": getattr(result, "reply", None),
+                    "created_at": now_time,
                 },
                 "context_used": {
                     "recent_messages": recent_for_display,
@@ -619,7 +681,7 @@ class Bridge:
                 "error": str(e)
             }
     
-    def stop_realtime_monitor(self) -> dict[str, Any]:
+    def stop_realtime_monitor(self, user_chat_history: Optional[list[dict]] = None) -> dict[str, Any]:
         """
         停止实时消息监听
         
@@ -640,7 +702,7 @@ class Bridge:
 
             # 停止前自动归档会话线程
             try:
-                self._archive_current_session(monitor_service)
+                self._archive_current_session(monitor_service, user_chat_history)
             except Exception as arch_e:
                 logger.error(f"[Bridge] 会话归档失败: {arch_e}")
 
@@ -777,14 +839,19 @@ class Bridge:
                     trigger_context TEXT,
                     created_at INTEGER NOT NULL,
                     read_at INTEGER,
-                    dismissed_at INTEGER
+                    dismissed_at INTEGER,
+                    reply TEXT
                 )
             ''')
+            try:
+                conn.execute("ALTER TABLE realtime_suggestions ADD COLUMN reply TEXT")
+            except:
+                pass
 
             # 查询 pending 状态的建议
             cursor = conn.execute('''
                 SELECT id, trigger_type, intent, severity, summary, speeches,
-                       confidence, engine_type, trigger_context, status, created_at
+                       confidence, engine_type, trigger_context, status, created_at, reply
                 FROM realtime_suggestions
                 WHERE batch_id = ? AND status = 'pending'
                 ORDER BY created_at DESC
@@ -806,6 +873,7 @@ class Bridge:
                     'trigger_context': json.loads(row['trigger_context']) if row['trigger_context'] else None,
                     'status': row['status'],
                     'created_at': row['created_at'],
+                    'reply': row['reply']
                 })
 
             # 获取情绪摘要
@@ -2151,7 +2219,7 @@ class Bridge:
 
     # ==================== 会话线程归档与继承 ====================
 
-    def _archive_current_session(self, monitor_service):
+    def _archive_current_session(self, monitor_service, user_chat_history=None):
         """内部方法：将当前监听会话归档为线程"""
         if not monitor_service.is_monitoring:
             return
@@ -2189,7 +2257,7 @@ class Bridge:
         svc = SessionThreadService()
         t = threading.Thread(
             target=svc.archive_thread,
-            args=(batch_id, display_name, messages, suggestions),
+            args=(batch_id, display_name, messages, suggestions, None, user_chat_history),
             daemon=True
         )
         t.start()

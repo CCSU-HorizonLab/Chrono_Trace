@@ -97,6 +97,7 @@ class SessionThreadService:
         messages: list[dict],
         suggestions: list[dict],
         start_time: Optional[int] = None,
+        user_chat_history: Optional[list[dict]] = None
     ) -> Optional[int]:
         """
         归档一次 AI 辅助指导会话。
@@ -136,24 +137,36 @@ class SessionThreadService:
             suggestions[-10:],  # 最多保留最近 10 条建议
             ensure_ascii=False
         )
+        chat_snapshot = json.dumps(
+            user_chat_history if user_chat_history else [],
+            ensure_ascii=False
+        )
 
         # 写入数据库
         try:
             from ...db.connection import get_db
             conn = get_db()
             self._ensure_table(conn)
+            
+            # 使用增量迁移来确保兼容
+            try:
+                conn.execute("ALTER TABLE session_threads ADD COLUMN user_chat_history_snapshot TEXT")
+            except:
+                pass
 
             cursor = conn.execute('''
                 INSERT INTO session_threads
                 (batch_id, display_name, summary, keywords,
                  messages_snapshot, suggestions_snapshot,
-                 message_count, suggestion_count, created_at, duration_seconds)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 message_count, suggestion_count, created_at, duration_seconds,
+                 user_chat_history_snapshot)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 batch_id, display_name, summary, keywords,
                 msg_snapshot, sug_snapshot,
                 len(messages), len(suggestions),
-                now, duration
+                now, duration,
+                chat_snapshot
             ))
             conn.commit()
             thread_id = cursor.lastrowid
@@ -217,11 +230,13 @@ class SessionThreadService:
 
             data = dict(row)
             # 解析 JSON 快照
-            data['messages'] = json.loads(data.get('messages_snapshot', '[]'))
-            data['suggestions'] = json.loads(data.get('suggestions_snapshot', '[]'))
+            data['messages'] = json.loads(data.get('messages_snapshot') or '[]')
+            data['suggestions'] = json.loads(data.get('suggestions_snapshot') or '[]')
+            data['user_chat_history'] = json.loads(data.get('user_chat_history_snapshot') or '[]')
             # 清理大字段
             data.pop('messages_snapshot', None)
             data.pop('suggestions_snapshot', None)
+            data.pop('user_chat_history_snapshot', None)
 
             _print(f"[SessionThread] 📂 已加载线程 #{thread_id}: "
                    f"{len(data['messages'])} 消息, {len(data['suggestions'])} 建议")

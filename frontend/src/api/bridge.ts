@@ -19,7 +19,7 @@ type PyWebViewApi = {
   scan_wechat_directory: (wechat_dir: string) => Promise<any>
   // 实时监听
   start_realtime_monitor: (talker_display_name: string) => Promise<any>
-  stop_realtime_monitor: () => Promise<any>
+  stop_realtime_monitor: (user_chat_history?: any[]) => Promise<any>
   get_realtime_status: () => Promise<any>
   get_realtime_messages: (batch_id: string, limit?: number) => Promise<any>
   // AI 建议

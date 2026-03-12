@@ -131,6 +131,10 @@ class LLMSuggestionEngine(SuggestionEngine):
             # 解析响应
             result = self._parse_response(response_text, trigger_type, intent)
             if result:
+                if result.summary == "[SILENT]":
+                    _print(f"[LLM Engine] 😶 LLM 决定保持沉默，无建议也不需回复。")
+                    return result
+
                 _print(f"[LLM Engine] ✅ LLM 生成成功!")
                 _print(f"[LLM Engine] 思考过程: {result.thought_process}")
                 _print(f"[LLM Engine] 摘要: {result.summary}")
@@ -485,11 +489,19 @@ class LLMSuggestionEngine(SuggestionEngine):
             reply = data.get("reply", "").strip()
 
             if not summary and not reply:
-                return None
+                # 允许模型保持沉默（既没建议也不回复用户）
+                summary = "[SILENT]"
 
             # 若 summary 为空，给一个默认标记防止报错，前端可根据此标记隐藏卡片
             if not summary and reply:
                 summary = "[PURE_CHAT]"
+
+            # 确保 speeches 是合法的列表
+            if isinstance(speeches, str):
+                # 如果大模型返回的是纯字符串，包裹一层
+                speeches = [speeches]
+            elif not isinstance(speeches, list):
+                speeches = []
 
             # 确保 speeches 是字符串列表
             speeches = [str(s).strip() for s in speeches if s]

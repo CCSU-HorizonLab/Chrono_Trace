@@ -171,9 +171,17 @@ const updateChart = () => {
   }
 }
 
+let resizeObserver: ResizeObserver | null = null
+
 onMounted(() => {
   nextTick(() => {
     initChart()
+    if (chartRef.value) {
+      resizeObserver = new ResizeObserver(() => {
+        chartInstance?.resize()
+      })
+      resizeObserver.observe(chartRef.value)
+    }
   })
   
   window.addEventListener('resize', () => {
@@ -182,6 +190,9 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  if (resizeObserver) {
+    resizeObserver.disconnect()
+  }
   chartInstance?.dispose()
   window.removeEventListener('resize', () => {
     chartInstance?.resize()
@@ -196,6 +207,7 @@ watch(() => props.dimensionScores, () => {
 <style scoped>
 .radar-chart {
   width: 100%;
-  height: 400px;
+  height: 100%;
+  min-height: 240px;
 }
 </style>

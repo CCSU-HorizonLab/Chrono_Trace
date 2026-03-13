@@ -92,7 +92,7 @@ export default {
             }
         })
 
-        const radius = 55
+        const radius = 50
         const circumference = 2 * Math.PI * radius
         const strokeDashoffset = computed(() => circumference - (displayScore.value / 100) * circumference)
 

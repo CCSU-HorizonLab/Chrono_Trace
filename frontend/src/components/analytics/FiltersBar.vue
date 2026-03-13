@@ -55,8 +55,7 @@ function onConversationChange(e: Event) {
   background: var(--ct-bg-elevated);
   border-radius: var(--ct-radius-lg);
   box-shadow: var(--ct-shadow-md);
-  padding: var(--ct-space-md) var(--ct-space-lg);
-  margin-bottom: var(--ct-space-md);
+  padding: var(--ct-space-sm) var(--ct-space-md);
 }
 
 .left {
@@ -73,6 +72,8 @@ function onConversationChange(e: Event) {
 .conversation-select label {
   font-weight: 500;
   color: var(--ct-text-secondary);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .conversation-select select {

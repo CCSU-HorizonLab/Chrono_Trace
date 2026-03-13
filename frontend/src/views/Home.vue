@@ -468,6 +468,7 @@ function resetFlow() {
   border-radius: 6px;
   border: 1px solid #e2e8f0;
   background: #fff;
+  color: var(--ct-color-primary);
   cursor: pointer;
   white-space: nowrap;
 }

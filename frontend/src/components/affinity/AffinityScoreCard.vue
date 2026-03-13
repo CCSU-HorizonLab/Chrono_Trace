@@ -65,10 +65,13 @@ const handleClick = () => {
   background: var(--ct-bg-elevated);
   border: 1px solid var(--ct-border-color);
   border-radius: var(--ct-radius-md);
-  padding: var(--ct-space-lg);
+  padding: 1.5rem; /* Enlarged padding */
   box-shadow: var(--ct-shadow-sm);
   cursor: pointer;
   transition: transform var(--ct-transition-fast), box-shadow var(--ct-transition-fast);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
 }
 
 .score-card:hover {
@@ -80,8 +83,8 @@ const handleClick = () => {
 .header {
   display: flex;
   justify-content: space-between;
-  align-items: baseline;
-  margin-bottom: var(--ct-space-md);
+  align-items: center; /* Adjusted from baseline */
+  margin-bottom: var(--ct-space-lg); /* Enlarged margin */
 }
 
 .title-row {
@@ -91,52 +94,52 @@ const handleClick = () => {
 }
 
 .title {
-  font-weight: 600;
-  font-size: var(--ct-text-sm);
+  font-weight: 700;
+  font-size: var(--ct-text-base); /* Larger font */
   color: var(--ct-text-primary);
 }
 
 .weight-badge {
   display: inline-flex;
   align-items: center;
-  padding: 3px 10px;
+  padding: 4px 12px;
   border-radius: var(--ct-radius-full);
-  font-size: 0.7rem;
+  font-size: 0.75rem; /* Slightly larger badge text */
   font-weight: 600;
-  /* 使用明确的颜色而不是CSS变量 */
-  background: #3b82f6;  /* 明亮的蓝色 */
+  background: #3b82f6; 
   color: white;
-  border: 2px solid #2563eb;  /* 深蓝色边框 */
+  border: 2px solid #2563eb; 
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
-  margin-left: 6px;
+  margin-left: 8px;
 }
 
 .weight-badge.weight-zero {
-  background: #6b7280;  /* 灰色 */
+  background: #6b7280; 
   border-color: #4b5563;
   opacity: 0.9;
 }
 
 .score-text {
-  font-size: 1.5rem;
+  font-size: 2rem; /* Much larger score */
   font-weight: 700;
   color: var(--score-color);
   font-family: var(--ct-font-display);
+  line-height: 1;
 }
 
 .max-score {
-  font-size: var(--ct-text-xs);
+  font-size: var(--ct-text-sm);
   color: var(--ct-text-tertiary);
   font-weight: 400;
   margin-left: 2px;
 }
 
 .progress-container {
-  height: 6px;
+  height: 8px; /* Thicker progress bar */
   background: var(--ct-bg-tertiary);
   border-radius: var(--ct-radius-full);
   overflow: hidden;
-  margin-bottom: var(--ct-space-md);
+  margin-bottom: var(--ct-space-lg);
 }
 
 .progress-bar {
@@ -147,7 +150,7 @@ const handleClick = () => {
 }
 
 .interpretation {
-  font-size: var(--ct-text-xs);
+  font-size: var(--ct-text-sm); /* Larger text */
   color: var(--ct-text-secondary);
   line-height: var(--ct-leading-normal);
   overflow: hidden;

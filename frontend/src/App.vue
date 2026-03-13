@@ -81,8 +81,9 @@ onMounted(() => {
   height: 64px;
   background: linear-gradient(100deg, var(--ct-color-primary) 0%, #a855f7 100%);
   flex-shrink: 0;
-  position: relative;
-  z-index: 10;
+  position: sticky;
+  top: 0;
+  z-index: 1000;
   box-shadow: var(--ct-shadow-sm);
 }
 
@@ -195,6 +196,7 @@ onMounted(() => {
   flex-direction: column;
   position: relative;
   z-index: 1;
+  overflow: hidden; /* Added to keep scroll bounded to views if necessary */
 }
 
 .main-container {
@@ -202,6 +204,7 @@ onMounted(() => {
   flex: 1;
   display: flex;
   flex-direction: column;
+  overflow: hidden; /* Added to pass down height constraint */
 }
 
 /* 响应式 */

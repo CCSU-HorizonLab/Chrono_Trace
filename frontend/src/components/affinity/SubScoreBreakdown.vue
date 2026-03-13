@@ -111,18 +111,18 @@ const getBadgeClass = (score: number, key?: string): string => {
   background: var(--ct-bg-elevated);
   border: 1px solid var(--ct-border-color);
   border-radius: var(--ct-radius-md);
-  padding: var(--ct-space-lg);
+  padding: var(--ct-space-sm);
   box-shadow: var(--ct-shadow-sm);
 }
 
 .breakdown-title {
   margin-top: 0;
-  margin-bottom: var(--ct-space-md);
-  font-size: var(--ct-text-sm);
+  margin-bottom: var(--ct-space-xs);
+  font-size: 11px;
   font-weight: 600;
   color: var(--ct-text-primary);
-  padding-left: var(--ct-space-sm);
-  border-left: 3px solid var(--ct-color-primary);
+  padding-left: var(--ct-space-xs);
+  border-left: 2px solid var(--ct-color-primary);
 }
 
 .table-container {
@@ -132,22 +132,26 @@ const getBadgeClass = (score: number, key?: string): string => {
 .score-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: var(--ct-text-sm);
+  font-size: 10px;
 }
 
 .score-table th,
 .score-table td {
-  padding: var(--ct-space-sm) var(--ct-space-md);
+  padding: 2px 4px;
   text-align: left;
   border-bottom: 1px solid var(--ct-border-color);
   color: var(--ct-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 110px;
 }
 
 .score-table th {
   color: var(--ct-text-tertiary);
   font-weight: 500;
   border-bottom: 1px solid var(--ct-border-color);
-  font-size: var(--ct-text-xs);
+  font-size: 9px;
 }
 
 .score-table tr:last-child td {
@@ -164,11 +168,11 @@ const getBadgeClass = (score: number, key?: string): string => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 2px 8px;
+  padding: 1px 4px;
   border-radius: var(--ct-radius-full);
-  font-size: var(--ct-text-xs);
+  font-size: 9px;
   font-weight: 500;
-  line-height: 1.2;
+  line-height: 1.1;
 }
 
 .badge-success {

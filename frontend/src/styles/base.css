@@ -1,35 +1,127 @@
 /* minimal reset */
-* { box-sizing: border-box; }
-html, body, #app { height: 100%; }
-body { margin: 0; background: var(--ct-bg); color: var(--ct-text); font-family: system-ui, -apple-system, Segoe UI, Roboto, 'Helvetica Neue', Arial; }
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--ct-bg);
+  color: var(--ct-text);
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, 'Helvetica Neue', Arial;
+}
 
 /* layout helpers (legacy sidebar removed) */
 
 /* card */
-.ct-card { background: var(--ct-bg-elevated); border: var(--ct-border); border-radius: var(--ct-radius); box-shadow: var(--ct-shadow); }
-.ct-card-hd { padding: 12px 14px; font-weight: 600; color: var(--ct-color-primary); border-bottom: var(--ct-border); display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.ct-card-bd { padding: 14px; }
+.ct-card {
+  background: var(--ct-bg-elevated);
+  border: var(--ct-border);
+  border-radius: var(--ct-radius);
+  box-shadow: var(--ct-shadow);
+}
+
+.ct-card-hd {
+  padding: 12px 14px;
+  font-weight: 600;
+  color: var(--ct-color-primary);
+  border-bottom: var(--ct-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ct-card-bd {
+  padding: 14px;
+}
 
 /* button */
-.ct-btn { background: var(--ct-color-primary); color: var(--ct-text-inverse); border: none; padding: 8px 12px; border-radius: 8px; cursor: pointer; }
-.ct-btn:hover { background: var(--ct-color-accent); color: var(--ct-text-primary); }
-.ct-btn:disabled { opacity: 0.6; cursor: not-allowed; }
-.ct-btn.ghost { background: transparent; color: var(--ct-color-primary); border: 1px solid var(--ct-color-primary); }
-.ct-btn.ghost:hover { background: var(--ct-color-primary-light); }
-.ct-btn.text { background: transparent; color: var(--ct-color-primary); }
+.ct-btn {
+  background: var(--ct-color-primary);
+  color: var(--ct-text-inverse);
+  border: none;
+  padding: 8px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.ct-btn:hover {
+  background: var(--ct-color-accent);
+  color: var(--ct-text-primary);
+}
+
+.ct-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.ct-btn.ghost {
+  background: transparent;
+  color: var(--ct-color-primary);
+  border: 1px solid var(--ct-color-primary);
+}
+
+.ct-btn.ghost:hover {
+  background: var(--ct-color-primary-light);
+}
+
+.ct-btn.text {
+  background: transparent;
+  color: var(--ct-color-primary);
+}
 
 /* field */
-.ct-field { width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--ct-border-color); outline: none; background: var(--ct-bg-elevated); color: var(--ct-text); }
-.ct-field:focus { border-color: var(--ct-color-accent); box-shadow: 0 0 0 3px var(--ct-color-primary-light); }
+.ct-field {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--ct-border-color);
+  outline: none;
+  background: var(--ct-bg-elevated);
+  color: var(--ct-text);
+}
+
+.ct-field:focus {
+  border-color: var(--ct-color-accent);
+  box-shadow: 0 0 0 3px var(--ct-color-primary-light);
+}
 
 /* utilities */
-.gap-8 { gap: 8px; }
-.gap-12 { gap: 12px; }
-.gap-16 { gap: 16px; }
-.grid-2 { display: grid; grid-template-columns: 1fr 360px; gap: 16px; }
-.grid-1 { display: grid; grid-template-columns: 1fr; gap: 16px; }
+.gap-8 {
+  gap: 8px;
+}
 
-@media (max-width: 1024px) { .grid-2 { grid-template-columns: 1fr; } }
+.gap-12 {
+  gap: 12px;
+}
+
+.gap-16 {
+  gap: 16px;
+}
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 360px;
+  gap: 16px;
+}
+
+.grid-1 {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+}
+
+@media (max-width: 1024px) {
+  .grid-2 {
+    grid-template-columns: 1fr;
+  }
+}
 
 /* ========================================
    Teleport Modals
@@ -44,6 +136,7 @@ body { margin: 0; background: var(--ct-bg); color: var(--ct-text); font-family: 
   z-index: 10000;
   backdrop-filter: blur(2px);
 }
+
 .ct-modal-dialog {
   background: var(--ct-bg-primary);
   border-radius: var(--ct-radius-lg);
@@ -53,25 +146,37 @@ body { margin: 0; background: var(--ct-bg); color: var(--ct-text); font-family: 
   display: flex;
   flex-direction: column;
 }
-.ct-modal-dialog h3, .ct-modal-dialog .modal-title {
+
+.ct-modal-dialog h3,
+.ct-modal-dialog .modal-title {
   margin: 0 0 var(--ct-space-md);
   color: var(--ct-color-primary);
   font-size: var(--ct-text-lg);
   font-weight: var(--ct-font-semibold);
 }
-.ct-modal-dialog .form, .ct-modal-dialog .modal-body {
+
+.ct-modal-dialog .form,
+.ct-modal-dialog .modal-body {
   display: flex;
   flex-direction: column;
   gap: var(--ct-space-md);
 }
-.ct-modal-dialog .row, .ct-modal-dialog .modal-field {
+
+.ct-modal-dialog .row,
+.ct-modal-dialog .modal-field {
   display: grid;
   grid-template-columns: 120px 1fr;
   gap: var(--ct-space-md);
   align-items: center;
 }
-.ct-modal-dialog .lab { color: var(--ct-text-secondary); font-weight: var(--ct-font-medium); }
-.ct-modal-dialog .modal-actions, .ct-modal-dialog .form-actions {
+
+.ct-modal-dialog .lab {
+  color: var(--ct-text-secondary);
+  font-weight: var(--ct-font-medium);
+}
+
+.ct-modal-dialog .modal-actions,
+.ct-modal-dialog .form-actions {
   display: flex;
   justify-content: flex-end;
   gap: var(--ct-space-sm);
@@ -81,9 +186,26 @@ body { margin: 0; background: var(--ct-bg); color: var(--ct-text); font-family: 
 /* ========================================
    Common Page Layout (Shared with Home, Settings, Suggestions, etc.)
    ======================================== */
-.home-page { 
-  display: flex; 
-  flex-direction: column; 
+.ct-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ct-space-2xl);
+  padding: var(--ct-space-xl);
+  max-width: 1400px;
+  margin: 0 auto;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.ct-section {
+  display: flex;
+  flex-direction: column;
+}
+
+.home-page {
+  display: flex;
+  flex-direction: column;
   gap: 40px;
   padding: 40px var(--ct-space-xl);
   max-width: 1200px;
@@ -112,8 +234,110 @@ body { margin: 0; background: var(--ct-bg); color: var(--ct-text); font-family: 
   margin-right: 10px;
   flex-shrink: 0;
 }
-.dot.pink { background-color: #ff8a8a; }
-.dot.green { background-color: #8ce1a7; }
-.dot.blue { background-color: #60a5fa; }
-.dot.purple { background-color: #a855f7; }
-.dot.orange { background-color: #f97316; }
+
+.dot.pink {
+  background-color: #ff8a8a;
+}
+
+.dot.green {
+  background-color: #8ce1a7;
+}
+
+.dot.blue {
+  background-color: #60a5fa;
+}
+
+.dot.purple {
+  background-color: #a855f7;
+}
+
+.dot.orange {
+  background-color: #f97316;
+}
+
+/* Grid & Layouts */
+.ct-grid-2-1 {
+  display: grid;
+  grid-template-columns: 2fr 1.2fr;
+  gap: var(--ct-space-xl);
+}
+
+/* Capsule Tabs Component */
+.ct-tabs-capsule {
+  display: inline-flex;
+  background: var(--ct-bg-secondary);
+  padding: 6px;
+  border-radius: var(--ct-radius-full);
+  border: 1px solid var(--ct-border-subtle);
+  gap: 4px;
+}
+
+.ct-tabs-capsule .menu-item {
+  padding: 8px 24px;
+  border-radius: var(--ct-radius-full);
+  border: none;
+  background: transparent;
+  color: var(--ct-color-primary);
+  font-size: var(--ct-text-sm);
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--ct-transition-normal);
+  white-space: nowrap;
+}
+
+.ct-tabs-capsule .menu-item.active {
+  background: var(--ct-color-primary);
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(91, 107, 224, 0.3);
+}
+
+.ct-tabs-capsule .menu-item:hover:not(.active) {
+  background: var(--ct-bg-tertiary);
+}
+
+.ct-grid-1-1 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--ct-space-xl);
+}
+
+@media (max-width: 1024px) {
+
+  .ct-grid-2-1,
+  .ct-grid-1-1 {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Score Ring Small */
+.ct-score-ring {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ct-score-ring svg {
+  transform: rotate(-90deg);
+}
+
+.ct-score-text {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+}
+
+.ct-score-num {
+  font-size: var(--ct-text-2xl);
+  font-weight: 700;
+  color: var(--ct-text-primary);
+  line-height: 1;
+}
+
+.ct-score-label {
+  font-size: var(--ct-text-xs);
+  color: var(--ct-text-tertiary);
+  text-transform: uppercase;
+}

@@ -157,33 +157,144 @@
 
   <!-- TAB 2: Features -->
   <div v-show="currentTab === 'features' && selectedConversationId" class="tab-content fade-in">
-    <div class="features-grid">
-       <div class="feature-card">
-         <div class="feature-header">
-           <div class="header-left">
-             <div class="feature-icon">⏱️</div>
-             <div>
-               <h3>回响响应</h3>
-               <p class="feature-subtitle">消息回复的典型分布与均值</p>
-             </div>
-           </div>
-         </div>
-         <div class="feature-body">
-           <div class="response-stats">
-             <div class="response-stat">
-               <span class="stat-label">平均响应</span>
-               <span class="stat-value">{{ formatTime(featureStats.avgResponseTime) }}</span>
-             </div>
-             <div class="response-stat">
-               <span class="stat-label">中位数</span>
-               <span class="stat-value">{{ formatTime(featureStats.medianResponseTime) }}</span>
-             </div>
-           </div>
-           <div class="feature-chart">
-             <div ref="responseTimeChart" class="chart-mount"></div>
-           </div>
-         </div>
-       </div>
+    <div v-if="!analysisResult && !isGlobalAnalyzing" class="empty-state">
+      <div class="empty-icon">📈</div>
+      <p>点击"开始全面分析"获取深度互动特征分析。</p>
+      <p class="empty-hint">💡 互动特征包含：回响响应分布、主动性分析、话语权比例等客观指标</p>
+    </div>
+
+    <div v-if="analysisResult" class="features-layout">
+      <!-- Row 1: 4 small stat cards -->
+      <div class="features-row-1">
+        <CtCard class="feature-stat-card">
+          <div class="stat-header">
+            <span class="icon-dot green"><span class="inner-dot"></span></span>
+            <span class="stat-title">平均响应时间</span>
+          </div>
+          <div class="stat-body">
+            <div class="stat-main">
+              <span class="stat-num">{{ featureStats.avgResponseTime ? formatTime(featureStats.avgResponseTime).replace(/[a-zA-Z]+$/, '') : '-' }}</span>
+              <span class="stat-unit">{{ featureStats.avgResponseTime ? formatTime(featureStats.avgResponseTime).replace(/[0-9.<]+/, '') : '' }}</span>
+            </div>
+            <div class="stat-sub">
+            </div>
+          </div>
+        </CtCard>
+
+        <CtCard class="feature-stat-card">
+          <div class="stat-header">
+            <span class="icon-dot purple"><span class="inner-dot"></span></span>
+            <span class="stat-title">对方主动率</span>
+          </div>
+          <div class="stat-body">
+            <div class="stat-main">
+              <span class="stat-num">{{ (initiativeStats.initiativeRate || 0).toFixed(0) }}</span>
+              <span class="stat-unit">%</span>
+            </div>
+            <div class="stat-sub">
+              我发起 {{ (100 - (initiativeStats.initiativeRate || 0)).toFixed(0) }}%
+            </div>
+          </div>
+        </CtCard>
+
+        <CtCard class="feature-stat-card">
+          <div class="stat-header">
+            <span class="icon-dot orange"><span class="inner-dot"></span></span>
+            <span class="stat-title">字数投入比</span>
+          </div>
+          <div class="stat-body">
+            <div class="stat-main">
+              <span class="stat-num">{{ featureStats.wordRatio ? featureStats.wordRatio.toFixed(2) : '0' }} : 1</span>
+            </div>
+            <div class="stat-sub">
+              我 : 对方
+            </div>
+          </div>
+        </CtCard>
+
+        <CtCard class="feature-stat-card">
+          <div class="stat-header">
+            <span class="icon-dot green"><span class="inner-dot"></span></span>
+            <span class="stat-title">响应中位数</span>
+          </div>
+          <div class="stat-body">
+            <div class="stat-main">
+              <span class="stat-num">{{ featureStats.medianResponseTime ? formatTime(featureStats.medianResponseTime).replace(/[a-zA-Z]+$/, '') : '-' }}</span>
+              <span class="stat-unit">{{ featureStats.medianResponseTime ? formatTime(featureStats.medianResponseTime).replace(/[0-9.<]+/, '') : '' }}</span>
+            </div>
+            <div class="stat-sub">
+              最快 {{ responseTimeStats.min ? formatTime(responseTimeStats.min) : '-' }}
+            </div>
+          </div>
+        </CtCard>
+      </div>
+
+      <!-- Row 2: 3 chart cards -->
+      <div class="features-row-2">
+        <CtCard class="feature-chart-card">
+          <h3 class="chart-card-title">响应时间区间</h3>
+          <div class="horizontal-bars">
+            <div class="h-bar-row" v-for="key in responseTimeStats.distributionKeys" :key="key" v-show="responseTimeStats.distribution?.[key]">
+              <span class="h-bar-label" style="width: 50px">{{ key }}</span>
+              <div class="h-bar-track"><div class="h-bar-fill" :style="{ width: ((responseTimeStats.distribution?.[key] || 0) / (responseTimeStats.count || 1) * 100) + '%' }"></div></div>
+              <span class="h-bar-value">{{ ((responseTimeStats.distribution?.[key] || 0) / (responseTimeStats.count || 1) * 100).toFixed(1) }}%</span>
+            </div>
+            <div v-if="!responseTimeStats.count" style="font-size:12px;color:var(--ct-text-tertiary);text-align:center;">暂无数据</div>
+          </div>
+        </CtCard>
+
+        <CtCard class="feature-chart-card">
+          <h3 class="chart-card-title">主动性分析</h3>
+          <div class="initiative-content">
+            <div class="donut-chart-box">
+              <svg viewBox="0 0 100 100" class="donut-svg">
+                <circle cx="50" cy="50" r="30" fill="transparent" stroke="#82ca9d" stroke-width="20" stroke-dasharray="188.5" stroke-dashoffset="0"></circle>
+                <circle cx="50" cy="50" r="30" fill="transparent" stroke="#8884d8" stroke-width="20" :stroke-dasharray="`${(100 - (initiativeStats.initiativeRate || 0)) / 100 * 188.5} 188.5`" stroke-dashoffset="0"></circle>
+              </svg>
+              <div class="donut-legend">
+                <div class="legend-item"><span class="legend-dot purple"></span>我发起 {{ (100 - (initiativeStats.initiativeRate || 0)).toFixed(0) }}%</div>
+                <div class="legend-item"><span class="legend-dot green"></span>对方发起 {{ (initiativeStats.initiativeRate || 0).toFixed(0) }}%</div>
+              </div>
+            </div>
+            <div class="initiative-box">
+              <span class="box-text" v-html="initiativeStats.interpretation ? initiativeStats.interpretation.replace(/\n/g, '<br>') : '暂无数据'"></span>
+            </div>
+          </div>
+        </CtCard>
+
+        <CtCard class="feature-chart-card">
+          <h3 class="chart-card-title">字数投入对比</h3>
+          <div class="word-content">
+            <div class="v-bars">
+              <div class="v-bar-col">
+                <div class="v-bar-track"><div class="v-bar-fill purple" :style="{ height: wordCountsStats.userCharCount || wordCountsStats.otherCharCount ? (wordCountsStats.userCharCount / Math.max(wordCountsStats.userCharCount, wordCountsStats.otherCharCount, 1) * 100) + '%' : '0%' }"></div></div>
+                <div class="v-bar-label">我的字数<br><strong>{{ formatNumber(wordCountsStats.userCharCount) }}</strong></div>
+              </div>
+              <div class="v-bar-col">
+                <div class="v-bar-track"><div class="v-bar-fill red" :style="{ height: wordCountsStats.userCharCount || wordCountsStats.otherCharCount ? (wordCountsStats.otherCharCount / Math.max(wordCountsStats.userCharCount, wordCountsStats.otherCharCount, 1) * 100) + '%' : '0%' }"></div></div>
+                <div class="v-bar-label">对方字数<br><strong>{{ formatNumber(wordCountsStats.otherCharCount) }}</strong></div>
+              </div>
+            </div>
+            <div class="word-box">
+              <div class="word-box-title">投入比 <span class="highlight">{{ wordCountsStats.charRatio ? wordCountsStats.charRatio.toFixed(2) : 0 }}x</span></div>
+              <div class="word-box-desc" v-html="wordCountsStats.interpretation ? wordCountsStats.interpretation.replace(/\n/g, '<br>') : '暂无数据'"></div>
+            </div>
+          </div>
+        </CtCard>
+      </div>
+
+      <!-- Row 3: Calendar -->
+      <div class="features-row-3">
+        <CtCard class="feature-calendar-card">
+          <div class="calendar-layout">
+            <div class="calendar-btn-plus">+</div>
+            <div class="calendar-text">
+              <h3>活跃日历 (开发中)</h3>
+              <p>每日对话活跃度热力分布</p>
+            </div>
+          </div>
+        </CtCard>
+      </div>
     </div>
   </div>
 

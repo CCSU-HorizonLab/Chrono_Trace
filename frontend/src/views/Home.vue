@@ -571,9 +571,24 @@ function resetFlow() {
 .empty-log { color: var(--ct-text-tertiary); font-style: italic; }
 
 @media (max-width: 1024px) {
-  .features-grid { grid-template-columns: 1fr; }
-  .wizard-container { flex-direction: column; gap: 10px; }
-  .step-arrow { transform: rotate(90deg); padding: 10px 0; }
+  .features-grid { gap: 10px; }
+  .feature-card { padding: 15px 10px; gap: 10px; }
+  .icon-wrap { width: 36px; height: 36px; }
+  .icon-wrap svg { width: 18px; height: 18px; }
+  .feature-card h3 { font-size: 14px; }
+  .feature-card p { font-size: 11px; }
+  
+  .wizard-container { gap: 8px; margin-bottom: 20px; }
+  .wizard-step { padding: 12px 8px; min-height: 80px; }
+  .step-header { margin-bottom: 8px; gap: 6px; }
+  .step-arrow { padding: 0 4px; transform: none; }
+  .step-arrow svg { width: 16px; height: 16px; }
+  .step-title { font-size: 12px; }
+  .step-content { font-size: 11px; }
+  .step-num { width: 20px; height: 20px; font-size: 10px; }
+  .tool-link, .verify-btn, .change-btn { padding: 4px 8px; font-size: 11px; }
+  .path-display { padding: 4px 6px; gap: 4px; }
+  
   .log-item { flex-wrap: wrap; gap: 10px; }
   .log-msg { display: none; }
 }

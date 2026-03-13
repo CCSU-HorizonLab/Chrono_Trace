@@ -638,7 +638,7 @@ class Bridge:
 
     # ==================== 实时监听相关 ====================
     
-    def start_realtime_monitor(self, talker_display_name: str) -> dict[str, Any]:
+    def start_realtime_monitor(self, talker_display_name: str, resume_mode: str = "skip") -> dict[str, Any]:
         """
         启动实时消息监听
         
@@ -661,7 +661,8 @@ class Bridge:
             monitor_service = RealtimeMonitorService()
             result = monitor_service.start_monitoring(
                 talker_username="",  # wxauto4 自动处理
-                talker_display_name=talker_display_name
+                talker_display_name=talker_display_name,
+                resume_mode=resume_mode
             )
             
             return {
@@ -1935,6 +1936,71 @@ class Bridge:
             return {
                 "ok": False,
                 "error": str(e)
+            }
+
+    def get_realtime_resume_info(
+        self,
+        talker_display_name: str,
+        threshold_seconds: int = 300
+    ) -> dict[str, Any]:
+        """
+        获取指定联系人的监听恢复探测信息。
+
+        Returns:
+            {
+                "ok": True,
+                "has_checkpoint": True/False,
+                "should_offer_resume": True/False,
+                "gap_seconds": 123,
+                "last_message_timestamp": 1234567890,
+                "last_message_preview": "..."
+            }
+        """
+        try:
+            from ..services.realtime.monitor_service import RealtimeMonitorService
+
+            monitor_service = RealtimeMonitorService()
+            result = monitor_service.get_resume_probe(
+                talker_display_name=talker_display_name,
+                threshold_seconds=threshold_seconds,
+            )
+            return {"ok": True, **result}
+        except Exception as e:
+            logger.error(f"[Bridge] 获取恢复探测信息异常: {e}")
+            return {
+                "ok": False,
+                "has_checkpoint": False,
+                "should_offer_resume": False,
+                "error": str(e),
+            }
+
+    def run_realtime_backfill(
+        self,
+        talker_display_name: str,
+        threshold_seconds: int = 300,
+        max_scroll_rounds: int = 80
+    ) -> dict[str, Any]:
+        """
+        执行指定联系人的回溯补全。
+        """
+        try:
+            from ..services.realtime.monitor_service import RealtimeMonitorService
+
+            monitor_service = RealtimeMonitorService()
+            result = monitor_service.run_backfill(
+                talker_display_name=talker_display_name,
+                threshold_seconds=threshold_seconds,
+                max_scroll_rounds=max_scroll_rounds,
+            )
+            return {"ok": result.get('success', False), **result}
+        except Exception as e:
+            logger.error(f"[Bridge] 执行回溯补全异常: {e}")
+            return {
+                "ok": False,
+                "success": False,
+                "inserted_count": 0,
+                "need_reimport": False,
+                "error": str(e),
             }
 
     def update_affinity_config(self, conversation_id: int, config: dict) -> dict[str, Any]:

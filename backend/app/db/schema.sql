@@ -620,3 +620,27 @@ CREATE TABLE IF NOT EXISTS llm_models (
 );
 
 CREATE INDEX IF NOT EXISTS idx_llm_models_active ON llm_models(is_active);
+
+
+-- ========================================
+-- 23. 实时监听断点表
+-- ========================================
+-- 记录每个监听对象最近一次成功监听到的最后一条消息，用于恢复探测和后续回溯补全
+CREATE TABLE IF NOT EXISTS realtime_monitor_checkpoints (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    talker_key TEXT NOT NULL UNIQUE,              -- username 优先，缺失时回退为 display_name
+    talker_username TEXT,                         -- 微信 username（如果可得）
+    talker_display_name TEXT NOT NULL,            -- 显示名称
+    last_batch_id TEXT,                           -- 最近一次监听批次
+    last_message_timestamp INTEGER NOT NULL,      -- 最近一条消息的时间戳
+    last_message_hash TEXT,                       -- 最近一条消息 hash
+    last_runtime_id TEXT,                         -- 最近一条消息 runtime id
+    last_message_preview TEXT,                    -- 最近一条消息预览
+    message_count INTEGER DEFAULT 0,              -- 最近批次消息数
+    source TEXT DEFAULT 'realtime',               -- 来源
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_realtime_checkpoint_updated ON realtime_monitor_checkpoints(updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_realtime_checkpoint_display_name ON realtime_monitor_checkpoints(talker_display_name);

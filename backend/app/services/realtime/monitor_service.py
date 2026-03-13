@@ -71,6 +71,7 @@ class RealtimeMonitorService:
             self._start_time = 0                # 开始监听时间戳
             self._last_known_ts = 0
             self._chat_timed_out = False
+            self._resume_mode = 'skip'
             self.message_buffer = MessageBuffer()
             self.seen_hashes = set()            # 消息去重集合
             self.polling_thread = None          # 轮询线程
@@ -109,7 +110,8 @@ class RealtimeMonitorService:
     def start_monitoring(
         self, 
         talker_username: str,
-        talker_display_name: str
+        talker_display_name: str,
+        resume_mode: str = 'skip',
     ) -> dict:
         """
         启动实时监听
@@ -150,9 +152,12 @@ class RealtimeMonitorService:
                     }
             
             # 3. 生成批次ID
+            resolved_talker_username = self._resolve_talker_username(talker_username, talker_display_name)
+
             self.current_batch_id = str(uuid.uuid4())
-            self.current_talker = talker_username
+            self.current_talker = resolved_talker_username
             self.current_display_name = talker_display_name
+            self._resume_mode = resume_mode or 'skip'
             self.seen_hashes.clear()
             self._last_known_ts = 0
             
@@ -179,7 +184,7 @@ class RealtimeMonitorService:
             # 8. 记录事件到运行时事件表
             self._log_runtime_event('realtime_monitor_start', {
                 'batch_id': self.current_batch_id,
-                'talker_username': talker_username,
+                'talker_username': resolved_talker_username,
                 'talker_display_name': talker_display_name
             })
             
@@ -333,6 +338,119 @@ class RealtimeMonitorService:
 
         return candidates
 
+    def _get_talker_key(self, talker_username: str | None, talker_display_name: str | None) -> str:
+        """Build a stable talker key for persistence when username may be unavailable."""
+        return (talker_username or talker_display_name or '').strip()
+
+    def _resolve_talker_username(self, talker_username: str | None, talker_display_name: str | None) -> str:
+        """Resolve the canonical conversation username from contacts/conversations when possible."""
+        if talker_username and str(talker_username).strip():
+            return str(talker_username).strip()
+
+        display_name = str(talker_display_name or '').strip()
+        if not display_name:
+            return ''
+
+        try:
+            from ...db.connection import get_db
+
+            conn = get_db()
+            row = conn.execute(
+                '''
+                SELECT username
+                FROM contacts
+                WHERE remark = ? OR nickname = ?
+                ORDER BY
+                    CASE
+                        WHEN remark = ? THEN 0
+                        WHEN nickname = ? THEN 1
+                        ELSE 2
+                    END,
+                    username ASC
+                LIMIT 1
+                ''',
+                (display_name, display_name, display_name, display_name)
+            ).fetchone()
+            if row and row[0]:
+                return str(row[0]).strip()
+
+            row = conn.execute(
+                '''
+                SELECT username
+                FROM conversations
+                WHERE display_name = ? OR username = ?
+                ORDER BY message_count DESC, updated_at DESC
+                LIMIT 1
+                ''',
+                (display_name, display_name)
+            ).fetchone()
+            if row and row[0]:
+                return str(row[0]).strip()
+        except Exception as e:
+            _print(f"[RealtimeMonitorService] 解析 talker username 失败: {e}")
+
+        return display_name
+
+    def _message_identity(self, msg) -> str:
+        """Build a stable identity for a wxauto4 message object."""
+        msg_hash = getattr(msg, 'hash', None)
+        if msg_hash:
+            return f"hash:{msg_hash}"
+        runtime_id = getattr(msg, 'id', None)
+        if runtime_id:
+            return f"id:{runtime_id}"
+        return (
+            f"fallback:{getattr(msg, 'is_self', False)}:"
+            f"{getattr(msg, 'type', 'text')}:{getattr(msg, 'content', '')}:{getattr(msg, 'time', '')}"
+        )
+
+    def _scroll_chat_history_up(self, wheel_times: int = 2) -> bool:
+        """Scroll the current chat message list upward to load older history."""
+        try:
+            if not self.wx or not hasattr(self.wx, 'ChatBox'):
+                return False
+            msgbox = self.wx.ChatBox.msgbox
+            msgbox.MiddleClick()
+            msgbox.WheelUp(wheelTimes=wheel_times)
+            time.sleep(0.8)
+            return True
+        except Exception as e:
+            _print(f"[Backfill] 向上滚动消息窗口失败: {e}")
+            return False
+
+    def _scroll_chat_history_down(self, wheel_times: int = 4) -> bool:
+        """Scroll the current chat message list downward toward the latest messages."""
+        try:
+            if not self.wx or not hasattr(self.wx, 'ChatBox'):
+                return False
+            msgbox = self.wx.ChatBox.msgbox
+            msgbox.MiddleClick()
+            msgbox.WheelDown(wheelTimes=wheel_times)
+            time.sleep(0.5)
+            return True
+        except Exception as e:
+            _print(f"[Backfill] Scroll down failed: {e}")
+            return False
+
+    def _scroll_chat_to_latest(self, max_rounds: int = 20, wheel_times: int = 4) -> None:
+        """Best-effort scroll back to the latest visible messages after backfill."""
+        seen_bottom_identity = None
+        stagnant_rounds = 0
+        for _ in range(max_rounds):
+            visible_messages = self.wx.GetAllMessage() if self.wx else []
+            if not visible_messages:
+                break
+            bottom_identity = self._message_identity(visible_messages[-1])
+            if bottom_identity == seen_bottom_identity:
+                stagnant_rounds += 1
+            else:
+                stagnant_rounds = 0
+                seen_bottom_identity = bottom_identity
+            if stagnant_rounds >= 2:
+                break
+            if not self._scroll_chat_history_down(wheel_times=wheel_times):
+                break
+
     def _try_chat_with(self, target_name: str) -> bool:
         """尝试执行 ChatWith，带 15 秒超时。成功返回 True，失败设置 _chat_error 并返回 False"""
         self._chat_timed_out = False
@@ -484,6 +602,35 @@ class RealtimeMonitorService:
                 _print(f"🛑 等待恢复被中断（收到停止信号），轮询线程退出")
                 return
         
+        if self._resume_mode == 'backfill':
+            _print("[Backfill] 已并入监听启动头部，开始补全历史消息")
+            probe = self.get_resume_probe(
+                talker_display_name=self.current_display_name or '',
+                talker_username=self.current_talker or '',
+                threshold_seconds=300,
+            )
+            if probe.get('has_checkpoint') and probe.get('should_offer_resume'):
+                backfill_result = self._run_backfill_in_current_chat_context(
+                    probe=probe,
+                    talker_username=self.current_talker or '',
+                    talker_display_name=self.current_display_name or '',
+                    max_scroll_rounds=80,
+                    wheel_times=2,
+                )
+                if not backfill_result.get('success'):
+                    self._chat_error = backfill_result.get('message') or '回溯补全失败'
+                    self.is_monitoring = False
+                    _print(f"[Backfill] 监听启动前回溯失败: {self._chat_error}")
+                    return
+                _print(
+                    f"[Backfill] 启动前回溯完成: inserted={backfill_result.get('inserted_count', 0)}, "
+                    f"existing={backfill_result.get('existing_count', 0)}"
+                )
+                self._scroll_chat_to_latest()
+            else:
+                _print("[Backfill] 未命中回溯条件，直接进入正常监听")
+            self._resume_mode = 'skip'
+
         # -- 3. 预加载情感分析模型 --
         _print(f"🤖 正在预加载情感分析模型...")
         try:
@@ -770,9 +917,10 @@ class RealtimeMonitorService:
         from ...db.connection import get_db
 
         conn = get_db()
+        talker_key = self._get_talker_key(talker_username, talker_display_name)
         row = conn.execute(
             'SELECT id FROM conversations WHERE username = ?',
-            (talker_username,)
+            (talker_key,)
         ).fetchone()
         if row:
             return row[0]
@@ -783,7 +931,7 @@ class RealtimeMonitorService:
             INSERT INTO conversations (username, display_name, created_at, updated_at, message_count)
             VALUES (?, ?, ?, ?, 0)
             ''',
-            (talker_username, talker_display_name or talker_username, now_ts, now_ts)
+            (talker_key, talker_display_name or talker_key, now_ts, now_ts)
         )
         conn.commit()
         return cursor.lastrowid
@@ -807,7 +955,6 @@ class RealtimeMonitorService:
             SELECT id
             FROM messages
             WHERE conversation_id = ?
-              AND source = 'realtime'
               AND is_sender = ?
               AND message_type = ?
               AND timestamp = ?
@@ -824,11 +971,573 @@ class RealtimeMonitorService:
         ).fetchone()
         return row is not None
 
+    def _ensure_checkpoint_table(self) -> None:
+        """Ensure the realtime checkpoint table exists for resume probing."""
+        from ...db.connection import get_db
+
+        conn = get_db()
+        conn.execute(
+            '''
+            CREATE TABLE IF NOT EXISTS realtime_monitor_checkpoints (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                talker_key TEXT NOT NULL UNIQUE,
+                talker_username TEXT,
+                talker_display_name TEXT NOT NULL,
+                last_batch_id TEXT,
+                last_message_timestamp INTEGER NOT NULL,
+                last_message_hash TEXT,
+                last_runtime_id TEXT,
+                last_message_preview TEXT,
+                message_count INTEGER DEFAULT 0,
+                source TEXT DEFAULT 'realtime',
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            )
+            '''
+        )
+        conn.execute(
+            'CREATE INDEX IF NOT EXISTS idx_realtime_checkpoint_updated ON realtime_monitor_checkpoints(updated_at DESC)'
+        )
+        conn.execute(
+            'CREATE INDEX IF NOT EXISTS idx_realtime_checkpoint_display_name ON realtime_monitor_checkpoints(talker_display_name)'
+        )
+        conn.commit()
+
+    def _save_monitor_checkpoint(
+        self,
+        batch_id: str,
+        talker_username: str,
+        talker_display_name: str,
+        message_count: int,
+    ) -> None:
+        """Persist the last captured non-system message as a resume checkpoint."""
+        talker_key = self._get_talker_key(talker_username, talker_display_name)
+        if not talker_key or not batch_id:
+            return
+
+        messages = self.message_buffer.get_batch_messages(batch_id)
+        last_message = None
+        for msg in reversed(messages):
+            if msg.get('sender_attr') == 'system':
+                continue
+            if not (msg.get('content') or '').strip() and not msg.get('runtime_id'):
+                continue
+            last_message = msg
+            break
+
+        if not last_message:
+            return
+
+        self._ensure_checkpoint_table()
+        from ...db.connection import get_db
+
+        now_ts = int(time.time())
+        conn = get_db()
+        conn.execute(
+            '''
+            INSERT INTO realtime_monitor_checkpoints (
+                talker_key, talker_username, talker_display_name, last_batch_id,
+                last_message_timestamp, last_message_hash, last_runtime_id,
+                last_message_preview, message_count, source, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'realtime', ?, ?)
+            ON CONFLICT(talker_key) DO UPDATE SET
+                talker_username = excluded.talker_username,
+                talker_display_name = excluded.talker_display_name,
+                last_batch_id = excluded.last_batch_id,
+                last_message_timestamp = excluded.last_message_timestamp,
+                last_message_hash = excluded.last_message_hash,
+                last_runtime_id = excluded.last_runtime_id,
+                last_message_preview = excluded.last_message_preview,
+                message_count = excluded.message_count,
+                updated_at = excluded.updated_at
+            ''',
+            (
+                talker_key,
+                talker_username or None,
+                talker_display_name or talker_key,
+                batch_id,
+                int(last_message.get('timestamp') or now_ts),
+                last_message.get('message_hash'),
+                last_message.get('runtime_id'),
+                (last_message.get('content') or '')[:120],
+                int(message_count or 0),
+                now_ts,
+                now_ts,
+            )
+        )
+        conn.commit()
+
+    def get_resume_checkpoint(self, talker_display_name: str, talker_username: str = '') -> dict:
+        """Return checkpoint information for the requested talker."""
+        resolved_talker_username = self._resolve_talker_username(talker_username, talker_display_name)
+        talker_key = self._get_talker_key(resolved_talker_username, talker_display_name)
+        if not talker_key:
+            return {'has_checkpoint': False}
+
+        self._ensure_checkpoint_table()
+        from ...db.connection import get_db
+
+        conn = get_db()
+        row = conn.execute(
+            '''
+            SELECT talker_key, talker_username, talker_display_name, last_batch_id,
+                   last_message_timestamp, last_message_hash, last_runtime_id,
+                   last_message_preview, message_count, source, created_at, updated_at
+            FROM realtime_monitor_checkpoints
+            WHERE talker_key = ?
+            ''',
+            (talker_key,)
+        ).fetchone()
+        if not row and talker_display_name:
+            row = conn.execute(
+                '''
+                SELECT talker_key, talker_username, talker_display_name, last_batch_id,
+                       last_message_timestamp, last_message_hash, last_runtime_id,
+                       last_message_preview, message_count, source, created_at, updated_at
+                FROM realtime_monitor_checkpoints
+                WHERE talker_display_name = ?
+                ORDER BY updated_at DESC
+                LIMIT 1
+                ''',
+                (talker_display_name,)
+            ).fetchone()
+
+        if not row:
+            return {'has_checkpoint': False}
+
+        return {
+            'has_checkpoint': True,
+            'talker_key': row['talker_key'],
+            'talker_username': row['talker_username'],
+            'talker_display_name': row['talker_display_name'],
+            'last_batch_id': row['last_batch_id'],
+            'last_message_timestamp': row['last_message_timestamp'],
+            'last_message_hash': row['last_message_hash'],
+            'last_runtime_id': row['last_runtime_id'],
+            'last_message_preview': row['last_message_preview'],
+            'message_count': row['message_count'],
+            'source': row['source'],
+            'created_at': row['created_at'],
+            'updated_at': row['updated_at'],
+        }
+
+    def get_resume_probe(
+        self,
+        talker_display_name: str,
+        talker_username: str = '',
+        threshold_seconds: int = 300,
+    ) -> dict:
+        """Return whether the UI should offer resume/backfill for this talker."""
+        checkpoint = self.get_resume_checkpoint(talker_display_name, talker_username)
+        if not checkpoint.get('has_checkpoint'):
+            return {
+                'has_checkpoint': False,
+                'should_offer_resume': False,
+                'threshold_seconds': int(threshold_seconds),
+            }
+
+        now_ts = int(time.time())
+        gap_seconds = max(0, now_ts - int(checkpoint['last_message_timestamp']))
+        checkpoint['has_checkpoint'] = True
+        checkpoint['threshold_seconds'] = int(threshold_seconds)
+        checkpoint['gap_seconds'] = gap_seconds
+        checkpoint['should_offer_resume'] = gap_seconds >= int(threshold_seconds)
+        return checkpoint
+
+    def _checkpoint_match_reason(self, checkpoint: dict, msg, resolved_timestamp: int) -> str | None:
+        """Return the checkpoint match reason, or None if the message is not the saved checkpoint."""
+        checkpoint_preview = re.sub(r'\s+', ' ', str(checkpoint.get('last_message_preview') or '')).strip()
+        checkpoint_ts = int(checkpoint.get('last_message_timestamp') or 0)
+        content = re.sub(r'\s+', ' ', str(getattr(msg, 'content', '') or '')).strip()
+
+        if not checkpoint_preview or not content:
+            return None
+
+        exact_match = checkpoint_preview == content
+        truncated_prefix_match = (
+            len(checkpoint_preview) >= 100 and
+            content.startswith(checkpoint_preview)
+        )
+        if not (exact_match or truncated_prefix_match):
+            return None
+
+        ts_diff = abs(int(resolved_timestamp or 0) - checkpoint_ts)
+        if ts_diff > 300:
+            if exact_match and len(checkpoint_preview) >= 8:
+                _print(
+                    "[Backfill] checkpoint 文本精确命中，但时间差过大，降级按内容命中: "
+                    f"content={content!r}, resolved_ts={resolved_timestamp}, checkpoint_ts={checkpoint_ts}, diff={ts_diff}"
+                )
+                return 'content_exact_fallback'
+            return None
+
+        return 'content_exact' if exact_match else 'content_truncated_prefix'
+
+    def _checkpoint_matches_message(self, checkpoint: dict, msg, resolved_timestamp: int) -> bool:
+        """Check whether a visible message corresponds to the stored checkpoint."""
+        return self._checkpoint_match_reason(checkpoint, msg, resolved_timestamp) is not None
+
+    def _store_backfill_messages(
+        self,
+        talker_username: str,
+        talker_display_name: str,
+        messages: list[dict],
+    ) -> dict:
+        """Persist recovered history directly into messages with a backfill source tag."""
+        from ...db.connection import get_db
+
+        talker_key = self._get_talker_key(talker_username, talker_display_name)
+        if not talker_key or not messages:
+            return {
+                'inserted_count': 0,
+                'existing_count': 0,
+            }
+
+        conn = get_db()
+        conversation_id = self._get_or_create_conversation_id(talker_key, talker_display_name or talker_key)
+        inserted = 0
+        existing = 0
+        latest_ts = 0
+        inserted_samples: list[str] = []
+        existing_samples: list[str] = []
+
+        for message_data in messages:
+            latest_ts = max(latest_ts, int(message_data.get('timestamp') or 0))
+            if self._message_exists_in_history(conversation_id, message_data):
+                existing += 1
+                if len(existing_samples) < 12:
+                    existing_samples.append(
+                        f"{message_data.get('sender_attr')}|{int(message_data.get('timestamp') or 0)}|{(message_data.get('content') or '')!r}"
+                    )
+                continue
+
+            runtime_id = str(message_data.get('runtime_id') or '').strip()
+            local_id = int(runtime_id) if runtime_id.isdigit() else None
+            conn.execute(
+                '''
+                INSERT INTO messages
+                (conversation_id, local_id, talker, sender, is_sender, message_type,
+                 content, timestamp, source, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'realtime_backfill', ?)
+                ''',
+                (
+                    conversation_id,
+                    local_id,
+                    talker_key,
+                    None if message_data.get('sender_attr') == 'self' else talker_key,
+                    1 if message_data.get('sender_attr') == 'self' else 0,
+                    self._map_message_type(message_data.get('message_type')),
+                    message_data.get('content') or '',
+                    int(message_data.get('timestamp') or int(time.time())),
+                    int(time.time()),
+                )
+            )
+            inserted += 1
+            if len(inserted_samples) < 12:
+                inserted_samples.append(
+                    f"{message_data.get('sender_attr')}|{int(message_data.get('timestamp') or 0)}|{(message_data.get('content') or '')!r}"
+                )
+
+        if inserted:
+            total_count = conn.execute(
+                'SELECT COUNT(*) FROM messages WHERE conversation_id = ?',
+                (conversation_id,)
+            ).fetchone()[0]
+            conn.execute(
+                '''
+                UPDATE conversations
+                SET display_name = ?, updated_at = ?, message_count = ?
+                WHERE id = ?
+                ''',
+                (
+                    talker_display_name or talker_key,
+                    latest_ts or int(time.time()),
+                    total_count,
+                    conversation_id,
+                )
+            )
+            conn.commit()
+
+        if messages:
+            _print(f"[Backfill] 已存在样本({existing}/{len(messages)}): {existing_samples}")
+            _print(f"[Backfill] 实际插入样本({inserted}/{len(messages)}): {inserted_samples}")
+
+        return {
+            'inserted_count': inserted,
+            'existing_count': existing,
+        }
+
+    def _merge_backfill_into_current_batch(
+        self,
+        talker_username: str,
+        talker_display_name: str,
+        messages: list[dict],
+    ) -> int:
+        """Append recovered messages into the active realtime batch for polling and archive."""
+        if not self.current_batch_id or not messages:
+            return 0
+
+        merged = 0
+        for message_data in messages:
+            message_hash = message_data.get('message_hash')
+            if message_hash and self.message_buffer.message_exists(message_hash):
+                self.seen_hashes.add(message_hash)
+                continue
+
+            success = self.message_buffer.save_message(
+                self.current_batch_id,
+                talker_username,
+                talker_display_name,
+                message_data,
+            )
+            if not success:
+                continue
+
+            merged += 1
+            if message_hash:
+                self.seen_hashes.add(message_hash)
+                content = str(message_data.get('content') or '').strip()
+                if message_data.get('sender_attr') != 'system' and content:
+                    try:
+                        self.sentiment_service.analyze_and_cache(
+                            message_id=message_hash,
+                            text=content,
+                        )
+                    except Exception as e:
+                        _print(f"[Backfill] 情感缓存失败: {e}")
+
+        return merged
+
+    def _run_backfill_in_current_chat_context(
+        self,
+        probe: dict,
+        talker_username: str,
+        talker_display_name: str,
+        max_scroll_rounds: int = 80,
+        wheel_times: int = 2,
+    ) -> dict:
+        """Run backfill using the current wx/chat context without re-running ChatWith."""
+        collected: dict[str, dict] = {}
+        seen_top_identity = None
+        stagnant_rounds = 0
+        checkpoint_found = False
+
+        for round_index in range(1, max_scroll_rounds + 1):
+            visible_messages = self.wx.GetAllMessage() if self.wx else []
+            if not visible_messages:
+                _print(f"[Backfill] 第 {round_index} 轮未读取到可见消息，停止回溯")
+                break
+
+            _print(f"[Backfill] 第 {round_index}/{max_scroll_rounds} 轮，可见消息 {len(visible_messages)} 条")
+
+            visible_top_identity = self._message_identity(visible_messages[0])
+            if visible_top_identity == seen_top_identity:
+                stagnant_rounds += 1
+            else:
+                stagnant_rounds = 0
+                seen_top_identity = visible_top_identity
+
+            self._last_known_ts = 0
+            checkpoint_index = -1
+            round_messages: list[dict] = []
+            round_identity_counts: dict[str, int] = {}
+
+            for idx, msg in enumerate(visible_messages):
+                sender_attr = 'self' if getattr(msg, 'is_self', False) else 'friend'
+                if getattr(msg, 'is_system', False):
+                    sender_attr = 'system'
+                content = str(getattr(msg, 'content', '') or '')
+                resolved_timestamp = self._resolve_message_timestamp(msg, sender_attr, content)
+
+                if sender_attr == 'system':
+                    continue
+
+                match_reason = self._checkpoint_match_reason(probe, msg, resolved_timestamp)
+                if match_reason:
+                    _print(
+                        "[Backfill] 命中 checkpoint: "
+                        f"reason={match_reason}, "
+                        f"content={content!r}, "
+                        f"runtime_id={getattr(msg, 'id', None)!r}, "
+                        f"hash={getattr(msg, 'hash', None)!r}, "
+                        f"timestamp={resolved_timestamp}"
+                    )
+                    checkpoint_index = idx
+                    checkpoint_found = True
+                    continue
+
+                base_identity = self._message_identity(msg)
+                round_identity_counts[base_identity] = round_identity_counts.get(base_identity, 0) + 1
+                identity = f"{base_identity}#occ{round_identity_counts[base_identity]}"
+                round_messages.append({
+                    'identity': identity,
+                    'message_hash': getattr(msg, 'hash', None),
+                    'runtime_id': str(getattr(msg, 'id', '') or ''),
+                    'sender_attr': sender_attr,
+                    'content': content,
+                    'message_type': getattr(msg, 'type', 'text'),
+                    'timestamp': resolved_timestamp,
+                    'visible_index': idx,
+                    'round_index': round_index,
+                })
+
+            if checkpoint_found:
+                round_messages = [
+                    item for item in round_messages
+                    if int(item.get('visible_index', -1)) > checkpoint_index
+                ]
+                _print(
+                    f"[Backfill] 第 {round_index} 轮命中 checkpoint，位置 idx={checkpoint_index}，"
+                    f"本轮保留 {len(round_messages)} 条较新消息"
+                )
+            else:
+                _print(f"[Backfill] 第 {round_index} 轮未命中 checkpoint，暂存 {len(round_messages)} 条消息")
+
+            for item in round_messages:
+                identity = str(item.pop('identity'))
+                collected[identity] = item
+
+            if checkpoint_found:
+                break
+
+            if stagnant_rounds >= 2:
+                _print("[Backfill] 可见顶部消息连续未变化，停止继续上翻")
+                break
+
+            if not self._scroll_chat_history_up(wheel_times=wheel_times):
+                break
+
+        if not checkpoint_found:
+            return {
+                'success': False,
+                'inserted_count': 0,
+                'message': '回溯达到阈值仍未找到断点，建议重新导入数据库',
+                'need_reimport': True,
+                'scanned_count': len(collected),
+            }
+
+        ordered_messages = sorted(
+            collected.values(),
+            key=lambda item: (
+                int(item.get('timestamp') or 0),
+                int(item.get('round_index') or 0),
+                int(item.get('visible_index') or 0),
+                str(item.get('runtime_id') or ''),
+                item.get('content') or '',
+            )
+        )
+        candidate_samples = [
+            f"{item.get('sender_attr')}|{int(item.get('timestamp') or 0)}|{(item.get('content') or '')!r}"
+            for item in ordered_messages[:12]
+        ]
+        _print(f"[Backfill] 候选样本({len(ordered_messages)}): {candidate_samples}")
+        store_result = self._store_backfill_messages(
+            talker_username=talker_username,
+            talker_display_name=talker_display_name,
+            messages=ordered_messages,
+        )
+        merged_batch_count = self._merge_backfill_into_current_batch(
+            talker_username=talker_username,
+            talker_display_name=talker_display_name,
+            messages=ordered_messages,
+        )
+        inserted_count = int(store_result.get('inserted_count') or 0)
+        existing_count = int(store_result.get('existing_count') or 0)
+        _print(
+            "[Backfill] 汇总: "
+            f"当前命中轮保留={len(round_messages) if checkpoint_found else 0}, "
+            f"最终候选={len(ordered_messages)}, "
+            f"已存在跳过={existing_count}, "
+            f"实际插入={inserted_count}, "
+            f"当前batch并入={merged_batch_count}"
+        )
+        return {
+            'success': True,
+            'inserted_count': inserted_count,
+            'existing_count': existing_count,
+            'merged_batch_count': merged_batch_count,
+            'scanned_count': len(ordered_messages),
+            'message': f'回溯完成，补入 {inserted_count} 条消息',
+            'need_reimport': False,
+        }
+
+    def run_backfill(
+        self,
+        talker_display_name: str,
+        talker_username: str = '',
+        threshold_seconds: int = 300,
+        max_scroll_rounds: int = 80,
+        wheel_times: int = 2,
+    ) -> dict:
+        """Backfill missing history between the last checkpoint and now."""
+        if self.is_monitoring:
+            return {
+                'success': False,
+                'message': '当前存在进行中的监听任务',
+                'need_reimport': False,
+            }
+
+        probe = self.get_resume_probe(
+            talker_display_name=talker_display_name,
+            talker_username=talker_username,
+            threshold_seconds=threshold_seconds,
+        )
+        if not probe.get('has_checkpoint'):
+            return {
+                'success': True,
+                'inserted_count': 0,
+                'message': '未找到可用断点，无需回溯',
+                'need_reimport': False,
+            }
+        if not probe.get('should_offer_resume'):
+            return {
+                'success': True,
+                'inserted_count': 0,
+                'message': '断点时间间隔未达到回溯阈值',
+                'need_reimport': False,
+                'gap_seconds': probe.get('gap_seconds', 0),
+            }
+
+        self.current_display_name = talker_display_name
+        self.current_talker = talker_username
+        self._last_known_ts = 0
+
+        try:
+            self._create_wechat_instance()
+            self._bring_wechat_to_front()
+            time.sleep(1.0)
+
+            switched = False
+            for target_name in self._build_chatwith_candidates():
+                if self._try_chat_with(target_name):
+                    switched = True
+                    break
+            if not switched:
+                return {
+                    'success': False,
+                    'message': f"回溯前切换聊天失败: {self._chat_error}",
+                    'need_reimport': False,
+                }
+
+            return self._run_backfill_in_current_chat_context(
+                probe=probe,
+                talker_username=talker_username,
+                talker_display_name=talker_display_name,
+                max_scroll_rounds=max_scroll_rounds,
+                wheel_times=wheel_times,
+            )
+        finally:
+            self.current_display_name = None
+            self.current_talker = None
+            self._last_known_ts = 0
+            self._reset_wechat_instance()
+
     def _migrate_buffer_to_messages(self, batch_id: str, talker_username: str, talker_display_name: str) -> int:
         """Move realtime buffered messages into the historical messages table."""
         from ...db.connection import get_db
 
-        if not batch_id or not talker_username:
+        talker_key = self._get_talker_key(talker_username, talker_display_name)
+        if not batch_id or not talker_key:
             return 0
 
         buffer_messages = self.message_buffer.get_batch_messages(batch_id)
@@ -837,8 +1546,8 @@ class RealtimeMonitorService:
 
         conn = get_db()
         conversation_id = self._get_or_create_conversation_id(
-            talker_username,
-            talker_display_name or talker_username
+            talker_key,
+            talker_display_name or talker_key
         )
         migrated = 0
         latest_ts = 0
@@ -864,8 +1573,8 @@ class RealtimeMonitorService:
                 (
                     conversation_id,
                     local_id,
-                    talker_username,
-                    None if msg.get('sender_attr') == 'self' else talker_username,
+                    talker_key,
+                    None if msg.get('sender_attr') == 'self' else talker_key,
                     1 if msg.get('sender_attr') == 'self' else 0,
                     self._map_message_type(msg.get('message_type')),
                     msg.get('content') or '',
@@ -887,14 +1596,17 @@ class RealtimeMonitorService:
                 WHERE id = ?
                 ''',
                 (
-                    talker_display_name or talker_username,
+                    talker_display_name or talker_key,
                     latest_ts or int(time.time()),
                     total_count,
                     conversation_id,
                 )
             )
             conn.commit()
-            self.message_buffer.mark_as_processed(batch_id)
+        else:
+            conn.commit()
+
+        self.message_buffer.mark_as_processed(batch_id)
 
         return migrated
 
@@ -956,6 +1668,13 @@ class RealtimeMonitorService:
             talker_username = self.current_talker
             talker_display_name = self.current_display_name
 
+            self._save_monitor_checkpoint(
+                batch_id,
+                talker_username,
+                talker_display_name,
+                message_count
+            )
+
             migrated_count = self._migrate_buffer_to_messages(
                 batch_id,
                 talker_username,
@@ -980,6 +1699,7 @@ class RealtimeMonitorService:
             self.seen_hashes.clear()
             self._last_known_ts = 0
             self._chat_timed_out = False
+            self._resume_mode = 'skip'
             
             # 7. 重置情绪追踪器
             if self.emotion_tracker:

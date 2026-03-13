@@ -290,6 +290,9 @@ const suggestionsRef = ref<HTMLElement | null>(null)
 let statusTimer: any = null
 let messagesTimer: any = null
 let suggestionsTimer: any = null
+const START_REQUEST_KEY = 'realtime_start_request'
+const RESUME_THRESHOLD_SECONDS = 300
+const BACKFILL_MAX_SCROLL_ROUNDS = 80
 
 // ========== 常量 ==========
 const triggerModes = [
@@ -350,8 +353,123 @@ const allSuggestions = computed(() => {
   return list
 })
 
+function readPendingStartRequest() {
+  try {
+    const raw = window.sessionStorage.getItem(START_REQUEST_KEY)
+    return raw ? JSON.parse(raw) : null
+  } catch {
+    return null
+  }
+}
+
+function clearPendingStartRequest() {
+  window.sessionStorage.removeItem(START_REQUEST_KEY)
+}
+
+function formatResumeTime(timestamp?: number) {
+  if (!timestamp) return '未知时间'
+  const date = new Date(timestamp * 1000)
+  if (Number.isNaN(date.getTime())) return '未知时间'
+  return date.toLocaleString('zh-CN', { hour12: false })
+}
+
+function formatResumeGap(gapSeconds?: number) {
+  const totalSeconds = Math.max(0, Number(gapSeconds || 0))
+  if (totalSeconds < 60) return `${totalSeconds} 秒`
+  if (totalSeconds < 3600) return `${Math.floor(totalSeconds / 60)} 分钟`
+  if (totalSeconds < 86400) return `${Math.floor(totalSeconds / 3600)} 小时`
+  return `${Math.floor(totalSeconds / 86400)} 天`
+}
+
+async function maybeResolveResumeMode(talkerName: string): Promise<'skip' | 'backfill' | false> {
+  const probe = await api.get_realtime_resume_info(talkerName, RESUME_THRESHOLD_SECONDS)
+  if (!probe?.ok) {
+    console.warn('[FloatingPanel] 获取回溯探测信息失败:', probe?.error || probe)
+    return 'skip'
+  }
+
+  if (!probe.should_offer_resume) {
+    return 'skip'
+  }
+
+  const preview = String(probe.last_message_preview || '').trim() || '无预览'
+  const confirmed = confirm(
+    `上次监听到 ${formatResumeTime(probe.last_message_timestamp)}。\n` +
+    `距离现在约 ${formatResumeGap(probe.gap_seconds)}，最后一条消息：\n` +
+    `“${preview}”\n\n` +
+    '是否先回溯补全这段未监听的消息，再开始新的实时监听？'
+  )
+
+  if (!confirmed) {
+    return 'skip'
+  }
+
+  return 'backfill'
+}
+
+async function applyMonitoringStatus(status: any) {
+  realtimeState.isMonitoring = true
+  realtimeState.status = 'monitoring'
+  realtimeState.talkerName = status.talker_display_name || ''
+  realtimeState.batchId = status.batch_id || ''
+  realtimeState.messageCount = status.message_count || 0
+  chatError.value = status.chat_error || ''
+
+  startPolling()
+  loadSuggestionConfig()
+  loadLlmModels()
+  checkContactProfile(realtimeState.talkerName)
+
+  try {
+    const tRes = await api.get_latest_thread(realtimeState.talkerName)
+    if (tRes.ok && tRes.thread) {
+      lastThread.value = tRes.thread
+    }
+  } catch (e) {
+    console.error('查询历史线程失败:', e)
+  }
+}
+
+async function startPendingMonitoring(talkerName: string) {
+  realtimeState.talkerName = talkerName
+  realtimeState.status = 'searching'
+  chatError.value = ''
+
+  const resumeMode = await maybeResolveResumeMode(talkerName)
+  if (!resumeMode) {
+    return false
+  }
+
+  const result = await api.start_realtime_monitor(talkerName, resumeMode)
+  if (!(result.success || result.ok)) {
+    chatError.value = result.error || result.message || '启动监听失败'
+    return false
+  }
+
+  await applyMonitoringStatus({
+    ok: true,
+    is_monitoring: true,
+    talker_display_name: talkerName,
+    batch_id: result.batch_id,
+    message_count: 0,
+    chat_error: '',
+  })
+  return true
+}
+
 // ========== 生命周期 ==========
 onMounted(async () => {
+  const pendingStart = readPendingStartRequest()
+  if (pendingStart?.talkerName) {
+    clearPendingStartRequest()
+    const started = await startPendingMonitoring(String(pendingStart.talkerName))
+    initChart()
+    if (!started && !realtimeState.isMonitoring) {
+      console.error('[FloatingPanel] 待启动监听未成功，返回建议页')
+      goBackToSuggestions()
+    }
+    return
+  }
   // 尝试恢复监听状态（带重试，因为现在悬浮模式先于监听启动）
   let status: any = null
   const MAX_RETRIES = 5

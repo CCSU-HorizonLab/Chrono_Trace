@@ -18,10 +18,16 @@ type PyWebViewApi = {
   select_directory: (title?: string) => Promise<any>
   scan_wechat_directory: (wechat_dir: string) => Promise<any>
   // 实时监听
-  start_realtime_monitor: (talker_display_name: string) => Promise<any>
+  start_realtime_monitor: (talker_display_name: string, resume_mode?: string) => Promise<any>
   stop_realtime_monitor: (user_chat_history?: any[]) => Promise<any>
   get_realtime_status: () => Promise<any>
   get_realtime_messages: (batch_id: string, limit?: number) => Promise<any>
+  get_realtime_resume_info: (talker_display_name: string, threshold_seconds?: number) => Promise<any>
+  run_realtime_backfill: (
+    talker_display_name: string,
+    threshold_seconds?: number,
+    max_scroll_rounds?: number
+  ) => Promise<any>
   // AI 建议
   get_pending_suggestions: (batch_id: string) => Promise<any>
   dismiss_suggestion: (suggestion_id: number) => Promise<any>

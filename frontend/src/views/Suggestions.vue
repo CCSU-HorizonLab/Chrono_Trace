@@ -358,7 +358,6 @@ const realtimeState = reactive({
 const realtimeError = ref('')
 let statusTimer: any = null
 let messagesTimer: any = null
-
 // ========== AI 建议状态 ==========
 const triggerMode = ref<any>('semi_auto')
 const manualSuggestion = ref<any>(null)
@@ -487,16 +486,15 @@ async function toggleMonitoring() {
 // 启动监听
 async function startMonitoring() {
   const talkerName = realtimeState.talkerName.trim()
-  
+
   if (!talkerName) {
     realtimeError.value = '请选择或输入监听对象'
     return
   }
-  
+
   try {
     await bridgeReady()
-    
-    // 检查 LLM 模型是否激活
+
     const llmRes = await api.get_llm_models()
     if (!llmRes.ok || !llmRes.models || !llmRes.models.some((m: any) => m.is_active)) {
       showLlmWarningDialog.value = true
@@ -505,29 +503,22 @@ async function startMonitoring() {
 
     realtimeError.value = ''
     realtimeState.status = 'searching'
-    
-    // 先进入悬浮窗模式（让用户立刻看到 UI，不阻塞等待 ChatWith）
+
+    window.sessionStorage.setItem('realtime_start_request', JSON.stringify({
+      talkerName,
+      createdAt: Date.now(),
+    }))
+
     try {
       await api.enter_floating_mode()
       router.push('/floating')
+      return
     } catch (e) {
-      console.warn('进入悬浮模式失败，保持当前页面:', e)
-    }
-    
-    // 再启动监听（ChatWith 在后台异步执行，不阻塞前端）
-    const result = await api.start_realtime_monitor(talkerName)
-    
-    if (result.success || result.ok) {
-      realtimeState.batchId = result.batch_id
-      realtimeState.status = 'loading_model'
-      realtimeState.isMonitoring = true
-      
-      startStatusPolling()
-      startMessagesPolling()
-      loadSuggestionConfig()    // 加载建议配置
-    } else {
+      window.sessionStorage.removeItem('realtime_start_request')
       realtimeState.status = 'idle'
-      realtimeError.value = result.error || result.message || '启动监听失败'
+      console.warn('进入悬浮模式失败', e)
+      realtimeError.value = '进入悬浮模式失败'
+      return
     }
   } catch (e: any) {
     realtimeState.status = 'idle'

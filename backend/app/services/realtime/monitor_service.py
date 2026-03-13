@@ -8,6 +8,10 @@ import time
 import uuid
 import json
 import threading
+import multiprocessing
+import queue
+import re
+from datetime import datetime, timedelta
 from .message_buffer import MessageBuffer
 from .realtime_sentiment_service import RealtimeSentimentService
 from .emotion_state_tracker import EmotionStateTracker
@@ -16,6 +20,27 @@ logger = logging.getLogger(__name__)
 def _print(*args, **kwargs):
     """强制刷新的打印函数"""
     print(*args, **kwargs, flush=True)
+
+
+def _chatwith_worker(target_name: str, result_queue):
+    """Run wxauto4.ChatWith in a separate process so it can be terminated on timeout."""
+    started_at = time.time()
+    try:
+        from wxauto4 import WeChat
+
+        wx = WeChat(start_listener=False)
+        wx.ChatWith(target_name)
+        result_queue.put({
+            'ok': True,
+            'error': '',
+            'elapsed': time.time() - started_at,
+        })
+    except Exception as e:
+        result_queue.put({
+            'ok': False,
+            'error': str(e),
+            'elapsed': time.time() - started_at,
+        })
 
 
 class RealtimeMonitorService:
@@ -44,6 +69,8 @@ class RealtimeMonitorService:
             self._chat_ready = False            # ChatWith 是否完成
             self._chat_error = ''               # ChatWith 出错信息
             self._start_time = 0                # 开始监听时间戳
+            self._last_known_ts = 0
+            self._chat_timed_out = False
             self.message_buffer = MessageBuffer()
             self.seen_hashes = set()            # 消息去重集合
             self.polling_thread = None          # 轮询线程
@@ -109,12 +136,12 @@ class RealtimeMonitorService:
         
         try:
             # 2. 初始化 wxauto4
+            self._reset_wechat_instance()
             if self.wx is None:
                 _print("[RealtimeMonitorService] 初始化 wxauto4...")
                 try:
-                    from wxauto4 import WeChat
-                    self.wx = WeChat(start_listener=True)
-                    _print(f"[RealtimeMonitorService] wxauto4 初始化成功, 当前账号: {self.wx.nickname}")
+                    from wxauto4 import WeChat  # noqa: F401
+                    self._reset_wechat_instance()
                 except Exception as e:
                     return {
                         'success': False,
@@ -127,6 +154,7 @@ class RealtimeMonitorService:
             self.current_talker = talker_username
             self.current_display_name = talker_display_name
             self.seen_hashes.clear()
+            self._last_known_ts = 0
             
             # 创建情绪追踪器
             self.emotion_tracker = EmotionStateTracker()
@@ -227,6 +255,11 @@ class RealtimeMonitorService:
             )
 
             user32.SetForegroundWindow(hwnd)
+            for _ in range(15):
+                if user32.GetForegroundWindow() == hwnd:
+                    break
+                _time.sleep(0.1)
+            _time.sleep(0.3)
 
             _print("✅ 微信窗口已强制置顶到最前方")
             return True
@@ -235,29 +268,136 @@ class RealtimeMonitorService:
             _print(f"⚠️ 自动置顶微信窗口失败: {e}，请手动切换")
             return False
 
-    def _try_chat_with(self) -> bool:
-        """尝试执行 ChatWith，带 15 秒超时。成功返回 True，失败设置 _chat_error 并返回 False"""
-        chat_result = [False, '']
-        def do_chat():
+    def _reset_wechat_instance(self):
+        """Reset the cached wxauto4 instance so the next retry starts clean."""
+        if self.wx is not None:
             try:
-                self.wx.ChatWith(self.current_display_name)
-                chat_result[0] = True
-            except Exception as e:
-                chat_result[1] = str(e)
+                stop_listening = getattr(self.wx, 'StopListening', None)
+                if callable(stop_listening):
+                    stop_listening()
+            except Exception:
+                pass
+        self.wx = None
+
+    def _create_wechat_instance(self):
+        """Create a fresh wxauto4 instance without starting the async listener."""
+        from wxauto4 import WeChat
+
+        self._reset_wechat_instance()
+        self.wx = WeChat(start_listener=False)
+        nickname = getattr(self.wx, 'nickname', '')
+        if nickname:
+            _print(f"[RealtimeMonitorService] wxauto4 初始化成功, 当前账号: {nickname}")
+        return self.wx
+
+    def _get_foreground_window_info(self) -> dict:
+        """Return basic diagnostics for the current foreground window."""
+        try:
+            import ctypes
+
+            user32 = ctypes.windll.user32
+            hwnd = user32.GetForegroundWindow()
+            title_buffer = ctypes.create_unicode_buffer(512)
+            user32.GetWindowTextW(hwnd, title_buffer, len(title_buffer))
+
+            class_buffer = ctypes.create_unicode_buffer(256)
+            user32.GetClassNameW(hwnd, class_buffer, len(class_buffer))
+            return {
+                'hwnd': int(hwnd or 0),
+                'title': title_buffer.value,
+                'class_name': class_buffer.value,
+            }
+        except Exception as e:
+            return {
+                'hwnd': 0,
+                'title': '',
+                'class_name': '',
+                'error': str(e),
+            }
+
+    def _build_chatwith_candidates(self) -> list[str]:
+        """Build fallback ChatWith search targets from the display name."""
+        raw_name = (self.current_display_name or '').strip()
+        if not raw_name:
+            return []
+
+        candidates = [raw_name]
+        simplified = re.sub(r'[\(（【\[].*?[\)）】\]]', '', raw_name).strip()
+        simplified = re.sub(r'\s+', ' ', simplified).strip()
+        if simplified and simplified not in candidates:
+            candidates.append(simplified)
+
+        compact = re.sub(r'[^\w\u4e00-\u9fff]', '', raw_name).strip()
+        if compact and compact not in candidates:
+            candidates.append(compact)
+
+        return candidates
+
+    def _try_chat_with(self, target_name: str) -> bool:
+        """尝试执行 ChatWith，带 15 秒超时。成功返回 True，失败设置 _chat_error 并返回 False"""
+        self._chat_timed_out = False
+        started_at = time.time()
+        before_info = self._get_foreground_window_info()
+        _print(
+            f"[ChatWith] 调用前前台窗口: hwnd={before_info.get('hwnd')} "
+            f"class={before_info.get('class_name')} title={before_info.get('title')}"
+        )
+
+        ctx = multiprocessing.get_context('spawn')
+        result_queue = ctx.Queue()
+        chat_process = ctx.Process(
+            target=_chatwith_worker,
+            args=(target_name, result_queue),
+            daemon=True,
+        )
+        _print(f"[ChatWith] 开始调用 wx.ChatWith('{target_name}')")
+        chat_process.start()
+        chat_process.join(timeout=15)
+        after_info = self._get_foreground_window_info()
         
-        chat_thread = threading.Thread(target=do_chat, daemon=True)
-        chat_thread.start()
-        chat_thread.join(timeout=15)
-        
-        if chat_thread.is_alive():
-            self._chat_error = '切换聊天窗口超时（15秒），请检查微信窗口是否正常'
+        if chat_process.is_alive():
+            self._chat_timed_out = True
+            elapsed = time.time() - started_at
+            chat_process.terminate()
+            chat_process.join(timeout=2)
+            self._chat_error = (
+                f"切换聊天窗口超时（{elapsed:.1f}秒）"
+                f"，target='{target_name}'，前台窗口={after_info.get('title') or after_info.get('class_name')}"
+            )
+            _print(
+                f"[ChatWith] 超时: hwnd={after_info.get('hwnd')} "
+                f"class={after_info.get('class_name')} title={after_info.get('title')}"
+            )
             return False
-        elif not chat_result[0]:
-            self._chat_error = f'切换聊天窗口失败: {chat_result[1]}'
+
+        try:
+            worker_result = result_queue.get_nowait()
+        except queue.Empty:
+            worker_result = {
+                'ok': False,
+                'error': f'子进程未返回结果(exitcode={chat_process.exitcode})',
+                'elapsed': time.time() - started_at,
+            }
+
+        if not worker_result.get('ok'):
+            elapsed = float(worker_result.get('elapsed') or (time.time() - started_at))
+            self._chat_error = (
+                f"切换聊天窗口失败: {worker_result.get('error', '')} "
+                f"(target='{target_name}', elapsed={elapsed:.2f}s)"
+            )
+            _print(
+                f"[ChatWith] 失败后前台窗口: hwnd={after_info.get('hwnd')} "
+                f"class={after_info.get('class_name')} title={after_info.get('title')}"
+            )
             return False
-        else:
-            self._chat_error = ''
-            return True
+
+        elapsed = float(worker_result.get('elapsed') or (time.time() - started_at))
+        _print(
+            f"[ChatWith] 成功: target='{target_name}', elapsed={elapsed:.2f}s, "
+            f"前台窗口={after_info.get('title') or after_info.get('class_name')}"
+        )
+        self._chat_error = ''
+        return True
 
     def _polling_loop(self):
         """轮询线程：先完成 ChatWith 和模型预加载，再开始抓取消息"""
@@ -265,12 +405,15 @@ class RealtimeMonitorService:
         
         # -- 1. 将微信窗口置顶 --
         self._bring_wechat_to_front()
+        time.sleep(1.0)
         
         # -- 2. 切换聊天窗口（带重试循环，最多 3 次） --
         _print(f"👂 切换到聊天窗口: {self.current_display_name}")
         MAX_CHAT_RETRIES = 3
         CHAT_RETRY_DELAY = 5  # 秒
         chat_connected = False
+        chat_targets = self._build_chatwith_candidates()
+        _print(f"[ChatWith] 候选搜索名: {chat_targets}")
         
         for attempt in range(1, MAX_CHAT_RETRIES + 1):
             if self.stop_polling or not self.is_monitoring:
@@ -278,20 +421,31 @@ class RealtimeMonitorService:
                 return
             
             _print(f"🔄 ChatWith 尝试 {attempt}/{MAX_CHAT_RETRIES}...")
-            if attempt > 1:
-                self._bring_wechat_to_front()
-            
             try:
-                if self._try_chat_with():
-                    _print(f"✅ 已切换到聊天窗口: {self.current_display_name}")
-                    chat_connected = True
-                    break
-                else:
+                self._create_wechat_instance()
+                self._bring_wechat_to_front()
+                time.sleep(1.2)
+                for target_name in chat_targets:
+                    _print(f"[ChatWith] 本轮尝试搜索名: {target_name}")
+                    if self._try_chat_with(target_name):
+                        _print(f"✅ 已切换到聊天窗口: {target_name}")
+                        chat_connected = True
+                        break
                     _print(f"⚠️ 第 {attempt} 次 ChatWith 失败: {self._chat_error}")
+                    if self._chat_timed_out:
+                        _print("⚠️ 检测到 ChatWith 超时，停止本轮其余候选名和后续自动重试，避免堆积挂起线程")
+                        break
+                if chat_connected:
+                    break
+                if self._chat_timed_out:
+                    break
             except Exception as e:
                 self._chat_error = f'切换聊天窗口异常: {e}'
                 _print(f"❌ 第 {attempt} 次 ChatWith 异常: {e}")
             
+            if self._chat_timed_out:
+                break
+
             if attempt < MAX_CHAT_RETRIES:
                 _print(f"⏳ {CHAT_RETRY_DELAY} 秒后重试...")
                 time.sleep(CHAT_RETRY_DELAY)
@@ -303,14 +457,28 @@ class RealtimeMonitorService:
             while not self.stop_polling and self.is_monitoring:
                 time.sleep(RECOVERY_INTERVAL)
                 _print(f"🔄 [等待恢复] 重试 ChatWith...")
-                self._bring_wechat_to_front()
                 try:
-                    if self._try_chat_with():
-                        _print(f"✅ [恢复成功] 已切换到聊天窗口: {self.current_display_name}")
-                        chat_connected = True
+                    self._create_wechat_instance()
+                    self._bring_wechat_to_front()
+                    time.sleep(1.2)
+                    for target_name in chat_targets:
+                        _print(f"[ChatWith] [恢复模式] 尝试搜索名: {target_name}")
+                        if self._try_chat_with(target_name):
+                            _print(f"✅ [恢复成功] 已切换到聊天窗口: {target_name}")
+                            chat_connected = True
+                            break
+                        if self._chat_timed_out:
+                            _print("⚠️ [恢复模式] ChatWith 超时，停止本轮恢复尝试")
+                            break
+                    if chat_connected:
+                        break
+                    if self._chat_timed_out:
                         break
                 except Exception as e:
                     _print(f"⚠️ [等待恢复] ChatWith 仍然失败: {e}")
+
+                if self._chat_timed_out:
+                    break
             
             if not chat_connected:
                 _print(f"🛑 等待恢复被中断（收到停止信号），轮询线程退出")
@@ -424,7 +592,7 @@ class RealtimeMonitorService:
                 'sender_attr': sender_attr,
                 'content': str(content) if content else '',
                 'message_type': message_type,
-                'timestamp': int(time.time())
+                'timestamp': self._resolve_message_timestamp(msg, sender_attr, content)
             }
             
             # 7. 保存到数据库
@@ -489,6 +657,247 @@ class RealtimeMonitorService:
             import traceback
             traceback.print_exc()
     
+    def _resolve_message_timestamp(self, msg, sender_attr: str, content) -> int:
+        """Resolve a best-effort message timestamp from wxauto4 metadata or system labels."""
+        now_ts = int(time.time())
+        direct_label = getattr(msg, 'time', None) or getattr(msg, 'CreateTime', None)
+        parsed_direct = self._resolve_time_label(direct_label, 0) if direct_label else 0
+        if parsed_direct:
+            self._last_known_ts = parsed_direct
+
+        if sender_attr == 'system':
+            parsed_system = self._resolve_time_label(content, 0)
+            if parsed_system:
+                self._last_known_ts = parsed_system
+                return parsed_system
+            return parsed_direct or now_ts
+
+        return parsed_direct or self._last_known_ts or now_ts
+
+    def _resolve_time_label(self, label, fallback: int) -> int:
+        """Convert WeChat time labels like '昨天 14:30' into unix timestamps."""
+        if not label:
+            return fallback
+
+        text = str(label).strip()
+        if not text:
+            return fallback
+
+        now_dt = datetime.now()
+
+        matched = re.match(r'^(\d{1,2}):(\d{2})$', text)
+        if matched:
+            return int(datetime(
+                now_dt.year, now_dt.month, now_dt.day,
+                int(matched.group(1)), int(matched.group(2))
+            ).timestamp())
+
+        matched = re.match(r'^昨天\s+(\d{1,2}):(\d{2})$', text)
+        if matched:
+            day = now_dt - timedelta(days=1)
+            return int(datetime(
+                day.year, day.month, day.day,
+                int(matched.group(1)), int(matched.group(2))
+            ).timestamp())
+
+        matched = re.match(r'^前天\s+(\d{1,2}):(\d{2})$', text)
+        if matched:
+            day = now_dt - timedelta(days=2)
+            return int(datetime(
+                day.year, day.month, day.day,
+                int(matched.group(1)), int(matched.group(2))
+            ).timestamp())
+
+        matched = re.match(r'^(\d{1,2})月(\d{1,2})日\s+(\d{1,2}):(\d{2})$', text)
+        if matched:
+            month = int(matched.group(1))
+            day = int(matched.group(2))
+            hour = int(matched.group(3))
+            minute = int(matched.group(4))
+            year = now_dt.year
+            candidate = datetime(year, month, day, hour, minute)
+            if candidate > now_dt + timedelta(days=1):
+                candidate = datetime(year - 1, month, day, hour, minute)
+            return int(candidate.timestamp())
+
+        matched = re.match(r'^(\d{1,2})/(\d{1,2})\s+(\d{1,2}):(\d{2})$', text)
+        if matched:
+            month = int(matched.group(1))
+            day = int(matched.group(2))
+            hour = int(matched.group(3))
+            minute = int(matched.group(4))
+            year = now_dt.year
+            candidate = datetime(year, month, day, hour, minute)
+            if candidate > now_dt + timedelta(days=1):
+                candidate = datetime(year - 1, month, day, hour, minute)
+            return int(candidate.timestamp())
+
+        weekday_map = {
+            '周一': 0, '星期一': 0,
+            '周二': 1, '星期二': 1,
+            '周三': 2, '星期三': 2,
+            '周四': 3, '星期四': 3,
+            '周五': 4, '星期五': 4,
+            '周六': 5, '星期六': 5,
+            '周日': 6, '星期日': 6, '星期天': 6,
+        }
+        for prefix, weekday in weekday_map.items():
+            matched = re.match(rf'^{re.escape(prefix)}\s+(\d{{1,2}}):(\d{{2}})$', text)
+            if not matched:
+                continue
+            day = now_dt - timedelta(days=(now_dt.weekday() - weekday) % 7)
+            return int(datetime(
+                day.year, day.month, day.day,
+                int(matched.group(1)), int(matched.group(2))
+            ).timestamp())
+
+        return fallback
+
+    def _map_message_type(self, message_type: str) -> int:
+        """Map wxauto4 string types to the app's integer message types."""
+        type_map = {
+            'text': 1,
+            'image': 3,
+            'voice': 34,
+            'video': 43,
+            'emoji': 47,
+            'file': 49,
+        }
+        return type_map.get(str(message_type or 'text').lower(), 1)
+
+    def _get_or_create_conversation_id(self, talker_username: str, talker_display_name: str) -> int:
+        """Return the conversation id for a talker, creating it when missing."""
+        from ...db.connection import get_db
+
+        conn = get_db()
+        row = conn.execute(
+            'SELECT id FROM conversations WHERE username = ?',
+            (talker_username,)
+        ).fetchone()
+        if row:
+            return row[0]
+
+        now_ts = int(time.time())
+        cursor = conn.execute(
+            '''
+            INSERT INTO conversations (username, display_name, created_at, updated_at, message_count)
+            VALUES (?, ?, ?, ?, 0)
+            ''',
+            (talker_username, talker_display_name or talker_username, now_ts, now_ts)
+        )
+        conn.commit()
+        return cursor.lastrowid
+
+    def _message_exists_in_history(self, conversation_id: int, message_data: dict) -> bool:
+        """Check whether a buffered realtime message has already been migrated."""
+        from ...db.connection import get_db
+
+        conn = get_db()
+        runtime_id = str(message_data.get('runtime_id') or '').strip()
+        if runtime_id.isdigit():
+            row = conn.execute(
+                'SELECT id FROM messages WHERE conversation_id = ? AND local_id = ? LIMIT 1',
+                (conversation_id, int(runtime_id))
+            ).fetchone()
+            if row:
+                return True
+
+        row = conn.execute(
+            '''
+            SELECT id
+            FROM messages
+            WHERE conversation_id = ?
+              AND source = 'realtime'
+              AND is_sender = ?
+              AND message_type = ?
+              AND timestamp = ?
+              AND COALESCE(content, '') = ?
+            LIMIT 1
+            ''',
+            (
+                conversation_id,
+                1 if message_data.get('sender_attr') == 'self' else 0,
+                self._map_message_type(message_data.get('message_type')),
+                int(message_data.get('timestamp') or 0),
+                message_data.get('content') or '',
+            )
+        ).fetchone()
+        return row is not None
+
+    def _migrate_buffer_to_messages(self, batch_id: str, talker_username: str, talker_display_name: str) -> int:
+        """Move realtime buffered messages into the historical messages table."""
+        from ...db.connection import get_db
+
+        if not batch_id or not talker_username:
+            return 0
+
+        buffer_messages = self.message_buffer.get_batch_messages(batch_id)
+        if not buffer_messages:
+            return 0
+
+        conn = get_db()
+        conversation_id = self._get_or_create_conversation_id(
+            talker_username,
+            talker_display_name or talker_username
+        )
+        migrated = 0
+        latest_ts = 0
+
+        for msg in buffer_messages:
+            if msg.get('sender_attr') == 'system':
+                continue
+            if self._message_exists_in_history(conversation_id, msg):
+                continue
+
+            runtime_id = str(msg.get('runtime_id') or '').strip()
+            local_id = int(runtime_id) if runtime_id.isdigit() else None
+            timestamp = int(msg.get('timestamp') or int(time.time()))
+            latest_ts = max(latest_ts, timestamp)
+
+            conn.execute(
+                '''
+                INSERT INTO messages
+                (conversation_id, local_id, talker, sender, is_sender, message_type,
+                 content, timestamp, source, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'realtime', ?)
+                ''',
+                (
+                    conversation_id,
+                    local_id,
+                    talker_username,
+                    None if msg.get('sender_attr') == 'self' else talker_username,
+                    1 if msg.get('sender_attr') == 'self' else 0,
+                    self._map_message_type(msg.get('message_type')),
+                    msg.get('content') or '',
+                    timestamp,
+                    int(time.time()),
+                )
+            )
+            migrated += 1
+
+        if migrated:
+            total_count = conn.execute(
+                'SELECT COUNT(*) FROM messages WHERE conversation_id = ?',
+                (conversation_id,)
+            ).fetchone()[0]
+            conn.execute(
+                '''
+                UPDATE conversations
+                SET display_name = ?, updated_at = ?, message_count = ?
+                WHERE id = ?
+                ''',
+                (
+                    talker_display_name or talker_username,
+                    latest_ts or int(time.time()),
+                    total_count,
+                    conversation_id,
+                )
+            )
+            conn.commit()
+            self.message_buffer.mark_as_processed(batch_id)
+
+        return migrated
+
     def stop_monitoring(self) -> dict:
         """
         停止实时监听
@@ -544,14 +953,24 @@ class RealtimeMonitorService:
             
             # 4. 保存批次ID用于返回
             batch_id = self.current_batch_id
+            talker_username = self.current_talker
             talker_display_name = self.current_display_name
+
+            migrated_count = self._migrate_buffer_to_messages(
+                batch_id,
+                talker_username,
+                talker_display_name
+            )
+            if migrated_count:
+                _print(f"✅ 已迁移 {migrated_count} 条消息到历史数据表")
             
             # 5. 记录事件
             self._log_runtime_event('realtime_monitor_stop', {
                 'batch_id': batch_id,
-                'talker_username': self.current_talker,
+                'talker_username': talker_username,
                 'talker_display_name': talker_display_name,
-                'message_count': message_count
+                'message_count': message_count,
+                'migrated_count': migrated_count
             })
             
             # 6. 清理状态
@@ -559,12 +978,15 @@ class RealtimeMonitorService:
             self.current_talker = None
             self.current_display_name = None
             self.seen_hashes.clear()
+            self._last_known_ts = 0
+            self._chat_timed_out = False
             
             # 7. 重置情绪追踪器
             if self.emotion_tracker:
                 self.emotion_tracker.reset()
                 self.emotion_tracker = None
             self._last_auto_suggestion_time = 0
+            self._reset_wechat_instance()
             
             _print(f"✅ 监听已完全停止！累计抓取: {message_count} 条\n")
             

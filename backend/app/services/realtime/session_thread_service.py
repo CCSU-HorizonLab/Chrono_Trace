@@ -26,10 +26,14 @@ def _print(msg: str):
 
 
 # LLM 总结用 System Prompt
-SUMMARY_SYSTEM_PROMPT = """你是一个对话总结专家。请用一句话（不超过50字）总结以下 AI 辅助聊天指导会话的核心要点。
-重点概括：这次指导围绕什么话题？AI 给出了什么关键建议？用户和对方之间发生了什么？
+SUMMARY_SYSTEM_PROMPT = """你是一个聊天记录总结专家。
+请只根据双方真实聊天内容，总结这段对话本身在聊什么，忽略 AI 建议、系统提示和分析过程。
 
-同时提取 3-5 个关键词（用逗号分隔），用于后续检索。
+要求：
+1. 用一句话总结，50 字以内
+2. 优先概括话题、事件、情绪变化或推进结果
+3. 不要提及 AI、建议、系统、辅助、分析
+4. 同时提取 3-5 个关键词，用逗号分隔
 
 输出格式（纯 JSON）：
 {"summary": "一句话总结", "keywords": "关键词1,关键词2,关键词3"}"""
@@ -337,22 +341,28 @@ class SessionThreadService:
             model_config = self._get_active_model()
             if not model_config:
                 _print("[SessionThread] 无激活模型，使用默认总结")
-                return {'summary': f'与对方的一次聊天指导（{len(messages)}条消息）', 'keywords': ''}
+                return {'summary': f'与对方的一次聊天（{len(messages)}条消息）', 'keywords': ''}
 
-            # 构建待总结的文本
+            chat_messages = [
+                msg for msg in messages
+                if msg.get('sender_attr') != 'system' and (msg.get('content') or '').strip()
+            ]
+            if not chat_messages:
+                return {'summary': f'与对方的一次聊天（{len(messages)}条消息）', 'keywords': ''}
+
+            # 构建待总结的文本，聊天记录为主体，AI 建议仅作为弱背景
             parts = []
-            # 最近消息
-            parts.append("【微信对话片段】")
-            for msg in messages[-15:]:
+            parts.append("【聊天记录】")
+            for msg in chat_messages[-20:]:
                 sender = "我" if msg.get('sender_attr') == 'self' else "对方"
                 content = (msg.get('content') or '')[:60]
                 if content:
                     parts.append(f"  {sender}：{content}")
 
-            # AI 建议
             if suggestions:
-                parts.append("\n【AI 给出的建议】")
-                for s in suggestions[-5:]:
+                parts.append("\n【辅助背景（不要作为总结重点）】")
+                parts.append("  以下内容仅供理解上下文，不要在总结中直接提及 AI 建议。")
+                for s in suggestions[-3:]:
                     summary = s.get('summary', '')
                     speeches = s.get('speeches', [])
                     if isinstance(speeches, str):
@@ -360,9 +370,10 @@ class SessionThreadService:
                             speeches = json.loads(speeches)
                         except:
                             speeches = [speeches]
-                    parts.append(f"  摘要: {summary}")
+                    if summary:
+                        parts.append(f"  背景摘要: {summary[:50]}")
                     if speeches:
-                        parts.append(f"  话术: {'; '.join(str(sp)[:40] for sp in speeches[:2])}")
+                        parts.append(f"  背景话术: {'; '.join(str(sp)[:30] for sp in speeches[:1])}")
 
             user_prompt = '\n'.join(parts)
 
@@ -400,14 +411,14 @@ class SessionThreadService:
                 content = msg.get('content', '') or ''
 
             if not content:
-                return {'summary': f'与对方的一次聊天指导（{len(messages)}条消息）', 'keywords': ''}
+                return {'summary': f'与对方的一次聊天（{len(messages)}条消息）', 'keywords': ''}
 
             # 解析 JSON
             return self._parse_summary_json(content, len(messages))
 
         except Exception as e:
             _print(f"[SessionThread] ⚠️ LLM 总结失败: {e}")
-            return {'summary': f'与对方的一次聊天指导（{len(messages)}条消息）', 'keywords': ''}
+            return {'summary': f'与对方的一次聊天（{len(messages)}条消息）', 'keywords': ''}
 
     def _parse_summary_json(self, text: str, msg_count: int) -> dict:
         """解析总结 JSON"""

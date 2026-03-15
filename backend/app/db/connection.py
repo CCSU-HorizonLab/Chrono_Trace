@@ -68,6 +68,52 @@ class DatabaseConnection:
         # 执行所有建表语句
         with cls._get_instance():
             cls._get_instance().executescript(schema_sql)
+            cls._run_compat_migrations()
+
+    @classmethod
+    def _run_compat_migrations(cls):
+        """Apply lightweight compatibility migrations for existing databases."""
+        conn = cls._get_instance()
+        if conn is None:
+            return
+
+        conn.execute(
+            """
+            DELETE FROM messages
+            WHERE local_id IS NOT NULL
+              AND id NOT IN (
+                  SELECT MIN(id)
+                  FROM messages
+                  WHERE local_id IS NOT NULL
+                  GROUP BY conversation_id, local_id
+              )
+            """
+        )
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_conv_local_unique
+            ON messages(conversation_id, local_id)
+            WHERE local_id IS NOT NULL
+            """
+        )
+        conn.execute(
+            """
+            UPDATE conversations
+            SET message_count = (
+                    SELECT COUNT(*)
+                    FROM messages
+                    WHERE messages.conversation_id = conversations.id
+                ),
+                updated_at = COALESCE(
+                    (
+                        SELECT MAX(timestamp)
+                        FROM messages
+                        WHERE messages.conversation_id = conversations.id
+                    ),
+                    updated_at
+                )
+            """
+        )
     
     @classmethod
     def get_connection(cls) -> sqlite3.Connection:

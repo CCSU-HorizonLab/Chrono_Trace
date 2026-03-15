@@ -1213,9 +1213,9 @@ class RealtimeMonitorService:
 
             runtime_id = str(message_data.get('runtime_id') or '').strip()
             local_id = int(runtime_id) if runtime_id.isdigit() else None
-            conn.execute(
+            cursor = conn.execute(
                 '''
-                INSERT INTO messages
+                INSERT OR IGNORE INTO messages
                 (conversation_id, local_id, talker, sender, is_sender, message_type,
                  content, timestamp, source, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'realtime_backfill', ?)
@@ -1232,11 +1232,14 @@ class RealtimeMonitorService:
                     int(time.time()),
                 )
             )
-            inserted += 1
-            if len(inserted_samples) < 12:
-                inserted_samples.append(
-                    f"{message_data.get('sender_attr')}|{int(message_data.get('timestamp') or 0)}|{(message_data.get('content') or '')!r}"
-                )
+            if cursor.rowcount == 1:
+                inserted += 1
+                if len(inserted_samples) < 12:
+                    inserted_samples.append(
+                        f"{message_data.get('sender_attr')}|{int(message_data.get('timestamp') or 0)}|{(message_data.get('content') or '')!r}"
+                    )
+            else:
+                existing += 1
 
         if inserted:
             total_count = conn.execute(
@@ -1563,9 +1566,9 @@ class RealtimeMonitorService:
             timestamp = int(msg.get('timestamp') or int(time.time()))
             latest_ts = max(latest_ts, timestamp)
 
-            conn.execute(
+            cursor = conn.execute(
                 '''
-                INSERT INTO messages
+                INSERT OR IGNORE INTO messages
                 (conversation_id, local_id, talker, sender, is_sender, message_type,
                  content, timestamp, source, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'realtime', ?)
@@ -1582,7 +1585,8 @@ class RealtimeMonitorService:
                     int(time.time()),
                 )
             )
-            migrated += 1
+            if cursor.rowcount == 1:
+                migrated += 1
 
         if migrated:
             total_count = conn.execute(

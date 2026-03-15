@@ -65,6 +65,9 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, timestamp DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_conv_local_unique
+ON messages(conversation_id, local_id)
+WHERE local_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_source ON messages(source);
 CREATE INDEX IF NOT EXISTS idx_messages_type ON messages(message_type);

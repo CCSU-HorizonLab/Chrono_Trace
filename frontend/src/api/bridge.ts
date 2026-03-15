@@ -4,6 +4,7 @@ type PyWebViewApi = {
   get_wechat_paths: () => Promise<any>
   verify_wechat_key: (db_key: string) => Promise<any>
   import_wechat_data: (db_key: string, options?: Record<string, any>) => Promise<any>
+  detect_wechat_import_increment: () => Promise<any>
   // 通用导入与分析
   ingest_data: (file_path: string, options?: Record<string, any>) => Promise<any>
   get_conversation_list: () => Promise<any>

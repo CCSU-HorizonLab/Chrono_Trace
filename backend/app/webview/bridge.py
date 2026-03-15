@@ -1,4 +1,4 @@
-from typing import Any, Optional
+﻿from typing import Any, Optional
 import json
 import os
 import logging
@@ -44,6 +44,25 @@ class Bridge:
 
     def ping(self) -> str:
         return "pong"
+
+    def _get_wechat_custom_paths(self) -> dict[str, str] | None:
+        wechat_dir = self.settings.get("wechat_data_dir")
+        wxid = self.settings.get("wechat_user_wxid")
+        if not wechat_dir or not wxid:
+            return None
+        return {
+            "wechat_dir": wechat_dir,
+            "current_user": wxid,
+        }
+
+    def _save_wechat_import_baseline(self, snapshot: dict[str, Any]) -> None:
+        self.settings.update({
+            "wechat_import_completed": True,
+            "wechat_last_import_at": snapshot.get("captured_at"),
+            "wechat_last_import_total_size": snapshot.get("total_size", 0),
+            "wechat_last_import_files": snapshot.get("files", []),
+        })
+        self._save_settings()
 
     # ==================== 微信数据导入相关 ====================
     
@@ -107,20 +126,64 @@ class Bridge:
             }
         """
         # 如果有自定义路径配置,传递给服务(只需要wechat_dir和current_user,databases会自动查找)
-        custom_paths = None
-        wechat_dir = self.settings.get("wechat_data_dir")
-        wxid = self.settings.get("wechat_user_wxid")
-        
-        if wechat_dir and wxid:
-            custom_paths = {
-                "wechat_dir": wechat_dir,
-                "current_user": wxid
-            }
+        custom_paths = self._get_wechat_custom_paths()
+        if custom_paths:
             logger.debug(f"[DEBUG Bridge] 使用自定义路径: {custom_paths}")
         else:
             logger.debug(f"[DEBUG Bridge] 未配置自定义路径,将使用自动检测")
-        
-        return self.wechat_service.import_wechat_data(db_key, options or {}, custom_paths)
+
+        result = self.wechat_service.import_wechat_data(db_key, options or {}, custom_paths)
+        if result.get("ok"):
+            snapshot = self.wechat_service.build_file_size_snapshot(custom_paths)
+            self._save_wechat_import_baseline(snapshot)
+        return result
+
+    def detect_wechat_import_increment(self) -> dict[str, Any]:
+        """Compare current WeChat DB file sizes with the last successful import baseline."""
+        baseline_files = self.settings.get("wechat_last_import_files") or []
+        if not baseline_files:
+            return {"ok": True, "has_increment": False}
+
+        custom_paths = self._get_wechat_custom_paths()
+        try:
+            snapshot = self.wechat_service.build_file_size_snapshot(custom_paths)
+        except Exception as e:
+            logger.error(f"[Bridge] 增量检测失败: {e}")
+            return {"ok": False, "error": str(e)}
+
+        baseline_map = {
+            os.path.normpath(item.get("path", "")): int(item.get("size", 0))
+            for item in baseline_files
+            if item.get("path")
+        }
+        current_map = {
+            os.path.normpath(item.get("path", "")): int(item.get("size", 0))
+            for item in snapshot.get("files", [])
+            if item.get("path")
+        }
+
+        changed_files = []
+        increment_size = 0
+        for path, current_size in current_map.items():
+            baseline_size = baseline_map.get(path, 0)
+            if current_size > baseline_size:
+                delta = current_size - baseline_size
+                increment_size += delta
+                changed_files.append({
+                    "path": path,
+                    "previous_size": baseline_size,
+                    "current_size": current_size,
+                    "delta": delta,
+                })
+
+        return {
+            "ok": True,
+            "has_increment": increment_size > 0,
+            "increment_size": increment_size,
+            "changed_files": changed_files,
+            "last_import_at": self.settings.get("wechat_last_import_at"),
+            "snapshot": snapshot,
+        }
 
     # ==================== 原有接口（保留） ====================
 

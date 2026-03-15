@@ -84,6 +84,45 @@
   gap: var(--ct-space-xs);
 }
 
+/* --- Global Progress --- */
+.extraction-progress {
+  padding: var(--ct-space-md) var(--ct-space-xl);
+  background: var(--ct-bg-secondary);
+  border-radius: var(--ct-radius-md);
+  margin-bottom: var(--ct-space-md);
+  box-shadow: var(--ct-shadow-sm);
+  border: 1px solid var(--ct-border-subtle);
+}
+
+.progress-bar {
+  height: 8px;
+  background: var(--ct-bg-tertiary);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+
+.progress-fill {
+  height: 100%;
+  background: var(--ct-color-primary);
+  transition: width 0.3s ease;
+}
+
+.progress-text {
+  font-size: var(--ct-text-sm);
+  color: var(--ct-text-secondary);
+  text-align: right;
+}
+
+.spinning {
+  display: inline-block;
+  animation: spin 2s linear infinite;
+}
+
+@keyframes spin {
+  100% { transform: rotate(360deg); }
+}
+
 /* --- Tabs Styling --- */
 /* --- Tabs Alignment --- */
 .tabs-container {
@@ -673,14 +712,88 @@
 }
 
 
+/* --- Content & Timeline Layout --- */
+.content-timeline-dashboard {
+  /* 当左右分开时，由于 grid 会双列都跟随最高的自适应拉伸。
+     如果希望右侧【严格等于左侧的高度】（左侧高度作为撑起的基础），使用绝对定位是一种好办法。 */
+  display: block;
+  position: relative;
+  overflow: visible;
+  padding-bottom: var(--ct-space-xl);
+}
+
+@media (min-width: 1025px) {
+  .content-timeline-dashboard .col-main {
+    width: calc(50% - var(--ct-space-xl) / 2);
+  }
+  .content-timeline-dashboard .col-side {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: calc(50% - var(--ct-space-xl) / 2);
+    height: calc(100% - var(--ct-space-xl)); /* Fix: exclude bottom padding from height */
+    display: flex;
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 1024px) {
+  .content-timeline-dashboard {
+    display: flex;
+    flex-direction: column;
+    gap: var(--ct-space-xl);
+  }
+  .content-timeline-dashboard .col-main,
+  .content-timeline-dashboard .col-side {
+    width: 100%;
+  }
+  .content-timeline-dashboard .timeline-section-card {
+    min-height: 500px;
+  }
+}
+
+.content-timeline-dashboard .main-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ct-space-md);
+}
+
+.content-timeline-dashboard .timeline-section-card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 24px;
+  animation: fadeInUp 0.6s ease-out 0.3s backwards;
+  margin-bottom: 0;
+}
+
+.content-timeline-dashboard .timeline-section-card .section-header {
+  flex-shrink: 0;
+  margin-bottom: var(--ct-space-md);
+}
+
+.content-timeline-dashboard .timeline-scroll-area {
+  flex: 1;
+  overflow-y: auto;
+  padding-right: var(--ct-space-sm);
+  padding-bottom: 24px;
+}
+.content-timeline-dashboard .timeline-scroll-area::-webkit-scrollbar {
+  width: 6px;
+}
+.content-timeline-dashboard .timeline-scroll-area::-webkit-scrollbar-thumb {
+  background-color: var(--ct-border-subtle);
+  border-radius: 3px;
+}
+
+.content-timeline-dashboard .subject-section {
+  flex-shrink: 0;
+}
+
 /* Common */
 .subject-section {
   margin-bottom: var(--ct-space-xl);
-}
-
-.timeline-section {
-    animation: fadeInUp 0.6s ease-out 0.3s backwards;
-    margin-bottom: var(--ct-space-xl);
 }
 
 .section-header {

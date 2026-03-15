@@ -143,21 +143,26 @@ class AffinityAnalysisService:
             # 2. 加载配置
             result.current_step = "加载配置"
             result.progress_percent = 10
+            logger.info(f"[好感度分析] 步骤 1/5: 加载配置...")
             config = self._load_config(conversation_id, config_overrides)
             
             # 3. 执行预处理
             result.current_step = "预处理数据"
             result.progress_percent = 20
+            logger.info(f"[好感度分析] 步骤 2/5: 预处理数据 (这可能需要较长时间)...")
             stats = self._preprocess_conversation(conversation_id, force_reanalyze)
+            logger.info(f"[好感度分析] 步骤 2/5: 预处理完成")
             
             # 4. 计算各维度
             result.current_step = "计算维度评分"
             result.progress_percent = 40
+            logger.info(f"[好感度分析] 步骤 3/5: 计算四大维度评分...")
             self._calculate_all_dimensions(result, conversation_id, stats, config)
             
             # 5. 计算综合评分
             result.current_step = "计算综合评分"
             result.progress_percent = 80
+            logger.info(f"[好感度分析] 步骤 4/5: 计算综合评分...")
             self._calculate_overall_score(result, config)
             
             # 6. 生成解释
@@ -168,6 +173,7 @@ class AffinityAnalysisService:
             # 7. 保存结果
             result.current_step = "保存结果"
             result.progress_percent = 90
+            logger.info(f"[好感度分析] 步骤 5/5: 保存结果...")
             self._save_results(conversation_id, result)
             
             # 完成

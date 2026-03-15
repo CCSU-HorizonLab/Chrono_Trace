@@ -369,7 +369,15 @@ function formatDuration(seconds: number): string {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: var(--ct-bg-elevated);
+  margin-top: calc(-1 * var(--ct-space-xl));
+  padding-top: var(--ct-space-xl);
+  padding-bottom: var(--ct-space-md);
   margin-bottom: var(--ct-space-lg);
+  border-bottom: 1px solid var(--ct-border-color);
 }
 
 .timeline-header h3 {
@@ -402,7 +410,7 @@ function formatDuration(seconds: number): string {
   gap: var(--ct-space-md);
   margin-bottom: var(--ct-space-md);
   position: sticky;
-  top: 0;
+  top: 73px; /* Allow space for sticky timeline-header */
   background: var(--ct-bg-elevated);
   padding: var(--ct-space-sm) 0;
   z-index: 10;

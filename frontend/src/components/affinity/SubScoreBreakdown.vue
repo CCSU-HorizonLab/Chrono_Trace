@@ -13,7 +13,14 @@
         <tbody>
           <tr v-for="(score, key) in subScores" :key="key">
             <td>{{ getLabel(key as string) }}</td>
-            <td class="score-cell">{{ formatScore(score) }}</td>
+            <td class="score-cell">
+              <div class="score-bar-container">
+                <div class="score-bar-bg">
+                  <div class="score-bar-fill" :class="getBarColorClass(score, key as string)" :style="{ width: Math.min(100, Math.max(0, score)) + '%' }"></div>
+                </div>
+                <span class="score-text">{{ formatScore(score) }}</span>
+              </div>
+            </td>
             <td>
               <span class="badge" :class="getBadgeClass(score, key as string)">
                 {{ getRating(score, key as string) }}
@@ -104,6 +111,19 @@ const getBadgeClass = (score: number, key?: string): string => {
   if (score >= 40) return 'badge-warning'
   return 'badge-danger'
 }
+
+const getBarColorClass = (score: number, key?: string): string => {
+  if (key && INVERSE_KEYS.has(key)) {
+    if (score <= 5) return 'bar-success'
+    if (score <= 15) return 'bar-info'
+    if (score <= 30) return 'bar-warning'
+    return 'bar-danger'
+  }
+  if (score >= 80) return 'bar-success'
+  if (score >= 60) return 'bar-info'
+  if (score >= 40) return 'bar-warning'
+  return 'bar-danger'
+}
 </script>
 
 <style scoped>
@@ -159,10 +179,43 @@ const getBadgeClass = (score: number, key?: string): string => {
 }
 
 .score-cell {
+  width: 120px;
+}
+
+.score-bar-container {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.score-bar-bg {
+  flex: 1;
+  height: 6px;
+  background-color: var(--ct-border-color);
+  border-radius: 3px;
+  overflow: hidden;
+  min-width: 40px;
+}
+
+.score-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+.score-text {
   font-family: var(--ct-font-mono);
   font-weight: 500;
   color: var(--ct-text-primary) !important;
+  min-width: 28px;
+  text-align: right;
 }
+
+.bar-success { background: var(--ct-color-success); }
+.bar-info { background: var(--ct-color-info); }
+.bar-warning { background: var(--ct-color-warning); }
+.bar-danger { background: var(--ct-color-error); }
 
 .badge {
   display: inline-flex;
@@ -177,21 +230,21 @@ const getBadgeClass = (score: number, key?: string): string => {
 
 .badge-success {
   background: var(--ct-color-success-light);
-  color: var(--ct-color-success-dark);
+  color: var(--ct-color-success);
 }
 
 .badge-info {
   background: var(--ct-color-info-light);
-  color: var(--ct-color-info-dark);
+  color: var(--ct-color-info);
 }
 
 .badge-warning {
   background: var(--ct-color-warning-light);
-  color: var(--ct-color-warning-dark);
+  color: var(--ct-color-warning);
 }
 
 .badge-danger {
   background: var(--ct-color-error-light);
-  color: var(--ct-color-error-dark);
+  color: var(--ct-color-error);
 }
 </style>

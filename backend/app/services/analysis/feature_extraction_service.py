@@ -65,25 +65,39 @@ class FeatureExtractionService:
         try:
             # 0. 清理旧数据，防止重复插入
             self._update_task_status(task_id, 5, "Clearing old data")
+            logger.info(f"[特征提取] 步骤 0/4: 清理旧数据...")
             self.delete_analysis_data(conversation_id)
 
             # 1. 会话切分
             self._update_task_status(task_id, 10, "Splitting sessions")
+            logger.info(f"[特征提取] 步骤 1/4: 会话切分...")
+            step_start = time.time()
             sessions = self.extract_sessions(conversation_id)
+            logger.info(f"[特征提取] 步骤 1/4: 会话切分完成 ({len(sessions)} 个会话, {time.time() - step_start:.1f}s)")
 
             # 2. 响应时间计算
             self._update_task_status(task_id, 40, "Calculating response times")
+            logger.info(f"[特征提取] 步骤 2/4: 计算响应时间...")
+            step_start = time.time()
             response_time_stats = self.extract_response_times(conversation_id)
+            logger.info(f"[特征提取] 步骤 2/4: 响应时间计算完成 ({response_time_stats.get('count', 0)} 条有效记录, {time.time() - step_start:.1f}s)")
 
             # 3. 主动性统计
             self._update_task_status(task_id, 70, "Calculating initiative stats")
+            logger.info(f"[特征提取] 步骤 3/4: 计算主动性统计...")
+            step_start = time.time()
             initiative_stats = self.calculate_initiative_stats(conversation_id, sessions)
+            logger.info(f"[特征提取] 步骤 3/4: 主动性统计完成 ({time.time() - step_start:.1f}s)")
 
             # 4. 字数统计
             self._update_task_status(task_id, 90, "Calculating word counts")
+            logger.info(f"[特征提取] 步骤 4/4: 计算字数统计...")
+            step_start = time.time()
             word_counts = self.calculate_word_counts(conversation_id, sessions)
+            logger.info(f"[特征提取] 步骤 4/4: 字数统计完成 ({time.time() - step_start:.1f}s)")
 
             self._update_task_status(task_id, 100, "completed", "completed")
+            logger.info(f"[特征提取] 全部特征提取完成 (conversation_id={conversation_id})")
 
             return {
                 "task_id": task_id,

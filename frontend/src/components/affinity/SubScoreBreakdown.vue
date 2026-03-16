@@ -138,7 +138,7 @@ const getBarColorClass = (score: number, key?: string): string => {
 .breakdown-title {
   margin-top: 0;
   margin-bottom: var(--ct-space-xs);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--ct-text-primary);
   padding-left: var(--ct-space-xs);
@@ -152,26 +152,36 @@ const getBarColorClass = (score: number, key?: string): string => {
 .score-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .score-table th,
 .score-table td {
-  padding: 2px 4px;
+  padding: 4px 6px;
   text-align: left;
   border-bottom: 1px solid var(--ct-border-color);
   color: var(--ct-text-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 110px;
 }
 
 .score-table th {
   color: var(--ct-text-tertiary);
   font-weight: 500;
   border-bottom: 1px solid var(--ct-border-color);
-  font-size: 9px;
+  font-size: 11px;
+}
+
+.score-table th:nth-child(1),
+.score-table td:nth-child(1) {
+  width: 38%;
+}
+
+.score-table th:nth-child(3),
+.score-table td:nth-child(3) {
+  text-align: right;
+  width: 15%;
 }
 
 .score-table tr:last-child td {
@@ -179,7 +189,7 @@ const getBarColorClass = (score: number, key?: string): string => {
 }
 
 .score-cell {
-  width: 120px;
+  width: 47%;
 }
 
 .score-bar-container {
@@ -221,11 +231,11 @@ const getBarColorClass = (score: number, key?: string): string => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 1px 4px;
+  padding: 2px 6px;
   border-radius: var(--ct-radius-full);
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 500;
-  line-height: 1.1;
+  line-height: 1.2;
 }
 
 .badge-success {

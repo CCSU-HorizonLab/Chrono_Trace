@@ -413,47 +413,65 @@ onMounted(() => {
   document.addEventListener('click', handleDropdownClickOutside)
 })
 
+// ========== 常量定义（避免重复编码） ==========
+const PROVIDER_CONFIG = {
+  deepseek: {
+    label: 'DeepSeek',
+    apiUrl: 'https://api.deepseek.com/v1',
+    modelId: 'deepseek-chat',
+  },
+  openai: {
+    label: 'OpenAI',
+    apiUrl: 'https://api.openai.com/v1',
+    modelId: 'gpt-5.2',
+  },
+  zhipu: {
+    label: '智谱 GLM',
+    apiUrl: 'https://open.bigmodel.cn/api/paas/v4',
+    modelId: 'glm-4.7',
+  },
+  moonshot: {
+    label: 'Kimi',
+    apiUrl: 'https://api.moonshot.cn/v1',
+    modelId: 'moonshot-v2',
+  },
+  minimax: {
+    label: 'MiniMax',
+    apiUrl: 'https://api.minimax.com/v1',
+    modelId: 'MiniMax-M2.5',
+  },
+  ollama: {
+    label: 'Ollama',
+    apiUrl: 'http://localhost:11434/v1',
+    modelId: 'qwen2.5:7b',
+  },
+  custom: {
+    label: '自定义',
+    apiUrl: '',
+    modelId: '',
+  },
+} as const
+
 onUnmounted(() => {
   document.removeEventListener('click', handleDropdownClickOutside)
 })
 
 const modelIdPlaceholder = computed(() => {
-  const map: Record<string, string> = {
-    deepseek: 'deepseek-chat',
-    openai: 'gpt-4o-mini',
-    zhipu: 'glm-4-flash',
-    moonshot: 'moonshot-v1-8k',
-    minimax: 'abab6.5s-chat',
-    ollama: 'qwen2.5:7b',
-    custom: '模型标识',
-  }
-  return editingModel.provider ? (map[editingModel.provider] || '模型标识') : '请先选择供应商'
+  const provider = editingModel.provider
+  if (!provider) return '请先选择供应商'
+  if (provider === 'custom') return '模型标识'
+  return PROVIDER_CONFIG[provider as keyof typeof PROVIDER_CONFIG]?.modelId || '模型标识'
 })
 
 const apiUrlPlaceholder = computed(() => {
-  const map: Record<string, string> = {
-    deepseek: 'https://api.deepseek.com/v1',
-    openai: 'https://api.openai.com/v1',
-    zhipu: 'https://open.bigmodel.cn/api/paas/v4',
-    moonshot: 'https://api.moonshot.cn/v1',
-    minimax: 'https://api.minimax.chat/v1',
-    ollama: 'http://localhost:11434/v1',
-    custom: 'https://your-api.com/v1',
-  }
-  return editingModel.provider ? (map[editingModel.provider] || 'https://api.example.com/v1') : '请先选择供应商'
+  const provider = editingModel.provider
+  if (!provider) return '请先选择供应商'
+  if (provider === 'custom') return 'https://your-api.com/v1'
+  return PROVIDER_CONFIG[provider as keyof typeof PROVIDER_CONFIG]?.apiUrl || 'https://api.example.com/v1'
 })
 
 function providerLabel(p: string) {
-  const map: Record<string, string> = {
-    deepseek: 'DeepSeek',
-    openai: 'OpenAI',
-    zhipu: '智谱 GLM',
-    moonshot: 'Kimi',
-    minimax: 'MiniMax',
-    ollama: 'Ollama',
-    custom: '自定义',
-  }
-  return map[p] || p
+  return PROVIDER_CONFIG[p as keyof typeof PROVIDER_CONFIG]?.label || p
 }
 
 async function loadLLMModels() {
@@ -559,22 +577,15 @@ async function removeModel(id: number) {
   }
 }
 
-// 监听供应商变化，自动填充 URL
+// 监听供应商变化，自动填充 URL 和模型ID
 watch(() => editingModel.provider, (p) => {
   if (!editingModel.id) {
-    // 新建时自动填充
-    const urlMap: Record<string, string> = {
-      deepseek: 'https://api.deepseek.com/v1',
-      openai: 'https://api.openai.com/v1',
-      ollama: 'http://localhost:11434/v1',
+    // 新建时自动填充，使用统一的常量配置
+    const config = PROVIDER_CONFIG[p as keyof typeof PROVIDER_CONFIG]
+    if (config) {
+      editingModel.api_base_url = config.apiUrl
+      editingModel.model_id = config.modelId
     }
-    const modelMap: Record<string, string> = {
-      deepseek: 'deepseek-chat',
-      openai: 'gpt-4o-mini',
-      ollama: 'qwen2.5:7b',
-    }
-    if (urlMap[p]) editingModel.api_base_url = urlMap[p]
-    if (modelMap[p]) editingModel.model_id = modelMap[p]
   }
 })
 

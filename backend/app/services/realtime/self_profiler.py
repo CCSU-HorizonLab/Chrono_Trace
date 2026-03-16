@@ -9,6 +9,7 @@
 
 import json
 import logging
+import socket
 import time
 import random
 from typing import Optional
@@ -36,6 +37,10 @@ TIME_BUCKETS = [
 
 # 缓存有效期（秒）
 PROFILE_TTL = 7 * 86400  # 7 天
+
+RETRYABLE_HTTP_STATUS = {429, 500, 502, 503, 504}
+MAX_LLM_RETRIES = 3
+BASE_RETRY_DELAY = 1.5
 
 # 画像生成用 System Prompt
 PROFILE_SYSTEM_PROMPT = """你是一个语言风格与行为克隆分析专家。根据提供的聊天记录（其中"我"是 `is_sender=1` 的发送者，"对方"是 `is_sender=0` 的发送者），提取"我"在这段特定关系中的专属语言画风与共同记忆。
@@ -69,6 +74,24 @@ class SelfProfiler:
 
     def __init__(self, timeout: int = 120):
         self.timeout = timeout
+
+    def _is_timeout_error(self, err: Exception) -> bool:
+        import urllib.error
+
+        if isinstance(err, (TimeoutError, socket.timeout)):
+            return True
+        if isinstance(err, urllib.error.URLError):
+            reason = getattr(err, "reason", None)
+            return isinstance(reason, (TimeoutError, socket.timeout))
+        return False
+
+    def _compute_retry_delay(self, attempt: int, retry_after: Optional[str] = None) -> float:
+        if retry_after:
+            try:
+                return max(0.0, float(retry_after))
+            except (TypeError, ValueError):
+                pass
+        return BASE_RETRY_DELAY * (2 ** attempt) + random.uniform(0.0, 0.5)
 
     def get_profile(self, display_name: str) -> Optional[dict]:
         """
@@ -668,39 +691,56 @@ class SelfProfiler:
         req = urllib.request.Request(url, data=data, headers=headers, method='POST')
 
         _print(f"[SelfProfiler] 📤 POST {url}")
-        start = time.time()
-        try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                body = json.loads(resp.read().decode('utf-8'))
-            elapsed = time.time() - start
-            _print(f"[SelfProfiler] 📥 HTTP {resp.status} ({elapsed:.2f}s)")
+        body = None
+        for attempt in range(MAX_LLM_RETRIES + 1):
+            start = time.time()
+            try:
+                with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                    body = json.loads(resp.read().decode('utf-8'))
+                    status = resp.status
+                elapsed = time.time() - start
+                _print(f"[SelfProfiler] 📥 HTTP {status} ({elapsed:.2f}s)")
+                break
+            except urllib.error.HTTPError as e:
+                status = getattr(e, 'code', None)
+                if status in RETRYABLE_HTTP_STATUS and attempt < MAX_LLM_RETRIES:
+                    delay = self._compute_retry_delay(attempt, e.headers.get('Retry-After'))
+                    _print(f"[SelfProfiler] Retry on HTTP {status} after {delay:.1f}s (attempt {attempt + 1})")
+                    time.sleep(delay)
+                    continue
+                _print(f"[SelfProfiler] ❌ HTTP 错误: {e}")
+                return None
+            except Exception as e:
+                if self._is_timeout_error(e) and attempt < MAX_LLM_RETRIES:
+                    delay = self._compute_retry_delay(attempt)
+                    _print(f"[SelfProfiler] Retry on timeout after {delay:.1f}s (attempt {attempt + 1})")
+                    time.sleep(delay)
+                    continue
+                _print(f"[SelfProfiler] ❌ LLM 调用失败: {e}")
+                import traceback
+                traceback.print_exc()
+                return None
 
-            message_obj = body.get('choices', [{}])[0].get('message', {})
-            content = message_obj.get('content', '')
-            reasoning = message_obj.get('reasoning_content', '')
-            
-            # 部分模型（如 deepseek-reasoner）可能将内容放在 reasoning_content 中，或者由于 max_tokens 限制没能输出 content
-            if not content and reasoning:
-                content = reasoning
-                _print("[SelfProfiler] ⚠️ 最终 content 为空，尝试回退使用 reasoning_content")
-
-            usage = body.get('usage', {})
-            _print(
-                f"[SelfProfiler] 📥 tokens: prompt={usage.get('prompt_tokens', '?')}, "
-                f"completion={usage.get('completion_tokens', '?')}, "
-                f"total={usage.get('total_tokens', '?')}"
-            )
-
-            return self._parse_profile_json(content)
-
-        except urllib.error.URLError as e:
-            _print(f"[SelfProfiler] ❌ 网络错误: {e}")
+        if body is None:
             return None
-        except Exception as e:
-            _print(f"[SelfProfiler] ❌ LLM 调用失败: {e}")
-            import traceback
-            traceback.print_exc()
-            return None
+
+        message_obj = body.get('choices', [{}])[0].get('message', {})
+        content = message_obj.get('content', '')
+        reasoning = message_obj.get('reasoning_content', '')
+
+        # 部分模型（如 deepseek-reasoner）可能将内容放在 reasoning_content 中，或者由于 max_tokens 限制没能输出 content
+        if not content and reasoning:
+            content = reasoning
+            _print("[SelfProfiler] ⚠️ 最终 content 为空，尝试回退使用 reasoning_content")
+
+        usage = body.get('usage', {})
+        _print(
+            f"[SelfProfiler] 📥 tokens: prompt={usage.get('prompt_tokens', '?')}, "
+            f"completion={usage.get('completion_tokens', '?')}, "
+            f"total={usage.get('total_tokens', '?')}"
+        )
+
+        return self._parse_profile_json(content)
 
     def _parse_profile_json(self, text: str) -> Optional[dict]:
         """解析 LLM 返回的画像 JSON"""

@@ -597,6 +597,13 @@ async function manualGenerate() {
   loading.value = true
   try {
     await bridgeReady()
+    // 先检查LLM是否可用
+    const llmRes = await api.get_llm_models()
+    if (!llmRes.ok || !llmRes.models || !llmRes.models.some((m: any) => m.is_active)) {
+      showLlmWarningDialog.value = true
+      return
+    }
+
     const r = await api.generate_suggestion(intent.value, {})
     if (r.ok && r.suggestion) {
       manualSuggestion.value = r.suggestion
@@ -675,6 +682,13 @@ const selfProfileEstimatedTokens = ref(0)
 async function checkSelfProfile(displayName: string) {
   try {
     await bridgeReady()
+    // 先检查LLM是否可用
+    const llmRes = await api.get_llm_models()
+    if (!llmRes.ok || !llmRes.models || !llmRes.models.some((m: any) => m.is_active)) {
+      showLlmWarningDialog.value = true
+      return
+    }
+
     const r = await api.get_self_profile(displayName)
     if (r.ok) {
       selfProfileEstimatedTokens.value = r.estimated_tokens || 0
@@ -727,6 +741,13 @@ const profileEstimatedTokens = ref(0)
 async function checkContactProfile(displayName: string) {
   try {
     await bridgeReady()
+    // 先检查LLM是否可用
+    const llmRes = await api.get_llm_models()
+    if (!llmRes.ok || !llmRes.models || !llmRes.models.some((m: any) => m.is_active)) {
+      showLlmWarningDialog.value = true
+      return
+    }
+
     const r = await api.get_contact_profile(displayName)
     if (r.ok) {
       profileEstimatedTokens.value = r.estimated_tokens || 0

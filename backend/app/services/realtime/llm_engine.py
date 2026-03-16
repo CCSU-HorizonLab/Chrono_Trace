@@ -8,6 +8,8 @@ LLM 建议引擎
 
 import json
 import logging
+import random
+import socket
 import time
 import urllib.request
 import urllib.error
@@ -63,6 +65,11 @@ def _print(msg: str):
     logger.debug(msg)
 
 
+RETRYABLE_HTTP_STATUS = {429, 500, 502, 503, 504}
+MAX_API_RETRIES = 3
+BASE_RETRY_DELAY = 1.5
+
+
 class LLMSuggestionEngine(SuggestionEngine):
     """
     LLM 建议引擎
@@ -82,6 +89,22 @@ class LLMSuggestionEngine(SuggestionEngine):
         # model_id 可用模型缓存: {base_url: (timestamp, [model_ids])}
         self._models_cache: dict[str, tuple[float, list[str]]] = {}
         self._cache_ttl = 300  # 缓存 TTL 5 分钟
+
+    def _is_timeout_error(self, err: Exception) -> bool:
+        if isinstance(err, (TimeoutError, socket.timeout)):
+            return True
+        if isinstance(err, urllib.error.URLError):
+            reason = getattr(err, "reason", None)
+            return isinstance(reason, (TimeoutError, socket.timeout))
+        return False
+
+    def _compute_retry_delay(self, attempt: int, retry_after: Optional[str] = None) -> float:
+        if retry_after:
+            try:
+                return max(0.0, float(retry_after))
+            except (TypeError, ValueError):
+                pass
+        return BASE_RETRY_DELAY * (2 ** attempt) + random.uniform(0.0, 0.5)
 
     def generate(
         self,
@@ -444,13 +467,34 @@ class LLMSuggestionEngine(SuggestionEngine):
         _print(f"[LLM Engine] 📤 POST {url}")
         _print(f"[LLM Engine] 📤 model={model_id}, temp={temperature}, max_tokens={max_tokens}")
 
-        start_time = time.time()
-        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-            status_code = resp.status
-            body = json.loads(resp.read().decode("utf-8"))
-        elapsed = time.time() - start_time
+        body = None
+        for attempt in range(MAX_API_RETRIES + 1):
+            start_time = time.time()
+            try:
+                with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                    status_code = resp.status
+                    body = json.loads(resp.read().decode("utf-8"))
+                elapsed = time.time() - start_time
+                _print(f"[LLM Engine] 📥 HTTP {status_code} ({elapsed:.2f}s)")
+                break
+            except urllib.error.HTTPError as e:
+                status_code = getattr(e, "code", None)
+                if status_code in RETRYABLE_HTTP_STATUS and attempt < MAX_API_RETRIES:
+                    delay = self._compute_retry_delay(attempt, e.headers.get("Retry-After"))
+                    _print(f"[LLM Engine] Retry on HTTP {status_code} after {delay:.1f}s (attempt {attempt + 1})")
+                    time.sleep(delay)
+                    continue
+                raise
+            except Exception as e:
+                if self._is_timeout_error(e) and attempt < MAX_API_RETRIES:
+                    delay = self._compute_retry_delay(attempt)
+                    _print(f"[LLM Engine] Retry on timeout after {delay:.1f}s (attempt {attempt + 1})")
+                    time.sleep(delay)
+                    continue
+                raise
 
-        _print(f"[LLM Engine] 📥 HTTP {status_code} ({elapsed:.2f}s)")
+        if body is None:
+            raise RuntimeError("LLM API did not return a response body")
 
         # 提取生成文本
         choices = body.get("choices", [])
@@ -570,8 +614,22 @@ class LLMSuggestionEngine(SuggestionEngine):
             elif "```" in cleaned:
                 cleaned = cleaned.split("```", 1)[1]
                 cleaned = cleaned.split("```", 1)[0]
-            
-            prompts = json.loads(cleaned.strip())
+
+            cleaned = cleaned.strip()
+            if not cleaned:
+                _print("[LLM Engine] 联想词响应为空，回退默认词")
+                return default_prompts
+
+            try:
+                prompts = json.loads(cleaned)
+            except json.JSONDecodeError:
+                # 某些模型会在数组前后夹带说明文字，这里尽量截取数组主体。
+                array_start = cleaned.find("[")
+                array_end = cleaned.rfind("]")
+                if array_start == -1 or array_end == -1 or array_end < array_start:
+                    _print("[LLM Engine] 联想词响应不是合法 JSON 数组，回退默认词")
+                    return default_prompts
+                prompts = json.loads(cleaned[array_start:array_end + 1])
             
             if isinstance(prompts, list) and len(prompts) > 0:
                 # 过滤掉非字符串，限制长度，并只取前 4 个
@@ -587,6 +645,4 @@ class LLMSuggestionEngine(SuggestionEngine):
 
         except Exception as e:
             _print(f"❌ [LLM Engine] 生成联想词时出错: {e}")
-            import traceback
-            traceback.print_exc()
-            raise e
+            return default_prompts

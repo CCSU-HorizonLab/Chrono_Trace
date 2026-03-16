@@ -102,9 +102,9 @@ function onTo(e: Event) { emit('update:dates', { from: props.dates.from, to: (e.
 }
 
 .btn:hover:not(:disabled) {
-  background: var(--ct-primary-light);
-  color: var(--ct-primary-color);
-  border-color: var(--ct-primary-color);
+  background: var(--ct-color-primary-light);
+  color: var(--ct-color-primary);
+  border-color: var(--ct-color-primary);
 }
 
 .btn-export {

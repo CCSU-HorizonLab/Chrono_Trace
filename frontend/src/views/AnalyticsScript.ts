@@ -52,6 +52,7 @@ export default {
         const showKeywordsDialog = ref(false)
         const showContextForm = ref(false)
         const pendingAnalysisForce = ref(false)
+        const analysisLaunchPending = ref(false)
 
         // Global Progress
         const isGlobalAnalyzing = ref(false)
@@ -224,15 +225,19 @@ export default {
 
         const handleStartGlobalAnalysis = async (force: boolean) => {
             if (!selectedConversationId.value) return
+            if (isGlobalAnalyzing.value) return
+            if (analysisLaunchPending.value || isGlobalAnalyzing.value) return
+            analysisLaunchPending.value = true
             try {
                 const { has_context } = await getRelationshipContext(selectedConversationId.value)
                 if (!has_context) {
                     pendingAnalysisForce.value = force
                     showContextForm.value = true
+                    analysisLaunchPending.value = false
                     return
                 }
             } catch (e) { }
-            startGlobalAnalysis(force)
+            await startGlobalAnalysis(force)
         }
 
         const handleContextSaved = () => startGlobalAnalysis(pendingAnalysisForce.value)
@@ -303,6 +308,7 @@ export default {
             } catch (e: any) {
                 globalProgressStep.value = '分析失败: ' + String(e)
             } finally {
+                analysisLaunchPending.value = false
                 setTimeout(() => { isGlobalAnalyzing.value = false }, 2000)
             }
         }

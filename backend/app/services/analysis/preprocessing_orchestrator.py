@@ -30,6 +30,11 @@ from .keyword_libraries import KeywordLibraries
 logger = logging.getLogger(__name__)
 
 
+def _step_elapsed(start_time: float) -> str:
+    """格式化步骤耗时，便于在终端观察进度。"""
+    return f"{time.time() - start_time:.1f}s"
+
+
 @dataclass
 class PreprocessedStatistics:
     """预处理统计数据结构 - 包含所有29个统计常量"""
@@ -109,13 +114,13 @@ class PreprocessingOrchestrator:
             PreprocessedStatistics: 包含所有29个统计常量的数据类
         """
         start_time = time.time()
-        logger.debug(f"开始预处理会话 {conversation_id} (force={force_reprocess})")
+        logger.info(f"[预处理] 开始处理会话 {conversation_id} (force={force_reprocess})")
         
         # 1. 检查缓存
         if not force_reprocess:
             cached_stats = self._load_cached_statistics(conversation_id)
             if cached_stats:
-                logger.debug(f"使用缓存的统计数据 (会话 {conversation_id})")
+                logger.info(f"[预处理] 使用缓存的统计数据 (会话 {conversation_id})")
                 return cached_stats
         
         # 2. 收集所有统计数据
@@ -126,7 +131,7 @@ class PreprocessingOrchestrator:
         stats.preprocessing_duration_ms = duration_ms
         self._save_preprocessing_results(conversation_id, stats)
 
-        logger.info(f"预处理完成,耗时 {duration_ms}ms (会话 {conversation_id})")
+        logger.info(f"[预处理] 全部完成,耗时 {duration_ms}ms (会话 {conversation_id})")
         return stats
     
     def _collect_all_statistics(self, conversation_id: int) -> PreprocessedStatistics:
@@ -139,52 +144,70 @@ class PreprocessingOrchestrator:
         Returns:
             PreprocessedStatistics: 统计数据
         """
-        logger.debug(f"开始收集统计数据 (会话 {conversation_id})")
+        logger.info(f"[预处理] 开始收集统计数据 (会话 {conversation_id})")
         stats = PreprocessedStatistics()
         stats.conversation_id = conversation_id
         stats.preprocessing_timestamp = int(time.time())
         
         # ===== 步骤1: 加载消息 =====
-        logger.debug(f"步骤1: 加载消息 (会话 {conversation_id})")
+        step_start = time.time()
+        logger.info(f"[预处理] 步骤 1/8: 加载消息...")
         messages = self._load_messages(conversation_id)
+        logger.info(f"[预处理] 步骤 1/8: 加载消息完成 ({len(messages)} 条, {_step_elapsed(step_start)})")
 
         if not messages:
             logger.warning(f"会话 {conversation_id} 没有消息")
             return stats
 
         # ===== 步骤2: 情感分析 (批量处理) =====
-        logger.debug(f"步骤2: 情感分析 ({len(messages)} 条消息)")
+        step_start = time.time()
+        logger.info(f"[预处理] 步骤 2/8: 情感分析与向量缓存...")
         self._ensure_sentiment_analysis(conversation_id, messages)
+        logger.info(f"[预处理] 步骤 2/8: 情感分析完成 ({_step_elapsed(step_start)})")
 
         # ===== 步骤3: 基础统计 =====
-        logger.debug(f"步骤3: 收集基础统计")
+        step_start = time.time()
+        logger.info(f"[预处理] 步骤 3/8: 收集基础统计...")
         basic_stats = self.basic_service.collect_message_statistics(conversation_id)
         stats.total_message_count = basic_stats["total_message_count"]
         stats.total_positive_count = basic_stats["total_positive_count"]
         stats.total_negative_count = basic_stats["total_negative_count"]
         stats.total_neutral_count = basic_stats["total_neutral_count"]
+        logger.info(f"[预处理] 步骤 3/8: 基础统计完成 (总消息 {stats.total_message_count}, {_step_elapsed(step_start)})")
 
         # ===== 步骤4: 时间统计 =====
-        logger.debug(f"步骤4: 收集时间统计")
+        step_start = time.time()
+        logger.info(f"[预处理] 步骤 4/8: 收集时间统计...")
         time_stats = self.basic_service.collect_time_statistics(conversation_id)
         stats.conversation_start_timestamp = time_stats["conversation_start_timestamp"]
         stats.conversation_end_timestamp = time_stats["conversation_end_timestamp"]
         stats.conversation_duration_days = time_stats["conversation_duration_days"]
         stats.chat_days_count = time_stats["chat_days_count"]
+        logger.info(f"[预处理] 步骤 4/8: 时间统计完成 ({stats.conversation_duration_days:.1f} 天, {_step_elapsed(step_start)})")
 
         # ===== 步骤5: 长度统计 =====
-        logger.debug(f"步骤5: 收集长度统计")
+        step_start = time.time()
+        logger.info(f"[预处理] 步骤 5/8: 收集长度统计...")
         length_stats = self.basic_service.collect_length_statistics(conversation_id)
         stats.total_characters = length_stats["total_characters"]
         stats.average_message_length = length_stats["average_message_length"]
+        logger.info(f"[预处理] 步骤 5/8: 长度统计完成 (平均长度 {stats.average_message_length:.1f}, {_step_elapsed(step_start)})")
 
         # ===== 步骤6: 构建发言单元和交互对 =====
-        logger.debug(f"步骤6: 构建交互对")
+        step_start = time.time()
+        logger.info(f"[预处理] 步骤 6/8: 构建发言单元和交互对...")
         speech_units = self.pair_service.build_speech_units(messages)
         interaction_pairs = self.pair_service.build_interaction_pairs(speech_units)
         
         # 保存到数据库
-        self.pair_service.save_speech_units(conversation_id, speech_units)
+        self.pair_service.clear_cached_pairs(conversation_id)
+        unit_id_map = self.pair_service.save_speech_units_with_mapping(
+            conversation_id,
+            speech_units
+        )
+        for pair in interaction_pairs:
+            pair["first_unit_id"] = unit_id_map[pair["first_unit_id"]]
+            pair["second_unit_id"] = unit_id_map[pair["second_unit_id"]]
         self.pair_service.save_interaction_pairs(conversation_id, interaction_pairs)
         
         # 收集交互对统计
@@ -192,9 +215,11 @@ class PreprocessingOrchestrator:
         stats.total_interaction_pairs = pair_stats["total_interaction_pairs"]
         stats.bidirectional_pairs = pair_stats["bidirectional_pairs"]
         stats.same_parity_pairs = pair_stats["same_parity_pairs"]
+        logger.info(f"[预处理] 步骤 6/8: 交互对构建完成 ({len(speech_units)} 个发言单元, {stats.total_interaction_pairs} 个交互对, {_step_elapsed(step_start)})")
 
         # ===== 步骤7: 会话切分 =====
-        logger.debug(f"步骤7: 会话切分")
+        step_start = time.time()
+        logger.info(f"[预处理] 步骤 7/8: 会话切分...")
         sessions = self.session_manager.split_sessions(speech_units, conversation_id)
         
         # 保存会话
@@ -210,9 +235,11 @@ class PreprocessingOrchestrator:
         initiator_stats = self.session_manager.identify_session_initiators(sessions)
         stats.sender_initiated_count = initiator_stats["sender_initiated_count"]
         stats.contact_initiated_count = initiator_stats["contact_initiated_count"]
+        logger.info(f"[预处理] 步骤 7/8: 会话切分完成 ({stats.total_sessions} 个会话, {_step_elapsed(step_start)})")
 
         # ===== 步骤8: 态度统计 =====
-        logger.debug(f"步骤8: 收集态度统计")
+        step_start = time.time()
+        logger.info(f"[预处理] 步骤 8/8: 收集态度统计...")
         attitude_stats = self.attitude_service.collect_attitude_statistics(messages)
         stats.emoji_message_count = attitude_stats.emoji_message_count
         stats.voice_message_count = attitude_stats.voice_message_count
@@ -221,8 +248,8 @@ class PreprocessingOrchestrator:
         stats.privacy_message_count = attitude_stats.privacy_message_count
         stats.holiday_message_count = attitude_stats.holiday_message_count
         stats.holidays_sent_count = attitude_stats.holidays_sent_count
-
-        logger.debug(f"统计收集完成: 29个常量已收集 (会话 {conversation_id})")
+        logger.info(f"[预处理] 步骤 8/8: 态度统计完成 ({_step_elapsed(step_start)})")
+        logger.info(f"[预处理] 统计收集完成 (会话 {conversation_id})")
         return stats
     
     def _load_messages(self, conversation_id: int) -> List[Dict[str, Any]]:
@@ -272,6 +299,62 @@ class PreprocessingOrchestrator:
         """
         # 检查哪些消息需要分析
         messages_to_analyze = []
+
+        for msg in messages:
+            if msg["message_type"] != 1:
+                continue
+
+            cached = self.sentiment_service.get_sentiment_from_cache(msg["id"])
+            if not cached:
+                messages_to_analyze.append(msg)
+
+        if not messages_to_analyze:
+            logger.info(f"[预处理] 情感分析缓存命中，无需重新计算")
+            return
+
+        logger.info(f"[预处理] 需要分析 {len(messages_to_analyze)} 条消息")
+
+        total_to_analyze = len(messages_to_analyze)
+        batch_size = 500
+        total_batches = (total_to_analyze + batch_size - 1) // batch_size
+        sentiment_start = time.time()
+
+        for i in range(0, total_to_analyze, batch_size):
+            batch_index = i // batch_size + 1
+            batch_msgs = messages_to_analyze[i:i + batch_size]
+            texts = [msg["content"] or "" for msg in batch_msgs]
+
+            batch_results = self.sentiment_service.analyze_batch(texts)
+
+            cache_data = []
+            for msg, result in zip(batch_msgs, batch_results):
+                cache_data.append({
+                    "message_id": msg["id"],
+                    "polarity": result["polarity"],
+                    "intensity": result["intensity"],
+                    "embedding": result["embedding"]
+                })
+
+            self.sentiment_service.batch_cache_sentiments(cache_data)
+
+            import gc
+            import torch
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+            time.sleep(0.1)
+
+            processed = min(i + batch_size, total_to_analyze)
+            percentage = (processed / total_to_analyze) * 100
+            logger.info(
+                f"[预处理] 情感分析批次 {batch_index}/{total_batches}: "
+                f"{processed}/{total_to_analyze} ({percentage:.1f}%), "
+                f"累计耗时 {_step_elapsed(sentiment_start)}"
+            )
+
+        logger.info(f"[预处理] 情感分析全部完成并缓存 ({total_to_analyze} 条消息)")
+        return
         
         for msg in messages:
             # 只分析文本消息

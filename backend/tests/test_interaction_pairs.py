@@ -6,6 +6,7 @@
 
 import pytest
 import sys
+import sqlite3
 from pathlib import Path
 from datetime import datetime, timedelta
 
@@ -22,6 +23,46 @@ class TestInteractionPairs:
         """创建预处理服务实例"""
         from app.services.analysis.preprocessing_service import PairPreprocessingService
         return PairPreprocessingService()
+
+    @pytest.fixture
+    def pair_storage_db(self, monkeypatch):
+        """创建仅包含交互对相关表的临时数据库。"""
+        from app.services.analysis import preprocessing_service as preprocessing_module
+
+        conn = sqlite3.connect(":memory:")
+        conn.execute("""
+            CREATE TABLE speech_units (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id INTEGER NOT NULL,
+                message_ids TEXT NOT NULL,
+                sender TEXT NOT NULL,
+                first_message_timestamp INTEGER NOT NULL,
+                last_message_timestamp INTEGER NOT NULL,
+                message_count INTEGER NOT NULL,
+                created_at INTEGER NOT NULL
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE interaction_pairs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id INTEGER NOT NULL,
+                from_speech_unit_id INTEGER NOT NULL,
+                to_speech_unit_id INTEGER NOT NULL,
+                time_gap INTEGER NOT NULL,
+                semantic_similarity REAL,
+                from_polarity INTEGER NOT NULL,
+                to_polarity INTEGER NOT NULL,
+                from_intensity REAL NOT NULL,
+                to_intensity REAL NOT NULL,
+                is_negative_initiation INTEGER DEFAULT 0,
+                is_empathetic_response INTEGER DEFAULT 0,
+                created_at INTEGER NOT NULL
+            )
+        """)
+
+        monkeypatch.setattr(preprocessing_module, "get_db", lambda: conn)
+        yield conn
+        conn.close()
 
     # ========== 发言单元合并测试 ==========
 
@@ -370,6 +411,67 @@ class TestInteractionPairs:
         # 检查平均时间间隔
         assert "avg_time_gap_seconds" in stats
         assert "avg_time_gap_minutes" in stats
+
+    def test_save_speech_units_with_mapping_returns_db_ids(self, preprocessing_service, pair_storage_db):
+        """保存发言单元时应返回数据库真实 ID，而不是内存临时 ID。"""
+        speech_units = [
+            {
+                "id": 101,
+                "is_sender": 1,
+                "start_timestamp": 100,
+                "end_timestamp": 100,
+                "message_count": 1,
+                "message_ids": [1],
+            },
+            {
+                "id": 202,
+                "is_sender": 0,
+                "start_timestamp": 200,
+                "end_timestamp": 200,
+                "message_count": 1,
+                "message_ids": [2],
+            },
+        ]
+
+        unit_id_map = preprocessing_service.save_speech_units_with_mapping(9, speech_units)
+
+        rows = pair_storage_db.execute(
+            "SELECT id, conversation_id FROM speech_units ORDER BY id"
+        ).fetchall()
+
+        assert len(rows) == 2
+        assert unit_id_map == {101: rows[0][0], 202: rows[1][0]}
+        assert rows[0][0] != 101
+        assert rows[1][0] != 202
+
+    def test_clear_cached_pairs_removes_previous_rows(self, preprocessing_service, pair_storage_db):
+        """重新预处理前应清空该会话旧数据，避免交互对重复累积。"""
+        pair_storage_db.execute("""
+            INSERT INTO speech_units (
+                conversation_id, message_ids, sender, first_message_timestamp,
+                last_message_timestamp, message_count, created_at
+            ) VALUES (7, '[1]', 'user', 100, 100, 1, 1)
+        """)
+        pair_storage_db.execute("""
+            INSERT INTO interaction_pairs (
+                conversation_id, from_speech_unit_id, to_speech_unit_id, time_gap,
+                semantic_similarity, from_polarity, to_polarity, from_intensity,
+                to_intensity, is_negative_initiation, is_empathetic_response, created_at
+            ) VALUES (7, 1, 2, 60, NULL, 1, 1, 0.8, 0.9, 0, 0, 1)
+        """)
+        pair_storage_db.commit()
+
+        preprocessing_service.clear_cached_pairs(7)
+
+        speech_unit_count = pair_storage_db.execute(
+            "SELECT COUNT(*) FROM speech_units WHERE conversation_id = 7"
+        ).fetchone()[0]
+        pair_count = pair_storage_db.execute(
+            "SELECT COUNT(*) FROM interaction_pairs WHERE conversation_id = 7"
+        ).fetchone()[0]
+
+        assert speech_unit_count == 0
+        assert pair_count == 0
 
     # ========== 边界情况测试 ==========
 

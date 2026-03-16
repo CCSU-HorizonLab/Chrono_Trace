@@ -970,6 +970,57 @@ class PairPreprocessingService:
             logger.error(f"[交互对预处理] 保存发言单元失败: {e}")
             return 0
 
+    def clear_cached_pairs(self, conversation_id: int):
+        """清理某个会话已有的发言单元和交互对。"""
+        db = get_db()
+        db.execute(
+            "DELETE FROM interaction_pairs WHERE conversation_id = ?",
+            (conversation_id,)
+        )
+        db.execute(
+            "DELETE FROM speech_units WHERE conversation_id = ?",
+            (conversation_id,)
+        )
+        db.commit()
+
+    def save_speech_units_with_mapping(
+        self,
+        conversation_id: int,
+        speech_units: List[Dict[str, Any]]
+    ) -> Dict[int, int]:
+        """写入发言单元，并返回内存单元 ID 到数据库 ID 的映射。"""
+        try:
+            import time
+
+            db = get_db()
+            unit_id_map: Dict[int, int] = {}
+            created_at = int(time.time())
+
+            for unit in speech_units:
+                cursor = db.execute("""
+                    INSERT INTO speech_units
+                    (conversation_id, sender, first_message_timestamp,
+                     last_message_timestamp, message_count, message_ids, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    conversation_id,
+                    'user' if unit["is_sender"] == 1 else 'other',
+                    int(unit["start_timestamp"]),
+                    int(unit["end_timestamp"]),
+                    unit["message_count"],
+                    json.dumps(unit["message_ids"]),
+                    created_at
+                ))
+                unit_id_map[unit["id"]] = cursor.lastrowid
+
+            db.commit()
+            logger.debug(f"[交互对预处理] 已保存 {len(speech_units)} 个发言单元并建立 ID 映射")
+            return unit_id_map
+
+        except Exception as e:
+            logger.error(f"[交互对预处理] 保存发言单元并映射 ID 失败: {e}")
+            return {}
+
     def save_interaction_pairs(
         self,
         conversation_id: int,

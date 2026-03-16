@@ -133,10 +133,19 @@ class AffinityAnalysisService:
         self._task_status[task_id] = result
         
         try:
+            if force_reanalyze:
+                logger.info(f"[好感度分析] 强制重算，先删除旧缓存 (会话 {conversation_id})")
+                self._invalidate_cache(conversation_id)
             # 1. 检查缓存
             if not force_reanalyze:
                 cached = self._load_cached_scores(conversation_id)
                 if cached:
+                    cached.task_id = task_id
+                    cached.conversation_id = conversation_id
+                    cached.status = "completed"
+                    cached.progress_percent = 100
+                    cached.current_step = "完成"
+                    self._task_status[task_id] = cached
                     logger.info(f"使用缓存的分析结果 (会话 {conversation_id})")
                     return cached
             
@@ -229,11 +238,15 @@ class AffinityAnalysisService:
         Returns:
             AffinityAnalysisResult: 分析结果
         """
+        logger.info(f"[好感度分析] 开始重新分析会话 {conversation_id}，准备清理缓存...")
+
         # 清除预处理缓存
         self.preprocessing.invalidate_cache(conversation_id)
         
         # 清除分析结果缓存
+        self.preprocessing.invalidate_cache(conversation_id)
         self._invalidate_cache(conversation_id)
+        logger.info(f"[好感度分析] 缓存清理完成，开始重新计算 (会话 {conversation_id})")
         
         # 重新分析
         return self.analyze(conversation_id, force_reanalyze=True)
@@ -293,6 +306,10 @@ class AffinityAnalysisService:
         logger.info(f"使用动态权重: {weights}")
         
         # 1. 情感共振率
+        result.progress_percent = 45
+        result.progress_percent = 45
+        result.current_step = "计算维度评分: 情感共振率"
+        logger.info(f"[好感度分析] 维度 1/4: 情感共振率...")
         resonance_result = self.resonance_service.calculate_overall_resonance(
             conversation_id
         )
@@ -313,6 +330,10 @@ class AffinityAnalysisService:
         logger.info(f"情感共振率计算完成: {resonance_result['overall_score']:.1f}分 (权重: {weights['emotional_resonance']*100}%)")
         
         # 2. 聊天积极度
+        result.progress_percent = 55
+        result.progress_percent = 55
+        result.current_step = "计算维度评分: 聊天积极度"
+        logger.info(f"[好感度分析] 维度 2/4: 聊天积极度...")
         self.positivity_service.timeliness_threshold = config.reply_timeliness_threshold_seconds
         positivity_result = self.positivity_service.calculate_scores(
             conversation_id, stats
@@ -336,6 +357,10 @@ class AffinityAnalysisService:
         logger.info(f"聊天积极度计算完成: {positivity_result.overall_score:.1f}分 (权重: {weights['chat_positivity']*100}%)")
         
         # 3. 态度倾向
+        result.progress_percent = 65
+        result.progress_percent = 65
+        result.current_step = "计算维度评分: 态度倾向"
+        logger.info(f"[好感度分析] 维度 3/4: 态度倾向...")
         attitude_result = self.attitude_service.calculate_overall_attitude(
             conversation_id
         )
@@ -354,6 +379,10 @@ class AffinityAnalysisService:
         logger.info(f"态度倾向计算完成: {attitude_result['overall_score']:.1f}分 (权重: {weights['attitude_tendency']*100}%)")
         
         # 4. 喜好兼容度
+        result.progress_percent = 75
+        result.progress_percent = 75
+        result.current_step = "计算维度评分: 喜好兼容度"
+        logger.info(f"[好感度分析] 维度 4/4: 喜好兼容度...")
         self.preference_service.set_preference_keywords(config.preference_keywords)
         preference_result = self.preference_service.calculate_scores(
             conversation_id, stats

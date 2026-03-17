@@ -34,8 +34,8 @@
       <div class="header-actions-group">
         <CtButton variant="ghost" @click="showContextForm = true" :disabled="isGlobalAnalyzing">关系信息</CtButton>
         <CtButton variant="ghost" @click="showKeywordsDialog = true" :disabled="isGlobalAnalyzing">配置喜好</CtButton>
-        <CtButton variant="primary" @click="handleStartGlobalAnalysis(false)" :loading="isGlobalAnalyzing" class="btn-full-analysis">
-          {{ isGlobalAnalyzing ? '分析中...' : ((hasFeatures || analysisResult) ? '重新全面分析' : '开始全面分析') }}
+        <CtButton variant="primary" @click="handleStartGlobalAnalysis(hasCachedAffinityAnalysis)" :loading="isGlobalAnalyzing" class="btn-full-analysis">
+          {{ isGlobalAnalyzing ? '分析中...' : (hasCachedAffinityAnalysis ? '重新全面分析' : '开始全面分析') }}
         </CtButton>
       </div>
     </div>

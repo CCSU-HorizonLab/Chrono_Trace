@@ -82,6 +82,7 @@ export default {
         })
 
         const hasPreferenceKeywords = computed(() => analysisResult.value?.preference_compatibility?.weight !== undefined && analysisResult.value.preference_compatibility.weight > 0)
+        const hasCachedAffinityAnalysis = computed(() => Boolean(analysisResult.value))
 
         const allDimensions = computed(() => {
             if (!analysisResult.value) return {}
@@ -161,7 +162,11 @@ export default {
             if (!selectedConversationId.value) return
             try {
                 const scores = await getAffinityScores(selectedConversationId.value)
-                analysisResult.value = scores || null
+                if (scores && scores.cache_version >= 4) {
+                    analysisResult.value = scores
+                } else {
+                    analysisResult.value = null
+                }
             } catch (e) {
                 analysisResult.value = null
             }
@@ -289,10 +294,19 @@ export default {
                                 globalProgressStep.value = `[深度推理] ${prog.current_step || '分析中...'}`
                                 if (prog.status === 'completed') {
                                     clearInterval(timer)
-                                    if (prog.result) analysisResult.value = prog.result as AffinityAnalysisResult
-                                    else {
-                                        const scores = await getAffinityScores(selectedConversationId.value!)
-                                        if (scores) analysisResult.value = scores
+                                    if (prog.result) {
+                                        analysisResult.value = prog.result as AffinityAnalysisResult
+                                    }
+
+                                    const scores = await getAffinityScores(selectedConversationId.value!)
+                                    if (
+                                        scores &&
+                                        (
+                                            !analysisResult.value ||
+                                            (scores.cache_updated_at || 0) >= (analysisResult.value.cache_updated_at || 0)
+                                        )
+                                    ) {
+                                        analysisResult.value = scores
                                     }
                                     resolve()
                                 } else if (prog.status === 'failed') {
@@ -436,7 +450,7 @@ export default {
         return {
             currentTab, conversations, selectedConversationId, dates, loading, loadingSessions, error, analysis, subject, sessions,
             analysisResult, displayScore, showKeywordsDialog, showContextForm, pendingAnalysisForce, isGlobalAnalyzing, globalProgressPercent, globalProgressStep,
-            hasFeatures, featureStats, responseTimeStats, initiativeStats, wordCountsStats,
+            hasFeatures, hasCachedAffinityAnalysis, featureStats, responseTimeStats, initiativeStats, wordCountsStats,
             responseTimeChart, timelineChart, wordCountChart, stats, currentContactName, hasPreferenceKeywords, allDimensions,
             circumference, strokeDashoffset, formatNumber, formatTime, onConversationChange, onDatesChange, handleExport, handleStartGlobalAnalysis, handleContextSaved, handleKeywordsUpdated,
             getScoreColor, scrollToDetails, handlePreferenceDisabledClick, onWordSelect, loadAnalysis, loadSessions

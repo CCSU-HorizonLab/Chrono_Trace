@@ -12,7 +12,7 @@
 
 import logging
 from dataclasses import dataclass
-from typing import Optional
+from typing import Dict, List, Optional
 
 from ...db.connection import get_db
 from .preprocessing_orchestrator import PreprocessedStatistics
@@ -77,6 +77,8 @@ class ChatPositivityService:
         """
         pass  # get_db() removed for thread safety
         self.timeliness_threshold = timeliness_threshold_seconds
+        self._pair_service = None
+        self._sentiment_service = None
         
     def calculate_scores(
         self,
@@ -259,21 +261,144 @@ class ChatPositivityService:
         """
         try:
             cursor = get_db().execute("""
-                SELECT AVG(semantic_similarity)
+                SELECT COUNT(semantic_similarity), AVG(semantic_similarity)
                 FROM interaction_pairs
                 WHERE conversation_id = ?
                     AND semantic_similarity IS NOT NULL
             """, (conversation_id,))
             
             row = cursor.fetchone()
-            avg_similarity = row[0] if row[0] is not None else 0.0
-            
-            return max(0.0, min(1.0, avg_similarity))
+            similarity_count = row[0] or 0
+            avg_similarity = row[1] if row[1] is not None else 0.0
+
+            if similarity_count > 0:
+                return max(0.0, min(1.0, avg_similarity))
+
+            return self._calculate_topic_continuity_from_sessions(conversation_id)
             
         except Exception as e:
             logger.error(f"计算话题延续性失败: {e}")
             return 0.0
     
+    def _calculate_topic_continuity_from_sessions(self, conversation_id: int) -> float:
+        """历史数据兜底: 按会话重建连续性分数."""
+        try:
+            cursor = get_db().execute("""
+                SELECT start_time, end_time
+                FROM sessions
+                WHERE conversation_id = ?
+                ORDER BY start_time ASC
+            """, (conversation_id,))
+            session_ranges = cursor.fetchall()
+
+            if not session_ranges:
+                return 0.0
+
+            session_scores: List[float] = []
+            for start_time, end_time in session_ranges:
+                messages = self._load_messages_for_time_range(
+                    conversation_id,
+                    start_time,
+                    end_time
+                )
+                speech_units = self._get_pair_service().build_speech_units(messages)
+                session_similarity = self._calculate_session_similarity(speech_units)
+                if session_similarity is not None:
+                    session_scores.append(session_similarity)
+
+            if not session_scores:
+                return 0.0
+
+            return round(sum(session_scores) / len(session_scores), 4)
+
+        except Exception as e:
+            logger.warning(f"话题连续性会话兜底计算失败: {e}")
+            return 0.0
+
+    def _load_messages_for_time_range(
+        self,
+        conversation_id: int,
+        start_time: int,
+        end_time: int
+    ) -> List[Dict[str, object]]:
+        """加载指定时间窗内的文本消息."""
+        cursor = get_db().execute("""
+            SELECT id, content, is_sender, timestamp
+            FROM messages
+            WHERE conversation_id = ?
+              AND message_type = 1
+              AND timestamp >= ?
+              AND timestamp <= ?
+            ORDER BY timestamp ASC
+        """, (conversation_id, start_time, end_time))
+
+        messages: List[Dict[str, object]] = []
+        for row in cursor.fetchall():
+            content = row[1] if row[1] is not None else ""
+            if isinstance(content, bytes):
+                content = content.decode("utf-8", errors="replace")
+            messages.append({
+                "id": row[0],
+                "content": content,
+                "is_sender": row[2],
+                "timestamp": row[3],
+            })
+
+        return messages
+
+    def _calculate_session_similarity(
+        self,
+        speech_units: List[Dict[str, object]]
+    ) -> Optional[float]:
+        """计算单个会话内相邻发言单元的平均相似度."""
+        if len(speech_units) < 2:
+            return None
+
+        texts = [(unit.get("content") or "").strip() for unit in speech_units]
+        if len([text for text in texts if text]) < 2:
+            return None
+
+        try:
+            sentiment_service = self._get_sentiment_service()
+            sentiment_service._load_embedding_model()
+            if sentiment_service._embedding_model is None:
+                return None
+
+            embeddings = sentiment_service._embedding_model.encode(
+                texts,
+                normalize_embeddings=True,
+                show_progress_bar=False,
+                batch_size=32
+            )
+
+            import numpy as np
+
+            similarities: List[float] = []
+            for idx in range(len(embeddings) - 1):
+                similarity = float(np.dot(embeddings[idx], embeddings[idx + 1]))
+                similarities.append(max(0.0, min(1.0, similarity)))
+
+            if not similarities:
+                return None
+
+            return sum(similarities) / len(similarities)
+
+        except Exception as e:
+            logger.warning(f"会话相似度计算失败: {e}")
+            return None
+
+    def _get_pair_service(self):
+        if self._pair_service is None:
+            from .preprocessing_service import PairPreprocessingService
+            self._pair_service = PairPreprocessingService()
+        return self._pair_service
+
+    def _get_sentiment_service(self):
+        if self._sentiment_service is None:
+            from .sentiment_service import SentimentService
+            self._sentiment_service = SentimentService()
+        return self._sentiment_service
+
     def calculate_active_initiation_score(self, stats: PreprocessedStatistics) -> float:
         """
         计算主动发起率得分 (0-100)

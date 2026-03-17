@@ -39,9 +39,12 @@ class TestChatPositivityService:
     @pytest.fixture
     def service(self, mock_db):
         """创建服务实例"""
-        with patch('app.services.analysis.chat_positivity_service.get_db', return_value=mock_db):
-            from app.services.analysis.chat_positivity_service import ChatPositivityService
-            return ChatPositivityService(timeliness_threshold_seconds=300)
+        patcher = patch('app.services.analysis.chat_positivity_service.get_db', return_value=mock_db)
+        patcher.start()
+        from app.services.analysis.chat_positivity_service import ChatPositivityService
+        service = ChatPositivityService(timeliness_threshold_seconds=300)
+        yield service
+        patcher.stop()
 
     # ========================================
     # 日均消息数测试
@@ -130,24 +133,34 @@ class TestChatPositivityService:
 
     def test_topic_continuity_high(self, service, mock_db):
         """测试高话题延续性"""
-        mock_db.execute.return_value.fetchone.return_value = (0.8,)
+        mock_db.execute.return_value.fetchone.return_value = (1, 0.8)
         
         score = service.calculate_topic_continuity_score(1)
         assert score == 100.0
 
     def test_topic_continuity_low(self, service, mock_db):
         """测试低话题延续性"""
-        mock_db.execute.return_value.fetchone.return_value = (0.3,)
+        mock_db.execute.return_value.fetchone.return_value = (1, 0.3)
         
         score = service.calculate_topic_continuity_score(1)
         assert score == 60.0
 
     def test_topic_continuity_null(self, service, mock_db):
         """测试无相似度数据"""
-        mock_db.execute.return_value.fetchone.return_value = (None,)
+        mock_db.execute.return_value.fetchone.return_value = (0, None)
         
         score = service.calculate_topic_continuity_score(1)
         assert score == 0.0
+
+    def test_topic_continuity_falls_back_to_session_rebuild(self, service, mock_db):
+        """当交互对缺少语义相似度时，回退到会话级重算"""
+        mock_db.execute.return_value.fetchone.return_value = (0, None)
+
+        with patch.object(service, '_calculate_topic_continuity_from_sessions', return_value=0.4) as fallback:
+            score = service.calculate_topic_continuity_score(1)
+
+        fallback.assert_called_once_with(1)
+        assert score == 80.0
 
     # ========================================
     # 主动发起率测试
@@ -270,11 +283,14 @@ class TestReplyTimelinessBoundaries:
     """回复及时性边界测试 - T016"""
     
     @pytest.fixture
-    def service_300s(self):
+    def service_300s(self, mock_db):
         """创建阈值为300秒的服务实例"""
-        with patch('app.services.analysis.chat_positivity_service.get_db'):
-            from app.services.analysis.chat_positivity_service import ChatPositivityService
-            return ChatPositivityService(timeliness_threshold_seconds=300)
+        patcher = patch('app.services.analysis.chat_positivity_service.get_db', return_value=mock_db)
+        patcher.start()
+        from app.services.analysis.chat_positivity_service import ChatPositivityService
+        service = ChatPositivityService(timeliness_threshold_seconds=300)
+        yield service
+        patcher.stop()
     
     @pytest.fixture
     def mock_db(self):
@@ -400,27 +416,23 @@ class TestReplyTimelinessBoundaries:
     
     def test_different_threshold_60s(self, mock_db):
         """测试不同阈值（60秒）"""
-        with patch('app.services.analysis.chat_positivity_service.get_db'):
+        with patch('app.services.analysis.chat_positivity_service.get_db', return_value=mock_db):
             from app.services.analysis.chat_positivity_service import ChatPositivityService
             service = ChatPositivityService(timeliness_threshold_seconds=60)
             
             # 模拟：10个交互对，5个在60秒内
             mock_db.execute.return_value.fetchone.return_value = (10, 5)
-            service.db = mock_db
-            
             score = service.calculate_reply_timeliness_score(1)
             assert score == 50.0
     
     def test_different_threshold_600s(self, mock_db):
         """测试不同阈值（600秒 = 10分钟）"""
-        with patch('app.services.analysis.chat_positivity_service.get_db'):
+        with patch('app.services.analysis.chat_positivity_service.get_db', return_value=mock_db):
             from app.services.analysis.chat_positivity_service import ChatPositivityService
             service = ChatPositivityService(timeliness_threshold_seconds=600)
             
             # 模拟：10个交互对，8个在600秒内
             mock_db.execute.return_value.fetchone.return_value = (10, 8)
-            service.db = mock_db
-            
             score = service.calculate_reply_timeliness_score(1)
             assert score == 80.0
     

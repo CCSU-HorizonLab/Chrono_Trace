@@ -67,6 +67,8 @@ export interface AffinityAnalysisResult {
     analysis_timestamp: number
     analysis_duration_ms: number
     task_id: string
+    cache_version: number
+    cache_updated_at: number
     status: 'pending' | 'running' | 'completed' | 'failed'
     progress_percent: number
     current_step: string

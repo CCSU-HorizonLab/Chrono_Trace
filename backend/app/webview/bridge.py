@@ -2,6 +2,7 @@
 import json
 import os
 import logging
+import importlib
 from pathlib import Path
 from ..services.wechat.ingest_service import WeChatIngestService
 
@@ -44,6 +45,18 @@ class Bridge:
 
     def ping(self) -> str:
         return "pong"
+
+    def _get_fresh_affinity_service_class(self):
+        """Reload affinity analysis modules so updated scoring code takes effect immediately."""
+        module_names = [
+            "backend.app.services.analysis.emotional_resonance_service",
+            "backend.app.services.analysis.affinity_analysis_service",
+        ]
+        reloaded = None
+        for module_name in module_names:
+            module = importlib.import_module(module_name)
+            reloaded = importlib.reload(module)
+        return reloaded.AffinityAnalysisService
 
     def _get_wechat_custom_paths(self) -> dict[str, str] | None:
         wechat_dir = self.settings.get("wechat_data_dir")
@@ -2218,8 +2231,8 @@ class Bridge:
         try:
             import threading
             import time as _time
-            from ..services.analysis.affinity_analysis_service import AffinityAnalysisService
 
+            AffinityAnalysisService = self._get_fresh_affinity_service_class()
             service = AffinityAnalysisService()
             # 保存服务实例引用，供 get_affinity_progress 查询进度
             self._affinity_service = service
@@ -2328,9 +2341,9 @@ class Bridge:
     def get_affinity_scores(self, conversation_id: int) -> dict[str, Any]:
         """获取好感度分析结果"""
         try:
-            from ..services.analysis.affinity_analysis_service import AffinityAnalysisService
             from dataclasses import asdict
             
+            AffinityAnalysisService = self._get_fresh_affinity_service_class()
             service = AffinityAnalysisService()
             result = service.get_scores(conversation_id)
             

@@ -3,6 +3,7 @@
 测试 AffinityAnalysisService 的编排和评分逻辑
 """
 
+import json
 import pytest
 import sys
 import os
@@ -146,6 +147,19 @@ class TestAffinityAnalysisService:
         result = service.get_scores(1)
         assert result is None
 
+    def test_get_scores_ignores_running_cache(self, service, mock_db):
+        """未完成缓存不应被当作正式结果返回"""
+        mock_db.execute.return_value.fetchone.return_value = (
+            json.dumps({
+                "overall_score": 12.3,
+                "conversation_id": 1,
+                "status": "running"
+            }),
+        )
+
+        result = service.get_scores(1)
+        assert result is None
+
     def test_reanalyze_clears_cache(self, service, mock_db):
         """测试重新分析清除缓存"""
         service.reanalyze(1)
@@ -165,6 +179,21 @@ class TestAffinityAnalysisService:
         assert progress is not None
         assert progress.status == "completed"
         assert progress.progress_percent == 100
+
+    def test_analyze_saves_completed_result(self, service, mock_db):
+        """保存缓存时应写入 completed 状态"""
+        service.analyze(1)
+
+        save_calls = [
+            call for call in mock_db.execute.call_args_list
+            if "INSERT OR REPLACE INTO settings" in call.args[0]
+        ]
+        assert save_calls
+
+        saved_json = save_calls[-1].args[1][1]
+        saved = json.loads(saved_json)
+        assert saved["status"] == "completed"
+        assert saved["analysis_timestamp"] > 0
 
     # ========================================
     # 解释文本测试

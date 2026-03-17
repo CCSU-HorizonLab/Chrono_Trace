@@ -69,6 +69,8 @@ class AffinityAnalysisResult:
     analysis_timestamp: int = 0
     analysis_duration_ms: int = 0
     task_id: str = ""
+    cache_version: int = 0
+    cache_updated_at: int = 0
     
     # 状态
     status: str = "pending"  # pending, running, completed, failed
@@ -79,6 +81,8 @@ class AffinityAnalysisResult:
 
 class AffinityAnalysisService:
     """好感度分析编排器"""
+
+    CACHE_SCHEMA_VERSION = 4
     
     # 默认维度权重(已废弃,使用动态权重)
     # 实际权重由 AffinityConfigService.get_dimension_weights() 动态返回
@@ -127,6 +131,7 @@ class AffinityAnalysisService:
         result = AffinityAnalysisResult()
         result.conversation_id = conversation_id
         result.task_id = task_id
+        result.cache_version = self.CACHE_SCHEMA_VERSION
         result.status = "running"
         result.current_step = "初始化"
         
@@ -179,18 +184,17 @@ class AffinityAnalysisService:
                 result.overall_score
             )
             
-            # 7. 保存结果
-            result.current_step = "保存结果"
-            result.progress_percent = 90
-            logger.info(f"[好感度分析] 步骤 5/5: 保存结果...")
-            self._save_results(conversation_id, result)
-            
             # 完成
             result.status = "completed"
             result.progress_percent = 100
             result.current_step = "完成"
             result.analysis_timestamp = int(time.time())
             result.analysis_duration_ms = int((time.time() - start_time) * 1000)
+            result.cache_version = self.CACHE_SCHEMA_VERSION
+
+            # 7. 保存结果
+            logger.info(f"[好感度分析] 步骤 5/5: 保存结果...")
+            self._save_results(conversation_id, result)
             
             logger.info(
                 f"好感度分析完成: {result.overall_score:.1f} 分, "
@@ -484,6 +488,10 @@ class AffinityAnalysisService:
     def _save_results(self, conversation_id: int, result: AffinityAnalysisResult):
         """保存分析结果到数据库"""
         try:
+            cache_updated_at = int(time.time())
+            result.cache_version = self.CACHE_SCHEMA_VERSION
+            result.cache_updated_at = cache_updated_at
+
             # 序列化结果
             result_dict = {
                 "overall_score": result.overall_score,
@@ -497,6 +505,8 @@ class AffinityAnalysisService:
                 "analysis_duration_ms": result.analysis_duration_ms,
                 "task_id": result.task_id,
                 "status": result.status,
+                "cache_version": result.cache_version,
+                "cache_updated_at": result.cache_updated_at,
             }
             
             result_json = json.dumps(result_dict, ensure_ascii=False)
@@ -505,7 +515,7 @@ class AffinityAnalysisService:
             get_db().execute("""
                 INSERT OR REPLACE INTO settings (key, value, updated_at)
                 VALUES (?, ?, ?)
-            """, (key, result_json, int(time.time())))
+            """, (key, result_json, cache_updated_at))
             
             get_db().commit()
             logger.debug(f"分析结果已保存 (会话 {conversation_id})")
@@ -521,7 +531,7 @@ class AffinityAnalysisService:
         try:
             key = f"affinity_scores_{conversation_id}"
             cursor = get_db().execute("""
-                SELECT value FROM settings WHERE key = ?
+                SELECT value, updated_at FROM settings WHERE key = ?
             """, (key,))
             
             row = cursor.fetchone()
@@ -529,6 +539,19 @@ class AffinityAnalysisService:
                 return None
             
             result_dict = json.loads(row[0])
+
+            # 只信任已完成的缓存结果，避免把运行中的半成品展示给前端
+            if result_dict.get("status") != "completed":
+                logger.info(f"忽略未完成的好感度缓存结果 (会话 {conversation_id})")
+                return None
+
+            if result_dict.get("cache_version") != self.CACHE_SCHEMA_VERSION:
+                logger.info(
+                    f"忽略过期的好感度缓存结果 "
+                    f"(会话 {conversation_id}, version={result_dict.get('cache_version')}, "
+                    f"expected={self.CACHE_SCHEMA_VERSION})"
+                )
+                return None
             
             # 重建结果对象
             result = AffinityAnalysisResult()
@@ -539,6 +562,8 @@ class AffinityAnalysisService:
             result.analysis_duration_ms = result_dict.get("analysis_duration_ms", 0)
             result.task_id = result_dict.get("task_id", "")
             result.status = result_dict.get("status", "completed")
+            result.cache_version = result_dict.get("cache_version", 0)
+            result.cache_updated_at = result_dict.get("cache_updated_at", row[1] or 0)
             
             # 重建维度分数
             for dim_name in ["emotional_resonance", "chat_positivity", 

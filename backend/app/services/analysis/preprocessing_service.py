@@ -21,6 +21,7 @@ class PreprocessingService:
     def __init__(self):
         pass  # get_db() removed for thread safety
         self._compile_patterns()
+
     
     def _compile_patterns(self):
         """编译正则表达式模式（提升性能）"""
@@ -678,6 +679,42 @@ class PairPreprocessingService:
     def __init__(self):
         pass  # get_db() removed for thread safety
 
+    def _calculate_unit_similarities(
+        self,
+        speech_units: List[Dict[str, Any]]
+    ) -> Dict[int, float]:
+        """批量计算相邻发言单元的语义相似度."""
+        if len(speech_units) < 2:
+            return {}
+
+        try:
+            from .sentiment_service import SentimentService
+            import numpy as np
+
+            sentiment_service = SentimentService()
+            sentiment_service._load_embedding_model()
+            if sentiment_service._embedding_model is None:
+                return {}
+
+            texts = [(unit.get("content") or "").strip() for unit in speech_units]
+            embeddings = sentiment_service._embedding_model.encode(
+                texts,
+                normalize_embeddings=True,
+                show_progress_bar=False,
+                batch_size=32
+            )
+
+            similarities: Dict[int, float] = {}
+            for idx in range(len(speech_units) - 1):
+                similarity = float(np.dot(embeddings[idx], embeddings[idx + 1]))
+                similarities[idx] = max(0.0, min(1.0, similarity))
+
+            return similarities
+
+        except Exception as e:
+            logger.warning(f"[交互对预处理] 计算语义相似度失败，将保留为空值: {e}")
+            return {}
+
     def _get_sentiment_for_unit(self, message_ids: List[int]) -> Dict[str, Any]:
         """
         获取发言单元的平均情感数据
@@ -864,6 +901,7 @@ class PairPreprocessingService:
             return []
 
         interaction_pairs = []
+        adjacent_similarities = self._calculate_unit_similarities(speech_units)
 
         for i in range(len(speech_units) - 1):
             first_unit = speech_units[i]
@@ -886,7 +924,7 @@ class PairPreprocessingService:
                 "first_unit_id": first_unit["id"],
                 "second_unit_id": second_unit["id"],
                 "time_gap_seconds": time_gap,
-                "semantic_similarity": None,  # 稍后计算
+                "semantic_similarity": adjacent_similarities.get(i),
                 # 情感数据
                 "from_polarity": first_sentiment["polarity"],
                 "to_polarity": second_sentiment["polarity"],

@@ -355,65 +355,6 @@ class PreprocessingOrchestrator:
 
         logger.info(f"[预处理] 情感分析全部完成并缓存 ({total_to_analyze} 条消息)")
         return
-        
-        for msg in messages:
-            # 只分析文本消息
-            if msg["message_type"] != 1:
-                continue
-            
-            # 检查缓存
-            cached = self.sentiment_service.get_sentiment_from_cache(msg["id"])
-            if not cached:
-                messages_to_analyze.append(msg)
-        
-        if not messages_to_analyze:
-            logger.debug(f"所有消息已完成情感分析 (缓存命中)")
-            return
-
-        logger.debug(f"需要分析 {len(messages_to_analyze)} 条消息")
-        
-        # 分批处理并打印进度条
-        total_to_analyze = len(messages_to_analyze)
-        batch_size = 500
-        
-        for i in range(0, total_to_analyze, batch_size):
-            batch_msgs = messages_to_analyze[i:i + batch_size]
-            texts = [msg["content"] or "" for msg in batch_msgs]
-            
-            # 批量分析
-            batch_results = self.sentiment_service.analyze_batch(texts)
-            
-            # 批量写入缓存
-            cache_data = []
-            for msg, result in zip(batch_msgs, batch_results):
-                cache_data.append({
-                    "message_id": msg["id"],
-                    "polarity": result["polarity"],
-                    "intensity": result["intensity"],
-                    "embedding": result["embedding"]
-                })
-
-            self.sentiment_service.batch_cache_sentiments(cache_data)
-            
-            # 强行触发内存与显存回收，防止长时间计算由于系统内存碎片化与文件句柄枯竭导致 safetensors 的 mmap 后台失联触发元张量指针(meta)崩溃
-            import gc
-            import torch
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-            
-            import time
-            time.sleep(0.1)  # 给操作系统释放资源的空窗期
-            
-            # 原地打印进度 (利用 sys.stdout 和 \r，不造成控制台刷屏)
-            import sys
-            processed = min(i + batch_size, total_to_analyze)
-            percentage = (processed / total_to_analyze) * 100
-            sys.stdout.write(f"\r[进度] 情感与语义向处理中: {processed}/{total_to_analyze} ({percentage:.1f}%)")
-            sys.stdout.flush()
-            
-        print()  # 当全部循环完成后，为了避免文字覆盖接下来的正常输出，在这里另起一行打印
-        logger.info(f"情感分析全部完成并缓存 ({total_to_analyze} 条消息)")
 
     def _save_preprocessing_results(
         self,

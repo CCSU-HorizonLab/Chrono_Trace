@@ -70,15 +70,19 @@ watch(() => props.selectedConversationId, () => {
 }, { immediate: true })
 
 const filteredConversations = computed(() => {
+  let list: Conversation[]
   if (!showDropdown.value || searchQuery.value === selectedConversationName.value) {
-    return props.conversations
+    list = [...props.conversations]
+  } else {
+    const q = searchQuery.value.toLowerCase()
+    list = props.conversations.filter(c => {
+      const name = (c.name || '').toLowerCase()
+      const username = (c.username || '').toLowerCase()
+      return name.includes(q) || username.includes(q)
+    })
   }
-  const q = searchQuery.value.toLowerCase()
-  return props.conversations.filter(c => {
-    const name = (c.name || '').toLowerCase()
-    const username = (c.username || '').toLowerCase()
-    return name.includes(q) || username.includes(q)
-  })
+  // 按消息数量递减排序
+  return list.sort((a, b) => (b.message_count || 0) - (a.message_count || 0))
 })
 
 function selectConversation(id: number) {

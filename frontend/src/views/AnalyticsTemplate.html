@@ -202,11 +202,11 @@
           </div>
           <div class="stat-body">
             <div class="stat-main">
-              <span class="stat-num">{{ (initiativeStats.initiativeRate || 0).toFixed(0) }}</span>
+              <span class="stat-num">{{ ((initiativeStats.initiativeRate || 0) * 100).toFixed(0) }}</span>
               <span class="stat-unit">%</span>
             </div>
             <div class="stat-sub">
-              我发起 {{ (100 - (initiativeStats.initiativeRate || 0)).toFixed(0) }}%
+              我发起 {{ ((1 - (initiativeStats.initiativeRate || 0)) * 100).toFixed(0) }}%
             </div>
           </div>
         </CtCard>
@@ -263,11 +263,11 @@
             <div class="donut-chart-box">
               <svg viewBox="0 0 100 100" class="donut-svg">
                 <circle cx="50" cy="50" r="30" fill="transparent" stroke="#82ca9d" stroke-width="20" stroke-dasharray="188.5" stroke-dashoffset="0"></circle>
-                <circle cx="50" cy="50" r="30" fill="transparent" stroke="#8884d8" stroke-width="20" :stroke-dasharray="`${(100 - (initiativeStats.initiativeRate || 0)) / 100 * 188.5} 188.5`" stroke-dashoffset="0"></circle>
+                <circle cx="50" cy="50" r="30" fill="transparent" stroke="#8884d8" stroke-width="20" :stroke-dasharray="`${(1 - (initiativeStats.initiativeRate || 0)) * 188.5} 188.5`" stroke-dashoffset="0"></circle>
               </svg>
               <div class="donut-legend">
-                <div class="legend-item"><span class="legend-dot purple"></span>我发起 {{ (100 - (initiativeStats.initiativeRate || 0)).toFixed(0) }}%</div>
-                <div class="legend-item"><span class="legend-dot green"></span>对方发起 {{ (initiativeStats.initiativeRate || 0).toFixed(0) }}%</div>
+                <div class="legend-item"><span class="legend-dot purple"></span>我发起 {{ ((1 - (initiativeStats.initiativeRate || 0)) * 100).toFixed(0) }}%</div>
+                <div class="legend-item"><span class="legend-dot green"></span>对方发起 {{ ((initiativeStats.initiativeRate || 0) * 100).toFixed(0) }}%</div>
               </div>
             </div>
             <div class="initiative-box">

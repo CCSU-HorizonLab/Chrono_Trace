@@ -111,6 +111,16 @@
                 </div>
               </div>
             </div>
+            <div v-if="profileMeta.createdAt || profileMeta.expiresAt" class="sug-date-meta">
+              <span v-if="profileMeta.createdAt">生成: {{ formatProfileDate(profileMeta.createdAt) }}</span>
+              <span v-if="profileMeta.expiresAt">过期: {{ formatProfileDate(profileMeta.expiresAt) }}</span>
+              <span v-if="profileMeta.expired" class="is-expired">已过期</span>
+            </div>
+            <div v-if="realtimeState.talkerName && (profile.chat_style || profileMeta.expired)" class="sug-profile-actions">
+              <button class="sug-action-sm" @click="openPortraitDialog({ contact: true })" :disabled="profileLoading || selfProfileLoading">
+                {{ profileMeta.expired ? '更新画像' : '重生成像' }}
+              </button>
+            </div>
             <!-- 画像详情 -->
             <div v-if="profile.chat_style" class="sug-detail-list">
               <div class="sug-detail-row">
@@ -133,7 +143,7 @@
             <!-- 空状态 -->
             <div v-else-if="!profileLoading" class="sug-empty-state">
               <span>暂无 AI 画像</span>
-              <button v-if="realtimeState.talkerName" class="sug-action-sm" @click="showProfileDialog = true" :disabled="profileLoading">生成画像</button>
+              <button v-if="realtimeState.talkerName" class="sug-action-sm" @click="openPortraitDialog({ contact: true })" :disabled="profileLoading || selfProfileLoading">生成画像</button>
             </div>
             <div v-if="profileLoading" class="sug-loading-text">画像生成中...</div>
           </div>
@@ -147,6 +157,16 @@
             <span>我的克隆画像</span>
           </div>
           <div class="sug-panel-bd">
+            <div v-if="selfProfileMeta.createdAt || selfProfileMeta.expiresAt" class="sug-date-meta">
+              <span v-if="selfProfileMeta.createdAt">生成: {{ formatProfileDate(selfProfileMeta.createdAt) }}</span>
+              <span v-if="selfProfileMeta.expiresAt">过期: {{ formatProfileDate(selfProfileMeta.expiresAt) }}</span>
+              <span v-if="selfProfileMeta.expired" class="is-expired">已过期</span>
+            </div>
+            <div v-if="realtimeState.talkerName && (selfProfile.typing_style || selfProfileMeta.expired)" class="sug-profile-actions">
+              <button class="sug-action-sm" @click="openPortraitDialog({ self: true })" :disabled="profileLoading || selfProfileLoading">
+                {{ selfProfileMeta.expired ? '刷新克隆' : '重新提取' }}
+              </button>
+            </div>
             <div v-if="selfProfile.typing_style" class="sug-detail-list">
               <div class="sug-detail-row">
                 <span class="sug-detail-icon">✍️</span>
@@ -163,7 +183,7 @@
             </div>
             <div v-else-if="!selfProfileLoading" class="sug-empty-state">
               <span>暂未提取你对TA的专属聊天风格</span>
-              <button v-if="realtimeState.talkerName" class="sug-action-sm" @click="showSelfProfileDialog = true" :disabled="selfProfileLoading">扫描克隆</button>
+              <button v-if="realtimeState.talkerName" class="sug-action-sm" @click="openPortraitDialog({ self: true })" :disabled="profileLoading || selfProfileLoading">扫描克隆</button>
             </div>
             <div v-if="selfProfileLoading" class="sug-loading-text">特征扫描提取中 (约15-30秒)...</div>
           </div>
@@ -209,70 +229,74 @@
 
   <!-- 画像生成确认弹窗 -->
   <Teleport to="body">
-    <div v-if="showProfileDialog" class="ct-modal-overlay" @click.self="showProfileDialog = false">
+    <div v-if="showPortraitDialog" class="ct-modal-overlay" @click.self="closePortraitDialog">
       <div class="ct-modal-dialog">
-        <div class="modal-title">🧠 生成联系人画像</div>
+        <div class="modal-title">🧠 生成画像</div>
         <div class="modal-desc">
-          将使用 LLM 分析「{{ realtimeState.talkerName }}」的历史聊天，生成对方画像。
+          将围绕「{{ realtimeState.talkerName }}」的历史聊天，同时生成对象画像与自我克隆画像。你可以按需勾选本次要生成的内容。
         </div>
-        <div class="modal-field">
-          <label>Token 预算档位</label>
-          <div class="budget-options">
-            <label v-for="opt in [
-              { value: 'low', label: '低 (~2K)', desc: '粗略画像' },
-              { value: 'medium', label: '中 (~4K)', desc: '推荐' },
-              { value: 'high', label: '高 (~8K)', desc: '精细画像' },
-              { value: 'custom', label: '自定义', desc: '' },
-            ]" :key="opt.value" class="budget-option" :class="{ active: profileBudgetLevel === opt.value }">
-              <input type="radio" :value="opt.value" v-model="profileBudgetLevel" />
-              <span class="budget-label">{{ opt.label }}</span>
-              <span class="budget-desc" v-if="opt.desc">{{ opt.desc }}</span>
+        <div class="modal-stack">
+          <div class="modal-panel">
+            <label class="modal-panel-title">
+              <input v-model="dialogGenerateContact" type="checkbox" />
+              <span>联系人画像</span>
             </label>
+            <div class="modal-panel-desc">
+              分析「{{ realtimeState.talkerName }}」的历史聊天，生成对方画像。
+            </div>
+            <div class="modal-field" :class="{ disabled: !dialogGenerateContact }">
+              <label>Token 预算档位</label>
+              <div class="budget-options">
+                <label v-for="opt in [
+                  { value: 'low', label: '低 (~2K)', desc: '粗略画像' },
+                  { value: 'medium', label: '中 (~4K)', desc: '推荐' },
+                  { value: 'high', label: '高 (~8K)', desc: '精细画像' },
+                  { value: 'custom', label: '自定义', desc: '' },
+                ]" :key="opt.value" class="budget-option" :class="{ active: profileBudgetLevel === opt.value, disabled: !dialogGenerateContact }">
+                  <input type="radio" :value="opt.value" v-model="profileBudgetLevel" :disabled="!dialogGenerateContact" />
+                  <span class="budget-label">{{ opt.label }}</span>
+                  <span class="budget-desc" v-if="opt.desc">{{ opt.desc }}</span>
+                </label>
+              </div>
+              <div v-if="profileBudgetLevel === 'custom'" class="custom-budget">
+                <input type="number" v-model.number="profileCustomBudget" min="500" max="50000" step="500" :disabled="!dialogGenerateContact" />
+                <span class="unit">tokens</span>
+              </div>
+              <div class="modal-info">
+                预估消耗: ~{{ profileEstimatedTokens || '计算中' }} tokens
+              </div>
+            </div>
           </div>
-          <div v-if="profileBudgetLevel === 'custom'" class="custom-budget">
-            <input type="number" v-model.number="profileCustomBudget" min="500" max="50000" step="500" />
-            <span class="unit">tokens</span>
-          </div>
-        </div>
-        <div class="modal-info">
-          预估消耗: ~{{ profileEstimatedTokens || '计算中' }} tokens
-        </div>
-        <div class="modal-actions">
-          <button class="ct-btn variant-ghost" @click="showProfileDialog = false">取消</button>
-          <button class="ct-btn primary" @click="generateContactProfile">确认生成</button>
-        </div>
-      </div>
-    </div>
-  </Teleport>
 
-  <!-- 本体画像生成确认弹窗 -->
-  <Teleport to="body">
-    <div v-if="showSelfProfileDialog" class="ct-modal-overlay" @click.self="showSelfProfileDialog = false">
-      <div class="ct-modal-dialog">
-        <div class="modal-title">🎭 克隆我的专属风格</div>
-        <div class="modal-desc">
-          将分析过去你发送给「{{ realtimeState.talkerName }}」的聊天记录，提取属于你的打字排版习惯与常用口头禅。<br/>
-          <strong>此举能大幅消除预设的"AI 机器味"，让生成的回复更像你自己。</strong>
-        </div>
-        <div class="modal-field">
-          <label>扫描提取深度</label>
-          <div class="budget-options">
-            <label v-for="opt in [
-              { value: 'medium', label: '标准 (~4K)', desc: '推荐深度' },
-              { value: 'high', label: '深度 (~8K)', desc: '消耗较多' }
-            ]" :key="opt.value" class="budget-option" :class="{ active: selfProfileBudgetLevel === opt.value }">
-              <input type="radio" :value="opt.value" v-model="selfProfileBudgetLevel" />
-              <span class="budget-label">{{ opt.label }}</span>
-              <span class="budget-desc" v-if="opt.desc">{{ opt.desc }}</span>
+          <div class="modal-panel">
+            <label class="modal-panel-title">
+              <input v-model="dialogGenerateSelf" type="checkbox" />
+              <span>自我克隆画像</span>
             </label>
+            <div class="modal-panel-desc">
+              分析你发送给「{{ realtimeState.talkerName }}」的聊天记录，提取你的打字风格与常用表达。
+            </div>
+            <div class="modal-field" :class="{ disabled: !dialogGenerateSelf }">
+              <label>扫描提取深度</label>
+              <div class="budget-options">
+                <label v-for="opt in [
+                  { value: 'medium', label: '标准 (~4K)', desc: '推荐深度' },
+                  { value: 'high', label: '深度 (~8K)', desc: '消耗较多' }
+                ]" :key="opt.value" class="budget-option" :class="{ active: selfProfileBudgetLevel === opt.value, disabled: !dialogGenerateSelf }">
+                  <input type="radio" :value="opt.value" v-model="selfProfileBudgetLevel" :disabled="!dialogGenerateSelf" />
+                  <span class="budget-label">{{ opt.label }}</span>
+                  <span class="budget-desc" v-if="opt.desc">{{ opt.desc }}</span>
+                </label>
+              </div>
+              <div class="modal-info">
+                预估消耗: ~{{ selfProfileEstimatedTokens || '计算中' }} tokens
+              </div>
+            </div>
           </div>
         </div>
-        <div class="modal-info">
-          预估消耗: ~{{ selfProfileEstimatedTokens || '计算中' }} tokens
-        </div>
         <div class="modal-actions">
-          <button class="ct-btn variant-ghost" @click="showSelfProfileDialog = false">取消</button>
-          <button class="ct-btn primary" @click="generateSelfProfile">确认提取</button>
+          <button class="ct-btn variant-ghost" @click="closePortraitDialog">取消</button>
+          <button class="ct-btn primary" @click="generatePortraitProfiles" :disabled="!dialogGenerateContact && !dialogGenerateSelf">确认生成</button>
         </div>
       </div>
     </div>
@@ -365,8 +389,7 @@ function onConversationChange(id: number) {
   if (c) {
     realtimeState.talkerName = c.name
     // 选择联系人后自动检查并加载画像
-    checkContactProfile(c.name)
-    checkSelfProfile(c.name)
+    checkPortraitProfiles(c.name)
   }
 }
 
@@ -596,35 +619,15 @@ function stopMessagesPolling() {
 
 const selfProfile = ref<any>({})
 const selfProfileLoading = ref(false)
-const showSelfProfileDialog = ref(false)
 const selfProfileBudgetLevel = ref('medium')
 const selfProfileEstimatedTokens = ref(0)
-
-async function checkSelfProfile(displayName: string) {
-  try {
-    await bridgeReady()
-    const llmRes = await api.get_llm_models()
-    if (!llmRes.ok || !llmRes.models || !llmRes.models.some((m: any) => m.is_active)) {
-      showLlmWarningDialog.value = true
-      return
-    }
-
-    const r = await api.get_self_profile(displayName)
-    if (r.ok) {
-      selfProfileEstimatedTokens.value = r.estimated_tokens || 0
-      if (r.has_profile && !r.expired) {
-        selfProfile.value = r.profile
-      } else {
-        selfProfile.value = {}
-      }
-    }
-  } catch (e) {
-    console.error('检查克隆画像失败:', e)
-  }
-}
+const selfProfileMeta = reactive({
+  createdAt: 0,
+  expiresAt: 0,
+  expired: false,
+})
 
 async function generateSelfProfile() {
-  showSelfProfileDialog.value = false
   selfProfileLoading.value = true
   try {
     await bridgeReady()
@@ -635,6 +638,7 @@ async function generateSelfProfile() {
     )
     if (r.ok && r.profile) {
       selfProfile.value = r.profile
+      await refreshSelfProfileState(realtimeState.talkerName)
     } else {
       console.error('画像克隆失败:', r.error)
     }
@@ -651,37 +655,19 @@ const profile = ref<any>({
 })
 const profileInitial = computed(() => (profile.value.name ? profile.value.name[0] : 'N'))
 const profileLoading = ref(false)
-const showProfileDialog = ref(false)
 const profileBudgetLevel = ref('medium')
 const profileCustomBudget = ref(4000)
 const profileEstimatedTokens = ref(0)
-
-async function checkContactProfile(displayName: string) {
-  try {
-    await bridgeReady()
-    const llmRes = await api.get_llm_models()
-    if (!llmRes.ok || !llmRes.models || !llmRes.models.some((m: any) => m.is_active)) {
-      showLlmWarningDialog.value = true
-      return
-    }
-
-    const r = await api.get_contact_profile(displayName)
-    if (r.ok) {
-      profileEstimatedTokens.value = r.estimated_tokens || 0
-      if (r.has_profile && !r.expired) {
-        profile.value = { name: displayName, ...r.profile }
-      } else {
-        profile.value = { name: displayName, tags: [] }
-        showProfileDialog.value = true
-      }
-    }
-  } catch (e) {
-    console.error('检查画像失败:', e)
-  }
-}
+const profileMeta = reactive({
+  createdAt: 0,
+  expiresAt: 0,
+  expired: false,
+})
+const showPortraitDialog = ref(false)
+const dialogGenerateContact = ref(true)
+const dialogGenerateSelf = ref(true)
 
 async function generateContactProfile() {
-  showProfileDialog.value = false
   profileLoading.value = true
   try {
     await bridgeReady()
@@ -692,6 +678,7 @@ async function generateContactProfile() {
     )
     if (r.ok && r.profile) {
       profile.value = { name: realtimeState.talkerName, ...r.profile }
+      await refreshContactProfileState(realtimeState.talkerName)
     } else {
       console.error('画像生成失败:', r.error)
       profile.value = {
@@ -714,6 +701,117 @@ async function generateContactProfile() {
 
 function copyText(text: string) { navigator.clipboard?.writeText(text) }
 
+function resetProfileMeta(meta: { createdAt: number; expiresAt: number; expired: boolean }) {
+  meta.createdAt = 0
+  meta.expiresAt = 0
+  meta.expired = false
+}
+
+function applyProfileMeta(
+  meta: { createdAt: number; expiresAt: number; expired: boolean },
+  createdAt?: number,
+  expiresAt?: number,
+  expired?: boolean
+) {
+  meta.createdAt = createdAt || 0
+  meta.expiresAt = expiresAt || 0
+  meta.expired = Boolean(expired)
+}
+
+function formatProfileDate(timestamp?: number) {
+  if (!timestamp) return '--'
+  return new Date(timestamp * 1000).toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+function closePortraitDialog() {
+  showPortraitDialog.value = false
+}
+
+function openPortraitDialog(targets?: { contact?: boolean; self?: boolean }) {
+  dialogGenerateContact.value = targets?.contact ?? (!profile.value.chat_style || profileMeta.expired)
+  dialogGenerateSelf.value = targets?.self ?? (!selfProfile.value.typing_style || selfProfileMeta.expired)
+  showPortraitDialog.value = true
+}
+
+async function ensureActiveLlm() {
+  await bridgeReady()
+  const llmRes = await api.get_llm_models()
+  const hasActive = Boolean(llmRes.ok && llmRes.models && llmRes.models.some((m: any) => m.is_active))
+  if (!hasActive) {
+    showLlmWarningDialog.value = true
+  }
+  return hasActive
+}
+
+async function refreshContactProfileState(displayName: string) {
+  const r = await api.get_contact_profile(displayName)
+  if (!r.ok) return r
+
+  profileEstimatedTokens.value = r.estimated_tokens || 0
+  if (r.has_profile) {
+    profile.value = { name: displayName, ...(r.profile || {}) }
+    applyProfileMeta(profileMeta, r.created_at, r.expires_at, r.expired)
+  } else {
+    profile.value = { name: displayName, tags: [] }
+    resetProfileMeta(profileMeta)
+  }
+  return r
+}
+
+async function refreshSelfProfileState(displayName: string) {
+  const r = await api.get_self_profile(displayName)
+  if (!r.ok) return r
+
+  selfProfileEstimatedTokens.value = r.estimated_tokens || 0
+  if (r.has_profile) {
+    selfProfile.value = r.profile || {}
+    applyProfileMeta(selfProfileMeta, r.created_at, r.expires_at, r.expired)
+  } else {
+    selfProfile.value = {}
+    resetProfileMeta(selfProfileMeta)
+  }
+  return r
+}
+
+async function checkPortraitProfiles(displayName: string, openDialogIfNeeded = true) {
+  try {
+    const hasActiveLlm = await ensureActiveLlm()
+    if (!hasActiveLlm) return
+
+    const [contactRes, selfRes] = await Promise.all([
+      refreshContactProfileState(displayName),
+      refreshSelfProfileState(displayName),
+    ])
+
+    if (!openDialogIfNeeded) return
+
+    const needContact = Boolean(contactRes?.ok) && (!contactRes?.has_profile || contactRes?.expired)
+    const needSelf = Boolean(selfRes?.ok) && (!selfRes?.has_profile || selfRes?.expired)
+
+    if ((needContact || needSelf) && !showPortraitDialog.value && !profileLoading.value && !selfProfileLoading.value) {
+      openPortraitDialog({ contact: needContact, self: needSelf })
+    }
+  } catch (e) {
+    console.error('检查画像失败:', e)
+  }
+}
+
+async function generatePortraitProfiles() {
+  closePortraitDialog()
+  if (dialogGenerateContact.value) {
+    await generateContactProfile()
+  }
+  if (dialogGenerateSelf.value) {
+    await generateSelfProfile()
+  }
+}
+
 // 组件挂载时恢复监听状态
 onMounted(async () => {
   loadContacts()
@@ -733,8 +831,7 @@ onMounted(async () => {
       loadSuggestionConfig()
 
       if (realtimeState.talkerName) {
-        checkContactProfile(realtimeState.talkerName)
-        checkSelfProfile(realtimeState.talkerName)
+        checkPortraitProfiles(realtimeState.talkerName)
       }
     }
   } catch (e) {
@@ -998,6 +1095,12 @@ function getTriggerIcon(type: string): string {
   display: inline-block; padding: 2px 8px; font-size: 11px; font-weight: 500;
   border-radius: var(--ct-radius-full); background: var(--ct-color-primary-light); color: var(--ct-color-primary);
 }
+.sug-date-meta {
+  display: flex; flex-wrap: wrap; gap: 8px 12px; margin-bottom: var(--ct-space-sm);
+  font-size: var(--ct-text-xs); color: var(--ct-text-tertiary);
+}
+.sug-date-meta .is-expired { color: var(--ct-color-error); font-weight: 600; }
+.sug-profile-actions { display: flex; justify-content: flex-end; margin-bottom: var(--ct-space-sm); }
 
 /* Detail List */
 .sug-detail-list { display: flex; flex-direction: column; gap: 0; }
@@ -1058,14 +1161,35 @@ function getTriggerIcon(type: string): string {
 
 /* ═══ Modal Styles ═══ */
 .modal-desc { font-size: var(--ct-text-sm); color: var(--ct-text-secondary); line-height: 1.5; margin-bottom: var(--ct-space-md); }
+.modal-stack { display: flex; flex-direction: column; gap: var(--ct-space-md); }
+.modal-panel {
+  border: 1px solid var(--ct-border-color);
+  border-radius: var(--ct-radius-md);
+  padding: var(--ct-space-md);
+  background: var(--ct-bg-secondary);
+}
+.modal-panel-title {
+  display: flex; align-items: center; gap: 8px;
+  font-size: var(--ct-text-sm); font-weight: var(--ct-font-semibold); color: var(--ct-text-primary);
+}
+.modal-panel-title input[type="checkbox"] { accent-color: var(--ct-color-primary); }
+.modal-panel-desc {
+  margin: 8px 0 12px;
+  font-size: var(--ct-text-sm);
+  color: var(--ct-text-secondary);
+  line-height: 1.5;
+}
 .modal-field > label { font-size: var(--ct-text-sm); font-weight: var(--ct-font-medium); color: var(--ct-text-secondary); }
+.modal-field.disabled { opacity: 0.5; }
 .budget-options { display: grid; grid-template-columns: 1fr 1fr; gap: var(--ct-space-xs); }
 .budget-option {
   display: flex; align-items: center; gap: 6px; padding: 8px 10px;
   border-radius: var(--ct-radius-sm); border: 1px solid var(--ct-border-color);
   cursor: pointer; transition: all var(--ct-transition-fast); font-size: var(--ct-text-sm);
 }
+.budget-option.disabled { cursor: not-allowed; }
 .budget-option:hover { border-color: var(--ct-color-primary); }
+.budget-option.disabled:hover { border-color: var(--ct-border-color); }
 .budget-option.active { border-color: var(--ct-color-primary); background: var(--ct-color-primary-light); }
 .budget-option input[type="radio"] { display: none; }
 .budget-label { font-weight: var(--ct-font-medium); }

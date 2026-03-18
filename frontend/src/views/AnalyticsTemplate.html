@@ -25,7 +25,8 @@
             </div>
           </div>
           <div class="profile-stats">
-            <span class="stat-tag">分析周期：近30天</span>
+            <span class="stat-tag">默认近30天，可切换时间范围</span>
+            <span class="stat-tag">{{ currentRangeLabel }}</span>
             <span class="stat-tag">消息总数 {{ stats?.totalMessages || 0 }}</span>
           </div>
         </div>
@@ -314,20 +315,38 @@
 
   <!-- TAB 3: Content & Timeline -->
   <div v-show="currentTab === 'content' && selectedConversationId" class="tab-content fade-in">
+    <DateRangeFilter
+      :dates="dates"
+      :loading="loading"
+      @update:dates="onDatesChange"
+      @refresh="loadAnalysis"
+      @export="handleExport"
+    />
+
     <div class="ct-grid-1-1 affinity-dashboard content-timeline-dashboard">
       <div class="col-main">
         <div class="main-content">
           <CtCard title="情感走势图" class="chart-card">
-            <EmotionLineChart :timeseries="analysis.timeseries" />
+            <div v-if="analysis.timeseries.length === 0" class="empty-state inline-empty-state">
+              <div class="empty-icon">-</div>
+              <p>趋势数据暂未生成</p>
+              <p class="empty-hint">当前时间范围内缺少足够的情感样本，可以尝试扩大日期范围。</p>
+            </div>
+            <EmotionLineChart v-else :timeseries="analysis.timeseries" />
           </CtCard>
           <CtCard title="关键词云" class="chart-card">
-            <WordCloud :words="analysis.wordcloud" @word-click="onWordSelect" />
+            <div v-if="analysis.wordcloud.length === 0" class="empty-state inline-empty-state">
+              <div class="empty-icon">-</div>
+              <p>当前时间范围内没有可用文本消息</p>
+              <p class="empty-hint">可以切换到近30天、半年或全部历史查看。</p>
+            </div>
+            <WordCloud v-else :words="analysis.wordcloud" @select="onWordSelect" />
           </CtCard>
         </div>
       </div>
       <div class="col-side">
         <div class="subject-section">
-          <SubjectCard :subject="subject" />
+          <SubjectCard :subject="subject" :has-analysis="hasContentAnalysis" />
         </div>
         <div class="ct-card timeline-section-card">
           <div class="section-header">

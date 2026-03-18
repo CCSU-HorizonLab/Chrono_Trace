@@ -15,7 +15,8 @@
         <div class="stat"><span class="k">最高日</span><span class="v">{{ subject!.stats!.maxDay || '-' }}</span></div>
         <div class="stat"><span class="k">最低日</span><span class="v">{{ subject!.stats!.minDay || '-' }}</span></div>
       </div>
-      <div v-else class="empty">暂无统计</div>
+      <div v-if="subject?.stats && !hasAnalysis" class="empty-hint">当前时间范围无分析数据</div>
+      <div v-else-if="!subject" class="empty">暂无统计</div>
     </div>
   </div>
 </template>
@@ -24,7 +25,7 @@
 type SubjectStats = { msgCount: number; avgScore: number; maxDay?: string; minDay?: string }
 export type Subject = { id?: string | number; name: string; avatar?: string; stats?: SubjectStats }
 
-defineProps<{ subject?: Subject }>()
+defineProps<{ subject?: Subject; hasAnalysis?: boolean }>()
 </script>
 
 <style scoped>
@@ -73,4 +74,5 @@ defineProps<{ subject?: Subject }>()
 .stat .k { color: var(--ct-text-secondary); font-size: var(--ct-text-xs); }
 .stat .v { font-weight: var(--ct-font-bold); color: var(--ct-text-primary); }
 .empty { color: var(--ct-text-secondary); margin-top: var(--ct-space-sm); }
+.empty-hint { color: var(--ct-text-tertiary); margin-top: var(--ct-space-md); font-size: var(--ct-text-sm); }
 </style>

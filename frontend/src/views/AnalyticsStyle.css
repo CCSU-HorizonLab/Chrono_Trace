@@ -177,6 +177,18 @@
   border-radius: var(--ct-radius-full);
 }
 
+.tab-content .inline-empty-state {
+  min-height: 280px;
+  margin-top: 0;
+  padding: var(--ct-space-2xl) var(--ct-space-xl);
+  border-radius: var(--ct-radius-xl);
+}
+
+.tab-content .inline-empty-state .empty-icon {
+  font-size: 40px;
+  margin-bottom: var(--ct-space-md);
+}
+
 /* --- Affinity Dashboard (Two Column) --- */
 .affinity-dashboard {
   flex: 1;

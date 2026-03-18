@@ -21,7 +21,16 @@ import CtButton from '@/components/base/CtButton.vue'
 
 type Conversation = { id: number; name: string; username: string; message_count: number; last_message_time: string }
 type Session = { id: number; start_time: number; end_time: number; duration: number; message_count: number; initiator: string; messages: any[] }
-type TimeseriesPoint = { ts: string; score: number; positive?: number; negative?: number }
+type TimeseriesPoint = {
+    ts: string
+    score: number
+    positive?: number
+    neutral?: number
+    negative?: number
+    msgCount?: number
+    userScore?: number
+    otherScore?: number
+}
 type SubjectStats = { msgCount: number; avgScore: number; maxDay?: string; minDay?: string }
 type Subject = { id?: string | number; name: string; avatar?: string; stats?: SubjectStats }
 type Analysis = { subject?: Subject; timeseries: TimeseriesPoint[]; wordcloud: { word: string; weight: number }[] }
@@ -75,6 +84,17 @@ export default {
         let wordCountChartInstance: echarts.ECharts | null = null
 
         const stats = ref<{ totalMessages: number; avgSentiment: number; activeDays: number; sessionCount: number } | null>(null)
+        const currentRangeLabel = computed(() => {
+            if (!dates.from || !dates.to) return '默认近30天，可切换时间范围'
+            return `${dates.from} 至 ${dates.to}`
+        })
+        const hasContentAnalysis = computed(() => {
+            return Boolean(subject.value?.stats && (
+                (subject.value.stats.msgCount || 0) > 0 ||
+                analysis.wordcloud.length > 0 ||
+                analysis.timeseries.length > 0
+            ))
+        })
 
         const currentContactName = computed(() => {
             if (!selectedConversationId.value) return '选择联系人'
@@ -121,6 +141,17 @@ export default {
             from.setDate(to.getDate() - (days - 1))
             dates.from = from.toISOString().slice(0, 10)
             dates.to = to.toISOString().slice(0, 10)
+        }
+
+        function refreshSummaryStats() {
+            const timeseries = analysis.timeseries || []
+            const totalSentiment = timeseries.reduce((sum: number, p: any) => sum + (p.score || 0), 0)
+            stats.value = {
+                totalMessages: subject.value?.stats?.msgCount || 0,
+                avgSentiment: timeseries.length ? parseFloat((totalSentiment / timeseries.length).toFixed(2)) : 0,
+                activeDays: timeseries.length,
+                sessionCount: sessions.value.length
+            }
         }
 
         async function loadConversations() {
@@ -195,15 +226,7 @@ export default {
                 analysis.timeseries = res?.timeseries ?? []
                 analysis.wordcloud = res?.wordcloud ?? []
                 subject.value = res?.subject ?? subject.value
-                if (analysis.timeseries.length > 0) {
-                    const totalSentiment = analysis.timeseries.reduce((sum: number, p: any) => sum + (p.score || 0), 0)
-                    stats.value = {
-                        totalMessages: subject.value?.stats?.msgCount || 0,
-                        avgSentiment: parseFloat((totalSentiment / analysis.timeseries.length).toFixed(2)),
-                        activeDays: analysis.timeseries.length,
-                        sessionCount: sessions.value.length
-                    }
-                }
+                refreshSummaryStats()
             } catch (e: any) {
                 error.value = e?.message || '加载失败'
             } finally { loading.value = false }
@@ -224,6 +247,7 @@ export default {
                     }))
                     await nextTick()
                     if (currentTab.value === 'features' || currentTab.value === 'content') renderTimelineChart()
+                    refreshSummaryStats()
                 }
             } catch (e) { console.error(e) } finally { loadingSessions.value = false }
         }
@@ -278,7 +302,10 @@ export default {
                         })
                     }
                     hasFeatures.value = true
-                    await loadFeatureData()
+                    await Promise.all([
+                        loadFeatureData(),
+                        loadSessions()
+                    ])
                 }
 
                 // Stage 2: Affinity Model
@@ -308,6 +335,10 @@ export default {
                                     ) {
                                         analysisResult.value = scores
                                     }
+                                    await Promise.all([
+                                        loadAnalysis(),
+                                        loadSessions()
+                                    ])
                                     resolve()
                                 } else if (prog.status === 'failed') {
                                     clearInterval(timer); reject(new Error(prog.error))
@@ -380,7 +411,7 @@ export default {
             const dailyData: Record<string, { total: number, user: number, other: number }> = {}
             let maxCount = 0
             sessions.value.forEach(s => {
-                const d = new Date(s.start_time * 1000)
+                const d = new Date(s.start_time)
                 const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
                 if (!dailyData[dateStr]) dailyData[dateStr] = { total: 0, user: 0, other: 0 }
                 dailyData[dateStr].total += s.message_count
@@ -437,7 +468,7 @@ export default {
         function handleResize() { responseTimeChartInstance?.resize(); timelineChartInstance?.resize(); wordCountChartInstance?.resize() }
 
         onMounted(async () => {
-            if (!dates.from || !dates.to) setDefaultDates(7)
+            if (!dates.from || !dates.to) setDefaultDates(30)
             await loadConversations()
             window.addEventListener('resize', handleResize)
         })
@@ -452,7 +483,7 @@ export default {
             analysisResult, displayScore, showKeywordsDialog, showContextForm, pendingAnalysisForce, isGlobalAnalyzing, globalProgressPercent, globalProgressStep,
             hasFeatures, hasCachedAffinityAnalysis, featureStats, responseTimeStats, initiativeStats, wordCountsStats,
             responseTimeChart, timelineChart, wordCountChart, stats, currentContactName, hasPreferenceKeywords, allDimensions,
-            circumference, strokeDashoffset, formatNumber, formatTime, onConversationChange, onDatesChange, handleExport, handleStartGlobalAnalysis, handleContextSaved, handleKeywordsUpdated,
+            currentRangeLabel, hasContentAnalysis, circumference, strokeDashoffset, formatNumber, formatTime, onConversationChange, onDatesChange, handleExport, handleStartGlobalAnalysis, handleContextSaved, handleKeywordsUpdated,
             getScoreColor, scrollToDetails, handlePreferenceDisabledClick, onWordSelect, loadAnalysis, loadSessions
         }
     }

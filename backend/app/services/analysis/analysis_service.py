@@ -1,5 +1,5 @@
 """历史数据分析服务"""
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
 from ...db.connection import get_db
 from .wordcloud_generator import WordCloudGenerator
@@ -145,6 +145,7 @@ class AnalysisService:
             # 4. 生成词云（使用清洗后的文本）
             cleaned_texts = [msg["cleaned_content"] for msg in preprocessed["cleaned_messages"]]
             wordcloud = self.wordcloud_gen.generate(cleaned_texts, top_n=50)
+            sentiment_summary = self._build_sentiment_timeseries(conversation_id, from_ts, to_ts)
             
             logger.debug(f"[DEBUG] 生成词云: {len(wordcloud)} 个词")
             
@@ -159,12 +160,12 @@ class AnalysisService:
                         "validMsgCount": valid_count,
                         "avgCharCount": preprocessed["stats"]["avg_char_count"],
                         "avgWordCount": preprocessed["stats"]["avg_word_count"],
-                        "avgScore": 0.0,  # 暂不实现情绪分析
-                        "maxDay": None,
-                        "minDay": None
+                        "avgScore": sentiment_summary["avg_score"],
+                        "maxDay": sentiment_summary["max_day"],
+                        "minDay": sentiment_summary["min_day"]
                     }
                 },
-                "timeseries": [],  # 暂不实现
+                "timeseries": sentiment_summary["timeseries"],
                 "wordcloud": wordcloud
             }
         
@@ -179,6 +180,85 @@ class AnalysisService:
                 "wordcloud": []
             }
     
+    def _build_sentiment_timeseries(
+        self,
+        conversation_id: int,
+        from_ts: int,
+        to_ts: int
+    ) -> Dict[str, Any]:
+        """按天聚合情感趋势数据"""
+        cursor = get_db().execute("""
+            SELECT
+                DATE(m.timestamp, 'unixepoch', 'localtime') AS day,
+                AVG(sc.intensity) AS avg_score,
+                SUM(CASE WHEN sc.polarity = 1 THEN 1 ELSE 0 END) AS positive_count,
+                SUM(CASE WHEN sc.polarity = 0 THEN 1 ELSE 0 END) AS neutral_count,
+                SUM(CASE WHEN sc.polarity = -1 THEN 1 ELSE 0 END) AS negative_count,
+                COUNT(*) AS msg_count,
+                AVG(CASE WHEN m.is_sender = 1 THEN sc.intensity END) AS user_score,
+                AVG(CASE WHEN m.is_sender = 0 THEN sc.intensity END) AS other_score
+            FROM messages m
+            INNER JOIN sentiment_cache sc ON sc.message_id = m.id
+            WHERE m.conversation_id = ?
+                AND m.message_type = 1
+                AND m.timestamp BETWEEN ? AND ?
+                AND m.content IS NOT NULL
+                AND TRIM(m.content) != ''
+            GROUP BY day
+            ORDER BY day ASC
+        """, (conversation_id, from_ts, to_ts))
+
+        rows = cursor.fetchall()
+        if not rows:
+            return {
+                "timeseries": [],
+                "avg_score": 0.0,
+                "max_day": None,
+                "min_day": None
+            }
+
+        timeseries: List[Dict[str, Any]] = []
+        total_weighted_score = 0.0
+        total_count = 0
+        max_row: Optional[Tuple[str, float]] = None
+        min_row: Optional[Tuple[str, float]] = None
+
+        for row in rows:
+            day = str(row[0])
+            avg_score = float(row[1] or 0.0)
+            positive_count = int(row[2] or 0)
+            neutral_count = int(row[3] or 0)
+            negative_count = int(row[4] or 0)
+            msg_count = int(row[5] or 0)
+            user_score = None if row[6] is None else round(float(row[6]), 3)
+            other_score = None if row[7] is None else round(float(row[7]), 3)
+
+            timeseries.append({
+                "ts": day,
+                "score": round(avg_score, 3),
+                "positive": positive_count,
+                "neutral": neutral_count,
+                "negative": negative_count,
+                "msgCount": msg_count,
+                "userScore": user_score,
+                "otherScore": other_score
+            })
+
+            total_weighted_score += avg_score * msg_count
+            total_count += msg_count
+
+            if max_row is None or avg_score > max_row[1]:
+                max_row = (day, avg_score)
+            if min_row is None or avg_score < min_row[1]:
+                min_row = (day, avg_score)
+
+        return {
+            "timeseries": timeseries,
+            "avg_score": round(total_weighted_score / total_count, 3) if total_count else 0.0,
+            "max_day": max_row[0] if max_row else None,
+            "min_day": min_row[0] if min_row else None
+        }
+
     def _get_subject_info(self, conversation_id: int) -> Optional[Dict]:
         """获取会话详情"""
         cursor = get_db().execute("""

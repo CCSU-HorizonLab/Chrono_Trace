@@ -1,59 +1,54 @@
 <template>
   <div class="fp">
-    <!-- 顶部拖拽/控制栏 -->
     <header class="fp-header">
       <div class="fp-brand">
-        <span class="fp-logo">⏱</span>
+        <span class="fp-logo">CT</span>
         <span class="fp-title">Chrono Trace</span>
       </div>
       <div class="fp-controls">
         <span class="fp-status-dot" :class="{ active: realtimeState.isMonitoring }"></span>
-        <button class="fp-btn icon" @click="exitFloating" title="退出悬浮模式">✕</button>
+        <button class="fp-btn icon" @click="exitFloating" title="退出悬浮模式">×</button>
       </div>
     </header>
 
     <div v-if="connectionLost" class="fp-connection-lost">
-      <span>⚠️ 连接已断开，等待重新连接…</span>
-      <button class="fp-btn small" @click="retryConnection">🔄 重试</button>
+      <span>连接已断开，等待重新连接…</span>
+      <button class="fp-btn small" @click="retryConnection">重试</button>
     </div>
 
-    <!-- ChatWith 超时/错误提示 -->
     <div v-if="chatError && !connectionLost" class="fp-chat-error">
-      <span>⚠️ {{ chatError }}</span>
+      <span>{{ chatError }}</span>
       <button class="fp-btn small" @click="exitFloating">重新开始</button>
     </div>
 
-    <!-- 监听对象信息 -->
     <div class="fp-contact">
       <div class="fp-avatar">{{ profileInitial }}</div>
       <div class="fp-contact-info">
         <div class="fp-contact-name">{{ profile.name || realtimeState.talkerName || '未选择' }}</div>
-        <div class="fp-contact-tags" v-if="profile.personality_tags?.length">
+        <div v-if="profile.personality_tags?.length" class="fp-contact-tags">
           <span v-for="t in profile.personality_tags.slice(0, 4)" :key="t" class="fp-tag">{{ t }}</span>
         </div>
       </div>
-      <button class="fp-btn icon" @click="profileExpanded = !profileExpanded"
-        :title="profileExpanded ? '收起画像' : '展开画像'">
+      <button class="fp-btn icon" @click="profileExpanded = !profileExpanded" :title="profileExpanded ? '收起画像' : '展开画像'">
         {{ profileExpanded ? '▲' : '▼' }}
       </button>
     </div>
 
-    <!-- 画像详情（折叠） -->
     <div v-show="profileExpanded" class="fp-profile-detail">
       <div v-if="profile.chat_style" class="fp-detail-row">
-        <span class="fp-detail-icon">💬</span>
+        <span class="fp-detail-icon">画像</span>
         <span>{{ profile.chat_style }}</span>
       </div>
       <div v-if="profile.interests?.length" class="fp-detail-row">
-        <span class="fp-detail-icon">🎯</span>
+        <span class="fp-detail-icon">兴趣</span>
         <span>{{ profile.interests.join('、') }}</span>
       </div>
       <div v-if="profile.communication_tips" class="fp-detail-row">
-        <span class="fp-detail-icon">📌</span>
+        <span class="fp-detail-icon">提示</span>
         <span>{{ profile.communication_tips }}</span>
       </div>
       <div v-if="profile.relationship_note" class="fp-detail-row">
-        <span class="fp-detail-icon">💡</span>
+        <span class="fp-detail-icon">关系</span>
         <span>{{ profile.relationship_note }}</span>
       </div>
       <div v-if="!profile.chat_style && !profileLoading" class="fp-detail-empty">
@@ -62,64 +57,77 @@
       </div>
     </div>
 
-    <!-- 情绪曲线图 -->
     <div class="fp-section">
       <div class="fp-section-hd">
-        <span>📈 情绪曲线</span>
+        <span>情绪曲线</span>
         <span v-if="emotionSummary" class="fp-trend-badge" :class="emotionSummary.trend">
-          {{ emotionSummary.trend === 'positive' ? '😊 正面' : emotionSummary.trend === 'negative' ? '😟 负面' : '😐 中性' }}
+          {{ emotionSummary.trend === 'positive' ? '正面' : emotionSummary.trend === 'negative' ? '负面' : '中性' }}
         </span>
       </div>
-      <div class="fp-chart-wrap" ref="chartRef"></div>
+      <div ref="chartRef" class="fp-chart-wrap"></div>
     </div>
 
-    <!-- 设置栏（紧凑） -->
     <div class="fp-settings">
       <div class="fp-seg">
-        <button v-for="m in triggerModes" :key="m.value"
+        <button
+          v-for="m in triggerModes"
+          :key="m.value"
           :class="{ active: triggerMode === m.value }"
-          @click="setTriggerMode(m.value)">{{ m.label }}</button>
+          @click="setTriggerMode(m.value)"
+        >
+          {{ m.label }}
+        </button>
       </div>
       <div class="fp-seg">
-        <button v-for="i in intents" :key="i.value"
+        <button
+          v-for="i in intents"
+          :key="i.value"
           :class="{ active: intent === i.value }"
-          @click="setIntent(i.value)">{{ i.icon }}</button>
+          @click="setIntent(i.value)"
+        >
+          {{ i.icon }}
+        </button>
       </div>
     </div>
 
-    <!-- 继续上次指导横幅 -->
     <div v-if="lastThread" class="fp-thread-banner" @click="loadLastThread">
-      <span class="fp-thread-icon">📎</span>
+      <span class="fp-thread-icon">续聊</span>
       <div class="fp-thread-info">
-        <span class="fp-thread-label">继续上次指导</span>
+        <span class="fp-thread-label">继续上次引导</span>
         <span class="fp-thread-summary">{{ lastThread.summary }}</span>
       </div>
       <button class="fp-btn tiny" @click.stop="lastThread = null">×</button>
     </div>
 
-    <!-- AI 建议列表 -->
-    <div class="fp-section fp-suggestions" ref="suggestionsRef">
+    <div ref="suggestionsRef" class="fp-section fp-suggestions">
       <div class="fp-section-hd">
-        <span>💡 AI 建议</span>
-        <span class="fp-badge" v-if="allSuggestions.length">{{ allSuggestions.length }}</span>
-        <button class="fp-btn small" @click="showContext = !showContext"
-          :class="{ active: showContext }" title="查看 AI 参考的聊天记录">
-          📝 记录
+        <span>AI 建议</span>
+        <span v-if="allSuggestions.length" class="fp-badge">{{ allSuggestions.length }}</span>
+        <button
+          class="fp-btn small"
+          :class="{ active: showContext }"
+          title="查看 AI 参考的聊天记录"
+          @click="showContext = !showContext"
+        >
+          参考记录
         </button>
-        <button class="fp-btn small" @click="manualGenerate" :disabled="loading">
-          {{ loading ? '生成中…' : '🎯 生成' }}
+        <button class="fp-btn small" :disabled="loading" @click="manualGenerate">
+          {{ loading ? '生成中…' : '生成' }}
         </button>
       </div>
 
-      <!-- AI 参考聊天记录面板 -->
       <div v-show="showContext" class="fp-context-panel">
-        <div class="fp-context-title">🔍 AI 参考的最近聊天（{{ contextUsed.length }} 条）</div>
+        <div class="fp-context-title">AI 参考的最近聊天（{{ contextUsed.length }} 条）</div>
         <div v-if="!contextUsed.length" class="fp-context-empty">尚未生成建议，暂无参考记录</div>
-        <div v-for="(msg, i) in contextUsed" :key="i" class="fp-context-msg"
-          :class="{ self: msg.sender === '我' }">
+        <div
+          v-for="(msg, i) in contextUsed"
+          :key="i"
+          class="fp-context-msg"
+          :class="{ self: msg.sender === '我' }"
+        >
           <span class="fp-context-sender">{{ msg.sender }}</span>
           <span class="fp-context-text">{{ msg.content }}</span>
-          <span class="fp-context-time" v-if="msg.timestamp">{{ formatMsgTime(msg.timestamp) }}</span>
+          <span v-if="msg.timestamp" class="fp-context-time">{{ formatMsgTime(msg.timestamp) }}</span>
         </div>
       </div>
 
@@ -129,44 +137,42 @@
 
       <div v-if="loading" class="fp-loading">
         <div class="fp-loading-bar"></div>
-        <span>AI 正在思考 (已思考 {{ thinkingSeconds }} 秒)…</span>
+        <span>AI 正在思考（{{ thinkingSeconds }} 秒）</span>
       </div>
 
-      <!-- 自包含列表滚动区 -->
       <div class="fp-suggestions-list">
-        <!-- 建议卡片及对话气泡混排 -->
-        <div v-for="s in allSuggestions" :key="s.id || s._tempId"
+        <div
+          v-for="s in allSuggestions"
+          :key="s.id || s._tempId"
           :class="{
             'fp-suggestion-card': s._type === 'suggestion',
             [s.severity || 'medium']: s._type === 'suggestion',
             'fp-chat-bubble': s._type === 'chat',
-            'user': s._type === 'chat' && s.role === 'user',
-            'ai': s._type === 'chat' && s.role === 'ai'
-          }">
-          
-          <!-- AI 建议形态 -->
+            user: s._type === 'chat' && s.role === 'user',
+            ai: s._type === 'chat' && s.role === 'ai'
+          }"
+        >
           <template v-if="s._type === 'suggestion'">
             <div class="fp-sug-header" @click="toggleSuggestion(s)">
               <span class="fp-sug-icon">{{ getTriggerIcon(s.trigger_type) }}</span>
               <span class="fp-sug-summary">{{ s.summary }}</span>
-              <span class="fp-sug-time">{{ s.created_at ? formatMsgTime(s.created_at) : '刚才' }}</span>
-              <span class="fp-sug-expand">{{ isSuggestionExpanded(s) ? '▼' : '▶' }}</span>
-        </div>
-        <div v-show="isSuggestionExpanded(s)" class="fp-sug-body">
-          <div v-if="s.thought_process" class="fp-thought-process">
-            <details>
-              <summary>🤔 AI 思考过程</summary>
-              <div class="fp-thought-content">{{ s.thought_process }}</div>
-            </details>
-          </div>
-            <div v-for="(sp, i) in s.speeches" :key="i" class="fp-speech-item">
-              <span class="fp-speech-text">{{ sp }}</span>
-              <button class="fp-btn copy" @click="copyText(sp)">📋</button>
+              <span class="fp-sug-time">{{ s.created_at ? formatMsgTime(s.created_at) : '刚刚' }}</span>
+              <span class="fp-sug-expand">{{ isSuggestionExpanded(s) ? '▲' : '▼' }}</span>
             </div>
-          </div>
+            <div v-show="isSuggestionExpanded(s)" class="fp-sug-body">
+              <div v-if="s.thought_process" class="fp-thought-process">
+                <details>
+                  <summary>AI 思考过程</summary>
+                  <div class="fp-thought-content">{{ s.thought_process }}</div>
+                </details>
+              </div>
+              <div v-for="(sp, i) in s.speeches" :key="i" class="fp-speech-item">
+                <span class="fp-speech-text">{{ sp }}</span>
+                <button class="fp-btn copy" @click="copyText(sp)">复制</button>
+              </div>
+            </div>
           </template>
 
-          <!-- 对话历史气泡形态 -->
           <template v-else-if="s._type === 'chat'">
             <div class="fp-chat-content">
               <span class="fp-chat-avatar">{{ s.role === 'user' ? '我' : 'AI' }}</span>
@@ -178,45 +184,41 @@
       </div>
     </div>
 
-    <!-- 用户交互输入区 -->
     <div class="fp-input-area">
-      <!-- 快捷按钮 -->
       <transition-group name="fp-quick-list" tag="div" class="fp-quick-btns">
-        <button v-for="q in quickPrompts" :key="q"
-          class="fp-quick-btn"
-          @click="sendQuickPrompt(q)">{{ q }}</button>
+        <button v-for="q in quickPrompts" :key="q" class="fp-quick-btn" @click="sendQuickPrompt(q)">
+          {{ q }}
+        </button>
       </transition-group>
       <div class="fp-input-row">
         <input
           v-model="userInput"
           type="text"
-          :placeholder="llmError ? '⚠️ 模型暂时不可用' : '告诉 AI 你的想法…'"
+          :placeholder="llmError ? '模型暂时不可用' : '告诉 AI 你的想法…'"
           :disabled="!!llmError"
           @keydown.enter.exact.prevent="sendUserContext"
         />
-        <button class="fp-btn send" @click="sendUserContext" :disabled="!userInput.trim() || loading || !!llmError">
-          ↑
+        <button class="fp-btn send" :disabled="!userInput.trim() || loading || !!llmError" @click="sendUserContext">
+          发送
         </button>
       </div>
-      <!-- 模型选择栏 -->
-      <div class="fp-model-row" v-if="llmModels.length > 0">
-        <span class="fp-model-label">⚙️ 模型:</span>
+      <div v-if="llmModels.length > 0" class="fp-model-row">
+        <span class="fp-model-label">模型</span>
         <select v-model="activeModelId" class="fp-model-select" @change="switchModel">
           <option v-for="m in llmModels" :key="m.id" :value="m.id" :disabled="disabledModels.has(m.id)">
             {{ m.name }} {{ disabledModels.has(m.id) ? '(不可用)' : '' }}
           </option>
         </select>
-        <div v-if="llmError" class="fp-model-error" :title="llmError">❌ {{ llmError }}</div>
+        <div v-if="llmError" class="fp-model-error" :title="llmError">{{ llmError }}</div>
       </div>
     </div>
   </div>
 
-  <!-- 画像生成弹窗（简化版） -->
   <Teleport to="body">
     <div v-if="showProfileDialog" class="fp-modal-overlay" @click.self="showProfileDialog = false">
       <div class="fp-modal">
-        <div class="fp-modal-title">🧠 生成画像</div>
-        <div class="fp-modal-desc">分析「{{ realtimeState.talkerName }}」的历史聊天</div>
+        <div class="fp-modal-title">生成画像</div>
+        <div class="fp-modal-desc">分析「{{ realtimeState.talkerName }}」的历史聊天。</div>
         <div class="fp-modal-actions">
           <button class="fp-btn" @click="showProfileDialog = false">取消</button>
           <button class="fp-btn primary" @click="generateProfile">确认</button>
@@ -1542,7 +1544,7 @@ async function loadLastThread() {
 
 .fp-chart-wrap {
   width: 100%;
-  height: 140px;
+  height: 80px;
   padding: 0 4px;
 }
 
@@ -2013,5 +2015,104 @@ async function loadLastThread() {
   font-size: 11px;
   font-weight: 600;
   white-space: nowrap;
+}
+
+/* FloatingPanel visual refresh */
+.fp {
+  background: radial-gradient(circle at top right, rgba(124,58,237,.08), transparent 32%), radial-gradient(circle at bottom left, rgba(14,165,233,.1), transparent 26%), linear-gradient(180deg, var(--ct-bg-primary) 0%, var(--ct-bg-secondary) 100%);
+}
+.fp-header,.fp-contact,.fp-profile-detail,.fp-section,.fp-settings,.fp-thread-banner,.fp-input-area,.fp-connection-lost,.fp-chat-error {
+  margin-left: 14px; margin-right: 14px;
+}
+.fp-header,.fp-contact,.fp-profile-detail,.fp-section,.fp-settings,.fp-thread-banner,.fp-input-area {
+  background: rgba(255,255,255,.84);
+  border: 1px solid rgba(148,163,184,.16);
+  box-shadow: 0 18px 40px rgba(15,23,42,.07);
+  backdrop-filter: blur(18px);
+}
+.fp-header { margin-top: 8px; padding: 8px 12px; border-radius: 16px; }
+.fp-logo { display:inline-flex; align-items:center; justify-content:center; width:26px; height:26px; border-radius:8px; background:linear-gradient(135deg,var(--ct-color-primary),#8b5cf6); color:#fff; box-shadow:0 8px 18px rgba(91,107,224,.24); font-size: 13px; font-weight: bold; }
+.fp-title { font-size: 16px; letter-spacing: -.02em; color: var(--ct-text-primary); }
+.fp-status-dot { width:10px; height:10px; box-shadow:0 0 0 5px rgba(148,163,184,.12); }
+.fp-status-dot.active { box-shadow:0 0 0 5px rgba(16,185,129,.14); }
+.fp-contact { margin-top: 8px; padding: 10px 12px; border-radius: 16px; gap: 10px; }
+.fp-avatar { width:38px; height:38px; border-radius:12px; background:linear-gradient(135deg,var(--ct-color-primary),#0ea5e9); font-size:16px; font-weight: bold; box-shadow:0 8px 18px rgba(91,107,224,.24); }
+.fp-contact-name { font-size: 15px; font-weight: 700; }
+.fp-contact-tags { gap: 4px; margin-top: 4px; }
+.fp-tag { padding: 3px 8px; background: rgba(91,107,224,.1); font-size: 10px; font-weight: 600; }
+.fp-profile-detail { margin-top: 8px; padding: 10px 12px; border-radius: 16px; background: rgba(255,255,255,.78); }
+.fp-detail-row { padding: 8px 10px; border-radius: 12px; background: rgba(248,250,252,.84); border: 1px solid rgba(148,163,184,.12); }
+.fp-detail-row + .fp-detail-row { margin-top: 6px; }
+.fp-detail-empty { padding: 10px; border-radius: 12px; background: rgba(248,250,252,.84); }
+.fp-section { margin-top: 8px; border-radius: 16px; border-bottom: none; overflow: hidden; }
+.fp-section-hd { padding: 10px 12px 8px; font-size: 12px; font-weight: 700; letter-spacing: .04em; }
+.fp > .fp-section:not(.fp-suggestions) { flex: 0 0 auto; }
+.fp-chart-wrap { height: 80px; padding: 0 6px 8px; }
+.fp-settings { margin-top: 8px; padding: 8px 12px; border-radius: 16px; border-bottom: none; flex: 0 0 auto; }
+.fp-seg { padding: 3px; border-radius: 12px; background: rgba(241,245,249,.9); border: 1px solid rgba(148,163,184,.14); }
+.fp-seg button { min-height: 32px; border-radius: 10px; font-size: 12px; font-weight: 600; }
+.fp-seg button.active { background: linear-gradient(135deg,var(--ct-color-primary),#7c3aed); box-shadow: 0 6px 16px rgba(91,107,224,.2); }
+.fp-thread-banner { margin-top: 8px; padding: 8px 12px; border-radius: 16px; flex: 0 0 auto; }
+.fp-thread-icon { display:inline-flex; align-items:center; justify-content:center; min-width:32px; height:32px; border-radius:10px; background:linear-gradient(135deg,rgba(91,107,224,.16),rgba(14,165,233,.16)); color:var(--ct-color-primary); font-size:11px; font-weight:700; }
+.fp-thread-label { font-weight: 700; }
+.fp-suggestions {
+  margin-top: 8px;
+  border-radius: 16px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+.fp-suggestions .fp-section-hd { background: rgba(255,255,255,.94); backdrop-filter: blur(18px); border-bottom: 1px solid rgba(148,163,184,.12); }
+.fp-context-panel,.fp-empty,.fp-loading { margin: 0 16px 12px; border-radius: 16px; background: rgba(248,250,252,.84); border: 1px solid rgba(148,163,184,.12); }
+.fp-empty,.fp-loading { padding: 18px 16px; }
+.fp-suggestions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  padding: 0 16px 16px;
+}
+.fp-suggestion-card,.fp-chat-bubble { border: 1px solid rgba(148,163,184,.14); border-radius: 18px; background: rgba(248,250,252,.84); box-shadow: 0 8px 22px rgba(15,23,42,.04); }
+.fp-sug-header { display:grid; grid-template-columns:auto 1fr auto auto; gap:10px; align-items:center; padding:14px 16px; }
+.fp-sug-body { padding: 0 16px 16px; background: transparent; }
+.fp-thought-process { border-radius: 14px; background: rgba(255,255,255,.72); border: 1px dashed rgba(148,163,184,.2); }
+.fp-speech-item { gap: 10px; padding: 12px; background: rgba(255,255,255,.72); border-radius: 14px; }
+.fp-chat-bubble { padding: 12px 14px; }
+.fp-chat-bubble.user { background: linear-gradient(135deg,var(--ct-color-primary),#4f46e5); border-color: transparent; box-shadow: 0 12px 24px rgba(91,107,224,.2); }
+.fp-chat-avatar { min-width: 30px; height: 22px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+.fp-input-area {
+  margin-top: 8px;
+  margin-bottom: 10px;
+  padding: 8px 10px 10px;
+  border-radius: 16px;
+  flex: 0 0 auto;
+  position: sticky;
+  bottom: 10px;
+  z-index: 3;
+}
+.fp-quick-btns { gap: 8px; padding-bottom: 10px; }
+.fp-quick-btn { padding: 8px 12px; border: 1px solid rgba(148,163,184,.16); background: rgba(248,250,252,.86); font-size: 12px; }
+.fp-input-row { gap: 10px; padding: 0; }
+.fp-input-row input { min-height: 44px; padding: 0 14px; border-radius: 14px; background: rgba(255,255,255,.88); }
+.fp-model-row { margin-top: 10px; padding: 0 2px; }
+.fp-model-select { height: 34px; border-radius: 10px; background: rgba(255,255,255,.88); }
+.fp-btn.icon { width: 34px; height: 34px; border-radius: 12px; }
+.fp-btn.small { min-height: 32px; padding: 0 12px; border-radius: 999px; background: rgba(255,255,255,.84); font-size: 12px; font-weight: 600; }
+.fp-btn.copy { min-width: 42px; height: 28px; padding: 0 10px; border-radius: 10px; border: 1px solid rgba(148,163,184,.16); color: var(--ct-text-secondary); font-weight: 600; background: rgba(255,255,255,.6); opacity: 1; transition: all 0.2s; }
+.fp-btn.copy:hover { background: rgba(91,107,224,.1); color: var(--ct-color-primary); border-color: rgba(91,107,224,.3); }
+.fp-btn.send { min-width: 72px; height: 44px; border-radius: 14px; background: linear-gradient(135deg,var(--ct-color-primary),#7c3aed); font-size: 13px; box-shadow: 0 12px 24px rgba(91,107,224,.22); }
+.fp-btn.primary { background: linear-gradient(135deg,var(--ct-color-primary),#7c3aed); }
+.fp-modal-overlay { background: rgba(15,23,42,.36); backdrop-filter: blur(8px); }
+.fp-modal { background: rgba(255,255,255,.96); border-radius: 22px; width: min(320px, calc(100vw - 32px)); }
+.fp-modal-title { font-family: var(--ct-font-display); font-size: 24px; }
+@media (max-width: 860px) {
+  .fp-settings { grid-template-columns: 1fr; }
+  .fp-chat-bubble { max-width: 100%; }
+}
+@media (max-width: 640px) {
+  .fp-header,.fp-contact,.fp-settings,.fp-input-row,.fp-model-row,.fp-connection-lost,.fp-chat-error { flex-wrap: wrap; }
+  .fp-sug-header { grid-template-columns: auto 1fr auto; }
+  .fp-sug-time { grid-column: 2 / 3; }
+  .fp-chart-wrap { height: 96px; }
 }
 </style>

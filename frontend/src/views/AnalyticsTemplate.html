@@ -310,12 +310,64 @@
       <!-- Row 4: Calendar -->
       <div class="features-row-4">
         <CtCard class="feature-calendar-card">
-          <div class="calendar-layout">
-            <div class="calendar-btn-plus">+</div>
+          <div class="calendar-header">
             <div class="calendar-text">
-              <h3>活跃日历 (开发中)</h3>
-              <p>每日对话活跃度热力分布</p>
+              <h3>活跃日历</h3>
+              <p>按天展示会话强度分布，颜色越深代表互动越集中。</p>
             </div>
+            <label class="calendar-year-picker">
+              <span>年份</span>
+              <select :value="activityCalendar.year" @change="handleActivityYearChange">
+                <option v-for="year in activityCalendar.years" :key="year" :value="year">{{ year }}</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="calendar-summary-card">
+            <div class="calendar-summary-grid">
+              <div class="calendar-summary-item">
+                <span class="calendar-summary-label">活跃天数</span>
+                <strong>{{ activityCalendar.summary.active_days }}</strong>
+              </div>
+              <div class="calendar-summary-item">
+                <span class="calendar-summary-label">总消息数</span>
+                <strong>{{ formatNumber(activityCalendar.summary.total_messages) }}</strong>
+              </div>
+              <div class="calendar-summary-item">
+                <span class="calendar-summary-label">当前连续活跃</span>
+                <strong>{{ activityCalendar.summary.current_streak }} 天</strong>
+              </div>
+              <div class="calendar-summary-item">
+                <span class="calendar-summary-label">最长连续活跃</span>
+                <strong>{{ activityCalendar.summary.longest_streak }} 天</strong>
+              </div>
+              <div class="calendar-summary-item peak-day">
+                <span class="calendar-summary-label">峰值日期</span>
+                <strong>{{ activityCalendar.summary.peak_day?.date || '--' }}</strong>
+                <em v-if="activityCalendar.summary.peak_day">
+                  {{ activityCalendar.summary.peak_day.message_count }} 条消息 / {{ activityCalendar.summary.peak_day.session_count }} 场会话
+                </em>
+              </div>
+            </div>
+          </div>
+
+          <div v-if="activityCalendar.entries.length" class="calendar-chart-shell">
+            <div class="calendar-legend">
+              <span>低活跃</span>
+              <div class="calendar-legend-scale">
+                <i></i>
+                <i></i>
+                <i></i>
+                <i></i>
+                <i></i>
+              </div>
+              <span>高活跃</span>
+            </div>
+            <div ref="activityCalendarChart" class="calendar-chart"></div>
+          </div>
+
+          <div v-else class="calendar-empty">
+            当前年份暂无活跃记录
           </div>
         </CtCard>
       </div>

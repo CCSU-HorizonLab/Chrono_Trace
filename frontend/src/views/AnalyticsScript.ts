@@ -34,6 +34,37 @@ type TimeseriesPoint = {
 type SubjectStats = { msgCount: number; avgScore: number; maxDay?: string; minDay?: string }
 type Subject = { id?: string | number; name: string; avatar?: string; stats?: SubjectStats }
 type Analysis = { subject?: Subject; timeseries: TimeseriesPoint[]; wordcloud: { word: string; weight: number }[] }
+type ActivityCalendarEntry = {
+    date: string
+    message_count: number
+    session_count: number
+    active_duration_seconds: number
+    user_initiated_sessions: number
+    other_initiated_sessions: number
+    activity_score: number
+    activity_level: number
+    first_time: string
+    last_time: string
+}
+type ActivityCalendarSummary = {
+    active_days: number
+    total_messages: number
+    current_streak: number
+    longest_streak: number
+    peak_day: null | {
+        date: string
+        message_count: number
+        session_count: number
+        activity_score: number
+    }
+}
+type ActivityCalendarData = {
+    year: number
+    years: number[]
+    entries: ActivityCalendarEntry[]
+    summary: ActivityCalendarSummary
+    max_activity_score: number
+}
 
 export default {
     components: {
@@ -83,13 +114,26 @@ export default {
         })
         const initiativeStats = ref({ totalSessions: 0, userInitiatedSessions: 0, otherInitiatedSessions: 0, initiativeRate: 0, interpretation: '' })
         const wordCountsStats = ref({ userCharCount: 0, otherCharCount: 0, charRatio: 0, interpretation: '' })
+        const activityCalendar = ref<ActivityCalendarData>({
+            year: new Date().getFullYear(),
+            years: [new Date().getFullYear()],
+            entries: [],
+            summary: {
+                active_days: 0,
+                total_messages: 0,
+                current_streak: 0,
+                longest_streak: 0,
+                peak_day: null
+            },
+            max_activity_score: 0
+        })
 
         // Chart Refs
         const responseTimeChart = ref<HTMLDivElement | null>(null)
-        const timelineChart = ref<HTMLDivElement | null>(null)
+        const activityCalendarChart = ref<HTMLDivElement | null>(null)
         const wordCountChart = ref<HTMLDivElement | null>(null)
         let responseTimeChartInstance: echarts.ECharts | null = null
-        let timelineChartInstance: echarts.ECharts | null = null
+        let activityCalendarChartInstance: echarts.ECharts | null = null
         let wordCountChartInstance: echarts.ECharts | null = null
 
         const stats = ref<{ totalMessages: number; avgSentiment: number; activeDays: number; sessionCount: number } | null>(null)
@@ -238,9 +282,26 @@ export default {
                 const res = await api.get_response_times(selectedConversationId.value)
                 if (res.success && res.data && res.data.count > 0) {
                     hasFeatures.value = true
-                    await loadFeatureData()
+                    await Promise.all([
+                        loadFeatureData(),
+                        loadActivityCalendar()
+                    ])
                 }
             } catch (e) { }
+        }
+
+        async function loadActivityCalendar(year?: number) {
+            if (!selectedConversationId.value) return
+            try {
+                const res = await api.get_activity_calendar(selectedConversationId.value, year)
+                if (res.success && res.data) {
+                    activityCalendar.value = res.data
+                    if (currentTab.value === 'features') {
+                        await nextTick()
+                        renderActivityCalendar()
+                    }
+                }
+            } catch (e) { console.error(e) }
         }
 
         async function loadAnalysis() {
@@ -273,8 +334,6 @@ export default {
                         end_time: s.end_time * 1000,
                         duration: (s.end_time || 0) - (s.start_time || 0)
                     }))
-                    await nextTick()
-                    if (currentTab.value === 'features' || currentTab.value === 'content') renderTimelineChart()
                     refreshSummaryStats()
                 }
             } catch (e) { console.error(e) } finally { loadingSessions.value = false }
@@ -332,7 +391,8 @@ export default {
                     hasFeatures.value = true
                     await Promise.all([
                         loadFeatureData(),
-                        loadSessions()
+                        loadSessions(),
+                        loadActivityCalendar()
                     ])
                 }
 
@@ -365,7 +425,8 @@ export default {
                                     }
                                     await Promise.all([
                                         loadAnalysis(),
-                                        loadSessions()
+                                        loadSessions(),
+                                        loadActivityCalendar(activityCalendar.value.year)
                                     ])
                                     resolve()
                                 } else if (prog.status === 'failed') {
@@ -435,28 +496,86 @@ export default {
             })
         }
 
-        function renderTimelineChart() {
-            if (!timelineChart.value || !sessions.value.length) return
-            if (timelineChartInstance) timelineChartInstance.dispose()
-            timelineChartInstance = echarts.init(timelineChart.value)
-            const dailyData: Record<string, { total: number, user: number, other: number }> = {}
-            let maxCount = 0
-            sessions.value.forEach(s => {
-                const d = new Date(s.start_time)
-                const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-                if (!dailyData[dateStr]) dailyData[dateStr] = { total: 0, user: 0, other: 0 }
-                dailyData[dateStr].total += s.message_count
-                if (s.initiator === 'user') dailyData[dateStr].user += s.message_count; else dailyData[dateStr].other += s.message_count
-                maxCount = Math.max(maxCount, dailyData[dateStr].total)
-            })
-            const data = Object.entries(dailyData).map(([date, stats]) => [date, stats.total, stats.user, stats.other])
-            const years = [...new Set(Object.keys(dailyData).map(d => d.split('-')[0]))]
-            const displayYear = years.length > 0 ? parseInt(years[years.length - 1]) : new Date().getFullYear()
+        function renderActivityCalendar() {
+            if (!activityCalendarChart.value || !activityCalendar.value.entries.length) return
+            if (activityCalendarChartInstance) activityCalendarChartInstance.dispose()
+            activityCalendarChartInstance = echarts.init(activityCalendarChart.value)
 
-            timelineChartInstance.setOption({
-                calendar: { top: 60, left: 40, right: 20, bottom: 20, cellSize: ['auto', 14], range: displayYear, itemStyle: { borderColor: 'transparent', color: 'rgba(255,255,255,0.02)' }, dayLabel: { color: '#64748b' }, monthLabel: { color: '#64748b' } },
-                visualMap: { min: 0, max: Math.max(maxCount, 1), orient: 'horizontal', right: 20, top: 10, inRange: { color: ['rgba(255,255,255,0.05)', '#818cf8', '#312e81'] } },
-                series: [{ type: 'heatmap', coordinateSystem: 'calendar', data: data, itemStyle: { borderRadius: 3 } }]
+            const calendarData = activityCalendar.value.entries.map((entry) => ({
+                value: [entry.date, entry.activity_score],
+                entry
+            }))
+
+            activityCalendarChartInstance.setOption({
+                backgroundColor: 'transparent',
+                tooltip: {
+                    trigger: 'item',
+                    backgroundColor: 'rgba(15, 23, 42, 0.96)',
+                    borderColor: 'rgba(148, 163, 184, 0.18)',
+                    textStyle: { color: '#e2e8f0' },
+                    formatter: (params: any) => {
+                        const entry = params.data?.entry as ActivityCalendarEntry | undefined
+                        if (!entry) return ''
+                        return [
+                            `<div style="font-weight:600;margin-bottom:6px;">${entry.date}</div>`,
+                            `<div>活跃分数：${entry.activity_score}</div>`,
+                            `<div>消息数：${entry.message_count}</div>`,
+                            `<div>会话数：${entry.session_count}</div>`,
+                            `<div>活跃时长：${formatTime(entry.active_duration_seconds)}</div>`,
+                            `<div>时间范围：${entry.first_time} - ${entry.last_time}</div>`,
+                            `<div>我发起 ${entry.user_initiated_sessions} / 对方发起 ${entry.other_initiated_sessions}</div>`
+                        ].join('')
+                    }
+                },
+                visualMap: {
+                    min: 0,
+                    max: Math.max(activityCalendar.value.max_activity_score, 1),
+                    show: false,
+                    inRange: {
+                        color: ['#eef2ff', '#c7d2fe', '#818cf8', '#4f46e5', '#312e81']
+                    }
+                },
+                calendar: {
+                    top: 34,
+                    left: 28,
+                    right: 22,
+                    bottom: 20,
+                    range: `${activityCalendar.value.year}`,
+                    cellSize: ['auto', 18],
+                    splitLine: { show: false },
+                    itemStyle: {
+                        color: 'rgba(99, 102, 241, 0.06)',
+                        borderWidth: 2,
+                        borderColor: '#ffffff'
+                    },
+                    yearLabel: { show: false },
+                    dayLabel: {
+                        firstDay: 1,
+                        nameMap: ['日', '一', '二', '三', '四', '五', '六'],
+                        color: '#94a3b8',
+                        margin: 14
+                    },
+                    monthLabel: {
+                        nameMap: 'cn',
+                        color: '#64748b',
+                        fontWeight: 600,
+                        margin: 18
+                    }
+                },
+                series: [{
+                    type: 'heatmap',
+                    coordinateSystem: 'calendar',
+                    data: calendarData,
+                    itemStyle: {
+                        borderRadius: 4
+                    },
+                    emphasis: {
+                        itemStyle: {
+                            shadowBlur: 8,
+                            shadowColor: 'rgba(79, 70, 229, 0.35)'
+                        }
+                    }
+                }]
             })
         }
 
@@ -472,11 +591,22 @@ export default {
             })
         }
 
+        async function handleActivityYearChange(event: Event) {
+            const target = event.target as HTMLSelectElement | null
+            if (!target) return
+            const nextYear = Number(target.value)
+            if (!Number.isFinite(nextYear)) return
+            await loadActivityCalendar(nextYear)
+        }
+
         watch(() => currentTab.value, async (newVal) => {
             await nextTick()
             if (newVal === 'features') {
-                if (hasFeatures.value) { renderResponseTimeChart(); renderWordCountChart(); }
-                if (sessions.value.length) renderTimelineChart()
+                if (hasFeatures.value) {
+                    renderResponseTimeChart()
+                    renderWordCountChart()
+                    if (activityCalendar.value.entries.length) renderActivityCalendar()
+                }
             }
         })
 
@@ -496,7 +626,7 @@ export default {
         const scrollToDetails = (idSuffix: string) => document.getElementById(`detail-${idSuffix}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
         const handlePreferenceDisabledClick = () => { showKeywordsDialog.value = true }
         function onWordSelect(word: string) { console.debug('selected', word) }
-        function handleResize() { responseTimeChartInstance?.resize(); timelineChartInstance?.resize(); wordCountChartInstance?.resize() }
+        function handleResize() { responseTimeChartInstance?.resize(); activityCalendarChartInstance?.resize(); wordCountChartInstance?.resize() }
 
         onMounted(async () => {
             if (!dates.from || !dates.to) setDefaultDates(30)
@@ -506,16 +636,16 @@ export default {
 
         onUnmounted(() => {
             window.removeEventListener('resize', handleResize)
-            responseTimeChartInstance?.dispose(); timelineChartInstance?.dispose(); wordCountChartInstance?.dispose()
+            responseTimeChartInstance?.dispose(); activityCalendarChartInstance?.dispose(); wordCountChartInstance?.dispose()
         })
 
         return {
             currentTab, conversations, selectedConversationId, dates, loading, loadingSessions, error, analysis, subject, sessions,
             analysisResult, displayScore, showKeywordsDialog, showContextForm, pendingAnalysisForce, isGlobalAnalyzing, globalProgressPercent, globalProgressStep,
-            hasFeatures, hasCachedAffinityAnalysis, featureStats, responseTimeStats, initiativeStats, wordCountsStats,
-            responseTimeChart, timelineChart, wordCountChart, stats, currentContactName, hasPreferenceKeywords, allDimensions,
+            hasFeatures, hasCachedAffinityAnalysis, featureStats, responseTimeStats, initiativeStats, wordCountsStats, activityCalendar,
+            responseTimeChart, activityCalendarChart, wordCountChart, stats, currentContactName, hasPreferenceKeywords, allDimensions,
             currentRangeLabel, hasContentAnalysis, circumference, strokeDashoffset, formatNumber, formatTime, getResponseTimeLabel, getResponseTimePercent, onConversationChange, onDatesChange, handleExport, handleStartGlobalAnalysis, handleContextSaved, handleKeywordsUpdated,
-            getScoreColor, scrollToDetails, handlePreferenceDisabledClick, onWordSelect, loadAnalysis, loadSessions
+            getScoreColor, scrollToDetails, handlePreferenceDisabledClick, onWordSelect, loadAnalysis, loadSessions, handleActivityYearChange
         }
     }
 }

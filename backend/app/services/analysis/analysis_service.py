@@ -1,6 +1,6 @@
 """历史数据分析服务"""
 from typing import Dict, Any, List, Optional, Tuple
-from datetime import datetime
+from datetime import datetime, timedelta
 from ...db.connection import get_db
 from .wordcloud_generator import WordCloudGenerator
 from .preprocessing_service import PreprocessingService
@@ -589,6 +589,140 @@ class AnalysisService:
                 },
                 "by_session": []
             }
+
+    def get_activity_calendar(self, conversation_id: int, year: Optional[int] = None) -> Dict[str, Any]:
+        """
+        获取按天聚合的活跃日历数据。
+
+        Args:
+            conversation_id: 对话ID
+            year: 可选年份；不传时默认使用最新有数据的年份
+        """
+        cursor = get_db().execute("""
+            SELECT start_time, end_time, message_count, initiator
+            FROM sessions
+            WHERE conversation_id = ?
+            ORDER BY start_time ASC
+        """, (conversation_id,))
+
+        rows = cursor.fetchall()
+        if not rows:
+            default_year = year or datetime.now().year
+            return {
+                "year": default_year,
+                "years": [default_year],
+                "entries": [],
+                "summary": {
+                    "active_days": 0,
+                    "total_messages": 0,
+                    "current_streak": 0,
+                    "longest_streak": 0,
+                    "peak_day": None
+                },
+                "max_activity_score": 0
+            }
+
+        daily_all: Dict[str, Dict[str, Any]] = {}
+        years = set()
+
+        for row in rows:
+            start_time = row[0]
+            end_time = row[1]
+            message_count = row[2] or 0
+            initiator = row[3] or "other"
+            start_dt = datetime.fromtimestamp(start_time)
+            date_str = start_dt.strftime("%Y-%m-%d")
+            years.add(start_dt.year)
+
+            if date_str not in daily_all:
+                daily_all[date_str] = {
+                    "date": date_str,
+                    "message_count": 0,
+                    "session_count": 0,
+                    "active_duration_seconds": 0,
+                    "first_timestamp": start_time,
+                    "last_timestamp": end_time or start_time,
+                    "user_initiated_sessions": 0,
+                    "other_initiated_sessions": 0,
+                }
+
+            day = daily_all[date_str]
+            day["message_count"] += message_count
+            day["session_count"] += 1
+            day["active_duration_seconds"] += max(0, (end_time or start_time) - start_time)
+            day["first_timestamp"] = min(day["first_timestamp"], start_time)
+            day["last_timestamp"] = max(day["last_timestamp"], end_time or start_time)
+
+            if initiator == "user":
+                day["user_initiated_sessions"] += 1
+            else:
+                day["other_initiated_sessions"] += 1
+
+        available_years = sorted(years)
+        selected_year = year if year in years else available_years[-1]
+
+        selected_entries = [
+            entry for entry in daily_all.values()
+            if int(entry["date"][:4]) == selected_year
+        ]
+        selected_entries.sort(key=lambda item: item["date"])
+
+        max_messages = max((entry["message_count"] for entry in selected_entries), default=0)
+        max_sessions = max((entry["session_count"] for entry in selected_entries), default=0)
+        max_duration = max((entry["active_duration_seconds"] for entry in selected_entries), default=0)
+
+        max_activity_score = 0
+        for entry in selected_entries:
+            message_ratio = entry["message_count"] / max_messages if max_messages else 0
+            session_ratio = entry["session_count"] / max_sessions if max_sessions else 0
+            duration_ratio = entry["active_duration_seconds"] / max_duration if max_duration else 0
+            raw_score = (session_ratio * 0.45) + (message_ratio * 0.4) + (duration_ratio * 0.15)
+            activity_score = round(raw_score * 100)
+
+            entry["activity_score"] = activity_score
+            entry["activity_level"] = min(4, max(1, int(raw_score * 4 + 0.9999)))
+            entry["first_time"] = datetime.fromtimestamp(entry["first_timestamp"]).strftime("%H:%M")
+            entry["last_time"] = datetime.fromtimestamp(entry["last_timestamp"]).strftime("%H:%M")
+            max_activity_score = max(max_activity_score, activity_score)
+
+        active_dates = [datetime.strptime(entry["date"], "%Y-%m-%d").date() for entry in selected_entries]
+        longest_streak = 0
+        running_streak = 0
+        previous_date = None
+
+        for current_date in active_dates:
+            if previous_date and current_date == previous_date + timedelta(days=1):
+                running_streak += 1
+            else:
+                running_streak = 1
+            longest_streak = max(longest_streak, running_streak)
+            previous_date = current_date
+
+        peak_entry = None
+        if selected_entries:
+            peak_entry = max(
+                selected_entries,
+                key=lambda entry: (entry["activity_score"], entry["message_count"], entry["session_count"])
+            )
+
+        return {
+            "year": selected_year,
+            "years": available_years,
+            "entries": selected_entries,
+            "summary": {
+                "active_days": len(selected_entries),
+                "total_messages": sum(entry["message_count"] for entry in selected_entries),
+                "current_streak": running_streak if active_dates else 0,
+                "longest_streak": longest_streak,
+                "peak_day": {
+                    "date": peak_entry["date"],
+                    "message_count": peak_entry["message_count"],
+                    "session_count": peak_entry["session_count"],
+                    "activity_score": peak_entry["activity_score"]
+                } if peak_entry else None
+            },
+            "max_activity_score": max_activity_score
+        }
 
     def reanalyze(self, conversation_id: int) -> Dict[str, Any]:
         """

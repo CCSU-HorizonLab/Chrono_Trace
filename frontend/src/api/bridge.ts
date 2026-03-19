@@ -53,6 +53,7 @@ type PyWebViewApi = {
   get_response_times: (conversation_id: number) => Promise<any>
   get_initiative_stats: (conversation_id: number) => Promise<any>
   get_word_counts: (conversation_id: number, by_session?: boolean) => Promise<any>
+  get_activity_calendar: (conversation_id: number, year?: number) => Promise<any>
   reanalyze: (conversation_id: number) => Promise<any>
   // 悬浮窗管理
   enter_floating_mode: () => Promise<any>

@@ -1810,6 +1810,27 @@ class Bridge:
                 "error": str(e)
             }
 
+    def get_activity_calendar(self, conversation_id: int, year: Optional[int] = None) -> dict:
+        """
+        获取互动活跃日历数据。
+        """
+        try:
+            from ..services.analysis.analysis_service import AnalysisService
+
+            service = AnalysisService()
+            data = service.get_activity_calendar(conversation_id, year)
+
+            return {
+                "success": True,
+                "data": data
+            }
+        except Exception as e:
+            logger.error(f"[Bridge] 获取活跃日历失败: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
+
     def reanalyze(self, conversation_id: int) -> dict:
         """
         重新分析对话（删除旧数据+重新提取特征）

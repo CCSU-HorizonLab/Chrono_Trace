@@ -35,6 +35,7 @@ export interface ResponseTimeStats {
   max: number | null
   stddev: number | null
   abnormal_count: number
+  distribution?: Record<string, number>
 }
 
 /**

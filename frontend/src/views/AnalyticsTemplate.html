@@ -165,7 +165,7 @@
 
   <!-- TAB 2: Features -->
   <div v-show="currentTab === 'features' && selectedConversationId" class="tab-content fade-in">
-    <div v-if="!analysisResult && !isGlobalAnalyzing" class="empty-state">
+    <div v-if="!hasFeatures && !isGlobalAnalyzing" class="empty-state">
       <div class="empty-icon">📈</div>
       <p>点击"开始全面分析"获取深度互动特征分析。</p>
       <p class="empty-hint">💡 互动特征包含：回响响应分布、主动性分析、话语权比例等客观指标</p>
@@ -178,7 +178,7 @@
       <p class="empty-hint">💡 我们正在处理特征提取和模型推理</p>
     </div>
 
-    <div v-if="analysisResult && !isGlobalAnalyzing" class="features-layout">
+    <div v-if="hasFeatures && !isGlobalAnalyzing" class="features-layout">
       <!-- Row 1: 4 small stat cards -->
       <div class="features-row-1">
         <CtCard class="feature-stat-card">
@@ -246,18 +246,27 @@
 
       <!-- Row 2: 3 chart cards -->
       <div class="features-row-2">
-        <CtCard class="feature-chart-card">
+        <CtCard class="feature-chart-card full-width-card">
           <h3 class="chart-card-title">响应时间区间</h3>
           <div class="horizontal-bars">
             <div class="h-bar-row" v-for="key in responseTimeStats.distributionKeys" :key="key" v-show="responseTimeStats.distribution?.[key]">
-              <span class="h-bar-label" style="width: 50px">{{ key }}</span>
-              <div class="h-bar-track"><div class="h-bar-fill" :style="{ width: ((responseTimeStats.distribution?.[key] || 0) / (responseTimeStats.count || 1) * 100) + '%' }"></div></div>
-              <span class="h-bar-value">{{ ((responseTimeStats.distribution?.[key] || 0) / (responseTimeStats.count || 1) * 100).toFixed(1) }}%</span>
+              <div class="h-bar-label">
+                <span class="h-bar-label-main">{{ getResponseTimeLabel(key) }}</span>
+                <span class="h-bar-label-sub">{{ responseTimeStats.distribution?.[key] || 0 }} 次</span>
+              </div>
+              <div class="h-bar-track-wrap">
+                <div class="h-bar-track">
+                  <div class="h-bar-fill" :style="{ width: ((responseTimeStats.distribution?.[key] || 0) / (responseTimeStats.count || 1) * 100) + '%' }"></div>
+                </div>
+              </div>
+              <span class="h-bar-value">{{ getResponseTimePercent(key) }}</span>
             </div>
             <div v-if="!responseTimeStats.count" style="font-size:12px;color:var(--ct-text-tertiary);text-align:center;">暂无数据</div>
           </div>
         </CtCard>
+      </div>
 
+      <div class="features-row-3">
         <CtCard class="feature-chart-card">
           <h3 class="chart-card-title">主动性分析</h3>
           <div class="initiative-content">
@@ -298,8 +307,8 @@
         </CtCard>
       </div>
 
-      <!-- Row 3: Calendar -->
-      <div class="features-row-3">
+      <!-- Row 4: Calendar -->
+      <div class="features-row-4">
         <CtCard class="feature-calendar-card">
           <div class="calendar-layout">
             <div class="calendar-btn-plus">+</div>

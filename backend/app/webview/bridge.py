@@ -1604,54 +1604,14 @@ class Bridge:
             }
         """
         try:
-            from ..db.connection import get_db
+            from ..services.analysis.analysis_service import AnalysisService
 
-            db = get_db()
-
-            # 查询统计
-            cursor = db.execute("""
-                SELECT
-                    COUNT(*) as count,
-                    AVG(response_time_seconds) as avg,
-                    MIN(response_time_seconds) as min,
-                    MAX(response_time_seconds) as max
-                FROM response_times
-                WHERE conversation_id = ? AND is_abnormal = 0
-            """, (conversation_id,))
-
-            row = cursor.fetchone()
-
-            # 计算中位数
-            cursor2 = db.execute("""
-                SELECT response_time_seconds
-                FROM response_times
-                WHERE conversation_id = ? AND is_abnormal = 0
-                ORDER BY response_time_seconds
-            """, (conversation_id,))
-
-            values = [r["response_time_seconds"] for r in cursor2.fetchall()]
-            median = values[len(values) // 2] if values else None
-
-            # 查询异常数量
-            abnormal_cursor = db.execute("""
-                SELECT COUNT(*) as abnormal_count
-                FROM response_times
-                WHERE conversation_id = ? AND is_abnormal = 1
-            """, (conversation_id,))
-
-            abnormal_row = abnormal_cursor.fetchone()
+            service = AnalysisService()
+            stats = service.get_response_time_stats(conversation_id)
 
             return {
                 "success": True,
-                "data": {
-                    "count": row["count"],
-                    "avg": round(row["avg"], 1) if row["avg"] else None,
-                    "median": median,
-                    "min": row["min"],
-                    "max": row["max"],
-                    "stddev": 0,  # 简化处理
-                    "abnormal_count": abnormal_row["abnormal_count"]
-                }
+                "data": stats
             }
         except Exception as e:
             logger.error(f"[Bridge] 获取响应时间统计失败: {e}")

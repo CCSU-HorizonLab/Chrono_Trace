@@ -71,7 +71,16 @@ export default {
         // Features State
         const hasFeatures = ref(false)
         const featureStats = ref({ avgResponseTime: 0, medianResponseTime: 0, initiativeRate: 0, wordRatio: 0 })
-        const responseTimeStats = ref({ avg: 0, median: 0, min: 0, max: 0, abnormalCount: 0, count: 0, distribution: null as Record<string, number> | null, distributionKeys: ['<1m', '1m-10m', '10m-30m', '30m-1h', '1h-6h', '6h-24h', '>1d'] })
+        const responseTimeStats = ref({
+            avg: 0,
+            median: 0,
+            min: 0,
+            max: 0,
+            abnormal_count: 0,
+            count: 0,
+            distribution: null as Record<string, number> | null,
+            distributionKeys: ['<1m', '1m-10m', '10m-30m', '30m-1h', '1h-6h', '6h-24h', '>1d']
+        })
         const initiativeStats = ref({ totalSessions: 0, userInitiatedSessions: 0, otherInitiatedSessions: 0, initiativeRate: 0, interpretation: '' })
         const wordCountsStats = ref({ userCharCount: 0, otherCharCount: 0, charRatio: 0, interpretation: '' })
 
@@ -133,6 +142,25 @@ export default {
             if (seconds < 3600) return `${Math.round(seconds / 60)}m`
             if (seconds < 86400) return `${(seconds / 3600).toFixed(1)}h`
             return `${(seconds / 86400).toFixed(1)}d`
+        }
+
+        function getResponseTimeLabel(rangeKey: string): string {
+            const labelMap: Record<string, string> = {
+                '<1m': '1分钟内',
+                '1m-10m': '1到10分钟',
+                '10m-30m': '10到30分钟',
+                '30m-1h': '30分钟到1小时',
+                '1h-6h': '1到6小时',
+                '6h-24h': '6到24小时',
+                '>1d': '1天以上'
+            }
+            return labelMap[rangeKey] || rangeKey
+        }
+
+        function getResponseTimePercent(rangeKey: string): string {
+            const count = responseTimeStats.value.distribution?.[rangeKey] || 0
+            const total = responseTimeStats.value.count || 1
+            return `${((count / total) * 100).toFixed(1)}%`
         }
 
         function setDefaultDates(days = 7) {
@@ -367,10 +395,13 @@ export default {
                     api.get_word_counts(selectedConversationId.value, false)
                 ])
                 if (rtData.success && rtData.data) {
-                    responseTimeStats.value = rtData.data
+                    responseTimeStats.value = {
+                        ...responseTimeStats.value,
+                        ...rtData.data,
+                        distribution: rtData.data.distribution || responseTimeStats.value.distribution
+                    }
                     featureStats.value.avgResponseTime = rtData.data.avg
                     featureStats.value.medianResponseTime = rtData.data.median
-                    if (rtData.data.distribution) responseTimeStats.value.distribution = rtData.data.distribution
                     if (currentTab.value === 'features') await nextTick(() => renderResponseTimeChart())
                 }
                 if (iniData.success && iniData.data) {
@@ -483,7 +514,7 @@ export default {
             analysisResult, displayScore, showKeywordsDialog, showContextForm, pendingAnalysisForce, isGlobalAnalyzing, globalProgressPercent, globalProgressStep,
             hasFeatures, hasCachedAffinityAnalysis, featureStats, responseTimeStats, initiativeStats, wordCountsStats,
             responseTimeChart, timelineChart, wordCountChart, stats, currentContactName, hasPreferenceKeywords, allDimensions,
-            currentRangeLabel, hasContentAnalysis, circumference, strokeDashoffset, formatNumber, formatTime, onConversationChange, onDatesChange, handleExport, handleStartGlobalAnalysis, handleContextSaved, handleKeywordsUpdated,
+            currentRangeLabel, hasContentAnalysis, circumference, strokeDashoffset, formatNumber, formatTime, getResponseTimeLabel, getResponseTimePercent, onConversationChange, onDatesChange, handleExport, handleStartGlobalAnalysis, handleContextSaved, handleKeywordsUpdated,
             getScoreColor, scrollToDetails, handlePreferenceDisabledClick, onWordSelect, loadAnalysis, loadSessions
         }
     }

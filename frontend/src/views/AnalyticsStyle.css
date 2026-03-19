@@ -476,7 +476,13 @@
 
 .features-row-2 {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--ct-space-lg);
+}
+
+.features-row-3 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--ct-space-lg);
 }
 
@@ -500,41 +506,65 @@
 .horizontal-bars {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
   margin-top: var(--ct-space-md);
 }
 
 .h-bar-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(120px, 180px) minmax(0, 1fr) 64px;
   align-items: center;
-  gap: 12px;
+  gap: 16px;
 }
 
 .h-bar-label {
-  width: 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.h-bar-label-main {
   font-size: var(--ct-text-sm);
-  color: var(--ct-text-secondary);
+  color: var(--ct-text-primary);
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.h-bar-label-sub {
+  font-size: 11px;
+  color: var(--ct-text-tertiary);
+  line-height: 1;
+}
+
+.h-bar-track-wrap {
+  display: flex;
+  align-items: center;
+  min-width: 0;
 }
 
 .h-bar-track {
   flex: 1;
-  height: 8px;
-  background: var(--ct-bg-tertiary);
-  border-radius: 4px;
+  height: 10px;
+  background: linear-gradient(180deg, rgba(136, 132, 216, 0.08), rgba(136, 132, 216, 0.02));
+  border-radius: 999px;
   overflow: hidden;
+  position: relative;
 }
 
 .h-bar-fill {
   height: 100%;
-  background: #8884d8; /* Main purple */
-  border-radius: 4px;
+  background: linear-gradient(90deg, #7c71df 0%, #9a90ef 100%);
+  border-radius: 999px;
+  min-width: 6px;
 }
 
 .h-bar-value {
-  width: 30px;
+  width: 64px;
   text-align: right;
   font-size: var(--ct-text-sm);
   color: var(--ct-text-secondary);
+  font-weight: 600;
 }
 
 .initiative-content {
@@ -676,8 +706,8 @@
   color: var(--ct-text-tertiary);
 }
 
-/* Row 3 */
-.features-row-3 {
+/* Row 4 */
+.features-row-4 {
   display: flex;
   margin-bottom: var(--ct-space-xl);
 }
@@ -892,14 +922,30 @@
     .response-stats {
         grid-template-columns: repeat(2, 1fr);
     }
+
+    .h-bar-row {
+        grid-template-columns: minmax(96px, 136px) minmax(0, 1fr) 56px;
+        gap: 12px;
+    }
 }
 
 @media (max-width: 480px) {
 
     .features-row-1,
+    .features-row-3,
     .stats-grid,
     .response-stats,
     .word-stats-grid {
         grid-template-columns: 1fr;
+    }
+
+    .h-bar-row {
+        grid-template-columns: 1fr;
+        gap: 8px;
+    }
+
+    .h-bar-value {
+        width: auto;
+        text-align: left;
     }
 }

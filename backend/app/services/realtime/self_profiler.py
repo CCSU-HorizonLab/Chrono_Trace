@@ -47,6 +47,8 @@ PROFILE_SYSTEM_PROMPT = """你是一个语言风格与行为克隆分析专家�
 
 关注点：
 1. **语言风格识别**：我（本用户）喜欢发短句还是连发长段落？标点符号使用习惯（是否完全不加标点？或者喜欢连用波浪号~~~、感叹号!!!）？有什么特定的口头禅或语气词（哈、呢、哦、卧槽、啊这）？
+   - 额外提取 3-5 个最具代表性的句式模板，例如“哈哈[内容]”“就[事情]而已”“[动词]一下就好了”。
+   - 说明我更偏向直问、反问还是陈述，是否习惯多条短消息连续发送，以及通常一条消息大约多少字。
 2. **共有记忆与事实（身份方向性极其重要！）**：在这段聊天中透露的事实和共有经历。
    - ❗ **必须明确标注“谁做了什么”，严禁混淆主语**。例如应写“我给对方买了裙子”，绝不能写成“对方给我买了裙子”。
    - ❗ **必须标注大致时间段**（如“最近一周”“约一个月前”“很久以前”）。记忆的新鲜度很重要。
@@ -63,9 +65,10 @@ PROFILE_SYSTEM_PROMPT = """你是一个语言风格与行为克隆分析专家�
 {
   "typing_style": "我的详细打字排版与语言风格特征（例如：极简直白，从不打标点，喜欢用'哈哈'垫底）",
   "frequent_catchphrases": ["常用词或语气词1", "常用词或语气词2"],
+  "sentence_patterns": ["句式模板1", "句式模板2", "句式模板3"],
   "shared_memories": ["我给对方买了裙子(最近一周)", "对方上周末来找我玩(约两周前)", "我养了只猫(很久以前提过)"],
   "attitude_and_role": "在这段特定关系中我扮演的角色与沟通态度（如：冷淡/敷衍/热情讨好/爹味说教等）",
-  "do_and_donts": "如果让你来完全模仿我说话，必须做的事和绝对不能做的事"
+  "do_and_donts": "如果让你来完全模仿我说话，必须做的事和绝对不能做的事，并明确写出建议话术应控制在多少字范围"
 }"""
 
 
@@ -432,6 +435,23 @@ class SelfProfiler:
         except Exception as e:
             _print(f"[SelfProfiler] 跳过字数统计: {e}")
 
+        # 用户消息长度风格
+        try:
+            row = conn.execute(
+                'SELECT COUNT(*) as cnt, AVG(LENGTH(content)) as avg_len '
+                'FROM messages '
+                'WHERE conversation_id = ? AND is_sender = 1 '
+                'AND message_type = 1 AND content IS NOT NULL AND content != ""',
+                (conversation_id,)
+            ).fetchone()
+            if row and row['cnt'] > 0:
+                features['user_msg_style'] = {
+                    'msg_count': row['cnt'],
+                    'avg_chars_per_msg': round(row['avg_len'] or 0, 1),
+                }
+        except Exception as e:
+            _print(f"[SelfProfiler] 跳过用户消息长度统计: {e}")
+
         # 好感度评分
         try:
             row = conn.execute(
@@ -604,6 +624,13 @@ class SelfProfiler:
                 f"比值(对方/我)={wc['ratio']}"
             )
 
+        user_msg_style = features.get('user_msg_style')
+        if user_msg_style:
+            feat_lines.append(
+                f"- 我方文本消息: {user_msg_style['msg_count']}条, "
+                f"平均每条约 {user_msg_style['avg_chars_per_msg']} 字"
+            )
+
         if feat_lines:
             parts.append("")
             parts.append("【互动特征】")
@@ -758,6 +785,9 @@ class SelfProfiler:
             for field in required:
                 if field not in data:
                     _print(f"[SelfProfiler] ⚠️ 缺少字段: {field}")
+
+            if 'sentence_patterns' not in data or not isinstance(data.get('sentence_patterns'), list):
+                data['sentence_patterns'] = []
 
             return data
         except (json.JSONDecodeError, KeyError) as e:

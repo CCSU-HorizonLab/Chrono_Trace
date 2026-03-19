@@ -58,13 +58,51 @@
     </div>
 
     <div class="fp-section">
-      <div class="fp-section-hd">
-        <span>情绪曲线</span>
-        <span v-if="emotionSummary" class="fp-trend-badge" :class="emotionSummary.trend">
-          {{ emotionSummary.trend === 'positive' ? '正面' : emotionSummary.trend === 'negative' ? '负面' : '中性' }}
-        </span>
+      <div class="fp-section-hd fp-section-hd-charts">
+        <div class="fp-section-title-group">
+          <span>情绪分析</span>
+          <span v-if="emotionSummary" class="fp-trend-badge" :class="emotionSummary.trend">
+            {{ emotionSummary.trend === 'positive' ? '正面' : emotionSummary.trend === 'negative' ? '负面' : '中性' }}
+          </span>
+        </div>
+        <button class="fp-btn small" :class="{ active: chartSettingsOpen }" @click="chartSettingsOpen = !chartSettingsOpen">
+          {{ chartSettingsOpen ? '收起设置' : '图表设置' }}
+        </button>
       </div>
-      <div ref="chartRef" class="fp-chart-wrap"></div>
+
+      <div v-show="chartSettingsOpen" class="fp-chart-settings-panel">
+        <label v-for="item in chartConfigItems" :key="item.key" class="fp-chart-toggle">
+          <input :checked="chartVisibility[item.key]" type="checkbox" @change="toggleChartVisibility(item.key)" />
+          <span>{{ item.label }}</span>
+        </label>
+      </div>
+
+      <div class="fp-chart-grid">
+        <div v-if="chartVisibility.emotion_curve" class="fp-chart-item">
+          <div class="fp-chart-label">对方情绪曲线</div>
+          <div ref="emotionChartRef" class="fp-chart-wrap"></div>
+        </div>
+        <div v-if="chartVisibility.msg_frequency" class="fp-chart-item">
+          <div class="fp-chart-label">消息频率</div>
+          <div ref="freqChartRef" class="fp-chart-wrap"></div>
+        </div>
+        <div v-if="chartVisibility.emotion_dist" class="fp-chart-item">
+          <div class="fp-chart-label">情绪分布</div>
+          <div ref="distChartRef" class="fp-chart-wrap"></div>
+        </div>
+        <div v-if="chartVisibility.reply_gap" class="fp-chart-item">
+          <div class="fp-chart-label">回复间隔</div>
+          <div ref="replyGapChartRef" class="fp-chart-wrap"></div>
+        </div>
+        <div v-if="chartVisibility.msg_ratio" class="fp-chart-item">
+          <div class="fp-chart-label">发言比例</div>
+          <div ref="ratioChartRef" class="fp-chart-wrap"></div>
+        </div>
+        <div v-if="chartVisibility.intensity_heat" class="fp-chart-item">
+          <div class="fp-chart-label">情绪强度</div>
+          <div ref="intensityChartRef" class="fp-chart-wrap"></div>
+        </div>
+      </div>
     </div>
 
     <div class="fp-settings">
@@ -215,6 +253,20 @@
   </div>
 
   <Teleport to="body">
+    <div v-if="showResumeDialog" class="fp-modal-overlay" @click.self="resolveResumeChoice('skip')">
+      <div class="fp-modal">
+        <div class="fp-modal-title">补全未监听消息</div>
+        <div class="fp-modal-desc">
+          上次监听到 {{ resumeDialogState.lastMessageTime }}，距离现在约 {{ resumeDialogState.gapLabel }}。
+        </div>
+        <div class="fp-modal-preview">最后一条消息：{{ resumeDialogState.preview }}</div>
+        <div class="fp-modal-actions">
+          <button class="fp-btn" @click="resolveResumeChoice('skip')">直接开始</button>
+          <button class="fp-btn primary" @click="resolveResumeChoice('backfill')">先补全再开始</button>
+        </div>
+      </div>
+    </div>
+
     <div v-if="showProfileDialog" class="fp-modal-overlay" @click.self="showProfileDialog = false">
       <div class="fp-modal">
         <div class="fp-modal-title">生成画像</div>
@@ -235,6 +287,44 @@ import { bridgeReady, api } from '@/api/bridge'
 import * as echarts from 'echarts'
 
 const router = useRouter()
+
+type ChartVisibilityKey =
+  | 'emotion_curve'
+  | 'msg_frequency'
+  | 'emotion_dist'
+  | 'reply_gap'
+  | 'msg_ratio'
+  | 'intensity_heat'
+
+type ChartVisibilityState = Record<ChartVisibilityKey, boolean>
+
+type EmotionPoint = {
+  time: string
+  polarity: number
+  sender: string
+  content: string
+  intensity: number
+  confidence: number
+  timestamp: number
+}
+
+const DEFAULT_CHART_VISIBILITY: ChartVisibilityState = {
+  emotion_curve: true,
+  msg_frequency: true,
+  emotion_dist: false,
+  reply_gap: false,
+  msg_ratio: true,
+  intensity_heat: false,
+}
+
+const chartConfigItems: { key: ChartVisibilityKey; label: string }[] = [
+  { key: 'emotion_curve', label: '对方情绪曲线' },
+  { key: 'msg_frequency', label: '消息频率' },
+  { key: 'emotion_dist', label: '情绪分布' },
+  { key: 'reply_gap', label: '回复间隔' },
+  { key: 'msg_ratio', label: '发言比例' },
+  { key: 'intensity_heat', label: '情绪强度' },
+]
 
 // ========== 状态 ==========
 const realtimeState = reactive({
@@ -266,6 +356,14 @@ const profileLoading = ref(false)
 const profileExpanded = ref(false)
 const showProfileDialog = ref(false)
 const emotionSummary = ref<any>(null)
+const chartSettingsOpen = ref(false)
+const showResumeDialog = ref(false)
+const resumeDialogState = reactive({
+  lastMessageTime: '',
+  gapLabel: '',
+  preview: '',
+})
+let resumeDialogResolver: ((value: 'skip' | 'backfill') => void) | null = null
 
 // 建议数据
 const pendingSuggestions = ref<any[]>([])
@@ -281,12 +379,19 @@ const lastThread = ref<any>(null)
 const conversationHistory = ref<{ role: string; content: string; ts: number }[]>([])
 
 // 情绪历史数据（用于曲线图）
-const emotionHistory = ref<{ time: string; polarity: number; sender: string; content: string }[]>([])
+const emotionHistory = ref<EmotionPoint[]>([])
+
+const chartVisibility = reactive<ChartVisibilityState>({ ...DEFAULT_CHART_VISIBILITY })
 
 // ECharts 引用
-const chartRef = ref<HTMLElement | null>(null)
-let chartInstance: echarts.ECharts | null = null
+const emotionChartRef = ref<HTMLElement | null>(null)
+const freqChartRef = ref<HTMLElement | null>(null)
+const distChartRef = ref<HTMLElement | null>(null)
+const replyGapChartRef = ref<HTMLElement | null>(null)
+const ratioChartRef = ref<HTMLElement | null>(null)
+const intensityChartRef = ref<HTMLElement | null>(null)
 const suggestionsRef = ref<HTMLElement | null>(null)
+const chartInstances: Partial<Record<ChartVisibilityKey, echarts.ECharts>> = {}
 
 // 定时器
 let statusTimer: any = null
@@ -317,6 +422,46 @@ const quickPrompts = ref<string[]>([
 const profileInitial = computed(() => {
   const name = profile.value.name || realtimeState.talkerName
   return name ? name[0] : '?'
+})
+
+const chartVisibilityStorageKey = computed(() => {
+  const displayName = (realtimeState.talkerName || profile.value.name || 'default').trim() || 'default'
+  return `ct_chart_visibility:${displayName}`
+})
+
+const computedChartStats = computed(() => {
+  const msgs = realtimeState.messages || []
+  const friendMsgs = msgs.filter(m => m.sender_attr === 'friend')
+  const selfMsgs = msgs.filter(m => m.sender_attr === 'self')
+
+  let repliedCount = 0
+  for (let i = 0; i < msgs.length; i++) {
+    if (msgs[i].sender_attr !== 'self') continue
+    const hasReply = msgs.slice(i + 1).some(nextMsg => nextMsg.sender_attr === 'friend')
+    if (hasReply) repliedCount++
+  }
+
+  const positiveCount = friendMsgs.filter(m => Number(m.sentiment?.polarity) > 0).length
+  const positiveRate = friendMsgs.length ? (positiveCount / friendMsgs.length).toFixed(2) : 'N/A'
+  const replyRate = selfMsgs.length ? (repliedCount / selfMsgs.length).toFixed(2) : 'N/A'
+  const msgRatio = selfMsgs.length || friendMsgs.length ? `${selfMsgs.length}:${friendMsgs.length}` : 'N/A'
+
+  const gaps = friendMsgs
+    .slice(1)
+    .map((m, i) => Number(m.timestamp) - Number(friendMsgs[i].timestamp))
+    .filter(gap => gap > 0 && gap < 3600)
+  const avgReplyGap = gaps.length
+    ? Math.round(gaps.reduce((sum, gap) => sum + gap, 0) / gaps.length)
+    : null
+
+  return {
+    reply_rate: replyRate,
+    positive_rate: positiveRate,
+    msg_ratio: msgRatio,
+    avg_reply_gap: avgReplyGap,
+    friend_msg_count: friendMsgs.length,
+    self_msg_count: selfMsgs.length,
+  }
 })
 
 const allSuggestions = computed(() => {
@@ -383,6 +528,51 @@ function formatResumeGap(gapSeconds?: number) {
   return `${Math.floor(totalSeconds / 86400)} 天`
 }
 
+function loadChartVisibility(displayName?: string) {
+  const key = displayName?.trim() ? `ct_chart_visibility:${displayName.trim()}` : chartVisibilityStorageKey.value
+  try {
+    const raw = window.localStorage.getItem(key)
+    const parsed = raw ? JSON.parse(raw) : null
+    const nextState = { ...DEFAULT_CHART_VISIBILITY, ...(parsed || {}) }
+    for (const item of chartConfigItems) {
+      chartVisibility[item.key] = Boolean(nextState[item.key])
+    }
+  } catch {
+    for (const item of chartConfigItems) {
+      chartVisibility[item.key] = DEFAULT_CHART_VISIBILITY[item.key]
+    }
+  }
+}
+
+function persistChartVisibility() {
+  try {
+    window.localStorage.setItem(chartVisibilityStorageKey.value, JSON.stringify(chartVisibility))
+  } catch (error) {
+    console.error('保存图表设置失败:', error)
+  }
+}
+
+function toggleChartVisibility(key: ChartVisibilityKey) {
+  chartVisibility[key] = !chartVisibility[key]
+  persistChartVisibility()
+  nextTick(() => syncCharts())
+}
+
+function buildHistoricalContext() {
+  return {
+    profile: profile.value?.chat_style ? profile.value : undefined,
+    emotion_summary: emotionSummary.value || undefined,
+    chart_stats: computedChartStats.value,
+  }
+}
+
+function resolveResumeChoice(choice: 'skip' | 'backfill') {
+  showResumeDialog.value = false
+  const resolver = resumeDialogResolver
+  resumeDialogResolver = null
+  resolver?.(choice)
+}
+
 async function maybeResolveResumeMode(talkerName: string): Promise<'skip' | 'backfill' | false> {
   const probe = await api.get_realtime_resume_info(talkerName, RESUME_THRESHOLD_SECONDS)
   if (!probe?.ok) {
@@ -394,19 +584,14 @@ async function maybeResolveResumeMode(talkerName: string): Promise<'skip' | 'bac
     return 'skip'
   }
 
-  const preview = String(probe.last_message_preview || '').trim() || '无预览'
-  const confirmed = confirm(
-    `上次监听到 ${formatResumeTime(probe.last_message_timestamp)}。\n` +
-    `距离现在约 ${formatResumeGap(probe.gap_seconds)}，最后一条消息：\n` +
-    `“${preview}”\n\n` +
-    '是否先回溯补全这段未监听的消息，再开始新的实时监听？'
-  )
+  resumeDialogState.lastMessageTime = formatResumeTime(probe.last_message_timestamp)
+  resumeDialogState.gapLabel = formatResumeGap(probe.gap_seconds)
+  resumeDialogState.preview = String(probe.last_message_preview || '').trim() || '无预览'
+  showResumeDialog.value = true
 
-  if (!confirmed) {
-    return 'skip'
-  }
-
-  return 'backfill'
+  return await new Promise<'skip' | 'backfill'>((resolve) => {
+    resumeDialogResolver = resolve
+  })
 }
 
 async function applyMonitoringStatus(status: any) {
@@ -421,6 +606,7 @@ async function applyMonitoringStatus(status: any) {
   loadSuggestionConfig()
   loadLlmModels()
   checkContactProfile(realtimeState.talkerName)
+  loadChartVisibility(realtimeState.talkerName)
 
   try {
     const tRes = await api.get_latest_thread(realtimeState.talkerName)
@@ -465,7 +651,10 @@ onMounted(async () => {
   if (pendingStart?.talkerName) {
     clearPendingStartRequest()
     const started = await startPendingMonitoring(String(pendingStart.talkerName))
-    initChart()
+    loadChartVisibility(String(pendingStart.talkerName))
+    window.addEventListener('resize', resizeVisibleCharts)
+    await nextTick()
+    syncCharts()
     if (!started && !realtimeState.isMonitoring) {
       console.error('[FloatingPanel] 待启动监听未成功，返回建议页')
       goBackToSuggestions()
@@ -508,6 +697,7 @@ onMounted(async () => {
     loadSuggestionConfig()
     loadLlmModels()
     checkContactProfile(realtimeState.talkerName)
+    loadChartVisibility(realtimeState.talkerName)
 
     // 查询是否有上次会话线程
     try {
@@ -525,16 +715,26 @@ onMounted(async () => {
     return
   }
 
-  // 初始化图表
-  initChart()
+  window.addEventListener('resize', resizeVisibleCharts)
+  await nextTick()
+  syncCharts()
 })
 
 onBeforeUnmount(() => {
   stopPolling()
-  if (chartInstance) {
-    chartInstance.dispose()
-    chartInstance = null
-  }
+  window.removeEventListener('resize', resizeVisibleCharts)
+  disposeAllCharts()
+  resolveResumeChoice('skip')
+})
+
+watch(() => realtimeState.talkerName, (name) => {
+  if (!name) return
+  loadChartVisibility(name)
+  nextTick(() => syncCharts())
+})
+
+watch(chartVisibilityStorageKey, () => {
+  nextTick(() => syncCharts())
 })
 
 // ========== 悬浮窗控制 ==========
@@ -569,89 +769,324 @@ async function goBackToSuggestions() {
   router.push('/suggestions')
 }
 
-// ========== ECharts 情绪曲线图 ==========
-function initChart() {
-  if (!chartRef.value) return
-  chartInstance = echarts.init(chartRef.value, undefined, { renderer: 'canvas' })
+// ========== ECharts 图表 ==========
+function getChartRef(key: ChartVisibilityKey): HTMLElement | null {
+  const refs: Record<ChartVisibilityKey, HTMLElement | null> = {
+    emotion_curve: emotionChartRef.value,
+    msg_frequency: freqChartRef.value,
+    emotion_dist: distChartRef.value,
+    reply_gap: replyGapChartRef.value,
+    msg_ratio: ratioChartRef.value,
+    intensity_heat: intensityChartRef.value,
+  }
+  return refs[key]
+}
 
-  const option: echarts.EChartsOption = {
+function getChartInstance(key: ChartVisibilityKey): echarts.ECharts | null {
+  const target = getChartRef(key)
+  if (!target || !chartVisibility[key]) return null
+  if (!chartInstances[key]) {
+    chartInstances[key] = echarts.init(target, undefined, { renderer: 'canvas' })
+  }
+  return chartInstances[key] || null
+}
+
+function disposeChart(key: ChartVisibilityKey) {
+  if (chartInstances[key]) {
+    chartInstances[key]?.dispose()
+    delete chartInstances[key]
+  }
+}
+
+function disposeAllCharts() {
+  for (const item of chartConfigItems) {
+    disposeChart(item.key)
+  }
+}
+
+function resizeVisibleCharts() {
+  for (const item of chartConfigItems) {
+    chartInstances[item.key]?.resize()
+  }
+}
+
+function buildChartBaseOption(): echarts.EChartsOption {
+  return {
     grid: {
-      top: 10,
-      right: 10,
+      top: 16,
+      right: 12,
       bottom: 24,
-      left: 36,
+      left: 34,
+      containLabel: false,
+    },
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: '#1e293b',
+      borderColor: '#334155',
+      textStyle: { color: '#f1f5f9', fontSize: 12 },
     },
     xAxis: {
       type: 'category',
-      data: [],
       axisLabel: { fontSize: 10, color: '#94a3b8' },
       axisLine: { lineStyle: { color: '#334155' } },
       axisTick: { show: false },
     },
     yAxis: {
       type: 'value',
-      min: -1,
-      max: 1,
-      splitNumber: 4,
-      axisLabel: { fontSize: 10, color: '#94a3b8', formatter: '{value}' },
+      axisLabel: { fontSize: 10, color: '#94a3b8' },
       splitLine: { lineStyle: { color: '#1e293b', type: 'dashed' } },
       axisLine: { show: false },
     },
-    series: [{
-      type: 'line',
-      data: [],
-      smooth: true,
-      symbol: 'circle',
-      symbolSize: 6,
-      lineStyle: { width: 2.5 },
-      areaStyle: {
-        color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-          { offset: 0, color: 'rgba(129,140,248,0.3)' },
-          { offset: 1, color: 'rgba(129,140,248,0.02)' },
-        ]),
-      },
-      itemStyle: {
-        color: (params: any) => {
-          const v = params.data as number
-          if (v > 0.2) return '#34d399'
-          if (v < -0.2) return '#f87171'
-          return '#94a3b8'
-        },
-      },
-    }],
-    tooltip: {
-      trigger: 'axis',
-      backgroundColor: '#1e293b',
-      borderColor: '#334155',
-      textStyle: { color: '#f1f5f9', fontSize: 12 },
-      formatter: (params: any) => {
-        const p = params[0]
-        const idx = p.dataIndex
-        const v = p.data as number
-        const label = v > 0 ? '正面' : v < 0 ? '负面' : '中性'
-        const item = emotionHistory.value[idx]
-        let html = `<b>${p.name}</b><br/>情绪: ${label} (${v.toFixed(2)})`
-        if (item) {
-          const sender = item.sender === 'self' ? '我' : '对方'
-          const content = item.content.length > 25 ? item.content.slice(0, 25) + '…' : item.content
-          html += `<br/><span style="color:#94a3b8">${sender}：${content}</span>`
-        }
-        return html
-      },
-    },
   }
-
-  chartInstance.setOption(option)
 }
 
-function updateChart() {
-  if (!chartInstance) return
-  const times = emotionHistory.value.map(e => e.time)
-  const values = emotionHistory.value.map(e => e.polarity)
-  chartInstance.setOption({
-    xAxis: { data: times },
-    series: [{ data: values }],
+function buildMessageFrequencyBuckets() {
+  const messages = realtimeState.messages || []
+  if (!messages.length) {
+    return { labels: [] as string[], values: [] as number[] }
+  }
+
+  const sortedMessages = [...messages].sort((a, b) => Number(a.timestamp) - Number(b.timestamp))
+  const startTs = Number(sortedMessages[0]?.timestamp || 0)
+  const endTs = Number(sortedMessages[sortedMessages.length - 1]?.timestamp || startTs)
+  const span = Math.max(endTs - startTs, 1)
+  const bucketCount = Math.min(12, Math.max(4, sortedMessages.length))
+  const bucketSize = Math.max(60, Math.ceil(span / bucketCount))
+  const counts = Array.from({ length: bucketCount }, () => 0)
+  const labels = Array.from({ length: bucketCount }, (_, index) => {
+    const bucketTs = startTs + index * bucketSize
+    return new Date(bucketTs * 1000).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
   })
+
+  sortedMessages.forEach((message) => {
+    const ts = Number(message.timestamp || startTs)
+    const rawIndex = Math.floor((ts - startTs) / bucketSize)
+    const bucketIndex = Math.max(0, Math.min(bucketCount - 1, rawIndex))
+    counts[bucketIndex]++
+  })
+
+  return { labels, values: counts }
+}
+
+function buildReplyGapData() {
+  const friendMsgs = (realtimeState.messages || []).filter(message => message.sender_attr === 'friend')
+  const points = friendMsgs
+    .slice(1)
+    .map((message, index) => {
+      const gap = Number(message.timestamp) - Number(friendMsgs[index].timestamp)
+      return {
+        label: new Date(Number(message.timestamp) * 1000).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
+        value: gap,
+      }
+    })
+    .filter(point => point.value > 0 && point.value < 3600)
+
+  return {
+    labels: points.map(point => point.label),
+    values: points.map(point => point.value),
+  }
+}
+
+function syncCharts() {
+  for (const item of chartConfigItems) {
+    if (!chartVisibility[item.key]) {
+      disposeChart(item.key)
+      continue
+    }
+
+    const chart = getChartInstance(item.key)
+    if (!chart) continue
+
+    if (item.key === 'emotion_curve') {
+      const times = emotionHistory.value.map(point => point.time)
+      const values = emotionHistory.value.map(point => point.polarity)
+      chart.setOption({
+        ...buildChartBaseOption(),
+        yAxis: {
+          type: 'value',
+          min: -1,
+          max: 1,
+          splitNumber: 4,
+          axisLabel: { fontSize: 10, color: '#94a3b8', formatter: '{value}' },
+          splitLine: { lineStyle: { color: '#1e293b', type: 'dashed' } },
+          axisLine: { show: false },
+        },
+        xAxis: {
+          type: 'category',
+          data: times,
+          axisLabel: { fontSize: 10, color: '#94a3b8' },
+          axisLine: { lineStyle: { color: '#334155' } },
+          axisTick: { show: false },
+        },
+        tooltip: {
+          trigger: 'axis',
+          backgroundColor: '#1e293b',
+          borderColor: '#334155',
+          textStyle: { color: '#f1f5f9', fontSize: 12 },
+          formatter: (params: any) => {
+            const point = params[0]
+            const itemData = emotionHistory.value[point.dataIndex]
+            const value = Number(point.data || 0)
+            const label = value > 0 ? '正面' : value < 0 ? '负面' : '中性'
+            const content = itemData?.content?.length > 25 ? `${itemData.content.slice(0, 25)}…` : itemData?.content || ''
+            return `<b>对方情绪</b><br/>时间：${point.name}<br/>情绪：${label} (${value.toFixed(2)})${content ? `<br/><span style="color:#94a3b8">${content}</span>` : ''}`
+          },
+        },
+        series: [{
+          type: 'line',
+          smooth: true,
+          symbol: 'circle',
+          symbolSize: 6,
+          data: values,
+          lineStyle: { width: 2.5, color: '#818cf8' },
+          areaStyle: {
+            color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+              { offset: 0, color: 'rgba(129,140,248,0.3)' },
+              { offset: 1, color: 'rgba(129,140,248,0.02)' },
+            ]),
+          },
+          itemStyle: {
+            color: (params: any) => {
+              const value = Number(params.data || 0)
+              if (value > 0.2) return '#34d399'
+              if (value < -0.2) return '#f87171'
+              return '#94a3b8'
+            },
+          },
+        }],
+      }, true)
+    }
+
+    if (item.key === 'msg_frequency') {
+      const frequency = buildMessageFrequencyBuckets()
+      chart.setOption({
+        ...buildChartBaseOption(),
+        xAxis: { ...(buildChartBaseOption().xAxis as object), data: frequency.labels },
+        yAxis: { ...(buildChartBaseOption().yAxis as object), minInterval: 1 },
+        series: [{
+          type: 'bar',
+          data: frequency.values,
+          barWidth: '45%',
+          itemStyle: {
+            borderRadius: [4, 4, 0, 0],
+            color: '#60a5fa',
+          },
+        }],
+      }, true)
+    }
+
+    if (item.key === 'emotion_dist') {
+      const distribution = [
+        { value: emotionHistory.value.filter(point => point.polarity > 0).length, name: '正面' },
+        { value: emotionHistory.value.filter(point => point.polarity === 0).length, name: '中性' },
+        { value: emotionHistory.value.filter(point => point.polarity < 0).length, name: '负面' },
+      ]
+      chart.setOption({
+        tooltip: {
+          trigger: 'item',
+          backgroundColor: '#1e293b',
+          borderColor: '#334155',
+          textStyle: { color: '#f1f5f9', fontSize: 12 },
+        },
+        series: [{
+          type: 'pie',
+          radius: ['38%', '68%'],
+          center: ['50%', '54%'],
+          label: { color: '#cbd5e1', fontSize: 10 },
+          data: distribution,
+          itemStyle: {
+            borderColor: 'rgba(15,23,42,0.55)',
+            borderWidth: 2,
+          },
+          color: ['#34d399', '#94a3b8', '#f87171'],
+        }],
+      }, true)
+    }
+
+    if (item.key === 'reply_gap') {
+      const gapData = buildReplyGapData()
+      chart.setOption({
+        ...buildChartBaseOption(),
+        xAxis: { ...(buildChartBaseOption().xAxis as object), data: gapData.labels },
+        yAxis: {
+          ...(buildChartBaseOption().yAxis as object),
+          axisLabel: { fontSize: 10, color: '#94a3b8', formatter: '{value}s' },
+        },
+        series: [{
+          type: 'line',
+          data: gapData.values,
+          smooth: true,
+          symbolSize: 5,
+          lineStyle: { width: 2, color: '#f59e0b' },
+          itemStyle: { color: '#fbbf24' },
+          areaStyle: {
+            color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+              { offset: 0, color: 'rgba(245,158,11,0.26)' },
+              { offset: 1, color: 'rgba(245,158,11,0.03)' },
+            ]),
+          },
+        }],
+      }, true)
+    }
+
+    if (item.key === 'msg_ratio') {
+      chart.setOption({
+        tooltip: {
+          trigger: 'item',
+          backgroundColor: '#1e293b',
+          borderColor: '#334155',
+          textStyle: { color: '#f1f5f9', fontSize: 12 },
+        },
+        series: [{
+          type: 'pie',
+          radius: ['42%', '70%'],
+          center: ['50%', '54%'],
+          label: { color: '#cbd5e1', fontSize: 10 },
+          data: [
+            { value: computedChartStats.value.self_msg_count, name: '我' },
+            { value: computedChartStats.value.friend_msg_count, name: '对方' },
+          ],
+          itemStyle: {
+            borderColor: 'rgba(15,23,42,0.55)',
+            borderWidth: 2,
+          },
+          color: ['#818cf8', '#38bdf8'],
+        }],
+      }, true)
+    }
+
+    if (item.key === 'intensity_heat') {
+      chart.setOption({
+        ...buildChartBaseOption(),
+        xAxis: {
+          ...(buildChartBaseOption().xAxis as object),
+          data: emotionHistory.value.map(point => point.time),
+        },
+        yAxis: {
+          type: 'value',
+          min: 0,
+          max: 1,
+          axisLabel: { fontSize: 10, color: '#94a3b8' },
+          splitLine: { lineStyle: { color: '#1e293b', type: 'dashed' } },
+          axisLine: { show: false },
+        },
+        series: [{
+          type: 'bar',
+          data: emotionHistory.value.map(point => Number(point.intensity || 0)),
+          barWidth: '55%',
+          itemStyle: {
+            borderRadius: [4, 4, 0, 0],
+            color: (params: any) => {
+              const value = Number(params.data || 0)
+              if (value >= 0.75) return '#f87171'
+              if (value >= 0.45) return '#fbbf24'
+              return '#60a5fa'
+            },
+          },
+        }],
+      }, true)
+    }
+  }
 }
 
 // ========== 轮询 ==========
@@ -722,11 +1157,7 @@ function startPolling() {
       if (r.ok) {
         const prevLen = realtimeState.messages.length
         realtimeState.messages = r.messages || []
-
-        // 更新情绪历史
-        if (realtimeState.messages.length > prevLen) {
-          updateEmotionHistory()
-        }
+        updateEmotionHistory()
 
         // --- 动态联想词逻辑 ---
         if (lastMessageCount !== -1) {
@@ -809,23 +1240,23 @@ function stopPolling() {
 // ========== 情绪历史更新 ==========
 function updateEmotionHistory() {
   const msgs = realtimeState.messages
-  const newHistory: { time: string; polarity: number; sender: string; content: string }[] = []
+    .filter(msg => msg.sender_attr === 'friend' && msg.sentiment)
 
-  for (const msg of msgs) {
-    if (msg.sentiment) {
-      const date = new Date(msg.timestamp * 1000)
-      newHistory.push({
-        time: date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
-        polarity: msg.sentiment.polarity || 0,
-        sender: msg.sender_attr || 'friend',
-        content: msg.content || '',
-      })
+  const newHistory = msgs.map((msg) => {
+    const date = new Date(Number(msg.timestamp) * 1000)
+    return {
+      time: date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
+      polarity: Number(msg.sentiment?.polarity || 0),
+      sender: msg.sender_attr || 'friend',
+      content: msg.content || '',
+      intensity: Number(msg.sentiment?.intensity || 0),
+      confidence: Number(msg.sentiment?.confidence || 0),
+      timestamp: Number(msg.timestamp || 0),
     }
-  }
+  })
 
-  // 只保留最近 20 个数据点
   emotionHistory.value = newHistory.slice(-20)
-  updateChart()
+  syncCharts()
 }
 
 // ========== 建议配置 ==========
@@ -915,6 +1346,7 @@ async function manualGenerate() {
     await bridgeReady()
     const r = await api.generate_suggestion(intent.value, {
       user_context: conversationHistory.value.length ? conversationHistory.value : undefined,
+      historical_context: buildHistoricalContext(),
     })
     if (r.ok && r.suggestion) {
       manualSuggestion.value = r.suggestion
@@ -1003,6 +1435,7 @@ async function sendUserContext() {
     const r = await api.generate_suggestion(intent.value, {
       user_context: conversationHistory.value.map(c => ({ role: c.role, content: c.content })),
       include_history: true,
+      historical_context: buildHistoricalContext(),
     })
     if (r.ok && r.suggestion) {
       // 如果 AI 返回了 reply（回应用户的话），插入对话流
@@ -1520,6 +1953,17 @@ async function loadLastThread() {
   color: var(--ct-text-secondary);
 }
 
+.fp-section-hd-charts {
+  gap: 8px;
+}
+
+.fp-section-title-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
 .fp-trend-badge {
   font-size: 11px;
   padding: 2px 8px;
@@ -1546,6 +1990,51 @@ async function loadLastThread() {
   width: 100%;
   height: 80px;
   padding: 0 4px;
+}
+
+.fp-chart-settings-panel {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 0 12px 10px;
+}
+
+.fp-chart-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  background: var(--ct-bg-secondary);
+  border: 1px solid var(--ct-border-color);
+  border-radius: 10px;
+  font-size: 11px;
+  color: var(--ct-text-secondary);
+  cursor: pointer;
+}
+
+.fp-chart-toggle input {
+  accent-color: var(--ct-color-primary);
+}
+
+.fp-chart-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  padding: 0 8px 8px;
+}
+
+.fp-chart-item {
+  background: var(--ct-bg-secondary);
+  border: 1px solid var(--ct-border-color);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.fp-chart-label {
+  padding: 8px 10px 2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ct-text-secondary);
 }
 
 /* ==================== 设置栏 ==================== */
@@ -1940,6 +2429,16 @@ async function loadLastThread() {
   margin-bottom: 16px;
 }
 
+.fp-modal-preview {
+  margin: -4px 0 16px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--ct-bg-secondary);
+  color: var(--ct-text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
 .fp-modal-actions {
   display: flex;
   justify-content: flex-end;
@@ -2048,6 +2547,10 @@ async function loadLastThread() {
 .fp-section-hd { padding: 10px 12px 8px; font-size: 12px; font-weight: 700; letter-spacing: .04em; }
 .fp > .fp-section:not(.fp-suggestions) { flex: 0 0 auto; }
 .fp-chart-wrap { height: 80px; padding: 0 6px 8px; }
+.fp-chart-settings-panel { padding: 0 12px 12px; }
+.fp-chart-grid { padding: 0 12px 12px; gap: 10px; }
+.fp-chart-item { border-radius: 16px; background: rgba(248,250,252,.84); border: 1px solid rgba(148,163,184,.12); }
+.fp-chart-label { padding: 10px 12px 2px; font-size: 11px; font-weight: 700; }
 .fp-settings { margin-top: 8px; padding: 8px 12px; border-radius: 16px; border-bottom: none; flex: 0 0 auto; }
 .fp-seg { padding: 3px; border-radius: 12px; background: rgba(241,245,249,.9); border: 1px solid rgba(148,163,184,.14); }
 .fp-seg button { min-height: 32px; border-radius: 10px; font-size: 12px; font-weight: 600; }
@@ -2098,6 +2601,7 @@ async function loadLastThread() {
 .fp-model-select { height: 34px; border-radius: 10px; background: rgba(255,255,255,.88); }
 .fp-btn.icon { width: 34px; height: 34px; border-radius: 12px; }
 .fp-btn.small { min-height: 32px; padding: 0 12px; border-radius: 999px; background: rgba(255,255,255,.84); font-size: 12px; font-weight: 600; }
+.fp-btn.small.active { background: rgba(91,107,224,.12); border-color: rgba(91,107,224,.34); color: var(--ct-color-primary); }
 .fp-btn.copy { min-width: 42px; height: 28px; padding: 0 10px; border-radius: 10px; border: 1px solid rgba(148,163,184,.16); color: var(--ct-text-secondary); font-weight: 600; background: rgba(255,255,255,.6); opacity: 1; transition: all 0.2s; }
 .fp-btn.copy:hover { background: rgba(91,107,224,.1); color: var(--ct-color-primary); border-color: rgba(91,107,224,.3); }
 .fp-btn.send { min-width: 72px; height: 44px; border-radius: 14px; background: linear-gradient(135deg,var(--ct-color-primary),#7c3aed); font-size: 13px; box-shadow: 0 12px 24px rgba(91,107,224,.22); }
@@ -2105,6 +2609,7 @@ async function loadLastThread() {
 .fp-modal-overlay { background: rgba(15,23,42,.36); backdrop-filter: blur(8px); }
 .fp-modal { background: rgba(255,255,255,.96); border-radius: 22px; width: min(320px, calc(100vw - 32px)); }
 .fp-modal-title { font-family: var(--ct-font-display); font-size: 24px; }
+.fp-modal-preview { background: rgba(248,250,252,.92); border: 1px solid rgba(148,163,184,.12); }
 @media (max-width: 860px) {
   .fp-settings { grid-template-columns: 1fr; }
   .fp-chat-bubble { max-width: 100%; }
@@ -2114,5 +2619,6 @@ async function loadLastThread() {
   .fp-sug-header { grid-template-columns: auto 1fr auto; }
   .fp-sug-time { grid-column: 2 / 3; }
   .fp-chart-wrap { height: 96px; }
+  .fp-chart-settings-panel { grid-template-columns: 1fr; }
 }
 </style>

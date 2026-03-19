@@ -373,6 +373,25 @@ class Bridge:
                 except Exception as e:
                     logger.error(f"[Bridge] 获取画像失败: {e}")
 
+            try:
+                from ..services.realtime.historical_context import build_historical_context
+
+                historical_context = context.get('historical_context', {})
+                if not isinstance(historical_context, dict):
+                    historical_context = {}
+
+                auto_historical = build_historical_context(
+                    contact_profile=context.get('contact_profile'),
+                    emotion_summary=context.get('emotion_summary'),
+                    recent_messages=context.get('recent_messages'),
+                )
+                for key, value in auto_historical.items():
+                    historical_context.setdefault(key, value)
+                if historical_context:
+                    context['historical_context'] = historical_context
+            except Exception as e:
+                logger.error(f"[Bridge] 构建 historical_context 失败: {e}")
+
             # 传递联系人名称以便查询调教规则
             if monitor.current_display_name:
                 context['display_name'] = monitor.current_display_name

@@ -1824,6 +1824,16 @@ class RealtimeMonitorService:
                 
                 # 构建完整的 context (融合 trigger.context 和 画外特征)
                 ctx = trigger.context.copy() if trigger.context else {}
+
+                if 'emotion_summary' not in ctx and self.emotion_tracker:
+                    ctx['emotion_summary'] = self.emotion_tracker.get_emotion_summary()
+
+                if 'recent_messages' not in ctx and self.current_batch_id:
+                    try:
+                        from .message_query import get_messages_with_sentiment
+                        ctx['recent_messages'] = get_messages_with_sentiment(self.current_batch_id, 50)
+                    except Exception as msg_e:
+                        _print(f"⚠️ 获取最近消息失败: {msg_e}")
                 
                 if self.current_display_name:
                     try:
@@ -1843,6 +1853,24 @@ class RealtimeMonitorService:
                             ctx['self_profile'] = s_cached['profile']
                     except Exception as prof_e:
                         _print(f"⚠️ 提取画像失败: {prof_e}")
+
+                try:
+                    from .historical_context import build_historical_context
+
+                    historical_context = ctx.get('historical_context', {})
+                    if not isinstance(historical_context, dict):
+                        historical_context = {}
+                    auto_historical = build_historical_context(
+                        contact_profile=ctx.get('contact_profile'),
+                        emotion_summary=ctx.get('emotion_summary'),
+                        recent_messages=ctx.get('recent_messages'),
+                    )
+                    for key, value in auto_historical.items():
+                        historical_context.setdefault(key, value)
+                    if historical_context:
+                        ctx['historical_context'] = historical_context
+                except Exception as hist_e:
+                    _print(f"⚠️ historical_context 构建失败: {hist_e}")
 
                 # 传递联系人名称以便查询调教规则
                 ctx['display_name'] = self.current_display_name
@@ -1910,6 +1938,14 @@ class RealtimeMonitorService:
             
             # 构建完整的 context (包含画像)
             ctx = {'mode': 'full_auto'}
+            if self.emotion_tracker:
+                ctx['emotion_summary'] = self.emotion_tracker.get_emotion_summary()
+            if self.current_batch_id:
+                try:
+                    from .message_query import get_messages_with_sentiment
+                    ctx['recent_messages'] = get_messages_with_sentiment(self.current_batch_id, 50)
+                except Exception as msg_e:
+                    _print(f"⚠️ 获取最近消息失败: {msg_e}")
             if self.current_display_name:
                 try:
                     from .contact_profiler import ContactProfiler
@@ -1928,6 +1964,19 @@ class RealtimeMonitorService:
                         ctx['self_profile'] = s_cached['profile']
                 except Exception as prof_e:
                     _print(f"⚠️ 提取画像失败: {prof_e}")
+
+            try:
+                from .historical_context import build_historical_context
+
+                historical_context = build_historical_context(
+                    contact_profile=ctx.get('contact_profile'),
+                    emotion_summary=ctx.get('emotion_summary'),
+                    recent_messages=ctx.get('recent_messages'),
+                )
+                if historical_context:
+                    ctx['historical_context'] = historical_context
+            except Exception as hist_e:
+                _print(f"⚠️ historical_context 构建失败: {hist_e}")
 
             # 传递联系人名称以便查询调教规则
             if self.current_display_name:

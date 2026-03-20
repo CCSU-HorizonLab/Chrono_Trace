@@ -9,6 +9,7 @@ LLM 建议引擎
 import json
 import logging
 import random
+import re
 import socket
 import time
 import urllib.request
@@ -26,7 +27,13 @@ SYSTEM_PROMPT = """你是一个专业的聊天沟通顾问，但你当前必须�
 2. **完美模仿用户风格**：你给出的所有的"建议话术"，必须【逐字逐句完全模仿】提供的「用户本体克隆画像」中的打字风格、标点习惯、常用语气词、句式模板、建议字数区间和沟通态度。这非常关键！
 3. 内容必须贴合当前情境和已有的关系进度，严禁空泛。
 4. **身份区分**："我"是用户本人（发建议的人），"对方"是聊天对象。在引用记忆/事实时，严禁混淆谁做了什么。
-5. **时效性**：优先利用近期记忆和事件，避免引用太久远的事情。如果记忆标注了时间，请根据新鲜度判断是否适合当前话题。
+5. **【时效优先】核心注意力规则**：
+   - 你的注意力必须优先集中在【最近对话】中，先理解眼前正在发生什么
+   - 【被唤醒的历史记忆】只有在对方最近消息里明确提到相关话题时才能使用
+   - 禁止主动翻出历史记忆作为建议主轴，除非对方刚刚提起
+   - 如果历史记忆与当前对话无关，直接忽略它
+   - 规则、画像和长期偏好只能约束“怎么说”，不能决定“聊什么”
+   - 如果规则/画像与【最近对话】冲突，必须以【最近对话】和当前触发为准
 6. **回应用户与纯对话**：如果【用户需求与反馈】中有用户的提问或想法，你必须在 reply 字段直接回应他的问题。
 7. **【极其重要】判定模式机制**：
    - 模式 A（纯聊天/指令/修改规则）：如果用户输入只是打招呼（如“你好”）、闲聊、或是要求修改你的回复规则，你**绝对不可提供任何对话建议**！你只能在 `reply` 字段内回答他，同时**必须**将 `summary` 设为空字符串 `""`，`speeches` 设为空数组 `[]`！禁止硬凑无关紧要的建议卡片！
@@ -79,6 +86,54 @@ class LLMSuggestionEngine(SuggestionEngine):
     - 本地推理：Ollama / LM Studio（无需 api_key）
 
     """
+    RECENT_MESSAGE_LIMIT = 20
+    RECENT_CHAR_GUARD = 300
+    MSG_COMPRESS_THRESHOLD = 20
+    MSG_SUMMARY_MAX_CHARS = 300
+    MEMORY_LOOKBACK_MESSAGES = 5
+    MEMORY_MAX_ITEMS = 3
+    STYLE_RULE_KEYWORDS = (
+        "短句",
+        "长句",
+        "连发",
+        "图片",
+        "表情",
+        "语气",
+        "语气词",
+        "口语",
+        "简短",
+        "具体事实",
+        "数字",
+        "肯定",
+        "自嘲",
+        "措辞",
+        "直接分享事实",
+        "简短肯定",
+        "抱怨",
+        "吐槽",
+        "文字",
+    )
+    CONTENT_RULE_KEYWORDS = (
+        "转移话题",
+        "开启新话题",
+        "延续当前话题",
+        "终止对话",
+        "学习内容",
+        "学业",
+        "工作",
+        "高数",
+        "游戏",
+        "回忆分享",
+        "现实话题",
+        "留学",
+        "考研",
+        "就业",
+        "兼职",
+        "生活费",
+        "专业",
+        "聊到",
+        "话题",
+    )
 
     def __init__(self, timeout: int = 60):
         """
@@ -214,6 +269,140 @@ class LLMSuggestionEngine(SuggestionEngine):
             _print(f"[LLM Engine] 获取模型配置失败: {e}")
             return None
 
+    def _select_recent_messages(self, messages: list[dict]) -> tuple[list[dict], list[dict]]:
+        """条数优先保留最近对话，字符数只作为兜底保护。"""
+        messages = self._normalize_recent_messages(messages)
+        if not messages:
+            return [], []
+
+        kept_reversed: list[dict] = []
+        total_chars = 0
+
+        for msg in reversed(messages):
+            if len(kept_reversed) >= self.RECENT_MESSAGE_LIMIT:
+                break
+
+            content = str(msg.get("content", ""))
+            if kept_reversed and total_chars + len(content) > self.RECENT_CHAR_GUARD:
+                break
+
+            kept_reversed.append(msg)
+            total_chars += len(content)
+
+        kept = list(reversed(kept_reversed))
+        older = messages[:-len(kept)] if kept else messages
+        return older, kept
+
+    def _normalize_recent_messages(self, messages: list[dict]) -> list[dict]:
+        """将最近消息统一归一化为时间正序，避免上游倒序查询导致截错窗口。"""
+        if not messages:
+            return []
+
+        def _sort_key(item: dict) -> tuple[int, int]:
+            timestamp = item.get("timestamp")
+            message_id = item.get("id")
+            try:
+                safe_ts = int(timestamp)
+            except (TypeError, ValueError):
+                safe_ts = 0
+            try:
+                safe_id = int(message_id)
+            except (TypeError, ValueError):
+                safe_id = 0
+            return safe_ts, safe_id
+
+        ordered = sorted(messages, key=_sort_key)
+        if ordered and messages and ordered[0] is not messages[0]:
+            _print("[LLM Engine] ↕️ recent_messages 已按时间正序归一化")
+        return ordered
+
+    def _compress_messages(
+        self, messages: list[dict], kept_messages: list[dict]
+    ) -> str:
+        """将最近窗口外的较早消息折叠为简短摘要。"""
+        if len(messages) <= self.MSG_COMPRESS_THRESHOLD:
+            return ""
+
+        older_count = max(len(messages) - len(kept_messages), 0)
+        if older_count <= 0:
+            return ""
+
+        older = messages[:older_count]
+        self_count = sum(1 for m in older if m.get("sender_attr") == "self")
+        other_count = older_count - self_count
+        other_snippets = [
+            str(m.get("content", "")).strip()[:30]
+            for m in older[-5:]
+            if m.get("sender_attr") != "self" and str(m.get("content", "")).strip()
+        ]
+        snippet_text = "；".join(other_snippets) if other_snippets else "内容略"
+        summary = (
+            f"（更早的 {older_count} 条消息已折叠：我发了 {self_count} 条，"
+            f"对方发了 {other_count} 条，对方当时提到：{snippet_text}）"
+        )
+        return summary[: self.MSG_SUMMARY_MAX_CHARS]
+
+    def _extract_memory_keywords(self, summary: str) -> list[str]:
+        """从记忆摘要中提取简单关键词。"""
+        tokens = re.split(r"[\s,，。！？；：、/()（）\[\]\-]+", summary)
+        keywords = [token.strip() for token in tokens if len(token.strip()) >= 2]
+        compact = re.sub(r"[\s,，。！？；：、/()（）\[\]\-]+", "", summary)
+        if len(compact) >= 2:
+            max_size = min(6, len(compact))
+            for size in range(2, max_size + 1):
+                for index in range(0, len(compact) - size + 1):
+                    keywords.append(compact[index:index + size])
+        deduped = list(dict.fromkeys(keywords))
+        return deduped[:12]
+
+    def _should_inject_memories(
+        self, recent_messages: list[dict], memories: list[dict]
+    ) -> list[dict]:
+        """仅在对方最近消息主动提及相关话题时注入记忆。"""
+        if not recent_messages or not memories:
+            return []
+
+        other_msgs = [
+            str(msg.get("content", "")).strip()
+            for msg in recent_messages[-self.MEMORY_LOOKBACK_MESSAGES:]
+            if msg.get("sender_attr") != "self" and str(msg.get("content", "")).strip()
+        ]
+        if not other_msgs:
+            return []
+
+        combined_text = " ".join(other_msgs)
+        matched = []
+        for mem in memories:
+            summary = str(mem.get("summary", "")).strip()
+            if not summary:
+                continue
+            keywords = self._extract_memory_keywords(summary)
+            if keywords and any(keyword in combined_text for keyword in keywords):
+                matched.append(mem)
+            if len(matched) >= self.MEMORY_MAX_ITEMS:
+                break
+        return matched
+
+    def _is_style_rule(self, rule: str) -> bool:
+        """仅保留措辞/表达习惯类规则，过滤掉内容和策略类规则。"""
+        normalized = str(rule).strip()
+        if not normalized:
+            return False
+        if any(keyword in normalized for keyword in self.CONTENT_RULE_KEYWORDS):
+            return False
+        return any(keyword in normalized for keyword in self.STYLE_RULE_KEYWORDS)
+
+    def _filter_style_rules(self, rules: list[str]) -> list[str]:
+        """运行时过滤规则，只把表达风格类规则传给 LLM。"""
+        filtered = [rule for rule in rules if self._is_style_rule(rule)]
+        if rules and not filtered:
+            _print("[LLM Engine] 🎛️ 已过滤掉内容/策略类规则，仅保留最近对话决定选题")
+        elif len(filtered) < len(rules):
+            _print(
+                f"[LLM Engine] 🎛️ 规则已收敛为表达风格参考: {len(filtered)}/{len(rules)}"
+            )
+        return filtered
+
     def _build_prompt(self, trigger_type: str, intent: str, context: dict) -> str:
         """构造用户 prompt"""
         parts = []
@@ -228,79 +417,17 @@ class LLMSuggestionEngine(SuggestionEngine):
         intent_desc = INTENT_DESCRIPTIONS.get(intent, intent)
         parts.append(f"【用户目标】{intent_desc}")
 
-        # 联系人画像（如有）
-        profile = context.get("contact_profile")
-        if profile:
-            parts.append("\n【对方画像（分析对方心态时参考）】")
-            tags = profile.get("personality_tags", [])
-            if tags:
-                parts.append(f"  性格标签: {', '.join(tags)}")
-            style = profile.get("chat_style", "")
-            if style:
-                parts.append(f"  聊天风格: {style}")
-            interests = profile.get("interests", [])
-            if interests:
-                parts.append(f"  兴趣话题: {', '.join(interests)}")
-            tips = profile.get("communication_tips", "")
-            if tips:
-                parts.append(f"  沟通注意: {tips}")
-            note = profile.get("relationship_note", "")
-            if note:
-                parts.append(f"  关系状态: {note}")
-
-        # 用户本体专属克隆画像
-        self_profile = context.get("self_profile")
-        if self_profile:
-            parts.append("\n【用户本体克隆画像（绝对强制按照此风格生成话术！）】")
-            typing_style = self_profile.get("typing_style", "")
-            if typing_style:
-                parts.append(f"  打字排版风格: {typing_style}")
-            catchphrases = self_profile.get("frequent_catchphrases", [])
-            if catchphrases:
-                parts.append(f"  高频语气词汇: {', '.join(catchphrases)}")
-            patterns = self_profile.get("sentence_patterns", [])
-            if patterns:
-                parts.append(f"  常用句式模板（优先仿照这些结构写话术）: {' / '.join(patterns)}")
-            attitude = self_profile.get("attitude_and_role", "")
-            if attitude:
-                parts.append(f"  本关系里的态度与角色: {attitude}")
-            shared_mem = self_profile.get("shared_memories", [])
-            if shared_mem:
-                parts.append(f"  与对方共有的记忆常识(注意谁做了什么，优先使用近期事件): {', '.join(shared_mem)}")
-            donts = self_profile.get("do_and_donts", "")
-            if donts:
-                parts.append(f"  模仿禁忌: {donts}")
-
-        historical_ctx = context.get("historical_context", {})
-        if historical_ctx:
-            profile_ctx = historical_ctx.get("profile")
-            if profile_ctx:
-                parts.append("\n【历史联系人画像（辅助理解长期关系）】")
-                if profile_ctx.get("chat_style"):
-                    parts.append(f"  沟通风格: {profile_ctx.get('chat_style')}")
-                tags = profile_ctx.get("personality_tags", [])
-                if tags:
-                    parts.append(f"  性格标签: {', '.join(tags)}")
-                interests = profile_ctx.get("interests", [])
-                if interests:
-                    parts.append(f"  兴趣偏好: {', '.join(interests)}")
-                if profile_ctx.get("communication_tips"):
-                    parts.append(f"  沟通提示: {profile_ctx.get('communication_tips')}")
-
-            emotion_ctx = historical_ctx.get("emotion_summary")
-            if emotion_ctx:
-                parts.append("\n【历史情绪摘要（对方近况）】")
-                parts.append(f"  趋势: {emotion_ctx.get('trend', 'unknown')}")
-                parts.append(f"  平均极性: {emotion_ctx.get('avg_polarity', 'N/A')}")
-                parts.append(f"  平均强度: {emotion_ctx.get('avg_intensity', 'N/A')}")
-
-            chart_stats = historical_ctx.get("chart_stats")
-            if chart_stats:
-                parts.append("\n【会话统计特征】")
-                parts.append(f"  对方回复率: {chart_stats.get('reply_rate', 'N/A')}")
-                parts.append(f"  对方积极率: {chart_stats.get('positive_rate', 'N/A')}")
-                parts.append(f"  消息比（我:对方）: {chart_stats.get('msg_ratio', 'N/A')}")
-                parts.append(f"  平均回复时长: {chart_stats.get('avg_reply_gap', 'N/A')} 秒")
+        recent = self._normalize_recent_messages(context.get("recent_messages", []))
+        _older_messages, recent_window = self._select_recent_messages(recent)
+        compressed_summary = self._compress_messages(recent, recent_window)
+        if recent_window:
+            parts.append("\n【最近对话】")
+            if compressed_summary:
+                parts.append(f"  {compressed_summary}")
+            for msg in recent_window:
+                sender = "我" if msg.get("sender_attr") == "self" else "对方"
+                content = str(msg.get("content", ""))[:200]
+                parts.append(f"  {sender}：{content}")
 
         # 情绪摘要
         emotion = context.get("emotion_summary")
@@ -347,53 +474,110 @@ class LLMSuggestionEngine(SuggestionEngine):
             if history_summary:
                 parts.append(f"【历史关系分析】{history_summary[:500]}")
 
-        # 最近对话 (考虑传入的 window_size 控制的情绪窗口内最近聊天)
-        recent = context.get("recent_messages", [])
-        if recent:
-            parts.append("【最近对话】")
-            # 窗口大小默认为 8，如果有 emotion summary 的 window size，可采用，但不完全限制
-            window_size = 5 # 根据用户要求修改为 5 条作为窗口基础
-            if emotion and emotion.get('window_size'):
-                window_size = int(emotion.get('window_size', 5))
-            
-            # 但最多还是取最近 8~10 条，避免 prompt 太长，这里先限制最多8条，如果要求5条也可以这里调整。
-            for msg in recent[-8:]:  
-                sender = "我" if msg.get("sender_attr") == "self" else "对方"
-                content = msg.get("content", "")[:100]
-                parts.append(f"  {sender}：{content}")
+        # 联系人画像（如有）
+        profile = context.get("contact_profile")
+        if profile:
+            parts.append("\n【对方画像（低权重参考）】")
+            tags = profile.get("personality_tags", [])
+            if tags:
+                parts.append(f"  性格标签: {', '.join(tags)}")
+            style = profile.get("chat_style", "")
+            if style:
+                parts.append(f"  聊天风格: {style}")
+            tips = profile.get("communication_tips", "")
+            if tips:
+                parts.append(f"  沟通注意: {tips}")
+            note = profile.get("relationship_note", "")
+            if note:
+                parts.append(f"  关系状态: {note}")
+
+        # 用户本体专属克隆画像
+        self_profile = context.get("self_profile")
+        if self_profile:
+            parts.append("\n【用户本体语言风格参考（仅影响措辞）】")
+            typing_style = self_profile.get("typing_style", "")
+            if typing_style:
+                parts.append(f"  打字排版风格: {typing_style}")
+            catchphrases = self_profile.get("frequent_catchphrases", [])
+            if catchphrases:
+                parts.append(f"  高频语气词汇: {', '.join(catchphrases)}")
+            patterns = self_profile.get("sentence_patterns", [])
+            if patterns:
+                parts.append(f"  常用句式模板（优先仿照这些结构写话术）: {' / '.join(patterns)}")
+            donts = self_profile.get("do_and_donts", "")
+            if donts:
+                parts.append(f"  模仿禁忌: {donts}")
+
+        relevant_memories = self._should_inject_memories(
+            recent_window or recent,
+            context.get("relevant_memories", []),
+        )
+        if relevant_memories:
+            parts.append("\n【被唤醒的历史记忆（仅作辅助，不要盖过当前对话）】")
+            for mem in relevant_memories:
+                summary = str(mem.get("summary", "")).strip()
+                created = mem.get("created_at", 0)
+                age_hours = int((time.time() - created) / 3600) if created else 0
+                time_label = f"{age_hours}小时前" if age_hours < 24 else f"{age_hours // 24}天前"
+                parts.append(f"  {time_label}: {summary}")
+
+        historical_ctx = context.get("historical_context", {})
+        history_lines = []
+        if historical_ctx:
+            profile_ctx = historical_ctx.get("profile") or {}
+            profile_bits = []
+            if profile_ctx.get("chat_style"):
+                profile_bits.append(f"历史沟通风格={profile_ctx.get('chat_style')}")
+            if profile_ctx.get("communication_tips"):
+                profile_bits.append(f"历史沟通提示={profile_ctx.get('communication_tips')}")
+            if profile_ctx.get("personality_tags"):
+                profile_bits.append(
+                    f"历史性格标签={', '.join(profile_ctx.get('personality_tags', []))}"
+                )
+            if profile_bits:
+                history_lines.append("；".join(profile_bits))
+
+            emotion_ctx = historical_ctx.get("emotion_summary") or {}
+            chart_stats = historical_ctx.get("chart_stats") or {}
+            summary_bits = []
+            if emotion_ctx:
+                summary_bits.append(f"趋势={emotion_ctx.get('trend', 'unknown')}")
+                summary_bits.append(f"平均极性={emotion_ctx.get('avg_polarity', 'N/A')}")
+                summary_bits.append(f"平均强度={emotion_ctx.get('avg_intensity', 'N/A')}")
+            if chart_stats:
+                summary_bits.append(f"对方回复率={chart_stats.get('reply_rate', 'N/A')}")
+                summary_bits.append(f"对方积极率={chart_stats.get('positive_rate', 'N/A')}")
+                summary_bits.append(f"消息比={chart_stats.get('msg_ratio', 'N/A')}")
+                summary_bits.append(f"平均回复时长={chart_stats.get('avg_reply_gap', 'N/A')} 秒")
+            if summary_bits:
+                history_lines.append("；".join(summary_bits))
+        if history_lines:
+            parts.append("\n【历史上下文补充（低权重）】")
+            for line in history_lines:
+                parts.append(f"  {line}")
 
         # 用户调教规则（最高优先级）
         display_name = context.get("display_name")
         if display_name:
             try:
                 from .feedback_rule_extractor import FeedbackRuleExtractor
-                rules = FeedbackRuleExtractor().get_active_rules(display_name)
+                rules = self._filter_style_rules(
+                    FeedbackRuleExtractor().get_active_rules(display_name)
+                )
                 if rules:
-                    parts.append("\n【用户调教规则（绝对最高戒律！每一条都必须严格遵守）】")
+                    parts.append("\n【表达偏好参考（仅影响措辞，不决定话题）】")
                     for i, rule in enumerate(rules, 1):
                         parts.append(f"  规则{i}: {rule}")
             except Exception as e:
                 _print(f"[LLM Engine] 加载调教规则失败: {e}")
 
-        # 被唤醒的长期记忆（RAG）
-        relevant_memories = context.get("relevant_memories", [])
-        if relevant_memories:
-            parts.append("\n【被唤醒的历史记忆（你们过去聊过的相关事件）】")
-            for mem in relevant_memories[:3]:
-                summary = mem.get('summary', '')
-                # 计算时间距离
-                import time as _time
-                created = mem.get('created_at', 0)
-                age_hours = int((_time.time() - created) / 3600) if created else 0
-                if age_hours < 24:
-                    time_label = f"{age_hours}小时前"
-                else:
-                    time_label = f"{age_hours // 24}天前"
-                parts.append(f"  {time_label}: {summary}")
-
         parts.append("\n请根据以上信息生成思考过程和沟通建议（纯 JSON 输出）：")
-
-        return "\n".join(parts)
+        prompt = "\n".join(parts)
+        total_chars = len(prompt)
+        _print(f"[LLM Engine] 📏 Prompt 总长度: {total_chars} 字符")
+        if total_chars > 3000:
+            _print("[LLM Engine] ⚠️ Prompt 较长，建议检查最近对话窗口和压缩逻辑")
+        return prompt
 
     def _fetch_available_models(self, base_url: str, api_key: str = "") -> list[str] | None:
         """查询厂商 /models 端点获取可用模型列表，带缓存"""

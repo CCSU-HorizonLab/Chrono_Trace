@@ -15,6 +15,7 @@ from app.services.realtime.historical_context import build_historical_context
 from app.services.realtime.llm_engine import LLMSuggestionEngine
 from app.services.realtime.self_profiler import SelfProfiler
 from app.services.realtime.session_thread_service import SessionThreadService
+from app.services.realtime.trigger_resolver import resolve_suggestion_trigger
 
 
 DISPLAY_NAME = "阿澄"
@@ -137,22 +138,51 @@ def build_context(display_name: str, case_name: str, payload: dict) -> dict:
     return ctx
 
 
+def detect_trigger(messages: list[dict]) -> tuple[str | None, dict]:
+    resolved = resolve_suggestion_trigger(
+        mode="semi_auto",
+        recent_messages=messages,
+    )
+    return resolved.trigger_type, resolved.trigger_context
+
+
 def main() -> None:
     engine = LLMSuggestionEngine(timeout=90)
     for case_name, payload in CASES.items():
+        computed_trigger, trigger_context = detect_trigger(payload["messages"])
         ctx = build_context(DISPLAY_NAME, case_name, payload)
-        result = engine.generate(payload["trigger_type"], "maintain", ctx)
-        print(f"\n=== {case_name} ===")
-        print(
-            json.dumps(
+        ctx.setdefault("trigger_context", {}).update(trigger_context)
+
+        result_payload = {
+            "historical_trigger_type": payload["trigger_type"],
+            "computed_trigger_type": computed_trigger or "no_trigger",
+            "emotion_summary": ctx["emotion_summary"],
+        }
+
+        if computed_trigger is None:
+            result_payload.update(
                 {
-                    "trigger_type": payload["trigger_type"],
-                    "emotion_summary": ctx["emotion_summary"],
+                    "summary": "[NO_TRIGGER] 当前代码不会为这段上下文生成建议",
+                    "speeches": [],
+                    "thought_process": "当前 EmotionStateTracker 没有命中任何触发条件，因此这段对话更接近自然推进而非系统介入。",
+                    "reply": None,
+                }
+            )
+        else:
+            result = engine.generate(computed_trigger, "maintain", ctx)
+            result_payload.update(
+                {
                     "summary": result.summary,
                     "speeches": result.speeches,
                     "thought_process": result.thought_process,
                     "reply": result.reply,
-                },
+                }
+            )
+
+        print(f"\n=== {case_name} ===")
+        print(
+            json.dumps(
+                result_payload,
                 ensure_ascii=False,
                 indent=2,
             )

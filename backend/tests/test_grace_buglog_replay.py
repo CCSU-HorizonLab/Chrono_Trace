@@ -8,8 +8,13 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from app.services.realtime.emotion_state_tracker import (
+    EmotionStateTracker,
+    TRIGGER_EMOTION_SHIFT,
+)
 from app.services.realtime import feedback_rule_extractor
 from app.services.realtime.llm_engine import LLMSuggestionEngine
+from replay_buglog_live import CASES, detect_trigger
 
 
 def _build_recent_messages(raw_messages: list[tuple[str, str]]) -> list[dict]:
@@ -32,6 +37,27 @@ def _extract_recent_block(prompt: str) -> str:
     return prompt.split("【最近对话】", 1)[1].split(
         "请根据以上信息生成思考过程和沟通建议", 1
     )[0]
+
+
+def _update_tracker_with_friend_window(items: list[tuple[str, int, float, float]]):
+    tracker = EmotionStateTracker()
+    triggers = []
+    for index, (content, polarity, intensity, confidence) in enumerate(items, start=1):
+        triggers = tracker.update(
+            {
+                "polarity": polarity,
+                "intensity": intensity,
+                "confidence": confidence,
+                "rules_applied": [],
+            },
+            {
+                "content": content,
+                "sender_attr": "friend",
+                "timestamp": index,
+            },
+            current_time=float(index),
+        )
+    return triggers
 
 
 BUGLOG_TOPIC_SHIFT = _build_recent_messages(
@@ -136,6 +162,47 @@ def test_grace_buglog_prompt_ignores_content_rules(monkeypatch):
     assert "用户倾向于用图片而非文字表达情绪或状态" in prompt
     assert "用户对不感兴趣的话题会直接转移话题" not in prompt
     assert "用户倾向于开启新话题而非延续玩笑" not in prompt
+
+
+def test_grace_buglog_dorm_annoyance_window_no_longer_triggers_emotion_shift():
+    triggers = _update_tracker_with_friend_window(
+        [
+            ("这事居然解决了", 1, 0.7, 0.9),
+            ("那还挺顺的", 1, 0.5, 0.9),
+            ("还行吧", 1, 0.3, 0.85),
+            ("我很讨厌体育队还有打游戏大吼大叫", -1, -0.7, 0.92),
+            ("动画表情", 0, 0.0, 0.95),
+        ]
+    )
+
+    assert TRIGGER_EMOTION_SHIFT not in [ev.trigger_type for ev in triggers]
+
+
+def test_grace_buglog_part_time_money_window_no_longer_triggers_emotion_shift():
+    triggers = _update_tracker_with_friend_window(
+        [
+            ("前面还挺开心的", 1, 0.8, 0.9),
+            ("感觉之后机会还挺多", 1, 0.6, 0.9),
+            ("嗯还不错", 1, 0.4, 0.85),
+            ("我打算毕业去兼职赚点小钱", 0, 0.0, 0.95),
+        ]
+    )
+
+    assert TRIGGER_EMOTION_SHIFT not in [ev.trigger_type for ev in triggers]
+
+
+def test_replay_live_detect_trigger_returns_no_trigger_for_abroad_plan():
+    trigger_type, trigger_context = detect_trigger(CASES["abroad_study_plan"]["messages"])
+
+    assert trigger_type is None
+    assert trigger_context == {}
+
+
+def test_replay_live_detect_trigger_returns_no_trigger_for_part_time_money():
+    trigger_type, trigger_context = detect_trigger(CASES["part_time_money"]["messages"])
+
+    assert trigger_type is None
+    assert trigger_context == {}
 
 
 if __name__ == "__main__":

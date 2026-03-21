@@ -234,6 +234,41 @@ def test_llm_prompt_filters_content_rules_and_keeps_style_rules(monkeypatch):
     assert "与对方共有的记忆常识" not in prompt
 
 
+def test_llm_prompt_uses_refined_emotion_shift_description():
+    engine = LLMSuggestionEngine()
+
+    prompt = engine._build_prompt(
+        "emotion_shift",
+        "maintain",
+        {
+            "recent_messages": [
+                {"id": 1, "timestamp": 100, "sender_attr": "other", "content": "刚刚还挺顺的"},
+                {"id": 2, "timestamp": 101, "sender_attr": "other", "content": "这下突然有点烦"},
+            ],
+        },
+    )
+
+    assert "对方近期情绪明显下坠，且最新表达偏负面" in prompt
+    assert "对方情绪发生了突变，从正面转为负面" not in prompt
+
+
+def test_llm_prompt_supports_manual_request_trigger_description():
+    engine = LLMSuggestionEngine()
+
+    prompt = engine._build_prompt(
+        "manual_request",
+        "maintain",
+        {
+            "recent_messages": [
+                {"id": 1, "timestamp": 100, "sender_attr": "other", "content": "最近有点纠结"},
+                {"id": 2, "timestamp": 101, "sender_attr": "self", "content": "该怎么回"},
+            ],
+        },
+    )
+
+    assert "用户主动请求建议，需要基于当前上下文给出回复思路" in prompt
+
+
 def test_self_profiler_collect_features_and_parse_sentence_patterns():
     profiler = SelfProfiler()
     conn = sqlite3.connect(":memory:")

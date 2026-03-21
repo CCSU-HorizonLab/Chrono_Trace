@@ -49,6 +49,36 @@ SYSTEM_PROMPT = """你是一个专业的聊天沟通顾问，但你当前必须�
   "speeches": ["话术1", "话术2", "话术3"]
 }"""
 
+ANALYSIS_SYSTEM_PROMPT = """你是用户的聊天思考助手。请先只做分析，不要输出 JSON。
+
+要求：
+1. 只分析眼前这段聊天上下文现在该聊什么、为什么这么聊。
+2. 可以参考用户风格和对方画像，但不要复述整段 prompt。
+3. 不要输出规则标题，不要输出“reply/summary/speeches/thought_process”这类字段名。
+4. 最后单独给出 1 到 3 条“可直接发送的话术草稿”，每条单独成行，以 `- ` 开头。
+5. 除了分析和草稿，不要输出别的格式说明。"""
+
+REPAIR_SYSTEM_PROMPT = """你是一个结果整理器。你会收到：
+1. 当前聊天建议任务的上下文
+2. 一次失败的历史说明（可选）
+
+你的任务不是继续分析规则，而是直接重新给出最终结果。
+
+要求：
+1. 只输出纯 JSON，不要输出解释、前言、Markdown。
+2. `speeches` 必须是用户可以直接发送给对方的原句，不能是规则、分析、Prompt 片段、字段说明。
+3. 如果没有足够可靠的话术，就返回空 `speeches`，不要编造 prompt 规则。
+4. `thought_process` 只保留一两句简短总结，不要复述长篇思维链。
+5. 不要续写坏掉的 JSON，不要分析“你收到什么任务”，只给最终结果。
+
+输出格式：
+{
+  "reply": "",
+  "thought_process": "",
+  "summary": "",
+  "speeches": []
+}"""
+
 # 触发类型的中文描述
 TRIGGER_DESCRIPTIONS = {
     "negative_streak": "对方连续发送了多条消极/负面情绪的消息",
@@ -136,6 +166,42 @@ class LLMSuggestionEngine(SuggestionEngine):
         "聊到",
         "话题",
     )
+    JSON_MODE_PROVIDERS = {"openai", "deepseek"}
+    PLACEHOLDER_SUMMARIES = {"...", "…", "一句话建议摘要（若无须提供建议则留空）"}
+    META_SPEECH_KEYWORDS = (
+        "AI",
+        "用户",
+        "对方",
+        "规则",
+        "模仿",
+        "画像",
+        "输出",
+        "JSON",
+        "reply",
+        "summary",
+        "thought_process",
+        "speeches",
+        "身份区分",
+        "千人千面",
+        "完美模仿",
+        "克隆规则",
+        "聊天对象",
+        "当前上下文",
+        "关系状态",
+        "触发",
+        "模式",
+        "Prompt",
+        "prompt",
+        "字段",
+        "性格标签",
+        "聊天风格",
+        "沟通注意",
+        "关系状态",
+        "打字排版风格",
+        "高频语气词汇",
+        "常用句式模板",
+        "模仿禁忌",
+    )
 
     def __init__(self, timeout: int = 60):
         """
@@ -162,6 +228,10 @@ class LLMSuggestionEngine(SuggestionEngine):
             except (TypeError, ValueError):
                 pass
         return BASE_RETRY_DELAY * (2 ** attempt) + random.uniform(0.0, 0.5)
+
+    def _is_reasoning_model(self, model_id: str) -> bool:
+        normalized = (model_id or "").lower()
+        return "reasoner" in normalized or "deepseek-r1" in normalized
 
     def generate(
         self,
@@ -203,13 +273,32 @@ class LLMSuggestionEngine(SuggestionEngine):
         _print(f"{'─'*50}")
 
         try:
-            # 调用 API
-            response_text = self._call_api(model_config, user_prompt)
-            _print(f"[LLM Engine] 📥 收到响应 ({len(response_text)} 字符):")
-            _print(f"[LLM Engine] 响应内容: {response_text[:300]}")
+            if self._is_reasoning_model(model_config.get("model_id", "")):
+                analysis_text = self._generate_reasoning_analysis(model_config, user_prompt)
+                _print(f"[LLM Engine] 🧠 分析阶段输出 ({len(analysis_text)} 字符): {analysis_text[:300]}")
+                response_text = self._format_reasoning_result(model_config, user_prompt, analysis_text)
+                _print(f"[LLM Engine] 📥 格式化阶段输出 ({len(response_text)} 字符): {response_text[:300]}")
+                result = self._parse_response(response_text, trigger_type, intent)
+                if not result:
+                    repaired_text = self._repair_response(model_config, user_prompt, analysis_text)
+                    if repaired_text:
+                        _print(f"[LLM Engine] 🩹 修复后响应: {repaired_text[:300]}")
+                        result = self._parse_response(repaired_text, trigger_type, intent)
+                if result and analysis_text:
+                    result.thought_process = analysis_text[:2000]
+            else:
+                # 调用 API
+                response_text = self._call_api(model_config, user_prompt)
+                _print(f"[LLM Engine] 📥 收到响应 ({len(response_text)} 字符):")
+                _print(f"[LLM Engine] 响应内容: {response_text[:300]}")
 
-            # 解析响应
-            result = self._parse_response(response_text, trigger_type, intent)
+                # 解析响应
+                result = self._parse_response(response_text, trigger_type, intent)
+                if not result:
+                    repaired_text = self._repair_response(model_config, user_prompt, response_text)
+                    if repaired_text:
+                        _print(f"[LLM Engine] 🩹 修复后响应: {repaired_text[:300]}")
+                        result = self._parse_response(repaired_text, trigger_type, intent)
             if result:
                 if result.summary == "[SILENT]":
                     _print(f"[LLM Engine] 😶 LLM 决定保持沉默，无建议也不需回复。")
@@ -573,6 +662,13 @@ class LLMSuggestionEngine(SuggestionEngine):
             except Exception as e:
                 _print(f"[LLM Engine] 加载调教规则失败: {e}")
 
+        if trigger_type == "manual_request":
+            parts.append(
+                "\n【手动求助模式】用户是主动来问该怎么聊的。"
+                "请直接基于当前上下文给出可发送的话术，"
+                "并且必须严格只输出 JSON，不要输出解释、前言或额外文本。"
+            )
+
         parts.append("\n请根据以上信息生成思考过程和沟通建议（纯 JSON 输出）：")
         prompt = "\n".join(parts)
         total_chars = len(prompt)
@@ -651,30 +747,62 @@ class LLMSuggestionEngine(SuggestionEngine):
         _print(f"[LLM Engine] ⚠️ model_id \"{model_id}\" 不在可用列表中，保持原值（可用: {available[:5]}...）")
         return model_id
 
-    def _call_api(self, model_config: dict, user_prompt: str) -> str:
-        """调用 OpenAI 兼容 API"""
+    def _supports_json_mode(self, model_config: dict, base_url: str) -> bool:
+        """仅对较稳定支持 response_format 的远端厂商启用 JSON 模式。"""
+        provider = str(model_config.get("provider", "")).lower()
+        if provider in self.JSON_MODE_PROVIDERS:
+            return True
+
+        normalized_url = base_url.lower()
+        return "api.openai.com" in normalized_url or "api.deepseek.com" in normalized_url
+
+    def _boost_reasoning_max_tokens(self, model_id: str, max_tokens: int, request_tag: str) -> int:
+        """reasoning 模型容易把输出预算耗在思维过程上，给结构化结果更高上限。"""
+        is_reasoning_model = self._is_reasoning_model(model_id)
+        if not is_reasoning_model:
+            return max_tokens
+
+        if request_tag == "analysis":
+            return max(max_tokens, 1536)
+        if request_tag == "repair":
+            return max(max_tokens, 768)
+        if request_tag == "suggestion":
+            return max(max_tokens, 1024)
+        if request_tag == "format":
+            return max(max_tokens, 768)
+        return max_tokens
+
+    def _call_api_with_messages(
+        self,
+        model_config: dict,
+        messages: list[dict],
+        *,
+        max_tokens: Optional[int] = None,
+        temperature: Optional[float] = None,
+        request_tag: str = "suggestion",
+        use_json_mode: bool = True,
+    ) -> str:
+        """调用 OpenAI 兼容 API，并允许传入自定义消息。"""
         base_url = model_config["api_base_url"].rstrip("/")
         api_key = model_config.get("api_key", "")
         model_id = model_config["model_id"]
-        max_tokens = model_config.get("max_tokens", 512)
-        temperature = model_config.get("temperature", 0.7)
+        max_tokens = model_config.get("max_tokens", 512) if max_tokens is None else max_tokens
+        temperature = model_config.get("temperature", 0.7) if temperature is None else temperature
 
         # Bug 2: 动态校验并修正 model_id
         model_id = self._validate_model_id(model_id, base_url, api_key)
+        max_tokens = self._boost_reasoning_max_tokens(model_id, int(max_tokens), request_tag)
 
         url = f"{base_url}/chat/completions"
 
         payload = {
             "model": model_id,
-            "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
+            "messages": messages,
             "max_tokens": max_tokens,
             "temperature": temperature,
         }
-
-        data = json.dumps(payload).encode("utf-8")
+        if use_json_mode and self._supports_json_mode(model_config, base_url):
+            payload["response_format"] = {"type": "json_object"}
 
         headers = {
             "Content-Type": "application/json",
@@ -682,15 +810,19 @@ class LLMSuggestionEngine(SuggestionEngine):
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
 
-        req = urllib.request.Request(url, data=data, headers=headers, method="POST")
-
         _print(f"[LLM Engine] 📤 POST {url}")
-        _print(f"[LLM Engine] 📤 model={model_id}, temp={temperature}, max_tokens={max_tokens}")
+        _print(
+            f"[LLM Engine] 📤 [{request_tag}] model={model_id}, temp={temperature}, max_tokens={max_tokens}"
+        )
+        if payload.get("response_format"):
+            _print("[LLM Engine] 📤 已启用 response_format=json_object")
 
         body = None
         for attempt in range(MAX_API_RETRIES + 1):
             start_time = time.time()
             try:
+                data = json.dumps(payload).encode("utf-8")
+                req = urllib.request.Request(url, data=data, headers=headers, method="POST")
                 with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                     status_code = resp.status
                     body = json.loads(resp.read().decode("utf-8"))
@@ -721,7 +853,8 @@ class LLMSuggestionEngine(SuggestionEngine):
         if not choices:
             raise ValueError("API 返回空 choices")
 
-        content = choices[0].get("message", {}).get("content", "")
+        message_obj = choices[0].get("message", {})
+        content = self._extract_message_text(message_obj)
         usage = body.get("usage", {})
         _print(
             f"[LLM Engine] 📥 tokens: prompt={usage.get('prompt_tokens', '?')}, "
@@ -731,21 +864,363 @@ class LLMSuggestionEngine(SuggestionEngine):
 
         return content.strip()
 
+    def _call_api(self, model_config: dict, user_prompt: str) -> str:
+        """调用 OpenAI 兼容 API"""
+        return self._call_api_with_messages(
+            model_config,
+            [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            request_tag="suggestion",
+        )
+
+    def _resolve_formatter_model_config(self, model_config: dict) -> dict:
+        """reasoner 负责思考，格式化阶段尽量切到同厂商 chat 模型。"""
+        if not self._is_reasoning_model(model_config.get("model_id", "")):
+            return dict(model_config)
+
+        base_url = model_config["api_base_url"].rstrip("/")
+        api_key = model_config.get("api_key", "")
+        available = self._fetch_available_models(base_url, api_key) or []
+        for candidate in available:
+            if candidate.lower() == "deepseek-chat":
+                formatter_config = dict(model_config)
+                formatter_config["model_id"] = candidate
+                _print(f"[LLM Engine] 🔀 格式化阶段使用 chat 模型: {candidate}")
+                return formatter_config
+        return dict(model_config)
+
+    def _generate_reasoning_analysis(self, model_config: dict, user_prompt: str) -> str:
+        """第一阶段：仅生成思考过程和候选话术草稿。"""
+        return self._call_api_with_messages(
+            model_config,
+            [
+                {"role": "system", "content": ANALYSIS_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.4,
+            request_tag="analysis",
+            use_json_mode=False,
+        )
+
+    def _format_reasoning_result(self, model_config: dict, user_prompt: str, analysis_text: str) -> str:
+        """第二阶段：基于上下文和分析文本，只输出最终 JSON。"""
+        formatter_config = self._resolve_formatter_model_config(model_config)
+        format_prompt = (
+            "【当前聊天建议任务上下文】\n"
+            f"{user_prompt[:3200]}\n\n"
+            "【分析阶段输出】\n"
+            f"{analysis_text[:2200]}\n\n"
+            "请直接输出最终 JSON。"
+            "注意：speeches 必须是用户可以直接复制发送给对方的话，不得复述画像字段、规则标题或 prompt 原文。"
+        )
+        return self._call_api_with_messages(
+            formatter_config,
+            [
+                {"role": "system", "content": REPAIR_SYSTEM_PROMPT},
+                {"role": "user", "content": format_prompt},
+            ],
+            temperature=0.2,
+            request_tag="format",
+        )
+
+    def _extract_message_text(self, message_obj: dict) -> str:
+        """兼容不同 OpenAI 兼容厂商返回的文本字段。"""
+        content = message_obj.get("content", "") or ""
+        reasoning = message_obj.get("reasoning_content", "") or ""
+
+        if not content and reasoning:
+            _print("[LLM Engine] ⚠️ message.content 为空，回退使用 reasoning_content")
+            return reasoning
+
+        if not content and not reasoning:
+            logger.error(
+                "[LLM Engine] message.content 与 reasoning_content 均为空: %s",
+                json.dumps(message_obj, ensure_ascii=False)[:2000],
+            )
+
+        return content
+
+    def _extract_json_candidate(self, text: str) -> str:
+        """尽量从模型输出中提取一个可解析的 JSON 对象字符串。"""
+        cleaned = (text or "").strip()
+        if not cleaned:
+            return ""
+
+        if "```json" in cleaned:
+            cleaned = cleaned.split("```json", 1)[1]
+            cleaned = cleaned.split("```", 1)[0]
+            return cleaned.strip()
+
+        if "```" in cleaned:
+            cleaned = cleaned.split("```", 1)[1]
+            cleaned = cleaned.split("```", 1)[0]
+            return cleaned.strip()
+
+        if cleaned.startswith("{") and cleaned.endswith("}"):
+            return cleaned
+
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            return cleaned[start:end + 1].strip()
+
+        return cleaned
+
+    def _sanitize_json_candidate(self, text: str) -> str:
+        """修正常见的 JSON 非法控制字符，尤其是字符串中的裸换行。"""
+        if not text:
+            return ""
+
+        result: list[str] = []
+        in_string = False
+        escape = False
+
+        for char in text:
+            if in_string:
+                if escape:
+                    result.append(char)
+                    escape = False
+                    continue
+                if char == "\\":
+                    result.append(char)
+                    escape = True
+                    continue
+                if char == "\"":
+                    result.append(char)
+                    in_string = False
+                    continue
+                if char == "\n":
+                    result.append("\\n")
+                    continue
+                if char == "\r":
+                    result.append("\\r")
+                    continue
+                if char == "\t":
+                    result.append("\\t")
+                    continue
+                result.append(char)
+                continue
+
+            result.append(char)
+            if char == "\"":
+                in_string = True
+
+        return "".join(result)
+
+    def _clean_speech_candidate(self, line: str) -> str:
+        """清洗 reasoning 文本里候选话术的前缀噪音。"""
+        candidate = re.sub(r"^[-*•\s]+", "", line.strip())
+        candidate = re.sub(r"^\d+[.)、．]\s*", "", candidate)
+        candidate = re.sub(r"^话术(?:建议|例子|示例)?[:：]\s*", "", candidate)
+        candidate = candidate.strip("`\"'“”‘’ ")
+        if "：" in candidate and candidate.split("：", 1)[0] in {"话术1", "话术2", "话术3"}:
+            candidate = candidate.split("：", 1)[1].strip()
+        return candidate
+
+    def _is_sendable_speech(self, text: str) -> bool:
+        """判断一段文本是否像用户可以直接发送的话术，而不是规则说明。"""
+        candidate = str(text or "").strip()
+        if not candidate:
+            return False
+        if candidate.startswith(("**", "#", "【")):
+            return False
+        if len(candidate) > 48:
+            return False
+        if any(keyword in candidate for keyword in self.META_SPEECH_KEYWORDS):
+            return False
+        if re.fullmatch(r"话术\d+", candidate):
+            return False
+        return True
+
+    def _looks_like_meta_reasoning(self, text: str) -> bool:
+        meta_keywords = (
+            "JSON",
+            "reply",
+            "summary",
+            "thought_process",
+            "speeches",
+            "输出格式",
+            "用户目标",
+            "当前对话",
+            "规则",
+            "结构",
+            "模式",
+            "触发",
+            "关系状态",
+        )
+        return any(keyword in text for keyword in meta_keywords)
+
+    def _extract_speeches_from_reasoning(self, text: str) -> list[str]:
+        """从 reasoning 型自由文本中尽量提取可发送的话术。"""
+        lines = [line.rstrip() for line in (text or "").splitlines()]
+        speeches: list[str] = []
+        collecting = False
+        markers = ("话术例子", "建议话术", "示例话术", "可以发", "可直接发", "可发")
+        stop_markers = ("输出必须", "输出格式", "结构：", "所以，结构", "因此，结构", "`reply`", "`thought_process`")
+
+        for raw_line in lines:
+            line = raw_line.strip()
+            if not line:
+                if collecting and speeches:
+                    break
+                continue
+
+            if any(marker in line for marker in markers):
+                collecting = True
+                remainder = re.split(r"[:：]", line, maxsplit=1)
+                if len(remainder) == 2:
+                    candidate = self._clean_speech_candidate(remainder[1])
+                    if candidate and self._is_sendable_speech(candidate):
+                        speeches.append(candidate)
+                continue
+
+            if not collecting:
+                continue
+
+            if any(marker in line for marker in stop_markers):
+                if speeches:
+                    break
+                collecting = False
+                continue
+
+            bullet_like = bool(re.match(r"^[-*•]\s*", line) or re.match(r"^\d+[.)、．]\s*", line))
+            if not bullet_like:
+                if speeches:
+                    break
+                continue
+
+            candidate = self._clean_speech_candidate(line)
+            if not self._is_sendable_speech(candidate):
+                continue
+            speeches.append(candidate)
+            if len(speeches) >= 3:
+                break
+
+        if not speeches:
+            for raw_line in lines:
+                line = raw_line.strip()
+                if not (re.match(r"^[-*•]\s*", line) or re.match(r"^\d+[.)、．]\s*", line)):
+                    continue
+                candidate = self._clean_speech_candidate(line)
+                if not self._is_sendable_speech(candidate):
+                    continue
+                speeches.append(candidate)
+                if len(speeches) >= 3:
+                    break
+
+        deduped: list[str] = []
+        for speech in speeches:
+            if speech not in deduped:
+                deduped.append(speech)
+        return deduped[:3]
+
+    def _build_reasoning_fallback_summary(
+        self, text: str, trigger_type: str, speeches: list[str]
+    ) -> str:
+        """为非 JSON reasoning 输出构造一个可显示的摘要。"""
+        if trigger_type == "manual_request":
+            if "开启话题" in text or "开场" in text:
+                return "给出几条可直接发送的开启话题话术"
+            return "已从思考输出中提取可直接发送的话术"
+        if trigger_type == "emotion_shift":
+            return "顺着对方最新情绪做轻量回应"
+        if trigger_type == "topic_cooling":
+            return "顺着当前语境补一条自然续聊的话术"
+        if speeches:
+            return "已从思考输出中提取建议话术"
+        return ""
+
+    def _is_placeholder_structured_output(self, data: dict) -> bool:
+        """识别模型复读输出格式示例时产生的占位 JSON。"""
+        summary = str(data.get("summary", "")).strip()
+        reply = str(data.get("reply", "")).strip()
+        thought_process = str(data.get("thought_process", "")).strip()
+        speeches = data.get("speeches", [])
+
+        if summary in self.PLACEHOLDER_SUMMARIES:
+            return True
+        if reply.startswith("（如果用户有提问或反馈"):
+            return True
+        if thought_process.startswith("用一两句话简述"):
+            return True
+
+        if isinstance(speeches, list):
+            normalized = [str(item).strip() for item in speeches if str(item).strip()]
+            if normalized and all(re.fullmatch(r"话术\d+", item) for item in normalized):
+                return True
+
+        return False
+
+    def _parse_reasoning_fallback(
+        self, text: str, trigger_type: str, intent: str
+    ) -> Optional[SuggestionResult]:
+        """当模型没有返回 JSON 时，尽量从 reasoning 自由文本中兜底提取结果。"""
+        cleaned = (text or "").strip()
+        if not cleaned:
+            return None
+
+        speeches = self._extract_speeches_from_reasoning(cleaned)
+        if not speeches:
+            return None
+        summary = self._build_reasoning_fallback_summary(cleaned, trigger_type, speeches)
+        if not summary:
+            return None
+
+        return SuggestionResult(
+            trigger_type=trigger_type,
+            intent=intent,
+            summary=summary or "[PURE_CHAT]",
+            speeches=speeches,
+            severity="medium",
+            confidence=0.65,
+            thought_process=cleaned,
+            reply=None,
+        )
+
+    def _repair_response(
+        self, model_config: dict, user_prompt: str, raw_response: str
+    ) -> str:
+        """当首轮输出偏 meta / 非 JSON 时，做一次轻量结构化整理。"""
+        repair_prompt = (
+            "【当前聊天建议任务上下文】\n"
+            f"{user_prompt[:3200]}\n\n"
+            "【失败说明】\n"
+            "上一次输出不是合法 JSON，或者结果里混入了规则说明/Prompt 片段。"
+            "请不要解释失败原因，不要续写旧输出，直接重新给最终 JSON。\n\n"
+            "如果你能从下面的坏输出片段里借用少量有价值的信息可以参考，否则忽略它：\n"
+            f"{raw_response[:600] if raw_response.strip() else '（无）'}"
+        )
+        try:
+            return self._call_api_with_messages(
+                model_config,
+                [
+                    {"role": "system", "content": REPAIR_SYSTEM_PROMPT},
+                    {"role": "user", "content": repair_prompt},
+                ],
+                max_tokens=min(max(int(model_config.get("max_tokens", 512)), 256), 512),
+                temperature=0.2,
+                request_tag="repair",
+            )
+        except Exception as e:
+            _print(f"[LLM Engine] 修复响应失败: {e}")
+            return ""
+
     def _parse_response(
         self, text: str, trigger_type: str, intent: str
     ) -> Optional[SuggestionResult]:
         """解析 LLM 返回的 JSON"""
         try:
-            # 尝试提取 JSON 块（LLM 有时会包裹在 ```json ... ``` 中）
-            cleaned = text
-            if "```json" in cleaned:
-                cleaned = cleaned.split("```json", 1)[1]
-                cleaned = cleaned.split("```", 1)[0]
-            elif "```" in cleaned:
-                cleaned = cleaned.split("```", 1)[1]
-                cleaned = cleaned.split("```", 1)[0]
-
-            data = json.loads(cleaned.strip())
+            cleaned = self._extract_json_candidate(text)
+            cleaned = cleaned.strip()
+            try:
+                data = json.loads(cleaned)
+            except json.JSONDecodeError:
+                sanitized = self._sanitize_json_candidate(cleaned)
+                data = json.loads(sanitized)
+            if self._is_placeholder_structured_output(data):
+                raise ValueError("模型返回了输出格式占位 JSON")
 
             thought_process = data.get("thought_process", "").strip()
             summary = data.get("summary", "").strip()
@@ -769,6 +1244,10 @@ class LLMSuggestionEngine(SuggestionEngine):
 
             # 确保 speeches 是字符串列表
             speeches = [str(s).strip() for s in speeches if s]
+            valid_speeches = [speech for speech in speeches if self._is_sendable_speech(speech)]
+            if speeches and not valid_speeches:
+                raise ValueError("模型返回的 speeches 更像规则说明，不是可发送话术")
+            speeches = valid_speeches
 
             return SuggestionResult(
                 trigger_type=trigger_type,
@@ -780,8 +1259,14 @@ class LLMSuggestionEngine(SuggestionEngine):
                 thought_process=thought_process or None,
                 reply=reply or None
             )
-        except (json.JSONDecodeError, KeyError, IndexError) as e:
-            _print(f"[LLM Engine] JSON 解析失败: {e}, 原始文本: {text[:200]}")
+        except (json.JSONDecodeError, KeyError, IndexError, ValueError) as e:
+            fallback_result = self._parse_reasoning_fallback(text, trigger_type, intent)
+            if fallback_result:
+                _print("[LLM Engine] ⚠️ 检测到非 JSON reasoning 输出，已本地提取建议结果")
+                return fallback_result
+            preview = (text or "")[:2000]
+            logger.error("[LLM Engine] JSON 解析失败: %s | 原始响应: %s", e, preview)
+            _print(f"[LLM Engine] JSON 解析失败: {e}, 原始文本: {preview[:200]}")
             return None
 
     def generate_quick_prompts(self, context: dict | None = None) -> list[str]:

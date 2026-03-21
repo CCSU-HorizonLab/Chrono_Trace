@@ -470,7 +470,11 @@ const allSuggestions = computed(() => {
 
   // 手动建议优先
   if (manualSuggestion.value) {
-    if (manualSuggestion.value.summary !== '[PURE_CHAT]' && manualSuggestion.value.summary !== '[SILENT]') {
+    if (
+      manualSuggestion.value.summary !== '[PURE_CHAT]'
+      && manualSuggestion.value.summary !== '[SILENT]'
+      && !isPlaceholderSuggestion(manualSuggestion.value)
+    ) {
       const id = manualSuggestion.value.id || 'manual'
       list.push({ ...manualSuggestion.value, id: id, _type: 'suggestion' })
       seenIds.add(String(id))
@@ -480,6 +484,7 @@ const allSuggestions = computed(() => {
   // 轮询建议：跳过纯对话和静默回应，以及跳过已被手动首选加载的高亮建议的同一id
   for (const s of pendingSuggestions.value) {
     if (s.summary === '[PURE_CHAT]' || s.summary === '[SILENT]') continue
+    if (isPlaceholderSuggestion(s)) continue
     if (s.id && seenIds.has(String(s.id))) continue
     if (s.id) seenIds.add(String(s.id))
     list.push({ ...s, _type: 'suggestion' })
@@ -499,6 +504,41 @@ const allSuggestions = computed(() => {
 
   return list
 })
+
+function parseSuggestionSpeeches(raw: any): string[] {
+  if (Array.isArray(raw)) return raw
+  if (typeof raw !== 'string') return []
+  try {
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+function isPlaceholderSuggestion(s: any): boolean {
+  if (!s) return false
+  const summary = String(s.summary || '').trim()
+  const thought = String(s.thought_process || '').trim()
+  const speeches = parseSuggestionSpeeches(s.speeches)
+  const metaKeywords = ['用户', '对方', '规则', '模仿', '画像', 'JSON', 'reply', 'summary', 'thought_process', 'speeches', 'Prompt', 'prompt', '性格标签', '聊天风格', '沟通注意', '关系状态', '打字排版风格', '高频语气词汇', '常用句式模板', '模仿禁忌']
+
+  if (summary === '...' || summary === '…') return true
+  if (thought === '...' || thought === '…') return true
+  if (summary.startsWith('话术应该关于')) return true
+  if (thought.startsWith('thought_process:')) return true
+  if (speeches.length > 0 && speeches.every((item) => /^话术\d+$/.test(String(item).trim()))) {
+    return true
+  }
+  if (speeches.length > 0 && speeches.every((item) => {
+    const text = String(item).trim()
+    return text.startsWith('**') || metaKeywords.some((keyword) => text.includes(keyword))
+  })) {
+    return true
+  }
+
+  return false
+}
 
 function readPendingStartRequest() {
   try {

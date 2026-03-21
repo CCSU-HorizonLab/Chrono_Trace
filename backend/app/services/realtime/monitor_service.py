@@ -2047,19 +2047,24 @@ class RealtimeMonitorService:
                     created_at INTEGER NOT NULL,
                     read_at INTEGER,
                     dismissed_at INTEGER,
-                    reply TEXT
+                    reply TEXT,
+                    thought_process TEXT
                 )
             ''')
             try:
                 conn.execute("ALTER TABLE realtime_suggestions ADD COLUMN reply TEXT")
             except:
                 pass
+            try:
+                conn.execute("ALTER TABLE realtime_suggestions ADD COLUMN thought_process TEXT")
+            except:
+                pass
             
             conn.execute('''
                 INSERT INTO realtime_suggestions
                 (batch_id, trigger_type, intent, severity, summary, speeches,
-                 confidence, engine_type, trigger_context, created_at, reply)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 confidence, engine_type, trigger_context, created_at, reply, thought_process)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 self.current_batch_id,
                 result.trigger_type,
@@ -2071,7 +2076,8 @@ class RealtimeMonitorService:
                 self._suggestion_config.get('engine_type', 'llm'),
                 json.dumps(trigger.context, ensure_ascii=False) if trigger.context else None,
                 int(time.time()),
-                getattr(result, 'reply', None)
+                getattr(result, 'reply', None),
+                getattr(result, 'thought_process', None)
             ))
             conn.commit()
             

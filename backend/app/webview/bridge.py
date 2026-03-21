@@ -434,11 +434,16 @@ class Bridge:
                         created_at INTEGER NOT NULL,
                         read_at INTEGER,
                         dismissed_at INTEGER,
-                        reply TEXT
+                        reply TEXT,
+                        thought_process TEXT
                     )
                 ''')
                 try:
                     conn.execute("ALTER TABLE realtime_suggestions ADD COLUMN reply TEXT")
+                except:
+                    pass
+                try:
+                    conn.execute("ALTER TABLE realtime_suggestions ADD COLUMN thought_process TEXT")
                 except:
                     pass
                 now_time = int(_time.time())
@@ -446,8 +451,8 @@ class Bridge:
                 cursor.execute('''
                     INSERT INTO realtime_suggestions
                     (batch_id, trigger_type, intent, severity, summary, speeches,
-                     confidence, status, engine_type, trigger_context, created_at, reply)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 'displayed', ?, ?, ?, ?)
+                     confidence, status, engine_type, trigger_context, created_at, reply, thought_process)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 'displayed', ?, ?, ?, ?, ?)
                 ''', (
                     monitor.current_batch_id or 'manual',
                     result.trigger_type,
@@ -465,6 +470,7 @@ class Bridge:
                     }, ensure_ascii=False),
                     now_time,
                     getattr(result, 'reply', None),
+                    getattr(result, 'thought_process', None),
                 ))
                 inserted_id = cursor.lastrowid
                 conn.commit()
@@ -938,18 +944,23 @@ class Bridge:
                     created_at INTEGER NOT NULL,
                     read_at INTEGER,
                     dismissed_at INTEGER,
-                    reply TEXT
-                )
-            ''')
+                    reply TEXT,
+                    thought_process TEXT
+                    )
+                ''')
             try:
                 conn.execute("ALTER TABLE realtime_suggestions ADD COLUMN reply TEXT")
+            except:
+                pass
+            try:
+                conn.execute("ALTER TABLE realtime_suggestions ADD COLUMN thought_process TEXT")
             except:
                 pass
 
             # 查询 pending 状态的建议
             cursor = conn.execute('''
                 SELECT id, trigger_type, intent, severity, summary, speeches,
-                       confidence, engine_type, trigger_context, status, created_at, reply
+                       confidence, engine_type, trigger_context, status, created_at, reply, thought_process
                 FROM realtime_suggestions
                 WHERE batch_id = ? AND status = 'pending'
                 ORDER BY created_at DESC
@@ -971,7 +982,8 @@ class Bridge:
                     'trigger_context': json.loads(row['trigger_context']) if row['trigger_context'] else None,
                     'status': row['status'],
                     'created_at': row['created_at'],
-                    'reply': row['reply']
+                    'reply': row['reply'],
+                    'thought_process': row['thought_process'],
                 })
 
             # 获取情绪摘要

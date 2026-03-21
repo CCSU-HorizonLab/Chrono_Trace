@@ -1,5 +1,6 @@
 """Prompt/context regression tests for realtime suggestion stack."""
 
+import json
 import os
 import sqlite3
 import sys
@@ -267,6 +268,267 @@ def test_llm_prompt_supports_manual_request_trigger_description():
     )
 
     assert "用户主动请求建议，需要基于当前上下文给出回复思路" in prompt
+    assert "必须严格只输出 JSON" in prompt
+
+
+def test_llm_parse_response_extracts_json_from_wrapped_text():
+    engine = LLMSuggestionEngine()
+
+    result = engine._parse_response(
+        '好的，下面是结果：{"reply":"","thought_process":"对方还在正常推进话题。","summary":"顺着新话题接一句。","speeches":["那你更倾向哪个？"]}',
+        "manual_request",
+        "maintain",
+    )
+
+    assert result is not None
+    assert result.summary == "顺着新话题接一句。"
+    assert result.speeches == ["那你更倾向哪个？"]
+
+
+def test_llm_extract_message_text_falls_back_to_reasoning_content():
+    engine = LLMSuggestionEngine()
+
+    content = engine._extract_message_text(
+        {
+            "content": "",
+            "reasoning_content": '{"reply":"","thought_process":"测试","summary":"测试摘要","speeches":["测试话术"]}',
+        }
+    )
+
+    assert '"summary":"测试摘要"' in content
+
+
+def test_llm_parse_response_falls_back_to_reasoning_text_with_speeches():
+    engine = LLMSuggestionEngine()
+
+    result = engine._parse_response(
+        """
+首先，理解任务：这是用户主动请求“开启话题”。
+话术例子：
+- 宝贝在干嘛呢～
+- 想你了嘿嘿
+- 今天有什么好玩的事吗
+输出必须是纯JSON。
+        """,
+        "manual_request",
+        "maintain",
+    )
+
+    assert result is not None
+    assert result.summary == "给出几条可直接发送的开启话题话术"
+    assert result.speeches == ["宝贝在干嘛呢～", "想你了嘿嘿", "今天有什么好玩的事吗"]
+    assert result.thought_process is not None
+
+
+def test_llm_parse_response_rejects_placeholder_json_and_uses_reasoning_fallback():
+    engine = LLMSuggestionEngine()
+
+    result = engine._parse_response(
+        """
+{
+  "reply": "（如果用户有提问或反馈，在这里直接回应用户的话；如果没有用户输入，此字段留空字符串）",
+  "thought_process": "用一两句话简述你是如何推断对方的情感以及为什么提供以下建议的",
+  "summary": "...",
+  "speeches": ["话术1", "话术2", "话术3"]
+}
+
+话术例子：
+- 那你最近又在玩啥
+- 某款游戏2好玩吗
+- 你现在打到哪了
+        """,
+        "manual_request",
+        "maintain",
+    )
+
+    assert result is not None
+    assert result.summary == "已从思考输出中提取可直接发送的话术"
+    assert result.speeches == ["那你最近又在玩啥", "某款游戏2好玩吗", "你现在打到哪了"]
+
+
+def test_llm_parse_response_rejects_meta_prompt_rules_as_speeches():
+    engine = LLMSuggestionEngine()
+
+    result = engine._parse_response(
+        """
+{
+  "reply": "",
+  "thought_process": "thought_process: 基于用户输入是主动请求建议来开启一个特定话题",
+  "summary": "话术应该关于开启某款游戏2SL mod的话题。",
+  "speeches": [
+    "**千人千面，消除机味**：我必须彻底抛开AI常用的客套话等",
+    "**完美模仿用户风格**：话术必须模仿用户本体克隆画像",
+    "**身份区分**：\"我\"是用户本人，对方是聊天对象"
+  ]
+}
+        """,
+        "manual_request",
+        "maintain",
+    )
+
+    assert result is None
+
+
+def test_llm_generate_repairs_meta_response_before_returning_result(monkeypatch):
+    engine = LLMSuggestionEngine()
+
+    monkeypatch.setattr(
+        engine,
+        "_get_active_model",
+        lambda: {
+            "name": "DeepSeek R1",
+            "provider": "deepseek",
+            "model_id": "deepseek-reasoner",
+            "api_base_url": "https://api.deepseek.com/v1",
+            "api_key": "token",
+            "max_tokens": 512,
+            "temperature": 0.7,
+        },
+    )
+    monkeypatch.setattr(engine, "_build_prompt", lambda trigger_type, intent, context: "prompt")
+    monkeypatch.setattr(
+        engine,
+        "_generate_reasoning_analysis",
+        lambda model_config, user_prompt: "对方在聊游戏模组，顺着兴趣切进去更自然。\n- 你那个SL mod具体改了啥",
+    )
+    monkeypatch.setattr(
+        engine,
+        "_format_reasoning_result",
+        lambda model_config, user_prompt, analysis_text: """
+{"reply":"","thought_process":"对方在聊游戏模组，顺着兴趣切进去更自然。","summary":"顺着某款游戏2 mod继续聊。","speeches":["你那个SL mod具体改了啥","这个mod你是在哪下的","你现在玩起来手感咋样"]}        
+        """,
+    )
+    monkeypatch.setattr(
+        engine,
+        "_repair_response",
+        lambda model_config, user_prompt, raw_response: """
+{"reply":"","thought_process":"对方在聊游戏模组，顺着兴趣切进去更自然。","summary":"顺着某款游戏2 mod继续聊。","speeches":["你那个SL mod具体改了啥","这个mod你是在哪下的","你现在玩起来手感咋样"]}        
+        """,
+    )
+
+    result = engine.generate("manual_request", "maintain", {})
+
+    assert result.summary == "顺着某款游戏2 mod继续聊。"
+    assert result.speeches == ["你那个SL mod具体改了啥", "这个mod你是在哪下的", "你现在玩起来手感咋样"]
+
+
+def test_llm_parse_response_sanitizes_newlines_inside_json_strings():
+    engine = LLMSuggestionEngine()
+
+    result = engine._parse_response(
+        '{\n'
+        '  "reply": "",\n'
+        '  "thought_process": "对方性格幽默亲密且常聊游戏，\n顺着游戏聊更自然。",\n'
+        '  "summary": "顺着游戏话题继续聊。",\n'
+        '  "speeches": ["你最近又在打哪个mod"]\n'
+        '}',
+        "manual_request",
+        "maintain",
+    )
+
+    assert result is not None
+    assert result.summary == "顺着游戏话题继续聊。"
+    assert result.speeches == ["你最近又在打哪个mod"]
+
+
+def test_llm_call_api_enables_json_mode_for_supported_provider(monkeypatch):
+    engine = LLMSuggestionEngine()
+    captured = {}
+
+    monkeypatch.setattr(engine, "_validate_model_id", lambda model_id, base_url, api_key="": model_id)
+
+    class DummyResponse:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": '{"reply":"","thought_process":"ok","summary":"ok","speeches":["hi"]}'
+                            }
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+                }
+            ).encode("utf-8")
+
+    def fake_urlopen(req, timeout=0):
+        captured["payload"] = json.loads(req.data.decode("utf-8"))
+        return DummyResponse()
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+
+    engine._call_api(
+        {
+            "provider": "deepseek",
+            "api_base_url": "https://api.deepseek.com/v1",
+            "api_key": "token",
+            "model_id": "deepseek-chat",
+            "max_tokens": 256,
+            "temperature": 0.3,
+        },
+        "test prompt",
+    )
+
+    assert captured["payload"]["response_format"] == {"type": "json_object"}
+
+
+def test_llm_call_api_boosts_reasoner_max_tokens(monkeypatch):
+    engine = LLMSuggestionEngine()
+    captured = {}
+
+    monkeypatch.setattr(engine, "_validate_model_id", lambda model_id, base_url, api_key="": model_id)
+
+    class DummyResponse:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": '{"reply":"","thought_process":"ok","summary":"ok","speeches":["hi"]}'
+                            }
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+                }
+            ).encode("utf-8")
+
+    def fake_urlopen(req, timeout=0):
+        captured["payload"] = json.loads(req.data.decode("utf-8"))
+        return DummyResponse()
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+
+    engine._call_api(
+        {
+            "provider": "deepseek",
+            "api_base_url": "https://api.deepseek.com/v1",
+            "api_key": "token",
+            "model_id": "deepseek-reasoner",
+            "max_tokens": 256,
+            "temperature": 0.3,
+        },
+        "test prompt",
+    )
+
+    assert captured["payload"]["max_tokens"] >= 1024
 
 
 def test_self_profiler_collect_features_and_parse_sentence_patterns():

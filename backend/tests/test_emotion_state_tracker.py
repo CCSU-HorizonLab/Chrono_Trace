@@ -103,21 +103,23 @@ class TestEmotionShift:
     """情绪突变检测测试"""
 
     def test_triggers_on_shift(self):
-        """前正后负应触发"""
+        """近期基线偏正，最新一条明确转负应触发"""
         tracker = EmotionStateTracker()
         t = 1000.0
 
-        # 前半正面
         tracker.update(make_sentiment(1, 0.8), make_message("开心！！！", timestamp=int(t)), current_time=t)
         tracker.update(make_sentiment(1, 0.7), make_message("太棒了！！", timestamp=int(t+1)), current_time=t+1)
-        # 后半负面
-        tracker.update(make_sentiment(-1, -0.6), make_message("难过了", timestamp=int(t+2)), current_time=t+2)
+        tracker.update(make_sentiment(1, 0.5), make_message("今天还挺顺", timestamp=int(t+2)), current_time=t+2)
         triggers = tracker.update(
-            make_sentiment(-1, -0.8), make_message("好烦啊好烦", timestamp=int(t+3)), current_time=t+3,
+            make_sentiment(-1, -0.8, confidence=0.92),
+            make_message("好烦啊好烦", timestamp=int(t+3)),
+            current_time=t+3,
         )
 
-        trigger_types = [ev.trigger_type for ev in triggers]
-        assert TRIGGER_EMOTION_SHIFT in trigger_types
+        shift_events = [ev for ev in triggers if ev.trigger_type == TRIGGER_EMOTION_SHIFT]
+        assert len(shift_events) == 1
+        assert shift_events[0].context["baseline_positive_count"] == 3
+        assert shift_events[0].context["latest_intensity"] == -0.8
 
     def test_no_trigger_all_positive(self):
         """全正面不应触发"""
@@ -135,6 +137,90 @@ class TestEmotionShift:
             ev.trigger_type != TRIGGER_EMOTION_SHIFT
             for ev in triggers
         )
+
+    def test_no_trigger_when_latest_message_is_neutral(self):
+        """最新消息是中性/表情时不应误判为情绪突变"""
+        tracker = EmotionStateTracker()
+        t = 1000.0
+
+        tracker.update(make_sentiment(1, 0.8), make_message("哈哈哈哈", timestamp=int(t)), current_time=t)
+        tracker.update(make_sentiment(1, 0.7), make_message("今天真不错", timestamp=int(t+1)), current_time=t+1)
+        tracker.update(make_sentiment(1, 0.4), make_message("还挺开心", timestamp=int(t+2)), current_time=t+2)
+        triggers = tracker.update(
+            make_sentiment(0, confidence=0.9),
+            make_message("动画表情", timestamp=int(t+3)),
+            current_time=t+3,
+        )
+
+        assert all(
+            ev.trigger_type != TRIGGER_EMOTION_SHIFT
+            for ev in triggers
+        )
+
+    def test_no_trigger_when_latest_confidence_is_low(self):
+        """最新负面消息置信度过低时不应触发"""
+        tracker = EmotionStateTracker()
+        t = 1000.0
+
+        tracker.update(make_sentiment(1, 0.9), make_message("爽", timestamp=int(t)), current_time=t)
+        tracker.update(make_sentiment(1, 0.7), make_message("很开心", timestamp=int(t+1)), current_time=t+1)
+        tracker.update(make_sentiment(1, 0.4), make_message("还不错", timestamp=int(t+2)), current_time=t+2)
+        triggers = tracker.update(
+            make_sentiment(-1, -0.8, confidence=0.45),
+            make_message("烦死了", timestamp=int(t+3)),
+            current_time=t+3,
+        )
+
+        assert all(
+            ev.trigger_type != TRIGGER_EMOTION_SHIFT
+            for ev in triggers
+        )
+
+    def test_no_trigger_when_reference_is_too_old(self):
+        """跨度过长时不应用很久以前的正面情绪做参照"""
+        tracker = EmotionStateTracker()
+        t = 1000.0
+
+        tracker.update(make_sentiment(1, 0.8), make_message("开心", timestamp=int(t)), current_time=t)
+        tracker.update(make_sentiment(1, 0.8), make_message("很爽", timestamp=int(t+30)), current_time=t+30)
+        tracker.update(make_sentiment(1, 0.5), make_message("还行", timestamp=int(t+60)), current_time=t+60)
+        triggers = tracker.update(
+            make_sentiment(-1, -0.9, confidence=0.95),
+            make_message("突然好烦", timestamp=int(t+250)),
+            current_time=t+250,
+        )
+
+        assert all(
+            ev.trigger_type != TRIGGER_EMOTION_SHIFT
+            for ev in triggers
+        )
+
+    def test_negative_streak_suppresses_emotion_shift_when_both_exist(self, monkeypatch):
+        """如果两者同时命中，应优先保留连续消极"""
+        tracker = EmotionStateTracker()
+        t = 1000.0
+
+        monkeypatch.setattr(
+            tracker,
+            "_check_negative_streak",
+            lambda now: TriggerEvent(TRIGGER_NEGATIVE_STREAK, now, "high"),
+        )
+        monkeypatch.setattr(
+            tracker,
+            "_check_emotion_shift",
+            lambda now: TriggerEvent(TRIGGER_EMOTION_SHIFT, now, "high"),
+        )
+        monkeypatch.setattr(tracker, "_check_perfunctory", lambda now: None)
+        monkeypatch.setattr(tracker, "_check_positive_window", lambda now: None)
+        monkeypatch.setattr(tracker, "_check_topic_cooling", lambda now: None)
+
+        triggers = tracker.update(
+            make_sentiment(-1, -0.8),
+            make_message("烦", timestamp=int(t)),
+            current_time=t,
+        )
+
+        assert [ev.trigger_type for ev in triggers] == [TRIGGER_NEGATIVE_STREAK]
 
 
 class TestPerfunctory:
@@ -273,6 +359,60 @@ class TestTopicCooling:
 
         trigger_types = [ev.trigger_type for ev in triggers]
         assert TRIGGER_TOPIC_COOLING in trigger_types
+
+    def test_no_trigger_when_latest_message_contains_new_plan(self):
+        """即使频率变慢，只要对方还在给新计划，就不应判为冷场"""
+        tracker = EmotionStateTracker()
+        base = 1000.0
+
+        for i in range(12):
+            tracker.update(
+                make_sentiment(0),
+                make_message("密集消息" + str(i), timestamp=int(base + i * 25)),
+                current_time=base + i * 25,
+            )
+
+        t_late = base + 550
+        triggers = tracker.update(
+            make_sentiment(0),
+            make_message("看能不能去外地发展", timestamp=int(t_late)),
+            current_time=t_late,
+        )
+
+        assert all(
+            ev.trigger_type != TRIGGER_TOPIC_COOLING
+            for ev in triggers
+        )
+
+    def test_no_trigger_when_recent_messages_still_have_substantive_content(self):
+        """最近消息仍有具体信息时，不应被机械判成冷场"""
+        tracker = EmotionStateTracker()
+        base = 1000.0
+
+        for i in range(12):
+            tracker.update(
+                make_sentiment(0),
+                make_message("密集消息" + str(i), timestamp=int(base + i * 25)),
+                current_time=base + i * 25,
+            )
+
+        t1 = base + 520
+        tracker.update(
+            make_sentiment(0),
+            make_message("我都不学高数了", timestamp=int(t1)),
+            current_time=t1,
+        )
+        t2 = base + 550
+        triggers = tracker.update(
+            make_sentiment(0),
+            make_message("学完了", timestamp=int(t2)),
+            current_time=t2,
+        )
+
+        assert all(
+            ev.trigger_type != TRIGGER_TOPIC_COOLING
+            for ev in triggers
+        )
 
 
 class TestCooldown:

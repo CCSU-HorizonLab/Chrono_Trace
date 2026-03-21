@@ -9,6 +9,8 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Optional
+
+
 @dataclass
 class TriggerEvent:
     """触发事件"""
@@ -25,6 +27,63 @@ TRIGGER_PERFUNCTORY     = "perfunctory"           # 敷衍回复
 TRIGGER_SILENCE         = "silence"               # 长时间不回
 TRIGGER_POSITIVE_WINDOW = "positive_window"       # 积极窗口
 TRIGGER_TOPIC_COOLING   = "topic_cooling"         # 话题冷场
+
+EMOTION_SHIFT_MIN_MESSAGES = 4
+EMOTION_SHIFT_BASELINE_SIZE = 3
+EMOTION_SHIFT_MIN_BASELINE_POSITIVE = 2
+EMOTION_SHIFT_MIN_BASELINE_INTENSITY = 0.25
+EMOTION_SHIFT_LATEST_MAX_INTENSITY = -0.35
+EMOTION_SHIFT_MIN_CONFIDENCE = 0.60
+EMOTION_SHIFT_MIN_DELTA = 0.70
+EMOTION_SHIFT_MAX_SPAN_SECONDS = 180
+TOPIC_COOLING_SIGNAL_LOOKBACK = 2
+TOPIC_COOLING_SIGNAL_MAX_AGE_SECONDS = 120
+TOPIC_COOLING_MIN_SUBSTANTIVE_LENGTH = 10
+TOPIC_COOLING_PLAN_KEYWORDS = (
+    "打算",
+    "准备",
+    "想",
+    "考虑",
+    "计划",
+    "看能不能",
+    "不然就",
+    "毕业",
+    "工作",
+    "留学",
+    "兼职",
+    "大学",
+    "高中",
+    "专业",
+)
+TOPIC_COOLING_DETAIL_KEYWORDS = (
+    "高数",
+    "工资",
+    "生活费",
+    "省钱",
+    "香港",
+    "游戏",
+    "steam",
+    "钱",
+    "包",
+    "买",
+)
+TOPIC_COOLING_QUESTION_MARKERS = (
+    "?",
+    "？",
+    "吗",
+    "么",
+    "呢",
+    "咋",
+    "怎么",
+    "为什么",
+    "要不要",
+)
+NONVERBAL_CONTENT_MARKERS = (
+    "动画表情",
+    "图片",
+    "表情",
+    "[图片]",
+)
 
 # 默认冷却时间（秒）
 DEFAULT_COOLDOWNS = {
@@ -139,6 +198,7 @@ class EmotionStateTracker:
             'intensity': intensity,
             'confidence': confidence,
             'content_length': content_length,
+            'content': content,
         })
 
         # 更新消息频率追踪（保留最近 10 分钟的时间戳）
@@ -155,15 +215,25 @@ class EmotionStateTracker:
         # 执行所有检测
         triggers: list[TriggerEvent] = []
 
-        checks = [
-            self._check_negative_streak,
-            self._check_emotion_shift,
+        negative_streak = self._check_negative_streak(now)
+        if negative_streak and self._can_trigger(negative_streak.trigger_type, now):
+            self._last_trigger_times[negative_streak.trigger_type] = now
+            triggers.append(negative_streak)
+
+        emotion_shift = self._check_emotion_shift(now)
+        if (
+            emotion_shift
+            and not negative_streak
+            and self._can_trigger(emotion_shift.trigger_type, now)
+        ):
+            self._last_trigger_times[emotion_shift.trigger_type] = now
+            triggers.append(emotion_shift)
+
+        for check_fn in (
             self._check_perfunctory,
             self._check_positive_window,
             self._check_topic_cooling,
-        ]
-
-        for check_fn in checks:
+        ):
             event = check_fn(now)
             if event and self._can_trigger(event.trigger_type, now):
                 self._last_trigger_times[event.trigger_type] = now
@@ -305,32 +375,65 @@ class EmotionStateTracker:
 
     def _check_emotion_shift(self, now: float) -> TriggerEvent | None:
         """
-        检测情绪突变：窗口前半正面、后半负面
-        需要至少 4 条消息
+        检测情绪突变：近期基线偏正面，且最新一条明确转为负面。
+
+        这是一种“高精度预警”：
+        - 至少 4 条对方消息
+        - 基线取最新消息之前的最近 3 条
+        - 基线里至少 2 条正面，且平均强度足够正
+        - 最新消息必须明确负面且置信度足够高
+        - 从基线到最新消息的时间跨度不能过长
         """
-        if len(self.window) < 4:
+        if len(self.window) < EMOTION_SHIFT_MIN_MESSAGES:
             return None
 
         entries = list(self.window)
-        mid = len(entries) // 2
-        first_half = entries[:mid]
-        second_half = entries[mid:]
+        latest = entries[-1]
+        baseline = entries[-(EMOTION_SHIFT_BASELINE_SIZE + 1):-1]
 
-        # 前半平均极性 > 0 且后半平均极性 < 0
-        first_avg = sum(e['polarity'] for e in first_half) / len(first_half)
-        second_avg = sum(e['polarity'] for e in second_half) / len(second_half)
+        if len(baseline) < EMOTION_SHIFT_BASELINE_SIZE:
+            return None
 
-        if first_avg > 0 and second_avg < 0:
-            return TriggerEvent(
-                trigger_type=TRIGGER_EMOTION_SHIFT,
-                timestamp=now,
-                severity=TRIGGER_SEVERITY[TRIGGER_EMOTION_SHIFT],
-                context={
-                    'first_half_avg': round(first_avg, 3),
-                    'second_half_avg': round(second_avg, 3),
-                    'shift_magnitude': round(first_avg - second_avg, 3),
-                }
-            )
+        if latest['polarity'] != -1:
+            return None
+
+        if latest['intensity'] > EMOTION_SHIFT_LATEST_MAX_INTENSITY:
+            return None
+
+        if latest['confidence'] < EMOTION_SHIFT_MIN_CONFIDENCE:
+            return None
+
+        positive_count = sum(1 for entry in baseline if entry['polarity'] == 1)
+        if positive_count < EMOTION_SHIFT_MIN_BASELINE_POSITIVE:
+            return None
+
+        baseline_avg_intensity = (
+            sum(entry['intensity'] for entry in baseline) / len(baseline)
+        )
+        if baseline_avg_intensity < EMOTION_SHIFT_MIN_BASELINE_INTENSITY:
+            return None
+
+        span_seconds = latest['timestamp'] - baseline[0]['timestamp']
+        if span_seconds > EMOTION_SHIFT_MAX_SPAN_SECONDS:
+            return None
+
+        shift_magnitude = baseline_avg_intensity - latest['intensity']
+        if shift_magnitude < EMOTION_SHIFT_MIN_DELTA:
+            return None
+
+        return TriggerEvent(
+            trigger_type=TRIGGER_EMOTION_SHIFT,
+            timestamp=now,
+            severity=TRIGGER_SEVERITY[TRIGGER_EMOTION_SHIFT],
+            context={
+                'baseline_avg_intensity': round(baseline_avg_intensity, 3),
+                'baseline_positive_count': positive_count,
+                'latest_intensity': round(latest['intensity'], 3),
+                'latest_confidence': round(latest['confidence'], 3),
+                'shift_magnitude': round(shift_magnitude, 3),
+                'window_span_seconds': round(span_seconds, 1),
+            }
+        )
         return None
 
     def _check_perfunctory(self, now: float) -> TriggerEvent | None:
@@ -411,6 +514,9 @@ class EmotionStateTracker:
 
         # 频率下降超过 50%
         if recent_count < earlier_count * 0.5:
+            if self._has_recent_topic_continuation_signal():
+                return None
+
             return TriggerEvent(
                 trigger_type=TRIGGER_TOPIC_COOLING,
                 timestamp=now,
@@ -424,3 +530,55 @@ class EmotionStateTracker:
                 }
             )
         return None
+
+    def _has_recent_topic_continuation_signal(self) -> bool:
+        """
+        判断最近 1-2 条对方消息是否仍在推进话题。
+
+        设计目标偏高精度：只要最近消息看起来还在提供信息、
+        提计划、提问题或给出较完整表达，就不应当被视为冷场。
+        """
+        recent_entries = list(self.window)[-TOPIC_COOLING_SIGNAL_LOOKBACK:]
+        if not recent_entries:
+            return False
+
+        latest_ts = recent_entries[-1].get('timestamp', 0)
+        return any(
+            latest_ts - entry.get('timestamp', latest_ts) <= TOPIC_COOLING_SIGNAL_MAX_AGE_SECONDS
+            and self._is_substantive_friend_message(entry.get('content', ''))
+            for entry in recent_entries
+        )
+
+    def _is_substantive_friend_message(self, content: str) -> bool:
+        """判断单条对方消息是否提供了足够的新信息或延续信号。"""
+        normalized = (content or '').strip()
+        if not normalized:
+            return False
+
+        compact = normalized.replace(" ", "")
+        if compact in NONVERBAL_CONTENT_MARKERS:
+            return False
+
+        if any(marker in normalized for marker in TOPIC_COOLING_QUESTION_MARKERS):
+            return True
+
+        if any(keyword in normalized for keyword in TOPIC_COOLING_PLAN_KEYWORDS):
+            return True
+
+        if any(keyword in normalized for keyword in TOPIC_COOLING_DETAIL_KEYWORDS):
+            return True
+
+        if any(ch.isdigit() for ch in normalized) and len(compact) >= 4:
+            return True
+
+        alpha_count = sum(ch.isalpha() and ch.isascii() for ch in normalized)
+        if alpha_count >= 2 and len(compact) >= 4:
+            return True
+
+        if len(compact) >= TOPIC_COOLING_MIN_SUBSTANTIVE_LENGTH:
+            return True
+
+        if len(compact) >= 6 and any(punct in normalized for punct in ("，", ",", "。", "！", "!", "；", ";")):
+            return True
+
+        return False

@@ -597,7 +597,8 @@ CREATE TABLE IF NOT EXISTS realtime_suggestions (
     created_at INTEGER NOT NULL,                 -- 生成时间戳（秒）
     read_at INTEGER,                             -- 阅读时间戳
     dismissed_at INTEGER,                        -- 关闭时间戳
-    reply TEXT                                   -- 纯对话回复
+    reply TEXT,                                  -- 纯对话回复
+    thought_process TEXT                         -- AI 思考过程
 );
 
 CREATE INDEX IF NOT EXISTS idx_realtime_suggestions_batch ON realtime_suggestions(batch_id, status);

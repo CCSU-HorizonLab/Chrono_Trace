@@ -757,6 +757,7 @@ class RealtimeMonitorService:
                 
                 # 自动进行实时情感分析(排除系统消息)
                 sentiment_result = None
+                triggers = []
                 if sender_attr != 'system' and message_data['content'] and str(message_data['content']).strip():
                     try:
                         sentiment_result = self.sentiment_service.analyze(
@@ -779,7 +780,8 @@ class RealtimeMonitorService:
                         triggers = self.emotion_tracker.update(
                             sentiment_result, message_data
                         )
-                        if triggers:
+                        if (triggers
+                                and self._suggestion_config.get('trigger_mode') != 'full_auto'):
                             self._handle_trigger_events(triggers)
                     except Exception as e:
                         _print(f"⚠️ 情绪追踪更新失败: {e}")
@@ -788,7 +790,7 @@ class RealtimeMonitorService:
                 if (self._suggestion_config.get('trigger_mode') == 'full_auto'
                         and sentiment_result
                         and sender_attr == 'friend'):
-                    self._handle_full_auto_suggestion(sentiment_result)
+                    self._handle_full_auto_suggestion(sentiment_result, triggers)
                 
                 # 隐式反馈：用户自己发了消息 → 对比最近的 AI 建议
                 if sender_attr == 'self' and message_data['content']:
@@ -1903,7 +1905,18 @@ class RealtimeMonitorService:
             except Exception as e:
                 _print(f"⚠️ 生成建议失败: {e}")
     
-    def _handle_full_auto_suggestion(self, sentiment_result):
+    def _select_full_auto_trigger(self, runtime_triggers=None):
+        """为 full_auto 模式选择一个合适的触发类型。"""
+        from .trigger_resolver import resolve_suggestion_trigger
+
+        resolved = resolve_suggestion_trigger(
+            mode='full_auto',
+            runtime_triggers=runtime_triggers,
+            emotion_tracker=self.emotion_tracker,
+        )
+        return resolved.trigger_type, resolved.trigger_context
+
+    def _handle_full_auto_suggestion(self, sentiment_result, runtime_triggers=None):
         """
         全自动模式：每条对方消息都生成建议（受频率限制）
         """
@@ -1913,22 +1926,15 @@ class RealtimeMonitorService:
         if now - self._last_auto_suggestion_time < rate_limit:
             return  # 频率限制内，跳过
         
-        self._last_auto_suggestion_time = now
-        
         try:
             intent = self._suggestion_config.get('intent', 'maintain')
-            
-            # 根据当前情绪推断触发类型
-            if self.emotion_tracker:
-                summary = self.emotion_tracker.get_emotion_summary()
-                if summary['trend'] == 'negative':
-                    trigger_type = 'negative_streak'
-                elif summary['trend'] == 'positive':
-                    trigger_type = 'positive_window'
-                else:
-                    trigger_type = 'topic_cooling'
-            else:
-                trigger_type = 'topic_cooling'
+
+            trigger_type, trigger_context = self._select_full_auto_trigger(runtime_triggers)
+            if not trigger_type:
+                _print("📭 [全自动] 当前消息未命中触发，且趋势不足以支撑建议，已跳过")
+                return
+
+            self._last_auto_suggestion_time = now
             
             from .suggestion_engine import SuggestionEngineFactory
             from .emotion_state_tracker import TriggerEvent
@@ -1938,6 +1944,11 @@ class RealtimeMonitorService:
             
             # 构建完整的 context (包含画像)
             ctx = {'mode': 'full_auto'}
+            if trigger_context:
+                ctx['trigger_context'] = {
+                    **trigger_context,
+                    'mode': 'full_auto',
+                }
             if self.emotion_tracker:
                 ctx['emotion_summary'] = self.emotion_tracker.get_emotion_summary()
             if self.current_batch_id:
@@ -2002,7 +2013,7 @@ class RealtimeMonitorService:
                 trigger_type=trigger_type,
                 timestamp=now,
                 severity='low',
-                context={'mode': 'full_auto'}
+                context=ctx.get('trigger_context', {'mode': 'full_auto'})
             )
             self._save_suggestion_to_db(trigger, result)
             _print(f"💡 [全自动] 建议已生成: {result.summary}")

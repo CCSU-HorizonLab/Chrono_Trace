@@ -396,20 +396,20 @@ class Bridge:
             if monitor.current_display_name:
                 context['display_name'] = monitor.current_display_name
 
-            # 获取触发类型，默认通过 tracker 状态推断
-            trigger_type = context.get("trigger_type")
-            if not trigger_type:
-                # 从 Tracker 获取当前情绪摘要来推断
-                if hasattr(monitor, 'emotion_tracker') and monitor.emotion_tracker:
-                    summary = monitor.emotion_tracker.get_emotion_summary()
-                    if summary['trend'] == 'negative':
-                        trigger_type = "negative_streak"
-                    elif summary['trend'] == 'positive':
-                        trigger_type = "positive_window"
-                    else:
-                        trigger_type = "topic_cooling"
-                else:
-                    trigger_type = "topic_cooling"
+            from ..services.realtime.trigger_resolver import resolve_suggestion_trigger
+
+            resolved_trigger = resolve_suggestion_trigger(
+                mode="manual",
+                explicit_trigger_type=context.get("trigger_type"),
+                explicit_trigger_context=context.get("trigger_context"),
+                emotion_tracker=getattr(monitor, "emotion_tracker", None),
+                recent_messages=context.get("recent_messages"),
+            )
+            trigger_type = resolved_trigger.trigger_type
+            if resolved_trigger.trigger_context:
+                merged_trigger_context = dict(context.get("trigger_context") or {})
+                merged_trigger_context.update(resolved_trigger.trigger_context)
+                context["trigger_context"] = merged_trigger_context
 
             result = engine.generate(trigger_type, intent, context)
 
@@ -460,6 +460,8 @@ class Bridge:
                     json.dumps({
                         'source': 'manual_generate',
                         'user_context': context.get('user_context'),
+                        'resolved_trigger_source': resolved_trigger.source,
+                        **(context.get('trigger_context') or {}),
                     }, ensure_ascii=False),
                     now_time,
                     getattr(result, 'reply', None),

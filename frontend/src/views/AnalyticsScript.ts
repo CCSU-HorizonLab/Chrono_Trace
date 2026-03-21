@@ -102,6 +102,12 @@ export default {
         // Features State
         const hasFeatures = ref(false)
         const featureStats = ref({ avgResponseTime: 0, medianResponseTime: 0, initiativeRate: 0, wordRatio: 0 })
+        const responseTimeBucketGroups: Record<string, string[]> = {
+            '<10m': ['<1m', '1m-10m'],
+            '10m-1h': ['10m-30m', '30m-1h'],
+            '1h-24h': ['1h-6h', '6h-24h'],
+            '>1d': ['>1d']
+        }
         const responseTimeStats = ref({
             avg: 0,
             median: 0,
@@ -110,7 +116,7 @@ export default {
             abnormal_count: 0,
             count: 0,
             distribution: null as Record<string, number> | null,
-            distributionKeys: ['<1m', '1m-10m', '10m-30m', '30m-1h', '1h-6h', '6h-24h', '>1d']
+            distributionKeys: Object.keys(responseTimeBucketGroups)
         })
         const initiativeStats = ref({ totalSessions: 0, userInitiatedSessions: 0, otherInitiatedSessions: 0, initiativeRate: 0, interpretation: '' })
         const wordCountsStats = ref({ userCharCount: 0, otherCharCount: 0, charRatio: 0, interpretation: '' })
@@ -205,6 +211,25 @@ export default {
             const count = responseTimeStats.value.distribution?.[rangeKey] || 0
             const total = responseTimeStats.value.count || 1
             return `${((count / total) * 100).toFixed(1)}%`
+        }
+
+        function getMergedResponseTimeLabel(rangeKey: string): string {
+            const labelMap: Record<string, string> = {
+                '<10m': '10分钟内',
+                '10m-1h': '10分钟 - 1小时',
+                '1h-24h': '1小时 - 1天',
+                '>1d': '1天以上'
+            }
+            return labelMap[rangeKey] || rangeKey
+        }
+
+        function aggregateResponseTimeDistribution(distribution: Record<string, number> | null | undefined): Record<string, number> | null {
+            if (!distribution) return null
+
+            return Object.entries(responseTimeBucketGroups).reduce<Record<string, number>>((acc, [targetKey, sourceKeys]) => {
+                acc[targetKey] = sourceKeys.reduce((sum, sourceKey) => sum + (distribution[sourceKey] || 0), 0)
+                return acc
+            }, {})
         }
 
         function setDefaultDates(days = 7) {
@@ -456,10 +481,12 @@ export default {
                     api.get_word_counts(selectedConversationId.value, false)
                 ])
                 if (rtData.success && rtData.data) {
+                    const aggregatedDistribution = aggregateResponseTimeDistribution(rtData.data.distribution)
                     responseTimeStats.value = {
                         ...responseTimeStats.value,
                         ...rtData.data,
-                        distribution: rtData.data.distribution || responseTimeStats.value.distribution
+                        distribution: aggregatedDistribution || responseTimeStats.value.distribution,
+                        distributionKeys: Object.keys(responseTimeBucketGroups)
                     }
                     featureStats.value.avgResponseTime = rtData.data.avg
                     featureStats.value.medianResponseTime = rtData.data.median
@@ -644,7 +671,7 @@ export default {
             analysisResult, displayScore, showKeywordsDialog, showContextForm, pendingAnalysisForce, isGlobalAnalyzing, globalProgressPercent, globalProgressStep,
             hasFeatures, hasCachedAffinityAnalysis, featureStats, responseTimeStats, initiativeStats, wordCountsStats, activityCalendar,
             responseTimeChart, activityCalendarChart, wordCountChart, stats, currentContactName, hasPreferenceKeywords, allDimensions,
-            currentRangeLabel, hasContentAnalysis, circumference, strokeDashoffset, formatNumber, formatTime, getResponseTimeLabel, getResponseTimePercent, onConversationChange, onDatesChange, handleExport, handleStartGlobalAnalysis, handleContextSaved, handleKeywordsUpdated,
+            currentRangeLabel, hasContentAnalysis, circumference, strokeDashoffset, formatNumber, formatTime, getResponseTimeLabel, getMergedResponseTimeLabel, getResponseTimePercent, onConversationChange, onDatesChange, handleExport, handleStartGlobalAnalysis, handleContextSaved, handleKeywordsUpdated,
             getScoreColor, scrollToDetails, handlePreferenceDisabledClick, onWordSelect, loadAnalysis, loadSessions, handleActivityYearChange
         }
     }

@@ -27,7 +27,7 @@
           <div class="profile-stats">
             <span class="stat-tag">默认近30天，可切换时间范围</span>
             <span class="stat-tag">{{ currentRangeLabel }}</span>
-            <span class="stat-tag">消息总数 {{ stats?.totalMessages || 0 }}</span>
+            <span class="stat-tag">纯文本消息总数 {{ stats?.totalMessages || 0 }}</span>
           </div>
         </div>
       </div>
@@ -251,7 +251,7 @@
           <div class="horizontal-bars">
             <div class="h-bar-row" v-for="key in responseTimeStats.distributionKeys" :key="key" v-show="responseTimeStats.distribution?.[key]">
               <div class="h-bar-label">
-                <span class="h-bar-label-main">{{ getResponseTimeLabel(key) }}</span>
+                <span class="h-bar-label-main">{{ getMergedResponseTimeLabel(key) }}</span>
                 <span class="h-bar-label-sub">{{ responseTimeStats.distribution?.[key] || 0 }} 次</span>
               </div>
               <div class="h-bar-track-wrap">

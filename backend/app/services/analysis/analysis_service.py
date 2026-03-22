@@ -606,6 +606,10 @@ class AnalysisService:
         """, (conversation_id,))
 
         rows = cursor.fetchall()
+
+        global_first_session_start_time = None
+        global_peak_session = {"start_time": None, "message_count": 0}
+
         if not rows:
             default_year = year or datetime.now().year
             return {
@@ -617,7 +621,9 @@ class AnalysisService:
                     "total_messages": 0,
                     "current_streak": 0,
                     "longest_streak": 0,
-                    "peak_day": None
+                    "peak_day": None,
+                    "global_first_session_start_time": None,
+                    "global_peak_session": None
                 },
                 "max_activity_score": 0
             }
@@ -633,6 +639,12 @@ class AnalysisService:
             start_dt = datetime.fromtimestamp(start_time)
             date_str = start_dt.strftime("%Y-%m-%d")
             years.add(start_dt.year)
+            
+            if global_first_session_start_time is None:
+                global_first_session_start_time = start_time
+            if message_count > global_peak_session["message_count"]:
+                global_peak_session["message_count"] = message_count
+                global_peak_session["start_time"] = start_time
 
             if date_str not in daily_all:
                 daily_all[date_str] = {
@@ -719,7 +731,12 @@ class AnalysisService:
                     "message_count": peak_entry["message_count"],
                     "session_count": peak_entry["session_count"],
                     "activity_score": peak_entry["activity_score"]
-                } if peak_entry else None
+                } if peak_entry else None,
+                "global_first_session_start_time": global_first_session_start_time * 1000 if global_first_session_start_time else None,
+                "global_peak_session": {
+                    "start_time": global_peak_session["start_time"] * 1000,
+                    "message_count": global_peak_session["message_count"]
+                } if global_peak_session["start_time"] else None
             },
             "max_activity_score": max_activity_score
         }

@@ -195,7 +195,7 @@ function onInputFocus() {
   box-shadow: var(--ct-shadow-lg);
   max-height: 250px;
   overflow-y: auto;
-  z-index: 100;
+  z-index: 9999;
   list-style: none;
 }
 

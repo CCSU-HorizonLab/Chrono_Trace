@@ -9,10 +9,10 @@
 
 import json
 import logging
-import socket
 import time
 import random
 from typing import Optional
+from .llm_http import post_json_with_retries
 
 logger = logging.getLogger(__name__)
 def _print(msg: str):
@@ -37,10 +37,6 @@ TIME_BUCKETS = [
 
 # 缓存有效期（秒）
 PROFILE_TTL = 7 * 86400  # 7 天
-
-RETRYABLE_HTTP_STATUS = {429, 500, 502, 503, 504}
-MAX_LLM_RETRIES = 3
-BASE_RETRY_DELAY = 1.5
 
 # 画像生成用 System Prompt
 PROFILE_SYSTEM_PROMPT = """你是一个语言风格与行为克隆分析专家。根据提供的聊天记录（其中"我"是 `is_sender=1` 的发送者，"对方"是 `is_sender=0` 的发送者），提取"我"在这段特定关系中的专属语言画风与共同记忆。
@@ -77,24 +73,6 @@ class SelfProfiler:
 
     def __init__(self, timeout: int = 120):
         self.timeout = timeout
-
-    def _is_timeout_error(self, err: Exception) -> bool:
-        import urllib.error
-
-        if isinstance(err, (TimeoutError, socket.timeout)):
-            return True
-        if isinstance(err, urllib.error.URLError):
-            reason = getattr(err, "reason", None)
-            return isinstance(reason, (TimeoutError, socket.timeout))
-        return False
-
-    def _compute_retry_delay(self, attempt: int, retry_after: Optional[str] = None) -> float:
-        if retry_after:
-            try:
-                return max(0.0, float(retry_after))
-            except (TypeError, ValueError):
-                pass
-        return BASE_RETRY_DELAY * (2 ** attempt) + random.uniform(0.0, 0.5)
 
     def get_profile(self, display_name: str) -> Optional[dict]:
         """
@@ -233,8 +211,6 @@ class SelfProfiler:
 
             # 5. 调用 LLM，传入预算以动态决定输出额度
             profile_data = self._call_llm(user_prompt, budget)
-            if not profile_data:
-                return {'ok': False, 'error': 'LLM 返回解析失败'}
 
             _print(f"[SelfProfiler] ✅ 画像生成成功!")
             _print(f"[SelfProfiler] 标签: {profile_data.get('personality_tags', [])}")
@@ -660,10 +636,8 @@ class SelfProfiler:
 
         return "\n".join(parts)
 
-    def _call_llm(self, user_prompt: str, sample_budget: int) -> Optional[dict]:
+    def _call_llm(self, user_prompt: str, sample_budget: int) -> dict:
         """调用 LLM 生成画像"""
-        import urllib.request
-        import urllib.error
 
         # 获取激活的模型配置
         try:
@@ -683,13 +657,13 @@ class SelfProfiler:
 
             cursor = conn.execute('SELECT * FROM llm_models WHERE is_active = 1 LIMIT 1')
             model_config = cursor.fetchone()
-            if not model_config:
-                _print("[SelfProfiler] ❌ 未配置激活的 LLM 模型")
-                return None
-            model_config = dict(model_config)
         except Exception as e:
             _print(f"[SelfProfiler] 获取模型配置失败: {e}")
-            return None
+            raise RuntimeError(f'获取模型配置失败: {e}') from e
+
+        if not model_config:
+            raise ValueError('未配置激活的 LLM 模型')
+        model_config = dict(model_config)
 
         # 构造请求
         base_url = model_config['api_base_url'].rstrip('/')
@@ -709,47 +683,19 @@ class SelfProfiler:
             'temperature': 0.5,  # 画像生成用较低温度
         }
 
-        headers = {'Content-Type': 'application/json'}
+        headers = {}
         api_key = model_config.get('api_key', '')
         if api_key:
             headers['Authorization'] = f'Bearer {api_key}'
 
-        data = json.dumps(payload).encode('utf-8')
-        req = urllib.request.Request(url, data=data, headers=headers, method='POST')
-
-        _print(f"[SelfProfiler] 📤 POST {url}")
-        body = None
-        for attempt in range(MAX_LLM_RETRIES + 1):
-            start = time.time()
-            try:
-                with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                    body = json.loads(resp.read().decode('utf-8'))
-                    status = resp.status
-                elapsed = time.time() - start
-                _print(f"[SelfProfiler] 📥 HTTP {status} ({elapsed:.2f}s)")
-                break
-            except urllib.error.HTTPError as e:
-                status = getattr(e, 'code', None)
-                if status in RETRYABLE_HTTP_STATUS and attempt < MAX_LLM_RETRIES:
-                    delay = self._compute_retry_delay(attempt, e.headers.get('Retry-After'))
-                    _print(f"[SelfProfiler] Retry on HTTP {status} after {delay:.1f}s (attempt {attempt + 1})")
-                    time.sleep(delay)
-                    continue
-                _print(f"[SelfProfiler] ❌ HTTP 错误: {e}")
-                return None
-            except Exception as e:
-                if self._is_timeout_error(e) and attempt < MAX_LLM_RETRIES:
-                    delay = self._compute_retry_delay(attempt)
-                    _print(f"[SelfProfiler] Retry on timeout after {delay:.1f}s (attempt {attempt + 1})")
-                    time.sleep(delay)
-                    continue
-                _print(f"[SelfProfiler] ❌ LLM 调用失败: {e}")
-                import traceback
-                traceback.print_exc()
-                return None
-
-        if body is None:
-            return None
+        body = post_json_with_retries(
+            url=url,
+            payload=payload,
+            headers=headers,
+            timeout=self.timeout,
+            log=_print,
+            log_prefix='[SelfProfiler]',
+        )
 
         message_obj = body.get('choices', [{}])[0].get('message', {})
         content = message_obj.get('content', '')
@@ -767,7 +713,11 @@ class SelfProfiler:
             f"total={usage.get('total_tokens', '?')}"
         )
 
-        return self._parse_profile_json(content)
+        parsed = self._parse_profile_json(content)
+        if not parsed:
+            raise ValueError('LLM 返回内容解析失败：未得到合法画像 JSON')
+
+        return parsed
 
     def _parse_profile_json(self, text: str) -> Optional[dict]:
         """解析 LLM 返回的画像 JSON"""

@@ -763,7 +763,7 @@ class Bridge:
             logger.debug(f"[Bridge] 启动实时监听: {talker_display_name}")
             monitor_service = RealtimeMonitorService()
             result = monitor_service.start_monitoring(
-                talker_username="",  # wxauto4 自动处理
+                talker_username="",  # 由监听后端自行解析
                 talker_display_name=talker_display_name,
                 resume_mode=resume_mode
             )
@@ -858,6 +858,9 @@ class Bridge:
                 "chat_ready": status.get('chat_ready', False),
                 "chat_error": status.get('chat_error', ''),
                 "polling_alive": status.get('polling_alive', True),
+                "provider": status.get('provider', ''),
+                "listener_profile": status.get('listener_profile', ''),
+                "wechat_version": status.get('wechat_version', ''),
             }
         except Exception as e:
             logger.error(f"[Bridge] 获取实时监听状态异常: {e}")
@@ -867,7 +870,34 @@ class Bridge:
                 "is_monitoring": False,
                 "message_count": 0
             }
-    
+
+    def debug_dump_wechat_uia(
+        self,
+        talker_display_name: str = "",
+        max_depth: int = 4,
+        max_nodes: int = 300,
+    ) -> dict[str, Any]:
+        """
+        导出当前微信窗口的 UIA 树和可见消息快照，用于校准监听器。
+        """
+        try:
+            from ..services.realtime.providers.debug_tools import dump_wechat_uia_snapshot
+
+            result = dump_wechat_uia_snapshot(
+                talker_display_name=talker_display_name or "",
+                max_depth=max(1, int(max_depth)),
+                max_nodes=max(50, int(max_nodes)),
+            )
+            return {"ok": True, **result}
+        except Exception as e:
+            logger.error(f"[Bridge] 导出微信 UIA 快照失败: {e}")
+            return {
+                "ok": False,
+                "error": str(e),
+                "messages": [],
+                "tree": {},
+            }
+
     def get_realtime_messages(self, batch_id: str, limit: int = 50) -> dict[str, Any]:
         """
         获取批次消息列表(带情感分析结果)
@@ -1037,6 +1067,7 @@ class Bridge:
                     "intent": self.settings.get("intent", "maintain"),
                     "auto_rate_limit": int(self.settings.get("auto_rate_limit", 10)),
                     "engine_type": "llm",
+                    "listener_backend": self.settings.get("listener_backend", "auto"),
                 }
             }
         except Exception as e:
@@ -1100,7 +1131,7 @@ class Bridge:
         """更新并持久化 AI 建议配置"""
         try:
             # 1. 更新通用设置文件
-            for key in ('trigger_mode', 'intent', 'auto_rate_limit'):
+            for key in ('trigger_mode', 'intent', 'auto_rate_limit', 'listener_backend'):
                 if key in config:
                     self.settings[key] = config[key]
             self._save_settings()

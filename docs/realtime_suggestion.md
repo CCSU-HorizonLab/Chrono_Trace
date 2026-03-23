@@ -3,8 +3,13 @@
 ## 目标
 在用户监听微信实时聊天时，根据对方的情绪变化**半自动**推送话术建议，帮助用户更好地把握对话节奏。
 
+## 当前实现说明
+- 默认监听后端为项目内 `native_uia`
+- 统一通过 realtime provider 抽象读取微信主窗口可见消息
+- `wxauto` 兼容 provider 仅保留为临时兜底，不再是主链路
+
 ## 已有基础
-- **消息抓取**：wxauto4 每 1 秒轮询 `GetAllMessage()`，去重后存入 `realtime_message_buffer` 表
+- **消息抓取**：`native_uia` provider 每 1 秒轮询可见消息列表，去重后存入 `realtime_message_buffer` 表
 - **情感分析**：每条消息保存后立即用 RoBERTa-small 分析，输出极性(-1/0/1)、强度(-1.0~1.0)、置信度(0~1)，存入 `realtime_sentiment_cache` 表
 - **规则增强**：表情符号、网络用语、否定词、反讽、敷衍检测等规则库
 - **前端展示**：`Suggestions.vue` 已有监听控制 + 消息列表 + 情感标签显示
@@ -82,7 +87,7 @@
 ## 完整数据流
 
 ```
-wxauto4 抓取消息
+native_uia / provider 抓取消息
     ↓
 保存到 realtime_message_buffer
     ↓

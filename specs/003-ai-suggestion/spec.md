@@ -107,7 +107,7 @@
 - **SC-004**: 左右分栏布局在宽度 >1000px 的窗体内能正常并列显示，无元素遮挡；在极窄模式下折叠或堆叠。
 
 ## Assumptions
-- 用户微信客户端保持正常，且 wxauto4 的抓取无严重延迟。
+- 用户微信客户端保持正常，且实时监听后端能稳定抓取主窗口可见消息。
 - 先前已有的 `realtime_sentiment_cache` 和 RoBERTa-small 情感分析结果已经高度可信并且就绪。
 - 不修改原有的 `realtime_message_buffer` 和长期分析代码。
 - Phase 1 不接入 LLM API，仅依赖本地内置 Template Engine。

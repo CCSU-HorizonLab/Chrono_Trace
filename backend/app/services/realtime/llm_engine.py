@@ -79,6 +79,15 @@ REPAIR_SYSTEM_PROMPT = """你是一个结果整理器。你会收到：
   "speeches": []
 }"""
 
+QUICK_PROMPTS_SYSTEM_PROMPT = """你是一个聊天联想词生成器。
+你的唯一任务是根据最近聊天记录，输出 4 个“用户下一步可能发起的话题方向/对话策略”短语。
+要求：
+1. 只能输出一个 JSON 字符串数组，例如 ["顺着话题","转移话题","表达关心","约她吃饭"]。
+2. 每个元素都必须是简短的动宾短语，尽量控制在 4 个字内。
+3. 不要输出分析、解释、思考过程、规则复述、字段名、Markdown 或代码块。
+4. 如果上下文很少，也要基于当前最后几句聊天给出最可能的 4 个方向，不要拒答。
+"""
+
 # 触发类型的中文描述
 TRIGGER_DESCRIPTIONS = {
     "negative_streak": "对方连续发送了多条消极/负面情绪的消息",
@@ -925,6 +934,21 @@ class LLMSuggestionEngine(SuggestionEngine):
             request_tag="format",
         )
 
+    def _call_quick_prompts_api(self, model_config: dict, user_prompt: str) -> str:
+        """联想词使用独立 system prompt，避免被建议卡片的规则污染。"""
+        formatter_config = self._resolve_formatter_model_config(model_config)
+        return self._call_api_with_messages(
+            formatter_config,
+            [
+                {"role": "system", "content": QUICK_PROMPTS_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            max_tokens=128,
+            temperature=0.2,
+            request_tag="quick_prompts",
+            use_json_mode=False,
+        )
+
     def _extract_message_text(self, message_obj: dict) -> str:
         """兼容不同 OpenAI 兼容厂商返回的文本字段。"""
         content = message_obj.get("content", "") or ""
@@ -967,6 +991,66 @@ class LLMSuggestionEngine(SuggestionEngine):
             return cleaned[start:end + 1].strip()
 
         return cleaned
+
+    def _extract_json_array_candidate(self, text: str) -> str:
+        """尽量从模型输出中提取一个可解析的 JSON 数组字符串。"""
+        cleaned = (text or "").strip()
+        if not cleaned:
+            return ""
+
+        if "```json" in cleaned:
+            cleaned = cleaned.split("```json", 1)[1]
+            cleaned = cleaned.split("```", 1)[0]
+            cleaned = cleaned.strip()
+        elif "```" in cleaned:
+            cleaned = cleaned.split("```", 1)[1]
+            cleaned = cleaned.split("```", 1)[0]
+            cleaned = cleaned.strip()
+
+        if cleaned.startswith("[") and cleaned.endswith("]"):
+            return cleaned
+
+        decoder = json.JSONDecoder()
+        for index, char in enumerate(cleaned):
+            if char not in "[{":
+                continue
+            try:
+                candidate, _ = decoder.raw_decode(cleaned[index:])
+            except json.JSONDecodeError:
+                continue
+            if isinstance(candidate, list):
+                return json.dumps(candidate, ensure_ascii=False)
+            if isinstance(candidate, dict):
+                prompts = candidate.get("prompts")
+                if isinstance(prompts, list):
+                    return json.dumps(prompts, ensure_ascii=False)
+                speeches = candidate.get("speeches")
+                if isinstance(speeches, list):
+                    return json.dumps(speeches, ensure_ascii=False)
+        return ""
+
+    def _normalize_quick_prompt_items(self, prompts: list, default_prompts: list[str]) -> list[str]:
+        """过滤并标准化联想词，确保返回 4 个可展示的短词。"""
+        valid_prompts: list[str] = []
+        for item in prompts:
+            if not isinstance(item, str):
+                continue
+            normalized = re.sub(r"^[\-\d\.\s]+", "", item).strip()
+            normalized = normalized.replace("：", "").replace(":", "").strip()
+            if not normalized:
+                continue
+            if any(keyword in normalized for keyword in self.META_SPEECH_KEYWORDS):
+                continue
+            normalized = re.sub(r"\s+", "", normalized)
+            normalized = normalized[:8]
+            if normalized and normalized not in valid_prompts:
+                valid_prompts.append(normalized)
+
+        if len(valid_prompts) >= 4:
+            return valid_prompts[:4]
+        if valid_prompts:
+            return (valid_prompts + default_prompts)[:4]
+        return default_prompts
 
     def _sanitize_json_candidate(self, text: str) -> str:
         """修正常见的 JSON 非法控制字符，尤其是字符串中的裸换行。"""
@@ -1291,10 +1375,10 @@ class LLMSuggestionEngine(SuggestionEngine):
             _print("❌ [LLM Engine] 未配置激活模型！")
             raise ValueError("未配置激活模型")
 
-        prompt = "你是一个高情商聊天助手。请阅读以下双方的最新聊天记录，推测用户（‘我’）下一步最可能想发起的话题方向或对话策略。\n"
+        prompt = "请阅读以下双方的最新聊天记录，推测用户（‘我’）下一步最可能想发起的话题方向或对话策略。\n"
         prompt += "要求：给出 4 个选项；每个选项必须是简短的动宾短语（限 4 个字内，如‘顺着话题’、‘转移话题’、‘约她吃饭’、‘表达心疼’）；只返回一个 JSON 格式的字符串数组，不要其他废话。\n\n"
 
-        recent = context.get("recent_messages", [])
+        recent = self._normalize_recent_messages(context.get("recent_messages", []))
         if recent:
             prompt += "【最近对话】\n"
             for msg in recent[-8:]:  # 最多取最近 8 条
@@ -1308,19 +1392,10 @@ class LLMSuggestionEngine(SuggestionEngine):
         _print(prompt)
 
         try:
-            response_text = self._call_api(model_config, prompt)
+            response_text = self._call_quick_prompts_api(model_config, prompt)
             _print(f"[LLM Engine] 📥 收到联想词响应: {response_text}")
 
-            # 解析 JSON 数组
-            cleaned = response_text
-            if "```json" in cleaned:
-                cleaned = cleaned.split("```json", 1)[1]
-                cleaned = cleaned.split("```", 1)[0]
-            elif "```" in cleaned:
-                cleaned = cleaned.split("```", 1)[1]
-                cleaned = cleaned.split("```", 1)[0]
-
-            cleaned = cleaned.strip()
+            cleaned = self._extract_json_array_candidate(response_text).strip()
             if not cleaned:
                 _print("[LLM Engine] 联想词响应为空，回退默认词")
                 return default_prompts
@@ -1328,22 +1403,13 @@ class LLMSuggestionEngine(SuggestionEngine):
             try:
                 prompts = json.loads(cleaned)
             except json.JSONDecodeError:
-                # 某些模型会在数组前后夹带说明文字，这里尽量截取数组主体。
-                array_start = cleaned.find("[")
-                array_end = cleaned.rfind("]")
-                if array_start == -1 or array_end == -1 or array_end < array_start:
-                    _print("[LLM Engine] 联想词响应不是合法 JSON 数组，回退默认词")
-                    return default_prompts
-                prompts = json.loads(cleaned[array_start:array_end + 1])
-            
+                _print("[LLM Engine] 联想词响应不是合法 JSON 数组，回退默认词")
+                return default_prompts
+
             if isinstance(prompts, list) and len(prompts) > 0:
-                # 过滤掉非字符串，限制长度，并只取前 4 个
-                valid_prompts = [str(p).strip()[:8] for p in prompts if isinstance(p, str) and str(p).strip()]
-                if len(valid_prompts) >= 4:
-                    return valid_prompts[:4]
-                elif len(valid_prompts) > 0:
-                    # 数量不足时用默认词补充
-                    return (valid_prompts + default_prompts)[:4]
+                normalized_prompts = self._normalize_quick_prompt_items(prompts, default_prompts)
+                if normalized_prompts:
+                    return normalized_prompts
             
             _print("❌ [LLM Engine] 联想词解析出来的不是有效数组或为空。")
             raise ValueError("大模型响应解析失败，未能生成有效联想词")

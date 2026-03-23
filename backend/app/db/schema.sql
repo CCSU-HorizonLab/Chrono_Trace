@@ -178,8 +178,8 @@ CREATE TABLE IF NOT EXISTS realtime_message_buffer (
     talker_display_name TEXT NOT NULL,      -- 对话对象显示名称
     
     -- 消息内容
-    message_hash TEXT,                      -- 消息哈希值(wxauto4提供,用于去重)
-    runtime_id TEXT,                        -- wxauto4消息运行时ID
+    message_hash TEXT,                      -- 项目内生成的稳定消息哈希，用于去重
+    runtime_id TEXT,                        -- 监听器提供的运行时消息ID
     sender_attr TEXT NOT NULL,              -- 发送者属性: self(本人), friend(对方), system(系统)
     content TEXT,                           -- 消息内容
     message_type TEXT,                      -- 消息类型(text/image/voice等)

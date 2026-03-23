@@ -16,7 +16,7 @@
 
 - **语言环境**: Python 3.8+ / Vue 3 + TypeScript
 - **数据库**: SQLite (`realtime_suggestions`新表，复用`suggestions`)
-- **性能预期**: 判断 < 50ms，完全满足 wxauto4 每秒1次的轮询频次而不产生阻塞。
+- **性能预期**: 判断 < 50ms，完全满足实时监听主链路每秒1次的轮询频次而不产生阻塞。
 
 ## Project Structure
 

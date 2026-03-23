@@ -1,6 +1,6 @@
 """
 实时消息监听服务模块
-基于 wxauto4 实现微信消息实时监听
+基于 provider 抽象实现微信消息实时监听
 """
 
 from .monitor_service import RealtimeMonitorService

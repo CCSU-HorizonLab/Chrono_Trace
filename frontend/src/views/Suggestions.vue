@@ -32,9 +32,10 @@
           <details class="sug-notice">
             <summary>⚠ 使用须知</summary>
             <ul>
-              <li>确保微信 4.0.5 已启动并登录</li>
-              <li><strong>微信窗口搜索栏必须在屏幕上显示</strong>（wxauto 限制）</li>
-              <li><strong>只能监听主窗口聊天，不能监听独立弹窗</strong></li>
+              <li>确保 Windows 微信已启动并登录</li>
+              <li><strong>请保持微信主窗口可见，不要最小化</strong></li>
+              <li><strong>当前推荐在微信主窗口中监听，独立弹窗不作为主路径</strong></li>
+              <li>当前已完成微信 4.0.5 主窗口监听验证</li>
               <li>昵称必须与微信中显示完全一致（备注名优先）</li>
               <li>同时只能监听一个对象</li>
             </ul>

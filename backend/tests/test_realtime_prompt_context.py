@@ -531,6 +531,107 @@ def test_llm_call_api_boosts_reasoner_max_tokens(monkeypatch):
     assert captured["payload"]["max_tokens"] >= 1024
 
 
+def test_generate_quick_prompts_uses_dedicated_prompt_and_disables_json_object(monkeypatch):
+    engine = LLMSuggestionEngine()
+    captured = {}
+
+    monkeypatch.setattr(
+        engine,
+        "_get_active_model",
+        lambda: {
+            "provider": "deepseek",
+            "api_base_url": "https://api.deepseek.com/v1",
+            "api_key": "token",
+            "model_id": "deepseek-reasoner",
+            "max_tokens": 256,
+            "temperature": 0.7,
+        },
+    )
+    monkeypatch.setattr(engine, "_resolve_formatter_model_config", lambda config: {**config, "model_id": "deepseek-chat"})
+
+    def fake_call(model_config, messages, **kwargs):
+        captured["model_id"] = model_config["model_id"]
+        captured["messages"] = messages
+        captured["kwargs"] = kwargs
+        return '["继续游戏","表达关心","顺着话题","转移话题"]'
+
+    monkeypatch.setattr(engine, "_call_api_with_messages", fake_call)
+
+    prompts = engine.generate_quick_prompts(
+        {
+            "recent_messages": [
+                {"id": 1, "timestamp": 100, "sender_attr": "self", "content": "宝宝"},
+                {"id": 2, "timestamp": 101, "sender_attr": "self", "content": "还爬塔吗？"},
+            ]
+        }
+    )
+
+    assert captured["model_id"] == "deepseek-chat"
+    assert captured["messages"][0]["content"].startswith("你是一个聊天联想词生成器")
+    assert captured["kwargs"]["use_json_mode"] is False
+    assert prompts == ["继续游戏", "表达关心", "顺着话题", "转移话题"]
+
+
+def test_generate_quick_prompts_extracts_array_from_wrapped_text(monkeypatch):
+    engine = LLMSuggestionEngine()
+
+    monkeypatch.setattr(
+        engine,
+        "_get_active_model",
+        lambda: {
+            "provider": "deepseek",
+            "api_base_url": "https://api.deepseek.com/v1",
+            "api_key": "token",
+            "model_id": "deepseek-chat",
+            "max_tokens": 256,
+            "temperature": 0.7,
+        },
+    )
+    monkeypatch.setattr(
+        engine,
+        "_call_quick_prompts_api",
+        lambda model_config, prompt: '先分析一下方向，然后给结果：["继续游戏","表达关心","顺着话题","转移话题"]',
+    )
+
+    prompts = engine.generate_quick_prompts({"recent_messages": []})
+
+    assert prompts == ["继续游戏", "表达关心", "顺着话题", "转移话题"]
+
+
+def test_generate_quick_prompts_salvages_speeches_array_from_object_response(monkeypatch):
+    engine = LLMSuggestionEngine()
+
+    monkeypatch.setattr(
+        engine,
+        "_get_active_model",
+        lambda: {
+            "provider": "deepseek",
+            "api_base_url": "https://api.deepseek.com/v1",
+            "api_key": "token",
+            "model_id": "deepseek-chat",
+            "max_tokens": 256,
+            "temperature": 0.7,
+        },
+    )
+    monkeypatch.setattr(
+        engine,
+        "_call_quick_prompts_api",
+        lambda model_config, prompt: json.dumps(
+            {
+                "reply": "",
+                "thought_process": "test",
+                "summary": "",
+                "speeches": ["继续游戏", "表达关心", "顺着话题", "转移话题"],
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+    prompts = engine.generate_quick_prompts({"recent_messages": []})
+
+    assert prompts == ["继续游戏", "表达关心", "顺着话题", "转移话题"]
+
+
 def test_self_profiler_collect_features_and_parse_sentence_patterns():
     profiler = SelfProfiler()
     conn = sqlite3.connect(":memory:")

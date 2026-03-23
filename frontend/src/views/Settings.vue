@@ -1,14 +1,17 @@
 <template>
   <section class="home-page">
     <div class="home-section">
-      <h2 class="section-title">
-        <div style="display:flex;align-items:center;">
-          <span class="dot purple"></span>设置
+      <h2 class="section-title ct-page-title">
+        <div style="display:flex;align-items:center; gap: 8px;">
+          <span class="title-icon">⚙️</span>
+          <span class="gradient-text">通用设置</span>
         </div>
-        <div class="auto-save-status" style="margin-left: auto;">
-          <span v-if="saving" class="saving">💾 保存中...</span>
+        <div class="auto-save-status glass-pill" style="margin-left: auto;">
+          <span v-if="saving" class="saving">
+            <span class="spinner"></span> 保存中...
+          </span>
           <span v-else-if="lastSaveTime" class="saved">✅ 已保存 {{ lastSaveTime }}</span>
-          <span v-else class="idle">⚙️ 自动保存已启用</span>
+          <span v-else class="idle">✨ 自动保存已启用</span>
         </div>
       </h2>
 
@@ -32,14 +35,11 @@
                 <div class="model-info">
                   <span class="model-name">{{ m.name }}</span>
                   <span class="model-provider">{{ providerLabel(m.provider) }}</span>
-                  <button 
-                    class="badge toggle-badge" 
-                    :class="{ active: m.is_active }"
-                    @click="toggleModelActive(m)"
-                    title="点击切换激活状态"
-                  >
-                    {{ m.is_active ? '✅ 已激活' : '未激活' }}
-                  </button>
+                  <label class="ct-switch" title="点击切换激活状态">
+                    <input type="checkbox" :checked="m.is_active" @click.stop @change="toggleModelActive(m)" />
+                    <span class="slider"></span>
+                    <span class="switch-label">{{ m.is_active ? '已激活' : '未激活' }}</span>
+                  </label>
                 </div>
                 <div class="model-actions">
                   <button class="mini-btn" @click="editModel(m)">编辑</button>
@@ -54,8 +54,8 @@
             </div>
           </div>
 
-          <button class="ct-btn primary add-model-btn" @click.prevent="resetEditingModel(); showModelForm = true">
-            + 添加模型
+          <button class="add-model-btn dashed" @click.prevent="resetEditingModel(); showModelForm = true">
+            <span class="add-icon">+</span> 添加新的模型配置
           </button>
         </div>
       </CtCard>
@@ -78,7 +78,10 @@
 
           <label class="row">
             <div class="lab">使用自定义路径</div>
-            <input v-model="form.wechat_use_custom_path" type="checkbox" />
+            <label class="ct-switch">
+              <input v-model="form.wechat_use_custom_path" type="checkbox" />
+              <span class="slider"></span>
+            </label>
           </label>
 
           <template v-if="form.wechat_use_custom_path">
@@ -104,25 +107,6 @@
         </div>
       </CtCard>
 
-      <!-- 消息抓取与监听 -->
-      <CtCard title="消息抓取与监听">
-        <div class="form">
-          <label class="row">
-            <div class="lab">抓取间隔（分钟）</div>
-            <input v-model.number="form.interval_minutes" type="number" min="1" step="1" class="ct-field" placeholder="如：15" />
-          </label>
-
-          <label class="row">
-            <div class="lab">每次最大抓取条数</div>
-            <input v-model.number="form.batch_size" type="number" min="10" step="10" class="ct-field" placeholder="如：100" />
-          </label>
-
-          <label class="row">
-            <div class="lab">启用实时监听</div>
-            <input v-model="form.realtime_enabled" type="checkbox" />
-          </label>
-        </div>
-      </CtCard>
       </div>
     </div>
 
@@ -210,7 +194,7 @@ import { bridgeReady, api } from '@/api/bridge'
 import CtCard from '@/components/base/CtCard.vue'
 import CtField from '@/components/base/CtField.vue'
 import CtButton from '@/components/base/CtButton.vue'
-import { showDialog } from '@/utils/dialog'
+import { showDialog, showConfirm } from '@/utils/dialog'
 
 const loading = ref(false)
 const saving = ref(false)
@@ -219,17 +203,11 @@ const autoSaveTimer = ref<number | null>(null)
 const lastSaveTime = ref<string>('')
 
 const form = reactive<{ 
-  interval_minutes: number
-  batch_size: number
-  realtime_enabled: boolean
   wechat_use_custom_path: boolean
   wechat_data_dir: string
   wechat_user_wxid: string
   wechat_db_key: string
 }>({
-  interval_minutes: 15,
-  batch_size: 100,
-  realtime_enabled: true,
   wechat_use_custom_path: false,
   wechat_data_dir: '',
   wechat_user_wxid: '',
@@ -244,10 +222,6 @@ async function onLoad() {
     console.log('[DEBUG] 从后端加载的设置:', s)
     
     if (s && typeof s === 'object') {
-      form.interval_minutes = Number(s.interval_minutes ?? form.interval_minutes)
-      form.batch_size = Number(s.batch_size ?? form.batch_size)
-      form.realtime_enabled = Boolean(s.realtime_enabled ?? form.realtime_enabled)
-      
       // 微信路径配置
       form.wechat_use_custom_path = Boolean(s.wechat_use_custom_path ?? false)
       form.wechat_data_dir = s.wechat_data_dir ?? ''
@@ -285,9 +259,6 @@ async function onSave() {
     await bridgeReady()
     
     const settingsToSave = {
-      interval_minutes: form.interval_minutes,
-      batch_size: form.batch_size,
-      realtime_enabled: form.realtime_enabled,
       wechat_use_custom_path: form.wechat_use_custom_path,
       wechat_data_dir: form.wechat_data_dir,
       wechat_user_wxid: form.wechat_user_wxid,
@@ -568,7 +539,8 @@ async function toggleModelActive(m: any) {
 }
 
 async function removeModel(id: number) {
-  if (!confirm('确定删除此模型配置？')) return
+  const confirmed = await showConfirm('确定删除此模型配置？')
+  if (!confirmed) return
   try {
     await bridgeReady()
     const r = await api.delete_llm_model(id)
@@ -597,147 +569,362 @@ onMounted(() => {
 </script>
 
 <style scoped>
-/* 自动保存状态 */
-.auto-save-status {
+/* 整体布局 */
+.grid { 
+  display: grid; 
+  grid-template-columns: repeat(2, 1fr); 
+  gap: 32px; 
+  max-width: 1400px; 
+  margin: 0 auto; 
+  align-items: stretch;
+}
+
+@media (max-width: 1024px) {
+  .grid {
+    grid-template-columns: 1fr;
+    max-width: 900px;
+  }
+}
+
+.form { display: flex; flex-direction: column; gap: 20px; }
+.row { display: grid; grid-template-columns: 180px 1fr; gap: 16px; align-items: center; }
+@media (max-width: 768px) {
+  .row { grid-template-columns: 1fr; gap: 8px; }
+}
+.lab { color: var(--ct-text-secondary); font-weight: 500; }
+
+/* 页面标题 & 渐变 */
+.ct-page-title {
+  margin-bottom: 24px;
+  border-bottom: none;
+}
+.title-icon {
+  font-size: 24px;
+  filter: drop-shadow(0 2px 4px rgba(0,0,0,0.1));
+}
+.gradient-text {
+  background: linear-gradient(135deg, var(--ct-color-primary, #646cff), var(--ct-color-purple-light, #9c27b0));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+}
+
+/* 自动保存 - 胶囊 */
+.glass-pill {
   display: flex;
   align-items: center;
-  gap: var(--ct-space-sm);
-  font-size: var(--ct-text-sm);
-  padding: 6px var(--ct-space-md);
-  border-radius: var(--ct-radius-sm);
-  background: var(--ct-bg-secondary);
+  gap: 8px;
+  font-size: 13px;
+  padding: 6px 16px;
+  border-radius: 100px;
+  background: rgba(var(--ct-bg-rgb, 255, 255, 255), 0.6);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(120, 120, 120, 0.1);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
+  transition: all 0.3s ease;
 }
 .auto-save-status .saving {
-  color: var(--ct-color-info);
-  animation: pulse 1.5s var(--ct-ease-in-out) infinite;
+  color: var(--ct-color-primary, #646cff);
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 .auto-save-status .saved {
-  color: var(--ct-color-success);
+  color: var(--ct-color-success, #4caf50);
 }
 .auto-save-status .idle {
-  color: var(--ct-text-secondary);
+  color: var(--ct-text-tertiary);
 }
-
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
+.spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(100, 108, 255, 0.2);
+  border-top-color: var(--ct-color-primary, #646cff);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
 }
+@keyframes spin { to { transform: rotate(360deg); } }
 
-.grid { display: grid; grid-template-columns: 1fr; gap: var(--ct-space-lg); }
-.form { display: flex; flex-direction: column; gap: var(--ct-space-md); }
-.row { display: grid; grid-template-columns: 160px 1fr; gap: var(--ct-space-md); align-items: center; }
-.lab { color: var(--ct-text-secondary); }
-.hint { color: var(--ct-text-secondary); }
-
+/* Hint Box */
 .hint-box.info {
-  background: var(--ct-color-info-light);
-  border-left: 3px solid var(--ct-color-info);
-  padding: var(--ct-space-md);
-  margin-bottom: var(--ct-space-sm);
-  border-radius: var(--ct-radius-sm);
+  background: rgba(24, 144, 255, 0.08);
+  border: 1px solid rgba(24, 144, 255, 0.15);
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 8px;
+  color: #0056b3;
 }
-.hint-box p { margin: var(--ct-space-xs) 0; font-size: var(--ct-text-sm); }
-.path-input { display: flex; gap: var(--ct-space-sm); align-items: center; }
-.path-input .ct-field { flex: 1; }
+.hint-box p { margin: 0; font-size: 14px; line-height: 1.5; }
 
-
+/* Switch Toggle 组件 */
+.ct-switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+}
+.ct-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+  position: absolute;
+}
+.ct-switch .slider {
+  position: relative;
+  width: 44px;
+  height: 24px;
+  background-color: var(--ct-bg-tertiary, #e0e0e0);
+  border-radius: 24px;
+  transition: .3s cubic-bezier(0.4, 0.0, 0.2, 1);
+  box-shadow: inset 0 1px 3px rgba(0,0,0,0.1);
+}
+.ct-switch .slider:before {
+  position: absolute;
+  content: "";
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  bottom: 3px;
+  background-color: white;
+  border-radius: 50%;
+  transition: .3s cubic-bezier(0.4, 0.0, 0.2, 1);
+  box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+.ct-switch input:checked + .slider {
+  background-color: var(--ct-color-success, #10b981);
+}
+.ct-switch input:checked + .slider:before {
+  transform: translateX(20px);
+}
+.switch-label {
+  font-size: 13px;
+  color: var(--ct-text-secondary);
+  font-weight: 500;
+}
+.ct-switch input:checked ~ .switch-label {
+  color: var(--ct-color-success, #10b981);
+}
 
 /* 模型列表 */
-.model-list { display: flex; flex-direction: column; gap: var(--ct-space-sm); }
-.empty-models { color: var(--ct-text-tertiary); text-align: center; padding: var(--ct-space-lg); font-size: var(--ct-text-sm); }
+.model-list { 
+  display: flex; 
+  flex-direction: column; 
+  gap: 16px; 
+  margin-bottom: 8px; 
+  max-height: 380px; 
+  overflow-y: auto; 
+  padding-right: 6px; 
+}
+
+/* 内部内容超出时的滚动条美化 */
+.model-list::-webkit-scrollbar {
+  width: 6px;
+}
+.model-list::-webkit-scrollbar-thumb {
+  background: var(--ct-border-color, #e0e0e0);
+  border-radius: 4px;
+}
+.model-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+.empty-models { 
+  color: var(--ct-text-tertiary); 
+  text-align: center; 
+  padding: 40px 20px; 
+  font-size: 14px;
+  background: var(--ct-bg-secondary);
+  border-radius: 12px;
+  border: 1px dashed var(--ct-border-color);
+}
 
 .model-card {
+  position: relative;
+  flex-shrink: 0;
   border: 1px solid var(--ct-border-color);
-  border-radius: var(--ct-radius-md);
-  padding: var(--ct-space-md);
-  transition: all var(--ct-transition-fast);
+  background: var(--ct-bg-1, #ffffff);
+  border-radius: 14px;
+  padding: 16px 20px;
+  transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.02);
+  overflow: hidden;
+}
+.model-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 24px rgba(0,0,0,0.06);
+  border-color: rgba(100, 108, 255, 0.3);
 }
 .model-card.active {
-  border-color: var(--ct-color-primary);
-  background: var(--ct-color-primary-light);
+  border-color: var(--ct-color-primary, #646cff);
+  background: linear-gradient(to right, rgba(100, 108, 255, 0.03), transparent);
 }
+.model-card.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: var(--ct-color-primary, #646cff);
+}
+
 .model-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: var(--ct-space-xs);
+  margin-bottom: 12px;
 }
-.model-info { display: flex; align-items: center; gap: var(--ct-space-sm); }
-.model-name { font-weight: var(--ct-font-semibold); }
-.model-provider { font-size: var(--ct-text-xs); color: var(--ct-text-secondary); background: var(--ct-bg-tertiary); padding: 2px 6px; border-radius: var(--ct-radius-sm); }
-.badge.toggle-badge { 
-  font-size: var(--ct-text-xs); 
-  padding: 2px 8px; 
-  border-radius: var(--ct-radius-sm); 
-  border: 1px solid var(--ct-border-color);
-  background: var(--ct-bg-secondary);
-  color: var(--ct-text-secondary);
-  cursor: pointer;
-  transition: all var(--ct-transition-fast);
+.model-info { display: flex; align-items: center; gap: 12px; }
+.model-name { font-weight: 600; font-size: 16px; color: var(--ct-text-primary); }
+.model-provider { 
+  font-size: 12px; 
+  color: var(--ct-text-secondary); 
+  background: var(--ct-bg-secondary); 
+  padding: 4px 10px; 
+  border-radius: 12px; 
+  font-weight: 500;
 }
-.badge.toggle-badge:hover {
-  background: var(--ct-bg-tertiary);
-}
-.badge.toggle-badge.active { 
-  background: var(--ct-color-success-light, #e8f5e9); 
-  color: var(--ct-color-success, #4caf50); 
-  border-color: var(--ct-color-success, #4caf50);
-}
-.model-actions { display: flex; gap: var(--ct-space-xs); }
+
+.model-actions { display: flex; gap: 8px; }
 .mini-btn {
-  border: 1px solid var(--ct-border-color);
+  border: none;
   background: transparent;
   color: var(--ct-text-secondary);
-  padding: 3px 8px;
-  border-radius: var(--ct-radius-sm);
-  font-size: var(--ct-text-xs);
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
   cursor: pointer;
-  transition: all var(--ct-transition-fast);
+  transition: all 0.2s;
 }
-.mini-btn:hover { background: var(--ct-bg-tertiary); color: var(--ct-text-primary); }
-.mini-btn.danger:hover { background: var(--ct-color-error-light); color: var(--ct-color-error); border-color: var(--ct-color-error); }
-.model-detail { display: flex; flex-wrap: wrap; gap: var(--ct-space-sm); font-size: var(--ct-text-xs); color: var(--ct-text-tertiary); }
+.mini-btn:hover { background: var(--ct-bg-secondary); color: var(--ct-text-primary); }
+.mini-btn.danger:hover { background: rgba(255, 77, 79, 0.1); color: var(--ct-color-error, #ff4d4f); }
 
-.add-model-btn { align-self: flex-start; }
+.model-detail { 
+  display: flex; 
+  flex-wrap: wrap; 
+  gap: 16px; 
+  font-size: 13px; 
+  color: var(--ct-text-tertiary); 
+  background: var(--ct-bg-secondary);
+  padding: 10px 14px;
+  border-radius: 8px;
+  margin-top: 8px;
+}
+.model-detail span { display: flex; align-items: center; gap: 4px; }
 
+/* 虚线添加模型按钮 */
+.add-model-btn.dashed {
+  width: 100%;
+  background: transparent;
+  border: 2px dashed var(--ct-border-color);
+  color: var(--ct-text-secondary);
+  padding: 16px;
+  border-radius: 14px;
+  font-size: 15px;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: all 0.2s;
+}
+.add-model-btn.dashed .add-icon {
+  font-size: 18px;
+  font-weight: 400;
+}
+.add-model-btn.dashed:hover {
+  border-color: var(--ct-color-primary, #646cff);
+  color: var(--ct-color-primary, #646cff);
+  background: rgba(100, 108, 255, 0.04);
+}
+
+/* 微信路径输入栏 */
+.path-input { display: flex; gap: 12px; align-items: center; }
+.path-input .ct-field { flex: 1; }
+
+/* Modal 模糊遮罩 */
+.ct-modal-overlay {
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  animation: fadeIn 0.3s ease;
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* 弹窗样式 */
+.ct-modal-dialog {
+  border-radius: 20px;
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.2);
+  padding: 32px;
+  animation: popIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  border: 1px solid rgba(255,255,255,0.1);
+  background: var(--ct-bg-1, #ffffff);
+}
+@keyframes popIn {
+  from { opacity: 0; transform: scale(0.95) translateY(10px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.ct-modal-dialog h3 {
+  margin-top: 0;
+  margin-bottom: 24px;
+  font-size: 20px;
+  font-weight: 600;
+  background: linear-gradient(135deg, var(--ct-color-primary, #646cff), var(--ct-color-purple-light, #9c27b0));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.ct-modal-dialog .form-actions {
+  margin-top: 32px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+/* 下拉菜单美化 */
 .ct-custom-dropdown {
   position: absolute;
-  top: calc(100% + 4px);
+  top: calc(100% + 8px);
   left: 0;
   width: 100%;
-  max-height: 200px;
+  max-height: 240px;
   overflow-y: auto;
   background-color: var(--ct-bg-1, #ffffff);
-  border: 1px solid var(--ct-border);
-  border-radius: var(--ct-radius-md);
-  padding: 0;
+  border: 1px solid rgba(0,0,0,0.08);
+  border-radius: 12px;
+  padding: 6px;
   margin: 0;
   list-style: none;
   z-index: 99999;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+  animation: dropIn 0.2s ease;
 }
-
-.ct-custom-dropdown::-webkit-scrollbar {
-  width: 6px;
+@keyframes dropIn {
+  from { opacity: 0; transform: translateY(-5px); }
+  to { opacity: 1; transform: translateY(0); }
 }
-.ct-custom-dropdown::-webkit-scrollbar-track {
-  background: transparent;
-}
-.ct-custom-dropdown::-webkit-scrollbar-thumb {
-  background-color: var(--ct-border);
-  border-radius: 3px;
-}
+.ct-custom-dropdown::-webkit-scrollbar { width: 6px; }
+.ct-custom-dropdown::-webkit-scrollbar-thumb { background-color: var(--ct-border-color); border-radius: 3px; }
 
 .ct-custom-dropdown .dropdown-item {
-  padding: 8px 12px;
+  padding: 10px 14px;
   font-size: 14px;
-  color: var(--ct-text-1);
+  color: var(--ct-text-primary);
   cursor: pointer;
-  transition: all 0.2s ease;
+  border-radius: 8px;
+  transition: all 0.2s;
+  margin-bottom: 2px;
 }
-
+.ct-custom-dropdown .dropdown-item:last-child { margin-bottom: 0; }
 .ct-custom-dropdown .dropdown-item:hover {
-  background-color: var(--ct-bg-hover);
-  color: var(--ct-primary);
+  background-color: rgba(100, 108, 255, 0.08);
+  color: var(--ct-color-primary, #646cff);
 }
 </style>

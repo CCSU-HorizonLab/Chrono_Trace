@@ -138,6 +138,7 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
 import { bridgeReady, api } from '@/api/bridge'
+import { showConfirm } from '@/utils/dialog'
 
 type ImportProgress = { status: string; percent: number } | null
 type IncrementInfo = {
@@ -304,7 +305,7 @@ async function startImport() {
     return
   }
   if (hasImportedBefore.value) {
-    const confirmed = window.confirm('检测到已有导入记录。继续导入会自动跳过重复数据，是否继续？')
+    const confirmed = await showConfirm('检测到已有导入记录。继续导入会自动跳过重复数据，是否继续？')
     if (!confirmed) return
   }
 

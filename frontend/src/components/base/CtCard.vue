@@ -21,6 +21,8 @@ const hasHeader = computed(() => !!props.title || !!useSlots().header || !!useSl
 </script>
 <style scoped>
 .ct-card {
+  display: flex;
+  flex-direction: column;
   background: var(--ct-bg-elevated);
   border: 1px solid var(--ct-border-color);
   border-radius: var(--ct-radius-lg);

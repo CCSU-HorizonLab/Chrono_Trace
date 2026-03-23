@@ -36,3 +36,38 @@ export function showDialog(options: DialogOptions | string): Promise<void> {
     }
   });
 }
+
+export function showConfirm(options: DialogOptions | string): Promise<boolean> {
+  return new Promise((resolve) => {
+    let message = typeof options === 'string' ? options : options.message;
+    let title = typeof options === 'string' ? '提问' : (options.title || '提问');
+
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+
+    const removeDialog = () => {
+      render(null, container);
+      container.remove();
+    };
+
+    const vnode = createVNode(CtDialog, {
+      title,
+      message,
+      showCancel: true,
+      onConfirm: () => {
+        removeDialog();
+        resolve(true);
+      },
+      onCancel: () => {
+        removeDialog();
+        resolve(false);
+      }
+    });
+
+    render(vnode, container);
+
+    if (vnode.component && vnode.component.exposed) {
+      vnode.component.exposed.open();
+    }
+  });
+}

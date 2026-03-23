@@ -9,6 +9,7 @@
           <slot>{{ message }}</slot>
         </div>
         <footer class="ct-dialog-footer">
+          <CtButton v-if="showCancel" variant="secondary" @click="handleCancel" class="cancel-btn">取消</CtButton>
           <CtButton variant="primary" @click="handleConfirm">确定</CtButton>
         </footer>
       </div>
@@ -23,7 +24,9 @@ import CtButton from './CtButton.vue';
 const props = defineProps<{
   title?: string;
   message?: string;
+  showCancel?: boolean;
   onConfirm?: () => void;
+  onCancel?: () => void;
 }>();
 
 const visible = ref(false);
@@ -39,9 +42,19 @@ const handleConfirm = () => {
   }
 };
 
+const handleCancel = () => {
+  visible.value = false;
+  if (props.onCancel) {
+    props.onCancel();
+  }
+};
+
 const handleWrapperClick = () => {
-  // Can close on backdrop click if needed, but for "alert" replacement, we can leave it to the confirm button.
-  // visible.value = false;
+  if (props.showCancel) {
+    handleCancel();
+  } else {
+    handleConfirm();
+  }
 };
 
 defineExpose({

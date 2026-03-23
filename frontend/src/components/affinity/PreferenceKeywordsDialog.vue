@@ -84,6 +84,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { getPreferenceKeywords, updatePreferenceKeywords } from '../../api/affinity'
+import { showDialog } from '../../utils/dialog'
 
 const props = defineProps<{
   modelValue: boolean
@@ -147,7 +148,7 @@ const handleSave = async () => {
     handleClose()
   } catch (e) {
     console.error('Failed to update preference keywords', e)
-    alert('保存失败: ' + (e instanceof Error ? e.message : String(e)))
+    showDialog('保存失败: ' + (e instanceof Error ? e.message : String(e)))
   } finally {
     isSaving.value = false
   }

@@ -104,6 +104,7 @@ import {
   getRelationshipFieldOptions,
   type FieldOptions
 } from '../../api/affinity'
+import { showDialog } from '../../utils/dialog'
 
 const props = defineProps<{
   modelValue: boolean
@@ -198,7 +199,7 @@ const handleSave = async () => {
     emit('update:modelValue', false)
   } catch (e) {
     console.error('保存关系上下文失败', e)
-    alert('保存失败: ' + (e instanceof Error ? e.message : String(e)))
+    showDialog('保存失败: ' + (e instanceof Error ? e.message : String(e)))
   } finally {
     isSaving.value = false
   }

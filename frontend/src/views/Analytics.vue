@@ -474,6 +474,7 @@ import RelationshipContextForm from '@/components/affinity/RelationshipContextFo
 import CtCard from '@/components/base/CtCard.vue'
 import CtButton from '@/components/base/CtButton.vue'
 import PersonaGallery from '@/components/persona/PersonaGallery.vue'
+import { showDialog } from '@/utils/dialog'
 
 type Conversation = { id: number; name: string; username: string; message_count: number; last_message_time: string }
 type Session = { id: number; start_time: number; end_time: number; duration: number; message_count: number; initiator: string; messages: any[] }
@@ -777,7 +778,7 @@ export default {
         const handleExport = () => {
             // Note: export function might just redirect or emit. Assuming an unimplemented function for now
             console.warn('Export to CSV is clicked.')
-            alert('导出功能尚未实现。')
+            showDialog('导出功能尚未实现。')
         }
 
         async function tryLoadAffinityScores() {

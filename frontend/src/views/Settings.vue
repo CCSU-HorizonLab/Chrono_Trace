@@ -210,6 +210,7 @@ import { bridgeReady, api } from '@/api/bridge'
 import CtCard from '@/components/base/CtCard.vue'
 import CtField from '@/components/base/CtField.vue'
 import CtButton from '@/components/base/CtButton.vue'
+import { showDialog } from '@/utils/dialog'
 
 const loading = ref(false)
 const saving = ref(false)
@@ -331,13 +332,13 @@ async function selectWeChatDir() {
       // 自动扫描该目录下的wxid
       await scanWeChatDirectory(result.path)
     } else if (result && result.error) {
-      alert('选择目录失败：' + result.error)
+      showDialog('选择目录失败：' + result.error)
     } else {
       console.log('[DEBUG] 用户取消选择或未选择')
     }
   } catch (e) {
     console.error('选择目录异常:', e)
-    alert('选择目录出错：' + (e as Error).message)
+    showDialog('选择目录出错：' + (e as Error).message)
   } finally {
     scanning.value = false
   }
@@ -351,7 +352,7 @@ async function scanWeChatDirectory(wechatDir: string) {
     console.log('[DEBUG] 扫描结果:', scanResult)
     
     if (!scanResult.ok) {
-      alert('扫描失败：' + (scanResult.error || '未知错误'))
+      showDialog('扫描失败：' + (scanResult.error || '未知错误'))
       return
     }
     
@@ -361,16 +362,16 @@ async function scanWeChatDirectory(wechatDir: string) {
       form.wechat_user_wxid = firstWxid
       console.log('[DEBUG] 自动设置wxid:', firstWxid)
       
-      alert(`扫描成功！
+      showDialog(`扫描成功！
 找到 ${scanResult.wxids.length} 个微信账号
 已自动设置第一个账号：${firstWxid}
 数据库将在导入时自动检测`)
     } else {
-      alert('未在该目录下找到微信数据（wxid_ 开头的文件夹）')
+      showDialog('未在该目录下找到微信数据（wxid_ 开头的文件夹）')
     }
   } catch (e) {
     console.error('扫描异常:', e)
-    alert('扫描出错：' + (e as Error).message)
+    showDialog('扫描出错：' + (e as Error).message)
   }
 }
 
@@ -486,7 +487,7 @@ async function loadLLMModels() {
 
 async function fetchAvailableModels() {
   if (!editingModel.api_base_url) {
-    alert('请先输入 API Base URL')
+    showDialog('请先输入 API Base URL')
     return
   }
   fetchingModels.value = true
@@ -496,18 +497,18 @@ async function fetchAvailableModels() {
     if (r.ok) {
       availableModels.value = r.models || []
       if (availableModels.value.length === 0) {
-        alert('获取成功，但该地址没有返回任何模型列表')
+        showDialog('获取成功，但该地址没有返回任何模型列表')
       } else {
         if (!editingModel.model_id) {
           editingModel.model_id = availableModels.value[0]
         }
       }
     } else {
-      alert('获取失败: ' + (r.error || '未知错误'))
+      showDialog('获取失败: ' + (r.error || '未知错误'))
     }
   } catch (e) {
     console.error('获取模型列表失败:', e)
-    alert('请求异常: ' + (e as Error).message)
+    showDialog('请求异常: ' + (e as Error).message)
   } finally {
     fetchingModels.value = false
   }
@@ -548,7 +549,7 @@ async function saveModel() {
       resetEditingModel()
       await loadLLMModels()
     } else {
-      alert('保存失败: ' + (r.error || '未知错误'))
+      showDialog('保存失败: ' + (r.error || '未知错误'))
     }
   } catch (e) {
     console.error('保存模型失败:', e)

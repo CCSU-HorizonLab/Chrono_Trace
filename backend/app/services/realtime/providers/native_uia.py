@@ -54,6 +54,69 @@ def _classify_bubble_midpoint(active_mid: float, width: int) -> str:
     return ""
 
 
+def _build_active_segments(
+    column_activity: list[int],
+    active_threshold: int,
+    gap_tolerance: int,
+) -> list[tuple[int, int]]:
+    """Build merged active column spans from per-column activity counts."""
+    active_indices = [index for index, count in enumerate(column_activity) if count >= active_threshold]
+    if not active_indices:
+        return []
+
+    segments: list[tuple[int, int]] = []
+    start = active_indices[0]
+    end = start
+    for index in active_indices[1:]:
+        if index - end <= max(1, gap_tolerance):
+            end = index
+            continue
+        segments.append((start, end))
+        start = index
+        end = index
+    segments.append((start, end))
+    return segments
+
+
+def _resolve_primary_active_midpoint(
+    column_activity: list[int],
+    width: int,
+    active_threshold: int,
+) -> float | None:
+    """Pick the dominant activity span and return its weighted midpoint."""
+    if width <= 0 or not column_activity:
+        return None
+
+    gap_tolerance = max(6, int(width * 0.03))
+    segments = _build_active_segments(column_activity, active_threshold, gap_tolerance)
+    if not segments:
+        return None
+
+    best_segment = None
+    best_score = -1
+    for start, end in segments:
+        segment_counts = column_activity[start : end + 1]
+        score = sum(segment_counts)
+        if score > best_score:
+            best_score = score
+            best_segment = (start, end)
+    if best_segment is None:
+        return None
+
+    start, end = best_segment
+    weighted_total = 0
+    weight_sum = 0
+    for index in range(start, end + 1):
+        weight = int(column_activity[index] or 0)
+        if weight <= 0:
+            continue
+        weighted_total += index * weight
+        weight_sum += weight
+    if weight_sum <= 0:
+        return (start + end) / 2
+    return weighted_total / weight_sum
+
+
 class NativeUIARealtimeProvider(RealtimeProvider):
     """Best-effort realtime provider using pywinauto UI Automation."""
 
@@ -425,9 +488,9 @@ class NativeUIARealtimeProvider(RealtimeProvider):
             sum(sample[channel] for sample in background_samples) // len(background_samples)
             for channel in range(3)
         )
-        active_columns = []
         threshold = 50
         min_active_pixels = max(4, height // 10)
+        column_activity = [0] * width
         for x in range(width):
             active_pixels = 0
             for y in range(height):
@@ -438,11 +501,15 @@ class NativeUIARealtimeProvider(RealtimeProvider):
                     + abs(pixel[2] - background[2])
                 ) > threshold:
                     active_pixels += 1
-            if active_pixels >= min_active_pixels:
-                active_columns.append(x)
-        if not active_columns:
+            column_activity[x] = active_pixels
+
+        active_mid = _resolve_primary_active_midpoint(
+            column_activity,
+            width,
+            min_active_pixels,
+        )
+        if active_mid is None:
             return ""
-        active_mid = (min(active_columns) + max(active_columns)) / 2
         return _classify_bubble_midpoint(active_mid, width)
 
     def _resolve_message_type(self, class_name: str, text: str) -> str:
@@ -536,30 +603,56 @@ class NativeUIARealtimeProvider(RealtimeProvider):
             )
         return messages
 
-    def scroll_up(self, wheel_times: int = 2) -> bool:
+    def scroll_up(self, wheel_times: int = 3) -> bool:
         if self._chat_list is None:
             self._chat_list = self._find_chat_list()
         if self._chat_list is None:
             return False
+        step_count = max(1, int(wheel_times or 1))
+        try:
+            self._chat_list.scroll("up", "line", count=step_count, retry_interval=0.05)
+            time.sleep(max(0.12, step_count * 0.05))
+            return True
+        except Exception as exc:
+            logger.debug("native_uia line scroll up failed, fallback to wheel: %s", exc)
+        try:
+            self._chat_list.wheel_mouse_input(wheel_dist=step_count)
+            time.sleep(max(0.12, step_count * 0.05))
+            return True
+        except Exception as exc:
+            logger.debug("native_uia wheel scroll up failed, fallback to page: %s", exc)
         try:
             self._chat_list.type_keys("{PGUP}", pause=0.05)
-            time.sleep(max(0.2, wheel_times * 0.2))
+            time.sleep(max(0.18, step_count * 0.08))
             return True
         except Exception as exc:
-            logger.debug("native_uia scroll up failed: %s", exc)
+            logger.debug("native_uia page scroll up failed: %s", exc)
             return False
 
-    def scroll_down(self, wheel_times: int = 4) -> bool:
+    def scroll_down(self, wheel_times: int = 3) -> bool:
         if self._chat_list is None:
             self._chat_list = self._find_chat_list()
         if self._chat_list is None:
             return False
+        step_count = max(1, int(wheel_times or 1))
         try:
-            self._chat_list.type_keys("{PGDN}", pause=0.05)
-            time.sleep(max(0.2, wheel_times * 0.1))
+            self._chat_list.scroll("down", "line", count=step_count, retry_interval=0.05)
+            time.sleep(max(0.12, step_count * 0.05))
             return True
         except Exception as exc:
-            logger.debug("native_uia scroll down failed: %s", exc)
+            logger.debug("native_uia line scroll down failed, fallback to wheel: %s", exc)
+        try:
+            self._chat_list.wheel_mouse_input(wheel_dist=-step_count)
+            time.sleep(max(0.12, step_count * 0.05))
+            return True
+        except Exception as exc:
+            logger.debug("native_uia wheel scroll down failed, fallback to page: %s", exc)
+        try:
+            self._chat_list.type_keys("{PGDN}", pause=0.05)
+            time.sleep(max(0.18, step_count * 0.08))
+            return True
+        except Exception as exc:
+            logger.debug("native_uia page scroll down failed: %s", exc)
             return False
 
     def get_hwnd(self) -> int:

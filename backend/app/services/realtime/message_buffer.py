@@ -322,7 +322,7 @@ class MessageBuffer:
         except Exception as e:
             logger.error(f"[MessageBuffer] 检查消息是否存在失败: {e}")
             return False
-    
+
     def clear_old_batches(self, days: int = 30) -> int:
         """
         清理超过指定天数的已处理批次

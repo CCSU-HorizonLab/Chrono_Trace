@@ -640,6 +640,7 @@ CREATE TABLE IF NOT EXISTS realtime_monitor_checkpoints (
     last_message_hash TEXT,                       -- 最近一条消息 hash
     last_runtime_id TEXT,                         -- 最近一条消息 runtime id
     last_message_preview TEXT,                    -- 最近一条消息预览
+    last_message_context TEXT,                    -- 最近一条消息的局部上下文锚点(JSON)
     message_count INTEGER DEFAULT 0,              -- 最近批次消息数
     source TEXT DEFAULT 'realtime',               -- 来源
     created_at INTEGER NOT NULL,

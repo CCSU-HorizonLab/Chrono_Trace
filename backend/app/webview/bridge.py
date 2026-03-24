@@ -1980,6 +1980,101 @@ class Bridge:
             logger.error(f"[Bridge] 获取悬浮状态失败: {e}")
             return {'ok': False, 'error': str(e)}
 
+    def check_gpu_status(self) -> dict[str, Any]:
+        """检测 GPU 加速可用性。"""
+        try:
+            import torch
+
+            result = {
+                "ok": True,
+                "cuda_available": torch.cuda.is_available(),
+                "gpu_name": None,
+                "torch_version": torch.__version__,
+                "cuda_version": None,
+                "gpu_memory_total_mb": 0,
+                "gpu_memory_free_mb": 0,
+            }
+
+            if result["cuda_available"]:
+                result["gpu_name"] = torch.cuda.get_device_name(0)
+                result["cuda_version"] = torch.version.cuda
+
+                mem_total = torch.cuda.get_device_properties(0).total_memory
+                try:
+                    mem_free, mem_total_runtime = torch.cuda.mem_get_info(0)
+                    result["gpu_memory_total_mb"] = int(mem_total_runtime / 1024 / 1024)
+                    result["gpu_memory_free_mb"] = int(mem_free / 1024 / 1024)
+                except Exception:
+                    mem_free = mem_total - torch.cuda.memory_allocated(0)
+                    result["gpu_memory_total_mb"] = int(mem_total / 1024 / 1024)
+                    result["gpu_memory_free_mb"] = int(mem_free / 1024 / 1024)
+
+            return result
+
+        except Exception as e:
+            logger.error(f"[Bridge] GPU 检测失败: {e}")
+            return {
+                "ok": False,
+                "cuda_available": False,
+                "gpu_name": None,
+                "torch_version": "unknown",
+                "cuda_version": None,
+                "gpu_memory_total_mb": 0,
+                "gpu_memory_free_mb": 0,
+                "error": str(e)
+            }
+
+    def check_analysis_model_status(self) -> dict[str, Any]:
+        """检查分析所需模型是否在本地缓存中可用。"""
+        try:
+            from pathlib import Path
+
+            from ..services.model_manager import ModelManager
+
+            local_model_dir = (
+                Path(__file__).parent.parent.parent / "data" / "models" / "sentiment_3class"
+            )
+            sentiment_model_ready = ModelManager(
+                model_dir=str(local_model_dir),
+                repo_id="tingting11/chrono-trace-sentiment",
+            ).ensure_model_exists()
+
+            try:
+                from huggingface_hub import snapshot_download
+
+                snapshot_download(
+                    "shibing624/text2vec-base-chinese",
+                    local_files_only=True,
+                )
+                embedding_model_ready = True
+            except Exception:
+                embedding_model_ready = False
+
+            missing_models = []
+
+            if not sentiment_model_ready:
+                missing_models.append("sentiment")
+            if not embedding_model_ready:
+                missing_models.append("embedding")
+
+            return {
+                "ok": True,
+                "analysis_available": sentiment_model_ready and embedding_model_ready,
+                "sentiment_model_ready": sentiment_model_ready,
+                "embedding_model_ready": embedding_model_ready,
+                "missing_models": missing_models,
+            }
+        except Exception as e:
+            logger.error(f"[Bridge] 分析模型状态检查失败: {e}")
+            return {
+                "ok": False,
+                "analysis_available": False,
+                "sentiment_model_ready": False,
+                "embedding_model_ready": False,
+                "missing_models": ["sentiment", "embedding"],
+                "error": str(e),
+            }
+
     # ==================== 好感度分析相关 ====================
 
     # -- 关系上下文 --

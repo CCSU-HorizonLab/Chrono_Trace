@@ -25,8 +25,10 @@ const props = defineProps<{
   title?: string;
   message?: string;
   showCancel?: boolean;
-  onConfirm?: () => void;
-  onCancel?: () => void;
+}>();
+const emit = defineEmits<{
+  (e: 'confirm'): void;
+  (e: 'cancel'): void;
 }>();
 
 const visible = ref(false);
@@ -37,16 +39,12 @@ const open = () => {
 
 const handleConfirm = () => {
   visible.value = false;
-  if (props.onConfirm) {
-    props.onConfirm();
-  }
+  emit('confirm');
 };
 
 const handleCancel = () => {
   visible.value = false;
-  if (props.onCancel) {
-    props.onCancel();
-  }
+  emit('cancel');
 };
 
 const handleWrapperClick = () => {

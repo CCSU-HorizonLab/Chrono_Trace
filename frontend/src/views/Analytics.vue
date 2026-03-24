@@ -48,7 +48,11 @@
     <div class="progress-bar">
       <div class="progress-fill" :style="{ width: `${globalProgressPercent}%` }"></div>
     </div>
-    <div class="progress-text">{{ globalProgressPercent.toFixed(1) }}% - {{ globalProgressStep }}</div>
+    <div class="progress-text">
+      <span v-if="gpuMode === 'gpu'" class="gpu-badge">GPU 加速</span>
+      <span v-else class="cpu-badge">CPU 模式</span>
+      {{ globalProgressPercent.toFixed(1) }}% - {{ globalProgressStep }}
+    </div>
   </div>
 
   <!-- Tabs Navigation (Capsule Style) -->
@@ -474,7 +478,7 @@ import RelationshipContextForm from '@/components/affinity/RelationshipContextFo
 import CtCard from '@/components/base/CtCard.vue'
 import CtButton from '@/components/base/CtButton.vue'
 import PersonaGallery from '@/components/persona/PersonaGallery.vue'
-import { showDialog } from '@/utils/dialog'
+import { showDialog, showConfirm } from '@/utils/dialog'
 
 type Conversation = { id: number; name: string; username: string; message_count: number; last_message_time: string }
 type Session = { id: number; start_time: number; end_time: number; duration: number; message_count: number; initiator: string; messages: any[] }
@@ -580,6 +584,7 @@ export default {
         const isGlobalAnalyzing = ref(false)
         const globalProgressPercent = ref(0)
         const globalProgressStep = ref('')
+        const gpuMode = ref<'gpu' | 'cpu'>('cpu')
 
         const hasFeatures = ref(false)
         
@@ -873,10 +878,60 @@ export default {
                     return
                 }
             } catch (e) { }
+
+            try {
+                const modelStatus = await api.check_analysis_model_status()
+                if (!modelStatus.ok || !modelStatus.analysis_available) {
+                    await showDialog({
+                        title: '无法开始分析',
+                        message:
+                            '当前因网络原因无法使用分析功能，且本地没有可用的模型缓存。\n' +
+                            '请检查网络，或先在网络正常时完成一次模型缓存后再试。'
+                    })
+                    analysisLaunchPending.value = false
+                    return
+                }
+            } catch (e) {
+                await showDialog({
+                    title: '无法开始分析',
+                    message:
+                        '当前无法确认分析模型状态，已终止本次分析。\n' +
+                        '请检查网络或稍后重试。'
+                })
+                analysisLaunchPending.value = false
+                return
+            }
+
+            gpuMode.value = 'cpu'
+            try {
+                const gpuStatus = await api.check_gpu_status()
+                if (gpuStatus.ok && gpuStatus.cuda_available) {
+                    const memInfo = gpuStatus.gpu_memory_total_mb
+                        ? ` (${(gpuStatus.gpu_memory_total_mb / 1024).toFixed(1)}GB)`
+                        : ''
+                    const useGpu = await showConfirm({
+                        title: 'GPU 加速可用',
+                        message:
+                            `检测到 GPU: ${gpuStatus.gpu_name}${memInfo}\n` +
+                            `CUDA ${gpuStatus.cuda_version} | PyTorch ${gpuStatus.torch_version}\n\n` +
+                            '启用 GPU 加速后，分析速度预计可提升 5-10 倍。\n是否启用 GPU 加速？'
+                    })
+                    gpuMode.value = useGpu ? 'gpu' : 'cpu'
+                } else {
+                    await showDialog({
+                        title: 'CPU 模式',
+                        message:
+                            'GPU 加速不可用，将使用 CPU 模式进行分析。\n' +
+                            '如需启用 GPU，请安装支持 CUDA 的 PyTorch 版本。'
+                    })
+                }
+            } catch (e) {
+                gpuMode.value = 'cpu'
+            }
             await startGlobalAnalysis(force)
         }
 
-        const handleContextSaved = () => startGlobalAnalysis(pendingAnalysisForce.value)
+        const handleContextSaved = () => handleStartGlobalAnalysis(pendingAnalysisForce.value)
         const handleKeywordsUpdated = async () => { if (selectedConversationId.value) await startGlobalAnalysis(true) }
 
         async function startGlobalAnalysis(force: boolean) {
@@ -1164,7 +1219,7 @@ export default {
         return {
             currentTab, conversations, selectedConversationId, dates, loading, loadingSessions, error, analysis, subject, sessions,
             personaProfile, loadingPersonaProfile, personaProfileMeta,
-            analysisResult, displayScore, showKeywordsDialog, showContextForm, pendingAnalysisForce, isGlobalAnalyzing, globalProgressPercent, globalProgressStep,
+            analysisResult, displayScore, showKeywordsDialog, showContextForm, pendingAnalysisForce, isGlobalAnalyzing, globalProgressPercent, globalProgressStep, gpuMode,
             hasFeatures, hasCachedAffinityAnalysis, featureStats, responseTimeStats, initiativeStats, wordCountsStats, activityCalendar,
             responseTimeChart, activityCalendarChart, wordCountChart, stats, currentContactName, hasPreferenceKeywords, allDimensions,
             currentRangeLabel, hasContentAnalysis, circumference, strokeDashoffset, formatNumber, formatTime, getResponseTimeLabel, getMergedResponseTimeLabel, getResponseTimePercent, onConversationChange, onDatesChange, handleExport, handleStartGlobalAnalysis, handleContextSaved, handleKeywordsUpdated,
@@ -1292,6 +1347,27 @@ export default {
   font-size: var(--ct-text-sm);
   color: var(--ct-text-secondary);
   text-align: right;
+}
+
+.gpu-badge {
+  display: inline-block;
+  background: linear-gradient(135deg, #1f7a8c, #bfdb38);
+  color: #fff;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  margin-right: 8px;
+  font-weight: 600;
+}
+
+.cpu-badge {
+  display: inline-block;
+  background: var(--ct-bg-tertiary);
+  color: var(--ct-text-secondary);
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  margin-right: 8px;
 }
 
 .spinning {

@@ -357,6 +357,66 @@ class RealtimeSentimentService:
     
     # ========== 规则增强 ==========
     
+    @_safe_disable_dynamo
+    def _model_predict_batch(self, texts: List[str], batch_size: int = 32) -> List[Dict[str, Any]]:
+        """使用模型进行真正的批量推理。"""
+        try:
+            self._load_model()
+            import torch
+
+            all_results: List[Dict[str, Any]] = []
+
+            for i in range(0, len(texts), batch_size):
+                batch_texts = texts[i:i + batch_size]
+                inputs = self._tokenizer(
+                    batch_texts,
+                    return_tensors="pt",
+                    truncation=True,
+                    max_length=512,
+                    padding=True
+                )
+
+                if self._device != 'cpu':
+                    inputs = {k: v.to(self._device) for k, v in inputs.items()}
+
+                with torch.no_grad():
+                    with self._lock:
+                        outputs = self._model(**inputs)
+                        probabilities = torch.softmax(outputs.logits, dim=1)
+
+                probs_batch = probabilities.cpu().numpy()
+
+                for j in range(len(batch_texts)):
+                    probs = probs_batch[j].tolist()
+                    predicted_class = int(probs_batch[j].argmax())
+                    confidence = float(probs_batch[j].max())
+                    polarity_map = {0: -1, 1: 1, 2: 0}
+                    polarity = polarity_map.get(predicted_class, 0)
+                    raw_score = probs[1] - probs[0] if len(probs) >= 3 else 0.0
+                    probs_3class = [
+                        probs[0],
+                        probs[2] if len(probs) >= 3 else 0.0,
+                        probs[1] if len(probs) >= 2 else 0.0
+                    ]
+
+                    all_results.append({
+                        'polarity': polarity,
+                        'raw_score': raw_score,
+                        'confidence': confidence,
+                        'probabilities': probs_3class
+                    })
+
+            return all_results
+
+        except Exception as e:
+            logger.error(f"[实时情感分析] 批量模型推理失败: {e}")
+            import traceback
+            traceback.print_exc()
+            return [
+                {'polarity': 0, 'raw_score': 0.0, 'confidence': 0.0, 'probabilities': [0.33, 0.34, 0.33]}
+                for _ in texts
+            ]
+
     def _apply_rules(
         self,
         model_result: Dict[str, Any],
@@ -527,6 +587,70 @@ class RealtimeSentimentService:
                 })
         return results
     
+    def analyze_batch(self, texts: List[str]) -> List[Dict[str, Any]]:
+        """批量分析多条消息。"""
+        if not texts:
+            return []
+
+        empty_result = {
+            'polarity': 0,
+            'intensity': 0.0,
+            'confidence': 0.0,
+            'rules_applied': ['空文本']
+        }
+
+        preprocess_results: List[Dict[str, Any]] = []
+        features_list: List[Optional[Dict[str, Any]]] = []
+        valid_indices: List[int] = []
+        valid_texts: List[str] = []
+
+        for idx, text in enumerate(texts):
+            try:
+                pp = self._preprocess(text)
+                preprocess_results.append(pp)
+
+                if pp['cleaned_text']:
+                    features_list.append(self._extract_features(pp['cleaned_text']))
+                    valid_indices.append(idx)
+                    valid_texts.append(pp['cleaned_text'])
+                else:
+                    features_list.append(None)
+            except Exception as e:
+                logger.error(f"[实时情感分析] 批量预处理失败: {e}")
+                preprocess_results.append({
+                    'cleaned_text': '',
+                    'emojis': [],
+                    'slangs': [],
+                    'has_sarcasm': False,
+                    'is_perfunctory': True
+                })
+                features_list.append(None)
+
+        model_results_map: Dict[int, Dict[str, Any]] = {}
+        if valid_texts:
+            batch_model_results = self._model_predict_batch(valid_texts)
+            for i, idx in enumerate(valid_indices):
+                if i < len(batch_model_results):
+                    model_results_map[idx] = batch_model_results[i]
+
+        results: List[Dict[str, Any]] = []
+        for idx in range(len(texts)):
+            model_result = model_results_map.get(idx)
+            feature_result = features_list[idx] if idx < len(features_list) else None
+            preprocess_result = preprocess_results[idx] if idx < len(preprocess_results) else None
+
+            if not model_result or not preprocess_result or feature_result is None:
+                results.append(empty_result.copy())
+                continue
+
+            try:
+                results.append(self._apply_rules(model_result, preprocess_result, feature_result))
+            except Exception as e:
+                logger.error(f"[实时情感分析] 批量规则增强失败: {e}")
+                results.append(empty_result.copy())
+
+        return results
+
     def analyze_and_cache(self, message_id: int, text: str):
         """分析并缓存到数据库
         

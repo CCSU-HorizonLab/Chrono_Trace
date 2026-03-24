@@ -356,6 +356,71 @@ class PreprocessingOrchestrator:
         logger.info(f"[预处理] 情感分析全部完成并缓存 ({total_to_analyze} 条消息)")
         return
 
+    def _ensure_sentiment_analysis(
+        self,
+        conversation_id: int,
+        messages: List[Dict[str, Any]]
+    ):
+        """确保消息的情感分析已完成。"""
+        text_messages = [msg for msg in messages if msg["message_type"] == 1]
+        all_ids = [msg["id"] for msg in text_messages]
+        cached_results = self.sentiment_service.batch_get_sentiment_from_cache(all_ids)
+        messages_to_analyze = [
+            msg for msg in text_messages
+            if msg["id"] not in cached_results
+        ]
+
+        if not messages_to_analyze:
+            logger.info(f"[棰勫鐞哴 鎯呮劅鍒嗘瀽缂撳瓨鍛戒腑锛屾棤闇€閲嶆柊璁＄畻")
+            return
+
+        logger.info(
+            f"[预处理] 需要分析 {len(messages_to_analyze)} 条消息"
+            f"(缓存命中 {len(cached_results)}/{len(all_ids)})"
+        )
+
+        total_to_analyze = len(messages_to_analyze)
+        batch_size = 500
+        total_batches = (total_to_analyze + batch_size - 1) // batch_size
+        sentiment_start = time.time()
+
+        for i in range(0, total_to_analyze, batch_size):
+            batch_index = i // batch_size + 1
+            batch_msgs = messages_to_analyze[i:i + batch_size]
+            texts = [msg["content"] or "" for msg in batch_msgs]
+
+            batch_results = self.sentiment_service.analyze_batch(texts)
+
+            cache_data = []
+            for msg, result in zip(batch_msgs, batch_results):
+                cache_data.append({
+                    "message_id": msg["id"],
+                    "polarity": result["polarity"],
+                    "intensity": result["intensity"],
+                    "embedding": result["embedding"]
+                })
+
+            self.sentiment_service.batch_cache_sentiments(cache_data)
+
+            import gc
+            import torch
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+            time.sleep(0.1)
+
+            processed = min(i + batch_size, total_to_analyze)
+            percentage = (processed / total_to_analyze) * 100
+            logger.info(
+                f"[棰勫鐞哴 鎯呮劅鍒嗘瀽鎵规 {batch_index}/{total_batches}: "
+                f"{processed}/{total_to_analyze} ({percentage:.1f}%), "
+                f"绱鑰楁椂 {_step_elapsed(sentiment_start)}"
+            )
+
+        logger.info(f"[棰勫鐞哴 鎯呮劅鍒嗘瀽鍏ㄩ儴瀹屾垚骞剁紦瀛?({total_to_analyze} 鏉℃秷鎭?")
+        return
+
     def _save_preprocessing_results(
         self,
         conversation_id: int,

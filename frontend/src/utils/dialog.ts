@@ -1,4 +1,4 @@
-import { createVNode, render, AppContext } from 'vue';
+import { createVNode, nextTick, render } from 'vue';
 import CtDialog from '../components/base/CtDialog.vue';
 
 export interface DialogOptions {
@@ -29,11 +29,9 @@ export function showDialog(options: DialogOptions | string): Promise<void> {
     });
 
     render(vnode, container);
-
-    // After mounting, call the open method to trigger enter animations
-    if (vnode.component && vnode.component.exposed) {
-      vnode.component.exposed.open();
-    }
+    nextTick(() => {
+      vnode.component?.exposed?.open();
+    });
   });
 }
 
@@ -65,9 +63,8 @@ export function showConfirm(options: DialogOptions | string): Promise<boolean> {
     });
 
     render(vnode, container);
-
-    if (vnode.component && vnode.component.exposed) {
-      vnode.component.exposed.open();
-    }
+    nextTick(() => {
+      vnode.component?.exposed?.open();
+    });
   });
 }

@@ -74,7 +74,7 @@ def _make_service() -> tuple[RealtimeMonitorService, FakeMessageBuffer]:
     return service, buffer
 
 
-def test_process_message_dedupes_same_runtime_id_even_if_timestamp_label_changes():
+def test_process_message_dedupes_same_runtime_id_when_time_anchor_is_stable():
     service, buffer = _make_service()
     message = SimpleNamespace(
         hash="provider-hash-1",
@@ -83,8 +83,8 @@ def test_process_message_dedupes_same_runtime_id_even_if_timestamp_label_changes
         is_system=False,
         content="什么SL？",
         type="text",
-        time="",
-        CreateTime="",
+        time="12:48",
+        CreateTime="12:48",
         timestamp=0,
         visible_index=3,
     )
@@ -92,11 +92,277 @@ def test_process_message_dedupes_same_runtime_id_even_if_timestamp_label_changes
     service._process_message(message)
     assert len(buffer.saved_messages) == 1
 
-    message.time = "12:48"
+    message.hash = "provider-hash-1b"
     service._process_message(message)
 
     assert len(buffer.saved_messages) == 1
     assert len(service.seen_message_keys) == 1
+
+
+def test_process_message_dedupes_same_runtime_id_even_if_sender_attr_flips():
+    service, buffer = _make_service()
+    message = SimpleNamespace(
+        hash="provider-hash-role-flip",
+        id="runtime-role-flip-1",
+        is_self=False,
+        is_system=False,
+        content="就拽就拽",
+        type="text",
+        time="",
+        CreateTime="",
+        timestamp=0,
+        visible_index=5,
+    )
+
+    service._process_message(message)
+    assert len(buffer.saved_messages) == 1
+    assert buffer.saved_messages[0]["sender_attr"] == "friend"
+
+    message.is_self = True
+    service._process_message(message)
+
+    assert len(buffer.saved_messages) == 1
+    assert len(service.seen_message_keys) == 1
+
+
+def test_process_message_dedupes_same_visible_message_even_if_runtime_id_changes():
+    service, buffer = _make_service()
+    first_message = SimpleNamespace(
+        hash="provider-hash-runtime-1",
+        id="runtime-a",
+        is_self=False,
+        is_system=False,
+        content="我在你旁边扯你说对不起",
+        type="text",
+        time="12:48",
+        CreateTime="12:48",
+        timestamp=0,
+        visible_index=5,
+    )
+    second_message = SimpleNamespace(
+        hash="provider-hash-runtime-2",
+        id="runtime-b",
+        is_self=False,
+        is_system=False,
+        content="我在你旁边扯你说对不起",
+        type="text",
+        time="12:48",
+        CreateTime="12:48",
+        timestamp=0,
+        visible_index=5,
+    )
+
+    service._process_message(first_message)
+    service._process_message(second_message)
+
+    assert len(buffer.saved_messages) == 1
+    assert len(service.seen_message_keys) == 1
+
+
+def test_visible_message_signature_uses_edge_window_not_just_single_top_item():
+    service, _buffer = _make_service()
+    first = SimpleNamespace(hash="", id="1", is_self=False, type="text", content="顶部", time="")
+    second_a = SimpleNamespace(hash="", id="2a", is_self=False, type="text", content="第二条A", time="")
+    second_b = SimpleNamespace(hash="", id="2b", is_self=False, type="text", content="第二条B", time="")
+
+    signature_a = service._visible_message_signature([first, second_a], from_tail=False, size=2)
+    signature_b = service._visible_message_signature([first, second_b], from_tail=False, size=2)
+
+    assert signature_a != signature_b
+
+
+def test_checkpoint_match_prefers_runtime_id_for_short_anchor_text():
+    service, _buffer = _make_service()
+    checkpoint = {
+        "last_runtime_id": "runtime-anchor-1",
+        "last_message_preview": "怎么了",
+        "last_message_timestamp": 1234567890,
+    }
+    message = SimpleNamespace(
+        id="runtime-anchor-1",
+        content="怎么了",
+    )
+
+    reason = service._checkpoint_match_reason(checkpoint, message, resolved_timestamp=0)
+
+    assert reason == "runtime_id_exact"
+
+
+def test_checkpoint_match_uses_sliding_context_window_for_duplicate_short_text():
+    service, _buffer = _make_service()
+    checkpoint = {
+        "last_runtime_id": "",
+        "last_message_preview": "怎么了",
+        "last_message_timestamp": 1774273245,
+        "last_message_context": {
+            "before": [
+                "撅嘴",
+                "你都没看见！ 也没听见",
+                "狗屎!",
+                "就拽就拽、引用 稽塔 的消息 : 你刚刚带个耳机拽的要死",
+            ],
+            "after": ["system:昨天 21:20"],
+        },
+    }
+
+    current_visible_messages = [
+        SimpleNamespace(id="1", is_self=True, is_system=False, type="text", content="你都没看见！ 也没听见"),
+        SimpleNamespace(id="2", is_self=True, is_system=False, type="text", content="狗屎!"),
+        SimpleNamespace(id="3", is_self=False, is_system=False, type="text", content="就拽就拽、引用 稽塔 的消息 : 你刚刚带个耳机拽的要死"),
+        SimpleNamespace(id="4", is_self=False, is_system=False, type="text", content="怎么了"),
+        SimpleNamespace(id="5", is_self=False, is_system=True, type="system", content="21:20"),
+    ]
+    older_visible_messages = [
+        SimpleNamespace(id="a1", is_self=True, is_system=False, type="text", content="啥也听不见"),
+        SimpleNamespace(id="a2", is_self=True, is_system=False, type="text", content="我在你旁边扯你说对不起"),
+        SimpleNamespace(id="a3", is_self=True, is_system=False, type="text", content="撅嘴"),
+        SimpleNamespace(id="a4", is_self=True, is_system=False, type="text", content="你都没看见！ 也没听见"),
+        SimpleNamespace(id="a5", is_self=True, is_system=False, type="text", content="狗屎!"),
+        SimpleNamespace(id="a6", is_self=False, is_system=False, type="text", content="就拽就拽、引用 稽塔 的消息 : 你刚刚带个耳机拽的要死"),
+        SimpleNamespace(id="a7", is_self=False, is_system=False, type="text", content="怎么了"),
+        SimpleNamespace(id="a8", is_self=False, is_system=True, type="system", content="昨天 20:53"),
+        SimpleNamespace(id="a9", is_self=True, is_system=False, type="text", content="狗屎!"),
+        SimpleNamespace(id="a10", is_self=True, is_system=False, type="text", content="那你自己修"),
+        SimpleNamespace(id="a11", is_self=False, is_system=False, type="text", content="没有问题了！"),
+    ]
+
+    current_reason = service._checkpoint_match_reason(
+        checkpoint,
+        current_visible_messages[3],
+        resolved_timestamp=0,
+        visible_messages=current_visible_messages,
+        visible_index=3,
+    )
+    older_reason = service._checkpoint_match_reason(
+        checkpoint,
+        older_visible_messages[6],
+        resolved_timestamp=0,
+        visible_messages=older_visible_messages,
+        visible_index=6,
+    )
+
+    assert current_reason == "context_window"
+    assert older_reason is None
+
+
+def test_backfill_scroll_step_uses_faster_stride_when_anchor_context_is_far():
+    service, _buffer = _make_service()
+    checkpoint = {
+        "last_message_preview": "怎么了",
+        "last_message_context": {
+            "before": [
+                "撅嘴",
+                "你都没看见！ 也没听见",
+                "狗屎!",
+            ],
+            "after": ["system:昨天 21:20"],
+        },
+    }
+    visible_messages = [
+        SimpleNamespace(id="1", is_self=True, is_system=False, type="text", content="完全无关1"),
+        SimpleNamespace(id="2", is_self=False, is_system=False, type="text", content="完全无关2"),
+        SimpleNamespace(id="3", is_self=True, is_system=False, type="text", content="完全无关3"),
+    ]
+
+    step = service._choose_backfill_scroll_step(
+        checkpoint=checkpoint,
+        visible_messages=visible_messages,
+        round_index=1,
+        default_wheel_times=3,
+    )
+
+    assert step == 6
+
+
+def test_backfill_scroll_step_uses_large_stride_when_visible_time_is_far_later_than_checkpoint():
+    service, _buffer = _make_service()
+    checkpoint = {
+        "last_message_preview": "怎么了",
+        "last_message_timestamp": 1774273245,
+        "last_message_context": {
+            "before": ["狗屎!"],
+            "after": ["system:昨天 21:20"],
+        },
+    }
+    visible_messages = [
+        SimpleNamespace(id="1", is_self=False, is_system=True, type="system", content="13:16"),
+        SimpleNamespace(id="2", is_self=True, is_system=False, type="text", content="要能量吗"),
+        SimpleNamespace(id="3", is_self=False, is_system=False, type="text", content="不用"),
+    ]
+
+    step = service._choose_backfill_scroll_step(
+        checkpoint=checkpoint,
+        visible_messages=visible_messages,
+        round_index=2,
+        default_wheel_times=3,
+    )
+
+    assert step == 8
+
+
+def test_backfill_scroll_step_slows_down_when_anchor_window_enters_view():
+    service, _buffer = _make_service()
+    checkpoint = {
+        "last_message_preview": "怎么了",
+        "last_message_context": {
+            "before": [
+                "撅嘴",
+                "你都没看见！ 也没听见",
+                "狗屎!",
+                "就拽就拽、引用 稽塔 的消息 : 你刚刚带个耳机拽的要死",
+            ],
+            "after": ["system:昨天 21:20"],
+        },
+    }
+    visible_messages = [
+        SimpleNamespace(id="1", is_self=True, is_system=False, type="text", content="你都没看见！ 也没听见"),
+        SimpleNamespace(id="2", is_self=True, is_system=False, type="text", content="狗屎!"),
+        SimpleNamespace(id="3", is_self=False, is_system=False, type="text", content="就拽就拽、引用 稽塔 的消息 : 你刚刚带个耳机拽的要死"),
+        SimpleNamespace(id="4", is_self=False, is_system=False, type="text", content="怎么了"),
+        SimpleNamespace(id="5", is_self=False, is_system=True, type="system", content="21:20"),
+    ]
+
+    step = service._choose_backfill_scroll_step(
+        checkpoint=checkpoint,
+        visible_messages=visible_messages,
+        round_index=6,
+        default_wheel_times=3,
+    )
+
+    assert step == 1
+
+
+def test_backfill_scroll_direction_can_correct_if_viewport_is_older_than_checkpoint():
+    service, _buffer = _make_service()
+
+    direction = service._choose_backfill_scroll_direction(
+        proximity={"preview_visible": False, "focus_hits": 0},
+        time_gap_seconds=-(20 * 60),
+    )
+
+    assert direction == "down"
+
+
+def test_backfill_scroll_repeats_batches_more_small_scrolls_when_time_gap_is_large():
+    service, _buffer = _make_service()
+
+    repeats = service._choose_backfill_scroll_repeats(
+        proximity={"preview_visible": False, "focus_hits": 0},
+        time_gap_seconds=13 * 3600,
+    )
+
+    assert repeats == 3
+
+
+def test_backfill_scroll_repeats_stays_single_step_near_anchor():
+    service, _buffer = _make_service()
+
+    repeats = service._choose_backfill_scroll_repeats(
+        proximity={"preview_visible": True, "focus_hits": 2},
+        time_gap_seconds=13 * 3600,
+    )
+
+    assert repeats == 1
 
 
 def test_process_message_dedupes_system_rows_without_provider_hash():

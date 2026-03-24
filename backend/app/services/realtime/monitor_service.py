@@ -14,6 +14,7 @@ from .message_buffer import MessageBuffer
 from .realtime_sentiment_service import RealtimeSentimentService
 from .emotion_state_tracker import EmotionStateTracker
 from .providers.models import build_message_hash, normalize_text
+from .providers.factory import normalize_listener_backend
 
 logger = logging.getLogger(__name__)
 def _print(*args, **kwargs):
@@ -88,7 +89,9 @@ class RealtimeMonitorService:
                         settings = json.load(f)
                 else:
                     settings = {}
-                self._listener_backend = settings.get('listener_backend', 'auto')
+                self._listener_backend = normalize_listener_backend(
+                    settings.get('listener_backend', 'native_uia')
+                )
                 self._suggestion_config = {
                     'trigger_mode': settings.get('trigger_mode', 'semi_auto'),
                     'intent': settings.get('intent', 'maintain'),
@@ -96,7 +99,7 @@ class RealtimeMonitorService:
                     'engine_type': 'llm',           # llm
                 }
             except Exception as e:
-                self._listener_backend = 'auto'
+                self._listener_backend = 'native_uia'
                 _print(f"[RealtimeMonitorService] 获取全局设置失败: {e}")
                 self._suggestion_config = {
                     'trigger_mode': 'semi_auto',    # full_auto / semi_auto / manual
@@ -426,38 +429,649 @@ class RealtimeMonitorService:
             f"{getattr(msg, 'type', 'text')}:{getattr(msg, 'content', '')}:{getattr(msg, 'time', '')}"
         )
 
+    def _resolve_visible_sender_attr(self, msg) -> str:
+        """Resolve sender_attr from a visible provider message object."""
+        if getattr(msg, 'is_system', False):
+            return 'system'
+        return 'self' if getattr(msg, 'is_self', False) else 'friend'
+
+    def _normalize_checkpoint_context_value(self, token: str) -> str:
+        """Normalize checkpoint context tokens so relative time labels stay stable across days."""
+        text = normalize_text(token)
+        if not text:
+            return ""
+        if text.startswith('system_hm:'):
+            return text
+        if text.startswith('system_ts:'):
+            return text
+        if text.startswith('system:'):
+            label = text.split(':', 1)[1].strip()
+            matched = re.search(r'(\d{1,2}):(\d{2})$', label)
+            if matched:
+                return f"system_hm:{int(matched.group(1)):02d}:{matched.group(2)}"
+            resolved = self._resolve_time_label(label, 0)
+            if resolved:
+                return f"system_ts:{int(resolved // 60)}"
+            return f"system:{normalize_text(label)}"
+        return text
+
+    def _checkpoint_context_token(self, sender_attr: str, content: str) -> str:
+        """Build a tolerant checkpoint context token."""
+        text = normalize_text(content)
+        if not text:
+            return ""
+        if normalize_text(sender_attr) == 'system':
+            return self._normalize_checkpoint_context_value(f"system:{text}")
+        return self._normalize_checkpoint_context_value(text)
+
+    def _extract_visible_checkpoint_context(
+        self,
+        visible_messages: list,
+        anchor_index: int,
+        max_neighbors: int = 6,
+    ) -> dict:
+        """Extract a compact context window around a visible message."""
+        if not visible_messages or anchor_index < 0 or anchor_index >= len(visible_messages):
+            return {}
+
+        anchor_msg = visible_messages[anchor_index]
+        anchor_sender_attr = self._resolve_visible_sender_attr(anchor_msg)
+        anchor_content = str(getattr(anchor_msg, 'content', '') or '')
+        before: list[str] = []
+        after: list[str] = []
+
+        for msg in visible_messages[:anchor_index]:
+            token = self._checkpoint_context_token(
+                self._resolve_visible_sender_attr(msg),
+                str(getattr(msg, 'content', '') or ''),
+            )
+            if token:
+                before.append(token)
+        for msg in visible_messages[anchor_index + 1:]:
+            token = self._checkpoint_context_token(
+                self._resolve_visible_sender_attr(msg),
+                str(getattr(msg, 'content', '') or ''),
+            )
+            if token:
+                after.append(token)
+
+        return {
+            'sender_attr': anchor_sender_attr,
+            'message_type': str(getattr(anchor_msg, 'type', 'text') or 'text'),
+            'anchor': self._checkpoint_context_token(anchor_sender_attr, anchor_content),
+            'before': before[-max(0, int(max_neighbors or 0)):],
+            'after': after[:max(0, int(max_neighbors or 0))],
+        }
+
+    def _extract_record_checkpoint_context(
+        self,
+        messages: list[dict],
+        anchor_index: int,
+        max_neighbors: int = 6,
+    ) -> dict:
+        """Extract a compact context window from buffered record dicts."""
+        if not messages or anchor_index < 0 or anchor_index >= len(messages):
+            return {}
+
+        anchor_message = messages[anchor_index]
+        before: list[str] = []
+        after: list[str] = []
+        for item in messages[:anchor_index]:
+            token = self._checkpoint_context_token(
+                str(item.get('sender_attr') or ''),
+                str(item.get('content') or ''),
+            )
+            if token:
+                before.append(token)
+        for item in messages[anchor_index + 1:]:
+            token = self._checkpoint_context_token(
+                str(item.get('sender_attr') or ''),
+                str(item.get('content') or ''),
+            )
+            if token:
+                after.append(token)
+
+        return {
+            'sender_attr': str(anchor_message.get('sender_attr') or ''),
+            'message_type': str(anchor_message.get('message_type') or 'text'),
+            'anchor': self._checkpoint_context_token(
+                str(anchor_message.get('sender_attr') or ''),
+                str(anchor_message.get('content') or ''),
+            ),
+            'before': before[-max(0, int(max_neighbors or 0)):],
+            'after': after[:max(0, int(max_neighbors or 0))],
+        }
+
+    def _select_checkpoint_visible_index(self, last_message: dict, visible_messages: list) -> int:
+        """Find the most plausible visible occurrence for the checkpoint anchor."""
+        target_content = normalize_text(str(last_message.get('content') or ''))
+        target_runtime_id = normalize_text(str(last_message.get('runtime_id') or ''))
+        target_sender_attr = normalize_text(str(last_message.get('sender_attr') or ''))
+        target_message_type = normalize_text(str(last_message.get('message_type') or 'text')).lower()
+        if not target_content or not visible_messages:
+            return -1
+
+        best_index = -1
+        best_score = None
+        for index, msg in enumerate(visible_messages):
+            content = normalize_text(str(getattr(msg, 'content', '') or ''))
+            if content != target_content:
+                continue
+
+            score = index
+            runtime_id = normalize_text(str(getattr(msg, 'id', '') or ''))
+            if target_runtime_id and runtime_id == target_runtime_id:
+                score += 1000
+
+            sender_attr = self._resolve_visible_sender_attr(msg)
+            if target_sender_attr and normalize_text(sender_attr) == target_sender_attr:
+                score += 100
+
+            message_type = normalize_text(str(getattr(msg, 'type', 'text') or 'text')).lower()
+            if target_message_type and message_type == target_message_type:
+                score += 50
+
+            if best_score is None or score > best_score:
+                best_score = score
+                best_index = index
+
+        return best_index
+
+    def _select_checkpoint_record_index(self, last_message: dict, messages: list[dict]) -> int:
+        """Find the buffered record index for the checkpoint anchor."""
+        target_content = normalize_text(str(last_message.get('content') or ''))
+        target_runtime_id = normalize_text(str(last_message.get('runtime_id') or ''))
+        target_sender_attr = normalize_text(str(last_message.get('sender_attr') or ''))
+        target_message_type = normalize_text(str(last_message.get('message_type') or 'text')).lower()
+        if not target_content or not messages:
+            return -1
+
+        best_index = -1
+        best_score = None
+        for index, item in enumerate(messages):
+            content = normalize_text(str(item.get('content') or ''))
+            if content != target_content:
+                continue
+
+            score = index
+            runtime_id = normalize_text(str(item.get('runtime_id') or ''))
+            if target_runtime_id and runtime_id == target_runtime_id:
+                score += 1000
+            if target_sender_attr and normalize_text(str(item.get('sender_attr') or '')) == target_sender_attr:
+                score += 100
+            if target_message_type and normalize_text(str(item.get('message_type') or 'text')).lower() == target_message_type:
+                score += 50
+
+            if best_score is None or score > best_score:
+                best_score = score
+                best_index = index
+
+        return best_index
+
+    def _build_checkpoint_context(self, last_message: dict, batch_messages: list[dict]) -> dict:
+        """Build a context window for checkpoint matching."""
+        try:
+            visible_messages = self.wx.GetAllMessage() if self.wx else []
+        except Exception as e:
+            _print(f"[Checkpoint] 读取当前可见消息失败，回退 batch context: {e}")
+            visible_messages = []
+
+        visible_index = self._select_checkpoint_visible_index(last_message, visible_messages)
+        if visible_index >= 0:
+            context = self._extract_visible_checkpoint_context(visible_messages, visible_index)
+            if context:
+                return context
+
+        batch_index = self._select_checkpoint_record_index(last_message, batch_messages)
+        if batch_index >= 0:
+            return self._extract_record_checkpoint_context(batch_messages, batch_index)
+        return {}
+
+    def _normalize_checkpoint_context(self, raw_context) -> dict:
+        """Normalize checkpoint context payloads from DB/tests into a dict."""
+        if isinstance(raw_context, dict):
+            return raw_context
+        if not raw_context:
+            return {}
+        try:
+            payload = json.loads(str(raw_context))
+        except Exception:
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    def _score_context_window(
+        self,
+        expected: list[str],
+        actual: list[str],
+        reverse: bool = False,
+    ) -> dict:
+        """Score the best contiguous overlap between two context windows with sliding alignment."""
+        expected_tokens = [
+            self._normalize_checkpoint_context_value(token)
+            for token in (expected or [])
+        ]
+        expected_tokens = [token for token in expected_tokens if token]
+        actual_tokens = [
+            self._normalize_checkpoint_context_value(token)
+            for token in (actual or [])
+        ]
+        actual_tokens = [token for token in actual_tokens if token]
+
+        if reverse:
+            expected_tokens = list(reversed(expected_tokens))
+            actual_tokens = list(reversed(actual_tokens))
+
+        weights = [len(expected_tokens) - idx for idx in range(len(expected_tokens))]
+        total_weight = sum(weights)
+        best = {
+            'count': 0,
+            'weight': 0,
+            'expected_start': -1,
+            'actual_start': -1,
+            'expected_count': len(expected_tokens),
+            'actual_count': len(actual_tokens),
+            'expected_weight': total_weight,
+            'coverage': 0.0,
+            'weight_ratio': 0.0,
+        }
+        if not expected_tokens or not actual_tokens:
+            return best
+
+        for expected_start in range(len(expected_tokens)):
+            for actual_start in range(len(actual_tokens)):
+                matched = 0
+                matched_weight = 0
+                while (
+                    expected_start + matched < len(expected_tokens)
+                    and actual_start + matched < len(actual_tokens)
+                ):
+                    expected_token = expected_tokens[expected_start + matched]
+                    actual_token = actual_tokens[actual_start + matched]
+                    if expected_token != actual_token:
+                        break
+                    matched_weight += weights[expected_start + matched]
+                    matched += 1
+
+                if matched > best['count'] or (
+                    matched == best['count'] and matched_weight > best['weight']
+                ):
+                    best.update({
+                        'count': matched,
+                        'weight': matched_weight,
+                        'expected_start': expected_start,
+                        'actual_start': actual_start,
+                    })
+
+        if best['expected_count']:
+            best['coverage'] = best['count'] / best['expected_count']
+        if best['expected_weight']:
+            best['weight_ratio'] = best['weight'] / best['expected_weight']
+        return best
+
+    def _context_window_match_reason(self, checkpoint_context: dict, visible_context: dict) -> str | None:
+        """Decide whether the visible anchor matches the saved checkpoint context."""
+        expected_before = list(checkpoint_context.get('before') or [])
+        expected_after = list(checkpoint_context.get('after') or [])
+        actual_before = list(visible_context.get('before') or [])
+        actual_after = list(visible_context.get('after') or [])
+
+        before_score = self._score_context_window(expected_before, actual_before, reverse=True)
+        after_score = self._score_context_window(expected_after, actual_after, reverse=False)
+        total_expected_weight = int(before_score.get('expected_weight') or 0) + int(after_score.get('expected_weight') or 0)
+        matched_weight = int(before_score.get('weight') or 0) + int(after_score.get('weight') or 0)
+        total_weight_ratio = (matched_weight / total_expected_weight) if total_expected_weight else 0.0
+
+        sender_expected = normalize_text(str(checkpoint_context.get('sender_attr') or ''))
+        sender_actual = normalize_text(str(visible_context.get('sender_attr') or ''))
+        type_expected = normalize_text(str(checkpoint_context.get('message_type') or '')).lower()
+        type_actual = normalize_text(str(visible_context.get('message_type') or '')).lower()
+        if sender_expected and sender_actual and sender_expected == sender_actual:
+            total_weight_ratio = min(1.0, total_weight_ratio + 0.05)
+        if type_expected and type_actual and type_expected == type_actual:
+            total_weight_ratio = min(1.0, total_weight_ratio + 0.05)
+
+        expected_before_count = int(before_score.get('expected_count') or 0)
+        expected_after_count = int(after_score.get('expected_count') or 0)
+        before_count = int(before_score.get('count') or 0)
+        after_count = int(after_score.get('count') or 0)
+        strong_before = expected_before_count > 0 and (
+            before_count >= min(3, expected_before_count)
+            or float(before_score.get('weight_ratio') or 0.0) >= 0.75
+        )
+        solid_before = expected_before_count > 0 and (
+            before_count >= min(2, expected_before_count)
+            or float(before_score.get('weight_ratio') or 0.0) >= 0.55
+        )
+        any_after = expected_after_count > 0 and after_count >= 1
+        strong_after = expected_after_count > 0 and (
+            after_count >= min(2, expected_after_count)
+            or float(after_score.get('weight_ratio') or 0.0) >= 0.65
+        )
+
+        if expected_after_count:
+            if any_after and (solid_before or strong_after or total_weight_ratio >= 0.7):
+                return 'context_window'
+            return None
+
+        if strong_before and total_weight_ratio >= 0.65:
+            return 'context_before_window'
+
+        return None
+
+    def _estimate_backfill_checkpoint_proximity(self, checkpoint: dict, visible_messages: list) -> dict:
+        """Estimate how close the current viewport is to the saved checkpoint anchor."""
+        checkpoint_preview = re.sub(r'\s+', ' ', str(checkpoint.get('last_message_preview') or '')).strip()
+        checkpoint_context = self._normalize_checkpoint_context(
+            checkpoint.get('last_message_context')
+        )
+        visible_tokens: list[str] = []
+        preview_visible = False
+        preview_candidates = 0
+        strongest_candidate = {
+            'reason': None,
+            'before_count': 0,
+            'after_count': 0,
+            'before_ratio': 0.0,
+            'after_ratio': 0.0,
+            'total_ratio': 0.0,
+        }
+
+        for idx, msg in enumerate(visible_messages or []):
+            sender_attr = self._resolve_visible_sender_attr(msg)
+            content = str(getattr(msg, 'content', '') or '')
+            token = self._checkpoint_context_token(sender_attr, content)
+            if token:
+                visible_tokens.append(token)
+
+            normalized_content = re.sub(r'\s+', ' ', content).strip()
+            if not checkpoint_preview or normalized_content != checkpoint_preview:
+                continue
+
+            preview_visible = True
+            preview_candidates += 1
+            if not checkpoint_context:
+                continue
+
+            visible_context = self._extract_visible_checkpoint_context(
+                visible_messages,
+                idx,
+            )
+            before_score = self._score_context_window(
+                list(checkpoint_context.get('before') or []),
+                list(visible_context.get('before') or []),
+                reverse=True,
+            )
+            after_score = self._score_context_window(
+                list(checkpoint_context.get('after') or []),
+                list(visible_context.get('after') or []),
+                reverse=False,
+            )
+            total_expected_weight = int(before_score.get('expected_weight') or 0) + int(after_score.get('expected_weight') or 0)
+            matched_weight = int(before_score.get('weight') or 0) + int(after_score.get('weight') or 0)
+            total_ratio = (matched_weight / total_expected_weight) if total_expected_weight else 0.0
+            context_reason = self._context_window_match_reason(
+                checkpoint_context,
+                visible_context,
+            )
+            candidate = {
+                'reason': context_reason,
+                'before_count': int(before_score.get('count') or 0),
+                'after_count': int(after_score.get('count') or 0),
+                'before_ratio': float(before_score.get('weight_ratio') or 0.0),
+                'after_ratio': float(after_score.get('weight_ratio') or 0.0),
+                'total_ratio': float(total_ratio),
+            }
+            if (
+                candidate['total_ratio'] > strongest_candidate['total_ratio']
+                or (
+                    candidate['total_ratio'] == strongest_candidate['total_ratio']
+                    and (candidate['before_count'] + candidate['after_count'])
+                    > (strongest_candidate['before_count'] + strongest_candidate['after_count'])
+                )
+            ):
+                strongest_candidate = candidate
+
+        focus_tokens: list[str] = []
+        if checkpoint_context:
+            expected_before = [
+                self._normalize_checkpoint_context_value(token)
+                for token in list(checkpoint_context.get('before') or [])[-3:]
+            ]
+            expected_after = [
+                self._normalize_checkpoint_context_value(token)
+                for token in list(checkpoint_context.get('after') or [])[:2]
+            ]
+            focus_tokens = [token for token in (expected_before + expected_after) if token]
+
+        visible_token_set = set(visible_tokens)
+        focus_hits = sum(1 for token in focus_tokens if token in visible_token_set)
+        strongest_candidate['preview_visible'] = preview_visible
+        strongest_candidate['preview_candidates'] = preview_candidates
+        strongest_candidate['focus_hits'] = focus_hits
+        return strongest_candidate
+
+    def _estimate_backfill_time_gap_seconds(self, checkpoint: dict, visible_messages: list) -> int:
+        """Estimate whether the current viewport is still later than the checkpoint based on visible time markers."""
+        checkpoint_ts = int(checkpoint.get('last_message_timestamp') or 0)
+        if not checkpoint_ts:
+            return 0
+
+        visible_marker_timestamps: list[int] = []
+        for msg in visible_messages or []:
+            label = ''
+            if getattr(msg, 'is_system', False):
+                label = str(getattr(msg, 'content', '') or '')
+            else:
+                label = str(getattr(msg, 'time', None) or getattr(msg, 'CreateTime', '') or '')
+            parsed = self._resolve_time_label(label, 0) if label else 0
+            if parsed:
+                visible_marker_timestamps.append(int(parsed))
+
+        if not visible_marker_timestamps:
+            return 0
+
+        earliest_visible_ts = min(visible_marker_timestamps)
+        latest_visible_ts = max(visible_marker_timestamps)
+        if checkpoint_ts < earliest_visible_ts:
+            return earliest_visible_ts - checkpoint_ts
+        if checkpoint_ts > latest_visible_ts:
+            return latest_visible_ts - checkpoint_ts
+        return 0
+
+    def _choose_backfill_scroll_step(
+        self,
+        checkpoint: dict,
+        visible_messages: list,
+        round_index: int,
+        default_wheel_times: int = 3,
+        proximity: dict | None = None,
+        time_gap_seconds: int | None = None,
+    ) -> int:
+        """Choose a backfill scroll step: move faster when far away, slow down near the anchor."""
+        base_step = max(1, int(default_wheel_times or 1))
+        fast_step = min(8, max(base_step + 3, 6))
+        medium_step = min(5, max(base_step + 1, 4))
+        slow_step = max(1, base_step - 1)
+        proximity = proximity or self._estimate_backfill_checkpoint_proximity(checkpoint, visible_messages)
+        time_gap_seconds = (
+            int(time_gap_seconds)
+            if time_gap_seconds is not None
+            else self._estimate_backfill_time_gap_seconds(checkpoint, visible_messages)
+        )
+
+        if proximity.get('reason') in {'context_window', 'context_before_window'}:
+            return 1
+        if proximity.get('preview_visible'):
+            if (
+                int(proximity.get('before_count') or 0) >= 2
+                or int(proximity.get('after_count') or 0) >= 1
+                or float(proximity.get('total_ratio') or 0.0) >= 0.45
+            ):
+                return 1
+            return slow_step
+        if int(proximity.get('focus_hits') or 0) >= 2:
+            return slow_step
+        if int(proximity.get('focus_hits') or 0) == 1:
+            return min(base_step, 3)
+        if time_gap_seconds >= 12 * 3600:
+            return max(fast_step, 8)
+        if time_gap_seconds >= 6 * 3600:
+            return max(fast_step, 7)
+        if time_gap_seconds >= 3600:
+            return max(fast_step, 6)
+        if time_gap_seconds >= 15 * 60:
+            return fast_step
+        if round_index <= 4:
+            return fast_step
+        if round_index <= 12:
+            return medium_step
+        return max(base_step, 3)
+
+    def _choose_backfill_scroll_direction(
+        self,
+        proximity: dict | None = None,
+        time_gap_seconds: int | None = None,
+    ) -> str:
+        """Pick the next scroll direction for backfill."""
+        proximity = proximity or {}
+        time_gap_seconds = int(time_gap_seconds or 0)
+        if (
+            time_gap_seconds <= -15 * 60
+            and not proximity.get('preview_visible')
+            and int(proximity.get('focus_hits') or 0) == 0
+        ):
+            return 'down'
+        return 'up'
+
+    def _choose_backfill_scroll_repeats(
+        self,
+        proximity: dict | None = None,
+        time_gap_seconds: int | None = None,
+    ) -> int:
+        """Choose how many consecutive small-step scrolls to batch into one backfill round."""
+        proximity = proximity or {}
+        time_gap_seconds = int(time_gap_seconds or 0)
+        if proximity.get('reason') in {'context_window', 'context_before_window'}:
+            return 1
+        if proximity.get('preview_visible') or int(proximity.get('focus_hits') or 0) > 0:
+            return 1
+        if time_gap_seconds >= 12 * 3600:
+            return 3
+        if time_gap_seconds >= 6 * 3600:
+            return 2
+        if time_gap_seconds >= 3600:
+            return 2
+        return 1
+
+    def _visible_message_signature(self, visible_messages: list, from_tail: bool = False, size: int = 3) -> tuple[str, ...]:
+        """Build a short edge signature so small-step scrolling doesn't look stagnant too early."""
+        if not visible_messages:
+            return tuple()
+        window_size = max(1, int(size or 1))
+        selected = visible_messages[-window_size:] if from_tail else visible_messages[:window_size]
+        return tuple(self._message_identity(msg) for msg in selected)
+
+    def _prepare_visible_messages(self, visible_messages: list) -> list[dict]:
+        """Normalize one visible snapshot so dedupe can survive runtime_id churn."""
+        listener_profile = normalize_text(
+            self._listener_profile or getattr(self.wx, 'listener_profile', '') or 'unknown'
+        )
+        prepared_messages: list[dict] = []
+        occurrence_map: dict[str, int] = {}
+        self._last_known_ts = 0
+
+        for msg in visible_messages or []:
+            is_self = getattr(msg, 'is_self', False)
+            is_system = getattr(msg, 'is_system', False)
+            sender_attr = 'self' if is_self else 'friend'
+            if is_system:
+                sender_attr = 'system'
+
+            content = str(getattr(msg, 'content', '') or '')
+            message_type = str(getattr(msg, 'type', 'text') or 'text')
+            runtime_id = str(getattr(msg, 'id', '') or '')
+            visible_index = str(getattr(msg, 'visible_index', '') or '')
+            explicit_timestamp = int(getattr(msg, 'timestamp', 0) or 0)
+            timestamp_label = normalize_text(
+                str(getattr(msg, 'time', None) or getattr(msg, 'CreateTime', '') or '')
+            )
+            previous_known_ts = int(self._last_known_ts or 0)
+            resolved_timestamp = self._resolve_message_timestamp(msg, sender_attr, content)
+            dedupe_timestamp = int(
+                resolved_timestamp
+                if (explicit_timestamp or timestamp_label or sender_attr == 'system' or previous_known_ts)
+                else 0
+            )
+
+            occurrence_identity = [
+                listener_profile,
+                normalize_text(message_type).lower(),
+                normalize_text(content),
+            ]
+            if dedupe_timestamp:
+                occurrence_identity.append(f"ts:{dedupe_timestamp}")
+            elif timestamp_label:
+                occurrence_identity.append(f"label:{timestamp_label}")
+            occurrence_key = "|".join(occurrence_identity)
+            occurrence_map[occurrence_key] = occurrence_map.get(occurrence_key, 0) + 1
+            occurrence = occurrence_map[occurrence_key]
+
+            prepared_messages.append(
+                {
+                    'msg': msg,
+                    'sender_attr': sender_attr,
+                    'content': content,
+                    'message_type': message_type,
+                    'runtime_id': runtime_id,
+                    'visible_index': visible_index,
+                    'resolved_timestamp': resolved_timestamp,
+                    'dedupe_timestamp': dedupe_timestamp,
+                    'occurrence': occurrence,
+                    'message_key': self._build_message_key(
+                        msg,
+                        sender_attr,
+                        message_type,
+                        content,
+                        resolved_timestamp=dedupe_timestamp,
+                        occurrence=occurrence,
+                    ),
+                }
+            )
+
+        return prepared_messages
+
     def _build_message_key(
         self,
         msg,
         sender_attr: str,
         message_type: str,
         content: str,
+        resolved_timestamp: int = 0,
+        occurrence: int = 1,
     ) -> str:
-        """Build a stable per-session identity used for polling dedupe."""
+        """Build a stable per-session identity used for polling dedupe.
+
+        sender_attr is intentionally excluded so the same visible bubble is not
+        re-ingested when screenshot/UIA sender classification jitters, and
+        runtime_id is not treated as authoritative because Qt re-renders can
+        recycle it for already visible bubbles.
+        """
         listener_profile = normalize_text(
             self._listener_profile or getattr(self.wx, 'listener_profile', '') or 'unknown'
         )
-        runtime_id = normalize_text(str(getattr(msg, 'id', '') or ''))
-        provider_hash = normalize_text(str(getattr(msg, 'hash', '') or ''))
         timestamp_label = normalize_text(
             str(getattr(msg, 'time', None) or getattr(msg, 'CreateTime', '') or '')
         )
-        visible_index = str(getattr(msg, 'visible_index', '') or '')
         parts = [
             listener_profile,
-            normalize_text(sender_attr),
             normalize_text(message_type).lower(),
             normalize_text(content),
         ]
-        if runtime_id:
-            parts.append(f"id:{runtime_id}")
-        elif provider_hash:
-            parts.append(f"provider:{provider_hash}")
-        else:
-            parts.extend([
-                f"label:{timestamp_label}",
-                f"index:{visible_index}",
-            ])
+        if resolved_timestamp:
+            parts.append(f"ts:{int(resolved_timestamp)}")
+        elif timestamp_label:
+            parts.append(f"label:{timestamp_label}")
+        parts.append(f"occ:{max(1, int(occurrence or 1))}")
         return "|".join(parts)
 
     def _build_final_message_hash(
@@ -472,11 +1086,11 @@ class RealtimeMonitorService:
         """Build the canonical hash persisted in realtime_message_buffer."""
         return build_message_hash(
             self._listener_profile or getattr(self.wx, 'listener_profile', '') or 'unknown',
-            sender_attr,
+            'system' if sender_attr == 'system' else '',
             message_type,
             content,
             int(resolved_timestamp or 0),
-            runtime_id or fallback_occurrence,
+            fallback_occurrence or runtime_id,
         )
 
     def _build_session_state(self, session_token: int) -> dict:
@@ -508,7 +1122,7 @@ class RealtimeMonitorService:
             return False
         return self._session_is_current(session_state)
 
-    def _scroll_chat_history_up(self, wheel_times: int = 2) -> bool:
+    def _scroll_chat_history_up(self, wheel_times: int = 3) -> bool:
         """Scroll the current chat message list upward to load older history."""
         try:
             if not self.wx or not hasattr(self.wx, 'ChatBox'):
@@ -516,13 +1130,13 @@ class RealtimeMonitorService:
             msgbox = self.wx.ChatBox.msgbox
             msgbox.MiddleClick()
             msgbox.WheelUp(wheelTimes=wheel_times)
-            time.sleep(0.8)
+            time.sleep(0.12)
             return True
         except Exception as e:
             _print(f"[Backfill] 向上滚动消息窗口失败: {e}")
             return False
 
-    def _scroll_chat_history_down(self, wheel_times: int = 4) -> bool:
+    def _scroll_chat_history_down(self, wheel_times: int = 3) -> bool:
         """Scroll the current chat message list downward toward the latest messages."""
         try:
             if not self.wx or not hasattr(self.wx, 'ChatBox'):
@@ -530,27 +1144,32 @@ class RealtimeMonitorService:
             msgbox = self.wx.ChatBox.msgbox
             msgbox.MiddleClick()
             msgbox.WheelDown(wheelTimes=wheel_times)
-            time.sleep(0.5)
+            time.sleep(0.1)
             return True
         except Exception as e:
             _print(f"[Backfill] Scroll down failed: {e}")
             return False
 
-    def _scroll_chat_to_latest(self, max_rounds: int = 20, wheel_times: int = 4) -> None:
+    def _scroll_chat_to_latest(
+        self,
+        max_rounds: int = 20,
+        wheel_times: int = 3,
+        stagnant_threshold: int = 6,
+    ) -> None:
         """Best-effort scroll back to the latest visible messages after backfill."""
-        seen_bottom_identity = None
+        seen_bottom_signature = None
         stagnant_rounds = 0
         for _ in range(max_rounds):
             visible_messages = self.wx.GetAllMessage() if self.wx else []
             if not visible_messages:
                 break
-            bottom_identity = self._message_identity(visible_messages[-1])
-            if bottom_identity == seen_bottom_identity:
+            bottom_signature = self._visible_message_signature(visible_messages, from_tail=True)
+            if bottom_signature == seen_bottom_signature:
                 stagnant_rounds += 1
             else:
                 stagnant_rounds = 0
-                seen_bottom_identity = bottom_identity
-            if stagnant_rounds >= 2:
+                seen_bottom_signature = bottom_signature
+            if stagnant_rounds >= max(1, int(stagnant_threshold or 1)):
                 break
             if not self._scroll_chat_history_down(wheel_times=wheel_times):
                 break
@@ -629,25 +1248,22 @@ class RealtimeMonitorService:
         if not visible_messages:
             return 0
 
-        self._last_known_ts = 0
-        for msg in visible_messages:
+        for prepared_message in self._prepare_visible_messages(visible_messages):
             try:
-                is_self = getattr(msg, 'is_self', False)
-                is_system = getattr(msg, 'is_system', False)
-                sender_attr = 'self' if is_self else 'friend'
-                if is_system:
-                    sender_attr = 'system'
-                content = str(getattr(msg, 'content', '') or '')
-                message_type = str(getattr(msg, 'type', 'text') or 'text')
-                runtime_id = str(getattr(msg, 'id', '') or '')
-                visible_index = str(getattr(msg, 'visible_index', '') or '')
-                message_key = self._build_message_key(msg, sender_attr, message_type, content)
-                resolved_timestamp = self._resolve_message_timestamp(msg, sender_attr, content)
+                msg = prepared_message['msg']
+                sender_attr = prepared_message['sender_attr']
+                content = prepared_message['content']
+                message_type = prepared_message['message_type']
+                runtime_id = prepared_message['runtime_id']
+                visible_index = str(prepared_message['occurrence'])
+                message_key = prepared_message['message_key']
+                resolved_timestamp = int(prepared_message['resolved_timestamp'] or 0)
+                dedupe_timestamp = int(prepared_message['dedupe_timestamp'] or 0)
                 message_hash = self._build_final_message_hash(
                     sender_attr=sender_attr,
                     message_type=message_type,
                     content=content,
-                    resolved_timestamp=int(resolved_timestamp or 0),
+                    resolved_timestamp=dedupe_timestamp,
                     runtime_id=runtime_id,
                     fallback_occurrence=visible_index,
                 )
@@ -767,7 +1383,7 @@ class RealtimeMonitorService:
                     talker_username=session_state.get('talker_username') or '',
                     talker_display_name=session_state.get('display_name') or '',
                     max_scroll_rounds=80,
-                    wheel_times=2,
+                    wheel_times=3,
                 )
                 if not backfill_result.get('success'):
                     self._chat_error = backfill_result.get('message') or '回溯补全失败'
@@ -845,8 +1461,12 @@ class RealtimeMonitorService:
                 
                 if new_messages:
                     # 处理每条消息
-                    for msg in new_messages:
-                        self._process_message(msg, session_state=session_state)
+                    for prepared_message in self._prepare_visible_messages(new_messages):
+                        self._process_message(
+                            prepared_message['msg'],
+                            session_state=session_state,
+                            prepared_message=prepared_message,
+                        )
                 
                 # 周期性 silence 检测（即使没有新消息也需要检测）
                 if self.emotion_tracker:
@@ -865,7 +1485,12 @@ class RealtimeMonitorService:
         
         _print(f"🛑 轮询线程已停止")
     
-    def _process_message(self, msg, session_state: dict | None = None):
+    def _process_message(
+        self,
+        msg,
+        session_state: dict | None = None,
+        prepared_message: dict | None = None,
+    ):
         """处理单条消息（从轮询或回调中调用）"""
         try:
             session_state = session_state or self._build_session_state(self._monitor_session_token)
@@ -878,24 +1503,25 @@ class RealtimeMonitorService:
             if not batch_id or not display_name:
                 return
 
+            prepared_message = prepared_message or self._prepare_visible_messages([msg])[0]
+
             # 1. 判断发送者
-            is_self = getattr(msg, 'is_self', False)
-            is_system = getattr(msg, 'is_system', False)
-            
-            sender_attr = 'self' if is_self else 'friend'
-            if is_system:
-                sender_attr = 'system'
-            
+            sender_attr = prepared_message['sender_attr']
+            is_self = sender_attr == 'self'
+            is_system = sender_attr == 'system'
+
             sender_name = "我" if is_self else "对方"
             if is_system:
                 sender_name = "系统"
             
             # 5. 提取消息内容
-            content = getattr(msg, 'content', '')
-            message_type = getattr(msg, 'type', 'text')
-            runtime_id = str(getattr(msg, 'id', '') or '')
-            visible_index = str(getattr(msg, 'visible_index', '') or '')
-            message_key = self._build_message_key(msg, sender_attr, message_type, str(content or ''))
+            content = prepared_message['content']
+            message_type = prepared_message['message_type']
+            runtime_id = prepared_message['runtime_id']
+            visible_index = str(prepared_message['occurrence'])
+            message_key = prepared_message['message_key']
+            resolved_timestamp = int(prepared_message['resolved_timestamp'] or 0)
+            dedupe_timestamp = int(prepared_message['dedupe_timestamp'] or 0)
 
             # 2. 轮询去重：同一条 UI 消息在同一次监听内只处理一次
             if message_key in self.seen_message_keys:
@@ -912,13 +1538,13 @@ class RealtimeMonitorService:
                 'sender_attr': sender_attr,
                 'content': str(content) if content else '',
                 'message_type': message_type,
-                'timestamp': self._resolve_message_timestamp(msg, sender_attr, content)
+                'timestamp': resolved_timestamp
             }
             message_data['message_hash'] = self._build_final_message_hash(
                 sender_attr=sender_attr,
                 message_type=message_type,
                 content=message_data['content'],
-                resolved_timestamp=int(message_data['timestamp'] or 0),
+                resolved_timestamp=dedupe_timestamp,
                 runtime_id=message_data['runtime_id'],
                 fallback_occurrence=visible_index,
             )
@@ -1192,6 +1818,7 @@ class RealtimeMonitorService:
                 last_message_hash TEXT,
                 last_runtime_id TEXT,
                 last_message_preview TEXT,
+                last_message_context TEXT,
                 message_count INTEGER DEFAULT 0,
                 source TEXT DEFAULT 'realtime',
                 created_at INTEGER NOT NULL,
@@ -1205,6 +1832,12 @@ class RealtimeMonitorService:
         conn.execute(
             'CREATE INDEX IF NOT EXISTS idx_realtime_checkpoint_display_name ON realtime_monitor_checkpoints(talker_display_name)'
         )
+        columns = {
+            str(row['name'])
+            for row in conn.execute('PRAGMA table_info(realtime_monitor_checkpoints)').fetchall()
+        }
+        if 'last_message_context' not in columns:
+            conn.execute('ALTER TABLE realtime_monitor_checkpoints ADD COLUMN last_message_context TEXT')
         conn.commit()
 
     def _save_monitor_checkpoint(
@@ -1232,6 +1865,12 @@ class RealtimeMonitorService:
         if not last_message:
             return
 
+        checkpoint_context = self._build_checkpoint_context(last_message, messages)
+        checkpoint_context_json = (
+            json.dumps(checkpoint_context, ensure_ascii=False)
+            if checkpoint_context else None
+        )
+
         self._ensure_checkpoint_table()
         from ...db.connection import get_db
 
@@ -1242,8 +1881,8 @@ class RealtimeMonitorService:
             INSERT INTO realtime_monitor_checkpoints (
                 talker_key, talker_username, talker_display_name, last_batch_id,
                 last_message_timestamp, last_message_hash, last_runtime_id,
-                last_message_preview, message_count, source, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'realtime', ?, ?)
+                last_message_preview, last_message_context, message_count, source, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'realtime', ?, ?)
             ON CONFLICT(talker_key) DO UPDATE SET
                 talker_username = excluded.talker_username,
                 talker_display_name = excluded.talker_display_name,
@@ -1252,6 +1891,7 @@ class RealtimeMonitorService:
                 last_message_hash = excluded.last_message_hash,
                 last_runtime_id = excluded.last_runtime_id,
                 last_message_preview = excluded.last_message_preview,
+                last_message_context = excluded.last_message_context,
                 message_count = excluded.message_count,
                 updated_at = excluded.updated_at
             ''',
@@ -1264,6 +1904,7 @@ class RealtimeMonitorService:
                 last_message.get('message_hash'),
                 last_message.get('runtime_id'),
                 (last_message.get('content') or '')[:120],
+                checkpoint_context_json,
                 int(message_count or 0),
                 now_ts,
                 now_ts,
@@ -1286,7 +1927,7 @@ class RealtimeMonitorService:
             '''
             SELECT talker_key, talker_username, talker_display_name, last_batch_id,
                    last_message_timestamp, last_message_hash, last_runtime_id,
-                   last_message_preview, message_count, source, created_at, updated_at
+                   last_message_preview, last_message_context, message_count, source, created_at, updated_at
             FROM realtime_monitor_checkpoints
             WHERE talker_key = ?
             ''',
@@ -1297,7 +1938,7 @@ class RealtimeMonitorService:
                 '''
                 SELECT talker_key, talker_username, talker_display_name, last_batch_id,
                        last_message_timestamp, last_message_hash, last_runtime_id,
-                       last_message_preview, message_count, source, created_at, updated_at
+                       last_message_preview, last_message_context, message_count, source, created_at, updated_at
                 FROM realtime_monitor_checkpoints
                 WHERE talker_display_name = ?
                 ORDER BY updated_at DESC
@@ -1319,6 +1960,7 @@ class RealtimeMonitorService:
             'last_message_hash': row['last_message_hash'],
             'last_runtime_id': row['last_runtime_id'],
             'last_message_preview': row['last_message_preview'],
+            'last_message_context': self._normalize_checkpoint_context(row['last_message_context']),
             'message_count': row['message_count'],
             'source': row['source'],
             'created_at': row['created_at'],
@@ -1348,8 +1990,20 @@ class RealtimeMonitorService:
         checkpoint['should_offer_resume'] = gap_seconds >= int(threshold_seconds)
         return checkpoint
 
-    def _checkpoint_match_reason(self, checkpoint: dict, msg, resolved_timestamp: int) -> str | None:
+    def _checkpoint_match_reason(
+        self,
+        checkpoint: dict,
+        msg,
+        resolved_timestamp: int,
+        visible_messages: list | None = None,
+        visible_index: int = -1,
+    ) -> str | None:
         """Return the checkpoint match reason, or None if the message is not the saved checkpoint."""
+        checkpoint_runtime_id = normalize_text(str(checkpoint.get('last_runtime_id') or ''))
+        visible_runtime_id = normalize_text(str(getattr(msg, 'id', '') or ''))
+        if checkpoint_runtime_id and visible_runtime_id and checkpoint_runtime_id == visible_runtime_id:
+            return 'runtime_id_exact'
+
         checkpoint_preview = re.sub(r'\s+', ' ', str(checkpoint.get('last_message_preview') or '')).strip()
         checkpoint_ts = int(checkpoint.get('last_message_timestamp') or 0)
         content = re.sub(r'\s+', ' ', str(getattr(msg, 'content', '') or '')).strip()
@@ -1365,6 +2019,21 @@ class RealtimeMonitorService:
         if not (exact_match or truncated_prefix_match):
             return None
 
+        checkpoint_context = self._normalize_checkpoint_context(
+            checkpoint.get('last_message_context')
+        )
+        if checkpoint_context and visible_messages and visible_index >= 0:
+            visible_context = self._extract_visible_checkpoint_context(
+                visible_messages,
+                visible_index,
+            )
+            context_reason = self._context_window_match_reason(
+                checkpoint_context,
+                visible_context,
+            )
+            if context_reason:
+                return context_reason
+
         ts_diff = abs(int(resolved_timestamp or 0) - checkpoint_ts)
         if ts_diff > 300:
             if exact_match and len(checkpoint_preview) >= 8:
@@ -1377,9 +2046,22 @@ class RealtimeMonitorService:
 
         return 'content_exact' if exact_match else 'content_truncated_prefix'
 
-    def _checkpoint_matches_message(self, checkpoint: dict, msg, resolved_timestamp: int) -> bool:
+    def _checkpoint_matches_message(
+        self,
+        checkpoint: dict,
+        msg,
+        resolved_timestamp: int,
+        visible_messages: list | None = None,
+        visible_index: int = -1,
+    ) -> bool:
         """Check whether a visible message corresponds to the stored checkpoint."""
-        return self._checkpoint_match_reason(checkpoint, msg, resolved_timestamp) is not None
+        return self._checkpoint_match_reason(
+            checkpoint,
+            msg,
+            resolved_timestamp,
+            visible_messages=visible_messages,
+            visible_index=visible_index,
+        ) is not None
 
     def _store_backfill_messages(
         self,
@@ -1521,13 +2203,21 @@ class RealtimeMonitorService:
         talker_username: str,
         talker_display_name: str,
         max_scroll_rounds: int = 80,
-        wheel_times: int = 2,
+        wheel_times: int = 3,
     ) -> dict:
         """Run backfill using the current wx/chat context without re-running ChatWith."""
         collected: dict[str, dict] = {}
-        seen_top_identity = None
+        seen_top_signature = None
         stagnant_rounds = 0
         checkpoint_found = False
+        latest_step = min(8, max(int(wheel_times or 1) + 3, 6))
+
+        _print(f"[Backfill] 预定位到最新消息区域，scroll_step={latest_step}")
+        self._scroll_chat_to_latest(
+            max_rounds=18,
+            wheel_times=latest_step,
+            stagnant_threshold=3,
+        )
 
         for round_index in range(1, max_scroll_rounds + 1):
             visible_messages = self.wx.GetAllMessage() if self.wx else []
@@ -1537,12 +2227,12 @@ class RealtimeMonitorService:
 
             _print(f"[Backfill] 第 {round_index}/{max_scroll_rounds} 轮，可见消息 {len(visible_messages)} 条")
 
-            visible_top_identity = self._message_identity(visible_messages[0])
-            if visible_top_identity == seen_top_identity:
+            visible_top_signature = self._visible_message_signature(visible_messages, from_tail=False)
+            if visible_top_signature == seen_top_signature:
                 stagnant_rounds += 1
             else:
                 stagnant_rounds = 0
-                seen_top_identity = visible_top_identity
+                seen_top_signature = visible_top_signature
 
             self._last_known_ts = 0
             checkpoint_index = -1
@@ -1559,7 +2249,13 @@ class RealtimeMonitorService:
                 if sender_attr == 'system':
                     continue
 
-                match_reason = self._checkpoint_match_reason(probe, msg, resolved_timestamp)
+                match_reason = self._checkpoint_match_reason(
+                    probe,
+                    msg,
+                    resolved_timestamp,
+                    visible_messages=visible_messages,
+                    visible_index=idx,
+                )
                 if match_reason:
                     _print(
                         "[Backfill] 命中 checkpoint: "
@@ -1615,11 +2311,42 @@ class RealtimeMonitorService:
             if checkpoint_found:
                 break
 
-            if stagnant_rounds >= 2:
+            if stagnant_rounds >= 6:
                 _print("[Backfill] 可见顶部消息连续未变化，停止继续上翻")
                 break
 
-            if not self._scroll_chat_history_up(wheel_times=wheel_times):
+            proximity = self._estimate_backfill_checkpoint_proximity(probe, visible_messages)
+            time_gap_seconds = self._estimate_backfill_time_gap_seconds(probe, visible_messages)
+            scroll_direction = self._choose_backfill_scroll_direction(
+                proximity=proximity,
+                time_gap_seconds=time_gap_seconds,
+            )
+            scroll_step = self._choose_backfill_scroll_step(
+                checkpoint=probe,
+                visible_messages=visible_messages,
+                round_index=round_index,
+                default_wheel_times=wheel_times,
+                proximity=proximity,
+                time_gap_seconds=time_gap_seconds,
+            )
+            scroll_repeats = self._choose_backfill_scroll_repeats(
+                proximity=proximity,
+                time_gap_seconds=time_gap_seconds,
+            )
+            _print(
+                f"[Backfill] 第 {round_index} 轮继续滚动，direction={scroll_direction}, "
+                f"scroll_step={scroll_step}, repeats={scroll_repeats}, "
+                f"time_gap_seconds={time_gap_seconds}"
+            )
+            moved = False
+            for _ in range(max(1, int(scroll_repeats or 1))):
+                if scroll_direction == 'down':
+                    moved = self._scroll_chat_history_down(wheel_times=scroll_step)
+                else:
+                    moved = self._scroll_chat_history_up(wheel_times=scroll_step)
+                if not moved:
+                    break
+            if not moved:
                 break
 
         if not checkpoint_found:
@@ -1682,7 +2409,7 @@ class RealtimeMonitorService:
         talker_username: str = '',
         threshold_seconds: int = 300,
         max_scroll_rounds: int = 80,
-        wheel_times: int = 2,
+        wheel_times: int = 3,
     ) -> dict:
         """Backfill missing history between the last checkpoint and now."""
         if self.is_monitoring:
@@ -2340,7 +3067,7 @@ class RealtimeMonitorService:
             if key in config:
                 self._suggestion_config[key] = config[key]
         if 'listener_backend' in config:
-            self._listener_backend = str(config['listener_backend'] or 'auto')
+            self._listener_backend = normalize_listener_backend(config['listener_backend'])
         _print(f"[RealtimeMonitorService] 建议配置已更新: {self._suggestion_config}")
 
     def _check_feedback(self, user_message: str, session_state: dict | None = None):

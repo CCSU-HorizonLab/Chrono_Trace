@@ -1060,6 +1060,8 @@ class Bridge:
     def get_suggestion_config(self) -> dict[str, Any]:
         """获取 AI 建议配置（从系统设置读取）"""
         try:
+            from ..services.realtime.providers.factory import normalize_listener_backend
+
             return {
                 "ok": True, 
                 "config": {
@@ -1067,7 +1069,9 @@ class Bridge:
                     "intent": self.settings.get("intent", "maintain"),
                     "auto_rate_limit": int(self.settings.get("auto_rate_limit", 10)),
                     "engine_type": "llm",
-                    "listener_backend": self.settings.get("listener_backend", "auto"),
+                    "listener_backend": normalize_listener_backend(
+                        self.settings.get("listener_backend", "native_uia")
+                    ),
                 }
             }
         except Exception as e:
@@ -1130,10 +1134,15 @@ class Bridge:
     def set_suggestion_config(self, config: dict[str, Any]) -> dict[str, Any]:
         """更新并持久化 AI 建议配置"""
         try:
+            from ..services.realtime.providers.factory import normalize_listener_backend
+
             # 1. 更新通用设置文件
             for key in ('trigger_mode', 'intent', 'auto_rate_limit', 'listener_backend'):
                 if key in config:
-                    self.settings[key] = config[key]
+                    if key == 'listener_backend':
+                        self.settings[key] = normalize_listener_backend(config[key])
+                    else:
+                        self.settings[key] = config[key]
             self._save_settings()
 
             # 2. 同时热更新给运行中的 RealtimeMonitorService

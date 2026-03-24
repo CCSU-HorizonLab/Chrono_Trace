@@ -192,6 +192,43 @@ def test_llm_prompt_normalizes_desc_recent_messages_before_windowing():
     assert prompt.index("我：第一条") < prompt.index("对方：最新消息")
 
 
+def test_llm_prompt_dedupes_repeated_same_sender_messages_before_rendering():
+    engine = LLMSuggestionEngine()
+    recent_messages = [
+        {
+            "id": 3,
+            "timestamp": 103,
+            "sender_attr": "self",
+            "content": "怎么了",
+            "message_type": "text",
+        },
+        {
+            "id": 2,
+            "timestamp": 102,
+            "runtime_id": "runtime-2",
+            "sender_attr": "friend",
+            "content": "就拽就拽",
+            "message_type": "text",
+        },
+        {
+            "id": 1,
+            "timestamp": 102,
+            "runtime_id": "runtime-1",
+            "sender_attr": "friend",
+            "content": "就拽就拽",
+            "message_type": "text",
+        },
+    ]
+
+    prompt = engine._build_prompt(
+        "topic_cooling",
+        "maintain",
+        {"recent_messages": recent_messages},
+    )
+
+    assert prompt.count("就拽就拽") == 1
+
+
 def test_llm_prompt_filters_content_rules_and_keeps_style_rules(monkeypatch):
     engine = LLMSuggestionEngine()
 
@@ -269,6 +306,53 @@ def test_llm_prompt_supports_manual_request_trigger_description():
 
     assert "用户主动请求建议，需要基于当前上下文给出回复思路" in prompt
     assert "必须严格只输出 JSON" in prompt
+
+
+def test_llm_manual_request_direct_reply_prompt_avoids_suggestion_card():
+    engine = LLMSuggestionEngine()
+
+    prompt = engine._build_prompt(
+        "manual_request",
+        "maintain",
+        {
+            "contact_profile": {
+                "personality_tags": ["亲密", "幽默"],
+                "chat_style": "爱叫宝贝",
+            },
+            "self_profile": {
+                "typing_style": "短句",
+                "frequent_catchphrases": ["宝贝"],
+                "sentence_patterns": ["宝贝[内容]"],
+                "do_and_donts": "多用亲昵称呼",
+            },
+            "user_context": [
+                {"role": "user", "content": "测试 回复功能 请回复我"},
+            ],
+        },
+    )
+
+    assert "优先在 `reply` 字段直接回应用户" in prompt
+    assert "不要生成建议卡片" in prompt
+    assert "自然、简洁的助手口吻" in prompt
+    assert "【对方画像（低权重参考）】" not in prompt
+    assert "【用户本体语言风格参考（仅影响措辞）】" not in prompt
+
+
+def test_llm_manual_request_advice_prompt_still_requests_sendable_speeches():
+    engine = LLMSuggestionEngine()
+
+    prompt = engine._build_prompt(
+        "manual_request",
+        "maintain",
+        {
+            "user_context": [
+                {"role": "user", "content": "她刚刚这么说了，我该怎么回？"},
+            ],
+        },
+    )
+
+    assert "请基于当前上下文给出可发送的话术" in prompt
+    assert "不要生成建议卡片" not in prompt
 
 
 def test_llm_parse_response_extracts_json_from_wrapped_text():

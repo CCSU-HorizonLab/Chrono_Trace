@@ -16,6 +16,7 @@ import urllib.request
 import urllib.error
 from typing import Optional
 
+from .providers.models import normalize_text
 from .suggestion_engine import SuggestionEngine, SuggestionResult
 
 
@@ -36,6 +37,8 @@ SYSTEM_PROMPT = """你是一个专业的聊天沟通顾问，但你当前必须�
    - 如果规则/画像与【最近对话】冲突，必须以【最近对话】和当前触发为准
    - 如果触发是 emotion_shift，只能围绕对方最新那条偏负面的表达做轻量关心或顺势接话，禁止脑补重大心事或过度安慰
 6. **回应用户与纯对话**：如果【用户需求与反馈】中有用户的提问或想法，你必须在 reply 字段直接回应他的问题。
+   - 当 `reply` 是 AI 对用户本人说的话时，必须使用自然、简洁的助手口吻。
+   - 此时不要模仿用户给对方发消息的语气，不要使用“宝贝”等对方专属称呼，也不要套用联系人关系设定。
 7. **【极其重要】判定模式机制**：
    - 模式 A（纯聊天/指令/修改规则）：如果用户输入只是打招呼（如“你好”）、闲聊、或是要求修改你的回复规则，你**绝对不可提供任何对话建议**！你只能在 `reply` 字段内回答他，同时**必须**将 `summary` 设为空字符串 `""`，`speeches` 设为空数组 `[]`！禁止硬凑无关紧要的建议卡片！
    - 模式 B（请求指导/冷场）：只有在用户明确请教怎么回复对方、或者你检测到聊天即将冷场必须介入时，才能提供 `summary` 和 `speeches`。
@@ -55,8 +58,9 @@ ANALYSIS_SYSTEM_PROMPT = """你是用户的聊天思考助手。请先只做分�
 1. 只分析眼前这段聊天上下文现在该聊什么、为什么这么聊。
 2. 可以参考用户风格和对方画像，但不要复述整段 prompt。
 3. 不要输出规则标题，不要输出“reply/summary/speeches/thought_process”这类字段名。
-4. 最后单独给出 1 到 3 条“可直接发送的话术草稿”，每条单独成行，以 `- ` 开头。
-5. 除了分析和草稿，不要输出别的格式说明。"""
+4. 如果上下文判断这是“用户在直接和 AI 说话/提问”，不要生成发给对方的话术草稿；只需说明应该直接回复用户。
+5. 只有在上下文明确是在请教“怎么回复对方/怎么开启话题”时，最后才单独给出 1 到 3 条“可直接发送的话术草稿”，每条单独成行，以 `- ` 开头。
+6. 除了分析和草稿，不要输出别的格式说明。"""
 
 REPAIR_SYSTEM_PROMPT = """你是一个结果整理器。你会收到：
 1. 当前聊天建议任务的上下文
@@ -67,9 +71,10 @@ REPAIR_SYSTEM_PROMPT = """你是一个结果整理器。你会收到：
 要求：
 1. 只输出纯 JSON，不要输出解释、前言、Markdown。
 2. `speeches` 必须是用户可以直接发送给对方的原句，不能是规则、分析、Prompt 片段、字段说明。
-3. 如果没有足够可靠的话术，就返回空 `speeches`，不要编造 prompt 规则。
-4. `thought_process` 只保留一两句简短总结，不要复述长篇思维链。
-5. 不要续写坏掉的 JSON，不要分析“你收到什么任务”，只给最终结果。
+3. 如果上下文属于“用户在直接和 AI 说话/提问”，则必须把最终回答放进 `reply`，并将 `summary` 设为空字符串、`speeches` 设为空数组，不要生成建议卡片。此时 `reply` 要使用自然、简洁的助手口吻，不要模仿用户对第三方说话的语气。
+4. 如果没有足够可靠的话术，就返回空 `speeches`，不要编造 prompt 规则。
+5. `thought_process` 只保留一两句简短总结，不要复述长篇思维链。
+6. 不要续写坏掉的 JSON，不要分析“你收到什么任务”，只给最终结果。
 
 输出格式：
 {
@@ -210,6 +215,28 @@ class LLMSuggestionEngine(SuggestionEngine):
         "高频语气词汇",
         "常用句式模板",
         "模仿禁忌",
+    )
+    MANUAL_ADVICE_KEYWORDS = (
+        "怎么回",
+        "如何回",
+        "回复什么",
+        "怎么聊",
+        "如何聊",
+        "怎么说",
+        "说什么",
+        "怎么接",
+        "如何接",
+        "怎么开场",
+        "如何开场",
+        "开启话题",
+        "帮我回",
+        "给我建议",
+        "给我几个话术",
+        "给我几句",
+        "该发什么",
+        "应该发什么",
+        "回啥",
+        "怎么回复",
     )
 
     def __init__(self, timeout: int = 60):
@@ -394,7 +421,7 @@ class LLMSuggestionEngine(SuggestionEngine):
         return older, kept
 
     def _normalize_recent_messages(self, messages: list[dict]) -> list[dict]:
-        """将最近消息统一归一化为时间正序，避免上游倒序查询导致截错窗口。"""
+        """将最近消息统一归一化为时间正序，并折叠重复屏幕抓取。"""
         if not messages:
             return []
 
@@ -411,10 +438,43 @@ class LLMSuggestionEngine(SuggestionEngine):
                 safe_id = 0
             return safe_ts, safe_id
 
+        def _dedupe_key(item: dict) -> str:
+            semantic_key = "|".join(
+                [
+                    normalize_text(item.get("sender_attr")),
+                    normalize_text(item.get("message_type") or item.get("type")).lower(),
+                    normalize_text(item.get("content")),
+                    str(_sort_key(item)[0]),
+                ]
+            )
+            if semantic_key.strip("|"):
+                return semantic_key
+
+            message_hash = normalize_text(item.get("message_hash"))
+            if message_hash:
+                return f"hash:{message_hash}"
+
+            return ""
+
         ordered = sorted(messages, key=_sort_key)
         if ordered and messages and ordered[0] is not messages[0]:
             _print("[LLM Engine] ↕️ recent_messages 已按时间正序归一化")
-        return ordered
+
+        deduped: list[dict] = []
+        seen_dedupe_keys = set()
+        for item in ordered:
+            dedupe_key = _dedupe_key(item)
+            if dedupe_key and dedupe_key in seen_dedupe_keys:
+                continue
+            if dedupe_key:
+                seen_dedupe_keys.add(dedupe_key)
+            deduped.append(item)
+
+        if len(deduped) != len(ordered):
+            _print(
+                f"[LLM Engine] 🧹 recent_messages 去重: {len(ordered)} -> {len(deduped)}"
+            )
+        return deduped
 
     def _compress_messages(
         self, messages: list[dict], kept_messages: list[dict]
@@ -503,9 +563,41 @@ class LLMSuggestionEngine(SuggestionEngine):
             )
         return filtered
 
+    def _get_latest_user_input(self, context: dict) -> str:
+        """提取手动输入框里的最后一条用户输入。"""
+        user_context = context.get("user_context")
+        if isinstance(user_context, list):
+            for msg in reversed(user_context):
+                if msg.get("role") == "user":
+                    return str(msg.get("content", "")).strip()
+        elif isinstance(user_context, str):
+            return user_context.strip()
+        return ""
+
+    def _classify_manual_request(self, context: dict) -> str:
+        """
+        区分两类手动输入：
+        - direct_reply: 用户在直接和 AI 说话，希望 AI 回他
+        - advice_request: 用户在请教怎么回复对方/怎么开启话题
+        """
+        latest_user_input = self._get_latest_user_input(context)
+        if not latest_user_input:
+            return "advice_request"
+
+        normalized = re.sub(r"\s+", "", latest_user_input)
+        if any(keyword in normalized for keyword in self.MANUAL_ADVICE_KEYWORDS):
+            return "advice_request"
+        return "direct_reply"
+
     def _build_prompt(self, trigger_type: str, intent: str, context: dict) -> str:
         """构造用户 prompt"""
         parts = []
+        manual_request_kind = (
+            self._classify_manual_request(context)
+            if trigger_type == "manual_request"
+            else None
+        )
+        is_direct_reply = manual_request_kind == "direct_reply"
 
         # 触发原因
         trigger_desc = TRIGGER_DESCRIPTIONS.get(
@@ -514,8 +606,11 @@ class LLMSuggestionEngine(SuggestionEngine):
         parts.append(f"【触发原因】{trigger_desc}")
 
         # 走向目标
-        intent_desc = INTENT_DESCRIPTIONS.get(intent, intent)
-        parts.append(f"【用户目标】{intent_desc}")
+        if is_direct_reply:
+            parts.append("【当前任务】直接回复用户本人，不是代用户给第三方发消息")
+        else:
+            intent_desc = INTENT_DESCRIPTIONS.get(intent, intent)
+            parts.append(f"【用户目标】{intent_desc}")
 
         recent = self._normalize_recent_messages(context.get("recent_messages", []))
         _older_messages, recent_window = self._select_recent_messages(recent)
@@ -531,7 +626,7 @@ class LLMSuggestionEngine(SuggestionEngine):
 
         # 情绪摘要
         emotion = context.get("emotion_summary")
-        if emotion:
+        if emotion and not is_direct_reply:
             trend_map = {"positive": "正面", "negative": "负面", "neutral": "中性"}
             trend = trend_map.get(emotion.get("trend", ""), "未知")
             parts.append(
@@ -549,7 +644,7 @@ class LLMSuggestionEngine(SuggestionEngine):
 
         # 触发上下文
         trigger_ctx = context.get("trigger_context", {})
-        if trigger_ctx:
+        if trigger_ctx and not is_direct_reply:
             ctx_items = []
             for k, v in trigger_ctx.items():
                 ctx_items.append(f"{k}={v}")
@@ -569,14 +664,14 @@ class LLMSuggestionEngine(SuggestionEngine):
                 parts.append(f"【用户需求】{user_context[:500]}")
 
         # 历史聊天分析摘要（如请求包含历史数据）
-        if context.get("include_history"):
+        if context.get("include_history") and not is_direct_reply:
             history_summary = context.get("history_summary")
             if history_summary:
                 parts.append(f"【历史关系分析】{history_summary[:500]}")
 
         # 联系人画像（如有）
         profile = context.get("contact_profile")
-        if profile:
+        if profile and not is_direct_reply:
             parts.append("\n【对方画像（低权重参考）】")
             tags = profile.get("personality_tags", [])
             if tags:
@@ -593,7 +688,7 @@ class LLMSuggestionEngine(SuggestionEngine):
 
         # 用户本体专属克隆画像
         self_profile = context.get("self_profile")
-        if self_profile:
+        if self_profile and not is_direct_reply:
             parts.append("\n【用户本体语言风格参考（仅影响措辞）】")
             typing_style = self_profile.get("typing_style", "")
             if typing_style:
@@ -612,7 +707,7 @@ class LLMSuggestionEngine(SuggestionEngine):
             recent_window or recent,
             context.get("relevant_memories", []),
         )
-        if relevant_memories:
+        if relevant_memories and not is_direct_reply:
             parts.append("\n【被唤醒的历史记忆（仅作辅助，不要盖过当前对话）】")
             for mem in relevant_memories:
                 summary = str(mem.get("summary", "")).strip()
@@ -623,7 +718,7 @@ class LLMSuggestionEngine(SuggestionEngine):
 
         historical_ctx = context.get("historical_context", {})
         history_lines = []
-        if historical_ctx:
+        if historical_ctx and not is_direct_reply:
             profile_ctx = historical_ctx.get("profile") or {}
             profile_bits = []
             if profile_ctx.get("chat_style"):
@@ -658,7 +753,7 @@ class LLMSuggestionEngine(SuggestionEngine):
 
         # 用户调教规则（最高优先级）
         display_name = context.get("display_name")
-        if display_name:
+        if display_name and not is_direct_reply:
             try:
                 from .feedback_rule_extractor import FeedbackRuleExtractor
                 rules = self._filter_style_rules(
@@ -672,11 +767,22 @@ class LLMSuggestionEngine(SuggestionEngine):
                 _print(f"[LLM Engine] 加载调教规则失败: {e}")
 
         if trigger_type == "manual_request":
-            parts.append(
-                "\n【手动求助模式】用户是主动来问该怎么聊的。"
-                "请直接基于当前上下文给出可发送的话术，"
-                "并且必须严格只输出 JSON，不要输出解释、前言或额外文本。"
-            )
+            if is_direct_reply:
+                parts.append(
+                    "\n【手动求助模式】当前更像是用户在直接和 AI 说话/提问，"
+                    "不是在请教怎么回复对方。"
+                    "此时必须优先在 `reply` 字段直接回应用户，"
+                    "并将 `summary` 设为空字符串、`speeches` 设为空数组，"
+                    "不要生成建议卡片。"
+                    "reply 必须使用自然、简洁的助手口吻，"
+                    "不要模仿用户给对方说话的口吻，不要使用对方专属称呼。"
+                )
+            else:
+                parts.append(
+                    "\n【手动求助模式】当前是用户在请教怎么回复对方或怎么开启话题。"
+                    "请基于当前上下文给出可发送的话术，"
+                    "并且必须严格只输出 JSON，不要输出解释、前言或额外文本。"
+                )
 
         parts.append("\n请根据以上信息生成思考过程和沟通建议（纯 JSON 输出）：")
         prompt = "\n".join(parts)
@@ -922,6 +1028,9 @@ class LLMSuggestionEngine(SuggestionEngine):
             "【分析阶段输出】\n"
             f"{analysis_text[:2200]}\n\n"
             "请直接输出最终 JSON。"
+            "如果上下文显示这是在直接回复用户而不是代用户给对方发消息，"
+            "请把正文放进 reply，并将 summary 置空、speeches 置为空数组。"
+            "此时 reply 必须使用自然、简洁的助手口吻。"
             "注意：speeches 必须是用户可以直接复制发送给对方的话，不得复述画像字段、规则标题或 prompt 原文。"
         )
         return self._call_api_with_messages(

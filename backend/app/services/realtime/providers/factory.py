@@ -5,22 +5,29 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from .base import UINotAccessibleError, UnsupportedWeChatVersionError
+from .base import UnsupportedWeChatVersionError
 from .detector import detect_running_wechat
 from .native_uia import NativeUIARealtimeProvider
-from .wxauto_provider import WxautoRealtimeProvider
 
 
-def _load_listener_backend(default: str = "auto") -> str:
+def normalize_listener_backend(value: str | None, default: str = "native_uia") -> str:
+    """Collapse legacy backend names onto the single supported provider."""
+    raw_value = str(value or default).strip().lower()
+    if raw_value in {"", "auto", "wxauto", "native_uia"}:
+        return "native_uia"
+    return raw_value
+
+
+def _load_listener_backend(default: str = "native_uia") -> str:
     settings_file = Path(__file__).resolve().parents[4] / "data" / "settings.json"
     try:
         if settings_file.exists():
             with open(settings_file, "r", encoding="utf-8") as handle:
                 settings = json.load(handle)
-            return str(settings.get("listener_backend", default) or default)
+            return normalize_listener_backend(settings.get("listener_backend"), default=default)
     except Exception:
         pass
-    return default
+    return normalize_listener_backend(default, default=default)
 
 
 class RealtimeProviderFactory:
@@ -28,15 +35,10 @@ class RealtimeProviderFactory:
 
     @classmethod
     def create(cls, backend: str | None = None):
-        selected_backend = str(backend or _load_listener_backend()).strip().lower() or "auto"
+        selected_backend = normalize_listener_backend(backend or _load_listener_backend())
         version_info = detect_running_wechat()
 
-        if selected_backend == "wxauto":
-            provider = WxautoRealtimeProvider()
-            provider.initialize()
-            return provider
-
-        if selected_backend not in {"auto", "native_uia"}:
+        if selected_backend != "native_uia":
             raise UnsupportedWeChatVersionError(f"Unknown listener backend: {selected_backend}")
 
         if version_info.listener_profile not in {"wechat_405", "wechat_41x"}:
@@ -49,18 +51,5 @@ class RealtimeProviderFactory:
             wechat_version=version_info.version,
             hwnd=version_info.hwnd,
         )
-        try:
-            native_provider.initialize()
-            return native_provider
-        except UINotAccessibleError:
-            if selected_backend == "native_uia":
-                raise
-        except Exception:
-            if selected_backend == "native_uia":
-                raise
-
-        fallback = WxautoRealtimeProvider()
-        fallback.wechat_version = version_info.version
-        fallback.listener_profile = version_info.listener_profile or "wxauto4"
-        fallback.initialize()
-        return fallback
+        native_provider.initialize()
+        return native_provider

@@ -18,5 +18,5 @@ pytest>=7.0.0
 transformers>=4.30.0  # 实时消息情感分析
 
 # 实时消息监听依赖
-# 默认主链路使用 pywinauto + native_uia
-# wxauto 兼容兜底不作为常规安装前提，按需再接入
+# 实时监听统一使用 pywinauto + native_uia
+# wxauto 已不再作为项目依赖或运行时兜底

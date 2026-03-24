@@ -29,18 +29,30 @@ def _iter_window_classes() -> Iterable[str]:
         yield cls_name
 
 
-def _map_version_to_profile(version: str, hwnd: int, hwnd_class_name: str) -> str:
+def _map_version_to_profile(
+    version: str,
+    hwnd: int,
+    hwnd_class_name: str,
+    exe_basename: str = "",
+) -> str:
     version = str(version or "").strip()
+    exe_basename = Path(str(exe_basename or "")).name.lower()
     if version.startswith("4.0.5"):
         return "wechat_405"
     if version.startswith("4.1."):
         return "wechat_41x"
 
     # UI fallback when file-version probing fails.
+    if exe_basename == "weixin.exe" and hwnd:
+        return "wechat_41x"
     if hwnd_class_name == "WeChatMainWndForPC":
         return "wechat_405"
     if hwnd_class_name == "Qt51514QWindowIcon" and hwnd:
-        return "wechat_405"
+        if exe_basename == "wechat.exe":
+            return "wechat_405"
+        if exe_basename == "weixin.exe":
+            return "wechat_41x"
+        return ""
     if hwnd_class_name in {"WeChatMainWndForPC_New", "WeChat"} and hwnd:
         return "wechat_41x"
     return ""
@@ -173,7 +185,7 @@ def detect_running_wechat() -> WeChatVersionInfo:
 
     return WeChatVersionInfo(
         version=version,
-        listener_profile=_map_version_to_profile(version, hwnd, hwnd_class_name),
+        listener_profile=_map_version_to_profile(version, hwnd, hwnd_class_name, exe_path),
         hwnd=hwnd,
         exe_path=exe_path,
     )

@@ -4,9 +4,9 @@
 在用户监听微信实时聊天时，根据对方的情绪变化**半自动**推送话术建议，帮助用户更好地把握对话节奏。
 
 ## 当前实现说明
-- 默认监听后端为项目内 `native_uia`
+- 监听后端统一为项目内 `native_uia`
 - 统一通过 realtime provider 抽象读取微信主窗口可见消息
-- `wxauto` 兼容 provider 仅保留为临时兜底，不再是主链路
+- 项目中保留 `wxauto4` 名字兼容入口，但底层实现同样指向 `native_uia`
 
 ## 已有基础
 - **消息抓取**：`native_uia` provider 每 1 秒轮询可见消息列表，去重后存入 `realtime_message_buffer` 表

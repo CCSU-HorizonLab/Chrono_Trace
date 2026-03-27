@@ -31,7 +31,12 @@ pip install -r requirements.txt
 **核心依赖**:
 - `pycryptodome` - SQLCipher 4数据库解密
 - `pywebview` - 桌面应用框架
-- 其他依赖见 `requirements.txt`
+- `pywinauto` - Windows UI自动化（实时监听）
+- `Pillow` - 图像处理
+- `snownlp` - 中文情感分析
+- `sentence-transformers` - 句子嵌入
+- `scikit-learn` - 机器学习
+- `torch` - 深度学习框架
 
 ### 3. 安装前端依赖
 
@@ -50,6 +55,9 @@ python app_dev.py
 
 **生产模式**:
 ```bash
+cd frontend
+npm run build
+cd ..
 python app.py
 ```
 
@@ -185,7 +193,7 @@ npm install echarts
 
 1. **关闭其他程序** - 释放内存
 2. **使用SSD** - 加快文件读写
-3. **增量导入** - 只导入新消息(待实现)
+3. **增量导入** - 只导入新消息
 
 ---
 
@@ -213,5 +221,5 @@ npm install echarts
 
 ---
 
-**文档版本**: 1.0.0  
-**最后更新**: 2025-11-27
+**文档版本**: 2.0.0
+**最后更新**: 2026-03-27

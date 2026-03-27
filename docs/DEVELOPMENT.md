@@ -13,11 +13,12 @@
 - SQLite (数据存储)
 - PyWebView (桌面应用框架)
 - pycryptodome (加密/解密)
+- pywinauto (UI自动化)
 
 **前端**:
 - Vue 3 + TypeScript
 - Vite (构建工具)
-- 组件库: 自定义组件
+- ECharts (图表可视化)
 
 **数据流**:
 ```
@@ -38,6 +39,26 @@ Chrono-Trace/
 │   │   │   ├── connection.py
 │   │   │   └── schema.sql
 │   │   ├── services/        # 业务逻辑
+│   │   │   ├── analysis/    # 历史分析与好感度分析
+│   │   │   │   ├── affinity_analysis_service.py    # 主编排器
+│   │   │   │   ├── emotional_resonance_service.py  # 情感共振率
+│   │   │   │   ├── chat_positivity_service.py      # 聊天积极度
+│   │   │   │   ├── attitude_tendency_service.py     # 态度倾向
+│   │   │   │   ├── preference_compatibility_service.py  # 喜好兼容度
+│   │   │   │   ├── sentiment_service.py            # 情感分析
+│   │   │   │   ├── preprocessing_service.py        # 预处理
+│   │   │   │   └── preprocessing_orchestrator.py   # 预处理编排器
+│   │   │   ├── realtime/    # 实时监听、情绪分析、AI 建议
+│   │   │   │   ├── monitor_service.py              # 监听服务
+│   │   │   │   ├── providers/
+│   │   │   │   │   ├── native_uia.py               # 主监听后端
+│   │   │   │   │   ├── factory.py                  # 提供器工厂
+│   │   │   │   │   └── detector.py                 # 消息检测
+│   │   │   │   ├── floating_window_service.py      # 悬浮窗服务
+│   │   │   │   ├── suggestion_engine.py            # 建议引擎
+│   │   │   │   ├── llm_engine.py                   # LLM 引擎
+│   │   │   │   ├── emotion_state_tracker.py        # 情绪状态追踪
+│   │   │   │   └── trigger_resolver.py             # 触发解析器
 │   │   │   └── wechat/      # 微信数据处理
 │   │   │       ├── db/      # V4数据库解析
 │   │   │       │   └── v4/
@@ -54,8 +75,18 @@ Chrono-Trace/
 ├── frontend/
 │   ├── src/
 │   │   ├── api/             # API调用
+│   │   │   ├── bridge.ts
+│   │   │   └── affinity.ts
 │   │   ├── components/      # Vue组件
+│   │   │   ├── affinity/    # 关系分析组件
+│   │   │   ├── charts/      # 图表组件
+│   │   │   └── base/        # 基础组件
 │   │   └── views/           # 页面
+│   │       ├── Home.vue
+│   │       ├── Analytics.vue
+│   │       ├── Suggestions.vue
+│   │       ├── Settings.vue
+│   │       └── FloatingPanel.vue
 │   └── package.json
 ├── docs/                    # 文档
 │   ├── SETUP.md
@@ -115,7 +146,6 @@ python app.py
 ### 1. 微信数据库解密 (`db_decryptor_v2.py`)
 
 **实现原理**:
-- 参考 EchoTrace 项目
 - SQLCipher 4 标准
 - PBKDF2-HMAC-SHA512 密钥派生
 - AES-256-CBC 页面解密
@@ -125,31 +155,13 @@ python app.py
 class WeChatDBDecryptorV2:
     PAGE_SIZE = 4096              # 页大小
     V4_ITER_COUNT = 256000        # KDF迭代次数
-    
+
     def verify_key_from_file(db_path, key_hex) -> bool:
         """验证密钥是否正确"""
-        
+
     def decrypt_database(input_path, output_path, key_hex):
         """解密整个数据库到临时文件"""
 ```
-
-**使用示例**:
-```python
-from backend.app.services.wechat.db_decryptor_v2 import WeChatDBDecryptorV2
-
-decryptor = WeChatDBDecryptorV2()
-
-# 验证密钥
-if decryptor.verify_key_from_file(db_path, key_hex):
-    # 解密到临时文件
-    decryptor.decrypt_database(encrypted_db, temp_db, key_hex)
-    
-    # 使用标准sqlite3读取
-    import sqlite3
-    conn = sqlite3.connect(temp_db)
-```
-
----
 
 ### 2. 路径查找 (`path_finder.py`)
 
@@ -181,77 +193,44 @@ class WeChatPathFinder:
 2. `C:/Users/<user>/xwechat_files` (微信4.0+)
 3. 用户文档目录
 
----
+### 3. 实时监听 (`monitor_service.py` + `native_uia.py`)
 
-### 3. 联系人解析 (`db/v4/contact.py`)
+**架构**:
+- `RealtimeProviderFactory` - 提供器工厂（现在只创建 `native_uia`）
+- `RealtimeMonitorService` - 监听服务
+- `native_uia.py` - 主监听后端（Windows UI自动化）
+- `detector.py` - 消息检测与识别
 
-**核心类**:
+**关键功能**:
+- 启动时建立可见消息基线，避免历史消息误触发
+- 监听阶段去重（内容+时间锚点+同屏次序）
+- LLM上下文去重（同sender/同内容/同时间）
+- 跨会话切换不串上下文
+- 断点恢复（上下文滑窗+自适应滚动）
+
+### 4. 好感度分析 (`affinity_analysis_service.py`)
+
+**四个维度**:
+- **情感共振率** (30%) - 双向情感响应、极性一致性、强度匹配
+- **聊天积极度** (30%) - 日均消息数、回复及时性、话题延续性
+- **态度倾向** (20%) - 正负词汇、多媒体使用、隐私分享等
+- **喜好兼容度** (20%) - 话题提及、话题延续性（可选维度）
+
+**架构**:
 ```python
-class ContactDBV4:
-    def __init__(self, db_path: str, db_key: str):
-        """初始化并解密数据库"""
-        
-    def get_contacts(self) -> List[dict]:
-        """获取所有联系人"""
-        # 返回格式:
-        [
-            {
-                "username": "wxid_xxx",
-                "nickname": "昵称",
-                "remark": "备注",
-                "alias": "微信号",
-                "is_friend": True
-            },
-            ...
-        ]
-```
+class AffinityAnalysisService:
+    def analyze(self, conversation_id: int) -> Dict:
+        """主入口点：触发完整分析流程"""
+        # 1. 预处理编排
+        # 2. 计算四个维度
+        # 3. 加权求和总分
+        # 4. 保存结果
 
-**数据库表结构**:
-```sql
-CREATE TABLE Contact (
-    username TEXT PRIMARY KEY,
-    nick_name TEXT,
-    remark TEXT,
-    alias TEXT,
-    type INTEGER
-);
-```
+    def get_scores(self, conversation_id: int) -> Dict:
+        """获取已计算的分数"""
 
----
-
-### 4. 消息解析 (`db/v4/message.py`)
-
-**核心类**:
-```python
-class MessageDBV4:
-    def __init__(self, db_paths: List[str], db_key: str, my_wxid: str):
-        """连接多个数据库分片"""
-        
-    def get_all_conversation_usernames(self) -> List[str]:
-        """获取所有会话的username列表"""
-        
-    def get_messages(self, username: str, time_range=None, limit=None) -> List[dict]:
-        """获取指定会话的消息"""
-        # 返回格式:
-        [
-            {
-                "talker": "wxid_xxx",
-                "content": "消息内容",
-                "timestamp": 1732704000,
-                "is_sender": False,
-                "msg_type": 1
-            },
-            ...
-        ]
-```
-
-**表名生成**:
-```python
-import hashlib
-
-def _get_table_name(username: str) -> str:
-    md5 = hashlib.md5(username.encode('utf-8')).hexdigest()
-    return f"MSG_{md5}"
+    def reanalyze(self, conversation_id: int) -> Dict:
+        """重新分析"""
 ```
 
 ---
@@ -261,13 +240,20 @@ def _get_table_name(username: str) -> str:
 ### 单元测试
 
 ```bash
-# 测试解密功能
-python test_decrypt_v2.py
+# 运行所有测试
+pytest backend/tests/
 
-# 预期输出:
-✅ 密钥验证成功
-✅ 解密成功
-✅ 读取到 354 个联系人
+# 运行特定测试文件
+pytest backend/tests/test_sentiment_service.py
+pytest backend/tests/test_monitor_service_message_dedupe.py
+pytest backend/tests/test_native_uia_scroll.py
+
+# 运行实时监听相关测试
+pytest backend/tests/test_monitor_service_message_dedupe.py \
+       backend/tests/test_native_uia_scroll.py \
+       backend/tests/test_realtime_provider_factory.py \
+       backend/tests/test_local_wxauto_shim.py \
+       backend/tests/test_soak_realtime_listener.py
 ```
 
 ### 集成测试
@@ -355,6 +341,30 @@ select_file(title: str, file_types: str) -> Dict[str, Any]
 select_directory(title: str) -> Dict[str, Any]
 ```
 
+**分析相关**:
+```python
+# 分析好感度
+analyze_affinity(conversation_id: int, force_reanalyze: bool = False) -> Dict
+
+# 获取好感度分数
+get_affinity_scores(conversation_id: int) -> Dict
+
+# 获取好感度配置
+get_affinity_config(conversation_id: int) -> Dict
+```
+
+**实时监听相关**:
+```python
+# 开始监听
+start_realtime_listener(contact_name: str) -> Dict
+
+# 停止监听
+stop_realtime_listener() -> Dict
+
+# 获取监听状态
+get_listener_status() -> Dict
+```
+
 ---
 
 ## 🐛 调试技巧
@@ -405,6 +415,11 @@ print(cursor.fetchall())
    - 检查数据库路径
    - 查看SQL查询日志
 
+4. **实时监听问题**
+   - 检查微信窗口是否可见
+   - 确认微信版本是4.0+
+   - 查看 `[DEBUG Realtime]` 相关日志
+
 ---
 
 ## 📦 构建发布
@@ -415,7 +430,12 @@ print(cursor.fetchall())
 # 安装打包工具
 pip install pyinstaller
 
-# 打包
+# 构建前端
+cd frontend
+npm run build
+cd ..
+
+# 打包Python后端
 pyinstaller --onefile --windowed app.py
 ```
 
@@ -472,9 +492,9 @@ pyinstaller --onefile --windowed app.py
 - SQLCipher 4: https://www.zetetic.net/sqlcipher/
 - PyWebView: https://pywebview.flowrl.com/
 - Vue 3: https://vuejs.org/
+- Pywinauto: https://pywinauto.github.io/
 
 ---
 
-**文档版本**: 1.0.0  
-**最后更新**: 2025-11-27  
-**维护者**: CAN
+**文档版本**: 2.0.0
+**最后更新**: 2026-03-27

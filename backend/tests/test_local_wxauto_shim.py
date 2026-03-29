@@ -27,8 +27,8 @@ class FakeProvider:
     def get_hwnd(self):
         return 99
 
-    def open_chat(self, display_name):
-        self.opened.append(display_name)
+    def open_chat(self, display_name, expected_display_name=None):
+        self.opened.append((display_name, expected_display_name))
         return True
 
     def list_visible_messages(self):
@@ -59,7 +59,8 @@ def test_local_wxauto4_shim_delegates_to_provider(monkeypatch):
     assert wx._api.HWND == 99
 
     assert wx.ChatWith("Alice") is True
-    assert provider.opened == ["Alice"]
+    assert wx.ChatWith("Ali", expected_display_name="Alice") is True
+    assert provider.opened == [("Alice", None), ("Ali", "Alice")]
     assert wx.GetAllMessage() == ["m1", "m2"]
     assert wx.ChatBox.msgbox.WheelUp(wheelTimes=3) is True
     assert wx.ChatBox.msgbox.WheelDown(wheelTimes=5) is True

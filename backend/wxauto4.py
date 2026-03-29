@@ -45,8 +45,11 @@ class WeChat:
         self._api = SimpleNamespace(HWND=self._provider.get_hwnd())
         self.ChatBox = _ProviderChatBox(self._provider)
 
-    def ChatWith(self, target_name: str):
-        result = self._provider.open_chat(target_name)
+    def ChatWith(self, target_name: str, expected_display_name: str | None = None):
+        result = self._provider.open_chat(
+            target_name,
+            expected_display_name=expected_display_name,
+        )
         self._sync_metadata()
         return result
 

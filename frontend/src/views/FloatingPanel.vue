@@ -696,8 +696,8 @@ onMounted(async () => {
     await nextTick()
     syncCharts()
     if (!started && !realtimeState.isMonitoring) {
-      console.error('[FloatingPanel] 待启动监听未成功，返回建议页')
-      goBackToSuggestions()
+      realtimeState.status = 'error'
+      console.error('[FloatingPanel] 待启动监听未成功，保留悬浮页并显示错误')
     }
     return
   }

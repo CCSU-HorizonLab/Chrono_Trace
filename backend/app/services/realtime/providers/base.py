@@ -41,7 +41,7 @@ class RealtimeProvider(ABC):
         """Bring the WeChat window to the foreground."""
 
     @abstractmethod
-    def open_chat(self, display_name: str) -> bool:
+    def open_chat(self, display_name: str, expected_display_name: str | None = None) -> bool:
         """Switch to a target chat."""
 
     @abstractmethod

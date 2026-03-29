@@ -41,6 +41,10 @@ CHAT_ITEM_CLASS_NAMES = {
     "mmui::ChatTextItemView",
     "mmui::ChatItemView",
 }
+SHELL_ONLY_CLASS_NAMES = {
+    "Qt51514QWindowIcon",
+    "MMUIRenderSubWindowHW",
+}
 
 
 def _classify_bubble_midpoint(active_mid: float, width: int) -> str:
@@ -159,6 +163,7 @@ class NativeUIARealtimeProvider(RealtimeProvider):
             raise UINotAccessibleError(
                 f"ui_not_accessible: unable to bind main window ({exc})"
             ) from exc
+        self._ensure_accessible_tree()
 
     def activate_main_window(self) -> bool:
         if self._main_window is None:
@@ -191,6 +196,48 @@ class NativeUIARealtimeProvider(RealtimeProvider):
             except Exception:
                 continue
         return result
+
+    def _ensure_accessible_tree(self, attempts: int = 3, delay: float = 0.2) -> None:
+        """Fail fast when UIA only exposes the outer Qt shell panes."""
+        if self._main_window is None:
+            raise UINotAccessibleError("ui_not_accessible: WeChat main window not initialized")
+
+        last_visible_descendants = []
+        for attempt in range(max(1, int(attempts or 1))):
+            try:
+                descendants = list(self._main_window.descendants())
+            except Exception as exc:
+                raise UINotAccessibleError(
+                    f"ui_not_accessible: unable to enumerate WeChat descendants ({exc})"
+                ) from exc
+
+            visible_descendants = []
+            meaningful_visible_descendants = []
+            for item in descendants:
+                try:
+                    if not item.is_visible():
+                        continue
+                    class_name = str(item.class_name() or "")
+                    control_type = str(getattr(item.element_info, "control_type", "") or "")
+                    automation_id = str(getattr(item.element_info, "automation_id", "") or "")
+                except Exception:
+                    continue
+                visible_descendants.append((class_name, control_type, automation_id))
+                if automation_id or class_name not in SHELL_ONLY_CLASS_NAMES or control_type != "Pane":
+                    meaningful_visible_descendants.append((class_name, control_type, automation_id))
+
+            last_visible_descendants = visible_descendants
+            if meaningful_visible_descendants:
+                return
+
+            if attempt + 1 < max(1, int(attempts or 1)) and delay > 0:
+                time.sleep(delay)
+
+        raise UINotAccessibleError(
+            "ui_not_accessible: WeChat UIA tree unavailable; only shell panes are visible. "
+            f"visible_descendants={last_visible_descendants[:6]}. "
+            "Try reopening WeChat; if it still fails, enable Narrator once before login and then relaunch WeChat."
+        )
 
     def _find_chat_list(self):
         candidates = []
@@ -242,6 +289,64 @@ class NativeUIARealtimeProvider(RealtimeProvider):
         candidates.sort(key=lambda item: item[0], reverse=True)
         return candidates[0][1]
 
+    def _find_session_list(self):
+        candidates = []
+        for control in self._visible_descendants("List"):
+            try:
+                items = list(control.children(control_type="ListItem"))
+            except Exception:
+                continue
+            if not items:
+                continue
+
+            score = 0
+            automation_id = str(getattr(control.element_info, "automation_id", "") or "")
+            control_name = normalize_text(control.window_text())
+            class_names = []
+            for item in items[:8]:
+                try:
+                    class_names.append(str(item.class_name() or ""))
+                except Exception:
+                    continue
+
+            if automation_id == SESSION_LIST_AUTOMATION_ID:
+                score += 100
+            if control_name == "会话":
+                score += 30
+            if all(name == "mmui::ChatSessionCell" for name in class_names if name):
+                score += 20
+            try:
+                rect = control.rectangle()
+                score += max(0, int((rect.right - rect.left) / 150))
+            except Exception:
+                pass
+            candidates.append((score, control))
+
+        if not candidates:
+            return None
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        return candidates[0][1]
+
+    def _iter_session_items(self):
+        session_list = self._find_session_list()
+        if session_list is None:
+            return []
+        items = []
+        try:
+            raw_items = list(session_list.children(control_type="ListItem"))
+        except Exception:
+            raw_items = []
+        for item in raw_items:
+            try:
+                class_name = str(item.class_name() or "")
+                automation_id = str(getattr(item.element_info, "automation_id", "") or "")
+                if class_name == "mmui::ChatSessionCell" or automation_id.startswith("session_item_"):
+                    items.append(item)
+            except Exception:
+                continue
+        items.sort(key=lambda node: (node.rectangle().top, node.rectangle().left))
+        return items
+
     def _iter_direct_chat_items(self):
         items = []
         for item in self._visible_descendants("ListItem"):
@@ -282,7 +387,7 @@ class NativeUIARealtimeProvider(RealtimeProvider):
 
     def _find_session_entry(self, display_name: str):
         normalized_target = normalize_text(display_name)
-        for item in self._visible_descendants("ListItem"):
+        for item in self._iter_session_items():
             try:
                 text = normalize_text(item.window_text())
             except Exception:
@@ -294,6 +399,46 @@ class NativeUIARealtimeProvider(RealtimeProvider):
             if normalized_target in text:
                 return item
         return None
+
+    def _find_search_edit(self):
+        edit_controls = self._visible_descendants("Edit")
+        if not edit_controls:
+            return None
+
+        session_list = self._find_session_list()
+        session_rect = None
+        try:
+            session_rect = session_list.rectangle() if session_list is not None else None
+        except Exception:
+            session_rect = None
+
+        candidates = []
+        for control in edit_controls:
+            try:
+                automation_id = str(getattr(control.element_info, "automation_id", "") or "")
+                class_name = str(control.class_name() or "")
+                rect = control.rectangle()
+            except Exception:
+                continue
+            if automation_id == "chat_input_field":
+                continue
+
+            score = 0
+            if rect.top < 400:
+                score += 30
+            if session_rect is not None:
+                if rect.left >= session_rect.left - 40 and rect.right <= session_rect.right + 40:
+                    score += 40
+                if rect.bottom <= session_rect.top + 10:
+                    score += 20
+            if "Validator" in class_name:
+                score += 10
+            candidates.append((score, control))
+
+        if not candidates:
+            return None
+        candidates.sort(key=lambda item: (item[0], -item[1].rectangle().top), reverse=True)
+        return candidates[0][1]
 
     def _is_target_chat_active(self, display_name: str) -> bool:
         normalized_target = normalize_text(display_name)
@@ -321,15 +466,37 @@ class NativeUIARealtimeProvider(RealtimeProvider):
                 return True
         return False
 
+    def _visible_header_texts(self) -> list[str]:
+        if self._main_window is None:
+            return []
+        try:
+            main_rect = self._main_window.rectangle()
+            header_bottom = main_rect.top + max(120, int((main_rect.bottom - main_rect.top) * 0.18))
+        except Exception:
+            return []
+
+        header_texts: list[str] = []
+        for control in self._visible_descendants("Text"):
+            try:
+                text = normalize_text(control.window_text())
+                rect = control.rectangle()
+            except Exception:
+                continue
+            if not text:
+                continue
+            if rect.top <= header_bottom and rect.left >= main_rect.left + 250:
+                if text not in header_texts:
+                    header_texts.append(text)
+        return header_texts
+
     def _focus_search_and_open(self, display_name: str) -> bool:
         _, send_keys = self._import_backend()
         self.activate_main_window()
         send_keys("^f", pause=0.05)
         time.sleep(0.2)
-        edit_controls = self._visible_descendants("Edit")
-        if not edit_controls:
+        edit = self._find_search_edit()
+        if edit is None:
             return False
-        edit = edit_controls[0]
         try:
             edit.set_edit_text(display_name)
         except Exception:
@@ -343,24 +510,27 @@ class NativeUIARealtimeProvider(RealtimeProvider):
         send_keys("{ENTER}", pause=0.03)
         return True
 
-    def open_chat(self, display_name: str) -> bool:
+    def open_chat(self, display_name: str, expected_display_name: str | None = None) -> bool:
         if self._main_window is None:
             self.initialize()
-        self.current_display_name = display_name
+        self._ensure_accessible_tree(attempts=1, delay=0.0)
+        expected_name = (expected_display_name or display_name or "").strip()
+        search_name = (display_name or "").strip()
+        self.current_display_name = expected_name or search_name
         self.activate_main_window()
-        if self._is_target_chat_active(display_name):
+        if expected_name and self._is_target_chat_active(expected_name):
             self._chat_list = self._find_chat_list()
             self._refresh_chat_rect(self._iter_direct_chat_items())
             return True
 
-        target = self._find_session_entry(display_name)
+        target = self._find_session_entry(search_name)
         if target is not None:
             try:
                 target.click_input()
             except Exception as exc:
                 logger.debug("Direct session click failed: %s", exc)
-        elif not self._focus_search_and_open(display_name):
-            raise ProviderInitError(f"Unable to locate chat '{display_name}'")
+        elif not self._focus_search_and_open(search_name):
+            raise ProviderInitError(f"Unable to locate chat '{search_name}'")
 
         last_error = ""
         for _ in range(10):
@@ -368,7 +538,7 @@ class NativeUIARealtimeProvider(RealtimeProvider):
             self._chat_list = self._find_chat_list()
             direct_items = self._iter_direct_chat_items()
             self._refresh_chat_rect(direct_items)
-            if direct_items:
+            if expected_name and self._is_target_chat_active(expected_name):
                 return True
             if self._chat_list is not None:
                 try:
@@ -376,12 +546,15 @@ class NativeUIARealtimeProvider(RealtimeProvider):
                 except Exception as exc:
                     last_error = str(exc)
                 else:
-                    if items and not all(item.class_name() == "mmui::ChatSessionCell" for item in items):
+                    if items and not all(item.class_name() == "mmui::ChatSessionCell" for item in items) and expected_name:
                         self._refresh_chat_rect(items)
-                        return True
-        raise UINotAccessibleError(
-            f"ui_not_accessible: chat list not visible for '{display_name}'"
-            + (f" ({last_error})" if last_error else "")
+                        if self._is_target_chat_active(expected_name):
+                            return True
+        header_texts = self._visible_header_texts()
+        raise ProviderInitError(
+            f"Unable to confirm target chat '{expected_name or search_name}' after search '{search_name}'"
+            + (f"; visible_headers={header_texts[:6]}" if header_texts else "")
+            + (f"; chat_list_error={last_error}" if last_error else "")
         )
 
     def _iter_chat_items(self):
@@ -392,6 +565,7 @@ class NativeUIARealtimeProvider(RealtimeProvider):
         if self._chat_list is None:
             self._chat_list = self._find_chat_list()
         if self._chat_list is None:
+            self._ensure_accessible_tree(attempts=1, delay=0.0)
             raise UINotAccessibleError("ui_not_accessible: chat list not found")
         try:
             items = list(self._chat_list.children(control_type="ListItem"))

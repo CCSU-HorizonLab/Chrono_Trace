@@ -5,6 +5,10 @@ import logging
 import importlib
 from pathlib import Path
 from ..services.wechat.ingest_service import WeChatIngestService
+from ..services.analysis.feature_extraction_config import (
+    ANALYSIS_DEVICE_MODE_AUTO,
+    normalize_analysis_device_mode,
+)
 
 logger = logging.getLogger(__name__)
 class Bridge:
@@ -33,6 +37,9 @@ class Bridge:
                 self.settings = {}
         else:
             self.settings = {}
+        self.settings["analysis_device_mode"] = normalize_analysis_device_mode(
+            self.settings.get("analysis_device_mode", ANALYSIS_DEVICE_MODE_AUTO)
+        )
 
     def _save_settings(self):
         """保存设置"""
@@ -521,10 +528,16 @@ class Bridge:
 
     def get_settings(self) -> dict[str, Any]:
         """获取设置"""
+        self.settings["analysis_device_mode"] = normalize_analysis_device_mode(
+            self.settings.get("analysis_device_mode", ANALYSIS_DEVICE_MODE_AUTO)
+        )
         return self.settings
 
     def set_settings(self, payload: dict[str, Any]) -> dict[str, Any]:
         """保存设置"""
+        if "analysis_device_mode" in payload:
+            payload = dict(payload)
+            payload["analysis_device_mode"] = normalize_analysis_device_mode(payload["analysis_device_mode"])
         self.settings.update(payload)
         self._save_settings()
         return {"saved": True, "payload": payload}
@@ -1451,6 +1464,20 @@ class Bridge:
             self._feature_service = FeatureExtractionService()
         return self._feature_service
 
+    def _build_feature_config(self, config: dict | None = None):
+        """Merge caller overrides onto persisted feature extraction settings."""
+        from ..services.analysis.feature_extraction_config import FeatureExtractionConfig
+
+        base_config = FeatureExtractionConfig.from_settings()
+        merged_config = {
+            **base_config.__dict__,
+            **dict(config or {}),
+        }
+        merged_config["analysis_device_mode"] = normalize_analysis_device_mode(
+            merged_config.get("analysis_device_mode", self.settings.get("analysis_device_mode"))
+        )
+        return FeatureExtractionConfig(**merged_config)
+
     def extract_features(self, conversation_id: int, config: dict = None) -> dict:
         """
         执行完整的特征提取流程
@@ -1471,14 +1498,9 @@ class Bridge:
         """
         try:
             logger.info(f"[Bridge] 开始特征提取: conversation_id={conversation_id}")
-
-            # 如果提供了自定义配置，更新服务配置
-            if config:
-                from ..services.analysis.feature_extraction_config import FeatureExtractionConfig
-                service_config = FeatureExtractionConfig(**config)
-                service = FeatureExtractionService(service_config)
-            else:
-                service = self._get_feature_service()
+            service = self._get_feature_service()
+            service.config = self._build_feature_config(config)
+            service.config.validate()
 
             # 执行特征提取（异步任务）
             result = service.extract_features(conversation_id)

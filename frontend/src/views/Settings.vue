@@ -107,6 +107,66 @@
         </div>
       </CtCard>
 
+      <!-- 计算设备设置 -->
+      <CtCard title="⚡ 分析计算设备">
+        <div class="form">
+          <div class="hint-box info">
+            <p>💡 选择历史分析使用的计算设备。GPU 加速可大幅提升分析速度，但需要安装支持 CUDA 的 PyTorch。</p>
+          </div>
+
+          <div class="device-mode-options">
+            <label class="device-option" :class="{ active: form.analysis_device_mode === 'auto' }">
+              <input type="radio" v-model="form.analysis_device_mode" value="auto" />
+              <div class="device-option-body">
+                <span class="device-option-icon">🔄</span>
+                <div>
+                  <div class="device-option-title">自动</div>
+                  <div class="device-option-desc">每次分析前询问是否启用 GPU</div>
+                </div>
+              </div>
+            </label>
+            <label class="device-option" :class="{ active: form.analysis_device_mode === 'gpu' }">
+              <input type="radio" v-model="form.analysis_device_mode" value="gpu" />
+              <div class="device-option-body">
+                <span class="device-option-icon">🚀</span>
+                <div>
+                  <div class="device-option-title">GPU 加速</div>
+                  <div class="device-option-desc">始终使用 GPU，速度提升 5-10 倍</div>
+                </div>
+              </div>
+            </label>
+            <label class="device-option" :class="{ active: form.analysis_device_mode === 'cpu' }">
+              <input type="radio" v-model="form.analysis_device_mode" value="cpu" />
+              <div class="device-option-body">
+                <span class="device-option-icon">💻</span>
+                <div>
+                  <div class="device-option-title">CPU 模式</div>
+                  <div class="device-option-desc">仅使用 CPU，兼容性最好</div>
+                </div>
+              </div>
+            </label>
+          </div>
+
+          <div class="gpu-status-card">
+            <div class="gpu-status-header">当前 GPU 检测状态</div>
+            <div v-if="gpuInfoLoading" class="gpu-status-loading">
+              <span class="spinner"></span> 正在检测...
+            </div>
+            <div v-else-if="gpuInfo.cuda_available" class="gpu-status-detail">
+              <div class="gpu-status-row"><span class="gpu-label">GPU</span><span class="gpu-value">{{ gpuInfo.gpu_name }}</span></div>
+              <div class="gpu-status-row"><span class="gpu-label">CUDA</span><span class="gpu-value">{{ gpuInfo.cuda_version }}</span></div>
+              <div class="gpu-status-row"><span class="gpu-label">显存</span><span class="gpu-value">{{ (gpuInfo.gpu_memory_total_mb / 1024).toFixed(1) }} GB</span></div>
+              <div class="gpu-status-row"><span class="gpu-label">PyTorch</span><span class="gpu-value">{{ gpuInfo.torch_version }}</span></div>
+              <div class="gpu-status-badge available">✅ GPU 可用</div>
+            </div>
+            <div v-else class="gpu-status-detail">
+              <div class="gpu-status-badge unavailable">❌ GPU 不可用</div>
+              <div class="gpu-status-row"><span class="gpu-label">PyTorch</span><span class="gpu-value">{{ gpuInfo.torch_version || '未知' }}</span></div>
+            </div>
+          </div>
+        </div>
+      </CtCard>
+
       </div>
     </div>
 
@@ -190,7 +250,7 @@
 
 <script setup lang="ts">
 import { reactive, ref, onMounted, watch, computed, onUnmounted } from 'vue'
-import { bridgeReady, api } from '@/api/bridge'
+import { bridgeReady, api, type AnalysisDeviceMode } from '@/api/bridge'
 import CtCard from '@/components/base/CtCard.vue'
 import CtField from '@/components/base/CtField.vue'
 import CtButton from '@/components/base/CtButton.vue'
@@ -207,12 +267,52 @@ const form = reactive<{
   wechat_data_dir: string
   wechat_user_wxid: string
   wechat_db_key: string
+  analysis_device_mode: AnalysisDeviceMode
 }>({
   wechat_use_custom_path: false,
   wechat_data_dir: '',
   wechat_user_wxid: '',
   wechat_db_key: '',
+  analysis_device_mode: 'auto',
 })
+
+// GPU 检测状态
+const gpuInfo = reactive<{
+  cuda_available: boolean
+  gpu_name: string | null
+  torch_version: string
+  cuda_version: string | null
+  gpu_memory_total_mb: number
+  gpu_memory_free_mb: number
+}>({
+  cuda_available: false,
+  gpu_name: null,
+  torch_version: 'unknown',
+  cuda_version: null,
+  gpu_memory_total_mb: 0,
+  gpu_memory_free_mb: 0,
+})
+const gpuInfoLoading = ref(false)
+
+async function loadGpuInfo() {
+  gpuInfoLoading.value = true
+  try {
+    await bridgeReady()
+    const status = await api.check_gpu_status()
+    if (status) {
+      gpuInfo.cuda_available = Boolean(status.cuda_available)
+      gpuInfo.gpu_name = status.gpu_name ?? null
+      gpuInfo.torch_version = status.torch_version ?? 'unknown'
+      gpuInfo.cuda_version = status.cuda_version ?? null
+      gpuInfo.gpu_memory_total_mb = status.gpu_memory_total_mb ?? 0
+      gpuInfo.gpu_memory_free_mb = status.gpu_memory_free_mb ?? 0
+    }
+  } catch (e) {
+    console.error('GPU 检测失败:', e)
+  } finally {
+    gpuInfoLoading.value = false
+  }
+}
 
 async function onLoad() {
   loading.value = true
@@ -227,8 +327,9 @@ async function onLoad() {
       form.wechat_data_dir = s.wechat_data_dir ?? ''
       form.wechat_user_wxid = s.wechat_user_wxid ?? ''
       form.wechat_db_key = s.wechat_db_key ?? ''
-      
-      console.log('[DEBUG] 设置已加载到表单')
+      // 计算设备模式
+      const dm = s.analysis_device_mode
+      form.analysis_device_mode = (dm === 'gpu' || dm === 'cpu' || dm === 'auto') ? dm : 'auto'
     }
   } catch (e) {
     console.error('加载设置失败:', e)
@@ -263,6 +364,7 @@ async function onSave() {
       wechat_data_dir: form.wechat_data_dir,
       wechat_user_wxid: form.wechat_user_wxid,
       wechat_db_key: form.wechat_db_key,
+      analysis_device_mode: form.analysis_device_mode,
     }
     
     console.log('[DEBUG] 自动保存设置:', settingsToSave)
@@ -565,6 +667,7 @@ watch(() => editingModel.provider, (p) => {
 onMounted(() => {
   onLoad()
   loadLLMModels()
+  loadGpuInfo()
 })
 </script>
 
@@ -926,5 +1029,118 @@ onMounted(() => {
 .ct-custom-dropdown .dropdown-item:hover {
   background-color: rgba(100, 108, 255, 0.08);
   color: var(--ct-color-primary, #646cff);
+}
+
+/* 计算设备设置 */
+.device-mode-options {
+  display: flex;
+  gap: 12px;
+}
+@media (max-width: 768px) {
+  .device-mode-options { flex-direction: column; }
+}
+.device-option {
+  flex: 1;
+  cursor: pointer;
+  position: relative;
+}
+.device-option input[type="radio"] {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.device-option-body {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 14px;
+  border: 2px solid var(--ct-border-color, #e0e0e0);
+  background: var(--ct-bg-1, #ffffff);
+  transition: all 0.25s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+.device-option:hover .device-option-body {
+  border-color: rgba(100, 108, 255, 0.35);
+  box-shadow: 0 4px 12px rgba(100, 108, 255, 0.08);
+}
+.device-option.active .device-option-body {
+  border-color: var(--ct-color-primary, #646cff);
+  background: linear-gradient(135deg, rgba(100, 108, 255, 0.06), rgba(156, 39, 176, 0.04));
+  box-shadow: 0 4px 16px rgba(100, 108, 255, 0.12);
+}
+.device-option-icon {
+  font-size: 24px;
+  flex-shrink: 0;
+}
+.device-option-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--ct-text-primary);
+  margin-bottom: 2px;
+}
+.device-option-desc {
+  font-size: 12px;
+  color: var(--ct-text-tertiary);
+  line-height: 1.4;
+}
+
+.gpu-status-card {
+  background: var(--ct-bg-secondary, #f8f9fa);
+  border-radius: 12px;
+  padding: 16px;
+  border: 1px solid var(--ct-border-subtle, rgba(0,0,0,0.06));
+}
+.gpu-status-header {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ct-text-secondary);
+  margin-bottom: 12px;
+}
+.gpu-status-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ct-text-tertiary);
+  font-size: 13px;
+}
+.gpu-status-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.gpu-status-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+}
+.gpu-label {
+  color: var(--ct-text-tertiary);
+  font-weight: 500;
+}
+.gpu-value {
+  color: var(--ct-text-primary);
+  font-weight: 500;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 12px;
+}
+.gpu-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  width: fit-content;
+}
+.gpu-status-badge.available {
+  background: rgba(16, 185, 129, 0.1);
+  color: #059669;
+}
+.gpu-status-badge.unavailable {
+  background: rgba(239, 68, 68, 0.1);
+  color: #dc2626;
 }
 </style>

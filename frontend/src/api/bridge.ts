@@ -1,3 +1,9 @@
+export type AnalysisDeviceMode = 'auto' | 'gpu' | 'cpu'
+
+type FeatureExtractionConfig = {
+  analysis_device_mode?: AnalysisDeviceMode
+} & Record<string, any>
+
 type PyWebViewApi = {
   ping: () => Promise<string>
   // 微信数据导入
@@ -46,7 +52,7 @@ type PyWebViewApi = {
   get_self_profile: (display_name: string) => Promise<any>
   generate_self_profile: (display_name: string, budget_level?: string, custom_budget?: number) => Promise<any>
   // 特征提取
-  extract_features: (conversation_id: number, config?: Record<string, any>) => Promise<any>
+  extract_features: (conversation_id: number, config?: FeatureExtractionConfig) => Promise<any>
   get_extraction_progress: (task_id: string) => Promise<any>
   get_sessions: (conversation_id: number, limit?: number, offset?: number) => Promise<any>
   get_session_messages: (session_id: number) => Promise<any>

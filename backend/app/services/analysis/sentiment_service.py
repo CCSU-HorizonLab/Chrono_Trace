@@ -1,12 +1,4 @@
-"""情感分析服务。
-
-功能：
-- `analyze_sentiment()`：分析单条消息情感
-- `analyze_batch()`：批量分析消息
-- `cache_sentiment_result()`：缓存分析结果
-- `get_sentiment_from_cache()`：读取缓存
-- `batch_cache_sentiments()`：批量写入缓存
-"""
+"""Historical sentiment analysis service."""
 
 import logging
 import os
@@ -16,10 +8,17 @@ import time
 from typing import Any, Dict, List, Optional
 
 from ...db.connection import get_db
+from .feature_extraction_config import (
+    ANALYSIS_DEVICE_MODE_AUTO,
+    ANALYSIS_DEVICE_MODE_CPU,
+    ANALYSIS_DEVICE_MODE_GPU,
+    FeatureExtractionConfig,
+    normalize_analysis_device_mode,
+)
 
 
 def _safe_disable_dynamo(fn):
-    """安全禁用 PyTorch 2.x 的图编译能力，避免部分环境下的 meta 错误。"""
+    """Best-effort guard against PyTorch dynamo issues."""
     try:
         import torch._dynamo
 
@@ -48,29 +47,24 @@ logger = logging.getLogger(__name__)
 
 @singleton
 class SentimentService:
-    """情感分析服务。
-
-    使用实时情感分析服务完成极性和强度判断，
-    并使用 sentence-transformers 生成 384 维语义向量。
-    """
+    """Batch sentiment + embedding service used by historical analysis."""
 
     def __init__(self):
         self._realtime_service = None
         self._embedding_model = None
         self._embedding_load_failed = False
+        self._embedding_device = "cpu"
+        self._device_mode = FeatureExtractionConfig.from_settings().analysis_device_mode
         self._embedding_cache: Dict[str, List[float]] = {}
         self._lock = threading.Lock()
 
-        # 提前加载实时分析服务，避免后续批量处理中首次初始化带来额外开销。
         try:
             self._load_realtime_service()
-        except Exception as e:
-            logger.error(f"[情感服务] 实时分析服务预加载失败: {e}")
-
-    # ========== 模型加载 ==========
+        except Exception as exc:
+            logger.error(f"[情感服务] 实时情感分析服务预加载失败: {exc}")
 
     def has_local_embedding_model(self) -> bool:
-        """检查 embedding 模型是否已存在于本地缓存。"""
+        """Return whether the embedding model is available locally."""
         if self._embedding_model is not None:
             return True
 
@@ -85,16 +79,48 @@ class SentimentService:
         except Exception:
             return False
 
+    def configure_device_mode(self, device_mode: Optional[str]) -> str:
+        """Change requested device mode and rebuild cached models if needed."""
+        normalized_mode = normalize_analysis_device_mode(device_mode)
+        if normalized_mode == self._device_mode:
+            if self._realtime_service is not None:
+                self._realtime_service.configure_device_mode(normalized_mode)
+            return self._device_mode
+
+        self._device_mode = normalized_mode
+        self._embedding_model = None
+        self._embedding_load_failed = False
+        self._embedding_device = "cpu"
+        if self._realtime_service is not None:
+            self._realtime_service.configure_device_mode(normalized_mode)
+
+        logger.info(f"[情感服务] 切换分析设备模式: {normalized_mode}")
+        return self._device_mode
+
+    def _resolve_embedding_device(self) -> str:
+        import torch
+
+        if self._device_mode == ANALYSIS_DEVICE_MODE_CPU:
+            return "cpu"
+        if self._device_mode == ANALYSIS_DEVICE_MODE_GPU:
+            if torch.cuda.is_available():
+                return "cuda"
+            logger.warning("[情感服务] 已选择 GPU 模式，但当前 CUDA 不可用，回退到 CPU")
+            return "cpu"
+        return "cuda" if torch.cuda.is_available() else "cpu"
+
     def _load_realtime_service(self):
-        """按需加载实时情感分析服务。"""
+        """Load realtime sentiment service lazily and keep device mode in sync."""
         if self._realtime_service is None:
             from ..realtime.realtime_sentiment_service import RealtimeSentimentService
 
             self._realtime_service = RealtimeSentimentService(skip_db_init=True)
-            logger.debug("[情感服务] 实时情感分析服务加载成功")
+
+        self._realtime_service.configure_device_mode(self._device_mode)
+        logger.debug("[情感服务] 实时情感分析服务加载成功")
 
     def _load_embedding_model(self):
-        """按需加载本地缓存中的 embedding 模型。"""
+        """Load the embedding model using the configured device mode."""
         if self._embedding_load_failed:
             return
 
@@ -114,13 +140,11 @@ class SentimentService:
                 from sentence_transformers import SentenceTransformer
                 import torch
 
-                if torch.cuda.is_available():
-                    device = "cuda"
-                    gpu_name = torch.cuda.get_device_name(0)
-                    logger.debug(f"[情感服务] 检测到 GPU: {gpu_name}")
+                device = self._resolve_embedding_device()
+                if device == "cuda":
+                    logger.debug(f"[情感服务] 检测到 GPU: {torch.cuda.get_device_name(0)}")
                 else:
-                    device = "cpu"
-                    logger.debug("[情感服务] 未检测到 GPU，使用 CPU 模式")
+                    logger.debug("[情感服务] 使用 CPU 模式加载 embedding 模型")
 
                 model_name = "shibing624/text2vec-base-chinese"
                 old_hf_hub_offline = os.environ.get("HF_HUB_OFFLINE")
@@ -139,6 +163,7 @@ class SentimentService:
                             "torch_dtype": torch.float32,
                         },
                     )
+                    self._embedding_device = device
                 finally:
                     if old_hf_hub_offline is None:
                         os.environ.pop("HF_HUB_OFFLINE", None)
@@ -150,20 +175,19 @@ class SentimentService:
                     else:
                         os.environ["TRANSFORMERS_OFFLINE"] = old_transformers_offline
 
-                logger.info(f"[情感服务] 本地缓存向量模型加载成功: {model_name} (设备: {device})")
+                logger.info(
+                    f"[情感服务] 本地缓存向量模型加载成功: {model_name} (设备: {self._embedding_device})"
+                )
             except ImportError:
                 logger.warning("[情感服务] sentence-transformers 未安装")
-                logger.debug("请运行: pip install sentence-transformers")
                 self._embedding_load_failed = True
-            except Exception as e:
-                logger.error(f"[情感服务] 向量模型加载失败: {e}")
+            except Exception as exc:
+                logger.error(f"[情感服务] 向量模型加载失败: {exc}")
                 logger.debug("[情感服务] 将使用零向量替代，不影响核心分析流程")
                 self._embedding_load_failed = True
 
-    # ========== 情感分析 ==========
-
     def analyze_sentiment(self, text) -> Dict[str, Any]:
-        """分析单条文本的情感。"""
+        """Analyze one text and produce sentiment plus embedding."""
         if isinstance(text, bytes):
             try:
                 text = text.decode("utf-8", errors="replace")
@@ -183,14 +207,13 @@ class SentimentService:
             self._load_realtime_service()
             rt_result = self._realtime_service.analyze(text)
             embedding = self._get_embedding(text)
-
             return {
                 "polarity": rt_result["polarity"],
                 "intensity": round(rt_result["intensity"], 4),
                 "embedding": embedding,
             }
-        except Exception as e:
-            logger.error(f"[情感服务] 分析失败: {e}, 文本: '{text[:50]}...'")
+        except Exception as exc:
+            logger.error(f"[情感服务] 分析失败: {exc}, 文本: '{text[:50]}...'")
             return {
                 "polarity": 0,
                 "intensity": 0.0,
@@ -198,7 +221,7 @@ class SentimentService:
             }
 
     def analyze_batch(self, texts: List[str]) -> List[Dict[str, Any]]:
-        """批量分析多条文本。"""
+        """Analyze a batch of texts."""
         if not texts:
             return []
 
@@ -218,7 +241,7 @@ class SentimentService:
         embeddings = self._get_embeddings_batch(safe_texts)
 
         results: List[Dict[str, Any]] = []
-        for i, text in enumerate(safe_texts):
+        for index, text in enumerate(safe_texts):
             if not text or not text.strip():
                 results.append({
                     "polarity": 0,
@@ -227,20 +250,18 @@ class SentimentService:
                 })
                 continue
 
-            sr = sentiment_results[i] if i < len(sentiment_results) else {}
+            result = sentiment_results[index] if index < len(sentiment_results) else {}
             results.append({
-                "polarity": sr.get("polarity", 0),
-                "intensity": round(sr.get("intensity", 0.0), 4),
-                "embedding": embeddings[i] if i < len(embeddings) else [0.0] * 384,
+                "polarity": result.get("polarity", 0),
+                "intensity": round(result.get("intensity", 0.0), 4),
+                "embedding": embeddings[index] if index < len(embeddings) else [0.0] * 384,
             })
 
         return results
 
-    # ========== 向量生成 ==========
-
     @_safe_disable_dynamo
     def _get_embedding(self, text: str) -> List[float]:
-        """生成单条文本的 384 维 embedding。"""
+        """Encode one text to a 384-d embedding."""
         if text in self._embedding_cache:
             return self._embedding_cache[text]
 
@@ -268,13 +289,13 @@ class SentimentService:
 
             self._embedding_cache[text] = embedding_list
             return embedding_list
-        except Exception as e:
-            logger.error(f"[情感服务] 向量生成失败: {e}")
+        except Exception as exc:
+            logger.error(f"[情感服务] 向量生成失败: {exc}")
             return [0.0] * 384
 
     @_safe_disable_dynamo
     def _get_embeddings_batch(self, texts: List[str], batch_size: int = 64) -> List[List[float]]:
-        """批量生成 embedding，优先复用内存缓存。"""
+        """Encode a batch of texts to 384-d embeddings."""
         if not texts:
             return []
 
@@ -282,22 +303,21 @@ class SentimentService:
         uncached_indices: List[int] = []
         uncached_texts: List[str] = []
 
-        for i, text in enumerate(texts):
+        for index, text in enumerate(texts):
             if not text or not text.strip():
-                results[i] = [0.0] * 384
+                results[index] = [0.0] * 384
             elif text in self._embedding_cache:
-                results[i] = self._embedding_cache[text]
+                results[index] = self._embedding_cache[text]
             else:
-                uncached_indices.append(i)
+                uncached_indices.append(index)
                 uncached_texts.append(text)
 
         if uncached_texts:
             try:
                 self._load_embedding_model()
-
                 if self._embedding_model is None:
-                    for idx in uncached_indices:
-                        results[idx] = [0.0] * 384
+                    for index in uncached_indices:
+                        results[index] = [0.0] * 384
                 else:
                     with self._lock:
                         embeddings = self._embedding_model.encode(
@@ -307,28 +327,26 @@ class SentimentService:
                             batch_size=batch_size,
                         )
 
-                    for i, idx in enumerate(uncached_indices):
-                        emb_list = embeddings[i].tolist()
-                        if len(emb_list) > 384:
-                            emb_list = emb_list[:384]
-                        elif len(emb_list) < 384:
-                            emb_list = emb_list + ([0.0] * (384 - len(emb_list)))
+                    for local_index, original_index in enumerate(uncached_indices):
+                        embedding_list = embeddings[local_index].tolist()
+                        if len(embedding_list) > 384:
+                            embedding_list = embedding_list[:384]
+                        elif len(embedding_list) < 384:
+                            embedding_list = embedding_list + ([0.0] * (384 - len(embedding_list)))
 
-                        results[idx] = emb_list
+                        results[original_index] = embedding_list
 
                         if len(self._embedding_cache) >= 10000:
                             oldest_key = next(iter(self._embedding_cache))
                             del self._embedding_cache[oldest_key]
-                        self._embedding_cache[uncached_texts[i]] = emb_list
-            except Exception as e:
-                logger.error(f"[情感服务] 批量向量生成失败: {e}")
-                for idx in uncached_indices:
-                    if results[idx] is None:
-                        results[idx] = [0.0] * 384
+                        self._embedding_cache[uncached_texts[local_index]] = embedding_list
+            except Exception as exc:
+                logger.error(f"[情感服务] 批量向量生成失败: {exc}")
+                for index in uncached_indices:
+                    if results[index] is None:
+                        results[index] = [0.0] * 384
 
-        return [embedding if embedding is not None else [0.0] * 384 for embedding in results]
-
-    # ========== 缓存操作 ==========
+        return [item if item is not None else [0.0] * 384 for item in results]
 
     def cache_sentiment_result(
         self,
@@ -338,10 +356,9 @@ class SentimentService:
         intensity: float,
         embedding: List[float],
     ):
-        """缓存单条情感分析结果。"""
+        """Cache one sentiment result."""
         try:
             embedding_bytes = pickle.dumps(embedding)
-
             db = get_db()
             db.execute(
                 """
@@ -358,11 +375,11 @@ class SentimentService:
                 ),
             )
             db.commit()
-        except Exception as e:
-            logger.error(f"[情感服务] 缓存写入失败 (message_id={message_id}): {e}")
+        except Exception as exc:
+            logger.error(f"[情感服务] 缓存写入失败 (message_id={message_id}): {exc}")
 
     def get_sentiment_from_cache(self, message_id: int) -> Optional[Dict[str, Any]]:
-        """从缓存读取情感分析结果。"""
+        """Read one sentiment result from cache."""
         try:
             db = get_db()
             cursor = db.execute(
@@ -373,7 +390,6 @@ class SentimentService:
                 """,
                 (message_id,),
             )
-
             row = cursor.fetchone()
             if not row:
                 return None
@@ -392,23 +408,22 @@ class SentimentService:
                 "intensity": row[1],
                 "embedding": embedding,
             }
-        except Exception as e:
-            logger.error(f"[情感服务] 缓存读取失败 (message_id={message_id}): {e}")
+        except Exception as exc:
+            logger.error(f"[情感服务] 缓存读取失败 (message_id={message_id}): {exc}")
             return None
 
     def batch_get_sentiment_from_cache(self, message_ids: List[int]) -> Dict[int, Dict[str, Any]]:
-        """批量读取情感分析缓存。"""
+        """Read many sentiment results from cache with WHERE IN batching."""
         if not message_ids:
             return {}
 
         results: Dict[int, Dict[str, Any]] = {}
-
         try:
             db = get_db()
             batch_size = 500
 
-            for i in range(0, len(message_ids), batch_size):
-                batch_ids = message_ids[i:i + batch_size]
+            for start in range(0, len(message_ids), batch_size):
+                batch_ids = message_ids[start:start + batch_size]
                 placeholders = ",".join("?" * len(batch_ids))
                 cursor = db.execute(
                     f"""
@@ -434,13 +449,13 @@ class SentimentService:
                         "intensity": row[2],
                         "embedding": embedding,
                     }
-        except Exception as e:
-            logger.error(f"[情感服务] 批量缓存读取失败: {e}")
+        except Exception as exc:
+            logger.error(f"[情感服务] 批量缓存读取失败: {exc}")
 
         return results
 
     def batch_cache_sentiments(self, results: List[Dict[str, Any]]):
-        """批量写入情感分析缓存。"""
+        """Write many sentiment results into cache."""
         if not results:
             return
 
@@ -448,7 +463,6 @@ class SentimentService:
             db = get_db()
             now = int(time.time())
             batch_data = []
-
             for result in results:
                 batch_data.append(
                     (
@@ -470,13 +484,11 @@ class SentimentService:
             )
             db.commit()
             logger.info(f"[情感服务] 批量缓存写入成功: {len(results)} 条")
-        except Exception as e:
-            logger.error(f"[情感服务] 批量缓存写入失败: {e}")
-
-    # ========== 缓存统计 ==========
+        except Exception as exc:
+            logger.error(f"[情感服务] 批量缓存写入失败: {exc}")
 
     def get_cache_stats(self) -> Dict[str, Any]:
-        """获取缓存统计信息。"""
+        """Return sentiment cache statistics."""
         try:
             db = get_db()
             cursor = db.execute(
@@ -489,7 +501,6 @@ class SentimentService:
                 FROM sentiment_cache
                 """
             )
-
             row = cursor.fetchone()
             return {
                 "total_cached": row[0],
@@ -498,8 +509,8 @@ class SentimentService:
                 "negative_count": row[2],
                 "neutral_count": row[3],
             }
-        except Exception as e:
-            logger.error(f"[情感服务] 缓存统计失败: {e}")
+        except Exception as exc:
+            logger.error(f"[情感服务] 缓存统计失败: {exc}")
             return {
                 "total_cached": 0,
                 "memory_cache_size": 0,
@@ -509,6 +520,6 @@ class SentimentService:
             }
 
     def clear_memory_cache(self):
-        """清空内存缓存。"""
+        """Clear in-memory embedding cache."""
         self._embedding_cache.clear()
         logger.debug("[情感服务] 内存缓存已清空")

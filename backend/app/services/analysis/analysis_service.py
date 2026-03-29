@@ -334,7 +334,16 @@ class AnalysisService:
         Returns:
             特征提取结果
         """
+        from .feature_extraction_config import FeatureExtractionConfig
+
         service = self._get_feature_service()
+        if config:
+            base_config = FeatureExtractionConfig.from_settings()
+            service.config = FeatureExtractionConfig(**{
+                **base_config.__dict__,
+                **config,
+            })
+            service.config.validate()
         return service.extract_features(conversation_id)
 
     def get_feature_extraction_progress(self, task_id: str) -> Dict[str, Any]:

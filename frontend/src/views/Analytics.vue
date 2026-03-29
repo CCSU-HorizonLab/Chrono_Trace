@@ -459,7 +459,7 @@
 <script lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import * as echarts from 'echarts'
-import { bridgeReady, api } from '@/api/bridge'
+import { bridgeReady, api, type AnalysisDeviceMode } from '@/api/bridge'
 import { analyzeAffinity, getAffinityScores, getAffinityProgress, getRelationshipContext, type AffinityAnalysisResult } from '@/api/affinity'
 
 import FiltersBar from '@/components/analytics/FiltersBar.vue'
@@ -584,6 +584,7 @@ export default {
         const isGlobalAnalyzing = ref(false)
         const globalProgressPercent = ref(0)
         const globalProgressStep = ref('')
+        const analysisDeviceMode = ref<AnalysisDeviceMode>('auto')
         const gpuMode = ref<'gpu' | 'cpu'>('cpu')
 
         const hasFeatures = ref(false)
@@ -698,6 +699,56 @@ export default {
             dates.to = to.toISOString().slice(0, 10)
         }
 
+        function applyAnalysisDeviceMode(mode: AnalysisDeviceMode) {
+            analysisDeviceMode.value = mode
+            gpuMode.value = mode === 'gpu' ? 'gpu' : 'cpu'
+        }
+
+        function hasPersistedAnalysisDeviceMode(mode: unknown): mode is AnalysisDeviceMode {
+            return mode === 'gpu' || mode === 'cpu'
+        }
+
+        function hasExistingFeatureData(
+            responseTimes: any,
+            initiative: any,
+            wordCounts: any,
+            activity: any
+        ) {
+            const hasResponseTimes = Boolean(responseTimes?.success && responseTimes.data && responseTimes.data.count > 0)
+            const hasInitiative = Boolean(
+                initiative?.success &&
+                initiative.data &&
+                Number(initiative.data.total_sessions || 0) > 0
+            )
+            const overallWordCounts = wordCounts?.data?.overall
+            const hasWordCounts = Boolean(
+                wordCounts?.success &&
+                overallWordCounts &&
+                (
+                    Number(overallWordCounts.user_char_count || 0) > 0 ||
+                    Number(overallWordCounts.other_char_count || 0) > 0
+                )
+            )
+            const hasActivity = Boolean(
+                activity?.success &&
+                activity.data &&
+                Array.isArray(activity.data.heatmap) &&
+                activity.data.heatmap.length > 0
+            )
+
+            return hasResponseTimes || hasInitiative || hasWordCounts || hasActivity
+        }
+
+        async function loadAnalysisDeviceMode() {
+            try {
+                const settings = await api.get_settings()
+                const nextMode = settings?.analysis_device_mode
+                applyAnalysisDeviceMode(nextMode === 'gpu' || nextMode === 'cpu' || nextMode === 'auto' ? nextMode : 'auto')
+            } catch (e) {
+                applyAnalysisDeviceMode('auto')
+            }
+        }
+
         function refreshSummaryStats() {
             const timeseries = analysis.timeseries || []
             const totalSentiment = timeseries.reduce((sum: number, p: any) => sum + (p.score || 0), 0)
@@ -804,8 +855,13 @@ export default {
             if (!selectedConversationId.value) return
             hasFeatures.value = false
             try {
-                const res = await api.get_response_times(selectedConversationId.value)
-                if (res.success && res.data && res.data.count > 0) {
+                const [rtData, iniData, wcData, activityData] = await Promise.all([
+                    api.get_response_times(selectedConversationId.value),
+                    api.get_initiative_stats(selectedConversationId.value),
+                    api.get_word_counts(selectedConversationId.value, false),
+                    api.get_activity_calendar(selectedConversationId.value)
+                ])
+                if (hasExistingFeatureData(rtData, iniData, wcData, activityData)) {
                     hasFeatures.value = true
                     await Promise.all([
                         loadFeatureData(),
@@ -902,8 +958,9 @@ export default {
                 return
             }
 
-            gpuMode.value = 'cpu'
-            try {
+            if (!hasPersistedAnalysisDeviceMode(analysisDeviceMode.value)) {
+                applyAnalysisDeviceMode('cpu')
+                try {
                 const gpuStatus = await api.check_gpu_status()
                 if (gpuStatus.ok && gpuStatus.cuda_available) {
                     const memInfo = gpuStatus.gpu_memory_total_mb
@@ -914,19 +971,27 @@ export default {
                         message:
                             `检测到 GPU: ${gpuStatus.gpu_name}${memInfo}\n` +
                             `CUDA ${gpuStatus.cuda_version} | PyTorch ${gpuStatus.torch_version}\n\n` +
-                            '启用 GPU 加速后，分析速度预计可提升 5-10 倍。\n是否启用 GPU 加速？'
+                            '启用 GPU 加速后，分析速度预计可提升 5-10 倍。\n是否启用 GPU 加速？\n\n' +
+                            '💡 此选项可随时在「通用设置」页面修改。'
                     })
-                    gpuMode.value = useGpu ? 'gpu' : 'cpu'
+                    const nextMode: AnalysisDeviceMode = useGpu ? 'gpu' : 'cpu'
+                    await api.set_settings({ analysis_device_mode: nextMode })
+                    applyAnalysisDeviceMode(nextMode)
                 } else {
                     await showDialog({
                         title: 'CPU 模式',
                         message:
                             'GPU 加速不可用，将使用 CPU 模式进行分析。\n' +
-                            '如需启用 GPU，请安装支持 CUDA 的 PyTorch 版本。'
+                            '如需启用 GPU，请安装支持 CUDA 的 PyTorch 版本。\n\n' +
+                            '💡 此选项可随时在「通用设置」页面修改。'
                     })
+                    await api.set_settings({ analysis_device_mode: 'cpu' })
+                    applyAnalysisDeviceMode('cpu')
                 }
-            } catch (e) {
-                gpuMode.value = 'cpu'
+                } catch (e) {
+                    await api.set_settings({ analysis_device_mode: 'cpu' })
+                    applyAnalysisDeviceMode('cpu')
+                }
             }
             await startGlobalAnalysis(force)
         }
@@ -944,7 +1009,9 @@ export default {
                 // Stage 1: Feature Extraction
                 globalProgressStep.value = '正在提取客观互动特征...'
                 globalProgressPercent.value = 5
-                const extractRes = await api.extract_features(selectedConversationId.value)
+                const extractRes = await api.extract_features(selectedConversationId.value, {
+                    analysis_device_mode: analysisDeviceMode.value
+                })
                 if (extractRes.success || extractRes.ok) {
                     const taskId = (extractRes.data || extractRes).task_id
                     if ((extractRes.data || extractRes).status !== 'completed') {
@@ -1207,6 +1274,7 @@ export default {
 
         onMounted(async () => {
             if (!dates.from || !dates.to) setDefaultDates(30)
+            await loadAnalysisDeviceMode()
             await loadConversations()
             window.addEventListener('resize', handleResize)
         })

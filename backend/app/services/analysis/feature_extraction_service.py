@@ -7,6 +7,7 @@ from typing import Dict, List, Any, Optional, Tuple
 
 from .feature_extraction_config import FeatureExtractionConfig
 from .preprocessing_service import PreprocessingService
+from .sentiment_service import SentimentService
 from ...db.connection import get_db, batch_insert, execute_transaction
 
 
@@ -38,6 +39,10 @@ class FeatureExtractionService:
         # 任务状态管理（用于进度查询）
         self._task_status: Dict[str, Dict] = {}
 
+    def _apply_analysis_device_mode(self) -> None:
+        """Align sentiment-dependent helpers with the configured device mode."""
+        SentimentService().configure_device_mode(self.config.analysis_device_mode)
+
     # =========================================================================
     # 主入口
     # =========================================================================
@@ -53,6 +58,8 @@ class FeatureExtractionService:
             提取结果字典，包含sessions, response_times, initiative_stats, word_counts
         """
         #logger.info(f"开始特征提取: conversation_id={conversation_id}")
+
+        self._apply_analysis_device_mode()
 
         task_id = f"extract_{conversation_id}_{int(time.time())}"
         self._task_status[task_id] = {

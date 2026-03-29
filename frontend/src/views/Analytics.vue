@@ -1042,19 +1042,9 @@ export default {
                 if (api.cancel_analysis) {
                     await api.cancel_analysis()
                 }
-                if (activeTimer.value) {
-                    clearInterval(activeTimer.value)
-                    activeTimer.value = null
-                }
-                if (cancelCurrentAnalysis) {
-                    cancelCurrentAnalysis()
-                    cancelCurrentAnalysis = null
-                }
-                isGlobalAnalyzing.value = false
-                globalProgressStep.value = '已停止分析'
+                // Do not instantly change UI. Let the polling interval catch the cancelled status.
             } catch (e) {
                 console.error("取消分析失败", e)
-            } finally {
                 isStopping.value = false
             }
         }
@@ -1098,7 +1088,7 @@ export default {
                                         globalProgressPercent.value = 5 + (d.progress || 0) * 0.45
                                         globalProgressStep.value = `[特征分析] ${d.message || d.current_step || '分析中...'}`
                                         if (d.status === 'completed') { clearInterval(activeTimer.value); resolve() }
-                                        else if (d.status === 'failed') { clearInterval(activeTimer.value); resolve() } // Don't block affinity if features fail
+                                        else if (d.status === 'failed' || d.status === 'cancelled') { clearInterval(activeTimer.value); reject(new Error(d.error || '分析已取消')) } // Don't block affinity if features fail
                                     }
                                 } catch (e) { clearInterval(activeTimer.value); resolve() }
                             }, 500)
@@ -1155,8 +1145,8 @@ export default {
                                         loadActivityCalendar(activityCalendar.value.year)
                                     ])
                                     resolve()
-                                } else if (prog.status === 'failed') {
-                                    clearInterval(activeTimer.value); reject(new Error(prog.error))
+                                } else if (prog.status === 'failed' || prog.status === 'cancelled') {
+                                    clearInterval(activeTimer.value); reject(new Error(prog.error || '分析已取消'))
                                 }
                             }
                         } catch (e) { }
@@ -1175,9 +1165,8 @@ export default {
             } finally {
                 cancelCurrentAnalysis = null
                 analysisLaunchPending.value = false
-                if (!isCancelled) {
-                    setTimeout(() => { isGlobalAnalyzing.value = false }, 2000)
-                }
+                isStopping.value = false
+                setTimeout(() => { isGlobalAnalyzing.value = false }, 2000)
             }
         }
 

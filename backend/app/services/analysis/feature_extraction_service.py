@@ -122,8 +122,12 @@ class FeatureExtractionService:
             }
 
         except Exception as e:
-            logger.error(f"特征提取失败: {e}", exc_info=True)
-            self._update_task_status(task_id, -1, "failed", f"Error: {str(e)}")
+            if "取消" in str(e):
+                logger.info(f"[特征提取] 分析被用户取消 (conversation_id={conversation_id})")
+                self._update_task_status(task_id, -1, "cancelled", "分析已被用户取消")
+            else:
+                logger.error(f"特征提取失败: {e}", exc_info=True)
+                self._update_task_status(task_id, -1, "failed", f"Error: {str(e)}")
             raise
 
     def get_task_progress(self, task_id: str) -> Dict[str, Any]:

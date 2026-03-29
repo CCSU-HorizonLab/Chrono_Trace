@@ -219,9 +219,15 @@ class AffinityAnalysisService:
             result.error = "分析已被用户停止"
             logger.info(f"[好感度分析] 分析被中止 (会话 {conversation_id})")
         except Exception as e:
-            result.status = "failed"
-            result.error = str(e)
-            logger.error(f"好感度分析失败: {e}", exc_info=True)
+            if "取消" in str(e):
+                result.status = "cancelled"
+                result.current_step = "已停止"
+                result.error = "分析已被用户停止"
+                logger.info(f"[好感度分析] 分析被中止 (会话 {conversation_id})")
+            else:
+                result.status = "failed"
+                result.error = str(e)
+                logger.error(f"好感度分析失败: {e}", exc_info=True)
         
         # 添加调试日志
         logger.info(f"=== 好感度分析结果 ===")

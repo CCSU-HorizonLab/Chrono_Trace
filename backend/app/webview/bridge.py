@@ -1518,13 +1518,20 @@ class Bridge:
                 }
             }
         except Exception as e:
-            import traceback
-            logger.error(f"[Bridge] 特征提取失败: {e}")
-            traceback.print_exc()
-            return {
-                "success": False,
-                "error": str(e)
-            }
+            if "取消" in str(e):
+                logger.info("[Bridge] 特征提取被用户取消")
+                return {
+                    "success": False,
+                    "error": "分析已被用户取消"
+                }
+            else:
+                import traceback
+                logger.error(f"[Bridge] 特征提取失败: {e}")
+                traceback.print_exc()
+                return {
+                    "success": False,
+                    "error": str(e)
+                }
 
     def get_extraction_progress(self, task_id: str) -> dict:
         """

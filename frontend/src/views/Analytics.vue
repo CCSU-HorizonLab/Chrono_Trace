@@ -36,8 +36,11 @@
       <div class="header-actions-group">
         <CtButton variant="ghost" @click="showContextForm = true" :disabled="isGlobalAnalyzing">关系信息</CtButton>
         <CtButton variant="ghost" @click="showKeywordsDialog = true" :disabled="isGlobalAnalyzing">配置喜好</CtButton>
-        <CtButton variant="primary" @click="handleStartGlobalAnalysis(hasCachedAffinityAnalysis)" :loading="isGlobalAnalyzing" class="btn-full-analysis">
-          {{ isGlobalAnalyzing ? '分析中...' : (hasCachedAffinityAnalysis ? '重新全面分析' : '开始全面分析') }}
+        <CtButton variant="primary" @click="handleStartGlobalAnalysis(hasCachedAffinityAnalysis)" :loading="isGlobalAnalyzing && !isStopping" class="btn-full-analysis">
+          {{ isGlobalAnalyzing ? "分析中..." : (hasCachedAffinityAnalysis ? "重新全面分析" : "开始全面分析") }}
+        </CtButton>
+        <CtButton v-if="isGlobalAnalyzing" variant="danger" @click="handleStopAnalysis" :loading="isStopping" class="btn-stop-analysis" style="margin-left: 8px;">
+          停止
         </CtButton>
       </div>
     </div>
@@ -582,6 +585,8 @@ export default {
         const pendingAnalysisForce = ref(false)
         const analysisLaunchPending = ref(false)
         const isGlobalAnalyzing = ref(false)
+        const isStopping = ref(false)
+        const activeTimer = ref<any>(null)
         const globalProgressPercent = ref(0)
         const globalProgressStep = ref('')
         const analysisDeviceMode = ref<AnalysisDeviceMode>('auto')
@@ -595,6 +600,8 @@ export default {
         const wordCountsStats = ref({ userCharCount: 0, otherCharCount: 0, charRatio: 0, interpretation: '' })
         const activityCalendar = ref<ActivityCalendarData>({ year: new Date().getFullYear(), years: [], entries: [], summary: { active_days: 0, total_messages: 0, current_streak: 0, longest_streak: 0, peak_day: null, global_first_session_start_time: null, global_peak_session: null }, max_activity_score: 0 })
         
+        let cancelCurrentAnalysis: (() => void) | null = null
+
         const responseTimeBucketGroups: Record<string, string[]> = {
             '<10m': ['<1m', '1m-10m'],
             '10m-1h': ['10m-30m', '30m-1h'],
@@ -977,6 +984,33 @@ export default {
                     const nextMode: AnalysisDeviceMode = useGpu ? 'gpu' : 'cpu'
                     await api.set_settings({ analysis_device_mode: nextMode })
                     applyAnalysisDeviceMode(nextMode)
+                } else if (gpuStatus.ok && gpuStatus.has_nvidia_gpu) {
+                    const doInstall = await showConfirm({
+                        title: '检测到 GPU 硬件',
+                        message:
+                            '检测到您的计算机配备了 NVIDIA GPU，但当前未安装支持 CUDA 的环境依赖，导致无法启用 GPU 加速。\n\n' +
+                            '是否现在进行【一键配置】？这将自动下载和安装所需的 PyTorch 环境（通常需要几分钟，会在后台执行）。'
+                    })
+                    if (doInstall) {
+                        try {
+                            const installRes = await api.start_gpu_install()
+                            if (installRes.ok) {
+                                await showDialog({
+                                    title: '开始配置',
+                                    message: 'GPU 环境配置已在后台启动，您可以随时前往「通用设置」页面查看实时安装进度。\n本次分析将暂时使用 CPU 模式进行，安装完成后下次可使用 GPU 加速。'
+                                })
+                            } else {
+                                await showDialog({ title: '安装启动失败', message: installRes.error || '未知错误' })
+                            }
+                        } catch(e) {}
+                    } else {
+                        await showDialog({
+                            title: 'CPU 模式',
+                            message: '将使用 CPU 模式进行分析。'
+                        })
+                    }
+                    await api.set_settings({ analysis_device_mode: 'cpu' })
+                    applyAnalysisDeviceMode('cpu')
                 } else {
                     await showDialog({
                         title: 'CPU 模式',
@@ -999,7 +1033,34 @@ export default {
         const handleContextSaved = () => handleStartGlobalAnalysis(pendingAnalysisForce.value)
         const handleKeywordsUpdated = async () => { if (selectedConversationId.value) await startGlobalAnalysis(true) }
 
+
+        async function handleStopAnalysis() {
+            if (!isGlobalAnalyzing.value) return
+            isStopping.value = true
+            try {
+                await bridgeReady()
+                if (api.cancel_analysis) {
+                    await api.cancel_analysis()
+                }
+                if (activeTimer.value) {
+                    clearInterval(activeTimer.value)
+                    activeTimer.value = null
+                }
+                if (cancelCurrentAnalysis) {
+                    cancelCurrentAnalysis()
+                    cancelCurrentAnalysis = null
+                }
+                isGlobalAnalyzing.value = false
+                globalProgressStep.value = '已停止分析'
+            } catch (e) {
+                console.error("取消分析失败", e)
+            } finally {
+                isStopping.value = false
+            }
+        }
+
         async function startGlobalAnalysis(force: boolean) {
+            let isCancelled = false
             if (!selectedConversationId.value) return
             isGlobalAnalyzing.value = true
             globalProgressPercent.value = 0
@@ -1012,21 +1073,34 @@ export default {
                 const extractRes = await api.extract_features(selectedConversationId.value, {
                     analysis_device_mode: analysisDeviceMode.value
                 })
+                
+                if (!isGlobalAnalyzing.value) {
+                    throw new Error('分析已取消')
+                }
+                
+                if (!extractRes.success && !extractRes.ok) {
+                    if (extractRes.error && String(extractRes.error).includes('取消')) {
+                        throw new Error('分析已取消')
+                    }
+                    throw new Error(extractRes.error || '特征提取失败')
+                }
+
                 if (extractRes.success || extractRes.ok) {
                     const taskId = (extractRes.data || extractRes).task_id
                     if ((extractRes.data || extractRes).status !== 'completed') {
                         await new Promise<void>((resolve, reject) => {
-                            const timer = setInterval(async () => {
+                            cancelCurrentAnalysis = () => reject(new Error('分析已取消'))
+                            activeTimer.value = setInterval(async () => {
                                 try {
                                     const prog = await api.get_extraction_progress(taskId)
                                     const d = prog.data || prog
                                     if (prog.success || prog.ok) {
                                         globalProgressPercent.value = 5 + (d.progress || 0) * 0.45
                                         globalProgressStep.value = `[特征分析] ${d.message || d.current_step || '分析中...'}`
-                                        if (d.status === 'completed') { clearInterval(timer); resolve() }
-                                        else if (d.status === 'failed') { clearInterval(timer); resolve() } // Don't block affinity if features fail
+                                        if (d.status === 'completed') { clearInterval(activeTimer.value); resolve() }
+                                        else if (d.status === 'failed') { clearInterval(activeTimer.value); resolve() } // Don't block affinity if features fail
                                     }
-                                } catch (e) { clearInterval(timer); resolve() }
+                                } catch (e) { clearInterval(activeTimer.value); resolve() }
                             }, 500)
                         })
                     }
@@ -1038,19 +1112,29 @@ export default {
                     ])
                 }
 
+                if (!isGlobalAnalyzing.value) {
+                    throw new Error('分析已取消')
+                }
+
                 // Stage 2: Affinity Model
                 globalProgressPercent.value = 50
                 globalProgressStep.value = '正在进行深度关系推理...'
                 const affinityTaskId = await analyzeAffinity(selectedConversationId.value, force)
+                
+                if (!isGlobalAnalyzing.value) {
+                    throw new Error('分析已取消')
+                }
+                
                 await new Promise<void>((resolve, reject) => {
-                    const timer = setInterval(async () => {
+                    cancelCurrentAnalysis = () => reject(new Error('分析已取消'))
+                    activeTimer.value = setInterval(async () => {
                         try {
                             const prog = await getAffinityProgress(affinityTaskId)
                             if (prog.ok) {
                                 globalProgressPercent.value = 50 + prog.progress_percent * 0.5
                                 globalProgressStep.value = `[深度推理] ${prog.current_step || '分析中...'}`
                                 if (prog.status === 'completed') {
-                                    clearInterval(timer)
+                                    clearInterval(activeTimer.value)
                                     if (prog.result) {
                                         analysisResult.value = prog.result as AffinityAnalysisResult
                                     }
@@ -1072,7 +1156,7 @@ export default {
                                     ])
                                     resolve()
                                 } else if (prog.status === 'failed') {
-                                    clearInterval(timer); reject(new Error(prog.error))
+                                    clearInterval(activeTimer.value); reject(new Error(prog.error))
                                 }
                             }
                         } catch (e) { }
@@ -1082,10 +1166,18 @@ export default {
                 globalProgressPercent.value = 100
                 globalProgressStep.value = '全面分析完成'
             } catch (e: any) {
-                globalProgressStep.value = '分析失败: ' + String(e)
+                isCancelled = String(e).includes('已取消')
+                if (isCancelled) {
+                    globalProgressStep.value = '分析已停止'
+                } else {
+                    globalProgressStep.value = '分析失败: ' + String(e)
+                }
             } finally {
+                cancelCurrentAnalysis = null
                 analysisLaunchPending.value = false
-                setTimeout(() => { isGlobalAnalyzing.value = false }, 2000)
+                if (!isCancelled) {
+                    setTimeout(() => { isGlobalAnalyzing.value = false }, 2000)
+                }
             }
         }
 
@@ -1287,7 +1379,7 @@ export default {
         return {
             currentTab, conversations, selectedConversationId, dates, loading, loadingSessions, error, analysis, subject, sessions,
             personaProfile, loadingPersonaProfile, personaProfileMeta,
-            analysisResult, displayScore, showKeywordsDialog, showContextForm, pendingAnalysisForce, isGlobalAnalyzing, globalProgressPercent, globalProgressStep, gpuMode,
+            analysisResult, displayScore, showKeywordsDialog, showContextForm, pendingAnalysisForce, isGlobalAnalyzing, isStopping, activeTimer, handleStopAnalysis, isStopping, activeTimer, handleStopAnalysis, globalProgressPercent, globalProgressStep, gpuMode,
             hasFeatures, hasCachedAffinityAnalysis, featureStats, responseTimeStats, initiativeStats, wordCountsStats, activityCalendar,
             responseTimeChart, activityCalendarChart, wordCountChart, stats, currentContactName, hasPreferenceKeywords, allDimensions,
             currentRangeLabel, hasContentAnalysis, circumference, strokeDashoffset, formatNumber, formatTime, getResponseTimeLabel, getMergedResponseTimeLabel, getResponseTimePercent, onConversationChange, onDatesChange, handleExport, handleStartGlobalAnalysis, handleContextSaved, handleKeywordsUpdated,

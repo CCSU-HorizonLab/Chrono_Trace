@@ -67,6 +67,8 @@ type PyWebViewApi = {
   get_floating_status: () => Promise<any>
   // 好感度分析进度
   check_gpu_status: () => Promise<any>
+  start_gpu_install: () => Promise<any>
+  get_gpu_install_progress: () => Promise<any>
   check_analysis_model_status: () => Promise<any>
   get_affinity_progress: (task_id: string) => Promise<any>
   // 会话线程归档与继承

@@ -156,12 +156,7 @@ class SentimentService:
                     self._embedding_model = SentenceTransformer(
                         model_name,
                         device=device,
-                        local_files_only=True,
-                        model_kwargs={
-                            "low_cpu_mem_usage": False,
-                            "use_safetensors": False,
-                            "torch_dtype": torch.float32,
-                        },
+                        # remove model_kwargs causing TypeError in SentenceTransformer
                     )
                     self._embedding_device = device
                 finally:

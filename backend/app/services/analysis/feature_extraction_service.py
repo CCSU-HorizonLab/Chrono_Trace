@@ -2,6 +2,8 @@
 import logging
 import statistics
 import time
+import threading
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Any, Optional, Tuple
 
@@ -47,7 +49,7 @@ class FeatureExtractionService:
     # 主入口
     # =========================================================================
 
-    def extract_features(self, conversation_id: int) -> Dict[str, Any]:
+    def extract_features(self, conversation_id: int, cancel_event: Optional[threading.Event] = None) -> Dict[str, Any]:
         """
         执行完整的特征提取流程
 
@@ -71,11 +73,13 @@ class FeatureExtractionService:
 
         try:
             # 0. 清理旧数据，防止重复插入
+            if cancel_event and cancel_event.is_set(): raise Exception("分析已被用户取消")
             self._update_task_status(task_id, 5, "Clearing old data")
             logger.info(f"[特征提取] 步骤 0/4: 清理旧数据...")
             self.delete_analysis_data(conversation_id)
 
             # 1. 会话切分
+            if cancel_event and cancel_event.is_set(): raise Exception("分析已被用户取消")
             self._update_task_status(task_id, 10, "Splitting sessions")
             logger.info(f"[特征提取] 步骤 1/4: 会话切分...")
             step_start = time.time()
@@ -83,6 +87,7 @@ class FeatureExtractionService:
             logger.info(f"[特征提取] 步骤 1/4: 会话切分完成 ({len(sessions)} 个会话, {time.time() - step_start:.1f}s)")
 
             # 2. 响应时间计算
+            if cancel_event and cancel_event.is_set(): raise Exception("分析已被用户取消")
             self._update_task_status(task_id, 40, "Calculating response times")
             logger.info(f"[特征提取] 步骤 2/4: 计算响应时间...")
             step_start = time.time()
@@ -90,6 +95,7 @@ class FeatureExtractionService:
             logger.info(f"[特征提取] 步骤 2/4: 响应时间计算完成 ({response_time_stats.get('count', 0)} 条有效记录, {time.time() - step_start:.1f}s)")
 
             # 3. 主动性统计
+            if cancel_event and cancel_event.is_set(): raise Exception("分析已被用户取消")
             self._update_task_status(task_id, 70, "Calculating initiative stats")
             logger.info(f"[特征提取] 步骤 3/4: 计算主动性统计...")
             step_start = time.time()
@@ -97,6 +103,7 @@ class FeatureExtractionService:
             logger.info(f"[特征提取] 步骤 3/4: 主动性统计完成 ({time.time() - step_start:.1f}s)")
 
             # 4. 字数统计
+            if cancel_event and cancel_event.is_set(): raise Exception("分析已被用户取消")
             self._update_task_status(task_id, 90, "Calculating word counts")
             logger.info(f"[特征提取] 步骤 4/4: 计算字数统计...")
             step_start = time.time()

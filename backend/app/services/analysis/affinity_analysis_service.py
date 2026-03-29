@@ -22,6 +22,7 @@
 import time
 import json
 import logging
+import threading
 from dataclasses import dataclass, asdict, field
 from typing import Optional, Dict, Any, List
 
@@ -36,6 +37,11 @@ from .affinity_debug_logger import affinity_debug_log
 
 # 配置日志
 logger = logging.getLogger(__name__)
+
+
+class AnalysisCancelled(Exception):
+    """分析被用户取消"""
+    pass
 
 
 @dataclass
@@ -109,7 +115,8 @@ class AffinityAnalysisService:
         self,
         conversation_id: int,
         force_reanalyze: bool = False,
-        config_overrides: Optional[Dict[str, Any]] = None
+        config_overrides: Optional[Dict[str, Any]] = None,
+        cancel_event: Optional[threading.Event] = None
     ) -> AffinityAnalysisResult:
         """
         主入口 - 触发完整分析流程
@@ -156,24 +163,28 @@ class AffinityAnalysisService:
             
             # 2. 加载配置
             result.current_step = "加载配置"
+            self._check_cancelled(cancel_event)
             result.progress_percent = 10
             logger.info(f"[好感度分析] 步骤 1/5: 加载配置...")
             config = self._load_config(conversation_id, config_overrides)
             
             # 3. 执行预处理
             result.current_step = "预处理数据"
+            self._check_cancelled(cancel_event)
             result.progress_percent = 20
             logger.info(f"[好感度分析] 步骤 2/5: 预处理数据 (这可能需要较长时间)...")
-            stats = self._preprocess_conversation(conversation_id, force_reanalyze)
+            stats = self._preprocess_conversation(conversation_id, force_reanalyze, cancel_event)
             logger.info(f"[好感度分析] 步骤 2/5: 预处理完成")
             
             # 4. 计算各维度
             result.current_step = "计算维度评分"
+            self._check_cancelled(cancel_event)
             result.progress_percent = 40
             logger.info(f"[好感度分析] 步骤 3/5: 计算四大维度评分...")
-            self._calculate_all_dimensions(result, conversation_id, stats, config)
+            self._calculate_all_dimensions(result, conversation_id, stats, config, cancel_event)
             
             # 5. 计算综合评分
+            self._check_cancelled(cancel_event)
             result.current_step = "计算综合评分"
             result.progress_percent = 80
             logger.info(f"[好感度分析] 步骤 4/5: 计算综合评分...")
@@ -186,6 +197,7 @@ class AffinityAnalysisService:
             
             # 完成
             result.status = "completed"
+            self._check_cancelled(cancel_event)
             result.progress_percent = 100
             result.current_step = "完成"
             result.analysis_timestamp = int(time.time())
@@ -201,6 +213,11 @@ class AffinityAnalysisService:
                 f"耗时 {result.analysis_duration_ms}ms (会话 {conversation_id})"
             )
             
+        except AnalysisCancelled:
+            result.status = "cancelled"
+            result.current_step = "已停止"
+            result.error = "分析已被用户停止"
+            logger.info(f"[好感度分析] 分析被中止 (会话 {conversation_id})")
         except Exception as e:
             result.status = "failed"
             result.error = str(e)
@@ -289,19 +306,27 @@ class AffinityAnalysisService:
     def _preprocess_conversation(
         self,
         conversation_id: int,
-        force_reprocess: bool = False
+        force_reprocess: bool = False,
+        cancel_event: Optional[threading.Event] = None
     ) -> PreprocessedStatistics:
         """执行预处理"""
         return self.preprocessing.orchestrate_preprocessing(
-            conversation_id, force_reprocess
+            conversation_id, force_reprocess, cancel_event
         )
     
+
+    def _check_cancelled(self, cancel_event: Optional[threading.Event]):
+        """检查取消信号"""
+        if cancel_event and cancel_event.is_set():
+            raise AnalysisCancelled("分析已被用户取消")
+
     def _calculate_all_dimensions(
         self,
         result: AffinityAnalysisResult,
         conversation_id: int,
         stats: PreprocessedStatistics,
-        config: AffinityConfig
+        config: AffinityConfig,
+        cancel_event: Optional[threading.Event] = None
     ):
         """计算所有维度评分"""
         
@@ -310,6 +335,7 @@ class AffinityAnalysisService:
         logger.info(f"使用动态权重: {weights}")
         
         # 1. 情感共振率
+        self._check_cancelled(cancel_event)
         result.progress_percent = 45
         result.progress_percent = 45
         result.current_step = "计算维度评分: 情感共振率"
@@ -334,6 +360,7 @@ class AffinityAnalysisService:
         logger.info(f"情感共振率计算完成: {resonance_result['overall_score']:.1f}分 (权重: {weights['emotional_resonance']*100}%)")
         
         # 2. 聊天积极度
+        self._check_cancelled(cancel_event)
         result.progress_percent = 55
         result.progress_percent = 55
         result.current_step = "计算维度评分: 聊天积极度"
@@ -361,6 +388,7 @@ class AffinityAnalysisService:
         logger.info(f"聊天积极度计算完成: {positivity_result.overall_score:.1f}分 (权重: {weights['chat_positivity']*100}%)")
         
         # 3. 态度倾向
+        self._check_cancelled(cancel_event)
         result.progress_percent = 65
         result.progress_percent = 65
         result.current_step = "计算维度评分: 态度倾向"
@@ -383,6 +411,7 @@ class AffinityAnalysisService:
         logger.info(f"态度倾向计算完成: {attitude_result['overall_score']:.1f}分 (权重: {weights['attitude_tendency']*100}%)")
         
         # 4. 喜好兼容度
+        self._check_cancelled(cancel_event)
         result.progress_percent = 75
         result.progress_percent = 75
         result.current_step = "计算维度评分: 喜好兼容度"

@@ -3,6 +3,7 @@
 import json
 import logging
 import time
+import threading
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Optional
 
@@ -80,6 +81,7 @@ class PreprocessingOrchestrator:
         self,
         conversation_id: int,
         force_reprocess: bool = False,
+        cancel_event: Optional[threading.Event] = None
     ) -> PreprocessedStatistics:
         start_time = time.time()
         self._sync_analysis_device_mode()
@@ -91,7 +93,7 @@ class PreprocessingOrchestrator:
                 logger.info(f"[预处理] 命中缓存，会话 {conversation_id}")
                 return cached
 
-        stats = self._collect_all_statistics(conversation_id)
+        stats = self._collect_all_statistics(conversation_id, cancel_event)
         stats.preprocessing_duration_ms = int((time.time() - start_time) * 1000)
         self._save_preprocessing_results(conversation_id, stats)
         logger.info(
@@ -99,7 +101,7 @@ class PreprocessingOrchestrator:
         )
         return stats
 
-    def _collect_all_statistics(self, conversation_id: int) -> PreprocessedStatistics:
+    def _collect_all_statistics(self, conversation_id: int, cancel_event: Optional[threading.Event] = None) -> PreprocessedStatistics:
         stats = PreprocessedStatistics(
             conversation_id=conversation_id,
             preprocessing_timestamp=int(time.time()),
@@ -112,7 +114,7 @@ class PreprocessingOrchestrator:
             return stats
 
         step_start = time.time()
-        self._ensure_sentiment_analysis(conversation_id, messages)
+        self._ensure_sentiment_analysis(conversation_id, messages, cancel_event)
         logger.info(f"[预处理] 情感分析完成 ({_step_elapsed(step_start)})")
 
         basic_stats = self.basic_service.collect_message_statistics(conversation_id)
@@ -182,6 +184,7 @@ class PreprocessingOrchestrator:
         self,
         conversation_id: int,
         messages: List[Dict[str, Any]],
+        cancel_event: Optional[threading.Event] = None
     ):
         text_messages = [msg for msg in messages if msg["message_type"] == 1]
         all_ids = [msg["id"] for msg in text_messages]
@@ -202,6 +205,10 @@ class PreprocessingOrchestrator:
         sentiment_start = time.time()
 
         for start in range(0, total_to_analyze, batch_size):
+            if cancel_event and cancel_event.is_set():
+                logger.info(f"[预处理] 情感分析被用户取消 (已处理 {start}/{total_to_analyze})")
+                raise Exception("分析已被用户取消")
+                
             batch_index = start // batch_size + 1
             batch_msgs = messages_to_analyze[start:start + batch_size]
             texts = [msg["content"] or "" for msg in batch_msgs]

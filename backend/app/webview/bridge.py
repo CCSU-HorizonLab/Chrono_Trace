@@ -1,4 +1,4 @@
-﻿from typing import Any, Optional
+from typing import Any, Optional
 import json
 import os
 import logging
@@ -26,6 +26,7 @@ class Bridge:
         from ..services.realtime.floating_window_service import FloatingWindowService
         self._floating_service = FloatingWindowService()
         self._webview_window = None  # 由 app_dev.py 注入
+        self._analysis_cancel_event = None  # 用于取消好感度分析
 
     def _load_settings(self):
         """加载设置"""
@@ -1502,8 +1503,11 @@ class Bridge:
             service.config = self._build_feature_config(config)
             service.config.validate()
 
+            import threading
+            self._analysis_cancel_event = threading.Event()
+            
             # 执行特征提取（异步任务）
-            result = service.extract_features(conversation_id)
+            result = service.extract_features(conversation_id, cancel_event=self._analysis_cancel_event)
 
             return {
                 "success": True,
@@ -2006,10 +2010,12 @@ class Bridge:
         """检测 GPU 加速可用性。"""
         try:
             import torch
+            from ..services.gpu.gpu_installer import GpuInstallerService
 
             result = {
                 "ok": True,
                 "cuda_available": torch.cuda.is_available(),
+                "has_nvidia_gpu": GpuInstallerService.has_nvidia_gpu(),
                 "gpu_name": None,
                 "torch_version": torch.__version__,
                 "cuda_version": None,
@@ -2035,9 +2041,11 @@ class Bridge:
 
         except Exception as e:
             logger.error(f"[Bridge] GPU 检测失败: {e}")
+            from ..services.gpu.gpu_installer import GpuInstallerService
             return {
                 "ok": False,
                 "cuda_available": False,
+                "has_nvidia_gpu": getattr(GpuInstallerService, "has_nvidia_gpu", lambda: False)(),
                 "gpu_name": None,
                 "torch_version": "unknown",
                 "cuda_version": None,
@@ -2045,6 +2053,26 @@ class Bridge:
                 "gpu_memory_free_mb": 0,
                 "error": str(e)
             }
+
+    def start_gpu_install(self) -> dict[str, Any]:
+        """开始异步安装 GPU 环境"""
+        try:
+            from ..services.gpu.gpu_installer import GpuInstallerService
+            service = GpuInstallerService()
+            return service.start_install()
+        except Exception as e:
+            logger.error(f"[Bridge] 开始安装 GPU 环境失败: {e}")
+            return {"ok": False, "error": str(e)}
+
+    def get_gpu_install_progress(self) -> dict[str, Any]:
+        """获取 GPU 环境安装进度"""
+        try:
+            from ..services.gpu.gpu_installer import GpuInstallerService
+            service = GpuInstallerService()
+            return service.get_progress()
+        except Exception as e:
+            logger.error(f"[Bridge] 获取 GPU 环境安装进度失败: {e}")
+            return {"ok": False, "error": str(e)}
 
     def check_analysis_model_status(self) -> dict[str, Any]:
         """检查分析所需模型是否在本地缓存中可用。"""
@@ -2397,6 +2425,19 @@ class Bridge:
                 "error": str(e)
             }
 
+
+    def cancel_analysis(self) -> dict[str, Any]:
+        """取消正在进行的好感度分析 / 特征提取"""
+        try:
+            if self._analysis_cancel_event:
+                self._analysis_cancel_event.set()
+                logger.info("[Bridge] 已发送取消分析信号")
+                return {"ok": True, "message": "已发送取消指令"}
+            return {"ok": False, "message": "当前没有正在运行的分析"}
+        except Exception as e:
+            logger.error(f"[Bridge] 取消分析失败: {e}")
+            return {"ok": False, "error": str(e)}
+
     def analyze_affinity(self, conversation_id: int, force_reanalyze: bool = False, config_overrides: dict = None) -> dict[str, Any]:
         """执行好感度分析（异步，立即返回 task_id 供轮询）"""
         try:
@@ -2404,16 +2445,16 @@ class Bridge:
             import time as _time
 
             AffinityAnalysisService = self._get_fresh_affinity_service_class()
-            service = AffinityAnalysisService()
-            # 保存服务实例引用，供 get_affinity_progress 查询进度
+            service = AffinityAnalysisService()            # 保存服务实例引用，供 get_affinity_progress 查询进度
             self._affinity_service = service
+            self._analysis_cancel_event = threading.Event()
 
             # 预生成 task_id，与 service.analyze 内部生成的保持一致
             task_id = f"affinity_{conversation_id}_{int(_time.time())}"
 
             def _run_analysis():
                 try:
-                    service.analyze(conversation_id, force_reanalyze, config_overrides)
+                    service.analyze(conversation_id, force_reanalyze, config_overrides, cancel_event=self._analysis_cancel_event)
                 except Exception as e:
                     logger.error(f"[Bridge] 异步好感度分析失败: {e}")
                     import traceback

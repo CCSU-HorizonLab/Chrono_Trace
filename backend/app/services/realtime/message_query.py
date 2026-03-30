@@ -36,6 +36,39 @@ def _build_recent_message_dedupe_key(row) -> str:
     return ""
 
 
+def _row_value(row, key: str, default=None):
+    try:
+        return row[key]
+    except Exception:
+        return default
+
+
+def _has_visible_index_column(db) -> bool:
+    try:
+        rows = db.execute("PRAGMA table_info(realtime_message_buffer)").fetchall()
+    except Exception:
+        return False
+    for row in rows:
+        try:
+            name = row["name"]
+        except Exception:
+            name = row[1]
+        if str(name) == "visible_index":
+            return True
+    return False
+
+
+def _recent_message_sort_key(row) -> tuple[int, int, int, int, int]:
+    timestamp = _safe_int(_row_value(row, "timestamp"))
+    visible_index = _safe_int(_row_value(row, "visible_index"), -1)
+    created_at = _safe_int(_row_value(row, "created_at"))
+    captured_at = _safe_int(_row_value(row, "captured_at"))
+    row_id = _safe_int(_row_value(row, "id"))
+    if visible_index >= 0:
+        return (timestamp, 0, visible_index, created_at, row_id)
+    return (timestamp, 1, created_at or captured_at, row_id, row_id)
+
+
 def get_messages_with_sentiment(
     batch_id: str,
     limit: int = 50,
@@ -44,6 +77,7 @@ def get_messages_with_sentiment(
 ):
     """获取消息及其情感分析结果."""
     db = get_db()
+    visible_index_sql = "m.visible_index AS visible_index" if _has_visible_index_column(db) else "-1 AS visible_index"
 
     where_clause = "WHERE m.batch_id = ?"
     params = [batch_id]
@@ -61,7 +95,9 @@ def get_messages_with_sentiment(
             m.content,
             m.message_type,
             m.timestamp,
+            m.captured_at,
             m.created_at,
+            {visible_index_sql},
             s.polarity,
             s.intensity,
             s.confidence,
@@ -84,10 +120,9 @@ def get_messages_with_sentiment(
             seen_dedupe_keys.add(dedupe_key)
         deduped_rows.append(row)
 
-    deduped_rows.sort(
-        key=lambda row: (_safe_int(row["timestamp"]), _safe_int(row["id"])),
-        reverse=bool(order_desc),
-    )
+    deduped_rows.sort(key=_recent_message_sort_key)
+    if order_desc:
+        deduped_rows.reverse()
 
     messages = []
     for row in deduped_rows[: max(0, int(limit or 0))]:
@@ -101,6 +136,9 @@ def get_messages_with_sentiment(
             "type": row["message_type"],
             "message_type": row["message_type"],
             "timestamp": row["timestamp"],
+            "visible_index": _row_value(row, "visible_index", -1),
+            "created_at": row["created_at"],
+            "captured_at": row["captured_at"],
         }
 
         if row["polarity"] is not None:

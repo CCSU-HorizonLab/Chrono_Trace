@@ -187,6 +187,7 @@ CREATE TABLE IF NOT EXISTS realtime_message_buffer (
     -- 时间信息
     timestamp INTEGER NOT NULL,             -- 消息时间戳(秒)
     captured_at INTEGER NOT NULL,           -- 抓取时间(秒)
+    visible_index INTEGER DEFAULT -1,       -- 首次抓取时在可见消息列表中的顺序（用于同时间段稳定排序）
     
     -- 状态管理
     is_processed INTEGER DEFAULT 0,         -- 是否已处理(0=未处理, 1=已处理)

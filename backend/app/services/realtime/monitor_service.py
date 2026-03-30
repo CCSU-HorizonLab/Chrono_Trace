@@ -1387,7 +1387,7 @@ class RealtimeMonitorService:
                 content = prepared_message['content']
                 message_type = prepared_message['message_type']
                 runtime_id = prepared_message['runtime_id']
-                visible_index = str(prepared_message['occurrence'])
+                occurrence = str(prepared_message['occurrence'])
                 message_key = prepared_message['message_key']
                 resolved_timestamp = int(prepared_message['resolved_timestamp'] or 0)
                 dedupe_timestamp = int(prepared_message['dedupe_timestamp'] or 0)
@@ -1397,7 +1397,7 @@ class RealtimeMonitorService:
                     content=content,
                     resolved_timestamp=dedupe_timestamp,
                     runtime_id=runtime_id,
-                    fallback_occurrence=visible_index,
+                    fallback_occurrence=occurrence,
                 )
                 self.seen_message_keys.add(message_key)
                 if message_hash:
@@ -1664,7 +1664,8 @@ class RealtimeMonitorService:
             content = prepared_message['content']
             message_type = prepared_message['message_type']
             runtime_id = prepared_message['runtime_id']
-            visible_index = str(prepared_message['occurrence'])
+            occurrence = str(prepared_message['occurrence'])
+            visible_index = int(prepared_message.get('visible_index', -1) or -1)
             message_key = prepared_message['message_key']
             resolved_timestamp = int(prepared_message['resolved_timestamp'] or 0)
             dedupe_timestamp = int(prepared_message['dedupe_timestamp'] or 0)
@@ -1684,7 +1685,8 @@ class RealtimeMonitorService:
                 'sender_attr': sender_attr,
                 'content': str(content) if content else '',
                 'message_type': message_type,
-                'timestamp': resolved_timestamp
+                'timestamp': resolved_timestamp,
+                'visible_index': visible_index,
             }
             message_data['message_hash'] = self._build_final_message_hash(
                 sender_attr=sender_attr,
@@ -1692,7 +1694,7 @@ class RealtimeMonitorService:
                 content=message_data['content'],
                 resolved_timestamp=dedupe_timestamp,
                 runtime_id=message_data['runtime_id'],
-                fallback_occurrence=visible_index,
+                fallback_occurrence=occurrence,
             )
             message_hash = message_data.get('message_hash')
 

@@ -427,16 +427,29 @@ class LLMSuggestionEngine(SuggestionEngine):
 
         def _sort_key(item: dict) -> tuple[int, int]:
             timestamp = item.get("timestamp")
-            message_id = item.get("id")
             try:
                 safe_ts = int(timestamp)
             except (TypeError, ValueError):
                 safe_ts = 0
             try:
-                safe_id = int(message_id)
+                safe_visible_index = int(item.get("visible_index", -1))
+            except (TypeError, ValueError):
+                safe_visible_index = -1
+            try:
+                safe_created_at = int(item.get("created_at", 0))
+            except (TypeError, ValueError):
+                safe_created_at = 0
+            try:
+                safe_captured_at = int(item.get("captured_at", 0))
+            except (TypeError, ValueError):
+                safe_captured_at = 0
+            try:
+                safe_id = int(item.get("id"))
             except (TypeError, ValueError):
                 safe_id = 0
-            return safe_ts, safe_id
+            if safe_visible_index >= 0:
+                return safe_ts, 0, safe_visible_index, safe_created_at, safe_id
+            return safe_ts, 1, safe_created_at or safe_captured_at, safe_id, safe_id
 
         def _dedupe_key(item: dict) -> str:
             semantic_key = "|".join(

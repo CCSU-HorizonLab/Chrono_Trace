@@ -26,6 +26,7 @@ def _make_db():
             message_type TEXT,
             timestamp INTEGER NOT NULL,
             captured_at INTEGER NOT NULL,
+            visible_index INTEGER DEFAULT -1,
             is_processed INTEGER DEFAULT 0,
             batch_id TEXT,
             created_at INTEGER NOT NULL
@@ -56,8 +57,8 @@ def test_get_messages_with_sentiment_dedupes_same_sender_recaptures(monkeypatch)
         """
         INSERT INTO realtime_message_buffer (
             talker_username, talker_display_name, message_hash, runtime_id,
-            sender_attr, content, message_type, timestamp, captured_at, batch_id, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            sender_attr, content, message_type, timestamp, captured_at, visible_index, batch_id, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             "friend_user",
@@ -69,6 +70,7 @@ def test_get_messages_with_sentiment_dedupes_same_sender_recaptures(monkeypatch)
             "text",
             200,
             200,
+            5,
             "batch-1",
             200,
         ),
@@ -77,8 +79,8 @@ def test_get_messages_with_sentiment_dedupes_same_sender_recaptures(monkeypatch)
         """
         INSERT INTO realtime_message_buffer (
             talker_username, talker_display_name, message_hash, runtime_id,
-            sender_attr, content, message_type, timestamp, captured_at, batch_id, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            sender_attr, content, message_type, timestamp, captured_at, visible_index, batch_id, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             "friend_user",
@@ -90,6 +92,7 @@ def test_get_messages_with_sentiment_dedupes_same_sender_recaptures(monkeypatch)
             "text",
             200,
             228,
+            5,
             "batch-1",
             228,
         ),
@@ -111,3 +114,48 @@ def test_get_messages_with_sentiment_dedupes_same_sender_recaptures(monkeypatch)
     assert messages[0]["sender_attr"] == "friend"
     assert messages[0]["message_hash"] == "hash-early"
     assert messages[0]["sentiment"]["polarity"] == -1
+
+
+def test_get_messages_with_sentiment_preserves_same_timestamp_visible_order(monkeypatch):
+    conn = _make_db()
+    monkeypatch.setattr("app.services.realtime.message_query.get_db", lambda: conn)
+
+    rows = [
+        ("hash-1", "runtime-1", "self", "应该是修好了", 1743078480, 10, 3, 310),
+        ("hash-2", "runtime-2", "friend", "行", 1743078480, 11, 4, 311),
+        ("hash-3", "runtime-3", "friend", "你是指什么时候", 1743078480, 12, 6, 312),
+        ("hash-4", "runtime-4", "self", "今天晚上", 1743078480, 13, 7, 313),
+    ]
+    for message_hash, runtime_id, sender_attr, content, timestamp, captured_at, visible_index, created_at in reversed(rows):
+        conn.execute(
+            """
+            INSERT INTO realtime_message_buffer (
+                talker_username, talker_display_name, message_hash, runtime_id,
+                sender_attr, content, message_type, timestamp, captured_at, visible_index, batch_id, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "friend_user",
+                "Friend",
+                message_hash,
+                runtime_id,
+                sender_attr,
+                content,
+                "text",
+                timestamp,
+                captured_at,
+                visible_index,
+                "batch-1",
+                created_at,
+            ),
+        )
+    conn.commit()
+
+    messages = get_messages_with_sentiment("batch-1", limit=10, order_desc=False)
+
+    assert [msg["content"] for msg in messages] == [
+        "应该是修好了",
+        "行",
+        "你是指什么时候",
+        "今天晚上",
+    ]

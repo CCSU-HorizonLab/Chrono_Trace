@@ -229,6 +229,50 @@ def test_llm_prompt_dedupes_repeated_same_sender_messages_before_rendering():
     assert prompt.count("就拽就拽") == 1
 
 
+def test_llm_prompt_uses_visible_index_to_preserve_same_timestamp_order():
+    engine = LLMSuggestionEngine()
+    recent_messages = [
+        {
+            "id": 40,
+            "timestamp": 1743078480,
+            "visible_index": 7,
+            "sender_attr": "self",
+            "content": "今天晚上",
+        },
+        {
+            "id": 39,
+            "timestamp": 1743078480,
+            "visible_index": 6,
+            "sender_attr": "friend",
+            "content": "你是指什么时候",
+        },
+        {
+            "id": 38,
+            "timestamp": 1743078480,
+            "visible_index": 4,
+            "sender_attr": "friend",
+            "content": "行",
+        },
+        {
+            "id": 37,
+            "timestamp": 1743078480,
+            "visible_index": 3,
+            "sender_attr": "self",
+            "content": "应该是修好了",
+        },
+    ]
+
+    prompt = engine._build_prompt(
+        "topic_cooling",
+        "maintain",
+        {"recent_messages": recent_messages},
+    )
+
+    assert prompt.index("我：应该是修好了") < prompt.index("对方：行")
+    assert prompt.index("对方：行") < prompt.index("对方：你是指什么时候")
+    assert prompt.index("对方：你是指什么时候") < prompt.index("我：今天晚上")
+
+
 def test_llm_prompt_filters_content_rules_and_keeps_style_rules(monkeypatch):
     engine = LLMSuggestionEngine()
 

@@ -21,6 +21,26 @@ class MessageBuffer:
     def __init__(self):
         """初始化,确保线程安全"""
         self._lock = threading.Lock()
+        self._ensure_schema()
+
+    def _ensure_schema(self):
+        """Best-effort runtime migration for new ordering fields."""
+        try:
+            conn = get_db()
+            columns = set()
+            for row in conn.execute("PRAGMA table_info(realtime_message_buffer)").fetchall():
+                try:
+                    columns.add(str(row["name"]))
+                except Exception:
+                    columns.add(str(row[1]))
+            if "visible_index" not in columns:
+                conn.execute(
+                    "ALTER TABLE realtime_message_buffer "
+                    "ADD COLUMN visible_index INTEGER DEFAULT -1"
+                )
+                conn.commit()
+        except Exception as e:
+            logger.debug("[MessageBuffer] ensure schema skipped: %s", e)
     
     def save_message(
         self,
@@ -43,7 +63,8 @@ class MessageBuffer:
                     'sender_attr': str,  # self/friend/system
                     'content': str,
                     'message_type': str,
-                    'timestamp': int
+                    'timestamp': int,
+                    'visible_index': int,
                 }
         
         Returns:
@@ -67,10 +88,11 @@ class MessageBuffer:
                         message_type,
                         timestamp,
                         captured_at,
+                        visible_index,
                         batch_id,
                         is_processed,
                         created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
                 ''', (
                     talker_username,
                     talker_display_name,
@@ -81,6 +103,7 @@ class MessageBuffer:
                     message_data.get('message_type', 'text'),
                     message_data.get('timestamp', now),
                     now,
+                    int(message_data.get('visible_index', -1) or -1),
                     batch_id,
                     now
                 ))
@@ -119,10 +142,15 @@ class MessageBuffer:
                         id, talker_username, talker_display_name,
                         message_hash, runtime_id, sender_attr,
                         content, message_type, timestamp,
-                        captured_at, is_processed, batch_id, created_at
+                        captured_at, visible_index, is_processed, batch_id, created_at
                     FROM realtime_message_buffer
                     WHERE batch_id = ?
-                    ORDER BY timestamp ASC
+                    ORDER BY
+                        timestamp ASC,
+                        CASE WHEN COALESCE(visible_index, -1) >= 0 THEN 0 ELSE 1 END ASC,
+                        CASE WHEN COALESCE(visible_index, -1) >= 0 THEN visible_index ELSE id END ASC,
+                        created_at ASC,
+                        id ASC
                 ''', (batch_id,))
             else:
                 cursor.execute('''
@@ -130,10 +158,15 @@ class MessageBuffer:
                         id, talker_username, talker_display_name,
                         message_hash, runtime_id, sender_attr,
                         content, message_type, timestamp,
-                        captured_at, is_processed, batch_id, created_at
+                        captured_at, visible_index, is_processed, batch_id, created_at
                     FROM realtime_message_buffer
                     WHERE batch_id = ? AND is_processed = ?
-                    ORDER BY timestamp ASC
+                    ORDER BY
+                        timestamp ASC,
+                        CASE WHEN COALESCE(visible_index, -1) >= 0 THEN 0 ELSE 1 END ASC,
+                        CASE WHEN COALESCE(visible_index, -1) >= 0 THEN visible_index ELSE id END ASC,
+                        created_at ASC,
+                        id ASC
                 ''', (batch_id, 1 if processed else 0))
             
             rows = cursor.fetchall()
@@ -151,9 +184,10 @@ class MessageBuffer:
                     'message_type': row[7],
                     'timestamp': row[8],
                     'captured_at': row[9],
-                    'is_processed': row[10],
-                    'batch_id': row[11],
-                    'created_at': row[12]
+                    'visible_index': row[10],
+                    'is_processed': row[11],
+                    'batch_id': row[12],
+                    'created_at': row[13]
                 })
             
             return messages

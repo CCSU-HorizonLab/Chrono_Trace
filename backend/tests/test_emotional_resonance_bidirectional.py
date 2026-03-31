@@ -297,3 +297,60 @@ def test_negative_resolution_uses_weighted_pair_scores(service, monkeypatch):
     score = service.calculate_negative_resolution(1)
 
     assert score == 63.33
+
+
+def test_overall_resonance_uses_core_base_score_plus_bonus_items(service, monkeypatch):
+    monkeypatch.setattr(service, "calculate_bidirectional_positive_response", lambda conversation_id: 80.0)
+    monkeypatch.setattr(service, "calculate_polarity_consistency", lambda conversation_id: 70.0)
+    monkeypatch.setattr(service, "calculate_intensity_matching", lambda conversation_id: 60.0)
+    monkeypatch.setattr(service, "calculate_empathy_recognition", lambda conversation_id: 40.0)
+    monkeypatch.setattr(service, "calculate_negative_resolution", lambda conversation_id: 30.0)
+
+    result = service.calculate_overall_resonance(1)
+
+    assert result["overall_score"] == 80.0
+    assert result["bonus_scores"]["base_resonance_score"] == 73.0
+    assert result["bonus_scores"]["empathy_recognition_bonus"] == 4.0
+    assert result["bonus_scores"]["negative_resolution_bonus"] == 3.0
+
+
+def test_overall_resonance_bonus_items_do_not_overwhelm_strong_base(service, monkeypatch):
+    monkeypatch.setattr(service, "calculate_bidirectional_positive_response", lambda conversation_id: 90.0)
+    monkeypatch.setattr(service, "calculate_polarity_consistency", lambda conversation_id: 85.0)
+    monkeypatch.setattr(service, "calculate_intensity_matching", lambda conversation_id: 80.0)
+    monkeypatch.setattr(service, "calculate_empathy_recognition", lambda conversation_id: 10.0)
+    monkeypatch.setattr(service, "calculate_negative_resolution", lambda conversation_id: 0.0)
+
+    result = service.calculate_overall_resonance(1)
+
+    assert result["bonus_scores"]["base_resonance_score"] == 86.5
+    assert result["overall_score"] == 87.5
+
+
+def test_overall_resonance_bonus_items_cap_total_score_at_one_hundred(service, monkeypatch):
+    monkeypatch.setattr(service, "calculate_bidirectional_positive_response", lambda conversation_id: 100.0)
+    monkeypatch.setattr(service, "calculate_polarity_consistency", lambda conversation_id: 100.0)
+    monkeypatch.setattr(service, "calculate_intensity_matching", lambda conversation_id: 100.0)
+    monkeypatch.setattr(service, "calculate_empathy_recognition", lambda conversation_id: 100.0)
+    monkeypatch.setattr(service, "calculate_negative_resolution", lambda conversation_id: 100.0)
+
+    result = service.calculate_overall_resonance(1)
+
+    assert result["bonus_scores"]["empathy_recognition_bonus"] == 10.0
+    assert result["bonus_scores"]["negative_resolution_bonus"] == 10.0
+    assert result["overall_score"] == 100.0
+
+
+def test_overall_resonance_without_empathy_or_resolution_opportunities_only_uses_bonuses(service, monkeypatch):
+    monkeypatch.setattr(service, "calculate_bidirectional_positive_response", lambda conversation_id: 70.0)
+    monkeypatch.setattr(service, "calculate_polarity_consistency", lambda conversation_id: 60.0)
+    monkeypatch.setattr(service, "calculate_intensity_matching", lambda conversation_id: 50.0)
+    monkeypatch.setattr(service, "calculate_empathy_recognition", lambda conversation_id: 50.0)
+    monkeypatch.setattr(service, "calculate_negative_resolution", lambda conversation_id: 0.0)
+
+    result = service.calculate_overall_resonance(1)
+
+    assert result["bonus_scores"]["base_resonance_score"] == 63.0
+    assert result["bonus_scores"]["empathy_recognition_bonus"] == 5.0
+    assert result["bonus_scores"]["negative_resolution_bonus"] == 0.0
+    assert result["overall_score"] == 68.0

@@ -5,6 +5,7 @@ import os
 import pickle
 import threading
 import time
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ...db.connection import get_db
@@ -54,6 +55,7 @@ class SentimentService:
         self._embedding_model = None
         self._embedding_load_failed = False
         self._embedding_device = "cpu"
+        self._embedding_model_path: Optional[str] = None
         self._device_mode = FeatureExtractionConfig.from_settings().analysis_device_mode
         self._embedding_cache: Dict[str, List[float]] = {}
         self._lock = threading.Lock()
@@ -67,17 +69,30 @@ class SentimentService:
         """Return whether the embedding model is available locally."""
         if self._embedding_model is not None:
             return True
+        if self._embedding_model_path and Path(self._embedding_model_path).exists():
+            return True
+
+        return self._resolve_local_embedding_model_path() is not None
+
+    def _resolve_local_embedding_model_path(self) -> Optional[str]:
+        """Resolve a usable local embedding model path without any network access."""
+        if self._embedding_model_path and Path(self._embedding_model_path).exists():
+            return self._embedding_model_path
 
         try:
             from huggingface_hub import snapshot_download
 
-            snapshot_download(
+            local_path = snapshot_download(
                 "shibing624/text2vec-base-chinese",
                 local_files_only=True,
             )
-            return True
+            if local_path and Path(local_path).exists():
+                self._embedding_model_path = str(local_path)
+                return self._embedding_model_path
         except Exception:
-            return False
+            return None
+
+        return None
 
     def configure_device_mode(self, device_mode: Optional[str]) -> str:
         """Change requested device mode and rebuild cached models if needed."""
@@ -91,6 +106,7 @@ class SentimentService:
         self._embedding_model = None
         self._embedding_load_failed = False
         self._embedding_device = "cpu"
+        self._embedding_model_path = None
         if self._realtime_service is not None:
             self._realtime_service.configure_device_mode(normalized_mode)
 
@@ -124,7 +140,8 @@ class SentimentService:
         if self._embedding_load_failed:
             return
 
-        if self._embedding_model is None and not self.has_local_embedding_model():
+        local_model_path = self._resolve_local_embedding_model_path()
+        if self._embedding_model is None and not local_model_path:
             logger.error("[情感服务] 本地未找到 embedding 模型缓存，跳过运行时联网加载")
             self._embedding_load_failed = True
             return
@@ -146,7 +163,11 @@ class SentimentService:
                 else:
                     logger.debug("[情感服务] 使用 CPU 模式加载 embedding 模型")
 
-                model_name = "shibing624/text2vec-base-chinese"
+                model_path = local_model_path or self._resolve_local_embedding_model_path()
+                if not model_path:
+                    logger.error("[鎯呮劅鏈嶅姟] embedding 妯″瀷鏈湴璺緞瑙ｆ瀽澶辫触")
+                    self._embedding_load_failed = True
+                    return
                 old_hf_hub_offline = os.environ.get("HF_HUB_OFFLINE")
                 old_transformers_offline = os.environ.get("TRANSFORMERS_OFFLINE")
                 os.environ["HF_HUB_OFFLINE"] = "1"
@@ -154,9 +175,9 @@ class SentimentService:
 
                 try:
                     self._embedding_model = SentenceTransformer(
-                        model_name,
+                        model_path,
                         device=device,
-                        # remove model_kwargs causing TypeError in SentenceTransformer
+                        local_files_only=True,
                     )
                     self._embedding_device = device
                 finally:
@@ -171,7 +192,7 @@ class SentimentService:
                         os.environ["TRANSFORMERS_OFFLINE"] = old_transformers_offline
 
                 logger.info(
-                    f"[情感服务] 本地缓存向量模型加载成功: {model_name} (设备: {self._embedding_device})"
+                    f"[情感服务] 本地缓存向量模型加载成功: {model_path} (设备: {self._embedding_device})"
                 )
             except ImportError:
                 logger.warning("[情感服务] sentence-transformers 未安装")

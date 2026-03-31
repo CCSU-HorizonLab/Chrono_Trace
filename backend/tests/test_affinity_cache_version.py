@@ -78,6 +78,7 @@ def test_saved_affinity_cache_round_trips_with_version(monkeypatch):
             weighted_score=8.0,
             interpretation="x",
             sub_scores={"bidirectional_positive": 16.67},
+            bonus_scores={"base_resonance_score": 16.67},
         ),
         conversation_id=1,
         analysis_timestamp=123,
@@ -94,3 +95,4 @@ def test_saved_affinity_cache_round_trips_with_version(monkeypatch):
     assert loaded.cache_updated_at > 0
     assert loaded.emotional_resonance is not None
     assert loaded.emotional_resonance.sub_scores["bidirectional_positive"] == 16.67
+    assert loaded.emotional_resonance.bonus_scores["base_resonance_score"] == 16.67

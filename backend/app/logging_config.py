@@ -61,6 +61,7 @@ def setup_logging(level=logging.INFO, console_only=False):
     logging.getLogger("transformers").setLevel(logging.ERROR)
     logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
     logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
+    logging.getLogger("huggingface_hub.utils._http").setLevel(logging.ERROR)
     logging.getLogger("jieba").setLevel(logging.ERROR)
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     

@@ -69,6 +69,11 @@ class TestAffinityAnalysisService:
                     'intensity_matching': 80.0,
                     'empathy_recognition': 80.0,
                     'negative_resolution': 80.0
+                },
+                'bonus_scores': {
+                    'base_resonance_score': 80.0,
+                    'empathy_recognition_bonus': 8.0,
+                    'negative_resolution_bonus': 8.0
                 }
             }
             
@@ -97,7 +102,7 @@ class TestAffinityAnalysisService:
             MockPreference.return_value.calculate_scores.return_value = preference_result
             
             from app.services.analysis.affinity_analysis_service import AffinityAnalysisService
-            return AffinityAnalysisService()
+            yield AffinityAnalysisService()
 
     # ========================================
     # 分析流程测试
@@ -129,6 +134,9 @@ class TestAffinityAnalysisService:
         # 喜好兼容度应该有值
         assert result.preference_compatibility is not None
         assert result.preference_compatibility.score == 60.0
+        assert result.emotional_resonance is not None
+        assert result.emotional_resonance.bonus_scores["base_resonance_score"] == 80.0
+        assert result.emotional_resonance.bonus_scores["empathy_recognition_bonus"] == 8.0
 
     def test_analyze_calculates_overall_score(self, service):
         """测试计算综合评分"""

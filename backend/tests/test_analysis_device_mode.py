@@ -1,6 +1,7 @@
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+import tempfile
 
 
 backend_root = Path(__file__).parent.parent
@@ -76,6 +77,7 @@ class TestAnalysisDeviceMode:
         service = SentimentService()
         realtime_service = RealtimeSentimentService(skip_db_init=True)
         service._embedding_model = object()
+        service._embedding_model_path = "cached-path"
         service._realtime_service = realtime_service
         realtime_service._model = object()
         realtime_service._tokenizer = object()
@@ -83,9 +85,38 @@ class TestAnalysisDeviceMode:
         service.configure_device_mode("cpu")
 
         assert service._embedding_model is None
+        assert service._embedding_model_path is None
         assert realtime_service._model is None
         assert realtime_service._tokenizer is None
         assert service._device_mode == "cpu"
+
+    def test_sentiment_service_loads_embedding_from_local_path_only(self):
+        service = SentimentService()
+        service._embedding_model = None
+        service._embedding_load_failed = False
+
+        fake_model = MagicMock()
+
+        with tempfile.TemporaryDirectory() as temp_dir, \
+             patch.object(service, "_resolve_local_embedding_model_path", return_value=temp_dir), \
+             patch("sentence_transformers.SentenceTransformer", return_value=fake_model) as mock_sentence_transformer:
+            service._load_embedding_model()
+
+        mock_sentence_transformer.assert_called_once()
+        assert mock_sentence_transformer.call_args.args[0] == temp_dir
+        assert mock_sentence_transformer.call_args.kwargs["local_files_only"] is True
+
+    def test_sentiment_service_skips_embedding_load_without_local_model(self):
+        service = SentimentService()
+        service._embedding_model = None
+        service._embedding_load_failed = False
+
+        with patch.object(service, "_resolve_local_embedding_model_path", return_value=None), \
+             patch("sentence_transformers.SentenceTransformer") as mock_sentence_transformer:
+            service._load_embedding_model()
+
+        assert service._embedding_load_failed is True
+        mock_sentence_transformer.assert_not_called()
 
     def test_bridge_settings_and_extract_features_override(self):
         with patch("app.webview.bridge.WeChatIngestService", return_value=MagicMock()), \

@@ -1,6 +1,6 @@
 <template>
   <div class="sub-score-breakdown">
-    <h3 class="breakdown-title">{{ title }} 详情</h3>
+    <h3 class="breakdown-title">{{ title }}详情</h3>
     <div class="table-container">
       <table class="score-table">
         <thead>
@@ -16,7 +16,11 @@
             <td class="score-cell">
               <div class="score-bar-container">
                 <div class="score-bar-bg">
-                  <div class="score-bar-fill" :class="getBarColorClass(score, key as string)" :style="{ width: Math.min(100, Math.max(0, score)) + '%' }"></div>
+                  <div
+                    class="score-bar-fill"
+                    :class="getBarColorClass(score, key as string)"
+                    :style="{ width: Math.min(100, Math.max(0, score)) + '%' }"
+                  ></div>
                 </div>
                 <span class="score-text">{{ formatScore(score) }}</span>
               </div>
@@ -34,64 +38,65 @@
 </template>
 
 <script setup lang="ts">
-
-
-const props = defineProps<{
+defineProps<{
   title: string
   subScores: Record<string, number>
 }>()
 
 const LABELS: Record<string, string> = {
-  // Emotional Resonance
   bidirectional_positive: '双向积极互动',
   polarity_consistency: '情绪一致性',
   intensity_matching: '情绪强度匹配',
   empathy_recognition: '共情识别',
   negative_resolution: '负面情绪化解',
-
-  // Chat Positivity
   daily_message: '日均消息量',
   reply_timeliness: '回复及时性',
-  topic_continuity: '话题连续性',
+  topic_continuity: '话题延续性',
   active_initiation: '主动发起',
-
-  // Attitude Tendency
-  positive_emotion_frequency: '正面情绪出现频率',
-  negative_emotion_frequency: '负面情绪出现频率',
-  positive_word_frequency: '正面情绪出现频率',
-  negative_word_frequency: '负面情绪出现频率',
+  positive_emotion_frequency: '正面情绪频率',
+  negative_emotion_frequency: '负面情绪频率',
+  positive_word_frequency: '正面词频率',
+  negative_word_frequency: '负面词频率',
   effective_negative_frequency: '有效负面频率',
   trust_sharing_bonus: '信任倾诉加分',
   multimedia_usage: '多媒体互动',
-  nickname_frequency: '专属昵称',
+  nickname_frequency: '专属称呼',
   holiday_greeting: '节日祝福',
-
-  // Preference Compatibility
   topic_mention: '共同话题提及',
 }
 
-const getLabel = (key: string): string => {
-  return LABELS[key] || key
-}
+const BONUS_KEYS = new Set([
+  'empathy_recognition',
+  'negative_resolution',
+])
 
-const formatScore = (score: number): string => {
-  return score.toFixed(1)
-}
-
-// 负面频率字段需要反转评级（频率低 = 好）
 const INVERSE_KEYS = new Set([
   'negative_emotion_frequency',
   'negative_word_frequency',
 ])
 
+const getLabel = (key: string): string => {
+  const label = LABELS[key] || key
+  return BONUS_KEYS.has(key) ? `${label}（加分项）` : label
+}
+
+const formatScore = (score: number): string => score.toFixed(1)
+
 const getRating = (score: number, key?: string): string => {
+  if (key && BONUS_KEYS.has(key)) {
+    if (score >= 80) return '高加分'
+    if (score >= 60) return '中加分'
+    if (score >= 40) return '低加分'
+    return '待提升'
+  }
+
   if (key && INVERSE_KEYS.has(key)) {
-    // 反转：频率越低越好
     if (score <= 5) return '优'
     if (score <= 15) return '良'
     if (score <= 30) return '中'
     return '差'
   }
+
   if (score >= 80) return '优'
   if (score >= 60) return '良'
   if (score >= 40) return '中'
@@ -99,13 +104,20 @@ const getRating = (score: number, key?: string): string => {
 }
 
 const getBadgeClass = (score: number, key?: string): string => {
+  if (key && BONUS_KEYS.has(key)) {
+    if (score >= 80) return 'badge-success'
+    if (score >= 60) return 'badge-info'
+    if (score >= 40) return 'badge-warning'
+    return 'badge-danger'
+  }
+
   if (key && INVERSE_KEYS.has(key)) {
-    // 反转：频率越低越好
     if (score <= 5) return 'badge-success'
     if (score <= 15) return 'badge-info'
     if (score <= 30) return 'badge-warning'
     return 'badge-danger'
   }
+
   if (score >= 80) return 'badge-success'
   if (score >= 60) return 'badge-info'
   if (score >= 40) return 'badge-warning'
@@ -113,12 +125,20 @@ const getBadgeClass = (score: number, key?: string): string => {
 }
 
 const getBarColorClass = (score: number, key?: string): string => {
+  if (key && BONUS_KEYS.has(key)) {
+    if (score >= 80) return 'bar-success'
+    if (score >= 60) return 'bar-info'
+    if (score >= 40) return 'bar-warning'
+    return 'bar-danger'
+  }
+
   if (key && INVERSE_KEYS.has(key)) {
     if (score <= 5) return 'bar-success'
     if (score <= 15) return 'bar-info'
     if (score <= 30) return 'bar-warning'
     return 'bar-danger'
   }
+
   if (score >= 80) return 'bar-success'
   if (score >= 60) return 'bar-info'
   if (score >= 40) return 'bar-warning'
@@ -222,10 +242,21 @@ const getBarColorClass = (score: number, key?: string): string => {
   text-align: right;
 }
 
-.bar-success { background: var(--ct-color-success); }
-.bar-info { background: var(--ct-color-info); }
-.bar-warning { background: var(--ct-color-warning); }
-.bar-danger { background: var(--ct-color-error); }
+.bar-success {
+  background: var(--ct-color-success);
+}
+
+.bar-info {
+  background: var(--ct-color-info);
+}
+
+.bar-warning {
+  background: var(--ct-color-warning);
+}
+
+.bar-danger {
+  background: var(--ct-color-error);
+}
 
 .badge {
   display: inline-flex;

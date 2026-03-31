@@ -160,7 +160,7 @@
 
           <div class="breakdowns-container">
             <SubScoreBreakdown v-if="analysisResult.emotional_resonance" title="情感共振率"
-              :sub-scores="analysisResult.emotional_resonance.sub_scores" />
+              :sub-scores="emotionalResonanceDisplaySubScores" />
             <SubScoreBreakdown v-if="analysisResult.chat_positivity" title="聊天积极度"
               :sub-scores="analysisResult.chat_positivity.sub_scores" />
             <SubScoreBreakdown v-if="analysisResult.attitude_tendency" title="态度倾向"
@@ -637,6 +637,19 @@ export default {
                 attitude_tendency: analysisResult.value.attitude_tendency || undefined,
                 preference_compatibility: analysisResult.value.preference_compatibility || undefined
             }
+        })
+
+        const emotionalResonanceDisplaySubScores = computed(() => {
+            const subScores = analysisResult.value?.emotional_resonance?.sub_scores
+            if (!subScores) return {}
+
+            const {
+                empathy_recognition,
+                negative_resolution,
+                ...baseSubScores
+            } = subScores
+
+            return baseSubScores
         })
 
         const radius = 50
@@ -1370,7 +1383,7 @@ export default {
             personaProfile, loadingPersonaProfile, personaProfileMeta,
             analysisResult, displayScore, showKeywordsDialog, showContextForm, pendingAnalysisForce, isGlobalAnalyzing, isStopping, activeTimer, handleStopAnalysis, globalProgressPercent, globalProgressStep, gpuMode,
             hasFeatures, hasCachedAffinityAnalysis, featureStats, responseTimeStats, initiativeStats, wordCountsStats, activityCalendar,
-            responseTimeChart, activityCalendarChart, wordCountChart, stats, currentContactName, hasPreferenceKeywords, allDimensions,
+            responseTimeChart, activityCalendarChart, wordCountChart, stats, currentContactName, hasPreferenceKeywords, allDimensions, emotionalResonanceDisplaySubScores,
             currentRangeLabel, hasContentAnalysis, circumference, strokeDashoffset, formatNumber, formatTime, getResponseTimeLabel, getMergedResponseTimeLabel, getResponseTimePercent, onConversationChange, onDatesChange, handleExport, handleStartGlobalAnalysis, handleContextSaved, handleKeywordsUpdated,
             getScoreColor, scrollToDetails, handlePreferenceDisabledClick, onWordSelect, loadAnalysis, loadSessions, handleActivityYearChange
         }

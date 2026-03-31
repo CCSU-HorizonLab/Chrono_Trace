@@ -24,6 +24,11 @@ def debug_log(msg: str):
 class EmotionalResonanceService:
     """Calculate the emotional resonance dimension and its sub-scores."""
 
+    CORE_BIDIRECTIONAL_WEIGHT = 0.50
+    CORE_POLARITY_WEIGHT = 0.30
+    CORE_INTENSITY_WEIGHT = 0.20
+    EMPATHY_BONUS_RATIO = 0.10
+    NEGATIVE_RESOLUTION_BONUS_RATIO = 0.10
     POSITIVE_RESPONSE_TIME_WINDOW = 3600
     SOFT_POSITIVE_INTENSITY_THRESHOLD = 0.12
     BIDIRECTIONAL_POSITIVE_PRIOR = 0.68
@@ -319,8 +324,8 @@ class EmotionalResonanceService:
     def calculate_overall_resonance(self, conversation_id: int) -> Dict[str, Any]:
         """Calculate overall emotional resonance score."""
         debug_log(f"\n{'*' * 40}")
-        debug_log(f"【情感共振率】开始计算(会话 ID {conversation_id})")
-        debug_log("*[注] 该项占总分30%权重，自身包含 5 个子维度*")
+        debug_log(f"[情感共振率] 开始计算，会话 ID {conversation_id}")
+        debug_log("*[说明] 情感共振率现采用“3个基础子维度 + 2个加分项”模型*")
 
         bidirectional_rate = self.calculate_bidirectional_positive_response(conversation_id)
         polarity_score = self.calculate_polarity_consistency(conversation_id)
@@ -328,14 +333,29 @@ class EmotionalResonanceService:
         empathy_rate = self.calculate_empathy_recognition(conversation_id)
         resolution_rate = self.calculate_negative_resolution(conversation_id)
 
-        overall_score = (
-            bidirectional_rate * 0.20
-            + polarity_score * 0.15
-            + intensity_score * 0.10
-            + empathy_rate * 0.30
-            + resolution_rate * 0.25
+        base_score = (
+            bidirectional_rate * self.CORE_BIDIRECTIONAL_WEIGHT
+            + polarity_score * self.CORE_POLARITY_WEIGHT
+            + intensity_score * self.CORE_INTENSITY_WEIGHT
         )
-        overall_score = round(max(0.0, min(100.0, overall_score)), 2)
+        empathy_bonus = empathy_rate * self.EMPATHY_BONUS_RATIO
+        resolution_bonus = resolution_rate * self.NEGATIVE_RESOLUTION_BONUS_RATIO
+        overall_score = round(
+            max(0.0, min(100.0, base_score + empathy_bonus + resolution_bonus)), 2
+        )
+        base_score = round(base_score, 2)
+        empathy_bonus = round(empathy_bonus, 2)
+        resolution_bonus = round(resolution_bonus, 2)
+        debug_log("\n[情感共振率调试] --- 6. 综合得分（基础分 + 加分项） ---")
+        debug_log(
+            f"基础分 {base_score:.2f} = 双向积极互动 {bidirectional_rate:.2f} * 50% + "
+            f"情绪一致性 {polarity_score:.2f} * 30% + 情绪强度匹配 {intensity_score:.2f} * 20%"
+        )
+        debug_log(
+            f"加分项：共情识别 +{empathy_bonus:.2f}（最高 +10），"
+            f"负面情绪化解 +{resolution_bonus:.2f}（最高 +10）"
+        )
+        debug_log(f"情感共振率最终得分：{overall_score:.2f}")
 
         return {
             "overall_score": overall_score,
@@ -345,6 +365,11 @@ class EmotionalResonanceService:
                 "intensity_matching": intensity_score,
                 "empathy_recognition": empathy_rate,
                 "negative_resolution": resolution_rate,
+            },
+            "bonus_scores": {
+                "base_resonance_score": base_score,
+                "empathy_recognition_bonus": empathy_bonus,
+                "negative_resolution_bonus": resolution_bonus,
             },
             "interpretation": self.generate_interpretation(overall_score),
         }

@@ -88,7 +88,7 @@ class AffinityAnalysisResult:
 class AffinityAnalysisService:
     """好感度分析编排器"""
 
-    CACHE_SCHEMA_VERSION = 4
+    CACHE_SCHEMA_VERSION = 5
     
     # 默认维度权重(已废弃,使用动态权重)
     # 实际权重由 AffinityConfigService.get_dimension_weights() 动态返回
@@ -361,7 +361,8 @@ class AffinityAnalysisService:
                 "intensity_matching": resonance_result['sub_scores']['intensity_matching'],
                 "empathy_recognition": resonance_result['sub_scores']['empathy_recognition'],
                 "negative_resolution": resonance_result['sub_scores']['negative_resolution'],
-            }
+            },
+            bonus_scores=resonance_result.get('bonus_scores', {})
         )
         logger.info(f"情感共振率计算完成: {resonance_result['overall_score']:.1f}分 (权重: {weights['emotional_resonance']*100}%)")
         

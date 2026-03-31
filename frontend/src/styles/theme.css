@@ -11,7 +11,7 @@
 /* IMPORT FONTS */
 @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
 
-/* LIGHT THEME */
+/* SINGLE THEME */
 :root {
   /* Primary Colors - Purple/Blue */
   --ct-color-primary: #7c4dff;
@@ -116,55 +116,6 @@
   --ct-ease-out: cubic-bezier(0, 0, 0.2, 1);
   --ct-ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
   --ct-ease-bounce: cubic-bezier(0.68, -0.55, 0.265, 1.55);
-}
-
-/* DARK THEME */
-.dark-theme {
-  /* Primary Colors */
-  --ct-color-primary: #818cf8;
-  --ct-color-primary-hover: #6366f1;
-  --ct-color-primary-light: #1e1b4b;
-  --ct-color-primary-muted: rgba(129, 140, 248, 0.2);
-
-  /* Accent Colors */
-  --ct-color-accent: #fbbf24;
-  --ct-color-accent-hover: #f59e0b;
-  --ct-color-accent-light: #451a03;
-
-  /* Functional Colors */
-  --ct-color-success: #34d399;
-  --ct-color-warning: #fbbf24;
-  --ct-color-error: #f87171;
-  --ct-color-info: #60a5fa;
-
-  /* Light variants */
-  --ct-color-success-light: rgba(52, 211, 153, 0.15);
-  --ct-color-warning-light: rgba(251, 191, 36, 0.15);
-  --ct-color-error-light: rgba(248, 113, 113, 0.15);
-  --ct-color-info-light: rgba(96, 165, 250, 0.15);
-
-  /* Backgrounds */
-  --ct-bg-primary: #0f172a;
-  --ct-bg-secondary: #1e293b;
-  --ct-bg-tertiary: #334155;
-  --ct-bg-elevated: #1e293b;
-
-  /* Text Colors */
-  --ct-text-primary: #f1f5f9;
-  --ct-text-secondary: #cbd5e1;
-  --ct-text-tertiary: #64748b;
-  --ct-text-inverse: #0f172a;
-
-  /* Borders */
-  --ct-border-color: #334155;
-  --ct-border-color-hover: #475569;
-  --ct-border-color-focus: var(--ct-color-primary);
-
-  /* Shadows */
-  --ct-shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
-  --ct-shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4);
-  --ct-shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
-  --ct-shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.6);
 }
 
 /* THEME TRANSITIONS */

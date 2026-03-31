@@ -28,8 +28,6 @@
             <circle cx="12" cy="7" r="4"></circle>
           </svg>
         </div>
-        <!-- 可以在下拉菜单里放ThemeToggle或者直接放这里，此处先简化 -->
-        <ThemeToggle class="theme-toggle-btn" />
       </div>
     </header>
 
@@ -43,19 +41,14 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, computed } from 'vue'
+import { computed } from 'vue'
 import { useRoute } from 'vue-router'
-import ThemeToggle from '@/components/base/ThemeToggle.vue'
-import { initTheme } from '@/composables/useTheme'
 
 const route = useRoute()
 
 // 悬浮模式下隐藏顶部导航
 const isFloatingMode = computed(() => route.path === '/floating')
 
-onMounted(() => {
-  initTheme()
-})
 </script>
 
 <style>
@@ -176,14 +169,6 @@ onMounted(() => {
 .user-avatar svg {
   width: 18px;
   height: 18px;
-}
-
-.theme-toggle-btn {
-  color: #fff;
-  opacity: 0.8;
-}
-.theme-toggle-btn:hover {
-  opacity: 1;
 }
 
 /* ========================================

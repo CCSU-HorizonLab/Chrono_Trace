@@ -39,6 +39,12 @@ class EmotionalResonanceService:
     EMPATHY_MID_RESPONSE_THRESHOLD = 1800
     EMPATHY_SLOW_RESPONSE_THRESHOLD = 7200
     DETAILED_RESPONSE_LENGTH_THRESHOLD = 12
+    AMBIGUOUS_OPPORTUNITY_WEIGHT = 0.35
+    TO_OTHERS_OPPORTUNITY_WEIGHT = 0.0
+    MIN_OPPORTUNITY_WEIGHT = 0.15
+    NEGATIVE_EPISODE_DECAY = 0.55
+    NEGATIVE_EPISODE_MIN_FACTOR = 0.35
+    NEGATIVE_EPISODE_UNIT_GAP = 3
 
     SOFT_POSITIVE_KEYWORDS = (
         "哈哈",
@@ -131,6 +137,44 @@ class EmotionalResonanceService:
         "要我",
         "需要我",
         "有什么我",
+    )
+    SUPPORTIVE_ACKNOWLEDGEMENT_KEYWORDS = (
+        "辛苦了",
+        "太难了",
+        "太惨了",
+        "好惨",
+        "确实",
+        "确实很烦",
+        "确实挺烦",
+        "真的不容易",
+        "能理解",
+        "可以理解",
+        "理解你",
+        "我懂",
+        "我懂你",
+        "我在",
+        "我在呢",
+        "抱抱",
+        "摸摸",
+        "心疼你",
+        "太委屈了",
+        "太烦了",
+    )
+    SUPPORTIVE_NEUTRAL_KEYWORDS = (
+        "先缓缓",
+        "先休息",
+        "先别想了",
+        "慢慢来",
+        "别着急",
+        "别担心",
+        "会好的",
+        "没关系",
+        "没事的",
+        "会过去的",
+        "喝点水",
+        "早点休息",
+        "休息一下",
+        "缓一缓",
     )
 
     def __init__(self):
@@ -236,51 +280,33 @@ class EmotionalResonanceService:
         """Score empathy recognition only across actual empathy opportunities."""
         pairs = self._get_interaction_pairs(conversation_id)
         empathy_pairs = self._get_empathy_opportunity_pairs(pairs)
-        if not empathy_pairs:
+        weighted_pairs = self._build_weighted_opportunities(empathy_pairs)
+        if not weighted_pairs:
             return 50.0
 
         empathy_keywords = self._get_empathy_keywords()
         soothing_keywords = self._get_soothing_keywords()
 
-        explicit_hits = 0
+        explicit_hits = 0.0
         supportive_score_sum = 0.0
         timeliness_score_sum = 0.0
 
-        for pair in empathy_pairs:
+        for pair, opportunity_weight in weighted_pairs:
             if self._has_explicit_empathy(pair, empathy_keywords, soothing_keywords):
-                explicit_hits += 1
-            supportive_score_sum += self._score_supportive_response_pair(
+                explicit_hits += opportunity_weight
+            supportive_score_sum += opportunity_weight * self._score_supportive_response_pair(
                 pair, empathy_keywords, soothing_keywords
             )
-            timeliness_score_sum += self._score_empathy_timeliness(pair)
+            timeliness_score_sum += opportunity_weight * self._score_empathy_timeliness(pair)
 
-        opportunity_count = len(empathy_pairs)
-        explicit_rate = explicit_hits / opportunity_count
-        supportive_rate = supportive_score_sum / opportunity_count
-        timeliness_rate = timeliness_score_sum / opportunity_count
+        total_opportunity_weight = sum(weight for _, weight in weighted_pairs)
+        explicit_rate = explicit_hits / total_opportunity_weight
+        supportive_rate = supportive_score_sum / total_opportunity_weight
+        timeliness_rate = timeliness_score_sum / total_opportunity_weight
         main_score = explicit_rate * 0.6 + supportive_rate * 0.4
         rate = ((main_score * 0.85) + (timeliness_rate * 0.15)) * 100
-        empathy_count = explicit_hits
-        total_messages = opportunity_count
-        keyword_rate = explicit_rate
-        fast_response_count = sum(
-            1
-            for pair in empathy_pairs
-            if self._score_empathy_timeliness(pair) >= 0.7
-        )
-        negative_pairs = empathy_pairs
-        fast_response_rate = timeliness_rate
-        question_count = 0
 
         debug_log("\n[情感共振调试] --- 4. 共情意图识别率(权重30%) ---")
-        debug_log(
-            f"共情关键词消息数: {empathy_count} / 总消息数: {total_messages}, "
-            f"关键词率: {keyword_rate*100:.1f}%"
-        )
-        debug_log(
-            f"负面消息后快速响应数: {fast_response_count} / {len(negative_pairs)} "
-            f"(响应率: {fast_response_rate*100:.1f}%), 关心提问数: {question_count}"
-        )
         debug_log(f"多信号融合后识别率: {rate:.1f}%")
 
         return round(rate, 2)
@@ -292,30 +318,24 @@ class EmotionalResonanceService:
         if not negative_pairs:
             return 0.0
 
-        needs_resolution_pairs = []
-        for pair in negative_pairs:
-            from_content = pair.get("from_content", "")
-            if from_content:
-                direction_result = self.direction_service.classify(from_content)
-                if direction_result.direction != "to_others":
-                    needs_resolution_pairs.append(pair)
-            else:
-                needs_resolution_pairs.append(pair)
+        needs_resolution_pairs = self._get_empathy_opportunity_pairs(negative_pairs)
+        weighted_pairs = self._build_weighted_opportunities(needs_resolution_pairs)
 
-        if not needs_resolution_pairs:
+        if not weighted_pairs:
             return 100.0
 
         soothing_keywords = self._get_soothing_keywords()
         resolution_scores = [
-            self._score_resolution_pair(pair, soothing_keywords)
-            for pair in needs_resolution_pairs
+            weight * self._score_resolution_pair(pair, soothing_keywords)
+            for pair, weight in weighted_pairs
         ]
-        rate = (sum(resolution_scores) / len(needs_resolution_pairs)) * 100
+        total_opportunity_weight = sum(weight for _, weight in weighted_pairs)
+        rate = (sum(resolution_scores) / total_opportunity_weight) * 100
 
         debug_log("\n[情感共振调试] --- 5. 负面情绪协同化解率(权重25%) ---")
-        debug_log(f"需要化解的负面互动对数(排除'对他人'): {len(needs_resolution_pairs)}")
+        debug_log(f"需要化解的负面互动权重(排除'对他人'): {total_opportunity_weight:.2f}")
         debug_log(
-            f"化解加权总分: {sum(resolution_scores):.2f} / {len(needs_resolution_pairs)} "
+            f"化解加权总分: {sum(resolution_scores):.2f} / {total_opportunity_weight:.2f} "
             f"-> 化解率: {rate:.1f}%"
         )
 
@@ -416,6 +436,8 @@ class EmotionalResonanceService:
         unit_content_map = self._batch_get_speech_unit_contents(all_unit_ids)
         return [
             {
+                "from_speech_unit_id": row[7],
+                "to_speech_unit_id": row[6],
                 "from_polarity": row[0],
                 "to_polarity": row[1],
                 "from_intensity": row[2],
@@ -497,12 +519,20 @@ class EmotionalResonanceService:
         to_polarity = pair.get("to_polarity", 0)
         to_content = pair.get("to_content", "") or ""
         has_soothing = self._contains_keywords(to_content, list(soothing_keywords))
+        has_acknowledgement = self._has_supportive_acknowledgement(to_content)
+        has_soft_support = self._has_supportive_neutral_phrase(to_content)
         is_fast = self._is_supportive_fast_response(pair)
 
         if to_polarity == 1 and has_soothing:
             return 1.0
+        if to_polarity == 1 and (has_acknowledgement or has_soft_support):
+            return 0.8
         if to_polarity == 1 or has_soothing:
             return 0.6
+        if to_polarity == 0 and has_soothing and has_acknowledgement:
+            return 0.6 if is_fast else 0.52
+        if to_polarity == 0 and (has_acknowledgement or has_soft_support):
+            return 0.52 if is_fast else 0.42
         if to_polarity == 0 and is_fast:
             return 0.3
         return 0.0
@@ -524,6 +554,119 @@ class EmotionalResonanceService:
             opportunity_pairs.append(pair)
         return opportunity_pairs
 
+    def _build_weighted_opportunities(
+        self, pairs: Sequence[Dict[str, Any]]
+    ) -> List[tuple[Dict[str, Any], float]]:
+        weighted_pairs: List[tuple[Dict[str, Any], float]] = []
+        sorted_pairs = sorted(
+            pairs,
+            key=lambda pair: (
+                int(pair.get("from_speech_unit_id") or 0),
+                int(pair.get("to_speech_unit_id") or 0),
+            ),
+        )
+        previous_pair: Dict[str, Any] | None = None
+        episode_depth = 0
+
+        for pair in sorted_pairs:
+            weight = self._score_empathy_opportunity_weight(pair)
+            if previous_pair and self._is_same_negative_episode(previous_pair, pair):
+                episode_depth += 1
+                decay_factor = max(
+                    self.NEGATIVE_EPISODE_MIN_FACTOR,
+                    self.NEGATIVE_EPISODE_DECAY ** episode_depth,
+                )
+                weight *= decay_factor
+            else:
+                episode_depth = 0
+            if weight >= self.MIN_OPPORTUNITY_WEIGHT:
+                weighted_pairs.append((pair, round(weight, 4)))
+            previous_pair = pair
+        return weighted_pairs
+
+    def _score_empathy_opportunity_weight(self, pair: Dict[str, Any]) -> float:
+        from_content = (pair.get("from_content", "") or "").strip()
+        if not from_content:
+            return self.AMBIGUOUS_OPPORTUNITY_WEIGHT
+
+        direction_result = self.direction_service.classify(from_content)
+        direction = getattr(direction_result, "direction", "ambiguous")
+        confidence = float(getattr(direction_result, "confidence", 0.0) or 0.0)
+
+        if direction == "to_others":
+            return self.TO_OTHERS_OPPORTUNITY_WEIGHT
+        if direction == "to_me":
+            direction_weight = 1.0
+        else:
+            direction_weight = self.AMBIGUOUS_OPPORTUNITY_WEIGHT + confidence * 0.15
+
+        severity_weight = self._score_negative_distress_weight(from_content)
+        return round(max(self.MIN_OPPORTUNITY_WEIGHT, direction_weight * severity_weight), 4)
+
+    def _score_negative_distress_weight(self, text: str) -> float:
+        if not text:
+            return 0.5
+
+        strong_distress_terms = (
+            "难受", "伤心", "委屈", "崩溃", "焦虑", "害怕", "想哭", "失眠",
+            "不舒服", "头疼", "生病", "痛苦", "撑不住", "受不了", "emo",
+        )
+        medium_distress_terms = (
+            "累", "烦", "压力", "难过", "低落", "心烦", "糟糕", "烦躁", "沮丧",
+            "好惨", "太惨", "无助", "紧张",
+        )
+        complaint_terms = (
+            "无语", "生气", "过分", "无聊", "骂人", "气死", "服了", "离谱",
+            "真烦", "讨厌", "恶心",
+        )
+        self_signal_terms = ("我", "自己", "今天", "最近", "刚刚")
+
+        if any(term in text for term in strong_distress_terms):
+            return 1.0
+        if any(term in text for term in medium_distress_terms):
+            return 0.75 if any(term in text for term in self_signal_terms) else 0.65
+        if any(term in text for term in complaint_terms):
+            return 0.45 if any(term in text for term in self_signal_terms) else 0.35
+        return 0.55
+
+    def _is_same_negative_episode(
+        self, previous_pair: Dict[str, Any], current_pair: Dict[str, Any]
+    ) -> bool:
+        previous_from_id = int(previous_pair.get("from_speech_unit_id") or 0)
+        current_from_id = int(current_pair.get("from_speech_unit_id") or 0)
+        if not previous_from_id or not current_from_id:
+            return False
+        if current_from_id <= previous_from_id:
+            return False
+        if (current_from_id - previous_from_id) > self.NEGATIVE_EPISODE_UNIT_GAP:
+            return False
+
+        previous_tags = self._extract_negative_signal_tags(previous_pair.get("from_content", ""))
+        current_tags = self._extract_negative_signal_tags(current_pair.get("from_content", ""))
+        if previous_tags and current_tags:
+            return bool(previous_tags & current_tags)
+
+        previous_text = (previous_pair.get("from_content", "") or "").strip()
+        current_text = (current_pair.get("from_content", "") or "").strip()
+        if not previous_text or not current_text:
+            return False
+        return previous_text == current_text
+
+    def _extract_negative_signal_tags(self, text: str) -> set[str]:
+        normalized = text or ""
+        tag_map = {
+            "distress": ("难受", "伤心", "委屈", "崩溃", "想哭", "emo"),
+            "fatigue": ("累", "疲惫", "撑不住"),
+            "stress": ("压力", "焦虑", "紧张", "烦躁"),
+            "complaint": ("无语", "生气", "过分", "离谱", "太烦", "讨厌"),
+            "health": ("不舒服", "头疼", "生病"),
+        }
+        tags = set()
+        for tag, terms in tag_map.items():
+            if any(term in normalized for term in terms):
+                tags.add(tag)
+        return tags
+
     def _has_explicit_empathy(
         self,
         pair: Dict[str, Any],
@@ -537,6 +680,24 @@ class EmotionalResonanceService:
                 empathy_keywords,
                 soothing_keywords,
                 self.EXTRA_EMPATHY_KEYWORDS,
+            ),
+        )
+
+    def _has_supportive_acknowledgement(self, text: str) -> bool:
+        return self._contains_keywords(
+            text,
+            self._merge_keywords(
+                self.keyword_lib.get_keywords("empathy"),
+                list(self.SUPPORTIVE_ACKNOWLEDGEMENT_KEYWORDS),
+            ),
+        )
+
+    def _has_supportive_neutral_phrase(self, text: str) -> bool:
+        return self._contains_keywords(
+            text,
+            self._merge_keywords(
+                self.keyword_lib.get_keywords("soothing"),
+                list(self.SUPPORTIVE_NEUTRAL_KEYWORDS),
             ),
         )
 
@@ -555,19 +716,34 @@ class EmotionalResonanceService:
         has_question = self._contains_keywords(
             to_content, list(self.EMPATHY_QUESTION_KEYWORDS)
         )
+        has_acknowledgement = self._has_supportive_acknowledgement(to_content)
+        has_soft_support = self._has_supportive_neutral_phrase(to_content)
         is_detailed_reply = len(to_content.strip()) >= self.DETAILED_RESPONSE_LENGTH_THRESHOLD
         is_engaged = (
             semantic_similarity >= self.SEMANTIC_SIMILARITY_THRESHOLD
             or has_question
             or is_detailed_reply
+            or has_acknowledgement
         )
 
         if to_polarity == 1 and has_explicit_empathy:
             return 1.0
+        if to_polarity == 1 and has_acknowledgement and is_engaged:
+            return 0.85
+        if to_polarity == 1 and has_soft_support:
+            return 0.78
         if to_polarity == 1 and is_engaged:
             return 0.7
         if to_polarity == 0 and has_explicit_empathy:
             return 0.6
+        if to_polarity == 0 and has_acknowledgement and is_engaged:
+            return 0.72
+        if to_polarity == 0 and has_soft_support and is_engaged:
+            return 0.62
+        if to_polarity == 0 and has_acknowledgement:
+            return 0.55
+        if to_polarity == 0 and has_soft_support:
+            return 0.5
         if to_polarity == 0 and is_engaged:
             return 0.4
         return 0.0

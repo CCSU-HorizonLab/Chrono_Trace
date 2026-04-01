@@ -153,7 +153,7 @@ def test_empathy_recognition_uses_opportunity_based_scoring(service, monkeypatch
 
     score = service.calculate_empathy_recognition(1)
 
-    assert score == 90.95
+    assert score == 92.24
 
 
 def test_empathy_recognition_late_but_explicit_support_stays_high(service, monkeypatch):
@@ -234,6 +234,32 @@ def test_empathy_recognition_neutral_question_reply_scores_mid(service, monkeypa
     assert score == 81.9
 
 
+def test_empathy_recognition_neutral_acknowledgement_reply_scores_as_support(service, monkeypatch):
+    monkeypatch.setattr(
+        service,
+        "_get_interaction_pairs",
+        lambda conversation_id: [
+            {
+                "from_polarity": -1,
+                "from_content": "我今天真的很烦",
+                "to_polarity": 0,
+                "to_content": "确实很烦，先缓缓",
+                "semantic_similarity": 0.30,
+                "time_gap": 240,
+            },
+        ],
+    )
+    monkeypatch.setattr(
+        service.direction_service,
+        "classify",
+        lambda content: type("Result", (), {"direction": "self"})(),
+    )
+
+    score = service.calculate_empathy_recognition(1)
+
+    assert score == 86.4
+
+
 def test_empathy_recognition_filters_negative_messages_aimed_at_others(service, monkeypatch):
     monkeypatch.setattr(
         service,
@@ -296,7 +322,140 @@ def test_negative_resolution_uses_weighted_pair_scores(service, monkeypatch):
 
     score = service.calculate_negative_resolution(1)
 
-    assert score == 63.33
+    assert score == 82.0
+
+
+def test_negative_resolution_rewards_neutral_soothing_acknowledgement(service, monkeypatch):
+    monkeypatch.setattr(
+        service,
+        "_get_interaction_pairs",
+        lambda conversation_id: [
+            {
+                "from_polarity": -1,
+                "from_content": "我现在真的很烦",
+                "to_polarity": 0,
+                "to_content": "确实很烦，先缓缓",
+                "time_gap": 120,
+            },
+        ],
+    )
+    monkeypatch.setattr(
+        service.direction_service,
+        "classify",
+        lambda content: type("Result", (), {"direction": "self"})(),
+    )
+
+    score = service.calculate_negative_resolution(1)
+
+    assert score == 60.0
+
+
+def test_empathy_recognition_downweights_ambiguous_light_complaints(service, monkeypatch):
+    monkeypatch.setattr(
+        service,
+        "_get_interaction_pairs",
+        lambda conversation_id: [
+            {
+                "from_polarity": -1,
+                "from_content": "真无语",
+                "to_polarity": 0,
+                "to_content": "嗯",
+                "semantic_similarity": 0.05,
+                "time_gap": 120,
+            },
+            {
+                "from_polarity": -1,
+                "from_content": "我今天很难受",
+                "to_polarity": 1,
+                "to_content": "抱抱你，我在",
+                "semantic_similarity": 0.82,
+                "time_gap": 90,
+            },
+        ],
+    )
+
+    def classify(content):
+        if content == "真无语":
+            return type("Result", (), {"direction": "ambiguous", "confidence": 1.0})()
+        return type("Result", (), {"direction": "to_me", "confidence": 1.0})()
+
+    monkeypatch.setattr(service.direction_service, "classify", classify)
+
+    score = service.calculate_empathy_recognition(1)
+
+    assert score == 87.34
+
+
+def test_negative_resolution_ignores_to_others_pairs_in_weighted_pool(service, monkeypatch):
+    monkeypatch.setattr(
+        service,
+        "_get_interaction_pairs",
+        lambda conversation_id: [
+            {
+                "from_polarity": -1,
+                "from_content": "老板太离谱了",
+                "to_polarity": 0,
+                "to_content": "别理他",
+                "time_gap": 100,
+            },
+            {
+                "from_polarity": -1,
+                "from_content": "我今天特别难受",
+                "to_polarity": 1,
+                "to_content": "抱抱你，我在",
+                "time_gap": 100,
+            },
+        ],
+    )
+
+    def classify(content):
+        if "老板" in content:
+            return type("Result", (), {"direction": "to_others", "confidence": 1.0})()
+        return type("Result", (), {"direction": "to_me", "confidence": 1.0})()
+
+    monkeypatch.setattr(service.direction_service, "classify", classify)
+
+    score = service.calculate_negative_resolution(1)
+
+    assert score == 80.0
+
+
+def test_empathy_recognition_decays_repeated_negative_pairs_in_same_episode(service, monkeypatch):
+    monkeypatch.setattr(
+        service,
+        "_get_interaction_pairs",
+        lambda conversation_id: [
+            {
+                "from_speech_unit_id": 10,
+                "to_speech_unit_id": 11,
+                "from_polarity": -1,
+                "from_content": "我今天真的很烦",
+                "to_polarity": 0,
+                "to_content": "确实很烦，先缓缓",
+                "semantic_similarity": 0.28,
+                "time_gap": 100,
+            },
+            {
+                "from_speech_unit_id": 12,
+                "to_speech_unit_id": 13,
+                "from_polarity": -1,
+                "from_content": "还是好烦",
+                "to_polarity": 0,
+                "to_content": "嗯",
+                "semantic_similarity": 0.05,
+                "time_gap": 60,
+            },
+        ],
+    )
+    monkeypatch.setattr(
+        service.direction_service,
+        "classify",
+        lambda content: type("Result", (), {"direction": "to_me", "confidence": 1.0})(),
+    )
+
+    score = service.calculate_empathy_recognition(1)
+
+    assert score == 53.25
 
 
 def test_overall_resonance_uses_core_base_score_plus_bonus_items(service, monkeypatch):

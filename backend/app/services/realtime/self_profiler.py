@@ -94,7 +94,7 @@ class SelfProfiler:
             self._ensure_table(conn)
 
             cursor = conn.execute(
-                'SELECT profile_json, created_at, expires_at '
+                'SELECT conversation_id, profile_json, features_snapshot, created_at, expires_at '
                 'FROM self_profiles WHERE display_name = ?',
                 (display_name,)
             )
@@ -103,8 +103,16 @@ class SelfProfiler:
                 return None
 
             now = int(time.time())
+            features_snapshot = {}
+            if row['features_snapshot']:
+                try:
+                    features_snapshot = json.loads(row['features_snapshot'])
+                except Exception:
+                    features_snapshot = {}
             return {
+                'conversation_id': row['conversation_id'],
                 'profile': json.loads(row['profile_json']),
+                'features_snapshot': features_snapshot,
                 'created_at': row['created_at'],
                 'expires_at': row['expires_at'],
                 'expired': now > row['expires_at'],

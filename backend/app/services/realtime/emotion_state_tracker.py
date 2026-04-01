@@ -28,11 +28,13 @@ TRIGGER_SILENCE         = "silence"               # 长时间不回
 TRIGGER_POSITIVE_WINDOW = "positive_window"       # 积极窗口
 TRIGGER_TOPIC_COOLING   = "topic_cooling"         # 话题冷场
 
+TEXT_MESSAGE_TYPE = 1
+
 EMOTION_SHIFT_MIN_MESSAGES = 4
 EMOTION_SHIFT_BASELINE_SIZE = 3
 EMOTION_SHIFT_MIN_BASELINE_POSITIVE = 2
 EMOTION_SHIFT_MIN_BASELINE_INTENSITY = 0.25
-EMOTION_SHIFT_LATEST_MAX_INTENSITY = -0.35
+EMOTION_SHIFT_LATEST_MAX_INTENSITY = -0.50
 EMOTION_SHIFT_MIN_CONFIDENCE = 0.60
 EMOTION_SHIFT_MIN_DELTA = 0.70
 EMOTION_SHIFT_MAX_SPAN_SECONDS = 180
@@ -84,6 +86,80 @@ NONVERBAL_CONTENT_MARKERS = (
     "表情",
     "[图片]",
 )
+PERFUNCTORY_MAX_SPAN_SECONDS = 180
+PERFUNCTORY_MAX_CONTENT_LENGTH = 4
+PERFUNCTORY_MAX_ABS_INTENSITY = 0.25
+PERFUNCTORY_ACK_MARKERS = {
+    "嗯",
+    "嗯嗯",
+    "哦",
+    "哦哦",
+    "好",
+    "好的",
+    "好吧",
+    "好哦",
+    "行",
+    "行吧",
+    "可",
+    "可以",
+    "收到",
+    "知道了",
+    "知道啦",
+    "对",
+    "对的",
+    "ok",
+    "okay",
+}
+PERFUNCTORY_STRONG_ACK_MARKERS = {
+    "嗯",
+    "嗯嗯",
+    "哦",
+    "哦哦",
+    "好的",
+    "好吧",
+    "好哦",
+    "收到",
+    "知道了",
+    "知道啦",
+    "ok",
+    "okay",
+}
+PERFUNCTORY_MIN_STRONG_ACKS = 2
+DECLINE_EXACT_MARKERS = (
+    "不了",
+    "别了",
+    "不聊了",
+    "先算了",
+    "还是算了",
+    "就算了",
+    "算了吧",
+    "去不了",
+    "约不了",
+    "发不了",
+    "安排不了",
+)
+DECLINE_CONTAINS_MARKERS = (
+    "你去吧",
+    "你们去吧",
+    "我就不去了",
+    "先不聊了",
+    "不想去了",
+)
+IMPATIENCE_MARKERS = (
+    "别问了",
+    "别说了",
+    "别搞了",
+    "别催了",
+    "不想聊",
+    "懒得说",
+    "懒得聊",
+    "随便吧",
+    "随便你",
+    "你随便",
+    "懒得理",
+    "受不了你",
+)
+BOUNDARY_INTENTS = {"decline", "impatience"}
 
 # 默认冷却时间（秒）
 DEFAULT_COOLDOWNS = {
@@ -190,6 +266,8 @@ class EmotionStateTracker:
         content = message_data.get('content', '')
         content_length = len(content.strip()) if content else 0
         msg_time = float(message_data.get('timestamp', now))
+        message_type = message_data.get('message_type', message_data.get('type', TEXT_MESSAGE_TYPE))
+        interaction_intent, intent_markers = self._detect_interaction_intent(content)
 
         # 更新滑动窗口
         self.window.append({
@@ -199,6 +277,9 @@ class EmotionStateTracker:
             'confidence': confidence,
             'content_length': content_length,
             'content': content,
+            'message_type': message_type,
+            'interaction_intent': interaction_intent,
+            'intent_markers': intent_markers,
         })
 
         # 更新消息频率追踪（保留最近 10 分钟的时间戳）
@@ -326,6 +407,8 @@ class EmotionStateTracker:
             'avg_intensity': round(avg_intensity, 3),
             'trend': trend,
             'recent_polarities': [e['polarity'] for e in entries],
+            'latest_intent': entries[-1].get('interaction_intent'),
+            'recent_intents': [e.get('interaction_intent') for e in entries if e.get('interaction_intent')],
         }
 
     def reset(self):
@@ -357,6 +440,7 @@ class EmotionStateTracker:
         # 检查最近 3 条是否都是消极
         recent = entries[-3:]
         if all(e['polarity'] == -1 for e in recent):
+            latest = recent[-1]
             return TriggerEvent(
                 trigger_type=TRIGGER_NEGATIVE_STREAK,
                 timestamp=now,
@@ -369,6 +453,7 @@ class EmotionStateTracker:
                     'avg_intensity': round(
                         sum(e['intensity'] for e in recent) / 3, 3
                     ),
+                    **self._build_intent_context(latest),
                 }
             )
         return None
@@ -397,6 +482,9 @@ class EmotionStateTracker:
         if latest['polarity'] != -1:
             return None
 
+        if latest.get('interaction_intent') in BOUNDARY_INTENTS:
+            return None
+
         if latest['intensity'] > EMOTION_SHIFT_LATEST_MAX_INTENSITY:
             return None
 
@@ -405,6 +493,12 @@ class EmotionStateTracker:
 
         positive_count = sum(1 for entry in baseline if entry['polarity'] == 1)
         if positive_count < EMOTION_SHIFT_MIN_BASELINE_POSITIVE:
+            return None
+
+        baseline_avg_polarity = (
+            sum(entry['polarity'] for entry in baseline) / len(baseline)
+        )
+        if baseline_avg_polarity < 0.45:
             return None
 
         baseline_avg_intensity = (
@@ -427,6 +521,7 @@ class EmotionStateTracker:
             severity=TRIGGER_SEVERITY[TRIGGER_EMOTION_SHIFT],
             context={
                 'baseline_avg_intensity': round(baseline_avg_intensity, 3),
+                'baseline_avg_polarity': round(baseline_avg_polarity, 3),
                 'baseline_positive_count': positive_count,
                 'latest_intensity': round(latest['intensity'], 3),
                 'latest_confidence': round(latest['confidence'], 3),
@@ -438,7 +533,7 @@ class EmotionStateTracker:
 
     def _check_perfunctory(self, now: float) -> TriggerEvent | None:
         """
-        检测敷衍回复：对方连续 ≥3 条消息长度 < 5 字
+        检测敷衍回复：对方在短时间内连续发送 ≥3 条低信息确认式短回复
         """
         if len(self.window) < 3:
             return None
@@ -446,13 +541,28 @@ class EmotionStateTracker:
         entries = list(self.window)
         recent = entries[-3:]
 
-        if all(e['content_length'] < 5 for e in recent):
+        if any(entry.get('interaction_intent') in BOUNDARY_INTENTS for entry in recent):
+            return None
+
+        span_seconds = recent[-1]['timestamp'] - recent[0]['timestamp']
+        if span_seconds > PERFUNCTORY_MAX_SPAN_SECONDS:
+            return None
+
+        if all(self._is_perfunctory_reply_candidate(entry) for entry in recent):
+            strong_ack_count = sum(
+                1 for entry in recent
+                if self._is_strong_perfunctory_ack(entry)
+            )
+            if strong_ack_count < PERFUNCTORY_MIN_STRONG_ACKS:
+                return None
             return TriggerEvent(
                 trigger_type=TRIGGER_PERFUNCTORY,
                 timestamp=now,
                 severity=TRIGGER_SEVERITY[TRIGGER_PERFUNCTORY],
                 context={
                     'lengths': [e['content_length'] for e in recent],
+                    'span_seconds': round(span_seconds, 1),
+                    'strong_ack_count': strong_ack_count,
                 }
             )
         return None
@@ -542,6 +652,9 @@ class EmotionStateTracker:
         if not recent_entries:
             return False
 
+        if recent_entries[-1].get('interaction_intent') in BOUNDARY_INTENTS:
+            return True
+
         latest_ts = recent_entries[-1].get('timestamp', 0)
         return any(
             latest_ts - entry.get('timestamp', latest_ts) <= TOPIC_COOLING_SIGNAL_MAX_AGE_SECONDS
@@ -582,3 +695,116 @@ class EmotionStateTracker:
             return True
 
         return False
+
+    def _is_perfunctory_reply_candidate(self, entry: dict) -> bool:
+        """Conservative perfunctory detector for low-information acknowledgements only."""
+        message_type = entry.get('message_type', TEXT_MESSAGE_TYPE)
+        try:
+            message_type = int(message_type)
+        except (TypeError, ValueError):
+            message_type = TEXT_MESSAGE_TYPE
+        if message_type != TEXT_MESSAGE_TYPE:
+            return False
+
+        normalized = (entry.get('content') or '').strip()
+        if not normalized:
+            return False
+
+        compact = normalized.replace(" ", "")
+        if compact in NONVERBAL_CONTENT_MARKERS:
+            return False
+
+        if entry.get('content_length', 0) > PERFUNCTORY_MAX_CONTENT_LENGTH:
+            return False
+
+        if self._is_substantive_short_reply(normalized):
+            return False
+
+        if entry.get('polarity') != 0:
+            return False
+
+        if abs(entry.get('intensity', 0.0)) > PERFUNCTORY_MAX_ABS_INTENSITY:
+            return False
+
+        return compact.casefold() in PERFUNCTORY_ACK_MARKERS
+
+    def _is_substantive_short_reply(self, content: str) -> bool:
+        """Short messages can still be meaningful when they contain clear task or topic signals."""
+        normalized = (content or '').strip()
+        if not normalized:
+            return False
+
+        compact = normalized.replace(" ", "")
+        if any(marker in normalized for marker in TOPIC_COOLING_QUESTION_MARKERS):
+            return True
+
+        if any(keyword in normalized for keyword in TOPIC_COOLING_PLAN_KEYWORDS):
+            return True
+
+        if any(keyword in normalized for keyword in TOPIC_COOLING_DETAIL_KEYWORDS):
+            return True
+
+        if len(compact) >= 6:
+            return True
+
+        if any(ch.isdigit() for ch in normalized):
+            return True
+
+        if any(punct in normalized for punct in ("，", ",", "。", "！", "!", "；", ";", "：", ":")):
+            return True
+
+        return False
+
+    def _is_strong_perfunctory_ack(self, entry: dict) -> bool:
+        normalized = (entry.get('content') or '').strip()
+        if not normalized:
+            return False
+        compact = normalized.replace(" ", "")
+        return compact.casefold() in PERFUNCTORY_STRONG_ACK_MARKERS
+
+    def _build_intent_context(self, entry: dict) -> dict:
+        """Attach high-value intent markers to trigger context when present."""
+        interaction_intent = entry.get('interaction_intent')
+        if not interaction_intent:
+            return {}
+        return {
+            'interaction_intent': interaction_intent,
+            'intent_markers': entry.get('intent_markers', []),
+        }
+
+    def _detect_interaction_intent(self, content: str) -> tuple[Optional[str], list[str]]:
+        """Detect explicit decline / impatience cues to avoid reading too much into them."""
+        normalized = (content or '').strip()
+        if not normalized:
+            return None, []
+
+        compact = normalized.replace(" ", "")
+        if compact in NONVERBAL_CONTENT_MARKERS:
+            return None, []
+
+        decline_markers: list[str] = []
+        for marker in DECLINE_EXACT_MARKERS:
+            if compact.startswith(marker) or compact.endswith(marker):
+                decline_markers.append(marker)
+
+        for marker in DECLINE_CONTAINS_MARKERS:
+            if marker in compact:
+                decline_markers.append(marker)
+
+        if "你和" in compact and compact.endswith("去吧"):
+            decline_markers.append("你和...去吧")
+
+        if "算了" in compact and "算了一下" not in compact and "算一算" not in compact:
+            decline_markers.append("算了")
+
+        if decline_markers:
+            return "decline", list(dict.fromkeys(decline_markers))
+
+        impatience_markers = [
+            marker for marker in IMPATIENCE_MARKERS
+            if marker in compact
+        ]
+        if impatience_markers:
+            return "impatience", impatience_markers
+
+        return None, []

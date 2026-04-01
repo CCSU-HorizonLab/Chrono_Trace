@@ -588,6 +588,12 @@ class NativeUIARealtimeProvider(RealtimeProvider):
             return True
         return False
 
+    def _looks_like_time_label_item(self, text: str, class_name: str) -> bool:
+        """Distinguish true timeline separators from generic system notices."""
+        if TIME_LABEL_RE.match(text):
+            return True
+        return "Time" in class_name
+
     def _resolve_sender_attr(self, item) -> str:
         if self._chat_rect is None:
             self._refresh_chat_rect()
@@ -720,14 +726,16 @@ class NativeUIARealtimeProvider(RealtimeProvider):
 
             runtime_id = runtime_id_to_string(getattr(item.element_info, "runtime_id", ""))
             if self._looks_like_system_item(item, text, class_name):
-                current_label = text or current_label
+                is_time_label = self._looks_like_time_label_item(text, class_name)
+                if is_time_label:
+                    current_label = text or current_label
                 messages.append(
                     RealtimeMessage(
                         runtime_id=runtime_id,
                         sender_attr="system",
                         content=text,
                         message_type="system",
-                        timestamp_label=text,
+                        timestamp_label=current_label if not is_time_label else text,
                         timestamp=0,
                         message_hash="",
                         is_system=True,
@@ -738,7 +746,6 @@ class NativeUIARealtimeProvider(RealtimeProvider):
 
             sender_attr = self._resolve_sender_attr(item)
             if not sender_attr:
-                logger.debug("Skipping ambiguous chat item at index %s", visible_index)
                 continue
 
             message_type = self._resolve_message_type(class_name, text)

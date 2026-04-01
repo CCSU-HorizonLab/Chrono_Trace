@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from app.services.realtime import feedback_rule_extractor
 from app.services.realtime.llm_engine import LLMSuggestionEngine
 from app.services.realtime.self_profiler import SelfProfiler
+from app.services.realtime.style_constraints import StyleConstraints
 
 
 def test_llm_prompt_includes_historical_context_and_sentence_patterns():
@@ -58,15 +59,28 @@ def test_llm_prompt_includes_historical_context_and_sentence_patterns():
                     "msg_ratio": "12:10",
                     "avg_reply_gap": 180,
                 },
+                "style_constraints": {
+                    "emoji_density": 0.0,
+                    "avg_msg_length": 8.5,
+                    "max_speech_length": 21,
+                    "communication_type": "reactive",
+                    "emotional_style": "cold",
+                    "nickname_usage": False,
+                },
             },
         },
     )
 
     assert "常用句式模板" in prompt
+    assert "至少 2 条沿用上述句式模板结构" in prompt
     assert "本关系里的态度与角色" not in prompt
     assert "与对方共有的记忆常识" not in prompt
+    assert "【量化风格硬约束（必须遵守）】" in prompt
+    assert "每条话术严禁超过 21 字" in prompt
+    assert "话术中严禁出现任何 emoji" in prompt
     assert "历史上下文补充" in prompt
     assert "平均回复时长=180 秒" in prompt
+    assert "越新的消息权重越高" in prompt
     assert prompt.index("【最近对话】") < prompt.index("【历史上下文补充（低权重）】")
 
 
@@ -93,6 +107,25 @@ def test_llm_prompt_keeps_more_than_eight_short_messages():
     assert prompt.count("：短句") == 12
 
 
+def test_llm_prompt_without_history_uses_default_style_fallback():
+    engine = LLMSuggestionEngine()
+
+    prompt = engine._build_prompt(
+        "topic_cooling",
+        "maintain",
+        {
+            "recent_messages": [
+                {"sender_attr": "other", "content": "最近有点忙", "timestamp": 100},
+                {"sender_attr": "self", "content": "那先忙", "timestamp": 101},
+            ],
+        },
+    )
+
+    assert "【用户风格缺省约束】" in prompt
+    assert "默认每条话术不超过 15 字" in prompt
+    assert "禁止 emoji、连续感叹号、连续问号" in prompt
+
+
 def test_llm_prompt_uses_char_guard_for_long_messages():
     engine = LLMSuggestionEngine()
     recent_messages = [
@@ -100,9 +133,9 @@ def test_llm_prompt_uses_char_guard_for_long_messages():
             "id": i + 1,
             "timestamp": 100 + i,
             "sender_attr": "other" if i % 2 else "self",
-            "content": f"{i}-" + ("很长" * 500),
+            "content": f"msg{i}_" + ("很长" * 500),
         }
-        for i in range(6)
+        for i in range(30)
     ]
 
     prompt = engine._build_prompt(
@@ -111,8 +144,31 @@ def test_llm_prompt_uses_char_guard_for_long_messages():
         {"recent_messages": recent_messages},
     )
 
-    assert "0-" not in prompt
-    assert "5-" in prompt
+    assert "msg0_" not in prompt
+    assert "msg10_" in prompt
+    assert "msg29_" in prompt
+
+
+def test_llm_prompt_keeps_twenty_recent_messages_even_when_each_is_long():
+    engine = LLMSuggestionEngine()
+    recent_messages = [
+        {
+            "id": i + 1,
+            "timestamp": 100 + i,
+            "sender_attr": "self" if i % 2 == 0 else "other",
+            "content": f"消息{i}-" + ("很长" * 100),
+        }
+        for i in range(20)
+    ]
+
+    prompt = engine._build_prompt(
+        "topic_cooling",
+        "maintain",
+        {"recent_messages": recent_messages},
+    )
+
+    assert "消息0-" in prompt
+    assert "消息19-" in prompt
 
 
 def test_llm_prompt_compresses_older_messages_when_window_exceeds_threshold():
@@ -281,6 +337,7 @@ def test_llm_prompt_filters_content_rules_and_keeps_style_rules(monkeypatch):
         "get_active_rules",
         lambda self, display_name: [
             "用户倾向于用图片而非文字表达情绪或状态",
+            "用户这类场景更爱用语音回复，不会打长文字",
             "用户对不感兴趣的话题会直接转移话题",
             "用户拒绝闲聊时，会直接转移话题到学习内容",
             "用户倾向于用具体事实和数字回应，而非附和或调侃。",
@@ -309,6 +366,7 @@ def test_llm_prompt_filters_content_rules_and_keeps_style_rules(monkeypatch):
 
     assert "【表达偏好参考（仅影响措辞，不决定话题）】" in prompt
     assert "用户倾向于用图片而非文字表达情绪或状态" in prompt
+    assert "用户这类场景更爱用语音回复，不会打长文字" in prompt
     assert "用户倾向于用具体事实和数字回应，而非附和或调侃。" in prompt
     assert "用户对不感兴趣的话题会直接转移话题" not in prompt
     assert "用户拒绝闲聊时，会直接转移话题到学习内容" not in prompt
@@ -379,7 +437,8 @@ def test_llm_manual_request_direct_reply_prompt_avoids_suggestion_card():
     assert "不要生成建议卡片" in prompt
     assert "自然、简洁的助手口吻" in prompt
     assert "【对方画像（低权重参考）】" not in prompt
-    assert "【用户本体语言风格参考（仅影响措辞）】" not in prompt
+    assert "【用户本体克隆画像（必须严格模仿，不可偏离）】" not in prompt
+    assert "【量化风格硬约束（必须遵守）】" not in prompt
 
 
 def test_llm_manual_request_advice_prompt_still_requests_sendable_speeches():
@@ -391,6 +450,59 @@ def test_llm_manual_request_advice_prompt_still_requests_sendable_speeches():
         {
             "user_context": [
                 {"role": "user", "content": "她刚刚这么说了，我该怎么回？"},
+            ],
+        },
+    )
+
+    assert "请基于当前上下文给出可发送的话术" in prompt
+    assert "不要生成建议卡片" not in prompt
+
+
+def test_llm_manual_request_treats_generate_suggestion_style_clone_as_advice_prompt():
+    engine = LLMSuggestionEngine()
+
+    prompt = engine._build_prompt(
+        "manual_request",
+        "maintain",
+        {
+            "user_context": [
+                {"role": "user", "content": "生成建议 模仿我说话"},
+            ],
+        },
+    )
+
+    assert "请基于当前上下文给出可发送的话术" in prompt
+    assert "不要生成建议卡片" not in prompt
+
+
+def test_llm_manual_request_treats_style_refinement_after_advice_as_advice_prompt():
+    engine = LLMSuggestionEngine()
+
+    prompt = engine._build_prompt(
+        "manual_request",
+        "maintain",
+        {
+            "user_context": [
+                {"role": "user", "content": "她刚刚这样说，我该怎么开口？"},
+                {"role": "assistant", "content": "建议你先真诚道歉。你可以说：对不起，刚刚那个类比不太合适。"},
+                {"role": "user", "content": "模仿我说话"},
+            ],
+        },
+    )
+
+    assert "请基于当前上下文给出可发送的话术" in prompt
+    assert "不要生成建议卡片" not in prompt
+
+
+def test_llm_manual_request_treats_request_for_suggestion_speeches_as_advice_prompt():
+    engine = LLMSuggestionEngine()
+
+    prompt = engine._build_prompt(
+        "manual_request",
+        "maintain",
+        {
+            "user_context": [
+                {"role": "user", "content": "你不生成点建议话术？"},
             ],
         },
     )
@@ -411,6 +523,124 @@ def test_llm_parse_response_extracts_json_from_wrapped_text():
     assert result is not None
     assert result.summary == "顺着新话题接一句。"
     assert result.speeches == ["那你更倾向哪个？"]
+
+
+def test_llm_parse_response_enforces_dynamic_style_constraints():
+    engine = LLMSuggestionEngine()
+
+    result = engine._parse_response(
+        json.dumps(
+                {
+                    "reply": "",
+                    "thought_process": "test",
+                    "summary": "test",
+                    "speeches": ["我理解你的感受😊", "今天真的是特别特别特别特别累吧"],
+                },
+                ensure_ascii=False,
+            ),
+        "manual_request",
+        "maintain",
+        style_constraints=StyleConstraints(
+            emoji_density=0.0,
+            avg_msg_length=6.0,
+            max_speech_length=12,
+            communication_type="reactive",
+            emotional_style="cold",
+            nickname_usage=False,
+        ),
+    )
+
+    assert result is None
+
+
+def test_llm_parse_response_keeps_reply_when_all_speeches_filtered():
+    engine = LLMSuggestionEngine()
+
+    result = engine._parse_response(
+        json.dumps(
+            {
+                "reply": "我先帮你捋一下",
+                "thought_process": "test",
+                "summary": "这里其实不该展示建议卡片",
+                "speeches": ["我理解你的感受😊"],
+            },
+            ensure_ascii=False,
+        ),
+        "manual_request",
+        "maintain",
+        style_constraints=StyleConstraints(
+            emoji_density=0.0,
+            avg_msg_length=5.0,
+            max_speech_length=10,
+            communication_type="balanced",
+            emotional_style="neutral",
+            nickname_usage=False,
+        ),
+    )
+
+    assert result is not None
+    assert result.summary == "[PURE_CHAT]"
+    assert result.reply == "我先帮你捋一下"
+    assert result.speeches == []
+
+
+def test_llm_parse_response_keeps_manual_request_reference_speeches_when_reply_present():
+    engine = LLMSuggestionEngine()
+
+    result = engine._parse_response(
+        json.dumps(
+            {
+                "reply": "好的，明白了。以下是建议话术：",
+                "thought_process": "test",
+                "summary": "承认行为不当并转移话题",
+                "speeches": [
+                    "行，我知道了。刚才确实是我没过脑子，不该拿你跟别人比，以后不这样了。",
+                    "是我考虑不周。那种比较的行为确实挺没劲的，以后肯定注意。"
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        "manual_request",
+        "maintain",
+        style_constraints=StyleConstraints(
+            emoji_density=0.0,
+            avg_msg_length=6.0,
+            max_speech_length=12,
+            communication_type="balanced",
+            emotional_style="neutral",
+            nickname_usage=False,
+        ),
+    )
+
+    assert result is not None
+    assert result.summary == "承认行为不当并转移话题"
+    assert result.reply == "好的，明白了。以下是建议话术："
+    assert len(result.speeches) == 2
+
+
+def test_llm_antipattern_match_avoids_overblocking_followup_question():
+    engine = LLMSuggestionEngine()
+
+    assert engine._contains_ai_antipattern("你说得对。") is True
+    assert engine._contains_ai_antipattern("你说得对吧？") is False
+
+
+def test_llm_sanitize_limited_emoji_keeps_last_emoji():
+    engine = LLMSuggestionEngine()
+
+    sanitized = engine._sanitize_speech_candidate(
+        "好呀😊😂",
+        StyleConstraints(
+            emoji_density=0.02,
+            avg_msg_length=8.0,
+            max_speech_length=20,
+            communication_type="balanced",
+            emotional_style="neutral",
+            nickname_usage=False,
+        ),
+    )
+
+    assert sanitized == "好呀😂"
 
 
 def test_llm_extract_message_text_falls_back_to_reasoning_content():
@@ -697,6 +927,49 @@ def test_generate_quick_prompts_uses_dedicated_prompt_and_disables_json_object(m
     assert captured["model_id"] == "deepseek-chat"
     assert captured["messages"][0]["content"].startswith("你是一个聊天联想词生成器")
     assert captured["kwargs"]["use_json_mode"] is False
+    assert prompts == ["继续游戏", "表达关心", "顺着话题", "转移话题"]
+
+
+def test_generate_quick_prompts_uses_twenty_message_window_with_recency_weighting(monkeypatch):
+    engine = LLMSuggestionEngine()
+    captured = {}
+
+    monkeypatch.setattr(
+        engine,
+        "_get_active_model",
+        lambda: {
+            "provider": "deepseek",
+            "api_base_url": "https://api.deepseek.com/v1",
+            "api_key": "token",
+            "model_id": "deepseek-chat",
+            "max_tokens": 256,
+            "temperature": 0.7,
+        },
+    )
+
+    def fake_call(model_config, prompt):
+        captured["prompt"] = prompt
+        return '["继续游戏","表达关心","顺着话题","转移话题"]'
+
+    monkeypatch.setattr(engine, "_call_quick_prompts_api", fake_call)
+
+    prompts = engine.generate_quick_prompts(
+        {
+            "recent_messages": [
+                {
+                    "id": i + 1,
+                    "timestamp": 100 + i,
+                    "sender_attr": "self" if i % 2 == 0 else "other",
+                    "content": f"消息{i}",
+                }
+                for i in range(12)
+            ],
+        }
+    )
+
+    assert "消息0" in captured["prompt"]
+    assert "消息11" in captured["prompt"]
+    assert "越新的消息权重越高" in captured["prompt"]
     assert prompts == ["继续游戏", "表达关心", "顺着话题", "转移话题"]
 
 

@@ -11,8 +11,9 @@ from app.services.realtime.monitor_service import RealtimeMonitorService
 
 
 class FakeTracker:
-    def __init__(self, trend: str):
+    def __init__(self, trend: str, latest_intent: str | None = None):
         self._trend = trend
+        self._latest_intent = latest_intent
 
     def get_emotion_summary(self):
         return {
@@ -21,6 +22,7 @@ class FakeTracker:
             "avg_intensity": 0.0,
             "trend": self._trend,
             "recent_polarities": [0, 0, 0],
+            "latest_intent": self._latest_intent,
         }
 
 
@@ -56,6 +58,16 @@ def test_select_full_auto_trigger_skips_neutral_without_runtime_trigger():
 
     assert trigger_type is None
     assert trigger_context == {}
+
+
+def test_select_full_auto_trigger_skips_boundary_signal_without_runtime_trigger():
+    service = _make_service()
+    service.emotion_tracker = FakeTracker("negative", latest_intent="decline")
+
+    trigger_type, trigger_context = service._select_full_auto_trigger([])
+
+    assert trigger_type is None
+    assert trigger_context["latest_intent"] == "decline"
 
 
 def test_select_full_auto_trigger_uses_negative_trend_fallback():

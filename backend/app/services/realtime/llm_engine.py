@@ -18,18 +18,20 @@ from typing import Optional
 
 from .providers.models import normalize_text
 from .suggestion_engine import SuggestionEngine, SuggestionResult
+from .style_constraints import StyleConstraints, compute_style_constraints
 
 
 # Prompt 系统模板
 SYSTEM_PROMPT = """你是一个专业的聊天沟通顾问，但你当前必须作为【用户本人】的思考替身。你的任务是根据当前的对话情绪状态和长期记忆，为用户提供接下来该怎么回复的建议。
 
 【核心克隆规则】
-1. **千人千面，消除机味**：你必须彻底抛开所有 AI 常用的客套话、转折词、反问句和过度同理心。
-2. **完美模仿用户风格**：你给出的所有的"建议话术"，必须【逐字逐句完全模仿】提供的「用户本体克隆画像」中的打字风格、标点习惯、常用语气词、句式模板、建议字数区间和沟通态度。这非常关键！
+1. **千人千面，消除机味**：你必须彻底抛开所有 AI 常用的客套话、转折词、反问句、安抚腔和过度同理心。
+2. **完美模仿用户风格**：你给出的所有"建议话术"，必须【逐字逐句完全模仿】提供的「用户本体克隆画像」和「量化风格硬约束」中的打字风格、标点习惯、常用语气词、句式模板、建议字数区间和沟通态度。这非常关键！
 3. 内容必须贴合当前情境和已有的关系进度，严禁空泛。
 4. **身份区分**："我"是用户本人（发建议的人），"对方"是聊天对象。在引用记忆/事实时，严禁混淆谁做了什么。
 5. **【时效优先】核心注意力规则**：
    - 你的注意力必须优先集中在【最近对话】中，先理解眼前正在发生什么
+   - 默认按时间顺序阅读最近 20 条消息，但注意力必须随时间递增：越新的消息权重越高，越早的消息只作背景参考
    - 【被唤醒的历史记忆】只有在对方最近消息里明确提到相关话题时才能使用
    - 禁止主动翻出历史记忆作为建议主轴，除非对方刚刚提起
    - 如果历史记忆与当前对话无关，直接忽略它
@@ -42,7 +44,9 @@ SYSTEM_PROMPT = """你是一个专业的聊天沟通顾问，但你当前必须�
 7. **【极其重要】判定模式机制**：
    - 模式 A（纯聊天/指令/修改规则）：如果用户输入只是打招呼（如“你好”）、闲聊、或是要求修改你的回复规则，你**绝对不可提供任何对话建议**！你只能在 `reply` 字段内回答他，同时**必须**将 `summary` 设为空字符串 `""`，`speeches` 设为空数组 `[]`！禁止硬凑无关紧要的建议卡片！
    - 模式 B（请求指导/冷场）：只有在用户明确请教怎么回复对方、或者你检测到聊天即将冷场必须介入时，才能提供 `summary` 和 `speeches`。
-8. 严格按 JSON 格式输出，禁止输出引导语或 Markdown。
+8. **反 AI 腔**：禁止输出下列典型句式或近似表达：“我理解你的感受”“别太难过了”“你说得对”“有什么我能帮到你的吗”“要不要我陪你聊聊”“你值得被温柔以待”“加油哦”“抱抱你”。
+9. **短句优先**：真人微信更像碎片化短句，不要为了完整而完整，不要硬凑主谓宾，不要把一句话写成小作文。
+10. 严格按 JSON 格式输出，禁止输出引导语或 Markdown。
 
 输出格式（纯 JSON，无 markdown）：
 {
@@ -133,7 +137,11 @@ class LLMSuggestionEngine(SuggestionEngine):
 
     """
     RECENT_MESSAGE_LIMIT = 20
-    RECENT_CHAR_GUARD = 300
+    QUICK_PROMPT_MESSAGE_LIMIT = 20
+    RECENT_CHAR_GUARD = 2400
+    RECENT_MESSAGE_RENDER_CHARS = 120
+    QUICK_PROMPT_RENDER_CHARS = 100
+    RECENT_ATTENTION_TAIL = 6
     MSG_COMPRESS_THRESHOLD = 20
     MSG_SUMMARY_MAX_CHARS = 300
     MEMORY_LOOKBACK_MESSAGES = 5
@@ -143,6 +151,7 @@ class LLMSuggestionEngine(SuggestionEngine):
         "长句",
         "连发",
         "图片",
+        "语音",
         "表情",
         "语气",
         "语气词",
@@ -182,6 +191,17 @@ class LLMSuggestionEngine(SuggestionEngine):
     )
     JSON_MODE_PROVIDERS = {"openai", "deepseek"}
     PLACEHOLDER_SUMMARIES = {"...", "…", "一句话建议摘要（若无须提供建议则留空）"}
+    AI_ANTIPATTERN_PHRASES = (
+        "我理解你的感受",
+        "别太难过了",
+        "你说得对",
+        "有什么我能帮到你的吗",
+        "要不要我陪你聊聊",
+        "你值得被温柔以待",
+        "加油哦",
+        "抱抱你",
+        "抱抱你~",
+    )
     META_SPEECH_KEYWORDS = (
         "AI",
         "用户",
@@ -237,6 +257,75 @@ class LLMSuggestionEngine(SuggestionEngine):
         "应该发什么",
         "回啥",
         "怎么回复",
+        "生成建议",
+        "生成回复",
+        "生成话术",
+        "建议话术",
+        "给点建议",
+        "给点话术",
+        "建议呢",
+        "来点建议",
+        "来点话术",
+        "模仿我说话",
+        "模仿我的语气",
+        "按我的语气",
+        "按我的风格",
+        "用我的语气",
+        "换成我的语气",
+        "换成我的风格",
+        "改成我会说的",
+        "像我会说的",
+        "更像我",
+        "像我一点",
+    )
+    MANUAL_REWRITE_KEYWORDS = (
+        "模仿我说话",
+        "模仿我的语气",
+        "按我的语气",
+        "按我的风格",
+        "用我的语气",
+        "换成我的语气",
+        "换成我的风格",
+        "改成我会说的",
+        "像我会说的",
+        "更像我",
+        "像我一点",
+        "换个说法",
+        "润色一下",
+        "改一下",
+        "口语一点",
+        "再口语一点",
+        "短一点",
+        "简短一点",
+        "再来几句",
+    )
+    MANUAL_ADVICE_CONTEXT_HINTS = (
+        "建议",
+        "话术",
+        "你可以说",
+        "你可以回",
+        "可以这样回",
+        "可以这么回",
+        "怎么回",
+        "怎么说",
+        "如何开口",
+        "回复草稿",
+        "化解尴尬",
+        "真诚道歉",
+    )
+    EMOJI_PATTERN = re.compile(
+        "["
+        "\U0001F300-\U0001F5FF"
+        "\U0001F600-\U0001F64F"
+        "\U0001F680-\U0001F6FF"
+        "\U0001F700-\U0001F77F"
+        "\U0001F780-\U0001F7FF"
+        "\U0001F800-\U0001F8FF"
+        "\U0001F900-\U0001F9FF"
+        "\U0001FA00-\U0001FAFF"
+        "\u2600-\u26FF"
+        "\u2700-\u27BF"
+        "]",
     )
 
     def __init__(self, timeout: int = 60):
@@ -248,6 +337,99 @@ class LLMSuggestionEngine(SuggestionEngine):
         # model_id 可用模型缓存: {base_url: (timestamp, [model_ids])}
         self._models_cache: dict[str, tuple[float, list[str]]] = {}
         self._cache_ttl = 300  # 缓存 TTL 5 分钟
+
+    def _resolve_style_constraints(self, context: dict | None = None) -> StyleConstraints:
+        """Resolve style constraints from prebuilt historical context or raw cached inputs."""
+        context = context or {}
+        historical_ctx = context.get("historical_context", {})
+        if isinstance(historical_ctx, dict):
+            raw_constraints = historical_ctx.get("style_constraints")
+            if isinstance(raw_constraints, dict):
+                try:
+                    return StyleConstraints(**raw_constraints)
+                except TypeError:
+                    pass
+
+        return compute_style_constraints(
+            self_profile_features=context.get("self_profile_features"),
+            preprocessed_stats=context.get("preprocessed_stats"),
+            affinity_result=context.get("affinity_result"),
+        )
+
+    def _has_empirical_style_constraints(self, style_constraints: StyleConstraints) -> bool:
+        return (
+            style_constraints.avg_msg_length > 0
+            or style_constraints.emoji_density > 0
+            or style_constraints.nickname_usage
+            or style_constraints.communication_type != "balanced"
+            or style_constraints.emotional_style != "neutral"
+            or style_constraints.max_speech_length != 15
+        )
+
+    def _emoji_policy(self, style_constraints: StyleConstraints) -> str:
+        if style_constraints.emoji_density >= 0.05:
+            return "free"
+        if style_constraints.emoji_density >= 0.01:
+            return "limited"
+        return "forbidden"
+
+    def _count_emojis(self, text: str) -> int:
+        return len(self.EMOJI_PATTERN.findall(text or ""))
+
+    def _sanitize_speech_candidate(
+        self,
+        text: str,
+        style_constraints: StyleConstraints | None = None,
+    ) -> str:
+        """Apply lightweight cleanup before validating sendable speech."""
+        candidate = str(text or "").strip()
+        if not candidate:
+            return ""
+
+        candidate = candidate.strip("`\"'“”‘’ ")
+        candidate = re.sub(r"\s+", " ", candidate).strip()
+        candidate = re.sub(r"([!?！？])\1+", r"\1", candidate)
+        candidate = re.sub(r"([~～])\1+", r"\1", candidate)
+
+        constraints = style_constraints or StyleConstraints(max_speech_length=48)
+        emoji_policy = self._emoji_policy(constraints)
+        if emoji_policy == "forbidden":
+            candidate = self.EMOJI_PATTERN.sub("", candidate)
+            candidate = re.sub(r"\s+", " ", candidate).strip()
+        elif emoji_policy == "limited":
+            chars = list(candidate)
+            emoji_indexes = [
+                index for index, char in enumerate(chars)
+                if self.EMOJI_PATTERN.fullmatch(char)
+            ]
+            if len(emoji_indexes) > 1:
+                keep_index = emoji_indexes[-1]
+                candidate = "".join(
+                    char
+                    for index, char in enumerate(chars)
+                    if index == keep_index or index not in emoji_indexes
+                ).strip()
+
+        if not self._has_empirical_style_constraints(constraints):
+            candidate = re.sub(r"([!?！？])\1+", r"\1", candidate)
+
+        return candidate.strip()
+
+    def _contains_ai_antipattern(self, text: str) -> bool:
+        normalized = re.sub(r"\s+", "", str(text or ""))
+        for phrase in self.AI_ANTIPATTERN_PHRASES:
+            normalized_phrase = re.sub(r"\s+", "", phrase)
+            if normalized == normalized_phrase:
+                return True
+            if normalized.startswith(normalized_phrase):
+                remainder = normalized[len(normalized_phrase):]
+                if remainder and re.fullmatch(r"[!！,，。.\-~～…]+", remainder):
+                    return True
+            if normalized.endswith(normalized_phrase):
+                prefix = normalized[:-len(normalized_phrase)]
+                if prefix and re.fullmatch(r"[\"'“”‘’\(\)（）\[\]【】]+", prefix):
+                    return True
+        return False
 
     def _is_timeout_error(self, err: Exception) -> bool:
         if isinstance(err, (TimeoutError, socket.timeout)):
@@ -302,6 +484,7 @@ class LLMSuggestionEngine(SuggestionEngine):
         _print(f"[LLM Engine] API URL: {model_config.get('api_base_url')}")
 
         # 构造 prompt
+        style_constraints = self._resolve_style_constraints(context)
         user_prompt = self._build_prompt(trigger_type, intent, context)
         _print(f"[LLM Engine] 📤 发送 prompt ({len(user_prompt)} 字符):")
         _print(f"{'─'*50}")
@@ -314,12 +497,22 @@ class LLMSuggestionEngine(SuggestionEngine):
                 _print(f"[LLM Engine] 🧠 分析阶段输出 ({len(analysis_text)} 字符): {analysis_text[:300]}")
                 response_text = self._format_reasoning_result(model_config, user_prompt, analysis_text)
                 _print(f"[LLM Engine] 📥 格式化阶段输出 ({len(response_text)} 字符): {response_text[:300]}")
-                result = self._parse_response(response_text, trigger_type, intent)
+                result = self._parse_response(
+                    response_text,
+                    trigger_type,
+                    intent,
+                    style_constraints=style_constraints,
+                )
                 if not result:
                     repaired_text = self._repair_response(model_config, user_prompt, analysis_text)
                     if repaired_text:
                         _print(f"[LLM Engine] 🩹 修复后响应: {repaired_text[:300]}")
-                        result = self._parse_response(repaired_text, trigger_type, intent)
+                        result = self._parse_response(
+                            repaired_text,
+                            trigger_type,
+                            intent,
+                            style_constraints=style_constraints,
+                        )
                 if result and analysis_text:
                     result.thought_process = analysis_text[:2000]
             else:
@@ -329,12 +522,22 @@ class LLMSuggestionEngine(SuggestionEngine):
                 _print(f"[LLM Engine] 响应内容: {response_text[:300]}")
 
                 # 解析响应
-                result = self._parse_response(response_text, trigger_type, intent)
+                result = self._parse_response(
+                    response_text,
+                    trigger_type,
+                    intent,
+                    style_constraints=style_constraints,
+                )
                 if not result:
                     repaired_text = self._repair_response(model_config, user_prompt, response_text)
                     if repaired_text:
                         _print(f"[LLM Engine] 🩹 修复后响应: {repaired_text[:300]}")
-                        result = self._parse_response(repaired_text, trigger_type, intent)
+                        result = self._parse_response(
+                            repaired_text,
+                            trigger_type,
+                            intent,
+                            style_constraints=style_constraints,
+                        )
             if result:
                 if result.summary == "[SILENT]":
                     _print(f"[LLM Engine] 😶 LLM 决定保持沉默，无建议也不需回复。")
@@ -410,11 +613,12 @@ class LLMSuggestionEngine(SuggestionEngine):
                 break
 
             content = str(msg.get("content", ""))
-            if kept_reversed and total_chars + len(content) > self.RECENT_CHAR_GUARD:
+            estimated_render_len = min(len(content), self.RECENT_MESSAGE_RENDER_CHARS)
+            if kept_reversed and total_chars + estimated_render_len > self.RECENT_CHAR_GUARD:
                 break
 
             kept_reversed.append(msg)
-            total_chars += len(content)
+            total_chars += estimated_render_len
 
         kept = list(reversed(kept_reversed))
         older = messages[:-len(kept)] if kept else messages
@@ -600,7 +804,32 @@ class LLMSuggestionEngine(SuggestionEngine):
         normalized = re.sub(r"\s+", "", latest_user_input)
         if any(keyword in normalized for keyword in self.MANUAL_ADVICE_KEYWORDS):
             return "advice_request"
+        if (
+            any(keyword in normalized for keyword in self.MANUAL_REWRITE_KEYWORDS)
+            and self._has_manual_advice_context(context)
+        ):
+            return "advice_request"
         return "direct_reply"
+
+    def _has_manual_advice_context(self, context: dict) -> bool:
+        """判断当前用户输入前，是否已经在围绕“给建议/改话术”这个任务继续追问。"""
+        user_context = context.get("user_context")
+        if not isinstance(user_context, list):
+            return False
+
+        historical_inputs: list[str] = []
+        for msg in user_context[:-1]:
+            content = str(msg.get("content", "")).strip()
+            if content:
+                historical_inputs.append(content)
+
+        if not historical_inputs:
+            return False
+
+        normalized = re.sub(r"\s+", "", "".join(historical_inputs))
+        if any(keyword in normalized for keyword in self.MANUAL_ADVICE_KEYWORDS):
+            return True
+        return any(keyword in normalized for keyword in self.MANUAL_ADVICE_CONTEXT_HINTS)
 
     def _build_prompt(self, trigger_type: str, intent: str, context: dict) -> str:
         """构造用户 prompt"""
@@ -611,6 +840,7 @@ class LLMSuggestionEngine(SuggestionEngine):
             else None
         )
         is_direct_reply = manual_request_kind == "direct_reply"
+        style_constraints = self._resolve_style_constraints(context)
 
         # 触发原因
         trigger_desc = TRIGGER_DESCRIPTIONS.get(
@@ -630,11 +860,15 @@ class LLMSuggestionEngine(SuggestionEngine):
         compressed_summary = self._compress_messages(recent, recent_window)
         if recent_window:
             parts.append("\n【最近对话】")
+            parts.append(
+                f"  注意力分配：按时间顺序理解最近 {len(recent_window)} 条，"
+                f"越新的消息权重越高，最后 {min(self.RECENT_ATTENTION_TAIL, len(recent_window))} 条优先级最高。"
+            )
             if compressed_summary:
                 parts.append(f"  {compressed_summary}")
             for msg in recent_window:
                 sender = "我" if msg.get("sender_attr") == "self" else "对方"
-                content = str(msg.get("content", ""))[:200]
+                content = str(msg.get("content", ""))[: self.RECENT_MESSAGE_RENDER_CHARS]
                 parts.append(f"  {sender}：{content}")
 
         # 情绪摘要
@@ -702,7 +936,7 @@ class LLMSuggestionEngine(SuggestionEngine):
         # 用户本体专属克隆画像
         self_profile = context.get("self_profile")
         if self_profile and not is_direct_reply:
-            parts.append("\n【用户本体语言风格参考（仅影响措辞）】")
+            parts.append("\n【用户本体克隆画像（必须严格模仿，不可偏离）】")
             typing_style = self_profile.get("typing_style", "")
             if typing_style:
                 parts.append(f"  打字排版风格: {typing_style}")
@@ -712,9 +946,52 @@ class LLMSuggestionEngine(SuggestionEngine):
             patterns = self_profile.get("sentence_patterns", [])
             if patterns:
                 parts.append(f"  常用句式模板（优先仿照这些结构写话术）: {' / '.join(patterns)}")
+                parts.append("  强制要求: 最终 3 条候选里至少 2 条沿用上述句式模板结构")
             donts = self_profile.get("do_and_donts", "")
             if donts:
                 parts.append(f"  模仿禁忌: {donts}")
+        elif not is_direct_reply:
+            parts.append("\n【用户风格缺省约束】")
+            parts.append("  当前无可用的用户画像缓存，默认每条话术不超过 15 字")
+            parts.append("  禁止 emoji、连续感叹号、连续问号，优先短句和口语")
+
+        if not is_direct_reply:
+            parts.append("\n【量化风格硬约束（必须遵守）】")
+            if self._has_empirical_style_constraints(style_constraints):
+                if style_constraints.avg_msg_length > 0:
+                    parts.append(
+                        f"  用户平均消息长度: {style_constraints.avg_msg_length:.1f} 字"
+                        f" -> 每条话术严禁超过 {style_constraints.max_speech_length} 字"
+                    )
+                emoji_density_pct = style_constraints.emoji_density * 100
+                emoji_rule = {
+                    "forbidden": "话术中严禁出现任何 emoji",
+                    "limited": "每条话术最多保留 1 个 emoji，且不要堆叠",
+                    "free": "emoji 可自然使用，但仍需克制",
+                }[self._emoji_policy(style_constraints)]
+                parts.append(
+                    f"  用户 emoji 使用率: {emoji_density_pct:.1f}% -> {emoji_rule}"
+                )
+                comm_desc = {
+                    "proactive": "主动型，不要突然比本人更冷",
+                    "reactive": "被动型，不要建议用户主动追问或过度热情",
+                    "balanced": "均衡型，保持自然往返，不要抢节奏",
+                }[style_constraints.communication_type]
+                parts.append(f"  用户沟通类型: {style_constraints.communication_type} -> {comm_desc}")
+                emo_desc = {
+                    "cold": "冷淡型，禁止使用过热称呼和过度安慰",
+                    "warm": "偏热情，可自然一些，但别用 AI 安抚腔",
+                    "neutral": "中性，按当前上下文轻量表达",
+                }[style_constraints.emotional_style]
+                parts.append(f"  用户情感风格: {style_constraints.emotional_style} -> {emo_desc}")
+                parts.append(
+                    "  用户昵称习惯: "
+                    + ("有专属昵称习惯，可在合适时轻量沿用" if style_constraints.nickname_usage else "没有明显昵称习惯，不要硬加亲昵称呼")
+                )
+            else:
+                parts.append("  当前缺少历史统计缓存，默认每条话术 <= 15 字")
+                parts.append("  严禁 emoji、连续感叹号、连续问号")
+                parts.append("  优先短句、口语、直接表达，不要写成安慰小作文")
 
         relevant_memories = self._should_inject_memories(
             recent_window or recent,
@@ -796,6 +1073,13 @@ class LLMSuggestionEngine(SuggestionEngine):
                     "请基于当前上下文给出可发送的话术，"
                     "并且必须严格只输出 JSON，不要输出解释、前言或额外文本。"
                 )
+
+        if not is_direct_reply:
+            parts.append("\n【禁止使用的 AI 典型句式】")
+            parts.append("  我理解你的感受 / 别太难过了 / 你说得对")
+            parts.append("  有什么我能帮到你的吗 / 要不要我陪你聊聊")
+            parts.append("  你值得被温柔以待 / 加油哦 / 抱抱你")
+            parts.append("  任何过度完整、过度客套、像心理咨询模板的话")
 
         parts.append("\n请根据以上信息生成思考过程和沟通建议（纯 JSON 输出）：")
         prompt = "\n".join(parts)
@@ -1225,18 +1509,62 @@ class LLMSuggestionEngine(SuggestionEngine):
             candidate = candidate.split("：", 1)[1].strip()
         return candidate
 
-    def _is_sendable_speech(self, text: str) -> bool:
+    def _is_sendable_speech(
+        self,
+        text: str,
+        style_constraints: StyleConstraints | None = None,
+    ) -> bool:
         """判断一段文本是否像用户可以直接发送的话术，而不是规则说明。"""
-        candidate = str(text or "").strip()
+        constraints = style_constraints or StyleConstraints(max_speech_length=48)
+        candidate = self._sanitize_speech_candidate(text, constraints)
         if not candidate:
             return False
         if candidate.startswith(("**", "#", "【")):
             return False
-        if len(candidate) > 48:
+        if len(candidate) > constraints.max_speech_length:
             return False
         if any(keyword in candidate for keyword in self.META_SPEECH_KEYWORDS):
             return False
         if re.fullmatch(r"话术\d+", candidate):
+            return False
+        if self._contains_ai_antipattern(candidate):
+            return False
+        emoji_count = self._count_emojis(candidate)
+        emoji_policy = self._emoji_policy(constraints)
+        if emoji_policy == "forbidden" and emoji_count:
+            return False
+        if emoji_policy == "limited" and emoji_count > 1:
+            return False
+        return True
+
+    def _is_reference_sendable_speech(
+        self,
+        text: str,
+        style_constraints: StyleConstraints | None = None,
+    ) -> bool:
+        """
+        更宽松地判断一段文本是否至少值得展示给用户参考。
+        用于 manual_request 场景下，避免因为长度略长把整组话术全部降级成 PURE_CHAT。
+        """
+        constraints = style_constraints or StyleConstraints(max_speech_length=48)
+        candidate = self._sanitize_speech_candidate(text, constraints)
+        if not candidate:
+            return False
+        if candidate.startswith(("**", "#", "【")):
+            return False
+        if len(candidate) > max(80, constraints.max_speech_length):
+            return False
+        if any(keyword in candidate for keyword in self.META_SPEECH_KEYWORDS):
+            return False
+        if re.fullmatch(r"话术\d+", candidate):
+            return False
+        if self._contains_ai_antipattern(candidate):
+            return False
+        emoji_count = self._count_emojis(candidate)
+        emoji_policy = self._emoji_policy(constraints)
+        if emoji_policy == "forbidden" and emoji_count:
+            return False
+        if emoji_policy == "limited" and emoji_count > 1:
             return False
         return True
 
@@ -1258,7 +1586,11 @@ class LLMSuggestionEngine(SuggestionEngine):
         )
         return any(keyword in text for keyword in meta_keywords)
 
-    def _extract_speeches_from_reasoning(self, text: str) -> list[str]:
+    def _extract_speeches_from_reasoning(
+        self,
+        text: str,
+        style_constraints: StyleConstraints | None = None,
+    ) -> list[str]:
         """从 reasoning 型自由文本中尽量提取可发送的话术。"""
         lines = [line.rstrip() for line in (text or "").splitlines()]
         speeches: list[str] = []
@@ -1278,7 +1610,8 @@ class LLMSuggestionEngine(SuggestionEngine):
                 remainder = re.split(r"[:：]", line, maxsplit=1)
                 if len(remainder) == 2:
                     candidate = self._clean_speech_candidate(remainder[1])
-                    if candidate and self._is_sendable_speech(candidate):
+                    candidate = self._sanitize_speech_candidate(candidate, style_constraints)
+                    if candidate and self._is_sendable_speech(candidate, style_constraints):
                         speeches.append(candidate)
                 continue
 
@@ -1298,7 +1631,8 @@ class LLMSuggestionEngine(SuggestionEngine):
                 continue
 
             candidate = self._clean_speech_candidate(line)
-            if not self._is_sendable_speech(candidate):
+            candidate = self._sanitize_speech_candidate(candidate, style_constraints)
+            if not self._is_sendable_speech(candidate, style_constraints):
                 continue
             speeches.append(candidate)
             if len(speeches) >= 3:
@@ -1310,7 +1644,8 @@ class LLMSuggestionEngine(SuggestionEngine):
                 if not (re.match(r"^[-*•]\s*", line) or re.match(r"^\d+[.)、．]\s*", line)):
                     continue
                 candidate = self._clean_speech_candidate(line)
-                if not self._is_sendable_speech(candidate):
+                candidate = self._sanitize_speech_candidate(candidate, style_constraints)
+                if not self._is_sendable_speech(candidate, style_constraints):
                     continue
                 speeches.append(candidate)
                 if len(speeches) >= 3:
@@ -1360,14 +1695,18 @@ class LLMSuggestionEngine(SuggestionEngine):
         return False
 
     def _parse_reasoning_fallback(
-        self, text: str, trigger_type: str, intent: str
+        self,
+        text: str,
+        trigger_type: str,
+        intent: str,
+        style_constraints: StyleConstraints | None = None,
     ) -> Optional[SuggestionResult]:
         """当模型没有返回 JSON 时，尽量从 reasoning 自由文本中兜底提取结果。"""
         cleaned = (text or "").strip()
         if not cleaned:
             return None
 
-        speeches = self._extract_speeches_from_reasoning(cleaned)
+        speeches = self._extract_speeches_from_reasoning(cleaned, style_constraints)
         if not speeches:
             return None
         summary = self._build_reasoning_fallback_summary(cleaned, trigger_type, speeches)
@@ -1414,7 +1753,11 @@ class LLMSuggestionEngine(SuggestionEngine):
             return ""
 
     def _parse_response(
-        self, text: str, trigger_type: str, intent: str
+        self,
+        text: str,
+        trigger_type: str,
+        intent: str,
+        style_constraints: StyleConstraints | None = None,
     ) -> Optional[SuggestionResult]:
         """解析 LLM 返回的 JSON"""
         try:
@@ -1433,14 +1776,6 @@ class LLMSuggestionEngine(SuggestionEngine):
             speeches = data.get("speeches", [])
             reply = data.get("reply", "").strip()
 
-            if not summary and not reply:
-                # 允许模型保持沉默（既没建议也不回复用户）
-                summary = "[SILENT]"
-
-            # 若 summary 为空，给一个默认标记防止报错，前端可根据此标记隐藏卡片
-            if not summary and reply:
-                summary = "[PURE_CHAT]"
-
             # 确保 speeches 是合法的列表
             if isinstance(speeches, str):
                 # 如果大模型返回的是纯字符串，包裹一层
@@ -1449,11 +1784,41 @@ class LLMSuggestionEngine(SuggestionEngine):
                 speeches = []
 
             # 确保 speeches 是字符串列表
-            speeches = [str(s).strip() for s in speeches if s]
-            valid_speeches = [speech for speech in speeches if self._is_sendable_speech(speech)]
+            speeches = [
+                self._sanitize_speech_candidate(str(s).strip(), style_constraints)
+                for s in speeches
+                if s
+            ]
+            speeches = [speech for speech in speeches if speech]
+            valid_speeches = [
+                speech for speech in speeches if self._is_sendable_speech(speech, style_constraints)
+            ]
             if speeches and not valid_speeches:
-                raise ValueError("模型返回的 speeches 更像规则说明，不是可发送话术")
-            speeches = valid_speeches
+                if trigger_type == "manual_request" and reply:
+                    relaxed_speeches = [
+                        speech
+                        for speech in speeches
+                        if self._is_reference_sendable_speech(speech, style_constraints)
+                    ]
+                    if relaxed_speeches:
+                        _print("[LLM Engine] ⚠️ manual_request 话术未通过严格校验，已保留为参考话术展示")
+                        speeches = relaxed_speeches[:3]
+                    else:
+                        speeches = []
+                elif not reply:
+                    raise ValueError("模型返回的 speeches 更像规则说明，不是可发送话术")
+                else:
+                    speeches = []
+            else:
+                speeches = valid_speeches
+            if speeches:
+                if not summary or summary == "[SILENT]":
+                    summary = "已生成可直接发送的话术"
+            elif reply:
+                summary = "[PURE_CHAT]"
+            elif not summary:
+                # 允许模型保持沉默（既没建议也不回复用户）
+                summary = "[SILENT]"
 
             return SuggestionResult(
                 trigger_type=trigger_type,
@@ -1466,7 +1831,12 @@ class LLMSuggestionEngine(SuggestionEngine):
                 reply=reply or None
             )
         except (json.JSONDecodeError, KeyError, IndexError, ValueError) as e:
-            fallback_result = self._parse_reasoning_fallback(text, trigger_type, intent)
+            fallback_result = self._parse_reasoning_fallback(
+                text,
+                trigger_type,
+                intent,
+                style_constraints=style_constraints,
+            )
             if fallback_result:
                 _print("[LLM Engine] ⚠️ 检测到非 JSON reasoning 输出，已本地提取建议结果")
                 return fallback_result
@@ -1498,14 +1868,23 @@ class LLMSuggestionEngine(SuggestionEngine):
             raise ValueError("未配置激活模型")
 
         prompt = "请阅读以下双方的最新聊天记录，推测用户（‘我’）下一步最可能想发起的话题方向或对话策略。\n"
-        prompt += "要求：给出 4 个选项；每个选项必须是简短的动宾短语（限 4 个字内，如‘顺着话题’、‘转移话题’、‘约她吃饭’、‘表达心疼’）；只返回一个 JSON 格式的字符串数组，不要其他废话。\n\n"
+        prompt += (
+            "要求：给出 4 个选项；每个选项必须是简短的动宾短语（限 4 个字内，如‘顺着话题’、‘转移话题’、‘约她吃饭’、‘表达心疼’）；"
+            "理解上下文时按时间顺序看最近对话，但越新的消息权重越高，最后几句优先。"
+            "只返回一个 JSON 格式的字符串数组，不要其他废话。\n\n"
+        )
 
         recent = self._normalize_recent_messages(context.get("recent_messages", []))
         if recent:
+            _older_messages, recent_window = self._select_recent_messages(recent)
             prompt += "【最近对话】\n"
-            for msg in recent[-8:]:  # 最多取最近 8 条
+            prompt += (
+                f"注意力分配：按时间顺序理解最近 {len(recent_window)} 条，"
+                f"越新的消息权重越高，最后 {min(self.RECENT_ATTENTION_TAIL, len(recent_window))} 条优先级最高。\n"
+            )
+            for msg in recent_window:
                 sender = "我" if msg.get("sender_attr") == "self" else "对方"
-                content = msg.get("content", "")[:100]
+                content = str(msg.get("content", ""))[: self.QUICK_PROMPT_RENDER_CHARS]
                 prompt += f"{sender}：{content}\n"
         else:
             prompt += "【最近对话】暂无。\n"

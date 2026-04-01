@@ -390,6 +390,42 @@ def test_native_provider_find_session_entry_uses_session_list_instead_of_chat_bu
     assert result is session_item
 
 
+def test_native_provider_recall_notice_does_not_replace_current_time_label(monkeypatch):
+    provider = NativeUIARealtimeProvider("wechat_41x", wechat_version="4.1.8.29", hwnd=101)
+
+    class _FakeChatItem:
+        def __init__(self, text: str, class_name: str, runtime_id: str):
+            self._text = text
+            self._class_name = class_name
+            self.element_info = SimpleNamespace(runtime_id=runtime_id)
+
+        def class_name(self):
+            return self._class_name
+
+        def window_text(self):
+            return self._text
+
+    items = [
+        _FakeChatItem("12:28", "mmui::ChatTimeSeparator", "rt-1"),
+        _FakeChatItem("你撤回了一条消息 重新编辑", "mmui::ChatSystemNotice", "rt-2"),
+        _FakeChatItem("今天晚上", "mmui::ChatBubbleItemView", "rt-3"),
+    ]
+
+    monkeypatch.setattr(provider, "_iter_chat_items", lambda: items)
+    monkeypatch.setattr(provider, "_resolve_sender_attr", lambda item: "" if "System" in item.class_name() or "Time" in item.class_name() else "self")
+    monkeypatch.setattr(provider, "_resolve_message_type", lambda class_name, text: "system" if "System" in class_name or "Time" in class_name else "text")
+
+    messages = provider.list_visible_messages()
+
+    assert len(messages) == 3
+    assert messages[0].is_system is True
+    assert messages[0].time == "12:28"
+    assert messages[1].is_system is True
+    assert messages[1].content == "你撤回了一条消息 重新编辑"
+    assert messages[1].time == "12:28"
+    assert messages[2].time == "12:28"
+
+
 def test_factory_rejects_unsupported_versions(monkeypatch):
     monkeypatch.setattr(
         "app.services.realtime.providers.factory.detect_running_wechat",

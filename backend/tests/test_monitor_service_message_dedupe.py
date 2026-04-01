@@ -530,6 +530,34 @@ def test_process_message_dedupes_system_rows_without_provider_hash():
     assert saved["message_hash"]
 
 
+def test_process_message_dedupes_recall_system_notice_without_time_label(monkeypatch):
+    service, buffer = _make_service()
+    message = SimpleNamespace(
+        hash="",
+        id="runtime-system-recall-1",
+        is_self=False,
+        is_system=True,
+        content="你撤回了一条消息 重新编辑",
+        type="system",
+        time="",
+        CreateTime="",
+        timestamp=0,
+        visible_index=0,
+    )
+
+    clock = iter([1711958400, 1711958401, 1711958402, 1711958403])
+    monkeypatch.setattr("app.services.realtime.monitor_service.time.time", lambda: next(clock))
+
+    service._process_message(message)
+    service._process_message(message)
+
+    assert len(buffer.saved_messages) == 1
+    saved = buffer.saved_messages[0]
+    assert saved["sender_attr"] == "system"
+    assert saved["timestamp"] == 0
+    assert saved["message_hash"]
+
+
 def test_seed_visible_message_baseline_skips_startup_history_processing():
     service, buffer = _make_service()
     message = SimpleNamespace(
@@ -609,16 +637,24 @@ def test_check_feedback_reserves_suggestion_once(monkeypatch):
     calls = []
 
     class FakeExtractor:
-        def compare_and_extract(self, ai_speeches, user_actual_message, display_name, suggestion_id=None):
+        def analyze_feedback(
+            self,
+            ai_speeches,
+            user_actual_message,
+            display_name="",
+            suggestion_id=None,
+            user_message_type=None,
+        ):
             calls.append(
                 {
                     "ai_speeches": ai_speeches,
                     "user_actual_message": user_actual_message,
                     "display_name": display_name,
                     "suggestion_id": suggestion_id,
+                    "user_message_type": user_message_type,
                 }
             )
-            return None
+            return {"outcome": "adopted", "rules": [], "max_similarity": 0.91, "selected_speech": "测试话术"}
 
     monkeypatch.setattr(
         "app.services.realtime.feedback_rule_extractor.FeedbackRuleExtractor",
@@ -649,3 +685,42 @@ def test_check_feedback_reserves_suggestion_once(monkeypatch):
     assert row["status"] == "feedback_processing"
     assert len(started_targets) == 1
     assert calls == []
+
+
+def test_process_message_passes_message_type_into_feedback(monkeypatch):
+    service, _buffer = _make_service()
+    service.current_batch_id = "batch-1"
+    service.current_display_name = "Friend"
+    captured = {}
+
+    monkeypatch.setattr(
+        service,
+        "_check_feedback",
+        lambda user_message, session_state=None, user_message_type=None: captured.update(
+            {
+                "user_message": user_message,
+                "user_message_type": user_message_type,
+                "display_name": (session_state or {}).get("display_name"),
+            }
+        ),
+    )
+
+    message = SimpleNamespace(
+        hash="provider-hash-self-1",
+        id="runtime-self-1",
+        is_self=True,
+        is_system=False,
+        content="语音",
+        type="voice",
+        time="12:48",
+        CreateTime="12:48",
+        timestamp=0,
+        visible_index=3,
+    )
+
+    session_state = service._build_session_state(1)
+    service._process_message(message, session_state=session_state)
+
+    assert captured["user_message"] == "语音"
+    assert captured["user_message_type"] == "voice"
+    assert captured["display_name"] == "Friend"

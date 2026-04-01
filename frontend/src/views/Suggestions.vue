@@ -226,6 +226,51 @@
       </div>
     </div>
 
+    <div v-if="manualSuggestion && !isSilentSuggestion(manualSuggestion)" class="sug-section">
+      <div class="sug-result-card">
+        <div class="sug-result-hd">
+          <div>
+            <div class="sug-result-kicker">
+              {{ isPureChatSuggestion(manualSuggestion) ? 'AI 回复' : '最新建议' }}
+            </div>
+            <h2 class="sug-result-title">
+              {{ isPureChatSuggestion(manualSuggestion) ? 'AI 已直接回应你的输入' : manualSuggestion.summary }}
+            </h2>
+          </div>
+          <button
+            v-if="!isPureChatSuggestion(manualSuggestion)"
+            class="sug-action-sm"
+            @click="manualSuggestionExpanded = !manualSuggestionExpanded"
+          >
+            {{ manualSuggestionExpanded ? '收起' : '展开' }}
+          </button>
+        </div>
+
+        <div v-if="manualSuggestion.reply" class="sug-reply-block">
+          <div class="sug-reply-label">AI 回复</div>
+          <div class="sug-reply-text">{{ manualSuggestion.reply }}</div>
+          <button class="sug-action-sm" @click="copyText(manualSuggestion.reply)">复制回复</button>
+        </div>
+
+        <div v-if="!isPureChatSuggestion(manualSuggestion) && manualSuggestionExpanded" class="sug-result-bd">
+          <details v-if="manualSuggestion.thought_process" class="sug-thought">
+            <summary>AI 思考过程</summary>
+            <div class="sug-thought-text">{{ manualSuggestion.thought_process }}</div>
+          </details>
+
+          <div v-if="manualSuggestionSpeeches.length" class="sug-speech-list">
+            <div v-for="(speech, idx) in manualSuggestionSpeeches" :key="idx" class="sug-speech-item">
+              <span class="sug-speech-text">{{ speech }}</span>
+              <button class="sug-action-sm" @click="copyText(speech)">复制</button>
+            </div>
+          </div>
+          <div v-else class="sug-empty-state">
+            <span>这次没有生成可直接发送的话术。</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
   </section>
 
   <!-- 画像生成确认弹窗 -->
@@ -356,6 +401,7 @@ let messagesTimer: any = null
 const triggerMode = ref<any>('semi_auto')
 const manualSuggestion = ref<any>(null)
 const manualSuggestionExpanded = ref(true)
+const manualSuggestionSpeeches = computed(() => parseSuggestionSpeeches(manualSuggestion.value?.speeches))
 
 const showLlmWarningDialog = ref(false)
 
@@ -701,6 +747,27 @@ async function generateContactProfile() {
 }
 
 function copyText(text: string) { navigator.clipboard?.writeText(text) }
+
+function parseSuggestionSpeeches(raw: any): string[] {
+  if (Array.isArray(raw)) {
+    return raw.map((item) => String(item).trim()).filter(Boolean)
+  }
+  if (typeof raw !== 'string') return []
+  try {
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed.map((item) => String(item).trim()).filter(Boolean) : []
+  } catch {
+    return []
+  }
+}
+
+function isPureChatSuggestion(s: any): boolean {
+  return String(s?.summary || '').trim() === '[PURE_CHAT]'
+}
+
+function isSilentSuggestion(s: any): boolean {
+  return String(s?.summary || '').trim() === '[SILENT]'
+}
 
 function resetProfileMeta(meta: { createdAt: number; expiresAt: number; expired: boolean }) {
   meta.createdAt = 0
@@ -1076,6 +1143,91 @@ function getTriggerIcon(type: string): string {
 }
 .sug-panel-hd svg { color: var(--ct-text-tertiary); }
 .sug-panel-bd { padding: var(--ct-space-lg); flex: 1; display: flex; flex-direction: column; }
+
+/* Result Card */
+.sug-result-card {
+  position: relative;
+  z-index: 1;
+  background: var(--ct-bg-elevated);
+  border: 1px solid var(--ct-border-color);
+  border-radius: var(--ct-radius-xl);
+  padding: var(--ct-space-xl);
+  box-shadow: var(--ct-shadow-md);
+}
+.sug-result-hd {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--ct-space-md);
+  margin-bottom: var(--ct-space-lg);
+}
+.sug-result-kicker {
+  font-size: var(--ct-text-xs);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ct-color-primary);
+  margin-bottom: 6px;
+}
+.sug-result-title {
+  margin: 0;
+  font-size: var(--ct-text-xl);
+  color: var(--ct-text-primary);
+}
+.sug-result-bd {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ct-space-md);
+}
+.sug-reply-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ct-space-sm);
+  padding: var(--ct-space-md);
+  margin-bottom: var(--ct-space-md);
+  background: var(--ct-bg-secondary);
+  border: 1px solid var(--ct-border-color);
+  border-radius: var(--ct-radius-lg);
+}
+.sug-reply-label {
+  font-size: var(--ct-text-xs);
+  font-weight: 600;
+  color: var(--ct-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.sug-reply-text,
+.sug-thought-text,
+.sug-speech-text {
+  line-height: 1.7;
+  color: var(--ct-text-primary);
+}
+.sug-thought {
+  padding: var(--ct-space-md);
+  background: var(--ct-bg-secondary);
+  border: 1px solid var(--ct-border-color);
+  border-radius: var(--ct-radius-lg);
+}
+.sug-thought summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--ct-text-secondary);
+}
+.sug-speech-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ct-space-sm);
+}
+.sug-speech-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ct-space-md);
+  padding: var(--ct-space-md);
+  background: linear-gradient(135deg, rgba(124, 77, 255, 0.08), rgba(52, 211, 153, 0.06));
+  border: 1px solid var(--ct-border-color);
+  border-radius: var(--ct-radius-lg);
+}
 
 /* Profile Card */
 .sug-profile-row { display: flex; align-items: center; gap: var(--ct-space-md); margin-bottom: var(--ct-space-md); }

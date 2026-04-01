@@ -1389,6 +1389,9 @@ async function manualGenerate() {
       historical_context: buildHistoricalContext(),
     })
     if (r.ok && r.suggestion) {
+      if (r.suggestion.reply) {
+        conversationHistory.value.push({ role: 'ai', content: r.suggestion.reply, ts: Math.floor(Date.now() / 1000) })
+      }
       manualSuggestion.value = r.suggestion
       // 将手动生成的卡片同步加入待处理池以将其驻留，防止下次 manual_generate 覆盖致其屏幕消失
       if (r.suggestion.summary !== '[PURE_CHAT]' && r.suggestion.summary !== '[SILENT]') {

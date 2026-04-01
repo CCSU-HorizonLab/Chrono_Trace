@@ -1764,7 +1764,11 @@ class RealtimeMonitorService:
                 
                 # 隐式反馈：用户自己发了消息 → 对比最近的 AI 建议
                 if sender_attr == 'self' and message_data['content']:
-                    self._check_feedback(message_data['content'], session_state=session_state)
+                    self._check_feedback(
+                        message_data['content'],
+                        session_state=session_state,
+                        user_message_type=message_data.get('message_type'),
+                    )
                 
                 # 显示统计
                 _print(f"✅ 已保存！累计: {len(self.seen_hashes)} 条\n")
@@ -1793,7 +1797,10 @@ class RealtimeMonitorService:
             if parsed_system:
                 self._last_known_ts = parsed_system
                 return parsed_system
-            return parsed_direct or now_ts
+            if parsed_direct:
+                self._last_known_ts = parsed_direct
+                return parsed_direct
+            return self._last_known_ts or 0
 
         return parsed_direct or self._last_known_ts or now_ts
 
@@ -2944,6 +2951,7 @@ class RealtimeMonitorService:
                     except Exception as msg_e:
                         _print(f"⚠️ 获取最近消息失败: {msg_e}")
                 
+                self_profile_cache = None
                 if display_name:
                     try:
                         from .contact_profiler import ContactProfiler
@@ -2960,26 +2968,14 @@ class RealtimeMonitorService:
                         s_cached = s_profiler.get_profile(display_name)
                         if s_cached and not s_cached['expired']:
                             ctx['self_profile'] = s_cached['profile']
+                            self_profile_cache = s_cached
                     except Exception as prof_e:
                         _print(f"⚠️ 提取画像失败: {prof_e}")
 
-                try:
-                    from .historical_context import build_historical_context
-
-                    historical_context = ctx.get('historical_context', {})
-                    if not isinstance(historical_context, dict):
-                        historical_context = {}
-                    auto_historical = build_historical_context(
-                        contact_profile=ctx.get('contact_profile'),
-                        emotion_summary=ctx.get('emotion_summary'),
-                        recent_messages=ctx.get('recent_messages'),
-                    )
-                    for key, value in auto_historical.items():
-                        historical_context.setdefault(key, value)
-                    if historical_context:
-                        ctx['historical_context'] = historical_context
-                except Exception as hist_e:
-                    _print(f"⚠️ historical_context 构建失败: {hist_e}")
+                self._build_augmented_historical_context(
+                    ctx,
+                    self_profile_cache=self_profile_cache,
+                )
 
                 # 传递联系人名称以便查询调教规则
                 ctx['display_name'] = display_name
@@ -3071,6 +3067,7 @@ class RealtimeMonitorService:
                     ctx['recent_messages'] = get_messages_with_sentiment(session_state['batch_id'], 50)
                 except Exception as msg_e:
                     _print(f"⚠️ 获取最近消息失败: {msg_e}")
+            self_profile_cache = None
             if session_state.get('display_name'):
                 try:
                     from .contact_profiler import ContactProfiler
@@ -3087,21 +3084,14 @@ class RealtimeMonitorService:
                     s_cached = s_profiler.get_profile(session_state['display_name'])
                     if s_cached and not s_cached['expired']:
                         ctx['self_profile'] = s_cached['profile']
+                        self_profile_cache = s_cached
                 except Exception as prof_e:
                     _print(f"⚠️ 提取画像失败: {prof_e}")
 
-            try:
-                from .historical_context import build_historical_context
-
-                historical_context = build_historical_context(
-                    contact_profile=ctx.get('contact_profile'),
-                    emotion_summary=ctx.get('emotion_summary'),
-                    recent_messages=ctx.get('recent_messages'),
-                )
-                if historical_context:
-                    ctx['historical_context'] = historical_context
-            except Exception as hist_e:
-                _print(f"⚠️ historical_context 构建失败: {hist_e}")
+            self._build_augmented_historical_context(
+                ctx,
+                self_profile_cache=self_profile_cache,
+            )
 
             # 传递联系人名称以便查询调教规则
             if session_state.get('display_name'):
@@ -3182,7 +3172,8 @@ class RealtimeMonitorService:
             except:
                 pass
             
-            conn.execute('''
+            cursor = conn.cursor()
+            cursor.execute('''
                 INSERT INTO realtime_suggestions
                 (batch_id, trigger_type, intent, severity, summary, speeches,
                  confidence, engine_type, trigger_context, created_at, reply, thought_process)
@@ -3201,6 +3192,20 @@ class RealtimeMonitorService:
                 getattr(result, 'reply', None),
                 getattr(result, 'thought_process', None)
             ))
+            suggestion_id = cursor.lastrowid
+            try:
+                from .suggestion_observer import EVENT_SHOWN, record_observation
+
+                record_observation(
+                    conn,
+                    suggestion_id=suggestion_id,
+                    event_type=EVENT_SHOWN,
+                    batch_id=batch_id,
+                    display_name=session_state.get('display_name'),
+                    trigger_type=result.trigger_type,
+                )
+            except Exception as obs_e:
+                _print(f"⚠️ 建议观察记录失败: {obs_e}")
             conn.commit()
             
         except Exception as e:
@@ -3221,7 +3226,29 @@ class RealtimeMonitorService:
             self._listener_backend = normalize_listener_backend(config['listener_backend'])
         _print(f"[RealtimeMonitorService] 建议配置已更新: {self._suggestion_config}")
 
-    def _check_feedback(self, user_message: str, session_state: dict | None = None):
+    def _build_augmented_historical_context(
+        self,
+        ctx: dict,
+        *,
+        self_profile_cache: dict | None = None,
+    ) -> None:
+        """构建带量化风格约束的 historical_context。"""
+        try:
+            from .historical_context import augment_context_with_historical_data
+
+            augment_context_with_historical_data(
+                ctx,
+                self_profile_cache=self_profile_cache,
+            )
+        except Exception as hist_e:
+            _print(f"⚠️ historical_context 构建失败: {hist_e}")
+
+    def _check_feedback(
+        self,
+        user_message: str,
+        session_state: dict | None = None,
+        user_message_type: int | str | None = None,
+    ):
         """
         隐式反馈：将用户实际发送的消息与最近的 AI 建议进行对比，
         提取调教规则。
@@ -3277,14 +3304,49 @@ class RealtimeMonitorService:
             import threading
             def do_extract():
                 try:
-                    result = extractor.compare_and_extract(
+                    feedback_analysis = extractor.analyze_feedback(
                         ai_speeches=speeches,
                         user_actual_message=captured_user_message,
                         display_name=captured_display_name,
                         suggestion_id=suggestion_id,
+                        user_message_type=user_message_type,
                     )
-                    if result:
-                        _print(f"\ud83d\udcdd [隐式反馈] 提取到新规则: {result.get('rule', '')}")
+                    try:
+                        from .suggestion_observer import (
+                            EVENT_ADOPTED,
+                            EVENT_REWRITTEN,
+                            record_observation,
+                        )
+
+                        outcome = feedback_analysis.get('outcome')
+                        if outcome in {'adopted', 'rewritten'}:
+                            record_observation(
+                                conn2 := get_db(),
+                                suggestion_id=suggestion_id,
+                                event_type=EVENT_ADOPTED if outcome == 'adopted' else EVENT_REWRITTEN,
+                                similarity=feedback_analysis.get('max_similarity'),
+                                selected_speech=feedback_analysis.get('selected_speech'),
+                                actual_message=captured_user_message,
+                                actual_message_type=user_message_type,
+                                metadata={
+                                    'rule_source': feedback_analysis.get('rule_source'),
+                                    'rule_count': len(feedback_analysis.get('rules') or []),
+                                },
+                            )
+                            conn2.commit()
+                    except Exception as obs_e:
+                        _print(f"⚠️ [隐式反馈] 记录观察事件失败: {obs_e}")
+
+                    extracted_rules = feedback_analysis.get('rules') or []
+                    if extracted_rules:
+                        _print(
+                            "\ud83d\udcdd [隐式反馈] 提取到新规则: "
+                            + " / ".join(
+                                str(item.get('rule', '')).strip()
+                                for item in extracted_rules
+                                if str(item.get('rule', '')).strip()
+                            )
+                        )
                     
                     # 标记建议为已反馈
                     conn2 = get_db()

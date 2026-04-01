@@ -362,6 +362,7 @@ class Bridge:
                     logger.error(f"[Bridge] 获取最近消息失败: {e}")
 
             # 自动补充上下文：联系人画像与本体画像
+            self_profile_cache = None
             if monitor.current_display_name:
                 try:
                     from ..services.realtime.contact_profiler import ContactProfiler
@@ -378,25 +379,19 @@ class Bridge:
                         s_cached = s_profiler.get_profile(monitor.current_display_name)
                         if s_cached and not s_cached['expired']:
                             context['self_profile'] = s_cached['profile']
+                            self_profile_cache = s_cached
                 except Exception as e:
                     logger.error(f"[Bridge] 获取画像失败: {e}")
 
             try:
-                from ..services.realtime.historical_context import build_historical_context
-
-                historical_context = context.get('historical_context', {})
-                if not isinstance(historical_context, dict):
-                    historical_context = {}
-
-                auto_historical = build_historical_context(
-                    contact_profile=context.get('contact_profile'),
-                    emotion_summary=context.get('emotion_summary'),
-                    recent_messages=context.get('recent_messages'),
+                from ..services.realtime.historical_context import (
+                    augment_context_with_historical_data,
                 )
-                for key, value in auto_historical.items():
-                    historical_context.setdefault(key, value)
-                if historical_context:
-                    context['historical_context'] = historical_context
+
+                augment_context_with_historical_data(
+                    context,
+                    self_profile_cache=self_profile_cache,
+                )
             except Exception as e:
                 logger.error(f"[Bridge] 构建 historical_context 失败: {e}")
 
@@ -481,6 +476,39 @@ class Bridge:
                     getattr(result, 'thought_process', None),
                 ))
                 inserted_id = cursor.lastrowid
+                try:
+                    from ..services.realtime.suggestion_observer import (
+                        EVENT_SHOWN,
+                        EVENT_VIEWED,
+                        record_observation,
+                    )
+
+                    record_observation(
+                        conn,
+                        suggestion_id=inserted_id,
+                        event_type=EVENT_SHOWN,
+                        batch_id=monitor.current_batch_id or 'manual',
+                        display_name=monitor.current_display_name,
+                        trigger_type=result.trigger_type,
+                        metadata={'source': 'manual_generate'},
+                        created_at=now_time,
+                    )
+                    record_observation(
+                        conn,
+                        suggestion_id=inserted_id,
+                        event_type=EVENT_VIEWED,
+                        batch_id=monitor.current_batch_id or 'manual',
+                        display_name=monitor.current_display_name,
+                        trigger_type=result.trigger_type,
+                        metadata={'source': 'manual_generate'},
+                        created_at=now_time,
+                    )
+                    conn.execute(
+                        "UPDATE realtime_suggestions SET read_at = COALESCE(read_at, ?) WHERE id = ?",
+                        (now_time, inserted_id),
+                    )
+                except Exception as obs_e:
+                    logger.error(f"[Bridge] 记录手动建议观察事件失败: {obs_e}")
                 conn.commit()
                 logger.debug(f"[Bridge] 手动建议已写入 realtime_suggestions 表, id={inserted_id}")
             except Exception as db_e:
@@ -488,10 +516,10 @@ class Bridge:
                 now_time = int(_time.time())
                 logger.error(f"[Bridge] 写入建议到DB失败: {db_e}")
 
-            # 提取 AI 实际参考的聊天记录（最多 10 条）
+            # 提取 AI 实际参考的聊天记录（最多 20 条）
             recent_used = context.get('recent_messages', [])
             recent_for_display = []
-            for msg in recent_used[-10:]:
+            for msg in recent_used[-20:]:
                 recent_for_display.append({
                     'sender': '我' if msg.get('sender_attr') == 'self' else '对方',
                     'content': (msg.get('content') or '')[:120],
@@ -1014,6 +1042,17 @@ class Bridge:
             suggestions = []
             for row in cursor.fetchall():
                 import json
+                try:
+                    from ..services.realtime.suggestion_observer import mark_suggestion_viewed
+
+                    mark_suggestion_viewed(
+                        conn,
+                        row['id'],
+                        batch_id=batch_id,
+                        trigger_type=row['trigger_type'],
+                    )
+                except Exception as obs_e:
+                    logger.error(f"[Bridge] 标记建议已查看失败: {obs_e}")
                 suggestions.append({
                     'id': row['id'],
                     'trigger_type': row['trigger_type'],
@@ -1029,6 +1068,7 @@ class Bridge:
                     'reply': row['reply'],
                     'thought_process': row['thought_process'],
                 })
+            conn.commit()
 
             # 获取情绪摘要
             emotion_summary = None
@@ -1059,6 +1099,16 @@ class Bridge:
             from ..db.connection import get_db
 
             conn = get_db()
+            try:
+                from ..services.realtime.suggestion_observer import EVENT_DISMISSED, record_observation
+
+                record_observation(
+                    conn,
+                    suggestion_id=suggestion_id,
+                    event_type=EVENT_DISMISSED,
+                )
+            except Exception as obs_e:
+                logger.error(f"[Bridge] 记录建议关闭观察事件失败: {obs_e}")
             conn.execute('''
                 UPDATE realtime_suggestions
                 SET status = 'dismissed', dismissed_at = ?
@@ -1070,6 +1120,27 @@ class Bridge:
         except Exception as e:
             logger.error(f"[Bridge] 关闭建议失败: {e}")
             return {"ok": False, "error": str(e)}
+
+    def get_suggestion_metrics(self, days: int = 7) -> dict[str, Any]:
+        """Return aggregated suggestion observation metrics for recent days."""
+        try:
+            from ..db.connection import get_db
+            from ..services.realtime.suggestion_observer import get_suggestion_metrics
+
+            normalized_days = max(1, int(days or 7))
+            conn = get_db()
+            metrics = get_suggestion_metrics(conn, days=normalized_days)
+            return {
+                "ok": True,
+                "metrics": metrics,
+            }
+        except Exception as e:
+            logger.error(f"[Bridge] 获取建议指标失败: {e}")
+            return {
+                "ok": False,
+                "error": str(e),
+                "metrics": {},
+            }
 
     def get_suggestion_config(self) -> dict[str, Any]:
         """获取 AI 建议配置（从系统设置读取）"""

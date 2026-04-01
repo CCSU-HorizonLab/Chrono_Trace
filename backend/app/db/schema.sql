@@ -605,6 +605,29 @@ CREATE TABLE IF NOT EXISTS realtime_suggestions (
 CREATE INDEX IF NOT EXISTS idx_realtime_suggestions_batch ON realtime_suggestions(batch_id, status);
 CREATE INDEX IF NOT EXISTS idx_realtime_suggestions_created ON realtime_suggestions(created_at DESC);
 
+-- 观察事件表：记录建议展示、查看、采纳、改写、忽略等结果
+CREATE TABLE IF NOT EXISTS suggestion_observations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    suggestion_id INTEGER NOT NULL,
+    batch_id TEXT,
+    display_name TEXT,
+    trigger_type TEXT,
+    event_type TEXT NOT NULL,
+    similarity REAL,
+    selected_speech TEXT,
+    actual_message TEXT,
+    actual_message_type TEXT,
+    metadata_json TEXT,
+    created_at INTEGER NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_suggestion_observations_singleton
+ON suggestion_observations(suggestion_id, event_type);
+CREATE INDEX IF NOT EXISTS idx_suggestion_observations_event_created
+ON suggestion_observations(event_type, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_suggestion_observations_display
+ON suggestion_observations(display_name, created_at DESC);
+
 
 -- ========================================
 -- 22. LLM 模型配置表

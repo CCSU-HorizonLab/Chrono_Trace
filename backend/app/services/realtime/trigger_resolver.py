@@ -32,9 +32,9 @@ def _normalize_sentiment(message: dict) -> dict:
 def resolve_runtime_trigger_from_messages(
     messages: list[dict],
 ) -> ResolvedSuggestionTrigger:
-    """Replay helper: infer the latest trigger from a recent message window."""
+    """Replay helper: infer whether the latest message in a recent window triggered."""
     tracker = EmotionStateTracker()
-    last_event = None
+    latest_message_events = []
 
     for message in messages:
         events = tracker.update(
@@ -43,13 +43,13 @@ def resolve_runtime_trigger_from_messages(
                 "content": message.get("content", ""),
                 "sender_attr": "friend" if message.get("sender_attr") == "other" else message.get("sender_attr"),
                 "timestamp": message.get("timestamp"),
+                "message_type": message.get("message_type", message.get("type", 1)),
             },
             current_time=float(message.get("timestamp", 0) or 0),
         )
-        if events:
-            last_event = events[-1]
+        latest_message_events = events
 
-    if not last_event:
+    if not latest_message_events:
         return ResolvedSuggestionTrigger(
             trigger_type=None,
             trigger_context={},
@@ -57,6 +57,7 @@ def resolve_runtime_trigger_from_messages(
             should_generate=False,
         )
 
+    last_event = latest_message_events[-1]
     return ResolvedSuggestionTrigger(
         trigger_type=last_event.trigger_type,
         trigger_context=last_event.context or {},
@@ -109,6 +110,14 @@ def resolve_suggestion_trigger(
 
     if mode == "full_auto" and emotion_tracker:
         summary = emotion_tracker.get_emotion_summary()
+        latest_intent = summary.get("latest_intent")
+        if latest_intent in {"decline", "impatience"}:
+            return ResolvedSuggestionTrigger(
+                trigger_type=None,
+                trigger_context={"latest_intent": latest_intent, "source": "full_auto_guard"},
+                source="full_auto_guard",
+                should_generate=False,
+            )
         trend = summary.get("trend")
         if trend == "negative":
             return ResolvedSuggestionTrigger(

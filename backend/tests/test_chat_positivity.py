@@ -46,6 +46,16 @@ class TestChatPositivityService:
         yield service
         patcher.stop()
 
+    def test_reply_timeliness_is_dampened_for_small_pair_count(self, service, mock_db):
+        """娴嬭瘯灏戦噺浜や簰瀵规椂鍙婃椂鐜囦細琚姌鍑?"""
+        mock_db.execute.side_effect = [
+            MagicMock(fetchone=MagicMock(return_value=(10, 10))),
+            MagicMock(fetchone=MagicMock(return_value=(10,))),
+        ]
+
+        score = service.calculate_reply_timeliness_score(1)
+        assert score == round(100 * (10 / 15), 2)
+
     # ========================================
     # 日均消息数测试
     # ========================================
@@ -79,21 +89,30 @@ class TestChatPositivityService:
     def test_reply_timeliness_all_timely(self, service, mock_db):
         """测试全部及时回复"""
         # 模拟所有交互对都及时回复
-        mock_db.execute.return_value.fetchone.return_value = (100, 100)
+        mock_db.execute.side_effect = [
+            MagicMock(fetchone=MagicMock(return_value=(100, 100))),
+            MagicMock(fetchone=MagicMock(return_value=(100,))),
+        ]
         
         score = service.calculate_reply_timeliness_score(1)
         assert score == 100.0
 
     def test_reply_timeliness_half_timely(self, service, mock_db):
         """测试一半及时回复"""
-        mock_db.execute.return_value.fetchone.return_value = (100, 50)
+        mock_db.execute.side_effect = [
+            MagicMock(fetchone=MagicMock(return_value=(100, 50))),
+            MagicMock(fetchone=MagicMock(return_value=(100,))),
+        ]
         
         score = service.calculate_reply_timeliness_score(1)
         assert score == 50.0
 
     def test_reply_timeliness_no_pairs(self, service, mock_db):
         """测试无交互对"""
-        mock_db.execute.return_value.fetchone.return_value = (0, 0)
+        mock_db.execute.side_effect = [
+            MagicMock(fetchone=MagicMock(return_value=(0, 0))),
+            MagicMock(fetchone=MagicMock(return_value=(0,))),
+        ]
         
         score = service.calculate_reply_timeliness_score(1)
         assert score == 0.0
@@ -270,7 +289,7 @@ class TestChatPositivityService:
 
     def test_interpretation_medium(self, service):
         """测试中等分解释"""
-        interpretation = service.generate_interpretation(55)
+        interpretation = service.generate_interpretation(45)
         assert "一般" in interpretation
 
     def test_interpretation_low(self, service):
@@ -311,7 +330,7 @@ class TestReplyTimelinessBoundaries:
         score = service_300s.calculate_reply_timeliness_score(1)
         
         # 5/10 = 50%
-        assert score == 50.0
+        assert score == 33.33
     
     def test_just_below_threshold(self, service_300s, mock_db):
         """测试刚好低于阈值（299秒）"""
@@ -322,7 +341,7 @@ class TestReplyTimelinessBoundaries:
         score = service_300s.calculate_reply_timeliness_score(1)
         
         # 10/10 = 100%
-        assert score == 100.0
+        assert score == 66.67
     
     def test_just_above_threshold(self, service_300s, mock_db):
         """测试刚好超过阈值（301秒）"""
@@ -393,7 +412,7 @@ class TestReplyTimelinessBoundaries:
         score = service_300s.calculate_reply_timeliness_score(1)
         
         # 10/10 = 100%
-        assert score == 100.0
+        assert score == 66.67
     
     # ========================================
     # 混合场景测试
@@ -423,7 +442,7 @@ class TestReplyTimelinessBoundaries:
             # 模拟：10个交互对，5个在60秒内
             mock_db.execute.return_value.fetchone.return_value = (10, 5)
             score = service.calculate_reply_timeliness_score(1)
-            assert score == 50.0
+            assert score == 33.33
     
     def test_different_threshold_600s(self, mock_db):
         """测试不同阈值（600秒 = 10分钟）"""
@@ -434,7 +453,7 @@ class TestReplyTimelinessBoundaries:
             # 模拟：10个交互对，8个在600秒内
             mock_db.execute.return_value.fetchone.return_value = (10, 8)
             score = service.calculate_reply_timeliness_score(1)
-            assert score == 80.0
+            assert score == 53.33
     
     # ========================================
     # 边界组合测试

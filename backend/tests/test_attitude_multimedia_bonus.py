@@ -90,9 +90,9 @@ class TestAttitudeTendencyServiceMultimediaBonus:
 
         result = service.calculate_multimedia_usage(1)
 
-        assert result["video_bonus"] == 10.0
+        assert result["video_bonus"] == 5.0
         assert result["voice_bonus"] == 0.0
-        assert result["multimedia_bonus"] == 10.0
+        assert result["multimedia_bonus"] == 5.0
 
     def test_voice_bonus_only_uses_voice_threshold(self, service):
         service.orchestrator.get_preprocessed_statistics.return_value = make_stats(
@@ -108,8 +108,8 @@ class TestAttitudeTendencyServiceMultimediaBonus:
         result = service.calculate_multimedia_usage(1)
 
         assert result["video_bonus"] == 0.0
-        assert result["voice_bonus"] == 20.0
-        assert result["multimedia_bonus"] == 20.0
+        assert result["voice_bonus"] == 10.0
+        assert result["multimedia_bonus"] == 10.0
 
     def test_multimedia_bonus_sums_voice_and_video(self, service):
         service.orchestrator.get_preprocessed_statistics.return_value = make_stats(
@@ -124,9 +124,9 @@ class TestAttitudeTendencyServiceMultimediaBonus:
 
         result = service.calculate_multimedia_usage(1)
 
-        assert result["video_bonus"] == 10.0
-        assert result["voice_bonus"] == 20.0
-        assert result["multimedia_bonus"] == 30.0
+        assert result["video_bonus"] == 5.0
+        assert result["voice_bonus"] == 10.0
+        assert result["multimedia_bonus"] == 15.0
 
     def test_zero_message_stats_return_zero_bonus(self, service):
         service.orchestrator.get_preprocessed_statistics.return_value = make_stats(
@@ -166,9 +166,9 @@ class TestAttitudeTendencyServiceMultimediaBonus:
             service,
             "calculate_multimedia_usage",
             lambda conversation_id: {
-                "video_bonus": 7.5,
-                "voice_bonus": 12.5,
-                "multimedia_bonus": 20.0,
+                "video_bonus": 5.0,
+                "voice_bonus": 10.0,
+                "multimedia_bonus": 15.0,
                 "video_calls_per_month": 3.0,
                 "voice_calls_per_month": 12.5,
                 "video_threshold": 4.0,
@@ -181,7 +181,47 @@ class TestAttitudeTendencyServiceMultimediaBonus:
 
         result = service.calculate_overall_attitude(1)
 
-        assert result["bonus_scores"]["multimedia_bonus"] == 20.0
-        assert result["bonus_scores"]["video_bonus"] == 7.5
-        assert result["bonus_scores"]["voice_bonus"] == 12.5
-        assert result["overall_score"] == 90.0
+        assert result["bonus_scores"]["multimedia_bonus"] == 15.0
+        assert result["bonus_scores"]["video_bonus"] == 5.0
+        assert result["bonus_scores"]["voice_bonus"] == 10.0
+        assert result["bonus_scores"]["total_bonus"] == 15.0
+        assert result["overall_score"] == 85.0
+
+    def test_overall_attitude_caps_total_bonus_at_twenty_five(self, service, monkeypatch):
+        stats = make_stats(privacy_message_count=20)
+        service.orchestrator.get_preprocessed_statistics.return_value = stats
+        monkeypatch.setattr(service, "calculate_positive_word_frequency", lambda conversation_id: 80.0)
+        monkeypatch.setattr(
+            service,
+            "calculate_negative_with_direction",
+            lambda conversation_id: {
+                "raw_frequency": 1.0,
+                "negative_score": 90.0,
+                "trust_bonus": 15.0,
+                "to_me_count": 0,
+                "to_others_count": 5,
+                "ambiguous_count": 0,
+                "total_negative_count": 5,
+            },
+        )
+        monkeypatch.setattr(
+            service,
+            "calculate_multimedia_usage",
+            lambda conversation_id: {
+                "video_bonus": 5.0,
+                "voice_bonus": 10.0,
+                "multimedia_bonus": 15.0,
+                "video_calls_per_month": 3.0,
+                "voice_calls_per_month": 12.5,
+                "video_threshold": 4.0,
+                "voice_threshold": 20.0,
+                "relationship_type": "lover",
+            },
+        )
+        monkeypatch.setattr(service, "calculate_nickname_frequency", lambda conversation_id: 8.0)
+        monkeypatch.setattr(service, "calculate_holiday_greeting", lambda conversation_id: 7.0)
+
+        result = service.calculate_overall_attitude(1)
+
+        assert result["bonus_scores"]["total_bonus"] == 25.0
+        assert result["overall_score"] == 100.0

@@ -105,6 +105,18 @@ class TestAffinityAnalysisService:
             from app.services.analysis.affinity_analysis_service import AffinityAnalysisService
             yield AffinityAnalysisService()
 
+    def test_confidence_shrinkage_uses_power_curve(self, service):
+        """娴嬭瘯缃俊搴︽敹缂╀娇鐢ㄥ箓寰嬫洸绾?"""
+        adjusted = service._apply_confidence_shrinkage(80.0, 0.6, 35.0)
+
+        assert adjusted == pytest.approx(55.91, abs=0.01)
+
+    def test_sigmoid_calibrate_rebalances_mid_scores(self, service):
+        """娴嬭瘯 Sigmoid 鏍″噯鍖栧悗鐨勫垎甯?"""
+        calibrated = service._sigmoid_calibrate(55.0)
+
+        assert calibrated == 50.0
+
     # ========================================
     # 分析流程测试
     # ========================================
@@ -146,6 +158,7 @@ class TestAffinityAnalysisService:
         # 综合评分应该大于 0
         assert result.overall_score > 0
         assert result.overall_interpretation != ""
+        assert result.cache_version == service.CACHE_SCHEMA_VERSION
 
     # ========================================
     # 缓存测试
@@ -215,7 +228,7 @@ class TestAffinityAnalysisService:
 
     def test_interpretation_medium_score(self, service):
         """测试中等分解释"""
-        interpretation = service._generate_overall_interpretation(55)
+        interpretation = service._generate_overall_interpretation(45)
         assert "一般" in interpretation
 
     def test_interpretation_low_score(self, service):

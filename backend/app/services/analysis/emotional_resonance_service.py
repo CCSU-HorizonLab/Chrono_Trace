@@ -31,8 +31,8 @@ class EmotionalResonanceService:
     EMPATHY_BONUS_RATIO = 0.10
     NEGATIVE_RESOLUTION_BONUS_RATIO = 0.10
     POSITIVE_RESPONSE_TIME_WINDOW = 3600
-    SOFT_POSITIVE_INTENSITY_THRESHOLD = 0.12
-    BIDIRECTIONAL_POSITIVE_PRIOR = 0.68
+    SOFT_POSITIVE_INTENSITY_THRESHOLD = 0.20
+    BIDIRECTIONAL_POSITIVE_PRIOR = 0.50
     BIDIRECTIONAL_CONFIDENCE_PAIR_COUNT = 4
     SEMANTIC_SIMILARITY_THRESHOLD = 0.45
     FAST_RESPONSE_THRESHOLD = 300
@@ -46,14 +46,15 @@ class EmotionalResonanceService:
     NEGATIVE_EPISODE_DECAY = 0.55
     NEGATIVE_EPISODE_MIN_FACTOR = 0.35
     NEGATIVE_EPISODE_UNIT_GAP = 3
-    NEUTRAL_RESONANCE_BASELINE = 50.0
-    BIDIRECTIONAL_CONFIDENCE_TARGET = 8
-    PAIR_CONFIDENCE_TARGET = 10
+    NEUTRAL_RESONANCE_BASELINE = 40.0
+    BIDIRECTIONAL_CONFIDENCE_TARGET = 15
+    PAIR_CONFIDENCE_TARGET = 20
     RELATIONSHIP_DEPTH_LOW_CONFIDENCE_THRESHOLD = 0.55
-    DEPTH_PAIR_COUNT_TARGET = 12
-    DEPTH_POSITIVE_PAIR_TARGET = 8
-    DEPTH_ACTIVE_DAY_TARGET = 7
-    DEPTH_SPAN_DAY_TARGET = 14
+    DEPTH_PAIR_COUNT_TARGET = 25
+    DEPTH_POSITIVE_PAIR_TARGET = 15
+    DEPTH_ACTIVE_DAY_TARGET = 14
+    DEPTH_SPAN_DAY_TARGET = 30
+    CONFIDENCE_SHRINKAGE_POWER = 1.5
 
     SOFT_POSITIVE_KEYWORDS = (
         "哈哈",
@@ -564,7 +565,7 @@ class EmotionalResonanceService:
 
         score = 0.0
         if self._is_soft_positive_response(pair):
-            score += 0.38
+            score += 0.25
         if semantic_similarity >= self.SEMANTIC_SIMILARITY_THRESHOLD:
             score += 0.14
         if to_intensity >= self.SOFT_POSITIVE_INTENSITY_THRESHOLD:
@@ -928,7 +929,11 @@ class EmotionalResonanceService:
     def _apply_confidence_shrinkage(
         raw_score: float, confidence: float, neutral_score: float
     ) -> float:
-        adjusted = raw_score * confidence + neutral_score * (1 - confidence)
+        effective_confidence = (
+            max(0.0, min(1.0, confidence))
+            ** EmotionalResonanceService.CONFIDENCE_SHRINKAGE_POWER
+        )
+        adjusted = raw_score * effective_confidence + neutral_score * (1 - effective_confidence)
         return max(0.0, min(100.0, adjusted))
 
     def _build_relationship_confidence_meta(

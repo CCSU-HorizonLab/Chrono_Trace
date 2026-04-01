@@ -67,9 +67,10 @@ class ChatPositivityService:
     # 评分标准化参数
     DAILY_MESSAGE_BASELINE = 10.0  # 日均 10 条消息为满分基准
     LONG_TEXT_THRESHOLD = 50       # 长文本阈值 (字符数)
-    NEUTRAL_POSITIVITY_BASELINE = 45.0
-    SESSION_CONFIDENCE_TARGET = 8
-    ACTIVE_DAY_CONFIDENCE_TARGET = 10
+    NEUTRAL_POSITIVITY_BASELINE = 38.0
+    SESSION_CONFIDENCE_TARGET = 20
+    ACTIVE_DAY_CONFIDENCE_TARGET = 25
+    CONFIDENCE_SHRINKAGE_POWER = 1.5
     
     def __init__(self, timeliness_threshold_seconds: int = 300):
         """
@@ -184,7 +185,23 @@ class ChatPositivityService:
         及时: 回复时间 <= timeliness_threshold
         """
         timeliness_rate = self._calculate_reply_timeliness_raw(conversation_id)
-        return round(timeliness_rate * 100, 2)
+
+        try:
+            cursor = get_db().execute(
+                """
+                SELECT COUNT(*)
+                FROM interaction_pairs
+                WHERE conversation_id = ?
+                """,
+                (conversation_id,),
+            )
+            pair_count = cursor.fetchone()[0] or 0
+        except Exception as e:
+            logger.error(f"鑾峰彇浜や簰瀵规暟閲忓け璐? {e}")
+            pair_count = 0
+
+        pair_dampening = min(1.0, pair_count / 15.0)
+        return round(timeliness_rate * 100 * pair_dampening, 2)
     
     def _calculate_reply_timeliness_raw(self, conversation_id: int) -> float:
         """
@@ -475,7 +492,11 @@ class ChatPositivityService:
     def _apply_confidence_shrinkage(
         raw_score: float, confidence: float, neutral_score: float
     ) -> float:
-        adjusted = raw_score * confidence + neutral_score * (1 - confidence)
+        effective_confidence = (
+            max(0.0, min(1.0, confidence))
+            ** ChatPositivityService.CONFIDENCE_SHRINKAGE_POWER
+        )
+        adjusted = raw_score * effective_confidence + neutral_score * (1 - effective_confidence)
         return round(max(0.0, min(100.0, adjusted)), 2)
     
     def generate_interpretation(self, score: float) -> str:

@@ -28,7 +28,7 @@ def test_bidirectional_positive_response_counts_strong_and_soft_replies(service,
 
     score = service.calculate_bidirectional_positive_response(1)
 
-    assert score == 58.0
+    assert score == 41.58
 
 
 def test_bidirectional_positive_response_ignores_replies_outside_time_window(service, monkeypatch):
@@ -43,7 +43,7 @@ def test_bidirectional_positive_response_ignores_replies_outside_time_window(ser
 
     score = service.calculate_bidirectional_positive_response(1)
 
-    assert score == 100.0
+    assert score == 41.03
 
 
 def test_bidirectional_positive_response_returns_zero_without_positive_initiation(service, monkeypatch):
@@ -79,7 +79,7 @@ def test_bidirectional_positive_response_rewards_engaged_neutral_reply(service, 
 
     score = service.calculate_bidirectional_positive_response(1)
 
-    assert score == 72.25
+    assert score == 40.27
 
 
 def test_polarity_consistency_uses_weighted_fusion(service, monkeypatch):
@@ -96,7 +96,7 @@ def test_polarity_consistency_uses_weighted_fusion(service, monkeypatch):
 
     score = service.calculate_polarity_consistency(1)
 
-    assert score == 50.0
+    assert score == 40.89
 
 
 def test_empathy_recognition_returns_neutral_score_without_opportunities(service, monkeypatch):
@@ -111,7 +111,7 @@ def test_empathy_recognition_returns_neutral_score_without_opportunities(service
 
     score = service.calculate_empathy_recognition(1)
 
-    assert score == 50.0
+    assert score == 0.0
 
 
 def test_empathy_recognition_uses_opportunity_based_scoring(service, monkeypatch):
@@ -283,7 +283,7 @@ def test_empathy_recognition_filters_negative_messages_aimed_at_others(service, 
 
     score = service.calculate_empathy_recognition(1)
 
-    assert score == 50.0
+    assert score == 0.0
 
 
 def test_negative_resolution_uses_weighted_pair_scores(service, monkeypatch):
@@ -464,6 +464,18 @@ def test_overall_resonance_uses_core_base_score_plus_bonus_items(service, monkey
     monkeypatch.setattr(service, "calculate_intensity_matching", lambda conversation_id: 60.0)
     monkeypatch.setattr(service, "calculate_empathy_recognition", lambda conversation_id: 40.0)
     monkeypatch.setattr(service, "calculate_negative_resolution", lambda conversation_id: 30.0)
+    monkeypatch.setattr(service, "_get_interaction_pairs", lambda conversation_id: [])
+    monkeypatch.setattr(
+        service,
+        "_build_relationship_confidence_meta",
+        lambda conversation_id, pairs, positive_pairs: {
+            "relationship_depth_confidence": 1.0,
+            "interaction_pair_count": 0,
+            "positive_pair_count": 0,
+            "active_day_count": 0,
+            "low_confidence_reason": "",
+        },
+    )
 
     result = service.calculate_overall_resonance(1)
 
@@ -479,6 +491,18 @@ def test_overall_resonance_bonus_items_do_not_overwhelm_strong_base(service, mon
     monkeypatch.setattr(service, "calculate_intensity_matching", lambda conversation_id: 80.0)
     monkeypatch.setattr(service, "calculate_empathy_recognition", lambda conversation_id: 10.0)
     monkeypatch.setattr(service, "calculate_negative_resolution", lambda conversation_id: 0.0)
+    monkeypatch.setattr(service, "_get_interaction_pairs", lambda conversation_id: [])
+    monkeypatch.setattr(
+        service,
+        "_build_relationship_confidence_meta",
+        lambda conversation_id, pairs, positive_pairs: {
+            "relationship_depth_confidence": 1.0,
+            "interaction_pair_count": 0,
+            "positive_pair_count": 0,
+            "active_day_count": 0,
+            "low_confidence_reason": "",
+        },
+    )
 
     result = service.calculate_overall_resonance(1)
 
@@ -492,6 +516,18 @@ def test_overall_resonance_bonus_items_cap_total_score_at_one_hundred(service, m
     monkeypatch.setattr(service, "calculate_intensity_matching", lambda conversation_id: 100.0)
     monkeypatch.setattr(service, "calculate_empathy_recognition", lambda conversation_id: 100.0)
     monkeypatch.setattr(service, "calculate_negative_resolution", lambda conversation_id: 100.0)
+    monkeypatch.setattr(service, "_get_interaction_pairs", lambda conversation_id: [])
+    monkeypatch.setattr(
+        service,
+        "_build_relationship_confidence_meta",
+        lambda conversation_id, pairs, positive_pairs: {
+            "relationship_depth_confidence": 1.0,
+            "interaction_pair_count": 0,
+            "positive_pair_count": 0,
+            "active_day_count": 0,
+            "low_confidence_reason": "",
+        },
+    )
 
     result = service.calculate_overall_resonance(1)
 
@@ -506,6 +542,18 @@ def test_overall_resonance_without_empathy_or_resolution_opportunities_only_uses
     monkeypatch.setattr(service, "calculate_intensity_matching", lambda conversation_id: 50.0)
     monkeypatch.setattr(service, "calculate_empathy_recognition", lambda conversation_id: 50.0)
     monkeypatch.setattr(service, "calculate_negative_resolution", lambda conversation_id: 0.0)
+    monkeypatch.setattr(service, "_get_interaction_pairs", lambda conversation_id: [])
+    monkeypatch.setattr(
+        service,
+        "_build_relationship_confidence_meta",
+        lambda conversation_id, pairs, positive_pairs: {
+            "relationship_depth_confidence": 1.0,
+            "interaction_pair_count": 0,
+            "positive_pair_count": 0,
+            "active_day_count": 0,
+            "low_confidence_reason": "",
+        },
+    )
 
     result = service.calculate_overall_resonance(1)
 

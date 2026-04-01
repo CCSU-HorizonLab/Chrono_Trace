@@ -23,6 +23,7 @@ import time
 import json
 import logging
 import threading
+import math
 from dataclasses import dataclass, asdict, field
 from typing import Optional, Dict, Any, List
 
@@ -89,12 +90,15 @@ class AffinityAnalysisResult:
 class AffinityAnalysisService:
     """好感度分析编排器"""
 
-    CACHE_SCHEMA_VERSION = 7
-    NEUTRAL_OVERALL_BASELINE = 42.0
-    OVERALL_SESSION_CONFIDENCE_TARGET = 10
-    OVERALL_ACTIVE_DAY_CONFIDENCE_TARGET = 12
-    OVERALL_MESSAGE_CONFIDENCE_TARGET = 120
-    OVERALL_CONTACT_INITIATION_TARGET = 4
+    CACHE_SCHEMA_VERSION = 8
+    NEUTRAL_OVERALL_BASELINE = 35.0
+    OVERALL_SESSION_CONFIDENCE_TARGET = 30
+    OVERALL_ACTIVE_DAY_CONFIDENCE_TARGET = 30
+    OVERALL_MESSAGE_CONFIDENCE_TARGET = 400
+    OVERALL_CONTACT_INITIATION_TARGET = 12
+    CONFIDENCE_SHRINKAGE_POWER = 1.5
+    SCORE_SIGMOID_MIDPOINT = 55.0
+    SCORE_SIGMOID_STEEPNESS = 0.07
     
     # 默认维度权重(已废弃,使用动态权重)
     # 实际权重由 AffinityConfigService.get_dimension_weights() 动态返回
@@ -472,20 +476,25 @@ class AffinityAnalysisService:
         relationship_stability_confidence = self._calculate_relationship_stability_confidence(
             stats
         )
-        result.overall_score = round(
-            self._apply_confidence_shrinkage(
-                total_weighted,
-                relationship_stability_confidence,
-                self.NEUTRAL_OVERALL_BASELINE,
-            ),
-            2,
+        shrunk_score = self._apply_confidence_shrinkage(
+            total_weighted,
+            relationship_stability_confidence,
+            self.NEUTRAL_OVERALL_BASELINE,
         )
+        result.overall_score = self._sigmoid_calibrate(shrunk_score)
         logger.info(
             f"综合评分计算完成: {result.overall_score:.1f}分 "
             f"(原始={total_weighted:.1f}, 稳定性置信度={relationship_stability_confidence:.2f})"
         )
         
         # 统一输出四大维度的明细日志到文件
+        affinity_debug_log(
+            "[濂芥劅搴﹀垎鏋怾 鎬诲垎鏍″噯] "
+            f"weighted={total_weighted:.2f}, "
+            f"shrunk={shrunk_score:.2f}, "
+            f"sigmoid={result.overall_score:.2f}, "
+            f"confidence={relationship_stability_confidence:.2f}"
+        )
         self._log_debug_summary(result)
 
     def _calculate_relationship_stability_confidence(
@@ -522,8 +531,18 @@ class AffinityAnalysisService:
     def _apply_confidence_shrinkage(
         raw_score: float, confidence: float, neutral_score: float
     ) -> float:
-        adjusted = raw_score * confidence + neutral_score * (1 - confidence)
+        effective_confidence = (
+            max(0.0, min(1.0, confidence))
+            ** AffinityAnalysisService.CONFIDENCE_SHRINKAGE_POWER
+        )
+        adjusted = raw_score * effective_confidence + neutral_score * (1 - effective_confidence)
         return max(0.0, min(100.0, adjusted))
+
+    @classmethod
+    def _sigmoid_calibrate(cls, raw_score: float) -> float:
+        x = (raw_score - cls.SCORE_SIGMOID_MIDPOINT) * cls.SCORE_SIGMOID_STEEPNESS
+        sigmoid = 1.0 / (1.0 + math.exp(-x))
+        return round(max(0.0, min(100.0, sigmoid * 100.0)), 2)
         
     def _log_debug_summary(self, result: AffinityAnalysisResult):
         """将好感度四大维度的详细得分输出到独立的物理日志文件"""
@@ -570,9 +589,9 @@ class AffinityAnalysisService:
         """生成综合解释"""
         if score >= 80:
             return "总体好感度非常高，对方对这段关系非常重视，表现出强烈的情感投入"
-        elif score >= 60:
+        elif score >= 55:
             return "总体好感度较高，对方对这段关系较为重视，愿意投入时间和精力"
-        elif score >= 40:
+        elif score >= 35:
             return "总体好感度一般，对方态度较为平淡，可能需要更多互动来培养感情"
         elif score >= 20:
             return "总体好感度较低，对方可能兴趣不大，建议观察更多互动信号"

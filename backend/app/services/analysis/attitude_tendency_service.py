@@ -39,8 +39,12 @@ def debug_log(msg: str):
 class AttitudeTendencyService:
     """态度倾向服务"""
 
-    VIDEO_BONUS_MAX = 10.0
-    VOICE_BONUS_MAX = 20.0
+    VIDEO_BONUS_MAX = 5.0
+    VOICE_BONUS_MAX = 10.0
+    TRUST_BONUS_MAX = 15.0
+    NICKNAME_BONUS_MAX = 8.0
+    HOLIDAY_BONUS_MAX = 7.0
+    TOTAL_BONUS_CAP = 25.0
     
     def __init__(self):
         pass  # get_db() removed for thread safety
@@ -174,7 +178,10 @@ class AttitudeTendencyService:
         
         # 信任倾诉加分（独立项，不混入负面得分）
         # 放大系数20，上限30分
-        trust_bonus = min(30.0, (to_others_count / stats.total_message_count) * 20 * 100)
+        trust_bonus = min(
+            self.TRUST_BONUS_MAX,
+            (to_others_count / stats.total_message_count) * 20 * 100,
+        )
         
         if DEBUG_TRACE:
             debug_log(f"\n[态度调试] === 负面频率汇总 ===")
@@ -346,7 +353,10 @@ class AttitudeTendencyService:
                 
         # 放大系数：只要包含一次就非常重要。假设20%的会话含有称呼即可拿满15分附加分。
         frequency_ratio = weighted_nickname_session_count / total_sessions
-        bonus_score = min(15.0, (frequency_ratio / 0.2) * 15.0)
+        bonus_score = min(
+            self.NICKNAME_BONUS_MAX,
+            (frequency_ratio / 0.2) * self.NICKNAME_BONUS_MAX,
+        )
         
         if DEBUG_TRACE:
             debug_log("\n[态度调试] === 专属称呼会话加分（思路3） ===")
@@ -379,7 +389,10 @@ class AttitudeTendencyService:
         
         # 将节日祝福频率映射为最高 10 分的附加分
         frequency_ratio = stats.holidays_sent_count / total_holidays
-        bonus_score = min(10.0, frequency_ratio * 10 * 3) # 放大系数3，让附加分更容易获得
+        bonus_score = min(
+            self.HOLIDAY_BONUS_MAX,
+            frequency_ratio * self.HOLIDAY_BONUS_MAX * 3,
+        ) # 放大系数3，让附加分更容易获得
         
         if DEBUG_TRACE:
             debug_log("\n[态度调试] === 节日祝福加分 ===")
@@ -424,11 +437,11 @@ class AttitudeTendencyService:
         attitude_stats = self.orchestrator.get_preprocessed_statistics(conversation_id)
         
         # 基础信任加分
-        base_trust_bonus = min(20.0, negative_info["trust_bonus"])
+        base_trust_bonus = min(self.TRUST_BONUS_MAX, negative_info["trust_bonus"])
         
         # 深夜隐私倾诉额外加分 (最高 10 分)
-        late_night_privacy_bonus = min(10.0, attitude_stats.privacy_message_count * 2.0)
-        trust_bonus = min(30.0, base_trust_bonus + late_night_privacy_bonus)
+        late_night_privacy_bonus = min(5.0, attitude_stats.privacy_message_count * 1.0)
+        trust_bonus = min(self.TRUST_BONUS_MAX, base_trust_bonus + late_night_privacy_bonus)
         
         multimedia_detail = self.calculate_multimedia_usage(conversation_id)
         multimedia_bonus = multimedia_detail["multimedia_bonus"]
@@ -442,7 +455,11 @@ class AttitudeTendencyService:
         )
         
         # 信任倾诉、多媒体、专属称呼、节日加分（独立加到总分上）
-        overall_score = weighted_total + trust_bonus + holiday_bonus + nickname_bonus + multimedia_bonus
+        total_bonus = min(
+            self.TOTAL_BONUS_CAP,
+            trust_bonus + holiday_bonus + nickname_bonus + multimedia_bonus,
+        )
+        overall_score = weighted_total + total_bonus
         overall_score = max(0.0, min(100.0, overall_score))
         
         debug_log(f"\n[态度调试] === 最终加权计算 ===")
@@ -456,6 +473,7 @@ class AttitudeTendencyService:
         )
         debug_log(f"[态度调试] + 节日互动加分: {holiday_bonus:.2f}")
         debug_log(f"[态度调试] + 专属称呼加分: {nickname_bonus:.2f}")
+        debug_log(f"[态度调试] + 加分总量封顶后: {total_bonus:.2f}")
         debug_log(f"[态度调试] === 总分: {overall_score:.2f} ===")
         debug_log(f"{'='*60}\n")
         
@@ -473,6 +491,7 @@ class AttitudeTendencyService:
                 "voice_bonus": round(multimedia_detail["voice_bonus"], 2),
                 "holiday_bonus": round(holiday_bonus, 2),
                 "nickname_bonus": round(nickname_bonus, 2),
+                "total_bonus": round(total_bonus, 2),
             },
             "negative_direction_detail": {
                 "to_me_count": negative_info["to_me_count"],

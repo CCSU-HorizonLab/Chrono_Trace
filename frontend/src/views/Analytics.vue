@@ -1379,7 +1379,7 @@ export default {
             } else displayScore.value = 0
         })
 
-        const getScoreColor = (score: number) => { if (score >= 80) return '#10b981'; if (score >= 60) return '#3b82f6'; if (score >= 40) return '#f59e0b'; return '#ef4444' }
+        const getScoreColor = (score: number) => { if (score >= 80) return '#10b981'; if (score >= 55) return '#3b82f6'; if (score >= 35) return '#f59e0b'; return '#ef4444' }
         const scrollToDetails = (idSuffix: string) => document.getElementById(`detail-${idSuffix}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
         const handlePreferenceDisabledClick = () => { showKeywordsDialog.value = true }
         function onWordSelect(word: string) { console.debug('selected', word) }

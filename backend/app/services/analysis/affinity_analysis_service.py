@@ -54,6 +54,7 @@ class DimensionScore:
     interpretation: str = ""
     sub_scores: Dict[str, float] = field(default_factory=dict)
     bonus_scores: Dict[str, float] = field(default_factory=dict)
+    confidence_meta: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -88,7 +89,12 @@ class AffinityAnalysisResult:
 class AffinityAnalysisService:
     """好感度分析编排器"""
 
-    CACHE_SCHEMA_VERSION = 5
+    CACHE_SCHEMA_VERSION = 7
+    NEUTRAL_OVERALL_BASELINE = 42.0
+    OVERALL_SESSION_CONFIDENCE_TARGET = 10
+    OVERALL_ACTIVE_DAY_CONFIDENCE_TARGET = 12
+    OVERALL_MESSAGE_CONFIDENCE_TARGET = 120
+    OVERALL_CONTACT_INITIATION_TARGET = 4
     
     # 默认维度权重(已废弃,使用动态权重)
     # 实际权重由 AffinityConfigService.get_dimension_weights() 动态返回
@@ -362,7 +368,8 @@ class AffinityAnalysisService:
                 "empathy_recognition": resonance_result['sub_scores']['empathy_recognition'],
                 "negative_resolution": resonance_result['sub_scores']['negative_resolution'],
             },
-            bonus_scores=resonance_result.get('bonus_scores', {})
+            bonus_scores=resonance_result.get('bonus_scores', {}),
+            confidence_meta=resonance_result.get('confidence_meta', {}),
         )
         logger.info(f"情感共振率计算完成: {resonance_result['overall_score']:.1f}分 (权重: {weights['emotional_resonance']*100}%)")
         
@@ -460,12 +467,63 @@ class AffinityAnalysisService:
         for dim in dimensions:
             if dim:
                 total_weighted += dim.weighted_score
-        
-        result.overall_score = round(total_weighted, 2)
-        logger.info(f"综合评分计算完成: {result.overall_score:.1f}分")
+
+        stats = self.preprocessing.get_preprocessed_statistics(result.conversation_id)
+        relationship_stability_confidence = self._calculate_relationship_stability_confidence(
+            stats
+        )
+        result.overall_score = round(
+            self._apply_confidence_shrinkage(
+                total_weighted,
+                relationship_stability_confidence,
+                self.NEUTRAL_OVERALL_BASELINE,
+            ),
+            2,
+        )
+        logger.info(
+            f"综合评分计算完成: {result.overall_score:.1f}分 "
+            f"(原始={total_weighted:.1f}, 稳定性置信度={relationship_stability_confidence:.2f})"
+        )
         
         # 统一输出四大维度的明细日志到文件
         self._log_debug_summary(result)
+
+    def _calculate_relationship_stability_confidence(
+        self, stats: PreprocessedStatistics
+    ) -> float:
+        session_confidence = min(
+            1.0, (stats.total_sessions or 0) / self.OVERALL_SESSION_CONFIDENCE_TARGET
+        )
+        active_day_confidence = min(
+            1.0, (stats.chat_days_count or 0) / self.OVERALL_ACTIVE_DAY_CONFIDENCE_TARGET
+        )
+        message_confidence = min(
+            1.0, (stats.total_message_count or 0) / self.OVERALL_MESSAGE_CONFIDENCE_TARGET
+        )
+        contact_initiation_confidence = min(
+            1.0,
+            (stats.contact_initiated_count or 0) / self.OVERALL_CONTACT_INITIATION_TARGET,
+        )
+        confidence = (
+            session_confidence * 0.35
+            + active_day_confidence * 0.35
+            + message_confidence * 0.20
+            + contact_initiation_confidence * 0.10
+        )
+        affinity_debug_log(
+            "[好感度分析] 关系稳定性收缩: "
+            f"sessions={stats.total_sessions}, active_days={stats.chat_days_count}, "
+            f"messages={stats.total_message_count}, contact_initiated={stats.contact_initiated_count}, "
+            f"confidence={confidence:.2f}"
+        )
+        return max(0.0, min(1.0, confidence))
+
+    @staticmethod
+    def _apply_confidence_shrinkage(
+        raw_score: float, confidence: float, neutral_score: float
+    ) -> float:
+        adjusted = raw_score * confidence + neutral_score * (1 - confidence)
+        return max(0.0, min(100.0, adjusted))
         
     def _log_debug_summary(self, result: AffinityAnalysisResult):
         """将好感度四大维度的详细得分输出到独立的物理日志文件"""

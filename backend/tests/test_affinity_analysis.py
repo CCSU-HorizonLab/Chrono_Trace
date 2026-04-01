@@ -50,6 +50,7 @@ class TestAffinityAnalysisService:
             
             # 配置 mock
             MockPreprocessing.return_value.orchestrate_preprocessing.return_value = mock_stats
+            MockPreprocessing.return_value.get_preprocessed_statistics.return_value = mock_stats
             
             from app.services.analysis.affinity_config import AffinityConfig
             MockConfig.return_value.get_config.return_value = AffinityConfig()

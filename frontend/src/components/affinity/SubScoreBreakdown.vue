@@ -1,6 +1,15 @@
 <template>
   <div class="sub-score-breakdown">
     <h3 class="breakdown-title">{{ title }}详情</h3>
+    <p
+      v-if="showLowConfidenceHint"
+      class="confidence-hint"
+    >
+      互动样本较少，当前分数更偏向积极迹象，不代表稳定关系深度
+      <span v-if="confidenceMeta?.low_confidence_reason">
+        （{{ confidenceMeta.low_confidence_reason }}）
+      </span>
+    </p>
     <div class="table-container">
       <table class="score-table">
         <thead>
@@ -38,10 +47,16 @@
 </template>
 
 <script setup lang="ts">
-defineProps<{
+import { computed } from 'vue'
+import type { ResonanceConfidenceMeta } from '@/api/affinity'
+
+const props = defineProps<{
   title: string
   subScores: Record<string, number>
+  confidenceMeta?: ResonanceConfidenceMeta
 }>()
+
+const LOW_CONFIDENCE_THRESHOLD = 0.55
 
 const LABELS: Record<string, string> = {
   bidirectional_positive: '双向积极互动',
@@ -144,6 +159,10 @@ const getBarColorClass = (score: number, key?: string): string => {
   if (score >= 40) return 'bar-warning'
   return 'bar-danger'
 }
+
+const showLowConfidenceHint = computed(() => {
+  return (props.confidenceMeta?.relationship_depth_confidence ?? 1) < LOW_CONFIDENCE_THRESHOLD
+})
 </script>
 
 <style scoped>
@@ -167,6 +186,16 @@ const getBarColorClass = (score: number, key?: string): string => {
 
 .table-container {
   overflow-x: auto;
+}
+
+.confidence-hint {
+  margin: 0 0 var(--ct-space-xs);
+  padding: 6px 8px;
+  border-radius: var(--ct-radius-sm);
+  background: var(--ct-color-warning-light);
+  color: var(--ct-color-warning);
+  font-size: 11px;
+  line-height: 1.45;
 }
 
 .score-table {

@@ -85,6 +85,16 @@ class AnalysisAdjustments:
 class RelationshipContextService:
     """关系上下文服务"""
 
+    MEDIA_THRESHOLDS_BY_RELATIONSHIP = {
+        "lover": {"video": 4.0, "voice": 20.0},
+        "crush": {"video": 4.0, "voice": 20.0},
+        "friend": {"video": 3.0, "voice": 20.0},
+        "family": {"video": 3.0, "voice": 20.0},
+        "colleague": {"video": 1.0, "voice": 10.0},
+        "other": {"video": 1.0, "voice": 10.0},
+    }
+    DEFAULT_MEDIA_RELATIONSHIP_TYPE = "friend"
+
     def __init__(self):
         pass  # get_db() removed for thread safety
 
@@ -173,6 +183,21 @@ class RelationshipContextService:
     def has_context(self, conversation_id: int) -> bool:
         """检查是否已填写关系上下文"""
         return self.get_context(conversation_id) is not None
+
+    def get_multimedia_thresholds(self, conversation_id: int) -> Dict[str, float]:
+        """Return relationship-derived multimedia thresholds."""
+        ctx = self.get_context(conversation_id)
+        relationship_type = (
+            ctx.relationship_type
+            if ctx and ctx.relationship_type in self.MEDIA_THRESHOLDS_BY_RELATIONSHIP
+            else self.DEFAULT_MEDIA_RELATIONSHIP_TYPE
+        )
+        thresholds = self.MEDIA_THRESHOLDS_BY_RELATIONSHIP[relationship_type]
+        return {
+            "relationship_type": relationship_type,
+            "video": float(thresholds["video"]),
+            "voice": float(thresholds["voice"]),
+        }
 
     def get_adjustments(self, conversation_id: int) -> AnalysisAdjustments:
         """

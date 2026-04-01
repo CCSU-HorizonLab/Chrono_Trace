@@ -2516,7 +2516,7 @@ class Bridge:
             logger.error(f"[Bridge] 取消分析失败: {e}")
             return {"ok": False, "error": str(e)}
 
-    def analyze_affinity(self, conversation_id: int, force_reanalyze: bool = False, config_overrides: dict = None) -> dict[str, Any]:
+    def analyze_affinity(self, conversation_id: int, force_reanalyze: bool = True, config_overrides: dict = None) -> dict[str, Any]:
         """执行好感度分析（异步，立即返回 task_id 供轮询）"""
         try:
             import threading
@@ -2526,13 +2526,19 @@ class Bridge:
             service = AffinityAnalysisService()            # 保存服务实例引用，供 get_affinity_progress 查询进度
             self._affinity_service = service
             self._analysis_cancel_event = threading.Event()
+            effective_force_reanalyze = True
 
             # 预生成 task_id，与 service.analyze 内部生成的保持一致
             task_id = f"affinity_{conversation_id}_{int(_time.time())}"
 
             def _run_analysis():
                 try:
-                    service.analyze(conversation_id, force_reanalyze, config_overrides, cancel_event=self._analysis_cancel_event)
+                    service.analyze(
+                        conversation_id,
+                        effective_force_reanalyze,
+                        config_overrides,
+                        cancel_event=self._analysis_cancel_event,
+                    )
                 except Exception as e:
                     logger.error(f"[Bridge] 异步好感度分析失败: {e}")
                     import traceback

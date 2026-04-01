@@ -2,6 +2,7 @@
 
 import json
 import math
+from datetime import datetime
 from typing import Any, Dict, List, Sequence
 
 from ...db.connection import get_db
@@ -45,6 +46,14 @@ class EmotionalResonanceService:
     NEGATIVE_EPISODE_DECAY = 0.55
     NEGATIVE_EPISODE_MIN_FACTOR = 0.35
     NEGATIVE_EPISODE_UNIT_GAP = 3
+    NEUTRAL_RESONANCE_BASELINE = 50.0
+    BIDIRECTIONAL_CONFIDENCE_TARGET = 8
+    PAIR_CONFIDENCE_TARGET = 10
+    RELATIONSHIP_DEPTH_LOW_CONFIDENCE_THRESHOLD = 0.55
+    DEPTH_PAIR_COUNT_TARGET = 12
+    DEPTH_POSITIVE_PAIR_TARGET = 8
+    DEPTH_ACTIVE_DAY_TARGET = 7
+    DEPTH_SPAN_DAY_TARGET = 14
 
     SOFT_POSITIVE_KEYWORDS = (
         "哈哈",
@@ -211,13 +220,21 @@ class EmotionalResonanceService:
                 engaged_neutral_count += 1
 
         raw_rate = weighted_positive_response / len(positive_initiated_pairs)
-        confidence = min(
+        prior_confidence = min(
             1.0, len(positive_initiated_pairs) / self.BIDIRECTIONAL_CONFIDENCE_PAIR_COUNT
         )
-        smoothed_rate = raw_rate * confidence + self.BIDIRECTIONAL_POSITIVE_PRIOR * (
-            1 - confidence
+        smoothed_rate = raw_rate * prior_confidence + self.BIDIRECTIONAL_POSITIVE_PRIOR * (
+            1 - prior_confidence
         )
-        rate = (raw_rate if raw_rate >= 0.95 else smoothed_rate) * 100
+        base_rate = (raw_rate if raw_rate >= 0.95 else smoothed_rate) * 100
+        confidence = self._calculate_sample_confidence(
+            len(positive_initiated_pairs), self.BIDIRECTIONAL_CONFIDENCE_TARGET
+        )
+        rate = self._apply_confidence_shrinkage(
+            base_rate,
+            confidence,
+            self.NEUTRAL_RESONANCE_BASELINE,
+        )
 
         debug_log("\n[情感共振调试] --- 1. 双向积极情感响应率(权重20%) ---")
         debug_log(
@@ -225,7 +242,10 @@ class EmotionalResonanceService:
             f"强正向回复: {strong_positive_count}, 软正向回复: {soft_positive_count}, "
             f"友好中性回复: {engaged_neutral_count}, 加权响应值: {weighted_positive_response:.2f}"
         )
-        debug_log(f"原始响应率: {raw_rate*100:.1f}%, 平滑后响应率: {rate:.1f}%")
+        debug_log(
+            f"原始响应率: {raw_rate*100:.1f}%, 先验平滑后: {base_rate:.1f}%, "
+            f"样本置信度: {confidence:.2f}, 收缩后: {rate:.1f}%"
+        )
 
         return round(rate, 2)
 
@@ -245,16 +265,27 @@ class EmotionalResonanceService:
         avg_similarity = sum(
             pair.get("semantic_similarity") or 0.0 for pair in same_polarity_pairs
         ) / len(same_polarity_pairs)
-        score = ratio * 0.7 + avg_similarity * 0.3
+        raw_score = (ratio * 0.7 + avg_similarity * 0.3) * 100
+        confidence = self._calculate_sample_confidence(
+            len(pairs), self.PAIR_CONFIDENCE_TARGET
+        )
+        score = self._apply_confidence_shrinkage(
+            raw_score,
+            confidence,
+            self.NEUTRAL_RESONANCE_BASELINE,
+        )
 
         debug_log("\n[情感共振调试] --- 2. 情感极性一致性(权重15%) ---")
         debug_log(
             f"同极性交互对数: {len(same_polarity_pairs)} / {len(pairs)} "
             f"(比例: {ratio*100:.1f}%)"
         )
-        debug_log(f"同极性平均语义相似度: {avg_similarity:.3f} -> 一致性得分: {score*100:.2f}")
+        debug_log(
+            f"同极性平均语义相似度: {avg_similarity:.3f} -> 原始一致性: {raw_score:.2f}, "
+            f"样本置信度: {confidence:.2f}, 收缩后: {score:.2f}"
+        )
 
-        return round(score * 100, 2)
+        return round(score, 2)
 
     def calculate_intensity_matching(self, conversation_id: int) -> float:
         """Score emotional intensity matching."""
@@ -268,13 +299,23 @@ class EmotionalResonanceService:
         mean_abs_diff = sum(intensity_diffs) / len(intensity_diffs)
         raw_score = 1 / (mean_abs_diff + 0.1)
         normalized_score = math.tanh(raw_score)
+        raw_percent = normalized_score * 100
+        confidence = self._calculate_sample_confidence(
+            len(pairs), self.PAIR_CONFIDENCE_TARGET
+        )
+        adjusted_score = self._apply_confidence_shrinkage(
+            raw_percent,
+            confidence,
+            self.NEUTRAL_RESONANCE_BASELINE,
+        )
 
         debug_log("\n[情感共振调试] --- 3. 情绪强度匹配度(权重10%) ---")
         debug_log(
-            f"平均强度差异(mean_abs_diff): {mean_abs_diff:.3f} -> 归一化得分: {normalized_score*100:.2f}"
+            f"平均强度差异(mean_abs_diff): {mean_abs_diff:.3f} -> 原始归一化得分: {raw_percent:.2f}, "
+            f"样本置信度: {confidence:.2f}, 收缩后: {adjusted_score:.2f}"
         )
 
-        return round(normalized_score * 100, 2)
+        return round(adjusted_score, 2)
 
     def calculate_empathy_recognition(self, conversation_id: int) -> float:
         """Score empathy recognition only across actual empathy opportunities."""
@@ -282,7 +323,9 @@ class EmotionalResonanceService:
         empathy_pairs = self._get_empathy_opportunity_pairs(pairs)
         weighted_pairs = self._build_weighted_opportunities(empathy_pairs)
         if not weighted_pairs:
-            return 50.0
+            debug_log("\n[情感共振调试] --- 4. 共情意图识别率(权重30%) ---")
+            debug_log("共情机会样本数为 0，bonus 不加分")
+            return 0.0
 
         empathy_keywords = self._get_empathy_keywords()
         soothing_keywords = self._get_soothing_keywords()
@@ -307,7 +350,9 @@ class EmotionalResonanceService:
         rate = ((main_score * 0.85) + (timeliness_rate * 0.15)) * 100
 
         debug_log("\n[情感共振调试] --- 4. 共情意图识别率(权重30%) ---")
-        debug_log(f"多信号融合后识别率: {rate:.1f}%")
+        debug_log(
+            f"共情机会样本权重: {total_opportunity_weight:.2f}, 多信号融合后识别率: {rate:.1f}%"
+        )
 
         return round(rate, 2)
 
@@ -322,7 +367,9 @@ class EmotionalResonanceService:
         weighted_pairs = self._build_weighted_opportunities(needs_resolution_pairs)
 
         if not weighted_pairs:
-            return 100.0
+            debug_log("\n[情感共振调试] --- 5. 负面情绪协同化解率(权重25%) ---")
+            debug_log("需要化解的负面样本数为 0，bonus 不加分")
+            return 0.0
 
         soothing_keywords = self._get_soothing_keywords()
         resolution_scores = [
@@ -352,6 +399,15 @@ class EmotionalResonanceService:
         intensity_score = self.calculate_intensity_matching(conversation_id)
         empathy_rate = self.calculate_empathy_recognition(conversation_id)
         resolution_rate = self.calculate_negative_resolution(conversation_id)
+        all_pairs = self._get_interaction_pairs(conversation_id)
+        positive_pairs = [
+            pair for pair in all_pairs if pair["from_polarity"] == 1 and self._is_within_positive_response_window(pair)
+        ]
+        confidence_meta = self._build_relationship_confidence_meta(
+            conversation_id,
+            all_pairs,
+            positive_pairs,
+        )
 
         base_score = (
             bidirectional_rate * self.CORE_BIDIRECTIONAL_WEIGHT
@@ -360,8 +416,17 @@ class EmotionalResonanceService:
         )
         empathy_bonus = empathy_rate * self.EMPATHY_BONUS_RATIO
         resolution_bonus = resolution_rate * self.NEGATIVE_RESOLUTION_BONUS_RATIO
+        raw_overall_score = max(
+            0.0,
+            min(100.0, base_score + empathy_bonus + resolution_bonus),
+        )
         overall_score = round(
-            max(0.0, min(100.0, base_score + empathy_bonus + resolution_bonus)), 2
+            self._apply_confidence_shrinkage(
+                raw_overall_score,
+                confidence_meta["relationship_depth_confidence"],
+                self.NEUTRAL_RESONANCE_BASELINE,
+            ),
+            2,
         )
         base_score = round(base_score, 2)
         empathy_bonus = round(empathy_bonus, 2)
@@ -375,7 +440,12 @@ class EmotionalResonanceService:
             f"加分项：共情识别 +{empathy_bonus:.2f}（最高 +10），"
             f"负面情绪化解 +{resolution_bonus:.2f}（最高 +10）"
         )
-        debug_log(f"情感共振率最终得分：{overall_score:.2f}")
+        debug_log(
+            f"关系深度置信度: {confidence_meta['relationship_depth_confidence']:.2f}, "
+            f"原始综合得分: {raw_overall_score:.2f}, 最终得分: {overall_score:.2f}"
+        )
+        if confidence_meta["low_confidence_reason"]:
+            debug_log(f"低置信原因: {confidence_meta['low_confidence_reason']}")
 
         return {
             "overall_score": overall_score,
@@ -391,6 +461,7 @@ class EmotionalResonanceService:
                 "empathy_recognition_bonus": empathy_bonus,
                 "negative_resolution_bonus": resolution_bonus,
             },
+            "confidence_meta": confidence_meta,
             "interpretation": self.generate_interpretation(overall_score),
         }
 
@@ -433,7 +504,7 @@ class EmotionalResonanceService:
             if row[7]:
                 all_unit_ids.add(row[7])
 
-        unit_content_map = self._batch_get_speech_unit_contents(all_unit_ids)
+        unit_metadata_map = self._batch_get_speech_unit_metadata(all_unit_ids)
         return [
             {
                 "from_speech_unit_id": row[7],
@@ -444,8 +515,10 @@ class EmotionalResonanceService:
                 "to_intensity": row[3],
                 "semantic_similarity": row[4],
                 "time_gap": row[5],
-                "to_content": unit_content_map.get(row[6], ""),
-                "from_content": unit_content_map.get(row[7], ""),
+                "to_content": unit_metadata_map.get(row[6], {}).get("content", ""),
+                "from_content": unit_metadata_map.get(row[7], {}).get("content", ""),
+                "to_timestamp": unit_metadata_map.get(row[6], {}).get("first_timestamp"),
+                "from_timestamp": unit_metadata_map.get(row[7], {}).get("first_timestamp"),
             }
             for row in rows
         ]
@@ -760,19 +833,23 @@ class EmotionalResonanceService:
             return 0.4
         return 0.1
 
-    def _batch_get_speech_unit_contents(self, unit_ids: set) -> Dict[int, str]:
+    def _batch_get_speech_unit_metadata(self, unit_ids: set) -> Dict[int, Dict[str, Any]]:
         if not unit_ids:
             return {}
 
-        result_map: Dict[int, str] = {}
+        result_map: Dict[int, Dict[str, Any]] = {}
         unit_id_list = list(unit_ids)
         placeholders = ",".join("?" * len(unit_id_list))
         cursor = get_db().execute(
-            f"SELECT id, message_ids FROM speech_units WHERE id IN ({placeholders})",
+            (
+                f"SELECT id, message_ids, first_message_timestamp "
+                f"FROM speech_units WHERE id IN ({placeholders})"
+            ),
             unit_id_list,
         )
 
         unit_msg_map: Dict[int, List[int]] = {}
+        unit_ts_map: Dict[int, int] = {}
         all_msg_ids = set()
         for row in cursor.fetchall():
             try:
@@ -782,6 +859,7 @@ class EmotionalResonanceService:
             if msg_ids:
                 unit_msg_map[row[0]] = msg_ids
                 all_msg_ids.update(msg_ids)
+            unit_ts_map[row[0]] = row[2] or 0
 
         msg_content_map: Dict[int, str] = {}
         if all_msg_ids:
@@ -802,7 +880,10 @@ class EmotionalResonanceService:
 
         for unit_id in unit_id_list:
             msg_ids = unit_msg_map.get(unit_id, [])
-            result_map[unit_id] = " ".join(msg_content_map.get(mid, "") for mid in msg_ids)
+            result_map[unit_id] = {
+                "content": " ".join(msg_content_map.get(mid, "") for mid in msg_ids),
+                "first_timestamp": unit_ts_map.get(unit_id, 0),
+            }
 
         return result_map
 
@@ -836,6 +917,135 @@ class EmotionalResonanceService:
         return self._merge_keywords(
             self.keyword_lib.get_keywords("soothing"), list(self.EXTRA_SOOTHING_KEYWORDS)
         )
+
+    @staticmethod
+    def _calculate_sample_confidence(sample_count: int, target_count: int) -> float:
+        if target_count <= 0:
+            return 1.0
+        return max(0.0, min(1.0, sample_count / target_count))
+
+    @staticmethod
+    def _apply_confidence_shrinkage(
+        raw_score: float, confidence: float, neutral_score: float
+    ) -> float:
+        adjusted = raw_score * confidence + neutral_score * (1 - confidence)
+        return max(0.0, min(100.0, adjusted))
+
+    def _build_relationship_confidence_meta(
+        self,
+        conversation_id: int,
+        pairs: Sequence[Dict[str, Any]],
+        positive_pairs: Sequence[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        active_day_count, span_day_count = self._get_pair_activity_day_stats(conversation_id, pairs)
+        pair_confidence = self._calculate_sample_confidence(
+            len(pairs), self.DEPTH_PAIR_COUNT_TARGET
+        )
+        positive_confidence = self._calculate_sample_confidence(
+            len(positive_pairs), self.DEPTH_POSITIVE_PAIR_TARGET
+        )
+        active_day_confidence = self._calculate_sample_confidence(
+            active_day_count, self.DEPTH_ACTIVE_DAY_TARGET
+        )
+        span_confidence = self._calculate_sample_confidence(
+            span_day_count, self.DEPTH_SPAN_DAY_TARGET
+        )
+        relationship_depth_confidence = round(
+            pair_confidence * 0.4
+            + positive_confidence * 0.3
+            + active_day_confidence * 0.2
+            + span_confidence * 0.1,
+            4,
+        )
+        low_confidence_reason = self._build_low_confidence_reason(
+            len(pairs),
+            len(positive_pairs),
+            active_day_count,
+            span_day_count,
+            relationship_depth_confidence,
+        )
+        return {
+            "relationship_depth_confidence": relationship_depth_confidence,
+            "interaction_pair_count": len(pairs),
+            "positive_pair_count": len(positive_pairs),
+            "active_day_count": active_day_count,
+            "low_confidence_reason": low_confidence_reason,
+        }
+
+    def _get_pair_activity_day_stats(
+        self, conversation_id: int, pairs: Sequence[Dict[str, Any]]
+    ) -> tuple[int, int]:
+        unit_ids = set()
+        for pair in pairs:
+            from_id = pair.get("from_speech_unit_id")
+            to_id = pair.get("to_speech_unit_id")
+            if from_id:
+                unit_ids.add(int(from_id))
+            if to_id:
+                unit_ids.add(int(to_id))
+
+        if not unit_ids:
+            cursor = get_db().execute(
+                """
+                SELECT COUNT(DISTINCT DATE(timestamp, 'unixepoch', 'localtime')) AS active_days,
+                       MIN(timestamp) AS first_ts,
+                       MAX(timestamp) AS last_ts
+                FROM messages
+                WHERE conversation_id = ?
+                """,
+                (conversation_id,),
+            )
+            row = cursor.fetchone()
+            active_days = int((row[0] or 0) if row else 0)
+            first_ts = int((row[1] or 0) if row else 0)
+            last_ts = int((row[2] or 0) if row else 0)
+            if not first_ts or not last_ts:
+                return active_days, 0
+            span_days = max(1, (last_ts - first_ts) // 86400 + 1)
+            return active_days, span_days
+
+        unit_id_list = list(unit_ids)
+        placeholders = ",".join("?" * len(unit_id_list))
+        cursor = get_db().execute(
+            (
+                f"SELECT first_message_timestamp FROM speech_units "
+                f"WHERE conversation_id = ? AND id IN ({placeholders})"
+            ),
+            [conversation_id, *unit_id_list],
+        )
+        timestamps = [int(row[0] or 0) for row in cursor.fetchall() if row[0]]
+        if not timestamps:
+            return 0, 0
+        active_days = len(
+            {
+                datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d")
+                for timestamp in timestamps
+            }
+        )
+        span_days = max(1, (max(timestamps) - min(timestamps)) // 86400 + 1)
+        return active_days, span_days
+
+    def _build_low_confidence_reason(
+        self,
+        pair_count: int,
+        positive_pair_count: int,
+        active_day_count: int,
+        span_day_count: int,
+        relationship_depth_confidence: float,
+    ) -> str:
+        if relationship_depth_confidence >= self.RELATIONSHIP_DEPTH_LOW_CONFIDENCE_THRESHOLD:
+            return ""
+
+        reasons: List[str] = []
+        if pair_count < self.DEPTH_PAIR_COUNT_TARGET:
+            reasons.append("互动轮次偏少")
+        if positive_pair_count < self.DEPTH_POSITIVE_PAIR_TARGET:
+            reasons.append("稳定积极回应样本不足")
+        if active_day_count < self.DEPTH_ACTIVE_DAY_TARGET:
+            reasons.append("活跃天数较少")
+        if span_day_count < self.DEPTH_SPAN_DAY_TARGET:
+            reasons.append("跨时间分布不足")
+        return "、".join(reasons)
 
     @staticmethod
     def _merge_keywords(*keyword_groups: Sequence[str]) -> List[str]:

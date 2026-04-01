@@ -25,18 +25,13 @@
                 @update:conversation-id="onConversationChange" />
             </div>
           </div>
-          <div class="profile-stats">
-            <span class="stat-tag">默认近30天，可切换时间范围</span>
-            <span class="stat-tag">{{ currentRangeLabel }}</span>
-            <span class="stat-tag">纯文本消息总数 {{ stats?.totalMessages || 0 }}</span>
-          </div>
         </div>
       </div>
       
       <div class="header-actions-group">
         <CtButton variant="ghost" @click="showContextForm = true" :disabled="isGlobalAnalyzing">关系信息</CtButton>
         <CtButton variant="ghost" @click="showKeywordsDialog = true" :disabled="isGlobalAnalyzing">配置喜好</CtButton>
-        <CtButton variant="primary" @click="handleStartGlobalAnalysis(hasCachedAffinityAnalysis)" :loading="isGlobalAnalyzing && !isStopping" class="btn-full-analysis">
+        <CtButton variant="primary" @click="handleStartGlobalAnalysis" :loading="isGlobalAnalyzing && !isStopping" class="btn-full-analysis">
           {{ isGlobalAnalyzing ? "分析中..." : (hasCachedAffinityAnalysis ? "重新全面分析" : "开始全面分析") }}
         </CtButton>
         <CtButton v-if="isGlobalAnalyzing" variant="danger" @click="handleStopAnalysis" :loading="isStopping" class="btn-stop-analysis" style="margin-left: 8px;">
@@ -160,7 +155,8 @@
 
           <div class="breakdowns-container">
             <SubScoreBreakdown v-if="analysisResult.emotional_resonance" title="情感共振率"
-              :sub-scores="emotionalResonanceDisplaySubScores" />
+              :sub-scores="emotionalResonanceDisplaySubScores"
+              :confidence-meta="analysisResult.emotional_resonance.confidence_meta" />
             <SubScoreBreakdown v-if="analysisResult.chat_positivity" title="聊天积极度"
               :sub-scores="analysisResult.chat_positivity.sub_scores" />
             <SubScoreBreakdown v-if="analysisResult.attitude_tendency" title="态度倾向"
@@ -582,7 +578,6 @@ export default {
         const displayScore = ref(0)
         const showKeywordsDialog = ref(false)
         const showContextForm = ref(false)
-        const pendingAnalysisForce = ref(false)
         const analysisLaunchPending = ref(false)
         const isGlobalAnalyzing = ref(false)
         const isStopping = ref(false)
@@ -612,6 +607,9 @@ export default {
         const currentRangeLabel = computed(() => {
             if (!dates.from || !dates.to) return '默认近30天，可切换时间范围'
             return `${dates.from} 至 ${dates.to}`
+        })
+        const shouldLoadContentAnalysis = computed(() => {
+            return currentTab.value === 'content' || currentTab.value === 'persona'
         })
         const hasContentAnalysis = computed(() => {
             return Boolean(subject.value?.stats && (
@@ -711,9 +709,22 @@ export default {
             }, {})
         }
 
-        function setDefaultDates(days = 7) {
-            const to = new Date()
-            const from = new Date()
+        function getConversationAnchorDate(conversationId?: number | null): Date {
+            const conversation = conversations.value.find(c => c.id === conversationId)
+            const rawLastMessageTime = conversation?.last_message_time?.trim()
+            if (rawLastMessageTime) {
+                const normalized = rawLastMessageTime.replace(' ', 'T')
+                const parsed = new Date(normalized)
+                if (!Number.isNaN(parsed.getTime())) {
+                    return parsed
+                }
+            }
+            return new Date()
+        }
+
+        function setDefaultDates(days = 7, anchorDate?: Date) {
+            const to = anchorDate ? new Date(anchorDate) : new Date()
+            const from = new Date(to)
             from.setDate(to.getDate() - (days - 1))
             dates.from = from.toISOString().slice(0, 10)
             dates.to = to.toISOString().slice(0, 10)
@@ -795,13 +806,16 @@ export default {
 
         async function onConversationChange(id: number) {
             selectedConversationId.value = id
+            setDefaultDates(30, getConversationAnchorDate(id))
             hasFeatures.value = false
             analysisResult.value = null
             loadPersonaProfile(id)
-            loadAnalysis()
             loadSessions()
             tryLoadExistingFeatures()
             tryLoadAffinityScores()
+            if (shouldLoadContentAnalysis.value) {
+                loadAnalysis()
+            }
         }
 
         function resetPersonaProfile() {
@@ -940,7 +954,7 @@ export default {
             } catch (e) { console.error(e) } finally { loadingSessions.value = false }
         }
 
-        const handleStartGlobalAnalysis = async (force: boolean) => {
+        const handleStartGlobalAnalysis = async () => {
             if (!selectedConversationId.value) return
             if (isGlobalAnalyzing.value) return
             if (analysisLaunchPending.value || isGlobalAnalyzing.value) return
@@ -948,7 +962,6 @@ export default {
             try {
                 const { has_context } = await getRelationshipContext(selectedConversationId.value)
                 if (!has_context) {
-                    pendingAnalysisForce.value = force
                     showContextForm.value = true
                     analysisLaunchPending.value = false
                     return
@@ -1040,11 +1053,11 @@ export default {
                     applyAnalysisDeviceMode('cpu')
                 }
             }
-            await startGlobalAnalysis(force)
+            await startGlobalAnalysis()
         }
 
-        const handleContextSaved = () => handleStartGlobalAnalysis(pendingAnalysisForce.value)
-        const handleKeywordsUpdated = async () => { if (selectedConversationId.value) await startGlobalAnalysis(true) }
+        const handleContextSaved = () => handleStartGlobalAnalysis()
+        const handleKeywordsUpdated = async () => { if (selectedConversationId.value) await startGlobalAnalysis() }
 
 
         async function handleStopAnalysis() {
@@ -1062,7 +1075,7 @@ export default {
             }
         }
 
-        async function startGlobalAnalysis(force: boolean) {
+        async function startGlobalAnalysis() {
             let isCancelled = false
             if (!selectedConversationId.value) return
             isGlobalAnalyzing.value = true
@@ -1122,7 +1135,7 @@ export default {
                 // Stage 2: Affinity Model
                 globalProgressPercent.value = 50
                 globalProgressStep.value = '正在进行深度关系推理...'
-                const affinityTaskId = await analyzeAffinity(selectedConversationId.value, force)
+                const affinityTaskId = await analyzeAffinity(selectedConversationId.value, true)
                 
                 if (!isGlobalAnalyzing.value) {
                     throw new Error('分析已取消')
@@ -1152,11 +1165,14 @@ export default {
                                     ) {
                                         analysisResult.value = scores
                                     }
-                                    await Promise.all([
-                                        loadAnalysis(),
+                                    const followUpTasks = [
                                         loadSessions(),
                                         loadActivityCalendar(activityCalendar.value.year)
-                                    ])
+                                    ]
+                                    if (shouldLoadContentAnalysis.value) {
+                                        followUpTasks.unshift(loadAnalysis())
+                                    }
+                                    await Promise.all(followUpTasks)
                                     resolve()
                                 } else if (prog.status === 'failed' || prog.status === 'cancelled') {
                                     clearInterval(activeTimer.value); reject(new Error(prog.error || '分析已取消'))
@@ -1346,6 +1362,9 @@ export default {
                     if (activityCalendar.value.entries.length) renderActivityCalendar()
                 }
             }
+            if ((newVal === 'content' || newVal === 'persona') && selectedConversationId.value) {
+                loadAnalysis()
+            }
         })
 
         watch(() => analysisResult.value, (newVal) => {
@@ -1381,7 +1400,7 @@ export default {
         return {
             currentTab, conversations, selectedConversationId, dates, loading, loadingSessions, error, analysis, subject, sessions,
             personaProfile, loadingPersonaProfile, personaProfileMeta,
-            analysisResult, displayScore, showKeywordsDialog, showContextForm, pendingAnalysisForce, isGlobalAnalyzing, isStopping, activeTimer, handleStopAnalysis, globalProgressPercent, globalProgressStep, gpuMode,
+            analysisResult, displayScore, showKeywordsDialog, showContextForm, isGlobalAnalyzing, isStopping, activeTimer, handleStopAnalysis, globalProgressPercent, globalProgressStep, gpuMode,
             hasFeatures, hasCachedAffinityAnalysis, featureStats, responseTimeStats, initiativeStats, wordCountsStats, activityCalendar,
             responseTimeChart, activityCalendarChart, wordCountChart, stats, currentContactName, hasPreferenceKeywords, allDimensions, emotionalResonanceDisplaySubScores,
             currentRangeLabel, hasContentAnalysis, circumference, strokeDashoffset, formatNumber, formatTime, getResponseTimeLabel, getMergedResponseTimeLabel, getResponseTimePercent, onConversationChange, onDatesChange, handleExport, handleStartGlobalAnalysis, handleContextSaved, handleKeywordsUpdated,

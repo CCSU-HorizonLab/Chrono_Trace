@@ -24,6 +24,7 @@ from ...db.connection import get_db
 from .preprocessing_orchestrator import PreprocessingOrchestrator
 from .keyword_libraries import KeywordLibraries
 from .negative_direction_service import NegativeDirectionService
+from .relationship_context_service import RelationshipContextService
 
 # ===== 调试开关：设为True时输出详细跟踪日志 =====
 DEBUG_TRACE = True
@@ -37,12 +38,16 @@ def debug_log(msg: str):
 
 class AttitudeTendencyService:
     """态度倾向服务"""
+
+    VIDEO_BONUS_MAX = 10.0
+    VOICE_BONUS_MAX = 20.0
     
     def __init__(self):
         pass  # get_db() removed for thread safety
         self.orchestrator = PreprocessingOrchestrator()
         self.keyword_lib = KeywordLibraries()
         self.direction_service = NegativeDirectionService()
+        self.relationship_context_service = RelationshipContextService()
     
     def calculate_positive_word_frequency(
         self,
@@ -192,41 +197,71 @@ class AttitudeTendencyService:
     def calculate_multimedia_usage(
         self,
         conversation_id: int
-    ) -> float:
+    ) -> Dict[str, float]:
         """
-        计算多媒体使用加分 (最高 20 分)
-        
-        基于通话频率计算（仅针对语音和视频通话）：
-        公式: 平均每月通话次数 / 满分阈值(4次/月) * 20.0 加分
+        计算多媒体使用加分。
+
+        视频和语音分开计算后再相加：
+        - 视频最高 10 分
+        - 语音最高 20 分
         """
         stats = self.orchestrator.get_preprocessed_statistics(conversation_id)
-        
-        if stats.total_message_count == 0:
-            return 0.0
-        
-        # 仅统计语音和视频通话
-        call_count = (
-            stats.voice_message_count +
-            stats.video_message_count
+        thresholds = self.relationship_context_service.get_multimedia_thresholds(
+            conversation_id
         )
-        
-        # 按自然日计算月份跨度（至少按1个月算）
+
+        if stats.total_message_count == 0:
+            return {
+                "video_bonus": 0.0,
+                "voice_bonus": 0.0,
+                "multimedia_bonus": 0.0,
+                "video_calls_per_month": 0.0,
+                "voice_calls_per_month": 0.0,
+                "video_threshold": thresholds["video"],
+                "voice_threshold": thresholds["voice"],
+                "relationship_type": thresholds["relationship_type"],
+            }
+
         total_months = max(1.0, stats.chat_days_count / 30.0)
-        calls_per_month = call_count / total_months
-        
-        # 优化算法：以一个月为周期。
-        # 每月4次通话（约每周1次）即视为非常频繁，达到满分。
-        # 恋人或密切家人间这个数字很容易达到，普通朋友较难，能有效区分亲密度。
-        bonus_score = min(20.0, (calls_per_month / 4.0) * 20.0)
-        
+        video_calls_per_month = stats.video_message_count / total_months
+        voice_calls_per_month = stats.voice_message_count / total_months
+
+        video_bonus = min(
+            self.VIDEO_BONUS_MAX,
+            (video_calls_per_month / max(thresholds["video"], 1e-6)) * self.VIDEO_BONUS_MAX,
+        )
+        voice_bonus = min(
+            self.VOICE_BONUS_MAX,
+            (voice_calls_per_month / max(thresholds["voice"], 1e-6)) * self.VOICE_BONUS_MAX,
+        )
+        multimedia_bonus = video_bonus + voice_bonus
+
         if DEBUG_TRACE:
             debug_log("\n[态度调试] === 多媒体(通话)使用加分 ===")
-            debug_log(f"[态度调试] 聊天总跨度(按天折算月): {total_months:.2f} 月")
-            debug_log(f"[态度调试] 语音/视频通话总数: {call_count} 次")
-            debug_log(f"[态度调试] 月均通话频率: {calls_per_month:.2f} 次/月 (满分阈值: 4次/月)")
-            debug_log(f"[态度调试] 最终附加加分: +{bonus_score:.2f} 分")
-            
-        return bonus_score
+            debug_log(
+                f"[态度调试] 关系类型: {thresholds['relationship_type']}, "
+                f"聊天总跨度(按天折算月): {total_months:.2f} 月"
+            )
+            debug_log(
+                f"[态度调试] 视频次数: {stats.video_message_count}, 月均: {video_calls_per_month:.2f} 次/月, "
+                f"阈值: {thresholds['video']:.2f} -> +{video_bonus:.2f}"
+            )
+            debug_log(
+                f"[态度调试] 语音次数: {stats.voice_message_count}, 月均: {voice_calls_per_month:.2f} 次/月, "
+                f"阈值: {thresholds['voice']:.2f} -> +{voice_bonus:.2f}"
+            )
+            debug_log(f"[态度调试] 最终附加加分: +{multimedia_bonus:.2f} 分")
+
+        return {
+            "video_bonus": round(video_bonus, 2),
+            "voice_bonus": round(voice_bonus, 2),
+            "multimedia_bonus": round(multimedia_bonus, 2),
+            "video_calls_per_month": round(video_calls_per_month, 4),
+            "voice_calls_per_month": round(voice_calls_per_month, 4),
+            "video_threshold": thresholds["video"],
+            "voice_threshold": thresholds["voice"],
+            "relationship_type": thresholds["relationship_type"],
+        }
     
     def calculate_nickname_frequency(
         self,
@@ -395,7 +430,8 @@ class AttitudeTendencyService:
         late_night_privacy_bonus = min(10.0, attitude_stats.privacy_message_count * 2.0)
         trust_bonus = min(30.0, base_trust_bonus + late_night_privacy_bonus)
         
-        multimedia_bonus = self.calculate_multimedia_usage(conversation_id) # 现为附加分
+        multimedia_detail = self.calculate_multimedia_usage(conversation_id)
+        multimedia_bonus = multimedia_detail["multimedia_bonus"]
         nickname_bonus = self.calculate_nickname_frequency(conversation_id) # 现为附加分
         holiday_bonus = self.calculate_holiday_greeting(conversation_id) # 获取附加加分
         
@@ -414,7 +450,10 @@ class AttitudeTendencyService:
         debug_log(f"[态度调试] 负面情绪得分: {negative_score:.2f} × 0.50 = {negative_score*0.50:.2f}")
         debug_log(f"[态度调试] 2主维度加权合计: {weighted_total:.2f}")
         debug_log(f"[态度调试] + 信任倾诉加分: {trust_bonus:.2f}")
-        debug_log(f"[态度调试] + 多媒体(通话)加分: {multimedia_bonus:.2f}")
+        debug_log(
+            f"[态度调试] + 多媒体(通话)加分: {multimedia_bonus:.2f} "
+            f"(视频 +{multimedia_detail['video_bonus']:.2f}, 语音 +{multimedia_detail['voice_bonus']:.2f})"
+        )
         debug_log(f"[态度调试] + 节日互动加分: {holiday_bonus:.2f}")
         debug_log(f"[态度调试] + 专属称呼加分: {nickname_bonus:.2f}")
         debug_log(f"[态度调试] === 总分: {overall_score:.2f} ===")
@@ -430,6 +469,8 @@ class AttitudeTendencyService:
             "bonus_scores": {
                 "trust_bonus": round(trust_bonus, 2),
                 "multimedia_bonus": round(multimedia_bonus, 2),
+                "video_bonus": round(multimedia_detail["video_bonus"], 2),
+                "voice_bonus": round(multimedia_detail["voice_bonus"], 2),
                 "holiday_bonus": round(holiday_bonus, 2),
                 "nickname_bonus": round(nickname_bonus, 2),
             },

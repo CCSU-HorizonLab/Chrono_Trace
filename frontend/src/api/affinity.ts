@@ -47,6 +47,14 @@ export interface SubScore {
     [key: string]: number
 }
 
+export interface ResonanceConfidenceMeta {
+    relationship_depth_confidence: number
+    interaction_pair_count: number
+    positive_pair_count: number
+    active_day_count: number
+    low_confidence_reason: string
+}
+
 export interface DimensionScore {
     name: string
     score: number
@@ -54,6 +62,8 @@ export interface DimensionScore {
     weighted_score: number
     interpretation: string
     sub_scores: SubScore
+    bonus_scores?: Record<string, number>
+    confidence_meta?: ResonanceConfidenceMeta
 }
 
 export interface AffinityAnalysisResult {
@@ -102,7 +112,7 @@ export interface AffinityProgressResult {
  */
 export async function analyzeAffinity(
     conversationId: number,
-    forceReanalyze: boolean = false,
+    forceReanalyze: boolean = true,
     configOverrides?: Partial<AffinityConfig>
 ): Promise<string> {
     const res = await api.analyze_affinity(conversationId, forceReanalyze, configOverrides)

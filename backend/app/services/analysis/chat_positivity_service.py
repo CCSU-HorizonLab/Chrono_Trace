@@ -67,6 +67,9 @@ class ChatPositivityService:
     # 评分标准化参数
     DAILY_MESSAGE_BASELINE = 10.0  # 日均 10 条消息为满分基准
     LONG_TEXT_THRESHOLD = 50       # 长文本阈值 (字符数)
+    NEUTRAL_POSITIVITY_BASELINE = 45.0
+    SESSION_CONFIDENCE_TARGET = 8
+    ACTIVE_DAY_CONFIDENCE_TARGET = 10
     
     def __init__(self, timeliness_threshold_seconds: int = 300):
         """
@@ -133,7 +136,18 @@ class ChatPositivityService:
         debug_log(f"长文本(>{self.LONG_TEXT_THRESHOLD}字)占比: {result.long_text_ratio*100:.1f}% (满分基准: 30.0%) -> 加分: +{result.long_text_bonus}")
         
         # 综合评分
-        result.overall_score = self._calculate_overall_score(result)
+        raw_overall_score = self._calculate_overall_score(result)
+        relationship_confidence = self._calculate_relationship_confidence(stats)
+        result.overall_score = self._apply_confidence_shrinkage(
+            raw_overall_score,
+            relationship_confidence,
+            self.NEUTRAL_POSITIVITY_BASELINE,
+        )
+        debug_log(f"\n[聊天积极度调试] --- 6. 综合评分收缩 ---")
+        debug_log(
+            f"原始综合得分: {raw_overall_score:.2f}, 关系置信度: {relationship_confidence:.2f} -> "
+            f"收缩后得分: {result.overall_score:.2f}"
+        )
         
         # 生成解释
         result.interpretation = self.generate_interpretation(result.overall_score)
@@ -447,6 +461,22 @@ class ChatPositivityService:
         )
         overall += result.long_text_bonus
         return min(round(overall, 2), 100.0)
+
+    def _calculate_relationship_confidence(self, stats: PreprocessedStatistics) -> float:
+        session_confidence = min(
+            1.0, (stats.total_sessions or 0) / self.SESSION_CONFIDENCE_TARGET
+        )
+        active_day_confidence = min(
+            1.0, (stats.chat_days_count or 0) / self.ACTIVE_DAY_CONFIDENCE_TARGET
+        )
+        return round(session_confidence * 0.55 + active_day_confidence * 0.45, 4)
+
+    @staticmethod
+    def _apply_confidence_shrinkage(
+        raw_score: float, confidence: float, neutral_score: float
+    ) -> float:
+        adjusted = raw_score * confidence + neutral_score * (1 - confidence)
+        return round(max(0.0, min(100.0, adjusted)), 2)
     
     def generate_interpretation(self, score: float) -> str:
         """

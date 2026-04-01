@@ -50,6 +50,8 @@ class PreprocessedStatistics:
     voice_message_count: int = 0
     video_message_count: int = 0
     nickname_message_count: int = 0
+    sender_nickname_message_count: int = 0
+    contact_nickname_message_count: int = 0
     privacy_message_count: int = 0
     holiday_message_count: int = 0
     holidays_sent_count: int = 0
@@ -162,6 +164,12 @@ class PreprocessingOrchestrator:
         stats.voice_message_count = getattr(attitude_stats, "voice_message_count", 0)
         stats.video_message_count = getattr(attitude_stats, "video_message_count", 0)
         stats.nickname_message_count = getattr(attitude_stats, "nickname_message_count", 0)
+        stats.sender_nickname_message_count = getattr(
+            attitude_stats, "sender_nickname_message_count", 0
+        )
+        stats.contact_nickname_message_count = getattr(
+            attitude_stats, "contact_nickname_message_count", 0
+        )
         stats.privacy_message_count = getattr(attitude_stats, "privacy_message_count", 0)
         stats.holiday_message_count = getattr(attitude_stats, "holiday_message_count", 0)
         stats.holidays_sent_count = getattr(attitude_stats, "holidays_sent_count", 0)

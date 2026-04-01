@@ -134,14 +134,16 @@ class TestAttitudePreprocessingService:
     def test_collect_nickname_keywords(self, service):
         """测试专属称呼统计"""
         messages = [
-            {'content': '宝宝,你到了吗', 'message_type': 1, 'timestamp': 1000},
-            {'content': '亲爱的,我想你了', 'message_type': 1, 'timestamp': 2000},
-            {'content': '普通消息', 'message_type': 1, 'timestamp': 3000}
+            {'content': '宝宝,你到了吗', 'message_type': 1, 'timestamp': 1000, 'is_sender': 1},
+            {'content': '亲爱的,我想你了', 'message_type': 1, 'timestamp': 2000, 'is_sender': 0},
+            {'content': '普通消息', 'message_type': 1, 'timestamp': 3000, 'is_sender': 1}
         ]
 
         stats = service.collect_attitude_statistics(messages)
 
         assert stats.nickname_message_count == 2
+        assert stats.sender_nickname_message_count == 1
+        assert stats.contact_nickname_message_count == 1
 
     def test_collect_privacy_keywords(self, service):
         """测试隐私关键词统计"""
@@ -221,7 +223,7 @@ class TestAttitudePreprocessingService:
 
     # ===== 测试异常处理 =====
     
-    def test_invalid_message_format(self, service, capsys):
+    def test_invalid_message_format(self, service, caplog):
         """测试无效消息格式的异常处理"""
         messages = [
             "这不是字典",  # 无效格式
@@ -233,10 +235,9 @@ class TestAttitudePreprocessingService:
         stats = service.collect_attitude_statistics(messages)
         
         # 应该跳过无效消息,不崩溃
-        captured = capsys.readouterr()
-        assert '[警告]' in captured.out or '[错误]' in captured.out
+        assert '[警告]' in caplog.text or '[错误]' in caplog.text
 
-    def test_message_processing_exception(self, service, capsys):
+    def test_message_processing_exception(self, service, caplog):
         """测试消息处理异常"""
         # 模拟关键词检查抛出异常
         def raise_error(text, category):
@@ -251,8 +252,7 @@ class TestAttitudePreprocessingService:
         stats = service.collect_attitude_statistics(messages)
         
         # 应该捕获异常并继续
-        captured = capsys.readouterr()
-        assert '[错误]' in captured.out
+        assert '[错误]' in caplog.text
 
     # ===== 测试O(N)复杂度 =====
 

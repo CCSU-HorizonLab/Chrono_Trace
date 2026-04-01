@@ -1758,6 +1758,8 @@ class AttitudeStatistics:
     voice_message_count: int = 0          # 语音消息数
     video_message_count: int = 0          # 视频通话消息数
     nickname_message_count: int = 0       # 专属称呼消息数
+    sender_nickname_message_count: int = 0
+    contact_nickname_message_count: int = 0
     privacy_message_count: int = 0        # 隐私分享消息数
     holiday_message_count: int = 0        # 节日祝福消息数
     holidays_sent_count: int = 0          # 独立节日日期数(去重)
@@ -1838,6 +1840,7 @@ class AttitudePreprocessingService:
                 content = msg.get('content', '')
                 msg_type = msg.get('message_type', self.MESSAGE_TYPE_TEXT)
                 timestamp = msg.get('timestamp', 0)
+                is_sender = int(msg.get('is_sender', 0) or 0)
                 
                 # 修复: sqlite可能会返回bytes
                 if isinstance(content, bytes):
@@ -1864,6 +1867,10 @@ class AttitudePreprocessingService:
                     # 统计专属称呼
                     if keyword_matches.get('nickname'):
                         stats.nickname_message_count += 1
+                        if is_sender:
+                            stats.sender_nickname_message_count += 1
+                        else:
+                            stats.contact_nickname_message_count += 1
                         if is_late_night:
                             stats.late_night_nickname_count += 1
 

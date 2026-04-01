@@ -131,6 +131,8 @@ class TestPreprocessingOrchestrator:
         assert stats.voice_message_count >= 0
         assert stats.video_message_count >= 0
         assert stats.nickname_message_count >= 0
+        assert stats.sender_nickname_message_count >= 0
+        assert stats.contact_nickname_message_count >= 0
         assert stats.privacy_message_count >= 0
         assert stats.holiday_message_count >= 0
         assert stats.holidays_sent_count >= 0

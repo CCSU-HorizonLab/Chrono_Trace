@@ -1,22 +1,10 @@
-"""好感度分析编排器 - 协调4个维度服务并计算综合评分
+"""?????????
 
-功能:
-- analyze(): 主入口，触发完整分析流程
-- get_scores(): 获取缓存分数
-- reanalyze(): 重新分析（清除缓存）
+??????????????????
 
-维度权重(动态调整):
-有喜好关键词时:
-- 情感共振率: 35%
-- 聊天积极度: 35%
-- 态度倾向: 20%
-- 喜好兼容度: 10%
-
-无喜好关键词时:
-- 情感共振率: 40%
-- 聊天积极度: 35%
-- 态度倾向: 25%
-- 喜好兼容度: 0%
+???????
+- ??????????????? 40%?????? 35%????? 25%
+- ???????????????????????? sigmoid ?????
 """
 
 import time
@@ -102,9 +90,9 @@ class AffinityAnalysisService:
     PREFERENCE_BONUS_FACTOR = 0.10
     PREFERENCE_BONUS_DECAY_START = 60
     PREFERENCE_BONUS_DECAY_END = 90
-    
-    # 默认维度权重(已废弃,使用动态权重)
-    # 实际权重由 AffinityConfigService.get_dimension_weights() 动态返回
+
+    # 默认维度权重仅保留为内部常量，实际主维度权重固定为 40/35/25
+    # 喜好兼容度不参与主维度加权，统一作为额外加分项处理
     DEFAULT_WEIGHT_EMOTIONAL = 0.40
     DEFAULT_WEIGHT_POSITIVITY = 0.35
     DEFAULT_WEIGHT_ATTITUDE = 0.25
@@ -349,9 +337,9 @@ class AffinityAnalysisService:
     ):
         """计算所有维度评分"""
         
-        # 获取动态权重
+        # 获取固定主维度权重与喜好加分展示权重
         weights = self.config_service.get_dimension_weights(conversation_id)
-        logger.info(f"使用动态权重: {weights}")
+        logger.info(f"使用固定主维度权重与喜好加分配置: {weights}")
         
         # 1. 情感共振率
         self._check_cancelled(cancel_event)
@@ -514,46 +502,6 @@ class AffinityAnalysisService:
         )
         self._log_debug_summary(result)
         return
-        """计算综合评分(使用动态权重)"""
-        # 收集所有维度的加权分数
-        total_weighted = 0.0
-        
-        dimensions = [
-            result.emotional_resonance,
-            result.chat_positivity,
-            result.attitude_tendency,
-            result.preference_compatibility,
-        ]
-        
-        # 直接累加加权分数(权重已在维度计算时设置)
-        for dim in dimensions:
-            if dim:
-                total_weighted += dim.weighted_score
-
-        stats = self.preprocessing.get_preprocessed_statistics(result.conversation_id)
-        relationship_stability_confidence = self._calculate_relationship_stability_confidence(
-            stats
-        )
-        shrunk_score = self._apply_confidence_shrinkage(
-            total_weighted,
-            relationship_stability_confidence,
-            self.NEUTRAL_OVERALL_BASELINE,
-        )
-        result.overall_score = self._sigmoid_calibrate(shrunk_score)
-        logger.info(
-            f"综合评分计算完成: {result.overall_score:.1f}分 "
-            f"(原始={total_weighted:.1f}, 稳定性置信度={relationship_stability_confidence:.2f})"
-        )
-        
-        # 统一输出四大维度的明细日志到文件
-        affinity_debug_log(
-            "[濂芥劅搴﹀垎鏋怾 鎬诲垎鏍″噯] "
-            f"weighted={total_weighted:.2f}, "
-            f"shrunk={shrunk_score:.2f}, "
-            f"sigmoid={result.overall_score:.2f}, "
-            f"confidence={relationship_stability_confidence:.2f}"
-        )
-        self._log_debug_summary(result)
 
     def _calculate_decayed_bonus(self, base_score: float, raw_bonus: float) -> float:
         """Apply dynamic decay to the preference bonus based on the base score."""
@@ -641,7 +589,16 @@ class AffinityAnalysisService:
         for dim in dimensions:
             if not dim:
                 continue
-            affinity_debug_log(f"► 【{dim.name}】: {dim.score:.2f}分 | 权重: {dim.weight*100:.0f}% -> 最终贡献: {dim.weighted_score:.2f}分")
+            if dim is result.preference_compatibility:
+                affinity_debug_log(
+                    f"[加分项] {dim.name}: 原始分 {dim.score:.2f} | "
+                    f"额外加分 +{dim.bonus_scores.get('preference_bonus', 0):.2f}"
+                )
+            else:
+                affinity_debug_log(
+                    f"[维度] {dim.name}: {dim.score:.2f}分 | "
+                    f"权重: {dim.weight*100:.0f}% -> 最终贡献: {dim.weighted_score:.2f}分"
+                )
             
             # 输出子维度
             if dim.sub_scores:
@@ -654,7 +611,7 @@ class AffinityAnalysisService:
                         
             # 输出附加加分项
             if hasattr(dim, 'bonus_scores') and dim.bonus_scores:
-                affinity_debug_log(f"  ├─ [额外加分详情 (已计算入该维度得分)]")
+                affinity_debug_log(f"  ├─ [额外加分详情]")
                 for sub_key, sub_val in dim.bonus_scores.items():
                     if isinstance(sub_val, (int, float)):
                         affinity_debug_log(f"  │  ├─ {sub_key}: +{sub_val:.2f}")

@@ -78,6 +78,7 @@ const LABELS: Record<string, string> = {
   nickname_frequency: '专属称呼',
   holiday_greeting: '节日祝福',
   topic_mention: '共同话题提及',
+  preference_bonus: '喜好加分',
 }
 
 const BONUS_KEYS = new Set([

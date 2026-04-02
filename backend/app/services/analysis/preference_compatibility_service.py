@@ -1,8 +1,10 @@
-"""喜好兼容度服务 - 计算喜好维度 (20% 权重)
+"""喜好兼容度服务。
 
-包含 2 个子维度计算：
-1. 话题提及频率 (40% 权重)
-2. 喜好话题延续性 (60% 权重)
+计算喜好兼容度原始分，并为总分链路提供额外加分依据。
+
+包含两个子维度：
+1. 话题提及频率（40%）
+2. 喜好话题延续性（60%）
 """
 
 import logging
@@ -92,7 +94,7 @@ class PreferenceCompatibilityService:
         
         debug_log(f"\n{'*'*40}")
         debug_log(f"【喜好兼容度】开始计分 (会话 ID {conversation_id})")
-        debug_log(f"*[注] 该项占总分20%权重，自身包含2个子维度*")
+        debug_log(f"*[??] ????????????? 2 ????*")
         
         # 如果没有喜好关键词，返回 0 分
         if not self.preference_keywords:
@@ -355,22 +357,4 @@ class PreferenceCompatibilityService:
         if score >= 20:
             return "兴趣契合度较低，很少涉及共同喜好，喜好加分较少"
         return "兴趣契合度很低，几乎没有共同话题，暂时没有形成明显加分"
-        """
-        根据分数生成解释文本
-        
-        Args:
-            score: 综合评分 (0-100)
-            
-        Returns:
-            解释文本
-        """
-        if score >= 80:
-            return "兴趣高度契合，经常聊到共同喜好话题，话题延续性强"
-        elif score >= 60:
-            return "兴趣较为契合，偶尔聊到共同喜好话题"
-        elif score >= 40:
-            return "兴趣契合度一般，共同话题较少"
-        elif score >= 20:
-            return "兴趣契合度较低，很少涉及共同喜好"
-        else:
-            return "兴趣契合度很低，几乎没有共同话题"
+

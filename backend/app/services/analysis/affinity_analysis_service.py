@@ -90,7 +90,7 @@ class AffinityAnalysisResult:
 class AffinityAnalysisService:
     """好感度分析编排器"""
 
-    CACHE_SCHEMA_VERSION = 8
+    CACHE_SCHEMA_VERSION = 9
     NEUTRAL_OVERALL_BASELINE = 35.0
     OVERALL_SESSION_CONFIDENCE_TARGET = 30
     OVERALL_ACTIVE_DAY_CONFIDENCE_TARGET = 30
@@ -99,13 +99,16 @@ class AffinityAnalysisService:
     CONFIDENCE_SHRINKAGE_POWER = 1.5
     SCORE_SIGMOID_MIDPOINT = 55.0
     SCORE_SIGMOID_STEEPNESS = 0.07
+    PREFERENCE_BONUS_FACTOR = 0.10
+    PREFERENCE_BONUS_DECAY_START = 60
+    PREFERENCE_BONUS_DECAY_END = 90
     
     # 默认维度权重(已废弃,使用动态权重)
     # 实际权重由 AffinityConfigService.get_dimension_weights() 动态返回
-    DEFAULT_WEIGHT_EMOTIONAL = 0.35
+    DEFAULT_WEIGHT_EMOTIONAL = 0.40
     DEFAULT_WEIGHT_POSITIVITY = 0.35
-    DEFAULT_WEIGHT_ATTITUDE = 0.20
-    DEFAULT_WEIGHT_PREFERENCE = 0.10
+    DEFAULT_WEIGHT_ATTITUDE = 0.25
+    DEFAULT_WEIGHT_PREFERENCE = 0.00
     
     def __init__(self):
         pass  # get_db() removed for thread safety
@@ -438,24 +441,79 @@ class AffinityAnalysisService:
         preference_result = self.preference_service.calculate_scores(
             conversation_id, stats
         )
+        raw_bonus = (
+            preference_result.overall_score
+            * getattr(config, "preference_bonus_factor", self.PREFERENCE_BONUS_FACTOR)
+        )
         result.preference_compatibility = DimensionScore(
             name="喜好兼容度",
             score=preference_result.overall_score,
-            weight=weights['preference_compatibility'],
-            weighted_score=preference_result.overall_score * weights['preference_compatibility'],
+            weight=0.0,
+            weighted_score=0.0,
             interpretation=preference_result.interpretation,
             sub_scores={
                 "topic_mention": preference_result.topic_mention_score,
                 "topic_continuity": preference_result.topic_continuity_score,
+            },
+            bonus_scores={
+                "preference_bonus": round(raw_bonus, 2),
             }
         )
-        logger.info(f"喜好兼容度计算完成: {preference_result.overall_score:.1f}分 (权重: {weights['preference_compatibility']*100}%)")
+        logger.info(
+            "喜好兼容度计算完成: %.1f分 (raw_bonus=%.2f)",
+            preference_result.overall_score,
+            raw_bonus,
+        )
     
     def _calculate_overall_score(
         self,
         result: AffinityAnalysisResult,
         config: AffinityConfig
     ):
+        base_score = 0.0
+        for dim in [
+            result.emotional_resonance,
+            result.chat_positivity,
+            result.attitude_tendency,
+        ]:
+            if dim:
+                base_score += dim.weighted_score
+
+        raw_bonus = 0.0
+        if result.preference_compatibility and result.preference_compatibility.bonus_scores:
+            raw_bonus = result.preference_compatibility.bonus_scores.get("preference_bonus", 0.0)
+
+        preference_bonus = self._calculate_decayed_bonus(base_score, raw_bonus)
+        total_with_bonus = base_score + preference_bonus
+
+        stats = self.preprocessing.get_preprocessed_statistics(result.conversation_id)
+        relationship_stability_confidence = self._calculate_relationship_stability_confidence(stats)
+        shrunk_score = self._apply_confidence_shrinkage(
+            total_with_bonus,
+            relationship_stability_confidence,
+            self.NEUTRAL_OVERALL_BASELINE,
+        )
+        result.overall_score = min(100.0, self._sigmoid_calibrate(shrunk_score))
+        logger.info(
+            "综合评分计算完成: %.1f分 (base=%.1f, bonus=%.1f, total=%.1f, confidence=%.2f)",
+            result.overall_score,
+            base_score,
+            preference_bonus,
+            total_with_bonus,
+            relationship_stability_confidence,
+        )
+        affinity_debug_log(
+            "[Affinity Overall] "
+            f"base={base_score:.2f}, "
+            f"raw_bonus={raw_bonus:.2f}, "
+            f"bonus={preference_bonus:.2f}, "
+            f"total={total_with_bonus:.2f}, "
+            f"shrunk={shrunk_score:.2f}, "
+            f"sigmoid={result.overall_score:.2f}, "
+            f"confidence={relationship_stability_confidence:.2f}"
+        )
+        self._log_debug_summary(result)
+        return
         """计算综合评分(使用动态权重)"""
         # 收集所有维度的加权分数
         total_weighted = 0.0
@@ -496,6 +554,29 @@ class AffinityAnalysisService:
             f"confidence={relationship_stability_confidence:.2f}"
         )
         self._log_debug_summary(result)
+
+    def _calculate_decayed_bonus(self, base_score: float, raw_bonus: float) -> float:
+        """Apply dynamic decay to the preference bonus based on the base score."""
+        if raw_bonus <= 0:
+            return 0.0
+
+        if base_score >= self.PREFERENCE_BONUS_DECAY_END:
+            decay_factor = 0.0
+        elif base_score <= self.PREFERENCE_BONUS_DECAY_START:
+            decay_factor = 1.0
+        else:
+            decay_factor = (
+                (self.PREFERENCE_BONUS_DECAY_END - base_score)
+                / (self.PREFERENCE_BONUS_DECAY_END - self.PREFERENCE_BONUS_DECAY_START)
+            )
+
+        decayed = raw_bonus * decay_factor
+        affinity_debug_log(
+            "[Preference Bonus] "
+            f"base={base_score:.2f}, raw_bonus={raw_bonus:.2f}, "
+            f"decay_factor={decay_factor:.2f}, final_bonus={decayed:.2f}"
+        )
+        return max(0.0, round(decayed, 2))
 
     def _calculate_relationship_stability_confidence(
         self, stats: PreprocessedStatistics

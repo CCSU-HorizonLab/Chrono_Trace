@@ -2,23 +2,23 @@
   <div class="weight-info-tooltip">
     <button class="info-button" @click="showTooltip = !showTooltip" title="查看权重说明">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <circle cx="12" cy="12" r="10"/>
-        <path d="M12 16v-4M12 8h.01"/>
+        <circle cx="12" cy="12" r="10" />
+        <path d="M12 16v-4M12 8h.01" />
       </svg>
     </button>
-    
+
     <Transition name="tooltip-fade">
       <div v-if="showTooltip" class="tooltip-panel" @click.stop>
         <div class="tooltip-header">
           <h4>维度权重说明</h4>
           <button class="close-btn" @click="showTooltip = false">×</button>
         </div>
-        
+
         <div class="tooltip-content">
-          <div class="weight-section" :class="{ active: hasPreferenceKeywords }">
+          <div class="weight-section active">
             <div class="section-title">
-              <span class="status-icon">{{ hasPreferenceKeywords ? '✓' : 'ℹ️' }}</span>
-              {{ hasPreferenceKeywords ? '当前配置(已设置喜好关键词)' : '未设置喜好关键词时' }}
+              <span class="status-icon">📊</span>
+              维度权重分配
             </div>
             <ul class="weight-list">
               <li v-for="item in currentWeights" :key="item.name">
@@ -27,46 +27,20 @@
               </li>
             </ul>
           </div>
-          
-          <div v-if="hasPreferenceKeywords" class="weight-section inactive">
-            <div class="section-title">
-              <span class="status-icon">ℹ️</span>
-              未设置喜好关键词时
-            </div>
-            <ul class="weight-list">
-              <li v-for="item in alternativeWeights" :key="item.name">
-                <span class="dimension-name">{{ item.name }}</span>
-                <span class="dimension-weight">{{ item.weight }}</span>
-              </li>
-            </ul>
-          </div>
-          
-          <div v-else class="weight-section inactive">
-            <div class="section-title">
-              <span class="status-icon">💡</span>
-              设置喜好关键词后
-            </div>
-            <ul class="weight-list">
-              <li v-for="item in alternativeWeights" :key="item.name">
-                <span class="dimension-name">{{ item.name }}</span>
-                <span class="dimension-weight">{{ item.weight }}</span>
-              </li>
-            </ul>
-          </div>
-          
+
           <div class="tooltip-footer">
-            <p>💡 系统会根据是否设置喜好关键词自动调整权重分配</p>
+            <p>喜好兼容度为额外加分项，配置喜好关键词后可获得额外好感度加分，不会压缩前三个维度的权重。</p>
           </div>
         </div>
       </div>
     </Transition>
-    
+
     <div v-if="showTooltip" class="tooltip-backdrop" @click="showTooltip = false"></div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { computed, ref } from 'vue'
 
 const props = defineProps<{
   hasPreferenceKeywords: boolean
@@ -75,39 +49,17 @@ const props = defineProps<{
 const showTooltip = ref(false)
 
 const currentWeights = computed(() => {
-  if (props.hasPreferenceKeywords) {
-    return [
-      { name: '情感共振率', weight: '35%', color: '#3b82f6' },
-      { name: '聊天积极度', weight: '35%', color: '#3b82f6' },
-      { name: '态度倾向', weight: '20%', color: '#10b981' },
-      { name: '喜好维度', weight: '10%', color: '#10b981' },
-    ]
-  } else {
-    return [
-      { name: '情感共振率', weight: '40%', color: '#3b82f6' },
-      { name: '聊天积极度', weight: '35%', color: '#3b82f6' },
-      { name: '态度倾向', weight: '25%', color: '#10b981' },
-      { name: '喜好维度', weight: '0%', color: '#9ca3af' },
-    ]
-  }
-})
+  const base = [
+    { name: '情感共振率', weight: '40%', color: '#3b82f6' },
+    { name: '聊天积极度', weight: '35%', color: '#3b82f6' },
+    { name: '态度倾向', weight: '25%', color: '#10b981' },
+  ]
 
-const alternativeWeights = computed(() => {
   if (props.hasPreferenceKeywords) {
-    return [
-      { name: '情感共振率', weight: '40%' },
-      { name: '聊天积极度', weight: '35%' },
-      { name: '态度倾向', weight: '25%' },
-      { name: '喜好维度', weight: '0%' },
-    ]
-  } else {
-    return [
-      { name: '情感共振率', weight: '35%' },
-      { name: '聊天积极度', weight: '35%' },
-      { name: '态度倾向', weight: '20%' },
-      { name: '喜好维度', weight: '10%' },
-    ]
+    base.push({ name: '喜好兼容度', weight: '额外加分', color: '#f59e0b' })
   }
+
+  return base
 })
 </script>
 
@@ -139,10 +91,7 @@ const alternativeWeights = computed(() => {
 
 .tooltip-backdrop {
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  inset: 0;
   background: transparent;
   z-index: 999;
 }
@@ -215,11 +164,6 @@ const alternativeWeights = computed(() => {
   border-color: var(--ct-color-primary);
 }
 
-.weight-section.inactive {
-  background: var(--ct-bg-secondary);
-  opacity: 0.8;
-}
-
 .section-title {
   display: flex;
   align-items: center;
@@ -230,10 +174,6 @@ const alternativeWeights = computed(() => {
   margin-bottom: var(--ct-space-sm);
   text-transform: uppercase;
   letter-spacing: 0.05em;
-}
-
-.status-icon {
-  font-size: 1rem;
 }
 
 .weight-list {

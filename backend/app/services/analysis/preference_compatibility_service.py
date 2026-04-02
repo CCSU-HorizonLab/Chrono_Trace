@@ -346,6 +346,15 @@ class PreferenceCompatibilityService:
         return round(overall, 2)
     
     def generate_interpretation(self, score: float) -> str:
+        if score >= 80:
+            return "兴趣高度契合，经常聊到共同喜好话题，已获得较高的喜好加分"
+        if score >= 60:
+            return "兴趣较为契合，偶尔会延展到共同喜好话题，已获得中等喜好加分"
+        if score >= 40:
+            return "兴趣契合度一般，共同话题较少，获得少量喜好加分"
+        if score >= 20:
+            return "兴趣契合度较低，很少涉及共同喜好，喜好加分较少"
+        return "兴趣契合度很低，几乎没有共同话题，暂时没有形成明显加分"
         """
         根据分数生成解释文本
         

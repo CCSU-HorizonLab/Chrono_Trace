@@ -89,7 +89,7 @@ export interface AffinityConfig {
     weight_emotional_resonance: number
     weight_chat_positivity: number
     weight_attitude_tendency: number
-    weight_preference_compatibility: number
+    preference_bonus_factor?: number
     reply_timeliness_threshold_seconds: number
     session_gap_threshold_seconds: number
     preference_keywords: string[]

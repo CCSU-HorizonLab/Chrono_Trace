@@ -3,19 +3,30 @@
     <div class="header">
       <div class="title-row">
         <span class="title">{{ title }}</span>
-        <!-- 测试: 强制显示徽章 -->
-        <span class="weight-badge" :class="{ 'weight-zero': weight === 0 }">
-          {{ weight === 0 ? '未启用' : weight !== undefined ? `${Math.round(weight * 100)}%` : '无weight' }}
+        <span
+          class="weight-badge"
+          :class="{
+            'weight-zero': !props.isBonus && props.weight === 0,
+            'bonus-badge': props.isBonus && props.bonusValue !== undefined && props.bonusValue > 0,
+            'bonus-inactive': props.isBonus && (props.bonusValue === undefined || props.bonusValue <= 0),
+          }"
+        >
+          <template v-if="props.isBonus">
+            {{ props.bonusValue !== undefined && props.bonusValue > 0 ? `+${props.bonusValue.toFixed(1)} 加分` : '加分项' }}
+          </template>
+          <template v-else>
+            {{ props.weight === 0 ? '未启用' : props.weight !== undefined ? `${Math.round(props.weight * 100)}%` : '' }}
+          </template>
         </span>
       </div>
       <span class="score-text">{{ Math.round(score) }}<span class="max-score">/{{ maxScore }}</span></span>
     </div>
-    
+
     <div class="progress-container">
       <div class="progress-bar" :style="{ width: percentage + '%' }"></div>
     </div>
-    
-    <div class="interpretation" v-if="interpretation">
+
+    <div v-if="interpretation" class="interpretation">
       {{ interpretation }}
     </div>
   </div>
@@ -29,11 +40,14 @@ const props = defineProps<{
   score: number
   maxScore: number
   interpretation?: string
-  weight?: number  // 维度权重 (0-1)
-  disabled?: boolean  // 是否禁用状态
+  weight?: number
+  disabled?: boolean
+  isBonus?: boolean
+  bonusValue?: number
 }>()
 
 const isDisabled = computed(() => {
+  if (props.isBonus) return false
   return props.disabled || props.weight === 0
 })
 
@@ -65,7 +79,7 @@ const handleClick = () => {
   background: var(--ct-bg-elevated);
   border: 1px solid var(--ct-border-color);
   border-radius: var(--ct-radius-md);
-  padding: 1.5rem; /* Enlarged padding */
+  padding: 1.5rem;
   box-shadow: var(--ct-shadow-sm);
   cursor: pointer;
   transition: transform var(--ct-transition-fast), box-shadow var(--ct-transition-fast);
@@ -83,8 +97,8 @@ const handleClick = () => {
 .header {
   display: flex;
   justify-content: space-between;
-  align-items: center; /* Adjusted from baseline */
-  margin-bottom: var(--ct-space-lg); /* Enlarged margin */
+  align-items: center;
+  margin-bottom: var(--ct-space-lg);
 }
 
 .title-row {
@@ -95,7 +109,7 @@ const handleClick = () => {
 
 .title {
   font-weight: 700;
-  font-size: var(--ct-text-base); /* Larger font */
+  font-size: var(--ct-text-base);
   color: var(--ct-text-primary);
 }
 
@@ -104,23 +118,35 @@ const handleClick = () => {
   align-items: center;
   padding: 4px 12px;
   border-radius: var(--ct-radius-full);
-  font-size: 0.75rem; /* Slightly larger badge text */
+  font-size: 0.75rem;
   font-weight: 600;
-  background: #3b82f6; 
+  background: #3b82f6;
   color: white;
-  border: 2px solid #2563eb; 
+  border: 2px solid #2563eb;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
   margin-left: 8px;
 }
 
 .weight-badge.weight-zero {
-  background: #6b7280; 
+  background: #6b7280;
+  border-color: #4b5563;
+  opacity: 0.9;
+}
+
+.weight-badge.bonus-badge {
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  border-color: #b45309;
+  color: white;
+}
+
+.weight-badge.bonus-inactive {
+  background: #6b7280;
   border-color: #4b5563;
   opacity: 0.9;
 }
 
 .score-text {
-  font-size: 2rem; /* Much larger score */
+  font-size: 2rem;
   font-weight: 700;
   color: var(--score-color);
   font-family: var(--ct-font-display);
@@ -135,7 +161,7 @@ const handleClick = () => {
 }
 
 .progress-container {
-  height: 8px; /* Thicker progress bar */
+  height: 8px;
   background: var(--ct-bg-tertiary);
   border-radius: var(--ct-radius-full);
   overflow: hidden;
@@ -150,7 +176,7 @@ const handleClick = () => {
 }
 
 .interpretation {
-  font-size: var(--ct-text-sm); /* Larger text */
+  font-size: var(--ct-text-sm);
   color: var(--ct-text-secondary);
   line-height: var(--ct-leading-normal);
   overflow: hidden;
@@ -159,13 +185,11 @@ const handleClick = () => {
   -webkit-box-orient: vertical;
 }
 
-/* Color Themes */
 .score-card.green { --score-color: var(--ct-color-success); }
 .score-card.blue { --score-color: var(--ct-color-info); }
 .score-card.yellow { --score-color: var(--ct-color-warning); }
 .score-card.red { --score-color: var(--ct-color-error); }
 
-/* Disabled State */
 .score-card.disabled {
   opacity: 0.6;
   background: var(--ct-bg-secondary);

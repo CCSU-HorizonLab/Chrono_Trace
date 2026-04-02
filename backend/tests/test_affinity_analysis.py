@@ -55,10 +55,10 @@ class TestAffinityAnalysisService:
             from app.services.analysis.affinity_config import AffinityConfig
             MockConfig.return_value.get_config.return_value = AffinityConfig()
             MockConfig.return_value.get_dimension_weights.return_value = {
-                'emotional_resonance': 0.35,
+                'emotional_resonance': 0.40,
                 'chat_positivity': 0.35,
-                'attitude_tendency': 0.20,
-                'preference_compatibility': 0.10
+                'attitude_tendency': 0.25,
+                'preference_compatibility': 0.00
             }
             
             MockResonance.return_value.calculate_overall_resonance.return_value = {
@@ -147,9 +147,38 @@ class TestAffinityAnalysisService:
         # 喜好兼容度应该有值
         assert result.preference_compatibility is not None
         assert result.preference_compatibility.score == 60.0
+        assert result.preference_compatibility.weight == 0.0
+        assert result.preference_compatibility.weighted_score == 0.0
+        assert result.preference_compatibility.bonus_scores["preference_bonus"] == 6.0
         assert result.emotional_resonance is not None
         assert result.emotional_resonance.bonus_scores["base_resonance_score"] == 80.0
         assert result.emotional_resonance.bonus_scores["empathy_recognition_bonus"] == 8.0
+
+    def test_preference_bonus_only_increases_score(self, service):
+        result = service.analyze(1)
+
+        base_score = (
+            result.emotional_resonance.weighted_score
+            + result.chat_positivity.weighted_score
+            + result.attitude_tendency.weighted_score
+        )
+
+        assert result.preference_compatibility.bonus_scores["preference_bonus"] > 0
+        assert service._calculate_decayed_bonus(base_score, 6.0) >= 0
+
+    @pytest.mark.parametrize(
+        ("base_score", "raw_bonus", "expected"),
+        [
+            (40, 8.0, 8.0),
+            (60, 8.0, 8.0),
+            (70, 8.0, 5.33),
+            (80, 8.0, 2.67),
+            (90, 8.0, 0.0),
+            (95, 8.0, 0.0),
+        ],
+    )
+    def test_calculate_decayed_bonus_boundaries(self, service, base_score, raw_bonus, expected):
+        assert service._calculate_decayed_bonus(base_score, raw_bonus) == pytest.approx(expected, abs=0.01)
 
     def test_analyze_calculates_overall_score(self, service):
         """测试计算综合评分"""

@@ -78,14 +78,16 @@ class TestPreferenceCompatibilityService:
         """测试高话题延续性"""
         mock_db.execute.return_value.fetchone.return_value = (0.8,)
         
-        score = service.calculate_topic_continuity_score(1, [1, 2, 3])
+        with patch('app.services.analysis.preference_compatibility_service.get_db', return_value=mock_db):
+            score = service.calculate_topic_continuity_score(1, [1, 2, 3])
         assert score == 80.0
 
     def test_topic_continuity_low(self, service, mock_db):
         """测试低话题延续性"""
         mock_db.execute.return_value.fetchone.return_value = (0.3,)
         
-        score = service.calculate_topic_continuity_score(1, [1, 2])
+        with patch('app.services.analysis.preference_compatibility_service.get_db', return_value=mock_db):
+            score = service.calculate_topic_continuity_score(1, [1, 2])
         assert score == 30.0
 
     def test_topic_continuity_no_sessions(self, service, mock_db):
@@ -97,7 +99,8 @@ class TestPreferenceCompatibilityService:
         """测试无相似度数据"""
         mock_db.execute.return_value.fetchone.return_value = (None,)
         
-        score = service.calculate_topic_continuity_score(1, [1])
+        with patch('app.services.analysis.preference_compatibility_service.get_db', return_value=mock_db):
+            score = service.calculate_topic_continuity_score(1, [1])
         assert score == 0.0
 
     # ========================================
@@ -199,8 +202,10 @@ class TestAffinityConfigService:
         config = service.get_config(1)
         
         assert isinstance(config, AffinityConfig)
-        assert config.weight_emotional_resonance == 0.30
-        assert config.weight_chat_positivity == 0.30
+        assert config.weight_emotional_resonance == 0.40
+        assert config.weight_chat_positivity == 0.35
+        assert config.weight_attitude_tendency == 0.25
+        assert config.preference_bonus_factor == 0.10
 
     def test_validate_config_valid(self, service):
         """测试验证有效配置"""

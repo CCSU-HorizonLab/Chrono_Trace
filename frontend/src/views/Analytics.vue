@@ -142,7 +142,9 @@
             :score="analysisResult.preference_compatibility.score" 
             :max-score="100"
             :weight="analysisResult.preference_compatibility.weight"
-            :interpretation="analysisResult.preference_compatibility.interpretation" />
+            :interpretation="analysisResult.preference_compatibility.interpretation"
+            :is-bonus="true"
+            :bonus-value="analysisResult.preference_compatibility.bonus_scores?.preference_bonus" />
         </div>
       </div>
 
@@ -624,7 +626,11 @@ export default {
             return conversations.value.find(c => c.id === selectedConversationId.value)?.name || '选择联系人'
         })
 
-        const hasPreferenceKeywords = computed(() => analysisResult.value?.preference_compatibility?.weight !== undefined && analysisResult.value.preference_compatibility.weight > 0)
+        const hasPreferenceKeywords = computed(() => {
+            const preference = analysisResult.value?.preference_compatibility
+            if (!preference) return false
+            return (preference.bonus_scores?.preference_bonus ?? 0) > 0
+        })
         const hasCachedAffinityAnalysis = computed(() => Boolean(analysisResult.value))
 
         const allDimensions = computed(() => {

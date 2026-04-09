@@ -11,7 +11,8 @@ import logging
 logger = logging.getLogger(__name__)
 
 # 悬浮窗默认参数
-FLOATING_WIDTH = 660           # 足够展示建议内容
+FLOATING_WIDTH = 660           # 默认紧凑宽度
+FLOATING_EXPANDED_WIDTH = 960  # 展开辅助栏时的宽度
 FLOATING_MIN_HEIGHT = 700
 TRACKING_INTERVAL_MS = 300     # 缩短到 300ms 让跟随更流畅
 WECHAT_WINDOW_CLASS = 'WeChatMainWndForPC'
@@ -33,6 +34,7 @@ class FloatingWindowService:
     def __init__(self):
         self._webview_window = None
         self._is_floating = False
+        self._is_expanded = False
         self._original_rect = None  # (x, y, width, height)
         self._tracking_thread = None
         self._stop_tracking = threading.Event()
@@ -50,6 +52,10 @@ class FloatingWindowService:
     def is_floating(self) -> bool:
         return self._is_floating
 
+    @property
+    def floating_width(self) -> int:
+        return FLOATING_EXPANDED_WIDTH if self._is_expanded else FLOATING_WIDTH
+
     def enter_floating_mode(self) -> dict:
         """
         进入悬浮窗模式：
@@ -65,6 +71,7 @@ class FloatingWindowService:
             return {'ok': False, 'error': 'PyWebView 窗口引用未设置'}
 
         try:
+            self._is_expanded = False
             # 确保有 HWND
             if not self._webview_hwnd:
                 self._webview_hwnd = self._get_webview_hwnd()
@@ -81,6 +88,11 @@ class FloatingWindowService:
                 x = wechat_rect[2] + FLOATING_GAP  # right + gap
                 y = wechat_rect[1]                   # top 对齐
                 height = max(wechat_rect[3] - wechat_rect[1], FLOATING_MIN_HEIGHT)
+                x = self._clamp_floating_x(
+                    x,
+                    self.floating_width,
+                    anchor_point=(wechat_rect[2] - 1, wechat_rect[1] + 20),
+                )
                 _log(f"微信窗口位置: left={wechat_rect[0]}, top={wechat_rect[1]}, "
                      f"right={wechat_rect[2]}, bottom={wechat_rect[3]}")
             else:
@@ -89,11 +101,11 @@ class FloatingWindowService:
                 _log(f"未找到微信窗口，使用回退位置: x={x}, y={y}, h={height}")
 
             # 使用 Win32 API 直接移动和调整窗口（更可靠）
-            moved = self._win32_move_resize(x, y, FLOATING_WIDTH, height)
+            moved = self._win32_move_resize(x, y, self.floating_width, height)
             if not moved:
                 # 回退到 PyWebView API
                 _log("Win32 移动失败，回退到 PyWebView API")
-                self._webview_window.resize(FLOATING_WIDTH, height)
+                self._webview_window.resize(self.floating_width, height)
                 self._webview_window.move(x, y)
 
             # 设置置顶
@@ -104,7 +116,7 @@ class FloatingWindowService:
             # 启动跟踪线程
             self._start_tracking()
 
-            _log(f'✅ 已进入悬浮模式: x={x}, y={y}, w={FLOATING_WIDTH}, h={height}')
+            _log(f'✅ 已进入悬浮模式: x={x}, y={y}, w={self.floating_width}, h={height}')
             return {
                 'ok': True,
                 'message': '已进入悬浮模式',
@@ -144,6 +156,7 @@ class FloatingWindowService:
                 _log(f'恢复窗口: x={x}, y={y}, w={w}, h={h}')
 
             self._is_floating = False
+            self._is_expanded = False
             return {'ok': True, 'message': '已退出悬浮模式'}
 
         except Exception as e:
@@ -157,9 +170,56 @@ class FloatingWindowService:
         return {
             'ok': True,
             'is_floating': self._is_floating,
+            'is_expanded': self._is_expanded,
+            'floating_width': self.floating_width,
             'wechat_found': self._wechat_hwnd is not None,
             'original_rect': self._original_rect,
         }
+
+    def set_expanded(self, expanded: bool) -> dict:
+        """
+        在悬浮模式中切换宽度：
+        - 默认紧凑宽度
+        - 展开辅助栏时加宽
+        """
+        self._is_expanded = bool(expanded)
+
+        if not self._is_floating:
+            return {
+                'ok': True,
+                'message': '未在悬浮模式，已记录展开状态',
+                'is_expanded': self._is_expanded,
+                'floating_width': self.floating_width,
+            }
+
+        try:
+            wechat_rect = self._find_wechat_window()
+            if wechat_rect:
+                x = wechat_rect[2] + FLOATING_GAP
+                y = wechat_rect[1]
+                height = max(wechat_rect[3] - wechat_rect[1], FLOATING_MIN_HEIGHT)
+                x = self._clamp_floating_x(
+                    x,
+                    self.floating_width,
+                    anchor_point=(wechat_rect[2] - 1, wechat_rect[1] + 20),
+                )
+            else:
+                x, y, height = self._fallback_position()
+
+            moved = self._win32_move_resize(x, y, self.floating_width, height)
+            if not moved:
+                self._webview_window.resize(self.floating_width, height)
+                self._webview_window.move(x, y)
+
+            _log(f"切换悬浮窗展开态: expanded={self._is_expanded}, x={x}, y={y}, w={self.floating_width}, h={height}")
+            return {
+                'ok': True,
+                'is_expanded': self._is_expanded,
+                'floating_width': self.floating_width,
+            }
+        except Exception as e:
+            _log(f'❌ 切换悬浮窗展开态失败: {e}')
+            return {'ok': False, 'error': str(e)}
 
     # ==================== Win32 直接操作 ====================
 
@@ -180,11 +240,7 @@ class FloatingWindowService:
                 return False
 
             # 获取 DPI 缩放比例（如 150% → scale=1.5）
-            try:
-                dpi = ctypes.windll.user32.GetDpiForWindow(hwnd)
-                scale = dpi / 96.0
-            except AttributeError:
-                scale = 1.0
+            scale = self._get_window_scale(hwnd)
 
             # 宽度始终缩放（FLOATING_WIDTH 是 CSS 像素）
             scaled_w = int(w * scale)
@@ -200,6 +256,50 @@ class FloatingWindowService:
         except Exception as e:
             _log(f"Win32 移动窗口失败: {e}")
             return False
+
+    def _get_window_scale(self, hwnd=None) -> float:
+        """获取窗口 DPI 缩放比例。"""
+        try:
+            import ctypes
+
+            target_hwnd = hwnd or self._webview_hwnd or self._get_webview_hwnd()
+            if not target_hwnd:
+                return 1.0
+            return ctypes.windll.user32.GetDpiForWindow(target_hwnd) / 96.0
+        except Exception:
+            return 1.0
+
+    def _clamp_floating_x(
+        self,
+        x: int,
+        width: int,
+        anchor_point: tuple[int, int] | None = None,
+        margin: int = 12,
+    ) -> int:
+        """
+        将悬浮窗 x 坐标限制在当前显示器工作区内。
+
+        x 与 Win32 窗口矩形同为物理像素，因此宽度也需按 DPI 缩放后再参与钳制。
+        """
+        scaled_width = int(width * self._get_window_scale())
+
+        try:
+            import win32api
+            import win32con
+
+            if anchor_point:
+                monitor = win32api.MonitorFromPoint(anchor_point, win32con.MONITOR_DEFAULTTONEAREST)
+                work_left, _, work_right, _ = win32api.GetMonitorInfo(monitor)['Work']
+            else:
+                work_left = 0
+                work_right = win32api.GetSystemMetrics(0)
+
+            min_x = work_left + margin
+            max_x = max(min_x, work_right - scaled_width - margin)
+            return max(min_x, min(x, max_x))
+        except Exception as e:
+            _log(f"钳制悬浮窗位置失败，回退原始 x: {e}")
+            return max(0, x)
 
     # ==================== 内部方法 ====================
 
@@ -319,7 +419,7 @@ class FloatingWindowService:
             import win32api
             screen_w = win32api.GetSystemMetrics(0)
             screen_h = win32api.GetSystemMetrics(1)
-            x = screen_w - FLOATING_WIDTH - 20
+            x = self._clamp_floating_x(screen_w - 20, self.floating_width)
             y = 40
             height = screen_h - 100
             return x, y, height
@@ -417,13 +517,18 @@ class FloatingWindowService:
                     y = rect[1]                         # 与微信顶部对齐
                     wechat_h = rect[3] - rect[1]
                     height = max(wechat_h, FLOATING_MIN_HEIGHT)
+                    x = self._clamp_floating_x(
+                        x,
+                        self.floating_width,
+                        anchor_point=(rect[2] - 1, rect[1] + 20),
+                    )
 
                     # 直接用 Win32 API 移动（包含 DPI 缩放计算）
                     # _win32_move_resize 内部使用了 SWP_NOZORDER，因此能保持原有的 TOPMOST 置顶状态
                     webview_hwnd = self._webview_hwnd or self._get_webview_hwnd()
                     if webview_hwnd:
                         try:
-                            self._win32_move_resize(x, y, FLOATING_WIDTH, height)
+                            self._win32_move_resize(x, y, self.floating_width, height)
                         except Exception as e:
                             _log(f'移动悬浮窗失败: {e}')
 

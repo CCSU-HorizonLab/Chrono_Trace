@@ -1,284 +1,341 @@
 <template>
-  <div class="fp">
-    <header class="fp-header">
-      <div class="fp-brand">
-        <span class="fp-logo">CT</span>
-        <span class="fp-title">Chrono Trace</span>
+  <div class="fp-layout" :class="{ 'is-inspector-open': inspectorOpen }">
+    <!-- 1. Header (Fixed) -->
+    <header class="fp-site-header">
+      <div class="fp-header-drag-zone">
+        <div class="fp-brand">
+          <span class="fp-status-dot" :class="{ active: realtimeState.isMonitoring }"></span>
+          <span class="fp-brand-name">Chrono Trace</span>
+        </div>
+        <button class="fp-btn-icon close-btn" @click="exitFloating" title="退出悬浮模式">✕</button>
       </div>
-      <div class="fp-controls">
-        <span class="fp-status-dot" :class="{ active: realtimeState.isMonitoring }"></span>
-        <button class="fp-btn icon" @click="exitFloating" title="退出悬浮模式">×</button>
+      <div class="fp-contact-bar">
+        <div class="fp-avatar">{{ profileInitial }}</div>
+        <div class="fp-contact-info">
+          <div class="fp-contact-name">{{ profile.name || realtimeState.talkerName || '等待对象...' }}</div>
+          <div class="fp-contact-tags" v-if="!profileExpanded && profile.personality_tags?.length">
+            <span v-for="t in profile.personality_tags.slice(0, 3)" :key="t" class="fp-tag">{{ t }}</span>
+          </div>
+        </div>
+        <button class="fp-btn-icon profile-toggle" :class="{ 'is-open': profileExpanded }" @click="profileExpanded = !profileExpanded">
+           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
+      </div>
+
+      <!-- Absolute Profile Dropdown -->
+      <div class="fp-profile-dropdown" v-show="profileExpanded">
+        <div class="fp-contact-tags all-tags" v-if="profile.personality_tags?.length">
+          <span v-for="t in profile.personality_tags" :key="t" class="fp-tag">{{ t }}</span>
+        </div>
+        <div class="fp-profile-attrs">
+          <div v-if="profile.chat_style" class="fp-attr">
+            <span class="fp-attr-lbl">画像</span><span class="fp-attr-val">{{ profile.chat_style }}</span>
+          </div>
+          <div v-if="profile.interests?.length" class="fp-attr">
+            <span class="fp-attr-lbl">兴趣</span><span class="fp-attr-val">{{ profile.interests.join('、') }}</span>
+          </div>
+          <div v-if="profile.communication_tips" class="fp-attr">
+            <span class="fp-attr-lbl">提示</span><span class="fp-attr-val">{{ profile.communication_tips }}</span>
+          </div>
+          <div v-if="profile.relationship_note" class="fp-attr">
+            <span class="fp-attr-lbl">关系</span><span class="fp-attr-val">{{ profile.relationship_note }}</span>
+          </div>
+          <div v-if="!profile.chat_style && !profileLoading" class="fp-profile-empty">
+            <span class="fp-txt-sub">暂无画像特征</span>
+            <button class="fp-btn-sm" @click="showProfileDialog = true">扫描画像</button>
+          </div>
+        </div>
       </div>
     </header>
 
-    <div v-if="connectionLost" class="fp-connection-lost">
-      <span>连接已断开，等待重新连接…</span>
-      <button class="fp-btn small" @click="retryConnection">重试</button>
-    </div>
-
-    <div v-if="chatError && !connectionLost" class="fp-chat-error">
-      <span>{{ chatError }}</span>
-      <button class="fp-btn small" @click="exitFloating">重新开始</button>
-    </div>
-
-    <div class="fp-contact">
-      <div class="fp-avatar">{{ profileInitial }}</div>
-      <div class="fp-contact-info">
-        <div class="fp-contact-name">{{ profile.name || realtimeState.talkerName || '未选择' }}</div>
-        <div v-if="profile.personality_tags?.length" class="fp-contact-tags">
-          <span v-for="t in profile.personality_tags.slice(0, 4)" :key="t" class="fp-tag">{{ t }}</span>
-        </div>
+    <!-- App State Banners -->
+    <div class="fp-banners">
+      <div v-if="connectionLost" class="fp-banner error">
+        <span>连接断开，等待重连…</span>
+        <button class="fp-btn-sm warning" @click="retryConnection">重试</button>
       </div>
-      <button class="fp-btn icon" @click="profileExpanded = !profileExpanded" :title="profileExpanded ? '收起画像' : '展开画像'">
-        {{ profileExpanded ? '▲' : '▼' }}
-      </button>
-    </div>
-
-    <div v-show="profileExpanded" class="fp-profile-detail">
-      <div v-if="profile.chat_style" class="fp-detail-row">
-        <span class="fp-detail-icon">画像</span>
-        <span>{{ profile.chat_style }}</span>
-      </div>
-      <div v-if="profile.interests?.length" class="fp-detail-row">
-        <span class="fp-detail-icon">兴趣</span>
-        <span>{{ profile.interests.join('、') }}</span>
-      </div>
-      <div v-if="profile.communication_tips" class="fp-detail-row">
-        <span class="fp-detail-icon">提示</span>
-        <span>{{ profile.communication_tips }}</span>
-      </div>
-      <div v-if="profile.relationship_note" class="fp-detail-row">
-        <span class="fp-detail-icon">关系</span>
-        <span>{{ profile.relationship_note }}</span>
-      </div>
-      <div v-if="!profile.chat_style && !profileLoading" class="fp-detail-empty">
-        <span>暂无画像</span>
-        <button class="fp-btn small" @click="showProfileDialog = true">生成</button>
+      <div v-if="chatError && !connectionLost" class="fp-banner error">
+        <span>{{ chatError }}</span>
+        <button class="fp-btn-sm warning" @click="exitFloating">重新开始</button>
       </div>
     </div>
 
-    <div class="fp-section">
-      <div class="fp-section-hd fp-section-hd-charts">
-        <div class="fp-section-title-group">
-          <span>情绪分析</span>
-          <span v-if="emotionSummary" class="fp-trend-badge" :class="emotionSummary.trend">
-            {{ emotionSummary.trend === 'positive' ? '正面' : emotionSummary.trend === 'negative' ? '负面' : '中性' }}
-          </span>
-        </div>
-        <button class="fp-btn small" :class="{ active: chartSettingsOpen }" @click="chartSettingsOpen = !chartSettingsOpen">
-          {{ chartSettingsOpen ? '收起设置' : '图表设置' }}
-        </button>
+        <!-- Workbench Container -->
+    <div class="fp-workbench-container">
+      
+      <!-- LEFT/MAIN COLUMN -->
+      <main class="fp-main-column">
+        <!-- Narrow Mode Insights Strip -->
+        <div class="fp-insights-strip" @click="toggleInspector('emotion')">
+      <div class="fp-insight-primary">
+        <span class="fp-trend-badge" :class="emotionSummary?.trend || 'neutral'">
+          {{ emotionSummary?.trend === 'positive' ? '正面向上' : emotionSummary?.trend === 'negative' ? '负面向下' : '稳定平缓' }}
+        </span>
+        <span class="fp-insight-text">{{ emotionSummary?.insight || '正在分析情绪数据...' }}</span>
       </div>
-
-      <div v-show="chartSettingsOpen" class="fp-chart-settings-panel">
-        <label v-for="item in chartConfigItems" :key="item.key" class="fp-chart-toggle">
-          <input :checked="chartVisibility[item.key]" type="checkbox" @change="toggleChartVisibility(item.key)" />
-          <span>{{ item.label }}</span>
-        </label>
-      </div>
-
-      <div class="fp-chart-grid">
-        <div v-if="chartVisibility.emotion_curve" class="fp-chart-item">
-          <div class="fp-chart-label">对方情绪曲线</div>
-          <div ref="emotionChartRef" class="fp-chart-wrap"></div>
-        </div>
-        <div v-if="chartVisibility.msg_frequency" class="fp-chart-item">
-          <div class="fp-chart-label">消息频率</div>
-          <div ref="freqChartRef" class="fp-chart-wrap"></div>
-        </div>
-        <div v-if="chartVisibility.emotion_dist" class="fp-chart-item">
-          <div class="fp-chart-label">情绪分布</div>
-          <div ref="distChartRef" class="fp-chart-wrap"></div>
-        </div>
-        <div v-if="chartVisibility.reply_gap" class="fp-chart-item">
-          <div class="fp-chart-label">回复间隔</div>
-          <div ref="replyGapChartRef" class="fp-chart-wrap"></div>
-        </div>
-        <div v-if="chartVisibility.msg_ratio" class="fp-chart-item">
-          <div class="fp-chart-label">发言比例</div>
-          <div ref="ratioChartRef" class="fp-chart-wrap"></div>
-        </div>
-        <div v-if="chartVisibility.intensity_heat" class="fp-chart-item">
-          <div class="fp-chart-label">情绪强度</div>
-          <div ref="intensityChartRef" class="fp-chart-wrap"></div>
-        </div>
+      <div class="fp-insight-metrics">
+        <span v-if="computedChartStats?.msg_ratio" class="fp-metric-pill">比例 {{ computedChartStats.msg_ratio }}</span>
+        <span class="fp-arr" :class="{'arr-up': inspectorOpen && inspectorTab === 'emotion'}">›</span>
       </div>
     </div>
 
-    <div class="fp-settings">
-      <div class="fp-seg">
-        <button
-          v-for="m in triggerModes"
-          :key="m.value"
-          :class="{ active: triggerMode === m.value }"
-          @click="setTriggerMode(m.value)"
-        >
-          {{ m.label }}
-        </button>
-      </div>
-      <div class="fp-seg">
-        <button
-          v-for="i in intents"
-          :key="i.value"
-          :class="{ active: intent === i.value }"
-          @click="setIntent(i.value)"
-        >
-          {{ i.icon }}
-        </button>
-      </div>
-    </div>
+    <!-- 3. SHARED INSPECTOR PANEL (Shared fixed height block) -->
 
-    <div v-if="lastThread" class="fp-thread-banner" @click="loadLastThread">
-      <span class="fp-thread-icon">续聊</span>
-      <div class="fp-thread-info">
-        <span class="fp-thread-label">继续上次引导</span>
-        <span class="fp-thread-summary">{{ lastThread.summary }}</span>
-      </div>
-      <button class="fp-btn tiny" @click.stop="lastThread = null">×</button>
-    </div>
-
-    <div ref="suggestionsRef" class="fp-section fp-suggestions">
-      <div class="fp-section-hd">
-        <span>AI 建议</span>
-        <span v-if="allSuggestions.length" class="fp-badge">{{ allSuggestions.length }}</span>
-        <button
-          class="fp-btn small"
-          :class="{ active: showContext }"
-          title="查看 AI 参考的聊天记录"
-          @click="showContext = !showContext"
-        >
-          参考记录
-        </button>
-        <button class="fp-btn small" :disabled="loading" @click="manualGenerate">
-          {{ loading ? '生成中…' : '生成' }}
-        </button>
-      </div>
-
-      <div v-show="showContext" class="fp-context-panel">
-        <div class="fp-context-title">AI 参考的最近聊天（{{ contextUsed.length }} 条）</div>
-        <div v-if="!contextUsed.length" class="fp-context-empty">尚未生成建议，暂无参考记录</div>
-        <div
-          v-for="(msg, i) in contextUsed"
-          :key="i"
-          class="fp-context-msg"
-          :class="{ self: msg.sender === '我' }"
-        >
-          <span class="fp-context-sender">{{ msg.sender }}</span>
-          <span class="fp-context-text">{{ msg.content }}</span>
-          <span v-if="msg.timestamp" class="fp-context-time">{{ formatMsgTime(msg.timestamp) }}</span>
+        <!-- 4. Suggestion & Chat Area (Main scroll view) -->
+        <div class="fp-main-stack">
+      <div class="fp-scroll-area" ref="suggestionsRef">
+        <div v-if="lastThread" class="fp-thread-banner compress" @click="loadLastThread">
+          <div class="fp-thread-info">
+            <span class="fp-thread-label">继续指导: {{ lastThread.summary }}</span>
+          </div>
+          <button class="fp-btn-icon tiny" @click.stop="lastThread = null">✕</button>
         </div>
-      </div>
 
-      <div v-if="!allSuggestions.length && !loading" class="fp-empty">
-        等待 AI 分析…
-      </div>
+        <div v-if="!allSuggestions.length && !loading" class="fp-empty-slate">
+          等待接收聊天数据...
+        </div>
 
-      <div v-if="loading" class="fp-loading">
-        <div class="fp-loading-bar"></div>
-        <span>AI 正在思考（{{ thinkingSeconds }} 秒）</span>
-      </div>
-
-      <div class="fp-suggestions-list">
-        <div
-          v-for="s in allSuggestions"
-          :key="s.id || s._tempId"
-          :class="{
-            'fp-suggestion-card': s._type === 'suggestion',
-            [s.severity || 'medium']: s._type === 'suggestion',
-            'fp-chat-bubble': s._type === 'chat',
-            user: s._type === 'chat' && s.role === 'user',
-            ai: s._type === 'chat' && s.role === 'ai'
-          }"
-        >
-          <template v-if="s._type === 'suggestion'">
-            <div class="fp-sug-header" @click="toggleSuggestion(s)">
-              <span class="fp-sug-icon">{{ getTriggerIcon(s.trigger_type) }}</span>
-              <span class="fp-sug-summary">{{ s.summary }}</span>
-              <span class="fp-sug-time">{{ s.created_at ? formatMsgTime(s.created_at) : '刚刚' }}</span>
-              <span class="fp-sug-expand">{{ isSuggestionExpanded(s) ? '▲' : '▼' }}</span>
-            </div>
-            <div v-show="isSuggestionExpanded(s)" class="fp-sug-body">
-              <div v-if="s.thought_process" class="fp-thought-process">
-                <details>
-                  <summary>AI 思考过程</summary>
-                  <div class="fp-thought-content">{{ s.thought_process }}</div>
+        <div class="fp-sug-list">
+          <div
+            v-for="s in allSuggestions"
+            :key="s.id || s._tempId"
+            :class="{
+              'fp-card': s._type === 'suggestion',
+              [s.severity || 'medium']: s._type === 'suggestion',
+              'fp-bubble': s._type === 'chat',
+              user: s._type === 'chat' && s.role === 'user',
+              ai: s._type === 'chat' && s.role === 'ai'
+            }"
+          >
+            <template v-if="s._type === 'suggestion'">
+              <div class="fp-card-hd" @click="toggleSuggestion(s)">
+                <span class="fp-card-icon">{{ getTriggerIcon(s.trigger_type) }}</span>
+                <span class="fp-card-title">{{ s.summary }}</span>
+                <span class="fp-card-time">{{ s.created_at ? formatMsgTime(s.created_at) : '刚刚' }}</span>
+                <button class="fp-btn-icon">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" :class="{ 'rotate-180': isSuggestionExpanded(s) }"><path d="M6 9l6 6 6-6"/></svg>
+                </button>
+              </div>
+              <div v-show="isSuggestionExpanded(s)" class="fp-card-bd">
+                <details v-if="s.thought_process" class="fp-cot">
+                  <summary>思考过程</summary>
+                  <div class="fp-cot-txt">{{ s.thought_process }}</div>
                 </details>
+                <div v-for="(sp, i) in s.speeches" :key="i" class="fp-speech-item">
+                  <span class="fp-speech-text">{{ sp }}</span>
+                  <button class="fp-btn-copy" @click="copyText(sp)">复制</button>
+                </div>
               </div>
-              <div v-for="(sp, i) in s.speeches" :key="i" class="fp-speech-item">
-                <span class="fp-speech-text">{{ sp }}</span>
-                <button class="fp-btn copy" @click="copyText(sp)">复制</button>
-              </div>
-            </div>
-          </template>
+            </template>
 
-          <template v-else-if="s._type === 'chat'">
-            <div class="fp-chat-content">
-              <span class="fp-chat-avatar">{{ s.role === 'user' ? '我' : 'AI' }}</span>
-              <span class="fp-chat-text">{{ s.content }}</span>
-            </div>
-            <span class="fp-chat-time">{{ formatMsgTime(s.created_at) }}</span>
-          </template>
+            <template v-else-if="s._type === 'chat'">
+              <div class="fp-bubble-meta">
+                 <span class="fp-bubble-avatar">{{ s.role === 'user' ? '我' : 'AI' }}</span>
+                 <span class="fp-bubble-time">{{ formatMsgTime(s.created_at) }}</span>
+              </div>
+              <div class="fp-bubble-txt">{{ s.content }}</div>
+            </template>
+          </div>
+
+          <div v-if="loading" class="fp-loading-state">
+            <div class="fp-spinner"></div>
+            <span>AI 分析中 ({{ thinkingSeconds }}s)</span>
+          </div>
         </div>
       </div>
     </div>
 
-    <div class="fp-input-area">
-      <transition-group name="fp-quick-list" tag="div" class="fp-quick-btns">
-        <button v-for="q in quickPrompts" :key="q" class="fp-quick-btn" @click="sendQuickPrompt(q)">
-          {{ q }}
-        </button>
-      </transition-group>
+    <!-- 5. Bottom Composer -->
+
+        <!-- 5. Bottom Composer -->
+        
+      </main>
+
+      <!-- RIGHT SUPPORT RAIL (or Narrow Shared Inspector) -->
+      <aside class="fp-support-rail fp-inspector">
+      <div class="fp-inspector-header">
+        <div class="fp-inspector-tabs">
+          <button class="fp-tab-btn" :class="{ active: inspectorTab === 'emotion' }" @click="toggleInspector('emotion')">情绪明细</button>
+          <button class="fp-tab-btn" :class="{ active: inspectorTab === 'context' }" @click="toggleInspector('context')">AI 参考记录</button>
+        </div>
+        <button class="fp-btn-icon close-rail-btn" @click="closeInspector">✕</button>
+      </div>
+
+      <div class="fp-inspector-body">
+        <!-- EMOTION TAB -->
+        <div v-show="inspectorTab === 'emotion'" class="fp-inspector-tab-content">
+          <!-- 1. Compact Summary Strip/Cards -->
+          <div class="fp-emotion-summary-cards">
+            <div class="fp-summary-card">
+              <span class="fp-card-lbl">情绪趋势</span>
+              <span class="fp-card-val" :class="emotionSummary?.trend || 'neutral'">{{ emotionSummary?.trend === 'positive' ? '正面' : emotionSummary?.trend === 'negative' ? '负面' : '平稳' }}</span>
+            </div>
+            <div class="fp-summary-card">
+              <span class="fp-card-lbl">发言比例</span>
+              <span class="fp-card-val">{{ computedChartStats?.msg_ratio || '暂无' }}</span>
+            </div>
+            <div class="fp-summary-card">
+              <span class="fp-card-lbl">回复率</span>
+              <span class="fp-card-val">{{ computedChartStats?.reply_rate || '暂无' }}</span>
+            </div>
+          </div>
+
+          <!-- 2. Main Chart or Empty State -->
+          <div v-show="!hasSufficientEmotionData" class="compact-empty">
+            <span class="fp-empty-icon">🌱</span>
+            <span>数据不足以绘制图表 (暂存 {{ realtimeState.messageCount }} 条对话)</span>
+          </div>
+          
+          <div v-show="hasSufficientEmotionData" class="fp-chart-workspace">
+            <div class="fp-chart-header-row">
+              <span class="fp-chart-lbl">主图表分析</span>
+              <button class="fp-btn-text tiny-link" @click="showSecondaryCharts = !showSecondaryCharts">
+                {{ showSecondaryCharts ? '收起次要图表' : '展开次要图表' }}
+              </button>
+            </div>
+            <div class="fp-chart-stage tight-stage">
+              <div class="fp-chart-item emotion-curve-main compact-main">
+                <div ref="emotionChartRef" class="fp-chart-wrap"></div>
+              </div>
+            </div>
+
+            <!-- 3. Secondary Charts Toggle -->
+            <div v-show="showSecondaryCharts" class="fp-secondary-charts-zone">
+              <div class="fp-chart-settings compact-charts-config tight-config">
+                <label v-for="item in chartConfigItems.filter(i => i.key !== 'emotion_curve')" :key="item.key" class="fp-chart-toggle">
+                  <input :checked="chartVisibility[item.key]" type="checkbox" @change="toggleChartVisibility(item.key)" />
+                  <span>{{ item.label }}</span>
+                </label>
+              </div>
+              <div class="fp-chart-rail tight-rail">
+                <div v-if="chartVisibility.msg_frequency" class="fp-chart-item compact-secondary">
+                  <div class="fp-chart-lbl">消息频率</div>
+                  <div v-show="computedChartStats?.friend_msg_count > 0" ref="freqChartRef" class="fp-chart-wrap"></div>
+                  <div v-show="!(computedChartStats?.friend_msg_count > 0)" class="fp-empty-val">缺乏特征数据</div>
+                </div>
+                <div v-if="chartVisibility.emotion_dist" class="fp-chart-item compact-secondary">
+                  <div class="fp-chart-lbl">情绪分布</div>
+                  <div v-show="computedChartStats?.friend_msg_count > 0" ref="distChartRef" class="fp-chart-wrap"></div>
+                  <div v-show="!(computedChartStats?.friend_msg_count > 0)" class="fp-empty-val">缺乏特征数据</div>
+                </div>
+                <div v-if="chartVisibility.reply_gap" class="fp-chart-item compact-secondary">
+                  <div class="fp-chart-lbl">回复间隔</div>
+                  <div v-show="computedChartStats?.avg_reply_gap" ref="replyGapChartRef" class="fp-chart-wrap"></div>
+                  <div v-show="!computedChartStats?.avg_reply_gap" class="fp-empty-val">暂无间隔数据</div>
+                </div>
+                <div v-if="chartVisibility.msg_ratio" class="fp-chart-item compact-secondary">
+                  <div class="fp-chart-lbl">发言比例</div>
+                  <div ref="ratioChartRef" class="fp-chart-wrap"></div>
+                </div>
+                <div v-if="chartVisibility.intensity_heat" class="fp-chart-item compact-secondary">
+                  <div class="fp-chart-lbl">情绪强度</div>
+                  <div v-show="computedChartStats?.friend_msg_count > 0" ref="intensityChartRef" class="fp-chart-wrap"></div>
+                  <div v-show="!(computedChartStats?.friend_msg_count > 0)" class="fp-empty-val">缺乏强度数据</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- CONTEXT TAB -->
+        <div v-show="inspectorTab === 'context'" class="fp-inspector-tab-content">
+          <div class="fp-context-meta">基于最近 {{ contextUsed.length }} 条主要聊天记录</div>
+          <div v-if="!contextUsed.length" class="fp-context-empty">暂无可用参考记录。</div>
+          <div class="fp-context-list stream-layout">
+            <div v-for="(msg, i) in contextUsed" :key="i" class="fp-ctx-msg" :class="{ self: msg.sender === '我' }">
+              <div class="fp-ctx-msg-hd">
+                 <span class="fp-ctx-sender">{{ msg.sender }}</span>
+                 <span v-if="msg.timestamp" class="fp-ctx-time">{{ formatMsgTime(msg.timestamp) }}</span>
+              </div>
+              <div class="fp-ctx-txt">{{ msg.content }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    </div>
+  <footer class="fp-composer">
+      <!-- Top strip -->
+      <div class="fp-composer-top">
+        <div class="fp-quick-prompts">
+          <button v-for="q in quickPrompts" :key="q" class="fp-qp-btn" @click="sendQuickPrompt(q)">{{ q }}</button>
+        </div>
+        <button class="fp-ctx-btn" @click="toggleInspector('context')" :class="{ 'is-active': inspectorOpen && inspectorTab === 'context' }" title="查看AI参考记录">参考</button>
+      </div>
+
+      <!-- Settings Strip -->
+      <div class="fp-composer-settings">
+        <div class="fp-seg-group">
+          <span class="fp-seg-title">触发模式</span>
+          <button v-for="m in triggerModes" :key="m.value" class="fp-seg-btn" :class="{ active: triggerMode === m.value }" @click="setTriggerMode(m.value)" :title="m.value === 'full_auto' ? '自动分析所有新消息' : m.value === 'semi_auto' ? '需要时自动给出建议' : '仅在手动点击生成时分析'">{{ m.label }}</button>
+        </div>
+        <div class="fp-seg-divider"></div>
+        <div class="fp-seg-group">
+          <span class="fp-seg-title">关系方向</span>
+          <button class="fp-seg-btn" :class="{ active: intent === 'intimate' }" @click="setIntent('intimate')" title="生成更有感情、亲密回复">亲近</button>
+          <button class="fp-seg-btn" :class="{ active: intent === 'maintain' }" @click="setIntent('maintain')" title="维持当前氛围">维持</button>
+          <button class="fp-seg-btn" :class="{ active: intent === 'distance' }" @click="setIntent('distance')" title="生成稍带距离感回复">疏远</button>
+        </div>
+      </div>
+
+      <!-- Input Strip -->
       <div class="fp-input-row">
         <input
           v-model="userInput"
           type="text"
-          :placeholder="llmError ? '模型暂时不可用' : '告诉 AI 你的想法…'"
-          :disabled="!!llmError"
+          class="fp-composer-input"
+          :placeholder="llmError ? '模型异常' : '告诉 AI 下一步意图…'"
+          :disabled="!!llmError || loading"
           @keydown.enter.exact.prevent="sendUserContext"
         />
-        <button class="fp-btn send" :disabled="!userInput.trim() || loading || !!llmError" @click="sendUserContext">
-          发送
+        <button class="fp-btn-main act-send" :disabled="!userInput.trim() || loading || !!llmError" @click="sendUserContext">
+           发送
+        </button>
+        <button class="fp-btn-main act-gen" :disabled="loading || !!llmError" @click="manualGenerate">
+           生成
         </button>
       </div>
-      <div v-if="llmModels.length > 0" class="fp-model-row">
-        <span class="fp-model-label">模型</span>
-        <select v-model="activeModelId" class="fp-model-select" @change="switchModel">
+
+      <!-- Footer Info -->
+      <div class="fp-composer-footer" v-if="llmModels.length > 0">
+        <select v-model="activeModelId" class="fp-mini-select" @change="switchModel">
           <option v-for="m in llmModels" :key="m.id" :value="m.id" :disabled="disabledModels.has(m.id)">
-            {{ m.name }} {{ disabledModels.has(m.id) ? '(不可用)' : '' }}
+            ⚙️ 模型: {{ m.name }} {{ disabledModels.has(m.id) ? '(已失效)' : '' }}
           </option>
         </select>
-        <div v-if="llmError" class="fp-model-error" :title="llmError">{{ llmError }}</div>
+        <div v-if="llmError" class="fp-error-txt">{{ llmError }}</div>
       </div>
-    </div>
+    </footer>
   </div>
 
   <Teleport to="body">
     <div v-if="showResumeDialog" class="fp-modal-overlay" @click.self="resolveResumeChoice('skip')">
       <div class="fp-modal">
-        <div class="fp-modal-title">补全未监听消息</div>
-        <div class="fp-modal-desc">
-          上次监听到 {{ resumeDialogState.lastMessageTime }}，距离现在约 {{ resumeDialogState.gapLabel }}。
-        </div>
-        <div class="fp-modal-preview">最后一条消息：{{ resumeDialogState.preview }}</div>
+        <h3 class="fp-modal-title">补全未监听消息</h3>
+        <p class="fp-modal-desc">
+          上次监听到 {{ resumeDialogState.lastMessageTime }}，距今约 {{ resumeDialogState.gapLabel }}。
+        </p>
+        <div class="fp-modal-box">{{ resumeDialogState.preview }}</div>
         <div class="fp-modal-actions">
-          <button class="fp-btn fp-btn-secondary" @click="resolveResumeChoice('skip')">直接开始</button>
-          <button class="fp-btn primary" @click="resolveResumeChoice('backfill')">先补全再开始</button>
+          <button class="fp-btn-base ghost" @click="resolveResumeChoice('skip')">忽略</button>
+          <button class="fp-btn-base primary" @click="resolveResumeChoice('backfill')">补全记录</button>
         </div>
       </div>
     </div>
-
     <div v-if="showProfileDialog" class="fp-modal-overlay" @click.self="showProfileDialog = false">
       <div class="fp-modal">
-        <div class="fp-modal-title">生成画像</div>
-        <div class="fp-modal-desc">分析「{{ realtimeState.talkerName }}」的历史聊天。</div>
+        <h3 class="fp-modal-title">重新生成画像</h3>
+        <p class="fp-modal-desc">分析与「{{ realtimeState.talkerName }}」的聊天记录并重树特征框架。</p>
         <div class="fp-modal-actions">
-          <button class="fp-btn" @click="showProfileDialog = false">取消</button>
-          <button class="fp-btn primary" @click="generateProfile">确认</button>
+          <button class="fp-btn-base ghost" @click="showProfileDialog = false">取消</button>
+          <button class="fp-btn-base primary" @click="generateProfile">确认生成</button>
         </div>
       </div>
     </div>
   </Teleport>
 </template>
+
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
@@ -287,6 +344,50 @@ import { bridgeReady, api } from '@/api/bridge'
 import * as echarts from 'echarts'
 
 const router = useRouter()
+
+const inspectorOpen = ref(false)
+const isWideMode = ref(window.innerWidth >= 820)
+window.addEventListener('resize', () => { isWideMode.value = window.innerWidth >= 820 })
+const inspectorTab = ref<'emotion' | 'context'>('emotion')
+const showSecondaryCharts = ref(false)
+watch(showSecondaryCharts, (val) => { if (val) { nextTick(() => { typeof syncCharts === 'function' && syncCharts(); typeof triggerChartResize === 'function' && triggerChartResize() }) } })
+const hasSufficientEmotionData = computed(() => realtimeState.messageCount >= 4 && emotionHistory.value && emotionHistory.value.length > 2)
+function triggerChartResize() {
+  requestAnimationFrame(() => {
+    setTimeout(() => { typeof syncCharts === 'function' && syncCharts(); typeof resizeVisibleCharts === 'function' && resizeVisibleCharts(); }, 50)
+    setTimeout(() => { typeof syncCharts === 'function' && syncCharts(); typeof resizeVisibleCharts === 'function' && resizeVisibleCharts(); }, 200)
+    setTimeout(() => { typeof syncCharts === 'function' && syncCharts(); typeof resizeVisibleCharts === 'function' && resizeVisibleCharts(); }, 500)
+  })
+}
+
+async function closeInspector() {
+  inspectorOpen.value = false
+  showSecondaryCharts.value = false
+  try {
+    if (api && api.set_floating_expanded) await api.set_floating_expanded(false)
+  } catch (e) {
+    console.error(e)
+  }
+}
+
+async function toggleInspector(tab: 'emotion' | 'context') {
+  if (inspectorOpen.value && inspectorTab.value === tab) {
+    await closeInspector()
+  } else {
+    inspectorOpen.value = true
+    inspectorTab.value = tab
+    showSecondaryCharts.value = false
+    try {
+      if (api && api.set_floating_expanded) await api.set_floating_expanded(true)
+    } catch (e) {
+      console.error(e)
+    }
+    if (tab === 'emotion') {
+      nextTick(() => { if (typeof syncCharts === 'function') syncCharts(); typeof triggerChartResize === 'function' && triggerChartResize() })
+    }
+  }
+}
+
 
 type ChartVisibilityKey =
   | 'emotion_curve'
@@ -1629,1064 +1730,332 @@ async function loadLastThread() {
 </script>
 
 <style scoped>
-/* ==================== 会话线程横幅 ==================== */
-.fp-thread-banner {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  margin: 4px 8px;
-  background: linear-gradient(135deg, rgba(99, 102, 241, 0.12), rgba(139, 92, 246, 0.08));
-  border: 1px solid rgba(99, 102, 241, 0.25);
-  border-radius: 8px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-.fp-thread-banner:hover { background: rgba(99, 102, 241, 0.18); }
-.fp-thread-icon { font-size: 16px; flex-shrink: 0; }
-.fp-thread-info { flex: 1; min-width: 0; }
-.fp-thread-label {
-  display: block;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--ct-accent-primary, #818cf8);
-  margin-bottom: 1px;
-}
-.fp-thread-summary {
-  display: block;
-  font-size: 10px;
-  color: var(--ct-text-secondary, #94a3b8);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.fp-btn.tiny {
-  padding: 0 4px;
-  font-size: 14px;
-  line-height: 1;
-  background: none;
-  border: none;
-  color: var(--ct-text-tertiary, #64748b);
-  cursor: pointer;
-  opacity: 0.6;
-}
-.fp-btn.tiny:hover { opacity: 1; }
 
-/* ==================== 悬浮面板全局 ==================== */
-.fp {
+
+/* Workbench Structural Layout */
+.fp-layout {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  overflow-x: hidden;
-  overflow-y: auto;
-  background: var(--ct-bg-primary);
-  font-family: var(--ct-font-body);
-  font-size: var(--ct-text-sm);
-  color: var(--ct-text-primary);
-}
-
-/* ==================== 顶部栏 ====================*/
-/* 对话气泡美化样式 */
-.fp-chat-bubble {
-  display: flex;
-  flex-direction: column;
-  align-self: flex-start;
-  max-width: 88%;
-  background: var(--ct-bg-elevated);
-  border: 1px solid var(--ct-border-color);
-  box-shadow: 0 1px 3px rgba(0,0,0,0.03);
-  padding: 10px 14px;
-  border-radius: 12px;
-  border-top-left-radius: 4px;
-  transition: all 0.2s ease;
-}
-.fp-chat-bubble.user {
-  align-self: flex-end;
-  background-color: #4f46e5; /* fallback */
-  background: linear-gradient(135deg, var(--ct-color-primary, #6366f1) 0%, var(--ct-accent-primary, #4f46e5) 100%);
-  border: none;
-  box-shadow: 0 2px 5px rgba(99, 102, 241, 0.2);
-  color: #ffffff;
-  border-radius: 12px;
-  border-top-right-radius: 4px;
-  border-top-left-radius: 12px;
-}
-.fp-chat-content {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  font-size: 13.5px;
-  line-height: 1.5;
-  letter-spacing: 0.2px;
-}
-.fp-chat-avatar {
-  font-size: 11px;
-  opacity: 0.9;
-  font-weight: 600;
-  padding: 2px 6px;
-  background: rgba(0,0,0,0.05);
-  border-radius: 4px;
-  margin-top: 1px;
-}
-.user .fp-chat-avatar {
-  background: rgba(255,255,255,0.2);
-}
-.fp-chat-text {
-  flex: 1;
-  word-break: break-all;
-  white-space: pre-wrap;
-}
-.fp-chat-time {
-  margin-top: 6px;
-  font-size: 10px;
-  opacity: 0.5;
-  text-align: right;
-  font-weight: 500;
-}
-.user .fp-chat-time { color: rgba(255, 255, 255, 0.9); opacity: 0.8; }
-
-.fp-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 12px;
-  background: var(--ct-bg-elevated);
-  border-bottom: 1px solid var(--ct-border-color);
-  /* 允许拖拽窗口 */
-  -webkit-app-region: drag;
-  flex-shrink: 0;
-}
-
-.fp-brand {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.fp-logo {
-  font-size: 16px;
-}
-
-.fp-title {
-  font-family: var(--ct-font-display);
-  font-size: var(--ct-text-sm);
-  font-weight: 600;
-  color: var(--ct-color-primary);
-}
-
-.fp-controls {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  -webkit-app-region: no-drag;
-}
-
-.fp-status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--ct-text-tertiary);
-  transition: background 0.3s;
-}
-
-.fp-status-dot.active {
-  background: var(--ct-color-success);
-  box-shadow: 0 0 6px var(--ct-color-success);
-  animation: fp-pulse 2s infinite;
-}
-
-@keyframes fp-pulse {
-  0%, 100% { opacity: 1; box-shadow: 0 0 6px var(--ct-color-success); }
-  50% { opacity: 0.6; box-shadow: 0 0 12px var(--ct-color-success); }
-}
-
-/* ==================== 联系人信息 ==================== */
-.fp-contact {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--ct-border-color);
-  flex-shrink: 0;
-}
-
-.fp-avatar {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, var(--ct-color-primary), var(--ct-color-accent));
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: white;
-  font-weight: 700;
-  font-size: 14px;
-  flex-shrink: 0;
-}
-
-.fp-contact-info {
-  flex: 1;
-  min-width: 0;
-}
-
-.fp-contact-name {
-  font-weight: 600;
-  font-size: var(--ct-text-sm);
-  color: var(--ct-text-primary);
-  white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis;
+  background: var(--ct-bg-app, #f8fafc);
+  font-family: var(--ct-font-body, Inter, sans-serif);
 }
 
-.fp-contact-tags {
-  display: flex;
-  gap: 4px;
-  flex-wrap: wrap;
-  margin-top: 3px;
-}
-
-/* ==================== 快捷按钮动画 ==================== */
-.fp-quick-list-move,
-.fp-quick-list-enter-active,
-.fp-quick-list-leave-active {
-  transition: all 0.4s ease;
-}
-.fp-quick-list-enter-from {
-  opacity: 0;
-  transform: translateY(10px);
-}
-.fp-quick-list-leave-to {
-  opacity: 0;
-  transform: translateY(-10px);
-  position: absolute;
-}
-
-/* ==================== 思维链 CoT ==================== */
-.fp-thought-process {
-  margin-bottom: 8px;
-  background: var(--ct-bg-elevated);
-  border-radius: 6px;
-  border: 1px dashed var(--ct-border-color);
-}
-
-.fp-thought-process details {
-  padding: 6px 10px;
-}
-
-.fp-thought-process summary {
-  font-size: 11px;
-  color: var(--ct-text-secondary);
-  cursor: pointer;
-  user-select: none;
-  display: flex;
-  align-items: center;
-  outline: none;
-}
-
-.fp-thought-process summary::marker {
-  color: var(--ct-text-tertiary);
-}
-
-.fp-thought-content {
-  margin-top: 6px;
-  padding-top: 6px;
-  border-top: 1px dashed var(--ct-border-color);
-  font-size: 12px;
-  color: var(--ct-text-secondary);
-  line-height: 1.5;
-  white-space: pre-wrap;
-}
-
-/* ==================== 模型选择区 ==================== */
-.fp-model-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 8px;
-  padding: 0 4px;
-}
-
-.fp-model-label {
-  font-size: 11px;
-  color: var(--ct-text-secondary);
-}
-
-.fp-model-select {
-  background: var(--ct-bg-elevated);
-  border: 1px solid var(--ct-border-color);
-  color: var(--ct-text-primary);
-  font-size: 11px;
-  padding: 2px 6px;
-  border-radius: 4px;
-  outline: none;
-  cursor: pointer;
-}
-
-.fp-model-select:focus {
-  border-color: var(--ct-color-primary);
-}
-
-.fp-model-select option:disabled {
-  color: var(--ct-text-tertiary);
-  font-style: italic;
-}
-
-.fp-model-error {
-  font-size: 11px;
-  color: var(--ct-color-danger);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 150px;
-}
-
-.fp-tag {
-  background: var(--ct-color-primary-light);
-  color: var(--ct-color-primary);
-  padding: 1px 6px;
-  border-radius: var(--ct-radius-full);
-  font-size: 10px;
-  font-weight: 500;
-}
-
-/* ==================== 画像详情 ==================== */
-.fp-profile-detail {
-  padding: 6px 12px 10px;
-  border-bottom: 1px solid var(--ct-border-color);
-  background: var(--ct-bg-secondary);
-  flex-shrink: 0;
-}
-
-.fp-detail-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  padding: 4px 0;
-  font-size: 12px;
-  color: var(--ct-text-secondary);
-  line-height: 1.5;
-}
-
-.fp-detail-icon {
-  flex-shrink: 0;
-  font-size: 12px;
-}
-
-.fp-detail-empty {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-size: 12px;
-  color: var(--ct-text-tertiary);
-  padding: 4px 0;
-}
-
-/* ==================== 情绪曲线图 ==================== */
-.fp-section {
-  flex-shrink: 0;
-  border-bottom: 1px solid var(--ct-border-color);
-}
-
-.fp-section-hd {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 12px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--ct-text-secondary);
-}
-
-.fp-section-hd-charts {
-  gap: 8px;
-}
-
-.fp-section-title-group {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.fp-trend-badge {
-  font-size: 11px;
-  padding: 2px 8px;
-  border-radius: var(--ct-radius-full);
-  font-weight: 500;
-}
-
-.fp-trend-badge.positive {
-  background: var(--ct-color-success-light);
-  color: var(--ct-color-success);
-}
-
-.fp-trend-badge.negative {
-  background: var(--ct-color-error-light);
-  color: var(--ct-color-error);
-}
-
-.fp-trend-badge.neutral {
-  background: var(--ct-bg-tertiary);
-  color: var(--ct-text-tertiary);
-}
-
-.fp-chart-wrap {
+/* Base states: Compact Default (Closed) */
+.fp-workbench-container {
+  display: grid;
+  flex: 1;
+  min-height: 0;
   width: 100%;
-  flex: 1;
-  min-height: 0;
-  padding: 2px 4px 6px;
+  overflow: hidden; /* Strict bound */
+  grid-template-columns: 1fr;
+  grid-template-rows: auto 0 1fr;
+  grid-template-areas:
+    "insights"
+    "inspector"
+    "main";
+  transition: grid-template-rows 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.fp-chart-settings-panel {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  padding: 0 12px 10px;
+.fp-main-column {
+  display: contents; /* Grid flattening fallback */
 }
+.fp-insights-strip { grid-area: insights; }
 
-.fp-chart-toggle {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 10px;
-  background: var(--ct-bg-secondary);
-  border: 1px solid var(--ct-border-color);
-  border-radius: 10px;
-  font-size: 11px;
-  color: var(--ct-text-secondary);
-  cursor: pointer;
-}
-
-.fp-chart-toggle input {
-  accent-color: var(--ct-color-primary);
-}
-
-.fp-chart-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  padding: 0 8px 8px;
-}
-
-.fp-chart-item {
+.fp-main-stack { 
+  grid-area: main; 
+  overflow: hidden; 
+  position: relative; 
   display: flex;
   flex-direction: column;
-  aspect-ratio: 1 / 1;
-  background: var(--ct-bg-secondary);
-  border: 1px solid var(--ct-border-color);
-  border-radius: 12px;
-  overflow: hidden;
-}
-
-.fp-chart-label {
-  flex-shrink: 0;
-  padding: 8px 10px 0;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--ct-text-secondary);
-}
-
-/* ==================== 设置栏 ==================== */
-.fp-settings {
-  display: flex;
-  gap: 6px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--ct-border-color);
-  flex-shrink: 0;
-}
-
-.fp-seg {
-  display: flex;
-  border-radius: var(--ct-radius-md);
-  overflow: hidden;
-  border: 1px solid var(--ct-border-color);
-  flex: 1;
-}
-
-.fp-seg button {
-  flex: 1;
-  padding: 4px 2px;
-  border: none;
-  background: var(--ct-bg-elevated);
-  color: var(--ct-text-tertiary);
-  font-size: 11px;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-
-.fp-seg button:not(:last-child) {
-  border-right: 1px solid var(--ct-border-color);
-}
-
-.fp-seg button.active {
-  background: var(--ct-color-primary);
-  color: white;
-  font-weight: 600;
-}
-
-.fp-seg button:hover:not(.active) {
-  background: var(--ct-bg-tertiary);
-}
-
-/* ==================== AI 建议 ==================== */
-.fp-suggestions {
-  flex: 1;
-  overflow-y: auto;
   min-height: 0;
-  border-bottom: none;
-}
-
-.fp-suggestions .fp-section-hd {
-  position: sticky;
-  top: 0;
-  background: var(--ct-bg-primary);
-  z-index: 2;
-  border-bottom: 1px solid var(--ct-border-color);
-}
-
-.fp-badge {
-  background: var(--ct-color-error);
-  color: white;
-  padding: 1px 7px;
-  border-radius: 10px;
-  font-size: 10px;
-  font-weight: 600;
-}
-
-.fp-empty {
-  padding: 20px 12px;
-  text-align: center;
-  color: var(--ct-text-tertiary);
-  font-size: 12px;
-}
-
-.fp-loading {
-  padding: 12px;
-  text-align: center;
-  color: var(--ct-color-primary);
-  font-size: 12px;
-}
-
-.fp-loading-bar {
-  height: 2px;
-  background: linear-gradient(90deg, transparent, var(--ct-color-primary), transparent);
-  background-size: 200% 100%;
-  animation: fp-loading-slide 1.5s infinite;
-  border-radius: 1px;
-  margin-bottom: 8px;
-}
-
-@keyframes fp-loading-slide {
-  0% { background-position: 200% 0; }
-  100% { background-position: -200% 0; }
-}
-
-.fp-suggestion-card {
-  margin: 6px 10px;
-  border: 1px solid var(--ct-border-color);
-  border-radius: var(--ct-radius-md);
-  overflow: hidden;
-  transition: all 0.15s;
-}
-
-.fp-suggestion-card.high { border-left: 3px solid var(--ct-color-error); }
-.fp-suggestion-card.medium { border-left: 3px solid var(--ct-color-warning); }
-.fp-suggestion-card.low { border-left: 3px solid var(--ct-color-success); }
-
-.fp-sug-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 10px;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-
-.fp-sug-header:hover { background: var(--ct-bg-tertiary); }
-
-.fp-sug-icon { font-size: 13px; flex-shrink: 0; }
-.fp-sug-summary { flex: 1; font-size: 12px; font-weight: 500; line-height: 1.4; }
-.fp-sug-expand { color: var(--ct-text-tertiary); font-size: 10px; flex-shrink: 0; }
-
-/* ==================== AI 参考记录面板 ==================== */
-.fp-context-panel {
-  margin: 0 10px 6px;
-  padding: 8px;
-  background: var(--ct-bg-secondary);
-  border: 1px solid var(--ct-border-color);
-  border-radius: var(--ct-radius-md);
-  max-height: 180px;
-  overflow-y: auto;
-}
-
-.fp-context-title {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--ct-text-secondary);
-  margin-bottom: 6px;
-}
-
-.fp-context-empty {
-  font-size: 11px;
-  color: var(--ct-text-tertiary);
-  text-align: center;
-  padding: 8px 0;
-}
-
-.fp-context-msg {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  padding: 3px 6px;
-  border-radius: var(--ct-radius-sm);
-  font-size: 11px;
-  line-height: 1.5;
-}
-
-.fp-context-msg:nth-child(odd) {
   background: var(--ct-bg-tertiary);
+  width: 100%;
 }
 
-.fp-context-msg.self .fp-context-sender {
-  color: var(--ct-color-primary);
+.fp-composer { 
+  flex-shrink: 0; 
+  z-index: 10;
 }
 
-.fp-context-sender {
-  font-weight: 600;
-  color: var(--ct-color-accent);
-  flex-shrink: 0;
-  min-width: 28px;
-}
-
-.fp-context-text {
-  flex: 1;
-  color: var(--ct-text-primary);
-  word-break: break-all;
-}
-
-.fp-context-time {
-  flex-shrink: 0;
-  color: var(--ct-text-tertiary);
-  font-size: 10px;
-}
-
-.fp-btn.small.active {
-  background: var(--ct-color-primary-light);
-  border-color: var(--ct-color-primary);
-  color: var(--ct-color-primary);
-}
-
-.fp-context-panel::-webkit-scrollbar {
-  width: 3px;
-}
-
-.fp-context-panel::-webkit-scrollbar-thumb {
-  background: var(--ct-border-color);
-  border-radius: 2px;
-}
-
-.fp-sug-body {
-  padding: 6px 10px 10px;
-  border-top: 1px solid var(--ct-border-color);
-  background: var(--ct-bg-secondary);
-}
-
-.fp-speech-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  padding: 6px 8px;
-  background: var(--ct-bg-elevated);
-  border-radius: var(--ct-radius-sm);
-  margin-bottom: 4px;
-}
-
-.fp-speech-text {
-  flex: 1;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--ct-text-primary);
-}
-
-/* ==================== 用户输入区 ==================== */
-.fp-input-area {
-  flex-shrink: 0;
-  border-top: 1px solid var(--ct-border-color);
-  background: var(--ct-bg-elevated);
-}
-
-.fp-quick-btns {
-  display: flex;
-  gap: 4px;
-  padding: 6px 10px 0;
-  overflow-x: auto;
-}
-
-.fp-quick-btn {
-  padding: 3px 10px;
-  border: 1px solid var(--ct-border-color);
-  border-radius: var(--ct-radius-full);
-  background: var(--ct-bg-secondary);
-  color: var(--ct-text-secondary);
-  font-size: 11px;
-  white-space: nowrap;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-
-.fp-quick-btn:hover {
-  border-color: var(--ct-color-primary);
-  color: var(--ct-color-primary);
-  background: var(--ct-color-primary-light);
-}
-
-.fp-input-row {
-  display: flex;
-  gap: 6px;
-  padding: 8px 10px;
-}
-
-.fp-input-row input {
-  flex: 1;
-  padding: 6px 10px;
-  border: 1px solid var(--ct-border-color);
-  border-radius: var(--ct-radius-md);
-  font-size: 12px;
-  background: var(--ct-bg-primary);
-  color: var(--ct-text-primary);
-  transition: border-color 0.15s;
-}
-
-.fp-input-row input:focus {
-  outline: none;
-  border-color: var(--ct-color-primary);
-  box-shadow: 0 0 0 2px var(--ct-color-primary-light);
-}
-
-/* ==================== 通用按钮 ==================== */
-.fp-btn {
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  transition: all 0.15s;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.fp-btn.icon {
-  width: 24px;
-  height: 24px;
-  border-radius: var(--ct-radius-sm);
-  color: var(--ct-text-tertiary);
-  font-size: 12px;
-}
-
-.fp-btn.icon:hover {
-  background: var(--ct-bg-tertiary);
-  color: var(--ct-text-primary);
-}
-
-.fp-btn.small {
-  padding: 3px 10px;
-  font-size: 11px;
-  border-radius: var(--ct-radius-sm);
-  color: var(--ct-color-primary);
-  border: 1px solid var(--ct-color-primary);
-}
-
-.fp-btn.small:hover {
-  background: var(--ct-color-primary-light);
-}
-
-.fp-btn.small:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.fp-btn.copy {
-  padding: 2px;
-  font-size: 12px;
-  flex-shrink: 0;
-  opacity: 0.5;
-}
-
-.fp-btn.copy:hover { opacity: 1; }
-
-.fp-btn.send {
-  width: 32px;
-  height: 32px;
-  border-radius: var(--ct-radius-md);
-  background: var(--ct-color-primary);
-  color: white;
-  font-size: 16px;
-  font-weight: 700;
-  flex-shrink: 0;
-}
-
-.fp-btn.send:hover:not(:disabled) {
-  background: var(--ct-color-primary-hover);
-  transform: translateY(-1px);
-}
-
-.fp-btn.send:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.fp-btn.primary {
-  background: var(--ct-color-primary);
-  color: white;
-  padding: 6px 16px;
-  border-radius: var(--ct-radius-md);
-  font-size: 13px;
-  font-weight: 500;
-}
-
-.fp-btn.primary:hover {
-  background: var(--ct-color-primary-hover);
-}
-
-.fp-btn-secondary {
-  background: rgba(248,250,252,.96);
-  color: var(--ct-text-primary);
-  border: 1px solid rgba(148,163,184,.22);
-}
-
-.fp-btn-secondary:hover {
-  background: rgba(226,232,240,.92);
-}
-
-/* ==================== 弹窗 ==================== */
-.fp-modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 9999;
-}
-
-.fp-modal {
-  background: var(--ct-bg-elevated);
-  border-radius: var(--ct-radius-lg);
-  padding: 20px;
-  width: 300px;
-  box-shadow: var(--ct-shadow-xl);
-}
-
-.fp-modal-title {
-  font-weight: 600;
-  font-size: 15px;
-  margin-bottom: 8px;
-}
-
-.fp-modal-desc {
-  font-size: 13px;
-  color: var(--ct-text-secondary);
-  margin-bottom: 16px;
-}
-
-.fp-modal-preview {
-  margin: -4px 0 16px;
-  padding: 10px 12px;
-  border-radius: 12px;
-  background: var(--ct-bg-secondary);
-  color: var(--ct-text-secondary);
-  font-size: 12px;
-  line-height: 1.6;
-}
-
-.fp-modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-/* ==================== 滚动条 ==================== */
-.fp-suggestions::-webkit-scrollbar {
-  width: 4px;
-}
-
-.fp-suggestions::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.fp-suggestions::-webkit-scrollbar-thumb {
-  background: var(--ct-border-color);
-  border-radius: 2px;
-}
-
-/* ==================== 断流感知横幅 ==================== */
-.fp-connection-lost {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 8px 12px;
-  background: linear-gradient(135deg, #fecaca 0%, #fde2e2 100%);
-  border-bottom: 1px solid #ef4444;
-  color: #991b1b;
-  font-size: 12px;
-  font-weight: 600;
-  flex-shrink: 0;
-  animation: fp-pulse-bg 2s ease-in-out infinite;
-}
-
-@keyframes fp-pulse-bg {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.75; }
-}
-
-.fp-connection-lost .fp-btn.small {
-  background: #ef4444;
-  color: white;
-  border: none;
-  padding: 3px 10px;
-  border-radius: var(--ct-radius-md);
-  font-size: 11px;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-/* ==================== ChatWith 错误提示 ==================== */
-.fp-chat-error {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 8px 12px;
-  background: #fef3c7;
-  border-bottom: 1px solid #f59e0b;
-  color: #92400e;
-  font-size: 12px;
-  flex-shrink: 0;
-}
-
-.fp-chat-error .fp-btn.small {
-  background: #f59e0b;
-  color: white;
-  border: none;
-  padding: 3px 10px;
-  border-radius: var(--ct-radius-md);
-  font-size: 11px;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-/* FloatingPanel visual refresh */
-.fp {
-  background: radial-gradient(circle at top right, rgba(124,58,237,.08), transparent 32%), radial-gradient(circle at bottom left, rgba(14,165,233,.1), transparent 26%), linear-gradient(180deg, var(--ct-bg-primary) 0%, var(--ct-bg-secondary) 100%);
-  overflow-x: hidden;
-  overflow-y: auto;
-}
-.fp-header,.fp-contact,.fp-profile-detail,.fp-section,.fp-settings,.fp-thread-banner,.fp-input-area,.fp-connection-lost,.fp-chat-error {
-  margin-left: 14px; margin-right: 14px;
-}
-.fp-header,.fp-contact,.fp-profile-detail,.fp-section,.fp-settings,.fp-thread-banner,.fp-input-area {
-  background: rgba(255,255,255,.84);
-  border: 1px solid rgba(148,163,184,.16);
-  box-shadow: 0 18px 40px rgba(15,23,42,.07);
-  backdrop-filter: blur(18px);
-}
-.fp-header { margin-top: 8px; padding: 8px 12px; border-radius: 16px; }
-.fp-logo { display:inline-flex; align-items:center; justify-content:center; width:26px; height:26px; border-radius:8px; background:linear-gradient(135deg,var(--ct-color-primary),#8b5cf6); color:#fff; box-shadow:0 8px 18px rgba(91,107,224,.24); font-size: 13px; font-weight: bold; }
-.fp-title { font-size: 16px; letter-spacing: -.02em; color: var(--ct-text-primary); }
-.fp-status-dot { width:10px; height:10px; box-shadow:0 0 0 5px rgba(148,163,184,.12); }
-.fp-status-dot.active { box-shadow:0 0 0 5px rgba(16,185,129,.14); }
-.fp-contact { margin-top: 8px; padding: 10px 12px; border-radius: 16px; gap: 10px; }
-.fp-avatar { width:38px; height:38px; border-radius:12px; background:linear-gradient(135deg,var(--ct-color-primary),#0ea5e9); font-size:16px; font-weight: bold; box-shadow:0 8px 18px rgba(91,107,224,.24); }
-.fp-contact-name { font-size: 15px; font-weight: 700; }
-.fp-contact-tags { gap: 4px; margin-top: 4px; }
-.fp-tag { padding: 3px 8px; background: rgba(91,107,224,.1); font-size: 10px; font-weight: 600; }
-.fp-profile-detail { margin-top: 8px; padding: 10px 12px; border-radius: 16px; background: rgba(255,255,255,.78); }
-.fp-detail-row { padding: 8px 10px; border-radius: 12px; background: rgba(248,250,252,.84); border: 1px solid rgba(148,163,184,.12); }
-.fp-detail-row + .fp-detail-row { margin-top: 6px; }
-.fp-detail-empty { padding: 10px; border-radius: 12px; background: rgba(248,250,252,.84); }
-.fp-section { margin-top: 8px; border-radius: 16px; border-bottom: none; overflow: hidden; }
-.fp-section-hd { padding: 10px 12px 8px; font-size: 12px; font-weight: 700; letter-spacing: .04em; }
-.fp > .fp-section:not(.fp-suggestions) { flex: 0 0 auto; }
-.fp-chart-wrap { padding: 2px 4px 8px; }
-.fp-chart-settings-panel { padding: 0 12px 12px; }
-.fp-chart-grid { padding: 0 10px 12px; gap: 10px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.fp-chart-item { border-radius: 16px; background: rgba(248,250,252,.84); border: 1px solid rgba(148,163,184,.12); aspect-ratio: 1 / 1; }
-.fp-chart-label { padding: 10px 12px 0; font-size: 11px; font-weight: 700; }
-.fp-settings { margin-top: 8px; padding: 8px 12px; border-radius: 16px; border-bottom: none; flex: 0 0 auto; }
-.fp-seg { padding: 3px; border-radius: 12px; background: rgba(241,245,249,.9); border: 1px solid rgba(148,163,184,.14); }
-.fp-seg button { min-height: 32px; border-radius: 10px; font-size: 12px; font-weight: 600; }
-.fp-seg button.active { background: linear-gradient(135deg,var(--ct-color-primary),#7c3aed); box-shadow: 0 6px 16px rgba(91,107,224,.2); }
-.fp-thread-banner { margin-top: 8px; padding: 8px 12px; border-radius: 16px; flex: 0 0 auto; }
-.fp-thread-icon { display:inline-flex; align-items:center; justify-content:center; min-width:32px; height:32px; border-radius:10px; background:linear-gradient(135deg,rgba(91,107,224,.16),rgba(14,165,233,.16)); color:var(--ct-color-primary); font-size:11px; font-weight:700; }
-.fp-thread-label { font-weight: 700; }
-.fp-suggestions {
-  margin-top: 8px;
-  border-radius: 16px;
-  flex: 0 0 auto;
-  min-height: 320px;
-  max-height: 48vh;
-  overflow-y: auto;
-}
-.fp-suggestions .fp-section-hd { background: rgba(255,255,255,.94); backdrop-filter: blur(18px); border-bottom: 1px solid rgba(148,163,184,.12); }
-.fp-context-panel,.fp-empty,.fp-loading { margin: 0 16px 12px; border-radius: 16px; background: rgba(248,250,252,.84); border: 1px solid rgba(148,163,184,.12); }
-.fp-empty,.fp-loading { padding: 18px 16px; }
-.fp-suggestions-list {
-  display: flex;
+.fp-support-rail {
+  grid-area: inspector;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s;
+  display: flex !important;
   flex-direction: column;
-  gap: 12px;
+  overflow: hidden;
+  background: var(--ct-bg-app);
+  border-bottom: 1px solid var(--ct-border-color);
+  z-index: 5;
   min-height: 0;
-  padding: 0 18px 18px;
 }
-.fp-suggestion-card,.fp-chat-bubble { border: 1px solid rgba(148,163,184,.14); border-radius: 20px; background: rgba(248,250,252,.88); box-shadow: 0 12px 28px rgba(15,23,42,.06); }
-.fp-sug-header { display:grid; grid-template-columns:auto 1fr auto auto; gap:12px; align-items:center; padding:16px 18px; }
-.fp-sug-summary { font-size: 13px; font-weight: 600; line-height: 1.5; }
-.fp-sug-body { padding: 0 18px 18px; background: transparent; }
-.fp-thought-process { border-radius: 14px; background: rgba(255,255,255,.72); border: 1px dashed rgba(148,163,184,.2); }
-.fp-thought-content { font-size: 12.5px; line-height: 1.65; }
-.fp-speech-item { gap: 12px; padding: 14px; background: rgba(255,255,255,.78); border-radius: 16px; }
-.fp-speech-text { font-size: 13px; line-height: 1.6; }
-.fp-btn.copy { min-width: 48px; }
-.fp-chat-bubble { padding: 12px 14px; }
-.fp-chat-bubble.user { background: linear-gradient(135deg,var(--ct-color-primary),#4f46e5); border-color: transparent; box-shadow: 0 12px 24px rgba(91,107,224,.2); }
-.fp-chat-avatar { min-width: 30px; height: 22px; border-radius: 999px; font-size: 11px; font-weight: 700; }
-.fp-input-area {
-  margin-top: 8px;
-  margin-bottom: 10px;
-  padding: 8px 10px 10px;
-  border-radius: 16px;
-  flex: 0 0 auto;
-  position: sticky;
-  bottom: 10px;
-  z-index: 3;
+
+/* 1. Narrow mode + open behavior */
+@media (max-width: 819px) {
+  .fp-layout.is-inspector-open .fp-workbench-container {
+    grid-template-rows: auto clamp(160px, 30%, 220px) 1fr;
+  }
+  .fp-layout.is-inspector-open .fp-support-rail {
+    opacity: 1;
+    pointer-events: auto;
+  }
 }
-.fp-quick-btns { gap: 8px; padding-bottom: 10px; }
-.fp-quick-btn { padding: 8px 12px; border: 1px solid rgba(148,163,184,.16); background: rgba(248,250,252,.86); font-size: 12px; }
-.fp-input-row { gap: 10px; padding: 0; }
-.fp-input-row input { min-height: 44px; padding: 0 14px; border-radius: 14px; background: rgba(255,255,255,.88); }
-.fp-model-row { margin-top: 10px; padding: 0 2px; }
-.fp-model-select { height: 34px; border-radius: 10px; background: rgba(255,255,255,.88); }
-.fp-btn.icon { width: 34px; height: 34px; border-radius: 12px; }
-.fp-btn.small { min-height: 32px; padding: 0 12px; border-radius: 999px; background: rgba(255,255,255,.84); font-size: 12px; font-weight: 600; }
-.fp-btn.small.active { background: rgba(91,107,224,.12); border-color: rgba(91,107,224,.34); color: var(--ct-color-primary); }
-.fp-btn.copy { min-width: 42px; height: 28px; padding: 0 10px; border-radius: 10px; border: 1px solid rgba(148,163,184,.16); color: var(--ct-text-secondary); font-weight: 600; background: rgba(255,255,255,.6); opacity: 1; transition: all 0.2s; }
-.fp-btn.copy:hover { background: rgba(91,107,224,.1); color: var(--ct-color-primary); border-color: rgba(91,107,224,.3); }
-.fp-btn.send { min-width: 72px; height: 44px; border-radius: 14px; background: linear-gradient(135deg,var(--ct-color-primary),#7c3aed); font-size: 13px; box-shadow: 0 12px 24px rgba(91,107,224,.22); }
-.fp-btn.primary { background: linear-gradient(135deg,var(--ct-color-primary),#7c3aed); }
-.fp-modal-overlay { background: rgba(15,23,42,.36); backdrop-filter: blur(8px); }
-.fp-modal { background: rgba(255,255,255,.96); border-radius: 22px; width: min(320px, calc(100vw - 32px)); }
-.fp-modal-title { font-family: var(--ct-font-display); font-size: 24px; }
-.fp-modal-preview { background: rgba(248,250,252,.92); border: 1px solid rgba(148,163,184,.12); }
-@media (max-width: 860px) {
-  .fp-settings { grid-template-columns: 1fr; }
-  .fp-chat-bubble { max-width: 100%; }
+
+/* 2. Wide mode + open behavior (Explicit Coupling) */
+@media (min-width: 820px) {
+  .fp-layout.is-inspector-open .fp-chart-rail {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    grid-auto-flow: row;
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding-bottom: 24px;
+    height: auto;
+  }
+
+  .fp-layout.is-inspector-open .fp-workbench-container {
+    display: flex;
+    flex-direction: row;
+    min-height: 0;
+    overflow: hidden;
+    flex: 1;
+    width: 100%;
+  }
+  .fp-layout.is-inspector-open .fp-main-column {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .fp-layout.is-inspector-open .fp-main-stack { 
+    flex: 1; 
+    overflow: hidden; 
+    position: relative; 
+    min-height: 0; 
+    display: flex;
+    flex-direction: column;
+  }
+  .fp-layout.is-inspector-open .fp-insights-strip { display: none; }
+  
+  .fp-layout.is-inspector-open .fp-support-rail {
+    flex-shrink: 0;
+    width: 320px;
+    border-bottom: none;
+    border-left: 1px solid var(--ct-border-color);
+    box-shadow: -2px 0 8px rgba(0,0,0,0.015);
+    opacity: 1;
+    pointer-events: auto;
+    height: 100%;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
 }
-@media (max-width: 640px) {
-  .fp-header,.fp-contact,.fp-settings,.fp-input-row,.fp-model-row,.fp-connection-lost,.fp-chat-error { flex-wrap: wrap; }
-  .fp-sug-header { grid-template-columns: auto 1fr auto; }
-  .fp-sug-time { grid-column: 2 / 3; }
-  .fp-chart-grid { grid-template-columns: 1fr; }
-  .fp-chart-item { aspect-ratio: 1 / 1; }
-  .fp-chart-settings-panel { grid-template-columns: 1fr; }
-  .fp-suggestions { min-height: 280px; max-height: 40vh; }
-}
+/* Replaced old Workbench CSS Block fully */
+/* Remove old layout */
+/* Base Buttons */
+.fp-btn-icon { background: transparent; border: none; cursor: pointer; color: var(--ct-text-tertiary); display: inline-flex; align-items: center; justify-content: center; padding: 4px; border-radius: var(--ct-radius-sm); transition: all 0.2s; }
+.fp-btn-icon:hover { background: var(--ct-bg-secondary); color: var(--ct-text-primary); }
+.fp-btn-sm { font-size: 11px; font-weight: 500; padding: 4px 10px; border-radius: var(--ct-radius-sm); background: var(--ct-color-primary-light); color: var(--ct-color-primary); border: 1px solid var(--ct-color-primary); cursor: pointer; }
+.fp-btn-base { font-size: 13px; font-weight: 500; padding: 6px 14px; border-radius: var(--ct-radius-md); cursor: pointer; border: none; transition: all 0.2s; }
+.fp-btn-base.primary { background: var(--ct-color-primary); color: white; }
+.fp-btn-base.primary:hover { background: var(--ct-color-primary-hover); }
+.fp-btn-base.ghost { background: transparent; border: 1px solid var(--ct-border-color); color: var(--ct-text-secondary); }
+.fp-btn-text { font-size: 11px; font-weight: 500; color: var(--ct-color-primary); background: none; border: none; cursor: pointer; padding: 0; }
+.fp-btn-text:hover { text-decoration: underline; }
+
+/* 1. Header */
+.fp-site-header { background: var(--ct-bg-elevated); border-bottom: 1px solid var(--ct-border-color); flex-shrink: 0; position: relative; z-index: 10; box-shadow: 0 1px 3px rgba(15,23,42,0.02); }
+.fp-header-drag-zone { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; -webkit-app-region: drag; }
+.fp-brand { display: flex; align-items: center; gap: 8px; }
+.fp-status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ct-text-tertiary); }
+.fp-status-dot.active { background: var(--ct-color-success); box-shadow: 0 0 6px var(--ct-color-success); }
+.fp-brand-name { font-family: var(--ct-font-display); font-size: 12px; font-weight: 600; color: var(--ct-text-secondary); }
+.close-btn { -webkit-app-region: no-drag; }
+.fp-contact-bar { display: flex; align-items: center; gap: 10px; padding: 4px 12px 12px; -webkit-app-region: no-drag; cursor: pointer; }
+.fp-avatar { width: 34px; height: 34px; border-radius: 10px; background: var(--ct-bg-tertiary); color: var(--ct-color-primary); display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 15px; border: 1px solid var(--ct-border-color); }
+.fp-contact-info { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; }
+.fp-contact-name { font-size: 14px; font-weight: 600; color: var(--ct-text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.2; }
+.fp-contact-tags { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; }
+.fp-tag { font-size: 10px; font-weight: 500; background: var(--ct-bg-tertiary); color: var(--ct-text-secondary); padding: 2px 6px; border-radius: 4px; }
+.profile-toggle.is-open { transform: rotate(180deg); }
+
+/* Absolute Profile Dropdown */
+.fp-profile-dropdown { position: absolute; top: 100%; left: 0; right: 0; background: var(--ct-bg-elevated); border-bottom: 1px solid var(--ct-border-color); box-shadow: 0 8px 24px rgba(15,23,42,0.06); padding: 12px; z-index: 9; }
+.all-tags { margin-bottom: 12px; }
+.fp-attr { display: flex; gap: 8px; font-size: 12px; line-height: 1.5; margin-bottom: 8px; }
+.fp-attr-lbl { color: var(--ct-text-primary); font-weight: 600; flex-shrink: 0; }
+.fp-attr-val { color: var(--ct-text-secondary); word-break: break-word; }
+.fp-profile-empty { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-top: 1px dashed var(--ct-border-color); }
+.fp-txt-sub { font-size: 11px; color: var(--ct-text-tertiary); }
+
+/* Banners */
+.fp-banners { flex-shrink: 0; z-index: 8; position: relative; }
+.fp-banner { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; font-size: 11px; font-weight: 500; }
+.fp-banner.error { background: #fef2f2; color: #991b1b; border-bottom: 1px solid #fca5a5; }
+
+/* 2. Insights Strip */
+.fp-insights-strip { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: var(--ct-bg-elevated); border-bottom: 1px solid var(--ct-border-color); cursor: pointer; flex-shrink: 0; transition: background 0.2s; position: relative; z-index: 7; }
+.fp-insights-strip:hover { background: var(--ct-bg-secondary); }
+.fp-insight-primary { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.fp-trend-badge { font-size: 10px; font-weight: 600; padding: 2px 6px; border-radius: 4px; }
+.fp-trend-badge.positive { background: var(--ct-color-success-light); color: var(--ct-color-success); }
+.fp-trend-badge.negative { background: var(--ct-color-error-light); color: var(--ct-color-error); }
+.fp-trend-badge.neutral { background: var(--ct-bg-tertiary); color: var(--ct-text-secondary); }
+.fp-insight-text { font-size: 11px; color: var(--ct-text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fp-insight-metrics { display: flex; align-items: center; gap: 6px; }
+.fp-metric-pill { font-size: 10px; color: var(--ct-text-tertiary); font-variant-numeric: tabular-nums; }
+.fp-arr { font-size: 14px; color: var(--ct-text-tertiary); margin-top: -2px; font-family: monospace; transition: transform 0.2s; }
+.fp-arr.arr-up { transform: rotate(-90deg); }
+
+/* 3. SHARED INSPECTOR PANEL */
+.fp-inspector { display: flex; flex-direction: column; flex: 0 0 auto; height: clamp(184px, 31%, 236px); min-height: 184px; background: var(--ct-bg-app); border-bottom: 1px solid var(--ct-border-color); box-shadow: inset 0 -4px 8px rgba(0,0,0,0.015); z-index: 5; }
+.fp-inspector-header { display: flex; justify-content: space-between; align-items: center; padding: 3px 8px; border-bottom: 1px solid var(--ct-border-color); background: var(--ct-bg-elevated); gap: 6px; }
+.fp-inspector-tabs { display: flex; gap: 6px; min-width: 0; }
+.fp-tab-btn { background: var(--ct-bg-secondary); border: 1px solid transparent; font-size: 11px; font-weight: 600; color: var(--ct-text-secondary); cursor: pointer; padding: 2px 8px; border-radius: 4px; transition: all 0.2s; white-space: nowrap; }
+.fp-tab-btn.active { color: var(--ct-color-primary); border-color: rgba(124, 77, 255, 0.2); background: rgba(124, 77, 255, 0.08); box-shadow: inset 0 0 0 1px rgba(124, 77, 255, 0.06); }
+.fp-inspector-body { flex: 1; overflow-y: auto; padding: 0; background: var(--ct-bg-tertiary); display: flex; flex-direction: column; }
+.fp-inspector-body::-webkit-scrollbar { width: 6px; }
+.fp-inspector-body::-webkit-scrollbar-thumb { background: var(--ct-border-color-hover); border-radius: 4px; }
+.fp-inspector-tab-content { display: flex; flex-direction: column; height: 100%; }
+
+/* Chart Sub-Tab */
+.compact-charts-config { display: flex; flex-wrap: nowrap; gap: 4px; padding: 4px 8px; background: var(--ct-bg-elevated); border-bottom: 1px solid var(--ct-border-color); overflow-x: auto; scrollbar-width: none; }
+.compact-charts-config::-webkit-scrollbar { display: none; }
+.fp-chart-toggle { display: inline-flex; align-items: center; gap: 2px; font-size: 10px; color: var(--ct-text-secondary); cursor: pointer; white-space: nowrap; padding: 2px 6px; border: 1px solid var(--ct-border-color); border-radius: 999px; background: var(--ct-bg-secondary); }
+.fp-chart-stage { padding: 4px 6px 4px; }
+.fp-chart-rail { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(132px, 1fr); gap: 6px; padding: 0 6px 6px; overflow-x: auto; overscroll-behavior-x: contain; }
+.fp-chart-rail::-webkit-scrollbar { height: 6px; }
+.fp-chart-rail::-webkit-scrollbar-thumb { background: var(--ct-border-color-hover); border-radius: 999px; }
+.fp-chart-item { background: var(--ct-bg-elevated); border: 1px solid var(--ct-border-color); border-radius: var(--ct-radius-md); display: flex; flex-direction: column; box-shadow: var(--ct-shadow-sm); overflow: hidden; min-height: 0; }
+.fp-chart-item.emotion-curve-main { aspect-ratio: auto; }
+.fp-chart-item.compact-main { height: 124px; }
+.fp-chart-item.compact-secondary { height: 108px; min-width: 132px; }
+.fp-chart-lbl { font-size: 10.5px; font-weight: 600; color: var(--ct-text-secondary); padding: 8px 8px 0; flex-shrink: 0; }
+.fp-chart-wrap { flex: 1; min-height: 0; padding: 2px 4px 4px; }
+
+.compact-empty { font-size: 11px; color: var(--ct-text-tertiary); text-align: center; padding: 24px; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100px; }
+/* Context Sub-Tab */
+.fp-context-meta { font-size: 10px; color: var(--ct-text-tertiary); padding: 4px 8px 0; text-align: left; }
+.fp-context-empty { font-size: 12px; color: var(--ct-text-secondary); text-align: center; padding: 24px; }
+.stream-layout { padding: 4px 8px 8px; display: flex; flex-direction: column; gap: 6px; }
+.fp-ctx-msg { background: var(--ct-bg-elevated); border-radius: var(--ct-radius-sm); padding: 6px 8px; border: 1px solid var(--ct-border-color); width: 96%; align-self: flex-start; box-shadow: var(--ct-shadow-sm); }
+.fp-ctx-msg.self { align-self: flex-end; background: var(--ct-color-primary-light); border-color: rgba(124, 77, 255, 0.2); }
+.fp-ctx-msg-hd { display: flex; justify-content: space-between; gap: 10px; align-items: center; margin-bottom: 4px; }
+.fp-ctx-sender { font-size: 11px; font-weight: 600; color: var(--ct-text-secondary); }
+.fp-ctx-msg.self .fp-ctx-sender { color: var(--ct-color-primary); }
+.fp-ctx-time { font-size: 10px; color: var(--ct-text-tertiary); }
+.fp-ctx-txt { font-size: 11px; line-height: 1.4; color: var(--ct-text-primary); word-break: break-word; white-space: pre-wrap; }
+
+/* 5. Main Suggestion Stack */
+.fp-main-stack { position: relative; min-height: 0; display: flex; flex-direction: column; background: var(--ct-bg-tertiary); overflow: hidden; }
+.fp-scroll-area { flex: 1; overflow-y: auto; padding: 12px 10px; }
+.fp-scroll-area::-webkit-scrollbar { width: 6px; }
+.fp-scroll-area::-webkit-scrollbar-thumb { background: var(--ct-border-color-hover); border-radius: 4px; }
+
+/* Thread Banner */
+.fp-thread-banner { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: var(--ct-bg-elevated); border: 1px solid var(--ct-border-color); border-left: 3px solid var(--ct-color-primary); border-radius: var(--ct-radius-md); margin-bottom: 12px; cursor: pointer; box-shadow: var(--ct-shadow-sm); }
+.fp-thread-label { font-size: 12px; font-weight: 600; color: var(--ct-text-primary); }
+
+/* Suggestion Cards & Chats */
+.fp-empty-slate { text-align: center; padding: 32px; font-size: 12px; color: var(--ct-text-tertiary); }
+.fp-sug-list { display: flex; flex-direction: column; gap: 12px; }
+.fp-card { background: var(--ct-bg-elevated); border: 1px solid var(--ct-border-color); border-radius: var(--ct-radius-lg); box-shadow: var(--ct-shadow-sm); overflow: hidden; }
+.fp-card.high { border-left: 3px solid var(--ct-color-error); }
+.fp-card.medium { border-left: 3px solid var(--ct-color-warning); }
+.fp-card.low { border-left: 3px solid var(--ct-color-success); }
+.fp-card-hd { display: flex; align-items: center; gap: 8px; padding: 12px; cursor: pointer; transition: background 0.15s; }
+.fp-card-hd:hover { background: var(--ct-bg-secondary); }
+.fp-card-icon { font-size: 14px; flex-shrink: 0; }
+.fp-card-title { font-size: 13.5px; font-weight: 600; color: var(--ct-text-primary); flex: 1; line-height: 1.4; }
+.fp-card-time { font-size: 10px; color: var(--ct-text-tertiary); }
+.fp-card-bd { padding: 0 12px 12px; border-top: 1px solid var(--ct-border-color); padding-top: 12px; background: var(--ct-bg-secondary); }
+.fp-cot { background: var(--ct-bg-elevated); border-radius: var(--ct-radius-md); padding: 10px; margin-bottom: 12px; border: 1px solid var(--ct-border-color); }
+.fp-cot summary { font-size: 11px; color: var(--ct-text-secondary); cursor: pointer; user-select: none; font-weight: 600; outline: none; }
+.fp-cot-txt { font-size: 12px; line-height: 1.6; color: var(--ct-text-secondary); margin-top: 8px; border-top: 1px dashed var(--ct-border-color); padding-top: 8px; white-space: pre-wrap; }
+.fp-speech-item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: var(--ct-bg-elevated); border-radius: var(--ct-radius-md); margin-bottom: 8px; border: 1px solid var(--ct-border-color); box-shadow: 0 1px 2px rgba(15,23,42,0.02); }
+.fp-speech-text { font-size: 13px; line-height: 1.6; color: var(--ct-text-primary); flex: 1; }
+.fp-btn-copy { font-size: 11px; font-weight: 500; color: var(--ct-text-secondary); background: var(--ct-bg-secondary); border: 1px solid var(--ct-border-color); padding: 4px 10px; border-radius: var(--ct-radius-sm); cursor: pointer; transition: all 0.2s; flex-shrink: 0; }
+.fp-btn-copy:hover { color: var(--ct-color-primary); border-color: var(--ct-color-primary); background: white; box-shadow: var(--ct-shadow-sm); }
+
+/* Chat Bubbles */
+.fp-bubble { max-width: 88%; padding: 10px 14px; border-radius: 12px; align-self: flex-start; background: var(--ct-bg-elevated); border: 1px solid var(--ct-border-color); border-top-left-radius: 4px; box-shadow: var(--ct-shadow-sm); }
+.fp-bubble.user { align-self: flex-end; background: var(--ct-color-primary); color: white; border: none; border-top-left-radius: 12px; border-top-right-radius: 4px; box-shadow: 0 2px 8px rgba(124, 77, 255, 0.2); }
+.fp-bubble-meta { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; gap: 16px; }
+.fp-bubble-avatar { font-size: 10px; font-weight: 700; color: var(--ct-text-tertiary); background: var(--ct-bg-secondary); padding: 2px 6px; border-radius: 4px; }
+.fp-bubble.user .fp-bubble-avatar { color: white; background: rgba(0,0,0,0.15); }
+.fp-bubble-time { font-size: 10px; color: var(--ct-text-tertiary); opacity: 0.8; }
+.fp-bubble.user .fp-bubble-time { color: rgba(255,255,255,0.8); }
+.fp-bubble-txt { font-size: 14px; line-height: 1.5; word-break: break-word; white-space: pre-wrap; }
+
+/* Loading State */
+.fp-loading-state { padding: 24px; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 12px; color: var(--ct-color-primary); font-weight: 500; }
+.fp-spinner { width: 14px; height: 14px; border: 2px solid var(--ct-color-primary-light); border-top-color: var(--ct-color-primary); border-radius: 50%; animation: fp-spin 0.8s linear infinite; }
+@keyframes fp-spin { to { transform: rotate(360deg); } }
+
+/* 6. Bottom Composer */
+.fp-composer { background: var(--ct-bg-elevated); border-top: 1px solid var(--ct-border-color); padding: 12px; flex-shrink: 0; position: relative; z-index: 10; box-shadow: 0 -4px 16px rgba(15,23,42,0.04); display: flex; flex-direction: column; gap: 10px; }
+.fp-composer-top { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.fp-quick-prompts { flex: 1; display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; }
+.fp-quick-prompts::-webkit-scrollbar { display: none; }
+.fp-qp-btn { font-size: 11px; font-weight: 500; padding: 4px 12px; background: var(--ct-bg-secondary); border: 1px solid var(--ct-border-color); border-radius: 12px; color: var(--ct-text-secondary); cursor: pointer; white-space: nowrap; transition: all 0.2s; }
+.fp-qp-btn:hover { background: var(--ct-bg-elevated); border-color: var(--ct-color-primary); color: var(--ct-color-primary); box-shadow: var(--ct-shadow-sm); }
+.fp-ctx-btn { font-size: 11px; font-weight: 600; color: var(--ct-color-primary); background: var(--ct-color-primary-light); border: none; cursor: pointer; flex-shrink: 0; padding: 4px 10px; border-radius: var(--ct-radius-sm); transition: all 0.2s; }
+.fp-ctx-btn:hover { opacity: 0.9; }
+.fp-ctx-btn.is-active { background: var(--ct-color-primary); color: white; }
+
+.fp-composer-settings { display: flex; align-items: center; gap: 8px; justify-content: space-between; background: var(--ct-bg-secondary); padding: 4px; border-radius: var(--ct-radius-md); border: 1px solid var(--ct-border-color); }
+
+.fp-seg-title { font-size: 11px; color: var(--ct-text-tertiary); font-weight: 500; margin-right: 2px; }
+.fp-seg-divider { width: 1px; height: 14px; background: var(--ct-border-color); margin: 0 4px; pointer-events: none; }
+.fp-seg-group { display: flex; flex: 1; padding: 2px; }
+.fp-seg-btn { flex: 1; padding: 4px; border: none; background: transparent; font-size: 11px; font-weight: 500; color: var(--ct-text-secondary); border-radius: var(--ct-radius-sm); cursor: pointer; transition: all 0.2s; text-align: center; }
+.fp-seg-btn.active { background: var(--ct-bg-elevated); color: var(--ct-text-primary); box-shadow: 0 1px 2px rgba(15,23,42,0.06); border: 1px solid var(--ct-border-color); }
+.fp-seg-divider { width: 1px; background: var(--ct-border-color); margin: 4px 2px; }
+
+.fp-input-row { display: flex; gap: 8px; align-items: stretch; }
+.fp-composer-input { flex: 1; min-width: 0; background: var(--ct-bg-primary); border: 1px solid var(--ct-border-color); border-radius: var(--ct-radius-md); padding: 10px 12px; font-size: 13px; color: var(--ct-text-primary); outline: none; transition: border-color 0.2s; box-shadow: inset 0 1px 2px rgba(15,23,42,0.02); }
+.fp-composer-input:focus { border-color: var(--ct-color-primary); box-shadow: 0 0 0 2px var(--ct-color-primary-light); }
+.fp-btn-main { border: none; border-radius: var(--ct-radius-md); font-size: 13px; font-weight: 600; padding: 0 16px; cursor: pointer; transition: all 0.2s; display: flex; align-items: center; justify-content: center; }
+.fp-btn-main:disabled { opacity: 0.5; cursor: not-allowed; }
+.act-send { background: var(--ct-bg-secondary); border: 1px solid var(--ct-border-color); color: var(--ct-text-primary); padding: 0 12px; }
+.act-send:hover:not(:disabled) { background: var(--ct-border-color-hover); }
+.act-gen { background: var(--ct-color-primary); color: white; box-shadow: var(--ct-shadow-sm); }
+.act-gen:hover:not(:disabled) { background: var(--ct-color-primary-hover); box-shadow: var(--ct-shadow-md); }
+
+.fp-composer-footer { display: flex; align-items: center; justify-content: space-between; margin-top: -2px; }
+.fp-mini-select { font-size: 10px; color: var(--ct-text-tertiary); background: transparent; border: none; outline: none; cursor: pointer; max-width: 200px; padding: 0; font-family: inherit; }
+.fp-error-txt { font-size: 10px; color: var(--ct-color-error); }
+
+/* Modals */
+.fp-modal-overlay { position: fixed; inset: 0; background: rgba(15,23,42,0.5); display: flex; align-items: center; justify-content: center; z-index: 9999; backdrop-filter: blur(2px); }
+.fp-modal { background: var(--ct-bg-elevated); border-radius: var(--ct-radius-lg); padding: 24px; width: 320px; box-shadow: var(--ct-shadow-xl); border: 1px solid var(--ct-border-color); }
+.fp-modal-title { font-size: 16px; font-weight: 600; color: var(--ct-text-primary); margin: 0 0 8px 0; }
+.fp-modal-desc { font-size: 13px; color: var(--ct-text-secondary); margin-bottom: 16px; line-height: 1.5; }
+.fp-modal-box { padding: 12px; background: var(--ct-bg-secondary); border-radius: var(--ct-radius-md); font-size: 12px; color: var(--ct-text-secondary); margin-bottom: 20px; border: 1px dashed var(--ct-border-color); line-height: 1.5; word-break: break-word; }
+.fp-modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* QA Emotion Tab CSS */
+.fp-emotion-summary-cards { display: flex; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--ct-border-color); background: var(--ct-bg-tertiary); }
+.fp-summary-card { flex: 1; display: flex; flex-direction: column; background: var(--ct-bg-elevated); border: 1px solid var(--ct-border-color); border-radius: var(--ct-radius-md); padding: 8px 10px; box-shadow: var(--ct-shadow-sm); }
+.fp-card-lbl { font-size: 10.5px; color: var(--ct-text-tertiary); margin-bottom: 3px; }
+.fp-card-val { font-size: 13px; font-weight: 600; color: var(--ct-text-primary); }
+.fp-card-val.positive { color: var(--ct-color-success); }
+.fp-card-val.negative { color: var(--ct-color-error); }
+.fp-chart-workspace { display: flex; flex-direction: column; flex: 1; min-height: 0; background: var(--ct-bg-tertiary); }
+.fp-chart-header-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px 4px; }
+.tiny-link { font-size: 10px; padding: 2px 6px; }
+.tight-stage { padding: 4px 10px; }
+.fp-secondary-charts-zone { display: flex; flex-direction: column; background: var(--ct-bg-tertiary); padding-bottom: 8px; }
+.tight-config { background: transparent; border-bottom: none; padding: 6px 10px 4px; }
+.tight-rail { padding: 0 10px; }
+.fp-empty-icon { font-size: 24px; margin-bottom: 8px; opacity: 0.5; filter: grayscale(1); }
+
+.fp-empty-val { font-size: 10.5px; color: var(--ct-text-tertiary); text-align: center; margin-top: 16px; opacity: 0.6; }
 </style>

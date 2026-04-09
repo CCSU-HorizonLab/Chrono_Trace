@@ -2084,6 +2084,21 @@ class Bridge:
             logger.error(f"[Bridge] 获取悬浮状态失败: {e}")
             return {'ok': False, 'error': str(e)}
 
+    def set_floating_expanded(self, expanded: bool) -> dict[str, Any]:
+        """
+        动态切换悬浮窗展开态。
+
+        expanded=True: 展开辅助栏所需宽度
+        expanded=False: 恢复紧凑宽度
+        """
+        try:
+            return self._floating_service.set_expanded(expanded)
+        except Exception as e:
+            logger.error(f"[Bridge] 切换悬浮窗展开态失败: {e}")
+            import traceback
+            traceback.print_exc()
+            return {'ok': False, 'error': str(e)}
+
     def check_gpu_status(self) -> dict[str, Any]:
         """检测 GPU 加速可用性。"""
         try:

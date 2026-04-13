@@ -276,73 +276,101 @@
   <!-- 画像生成确认弹窗 -->
   <Teleport to="body">
     <div v-if="showPortraitDialog" class="ct-modal-overlay" @click.self="closePortraitDialog">
-      <div class="ct-modal-dialog">
-        <div class="modal-title">🧠 生成画像</div>
-        <div class="modal-desc">
-          将围绕「{{ realtimeState.talkerName }}」的历史聊天，同时生成对象画像与自我克隆画像。你可以按需勾选本次要生成的内容。
+      <div class="portrait-dialog">
+        <!-- 头部 -->
+        <div class="pd-header">
+          <div class="pd-icon-wrap">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 2a5 5 0 015 5c0 3.5-5 7-5 7s-5-3.5-5-7a5 5 0 015-5z"/>
+              <circle cx="12" cy="7" r="1.5"/>
+              <path d="M5 21c0-4 3-6 7-6s7 2 7 6"/>
+            </svg>
+          </div>
+          <div class="pd-title-area">
+            <h3 class="pd-title">生成画像</h3>
+            <p class="pd-subtitle">
+              围绕「<strong>{{ realtimeState.talkerName }}</strong>」历史聊天，按需生成画像
+            </p>
+          </div>
+          <button class="pd-close" @click="closePortraitDialog" aria-label="关闭">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+          </button>
         </div>
-        <div class="modal-stack">
-          <div class="modal-panel">
-            <label class="modal-panel-title">
-              <input v-model="dialogGenerateContact" type="checkbox" />
-              <span>联系人画像</span>
+
+        <!-- 双面板 -->
+        <div class="pd-panels">
+          <!-- 联系人画像 -->
+          <div class="pd-card" :class="{ 'is-off': !dialogGenerateContact }">
+            <label class="pd-card-toggle">
+              <span class="pd-toggle-track" :class="{ on: dialogGenerateContact }">
+                <input v-model="dialogGenerateContact" type="checkbox" class="sr-only" />
+                <span class="pd-toggle-thumb"></span>
+              </span>
+              <span class="pd-card-label">联系人画像</span>
             </label>
-            <div class="modal-panel-desc">
-              分析「{{ realtimeState.talkerName }}」的历史聊天，生成对方画像。
-            </div>
-            <div class="modal-field" :class="{ disabled: !dialogGenerateContact }">
-              <label>Token 预算档位</label>
-              <div class="budget-options">
+            <p class="pd-card-hint">
+              分析对方聊天风格，生成性格与沟通特征
+            </p>
+            <div class="pd-options" :class="{ disabled: !dialogGenerateContact }">
+              <span class="pd-options-label">Token 预算</span>
+              <div class="pd-chips">
                 <label v-for="opt in [
-                  { value: 'low', label: '低 (~2K)', desc: '粗略画像' },
-                  { value: 'medium', label: '中 (~4K)', desc: '推荐' },
-                  { value: 'high', label: '高 (~8K)', desc: '精细画像' },
-                  { value: 'custom', label: '自定义', desc: '' },
-                ]" :key="opt.value" class="budget-option" :class="{ active: profileBudgetLevel === opt.value, disabled: !dialogGenerateContact }">
-                  <input type="radio" :value="opt.value" v-model="profileBudgetLevel" :disabled="!dialogGenerateContact" />
-                  <span class="budget-label">{{ opt.label }}</span>
-                  <span class="budget-desc" v-if="opt.desc">{{ opt.desc }}</span>
+                  { value: 'low', label: '~2K', tip: '粗略' },
+                  { value: 'medium', label: '~4K', tip: '推荐' },
+                  { value: 'high', label: '~8K', tip: '精细' },
+                  { value: 'custom', label: '自定义', tip: '' },
+                ]" :key="opt.value" class="pd-chip" :class="{ active: profileBudgetLevel === opt.value }">
+                  <input type="radio" :value="opt.value" v-model="profileBudgetLevel" :disabled="!dialogGenerateContact" class="sr-only" />
+                  <span class="pd-chip-text">{{ opt.label }}</span>
+                  <span v-if="opt.tip" class="pd-chip-tip">{{ opt.tip }}</span>
                 </label>
               </div>
-              <div v-if="profileBudgetLevel === 'custom'" class="custom-budget">
+              <div v-if="profileBudgetLevel === 'custom'" class="pd-custom-input">
                 <input type="number" v-model.number="profileCustomBudget" min="500" max="50000" step="500" :disabled="!dialogGenerateContact" />
-                <span class="unit">tokens</span>
+                <span>tokens</span>
               </div>
-              <div class="modal-info">
-                预估消耗: ~{{ profileEstimatedTokens || '计算中' }} tokens
-              </div>
+              <div class="pd-est">≈ {{ profileEstimatedTokens || '--' }} tokens</div>
             </div>
           </div>
 
-          <div class="modal-panel">
-            <label class="modal-panel-title">
-              <input v-model="dialogGenerateSelf" type="checkbox" />
-              <span>自我克隆画像</span>
+          <!-- 自我克隆画像 -->
+          <div class="pd-card" :class="{ 'is-off': !dialogGenerateSelf }">
+            <label class="pd-card-toggle">
+              <span class="pd-toggle-track" :class="{ on: dialogGenerateSelf }">
+                <input v-model="dialogGenerateSelf" type="checkbox" class="sr-only" />
+                <span class="pd-toggle-thumb"></span>
+              </span>
+              <span class="pd-card-label">自我克隆</span>
             </label>
-            <div class="modal-panel-desc">
-              分析你发送给「{{ realtimeState.talkerName }}」的聊天记录，提取你的打字风格与常用表达。
-            </div>
-            <div class="modal-field" :class="{ disabled: !dialogGenerateSelf }">
-              <label>扫描提取深度</label>
-              <div class="budget-options">
+            <p class="pd-card-hint">
+              提取你的打字风格与常用表达
+            </p>
+            <div class="pd-options" :class="{ disabled: !dialogGenerateSelf }">
+              <span class="pd-options-label">扫描深度</span>
+              <div class="pd-chips">
                 <label v-for="opt in [
-                  { value: 'medium', label: '标准 (~4K)', desc: '推荐深度' },
-                  { value: 'high', label: '深度 (~8K)', desc: '消耗较多' }
-                ]" :key="opt.value" class="budget-option" :class="{ active: selfProfileBudgetLevel === opt.value, disabled: !dialogGenerateSelf }">
-                  <input type="radio" :value="opt.value" v-model="selfProfileBudgetLevel" :disabled="!dialogGenerateSelf" />
-                  <span class="budget-label">{{ opt.label }}</span>
-                  <span class="budget-desc" v-if="opt.desc">{{ opt.desc }}</span>
+                  { value: 'medium', label: '~4K', tip: '标准' },
+                  { value: 'high', label: '~8K', tip: '深度' },
+                ]" :key="opt.value" class="pd-chip" :class="{ active: selfProfileBudgetLevel === opt.value }">
+                  <input type="radio" :value="opt.value" v-model="selfProfileBudgetLevel" :disabled="!dialogGenerateSelf" class="sr-only" />
+                  <span class="pd-chip-text">{{ opt.label }}</span>
+                  <span v-if="opt.tip" class="pd-chip-tip">{{ opt.tip }}</span>
                 </label>
               </div>
-              <div class="modal-info">
-                预估消耗: ~{{ selfProfileEstimatedTokens || '计算中' }} tokens
-              </div>
+              <div class="pd-est">≈ {{ selfProfileEstimatedTokens || '--' }} tokens</div>
             </div>
           </div>
         </div>
-        <div class="modal-actions">
-          <button class="ct-btn variant-ghost" @click="closePortraitDialog">取消</button>
-          <button class="ct-btn primary" @click="generatePortraitProfiles" :disabled="!dialogGenerateContact && !dialogGenerateSelf">确认生成</button>
+
+        <!-- 底部操作 -->
+        <div class="pd-footer">
+          <button class="pd-btn pd-btn-ghost" @click="closePortraitDialog">取消</button>
+          <button class="pd-btn pd-btn-primary" @click="generatePortraitProfiles" :disabled="!dialogGenerateContact && !dialogGenerateSelf">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+            </svg>
+            确认生成
+          </button>
         </div>
       </div>
     </div>
@@ -1312,45 +1340,180 @@ function getTriggerIcon(type: string): string {
 }
 @keyframes sug-spin { to { transform: rotate(360deg); } }
 
-/* ═══ Modal Styles ═══ */
-.modal-desc { font-size: var(--ct-text-sm); color: var(--ct-text-secondary); line-height: 1.5; margin-bottom: var(--ct-space-md); }
-.modal-stack { display: flex; flex-direction: column; gap: var(--ct-space-md); }
-.modal-panel {
+/* ═══ Portrait Dialog — Compact Card Modal ═══ */
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); border: 0; }
+
+.portrait-dialog {
+  background: var(--ct-bg-primary);
+  border-radius: 16px;
+  width: min(540px, 92vw);
+  max-height: min(72vh, 560px);
+  overflow-y: auto;
+  box-shadow: 0 24px 80px rgba(0,0,0,.35), 0 0 0 1px rgba(255,255,255,.06) inset;
+  display: flex;
+  flex-direction: column;
+  animation: pd-enter .22s cubic-bezier(.22,1,.36,1);
+}
+@keyframes pd-enter {
+  from { opacity: 0; transform: translateY(12px) scale(.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* --- 头部 --- */
+.pd-header {
+  display: flex; align-items: flex-start; gap: 12px;
+  padding: 20px 22px 14px;
+  border-bottom: 1px solid var(--ct-border-color);
+}
+.pd-icon-wrap {
+  width: 38px; height: 38px; border-radius: 10px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(135deg, rgba(124,77,255,.12), rgba(168,85,247,.10));
+  color: var(--ct-color-primary);
+}
+.pd-title-area { flex: 1; min-width: 0; }
+.pd-title { margin: 0 0 2px; font-size: 15px; font-weight: 700; color: var(--ct-text-primary); }
+.pd-subtitle { margin: 0; font-size: 12px; color: var(--ct-text-tertiary); line-height: 1.5; }
+.pd-subtitle strong { color: var(--ct-text-secondary); font-weight: 600; }
+.pd-close {
+  background: none; border: none; cursor: pointer;
+  color: var(--ct-text-tertiary); padding: 4px; border-radius: 6px;
+  transition: background .15s, color .15s;
+}
+.pd-close:hover { background: var(--ct-bg-secondary); color: var(--ct-text-primary); }
+
+/* --- 面板容器 --- */
+.pd-panels {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+  padding: 16px 22px;
+}
+
+/* --- 单张面板卡 --- */
+.pd-card {
   border: 1px solid var(--ct-border-color);
-  border-radius: var(--ct-radius-md);
-  padding: var(--ct-space-md);
+  border-radius: 12px;
+  padding: 14px;
   background: var(--ct-bg-secondary);
+  display: flex; flex-direction: column; gap: 8px;
+  transition: opacity .2s, border-color .2s;
 }
-.modal-panel-title {
-  display: flex; align-items: center; gap: 8px;
-  font-size: var(--ct-text-sm); font-weight: var(--ct-font-semibold); color: var(--ct-text-primary);
+.pd-card.is-off { opacity: .45; }
+.pd-card.is-off:hover { opacity: .65; }
+
+/* 开关 */
+.pd-card-toggle {
+  display: flex; align-items: center; gap: 10px; cursor: pointer;
 }
-.modal-panel-title input[type="checkbox"] { accent-color: var(--ct-color-primary); }
-.modal-panel-desc {
-  margin: 8px 0 12px;
+.pd-toggle-track {
+  position: relative; width: 34px; height: 18px; border-radius: 99px;
+  background: var(--ct-bg-tertiary); border: 1px solid var(--ct-border-color);
+  transition: background .2s, border-color .2s; flex-shrink: 0;
+}
+.pd-toggle-track.on {
+  background: var(--ct-color-primary); border-color: var(--ct-color-primary);
+}
+.pd-toggle-thumb {
+  position: absolute; top: 2px; left: 2px;
+  width: 12px; height: 12px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.2);
+  transition: transform .2s cubic-bezier(.4,.0,.2,1);
+}
+.pd-toggle-track.on .pd-toggle-thumb { transform: translateX(16px); }
+.pd-card-label {
+  font-size: 13px; font-weight: 650; color: var(--ct-text-primary);
+  letter-spacing: .01em;
+}
+.pd-card-hint {
+  margin: 0; font-size: 11.5px; color: var(--ct-text-tertiary); line-height: 1.5;
+}
+
+/* 选项区域 */
+.pd-options {
+  display: flex; flex-direction: column; gap: 6px;
+  transition: opacity .2s;
+}
+.pd-options.disabled { opacity: .4; pointer-events: none; }
+.pd-options-label {
+  font-size: 10.5px; font-weight: 650; color: var(--ct-text-tertiary);
+  text-transform: uppercase; letter-spacing: .06em;
+}
+
+/* token chips */
+.pd-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.pd-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 4px 10px; border-radius: 99px; cursor: pointer;
+  border: 1px solid var(--ct-border-color);
+  background: var(--ct-bg-elevated);
+  transition: all .15s;
+  font-size: 12px; line-height: 1;
+}
+.pd-chip:hover { border-color: var(--ct-color-primary); }
+.pd-chip.active {
+  background: var(--ct-color-primary); border-color: var(--ct-color-primary);
+  color: #fff;
+}
+.pd-chip-text { font-weight: 600; }
+.pd-chip-tip { font-size: 10px; opacity: .7; }
+.pd-chip.active .pd-chip-tip { opacity: .85; }
+
+/* 自定义输入 */
+.pd-custom-input {
+  display: flex; align-items: center; gap: 6px;
+}
+.pd-custom-input input {
+  width: 90px; padding: 4px 8px; border-radius: 6px;
+  border: 1px solid var(--ct-border-color);
+  background: var(--ct-bg-elevated); color: var(--ct-text-primary);
+  font-size: 12px;
+}
+.pd-custom-input span { font-size: 10.5px; color: var(--ct-text-tertiary); }
+
+/* 预估消耗 */
+.pd-est {
+  font-size: 11px; color: var(--ct-text-tertiary);
+  padding-top: 2px;
+}
+
+/* --- 底部操作 --- */
+.pd-footer {
+  display: flex; justify-content: flex-end; gap: 8px;
+  padding: 12px 22px 18px;
+  border-top: 1px solid var(--ct-border-color);
+}
+.pd-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 8px 18px; border-radius: 8px;
+  font-size: 13px; font-weight: 600; cursor: pointer;
+  border: none; transition: all .15s;
+}
+.pd-btn-ghost {
+  background: transparent; color: var(--ct-text-secondary);
+  border: 1px solid var(--ct-border-color);
+}
+.pd-btn-ghost:hover { background: var(--ct-bg-secondary); color: var(--ct-text-primary); }
+.pd-btn-primary {
+  background: linear-gradient(135deg, var(--ct-color-primary), #7c3aed);
+  color: #fff; box-shadow: 0 2px 10px rgba(124,77,255,.22);
+}
+.pd-btn-primary:hover:not(:disabled) {
+  box-shadow: 0 4px 16px rgba(124,77,255,.35);
+  transform: translateY(-1px);
+}
+.pd-btn-primary:disabled { opacity: .5; cursor: not-allowed; transform: none; }
+
+/* 兼容同文件内其他 ct-modal-dialog 描述文案 */
+.modal-desc {
   font-size: var(--ct-text-sm);
   color: var(--ct-text-secondary);
-  line-height: 1.5;
+  line-height: 1.6;
 }
-.modal-field > label { font-size: var(--ct-text-sm); font-weight: var(--ct-font-medium); color: var(--ct-text-secondary); }
-.modal-field.disabled { opacity: 0.5; }
-.budget-options { display: grid; grid-template-columns: 1fr 1fr; gap: var(--ct-space-xs); }
-.budget-option {
-  display: flex; align-items: center; gap: 6px; padding: 8px 10px;
-  border-radius: var(--ct-radius-sm); border: 1px solid var(--ct-border-color);
-  cursor: pointer; transition: all var(--ct-transition-fast); font-size: var(--ct-text-sm);
+
+/* --- 响应式 --- */
+@media (max-width: 580px) {
+  .pd-panels { grid-template-columns: 1fr; }
+  .portrait-dialog { max-height: 80vh; }
 }
-.budget-option.disabled { cursor: not-allowed; }
-.budget-option:hover { border-color: var(--ct-color-primary); }
-.budget-option.disabled:hover { border-color: var(--ct-border-color); }
-.budget-option.active { border-color: var(--ct-color-primary); background: var(--ct-color-primary-light); }
-.budget-option input[type="radio"] { display: none; }
-.budget-label { font-weight: var(--ct-font-medium); }
-.budget-desc { font-size: var(--ct-text-xs); color: var(--ct-text-tertiary); }
-.custom-budget { display: flex; align-items: center; gap: 6px; margin-top: var(--ct-space-xs); grid-column: 1 / -1; }
-.custom-budget input { width: 120px; padding: 6px 10px; border-radius: var(--ct-radius-sm); border: 1px solid var(--ct-border-color); background: var(--ct-bg-elevated); color: var(--ct-text-primary); font-size: var(--ct-text-sm); }
-.custom-budget .unit { font-size: var(--ct-text-xs); color: var(--ct-text-tertiary); }
-.modal-info { font-size: var(--ct-text-sm); color: var(--ct-text-tertiary); margin-top: var(--ct-space-sm); }
 
 /* ═══ Responsive ═══ */
 @media (max-width: 1024px) { .sug-panels-grid { grid-template-columns: 1fr; } }

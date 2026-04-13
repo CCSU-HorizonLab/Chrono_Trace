@@ -9,6 +9,46 @@ from typing import Optional, Dict, List
 logger = logging.getLogger(__name__)
 class WeChatPathFinder:
     """微信数据库路径查找器 (仅支持微信4.0+版本)"""
+
+    @staticmethod
+    def _looks_like_wechat_data_dir(path: Path) -> bool:
+        """判断一个目录是否像微信数据根目录。"""
+        if not path or not path.exists() or not path.is_dir():
+            return False
+
+        try:
+            for child in path.iterdir():
+                if not child.is_dir():
+                    continue
+                if child.name.startswith("wxid_"):
+                    return True
+        except Exception:
+            return False
+
+        return False
+
+    @classmethod
+    def _expand_data_dir_candidates(cls, base_path: Path) -> List[Path]:
+        """从一个可能的基路径展开出真正的数据目录候选项。"""
+        candidates: List[Path] = []
+        seen = set()
+
+        def _add(path: Path):
+            normalized = os.path.normcase(str(path))
+            if normalized in seen:
+                return
+            seen.add(normalized)
+            candidates.append(path)
+
+        _add(base_path)
+        _add(base_path / "xwechat_files")
+        _add(base_path / "WeChat Files")
+
+        if base_path.name.lower() != "documents":
+            _add(base_path / "Documents" / "xwechat_files")
+            _add(base_path / "Documents" / "WeChat Files")
+
+        return candidates
     
     @staticmethod
     def find_wechat_install_path() -> Optional[str]:
@@ -35,18 +75,29 @@ class WeChatPathFinder:
         Returns:
             str: 微信数据目录路径
         """
+        candidate_paths: List[Path] = []
+        seen = set()
+
+        def _append_candidates(paths: List[Path]):
+            for path in paths:
+                normalized = os.path.normcase(str(path))
+                if normalized in seen:
+                    continue
+                seen.add(normalized)
+                candidate_paths.append(path)
+
         try:
             # 方法1:从注册表获取
             key_path = r"Software\Tencent\WeChat"
             key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path)
             data_path, _ = winreg.QueryValueEx(key, "FileSavePath")
             winreg.CloseKey(key)
-            
-            if data_path and os.path.exists(data_path):
-                return data_path
+
+            if data_path:
+                _append_candidates(WeChatPathFinder._expand_data_dir_candidates(Path(data_path)))
         except Exception:
             pass
-        
+
         # 方法2:尝试多个可能的路径
         # 新版微信使用 xwechat_files (4.0+)
         try:
@@ -54,18 +105,26 @@ class WeChatPathFinder:
             possible_paths = [
                 Path(f"C:/Users/{username}/xwechat_files"),  # 新版
                 Path.home() / "xwechat_files",  # 新版(用户目录)
+                Path.home() / "Documents" / "xwechat_files",  # 新版(文档目录)
                 Path.home() / "Documents" / "WeChat Files",  # 旧版(保留以防万一)
             ]
         except Exception:
             possible_paths = [
                 Path.home() / "xwechat_files",
+                Path.home() / "Documents" / "xwechat_files",
                 Path.home() / "Documents" / "WeChat Files",
             ]
-        
-        for path in possible_paths:
-            if path.exists():
+
+        _append_candidates(possible_paths)
+
+        for path in candidate_paths:
+            if WeChatPathFinder._looks_like_wechat_data_dir(path):
                 return str(path)
-        
+
+        for path in candidate_paths:
+            if path.exists() and path.is_dir() and path.name.lower() in {"xwechat_files", "wechat files"}:
+                return str(path)
+
         return None
     
     @staticmethod

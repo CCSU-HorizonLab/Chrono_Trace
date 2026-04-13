@@ -52,7 +52,7 @@ class WeChatIngestService:
                 "error": f"查找微信路径失败: {str(e)}"
             }
 
-    def verify_key(self, db_key: str) -> Dict[str, Any]:
+    def verify_key(self, db_key: str, custom_paths: Optional[Dict] = None) -> Dict[str, Any]:
         """
         验证密钥是否有效
 
@@ -63,8 +63,8 @@ class WeChatIngestService:
             dict: {"ok": bool, "error": str}
         """
         try:
-            # 查找数据库路径
-            paths = WeChatPathFinder.find_all_wechat_dbs()
+            # 查找数据库路径，优先使用前端已确认的目录
+            paths = self.resolve_wechat_paths(custom_paths)
             if not paths:
                 return {"ok": False, "error": "未找到微信数据库"}
 

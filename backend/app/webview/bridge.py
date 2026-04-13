@@ -5,6 +5,7 @@ import logging
 import importlib
 from pathlib import Path
 from ..services.wechat.ingest_service import WeChatIngestService
+from ..services.wechat.path_finder import WeChatPathFinder
 from ..services.analysis.feature_extraction_config import (
     ANALYSIS_DEVICE_MODE_AUTO,
     normalize_analysis_device_mode,
@@ -115,7 +116,7 @@ class Bridge:
         # 使用自动检测
         return self.wechat_service.get_wechat_paths()
     
-    def verify_wechat_key(self, db_key: str) -> dict[str, Any]:
+    def verify_wechat_key(self, db_key: str, custom_paths: dict[str, str] | None = None) -> dict[str, Any]:
         """
         验证微信数据库密钥是否有效
         
@@ -125,7 +126,8 @@ class Bridge:
         Returns:
             {"ok": True} 或 {"ok": False, "error": "..."}
         """
-        return self.wechat_service.verify_key(db_key)
+        preferred_paths = custom_paths or self._get_wechat_custom_paths()
+        return self.wechat_service.verify_key(db_key, preferred_paths)
     
     def import_wechat_data(self, db_key: str, options: dict[str, Any] | None = None) -> dict[str, Any]:
         """
@@ -695,11 +697,10 @@ class Bridge:
             }
         """
         try:
-            import os
-            
             logger.info(f"[DEBUG] 开始扫描目录: {wechat_dir}")
-            
-            if not os.path.exists(wechat_dir):
+
+            target_dir = Path(wechat_dir)
+            if not target_dir.exists():
                 return {
                     "ok": False,
                     "error": f"目录不存在: {wechat_dir}",
@@ -712,59 +713,29 @@ class Bridge:
                 "wxids": [],
                 "databases": {}
             }
-            
-            # 扫描所有子目录，查找 wxid_ 开头的文件夹
-            logger.debug(f"[DEBUG] 列举目录内容...")
-            entries = os.listdir(wechat_dir)
-            logger.debug(f"[DEBUG] 找到 {len(entries)} 个条目")
-            
-            for entry in entries:
-                # 只处理 wxid_ 开头的目录名
-                if not entry.startswith("wxid_"):
-                    continue
-                
-                entry_path = os.path.join(wechat_dir, entry)
-                
-                # 跳过非目录
-                if not os.path.isdir(entry_path):
-                    logger.debug(f"[DEBUG] 跳过非目录: {entry}")
-                    continue
-                
-                wxid = entry
-                logger.debug(f"[DEBUG] 找到wxid: {wxid}")
+
+            # 兼容直接选中了某个账号目录的情况
+            if (target_dir / "db_storage").is_dir() and target_dir.name.startswith("wxid_"):
+                root_dir = target_dir.parent
+                wxid_dirs = [target_dir.name]
+            else:
+                root_dir = target_dir
+                wxid_dirs = sorted(
+                    child.name
+                    for child in target_dir.iterdir()
+                    if child.is_dir() and child.name.startswith("wxid_")
+                )
+
+            logger.debug(f"[DEBUG] 找到 {len(wxid_dirs)} 个 wxid 目录")
+
+            for wxid in wxid_dirs:
+                databases = WeChatPathFinder.find_databases(wxid, str(root_dir))
                 result["wxids"].append(wxid)
-                
-                # 查找该用户的数据库文件
-                user_data = {
-                    "msg_dbs": [],
-                    "contact_db": None
+                result["databases"][wxid] = {
+                    "msg_dbs": databases.get("message") or [],
+                    "contact_db": databases.get("contact"),
+                    "session_db": databases.get("session"),
                 }
-                
-                # 查找消息数据库 (Msg/Multi/MSG*.db)
-                msg_dir = os.path.join(entry_path, "Msg")
-                if os.path.isdir(msg_dir):
-                    logger.debug(f"[DEBUG] 扫描消息目录: {msg_dir}")
-                    # 限制扫描深度，避免过深的递归
-                    for root, dirs, files in os.walk(msg_dir):
-                        # 只扫描Msg和Msg/Multi两层
-                        depth = root[len(msg_dir):].count(os.sep)
-                        if depth > 1:
-                            dirs[:] = []  # 不再深入
-                            continue
-                        
-                        for file in files:
-                            if file.startswith("MSG") and file.endswith(".db"):
-                                db_path = os.path.join(root, file)
-                                user_data["msg_dbs"].append(db_path)
-                                logger.debug(f"[DEBUG] 找到消息数据库: {file}")
-                
-                # 查找联系人数据库 (Msg/MicroMsg.db)
-                micromsg_path = os.path.join(entry_path, "Msg", "MicroMsg.db")
-                if os.path.exists(micromsg_path):
-                    user_data["contact_db"] = micromsg_path
-                    logger.debug(f"[DEBUG] 找到联系人数据库: MicroMsg.db")
-                
-                result["databases"][wxid] = user_data
             
             logger.info(f"[DEBUG] 扫描完成，找到 {len(result['wxids'])} 个wxid")
             return result

@@ -8,7 +8,10 @@ type PyWebViewApi = {
   ping: () => Promise<string>
   // 微信数据导入
   get_wechat_paths: () => Promise<any>
-  verify_wechat_key: (db_key: string) => Promise<any>
+  verify_wechat_key: (
+    db_key: string,
+    custom_paths?: { wechat_dir: string; current_user: string }
+  ) => Promise<any>
   import_wechat_data: (db_key: string, options?: Record<string, any>) => Promise<any>
   detect_wechat_import_increment: () => Promise<any>
   // 通用导入与分析

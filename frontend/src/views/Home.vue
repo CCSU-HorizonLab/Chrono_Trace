@@ -94,7 +94,7 @@
           <div class="step-content flex-row">
             <div class="path-display">
               <span class="folder-icon">目录</span>
-              <span class="path-text">{{ (pathInfo && pathInfo.wechat_dir) || customWechatDir || '等待验证后自动检测...' }}</span>
+              <span class="path-text">{{ (pathInfo && pathInfo.wechat_dir) || customWechatDir || '首次启动将自动检测微信目录...' }}</span>
             </div>
             <button class="change-btn" @click.stop.prevent="selectCustomPath">更改</button>
           </div>
@@ -183,6 +183,33 @@ function formatImportTime(ts?: number | null) {
   return new Date(ts * 1000).toLocaleString()
 }
 
+function getPreferredWechatPaths() {
+  if (!pathInfo.value?.wechat_dir || !pathInfo.value?.current_user) return null
+  return {
+    wechat_dir: pathInfo.value.wechat_dir,
+    current_user: pathInfo.value.current_user
+  }
+}
+
+async function detectWechatPath(options?: { silent?: boolean }) {
+  try {
+    const pathRes = await api.get_wechat_paths()
+    if (!pathRes?.ok || !pathRes.data) return false
+
+    pathInfo.value = pathRes.data
+    customWechatDir.value = ''
+    await savePathsToSettings(pathRes.data, false)
+
+    if (!options?.silent) {
+      addLog(`已自动检测到微信数据目录：${pathRes.data.wechat_dir}`)
+    }
+    return true
+  } catch (error) {
+    console.error('[Home] detectWechatPath failed', error)
+    return false
+  }
+}
+
 async function loadSavedPaths() {
   try {
     await bridgeReady()
@@ -201,6 +228,13 @@ async function loadSavedPaths() {
         source: settings.wechat_use_custom_path ? 'custom' : 'auto'
       }
       addLog('已恢复上次保存的微信数据路径。')
+    }
+
+    if (!pathInfo.value) {
+      const detected = await detectWechatPath()
+      if (!detected) {
+        addLog('暂未自动检测到微信数据目录，可稍后手动选择。')
+      }
     }
 
     hasImportedBefore.value = !!settings.wechat_import_completed
@@ -264,7 +298,7 @@ async function onVerifyAndUnpack() {
   try {
     await bridgeReady()
     importProgress.value = { status: '验证密钥...', percent: 10 }
-    const verifyRes = await api.verify_wechat_key(wechatForm.dbKey)
+    const verifyRes = await api.verify_wechat_key(wechatForm.dbKey, getPreferredWechatPaths() || undefined)
 
     if (!verifyRes.ok) {
       wechatErr.value = verifyRes.error || '密钥验证失败。'
@@ -272,18 +306,23 @@ async function onVerifyAndUnpack() {
       return
     }
 
-    importProgress.value = { status: '查找微信数据路径...', percent: 30 }
-    const pathRes = await api.get_wechat_paths()
-
-    if (pathRes.ok && pathRes.data) {
-      pathInfo.value = pathRes.data
-      await savePathsToSettings(pathRes.data, false)
-      wechatOk.value = '验证成功。已检测到微信数据路径，请点击“开始导入”。'
-      addLog('密钥验证成功，已检测到微信数据路径。')
+    const preferredPaths = getPreferredWechatPaths()
+    if (preferredPaths) {
+      await savePathsToSettings(pathInfo.value, pathInfo.value?.source === 'custom')
+      wechatOk.value = '验证成功。已确认微信数据路径，请点击“开始导入”。'
+      addLog('密钥验证成功，当前微信数据路径可用。')
       await checkIncrement()
     } else {
-      wechatErr.value = '未能自动检测到微信路径，请手动选择数据目录。'
-      addLog('自动检测微信路径失败，请手动指定目录。')
+      importProgress.value = { status: '查找微信数据路径...', percent: 30 }
+      const detected = await detectWechatPath({ silent: true })
+      if (detected) {
+        wechatOk.value = '验证成功。已检测到微信数据路径，请点击“开始导入”。'
+        addLog('密钥验证成功，已检测到微信数据路径。')
+        await checkIncrement()
+      } else {
+        wechatErr.value = '未能自动检测到微信路径，请手动选择数据目录。'
+        addLog('自动检测微信路径失败，请手动指定目录。')
+      }
     }
   } catch (error: any) {
     wechatErr.value = error?.message || '验证异常。'

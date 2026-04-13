@@ -41,6 +41,45 @@
     </div>
   </header>
 
+  <div v-if="!hasConversations" class="page-empty-state fade-in">
+    <div class="page-empty-glow page-empty-glow-left"></div>
+    <div class="page-empty-glow page-empty-glow-right"></div>
+
+    <div class="page-empty-hero">
+      <div class="page-empty-badge">History Ready</div>
+
+      <div class="page-empty-illustration" aria-hidden="true">
+        <div class="empty-orb empty-orb-main">🗂️</div>
+        <div class="empty-orb empty-orb-small empty-orb-chat">💬</div>
+        <div class="empty-orb empty-orb-small empty-orb-star">✦</div>
+      </div>
+
+      <h2>还没有历史记录</h2>
+      <p class="page-empty-lead">当前还没有可分析的聊天会话，但这个页面不该再是空白的。</p>
+      <p class="page-empty-hint">先去首页导入微信数据，完成后这里会自动显示联系人、分析入口和时间线内容。</p>
+    </div>
+
+    <div class="page-empty-grid">
+      <div class="page-empty-card">
+        <span class="page-empty-card-label">下一步</span>
+        <strong>去首页导入聊天数据</strong>
+        <p>导入完成后，历史记录页会自动恢复完整展示。</p>
+      </div>
+
+      <div class="page-empty-card">
+        <span class="page-empty-card-label">导入后可查看</span>
+        <strong>关系分析、互动特征、时间线</strong>
+        <p>包括联系人切换、趋势图、词云和画像回廊等内容。</p>
+      </div>
+
+      <div class="page-empty-card page-empty-card-accent">
+        <span class="page-empty-card-label">当前状态</span>
+        <strong>暂无可分析会话</strong>
+        <p>页面已保持可见，并提供明确的下一步引导。</p>
+      </div>
+    </div>
+  </div>
+
   <!-- Global Progress -->
   <div v-if="isGlobalAnalyzing" class="extraction-progress">
     <div class="progress-bar">
@@ -620,6 +659,7 @@ export default {
                 analysis.timeseries.length > 0
             ))
         })
+        const hasConversations = computed(() => conversations.value.length > 0)
 
         const currentContactName = computed(() => {
             if (!selectedConversationId.value) return '选择联系人'
@@ -805,6 +845,8 @@ export default {
                     conversations.value = res.conversations
                     if (conversations.value.length > 0 && !selectedConversationId.value) {
                         onConversationChange(conversations.value[0].id)
+                    } else if (conversations.value.length === 0) {
+                        selectedConversationId.value = null
                     }
                 }
             } catch (e: any) { console.error('加载联系人失败', e) }
@@ -1407,7 +1449,7 @@ export default {
             currentTab, conversations, selectedConversationId, dates, loading, loadingSessions, error, analysis, subject, sessions,
             personaProfile, loadingPersonaProfile, personaProfileMeta,
             analysisResult, displayScore, showKeywordsDialog, showContextForm, isGlobalAnalyzing, isStopping, activeTimer, handleStopAnalysis, globalProgressPercent, globalProgressStep, gpuMode,
-            hasFeatures, hasCachedAffinityAnalysis, featureStats, responseTimeStats, initiativeStats, wordCountsStats, activityCalendar,
+            hasConversations, hasFeatures, hasCachedAffinityAnalysis, featureStats, responseTimeStats, initiativeStats, wordCountsStats, activityCalendar,
             responseTimeChart, activityCalendarChart, wordCountChart, stats, currentContactName, hasPreferenceKeywords, allDimensions, emotionalResonanceDisplaySubScores,
             currentRangeLabel, hasContentAnalysis, circumference, strokeDashoffset, formatNumber, formatTime, getResponseTimeLabel, getMergedResponseTimeLabel, getResponseTimePercent, onConversationChange, onDatesChange, handleExport, handleStartGlobalAnalysis, handleContextSaved, handleKeywordsUpdated,
             getScoreColor, scrollToDetails, handlePreferenceDisabledClick, onWordSelect, loadAnalysis, loadSessions, handleActivityYearChange
@@ -1434,6 +1476,193 @@ export default {
   flex-shrink: 0; /* Prevent header squishing */
   position: relative;
   z-index: 50;
+}
+
+.page-empty-state {
+  position: relative;
+  flex: 1;
+  min-height: 520px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 28px;
+  padding: clamp(32px, 6vw, 72px);
+  border-radius: 28px;
+  border: 1px solid rgba(124, 77, 255, 0.12);
+  background:
+    radial-gradient(circle at top, rgba(124, 77, 255, 0.14), transparent 34%),
+    radial-gradient(circle at bottom right, rgba(245, 166, 35, 0.12), transparent 28%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(247, 250, 255, 0.94));
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.08);
+  overflow: hidden;
+}
+
+.page-empty-glow {
+  position: absolute;
+  width: 280px;
+  height: 280px;
+  border-radius: 999px;
+  filter: blur(42px);
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.page-empty-glow-left {
+  top: -100px;
+  left: -80px;
+  background: rgba(124, 77, 255, 0.18);
+}
+
+.page-empty-glow-right {
+  right: -110px;
+  bottom: -120px;
+  background: rgba(245, 166, 35, 0.18);
+}
+
+.page-empty-hero {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  max-width: 720px;
+}
+
+.page-empty-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 14px;
+  margin-bottom: 18px;
+  border-radius: 999px;
+  border: 1px solid rgba(124, 77, 255, 0.16);
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--ct-color-primary);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  box-shadow: 0 8px 20px rgba(124, 77, 255, 0.08);
+}
+
+.page-empty-illustration {
+  position: relative;
+  width: 180px;
+  height: 140px;
+  margin-bottom: 10px;
+}
+
+.empty-orb {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  backdrop-filter: blur(10px);
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.12);
+}
+
+.empty-orb-main {
+  left: 50%;
+  top: 18px;
+  width: 92px;
+  height: 92px;
+  transform: translateX(-50%);
+  background: linear-gradient(135deg, rgba(124, 77, 255, 0.18), rgba(124, 77, 255, 0.08));
+  border: 1px solid rgba(124, 77, 255, 0.14);
+  font-size: 42px;
+}
+
+.empty-orb-small {
+  width: 44px;
+  height: 44px;
+  font-size: 18px;
+}
+
+.empty-orb-chat {
+  left: 28px;
+  top: 72px;
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.16), rgba(59, 130, 246, 0.08));
+  border: 1px solid rgba(59, 130, 246, 0.14);
+}
+
+.empty-orb-star {
+  right: 28px;
+  top: 34px;
+  background: linear-gradient(135deg, rgba(245, 166, 35, 0.2), rgba(245, 166, 35, 0.08));
+  border: 1px solid rgba(245, 166, 35, 0.14);
+  color: #b45309;
+}
+
+.page-empty-state h2 {
+  margin: 0 0 12px;
+  font-size: clamp(30px, 4.2vw, 42px);
+  color: var(--ct-text-primary);
+}
+
+.page-empty-state p {
+  margin: 0;
+  line-height: 1.8;
+  color: var(--ct-text-secondary);
+}
+
+.page-empty-lead {
+  max-width: 560px;
+  font-size: var(--ct-text-lg);
+}
+
+.page-empty-hint {
+  max-width: 620px;
+  margin-top: var(--ct-space-md) !important;
+  color: var(--ct-text-tertiary) !important;
+}
+
+.page-empty-grid {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.page-empty-card {
+  text-align: left;
+  padding: 18px 18px 20px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
+}
+
+.page-empty-card-accent {
+  background: linear-gradient(180deg, rgba(124, 77, 255, 0.08), rgba(255, 255, 255, 0.9));
+  border-color: rgba(124, 77, 255, 0.16);
+}
+
+.page-empty-card-label {
+  display: inline-flex;
+  margin-bottom: 10px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ct-text-tertiary);
+}
+
+.page-empty-card strong {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 17px;
+  line-height: 1.4;
+  color: var(--ct-text-primary);
+}
+
+.page-empty-card p {
+  font-size: var(--ct-text-sm);
+  line-height: 1.7;
+  color: var(--ct-text-secondary);
 }
 
 .user-profile-header {
@@ -2498,6 +2727,20 @@ export default {
         padding: var(--ct-space-lg) var(--ct-space-md) !important;
     }
 
+    .page-empty-state {
+        min-height: 460px;
+        gap: 22px;
+        border-radius: 22px;
+    }
+
+    .page-empty-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .page-empty-illustration {
+        transform: scale(0.92);
+    }
+
     .page-header,
     .feature-actions,
     .card-header {
@@ -2531,6 +2774,19 @@ export default {
 }
 
 @media (max-width: 480px) {
+
+    .page-empty-badge {
+        font-size: 11px;
+        letter-spacing: 0.06em;
+    }
+
+    .page-empty-state h2 {
+        font-size: 28px;
+    }
+
+    .page-empty-card {
+        padding: 16px;
+    }
 
     .features-row-1,
     .features-row-3,

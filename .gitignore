@@ -59,6 +59,9 @@ frontend/coverage/
 frontend/.vite/
 frontend/dist-ssr/
 
+# Documentation build output
+docs/docs/
+
 # Temporary documentation and specs
 CARD_FIX*.md
 DARK_MODE_FIX*.md

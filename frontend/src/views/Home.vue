@@ -559,8 +559,10 @@ async function scanAndSetCustomPath(wechatDir: string) {
     mergeAccounts((scanResult.accounts || []) as WechatAccount[])
     const nextWxid = selectedWxid.value || scanResult.accounts[0].wxid
     const databases = scanResult.databases[nextWxid]
+    const resolvedAccount = (scanResult.accounts || []).find((account: WechatAccount) => account.wxid === nextWxid)
+    const resolvedWechatDir = resolvedAccount?.wechat_dir || wechatDir
     const newPathInfo = {
-      wechat_dir: wechatDir,
+      wechat_dir: resolvedWechatDir,
       current_user: nextWxid,
       account_wxid: nextWxid,
       databases: {
@@ -573,6 +575,7 @@ async function scanAndSetCustomPath(wechatDir: string) {
     selectedWxid.value = nextWxid
     activeAccountWxid.value = nextWxid
     pathInfo.value = newPathInfo
+    customWechatDir.value = resolvedWechatDir
     await savePathsToSettings(newPathInfo, true)
     wechatOk.value = `扫描成功，找到 ${scanResult.accounts.length} 个账号，当前使用 ${nextWxid}。`
     addLog(wechatOk.value)

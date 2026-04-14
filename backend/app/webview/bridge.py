@@ -1171,8 +1171,17 @@ class Bridge:
                 root_dir = target_dir.parent
                 wxid_dirs = [target_dir.name]
             else:
-                root_dir = target_dir
-                wxid_dirs = WeChatPathFinder.find_all_user_wxids(str(target_dir))
+                root_dir = WeChatPathFinder._resolve_wechat_data_dir(target_dir, aggressive_depth=2) or target_dir
+                wxid_dirs = WeChatPathFinder.find_all_user_wxids(str(root_dir))
+
+            if not wxid_dirs:
+                return {
+                    "ok": False,
+                    "error": f"未在目录中找到微信 V4 数据目录: {wechat_dir}",
+                    "wxids": [],
+                    "databases": {},
+                    "accounts": [],
+                }
 
             logger.debug(f"[DEBUG] 找到 {len(wxid_dirs)} 个 wxid 目录")
 

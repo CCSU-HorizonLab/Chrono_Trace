@@ -605,9 +605,6 @@ async function selectWeChatDir() {
     console.log('[DEBUG] select_directory 返回:', result)
     
     if (result && result.path) {
-      form.wechat_data_dir = result.path
-      console.log('[DEBUG] 已设置微信数据目录:', result.path)
-      
       // 自动扫描该目录下的wxid
       await scanWeChatDirectory(result.path)
     } else if (result && result.error) {
@@ -658,6 +655,7 @@ async function scanWeChatDirectory(wechatDir: string) {
       showDialog(`扫描成功！
 找到 ${scannedAccounts.length} 个微信账号
 当前设置为：${nextAccount?.label || nextWxid}
+微信数据根目录：${nextAccount?.wechat_dir || wechatDir}
 可通过上方账号下拉切换不同账号配置。`)
     } else {
       showDialog('未在该目录下找到微信数据（wxid_ 开头的文件夹）')

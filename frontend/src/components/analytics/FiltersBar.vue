@@ -4,6 +4,12 @@
       <div class="conversation-select" ref="dropdownRef">
         <label>选择联系人</label>
         <div class="searchable-select">
+          <CtAvatar
+            class="selected-avatar"
+            :src="selectedConversation?.avatar"
+            :name="selectedConversation?.name || selectedConversation?.username || ''"
+            :size="30"
+          />
           <input 
             type="text" 
             v-model="searchQuery"
@@ -23,7 +29,16 @@
               :class="{ active: conv.id === selectedConversationId }"
               class="dropdown-item"
             >
-              {{ conv.name || conv.username || '未知联系人' }} ({{ conv.message_count }}条)
+              <CtAvatar
+                class="dropdown-avatar"
+                :src="conv.avatar"
+                :name="conv.name || conv.username || ''"
+                :size="28"
+              />
+              <div class="dropdown-copy">
+                <span class="dropdown-name">{{ conv.name || conv.username || '未知联系人' }}</span>
+                <span class="dropdown-meta">{{ conv.message_count }}条</span>
+              </div>
             </li>
             <li v-if="filteredConversations.length === 0" class="dropdown-item no-results">
               无匹配联系人
@@ -37,12 +52,14 @@
 
 <script setup lang="ts">
 import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
+import CtAvatar from '@/components/base/CtAvatar.vue'
 
 type Conversation = {
   id: number
   name: string
   username?: string
   message_count: number
+  avatar?: string
 }
 
 const props = defineProps<{ 
@@ -58,9 +75,12 @@ const emit = defineEmits<{
 const dropdownRef = ref<HTMLElement | null>(null)
 const showDropdown = ref(false)
 const searchQuery = ref('')
+const selectedConversation = computed(() => (
+  props.conversations.find(c => c.id === props.selectedConversationId)
+))
 
 const selectedConversationName = computed(() => {
-  const conv = props.conversations.find(c => c.id === props.selectedConversationId)
+  const conv = selectedConversation.value
   if (!conv) return ''
   return `${conv.name || conv.username || '未知联系人'} (${conv.message_count}条)`
 })
@@ -145,9 +165,18 @@ function onInputFocus() {
   min-width: 250px;
 }
 
+.selected-avatar {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 1;
+  pointer-events: none;
+}
+
 .select-input {
   width: 100%;
-  padding: 8px 32px 8px 12px;
+  padding: 8px 32px 8px 48px;
   border: 1px solid var(--ct-border-color);
   border-radius: var(--ct-radius-md);
   background: var(--ct-bg-input);
@@ -204,6 +233,9 @@ function onInputFocus() {
   cursor: pointer;
   color: var(--ct-text-primary);
   transition: background-color 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .dropdown-item:hover {
@@ -220,8 +252,30 @@ function onInputFocus() {
   color: var(--ct-text-secondary);
   text-align: center;
   cursor: default;
+  justify-content: center;
 }
 .dropdown-item.no-results:hover {
   background-color: transparent;
+}
+
+.dropdown-copy {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  width: 100%;
+}
+
+.dropdown-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dropdown-meta {
+  font-size: 12px;
+  opacity: 0.8;
+  flex-shrink: 0;
 }
 </style>

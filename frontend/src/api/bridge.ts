@@ -13,6 +13,10 @@ type PyWebViewApi = {
     custom_paths?: { wechat_dir: string; current_user: string }
   ) => Promise<any>
   import_wechat_data: (db_key: string, options?: Record<string, any>) => Promise<any>
+  refresh_wechat_contact_avatars: (
+    db_key: string,
+    custom_paths?: { wechat_dir: string; current_user: string }
+  ) => Promise<any>
   detect_wechat_import_increment: () => Promise<any>
   // 通用导入与分析
   ingest_data: (file_path: string, options?: Record<string, any>) => Promise<any>

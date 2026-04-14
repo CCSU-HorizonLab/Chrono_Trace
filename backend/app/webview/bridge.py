@@ -161,6 +161,15 @@ class Bridge:
             self._save_wechat_import_baseline(snapshot)
         return result
 
+    def refresh_wechat_contact_avatars(
+        self,
+        db_key: str,
+        custom_paths: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """Refresh imported contact avatar metadata without reimporting messages."""
+        preferred_paths = custom_paths or self._get_wechat_custom_paths()
+        return self.wechat_service.refresh_contact_avatars(db_key, preferred_paths)
+
     def detect_wechat_import_increment(self) -> dict[str, Any]:
         """Compare current WeChat DB file sizes with the last successful import baseline."""
         baseline_files = self.settings.get("wechat_last_import_files") or []

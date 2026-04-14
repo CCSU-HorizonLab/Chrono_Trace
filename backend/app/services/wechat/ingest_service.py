@@ -213,6 +213,8 @@ class WeChatIngestService:
             logger.debug(f"[DEBUG] databases: {databases}")
 
             # 2. 导入联系人
+            imported_contacts = False
+
             logger.debug(f"\n[DEBUG] import_contacts={import_contacts}, has contact db={databases.get('contact')}")
             if import_contacts and databases.get("contact"):
                 if progress_callback:
@@ -223,6 +225,7 @@ class WeChatIngestService:
                     db_key
                 )
                 stats["contacts"] = contact_count
+                imported_contacts = True
                 logger.debug(f"[DEBUG] 联系人导入结果: {contact_count}")
 
             # 3. 导入消息
@@ -243,6 +246,10 @@ class WeChatIngestService:
                 stats["conversations"] = message_stats["conversations"]
                 stats["skipped"] += message_stats.get("skipped", 0)
                 logger.debug(f"[DEBUG] 消息导入结果: {message_stats}")
+
+            if imported_contacts:
+                synced_conversations = self._sync_conversation_avatar_metadata()
+                logger.debug(f"[DEBUG] 已同步 {synced_conversations} 个会话头像")
 
             logger.debug(f"\n[DEBUG] 最终统计: {stats}")
 
@@ -275,6 +282,40 @@ class WeChatIngestService:
                 "stats": stats
             }
 
+    def refresh_contact_avatars(
+        self,
+        db_key: str,
+        custom_paths: Optional[Dict] = None,
+    ) -> Dict[str, Any]:
+        """Re-read the WeChat contact DB and backfill avatar metadata only."""
+        try:
+            paths = self.resolve_wechat_paths(custom_paths)
+            contact_db_path = (paths.get("databases") or {}).get("contact")
+            if not contact_db_path:
+                return {"ok": False, "error": "未找到联系人数据库"}
+
+            contact_db = ContactDBV4(contact_db_path, db_key)
+            try:
+                contacts_data = contact_db.get_contacts()
+            finally:
+                contact_db.close()
+
+            store_stats = self._upsert_contacts(contacts_data)
+            conversation_updates = self._sync_conversation_avatar_metadata()
+
+            return {
+                "ok": True,
+                "stats": {
+                    "scanned": store_stats["scanned"],
+                    "contact_updates": store_stats["avatar_updates"],
+                    "conversation_updates": conversation_updates,
+                    "skipped_empty": store_stats["skipped_empty"],
+                }
+            }
+        except Exception as e:
+            logger.error(f"[DEBUG] 刷新联系人头像失败: {e}")
+            return {"ok": False, "error": f"刷新联系人头像失败: {str(e)}"}
+
     def _import_contacts_v4(self, contact_db_path: str, db_key: str) -> int:
         """导入联系人(V4版本)"""
         logger.info(f"\n[DEBUG] 开始导入联系人")
@@ -285,52 +326,140 @@ class WeChatIngestService:
         try:
             contacts_data = contact_db.get_contacts()
             logger.debug(f"[DEBUG] 从数据库读取到 {len(contacts_data)} 个联系人")
-
-            # 批量插入联系人
-            inserted = 0
-            skipped = 0
-            for contact_dict in contacts_data:
-                username = contact_dict['username']
-
-                # 过滤群聊和公众号
-                if '@chatroom' in username or username.startswith('gh_'):
-                    skipped += 1
-                    continue
-
-                try:
-                    now = int(time.time())
-                    get_db().execute("""
-                        INSERT INTO contacts
-                        (username, nickname, remark, alias, phone, is_friend, created_at, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                        ON CONFLICT(username) DO UPDATE SET
-                            nickname = excluded.nickname,
-                            remark = excluded.remark,
-                            alias = excluded.alias,
-                            phone = excluded.phone,
-                            is_friend = excluded.is_friend,
-                            updated_at = excluded.updated_at,
-                            is_deleted = 0
-                    """, (
-                        username,
-                        contact_dict['nickname'],
-                        contact_dict['remark'],
-                        contact_dict['alias'],
-                        contact_dict['phone'],
-                        1 if contact_dict['is_friend'] else 0,
-                        now,
-                        now
-                    ))
-                    inserted += 1
-                except Exception as e:
-                    logger.error(f"[DEBUG] 插入联系人失败: {e}")
-                    pass  # 忽略单条错误
-
-            get_db().commit()
-            logger.info(f"[DEBUG] Contacts imported: {inserted}, filtered: {skipped}")
-            return inserted
+            store_stats = self._upsert_contacts(contacts_data)
+            logger.info(
+                "[DEBUG] Contacts imported: %s, filtered: %s, avatar updates: %s",
+                store_stats["processed"],
+                store_stats["filtered"],
+                store_stats["avatar_updates"],
+            )
+            return store_stats["processed"]
         finally:
             contact_db.close()
+
+    def _upsert_contacts(self, contacts_data: list[dict[str, Any]]) -> Dict[str, int]:
+        """Store contacts while preserving an existing avatar when the new one is blank."""
+        db = get_db()
+        now = int(time.time())
+        existing_avatars = self._fetch_existing_contact_avatars(
+            [contact.get("username", "") for contact in contacts_data]
+        )
+
+        processed = 0
+        filtered = 0
+        skipped_empty = 0
+        avatar_updates = 0
+
+        for contact_dict in contacts_data:
+            username = (contact_dict.get("username") or "").strip()
+            if not username:
+                filtered += 1
+                continue
+
+            # 过滤群聊和公众号
+            if "@chatroom" in username or username.startswith("gh_"):
+                filtered += 1
+                continue
+
+            avatar_url = (contact_dict.get("avatar_url") or "").strip()
+            if avatar_url:
+                if existing_avatars.get(username, "") != avatar_url:
+                    avatar_updates += 1
+            else:
+                skipped_empty += 1
+
+            try:
+                db.execute(
+                    """
+                    INSERT INTO contacts
+                    (username, nickname, remark, alias, phone, avatar_path, is_friend, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(username) DO UPDATE SET
+                        nickname = excluded.nickname,
+                        remark = excluded.remark,
+                        alias = excluded.alias,
+                        phone = excluded.phone,
+                        avatar_path = CASE
+                            WHEN excluded.avatar_path IS NOT NULL AND TRIM(excluded.avatar_path) != ''
+                                THEN excluded.avatar_path
+                            ELSE contacts.avatar_path
+                        END,
+                        is_friend = excluded.is_friend,
+                        updated_at = excluded.updated_at,
+                        is_deleted = 0
+                """,
+                    (
+                        username,
+                        contact_dict.get("nickname", ""),
+                        contact_dict.get("remark", ""),
+                        contact_dict.get("alias", ""),
+                        contact_dict.get("phone", ""),
+                        avatar_url or None,
+                        1 if contact_dict.get("is_friend") else 0,
+                        now,
+                        now,
+                    ),
+                )
+                processed += 1
+            except Exception as e:
+                logger.error(f"[DEBUG] 插入联系人失败: {e}")
+
+        db.commit()
+        return {
+            "scanned": len(contacts_data),
+            "processed": processed,
+            "filtered": filtered,
+            "skipped_empty": skipped_empty,
+            "avatar_updates": avatar_updates,
+        }
+
+    def _fetch_existing_contact_avatars(self, usernames: list[str]) -> dict[str, str]:
+        """Load current avatar paths once so we can report actual avatar updates."""
+        normalized_usernames = sorted({username.strip() for username in usernames if username and username.strip()})
+        if not normalized_usernames:
+            return {}
+
+        placeholders = ", ".join(["?"] * len(normalized_usernames))
+        cursor = get_db().execute(
+            f"""
+            SELECT username, COALESCE(avatar_path, '') AS avatar_path
+            FROM contacts
+            WHERE username IN ({placeholders})
+            """,
+            tuple(normalized_usernames),
+        )
+        return {
+            str(row["username"]): (row["avatar_path"] or "").strip()
+            for row in cursor.fetchall()
+        }
+
+    def _sync_conversation_avatar_metadata(self) -> int:
+        """Backfill conversation avatars from imported contact metadata."""
+        cursor = get_db().execute(
+            """
+            UPDATE conversations
+            SET avatar_path = (
+                SELECT ct.avatar_path
+                FROM contacts ct
+                WHERE ct.username = conversations.username
+            )
+            WHERE platform = 'wechat'
+              AND EXISTS (
+                    SELECT 1
+                    FROM contacts ct
+                    WHERE ct.username = conversations.username
+                      AND ct.avatar_path IS NOT NULL
+                      AND TRIM(ct.avatar_path) != ''
+                )
+              AND COALESCE(TRIM(conversations.avatar_path), '') != COALESCE(TRIM((
+                    SELECT ct.avatar_path
+                    FROM contacts ct
+                    WHERE ct.username = conversations.username
+                )), '')
+            """
+        )
+        get_db().commit()
+        return int(cursor.rowcount or 0)
 
     def _import_messages_v4(
         self,

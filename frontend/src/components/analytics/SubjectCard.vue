@@ -2,8 +2,7 @@
   <div class="subject-card">
     <div class="card">
       <div class="header">
-        <img v-if="subject?.avatar" :src="subject!.avatar" alt="avatar" />
-        <div v-else class="avatar-fallback">{{ subject?.name?.[0] || '?' }}</div>
+        <CtAvatar class="subject-avatar" :src="subject?.avatar" :name="subject?.name" :size="44" />
         <div class="title">
           <div class="name">{{ subject?.name || '未选择对象' }}</div>
           <div class="sub">对象信息</div>
@@ -22,6 +21,8 @@
 </template>
 
 <script setup lang="ts">
+import CtAvatar from '@/components/base/CtAvatar.vue'
+
 type SubjectStats = { msgCount: number; avgScore: number; maxDay?: string; minDay?: string }
 export type Subject = { id?: string | number; name: string; avatar?: string; stats?: SubjectStats }
 
@@ -47,18 +48,7 @@ defineProps<{ subject?: Subject; hasAnalysis?: boolean }>()
 }
 
 .header { display: flex; align-items: center; gap: var(--ct-space-md); }
-.header img { width: 44px; height: 44px; border-radius: 50%; object-fit: cover; }
-.avatar-fallback {
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  background: var(--ct-color-primary-light);
-  color: var(--ct-color-primary);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: var(--ct-font-bold);
-}
+.subject-avatar { flex-shrink: 0; }
 .title .name { font-size: var(--ct-text-base); font-weight: var(--ct-font-bold); color: var(--ct-text-primary); }
 .title .sub { color: var(--ct-text-secondary); font-size: var(--ct-text-xs); }
 .stats { margin-top: var(--ct-space-md); display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--ct-space-sm); }

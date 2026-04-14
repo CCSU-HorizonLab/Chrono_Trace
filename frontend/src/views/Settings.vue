@@ -107,6 +107,32 @@
         </div>
       </CtCard>
 
+      <CtCard title="🧰 杂项维护">
+        <div class="form">
+          <div class="hint-box info">
+            <p>💡 首次导入微信数据时，联系人头像会自动同步。</p>
+            <p style="margin-top: 8px;">这个入口只用于历史旧数据修复：重新扫描联系人库，把头像回填到已导入的联系人和会话，不会重新导入消息。</p>
+          </div>
+
+          <div class="maintenance-card">
+            <div class="maintenance-copy">
+              <div class="maintenance-title">补齐已导入联系人头像</div>
+              <div class="maintenance-desc">适用于早期导入时还没有头像字段的历史数据。</div>
+            </div>
+            <CtButton
+              :loading="avatarRefreshLoading"
+              :disabled="!form.wechat_db_key.trim() || avatarRefreshLoading"
+              @click.stop.prevent="refreshContactAvatars"
+            >
+              {{ avatarRefreshLoading ? '补齐中...' : '执行补齐' }}
+            </CtButton>
+          </div>
+
+          <div v-if="avatarRefreshMessage" class="maintenance-feedback success">{{ avatarRefreshMessage }}</div>
+          <div v-if="avatarRefreshError" class="maintenance-feedback error">{{ avatarRefreshError }}</div>
+        </div>
+      </CtCard>
+
       <!-- 计算设备设置 -->
       <CtCard title="⚡ 分析计算设备">
         <div class="form">
@@ -279,6 +305,9 @@ import { showDialog, showConfirm } from '@/utils/dialog'
 const loading = ref(false)
 const saving = ref(false)
 const scanning = ref(false)
+const avatarRefreshLoading = ref(false)
+const avatarRefreshMessage = ref('')
+const avatarRefreshError = ref('')
 const autoSaveTimer = ref<number | null>(null)
 const lastSaveTime = ref<string>('')
 
@@ -519,6 +548,50 @@ async function scanWeChatDirectory(wechatDir: string) {
   } catch (e) {
     console.error('扫描异常:', e)
     showDialog('扫描出错：' + (e as Error).message)
+  }
+}
+
+function getPreferredWechatPaths() {
+  if (!form.wechat_data_dir.trim() || !form.wechat_user_wxid.trim()) {
+    return undefined
+  }
+  return {
+    wechat_dir: form.wechat_data_dir.trim(),
+    current_user: form.wechat_user_wxid.trim(),
+  }
+}
+
+async function refreshContactAvatars() {
+  if (avatarRefreshLoading.value) return
+  if (!form.wechat_db_key.trim()) {
+    avatarRefreshError.value = '请先填写数据库密钥。'
+    avatarRefreshMessage.value = ''
+    return
+  }
+
+  avatarRefreshLoading.value = true
+  avatarRefreshMessage.value = ''
+  avatarRefreshError.value = ''
+
+  try {
+    await bridgeReady()
+    const res = await api.refresh_wechat_contact_avatars(
+      form.wechat_db_key.trim(),
+      getPreferredWechatPaths()
+    )
+
+    if (!res?.ok) {
+      avatarRefreshError.value = res?.error || '头像补齐失败。'
+      return
+    }
+
+    const stats = res.stats || {}
+    avatarRefreshMessage.value = `头像补齐完成：扫描 ${stats.scanned || 0}，联系人更新 ${stats.contact_updates || 0}，会话更新 ${stats.conversation_updates || 0}，空头像跳过 ${stats.skipped_empty || 0}。`
+  } catch (e) {
+    console.error('补齐联系人头像失败:', e)
+    avatarRefreshError.value = '头像补齐异常：' + ((e as Error).message || '未知错误')
+  } finally {
+    avatarRefreshLoading.value = false
   }
 }
 
@@ -834,6 +907,61 @@ onMounted(() => {
   color: #0056b3;
 }
 .hint-box p { margin: 0; font-size: 14px; line-height: 1.5; }
+
+.maintenance-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px;
+  border-radius: 14px;
+  border: 1px solid var(--ct-border-color);
+  background: var(--ct-bg-secondary);
+}
+
+.maintenance-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.maintenance-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ct-text-primary);
+}
+
+.maintenance-desc {
+  font-size: 13px;
+  color: var(--ct-text-secondary);
+  line-height: 1.5;
+}
+
+.maintenance-feedback {
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.maintenance-feedback.success {
+  background: rgba(16, 185, 129, 0.08);
+  border: 1px solid rgba(16, 185, 129, 0.2);
+  color: #0f8f63;
+}
+
+.maintenance-feedback.error {
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  color: #c24141;
+}
+
+@media (max-width: 768px) {
+  .maintenance-card {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
 
 /* Switch Toggle 组件 */
 .ct-switch {

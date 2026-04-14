@@ -54,7 +54,11 @@ class AnalysisService:
                         '未知联系人'
                     ) as name,
                     c.message_count,
-                    c.updated_at
+                    c.updated_at,
+                    COALESCE(
+                        NULLIF(TRIM(c.avatar_path), ''),
+                        NULLIF(TRIM(ct.avatar_path), '')
+                    ) as avatar
                 FROM conversations c
                 LEFT JOIN contacts ct ON c.username = ct.username
                 WHERE c.is_deleted = 0
@@ -69,7 +73,8 @@ class AnalysisService:
                     "username": row[1],
                     "name": row[3],  # 优先使用备注名
                     "message_count": row[4],
-                    "last_message_time": datetime.fromtimestamp(row[5]).strftime("%Y-%m-%d %H:%M")
+                    "last_message_time": datetime.fromtimestamp(row[5]).strftime("%Y-%m-%d %H:%M"),
+                    "avatar": row[6],
                 })
             
             logger.debug(f"[DEBUG] 查询到 {len(conversations)} 个联系人")
@@ -272,7 +277,10 @@ class AnalysisService:
                     NULLIF(TRIM(c.username), ''),
                     '未知联系人'
                 ) as name,
-                c.avatar_path
+                COALESCE(
+                    NULLIF(TRIM(c.avatar_path), ''),
+                    NULLIF(TRIM(ct.avatar_path), '')
+                ) as avatar
             FROM conversations c
             LEFT JOIN contacts ct ON c.username = ct.username
             WHERE c.id = ?

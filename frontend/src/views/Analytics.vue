@@ -5,17 +5,7 @@
     <div v-if="selectedConversationId" class="user-profile-header fade-in">
       <div class="profile-main">
         <div class="profile-avatar-wrap">
-          <div class="profile-avatar">
-            <template v-if="subject?.avatar">
-              <img :src="subject.avatar" alt="avatar" />
-            </template>
-            <template v-else>
-              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
-                <circle cx="12" cy="7" r="4"></circle>
-              </svg>
-            </template>
-          </div>
+          <CtAvatar class="profile-avatar" :src="headerAvatarSrc" :name="currentContactName" :size="48" />
         </div>
         <div class="profile-info">
           <div class="name-row">
@@ -519,8 +509,9 @@ import CtCard from '@/components/base/CtCard.vue'
 import CtButton from '@/components/base/CtButton.vue'
 import PersonaGallery from '@/components/persona/PersonaGallery.vue'
 import { showDialog, showConfirm } from '@/utils/dialog'
+import CtAvatar from '@/components/base/CtAvatar.vue'
 
-type Conversation = { id: number; name: string; username: string; message_count: number; last_message_time: string }
+type Conversation = { id: number; name: string; username: string; message_count: number; last_message_time: string; avatar?: string }
 type Session = { id: number; start_time: number; end_time: number; duration: number; message_count: number; initiator: string; messages: any[] }
 type TimeseriesPoint = {
     ts: string
@@ -583,7 +574,7 @@ export default {
     components: {
         FiltersBar, DateRangeFilter, SubjectCard, EmotionLineChart, WordCloud, ConversationTimeline,
         AffinityScoreCard, DimensionRadar, SubScoreBreakdown, WeightInfoTooltip,
-        PreferenceKeywordsDialog, RelationshipContextForm, CtCard, CtButton, PersonaGallery
+        PreferenceKeywordsDialog, RelationshipContextForm, CtCard, CtButton, PersonaGallery, CtAvatar
     },
     setup() {
         const currentTab = ref('affinity')
@@ -660,10 +651,22 @@ export default {
             ))
         })
         const hasConversations = computed(() => conversations.value.length > 0)
+        const currentConversation = computed(() => {
+            if (!selectedConversationId.value) return undefined
+            return conversations.value.find(c => c.id === selectedConversationId.value)
+        })
 
         const currentContactName = computed(() => {
-            if (!selectedConversationId.value) return '选择联系人'
-            return conversations.value.find(c => c.id === selectedConversationId.value)?.name || '选择联系人'
+            return currentConversation.value?.name || '选择联系人'
+        })
+        const headerAvatarSrc = computed(() => {
+            const currentId = selectedConversationId.value
+            const subjectId = subject.value?.id
+            const subjectMatchesSelection = currentId != null && subjectId != null && Number(subjectId) === Number(currentId)
+            if (subjectMatchesSelection && subject.value?.avatar) {
+                return subject.value.avatar
+            }
+            return currentConversation.value?.avatar || ''
         })
 
         const hasPreferenceKeywords = computed(() => {
@@ -1450,7 +1453,7 @@ export default {
             personaProfile, loadingPersonaProfile, personaProfileMeta,
             analysisResult, displayScore, showKeywordsDialog, showContextForm, isGlobalAnalyzing, isStopping, activeTimer, handleStopAnalysis, globalProgressPercent, globalProgressStep, gpuMode,
             hasConversations, hasFeatures, hasCachedAffinityAnalysis, featureStats, responseTimeStats, initiativeStats, wordCountsStats, activityCalendar,
-            responseTimeChart, activityCalendarChart, wordCountChart, stats, currentContactName, hasPreferenceKeywords, allDimensions, emotionalResonanceDisplaySubScores,
+            responseTimeChart, activityCalendarChart, wordCountChart, stats, currentContactName, headerAvatarSrc, hasPreferenceKeywords, allDimensions, emotionalResonanceDisplaySubScores,
             currentRangeLabel, hasContentAnalysis, circumference, strokeDashoffset, formatNumber, formatTime, getResponseTimeLabel, getMergedResponseTimeLabel, getResponseTimePercent, onConversationChange, onDatesChange, handleExport, handleStartGlobalAnalysis, handleContextSaved, handleKeywordsUpdated,
             getScoreColor, scrollToDetails, handlePreferenceDisabledClick, onWordSelect, loadAnalysis, loadSessions, handleActivityYearChange
         }
@@ -1685,6 +1688,12 @@ export default {
   flex-wrap: wrap;
 }
 
+.profile-avatar-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .profile-avatar {
   width: 48px;
   height: 48px;
@@ -1700,13 +1709,14 @@ export default {
 .profile-info {
   display: flex;
   flex-direction: column;
+  justify-content: center;
 }
 
 .name-row {
   display: flex;
   align-items: center;
   gap: var(--ct-space-md);
-  margin-bottom: 4px;
+  margin-bottom: 0;
   flex-wrap: wrap;
 }
 

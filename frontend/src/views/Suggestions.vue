@@ -101,9 +101,14 @@
           </div>
           <div class="sug-panel-bd">
             <div class="sug-profile-row">
-              <div class="sug-avatar" aria-hidden="true">{{ profileInitial }}</div>
+              <CtAvatar
+                class="sug-avatar"
+                :src="activeContact?.avatar"
+                :name="activeContactName"
+                :size="44"
+              />
               <div class="sug-profile-meta">
-                <span class="sug-profile-name">{{ profile.name || realtimeState.talkerName || '未选择' }}</span>
+                <span class="sug-profile-name">{{ activeContactName || '未选择' }}</span>
                 <div class="sug-tag-row" v-if="profile.personality_tags?.length">
                   <span v-for="t in profile.personality_tags" :key="t" class="sug-tag">{{ t }}</span>
                 </div>
@@ -399,6 +404,7 @@ import { ref, onMounted, onBeforeUnmount, computed, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { bridgeReady, api } from '@/api/bridge'
 import CtButton from '@/components/base/CtButton.vue'
+import CtAvatar from '@/components/base/CtAvatar.vue'
 import FiltersBar from '@/components/analytics/FiltersBar.vue'
 
 const router = useRouter()
@@ -442,6 +448,22 @@ function goToSettings() {
 const contacts = ref<any[]>([])
 const contactsLoading = ref(false)
 const selectedConversationId = ref<number | null>(null)
+const activeContact = computed(() => {
+  if (selectedConversationId.value) {
+    return contacts.value.find((contact: any) => contact.id === selectedConversationId.value) || null
+  }
+  if (!realtimeState.talkerName) {
+    return null
+  }
+  return contacts.value.find((contact: any) => contact.name === realtimeState.talkerName) || null
+})
+const activeContactName = computed(() => {
+  const profileName = (profile.value.name || '').trim()
+  if (profileName && profileName !== '对方昵称') {
+    return profileName
+  }
+  return realtimeState.talkerName || activeContact.value?.name || ''
+})
 
 async function loadContacts() {
   contactsLoading.value = true
@@ -728,7 +750,6 @@ const profile = ref<any>({
   name: '对方昵称',
   tags: [],
 })
-const profileInitial = computed(() => (profile.value.name ? profile.value.name[0] : 'N'))
 const profileLoading = ref(false)
 const profileBudgetLevel = ref('medium')
 const profileCustomBudget = ref(4000)
@@ -1260,11 +1281,8 @@ function getTriggerIcon(type: string): string {
 /* Profile Card */
 .sug-profile-row { display: flex; align-items: center; gap: var(--ct-space-md); margin-bottom: var(--ct-space-md); }
 .sug-avatar {
-  width: 44px; height: 44px; border-radius: 50%;
-  background: linear-gradient(135deg, var(--ct-color-primary-light), var(--ct-color-primary-muted));
-  display: flex; align-items: center; justify-content: center;
-  font-weight: 700; font-size: var(--ct-text-lg); color: var(--ct-color-primary);
-  flex-shrink: 0; border: 2px solid var(--ct-color-primary-muted);
+  flex-shrink: 0;
+  border: 2px solid var(--ct-color-primary-muted);
 }
 .sug-profile-meta { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .sug-profile-name {

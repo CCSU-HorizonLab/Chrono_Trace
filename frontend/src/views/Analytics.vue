@@ -616,6 +616,10 @@ export default {
         const activeTimer = ref<any>(null)
         const globalProgressPercent = ref(0)
         const globalProgressStep = ref('')
+        const isDownloadingModels = ref(false)
+        const modelDownloadProgress = ref(0)
+        const modelDownloadStep = ref('')
+        const modelDownloadTaskId = ref<string | null>(null)
         const analysisDeviceMode = ref<AnalysisDeviceMode>('auto')
         const gpuMode = ref<'gpu' | 'cpu'>('cpu')
 
@@ -1005,6 +1009,100 @@ export default {
             } catch (e) { console.error(e) } finally { loadingSessions.value = false }
         }
 
+        function buildModelStatusMessage(modelStatus: any): string {
+            const details = Array.isArray(modelStatus?.missing_details) ? modelStatus.missing_details : []
+            if (!details.length) {
+                if (modelStatus?.error_detail) return modelStatus.error_detail
+                if (modelStatus?.error) return String(modelStatus.error)
+                return '无法确认分析模型状态'
+            }
+            return details
+                .map((d: any) => `- ${d.model_name || d.model_key || '未知模型'}: ${d.issue || '模型不可用'}`)
+                .join('\n')
+        }
+
+        async function waitForModelDownload(taskId: string): Promise<boolean> {
+            modelDownloadTaskId.value = taskId
+            return new Promise((resolve, reject) => {
+                const timer = setInterval(async () => {
+                    try {
+                        const prog = await api.get_model_download_progress(taskId)
+                        if (!prog.ok) {
+                            clearInterval(timer)
+                            reject(new Error(prog.error_detail || prog.error || '模型下载失败'))
+                            return
+                        }
+
+                        modelDownloadProgress.value = Number(prog.overall_progress || 0)
+                        modelDownloadStep.value = prog.current_step || '正在下载模型...'
+                        globalProgressPercent.value = modelDownloadProgress.value
+                        globalProgressStep.value = `[模型下载] ${modelDownloadStep.value}`
+
+                        if (prog.status === 'completed') {
+                            clearInterval(timer)
+                            resolve(true)
+                        } else if (prog.status === 'failed') {
+                            clearInterval(timer)
+                            reject(new Error(prog.error_detail || prog.error || '模型下载失败'))
+                        }
+                    } catch (error: any) {
+                        clearInterval(timer)
+                        reject(error)
+                    }
+                }, 1000)
+            })
+        }
+
+        async function ensureAnalysisModelsReady(modelStatus: any): Promise<boolean> {
+            if (modelStatus?.ok && modelStatus?.analysis_available) return true
+
+            const detailLines = buildModelStatusMessage(modelStatus)
+            const details = Array.isArray(modelStatus?.missing_details) ? modelStatus.missing_details : []
+            const canAutoDownload = details.length > 0 && details.every((d: any) => d.can_auto_download !== false)
+
+            if (!canAutoDownload) {
+                await showDialog({
+                    title: '缺少分析模型',
+                    message:
+                        `以下模型不可用且无法自动下载:\n${detailLines}\n\n` +
+                        '请先安装 huggingface_hub 依赖并检查本地模型文件。'
+                })
+                return false
+            }
+
+            const doDownload = await showConfirm({
+                title: '缺少分析模型',
+                message:
+                    `检测到以下模型不可用:\n${detailLines}\n\n` +
+                    '是否自动下载缺失的模型？\n' +
+                    '（下载大小约 400MB，需要网络连接）'
+            })
+            if (!doDownload) {
+                return false
+            }
+
+            const downloadRes = await api.download_analysis_models()
+            if (!downloadRes.ok) {
+                throw new Error(downloadRes.error_detail || downloadRes.error || '无法启动模型下载')
+            }
+            if (!downloadRes.task_id) {
+                return true
+            }
+
+            isDownloadingModels.value = true
+            modelDownloadProgress.value = 0
+            modelDownloadStep.value = '正在准备下载模型...'
+            globalProgressPercent.value = 0
+            globalProgressStep.value = '[模型下载] 正在准备下载模型...'
+
+            try {
+                await waitForModelDownload(downloadRes.task_id)
+                return true
+            } finally {
+                isDownloadingModels.value = false
+            }
+        }
+
         const handleStartGlobalAnalysis = async () => {
             if (!selectedConversationId.value) return
             if (isGlobalAnalyzing.value) return
@@ -1021,22 +1119,21 @@ export default {
 
             try {
                 const modelStatus = await api.check_analysis_model_status()
-                if (!modelStatus.ok || !modelStatus.analysis_available) {
-                    await showDialog({
-                        title: '无法开始分析',
-                        message:
-                            '当前因网络原因无法使用分析功能，且本地没有可用的模型缓存。\n' +
-                            '请检查网络，或先在网络正常时完成一次模型缓存后再试。'
-                    })
+                const modelsReady = await ensureAnalysisModelsReady(modelStatus)
+                if (!modelsReady) {
                     analysisLaunchPending.value = false
                     return
                 }
             } catch (e) {
+                const modelStatusError = (e as any)?.message || '未知错误'
                 await showDialog({
                     title: '无法开始分析',
                     message:
-                        '当前无法确认分析模型状态，已终止本次分析。\n' +
-                        '请检查网络或稍后重试。'
+                        `分析模型状态检查失败: ${modelStatusError}\n\n` +
+                        '可能的原因:\n' +
+                        '- 本地模型文件缺失或损坏\n' +
+                        '- Python 依赖未正确安装\n' +
+                        '- 应用内部错误'
                 })
                 analysisLaunchPending.value = false
                 return
@@ -1240,7 +1337,16 @@ export default {
                 if (isCancelled) {
                     globalProgressStep.value = '分析已停止'
                 } else {
-                    globalProgressStep.value = '分析失败: ' + String(e)
+                    const errorMessage = e?.message || String(e)
+                    if (errorMessage.includes('模型') || errorMessage.includes('MODEL_NOT_FOUND')) {
+                        globalProgressStep.value = '分析失败: 缺少必要模型，请先通过自动下载获取'
+                    } else if (errorMessage.includes('依赖') || errorMessage.includes('DEPENDENCY_MISSING')) {
+                        globalProgressStep.value = '分析失败: 缺少 Python 依赖，请检查安装'
+                    } else if (errorMessage.includes('取消')) {
+                        globalProgressStep.value = '分析已停止'
+                    } else {
+                        globalProgressStep.value = `分析失败: ${errorMessage}`
+                    }
                 }
             } finally {
                 cancelCurrentAnalysis = null
@@ -1451,7 +1557,7 @@ export default {
         return {
             currentTab, conversations, selectedConversationId, dates, loading, loadingSessions, error, analysis, subject, sessions,
             personaProfile, loadingPersonaProfile, personaProfileMeta,
-            analysisResult, displayScore, showKeywordsDialog, showContextForm, isGlobalAnalyzing, isStopping, activeTimer, handleStopAnalysis, globalProgressPercent, globalProgressStep, gpuMode,
+            analysisResult, displayScore, showKeywordsDialog, showContextForm, isGlobalAnalyzing, isStopping, activeTimer, handleStopAnalysis, globalProgressPercent, globalProgressStep, isDownloadingModels, modelDownloadProgress, modelDownloadStep, modelDownloadTaskId, gpuMode,
             hasConversations, hasFeatures, hasCachedAffinityAnalysis, featureStats, responseTimeStats, initiativeStats, wordCountsStats, activityCalendar,
             responseTimeChart, activityCalendarChart, wordCountChart, stats, currentContactName, headerAvatarSrc, hasPreferenceKeywords, allDimensions, emotionalResonanceDisplaySubScores,
             currentRangeLabel, hasContentAnalysis, circumference, strokeDashoffset, formatNumber, formatTime, getResponseTimeLabel, getMergedResponseTimeLabel, getResponseTimePercent, onConversationChange, onDatesChange, handleExport, handleStartGlobalAnalysis, handleContextSaved, handleKeywordsUpdated,

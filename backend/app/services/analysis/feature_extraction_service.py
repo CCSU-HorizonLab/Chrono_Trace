@@ -121,6 +121,16 @@ class FeatureExtractionService:
                 "word_counts": word_counts
             }
 
+        except FileNotFoundError as e:
+            error_msg = f"分析所需模型缺失: {e}"
+            logger.error(f"[特征提取] {error_msg}")
+            self._update_task_status(task_id, -1, "failed", error_msg)
+            raise
+        except ImportError as e:
+            error_msg = f"缺少必要的 Python 依赖: {e}。请检查 requirements.txt 并重新安装。"
+            logger.error(f"[特征提取] {error_msg}")
+            self._update_task_status(task_id, -1, "failed", error_msg)
+            raise
         except Exception as e:
             if "取消" in str(e):
                 logger.info(f"[特征提取] 分析被用户取消 (conversation_id={conversation_id})")

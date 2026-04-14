@@ -3,6 +3,8 @@ import json
 import os
 import logging
 import importlib
+import threading
+import time
 from pathlib import Path
 from ..services.wechat.ingest_service import WeChatIngestService
 from ..services.wechat.path_finder import WeChatPathFinder
@@ -26,6 +28,8 @@ class Bridge:
         # 悬浮窗管理服务
         from ..services.realtime.floating_window_service import FloatingWindowService
         self._floating_service = FloatingWindowService()
+        self._model_download_status: dict[str, dict[str, Any]] = {}
+        self._model_download_lock = threading.Lock()
         self._webview_window = None  # 由 app_dev.py 注入
         self._analysis_cancel_event = None  # 用于取消好感度分析
 
@@ -51,6 +55,134 @@ class Bridge:
                 json.dump(self.settings, f, indent=2, ensure_ascii=False)
         except Exception as e:
             logger.error(f"保存设置失败: {e}")
+
+    def _update_model_download_status(self, task_id: str, **updates: Any) -> None:
+        with self._model_download_lock:
+            current = self._model_download_status.get(task_id, {}).copy()
+            current.update(updates)
+            self._model_download_status[task_id] = current
+
+    def _get_model_download_status(self, task_id: str) -> dict[str, Any]:
+        with self._model_download_lock:
+            status = self._model_download_status.get(task_id)
+        return status.copy() if status else {}
+
+    def _get_sentiment_model_manager(self):
+        from ..services.model_manager import ModelManager
+
+        local_model_dir = (
+            Path(__file__).parent.parent.parent / "data" / "models" / "sentiment_3class"
+        )
+        return ModelManager(
+            model_dir=str(local_model_dir),
+            repo_id="tingting11/chrono-trace-sentiment",
+        )
+
+    def _diagnose_embedding_model_status(self) -> dict[str, Any]:
+        diagnosis = {
+            "exists": False,
+            "has_config": False,
+            "has_weights": False,
+            "has_tokenizer": False,
+            "model_dir": None,
+            "repo_id": "shibing624/text2vec-base-chinese",
+            "version": None,
+            "issue": None,
+            "can_recover": True,
+        }
+        try:
+            from huggingface_hub import snapshot_download
+
+            local_path = snapshot_download(
+                "shibing624/text2vec-base-chinese",
+                local_files_only=True,
+            )
+            model_path = Path(local_path)
+            diagnosis["model_dir"] = str(model_path)
+            diagnosis["exists"] = model_path.exists()
+            diagnosis["has_config"] = (model_path / "config.json").exists()
+            diagnosis["has_weights"] = any(model_path.glob("*.safetensors")) or any(model_path.glob("*.bin"))
+            diagnosis["has_tokenizer"] = any(
+                (model_path / name).exists()
+                for name in (
+                    "tokenizer.json",
+                    "tokenizer_config.json",
+                    "vocab.txt",
+                    "vocab.json",
+                    "merges.txt",
+                    "special_tokens_map.json",
+                    "spiece.model",
+                )
+            )
+            if not diagnosis["has_config"]:
+                diagnosis["issue"] = f"嵌入模型缓存缺少 config.json: {model_path}"
+            elif not diagnosis["has_weights"]:
+                diagnosis["issue"] = f"嵌入模型缓存缺少权重文件(.safetensors/.bin): {model_path}"
+            elif not diagnosis["has_tokenizer"]:
+                diagnosis["issue"] = f"嵌入模型缓存缺少 tokenizer 文件: {model_path}"
+        except ImportError:
+            diagnosis["issue"] = "缺少 huggingface_hub 依赖，无法管理嵌入模型"
+            diagnosis["can_recover"] = False
+        except Exception as e:
+            diagnosis["issue"] = f"嵌入模型本地缓存不存在或不完整: {type(e).__name__}: {e}"
+        return diagnosis
+
+    def _download_embedding_model(self, progress_callback=None) -> dict[str, Any]:
+        old_endpoint = os.environ.get("HF_ENDPOINT")
+        try:
+            try:
+                from huggingface_hub import snapshot_download
+            except ImportError:
+                return {
+                    "success": False,
+                    "error": "缺少 huggingface_hub 依赖，无法下载嵌入模型",
+                    "error_code": "HF_NOT_INSTALLED",
+                }
+
+            if progress_callback:
+                progress_callback("正在准备下载文本向量模型...", 5.0)
+
+            sentiment_manager = self._get_sentiment_model_manager()
+            if sentiment_manager.mirror_endpoint:
+                os.environ["HF_ENDPOINT"] = sentiment_manager.mirror_endpoint
+
+            if progress_callback:
+                progress_callback("正在下载文本向量模型...", 35.0)
+
+            snapshot_download("shibing624/text2vec-base-chinese")
+
+            if progress_callback:
+                progress_callback("正在校验文本向量模型...", 90.0)
+
+            diagnosis = self._diagnose_embedding_model_status()
+            if diagnosis["issue"]:
+                return {
+                    "success": False,
+                    "error": diagnosis["issue"],
+                    "error_code": "MODEL_VALIDATION_FAILED",
+                }
+
+            if progress_callback:
+                progress_callback("文本向量模型下载完成", 100.0)
+
+            return {
+                "success": True,
+                "error": None,
+                "error_code": None,
+                "model_dir": diagnosis.get("model_dir"),
+            }
+        except Exception as e:
+            logger.error(f"[Bridge] 嵌入模型下载失败: {type(e).__name__}: {e}", exc_info=True)
+            return {
+                "success": False,
+                "error": f"{type(e).__name__}: {e}",
+                "error_code": "NETWORK_ERROR",
+            }
+        finally:
+            if old_endpoint is not None:
+                os.environ["HF_ENDPOINT"] = old_endpoint
+            elif "HF_ENDPOINT" in os.environ:
+                del os.environ["HF_ENDPOINT"]
 
     def ping(self) -> str:
         return "pong"
@@ -2201,6 +2333,249 @@ class Bridge:
     # ==================== 好感度分析相关 ====================
 
     # -- 关系上下文 --
+
+    def check_analysis_model_status(self) -> dict[str, Any]:
+        """Check whether analysis models are available locally with detailed diagnosis."""
+        try:
+            sentiment_manager = self._get_sentiment_model_manager()
+            sentiment_diagnosis = sentiment_manager.diagnose_model_status()
+            embedding_diagnosis = self._diagnose_embedding_model_status()
+
+            sentiment_model_ready = not sentiment_diagnosis["issue"]
+            embedding_model_ready = not embedding_diagnosis["issue"]
+
+            missing_models = []
+            missing_details = []
+
+            if not sentiment_model_ready:
+                missing_models.append("sentiment")
+                missing_details.append({
+                    "model_name": "情感分类模型",
+                    "model_key": "sentiment",
+                    "repo_id": sentiment_diagnosis.get("repo_id"),
+                    "issue": sentiment_diagnosis.get("issue") or "情感分类模型不可用",
+                    "can_auto_download": True,
+                })
+
+            if not embedding_model_ready:
+                missing_models.append("embedding")
+                missing_details.append({
+                    "model_name": "文本向量模型",
+                    "model_key": "embedding",
+                    "repo_id": embedding_diagnosis.get("repo_id"),
+                    "issue": embedding_diagnosis.get("issue") or "文本向量模型不可用",
+                    "can_auto_download": embedding_diagnosis.get("can_recover", True),
+                })
+
+            return {
+                "ok": True,
+                "analysis_available": sentiment_model_ready and embedding_model_ready,
+                "sentiment_model_ready": sentiment_model_ready,
+                "embedding_model_ready": embedding_model_ready,
+                "missing_models": missing_models,
+                "missing_details": missing_details,
+                "sentiment_diagnosis": sentiment_diagnosis,
+                "embedding_diagnosis": embedding_diagnosis,
+                "error": None,
+                "error_code": None,
+                "error_detail": None,
+            }
+        except Exception as e:
+            logger.error(f"[Bridge] 分析模型状态检查失败: {type(e).__name__}: {e}", exc_info=True)
+            return {
+                "ok": False,
+                "analysis_available": False,
+                "sentiment_model_ready": False,
+                "embedding_model_ready": False,
+                "missing_models": ["sentiment", "embedding"],
+                "missing_details": [],
+                "sentiment_diagnosis": {},
+                "embedding_diagnosis": {},
+                "error": str(e),
+                "error_code": "UNKNOWN_ERROR",
+                "error_detail": f"模型状态检查过程中发生异常: {type(e).__name__}: {e}",
+            }
+
+    def download_analysis_models(self) -> dict[str, Any]:
+        """Start downloading all missing analysis models in the background."""
+        try:
+            model_status = self.check_analysis_model_status()
+            if not model_status.get("ok"):
+                return {
+                    "ok": False,
+                    "error": model_status.get("error") or "模型状态检查失败",
+                    "error_code": model_status.get("error_code") or "UNKNOWN_ERROR",
+                    "error_detail": model_status.get("error_detail") or "无法启动模型下载",
+                }
+
+            models_to_download = model_status.get("missing_models", [])
+            if not models_to_download:
+                return {
+                    "ok": True,
+                    "task_id": None,
+                    "models_to_download": [],
+                    "status": "completed",
+                }
+
+            task_id = f"analysis_model_download_{int(time.time())}"
+            self._update_model_download_status(
+                task_id,
+                status="downloading",
+                overall_progress=0.0,
+                current_model=models_to_download[0],
+                current_step="等待开始下载...",
+                completed_models=[],
+                failed_models=[],
+                error=None,
+                error_code=None,
+                error_detail=None,
+                models_to_download=models_to_download,
+            )
+
+            def _run():
+                completed_models = []
+                failed_models = []
+                total_models = len(models_to_download)
+
+                try:
+                    for index, model_key in enumerate(models_to_download):
+                        base_progress = (index / total_models) * 100.0
+                        span = 100.0 / total_models
+
+                        def _progress(step: str, percent: float):
+                            overall = base_progress + span * (max(0.0, min(100.0, float(percent))) / 100.0)
+                            self._update_model_download_status(
+                                task_id,
+                                status="downloading",
+                                overall_progress=overall,
+                                current_model=model_key,
+                                current_step=step,
+                                completed_models=completed_models.copy(),
+                                failed_models=failed_models.copy(),
+                            )
+
+                        if model_key == "sentiment":
+                            result = self._get_sentiment_model_manager().download_model(progress_callback=_progress)
+                        else:
+                            result = self._download_embedding_model(progress_callback=_progress)
+
+                        if result.get("success"):
+                            completed_models.append(model_key)
+                            self._update_model_download_status(
+                                task_id,
+                                status="downloading",
+                                overall_progress=base_progress + span,
+                                current_model=model_key,
+                                current_step=f"{model_key} 模型下载完成",
+                                completed_models=completed_models.copy(),
+                                failed_models=failed_models.copy(),
+                            )
+                        else:
+                            failed_models.append(model_key)
+                            error = result.get("error") or f"{model_key} 模型下载失败"
+                            error_code = result.get("error_code") or "UNKNOWN_ERROR"
+                            self._update_model_download_status(
+                                task_id,
+                                status="failed",
+                                overall_progress=base_progress,
+                                current_model=model_key,
+                                current_step=f"{model_key} 模型下载失败",
+                                completed_models=completed_models.copy(),
+                                failed_models=failed_models.copy(),
+                                error=error,
+                                error_code=error_code,
+                                error_detail=error,
+                            )
+                            return
+
+                    self._update_model_download_status(
+                        task_id,
+                        status="completed",
+                        overall_progress=100.0,
+                        current_model=models_to_download[-1],
+                        current_step="缺失模型下载完成",
+                        completed_models=completed_models.copy(),
+                        failed_models=failed_models.copy(),
+                        error=None,
+                        error_code=None,
+                        error_detail=None,
+                    )
+                except Exception as e:
+                    logger.error(f"[Bridge] 模型下载任务失败: {type(e).__name__}: {e}", exc_info=True)
+                    current_status = self._get_model_download_status(task_id)
+                    self._update_model_download_status(
+                        task_id,
+                        status="failed",
+                        overall_progress=current_status.get("overall_progress", 0.0),
+                        current_model=current_status.get("current_model"),
+                        current_step="模型下载失败",
+                        completed_models=completed_models.copy(),
+                        failed_models=failed_models.copy(),
+                        error=str(e),
+                        error_code="UNKNOWN_ERROR",
+                        error_detail=f"{type(e).__name__}: {e}",
+                    )
+
+            threading.Thread(target=_run, name=f"AnalysisModelDownload-{task_id}", daemon=True).start()
+
+            return {
+                "ok": True,
+                "task_id": task_id,
+                "models_to_download": models_to_download,
+            }
+        except Exception as e:
+            logger.error(f"[Bridge] 启动模型下载失败: {type(e).__name__}: {e}", exc_info=True)
+            return {
+                "ok": False,
+                "error": str(e),
+                "error_code": "UNKNOWN_ERROR",
+                "error_detail": f"{type(e).__name__}: {e}",
+            }
+
+    def get_model_download_progress(self, task_id: str) -> dict[str, Any]:
+        """Query analysis model download progress."""
+        try:
+            status = self._get_model_download_status(task_id)
+            if not status:
+                return {
+                    "ok": False,
+                    "status": "not_found",
+                    "overall_progress": 0.0,
+                    "current_model": None,
+                    "current_step": "",
+                    "completed_models": [],
+                    "failed_models": [],
+                    "error": "下载任务不存在",
+                    "error_code": "TASK_NOT_FOUND",
+                    "error_detail": "未找到对应的模型下载任务",
+                }
+
+            return {
+                "ok": True,
+                "status": status.get("status", "downloading"),
+                "overall_progress": status.get("overall_progress", 0.0),
+                "current_model": status.get("current_model"),
+                "current_step": status.get("current_step", ""),
+                "completed_models": status.get("completed_models", []),
+                "failed_models": status.get("failed_models", []),
+                "error": status.get("error"),
+                "error_code": status.get("error_code"),
+                "error_detail": status.get("error_detail"),
+            }
+        except Exception as e:
+            logger.error(f"[Bridge] 获取模型下载进度失败: {type(e).__name__}: {e}", exc_info=True)
+            return {
+                "ok": False,
+                "status": "failed",
+                "overall_progress": 0.0,
+                "current_model": None,
+                "current_step": "",
+                "completed_models": [],
+                "failed_models": [],
+                "error": str(e),
+                "error_code": "UNKNOWN_ERROR",
+                "error_detail": f"{type(e).__name__}: {e}",
+            }
 
     def get_relationship_context(self, conversation_id: int) -> dict[str, Any]:
         """获取会话的关系上下文信息"""

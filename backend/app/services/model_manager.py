@@ -9,7 +9,8 @@ import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, Optional
+from uuid import uuid4
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,8 @@ class ModelManager:
         self._max_retry_attempts = 3
         self._retry_delay_seconds = 2
         self._request_timeout_seconds = 15
+        self._download_status: Dict[str, Dict[str, Any]] = {}
+        self._download_lock = threading.Lock()
 
     def _run_with_retries(self, operation_name: str, func, timeout_seconds: Optional[int] = None):
         """Run a remote operation with limited retries and fall back to local models on failure."""
@@ -60,20 +63,57 @@ class ModelManager:
             if attempt < self._max_retry_attempts:
                 time.sleep(self._retry_delay_seconds)
 
-        logger.warning(f"[模型管理] {operation_name} 连续失败，回退到本地现有模型")
+        logger.warning(f"[模型管理] {operation_name} 连续失败，回退到本地已有模型")
         return None
+
+    def diagnose_model_status(self) -> Dict[str, Any]:
+        """Return a detailed diagnosis of the local model directory."""
+        config_file = self.model_dir / "config.json"
+        tokenizer_candidates = (
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "vocab.txt",
+            "vocab.json",
+            "merges.txt",
+            "special_tokens_map.json",
+            "spiece.model",
+        )
+
+        exists = self.model_dir.exists()
+        has_config = config_file.exists()
+        has_weights = False
+        has_tokenizer = False
+        if exists:
+            has_weights = any(self.model_dir.glob("*.safetensors")) or any(self.model_dir.glob("*.bin"))
+            has_tokenizer = any((self.model_dir / name).exists() for name in tokenizer_candidates)
+
+        issue = None
+        if not exists:
+            issue = f"模型目录不存在: {self.model_dir}"
+        elif not has_config:
+            issue = f"模型目录缺少 config.json: {self.model_dir}"
+        elif not has_weights:
+            issue = f"模型目录缺少权重文件(.safetensors/.bin): {self.model_dir}"
+        elif not has_tokenizer:
+            issue = f"模型目录缺少 tokenizer 文件: {self.model_dir}"
+
+        return {
+            "exists": exists,
+            "has_config": has_config,
+            "has_weights": has_weights,
+            "has_tokenizer": has_tokenizer,
+            "model_dir": str(self.model_dir),
+            "repo_id": self.repo_id,
+            "version": self.get_local_version(),
+            "issue": issue,
+            "can_recover": bool(issue),
+        }
 
     def ensure_model_exists(self) -> bool:
         """Return whether the local model directory is present and usable."""
-        config_file = self.model_dir / "config.json"
-        if not self.model_dir.exists() or not config_file.exists():
-            logger.warning(f"[模型管理] 本地模型不存在: {self.model_dir}")
-            logger.warning("[模型管理] 请先运行训练脚本或手动放置模型文件")
-            return False
-
-        has_weights = any(self.model_dir.glob("*.safetensors")) or any(self.model_dir.glob("*.bin"))
-        if not has_weights:
-            logger.warning(f"[模型管理] 本地模型目录缺少权重文件: {self.model_dir}")
+        diagnosis = self.diagnose_model_status()
+        if diagnosis["issue"]:
+            logger.warning(f"[模型管理] 本地模型不可用: {diagnosis['issue']}")
             return False
 
         logger.debug(f"[模型管理] 本地模型可用: {self.model_dir}")
@@ -108,6 +148,207 @@ class ModelManager:
             logger.debug(f"[模型管理] 版本信息已保存: {commit_sha[:8]}...")
         except Exception as e:
             logger.error(f"[模型管理] 保存版本文件失败: {e}")
+
+    def _set_download_status(self, task_id: str, **updates: Any):
+        with self._download_lock:
+            current = self._download_status.get(task_id, {}).copy()
+            current.update(updates)
+            self._download_status[task_id] = current
+
+    def download_model(self, progress_callback=None) -> Dict[str, Any]:
+        """
+        Download the model to self.model_dir for first-time install or repair.
+
+        Args:
+            progress_callback: Optional callback receiving (step: str, percent: float)
+        """
+        temp_dir = self.model_dir.parent / f"{self.model_dir.name}_download_temp"
+        backup_dir = self.model_dir.parent / f"{self.model_dir.name}_download_backup"
+        old_endpoint = os.environ.get("HF_ENDPOINT")
+
+        try:
+            try:
+                from huggingface_hub import model_info, snapshot_download
+            except ImportError:
+                return {
+                    "success": False,
+                    "model_dir": str(self.model_dir),
+                    "error": "缺少 huggingface_hub 依赖，无法下载模型",
+                    "error_code": "HF_NOT_INSTALLED",
+                }
+
+            if self.mirror_endpoint:
+                os.environ["HF_ENDPOINT"] = self.mirror_endpoint
+
+            if progress_callback:
+                progress_callback("正在准备模型下载...", 5.0)
+
+            if temp_dir.exists():
+                shutil.rmtree(temp_dir, ignore_errors=True)
+
+            remote_sha = None
+            if progress_callback:
+                progress_callback("正在获取模型版本信息...", 10.0)
+
+            info = self._run_with_retries(
+                "获取模型版本信息",
+                lambda: model_info(self.repo_id),
+            )
+            if info is not None:
+                remote_sha = getattr(info, "sha", None)
+
+            if progress_callback:
+                progress_callback("正在下载模型文件...", 30.0)
+
+            download_result = self._run_with_retries(
+                "下载模型",
+                lambda: snapshot_download(
+                    self.repo_id,
+                    local_dir=str(temp_dir),
+                    local_dir_use_symlinks=False,
+                ),
+                timeout_seconds=60,
+            )
+            if download_result is None:
+                if temp_dir.exists():
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+                return {
+                    "success": False,
+                    "model_dir": str(self.model_dir),
+                    "error": f"模型下载失败: {self.repo_id}",
+                    "error_code": "NETWORK_ERROR",
+                }
+
+            if progress_callback:
+                progress_callback("正在校验模型文件...", 80.0)
+
+            downloaded_manager = ModelManager(
+                model_dir=str(temp_dir),
+                repo_id=self.repo_id,
+                mirror_endpoint=self.mirror_endpoint,
+            )
+            downloaded_diagnosis = downloaded_manager.diagnose_model_status()
+            if downloaded_diagnosis["issue"]:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                return {
+                    "success": False,
+                    "model_dir": str(self.model_dir),
+                    "error": downloaded_diagnosis["issue"],
+                    "error_code": "MODEL_VALIDATION_FAILED",
+                }
+
+            if progress_callback:
+                progress_callback("正在替换本地模型...", 90.0)
+
+            if backup_dir.exists():
+                shutil.rmtree(backup_dir, ignore_errors=True)
+            if self.model_dir.exists():
+                shutil.move(str(self.model_dir), str(backup_dir))
+
+            shutil.move(str(temp_dir), str(self.model_dir))
+            if remote_sha:
+                self._save_local_version(remote_sha)
+
+            final_diagnosis = self.diagnose_model_status()
+            if final_diagnosis["issue"]:
+                if self.model_dir.exists():
+                    shutil.rmtree(self.model_dir, ignore_errors=True)
+                if backup_dir.exists():
+                    shutil.move(str(backup_dir), str(self.model_dir))
+                return {
+                    "success": False,
+                    "model_dir": str(self.model_dir),
+                    "error": final_diagnosis["issue"],
+                    "error_code": "MODEL_VALIDATION_FAILED",
+                }
+
+            if backup_dir.exists():
+                shutil.rmtree(backup_dir, ignore_errors=True)
+
+            if progress_callback:
+                progress_callback("模型下载完成", 100.0)
+
+            return {
+                "success": True,
+                "model_dir": str(self.model_dir),
+                "error": None,
+                "error_code": None,
+                "version": remote_sha,
+            }
+        except Exception as e:
+            logger.error(f"[模型管理] 模型下载失败: {type(e).__name__}: {e}", exc_info=True)
+            return {
+                "success": False,
+                "model_dir": str(self.model_dir),
+                "error": f"{type(e).__name__}: {e}",
+                "error_code": "UNKNOWN_ERROR",
+            }
+        finally:
+            if temp_dir.exists():
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            if old_endpoint is not None:
+                os.environ["HF_ENDPOINT"] = old_endpoint
+            elif "HF_ENDPOINT" in os.environ and self.mirror_endpoint:
+                del os.environ["HF_ENDPOINT"]
+
+    def download_model_async(self) -> str:
+        """Start a background download task and return its task id."""
+        task_id = f"model_download_{int(time.time())}_{uuid4().hex[:8]}"
+        self._set_download_status(
+            task_id,
+            status="downloading",
+            progress=0.0,
+            step="等待开始下载...",
+            error=None,
+            error_code=None,
+        )
+
+        def _progress(step: str, percent: float):
+            self._set_download_status(
+                task_id,
+                status="downloading",
+                progress=max(0.0, min(100.0, float(percent))),
+                step=step,
+            )
+
+        def _run():
+            result = self.download_model(progress_callback=_progress)
+            if result.get("success"):
+                self._set_download_status(
+                    task_id,
+                    status="completed",
+                    progress=100.0,
+                    step="模型下载完成",
+                    error=None,
+                    error_code=None,
+                )
+            else:
+                current_progress = self.get_download_progress(task_id).get("progress", 0.0)
+                self._set_download_status(
+                    task_id,
+                    status="failed",
+                    progress=current_progress,
+                    step="模型下载失败",
+                    error=result.get("error"),
+                    error_code=result.get("error_code"),
+                )
+
+        threading.Thread(target=_run, name=f"ModelDownloader-{task_id}", daemon=True).start()
+        return task_id
+
+    def get_download_progress(self, task_id: str) -> Dict[str, Any]:
+        """Return the current status for a background download task."""
+        with self._download_lock:
+            progress = self._download_status.get(task_id)
+        if progress is None:
+            return {
+                "status": "not_found",
+                "progress": 0.0,
+                "step": "",
+                "error": "下载任务不存在",
+                "error_code": "TASK_NOT_FOUND",
+            }
+        return progress.copy()
 
     def check_and_update_async(self):
         """Check for remote updates in the background without blocking startup."""
@@ -149,6 +390,10 @@ class ModelManager:
             os.environ["HF_ENDPOINT"] = self.mirror_endpoint
 
         try:
+            if not self.ensure_model_exists():
+                logger.info("[模型管理] 本地模型缺失或损坏，跳过后台自动更新，等待用户手动触发下载/修复")
+                return
+
             logger.debug(f"[模型管理] 正在检查云端更新: {self.repo_id}")
             info = self._run_with_retries(
                 "检查云端更新",
@@ -164,16 +409,15 @@ class ModelManager:
 
             local_sha = self.get_local_version()
             if local_sha == remote_sha:
-                logger.debug(f"[模型管理] 模型已是最新版本: {remote_sha[:8]}...")
+                logger.debug(f"[模型管理] 模型已经是最新版本: {remote_sha[:8]}...")
                 return
 
             if local_sha:
                 logger.info(f"[模型管理] 发现新版本: {local_sha[:8]}... -> {remote_sha[:8]}...")
             else:
                 logger.info(f"[模型管理] 首次记录版本: {remote_sha[:8]}...")
-                if self.ensure_model_exists():
-                    self._save_local_version(remote_sha)
-                    return
+                self._save_local_version(remote_sha)
+                return
 
             temp_dir = self.model_dir.parent / f"{self.model_dir.name}_update_temp"
             logger.info("[模型管理] 正在下载模型更新...")
@@ -192,9 +436,13 @@ class ModelManager:
                     shutil.rmtree(temp_dir, ignore_errors=True)
                 return
 
-            temp_config = temp_dir / "config.json"
-            if not temp_config.exists():
-                logger.error("[模型管理] 下载的模型缺少 config.json，放弃更新")
+            temp_manager = ModelManager(
+                model_dir=str(temp_dir),
+                repo_id=self.repo_id,
+                mirror_endpoint=self.mirror_endpoint,
+            )
+            if temp_manager.diagnose_model_status()["issue"]:
+                logger.error("[模型管理] 下载的模型校验失败，放弃更新")
                 shutil.rmtree(temp_dir, ignore_errors=True)
                 return
 
@@ -207,7 +455,7 @@ class ModelManager:
 
                 shutil.move(str(temp_dir), str(self.model_dir))
                 self._save_local_version(remote_sha)
-                logger.info(f"[模型管理] 模型已更新至 {remote_sha[:8]}...，下次启动生效")
+                logger.info(f"[模型管理] 模型已更新至 {remote_sha[:8]}...")
 
                 if backup_dir.exists():
                     shutil.rmtree(backup_dir, ignore_errors=True)

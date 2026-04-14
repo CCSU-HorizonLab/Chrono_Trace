@@ -142,6 +142,13 @@ class SentimentService:
 
         local_model_path = self._resolve_local_embedding_model_path()
         if self._embedding_model is None and not local_model_path:
+            logger.error(
+                "[情感服务] 本地未找到 embedding 模型 "
+                "(shibing624/text2vec-base-chinese) 的缓存。"
+                "请先通过“历史记录分析”页面的自动下载功能获取模型，"
+                "或手动运行: python -c \"from huggingface_hub import snapshot_download; "
+                "snapshot_download('shibing624/text2vec-base-chinese')\""
+            )
             logger.error("[情感服务] 本地未找到 embedding 模型缓存，跳过运行时联网加载")
             self._embedding_load_failed = True
             return

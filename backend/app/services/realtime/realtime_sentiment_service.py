@@ -150,6 +150,11 @@ class RealtimeSentimentService:
                 logger.debug("[实时情感分析] 正在加载情感分析模型...")
                 if not self._model_manager.ensure_model_exists():
                     raise FileNotFoundError(
+                        f"情感分类模型不存在: {self._model_manager.model_dir}\n"
+                        f"模型仓库: {self._model_manager.repo_id}\n"
+                        "请先通过“历史记录分析”页面的自动下载功能获取模型。"
+                    )
+                    raise FileNotFoundError(
                         f"本地模型不存在: {self._model_manager.model_dir}"
                     )
 
@@ -184,6 +189,12 @@ class RealtimeSentimentService:
                 logger.warning("[实时情感分析] transformers 未安装")
                 raise
             except Exception as exc:
+                logger.error(
+                    f"[实时情感分析] 模型加载失败: {type(exc).__name__}: {exc}\n"
+                    f"  模型路径: {self._model_manager.model_dir}\n"
+                    f"  模型仓库: {self._model_manager.repo_id}\n"
+                    "  可能原因: 模型文件不完整或已损坏，建议重新下载。"
+                )
                 logger.error(f"[实时情感分析] 模型加载失败: {exc}")
                 raise
 

@@ -78,6 +78,8 @@ type PyWebViewApi = {
   start_gpu_install: () => Promise<any>
   get_gpu_install_progress: () => Promise<any>
   check_analysis_model_status: () => Promise<any>
+  download_analysis_models: () => Promise<any>
+  get_model_download_progress: (task_id: string) => Promise<any>
   get_affinity_progress: (task_id: string) => Promise<any>
   // 会话线程归档与继承
   get_latest_thread: (display_name: string) => Promise<any>

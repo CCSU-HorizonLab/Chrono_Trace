@@ -62,6 +62,7 @@ def setup_logging(level=logging.INFO, console_only=False):
     logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
     logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
     logging.getLogger("huggingface_hub.utils._http").setLevel(logging.ERROR)
+    logging.getLogger("huggingface_hub.file_download").setLevel(logging.ERROR)
     logging.getLogger("filelock").setLevel(logging.WARNING)
     logging.getLogger("jieba").setLevel(logging.ERROR)
     logging.getLogger("urllib3").setLevel(logging.WARNING)
@@ -69,6 +70,7 @@ def setup_logging(level=logging.INFO, console_only=False):
     # Hugging Face 彻底静默控制台输出的环境变量预设（可选的保险保障）
     os.environ["TRANSFORMERS_VERBOSITY"] = "error"
     os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
+    os.environ["HF_HUB_DISABLE_XET"] = "1"
 
     return root_logger
 

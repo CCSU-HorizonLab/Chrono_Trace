@@ -19,10 +19,10 @@
       </div>
       
       <div class="header-actions-group">
-        <CtButton variant="ghost" @click="showContextForm = true" :disabled="isGlobalAnalyzing">关系信息</CtButton>
-        <CtButton variant="ghost" @click="showKeywordsDialog = true" :disabled="isGlobalAnalyzing">配置喜好</CtButton>
-        <CtButton variant="primary" @click="handleStartGlobalAnalysis" :loading="isGlobalAnalyzing && !isStopping" class="btn-full-analysis">
-          {{ isGlobalAnalyzing ? "分析中..." : (hasCachedAffinityAnalysis ? "重新全面分析" : "开始全面分析") }}
+        <CtButton variant="ghost" @click="showContextForm = true" :disabled="isGlobalAnalyzing || isDownloadingModels">关系信息</CtButton>
+        <CtButton variant="ghost" @click="showKeywordsDialog = true" :disabled="isGlobalAnalyzing || isDownloadingModels">配置喜好</CtButton>
+        <CtButton variant="primary" @click="handleStartGlobalAnalysis" :loading="(isGlobalAnalyzing && !isStopping) || isDownloadingModels" :disabled="isDownloadingModels" class="btn-full-analysis">
+          {{ isDownloadingModels ? "下载模型中..." : (isGlobalAnalyzing ? "分析中..." : (hasCachedAffinityAnalysis ? "重新全面分析" : "开始全面分析")) }}
         </CtButton>
         <CtButton v-if="isGlobalAnalyzing" variant="danger" @click="handleStopAnalysis" :loading="isStopping" class="btn-stop-analysis" style="margin-left: 8px;">
           停止
@@ -71,12 +71,13 @@
   </div>
 
   <!-- Global Progress -->
-  <div v-if="isGlobalAnalyzing" class="extraction-progress">
+  <div v-if="isGlobalAnalyzing || isDownloadingModels" class="extraction-progress">
     <div class="progress-bar">
       <div class="progress-fill" :style="{ width: `${globalProgressPercent}%` }"></div>
     </div>
     <div class="progress-text">
-      <span v-if="gpuMode === 'gpu'" class="gpu-badge">GPU 加速</span>
+      <span v-if="isDownloadingModels" class="cpu-badge">模型下载</span>
+      <span v-else-if="gpuMode === 'gpu'" class="gpu-badge">GPU 加速</span>
       <span v-else class="cpu-badge">CPU 模式</span>
       {{ globalProgressPercent.toFixed(1) }}% - {{ globalProgressStep }}
     </div>
@@ -98,21 +99,21 @@
 
   <!-- TAB 1: Affinity -->
   <div v-show="currentTab === 'affinity' && selectedConversationId" class="tab-content fade-in">
-    <div v-if="!analysisResult && !isGlobalAnalyzing" class="empty-state">
+    <div v-if="!analysisResult && !isGlobalAnalyzing && !isDownloadingModels" class="empty-state">
       <div class="empty-icon">📊</div>
       <p>请点击"开始全面分析"探索你们的亲密关系维度。</p>
       <p class="empty-hint">💡 首次分析需要1-2分钟进行数据特征提取和模型推理,请耐心等待</p>
     </div>
 
     <!-- Analyzing State -->
-    <div v-if="isGlobalAnalyzing" class="empty-state">
+    <div v-if="isGlobalAnalyzing || isDownloadingModels" class="empty-state">
       <div class="empty-icon spinning">⏳</div>
-      <p>正在分析中，请耐心等待...</p>
-      <p class="empty-hint">💡 我们正在处理特征提取和模型推理</p>
+      <p>{{ isDownloadingModels ? '正在下载分析模型，请耐心等待...' : '正在分析中，请耐心等待...' }}</p>
+      <p class="empty-hint">{{ isDownloadingModels ? '💡 模型下载完成后会自动继续分析流程' : '💡 我们正在处理特征提取和模型推理' }}</p>
     </div>
 
     <!-- Affinity Dashboard Two-Col Layout -->
-    <div v-if="analysisResult && !isGlobalAnalyzing" class="ct-grid-1-1 affinity-dashboard">
+    <div v-if="analysisResult && !isGlobalAnalyzing && !isDownloadingModels" class="ct-grid-1-1 affinity-dashboard">
       <!-- Left Column: Overview & Cards -->
       <div class="col-main">
         <div class="summary-row">
@@ -202,20 +203,20 @@
 
   <!-- TAB 2: Features -->
   <div v-show="currentTab === 'features' && selectedConversationId" class="tab-content fade-in">
-    <div v-if="!hasFeatures && !isGlobalAnalyzing" class="empty-state">
+    <div v-if="!hasFeatures && !isGlobalAnalyzing && !isDownloadingModels" class="empty-state">
       <div class="empty-icon">📈</div>
       <p>点击"开始全面分析"获取深度互动特征分析。</p>
       <p class="empty-hint">💡 互动特征包含：回响响应分布、主动性分析、话语权比例等客观指标</p>
     </div>
 
     <!-- Analyzing State -->
-    <div v-if="isGlobalAnalyzing" class="empty-state">
+    <div v-if="isGlobalAnalyzing || isDownloadingModels" class="empty-state">
       <div class="empty-icon spinning">⏳</div>
-      <p>正在分析中，请耐心等待...</p>
-      <p class="empty-hint">💡 我们正在处理特征提取和模型推理</p>
+      <p>{{ isDownloadingModels ? '正在下载分析模型，请耐心等待...' : '正在分析中，请耐心等待...' }}</p>
+      <p class="empty-hint">{{ isDownloadingModels ? '💡 模型下载完成后会自动继续分析流程' : '💡 我们正在处理特征提取和模型推理' }}</p>
     </div>
 
-    <div v-if="hasFeatures && !isGlobalAnalyzing" class="features-layout">
+    <div v-if="hasFeatures && !isGlobalAnalyzing && !isDownloadingModels" class="features-layout">
       <!-- Row 1: 4 small stat cards -->
       <div class="features-row-1">
         <CtCard class="feature-stat-card">

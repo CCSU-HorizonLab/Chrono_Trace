@@ -21,6 +21,14 @@
 
       <!-- 右侧用户区 -->
       <div class="topbar-user">
+        <label v-if="wechatAccounts.length" class="account-switcher">
+          <span class="account-switcher-label">账号</span>
+          <select :value="activeAccountWxid" class="account-switcher-select" @change="handleAccountChange">
+            <option v-for="account in wechatAccounts" :key="account.wxid" :value="account.wxid">
+              {{ account.label || account.wxid }}
+            </option>
+          </select>
+        </label>
         <CtAvatar
           class="user-avatar"
           :src="currentUserProfile.avatar"
@@ -40,7 +48,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { bridgeReady, api } from '@/api/bridge'
 import CtAvatar from '@/components/base/CtAvatar.vue'
@@ -54,6 +62,20 @@ const currentUserProfile = reactive({
   name: '我',
   avatar: '',
 })
+const wechatAccounts = ref<any[]>([])
+const activeAccountWxid = ref('')
+
+async function loadWechatAccounts() {
+  try {
+    await bridgeReady()
+    const result = await api.get_wechat_accounts()
+    if (!result?.ok) return
+    wechatAccounts.value = result.accounts || []
+    activeAccountWxid.value = result.active_account_wxid || ''
+  } catch (error) {
+    console.error('[App] 加载微信账号列表失败:', error)
+  }
+}
 
 async function loadCurrentUserProfile() {
   try {
@@ -75,18 +97,38 @@ async function loadCurrentUserProfile() {
   }
 }
 
+async function handleAccountChange(event: Event) {
+  const target = event.target as HTMLSelectElement | null
+  const wxid = target?.value || ''
+  if (!wxid || wxid === activeAccountWxid.value) return
+
+  try {
+    await bridgeReady()
+    const result = await api.set_active_wechat_account(wxid)
+    if (!result?.ok) return
+    activeAccountWxid.value = result.active_account_wxid || wxid
+    await Promise.all([loadWechatAccounts(), loadCurrentUserProfile()])
+    window.dispatchEvent(new CustomEvent('chrono:wechat-account-changed', { detail: { wxid: activeAccountWxid.value } }))
+    window.dispatchEvent(new CustomEvent('chrono:user-avatar-refresh'))
+  } catch (error) {
+    console.error('[App] 切换微信账号失败:', error)
+  }
+}
+
 function handleProfileRefresh() {
   loadCurrentUserProfile()
 }
 
 watch(() => route.fullPath, () => {
   if (!isFloatingMode.value) {
+    loadWechatAccounts()
     loadCurrentUserProfile()
   }
 }, { immediate: true })
 
 onMounted(() => {
   window.addEventListener('chrono:user-avatar-refresh', handleProfileRefresh)
+  loadWechatAccounts()
 })
 
 onUnmounted(() => {
@@ -195,6 +237,37 @@ onUnmounted(() => {
   justify-content: flex-end;
   gap: var(--ct-space-md);
   width: 300px;
+}
+
+.account-switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.account-switcher-label {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.8);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.account-switcher-select {
+  min-width: 120px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.account-switcher-select option {
+  color: #111827;
 }
 
 .user-avatar {

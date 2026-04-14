@@ -1,4 +1,5 @@
 """微信V4数据导入服务 (仅支持4.0+版本)"""
+import json
 import os
 import time
 import logging
@@ -98,12 +99,14 @@ class WeChatIngestService:
             return {
                 "wechat_dir": wechat_dir,
                 "current_user": wxid,
+                "account_wxid": str(custom_paths.get("account_wxid") or wxid),
                 "databases": databases
             }
 
         paths = WeChatPathFinder.find_all_wechat_dbs()
         if not paths:
             raise Exception("WeChat database path not found")
+        paths["account_wxid"] = str(paths.get("account_wxid") or paths.get("current_user") or "")
         return paths
 
     def build_file_size_snapshot(self, custom_paths: Optional[Dict] = None) -> Dict[str, Any]:
@@ -145,6 +148,7 @@ class WeChatIngestService:
         return {
             "wechat_dir": paths.get("wechat_dir"),
             "current_user": paths.get("current_user"),
+            "account_wxid": paths.get("account_wxid") or paths.get("current_user"),
             "files": snapshot_files,
             "total_size": sum(item["size"] for item in snapshot_files),
             "captured_at": int(time.time())
@@ -194,8 +198,8 @@ class WeChatIngestService:
             "skipped": 0
         }
 
-        # 创建导入记录
-        import_id = self._create_import_record()
+        import_id = None
+        account_wxid = ""
 
         try:
             # 1. 获取数据库路径
@@ -207,7 +211,9 @@ class WeChatIngestService:
 
             paths = self.resolve_wechat_paths(custom_paths)
             wxid = paths["current_user"]
+            account_wxid = str(paths.get("account_wxid") or wxid)
             databases = paths["databases"]
+            import_id = self._create_import_record(account_wxid)
 
             logger.debug(f"[DEBUG] wxid: {wxid}")
             logger.debug(f"[DEBUG] databases: {databases}")
@@ -222,7 +228,8 @@ class WeChatIngestService:
 
                 contact_count = self._import_contacts_v4(
                     databases["contact"],
-                    db_key
+                    db_key,
+                    account_wxid,
                 )
                 stats["contacts"] = contact_count
                 imported_contacts = True
@@ -238,6 +245,7 @@ class WeChatIngestService:
                     databases["message"],
                     db_key,
                     wxid,
+                    account_wxid,
                     limit,
                     progress_callback
                 )
@@ -248,7 +256,7 @@ class WeChatIngestService:
                 logger.debug(f"[DEBUG] 消息导入结果: {message_stats}")
 
             if imported_contacts:
-                synced_conversations = self._sync_conversation_avatar_metadata()
+                synced_conversations = self._sync_conversation_avatar_metadata(account_wxid)
                 logger.debug(f"[DEBUG] 已同步 {synced_conversations} 个会话头像")
 
             logger.debug(f"\n[DEBUG] 最终统计: {stats}")
@@ -263,7 +271,8 @@ class WeChatIngestService:
             logger.info(f"[INFO] 数据导入完成,预处理将在首次分析时自动执行")
 
             # 6. 更新导入记录
-            self._update_import_record(import_id, "success", stats)
+            if import_id is not None:
+                self._update_import_record(import_id, "success", stats, account_wxid=account_wxid)
 
             if progress_callback:
                 progress_callback("导入完成", 100, 100)
@@ -275,7 +284,8 @@ class WeChatIngestService:
             }
 
         except Exception as e:
-            self._update_import_record(import_id, "failed", stats, str(e))
+            if import_id is not None:
+                self._update_import_record(import_id, "failed", stats, str(e), account_wxid=account_wxid)
             return {
                 "ok": False,
                 "error": f"导入失败: {str(e)}",
@@ -291,6 +301,7 @@ class WeChatIngestService:
         try:
             paths = self.resolve_wechat_paths(custom_paths)
             contact_db_path = (paths.get("databases") or {}).get("contact")
+            account_wxid = str(paths.get("account_wxid") or paths.get("current_user") or "")
             if not contact_db_path:
                 return {"ok": False, "error": "未找到联系人数据库"}
 
@@ -300,8 +311,8 @@ class WeChatIngestService:
             finally:
                 contact_db.close()
 
-            store_stats = self._upsert_contacts(contacts_data)
-            conversation_updates = self._sync_conversation_avatar_metadata()
+            store_stats = self._upsert_contacts(contacts_data, account_wxid)
+            conversation_updates = self._sync_conversation_avatar_metadata(account_wxid)
 
             return {
                 "ok": True,
@@ -316,7 +327,7 @@ class WeChatIngestService:
             logger.error(f"[DEBUG] 刷新联系人头像失败: {e}")
             return {"ok": False, "error": f"刷新联系人头像失败: {str(e)}"}
 
-    def _import_contacts_v4(self, contact_db_path: str, db_key: str) -> int:
+    def _import_contacts_v4(self, contact_db_path: str, db_key: str, account_wxid: str) -> int:
         """导入联系人(V4版本)"""
         logger.info(f"\n[DEBUG] 开始导入联系人")
         logger.debug(f"[DEBUG] 联系人数据库路径: {contact_db_path}")
@@ -326,7 +337,7 @@ class WeChatIngestService:
         try:
             contacts_data = contact_db.get_contacts()
             logger.debug(f"[DEBUG] 从数据库读取到 {len(contacts_data)} 个联系人")
-            store_stats = self._upsert_contacts(contacts_data)
+            store_stats = self._upsert_contacts(contacts_data, account_wxid)
             logger.info(
                 "[DEBUG] Contacts imported: %s, filtered: %s, avatar updates: %s",
                 store_stats["processed"],
@@ -337,12 +348,13 @@ class WeChatIngestService:
         finally:
             contact_db.close()
 
-    def _upsert_contacts(self, contacts_data: list[dict[str, Any]]) -> Dict[str, int]:
+    def _upsert_contacts(self, contacts_data: list[dict[str, Any]], account_wxid: str) -> Dict[str, int]:
         """Store contacts while preserving an existing avatar when the new one is blank."""
         db = get_db()
         now = int(time.time())
         existing_avatars = self._fetch_existing_contact_avatars(
-            [contact.get("username", "") for contact in contacts_data]
+            [contact.get("username", "") for contact in contacts_data],
+            account_wxid,
         )
 
         processed = 0
@@ -372,9 +384,9 @@ class WeChatIngestService:
                 db.execute(
                     """
                     INSERT INTO contacts
-                    (username, nickname, remark, alias, phone, avatar_path, is_friend, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(username) DO UPDATE SET
+                    (account_wxid, username, nickname, remark, alias, phone, avatar_path, is_friend, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(account_wxid, username) DO UPDATE SET
                         nickname = excluded.nickname,
                         remark = excluded.remark,
                         alias = excluded.alias,
@@ -389,6 +401,7 @@ class WeChatIngestService:
                         is_deleted = 0
                 """,
                     (
+                        account_wxid,
                         username,
                         contact_dict.get("nickname", ""),
                         contact_dict.get("remark", ""),
@@ -413,7 +426,7 @@ class WeChatIngestService:
             "avatar_updates": avatar_updates,
         }
 
-    def _fetch_existing_contact_avatars(self, usernames: list[str]) -> dict[str, str]:
+    def _fetch_existing_contact_avatars(self, usernames: list[str], account_wxid: str) -> dict[str, str]:
         """Load current avatar paths once so we can report actual avatar updates."""
         normalized_usernames = sorted({username.strip() for username in usernames if username and username.strip()})
         if not normalized_usernames:
@@ -424,16 +437,16 @@ class WeChatIngestService:
             f"""
             SELECT username, COALESCE(avatar_path, '') AS avatar_path
             FROM contacts
-            WHERE username IN ({placeholders})
+            WHERE account_wxid = ? AND username IN ({placeholders})
             """,
-            tuple(normalized_usernames),
+            (account_wxid, *normalized_usernames),
         )
         return {
             str(row["username"]): (row["avatar_path"] or "").strip()
             for row in cursor.fetchall()
         }
 
-    def _sync_conversation_avatar_metadata(self) -> int:
+    def _sync_conversation_avatar_metadata(self, account_wxid: str) -> int:
         """Backfill conversation avatars from imported contact metadata."""
         cursor = get_db().execute(
             """
@@ -441,22 +454,27 @@ class WeChatIngestService:
             SET avatar_path = (
                 SELECT ct.avatar_path
                 FROM contacts ct
-                WHERE ct.username = conversations.username
+                WHERE ct.account_wxid = conversations.account_wxid
+                  AND ct.username = conversations.username
             )
-            WHERE platform = 'wechat'
+            WHERE account_wxid = ?
+              AND platform = 'wechat'
               AND EXISTS (
                     SELECT 1
                     FROM contacts ct
-                    WHERE ct.username = conversations.username
+                    WHERE ct.account_wxid = conversations.account_wxid
+                      AND ct.username = conversations.username
                       AND ct.avatar_path IS NOT NULL
                       AND TRIM(ct.avatar_path) != ''
                 )
               AND COALESCE(TRIM(conversations.avatar_path), '') != COALESCE(TRIM((
                     SELECT ct.avatar_path
                     FROM contacts ct
-                    WHERE ct.username = conversations.username
+                    WHERE ct.account_wxid = conversations.account_wxid
+                      AND ct.username = conversations.username
                 )), '')
-            """
+            """,
+            (account_wxid,),
         )
         get_db().commit()
         return int(cursor.rowcount or 0)
@@ -466,6 +484,7 @@ class WeChatIngestService:
         message_db_paths: list,
         db_key: str,
         wxid: str,
+        account_wxid: str,
         limit: int,
         progress_callback: Optional[Callable] = None
     ) -> Dict:
@@ -524,6 +543,7 @@ class WeChatIngestService:
                         if len(batch) >= 1000:
                             batch_stats = self._insert_message_batch(
                                 batch,
+                                account_wxid,
                                 conversation_cache,
                                 touched_conversations
                             )
@@ -535,6 +555,7 @@ class WeChatIngestService:
                     if batch:
                         batch_stats = self._insert_message_batch(
                             batch,
+                            account_wxid,
                             conversation_cache,
                             touched_conversations
                         )
@@ -565,6 +586,7 @@ class WeChatIngestService:
     def _insert_message_batch(
         self,
         messages: list,
+        account_wxid: str,
         conversation_cache: dict[str, int],
         touched_conversations: dict[int, int]
     ) -> Dict[str, int]:  # pyright: ignore[reportMissingTypeArgument]
@@ -582,15 +604,16 @@ class WeChatIngestService:
 
                 # 确保会话存在 (修复: 使用 username 字段而不是 name)
                 db.execute("""
-                    INSERT OR IGNORE INTO conversations (username, display_name, platform, created_at, updated_at, message_count)
-                    VALUES (?, ?, 'wechat', ?, ?, 0)
-                """, (talker, talker, int(time.time()), int(time.time())))
+                    INSERT OR IGNORE INTO conversations
+                    (account_wxid, username, display_name, platform, created_at, updated_at, message_count)
+                    VALUES (?, ?, ?, 'wechat', ?, ?, 0)
+                """, (account_wxid, talker, talker, int(time.time()), int(time.time())))
 
                 conversation_id = conversation_cache.get(talker)
                 if conversation_id is None:
                     cursor = db.execute(
-                        "SELECT id FROM conversations WHERE username = ? AND platform = 'wechat'",
-                        (talker,)
+                        "SELECT id FROM conversations WHERE account_wxid = ? AND username = ? AND platform = 'wechat'",
+                        (account_wxid, talker)
                     )
                     row = cursor.fetchone()
                     if not row:
@@ -814,12 +837,12 @@ class WeChatIngestService:
                 "error": str(e)
             }
 
-    def _create_import_record(self) -> int:
+    def _create_import_record(self, account_wxid: str) -> int:
         """创建导入记录"""
         cursor = get_db().execute("""
-            INSERT INTO import_records (import_type, status, started_at)
-            VALUES ('wechat_full', 'pending', ?)
-        """, (int(time.time()),))
+            INSERT INTO import_records (import_type, status, started_at, metadata_json)
+            VALUES ('wechat_full', 'pending', ?, ?)
+        """, (int(time.time()), json.dumps({"account_wxid": account_wxid}, ensure_ascii=False)))
         get_db().commit()
         return cursor.lastrowid  # pyright: ignore[reportReturnType]
 
@@ -828,10 +851,13 @@ class WeChatIngestService:
         import_id: int,
         status: str,
         stats: Dict,
-        error: str = None
+        error: str = None,
+        account_wxid: str = "",
     ):
         """更新导入记录"""
         import json
+        metadata = dict(stats)
+        metadata["account_wxid"] = account_wxid
 
         get_db().execute("""
             UPDATE import_records
@@ -848,7 +874,7 @@ class WeChatIngestService:
             stats.get('conversations', 0),  # 修复: conversations不是total_conversations
             error,
             int(time.time()),
-            json.dumps(stats),
+            json.dumps(metadata, ensure_ascii=False),
             import_id
         ))
         get_db().commit()

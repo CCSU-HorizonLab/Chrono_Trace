@@ -26,6 +26,7 @@ def _setup_db():
         """
         CREATE TABLE realtime_suggestions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_wxid TEXT NOT NULL,
             batch_id TEXT NOT NULL,
             trigger_type TEXT NOT NULL,
             speeches TEXT NOT NULL,
@@ -44,13 +45,14 @@ def test_mark_suggestion_viewed_sets_read_at_and_reuses_shown_context():
     conn = _setup_db()
     conn.execute(
         """
-        INSERT INTO realtime_suggestions (id, batch_id, trigger_type, speeches, status, created_at)
-        VALUES (1, 'batch-1', 'negative_streak', '[]', 'pending', 1000)
+        INSERT INTO realtime_suggestions (id, account_wxid, batch_id, trigger_type, speeches, status, created_at)
+        VALUES (1, 'wxid_test', 'batch-1', 'negative_streak', '[]', 'pending', 1000)
         """
     )
     record_observation(
         conn,
         suggestion_id=1,
+        account_wxid="wxid_test",
         event_type=EVENT_SHOWN,
         batch_id="batch-1",
         display_name="阿澄",
@@ -58,7 +60,7 @@ def test_mark_suggestion_viewed_sets_read_at_and_reuses_shown_context():
         created_at=1000,
     )
 
-    mark_suggestion_viewed(conn, 1, created_at=1010)
+    mark_suggestion_viewed(conn, 1, account_wxid="wxid_test", created_at=1010)
     conn.commit()
 
     read_row = conn.execute("SELECT read_at FROM realtime_suggestions WHERE id = 1").fetchone()
@@ -86,8 +88,8 @@ def test_get_suggestion_metrics_uses_latest_terminal_outcome():
     for suggestion_id, batch_id, trigger_type, created_at in suggestions:
         conn.execute(
             """
-            INSERT INTO realtime_suggestions (id, batch_id, trigger_type, speeches, status, created_at)
-            VALUES (?, ?, ?, '[]', 'pending', ?)
+            INSERT INTO realtime_suggestions (id, account_wxid, batch_id, trigger_type, speeches, status, created_at)
+            VALUES (?, 'wxid_test', ?, ?, '[]', 'pending', ?)
             """,
             (suggestion_id, batch_id, trigger_type, created_at),
         )
@@ -95,22 +97,25 @@ def test_get_suggestion_metrics_uses_latest_terminal_outcome():
     record_observation(
         conn,
         suggestion_id=1,
+        account_wxid="wxid_test",
         event_type=EVENT_SHOWN,
         batch_id="batch-1",
         display_name="阿澄",
         trigger_type="negative_streak",
         created_at=1000,
     )
-    mark_suggestion_viewed(conn, 1, created_at=1001)
+    mark_suggestion_viewed(conn, 1, account_wxid="wxid_test", created_at=1001)
     record_observation(
         conn,
         suggestion_id=1,
+        account_wxid="wxid_test",
         event_type=EVENT_IGNORED,
         created_at=1002,
     )
     record_observation(
         conn,
         suggestion_id=1,
+        account_wxid="wxid_test",
         event_type=EVENT_ADOPTED,
         similarity=0.93,
         selected_speech="测试话术",
@@ -122,6 +127,7 @@ def test_get_suggestion_metrics_uses_latest_terminal_outcome():
     record_observation(
         conn,
         suggestion_id=2,
+        account_wxid="wxid_test",
         event_type=EVENT_SHOWN,
         batch_id="batch-2",
         display_name="妈",
@@ -131,6 +137,7 @@ def test_get_suggestion_metrics_uses_latest_terminal_outcome():
     record_observation(
         conn,
         suggestion_id=2,
+        account_wxid="wxid_test",
         event_type=EVENT_DISMISSED,
         created_at=1015,
     )
@@ -138,6 +145,7 @@ def test_get_suggestion_metrics_uses_latest_terminal_outcome():
     record_observation(
         conn,
         suggestion_id=3,
+        account_wxid="wxid_test",
         event_type=EVENT_SHOWN,
         batch_id="batch-3",
         display_name="阿澄",
@@ -148,6 +156,7 @@ def test_get_suggestion_metrics_uses_latest_terminal_outcome():
     metrics = get_suggestion_metrics(
         conn,
         days=7,
+        account_wxid="wxid_test",
         ignored_after_seconds=60,
         now_ts=1200,
     )

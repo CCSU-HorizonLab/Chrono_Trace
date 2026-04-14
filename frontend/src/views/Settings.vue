@@ -67,6 +67,15 @@
             <p>💡 <strong>提示:</strong>如果自动检测的微信路径不正确,可以在此手动指定数据库文件位置</p>
           </div>
 
+          <label v-if="wechatAccounts.length" class="row">
+            <div class="lab">当前微信账号</div>
+            <select class="ct-field" :value="activeAccountWxid" @change="handleAccountSelect">
+              <option v-for="account in wechatAccounts" :key="account.wxid" :value="account.wxid">
+                {{ account.label || account.wxid }}
+              </option>
+            </select>
+          </label>
+
           <label class="row">
             <div class="lab">数据库密钥</div>
             <CtField 
@@ -296,7 +305,7 @@
 
 <script setup lang="ts">
 import { reactive, ref, onMounted, watch, computed, onUnmounted } from 'vue'
-import { bridgeReady, api, type AnalysisDeviceMode } from '@/api/bridge'
+import { bridgeReady, api, type AnalysisDeviceMode, type WechatAccount } from '@/api/bridge'
 import CtCard from '@/components/base/CtCard.vue'
 import CtField from '@/components/base/CtField.vue'
 import CtButton from '@/components/base/CtButton.vue'
@@ -310,6 +319,9 @@ const avatarRefreshMessage = ref('')
 const avatarRefreshError = ref('')
 const autoSaveTimer = ref<number | null>(null)
 const lastSaveTime = ref<string>('')
+const wechatAccounts = ref<WechatAccount[]>([])
+const activeAccountWxid = ref('')
+const hydratingForm = ref(false)
 
 const form = reactive<{ 
   wechat_use_custom_path: boolean
@@ -324,6 +336,72 @@ const form = reactive<{
   wechat_db_key: '',
   analysis_device_mode: 'auto',
 })
+
+function mergeWechatAccounts(accounts: WechatAccount[]) {
+  const merged = new Map<string, WechatAccount>()
+  for (const account of wechatAccounts.value) {
+    merged.set(account.wxid, { ...account })
+  }
+  for (const account of accounts) {
+    if (!account?.wxid) continue
+    const current = merged.get(account.wxid)
+    merged.set(account.wxid, {
+      ...(current || {}),
+      ...account,
+      wxid: account.wxid,
+      label: account.label || current?.label || account.wxid,
+      avatar: account.avatar || current?.avatar || '',
+      db_key: account.db_key || current?.db_key || '',
+      wechat_dir: account.wechat_dir || current?.wechat_dir || '',
+      source: account.source || current?.source || '',
+      import_completed: Boolean(account.import_completed ?? current?.import_completed),
+      last_import_total_size: Number(account.last_import_total_size ?? current?.last_import_total_size ?? 0),
+      last_import_files: account.last_import_files || current?.last_import_files || [],
+    })
+  }
+  wechatAccounts.value = Array.from(merged.values())
+}
+
+function getActiveAccount() {
+  return wechatAccounts.value.find((account) => account.wxid === activeAccountWxid.value) || null
+}
+
+function hydrateFormFromAccount(account: Partial<WechatAccount> | null, options?: { keepDeviceMode?: boolean }) {
+  hydratingForm.value = true
+  form.wechat_user_wxid = String(account?.wxid || '')
+  form.wechat_data_dir = String(account?.wechat_dir || '')
+  form.wechat_db_key = String(account?.db_key || '')
+  form.wechat_use_custom_path = Boolean(account?.wechat_dir)
+  if (!options?.keepDeviceMode) {
+    form.analysis_device_mode = 'auto'
+  }
+  queueMicrotask(() => {
+    hydratingForm.value = false
+  })
+}
+
+async function loadWechatAccounts(preferredWxid = '') {
+  await bridgeReady()
+  const result = await api.get_wechat_accounts()
+  if (!result?.ok) return
+
+  mergeWechatAccounts((result.accounts || []) as WechatAccount[])
+  const nextWxid =
+    preferredWxid ||
+    result.active_account_wxid ||
+    activeAccountWxid.value ||
+    (wechatAccounts.value.length === 1 ? wechatAccounts.value[0]?.wxid : '') ||
+    ''
+
+  activeAccountWxid.value = nextWxid
+  if (!nextWxid) {
+    hydrateFormFromAccount(null, { keepDeviceMode: true })
+    return
+  }
+
+  const account = wechatAccounts.value.find((item) => item.wxid === nextWxid) || null
+  hydrateFormFromAccount(account, { keepDeviceMode: true })
+}
 
 // GPU 检测状态
 const gpuInfo = reactive<{
@@ -425,15 +503,18 @@ async function onLoad() {
     console.log('[DEBUG] 从后端加载的设置:', s)
     
     if (s && typeof s === 'object') {
-      // 微信路径配置
-      form.wechat_use_custom_path = Boolean(s.wechat_use_custom_path ?? false)
-      form.wechat_data_dir = s.wechat_data_dir ?? ''
-      form.wechat_user_wxid = s.wechat_user_wxid ?? ''
-      form.wechat_db_key = s.wechat_db_key ?? ''
+      mergeWechatAccounts((s.wechat_accounts || []) as WechatAccount[])
+      activeAccountWxid.value = String(s.wechat_active_account_wxid || '')
+      const activeAccount =
+        wechatAccounts.value.find((account) => account.wxid === activeAccountWxid.value) ||
+        (wechatAccounts.value.length === 1 ? wechatAccounts.value[0] : null)
+      hydrateFormFromAccount(activeAccount, { keepDeviceMode: true })
+
       // 计算设备模式
       const dm = s.analysis_device_mode
       form.analysis_device_mode = (dm === 'gpu' || dm === 'cpu' || dm === 'auto') ? dm : 'auto'
     }
+    await loadWechatAccounts(activeAccountWxid.value)
   } catch (e) {
     console.error('加载设置失败:', e)
   } finally {
@@ -443,6 +524,7 @@ async function onLoad() {
 
 // 自动保存（防抖）
 async function autoSave() {
+  if (hydratingForm.value) return
   // 清除之前的定时器
   if (autoSaveTimer.value) {
     clearTimeout(autoSaveTimer.value)
@@ -456,17 +538,38 @@ async function autoSave() {
 
 async function onSave() {
   // 如果正在保存，跳过
-  if (saving.value) return
+  if (saving.value || hydratingForm.value) return
   
   saving.value = true
   try {
     await bridgeReady()
-    
+    const wxid = form.wechat_user_wxid.trim() || activeAccountWxid.value.trim()
+    const nextAccount: WechatAccount | null = wxid ? {
+      ...(getActiveAccount() || {
+        wxid,
+        label: wxid,
+        avatar: '',
+        source: '',
+        import_completed: false,
+        last_import_total_size: 0,
+        last_import_files: [],
+      }),
+      wxid,
+      label: getActiveAccount()?.label || wxid,
+      wechat_dir: form.wechat_use_custom_path ? form.wechat_data_dir.trim() : '',
+      source: form.wechat_use_custom_path ? 'custom' : '',
+      db_key: form.wechat_db_key.trim(),
+    } : null
+
+    if (nextAccount) {
+      mergeWechatAccounts([nextAccount])
+      activeAccountWxid.value = nextAccount.wxid
+    }
+
     const settingsToSave = {
       wechat_use_custom_path: form.wechat_use_custom_path,
-      wechat_data_dir: form.wechat_data_dir,
-      wechat_user_wxid: form.wechat_user_wxid,
-      wechat_db_key: form.wechat_db_key,
+      wechat_accounts: wechatAccounts.value,
+      wechat_active_account_wxid: activeAccountWxid.value,
       analysis_device_mode: form.analysis_device_mode,
     }
     
@@ -532,16 +635,30 @@ async function scanWeChatDirectory(wechatDir: string) {
       return
     }
     
-    // 如果找到wxid，自动填充第一个
-    if (scanResult.wxids && scanResult.wxids.length > 0) {
-      const firstWxid = scanResult.wxids[0]
-      form.wechat_user_wxid = firstWxid
-      console.log('[DEBUG] 自动设置wxid:', firstWxid)
-      
+    const scannedAccounts = (scanResult.accounts || []).map((account: WechatAccount) => ({
+      ...account,
+      wechat_dir: account.wechat_dir || wechatDir,
+      source: 'custom',
+      db_key: account.db_key || form.wechat_db_key.trim(),
+    }))
+
+    if (scannedAccounts.length > 0) {
+      mergeWechatAccounts(scannedAccounts)
+      const nextWxid =
+        activeAccountWxid.value && scannedAccounts.some((account: WechatAccount) => account.wxid === activeAccountWxid.value)
+          ? activeAccountWxid.value
+          : scannedAccounts[0].wxid
+
+      activeAccountWxid.value = nextWxid
+      const nextAccount = wechatAccounts.value.find((account) => account.wxid === nextWxid) || null
+      hydrateFormFromAccount(nextAccount, { keepDeviceMode: true })
+      form.wechat_use_custom_path = true
+      await onSave()
+
       showDialog(`扫描成功！
-找到 ${scanResult.wxids.length} 个微信账号
-已自动设置第一个账号：${firstWxid}
-数据库将在导入时自动检测`)
+找到 ${scannedAccounts.length} 个微信账号
+当前设置为：${nextAccount?.label || nextWxid}
+可通过上方账号下拉切换不同账号配置。`)
     } else {
       showDialog('未在该目录下找到微信数据（wxid_ 开头的文件夹）')
     }
@@ -558,6 +675,7 @@ function getPreferredWechatPaths() {
   return {
     wechat_dir: form.wechat_data_dir.trim(),
     current_user: form.wechat_user_wxid.trim(),
+    account_wxid: form.wechat_user_wxid.trim(),
   }
 }
 
@@ -577,7 +695,8 @@ async function refreshContactAvatars() {
     await bridgeReady()
     const res = await api.refresh_wechat_contact_avatars(
       form.wechat_db_key.trim(),
-      getPreferredWechatPaths()
+      getPreferredWechatPaths(),
+      activeAccountWxid.value || form.wechat_user_wxid.trim()
     )
 
     if (!res?.ok) {
@@ -593,6 +712,28 @@ async function refreshContactAvatars() {
     avatarRefreshError.value = '头像补齐异常：' + ((e as Error).message || '未知错误')
   } finally {
     avatarRefreshLoading.value = false
+  }
+}
+
+async function handleAccountSelect(event: Event) {
+  const target = event.target as HTMLSelectElement | null
+  const wxid = target?.value || ''
+  if (!wxid || wxid === activeAccountWxid.value) return
+
+  await bridgeReady()
+  const result = await api.set_active_wechat_account(wxid)
+  if (!result?.ok) return
+  activeAccountWxid.value = result.active_account_wxid || wxid
+  const account = wechatAccounts.value.find((item) => item.wxid === activeAccountWxid.value) || null
+  hydrateFormFromAccount(account, { keepDeviceMode: true })
+  window.dispatchEvent(new CustomEvent('chrono:user-avatar-refresh'))
+}
+
+async function handleGlobalAccountChanged() {
+  try {
+    await loadWechatAccounts()
+  } catch (error) {
+    console.error('[Settings] 切换账号后刷新失败:', error)
   }
 }
 
@@ -676,6 +817,7 @@ const PROVIDER_CONFIG = {
 
 onUnmounted(() => {
   document.removeEventListener('click', handleDropdownClickOutside)
+  window.removeEventListener('chrono:wechat-account-changed', handleGlobalAccountChanged)
 })
 
 const modelIdPlaceholder = computed(() => {
@@ -813,6 +955,7 @@ watch(() => editingModel.provider, (p) => {
 })
 
 onMounted(() => {
+  window.addEventListener('chrono:wechat-account-changed', handleGlobalAccountChanged)
   onLoad()
   loadLLMModels()
   loadGpuInfo()

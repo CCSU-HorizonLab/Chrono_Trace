@@ -414,6 +414,7 @@ type Message = { role: 'ai' | 'user'; content: string }
 const intent = ref<any>('maintain')
 const loading = ref(false)
 const error = ref('')
+const activeAccountWxid = ref('')
 
 // ========== 实时监听状态 ==========
 const monitorPanelExpanded = ref(true)
@@ -469,15 +470,46 @@ async function loadContacts() {
   contactsLoading.value = true
   try {
     await bridgeReady()
-    const r = await api.get_conversation_list()
+    const r = await api.get_conversation_list(activeAccountWxid.value || undefined)
     if (r.ok && r.conversations) {
       contacts.value = r.conversations
+      if (selectedConversationId.value && !contacts.value.some((contact: any) => contact.id === selectedConversationId.value)) {
+        selectedConversationId.value = null
+      }
     }
   } catch (e) {
     console.error('加载联系人列表失败:', e)
   } finally {
     contactsLoading.value = false
   }
+}
+
+async function refreshAccountContext() {
+  try {
+    await bridgeReady()
+    const result = await api.get_wechat_accounts()
+    if (result?.ok) {
+      activeAccountWxid.value = result.active_account_wxid || ''
+    }
+  } catch (e) {
+    console.error('加载活动微信账号失败:', e)
+  }
+}
+
+function resetAccountScopedState() {
+  contacts.value = []
+  selectedConversationId.value = null
+  realtimeState.talkerName = ''
+  realtimeState.batchId = ''
+  realtimeState.messageCount = 0
+  realtimeState.messages = []
+  realtimeState.isMonitoring = false
+  realtimeState.status = 'idle'
+  manualSuggestion.value = null
+  profile.value = { name: '对方昵称', tags: [] }
+  selfProfile.value = {}
+  resetProfileMeta(profileMeta)
+  resetProfileMeta(selfProfileMeta)
 }
 
 function onConversationChange(id: number) {
@@ -552,6 +584,7 @@ async function startMonitoring() {
 
     window.sessionStorage.setItem('realtime_start_request', JSON.stringify({
       talkerName,
+      account_wxid: activeAccountWxid.value || undefined,
       createdAt: Date.now(),
     }))
 
@@ -731,7 +764,8 @@ async function generateSelfProfile() {
     const r = await api.generate_self_profile(
       realtimeState.talkerName,
       selfProfileBudgetLevel.value,
-      0
+      0,
+      activeAccountWxid.value || undefined,
     )
     if (r.ok && r.profile) {
       selfProfile.value = r.profile
@@ -770,7 +804,8 @@ async function generateContactProfile() {
     const r = await api.generate_contact_profile(
       realtimeState.talkerName,
       profileBudgetLevel.value,
-      profileBudgetLevel.value === 'custom' ? profileCustomBudget.value : 0
+      profileBudgetLevel.value === 'custom' ? profileCustomBudget.value : 0,
+      activeAccountWxid.value || undefined,
     )
     if (r.ok && r.profile) {
       profile.value = { name: realtimeState.talkerName, ...r.profile }
@@ -867,7 +902,7 @@ async function ensureActiveLlm() {
 }
 
 async function refreshContactProfileState(displayName: string) {
-  const r = await api.get_contact_profile(displayName)
+  const r = await api.get_contact_profile(displayName, activeAccountWxid.value || undefined)
   if (!r.ok) return r
 
   profileEstimatedTokens.value = r.estimated_tokens || 0
@@ -882,7 +917,7 @@ async function refreshContactProfileState(displayName: string) {
 }
 
 async function refreshSelfProfileState(displayName: string) {
-  const r = await api.get_self_profile(displayName)
+  const r = await api.get_self_profile(displayName, activeAccountWxid.value || undefined)
   if (!r.ok) return r
 
   selfProfileEstimatedTokens.value = r.estimated_tokens || 0
@@ -931,6 +966,7 @@ async function generatePortraitProfiles() {
 
 // 组件挂载时恢复监听状态
 onMounted(async () => {
+  await refreshAccountContext()
   loadContacts()
 
   try {
@@ -938,6 +974,7 @@ onMounted(async () => {
     const status = await api.get_realtime_status()
     
     if (status.ok && status.is_monitoring) {
+      activeAccountWxid.value = status.account_wxid || activeAccountWxid.value
       realtimeState.isMonitoring = true
       realtimeState.status = 'monitoring'
       realtimeState.talkerName = status.talker_display_name || ''
@@ -954,12 +991,21 @@ onMounted(async () => {
   } catch (e) {
     console.error('恢复监听状态失败:', e)
   }
+
+  window.addEventListener('chrono:wechat-account-changed', handleAccountChanged)
 })
 
 onBeforeUnmount(() => {
   stopStatusPolling()
   stopMessagesPolling()
+  window.removeEventListener('chrono:wechat-account-changed', handleAccountChanged)
 })
+
+async function handleAccountChanged() {
+  resetAccountScopedState()
+  await refreshAccountContext()
+  await loadContacts()
+}
 
 // ========== 辅助函数 ==========
 

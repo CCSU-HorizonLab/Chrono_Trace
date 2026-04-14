@@ -10,6 +10,22 @@ from pathlib import Path
 from ..services.wechat.ingest_service import WeChatIngestService
 from ..services.wechat.path_finder import WeChatPathFinder
 from ..services.wechat.db.v4.contact import ContactDBV4
+from ..services.wechat.account_settings import (
+    LEGACY_WECHAT_KEYS,
+    WECHAT_ACCOUNTS_KEY,
+    WECHAT_ACTIVE_ACCOUNT_KEY,
+    build_custom_paths,
+    get_active_wechat_account,
+    get_active_wechat_account_wxid,
+    get_wechat_account,
+    get_wechat_accounts,
+    load_settings_from_file,
+    normalize_wechat_accounts,
+    save_settings_to_file,
+    set_active_wechat_account,
+    upsert_wechat_account,
+    update_wechat_account_import_state,
+)
 from ..services.analysis.feature_extraction_config import (
     ANALYSIS_DEVICE_MODE_AUTO,
     normalize_analysis_device_mode,
@@ -37,14 +53,7 @@ class Bridge:
 
     def _load_settings(self):
         """加载设置"""
-        if self.settings_file.exists():
-            try:
-                with open(self.settings_file, "r", encoding="utf-8") as f:
-                    self.settings = json.load(f)
-            except Exception:
-                self.settings = {}
-        else:
-            self.settings = {}
+        self.settings = load_settings_from_file(self.settings_file)
         self.settings["analysis_device_mode"] = normalize_analysis_device_mode(
             self.settings.get("analysis_device_mode", ANALYSIS_DEVICE_MODE_AUTO)
         )
@@ -52,11 +61,39 @@ class Bridge:
     def _save_settings(self):
         """保存设置"""
         try:
-            self.settings_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.settings_file, "w", encoding="utf-8") as f:
-                json.dump(self.settings, f, indent=2, ensure_ascii=False)
+            save_settings_to_file(self.settings, self.settings_file)
         except Exception as e:
             logger.error(f"保存设置失败: {e}")
+
+    def _get_wechat_accounts(self) -> list[dict[str, Any]]:
+        return get_wechat_accounts(self.settings)
+
+    def _get_active_wechat_account_wxid(self) -> str:
+        return get_active_wechat_account_wxid(self.settings)
+
+    def _get_wechat_account(self, wxid: str) -> Optional[dict[str, Any]]:
+        return get_wechat_account(self.settings, wxid)
+
+    def _get_active_wechat_account(self) -> Optional[dict[str, Any]]:
+        return get_active_wechat_account(self.settings)
+
+    def _resolve_account_wxid(self, account_wxid: str = "") -> str:
+        normalized = str(account_wxid or "").strip()
+        if normalized:
+            return normalized
+        return self._get_active_wechat_account_wxid()
+
+    def _resolve_wechat_account(self, account_wxid: str = "") -> Optional[dict[str, Any]]:
+        resolved_wxid = self._resolve_account_wxid(account_wxid)
+        if resolved_wxid:
+            return self._get_wechat_account(resolved_wxid)
+        return self._get_active_wechat_account()
+
+    def _serialize_wechat_accounts(self) -> dict[str, Any]:
+        return {
+            "accounts": self._get_wechat_accounts(),
+            "active_account_wxid": self._get_active_wechat_account_wxid(),
+        }
 
     def _update_model_download_status(self, task_id: str, **updates: Any) -> None:
         with self._model_download_lock:
@@ -201,15 +238,8 @@ class Bridge:
             reloaded = importlib.reload(module)
         return reloaded.AffinityAnalysisService
 
-    def _get_wechat_custom_paths(self) -> dict[str, str] | None:
-        wechat_dir = self.settings.get("wechat_data_dir")
-        wxid = self.settings.get("wechat_user_wxid")
-        if not wechat_dir or not wxid:
-            return None
-        return {
-            "wechat_dir": wechat_dir,
-            "current_user": wxid,
-        }
+    def _get_wechat_custom_paths(self, account_wxid: str = "") -> dict[str, str] | None:
+        return build_custom_paths(self._resolve_wechat_account(account_wxid))
 
     def _build_wechat_user_candidates(self, wxid: str) -> list[str]:
         candidates: list[str] = []
@@ -224,46 +254,146 @@ class Bridge:
                 candidates.append(base_wxid)
         return candidates
 
-    def _save_wechat_import_baseline(self, snapshot: dict[str, Any]) -> None:
-        self.settings.update({
-            "wechat_import_completed": True,
-            "wechat_last_import_at": snapshot.get("captured_at"),
-            "wechat_last_import_total_size": snapshot.get("total_size", 0),
-            "wechat_last_import_files": snapshot.get("files", []),
-        })
+    def _save_wechat_import_baseline(
+        self,
+        snapshot: dict[str, Any],
+        *,
+        account_wxid: str = "",
+        db_key: str | None = None,
+    ) -> None:
+        resolved_wxid = self._resolve_account_wxid(account_wxid) or str(snapshot.get("account_wxid") or snapshot.get("current_user") or "")
+        if not resolved_wxid:
+            return
+        update_wechat_account_import_state(
+            self.settings,
+            resolved_wxid,
+            snapshot=snapshot,
+            db_key=db_key,
+            wechat_dir=str(snapshot.get("wechat_dir") or "") or None,
+            import_completed=True,
+        )
         self._save_settings()
 
+    def _build_wechat_account_candidate(
+        self,
+        wxid: str,
+        *,
+        wechat_dir: str,
+        source: str,
+        db_key: str = "",
+        avatar: str = "",
+        label: str | None = None,
+    ) -> dict[str, Any]:
+        existing = self._get_wechat_account(wxid) or {}
+        return {
+            "wxid": wxid,
+            "label": label or existing.get("label") or wxid,
+            "avatar": avatar or existing.get("avatar") or "",
+            "wechat_dir": wechat_dir or existing.get("wechat_dir") or "",
+            "source": source or existing.get("source") or "auto",
+            "db_key": db_key or existing.get("db_key") or "",
+            "import_completed": bool(existing.get("import_completed")),
+            "last_import_at": existing.get("last_import_at"),
+            "last_import_total_size": int(existing.get("last_import_total_size") or 0),
+            "last_import_files": existing.get("last_import_files") or [],
+        }
+
+    def _sync_wechat_account_candidates(self, accounts: list[dict[str, Any]]) -> None:
+        changed = False
+        for account in accounts:
+            normalized = self._build_wechat_account_candidate(
+                str(account.get("wxid") or ""),
+                wechat_dir=str(account.get("wechat_dir") or ""),
+                source=str(account.get("source") or "auto"),
+                db_key=str(account.get("db_key") or ""),
+                avatar=str(account.get("avatar") or ""),
+                label=str(account.get("label") or "") or None,
+            )
+            if not normalized["wxid"]:
+                continue
+            existing = self._get_wechat_account(normalized["wxid"]) or {}
+            if existing != normalized:
+                upsert_wechat_account(self.settings, normalized)
+                changed = True
+        if changed:
+            self._save_settings()
+
     # ==================== 微信数据导入相关 ====================
-    
-    def get_wechat_paths(self) -> dict[str, Any]:
+
+    def get_wechat_accounts(self) -> dict[str, Any]:
+        payload = self._serialize_wechat_accounts()
+        return {"ok": True, **payload}
+
+    def set_active_wechat_account(self, wxid: str) -> dict[str, Any]:
+        try:
+            active_wxid = set_active_wechat_account(self.settings, wxid)
+            self._save_settings()
+            return {"ok": True, "active_account_wxid": active_wxid}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def get_wechat_paths(self, account_wxid: str = "") -> dict[str, Any]:
         """
         获取微信数据库路径信息（用于前端展示）
         
         Returns:
             {"ok": True, "data": {...}} 或 {"ok": False, "error": "..."}
         """
-        # 优先使用自定义路径
-        if self.settings.get("wechat_use_custom_path"):
-            wechat_dir = self.settings.get("wechat_data_dir", "")
-            wxid = self.settings.get("wechat_user_wxid", "")
-            
-            # 验证路径是否完整
-            if not wechat_dir or not wxid:
-                logger.warning("[WARN] 自定义路径配置不完整，尝试自动检测")
-                return self.wechat_service.get_wechat_paths()
-            
-            custom_paths = {
-                "wechat_dir": wechat_dir,
-                "current_user": wxid,
-                "databases": {},  # 数据库会在导入时自动查找
-                "source": "custom"
-            }
-            return {"ok": True, "data": custom_paths}
-        
-        # 使用自动检测
-        return self.wechat_service.get_wechat_paths()
-    
-    def verify_wechat_key(self, db_key: str, custom_paths: dict[str, str] | None = None) -> dict[str, Any]:
+        resolved_account = self._resolve_wechat_account(account_wxid)
+        preferred_paths = self._get_wechat_custom_paths(account_wxid)
+
+        if preferred_paths:
+            try:
+                data = self.wechat_service.resolve_wechat_paths(preferred_paths)
+                data["source"] = str((resolved_account or {}).get("source") or "custom")
+                data["account_wxid"] = str((resolved_account or {}).get("wxid") or data.get("current_user") or "")
+                data["accounts"] = self._get_wechat_accounts()
+                data["active_account_wxid"] = self._get_active_wechat_account_wxid()
+                return {"ok": True, "data": data, **self._serialize_wechat_accounts()}
+            except Exception as e:
+                logger.warning(f"[Bridge] 读取已保存微信路径失败，将回退自动检测: {e}")
+
+        detected = self.wechat_service.get_wechat_paths()
+        if not detected.get("ok"):
+            return {**detected, **self._serialize_wechat_accounts()}
+
+        data = detected.get("data") or {}
+        wechat_dir = str(data.get("wechat_dir") or "")
+        available_users = [
+            str(wxid).strip()
+            for wxid in (data.get("available_users") or [])
+            if str(wxid).strip()
+        ]
+        candidates = [
+            self._build_wechat_account_candidate(
+                wxid,
+                wechat_dir=wechat_dir,
+                source="auto",
+            )
+            for wxid in available_users
+        ]
+        if candidates:
+            self._sync_wechat_account_candidates(candidates)
+
+        selected_wxid = self._resolve_account_wxid(account_wxid)
+        if not selected_wxid and len(candidates) == 1:
+            selected_wxid = candidates[0]["wxid"]
+
+        if selected_wxid and wechat_dir and selected_wxid != data.get("current_user"):
+            data["databases"] = WeChatPathFinder.find_databases(selected_wxid, wechat_dir)
+            data["current_user"] = selected_wxid
+
+        data["account_wxid"] = str(data.get("current_user") or selected_wxid or "")
+        data["accounts"] = self._get_wechat_accounts()
+        data["active_account_wxid"] = self._get_active_wechat_account_wxid()
+        return {"ok": True, "data": data, **self._serialize_wechat_accounts()}
+
+    def verify_wechat_key(
+        self,
+        db_key: str,
+        custom_paths: dict[str, str] | None = None,
+        account_wxid: str = "",
+    ) -> dict[str, Any]:
         """
         验证微信数据库密钥是否有效
         
@@ -273,10 +403,27 @@ class Bridge:
         Returns:
             {"ok": True} 或 {"ok": False, "error": "..."}
         """
-        preferred_paths = custom_paths or self._get_wechat_custom_paths()
-        return self.wechat_service.verify_key(db_key, preferred_paths)
-    
-    def import_wechat_data(self, db_key: str, options: dict[str, Any] | None = None) -> dict[str, Any]:
+        preferred_paths = custom_paths or self._get_wechat_custom_paths(account_wxid)
+        result = self.wechat_service.verify_key(db_key, preferred_paths)
+        if result.get("ok") and preferred_paths:
+            resolved_wxid = str(preferred_paths.get("account_wxid") or preferred_paths.get("current_user") or self._resolve_account_wxid(account_wxid))
+            if resolved_wxid:
+                update_wechat_account_import_state(
+                    self.settings,
+                    resolved_wxid,
+                    db_key=db_key,
+                    wechat_dir=str(preferred_paths.get("wechat_dir") or "") or None,
+                    source="custom" if custom_paths else None,
+                )
+                self._save_settings()
+        return result
+
+    def import_wechat_data(
+        self,
+        db_key: str,
+        options: dict[str, Any] | None = None,
+        account_wxid: str = "",
+    ) -> dict[str, Any]:
         """
         导入微信数据（完整流程）
         
@@ -295,35 +442,49 @@ class Bridge:
                 "warnings": [...]
             }
         """
-        # 如果有自定义路径配置,传递给服务(只需要wechat_dir和current_user,databases会自动查找)
-        custom_paths = self._get_wechat_custom_paths()
+        options = dict(options or {})
+        resolved_wxid = self._resolve_account_wxid(str(options.pop("account_wxid", "") or account_wxid))
+        custom_paths = self._get_wechat_custom_paths(resolved_wxid)
         if custom_paths:
             logger.debug(f"[DEBUG Bridge] 使用自定义路径: {custom_paths}")
         else:
             logger.debug(f"[DEBUG Bridge] 未配置自定义路径,将使用自动检测")
 
-        result = self.wechat_service.import_wechat_data(db_key, options or {}, custom_paths)
+        result = self.wechat_service.import_wechat_data(db_key, options, custom_paths)
         if result.get("ok"):
             snapshot = self.wechat_service.build_file_size_snapshot(custom_paths)
-            self._save_wechat_import_baseline(snapshot)
+            self._save_wechat_import_baseline(snapshot, account_wxid=resolved_wxid, db_key=db_key)
         return result
 
     def refresh_wechat_contact_avatars(
         self,
         db_key: str,
         custom_paths: dict[str, str] | None = None,
+        account_wxid: str = "",
     ) -> dict[str, Any]:
         """Refresh imported contact avatar metadata without reimporting messages."""
-        preferred_paths = custom_paths or self._get_wechat_custom_paths()
-        return self.wechat_service.refresh_contact_avatars(db_key, preferred_paths)
+        preferred_paths = custom_paths or self._get_wechat_custom_paths(account_wxid)
+        result = self.wechat_service.refresh_contact_avatars(db_key, preferred_paths)
+        if result.get("ok") and preferred_paths:
+            resolved_wxid = str(preferred_paths.get("account_wxid") or preferred_paths.get("current_user") or self._resolve_account_wxid(account_wxid))
+            if resolved_wxid:
+                update_wechat_account_import_state(
+                    self.settings,
+                    resolved_wxid,
+                    db_key=db_key,
+                    wechat_dir=str(preferred_paths.get("wechat_dir") or "") or None,
+                )
+                self._save_settings()
+        return result
 
-    def detect_wechat_import_increment(self) -> dict[str, Any]:
+    def detect_wechat_import_increment(self, account_wxid: str = "") -> dict[str, Any]:
         """Compare current WeChat DB file sizes with the last successful import baseline."""
-        baseline_files = self.settings.get("wechat_last_import_files") or []
+        account = self._resolve_wechat_account(account_wxid)
+        baseline_files = (account or {}).get("last_import_files") or []
         if not baseline_files:
             return {"ok": True, "has_increment": False}
 
-        custom_paths = self._get_wechat_custom_paths()
+        custom_paths = self._get_wechat_custom_paths(account_wxid)
         try:
             snapshot = self.wechat_service.build_file_size_snapshot(custom_paths)
         except Exception as e:
@@ -360,7 +521,7 @@ class Bridge:
             "has_increment": increment_size > 0,
             "increment_size": increment_size,
             "changed_files": changed_files,
-            "last_import_at": self.settings.get("wechat_last_import_at"),
+            "last_import_at": (account or {}).get("last_import_at"),
             "snapshot": snapshot,
         }
 
@@ -417,7 +578,7 @@ class Bridge:
 
     # ==================== 历史数据分析相关 ====================
     
-    def get_conversation_list(self) -> dict[str, Any]:
+    def get_conversation_list(self, account_wxid: str = "") -> dict[str, Any]:
         """
         获取联系人列表（用于前端下拉选择）
         
@@ -433,7 +594,7 @@ class Bridge:
         from ..services.analysis.analysis_service import AnalysisService
         
         service = AnalysisService()
-        return service.get_conversation_list()
+        return service.get_conversation_list(self._resolve_account_wxid(account_wxid))
     
     def get_analysis(self, date_range: dict[str, str]) -> dict[str, Any]:
         """
@@ -582,6 +743,7 @@ class Bridge:
                 conn.execute('''
                     CREATE TABLE IF NOT EXISTS realtime_suggestions (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        account_wxid TEXT NOT NULL,
                         batch_id TEXT NOT NULL,
                         trigger_type TEXT NOT NULL,
                         intent TEXT NOT NULL,
@@ -609,12 +771,14 @@ class Bridge:
                     pass
                 now_time = int(_time.time())
                 cursor = conn.cursor()
+                account_wxid = str(getattr(monitor, "current_account_wxid", "") or self._get_active_wechat_account_wxid() or "")
                 cursor.execute('''
                     INSERT INTO realtime_suggestions
-                    (batch_id, trigger_type, intent, severity, summary, speeches,
+                    (account_wxid, batch_id, trigger_type, intent, severity, summary, speeches,
                      confidence, status, engine_type, trigger_context, created_at, reply, thought_process)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 'displayed', ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'displayed', ?, ?, ?, ?, ?)
                 ''', (
+                    account_wxid,
                     monitor.current_batch_id or 'manual',
                     result.trigger_type,
                     result.intent,
@@ -644,6 +808,7 @@ class Bridge:
                     record_observation(
                         conn,
                         suggestion_id=inserted_id,
+                        account_wxid=account_wxid,
                         event_type=EVENT_SHOWN,
                         batch_id=monitor.current_batch_id or 'manual',
                         display_name=monitor.current_display_name,
@@ -654,6 +819,7 @@ class Bridge:
                     record_observation(
                         conn,
                         suggestion_id=inserted_id,
+                        account_wxid=account_wxid,
                         event_type=EVENT_VIEWED,
                         batch_id=monitor.current_batch_id or 'manual',
                         display_name=monitor.current_display_name,
@@ -718,11 +884,24 @@ class Bridge:
         self.settings["analysis_device_mode"] = normalize_analysis_device_mode(
             self.settings.get("analysis_device_mode", ANALYSIS_DEVICE_MODE_AUTO)
         )
-        return self.settings
+        payload = dict(self.settings)
+        active_account = self._get_active_wechat_account() or {}
+        payload[WECHAT_ACCOUNTS_KEY] = self._get_wechat_accounts()
+        payload[WECHAT_ACTIVE_ACCOUNT_KEY] = self._get_active_wechat_account_wxid()
+        payload["wechat_use_custom_path"] = str(active_account.get("source") or "") == "custom"
+        payload["wechat_data_dir"] = active_account.get("wechat_dir") or ""
+        payload["wechat_user_wxid"] = active_account.get("wxid") or ""
+        payload["wechat_db_key"] = active_account.get("db_key") or ""
+        payload["wechat_import_completed"] = bool(active_account.get("import_completed"))
+        payload["wechat_last_import_at"] = active_account.get("last_import_at")
+        payload["wechat_last_import_total_size"] = int(active_account.get("last_import_total_size") or 0)
+        payload["wechat_last_import_files"] = active_account.get("last_import_files") or []
+        return payload
 
-    def get_current_user_profile(self) -> dict[str, Any]:
+    def get_current_user_profile(self, account_wxid: str = "") -> dict[str, Any]:
         """Resolve the current WeChat account profile for the top-right header avatar."""
-        wxid = str(self.settings.get("wechat_user_wxid", "") or "").strip()
+        account = self._resolve_wechat_account(account_wxid)
+        wxid = str((account or {}).get("wxid") or self._resolve_account_wxid(account_wxid) or "").strip()
         if not wxid:
             return {"ok": False, "error": "未配置微信用户ID", "profile": None}
         wxid_candidates = self._build_wechat_user_candidates(wxid)
@@ -751,10 +930,10 @@ class Bridge:
                         ) AS name,
                         COALESCE(NULLIF(TRIM(avatar_path), ''), '') AS avatar
                     FROM contacts
-                    WHERE username = ?
+                    WHERE account_wxid = ? AND username = ?
                     LIMIT 1
                     """,
-                    (candidate,),
+                    (wxid, candidate),
                 ).fetchone()
                 if not row:
                     continue
@@ -766,8 +945,8 @@ class Bridge:
         except Exception as e:
             logger.warning(f"[Bridge] 从本地数据库读取当前用户头像失败: {e}")
 
-        db_key = str(self.settings.get("wechat_db_key", "") or "").strip()
-        custom_paths = self._get_wechat_custom_paths()
+        db_key = str((account or {}).get("db_key") or "").strip()
+        custom_paths = self._get_wechat_custom_paths(account_wxid)
         if not db_key or not custom_paths:
             return {"ok": True, "profile": profile}
 
@@ -805,12 +984,45 @@ class Bridge:
 
     def set_settings(self, payload: dict[str, Any]) -> dict[str, Any]:
         """保存设置"""
+        payload = dict(payload)
         if "analysis_device_mode" in payload:
-            payload = dict(payload)
             payload["analysis_device_mode"] = normalize_analysis_device_mode(payload["analysis_device_mode"])
+
+        if WECHAT_ACCOUNTS_KEY in payload:
+            self.settings[WECHAT_ACCOUNTS_KEY] = normalize_wechat_accounts(payload.pop(WECHAT_ACCOUNTS_KEY))
+        if WECHAT_ACTIVE_ACCOUNT_KEY in payload:
+            set_active_wechat_account(self.settings, str(payload.pop(WECHAT_ACTIVE_ACCOUNT_KEY) or ""))
+
+        legacy_keys = {key: payload.pop(key) for key in list(payload.keys()) if key in LEGACY_WECHAT_KEYS}
+        if legacy_keys:
+            target_wxid = str(
+                legacy_keys.get("wechat_user_wxid")
+                or self._get_active_wechat_account_wxid()
+                or ""
+            ).strip()
+            if target_wxid:
+                update_wechat_account_import_state(
+                    self.settings,
+                    target_wxid,
+                    db_key=str(legacy_keys.get("wechat_db_key") or "") if "wechat_db_key" in legacy_keys else None,
+                    wechat_dir=str(legacy_keys.get("wechat_data_dir") or "") if "wechat_data_dir" in legacy_keys else None,
+                    source="custom" if legacy_keys.get("wechat_use_custom_path") else "auto",
+                    import_completed=legacy_keys.get("wechat_import_completed") if "wechat_import_completed" in legacy_keys else None,
+                )
+                merged_account = dict(self._get_wechat_account(target_wxid) or {"wxid": target_wxid})
+                if "wechat_last_import_at" in legacy_keys:
+                    merged_account["last_import_at"] = legacy_keys.get("wechat_last_import_at")
+                if "wechat_last_import_total_size" in legacy_keys:
+                    merged_account["last_import_total_size"] = legacy_keys.get("wechat_last_import_total_size")
+                if "wechat_last_import_files" in legacy_keys:
+                    merged_account["last_import_files"] = legacy_keys.get("wechat_last_import_files") or []
+                upsert_wechat_account(self.settings, merged_account)
+                if legacy_keys.get("wechat_user_wxid"):
+                    set_active_wechat_account(self.settings, target_wxid)
+
         self.settings.update(payload)
         self._save_settings()
-        return {"saved": True, "payload": payload}
+        return {"saved": True, "payload": payload, **self._serialize_wechat_accounts()}
     
     def select_file(self, title: str = "选择文件", file_types: str = "*.*") -> dict[str, Any]:
         """
@@ -950,7 +1162,8 @@ class Bridge:
             result = {
                 "ok": True,
                 "wxids": [],
-                "databases": {}
+                "databases": {},
+                "accounts": [],
             }
 
             # 兼容直接选中了某个账号目录的情况
@@ -959,11 +1172,7 @@ class Bridge:
                 wxid_dirs = [target_dir.name]
             else:
                 root_dir = target_dir
-                wxid_dirs = sorted(
-                    child.name
-                    for child in target_dir.iterdir()
-                    if child.is_dir() and child.name.startswith("wxid_")
-                )
+                wxid_dirs = WeChatPathFinder.find_all_user_wxids(str(target_dir))
 
             logger.debug(f"[DEBUG] 找到 {len(wxid_dirs)} 个 wxid 目录")
 
@@ -975,6 +1184,13 @@ class Bridge:
                     "contact_db": databases.get("contact"),
                     "session_db": databases.get("session"),
                 }
+                result["accounts"].append(
+                    self._build_wechat_account_candidate(
+                        wxid,
+                        wechat_dir=str(root_dir),
+                        source="custom",
+                    )
+                )
             
             logger.info(f"[DEBUG] 扫描完成，找到 {len(result['wxids'])} 个wxid")
             return result
@@ -988,12 +1204,18 @@ class Bridge:
                 "ok": False,
                 "error": str(e),
                 "wxids": [],
-                "databases": {}
+                "databases": {},
+                "accounts": [],
             }
 
     # ==================== 实时监听相关 ====================
     
-    def start_realtime_monitor(self, talker_display_name: str, resume_mode: str = "skip") -> dict[str, Any]:
+    def start_realtime_monitor(
+        self,
+        talker_display_name: str,
+        resume_mode: str = "skip",
+        account_wxid: str = "",
+    ) -> dict[str, Any]:
         """
         启动实时消息监听
         
@@ -1017,7 +1239,8 @@ class Bridge:
             result = monitor_service.start_monitoring(
                 talker_username="",  # 由监听后端自行解析
                 talker_display_name=talker_display_name,
-                resume_mode=resume_mode
+                resume_mode=resume_mode,
+                account_wxid=self._resolve_account_wxid(account_wxid),
             )
             
             return {
@@ -1104,6 +1327,7 @@ class Bridge:
                 "ok": True,
                 "is_monitoring": status['is_monitoring'],
                 "talker_display_name": status.get('talker_display_name'),
+                "account_wxid": status.get('account_wxid'),
                 "batch_id": status.get('batch_id'),
                 "message_count": status.get('message_count', 0),
                 "model_ready": status.get('model_ready', False),
@@ -1193,7 +1417,7 @@ class Bridge:
 
     # ==================== AI 建议相关 ====================
 
-    def get_pending_suggestions(self, batch_id: str) -> dict[str, Any]:
+    def get_pending_suggestions(self, batch_id: str, account_wxid: str = "") -> dict[str, Any]:
         """
         获取当前批次的待处理 AI 建议
 
@@ -1208,11 +1432,13 @@ class Bridge:
             from ..services.realtime.monitor_service import RealtimeMonitorService
 
             conn = get_db()
+            resolved_account_wxid = self._resolve_account_wxid(account_wxid)
 
             # 确保表存在
             conn.execute('''
                 CREATE TABLE IF NOT EXISTS realtime_suggestions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    account_wxid TEXT NOT NULL,
                     batch_id TEXT NOT NULL,
                     trigger_type TEXT NOT NULL,
                     intent TEXT NOT NULL,
@@ -1244,10 +1470,10 @@ class Bridge:
                 SELECT id, trigger_type, intent, severity, summary, speeches,
                        confidence, engine_type, trigger_context, status, created_at, reply, thought_process
                 FROM realtime_suggestions
-                WHERE batch_id = ? AND status = 'pending'
+                WHERE account_wxid = ? AND batch_id = ? AND status = 'pending'
                 ORDER BY created_at DESC
                 LIMIT 20
-            ''', (batch_id,))
+            ''', (resolved_account_wxid, batch_id))
 
             suggestions = []
             for row in cursor.fetchall():
@@ -1258,6 +1484,7 @@ class Bridge:
                     mark_suggestion_viewed(
                         conn,
                         row['id'],
+                        account_wxid=resolved_account_wxid,
                         batch_id=batch_id,
                         trigger_type=row['trigger_type'],
                     )
@@ -1331,7 +1558,7 @@ class Bridge:
             logger.error(f"[Bridge] 关闭建议失败: {e}")
             return {"ok": False, "error": str(e)}
 
-    def get_suggestion_metrics(self, days: int = 7) -> dict[str, Any]:
+    def get_suggestion_metrics(self, days: int = 7, account_wxid: str = "") -> dict[str, Any]:
         """Return aggregated suggestion observation metrics for recent days."""
         try:
             from ..db.connection import get_db
@@ -1339,7 +1566,11 @@ class Bridge:
 
             normalized_days = max(1, int(days or 7))
             conn = get_db()
-            metrics = get_suggestion_metrics(conn, days=normalized_days)
+            metrics = get_suggestion_metrics(
+                conn,
+                account_wxid=self._resolve_account_wxid(account_wxid),
+                days=normalized_days,
+            )
             return {
                 "ok": True,
                 "metrics": metrics,
@@ -1614,7 +1845,7 @@ class Bridge:
             logger.error(f"[Bridge] 查询厂商模型失败: {e}")
             return {"ok": False, "error": str(e), "models": []}
 
-    def get_contact_profile(self, display_name: str) -> dict[str, Any]:
+    def get_contact_profile(self, display_name: str, account_wxid: str = "") -> dict[str, Any]:
         """
         获取联系人画像（查缓存）
 
@@ -1630,9 +1861,10 @@ class Bridge:
         try:
             from ..services.realtime.contact_profiler import ContactProfiler
             profiler = ContactProfiler()
+            resolved_account_wxid = self._resolve_account_wxid(account_wxid)
 
-            cached = profiler.get_profile(display_name)
-            estimate = profiler.estimate_tokens(display_name)
+            cached = profiler.get_profile(display_name, resolved_account_wxid)
+            estimate = profiler.estimate_tokens(display_name, account_wxid=resolved_account_wxid)
 
             if cached:
                 return {
@@ -1662,7 +1894,8 @@ class Bridge:
         self,
         display_name: str,
         budget_level: str = 'medium',
-        custom_budget: int = 0
+        custom_budget: int = 0,
+        account_wxid: str = "",
     ) -> dict[str, Any]:
         """
         生成联系人画像（调 LLM）
@@ -1678,7 +1911,12 @@ class Bridge:
         try:
             from ..services.realtime.contact_profiler import ContactProfiler
             profiler = ContactProfiler()
-            result = profiler.generate_profile(display_name, budget_level, custom_budget)
+            result = profiler.generate_profile(
+                display_name,
+                budget_level,
+                custom_budget,
+                self._resolve_account_wxid(account_wxid),
+            )
             return result
         except Exception as e:
             logger.error(f"[Bridge] 生成联系人画像失败: {e}")
@@ -1686,14 +1924,15 @@ class Bridge:
             traceback.print_exc()
             return {'ok': False, 'error': str(e)}
 
-    def get_self_profile(self, display_name: str) -> dict[str, Any]:
+    def get_self_profile(self, display_name: str, account_wxid: str = "") -> dict[str, Any]:
         """获取用户本人的专属克隆画像缓存"""
         try:
             from ..services.realtime.self_profiler import SelfProfiler
             profiler = SelfProfiler()
+            resolved_account_wxid = self._resolve_account_wxid(account_wxid)
 
-            cached = profiler.get_profile(display_name)
-            estimate = profiler.estimate_tokens(display_name)
+            cached = profiler.get_profile(display_name, resolved_account_wxid)
+            estimate = profiler.estimate_tokens(display_name, account_wxid=resolved_account_wxid)
 
             if cached:
                 return {
@@ -1723,13 +1962,19 @@ class Bridge:
         self,
         display_name: str,
         budget_level: str = 'medium',
-        custom_budget: int = 0
+        custom_budget: int = 0,
+        account_wxid: str = "",
     ) -> dict[str, Any]:
         """生成用户本体的聊天克隆画像"""
         try:
             from ..services.realtime.self_profiler import SelfProfiler
             profiler = SelfProfiler()
-            result = profiler.generate_profile(display_name, budget_level, custom_budget)
+            result = profiler.generate_profile(
+                display_name,
+                budget_level,
+                custom_budget,
+                self._resolve_account_wxid(account_wxid),
+            )
             return result
         except Exception as e:
             logger.error(f"[Bridge] 生成本体画像失败: {e}")
@@ -2762,7 +3007,8 @@ class Bridge:
     def get_realtime_resume_info(
         self,
         talker_display_name: str,
-        threshold_seconds: int = 300
+        threshold_seconds: int = 300,
+        account_wxid: str = "",
     ) -> dict[str, Any]:
         """
         获取指定联系人的监听恢复探测信息。
@@ -2784,6 +3030,7 @@ class Bridge:
             result = monitor_service.get_resume_probe(
                 talker_display_name=talker_display_name,
                 threshold_seconds=threshold_seconds,
+                account_wxid=self._resolve_account_wxid(account_wxid),
             )
             return {"ok": True, **result}
         except Exception as e:
@@ -2799,7 +3046,8 @@ class Bridge:
         self,
         talker_display_name: str,
         threshold_seconds: int = 300,
-        max_scroll_rounds: int = 80
+        max_scroll_rounds: int = 80,
+        account_wxid: str = "",
     ) -> dict[str, Any]:
         """
         执行指定联系人的回溯补全。
@@ -2808,6 +3056,7 @@ class Bridge:
             from ..services.realtime.monitor_service import RealtimeMonitorService
 
             monitor_service = RealtimeMonitorService()
+            monitor_service.current_account_wxid = self._resolve_account_wxid(account_wxid)
             result = monitor_service.run_backfill(
                 talker_display_name=talker_display_name,
                 threshold_seconds=threshold_seconds,
@@ -3140,7 +3389,7 @@ class Bridge:
 
         # 读取消息
         buffer = MessageBuffer()
-        messages = buffer.get_batch_messages(batch_id)
+        messages = buffer.get_batch_messages(batch_id, account_wxid=monitor_service.current_account_wxid)
 
         # 读取建议
         suggestions = []
@@ -3148,8 +3397,8 @@ class Bridge:
             from ..db.connection import get_db
             conn = get_db()
             rows = conn.execute(
-                'SELECT * FROM realtime_suggestions WHERE batch_id = ? ORDER BY created_at',
-                (batch_id,)
+                'SELECT * FROM realtime_suggestions WHERE account_wxid = ? AND batch_id = ? ORDER BY created_at',
+                (monitor_service.current_account_wxid, batch_id)
             ).fetchall()
             suggestions = [dict(r) for r in rows]
         except Exception:
@@ -3163,18 +3412,18 @@ class Bridge:
         svc = SessionThreadService()
         t = threading.Thread(
             target=svc.archive_thread,
-            args=(batch_id, display_name, messages, suggestions, None, user_chat_history),
+            args=(batch_id, display_name, messages, suggestions, None, user_chat_history, monitor_service.current_account_wxid),
             daemon=True
         )
         t.start()
         logger.debug(f"[Bridge] 会话归档已启动 (batch={batch_id[:8]}...)")
 
-    def get_latest_thread(self, display_name: str) -> dict[str, Any]:
+    def get_latest_thread(self, display_name: str, account_wxid: str = "") -> dict[str, Any]:
         """获取该联系人最近的会话线程（24 小时内）"""
         try:
             from ..services.realtime.session_thread_service import SessionThreadService
             svc = SessionThreadService()
-            thread = svc.get_latest_thread(display_name)
+            thread = svc.get_latest_thread(display_name, account_wxid=self._resolve_account_wxid(account_wxid))
             return {
                 "ok": True,
                 "has_thread": thread is not None,

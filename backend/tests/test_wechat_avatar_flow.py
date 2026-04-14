@@ -29,10 +29,10 @@ def isolated_db(tmp_path):
 def test_import_contacts_persists_avatar_without_blank_overwrite(monkeypatch, isolated_db):
     isolated_db.execute(
         """
-        INSERT INTO contacts (username, nickname, avatar_path, is_friend, created_at, updated_at)
-        VALUES (?, ?, ?, 1, 1, 1)
+        INSERT INTO contacts (account_wxid, username, nickname, avatar_path, is_friend, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 1, 1, 1)
         """,
-        ("wxid_existing", "旧昵称", "https://old.example/avatar.jpg"),
+        ("wxid_me", "wxid_existing", "旧昵称", "https://old.example/avatar.jpg"),
     )
     isolated_db.commit()
 
@@ -69,14 +69,15 @@ def test_import_contacts_persists_avatar_without_blank_overwrite(monkeypatch, is
     monkeypatch.setattr("app.services.wechat.ingest_service.ContactDBV4", FakeContactDB)
 
     service = WeChatIngestService()
-    imported = service._import_contacts_v4("fake_contact.db", "secret-key")
+    imported = service._import_contacts_v4("fake_contact.db", "secret-key", "wxid_me")
 
     assert imported == 2
 
     rows = {
         row["username"]: row
         for row in isolated_db.execute(
-            "SELECT username, nickname, avatar_path FROM contacts ORDER BY username"
+            "SELECT username, nickname, avatar_path FROM contacts WHERE account_wxid = ? ORDER BY username",
+            ("wxid_me",),
         ).fetchall()
     }
 
@@ -88,17 +89,17 @@ def test_import_contacts_persists_avatar_without_blank_overwrite(monkeypatch, is
 def test_refresh_contact_avatars_backfills_conversations(monkeypatch, isolated_db):
     isolated_db.execute(
         """
-        INSERT INTO contacts (username, nickname, avatar_path, is_friend, created_at, updated_at)
-        VALUES (?, ?, ?, 1, 1, 1)
+        INSERT INTO contacts (account_wxid, username, nickname, avatar_path, is_friend, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 1, 1, 1)
         """,
-        ("wxid_target", "目标联系人", "",),
+        ("wxid_me", "wxid_target", "目标联系人", "",),
     )
     isolated_db.execute(
         """
-        INSERT INTO conversations (username, display_name, avatar_path, created_at, updated_at, message_count)
-        VALUES (?, ?, ?, 1, 1, 10)
+        INSERT INTO conversations (account_wxid, username, display_name, platform, avatar_path, created_at, updated_at, message_count)
+        VALUES (?, ?, ?, 'wechat', ?, 1, 1, 10)
         """,
-        ("wxid_target", "目标联系人", ""),
+        ("wxid_me", "wxid_target", "目标联系人", ""),
     )
     isolated_db.commit()
 
@@ -127,6 +128,7 @@ def test_refresh_contact_avatars_backfills_conversations(monkeypatch, isolated_d
     monkeypatch.setattr(service, "resolve_wechat_paths", lambda custom_paths=None: {
         "wechat_dir": r"D:\WeChat",
         "current_user": "wxid_me",
+        "account_wxid": "wxid_me",
         "databases": {"contact": "fake_contact.db", "message": [], "session": None},
     })
     monkeypatch.setattr("app.services.wechat.ingest_service.ContactDBV4", FakeContactDB)
@@ -134,6 +136,7 @@ def test_refresh_contact_avatars_backfills_conversations(monkeypatch, isolated_d
     result = service.refresh_contact_avatars("secret-key", {
         "wechat_dir": r"D:\WeChat",
         "current_user": "wxid_me",
+        "account_wxid": "wxid_me",
     })
 
     assert result["ok"] is True
@@ -145,12 +148,12 @@ def test_refresh_contact_avatars_backfills_conversations(monkeypatch, isolated_d
     }
 
     contact_row = isolated_db.execute(
-        "SELECT avatar_path FROM contacts WHERE username = ?",
-        ("wxid_target",),
+        "SELECT avatar_path FROM contacts WHERE account_wxid = ? AND username = ?",
+        ("wxid_me", "wxid_target"),
     ).fetchone()
     conversation_row = isolated_db.execute(
-        "SELECT avatar_path FROM conversations WHERE username = ?",
-        ("wxid_target",),
+        "SELECT avatar_path FROM conversations WHERE account_wxid = ? AND username = ?",
+        ("wxid_me", "wxid_target"),
     ).fetchone()
 
     assert contact_row["avatar_path"] == "https://cdn.example/target.jpg"
@@ -160,22 +163,22 @@ def test_refresh_contact_avatars_backfills_conversations(monkeypatch, isolated_d
 def test_analysis_service_falls_back_to_contact_avatar(isolated_db):
     isolated_db.execute(
         """
-        INSERT INTO contacts (username, nickname, avatar_path, is_friend, created_at, updated_at)
-        VALUES (?, ?, ?, 1, 1, 1)
+        INSERT INTO contacts (account_wxid, username, nickname, avatar_path, is_friend, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 1, 1, 1)
         """,
-        ("wxid_avatar", "带头像联系人", "https://cdn.example/fallback.jpg"),
+        ("wxid_me", "wxid_avatar", "带头像联系人", "https://cdn.example/fallback.jpg"),
     )
     cursor = isolated_db.execute(
         """
-        INSERT INTO conversations (username, display_name, avatar_path, created_at, updated_at, message_count)
-        VALUES (?, ?, ?, 1, 1700000000, 5)
+        INSERT INTO conversations (account_wxid, username, display_name, platform, avatar_path, created_at, updated_at, message_count)
+        VALUES (?, ?, ?, 'wechat', ?, 1, 1700000000, 5)
         """,
-        ("wxid_avatar", "带头像联系人", None),
+        ("wxid_me", "wxid_avatar", "带头像联系人", None),
     )
     isolated_db.commit()
 
     service = AnalysisService()
-    conversation_list = service.get_conversation_list()
+    conversation_list = service.get_conversation_list("wxid_me")
     subject_info = service._get_subject_info(cursor.lastrowid)
 
     assert conversation_list["ok"] is True

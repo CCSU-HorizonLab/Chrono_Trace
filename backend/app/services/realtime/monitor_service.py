@@ -16,6 +16,7 @@ from .emotion_state_tracker import EmotionStateTracker
 from .providers.base import UINotAccessibleError
 from .providers.models import build_message_hash, normalize_text
 from .providers.factory import normalize_listener_backend
+from ..wechat.account_settings import get_active_wechat_account_wxid, load_settings_from_file
 
 logger = logging.getLogger(__name__)
 def _print(*args, **kwargs):
@@ -58,6 +59,7 @@ class RealtimeMonitorService:
             self.current_batch_id = None        # 当前批次ID
             self.current_talker = None          # 当前监听对象username
             self.current_display_name = None    # 当前监听对象显示名
+            self.current_account_wxid = ""
             self.is_monitoring = False          # 监听状态
             self._chat_ready = False            # 聊天切换是否完成
             self._chat_error = ''               # 聊天切换出错信息
@@ -112,14 +114,31 @@ class RealtimeMonitorService:
                     'engine_type': 'llm',           # llm
                 }
             self._last_auto_suggestion_time = 0
+            try:
+                self.current_account_wxid = get_active_wechat_account_wxid(load_settings_from_file())
+            except Exception:
+                self.current_account_wxid = ""
             self._initialized = True
             _print(f"[RealtimeMonitorService] 服务已初始化，引擎类型: {self._suggestion_config['engine_type']}")
+
+    def _resolve_account_wxid(self, account_wxid: str | None = None) -> str:
+        normalized = str(account_wxid or "").strip()
+        if normalized:
+            return normalized
+        current = str(getattr(self, "current_account_wxid", "") or "").strip()
+        if current:
+            return current
+        try:
+            return get_active_wechat_account_wxid(load_settings_from_file())
+        except Exception:
+            return ""
     
     def start_monitoring(
         self, 
         talker_username: str,
         talker_display_name: str,
         resume_mode: str = 'skip',
+        account_wxid: str = '',
     ) -> dict:
         """
         启动实时监听
@@ -161,11 +180,17 @@ class RealtimeMonitorService:
                     }
             
             # 3. 生成批次ID
-            resolved_talker_username = self._resolve_talker_username(talker_username, talker_display_name)
+            resolved_account_wxid = self._resolve_account_wxid(account_wxid)
+            resolved_talker_username = self._resolve_talker_username(
+                talker_username,
+                talker_display_name,
+                resolved_account_wxid,
+            )
 
             self.current_batch_id = str(uuid.uuid4())
             self.current_talker = resolved_talker_username
             self.current_display_name = talker_display_name
+            self.current_account_wxid = resolved_account_wxid
             self._resume_mode = resume_mode or 'skip'
             self.seen_hashes.clear()
             self.seen_message_keys.clear()
@@ -201,6 +226,7 @@ class RealtimeMonitorService:
             # 8. 记录事件到运行时事件表
             self._log_runtime_event('realtime_monitor_start', {
                 'batch_id': self.current_batch_id,
+                'account_wxid': self.current_account_wxid,
                 'talker_username': resolved_talker_username,
                 'talker_display_name': talker_display_name
             })
@@ -453,7 +479,12 @@ class RealtimeMonitorService:
         """Build a stable talker key for persistence when username may be unavailable."""
         return (talker_username or talker_display_name or '').strip()
 
-    def _resolve_talker_username(self, talker_username: str | None, talker_display_name: str | None) -> str:
+    def _resolve_talker_username(
+        self,
+        talker_username: str | None,
+        talker_display_name: str | None,
+        account_wxid: str | None = None,
+    ) -> str:
         """Resolve the canonical conversation username from contacts/conversations when possible."""
         if talker_username and str(talker_username).strip():
             return str(talker_username).strip()
@@ -466,11 +497,13 @@ class RealtimeMonitorService:
             from ...db.connection import get_db
 
             conn = get_db()
+            resolved_account_wxid = self._resolve_account_wxid(account_wxid)
             row = conn.execute(
                 '''
                 SELECT username
                 FROM contacts
-                WHERE remark = ? OR nickname = ?
+                WHERE account_wxid = ?
+                  AND (remark = ? OR nickname = ?)
                 ORDER BY
                     CASE
                         WHEN remark = ? THEN 0
@@ -480,7 +513,7 @@ class RealtimeMonitorService:
                     username ASC
                 LIMIT 1
                 ''',
-                (display_name, display_name, display_name, display_name)
+                (resolved_account_wxid, display_name, display_name, display_name, display_name)
             ).fetchone()
             if row and row[0]:
                 return str(row[0]).strip()
@@ -489,11 +522,12 @@ class RealtimeMonitorService:
                 '''
                 SELECT username
                 FROM conversations
-                WHERE display_name = ? OR username = ?
+                WHERE account_wxid = ?
+                  AND (display_name = ? OR username = ?)
                 ORDER BY message_count DESC, updated_at DESC
                 LIMIT 1
                 ''',
-                (display_name, display_name)
+                (resolved_account_wxid, display_name, display_name)
             ).fetchone()
             if row and row[0]:
                 return str(row[0]).strip()
@@ -1184,6 +1218,7 @@ class RealtimeMonitorService:
         return {
             'session_token': int(session_token),
             'batch_id': self.current_batch_id,
+            'account_wxid': self.current_account_wxid,
             'talker_username': self.current_talker,
             'display_name': self.current_display_name,
         }
@@ -1702,7 +1737,7 @@ class RealtimeMonitorService:
             if message_hash and message_hash in self.seen_hashes:
                 self.seen_message_keys.add(message_key)
                 return
-            if message_hash and self.message_buffer.message_exists(message_hash):
+            if message_hash and self.message_buffer.message_exists(message_hash, self.current_account_wxid):
                 self.seen_message_keys.add(message_key)
                 self.seen_hashes.add(message_hash)
                 return
@@ -1710,6 +1745,7 @@ class RealtimeMonitorService:
             # 7. 保存到数据库
             success = self.message_buffer.save_message(
                 batch_id,
+                self.current_account_wxid,
                 talker_username,
                 display_name,
                 message_data
@@ -1903,9 +1939,10 @@ class RealtimeMonitorService:
 
         conn = get_db()
         talker_key = self._get_talker_key(talker_username, talker_display_name)
+        account_wxid = self._resolve_account_wxid()
         row = conn.execute(
-            'SELECT id FROM conversations WHERE username = ?',
-            (talker_key,)
+            'SELECT id FROM conversations WHERE account_wxid = ? AND username = ? AND platform = ?',
+            (account_wxid, talker_key, 'wechat')
         ).fetchone()
         if row:
             return row[0]
@@ -1913,10 +1950,10 @@ class RealtimeMonitorService:
         now_ts = int(time.time())
         cursor = conn.execute(
             '''
-            INSERT INTO conversations (username, display_name, created_at, updated_at, message_count)
-            VALUES (?, ?, ?, ?, 0)
+            INSERT INTO conversations (account_wxid, username, display_name, platform, created_at, updated_at, message_count)
+            VALUES (?, ?, ?, 'wechat', ?, ?, 0)
             ''',
-            (talker_key, talker_display_name or talker_key, now_ts, now_ts)
+            (account_wxid, talker_key, talker_display_name or talker_key, now_ts, now_ts)
         )
         conn.commit()
         return cursor.lastrowid
@@ -1965,7 +2002,8 @@ class RealtimeMonitorService:
             '''
             CREATE TABLE IF NOT EXISTS realtime_monitor_checkpoints (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                talker_key TEXT NOT NULL UNIQUE,
+                account_wxid TEXT NOT NULL,
+                talker_key TEXT NOT NULL,
                 talker_username TEXT,
                 talker_display_name TEXT NOT NULL,
                 last_batch_id TEXT,
@@ -1977,15 +2015,16 @@ class RealtimeMonitorService:
                 message_count INTEGER DEFAULT 0,
                 source TEXT DEFAULT 'realtime',
                 created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL
+                updated_at INTEGER NOT NULL,
+                UNIQUE(account_wxid, talker_key)
             )
             '''
         )
         conn.execute(
-            'CREATE INDEX IF NOT EXISTS idx_realtime_checkpoint_updated ON realtime_monitor_checkpoints(updated_at DESC)'
+            'CREATE INDEX IF NOT EXISTS idx_realtime_checkpoint_account_updated ON realtime_monitor_checkpoints(account_wxid, updated_at DESC)'
         )
         conn.execute(
-            'CREATE INDEX IF NOT EXISTS idx_realtime_checkpoint_display_name ON realtime_monitor_checkpoints(talker_display_name)'
+            'CREATE INDEX IF NOT EXISTS idx_realtime_checkpoint_account_display_name ON realtime_monitor_checkpoints(account_wxid, talker_display_name)'
         )
         columns = {
             str(row['name'])
@@ -2007,7 +2046,8 @@ class RealtimeMonitorService:
         if not talker_key or not batch_id:
             return
 
-        messages = self.message_buffer.get_batch_messages(batch_id)
+        account_wxid = self._resolve_account_wxid()
+        messages = self.message_buffer.get_batch_messages(batch_id, account_wxid=account_wxid)
         last_message = None
         for msg in reversed(messages):
             if msg.get('sender_attr') == 'system':
@@ -2034,11 +2074,11 @@ class RealtimeMonitorService:
         conn.execute(
             '''
             INSERT INTO realtime_monitor_checkpoints (
-                talker_key, talker_username, talker_display_name, last_batch_id,
+                account_wxid, talker_key, talker_username, talker_display_name, last_batch_id,
                 last_message_timestamp, last_message_hash, last_runtime_id,
                 last_message_preview, last_message_context, message_count, source, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'realtime', ?, ?)
-            ON CONFLICT(talker_key) DO UPDATE SET
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'realtime', ?, ?)
+            ON CONFLICT(account_wxid, talker_key) DO UPDATE SET
                 talker_username = excluded.talker_username,
                 talker_display_name = excluded.talker_display_name,
                 last_batch_id = excluded.last_batch_id,
@@ -2051,6 +2091,7 @@ class RealtimeMonitorService:
                 updated_at = excluded.updated_at
             ''',
             (
+                account_wxid,
                 talker_key,
                 talker_username or None,
                 talker_display_name or talker_key,
@@ -2067,9 +2108,10 @@ class RealtimeMonitorService:
         )
         conn.commit()
 
-    def get_resume_checkpoint(self, talker_display_name: str, talker_username: str = '') -> dict:
+    def get_resume_checkpoint(self, talker_display_name: str, talker_username: str = '', account_wxid: str = '') -> dict:
         """Return checkpoint information for the requested talker."""
-        resolved_talker_username = self._resolve_talker_username(talker_username, talker_display_name)
+        resolved_account_wxid = self._resolve_account_wxid(account_wxid)
+        resolved_talker_username = self._resolve_talker_username(talker_username, talker_display_name, resolved_account_wxid)
         talker_key = self._get_talker_key(resolved_talker_username, talker_display_name)
         if not talker_key:
             return {'has_checkpoint': False}
@@ -2080,26 +2122,26 @@ class RealtimeMonitorService:
         conn = get_db()
         row = conn.execute(
             '''
-            SELECT talker_key, talker_username, talker_display_name, last_batch_id,
+            SELECT account_wxid, talker_key, talker_username, talker_display_name, last_batch_id,
                    last_message_timestamp, last_message_hash, last_runtime_id,
                    last_message_preview, last_message_context, message_count, source, created_at, updated_at
             FROM realtime_monitor_checkpoints
-            WHERE talker_key = ?
+            WHERE account_wxid = ? AND talker_key = ?
             ''',
-            (talker_key,)
+            (resolved_account_wxid, talker_key)
         ).fetchone()
         if not row and talker_display_name:
             row = conn.execute(
                 '''
-                SELECT talker_key, talker_username, talker_display_name, last_batch_id,
+                SELECT account_wxid, talker_key, talker_username, talker_display_name, last_batch_id,
                        last_message_timestamp, last_message_hash, last_runtime_id,
                        last_message_preview, last_message_context, message_count, source, created_at, updated_at
                 FROM realtime_monitor_checkpoints
-                WHERE talker_display_name = ?
+                WHERE account_wxid = ? AND talker_display_name = ?
                 ORDER BY updated_at DESC
                 LIMIT 1
                 ''',
-                (talker_display_name,)
+                (resolved_account_wxid, talker_display_name)
             ).fetchone()
 
         if not row:
@@ -2107,6 +2149,7 @@ class RealtimeMonitorService:
 
         return {
             'has_checkpoint': True,
+            'account_wxid': row['account_wxid'],
             'talker_key': row['talker_key'],
             'talker_username': row['talker_username'],
             'talker_display_name': row['talker_display_name'],
@@ -2127,9 +2170,10 @@ class RealtimeMonitorService:
         talker_display_name: str,
         talker_username: str = '',
         threshold_seconds: int = 300,
+        account_wxid: str = '',
     ) -> dict:
         """Return whether the UI should offer resume/backfill for this talker."""
-        checkpoint = self.get_resume_checkpoint(talker_display_name, talker_username)
+        checkpoint = self.get_resume_checkpoint(talker_display_name, talker_username, account_wxid)
         if not checkpoint.get('has_checkpoint'):
             return {
                 'has_checkpoint': False,
@@ -2324,12 +2368,13 @@ class RealtimeMonitorService:
         merged = 0
         for message_data in messages:
             message_hash = message_data.get('message_hash')
-            if message_hash and self.message_buffer.message_exists(message_hash):
+            if message_hash and self.message_buffer.message_exists(message_hash, self.current_account_wxid):
                 self.seen_hashes.add(message_hash)
                 continue
 
             success = self.message_buffer.save_message(
                 self.current_batch_id,
+                self.current_account_wxid,
                 talker_username,
                 talker_display_name,
                 message_data,
@@ -2637,7 +2682,7 @@ class RealtimeMonitorService:
         if not batch_id or not talker_key:
             return 0
 
-        buffer_messages = self.message_buffer.get_batch_messages(batch_id)
+        buffer_messages = self.message_buffer.get_batch_messages(batch_id, account_wxid=self.current_account_wxid)
         if not buffer_messages:
             return 0
 
@@ -2704,7 +2749,7 @@ class RealtimeMonitorService:
         else:
             conn.commit()
 
-        self.message_buffer.mark_as_processed(batch_id)
+        self.message_buffer.mark_as_processed(batch_id, self.current_account_wxid)
 
         return migrated
 
@@ -2765,7 +2810,7 @@ class RealtimeMonitorService:
                     _print(f"❌ 移除监听异常: {e}")
             
             # 3. 获取消息数量
-            message_count = self.message_buffer.get_batch_count(self.current_batch_id)
+            message_count = self.message_buffer.get_batch_count(self.current_batch_id, self.current_account_wxid)
             
             # 4. 保存批次ID用于返回
             batch_id = self.current_batch_id
@@ -2854,7 +2899,7 @@ class RealtimeMonitorService:
         try:
             message_count = 0
             if self.is_monitoring and self.current_batch_id:
-                message_count = self.message_buffer.get_batch_count(self.current_batch_id)
+                message_count = self.message_buffer.get_batch_count(self.current_batch_id, self.current_account_wxid)
             
             # 检测轮询线程是否仍然存活
             polling_alive = (
@@ -2866,6 +2911,7 @@ class RealtimeMonitorService:
                 'is_monitoring': self.is_monitoring,
                 'talker_username': self.current_talker,
                 'talker_display_name': self.current_display_name,
+                'account_wxid': self.current_account_wxid,
                 'batch_id': self.current_batch_id,
                 'message_count': message_count,
                 'model_ready': self.sentiment_service.is_ready(),
@@ -2931,6 +2977,7 @@ class RealtimeMonitorService:
         intent = self._suggestion_config.get('intent', 'maintain')
         batch_id = session_state.get('batch_id')
         display_name = session_state.get('display_name')
+        account_wxid = self._resolve_account_wxid(session_state.get('account_wxid'))
         
         for trigger in triggers:
             try:
@@ -2959,13 +3006,13 @@ class RealtimeMonitorService:
                         
                         # 对方画像
                         c_profiler = ContactProfiler()
-                        c_cached = c_profiler.get_profile(display_name)
+                        c_cached = c_profiler.get_profile(display_name, account_wxid)
                         if c_cached and not c_cached['expired']:
                             ctx['contact_profile'] = c_cached['profile']
                             
                         # 我方本体画像
                         s_profiler = SelfProfiler()
-                        s_cached = s_profiler.get_profile(display_name)
+                        s_cached = s_profiler.get_profile(display_name, account_wxid)
                         if s_cached and not s_cached['expired']:
                             ctx['self_profile'] = s_cached['profile']
                             self_profile_cache = s_cached
@@ -2979,6 +3026,7 @@ class RealtimeMonitorService:
 
                 # 传递联系人名称以便查询调教规则
                 ctx['display_name'] = display_name
+                ctx['account_wxid'] = account_wxid
 
                 # RAG：检索相关历史记忆
                 try:
@@ -2986,7 +3034,7 @@ class RealtimeMonitorService:
                     thread_svc = SessionThreadService()
                     recent = ctx.get('recent_messages', [])
                     memories = thread_svc.retrieve_relevant_memories(
-                        display_name, recent
+                        display_name, recent, account_wxid=account_wxid
                     )
                     if memories:
                         ctx['relevant_memories'] = memories
@@ -3038,6 +3086,7 @@ class RealtimeMonitorService:
         
         try:
             intent = self._suggestion_config.get('intent', 'maintain')
+            account_wxid = self._resolve_account_wxid(session_state.get('account_wxid'))
 
             trigger_type, trigger_context = self._select_full_auto_trigger(runtime_triggers)
             if not trigger_type:
@@ -3075,13 +3124,13 @@ class RealtimeMonitorService:
                     
                     # 对方画像
                     c_profiler = ContactProfiler()
-                    c_cached = c_profiler.get_profile(session_state['display_name'])
+                    c_cached = c_profiler.get_profile(session_state['display_name'], account_wxid)
                     if c_cached and not c_cached['expired']:
                         ctx['contact_profile'] = c_cached['profile']
                         
                     # 我方本体画像
                     s_profiler = SelfProfiler()
-                    s_cached = s_profiler.get_profile(session_state['display_name'])
+                    s_cached = s_profiler.get_profile(session_state['display_name'], account_wxid)
                     if s_cached and not s_cached['expired']:
                         ctx['self_profile'] = s_cached['profile']
                         self_profile_cache = s_cached
@@ -3096,6 +3145,7 @@ class RealtimeMonitorService:
             # 传递联系人名称以便查询调教规则
             if session_state.get('display_name'):
                 ctx['display_name'] = session_state['display_name']
+                ctx['account_wxid'] = account_wxid
 
             # RAG：检索相关历史记忆
             if session_state.get('display_name'):
@@ -3104,7 +3154,7 @@ class RealtimeMonitorService:
                     thread_svc = SessionThreadService()
                     recent = ctx.get('recent_messages', [])
                     memories = thread_svc.retrieve_relevant_memories(
-                        session_state['display_name'], recent
+                        session_state['display_name'], recent, account_wxid=account_wxid
                     )
                     if memories:
                         ctx['relevant_memories'] = memories
@@ -3146,6 +3196,7 @@ class RealtimeMonitorService:
             conn.execute('''
                 CREATE TABLE IF NOT EXISTS realtime_suggestions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    account_wxid TEXT NOT NULL,
                     batch_id TEXT NOT NULL,
                     trigger_type TEXT NOT NULL,
                     intent TEXT NOT NULL,
@@ -3173,12 +3224,14 @@ class RealtimeMonitorService:
                 pass
             
             cursor = conn.cursor()
+            account_wxid = self._resolve_account_wxid(session_state.get('account_wxid'))
             cursor.execute('''
                 INSERT INTO realtime_suggestions
-                (batch_id, trigger_type, intent, severity, summary, speeches,
+                (account_wxid, batch_id, trigger_type, intent, severity, summary, speeches,
                  confidence, engine_type, trigger_context, created_at, reply, thought_process)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
+                account_wxid,
                 batch_id,
                 result.trigger_type,
                 result.intent,
@@ -3199,6 +3252,7 @@ class RealtimeMonitorService:
                 record_observation(
                     conn,
                     suggestion_id=suggestion_id,
+                    account_wxid=account_wxid,
                     event_type=EVENT_SHOWN,
                     batch_id=batch_id,
                     display_name=session_state.get('display_name'),
@@ -3260,6 +3314,7 @@ class RealtimeMonitorService:
 
             batch_id = session_state.get('batch_id')
             display_name = session_state.get('display_name') or ''
+            account_wxid = self._resolve_account_wxid(session_state.get('account_wxid'))
             if not batch_id:
                 return
 
@@ -3270,9 +3325,9 @@ class RealtimeMonitorService:
             cutoff = int(time.time()) - 300
             cursor = conn.execute('''
                 SELECT id, speeches FROM realtime_suggestions
-                WHERE batch_id = ? AND status IN ('pending', 'displayed') AND created_at >= ?
+                WHERE account_wxid = ? AND batch_id = ? AND status IN ('pending', 'displayed') AND created_at >= ?
                 ORDER BY created_at DESC LIMIT 1
-            ''', (batch_id, cutoff))
+            ''', (account_wxid, batch_id, cutoff))
 
             row = cursor.fetchone()
             if not row:
@@ -3284,9 +3339,9 @@ class RealtimeMonitorService:
                 '''
                 UPDATE realtime_suggestions
                 SET status = 'feedback_processing'
-                WHERE id = ? AND status IN ('pending', 'displayed')
+                WHERE account_wxid = ? AND id = ? AND status IN ('pending', 'displayed')
                 ''',
-                (suggestion_id,)
+                (account_wxid, suggestion_id)
             )
             conn.commit()
             if reserve.rowcount != 1:
@@ -3310,6 +3365,7 @@ class RealtimeMonitorService:
                         display_name=captured_display_name,
                         suggestion_id=suggestion_id,
                         user_message_type=user_message_type,
+                        account_wxid=str(session_state.get('account_wxid') or self.current_account_wxid or ''),
                     )
                     try:
                         from .suggestion_observer import (
@@ -3323,6 +3379,7 @@ class RealtimeMonitorService:
                             record_observation(
                                 conn2 := get_db(),
                                 suggestion_id=suggestion_id,
+                                account_wxid=account_wxid,
                                 event_type=EVENT_ADOPTED if outcome == 'adopted' else EVENT_REWRITTEN,
                                 similarity=feedback_analysis.get('max_similarity'),
                                 selected_speech=feedback_analysis.get('selected_speech'),
@@ -3349,18 +3406,18 @@ class RealtimeMonitorService:
                         )
                     
                     # 标记建议为已反馈
-                    conn2 = get_db()
-                    conn2.execute(
-                        "UPDATE realtime_suggestions SET status = 'feedback_collected' WHERE id = ?",
-                        (suggestion_id,)
-                    )
-                    conn2.commit()
+                        conn2 = get_db()
+                        conn2.execute(
+                            "UPDATE realtime_suggestions SET status = 'feedback_collected' WHERE account_wxid = ? AND id = ?",
+                            (account_wxid, suggestion_id)
+                        )
+                        conn2.commit()
                 except Exception as e:
                     try:
                         conn2 = get_db()
                         conn2.execute(
-                            "UPDATE realtime_suggestions SET status = 'feedback_failed' WHERE id = ?",
-                            (suggestion_id,)
+                            "UPDATE realtime_suggestions SET status = 'feedback_failed' WHERE account_wxid = ? AND id = ?",
+                            (account_wxid, suggestion_id)
                         )
                         conn2.commit()
                     except Exception:

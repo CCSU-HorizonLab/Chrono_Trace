@@ -17,16 +17,18 @@ class FakeMessageBuffer:
     def __init__(self):
         self.saved_messages = []
 
-    def message_exists(self, message_hash: str) -> bool:
+    def message_exists(self, message_hash: str, account_wxid: str | None = None) -> bool:
         return any(
             item.get("message_hash") == message_hash
+            and (account_wxid is None or item.get("account_wxid") == account_wxid)
             for item in self.saved_messages
         )
 
-    def save_message(self, batch_id, talker_username, talker_display_name, message_data):
+    def save_message(self, batch_id, account_wxid, talker_username, talker_display_name, message_data):
         self.saved_messages.append(
             {
                 "batch_id": batch_id,
+                "account_wxid": account_wxid,
                 "talker_username": talker_username,
                 "talker_display_name": talker_display_name,
                 **message_data,
@@ -66,6 +68,7 @@ def _make_service() -> tuple[RealtimeMonitorService, FakeMessageBuffer]:
     service.current_batch_id = "batch-1"
     service.current_talker = "friend_user"
     service.current_display_name = "Friend"
+    service.current_account_wxid = "wxid_test"
     service.is_monitoring = True
     service._listener_profile = "wechat_405"
     service._monitor_session_token = 1
@@ -616,6 +619,7 @@ def test_check_feedback_reserves_suggestion_once(monkeypatch):
         """
         CREATE TABLE realtime_suggestions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_wxid TEXT NOT NULL,
             batch_id TEXT NOT NULL,
             speeches TEXT NOT NULL,
             status TEXT DEFAULT 'pending',
@@ -625,10 +629,10 @@ def test_check_feedback_reserves_suggestion_once(monkeypatch):
     )
     conn.execute(
         """
-        INSERT INTO realtime_suggestions (batch_id, speeches, status, created_at)
-        VALUES (?, ?, 'pending', 9999999999)
+        INSERT INTO realtime_suggestions (account_wxid, batch_id, speeches, status, created_at)
+        VALUES (?, ?, ?, 'pending', 9999999999)
         """,
-        ("batch-1", json.dumps(["测试话术"], ensure_ascii=False)),
+        ("wxid_test", "batch-1", json.dumps(["测试话术"], ensure_ascii=False)),
     )
     conn.commit()
 
@@ -644,6 +648,7 @@ def test_check_feedback_reserves_suggestion_once(monkeypatch):
             display_name="",
             suggestion_id=None,
             user_message_type=None,
+            account_wxid="",
         ):
             calls.append(
                 {
@@ -652,6 +657,7 @@ def test_check_feedback_reserves_suggestion_once(monkeypatch):
                     "display_name": display_name,
                     "suggestion_id": suggestion_id,
                     "user_message_type": user_message_type,
+                    "account_wxid": account_wxid,
                 }
             )
             return {"outcome": "adopted", "rules": [], "max_similarity": 0.91, "selected_speech": "测试话术"}
@@ -678,8 +684,8 @@ def test_check_feedback_reserves_suggestion_once(monkeypatch):
     service._check_feedback("第二条自发消息", session_state=session_state)
 
     row = conn.execute(
-        "SELECT status FROM realtime_suggestions WHERE batch_id = ?",
-        ("batch-1",),
+        "SELECT status FROM realtime_suggestions WHERE account_wxid = ? AND batch_id = ?",
+        ("wxid_test", "batch-1"),
     ).fetchone()
 
     assert row["status"] == "feedback_processing"

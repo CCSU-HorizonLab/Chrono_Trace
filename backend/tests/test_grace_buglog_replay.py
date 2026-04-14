@@ -146,7 +146,7 @@ def test_grace_buglog_prompt_ignores_content_rules(monkeypatch):
     monkeypatch.setattr(
         feedback_rule_extractor.FeedbackRuleExtractor,
         "get_active_rules",
-        lambda self, display_name: [
+        lambda self, display_name, account_wxid="": [
             "用户对不感兴趣的话题会直接转移话题",
             "用户倾向于开启新话题而非延续玩笑",
             "用户倾向于用图片而非文字表达情绪或状态",

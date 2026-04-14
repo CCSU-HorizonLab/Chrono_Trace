@@ -1047,7 +1047,10 @@ class LLMSuggestionEngine(SuggestionEngine):
             try:
                 from .feedback_rule_extractor import FeedbackRuleExtractor
                 rules = self._filter_style_rules(
-                    FeedbackRuleExtractor().get_active_rules(display_name)
+                    FeedbackRuleExtractor().get_active_rules(
+                        display_name,
+                        str(context.get("account_wxid") or ""),
+                    )
                 )
                 if rules:
                     parts.append("\n【表达偏好参考（仅影响措辞，不决定话题）】")

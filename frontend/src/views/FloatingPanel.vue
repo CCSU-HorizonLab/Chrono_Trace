@@ -459,6 +459,7 @@ const showProfileDialog = ref(false)
 const emotionSummary = ref<any>(null)
 const chartSettingsOpen = ref(false)
 const showResumeDialog = ref(false)
+const activeAccountWxid = ref('')
 const resumeDialogState = reactive({
   lastMessageTime: '',
   gapLabel: '',
@@ -527,7 +528,8 @@ const profileInitial = computed(() => {
 
 const chartVisibilityStorageKey = computed(() => {
   const displayName = (realtimeState.talkerName || profile.value.name || 'default').trim() || 'default'
-  return `ct_chart_visibility:${displayName}`
+  const account = (activeAccountWxid.value || 'default').trim() || 'default'
+  return `ct_chart_visibility:${account}:${displayName}`
 })
 
 const computedChartStats = computed(() => {
@@ -670,7 +672,9 @@ function formatResumeGap(gapSeconds?: number) {
 }
 
 function loadChartVisibility(displayName?: string) {
-  const key = displayName?.trim() ? `ct_chart_visibility:${displayName.trim()}` : chartVisibilityStorageKey.value
+  const key = displayName?.trim()
+    ? `ct_chart_visibility:${(activeAccountWxid.value || 'default').trim() || 'default'}:${displayName.trim()}`
+    : chartVisibilityStorageKey.value
   try {
     const raw = window.localStorage.getItem(key)
     const parsed = raw ? JSON.parse(raw) : null
@@ -715,7 +719,11 @@ function resolveResumeChoice(choice: 'skip' | 'backfill') {
 }
 
 async function maybeResolveResumeMode(talkerName: string): Promise<'skip' | 'backfill' | false> {
-  const probe = await api.get_realtime_resume_info(talkerName, RESUME_THRESHOLD_SECONDS)
+  const probe = await api.get_realtime_resume_info(
+    talkerName,
+    RESUME_THRESHOLD_SECONDS,
+    activeAccountWxid.value || undefined,
+  )
   if (!probe?.ok) {
     console.warn('[FloatingPanel] 获取回溯探测信息失败:', probe?.error || probe)
     return 'skip'
@@ -736,6 +744,7 @@ async function maybeResolveResumeMode(talkerName: string): Promise<'skip' | 'bac
 }
 
 async function applyMonitoringStatus(status: any) {
+  activeAccountWxid.value = status.account_wxid || activeAccountWxid.value
   realtimeState.isMonitoring = true
   realtimeState.status = 'monitoring'
   realtimeState.talkerName = status.talker_display_name || ''
@@ -750,7 +759,7 @@ async function applyMonitoringStatus(status: any) {
   loadChartVisibility(realtimeState.talkerName)
 
   try {
-    const tRes = await api.get_latest_thread(realtimeState.talkerName)
+    const tRes = await api.get_latest_thread(realtimeState.talkerName, activeAccountWxid.value || undefined)
     if (tRes.ok && tRes.thread) {
       lastThread.value = tRes.thread
     }
@@ -759,7 +768,8 @@ async function applyMonitoringStatus(status: any) {
   }
 }
 
-async function startPendingMonitoring(talkerName: string) {
+async function startPendingMonitoring(talkerName: string, requestedAccountWxid = '') {
+  activeAccountWxid.value = requestedAccountWxid || activeAccountWxid.value
   realtimeState.talkerName = talkerName
   realtimeState.status = 'searching'
   chatError.value = ''
@@ -769,7 +779,7 @@ async function startPendingMonitoring(talkerName: string) {
     return false
   }
 
-  const result = await api.start_realtime_monitor(talkerName, resumeMode)
+  const result = await api.start_realtime_monitor(talkerName, resumeMode, activeAccountWxid.value || undefined)
   if (!(result.success || result.ok)) {
     chatError.value = result.error || result.message || '启动监听失败'
     return false
@@ -778,6 +788,7 @@ async function startPendingMonitoring(talkerName: string) {
   await applyMonitoringStatus({
     ok: true,
     is_monitoring: true,
+    account_wxid: activeAccountWxid.value,
     talker_display_name: talkerName,
     batch_id: result.batch_id,
     message_count: 0,
@@ -788,10 +799,23 @@ async function startPendingMonitoring(talkerName: string) {
 
 // ========== 生命周期 ==========
 onMounted(async () => {
+  try {
+    await bridgeReady()
+    const accountResult = await api.get_wechat_accounts()
+    if (accountResult?.ok) {
+      activeAccountWxid.value = accountResult.active_account_wxid || ''
+    }
+  } catch (e) {
+    console.error('[FloatingPanel] 加载微信账号上下文失败:', e)
+  }
+
   const pendingStart = readPendingStartRequest()
   if (pendingStart?.talkerName) {
     clearPendingStartRequest()
-    const started = await startPendingMonitoring(String(pendingStart.talkerName))
+    const started = await startPendingMonitoring(
+      String(pendingStart.talkerName),
+      String(pendingStart.account_wxid || activeAccountWxid.value || ''),
+    )
     loadChartVisibility(String(pendingStart.talkerName))
     window.addEventListener('resize', resizeVisibleCharts)
     await nextTick()
@@ -824,6 +848,7 @@ onMounted(async () => {
   }
 
   if (status?.ok && status.is_monitoring) {
+    activeAccountWxid.value = status.account_wxid || activeAccountWxid.value
     realtimeState.isMonitoring = true
     realtimeState.status = 'monitoring'
     realtimeState.talkerName = status.talker_display_name || ''
@@ -842,7 +867,7 @@ onMounted(async () => {
 
     // 查询是否有上次会话线程
     try {
-      const tRes = await api.get_latest_thread(realtimeState.talkerName)
+      const tRes = await api.get_latest_thread(realtimeState.talkerName, activeAccountWxid.value || undefined)
       if (tRes.ok && tRes.thread) {
         lastThread.value = tRes.thread
       }
@@ -1335,7 +1360,7 @@ function startPolling() {
     if (!realtimeState.batchId) return
     try {
       await bridgeReady()
-      const r = await api.get_pending_suggestions(realtimeState.batchId)
+      const r = await api.get_pending_suggestions(realtimeState.batchId, activeAccountWxid.value || undefined)
       if (r.ok) {
         let addedNew = false
         const revSuggestions = [...(r.suggestions || [])].reverse()
@@ -1657,7 +1682,7 @@ async function checkContactProfile(name: string) {
   if (!name) return
   try {
     await bridgeReady()
-    const r = await api.get_contact_profile(name)
+    const r = await api.get_contact_profile(name, activeAccountWxid.value || undefined)
     if (r.ok && r.has_profile && !r.expired) {
       profile.value = { name, ...r.profile }
     } else {
@@ -1671,7 +1696,12 @@ async function generateProfile() {
   profileLoading.value = true
   try {
     await bridgeReady()
-    const r = await api.generate_contact_profile(realtimeState.talkerName, 'medium', 0)
+    const r = await api.generate_contact_profile(
+      realtimeState.talkerName,
+      'medium',
+      0,
+      activeAccountWxid.value || undefined,
+    )
     if (r.ok && r.profile) {
       profile.value = { name: realtimeState.talkerName, ...r.profile }
     }

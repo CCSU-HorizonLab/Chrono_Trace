@@ -1,4 +1,22 @@
 export type AnalysisDeviceMode = 'auto' | 'gpu' | 'cpu'
+export type WechatAccount = {
+  wxid: string
+  label: string
+  avatar: string
+  wechat_dir: string
+  source: string
+  db_key: string
+  import_completed: boolean
+  last_import_at?: number | null
+  last_import_total_size: number
+  last_import_files: Array<Record<string, any>>
+}
+
+type WechatCustomPaths = {
+  wechat_dir: string
+  current_user: string
+  account_wxid?: string
+}
 
 type FeatureExtractionConfig = {
   analysis_device_mode?: AnalysisDeviceMode
@@ -7,24 +25,28 @@ type FeatureExtractionConfig = {
 type PyWebViewApi = {
   ping: () => Promise<string>
   // 微信数据导入
-  get_wechat_paths: () => Promise<any>
+  get_wechat_accounts: () => Promise<any>
+  set_active_wechat_account: (wxid: string) => Promise<any>
+  get_wechat_paths: (account_wxid?: string) => Promise<any>
   verify_wechat_key: (
     db_key: string,
-    custom_paths?: { wechat_dir: string; current_user: string }
+    custom_paths?: WechatCustomPaths,
+    account_wxid?: string,
   ) => Promise<any>
-  import_wechat_data: (db_key: string, options?: Record<string, any>) => Promise<any>
+  import_wechat_data: (db_key: string, options?: Record<string, any>, account_wxid?: string) => Promise<any>
   refresh_wechat_contact_avatars: (
     db_key: string,
-    custom_paths?: { wechat_dir: string; current_user: string }
+    custom_paths?: WechatCustomPaths,
+    account_wxid?: string,
   ) => Promise<any>
-  detect_wechat_import_increment: () => Promise<any>
+  detect_wechat_import_increment: (account_wxid?: string) => Promise<any>
   // 通用导入与分析
   ingest_data: (file_path: string, options?: Record<string, any>) => Promise<any>
-  get_conversation_list: () => Promise<any>
+  get_conversation_list: (account_wxid?: string) => Promise<any>
   get_analysis: (params: { conversation_id: number; from: string; to: string }) => Promise<any>
   generate_suggestion: (intent: string, context: Record<string, any>) => Promise<any>
   get_settings: () => Promise<any>
-  get_current_user_profile: () => Promise<any>
+  get_current_user_profile: (account_wxid?: string) => Promise<any>
   set_settings: (payload: Record<string, any>) => Promise<any>
   // 仪表板统计
   get_dashboard_stats: () => Promise<any>
@@ -33,18 +55,19 @@ type PyWebViewApi = {
   select_directory: (title?: string) => Promise<any>
   scan_wechat_directory: (wechat_dir: string) => Promise<any>
   // 实时监听
-  start_realtime_monitor: (talker_display_name: string, resume_mode?: string) => Promise<any>
+  start_realtime_monitor: (talker_display_name: string, resume_mode?: string, account_wxid?: string) => Promise<any>
   stop_realtime_monitor: (user_chat_history?: any[]) => Promise<any>
   get_realtime_status: () => Promise<any>
   get_realtime_messages: (batch_id: string, limit?: number) => Promise<any>
-  get_realtime_resume_info: (talker_display_name: string, threshold_seconds?: number) => Promise<any>
+  get_realtime_resume_info: (talker_display_name: string, threshold_seconds?: number, account_wxid?: string) => Promise<any>
   run_realtime_backfill: (
     talker_display_name: string,
     threshold_seconds?: number,
-    max_scroll_rounds?: number
+    max_scroll_rounds?: number,
+    account_wxid?: string,
   ) => Promise<any>
   // AI 建议
-  get_pending_suggestions: (batch_id: string) => Promise<any>
+  get_pending_suggestions: (batch_id: string, account_wxid?: string) => Promise<any>
   dismiss_suggestion: (suggestion_id: number) => Promise<any>
   get_suggestion_config: () => Promise<any>
   set_suggestion_config: (config: any) => Promise<any>
@@ -55,10 +78,10 @@ type PyWebViewApi = {
   delete_llm_model: (model_id: number) => Promise<any>
   fetch_provider_models: (base_url: string, api_key?: string) => Promise<any>
   // 联系人画像与本体画像
-  get_contact_profile: (display_name: string) => Promise<any>
-  generate_contact_profile: (display_name: string, budget_level?: string, custom_budget?: number) => Promise<any>
-  get_self_profile: (display_name: string) => Promise<any>
-  generate_self_profile: (display_name: string, budget_level?: string, custom_budget?: number) => Promise<any>
+  get_contact_profile: (display_name: string, account_wxid?: string) => Promise<any>
+  generate_contact_profile: (display_name: string, budget_level?: string, custom_budget?: number, account_wxid?: string) => Promise<any>
+  get_self_profile: (display_name: string, account_wxid?: string) => Promise<any>
+  generate_self_profile: (display_name: string, budget_level?: string, custom_budget?: number, account_wxid?: string) => Promise<any>
   // 特征提取
   extract_features: (conversation_id: number, config?: FeatureExtractionConfig) => Promise<any>
   get_extraction_progress: (task_id: string) => Promise<any>
@@ -83,7 +106,7 @@ type PyWebViewApi = {
   get_model_download_progress: (task_id: string) => Promise<any>
   get_affinity_progress: (task_id: string) => Promise<any>
   // 会话线程归档与继承
-  get_latest_thread: (display_name: string) => Promise<any>
+  get_latest_thread: (display_name: string, account_wxid?: string) => Promise<any>
   load_thread_context: (thread_id: number) => Promise<any>
 }
 

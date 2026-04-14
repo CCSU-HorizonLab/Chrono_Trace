@@ -49,11 +49,11 @@
 
       <div v-if="availableAccounts.length" class="account-selector-row">
         <label class="account-selector-label">当前账号</label>
-        <select :value="selectedWxid" class="account-selector-select" @change="onAccountSelect">
-          <option v-for="account in availableAccounts" :key="account.wxid" :value="account.wxid">
-            {{ account.label || account.wxid }}
-          </option>
-        </select>
+        <CtAccountSelector
+          v-model="selectedWxid"
+          :accounts="availableAccounts"
+          @update:modelValue="onAccountSelectValue"
+        />
       </div>
 
       <div class="wizard-container">
@@ -148,6 +148,8 @@
 import { onMounted, onUnmounted, reactive, ref } from 'vue'
 import { bridgeReady, api } from '@/api/bridge'
 import { showConfirm } from '@/utils/dialog'
+import CtAccountSelector from '@/components/base/CtAccountSelector.vue'
+import { enrichWechatAccountsWithProfiles } from '@/utils/wechatAccounts'
 
 type ImportProgress = { status: string; percent: number } | null
 type IncrementInfo = {
@@ -159,6 +161,7 @@ type WechatAccount = {
   wxid: string
   label: string
   avatar: string
+  profile_name?: string
   wechat_dir: string
   source: string
   db_key: string
@@ -271,6 +274,7 @@ function mergeAccounts(accounts: WechatAccount[]) {
       ...account,
       label: account.label || current?.label || account.wxid,
       db_key: account.db_key || current?.db_key || '',
+      profile_name: account.profile_name || current?.profile_name || '',
       last_import_files: account.last_import_files || current?.last_import_files || [],
     } as WechatAccount)
   }
@@ -282,7 +286,7 @@ async function loadWechatAccounts() {
     await bridgeReady()
     const result = await api.get_wechat_accounts()
     if (!result?.ok) return
-    mergeAccounts(result.accounts || [])
+    mergeAccounts(await enrichWechatAccountsWithProfiles((result.accounts || []) as WechatAccount[]))
     activeAccountWxid.value = result.active_account_wxid || activeAccountWxid.value
     const nextWxid =
       activeAccountWxid.value ||
@@ -304,7 +308,7 @@ async function detectWechatPath(options?: { silent?: boolean; accountWxid?: stri
     if (!pathRes?.ok || !pathRes.data) return false
 
     pathInfo.value = pathRes.data
-    mergeAccounts((pathRes.accounts || pathRes.data.accounts || []) as WechatAccount[])
+    mergeAccounts(await enrichWechatAccountsWithProfiles((pathRes.accounts || pathRes.data.accounts || []) as WechatAccount[]))
 
     const detectedWxid =
       pathRes.data.account_wxid ||
@@ -337,7 +341,7 @@ async function loadSavedPaths() {
   try {
     await bridgeReady()
     const settings = await api.get_settings()
-    mergeAccounts((settings.wechat_accounts || []) as WechatAccount[])
+    mergeAccounts(await enrichWechatAccountsWithProfiles((settings.wechat_accounts || []) as WechatAccount[]))
     activeAccountWxid.value = settings.wechat_active_account_wxid || ''
 
     const targetWxid =
@@ -556,7 +560,7 @@ async function scanAndSetCustomPath(wechatDir: string) {
       return
     }
 
-    mergeAccounts((scanResult.accounts || []) as WechatAccount[])
+    mergeAccounts(await enrichWechatAccountsWithProfiles((scanResult.accounts || []) as WechatAccount[]))
     const nextWxid = selectedWxid.value || scanResult.accounts[0].wxid
     const databases = scanResult.databases[nextWxid]
     const resolvedAccount = (scanResult.accounts || []).find((account: WechatAccount) => account.wxid === nextWxid)
@@ -620,9 +624,7 @@ function resetFlow() {
   addLog('已重置当前账号的导入状态。')
 }
 
-async function onAccountSelect(event: Event) {
-  const target = event.target as HTMLSelectElement | null
-  const wxid = target?.value || ''
+async function onAccountSelectValue(wxid: string) {
   if (!wxid) return
 
   selectedWxid.value = wxid
@@ -892,16 +894,6 @@ onUnmounted(() => {
   font-size: 13px;
   font-weight: 600;
   color: var(--ct-text-secondary);
-}
-
-.account-selector-select {
-  min-width: 220px;
-  height: 40px;
-  padding: 0 14px;
-  border-radius: 10px;
-  border: 1px solid #e2e8f0;
-  background: #fff;
-  color: var(--ct-text-primary);
 }
 
 .error-msg {

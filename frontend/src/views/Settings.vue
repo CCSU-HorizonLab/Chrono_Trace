@@ -67,13 +67,13 @@
             <p>💡 <strong>提示:</strong>如果自动检测的微信路径不正确,可以在此手动指定数据库文件位置</p>
           </div>
 
-          <label v-if="wechatAccounts.length" class="row">
+          <label v-if="wechatAccounts.length" class="row" style="align-items: center;">
             <div class="lab">当前微信账号</div>
-            <select class="ct-field" :value="activeAccountWxid" @change="handleAccountSelect">
-              <option v-for="account in wechatAccounts" :key="account.wxid" :value="account.wxid">
-                {{ account.label || account.wxid }}
-              </option>
-            </select>
+            <CtAccountSelector
+              v-model="activeAccountWxid"
+              :accounts="wechatAccounts"
+              @update:modelValue="handleAccountSelectValue"
+            />
           </label>
 
           <label class="row">
@@ -309,7 +309,13 @@ import { bridgeReady, api, type AnalysisDeviceMode, type WechatAccount } from '@
 import CtCard from '@/components/base/CtCard.vue'
 import CtField from '@/components/base/CtField.vue'
 import CtButton from '@/components/base/CtButton.vue'
+import CtAccountSelector from '@/components/base/CtAccountSelector.vue'
 import { showDialog, showConfirm } from '@/utils/dialog'
+import { enrichWechatAccountsWithProfiles } from '@/utils/wechatAccounts'
+
+type WechatAccountOption = WechatAccount & {
+  profile_name?: string
+}
 
 const loading = ref(false)
 const saving = ref(false)
@@ -319,7 +325,7 @@ const avatarRefreshMessage = ref('')
 const avatarRefreshError = ref('')
 const autoSaveTimer = ref<number | null>(null)
 const lastSaveTime = ref<string>('')
-const wechatAccounts = ref<WechatAccount[]>([])
+const wechatAccounts = ref<WechatAccountOption[]>([])
 const activeAccountWxid = ref('')
 const hydratingForm = ref(false)
 
@@ -337,8 +343,8 @@ const form = reactive<{
   analysis_device_mode: 'auto',
 })
 
-function mergeWechatAccounts(accounts: WechatAccount[]) {
-  const merged = new Map<string, WechatAccount>()
+function mergeWechatAccounts(accounts: WechatAccountOption[]) {
+  const merged = new Map<string, WechatAccountOption>()
   for (const account of wechatAccounts.value) {
     merged.set(account.wxid, { ...account })
   }
@@ -351,6 +357,7 @@ function mergeWechatAccounts(accounts: WechatAccount[]) {
       wxid: account.wxid,
       label: account.label || current?.label || account.wxid,
       avatar: account.avatar || current?.avatar || '',
+      profile_name: account.profile_name || current?.profile_name || '',
       db_key: account.db_key || current?.db_key || '',
       wechat_dir: account.wechat_dir || current?.wechat_dir || '',
       source: account.source || current?.source || '',
@@ -385,7 +392,7 @@ async function loadWechatAccounts(preferredWxid = '') {
   const result = await api.get_wechat_accounts()
   if (!result?.ok) return
 
-  mergeWechatAccounts((result.accounts || []) as WechatAccount[])
+  mergeWechatAccounts(await enrichWechatAccountsWithProfiles((result.accounts || []) as WechatAccountOption[]))
   const nextWxid =
     preferredWxid ||
     result.active_account_wxid ||
@@ -503,7 +510,7 @@ async function onLoad() {
     console.log('[DEBUG] 从后端加载的设置:', s)
     
     if (s && typeof s === 'object') {
-      mergeWechatAccounts((s.wechat_accounts || []) as WechatAccount[])
+      mergeWechatAccounts(await enrichWechatAccountsWithProfiles((s.wechat_accounts || []) as WechatAccountOption[]))
       activeAccountWxid.value = String(s.wechat_active_account_wxid || '')
       const activeAccount =
         wechatAccounts.value.find((account) => account.wxid === activeAccountWxid.value) ||
@@ -544,7 +551,7 @@ async function onSave() {
   try {
     await bridgeReady()
     const wxid = form.wechat_user_wxid.trim() || activeAccountWxid.value.trim()
-    const nextAccount: WechatAccount | null = wxid ? {
+    const nextAccount: WechatAccountOption | null = wxid ? {
       ...(getActiveAccount() || {
         wxid,
         label: wxid,
@@ -640,7 +647,7 @@ async function scanWeChatDirectory(wechatDir: string) {
     }))
 
     if (scannedAccounts.length > 0) {
-      mergeWechatAccounts(scannedAccounts)
+      mergeWechatAccounts(await enrichWechatAccountsWithProfiles(scannedAccounts as WechatAccountOption[]))
       const nextWxid =
         activeAccountWxid.value && scannedAccounts.some((account: WechatAccount) => account.wxid === activeAccountWxid.value)
           ? activeAccountWxid.value
@@ -713,9 +720,7 @@ async function refreshContactAvatars() {
   }
 }
 
-async function handleAccountSelect(event: Event) {
-  const target = event.target as HTMLSelectElement | null
-  const wxid = target?.value || ''
+async function handleAccountSelectValue(wxid: string) {
   if (!wxid || wxid === activeAccountWxid.value) return
 
   await bridgeReady()

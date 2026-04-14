@@ -21,15 +21,26 @@
 
       <!-- 右侧用户区 -->
       <div class="topbar-user">
-        <label v-if="wechatAccounts.length" class="account-switcher">
-          <span class="account-switcher-label">账号</span>
-          <select :value="activeAccountWxid" class="account-switcher-select" @change="handleAccountChange">
-            <option v-for="account in wechatAccounts" :key="account.wxid" :value="account.wxid">
-              {{ account.label || account.wxid }}
-            </option>
-          </select>
-        </label>
+        <CtAccountSelector
+          v-if="wechatAccounts.length"
+          :modelValue="activeAccountWxid"
+          @update:modelValue="handleAccountChangeValue"
+          :accounts="wechatAccounts"
+        >
+          <template #trigger="{ isOpen }">
+            <div class="avatar-trigger-wrap" :class="{ 'is-open': isOpen }">
+              <CtAvatar
+                class="user-avatar popup-trigger"
+                :src="currentUserProfile.avatar"
+                :name="currentUserProfile.name || '我'"
+                :size="42"
+              />
+            </div>
+          </template>
+        </CtAccountSelector>
+        
         <CtAvatar
+          v-else
           class="user-avatar"
           :src="currentUserProfile.avatar"
           :name="currentUserProfile.name || '我'"
@@ -52,6 +63,8 @@ import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { bridgeReady, api } from '@/api/bridge'
 import CtAvatar from '@/components/base/CtAvatar.vue'
+import CtAccountSelector from '@/components/base/CtAccountSelector.vue'
+import { enrichWechatAccountsWithProfiles } from '@/utils/wechatAccounts'
 
 const route = useRoute()
 
@@ -70,7 +83,7 @@ async function loadWechatAccounts() {
     await bridgeReady()
     const result = await api.get_wechat_accounts()
     if (!result?.ok) return
-    wechatAccounts.value = result.accounts || []
+    wechatAccounts.value = await enrichWechatAccountsWithProfiles(result.accounts || [])
     activeAccountWxid.value = result.active_account_wxid || ''
   } catch (error) {
     console.error('[App] 加载微信账号列表失败:', error)
@@ -97,9 +110,7 @@ async function loadCurrentUserProfile() {
   }
 }
 
-async function handleAccountChange(event: Event) {
-  const target = event.target as HTMLSelectElement | null
-  const wxid = target?.value || ''
+async function handleAccountChangeValue(wxid: string) {
   if (!wxid || wxid === activeAccountWxid.value) return
 
   try {
@@ -239,35 +250,20 @@ onUnmounted(() => {
   width: 300px;
 }
 
-.account-switcher {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.16);
-  border: 1px solid rgba(255, 255, 255, 0.2);
+.avatar-trigger-wrap {
+  cursor: pointer;
+  border-radius: 50%;
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s ease;
+  display: flex;
 }
 
-.account-switcher-label {
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.8);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
+.avatar-trigger-wrap:hover {
+  transform: scale(1.05);
 }
 
-.account-switcher-select {
-  min-width: 120px;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: #fff;
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.account-switcher-select option {
-  color: #111827;
+.avatar-trigger-wrap.is-open {
+  transform: scale(0.95);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.5);
 }
 
 .user-avatar {
@@ -275,6 +271,10 @@ onUnmounted(() => {
   background: rgba(255, 255, 255, 0.2);
   color: #fff;
   box-shadow: 0 6px 16px rgba(76, 29, 149, 0.25);
+}
+
+.user-avatar.popup-trigger {
+  pointer-events: none; /* Let the wrapper handle clicks */
 }
 
 /* ========================================

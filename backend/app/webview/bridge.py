@@ -5,9 +5,11 @@ import logging
 import importlib
 import threading
 import time
+import re
 from pathlib import Path
 from ..services.wechat.ingest_service import WeChatIngestService
 from ..services.wechat.path_finder import WeChatPathFinder
+from ..services.wechat.db.v4.contact import ContactDBV4
 from ..services.analysis.feature_extraction_config import (
     ANALYSIS_DEVICE_MODE_AUTO,
     normalize_analysis_device_mode,
@@ -208,6 +210,19 @@ class Bridge:
             "wechat_dir": wechat_dir,
             "current_user": wxid,
         }
+
+    def _build_wechat_user_candidates(self, wxid: str) -> list[str]:
+        candidates: list[str] = []
+        normalized = str(wxid or "").strip()
+        if not normalized:
+            return candidates
+        candidates.append(normalized)
+        match = re.match(r"^(wxid_[a-z0-9]+)_([a-z0-9]{4,6})$", normalized)
+        if match:
+            base_wxid = match.group(1)
+            if base_wxid not in candidates:
+                candidates.append(base_wxid)
+        return candidates
 
     def _save_wechat_import_baseline(self, snapshot: dict[str, Any]) -> None:
         self.settings.update({
@@ -704,6 +719,89 @@ class Bridge:
             self.settings.get("analysis_device_mode", ANALYSIS_DEVICE_MODE_AUTO)
         )
         return self.settings
+
+    def get_current_user_profile(self) -> dict[str, Any]:
+        """Resolve the current WeChat account profile for the top-right header avatar."""
+        wxid = str(self.settings.get("wechat_user_wxid", "") or "").strip()
+        if not wxid:
+            return {"ok": False, "error": "未配置微信用户ID", "profile": None}
+        wxid_candidates = self._build_wechat_user_candidates(wxid)
+
+        profile = {
+            "wxid": wxid,
+            "name": "我",
+            "avatar": "",
+        }
+
+        try:
+            from ..db.connection import get_db
+
+            db = get_db()
+            for candidate in wxid_candidates:
+                row = db.execute(
+                    """
+                    SELECT
+                        username,
+                        COALESCE(
+                            NULLIF(TRIM(remark), ''),
+                            NULLIF(TRIM(nickname), ''),
+                            NULLIF(TRIM(alias), ''),
+                            NULLIF(TRIM(username), ''),
+                            '我'
+                        ) AS name,
+                        COALESCE(NULLIF(TRIM(avatar_path), ''), '') AS avatar
+                    FROM contacts
+                    WHERE username = ?
+                    LIMIT 1
+                    """,
+                    (candidate,),
+                ).fetchone()
+                if not row:
+                    continue
+                profile["wxid"] = row["username"] or profile["wxid"]
+                profile["name"] = row["name"] or profile["name"]
+                profile["avatar"] = row["avatar"] or ""
+                if profile["avatar"]:
+                    return {"ok": True, "profile": profile}
+        except Exception as e:
+            logger.warning(f"[Bridge] 从本地数据库读取当前用户头像失败: {e}")
+
+        db_key = str(self.settings.get("wechat_db_key", "") or "").strip()
+        custom_paths = self._get_wechat_custom_paths()
+        if not db_key or not custom_paths:
+            return {"ok": True, "profile": profile}
+
+        try:
+            paths = self.wechat_service.resolve_wechat_paths(custom_paths)
+            contact_db_path = (paths.get("databases") or {}).get("contact")
+            if not contact_db_path:
+                return {"ok": True, "profile": profile}
+
+            contact_db = ContactDBV4(contact_db_path, db_key)
+            try:
+                contact = None
+                for candidate in wxid_candidates:
+                    contact = contact_db.get_contact_by_username(candidate)
+                    if contact:
+                        break
+            finally:
+                contact_db.close()
+
+            if not contact:
+                return {"ok": True, "profile": profile}
+
+            profile["wxid"] = contact.get("username") or profile["wxid"]
+            profile["name"] = (
+                contact.get("remark")
+                or contact.get("nickname")
+                or contact.get("alias")
+                or profile["name"]
+            )
+            profile["avatar"] = (contact.get("avatar_url") or "").strip()
+            return {"ok": True, "profile": profile}
+        except Exception as e:
+            logger.warning(f"[Bridge] 从微信联系人库读取当前用户头像失败: {e}")
+            return {"ok": True, "profile": profile}
 
     def set_settings(self, payload: dict[str, Any]) -> dict[str, Any]:
         """保存设置"""

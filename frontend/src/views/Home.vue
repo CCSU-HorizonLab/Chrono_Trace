@@ -372,6 +372,7 @@ async function startImport() {
     hasImportedBefore.value = true
     incrementInfo.value = null
     incrementDismissed.value = false
+    window.dispatchEvent(new CustomEvent('chrono:user-avatar-refresh'))
     addLog(wechatOk.value)
   } catch (error: any) {
     wechatErr.value = error?.message || '导入异常。'

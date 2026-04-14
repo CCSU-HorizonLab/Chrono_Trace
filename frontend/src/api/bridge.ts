@@ -24,6 +24,7 @@ type PyWebViewApi = {
   get_analysis: (params: { conversation_id: number; from: string; to: string }) => Promise<any>
   generate_suggestion: (intent: string, context: Record<string, any>) => Promise<any>
   get_settings: () => Promise<any>
+  get_current_user_profile: () => Promise<any>
   set_settings: (payload: Record<string, any>) => Promise<any>
   // 仪表板统计
   get_dashboard_stats: () => Promise<any>

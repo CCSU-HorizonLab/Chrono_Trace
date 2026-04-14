@@ -21,13 +21,12 @@
 
       <!-- 右侧用户区 -->
       <div class="topbar-user">
-        <!-- 头像占位符 -->
-        <div class="user-avatar">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
-            <circle cx="12" cy="7" r="4"></circle>
-          </svg>
-        </div>
+        <CtAvatar
+          class="user-avatar"
+          :src="currentUserProfile.avatar"
+          :name="currentUserProfile.name || '我'"
+          :size="42"
+        />
       </div>
     </header>
 
@@ -41,13 +40,58 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import { bridgeReady, api } from '@/api/bridge'
+import CtAvatar from '@/components/base/CtAvatar.vue'
 
 const route = useRoute()
 
 // 悬浮模式下隐藏顶部导航
 const isFloatingMode = computed(() => route.path === '/floating')
+const currentUserProfile = reactive({
+  wxid: '',
+  name: '我',
+  avatar: '',
+})
+
+async function loadCurrentUserProfile() {
+  try {
+    await bridgeReady()
+    const result = await api.get_current_user_profile()
+    const profile = result?.profile
+    if (!result?.ok || !profile) {
+      currentUserProfile.wxid = ''
+      currentUserProfile.name = '我'
+      currentUserProfile.avatar = ''
+      return
+    }
+
+    currentUserProfile.wxid = profile.wxid || ''
+    currentUserProfile.name = profile.name || '我'
+    currentUserProfile.avatar = profile.avatar || ''
+  } catch (error) {
+    console.error('[App] 加载当前用户头像失败:', error)
+  }
+}
+
+function handleProfileRefresh() {
+  loadCurrentUserProfile()
+}
+
+watch(() => route.fullPath, () => {
+  if (!isFloatingMode.value) {
+    loadCurrentUserProfile()
+  }
+}, { immediate: true })
+
+onMounted(() => {
+  window.addEventListener('chrono:user-avatar-refresh', handleProfileRefresh)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('chrono:user-avatar-refresh', handleProfileRefresh)
+})
 
 </script>
 
@@ -154,21 +198,10 @@ const isFloatingMode = computed(() => route.path === '/floating')
 }
 
 .user-avatar {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  background: #a5b4fc;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #fff;
   border: 2px solid rgba(255,255,255,0.3);
-  overflow: hidden;
-}
-
-.user-avatar svg {
-  width: 18px;
-  height: 18px;
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+  box-shadow: 0 6px 16px rgba(76, 29, 149, 0.25);
 }
 
 /* ========================================

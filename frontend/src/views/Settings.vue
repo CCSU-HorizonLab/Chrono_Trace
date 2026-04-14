@@ -587,6 +587,7 @@ async function refreshContactAvatars() {
 
     const stats = res.stats || {}
     avatarRefreshMessage.value = `头像补齐完成：扫描 ${stats.scanned || 0}，联系人更新 ${stats.contact_updates || 0}，会话更新 ${stats.conversation_updates || 0}，空头像跳过 ${stats.skipped_empty || 0}。`
+    window.dispatchEvent(new CustomEvent('chrono:user-avatar-refresh'))
   } catch (e) {
     console.error('补齐联系人头像失败:', e)
     avatarRefreshError.value = '头像补齐异常：' + ((e as Error).message || '未知错误')

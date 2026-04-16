@@ -6,6 +6,7 @@ import re
 import logging
 from typing import List, Optional, Tuple, Dict, Set
 from ..base import WeChatDBBase
+from ...contact_filters import is_excluded_contact_username
 
 
 
@@ -378,10 +379,8 @@ class MessageDBV4(WeChatDBBase):
                 cursor = conn.execute("SELECT user_name FROM Name2Id")
                 for row in cursor:
                     username = row['user_name']
-                    if username:
-                        # 过滤群聊和公众号
-                        if '@chatroom' not in username and not username.startswith('gh_'):
-                            usernames.add(username)
+                    if username and not is_excluded_contact_username(username):
+                        usernames.add(username)
             except:
                 continue
         

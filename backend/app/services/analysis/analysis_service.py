@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from ...db.connection import get_db
 from .wordcloud_generator import WordCloudGenerator
 from .preprocessing_service import PreprocessingService
+from ..wechat.contact_filters import is_excluded_contact_username
 import logging
 
 
@@ -71,6 +72,8 @@ class AnalysisService:
             
             conversations = []
             for row in cursor.fetchall():
+                if is_excluded_contact_username(row[1]):
+                    continue
                 conversations.append({
                     "id": row[0],
                     "username": row[1],

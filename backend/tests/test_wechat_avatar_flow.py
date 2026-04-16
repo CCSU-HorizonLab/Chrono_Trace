@@ -1,5 +1,6 @@
 import sys
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -84,6 +85,88 @@ def test_import_contacts_persists_avatar_without_blank_overwrite(monkeypatch, is
     assert rows["wxid_new"]["avatar_path"] == "https://cdn.example/new.jpg"
     assert rows["wxid_existing"]["nickname"] == "新昵称"
     assert rows["wxid_existing"]["avatar_path"] == "https://old.example/avatar.jpg"
+
+
+def test_import_contacts_filters_wechat_system_accounts(monkeypatch, isolated_db):
+    class FakeContactDB:
+        def __init__(self, db_path: str, db_key: str):
+            assert db_path == "fake_contact.db"
+            assert db_key == "secret-key"
+
+        def get_contacts(self):
+            return [
+                {
+                    "username": "notifymessage",
+                    "nickname": "",
+                    "remark": "",
+                    "alias": "",
+                    "phone": "",
+                    "is_friend": True,
+                    "avatar_url": "",
+                },
+                {
+                    "username": "wxid_friend",
+                    "nickname": "真实联系人",
+                    "remark": "",
+                    "alias": "",
+                    "phone": "",
+                    "is_friend": True,
+                    "avatar_url": "",
+                },
+            ]
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr("app.services.wechat.ingest_service.ContactDBV4", FakeContactDB)
+
+    service = WeChatIngestService()
+    imported = service._import_contacts_v4("fake_contact.db", "secret-key", "wxid_me")
+
+    usernames = [
+        row["username"]
+        for row in isolated_db.execute(
+            "SELECT username FROM contacts WHERE account_wxid = ? ORDER BY username",
+            ("wxid_me",),
+        ).fetchall()
+    ]
+
+    assert imported == 1
+    assert usernames == ["wxid_friend"]
+
+
+def test_import_cleanup_soft_deletes_existing_system_accounts(isolated_db):
+    isolated_db.execute(
+        """
+        INSERT INTO contacts (account_wxid, username, nickname, is_friend, is_deleted, created_at, updated_at)
+        VALUES (?, ?, ?, 1, 0, 1, 1)
+        """,
+        ("wxid_me", "notifymessage", "",),
+    )
+    isolated_db.execute(
+        """
+        INSERT INTO conversations (account_wxid, username, display_name, platform, created_at, updated_at, message_count, is_deleted)
+        VALUES (?, ?, ?, 'wechat', 1, 1, 1108, 0)
+        """,
+        ("wxid_me", "notifymessage", "notifymessage"),
+    )
+    isolated_db.commit()
+
+    service = WeChatIngestService()
+    cleanup_stats = service._soft_delete_excluded_contacts_and_conversations("wxid_me")
+
+    contact_row = isolated_db.execute(
+        "SELECT is_deleted FROM contacts WHERE account_wxid = ? AND username = ?",
+        ("wxid_me", "notifymessage"),
+    ).fetchone()
+    conversation_row = isolated_db.execute(
+        "SELECT is_deleted FROM conversations WHERE account_wxid = ? AND username = ?",
+        ("wxid_me", "notifymessage"),
+    ).fetchone()
+
+    assert cleanup_stats == {"contacts": 1, "conversations": 1}
+    assert contact_row["is_deleted"] == 1
+    assert conversation_row["is_deleted"] == 1
 
 
 def test_refresh_contact_avatars_backfills_conversations(monkeypatch, isolated_db):
@@ -184,3 +267,48 @@ def test_analysis_service_falls_back_to_contact_avatar(isolated_db):
     assert conversation_list["ok"] is True
     assert conversation_list["conversations"][0]["avatar"] == "https://cdn.example/fallback.jpg"
     assert subject_info["avatar"] == "https://cdn.example/fallback.jpg"
+
+
+def test_analysis_service_excludes_wechat_system_conversations(isolated_db):
+    isolated_db.execute(
+        """
+        INSERT INTO conversations (account_wxid, username, display_name, platform, created_at, updated_at, message_count)
+        VALUES (?, ?, ?, 'wechat', 1, 1700000000, 1108)
+        """,
+        ("wxid_me", "notifymessage", "notifymessage"),
+    )
+    isolated_db.execute(
+        """
+        INSERT INTO conversations (account_wxid, username, display_name, platform, created_at, updated_at, message_count)
+        VALUES (?, ?, ?, 'wechat', 1, 1700000001, 5)
+        """,
+        ("wxid_me", "wxid_friend", "真实联系人"),
+    )
+    isolated_db.commit()
+
+    conversation_list = AnalysisService().get_conversation_list("wxid_me")
+
+    assert conversation_list["ok"] is True
+    assert [item["username"] for item in conversation_list["conversations"]] == ["wxid_friend"]
+
+
+def test_bridge_word_counts_handles_zero_ratio(isolated_db):
+    isolated_db.execute(
+        """
+        INSERT INTO word_counts
+        (conversation_id, session_id, user_char_count, other_char_count, char_ratio, last_updated)
+        VALUES (?, NULL, 0, 0, 0, 1)
+        """,
+        (42,),
+    )
+    isolated_db.commit()
+
+    with patch("app.webview.bridge.WeChatIngestService", return_value=MagicMock()), \
+            patch("app.services.realtime.floating_window_service.FloatingWindowService", return_value=MagicMock()):
+        from app.webview.bridge import Bridge
+
+        result = Bridge().get_word_counts(42)
+
+    assert result["success"] is True
+    assert result["data"]["overall"]["char_ratio"] == 0
+    assert result["data"]["overall"]["interpretation"] == "无字数数据"

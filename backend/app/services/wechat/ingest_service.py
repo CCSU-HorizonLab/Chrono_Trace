@@ -8,6 +8,7 @@ from .path_finder import WeChatPathFinder
 from .db_decryptor import WeChatDBDecryptor
 from .db.v4.contact import ContactDBV4
 from .db.v4.message import MessageDBV4
+from .contact_filters import EXCLUDED_CONTACT_USERNAMES, is_excluded_contact_username
 from ...db.connection import get_db
 from ..analysis.preprocessing_service import PreprocessingService
 
@@ -259,6 +260,14 @@ class WeChatIngestService:
                 synced_conversations = self._sync_conversation_avatar_metadata(account_wxid)
                 logger.debug(f"[DEBUG] 已同步 {synced_conversations} 个会话头像")
 
+            cleanup_stats = self._soft_delete_excluded_contacts_and_conversations(account_wxid)
+            if cleanup_stats["contacts"] or cleanup_stats["conversations"]:
+                logger.info(
+                    "[DEBUG] Soft-deleted excluded accounts: contacts=%s, conversations=%s",
+                    cleanup_stats["contacts"],
+                    cleanup_stats["conversations"],
+                )
+
             logger.debug(f"\n[DEBUG] 最终统计: {stats}")
 
             # 4. 预处理和特征提取已改为懒加载模式
@@ -313,6 +322,7 @@ class WeChatIngestService:
 
             store_stats = self._upsert_contacts(contacts_data, account_wxid)
             conversation_updates = self._sync_conversation_avatar_metadata(account_wxid)
+            self._soft_delete_excluded_contacts_and_conversations(account_wxid)
 
             return {
                 "ok": True,
@@ -368,8 +378,7 @@ class WeChatIngestService:
                 filtered += 1
                 continue
 
-            # 过滤群聊和公众号
-            if "@chatroom" in username or username.startswith("gh_"):
+            if is_excluded_contact_username(username):
                 filtered += 1
                 continue
 
@@ -514,8 +523,7 @@ class WeChatIngestService:
                 logger.debug(f"[DEBUG] 前3个会话: {all_usernames[:3]}")
 
             for idx, username in enumerate(all_usernames):
-                # 过滤群聊、公众号、商业号
-                if '@chatroom' in username or '@openim' in username or username.startswith('gh_'):
+                if is_excluded_contact_username(username):
                     skipped_conversations += 1
                     continue
 
@@ -536,6 +544,10 @@ class WeChatIngestService:
                     # 批量插入
                     batch = []
                     for msg_dict in messages_data:
+                        if is_excluded_contact_username(msg_dict.get('talker')):
+                            skipped_messages += 1
+                            continue
+
                         conversations_set.add(msg_dict['talker'])
                         batch.append(msg_dict)
 
@@ -598,8 +610,8 @@ class WeChatIngestService:
             try:
                 talker = msg['talker']
 
-                # 再次过滤群聊和公众号(双重保险)
-                if '@chatroom' in talker or talker.startswith('gh_'):
+                if is_excluded_contact_username(talker):
+                    skipped += 1
                     continue
 
                 # 确保会话存在 (修复: 使用 username 字段而不是 name)
@@ -655,6 +667,42 @@ class WeChatIngestService:
 
         db.commit()
         return {"inserted": inserted, "skipped": skipped}
+
+    def _soft_delete_excluded_contacts_and_conversations(self, account_wxid: str) -> Dict[str, int]:
+        """Hide imported WeChat system accounts from relationship analysis."""
+        usernames = sorted(EXCLUDED_CONTACT_USERNAMES)
+        if not account_wxid or not usernames:
+            return {"contacts": 0, "conversations": 0}
+
+        placeholders = ", ".join(["?"] * len(usernames))
+        now = int(time.time())
+        db = get_db()
+
+        contacts_cursor = db.execute(
+            f"""
+            UPDATE contacts
+            SET is_deleted = 1, updated_at = ?
+            WHERE account_wxid = ?
+              AND is_deleted = 0
+              AND LOWER(TRIM(username)) IN ({placeholders})
+            """,
+            (now, account_wxid, *usernames),
+        )
+        conversations_cursor = db.execute(
+            f"""
+            UPDATE conversations
+            SET is_deleted = 1, updated_at = ?
+            WHERE account_wxid = ?
+              AND is_deleted = 0
+              AND LOWER(TRIM(username)) IN ({placeholders})
+            """,
+            (now, account_wxid, *usernames),
+        )
+        db.commit()
+        return {
+            "contacts": int(contacts_cursor.rowcount or 0),
+            "conversations": int(conversations_cursor.rowcount or 0),
+        }
 
     def _refresh_conversation_stats(self, touched_conversations: dict[int, int]) -> None:
         """Refresh denormalized counters for conversations touched by the import."""

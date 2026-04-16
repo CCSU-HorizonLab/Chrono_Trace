@@ -2382,12 +2382,16 @@ class Bridge:
 
             user_chars = overall_row["user_char_count"]
             other_chars = overall_row["other_char_count"]
-            char_ratio = overall_row["char_ratio"]
+            char_ratio = overall_row["char_ratio"] or 0
 
-            if char_ratio >= 1:
+            if user_chars == 0 and other_chars == 0:
+                interpretation = "无字数数据"
+            elif char_ratio >= 1:
                 interpretation = f"对方投入的字数是您的{char_ratio:.2f}倍"
-            else:
+            elif char_ratio > 0:
                 interpretation = f"您投入的字数是对方的{1/char_ratio:.2f}倍"
+            else:
+                interpretation = "无对比数据"
 
             result = {
                 "success": True,
@@ -2415,12 +2419,12 @@ class Bridge:
                 result["data"]["by_session"] = [
                     {
                         "session_id": row["session_id"],
-                        "word_count": {
-                            "user_char_count": row["user_char_count"],
-                            "other_char_count": row["other_char_count"],
-                            "char_ratio": round(row["char_ratio"], 2)
+                            "word_count": {
+                                "user_char_count": row["user_char_count"],
+                                "other_char_count": row["other_char_count"],
+                                "char_ratio": round(row["char_ratio"] or 0, 2)
+                            }
                         }
-                    }
                     for row in session_rows
                 ]
 

@@ -147,13 +147,16 @@ class FloatingWindowService:
             self._set_on_top(False)
 
             # 恢复原始窗口尺寸
+            # _original_rect 来自 GetWindowRect，已经是物理像素，
+            # 不能再走 _win32_move_resize（内部会再乘 DPI scale），
+            # 直接调用 SetWindowPos 避免重复缩放导致宽度累积增大。
             if self._original_rect:
                 x, y, w, h = self._original_rect
-                moved = self._win32_move_resize(x, y, w, h)
+                moved = self._restore_physical_rect(x, y, w, h)
                 if not moved:
                     self._webview_window.resize(w, h)
                     self._webview_window.move(x, y)
-                _log(f'恢复窗口: x={x}, y={y}, w={w}, h={h}')
+                _log(f'恢复窗口(物理像素): x={x}, y={y}, w={w}, h={h}')
 
             self._is_floating = False
             self._is_expanded = False
@@ -226,25 +229,25 @@ class FloatingWindowService:
     def _win32_move_resize(self, x: int, y: int, w: int, h: int, scale_height: bool = False) -> bool:
         """
         使用 Win32 API 直接移动和调整窗口大小。
-        宽度 w 总是按 DPI 缩放（因为 FLOATING_WIDTH 是 CSS 逻辑像素）。
-        高度 h 默认不缩放（因为通常来自 GetWindowRect，已经是物理像素）。
+        w 是 CSS 逻辑像素（如 FLOATING_WIDTH），内部会乘以 DPI 缩放转为物理像素。
+        h 默认已是物理像素（来自 GetWindowRect），不再缩放；
+          传入 scale_height=True 时才对 h 做缩放。
         """
         try:
             import win32gui
             import win32con
-            import ctypes
 
             hwnd = self._webview_hwnd or self._get_webview_hwnd()
             if not hwnd:
                 _log("无法获取 HWND，跳过 Win32 移动")
                 return False
 
-            # 获取 DPI 缩放比例（如 150% → scale=1.5）
+            # 获取 DPI 缩放比例（如 125% → scale=1.25）
             scale = self._get_window_scale(hwnd)
 
-            # 宽度始终缩放（FLOATING_WIDTH 是 CSS 像素）
+            # 宽度需要从 CSS 逻辑像素转为物理像素
             scaled_w = int(w * scale)
-            # 高度默认不缩放（来自 GetWindowRect 的已经是物理像素）
+            # 高度通常已经是物理像素，仅在 scale_height=True 时才缩放
             final_h = int(h * scale) if scale_height else h
 
             # SWP_NOZORDER: 不改变 Z 序（置顶由 _set_on_top 单独处理）
@@ -255,6 +258,28 @@ class FloatingWindowService:
             return True
         except Exception as e:
             _log(f"Win32 移动窗口失败: {e}")
+            return False
+
+    def _restore_physical_rect(self, x: int, y: int, w: int, h: int) -> bool:
+        """
+        将窗口恢复到由 GetWindowRect 保存的物理像素矩形，
+        不做任何 DPI 缩放（原始值已经是物理像素）。
+        """
+        try:
+            import win32gui
+            import win32con
+
+            hwnd = self._webview_hwnd or self._get_webview_hwnd()
+            if not hwnd:
+                return False
+
+            win32gui.SetWindowPos(
+                hwnd, 0, x, y, w, h,
+                win32con.SWP_NOZORDER | win32con.SWP_NOACTIVATE
+            )
+            return True
+        except Exception as e:
+            _log(f"恢复窗口物理尺寸失败: {e}")
             return False
 
     def _get_window_scale(self, hwnd=None) -> float:

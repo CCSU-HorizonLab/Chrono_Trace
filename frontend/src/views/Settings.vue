@@ -376,7 +376,7 @@ function hydrateFormFromAccount(account: Partial<WechatAccount> | null, options?
   form.wechat_user_wxid = String(account?.wxid || '')
   form.wechat_data_dir = String(account?.wechat_dir || '')
   form.wechat_db_key = String(account?.db_key || '')
-  form.wechat_use_custom_path = Boolean(account?.wechat_dir)
+  form.wechat_use_custom_path = String(account?.source || '').trim() === 'custom'
   if (!options?.keepDeviceMode) {
     form.analysis_device_mode = 'auto'
   }

@@ -14,6 +14,15 @@ type CachedProfile = {
 
 const profileCache = new Map<string, CachedProfile>()
 
+export function clearWechatAccountProfileCache(wxid?: string) {
+  const normalized = String(wxid || '').trim()
+  if (normalized) {
+    profileCache.delete(normalized)
+  } else {
+    profileCache.clear()
+  }
+}
+
 function isMeaningfulLabel(label?: string, wxid?: string) {
   const normalized = String(label || '').trim()
   if (!normalized) return false
@@ -27,7 +36,10 @@ export function getWechatAccountDisplayName(account?: AccountLike | null) {
   return account.wxid || '未命名账号'
 }
 
-export async function enrichWechatAccountsWithProfiles<T extends AccountLike>(accounts: T[]) {
+export async function enrichWechatAccountsWithProfiles<T extends AccountLike>(
+  accounts: T[],
+  options: { forceRefresh?: boolean } = {},
+) {
   if (!Array.isArray(accounts) || accounts.length === 0) return []
 
   await bridgeReady()
@@ -38,7 +50,7 @@ export async function enrichWechatAccountsWithProfiles<T extends AccountLike>(ac
       if (!wxid) return account
 
       const cached = profileCache.get(wxid)
-      if (cached) {
+      if (cached && !options.forceRefresh) {
         return {
           ...account,
           profile_name: account.profile_name || cached.name || '',
@@ -56,8 +68,8 @@ export async function enrichWechatAccountsWithProfiles<T extends AccountLike>(ac
 
         return {
           ...account,
-          profile_name: account.profile_name || name || '',
-          avatar: account.avatar || avatar || '',
+          profile_name: options.forceRefresh ? (name || account.profile_name || '') : (account.profile_name || name || ''),
+          avatar: options.forceRefresh ? (avatar || account.avatar || '') : (account.avatar || avatar || ''),
         }
       } catch (error) {
         console.error('[wechatAccounts] 加载账号身份失败:', wxid, error)

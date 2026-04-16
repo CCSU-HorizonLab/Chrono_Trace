@@ -100,17 +100,14 @@
                 <CtField 
                   v-model="form.wechat_data_dir" 
                   placeholder="例如: C:\Users\YourName\Documents\WeChat Files" 
+                  @keydown.enter.prevent="scanCurrentWeChatDir"
                 />
-                <CtButton variant="ghost" :loading="scanning" @click.stop.prevent="selectWeChatDir">浏览并扫描</CtButton>
+                <CtButton :loading="scanning" :disabled="browsingDir" @click.stop.prevent="scanCurrentWeChatDir">扫描路径</CtButton>
+                <CtButton variant="ghost" :disabled="scanning || browsingDir" @click.stop.prevent="selectWeChatDir">
+                  {{ browsingDir ? '选择中...' : '浏览' }}
+                </CtButton>
               </div>
-            </div>
-
-            <div class="row">
-              <div class="lab">微信用户ID (wxid)</div>
-              <CtField 
-                v-model="form.wechat_user_wxid" 
-                placeholder="例如: wxid_abc123def456 (浏览目录后自动填充)" 
-              />
+              <div class="path-hint">可以直接粘贴 WeChat Files 目录路径；回车或点击“扫描路径”会自动识别 wxid。</div>
             </div>
           </template>
         </div>
@@ -311,7 +308,7 @@ import CtField from '@/components/base/CtField.vue'
 import CtButton from '@/components/base/CtButton.vue'
 import CtAccountSelector from '@/components/base/CtAccountSelector.vue'
 import { showDialog, showConfirm } from '@/utils/dialog'
-import { enrichWechatAccountsWithProfiles } from '@/utils/wechatAccounts'
+import { clearWechatAccountProfileCache, enrichWechatAccountsWithProfiles } from '@/utils/wechatAccounts'
 
 type WechatAccountOption = WechatAccount & {
   profile_name?: string
@@ -320,6 +317,7 @@ type WechatAccountOption = WechatAccount & {
 const loading = ref(false)
 const saving = ref(false)
 const scanning = ref(false)
+const browsingDir = ref(false)
 const avatarRefreshLoading = ref(false)
 const avatarRefreshMessage = ref('')
 const avatarRefreshError = ref('')
@@ -598,12 +596,12 @@ async function onSave() {
 // 文件选择功能
 async function selectWeChatDir() {
   // 防止重复点击
-  if (scanning.value) {
-    console.log('[DEBUG] 扫描进行中，忽略重复点击')
+  if (scanning.value || browsingDir.value) {
+    console.log('[DEBUG] 目录选择或扫描进行中，忽略重复点击')
     return
   }
 
-  scanning.value = true
+  browsingDir.value = true
 
   try {
     await bridgeReady()
@@ -623,12 +621,24 @@ async function selectWeChatDir() {
     console.error('选择目录异常:', e)
     showDialog('选择目录出错：' + (e as Error).message)
   } finally {
-    scanning.value = false
+    browsingDir.value = false
   }
+}
+
+async function scanCurrentWeChatDir() {
+  if (scanning.value) return
+  const wechatDir = form.wechat_data_dir.trim()
+  if (!wechatDir) {
+    showDialog('请先输入或粘贴微信数据目录路径。')
+    return
+  }
+  await scanWeChatDirectory(wechatDir)
 }
 
 // 扫描微信目录
 async function scanWeChatDirectory(wechatDir: string) {
+  if (scanning.value) return
+  scanning.value = true
   try {
     console.log('[DEBUG] 开始扫描微信目录:', wechatDir)
     const scanResult = await api.scan_wechat_directory(wechatDir)
@@ -670,6 +680,8 @@ async function scanWeChatDirectory(wechatDir: string) {
   } catch (e) {
     console.error('扫描异常:', e)
     showDialog('扫描出错：' + (e as Error).message)
+  } finally {
+    scanning.value = false
   }
 }
 
@@ -711,7 +723,12 @@ async function refreshContactAvatars() {
 
     const stats = res.stats || {}
     avatarRefreshMessage.value = `头像补齐完成：扫描 ${stats.scanned || 0}，联系人更新 ${stats.contact_updates || 0}，会话更新 ${stats.conversation_updates || 0}，空头像跳过 ${stats.skipped_empty || 0}。`
-    window.dispatchEvent(new CustomEvent('chrono:user-avatar-refresh'))
+    const wxid = activeAccountWxid.value || form.wechat_user_wxid.trim()
+    clearWechatAccountProfileCache(wxid)
+    await loadWechatAccounts(wxid)
+    window.dispatchEvent(new CustomEvent('chrono:user-avatar-refresh', {
+      detail: { wxid, forceProfiles: true },
+    }))
   } catch (e) {
     console.error('补齐联系人头像失败:', e)
     avatarRefreshError.value = '头像补齐异常：' + ((e as Error).message || '未知错误')
@@ -721,7 +738,7 @@ async function refreshContactAvatars() {
 }
 
 async function handleAccountSelectValue(wxid: string) {
-  if (!wxid || wxid === activeAccountWxid.value) return
+  if (!wxid) return
 
   await bridgeReady()
   const result = await api.set_active_wechat_account(wxid)
@@ -1295,8 +1312,21 @@ onMounted(() => {
 }
 
 /* 微信路径输入栏 */
-.path-input { display: flex; gap: 12px; align-items: center; }
+.path-input { display: flex; gap: 8px; align-items: center; }
 .path-input .ct-field { flex: 1; }
+.path-input :deep(.ct-btn) { white-space: nowrap; }
+.path-hint {
+  grid-column: 2;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--ct-text-tertiary);
+  line-height: 1.5;
+}
+@media (max-width: 768px) {
+  .path-input { flex-wrap: wrap; }
+  .path-input .ct-field { flex-basis: 100%; }
+  .path-hint { grid-column: 1; }
+}
 
 /* Modal 模糊遮罩 */
 .ct-modal-overlay {

@@ -1092,6 +1092,10 @@ class Bridge:
             {"path": "选择的目录路径"} 或 {"path": None}
         """
         try:
+            editable_result = self._select_directory_with_edit_box(title)
+            if editable_result is not None:
+                return editable_result
+
             import webview
             
             logger.debug(f"[DEBUG] 打开目录选择对话框: title={title}")
@@ -1127,6 +1131,50 @@ class Bridge:
             logger.error("[ERROR] 详细错误:")
             logger.error(error_detail)
             return {"path": None, "error": str(e)}
+
+    def _select_directory_with_edit_box(self, title: str) -> Optional[dict[str, Any]]:
+        """Use a Windows folder picker with an editable path box when available."""
+        if os.name != "nt":
+            return None
+
+        co_initialized = False
+        try:
+            import pythoncom
+            from win32com.shell import shell, shellcon
+
+            pythoncom.CoInitialize()
+            co_initialized = True
+
+            # pywebview's FOLDER_DIALOG uses an old tree-only picker on Windows.
+            # BIF_EDITBOX adds a text field so users can paste a full folder path.
+            bif_newdialogstyle = getattr(shellcon, "BIF_NEWDIALOGSTYLE", 0x0040)
+            flags = (
+                shellcon.BIF_RETURNONLYFSDIRS
+                | shellcon.BIF_EDITBOX
+                | shellcon.BIF_VALIDATE
+                | bif_newdialogstyle
+            )
+            logger.debug("[DEBUG] 调用 Windows 可输入路径目录选择框")
+            result = shell.SHBrowseForFolder(0, None, title, flags)
+
+            if not result:
+                logger.debug("[DEBUG] 用户取消 Windows 目录选择")
+                return {"path": None}
+
+            pidl = result[0]
+            selected_path = shell.SHGetPathFromIDList(pidl)
+            if isinstance(selected_path, bytes):
+                selected_path = selected_path.decode("mbcs", errors="replace")
+            if selected_path:
+                logger.debug(f"[DEBUG] 已选择目录: {selected_path}")
+                return {"path": str(selected_path)}
+            return {"path": None}
+        except Exception as e:
+            logger.warning(f"[DEBUG] Windows 可输入路径目录选择框失败，回退 pywebview: {e}")
+            return None
+        finally:
+            if co_initialized:
+                pythoncom.CoUninitialize()
     
     def scan_wechat_directory(self, wechat_dir: str) -> dict[str, Any]:
         """

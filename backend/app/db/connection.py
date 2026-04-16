@@ -57,10 +57,14 @@ class DatabaseConnection:
     def _create_tables(cls):
         """执行建表SQL"""
         schema_sql = cls._load_schema_sql()
+        conn = cls._get_instance()
         
         # 执行所有建表语句
-        with cls._get_instance():
-            cls._get_instance().executescript(schema_sql)
+        with conn:
+            # 旧版数据库缺少 account_wxid。先做破坏性重建兜底，
+            # 避免新版 schema 中的账号索引在迁移前访问不存在的列。
+            cls._migrate_wechat_account_isolation(conn)
+            conn.executescript(schema_sql)
             cls._run_compat_migrations()
 
     @classmethod

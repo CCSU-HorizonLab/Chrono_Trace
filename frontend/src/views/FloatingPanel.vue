@@ -10,7 +10,13 @@
         <button class="fp-btn-icon close-btn" @click="exitFloating" title="退出悬浮模式">✕</button>
       </div>
       <div class="fp-contact-bar">
-        <div class="fp-avatar">{{ profileInitial }}</div>
+        <CtAvatar
+          class="fp-avatar"
+          :src="contactAvatar"
+          :name="profile.name || realtimeState.talkerName"
+          :size="34"
+          radius="10px"
+        />
         <div class="fp-contact-info">
           <div class="fp-contact-name">{{ profile.name || realtimeState.talkerName || '等待对象...' }}</div>
           <div class="fp-contact-tags" v-if="!profileExpanded && profile.personality_tags?.length">
@@ -342,6 +348,7 @@ import { ref, reactive, computed, onMounted, onBeforeUnmount, watch, nextTick } 
 import { useRouter } from 'vue-router'
 import { bridgeReady, api } from '@/api/bridge'
 import * as echarts from 'echarts'
+import CtAvatar from '@/components/base/CtAvatar.vue'
 
 const router = useRouter()
 
@@ -453,6 +460,7 @@ const triggerMode = ref<'full_auto' | 'semi_auto' | 'manual'>('semi_auto')
 const loading = ref(false)
 const userInput = ref('')
 const profile = ref<any>({ name: '', tags: [] })
+const contactAvatar = ref('')
 const profileLoading = ref(false)
 const profileExpanded = ref(false)
 const showProfileDialog = ref(false)
@@ -521,11 +529,6 @@ const quickPrompts = ref<string[]>([
 ])
 
 // ========== 计算属性 ==========
-const profileInitial = computed(() => {
-  const name = profile.value.name || realtimeState.talkerName
-  return name ? name[0] : '?'
-})
-
 const chartVisibilityStorageKey = computed(() => {
   const displayName = (realtimeState.talkerName || profile.value.name || 'default').trim() || 'default'
   const account = (activeAccountWxid.value || 'default').trim() || 'default'
@@ -755,6 +758,7 @@ async function applyMonitoringStatus(status: any) {
   startPolling()
   loadSuggestionConfig()
   loadLlmModels()
+  resolveContactAvatar(realtimeState.talkerName)
   checkContactProfile(realtimeState.talkerName)
   loadChartVisibility(realtimeState.talkerName)
 
@@ -771,6 +775,7 @@ async function applyMonitoringStatus(status: any) {
 async function startPendingMonitoring(talkerName: string, requestedAccountWxid = '') {
   activeAccountWxid.value = requestedAccountWxid || activeAccountWxid.value
   realtimeState.talkerName = talkerName
+  contactAvatar.value = ''
   realtimeState.status = 'searching'
   chatError.value = ''
 
@@ -862,6 +867,7 @@ onMounted(async () => {
     startPolling()
     loadSuggestionConfig()
     loadLlmModels()
+    resolveContactAvatar(realtimeState.talkerName)
     checkContactProfile(realtimeState.talkerName)
     loadChartVisibility(realtimeState.talkerName)
 
@@ -894,7 +900,12 @@ onBeforeUnmount(() => {
 })
 
 watch(() => realtimeState.talkerName, (name) => {
-  if (!name) return
+  if (!name) {
+    contactAvatar.value = ''
+    profile.value = { name: '', tags: [] }
+    return
+  }
+  resolveContactAvatar(name)
   loadChartVisibility(name)
   nextTick(() => syncCharts())
 })
@@ -1678,6 +1689,26 @@ async function retryConnection() {
 }
 
 // ========== 画像 ==========
+async function resolveContactAvatar(displayName: string) {
+  const name = String(displayName || '').trim()
+  if (!name) {
+    contactAvatar.value = ''
+    return
+  }
+
+  try {
+    await bridgeReady()
+    const result = await api.get_conversation_list(activeAccountWxid.value || undefined)
+    const conversations = result?.conversations || []
+    const matched = conversations.find((item: any) => {
+      return item?.name === name || item?.username === name
+    })
+    contactAvatar.value = String(matched?.avatar || '').trim()
+  } catch (e) {
+    console.error('加载联系人头像失败:', e)
+  }
+}
+
 async function checkContactProfile(name: string) {
   if (!name) return
   try {
@@ -1909,7 +1940,7 @@ async function loadLastThread() {
 .fp-brand-name { font-family: var(--ct-font-display); font-size: 12px; font-weight: 600; color: var(--ct-text-secondary); }
 .close-btn { -webkit-app-region: no-drag; }
 .fp-contact-bar { display: flex; align-items: center; gap: 10px; padding: 4px 12px 12px; -webkit-app-region: no-drag; cursor: pointer; }
-.fp-avatar { width: 34px; height: 34px; border-radius: 10px; background: var(--ct-bg-tertiary); color: var(--ct-color-primary); display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 15px; border: 1px solid var(--ct-border-color); }
+.fp-avatar { background: var(--ct-bg-tertiary); color: var(--ct-color-primary); font-weight: 700; font-size: 15px; border: 1px solid var(--ct-border-color); }
 .fp-contact-info { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; }
 .fp-contact-name { font-size: 14px; font-weight: 600; color: var(--ct-text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.2; }
 .fp-contact-tags { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; }

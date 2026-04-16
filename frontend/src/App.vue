@@ -64,7 +64,7 @@ import { useRoute } from 'vue-router'
 import { bridgeReady, api } from '@/api/bridge'
 import CtAvatar from '@/components/base/CtAvatar.vue'
 import CtAccountSelector from '@/components/base/CtAccountSelector.vue'
-import { enrichWechatAccountsWithProfiles } from '@/utils/wechatAccounts'
+import { clearWechatAccountProfileCache, enrichWechatAccountsWithProfiles } from '@/utils/wechatAccounts'
 
 const route = useRoute()
 
@@ -78,12 +78,15 @@ const currentUserProfile = reactive({
 const wechatAccounts = ref<any[]>([])
 const activeAccountWxid = ref('')
 
-async function loadWechatAccounts() {
+async function loadWechatAccounts(options: { forceProfiles?: boolean } = {}) {
   try {
     await bridgeReady()
     const result = await api.get_wechat_accounts()
     if (!result?.ok) return
-    wechatAccounts.value = await enrichWechatAccountsWithProfiles(result.accounts || [])
+    wechatAccounts.value = await enrichWechatAccountsWithProfiles(
+      result.accounts || [],
+      { forceRefresh: options.forceProfiles },
+    )
     activeAccountWxid.value = result.active_account_wxid || ''
   } catch (error) {
     console.error('[App] 加载微信账号列表失败:', error)
@@ -126,8 +129,13 @@ async function handleAccountChangeValue(wxid: string) {
   }
 }
 
-function handleProfileRefresh() {
-  loadCurrentUserProfile()
+async function handleProfileRefresh(event?: Event) {
+  const detail = (event as CustomEvent | undefined)?.detail || {}
+  clearWechatAccountProfileCache(detail.wxid || activeAccountWxid.value)
+  await Promise.all([
+    loadWechatAccounts({ forceProfiles: Boolean(detail.forceProfiles ?? true) }),
+    loadCurrentUserProfile(),
+  ])
 }
 
 watch(() => route.fullPath, () => {

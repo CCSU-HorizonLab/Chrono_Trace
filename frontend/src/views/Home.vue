@@ -149,7 +149,7 @@ import { onMounted, onUnmounted, reactive, ref } from 'vue'
 import { bridgeReady, api } from '@/api/bridge'
 import { showConfirm } from '@/utils/dialog'
 import CtAccountSelector from '@/components/base/CtAccountSelector.vue'
-import { enrichWechatAccountsWithProfiles } from '@/utils/wechatAccounts'
+import { clearWechatAccountProfileCache, enrichWechatAccountsWithProfiles } from '@/utils/wechatAccounts'
 
 type ImportProgress = { status: string; percent: number } | null
 type IncrementInfo = {
@@ -281,12 +281,15 @@ function mergeAccounts(accounts: WechatAccount[]) {
   availableAccounts.value = Array.from(merged.values())
 }
 
-async function loadWechatAccounts() {
+async function loadWechatAccounts(options: { forceProfiles?: boolean } = {}) {
   try {
     await bridgeReady()
     const result = await api.get_wechat_accounts()
     if (!result?.ok) return
-    mergeAccounts(await enrichWechatAccountsWithProfiles((result.accounts || []) as WechatAccount[]))
+    mergeAccounts(await enrichWechatAccountsWithProfiles(
+      (result.accounts || []) as WechatAccount[],
+      { forceRefresh: options.forceProfiles },
+    ))
     activeAccountWxid.value = result.active_account_wxid || activeAccountWxid.value
     const nextWxid =
       activeAccountWxid.value ||
@@ -521,8 +524,11 @@ async function startImport() {
     hasImportedBefore.value = true
     incrementInfo.value = null
     incrementDismissed.value = false
-    await loadWechatAccounts()
-    window.dispatchEvent(new CustomEvent('chrono:user-avatar-refresh'))
+    clearWechatAccountProfileCache(selectedWxid.value)
+    await loadWechatAccounts({ forceProfiles: true })
+    window.dispatchEvent(new CustomEvent('chrono:user-avatar-refresh', {
+      detail: { wxid: selectedWxid.value, forceProfiles: true },
+    }))
     addLog(wechatOk.value)
   } catch (error: any) {
     wechatErr.value = error?.message || '导入异常。'

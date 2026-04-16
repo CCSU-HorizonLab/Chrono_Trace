@@ -25,6 +25,7 @@ class FakeMonitor:
         self.emotion_tracker = None
         self.current_batch_id = "manual-batch"
         self.current_display_name = None
+        self.current_account_wxid = "wxid_test"
 
 
 class FakeMonitorWithProfile(FakeMonitor):
@@ -58,6 +59,7 @@ def _setup_db():
         """
         CREATE TABLE realtime_suggestions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_wxid TEXT NOT NULL,
             batch_id TEXT NOT NULL,
             trigger_type TEXT NOT NULL,
             intent TEXT DEFAULT 'maintain',
@@ -193,11 +195,11 @@ def test_bridge_manual_generate_injects_style_constraints_from_cached_history(mo
     monkeypatch.setattr("app.db.connection.get_db", lambda: conn)
     monkeypatch.setattr(
         "app.services.realtime.contact_profiler.ContactProfiler.get_profile",
-        lambda self, display_name: None,
+        lambda self, display_name, account_wxid="": None,
     )
     monkeypatch.setattr(
         "app.services.realtime.self_profiler.SelfProfiler.get_profile",
-        lambda self, display_name: {
+        lambda self, display_name, account_wxid="": {
             "conversation_id": 7,
             "profile": {"typing_style": "短句"},
             "features_snapshot": {"user_msg_style": {"avg_chars_per_msg": 9.0}},
@@ -245,18 +247,20 @@ def test_bridge_manual_generate_injects_style_constraints_from_cached_history(mo
 
 def test_bridge_get_pending_suggestions_marks_viewed(monkeypatch):
     bridge = Bridge.__new__(Bridge)
+    bridge.settings = {"wechat_user_wxid": "wxid_test"}
     conn = _setup_db()
     conn.execute(
         """
         INSERT INTO realtime_suggestions
-        (id, batch_id, trigger_type, intent, severity, summary, speeches, confidence, status, created_at)
-        VALUES (1, 'batch-1', 'negative_streak', 'maintain', 'medium', '测试建议', ?, 0.9, 'pending', 1000)
+        (id, account_wxid, batch_id, trigger_type, intent, severity, summary, speeches, confidence, status, created_at)
+        VALUES (1, 'wxid_test', 'batch-1', 'negative_streak', 'maintain', 'medium', '测试建议', ?, 0.9, 'pending', 1000)
         """,
         (json.dumps(["测试话术"], ensure_ascii=False),),
     )
     record_observation(
         conn,
         suggestion_id=1,
+        account_wxid="wxid_test",
         event_type=EVENT_SHOWN,
         batch_id="batch-1",
         display_name="阿澄",
@@ -289,14 +293,15 @@ def test_bridge_dismiss_suggestion_records_observation(monkeypatch):
     conn.execute(
         """
         INSERT INTO realtime_suggestions
-        (id, batch_id, trigger_type, intent, severity, summary, speeches, confidence, status, created_at)
-        VALUES (2, 'batch-2', 'topic_cooling', 'maintain', 'medium', '测试建议', ?, 0.9, 'pending', 1000)
+        (id, account_wxid, batch_id, trigger_type, intent, severity, summary, speeches, confidence, status, created_at)
+        VALUES (2, 'wxid_test', 'batch-2', 'topic_cooling', 'maintain', 'medium', '测试建议', ?, 0.9, 'pending', 1000)
         """,
         (json.dumps(["测试话术"], ensure_ascii=False),),
     )
     record_observation(
         conn,
         suggestion_id=2,
+        account_wxid="wxid_test",
         event_type=EVENT_SHOWN,
         batch_id="batch-2",
         display_name="妈",
@@ -323,15 +328,16 @@ def test_bridge_dismiss_suggestion_records_observation(monkeypatch):
 
 def test_bridge_get_suggestion_metrics_returns_aggregates(monkeypatch):
     bridge = Bridge.__new__(Bridge)
+    bridge.settings = {"wechat_user_wxid": "wxid_test"}
     conn = _setup_db()
     now = int(time.time())
     conn.execute(
         """
         INSERT INTO realtime_suggestions
-        (id, batch_id, trigger_type, intent, severity, summary, speeches, confidence, status, created_at)
+        (id, account_wxid, batch_id, trigger_type, intent, severity, summary, speeches, confidence, status, created_at)
         VALUES
-        (1, 'batch-1', 'negative_streak', 'maintain', 'medium', 'A', '[]', 1.0, 'pending', ?),
-        (2, 'batch-2', 'topic_cooling', 'maintain', 'medium', 'B', '[]', 1.0, 'pending', ?)
+        (1, 'wxid_test', 'batch-1', 'negative_streak', 'maintain', 'medium', 'A', '[]', 1.0, 'pending', ?),
+        (2, 'wxid_test', 'batch-2', 'topic_cooling', 'maintain', 'medium', 'B', '[]', 1.0, 'pending', ?)
         """
         ,
         (now - 20, now - 10),
@@ -339,6 +345,7 @@ def test_bridge_get_suggestion_metrics_returns_aggregates(monkeypatch):
     record_observation(
         conn,
         suggestion_id=1,
+        account_wxid="wxid_test",
         event_type=EVENT_SHOWN,
         batch_id="batch-1",
         display_name="阿澄",
@@ -348,6 +355,7 @@ def test_bridge_get_suggestion_metrics_returns_aggregates(monkeypatch):
     record_observation(
         conn,
         suggestion_id=1,
+        account_wxid="wxid_test",
         event_type="adopted",
         similarity=0.9,
         selected_speech="A",
@@ -358,6 +366,7 @@ def test_bridge_get_suggestion_metrics_returns_aggregates(monkeypatch):
     record_observation(
         conn,
         suggestion_id=2,
+        account_wxid="wxid_test",
         event_type=EVENT_SHOWN,
         batch_id="batch-2",
         display_name="妈",
@@ -367,6 +376,7 @@ def test_bridge_get_suggestion_metrics_returns_aggregates(monkeypatch):
     record_observation(
         conn,
         suggestion_id=2,
+        account_wxid="wxid_test",
         event_type="dismissed",
         created_at=now - 9,
     )

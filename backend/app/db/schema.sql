@@ -6,7 +6,8 @@
 -- ========================================
 CREATE TABLE IF NOT EXISTS conversations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT NOT NULL UNIQUE,          -- 微信username（唯一标识）
+    account_wxid TEXT NOT NULL,              -- 归属微信账号 wxid
+    username TEXT NOT NULL,                  -- 微信username（唯一标识）
     display_name TEXT NOT NULL,              -- 显示名称（备注名 > 昵称 > username）
     remark TEXT,                             -- 备注名
     nickname TEXT,                           -- 昵称
@@ -16,11 +17,12 @@ CREATE TABLE IF NOT EXISTS conversations (
     created_at INTEGER NOT NULL,             -- 首次聊天时间戳（秒）
     updated_at INTEGER NOT NULL,             -- 最后一条消息时间戳（秒）
     message_count INTEGER DEFAULT 0,         -- 消息总数
-    is_deleted INTEGER DEFAULT 0             -- 是否已删除（软删除）
+    is_deleted INTEGER DEFAULT 0,            -- 是否已删除（软删除）
+    UNIQUE(account_wxid, username, platform)
 );
 
-CREATE INDEX IF NOT EXISTS idx_conversations_username ON conversations(username);
-CREATE INDEX IF NOT EXISTS idx_conversations_updated_at ON conversations(updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_conversations_account_username ON conversations(account_wxid, username);
+CREATE INDEX IF NOT EXISTS idx_conversations_account_updated_at ON conversations(account_wxid, updated_at DESC);
 
 
 -- ========================================
@@ -28,7 +30,8 @@ CREATE INDEX IF NOT EXISTS idx_conversations_updated_at ON conversations(updated
 -- ========================================
 CREATE TABLE IF NOT EXISTS contacts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT NOT NULL UNIQUE,           -- 微信username
+    account_wxid TEXT NOT NULL,              -- 归属微信账号 wxid
+    username TEXT NOT NULL,                  -- 微信username
     nickname TEXT,                           -- 昵称
     remark TEXT,                             -- 备注名
     alias TEXT,                              -- 微信号
@@ -38,10 +41,11 @@ CREATE TABLE IF NOT EXISTS contacts (
     is_friend INTEGER DEFAULT 1,             -- 是否为好友
     is_deleted INTEGER DEFAULT 0,            -- 是否已删除
     created_at INTEGER,                      -- 添加时间
-    updated_at INTEGER                       -- 更新时间
+    updated_at INTEGER,                      -- 更新时间
+    UNIQUE(account_wxid, username)
 );
 
-CREATE INDEX IF NOT EXISTS idx_contacts_username ON contacts(username);
+CREATE INDEX IF NOT EXISTS idx_contacts_account_username ON contacts(account_wxid, username);
 
 
 -- ========================================
@@ -172,6 +176,7 @@ CREATE INDEX IF NOT EXISTS idx_import_records_started_at ON import_records(start
 -- 用于临时存储实时监听到的消息,会话结束后可处理迁移
 CREATE TABLE IF NOT EXISTS realtime_message_buffer (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_wxid TEXT NOT NULL,             -- 归属微信账号 wxid
     
     -- 监听对象信息
     talker_username TEXT NOT NULL,          -- 对话对象username
@@ -196,11 +201,11 @@ CREATE TABLE IF NOT EXISTS realtime_message_buffer (
     created_at INTEGER NOT NULL             -- 记录创建时间
 );
 
-CREATE INDEX IF NOT EXISTS idx_realtime_buffer_talker ON realtime_message_buffer(talker_username);
-CREATE INDEX IF NOT EXISTS idx_realtime_buffer_batch ON realtime_message_buffer(batch_id);
-CREATE INDEX IF NOT EXISTS idx_realtime_buffer_processed ON realtime_message_buffer(is_processed);
-CREATE INDEX IF NOT EXISTS idx_realtime_buffer_timestamp ON realtime_message_buffer(timestamp);
-CREATE INDEX IF NOT EXISTS idx_realtime_buffer_hash ON realtime_message_buffer(message_hash);
+CREATE INDEX IF NOT EXISTS idx_realtime_buffer_account_talker ON realtime_message_buffer(account_wxid, talker_username);
+CREATE INDEX IF NOT EXISTS idx_realtime_buffer_account_batch ON realtime_message_buffer(account_wxid, batch_id);
+CREATE INDEX IF NOT EXISTS idx_realtime_buffer_account_processed ON realtime_message_buffer(account_wxid, is_processed);
+CREATE INDEX IF NOT EXISTS idx_realtime_buffer_account_timestamp ON realtime_message_buffer(account_wxid, timestamp);
+CREATE INDEX IF NOT EXISTS idx_realtime_buffer_account_hash ON realtime_message_buffer(account_wxid, message_hash);
 
 
 -- ========================================
@@ -585,6 +590,7 @@ CREATE INDEX IF NOT EXISTS idx_affinity_scores_conversation ON affinity_scores(c
 -- 存储实时监听期间由情绪触发引擎生成的建议
 CREATE TABLE IF NOT EXISTS realtime_suggestions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_wxid TEXT NOT NULL,                 -- 归属微信账号 wxid
     batch_id TEXT NOT NULL,                      -- 监听批次ID
     trigger_type TEXT NOT NULL,                  -- 触发类型: negative_streak, emotion_shift, perfunctory, silence, positive_window, topic_cooling
     intent TEXT NOT NULL,                        -- 走向: intimate, maintain, distance
@@ -602,12 +608,13 @@ CREATE TABLE IF NOT EXISTS realtime_suggestions (
     thought_process TEXT                         -- AI 思考过程
 );
 
-CREATE INDEX IF NOT EXISTS idx_realtime_suggestions_batch ON realtime_suggestions(batch_id, status);
-CREATE INDEX IF NOT EXISTS idx_realtime_suggestions_created ON realtime_suggestions(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_realtime_suggestions_account_batch ON realtime_suggestions(account_wxid, batch_id, status);
+CREATE INDEX IF NOT EXISTS idx_realtime_suggestions_account_created ON realtime_suggestions(account_wxid, created_at DESC);
 
 -- 观察事件表：记录建议展示、查看、采纳、改写、忽略等结果
 CREATE TABLE IF NOT EXISTS suggestion_observations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_wxid TEXT NOT NULL,
     suggestion_id INTEGER NOT NULL,
     batch_id TEXT,
     display_name TEXT,
@@ -625,8 +632,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_suggestion_observations_singleton
 ON suggestion_observations(suggestion_id, event_type);
 CREATE INDEX IF NOT EXISTS idx_suggestion_observations_event_created
 ON suggestion_observations(event_type, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_suggestion_observations_display
-ON suggestion_observations(display_name, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_suggestion_observations_account_display
+ON suggestion_observations(account_wxid, display_name, created_at DESC);
 
 
 -- ========================================
@@ -656,7 +663,8 @@ CREATE INDEX IF NOT EXISTS idx_llm_models_active ON llm_models(is_active);
 -- 记录每个监听对象最近一次成功监听到的最后一条消息，用于恢复探测和后续回溯补全
 CREATE TABLE IF NOT EXISTS realtime_monitor_checkpoints (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    talker_key TEXT NOT NULL UNIQUE,              -- username 优先，缺失时回退为 display_name
+    account_wxid TEXT NOT NULL,                   -- 归属微信账号 wxid
+    talker_key TEXT NOT NULL,                     -- username 优先，缺失时回退为 display_name
     talker_username TEXT,                         -- 微信 username（如果可得）
     talker_display_name TEXT NOT NULL,            -- 显示名称
     last_batch_id TEXT,                           -- 最近一次监听批次
@@ -668,8 +676,32 @@ CREATE TABLE IF NOT EXISTS realtime_monitor_checkpoints (
     message_count INTEGER DEFAULT 0,              -- 最近批次消息数
     source TEXT DEFAULT 'realtime',               -- 来源
     created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
+    updated_at INTEGER NOT NULL,
+    UNIQUE(account_wxid, talker_key)
 );
 
-CREATE INDEX IF NOT EXISTS idx_realtime_checkpoint_updated ON realtime_monitor_checkpoints(updated_at DESC);
-CREATE INDEX IF NOT EXISTS idx_realtime_checkpoint_display_name ON realtime_monitor_checkpoints(talker_display_name);
+CREATE INDEX IF NOT EXISTS idx_realtime_checkpoint_account_updated ON realtime_monitor_checkpoints(account_wxid, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_realtime_checkpoint_account_display_name ON realtime_monitor_checkpoints(account_wxid, talker_display_name);
+
+
+-- ========================================
+-- 24. 会话线程归档表
+-- ========================================
+CREATE TABLE IF NOT EXISTS session_threads (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_wxid TEXT NOT NULL,
+    batch_id TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    keywords TEXT,
+    messages_snapshot TEXT,
+    suggestions_snapshot TEXT,
+    user_chat_history_snapshot TEXT,
+    message_count INTEGER,
+    suggestion_count INTEGER,
+    created_at INTEGER NOT NULL,
+    duration_seconds INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_threads_account_display_created
+ON session_threads(account_wxid, display_name, created_at DESC);

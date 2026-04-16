@@ -47,6 +47,15 @@
         </div>
       </div>
 
+      <div v-if="availableAccounts.length" class="account-selector-row">
+        <label class="account-selector-label">当前账号</label>
+        <CtAccountSelector
+          v-model="selectedWxid"
+          :accounts="availableAccounts"
+          @update:modelValue="onAccountSelectValue"
+        />
+      </div>
+
       <div class="wizard-container">
         <div class="wizard-step">
           <div class="step-header">
@@ -113,7 +122,7 @@
       </div>
 
       <div class="wizard-actions">
-        <button class="btn-primary-large" :disabled="!pathInfo || wechatImporting" @click.stop.prevent="startImport">
+        <button class="btn-primary-large" :disabled="!pathInfo || !selectedWxid || wechatImporting" @click.stop.prevent="startImport">
           {{ wechatImporting ? '导入中...' : (hasImportedBefore ? '重新导入' : '开始导入') }}
         </button>
         <button class="btn-outline-large" :disabled="wechatImporting || verifying" @click.stop.prevent="resetFlow">重新配置</button>
@@ -136,9 +145,11 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { onMounted, onUnmounted, reactive, ref } from 'vue'
 import { bridgeReady, api } from '@/api/bridge'
 import { showConfirm } from '@/utils/dialog'
+import CtAccountSelector from '@/components/base/CtAccountSelector.vue'
+import { clearWechatAccountProfileCache, enrichWechatAccountsWithProfiles } from '@/utils/wechatAccounts'
 
 type ImportProgress = { status: string; percent: number } | null
 type IncrementInfo = {
@@ -146,6 +157,19 @@ type IncrementInfo = {
   changedFiles: Array<{ path: string; delta: number }>
   lastImportAt?: number | null
 } | null
+type WechatAccount = {
+  wxid: string
+  label: string
+  avatar: string
+  profile_name?: string
+  wechat_dir: string
+  source: string
+  db_key: string
+  import_completed: boolean
+  last_import_at?: number | null
+  last_import_total_size: number
+  last_import_files: Array<Record<string, any>>
+}
 
 const wechatForm = reactive({
   dbKey: '',
@@ -163,6 +187,9 @@ const incrementInfo = ref<IncrementInfo>(null)
 const incrementDismissed = ref(false)
 const pathInfo = ref<any>(null)
 const customWechatDir = ref('')
+const availableAccounts = ref<WechatAccount[]>([])
+const activeAccountWxid = ref('')
+const selectedWxid = ref('')
 const logs = ref<{ ts: string; msg: string }[]>([
   { ts: new Date().toLocaleString(), msg: '系统启动完成，等待导入。' },
   { ts: new Date().toLocaleString(), msg: '已准备微信导入流程。' }
@@ -183,22 +210,125 @@ function formatImportTime(ts?: number | null) {
   return new Date(ts * 1000).toLocaleString()
 }
 
+function buildPathInfoFromAccount(account?: Partial<WechatAccount> | null) {
+  if (!account?.wechat_dir || !account?.wxid) return null
+  return {
+    wechat_dir: account.wechat_dir,
+    current_user: account.wxid,
+    account_wxid: account.wxid,
+    databases: {},
+    source: account.source || 'auto'
+  }
+}
+
+function getSelectedAccount() {
+  return availableAccounts.value.find((account) => account.wxid === selectedWxid.value) || null
+}
+
 function getPreferredWechatPaths() {
   if (!pathInfo.value?.wechat_dir || !pathInfo.value?.current_user) return null
   return {
     wechat_dir: pathInfo.value.wechat_dir,
-    current_user: pathInfo.value.current_user
+    current_user: pathInfo.value.current_user,
+    account_wxid: selectedWxid.value || pathInfo.value.current_user
   }
 }
 
-async function detectWechatPath(options?: { silent?: boolean }) {
+function hydrateAccountState(wxid: string) {
+  const account = availableAccounts.value.find((item) => item.wxid === wxid)
+  selectedWxid.value = wxid
+  activeAccountWxid.value = wxid
+  wechatForm.dbKey = account?.db_key || ''
+  hasImportedBefore.value = Boolean(account?.import_completed)
+  pathInfo.value = buildPathInfoFromAccount(account)
+  customWechatDir.value = account?.wechat_dir || ''
+  incrementInfo.value = null
+  incrementDismissed.value = false
+}
+
+async function persistAccounts() {
+  const nextAccounts = availableAccounts.value.map((account) => {
+    if (account.wxid !== selectedWxid.value) return account
+    return {
+      ...account,
+      db_key: wechatForm.dbKey,
+      label: account.label || account.wxid,
+    }
+  })
+  availableAccounts.value = nextAccounts
+  await api.set_settings({
+    wechat_accounts: nextAccounts,
+    wechat_active_account_wxid: activeAccountWxid.value || selectedWxid.value || '',
+  })
+}
+
+function mergeAccounts(accounts: WechatAccount[]) {
+  const merged = new Map<string, WechatAccount>()
+  for (const existing of availableAccounts.value) {
+    merged.set(existing.wxid, { ...existing })
+  }
+  for (const account of accounts) {
+    const current = merged.get(account.wxid)
+    merged.set(account.wxid, {
+      ...(current || {}),
+      ...account,
+      label: account.label || current?.label || account.wxid,
+      db_key: account.db_key || current?.db_key || '',
+      profile_name: account.profile_name || current?.profile_name || '',
+      last_import_files: account.last_import_files || current?.last_import_files || [],
+    } as WechatAccount)
+  }
+  availableAccounts.value = Array.from(merged.values())
+}
+
+async function loadWechatAccounts(options: { forceProfiles?: boolean } = {}) {
   try {
-    const pathRes = await api.get_wechat_paths()
+    await bridgeReady()
+    const result = await api.get_wechat_accounts()
+    if (!result?.ok) return
+    mergeAccounts(await enrichWechatAccountsWithProfiles(
+      (result.accounts || []) as WechatAccount[],
+      { forceRefresh: options.forceProfiles },
+    ))
+    activeAccountWxid.value = result.active_account_wxid || activeAccountWxid.value
+    const nextWxid =
+      activeAccountWxid.value ||
+      selectedWxid.value ||
+      (availableAccounts.value.length === 1 ? availableAccounts.value[0]?.wxid : '') ||
+      ''
+    if (nextWxid) {
+      hydrateAccountState(nextWxid)
+    }
+  } catch (error) {
+    console.error('[Home] loadWechatAccounts failed', error)
+  }
+}
+
+async function detectWechatPath(options?: { silent?: boolean; accountWxid?: string }) {
+  try {
+    const accountWxid = options?.accountWxid || selectedWxid.value || activeAccountWxid.value || undefined
+    const pathRes = await api.get_wechat_paths(accountWxid)
     if (!pathRes?.ok || !pathRes.data) return false
 
     pathInfo.value = pathRes.data
-    customWechatDir.value = ''
-    await savePathsToSettings(pathRes.data, false)
+    mergeAccounts(await enrichWechatAccountsWithProfiles((pathRes.accounts || pathRes.data.accounts || []) as WechatAccount[]))
+
+    const detectedWxid =
+      pathRes.data.account_wxid ||
+      pathRes.data.current_user ||
+      accountWxid ||
+      (availableAccounts.value.length === 1 ? availableAccounts.value[0]?.wxid : '') ||
+      ''
+
+    if (detectedWxid) {
+      activeAccountWxid.value = detectedWxid
+      selectedWxid.value = detectedWxid
+      const detectedAccount = availableAccounts.value.find((account) => account.wxid === detectedWxid)
+      customWechatDir.value = pathRes.data.wechat_dir || detectedAccount?.wechat_dir || ''
+      if (detectedAccount?.db_key) {
+        wechatForm.dbKey = detectedAccount.db_key
+      }
+    }
 
     if (!options?.silent) {
       addLog(`已自动检测到微信数据目录：${pathRes.data.wechat_dir}`)
@@ -214,31 +344,27 @@ async function loadSavedPaths() {
   try {
     await bridgeReady()
     const settings = await api.get_settings()
+    mergeAccounts(await enrichWechatAccountsWithProfiles((settings.wechat_accounts || []) as WechatAccount[]))
+    activeAccountWxid.value = settings.wechat_active_account_wxid || ''
 
-    if (settings.wechat_db_key) {
-      wechatForm.dbKey = settings.wechat_db_key
-      addLog('已恢复上次保存的数据库密钥。')
-    }
+    const targetWxid =
+      activeAccountWxid.value ||
+      (availableAccounts.value.length === 1 ? availableAccounts.value[0]?.wxid : '') ||
+      ''
 
-    if (settings.wechat_data_dir && settings.wechat_user_wxid) {
-      pathInfo.value = {
-        wechat_dir: settings.wechat_data_dir,
-        current_user: settings.wechat_user_wxid,
-        databases: {},
-        source: settings.wechat_use_custom_path ? 'custom' : 'auto'
-      }
-      addLog('已恢复上次保存的微信数据路径。')
+    if (targetWxid) {
+      hydrateAccountState(targetWxid)
+      addLog(`已恢复账号配置：${targetWxid}`)
     }
 
     if (!pathInfo.value) {
-      const detected = await detectWechatPath()
+      const detected = await detectWechatPath({ accountWxid: targetWxid || undefined })
       if (!detected) {
         addLog('暂未自动检测到微信数据目录，可稍后手动选择。')
       }
     }
 
-    hasImportedBefore.value = !!settings.wechat_import_completed
-    if (hasImportedBefore.value) {
+    if (selectedWxid.value && hasImportedBefore.value) {
       await checkIncrement()
     }
   } catch (error) {
@@ -248,23 +374,41 @@ async function loadSavedPaths() {
 
 async function savePathsToSettings(paths: any, isCustom: boolean) {
   try {
-    await api.set_settings({
-      wechat_use_custom_path: isCustom,
-      wechat_data_dir: paths.wechat_dir || '',
-      wechat_user_wxid: paths.current_user || '',
-      wechat_db_key: wechatForm.dbKey
-    })
+    const wxid = String(paths.current_user || selectedWxid.value || '').trim()
+    if (!wxid) return
+
+    const nextAccounts = availableAccounts.value.filter((account) => account.wxid !== wxid)
+    nextAccounts.push({
+      ...(getSelectedAccount() || {
+        wxid,
+        label: wxid,
+        avatar: '',
+        last_import_files: [],
+        last_import_total_size: 0,
+        import_completed: false,
+      }),
+      wxid,
+      label: getSelectedAccount()?.label || wxid,
+      wechat_dir: paths.wechat_dir || '',
+      source: isCustom ? 'custom' : 'auto',
+      db_key: wechatForm.dbKey,
+    } as WechatAccount)
+
+    availableAccounts.value = nextAccounts
+    activeAccountWxid.value = wxid
+    selectedWxid.value = wxid
+    await persistAccounts()
   } catch (error) {
     console.error('[Home] savePathsToSettings failed', error)
   }
 }
 
 async function checkIncrement() {
-  if (incrementDismissed.value) return
+  if (incrementDismissed.value || !selectedWxid.value) return
 
   try {
     await bridgeReady()
-    const result = await api.detect_wechat_import_increment()
+    const result = await api.detect_wechat_import_increment(selectedWxid.value)
     if (result?.ok && result.has_increment) {
       incrementInfo.value = {
         incrementSize: result.increment_size || 0,
@@ -298,7 +442,11 @@ async function onVerifyAndUnpack() {
   try {
     await bridgeReady()
     importProgress.value = { status: '验证密钥...', percent: 10 }
-    const verifyRes = await api.verify_wechat_key(wechatForm.dbKey, getPreferredWechatPaths() || undefined)
+    const verifyRes = await api.verify_wechat_key(
+      wechatForm.dbKey,
+      getPreferredWechatPaths() || undefined,
+      selectedWxid.value || undefined,
+    )
 
     if (!verifyRes.ok) {
       wechatErr.value = verifyRes.error || '密钥验证失败。'
@@ -314,7 +462,7 @@ async function onVerifyAndUnpack() {
       await checkIncrement()
     } else {
       importProgress.value = { status: '查找微信数据路径...', percent: 30 }
-      const detected = await detectWechatPath({ silent: true })
+      const detected = await detectWechatPath({ silent: true, accountWxid: selectedWxid.value || undefined })
       if (detected) {
         wechatOk.value = '验证成功。已检测到微信数据路径，请点击“开始导入”。'
         addLog('密钥验证成功，已检测到微信数据路径。')
@@ -335,6 +483,10 @@ async function onVerifyAndUnpack() {
 
 async function startImport() {
   if (wechatImporting.value || verifying.value) return
+  if (!selectedWxid.value) {
+    wechatErr.value = '请先选择要导入的微信账号。'
+    return
+  }
   if (!pathInfo.value) {
     wechatErr.value = '请先点击“验证”并确认微信数据路径。'
     return
@@ -359,7 +511,7 @@ async function startImport() {
     const res = await api.import_wechat_data(wechatForm.dbKey, {
       import_contacts: wechatForm.importContacts,
       import_messages: wechatForm.importMessages
-    })
+    }, selectedWxid.value)
 
     if (!res.ok) {
       wechatErr.value = res.error || '导入失败。'
@@ -372,7 +524,11 @@ async function startImport() {
     hasImportedBefore.value = true
     incrementInfo.value = null
     incrementDismissed.value = false
-    window.dispatchEvent(new CustomEvent('chrono:user-avatar-refresh'))
+    clearWechatAccountProfileCache(selectedWxid.value)
+    await loadWechatAccounts({ forceProfiles: true })
+    window.dispatchEvent(new CustomEvent('chrono:user-avatar-refresh', {
+      detail: { wxid: selectedWxid.value, forceProfiles: true },
+    }))
     addLog(wechatOk.value)
   } catch (error: any) {
     wechatErr.value = error?.message || '导入异常。'
@@ -404,17 +560,21 @@ async function scanAndSetCustomPath(wechatDir: string) {
   try {
     addLog('正在扫描微信目录。')
     const scanResult = await api.scan_wechat_directory(wechatDir)
-    if (!scanResult.ok || !scanResult.wxids?.length) {
+    if (!scanResult.ok || !scanResult.accounts?.length) {
       wechatErr.value = '未在该目录下找到微信数据。'
       addLog('扫描失败：未找到可用的微信账号目录。')
       return
     }
 
-    const firstWxid = scanResult.wxids[0]
-    const databases = scanResult.databases[firstWxid]
+    mergeAccounts(await enrichWechatAccountsWithProfiles((scanResult.accounts || []) as WechatAccount[]))
+    const nextWxid = selectedWxid.value || scanResult.accounts[0].wxid
+    const databases = scanResult.databases[nextWxid]
+    const resolvedAccount = (scanResult.accounts || []).find((account: WechatAccount) => account.wxid === nextWxid)
+    const resolvedWechatDir = resolvedAccount?.wechat_dir || wechatDir
     const newPathInfo = {
-      wechat_dir: wechatDir,
-      current_user: firstWxid,
+      wechat_dir: resolvedWechatDir,
+      current_user: nextWxid,
+      account_wxid: nextWxid,
       databases: {
         message: databases.msg_dbs || [],
         contact: databases.contact_db
@@ -422,9 +582,12 @@ async function scanAndSetCustomPath(wechatDir: string) {
       source: 'custom'
     }
 
+    selectedWxid.value = nextWxid
+    activeAccountWxid.value = nextWxid
     pathInfo.value = newPathInfo
+    customWechatDir.value = resolvedWechatDir
     await savePathsToSettings(newPathInfo, true)
-    wechatOk.value = `扫描成功，找到 ${scanResult.wxids.length} 个账号，当前使用 ${firstWxid}。`
+    wechatOk.value = `扫描成功，找到 ${scanResult.accounts.length} 个账号，当前使用 ${nextWxid}。`
     addLog(wechatOk.value)
   } catch (error: any) {
     wechatErr.value = `扫描失败：${error?.message || '未知错误'}`
@@ -438,8 +601,6 @@ function dismissIncrementBanner() {
 }
 
 function resetFlow() {
-  pathInfo.value = null
-  customWechatDir.value = ''
   wechatErr.value = ''
   wechatOk.value = ''
   importProgress.value = null
@@ -447,24 +608,59 @@ function resetFlow() {
   incrementInfo.value = null
   incrementDismissed.value = false
 
+  availableAccounts.value = availableAccounts.value.map((account) => {
+    if (account.wxid !== selectedWxid.value) return account
+    return {
+      ...account,
+      db_key: wechatForm.dbKey,
+      import_completed: false,
+      last_import_at: null,
+      last_import_total_size: 0,
+      last_import_files: [],
+    }
+  })
+
   api.set_settings({
-    wechat_use_custom_path: false,
-    wechat_data_dir: '',
-    wechat_user_wxid: '',
-    wechat_db_key: wechatForm.dbKey,
-    wechat_import_completed: false,
-    wechat_last_import_at: null,
-    wechat_last_import_total_size: 0,
-    wechat_last_import_files: []
+    wechat_accounts: availableAccounts.value,
+    wechat_active_account_wxid: activeAccountWxid.value || selectedWxid.value || '',
   }).catch((error: any) => {
     console.error('[Home] resetFlow settings cleanup failed', error)
   })
 
-  addLog('已重置微信导入配置。')
+  addLog('已重置当前账号的导入状态。')
+}
+
+async function onAccountSelectValue(wxid: string) {
+  if (!wxid) return
+
+  selectedWxid.value = wxid
+  activeAccountWxid.value = wxid
+  await api.set_active_wechat_account(wxid)
+  hydrateAccountState(wxid)
+  await detectWechatPath({ silent: true, accountWxid: wxid })
+  if (hasImportedBefore.value) {
+    await checkIncrement()
+  }
+  window.dispatchEvent(new CustomEvent('chrono:user-avatar-refresh'))
+}
+
+async function handleGlobalAccountChanged() {
+  await loadWechatAccounts()
+  if (selectedWxid.value) {
+    await detectWechatPath({ silent: true, accountWxid: selectedWxid.value })
+    if (hasImportedBefore.value) {
+      await checkIncrement()
+    }
+  }
 }
 
 onMounted(() => {
   loadSavedPaths()
+  window.addEventListener('chrono:wechat-account-changed', handleGlobalAccountChanged)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('chrono:wechat-account-changed', handleGlobalAccountChanged)
 })
 </script>
 
@@ -691,6 +887,19 @@ onMounted(() => {
 
 .status-area {
   margin: 10px 0;
+}
+
+.account-selector-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 18px;
+}
+
+.account-selector-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ct-text-secondary);
 }
 
 .error-msg {

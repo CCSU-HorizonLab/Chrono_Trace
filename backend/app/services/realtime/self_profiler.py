@@ -13,6 +13,7 @@ import time
 import random
 from typing import Optional
 from .llm_http import post_json_with_retries
+from ..wechat.account_settings import get_active_wechat_account_wxid, load_settings_from_file
 
 logger = logging.getLogger(__name__)
 def _print(msg: str):
@@ -74,7 +75,16 @@ class SelfProfiler:
     def __init__(self, timeout: int = 120):
         self.timeout = timeout
 
-    def get_profile(self, display_name: str) -> Optional[dict]:
+    def _resolve_account_wxid(self, account_wxid: str = "") -> str:
+        normalized = str(account_wxid or "").strip()
+        if normalized:
+            return normalized
+        try:
+            return get_active_wechat_account_wxid(load_settings_from_file())
+        except Exception:
+            return ""
+
+    def get_profile(self, display_name: str, account_wxid: str = "") -> Optional[dict]:
         """
         获取缓存的联系人画像
 
@@ -92,11 +102,12 @@ class SelfProfiler:
 
             # 确保表存在
             self._ensure_table(conn)
+            resolved_account_wxid = self._resolve_account_wxid(account_wxid)
 
             cursor = conn.execute(
                 'SELECT conversation_id, profile_json, features_snapshot, created_at, expires_at '
-                'FROM self_profiles WHERE display_name = ?',
-                (display_name,)
+                'FROM self_profiles WHERE account_wxid = ? AND display_name = ?',
+                (resolved_account_wxid, display_name)
             )
             row = cursor.fetchone()
             if not row:
@@ -121,7 +132,7 @@ class SelfProfiler:
             _print(f"[SelfProfiler] 查询缓存失败: {e}")
             return None
 
-    def estimate_tokens(self, display_name: str, budget_level: str = 'medium', custom_budget: int = 0) -> dict:
+    def estimate_tokens(self, display_name: str, budget_level: str = 'medium', custom_budget: int = 0, account_wxid: str = "") -> dict:
         """
         预估生成画像所需的 token 量
 
@@ -138,8 +149,9 @@ class SelfProfiler:
         try:
             from ...db.connection import get_db
             conn = get_db()
+            resolved_account_wxid = self._resolve_account_wxid(account_wxid)
 
-            conv = self._find_conversation(conn, display_name)
+            conv = self._find_conversation(conn, display_name, resolved_account_wxid)
             if not conv:
                 return {
                     'conversation_id': None,
@@ -168,7 +180,8 @@ class SelfProfiler:
         self,
         display_name: str,
         budget_level: str = 'medium',
-        custom_budget: int = 0
+        custom_budget: int = 0,
+        account_wxid: str = "",
     ) -> dict:
         """
         生成联系人画像（调 LLM）
@@ -191,13 +204,14 @@ class SelfProfiler:
         try:
             from ...db.connection import get_db
             conn = get_db()
+            resolved_account_wxid = self._resolve_account_wxid(account_wxid)
 
             # 1. 查找 conversation_id
             _print(f"[SelfProfiler] 步骤1: 查找会话...")
-            conv = self._find_conversation(conn, display_name)
+            conv = self._find_conversation(conn, display_name, resolved_account_wxid)
             if not conv:
                 _print(f"[SelfProfiler] ⚠️ 未找到精确匹配的会话，尝试模糊匹配...")
-                conv = self._find_conversation_fuzzy(conn, display_name)
+                conv = self._find_conversation_fuzzy(conn, display_name, resolved_account_wxid)
             if not conv:
                 _print(f"[SelfProfiler] ❌ 未找到联系人「{display_name}」的历史聊天记录")
                 return {'ok': False, 'error': f'未找到联系人「{display_name}」的历史聊天记录，请先导入微信数据'}
@@ -225,7 +239,7 @@ class SelfProfiler:
 
             # 6. 缓存
             self._save_cache(conn, display_name, conversation_id, profile_data,
-                             len(sample), features)
+                             len(sample), features, resolved_account_wxid)
 
             return {'ok': True, 'profile': profile_data}
 
@@ -237,7 +251,7 @@ class SelfProfiler:
 
     # ==================== 内部方法 ====================
 
-    def _find_conversation(self, conn, display_name: str) -> Optional[dict]:
+    def _find_conversation(self, conn, display_name: str, account_wxid: str) -> Optional[dict]:
         """通过 display_name / nickname / remark / contacts反查 查找会话
 
         查找策略（按优先级）：
@@ -249,10 +263,10 @@ class SelfProfiler:
         cursor = conn.execute(
             'SELECT id, display_name, username, nickname, remark, message_count, created_at, updated_at '
             'FROM conversations '
-            'WHERE (display_name = ? OR nickname = ? OR remark = ? OR username = ?) '
+            'WHERE account_wxid = ? AND (display_name = ? OR nickname = ? OR remark = ? OR username = ?) '
             'AND is_deleted = 0 '
             'ORDER BY message_count DESC LIMIT 1',
-            (display_name, display_name, display_name, display_name)
+            (account_wxid, display_name, display_name, display_name, display_name)
         )
         row = cursor.fetchone()
         if row:
@@ -266,9 +280,9 @@ class SelfProfiler:
         _print(f"[SelfProfiler] 直接匹配失败，尝试通过 contacts 表反查...")
         contact_cursor = conn.execute(
             'SELECT username, nickname, remark FROM contacts '
-            'WHERE nickname = ? OR remark = ? '
+            'WHERE account_wxid = ? AND (nickname = ? OR remark = ?) '
             'LIMIT 5',
-            (display_name, display_name)
+            (account_wxid, display_name, display_name)
         )
         contacts = contact_cursor.fetchall()
         if contacts:
@@ -281,9 +295,9 @@ class SelfProfiler:
                     'SELECT id, display_name, username, nickname, remark, '
                     'message_count, created_at, updated_at '
                     'FROM conversations '
-                    'WHERE (username = ? OR display_name = ?) AND is_deleted = 0 '
+                    'WHERE account_wxid = ? AND (username = ? OR display_name = ?) AND is_deleted = 0 '
                     'ORDER BY message_count DESC LIMIT 1',
-                    (wxid, wxid)
+                    (account_wxid, wxid, wxid)
                 )
                 conv_row = conv_cursor.fetchone()
                 if conv_row:
@@ -295,7 +309,7 @@ class SelfProfiler:
         _print(f"[SelfProfiler] ⚠️ 精确匹配全部失败: {display_name}")
         return None
 
-    def _find_conversation_fuzzy(self, conn, display_name: str) -> Optional[dict]:
+    def _find_conversation_fuzzy(self, conn, display_name: str, account_wxid: str) -> Optional[dict]:
         """模糊匹配会话（精确匹配失败时的回退方案）
 
         查找策略：
@@ -308,10 +322,10 @@ class SelfProfiler:
         cursor = conn.execute(
             'SELECT id, display_name, username, nickname, remark, message_count, created_at, updated_at '
             'FROM conversations '
-            'WHERE (nickname LIKE ? OR remark LIKE ? OR display_name LIKE ?) '
+            'WHERE account_wxid = ? AND (nickname LIKE ? OR remark LIKE ? OR display_name LIKE ?) '
             'AND is_deleted = 0 '
             'ORDER BY message_count DESC LIMIT 5',
-            (f'%{search_key}%', f'%{search_key}%', f'%{search_key}%')
+            (account_wxid, f'%{search_key}%', f'%{search_key}%', f'%{search_key}%')
         )
         rows = cursor.fetchall()
         if rows:
@@ -322,9 +336,9 @@ class SelfProfiler:
         # 策略2: 模糊匹配 contacts 表反查
         contact_cursor = conn.execute(
             'SELECT username, nickname, remark FROM contacts '
-            'WHERE nickname LIKE ? OR remark LIKE ? '
+            'WHERE account_wxid = ? AND (nickname LIKE ? OR remark LIKE ?) '
             'LIMIT 5',
-            (f'%{search_key}%', f'%{search_key}%')
+            (account_wxid, f'%{search_key}%', f'%{search_key}%')
         )
         contacts = contact_cursor.fetchall()
         if contacts:
@@ -336,9 +350,9 @@ class SelfProfiler:
                     'SELECT id, display_name, username, nickname, remark, '
                     'message_count, created_at, updated_at '
                     'FROM conversations '
-                    'WHERE (username = ? OR display_name = ?) AND is_deleted = 0 '
+                    'WHERE account_wxid = ? AND (username = ? OR display_name = ?) AND is_deleted = 0 '
                     'ORDER BY message_count DESC LIMIT 1',
-                    (wxid, wxid)
+                    (account_wxid, wxid, wxid)
                 )
                 conv_row = conv_cursor.fetchone()
                 if conv_row:
@@ -351,7 +365,8 @@ class SelfProfiler:
         cursor2 = conn.execute(
             'SELECT username, display_name, nickname, remark, message_count '
             'FROM conversations '
-            'WHERE is_deleted = 0 ORDER BY message_count DESC LIMIT 10'
+            'WHERE account_wxid = ? AND is_deleted = 0 ORDER BY message_count DESC LIMIT 10',
+            (account_wxid,)
         )
         all_convs = [(dict(r)['nickname'] or dict(r)['display_name'],
                        dict(r)['username'], dict(r)['message_count'])
@@ -754,7 +769,7 @@ class SelfProfiler:
 
     def _save_cache(
         self, conn, display_name: str, conversation_id: int,
-        profile: dict, sample_count: int, features: dict
+        profile: dict, sample_count: int, features: dict, account_wxid: str
     ):
         """保存画像到缓存表"""
         try:
@@ -763,10 +778,11 @@ class SelfProfiler:
             now = int(time.time())
             conn.execute(
                 'INSERT OR REPLACE INTO self_profiles '
-                '(display_name, conversation_id, profile_json, features_snapshot, '
+                '(account_wxid, display_name, conversation_id, profile_json, features_snapshot, '
                 'message_sample_count, token_usage, created_at, expires_at) '
-                'VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
                 (
+                    account_wxid,
                     display_name,
                     conversation_id,
                     json.dumps(profile, ensure_ascii=False),
@@ -787,13 +803,15 @@ class SelfProfiler:
         conn.execute('''
             CREATE TABLE IF NOT EXISTS self_profiles (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                display_name TEXT NOT NULL UNIQUE,
+                account_wxid TEXT NOT NULL,
+                display_name TEXT NOT NULL,
                 conversation_id INTEGER,
                 profile_json TEXT NOT NULL,
                 features_snapshot TEXT,
                 message_sample_count INTEGER,
                 token_usage INTEGER,
                 created_at INTEGER NOT NULL,
-                expires_at INTEGER NOT NULL
+                expires_at INTEGER NOT NULL,
+                UNIQUE(account_wxid, display_name)
             )
         ''')

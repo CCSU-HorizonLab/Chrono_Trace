@@ -335,7 +335,7 @@ def test_llm_prompt_filters_content_rules_and_keeps_style_rules(monkeypatch):
     monkeypatch.setattr(
         feedback_rule_extractor.FeedbackRuleExtractor,
         "get_active_rules",
-        lambda self, display_name: [
+        lambda self, display_name, account_wxid="": [
             "用户倾向于用图片而非文字表达情绪或状态",
             "用户这类场景更爱用语音回复，不会打长文字",
             "用户对不感兴趣的话题会直接转移话题",

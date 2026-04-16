@@ -1,6 +1,5 @@
 """数据库连接与初始化模块"""
 import sqlite3
-import os
 from pathlib import Path
 from typing import Optional
 
@@ -57,18 +56,149 @@ class DatabaseConnection:
     @classmethod
     def _create_tables(cls):
         """执行建表SQL"""
-        schema_path = Path(__file__).parent / "schema.sql"
-        
-        if not schema_path.exists():
-            raise FileNotFoundError(f"Schema file not found: {schema_path}")
-        
-        with open(schema_path, "r", encoding="utf-8") as f:
-            schema_sql = f.read()
+        schema_sql = cls._load_schema_sql()
+        conn = cls._get_instance()
         
         # 执行所有建表语句
-        with cls._get_instance():
-            cls._get_instance().executescript(schema_sql)
+        with conn:
+            # 旧版数据库缺少 account_wxid。先做破坏性重建兜底，
+            # 避免新版 schema 中的账号索引在迁移前访问不存在的列。
+            cls._migrate_wechat_account_isolation(conn)
+            conn.executescript(schema_sql)
             cls._run_compat_migrations()
+
+    @classmethod
+    def _load_schema_sql(cls) -> str:
+        schema_path = Path(__file__).parent / "schema.sql"
+        if not schema_path.exists():
+            raise FileNotFoundError(f"Schema file not found: {schema_path}")
+        return schema_path.read_text(encoding="utf-8")
+
+    @classmethod
+    def _table_exists(cls, conn: sqlite3.Connection, table_name: str) -> bool:
+        row = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (table_name,),
+        ).fetchone()
+        return row is not None
+
+    @classmethod
+    def _table_columns(cls, conn: sqlite3.Connection, table_name: str) -> set[str]:
+        if not cls._table_exists(conn, table_name):
+            return set()
+        columns = set()
+        for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall():
+            try:
+                columns.add(str(row["name"]))
+            except Exception:
+                columns.add(str(row[1]))
+        return columns
+
+    @classmethod
+    def _clear_wechat_related_data(cls, conn: sqlite3.Connection) -> None:
+        cleanup_tables = [
+            "suggestion_observations",
+            "realtime_suggestions",
+            "session_threads",
+            "realtime_monitor_checkpoints",
+            "realtime_message_buffer",
+            "contact_rules",
+            "self_profiles",
+            "contact_profiles",
+            "sentiment_cache",
+            "interaction_pairs",
+            "speech_units",
+            "word_counts",
+            "initiative_stats",
+            "response_times",
+            "sessions",
+            "message_preprocessed",
+            "analysis_segments",
+            "affinity_scores",
+            "affinity_config",
+            "suggestions",
+            "messages",
+            "conversations",
+            "contacts",
+        ]
+        for table_name in cleanup_tables:
+            if cls._table_exists(conn, table_name):
+                conn.execute(f"DELETE FROM {table_name}")
+
+        if cls._table_exists(conn, "import_records"):
+            conn.execute(
+                "DELETE FROM import_records WHERE import_type LIKE 'wechat_%'"
+            )
+
+    @classmethod
+    def _recreate_wechat_account_tables(cls, conn: sqlite3.Connection) -> None:
+        structural_tables = [
+            "suggestion_observations",
+            "realtime_suggestions",
+            "session_threads",
+            "realtime_monitor_checkpoints",
+            "realtime_message_buffer",
+            "contact_rules",
+            "self_profiles",
+            "contact_profiles",
+            "conversations",
+            "contacts",
+        ]
+        for table_name in structural_tables:
+            conn.execute(f"DROP TABLE IF EXISTS {table_name}")
+
+        index_names = [
+            "idx_conversations_username",
+            "idx_conversations_updated_at",
+            "idx_contacts_username",
+            "idx_realtime_buffer_talker",
+            "idx_realtime_buffer_batch",
+            "idx_realtime_buffer_processed",
+            "idx_realtime_buffer_timestamp",
+            "idx_realtime_buffer_hash",
+            "idx_realtime_suggestions_batch",
+            "idx_realtime_suggestions_created",
+            "idx_suggestion_observations_display",
+            "idx_realtime_checkpoint_updated",
+            "idx_realtime_checkpoint_display_name",
+        ]
+        for index_name in index_names:
+            conn.execute(f"DROP INDEX IF EXISTS {index_name}")
+
+        conn.executescript(cls._load_schema_sql())
+
+    @classmethod
+    def _migrate_wechat_account_isolation(cls, conn: sqlite3.Connection) -> None:
+        required_columns = {
+            "contacts": {"account_wxid"},
+            "conversations": {"account_wxid"},
+            "realtime_message_buffer": {"account_wxid"},
+            "realtime_monitor_checkpoints": {"account_wxid"},
+            "realtime_suggestions": {"account_wxid"},
+            "suggestion_observations": {"account_wxid"},
+        }
+
+        migration_needed = False
+        for table_name, columns in required_columns.items():
+            existing_columns = cls._table_columns(conn, table_name)
+            if existing_columns and not columns.issubset(existing_columns):
+                migration_needed = True
+                break
+
+        optional_account_tables = ("session_threads", "contact_profiles", "self_profiles", "contact_rules")
+        if not migration_needed:
+            for table_name in optional_account_tables:
+                existing_columns = cls._table_columns(conn, table_name)
+                if existing_columns and "account_wxid" not in existing_columns:
+                    migration_needed = True
+                    break
+
+        if not migration_needed:
+            return
+
+        cls._clear_wechat_related_data(conn)
+        cls._recreate_wechat_account_tables(conn)
+        conn.commit()
 
     @classmethod
     def _run_compat_migrations(cls):
@@ -76,6 +206,8 @@ class DatabaseConnection:
         conn = cls._get_instance()
         if conn is None:
             return
+
+        cls._migrate_wechat_account_isolation(conn)
 
         conn.execute(
             """
@@ -114,6 +246,7 @@ class DatabaseConnection:
                 )
             """
         )
+        conn.commit()
     
     @classmethod
     def get_connection(cls) -> sqlite3.Connection:

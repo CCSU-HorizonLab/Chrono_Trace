@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from ...db.connection import get_db
 from .wordcloud_generator import WordCloudGenerator
 from .preprocessing_service import PreprocessingService
+from ..wechat.contact_filters import is_excluded_contact_username
 import logging
 
 
@@ -19,7 +20,7 @@ class AnalysisService:
         # 延迟加载特征提取服务（避免循环导入）
         self._feature_service = None
     
-    def get_conversation_list(self) -> Dict[str, Any]:
+    def get_conversation_list(self, account_wxid: str = "") -> Dict[str, Any]:
         """
         获取所有联系人列表（用于前端下拉选择）
         
@@ -60,14 +61,19 @@ class AnalysisService:
                         NULLIF(TRIM(ct.avatar_path), '')
                     ) as avatar
                 FROM conversations c
-                LEFT JOIN contacts ct ON c.username = ct.username
+                LEFT JOIN contacts ct
+                    ON c.account_wxid = ct.account_wxid
+                   AND c.username = ct.username
                 WHERE c.is_deleted = 0
+                    AND (? = '' OR c.account_wxid = ?)
                     AND c.message_count > 0
                 ORDER BY c.updated_at DESC
-            """)
+            """, (account_wxid, account_wxid))
             
             conversations = []
             for row in cursor.fetchall():
+                if is_excluded_contact_username(row[1]):
+                    continue
                 conversations.append({
                     "id": row[0],
                     "username": row[1],
@@ -270,6 +276,7 @@ class AnalysisService:
             SELECT 
                 c.id,
                 c.username,
+                c.account_wxid,
                 COALESCE(
                     NULLIF(TRIM(ct.remark), ''),
                     NULLIF(TRIM(ct.nickname), ''),
@@ -282,7 +289,9 @@ class AnalysisService:
                     NULLIF(TRIM(ct.avatar_path), '')
                 ) as avatar
             FROM conversations c
-            LEFT JOIN contacts ct ON c.username = ct.username
+            LEFT JOIN contacts ct
+                ON c.account_wxid = ct.account_wxid
+               AND c.username = ct.username
             WHERE c.id = ?
         """, (conversation_id,))
         
@@ -293,8 +302,9 @@ class AnalysisService:
         return {
             "id": row[0],
             "username": row[1],
-            "name": row[2],
-            "avatar": row[3]
+            "account_wxid": row[2],
+            "name": row[3],
+            "avatar": row[4]
         }
     
     def _get_messages(

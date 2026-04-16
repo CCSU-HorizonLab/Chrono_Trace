@@ -16,8 +16,20 @@ def test_bridge_refresh_wechat_contact_avatars_prefers_saved_selected_paths():
     bridge.wechat_service = MagicMock()
     bridge.wechat_service.refresh_contact_avatars.return_value = {"ok": True, "stats": {"scanned": 1}}
     bridge.settings = {
-        "wechat_data_dir": r"D:\WeChat\xwechat_files",
-        "wechat_user_wxid": "wxid_selected",
+        "wechat_accounts": [
+            {
+                "wxid": "wxid_selected",
+                "label": "wxid_selected",
+                "avatar": "",
+                "wechat_dir": r"D:\WeChat\xwechat_files",
+                "source": "custom",
+                "db_key": "",
+                "import_completed": False,
+                "last_import_total_size": 0,
+                "last_import_files": [],
+            }
+        ],
+        "wechat_active_account_wxid": "wxid_selected",
     }
 
     result = bridge.refresh_wechat_contact_avatars("secret-key")
@@ -28,6 +40,7 @@ def test_bridge_refresh_wechat_contact_avatars_prefers_saved_selected_paths():
         {
             "wechat_dir": r"D:\WeChat\xwechat_files",
             "current_user": "wxid_selected",
+            "account_wxid": "wxid_selected",
         },
     )
 
@@ -40,19 +53,30 @@ def test_bridge_get_current_user_profile_prefers_local_contact_avatar(tmp_path):
     conn = DatabaseConnection.initialize(str(db_path))
     conn.execute(
         """
-        INSERT INTO contacts (username, nickname, avatar_path, is_friend, created_at, updated_at)
-        VALUES (?, ?, ?, 1, 1, 1)
+        INSERT INTO contacts (account_wxid, username, nickname, avatar_path, is_friend, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 1, 1, 1)
         """,
-        ("wxid_self", "时痕", "https://cdn.example/self.jpg"),
+        ("wxid_self", "wxid_self", "时痕", "https://cdn.example/self.jpg"),
     )
     conn.commit()
 
     bridge = Bridge.__new__(Bridge)
     bridge.wechat_service = MagicMock()
     bridge.settings = {
-        "wechat_user_wxid": "wxid_self",
-        "wechat_db_key": "secret-key",
-        "wechat_data_dir": r"D:\WeChat\xwechat_files",
+        "wechat_accounts": [
+            {
+                "wxid": "wxid_self",
+                "label": "wxid_self",
+                "avatar": "",
+                "wechat_dir": r"D:\WeChat\xwechat_files",
+                "source": "custom",
+                "db_key": "secret-key",
+                "import_completed": False,
+                "last_import_total_size": 0,
+                "last_import_files": [],
+            }
+        ],
+        "wechat_active_account_wxid": "wxid_self",
     }
 
     try:
@@ -80,19 +104,30 @@ def test_bridge_get_current_user_profile_supports_suffixed_wechat_dir_wxid(tmp_p
     conn = DatabaseConnection.initialize(str(db_path))
     conn.execute(
         """
-        INSERT INTO contacts (username, nickname, avatar_path, is_friend, created_at, updated_at)
-        VALUES (?, ?, ?, 1, 1, 1)
+        INSERT INTO contacts (account_wxid, username, nickname, avatar_path, is_friend, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 1, 1, 1)
         """,
-        ("wxid_selfbase", "时痕", "https://cdn.example/selfbase.jpg"),
+        ("wxid_selfbase_9cc7", "wxid_selfbase", "时痕", "https://cdn.example/selfbase.jpg"),
     )
     conn.commit()
 
     bridge = Bridge.__new__(Bridge)
     bridge.wechat_service = MagicMock()
     bridge.settings = {
-        "wechat_user_wxid": "wxid_selfbase_9cc7",
-        "wechat_db_key": "secret-key",
-        "wechat_data_dir": r"D:\WeChat\xwechat_files",
+        "wechat_accounts": [
+            {
+                "wxid": "wxid_selfbase_9cc7",
+                "label": "wxid_selfbase_9cc7",
+                "avatar": "",
+                "wechat_dir": r"D:\WeChat\xwechat_files",
+                "source": "custom",
+                "db_key": "secret-key",
+                "import_completed": False,
+                "last_import_total_size": 0,
+                "last_import_files": [],
+            }
+        ],
+        "wechat_active_account_wxid": "wxid_selfbase_9cc7",
     }
 
     try:

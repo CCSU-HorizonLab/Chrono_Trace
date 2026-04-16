@@ -219,60 +219,10 @@
                 <button :class="{ active: intent === 'distance' }" @click="setIntent('distance')"><span class="sug-intent-icon">❄️</span>疏远</button>
               </div>
             </div>
-            <button class="sug-generate-btn" @click="manualGenerate" :disabled="loading">
-              <svg v-if="!loading" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-              <span v-if="!loading">手动生成建议</span>
-              <span v-else class="sug-loading-spinner"></span>
-              <span v-if="loading">生成中…</span>
-            </button>
+            <p class="sug-config-note">配置会同步到悬浮窗，并用于自动触发或悬浮窗内的手动生成。</p>
           </div>
         </div>
 
-      </div>
-    </div>
-
-    <div v-if="manualSuggestion && !isSilentSuggestion(manualSuggestion)" class="sug-section">
-      <div class="sug-result-card">
-        <div class="sug-result-hd">
-          <div>
-            <div class="sug-result-kicker">
-              {{ isPureChatSuggestion(manualSuggestion) ? 'AI 回复' : '最新建议' }}
-            </div>
-            <h2 class="sug-result-title">
-              {{ isPureChatSuggestion(manualSuggestion) ? 'AI 已直接回应你的输入' : manualSuggestion.summary }}
-            </h2>
-          </div>
-          <button
-            v-if="!isPureChatSuggestion(manualSuggestion)"
-            class="sug-action-sm"
-            @click="manualSuggestionExpanded = !manualSuggestionExpanded"
-          >
-            {{ manualSuggestionExpanded ? '收起' : '展开' }}
-          </button>
-        </div>
-
-        <div v-if="manualSuggestion.reply" class="sug-reply-block">
-          <div class="sug-reply-label">AI 回复</div>
-          <div class="sug-reply-text">{{ manualSuggestion.reply }}</div>
-          <button class="sug-action-sm" @click="copyText(manualSuggestion.reply)">复制回复</button>
-        </div>
-
-        <div v-if="!isPureChatSuggestion(manualSuggestion) && manualSuggestionExpanded" class="sug-result-bd">
-          <details v-if="manualSuggestion.thought_process" class="sug-thought">
-            <summary>AI 思考过程</summary>
-            <div class="sug-thought-text">{{ manualSuggestion.thought_process }}</div>
-          </details>
-
-          <div v-if="manualSuggestionSpeeches.length" class="sug-speech-list">
-            <div v-for="(speech, idx) in manualSuggestionSpeeches" :key="idx" class="sug-speech-item">
-              <span class="sug-speech-text">{{ speech }}</span>
-              <button class="sug-action-sm" @click="copyText(speech)">复制</button>
-            </div>
-          </div>
-          <div v-else class="sug-empty-state">
-            <span>这次没有生成可直接发送的话术。</span>
-          </div>
-        </div>
       </div>
     </div>
 
@@ -412,8 +362,7 @@ const router = useRouter()
 type Message = { role: 'ai' | 'user'; content: string }
 
 const intent = ref<any>('maintain')
-const loading = ref(false)
-const error = ref('')
+const activeAccountWxid = ref('')
 
 // ========== 实时监听状态 ==========
 const monitorPanelExpanded = ref(true)
@@ -433,9 +382,6 @@ let messagesTimer: any = null
 
 // ========== AI 建议状态 ==========
 const triggerMode = ref<any>('semi_auto')
-const manualSuggestion = ref<any>(null)
-const manualSuggestionExpanded = ref(true)
-const manualSuggestionSpeeches = computed(() => parseSuggestionSpeeches(manualSuggestion.value?.speeches))
 
 const showLlmWarningDialog = ref(false)
 
@@ -469,15 +415,45 @@ async function loadContacts() {
   contactsLoading.value = true
   try {
     await bridgeReady()
-    const r = await api.get_conversation_list()
+    const r = await api.get_conversation_list(activeAccountWxid.value || undefined)
     if (r.ok && r.conversations) {
       contacts.value = r.conversations
+      if (selectedConversationId.value && !contacts.value.some((contact: any) => contact.id === selectedConversationId.value)) {
+        selectedConversationId.value = null
+      }
     }
   } catch (e) {
     console.error('加载联系人列表失败:', e)
   } finally {
     contactsLoading.value = false
   }
+}
+
+async function refreshAccountContext() {
+  try {
+    await bridgeReady()
+    const result = await api.get_wechat_accounts()
+    if (result?.ok) {
+      activeAccountWxid.value = result.active_account_wxid || ''
+    }
+  } catch (e) {
+    console.error('加载活动微信账号失败:', e)
+  }
+}
+
+function resetAccountScopedState() {
+  contacts.value = []
+  selectedConversationId.value = null
+  realtimeState.talkerName = ''
+  realtimeState.batchId = ''
+  realtimeState.messageCount = 0
+  realtimeState.messages = []
+  realtimeState.isMonitoring = false
+  realtimeState.status = 'idle'
+  profile.value = { name: '对方昵称', tags: [] }
+  selfProfile.value = {}
+  resetProfileMeta(profileMeta)
+  resetProfileMeta(selfProfileMeta)
 }
 
 function onConversationChange(id: number) {
@@ -552,6 +528,7 @@ async function startMonitoring() {
 
     window.sessionStorage.setItem('realtime_start_request', JSON.stringify({
       talkerName,
+      account_wxid: activeAccountWxid.value || undefined,
       createdAt: Date.now(),
     }))
 
@@ -593,7 +570,6 @@ async function stopMonitoring() {
           realtimeState.status = 'idle'
           realtimeState.messageCount = 0
           realtimeState.messages = []
-          manualSuggestion.value = null
         }
       }, 3000)
     } else {
@@ -635,29 +611,6 @@ async function setIntent(newIntent: string) {
     await api.set_suggestion_config({ intent: newIntent })
   } catch (e) {
     console.error('设置走向失败:', e)
-  }
-}
-
-// 手动生成建议
-async function manualGenerate() {
-  loading.value = true
-  try {
-    await bridgeReady()
-    const llmRes = await api.get_llm_models()
-    if (!llmRes.ok || !llmRes.models || !llmRes.models.some((m: any) => m.is_active)) {
-      showLlmWarningDialog.value = true
-      return
-    }
-
-    const r = await api.generate_suggestion(intent.value, {})
-    if (r.ok && r.suggestion) {
-      manualSuggestion.value = r.suggestion
-      manualSuggestionExpanded.value = true
-    }
-  } catch (e: any) {
-    console.error('手动生成失败:', e)
-  } finally {
-    loading.value = false
   }
 }
 
@@ -731,7 +684,8 @@ async function generateSelfProfile() {
     const r = await api.generate_self_profile(
       realtimeState.talkerName,
       selfProfileBudgetLevel.value,
-      0
+      0,
+      activeAccountWxid.value || undefined,
     )
     if (r.ok && r.profile) {
       selfProfile.value = r.profile
@@ -770,7 +724,8 @@ async function generateContactProfile() {
     const r = await api.generate_contact_profile(
       realtimeState.talkerName,
       profileBudgetLevel.value,
-      profileBudgetLevel.value === 'custom' ? profileCustomBudget.value : 0
+      profileBudgetLevel.value === 'custom' ? profileCustomBudget.value : 0,
+      activeAccountWxid.value || undefined,
     )
     if (r.ok && r.profile) {
       profile.value = { name: realtimeState.talkerName, ...r.profile }
@@ -793,29 +748,6 @@ async function generateContactProfile() {
   } finally {
     profileLoading.value = false
   }
-}
-
-function copyText(text: string) { navigator.clipboard?.writeText(text) }
-
-function parseSuggestionSpeeches(raw: any): string[] {
-  if (Array.isArray(raw)) {
-    return raw.map((item) => String(item).trim()).filter(Boolean)
-  }
-  if (typeof raw !== 'string') return []
-  try {
-    const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) ? parsed.map((item) => String(item).trim()).filter(Boolean) : []
-  } catch {
-    return []
-  }
-}
-
-function isPureChatSuggestion(s: any): boolean {
-  return String(s?.summary || '').trim() === '[PURE_CHAT]'
-}
-
-function isSilentSuggestion(s: any): boolean {
-  return String(s?.summary || '').trim() === '[SILENT]'
 }
 
 function resetProfileMeta(meta: { createdAt: number; expiresAt: number; expired: boolean }) {
@@ -867,7 +799,7 @@ async function ensureActiveLlm() {
 }
 
 async function refreshContactProfileState(displayName: string) {
-  const r = await api.get_contact_profile(displayName)
+  const r = await api.get_contact_profile(displayName, activeAccountWxid.value || undefined)
   if (!r.ok) return r
 
   profileEstimatedTokens.value = r.estimated_tokens || 0
@@ -882,7 +814,7 @@ async function refreshContactProfileState(displayName: string) {
 }
 
 async function refreshSelfProfileState(displayName: string) {
-  const r = await api.get_self_profile(displayName)
+  const r = await api.get_self_profile(displayName, activeAccountWxid.value || undefined)
   if (!r.ok) return r
 
   selfProfileEstimatedTokens.value = r.estimated_tokens || 0
@@ -931,6 +863,7 @@ async function generatePortraitProfiles() {
 
 // 组件挂载时恢复监听状态
 onMounted(async () => {
+  await refreshAccountContext()
   loadContacts()
 
   try {
@@ -938,6 +871,7 @@ onMounted(async () => {
     const status = await api.get_realtime_status()
     
     if (status.ok && status.is_monitoring) {
+      activeAccountWxid.value = status.account_wxid || activeAccountWxid.value
       realtimeState.isMonitoring = true
       realtimeState.status = 'monitoring'
       realtimeState.talkerName = status.talker_display_name || ''
@@ -954,12 +888,21 @@ onMounted(async () => {
   } catch (e) {
     console.error('恢复监听状态失败:', e)
   }
+
+  window.addEventListener('chrono:wechat-account-changed', handleAccountChanged)
 })
 
 onBeforeUnmount(() => {
   stopStatusPolling()
   stopMessagesPolling()
+  window.removeEventListener('chrono:wechat-account-changed', handleAccountChanged)
 })
+
+async function handleAccountChanged() {
+  resetAccountScopedState()
+  await refreshAccountContext()
+  await loadContacts()
+}
 
 // ========== 辅助函数 ==========
 
@@ -1193,91 +1136,6 @@ function getTriggerIcon(type: string): string {
 .sug-panel-hd svg { color: var(--ct-text-tertiary); }
 .sug-panel-bd { padding: var(--ct-space-lg); flex: 1; display: flex; flex-direction: column; }
 
-/* Result Card */
-.sug-result-card {
-  position: relative;
-  z-index: 1;
-  background: var(--ct-bg-elevated);
-  border: 1px solid var(--ct-border-color);
-  border-radius: var(--ct-radius-xl);
-  padding: var(--ct-space-xl);
-  box-shadow: var(--ct-shadow-md);
-}
-.sug-result-hd {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--ct-space-md);
-  margin-bottom: var(--ct-space-lg);
-}
-.sug-result-kicker {
-  font-size: var(--ct-text-xs);
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--ct-color-primary);
-  margin-bottom: 6px;
-}
-.sug-result-title {
-  margin: 0;
-  font-size: var(--ct-text-xl);
-  color: var(--ct-text-primary);
-}
-.sug-result-bd {
-  display: flex;
-  flex-direction: column;
-  gap: var(--ct-space-md);
-}
-.sug-reply-block {
-  display: flex;
-  flex-direction: column;
-  gap: var(--ct-space-sm);
-  padding: var(--ct-space-md);
-  margin-bottom: var(--ct-space-md);
-  background: var(--ct-bg-secondary);
-  border: 1px solid var(--ct-border-color);
-  border-radius: var(--ct-radius-lg);
-}
-.sug-reply-label {
-  font-size: var(--ct-text-xs);
-  font-weight: 600;
-  color: var(--ct-text-tertiary);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-.sug-reply-text,
-.sug-thought-text,
-.sug-speech-text {
-  line-height: 1.7;
-  color: var(--ct-text-primary);
-}
-.sug-thought {
-  padding: var(--ct-space-md);
-  background: var(--ct-bg-secondary);
-  border: 1px solid var(--ct-border-color);
-  border-radius: var(--ct-radius-lg);
-}
-.sug-thought summary {
-  cursor: pointer;
-  font-weight: 600;
-  color: var(--ct-text-secondary);
-}
-.sug-speech-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--ct-space-sm);
-}
-.sug-speech-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--ct-space-md);
-  padding: var(--ct-space-md);
-  background: linear-gradient(135deg, rgba(124, 77, 255, 0.08), rgba(52, 211, 153, 0.06));
-  border: 1px solid var(--ct-border-color);
-  border-radius: var(--ct-radius-lg);
-}
-
 /* Profile Card */
 .sug-profile-row { display: flex; align-items: center; gap: var(--ct-space-md); margin-bottom: var(--ct-space-md); }
 .sug-avatar {
@@ -1340,23 +1198,15 @@ function getTriggerIcon(type: string): string {
 .sug-seg button.active { background: var(--ct-color-primary); color: white; font-weight: 600; }
 .sug-seg button:hover:not(.active) { background: var(--ct-bg-tertiary); }
 .sug-intent-icon { margin-right: 2px; }
-
-/* CTA 按钮 */
-.sug-generate-btn {
-  display: flex; align-items: center; justify-content: center; gap: var(--ct-space-sm);
-  width: 100%; padding: 12px; border: none; border-radius: var(--ct-radius-lg);
-  background: linear-gradient(135deg, var(--ct-color-primary), #7c3aed);
-  color: white; font-weight: 600; font-size: var(--ct-text-sm); cursor: pointer;
-  transition: all var(--ct-transition-fast);
-  box-shadow: 0 4px 14px rgba(124, 77, 255, 0.2); margin-top: var(--ct-space-xs);
+.sug-config-note {
+  margin: 0;
+  padding: var(--ct-space-sm) var(--ct-space-md);
+  border-radius: var(--ct-radius-md);
+  background: var(--ct-bg-secondary);
+  color: var(--ct-text-tertiary);
+  font-size: var(--ct-text-xs);
+  line-height: 1.6;
 }
-.sug-generate-btn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(124, 77, 255, 0.35); }
-.sug-generate-btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
-.sug-loading-spinner {
-  width: 16px; height: 16px; border: 2px solid rgba(255, 255, 255, 0.3);
-  border-top-color: white; border-radius: 50%; animation: sug-spin 0.6s linear infinite;
-}
-@keyframes sug-spin { to { transform: rotate(360deg); } }
 
 /* ═══ Portrait Dialog — Compact Card Modal ═══ */
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); border: 0; }

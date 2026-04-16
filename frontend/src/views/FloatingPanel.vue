@@ -10,7 +10,13 @@
         <button class="fp-btn-icon close-btn" @click="exitFloating" title="退出悬浮模式">✕</button>
       </div>
       <div class="fp-contact-bar">
-        <div class="fp-avatar">{{ profileInitial }}</div>
+        <CtAvatar
+          class="fp-avatar"
+          :src="contactAvatar"
+          :name="profile.name || realtimeState.talkerName"
+          :size="34"
+          radius="10px"
+        />
         <div class="fp-contact-info">
           <div class="fp-contact-name">{{ profile.name || realtimeState.talkerName || '等待对象...' }}</div>
           <div class="fp-contact-tags" v-if="!profileExpanded && profile.personality_tags?.length">
@@ -342,6 +348,7 @@ import { ref, reactive, computed, onMounted, onBeforeUnmount, watch, nextTick } 
 import { useRouter } from 'vue-router'
 import { bridgeReady, api } from '@/api/bridge'
 import * as echarts from 'echarts'
+import CtAvatar from '@/components/base/CtAvatar.vue'
 
 const router = useRouter()
 
@@ -453,12 +460,14 @@ const triggerMode = ref<'full_auto' | 'semi_auto' | 'manual'>('semi_auto')
 const loading = ref(false)
 const userInput = ref('')
 const profile = ref<any>({ name: '', tags: [] })
+const contactAvatar = ref('')
 const profileLoading = ref(false)
 const profileExpanded = ref(false)
 const showProfileDialog = ref(false)
 const emotionSummary = ref<any>(null)
 const chartSettingsOpen = ref(false)
 const showResumeDialog = ref(false)
+const activeAccountWxid = ref('')
 const resumeDialogState = reactive({
   lastMessageTime: '',
   gapLabel: '',
@@ -520,14 +529,10 @@ const quickPrompts = ref<string[]>([
 ])
 
 // ========== 计算属性 ==========
-const profileInitial = computed(() => {
-  const name = profile.value.name || realtimeState.talkerName
-  return name ? name[0] : '?'
-})
-
 const chartVisibilityStorageKey = computed(() => {
   const displayName = (realtimeState.talkerName || profile.value.name || 'default').trim() || 'default'
-  return `ct_chart_visibility:${displayName}`
+  const account = (activeAccountWxid.value || 'default').trim() || 'default'
+  return `ct_chart_visibility:${account}:${displayName}`
 })
 
 const computedChartStats = computed(() => {
@@ -670,7 +675,9 @@ function formatResumeGap(gapSeconds?: number) {
 }
 
 function loadChartVisibility(displayName?: string) {
-  const key = displayName?.trim() ? `ct_chart_visibility:${displayName.trim()}` : chartVisibilityStorageKey.value
+  const key = displayName?.trim()
+    ? `ct_chart_visibility:${(activeAccountWxid.value || 'default').trim() || 'default'}:${displayName.trim()}`
+    : chartVisibilityStorageKey.value
   try {
     const raw = window.localStorage.getItem(key)
     const parsed = raw ? JSON.parse(raw) : null
@@ -715,7 +722,11 @@ function resolveResumeChoice(choice: 'skip' | 'backfill') {
 }
 
 async function maybeResolveResumeMode(talkerName: string): Promise<'skip' | 'backfill' | false> {
-  const probe = await api.get_realtime_resume_info(talkerName, RESUME_THRESHOLD_SECONDS)
+  const probe = await api.get_realtime_resume_info(
+    talkerName,
+    RESUME_THRESHOLD_SECONDS,
+    activeAccountWxid.value || undefined,
+  )
   if (!probe?.ok) {
     console.warn('[FloatingPanel] 获取回溯探测信息失败:', probe?.error || probe)
     return 'skip'
@@ -736,6 +747,7 @@ async function maybeResolveResumeMode(talkerName: string): Promise<'skip' | 'bac
 }
 
 async function applyMonitoringStatus(status: any) {
+  activeAccountWxid.value = status.account_wxid || activeAccountWxid.value
   realtimeState.isMonitoring = true
   realtimeState.status = 'monitoring'
   realtimeState.talkerName = status.talker_display_name || ''
@@ -746,11 +758,12 @@ async function applyMonitoringStatus(status: any) {
   startPolling()
   loadSuggestionConfig()
   loadLlmModels()
+  resolveContactAvatar(realtimeState.talkerName)
   checkContactProfile(realtimeState.talkerName)
   loadChartVisibility(realtimeState.talkerName)
 
   try {
-    const tRes = await api.get_latest_thread(realtimeState.talkerName)
+    const tRes = await api.get_latest_thread(realtimeState.talkerName, activeAccountWxid.value || undefined)
     if (tRes.ok && tRes.thread) {
       lastThread.value = tRes.thread
     }
@@ -759,8 +772,10 @@ async function applyMonitoringStatus(status: any) {
   }
 }
 
-async function startPendingMonitoring(talkerName: string) {
+async function startPendingMonitoring(talkerName: string, requestedAccountWxid = '') {
+  activeAccountWxid.value = requestedAccountWxid || activeAccountWxid.value
   realtimeState.talkerName = talkerName
+  contactAvatar.value = ''
   realtimeState.status = 'searching'
   chatError.value = ''
 
@@ -769,7 +784,7 @@ async function startPendingMonitoring(talkerName: string) {
     return false
   }
 
-  const result = await api.start_realtime_monitor(talkerName, resumeMode)
+  const result = await api.start_realtime_monitor(talkerName, resumeMode, activeAccountWxid.value || undefined)
   if (!(result.success || result.ok)) {
     chatError.value = result.error || result.message || '启动监听失败'
     return false
@@ -778,6 +793,7 @@ async function startPendingMonitoring(talkerName: string) {
   await applyMonitoringStatus({
     ok: true,
     is_monitoring: true,
+    account_wxid: activeAccountWxid.value,
     talker_display_name: talkerName,
     batch_id: result.batch_id,
     message_count: 0,
@@ -788,10 +804,23 @@ async function startPendingMonitoring(talkerName: string) {
 
 // ========== 生命周期 ==========
 onMounted(async () => {
+  try {
+    await bridgeReady()
+    const accountResult = await api.get_wechat_accounts()
+    if (accountResult?.ok) {
+      activeAccountWxid.value = accountResult.active_account_wxid || ''
+    }
+  } catch (e) {
+    console.error('[FloatingPanel] 加载微信账号上下文失败:', e)
+  }
+
   const pendingStart = readPendingStartRequest()
   if (pendingStart?.talkerName) {
     clearPendingStartRequest()
-    const started = await startPendingMonitoring(String(pendingStart.talkerName))
+    const started = await startPendingMonitoring(
+      String(pendingStart.talkerName),
+      String(pendingStart.account_wxid || activeAccountWxid.value || ''),
+    )
     loadChartVisibility(String(pendingStart.talkerName))
     window.addEventListener('resize', resizeVisibleCharts)
     await nextTick()
@@ -824,6 +853,7 @@ onMounted(async () => {
   }
 
   if (status?.ok && status.is_monitoring) {
+    activeAccountWxid.value = status.account_wxid || activeAccountWxid.value
     realtimeState.isMonitoring = true
     realtimeState.status = 'monitoring'
     realtimeState.talkerName = status.talker_display_name || ''
@@ -837,12 +867,13 @@ onMounted(async () => {
     startPolling()
     loadSuggestionConfig()
     loadLlmModels()
+    resolveContactAvatar(realtimeState.talkerName)
     checkContactProfile(realtimeState.talkerName)
     loadChartVisibility(realtimeState.talkerName)
 
     // 查询是否有上次会话线程
     try {
-      const tRes = await api.get_latest_thread(realtimeState.talkerName)
+      const tRes = await api.get_latest_thread(realtimeState.talkerName, activeAccountWxid.value || undefined)
       if (tRes.ok && tRes.thread) {
         lastThread.value = tRes.thread
       }
@@ -869,7 +900,12 @@ onBeforeUnmount(() => {
 })
 
 watch(() => realtimeState.talkerName, (name) => {
-  if (!name) return
+  if (!name) {
+    contactAvatar.value = ''
+    profile.value = { name: '', tags: [] }
+    return
+  }
+  resolveContactAvatar(name)
   loadChartVisibility(name)
   nextTick(() => syncCharts())
 })
@@ -1335,7 +1371,7 @@ function startPolling() {
     if (!realtimeState.batchId) return
     try {
       await bridgeReady()
-      const r = await api.get_pending_suggestions(realtimeState.batchId)
+      const r = await api.get_pending_suggestions(realtimeState.batchId, activeAccountWxid.value || undefined)
       if (r.ok) {
         let addedNew = false
         const revSuggestions = [...(r.suggestions || [])].reverse()
@@ -1653,11 +1689,31 @@ async function retryConnection() {
 }
 
 // ========== 画像 ==========
+async function resolveContactAvatar(displayName: string) {
+  const name = String(displayName || '').trim()
+  if (!name) {
+    contactAvatar.value = ''
+    return
+  }
+
+  try {
+    await bridgeReady()
+    const result = await api.get_conversation_list(activeAccountWxid.value || undefined)
+    const conversations = result?.conversations || []
+    const matched = conversations.find((item: any) => {
+      return item?.name === name || item?.username === name
+    })
+    contactAvatar.value = String(matched?.avatar || '').trim()
+  } catch (e) {
+    console.error('加载联系人头像失败:', e)
+  }
+}
+
 async function checkContactProfile(name: string) {
   if (!name) return
   try {
     await bridgeReady()
-    const r = await api.get_contact_profile(name)
+    const r = await api.get_contact_profile(name, activeAccountWxid.value || undefined)
     if (r.ok && r.has_profile && !r.expired) {
       profile.value = { name, ...r.profile }
     } else {
@@ -1671,7 +1727,12 @@ async function generateProfile() {
   profileLoading.value = true
   try {
     await bridgeReady()
-    const r = await api.generate_contact_profile(realtimeState.talkerName, 'medium', 0)
+    const r = await api.generate_contact_profile(
+      realtimeState.talkerName,
+      'medium',
+      0,
+      activeAccountWxid.value || undefined,
+    )
     if (r.ok && r.profile) {
       profile.value = { name: realtimeState.talkerName, ...r.profile }
     }
@@ -1879,7 +1940,7 @@ async function loadLastThread() {
 .fp-brand-name { font-family: var(--ct-font-display); font-size: 12px; font-weight: 600; color: var(--ct-text-secondary); }
 .close-btn { -webkit-app-region: no-drag; }
 .fp-contact-bar { display: flex; align-items: center; gap: 10px; padding: 4px 12px 12px; -webkit-app-region: no-drag; cursor: pointer; }
-.fp-avatar { width: 34px; height: 34px; border-radius: 10px; background: var(--ct-bg-tertiary); color: var(--ct-color-primary); display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 15px; border: 1px solid var(--ct-border-color); }
+.fp-avatar { background: var(--ct-bg-tertiary); color: var(--ct-color-primary); font-weight: 700; font-size: 15px; border: 1px solid var(--ct-border-color); }
 .fp-contact-info { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; }
 .fp-contact-name { font-size: 14px; font-weight: 600; color: var(--ct-text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.2; }
 .fp-contact-tags { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; }

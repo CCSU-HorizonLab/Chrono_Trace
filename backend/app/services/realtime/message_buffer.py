@@ -8,6 +8,7 @@ import time
 import threading
 from typing import List, Dict, Optional
 from ...db.connection import get_db
+from ..wechat.account_settings import get_active_wechat_account_wxid, load_settings_from_file
 
 logger = logging.getLogger(__name__)
 def _print(*args, **kwargs):
@@ -41,10 +42,20 @@ class MessageBuffer:
                 conn.commit()
         except Exception as e:
             logger.debug("[MessageBuffer] ensure schema skipped: %s", e)
+
+    def _resolve_account_wxid(self, account_wxid: Optional[str]) -> str:
+        normalized = str(account_wxid or "").strip()
+        if normalized:
+            return normalized
+        try:
+            return get_active_wechat_account_wxid(load_settings_from_file())
+        except Exception:
+            return ""
     
     def save_message(
         self,
         batch_id: str,
+        account_wxid: str,
         talker_username: str,
         talker_display_name: str,
         message_data: dict
@@ -79,6 +90,7 @@ class MessageBuffer:
                 
                 cursor.execute('''
                     INSERT INTO realtime_message_buffer (
+                        account_wxid,
                         talker_username,
                         talker_display_name,
                         message_hash,
@@ -94,6 +106,7 @@ class MessageBuffer:
                         created_at
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
                 ''', (
+                    self._resolve_account_wxid(account_wxid),
                     talker_username,
                     talker_display_name,
                     message_data.get('message_hash'),
@@ -120,7 +133,8 @@ class MessageBuffer:
     def get_batch_messages(
         self, 
         batch_id: str, 
-        processed: Optional[bool] = None
+        processed: Optional[bool] = None,
+        account_wxid: Optional[str] = None,
     ) -> List[Dict]:
         """
         获取指定批次的消息
@@ -135,39 +149,40 @@ class MessageBuffer:
         try:
             conn = get_db()
             cursor = conn.cursor()
+            resolved_account_wxid = self._resolve_account_wxid(account_wxid)
             
             if processed is None:
                 cursor.execute('''
                     SELECT 
-                        id, talker_username, talker_display_name,
+                        id, account_wxid, talker_username, talker_display_name,
                         message_hash, runtime_id, sender_attr,
                         content, message_type, timestamp,
                         captured_at, visible_index, is_processed, batch_id, created_at
                     FROM realtime_message_buffer
-                    WHERE batch_id = ?
+                    WHERE account_wxid = ? AND batch_id = ?
                     ORDER BY
                         timestamp ASC,
                         CASE WHEN COALESCE(visible_index, -1) >= 0 THEN 0 ELSE 1 END ASC,
                         CASE WHEN COALESCE(visible_index, -1) >= 0 THEN visible_index ELSE id END ASC,
                         created_at ASC,
                         id ASC
-                ''', (batch_id,))
+                ''', (resolved_account_wxid, batch_id))
             else:
                 cursor.execute('''
                     SELECT 
-                        id, talker_username, talker_display_name,
+                        id, account_wxid, talker_username, talker_display_name,
                         message_hash, runtime_id, sender_attr,
                         content, message_type, timestamp,
                         captured_at, visible_index, is_processed, batch_id, created_at
                     FROM realtime_message_buffer
-                    WHERE batch_id = ? AND is_processed = ?
+                    WHERE account_wxid = ? AND batch_id = ? AND is_processed = ?
                     ORDER BY
                         timestamp ASC,
                         CASE WHEN COALESCE(visible_index, -1) >= 0 THEN 0 ELSE 1 END ASC,
                         CASE WHEN COALESCE(visible_index, -1) >= 0 THEN visible_index ELSE id END ASC,
                         created_at ASC,
                         id ASC
-                ''', (batch_id, 1 if processed else 0))
+                ''', (resolved_account_wxid, batch_id, 1 if processed else 0))
             
             rows = cursor.fetchall()
             
@@ -175,19 +190,20 @@ class MessageBuffer:
             for row in rows:
                 messages.append({
                     'id': row[0],
-                    'talker_username': row[1],
-                    'talker_display_name': row[2],
-                    'message_hash': row[3],
-                    'runtime_id': row[4],
-                    'sender_attr': row[5],
-                    'content': row[6],
-                    'message_type': row[7],
-                    'timestamp': row[8],
-                    'captured_at': row[9],
-                    'visible_index': row[10],
-                    'is_processed': row[11],
-                    'batch_id': row[12],
-                    'created_at': row[13]
+                    'account_wxid': row[1],
+                    'talker_username': row[2],
+                    'talker_display_name': row[3],
+                    'message_hash': row[4],
+                    'runtime_id': row[5],
+                    'sender_attr': row[6],
+                    'content': row[7],
+                    'message_type': row[8],
+                    'timestamp': row[9],
+                    'captured_at': row[10],
+                    'visible_index': row[11],
+                    'is_processed': row[12],
+                    'batch_id': row[13],
+                    'created_at': row[14]
                 })
             
             return messages
@@ -196,7 +212,7 @@ class MessageBuffer:
             logger.error(f"[MessageBuffer] 获取批次消息失败: {e}")
             return []
     
-    def get_batch_count(self, batch_id: str) -> int:
+    def get_batch_count(self, batch_id: str, account_wxid: Optional[str] = None) -> int:
         """
         获取批次消息数量
         
@@ -209,11 +225,12 @@ class MessageBuffer:
         try:
             conn = get_db()
             cursor = conn.cursor()
+            resolved_account_wxid = self._resolve_account_wxid(account_wxid)
             
             cursor.execute('''
                 SELECT COUNT(*) FROM realtime_message_buffer
-                WHERE batch_id = ?
-            ''', (batch_id,))
+                WHERE account_wxid = ? AND batch_id = ?
+            ''', (resolved_account_wxid, batch_id))
             
             result = cursor.fetchone()
             count = result[0] if result else 0
@@ -223,7 +240,7 @@ class MessageBuffer:
             logger.error(f"[MessageBuffer] 获取批次消息数量失败: {e}")
             return 0
     
-    def mark_as_processed(self, batch_id: str) -> int:
+    def mark_as_processed(self, batch_id: str, account_wxid: Optional[str] = None) -> int:
         """
         标记批次消息为已处理
         
@@ -237,12 +254,13 @@ class MessageBuffer:
             try:
                 conn = get_db()
                 cursor = conn.cursor()
+                resolved_account_wxid = self._resolve_account_wxid(account_wxid)
                 
                 cursor.execute('''
                     UPDATE realtime_message_buffer
                     SET is_processed = 1
-                    WHERE batch_id = ?
-                ''', (batch_id,))
+                    WHERE account_wxid = ? AND batch_id = ?
+                ''', (resolved_account_wxid, batch_id))
                 
                 conn.commit()
                 return cursor.rowcount
@@ -251,7 +269,7 @@ class MessageBuffer:
                 logger.error(f"[MessageBuffer] 标记批次为已处理失败: {e}")
                 return 0
     
-    def delete_batch(self, batch_id: str) -> int:
+    def delete_batch(self, batch_id: str, account_wxid: Optional[str] = None) -> int:
         """
         删除批次消息
         
@@ -265,11 +283,12 @@ class MessageBuffer:
             try:
                 conn = get_db()
                 cursor = conn.cursor()
+                resolved_account_wxid = self._resolve_account_wxid(account_wxid)
                 
                 cursor.execute('''
                     DELETE FROM realtime_message_buffer
-                    WHERE batch_id = ?
-                ''', (batch_id,))
+                    WHERE account_wxid = ? AND batch_id = ?
+                ''', (resolved_account_wxid, batch_id))
                 
                 conn.commit()
                 return cursor.rowcount
@@ -278,7 +297,7 @@ class MessageBuffer:
                 logger.error(f"[MessageBuffer] 删除批次消息失败: {e}")
                 return 0
     
-    def get_recent_batches(self, limit: int = 10) -> List[Dict]:
+    def get_recent_batches(self, limit: int = 10, account_wxid: Optional[str] = None) -> List[Dict]:
         """
         获取最近的监听批次列表
         
@@ -291,9 +310,11 @@ class MessageBuffer:
         try:
             conn = get_db()
             cursor = conn.cursor()
+            resolved_account_wxid = self._resolve_account_wxid(account_wxid)
             
             cursor.execute('''
                 SELECT 
+                    account_wxid,
                     batch_id,
                     talker_username,
                     talker_display_name,
@@ -302,24 +323,26 @@ class MessageBuffer:
                     MAX(timestamp) as last_message_time,
                     SUM(CASE WHEN is_processed = 1 THEN 1 ELSE 0 END) as processed_count
                 FROM realtime_message_buffer
+                WHERE account_wxid = ?
                 GROUP BY batch_id
                 ORDER BY MAX(created_at) DESC
                 LIMIT ?
-            ''', (limit,))
+            ''', (resolved_account_wxid, limit))
             
             rows = cursor.fetchall()
             
             batches = []
             for row in rows:
                 batches.append({
-                    'batch_id': row[0],
-                    'talker_username': row[1],
-                    'talker_display_name': row[2],
-                    'message_count': row[3],
-                    'first_message_time': row[4],
-                    'last_message_time': row[5],
-                    'processed_count': row[6],
-                    'is_fully_processed': row[6] == row[3]
+                    'account_wxid': row[0],
+                    'batch_id': row[1],
+                    'talker_username': row[2],
+                    'talker_display_name': row[3],
+                    'message_count': row[4],
+                    'first_message_time': row[5],
+                    'last_message_time': row[6],
+                    'processed_count': row[7],
+                    'is_fully_processed': row[7] == row[4]
                 })
             
             return batches
@@ -328,7 +351,7 @@ class MessageBuffer:
             logger.error(f"[MessageBuffer] 获取批次列表失败: {e}")
             return []
     
-    def message_exists(self, message_hash: str) -> bool:
+    def message_exists(self, message_hash: str, account_wxid: Optional[str] = None) -> bool:
         """
         检查消息是否已存在(去重)
         
@@ -344,11 +367,12 @@ class MessageBuffer:
             
             conn = get_db()
             cursor = conn.cursor()
+            resolved_account_wxid = self._resolve_account_wxid(account_wxid)
             
             cursor.execute('''
                 SELECT COUNT(*) FROM realtime_message_buffer
-                WHERE message_hash = ?
-            ''', (message_hash,))
+                WHERE account_wxid = ? AND message_hash = ?
+            ''', (resolved_account_wxid, message_hash))
             
             result = cursor.fetchone()
             return result[0] > 0 if result else False
@@ -357,7 +381,7 @@ class MessageBuffer:
             logger.error(f"[MessageBuffer] 检查消息是否存在失败: {e}")
             return False
 
-    def clear_old_batches(self, days: int = 30) -> int:
+    def clear_old_batches(self, days: int = 30, account_wxid: Optional[str] = None) -> int:
         """
         清理超过指定天数的已处理批次
         
@@ -371,13 +395,14 @@ class MessageBuffer:
             try:
                 conn = get_db()
                 cursor = conn.cursor()
+                resolved_account_wxid = self._resolve_account_wxid(account_wxid)
                 
                 threshold = int(time.time()) - (days * 24 * 3600)
                 
                 cursor.execute('''
                     DELETE FROM realtime_message_buffer
-                    WHERE is_processed = 1 AND created_at < ?
-                ''', (threshold,))
+                    WHERE account_wxid = ? AND is_processed = 1 AND created_at < ?
+                ''', (resolved_account_wxid, threshold))
                 
                 conn.commit()
                 return cursor.rowcount

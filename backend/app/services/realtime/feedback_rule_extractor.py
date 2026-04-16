@@ -13,6 +13,7 @@ import urllib.request
 import urllib.error
 import re
 from typing import Optional
+from ..wechat.account_settings import get_active_wechat_account_wxid, load_settings_from_file
 
 logger = logging.getLogger(__name__)
 
@@ -156,6 +157,15 @@ class FeedbackRuleExtractor:
     def __init__(self, timeout: int = 30):
         self.timeout = timeout
 
+    def _resolve_account_wxid(self, account_wxid: str = "") -> str:
+        normalized = str(account_wxid or "").strip()
+        if normalized:
+            return normalized
+        try:
+            return get_active_wechat_account_wxid(load_settings_from_file())
+        except Exception:
+            return ""
+
     # ==================== 核心方法 ====================
 
     def analyze_feedback(
@@ -165,6 +175,7 @@ class FeedbackRuleExtractor:
         display_name: str = "",
         suggestion_id: Optional[int] = None,
         user_message_type: Optional[int | str] = None,
+        account_wxid: str = "",
     ) -> dict:
         """Compare suggestion vs actual message and return a structured outcome."""
         result = {
@@ -202,6 +213,7 @@ class FeedbackRuleExtractor:
                     confidence=rule.get("confidence", 0.7),
                     scope=rule.get("scope", "contact"),
                     source_suggestion_id=suggestion_id,
+                    account_wxid=account_wxid,
                 )
             result["outcome"] = "rewritten"
             result["rules"] = heuristic_rules
@@ -222,6 +234,7 @@ class FeedbackRuleExtractor:
                 confidence=rule.get('confidence', 0.7),
                 scope=rule.get('scope', 'contact'),
                 source_suggestion_id=suggestion_id,
+                account_wxid=account_wxid,
             )
             result["outcome"] = "rewritten"
             result["rules"] = [rule]
@@ -430,6 +443,7 @@ class FeedbackRuleExtractor:
         confidence: float = 0.7,
         scope: str = 'contact',
         source_suggestion_id: Optional[int] = None,
+        account_wxid: str = "",
     ):
         """保存规则到数据库（自动去重合并）"""
         if not rule_text or not rule_text.strip():
@@ -439,13 +453,14 @@ class FeedbackRuleExtractor:
             from ...db.connection import get_db
             conn = get_db()
             self._ensure_table(conn)
+            resolved_account_wxid = self._resolve_account_wxid(account_wxid)
 
             now = int(time.time())
 
             # 去重检查：与已有规则做文本相似度
             existing = conn.execute(
-                'SELECT id, rule_text, confidence, hit_count FROM contact_rules WHERE display_name = ?',
-                (display_name,)
+                'SELECT id, rule_text, confidence, hit_count FROM contact_rules WHERE account_wxid = ? AND display_name = ?',
+                (resolved_account_wxid, display_name)
             ).fetchall()
 
             for row in existing:
@@ -465,29 +480,31 @@ class FeedbackRuleExtractor:
             # 全新规则 → 插入
             conn.execute('''
                 INSERT INTO contact_rules
-                (display_name, rule_text, confidence, scope, source_suggestion_id, hit_count, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, 1, ?, ?)
-            ''', (display_name, rule_text.strip(), confidence, scope, source_suggestion_id, now, now))
+                (account_wxid, display_name, rule_text, confidence, scope, source_suggestion_id, hit_count, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
+            ''', (resolved_account_wxid, display_name, rule_text.strip(), confidence, scope, source_suggestion_id, now, now))
             conn.commit()
             _print(f"[FeedbackRule] 💾 新规则已保存: \"{rule_text.strip()}\" (conf={confidence:.2f})")
 
         except Exception as e:
             _print(f"[FeedbackRule] ❌ 保存规则失败: {e}")
 
-    def get_active_rules(self, display_name: str) -> list[str]:
+    def get_active_rules(self, display_name: str, account_wxid: str = "") -> list[str]:
         """获取该联系人的有效规则列表（置信度 >= 0.5）"""
         try:
             from ...db.connection import get_db
             conn = get_db()
             self._ensure_table(conn)
+            resolved_account_wxid = self._resolve_account_wxid(account_wxid)
 
             cursor = conn.execute('''
                 SELECT rule_text FROM contact_rules
-                WHERE (display_name = ? OR scope = 'global')
+                WHERE account_wxid = ?
+                  AND (display_name = ? OR scope = 'global')
                   AND confidence >= 0.5
                 ORDER BY confidence DESC, hit_count DESC
                 LIMIT 10
-            ''', (display_name,))
+            ''', (resolved_account_wxid, display_name))
 
             rules = [row['rule_text'] for row in cursor.fetchall()]
             if rules:
@@ -503,6 +520,7 @@ class FeedbackRuleExtractor:
         conn.execute('''
             CREATE TABLE IF NOT EXISTS contact_rules (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_wxid TEXT NOT NULL,
                 display_name TEXT NOT NULL,
                 rule_text TEXT NOT NULL,
                 confidence REAL DEFAULT 0.7,

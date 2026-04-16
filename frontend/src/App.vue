@@ -21,7 +21,26 @@
 
       <!-- 右侧用户区 -->
       <div class="topbar-user">
+        <CtAccountSelector
+          v-if="wechatAccounts.length"
+          :modelValue="activeAccountWxid"
+          @update:modelValue="handleAccountChangeValue"
+          :accounts="wechatAccounts"
+        >
+          <template #trigger="{ isOpen }">
+            <div class="avatar-trigger-wrap" :class="{ 'is-open': isOpen }">
+              <CtAvatar
+                class="user-avatar popup-trigger"
+                :src="currentUserProfile.avatar"
+                :name="currentUserProfile.name || '我'"
+                :size="42"
+              />
+            </div>
+          </template>
+        </CtAccountSelector>
+        
         <CtAvatar
+          v-else
           class="user-avatar"
           :src="currentUserProfile.avatar"
           :name="currentUserProfile.name || '我'"
@@ -40,10 +59,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { bridgeReady, api } from '@/api/bridge'
 import CtAvatar from '@/components/base/CtAvatar.vue'
+import CtAccountSelector from '@/components/base/CtAccountSelector.vue'
+import { clearWechatAccountProfileCache, enrichWechatAccountsWithProfiles } from '@/utils/wechatAccounts'
 
 const route = useRoute()
 
@@ -54,6 +75,23 @@ const currentUserProfile = reactive({
   name: '我',
   avatar: '',
 })
+const wechatAccounts = ref<any[]>([])
+const activeAccountWxid = ref('')
+
+async function loadWechatAccounts(options: { forceProfiles?: boolean } = {}) {
+  try {
+    await bridgeReady()
+    const result = await api.get_wechat_accounts()
+    if (!result?.ok) return
+    wechatAccounts.value = await enrichWechatAccountsWithProfiles(
+      result.accounts || [],
+      { forceRefresh: options.forceProfiles },
+    )
+    activeAccountWxid.value = result.active_account_wxid || ''
+  } catch (error) {
+    console.error('[App] 加载微信账号列表失败:', error)
+  }
+}
 
 async function loadCurrentUserProfile() {
   try {
@@ -75,18 +113,41 @@ async function loadCurrentUserProfile() {
   }
 }
 
-function handleProfileRefresh() {
-  loadCurrentUserProfile()
+async function handleAccountChangeValue(wxid: string) {
+  if (!wxid || wxid === activeAccountWxid.value) return
+
+  try {
+    await bridgeReady()
+    const result = await api.set_active_wechat_account(wxid)
+    if (!result?.ok) return
+    activeAccountWxid.value = result.active_account_wxid || wxid
+    await Promise.all([loadWechatAccounts(), loadCurrentUserProfile()])
+    window.dispatchEvent(new CustomEvent('chrono:wechat-account-changed', { detail: { wxid: activeAccountWxid.value } }))
+    window.dispatchEvent(new CustomEvent('chrono:user-avatar-refresh'))
+  } catch (error) {
+    console.error('[App] 切换微信账号失败:', error)
+  }
+}
+
+async function handleProfileRefresh(event?: Event) {
+  const detail = (event as CustomEvent | undefined)?.detail || {}
+  clearWechatAccountProfileCache(detail.wxid || activeAccountWxid.value)
+  await Promise.all([
+    loadWechatAccounts({ forceProfiles: Boolean(detail.forceProfiles ?? true) }),
+    loadCurrentUserProfile(),
+  ])
 }
 
 watch(() => route.fullPath, () => {
   if (!isFloatingMode.value) {
+    loadWechatAccounts()
     loadCurrentUserProfile()
   }
 }, { immediate: true })
 
 onMounted(() => {
   window.addEventListener('chrono:user-avatar-refresh', handleProfileRefresh)
+  loadWechatAccounts()
 })
 
 onUnmounted(() => {
@@ -197,11 +258,31 @@ onUnmounted(() => {
   width: 300px;
 }
 
+.avatar-trigger-wrap {
+  cursor: pointer;
+  border-radius: 50%;
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s ease;
+  display: flex;
+}
+
+.avatar-trigger-wrap:hover {
+  transform: scale(1.05);
+}
+
+.avatar-trigger-wrap.is-open {
+  transform: scale(0.95);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.5);
+}
+
 .user-avatar {
   border: 2px solid rgba(255,255,255,0.3);
   background: rgba(255, 255, 255, 0.2);
   color: #fff;
   box-shadow: 0 6px 16px rgba(76, 29, 149, 0.25);
+}
+
+.user-avatar.popup-trigger {
+  pointer-events: none; /* Let the wrapper handle clicks */
 }
 
 /* ========================================

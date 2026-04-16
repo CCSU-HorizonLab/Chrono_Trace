@@ -579,6 +579,7 @@ export default {
     },
     setup() {
         const currentTab = ref('affinity')
+        const activeAccountWxid = ref('')
 
         // Core State
         const conversations = ref<Conversation[]>([])
@@ -848,9 +849,12 @@ export default {
         async function loadConversations() {
             try {
                 await bridgeReady()
-                const res = await api.get_conversation_list()
+                const res = await api.get_conversation_list(activeAccountWxid.value || undefined)
                 if (res.ok) {
                     conversations.value = res.conversations
+                    if (selectedConversationId.value && !conversations.value.some((item) => item.id === selectedConversationId.value)) {
+                        selectedConversationId.value = null
+                    }
                     if (conversations.value.length > 0 && !selectedConversationId.value) {
                         onConversationChange(conversations.value[0].id)
                     } else if (conversations.value.length === 0) {
@@ -858,6 +862,45 @@ export default {
                     }
                 }
             } catch (e: any) { console.error('加载联系人失败', e) }
+        }
+
+        function resetAccountScopedState() {
+            selectedConversationId.value = null
+            conversations.value = []
+            analysisResult.value = null
+            hasFeatures.value = false
+            analysis.timeseries = []
+            analysis.wordcloud = []
+            subject.value = undefined
+            sessions.value = []
+            stats.value = null
+            activityCalendar.value = {
+                year: new Date().getFullYear(),
+                years: [],
+                entries: [],
+                summary: {
+                    active_days: 0,
+                    total_messages: 0,
+                    current_streak: 0,
+                    longest_streak: 0,
+                    peak_day: null,
+                    global_first_session_start_time: null,
+                    global_peak_session: null,
+                },
+                max_activity_score: 0,
+            }
+            resetPersonaProfile()
+        }
+
+        async function refreshAccountContext() {
+            try {
+                const result = await api.get_wechat_accounts()
+                if (result?.ok) {
+                    activeAccountWxid.value = result.active_account_wxid || ''
+                }
+            } catch (e) {
+                console.error('刷新微信账号上下文失败', e)
+            }
         }
 
         async function onConversationChange(id: number) {
@@ -897,7 +940,7 @@ export default {
 
             loadingPersonaProfile.value = true
             try {
-                const res = await api.get_contact_profile(displayName)
+                const res = await api.get_contact_profile(displayName, activeAccountWxid.value || undefined)
                 if (res.ok && res.has_profile) {
                     personaProfile.value = res.profile || null
                     personaProfileMeta.createdAt = res.created_at || null
@@ -1546,14 +1589,23 @@ export default {
         onMounted(async () => {
             if (!dates.from || !dates.to) setDefaultDates(30)
             await loadAnalysisDeviceMode()
+            await refreshAccountContext()
             await loadConversations()
             window.addEventListener('resize', handleResize)
+            window.addEventListener('chrono:wechat-account-changed', handleAccountChanged)
         })
 
         onUnmounted(() => {
             window.removeEventListener('resize', handleResize)
+            window.removeEventListener('chrono:wechat-account-changed', handleAccountChanged)
             responseTimeChartInstance?.dispose(); activityCalendarChartInstance?.dispose(); wordCountChartInstance?.dispose()
         })
+
+        async function handleAccountChanged() {
+            resetAccountScopedState()
+            await refreshAccountContext()
+            await loadConversations()
+        }
 
         return {
             currentTab, conversations, selectedConversationId, dates, loading, loadingSessions, error, analysis, subject, sessions,

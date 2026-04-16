@@ -21,6 +21,20 @@ from app.services.analysis.preprocessing_orchestrator import (
     PreprocessingOrchestrator,
     PreprocessedStatistics
 )
+from app.db.connection import DatabaseConnection
+
+
+@pytest.fixture
+def test_db(tmp_path):
+    DatabaseConnection.close()
+    DatabaseConnection._db_path = None
+
+    db_path = tmp_path / "chrono_trace_preprocessing.db"
+    conn = DatabaseConnection.initialize(str(db_path))
+    yield conn
+
+    DatabaseConnection.close()
+    DatabaseConnection._db_path = None
 
 
 class TestPreprocessingOrchestrator:
@@ -35,8 +49,8 @@ class TestPreprocessingOrchestrator:
     def sample_conversation_id(self, test_db):
         """创建测试会话"""
         cursor = test_db.execute("""
-            INSERT INTO conversations (username, display_name, created_at, updated_at)
-            VALUES ('test_user', 'Test User', 1234567890, 1234567890)
+            INSERT INTO conversations (account_wxid, username, display_name, platform, created_at, updated_at)
+            VALUES ('wxid_test', 'test_user', 'Test User', 'wechat', 1234567890, 1234567890)
         """)
         test_db.commit()
         return cursor.lastrowid
@@ -200,8 +214,8 @@ class TestPreprocessingOrchestrator:
         """测试空会话"""
         # 创建空会话
         cursor = test_db.execute("""
-            INSERT INTO conversations (username, display_name, created_at, updated_at)
-            VALUES ('empty_user', 'Empty User', 1234567890, 1234567890)
+            INSERT INTO conversations (account_wxid, username, display_name, platform, created_at, updated_at)
+            VALUES ('wxid_test', 'empty_user', 'Empty User', 'wechat', 1234567890, 1234567890)
         """)
         test_db.commit()
         empty_conversation_id = cursor.lastrowid

@@ -4,6 +4,7 @@ import logging
 import sqlite3
 from typing import List, Optional
 from ..base import WeChatDBBase
+from ...contact_filters import is_excluded_contact_username
 
 
 logger = logging.getLogger(__name__)
@@ -107,8 +108,11 @@ class ContactDBV4(WeChatDBBase):
         contacts = []
         
         for row in cursor:
+            username = row['username']
+            if is_excluded_contact_username(username):
+                continue
             contact = {
-                'username': row['username'],
+                'username': username,
                 'nickname': row['nick_name'] or '',
                 'remark': row['remark'] or '',
                 'alias': row['alias'] or '',
@@ -150,6 +154,9 @@ class ContactDBV4(WeChatDBBase):
         row = cursor.fetchone()
         
         if not row:
+            return None
+
+        if is_excluded_contact_username(row['username']):
             return None
         
         return {

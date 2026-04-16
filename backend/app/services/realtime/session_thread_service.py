@@ -16,6 +16,7 @@ import urllib.request
 import urllib.error
 from collections import Counter
 from typing import Optional
+from ..wechat.account_settings import get_active_wechat_account_wxid, load_settings_from_file
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +93,15 @@ class SessionThreadService:
     def __init__(self, timeout: int = 30):
         self.timeout = timeout
 
+    def _resolve_account_wxid(self, account_wxid: Optional[str]) -> str:
+        normalized = str(account_wxid or "").strip()
+        if normalized:
+            return normalized
+        try:
+            return get_active_wechat_account_wxid(load_settings_from_file())
+        except Exception:
+            return ""
+
     # ---------- 归档 ----------
 
     def archive_thread(
@@ -101,7 +111,8 @@ class SessionThreadService:
         messages: list[dict],
         suggestions: list[dict],
         start_time: Optional[int] = None,
-        user_chat_history: Optional[list[dict]] = None
+        user_chat_history: Optional[list[dict]] = None,
+        account_wxid: str = "",
     ) -> Optional[int]:
         """
         归档一次 AI 辅助指导会话。
@@ -151,21 +162,17 @@ class SessionThreadService:
             from ...db.connection import get_db
             conn = get_db()
             self._ensure_table(conn)
-            
-            # 使用增量迁移来确保兼容
-            try:
-                conn.execute("ALTER TABLE session_threads ADD COLUMN user_chat_history_snapshot TEXT")
-            except:
-                pass
+            resolved_account_wxid = self._resolve_account_wxid(account_wxid)
 
             cursor = conn.execute('''
                 INSERT INTO session_threads
-                (batch_id, display_name, summary, keywords,
+                (account_wxid, batch_id, display_name, summary, keywords,
                  messages_snapshot, suggestions_snapshot,
                  message_count, suggestion_count, created_at, duration_seconds,
                  user_chat_history_snapshot)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
+                resolved_account_wxid,
                 batch_id, display_name, summary, keywords,
                 msg_snapshot, sug_snapshot,
                 len(messages), len(suggestions),
@@ -185,7 +192,7 @@ class SessionThreadService:
 
     # ---------- 查询 ----------
 
-    def get_latest_thread(self, display_name: str, max_age_hours: int = 24) -> Optional[dict]:
+    def get_latest_thread(self, display_name: str, max_age_hours: int = 24, account_wxid: str = "") -> Optional[dict]:
         """
         获取该联系人最近一个线程（24 小时内）。
 
@@ -196,15 +203,16 @@ class SessionThreadService:
             from ...db.connection import get_db
             conn = get_db()
             self._ensure_table(conn)
+            resolved_account_wxid = self._resolve_account_wxid(account_wxid)
 
             cutoff = int(time.time()) - max_age_hours * 3600
             row = conn.execute('''
-                SELECT id, batch_id, display_name, summary, keywords,
+                SELECT id, account_wxid, batch_id, display_name, summary, keywords,
                        message_count, suggestion_count, created_at, duration_seconds
                 FROM session_threads
-                WHERE display_name = ? AND created_at >= ?
+                WHERE account_wxid = ? AND display_name = ? AND created_at >= ?
                 ORDER BY created_at DESC LIMIT 1
-            ''', (display_name, cutoff)).fetchone()
+            ''', (resolved_account_wxid, display_name, cutoff)).fetchone()
 
             if row:
                 return dict(row)
@@ -258,6 +266,7 @@ class SessionThreadService:
         current_messages: list[dict],
         top_k: int = 2,
         min_score: float = 0.15,
+        account_wxid: str = "",
     ) -> list[dict]:
         """
         根据当前对话内容，从历史线程中检索相关记忆。
@@ -278,15 +287,16 @@ class SessionThreadService:
             from ...db.connection import get_db
             conn = get_db()
             self._ensure_table(conn)
+            resolved_account_wxid = self._resolve_account_wxid(account_wxid)
 
             # 读取该联系人所有历史线程
             rows = conn.execute('''
                 SELECT id, summary, keywords, created_at, duration_seconds
                 FROM session_threads
-                WHERE display_name = ?
+                WHERE account_wxid = ? AND display_name = ?
                 ORDER BY created_at DESC
                 LIMIT 50
-            ''', (display_name,)).fetchall()
+            ''', (resolved_account_wxid, display_name)).fetchall()
 
             if not rows:
                 return []
@@ -443,17 +453,23 @@ class SessionThreadService:
         conn.execute('''
             CREATE TABLE IF NOT EXISTS session_threads (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_wxid TEXT NOT NULL,
                 batch_id TEXT NOT NULL,
                 display_name TEXT NOT NULL,
                 summary TEXT NOT NULL,
                 keywords TEXT,
                 messages_snapshot TEXT,
                 suggestions_snapshot TEXT,
+                user_chat_history_snapshot TEXT,
                 message_count INTEGER,
                 suggestion_count INTEGER,
                 created_at INTEGER NOT NULL,
                 duration_seconds INTEGER
             )
+        ''')
+        conn.execute('''
+            CREATE INDEX IF NOT EXISTS idx_session_threads_account_display_created
+            ON session_threads(account_wxid, display_name, created_at DESC)
         ''')
 
     def _get_active_model(self) -> Optional[dict]:

@@ -745,13 +745,13 @@ class SelfProfiler:
     def _parse_profile_json(self, text: str) -> Optional[dict]:
         """解析 LLM 返回的画像 JSON"""
         try:
-            cleaned = text.strip()
-            if '```json' in cleaned:
-                cleaned = cleaned.split('```json', 1)[1].split('```', 1)[0]
-            elif '```' in cleaned:
-                cleaned = cleaned.split('```', 1)[1].split('```', 1)[0]
-
-            data = json.loads(cleaned.strip())
+            cleaned = self._extract_json_candidate(text)
+            sanitized = self._strip_trailing_json_commas(
+                self._sanitize_json_candidate(cleaned)
+            )
+            data = json.loads(sanitized)
+            if not isinstance(data, dict):
+                raise ValueError('画像 JSON 根节点不是对象')
 
             # 校验必要字段
             required = ['typing_style', 'attitude_and_role', 'do_and_donts']
@@ -763,9 +763,113 @@ class SelfProfiler:
                 data['sentence_patterns'] = []
 
             return data
-        except (json.JSONDecodeError, KeyError) as e:
+        except (json.JSONDecodeError, KeyError, ValueError) as e:
             _print(f"[SelfProfiler] JSON 解析失败: {e}, 原文: {text[:200]}")
             return None
+
+    def _extract_json_candidate(self, text: str) -> str:
+        """尽量从模型输出中提取一个 JSON 对象字符串。"""
+        cleaned = (text or '').strip()
+        if not cleaned:
+            return ''
+
+        lowered = cleaned.lower()
+        if '```json' in lowered:
+            start = lowered.find('```json') + len('```json')
+            candidate = cleaned[start:]
+            return candidate.split('```', 1)[0].strip()
+
+        if '```' in cleaned:
+            candidate = cleaned.split('```', 1)[1]
+            return candidate.split('```', 1)[0].strip()
+
+        if cleaned.startswith('{') and cleaned.endswith('}'):
+            return cleaned
+
+        start = cleaned.find('{')
+        end = cleaned.rfind('}')
+        if start != -1 and end != -1 and end > start:
+            return cleaned[start:end + 1].strip()
+
+        return cleaned
+
+    def _sanitize_json_candidate(self, text: str) -> str:
+        """修正常见的 JSON 非法控制字符，尤其是字符串中的裸换行。"""
+        if not text:
+            return ''
+
+        result: list[str] = []
+        in_string = False
+        escape = False
+
+        for char in text:
+            if in_string:
+                if escape:
+                    result.append(char)
+                    escape = False
+                    continue
+                if char == '\\':
+                    result.append(char)
+                    escape = True
+                    continue
+                if char == '"':
+                    result.append(char)
+                    in_string = False
+                    continue
+                if char == '\n':
+                    result.append('\\n')
+                    continue
+                if char == '\r':
+                    result.append('\\r')
+                    continue
+                if char == '\t':
+                    result.append('\\t')
+                    continue
+                result.append(char)
+                continue
+
+            result.append(char)
+            if char == '"':
+                in_string = True
+
+        return ''.join(result)
+
+    def _strip_trailing_json_commas(self, text: str) -> str:
+        """去掉对象或数组闭合符前的尾逗号，避免常见 LLM JSON 变体解析失败。"""
+        if not text:
+            return ''
+
+        result: list[str] = []
+        in_string = False
+        escape = False
+
+        for char in text:
+            if in_string:
+                result.append(char)
+                if escape:
+                    escape = False
+                elif char == '\\':
+                    escape = True
+                elif char == '"':
+                    in_string = False
+                continue
+
+            if char == '"':
+                result.append(char)
+                in_string = True
+                continue
+
+            if char in '}]':
+                whitespace: list[str] = []
+                while result and result[-1] in ' \t\r\n':
+                    whitespace.append(result.pop())
+                if result and result[-1] == ',':
+                    result.pop()
+                result.extend(reversed(whitespace))
+
+            result.append(char)
+
+        return ''.join(result)
 
     def _save_cache(
         self, conn, display_name: str, conversation_id: int,

@@ -6,100 +6,121 @@
 [![Vue](https://img.shields.io/badge/Vue-3.x-green.svg)](https://vuejs.org/)
 [![Vite](https://img.shields.io/badge/Vite-5.x-646CFF.svg)](https://vitejs.dev/)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6.svg)](https://www.microsoft.com/windows)
-[![Status](https://img.shields.io/badge/Status-Core%20Flow%20Ready-brightgreen.svg)](#当前限制)
+[![Status](https://img.shields.io/badge/Status-Core%20Flow%20Ready-brightgreen.svg)](#当前边界)
 
-> “镌刻对话年轮，丈量心动间距”
+> 镌刻对话年轮，丈量心动间距
 
 ---
 
 ## 项目简介
 
-Chrono Trace 是一个基于 `PyWebView + Vue 3 + Python` 的桌面应用，围绕微信聊天数据提供两条核心链路：
+Chrono Trace 是一个基于 `PyWebView + Vue 3 + Python` 的 Windows 桌面应用，围绕微信聊天数据提供两条主链路：
 
-- **历史聊天导入与本地分析**：将微信 PC 端聊天记录导入本地数据库，进行多维度可视化分析与关系好感度评估。
-- **实时监听与 AI 辅助**：对指定联系人的实时消息进行情绪判断，结合上下文自动生成沟通建议。
+- 历史聊天导入与本地分析
+- 实时监听与 AI 沟通建议
 
-历史导入、分析与本地存储默认在本机完成。启用 LLM 建议时，系统会根据所选模型配置发送必要上下文；请按自己的隐私边界配置供应商和模型。
+默认情况下，聊天数据解密、导入、存储和分析都在本机完成。只有在你启用 LLM 建议时，系统才会把生成建议所需的必要上下文发送到你配置的模型接口。
 
-## 核心功能
+本地数据默认写入 `backend/data/chrono_trace.db`。
+
+## 核心能力
 
 ### 微信数据导入
 
-- 自动扫描微信 4.x 数据目录，支持手动指定路径
-- 通过 `wx_key` 获取的密钥进行数据库校验与解密
+- 自动扫描微信 `4.x` 数据目录
+- 支持手动指定微信数据路径
+- 使用 `wx_key` 获取的密钥做数据库校验与解密
 - 联系人、会话、消息逐步入库，支持增量导入
 
 ### 历史分析工作台
 
-分析页面提供完整的本地数据可视化能力，已实现的分析维度包括：
+分析页当前聚焦这几类结果：
 
-| 分析类别 | 具体内容 |
-|---------|---------|
-| 情绪分析 | 情绪趋势图、词云 |
-| 互动分析 | 会话时间线、响应时间分布、主动率、字数投入比例 |
-| 关系评估 | 好感度综合分析（情感共振 / 聊天积极度 / 态度倾向 / 偏好兼容度） |
-| 辅助展示 | 活跃日历、关系补充信息、偏好关键词配置 |
+| 类别     | 内容                                   |
+| -------- | -------------------------------------- |
+| 情绪分析 | 情绪趋势、词云、情绪分布               |
+| 互动分析 | 时间线、响应时间、主动率、字数投入比例 |
+| 关系评估 | 好感度总分与分维度结果                 |
+| 辅助信息 | 活跃日历、关系补充信息、偏好关键词配置 |
 
-详细的指标设计说明见 [历史分析文档](docs/history_analyze.md)。
+好感度分析目前采用四个维度：
 
-### 实时建议链路
+| 维度       | 默认权重   | 说明                                       |
+| ---------- | ---------- | ------------------------------------------ |
+| 情感共振率 | 35% 或 40% | 情绪响应、极性一致性、强度匹配、共情信号   |
+| 聊天积极度 | 35%        | 日均消息、回复及时性、话题延续性、主动发起 |
+| 态度倾向   | 20% 或 25% | 正负向表达、称呼、隐私分享、节假日互动等   |
+| 偏好兼容度 | 10%        | 用户配置喜好关键词后参与评分               |
 
-实时建议覆盖从监听到生成的完整流程：
+说明：
 
-1. 选择监听对象并启动实时监听
-2. 基线去重、断点恢复与 backfill
-3. 实时消息展示与情绪判断
-4. 根据触发条件调用 LLM 生成沟通建议
-5. 支持查看建议生成所用上下文
+- 配置了喜好关键词时，权重为 `35 / 35 / 20 / 10`
+- 未配置喜好关键词时，偏好维度不参与，权重调整为 `40 / 35 / 25 / 0`
 
-设计说明见 [实时建议文档](docs/realtime_suggestion.md)。
+### 实时监听与 AI 建议
+
+实时建议链路当前是：
+
+1. 选择联系人并启动监听
+2. 建立启动基线，避免把屏幕上已有旧消息当成新增消息
+3. 对增量消息做去重、情绪判断和上下文整理
+4. 按触发条件调用 LLM 生成建议
+5. 在建议页和悬浮窗中查看结果
+
+当前已落地的关键保护：
+
+- 启动基线，降低旧消息误触发概率
+- 监听阶段去重，结合内容、时间锚点和同屏次序识别重复消息
+- LLM 上下文去重，减少重复上下文污染
+- 会话隔离，避免旧线程把消息写进新会话
+- checkpoint backfill，尽量补回连续上下文而不是断裂片段
 
 ### 悬浮辅助窗
 
-适用于边聊边参考的场景，支持：
+适合边聊边参考的场景，支持：
 
-- 联系人摘要与建议卡片查看
-- 上下文延续与快捷参考话术
+- 联系人摘要与建议卡片
+- 最近上下文与参考话术
 - 模型切换
 
 ### 模型配置
 
-通过设置页配置 OpenAI 兼容模型，已适配的供应商与接入形态：
+通过设置页配置 OpenAI 兼容模型，当前已适配：
 
-| 供应商 / 形态 | 说明 |
-|--------------|------|
-| DeepSeek | 在线 API |
-| OpenAI | 在线 API |
-| 智谱 GLM | 在线 API |
-| Moonshot / Kimi | 在线 API |
-| MiniMax | 在线 API |
-| Ollama / LM Studio | 本地推理 |
-| 自定义 | 任意 OpenAI 兼容接口 |
+| 供应商 / 形态      | 说明                 |
+| ------------------ | -------------------- |
+| DeepSeek           | 在线 API             |
+| OpenAI             | 在线 API             |
+| 智谱 GLM           | 在线 API             |
+| Moonshot / Kimi    | 在线 API             |
+| MiniMax            | 在线 API             |
+| Ollama / LM Studio | 本地推理<br />       |
+| 自定义             | 任意 OpenAI 兼容接口 |
 
 ## 技术架构
 
 ```text
 ┌─────────────────────────────┐
-│  Frontend                   │
-│  Vue 3 + TypeScript + Vite  │
+│ Frontend                    │
+│ Vue 3 + TypeScript + Vite   │
 └──────────┬──────────────────┘
            │ PyWebView Bridge
 ┌──────────▼──────────────────┐
-│  Backend                    │
-│  Python Services            │
-│  ├─ analysis/   历史分析     │
-│  ├─ realtime/   实时监听     │
-│  └─ wechat/     数据导入     │
+│ Backend                     │
+│ Python Services             │
+│ ├─ analysis/   历史分析      │
+│ ├─ realtime/   实时监听      │
+│ └─ wechat/     数据导入      │
 └──────────┬──────────────────┘
            │
 ┌──────────▼──────────────────┐
-│  Data Layer                 │
-│  SQLite 本地存储             │
-│  微信数据库解密 + native_uia │
+│ Data Layer                  │
+│ SQLite 本地存储              │
+│ 微信数据库解密 + native_uia  │
 └─────────────────────────────┘
 ```
 
-**项目目录概览：**
+项目目录概览：
 
 ```text
 backend/
@@ -110,96 +131,183 @@ backend/
       realtime/      # 实时监听、情绪分析、AI 建议
       wechat/        # 微信数据库扫描、解密、导入
     webview/         # 前后端桥接
+  tests/             # 后端测试
 
 frontend/
   src/
     views/           # Home / Analytics / Suggestions / Settings / FloatingPanel
     components/      # 图表、分析组件、基础组件
+    api/             # Bridge API 封装
 
-docs/                # 补充设计和开发文档
+app.py               # 生产入口
+app_dev.py           # 开发入口
+requirements.txt
 ```
+
+## 环境要求
+
+| 项目    | 要求            |
+| ------- | --------------- |
+| OS      | Windows 10 / 11 |
+| Python  | 3.8+            |
+| Node.js | 16+             |
+| 微信 PC | 4.x             |
 
 ## 快速开始
 
-### 环境要求
-
-| 依赖项 | 版本要求 |
-|-------|---------|
-| OS | Windows 10 / 11 |
-| Python | 3.8+ |
-| Node.js | 16+ |
-| 微信 PC | 4.x（已验证 4.1.8.29） |
-
-### 安装与运行
+### 1. 安装依赖
 
 ```bash
-# 安装后端依赖
 pip install -r requirements.txt
 
-# 安装前端依赖
 cd frontend
 npm install
 cd ..
+```
 
-# 开发模式（启动 Vite dev server，PyWebView 加载 localhost:5173）
+### 2. 启动应用
+
+开发模式：
+
+```bash
 python app_dev.py
+```
 
-# 生产模式（先构建前端静态资源）
-cd frontend && npm run build && cd ..
+生产模式：
+
+```bash
+cd frontend
+npm run build
+cd ..
 python app.py
 ```
 
-## 使用流程
+开发模式下，前端会由 Vite 提供在 `http://localhost:5173`。
 
-### 历史导入与分析
+### 3. 获取微信数据库密钥
 
-1. 使用 `wx_key` 获取微信数据库密钥
-2. 启动应用，在首页输入密钥并校验
-3. 自动扫描或手动指定微信数据目录
-4. 执行导入，在分析页查看结果
+推荐使用 `wx_key`：
 
-### 实时辅助
+- 仓库：[https://github.com/ycccccccy/wx_key](https://github.com/ycccccccy/wx_key)
+- 结果应为 `64` 位十六进制字符串
 
-1. 在设置页配置并激活可用模型
-2. 在建议页选择联系人，启动实时监听
-3. 按需切换触发模式和关系意图
-4. 如有需要，进入悬浮窗边聊边参考
+示例：
 
-## 当前限制
+```text
+1a2b3c4d5e6f7890abcdef1234567890abcdef1234567890abcdef1234567890
+```
 
-- 仅支持 Windows 平台
+### 4. 导入聊天数据
+
+1. 启动应用并输入微信数据库密钥
+2. 让应用自动扫描微信目录
+3. 若自动扫描失败，在界面里手动指定微信数据路径
+4. 验证成功后开始导入
+5. 在分析页查看结果
+
+微信 `4.x` 常见目录形态：
+
+```text
+C:\Users\<用户名>\xwechat_files\wxid_xxx\db_storage\
+├── contact\
+├── message\
+└── session\
+```
+
+### 5. 配置实时建议
+
+1. 在设置页填写模型接口信息
+2. 选择联系人并启动实时监听
+3. 保持微信主窗口可见
+4. 在建议页或悬浮窗查看输出
+
+## 当前边界
+
+- 仅支持 Windows
 - 仅面向微信 PC 端
-- 实时监听依赖可见的微信主窗口（不能最小化）
-- 当前以单对象监听为主，暂不支持多会话并发
-- 复杂消息类型以规则识别和占位处理为主
-- 群聊不是当前主要目标场景
+- 实时监听运行时统一使用项目内 `native_uia`
+- 监听依赖微信主窗口可见，最小化或后台不可见时不保证有效
+- 当前以单人聊天为主，不支持多会话并发监听
+- 群聊不是当前主目标
+- 文件、语音、视频、小程序卡片等复杂消息类型仍以规则识别和占位处理为主
 
-### 实时监听验证环境
+## 开发
 
-当前实时监听链路使用项目内的 `native_uia` provider。已在以下环境验证通过：
+### 常用命令
 
-- 微信 `4.1.8.29`
-- Windows 微信主窗口可见状态
-- 单人聊天场景
+```bash
+# 启动桌面开发模式（推荐）
+python app_dev.py
+```
 
-更多细节见 [实时监听状态](docs/realtime_listener_status.md)。
+```bash
+# 单独启动前端
+cd frontend
+npm run dev
+cd ..
+```
 
-## 文档
+```bash
+# 构建前端
+cd frontend
+npm run build
+cd ..
+```
 
-| 文档 | 内容 |
-|------|------|
-| [安装说明](docs/SETUP.md) | 环境配置与安装步骤 |
-| [开发说明](docs/DEVELOPMENT.md) | 开发环境与调试指南 |
-| [历史分析设计](docs/history_analyze.md) | 分析维度与指标定义 |
-| [实时建议链路](docs/realtime_suggestion.md) | 实时建议的触发与生成机制 |
-| [实时监听状态](docs/realtime_listener_status.md) | 监听能力与兼容性说明 |
-| [实时监听总结](docs/realtime_listener_summary.md) | 监听模块设计总结 |
-| [监听交接说明](docs/realtime_listener_handoff.md) | 开发交接与上下文说明 |
+```bash
+# 运行后端测试
+pytest backend/tests/
+```
+
+### 推荐先看的模块
+
+- `backend/app/services/wechat/`：微信路径扫描、解密、导入
+- `backend/app/services/analysis/`：历史分析与好感度计算
+- `backend/app/services/realtime/`：实时监听、触发、LLM 建议
+- `backend/app/webview/bridge.py`：前后端桥接接口
+- `frontend/src/views/`：主要页面入口
+
+### 调试建议
+
+- 导入问题优先看路径扫描、密钥校验和数据库解密日志
+- 实时监听问题优先确认微信窗口可见，再看 `realtime` 相关日志
+- 如果导入成功但结果异常，先直接检查 `backend/data/chrono_trace.db`
+
+## 常见问题
+
+### 未找到微信数据目录
+
+- 确认微信已安装并登录
+- 确认版本是 `4.x`
+- 改为手动指定路径
+
+### 密钥验证失败
+
+- 确认密钥是 `64` 位十六进制字符串
+- 重新运行 `wx_key`
+
+### 导入成功但数据为 0
+
+- 检查是否选错了微信数据目录
+- 检查解密后的数据库是否可正常读取
+- 检查导入日志和本地 SQLite 数据
+
+### 实时监听没有反应
+
+- 确认当前是单人聊天窗口
+- 确认微信主窗口没有最小化
+- 确认模型配置可用
+
+## 隐私与安全
+
+- 聊天数据默认只保存在本地
+- 解密过程中产生的临时文件应由程序自行清理
+- 启用在线模型前，请自行评估上下文发送范围和隐私边界
 
 ## 致谢
 
 - [EchoTrace](https://github.com/ycccccccy/echotrace)：微信数据解密参考
-- [wx_key](https://github.com/ycccccccy/wx_key)：密钥获取工具
+- [wx_key](https://github.com/ycccccccy/wx_key)：微信数据库密钥获取工具
 
 ## 免责声明
 
@@ -207,4 +315,4 @@ python app.py
 
 ---
 
-最后更新：2026-04-19 &nbsp;|&nbsp; 项目状态：核心流程可用，持续迭代中
+最后更新：2026-04-19

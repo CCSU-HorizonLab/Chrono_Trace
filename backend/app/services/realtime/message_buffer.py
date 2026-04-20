@@ -104,7 +104,7 @@ class MessageBuffer:
                         batch_id,
                         is_processed,
                         created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
                 ''', (
                     self._resolve_account_wxid(account_wxid),
                     talker_username,

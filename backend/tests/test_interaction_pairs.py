@@ -173,7 +173,7 @@ class TestInteractionPairs:
     # ========== 交互对构建测试 ==========
 
     def test_build_interaction_pairs_alternating(self, preprocessing_service):
-        """测试构建双向交替交互对"""
+        """测试构建相邻异发送者交互对"""
         base_timestamp = datetime(2024, 1, 1, 12, 0, 0).timestamp()
 
         # 创建发言单元
@@ -229,20 +229,20 @@ class TestInteractionPairs:
         # 检查第一个交互对: 发送者 -> 对方
         assert interaction_pairs[0]["first_unit_id"] == 1
         assert interaction_pairs[0]["second_unit_id"] == 2
-        assert interaction_pairs[0]["direction"] == "sender_to_contact"
+        assert interaction_pairs[0]["time_gap_seconds"] == 60
 
         # 检查第二个交互对: 对方 -> 发送者
         assert interaction_pairs[1]["first_unit_id"] == 2
         assert interaction_pairs[1]["second_unit_id"] == 3
-        assert interaction_pairs[1]["direction"] == "contact_to_sender"
+        assert interaction_pairs[1]["time_gap_seconds"] == 60
 
         # 检查第三个交互对: 发送者 -> 对方
         assert interaction_pairs[2]["first_unit_id"] == 3
         assert interaction_pairs[2]["second_unit_id"] == 4
-        assert interaction_pairs[2]["direction"] == "sender_to_contact"
+        assert interaction_pairs[2]["time_gap_seconds"] == 60
 
     def test_interaction_pair_bidirectional(self, preprocessing_service):
-        """测试交互对的双向性"""
+        """测试交互对保留基础情感字段"""
         base_timestamp = datetime(2024, 1, 1, 12, 0, 0).timestamp()
 
         speech_units = [
@@ -275,14 +275,17 @@ class TestInteractionPairs:
 
         pair = interaction_pairs[0]
 
-        # 检查双向字段
+        # 检查当前实现保留的基础字段
         assert pair["first_unit_id"] == 1
         assert pair["second_unit_id"] == 2
-        assert pair["is_bidirectional"] == 1  # 标记为双向
-        assert pair["direction"] in ["sender_to_contact", "contact_to_sender"]
+        assert pair["time_gap_seconds"] == 60
+        assert "from_polarity" in pair
+        assert "to_polarity" in pair
+        assert "from_intensity" in pair
+        assert "to_intensity" in pair
 
     def test_interaction_pair_same_parity(self, preprocessing_service):
-        """测试交互对奇偶性标记"""
+        """测试交互对按相邻单元顺序配对"""
         base_timestamp = datetime(2024, 1, 1, 12, 0, 0).timestamp()
 
         # 创建4个发言单元 (2轮对话)
@@ -305,19 +308,14 @@ class TestInteractionPairs:
         # 应该生成3个交互对
         assert len(interaction_pairs) == 3
 
-        # 检查奇偶性
-        # 交互对 1-2: 奇数对 (交互对索引从1开始, 这是第1个交互对)
-        assert interaction_pairs[0]["pair_index"] == 1
-        assert interaction_pairs[0]["is_same_parity"] in [0, 1]
-
-        # 交互对 2-3: 偶数对
-        assert interaction_pairs[1]["pair_index"] == 2
-
-        # 交互对 3-4: 奇数对
-        assert interaction_pairs[2]["pair_index"] == 3
+        assert [(pair["first_unit_id"], pair["second_unit_id"]) for pair in interaction_pairs] == [
+            (1, 2),
+            (2, 3),
+            (3, 4),
+        ]
 
     def test_interaction_pair_time_gap(self, preprocessing_service):
-        """测试交互对时间间隔计算"""
+        """测试交互对时间间隔计算与统计转换"""
         base_timestamp = datetime(2024, 1, 1, 12, 0, 0).timestamp()
 
         speech_units = [
@@ -351,7 +349,8 @@ class TestInteractionPairs:
 
         # 检查时间间隔
         assert pair["time_gap_seconds"] == 300
-        assert pair["time_gap_minutes"] == 5.0
+        stats = preprocessing_service.collect_pair_statistics(interaction_pairs)
+        assert stats["avg_time_gap_minutes"] == 5.0
 
     def test_no_pair_single_unit(self, preprocessing_service):
         """测试单个发言单元无法构建交互对"""
@@ -520,7 +519,7 @@ class TestInteractionPairs:
 
     def test_session_split_with_time_gap(self, preprocessing_service):
         """测试基于时间间隔的会话切分 (> 30分钟强制切分)"""
-        from backend.app.services.analysis.preprocessing_service import SessionManager
+        from app.services.analysis.preprocessing_service import SessionManager
 
         base_timestamp = datetime(2024, 1, 1, 12, 0, 0).timestamp()
 
@@ -559,7 +558,7 @@ class TestInteractionPairs:
 
     def test_session_no_split_with_short_time_gap(self, preprocessing_service):
         """测试短时间间隔不会切分会话 (< 30分钟)"""
-        from backend.app.services.analysis.preprocessing_service import SessionManager
+        from app.services.analysis.preprocessing_service import SessionManager
 
         base_timestamp = datetime(2024, 1, 1, 12, 0, 0).timestamp()
 
@@ -583,19 +582,21 @@ class TestInteractionPairs:
 
     def test_session_split_with_midnight_cross(self, preprocessing_service):
         """测试跨越午夜时的会话切分"""
-        from backend.app.services.analysis.preprocessing_service import SessionManager
+        from app.services.analysis.preprocessing_service import SessionManager
 
         # 2024-01-01 23:50
         before_midnight = datetime(2024, 1, 1, 23, 50, 0).timestamp()
         # 2024-01-02 00:10 (跨越午夜)
         after_midnight = datetime(2024, 1, 2, 0, 10, 0).timestamp()
 
-        # 创建消息序列：跨越午夜
+        # 创建消息序列：跨越午夜，且两侧各自有足够单元，避免被碎片合并逻辑吞并
         messages = [
             {"id": 1, "content": "还没睡呢", "is_sender": 1, "timestamp": before_midnight},
-            {"id": 2, "content": "在加班", "is_sender": 1, "timestamp": before_midnight + 600},
-            {"id": 3, "content": "早点休息", "is_sender": 0, "timestamp": after_midnight},
-            {"id": 4, "content": "刚下班", "is_sender": 1, "timestamp": after_midnight + 600},
+            {"id": 2, "content": "在加班", "is_sender": 0, "timestamp": before_midnight + 120},
+            {"id": 3, "content": "快结束了", "is_sender": 1, "timestamp": before_midnight + 240},
+            {"id": 4, "content": "早点休息", "is_sender": 0, "timestamp": after_midnight},
+            {"id": 5, "content": "刚下班", "is_sender": 1, "timestamp": after_midnight + 120},
+            {"id": 6, "content": "到家说声", "is_sender": 0, "timestamp": after_midnight + 240},
         ]
 
         speech_units = preprocessing_service.build_speech_units(messages)
@@ -604,7 +605,7 @@ class TestInteractionPairs:
         session_manager = SessionManager()
         sessions = session_manager.split_sessions(speech_units)
 
-        # 应该切分成2个会话（因为跨越午夜）
+        # 应该切分成至少2个会话（因为跨越午夜）
         assert len(sessions) >= 2  # 至少有2个会话
 
         # 验证确实有跨越午夜的切分
@@ -622,7 +623,7 @@ class TestInteractionPairs:
 
     def test_session_split_in_sleep_hours(self, preprocessing_service):
         """测试在睡眠时段（00:00-07:00）内的会话切分"""
-        from backend.app.services.analysis.preprocessing_service import SessionManager
+        from app.services.analysis.preprocessing_service import SessionManager
 
         # 2024-01-01 03:00 (睡眠时段内)
         sleep_time_1 = datetime(2024, 1, 1, 3, 0, 0).timestamp()

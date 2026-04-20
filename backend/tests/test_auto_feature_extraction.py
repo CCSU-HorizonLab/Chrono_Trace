@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 # 添加项目路径
-backend_dir = Path(__file__).parent
+backend_dir = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(backend_dir))
 
 from app.services.wechat.ingest_service import WeChatIngestService
@@ -85,13 +85,12 @@ def test_auto_extract_features():
                 print(f"    发起者: {initiator_str}")
 
         print_section("[OK] 测试完成")
-        return True
 
     except Exception as e:
         print(f"\n[ERROR] 测试失败: {e}")
         import traceback
         traceback.print_exc()
-        return False
+        raise AssertionError("自动特征提取测试失败") from e
 
 
 if __name__ == "__main__":

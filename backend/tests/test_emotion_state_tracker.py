@@ -36,12 +36,18 @@ def make_sentiment(polarity: int, intensity: float = 0.5, confidence: float = 0.
     }
 
 
-def make_message(content: str = "测试消息", sender: str = "friend", timestamp: int = 0):
+def make_message(
+    content: str = "测试消息",
+    sender: str = "friend",
+    timestamp: int = 0,
+    message_type: int = 1,
+):
     """构造消息数据"""
     return {
         'content': content,
         'sender_attr': sender,
         'timestamp': timestamp or int(time.time()),
+        'message_type': message_type,
     }
 
 
@@ -97,6 +103,23 @@ class TestNegativeStreak:
             ev.trigger_type != TRIGGER_NEGATIVE_STREAK
             for ev in triggers
         )
+
+    def test_negative_streak_keeps_decline_intent_in_context(self):
+        """连续消极若伴随明确拒绝，应保留 intent 供下游建议收敛语气"""
+        tracker = EmotionStateTracker()
+        t = 1000.0
+
+        tracker.update(make_sentiment(-1, -0.8), make_message("烦", timestamp=int(t)), current_time=t)
+        tracker.update(make_sentiment(-1, -0.7), make_message("不想搞了", timestamp=int(t+1)), current_time=t+1)
+        triggers = tracker.update(
+            make_sentiment(-1, -0.8),
+            make_message("算了吧", timestamp=int(t+2)),
+            current_time=t+2,
+        )
+
+        streak_events = [ev for ev in triggers if ev.trigger_type == TRIGGER_NEGATIVE_STREAK]
+        assert len(streak_events) == 1
+        assert streak_events[0].context["interaction_intent"] == "decline"
 
 
 class TestEmotionShift:
@@ -176,6 +199,46 @@ class TestEmotionShift:
             for ev in triggers
         )
 
+    def test_no_trigger_when_latest_negative_is_too_mild(self):
+        """轻微负面应降级为观察，不触发情绪突变建议"""
+        tracker = EmotionStateTracker()
+        t = 1000.0
+
+        tracker.update(make_sentiment(1, 0.9), make_message("今天真开心", timestamp=int(t)), current_time=t)
+        tracker.update(make_sentiment(1, 0.7), make_message("事情很顺", timestamp=int(t+1)), current_time=t+1)
+        tracker.update(make_sentiment(1, 0.5), make_message("还不错", timestamp=int(t+2)), current_time=t+2)
+        triggers = tracker.update(
+            make_sentiment(-1, -0.45, confidence=0.95),
+            make_message("有点烦", timestamp=int(t+3)),
+            current_time=t+3,
+        )
+
+        assert all(
+            ev.trigger_type != TRIGGER_EMOTION_SHIFT
+            for ev in triggers
+        )
+
+    def test_no_trigger_when_latest_message_is_decline_boundary(self):
+        """明确拒绝/收口更像边界感，不应误判为情绪坠落"""
+        tracker = EmotionStateTracker()
+        t = 1000.0
+
+        tracker.update(make_sentiment(1, 0.8), make_message("哈哈还挺开心", timestamp=int(t)), current_time=t)
+        tracker.update(make_sentiment(1, 0.7), make_message("今天挺顺", timestamp=int(t+1)), current_time=t+1)
+        tracker.update(make_sentiment(1, 0.6), make_message("感觉不错", timestamp=int(t+2)), current_time=t+2)
+        triggers = tracker.update(
+            make_sentiment(-1, -0.8, confidence=0.95),
+            make_message("不了 你和别人去吧", timestamp=int(t+3)),
+            current_time=t+3,
+        )
+
+        assert all(
+            ev.trigger_type != TRIGGER_EMOTION_SHIFT
+            for ev in triggers
+        )
+        summary = tracker.get_emotion_summary()
+        assert summary["latest_intent"] == "decline"
+
     def test_no_trigger_when_reference_is_too_old(self):
         """跨度过长时不应用很久以前的正面情绪做参照"""
         tracker = EmotionStateTracker()
@@ -252,6 +315,77 @@ class TestPerfunctory:
             make_sentiment(0),
             make_message("今天天气不错呢", timestamp=int(t+2)),
             current_time=t + 2,
+        )
+
+        assert all(
+            ev.trigger_type != TRIGGER_PERFUNCTORY
+            for ev in triggers
+        )
+
+    def test_no_trigger_when_short_replies_are_explicit_boundary(self):
+        """明确拒绝/收口不应被误判成单纯敷衍"""
+        tracker = EmotionStateTracker()
+        t = 1000.0
+
+        tracker.update(make_sentiment(0), make_message("嗯", timestamp=int(t)), current_time=t)
+        tracker.update(make_sentiment(0), make_message("不了", timestamp=int(t+1)), current_time=t+1)
+        triggers = tracker.update(
+            make_sentiment(0),
+            make_message("算了吧", timestamp=int(t+2)),
+            current_time=t + 2,
+        )
+
+        assert all(
+            ev.trigger_type != TRIGGER_PERFUNCTORY
+            for ev in triggers
+        )
+
+    def test_no_trigger_on_weak_agreement_cluster(self):
+        """只有弱确认词时先观察，避免把正常顺手确认判成敷衍"""
+        tracker = EmotionStateTracker()
+        t = 1000.0
+
+        for i, msg in enumerate(["行", "好", "可以"]):
+            triggers = tracker.update(
+                make_sentiment(0),
+                make_message(msg, timestamp=int(t + i)),
+                current_time=t + i,
+            )
+
+        assert all(
+            ev.trigger_type != TRIGGER_PERFUNCTORY
+            for ev in triggers
+        )
+
+    def test_no_trigger_when_latest_short_reply_is_non_text(self):
+        """图片/语音等非文本短消息不应拼成 perfunctory"""
+        tracker = EmotionStateTracker()
+        t = 1000.0
+
+        tracker.update(make_sentiment(0), make_message("嗯", timestamp=int(t)), current_time=t)
+        tracker.update(make_sentiment(0), make_message("哦", timestamp=int(t+1)), current_time=t+1)
+        triggers = tracker.update(
+            make_sentiment(0),
+            make_message("好", timestamp=int(t+2), message_type=34),
+            current_time=t + 2,
+        )
+
+        assert all(
+            ev.trigger_type != TRIGGER_PERFUNCTORY
+            for ev in triggers
+        )
+
+    def test_no_trigger_when_short_replies_span_too_long(self):
+        """跨时段零散确认不应被拼成一次敷衍窗口"""
+        tracker = EmotionStateTracker()
+        t = 1000.0
+
+        tracker.update(make_sentiment(0), make_message("嗯", timestamp=int(t)), current_time=t)
+        tracker.update(make_sentiment(0), make_message("哦", timestamp=int(t+120)), current_time=t+120)
+        triggers = tracker.update(
+            make_sentiment(0),
+            make_message("好", timestamp=int(t+240)),
+            current_time=t + 240,
         )
 
         assert all(

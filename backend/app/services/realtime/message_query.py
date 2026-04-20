@@ -74,6 +74,7 @@ def get_messages_with_sentiment(
     limit: int = 50,
     exclude_system: bool = True,
     order_desc: bool = True,
+    account_wxid: str = "",
 ):
     """获取消息及其情感分析结果."""
     db = get_db()
@@ -81,6 +82,10 @@ def get_messages_with_sentiment(
 
     where_clause = "WHERE m.batch_id = ?"
     params = [batch_id]
+    normalized_account_wxid = str(account_wxid or "").strip()
+    if normalized_account_wxid:
+        where_clause += " AND m.account_wxid = ?"
+        params.append(normalized_account_wxid)
 
     if exclude_system:
         where_clause += " AND m.sender_attr != 'system'"

@@ -57,6 +57,38 @@ class FakeWx:
         return list(self._messages)
 
 
+class SequencedFakeWx:
+    def __init__(self, batches, stop_event=None, stop_after_calls=None):
+        self.listener_profile = "wechat_405"
+        self._batches = [list(batch) for batch in batches]
+        self._call_count = 0
+        self._stop_event = stop_event
+        self._stop_after_calls = stop_after_calls
+
+    def GetAllMessage(self):
+        index = min(self._call_count, max(len(self._batches) - 1, 0))
+        payload = list(self._batches[index]) if self._batches else []
+        self._call_count += 1
+        if (
+            self._stop_event is not None
+            and self._stop_after_calls is not None
+            and self._call_count >= int(self._stop_after_calls)
+        ):
+            self._stop_event.set()
+        return payload
+
+
+class FakeStopEvent:
+    def __init__(self):
+        self._is_set = False
+
+    def is_set(self):
+        return self._is_set
+
+    def set(self):
+        self._is_set = True
+
+
 def _make_service() -> tuple[RealtimeMonitorService, FakeMessageBuffer]:
     service = RealtimeMonitorService()
     buffer = FakeMessageBuffer()
@@ -585,6 +617,63 @@ def test_seed_visible_message_baseline_skips_startup_history_processing():
     assert len(buffer.saved_messages) == 0
 
 
+def test_polling_loop_only_persists_messages_arriving_after_startup_baseline(monkeypatch):
+    service, buffer = _make_service()
+    startup_message = SimpleNamespace(
+        hash="provider-hash-startup-1",
+        id="runtime-startup-1",
+        is_self=False,
+        is_system=False,
+        content="启动前已有消息",
+        type="text",
+        time="12:48",
+        CreateTime="12:48",
+        timestamp=0,
+        visible_index=1,
+    )
+    new_message = SimpleNamespace(
+        hash="provider-hash-new-1",
+        id="runtime-new-1",
+        is_self=False,
+        is_system=False,
+        content="监听开始后新收到的消息",
+        type="text",
+        time="12:49",
+        CreateTime="12:49",
+        timestamp=0,
+        visible_index=2,
+    )
+    stop_event = FakeStopEvent()
+    service.wx = SequencedFakeWx(
+        [
+            [startup_message],
+            [startup_message, new_message],
+            [startup_message, new_message],
+        ],
+        stop_event=stop_event,
+        stop_after_calls=3,
+    )
+
+    monkeypatch.setattr(service, "_bring_wechat_to_front", lambda: True)
+    monkeypatch.setattr(service, "_build_chatwith_candidates", lambda: ["Friend"])
+    monkeypatch.setattr(service, "_try_chat_with", lambda target_name: target_name == "Friend")
+    monkeypatch.setattr("app.services.realtime.monitor_service.time.sleep", lambda _seconds: None)
+
+    service._polling_loop(service._monitor_session_token, stop_event)
+
+    assert service._chat_ready is True
+    assert len(buffer.saved_messages) == 1
+    saved = buffer.saved_messages[0]
+    assert saved["batch_id"] == "batch-1"
+    assert saved["account_wxid"] == "wxid_test"
+    assert saved["talker_username"] == "friend_user"
+    assert saved["talker_display_name"] == "Friend"
+    assert saved["content"] == "监听开始后新收到的消息"
+    assert saved["runtime_id"] == "runtime-new-1"
+    assert saved["visible_index"] == 2
+    assert saved["message_hash"]
+
+
 def test_process_message_ignores_stale_session_snapshot():
     service, buffer = _make_service()
     message = SimpleNamespace(
@@ -691,6 +780,73 @@ def test_check_feedback_reserves_suggestion_once(monkeypatch):
     assert row["status"] == "feedback_processing"
     assert len(started_targets) == 1
     assert calls == []
+
+
+def test_check_feedback_marks_collected_even_when_no_rules_are_extracted(monkeypatch):
+    service, _buffer = _make_service()
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        """
+        CREATE TABLE realtime_suggestions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_wxid TEXT NOT NULL,
+            batch_id TEXT NOT NULL,
+            speeches TEXT NOT NULL,
+            status TEXT DEFAULT 'pending',
+            created_at INTEGER NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO realtime_suggestions (account_wxid, batch_id, speeches, status, created_at)
+        VALUES (?, ?, ?, 'pending', 9999999999)
+        """,
+        ("wxid_test", "batch-1", json.dumps(["测试话术"], ensure_ascii=False)),
+    )
+    conn.commit()
+
+    monkeypatch.setattr("app.db.connection.get_db", lambda: conn)
+
+    class FakeExtractor:
+        def analyze_feedback(
+            self,
+            ai_speeches,
+            user_actual_message,
+            display_name="",
+            suggestion_id=None,
+            user_message_type=None,
+            account_wxid="",
+        ):
+            del ai_speeches, user_actual_message, display_name, suggestion_id, user_message_type, account_wxid
+            return {"outcome": "adopted", "rules": [], "max_similarity": 0.91, "selected_speech": "测试话术"}
+
+    monkeypatch.setattr(
+        "app.services.realtime.feedback_rule_extractor.FeedbackRuleExtractor",
+        FakeExtractor,
+    )
+
+    class ImmediateThread:
+        def __init__(self, target=None, daemon=None):
+            self._target = target
+            self.daemon = daemon
+
+        def start(self):
+            if self._target:
+                self._target()
+
+    monkeypatch.setattr("threading.Thread", ImmediateThread)
+
+    session_state = service._build_session_state(1)
+    service._check_feedback("第一条自发消息", session_state=session_state)
+
+    row = conn.execute(
+        "SELECT status FROM realtime_suggestions WHERE account_wxid = ? AND batch_id = ?",
+        ("wxid_test", "batch-1"),
+    ).fetchone()
+
+    assert row["status"] == "feedback_collected"
 
 
 def test_process_message_passes_message_type_into_feedback(monkeypatch):

@@ -220,14 +220,25 @@ def mark_suggestion_viewed(
     created_at: int | None = None,
 ) -> None:
     ts = int(created_at or time.time())
-    conn.execute(
-        """
-        UPDATE realtime_suggestions
-        SET read_at = COALESCE(read_at, ?)
-        WHERE id = ?
-        """,
-        (ts, suggestion_id),
-    )
+    normalized_account_wxid = _resolve_account_wxid(account_wxid) if account_wxid is not None else ""
+    if normalized_account_wxid:
+        conn.execute(
+            """
+            UPDATE realtime_suggestions
+            SET read_at = COALESCE(read_at, ?)
+            WHERE id = ? AND account_wxid = ?
+            """,
+            (ts, suggestion_id, normalized_account_wxid),
+        )
+    else:
+        conn.execute(
+            """
+            UPDATE realtime_suggestions
+            SET read_at = COALESCE(read_at, ?)
+            WHERE id = ?
+            """,
+            (ts, suggestion_id),
+        )
     record_observation(
         conn,
         suggestion_id=suggestion_id,

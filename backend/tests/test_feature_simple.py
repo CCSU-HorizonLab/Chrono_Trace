@@ -6,11 +6,18 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+
 # 添加项目路径到sys.path
 backend_dir = Path(__file__).parent
 sys.path.insert(0, str(backend_dir))
 
 from app.services.analysis.analysis_service import AnalysisService
+
+
+pytestmark = pytest.mark.skip(
+    reason="manual verification script backed by local DB data; excluded from automated pytest runs"
+)
 
 
 def print_section(title: str):

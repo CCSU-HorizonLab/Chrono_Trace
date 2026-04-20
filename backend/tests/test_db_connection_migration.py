@@ -76,3 +76,33 @@ def test_old_wechat_schema_is_rebuilt_before_new_indexes(tmp_path):
     finally:
         DatabaseConnection.close()
         DatabaseConnection._db_path = None
+
+
+def test_fresh_database_initialization_executes_schema_sql(tmp_path):
+    db_path = tmp_path / "fresh_chrono_trace.db"
+
+    DatabaseConnection.close()
+    DatabaseConnection._db_path = None
+    try:
+        conn = DatabaseConnection.initialize(str(db_path))
+
+        realtime_buffer = conn.execute(
+            """
+            SELECT name
+            FROM sqlite_master
+            WHERE type = 'table' AND name = 'realtime_message_buffer'
+            """
+        ).fetchone()
+        realtime_suggestions = conn.execute(
+            """
+            SELECT name
+            FROM sqlite_master
+            WHERE type = 'table' AND name = 'realtime_suggestions'
+            """
+        ).fetchone()
+
+        assert realtime_buffer is not None
+        assert realtime_suggestions is not None
+    finally:
+        DatabaseConnection.close()
+        DatabaseConnection._db_path = None

@@ -3,6 +3,7 @@
 
 CREATE TABLE IF NOT EXISTS realtime_suggestions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_wxid TEXT NOT NULL,                 -- 归属微信账号 wxid
 
     -- 关联批次
     batch_id TEXT NOT NULL,                    -- 监听批次 ID
@@ -19,7 +20,7 @@ CREATE TABLE IF NOT EXISTS realtime_suggestions (
 
     -- 状态
     status TEXT DEFAULT 'pending',             -- pending / read / dismissed
-    engine_type TEXT DEFAULT 'template',       -- 生成引擎类型
+    engine_type TEXT DEFAULT 'llm',            -- 生成引擎类型
 
     -- 上下文（可选）
     trigger_context TEXT,                      -- 触发上下文 JSON
@@ -27,9 +28,10 @@ CREATE TABLE IF NOT EXISTS realtime_suggestions (
     -- 时间戳
     created_at INTEGER NOT NULL,               -- 创建时间
     read_at INTEGER,                           -- 已读时间
-    dismissed_at INTEGER                       -- 关闭时间
+    dismissed_at INTEGER,                      -- 关闭时间
+    reply TEXT,                               -- 纯对话回复
+    thought_process TEXT                      -- AI 思考过程
 );
 
-CREATE INDEX IF NOT EXISTS idx_realtime_suggestions_batch ON realtime_suggestions(batch_id);
-CREATE INDEX IF NOT EXISTS idx_realtime_suggestions_status ON realtime_suggestions(status);
-CREATE INDEX IF NOT EXISTS idx_realtime_suggestions_created ON realtime_suggestions(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_realtime_suggestions_account_batch ON realtime_suggestions(account_wxid, batch_id, status);
+CREATE INDEX IF NOT EXISTS idx_realtime_suggestions_account_created ON realtime_suggestions(account_wxid, created_at DESC);

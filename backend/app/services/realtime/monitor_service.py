@@ -2994,7 +2994,11 @@ class RealtimeMonitorService:
                 if 'recent_messages' not in ctx and batch_id:
                     try:
                         from .message_query import get_messages_with_sentiment
-                        ctx['recent_messages'] = get_messages_with_sentiment(batch_id, 50)
+                        ctx['recent_messages'] = get_messages_with_sentiment(
+                            batch_id,
+                            50,
+                            account_wxid=account_wxid,
+                        )
                     except Exception as msg_e:
                         _print(f"⚠️ 获取最近消息失败: {msg_e}")
                 
@@ -3113,7 +3117,11 @@ class RealtimeMonitorService:
             if session_state.get('batch_id'):
                 try:
                     from .message_query import get_messages_with_sentiment
-                    ctx['recent_messages'] = get_messages_with_sentiment(session_state['batch_id'], 50)
+                    ctx['recent_messages'] = get_messages_with_sentiment(
+                        session_state['batch_id'],
+                        50,
+                        account_wxid=account_wxid,
+                    )
                 except Exception as msg_e:
                     _print(f"⚠️ 获取最近消息失败: {msg_e}")
             self_profile_cache = None
@@ -3404,14 +3412,14 @@ class RealtimeMonitorService:
                                 if str(item.get('rule', '')).strip()
                             )
                         )
-                    
-                    # 标记建议为已反馈
-                        conn2 = get_db()
-                        conn2.execute(
-                            "UPDATE realtime_suggestions SET status = 'feedback_collected' WHERE account_wxid = ? AND id = ?",
-                            (account_wxid, suggestion_id)
-                        )
-                        conn2.commit()
+
+                    # 标记建议为已反馈。即使这次没有提取到新规则，也不能卡在 feedback_processing。
+                    conn2 = get_db()
+                    conn2.execute(
+                        "UPDATE realtime_suggestions SET status = 'feedback_collected' WHERE account_wxid = ? AND id = ?",
+                        (account_wxid, suggestion_id)
+                    )
+                    conn2.commit()
                 except Exception as e:
                     try:
                         conn2 = get_db()

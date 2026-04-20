@@ -180,11 +180,12 @@ class TestPreprocessingOrchestrator:
         
         # 验证缓存加速 (第二次应该更快)
         assert second_duration < first_duration
-        
+
+        speedup = float("inf") if second_duration <= 0 else first_duration / second_duration
         print(f"✓ 缓存命中测试通过")
         print(f"  - 首次: {first_duration:.3f}s")
         print(f"  - 缓存: {second_duration:.3f}s")
-        print(f"  - 加速: {first_duration / second_duration:.1f}x")
+        print(f"  - 加速: {speedup:.1f}x")
     
     def test_cache_invalidation(
         self,

@@ -68,6 +68,7 @@ class SuggestionEngineFactory:
 
         if engine_type in ("llm", "local_llm", "cloud_api"):
             from .llm_engine import LLMSuggestionEngine
+
             engine = LLMSuggestionEngine()
         else:
             raise ValueError(f"未知引擎类型: {engine_type}")

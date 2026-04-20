@@ -222,7 +222,7 @@ class SessionThreadService:
             _print(f"[SessionThread] ❌ 查询最近线程失败: {e}")
             return None
 
-    def load_thread_context(self, thread_id: int) -> Optional[dict]:
+    def load_thread_context(self, thread_id: int, account_wxid: str = "") -> Optional[dict]:
         """
         加载线程的完整上下文（用于继续上次指导）。
 
@@ -232,9 +232,12 @@ class SessionThreadService:
         try:
             from ...db.connection import get_db
             conn = get_db()
+            self._ensure_table(conn)
+            resolved_account_wxid = self._resolve_account_wxid(account_wxid)
 
             row = conn.execute(
-                'SELECT * FROM session_threads WHERE id = ?', (thread_id,)
+                'SELECT * FROM session_threads WHERE id = ? AND account_wxid = ?',
+                (thread_id, resolved_account_wxid),
             ).fetchone()
 
             if not row:
@@ -471,6 +474,12 @@ class SessionThreadService:
             CREATE INDEX IF NOT EXISTS idx_session_threads_account_display_created
             ON session_threads(account_wxid, display_name, created_at DESC)
         ''')
+        columns = {
+            str(row['name'])
+            for row in conn.execute('PRAGMA table_info(session_threads)').fetchall()
+        }
+        if 'user_chat_history_snapshot' not in columns:
+            conn.execute('ALTER TABLE session_threads ADD COLUMN user_chat_history_snapshot TEXT')
 
     def _get_active_model(self) -> Optional[dict]:
         """从数据库获取当前激活的 LLM 模型配置"""

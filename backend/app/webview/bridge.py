@@ -662,7 +662,7 @@ class Bridge:
             monitor = RealtimeMonitorService()
 
             # 从 MonitorService 的配置中读取引擎类型（而非 settings.json）
-            engine_type = monitor._suggestion_config.get('engine_type', 'template')
+            engine_type = monitor._suggestion_config.get('engine_type', 'llm')
             engine = SuggestionEngineFactory.create(engine_type)
 
             logger.debug(f"[Bridge] generate_suggestion: engine_type={engine_type}, intent={intent}")
@@ -675,7 +675,11 @@ class Bridge:
             if 'recent_messages' not in context and monitor.current_batch_id:
                 try:
                     from ..services.realtime.message_query import get_messages_with_sentiment
-                    recent = get_messages_with_sentiment(monitor.current_batch_id, 50)
+                    recent = get_messages_with_sentiment(
+                        monitor.current_batch_id,
+                        50,
+                        account_wxid=str(getattr(monitor, "current_account_wxid", "") or ""),
+                    )
                     context['recent_messages'] = recent
                 except Exception as e:
                     logger.error(f"[Bridge] 获取最近消息失败: {e}")
@@ -1448,7 +1452,11 @@ class Bridge:
         try:
             from ..services.realtime.message_query import get_messages_with_sentiment
             
-            messages = get_messages_with_sentiment(batch_id, limit)
+            messages = get_messages_with_sentiment(
+                batch_id,
+                limit,
+                account_wxid=self._resolve_account_wxid(""),
+            )
             
             # 只在消息数量变化时打印（避免每 3 秒重复刷屏）
             count = len(messages) if messages else 0
@@ -1504,7 +1512,7 @@ class Bridge:
                     speeches TEXT NOT NULL,
                     confidence REAL DEFAULT 1.0,
                     status TEXT DEFAULT 'pending',
-                    engine_type TEXT DEFAULT 'template',
+                    engine_type TEXT DEFAULT 'llm',
                     trigger_context TEXT,
                     created_at INTEGER NOT NULL,
                     read_at INTEGER,
@@ -1581,7 +1589,7 @@ class Bridge:
             traceback.print_exc()
             return {"ok": False, "error": str(e), "suggestions": []}
 
-    def dismiss_suggestion(self, suggestion_id: int) -> dict[str, Any]:
+    def dismiss_suggestion(self, suggestion_id: int, account_wxid: str = "") -> dict[str, Any]:
         """
         标记建议为已关闭
 
@@ -1593,23 +1601,28 @@ class Bridge:
             from ..db.connection import get_db
 
             conn = get_db()
+            resolved_account_wxid = self._resolve_account_wxid(account_wxid)
+            cursor = conn.execute('''
+                UPDATE realtime_suggestions
+                SET status = 'dismissed', dismissed_at = ?
+                WHERE id = ? AND account_wxid = ?
+            ''', (int(_time.time()), suggestion_id, resolved_account_wxid))
+            conn.commit()
+
+            if cursor.rowcount != 1:
+                return {"ok": False, "error": "suggestion_not_found"}
             try:
                 from ..services.realtime.suggestion_observer import EVENT_DISMISSED, record_observation
 
                 record_observation(
                     conn,
                     suggestion_id=suggestion_id,
+                    account_wxid=resolved_account_wxid,
                     event_type=EVENT_DISMISSED,
                 )
+                conn.commit()
             except Exception as obs_e:
                 logger.error(f"[Bridge] 记录建议关闭观察事件失败: {obs_e}")
-            conn.execute('''
-                UPDATE realtime_suggestions
-                SET status = 'dismissed', dismissed_at = ?
-                WHERE id = ?
-            ''', (int(_time.time()), suggestion_id))
-            conn.commit()
-
             return {"ok": True}
         except Exception as e:
             logger.error(f"[Bridge] 关闭建议失败: {e}")
@@ -1676,7 +1689,11 @@ class Bridge:
             from ..services.realtime.suggestion_engine import SuggestionEngineFactory
 
             # 获取最近消息
-            recent_messages = get_messages_with_sentiment(batch_id, 10)
+            recent_messages = get_messages_with_sentiment(
+                batch_id,
+                10,
+                account_wxid=self._resolve_account_wxid(""),
+            )
             
             # 使用配置中的引擎（通常是 llm）
             monitor = RealtimeMonitorService()
@@ -3499,7 +3516,7 @@ class Bridge:
         try:
             from ..services.realtime.session_thread_service import SessionThreadService
             svc = SessionThreadService()
-            ctx = svc.load_thread_context(thread_id)
+            ctx = svc.load_thread_context(thread_id, account_wxid=self._resolve_account_wxid(""))
             return {
                 "ok": True,
                 "context": ctx

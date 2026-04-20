@@ -599,7 +599,7 @@ CREATE TABLE IF NOT EXISTS realtime_suggestions (
     speeches TEXT NOT NULL,                      -- 话术列表JSON: ["话术1", "话术2", ...]
     confidence REAL DEFAULT 1.0,                 -- 置信度 (0-1)
     status TEXT DEFAULT 'pending',               -- 状态: pending, read, dismissed
-    engine_type TEXT DEFAULT 'template',         -- 引擎类型: template, llm
+    engine_type TEXT DEFAULT 'llm',              -- 引擎类型: llm
     trigger_context TEXT,                        -- 触发上下文JSON
     created_at INTEGER NOT NULL,                 -- 生成时间戳（秒）
     read_at INTEGER,                             -- 阅读时间戳
@@ -607,7 +607,6 @@ CREATE TABLE IF NOT EXISTS realtime_suggestions (
     reply TEXT,                                  -- 纯对话回复
     thought_process TEXT                         -- AI 思考过程
 );
-
 CREATE INDEX IF NOT EXISTS idx_realtime_suggestions_account_batch ON realtime_suggestions(account_wxid, batch_id, status);
 CREATE INDEX IF NOT EXISTS idx_realtime_suggestions_account_created ON realtime_suggestions(account_wxid, created_at DESC);
 

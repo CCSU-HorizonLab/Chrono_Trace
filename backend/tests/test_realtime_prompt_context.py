@@ -1075,3 +1075,28 @@ def test_self_profiler_collect_features_and_parse_sentence_patterns():
     )
     assert parsed is not None
     assert parsed["sentence_patterns"] == []
+
+
+def test_self_profiler_parse_profile_json_repairs_common_llm_json_variants():
+    profiler = SelfProfiler()
+
+    parsed = profiler._parse_profile_json(
+        """
+        ```json
+        {
+          "typing_style": "极简短句流",
+          "frequent_catchphrases": ["6", "nmd", "逆天",],
+          "sentence_patterns": ["哈哈
+这个",],
+          "shared_memories": ["我最近聊过硬件",],
+          "attitude_and_role": "熟人间吐槽",
+          "do_and_donts": "控制在 8-12 字",
+        }
+        ```
+        """
+    )
+
+    assert parsed is not None
+    assert parsed["frequent_catchphrases"] == ["6", "nmd", "逆天"]
+    assert parsed["sentence_patterns"] == ["哈哈\n这个"]
+    assert parsed["do_and_donts"] == "控制在 8-12 字"

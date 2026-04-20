@@ -289,6 +289,7 @@ def test_bridge_get_pending_suggestions_marks_viewed(monkeypatch):
 
 def test_bridge_dismiss_suggestion_records_observation(monkeypatch):
     bridge = Bridge.__new__(Bridge)
+    bridge.settings = {"wechat_user_wxid": "wxid_test"}
     conn = _setup_db()
     conn.execute(
         """

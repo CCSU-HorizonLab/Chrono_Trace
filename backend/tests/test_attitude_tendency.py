@@ -74,12 +74,12 @@ class TestAttitudeTendencyRealData:
         print("="*60)
         
         assert service is not None
-        assert hasattr(service, 'db')
         assert hasattr(service, 'orchestrator')
         assert hasattr(service, 'keyword_lib')
+        assert hasattr(service, 'direction_service')
+        assert hasattr(service, 'relationship_context_service')
         
         print("✓ 服务初始化成功")
-        print("✓ 数据库连接正常")
         print("✓ 预处理编排器已加载")
         print("✓ 关键词库已加载")
     

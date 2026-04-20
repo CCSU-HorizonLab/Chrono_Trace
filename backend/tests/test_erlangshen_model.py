@@ -6,10 +6,17 @@ import sys
 import os
 import time
 
+import pytest
+
 # 添加backend到路径
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from app.services.realtime.realtime_sentiment_service import RealtimeSentimentService
+
+
+pytestmark = pytest.mark.skip(
+    reason="manual verification script; excluded from automated pytest runs"
+)
 
 
 def test_model_loading():

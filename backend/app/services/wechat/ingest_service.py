@@ -422,6 +422,30 @@ class WeChatIngestService:
                         now,
                     ),
                 )
+                #同步更新 conversations 表的冗余名称字段，确保备注名/昵称变更后显示一致
+                display_name =(
+                    (contact_dict.get("remark")or"").strip()
+                    or (contact_dict.get("nickname")or "").strip()
+                    or username
+                )
+                db.execute(
+                    """
+                    UPDATE conversations
+                    SET display_name = ?,
+                        remark = ?,
+                        nickname = ?,
+                        updated_at = ?
+                    WHERER account_wxid = ? AND username = ? AND platform = 'wechat'
+                """,
+                    (
+                        display_name,
+                        contact_dict.get("remark",""),
+                        contact_dict.get("nickname",""),
+                        now,
+                        account_wxid,
+                        username,
+                    ),
+                )
                 processed += 1
             except Exception as e:
                 logger.error(f"[DEBUG] 插入联系人失败: {e}")

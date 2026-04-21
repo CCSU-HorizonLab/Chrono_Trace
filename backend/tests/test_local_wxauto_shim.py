@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import os
 import sys
+from importlib import import_module
 
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-import wxauto4 as wxauto4_module
-
-from wxauto4 import WeChat
+wxauto4_module = import_module("backend.wxauto4")
+WeChat = wxauto4_module.WeChat
 
 
 class FakeProvider:

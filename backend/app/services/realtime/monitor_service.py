@@ -333,7 +333,10 @@ class RealtimeMonitorService:
 
     def _create_wechat_instance(self):
         """Create a fresh realtime provider instance."""
-        from wxauto4 import WeChat
+        try:
+            from backend.wxauto4 import WeChat
+        except ModuleNotFoundError:
+            from wxauto4 import WeChat
 
         self._reset_wechat_instance()
         self.wx = WeChat(start_listener=False, backend=self._listener_backend)

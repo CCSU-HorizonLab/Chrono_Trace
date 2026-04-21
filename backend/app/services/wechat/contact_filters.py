@@ -7,6 +7,7 @@ from __future__ import annotations
 EXCLUDED_CONTACT_USERNAMES = frozenset(
     {
         "brandsessionholder",
+        "exmail_tool",
         "filehelper",
         "fmessage",
         "floatbottle",

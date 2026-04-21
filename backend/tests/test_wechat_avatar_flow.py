@@ -282,6 +282,13 @@ def test_analysis_service_excludes_wechat_system_conversations(isolated_db):
         INSERT INTO conversations (account_wxid, username, display_name, platform, created_at, updated_at, message_count)
         VALUES (?, ?, ?, 'wechat', 1, 1700000001, 5)
         """,
+        ("wxid_me", "exmail_tool", "腾讯企业邮箱"),
+    )
+    isolated_db.execute(
+        """
+        INSERT INTO conversations (account_wxid, username, display_name, platform, created_at, updated_at, message_count)
+        VALUES (?, ?, ?, 'wechat', 1, 1700000002, 5)
+        """,
         ("wxid_me", "wxid_friend", "真实联系人"),
     )
     isolated_db.commit()

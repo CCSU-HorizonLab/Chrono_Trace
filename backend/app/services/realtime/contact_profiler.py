@@ -15,6 +15,7 @@ import random
 from typing import Optional
 from .llm_http import post_json_with_retries
 from ..wechat.account_settings import get_active_wechat_account_wxid, load_settings_from_file
+from ..wechat.contact_filters import is_excluded_contact_username
 
 logger = logging.getLogger(__name__)
 def _print(msg: str):
@@ -252,11 +253,14 @@ class ContactProfiler:
         )
         row = cursor.fetchone()
         if row:
-            _print(f"[ContactProfiler] ✅ 直接匹配成功: id={row['id']}, "
-                   f"username={row['username']}, "
-                   f"nickname={row['nickname']}, remark={row['remark']}, "
-                   f"messages={row['message_count']}")
-            return dict(row)
+            if is_excluded_contact_username(row['username']):
+                _print(f"[ContactProfiler] 跳过系统联系人会话: username={row['username']}")
+            else:
+                _print(f"[ContactProfiler] ✅ 直接匹配成功: id={row['id']}, "
+                       f"username={row['username']}, "
+                       f"nickname={row['nickname']}, remark={row['remark']}, "
+                       f"messages={row['message_count']}")
+                return dict(row)
 
         # 策略2: 通过 contacts 表反查 username(wxid)
         _print(f"[ContactProfiler] 直接匹配失败，尝试通过 contacts 表反查...")
@@ -266,7 +270,10 @@ class ContactProfiler:
             'LIMIT 5',
             (account_wxid, display_name, display_name)
         )
-        contacts = contact_cursor.fetchall()
+        contacts = [
+            contact for contact in contact_cursor.fetchall()
+            if not is_excluded_contact_username(contact['username'])
+        ]
         if contacts:
             _print(f"[ContactProfiler] 找到 {len(contacts)} 个匹配的联系人: "
                    f"{[(c['username'], c['nickname'], c['remark']) for c in contacts]}")
@@ -283,6 +290,9 @@ class ContactProfiler:
                 )
                 conv_row = conv_cursor.fetchone()
                 if conv_row:
+                    if is_excluded_contact_username(conv_row['username']):
+                        _print(f"[ContactProfiler] 跳过系统联系人反查结果: username={conv_row['username']}")
+                        continue
                     _print(f"[ContactProfiler] ✅ contacts 反查匹配成功: "
                            f"contact={contact['nickname']}({wxid}) → "
                            f"conv_id={conv_row['id']}, messages={conv_row['message_count']}")
@@ -311,9 +321,14 @@ class ContactProfiler:
         )
         rows = cursor.fetchall()
         if rows:
-            _print(f"[ContactProfiler] 模糊匹配 conversations 结果: "
-                   f"{[(r['nickname'] or r['display_name'], r['message_count']) for r in rows]}")
-            return dict(rows[0])
+            valid_rows = [
+                row for row in rows
+                if not is_excluded_contact_username(row['username'])
+            ]
+            if valid_rows:
+                _print(f"[ContactProfiler] 模糊匹配 conversations 结果: "
+                       f"{[(r['nickname'] or r['display_name'], r['message_count']) for r in valid_rows]}")
+                return dict(valid_rows[0])
 
         # 策略2: 模糊匹配 contacts 表反查
         contact_cursor = conn.execute(
@@ -322,7 +337,10 @@ class ContactProfiler:
             'LIMIT 5',
             (account_wxid, f'%{search_key}%', f'%{search_key}%')
         )
-        contacts = contact_cursor.fetchall()
+        contacts = [
+            contact for contact in contact_cursor.fetchall()
+            if not is_excluded_contact_username(contact['username'])
+        ]
         if contacts:
             _print(f"[ContactProfiler] 模糊匹配 contacts 结果: "
                    f"{[(c['nickname'], c['remark']) for c in contacts]}")
@@ -338,6 +356,9 @@ class ContactProfiler:
                 )
                 conv_row = conv_cursor.fetchone()
                 if conv_row:
+                    if is_excluded_contact_username(conv_row['username']):
+                        _print(f"[ContactProfiler] 跳过系统联系人模糊反查结果: username={conv_row['username']}")
+                        continue
                     _print(f"[ContactProfiler] ✅ 模糊反查匹配成功: "
                            f"contact={contact['nickname']}({wxid}) → "
                            f"conv_id={conv_row['id']}, messages={conv_row['message_count']}")

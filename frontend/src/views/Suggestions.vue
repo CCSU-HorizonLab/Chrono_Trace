@@ -13,7 +13,6 @@
         <p class="sug-subtitle">实时监听 · 智能画像 · 策略输出</p>
       </div>
     </header>
-
     <!-- 监听控制中心 -->
     <div class="sug-section">
       <div class="sug-command-card" :class="{ 'is-monitoring': realtimeState.isMonitoring }">
@@ -32,12 +31,12 @@
           <details class="sug-notice">
             <summary>⚠ 使用须知</summary>
             <ul>
-              <li>确保 Windows 微信已启动并登录</li>
-              <li><strong>请保持微信主窗口可见，不要最小化</strong></li>
-              <li><strong>当前推荐在微信主窗口中监听，独立弹窗不作为主路径</strong></li>
-              <li>当前已完成微信 4.0.5 主窗口监听验证</li>
-              <li>昵称必须与微信中显示完全一致（备注名优先）</li>
-              <li>同时只能监听一个对象</li>
+              <li>确保 Windows 微信已启动并登录。</li>
+              <li><strong>无需强制前台</strong>：窗口允许被其他应用遮挡（但请勿彻底最小化至任务栏）。</li>
+              <li>目标对象的昵称必须与微信中显示完全一致（如有备注名，必须输入备注名）。</li>
+              <li>当前系统全局仅支持对单一对象进行并行监听。</li>
+              <li>兼容最新微信版本（包含 3.9.x 稳定版及 4.0.x 全新架构）。</li>
+              <li>请监听时不要切换聊天对象，否则会影响监听效果。</li>
             </ul>
           </details>
 
@@ -55,7 +54,7 @@
             <button
               class="sug-monitor-btn"
               :class="{ stop: realtimeState.isMonitoring }"
-              :disabled="realtimeState.status === 'searching' || realtimeState.status === 'stopping'"
+              :disabled="realtimeState.status === 'searching' || realtimeState.status === 'stopping' || showGeneratingDialog"
               @click="toggleMonitoring"
             >
               <span class="sug-btn-icon">{{ realtimeState.isMonitoring ? '■' : '▶' }}</span>
@@ -347,6 +346,34 @@
       </div>
     </div>
   </Teleport>
+
+  <!-- 强制生成进度弹窗 -->
+  <Teleport to="body">
+    <div v-if="showGeneratingDialog" class="ct-modal-overlay">
+      <div class="ct-modal-dialog">
+        <div class="modal-title">⏳ 正在生成画像</div>
+        <div class="modal-desc">
+          正在生成画像，请稍候。<br/>
+          <strong style="color: var(--ct-color-danger); margin-top: 8px; display: inline-block;">⚠️ 生成期间不要开始监听</strong>
+        </div>
+      </div>
+    </div>
+  </Teleport>
+
+  <!-- 强制生成错误提示弹窗 -->
+  <Teleport to="body">
+    <div v-if="generatingErrorDialog" class="ct-modal-overlay" @click.self="generatingErrorDialog = false">
+      <div class="ct-modal-dialog">
+        <div class="modal-title" style="color: var(--ct-color-danger);">❌ 生成失败</div>
+        <div class="modal-desc">
+          {{ generatingErrorMessage }}
+        </div>
+        <div class="modal-actions">
+          <CtButton class="primary" @click="generatingErrorDialog = false">关闭</CtButton>
+        </div>
+      </div>
+    </div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
@@ -384,6 +411,9 @@ let messagesTimer: any = null
 const triggerMode = ref<any>('semi_auto')
 
 const showLlmWarningDialog = ref(false)
+const showGeneratingDialog = ref(false)
+const generatingErrorDialog = ref(false)
+const generatingErrorMessage = ref('')
 
 function goToSettings() {
   showLlmWarningDialog.value = false
@@ -690,11 +720,14 @@ async function generateSelfProfile() {
     if (r.ok && r.profile) {
       selfProfile.value = r.profile
       await refreshSelfProfileState(realtimeState.talkerName)
+      return { success: true }
     } else {
       console.error('画像克隆失败:', r.error)
+      return { success: false, error: r.error || '画像克隆失败' }
     }
   } catch (e: any) {
     console.error('提取克隆画像失败:', e)
+    return { success: false, error: e?.message || '提取克隆画像失败' }
   } finally {
     selfProfileLoading.value = false
   }
@@ -730,6 +763,7 @@ async function generateContactProfile() {
     if (r.ok && r.profile) {
       profile.value = { name: realtimeState.talkerName, ...r.profile }
       await refreshContactProfileState(realtimeState.talkerName)
+      return { success: true }
     } else {
       console.error('画像生成失败:', r.error)
       profile.value = {
@@ -737,6 +771,7 @@ async function generateContactProfile() {
         tags: [],
         relationship_note: `⚠️ ${r.error || '画像生成失败'}`,
       }
+      return { success: false, error: r.error || '画像生成失败' }
     }
   } catch (e: any) {
     console.error('生成画像失败:', e)
@@ -745,6 +780,7 @@ async function generateContactProfile() {
       tags: [],
       relationship_note: `⚠️ ${e?.message || '画像生成异常'}`,
     }
+    return { success: false, error: e?.message || '画像生成异常' }
   } finally {
     profileLoading.value = false
   }
@@ -853,11 +889,34 @@ async function checkPortraitProfiles(displayName: string, openDialogIfNeeded = t
 
 async function generatePortraitProfiles() {
   closePortraitDialog()
+  showGeneratingDialog.value = true
+  generatingErrorDialog.value = false
+  generatingErrorMessage.value = ''
+
+  let hasError = false
+  let errorMsg = ''
+
   if (dialogGenerateContact.value) {
-    await generateContactProfile()
+    const res = await generateContactProfile()
+    if (res && res.success === false) {
+      hasError = true
+      errorMsg = res.error || '联系人画像生成失败'
+    }
   }
-  if (dialogGenerateSelf.value) {
-    await generateSelfProfile()
+
+  if (dialogGenerateSelf.value && !hasError) {
+    const res = await generateSelfProfile()
+    if (res && res.success === false) {
+      hasError = true
+      errorMsg = res.error || '自我克隆画像提取失败'
+    }
+  }
+
+  showGeneratingDialog.value = false
+
+  if (hasError) {
+    generatingErrorMessage.value = errorMsg
+    generatingErrorDialog.value = true
   }
 }
 

@@ -87,14 +87,7 @@ class RealtimeMonitorService:
             # 情绪状态追踪器（每次 start_monitoring 时重建）
             # AI 建议配置: 从 global settings.json 中读取
             try:
-                from pathlib import Path
-                import json
-                settings_file = Path(__file__).parent.parent.parent.parent / "data" / "settings.json"
-                if settings_file.exists():
-                    with open(settings_file, "r", encoding="utf-8") as f:
-                        settings = json.load(f)
-                else:
-                    settings = {}
+                settings = load_settings_from_file()
                 self._listener_backend = normalize_listener_backend(
                     settings.get('listener_backend', 'native_uia')
                 )

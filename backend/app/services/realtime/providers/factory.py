@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
 from .base import UnsupportedWeChatVersionError
 from .detector import detect_running_wechat
 from .native_uia import NativeUIARealtimeProvider
+from ...wechat.account_settings import load_settings_from_file
 
 
 def normalize_listener_backend(value: str | None, default: str = "native_uia") -> str:
@@ -19,12 +17,9 @@ def normalize_listener_backend(value: str | None, default: str = "native_uia") -
 
 
 def _load_listener_backend(default: str = "native_uia") -> str:
-    settings_file = Path(__file__).resolve().parents[4] / "data" / "settings.json"
     try:
-        if settings_file.exists():
-            with open(settings_file, "r", encoding="utf-8") as handle:
-                settings = json.load(handle)
-            return normalize_listener_backend(settings.get("listener_backend"), default=default)
+        settings = load_settings_from_file()
+        return normalize_listener_backend(settings.get("listener_backend"), default=default)
     except Exception:
         pass
     return normalize_listener_backend(default, default=default)

@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from typing import Any, Optional
 
+from ...config import SETTINGS_PATH
+
 
 WECHAT_ACCOUNTS_KEY = "wechat_accounts"
 WECHAT_ACTIVE_ACCOUNT_KEY = "wechat_active_account_wxid"
@@ -21,7 +23,7 @@ LEGACY_WECHAT_KEYS = {
 
 
 def default_settings_path() -> Path:
-    return Path(__file__).parent.parent.parent.parent / "data" / "settings.json"
+    return Path(SETTINGS_PATH)
 
 
 def _normalize_snapshot_files(raw_files: Any) -> list[dict[str, Any]]:

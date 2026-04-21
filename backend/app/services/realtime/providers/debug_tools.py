@@ -8,6 +8,7 @@ from pathlib import Path
 
 from .detector import detect_running_wechat
 from .native_uia import NativeUIARealtimeProvider
+from ....config import LOG_DIR_PATH
 
 
 def _safe_call(func, default=None):
@@ -188,7 +189,7 @@ def dump_wechat_uia_snapshot(
         finally:
             provider.close()
 
-    logs_dir = Path(__file__).resolve().parents[4] / "data" / "logs"
+    logs_dir = Path(LOG_DIR_PATH)
     logs_dir.mkdir(parents=True, exist_ok=True)
     dump_path = logs_dir / f"wechat_uia_dump_{int(time.time())}.json"
     with open(dump_path, "w", encoding="utf-8") as handle:

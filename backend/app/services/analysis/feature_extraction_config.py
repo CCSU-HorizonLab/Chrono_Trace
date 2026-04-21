@@ -3,6 +3,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from ...config import SETTINGS_PATH
+
 
 ANALYSIS_DEVICE_MODE_AUTO = "auto"
 ANALYSIS_DEVICE_MODE_GPU = "gpu"
@@ -39,7 +41,7 @@ class FeatureExtractionConfig:
         """Load config from settings.json."""
         import json
 
-        settings_path = Path(__file__).parent.parent.parent.parent / "data" / "settings.json"
+        settings_path = Path(SETTINGS_PATH)
 
         if settings_path.exists():
             with open(settings_path, "r", encoding="utf-8") as handle:

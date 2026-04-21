@@ -3,6 +3,7 @@ import sqlite3
 from pathlib import Path
 from typing import Optional
 
+from ..config import DB_PATH, DB_SCHEMA_PATH
 
 import threading
 
@@ -26,7 +27,7 @@ class DatabaseConnection:
         初始化数据库连接（按线程本地单例）
         
         Args:
-            db_path: 数据库文件路径，默认为 backend/data/chrono_trace.db
+            db_path: 数据库文件路径，默认为用户数据目录中的 chrono_trace.db
             
         Returns:
             sqlite3.Connection: 数据库连接对象
@@ -36,10 +37,8 @@ class DatabaseConnection:
         
         # 确定数据库路径
         if db_path is None:
-            backend_dir = Path(__file__).parent.parent.parent
-            data_dir = backend_dir / "data"
-            data_dir.mkdir(exist_ok=True)
-            db_path = str(data_dir / "chrono_trace.db")
+            DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+            db_path = str(DB_PATH)
         
         cls._db_path = db_path
         
@@ -69,7 +68,7 @@ class DatabaseConnection:
 
     @classmethod
     def _load_schema_sql(cls) -> str:
-        schema_path = Path(__file__).parent / "schema.sql"
+        schema_path = Path(DB_SCHEMA_PATH)
         if not schema_path.exists():
             raise FileNotFoundError(f"Schema file not found: {schema_path}")
         return schema_path.read_text(encoding="utf-8")

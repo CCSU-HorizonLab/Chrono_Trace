@@ -1,6 +1,7 @@
 # Dependencies
 node_modules/
 frontend/dist/
+frontend/webdist/
 
 # Environment variables
 .env
@@ -20,6 +21,7 @@ build/
 .pytest_cache/
 .coverage
 htmlcov/
+release/
 
 # Database
 *.db
@@ -58,6 +60,7 @@ frontend/coverage/
 # Build outputs
 frontend/.vite/
 frontend/dist-ssr/
+packaging/third_party/*.exe
 
 # Documentation build output
 docs/docs/

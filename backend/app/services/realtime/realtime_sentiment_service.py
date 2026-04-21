@@ -12,6 +12,7 @@ import jieba
 import torch
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
+from ...config import SENTIMENT_MODEL_DIR_PATH
 from ...db.connection import get_db
 from ..analysis.feature_extraction_config import (
     ANALYSIS_DEVICE_MODE_AUTO,
@@ -72,9 +73,8 @@ class RealtimeSentimentService:
         self._device_mode = FeatureExtractionConfig.from_settings().analysis_device_mode
         self._lock = threading.Lock()
 
-        local_model_dir = Path(__file__).parent.parent.parent.parent / "data" / "models" / "sentiment_3class"
         self._model_manager = ModelManager(
-            model_dir=str(local_model_dir),
+            model_dir=str(SENTIMENT_MODEL_DIR_PATH),
             repo_id="tingting11/chrono-trace-sentiment",
         )
 

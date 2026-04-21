@@ -10,6 +10,6 @@ export default defineConfig({
     }
   },
   build: {
-    outDir: 'dist'
+    outDir: 'webdist'
   }
 })

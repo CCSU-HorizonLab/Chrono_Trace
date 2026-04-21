@@ -17,7 +17,7 @@ def main():
     bridge = Bridge()
     dist_index = get_dist_index_path()
     if not dist_index:
-        raise RuntimeError('未找到 frontend/dist/index.html，请先执行 npm run build')
+        raise RuntimeError('未找到前端构建产物，请先执行 npm run build 生成 frontend/webdist/index.html')
     webview.create_window(PROD_WINDOW_TITLE, url=dist_index, js_api=bridge, frameless=False)
     webview.start()
 

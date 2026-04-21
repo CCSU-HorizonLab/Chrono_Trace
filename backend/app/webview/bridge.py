@@ -7,6 +7,7 @@ import threading
 import time
 import re
 from pathlib import Path
+from ..config import SETTINGS_PATH, SENTIMENT_MODEL_DIR_PATH
 from ..services.wechat.ingest_service import WeChatIngestService
 from ..services.wechat.path_finder import WeChatPathFinder
 from ..services.wechat.db.v4.contact import ContactDBV4
@@ -37,7 +38,7 @@ class Bridge:
 
     def __init__(self):
         self.wechat_service = WeChatIngestService()
-        self.settings_file = Path(__file__).parent.parent.parent / "data" / "settings.json"
+        self.settings_file = Path(SETTINGS_PATH)
         self._load_settings()
 
         # 延迟加载特征提取服务（避免循环导入）
@@ -109,11 +110,8 @@ class Bridge:
     def _get_sentiment_model_manager(self):
         from ..services.model_manager import ModelManager
 
-        local_model_dir = (
-            Path(__file__).parent.parent.parent / "data" / "models" / "sentiment_3class"
-        )
         return ModelManager(
-            model_dir=str(local_model_dir),
+            model_dir=str(SENTIMENT_MODEL_DIR_PATH),
             repo_id="tingting11/chrono-trace-sentiment",
         )
 
@@ -2703,15 +2701,10 @@ class Bridge:
     def check_analysis_model_status(self) -> dict[str, Any]:
         """检查分析所需模型是否在本地缓存中可用。"""
         try:
-            from pathlib import Path
-
             from ..services.model_manager import ModelManager
 
-            local_model_dir = (
-                Path(__file__).parent.parent.parent / "data" / "models" / "sentiment_3class"
-            )
             sentiment_model_ready = ModelManager(
-                model_dir=str(local_model_dir),
+                model_dir=str(SENTIMENT_MODEL_DIR_PATH),
                 repo_id="tingting11/chrono-trace-sentiment",
             ).ensure_model_exists()
 

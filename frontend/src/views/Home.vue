@@ -520,7 +520,7 @@ async function startImport() {
     }
 
     const stats = res.stats || {}
-    wechatOk.value = `导入成功：联系人 ${stats.contacts || 0}，消息 ${stats.messages || 0}，会话 ${stats.conversations || 0}，跳过重复 ${stats.skipped || 0}。`
+    wechatOk.value = `导入成功：当前共联系人 ${stats.contacts || 0}，消息 ${stats.messages || 0}，会话 ${stats.conversations || 0}；本次新增联系人 ${stats.inserted_contacts || 0}，消息 ${stats.inserted_messages || 0}，跳过重复 ${stats.skipped || 0}。`
     hasImportedBefore.value = true
     incrementInfo.value = null
     incrementDismissed.value = false

@@ -196,6 +196,8 @@ class WeChatIngestService:
             "contacts": 0,
             "messages": 0,
             "conversations": 0,
+            "inserted_contacts": 0,
+            "inserted_messages": 0,
             "skipped": 0
         }
 
@@ -232,7 +234,7 @@ class WeChatIngestService:
                     db_key,
                     account_wxid,
                 )
-                stats["contacts"] = contact_count
+                stats["inserted_contacts"] = contact_count
                 imported_contacts = True
                 logger.debug(f"[DEBUG] 联系人导入结果: {contact_count}")
 
@@ -251,8 +253,7 @@ class WeChatIngestService:
                     progress_callback
                 )
 
-                stats["messages"] = message_stats["total"]
-                stats["conversations"] = message_stats["conversations"]
+                stats["inserted_messages"] = message_stats["total"]
                 stats["skipped"] += message_stats.get("skipped", 0)
                 logger.debug(f"[DEBUG] 消息导入结果: {message_stats}")
 
@@ -267,6 +268,8 @@ class WeChatIngestService:
                     cleanup_stats["contacts"],
                     cleanup_stats["conversations"],
                 )
+
+            stats.update(self._collect_import_totals(account_wxid))
 
             logger.debug(f"\n[DEBUG] 最终统计: {stats}")
 
@@ -435,7 +438,7 @@ class WeChatIngestService:
                         remark = ?,
                         nickname = ?,
                         updated_at = ?
-                    WHERER account_wxid = ? AND username = ? AND platform = 'wechat'
+                    WHERE account_wxid = ? AND username = ? AND platform = 'wechat'
                 """,
                     (
                         display_name,
@@ -457,6 +460,49 @@ class WeChatIngestService:
             "filtered": filtered,
             "skipped_empty": skipped_empty,
             "avatar_updates": avatar_updates,
+        }
+
+    def _collect_import_totals(self, account_wxid: str) -> Dict[str, int]:
+        """Return current visible totals for the imported WeChat account."""
+        db = get_db()
+
+        contacts_row = db.execute(
+            """
+            SELECT COUNT(*) AS total
+            FROM contacts
+            WHERE account_wxid = ?
+              AND is_deleted = 0
+            """,
+            (account_wxid,),
+        ).fetchone()
+
+        conversations_row = db.execute(
+            """
+            SELECT COUNT(*) AS total
+            FROM conversations
+            WHERE account_wxid = ?
+              AND platform = 'wechat'
+              AND is_deleted = 0
+            """,
+            (account_wxid,),
+        ).fetchone()
+
+        messages_row = db.execute(
+            """
+            SELECT COUNT(*) AS total
+            FROM messages m
+            INNER JOIN conversations c ON c.id = m.conversation_id
+            WHERE c.account_wxid = ?
+              AND c.platform = 'wechat'
+              AND c.is_deleted = 0
+            """,
+            (account_wxid,),
+        ).fetchone()
+
+        return {
+            "contacts": int((contacts_row or {})["total"] if contacts_row else 0),
+            "conversations": int((conversations_row or {})["total"] if conversations_row else 0),
+            "messages": int((messages_row or {})["total"] if messages_row else 0),
         }
 
     def _fetch_existing_contact_avatars(self, usernames: list[str], account_wxid: str) -> dict[str, str]:

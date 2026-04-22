@@ -353,6 +353,56 @@ import { showConfirm, showDialog } from '@/utils/dialog'
 
 const router = useRouter()
 
+function buildMissingModelLines(modelStatus: any): string {
+  const details = Array.isArray(modelStatus?.missing_details) ? modelStatus.missing_details : []
+  if (!details.length) {
+    return '分析模型未安装完整'
+  }
+
+  return details
+    .map((item: any) => {
+      const modelName = item?.model_name || item?.model_key || '未知模型'
+      const issue = item?.issue || '模型不可用'
+      return `- ${modelName}: ${issue}`
+    })
+    .join('\n')
+}
+
+async function ensureRealtimeAnalysisModelsReady(): Promise<boolean> {
+  try {
+    const modelStatus = await api.check_analysis_model_status()
+    if (modelStatus?.ok && modelStatus?.analysis_available) {
+      return true
+    }
+
+    const detailLines = buildMissingModelLines(modelStatus)
+    const shouldGoAnalytics = await showConfirm({
+      title: '缺少分析模型',
+      message:
+        `检测到当前分析模型未安装完整：\n${detailLines}\n\n` +
+        '实时监听依赖情绪分析模型。请先前往“历史数据”页面，选择联系人后点击一次“开始分析”，按提示完成模型安装。\n\n' +
+        '现在跳转到历史数据页面吗？',
+    })
+
+    chatError.value = '缺少分析模型，请先前往历史数据页面完成安装'
+
+    if (shouldGoAnalytics) {
+      await router.push('/analytics')
+    }
+    return false
+  } catch (e) {
+    const errorMessage = (e as any)?.message || '未知错误'
+    await showDialog({
+      title: '无法检查分析模型',
+      message:
+        `分析模型状态检查失败: ${errorMessage}\n\n` +
+        '请先前往“历史数据”页面尝试开始分析；如果仍失败，再检查模型文件和 Python 依赖是否完整。',
+    })
+    chatError.value = '分析模型状态检查失败，请先前往历史数据页面检查安装'
+    return false
+  }
+}
+
 const inspectorOpen = ref(false)
 const isWideMode = ref(window.innerWidth >= 820)
 window.addEventListener('resize', () => { isWideMode.value = window.innerWidth >= 820 })
@@ -836,6 +886,12 @@ async function startPendingMonitoring(talkerName: string, requestedAccountWxid =
   realtimeState.status = 'searching'
   uiaRecoveryPromptSuppressed = false
   chatError.value = '正在准备监听对象...'
+
+  const modelsReady = await ensureRealtimeAnalysisModelsReady()
+  if (!modelsReady) {
+    realtimeState.status = 'idle'
+    return false
+  }
 
   const resumeMode = await maybeResolveResumeMode(talkerName)
   if (!resumeMode) {

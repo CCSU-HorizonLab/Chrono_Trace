@@ -12,7 +12,6 @@ import jieba
 import torch
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
-from ...config import SENTIMENT_MODEL_DIR_PATH
 from ...db.connection import get_db
 from ..analysis.feature_extraction_config import (
     ANALYSIS_DEVICE_MODE_AUTO,
@@ -22,6 +21,7 @@ from ..analysis.feature_extraction_config import (
     normalize_analysis_device_mode,
 )
 from ..model_manager import ModelManager
+from ..model_paths import SENTIMENT_MODEL_REPO_ID, get_sentiment_model_dir
 from .sentiment_rules import (
     EMOJI_SENTIMENT,
     contains_sarcasm,
@@ -72,17 +72,26 @@ class RealtimeSentimentService:
         self._device = "cpu"
         self._device_mode = FeatureExtractionConfig.from_settings().analysis_device_mode
         self._lock = threading.Lock()
-
-        self._model_manager = ModelManager(
-            model_dir=str(SENTIMENT_MODEL_DIR_PATH),
-            repo_id="tingting11/chrono-trace-sentiment",
-        )
+        self._model_manager = None
+        self._refresh_model_manager()
 
         if not skip_db_init:
             self._ensure_table_exists()
 
         self._model_manager.check_and_update_async()
         logger.debug("[实时情感分析] 服务初始化完成")
+
+    def _refresh_model_manager(self):
+        desired_model_dir = str(get_sentiment_model_dir())
+        if (
+            self._model_manager is None
+            or str(self._model_manager.model_dir) != desired_model_dir
+            or self._model_manager.repo_id != SENTIMENT_MODEL_REPO_ID
+        ):
+            self._model_manager = ModelManager(
+                model_dir=desired_model_dir,
+                repo_id=SENTIMENT_MODEL_REPO_ID,
+            )
 
     def configure_device_mode(self, device_mode: Optional[str]) -> str:
         """Change target device mode and rebuild model lazily if needed."""
@@ -147,12 +156,13 @@ class RealtimeSentimentService:
                 return
 
             try:
+                self._refresh_model_manager()
                 logger.debug("[实时情感分析] 正在加载情感分析模型...")
                 if not self._model_manager.ensure_model_exists():
                     raise FileNotFoundError(
                         f"情感分类模型不存在: {self._model_manager.model_dir}\n"
                         f"模型仓库: {self._model_manager.repo_id}\n"
-                        "请先通过“历史记录分析”页面的自动下载功能获取模型。"
+                        "请先通过“历史记录分析”页面的自动下载功能从 ModelScope 获取模型。"
                     )
                     raise FileNotFoundError(
                         f"本地模型不存在: {self._model_manager.model_dir}"

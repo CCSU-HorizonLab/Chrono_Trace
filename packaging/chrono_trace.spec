@@ -28,7 +28,7 @@ datas += collect_data_files("jieba")
 datas += copy_metadata("pywebview")
 datas += copy_metadata("transformers")
 datas += copy_metadata("sentence-transformers")
-datas += copy_metadata("huggingface-hub")
+datas += copy_metadata("modelscope")
 
 
 hiddenimports = [

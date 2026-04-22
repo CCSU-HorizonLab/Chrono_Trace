@@ -48,10 +48,6 @@ WARMUP_RATIO = 0.1      # 预热比例(前10%的步骤逐渐提高学习率)
 WEIGHT_DECAY = 0.01     # 权重衰减(防止过拟合)
 SEED = 42               # 随机种子(保证可复现)
 
-# 配置HuggingFace镜像站
-os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
-
-
 def load_data(csv_path):
     """
     读取标注CSV,返回 (texts, labels) 列表

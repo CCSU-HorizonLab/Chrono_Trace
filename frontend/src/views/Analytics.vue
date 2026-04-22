@@ -257,7 +257,7 @@
           </div>
           <div class="stat-body">
             <div class="stat-main">
-              <span class="stat-num">{{ featureStats.wordRatio ? featureStats.wordRatio.toFixed(2) : '0' }} : 1</span>
+              <span class="stat-num">{{ displayWordRatioLabel }}</span>
             </div>
             <div class="stat-sub">
               我 : 对方
@@ -274,9 +274,6 @@
             <div class="stat-main">
               <span class="stat-num">{{ featureStats.medianResponseTime ? formatTime(featureStats.medianResponseTime).replace(/[a-zA-Z]+$/, '') : '-' }}</span>
               <span class="stat-unit">{{ featureStats.medianResponseTime ? formatTime(featureStats.medianResponseTime).replace(/[0-9.<]+/, '') : '' }}</span>
-            </div>
-            <div class="stat-sub">
-              最快 {{ responseTimeStats.min ? formatTime(responseTimeStats.min) : '-' }}
             </div>
           </div>
         </CtCard>
@@ -631,6 +628,12 @@ export default {
         const responseTimeStats = ref({ count: 0, avg: 0, median: 0, max: 0, mode: '', distribution: {} as Record<string, number>, distributionKeys: [] as string[] })
         const initiativeStats = ref({ totalSessions: 0, userInitiatedSessions: 0, otherInitiatedSessions: 0, initiativeRate: 0, interpretation: '' })
         const wordCountsStats = ref({ userCharCount: 0, otherCharCount: 0, charRatio: 0, interpretation: '' })
+        const displayWordRatioLabel = computed(() => {
+            const { userCharCount, otherCharCount } = wordCountsStats.value
+            if (!userCharCount && !otherCharCount) return '0 : 1'
+            if (!otherCharCount) return '∞ : 1'
+            return `${(userCharCount / otherCharCount).toFixed(2)} : 1`
+        })
         const activityCalendar = ref<ActivityCalendarData>({ year: new Date().getFullYear(), years: [], entries: [], summary: { active_days: 0, total_messages: 0, current_streak: 0, longest_streak: 0, peak_day: null, global_first_session_start_time: null, global_peak_session: null }, max_activity_score: 0 })
         
         let cancelCurrentAnalysis: (() => void) | null = null
@@ -1109,7 +1112,7 @@ export default {
                     title: '缺少分析模型',
                     message:
                         `以下模型不可用且无法自动下载:\n${detailLines}\n\n` +
-                        '请先安装 huggingface_hub 依赖并检查本地模型文件。'
+                        '请先检查 ModelScope 依赖和本地模型文件。'
                 })
                 return false
             }
@@ -1118,7 +1121,7 @@ export default {
                 title: '缺少分析模型',
                 message:
                     `检测到以下模型不可用:\n${detailLines}\n\n` +
-                    '是否自动下载缺失的模型？\n' +
+                    '是否从 ModelScope 自动下载缺失的模型？\n' +
                     '（下载大小约 400MB，需要网络连接）'
             })
             if (!doDownload) {
@@ -1611,7 +1614,7 @@ export default {
             currentTab, conversations, selectedConversationId, dates, loading, loadingSessions, error, analysis, subject, sessions,
             personaProfile, loadingPersonaProfile, personaProfileMeta,
             analysisResult, displayScore, showKeywordsDialog, showContextForm, isGlobalAnalyzing, isStopping, activeTimer, handleStopAnalysis, globalProgressPercent, globalProgressStep, isDownloadingModels, modelDownloadProgress, modelDownloadStep, modelDownloadTaskId, gpuMode,
-            hasConversations, hasFeatures, hasCachedAffinityAnalysis, featureStats, responseTimeStats, initiativeStats, wordCountsStats, activityCalendar,
+            hasConversations, hasFeatures, hasCachedAffinityAnalysis, featureStats, responseTimeStats, initiativeStats, wordCountsStats, displayWordRatioLabel, activityCalendar,
             responseTimeChart, activityCalendarChart, wordCountChart, stats, currentContactName, headerAvatarSrc, hasPreferenceKeywords, allDimensions, emotionalResonanceDisplaySubScores,
             currentRangeLabel, hasContentAnalysis, circumference, strokeDashoffset, formatNumber, formatTime, getResponseTimeLabel, getMergedResponseTimeLabel, getResponseTimePercent, onConversationChange, onDatesChange, handleExport, handleStartGlobalAnalysis, handleContextSaved, handleKeywordsUpdated,
             getScoreColor, scrollToDetails, handlePreferenceDisabledClick, onWordSelect, loadAnalysis, loadSessions, handleActivityYearChange

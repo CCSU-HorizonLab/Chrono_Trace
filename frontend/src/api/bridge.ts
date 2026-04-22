@@ -48,6 +48,7 @@ type PyWebViewApi = {
   get_settings: () => Promise<any>
   get_current_user_profile: (account_wxid?: string) => Promise<any>
   set_settings: (payload: Record<string, any>) => Promise<any>
+  update_model_root_dir: (new_dir: string) => Promise<any>
   // 仪表板统计
   get_dashboard_stats: () => Promise<any>
   // 文件/目录选择

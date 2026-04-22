@@ -23,6 +23,27 @@
             <p>💡 配置 LLM 模型后，AI 建议将使用大语言模型生成更智能的话术。支持远程 API（DeepSeek/OpenAI）和本地推理（Ollama/LM Studio）。</p>
           </div>
 
+          <div class="row">
+            <div class="lab">模型根目录</div>
+            <div class="path-input">
+              <CtField v-model="form.model_root_dir" placeholder="例如: D:\\ChronoTrace\\models" />
+              <CtButton
+                variant="ghost"
+                :disabled="modelRootBrowsing || modelRootMigrating"
+                @click.stop.prevent="selectModelRootDir"
+              >
+                {{ modelRootBrowsing ? '选择中...' : '浏览' }}
+              </CtButton>
+              <CtButton
+                :disabled="modelRootMigrating"
+                @click.stop.prevent="restoreDefaultModelRootDir"
+              >
+                默认
+              </CtButton>
+            </div>
+            <div class="path-hint">修改后会自动迁移已下载模型；若新目录下已存在同名模型目录，将阻止迁移以避免覆盖。</div>
+          </div>
+
           <!-- 引擎固定为 LLM -->
 
           <!-- 模型列表 -->
@@ -318,6 +339,8 @@ const loading = ref(false)
 const saving = ref(false)
 const scanning = ref(false)
 const browsingDir = ref(false)
+const modelRootBrowsing = ref(false)
+const modelRootMigrating = ref(false)
 const avatarRefreshLoading = ref(false)
 const avatarRefreshMessage = ref('')
 const avatarRefreshError = ref('')
@@ -326,6 +349,8 @@ const lastSaveTime = ref<string>('')
 const wechatAccounts = ref<WechatAccountOption[]>([])
 const activeAccountWxid = ref('')
 const hydratingForm = ref(false)
+const savedModelRootDir = ref('')
+const defaultModelRootDir = ref('')
 
 const form = reactive<{ 
   wechat_use_custom_path: boolean
@@ -333,12 +358,14 @@ const form = reactive<{
   wechat_user_wxid: string
   wechat_db_key: string
   analysis_device_mode: AnalysisDeviceMode
+  model_root_dir: string
 }>({
   wechat_use_custom_path: false,
   wechat_data_dir: '',
   wechat_user_wxid: '',
   wechat_db_key: '',
   analysis_device_mode: 'auto',
+  model_root_dir: '',
 })
 
 function mergeWechatAccounts(accounts: WechatAccountOption[]) {
@@ -510,6 +537,9 @@ async function onLoad() {
     if (s && typeof s === 'object') {
       mergeWechatAccounts(await enrichWechatAccountsWithProfiles((s.wechat_accounts || []) as WechatAccountOption[]))
       activeAccountWxid.value = String(s.wechat_active_account_wxid || '')
+      defaultModelRootDir.value = String(s.default_model_root_dir || '')
+      form.model_root_dir = String(s.model_root_dir || s.default_model_root_dir || '')
+      savedModelRootDir.value = form.model_root_dir
       const activeAccount =
         wechatAccounts.value.find((account) => account.wxid === activeAccountWxid.value) ||
         (wechatAccounts.value.length === 1 ? wechatAccounts.value[0] : null)
@@ -556,6 +586,43 @@ async function onSave() {
   saving.value = true
   try {
     await bridgeReady()
+    const targetModelRootDir = form.model_root_dir.trim() || defaultModelRootDir.value.trim()
+    if (targetModelRootDir && targetModelRootDir !== savedModelRootDir.value) {
+      const confirmed = await showConfirm({
+        title: '迁移模型目录',
+        message:
+          `模型目录将改为:\n${targetModelRootDir}\n\n` +
+          '程序会自动迁移已下载的分析模型到新位置。迁移失败时会保留原目录。是否继续？',
+      })
+      if (!confirmed) {
+        hydratingForm.value = true
+        form.model_root_dir = savedModelRootDir.value || defaultModelRootDir.value
+        queueMicrotask(() => { hydratingForm.value = false })
+        return
+      }
+
+      modelRootMigrating.value = true
+      let migrateRes: any
+      try {
+        migrateRes = await api.update_model_root_dir(targetModelRootDir)
+      } finally {
+        modelRootMigrating.value = false
+      }
+      if (!migrateRes?.ok) {
+        hydratingForm.value = true
+        form.model_root_dir = savedModelRootDir.value || defaultModelRootDir.value
+        queueMicrotask(() => { hydratingForm.value = false })
+        await showDialog({
+          title: '模型目录迁移失败',
+          message: migrateRes?.error || '无法迁移模型目录，请检查目标目录。',
+        })
+        return
+      }
+
+      form.model_root_dir = String(migrateRes.model_root_dir || targetModelRootDir)
+      savedModelRootDir.value = form.model_root_dir
+    }
+
     const wxid = form.wechat_user_wxid.trim() || activeAccountWxid.value.trim()
     const nextAccount: WechatAccountOption | null = wxid ? {
       ...(getActiveAccount() || {
@@ -584,12 +651,15 @@ async function onSave() {
       wechat_accounts: wechatAccounts.value,
       wechat_active_account_wxid: activeAccountWxid.value,
       analysis_device_mode: form.analysis_device_mode,
+      model_root_dir: form.model_root_dir.trim() || defaultModelRootDir.value.trim(),
     }
     
     console.log('[DEBUG] 自动保存设置:', settingsToSave)
     
     const result = await api.set_settings(settingsToSave)
     console.log('[DEBUG] 保存结果:', result)
+    savedModelRootDir.value = String(result?.model_root_dir || settingsToSave.model_root_dir || savedModelRootDir.value)
+    form.model_root_dir = savedModelRootDir.value
 
     window.dispatchEvent(new CustomEvent('chrono:wechat-settings-saved', {
       detail: { wxid: activeAccountWxid.value || wxid || '' },
@@ -603,6 +673,29 @@ async function onSave() {
   } finally {
     saving.value = false
   }
+}
+
+async function selectModelRootDir() {
+  if (modelRootBrowsing.value || modelRootMigrating.value) return
+  modelRootBrowsing.value = true
+  try {
+    await bridgeReady()
+    const result = await api.select_directory('选择模型根目录')
+    if (result?.path) {
+      form.model_root_dir = String(result.path)
+    } else if (result?.error) {
+      await showDialog('选择模型目录失败：' + result.error)
+    }
+  } catch (e) {
+    console.error('选择模型目录异常:', e)
+    await showDialog('选择模型目录出错：' + ((e as Error).message || '未知错误'))
+  } finally {
+    modelRootBrowsing.value = false
+  }
+}
+
+function restoreDefaultModelRootDir() {
+  form.model_root_dir = defaultModelRootDir.value || form.model_root_dir
 }
 
 // 文件选择功能

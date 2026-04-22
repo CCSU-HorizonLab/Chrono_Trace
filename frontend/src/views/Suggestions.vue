@@ -383,6 +383,7 @@ import { bridgeReady, api } from '@/api/bridge'
 import CtButton from '@/components/base/CtButton.vue'
 import CtAvatar from '@/components/base/CtAvatar.vue'
 import FiltersBar from '@/components/analytics/FiltersBar.vue'
+import { showConfirm, showDialog } from '@/utils/dialog'
 
 const router = useRouter()
 
@@ -414,6 +415,56 @@ const showLlmWarningDialog = ref(false)
 const showGeneratingDialog = ref(false)
 const generatingErrorDialog = ref(false)
 const generatingErrorMessage = ref('')
+
+function buildMissingModelLines(modelStatus: any): string {
+  const details = Array.isArray(modelStatus?.missing_details) ? modelStatus.missing_details : []
+  if (!details.length) {
+    return '分析模型未安装完整'
+  }
+
+  return details
+    .map((item: any) => {
+      const modelName = item?.model_name || item?.model_key || '未知模型'
+      const issue = item?.issue || '模型不可用'
+      return `- ${modelName}: ${issue}`
+    })
+    .join('\n')
+}
+
+async function ensureRealtimeAnalysisModelsReadyBeforeFloating(): Promise<boolean> {
+  try {
+    const modelStatus = await api.check_analysis_model_status()
+    if (modelStatus?.ok && modelStatus?.analysis_available) {
+      return true
+    }
+
+    const detailLines = buildMissingModelLines(modelStatus)
+    const shouldGoAnalytics = await showConfirm({
+      title: '缺少分析模型',
+      message:
+        `检测到当前分析模型未安装完整：\n${detailLines}\n\n` +
+        '进入实时监听前，请先前往“历史数据”页面，选择联系人后点击一次“开始分析”，按提示完成模型安装。\n\n' +
+        '现在跳转到历史数据页面吗？',
+    })
+
+    realtimeError.value = '缺少分析模型，请先前往历史数据页面完成安装'
+
+    if (shouldGoAnalytics) {
+      await router.push('/analytics')
+    }
+    return false
+  } catch (e) {
+    const errorMessage = (e as any)?.message || '未知错误'
+    await showDialog({
+      title: '无法检查分析模型',
+      message:
+        `分析模型状态检查失败: ${errorMessage}\n\n` +
+        '请先前往“历史数据”页面尝试开始分析；如果仍失败，再检查模型文件和 Python 依赖是否完整。',
+    })
+    realtimeError.value = '分析模型状态检查失败，请先前往历史数据页面检查安装'
+    return false
+  }
+}
 
 function goToSettings() {
   showLlmWarningDialog.value = false
@@ -555,6 +606,12 @@ async function startMonitoring() {
 
     realtimeError.value = ''
     realtimeState.status = 'searching'
+
+    const modelsReady = await ensureRealtimeAnalysisModelsReadyBeforeFloating()
+    if (!modelsReady) {
+      realtimeState.status = 'idle'
+      return
+    }
 
     window.sessionStorage.setItem('realtime_start_request', JSON.stringify({
       talkerName,

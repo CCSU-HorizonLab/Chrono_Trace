@@ -3,11 +3,12 @@ import json
 import os
 import logging
 import importlib
+import shutil
 import threading
 import time
 import re
 from pathlib import Path
-from ..config import SETTINGS_PATH, SENTIMENT_MODEL_DIR_PATH
+from ..config import SETTINGS_PATH
 from ..services.wechat.ingest_service import WeChatIngestService
 from ..services.wechat.path_finder import WeChatPathFinder
 from ..services.wechat.db.v4.contact import ContactDBV4
@@ -30,6 +31,18 @@ from ..services.wechat.account_settings import (
 from ..services.analysis.feature_extraction_config import (
     ANALYSIS_DEVICE_MODE_AUTO,
     normalize_analysis_device_mode,
+)
+from ..services.model_paths import (
+    EMBEDDING_MODEL_DIRNAME,
+    EMBEDDING_MODEL_REPO_ID,
+    MODEL_ROOT_DIR_KEY,
+    SENTIMENT_MODEL_DIRNAME,
+    SENTIMENT_MODEL_REPO_ID,
+    get_default_model_root_dir,
+    get_embedding_model_dir,
+    get_model_root_dir,
+    get_sentiment_model_dir,
+    normalize_model_root_dir,
 )
 
 logger = logging.getLogger(__name__)
@@ -57,6 +70,9 @@ class Bridge:
         self.settings = load_settings_from_file(self.settings_file)
         self.settings["analysis_device_mode"] = normalize_analysis_device_mode(
             self.settings.get("analysis_device_mode", ANALYSIS_DEVICE_MODE_AUTO)
+        )
+        self.settings[MODEL_ROOT_DIR_KEY] = normalize_model_root_dir(
+            self.settings.get(MODEL_ROOT_DIR_KEY)
         )
 
     def _save_settings(self):
@@ -111,115 +127,93 @@ class Bridge:
         from ..services.model_manager import ModelManager
 
         return ModelManager(
-            model_dir=str(SENTIMENT_MODEL_DIR_PATH),
-            repo_id="tingting11/chrono-trace-sentiment",
+            model_dir=str(get_sentiment_model_dir(self.settings)),
+            repo_id=SENTIMENT_MODEL_REPO_ID,
         )
 
     def _diagnose_embedding_model_status(self) -> dict[str, Any]:
-        diagnosis = {
-            "exists": False,
-            "has_config": False,
-            "has_weights": False,
-            "has_tokenizer": False,
-            "model_dir": None,
-            "repo_id": "shibing624/text2vec-base-chinese",
-            "version": None,
-            "issue": None,
-            "can_recover": True,
-        }
-        try:
-            from huggingface_hub import snapshot_download
+        from ..services.model_manager import ModelManager
 
-            local_path = snapshot_download(
-                "shibing624/text2vec-base-chinese",
-                local_files_only=True,
-            )
-            model_path = Path(local_path)
-            diagnosis["model_dir"] = str(model_path)
-            diagnosis["exists"] = model_path.exists()
-            diagnosis["has_config"] = (model_path / "config.json").exists()
-            diagnosis["has_weights"] = any(model_path.glob("*.safetensors")) or any(model_path.glob("*.bin"))
-            diagnosis["has_tokenizer"] = any(
-                (model_path / name).exists()
-                for name in (
-                    "tokenizer.json",
-                    "tokenizer_config.json",
-                    "vocab.txt",
-                    "vocab.json",
-                    "merges.txt",
-                    "special_tokens_map.json",
-                    "spiece.model",
-                )
-            )
-            if not diagnosis["has_config"]:
-                diagnosis["issue"] = f"嵌入模型缓存缺少 config.json: {model_path}"
-            elif not diagnosis["has_weights"]:
-                diagnosis["issue"] = f"嵌入模型缓存缺少权重文件(.safetensors/.bin): {model_path}"
-            elif not diagnosis["has_tokenizer"]:
-                diagnosis["issue"] = f"嵌入模型缓存缺少 tokenizer 文件: {model_path}"
-        except ImportError:
-            diagnosis["issue"] = "缺少 huggingface_hub 依赖，无法管理嵌入模型"
-            diagnosis["can_recover"] = False
-        except Exception as e:
-            diagnosis["issue"] = f"嵌入模型本地缓存不存在或不完整: {type(e).__name__}: {e}"
+        diagnosis = ModelManager(
+            model_dir=str(get_embedding_model_dir(self.settings)),
+            repo_id=EMBEDDING_MODEL_REPO_ID,
+        ).diagnose_model_status()
+        diagnosis["can_recover"] = True
         return diagnosis
 
     def _download_embedding_model(self, progress_callback=None) -> dict[str, Any]:
-        old_endpoint = os.environ.get("HF_ENDPOINT")
-        try:
-            try:
-                from huggingface_hub import snapshot_download
-            except ImportError:
-                return {
-                    "success": False,
-                    "error": "缺少 huggingface_hub 依赖，无法下载嵌入模型",
-                    "error_code": "HF_NOT_INSTALLED",
-                }
+        from ..services.model_manager import ModelManager
 
-            if progress_callback:
-                progress_callback("正在准备下载文本向量模型...", 5.0)
+        return ModelManager(
+            model_dir=str(get_embedding_model_dir(self.settings)),
+            repo_id=EMBEDDING_MODEL_REPO_ID,
+        ).download_model(progress_callback=progress_callback)
 
-            sentiment_manager = self._get_sentiment_model_manager()
-            if sentiment_manager.mirror_endpoint:
-                os.environ["HF_ENDPOINT"] = sentiment_manager.mirror_endpoint
+    def _get_model_root_dir(self) -> Path:
+        return get_model_root_dir(self.settings)
 
-            if progress_callback:
-                progress_callback("正在下载文本向量模型...", 35.0)
+    def _migrate_model_root_dir(self, target_dir: str) -> dict[str, Any]:
+        current_root = self._get_model_root_dir()
+        next_root = Path(normalize_model_root_dir(target_dir))
+        next_root.mkdir(parents=True, exist_ok=True)
 
-            snapshot_download("shibing624/text2vec-base-chinese")
-
-            if progress_callback:
-                progress_callback("正在校验文本向量模型...", 90.0)
-
-            diagnosis = self._diagnose_embedding_model_status()
-            if diagnosis["issue"]:
-                return {
-                    "success": False,
-                    "error": diagnosis["issue"],
-                    "error_code": "MODEL_VALIDATION_FAILED",
-                }
-
-            if progress_callback:
-                progress_callback("文本向量模型下载完成", 100.0)
-
+        if current_root == next_root:
+            self.settings[MODEL_ROOT_DIR_KEY] = str(next_root)
+            self._save_settings()
             return {
-                "success": True,
-                "error": None,
-                "error_code": None,
-                "model_dir": diagnosis.get("model_dir"),
+                "ok": True,
+                "model_root_dir": str(next_root),
+                "migrated_models": [],
+                "skipped_models": [SENTIMENT_MODEL_DIRNAME, EMBEDDING_MODEL_DIRNAME],
+            }
+
+        moved: list[tuple[Path, Path]] = []
+        skipped: list[str] = []
+        try:
+            for dirname in (SENTIMENT_MODEL_DIRNAME, EMBEDDING_MODEL_DIRNAME):
+                source = current_root / dirname
+                destination = next_root / dirname
+                if not source.exists():
+                    skipped.append(dirname)
+                    continue
+                if destination.exists():
+                    raise FileExistsError(f"目标目录已存在: {destination}")
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(source), str(destination))
+                moved.append((source, destination))
+
+            self.settings[MODEL_ROOT_DIR_KEY] = str(next_root)
+            self._save_settings()
+            return {
+                "ok": True,
+                "model_root_dir": str(next_root),
+                "migrated_models": [dst.name for _, dst in moved],
+                "skipped_models": skipped,
+            }
+        except Exception:
+            for source, destination in reversed(moved):
+                if destination.exists() and not source.exists():
+                    source.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.move(str(destination), str(source))
+            raise
+
+    def update_model_root_dir(self, new_dir: str) -> dict[str, Any]:
+        try:
+            result = self._migrate_model_root_dir(new_dir)
+            return {
+                **result,
+                "sentiment_model_dir": str(get_sentiment_model_dir(self.settings)),
+                "embedding_model_dir": str(get_embedding_model_dir(self.settings)),
             }
         except Exception as e:
-            logger.error(f"[Bridge] 嵌入模型下载失败: {type(e).__name__}: {e}", exc_info=True)
+            logger.error(f"[Bridge] 更新模型目录失败: {type(e).__name__}: {e}", exc_info=True)
             return {
-                "success": False,
+                "ok": False,
                 "error": f"{type(e).__name__}: {e}",
-                "error_code": "NETWORK_ERROR",
+                "model_root_dir": str(self._get_model_root_dir()),
+                "migrated_models": [],
+                "skipped_models": [],
             }
-        finally:
-            if old_endpoint is not None:
-                os.environ["HF_ENDPOINT"] = old_endpoint
-            elif "HF_ENDPOINT" in os.environ:
-                del os.environ["HF_ENDPOINT"]
 
     def ping(self) -> str:
         return "pong"
@@ -886,10 +880,15 @@ class Bridge:
         self.settings["analysis_device_mode"] = normalize_analysis_device_mode(
             self.settings.get("analysis_device_mode", ANALYSIS_DEVICE_MODE_AUTO)
         )
+        self.settings[MODEL_ROOT_DIR_KEY] = normalize_model_root_dir(self.settings.get(MODEL_ROOT_DIR_KEY))
         payload = dict(self.settings)
         active_account = self._get_active_wechat_account() or {}
         payload[WECHAT_ACCOUNTS_KEY] = self._get_wechat_accounts()
         payload[WECHAT_ACTIVE_ACCOUNT_KEY] = self._get_active_wechat_account_wxid()
+        payload[MODEL_ROOT_DIR_KEY] = self.settings[MODEL_ROOT_DIR_KEY]
+        payload["default_model_root_dir"] = str(get_default_model_root_dir())
+        payload["sentiment_model_dir"] = str(get_sentiment_model_dir(self.settings))
+        payload["embedding_model_dir"] = str(get_embedding_model_dir(self.settings))
         payload["wechat_use_custom_path"] = str(active_account.get("source") or "") == "custom"
         payload["wechat_data_dir"] = active_account.get("wechat_dir") or ""
         payload["wechat_user_wxid"] = active_account.get("wxid") or ""
@@ -989,6 +988,8 @@ class Bridge:
         payload = dict(payload)
         if "analysis_device_mode" in payload:
             payload["analysis_device_mode"] = normalize_analysis_device_mode(payload["analysis_device_mode"])
+        if MODEL_ROOT_DIR_KEY in payload:
+            payload[MODEL_ROOT_DIR_KEY] = normalize_model_root_dir(payload[MODEL_ROOT_DIR_KEY])
 
         if WECHAT_ACCOUNTS_KEY in payload:
             self.settings[WECHAT_ACCOUNTS_KEY] = normalize_wechat_accounts(payload.pop(WECHAT_ACCOUNTS_KEY))
@@ -1024,7 +1025,12 @@ class Bridge:
 
         self.settings.update(payload)
         self._save_settings()
-        return {"saved": True, "payload": payload, **self._serialize_wechat_accounts()}
+        return {
+            "saved": True,
+            "payload": payload,
+            "model_root_dir": self.settings.get(MODEL_ROOT_DIR_KEY),
+            **self._serialize_wechat_accounts(),
+        }
     
     def select_file(self, title: str = "选择文件", file_types: str = "*.*") -> dict[str, Any]:
         """
@@ -2728,52 +2734,6 @@ class Bridge:
         except Exception as e:
             logger.error(f"[Bridge] 获取 GPU 环境安装进度失败: {e}")
             return {"ok": False, "error": str(e)}
-
-    def check_analysis_model_status(self) -> dict[str, Any]:
-        """检查分析所需模型是否在本地缓存中可用。"""
-        try:
-            from ..services.model_manager import ModelManager
-
-            sentiment_model_ready = ModelManager(
-                model_dir=str(SENTIMENT_MODEL_DIR_PATH),
-                repo_id="tingting11/chrono-trace-sentiment",
-            ).ensure_model_exists()
-
-            try:
-                from huggingface_hub import snapshot_download
-
-                snapshot_download(
-                    "shibing624/text2vec-base-chinese",
-                    local_files_only=True,
-                )
-                embedding_model_ready = True
-            except Exception:
-                embedding_model_ready = False
-
-            missing_models = []
-
-            if not sentiment_model_ready:
-                missing_models.append("sentiment")
-            if not embedding_model_ready:
-                missing_models.append("embedding")
-
-            return {
-                "ok": True,
-                "analysis_available": sentiment_model_ready and embedding_model_ready,
-                "sentiment_model_ready": sentiment_model_ready,
-                "embedding_model_ready": embedding_model_ready,
-                "missing_models": missing_models,
-            }
-        except Exception as e:
-            logger.error(f"[Bridge] 分析模型状态检查失败: {e}")
-            return {
-                "ok": False,
-                "analysis_available": False,
-                "sentiment_model_ready": False,
-                "embedding_model_ready": False,
-                "missing_models": ["sentiment", "embedding"],
-                "error": str(e),
-            }
 
     # ==================== 好感度分析相关 ====================
 

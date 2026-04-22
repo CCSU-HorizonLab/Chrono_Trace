@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ...db.connection import get_db
+from ..model_paths import EMBEDDING_MODEL_REPO_ID, get_embedding_model_dir
 from .feature_extraction_config import (
     ANALYSIS_DEVICE_MODE_AUTO,
     ANALYSIS_DEVICE_MODE_CPU,
@@ -79,18 +80,10 @@ class SentimentService:
         if self._embedding_model_path and Path(self._embedding_model_path).exists():
             return self._embedding_model_path
 
-        try:
-            from huggingface_hub import snapshot_download
-
-            local_path = snapshot_download(
-                "shibing624/text2vec-base-chinese",
-                local_files_only=True,
-            )
-            if local_path and Path(local_path).exists():
-                self._embedding_model_path = str(local_path)
-                return self._embedding_model_path
-        except Exception:
-            return None
+        local_path = get_embedding_model_dir()
+        if local_path.exists():
+            self._embedding_model_path = str(local_path)
+            return self._embedding_model_path
 
         return None
 
@@ -143,13 +136,11 @@ class SentimentService:
         local_model_path = self._resolve_local_embedding_model_path()
         if self._embedding_model is None and not local_model_path:
             logger.error(
-                "[情感服务] 本地未找到 embedding 模型 "
-                "(shibing624/text2vec-base-chinese) 的缓存。"
-                "请先通过“历史记录分析”页面的自动下载功能获取模型，"
-                "或手动运行: python -c \"from huggingface_hub import snapshot_download; "
-                "snapshot_download('shibing624/text2vec-base-chinese')\""
+                "[情感服务] 本地未找到 embedding 模型 (%s)。"
+                "请先通过“历史记录分析”页面的自动下载功能从 ModelScope 获取模型。",
+                EMBEDDING_MODEL_REPO_ID,
             )
-            logger.error("[情感服务] 本地未找到 embedding 模型缓存，跳过运行时联网加载")
+            logger.error("[情感服务] 本地未找到 embedding 模型目录，跳过运行时联网加载")
             self._embedding_load_failed = True
             return
 

@@ -10,6 +10,7 @@ SPEC_FILE = globals().get("__file__") or globals().get("SPEC")
 PROJECT_ROOT = Path(SPEC_FILE).resolve().parents[1] if SPEC_FILE else Path(os.getcwd()).resolve()
 APP_NAME = "Chrono Trace"
 FRONTEND_DIST_DIR = PROJECT_ROOT / "frontend" / "webdist"
+APP_ICON = PROJECT_ROOT / "chrono Trace.ico"
 
 if not FRONTEND_DIST_DIR.exists():
     raise SystemExit(
@@ -71,6 +72,7 @@ exe = EXE(
     upx=False,
     console=False,
     disable_windowed_traceback=False,
+    icon=str(APP_ICON) if APP_ICON.exists() else None,
 )
 
 coll = COLLECT(

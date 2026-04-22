@@ -1,5 +1,6 @@
 #define AppName "Chrono Trace"
 #define AppExeName "Chrono Trace.exe"
+#define AppIconFile "..\chrono Trace.ico"
 
 #ifndef BuildRoot
   #define BuildRoot "..\release\pyinstaller\Chrono Trace"
@@ -22,6 +23,7 @@ AppId={{6FEEB5EC-97A9-4E7B-BE78-EE673FB5BDA0}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppPublisher=Chrono Trace
+SetupIconFile={#AppIconFile}
 DefaultDirName={localappdata}\Programs\{#AppName}
 DefaultGroupName={#AppName}
 OutputDir=..\release\installer

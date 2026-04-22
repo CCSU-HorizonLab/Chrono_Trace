@@ -21,7 +21,11 @@ Chrono Trace 是一个基于 `PyWebView + Vue 3 + Python` 的 Windows 桌面应�
 
 默认情况下，聊天数据解密、导入、存储和分析都在本机完成。只有在你启用 LLM 建议时，系统才会把生成建议所需的必要上下文发送到你配置的模型接口。
 
-本地数据默认写入 `backend/data/chrono_trace.db`。
+本地数据默认写入：
+
+```text
+%LOCALAPPDATA%\Chrono Trace\chrono_trace.db
+```
 
 ## 核心能力
 
@@ -267,11 +271,46 @@ pytest backend/tests/
 - `backend/app/webview/bridge.py`：前后端桥接接口
 - `frontend/src/views/`：主要页面入口
 
+### 打包发布
+
+项目当前已经接入 Windows 安装包打包链路。
+
+一键打包：
+
+```powershell
+.\build_release.ps1
+```
+
+或直接双击：
+
+```text
+build_release.bat
+```
+
+核心打包脚本位于：
+
+```text
+packaging\build_release.ps1
+```
+
+打包产物位置：
+
+```text
+release\pyinstaller\Chrono Trace\
+release\installer\
+```
+
+其中安装包用于正式分发：
+
+```text
+release\installer\ChronoTraceSetup-版本号.exe
+```
+
 ### 调试建议
 
 - 导入问题优先看路径扫描、密钥校验和数据库解密日志
 - 实时监听问题优先确认微信窗口可见，再看 `realtime` 相关日志
-- 如果导入成功但结果异常，先直接检查 `backend/data/chrono_trace.db`
+- 如果导入成功但结果异常，先直接检查本地用户数据目录中的 SQLite 数据库
 
 ## 常见问题
 

@@ -1,23 +1,87 @@
-# Chrono Trace Packaging
+# Chrono Trace 打包说明
 
-## Build flow
+## 打包流程
 
-1. Build the frontend into `frontend/webdist`
-2. Freeze `app.py` with PyInstaller using `packaging/chrono_trace.spec`
-3. Build the installer with Inno Setup using `packaging/ChronoTrace.iss`
+当前正式打包链路分三步：
 
-## One-command build
+1. 将前端构建到 `frontend/webdist`
+2. 使用 `packaging/chrono_trace.spec` 通过 PyInstaller 打包 `app.py`
+3. 使用 `packaging/ChronoTrace.iss` 通过 Inno Setup 生成安装包
+
+## 一键打包
+
+推荐直接在项目根目录运行：
 
 ```powershell
-.\packaging\build_release.ps1
+.\build_release.ps1
 ```
 
-## Optional WebView2 bootstrapper
+如果你习惯双击脚本，也可以直接运行：
 
-If you want the installer to bootstrap WebView2 automatically when it is missing, place:
+```text
+build_release.bat
+```
+
+上面两个入口最终都会调用：
+
+```text
+packaging\build_release.ps1
+```
+
+## 常用参数
+
+只生成 PyInstaller 目录版，不生成安装器：
+
+```powershell
+.\build_release.ps1 -SkipInstaller
+```
+
+跳过前端 `npm ci`：
+
+```powershell
+.\build_release.ps1 -SkipFrontendInstall
+```
+
+手动指定版本号：
+
+```powershell
+.\build_release.ps1 -Version 0.1.1
+```
+
+## 产物位置
+
+PyInstaller 目录版输出到：
+
+```text
+release\pyinstaller\Chrono Trace\
+```
+
+安装包输出到：
+
+```text
+release\installer\
+```
+
+正式交付时，优先使用安装包：
+
+```text
+release\installer\ChronoTraceSetup-版本号.exe
+```
+
+不要直接分发：
+
+```text
+release\build\
+```
+
+那是 PyInstaller 中间产物。
+
+## 可选：自动补装 WebView2
+
+如果希望安装包在目标机器缺少 WebView2 Runtime 时自动补装，请将下面这个文件放到：
 
 ```text
 packaging\third_party\MicrosoftEdgeWebview2Setup.exe
 ```
 
-The Inno Setup script detects the file and wires it into the install flow automatically.
+Inno Setup 脚本会自动检测并接入安装流程。

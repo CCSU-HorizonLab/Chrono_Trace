@@ -147,7 +147,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, reactive, ref } from 'vue'
 import { bridgeReady, api } from '@/api/bridge'
-import { showConfirm } from '@/utils/dialog'
+import { showConfirm, showDialog } from '@/utils/dialog'
 import CtAccountSelector from '@/components/base/CtAccountSelector.vue'
 import { clearWechatAccountProfileCache, enrichWechatAccountsWithProfiles } from '@/utils/wechatAccounts'
 
@@ -340,6 +340,28 @@ async function detectWechatPath(options?: { silent?: boolean; accountWxid?: stri
   }
 }
 
+async function promptManualWechatPathSelection(context: 'startup' | 'verify') {
+  const confirmed = await showConfirm({
+    title: '未找到微信数据库',
+    message:
+      context === 'verify'
+        ? '程序已经验证了密钥，但没有自动找到微信数据库目录。\n\n通常需要选择 WeChat Files 目录，再由程序自动识别账号和数据库。\n常见位置：\nC:\\Users\\你的用户名\\Documents\\WeChat Files\n\n现在就手动选择目录吗？'
+        : '程序暂时没有自动找到微信数据库目录。\n\n通常需要选择 WeChat Files 目录，再由程序自动识别账号和数据库。\n常见位置：\nC:\\Users\\你的用户名\\Documents\\WeChat Files\n\n现在就手动选择目录吗？',
+  })
+
+  if (!confirmed) {
+    wechatErr.value = '未能自动检测到微信路径，请点击“更改”手动选择 WeChat Files 目录。'
+    addLog('用户取消手动选择微信目录，等待后续操作。')
+    return
+  }
+
+  await showDialog({
+    title: '手动匹配目录',
+    message: '请在下一步选择微信的 WeChat Files 目录。选中后程序会自动扫描其中的账号与数据库文件。',
+  })
+  await selectCustomPath()
+}
+
 async function loadSavedPaths() {
   try {
     await bridgeReady()
@@ -361,6 +383,7 @@ async function loadSavedPaths() {
       const detected = await detectWechatPath({ accountWxid: targetWxid || undefined })
       if (!detected) {
         addLog('暂未自动检测到微信数据目录，可稍后手动选择。')
+        await promptManualWechatPathSelection('startup')
       }
     }
 
@@ -470,6 +493,7 @@ async function onVerifyAndUnpack() {
       } else {
         wechatErr.value = '未能自动检测到微信路径，请手动选择数据目录。'
         addLog('自动检测微信路径失败，请手动指定目录。')
+        await promptManualWechatPathSelection('verify')
       }
     }
   } catch (error: any) {
@@ -654,13 +678,32 @@ async function handleGlobalAccountChanged() {
   }
 }
 
+async function handleWechatSettingsSaved(event?: Event) {
+  const detail = (event as CustomEvent | undefined)?.detail || {}
+  await loadWechatAccounts()
+  const nextWxid =
+    String(detail.wxid || '').trim() ||
+    activeAccountWxid.value ||
+    selectedWxid.value ||
+    ''
+
+  if (!nextWxid) return
+
+  hydrateAccountState(nextWxid)
+  if (!pathInfo.value) {
+    await detectWechatPath({ silent: true, accountWxid: nextWxid })
+  }
+}
+
 onMounted(() => {
   loadSavedPaths()
   window.addEventListener('chrono:wechat-account-changed', handleGlobalAccountChanged)
+  window.addEventListener('chrono:wechat-settings-saved', handleWechatSettingsSaved)
 })
 
 onUnmounted(() => {
   window.removeEventListener('chrono:wechat-account-changed', handleGlobalAccountChanged)
+  window.removeEventListener('chrono:wechat-settings-saved', handleWechatSettingsSaved)
 })
 </script>
 

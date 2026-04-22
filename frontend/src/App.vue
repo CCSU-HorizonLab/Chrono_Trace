@@ -138,6 +138,17 @@ async function handleProfileRefresh(event?: Event) {
   ])
 }
 
+async function handleWechatSettingsSaved(event?: Event) {
+  const detail = (event as CustomEvent | undefined)?.detail || {}
+  if (detail.wxid) {
+    activeAccountWxid.value = detail.wxid
+  }
+  await Promise.all([
+    loadWechatAccounts(),
+    loadCurrentUserProfile(),
+  ])
+}
+
 watch(() => route.fullPath, () => {
   if (!isFloatingMode.value) {
     loadWechatAccounts()
@@ -147,11 +158,13 @@ watch(() => route.fullPath, () => {
 
 onMounted(() => {
   window.addEventListener('chrono:user-avatar-refresh', handleProfileRefresh)
+  window.addEventListener('chrono:wechat-settings-saved', handleWechatSettingsSaved)
   loadWechatAccounts()
 })
 
 onUnmounted(() => {
   window.removeEventListener('chrono:user-avatar-refresh', handleProfileRefresh)
+  window.removeEventListener('chrono:wechat-settings-saved', handleWechatSettingsSaved)
 })
 
 </script>

@@ -537,8 +537,16 @@ async function autoSave() {
   
   // 500ms 后自动保存
   autoSaveTimer.value = window.setTimeout(async () => {
+    autoSaveTimer.value = null
     await onSave()
   }, 500)
+}
+
+async function flushPendingSave() {
+  if (!autoSaveTimer.value) return
+  clearTimeout(autoSaveTimer.value)
+  autoSaveTimer.value = null
+  await onSave()
 }
 
 async function onSave() {
@@ -582,6 +590,10 @@ async function onSave() {
     
     const result = await api.set_settings(settingsToSave)
     console.log('[DEBUG] 保存结果:', result)
+
+    window.dispatchEvent(new CustomEvent('chrono:wechat-settings-saved', {
+      detail: { wxid: activeAccountWxid.value || wxid || '' },
+    }))
     
     // 更新保存时间
     const now = new Date()
@@ -740,6 +752,7 @@ async function refreshContactAvatars() {
 async function handleAccountSelectValue(wxid: string) {
   if (!wxid) return
 
+  await flushPendingSave()
   await bridgeReady()
   const result = await api.set_active_wechat_account(wxid)
   if (!result?.ok) return
@@ -836,6 +849,7 @@ const PROVIDER_CONFIG = {
 } as const
 
 onUnmounted(() => {
+  void flushPendingSave()
   document.removeEventListener('click', handleDropdownClickOutside)
   window.removeEventListener('chrono:wechat-account-changed', handleGlobalAccountChanged)
 })

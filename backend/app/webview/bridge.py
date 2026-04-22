@@ -1307,7 +1307,10 @@ class Bridge:
                 "success": result['success'],
                 "batch_id": result.get('batch_id'),
                 "message": result.get('message'),
-                "error": result.get('error')
+                "error": result.get('error'),
+                "uia_recovery_required": result.get('uia_recovery_required', False),
+                "uia_recovery_phase": result.get('uia_recovery_phase', ''),
+                "uia_recovery_prompt": result.get('uia_recovery_prompt', ''),
             }
         except Exception as e:
             import traceback
@@ -1317,6 +1320,31 @@ class Bridge:
                 "ok": False,
                 "success": False,
                 "error": str(e)
+            }
+
+    def run_realtime_uia_recovery(self) -> dict[str, Any]:
+        """Run the pending WeChat UIA recovery flow after the user confirms it in the frontend."""
+        try:
+            from ..services.realtime.monitor_service import RealtimeMonitorService
+
+            logger.debug("[Bridge] 执行实时监听 UIA 自动修复")
+            monitor_service = RealtimeMonitorService()
+            result = monitor_service.run_confirmed_uia_recovery()
+            return {
+                "ok": result.get("success", False),
+                "success": result.get("success", False),
+                "message": result.get("message", ""),
+                "error": result.get("error", ""),
+                "final_status": result.get("final_status", ""),
+            }
+        except Exception as e:
+            import traceback
+            logger.error(f"[Bridge] 执行 UIA 自动修复异常: {e}")
+            traceback.print_exc()
+            return {
+                "ok": False,
+                "success": False,
+                "error": str(e),
             }
     
     def stop_realtime_monitor(self, user_chat_history: Optional[list[dict]] = None) -> dict[str, Any]:
@@ -1392,6 +1420,9 @@ class Bridge:
                 "model_ready": status.get('model_ready', False),
                 "chat_ready": status.get('chat_ready', False),
                 "chat_error": status.get('chat_error', ''),
+                "uia_recovery_required": status.get('uia_recovery_required', False),
+                "uia_recovery_in_progress": status.get('uia_recovery_in_progress', False),
+                "uia_recovery_phase": status.get('uia_recovery_phase', ''),
                 "polling_alive": status.get('polling_alive', True),
                 "provider": status.get('provider', ''),
                 "listener_profile": status.get('listener_profile', ''),

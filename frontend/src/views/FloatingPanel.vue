@@ -349,6 +349,7 @@ import { useRouter } from 'vue-router'
 import { bridgeReady, api } from '@/api/bridge'
 import * as echarts from 'echarts'
 import CtAvatar from '@/components/base/CtAvatar.vue'
+import { showConfirm, showDialog } from '@/utils/dialog'
 
 const router = useRouter()
 
@@ -445,6 +446,8 @@ const realtimeState = reactive({
 })
 
 const chatError = ref('')
+let uiaRecoveryPromptOpen = false
+let uiaRecoveryPromptSuppressed = false
 
 const llmModels = ref<any[]>([])
 const activeModelId = ref<number | null>(null)
@@ -772,34 +775,110 @@ async function applyMonitoringStatus(status: any) {
   }
 }
 
-async function startPendingMonitoring(talkerName: string, requestedAccountWxid = '') {
+async function promptAndRunUiaRecovery(talkerName: string, requestedAccountWxid = ''): Promise<boolean> {
+  if (uiaRecoveryPromptOpen) {
+    return false
+  }
+  uiaRecoveryPromptOpen = true
+
+  try {
+    const confirmed = await showConfirm({
+      title: '确认自动修复',
+      message: '检测到微信 UI 树没有展开。继续后，程序会自动关闭微信、打开 Windows 讲述人，并重新启动微信。请在微信窗口完成登录后再回到这里。是否继续？',
+    })
+    if (!confirmed) {
+      uiaRecoveryPromptSuppressed = true
+      chatError.value = '已取消自动修复。'
+      return false
+    }
+
+    uiaRecoveryPromptSuppressed = false
+    chatError.value = '已确认自动修复，正在准备关闭微信并启动讲述人...'
+    let progressTimer: number | null = window.setInterval(async () => {
+      try {
+        const status = await api.get_realtime_status()
+        if (status?.chat_error) {
+          chatError.value = status.chat_error
+        }
+      } catch (_e) {
+        // 进度轮询失败时不打断修复流程
+      }
+    }, 1200)
+
+    try {
+      const result = await api.run_realtime_uia_recovery()
+      if (!(result.success || result.ok)) {
+        const message = result.error || '自动修复未成功完成。'
+        chatError.value = message
+        await showDialog({
+          title: '请手动修复',
+          message,
+        })
+        return false
+      }
+    } finally {
+      if (progressTimer !== null) {
+        window.clearInterval(progressTimer)
+        progressTimer = null
+      }
+    }
+
+    return await startPendingMonitoring(talkerName, requestedAccountWxid, false)
+  } finally {
+    uiaRecoveryPromptOpen = false
+  }
+}
+
+async function startPendingMonitoring(talkerName: string, requestedAccountWxid = '', allowRecoveryPrompt = true) {
   activeAccountWxid.value = requestedAccountWxid || activeAccountWxid.value
   realtimeState.talkerName = talkerName
   contactAvatar.value = ''
   realtimeState.status = 'searching'
-  chatError.value = ''
+  uiaRecoveryPromptSuppressed = false
+  chatError.value = '正在准备监听对象...'
 
   const resumeMode = await maybeResolveResumeMode(talkerName)
   if (!resumeMode) {
     return false
   }
 
-  const result = await api.start_realtime_monitor(talkerName, resumeMode, activeAccountWxid.value || undefined)
-  if (!(result.success || result.ok)) {
-    chatError.value = result.error || result.message || '启动监听失败'
-    return false
-  }
+  let progressTimer: number | null = window.setInterval(async () => {
+    try {
+      const status = await api.get_realtime_status()
+      if (status?.chat_error) {
+        chatError.value = status.chat_error
+      }
+    } catch (_e) {
+      // 启动期间状态探测失败不打断主流程
+    }
+  }, 1200)
 
-  await applyMonitoringStatus({
-    ok: true,
-    is_monitoring: true,
-    account_wxid: activeAccountWxid.value,
-    talker_display_name: talkerName,
-    batch_id: result.batch_id,
-    message_count: 0,
-    chat_error: '',
-  })
-  return true
+  try {
+    const result = await api.start_realtime_monitor(talkerName, resumeMode, activeAccountWxid.value || undefined)
+    if (!(result.success || result.ok)) {
+      chatError.value = result.error || result.message || '启动监听失败'
+      if (allowRecoveryPrompt && result.uia_recovery_required) {
+        return await promptAndRunUiaRecovery(talkerName, requestedAccountWxid)
+      }
+      return false
+    }
+
+    await applyMonitoringStatus({
+      ok: true,
+      is_monitoring: true,
+      account_wxid: activeAccountWxid.value,
+      talker_display_name: talkerName,
+      batch_id: result.batch_id,
+      message_count: 0,
+      chat_error: '',
+    })
+    return true
+  } finally {
+    if (progressTimer !== null) {
+      window.clearInterval(progressTimer)
+      progressTimer = null
+    }
+  }
 }
 
 // ========== 生命周期 ==========
@@ -1301,6 +1380,24 @@ function startPolling() {
           chatError.value = s.chat_error
         } else if (s.chat_ready) {
           chatError.value = ''
+        }
+        if (!s.uia_recovery_required) {
+          uiaRecoveryPromptSuppressed = false
+        }
+        if (
+          s.uia_recovery_required
+          && !s.uia_recovery_in_progress
+          && !uiaRecoveryPromptOpen
+          && !uiaRecoveryPromptSuppressed
+        ) {
+          notMonitoringCount = 0
+          const recovered = await promptAndRunUiaRecovery(
+            realtimeState.talkerName,
+            activeAccountWxid.value || '',
+          )
+          if (recovered) {
+            return
+          }
         }
         if (!s.is_monitoring) {
           notMonitoringCount++

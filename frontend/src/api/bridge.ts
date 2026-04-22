@@ -58,6 +58,7 @@ type PyWebViewApi = {
   start_realtime_monitor: (talker_display_name: string, resume_mode?: string, account_wxid?: string) => Promise<any>
   stop_realtime_monitor: (user_chat_history?: any[]) => Promise<any>
   get_realtime_status: () => Promise<any>
+  run_realtime_uia_recovery: () => Promise<any>
   get_realtime_messages: (batch_id: string, limit?: number) => Promise<any>
   get_realtime_resume_info: (talker_display_name: string, threshold_seconds?: number, account_wxid?: string) => Promise<any>
   run_realtime_backfill: (

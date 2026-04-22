@@ -66,6 +66,9 @@ class RealtimeMonitorService:
             self._chat_ui_inaccessible = False
             self._uia_recovery_attempts = 0
             self._last_uia_recovery = None
+            self._uia_recovery_required = False
+            self._uia_recovery_in_progress = False
+            self._uia_recovery_context = {}
             self._start_time = 0                # 开始监听时间戳
             self._last_known_ts = 0
             self._chat_timed_out = False
@@ -161,6 +164,9 @@ class RealtimeMonitorService:
             self._reset_wechat_instance()
             self._uia_recovery_attempts = 0
             self._last_uia_recovery = None
+            self._uia_recovery_required = False
+            self._uia_recovery_in_progress = False
+            self._uia_recovery_context = {}
             if self.wx is None:
                 _print("[RealtimeMonitorService] 初始化监听后端...")
                 try:
@@ -170,6 +176,9 @@ class RealtimeMonitorService:
                         'success': False,
                         'message': '监听后端初始化失败',
                         'error': self._format_listener_init_error(e),
+                        'uia_recovery_required': self._uia_recovery_required,
+                        'uia_recovery_phase': (self._uia_recovery_context or {}).get('phase', ''),
+                        'uia_recovery_prompt': self._chat_error,
                     }
             
             # 3. 生成批次ID
@@ -349,55 +358,111 @@ class RealtimeMonitorService:
         return self.wx
 
     def _attempt_auto_recover_shell_only_uia(self, phase: str, error_text: str = "") -> bool:
-        """Try one best-effort WeChat relaunch with Narrator when UIA only exposes shell panes."""
+        """Mark shell-only UIA recovery as pending and wait for explicit user confirmation."""
         if self._uia_recovery_attempts >= 1:
             _print("[RealtimeMonitorService] UIA 自动修复已尝试过，跳过重复恢复")
             return False
+
+        self._uia_recovery_attempts += 1
+        self._uia_recovery_required = True
+        self._uia_recovery_in_progress = False
+        self._uia_recovery_context = {
+            "phase": phase,
+            "error_text": error_text,
+        }
+        self._chat_error = (
+            "检测到微信 UI 树没有展开。请先确认自动修复；确认后程序会关闭微信、打开讲述人并重新启动微信。"
+        )
+        _print(
+            f"[RealtimeMonitorService] 检测到 shell-only UIA，等待用户确认自动修复 "
+            f"(phase={phase}, error={error_text})"
+        )
+        return False
+
+    def run_confirmed_uia_recovery(self) -> dict:
+        """Run the UIA recovery flow after the user confirms it in the frontend."""
+        if self._uia_recovery_in_progress:
+            return {
+                "success": False,
+                "message": "自动修复正在进行中",
+                "error": "自动修复正在进行中",
+            }
+
+        if not self._uia_recovery_required and not self._uia_recovery_context:
+            return {
+                "success": False,
+                "message": "当前没有待确认的自动修复任务",
+                "error": "当前没有待确认的自动修复任务",
+            }
 
         try:
             from .providers.recovery import recover_shell_only_wechat_uia
         except Exception as exc:
             _print(f"[RealtimeMonitorService] 无法加载 UIA 恢复模块: {exc}")
-            return False
+            return {
+                "success": False,
+                "message": "无法加载自动修复模块",
+                "error": str(exc),
+            }
 
-        self._uia_recovery_attempts += 1
-        self._chat_error = "检测到微信 UI 树只有外层壳窗口，正在尝试自动修复..."
-        _print(
-            f"[RealtimeMonitorService] 检测到 shell-only UIA，开始自动修复 "
-            f"(phase={phase}, error={error_text})"
-        )
+        self._uia_recovery_required = False
+        self._uia_recovery_in_progress = True
+        self._chat_error = "已确认自动修复，正在准备关闭微信并启动讲述人..."
+
+        def on_progress(step: str, message: str, extra: dict) -> None:
+            del extra
+            self._chat_error = message
+            _print(f"[RealtimeMonitorService] UIA 自动修复进度[{step}]: {message}")
 
         try:
             payload = recover_shell_only_wechat_uia(
                 recover=True,
-                stop_narrator_after_check=True,
+                recovery_mode="relaunch_with_narrator",
+                wait_after_launch=3.0,
+                probe_interval=3.0,
+                max_probes=20,
+                stop_narrator_on_success=True,
+                progress_callback=on_progress,
             )
         except Exception as exc:
-            self._chat_error = (
-                "检测到微信 UI 树只有外层壳窗口，尝试自动修复时发生异常。"
-                "请手动重新打开微信；如果仍然不行，请在登录前开启一次讲述人（Narrator）后再登录。"
-            )
+            self._uia_recovery_in_progress = False
+            self._chat_error = self._build_shell_only_uia_guidance(auto_attempted=True)
             _print(f"[RealtimeMonitorService] UIA 自动修复执行异常: {exc}")
-            return False
-        payload["phase"] = phase
-        payload["source_error"] = error_text
+            return {
+                "success": False,
+                "message": "自动修复执行异常",
+                "error": self._chat_error,
+            }
+        payload["phase"] = str((self._uia_recovery_context or {}).get("phase", ""))
+        payload["source_error"] = str((self._uia_recovery_context or {}).get("error_text", ""))
         self._last_uia_recovery = payload
+        self._uia_recovery_in_progress = False
+        self._uia_recovery_context = {}
 
         final_probe = payload.get("final_probe") or {}
         if final_probe.get("status") == "accessible":
             _print("[RealtimeMonitorService] 微信 UIA 自动修复成功，继续初始化监听后端")
             self._chat_error = ""
-            return True
+            return {
+                "success": True,
+                "message": "自动修复成功",
+                "final_status": final_probe.get("status"),
+            }
 
-        self._chat_error = (
-            "检测到微信 UI 树只有外层壳窗口，已尝试自动修复但仍未恢复。"
-            "请手动重新打开微信；如果仍然不行，请在登录前开启一次讲述人（Narrator）后再登录。"
+        self._chat_error = self._build_shell_only_uia_guidance(
+            auto_attempted=True,
+            final_status=str(final_probe.get("status") or ""),
         )
         _print(
             "[RealtimeMonitorService] 微信 UIA 自动修复失败: "
             f"final_status={final_probe.get('status')}, errors={payload.get('errors')}"
         )
-        return False
+        return {
+            "success": False,
+            "message": "自动修复失败",
+            "error": self._chat_error,
+            "final_status": final_probe.get("status"),
+        }
 
     def _create_wechat_instance_with_recovery(self, phase: str) -> None:
         try:
@@ -406,9 +471,7 @@ class RealtimeMonitorService:
         except Exception as exc:
             error_text = str(exc)
             if isinstance(exc, UINotAccessibleError) or ('ui_not_accessible' in error_text.lower()):
-                if self._attempt_auto_recover_shell_only_uia(phase=phase, error_text=error_text):
-                    self._create_wechat_instance()
-                    return
+                self._attempt_auto_recover_shell_only_uia(phase=phase, error_text=error_text)
             raise
 
     def _format_listener_init_error(self, exc: Exception) -> str:
@@ -418,15 +481,29 @@ class RealtimeMonitorService:
                 final_probe = self._last_uia_recovery.get("final_probe") or {}
                 final_status = final_probe.get("status") or "unknown"
                 return (
-                    "微信窗口已找到，但当前这次启动只暴露了外层壳窗口，程序已尝试自动修复。"
-                    f"当前最终状态: {final_status}。"
-                    "请先完全退出并重新打开微信；如果仍然不行，请在登录前开启一次讲述人（Narrator）后再登录。"
+                    "微信窗口已找到，但当前这次启动只暴露了外层壳窗口。"
+                    f"程序已尝试自动修复，当前状态: {final_status}。"
+                    + self._build_shell_only_uia_guidance(auto_attempted=True, include_prefix=False)
                 )
-            return (
-                "微信窗口已找到，但当前这次启动只暴露了外层壳窗口，无法读取内部控件。"
-                "请先完全退出并重新打开微信；如果仍然不行，请在登录前开启一次讲述人（Narrator）后再登录。"
-            )
+            return "微信窗口已找到，但" + self._build_shell_only_uia_guidance(auto_attempted=False)
         return f'请确保微信已启动并登录: {error_text}'
+
+    def _build_shell_only_uia_guidance(
+        self,
+        auto_attempted: bool,
+        final_status: str = "",
+        include_prefix: bool = True,
+    ) -> str:
+        prefix = ""
+        if include_prefix:
+            prefix = "微信界面当前不可访问（UIA 树没有展开，只能看到外层壳窗口）。"
+        attempted = "程序已尝试自动修复（关闭微信、打开讲述人并重新启动微信），但仍未恢复。" if auto_attempted else ""
+        final_status_text = f"当前检测状态：{final_status}。" if final_status else ""
+        return (
+            f"{prefix}{attempted}{final_status_text}"
+            "请按顺序手动处理：先完全退出微信，保持 Windows 讲述人（Narrator）开启，"
+            "再手动重新打开并登录微信，确认微信主界面正常显示后回到时痕再试。"
+        )
 
     def _get_foreground_window_info(self) -> dict:
         """Return basic diagnostics for the current foreground window."""
@@ -1317,41 +1394,7 @@ class RealtimeMonitorService:
             self._chat_timed_out = ('timeout' in error_text.lower()) or ('超时' in error_text)
             self._chat_ui_inaccessible = isinstance(e, UINotAccessibleError) or ('ui_not_accessible' in error_text.lower())
             if self._chat_ui_inaccessible:
-                if self._attempt_auto_recover_shell_only_uia(phase="chat_switch", error_text=error_text):
-                    try:
-                        self._create_wechat_instance()
-                        self._bring_wechat_to_front()
-                        time.sleep(1.0)
-                        expected_name = (self.current_display_name or target_name or "").strip()
-                        self.wx.ChatWith(target_name, expected_display_name=expected_name)
-                    except Exception as retry_exc:
-                        retry_after_info = self._get_foreground_window_info()
-                        retry_error_text = str(retry_exc)
-                        self._chat_ui_inaccessible = (
-                            isinstance(retry_exc, UINotAccessibleError)
-                            or ('ui_not_accessible' in retry_error_text.lower())
-                        )
-                        self._chat_error = self._format_listener_init_error(retry_exc)
-                        _print(
-                            f"[OpenChat] 自动修复后仍失败: hwnd={retry_after_info.get('hwnd')} "
-                            f"class={retry_after_info.get('class_name')} title={retry_after_info.get('title')} "
-                            f"error={retry_error_text}"
-                        )
-                        return False
-
-                    after_info = self._get_foreground_window_info()
-                    elapsed = time.time() - started_at
-                    _print(
-                        f"[OpenChat] 自动修复后成功: target='{target_name}', elapsed={elapsed:.2f}s, "
-                        f"前台窗口={after_info.get('title') or after_info.get('class_name')}"
-                    )
-                    self._chat_error = ''
-                    self._chat_ui_inaccessible = False
-                    return True
-                self._chat_error = (
-                    "微信界面当前不可访问（UIA 树没有展开，只能看到外层壳窗口）。"
-                    "请先重启微信；如果仍然不行，按 pywechat 的做法在登录前开启一次讲述人（Narrator）后再登录。"
-                )
+                self._attempt_auto_recover_shell_only_uia(phase="chat_switch", error_text=error_text)
                 _print(
                     f"[OpenChat] UIA 不可访问: hwnd={after_info.get('hwnd')} "
                     f"class={after_info.get('class_name')} title={after_info.get('title')} error={error_text}"
@@ -2848,6 +2891,9 @@ class RealtimeMonitorService:
             self._chat_ui_inaccessible = False
             self._uia_recovery_attempts = 0
             self._last_uia_recovery = None
+            self._uia_recovery_required = False
+            self._uia_recovery_in_progress = False
+            self._uia_recovery_context = {}
             self._resume_mode = 'skip'
             self._stop_event = None
             
@@ -2913,6 +2959,9 @@ class RealtimeMonitorService:
                 'model_ready': self.sentiment_service.is_ready(),
                 'chat_ready': self._chat_ready,
                 'chat_error': self._chat_error,
+                'uia_recovery_required': self._uia_recovery_required,
+                'uia_recovery_in_progress': self._uia_recovery_in_progress,
+                'uia_recovery_phase': (self._uia_recovery_context or {}).get('phase', ''),
                 'polling_alive': polling_alive,
                 'provider': self._provider_name or getattr(self.wx, 'backend_name', ''),
                 'listener_profile': self._listener_profile or getattr(self.wx, 'listener_profile', ''),

@@ -11,6 +11,7 @@ from app.services.realtime.providers.recovery import (
     launch_narrator,
     launch_wechat,
     pick_wechat_launch_path,
+    recover_shell_only_wechat_uia,
 )
 
 
@@ -81,3 +82,120 @@ def test_launch_helpers_return_structured_errors_when_process_start_fails(monkey
         "path": str(wechat_exe),
         "error": "boom",
     }
+
+
+def test_in_place_recovery_only_reactivates_existing_wechat_and_reprobes(monkeypatch):
+    probes = iter(
+        [
+            {
+                "status": "shell_only",
+                "hwnd": 2468,
+                "exe_path": r"C:\Program Files\Tencent\WeChat\WeChat.exe",
+            },
+            {
+                "status": "accessible",
+                "hwnd": 2468,
+                "exe_path": r"C:\Program Files\Tencent\WeChat\WeChat.exe",
+            },
+        ]
+    )
+    activation_calls = []
+
+    monkeypatch.setattr(
+        "app.services.realtime.providers.recovery.probe_wechat_uia",
+        lambda: dict(next(probes)),
+    )
+    monkeypatch.setattr(
+        "app.services.realtime.providers.recovery.activate_wechat_window",
+        lambda hwnd: activation_calls.append(hwnd) or {"ok": True, "hwnd": hwnd},
+    )
+    monkeypatch.setattr("app.services.realtime.providers.recovery.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        "app.services.realtime.providers.recovery.terminate_wechat_processes",
+        lambda: (_ for _ in ()).throw(AssertionError("should not terminate wechat in in_place mode")),
+    )
+    monkeypatch.setattr(
+        "app.services.realtime.providers.recovery.launch_narrator",
+        lambda narrator_path="": (_ for _ in ()).throw(AssertionError("should not launch narrator in in_place mode")),
+    )
+    monkeypatch.setattr(
+        "app.services.realtime.providers.recovery.launch_wechat",
+        lambda exe_path: (_ for _ in ()).throw(AssertionError("should not relaunch wechat in in_place mode")),
+    )
+
+    payload = recover_shell_only_wechat_uia(
+        recover=True,
+        recovery_mode="in_place",
+        wait_after_focus=0,
+        probe_interval=0,
+        max_probes=2,
+    )
+
+    assert payload["recovery_mode"] == "in_place"
+    assert activation_calls == [2468]
+    assert payload["actions"][0]["step"] == "activate_wechat_window"
+    assert payload["final_probe"]["status"] == "accessible"
+    assert payload["errors"] == []
+
+
+def test_relaunch_recovery_reports_progress_and_stops_narrator_on_success(monkeypatch):
+    probes = iter(
+        [
+            {
+                "status": "shell_only",
+                "hwnd": 1357,
+                "exe_path": r"C:\Program Files\Tencent\WeChat\WeChat.exe",
+            },
+            {
+                "status": "accessible",
+                "hwnd": 2468,
+                "exe_path": r"C:\Program Files\Tencent\WeChat\WeChat.exe",
+            },
+        ]
+    )
+    progress = []
+
+    monkeypatch.setattr(
+        "app.services.realtime.providers.recovery.probe_wechat_uia",
+        lambda: dict(next(probes)),
+    )
+    monkeypatch.setattr(
+        "app.services.realtime.providers.recovery.pick_wechat_launch_path",
+        lambda detected_exe_path="", extra_candidates=None: detected_exe_path or r"C:\Program Files\Tencent\WeChat\WeChat.exe",
+    )
+    monkeypatch.setattr(
+        "app.services.realtime.providers.recovery.terminate_wechat_processes",
+        lambda: [{"image_name": "WeChat.exe", "returncode": 0, "stdout": "", "stderr": ""}],
+    )
+    monkeypatch.setattr(
+        "app.services.realtime.providers.recovery.launch_narrator",
+        lambda narrator_path="": {"ok": True, "path": narrator_path or r"C:\Windows\System32\Narrator.exe", "pid": 11},
+    )
+    monkeypatch.setattr(
+        "app.services.realtime.providers.recovery.launch_wechat",
+        lambda exe_path: {"ok": True, "path": exe_path, "pid": 22},
+    )
+    monkeypatch.setattr(
+        "app.services.realtime.providers.recovery.terminate_narrator",
+        lambda: {"image_name": "Narrator.exe", "returncode": 0, "stdout": "", "stderr": ""},
+    )
+    monkeypatch.setattr("app.services.realtime.providers.recovery.time.sleep", lambda _seconds: None)
+
+    payload = recover_shell_only_wechat_uia(
+        recover=True,
+        recovery_mode="relaunch_with_narrator",
+        wait_after_kill=0,
+        wait_after_narrator=0,
+        wait_after_launch=0,
+        probe_interval=0,
+        max_probes=2,
+        stop_narrator_on_success=True,
+        progress_callback=lambda step, message, extra: progress.append((step, message, dict(extra))),
+    )
+
+    assert payload["final_probe"]["status"] == "accessible"
+    assert any(step == "terminate_wechat" for step, _message, _extra in progress)
+    assert any(step == "launch_narrator" for step, _message, _extra in progress)
+    assert any(step == "launch_wechat" for step, _message, _extra in progress)
+    assert any(step == "probe_after_relaunch" for step, _message, _extra in progress)
+    assert any(action["step"] == "terminate_narrator_on_success" for action in payload["actions"])

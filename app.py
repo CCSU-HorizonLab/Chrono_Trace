@@ -18,8 +18,13 @@ def main():
     dist_index = get_dist_index_path()
     if not dist_index:
         raise RuntimeError('未找到前端构建产物，请先执行 npm run build 生成 frontend/webdist/index.html')
-    webview.create_window(PROD_WINDOW_TITLE, url=dist_index, js_api=bridge, frameless=False)
-    webview.start()
+    window = webview.create_window(PROD_WINDOW_TITLE, url=dist_index, js_api=bridge, frameless=False)
+
+    def on_started():
+        """窗口启动后，将窗口引用注入 Bridge（供 Win32 悬浮窗服务使用）"""
+        bridge.set_webview_window(window)
+
+    webview.start(func=on_started)
 
 
 if __name__ == '__main__':

@@ -36,6 +36,8 @@ class FloatingWindowService:
         self._is_floating = False
         self._is_expanded = False
         self._original_rect = None  # (x, y, width, height)
+        self._original_style = None
+        self._original_ex_style = None
         self._tracking_thread = None
         self._stop_tracking = threading.Event()
         self._wechat_hwnd = None
@@ -79,6 +81,9 @@ class FloatingWindowService:
 
             # 保存原始窗口状态
             self._save_original_rect()
+
+            # 进入悬浮模式时去掉系统标题栏和最小化/最大化/关闭按钮
+            self._set_window_decorations(False)
 
             # 查找微信窗口并定位
             wechat_rect = self._find_wechat_window()
@@ -124,6 +129,7 @@ class FloatingWindowService:
             }
 
         except Exception as e:
+            self._set_window_decorations(True)
             _log(f'❌ 进入悬浮模式失败: {e}')
             import traceback
             traceback.print_exc()
@@ -146,6 +152,9 @@ class FloatingWindowService:
             # 取消置顶
             self._set_on_top(False)
 
+            # 先恢复系统边框，再恢复原始物理尺寸
+            self._set_window_decorations(True)
+
             # 恢复原始窗口尺寸
             # _original_rect 来自 GetWindowRect，已经是物理像素，
             # 不能再走 _win32_move_resize（内部会再乘 DPI scale），
@@ -160,6 +169,8 @@ class FloatingWindowService:
 
             self._is_floating = False
             self._is_expanded = False
+            self._original_style = None
+            self._original_ex_style = None
             return {'ok': True, 'message': '已退出悬浮模式'}
 
         except Exception as e:
@@ -280,6 +291,66 @@ class FloatingWindowService:
             return True
         except Exception as e:
             _log(f"恢复窗口物理尺寸失败: {e}")
+            return False
+
+    def _set_window_decorations(self, decorated: bool) -> bool:
+        """
+        动态切换原生窗口边框。
+
+        - decorated=True: 恢复普通窗口标题栏和系统按钮
+        - decorated=False: 去掉标题栏、边框以及最小化/最大化/关闭按钮
+        """
+        try:
+            import win32gui
+            import win32con
+
+            hwnd = self._webview_hwnd or self._get_webview_hwnd()
+            if not hwnd:
+                _log("无法获取 HWND，跳过窗口边框切换")
+                return False
+
+            current_style = win32gui.GetWindowLong(hwnd, win32con.GWL_STYLE)
+            current_ex_style = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
+
+            if decorated:
+                target_style = self._original_style if self._original_style is not None else current_style
+                target_ex_style = self._original_ex_style if self._original_ex_style is not None else current_ex_style
+            else:
+                if self._original_style is None:
+                    self._original_style = current_style
+                if self._original_ex_style is None:
+                    self._original_ex_style = current_ex_style
+
+                target_style = current_style & ~(
+                    win32con.WS_CAPTION
+                    | win32con.WS_THICKFRAME
+                    | win32con.WS_MINIMIZEBOX
+                    | win32con.WS_MAXIMIZEBOX
+                    | win32con.WS_SYSMENU
+                )
+                target_ex_style = current_ex_style & ~(
+                    getattr(win32con, 'WS_EX_DLGMODALFRAME', 0)
+                    | getattr(win32con, 'WS_EX_CLIENTEDGE', 0)
+                    | getattr(win32con, 'WS_EX_STATICEDGE', 0)
+                )
+
+            if target_style == current_style and target_ex_style == current_ex_style:
+                return True
+
+            win32gui.SetWindowLong(hwnd, win32con.GWL_STYLE, target_style)
+            win32gui.SetWindowLong(hwnd, win32con.GWL_EXSTYLE, target_ex_style)
+            win32gui.SetWindowPos(
+                hwnd, 0, 0, 0, 0, 0,
+                win32con.SWP_FRAMECHANGED
+                | win32con.SWP_NOMOVE
+                | win32con.SWP_NOSIZE
+                | win32con.SWP_NOZORDER
+                | win32con.SWP_NOACTIVATE
+            )
+            _log(f"窗口边框已{'恢复' if decorated else '移除'}")
+            return True
+        except Exception as e:
+            _log(f"切换窗口边框失败: {e}")
             return False
 
     def _get_window_scale(self, hwnd=None) -> float:

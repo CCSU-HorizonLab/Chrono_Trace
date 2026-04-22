@@ -34,6 +34,11 @@ function Resolve-IsccPath {
         $candidates += $fromPath.Source
     }
 
+    $localAppData = $env:LOCALAPPDATA
+    if ($localAppData) {
+        $candidates += (Join-Path $localAppData "Programs\Inno Setup 6\ISCC.exe")
+    }
+
     $programFilesX86 = ${env:ProgramFiles(x86)}
     if ($programFilesX86) {
         $candidates += (Join-Path $programFilesX86 "Inno Setup 6\ISCC.exe")

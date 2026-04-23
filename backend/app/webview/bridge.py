@@ -1342,6 +1342,10 @@ class Bridge:
                 "message": result.get("message", ""),
                 "error": result.get("error", ""),
                 "final_status": result.get("final_status", ""),
+                "uia_recovery_summary": result.get("uia_recovery_summary", ""),
+                "uia_recovery_actions": result.get("uia_recovery_actions", []),
+                "uia_recovery_aborted": result.get("uia_recovery_aborted", False),
+                "narrator_verification": result.get("narrator_verification", {}),
             }
         except Exception as e:
             import traceback
@@ -1433,6 +1437,12 @@ class Bridge:
                 "provider": status.get('provider', ''),
                 "listener_profile": status.get('listener_profile', ''),
                 "wechat_version": status.get('wechat_version', ''),
+                "uia_recovery_summary": status.get('uia_recovery_summary', ''),
+                "uia_recovery_final_status": status.get('uia_recovery_final_status', ''),
+                "uia_recovery_actions": status.get('uia_recovery_actions', []),
+                "uia_recovery_aborted": status.get('uia_recovery_aborted', False),
+                "uia_recovery_abort_reason": status.get('uia_recovery_abort_reason', ''),
+                "narrator_verification": status.get('narrator_verification', {}),
             }
         except Exception as e:
             logger.error(f"[Bridge] 获取实时监听状态异常: {e}")

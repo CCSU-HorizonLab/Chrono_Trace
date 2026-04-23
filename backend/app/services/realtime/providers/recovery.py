@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import csv
+import io
 import os
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -22,6 +25,12 @@ DEFAULT_WECHAT_EXE_CANDIDATES: tuple[Path, ...] = (
     Path(r"C:\Program Files\Tencent\WeChat\WeChat.exe"),
 )
 
+WECHAT_EXE_BASENAMES: tuple[str, ...] = (
+    "WeChat.exe",
+    "Weixin.exe",
+)
+NARRATOR_PROCESS_NAME = "Narrator.exe"
+
 
 def default_narrator_path() -> str:
     windir = str(os.environ.get("WINDIR") or r"C:\Windows")
@@ -35,6 +44,143 @@ def _as_path(value: str | Path | None) -> Path | None:
         return Path(str(value))
     except Exception:
         return None
+
+
+def _iter_related_wechat_paths(path: Path | None) -> Iterable[Path]:
+    if path is None:
+        return []
+
+    candidates: list[Path] = [path]
+    try:
+        parent = path.parent
+        grand_parent = parent.parent
+    except Exception:
+        parent = None
+        grand_parent = None
+
+    for base_dir in (parent, grand_parent):
+        if base_dir is None:
+            continue
+        for exe_name in WECHAT_EXE_BASENAMES:
+            candidates.append(base_dir / exe_name)
+    return candidates
+
+
+def _iter_registry_wechat_paths() -> Iterable[Path]:
+    try:
+        import winreg
+    except Exception:
+        return []
+
+    subkeys = (
+        r"Software\Microsoft\Windows\CurrentVersion\App Paths\WeChat.exe",
+        r"Software\Microsoft\Windows\CurrentVersion\App Paths\Weixin.exe",
+        r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\App Paths\WeChat.exe",
+        r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\App Paths\Weixin.exe",
+    )
+    roots = []
+    for root_name in ("HKEY_CURRENT_USER", "HKEY_LOCAL_MACHINE"):
+        root = getattr(winreg, root_name, None)
+        if root is not None:
+            roots.append(root)
+
+    results: list[Path] = []
+    for root in roots:
+        for subkey in subkeys:
+            try:
+                with winreg.OpenKey(root, subkey) as key:
+                    value, _ = winreg.QueryValueEx(key, None)
+            except Exception:
+                continue
+            path = _as_path(value)
+            if path is not None:
+                results.append(path)
+                results.extend(_iter_related_wechat_paths(path))
+    return results
+
+
+def _iter_env_default_wechat_paths() -> Iterable[Path]:
+    roots = [
+        os.environ.get("ProgramFiles", r"C:\Program Files"),
+        os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"),
+        os.environ.get("LocalAppData", ""),
+    ]
+    relative_paths = (
+        Path(r"Tencent\WeChat\WeChat.exe"),
+        Path(r"Tencent\WeChat\Weixin.exe"),
+        Path(r"Tencent\Weixin\Weixin.exe"),
+        Path(r"WeChat\WeChat.exe"),
+        Path(r"Weixin\Weixin.exe"),
+    )
+
+    results: list[Path] = []
+    for root in roots:
+        root_path = _as_path(root)
+        if root_path is None:
+            continue
+        for relative_path in relative_paths:
+            results.append(root_path / relative_path)
+    results.extend(DEFAULT_WECHAT_EXE_CANDIDATES)
+    return results
+
+
+def _iter_path_search_candidates() -> Iterable[Path]:
+    results: list[Path] = []
+    for exe_name in WECHAT_EXE_BASENAMES:
+        resolved = shutil.which(exe_name)
+        path = _as_path(resolved)
+        if path is not None:
+            results.append(path)
+    return results
+
+
+def resolve_wechat_launch_path(
+    detected_exe_path: str = "",
+    extra_candidates: Iterable[str | Path] | None = None,
+) -> dict:
+    ordered_candidates: list[tuple[str, Path]] = []
+    seen: set[str] = set()
+
+    def add_candidate(source: str, candidate: str | Path | None) -> None:
+        path = _as_path(candidate)
+        if path is None:
+            return
+        key = str(path).strip().lower()
+        if not key or key in seen:
+            return
+        seen.add(key)
+        ordered_candidates.append((source, path))
+
+    for candidate in _iter_related_wechat_paths(_as_path(detected_exe_path)):
+        add_candidate("detected", candidate)
+    for candidate in extra_candidates or ():
+        for expanded in _iter_related_wechat_paths(_as_path(candidate)):
+            add_candidate("extra", expanded)
+    for candidate in _iter_registry_wechat_paths():
+        add_candidate("registry", candidate)
+    for candidate in _iter_path_search_candidates():
+        add_candidate("path", candidate)
+    for candidate in _iter_env_default_wechat_paths():
+        add_candidate("default", candidate)
+
+    checked_candidates: list[str] = []
+    for source, path in ordered_candidates:
+        checked_candidates.append(str(path))
+        try:
+            if path.exists():
+                return {
+                    "path": str(path),
+                    "source": source,
+                    "checked_candidates": checked_candidates,
+                }
+        except Exception:
+            continue
+
+    return {
+        "path": "",
+        "source": "",
+        "checked_candidates": checked_candidates,
+    }
 
 
 def is_meaningful_visible_descendant(
@@ -76,20 +222,13 @@ def pick_wechat_launch_path(
     detected_exe_path: str = "",
     extra_candidates: Iterable[str | Path] | None = None,
 ) -> str:
-    candidates: list[Path] = []
-    for candidate in [detected_exe_path, *(extra_candidates or ()), *DEFAULT_WECHAT_EXE_CANDIDATES]:
-        path = _as_path(candidate)
-        if path is None:
-            continue
-        if path not in candidates:
-            candidates.append(path)
-    for path in candidates:
-        try:
-            if path.exists():
-                return str(path)
-        except Exception:
-            continue
-    return ""
+    return str(
+        resolve_wechat_launch_path(
+            detected_exe_path=detected_exe_path,
+            extra_candidates=extra_candidates,
+        ).get("path")
+        or ""
+    )
 
 
 def probe_wechat_uia() -> dict:
@@ -182,7 +321,133 @@ def terminate_wechat_processes() -> list[dict]:
 
 
 def terminate_narrator() -> dict:
-    return _run_taskkill("Narrator.exe")
+    return _run_taskkill(NARRATOR_PROCESS_NAME)
+
+
+def probe_process(
+    *,
+    image_name: str = "",
+    pid: int = 0,
+) -> dict:
+    args = ["tasklist", "/FO", "CSV", "/NH"]
+    if image_name:
+        args.extend(["/FI", f"IMAGENAME eq {image_name}"])
+    if pid:
+        args.extend(["/FI", f"PID eq {int(pid)}"])
+
+    try:
+        completed = subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            shell=False,
+        )
+    except Exception as exc:
+        return {
+            "status": "probe_failed",
+            "image_name": str(image_name or ""),
+            "pid": int(pid or 0),
+            "rows": [],
+            "error": str(exc),
+        }
+
+    stdout_text = str(completed.stdout or "").strip()
+    stderr_text = str(completed.stderr or "").strip()
+    if completed.returncode != 0 and not stdout_text:
+        return {
+            "status": "probe_failed",
+            "image_name": str(image_name or ""),
+            "pid": int(pid or 0),
+            "rows": [],
+            "error": stderr_text or f"tasklist exited with code {completed.returncode}",
+        }
+
+    if stdout_text.startswith("INFO:"):
+        return {
+            "status": "not_running",
+            "image_name": str(image_name or ""),
+            "pid": int(pid or 0),
+            "rows": [],
+            "error": "",
+        }
+
+    rows: list[dict[str, str | int]] = []
+    try:
+        reader = csv.reader(io.StringIO(stdout_text))
+        for raw_row in reader:
+            if len(raw_row) < 2:
+                continue
+            image_value = str(raw_row[0] or "").strip()
+            try:
+                row_pid = int(str(raw_row[1] or "0").replace(",", ""))
+            except Exception:
+                row_pid = 0
+            rows.append(
+                {
+                    "image_name": image_value,
+                    "pid": row_pid,
+                }
+            )
+    except Exception as exc:
+        return {
+            "status": "probe_failed",
+            "image_name": str(image_name or ""),
+            "pid": int(pid or 0),
+            "rows": [],
+            "error": f"parse_failed: {exc}",
+        }
+
+    return {
+        "status": "running" if rows else "not_running",
+        "image_name": str(image_name or ""),
+        "pid": int(pid or 0),
+        "rows": rows,
+        "error": "",
+    }
+
+
+def wait_for_process(
+    *,
+    image_name: str = "",
+    pid: int = 0,
+    timeout: float = 3.0,
+    probe_interval: float = 0.25,
+) -> dict:
+    deadline = time.time() + max(0.0, float(timeout or 0.0))
+    last_probe = probe_process(image_name=image_name, pid=pid)
+    attempts = 1
+    while last_probe.get("status") == "not_running" and time.time() < deadline:
+        if probe_interval > 0:
+            time.sleep(probe_interval)
+        last_probe = probe_process(image_name=image_name, pid=pid)
+        attempts += 1
+    return {
+        **last_probe,
+        "attempts": attempts,
+        "timeout": float(timeout or 0.0),
+        "probe_interval": float(probe_interval or 0.0),
+        "verified": last_probe.get("status") == "running",
+    }
+
+
+def _verify_narrator_running(pid: int = 0) -> dict:
+    return wait_for_process(
+        image_name=NARRATOR_PROCESS_NAME,
+        pid=int(pid or 0),
+        timeout=3.0,
+        probe_interval=0.25,
+    )
+
+
+def _build_narrator_launch_error(verification: dict, fallback_errors: list[str]) -> str:
+    status = str(verification.get("status") or "unknown")
+    verification_error = str(verification.get("error") or "").strip()
+    details = [item for item in fallback_errors if str(item or "").strip()]
+    if verification_error:
+        details.append(verification_error)
+    if details:
+        return "; ".join(details)
+    return f"Narrator launch could not be verified (status={status})"
 
 
 def launch_narrator(narrator_path: str = "") -> dict:
@@ -193,18 +458,129 @@ def launch_narrator(narrator_path: str = "") -> dict:
             "path": path,
             "error": "Narrator executable not found",
         }
+
+    existing_verification = _verify_narrator_running()
+    if existing_verification.get("verified"):
+        running_rows = existing_verification.get("rows") or []
+        existing_pid = 0
+        if running_rows and isinstance(running_rows[0], dict):
+            existing_pid = int(running_rows[0].get("pid") or 0)
+        return {
+            "ok": True,
+            "path": path,
+            "pid": existing_pid,
+            "launch_method": "already_running",
+            "verification": existing_verification,
+        }
+
+    fallback_errors: list[str] = []
+
     try:
         process = subprocess.Popen([path], shell=False)
+        verification = _verify_narrator_running(int(process.pid or 0))
+        if verification.get("verified"):
+            return {
+                "ok": True,
+                "path": path,
+                "pid": int(process.pid or 0),
+                "launch_method": "popen",
+                "verification": verification,
+            }
+        fallback_errors.append(_build_narrator_launch_error(verification, []))
     except Exception as exc:
-        return {
-            "ok": False,
-            "path": path,
-            "error": str(exc),
-        }
+        fallback_errors.append(str(exc))
+
+    startfile = getattr(os, "startfile", None)
+    if callable(startfile):
+        try:
+            startfile(path)
+            verification = _verify_narrator_running()
+            if verification.get("verified"):
+                running_rows = verification.get("rows") or []
+                started_pid = 0
+                if running_rows and isinstance(running_rows[0], dict):
+                    started_pid = int(running_rows[0].get("pid") or 0)
+                return {
+                    "ok": True,
+                    "path": path,
+                    "pid": started_pid,
+                    "launch_method": "startfile",
+                    "verification": verification,
+                }
+            fallback_errors.append("startfile_unverified")
+        except Exception as exc:
+            fallback_errors.append(f"startfile_failed: {exc}")
+
+    try:
+        completed = subprocess.run(
+            ["cmd", "/c", "start", "", path],
+            capture_output=True,
+            text=True,
+            shell=False,
+        )
+        if completed.returncode == 0:
+            verification = _verify_narrator_running()
+            if verification.get("verified"):
+                running_rows = verification.get("rows") or []
+                started_pid = 0
+                if running_rows and isinstance(running_rows[0], dict):
+                    started_pid = int(running_rows[0].get("pid") or 0)
+                return {
+                    "ok": True,
+                    "path": path,
+                    "pid": started_pid,
+                    "launch_method": "cmd_start",
+                    "verification": verification,
+                }
+            fallback_errors.append("cmd_start_unverified")
+        else:
+            stderr_text = str(completed.stderr or completed.stdout or "").strip()
+            fallback_errors.append(f"cmd_start_failed: {stderr_text or completed.returncode}")
+    except Exception as exc:
+        fallback_errors.append(f"cmd_start_exception: {exc}")
+
+    try:
+        escaped_path = path.replace("'", "''")
+        completed = subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                f"Start-Process -FilePath '{escaped_path}'",
+            ],
+            capture_output=True,
+            text=True,
+            shell=False,
+        )
+        if completed.returncode == 0:
+            verification = _verify_narrator_running()
+            if verification.get("verified"):
+                running_rows = verification.get("rows") or []
+                started_pid = 0
+                if running_rows and isinstance(running_rows[0], dict):
+                    started_pid = int(running_rows[0].get("pid") or 0)
+                return {
+                    "ok": True,
+                    "path": path,
+                    "pid": started_pid,
+                    "launch_method": "powershell_start_process",
+                    "verification": verification,
+                }
+            fallback_errors.append("powershell_start_process_unverified")
+        else:
+            stderr_text = str(completed.stderr or completed.stdout or "").strip()
+            fallback_errors.append(f"powershell_start_process_failed: {stderr_text or completed.returncode}")
+    except Exception as exc:
+        fallback_errors.append(f"powershell_start_process_exception: {exc}")
+
+    final_verification = _verify_narrator_running()
     return {
-        "ok": True,
+        "ok": False,
         "path": path,
-        "pid": int(process.pid or 0),
+        "pid": int((final_verification.get("rows") or [{}])[0].get("pid") or 0) if final_verification.get("rows") else 0,
+        "verification": final_verification,
+        "error": _build_narrator_launch_error(final_verification, fallback_errors),
     }
 
 
@@ -215,16 +591,52 @@ def launch_wechat(exe_path: str) -> dict:
         return {"ok": False, "path": exe_path, "error": "WeChat executable not found"}
     try:
         process = subprocess.Popen([exe_path], shell=False)
-    except Exception as exc:
         return {
-            "ok": False,
+            "ok": True,
             "path": exe_path,
-            "error": str(exc),
+            "pid": int(process.pid or 0),
+            "launch_method": "popen",
         }
+    except Exception as exc:
+        first_error = str(exc)
+
+    startfile = getattr(os, "startfile", None)
+    if callable(startfile):
+        try:
+            startfile(exe_path)
+            return {
+                "ok": True,
+                "path": exe_path,
+                "pid": 0,
+                "launch_method": "startfile",
+            }
+        except Exception as exc:
+            first_error = f"{first_error}; startfile_failed: {exc}"
+
+    try:
+        completed = subprocess.run(
+            ["cmd", "/c", "start", "", exe_path],
+            capture_output=True,
+            text=True,
+            shell=False,
+        )
+        if completed.returncode == 0:
+            return {
+                "ok": True,
+                "path": exe_path,
+                "pid": 0,
+                "launch_method": "cmd_start",
+            }
+        stderr_text = str(completed.stderr or completed.stdout or "").strip()
+        if stderr_text:
+            first_error = f"{first_error}; cmd_start_failed: {stderr_text}"
+    except Exception as exc:
+        first_error = f"{first_error}; cmd_start_exception: {exc}"
+
     return {
-        "ok": True,
+        "ok": False,
         "path": exe_path,
-        "pid": int(process.pid or 0),
+        "error": first_error,
     }
 
 
@@ -280,6 +692,8 @@ def recover_shell_only_wechat_uia(
     wait_after_launch: float = 6.0,
     probe_interval: float = 2.0,
     max_probes: int = 6,
+    manual_narrator_timeout: float = 90.0,
+    manual_narrator_probe_interval: float = 1.0,
     stop_narrator_after_check: bool = False,
     stop_narrator_on_success: bool = False,
     progress_callback: Callable[[str, str, dict], None] | None = None,
@@ -371,44 +785,47 @@ def recover_shell_only_wechat_uia(
         payload["final_probe"] = final_probe or probe_wechat_uia()
         return payload
 
-    resolved_wechat_exe = pick_wechat_launch_path(
+    resolution = resolve_wechat_launch_path(
         detected_exe_path=str(initial_probe.get("exe_path") or ""),
         extra_candidates=[wechat_exe] if wechat_exe else [],
     )
+    resolved_wechat_exe = str(resolution.get("path") or "")
     emit_progress(
         "prepare_relaunch",
         "检测到微信 UI 树没有展开，将尝试自动修复：关闭微信、打开讲述人并重新启动微信。",
-        {"resolved_wechat_exe": resolved_wechat_exe},
+        {
+            "resolved_wechat_exe": resolved_wechat_exe,
+            "resolution_source": resolution.get("source") or "",
+        },
     )
     payload["actions"].append(
         {
             "step": "resolve_wechat_exe",
             "requested_path": wechat_exe,
             "resolved_path": resolved_wechat_exe,
+            "resolution_source": resolution.get("source") or "",
+            "checked_candidates": list(resolution.get("checked_candidates") or []),
         }
     )
     if not resolved_wechat_exe:
         payload["errors"].append("Unable to resolve WeChat executable path for relaunch")
+        payload["actions"].append(
+            {
+                "step": "abort_before_terminate",
+                "reason": "wechat_launch_path_unresolved",
+            }
+        )
+        emit_progress(
+            "abort_before_terminate",
+            "未找到可用的微信启动路径，本次不会自动关闭微信。请手动确认微信安装位置后再重试。",
+            {},
+        )
         payload["final_probe"] = initial_probe
         return payload
 
     emit_progress(
-        "terminate_wechat",
-        "正在自动关闭当前微信窗口...",
-        {},
-    )
-    payload["actions"].append(
-        {
-            "step": "terminate_wechat",
-            "results": terminate_wechat_processes(),
-        }
-    )
-    if wait_after_kill > 0:
-        time.sleep(wait_after_kill)
-
-    emit_progress(
         "launch_narrator",
-        "正在打开 Windows 讲述人...",
+        "正在确认 Windows 讲述人已启动...",
         {},
     )
     narrator_result = launch_narrator(narrator_path=narrator_path)
@@ -419,9 +836,80 @@ def recover_shell_only_wechat_uia(
         }
     )
     if not narrator_result.get("ok"):
-        payload["errors"].append(str(narrator_result.get("error") or "Failed to launch Narrator"))
+        emit_progress(
+            "wait_manual_narrator",
+            "未能自动打开 Windows 讲述人。请现在手动打开讲述人；程序会在讲述人就绪后继续关闭并重新打开微信。",
+            {
+                "verification_status": (
+                    (narrator_result.get("verification") or {}).get("status") or "unknown"
+                ),
+            },
+        )
+        manual_verification = wait_for_process(
+            image_name=NARRATOR_PROCESS_NAME,
+            timeout=float(manual_narrator_timeout or 0.0),
+            probe_interval=float(manual_narrator_probe_interval or 0.0),
+        )
+        payload["actions"].append(
+            {
+                "step": "wait_for_manual_narrator",
+                "ok": bool(manual_verification.get("verified")),
+                "verification": manual_verification,
+            }
+        )
+        if not manual_verification.get("verified"):
+            payload["errors"].append(str(narrator_result.get("error") or "Failed to launch Narrator"))
+            payload["actions"].append(
+                {
+                    "step": "abort_before_terminate",
+                    "reason": "manual_narrator_timeout",
+                    "verification": manual_verification,
+                }
+            )
+            emit_progress(
+                "abort_before_terminate",
+                "等待讲述人就绪超时，本次自动修复已停止，本次不会自动关闭微信。",
+                {
+                    "verification_status": str(manual_verification.get("status") or "unknown"),
+                },
+            )
+            payload["final_probe"] = probe_wechat_uia()
+            if stop_narrator_after_check:
+                payload["actions"].append(
+                    {
+                        "step": "terminate_narrator",
+                        "result": terminate_narrator(),
+                    }
+                )
+            return payload
+        narrator_result = {
+            "ok": True,
+            "path": str(narrator_result.get("path") or narrator_path or default_narrator_path()),
+            "pid": int((manual_verification.get("rows") or [{}])[0].get("pid") or 0) if manual_verification.get("rows") else 0,
+            "launch_method": "manual_wait",
+            "verification": manual_verification,
+        }
+        emit_progress(
+            "manual_narrator_ready",
+            "已检测到讲述人就绪，正在继续自动修复。",
+            {"pid": narrator_result.get("pid", 0)},
+        )
     if wait_after_narrator > 0:
         time.sleep(wait_after_narrator)
+
+    emit_progress(
+        "terminate_wechat",
+        "讲述人已确认启动，正在自动关闭当前微信窗口...",
+        {},
+    )
+    payload["actions"].append(
+        {
+            "step": "terminate_wechat",
+            "results": terminate_wechat_processes(),
+        }
+    )
+    if wait_after_kill > 0:
+        time.sleep(wait_after_kill)
 
     emit_progress(
         "launch_wechat",

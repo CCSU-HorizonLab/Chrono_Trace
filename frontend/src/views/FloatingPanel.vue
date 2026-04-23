@@ -60,6 +60,12 @@
         <span>连接断开，等待重连…</span>
         <button class="fp-btn-sm warning" @click="retryConnection">重试</button>
       </div>
+      <div v-if="uiaRecoverySummary && !connectionLost" class="fp-banner info">
+        <div class="fp-banner-copy">
+          <span>{{ uiaRecoverySummary }}</span>
+          <span v-if="narratorVerificationText" class="fp-banner-sub">{{ narratorVerificationText }}</span>
+        </div>
+      </div>
       <div v-if="chatError && !connectionLost" class="fp-banner error">
         <span>{{ chatError }}</span>
         <button class="fp-btn-sm warning" @click="exitFloating">重新开始</button>
@@ -496,6 +502,10 @@ const realtimeState = reactive({
 })
 
 const chatError = ref('')
+const uiaRecoverySummary = ref('')
+const uiaRecoveryFinalStatus = ref('')
+const uiaRecoveryActions = ref<string[]>([])
+const narratorVerification = ref<any>(null)
 let uiaRecoveryPromptOpen = false
 let uiaRecoveryPromptSuppressed = false
 
@@ -563,6 +573,83 @@ let suggestionsTimer: any = null
 const START_REQUEST_KEY = 'realtime_start_request'
 const RESUME_THRESHOLD_SECONDS = 300
 const BACKFILL_MAX_SCROLL_ROUNDS = 80
+
+function clearUiaRecoveryTelemetry() {
+  uiaRecoverySummary.value = ''
+  uiaRecoveryFinalStatus.value = ''
+  uiaRecoveryActions.value = []
+  narratorVerification.value = null
+}
+
+function applyUiaRecoveryTelemetry(payload: any, options: { preserveOnMissing?: boolean } = {}) {
+  const preserveOnMissing = options.preserveOnMissing === true
+  const hasSummary = !!payload && Object.prototype.hasOwnProperty.call(payload, 'uia_recovery_summary')
+  const hasFinalStatus = !!payload && (
+    Object.prototype.hasOwnProperty.call(payload, 'uia_recovery_final_status')
+    || Object.prototype.hasOwnProperty.call(payload, 'final_status')
+  )
+  const hasActions = !!payload && Object.prototype.hasOwnProperty.call(payload, 'uia_recovery_actions')
+  const hasNarratorVerification = !!payload && Object.prototype.hasOwnProperty.call(payload, 'narrator_verification')
+
+  if (hasSummary) {
+    uiaRecoverySummary.value = String(payload?.uia_recovery_summary || '').trim()
+  } else if (!preserveOnMissing) {
+    uiaRecoverySummary.value = ''
+  }
+
+  if (hasFinalStatus) {
+    uiaRecoveryFinalStatus.value = String(
+      payload?.uia_recovery_final_status || payload?.final_status || '',
+    ).trim()
+  } else if (!preserveOnMissing) {
+    uiaRecoveryFinalStatus.value = ''
+  }
+
+  if (hasActions) {
+    uiaRecoveryActions.value = Array.isArray(payload?.uia_recovery_actions)
+      ? payload.uia_recovery_actions
+        .map((item: any) => String(item || '').trim())
+        .filter(Boolean)
+      : []
+  } else if (!preserveOnMissing) {
+    uiaRecoveryActions.value = []
+  }
+
+  if (hasNarratorVerification) {
+    narratorVerification.value = payload?.narrator_verification && typeof payload.narrator_verification === 'object'
+      ? payload.narrator_verification
+      : null
+  } else if (!preserveOnMissing) {
+    narratorVerification.value = null
+  }
+}
+
+const narratorVerificationText = computed(() => {
+  const info = narratorVerification.value
+  if (!info || typeof info !== 'object') {
+    return ''
+  }
+  if (info.verified === true) {
+    const pid = Number(info.pid || 0)
+    return pid > 0 ? `讲述人验证：已启动（PID ${pid}）` : '讲述人验证：已启动'
+  }
+  if (info.verified === false || info.status || info.error) {
+    const detail = String(info.error || info.status || '未确认启动').trim()
+    return `讲述人验证：${detail}`
+  }
+  return ''
+})
+
+function buildUiaRecoveryDialogMessage(baseMessage: string) {
+  const lines = [String(baseMessage || '').trim()]
+  if (uiaRecoverySummary.value && uiaRecoverySummary.value !== lines[0]) {
+    lines.push(uiaRecoverySummary.value)
+  }
+  if (narratorVerificationText.value) {
+    lines.push(narratorVerificationText.value)
+  }
+  return lines.filter(Boolean).join('\n')
+}
 
 // ========== 常量 ==========
 const triggerModes = [
@@ -807,6 +894,7 @@ async function applyMonitoringStatus(status: any) {
   realtimeState.batchId = status.batch_id || ''
   realtimeState.messageCount = status.message_count || 0
   chatError.value = status.chat_error || ''
+  applyUiaRecoveryTelemetry(status, { preserveOnMissing: true })
 
   startPolling()
   loadSuggestionConfig()
@@ -834,7 +922,7 @@ async function promptAndRunUiaRecovery(talkerName: string, requestedAccountWxid 
   try {
     const confirmed = await showConfirm({
       title: '确认自动修复',
-      message: '检测到微信 UI 树没有展开。继续后，程序会自动关闭微信、打开 Windows 讲述人，并重新启动微信。请在微信窗口完成登录后再回到这里。是否继续？',
+      message: '检测到微信界面当前不可访问。继续后，程序会先尝试启动 Windows 讲述人；如果自动启动失败，会提示你手动打开讲述人。等讲述人就绪后，程序再关闭并重新打开微信。是否继续？',
     })
     if (!confirmed) {
       uiaRecoveryPromptSuppressed = true
@@ -843,10 +931,12 @@ async function promptAndRunUiaRecovery(talkerName: string, requestedAccountWxid 
     }
 
     uiaRecoveryPromptSuppressed = false
+    clearUiaRecoveryTelemetry()
     chatError.value = '已确认自动修复，正在准备关闭微信并启动讲述人...'
     let progressTimer: number | null = window.setInterval(async () => {
       try {
         const status = await api.get_realtime_status()
+        applyUiaRecoveryTelemetry(status)
         if (status?.chat_error) {
           chatError.value = status.chat_error
         }
@@ -857,12 +947,13 @@ async function promptAndRunUiaRecovery(talkerName: string, requestedAccountWxid 
 
     try {
       const result = await api.run_realtime_uia_recovery()
+      applyUiaRecoveryTelemetry(result)
       if (!(result.success || result.ok)) {
         const message = result.error || '自动修复未成功完成。'
         chatError.value = message
         await showDialog({
           title: '请手动修复',
-          message,
+          message: buildUiaRecoveryDialogMessage(message),
         })
         return false
       }
@@ -901,6 +992,7 @@ async function startPendingMonitoring(talkerName: string, requestedAccountWxid =
   let progressTimer: number | null = window.setInterval(async () => {
     try {
       const status = await api.get_realtime_status()
+      applyUiaRecoveryTelemetry(status)
       if (status?.chat_error) {
         chatError.value = status.chat_error
       }
@@ -978,6 +1070,7 @@ onMounted(async () => {
         await new Promise(r => setTimeout(r, RETRY_DELAY))
       }
       status = await api.get_realtime_status()
+      applyUiaRecoveryTelemetry(status)
       if (status.ok && status.is_monitoring) {
         break
       }
@@ -994,6 +1087,7 @@ onMounted(async () => {
     realtimeState.talkerName = status.talker_display_name || ''
     realtimeState.batchId = status.batch_id || ''
     realtimeState.messageCount = status.message_count || 0
+    applyUiaRecoveryTelemetry(status)
     // 检查 chat_error
     if (status.chat_error) {
       chatError.value = status.chat_error
@@ -1420,6 +1514,7 @@ function startPolling() {
         batch_id: s.batch_id?.slice(0, 8),
       }))
       if (s.ok) {
+        applyUiaRecoveryTelemetry(s)
         realtimeState.isMonitoring = s.is_monitoring
         realtimeState.messageCount = s.message_count || 0
         pollFailCount = 0  // 成功则重置失败计数
@@ -1826,6 +1921,7 @@ async function retryConnection() {
     await bridgeReady()
     const s = await api.get_realtime_status()
     if (s.ok && s.is_monitoring) {
+      applyUiaRecoveryTelemetry(s)
       realtimeState.isMonitoring = true
       realtimeState.messageCount = s.message_count || 0
       if (s.chat_error) {
@@ -2113,6 +2209,9 @@ async function loadLastThread() {
 .fp-banners { flex-shrink: 0; z-index: 8; position: relative; }
 .fp-banner { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; font-size: 11px; font-weight: 500; }
 .fp-banner.error { background: #fef2f2; color: #991b1b; border-bottom: 1px solid #fca5a5; }
+.fp-banner.info { background: #eff6ff; color: #1d4ed8; border-bottom: 1px solid #93c5fd; }
+.fp-banner-copy { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.fp-banner-sub { font-size: 10px; color: rgba(29, 78, 216, 0.8); line-height: 1.35; word-break: break-word; }
 
 /* 2. Insights Strip */
 .fp-insights-strip { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: var(--ct-bg-elevated); border-bottom: 1px solid var(--ct-border-color); cursor: pointer; flex-shrink: 0; transition: background 0.2s; position: relative; z-index: 7; }

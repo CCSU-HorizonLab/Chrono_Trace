@@ -42,6 +42,8 @@ class RealtimeMonitorService:
     实时监听服务
     单例模式,同一时间只监听一个对象
     """
+
+    _UIA_MANUAL_RESTART_GUARD_SECONDS = 180.0
     
     _instance = None
     _lock = threading.Lock()
@@ -69,6 +71,9 @@ class RealtimeMonitorService:
             self._uia_recovery_required = False
             self._uia_recovery_in_progress = False
             self._uia_recovery_context = {}
+            self._uia_manual_restart_guard_until = 0.0
+            self._uia_manual_restart_guard_reason = ""
+            self._uia_manual_restart_guard_phase = ""
             self._start_time = 0                # 开始监听时间戳
             self._last_known_ts = 0
             self._chat_timed_out = False
@@ -357,8 +362,159 @@ class RealtimeMonitorService:
             )
         return self.wx
 
+    def _clear_uia_manual_restart_guard(self) -> None:
+        self._uia_manual_restart_guard_until = 0.0
+        self._uia_manual_restart_guard_reason = ""
+        self._uia_manual_restart_guard_phase = ""
+
+    def _has_active_uia_manual_restart_guard(self) -> bool:
+        guard_until = float(getattr(self, "_uia_manual_restart_guard_until", 0.0) or 0.0)
+        if guard_until <= 0:
+            return False
+        if time.time() >= guard_until:
+            self._clear_uia_manual_restart_guard()
+            return False
+        return True
+
+    def _set_uia_manual_restart_guard(
+        self,
+        *,
+        phase: str = "",
+        reason: str = "",
+        duration_seconds: float | None = None,
+    ) -> None:
+        duration = float(duration_seconds or self._UIA_MANUAL_RESTART_GUARD_SECONDS)
+        self._uia_manual_restart_guard_until = time.time() + max(1.0, duration)
+        self._uia_manual_restart_guard_phase = str(phase or "")
+        self._uia_manual_restart_guard_reason = str(reason or "")
+
+    def _build_uia_manual_restart_guard_guidance(
+        self,
+        *,
+        include_prefix: bool = True,
+    ) -> str:
+        remaining_seconds = max(
+            1,
+            int(float(getattr(self, "_uia_manual_restart_guard_until", 0.0) or 0.0) - time.time()),
+        )
+        prefix = ""
+        if include_prefix:
+            prefix = "微信界面当前不可访问（UIA 树没有展开，只能看到外层壳窗口）。"
+        return (
+            f"{prefix}程序刚执行过一次自动修复并关闭过微信。"
+            f"为避免你手动打开微信后又被程序再次关闭，接下来约 {remaining_seconds} 秒内不会再次自动关闭微信。"
+            "请保持 Windows 讲述人（Narrator）开启，手动打开并登录微信，确认微信主界面稳定显示后再重试。"
+        )
+
+    def _extract_uia_recovery_snapshot(self) -> dict:
+        payload = dict(self._last_uia_recovery or {})
+        actions = payload.get("actions") or []
+        if not isinstance(actions, list):
+            actions = []
+
+        action_steps = [
+            str(action.get("step") or "")
+            for action in actions
+            if isinstance(action, dict) and str(action.get("step") or "")
+        ]
+        launch_narrator_action = next(
+            (
+                action
+                for action in actions
+                if isinstance(action, dict) and str(action.get("step") or "") == "launch_narrator"
+            ),
+            {},
+        )
+        abort_action = next(
+            (
+                action
+                for action in actions
+                if isinstance(action, dict) and str(action.get("step") or "") == "abort_before_terminate"
+            ),
+            {},
+        )
+        manual_wait_action = next(
+            (
+                action
+                for action in actions
+                if isinstance(action, dict) and str(action.get("step") or "") == "wait_for_manual_narrator"
+            ),
+            {},
+        )
+        final_probe = payload.get("final_probe") or {}
+        final_status = str(final_probe.get("status") or "")
+        terminated_wechat = "terminate_wechat" in action_steps
+
+        verification_payload = (
+            manual_wait_action.get("verification")
+            or launch_narrator_action.get("verification")
+            or {}
+        )
+        if not isinstance(verification_payload, dict):
+            verification_payload = {}
+        narrator_verification = {
+            "ok": bool(manual_wait_action.get("ok") if manual_wait_action else launch_narrator_action.get("ok")),
+            "path": str(launch_narrator_action.get("path") or ""),
+            "pid": int(
+                (manual_wait_action.get("verification") or {}).get("pid")
+                or launch_narrator_action.get("pid")
+                or 0
+            ),
+            "status": str(verification_payload.get("status") or ""),
+            "verified": bool(verification_payload.get("verified")),
+            "attempts": int(verification_payload.get("attempts") or 0),
+            "error": str(
+                verification_payload.get("error")
+                or launch_narrator_action.get("error")
+                or ""
+            ),
+        }
+
+        summary = ""
+        if action_steps:
+            if abort_action:
+                abort_reason = str(abort_action.get("reason") or "")
+                if abort_reason == "manual_narrator_timeout":
+                    summary = "等待手动打开讲述人超时，本次自动修复已停止。"
+                else:
+                    summary = "讲述人尚未就绪，本次自动修复已暂停。"
+            elif final_status == "accessible":
+                if narrator_verification["verified"]:
+                    summary = "讲述人已验证启动，微信 UI 树已恢复。"
+                else:
+                    summary = "微信 UI 树已恢复。"
+            elif terminated_wechat:
+                if narrator_verification["verified"]:
+                    summary = f"讲述人已验证启动，但微信 UI 树仍未恢复（{final_status or 'unknown'}）。"
+                else:
+                    summary = f"自动修复已执行，但微信 UI 树仍未恢复（{final_status or 'unknown'}）。"
+            elif final_status:
+                summary = f"自动修复结束，当前 UIA 状态为 {final_status}。"
+
+        return {
+            "summary": summary,
+            "final_status": final_status,
+            "phase": str(payload.get("phase") or ""),
+            "source_error": str(payload.get("source_error") or ""),
+            "action_steps": action_steps,
+            "aborted": bool(abort_action),
+            "abort_reason": str(abort_action.get("reason") or ""),
+            "narrator_verification": narrator_verification,
+        }
+
     def _attempt_auto_recover_shell_only_uia(self, phase: str, error_text: str = "") -> bool:
         """Mark shell-only UIA recovery as pending and wait for explicit user confirmation."""
+        if self._has_active_uia_manual_restart_guard():
+            self._uia_recovery_required = False
+            self._uia_recovery_in_progress = False
+            self._uia_recovery_context = {}
+            self._chat_error = self._build_uia_manual_restart_guard_guidance()
+            _print(
+                "[RealtimeMonitorService] shell-only UIA 再次出现，但当前处于手动重开保护期，"
+                f"不再自动关闭微信 (phase={phase}, error={error_text})"
+            )
+            return False
+
         if self._uia_recovery_attempts >= 1:
             _print("[RealtimeMonitorService] UIA 自动修复已尝试过，跳过重复恢复")
             return False
@@ -438,35 +594,81 @@ class RealtimeMonitorService:
         self._last_uia_recovery = payload
         self._uia_recovery_in_progress = False
         self._uia_recovery_context = {}
+        actions = payload.get("actions") or []
+        terminated_wechat = any(
+            str(action.get("step") or "") == "terminate_wechat"
+            for action in actions
+            if isinstance(action, dict)
+        )
 
         final_probe = payload.get("final_probe") or {}
         if final_probe.get("status") == "accessible":
             _print("[RealtimeMonitorService] 微信 UIA 自动修复成功，继续初始化监听后端")
+            self._clear_uia_manual_restart_guard()
             self._chat_error = ""
+            recovery_snapshot = self._extract_uia_recovery_snapshot()
             return {
                 "success": True,
                 "message": "自动修复成功",
                 "final_status": final_probe.get("status"),
+                "uia_recovery_summary": recovery_snapshot.get("summary", ""),
+                "uia_recovery_actions": recovery_snapshot.get("action_steps", []),
+                "uia_recovery_aborted": recovery_snapshot.get("aborted", False),
+                "narrator_verification": recovery_snapshot.get("narrator_verification", {}),
             }
 
-        self._chat_error = self._build_shell_only_uia_guidance(
-            auto_attempted=True,
-            final_status=str(final_probe.get("status") or ""),
-        )
+        if terminated_wechat:
+            self._set_uia_manual_restart_guard(
+                phase=payload.get("phase") or "",
+                reason=str(final_probe.get("status") or "") or "unknown",
+            )
+            final_status_text = str(final_probe.get("status") or "").strip()
+            self._chat_error = (
+                (f"当前检测状态：{final_status_text}。" if final_status_text else "")
+                + self._build_uia_manual_restart_guard_guidance()
+            )
+        else:
+            recovery_snapshot = self._extract_uia_recovery_snapshot()
+            abort_reason = str(recovery_snapshot.get("abort_reason") or "")
+            if abort_reason == "manual_narrator_timeout":
+                self._chat_error = (
+                    "程序正在等待你手动打开 Windows 讲述人，但在限定时间内没有检测到讲述人就绪。"
+                    "请先手动打开讲述人，再重新执行自动修复。"
+                )
+            elif abort_reason == "narrator_launch_unverified":
+                self._chat_error = (
+                    "程序未能自动打开 Windows 讲述人。请先手动打开讲述人，"
+                    "确认讲述人已经运行后，再重新执行自动修复。"
+                )
+            else:
+                self._chat_error = (
+                    "程序尚未自动关闭微信，因为这台电脑上没有解析到可用的微信启动路径。"
+                    + self._build_shell_only_uia_guidance(
+                        auto_attempted=False,
+                        final_status=str(final_probe.get("status") or ""),
+                        include_prefix=False,
+                    )
+                )
         _print(
             "[RealtimeMonitorService] 微信 UIA 自动修复失败: "
             f"final_status={final_probe.get('status')}, errors={payload.get('errors')}"
         )
+        recovery_snapshot = self._extract_uia_recovery_snapshot()
         return {
             "success": False,
             "message": "自动修复失败",
             "error": self._chat_error,
             "final_status": final_probe.get("status"),
+            "uia_recovery_summary": recovery_snapshot.get("summary", ""),
+            "uia_recovery_actions": recovery_snapshot.get("action_steps", []),
+            "uia_recovery_aborted": recovery_snapshot.get("aborted", False),
+            "narrator_verification": recovery_snapshot.get("narrator_verification", {}),
         }
 
     def _create_wechat_instance_with_recovery(self, phase: str) -> None:
         try:
             self._create_wechat_instance()
+            self._clear_uia_manual_restart_guard()
             return
         except Exception as exc:
             error_text = str(exc)
@@ -477,9 +679,27 @@ class RealtimeMonitorService:
     def _format_listener_init_error(self, exc: Exception) -> str:
         error_text = str(exc)
         if isinstance(exc, UINotAccessibleError) or ('ui_not_accessible' in error_text.lower()):
+            if self._has_active_uia_manual_restart_guard():
+                return "微信窗口已找到，但" + self._build_uia_manual_restart_guard_guidance(include_prefix=False)
             if self._last_uia_recovery:
                 final_probe = self._last_uia_recovery.get("final_probe") or {}
                 final_status = final_probe.get("status") or "unknown"
+                actions = self._last_uia_recovery.get("actions") or []
+                terminated_wechat = any(
+                    str(action.get("step") or "") == "terminate_wechat"
+                    for action in actions
+                    if isinstance(action, dict)
+                )
+                if not terminated_wechat:
+                    return (
+                        "微信窗口已找到，但当前这次启动只暴露了外层壳窗口。"
+                        "程序没有自动关闭微信，因为当前机器上未确认到可用的微信启动路径。"
+                        + self._build_shell_only_uia_guidance(
+                            auto_attempted=False,
+                            final_status=final_status,
+                            include_prefix=False,
+                        )
+                    )
                 return (
                     "微信窗口已找到，但当前这次启动只暴露了外层壳窗口。"
                     f"程序已尝试自动修复，当前状态: {final_status}。"
@@ -2942,6 +3162,7 @@ class RealtimeMonitorService:
             message_count = 0
             if self.is_monitoring and self.current_batch_id:
                 message_count = self.message_buffer.get_batch_count(self.current_batch_id, self.current_account_wxid)
+            recovery_snapshot = self._extract_uia_recovery_snapshot()
             
             # 检测轮询线程是否仍然存活
             polling_alive = (
@@ -2966,6 +3187,12 @@ class RealtimeMonitorService:
                 'provider': self._provider_name or getattr(self.wx, 'backend_name', ''),
                 'listener_profile': self._listener_profile or getattr(self.wx, 'listener_profile', ''),
                 'wechat_version': self._wechat_version or getattr(self.wx, 'wechat_version', ''),
+                'uia_recovery_summary': recovery_snapshot.get('summary', ''),
+                'uia_recovery_final_status': recovery_snapshot.get('final_status', ''),
+                'uia_recovery_actions': recovery_snapshot.get('action_steps', []),
+                'uia_recovery_aborted': recovery_snapshot.get('aborted', False),
+                'uia_recovery_abort_reason': recovery_snapshot.get('abort_reason', ''),
+                'narrator_verification': recovery_snapshot.get('narrator_verification', {}),
             }
             
         except Exception as e:

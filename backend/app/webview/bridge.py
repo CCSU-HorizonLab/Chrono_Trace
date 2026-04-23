@@ -2672,6 +2672,11 @@ class Bridge:
         try:
             import torch
             from ..services.gpu.gpu_installer import GpuInstallerService
+            from ..runtime_overrides import get_build_variant, get_gpu_install_state, has_gpu_overlay
+
+            overlay_state = get_gpu_install_state()
+            overlay_installed = has_gpu_overlay()
+            current_cuda_version = torch.version.cuda
 
             result = {
                 "ok": True,
@@ -2679,14 +2684,24 @@ class Bridge:
                 "has_nvidia_gpu": GpuInstallerService.has_nvidia_gpu(),
                 "gpu_name": None,
                 "torch_version": torch.__version__,
-                "cuda_version": None,
+                "cuda_version": current_cuda_version,
                 "gpu_memory_total_mb": 0,
                 "gpu_memory_free_mb": 0,
+                "build_variant": get_build_variant(),
+                "gpu_overlay_installed": overlay_installed,
+                "gpu_overlay_torch_version": overlay_state.get("torch_version"),
+                "gpu_overlay_cuda_version": overlay_state.get("cuda_version"),
+                "restart_required": bool(
+                    overlay_installed
+                    and (
+                        str(torch.__version__) != str(overlay_state.get("torch_version") or "")
+                        or str(current_cuda_version or "") != str(overlay_state.get("cuda_version") or "")
+                    )
+                ),
             }
 
             if result["cuda_available"]:
                 result["gpu_name"] = torch.cuda.get_device_name(0)
-                result["cuda_version"] = torch.version.cuda
 
                 mem_total = torch.cuda.get_device_properties(0).total_memory
                 try:
@@ -2703,6 +2718,9 @@ class Bridge:
         except Exception as e:
             logger.error(f"[Bridge] GPU 检测失败: {e}")
             from ..services.gpu.gpu_installer import GpuInstallerService
+            from ..runtime_overrides import get_build_variant, get_gpu_install_state, has_gpu_overlay
+
+            overlay_state = get_gpu_install_state()
             return {
                 "ok": False,
                 "cuda_available": False,
@@ -2712,6 +2730,11 @@ class Bridge:
                 "cuda_version": None,
                 "gpu_memory_total_mb": 0,
                 "gpu_memory_free_mb": 0,
+                "build_variant": get_build_variant(),
+                "gpu_overlay_installed": has_gpu_overlay(),
+                "gpu_overlay_torch_version": overlay_state.get("torch_version"),
+                "gpu_overlay_cuda_version": overlay_state.get("cuda_version"),
+                "restart_required": bool(has_gpu_overlay()),
                 "error": str(e)
             }
 

@@ -1,5 +1,9 @@
 import os
 os.environ["TORCH_COMPILE_DISABLE"] = "1"
+from backend.app.runtime_overrides import activate_gpu_overlay_path
+
+activate_gpu_overlay_path()
+
 import time
 import atexit
 import signal

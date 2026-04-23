@@ -13,6 +13,8 @@ __pycache__/
 *.pyo
 *.pyd
 .Python
+.venv-packaging/
+.venv-packaging-gpu/
 *.so
 *.egg
 *.egg-info/
@@ -61,6 +63,7 @@ frontend/coverage/
 frontend/.vite/
 frontend/dist-ssr/
 packaging/third_party/*.exe
+packaging/generated/
 
 # Documentation build output
 docs/docs/

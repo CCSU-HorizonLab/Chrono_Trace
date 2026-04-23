@@ -10,6 +10,10 @@
   #define ProjectVersion "0.1.0"
 #endif
 
+#ifndef InstallerSuffix
+  #define InstallerSuffix ""
+#endif
+
 #define AppVersion GetStringFileInfo(AddBackslash(BuildRoot) + AppExeName, "ProductVersion")
 #if AppVersion == ""
   #undef AppVersion
@@ -27,7 +31,7 @@ SetupIconFile={#AppIconFile}
 DefaultDirName={localappdata}\Programs\{#AppName}
 DefaultGroupName={#AppName}
 OutputDir=..\release\installer
-OutputBaseFilename=ChronoTraceSetup-{#AppVersion}
+OutputBaseFilename=ChronoTraceSetup-{#AppVersion}{#InstallerSuffix}
 Compression=lzma2
 SolidCompression=yes
 ArchitecturesInstallIn64BitMode=x64compatible

@@ -1209,8 +1209,8 @@ export default {
                     const doInstall = await showConfirm({
                         title: '检测到 GPU 硬件',
                         message:
-                            '检测到您的计算机配备了 NVIDIA GPU，但当前未安装支持 CUDA 的环境依赖，导致无法启用 GPU 加速。\n\n' +
-                            '是否现在进行【一键配置】？这将自动下载和安装所需的 PyTorch 环境（通常需要几分钟，会在后台执行）。'
+                            '检测到您的计算机配备了 NVIDIA GPU，但当前应用还没有可用的 CUDA 运行时。\n\n' +
+                            '是否现在进行【一键配置】？这将下载独立的 GPU 运行时并在后台完成配置，通常需要几分钟。'
                     })
                     if (doInstall) {
                         try {
@@ -1218,7 +1218,7 @@ export default {
                             if (installRes.ok) {
                                 await showDialog({
                                     title: '开始配置',
-                                    message: 'GPU 环境配置已在后台启动，您可以随时前往「通用设置」页面查看实时安装进度。\n本次分析将暂时使用 CPU 模式进行，安装完成后下次可使用 GPU 加速。'
+                                    message: 'GPU 运行时配置已在后台启动，您可以随时前往「通用设置」页面查看实时安装进度。\n本次分析将暂时使用 CPU 模式进行，安装完成并重启应用后即可使用 GPU 加速。'
                                 })
                             } else {
                                 await showDialog({ title: '安装启动失败', message: installRes.error || '未知错误' })

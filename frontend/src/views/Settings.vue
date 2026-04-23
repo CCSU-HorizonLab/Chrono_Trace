@@ -212,15 +212,22 @@
               <div class="gpu-status-row"><span class="gpu-label">PyTorch</span><span class="gpu-value">{{ gpuInfo.torch_version }}</span></div>
               <div class="gpu-status-badge available">✅ GPU 可用</div>
             </div>
+            <div v-else-if="gpuInfo.restart_required" class="gpu-status-detail">
+              <div class="gpu-status-badge available">⏳ GPU 运行时已安装</div>
+              <div class="gpu-status-row"><span class="gpu-label">目标 CUDA</span><span class="gpu-value">{{ gpuInfo.gpu_overlay_cuda_version || '已安装' }}</span></div>
+              <div class="gpu-status-row"><span class="gpu-label">目标 PyTorch</span><span class="gpu-value">{{ gpuInfo.gpu_overlay_torch_version || '已安装' }}</span></div>
+              <div class="gpu-status-row"><span class="gpu-label">当前进程</span><span class="gpu-value">{{ gpuInfo.torch_version || 'unknown' }}</span></div>
+              <div class="gpu-status-badge unavailable">重启应用后切换到 GPU 运行时</div>
+            </div>
             <div v-else class="gpu-status-detail">
               <div class="gpu-status-badge unavailable">❌ GPU 不可用</div>
               <div class="gpu-status-row"><span class="gpu-label">PyTorch</span><span class="gpu-value">{{ gpuInfo.torch_version || '未知' }}</span></div>
               <div v-if="gpuInfo.has_nvidia_gpu && !gpuInfo.cuda_available" class="gpu-installer-box" style="margin-top: 12px; padding: 12px; background: rgba(255,152,0,0.1); border: 1px solid rgba(255,152,0,0.3); border-radius: 8px;">
                 <p style="margin: 0 0 8px 0; font-size: 13px; color: #d87c00;">
-                  ✨ 检测到系统包含 NVIDIA GPU 硬件，但缺少支持 CUDA 的环境依赖导致无法加速。
+                  ✨ 检测到系统包含 NVIDIA GPU 硬件，但当前应用还没有可用的 CUDA 运行时。
                 </p>
                 <div v-if="installStatus === 'idle'">
-                  <CtButton style="font-size: 13px; margin-top: 5px; width: 100%; border: 1px solid #d87c00;" @click.prevent="startGpuInstall">⚡一键配置支持 CUDA 的 GPU 环境</CtButton>
+                  <CtButton style="font-size: 13px; margin-top: 5px; width: 100%; border: 1px solid #d87c00;" @click.prevent="startGpuInstall">⚡下载并配置 GPU 运行时</CtButton>
                 </div>
                 <div v-else>
                   <div style="font-size: 12px; margin-bottom: 4px; color: var(--ct-text-secondary);">
@@ -444,6 +451,10 @@ const gpuInfo = reactive<{
   cuda_version: string | null
   gpu_memory_total_mb: number
   gpu_memory_free_mb: number
+  gpu_overlay_installed: boolean
+  gpu_overlay_torch_version: string | null
+  gpu_overlay_cuda_version: string | null
+  restart_required: boolean
 }>({
   cuda_available: false,
   has_nvidia_gpu: false,
@@ -452,6 +463,10 @@ const gpuInfo = reactive<{
   cuda_version: null,
   gpu_memory_total_mb: 0,
   gpu_memory_free_mb: 0,
+  gpu_overlay_installed: false,
+  gpu_overlay_torch_version: null,
+  gpu_overlay_cuda_version: null,
+  restart_required: false,
 })
 
 const installStatus = ref('idle')
@@ -492,7 +507,7 @@ async function pollGpuInstall() {
       if (res.status === 'completed' || res.status === 'failed') {
         if (installTimer) clearInterval(installTimer)
         if (res.status === 'completed') {
-          showDialog('GPU 环境安装成功！为保证生效，强烈建议重启应用程序。')
+          showDialog('GPU 运行时安装成功。为保证生效，需要重启应用程序。')
           loadGpuInfo()
         } else {
           installError.value = res.error || '安装失败未知原因'
@@ -519,6 +534,10 @@ async function loadGpuInfo() {
       gpuInfo.cuda_version = status.cuda_version ?? null
       gpuInfo.gpu_memory_total_mb = status.gpu_memory_total_mb ?? 0
       gpuInfo.gpu_memory_free_mb = status.gpu_memory_free_mb ?? 0
+      gpuInfo.gpu_overlay_installed = Boolean(status.gpu_overlay_installed)
+      gpuInfo.gpu_overlay_torch_version = status.gpu_overlay_torch_version ?? null
+      gpuInfo.gpu_overlay_cuda_version = status.gpu_overlay_cuda_version ?? null
+      gpuInfo.restart_required = Boolean(status.restart_required)
     }
   } catch (e) {
     console.error('GPU 检测失败:', e)

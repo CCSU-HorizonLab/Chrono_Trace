@@ -293,10 +293,34 @@ build_release.bat
 packaging\build_release.ps1
 ```
 
+仓库会自动复用或初始化 `.venv-packaging` 作为打包专用环境，减少系统 Python 杂项依赖对 PyInstaller 的影响。
+
+可选打包变体：
+
+```powershell
+.\build_release.ps1 -Variant cpu
+.\build_release.ps1 -Variant gpu
+.\build_release.ps1 -Variant both
+```
+
+生产环境测试回归推荐使用快速模式：
+
+```powershell
+.\build_release.ps1 -Fast
+```
+
+如果快速模式也要生成安装包：
+
+```powershell
+.\build_release.ps1 -Fast -IncludeInstaller
+.\build_release.ps1 -Fast -Variant both -IncludeInstaller
+```
+
 打包产物位置：
 
 ```text
 release\pyinstaller\Chrono Trace\
+release\pyinstaller-gpu\Chrono Trace\
 release\installer\
 ```
 
@@ -304,7 +328,14 @@ release\installer\
 
 ```text
 release\installer\ChronoTraceSetup-版本号.exe
+release\installer\ChronoTraceSetup-版本号-GPU.exe
 ```
+
+说明：
+
+- `CPU` 安装包默认内置 CPU 版 PyTorch
+- `GPU` 安装包在构建时直接带入 CUDA 版 PyTorch
+- `CPU` 包内如果检测到 NVIDIA GPU，可额外下载独立 GPU runtime 到 `%LOCALAPPDATA%\Chrono Trace\runtime\gpu`，重启应用后生效
 
 ### 调试建议
 

@@ -7,6 +7,7 @@
 import threading
 import time
 import logging
+import sys
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +22,14 @@ FLOATING_GAP = 6               # 悬浮窗与微信窗口之间的间距（像�
 
 def _log(msg: str):
     """同时输出到 stdout 和 logger（确保开发控制台可见）"""
-    print(f"[FloatingWindow] {msg}", flush=True)
+    text = f"[FloatingWindow] {msg}"
+    try:
+        print(text, flush=True)
+    except UnicodeEncodeError:
+        encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+        safe_text = text.encode(encoding, errors="replace").decode(encoding, errors="replace")
+        sys.stdout.write(safe_text + "\n")
+        sys.stdout.flush()
     logger.info(msg)
 
 

@@ -1709,7 +1709,7 @@ class RealtimeMonitorService:
         
         # -- 1. 将微信窗口置顶 --
         self._bring_wechat_to_front()
-        time.sleep(1.0)
+        time.sleep(0.35)
         
         # -- 2. 切换聊天窗口（带重试循环，最多 3 次） --
         _print(f"👂 切换到聊天窗口: {session_state.get('display_name')}")
@@ -1731,7 +1731,7 @@ class RealtimeMonitorService:
                 else:
                     self._create_wechat_instance_with_recovery(phase="chat_retry")
                 self._bring_wechat_to_front()
-                time.sleep(1.2)
+                time.sleep(0.4)
                 for target_name in chat_targets:
                     _print(f"[OpenChat] 本轮尝试搜索名: {target_name}")
                     if self._try_chat_with(target_name):
@@ -1775,7 +1775,7 @@ class RealtimeMonitorService:
                     if self.wx is None:
                         self._create_wechat_instance_with_recovery(phase="chat_recovery_loop")
                     self._bring_wechat_to_front()
-                    time.sleep(1.2)
+                    time.sleep(0.4)
                     for target_name in chat_targets:
                         _print(f"[OpenChat] [恢复模式] 尝试搜索名: {target_name}")
                         if self._try_chat_with(target_name):

@@ -24,6 +24,7 @@ from app.services.realtime.providers.factory import (
 from app.services.realtime.providers.native_uia import (
     NativeUIARealtimeProvider,
     _classify_bubble_midpoint,
+    _merge_rect_clusters,
     _resolve_primary_active_midpoint,
 )
 from app.services.realtime.providers.models import (
@@ -194,6 +195,22 @@ def test_primary_active_midpoint_prefers_main_left_cluster_over_edge_noise():
 
     assert active_mid is not None
     assert _classify_bubble_midpoint(active_mid, width) == "friend"
+
+
+def test_merge_rect_clusters_combines_nearby_spans_and_preserves_distant_noise():
+    clusters = _merge_rect_clusters(
+        [
+            (32, 84, 400),
+            (92, 226, 1800),
+            (468, 486, 120),
+        ],
+        gap_tolerance=18,
+    )
+
+    assert clusters == [
+        (32, 226, 2200),
+        (468, 486, 120),
+    ]
 
 
 def test_normalize_listener_backend_maps_legacy_values_to_native_uia():
@@ -424,6 +441,170 @@ def test_native_provider_recall_notice_does_not_replace_current_time_label(monke
     assert messages[1].content == "你撤回了一条消息 重新编辑"
     assert messages[1].time == "12:28"
     assert messages[2].time == "12:28"
+
+
+def test_native_provider_red_packet_receive_notice_is_treated_as_system_message(monkeypatch):
+    provider = NativeUIARealtimeProvider("wechat_41x", wechat_version="4.1.8.29", hwnd=101)
+
+    class _FakeChatItem:
+        def __init__(self, text: str, class_name: str, runtime_id: str):
+            self._text = text
+            self._class_name = class_name
+            self.element_info = SimpleNamespace(runtime_id=runtime_id)
+
+        def class_name(self):
+            return self._class_name
+
+        def window_text(self):
+            return self._text
+
+    items = [
+        _FakeChatItem("20:07", "mmui::ChatTimeSeparator", "rt-1"),
+        _FakeChatItem("你领取了听（备注）的红包", "mmui::ChatBubbleItemView", "rt-2"),
+        _FakeChatItem("我是殷杰", "mmui::ChatBubbleItemView", "rt-3"),
+    ]
+
+    monkeypatch.setattr(provider, "_iter_chat_items", lambda: items)
+    monkeypatch.setattr(provider, "_resolve_sender_attr", lambda item: "self")
+    monkeypatch.setattr(provider, "_resolve_message_type", lambda class_name, text: "text")
+
+    messages = provider.list_visible_messages()
+
+    assert len(messages) == 3
+    assert messages[1].is_system is True
+    assert messages[1].sender_attr == "system"
+    assert messages[1].content == "你领取了听（备注）的红包"
+    assert messages[1].time == "20:07"
+    assert messages[2].is_system is False
+
+
+def test_native_provider_resolve_sender_prefers_informative_descendants_over_full_row(monkeypatch):
+    provider = NativeUIARealtimeProvider("wechat_41x", wechat_version="4.1.8.29", hwnd=101)
+    provider._chat_rect = (0, 0, 1000, 800)
+
+    class _Rect:
+        def __init__(self, left: int, right: int, top: int = 0, bottom: int = 80):
+            self.left = left
+            self.right = right
+            self.top = top
+            self.bottom = bottom
+
+    class _Node:
+        def __init__(self, left: int, right: int):
+            self._rect = _Rect(left, right)
+
+        def is_visible(self):
+            return True
+
+        def rectangle(self):
+            return self._rect
+
+    class _Item:
+        def descendants(self):
+            return [
+                _Node(0, 1000),   # full-row container, should be ignored
+                _Node(640, 930),  # actual right-side bubble span
+            ]
+
+        def rectangle(self):
+            return _Rect(0, 1000)
+
+    screenshot_calls = {"count": 0}
+
+    def fake_screenshot(_item):
+        screenshot_calls["count"] += 1
+        return ""
+
+    monkeypatch.setattr(provider, "_resolve_sender_attr_from_screenshot", fake_screenshot)
+
+    sender_attr = provider._resolve_sender_attr(_Item())
+
+    assert sender_attr == "self"
+    assert screenshot_calls["count"] == 0
+
+
+def test_native_provider_resolve_sender_prefers_left_dominant_cluster_over_right_noise(monkeypatch):
+    provider = NativeUIARealtimeProvider("wechat_41x", wechat_version="4.1.8.29", hwnd=101)
+    provider._chat_rect = (0, 0, 1000, 800)
+
+    class _Rect:
+        def __init__(self, left: int, right: int, top: int = 0, bottom: int = 80):
+            self.left = left
+            self.right = right
+            self.top = top
+            self.bottom = bottom
+
+    class _Node:
+        def __init__(self, left: int, right: int, top: int = 0, bottom: int = 80):
+            self._rect = _Rect(left, right, top, bottom)
+
+        def is_visible(self):
+            return True
+
+        def rectangle(self):
+            return self._rect
+
+    class _Item:
+        def descendants(self):
+            return [
+                _Node(0, 1000, 0, 80),   # full-row container
+                _Node(40, 92, 12, 64),   # avatar
+                _Node(104, 262, 12, 68), # left bubble
+                _Node(868, 892, 18, 36), # tiny right noise
+            ]
+
+        def rectangle(self):
+            return _Rect(0, 1000)
+
+    screenshot_calls = {"count": 0}
+
+    def fake_screenshot(_item):
+        screenshot_calls["count"] += 1
+        return ""
+
+    monkeypatch.setattr(provider, "_resolve_sender_attr_from_screenshot", fake_screenshot)
+
+    sender_attr = provider._resolve_sender_attr(_Item())
+
+    assert sender_attr == "friend"
+    assert screenshot_calls["count"] == 0
+
+
+def test_native_provider_sender_screenshot_uses_all_screens(monkeypatch):
+    provider = NativeUIARealtimeProvider("wechat_41x", wechat_version="4.1.8.29", hwnd=101)
+
+    class _Rect:
+        left = -1200
+        top = 100
+        right = -900
+        bottom = 180
+
+    class _Item:
+        def rectangle(self):
+            return _Rect()
+
+    class _FakeImage:
+        def convert(self, _mode):
+            return self
+
+        def getpixel(self, pos):
+            x, _y = pos
+            if 210 <= x <= 250:
+                return (120, 210, 110)
+            return (245, 245, 245)
+
+    calls = []
+
+    def fake_grab(**kwargs):
+        calls.append(kwargs)
+        return _FakeImage()
+
+    monkeypatch.setattr("PIL.ImageGrab.grab", fake_grab)
+
+    sender_attr = provider._resolve_sender_attr_from_screenshot(_Item())
+
+    assert sender_attr == "self"
+    assert calls[0]["all_screens"] is True
 
 
 def test_factory_rejects_unsupported_versions(monkeypatch):

@@ -1,3 +1,5 @@
+import io
+import logging
 import sys
 import types
 from pathlib import Path
@@ -8,7 +10,38 @@ backend_root = Path(__file__).parent.parent
 sys.path.insert(0, str(backend_root))
 
 
+from app.services.realtime import floating_window_service
 from app.services.realtime.floating_window_service import FloatingWindowService
+
+
+class _AsciiStdout(io.StringIO):
+    encoding = "gbk"
+
+    def write(self, s):
+        str(s).encode(self.encoding)
+        return super().write(s)
+
+
+def test_log_falls_back_when_stdout_cannot_encode_unicode(monkeypatch):
+    stream = _AsciiStdout()
+    records: list[str] = []
+
+    class _Handler(logging.Handler):
+        def emit(self, record):
+            records.append(record.getMessage())
+
+    handler = _Handler()
+    floating_window_service.logger.addHandler(handler)
+    floating_window_service.logger.setLevel(logging.INFO)
+    try:
+        monkeypatch.setattr(floating_window_service.sys, "stdout", stream)
+        floating_window_service._log("✅ 测试")
+    finally:
+        floating_window_service.logger.removeHandler(handler)
+
+    assert "[FloatingWindow]" in stream.getvalue()
+    assert "?" in stream.getvalue()
+    assert records[-1] == "✅ 测试"
 
 
 def test_set_window_decorations_toggles_style_bits(monkeypatch):
@@ -125,4 +158,3 @@ def test_enter_and_exit_floating_mode_toggle_window_decorations():
     exit_result = service.exit_floating_mode()
     assert exit_result["ok"] is True
     assert decoration_events == [False, True]
-

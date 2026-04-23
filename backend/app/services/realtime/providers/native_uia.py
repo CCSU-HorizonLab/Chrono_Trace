@@ -34,6 +34,12 @@ SYSTEM_TEXT_PREFIXES = (
     "你撤回了一条消息",
     "对方撤回了一条消息",
 )
+SYSTEM_TEXT_PATTERNS = (
+    re.compile(r"^你领取了.+的红包$"),
+    re.compile(r"^领取了你的红包$"),
+    re.compile(r"^领取了您的红包$"),
+    re.compile(r"^你领取了微信红包$"),
+)
 CHAT_MESSAGE_AUTOMATION_ID = "chat_message_list"
 SESSION_LIST_AUTOMATION_ID = "session_list"
 CHAT_ITEM_CLASS_NAMES = {
@@ -56,6 +62,26 @@ def _classify_bubble_midpoint(active_mid: float, width: int) -> str:
     if active_mid >= width * 0.62:
         return "self"
     return ""
+
+
+def _merge_rect_clusters(
+    spans: list[tuple[int, int, int]],
+    gap_tolerance: int,
+) -> list[tuple[int, int, int]]:
+    """Merge nearby x-spans and accumulate their weights."""
+    if not spans:
+        return []
+
+    ordered = sorted(spans, key=lambda item: (item[0], item[1]))
+    clusters: list[list[int]] = [[ordered[0][0], ordered[0][1], ordered[0][2]]]
+    for left, right, weight in ordered[1:]:
+        last = clusters[-1]
+        if left - last[1] <= max(1, gap_tolerance):
+            last[1] = max(last[1], right)
+            last[2] += weight
+            continue
+        clusters.append([left, right, weight])
+    return [(left, right, weight) for left, right, weight in clusters]
 
 
 def _build_active_segments(
@@ -533,8 +559,8 @@ class NativeUIARealtimeProvider(RealtimeProvider):
             raise ProviderInitError(f"Unable to locate chat '{search_name}'")
 
         last_error = ""
-        for _ in range(10):
-            time.sleep(0.25)
+        for _ in range(8):
+            time.sleep(0.12)
             self._chat_list = self._find_chat_list()
             direct_items = self._iter_direct_chat_items()
             self._refresh_chat_rect(direct_items)
@@ -586,6 +612,8 @@ class NativeUIARealtimeProvider(RealtimeProvider):
             return True
         if any(text.startswith(prefix) for prefix in SYSTEM_TEXT_PREFIXES):
             return True
+        if any(pattern.match(text) for pattern in SYSTEM_TEXT_PATTERNS):
+            return True
         return False
 
     def _looks_like_time_label_item(self, text: str, class_name: str) -> bool:
@@ -604,7 +632,7 @@ class NativeUIARealtimeProvider(RealtimeProvider):
         except Exception:
             return ""
 
-        child_rects = []
+        rect_entries: list[tuple[int, int, int]] = []
         item_rect = None
         try:
             descendants = item.descendants()
@@ -615,7 +643,15 @@ class NativeUIARealtimeProvider(RealtimeProvider):
                 if not child.is_visible():
                     continue
                 rect = child.rectangle()
-                child_rects.append((rect.left, rect.right))
+                left = int(rect.left)
+                right = int(rect.right)
+                top = int(getattr(rect, "top", 0) or 0)
+                bottom = int(getattr(rect, "bottom", 0) or 0)
+                width = max(0, right - left)
+                height = max(0, bottom - top)
+                if width <= 0 or height <= 0:
+                    continue
+                rect_entries.append((left, right, width * height))
             except Exception:
                 continue
         try:
@@ -623,18 +659,40 @@ class NativeUIARealtimeProvider(RealtimeProvider):
             item_rect = (rect.left, rect.right)
         except Exception:
             item_rect = None
-        if not child_rects and item_rect is not None:
-            child_rects.append(item_rect)
-        if not child_rects:
+        if item_rect is not None:
+            item_width = max(1, item_rect[1] - item_rect[0])
+            informative_rects: list[tuple[int, int, int]] = []
+            for left, right, weight in rect_entries:
+                width = max(0, right - left)
+                if width < 16:
+                    continue
+                if width <= int(item_width * 0.9):
+                    informative_rects.append((left, right, weight))
+            rect_entries = informative_rects or rect_entries
+        if not rect_entries and item_rect is not None:
+            rect_entries.append((item_rect[0], item_rect[1], max(1, item_rect[1] - item_rect[0])))
+        if not rect_entries:
             return self._resolve_sender_attr_from_screenshot(item)
 
-        left_edge = min(pair[0] for pair in child_rects)
-        right_edge = max(pair[1] for pair in child_rects)
-        if item_rect is not None and (right_edge - left_edge) >= (item_rect[1] - item_rect[0]) * 0.9:
+        gap_tolerance = 24
+        if item_rect is not None:
+            gap_tolerance = max(12, int((item_rect[1] - item_rect[0]) * 0.04))
+        clusters = _merge_rect_clusters(rect_entries, gap_tolerance=gap_tolerance)
+        if not clusters:
             return self._resolve_sender_attr_from_screenshot(item)
-        if right_edge - center_x > 80 and right_edge > center_x:
+
+        best_left, best_right, _best_weight = max(
+            clusters,
+            key=lambda item: (
+                item[2],
+                item[1] - item[0],
+                abs(((item[0] + item[1]) / 2) - center_x),
+            ),
+        )
+        cluster_mid = (best_left + best_right) / 2
+        if cluster_mid - center_x > 80 and best_right > center_x:
             return "self"
-        if center_x - left_edge > 80 and left_edge < center_x:
+        if center_x - cluster_mid > 80 and best_left < center_x:
             return "friend"
         return self._resolve_sender_attr_from_screenshot(item)
 
@@ -654,7 +712,7 @@ class NativeUIARealtimeProvider(RealtimeProvider):
         if width <= 8 or height <= 8:
             return ""
         try:
-            image = ImageGrab.grab(bbox=bbox).convert("RGB")
+            image = ImageGrab.grab(bbox=bbox, all_screens=True).convert("RGB")
         except Exception as exc:
             logger.debug("Screenshot-based sender detection failed: %s", exc)
             return ""

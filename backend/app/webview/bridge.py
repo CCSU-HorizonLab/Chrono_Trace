@@ -2687,6 +2687,15 @@ class Bridge:
             overlay_state = get_gpu_install_state()
             overlay_installed = has_gpu_overlay()
             current_cuda_version = torch.version.cuda
+            build_variant = get_build_variant()
+            overlay_restart_required = bool(
+                build_variant != "dev"
+                and overlay_installed
+                and (
+                    str(torch.__version__) != str(overlay_state.get("torch_version") or "")
+                    or str(current_cuda_version or "") != str(overlay_state.get("cuda_version") or "")
+                )
+            )
 
             result = {
                 "ok": True,
@@ -2697,17 +2706,11 @@ class Bridge:
                 "cuda_version": current_cuda_version,
                 "gpu_memory_total_mb": 0,
                 "gpu_memory_free_mb": 0,
-                "build_variant": get_build_variant(),
+                "build_variant": build_variant,
                 "gpu_overlay_installed": overlay_installed,
                 "gpu_overlay_torch_version": overlay_state.get("torch_version"),
                 "gpu_overlay_cuda_version": overlay_state.get("cuda_version"),
-                "restart_required": bool(
-                    overlay_installed
-                    and (
-                        str(torch.__version__) != str(overlay_state.get("torch_version") or "")
-                        or str(current_cuda_version or "") != str(overlay_state.get("cuda_version") or "")
-                    )
-                ),
+                "restart_required": overlay_restart_required,
             }
 
             if result["cuda_available"]:
@@ -2731,6 +2734,7 @@ class Bridge:
             from ..runtime_overrides import get_build_variant, get_gpu_install_state, has_gpu_overlay
 
             overlay_state = get_gpu_install_state()
+            build_variant = get_build_variant()
             return {
                 "ok": False,
                 "cuda_available": False,
@@ -2740,11 +2744,11 @@ class Bridge:
                 "cuda_version": None,
                 "gpu_memory_total_mb": 0,
                 "gpu_memory_free_mb": 0,
-                "build_variant": get_build_variant(),
+                "build_variant": build_variant,
                 "gpu_overlay_installed": has_gpu_overlay(),
                 "gpu_overlay_torch_version": overlay_state.get("torch_version"),
                 "gpu_overlay_cuda_version": overlay_state.get("cuda_version"),
-                "restart_required": bool(has_gpu_overlay()),
+                "restart_required": bool(build_variant != "dev" and has_gpu_overlay()),
                 "error": str(e)
             }
 

@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from .config import RESOURCE_ROOT_PATH, USER_DATA_DIR_PATH, ensure_directory
+from .config import IS_FROZEN, RESOURCE_ROOT_PATH, USER_DATA_DIR_PATH, ensure_directory
 
 
 GPU_RUNTIME_ROOT_PATH = ensure_directory(USER_DATA_DIR_PATH / "runtime" / "gpu")
@@ -47,6 +47,8 @@ def get_build_info() -> dict[str, Any]:
 
 
 def get_build_variant() -> str:
+    if not IS_FROZEN:
+        return "dev"
     variant = str(get_build_info().get("variant") or "").strip().lower()
     if variant in {"cpu", "gpu"}:
         return variant

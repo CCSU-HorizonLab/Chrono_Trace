@@ -43,3 +43,23 @@ def test_activate_gpu_overlay_inserts_overlay_site_packages_first():
                 assert sys.path[0] == str(site_packages)
         finally:
             sys.path[:] = original_sys_path
+
+
+def test_get_build_variant_returns_dev_when_not_frozen_even_if_build_info_exists():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        build_info = Path(temp_dir) / "build_info.json"
+        build_info.write_text('{"variant": "gpu"}', encoding="utf-8")
+
+        with patch.object(runtime_overrides, "BUILD_INFO_PATH", build_info), \
+             patch.object(runtime_overrides, "IS_FROZEN", False):
+            assert runtime_overrides.get_build_variant() == "dev"
+
+
+def test_get_build_variant_reads_build_info_when_frozen():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        build_info = Path(temp_dir) / "build_info.json"
+        build_info.write_text('{"variant": "gpu"}', encoding="utf-8")
+
+        with patch.object(runtime_overrides, "BUILD_INFO_PATH", build_info), \
+             patch.object(runtime_overrides, "IS_FROZEN", True):
+            assert runtime_overrides.get_build_variant() == "gpu"

@@ -3508,8 +3508,8 @@ class RealtimeMonitorService:
             cursor.execute('''
                 INSERT INTO realtime_suggestions
                 (account_wxid, batch_id, trigger_type, intent, severity, summary, speeches,
-                 confidence, engine_type, trigger_context, created_at, reply, thought_process)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 confidence, status, engine_type, trigger_context, created_at, reply, thought_process)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 account_wxid,
                 batch_id,
@@ -3519,6 +3519,7 @@ class RealtimeMonitorService:
                 result.summary,
                 json.dumps(result.speeches, ensure_ascii=False),
                 result.confidence,
+                'attribution_window',
                 self._suggestion_config.get('engine_type', 'llm'),
                 json.dumps(trigger.context, ensure_ascii=False) if trigger.context else None,
                 int(time.time()),
@@ -3526,6 +3527,21 @@ class RealtimeMonitorService:
                 getattr(result, 'thought_process', None)
             ))
             suggestion_id = cursor.lastrowid
+            try:
+                rag_log_id = getattr(result, 'rag_log_id', None)
+                if rag_log_id:
+                    from .rag_context_builder import RagContextBuilder
+
+                    RagContextBuilder().attach_log_to_suggestion(rag_log_id, suggestion_id)
+            except Exception as rag_log_e:
+                _print(f"⚠️ RAG 检索日志关联建议失败: {rag_log_e}")
+            try:
+                from .feedback_attribution import SuggestionFeedbackAttributor
+                from ...db.connection import get_db as _get_db
+
+                SuggestionFeedbackAttributor.schedule_check(_get_db, suggestion_id)
+            except Exception as attr_schedule_e:
+                _print(f"⚠️ 反馈归因窗口调度失败: {attr_schedule_e}")
             try:
                 from .suggestion_observer import EVENT_SHOWN, record_observation
 
@@ -3601,11 +3617,13 @@ class RealtimeMonitorService:
             from ...db.connection import get_db
             conn = get_db()
 
-            # 查询最近 5 分钟内尚未反馈的建议（pending=自动生成, displayed=手动生成）
-            cutoff = int(time.time()) - 300
+            # 查询归因窗口内尚未完成反馈的建议。不能把下一条消息直接当作最终反馈。
+            cutoff = int(time.time()) - 600
             cursor = conn.execute('''
                 SELECT id, speeches FROM realtime_suggestions
-                WHERE account_wxid = ? AND batch_id = ? AND status IN ('pending', 'displayed') AND created_at >= ?
+                WHERE account_wxid = ? AND batch_id = ?
+                  AND status IN ('pending', 'displayed', 'attribution_window')
+                  AND created_at >= ?
                 ORDER BY created_at DESC LIMIT 1
             ''', (account_wxid, batch_id, cutoff))
 
@@ -3619,7 +3637,8 @@ class RealtimeMonitorService:
                 '''
                 UPDATE realtime_suggestions
                 SET status = 'feedback_processing'
-                WHERE account_wxid = ? AND id = ? AND status IN ('pending', 'displayed')
+                WHERE account_wxid = ? AND id = ?
+                  AND status IN ('pending', 'displayed', 'attribution_window')
                 ''',
                 (account_wxid, suggestion_id)
             )
@@ -3627,7 +3646,7 @@ class RealtimeMonitorService:
             if reserve.rowcount != 1:
                 return
 
-            _print(f"\ud83d\udd0d [隐式反馈] 检测到用户发消息，开始对比 AI 建议 (id={suggestion_id})")
+            _print(f"\ud83d\udd0d [反馈归因] 检测到用户发消息，进入归因窗口 (id={suggestion_id})")
 
             # 调用规则提取器
             from .feedback_rule_extractor import FeedbackRuleExtractor
@@ -3639,9 +3658,44 @@ class RealtimeMonitorService:
             import threading
             def do_extract():
                 try:
+                    from .feedback_attribution import SuggestionFeedbackAttributor
+
+                    try:
+                        attr = SuggestionFeedbackAttributor(get_db()).attribute(
+                            suggestion_id=suggestion_id,
+                            allow_pending=True,
+                        )
+                    except Exception as attr_e:
+                        _print(f"⚠️ [反馈归因] 窗口归因不可用，使用旧兼容路径: {attr_e}")
+                        attr = {
+                            "pending": False,
+                            "attribution_type": "accepted",
+                            "confidence": 0.0,
+                            "final_message": captured_user_message,
+                            "selected_speech": None,
+                        }
+                    if attr.get("pending"):
+                        conn2 = get_db()
+                        conn2.execute(
+                            "UPDATE realtime_suggestions SET status = 'attribution_window' WHERE account_wxid = ? AND id = ?",
+                            (account_wxid, suggestion_id),
+                        )
+                        conn2.commit()
+                        return
+
+                    attribution_type = attr.get("attribution_type")
+                    if attribution_type not in {"accepted", "rewritten", "preface_then_reply"}:
+                        conn2 = get_db()
+                        conn2.execute(
+                            "UPDATE realtime_suggestions SET status = 'feedback_collected' WHERE account_wxid = ? AND id = ?",
+                            (account_wxid, suggestion_id),
+                        )
+                        conn2.commit()
+                        return
+
                     feedback_analysis = extractor.analyze_feedback(
                         ai_speeches=speeches,
-                        user_actual_message=captured_user_message,
+                        user_actual_message=attr.get("final_message") or captured_user_message,
                         display_name=captured_display_name,
                         suggestion_id=suggestion_id,
                         user_message_type=user_message_type,
@@ -3655,6 +3709,10 @@ class RealtimeMonitorService:
                         )
 
                         outcome = feedback_analysis.get('outcome')
+                        if attribution_type in {'accepted', 'preface_then_reply'}:
+                            outcome = 'adopted'
+                        elif attribution_type == 'rewritten':
+                            outcome = 'rewritten'
                         if outcome in {'adopted', 'rewritten'}:
                             record_observation(
                                 conn2 := get_db(),
@@ -3662,10 +3720,12 @@ class RealtimeMonitorService:
                                 account_wxid=account_wxid,
                                 event_type=EVENT_ADOPTED if outcome == 'adopted' else EVENT_REWRITTEN,
                                 similarity=feedback_analysis.get('max_similarity'),
-                                selected_speech=feedback_analysis.get('selected_speech'),
-                                actual_message=captured_user_message,
+                                selected_speech=attr.get('selected_speech') or feedback_analysis.get('selected_speech'),
+                                actual_message=attr.get("final_message") or captured_user_message,
                                 actual_message_type=user_message_type,
                                 metadata={
+                                    'attribution_type': attribution_type,
+                                    'attribution_confidence': attr.get('confidence'),
                                     'rule_source': feedback_analysis.get('rule_source'),
                                     'rule_count': len(feedback_analysis.get('rules') or []),
                                 },

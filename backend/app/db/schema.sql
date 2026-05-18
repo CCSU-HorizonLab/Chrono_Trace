@@ -704,3 +704,167 @@ CREATE TABLE IF NOT EXISTS session_threads (
 
 CREATE INDEX IF NOT EXISTS idx_session_threads_account_display_created
 ON session_threads(account_wxid, display_name, created_at DESC);
+
+
+-- ========================================
+-- 25. 联系人级 RAG 数据结构
+-- ========================================
+CREATE TABLE IF NOT EXISTS rag_documents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_wxid TEXT NOT NULL,
+    conversation_id INTEGER NOT NULL,
+    doc_type TEXT NOT NULL,
+    source_table TEXT,
+    source_id TEXT,
+    source_ts INTEGER,
+    content TEXT NOT NULL,
+    redacted_content TEXT,
+    entity_map_json TEXT,
+    pii_flags_json TEXT,
+    metadata_json TEXT,
+    sensitivity TEXT DEFAULT 'normal',
+    enabled INTEGER DEFAULT 1,
+    superseded_by INTEGER,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+    UNIQUE(account_wxid, conversation_id, doc_type, source_table, source_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_rag_docs_scope
+ON rag_documents(account_wxid, conversation_id, doc_type);
+CREATE INDEX IF NOT EXISTS idx_rag_docs_source_ts
+ON rag_documents(account_wxid, conversation_id, source_ts DESC);
+CREATE INDEX IF NOT EXISTS idx_rag_docs_lifecycle
+ON rag_documents(account_wxid, conversation_id, enabled, superseded_by, sensitivity);
+
+CREATE TABLE IF NOT EXISTS rag_embeddings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id INTEGER NOT NULL,
+    account_wxid TEXT NOT NULL,
+    conversation_id INTEGER NOT NULL,
+    embedding_model TEXT NOT NULL,
+    embedding_dim INTEGER NOT NULL,
+    embedding_provider TEXT DEFAULT 'local',
+    vector_blob BLOB NOT NULL,
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY (document_id) REFERENCES rag_documents(id) ON DELETE CASCADE,
+    UNIQUE(document_id, embedding_model, embedding_dim)
+);
+
+CREATE INDEX IF NOT EXISTS idx_rag_embeddings_scope_model
+ON rag_embeddings(account_wxid, conversation_id, embedding_model, embedding_dim);
+
+CREATE TABLE IF NOT EXISTS rag_retrieval_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_wxid TEXT NOT NULL,
+    conversation_id INTEGER,
+    suggestion_id INTEGER,
+    query_text TEXT,
+    document_ids_json TEXT,
+    retrieval_scores_json TEXT,
+    index_status TEXT,
+    elapsed_ms INTEGER DEFAULT 0,
+    timed_out INTEGER DEFAULT 0,
+    degraded INTEGER DEFAULT 0,
+    degrade_reason TEXT,
+    redaction_status TEXT DEFAULT 'redacted',
+    redaction_disabled INTEGER DEFAULT 0,
+    redaction_fallback INTEGER DEFAULT 0,
+    remote_model INTEGER DEFAULT 0,
+    created_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_rag_logs_scope_created
+ON rag_retrieval_logs(account_wxid, conversation_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_rag_logs_suggestion
+ON rag_retrieval_logs(suggestion_id);
+
+CREATE TABLE IF NOT EXISTS rag_index_status (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_wxid TEXT NOT NULL,
+    conversation_id INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    embedding_model TEXT NOT NULL,
+    embedding_dim INTEGER NOT NULL,
+    privacy_mode TEXT NOT NULL DEFAULT 'balanced',
+    document_count INTEGER DEFAULT 0,
+    vector_count INTEGER DEFAULT 0,
+    dirty_since INTEGER,
+    last_indexed_at INTEGER,
+    last_error TEXT,
+    storage_bytes INTEGER DEFAULT 0,
+    enabled INTEGER DEFAULT 1,
+    updated_at INTEGER NOT NULL,
+    UNIQUE(account_wxid, conversation_id),
+    CHECK(status IN ('pending', 'indexing', 'ready', 'stale', 'failed'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_rag_index_status_account_status
+ON rag_index_status(account_wxid, status);
+
+CREATE TABLE IF NOT EXISTS privacy_entities (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_wxid TEXT NOT NULL,
+    conversation_id INTEGER,
+    entity_hash TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    placeholder TEXT NOT NULL,
+    first_seen_at INTEGER NOT NULL,
+    last_seen_at INTEGER NOT NULL,
+    UNIQUE(account_wxid, conversation_id, entity_hash, entity_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_privacy_entities_scope
+ON privacy_entities(account_wxid, conversation_id, entity_type);
+
+CREATE TABLE IF NOT EXISTS privacy_redaction_cache (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_wxid TEXT NOT NULL,
+    conversation_id INTEGER,
+    source_table TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    redaction_mode TEXT NOT NULL,
+    redacted_text TEXT NOT NULL,
+    entity_map_json TEXT,
+    pii_flags_json TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    UNIQUE(account_wxid, conversation_id, source_table, source_id, redaction_mode)
+);
+
+CREATE INDEX IF NOT EXISTS idx_privacy_redaction_cache_scope
+ON privacy_redaction_cache(account_wxid, conversation_id, source_table, source_id);
+
+CREATE TABLE IF NOT EXISTS suggestion_feedback_attributions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_wxid TEXT NOT NULL,
+    conversation_id INTEGER,
+    suggestion_id INTEGER NOT NULL,
+    batch_id TEXT,
+    attribution_type TEXT NOT NULL,
+    confidence REAL NOT NULL,
+    candidate_messages_json TEXT NOT NULL,
+    selected_speech TEXT,
+    final_message TEXT,
+    writeback_document_id INTEGER,
+    metadata_json TEXT,
+    created_at INTEGER NOT NULL,
+    CHECK(attribution_type IN ('accepted', 'rewritten', 'preface_then_reply', 'unrelated', 'interrupted', 'low_confidence'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_feedback_attr_suggestion
+ON suggestion_feedback_attributions(suggestion_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_feedback_attr_scope
+ON suggestion_feedback_attributions(account_wxid, conversation_id, created_at DESC);
+
+-- RAG 默认配置。settings.json 也会注入同样默认值；这里保证纯数据库初始化可见。
+INSERT OR IGNORE INTO settings (key, value, updated_at) VALUES
+    ('rag_enabled', '0', strftime('%s', 'now')),
+    ('rag_remote_context_redaction', '1', strftime('%s', 'now')),
+    ('rag_allow_remote_embedding', '0', strftime('%s', 'now')),
+    ('rag_embedding_provider', 'local', strftime('%s', 'now')),
+    ('rag_embedding_model', 'tingting0514/text2vec-base-chinese', strftime('%s', 'now')),
+    ('rag_embedding_dim', '384', strftime('%s', 'now')),
+    ('rag_privacy_mode', 'balanced', strftime('%s', 'now')),
+    ('rag_cross_contact_style_enabled', '0', strftime('%s', 'now'));

@@ -273,6 +273,12 @@ def load_settings_from_file(path: Optional[Path] = None) -> dict[str, Any]:
             settings = {}
 
     migrate_legacy_wechat_settings(settings)
+    try:
+        from ..realtime.rag_config import apply_rag_defaults
+
+        apply_rag_defaults(settings)
+    except Exception:
+        pass
     return settings
 
 

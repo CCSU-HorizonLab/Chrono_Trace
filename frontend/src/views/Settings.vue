@@ -81,6 +81,77 @@
         </div>
       </CtCard>
 
+      <CtCard title="联系人记忆 RAG">
+        <div class="form">
+          <div class="hint-box warning">
+            <p>关闭远程 RAG 脱敏后，未脱敏或弱脱敏的共同记忆上下文可能会发送给远程模型。只有确认风险后才应关闭。</p>
+          </div>
+
+          <label class="row">
+            <div class="lab">启用 RAG</div>
+            <label class="ct-switch">
+              <input v-model="form.rag_enabled" type="checkbox" @change="refreshRagStatus" />
+              <span class="slider"></span>
+              <span class="switch-label">{{ form.rag_enabled ? '已启用' : '已关闭' }}</span>
+            </label>
+          </label>
+
+          <label class="row">
+            <div class="lab">远程 RAG 脱敏</div>
+            <label class="ct-switch">
+              <input v-model="form.rag_remote_context_redaction" type="checkbox" @change="handleRagRedactionToggle" />
+              <span class="slider"></span>
+              <span class="switch-label">{{ form.rag_remote_context_redaction ? '默认脱敏' : '已关闭' }}</span>
+            </label>
+          </label>
+
+          <label class="row">
+            <div class="lab">远程 embedding</div>
+            <label class="ct-switch">
+              <input v-model="form.rag_allow_remote_embedding" type="checkbox" @change="handleRemoteEmbeddingToggle" />
+              <span class="slider"></span>
+              <span class="switch-label">{{ form.rag_allow_remote_embedding ? '允许' : '禁止' }}</span>
+            </label>
+          </label>
+
+          <div class="row">
+            <div class="lab">Embedding</div>
+            <div class="rag-config-line">
+              <span>{{ form.rag_embedding_model }}</span>
+              <span>{{ form.rag_embedding_dim }} 维</span>
+            </div>
+          </div>
+
+          <div class="rag-status-summary">
+            <div><strong>{{ ragStatus.totalDocuments }}</strong><span>文档</span></div>
+            <div><strong>{{ formatBytes(ragStatus.totalStorageBytes) }}</strong><span>占用</span></div>
+            <CtButton variant="ghost" :disabled="ragStatus.loading" @click.stop.prevent="refreshRagStatus">
+              {{ ragStatus.loading ? '刷新中...' : '刷新状态' }}
+            </CtButton>
+          </div>
+
+          <div class="rag-contact-list">
+            <div v-if="!ragStatus.items.length" class="empty-models">暂无可展示的联系人索引状态</div>
+            <div v-for="item in ragStatus.items.slice(0, 8)" :key="item.conversation_id" class="rag-contact-row">
+              <div class="rag-contact-main">
+                <div class="rag-contact-name">{{ item.display_name || item.username }}</div>
+                <div class="rag-contact-meta">
+                  {{ item.status }} · {{ item.document_count || 0 }} 文档 · {{ item.last_indexed_at ? formatTime(item.last_indexed_at) : '未索引' }}
+                  <span v-if="item.last_error"> · {{ item.last_error }}</span>
+                </div>
+              </div>
+              <div class="rag-contact-actions">
+                <button class="mini-btn" @click.prevent="toggleRagContact(item)">
+                  {{ item.enabled ? '禁用' : '启用' }}
+                </button>
+                <button class="mini-btn" @click.prevent="rebuildRagIndex(item)">重建</button>
+                <button class="mini-btn danger" @click.prevent="clearRagIndex(item)">清空</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </CtCard>
+
       <!-- 微信数据库路径配置 -->
       <CtCard title="微信数据库路径">
         <div class="form">
@@ -366,6 +437,12 @@ const form = reactive<{
   wechat_db_key: string
   analysis_device_mode: AnalysisDeviceMode
   model_root_dir: string
+  rag_enabled: boolean
+  rag_remote_context_redaction: boolean
+  rag_allow_remote_embedding: boolean
+  rag_embedding_model: string
+  rag_embedding_dim: number
+  rag_remote_embedding_redaction_risk_confirmed: boolean
 }>({
   wechat_use_custom_path: false,
   wechat_data_dir: '',
@@ -373,6 +450,19 @@ const form = reactive<{
   wechat_db_key: '',
   analysis_device_mode: 'auto',
   model_root_dir: '',
+  rag_enabled: false,
+  rag_remote_context_redaction: true,
+  rag_allow_remote_embedding: false,
+  rag_embedding_model: 'tingting0514/text2vec-base-chinese',
+  rag_embedding_dim: 384,
+  rag_remote_embedding_redaction_risk_confirmed: false,
+})
+
+const ragStatus = reactive({
+  loading: false,
+  items: [] as any[],
+  totalDocuments: 0,
+  totalStorageBytes: 0,
 })
 
 function mergeWechatAccounts(accounts: WechatAccountOption[]) {
@@ -567,8 +657,15 @@ async function onLoad() {
       // 计算设备模式
       const dm = s.analysis_device_mode
       form.analysis_device_mode = (dm === 'gpu' || dm === 'cpu' || dm === 'auto') ? dm : 'auto'
+      form.rag_enabled = Boolean(s.rag_enabled)
+      form.rag_remote_context_redaction = s.rag_remote_context_redaction !== false
+      form.rag_allow_remote_embedding = Boolean(s.rag_allow_remote_embedding)
+      form.rag_embedding_model = String(s.rag_embedding_model || 'tingting0514/text2vec-base-chinese')
+      form.rag_embedding_dim = Number(s.rag_embedding_dim || 384)
+      form.rag_remote_embedding_redaction_risk_confirmed = Boolean(s.rag_remote_embedding_redaction_risk_confirmed)
     }
     await loadWechatAccounts(activeAccountWxid.value)
+    await refreshRagStatus()
   } catch (e) {
     console.error('加载设置失败:', e)
   } finally {
@@ -671,6 +768,12 @@ async function onSave() {
       wechat_active_account_wxid: activeAccountWxid.value,
       analysis_device_mode: form.analysis_device_mode,
       model_root_dir: form.model_root_dir.trim() || defaultModelRootDir.value.trim(),
+      rag_enabled: form.rag_enabled,
+      rag_remote_context_redaction: form.rag_remote_context_redaction,
+      rag_allow_remote_embedding: form.rag_allow_remote_embedding,
+      rag_embedding_model: form.rag_embedding_model,
+      rag_embedding_dim: form.rag_embedding_dim,
+      rag_remote_embedding_redaction_risk_confirmed: form.rag_remote_embedding_redaction_risk_confirmed,
     }
     
     console.log('[DEBUG] 自动保存设置:', settingsToSave)
@@ -692,6 +795,86 @@ async function onSave() {
   } finally {
     saving.value = false
   }
+}
+
+async function handleRagRedactionToggle() {
+  if (form.rag_remote_context_redaction) {
+    form.rag_remote_embedding_redaction_risk_confirmed = false
+    return
+  }
+  const confirmed = await showConfirm({
+    title: '关闭远程 RAG 脱敏',
+    message: '关闭后，远程模型可能收到未脱敏或弱脱敏的共同记忆上下文。确认继续？',
+  })
+  if (!confirmed) {
+    form.rag_remote_context_redaction = true
+    form.rag_remote_embedding_redaction_risk_confirmed = false
+  }
+}
+
+async function handleRemoteEmbeddingToggle() {
+  if (form.rag_allow_remote_embedding && !form.rag_remote_context_redaction) {
+    const confirmed = await showConfirm({
+      title: '确认远程 embedding 风险',
+      message: '你同时允许远程 embedding 且关闭远程 RAG 脱敏。远程服务可能收到未脱敏记忆上下文。确认继续？',
+    })
+    form.rag_remote_embedding_redaction_risk_confirmed = confirmed
+    if (!confirmed) form.rag_allow_remote_embedding = false
+  }
+}
+
+async function refreshRagStatus() {
+  ragStatus.loading = true
+  try {
+    await bridgeReady()
+    const result = await api.get_rag_status(activeAccountWxid.value)
+    if (result?.ok) {
+      ragStatus.items = result.items || []
+      ragStatus.totalDocuments = Number(result.total_documents || 0)
+      ragStatus.totalStorageBytes = Number(result.total_storage_bytes || 0)
+    }
+  } catch (e) {
+    console.error('刷新 RAG 状态失败:', e)
+  } finally {
+    ragStatus.loading = false
+  }
+}
+
+async function rebuildRagIndex(item: any) {
+  const result = await api.rebuild_rag_index(Number(item.conversation_id), activeAccountWxid.value)
+  if (!result?.ok) await showDialog('重建失败: ' + (result?.error || '未知错误'))
+  await refreshRagStatus()
+}
+
+async function clearRagIndex(item: any) {
+  const confirmed = await showConfirm('确定清空该联系人的 RAG 数据？原始聊天记录不会删除。')
+  if (!confirmed) return
+  const result = await api.clear_rag_index(Number(item.conversation_id), activeAccountWxid.value)
+  if (!result?.ok) await showDialog('清空失败: ' + (result?.error || '未知错误'))
+  await refreshRagStatus()
+}
+
+async function toggleRagContact(item: any) {
+  const nextEnabled = !Boolean(item.enabled)
+  const result = await api.set_rag_conversation_enabled(
+    Number(item.conversation_id),
+    nextEnabled,
+    activeAccountWxid.value,
+  )
+  if (!result?.ok) await showDialog('更新失败: ' + (result?.error || '未知错误'))
+  await refreshRagStatus()
+}
+
+function formatBytes(value: number) {
+  if (!value) return '0 B'
+  if (value < 1024) return `${value} B`
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`
+  return `${(value / 1024 / 1024).toFixed(1)} MB`
+}
+
+function formatTime(ts: number) {
+  const date = new Date(Number(ts) * 1000)
+  return `${date.getMonth() + 1}/${date.getDate()} ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`
 }
 
 async function selectModelRootDir() {
@@ -1196,7 +1379,84 @@ onMounted(() => {
   margin-bottom: 8px;
   color: #0056b3;
 }
+.hint-box.warning {
+  background: rgba(245, 158, 11, 0.10);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  border-radius: 12px;
+  padding: 14px;
+  color: #9a5b00;
+}
 .hint-box p { margin: 0; font-size: 14px; line-height: 1.5; }
+
+.rag-config-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  color: var(--ct-text-secondary);
+  font-size: 13px;
+}
+.rag-status-summary {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 14px;
+  border: 1px solid var(--ct-border-color);
+  border-radius: 12px;
+  background: var(--ct-bg-secondary);
+}
+.rag-status-summary div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.rag-status-summary strong {
+  color: var(--ct-text-primary);
+  font-size: 16px;
+}
+.rag-status-summary span {
+  color: var(--ct-text-tertiary);
+  font-size: 12px;
+}
+.rag-contact-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.rag-contact-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--ct-border-color);
+  border-radius: 10px;
+  background: var(--ct-bg-1);
+}
+.rag-contact-main {
+  min-width: 0;
+}
+.rag-contact-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ct-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rag-contact-meta {
+  margin-top: 4px;
+  color: var(--ct-text-tertiary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.rag-contact-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 8px;
+}
 
 .maintenance-card {
   display: flex;

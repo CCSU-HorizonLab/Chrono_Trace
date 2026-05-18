@@ -122,6 +122,28 @@ class MessageBuffer:
                 ))
                 
                 conn.commit()
+                try:
+                    row = conn.execute(
+                        """
+                        SELECT id
+                        FROM conversations
+                        WHERE account_wxid = ?
+                          AND (username = ? OR display_name = ?)
+                        ORDER BY updated_at DESC
+                        LIMIT 1
+                        """,
+                        (
+                            self._resolve_account_wxid(account_wxid),
+                            talker_username,
+                            talker_display_name,
+                        ),
+                    ).fetchone()
+                    if row:
+                        from .rag_indexer import RagIndexQueue
+
+                        RagIndexQueue.mark_dirty(self._resolve_account_wxid(account_wxid), int(row["id"]))
+                except Exception as rag_e:
+                    logger.debug("[MessageBuffer] RAG dirty mark skipped: %s", rag_e)
                 return True
                 
             except Exception as e:

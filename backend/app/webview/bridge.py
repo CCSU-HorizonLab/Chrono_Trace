@@ -877,6 +877,12 @@ class Bridge:
 
     def get_settings(self) -> dict[str, Any]:
         """获取设置"""
+        try:
+            from ..services.realtime.rag_config import apply_rag_defaults
+
+            apply_rag_defaults(self.settings)
+        except Exception:
+            pass
         self.settings["analysis_device_mode"] = normalize_analysis_device_mode(
             self.settings.get("analysis_device_mode", ANALYSIS_DEVICE_MODE_AUTO)
         )
@@ -986,6 +992,30 @@ class Bridge:
     def set_settings(self, payload: dict[str, Any]) -> dict[str, Any]:
         """保存设置"""
         payload = dict(payload)
+        for bool_key in (
+            "rag_enabled",
+            "rag_remote_context_redaction",
+            "rag_allow_remote_embedding",
+            "rag_cross_contact_style_enabled",
+            "rag_remote_embedding_redaction_risk_confirmed",
+        ):
+            if bool_key in payload:
+                payload[bool_key] = bool(payload[bool_key])
+        if "rag_embedding_dim" in payload:
+            try:
+                payload["rag_embedding_dim"] = int(payload["rag_embedding_dim"] or 384)
+            except (TypeError, ValueError):
+                payload["rag_embedding_dim"] = 384
+        if (
+            payload.get("rag_allow_remote_embedding")
+            and payload.get("rag_remote_context_redaction") is False
+            and not payload.get("rag_remote_embedding_redaction_risk_confirmed")
+        ):
+            return {
+                "saved": False,
+                "ok": False,
+                "error": "同时开启远程 embedding 并关闭远程 RAG 脱敏前必须再次确认风险",
+            }
         if "analysis_device_mode" in payload:
             payload["analysis_device_mode"] = normalize_analysis_device_mode(payload["analysis_device_mode"])
         if MODEL_ROOT_DIR_KEY in payload:
@@ -1031,6 +1061,108 @@ class Bridge:
             "model_root_dir": self.settings.get(MODEL_ROOT_DIR_KEY),
             **self._serialize_wechat_accounts(),
         }
+
+    def get_rag_status(self, account_wxid: str = "") -> dict[str, Any]:
+        """Return per-contact RAG status summary for the settings page."""
+        try:
+            from ..db.connection import get_db
+            from ..services.realtime.rag_store import RagStore
+
+            resolved_account = self._resolve_account_wxid(account_wxid)
+            conn = get_db()
+            RagStore(conn)
+            rows = conn.execute(
+                """
+                SELECT
+                    c.id AS conversation_id,
+                    c.display_name,
+                    c.username,
+                    COALESCE(s.status, 'pending') AS status,
+                    COALESCE(s.document_count, 0) AS document_count,
+                    COALESCE(s.vector_count, 0) AS vector_count,
+                    s.last_indexed_at,
+                    s.last_error,
+                    COALESCE(s.storage_bytes, 0) AS storage_bytes,
+                    COALESCE(s.enabled, 1) AS enabled,
+                    s.updated_at
+                FROM conversations c
+                LEFT JOIN rag_index_status s
+                  ON s.account_wxid = c.account_wxid AND s.conversation_id = c.id
+                WHERE c.account_wxid = ? AND c.is_deleted = 0
+                ORDER BY c.updated_at DESC
+                LIMIT 80
+                """,
+                (resolved_account,),
+            ).fetchall()
+            items = [dict(row) for row in rows]
+            return {
+                "ok": True,
+                "settings": {
+                    key: self.settings.get(key)
+                    for key in (
+                        "rag_enabled",
+                        "rag_remote_context_redaction",
+                        "rag_allow_remote_embedding",
+                        "rag_embedding_model",
+                        "rag_embedding_dim",
+                        "rag_privacy_mode",
+                    )
+                },
+                "items": items,
+                "total_documents": sum(int(item.get("document_count") or 0) for item in items),
+                "total_storage_bytes": sum(int(item.get("storage_bytes") or 0) for item in items),
+            }
+        except Exception as e:
+            logger.error(f"[Bridge] 获取 RAG 状态失败: {e}")
+            return {"ok": False, "error": str(e), "items": []}
+
+    def rebuild_rag_index(self, conversation_id: int, account_wxid: str = "") -> dict[str, Any]:
+        """Rebuild one contact RAG index."""
+        try:
+            from ..services.realtime.rag_indexer import RagIndexer
+
+            resolved_account = self._resolve_account_wxid(account_wxid)
+            status = RagIndexer().rebuild_contact_index(
+                account_wxid=resolved_account,
+                conversation_id=int(conversation_id),
+            )
+            return {"ok": True, "status": status}
+        except Exception as e:
+            logger.error(f"[Bridge] 重建 RAG 索引失败: {e}")
+            return {"ok": False, "error": str(e)}
+
+    def clear_rag_index(self, conversation_id: int, account_wxid: str = "") -> dict[str, Any]:
+        """Clear one contact RAG data without touching original messages."""
+        try:
+            from ..services.realtime.rag_store import RagStore
+
+            resolved_account = self._resolve_account_wxid(account_wxid)
+            store = RagStore()
+            deleted = store.clear_conversation(resolved_account, int(conversation_id))
+            store.conn.commit()
+            return {"ok": True, "deleted": deleted}
+        except Exception as e:
+            logger.error(f"[Bridge] 清空 RAG 索引失败: {e}")
+            return {"ok": False, "error": str(e)}
+
+    def set_rag_conversation_enabled(
+        self,
+        conversation_id: int,
+        enabled: bool,
+        account_wxid: str = "",
+    ) -> dict[str, Any]:
+        """Enable or disable one contact's RAG candidates."""
+        try:
+            from ..services.realtime.rag_store import RagStore
+
+            resolved_account = self._resolve_account_wxid(account_wxid)
+            store = RagStore()
+            store.set_conversation_enabled(resolved_account, int(conversation_id), bool(enabled))
+            store.conn.commit()
+            return {"ok": True, "enabled": bool(enabled)}
+        except Exception as e:
+            logger.error(f"[Bridge] 更新联系人 RAG 启用状态失败: {e}")
+            return {"ok": False, "error": str(e)}
     
     def select_file(self, title: str = "选择文件", file_types: str = "*.*") -> dict[str, Any]:
         """

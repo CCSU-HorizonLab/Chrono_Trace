@@ -789,6 +789,25 @@ def test_llm_parse_response_sanitizes_newlines_inside_json_strings():
     assert result.speeches == ["你最近又在打哪个mod"]
 
 
+def test_llm_parse_response_salvages_truncated_json_speech():
+    engine = LLMSuggestionEngine()
+
+    result = engine._parse_response(
+        '{\n'
+        '  "reply": "好的，根据聊天记录给你几个选择：",\n'
+        '  "thought_process": "对方抱怨贵，顺着无奈语气接一句。",\n'
+        '  "summary": "用无奈带点幽默回应。",\n'
+        '  "speeches": [\n'
+        '    "那咋整，咱还能不买',
+        "manual_request",
+        "maintain",
+    )
+
+    assert result is not None
+    assert result.summary == "用无奈带点幽默回应。"
+    assert result.speeches == ["那咋整，咱还能不买"]
+
+
 def test_llm_call_api_enables_json_mode_for_supported_provider(monkeypatch):
     engine = LLMSuggestionEngine()
     captured = {}
@@ -837,6 +856,57 @@ def test_llm_call_api_enables_json_mode_for_supported_provider(monkeypatch):
     )
 
     assert captured["payload"]["response_format"] == {"type": "json_object"}
+    assert captured["payload"]["max_tokens"] >= 768
+
+
+def test_llm_call_api_uses_dynamic_completion_budget_for_long_json_prompt(monkeypatch):
+    engine = LLMSuggestionEngine()
+    captured = {}
+
+    monkeypatch.setattr(engine, "_validate_model_id", lambda model_id, base_url, api_key="": model_id)
+
+    class DummyResponse:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": '{"reply":"","thought_process":"ok","summary":"ok","speeches":["hi"]}'
+                            }
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 1200, "completion_tokens": 1, "total_tokens": 1201},
+                }
+            ).encode("utf-8")
+
+    def fake_urlopen(req, timeout=0):
+        captured["payload"] = json.loads(req.data.decode("utf-8"))
+        return DummyResponse()
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+
+    engine._call_api(
+        {
+            "provider": "deepseek",
+            "api_base_url": "https://api.deepseek.com/v1",
+            "api_key": "token",
+            "model_id": "deepseek-chat",
+            "max_tokens": 512,
+            "temperature": 0.3,
+        },
+        "长上下文" * 900,
+    )
+
+    assert captured["payload"]["max_tokens"] >= 1280
 
 
 def test_llm_call_api_boosts_reasoner_max_tokens(monkeypatch):

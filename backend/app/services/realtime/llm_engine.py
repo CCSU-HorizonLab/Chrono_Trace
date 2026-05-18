@@ -47,6 +47,7 @@ SYSTEM_PROMPT = """你是一个专业的聊天沟通顾问，但你当前必须�
 8. **反 AI 腔**：禁止输出下列典型句式或近似表达：“我理解你的感受”“别太难过了”“你说得对”“有什么我能帮到你的吗”“要不要我陪你聊聊”“你值得被温柔以待”“加油哦”“抱抱你”。
 9. **短句优先**：真人微信更像碎片化短句，不要为了完整而完整，不要硬凑主谓宾，不要把一句话写成小作文。
 10. 严格按 JSON 格式输出，禁止输出引导语或 Markdown。
+11. 输出必须短：reply 不超过 80 字，thought_process 不超过 80 字，summary 不超过 40 字，每条 speeches 不超过 30 字。
 
 输出格式（纯 JSON，无 markdown）：
 {
@@ -78,7 +79,8 @@ REPAIR_SYSTEM_PROMPT = """你是一个结果整理器。你会收到：
 3. 如果上下文属于“用户在直接和 AI 说话/提问”，则必须把最终回答放进 `reply`，并将 `summary` 设为空字符串、`speeches` 设为空数组，不要生成建议卡片。此时 `reply` 要使用自然、简洁的助手口吻，不要模仿用户对第三方说话的语气。
 4. 如果没有足够可靠的话术，就返回空 `speeches`，不要编造 prompt 规则。
 5. `thought_process` 只保留一两句简短总结，不要复述长篇思维链。
-6. 不要续写坏掉的 JSON，不要分析“你收到什么任务”，只给最终结果。
+6. 输出必须短：reply 不超过 80 字，thought_process 不超过 80 字，summary 不超过 40 字，每条 speeches 不超过 30 字。
+7. 不要续写坏掉的 JSON，不要分析“你收到什么任务”，只给最终结果。
 
 输出格式：
 {
@@ -138,12 +140,12 @@ class LLMSuggestionEngine(SuggestionEngine):
     """
     RECENT_MESSAGE_LIMIT = 20
     QUICK_PROMPT_MESSAGE_LIMIT = 20
-    RECENT_CHAR_GUARD = 2400
-    RECENT_MESSAGE_RENDER_CHARS = 120
+    RECENT_CHAR_GUARD = 1900
+    RECENT_MESSAGE_RENDER_CHARS = 90
     QUICK_PROMPT_RENDER_CHARS = 100
     RECENT_ATTENTION_TAIL = 6
     MSG_COMPRESS_THRESHOLD = 20
-    MSG_SUMMARY_MAX_CHARS = 300
+    MSG_SUMMARY_MAX_CHARS = 180
     MEMORY_LOOKBACK_MESSAGES = 5
     MEMORY_MAX_ITEMS = 3
     STYLE_RULE_KEYWORDS = (
@@ -483,6 +485,18 @@ class LLMSuggestionEngine(SuggestionEngine):
         _print(f"[LLM Engine] 使用模型: {model_config.get('name')} ({model_config.get('model_id')})")
         _print(f"[LLM Engine] API URL: {model_config.get('api_base_url')}")
 
+        try:
+            from .rag_context_builder import RagContextBuilder
+
+            RagContextBuilder().enrich_context(
+                context,
+                trigger_type=trigger_type,
+                intent=intent,
+                model_config=model_config,
+            )
+        except Exception as rag_e:
+            _print(f"[LLM Engine] RAG 上下文构造失败，已降级为原链路: {rag_e}")
+
         # 构造 prompt
         style_constraints = self._resolve_style_constraints(context)
         user_prompt = self._build_prompt(trigger_type, intent, context)
@@ -539,6 +553,9 @@ class LLMSuggestionEngine(SuggestionEngine):
                             style_constraints=style_constraints,
                         )
             if result:
+                if context.get("_rag_log_id"):
+                    setattr(result, "rag_log_id", context.get("_rag_log_id"))
+                    setattr(result, "rag_conversation_id", context.get("_rag_conversation_id"))
                 if result.summary == "[SILENT]":
                     _print(f"[LLM Engine] 😶 LLM 决定保持沉默，无建议也不需回复。")
                     return result
@@ -904,11 +921,11 @@ class LLMSuggestionEngine(SuggestionEngine):
             if isinstance(user_context, list):
                 # 对话历史格式: [{role: 'user', content: '...'}, ...]
                 parts.append("【用户需求与反馈】")
-                for msg in user_context[-6:]:  # 最多取最近 6 轮
+                for msg in user_context[-4:]:
                     role_label = "用户" if msg.get("role") == "user" else "AI"
-                    parts.append(f"  {role_label}：{msg.get('content', '')[:200]}")
+                    parts.append(f"  {role_label}：{msg.get('content', '')[:140]}")
             elif isinstance(user_context, str):
-                parts.append(f"【用户需求】{user_context[:500]}")
+                parts.append(f"【用户需求】{user_context[:320]}")
 
         # 历史聊天分析摘要（如请求包含历史数据）
         if context.get("include_history") and not is_direct_reply:
@@ -1005,6 +1022,21 @@ class LLMSuggestionEngine(SuggestionEngine):
                 age_hours = int((time.time() - created) / 3600) if created else 0
                 time_label = f"{age_hours}小时前" if age_hours < 24 else f"{age_hours // 24}天前"
                 parts.append(f"  {time_label}: {summary}")
+
+        retrieval_context = context.get("retrieval_context")
+        if retrieval_context and not is_direct_reply:
+            items = retrieval_context.get("items") or []
+            if items:
+                parts.append("\n【联系人级共同记忆 RAG（辅助参考，最近对话优先）】")
+                parts.append(
+                    "  使用边界: 只用于当前联系人和当前话题；不得主动翻旧账；"
+                    "若与最近对话冲突，必须忽略 RAG。"
+                )
+                for item in items[:4]:
+                    doc_type = item.get("doc_type")
+                    content = str(item.get("content") or "").strip()
+                    if content:
+                        parts.append(f"  - {doc_type}: {content}")
 
         historical_ctx = context.get("historical_context", {})
         history_lines = []
@@ -1187,6 +1219,38 @@ class LLMSuggestionEngine(SuggestionEngine):
             return max(max_tokens, 768)
         return max_tokens
 
+    def _estimate_message_tokens(self, messages: list[dict]) -> int:
+        """Rough local estimate used only to size completion budget before the API call."""
+        chars = 0
+        for message in messages:
+            chars += len(str(message.get("content") or ""))
+        return max(1, int(chars / 2.4))
+
+    def _dynamic_completion_tokens(self, messages: list[dict], request_tag: str) -> int:
+        """Raise JSON completion budget only when the current prompt is likely to need it."""
+        prompt_tokens = self._estimate_message_tokens(messages)
+        if request_tag == "suggestion":
+            if prompt_tokens <= 650:
+                return 768
+            if prompt_tokens <= 1100:
+                return 1024
+            if prompt_tokens <= 1800:
+                return 1280
+            return 1536
+        if request_tag == "repair":
+            if prompt_tokens <= 900:
+                return 896
+            if prompt_tokens <= 1600:
+                return 1152
+            return 1408
+        if request_tag == "format":
+            if prompt_tokens <= 1200:
+                return 768
+            if prompt_tokens <= 2200:
+                return 1024
+            return 1280
+        return 0
+
     def _call_api_with_messages(
         self,
         model_config: dict,
@@ -1206,7 +1270,10 @@ class LLMSuggestionEngine(SuggestionEngine):
 
         # Bug 2: 动态校验并修正 model_id
         model_id = self._validate_model_id(model_id, base_url, api_key)
-        max_tokens = self._boost_reasoning_max_tokens(model_id, int(max_tokens), request_tag)
+        max_tokens = max(
+            self._boost_reasoning_max_tokens(model_id, int(max_tokens), request_tag),
+            self._dynamic_completion_tokens(messages, request_tag),
+        )
 
         url = f"{base_url}/chat/completions"
 
@@ -1502,6 +1569,106 @@ class LLMSuggestionEngine(SuggestionEngine):
 
         return "".join(result)
 
+    def _extract_closed_json_string_field(self, text: str, field: str) -> str:
+        pattern = re.compile(rf'"{re.escape(field)}"\s*:\s*"((?:\\.|[^"\\])*)"', re.S)
+        match = pattern.search(text or "")
+        if not match:
+            return ""
+        raw = match.group(1)
+        try:
+            return json.loads(f'"{raw}"')
+        except Exception:
+            return raw.replace('\\"', '"').replace("\\n", "\n").strip()
+
+    def _extract_partial_speeches(self, text: str) -> list[str]:
+        """Recover completed, and last unterminated, speech strings from a cut JSON array."""
+        match = re.search(r'"speeches"\s*:\s*\[', text or "")
+        if not match:
+            return []
+
+        chunk = text[match.end():]
+        speeches: list[str] = []
+        buffer: list[str] = []
+        in_string = False
+        escape = False
+
+        for char in chunk:
+            if not in_string:
+                if char == "]":
+                    break
+                if char == '"':
+                    in_string = True
+                    buffer = []
+                continue
+
+            if escape:
+                buffer.append(char)
+                escape = False
+                continue
+            if char == "\\":
+                escape = True
+                continue
+            if char == '"':
+                candidate = "".join(buffer).strip()
+                if candidate:
+                    speeches.append(candidate)
+                in_string = False
+                buffer = []
+                continue
+            buffer.append(char)
+
+        if in_string:
+            candidate = "".join(buffer).strip()
+            if len(candidate) >= 2:
+                speeches.append(candidate)
+
+        deduped: list[str] = []
+        for speech in speeches:
+            if speech and speech not in deduped:
+                deduped.append(speech)
+        return deduped[:3]
+
+    def _parse_truncated_json_fallback(
+        self,
+        text: str,
+        trigger_type: str,
+        intent: str,
+        style_constraints: StyleConstraints | None = None,
+    ) -> Optional[SuggestionResult]:
+        """Last local fallback for API responses cut in the middle of a JSON object."""
+        cleaned = self._extract_json_candidate(text)
+        if not cleaned.startswith("{") or '"speeches"' not in cleaned:
+            return None
+
+        speeches = [
+            self._sanitize_speech_candidate(speech, style_constraints)
+            for speech in self._extract_partial_speeches(cleaned)
+        ]
+        speeches = [
+            speech
+            for speech in speeches
+            if speech
+            and (
+                self._is_sendable_speech(speech, style_constraints)
+                or (trigger_type == "manual_request" and self._is_reference_sendable_speech(speech, style_constraints))
+            )
+        ][:3]
+        if not speeches:
+            return None
+
+        summary = self._extract_closed_json_string_field(cleaned, "summary")[:80]
+        thought_process = self._extract_closed_json_string_field(cleaned, "thought_process")[:200]
+        return SuggestionResult(
+            trigger_type=trigger_type,
+            intent=intent,
+            summary=summary or "已从截断响应中提取可直接发送的话术",
+            speeches=speeches,
+            severity="medium",
+            confidence=0.55,
+            thought_process=thought_process or "模型响应被截断，已本地提取可用话术。",
+            reply=None,
+        )
+
     def _clean_speech_candidate(self, line: str) -> str:
         """清洗 reasoning 文本里候选话术的前缀噪音。"""
         candidate = re.sub(r"^[-*•\s]+", "", line.strip())
@@ -1738,7 +1905,7 @@ class LLMSuggestionEngine(SuggestionEngine):
             "上一次输出不是合法 JSON，或者结果里混入了规则说明/Prompt 片段。"
             "请不要解释失败原因，不要续写旧输出，直接重新给最终 JSON。\n\n"
             "如果你能从下面的坏输出片段里借用少量有价值的信息可以参考，否则忽略它：\n"
-            f"{raw_response[:600] if raw_response.strip() else '（无）'}"
+            f"{raw_response[:220] if raw_response.strip() else '（无）'}"
         )
         try:
             return self._call_api_with_messages(
@@ -1747,7 +1914,7 @@ class LLMSuggestionEngine(SuggestionEngine):
                     {"role": "system", "content": REPAIR_SYSTEM_PROMPT},
                     {"role": "user", "content": repair_prompt},
                 ],
-                max_tokens=min(max(int(model_config.get("max_tokens", 512)), 256), 512),
+                max_tokens=int(model_config.get("max_tokens", 512)),
                 temperature=0.2,
                 request_tag="repair",
             )
@@ -1834,6 +2001,17 @@ class LLMSuggestionEngine(SuggestionEngine):
                 reply=reply or None
             )
         except (json.JSONDecodeError, KeyError, IndexError, ValueError) as e:
+            candidate = self._extract_json_candidate(text).strip()
+            if isinstance(e, json.JSONDecodeError) or (candidate.startswith("{") and not candidate.endswith("}")):
+                truncated_result = self._parse_truncated_json_fallback(
+                    text,
+                    trigger_type,
+                    intent,
+                    style_constraints=style_constraints,
+                )
+                if truncated_result:
+                    _print("[LLM Engine] ⚠️ JSON 响应疑似被截断，已本地提取可用话术")
+                    return truncated_result
             fallback_result = self._parse_reasoning_fallback(
                 text,
                 trigger_type,

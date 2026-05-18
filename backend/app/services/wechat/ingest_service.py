@@ -655,6 +655,13 @@ class WeChatIngestService:
             message_db.close()
 
         self._refresh_conversation_stats(touched_conversations)
+        try:
+            from ..realtime.rag_indexer import RagIndexQueue
+
+            for conversation_id in touched_conversations:
+                RagIndexQueue.mark_dirty(account_wxid, conversation_id)
+        except Exception as rag_e:
+            logger.debug("[RAG] import dirty mark skipped: %s", rag_e)
 
         logger.info(f"[DEBUG] Messages imported: {total_messages}, conversations: {len(conversations_set)}")
         logger.debug(f"[DEBUG] Filtered conversations: {skipped_conversations}")

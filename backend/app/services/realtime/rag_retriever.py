@@ -15,6 +15,31 @@ from .rag_store import RagStore
 class RagRetriever:
     """Contact-scoped retriever with vector and keyword fallback."""
 
+    EXPLICIT_MEMORY_KEYWORDS = (
+        "找一下相关记忆",
+        "找下相关记忆",
+        "相关记忆",
+        "查一下记忆",
+        "找一下记忆",
+        "找下记忆",
+        "记忆里",
+        "历史里",
+        "聊天记录里",
+        "不记得了",
+        "想不起来",
+    )
+    MEMORY_TOPIC_HINTS = (
+        "上次",
+        "之前",
+        "那次",
+        "那家",
+        "店",
+        "吃",
+        "喝",
+        "玩",
+        "去过",
+        "一起",
+    )
     DOC_TYPE_WEIGHTS = {
         "relationship_state": 0.15,
         "dialogue_turn": 0.35,
@@ -103,6 +128,7 @@ class RagRetriever:
         if elapsed_ms > timeout_ms or (deadline is not None and time.perf_counter() > deadline):
             return self._empty(started, status, degraded=True, reason="timeout", timed_out=True)
 
+        explicit_memory_request = self._is_explicit_memory_request(query)
         filtered = []
         query_tokens = set(self._tokens(query))
         for item in scored:
@@ -120,6 +146,13 @@ class RagRetriever:
             filtered.append(item)
             if len(filtered) >= limit:
                 break
+
+        if not filtered and explicit_memory_request:
+            filtered = self._fallback_memory_candidates(docs, query_tokens, limit)
+            if filtered:
+                strategy = f"{strategy}_explicit_memory_fallback"
+        elif filtered and explicit_memory_request:
+            strategy = f"{strategy}_explicit_memory"
 
         return {
             "items": filtered,
@@ -203,6 +236,42 @@ class RagRetriever:
                 score += 0.2
             pairs.append((doc, score))
         return pairs
+
+    def _is_explicit_memory_request(self, query: str) -> bool:
+        normalized = re.sub(r"\s+", "", str(query or ""))
+        if not normalized:
+            return False
+        if any(keyword in normalized for keyword in self.EXPLICIT_MEMORY_KEYWORDS):
+            return True
+        return "记得" in normalized and any(hint in normalized for hint in self.MEMORY_TOPIC_HINTS)
+
+    def _fallback_memory_candidates(
+        self,
+        docs: list[dict[str, Any]],
+        query_tokens: set[str],
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        candidates = []
+        allowed_types = {"shared_memory", "dialogue_turn", "feedback_example"}
+        for doc in docs:
+            doc_type = str(doc.get("doc_type") or "")
+            if doc_type not in allowed_types:
+                continue
+            if str(doc.get("sensitivity") or "normal") == "sensitive":
+                doc_tokens = set(self._tokens(doc.get("content") or ""))
+                if len(query_tokens & doc_tokens) < 2:
+                    continue
+            try:
+                source_ts = int(doc.get("source_ts") or 0)
+            except (TypeError, ValueError):
+                source_ts = 0
+            doc_tokens = set(self._tokens(f"{doc.get('content') or ''} {doc.get('redacted_content') or ''}"))
+            overlap = len(query_tokens & doc_tokens)
+            recency_bonus = min(max(source_ts, 0) / 10_000_000_000, 0.2) if source_ts else 0.0
+            score = 0.18 + self.DOC_TYPE_WEIGHTS.get(doc_type, 0.0) + min(overlap * 0.08, 0.4) + recency_bonus
+            score *= self._time_decay(doc)
+            candidates.append({"doc": doc, "score": round(score, 4)})
+        return sorted(candidates, key=lambda item: item["score"], reverse=True)[:limit]
 
     def _tokens(self, text: str) -> list[str]:
         compact = re.sub(r"\s+", "", str(text or ""))

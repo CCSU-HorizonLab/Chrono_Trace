@@ -253,8 +253,12 @@ class LLMSuggestionEngine(SuggestionEngine):
         "开启话题",
         "帮我回",
         "给我建议",
+        "给出建议",
+        "给出相关建议",
+        "给相关建议",
         "给我几个话术",
         "给我几句",
+        "给出话术",
         "该发什么",
         "应该发什么",
         "回啥",
@@ -304,6 +308,7 @@ class LLMSuggestionEngine(SuggestionEngine):
     MANUAL_ADVICE_CONTEXT_HINTS = (
         "建议",
         "话术",
+        "相关建议",
         "你可以说",
         "你可以回",
         "可以这样回",
@@ -314,6 +319,9 @@ class LLMSuggestionEngine(SuggestionEngine):
         "回复草稿",
         "化解尴尬",
         "真诚道歉",
+        "问问",
+        "可以就提",
+        "可以，就提",
     )
     EMOJI_PATTERN = re.compile(
         "["
@@ -821,12 +829,39 @@ class LLMSuggestionEngine(SuggestionEngine):
         normalized = re.sub(r"\s+", "", latest_user_input)
         if any(keyword in normalized for keyword in self.MANUAL_ADVICE_KEYWORDS):
             return "advice_request"
+        if self._has_manual_advice_context(context) and self._looks_like_advice_followup(normalized):
+            return "advice_request"
         if (
             any(keyword in normalized for keyword in self.MANUAL_REWRITE_KEYWORDS)
             and self._has_manual_advice_context(context)
         ):
             return "advice_request"
         return "direct_reply"
+
+    def _looks_like_advice_followup(self, normalized_latest_input: str) -> bool:
+        """判断已在建议上下文中时，当前输入是否仍在追问给对方怎么说。"""
+        if not normalized_latest_input:
+            return False
+        third_party_hints = ("她", "他", "对方", "ta", "TA", "人家")
+        memory_or_topic_hints = (
+            "上次",
+            "之前",
+            "刚刚",
+            "说的",
+            "提到",
+            "流派",
+            "话题",
+            "游戏",
+            "店",
+            "吃",
+            "喝",
+            "不知道",
+            "不记得",
+            "忘了",
+        )
+        return any(hint in normalized_latest_input for hint in third_party_hints) and any(
+            hint in normalized_latest_input for hint in memory_or_topic_hints
+        )
 
     def _has_manual_advice_context(self, context: dict) -> bool:
         """判断当前用户输入前，是否已经在围绕“给建议/改话术”这个任务继续追问。"""
@@ -1251,6 +1286,14 @@ class LLMSuggestionEngine(SuggestionEngine):
             return 1280
         return 0
 
+    def _default_completion_tokens(self, request_tag: str) -> int:
+        """Internal defaults for non-user-facing completion sizing."""
+        if request_tag == "analysis":
+            return 1024
+        if request_tag == "quick_prompts":
+            return 128
+        return 0
+
     def _call_api_with_messages(
         self,
         model_config: dict,
@@ -1265,7 +1308,7 @@ class LLMSuggestionEngine(SuggestionEngine):
         base_url = model_config["api_base_url"].rstrip("/")
         api_key = model_config.get("api_key", "")
         model_id = model_config["model_id"]
-        max_tokens = model_config.get("max_tokens", 512) if max_tokens is None else max_tokens
+        max_tokens = self._default_completion_tokens(request_tag) if max_tokens is None else int(max_tokens)
         temperature = model_config.get("temperature", 0.7) if temperature is None else temperature
 
         # Bug 2: 动态校验并修正 model_id
@@ -1914,7 +1957,6 @@ class LLMSuggestionEngine(SuggestionEngine):
                     {"role": "system", "content": REPAIR_SYSTEM_PROMPT},
                     {"role": "user", "content": repair_prompt},
                 ],
-                max_tokens=int(model_config.get("max_tokens", 512)),
                 temperature=0.2,
                 request_tag="repair",
             )

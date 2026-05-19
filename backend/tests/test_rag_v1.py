@@ -376,6 +376,42 @@ def test_retriever_embedding_unavailable_falls_back_to_keyword():
     assert result["degraded"] is True
 
 
+def test_explicit_memory_request_falls_back_to_recent_contact_memory():
+    conn = _conn()
+    store = RagStore(conn)
+    store.upsert_status("wxid_a", 1, status="ready", document_count=2, vector_count=0)
+    store.upsert_document(
+        account_wxid="wxid_a",
+        conversation_id=1,
+        doc_type="relationship_state",
+        source_table="conversations",
+        source_id="1",
+        source_ts=int(time.time()),
+        content="关系摘要",
+        redacted_content="关系摘要",
+    )
+    memory_doc_id = store.upsert_document(
+        account_wxid="wxid_a",
+        conversation_id=1,
+        doc_type="dialogue_turn",
+        source_table="messages",
+        source_id="chunk:1",
+        source_ts=int(time.time()),
+        content="蓝窗帘 木星基地 奶龙梦男",
+        redacted_content="蓝窗帘 木星基地 奶龙梦男",
+    )
+
+    result = RagRetriever(store=store).retrieve(
+        account_wxid="wxid_a",
+        conversation_id=1,
+        query="你找一下相关记忆 关于上次店的 我们去吃的啥我其实有点不记得了 给我建议话术",
+    )
+
+    assert result["items"]
+    assert result["items"][0]["doc"]["id"] == memory_doc_id
+    assert "explicit_memory" in result["strategy"]
+
+
 def test_context_builder_timeout_omits_rag_and_logs_timeout(monkeypatch):
     conn = _conn()
     store = RagStore(conn)

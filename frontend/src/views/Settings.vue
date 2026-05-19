@@ -384,10 +384,6 @@
               <div class="lab">温度</div>
               <input v-model.number="editingModel.temperature" class="ct-field" type="number" min="0" max="2" step="0.1" />
             </label>
-            <label class="row">
-              <div class="lab">Max Tokens</div>
-              <input v-model.number="editingModel.max_tokens" class="ct-field" type="number" min="64" step="64" />
-            </label>
           </div>
           <div class="form-actions">
             <button class="ct-btn" @click="showModelForm = false">取消</button>
@@ -1082,7 +1078,6 @@ const editingModel = reactive({
   api_key: '',
   is_active: false,
   temperature: 0.7,
-  max_tokens: 512,
 })
 
 const fetchingModels = ref(false)
@@ -1216,7 +1211,6 @@ function editModel(m: any) {
   editingModel.api_key = '' // 编辑时不回显密钥
   editingModel.is_active = !!m.is_active
   editingModel.temperature = m.temperature ?? 0.7
-  editingModel.max_tokens = m.max_tokens ?? 512
   showModelForm.value = true
 }
 
@@ -1229,13 +1223,13 @@ function resetEditingModel() {
   editingModel.api_base_url = ''
   editingModel.api_key = ''
   editingModel.temperature = 0.7
-  editingModel.max_tokens = 512
 }
 
 async function saveModel() {
   try {
     await bridgeReady()
-    const r = await api.save_llm_model({ ...editingModel })
+    const { ...payload } = editingModel
+    const r = await api.save_llm_model(payload)
     if (r.ok) {
       showModelForm.value = false
       resetEditingModel()

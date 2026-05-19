@@ -1999,7 +1999,7 @@ class Bridge:
                 "api_base_url": str,
                 "api_key": str (可选),
                 "is_active": bool,
-                "max_tokens": int,
+                "max_tokens": int (legacy/internal, optional),
                 "temperature": float
             }
         """
@@ -2011,6 +2011,15 @@ class Bridge:
             now = int(_time.time())
 
             model_id = model.get('id')
+            legacy_max_tokens = model.get('max_tokens')
+            if legacy_max_tokens is None and model_id is not None:
+                existing = conn.execute(
+                    'SELECT max_tokens FROM llm_models WHERE id = ?',
+                    (model_id,),
+                ).fetchone()
+                legacy_max_tokens = existing['max_tokens'] if existing else 512
+            if legacy_max_tokens is None:
+                legacy_max_tokens = 512
 
             # 如果设为激活，先把其他所有模型设为非激活
             if model.get('is_active'):
@@ -2030,7 +2039,7 @@ class Bridge:
                            temperature = ?, updated_at = ? WHERE id = ?''',
                         (model.get('name', ''), model.get('provider', ''), model.get('model_id', ''),
                          model.get('api_base_url', ''), model.get('api_key', ''), 1 if model.get('is_active') else 0,
-                         model.get('max_tokens', 512), model.get('temperature', 0.7), _time.time(), model['id'])
+                         legacy_max_tokens, model.get('temperature', 0.7), _time.time(), model['id'])
                     )
             else:
                 conn.execute(
@@ -2039,7 +2048,7 @@ class Bridge:
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
                     (model.get('name', ''), model.get('provider', ''), model.get('model_id', ''),
                      model.get('api_base_url', ''), model.get('api_key', ''), 1 if model.get('is_active') else 0,
-                     model.get('max_tokens', 512), model.get('temperature', 0.7), _time.time(), _time.time())
+                     legacy_max_tokens, model.get('temperature', 0.7), _time.time(), _time.time())
                 )
 
             conn.commit()

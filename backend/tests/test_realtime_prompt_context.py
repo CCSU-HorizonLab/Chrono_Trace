@@ -511,6 +511,43 @@ def test_llm_manual_request_treats_request_for_suggestion_speeches_as_advice_pro
     assert "不要生成建议卡片" not in prompt
 
 
+def test_llm_manual_request_treats_related_advice_as_advice_prompt():
+    engine = LLMSuggestionEngine()
+
+    prompt = engine._build_prompt(
+        "manual_request",
+        "intimate",
+        {
+            "user_context": [
+                {"role": "assistant", "content": "可以，就提某款游戏。"},
+                {"role": "user", "content": "我要你给出相关建议"},
+            ],
+        },
+    )
+
+    assert "请基于当前上下文给出可发送的话术" in prompt
+    assert "不要生成建议卡片" not in prompt
+
+
+def test_llm_manual_request_treats_third_party_memory_followup_as_advice_prompt():
+    engine = LLMSuggestionEngine()
+
+    prompt = engine._build_prompt(
+        "manual_request",
+        "intimate",
+        {
+            "user_context": [
+                {"role": "user", "content": "比如上次的某款游戏啊 什么的"},
+                {"role": "assistant", "content": "可以，就提某款游戏，问问她最近有没有玩。"},
+                {"role": "user", "content": "她上次说的什么流派 我不知道"},
+            ],
+        },
+    )
+
+    assert "请基于当前上下文给出可发送的话术" in prompt
+    assert "不要生成建议卡片" not in prompt
+
+
 def test_llm_parse_response_extracts_json_from_wrapped_text():
     engine = LLMSuggestionEngine()
 

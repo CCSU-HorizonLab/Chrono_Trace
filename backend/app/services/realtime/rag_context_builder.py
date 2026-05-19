@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import time
+import logging
 from typing import Any
 
 from ...db.connection import get_db
@@ -12,6 +13,9 @@ from .rag_config import is_remote_llm_model, load_rag_settings
 from .rag_indexer import RagIndexer
 from .rag_retriever import RagRetriever
 from .rag_store import RagStore
+
+
+logger = logging.getLogger(__name__)
 
 
 class RagContextBuilder:
@@ -71,6 +75,13 @@ class RagContextBuilder:
         )
         status_name = (index_status or {}).get("status")
         document_count = int((index_status or {}).get("document_count") or 0)
+        logger.debug(
+            "[RAG] context build: account=%s conversation=%s status=%s docs=%s",
+            account_wxid,
+            conversation_id,
+            status_name,
+            document_count,
+        )
         if self._budget_exhausted(deadline):
             self._log_skip(
                 context,
@@ -116,6 +127,15 @@ class RagContextBuilder:
             query=query,
             timeout_ms=remaining_ms,
             deadline=deadline,
+        )
+        logger.debug(
+            "[RAG] retrieval result: conversation=%s strategy=%s items=%s degraded=%s reason=%s elapsed=%sms",
+            conversation_id,
+            result.get("strategy"),
+            len(result.get("items") or []),
+            result.get("degraded"),
+            result.get("degrade_reason"),
+            result.get("elapsed_ms"),
         )
 
         redaction_disabled = bool(remote_model and not settings.get("rag_remote_context_redaction"))
@@ -209,6 +229,13 @@ class RagContextBuilder:
         context["_rag_log_id"] = log_id
         context["_rag_conversation_id"] = conversation_id
         if items:
+            logger.debug(
+                "[RAG] injected context: conversation=%s docs=%s redaction=%s elapsed=%sms",
+                conversation_id,
+                [item.get("document_id") for item in items],
+                redaction_status,
+                elapsed_ms,
+            )
             context["retrieval_context"] = {
                 "account_wxid": account_wxid,
                 "conversation_id": conversation_id,
@@ -221,6 +248,14 @@ class RagContextBuilder:
                 "degrade_reason": result.get("degrade_reason"),
             }
         else:
+            logger.debug(
+                "[RAG] no context injected: conversation=%s status=%s reason=%s timed_out=%s elapsed=%sms",
+                conversation_id,
+                (index_status or {}).get("status"),
+                result.get("degrade_reason"),
+                bool(result.get("timed_out")),
+                elapsed_ms,
+            )
             context.pop("retrieval_context", None)
 
     def attach_log_to_suggestion(self, log_id: int | None, suggestion_id: int) -> None:
@@ -324,6 +359,13 @@ class RagContextBuilder:
             remote_model=remote_model,
         )
         self.store.conn.commit()
+        logger.debug(
+            "[RAG] skipped context: conversation=%s status=%s reason=%s timed_out=%s",
+            conversation_id,
+            index_status,
+            reason,
+            timed_out,
+        )
         context["_rag_log_id"] = log_id
         context["_rag_conversation_id"] = conversation_id
         context.pop("retrieval_context", None)

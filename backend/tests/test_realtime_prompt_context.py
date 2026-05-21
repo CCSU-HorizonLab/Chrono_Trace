@@ -655,6 +655,40 @@ def test_llm_parse_response_keeps_manual_request_reference_speeches_when_reply_p
     assert len(result.speeches) == 2
 
 
+def test_llm_parse_response_keeps_manual_request_reference_speeches_without_reply():
+    engine = LLMSuggestionEngine()
+
+    result = engine._parse_response(
+        json.dumps(
+            {
+                "reply": "",
+                "thought_process": "用户在延续上一轮建议，需要给出可发送话术。",
+                "summary": "用撒娇语气追问上次说的内容",
+                "speeches": [
+                    "宝宝 上次你说什么贵来着 我忘了 再跟我说说呗～",
+                    "嘿嘿 宝宝上次说某款游戏里啥贵啊 我记性不好",
+                    "宝宝不是说要买啥贵的嘛 我忘了 提醒我一下～",
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        "manual_request",
+        "intimate",
+        style_constraints=StyleConstraints(
+            emoji_density=0.345,
+            avg_msg_length=8.5,
+            max_speech_length=21,
+            communication_type="reactive",
+            emotional_style="warm",
+            nickname_usage=True,
+        ),
+    )
+
+    assert result is not None
+    assert result.summary == "用撒娇语气追问上次说的内容"
+    assert len(result.speeches) == 3
+
+
 def test_llm_antipattern_match_avoids_overblocking_followup_question():
     engine = LLMSuggestionEngine()
 
@@ -691,6 +725,20 @@ def test_llm_extract_message_text_falls_back_to_reasoning_content():
     )
 
     assert '"summary":"测试摘要"' in content
+
+
+def test_llm_extract_message_text_ignores_reasoning_content_for_json_mode():
+    engine = LLMSuggestionEngine()
+
+    content = engine._extract_message_text(
+        {
+            "content": "",
+            "reasoning_content": "这里是模型推理过程，不是最终 JSON。",
+        },
+        allow_reasoning_fallback=False,
+    )
+
+    assert content == ""
 
 
 def test_llm_parse_response_falls_back_to_reasoning_text_with_speeches():

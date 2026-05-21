@@ -12,26 +12,130 @@ from .privacy_redactor import PrivacyRedactor
 from .rag_config import is_remote_llm_model, load_rag_settings
 from .rag_indexer import RagIndexer
 from .rag_retriever import RagRetriever
+from .rag_relevance_gate import RagGateDecision, RagRelevanceGate
+from .rag_segmenter import RagSegmenter
+from .rag_store import RAG_INDEX_VERSION
 from .rag_store import RagStore
+from .memory_intent import MemoryIntent, detect_memory_intent
 
 
 logger = logging.getLogger(__name__)
+
+
+class RagQueryBuilder:
+    """Build a retrieval query from the current request and nearby context."""
+
+    MAX_QUERY_CHARS = 1200
+
+    def build(
+        self,
+        context: dict[str, Any],
+        *,
+        trigger_type: str,
+        intent: str,
+        memory_intent: MemoryIntent | None = None,
+    ) -> str:
+        parts: list[str] = []
+        latest = self._latest_user_input(context)
+        if latest:
+            parts.append(latest)
+
+        recent = context.get("recent_messages") or []
+        if isinstance(recent, list):
+            for msg in recent[-8:]:
+                if not isinstance(msg, dict):
+                    continue
+                content = str(msg.get("content") or "").strip()
+                if content:
+                    sender = "我" if msg.get("sender_attr") == "self" else "对方"
+                    parts.append(f"{sender}: {content}")
+
+        for key in ("recent_summary", "conversation_summary", "chat_summary"):
+            value = context.get(key)
+            if value:
+                parts.append(str(value))
+
+        trigger_context = context.get("trigger_context")
+        if isinstance(trigger_context, dict):
+            for key in ("user_input", "manual_input", "text", "content", "reason"):
+                value = trigger_context.get(key)
+                if value:
+                    parts.append(str(value))
+        elif trigger_context:
+            parts.append(str(trigger_context))
+
+        if memory_intent and memory_intent.query:
+            parts.append(memory_intent.query)
+        expanded_terms = self.expanded_terms(context, memory_intent=memory_intent)
+        if expanded_terms:
+            parts.append(" ".join(expanded_terms))
+        if trigger_type:
+            parts.append(str(trigger_type))
+        if intent:
+            parts.append(str(intent))
+
+        compacted: list[str] = []
+        seen = set()
+        for part in parts:
+            text = re.sub(r"\s+", " ", str(part or "")).strip()
+            if not text or text in seen:
+                continue
+            compacted.append(text)
+            seen.add(text)
+        return "\n".join(compacted)[: self.MAX_QUERY_CHARS]
+
+    def expanded_terms(
+        self,
+        context: dict[str, Any],
+        *,
+        memory_intent: MemoryIntent | None = None,
+    ) -> list[str]:
+        text_parts = [self._latest_user_input(context)]
+        recent = context.get("recent_messages") or []
+        if isinstance(recent, list):
+            text_parts.extend(str(msg.get("content") or "") for msg in recent[-5:] if isinstance(msg, dict))
+        text = re.sub(r"\s+", "", " ".join(text_parts))
+        terms: list[str] = []
+        if memory_intent and memory_intent.mode == "memory_request":
+            terms.extend(["上次", "之前", "说过", "提到"])
+            if any(token in text for token in ("刚刚", "刚才", "刚说")):
+                terms.append("刚刚")
+        for token in ("贵", "价格", "买", "某款游戏", "游戏", "卡组", "流派", "店", "吃", "喝", "喜欢"):
+            if token in text and token not in terms:
+                terms.append(token)
+        return terms[:12]
+
+    def _latest_user_input(self, context: dict[str, Any]) -> str:
+        user_context = context.get("user_context")
+        if isinstance(user_context, list):
+            for msg in reversed(user_context):
+                if isinstance(msg, dict) and msg.get("role") == "user":
+                    return str(msg.get("content") or "").strip()
+        if isinstance(user_context, str):
+            return user_context.strip()
+        return ""
 
 
 class RagContextBuilder:
     """Orchestrates lazy index, retrieval, minimization, redaction and logs."""
 
     MAX_CONTEXT_CHARS = 560
+    HOT_CONTEXT_MAX_AGE_SECONDS = 86400
 
     def __init__(
         self,
         store: RagStore | None = None,
         indexer: RagIndexer | None = None,
         retriever: RagRetriever | None = None,
+        query_builder: RagQueryBuilder | None = None,
+        relevance_gate: RagRelevanceGate | None = None,
     ):
         self.store = store or RagStore()
         self.indexer = indexer or RagIndexer(self.store)
         self.retriever = retriever or RagRetriever(self.store)
+        self.query_builder = query_builder or RagQueryBuilder()
+        self.relevance_gate = relevance_gate or RagRelevanceGate()
+        self.segmenter = RagSegmenter()
 
     def enrich_context(
         self,
@@ -41,20 +145,92 @@ class RagContextBuilder:
         intent: str,
         model_config: dict[str, Any] | None = None,
     ) -> None:
+        memory_intent = self._resolve_memory_intent(context)
+        context["memory_intent"] = memory_intent.to_dict()
+        logger.debug(
+            '[RAG Intent] mode=%s confidence=%.2f query="%s" reason=%s',
+            memory_intent.mode,
+            memory_intent.confidence,
+            memory_intent.query,
+            memory_intent.reason,
+        )
+
         settings = load_rag_settings()
+        rag_enabled = bool(settings.get("rag_enabled"))
         if not settings.get("rag_enabled"):
+            logger.debug(
+                "[RAG Skip] reason=rag_disabled memory_mode=%s confidence=%.2f",
+                memory_intent.mode,
+                memory_intent.confidence,
+            )
             context.pop("retrieval_context", None)
+            self._set_debug_state(
+                context,
+                memory_intent=memory_intent,
+                rag_enabled=False,
+                rag_retrieved=False,
+                hit_count=0,
+                injection_mode="none",
+                no_hit_guard=False,
+                degraded_reason="rag_disabled",
+                latency_ms=0,
+            )
             return
 
         account_wxid = str(context.get("account_wxid") or "").strip()
         conversation_id = self._resolve_conversation_id(context, account_wxid)
         if not account_wxid or not conversation_id:
+            logger.debug(
+                "[RAG Skip] reason=missing_scope account_wxid_present=%s "
+                "conversation_id=%s display_name_present=%s memory_mode=%s confidence=%.2f",
+                bool(account_wxid),
+                conversation_id,
+                bool(str(context.get("display_name") or "").strip()),
+                memory_intent.mode,
+                memory_intent.confidence,
+            )
+            self._set_debug_state(
+                context,
+                memory_intent=memory_intent,
+                rag_enabled=rag_enabled,
+                rag_retrieved=False,
+                hit_count=0,
+                injection_mode="none",
+                no_hit_guard=False,
+                degraded_reason="missing_scope",
+                latency_ms=0,
+            )
             return
 
+        injection_mode = self._resolve_injection_mode(context)
         remote_model = is_remote_llm_model(model_config)
         started = time.perf_counter()
         deadline = started + 0.8
-        query = self.retriever.build_query(context, trigger_type, intent)
+        query = self.query_builder.build(
+            context,
+            trigger_type=trigger_type,
+            intent=intent,
+            memory_intent=memory_intent,
+        ) or memory_intent.query or self.retriever.build_query(context, trigger_type, intent)
+        expanded_terms = self.query_builder.expanded_terms(context, memory_intent=memory_intent)
+        context["_rag_query_expanded_terms"] = expanded_terms
+        logger.debug(
+            "[RAG Query] mode=%s expanded_terms=%s",
+            memory_intent.mode,
+            expanded_terms,
+        )
+        hot_items = self._build_hot_context_items(
+            context,
+            account_wxid=account_wxid,
+            conversation_id=conversation_id,
+            query=query,
+            expanded_terms=expanded_terms,
+        )
+        logger.debug(
+            "[RAG] attempt enabled=%s scope=contact query_len=%s",
+            rag_enabled,
+            len(query),
+        )
         if self._budget_exhausted(deadline):
             self._log_skip(
                 context,
@@ -66,6 +242,10 @@ class RagContextBuilder:
                 remote_model=remote_model,
                 reason="timeout",
                 timed_out=True,
+                memory_intent=memory_intent,
+                rag_enabled=rag_enabled,
+                injection_mode="none",
+                gate_decision=RagGateDecision("skip", "timeout"),
             )
             return
 
@@ -93,9 +273,12 @@ class RagContextBuilder:
                 remote_model=remote_model,
                 reason="timeout",
                 timed_out=True,
+                memory_intent=memory_intent,
+                rag_enabled=rag_enabled,
+                injection_mode="none",
             )
             return
-        if status_name in {"pending", "indexing"} and document_count <= 0:
+        if status_name in {"pending", "indexing"} and document_count <= 0 and not hot_items:
             self._log_skip(
                 context,
                 account_wxid=account_wxid,
@@ -105,9 +288,12 @@ class RagContextBuilder:
                 index_status=status_name,
                 remote_model=remote_model,
                 reason="index_not_ready",
+                memory_intent=memory_intent,
+                rag_enabled=rag_enabled,
+                injection_mode="none",
             )
             return
-        if status_name == "failed":
+        if status_name == "failed" and not hot_items:
             self._log_skip(
                 context,
                 account_wxid=account_wxid,
@@ -117,16 +303,47 @@ class RagContextBuilder:
                 index_status=status_name,
                 remote_model=remote_model,
                 reason="index_failed",
+                memory_intent=memory_intent,
+                rag_enabled=rag_enabled,
+                injection_mode="none",
             )
             return
 
-        remaining_ms = max(1, int((deadline - time.perf_counter()) * 1000))
-        result = self.retriever.retrieve(
-            account_wxid=account_wxid,
-            conversation_id=conversation_id,
-            query=query,
-            timeout_ms=remaining_ms,
-            deadline=deadline,
+        if status_name in {"pending", "indexing", "failed"} and hot_items:
+            result = {
+                "items": hot_items,
+                "strategy": "hot_context",
+                "status": index_status,
+                "timed_out": False,
+                "degraded": status_name != "ready",
+                "degrade_reason": "hot_context_only",
+                "elapsed_ms": int((time.perf_counter() - started) * 1000),
+                "by_type": {"hot_context": len(hot_items)},
+            }
+        else:
+            remaining_ms = max(1, int((deadline - time.perf_counter()) * 1000))
+            result = self.retriever.retrieve(
+                account_wxid=account_wxid,
+                conversation_id=conversation_id,
+                query=query,
+                timeout_ms=remaining_ms,
+                deadline=deadline,
+            )
+            if hot_items:
+                result["items"] = sorted(
+                    hot_items + list(result.get("items") or []),
+                    key=lambda item: float(item.get("score") or 0.0),
+                    reverse=True,
+                )
+                by_type = dict(result.get("by_type") or {})
+                by_type["hot_context"] = by_type.get("hot_context", 0) + len(hot_items)
+                result["by_type"] = by_type
+        logger.debug(
+            "[RAG] retrieved hit_count=%s top_score=%.4f strategy=%s latency=%sms",
+            len(result.get("items") or []),
+            self._top_score(result.get("items") or []),
+            result.get("strategy"),
+            result.get("elapsed_ms"),
         )
         logger.debug(
             "[RAG] retrieval result: conversation=%s strategy=%s items=%s degraded=%s reason=%s elapsed=%sms",
@@ -136,6 +353,39 @@ class RagContextBuilder:
             result.get("degraded"),
             result.get("degrade_reason"),
             result.get("elapsed_ms"),
+        )
+        logger.debug(
+            "[RAG Retrieve] candidates=%s by_type=%s top_score=%.4f strategy=%s",
+            len(result.get("items") or []),
+            result.get("by_type") or {},
+            self._top_score(result.get("items") or []),
+            result.get("strategy"),
+        )
+        gate_decision = self.relevance_gate.decide(
+            query=query,
+            items=result.get("items") or [],
+            strategy=result.get("strategy"),
+            output_mode=injection_mode,
+            trigger_type=trigger_type,
+            recent_messages=context.get("recent_messages") or [],
+            user_context=context.get("user_context"),
+            memory_intent=memory_intent.to_dict(),
+            timed_out=bool(result.get("timed_out")),
+            degraded_reason=result.get("degrade_reason"),
+            previous_rag_hit=self._previous_rag_hit(context),
+        )
+        logger.debug(
+            "[RAG Gate] decision=%s reason=%s top_score=%.4f no_hit_eligible=%s",
+            gate_decision.decision,
+            gate_decision.reason,
+            gate_decision.top_score,
+            gate_decision.no_hit_eligible,
+        )
+        selected_scored_items = self._select_gate_items(result.get("items") or [], gate_decision)
+        logger.debug(
+            "[RAG Rank] selected=%s doc_types=%s",
+            len(selected_scored_items),
+            [str((item.get("doc") or {}).get("doc_type") or "") for item in selected_scored_items],
         )
 
         redaction_disabled = bool(remote_model and not settings.get("rag_remote_context_redaction"))
@@ -148,7 +398,7 @@ class RagContextBuilder:
             if self._budget_exhausted(deadline):
                 raise TimeoutError("rag budget exhausted before minimization")
             items = self._minimize_items(
-                result.get("items") or [],
+                selected_scored_items,
                 use_redacted=remote_model and not redaction_disabled,
             )
         except TimeoutError:
@@ -206,6 +456,23 @@ class RagContextBuilder:
             result["degraded"] = True
             result["degrade_reason"] = "timeout"
 
+        rag_retrieved = not bool(result.get("timed_out"))
+        retrieved_hit_count = len(result.get("items") or [])
+        hit_count = len(items)
+        degrade_reason = str(result.get("degrade_reason") or "")
+        no_hit_guard = bool(rag_retrieved and gate_decision.decision == "no_hit")
+        if gate_decision.decision in {"inject", "weak_inject"} and not items:
+            effective_gate_decision = RagGateDecision(
+                "skip",
+                result.get("degrade_reason") or "context_build_empty",
+                gate_decision.top_score,
+                gate_decision.no_hit_eligible,
+                gate_decision.allowed_doc_types,
+            )
+        else:
+            effective_gate_decision = gate_decision
+        effective_injection_mode = injection_mode if (items or no_hit_guard) else "none"
+
         log_id = self.store.insert_retrieval_log(
             account_wxid=account_wxid,
             conversation_id=conversation_id,
@@ -224,13 +491,45 @@ class RagContextBuilder:
             redaction_disabled=redaction_disabled,
             redaction_fallback=redaction_fallback,
             remote_model=remote_model,
+            memory_intent_mode=memory_intent.mode,
+            memory_intent_confidence=memory_intent.confidence,
+            memory_intent_query=self._safe_query_for_log(memory_intent.query),
+            memory_intent_reason=memory_intent.reason,
+            rag_enabled=rag_enabled,
+            rag_retrieved=rag_retrieved,
+            rag_hit_count=retrieved_hit_count,
+            rag_injection_mode=effective_injection_mode,
+            rag_no_hit_guard=no_hit_guard,
+            rag_latency_ms=elapsed_ms,
+            rag_degraded_reason=result.get("degrade_reason"),
+            rag_gate_decision=effective_gate_decision.decision,
+            rag_gate_reason=effective_gate_decision.reason,
+            rag_top_score=effective_gate_decision.top_score,
+            rag_strategy=result.get("strategy"),
+            index_version=RAG_INDEX_VERSION,
+            selected_doc_types=[
+                str(item.get("doc_type") or "")
+                for item in items
+                if item.get("doc_type")
+            ],
+            top_doc_time_label=items[0].get("time_label") if items else None,
+            query_expanded_terms=expanded_terms,
+            no_hit_reason=effective_gate_decision.reason if no_hit_guard else None,
         )
         self.store.conn.commit()
         context["_rag_log_id"] = log_id
         context["_rag_conversation_id"] = conversation_id
+        logger.debug(
+            "[RAG] retrieved hit_count=%s latency=%sms degraded=%s reason=%s",
+            hit_count,
+            elapsed_ms,
+            bool(result.get("degraded")),
+            result.get("degrade_reason"),
+        )
         if items:
             logger.debug(
-                "[RAG] injected context: conversation=%s docs=%s redaction=%s elapsed=%sms",
+                "[RAG Inject] status=hit mode=%s no_hit_guard=false conversation=%s docs=%s redaction=%s elapsed=%sms",
+                injection_mode,
                 conversation_id,
                 [item.get("document_id") for item in items],
                 redaction_status,
@@ -240,6 +539,44 @@ class RagContextBuilder:
                 "account_wxid": account_wxid,
                 "conversation_id": conversation_id,
                 "items": items,
+                "retrieval_status": "weak_hit" if effective_gate_decision.decision == "weak_inject" else "hit",
+                "query": query,
+                "memory_intent": memory_intent.to_dict(),
+                "injection_mode": injection_mode,
+                "hit_count": hit_count,
+                "no_hit_guard": False,
+                "gate_decision": effective_gate_decision.decision,
+                "gate_reason": effective_gate_decision.reason,
+                "top_score": effective_gate_decision.top_score,
+                "strategy": result.get("strategy"),
+                "index_status": (index_status or {}).get("status"),
+                "elapsed_ms": elapsed_ms,
+                "redaction_status": redaction_status,
+                "redaction_disabled": redaction_disabled,
+                "degraded": bool(result.get("degraded")),
+                "degrade_reason": result.get("degrade_reason"),
+            }
+        elif no_hit_guard:
+            logger.debug(
+                "[RAG Inject] status=no_hit mode=%s no_hit_guard=true conversation=%s elapsed=%sms",
+                injection_mode,
+                conversation_id,
+                elapsed_ms,
+            )
+            context["retrieval_context"] = {
+                "account_wxid": account_wxid,
+                "conversation_id": conversation_id,
+                "items": [],
+                "retrieval_status": "no_hit",
+                "query": query,
+                "memory_intent": memory_intent.to_dict(),
+                "injection_mode": injection_mode,
+                "hit_count": 0,
+                "no_hit_guard": True,
+                "gate_decision": effective_gate_decision.decision,
+                "gate_reason": effective_gate_decision.reason,
+                "top_score": effective_gate_decision.top_score,
+                "strategy": result.get("strategy"),
                 "index_status": (index_status or {}).get("status"),
                 "elapsed_ms": elapsed_ms,
                 "redaction_status": redaction_status,
@@ -249,7 +586,7 @@ class RagContextBuilder:
             }
         else:
             logger.debug(
-                "[RAG] no context injected: conversation=%s status=%s reason=%s timed_out=%s elapsed=%sms",
+                "[RAG Inject] status=none mode=none no_hit_guard=false conversation=%s status=%s reason=%s timed_out=%s elapsed=%sms",
                 conversation_id,
                 (index_status or {}).get("status"),
                 result.get("degrade_reason"),
@@ -257,10 +594,183 @@ class RagContextBuilder:
                 elapsed_ms,
             )
             context.pop("retrieval_context", None)
+        self._set_debug_state(
+            context,
+            memory_intent=memory_intent,
+            rag_enabled=rag_enabled,
+            rag_retrieved=rag_retrieved,
+            hit_count=retrieved_hit_count,
+            injection_mode=effective_injection_mode,
+            no_hit_guard=no_hit_guard,
+            degraded_reason=result.get("degrade_reason"),
+            latency_ms=elapsed_ms,
+            gate_decision=effective_gate_decision,
+            strategy=result.get("strategy"),
+        )
 
     def attach_log_to_suggestion(self, log_id: int | None, suggestion_id: int) -> None:
         self.store.attach_log_to_suggestion(log_id, suggestion_id)
         self.store.conn.commit()
+
+    def _build_hot_context_items(
+        self,
+        context: dict[str, Any],
+        *,
+        account_wxid: str,
+        conversation_id: int,
+        query: str,
+        expanded_terms: list[str],
+    ) -> list[dict[str, Any]]:
+        messages = self._collect_hot_messages(
+            context,
+            account_wxid=account_wxid,
+            conversation_id=conversation_id,
+        )
+        if not messages:
+            return []
+        rendered = []
+        source_ts = 0
+        message_ids: list[int] = []
+        for msg in messages[-20:]:
+            sender = "我" if int(msg.get("is_sender") or 0) else "对方"
+            content = re.sub(r"\s+", " ", str(msg.get("content") or "")).strip()
+            if not content:
+                continue
+            rendered.append(f"{sender}: {content[:160]}")
+            try:
+                source_ts = max(source_ts, int(msg.get("timestamp") or 0))
+            except (TypeError, ValueError):
+                pass
+            try:
+                if int(msg.get("id") or 0):
+                    message_ids.append(int(msg.get("id") or 0))
+            except (TypeError, ValueError):
+                pass
+        if not rendered:
+            return []
+        content = f"时间：{self.segmenter.time_label(source_ts or int(time.time()))}\n" + "\n".join(rendered)
+        score = max(0.25, self._hot_context_score(query, content, expanded_terms))
+        doc = {
+            "id": -1,
+            "doc_type": "hot_context",
+            "content": content,
+            "redacted_content": content,
+            "source_ts": source_ts or int(time.time()),
+            "sensitivity": "normal",
+            "enabled": 1,
+            "metadata_json": self._json_dumps(
+                {
+                    "source_kind": "realtime",
+                    "index_version": RAG_INDEX_VERSION,
+                    "time_label": self.segmenter.time_label(source_ts or int(time.time())),
+                    "message_ids": message_ids,
+                    "topics": self.segmenter.extract_topics(content),
+                    "entities": self.segmenter.extract_entities(content),
+                }
+            ),
+        }
+        return [{"doc": doc, "score": round(score, 4)}]
+
+    def _collect_hot_messages(
+        self,
+        context: dict[str, Any],
+        *,
+        account_wxid: str,
+        conversation_id: int,
+    ) -> list[dict[str, Any]]:
+        messages: list[dict[str, Any]] = []
+        for msg in context.get("recent_messages") or []:
+            if not isinstance(msg, dict):
+                continue
+            item = self._normalize_hot_message(msg)
+            if item and self._is_hot_context_message(item):
+                messages.append(item)
+
+        try:
+            display_name = str(context.get("display_name") or "").strip()
+            batch_id = str(context.get("batch_id") or context.get("current_batch_id") or "").strip()
+            if not batch_id and not display_name:
+                raise ValueError("missing realtime buffer scope")
+            params: list[Any] = [account_wxid]
+            where = ["account_wxid = ?", "message_type = 'text'", "content IS NOT NULL", "TRIM(content) != ''"]
+            min_ts = int(time.time()) - self.HOT_CONTEXT_MAX_AGE_SECONDS
+            where.append("timestamp >= ?")
+            params.append(min_ts)
+            if batch_id:
+                where.append("batch_id = ?")
+                params.append(batch_id)
+            elif display_name:
+                where.append("(talker_display_name = ? OR talker_username = ?)")
+                params.extend([display_name, display_name])
+            rows = self.store.conn.execute(
+                f"""
+                SELECT id, sender_attr, content, timestamp, talker_display_name, talker_username
+                FROM realtime_message_buffer
+                WHERE {' AND '.join(where)}
+                ORDER BY timestamp DESC, id DESC
+                LIMIT 30
+                """,
+                tuple(params),
+            ).fetchall()
+            for row in rows:
+                item = self._normalize_hot_message(dict(row))
+                if item and self._is_hot_context_message(item):
+                    messages.append(item)
+        except Exception:
+            pass
+
+        deduped: list[dict[str, Any]] = []
+        seen = set()
+        for msg in sorted(messages, key=lambda item: (int(item.get("timestamp") or 0), int(item.get("id") or 0))):
+            key = (msg.get("timestamp"), msg.get("is_sender"), msg.get("content"))
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(msg)
+        return deduped[-30:]
+
+    def _normalize_hot_message(self, msg: dict[str, Any]) -> dict[str, Any] | None:
+        content = re.sub(r"\s+", " ", str(msg.get("content") or "")).strip()
+        if not content:
+            return None
+        sender_attr = str(msg.get("sender_attr") or "").lower()
+        is_sender = 1 if sender_attr == "self" or msg.get("is_sender") == 1 else 0
+        try:
+            timestamp = int(msg.get("timestamp") or msg.get("created_at") or time.time())
+        except (TypeError, ValueError):
+            timestamp = int(time.time())
+        try:
+            message_id = int(msg.get("id") or 0)
+        except (TypeError, ValueError):
+            message_id = 0
+        return {
+            "id": message_id,
+            "is_sender": is_sender,
+            "content": content,
+            "timestamp": timestamp,
+        }
+
+    def _is_hot_context_message(self, msg: dict[str, Any]) -> bool:
+        try:
+            timestamp = int(msg.get("timestamp") or 0)
+        except (TypeError, ValueError):
+            return False
+        if timestamp <= 0:
+            return False
+        return (time.time() - timestamp) <= self.HOT_CONTEXT_MAX_AGE_SECONDS
+
+    def _hot_context_score(self, query: str, content: str, expanded_terms: list[str]) -> float:
+        query_tokens = set(self.segmenter.extract_topics(query) + expanded_terms)
+        content_tokens = set(self.segmenter.extract_topics(content))
+        if not query_tokens or not content_tokens:
+            return 0.25
+        overlap = len(query_tokens & content_tokens) / max(1, min(len(query_tokens), len(content_tokens)))
+        return 0.35 + overlap * 0.55
+
+    def _json_dumps(self, data: dict[str, Any]) -> str:
+        import json
+
+        return json.dumps(data, ensure_ascii=False, sort_keys=True)
 
     def _resolve_conversation_id(self, context: dict[str, Any], account_wxid: str) -> int | None:
         raw = context.get("conversation_id") or context.get("_rag_conversation_id")
@@ -291,6 +801,8 @@ class RagContextBuilder:
         return int(row["id"]) if row else None
 
     def _minimize_items(self, items: list[dict[str, Any]], *, use_redacted: bool) -> list[dict[str, Any]]:
+        import json
+
         minimized = []
         total_chars = 0
         for scored in items:
@@ -303,6 +815,10 @@ class RagContextBuilder:
             if remaining <= 0:
                 break
             content = content[: min(160, remaining)]
+            try:
+                metadata = json.loads(doc.get("metadata_json") or "{}")
+            except Exception:
+                metadata = {}
             minimized.append(
                 {
                     "document_id": int(doc["id"]),
@@ -310,11 +826,47 @@ class RagContextBuilder:
                     "content": content,
                     "score": scored.get("score"),
                     "source_ts": doc.get("source_ts"),
+                    "time_label": metadata.get("time_label")
+                    or self.segmenter.time_label(int(doc.get("source_ts") or time.time())),
+                    "topics": metadata.get("topics") or [],
+                    "entities": metadata.get("entities") or [],
                     "sensitivity": doc.get("sensitivity") or "normal",
                 }
             )
             total_chars += len(content)
         return minimized
+
+    def _select_gate_items(
+        self,
+        items: list[dict[str, Any]],
+        gate_decision: RagGateDecision,
+    ) -> list[dict[str, Any]]:
+        if gate_decision.decision == "skip":
+            return []
+        if gate_decision.decision == "no_hit":
+            return []
+        if gate_decision.decision == "weak_inject":
+            allowed = set(gate_decision.allowed_doc_types or ())
+            return [
+                item
+                for item in items
+                if str((item.get("doc") or {}).get("doc_type") or "") in allowed
+            ]
+        return items
+
+    def _top_score(self, items: list[dict[str, Any]]) -> float:
+        if not items:
+            return 0.0
+        return round(float((items[0] or {}).get("score") or 0.0), 4)
+
+    def _previous_rag_hit(self, context: dict[str, Any]) -> bool:
+        debug = context.get("_rag_debug")
+        if isinstance(debug, dict) and debug.get("rag_injection_mode") in {"reply", "suggestion"}:
+            return True
+        for item in reversed(context.get("memory_intent_history") or []):
+            if isinstance(item, dict) and item.get("rag_gate_decision") in {"inject", "weak_inject"}:
+                return True
+        return False
 
     def _safe_query_for_log(self, query: str) -> str:
         # Retrieval logs need traceability, not raw long chat history.
@@ -326,6 +878,63 @@ class RagContextBuilder:
 
     def _budget_exhausted(self, deadline: float) -> bool:
         return time.perf_counter() > deadline
+
+    def _resolve_memory_intent(self, context: dict[str, Any]) -> MemoryIntent:
+        raw = context.get("memory_intent")
+        if isinstance(raw, MemoryIntent):
+            return raw
+        if isinstance(raw, dict):
+            try:
+                return MemoryIntent(
+                    bool(raw.get("should_retrieve")),
+                    raw.get("mode") or "none",
+                    float(raw.get("confidence") or 0.0),
+                    str(raw.get("query") or ""),
+                    str(raw.get("reason") or "provided"),
+                )
+            except Exception:
+                return MemoryIntent.none("invalid_provided_memory_intent")
+        return detect_memory_intent(context)
+
+    def _resolve_injection_mode(self, context: dict[str, Any]) -> str:
+        raw = str(context.get("_rag_output_mode") or context.get("rag_injection_mode") or "").strip()
+        if raw in {"reply", "suggestion"}:
+            return raw
+        return "suggestion"
+
+    def _set_debug_state(
+        self,
+        context: dict[str, Any],
+        *,
+        memory_intent: MemoryIntent,
+        rag_enabled: bool,
+        rag_retrieved: bool,
+        hit_count: int,
+        injection_mode: str,
+        no_hit_guard: bool,
+        degraded_reason: str | None,
+        latency_ms: int,
+        gate_decision: RagGateDecision | None = None,
+        strategy: str | None = None,
+    ) -> None:
+        gate_decision = gate_decision or RagGateDecision("skip", degraded_reason or "not_attempted")
+        context["_rag_debug"] = {
+            "memory_intent_mode": memory_intent.mode,
+            "memory_intent_confidence": memory_intent.confidence,
+            "memory_intent_query": memory_intent.query,
+            "memory_intent_reason": memory_intent.reason,
+            "rag_enabled": rag_enabled,
+            "rag_retrieved": rag_retrieved,
+            "rag_hit_count": int(hit_count),
+            "rag_injection_mode": injection_mode,
+            "rag_no_hit_guard": no_hit_guard,
+            "rag_latency_ms": int(latency_ms),
+            "rag_degraded_reason": degraded_reason,
+            "rag_gate_decision": gate_decision.decision,
+            "rag_gate_reason": gate_decision.reason,
+            "rag_top_score": gate_decision.top_score,
+            "rag_strategy": strategy,
+        }
 
     def _log_skip(
         self,
@@ -339,9 +948,17 @@ class RagContextBuilder:
         remote_model: bool,
         reason: str,
         timed_out: bool = False,
+        memory_intent: MemoryIntent | None = None,
+        rag_enabled: bool = True,
+        injection_mode: str = "none",
+        gate_decision: RagGateDecision | None = None,
+        strategy: str | None = None,
     ) -> None:
+        memory_intent = memory_intent or MemoryIntent.none()
+        gate_decision = gate_decision or RagGateDecision("skip", reason)
         settings = load_rag_settings()
         redaction_disabled = bool(remote_model and not settings.get("rag_remote_context_redaction"))
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
         log_id = self.store.insert_retrieval_log(
             account_wxid=account_wxid,
             conversation_id=conversation_id,
@@ -349,7 +966,7 @@ class RagContextBuilder:
             document_ids=[],
             retrieval_scores={},
             index_status=index_status,
-            elapsed_ms=int((time.perf_counter() - started) * 1000),
+            elapsed_ms=elapsed_ms,
             timed_out=timed_out,
             degraded=True,
             degrade_reason=reason,
@@ -357,10 +974,29 @@ class RagContextBuilder:
             redaction_disabled=redaction_disabled,
             redaction_fallback=False,
             remote_model=remote_model,
+            memory_intent_mode=memory_intent.mode,
+            memory_intent_confidence=memory_intent.confidence,
+            memory_intent_query=self._safe_query_for_log(memory_intent.query),
+            memory_intent_reason=memory_intent.reason,
+            rag_enabled=rag_enabled,
+            rag_retrieved=False,
+            rag_hit_count=0,
+            rag_injection_mode=injection_mode,
+            rag_no_hit_guard=False,
+            rag_latency_ms=elapsed_ms,
+            rag_degraded_reason=reason,
+            rag_gate_decision=gate_decision.decision,
+            rag_gate_reason=gate_decision.reason,
+            rag_top_score=gate_decision.top_score,
+            rag_strategy=strategy,
+            index_version=RAG_INDEX_VERSION,
+            selected_doc_types=[],
+            query_expanded_terms=context.get("_rag_query_expanded_terms") or [],
+            no_hit_reason=reason if gate_decision.decision == "no_hit" else None,
         )
         self.store.conn.commit()
         logger.debug(
-            "[RAG] skipped context: conversation=%s status=%s reason=%s timed_out=%s",
+            "[RAG Skip] conversation=%s status=%s reason=%s timed_out=%s",
             conversation_id,
             index_status,
             reason,
@@ -369,3 +1005,16 @@ class RagContextBuilder:
         context["_rag_log_id"] = log_id
         context["_rag_conversation_id"] = conversation_id
         context.pop("retrieval_context", None)
+        self._set_debug_state(
+            context,
+            memory_intent=memory_intent,
+            rag_enabled=rag_enabled,
+            rag_retrieved=False,
+            hit_count=0,
+            injection_mode=injection_mode,
+            no_hit_guard=False,
+            degraded_reason=reason,
+            latency_ms=elapsed_ms,
+            gate_decision=gate_decision,
+            strategy=strategy,
+        )

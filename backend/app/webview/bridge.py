@@ -656,8 +656,17 @@ class Bridge:
             # 从 MonitorService 的配置中读取引擎类型（而非 settings.json）
             engine_type = monitor._suggestion_config.get('engine_type', 'llm')
             engine = SuggestionEngineFactory.create(engine_type)
+            account_wxid = str(getattr(monitor, "current_account_wxid", "") or self._get_active_wechat_account_wxid() or "")
+            if account_wxid and not context.get("account_wxid"):
+                context["account_wxid"] = account_wxid
 
             logger.debug(f"[Bridge] generate_suggestion: engine_type={engine_type}, intent={intent}")
+            logger.debug(
+                "[Bridge] generate_suggestion scope: account_wxid_present=%s, display_name_present=%s, batch_id=%s",
+                bool(account_wxid),
+                bool(getattr(monitor, "current_display_name", None)),
+                monitor.current_batch_id or "manual",
+            )
 
             # 自动补充上下文：情绪摘要
             if 'emotion_summary' not in context and monitor.emotion_tracker:
@@ -670,7 +679,7 @@ class Bridge:
                     recent = get_messages_with_sentiment(
                         monitor.current_batch_id,
                         50,
-                        account_wxid=str(getattr(monitor, "current_account_wxid", "") or ""),
+                        account_wxid=account_wxid,
                     )
                     context['recent_messages'] = recent
                 except Exception as e:
@@ -767,7 +776,6 @@ class Bridge:
                     pass
                 now_time = int(_time.time())
                 cursor = conn.cursor()
-                account_wxid = str(getattr(monitor, "current_account_wxid", "") or self._get_active_wechat_account_wxid() or "")
                 cursor.execute('''
                     INSERT INTO realtime_suggestions
                     (account_wxid, batch_id, trigger_type, intent, severity, summary, speeches,

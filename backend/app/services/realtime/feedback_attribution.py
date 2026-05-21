@@ -8,7 +8,9 @@ import threading
 import time
 from typing import Any
 
-from .rag_store import RagStore
+from .rag_config import load_rag_settings
+from .rag_embedding import RagEmbeddingService, RagEmbeddingUnavailable
+from .rag_store import RAG_INDEX_VERSION, RagStore
 
 
 POSITIVE_ATTRIBUTIONS = {"accepted", "rewritten", "preface_then_reply"}
@@ -298,7 +300,20 @@ class SuggestionFeedbackAttributor:
                 source_ts=int(time.time()),
                 content=content,
                 redacted_content=content,
-                metadata={"confidence": result["confidence"]},
+                metadata={
+                    "confidence": result["confidence"],
+                    "source_kind": "feedback",
+                    "index_version": RAG_INDEX_VERSION,
+                    "summary_method": "rules",
+                },
+                index_version=RAG_INDEX_VERSION,
+                source_kind="feedback",
+            )
+            self._try_embed_feedback_document(
+                writeback_document_id,
+                suggestion["account_wxid"],
+                conversation_id,
+                content,
             )
 
         self.conn.execute(
@@ -351,3 +366,39 @@ class SuggestionFeedbackAttributor:
             (suggestion.get("account_wxid"), suggestion.get("batch_id")),
         ).fetchone()
         return int(row["id"]) if row else None
+
+    def _try_embed_feedback_document(
+        self,
+        document_id: int | None,
+        account_wxid: str,
+        conversation_id: int,
+        content: str,
+    ) -> None:
+        if not document_id:
+            return
+        try:
+            settings = load_rag_settings()
+            model = str(settings["rag_embedding_model"])
+            dim = int(settings["rag_embedding_dim"])
+            vector = RagEmbeddingService().embed_text(content)
+            self.store.upsert_embedding(
+                document_id=int(document_id),
+                account_wxid=account_wxid,
+                conversation_id=conversation_id,
+                embedding_model=model,
+                embedding_dim=dim,
+                vector=vector,
+                embedding_provider="local",
+            )
+        except RagEmbeddingUnavailable:
+            self._mark_feedback_dirty(account_wxid, conversation_id)
+        except Exception:
+            self._mark_feedback_dirty(account_wxid, conversation_id)
+
+    def _mark_feedback_dirty(self, account_wxid: str, conversation_id: int) -> None:
+        try:
+            from .rag_indexer import RagIndexQueue
+
+            RagIndexQueue.mark_dirty(account_wxid, conversation_id)
+        except Exception:
+            pass

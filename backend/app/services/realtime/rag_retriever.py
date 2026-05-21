@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import re
 import time
@@ -15,37 +16,17 @@ from .rag_store import RagStore
 class RagRetriever:
     """Contact-scoped retriever with vector and keyword fallback."""
 
-    EXPLICIT_MEMORY_KEYWORDS = (
-        "找一下相关记忆",
-        "找下相关记忆",
-        "相关记忆",
-        "查一下记忆",
-        "找一下记忆",
-        "找下记忆",
-        "记忆里",
-        "历史里",
-        "聊天记录里",
-        "不记得了",
-        "想不起来",
-    )
-    MEMORY_TOPIC_HINTS = (
-        "上次",
-        "之前",
-        "那次",
-        "那家",
-        "店",
-        "吃",
-        "喝",
-        "玩",
-        "去过",
-        "一起",
-    )
     DOC_TYPE_WEIGHTS = {
-        "relationship_state": 0.15,
-        "dialogue_turn": 0.35,
+        "hot_context": 0.65,
+        "fact_memory": 0.55,
+        "topic_segment": 0.45,
+        "evidence_excerpt": 0.42,
+        "dialogue_turn": 0.30,
+        "shared_memory": 0.40,
+        "relationship_state": 0.12,
+        "communication_style": 0.12,
         "self_style_example": 0.20,
         "feedback_example": 0.45,
-        "shared_memory": 0.40,
     }
 
     def __init__(
@@ -128,11 +109,13 @@ class RagRetriever:
         if elapsed_ms > timeout_ms or (deadline is not None and time.perf_counter() > deadline):
             return self._empty(started, status, degraded=True, reason="timeout", timed_out=True)
 
-        explicit_memory_request = self._is_explicit_memory_request(query)
         filtered = []
         query_tokens = set(self._tokens(query))
+        time_scope = self._time_scope(query)
         for item in scored:
             doc = item["doc"]
+            if not self._within_time_scope(doc, time_scope):
+                continue
             if str(doc.get("sensitivity") or "normal") == "sensitive":
                 # Sensitive memories require explicit current-topic overlap.
                 doc_tokens = set(self._tokens(doc.get("content") or ""))
@@ -142,17 +125,10 @@ class RagRetriever:
                 return self._empty(started, status, degraded=True, reason="timeout", timed_out=True)
             if float(item["score"]) <= 0:
                 continue
-            item["score"] = round(float(item["score"]) * self._time_decay(doc), 4)
+            item["score"] = round(float(item["score"]), 4)
             filtered.append(item)
             if len(filtered) >= limit:
                 break
-
-        if not filtered and explicit_memory_request:
-            filtered = self._fallback_memory_candidates(docs, query_tokens, limit)
-            if filtered:
-                strategy = f"{strategy}_explicit_memory_fallback"
-        elif filtered and explicit_memory_request:
-            strategy = f"{strategy}_explicit_memory"
 
         return {
             "items": filtered,
@@ -162,6 +138,7 @@ class RagRetriever:
             "degraded": strategy != "vector" or status.get("status") in {"pending", "stale"},
             "degrade_reason": None if strategy == "vector" else strategy,
             "elapsed_ms": elapsed_ms,
+            "by_type": self._count_by_type(filtered),
         }
 
     def _timed_out(self, started: float, timeout_ms: int, deadline: float | None) -> bool:
@@ -204,8 +181,12 @@ class RagRetriever:
         scored = []
         for doc in docs:
             cosine = self._cosine(query_vector, doc.get("vector") or [])
-            score = cosine + keyword_scores.get(doc["id"], 0.0) * 0.25
-            score += self.DOC_TYPE_WEIGHTS.get(str(doc.get("doc_type")), 0.0)
+            keyword_score = keyword_scores.get(doc["id"], 0.0)
+            score = self._final_score(
+                doc,
+                vector_score=cosine,
+                keyword_score=keyword_score,
+            )
             scored.append({"doc": doc, "score": round(score, 4)})
         return sorted(scored, key=lambda item: item["score"], reverse=True)
 
@@ -216,7 +197,9 @@ class RagRetriever:
     ) -> list[dict[str, Any]]:
         scored = []
         for doc, base_score in self._keyword_pairs(query, docs):
-            score = base_score + self.DOC_TYPE_WEIGHTS.get(str(doc.get("doc_type")), 0.0)
+            if base_score <= 0:
+                continue
+            score = self._final_score(doc, vector_score=0.0, keyword_score=base_score)
             scored.append({"doc": doc, "score": round(score, 4)})
         return sorted(scored, key=lambda item: item["score"], reverse=True)
 
@@ -236,42 +219,6 @@ class RagRetriever:
                 score += 0.2
             pairs.append((doc, score))
         return pairs
-
-    def _is_explicit_memory_request(self, query: str) -> bool:
-        normalized = re.sub(r"\s+", "", str(query or ""))
-        if not normalized:
-            return False
-        if any(keyword in normalized for keyword in self.EXPLICIT_MEMORY_KEYWORDS):
-            return True
-        return "记得" in normalized and any(hint in normalized for hint in self.MEMORY_TOPIC_HINTS)
-
-    def _fallback_memory_candidates(
-        self,
-        docs: list[dict[str, Any]],
-        query_tokens: set[str],
-        limit: int,
-    ) -> list[dict[str, Any]]:
-        candidates = []
-        allowed_types = {"shared_memory", "dialogue_turn", "feedback_example"}
-        for doc in docs:
-            doc_type = str(doc.get("doc_type") or "")
-            if doc_type not in allowed_types:
-                continue
-            if str(doc.get("sensitivity") or "normal") == "sensitive":
-                doc_tokens = set(self._tokens(doc.get("content") or ""))
-                if len(query_tokens & doc_tokens) < 2:
-                    continue
-            try:
-                source_ts = int(doc.get("source_ts") or 0)
-            except (TypeError, ValueError):
-                source_ts = 0
-            doc_tokens = set(self._tokens(f"{doc.get('content') or ''} {doc.get('redacted_content') or ''}"))
-            overlap = len(query_tokens & doc_tokens)
-            recency_bonus = min(max(source_ts, 0) / 10_000_000_000, 0.2) if source_ts else 0.0
-            score = 0.18 + self.DOC_TYPE_WEIGHTS.get(doc_type, 0.0) + min(overlap * 0.08, 0.4) + recency_bonus
-            score *= self._time_decay(doc)
-            candidates.append({"doc": doc, "score": round(score, 4)})
-        return sorted(candidates, key=lambda item: item["score"], reverse=True)[:limit]
 
     def _tokens(self, text: str) -> list[str]:
         compact = re.sub(r"\s+", "", str(text or ""))
@@ -293,8 +240,6 @@ class RagRetriever:
         return dot / (norm_a * norm_b)
 
     def _time_decay(self, doc: dict[str, Any]) -> float:
-        if str(doc.get("doc_type") or "") != "shared_memory":
-            return 1.0
         try:
             source_ts = int(doc.get("source_ts") or 0)
         except (TypeError, ValueError):
@@ -302,4 +247,54 @@ class RagRetriever:
         if source_ts <= 0:
             return 1.0
         age_days = max(0.0, (time.time() - source_ts) / 86400)
-        return max(0.30, math.exp(-age_days / 90.0))
+        return max(0.20, math.exp(-age_days / 60.0))
+
+    def _final_score(self, doc: dict[str, Any], *, vector_score: float, keyword_score: float) -> float:
+        doc_type = str(doc.get("doc_type") or "")
+        recency_score = self._time_decay(doc)
+        type_score = self.DOC_TYPE_WEIGHTS.get(doc_type, 0.1)
+        if vector_score > 0:
+            return (
+                float(vector_score) * 0.40
+                + float(keyword_score) * 0.25
+                + recency_score * 0.25
+                + type_score * 0.10
+            )
+        return (
+            float(keyword_score) * 0.65
+            + recency_score * 0.25
+            + type_score * 0.10
+        )
+
+    def _time_scope(self, query: str) -> str:
+        compact = re.sub(r"\s+", "", str(query or ""))
+        if any(token in compact for token in ("刚刚", "刚才", "刚", "刚说")):
+            return "recent_24h"
+        if "上次" in compact or "上回" in compact:
+            return "recent_preferred"
+        return "all"
+
+    def _within_time_scope(self, doc: dict[str, Any], time_scope: str) -> bool:
+        if time_scope != "recent_24h":
+            return True
+        try:
+            source_ts = int(doc.get("source_ts") or 0)
+        except (TypeError, ValueError):
+            return False
+        if source_ts <= 0:
+            return False
+        return (time.time() - source_ts) <= 86400
+
+    def _count_by_type(self, items: list[dict[str, Any]]) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for item in items:
+            doc = item.get("doc") or {}
+            doc_type = str(doc.get("doc_type") or "")
+            counts[doc_type] = counts.get(doc_type, 0) + 1
+        return counts
+
+    def metadata(self, doc: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return json.loads(doc.get("metadata_json") or "{}")
+        except Exception:
+            return {}

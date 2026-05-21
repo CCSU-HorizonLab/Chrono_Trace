@@ -109,6 +109,7 @@ def test_bridge_manual_generate_uses_manual_request_without_explicit_trigger(mon
     assert result["ok"] is True
     assert result["suggestion"]["trigger_type"] == "manual_request"
     assert engine.last_trigger_type == "manual_request"
+    assert engine.last_context["account_wxid"] == "wxid_test"
 
     row = conn.execute(
         "SELECT trigger_type, trigger_context FROM realtime_suggestions LIMIT 1"

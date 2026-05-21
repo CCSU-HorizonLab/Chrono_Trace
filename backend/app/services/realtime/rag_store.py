@@ -12,6 +12,7 @@ from .rag_config import RAG_DEFAULTS
 
 
 INDEX_STATUSES = {"pending", "indexing", "ready", "stale", "failed"}
+RAG_INDEX_VERSION = "rag_v2"
 
 
 def _now() -> int:
@@ -44,6 +45,8 @@ class RagStore:
                 sensitivity TEXT DEFAULT 'normal',
                 enabled INTEGER DEFAULT 1,
                 superseded_by INTEGER,
+                index_version TEXT DEFAULT 'v1',
+                source_kind TEXT DEFAULT 'historical',
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL,
                 UNIQUE(account_wxid, conversation_id, doc_type, source_table, source_id)
@@ -83,6 +86,7 @@ class RagStore:
                 last_error TEXT,
                 storage_bytes INTEGER DEFAULT 0,
                 enabled INTEGER DEFAULT 1,
+                index_version TEXT DEFAULT 'v1',
                 updated_at INTEGER NOT NULL,
                 UNIQUE(account_wxid, conversation_id)
             )
@@ -107,10 +111,91 @@ class RagStore:
                 redaction_disabled INTEGER DEFAULT 0,
                 redaction_fallback INTEGER DEFAULT 0,
                 remote_model INTEGER DEFAULT 0,
+                memory_intent_mode TEXT,
+                memory_intent_confidence REAL DEFAULT 0,
+                memory_intent_query TEXT,
+                memory_intent_reason TEXT,
+                rag_enabled INTEGER DEFAULT 0,
+                rag_retrieved INTEGER DEFAULT 0,
+                rag_hit_count INTEGER DEFAULT 0,
+                rag_injection_mode TEXT DEFAULT 'none',
+                rag_no_hit_guard INTEGER DEFAULT 0,
+                rag_latency_ms INTEGER DEFAULT 0,
+                rag_degraded_reason TEXT,
+                rag_gate_decision TEXT,
+                rag_gate_reason TEXT,
+                rag_top_score REAL DEFAULT 0,
+                rag_strategy TEXT,
+                index_version TEXT,
+                selected_doc_types_json TEXT,
+                top_doc_time_label TEXT,
+                query_expanded_terms_json TEXT,
+                no_hit_reason TEXT,
                 created_at INTEGER NOT NULL
             )
             """
         )
+        self._ensure_document_columns()
+        self._ensure_status_columns()
+        self._ensure_retrieval_log_columns()
+
+    def _ensure_document_columns(self) -> None:
+        existing = set()
+        for row in self.conn.execute("PRAGMA table_info(rag_documents)").fetchall():
+            try:
+                existing.add(str(row["name"]))
+            except Exception:
+                existing.add(str(row[1]))
+        columns = {
+            "index_version": "TEXT DEFAULT 'v1'",
+            "source_kind": "TEXT DEFAULT 'historical'",
+        }
+        for name, definition in columns.items():
+            if name not in existing:
+                self.conn.execute(f"ALTER TABLE rag_documents ADD COLUMN {name} {definition}")
+
+    def _ensure_status_columns(self) -> None:
+        existing = set()
+        for row in self.conn.execute("PRAGMA table_info(rag_index_status)").fetchall():
+            try:
+                existing.add(str(row["name"]))
+            except Exception:
+                existing.add(str(row[1]))
+        if "index_version" not in existing:
+            self.conn.execute("ALTER TABLE rag_index_status ADD COLUMN index_version TEXT DEFAULT 'v1'")
+
+    def _ensure_retrieval_log_columns(self) -> None:
+        existing = set()
+        for row in self.conn.execute("PRAGMA table_info(rag_retrieval_logs)").fetchall():
+            try:
+                existing.add(str(row["name"]))
+            except Exception:
+                existing.add(str(row[1]))
+        columns = {
+            "memory_intent_mode": "TEXT",
+            "memory_intent_confidence": "REAL DEFAULT 0",
+            "memory_intent_query": "TEXT",
+            "memory_intent_reason": "TEXT",
+            "rag_enabled": "INTEGER DEFAULT 0",
+            "rag_retrieved": "INTEGER DEFAULT 0",
+            "rag_hit_count": "INTEGER DEFAULT 0",
+            "rag_injection_mode": "TEXT DEFAULT 'none'",
+            "rag_no_hit_guard": "INTEGER DEFAULT 0",
+            "rag_latency_ms": "INTEGER DEFAULT 0",
+            "rag_degraded_reason": "TEXT",
+            "rag_gate_decision": "TEXT",
+            "rag_gate_reason": "TEXT",
+            "rag_top_score": "REAL DEFAULT 0",
+            "rag_strategy": "TEXT",
+            "index_version": "TEXT",
+            "selected_doc_types_json": "TEXT",
+            "top_doc_time_label": "TEXT",
+            "query_expanded_terms_json": "TEXT",
+            "no_hit_reason": "TEXT",
+        }
+        for name, definition in columns.items():
+            if name not in existing:
+                self.conn.execute(f"ALTER TABLE rag_retrieval_logs ADD COLUMN {name} {definition}")
 
     def get_status(self, account_wxid: str, conversation_id: int) -> dict[str, Any] | None:
         row = self.conn.execute(
@@ -138,6 +223,7 @@ class RagStore:
         dirty_since: int | None = None,
         last_error: str | None = None,
         enabled: bool | None = None,
+        index_version: str | None = None,
     ) -> None:
         if status not in INDEX_STATUSES:
             raise ValueError(f"invalid RAG index status: {status}")
@@ -150,8 +236,9 @@ class RagStore:
             """
             INSERT INTO rag_index_status
             (account_wxid, conversation_id, status, embedding_model, embedding_dim, privacy_mode,
-             document_count, vector_count, dirty_since, last_indexed_at, last_error, storage_bytes, enabled, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             document_count, vector_count, dirty_since, last_indexed_at, last_error, storage_bytes,
+             enabled, index_version, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(account_wxid, conversation_id) DO UPDATE SET
                 status = excluded.status,
                 embedding_model = excluded.embedding_model,
@@ -164,6 +251,7 @@ class RagStore:
                 last_error = excluded.last_error,
                 storage_bytes = excluded.storage_bytes,
                 enabled = excluded.enabled,
+                index_version = excluded.index_version,
                 updated_at = excluded.updated_at
             """,
             (
@@ -180,6 +268,7 @@ class RagStore:
                 last_error,
                 self.estimate_storage_bytes(account_wxid, conversation_id),
                 int(enabled if enabled is not None else current.get("enabled", 1)),
+                index_version or current.get("index_version") or "v1",
                 now,
             ),
         )
@@ -191,16 +280,31 @@ class RagStore:
         embedding_model: str,
         embedding_dim: int,
         privacy_mode: str,
+        index_version: str | None = None,
     ) -> int:
+        version_clause = " OR index_version != ?" if index_version else ""
+        params: tuple[Any, ...]
+        if index_version:
+            params = (
+                _now(),
+                _now(),
+                account_wxid,
+                embedding_model,
+                int(embedding_dim),
+                privacy_mode,
+                index_version,
+            )
+        else:
+            params = (_now(), _now(), account_wxid, embedding_model, int(embedding_dim), privacy_mode)
         cursor = self.conn.execute(
-            """
+            f"""
             UPDATE rag_index_status
             SET status = 'stale', updated_at = ?, dirty_since = COALESCE(dirty_since, ?)
             WHERE account_wxid = ?
               AND status = 'ready'
-              AND (embedding_model != ? OR embedding_dim != ? OR privacy_mode != ?)
+              AND (embedding_model != ? OR embedding_dim != ? OR privacy_mode != ?{version_clause})
             """,
-            (_now(), _now(), account_wxid, embedding_model, int(embedding_dim), privacy_mode),
+            params,
         )
         return int(cursor.rowcount or 0)
 
@@ -231,6 +335,8 @@ class RagStore:
         metadata: dict[str, Any] | None = None,
         sensitivity: str = "normal",
         enabled: bool = True,
+        index_version: str = "v1",
+        source_kind: str = "historical",
     ) -> int:
         now = _now()
         cursor = self.conn.execute(
@@ -238,8 +344,8 @@ class RagStore:
             INSERT INTO rag_documents
             (account_wxid, conversation_id, doc_type, source_table, source_id, source_ts,
              content, redacted_content, entity_map_json, pii_flags_json, metadata_json,
-             sensitivity, enabled, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             sensitivity, enabled, index_version, source_kind, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(account_wxid, conversation_id, doc_type, source_table, source_id)
             DO UPDATE SET
                 source_ts = excluded.source_ts,
@@ -250,6 +356,8 @@ class RagStore:
                 metadata_json = excluded.metadata_json,
                 sensitivity = excluded.sensitivity,
                 enabled = excluded.enabled,
+                index_version = excluded.index_version,
+                source_kind = excluded.source_kind,
                 updated_at = excluded.updated_at
             """,
             (
@@ -266,6 +374,8 @@ class RagStore:
                 json.dumps(metadata or {}, ensure_ascii=False, sort_keys=True),
                 sensitivity,
                 int(enabled),
+                index_version,
+                source_kind,
                 now,
                 now,
             ),
@@ -333,6 +443,34 @@ class RagStore:
             (account_wxid, conversation_id),
         ).fetchall()
         return [dict(row) for row in rows]
+
+    def delete_auto_documents(
+        self,
+        account_wxid: str,
+        conversation_id: int,
+        *,
+        index_version: str = RAG_INDEX_VERSION,
+        source_kinds: tuple[str, ...] = ("historical", "realtime"),
+    ) -> int:
+        placeholders = ",".join("?" for _ in source_kinds)
+        rows = self.conn.execute(
+            f"""
+            SELECT id
+            FROM rag_documents
+            WHERE account_wxid = ?
+              AND conversation_id = ?
+              AND index_version = ?
+              AND source_kind IN ({placeholders})
+            """,
+            (account_wxid, conversation_id, index_version, *source_kinds),
+        ).fetchall()
+        ids = [int(row["id"]) for row in rows]
+        if not ids:
+            return 0
+        id_placeholders = ",".join("?" for _ in ids)
+        self.conn.execute(f"DELETE FROM rag_embeddings WHERE document_id IN ({id_placeholders})", ids)
+        cursor = self.conn.execute(f"DELETE FROM rag_documents WHERE id IN ({id_placeholders})", ids)
+        return int(cursor.rowcount or 0)
 
     def list_documents_with_vectors(
         self,
@@ -414,8 +552,13 @@ class RagStore:
             (account_wxid, conversation_id, suggestion_id, query_text, document_ids_json,
              retrieval_scores_json, index_status, elapsed_ms, timed_out, degraded,
              degrade_reason, redaction_status, redaction_disabled, redaction_fallback,
-             remote_model, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             remote_model, memory_intent_mode, memory_intent_confidence,
+             memory_intent_query, memory_intent_reason, rag_enabled, rag_retrieved,
+             rag_hit_count, rag_injection_mode, rag_no_hit_guard, rag_latency_ms,
+             rag_degraded_reason, rag_gate_decision, rag_gate_reason, rag_top_score,
+             rag_strategy, index_version, selected_doc_types_json, top_doc_time_label,
+             query_expanded_terms_json, no_hit_reason, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 payload.get("account_wxid") or "",
@@ -433,6 +576,26 @@ class RagStore:
                 int(bool(payload.get("redaction_disabled"))),
                 int(bool(payload.get("redaction_fallback"))),
                 int(bool(payload.get("remote_model"))),
+                payload.get("memory_intent_mode"),
+                float(payload.get("memory_intent_confidence") or 0.0),
+                payload.get("memory_intent_query"),
+                payload.get("memory_intent_reason"),
+                int(bool(payload.get("rag_enabled"))),
+                int(bool(payload.get("rag_retrieved"))),
+                int(payload.get("rag_hit_count") or 0),
+                payload.get("rag_injection_mode") or "none",
+                int(bool(payload.get("rag_no_hit_guard"))),
+                int(payload.get("rag_latency_ms") or payload.get("elapsed_ms") or 0),
+                payload.get("rag_degraded_reason") or payload.get("degrade_reason"),
+                payload.get("rag_gate_decision"),
+                payload.get("rag_gate_reason"),
+                float(payload.get("rag_top_score") or 0.0),
+                payload.get("rag_strategy"),
+                payload.get("index_version"),
+                json.dumps(payload.get("selected_doc_types") or [], ensure_ascii=False),
+                payload.get("top_doc_time_label"),
+                json.dumps(payload.get("query_expanded_terms") or [], ensure_ascii=False),
+                payload.get("no_hit_reason"),
                 _now(),
             ),
         )

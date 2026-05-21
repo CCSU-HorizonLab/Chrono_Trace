@@ -12,7 +12,8 @@ from ...db.connection import get_db
 from .privacy_redactor import PrivacyRedactor
 from .rag_config import load_rag_settings
 from .rag_embedding import RagEmbeddingService, RagEmbeddingUnavailable
-from .rag_store import RagStore
+from .rag_segmenter import RagSegment, RagSegmenter
+from .rag_store import RAG_INDEX_VERSION, RagStore
 
 
 logger = logging.getLogger(__name__)
@@ -21,9 +22,10 @@ logger = logging.getLogger(__name__)
 class RagIndexer:
     """Build a minimal but useful per-contact RAG index."""
 
-    MAX_MESSAGES = 240
-    DIALOGUE_CHUNK_SIZE = 8
+    INDEX_VERSION = RAG_INDEX_VERSION
     SELF_STYLE_LIMIT = 24
+    EMBED_BATCH_SIZE = 64
+    WRITE_COMMIT_INTERVAL = 64
 
     def __init__(
         self,
@@ -32,6 +34,7 @@ class RagIndexer:
     ):
         self.store = store or RagStore()
         self.embedding_service = embedding_service or RagEmbeddingService()
+        self.segmenter = RagSegmenter()
 
     def ensure_contact_index(
         self,
@@ -46,8 +49,24 @@ class RagIndexer:
             embedding_model=str(settings["rag_embedding_model"]),
             embedding_dim=int(settings["rag_embedding_dim"]),
             privacy_mode=str(settings["rag_privacy_mode"]),
+            index_version=self.INDEX_VERSION,
         )
         status = self.store.get_status(account_wxid, conversation_id)
+        if (
+            status
+            and status.get("enabled", 1)
+            and status.get("index_version") != self.INDEX_VERSION
+            and status.get("status") in {"ready", "stale"}
+        ):
+            self.store.upsert_status(
+                account_wxid,
+                conversation_id,
+                status="stale",
+                dirty_since=int(time.time()),
+                index_version=self.INDEX_VERSION,
+            )
+            self.store.conn.commit()
+            status = self.store.get_status(account_wxid, conversation_id)
         if force:
             return self.rebuild_contact_index(
                 account_wxid=account_wxid,
@@ -81,6 +100,7 @@ class RagIndexer:
             embedding_dim=int(settings["rag_embedding_dim"]),
             privacy_mode=str(settings["rag_privacy_mode"]),
             dirty_since=int(time.time()),
+            index_version=self.INDEX_VERSION,
         )
         self.store.conn.commit()
         RagIndexQueue.enqueue(account_wxid, conversation_id)
@@ -99,11 +119,18 @@ class RagIndexer:
             embedding_dim=dim,
             privacy_mode=privacy_mode,
             last_error=None,
+            index_version=self.INDEX_VERSION,
         )
+        self.store.conn.commit()
         try:
             conversation = self._load_conversation(account_wxid, conversation_id)
             messages = self._load_messages(conversation_id)
             if not conversation or not messages:
+                cleaned_old = self.store.delete_auto_documents(
+                    account_wxid,
+                    conversation_id,
+                    index_version=self.INDEX_VERSION,
+                )
                 self.store.upsert_status(
                     account_wxid,
                     conversation_id,
@@ -111,11 +138,25 @@ class RagIndexer:
                     document_count=0,
                     vector_count=0,
                     dirty_since=None,
+                    index_version=self.INDEX_VERSION,
                 )
                 self.store.conn.commit()
+                logger.debug(
+                    "[RAG Index] version=%s docs=0 vectors=0 cleaned_old=%s",
+                    self.INDEX_VERSION,
+                    cleaned_old,
+                )
                 return self.store.get_status(account_wxid, conversation_id) or {}
 
+            cleaned_old = self.store.delete_auto_documents(
+                account_wxid,
+                conversation_id,
+                index_version=self.INDEX_VERSION,
+            )
+            self.store.conn.commit()
             docs = self._build_documents(account_wxid, conversation_id, conversation, messages)
+            self.store.conn.commit()
+            docs.extend(self._load_feedback_documents_for_embedding(account_wxid, conversation_id))
             if not docs:
                 self.store.upsert_status(
                     account_wxid,
@@ -124,21 +165,45 @@ class RagIndexer:
                     document_count=0,
                     vector_count=0,
                     dirty_since=None,
+                    index_version=self.INDEX_VERSION,
                 )
                 self.store.conn.commit()
+                logger.debug(
+                    "[RAG Index] version=%s docs=0 vectors=0 cleaned_old=%s",
+                    self.INDEX_VERSION,
+                    cleaned_old,
+                )
                 return self.store.get_status(account_wxid, conversation_id) or {}
 
-            vectors = self.embedding_service.embed_texts([doc["content"] for doc in docs])
-            for doc, vector in zip(docs, vectors):
-                document_id = self.store.upsert_document(**doc)
-                self.store.upsert_embedding(
-                    document_id=document_id,
-                    account_wxid=account_wxid,
-                    conversation_id=conversation_id,
-                    embedding_model=model,
-                    embedding_dim=dim,
-                    vector=vector,
-                    embedding_provider="local",
+            document_count = 0
+            vector_count = 0
+            for start in range(0, len(docs), self.EMBED_BATCH_SIZE):
+                batch = docs[start:start + self.EMBED_BATCH_SIZE]
+                vectors = self.embedding_service.embed_texts([doc["content"] for doc in batch])
+                for doc, vector in zip(batch, vectors):
+                    existing_document_id = doc.pop("_existing_document_id", None)
+                    if existing_document_id:
+                        document_id = int(existing_document_id)
+                    else:
+                        document_id = self.store.upsert_document(**doc)
+                        document_count += 1
+                    self.store.upsert_embedding(
+                        document_id=document_id,
+                        account_wxid=account_wxid,
+                        conversation_id=conversation_id,
+                        embedding_model=model,
+                        embedding_dim=dim,
+                        vector=vector,
+                        embedding_provider="local",
+                    )
+                    vector_count += 1
+                self.store.conn.commit()
+                logger.debug(
+                    "[RAG Index] progress version=%s docs=%s/%s vectors=%s",
+                    self.INDEX_VERSION,
+                    min(start + len(batch), len(docs)),
+                    len(docs),
+                    vector_count,
                 )
 
             self.store.upsert_status(
@@ -148,12 +213,20 @@ class RagIndexer:
                 embedding_model=model,
                 embedding_dim=dim,
                 privacy_mode=privacy_mode,
-                document_count=len(docs),
-                vector_count=len(vectors),
+                document_count=self._count_indexed_documents(account_wxid, conversation_id),
+                vector_count=vector_count,
                 dirty_since=None,
                 last_error=None,
+                index_version=self.INDEX_VERSION,
             )
             self.store.conn.commit()
+            logger.debug(
+                "[RAG Index] version=%s docs=%s vectors=%s cleaned_old=%s",
+                self.INDEX_VERSION,
+                document_count,
+                vector_count,
+                cleaned_old,
+            )
             return self.store.get_status(account_wxid, conversation_id) or {}
         except RagEmbeddingUnavailable as exc:
             self.store.upsert_status(
@@ -164,6 +237,7 @@ class RagIndexer:
                 embedding_dim=dim,
                 privacy_mode=privacy_mode,
                 last_error=str(exc),
+                index_version=self.INDEX_VERSION,
             )
             self.store.conn.commit()
             return self.store.get_status(account_wxid, conversation_id) or {}
@@ -177,6 +251,7 @@ class RagIndexer:
                 embedding_dim=dim,
                 privacy_mode=privacy_mode,
                 last_error=type(exc).__name__,
+                index_version=self.INDEX_VERSION,
             )
             self.store.conn.commit()
             return self.store.get_status(account_wxid, conversation_id) or {}
@@ -202,12 +277,11 @@ class RagIndexer:
               AND message_type = 1
               AND content IS NOT NULL
               AND TRIM(content) != ''
-            ORDER BY timestamp DESC, id DESC
-            LIMIT ?
+            ORDER BY timestamp ASC, id ASC
             """,
-            (conversation_id, self.MAX_MESSAGES),
+            (conversation_id,),
         ).fetchall()
-        return [dict(row) for row in reversed(rows)]
+        return [dict(row) for row in rows]
 
     def _build_documents(
         self,
@@ -218,6 +292,7 @@ class RagIndexer:
     ) -> list[dict[str, Any]]:
         redactor = PrivacyRedactor(self.store.conn)
         docs: list[dict[str, Any]] = []
+        sessions = self._load_sessions_reference(conversation_id)
         display_name = (
             str(conversation.get("display_name") or conversation.get("username") or "").strip()
         )
@@ -237,35 +312,81 @@ class RagIndexer:
                 "conversations",
                 str(conversation_id),
                 last_ts or first_ts,
-                metadata={"display_name": display_name},
+                metadata=self._metadata(
+                    segment=None,
+                    source_kind="historical",
+                    summary_method="rules",
+                    extra={"display_name": display_name},
+                ),
             )
         )
 
-        for chunk_index, chunk in enumerate(self._chunks(messages, self.DIALOGUE_CHUNK_SIZE), 1):
-            rendered = []
-            for msg in chunk:
-                sender = "我" if int(msg.get("is_sender") or 0) else "对方"
-                content = self._compact_content(msg.get("content"))
-                if content:
-                    rendered.append(f"{sender}: {content}")
-            if not rendered:
-                continue
-            content = "\n".join(rendered)
-            sensitivity = "sensitive" if self._looks_sensitive(content) else "normal"
+        segments = self.segmenter.segment(messages, conversation_id=conversation_id, sessions=sessions)
+        logger.debug(
+            "[RAG Segment] messages=%s segments=%s sessions=%s source=sessions/reference_only",
+            len(messages),
+            len(segments),
+            len(sessions),
+        )
+
+        for index, segment in enumerate(segments, 1):
+            topic_content = self.segmenter.render_segment(segment)
+            sensitivity = "sensitive" if self._looks_sensitive(topic_content) else "normal"
             docs.append(
                 self._doc_payload(
                     redactor,
                     account_wxid,
                     conversation_id,
-                    "dialogue_turn",
-                    content,
+                    "topic_segment",
+                    topic_content,
                     "messages",
-                    f"chunk:{chunk_index}:{chunk[0]['id']}:{chunk[-1]['id']}",
-                    int(chunk[-1].get("timestamp") or 0),
+                    f"segment:{index}:{segment.start_ts}:{segment.end_ts}",
+                    segment.end_ts,
                     sensitivity=sensitivity,
-                    metadata={"message_ids": [int(item["id"]) for item in chunk]},
+                    metadata=self._metadata(segment, source_kind="historical", summary_method="rules"),
                 )
             )
+            excerpt_content = self.segmenter.render_excerpt(segment)
+            docs.append(
+                self._doc_payload(
+                    redactor,
+                    account_wxid,
+                    conversation_id,
+                    "evidence_excerpt",
+                    excerpt_content,
+                    "messages",
+                    f"evidence:{index}:{segment.start_ts}:{segment.end_ts}",
+                    segment.end_ts,
+                    sensitivity="sensitive" if self._looks_sensitive(excerpt_content) else "normal",
+                    metadata=self._metadata(segment, source_kind="historical", summary_method="rules"),
+                )
+            )
+            for fact_index, fact in enumerate(self.segmenter.build_fact_memories(segment), 1):
+                fact_metadata = self._metadata(
+                    segment,
+                    source_kind="historical",
+                    summary_method="rules",
+                    extra={
+                        "fact_source_id": fact.get("source_id"),
+                        "subject": fact.get("subject"),
+                        "topics": fact.get("topics") or segment.topics,
+                        "entities": fact.get("entities") or segment.entities,
+                    },
+                )
+                docs.append(
+                    self._doc_payload(
+                        redactor,
+                        account_wxid,
+                        conversation_id,
+                        "fact_memory",
+                        f"时间：{segment.time_label}\n{fact['content']}",
+                        "messages",
+                        f"fact:{index}:{fact_index}:{fact.get('source_id')}",
+                        int(fact.get("source_ts") or segment.end_ts),
+                        sensitivity="sensitive" if self._looks_sensitive(fact["content"]) else "normal",
+                        metadata=fact_metadata,
+                    )
+                )
 
         self_messages = [
             self._compact_content(msg.get("content"))
@@ -283,28 +404,34 @@ class RagIndexer:
                     "messages",
                     f"style:{index}:{hash(content)}",
                     last_ts,
-                    metadata={"style_sample": True},
+                    metadata=self._metadata(
+                        segment=None,
+                        source_kind="historical",
+                        summary_method="rules",
+                        extra={"style_sample": True},
+                    ),
                 )
             )
 
-        memory_docs = self._extract_shared_memories(messages)
-        for index, memory in enumerate(memory_docs, 1):
+        style_lines = [self._compact_content(msg.get("content")) for msg in messages if int(msg.get("is_sender") or 0)]
+        if style_lines:
+            communication_style = "用户常见表达样例：" + " / ".join(style_lines[:8])
             docs.append(
                 self._doc_payload(
                     redactor,
                     account_wxid,
                     conversation_id,
-                    "shared_memory",
-                    memory["content"],
+                    "communication_style",
+                    communication_style,
                     "messages",
-                    f"memory:{index}:{memory['source_id']}",
-                    int(memory["source_ts"]),
-                    sensitivity=memory["sensitivity"],
-                    metadata={
-                        "confidence": memory["confidence"],
-                        "subject": memory["subject"],
-                        "object": memory["object"],
-                    },
+                    f"communication_style:{conversation_id}",
+                    last_ts,
+                    metadata=self._metadata(
+                        segment=None,
+                        source_kind="historical",
+                        summary_method="rules",
+                        extra={"style_sample": True},
+                    ),
                 )
             )
         return docs
@@ -323,6 +450,10 @@ class RagIndexer:
         sensitivity: str = "normal",
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        metadata = dict(metadata or {})
+        metadata.setdefault("index_version", self.INDEX_VERSION)
+        metadata.setdefault("source_kind", "historical")
+        metadata.setdefault("summary_method", "rules")
         redacted = redactor.redact(
             content,
             account_wxid=account_wxid,
@@ -341,12 +472,11 @@ class RagIndexer:
             "redacted_content": redacted.redacted_text,
             "entity_map_json": redacted.entity_map_json,
             "pii_flags_json": redacted.pii_flags_json,
-            "metadata": metadata or {},
+            "metadata": metadata,
             "sensitivity": sensitivity,
+            "index_version": self.INDEX_VERSION,
+            "source_kind": str(metadata.get("source_kind") or "historical"),
         }
-
-    def _chunks(self, messages: list[dict[str, Any]], size: int) -> list[list[dict[str, Any]]]:
-        return [messages[index:index + size] for index in range(0, len(messages), size)]
 
     def _compact_content(self, content: Any) -> str:
         text = re.sub(r"\s+", " ", str(content or "")).strip()
@@ -360,27 +490,96 @@ class RagIndexer:
         keywords = ("秘密", "保密", "身份证", "银行卡", "密码", "密钥", "住址", "地址", "电话")
         return any(keyword in str(text or "") for keyword in keywords)
 
-    def _extract_shared_memories(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        memories: list[dict[str, Any]] = []
-        memory_markers = ("记得", "上次", "那次", "一起", "说好", "答应", "喜欢", "不喜欢")
-        for msg in messages:
-            content = self._compact_content(msg.get("content"))
-            if not content or not any(marker in content for marker in memory_markers):
-                continue
-            memories.append(
+    def _metadata(
+        self,
+        segment: RagSegment | None,
+        *,
+        source_kind: str,
+        summary_method: str,
+        extra: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        metadata = dict(extra or {})
+        if segment:
+            metadata.update(
                 {
-                    "content": content,
-                    "source_id": msg.get("id"),
-                    "source_ts": msg.get("timestamp") or 0,
-                    "sensitivity": "sensitive" if self._looks_sensitive(content) else "normal",
-                    "confidence": 0.55,
-                    "subject": "我" if int(msg.get("is_sender") or 0) else "对方",
-                    "object": "对方" if int(msg.get("is_sender") or 0) else "我",
+                    "segment_id": segment.segment_id,
+                    "start_ts": segment.start_ts,
+                    "end_ts": segment.end_ts,
+                    "time_label": segment.time_label,
+                    "message_ids": segment.message_ids,
+                    "topics": metadata.get("topics") or segment.topics,
+                    "entities": metadata.get("entities") or segment.entities,
+                    "session_id": segment.session_id,
                 }
             )
-            if len(memories) >= 12:
-                break
-        return memories
+        metadata["source_kind"] = source_kind
+        metadata["summary_method"] = summary_method
+        metadata["index_version"] = self.INDEX_VERSION
+        return metadata
+
+    def _load_sessions_reference(self, conversation_id: int) -> list[dict[str, Any]]:
+        try:
+            rows = self.store.conn.execute(
+                """
+                SELECT id, start_time, end_time, message_count, initiator
+                FROM sessions
+                WHERE conversation_id = ?
+                ORDER BY start_time ASC
+                """,
+                (conversation_id,),
+            ).fetchall()
+            return [dict(row) for row in rows]
+        except Exception:
+            return []
+
+    def _load_feedback_documents_for_embedding(self, account_wxid: str, conversation_id: int) -> list[dict[str, Any]]:
+        settings = load_rag_settings()
+        rows = self.store.conn.execute(
+            """
+            SELECT d.*
+            FROM rag_documents d
+            LEFT JOIN rag_embeddings e
+              ON e.document_id = d.id
+             AND e.embedding_model = ?
+             AND e.embedding_dim = ?
+            WHERE d.account_wxid = ?
+              AND d.conversation_id = ?
+              AND d.doc_type = 'feedback_example'
+              AND d.enabled = 1
+              AND d.superseded_by IS NULL
+              AND e.id IS NULL
+            """,
+            (
+                str(settings["rag_embedding_model"]),
+                int(settings["rag_embedding_dim"]),
+                account_wxid,
+                conversation_id,
+            ),
+        ).fetchall()
+        docs = []
+        for row in rows:
+            item = dict(row)
+            docs.append(
+                {
+                    "_existing_document_id": int(item["id"]),
+                    "content": item.get("content") or "",
+                }
+            )
+        return docs
+
+    def _count_indexed_documents(self, account_wxid: str, conversation_id: int) -> int:
+        row = self.store.conn.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM rag_documents
+            WHERE account_wxid = ?
+              AND conversation_id = ?
+              AND enabled = 1
+              AND superseded_by IS NULL
+            """,
+            (account_wxid, conversation_id),
+        ).fetchone()
+        return int(row["count"] if row else 0)
 
 
 class RagIndexQueue:

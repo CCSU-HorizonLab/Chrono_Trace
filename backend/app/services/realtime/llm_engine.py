@@ -493,6 +493,15 @@ class LLMSuggestionEngine(SuggestionEngine):
         _print(f"[LLM Engine] 使用模型: {model_config.get('name')} ({model_config.get('model_id')})")
         _print(f"[LLM Engine] API URL: {model_config.get('api_base_url')}")
 
+        if trigger_type == "manual_request":
+            context["_rag_output_mode"] = (
+                "reply"
+                if self._classify_manual_request(context) == "direct_reply"
+                else "suggestion"
+            )
+        else:
+            context["_rag_output_mode"] = "suggestion"
+
         try:
             from .rag_context_builder import RagContextBuilder
 
@@ -1059,19 +1068,58 @@ class LLMSuggestionEngine(SuggestionEngine):
                 parts.append(f"  {time_label}: {summary}")
 
         retrieval_context = context.get("retrieval_context")
-        if retrieval_context and not is_direct_reply:
+        if retrieval_context:
             items = retrieval_context.get("items") or []
-            if items:
-                parts.append("\n【联系人级共同记忆 RAG（辅助参考，最近对话优先）】")
-                parts.append(
-                    "  使用边界: 只用于当前联系人和当前话题；不得主动翻旧账；"
-                    "若与最近对话冲突，必须忽略 RAG。"
-                )
-                for item in items[:4]:
-                    doc_type = item.get("doc_type")
+            no_hit_guard = bool(retrieval_context.get("no_hit_guard"))
+            retrieval_status = str(retrieval_context.get("retrieval_status") or "")
+            query = str(retrieval_context.get("query") or "").strip()
+            memory_intent = retrieval_context.get("memory_intent") or context.get("memory_intent") or {}
+            query_mode = str(memory_intent.get("mode") or "unknown") if isinstance(memory_intent, dict) else "unknown"
+            time_strategy = "近期优先" if any(token in query for token in ("刚刚", "刚才", "上次", "之前")) else "相关优先"
+            if no_hit_guard:
+                parts.append("\n【历史记忆检索结果】")
+                parts.append("  检索状态：no_hit")
+                parts.append(f"  查询意图：{query_mode}")
+                parts.append(f"  时间策略：{time_strategy}")
+                if query:
+                    parts.append(f"  说明：当前联系人历史中没有找到和“{query[:80]}”直接相关的可靠记忆。")
+                else:
+                    parts.append("  说明：当前联系人历史中没有找到直接相关的可靠记忆。")
+                parts.append("  要求：没查到就说没查到；不要编造具体时间、地点、流派、店名、事件。")
+                if is_direct_reply:
+                    parts.append("  可以建议用户自然追问对方确认；不要生成建议卡片，除非用户明确要求话术。")
+                else:
+                    parts.append("  可以基于最近对话生成保守话术；优先建议自然追问对方确认。")
+            elif items and retrieval_status == "weak_hit":
+                parts.append("\n【联系人关系背景】")
+                parts.append("  检索状态：weak_hit")
+                parts.append("  说明：以下只作为关系策略参考，不要直接复述为具体历史事实。")
+                parts.append("  内容：")
+                for index, item in enumerate(items[:4], 1):
                     content = str(item.get("content") or "").strip()
                     if content:
-                        parts.append(f"  - {doc_type}: {content}")
+                        time_label = str(item.get("time_label") or "").strip()
+                        parts.append(f"  {index}. 时间：{time_label or '未知'}；内容：{content}")
+            elif items:
+                parts.append("\n【历史记忆检索结果】")
+                parts.append("  检索状态：hit")
+                parts.append(f"  查询意图：{query_mode}")
+                parts.append(f"  时间策略：{time_strategy}")
+                parts.append("  结果：")
+                for index, item in enumerate(items[:4], 1):
+                    content = str(item.get("content") or "").strip()
+                    if content:
+                        doc_type = str(item.get("doc_type") or "memory")
+                        time_label = str(item.get("time_label") or "").strip()
+                        parts.append(
+                            f"  {index}. 时间：{time_label or '未知'}；类型：{doc_type}；"
+                            f"相关度：{float(item.get('score') or 0):.2f}"
+                        )
+                        prefix = "原文" if doc_type == "evidence_excerpt" else "内容"
+                        parts.append(f"     {prefix}：{content}")
+                parts.append("  要求：只能基于以上结果回答；如果结果未包含具体细节，必须说没查到。")
+                if is_direct_reply:
+                    parts.append("  直接回答用户问题；不要生成建议卡片，除非用户明确要求话术。")
 
         historical_ctx = context.get("historical_context", {})
         history_lines = []
@@ -1379,7 +1427,10 @@ class LLMSuggestionEngine(SuggestionEngine):
             raise ValueError("API 返回空 choices")
 
         message_obj = choices[0].get("message", {})
-        content = self._extract_message_text(message_obj)
+        content = self._extract_message_text(
+            message_obj,
+            allow_reasoning_fallback=not use_json_mode,
+        )
         usage = body.get("usage", {})
         _print(
             f"[LLM Engine] 📥 tokens: prompt={usage.get('prompt_tokens', '?')}, "
@@ -1468,14 +1519,23 @@ class LLMSuggestionEngine(SuggestionEngine):
             use_json_mode=False,
         )
 
-    def _extract_message_text(self, message_obj: dict) -> str:
+    def _extract_message_text(
+        self,
+        message_obj: dict,
+        *,
+        allow_reasoning_fallback: bool = True,
+    ) -> str:
         """兼容不同 OpenAI 兼容厂商返回的文本字段。"""
         content = message_obj.get("content", "") or ""
         reasoning = message_obj.get("reasoning_content", "") or ""
 
-        if not content and reasoning:
+        if not content and reasoning and allow_reasoning_fallback:
             _print("[LLM Engine] ⚠️ message.content 为空，回退使用 reasoning_content")
             return reasoning
+
+        if not content and reasoning:
+            _print("[LLM Engine] ⚠️ message.content 为空，JSON 模式下忽略 reasoning_content")
+            return ""
 
         if not content and not reasoning:
             logger.error(
@@ -2006,17 +2066,19 @@ class LLMSuggestionEngine(SuggestionEngine):
                 speech for speech in speeches if self._is_sendable_speech(speech, style_constraints)
             ]
             if speeches and not valid_speeches:
-                if trigger_type == "manual_request" and reply:
+                if trigger_type == "manual_request":
                     relaxed_speeches = [
                         speech
                         for speech in speeches
                         if self._is_reference_sendable_speech(speech, style_constraints)
                     ]
-                    if relaxed_speeches:
+                    if relaxed_speeches and (reply or len(relaxed_speeches) == len(speeches)):
                         _print("[LLM Engine] ⚠️ manual_request 话术未通过严格校验，已保留为参考话术展示")
                         speeches = relaxed_speeches[:3]
-                    else:
+                    elif reply:
                         speeches = []
+                    else:
+                        raise ValueError("模型返回的 speeches 更像规则说明，不是可发送话术")
                 elif not reply:
                     raise ValueError("模型返回的 speeches 更像规则说明，不是可发送话术")
                 else:

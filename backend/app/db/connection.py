@@ -43,8 +43,11 @@ class DatabaseConnection:
         cls._db_path = db_path
         
         # 创建连接
-        conn = sqlite3.connect(db_path, check_same_thread=False)
+        conn = sqlite3.connect(db_path, check_same_thread=False, timeout=30.0)
         conn.row_factory = sqlite3.Row  # 支持字典式访问
+        conn.execute("PRAGMA busy_timeout = 30000")
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA synchronous = NORMAL")
         cls._set_instance(conn)
         
         # 执行建表SQL

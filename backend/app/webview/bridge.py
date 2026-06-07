@@ -7,6 +7,7 @@ import shutil
 import threading
 import time
 import re
+import uuid
 from pathlib import Path
 from ..config import SETTINGS_PATH
 from ..services.wechat.ingest_service import WeChatIngestService
@@ -62,6 +63,8 @@ class Bridge:
         self._floating_service = FloatingWindowService()
         self._model_download_status: dict[str, dict[str, Any]] = {}
         self._model_download_lock = threading.Lock()
+        self._suggestion_streams: dict[str, dict[str, Any]] = {}
+        self._suggestion_stream_lock = threading.Lock()
         self._webview_window = None  # 由 app_dev.py 注入
         self._analysis_cancel_event = None  # 用于取消好感度分析
 
@@ -636,7 +639,121 @@ class Bridge:
             to_date=to_date
         )
 
-    def generate_suggestion(self, intent: str, context: dict[str, Any]) -> dict[str, Any]:
+    def _ensure_suggestion_stream_state(self) -> None:
+        if not hasattr(self, "_suggestion_streams"):
+            self._suggestion_streams = {}
+        if not hasattr(self, "_suggestion_stream_lock"):
+            self._suggestion_stream_lock = threading.Lock()
+
+    def _append_suggestion_stream_event(self, stream_id: str, event: dict[str, Any]) -> None:
+        self._ensure_suggestion_stream_state()
+        with self._suggestion_stream_lock:
+            state = self._suggestion_streams.get(stream_id)
+            if not state:
+                return
+            events = state.setdefault("events", [])
+            seq = int(state.get("next_seq") or 0)
+            item = {
+                "seq": seq,
+                "ts": int(time.time() * 1000),
+                **dict(event or {}),
+            }
+            events.append(item)
+            state["next_seq"] = seq + 1
+            # Keep the bridge memory bounded; frontend polls frequently.
+            if len(events) > 400:
+                del events[:-400]
+
+    def start_suggestion_stream(self, intent: str, context: dict[str, Any]) -> dict[str, Any]:
+        """Start manual suggestion generation in a background thread and expose stream events."""
+        self._ensure_suggestion_stream_state()
+        stream_id = uuid.uuid4().hex
+        now_ms = int(time.time() * 1000)
+        with self._suggestion_stream_lock:
+            self._suggestion_streams[stream_id] = {
+                "stream_id": stream_id,
+                "status": "running",
+                "events": [],
+                "next_seq": 0,
+                "result": None,
+                "error": None,
+                "created_at": now_ms,
+                "updated_at": now_ms,
+            }
+
+        def _run() -> None:
+            try:
+                self._append_suggestion_stream_event(
+                    stream_id,
+                    {"type": "stage", "stage": "start", "message": "开始生成"},
+                )
+                result = self.generate_suggestion(
+                    intent,
+                    dict(context or {}),
+                    _stream_callback=lambda event: self._append_suggestion_stream_event(stream_id, event),
+                )
+                with self._suggestion_stream_lock:
+                    state = self._suggestion_streams.get(stream_id)
+                    if state is not None:
+                        state["status"] = "done" if result.get("ok") else "error"
+                        state["result"] = result
+                        state["error"] = None if result.get("ok") else result.get("error")
+                        state["updated_at"] = int(time.time() * 1000)
+                self._append_suggestion_stream_event(
+                    stream_id,
+                    {"type": "done" if result.get("ok") else "error", "message": "生成完成" if result.get("ok") else result.get("error")},
+                )
+            except Exception as exc:
+                logger.exception("[Bridge] suggestion stream failed")
+                with self._suggestion_stream_lock:
+                    state = self._suggestion_streams.get(stream_id)
+                    if state is not None:
+                        state["status"] = "error"
+                        state["error"] = str(exc)
+                        state["updated_at"] = int(time.time() * 1000)
+                self._append_suggestion_stream_event(
+                    stream_id,
+                    {"type": "error", "message": str(exc)},
+                )
+
+        thread = threading.Thread(target=_run, daemon=True)
+        thread.start()
+        return {"ok": True, "stream_id": stream_id}
+
+    def get_suggestion_stream(self, stream_id: str, cursor: int = 0) -> dict[str, Any]:
+        """Poll stream events for a running suggestion job."""
+        self._ensure_suggestion_stream_state()
+        normalized_id = str(stream_id or "").strip()
+        if not normalized_id:
+            return {"ok": False, "error": "missing_stream_id"}
+        with self._suggestion_stream_lock:
+            state = self._suggestion_streams.get(normalized_id)
+            if not state:
+                return {"ok": False, "error": "stream_not_found"}
+            start = max(0, int(cursor or 0))
+            events = [
+                dict(event)
+                for event in state.get("events", [])
+                if int(event.get("seq") or 0) >= start
+            ]
+            next_cursor = int(state.get("next_seq") or 0)
+            return {
+                "ok": True,
+                "stream_id": normalized_id,
+                "status": state.get("status"),
+                "events": events,
+                "next_cursor": next_cursor,
+                "done": state.get("status") in {"done", "error"},
+                "result": state.get("result"),
+                "error": state.get("error"),
+            }
+
+    def generate_suggestion(
+        self,
+        intent: str,
+        context: dict[str, Any],
+        _stream_callback=None,
+    ) -> dict[str, Any]:
         """
         手动生成 AI 建议（Manual 模式或用户主动请求）
 
@@ -738,7 +855,17 @@ class Bridge:
                 merged_trigger_context.update(resolved_trigger.trigger_context)
                 context["trigger_context"] = merged_trigger_context
 
-            result = engine.generate(trigger_type, intent, context)
+            import inspect
+
+            if "stream_callback" in inspect.signature(engine.generate).parameters:
+                result = engine.generate(
+                    trigger_type,
+                    intent,
+                    context,
+                    stream_callback=_stream_callback,
+                )
+            else:
+                result = engine.generate(trigger_type, intent, context)
 
             # 将手动生成的建议也写入 DB（供隐式反馈对比使用）
             try:

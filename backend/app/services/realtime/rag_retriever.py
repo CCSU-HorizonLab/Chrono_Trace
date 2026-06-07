@@ -112,8 +112,11 @@ class RagRetriever:
         filtered = []
         query_tokens = set(self._tokens(query))
         time_scope = self._time_scope(query)
+        memory_lookup = self._is_memory_lookup_query(query)
         for item in scored:
             doc = item["doc"]
+            if memory_lookup and str(doc.get("doc_type") or "") in {"self_style_example", "communication_style"}:
+                continue
             if not self._within_time_scope(doc, time_scope):
                 continue
             if str(doc.get("sensitivity") or "normal") == "sensitive":
@@ -273,6 +276,29 @@ class RagRetriever:
         if "上次" in compact or "上回" in compact:
             return "recent_preferred"
         return "all"
+
+    def _is_memory_lookup_query(self, query: str) -> bool:
+        compact = re.sub(r"\s+", "", str(query or ""))
+        return any(
+            token in compact
+            for token in (
+                "历史记录",
+                "聊天记录",
+                "RAG文档",
+                "rag文档",
+                "记忆文档",
+                "文档里",
+                "记录里",
+                "历史里",
+                "找一下",
+                "找下",
+                "找找",
+                "查一下",
+                "查下",
+                "翻一下",
+                "翻下",
+            )
+        )
 
     def _within_time_scope(self, doc: dict[str, Any], time_scope: str) -> bool:
         if time_scope != "recent_24h":

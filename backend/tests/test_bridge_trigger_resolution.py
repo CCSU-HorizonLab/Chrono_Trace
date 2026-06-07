@@ -52,6 +52,15 @@ class FakeEngine:
         )
 
 
+class FakeStreamingEngine(FakeEngine):
+    def generate(self, trigger_type, intent, context, stream_callback=None):
+        if stream_callback:
+            stream_callback({"type": "stage", "stage": "llm", "message": "模型生成中"})
+            stream_callback({"type": "delta", "text": '{"summary":"流式', "channel": "content"})
+            stream_callback({"type": "delta", "text": '建议"}', "channel": "content"})
+        return super().generate(trigger_type, intent, context)
+
+
 def _setup_db():
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
@@ -116,6 +125,43 @@ def test_bridge_manual_generate_uses_manual_request_without_explicit_trigger(mon
     ).fetchone()
     assert row["trigger_type"] == "manual_request"
     assert "manual_request" in row["trigger_context"]
+
+
+def test_bridge_suggestion_stream_returns_events_and_final_result(monkeypatch):
+    bridge = Bridge.__new__(Bridge)
+    engine = FakeStreamingEngine()
+    conn = _setup_db()
+
+    monkeypatch.setattr(
+        "app.services.realtime.monitor_service.RealtimeMonitorService",
+        lambda: FakeMonitor(),
+    )
+    monkeypatch.setattr(
+        "app.services.realtime.suggestion_engine.SuggestionEngineFactory.create",
+        lambda engine_type: engine,
+    )
+    monkeypatch.setattr("app.db.connection.get_db", lambda: conn)
+
+    started = bridge.start_suggestion_stream(
+        "maintain",
+        {"recent_messages": [{"sender_attr": "other", "content": "最近有点累", "timestamp": 1}]},
+    )
+
+    assert started["ok"] is True
+    deadline = time.time() + 2
+    poll = {}
+    while time.time() < deadline:
+        poll = bridge.get_suggestion_stream(started["stream_id"], 0)
+        if poll.get("done"):
+            break
+        time.sleep(0.02)
+
+    assert poll["ok"] is True
+    assert poll["done"] is True
+    assert poll["result"]["ok"] is True
+    assert poll["result"]["suggestion"]["summary"] == "测试建议"
+    event_text = "".join(str(event.get("text") or "") for event in poll["events"])
+    assert "流式建议" in event_text
 
 
 def test_bridge_manual_generate_preserves_explicit_trigger(monkeypatch):

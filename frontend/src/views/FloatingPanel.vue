@@ -151,7 +151,10 @@
 
           <div v-if="loading" class="fp-loading-state">
             <div class="fp-spinner"></div>
-            <span>AI 分析中 ({{ thinkingSeconds }}s)</span>
+            <div class="fp-loading-copy">
+              <span>{{ streamStageText || 'AI 分析中' }} ({{ thinkingSeconds }}s)</span>
+              <pre v-if="streamPreview" class="fp-stream-preview">{{ streamPreview }}</pre>
+            </div>
           </div>
         </div>
       </div>
@@ -1746,6 +1749,8 @@ function handleLlmError(errorMsg: string) {
 
 // ========== AI 建议操作 ==========
 const thinkingSeconds = ref(0)
+const streamPreview = ref('')
+const streamStageText = ref('')
 let thinkingTimer: any = null
 
 function __startThinkingTimer() {
@@ -1763,38 +1768,91 @@ function __stopThinkingTimer() {
   }
 }
 
+function sleep(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+function resetSuggestionStreamUi() {
+  streamPreview.value = ''
+  streamStageText.value = ''
+}
+
+function applyStreamEvent(event: any) {
+  if (!event || typeof event !== 'object') return
+  if (event.type === 'stage') {
+    const message = String(event.message || '').trim()
+    const stage = String(event.stage || '').trim()
+    streamStageText.value = message || stage || 'AI 分析中'
+  } else if (event.type === 'delta') {
+    const text = String(event.text || '')
+    if (!text) return
+    streamPreview.value = (streamPreview.value + text).slice(-1200)
+  } else if (event.type === 'error') {
+    streamStageText.value = String(event.message || '生成失败')
+  }
+}
+
+async function generateSuggestionWithStream(context: Record<string, any>) {
+  const started = await api.start_suggestion_stream(intent.value, context)
+  if (!started?.ok || !started.stream_id) {
+    return await api.generate_suggestion(intent.value, context)
+  }
+
+  let cursor = 0
+  let lastResult: any = null
+  for (;;) {
+    await sleep(220)
+    const chunk = await api.get_suggestion_stream(started.stream_id, cursor)
+    if (!chunk?.ok) {
+      throw new Error(chunk?.error || 'stream 获取失败')
+    }
+    const events = Array.isArray(chunk.events) ? chunk.events : []
+    events.forEach(applyStreamEvent)
+    cursor = Number(chunk.next_cursor ?? cursor)
+    if (chunk.done) {
+      lastResult = chunk.result || { ok: false, error: chunk.error || '生成失败' }
+      break
+    }
+  }
+  return lastResult || { ok: false, error: '生成失败' }
+}
+
+function appendSuggestionResult(r: any) {
+  if (!r?.ok || !r.suggestion) return false
+  if (r.suggestion.reply) {
+    conversationHistory.value.push({ role: 'ai', content: r.suggestion.reply, ts: Math.floor(Date.now() / 1000) })
+  }
+  manualSuggestion.value = r.suggestion
+  if (r.suggestion.summary !== '[PURE_CHAT]' && r.suggestion.summary !== '[SILENT]') {
+    const parsedSpeeches = parseSuggestionSpeeches(r.suggestion.speeches)
+    pendingSuggestions.value.push({ ...r.suggestion, speeches: parsedSpeeches })
+  }
+  expandedIds.value.add(String(r.suggestion.id || 'manual'))
+  expandedIds.value = new Set(expandedIds.value)
+  if (r.context_used?.recent_messages) {
+    contextUsed.value = r.context_used.recent_messages
+  }
+  return true
+}
+
 async function manualGenerate() {
   loading.value = true
   __startThinkingTimer()
+  resetSuggestionStreamUi()
   llmError.value = ''
   try {
     await bridgeReady()
-    const r = await api.generate_suggestion(intent.value, {
+    const r = await generateSuggestionWithStream({
       user_context: conversationHistory.value.length ? conversationHistory.value : undefined,
       historical_context: buildHistoricalContext(),
     })
     if (r.ok && r.suggestion) {
-      if (r.suggestion.reply) {
-        conversationHistory.value.push({ role: 'ai', content: r.suggestion.reply, ts: Math.floor(Date.now() / 1000) })
-      }
-      manualSuggestion.value = r.suggestion
-      // 将手动生成的卡片同步加入待处理池以将其驻留，防止下次 manual_generate 覆盖致其屏幕消失
-      if (r.suggestion.summary !== '[PURE_CHAT]' && r.suggestion.summary !== '[SILENT]') {
-         const parsedSpeeches = typeof r.suggestion.speeches === 'string' ? JSON.parse(r.suggestion.speeches) : (r.suggestion.speeches || [])
-         pendingSuggestions.value.push({ ...r.suggestion, speeches: parsedSpeeches })
-      }
-      
-      expandedIds.value.add('manual')
-      expandedIds.value = new Set(expandedIds.value)
+      appendSuggestionResult(r)
     } else {
       loading.value = false
       __stopThinkingTimer()
       handleLlmError(r.error || '生成失败')
       return
-    }
-    // 保存 AI 参考的聊天记录
-    if (r.context_used?.recent_messages) {
-      contextUsed.value = r.context_used.recent_messages
     }
   } catch (e: any) { 
     console.error('手动生成失败:', e) 
@@ -1803,6 +1861,7 @@ async function manualGenerate() {
   finally { 
     loading.value = false
     __stopThinkingTimer()
+    resetSuggestionStreamUi()
     await nextTick()
     scrollToBottom()
   }
@@ -1856,36 +1915,21 @@ async function sendUserContext() {
   userInput.value = ''
   loading.value = true
   __startThinkingTimer()
+  resetSuggestionStreamUi()
   llmError.value = ''
 
   try {
     await bridgeReady()
-    const r = await api.generate_suggestion(intent.value, {
+    const r = await generateSuggestionWithStream({
       user_context: conversationHistory.value.map(c => ({ role: c.role, content: c.content })),
       include_history: true,
       historical_context: buildHistoricalContext(),
     })
     if (r.ok && r.suggestion) {
-      // 如果 AI 返回了 reply（回应用户的话），插入对话流
-      if (r.suggestion.reply) {
-        conversationHistory.value.push({ role: 'ai', content: r.suggestion.reply, ts: Math.floor(Date.now() / 1000) })
-      }
-      manualSuggestion.value = r.suggestion
-      // 同步插入历史建议池
-      if (r.suggestion.summary !== '[PURE_CHAT]' && r.suggestion.summary !== '[SILENT]') {
-         const parsedSpeeches = typeof r.suggestion.speeches === 'string' ? JSON.parse(r.suggestion.speeches) : (r.suggestion.speeches || [])
-         pendingSuggestions.value.push({ ...r.suggestion, speeches: parsedSpeeches })
-      }
-      
-      expandedIds.value.add(String(r.suggestion.id || 'manual'))
-      expandedIds.value = new Set(expandedIds.value)
+      appendSuggestionResult(r)
     } else {
       conversationHistory.value.push({ role: 'ai', content: `[生成失败] ${r.error || '未知错误'}`, ts: Math.floor(Date.now() / 1000) })
       handleLlmError(r.error || '生成失败')
-    }
-    // 保存 AI 参考的聊天记录
-    if (r.context_used?.recent_messages) {
-      contextUsed.value = r.context_used.recent_messages
     }
   } catch (e: any) {
     console.error('发送失败:', e)
@@ -1894,6 +1938,7 @@ async function sendUserContext() {
   } finally {
     loading.value = false
     __stopThinkingTimer()
+    resetSuggestionStreamUi()
     // 自动滚动到底部
     await nextTick()
     scrollToBottom()
@@ -2308,8 +2353,23 @@ async function loadLastThread() {
 .fp-bubble-txt { font-size: 14px; line-height: 1.5; word-break: break-word; white-space: pre-wrap; }
 
 /* Loading State */
-.fp-loading-state { padding: 24px; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 12px; color: var(--ct-color-primary); font-weight: 500; }
+.fp-loading-state { padding: 18px 20px; display: flex; align-items: flex-start; justify-content: center; gap: 8px; font-size: 12px; color: var(--ct-color-primary); font-weight: 500; }
 .fp-spinner { width: 14px; height: 14px; border: 2px solid var(--ct-color-primary-light); border-top-color: var(--ct-color-primary); border-radius: 50%; animation: fp-spin 0.8s linear infinite; }
+.fp-loading-copy { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 8px; }
+.fp-stream-preview {
+  max-height: 120px;
+  margin: 0;
+  padding: 8px 10px;
+  overflow: hidden;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border: 1px solid var(--ct-border);
+  border-radius: 6px;
+  background: var(--ct-bg-muted);
+  color: var(--ct-text-secondary);
+  font: inherit;
+  line-height: 1.45;
+}
 @keyframes fp-spin { to { transform: rotate(360deg); } }
 
 /* 6. Bottom Composer */

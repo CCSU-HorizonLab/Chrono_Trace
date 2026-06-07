@@ -14,7 +14,7 @@ import socket
 import time
 import urllib.request
 import urllib.error
-from typing import Optional
+from typing import Any, Callable, Optional
 
 from .providers.models import normalize_text
 from .suggestion_engine import SuggestionEngine, SuggestionResult
@@ -466,6 +466,7 @@ class LLMSuggestionEngine(SuggestionEngine):
         trigger_type: str,
         intent: str,
         context: dict | None = None,
+        stream_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> SuggestionResult:
         """
         调用 LLM 生成建议
@@ -492,6 +493,7 @@ class LLMSuggestionEngine(SuggestionEngine):
 
         _print(f"[LLM Engine] 使用模型: {model_config.get('name')} ({model_config.get('model_id')})")
         _print(f"[LLM Engine] API URL: {model_config.get('api_base_url')}")
+        self._emit_stream(stream_callback, "stage", stage="model_ready", message="模型已就绪")
 
         if trigger_type == "manual_request":
             context["_rag_output_mode"] = (
@@ -505,6 +507,7 @@ class LLMSuggestionEngine(SuggestionEngine):
         try:
             from .rag_context_builder import RagContextBuilder
 
+            self._emit_stream(stream_callback, "stage", stage="rag", message="检索上下文")
             RagContextBuilder().enrich_context(
                 context,
                 trigger_type=trigger_type,
@@ -517,6 +520,13 @@ class LLMSuggestionEngine(SuggestionEngine):
         # 构造 prompt
         style_constraints = self._resolve_style_constraints(context)
         user_prompt = self._build_prompt(trigger_type, intent, context)
+        self._emit_stream(
+            stream_callback,
+            "stage",
+            stage="prompt",
+            message="提示词已构建",
+            prompt_chars=len(user_prompt),
+        )
         _print(f"[LLM Engine] 📤 发送 prompt ({len(user_prompt)} 字符):")
         _print(f"{'─'*50}")
         _print(user_prompt)
@@ -548,11 +558,17 @@ class LLMSuggestionEngine(SuggestionEngine):
                     result.thought_process = analysis_text[:2000]
             else:
                 # 调用 API
-                response_text = self._call_api(model_config, user_prompt)
+                self._emit_stream(stream_callback, "stage", stage="llm", message="模型生成中")
+                response_text = self._call_api(
+                    model_config,
+                    user_prompt,
+                    stream_callback=stream_callback,
+                )
                 _print(f"[LLM Engine] 📥 收到响应 ({len(response_text)} 字符):")
                 _print(f"[LLM Engine] 响应内容: {response_text[:300]}")
 
                 # 解析响应
+                self._emit_stream(stream_callback, "stage", stage="parse", message="解析结果")
                 result = self._parse_response(
                     response_text,
                     trigger_type,
@@ -582,6 +598,7 @@ class LLMSuggestionEngine(SuggestionEngine):
                 _print(f"[LLM Engine] 摘要: {result.summary}")
                 _print(f"[LLM Engine] 话术: {result.speeches}")
                 _print(f"{'='*60}\n")
+                self._emit_stream(stream_callback, "stage", stage="done", message="生成完成")
                 return result
             else:
                 _print("❌ [LLM Engine] 响应解析失败")
@@ -598,6 +615,19 @@ class LLMSuggestionEngine(SuggestionEngine):
             import traceback
             traceback.print_exc()
             raise e
+
+    def _emit_stream(
+        self,
+        callback: Callable[[dict[str, Any]], None] | None,
+        event_type: str,
+        **payload: Any,
+    ) -> None:
+        if not callback:
+            return
+        try:
+            callback({"type": event_type, **payload})
+        except Exception:
+            pass
 
     def _get_active_model(self) -> Optional[dict]:
         """从数据库获取当前激活的 LLM 模型配置"""
@@ -1351,6 +1381,7 @@ class LLMSuggestionEngine(SuggestionEngine):
         temperature: Optional[float] = None,
         request_tag: str = "suggestion",
         use_json_mode: bool = True,
+        stream_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> str:
         """调用 OpenAI 兼容 API，并允许传入自定义消息。"""
         base_url = model_config["api_base_url"].rstrip("/")
@@ -1374,6 +1405,8 @@ class LLMSuggestionEngine(SuggestionEngine):
             "max_tokens": max_tokens,
             "temperature": temperature,
         }
+        if stream_callback:
+            payload["stream"] = True
         if use_json_mode and self._supports_json_mode(model_config, base_url):
             payload["response_format"] = {"type": "json_object"}
 
@@ -1389,8 +1422,11 @@ class LLMSuggestionEngine(SuggestionEngine):
         )
         if payload.get("response_format"):
             _print("[LLM Engine] 📤 已启用 response_format=json_object")
+        if payload.get("stream"):
+            _print("[LLM Engine] 📤 已启用 stream=true")
 
         body = None
+        streamed_content = ""
         for attempt in range(MAX_API_RETRIES + 1):
             start_time = time.time()
             try:
@@ -1398,12 +1434,37 @@ class LLMSuggestionEngine(SuggestionEngine):
                 req = urllib.request.Request(url, data=data, headers=headers, method="POST")
                 with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                     status_code = resp.status
-                    body = json.loads(resp.read().decode("utf-8"))
+                    if payload.get("stream"):
+                        streamed_content = self._read_streaming_response(
+                            resp,
+                            stream_callback=stream_callback,
+                            allow_reasoning_fallback=not use_json_mode,
+                        )
+                        body = {"choices": [{"message": {"content": streamed_content}}], "usage": {}}
+                    else:
+                        body = json.loads(resp.read().decode("utf-8"))
                 elapsed = time.time() - start_time
                 _print(f"[LLM Engine] 📥 HTTP {status_code} ({elapsed:.2f}s)")
                 break
             except urllib.error.HTTPError as e:
                 status_code = getattr(e, "code", None)
+                if payload.get("stream") and status_code in {400, 404, 422}:
+                    _print(f"[LLM Engine] ⚠️ stream 请求被拒绝(HTTP {status_code})，回退非流式")
+                    self._emit_stream(
+                        stream_callback,
+                        "stage",
+                        stage="fallback",
+                        message="模型不支持流式，切回普通生成",
+                    )
+                    return self._call_api_with_messages(
+                        model_config,
+                        messages,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                        request_tag=request_tag,
+                        use_json_mode=use_json_mode,
+                        stream_callback=None,
+                    )
                 if status_code in RETRYABLE_HTTP_STATUS and attempt < MAX_API_RETRIES:
                     delay = self._compute_retry_delay(attempt, e.headers.get("Retry-After"))
                     _print(f"[LLM Engine] Retry on HTTP {status_code} after {delay:.1f}s (attempt {attempt + 1})")
@@ -1440,7 +1501,55 @@ class LLMSuggestionEngine(SuggestionEngine):
 
         return content.strip()
 
-    def _call_api(self, model_config: dict, user_prompt: str) -> str:
+    def _read_streaming_response(
+        self,
+        resp: Any,
+        *,
+        stream_callback: Callable[[dict[str, Any]], None] | None,
+        allow_reasoning_fallback: bool,
+    ) -> str:
+        content_parts: list[str] = []
+        reasoning_parts: list[str] = []
+        for raw_line in resp:
+            try:
+                line = raw_line.decode("utf-8").strip()
+            except Exception:
+                continue
+            if not line or not line.startswith("data:"):
+                continue
+            data = line[5:].strip()
+            if data == "[DONE]":
+                break
+            try:
+                payload = json.loads(data)
+            except Exception:
+                continue
+            choices = payload.get("choices") or []
+            if not choices:
+                continue
+            delta = choices[0].get("delta") or {}
+            text = delta.get("content") or ""
+            reasoning = delta.get("reasoning_content") or ""
+            if text:
+                content_parts.append(str(text))
+                self._emit_stream(stream_callback, "delta", text=str(text), channel="content")
+            elif reasoning:
+                reasoning_parts.append(str(reasoning))
+                self._emit_stream(stream_callback, "delta", text=str(reasoning), channel="reasoning")
+        content = "".join(content_parts)
+        if content:
+            return content
+        if allow_reasoning_fallback:
+            return "".join(reasoning_parts)
+        return ""
+
+    def _call_api(
+        self,
+        model_config: dict,
+        user_prompt: str,
+        *,
+        stream_callback: Callable[[dict[str, Any]], None] | None = None,
+    ) -> str:
         """调用 OpenAI 兼容 API"""
         return self._call_api_with_messages(
             model_config,
@@ -1449,6 +1558,7 @@ class LLMSuggestionEngine(SuggestionEngine):
                 {"role": "user", "content": user_prompt},
             ],
             request_tag="suggestion",
+            stream_callback=stream_callback,
         )
 
     def _resolve_formatter_model_config(self, model_config: dict) -> dict:

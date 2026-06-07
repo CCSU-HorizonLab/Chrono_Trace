@@ -174,12 +174,18 @@ def _looks_like_history_question(text: str) -> bool:
     has_actor = any(token in compact for token in ("她", "他", "对方", "我们", "ta", "TA"))
     reported_memory = any(token in compact for token in ("说过", "聊过", "提过", "说的", "聊的", "提的"))
     referential_anchor = any(token in compact for token in ("那个", "那家", "那次", "这个", "这家"))
-    direct_lookup = any(token in compact for token in ("找一下", "找下", "查一下", "查下", "翻一下", "翻下"))
+    direct_lookup = any(token in compact for token in ("找一下", "找下", "查一下", "查下", "翻一下", "翻下", "找找", "看看", "看下"))
+    explicit_memory_store = any(
+        token in compact
+        for token in ("历史记录", "聊天记录", "RAG文档", "rag文档", "记忆文档", "文档里", "记录里", "历史里")
+    )
+    wants_example = any(token in compact for token in ("合适", "适合", "开启话题", "开话题", "以此为话题", "找话题"))
     return (
         (has_temporal_anchor and asks_detail and has_actor)
         or (has_actor and reported_memory and asks_detail)
         or (has_actor and referential_anchor and reported_memory)
         or (direct_lookup and (has_temporal_anchor or reported_memory))
+        or (explicit_memory_store and (direct_lookup or wants_example or asks_detail))
     )
 
 

@@ -79,9 +79,21 @@ class RagRelevanceGate:
         top = usable[0]
         top_score = round(float(top.get("score") or 0.0), 4)
         top_type = self._doc_type(top)
+        mode = str((memory_intent or {}).get("mode") or "")
 
         if top_type == "hot_context" and top_score >= 0.20:
             return RagGateDecision("inject", "hot_context", top_score, no_hit_eligible)
+        if mode == "memory_request":
+            memory_items = [
+                item
+                for item in usable
+                if self._doc_type(item) in {"fact_memory", "topic_segment", "evidence_excerpt", "shared_memory", "dialogue_turn"}
+            ]
+            if memory_items:
+                best_memory = memory_items[0]
+                best_score = round(float(best_memory.get("score") or 0.0), 4)
+                if best_score >= 0.10:
+                    return RagGateDecision("inject", "memory_request_match", best_score, no_hit_eligible)
         if top_score >= 0.42 or (top_score >= 0.30 and top_type in self.HIGH_VALUE_TYPES):
             return RagGateDecision("inject", "high_score", top_score, no_hit_eligible)
 
@@ -160,8 +172,11 @@ class RagRelevanceGate:
         has_person_anchor = any(token in compact for token in ("她", "他", "对方", "我们", "ta", "TA"))
         reported_memory = any(token in compact for token in ("说过", "聊过", "提过", "说的", "聊的", "提的"))
         referential_anchor = any(token in compact for token in ("那个", "那家", "那次", "这个", "这家"))
+        direct_lookup = any(token in compact for token in ("找一下", "找下", "找找", "查一下", "查下", "翻一下", "翻下", "看看", "看下"))
+        explicit_memory_store = any(token in compact for token in ("历史记录", "聊天记录", "RAG文档", "rag文档", "记忆文档", "文档里", "记录里", "历史里"))
         return (
             (has_temporal_anchor and asks_detail and has_person_anchor)
             or (has_person_anchor and reported_memory and asks_detail)
             or (has_person_anchor and referential_anchor and reported_memory)
+            or (explicit_memory_store and (direct_lookup or asks_detail))
         )

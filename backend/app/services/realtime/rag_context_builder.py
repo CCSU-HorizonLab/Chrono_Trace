@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import time
 import logging
@@ -586,6 +587,22 @@ class RagContextBuilder:
             }
         else:
             logger.debug(
+                "[RAG Inject] status=none mode=none reason=%s gate=%s gate_reason=%s "
+                "candidates=%s selected=%s minimized=%s top_candidates=%s status=%s "
+                "retrieval_reason=%s timed_out=%s elapsed=%sms",
+                effective_gate_decision.reason,
+                effective_gate_decision.decision,
+                gate_decision.reason,
+                len(result.get("items") or []),
+                len(selected_scored_items),
+                len(items),
+                self._candidate_snapshot(result.get("items") or []),
+                (index_status or {}).get("status"),
+                result.get("degrade_reason"),
+                bool(result.get("timed_out")),
+                elapsed_ms,
+            )
+            logger.debug(
                 "[RAG Inject] status=none mode=none no_hit_guard=false conversation=%s status=%s reason=%s timed_out=%s elapsed=%sms",
                 conversation_id,
                 (index_status or {}).get("status"),
@@ -858,6 +875,26 @@ class RagContextBuilder:
         if not items:
             return 0.0
         return round(float((items[0] or {}).get("score") or 0.0), 4)
+
+    def _candidate_snapshot(self, items: list[dict[str, Any]], *, limit: int = 3) -> list[dict[str, Any]]:
+        snapshot = []
+        for item in (items or [])[:limit]:
+            doc = item.get("doc") or {}
+            metadata: dict[str, Any] = {}
+            try:
+                metadata = json.loads(doc.get("metadata_json") or "{}")
+            except Exception:
+                metadata = {}
+            snapshot.append(
+                {
+                    "id": doc.get("id"),
+                    "type": doc.get("doc_type"),
+                    "score": round(float(item.get("score") or 0.0), 4),
+                    "time": metadata.get("time_label")
+                    or self.segmenter.time_label(int(doc.get("source_ts") or time.time())),
+                }
+            )
+        return snapshot
 
     def _previous_rag_hit(self, context: dict[str, Any]) -> bool:
         debug = context.get("_rag_debug")

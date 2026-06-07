@@ -843,6 +843,102 @@ def test_retriever_prefers_recent_result_for_last_time_query():
     assert ids.index(new_id) < ids.index(old_id)
 
 
+def test_retriever_filters_style_examples_for_explicit_memory_lookup():
+    conn = _conn()
+    store = RagStore(conn)
+    now = int(time.time())
+    store.upsert_status("wxid_a", 1, status="ready", document_count=2, vector_count=0)
+    store.upsert_document(
+        account_wxid="wxid_a",
+        conversation_id=1,
+        doc_type="self_style_example",
+        source_table="messages",
+        source_id="style",
+        source_ts=now,
+        content="某款游戏 某款游戏 某款游戏",
+        redacted_content="某款游戏 某款游戏 某款游戏",
+        index_version=RAG_INDEX_VERSION,
+    )
+    topic_id = store.upsert_document(
+        account_wxid="wxid_a",
+        conversation_id=1,
+        doc_type="topic_segment",
+        source_table="messages",
+        source_id="topic",
+        source_ts=now - 60,
+        content="对方: 最近在玩某款游戏 我: 哪个流派",
+        redacted_content="对方: 最近在玩某款游戏 我: 哪个流派",
+        index_version=RAG_INDEX_VERSION,
+    )
+
+    result = RagRetriever(store=store).retrieve(
+        account_wxid="wxid_a",
+        conversation_id=1,
+        query="那你看看文档里有没有合适的聊天记录 比如某款游戏啥的",
+    )
+
+    ids = [item["doc"]["id"] for item in result["items"]]
+    assert topic_id in ids
+    assert all(item["doc"]["doc_type"] != "self_style_example" for item in result["items"])
+
+
+def test_context_builder_injects_low_score_memory_document_for_explicit_lookup(monkeypatch):
+    conn = _conn()
+    store = RagStore(conn)
+    now = int(time.time())
+    store.upsert_status("wxid_a", 1, status="ready", document_count=1, vector_count=0)
+    store.upsert_document(
+        account_wxid="wxid_a",
+        conversation_id=1,
+        doc_type="topic_segment",
+        source_table="messages",
+        source_id="topic",
+        source_ts=now,
+        content="对方: 最近在玩某款游戏 我: 哪个流派",
+        redacted_content="对方: 最近在玩某款游戏 我: 哪个流派",
+        index_version=RAG_INDEX_VERSION,
+    )
+    monkeypatch.setattr(
+        "app.services.realtime.rag_context_builder.load_rag_settings",
+        lambda: {
+            "rag_enabled": True,
+            "rag_remote_context_redaction": True,
+            "rag_allow_remote_embedding": False,
+            "rag_embedding_model": "tingting0514/text2vec-base-chinese",
+            "rag_embedding_dim": 384,
+            "rag_privacy_mode": "balanced",
+        },
+    )
+    monkeypatch.setattr(
+        "app.services.realtime.rag_retriever.load_rag_settings",
+        lambda: {
+            "rag_enabled": True,
+            "rag_embedding_model": "tingting0514/text2vec-base-chinese",
+            "rag_embedding_dim": 384,
+            "rag_privacy_mode": "balanced",
+        },
+    )
+
+    context = {
+        "account_wxid": "wxid_a",
+        "conversation_id": 1,
+        "user_context": "那你看看文档里有没有合适的聊天记录 比如某款游戏啥的",
+        "_rag_output_mode": "reply",
+    }
+    RagContextBuilder(store=store).enrich_context(
+        context,
+        trigger_type="manual_request",
+        intent="intimate",
+        model_config={"provider": "openai", "api_base_url": "https://api.openai.com/v1"},
+    )
+
+    assert context["memory_intent"]["mode"] == "memory_request"
+    assert context["retrieval_context"]["retrieval_status"] == "hit"
+    assert context["retrieval_context"]["items"][0]["doc_type"] == "topic_segment"
+    log = conn.execute("SELECT * FROM rag_retrieval_logs").fetchone()
+    assert log["rag_gate_reason"] == "memory_request_match"
+
+
 def test_retriever_embedding_unavailable_falls_back_to_keyword():
     conn = _conn()
     store = RagStore(conn)

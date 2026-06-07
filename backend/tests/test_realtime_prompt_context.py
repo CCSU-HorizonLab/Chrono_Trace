@@ -475,6 +475,25 @@ def test_llm_manual_request_treats_generate_suggestion_style_clone_as_advice_pro
     assert "不要生成建议卡片" not in prompt
 
 
+def test_llm_streaming_response_reader_collects_content_deltas():
+    engine = LLMSuggestionEngine()
+    events = []
+    lines = [
+        b'data: {"choices":[{"delta":{"content":"{\\"summary\\":\\""}}]}\n',
+        b'data: {"choices":[{"delta":{"content":"ok\\"}"}}]}\n',
+        b"data: [DONE]\n",
+    ]
+
+    text = engine._read_streaming_response(
+        lines,
+        stream_callback=lambda event: events.append(event),
+        allow_reasoning_fallback=False,
+    )
+
+    assert text == '{"summary":"ok"}'
+    assert "".join(event.get("text", "") for event in events) == text
+
+
 def test_llm_manual_request_treats_style_refinement_after_advice_as_advice_prompt():
     engine = LLMSuggestionEngine()
 

@@ -12,14 +12,29 @@ class DatabaseConnection:
     
     _local = threading.local()
     _db_path: Optional[str] = None
+    _schema_lock = threading.RLock()
+    _schema_initialized_paths: set[str] = set()
+    _wal_initialized_paths: set[str] = set()
     
     @classmethod
     def _get_instance(cls) -> Optional[sqlite3.Connection]:
         return getattr(cls._local, 'instance', None)
+
+    @classmethod
+    def _get_instance_path(cls) -> Optional[str]:
+        return getattr(cls._local, 'db_path', None)
         
     @classmethod
-    def _set_instance(cls, conn: sqlite3.Connection):
+    def _set_instance(cls, conn: Optional[sqlite3.Connection], db_path: Optional[str] = None):
         cls._local.instance = conn
+        cls._local.db_path = db_path if conn is not None else None
+
+    @classmethod
+    def _normalize_db_path(cls, db_path: str) -> str:
+        try:
+            return str(Path(db_path).expanduser().resolve())
+        except Exception:
+            return str(db_path)
 
     @classmethod
     def initialize(cls, db_path: Optional[str] = None) -> sqlite3.Connection:
@@ -32,26 +47,43 @@ class DatabaseConnection:
         Returns:
             sqlite3.Connection: 数据库连接对象
         """
-        if cls._get_instance() is not None:
-            return cls._get_instance()
-        
         # 确定数据库路径
         if db_path is None:
             DB_PATH.parent.mkdir(parents=True, exist_ok=True)
             db_path = str(DB_PATH)
+        db_path = cls._normalize_db_path(db_path)
+
+        current = cls._get_instance()
+        if current is not None:
+            current_path = cls._get_instance_path()
+            if current_path is None or current_path == db_path:
+                return current
+            current.close()
+            cls._set_instance(None)
         
-        cls._db_path = db_path
+        with cls._schema_lock:
+            cls._db_path = db_path
         
         # 创建连接
         conn = sqlite3.connect(db_path, check_same_thread=False, timeout=30.0)
         conn.row_factory = sqlite3.Row  # 支持字典式访问
         conn.execute("PRAGMA busy_timeout = 30000")
-        conn.execute("PRAGMA journal_mode = WAL")
         conn.execute("PRAGMA synchronous = NORMAL")
-        cls._set_instance(conn)
+        cls._set_instance(conn, db_path)
         
-        # 执行建表SQL
-        cls._create_tables()
+        try:
+            with cls._schema_lock:
+                if db_path not in cls._wal_initialized_paths:
+                    conn.execute("PRAGMA journal_mode = WAL")
+                    cls._wal_initialized_paths.add(db_path)
+
+                if db_path not in cls._schema_initialized_paths:
+                    cls._create_tables()
+                    cls._schema_initialized_paths.add(db_path)
+        except Exception:
+            conn.close()
+            cls._set_instance(None)
+            raise
         
         return conn
     

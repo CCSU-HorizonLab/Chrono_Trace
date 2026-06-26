@@ -1,6 +1,7 @@
 import os
 import sqlite3
 import sys
+import threading
 
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -106,3 +107,50 @@ def test_fresh_database_initialization_executes_schema_sql(tmp_path):
     finally:
         DatabaseConnection.close()
         DatabaseConnection._db_path = None
+
+
+def test_schema_initialization_runs_once_across_threads(tmp_path, monkeypatch):
+    db_path = tmp_path / "threaded_chrono_trace.db"
+    normalized_path = DatabaseConnection._normalize_db_path(str(db_path))
+    DatabaseConnection.close()
+    DatabaseConnection._db_path = None
+    DatabaseConnection._schema_initialized_paths.discard(normalized_path)
+    DatabaseConnection._wal_initialized_paths.discard(normalized_path)
+
+    original_create_tables = DatabaseConnection._create_tables
+    call_count = 0
+    count_lock = threading.Lock()
+
+    def counted_create_tables(cls):
+        nonlocal call_count
+        with count_lock:
+            call_count += 1
+        return original_create_tables()
+
+    monkeypatch.setattr(DatabaseConnection, "_create_tables", classmethod(counted_create_tables))
+
+    errors: list[Exception] = []
+
+    def worker():
+        try:
+            conn = DatabaseConnection.initialize(str(db_path))
+            conn.execute("SELECT name FROM sqlite_master LIMIT 1").fetchone()
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            DatabaseConnection.close()
+
+    threads = [threading.Thread(target=worker) for _ in range(6)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    try:
+        assert errors == []
+        assert call_count == 1
+    finally:
+        DatabaseConnection.close()
+        DatabaseConnection._db_path = None
+        DatabaseConnection._schema_initialized_paths.discard(normalized_path)
+        DatabaseConnection._wal_initialized_paths.discard(normalized_path)

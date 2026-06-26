@@ -12,7 +12,8 @@ from .rag_config import RAG_DEFAULTS
 
 
 INDEX_STATUSES = {"pending", "indexing", "ready", "stale", "failed"}
-RAG_INDEX_VERSION = "rag_v2"
+RAG_INDEX_VERSION = "rag_v3"
+_UNSET = object()
 
 
 def _now() -> int:
@@ -131,6 +132,11 @@ class RagStore:
                 top_doc_time_label TEXT,
                 query_expanded_terms_json TEXT,
                 no_hit_reason TEXT,
+                task_relevance_score REAL DEFAULT 0,
+                off_topic_rejected_count INTEGER DEFAULT 0,
+                semantic_fact_count INTEGER DEFAULT 0,
+                style_sample_count INTEGER DEFAULT 0,
+                rerank_reason TEXT,
                 created_at INTEGER NOT NULL
             )
             """
@@ -192,6 +198,11 @@ class RagStore:
             "top_doc_time_label": "TEXT",
             "query_expanded_terms_json": "TEXT",
             "no_hit_reason": "TEXT",
+            "task_relevance_score": "REAL DEFAULT 0",
+            "off_topic_rejected_count": "INTEGER DEFAULT 0",
+            "semantic_fact_count": "INTEGER DEFAULT 0",
+            "style_sample_count": "INTEGER DEFAULT 0",
+            "rerank_reason": "TEXT",
         }
         for name, definition in columns.items():
             if name not in existing:
@@ -220,8 +231,8 @@ class RagStore:
         privacy_mode: str | None = None,
         document_count: int | None = None,
         vector_count: int | None = None,
-        dirty_since: int | None = None,
-        last_error: str | None = None,
+        dirty_since: int | None | object = _UNSET,
+        last_error: str | None | object = _UNSET,
         enabled: bool | None = None,
         index_version: str | None = None,
     ) -> None:
@@ -231,6 +242,8 @@ class RagStore:
         model = embedding_model or current.get("embedding_model") or RAG_DEFAULTS["rag_embedding_model"]
         dim = int(embedding_dim or current.get("embedding_dim") or RAG_DEFAULTS["rag_embedding_dim"])
         mode = privacy_mode or current.get("privacy_mode") or RAG_DEFAULTS["rag_privacy_mode"]
+        resolved_dirty_since = current.get("dirty_since") if dirty_since is _UNSET else dirty_since
+        resolved_last_error = current.get("last_error") if last_error is _UNSET else last_error
         now = _now()
         self.conn.execute(
             """
@@ -263,9 +276,9 @@ class RagStore:
                 mode,
                 document_count if document_count is not None else current.get("document_count"),
                 vector_count if vector_count is not None else current.get("vector_count"),
-                dirty_since,
+                resolved_dirty_since,
                 now if status == "ready" else current.get("last_indexed_at"),
-                last_error,
+                resolved_last_error,
                 self.estimate_storage_bytes(account_wxid, conversation_id),
                 int(enabled if enabled is not None else current.get("enabled", 1)),
                 index_version or current.get("index_version") or "v1",
@@ -557,8 +570,10 @@ class RagStore:
              rag_hit_count, rag_injection_mode, rag_no_hit_guard, rag_latency_ms,
              rag_degraded_reason, rag_gate_decision, rag_gate_reason, rag_top_score,
              rag_strategy, index_version, selected_doc_types_json, top_doc_time_label,
-             query_expanded_terms_json, no_hit_reason, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             query_expanded_terms_json, no_hit_reason, task_relevance_score,
+             off_topic_rejected_count, semantic_fact_count, style_sample_count,
+             rerank_reason, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 payload.get("account_wxid") or "",
@@ -596,6 +611,11 @@ class RagStore:
                 payload.get("top_doc_time_label"),
                 json.dumps(payload.get("query_expanded_terms") or [], ensure_ascii=False),
                 payload.get("no_hit_reason"),
+                float(payload.get("task_relevance_score") or 0.0),
+                int(payload.get("off_topic_rejected_count") or 0),
+                int(payload.get("semantic_fact_count") or 0),
+                int(payload.get("style_sample_count") or 0),
+                payload.get("rerank_reason"),
                 _now(),
             ),
         )

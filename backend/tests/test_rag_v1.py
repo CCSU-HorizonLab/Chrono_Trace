@@ -12,9 +12,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from app.services.realtime.feedback_attribution import SuggestionFeedbackAttributor
 from app.services.realtime.llm_engine import LLMSuggestionEngine
 from app.services.realtime.privacy_redactor import PrivacyRedactor
-from app.services.realtime.rag_config import apply_rag_defaults
+from app.services.realtime.rag_config import apply_rag_defaults, is_remote_llm_model
 from app.services.realtime.rag_context_builder import RagContextBuilder
-from app.services.realtime.rag_embedding import RagEmbeddingUnavailable
+from app.services.realtime.rag_embedding import RagEmbeddingService, RagEmbeddingUnavailable
 from app.services.realtime.rag_indexer import RagIndexer, RagIndexQueue
 from app.services.realtime.rag_relevance_gate import RagRelevanceGate
 from app.services.realtime.rag_retriever import RagRetriever
@@ -36,6 +36,29 @@ def test_rag_defaults_are_privacy_preserving():
     assert settings["rag_allow_remote_embedding"] is False
     assert settings["rag_embedding_model"] == "tingting0514/text2vec-base-chinese"
     assert settings["rag_embedding_dim"] == 384
+
+
+def test_remote_llm_detection_uses_actual_host_not_provider_label():
+    assert is_remote_llm_model({"provider": "ollama", "api_base_url": "http://127.0.0.1:11434"}) is False
+    assert is_remote_llm_model({"provider": "lmstudio", "api_base_url": "http://localhost:1234"}) is False
+    assert is_remote_llm_model({"provider": "ollama", "api_base_url": "http://192.168.1.8:11434"}) is True
+    assert is_remote_llm_model({"provider": "local", "api_base_url": "https://models.example.com/v1"}) is True
+
+
+def test_rag_status_upsert_preserves_diagnostics_unless_explicitly_cleared():
+    conn = _conn()
+    store = RagStore(conn)
+    store.upsert_status("wxid_a", 1, status="failed", dirty_since=123, last_error="boom")
+    store.upsert_status("wxid_a", 1, status="pending")
+
+    status = store.get_status("wxid_a", 1)
+    assert status["dirty_since"] == 123
+    assert status["last_error"] == "boom"
+
+    store.upsert_status("wxid_a", 1, status="ready", dirty_since=None, last_error=None)
+    status = store.get_status("wxid_a", 1)
+    assert status["dirty_since"] is None
+    assert status["last_error"] is None
 
 
 def test_relevance_gate_weak_injects_relationship_context_only():
@@ -172,6 +195,107 @@ def test_rag_segmenter_does_not_fragment_every_short_topic_shift():
     assert len(segments) <= 3
 
 
+def test_rag_indexer_extracts_semantic_fact_without_marker_keywords(monkeypatch):
+    conn = _conn()
+    store = RagStore(conn)
+    conn.executescript(
+        """
+        CREATE TABLE conversations (
+            id INTEGER PRIMARY KEY,
+            account_wxid TEXT NOT NULL,
+            username TEXT NOT NULL,
+            display_name TEXT,
+            message_count INTEGER DEFAULT 0,
+            updated_at INTEGER DEFAULT 0,
+            is_deleted INTEGER DEFAULT 0
+        );
+        CREATE TABLE messages (
+            id INTEGER PRIMARY KEY,
+            conversation_id INTEGER NOT NULL,
+            is_sender INTEGER NOT NULL,
+            content TEXT,
+            message_type INTEGER NOT NULL,
+            timestamp INTEGER NOT NULL
+        );
+        """
+    )
+    now = int(time.time())
+    conn.execute(
+        """
+        INSERT INTO conversations
+        (id, account_wxid, username, display_name, message_count, updated_at)
+        VALUES (1, 'wxid_a', 'alice', 'Alice', 3, ?)
+        """,
+        (now,),
+    )
+    conn.executemany(
+        """
+        INSERT INTO messages (id, conversation_id, is_sender, content, message_type, timestamp)
+        VALUES (?, 1, ?, ?, 1, ?)
+        """,
+        [
+            (1, 1, "最近忙吗", now - 120),
+            (2, 0, "我每次压力大的时候都会去江边散步", now - 60),
+            (3, 1, "听起来挺舒服", now),
+        ],
+    )
+    monkeypatch.setattr(
+        "app.services.realtime.rag_indexer.load_rag_settings",
+        lambda: {
+            "rag_embedding_model": "tingting0514/text2vec-base-chinese",
+            "rag_embedding_dim": 384,
+            "rag_privacy_mode": "balanced",
+        },
+    )
+
+    class SemanticEmbedding:
+        def embed_texts(self, texts):
+            vectors = []
+            for text in texts:
+                compact = str(text)
+                if any(token in compact for token in ("每次", "经常", "习惯", "反复", "都会", "压力", "江边")):
+                    vectors.append([1.0, 0.0] + [0.0] * 382)
+                elif any(token in compact for token in ("喜欢", "偏好", "爱吃", "爱玩", "想要")):
+                    vectors.append([0.0, 1.0] + [0.0] * 382)
+                else:
+                    vectors.append([0.0, 0.0] + [0.0] * 382)
+            return vectors
+
+    status = RagIndexer(store=store, embedding_service=SemanticEmbedding()).rebuild_contact_index(
+        account_wxid="wxid_a",
+        conversation_id=1,
+    )
+
+    assert status["status"] == "ready"
+    fact = conn.execute(
+        "SELECT * FROM rag_documents WHERE doc_type = 'fact_memory' AND content LIKE '%江边散步%'"
+    ).fetchone()
+    assert fact is not None
+    metadata = json.loads(fact["metadata_json"])
+    assert metadata["memory_kind"] == "recurring_habit"
+    assert metadata["semantic_score"] >= 0.52
+    assert 2 in metadata["evidence_message_ids"]
+    assert metadata["source_window_start_ts"] <= now - 60 <= metadata["source_window_end_ts"]
+
+
+def test_rag_indexer_prefers_recent_quality_style_samples():
+    store = RagStore(_conn())
+    indexer = RagIndexer(store=store)
+    now = int(time.time())
+    messages = [
+        {"id": 1, "is_sender": 1, "content": "早期很长很长的一段解释性文字，已经不像现在的说话方式了", "timestamp": now - 120 * 86400},
+        {"id": 2, "is_sender": 1, "content": "哈哈哈", "timestamp": now - 2 * 86400},
+        {"id": 3, "is_sender": 1, "content": "那晚点一起看？", "timestamp": now - 3600},
+        {"id": 4, "is_sender": 1, "content": "可以呀", "timestamp": now - 1800},
+        {"id": 5, "is_sender": 0, "content": "你说呢", "timestamp": now - 900},
+    ]
+
+    samples = indexer._select_style_samples(messages, last_ts=now)
+
+    assert samples[:2] == ["那晚点一起看？", "可以呀"]
+    assert "哈哈哈" not in samples
+
+
 def test_prompt_omits_rag_when_disabled_and_injects_constructed_context_only():
     engine = LLMSuggestionEngine()
 
@@ -210,6 +334,8 @@ def test_prompt_omits_rag_when_disabled_and_injects_constructed_context_only():
 
     assert "历史记忆检索结果" in rag_prompt
     assert "对方上次提到喜欢拿铁" in rag_prompt
+    assert "当前对话和用户显式需求永远高于历史记忆" in rag_prompt
+    assert "不要为了使用记忆而引入旧话题" in rag_prompt
     assert rag_prompt.index("【最近对话】") < rag_prompt.index("【历史记忆检索结果】")
 
     direct_reply_prompt = engine._build_prompt(
@@ -254,6 +380,60 @@ def test_prompt_omits_rag_when_disabled_and_injects_constructed_context_only():
     assert "历史记忆检索结果" in no_hit_prompt
     assert "检索状态：no_hit" in no_hit_prompt
     assert "没查到就说没查到" in no_hit_prompt
+
+
+def test_llm_engine_builds_three_state_rag_context_summary():
+    engine = LLMSuggestionEngine()
+
+    referenced = engine._build_rag_context_summary(
+        {
+            "_rag_log_id": 10,
+            "_rag_debug": {
+                "rag_enabled": True,
+                "rag_retrieved": True,
+                "rag_hit_count": 3,
+                "rag_injection_mode": "reply",
+            },
+            "retrieval_context": {"items": [{"document_id": 1}, {"document_id": 2}]},
+        }
+    )
+    assert referenced == {
+        "state": "referenced",
+        "label": "参考命中 2 条记录",
+        "hit_count": 3,
+        "referenced_count": 2,
+        "log_id": 10,
+    }
+
+    no_hit = engine._build_rag_context_summary(
+        {
+            "_rag_debug": {
+                "rag_enabled": True,
+                "rag_retrieved": True,
+                "rag_hit_count": 0,
+                "rag_no_hit_guard": True,
+            },
+            "retrieval_context": {"items": [], "no_hit_guard": True},
+        }
+    )
+    assert no_hit["state"] == "no_hit"
+    assert no_hit["label"] == "未命中相关记录"
+
+    not_referenced = engine._build_rag_context_summary(
+        {
+            "_rag_debug": {
+                "rag_enabled": True,
+                "rag_retrieved": True,
+                "rag_hit_count": 2,
+                "rag_injection_mode": "none",
+            }
+        }
+    )
+    assert not_referenced["state"] == "not_referenced"
+    assert not_referenced["label"] == "未参考命中记录"
+
+    hidden = engine._build_rag_context_summary({"_rag_debug": {"rag_enabled": False}})
+    assert hidden["state"] == "hidden"
 
 
 def test_context_builder_uses_redacted_content_for_remote_model_and_logs_trace(monkeypatch):
@@ -462,6 +642,158 @@ def test_context_builder_attempts_retrieval_then_gate_skips_when_memory_intent_i
     assert log["rag_gate_reason"] == "no_result"
 
 
+def test_context_builder_skips_off_topic_memory_for_ordinary_suggestion(monkeypatch):
+    conn = _conn()
+    store = RagStore(conn)
+    store.upsert_status("wxid_a", 1, status="ready", document_count=1, vector_count=1)
+
+    class OffTopicRetriever:
+        def build_query(self, context, trigger_type, intent):
+            return "今晚打游戏怎么回"
+
+        def retrieve(self, **kwargs):
+            return {
+                "items": [
+                    {
+                        "doc": {
+                            "id": 9,
+                            "doc_type": "fact_memory",
+                            "content": "时间：2026-01-01 晚上\n对方提到：以前喝拿铁觉得很香",
+                            "redacted_content": "时间：2026-01-01 晚上\n对方提到：以前喝拿铁觉得很香",
+                            "source_ts": int(time.time()) - 86400,
+                            "sensitivity": "normal",
+                            "enabled": 1,
+                            "metadata_json": json.dumps({"memory_kind": "preference_like"}, ensure_ascii=False),
+                        },
+                        "score": 0.92,
+                        "vector_score": 0.55,
+                        "keyword_score": 0.0,
+                    }
+                ],
+                "strategy": "vector",
+                "status": {"status": "ready"},
+                "timed_out": False,
+                "degraded": False,
+                "degrade_reason": None,
+                "elapsed_ms": 1,
+                "by_type": {"fact_memory": 1},
+            }
+
+    monkeypatch.setattr(
+        "app.services.realtime.rag_context_builder.load_rag_settings",
+        lambda: {
+            "rag_enabled": True,
+            "rag_remote_context_redaction": True,
+            "rag_allow_remote_embedding": False,
+            "rag_embedding_model": "tingting0514/text2vec-base-chinese",
+            "rag_embedding_dim": 384,
+            "rag_privacy_mode": "balanced",
+        },
+    )
+    context = {
+        "account_wxid": "wxid_a",
+        "conversation_id": 1,
+        "recent_messages": [
+            {
+                "sender_attr": "other",
+                "content": "今晚打游戏吗",
+                "timestamp": int(time.time()) - 8 * 86400,
+            }
+        ],
+        "user_context": "怎么回自然点",
+    }
+
+    RagContextBuilder(store=store, retriever=OffTopicRetriever()).enrich_context(
+        context,
+        trigger_type="manual_request",
+        intent="maintain",
+        model_config={"provider": "openai", "api_base_url": "https://api.openai.com/v1"},
+    )
+
+    assert "retrieval_context" not in context
+    log = conn.execute("SELECT * FROM rag_retrieval_logs").fetchone()
+    assert log["rag_retrieved"] == 1
+    assert log["rag_hit_count"] == 1
+    assert log["rag_gate_reason"] == "off_topic_memory"
+    assert log["off_topic_rejected_count"] == 1
+    assert log["task_relevance_score"] > 0
+
+
+def test_context_builder_does_not_inject_topic_segment_for_ordinary_suggestion(monkeypatch):
+    conn = _conn()
+    store = RagStore(conn)
+    store.upsert_status("wxid_a", 1, status="ready", document_count=1, vector_count=1)
+
+    class TopicRetriever:
+        def build_query(self, context, trigger_type, intent):
+            return "某款游戏怎么回"
+
+        def retrieve(self, **kwargs):
+            return {
+                "items": [
+                    {
+                        "doc": {
+                            "id": 10,
+                            "doc_type": "topic_segment",
+                            "content": "对方: 最近在玩某款游戏\n我: 哪个流派呀",
+                            "redacted_content": "对方: 最近在玩某款游戏\n我: 哪个流派呀",
+                            "source_ts": int(time.time()) - 3600,
+                            "sensitivity": "normal",
+                            "enabled": 1,
+                            "metadata_json": "{}",
+                        },
+                        "score": 0.96,
+                        "vector_score": 0.90,
+                        "keyword_score": 0.70,
+                    }
+                ],
+                "strategy": "vector",
+                "status": {"status": "ready"},
+                "timed_out": False,
+                "degraded": False,
+                "degrade_reason": None,
+                "elapsed_ms": 1,
+                "by_type": {"topic_segment": 1},
+            }
+
+    monkeypatch.setattr(
+        "app.services.realtime.rag_context_builder.load_rag_settings",
+        lambda: {
+            "rag_enabled": True,
+            "rag_remote_context_redaction": True,
+            "rag_allow_remote_embedding": False,
+            "rag_embedding_model": "tingting0514/text2vec-base-chinese",
+            "rag_embedding_dim": 384,
+            "rag_privacy_mode": "balanced",
+        },
+    )
+    context = {
+        "account_wxid": "wxid_a",
+        "conversation_id": 1,
+        "recent_messages": [
+            {
+                "sender_attr": "other",
+                "content": "某款游戏这个怎么接",
+                "timestamp": int(time.time()) - 8 * 86400,
+            }
+        ],
+        "user_context": "怎么回自然点",
+    }
+
+    RagContextBuilder(store=store, retriever=TopicRetriever()).enrich_context(
+        context,
+        trigger_type="manual_request",
+        intent="maintain",
+        model_config={"provider": "openai", "api_base_url": "https://api.openai.com/v1"},
+    )
+
+    assert "retrieval_context" not in context
+    log = conn.execute("SELECT * FROM rag_retrieval_logs").fetchone()
+    assert log["rag_gate_decision"] == "skip"
+    assert log["rag_gate_reason"] == "low_score"
+    assert log["task_relevance_score"] >= 0.62
+
+
 def test_context_builder_injects_no_hit_guard_after_empty_retrieval(monkeypatch):
     conn = _conn()
     store = RagStore(conn)
@@ -520,6 +852,59 @@ def test_context_builder_injects_no_hit_guard_after_empty_retrieval(monkeypatch)
     assert log["rag_no_hit_guard"] == 1
 
 
+def test_context_builder_masks_no_hit_query_for_remote_prompt(monkeypatch):
+    conn = _conn()
+    store = RagStore(conn)
+    store.upsert_status("wxid_a", 1, status="ready", document_count=1, vector_count=0)
+    store.upsert_document(
+        account_wxid="wxid_a",
+        conversation_id=1,
+        doc_type="dialogue_turn",
+        source_table="messages",
+        source_id="m1",
+        source_ts=100,
+        content="对方喜欢拿铁",
+        redacted_content="对方喜欢拿铁",
+    )
+    monkeypatch.setattr(
+        "app.services.realtime.rag_context_builder.load_rag_settings",
+        lambda: {
+            "rag_enabled": True,
+            "rag_remote_context_redaction": True,
+            "rag_allow_remote_embedding": False,
+            "rag_embedding_model": "tingting0514/text2vec-base-chinese",
+            "rag_embedding_dim": 384,
+            "rag_privacy_mode": "balanced",
+        },
+    )
+    monkeypatch.setattr(
+        "app.services.realtime.rag_retriever.load_rag_settings",
+        lambda: {
+            "rag_enabled": True,
+            "rag_embedding_model": "tingting0514/text2vec-base-chinese",
+            "rag_embedding_dim": 384,
+            "rag_privacy_mode": "balanced",
+        },
+    )
+
+    context = {
+        "account_wxid": "wxid_a",
+        "conversation_id": 1,
+        "user_context": "她上次说手机号 13800138000 玩的游戏是啥",
+        "_rag_output_mode": "reply",
+    }
+    RagContextBuilder(store=store).enrich_context(
+        context,
+        trigger_type="manual_request",
+        intent="maintain",
+        model_config={"provider": "openai", "api_base_url": "https://api.openai.com/v1"},
+    )
+
+    assert context["retrieval_context"]["retrieval_status"] == "no_hit"
+    assert "13800138000" not in context["retrieval_context"]["query"]
+    assert "[PHONE]" in context["retrieval_context"]["query"]
+
+
 def test_first_contact_without_index_does_not_rebuild_synchronously(monkeypatch):
     conn = _conn()
     store = RagStore(conn)
@@ -543,6 +928,41 @@ def test_first_contact_without_index_does_not_rebuild_synchronously(monkeypatch)
     status = RagIndexer(store=store).ensure_contact_index(account_wxid="wxid_a", conversation_id=1)
 
     assert status["status"] == "pending"
+    assert queued == [("wxid_a", 1)]
+
+
+def test_failed_embedding_index_retries_when_model_becomes_available(monkeypatch):
+    conn = _conn()
+    store = RagStore(conn)
+    queued = []
+    store.upsert_status(
+        "wxid_a",
+        1,
+        status="failed",
+        last_error="本地 embedding 模型缺失: tingting0514/text2vec-base-chinese",
+    )
+
+    class AvailableEmbedding:
+        def ensure_available(self):
+            return None
+
+    monkeypatch.setattr(RagIndexQueue, "enqueue", lambda account_wxid, conversation_id: queued.append((account_wxid, conversation_id)))
+    monkeypatch.setattr(
+        "app.services.realtime.rag_indexer.load_rag_settings",
+        lambda: {
+            "rag_embedding_model": "tingting0514/text2vec-base-chinese",
+            "rag_embedding_dim": 384,
+            "rag_privacy_mode": "balanced",
+        },
+    )
+
+    status = RagIndexer(store=store, embedding_service=AvailableEmbedding()).ensure_contact_index(
+        account_wxid="wxid_a",
+        conversation_id=1,
+    )
+
+    assert status["status"] == "pending"
+    assert status["last_error"] is None
     assert queued == [("wxid_a", 1)]
 
 
@@ -975,6 +1395,88 @@ def test_retriever_embedding_unavailable_falls_back_to_keyword():
     assert result["items"]
     assert result["strategy"] == "keyword_fallback"
     assert result["degraded"] is True
+    assert result["degrade_reason"] == "embedding_unavailable"
+
+
+def test_retriever_uses_shared_warm_embedding_service_for_vector_search(monkeypatch):
+    conn = _conn()
+    store = RagStore(conn)
+    store.upsert_status("wxid_a", 1, status="ready", document_count=1, vector_count=1)
+    doc_id = store.upsert_document(
+        account_wxid="wxid_a",
+        conversation_id=1,
+        doc_type="topic_segment",
+        source_table="messages",
+        source_id="m1",
+        source_ts=int(time.time()),
+        content="蓝窗帘",
+        redacted_content="蓝窗帘",
+    )
+    store.upsert_embedding(
+        document_id=doc_id,
+        account_wxid="wxid_a",
+        conversation_id=1,
+        embedding_model="tingting0514/text2vec-base-chinese",
+        embedding_dim=384,
+        vector=[1.0] + [0.0] * 383,
+    )
+
+    class WarmSentiment:
+        _embedding_model = object()
+
+        def has_local_embedding_model(self):
+            return True
+
+        def analyze_batch(self, texts):
+            return [{"embedding": [1.0] + [0.0] * 383} for _ in texts]
+
+    monkeypatch.setattr(RagEmbeddingService, "_shared_sentiment_service", WarmSentiment())
+
+    result = RagRetriever(store=store).retrieve(
+        account_wxid="wxid_a",
+        conversation_id=1,
+        query="完全不同的问题",
+    )
+
+    assert result["strategy"] == "vector"
+    assert [item["doc"]["id"] for item in result["items"]] == [doc_id]
+
+
+def test_retriever_filters_low_vector_matches_without_keyword_overlap():
+    conn = _conn()
+    store = RagStore(conn)
+    store.upsert_status("wxid_a", 1, status="ready", document_count=1, vector_count=1)
+    doc_id = store.upsert_document(
+        account_wxid="wxid_a",
+        conversation_id=1,
+        doc_type="topic_segment",
+        source_table="messages",
+        source_id="m1",
+        source_ts=int(time.time()),
+        content="蓝窗帘",
+        redacted_content="蓝窗帘",
+    )
+    store.upsert_embedding(
+        document_id=doc_id,
+        account_wxid="wxid_a",
+        conversation_id=1,
+        embedding_model="tingting0514/text2vec-base-chinese",
+        embedding_dim=384,
+        vector=[0.2, 0.979795897] + [0.0] * 382,
+    )
+
+    class LowSimilarityEmbedding:
+        def embed_text(self, text):
+            return [1.0] + [0.0] * 383
+
+    result = RagRetriever(store=store, embedding_service=LowSimilarityEmbedding()).retrieve(
+        account_wxid="wxid_a",
+        conversation_id=1,
+        query="火星基地",
+    )
+
+    assert result["strategy"] == "vector"
+    assert result["items"] == []
 
 
 def test_retriever_does_not_invent_memory_candidates_without_overlap():

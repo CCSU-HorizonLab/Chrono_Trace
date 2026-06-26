@@ -205,6 +205,7 @@ class RealtimeMonitorService:
             self._monitor_session_token += 1
             session_token = self._monitor_session_token
             self._stop_event = threading.Event()
+            self._prewarm_rag_index_for_current_contact()
             
             # 创建情绪追踪器
             self.emotion_tracker = EmotionStateTracker()
@@ -2216,6 +2217,42 @@ class RealtimeMonitorService:
         )
         conn.commit()
         return cursor.lastrowid
+
+    def _prewarm_rag_index_for_current_contact(self) -> None:
+        try:
+            from .rag_config import load_rag_settings
+
+            if not load_rag_settings().get("rag_enabled"):
+                return
+            account_wxid = str(self.current_account_wxid or "").strip()
+            talker = str(self.current_talker or "").strip()
+            display_name = str(self.current_display_name or "").strip()
+            if not account_wxid or (not talker and not display_name):
+                return
+            from ...db.connection import get_db
+
+            row = get_db().execute(
+                """
+                SELECT id
+                FROM conversations
+                WHERE account_wxid = ?
+                  AND is_deleted = 0
+                  AND (username = ? OR display_name = ? OR username = ? OR display_name = ?)
+                ORDER BY updated_at DESC
+                LIMIT 1
+                """,
+                (account_wxid, talker, talker, display_name, display_name),
+            ).fetchone()
+            if not row:
+                return
+            from .rag_indexer import RagIndexer
+
+            RagIndexer().ensure_contact_index(
+                account_wxid=account_wxid,
+                conversation_id=int(row["id"]),
+            )
+        except Exception as exc:
+            logger.debug("[RAG] prewarm on monitor start skipped: %s", exc)
 
     def _message_exists_in_history(self, conversation_id: int, message_data: dict) -> bool:
         """Check whether a buffered realtime message has already been migrated."""

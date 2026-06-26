@@ -17,6 +17,9 @@ class RagGateDecision:
     top_score: float = 0.0
     no_hit_eligible: bool = False
     allowed_doc_types: tuple[str, ...] = ()
+    task_relevance_score: float = 0.0
+    off_topic_rejected_count: int = 0
+    rerank_reason: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -30,14 +33,19 @@ class RagRelevanceGate:
     HIGH_VALUE_TYPES = {
         "hot_context",
         "fact_memory",
-        "topic_segment",
         "evidence_excerpt",
         "shared_memory",
         "dialogue_turn",
         "feedback_example",
     }
+    ORDINARY_SUGGESTION_TYPES = {"hot_context", "fact_memory", "evidence_excerpt", "feedback_example"}
+    MEMORY_REQUEST_TYPES = {"fact_memory", "topic_segment", "evidence_excerpt", "shared_memory", "dialogue_turn"}
     RELATIONSHIP_TYPES = {"relationship_state", "contact_preference", "communication_style"}
+    STYLE_TYPES = {"self_style_example", "communication_style"}
     DISALLOWED_SENSITIVITY = {"sensitive"}
+    ORDINARY_TASK_THRESHOLD = 0.62
+    ORDINARY_SCORE_THRESHOLD = 0.48
+    MEMORY_TASK_THRESHOLD = 0.50
 
     def decide(
         self,
@@ -76,37 +84,138 @@ class RagRelevanceGate:
                 no_hit_eligible,
             )
 
+        for item in usable:
+            item.pop("_rag_gate_selected", None)
+
         top = usable[0]
         top_score = round(float(top.get("score") or 0.0), 4)
         top_type = self._doc_type(top)
         mode = str((memory_intent or {}).get("mode") or "")
+        off_topic_count = sum(1 for item in usable if self._is_off_topic(item))
+        best_task_score = max((self._task_relevance(item) for item in usable), default=0.0)
 
-        if top_type == "hot_context" and top_score >= 0.20:
-            return RagGateDecision("inject", "hot_context", top_score, no_hit_eligible)
         if mode == "memory_request":
             memory_items = [
                 item
                 for item in usable
-                if self._doc_type(item) in {"fact_memory", "topic_segment", "evidence_excerpt", "shared_memory", "dialogue_turn"}
+                if self._doc_type(item) in self.MEMORY_REQUEST_TYPES
+                and not self._is_off_topic(item)
+                and self._task_relevance(item) >= self.MEMORY_TASK_THRESHOLD
             ]
             if memory_items:
                 best_memory = memory_items[0]
                 best_score = round(float(best_memory.get("score") or 0.0), 4)
-                if best_score >= 0.10:
-                    return RagGateDecision("inject", "memory_request_match", best_score, no_hit_eligible)
-        if top_score >= 0.42 or (top_score >= 0.30 and top_type in self.HIGH_VALUE_TYPES):
-            return RagGateDecision("inject", "high_score", top_score, no_hit_eligible)
-
-        if 0.25 <= top_score < 0.42 and top_type in self.RELATIONSHIP_TYPES:
+                if best_score > 0:
+                    self._mark_selected(memory_items)
+                    return RagGateDecision(
+                        "inject",
+                        "memory_request_match",
+                        best_score,
+                        no_hit_eligible,
+                        tuple(sorted({self._doc_type(item) for item in memory_items})),
+                        self._task_relevance(best_memory),
+                        off_topic_count,
+                        str(best_memory.get("rerank_reason") or ""),
+                    )
+        if top_type == "hot_context" and top_score >= 0.20:
+            self._mark_selected([top])
             return RagGateDecision(
-                "weak_inject",
-                "weak_relationship_context",
+                "inject",
+                "hot_context",
                 top_score,
                 no_hit_eligible,
-                tuple(sorted(self.RELATIONSHIP_TYPES)),
+                ("hot_context",),
+                self._task_relevance(top),
+                off_topic_count,
+                str(top.get("rerank_reason") or ""),
+            )
+        if mode == "relationship_context" or self._looks_like_relationship_question(self._latest_user_text(user_context) or query):
+            relationship_items = [
+                item
+                for item in usable
+                if self._doc_type(item) in self.RELATIONSHIP_TYPES
+                and not self._is_off_topic(item)
+                and (self._task_relevance(item) >= 0.35 or float(item.get("score") or 0.0) >= 0.25)
+            ]
+            if relationship_items:
+                self._mark_selected(relationship_items)
+                best = relationship_items[0]
+                return RagGateDecision(
+                    "weak_inject",
+                    "weak_relationship_context",
+                    round(float(best.get("score") or 0.0), 4),
+                    no_hit_eligible,
+                    tuple(sorted({self._doc_type(item) for item in relationship_items})),
+                    self._task_relevance(best),
+                    off_topic_count,
+                    str(best.get("rerank_reason") or ""),
+                )
+
+        ordinary_items = [
+            item
+            for item in usable
+            if self._doc_type(item) in self.ORDINARY_SUGGESTION_TYPES
+            and not self._is_off_topic(item)
+            and self._task_relevance(item) >= self.ORDINARY_TASK_THRESHOLD
+            and float(item.get("score") or 0.0) >= self.ORDINARY_SCORE_THRESHOLD
+        ]
+        if ordinary_items:
+            self._mark_selected(ordinary_items)
+            best = ordinary_items[0]
+            return RagGateDecision(
+                "inject",
+                "task_relevant_memory",
+                round(float(best.get("score") or 0.0), 4),
+                no_hit_eligible,
+                tuple(sorted({self._doc_type(item) for item in ordinary_items})),
+                self._task_relevance(best),
+                off_topic_count,
+                str(best.get("rerank_reason") or ""),
             )
 
-        return RagGateDecision("skip", "low_score", top_score, no_hit_eligible)
+        style_items = [
+            item
+            for item in usable
+            if self._doc_type(item) in self.STYLE_TYPES
+            and not self._is_off_topic(item)
+            and (self._task_relevance(item) >= 0.35 or float(item.get("score") or 0.0) >= 0.35)
+        ]
+        if style_items:
+            self._mark_selected(style_items)
+            best = style_items[0]
+            return RagGateDecision(
+                "weak_inject",
+                "style_context",
+                round(float(best.get("score") or 0.0), 4),
+                no_hit_eligible,
+                tuple(sorted({self._doc_type(item) for item in style_items})),
+                self._task_relevance(best),
+                off_topic_count,
+                str(best.get("rerank_reason") or ""),
+            )
+
+        if off_topic_count and off_topic_count == len(usable):
+            return RagGateDecision(
+                "skip",
+                "off_topic_memory",
+                top_score,
+                no_hit_eligible,
+                (),
+                best_task_score,
+                off_topic_count,
+                "off_topic",
+            )
+
+        return RagGateDecision(
+            "skip",
+            "low_score",
+            top_score,
+            no_hit_eligible,
+            (),
+            best_task_score,
+            off_topic_count,
+            str(top.get("rerank_reason") or ""),
+        )
 
     def is_no_hit_eligible(
         self,
@@ -146,6 +255,16 @@ class RagRelevanceGate:
         doc = item.get("doc") or item
         return str(doc.get("doc_type") or item.get("doc_type") or "")
 
+    def _task_relevance(self, item: dict[str, Any]) -> float:
+        return round(float(item.get("task_relevance_score") or 0.0), 4)
+
+    def _is_off_topic(self, item: dict[str, Any]) -> bool:
+        return bool(item.get("off_topic_memory"))
+
+    def _mark_selected(self, items: list[dict[str, Any]]) -> None:
+        for item in items[:4]:
+            item["_rag_gate_selected"] = True
+
     def _latest_user_text(self, user_context: Any) -> str:
         if isinstance(user_context, str):
             return user_context.strip()
@@ -180,3 +299,12 @@ class RagRelevanceGate:
             or (has_person_anchor and referential_anchor and reported_memory)
             or (explicit_memory_store and (direct_lookup or asks_detail))
         )
+
+    def _looks_like_relationship_question(self, text: str) -> bool:
+        compact = re.sub(r"\s+", "", str(text or ""))
+        if not compact:
+            return False
+        asks_strategy = any(token in compact for token in ("适合", "能不能", "可不可以", "该不该", "怎么", "如何"))
+        relation_axis = any(token in compact for token in ("开玩笑", "玩笑", "调侃", "关系", "边界", "分寸", "相处", "沟通", "习惯", "风格"))
+        has_actor = any(token in compact for token in ("这个人", "对方", "她", "他", "我们", "ta", "TA"))
+        return asks_strategy and relation_axis and has_actor

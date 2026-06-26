@@ -18,6 +18,7 @@ class SuggestionResult:
     confidence: float = 1.0  # 置信度 (0.0 - 1.0)
     thought_process: str | None = None # AI 思考过程 (CoT)
     reply: str | None = None  # AI 对用户输入的自然语言回应
+    rag_context: dict | None = None  # RAG 三态摘要，供前端低噪展示
 
 
 class SuggestionEngine(ABC):

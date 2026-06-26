@@ -794,6 +794,11 @@ CREATE TABLE IF NOT EXISTS rag_retrieval_logs (
     top_doc_time_label TEXT,
     query_expanded_terms_json TEXT,
     no_hit_reason TEXT,
+    task_relevance_score REAL DEFAULT 0,
+    off_topic_rejected_count INTEGER DEFAULT 0,
+    semantic_fact_count INTEGER DEFAULT 0,
+    style_sample_count INTEGER DEFAULT 0,
+    rerank_reason TEXT,
     created_at INTEGER NOT NULL
 );
 

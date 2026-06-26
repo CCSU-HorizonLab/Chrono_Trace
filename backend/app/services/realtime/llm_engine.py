@@ -589,6 +589,7 @@ class LLMSuggestionEngine(SuggestionEngine):
                 if context.get("_rag_log_id"):
                     setattr(result, "rag_log_id", context.get("_rag_log_id"))
                     setattr(result, "rag_conversation_id", context.get("_rag_conversation_id"))
+                result.rag_context = self._build_rag_context_summary(context)
                 if result.summary == "[SILENT]":
                     _print(f"[LLM Engine] 😶 LLM 决定保持沉默，无建议也不需回复。")
                     return result
@@ -854,6 +855,65 @@ class LLMSuggestionEngine(SuggestionEngine):
         elif isinstance(user_context, str):
             return user_context.strip()
         return ""
+
+    def _build_rag_context_summary(self, context: dict) -> dict:
+        """Compress internal RAG debug state into the three user-facing labels."""
+        debug = context.get("_rag_debug") if isinstance(context, dict) else None
+        retrieval_context = context.get("retrieval_context") if isinstance(context, dict) else None
+        if not isinstance(debug, dict) or not debug.get("rag_enabled"):
+            return {
+                "state": "hidden",
+                "label": "",
+                "hit_count": 0,
+                "referenced_count": 0,
+                "log_id": context.get("_rag_log_id") if isinstance(context, dict) else None,
+            }
+
+        hit_count = int(debug.get("rag_hit_count") or 0)
+        referenced_count = 0
+        if isinstance(retrieval_context, dict) and not retrieval_context.get("no_hit_guard"):
+            referenced_count = len(retrieval_context.get("items") or [])
+
+        if referenced_count > 0:
+            return {
+                "state": "referenced",
+                "label": f"参考命中 {referenced_count} 条记录",
+                "hit_count": hit_count,
+                "referenced_count": referenced_count,
+                "log_id": context.get("_rag_log_id"),
+            }
+
+        if hit_count > 0:
+            return {
+                "state": "not_referenced",
+                "label": "未参考命中记录",
+                "hit_count": hit_count,
+                "referenced_count": 0,
+                "log_id": context.get("_rag_log_id"),
+            }
+
+        memory_mode = str(debug.get("memory_intent_mode") or "")
+        gate_decision = str(debug.get("rag_gate_decision") or "")
+        if (
+            debug.get("rag_no_hit_guard")
+            or gate_decision == "no_hit"
+            or (debug.get("rag_retrieved") and memory_mode in {"memory_request", "relationship_context"})
+        ):
+            return {
+                "state": "no_hit",
+                "label": "未命中相关记录",
+                "hit_count": 0,
+                "referenced_count": 0,
+                "log_id": context.get("_rag_log_id"),
+            }
+
+        return {
+            "state": "hidden",
+            "label": "",
+            "hit_count": 0,
+            "referenced_count": 0,
+            "log_id": context.get("_rag_log_id"),
+        }
 
     def _classify_manual_request(self, context: dict) -> str:
         """
@@ -1131,12 +1191,25 @@ class LLMSuggestionEngine(SuggestionEngine):
                         time_label = str(item.get("time_label") or "").strip()
                         parts.append(f"  {index}. 时间：{time_label or '未知'}；内容：{content}")
             elif items:
-                parts.append("\n【历史记忆检索结果】")
-                parts.append("  检索状态：hit")
-                parts.append(f"  查询意图：{query_mode}")
-                parts.append(f"  时间策略：{time_strategy}")
-                parts.append("  结果：")
-                for index, item in enumerate(items[:4], 1):
+                style_items = [
+                    item
+                    for item in items
+                    if str(item.get("doc_type") or "") in {"self_style_example", "communication_style"}
+                ]
+                memory_items = [
+                    item
+                    for item in items
+                    if str(item.get("doc_type") or "") not in {"self_style_example", "communication_style"}
+                ]
+                if memory_items:
+                    parts.append("\n【历史记忆检索结果】")
+                    parts.append("  检索状态：hit")
+                    parts.append(f"  查询意图：{query_mode}")
+                    parts.append(f"  时间策略：{time_strategy}")
+                    parts.append("  优先级：当前对话和用户显式需求永远高于历史记忆。")
+                    parts.append("  使用边界：只在历史内容直接服务当前回复目标时参考；不要为了使用记忆而引入旧话题。")
+                    parts.append("  结果：")
+                for index, item in enumerate(memory_items[:4], 1):
                     content = str(item.get("content") or "").strip()
                     if content:
                         doc_type = str(item.get("doc_type") or "memory")
@@ -1147,9 +1220,18 @@ class LLMSuggestionEngine(SuggestionEngine):
                         )
                         prefix = "原文" if doc_type == "evidence_excerpt" else "内容"
                         parts.append(f"     {prefix}：{content}")
-                parts.append("  要求：只能基于以上结果回答；如果结果未包含具体细节，必须说没查到。")
-                if is_direct_reply:
-                    parts.append("  直接回答用户问题；不要生成建议卡片，除非用户明确要求话术。")
+                if memory_items:
+                    parts.append("  要求：只能基于以上结果回答历史细节；如果结果未包含具体细节，必须说没查到。")
+                    parts.append("  禁止：不要把历史里的地点、游戏、偏好、约定强行带入无关的当前回复。")
+                    if is_direct_reply:
+                        parts.append("  直接回答用户问题；不要生成建议卡片，除非用户明确要求话术。")
+                if style_items:
+                    parts.append("\n【用户表达风格参考】")
+                    parts.append("  说明：以下只用于语气、长度、标点和亲密度；不得当作历史事实。")
+                    for index, item in enumerate(style_items[:3], 1):
+                        content = str(item.get("content") or "").strip()
+                        if content:
+                            parts.append(f"  {index}. {content}")
 
         historical_ctx = context.get("historical_context", {})
         history_lines = []

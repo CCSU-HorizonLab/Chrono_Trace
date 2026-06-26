@@ -38,12 +38,16 @@ class RagQueryBuilder:
     ) -> str:
         parts: list[str] = []
         latest = self._latest_user_input(context)
+        mode = str(getattr(memory_intent, "mode", "") or "")
         if latest:
             parts.append(latest)
+        if mode == "memory_request" and memory_intent and memory_intent.query:
+            parts.append(memory_intent.query)
 
         recent = context.get("recent_messages") or []
+        recent_limit = 3 if mode == "memory_request" else 4
         if isinstance(recent, list):
-            for msg in recent[-8:]:
+            for msg in recent[-recent_limit:]:
                 if not isinstance(msg, dict):
                     continue
                 content = str(msg.get("content") or "").strip()
@@ -51,29 +55,26 @@ class RagQueryBuilder:
                     sender = "我" if msg.get("sender_attr") == "self" else "对方"
                     parts.append(f"{sender}: {content}")
 
-        for key in ("recent_summary", "conversation_summary", "chat_summary"):
-            value = context.get(key)
-            if value:
-                parts.append(str(value))
+        if mode in {"memory_request", "relationship_context"}:
+            for key in ("recent_summary", "conversation_summary", "chat_summary"):
+                value = context.get(key)
+                if value:
+                    parts.append(str(value))
 
         trigger_context = context.get("trigger_context")
         if isinstance(trigger_context, dict):
-            for key in ("user_input", "manual_input", "text", "content", "reason"):
+            for key in ("user_input", "manual_input", "text", "content"):
                 value = trigger_context.get(key)
                 if value:
                     parts.append(str(value))
         elif trigger_context:
             parts.append(str(trigger_context))
 
-        if memory_intent and memory_intent.query:
+        if mode != "memory_request" and memory_intent and memory_intent.query:
             parts.append(memory_intent.query)
         expanded_terms = self.expanded_terms(context, memory_intent=memory_intent)
         if expanded_terms:
             parts.append(" ".join(expanded_terms))
-        if trigger_type:
-            parts.append(str(trigger_type))
-        if intent:
-            parts.append(str(intent))
 
         compacted: list[str] = []
         seen = set()
@@ -346,6 +347,14 @@ class RagContextBuilder:
             result.get("strategy"),
             result.get("elapsed_ms"),
         )
+        result["items"] = self._rerank_candidates_for_task(
+            result.get("items") or [],
+            query=query,
+            context=context,
+            memory_intent=memory_intent,
+            injection_mode=injection_mode,
+        )
+        rerank_debug = context.get("_rag_rerank_debug") or {}
         logger.debug(
             "[RAG] retrieval result: conversation=%s strategy=%s items=%s degraded=%s reason=%s elapsed=%sms",
             conversation_id,
@@ -356,11 +365,13 @@ class RagContextBuilder:
             result.get("elapsed_ms"),
         )
         logger.debug(
-            "[RAG Retrieve] candidates=%s by_type=%s top_score=%.4f strategy=%s",
+            "[RAG Retrieve] candidates=%s by_type=%s top_score=%.4f strategy=%s task_top=%.4f off_topic=%s",
             len(result.get("items") or []),
             result.get("by_type") or {},
             self._top_score(result.get("items") or []),
             result.get("strategy"),
+            float(rerank_debug.get("task_relevance_score") or 0.0),
+            int(rerank_debug.get("off_topic_rejected_count") or 0),
         )
         gate_decision = self.relevance_gate.decide(
             query=query,
@@ -473,6 +484,11 @@ class RagContextBuilder:
         else:
             effective_gate_decision = gate_decision
         effective_injection_mode = injection_mode if (items or no_hit_guard) else "none"
+        prompt_query = self._safe_query_for_prompt(
+            query,
+            remote_model=remote_model,
+            redaction_disabled=redaction_disabled,
+        )
 
         log_id = self.store.insert_retrieval_log(
             account_wxid=account_wxid,
@@ -516,6 +532,11 @@ class RagContextBuilder:
             top_doc_time_label=items[0].get("time_label") if items else None,
             query_expanded_terms=expanded_terms,
             no_hit_reason=effective_gate_decision.reason if no_hit_guard else None,
+            task_relevance_score=effective_gate_decision.task_relevance_score,
+            off_topic_rejected_count=effective_gate_decision.off_topic_rejected_count,
+            semantic_fact_count=self._semantic_fact_count(result.get("items") or []),
+            style_sample_count=self._style_sample_count(result.get("items") or []),
+            rerank_reason=effective_gate_decision.rerank_reason or rerank_debug.get("rerank_reason"),
         )
         self.store.conn.commit()
         context["_rag_log_id"] = log_id
@@ -541,7 +562,7 @@ class RagContextBuilder:
                 "conversation_id": conversation_id,
                 "items": items,
                 "retrieval_status": "weak_hit" if effective_gate_decision.decision == "weak_inject" else "hit",
-                "query": query,
+                "query": prompt_query,
                 "memory_intent": memory_intent.to_dict(),
                 "injection_mode": injection_mode,
                 "hit_count": hit_count,
@@ -549,6 +570,7 @@ class RagContextBuilder:
                 "gate_decision": effective_gate_decision.decision,
                 "gate_reason": effective_gate_decision.reason,
                 "top_score": effective_gate_decision.top_score,
+                "task_relevance_score": effective_gate_decision.task_relevance_score,
                 "strategy": result.get("strategy"),
                 "index_status": (index_status or {}).get("status"),
                 "elapsed_ms": elapsed_ms,
@@ -569,7 +591,7 @@ class RagContextBuilder:
                 "conversation_id": conversation_id,
                 "items": [],
                 "retrieval_status": "no_hit",
-                "query": query,
+                "query": prompt_query,
                 "memory_intent": memory_intent.to_dict(),
                 "injection_mode": injection_mode,
                 "hit_count": 0,
@@ -577,6 +599,7 @@ class RagContextBuilder:
                 "gate_decision": effective_gate_decision.decision,
                 "gate_reason": effective_gate_decision.reason,
                 "top_score": effective_gate_decision.top_score,
+                "task_relevance_score": effective_gate_decision.task_relevance_score,
                 "strategy": result.get("strategy"),
                 "index_status": (index_status or {}).get("status"),
                 "elapsed_ms": elapsed_ms,
@@ -623,6 +646,11 @@ class RagContextBuilder:
             latency_ms=elapsed_ms,
             gate_decision=effective_gate_decision,
             strategy=result.get("strategy"),
+            task_relevance_score=effective_gate_decision.task_relevance_score,
+            off_topic_rejected_count=effective_gate_decision.off_topic_rejected_count,
+            semantic_fact_count=self._semantic_fact_count(result.get("items") or []),
+            style_sample_count=self._style_sample_count(result.get("items") or []),
+            rerank_reason=effective_gate_decision.rerank_reason or rerank_debug.get("rerank_reason"),
         )
 
     def attach_log_to_suggestion(self, log_id: int | None, suggestion_id: int) -> None:
@@ -842,6 +870,7 @@ class RagContextBuilder:
                     "doc_type": doc.get("doc_type"),
                     "content": content,
                     "score": scored.get("score"),
+                    "task_relevance_score": scored.get("task_relevance_score"),
                     "source_ts": doc.get("source_ts"),
                     "time_label": metadata.get("time_label")
                     or self.segmenter.time_label(int(doc.get("source_ts") or time.time())),
@@ -853,6 +882,129 @@ class RagContextBuilder:
             total_chars += len(content)
         return minimized
 
+    def _rerank_candidates_for_task(
+        self,
+        items: list[dict[str, Any]],
+        *,
+        query: str,
+        context: dict[str, Any],
+        memory_intent: MemoryIntent,
+        injection_mode: str,
+    ) -> list[dict[str, Any]]:
+        recent_text = self._recent_task_text(context)
+        query_tokens = set(self.segmenter.extract_topics(query))
+        recent_tokens = set(self.segmenter.extract_topics(recent_text))
+        output: list[dict[str, Any]] = []
+        off_topic_count = 0
+        for item in items:
+            doc = item.get("doc") or {}
+            doc_type = str(doc.get("doc_type") or "")
+            content = str(doc.get("content") or doc.get("redacted_content") or "")
+            metadata = self._metadata(doc)
+            doc_tokens = set(
+                self.segmenter.extract_topics(
+                    " ".join(
+                        [
+                            content,
+                            " ".join(str(value) for value in metadata.get("topics") or []),
+                            " ".join(str(value) for value in metadata.get("entities") or []),
+                        ]
+                    )
+                )
+            )
+            lexical_score = self._overlap_score(query_tokens, doc_tokens)
+            recent_overlap = self._overlap_score(recent_tokens, doc_tokens)
+            vector_score = float(item.get("vector_score") or 0.0)
+            keyword_score = float(item.get("keyword_score") or 0.0)
+            if doc_type == "hot_context":
+                task_score = max(float(item.get("score") or 0.0), 0.80)
+                reason = "hot_context"
+            elif doc_type in {"self_style_example", "communication_style"}:
+                task_score = max(vector_score * 0.75, keyword_score, lexical_score, 0.35)
+                reason = "style_context"
+            else:
+                task_score = max(vector_score * 0.90, keyword_score, lexical_score)
+                reason = "semantic_rerank" if vector_score else "keyword_rerank"
+                if memory_intent.mode == "memory_request" and (keyword_score > 0 or lexical_score > 0):
+                    task_score = max(task_score, 0.50)
+                    reason = "memory_request_anchor"
+
+            off_topic = False
+            if (
+                injection_mode == "suggestion"
+                and memory_intent.mode not in {"memory_request", "relationship_context"}
+                and doc_type not in {"hot_context", "self_style_example", "communication_style"}
+                and recent_tokens
+                and recent_overlap <= 0.0
+                and task_score < 0.68
+            ):
+                off_topic = True
+                reason = "off_topic"
+                off_topic_count += 1
+
+            enriched = dict(item)
+            enriched["task_relevance_score"] = round(float(task_score), 4)
+            enriched["recent_topic_overlap"] = round(float(recent_overlap), 4)
+            enriched["off_topic_memory"] = off_topic
+            enriched["rerank_reason"] = reason
+            output.append(enriched)
+
+        output.sort(
+            key=lambda item: (
+                bool(item.get("off_topic_memory")),
+                -(float(item.get("task_relevance_score") or 0.0) * 0.55 + float(item.get("score") or 0.0) * 0.45),
+            )
+        )
+        context["_rag_rerank_debug"] = {
+            "task_relevance_score": max((float(item.get("task_relevance_score") or 0.0) for item in output), default=0.0),
+            "off_topic_rejected_count": off_topic_count,
+            "rerank_reason": output[0].get("rerank_reason") if output else "no_candidates",
+        }
+        return output
+
+    def _recent_task_text(self, context: dict[str, Any]) -> str:
+        parts: list[str] = []
+        latest = self.query_builder._latest_user_input(context)
+        if latest:
+            parts.append(latest)
+        recent = context.get("recent_messages") or []
+        if isinstance(recent, list):
+            for msg in recent[-4:]:
+                if isinstance(msg, dict):
+                    content = str(msg.get("content") or "").strip()
+                    if content:
+                        parts.append(content)
+        return "\n".join(parts)
+
+    def _overlap_score(self, left: set[str], right: set[str]) -> float:
+        if not left or not right:
+            return 0.0
+        return len(left & right) / max(1, min(len(left), len(right)))
+
+    def _metadata(self, doc: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return json.loads(doc.get("metadata_json") or "{}")
+        except Exception:
+            return {}
+
+    def _semantic_fact_count(self, items: list[dict[str, Any]]) -> int:
+        count = 0
+        for item in items:
+            doc = item.get("doc") or item
+            if str(doc.get("doc_type") or item.get("doc_type") or "") != "fact_memory":
+                continue
+            metadata = self._metadata(doc)
+            if metadata.get("memory_kind") and metadata.get("memory_kind") != "marker_fallback":
+                count += 1
+        return count
+
+    def _style_sample_count(self, items: list[dict[str, Any]]) -> int:
+        return sum(
+            1
+            for item in items
+            if str((item.get("doc") or item).get("doc_type") or "") in {"self_style_example", "communication_style"}
+        )
+
     def _select_gate_items(
         self,
         items: list[dict[str, Any]],
@@ -862,14 +1014,26 @@ class RagContextBuilder:
             return []
         if gate_decision.decision == "no_hit":
             return []
+        selected = [item for item in items if item.get("_rag_gate_selected")]
+        if selected:
+            return selected[:4]
         if gate_decision.decision == "weak_inject":
             allowed = set(gate_decision.allowed_doc_types or ())
             return [
                 item
                 for item in items
                 if str((item.get("doc") or {}).get("doc_type") or "") in allowed
+                and not item.get("off_topic_memory")
             ]
-        return items
+        allowed = set(gate_decision.allowed_doc_types or ())
+        if allowed:
+            return [
+                item
+                for item in items
+                if str((item.get("doc") or {}).get("doc_type") or "") in allowed
+                and not item.get("off_topic_memory")
+            ][:4]
+        return [item for item in items if not item.get("off_topic_memory")][:4]
 
     def _top_score(self, items: list[dict[str, Any]]) -> float:
         if not items:
@@ -913,6 +1077,21 @@ class RagContextBuilder:
         except Exception:
             return text[:120]
 
+    def _safe_query_for_prompt(
+        self,
+        query: str,
+        *,
+        remote_model: bool,
+        redaction_disabled: bool,
+    ) -> str:
+        text = re.sub(r"\s+", " ", str(query or "")).strip()
+        if not remote_model or redaction_disabled:
+            return text
+        try:
+            return PrivacyRedactor(self.store.conn).strong_mask(text[:500])
+        except Exception:
+            return ""
+
     def _budget_exhausted(self, deadline: float) -> bool:
         return time.perf_counter() > deadline
 
@@ -953,8 +1132,14 @@ class RagContextBuilder:
         latency_ms: int,
         gate_decision: RagGateDecision | None = None,
         strategy: str | None = None,
+        task_relevance_score: float = 0.0,
+        off_topic_rejected_count: int = 0,
+        semantic_fact_count: int = 0,
+        style_sample_count: int = 0,
+        rerank_reason: str | None = None,
     ) -> None:
         gate_decision = gate_decision or RagGateDecision("skip", degraded_reason or "not_attempted")
+        task_score = task_relevance_score or gate_decision.task_relevance_score
         context["_rag_debug"] = {
             "memory_intent_mode": memory_intent.mode,
             "memory_intent_confidence": memory_intent.confidence,
@@ -971,6 +1156,11 @@ class RagContextBuilder:
             "rag_gate_reason": gate_decision.reason,
             "rag_top_score": gate_decision.top_score,
             "rag_strategy": strategy,
+            "task_relevance_score": task_score,
+            "off_topic_rejected_count": off_topic_rejected_count or gate_decision.off_topic_rejected_count,
+            "semantic_fact_count": semantic_fact_count,
+            "style_sample_count": style_sample_count,
+            "rerank_reason": rerank_reason or gate_decision.rerank_reason,
         }
 
     def _log_skip(
@@ -1030,6 +1220,11 @@ class RagContextBuilder:
             selected_doc_types=[],
             query_expanded_terms=context.get("_rag_query_expanded_terms") or [],
             no_hit_reason=reason if gate_decision.decision == "no_hit" else None,
+            task_relevance_score=gate_decision.task_relevance_score,
+            off_topic_rejected_count=gate_decision.off_topic_rejected_count,
+            semantic_fact_count=0,
+            style_sample_count=0,
+            rerank_reason=gate_decision.rerank_reason,
         )
         self.store.conn.commit()
         logger.debug(

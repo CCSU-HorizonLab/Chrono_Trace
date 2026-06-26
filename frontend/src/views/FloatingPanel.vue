@@ -137,6 +137,11 @@
                   <span class="fp-speech-text">{{ sp }}</span>
                   <button class="fp-btn-copy" @click="copyText(sp)">复制</button>
                 </div>
+                <div v-if="getRagBadge(s.rag_context)" class="fp-rag-row">
+                  <span class="fp-rag-badge" :class="getRagBadge(s.rag_context)?.state">
+                    {{ getRagBadge(s.rag_context)?.label }}
+                  </span>
+                </div>
               </div>
             </template>
 
@@ -146,6 +151,11 @@
                  <span class="fp-bubble-time">{{ formatMsgTime(s.created_at) }}</span>
               </div>
               <div class="fp-bubble-txt">{{ s.content }}</div>
+              <div v-if="getRagBadge(s.rag_context)" class="fp-rag-row">
+                <span class="fp-rag-badge" :class="getRagBadge(s.rag_context)?.state">
+                  {{ getRagBadge(s.rag_context)?.label }}
+                </span>
+              </div>
             </template>
           </div>
 
@@ -552,7 +562,15 @@ const contextUsed = ref<{ sender: string; content: string; timestamp: number }[]
 const lastThread = ref<any>(null)
 
 // AI 对话历史 (带有时间戳)
-const conversationHistory = ref<{ role: string; content: string; ts: number }[]>([])
+type RagContextState = 'no_hit' | 'referenced' | 'not_referenced' | 'hidden'
+type RagContextSummary = {
+  state?: RagContextState
+  label?: string
+  hit_count?: number
+  referenced_count?: number
+  log_id?: number | null
+}
+const conversationHistory = ref<{ role: string; content: string; ts: number; rag_context?: RagContextSummary }[]>([])
 
 // 情绪历史数据（用于曲线图）
 const emotionHistory = ref<EmotionPoint[]>([])
@@ -1820,7 +1838,12 @@ async function generateSuggestionWithStream(context: Record<string, any>) {
 function appendSuggestionResult(r: any) {
   if (!r?.ok || !r.suggestion) return false
   if (r.suggestion.reply) {
-    conversationHistory.value.push({ role: 'ai', content: r.suggestion.reply, ts: Math.floor(Date.now() / 1000) })
+    conversationHistory.value.push({
+      role: 'ai',
+      content: r.suggestion.reply,
+      ts: Math.floor(Date.now() / 1000),
+      rag_context: r.suggestion.rag_context,
+    })
   }
   manualSuggestion.value = r.suggestion
   if (r.suggestion.summary !== '[PURE_CHAT]' && r.suggestion.summary !== '[SILENT]') {
@@ -1892,6 +1915,12 @@ function isSuggestionExpanded(s: any): boolean {
 
 function copyText(text: string) {
   navigator.clipboard?.writeText(text)
+}
+
+function getRagBadge(ragContext: RagContextSummary | undefined | null): RagContextSummary | null {
+  if (!ragContext || ragContext.state === 'hidden' || !ragContext.label) return null
+  if (!['no_hit', 'referenced', 'not_referenced'].includes(String(ragContext.state))) return null
+  return ragContext
 }
 
 function getTriggerIcon(type: string): string {
@@ -2341,6 +2370,11 @@ async function loadLastThread() {
 .fp-speech-text { font-size: 13px; line-height: 1.6; color: var(--ct-text-primary); flex: 1; }
 .fp-btn-copy { font-size: 11px; font-weight: 500; color: var(--ct-text-secondary); background: var(--ct-bg-secondary); border: 1px solid var(--ct-border-color); padding: 4px 10px; border-radius: var(--ct-radius-sm); cursor: pointer; transition: all 0.2s; flex-shrink: 0; }
 .fp-btn-copy:hover { color: var(--ct-color-primary); border-color: var(--ct-color-primary); background: white; box-shadow: var(--ct-shadow-sm); }
+.fp-rag-row { display: flex; justify-content: flex-end; margin-top: 8px; min-height: 18px; }
+.fp-rag-badge { display: inline-flex; align-items: center; max-width: 100%; min-height: 18px; padding: 2px 7px; border-radius: var(--ct-radius-sm); border: 1px solid var(--ct-border-color); background: var(--ct-bg-tertiary); color: var(--ct-text-tertiary); font-size: 10.5px; line-height: 1.2; font-weight: 600; white-space: nowrap; }
+.fp-rag-badge.referenced { color: var(--ct-color-primary); border-color: rgba(124, 77, 255, 0.28); background: rgba(124, 77, 255, 0.08); }
+.fp-rag-badge.no_hit { color: var(--ct-text-secondary); background: var(--ct-bg-secondary); }
+.fp-rag-badge.not_referenced { color: #8a5a00; border-color: rgba(180, 125, 20, 0.28); background: rgba(180, 125, 20, 0.08); }
 
 /* Chat Bubbles */
 .fp-bubble { max-width: 88%; padding: 10px 14px; border-radius: 12px; align-self: flex-start; background: var(--ct-bg-elevated); border: 1px solid var(--ct-border-color); border-top-left-radius: 4px; box-shadow: var(--ct-shadow-sm); }
@@ -2351,6 +2385,7 @@ async function loadLastThread() {
 .fp-bubble-time { font-size: 10px; color: var(--ct-text-tertiary); opacity: 0.8; }
 .fp-bubble.user .fp-bubble-time { color: rgba(255,255,255,0.8); }
 .fp-bubble-txt { font-size: 14px; line-height: 1.5; word-break: break-word; white-space: pre-wrap; }
+.fp-bubble .fp-rag-row { margin-top: 7px; }
 
 /* Loading State */
 .fp-loading-state { padding: 18px 20px; display: flex; align-items: flex-start; justify-content: center; gap: 8px; font-size: 12px; color: var(--ct-color-primary); font-weight: 500; }

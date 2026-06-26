@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import ipaddress
 from typing import Any
+from urllib.parse import urlparse
 
 from ..model_paths import EMBEDDING_MODEL_REPO_ID
 from ..wechat.account_settings import load_settings_from_file
@@ -78,8 +80,15 @@ def is_remote_llm_model(model_config: dict[str, Any] | None) -> bool:
         return False
     provider = str(model_config.get("provider") or "").strip().lower()
     base_url = str(model_config.get("api_base_url") or "").strip().lower()
-    if provider in {"ollama", "lmstudio", "local"}:
+    if not base_url:
+        return provider not in {"ollama", "lmstudio", "local"}
+    parsed = urlparse(base_url if "://" in base_url else f"http://{base_url}")
+    host = (parsed.hostname or "").strip().lower()
+    if host in {"localhost", "127.0.0.1", "::1"}:
         return False
-    if base_url.startswith("http://localhost") or base_url.startswith("http://127.0.0.1"):
-        return False
+    try:
+        if ipaddress.ip_address(host).is_loopback:
+            return False
+    except ValueError:
+        pass
     return True

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import re
 import time
@@ -13,8 +14,13 @@ from .rag_embedding import RagEmbeddingService, RagEmbeddingUnavailable
 from .rag_store import RagStore
 
 
+logger = logging.getLogger(__name__)
+
+
 class RagRetriever:
     """Contact-scoped retriever with vector and keyword fallback."""
+
+    MIN_VECTOR_SCORE_WITHOUT_KEYWORDS = 0.45
 
     DOC_TYPE_WEIGHTS = {
         "hot_context": 0.65,
@@ -75,6 +81,7 @@ class RagRetriever:
         if status.get("status") == "failed":
             return self._empty(started, status, degraded=True, reason="index_failed")
 
+        degrade_reason: str | None = None
         try:
             docs = self.store.list_documents_with_vectors(
                 account_wxid,
@@ -82,28 +89,56 @@ class RagRetriever:
                 embedding_model=model,
                 embedding_dim=dim,
             )
-            if docs:
-                if self._timed_out(started, timeout_ms, deadline):
-                    return self._empty(started, status, degraded=True, reason="timeout", timed_out=True)
-                if self._embedding_is_warm():
+        except Exception as exc:
+            logger.debug("[RAG Retriever] vector document load failed: %s", exc)
+            docs = []
+            degrade_reason = "db_error"
+
+        if docs:
+            if self._timed_out(started, timeout_ms, deadline):
+                return self._empty(started, status, degraded=True, reason="timeout", timed_out=True)
+            if self._embedding_is_warm():
+                try:
                     query_vector = self.embedding_service.embed_text(query)
                     scored = self._score_vector_docs(query, query_vector, docs)
                     strategy = "vector"
-                else:
-                    scored = self._score_keyword_docs(query, docs)
-                    strategy = "keyword_fallback"
+                except RagEmbeddingUnavailable:
+                    docs, scored, strategy = self._keyword_fallback(
+                        account_wxid,
+                        conversation_id,
+                        query,
+                        reason="embedding_unavailable",
+                    )
+                    degrade_reason = "embedding_unavailable"
+                except Exception as exc:
+                    logger.debug("[RAG Retriever] vector scoring failed: %s", exc)
+                    docs, scored, strategy = self._keyword_fallback(
+                        account_wxid,
+                        conversation_id,
+                        query,
+                        reason="vector_error",
+                    )
+                    degrade_reason = "vector_error"
             else:
-                docs = self.store.list_documents(account_wxid, conversation_id)
                 scored = self._score_keyword_docs(query, docs)
                 strategy = "keyword_fallback"
-        except RagEmbeddingUnavailable:
-            docs = self.store.list_documents(account_wxid, conversation_id)
-            scored = self._score_keyword_docs(query, docs)
-            strategy = "keyword_fallback"
-        except Exception:
-            docs = self.store.list_documents(account_wxid, conversation_id)
-            scored = self._score_keyword_docs(query, docs)
-            strategy = "keyword_fallback"
+                degrade_reason = "embedding_cold"
+        else:
+            if degrade_reason == "db_error":
+                docs, scored, strategy = self._keyword_fallback(
+                    account_wxid,
+                    conversation_id,
+                    query,
+                    reason="db_error",
+                )
+            else:
+                docs, scored, strategy = self._keyword_fallback(
+                    account_wxid,
+                    conversation_id,
+                    query,
+                    reason="keyword_fallback",
+                )
+            degrade_reason = degrade_reason or "keyword_fallback"
 
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         if elapsed_ms > timeout_ms or (deadline is not None and time.perf_counter() > deadline):
@@ -139,10 +174,25 @@ class RagRetriever:
             "status": status,
             "timed_out": False,
             "degraded": strategy != "vector" or status.get("status") in {"pending", "stale"},
-            "degrade_reason": None if strategy == "vector" else strategy,
+            "degrade_reason": None if strategy == "vector" else degrade_reason,
             "elapsed_ms": elapsed_ms,
             "by_type": self._count_by_type(filtered),
         }
+
+    def _keyword_fallback(
+        self,
+        account_wxid: str,
+        conversation_id: int,
+        query: str,
+        *,
+        reason: str,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str]:
+        try:
+            docs = self.store.list_documents(account_wxid, conversation_id)
+            return docs, self._score_keyword_docs(query, docs), "keyword_fallback"
+        except Exception as exc:
+            logger.debug("[RAG Retriever] keyword fallback failed (%s): %s", reason, exc)
+            return [], [], "none"
 
     def _timed_out(self, started: float, timeout_ms: int, deadline: float | None) -> bool:
         if deadline is not None and time.perf_counter() > deadline:
@@ -190,7 +240,14 @@ class RagRetriever:
                 vector_score=cosine,
                 keyword_score=keyword_score,
             )
-            scored.append({"doc": doc, "score": round(score, 4)})
+            scored.append(
+                {
+                    "doc": doc,
+                    "score": round(score, 4),
+                    "vector_score": round(float(cosine), 4),
+                    "keyword_score": round(float(keyword_score), 4),
+                }
+            )
         return sorted(scored, key=lambda item: item["score"], reverse=True)
 
     def _score_keyword_docs(
@@ -203,7 +260,14 @@ class RagRetriever:
             if base_score <= 0:
                 continue
             score = self._final_score(doc, vector_score=0.0, keyword_score=base_score)
-            scored.append({"doc": doc, "score": round(score, 4)})
+            scored.append(
+                {
+                    "doc": doc,
+                    "score": round(score, 4),
+                    "vector_score": 0.0,
+                    "keyword_score": round(float(base_score), 4),
+                }
+            )
         return sorted(scored, key=lambda item: item["score"], reverse=True)
 
     def _keyword_pairs(
@@ -257,6 +321,8 @@ class RagRetriever:
         recency_score = self._time_decay(doc)
         type_score = self.DOC_TYPE_WEIGHTS.get(doc_type, 0.1)
         if vector_score > 0:
+            if keyword_score <= 0 and vector_score < self.MIN_VECTOR_SCORE_WITHOUT_KEYWORDS:
+                return 0.0
             return (
                 float(vector_score) * 0.40
                 + float(keyword_score) * 0.25

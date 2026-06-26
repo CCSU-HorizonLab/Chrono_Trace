@@ -103,6 +103,72 @@ class Bridge:
             return normalized
         return self._get_active_wechat_account_wxid()
 
+    def _resolve_current_conversation_id(
+        self,
+        *,
+        account_wxid: str,
+        display_name: str = "",
+        username: str = "",
+    ) -> int | None:
+        account = str(account_wxid or "").strip()
+        display = str(display_name or "").strip()
+        user = str(username or "").strip()
+        if not account or (not display and not user):
+            return None
+        try:
+            from ..db.connection import get_db
+
+            row = get_db().execute(
+                """
+                SELECT id
+                FROM conversations
+                WHERE account_wxid = ?
+                  AND is_deleted = 0
+                  AND (display_name = ? OR username = ? OR username = ? OR display_name = ?)
+                ORDER BY updated_at DESC
+                LIMIT 1
+                """,
+                (account, display, display, user, user),
+            ).fetchone()
+            return int(row["id"]) if row else None
+        except Exception as exc:
+            logger.debug("[Bridge] resolve current conversation skipped: %s", exc)
+            return None
+
+    def _prewarm_current_rag_index(
+        self,
+        *,
+        account_wxid: str,
+        display_name: str = "",
+        username: str = "",
+        context: dict[str, Any] | None = None,
+    ) -> None:
+        try:
+            from ..services.realtime.rag_config import load_rag_settings
+
+            if not load_rag_settings().get("rag_enabled"):
+                return
+            raw_conversation_id = (context or {}).get("conversation_id") or (context or {}).get("_rag_conversation_id")
+            conversation_id = int(raw_conversation_id) if raw_conversation_id else None
+            if not conversation_id:
+                conversation_id = self._resolve_current_conversation_id(
+                    account_wxid=account_wxid,
+                    display_name=display_name,
+                    username=username,
+                )
+            if not account_wxid or not conversation_id:
+                return
+            if context is not None:
+                context.setdefault("conversation_id", conversation_id)
+            from ..services.realtime.rag_indexer import RagIndexer
+
+            RagIndexer().ensure_contact_index(
+                account_wxid=str(account_wxid),
+                conversation_id=int(conversation_id),
+            )
+        except Exception as exc:
+            logger.debug("[Bridge] RAG prewarm skipped: %s", exc)
+
     def _resolve_wechat_account(self, account_wxid: str = "") -> Optional[dict[str, Any]]:
         resolved_wxid = self._resolve_account_wxid(account_wxid)
         if resolved_wxid:
@@ -839,6 +905,12 @@ class Bridge:
             # 传递联系人名称以便查询调教规则
             if monitor.current_display_name:
                 context['display_name'] = monitor.current_display_name
+            self._prewarm_current_rag_index(
+                account_wxid=account_wxid,
+                display_name=str(monitor.current_display_name or context.get("display_name") or ""),
+                username=str(getattr(monitor, "current_talker", "") or ""),
+                context=context,
+            )
 
             from ..services.realtime.trigger_resolver import resolve_suggestion_trigger
 
@@ -993,6 +1065,7 @@ class Bridge:
                     "confidence": result.confidence,
                     "thought_process": getattr(result, "thought_process", None),
                     "reply": getattr(result, "reply", None),
+                    "rag_context": getattr(result, "rag_context", None),
                     "created_at": now_time,
                 },
                 "context_used": {

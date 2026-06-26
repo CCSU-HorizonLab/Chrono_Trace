@@ -12,6 +12,7 @@ from ...db.connection import get_db
 from .privacy_redactor import PrivacyRedactor
 from .rag_config import load_rag_settings
 from .rag_embedding import RagEmbeddingService, RagEmbeddingUnavailable
+from .rag_semantic_memory import SemanticFactExtractor
 from .rag_segmenter import RagSegment, RagSegmenter
 from .rag_store import RAG_INDEX_VERSION, RagStore
 
@@ -35,6 +36,7 @@ class RagIndexer:
         self.store = store or RagStore()
         self.embedding_service = embedding_service or RagEmbeddingService()
         self.segmenter = RagSegmenter()
+        self.semantic_fact_extractor = SemanticFactExtractor(self.embedding_service, self.segmenter)
 
     def ensure_contact_index(
         self,
@@ -90,6 +92,21 @@ class RagIndexer:
             RagIndexQueue.enqueue(account_wxid, conversation_id)
             return status
         if status and status.get("status") == "failed":
+            if self._can_retry_failed_status(status):
+                self.store.upsert_status(
+                    account_wxid,
+                    conversation_id,
+                    status="pending",
+                    embedding_model=str(settings["rag_embedding_model"]),
+                    embedding_dim=int(settings["rag_embedding_dim"]),
+                    privacy_mode=str(settings["rag_privacy_mode"]),
+                    dirty_since=int(time.time()),
+                    last_error=None,
+                    index_version=self.INDEX_VERSION,
+                )
+                self.store.conn.commit()
+                RagIndexQueue.enqueue(account_wxid, conversation_id)
+                return self.store.get_status(account_wxid, conversation_id) or {}
             return status
 
         self.store.upsert_status(
@@ -329,6 +346,7 @@ class RagIndexer:
             len(sessions),
         )
 
+        semantic_fact_count = 0
         for index, segment in enumerate(segments, 1):
             topic_content = self.segmenter.render_segment(segment)
             sensitivity = "sensitive" if self._looks_sensitive(topic_content) else "normal"
@@ -361,16 +379,27 @@ class RagIndexer:
                     metadata=self._metadata(segment, source_kind="historical", summary_method="rules"),
                 )
             )
-            for fact_index, fact in enumerate(self.segmenter.build_fact_memories(segment), 1):
+            semantic_facts = self.semantic_fact_extractor.extract(segment)
+            semantic_fact_count += len(
+                [fact for fact in semantic_facts if fact.memory_kind != "marker_fallback"]
+            )
+            for fact_index, fact in enumerate(semantic_facts, 1):
                 fact_metadata = self._metadata(
                     segment,
                     source_kind="historical",
-                    summary_method="rules",
+                    summary_method="semantic_embedding"
+                    if fact.memory_kind != "marker_fallback"
+                    else "marker_fallback",
                     extra={
-                        "fact_source_id": fact.get("source_id"),
-                        "subject": fact.get("subject"),
-                        "topics": fact.get("topics") or segment.topics,
-                        "entities": fact.get("entities") or segment.entities,
+                        "fact_source_id": fact.source_id,
+                        "subject": fact.subject,
+                        "topics": fact.topics or segment.topics,
+                        "entities": fact.entities or segment.entities,
+                        "memory_kind": fact.memory_kind,
+                        "semantic_score": fact.semantic_score,
+                        "evidence_message_ids": fact.evidence_message_ids,
+                        "source_window_start_ts": fact.source_window_start_ts,
+                        "source_window_end_ts": fact.source_window_end_ts,
                     },
                 )
                 docs.append(
@@ -379,20 +408,16 @@ class RagIndexer:
                         account_wxid,
                         conversation_id,
                         "fact_memory",
-                        f"时间：{segment.time_label}\n{fact['content']}",
+                        f"时间：{segment.time_label}\n{fact.content}",
                         "messages",
-                        f"fact:{index}:{fact_index}:{fact.get('source_id')}",
-                        int(fact.get("source_ts") or segment.end_ts),
-                        sensitivity="sensitive" if self._looks_sensitive(fact["content"]) else "normal",
+                        f"fact:{index}:{fact_index}:{fact.source_id or 'window'}:{fact.memory_kind}",
+                        int(fact.source_ts or segment.end_ts),
+                        sensitivity="sensitive" if self._looks_sensitive(fact.content) else "normal",
                         metadata=fact_metadata,
                     )
                 )
 
-        self_messages = [
-            self._compact_content(msg.get("content"))
-            for msg in messages
-            if int(msg.get("is_sender") or 0) and self._is_style_sample(msg.get("content"))
-        ][: self.SELF_STYLE_LIMIT]
+        self_messages = self._select_style_samples(messages, last_ts=last_ts)
         for index, content in enumerate(self_messages, 1):
             docs.append(
                 self._doc_payload(
@@ -408,14 +433,22 @@ class RagIndexer:
                         segment=None,
                         source_kind="historical",
                         summary_method="rules",
-                        extra={"style_sample": True},
+                        extra={
+                            "style_sample": True,
+                            "style_sample_rank": index,
+                            "style_sample_strategy": "recent_quality",
+                        },
                     ),
                 )
             )
 
-        style_lines = [self._compact_content(msg.get("content")) for msg in messages if int(msg.get("is_sender") or 0)]
+        style_lines = [
+            self._compact_content(msg.get("content"))
+            for msg in messages
+            if int(msg.get("is_sender") or 0) and self._is_style_sample(msg.get("content"))
+        ]
         if style_lines:
-            communication_style = "用户常见表达样例：" + " / ".join(style_lines[:8])
+            communication_style = self._build_communication_style_summary(style_lines, self_messages)
             docs.append(
                 self._doc_payload(
                     redactor,
@@ -430,10 +463,19 @@ class RagIndexer:
                         segment=None,
                         source_kind="historical",
                         summary_method="rules",
-                        extra={"style_sample": True},
+                        extra={
+                            "style_sample": True,
+                            "style_sample_count": len(self_messages),
+                            "semantic_fact_count": semantic_fact_count,
+                        },
                     ),
                 )
             )
+        logger.debug(
+            "[RAG Index] semantic_facts=%s style_samples=%s",
+            semantic_fact_count,
+            len(self_messages),
+        )
         return docs
 
     def _doc_payload(
@@ -484,7 +526,109 @@ class RagIndexer:
 
     def _is_style_sample(self, content: Any) -> bool:
         text = self._compact_content(content)
-        return 1 <= len(text) <= 80 and not self._looks_sensitive(text)
+        if not (1 <= len(text) <= 80) or self._looks_sensitive(text):
+            return False
+        if not re.search(r"[A-Za-z0-9\u4e00-\u9fff]", text):
+            return False
+        if re.fullmatch(r"[\W_]+", text, flags=re.UNICODE):
+            return False
+        compact = re.sub(r"\s+", "", text)
+        if compact in {"哈哈", "哈哈哈", "哈哈哈哈", "嗯", "嗯嗯", "哦", "好的", "可以", "行吧"}:
+            return False
+        meta_markers = (
+            "请帮我",
+            "帮我生成",
+            "根据以上",
+            "以下是",
+            "作为AI",
+            "作为ai",
+            "模型",
+            "prompt",
+            "system",
+        )
+        return not any(marker in compact for marker in meta_markers)
+
+    def _select_style_samples(self, messages: list[dict[str, Any]], *, last_ts: int) -> list[str]:
+        candidates: list[tuple[float, int, str]] = []
+        recent_cutoff = int(last_ts or time.time()) - 30 * 86400
+        for index, msg in enumerate(messages):
+            if not int(msg.get("is_sender") or 0):
+                continue
+            content = self._compact_content(msg.get("content"))
+            if not self._is_style_sample(content):
+                continue
+            try:
+                source_ts = int(msg.get("timestamp") or 0)
+            except (TypeError, ValueError):
+                source_ts = 0
+            length = len(content)
+            score = 0.0
+            if source_ts >= recent_cutoff:
+                score += 3.0
+            if 4 <= length <= 36:
+                score += 1.0
+            if 37 <= length <= 80:
+                score += 0.4
+            if re.search(r"[？?]", content):
+                score += 0.35
+            if self._count_emoji(content) > 0:
+                score += 0.25
+            age_days = max(0.0, (int(last_ts or time.time()) - source_ts) / 86400) if source_ts else 365.0
+            score += max(0.0, 1.0 - age_days / 90.0)
+            candidates.append((score, index, content))
+
+        candidates.sort(key=lambda item: (-item[0], -item[1]))
+        selected: list[str] = []
+        seen = set()
+        for _score, _index, content in candidates:
+            if content in seen:
+                continue
+            seen.add(content)
+            selected.append(content)
+            if len(selected) >= self.SELF_STYLE_LIMIT:
+                break
+        return selected
+
+    def _build_communication_style_summary(self, style_lines: list[str], samples: list[str]) -> str:
+        lines = style_lines[:80]
+        avg_len = sum(len(line) for line in lines) / max(1, len(lines))
+        question_ratio = sum(1 for line in lines if re.search(r"[？?]", line)) / max(1, len(lines))
+        emoji_count = sum(self._count_emoji(line) for line in lines)
+        emoji_ratio = emoji_count / max(1, len(lines))
+        repeated_punct = sum(1 for line in lines if re.search(r"([!?！？。~～])\1+", line)) / max(1, len(lines))
+        communication_type = (
+            "proactive"
+            if question_ratio >= 0.32 or avg_len >= 22
+            else "reactive"
+            if avg_len <= 8 and question_ratio < 0.18
+            else "balanced"
+        )
+        emotional_style = (
+            "warm"
+            if emoji_ratio >= 0.20 or repeated_punct >= 0.18
+            else "cold"
+            if avg_len <= 7 and emoji_ratio <= 0.05
+            else "neutral"
+        )
+        sample_text = " / ".join(samples[:8])
+        return (
+            "用户表达风格摘要："
+            f"平均长度 {avg_len:.1f} 字；"
+            f"问句比例 {question_ratio:.0%}；"
+            f"emoji 使用率 {emoji_ratio:.0%}；"
+            f"重复标点比例 {repeated_punct:.0%}；"
+            f"沟通类型 {communication_type}；"
+            f"情感风格 {emotional_style}。"
+            f"近期高质量样例：{sample_text}"
+        )
+
+    def _count_emoji(self, text: str) -> int:
+        return len(
+            re.findall(
+                r"[\U0001F300-\U0001FAFF\u2600-\u27BF]",
+                str(text or ""),
+            )
+        )
 
     def _looks_sensitive(self, text: str) -> bool:
         keywords = ("秘密", "保密", "身份证", "银行卡", "密码", "密钥", "住址", "地址", "电话")
@@ -580,6 +724,18 @@ class RagIndexer:
             (account_wxid, conversation_id),
         ).fetchone()
         return int(row["count"] if row else 0)
+
+    def _can_retry_failed_status(self, status: dict[str, Any]) -> bool:
+        last_error = str(status.get("last_error") or "").lower()
+        if "embedding" not in last_error and "模型缺失" not in last_error and "模型" not in last_error:
+            return False
+        try:
+            self.embedding_service.ensure_available()
+            return True
+        except RagEmbeddingUnavailable:
+            return False
+        except Exception:
+            return False
 
 
 class RagIndexQueue:

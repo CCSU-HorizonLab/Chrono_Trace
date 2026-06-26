@@ -17,9 +17,15 @@ class RagEmbeddingService:
 
     model_name = EMBEDDING_MODEL_REPO_ID
     dim = 384
+    _shared_sentiment_service: SentimentService | None = None
 
     def __init__(self, sentiment_service: SentimentService | None = None):
-        self.sentiment_service = sentiment_service or SentimentService()
+        if sentiment_service is not None:
+            self.sentiment_service = sentiment_service
+            return
+        if RagEmbeddingService._shared_sentiment_service is None:
+            RagEmbeddingService._shared_sentiment_service = SentimentService()
+        self.sentiment_service = RagEmbeddingService._shared_sentiment_service
 
     def ensure_available(self) -> None:
         if not self.sentiment_service.has_local_embedding_model():

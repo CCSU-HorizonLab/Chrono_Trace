@@ -10,6 +10,7 @@ from app.services.realtime.rag_fact_extractor import FactExtractionError, Struct
 from app.services.realtime.rag_config import apply_rag_defaults
 from app.services.realtime.rag_retriever import RagRetriever
 from app.services.realtime.rag_store import RagStore
+from app.services.realtime.privacy_redactor import PrivacyRedactor
 
 
 def test_structured_fact_extractor_validates_json_and_evidence():
@@ -100,3 +101,23 @@ def test_rag_schema_is_idempotent_and_keeps_contact_keys():
     assert {"account_wxid", "conversation_id"} <= columns
     assert first.get_status("missing", 99) is None
     assert second.get_status("missing", 99) is None
+
+
+def test_privacy_redactor_persists_cache_and_strong_masks_api_key():
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    redactor = PrivacyRedactor(conn)
+    result = redactor.redact(
+        "token=sk-abcdefghijklmnopqrstuvwxyz123456",
+        account_wxid="account-a",
+        conversation_id=7,
+        source_table="messages",
+        source_id="m1",
+    )
+    assert "sk-abcdefghijklmnopqrstuvwxyz123456" not in result.redacted_text
+    assert result.pii_flags["api_key"] is True
+    assert conn.execute("select count(*) from privacy_entities").fetchone()[0] == 1
+    assert conn.execute("select count(*) from privacy_redaction_cache").fetchone()[0] == 1
+    assert "sk-abcdefghijklmnopqrstuvwxyz123456" not in redactor.strong_mask(
+        "token=sk-abcdefghijklmnopqrstuvwxyz123456"
+    )

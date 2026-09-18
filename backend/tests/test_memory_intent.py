@@ -68,6 +68,13 @@ def test_memory_intent_does_not_inherit_after_topic_switch():
     assert intent.should_retrieve is False
 
 
+def test_memory_intent_uses_prototype_signal_for_implicit_lookup():
+    intent = detect_memory_intent({"user_context": "你还记得那家店吗"})
+    assert intent.mode == "memory_request"
+    assert intent.should_retrieve is True
+    assert intent.reason == "memory_prototype_signal"
+
+
 def test_memory_intent_history_does_not_cross_contact():
     intent = detect_memory_intent(
         {

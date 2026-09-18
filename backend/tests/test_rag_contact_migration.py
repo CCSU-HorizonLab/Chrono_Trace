@@ -86,6 +86,24 @@ def test_fact_read_is_opt_in_and_returns_contact_scoped_fact(monkeypatch):
     assert result["items"][0]["doc_type"] == "fact_memory"
 
 
+def test_fact_lifecycle_supersedes_and_allows_user_disable():
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    store = RagStore(conn)
+    old_id = store.upsert_fact(
+        account_wxid="account-a", conversation_id=1, subject="对方",
+        kind="preference", content="喜欢奶茶", confidence=0.7,
+    )
+    new_id = store.upsert_fact(
+        account_wxid="account-a", conversation_id=1, subject="对方",
+        kind="preference", content="喜欢咖啡", confidence=0.9,
+    )
+    store.supersede_fact(old_id, new_id)
+    assert [item["id"] for item in store.list_facts("account-a", 1)] == [new_id]
+    store.set_fact_enabled(new_id, False)
+    assert store.list_facts("account-a", 1) == []
+
+
 def test_rag_schema_is_idempotent_and_keeps_contact_keys():
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row

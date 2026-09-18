@@ -108,6 +108,7 @@ class RagStore:
                 valid_to INTEGER,
                 confidence REAL DEFAULT 0,
                 sensitivity TEXT DEFAULT 'normal',
+                enabled INTEGER NOT NULL DEFAULT 1,
                 evidence_message_ids_json TEXT,
                 source_window_json TEXT,
                 summary_method TEXT DEFAULT 'shadow',
@@ -189,6 +190,14 @@ class RagStore:
         for name, definition in columns.items():
             if name not in existing:
                 self.conn.execute(f"ALTER TABLE rag_documents ADD COLUMN {name} {definition}")
+        fact_columns = set()
+        for row in self.conn.execute("PRAGMA table_info(rag_facts)").fetchall():
+            try:
+                fact_columns.add(str(row["name"]))
+            except Exception:
+                fact_columns.add(str(row[1]))
+        if "enabled" not in fact_columns:
+            self.conn.execute("ALTER TABLE rag_facts ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1")
 
     def _ensure_status_columns(self) -> None:
         existing = set()
@@ -668,13 +677,14 @@ class RagStore:
             """
             INSERT INTO rag_facts
             (account_wxid, conversation_id, subject, kind, content, status, as_of,
-             valid_from, valid_to, confidence, sensitivity, evidence_message_ids_json,
+             valid_from, valid_to, confidence, sensitivity, enabled, evidence_message_ids_json,
              source_window_json, summary_method, supersedes_fact_id, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(account_wxid, conversation_id, kind, content) DO UPDATE SET
               subject=excluded.subject, status=excluded.status, as_of=excluded.as_of,
               valid_from=excluded.valid_from, valid_to=excluded.valid_to,
               confidence=excluded.confidence, sensitivity=excluded.sensitivity,
+              enabled=excluded.enabled,
               evidence_message_ids_json=excluded.evidence_message_ids_json,
               source_window_json=excluded.source_window_json,
               summary_method=excluded.summary_method,
@@ -690,6 +700,7 @@ class RagStore:
                 payload.get("as_of"), payload.get("valid_from"), payload.get("valid_to"),
                 float(payload.get("confidence") or 0.0),
                 payload.get("sensitivity") or "normal",
+                int(bool(payload.get("enabled", True))),
                 json.dumps(payload.get("evidence_message_ids") or [], ensure_ascii=False),
                 json.dumps(payload.get("source_window") or {}, ensure_ascii=False),
                 payload.get("summary_method") or "shadow",
@@ -712,12 +723,25 @@ class RagStore:
             """
             SELECT * FROM rag_facts
             WHERE account_wxid = ? AND conversation_id = ?
-              AND status = 'active'
+              AND status = 'active' AND enabled = 1
             ORDER BY confidence DESC, updated_at DESC
             """,
             (account_wxid, conversation_id),
         ).fetchall()
         return [dict(row) for row in rows]
+
+    def supersede_fact(self, old_fact_id: int, new_fact_id: int) -> None:
+        """Mark an older fact as superseded while retaining it for audit."""
+        self.conn.execute(
+            "UPDATE rag_facts SET status='superseded', enabled=0, supersedes_fact_id=?, updated_at=? WHERE id=?",
+            (int(new_fact_id), _now(), int(old_fact_id)),
+        )
+
+    def set_fact_enabled(self, fact_id: int, enabled: bool) -> None:
+        self.conn.execute(
+            "UPDATE rag_facts SET enabled=?, updated_at=? WHERE id=?",
+            (int(bool(enabled)), _now(), int(fact_id)),
+        )
 
     def attach_log_to_suggestion(self, log_id: int | None, suggestion_id: int) -> None:
         if not log_id:

@@ -33,6 +33,13 @@ class RagIndexer:
     SELF_STYLE_LIMIT = 24
     EMBED_BATCH_SIZE = 64
     WRITE_COMMIT_INTERVAL = 64
+    SHARED_MEMORY_KINDS = {
+        "plan_or_appointment",
+        "hobby_or_game",
+        "food_or_place",
+        "recurring_habit",
+        "preference_like",
+    }
 
     def __init__(
         self,
@@ -454,6 +461,23 @@ class RagIndexer:
                         metadata=fact_metadata,
                     )
                 )
+                if fact.memory_kind in self.SHARED_MEMORY_KINDS:
+                    shared_metadata = dict(fact_metadata)
+                    shared_metadata["summary_method"] = "shared_memory_shadow"
+                    docs.append(
+                        self._doc_payload(
+                            redactor,
+                            account_wxid,
+                            conversation_id,
+                            "shared_memory",
+                            f"时间：{segment.time_label}\n{fact.content}",
+                            "messages",
+                            f"shared:{index}:{fact_index}:{fact.source_id or 'window'}:{fact.memory_kind}",
+                            int(fact.source_ts or segment.end_ts),
+                            sensitivity="sensitive" if self._looks_sensitive(fact.content) else "normal",
+                            metadata=shared_metadata,
+                        )
+                    )
 
         self_messages = self._select_style_samples(messages, last_ts=last_ts)
         for index, content in enumerate(self_messages, 1):

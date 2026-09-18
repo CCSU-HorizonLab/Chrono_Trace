@@ -19,6 +19,9 @@ RAG_DEFAULTS: dict[str, Any] = {
     "rag_embedding_dim": 384,
     "rag_privacy_mode": "balanced",
     "rag_cross_contact_style_enabled": False,
+    "rag_query_scope": "latest_turn",
+    "rag_fact_shadow_enabled": True,
+    "rag_fact_read_enabled": False,
 }
 
 
@@ -52,6 +55,16 @@ def apply_rag_defaults(settings: dict[str, Any]) -> dict[str, Any]:
     )
     settings["rag_cross_contact_style_enabled"] = _as_bool(
         settings.get("rag_cross_contact_style_enabled"),
+        False,
+    )
+    if settings.get("rag_query_scope") not in {"latest_turn", "recent_window", "all"}:
+        settings["rag_query_scope"] = "latest_turn"
+    settings["rag_fact_shadow_enabled"] = _as_bool(
+        settings.get("rag_fact_shadow_enabled"),
+        True,
+    )
+    settings["rag_fact_read_enabled"] = _as_bool(
+        settings.get("rag_fact_read_enabled"),
         False,
     )
     try:

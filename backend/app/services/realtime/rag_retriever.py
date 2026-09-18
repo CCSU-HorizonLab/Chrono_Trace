@@ -44,11 +44,14 @@ class RagRetriever:
         self.embedding_service = embedding_service or RagEmbeddingService()
 
     def build_query(self, context: dict[str, Any], trigger_type: str, intent: str) -> str:
+        settings = load_rag_settings()
+        scope = str(settings.get("rag_query_scope") or "latest_turn")
         parts = [trigger_type, intent]
         trigger_context = context.get("trigger_context") or {}
         if trigger_context:
             parts.extend(str(value) for value in trigger_context.values())
-        for msg in (context.get("recent_messages") or [])[-8:]:
+        recent_limit = {"latest_turn": 1, "recent_window": 3, "all": 8}.get(scope, 1)
+        for msg in (context.get("recent_messages") or [])[-recent_limit:]:
             content = str(msg.get("content") or "").strip()
             if content:
                 parts.append(content)
@@ -80,6 +83,19 @@ class RagRetriever:
             return self._empty(started, status, degraded=True, reason="conversation_disabled")
         if status.get("status") == "failed":
             return self._empty(started, status, degraded=True, reason="index_failed")
+
+        if settings.get("rag_fact_read_enabled"):
+            fact_result = self._retrieve_facts(
+                account_wxid=account_wxid,
+                conversation_id=conversation_id,
+                query=query,
+                limit=limit,
+                started=started,
+                timeout_ms=timeout_ms,
+                deadline=deadline,
+            )
+            if fact_result["items"]:
+                return fact_result
 
         degrade_reason: str | None = None
         try:
@@ -177,6 +193,64 @@ class RagRetriever:
             "degrade_reason": None if strategy == "vector" else degrade_reason,
             "elapsed_ms": elapsed_ms,
             "by_type": self._count_by_type(filtered),
+        }
+
+    def _retrieve_facts(
+        self,
+        *,
+        account_wxid: str,
+        conversation_id: int,
+        query: str,
+        limit: int,
+        started: float,
+        timeout_ms: int,
+        deadline: float | None,
+    ) -> dict[str, Any]:
+        tokens = set(self._tokens(query))
+        items: list[dict[str, Any]] = []
+        for fact in self.store.list_facts(account_wxid, conversation_id):
+            if self._timed_out(started, timeout_ms, deadline):
+                return self._empty(started, self.store.get_status(account_wxid, conversation_id) or {}, degraded=True, reason="timeout", timed_out=True)
+            if str(fact.get("sensitivity") or "normal") == "sensitive":
+                continue
+            fact_tokens = set(self._tokens(fact.get("content") or ""))
+            overlap = len(tokens & fact_tokens)
+            if not overlap:
+                continue
+            score = overlap / max(1, min(len(tokens), len(fact_tokens)))
+            items.append(
+                {
+                    "document_id": int(fact["id"]),
+                    "doc_type": "fact_memory",
+                    "content": fact.get("content") or "",
+                    "score": round(float(score) * 0.8 + float(fact.get("confidence") or 0.0) * 0.2, 4),
+                    "vector_score": 0.0,
+                    "keyword_score": round(float(score), 4),
+                    "doc": {
+                        "id": int(fact["id"]),
+                        "doc_type": "fact_memory",
+                        "content": fact.get("content") or "",
+                        "source_ts": fact.get("as_of"),
+                        "sensitivity": fact.get("sensitivity") or "normal",
+                        "metadata_json": json.dumps({
+                            "subject": fact.get("subject"),
+                            "memory_kind": fact.get("kind"),
+                            "evidence_message_ids": json.loads(fact.get("evidence_message_ids_json") or "[]"),
+                        }, ensure_ascii=False),
+                    },
+                }
+            )
+        items.sort(key=lambda item: item["score"], reverse=True)
+        items = items[:limit]
+        return {
+            "items": items,
+            "strategy": "facts",
+            "status": self.store.get_status(account_wxid, conversation_id) or {},
+            "timed_out": False,
+            "degraded": False,
+            "degrade_reason": None,
+            "elapsed_ms": int((time.perf_counter() - started) * 1000),
+            "by_type": {"fact_memory": len(items)} if items else {},
         }
 
     def _keyword_fallback(

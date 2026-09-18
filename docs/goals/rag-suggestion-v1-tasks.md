@@ -109,11 +109,11 @@
 
 任务：
 
-- 根据 `account_wxid + conversation_id` 读取历史消息。
-- 切分 `dialogue_turn`、`self_style_example`。
-- 生成基础 `relationship_state` 文档。
-- 写入 RAG 文档和向量。
-- 更新索引状态为 `ready` 或 `failed`。
+- [x] 根据 `account_wxid + conversation_id` 读取历史消息。
+- [x] 切分 `dialogue_turn`、`self_style_example`。
+- [x] 生成基础 `relationship_state` 文档。
+- [x] 写入 RAG 文档和向量。
+- [x] 更新索引状态为 `ready` 或 `failed`。
 
 验收：
 

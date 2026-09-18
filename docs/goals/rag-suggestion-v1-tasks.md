@@ -229,12 +229,12 @@
 
 任务：
 
-- 建议生成后建立归因窗口。
-- 收集 3-10 分钟内同会话候选用户消息。
-- 合并连续短句。
-- 判断 `accepted / rewritten / preface_then_reply / unrelated / interrupted` 等类型。
-- 写入 `suggestion_feedback_attributions`。
-- 高置信正向样本写入 `feedback_example`。
+- [x] 建议生成后建立归因窗口。
+- [x] 收集 3-10 分钟内同会话候选用户消息。
+- [x] 合并连续短句。
+- [x] 判断 `accepted / rewritten / preface_then_reply / unrelated / interrupted` 等类型。
+- [x] 写入 `suggestion_feedback_attributions`。
+- [x] 高置信正向样本写入 `feedback_example`。
 
 验收：
 

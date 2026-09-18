@@ -148,11 +148,11 @@
 
 任务：
 
-- 构造 query：最近对话、最新对方消息、触发类型、intent、手动需求。
-- 支持联系人级过滤。
-- 召回 `relationship_state`、`dialogue_turn`、`self_style_example`、`feedback_example`。
-- 对结果做去重、敏感过滤、重排和压缩。
-- 限制 RAG 检索与上下文构造额外耗时为 800ms。
+- [x] 构造 query：最近对话、最新对方消息、触发类型、intent、手动需求。
+- [x] 支持联系人级过滤。
+- [x] 召回 `relationship_state`、`dialogue_turn`、`self_style_example`、`feedback_example`。
+- [x] 对结果做去重、敏感过滤、重排和压缩。
+- [x] 限制 RAG 检索与上下文构造额外耗时为 800ms。
 
 验收：
 

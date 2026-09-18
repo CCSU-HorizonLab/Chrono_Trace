@@ -127,11 +127,11 @@
 
 任务：
 
-- 增加 `[RAG Intent]` 日志。
-- 记录 mode、confidence、query、reason。
-- 增加 `[RAG] retrieved` 日志，记录 hit count 和 latency。
-- 增加 `[RAG] injected` 日志，记录 injection mode 和 no-hit guard。
-- 避免日志输出长篇原始聊天内容和强敏信息。
+- [x] 增加 `[RAG Intent]` 日志。
+- [x] 记录 mode、confidence、query、reason。
+- [x] 增加 `[RAG] retrieved` 日志，记录 hit count 和 latency。
+- [x] 增加 `[RAG] injected` 日志，记录 injection mode 和 no-hit guard。
+- [x] 避免日志输出长篇原始聊天内容和强敏信息。
 
 验收：
 

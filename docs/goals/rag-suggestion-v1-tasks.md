@@ -49,11 +49,11 @@
 
 任务：
 
-- 实现强敏字段识别：手机号、身份证、银行卡、详细地址、API key、密钥类字符串。
-- 实现稳定占位符：同一会话内相同实体映射到同一占位符。
-- 生成 `redacted_text`、`entity_map_json`、`pii_flags_json`。
-- 写入 `privacy_entities` 和 `privacy_redaction_cache`。
-- 提供强规则兜底遮罩方法，用于脱敏服务异常时的降级路径。
+- [x] 实现强敏字段识别：手机号、身份证、银行卡、详细地址、API key、密钥类字符串。
+- [x] 实现稳定占位符：同一会话内相同实体映射到同一占位符。
+- [x] 生成 `redacted_text`、`entity_map_json`、`pii_flags_json`。
+- [x] 写入 `privacy_entities` 和 `privacy_redaction_cache`。
+- [x] 提供强规则兜底遮罩方法，用于脱敏服务异常时的降级路径。
 
 验收：
 

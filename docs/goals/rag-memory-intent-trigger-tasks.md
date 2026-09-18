@@ -86,11 +86,11 @@
 
 任务：
 
-- `rag_context_builder` 接收 `MemoryIntent`。
-- `should_retrieve = true` 时执行联系人级检索。
-- `mode = ambient` 时只允许轻量关系背景或低成本检索。
-- 检索为空时生成 no-hit guard。
-- RAG 超时或异常时保留原降级行为。
+- [x] `rag_context_builder` 接收 `MemoryIntent`。
+- [x] `should_retrieve = true` 时执行联系人级检索。
+- [x] `mode = ambient` 时只允许轻量关系背景或低成本检索。
+- [x] 检索为空时生成 no-hit guard。
+- [x] RAG 超时或异常时保留原降级行为。
 
 验收：
 

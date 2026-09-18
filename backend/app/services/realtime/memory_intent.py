@@ -9,6 +9,20 @@ from typing import Any, Literal
 
 MemoryIntentMode = Literal["none", "ambient", "memory_request", "relationship_context"]
 
+MEMORY_REQUEST_PROTOTYPES = (
+    ("还记得", "之前", "提过"),
+    ("那家", "店"),
+    ("那个", "流派"),
+    ("上次", "说的"),
+    ("以前", "聊的"),
+)
+RELATIONSHIP_PROTOTYPES = (
+    ("这个人", "适合"),
+    ("对方", "能不能", "开玩笑"),
+    ("我们", "关系"),
+    ("相处", "分寸"),
+)
+
 
 @dataclass(frozen=True)
 class MemoryIntent:
@@ -61,6 +75,30 @@ def detect_memory_intent(context: dict[str, Any] | None) -> MemoryIntent:
                 0.68,
                 query,
                 "history_answer_signal",
+                True,
+                False,
+                manual_request,
+            )
+
+        prototype_mode = _prototype_mode(latest)
+        if prototype_mode == "memory_request":
+            return MemoryIntent(
+                True,
+                "memory_request",
+                0.58,
+                query,
+                "memory_prototype_signal",
+                True,
+                False,
+                manual_request,
+            )
+        if prototype_mode == "relationship_context":
+            return MemoryIntent(
+                True,
+                "relationship_context",
+                0.56,
+                query,
+                "relationship_prototype_signal",
                 True,
                 False,
                 manual_request,
@@ -197,6 +235,25 @@ def _looks_like_relationship_question(text: str) -> bool:
     relation_axis = any(token in compact for token in ("开玩笑", "玩笑", "调侃", "关系", "边界", "分寸", "相处", "沟通", "习惯", "风格"))
     has_actor = any(token in compact for token in ("这个人", "对方", "她", "他", "我们", "ta", "TA"))
     return asks_strategy and relation_axis and has_actor
+
+
+def _prototype_mode(text: str) -> MemoryIntentMode:
+    compact = _compact(text)
+    if not compact:
+        return "none"
+    memory_hits = max(
+        sum(1 for marker in prototype if marker in compact)
+        for prototype in MEMORY_REQUEST_PROTOTYPES
+    )
+    relation_hits = max(
+        sum(1 for marker in prototype if marker in compact)
+        for prototype in RELATIONSHIP_PROTOTYPES
+    )
+    if memory_hits >= 2 and memory_hits >= relation_hits:
+        return "memory_request"
+    if relation_hits >= 2:
+        return "relationship_context"
+    return "none"
 
 
 def _looks_like_followup(text: str) -> bool:

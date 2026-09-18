@@ -1,0 +1,14 @@
+[
+  {"id":"explicit_history","category":"明确记忆请求","user_context":"她上次说的什么流派我不知道","expected_mode":"memory_request","expected_retrieve":true,"output_shape":"reply","no_hit_honest":true},
+  {"id":"implicit_history","category":"隐含记忆请求","user_context":"你还记得那家店吗","expected_mode":"memory_request","expected_retrieve":true,"output_shape":"reply","no_hit_honest":true},
+  {"id":"preference_lookup","category":"偏好查询","user_context":"她说过喜欢拿铁吗","expected_mode":"memory_request","expected_retrieve":true,"output_shape":"reply","no_hit_honest":true},
+  {"id":"shared_place","category":"共同记忆","user_context":"找一下上次那家店我们吃的啥","expected_mode":"memory_request","expected_retrieve":true,"output_shape":"reply","no_hit_honest":true},
+  {"id":"relationship_strategy","category":"关系策略请求","user_context":"这个人现在适合开玩笑吗","expected_mode":"relationship_context","expected_retrieve":true,"output_shape":"reply","no_hit_honest":true},
+  {"id":"ordinary_greeting","category":"普通闲聊","user_context":"你好，测试一下","expected_mode":"none","expected_retrieve":false,"output_shape":"reply","no_hit_honest":true},
+  {"id":"ordinary_suggestion","category":"普通话术","user_context":"给我回一句","expected_mode":"none","expected_retrieve":false,"output_shape":"suggestion","no_hit_honest":true},
+  {"id":"no_hit_history","category":"无命中记忆请求","user_context":"她上次说的游戏是啥，但索引无结果","expected_mode":"memory_request","expected_retrieve":true,"output_shape":"reply","no_hit_honest":true},
+  {"id":"shared_meal","category":"共同记忆","user_context":"我们之前吃的那家店是啥","expected_mode":"memory_request","expected_retrieve":true,"output_shape":"reply","no_hit_honest":true},
+  {"id":"relationship_reply","category":"关系策略请求","user_context":"按我们之前的关系怎么回比较好","expected_mode":"relationship_context","expected_retrieve":true,"output_shape":"suggestion","no_hit_honest":true},
+  {"id":"rag_document_lookup","category":"明确记忆请求","user_context":"历史记录 我说错了 你找找RAG文档里的历史记录","expected_mode":"memory_request","expected_retrieve":true,"output_shape":"reply","no_hit_honest":true},
+  {"id":"topic_followup","category":"连续追问","user_context":"那你看看文档里有没有合适的聊天记录 比如杀戮尖塔啥的","expected_mode":"memory_request","expected_retrieve":true,"output_shape":"reply","no_hit_honest":true}
+]

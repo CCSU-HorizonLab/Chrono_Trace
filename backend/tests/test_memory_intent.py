@@ -7,6 +7,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from app.services.realtime.memory_intent import detect_memory_intent
+from scripts.evaluate_memory_intent_samples import evaluate
 
 
 def test_memory_intent_fixed_acceptance_samples():
@@ -93,3 +94,14 @@ def test_memory_intent_history_does_not_cross_contact():
 
     assert intent.mode == "none"
     assert intent.should_retrieve is False
+
+
+def test_memory_intent_evaluation_report_has_no_fixed_sample_mismatches():
+    samples = [
+        {"id": "lookup", "user_context": "你还记得那家店吗", "expected_mode": "memory_request", "expected_retrieve": True, "no_hit_honest": True},
+        {"id": "chat", "user_context": "你好，测试一下", "expected_mode": "none", "expected_retrieve": False, "no_hit_honest": True},
+    ]
+    report = evaluate(samples)
+    assert report["mismatches"] == []
+    assert report["recall"] == 1.0
+    assert report["false_positive_rate"] == 0.0

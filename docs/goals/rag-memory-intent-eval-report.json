@@ -1,0 +1,32 @@
+{
+  "dataset": "rag-memory-intent-eval-samples.json",
+  "dataset_version": "v1",
+  "baseline": {
+    "type": "legacy_rule_proxy",
+    "samples": 12,
+    "trigger_recall": 0.6,
+    "false_positive_rate": 0.0,
+    "false_negative_rate": 0.4,
+    "mode_accuracy": 0.6667,
+    "notes": "代码内置的旧规则兼容代理，不代表线上运行数据"
+  },
+  "optimized": {
+    "samples": 12,
+    "trigger_recall": 1.0,
+    "false_positive_rate": 0.0,
+    "false_negative_rate": 0.0,
+    "mode_accuracy": 1.0,
+    "no_hit_honesty_cases": 12,
+    "notes": "离线意图检测结果；答案证据忠诚度仍需脱敏答案/Evidence 人工或 LLM judge"
+  },
+  "answer_quality": {
+    "strategy_correctness": null,
+    "identity_isolation": null,
+    "privacy_safety": null,
+    "evidence_faithfulness": null,
+    "abstention_correctness": null,
+    "judge_version": null,
+    "prompt_version": null
+  },
+  "release_decision": "pending_evidence_quality_review"
+}

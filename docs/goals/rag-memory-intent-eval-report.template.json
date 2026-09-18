@@ -1,0 +1,26 @@
+{
+  "dataset": "rag-memory-intent-eval-samples.json",
+  "dataset_version": "v1",
+  "baseline": {
+    "trigger_recall": null,
+    "false_positive_rate": null,
+    "no_hit_honesty": null,
+    "notes": "旧链路未保留统一 memory_intent 输出，需回放旧版本后填写"
+  },
+  "optimized": {
+    "trigger_recall": null,
+    "false_positive_rate": null,
+    "no_hit_honesty": null,
+    "notes": "由 evaluate_memory_intent_samples.py 产出触发指标；答案质量需脱敏人工/LLM judge 填写"
+  },
+  "answer_quality": {
+    "strategy_correctness": null,
+    "identity_isolation": null,
+    "privacy_safety": null,
+    "evidence_faithfulness": null,
+    "abstention_correctness": null,
+    "judge_version": null,
+    "prompt_version": null
+  },
+  "release_decision": "pending_baseline_and_human_review"
+}

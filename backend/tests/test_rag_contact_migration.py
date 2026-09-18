@@ -82,3 +82,21 @@ def test_fact_read_is_opt_in_and_returns_contact_scoped_fact(monkeypatch):
     )
     assert result["strategy"] == "facts"
     assert result["items"][0]["doc_type"] == "fact_memory"
+
+
+def test_rag_schema_is_idempotent_and_keeps_contact_keys():
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    first = RagStore(conn)
+    second = RagStore(conn)
+    tables = {
+        row[0]
+        for row in conn.execute(
+            "select name from sqlite_master where type='table' and name like 'rag_%'"
+        ).fetchall()
+    }
+    assert {"rag_documents", "rag_embeddings", "rag_index_status", "rag_retrieval_logs", "rag_facts"} <= tables
+    columns = {row[1] for row in conn.execute("pragma table_info(rag_documents)").fetchall()}
+    assert {"account_wxid", "conversation_id"} <= columns
+    assert first.get_status("missing", 99) is None
+    assert second.get_status("missing", 99) is None

@@ -28,12 +28,12 @@
 
 任务：
 
-- 新增 RAG 文档表、向量表、检索日志表。
-- 新增联系人级索引状态表，支持 `pending / indexing / ready / stale / failed`。
-- 新增通用隐私实体表和脱敏缓存表。
-- 新增反馈归因表。
-- 所有表都必须包含 `account_wxid`，RAG 相关表必须能关联 `conversation_id`。
-- 迁移必须幂等，重复初始化不报错。
+- [x] 新增 RAG 文档表、向量表、检索日志表。
+- [x] 新增联系人级索引状态表，支持 `pending / indexing / ready / stale / failed`。
+- [x] 新增通用隐私实体表和脱敏缓存表。
+- [x] 新增反馈归因表。
+- [x] 所有表都必须包含 `account_wxid`，RAG 相关表必须能关联 `conversation_id`。
+- [x] 迁移必须幂等，重复初始化不报错。
 
 验收：
 

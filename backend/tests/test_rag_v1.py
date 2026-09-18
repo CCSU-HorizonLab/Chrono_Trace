@@ -1213,7 +1213,7 @@ def test_rag_indexer_rebuilds_v2_multilayer_documents_and_cleans_old_auto_docs(m
     assert conn.execute("SELECT 1 FROM rag_documents WHERE id = ?", (old_doc_id,)).fetchone() is None
     docs = conn.execute("SELECT * FROM rag_documents WHERE conversation_id = 1").fetchall()
     doc_types = {row["doc_type"] for row in docs}
-    assert {"topic_segment", "fact_memory", "evidence_excerpt"} <= doc_types
+    assert {"topic_segment", "fact_memory", "evidence_excerpt", "shared_memory"} <= doc_types
     assert conn.execute("SELECT 1 FROM rag_documents WHERE id = ?", (feedback_id,)).fetchone() is not None
     assert conn.execute("SELECT 1 FROM rag_embeddings WHERE document_id = ?", (feedback_id,)).fetchone() is not None
     fact = conn.execute("SELECT * FROM rag_documents WHERE doc_type = 'fact_memory' LIMIT 1").fetchone()

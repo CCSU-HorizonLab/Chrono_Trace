@@ -223,7 +223,11 @@ class RagRetriever:
                     "document_id": int(fact["id"]),
                     "doc_type": "fact_memory",
                     "content": fact.get("content") or "",
-                    "score": round(float(score) * 0.8 + float(fact.get("confidence") or 0.0) * 0.2, 4),
+                    "score": round(
+                        (float(score) * 0.8 + float(fact.get("confidence") or 0.0) * 0.2)
+                        * self._fact_time_decay(fact),
+                        4,
+                    ),
                     "vector_score": 0.0,
                     "keyword_score": round(float(score), 4),
                     "doc": {
@@ -252,6 +256,16 @@ class RagRetriever:
             "elapsed_ms": int((time.perf_counter() - started) * 1000),
             "by_type": {"fact_memory": len(items)} if items else {},
         }
+
+    def _fact_time_decay(self, fact: dict[str, Any]) -> float:
+        try:
+            source_ts = int(fact.get("as_of") or 0)
+        except (TypeError, ValueError):
+            return 0.5
+        if source_ts <= 0:
+            return 0.5
+        age_days = max(0.0, (time.time() - source_ts) / 86400)
+        return max(0.20, math.exp(-age_days / 180.0))
 
     def _keyword_fallback(
         self,

@@ -188,12 +188,12 @@
 
 任务：
 
-- 远程 LLM 默认只接收 `redacted_content`。
-- `rag_remote_context_redaction = 0` 时，远程 LLM 可接收未脱敏或弱脱敏 RAG。
-- 关闭脱敏必须由用户显式操作。
-- 关闭脱敏时设置页展示明确风险提示。
-- 检索日志写入 `redaction_disabled = true`。
-- 远程 embedding 默认关闭；同时开启远程 embedding 和关闭脱敏时需要再次确认。
+- [x] 远程 LLM 默认只接收 `redacted_content`。
+- [x] `rag_remote_context_redaction = 0` 时，远程 LLM 可接收未脱敏或弱脱敏 RAG。
+- [x] 关闭脱敏必须由用户显式操作。
+- [x] 关闭脱敏时设置页展示明确风险提示。
+- [x] 检索日志写入 `redaction_disabled = true`。
+- [x] 远程 embedding 默认关闭；同时开启远程 embedding 和关闭脱敏时需要再次确认。
 
 验收：
 

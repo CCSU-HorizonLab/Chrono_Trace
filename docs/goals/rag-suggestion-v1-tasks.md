@@ -168,11 +168,11 @@
 
 任务：
 
-- 在生成建议前调用 RAG context builder。
-- `_build_prompt()` 增加 RAG 段落。
-- 最近对话优先级高于 RAG。
-- RAG 异常时自动丢弃 RAG 上下文。
-- 写入 `rag_retrieval_logs`，记录文档 id、耗时、索引状态、脱敏状态、降级状态。
+- [x] 在生成建议前调用 RAG context builder。
+- [x] `_build_prompt()` 增加 RAG 段落。
+- [x] 最近对话优先级高于 RAG。
+- [x] RAG 异常时自动丢弃 RAG 上下文。
+- [x] 写入 `rag_retrieval_logs`，记录文档 id、耗时、索引状态、脱敏状态、降级状态。
 
 验收：
 

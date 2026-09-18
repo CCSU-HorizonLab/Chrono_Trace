@@ -95,6 +95,31 @@ class RagStore:
         )
         self.conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS rag_facts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_wxid TEXT NOT NULL,
+                conversation_id INTEGER NOT NULL,
+                subject TEXT NOT NULL DEFAULT '',
+                kind TEXT NOT NULL,
+                content TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'active',
+                as_of INTEGER,
+                valid_from INTEGER,
+                valid_to INTEGER,
+                confidence REAL DEFAULT 0,
+                sensitivity TEXT DEFAULT 'normal',
+                evidence_message_ids_json TEXT,
+                source_window_json TEXT,
+                summary_method TEXT DEFAULT 'shadow',
+                supersedes_fact_id INTEGER,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                UNIQUE(account_wxid, conversation_id, kind, content)
+            )
+            """
+        )
+        self.conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS rag_retrieval_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 account_wxid TEXT NOT NULL,
@@ -137,6 +162,11 @@ class RagStore:
                 semantic_fact_count INTEGER DEFAULT 0,
                 style_sample_count INTEGER DEFAULT 0,
                 rerank_reason TEXT,
+                retrieval_source TEXT,
+                fact_ids_json TEXT,
+                evidence_ids_json TEXT,
+                query_scope TEXT,
+                supersession_decision TEXT,
                 created_at INTEGER NOT NULL
             )
             """
@@ -203,6 +233,11 @@ class RagStore:
             "semantic_fact_count": "INTEGER DEFAULT 0",
             "style_sample_count": "INTEGER DEFAULT 0",
             "rerank_reason": "TEXT",
+            "retrieval_source": "TEXT",
+            "fact_ids_json": "TEXT",
+            "evidence_ids_json": "TEXT",
+            "query_scope": "TEXT",
+            "supersession_decision": "TEXT",
         }
         for name, definition in columns.items():
             if name not in existing:
@@ -572,8 +607,9 @@ class RagStore:
              rag_strategy, index_version, selected_doc_types_json, top_doc_time_label,
              query_expanded_terms_json, no_hit_reason, task_relevance_score,
              off_topic_rejected_count, semantic_fact_count, style_sample_count,
-             rerank_reason, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             rerank_reason, retrieval_source, fact_ids_json, evidence_ids_json,
+             query_scope, supersession_decision, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 payload.get("account_wxid") or "",
@@ -616,10 +652,72 @@ class RagStore:
                 int(payload.get("semantic_fact_count") or 0),
                 int(payload.get("style_sample_count") or 0),
                 payload.get("rerank_reason"),
+                payload.get("retrieval_source"),
+                json.dumps(payload.get("fact_ids") or [], ensure_ascii=False),
+                json.dumps(payload.get("evidence_ids") or [], ensure_ascii=False),
+                payload.get("query_scope"),
+                payload.get("supersession_decision"),
                 _now(),
             ),
         )
         return int(cursor.lastrowid)
+
+    def upsert_fact(self, **payload: Any) -> int:
+        now = _now()
+        self.conn.execute(
+            """
+            INSERT INTO rag_facts
+            (account_wxid, conversation_id, subject, kind, content, status, as_of,
+             valid_from, valid_to, confidence, sensitivity, evidence_message_ids_json,
+             source_window_json, summary_method, supersedes_fact_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(account_wxid, conversation_id, kind, content) DO UPDATE SET
+              subject=excluded.subject, status=excluded.status, as_of=excluded.as_of,
+              valid_from=excluded.valid_from, valid_to=excluded.valid_to,
+              confidence=excluded.confidence, sensitivity=excluded.sensitivity,
+              evidence_message_ids_json=excluded.evidence_message_ids_json,
+              source_window_json=excluded.source_window_json,
+              summary_method=excluded.summary_method,
+              supersedes_fact_id=excluded.supersedes_fact_id, updated_at=excluded.updated_at
+            """,
+            (
+                payload.get("account_wxid") or "",
+                payload.get("conversation_id"),
+                payload.get("subject") or "",
+                payload.get("kind") or "unknown",
+                payload.get("content") or "",
+                payload.get("status") or "active",
+                payload.get("as_of"), payload.get("valid_from"), payload.get("valid_to"),
+                float(payload.get("confidence") or 0.0),
+                payload.get("sensitivity") or "normal",
+                json.dumps(payload.get("evidence_message_ids") or [], ensure_ascii=False),
+                json.dumps(payload.get("source_window") or {}, ensure_ascii=False),
+                payload.get("summary_method") or "shadow",
+                payload.get("supersedes_fact_id"), now, now,
+            ),
+        )
+        row = self.conn.execute(
+            "SELECT id FROM rag_facts WHERE account_wxid=? AND conversation_id=? AND kind=? AND content=?",
+            (payload.get("account_wxid") or "", payload.get("conversation_id"), payload.get("kind") or "unknown", payload.get("content") or ""),
+        ).fetchone()
+        if not row:
+            return 0
+        try:
+            return int(row["id"])
+        except (TypeError, KeyError, IndexError):
+            return int(row[0])
+
+    def list_facts(self, account_wxid: str, conversation_id: int) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            """
+            SELECT * FROM rag_facts
+            WHERE account_wxid = ? AND conversation_id = ?
+              AND status = 'active'
+            ORDER BY confidence DESC, updated_at DESC
+            """,
+            (account_wxid, conversation_id),
+        ).fetchall()
+        return [dict(row) for row in rows]
 
     def attach_log_to_suggestion(self, log_id: int | None, suggestion_id: int) -> None:
         if not log_id:

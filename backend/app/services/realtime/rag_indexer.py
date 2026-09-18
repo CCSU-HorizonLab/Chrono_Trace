@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import json
 import re
 import threading
 import time
@@ -11,7 +12,12 @@ from typing import Any
 from ...db.connection import get_db
 from .privacy_redactor import PrivacyRedactor
 from .rag_config import load_rag_settings
-from .rag_embedding import RagEmbeddingService, RagEmbeddingUnavailable
+from .rag_embedding import (
+    RagEmbeddingDimensionMismatch,
+    RagEmbeddingService,
+    RagEmbeddingUnavailable,
+)
+from .rag_fact_extractor import FactExtractionError, StructuredFactExtractor
 from .rag_semantic_memory import SemanticFactExtractor
 from .rag_segmenter import RagSegment, RagSegmenter
 from .rag_store import RAG_INDEX_VERSION, RagStore
@@ -32,11 +38,13 @@ class RagIndexer:
         self,
         store: RagStore | None = None,
         embedding_service: RagEmbeddingService | None = None,
+        structured_fact_extractor: StructuredFactExtractor | None = None,
     ):
         self.store = store or RagStore()
         self.embedding_service = embedding_service or RagEmbeddingService()
         self.segmenter = RagSegmenter()
         self.semantic_fact_extractor = SemanticFactExtractor(self.embedding_service, self.segmenter)
+        self.structured_fact_extractor = structured_fact_extractor
 
     def ensure_contact_index(
         self,
@@ -197,6 +205,11 @@ class RagIndexer:
             for start in range(0, len(docs), self.EMBED_BATCH_SIZE):
                 batch = docs[start:start + self.EMBED_BATCH_SIZE]
                 vectors = self.embedding_service.embed_texts([doc["content"] for doc in batch])
+                raw_dimensions = getattr(self.embedding_service, "last_raw_dimensions", [])
+                if raw_dimensions and any(int(item or 0) != dim for item in raw_dimensions):
+                    raise RagEmbeddingDimensionMismatch(
+                        f"embedding dimension mismatch: model={raw_dimensions} configured={dim}"
+                    )
                 for doc, vector in zip(batch, vectors):
                     existing_document_id = doc.pop("_existing_document_id", None)
                     if existing_document_id:
@@ -245,7 +258,7 @@ class RagIndexer:
                 cleaned_old,
             )
             return self.store.get_status(account_wxid, conversation_id) or {}
-        except RagEmbeddingUnavailable as exc:
+        except (RagEmbeddingUnavailable, RagEmbeddingDimensionMismatch) as exc:
             self.store.upsert_status(
                 account_wxid,
                 conversation_id,
@@ -380,10 +393,35 @@ class RagIndexer:
                 )
             )
             semantic_facts = self.semantic_fact_extractor.extract(segment)
+            self._extract_structured_shadow_facts(
+                account_wxid=account_wxid,
+                conversation_id=conversation_id,
+                segment=segment,
+            )
             semantic_fact_count += len(
                 [fact for fact in semantic_facts if fact.memory_kind != "marker_fallback"]
             )
             for fact_index, fact in enumerate(semantic_facts, 1):
+                if load_rag_settings().get("rag_fact_shadow_enabled", True):
+                    self.store.upsert_fact(
+                        account_wxid=account_wxid,
+                        conversation_id=conversation_id,
+                        subject=fact.subject,
+                        kind=fact.memory_kind,
+                        content=fact.content,
+                        status="active",
+                        as_of=int(fact.source_ts or segment.end_ts),
+                        valid_from=int(fact.source_window_start_ts or segment.start_ts),
+                        valid_to=int(fact.source_window_end_ts or segment.end_ts),
+                        confidence=float(fact.semantic_score),
+                        sensitivity="sensitive" if self._looks_sensitive(fact.content) else "normal",
+                        evidence_message_ids=fact.evidence_message_ids,
+                        source_window={
+                            "start_ts": fact.source_window_start_ts,
+                            "end_ts": fact.source_window_end_ts,
+                        },
+                        summary_method="shadow_semantic_embedding",
+                    )
                 fact_metadata = self._metadata(
                     segment,
                     source_kind="historical",
@@ -477,6 +515,51 @@ class RagIndexer:
             len(self_messages),
         )
         return docs
+
+    def _extract_structured_shadow_facts(
+        self,
+        *,
+        account_wxid: str,
+        conversation_id: int,
+        segment: RagSegment,
+    ) -> None:
+        """Run an injected LLM extractor without affecting document retrieval."""
+        if self.structured_fact_extractor is None:
+            return
+        prompt = json.dumps(
+            {
+                "task": "extract_atomic_contact_facts",
+                "messages": segment.messages,
+                "contract": {
+                    "required": ["subject", "kind", "content"],
+                    "status": ["active", "superseded", "uncertain"],
+                    "evidence_message_ids": "integer array",
+                },
+            },
+            ensure_ascii=False,
+        )
+        try:
+            facts = self.structured_fact_extractor.extract(prompt)
+        except FactExtractionError as exc:
+            logger.warning("[RAG Fact Shadow] quarantined invalid extraction: %s", exc)
+            return
+        for fact in facts:
+            self.store.upsert_fact(
+                account_wxid=account_wxid,
+                conversation_id=conversation_id,
+                subject=fact["subject"],
+                kind=fact["kind"],
+                content=fact["content"],
+                status=fact["status"],
+                as_of=fact.get("as_of") or segment.end_ts,
+                valid_from=fact.get("valid_from") or segment.start_ts,
+                valid_to=fact.get("valid_to") or segment.end_ts,
+                confidence=fact["confidence"],
+                sensitivity=fact["sensitivity"],
+                evidence_message_ids=fact["evidence_message_ids"],
+                source_window=fact.get("source_window") or {},
+                summary_method="llm_shadow",
+            )
 
     def _doc_payload(
         self,

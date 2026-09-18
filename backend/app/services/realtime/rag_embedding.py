@@ -12,6 +12,10 @@ class RagEmbeddingUnavailable(RuntimeError):
     """Raised when the local RAG embedding model is not installed."""
 
 
+class RagEmbeddingDimensionMismatch(RuntimeError):
+    """Raised when a model emits vectors different from the configured index dimension."""
+
+
 class RagEmbeddingService:
     """Thin adapter over the existing local text2vec model."""
 
@@ -20,6 +24,7 @@ class RagEmbeddingService:
     _shared_sentiment_service: SentimentService | None = None
 
     def __init__(self, sentiment_service: SentimentService | None = None):
+        self.last_raw_dimensions: list[int] = []
         if sentiment_service is not None:
             self.sentiment_service = sentiment_service
             return
@@ -41,8 +46,10 @@ class RagEmbeddingService:
         # Reuse the existing analysis service to avoid a second model stack.
         results = self.sentiment_service.analyze_batch(safe_texts)
         vectors = []
+        self.last_raw_dimensions = []
         for result in results:
             vector = list(result.get("embedding") or [])
+            self.last_raw_dimensions.append(len(vector))
             if len(vector) > self.dim:
                 vector = vector[: self.dim]
             elif len(vector) < self.dim:

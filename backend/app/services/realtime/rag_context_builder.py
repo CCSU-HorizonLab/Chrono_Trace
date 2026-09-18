@@ -537,6 +537,15 @@ class RagContextBuilder:
             semantic_fact_count=self._semantic_fact_count(result.get("items") or []),
             style_sample_count=self._style_sample_count(result.get("items") or []),
             rerank_reason=effective_gate_decision.rerank_reason or rerank_debug.get("rerank_reason"),
+            retrieval_source="fact" if result.get("strategy") == "facts" else "document",
+            fact_ids=[
+                item.get("document_id")
+                for item in items
+                if str(item.get("doc_type") or "") == "fact_memory"
+            ],
+            evidence_ids=[],
+            query_scope=str(load_rag_settings().get("rag_query_scope") or "latest_turn"),
+            supersession_decision=None,
         )
         self.store.conn.commit()
         context["_rag_log_id"] = log_id
@@ -1225,6 +1234,11 @@ class RagContextBuilder:
             semantic_fact_count=0,
             style_sample_count=0,
             rerank_reason=gate_decision.rerank_reason,
+            retrieval_source="none",
+            fact_ids=[],
+            evidence_ids=[],
+            query_scope=str(settings.get("rag_query_scope") or "latest_turn"),
+            supersession_decision=None,
         )
         self.store.conn.commit()
         logger.debug(

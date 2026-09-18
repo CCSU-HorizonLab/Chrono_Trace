@@ -8,6 +8,7 @@ import pytest
 
 from app.services.realtime.rag_fact_extractor import FactExtractionError, StructuredFactExtractor
 from app.services.realtime.rag_config import apply_rag_defaults
+from app.services.realtime.rag_embedding import RagEmbeddingService
 from app.services.realtime.rag_retriever import RagRetriever
 from app.services.realtime.rag_store import RagStore
 from app.services.realtime.privacy_redactor import PrivacyRedactor
@@ -121,3 +122,17 @@ def test_privacy_redactor_persists_cache_and_strong_masks_api_key():
     assert "sk-abcdefghijklmnopqrstuvwxyz123456" not in redactor.strong_mask(
         "token=sk-abcdefghijklmnopqrstuvwxyz123456"
     )
+
+
+def test_embedding_adapter_exposes_raw_dimension_before_index_validation():
+    class FakeSentiment:
+        def has_local_embedding_model(self):
+            return True
+
+        def analyze_batch(self, texts):
+            return [{"embedding": [0.1] * 768} for _ in texts]
+
+    service = RagEmbeddingService(FakeSentiment())
+    vectors = service.embed_texts(["hello"])
+    assert len(vectors[0]) == 384  # compatibility shape at the adapter boundary
+    assert service.last_raw_dimensions == [768]

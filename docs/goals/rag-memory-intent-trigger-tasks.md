@@ -27,10 +27,10 @@
 
 任务：
 
-- 定义 `MemoryIntent` 数据结构。
-- 字段包括 `should_retrieve`、`mode`、`confidence`、`query`、`reason`。
-- 模式限定为 `none / ambient / memory_request / relationship_context`。
-- 提供默认值，确保异常时返回 `none` 而不是中断建议生成。
+- [x] 定义 `MemoryIntent` 数据结构。
+- [x] 字段包括 `should_retrieve`、`mode`、`confidence`、`query`、`reason`。
+- [x] 模式限定为 `none / ambient / memory_request / relationship_context`。
+- [x] 提供默认值，确保异常时返回 `none` 而不是中断建议生成。
 
 验收：
 

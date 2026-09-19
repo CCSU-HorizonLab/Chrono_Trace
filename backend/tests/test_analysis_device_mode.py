@@ -118,6 +118,29 @@ class TestAnalysisDeviceMode:
         assert service._embedding_load_failed is True
         mock_sentence_transformer.assert_not_called()
 
+    def test_sentiment_service_preserves_native_embedding_dimension(self):
+        class NativeVector(list):
+            def tolist(self):
+                return list(self)
+
+        class NativeModel:
+            def get_sentence_embedding_dimension(self):
+                return 768
+
+            def encode(self, text, **kwargs):
+                return NativeVector([0.1] * 768)
+
+        service = SentimentService()
+        service._embedding_model = NativeModel()
+        service._embedding_dimension = 768
+        service._embedding_load_failed = False
+        service._embedding_cache.clear()
+
+        vector = service._get_embedding("保留模型原始维度")
+
+        assert len(vector) == 768
+        assert service._embedding_dimension == 768
+
     def test_bridge_settings_and_extract_features_override(self):
         with patch("app.webview.bridge.WeChatIngestService", return_value=MagicMock()), \
              patch("app.services.realtime.floating_window_service.FloatingWindowService", return_value=MagicMock()):

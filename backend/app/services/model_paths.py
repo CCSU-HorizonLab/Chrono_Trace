@@ -13,6 +13,9 @@ MODEL_ROOT_DIR_KEY = "model_root_dir"
 
 SENTIMENT_MODEL_REPO_ID = "tingting0514/chrono-trace-sentiment"
 EMBEDDING_MODEL_REPO_ID = "tingting0514/text2vec-base-chinese"
+# text2vec-base-chinese is a BERT-base embedding model.  Do not project its
+# vectors down to this value; it is only the default index schema dimension.
+EMBEDDING_MODEL_DIM = 768
 
 SENTIMENT_MODEL_DIRNAME = "sentiment_3class"
 EMBEDDING_MODEL_DIRNAME = "text2vec_base_chinese"

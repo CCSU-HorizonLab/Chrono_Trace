@@ -20,7 +20,6 @@ class RagEmbeddingService:
     """Thin adapter over the existing local text2vec model."""
 
     model_name = EMBEDDING_MODEL_REPO_ID
-    dim = 384
     _shared_sentiment_service: SentimentService | None = None
 
     def __init__(self, sentiment_service: SentimentService | None = None):
@@ -50,13 +49,11 @@ class RagEmbeddingService:
         for result in results:
             vector = list(result.get("embedding") or [])
             self.last_raw_dimensions.append(len(vector))
-            if len(vector) > self.dim:
-                vector = vector[: self.dim]
-            elif len(vector) < self.dim:
-                vector.extend([0.0] * (self.dim - len(vector)))
+            if not vector:
+                raise RagEmbeddingUnavailable("本地 embedding 模型未返回可用向量")
             vectors.append(vector)
         return vectors
 
     def embed_text(self, text: str) -> list[float]:
         vectors = self.embed_texts([text])
-        return vectors[0] if vectors else [0.0] * self.dim
+        return vectors[0] if vectors else []

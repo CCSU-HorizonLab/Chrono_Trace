@@ -152,5 +152,27 @@ def test_embedding_adapter_exposes_raw_dimension_before_index_validation():
 
     service = RagEmbeddingService(FakeSentiment())
     vectors = service.embed_texts(["hello"])
-    assert len(vectors[0]) == 384  # compatibility shape at the adapter boundary
+    assert len(vectors[0]) == 768
     assert service.last_raw_dimensions == [768]
+
+
+def test_rag_store_rejects_embedding_dimension_mismatch():
+    conn = sqlite3.connect(":memory:")
+    store = RagStore(conn)
+    document_id = store.upsert_document(
+        account_wxid="wxid_a",
+        conversation_id=1,
+        doc_type="fact_memory",
+        content="对方喜欢拿铁",
+        source_table="messages",
+        source_id="1",
+    )
+    with pytest.raises(ValueError, match="embedding dimension mismatch"):
+        store.upsert_embedding(
+            document_id=document_id,
+            account_wxid="wxid_a",
+            conversation_id=1,
+            embedding_model="test",
+            embedding_dim=768,
+            vector=[0.1] * 384,
+        )

@@ -9,7 +9,11 @@ import time
 from typing import Any
 
 from .rag_config import load_rag_settings
-from .rag_embedding import RagEmbeddingService, RagEmbeddingUnavailable
+from .rag_embedding import (
+    RagEmbeddingDimensionMismatch,
+    RagEmbeddingService,
+    RagEmbeddingUnavailable,
+)
 from .rag_store import RAG_INDEX_VERSION, RagStore
 
 
@@ -381,6 +385,10 @@ class SuggestionFeedbackAttributor:
             model = str(settings["rag_embedding_model"])
             dim = int(settings["rag_embedding_dim"])
             vector = RagEmbeddingService().embed_text(content)
+            if len(vector) != dim:
+                raise RagEmbeddingDimensionMismatch(
+                    f"feedback embedding dimension mismatch: vector={len(vector)} configured={dim}"
+                )
             self.store.upsert_embedding(
                 document_id=int(document_id),
                 account_wxid=account_wxid,
@@ -390,7 +398,7 @@ class SuggestionFeedbackAttributor:
                 vector=vector,
                 embedding_provider="local",
             )
-        except RagEmbeddingUnavailable:
+        except (RagEmbeddingUnavailable, RagEmbeddingDimensionMismatch):
             self._mark_feedback_dirty(account_wxid, conversation_id)
         except Exception:
             self._mark_feedback_dirty(account_wxid, conversation_id)

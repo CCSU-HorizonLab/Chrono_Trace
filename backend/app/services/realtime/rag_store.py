@@ -461,9 +461,11 @@ class RagStore:
         vector: list[float],
         embedding_provider: str = "local",
     ) -> None:
-        safe_vector = [float(item) for item in vector[:embedding_dim]]
-        if len(safe_vector) < embedding_dim:
-            safe_vector.extend([0.0] * (embedding_dim - len(safe_vector)))
+        safe_vector = [float(item) for item in vector]
+        if len(safe_vector) != int(embedding_dim):
+            raise ValueError(
+                f"embedding dimension mismatch: vector={len(safe_vector)} configured={embedding_dim}"
+            )
         self.conn.execute(
             """
             INSERT INTO rag_embeddings

@@ -10,7 +10,11 @@ import time
 from typing import Any
 
 from .rag_config import load_rag_settings
-from .rag_embedding import RagEmbeddingService, RagEmbeddingUnavailable
+from .rag_embedding import (
+    RagEmbeddingDimensionMismatch,
+    RagEmbeddingService,
+    RagEmbeddingUnavailable,
+)
 from .rag_store import RagStore
 
 
@@ -116,6 +120,10 @@ class RagRetriever:
             if self._embedding_is_warm():
                 try:
                     query_vector = self.embedding_service.embed_text(query)
+                    if len(query_vector) != dim:
+                        raise RagEmbeddingDimensionMismatch(
+                            f"query embedding dimension mismatch: vector={len(query_vector)} configured={dim}"
+                        )
                     scored = self._score_vector_docs(query, query_vector, docs)
                     strategy = "vector"
                 except RagEmbeddingUnavailable:
@@ -126,6 +134,14 @@ class RagRetriever:
                         reason="embedding_unavailable",
                     )
                     degrade_reason = "embedding_unavailable"
+                except RagEmbeddingDimensionMismatch:
+                    docs, scored, strategy = self._keyword_fallback(
+                        account_wxid,
+                        conversation_id,
+                        query,
+                        reason="embedding_dimension_mismatch",
+                    )
+                    degrade_reason = "embedding_dimension_mismatch"
                 except Exception as exc:
                     logger.debug("[RAG Retriever] vector scoring failed: %s", exc)
                     docs, scored, strategy = self._keyword_fallback(

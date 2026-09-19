@@ -7,6 +7,7 @@ Pillow>=10.0.0
 jieba>=0.42.1
 numpy>=1.24.0
 pycryptodome>=3.20.0
+packaging/vendor/wx_key-2.1.1-cp312-cp312-win_amd64.whl
 snownlp>=0.12.3
 sentence-transformers>=2.2.0
 scikit-learn>=1.3.0

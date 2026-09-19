@@ -8,6 +8,7 @@ numpy>=1.24.0
 
 # 微信数据库解密依赖
 pycryptodome>=3.20.0  # 纯 Python 实现的 SQLCipher 4 解密
+./packaging/vendor/wx_key-2.1.1-cp312-cp312-win_amd64.whl
 
 # 好感度分析依赖 (002-affinity-analysis)
 snownlp>=0.12.3

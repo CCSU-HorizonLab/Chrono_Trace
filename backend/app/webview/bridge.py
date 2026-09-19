@@ -35,6 +35,7 @@ from ..services.analysis.feature_extraction_config import (
 )
 from ..services.model_paths import (
     EMBEDDING_MODEL_DIRNAME,
+    EMBEDDING_MODEL_DIM,
     EMBEDDING_MODEL_REPO_ID,
     MODEL_ROOT_DIR_KEY,
     SENTIMENT_MODEL_DIRNAME,
@@ -1211,9 +1212,14 @@ class Bridge:
                 payload[bool_key] = bool(payload[bool_key])
         if "rag_embedding_dim" in payload:
             try:
-                payload["rag_embedding_dim"] = int(payload["rag_embedding_dim"] or 384)
+                payload["rag_embedding_dim"] = int(payload["rag_embedding_dim"] or EMBEDDING_MODEL_DIM)
             except (TypeError, ValueError):
-                payload["rag_embedding_dim"] = 384
+                payload["rag_embedding_dim"] = EMBEDDING_MODEL_DIM
+            if (
+                payload.get("rag_embedding_model") == EMBEDDING_MODEL_REPO_ID
+                and payload["rag_embedding_dim"] == 384
+            ):
+                payload["rag_embedding_dim"] = EMBEDDING_MODEL_DIM
         if (
             payload.get("rag_allow_remote_embedding")
             and payload.get("rag_remote_context_redaction") is False

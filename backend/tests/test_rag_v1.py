@@ -35,7 +35,17 @@ def test_rag_defaults_are_privacy_preserving():
     assert settings["rag_remote_context_redaction"] is True
     assert settings["rag_allow_remote_embedding"] is False
     assert settings["rag_embedding_model"] == "tingting0514/text2vec-base-chinese"
-    assert settings["rag_embedding_dim"] == 384
+    assert settings["rag_embedding_dim"] == 768
+
+
+def test_rag_defaults_migrate_legacy_384_projection_for_default_model():
+    settings = apply_rag_defaults(
+        {
+            "rag_embedding_model": "tingting0514/text2vec-base-chinese",
+            "rag_embedding_dim": 384,
+        }
+    )
+    assert settings["rag_embedding_dim"] == 768
 
 
 def test_remote_llm_detection_uses_actual_host_not_provider_label():
@@ -1378,8 +1388,8 @@ def test_retriever_embedding_unavailable_falls_back_to_keyword():
         account_wxid="wxid_a",
         conversation_id=1,
         embedding_model="tingting0514/text2vec-base-chinese",
-        embedding_dim=384,
-        vector=[0.1] * 384,
+        embedding_dim=768,
+        vector=[0.1] * 768,
     )
 
     class MissingEmbedding:
@@ -1417,8 +1427,8 @@ def test_retriever_uses_shared_warm_embedding_service_for_vector_search(monkeypa
         account_wxid="wxid_a",
         conversation_id=1,
         embedding_model="tingting0514/text2vec-base-chinese",
-        embedding_dim=384,
-        vector=[1.0] + [0.0] * 383,
+        embedding_dim=768,
+        vector=[1.0] + [0.0] * 767,
     )
 
     class WarmSentiment:
@@ -1428,7 +1438,7 @@ def test_retriever_uses_shared_warm_embedding_service_for_vector_search(monkeypa
             return True
 
         def analyze_batch(self, texts):
-            return [{"embedding": [1.0] + [0.0] * 383} for _ in texts]
+            return [{"embedding": [1.0] + [0.0] * 767} for _ in texts]
 
     monkeypatch.setattr(RagEmbeddingService, "_shared_sentiment_service", WarmSentiment())
 
@@ -1461,13 +1471,13 @@ def test_retriever_filters_low_vector_matches_without_keyword_overlap():
         account_wxid="wxid_a",
         conversation_id=1,
         embedding_model="tingting0514/text2vec-base-chinese",
-        embedding_dim=384,
-        vector=[0.2, 0.979795897] + [0.0] * 382,
+        embedding_dim=768,
+        vector=[0.2, 0.979795897] + [0.0] * 766,
     )
 
     class LowSimilarityEmbedding:
         def embed_text(self, text):
-            return [1.0] + [0.0] * 383
+            return [1.0] + [0.0] * 767
 
     result = RagRetriever(store=store, embedding_service=LowSimilarityEmbedding()).retrieve(
         account_wxid="wxid_a",

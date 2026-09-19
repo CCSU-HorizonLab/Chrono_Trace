@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ...db.connection import get_db
-from ..model_paths import EMBEDDING_MODEL_REPO_ID, get_embedding_model_dir
+from ..model_paths import EMBEDDING_MODEL_DIM, EMBEDDING_MODEL_REPO_ID, get_embedding_model_dir
 from .feature_extraction_config import (
     ANALYSIS_DEVICE_MODE_AUTO,
     ANALYSIS_DEVICE_MODE_CPU,
@@ -55,6 +55,7 @@ class SentimentService:
         self._realtime_service = None
         self._embedding_model = None
         self._embedding_load_failed = False
+        self._embedding_dimension: Optional[int] = None
         self._embedding_device = "cpu"
         self._embedding_model_path: Optional[str] = None
         self._device_mode = FeatureExtractionConfig.from_settings().analysis_device_mode
@@ -98,6 +99,8 @@ class SentimentService:
         self._device_mode = normalized_mode
         self._embedding_model = None
         self._embedding_load_failed = False
+        self._embedding_dimension = None
+        self._embedding_cache.clear()
         self._embedding_device = "cpu"
         self._embedding_model_path = None
         if self._realtime_service is not None:
@@ -178,6 +181,7 @@ class SentimentService:
                         local_files_only=True,
                     )
                     self._embedding_device = device
+                    self._set_embedding_dimension_from_model()
                 finally:
                     if old_hf_hub_offline is None:
                         os.environ.pop("HF_HUB_OFFLINE", None)
@@ -200,6 +204,32 @@ class SentimentService:
                 logger.debug("[情感服务] 将使用零向量替代，不影响核心分析流程")
                 self._embedding_load_failed = True
 
+    def _set_embedding_dimension_from_model(self) -> None:
+        """Record the model's native vector width without projecting vectors."""
+        getter = getattr(self._embedding_model, "get_sentence_embedding_dimension", None)
+        try:
+            raw_dimension = getter() if callable(getter) else None
+        except Exception:
+            raw_dimension = None
+        if isinstance(raw_dimension, (int, float)) and int(raw_dimension) > 0:
+            self._set_embedding_dimension(int(raw_dimension))
+
+    def _set_embedding_dimension(self, dimension: int) -> None:
+        if dimension <= 0:
+            return
+        if self._embedding_dimension not in {None, dimension}:
+            # Avoid mixing old projected vectors with a newly loaded model.
+            self._embedding_cache.clear()
+        self._embedding_dimension = dimension
+
+    def _fallback_embedding(self) -> List[float]:
+        return [0.0] * (self._embedding_dimension or EMBEDDING_MODEL_DIM)
+
+    def _expected_embedding_dimension(self) -> Optional[int]:
+        """Load the local model if needed so persisted old-width vectors are skipped."""
+        self._load_embedding_model()
+        return self._embedding_dimension
+
     def analyze_sentiment(self, text) -> Dict[str, Any]:
         """Analyze one text and produce sentiment plus embedding."""
         if isinstance(text, bytes):
@@ -214,7 +244,7 @@ class SentimentService:
             return {
                 "polarity": 0,
                 "intensity": 0.0,
-                "embedding": [0.0] * 384,
+                "embedding": self._fallback_embedding(),
             }
 
         try:
@@ -231,7 +261,7 @@ class SentimentService:
             return {
                 "polarity": 0,
                 "intensity": 0.0,
-                "embedding": [0.0] * 384,
+                "embedding": self._fallback_embedding(),
             }
 
     def analyze_batch(self, texts: List[str]) -> List[Dict[str, Any]]:
@@ -260,7 +290,7 @@ class SentimentService:
                 results.append({
                     "polarity": 0,
                     "intensity": 0.0,
-                    "embedding": [0.0] * 384,
+                    "embedding": self._fallback_embedding(),
                 })
                 continue
 
@@ -268,21 +298,22 @@ class SentimentService:
             results.append({
                 "polarity": result.get("polarity", 0),
                 "intensity": round(result.get("intensity", 0.0), 4),
-                "embedding": embeddings[index] if index < len(embeddings) else [0.0] * 384,
+                "embedding": embeddings[index] if index < len(embeddings) else self._fallback_embedding(),
             })
 
         return results
 
     @_safe_disable_dynamo
     def _get_embedding(self, text: str) -> List[float]:
-        """Encode one text to a 384-d embedding."""
-        if text in self._embedding_cache:
-            return self._embedding_cache[text]
+        """Encode one text using the local model's native vector dimension."""
 
         try:
             self._load_embedding_model()
             if self._embedding_model is None:
-                return [0.0] * 384
+                return self._fallback_embedding()
+            cached = self._embedding_cache.get(text)
+            if cached is not None and len(cached) == self._embedding_dimension:
+                return cached
 
             with self._lock:
                 embedding = self._embedding_model.encode(
@@ -292,10 +323,7 @@ class SentimentService:
                 )
 
             embedding_list = embedding.tolist()
-            if len(embedding_list) > 384:
-                embedding_list = embedding_list[:384]
-            elif len(embedding_list) < 384:
-                embedding_list = embedding_list + ([0.0] * (384 - len(embedding_list)))
+            self._set_embedding_dimension(len(embedding_list))
 
             if len(self._embedding_cache) >= 10000:
                 oldest_key = next(iter(self._embedding_cache))
@@ -305,22 +333,26 @@ class SentimentService:
             return embedding_list
         except Exception as exc:
             logger.error(f"[情感服务] 向量生成失败: {exc}")
-            return [0.0] * 384
+            return self._fallback_embedding()
 
     @_safe_disable_dynamo
     def _get_embeddings_batch(self, texts: List[str], batch_size: int = 64) -> List[List[float]]:
-        """Encode a batch of texts to 384-d embeddings."""
+        """Encode a batch using the local model's native vector dimension."""
         if not texts:
             return []
 
+        self._load_embedding_model()
         results: List[Optional[List[float]]] = [None] * len(texts)
         uncached_indices: List[int] = []
         uncached_texts: List[str] = []
 
         for index, text in enumerate(texts):
             if not text or not text.strip():
-                results[index] = [0.0] * 384
-            elif text in self._embedding_cache:
+                results[index] = self._fallback_embedding()
+            elif (
+                text in self._embedding_cache
+                and len(self._embedding_cache[text]) == self._embedding_dimension
+            ):
                 results[index] = self._embedding_cache[text]
             else:
                 uncached_indices.append(index)
@@ -328,10 +360,9 @@ class SentimentService:
 
         if uncached_texts:
             try:
-                self._load_embedding_model()
                 if self._embedding_model is None:
                     for index in uncached_indices:
-                        results[index] = [0.0] * 384
+                        results[index] = self._fallback_embedding()
                 else:
                     with self._lock:
                         embeddings = self._embedding_model.encode(
@@ -343,10 +374,7 @@ class SentimentService:
 
                     for local_index, original_index in enumerate(uncached_indices):
                         embedding_list = embeddings[local_index].tolist()
-                        if len(embedding_list) > 384:
-                            embedding_list = embedding_list[:384]
-                        elif len(embedding_list) < 384:
-                            embedding_list = embedding_list + ([0.0] * (384 - len(embedding_list)))
+                        self._set_embedding_dimension(len(embedding_list))
 
                         results[original_index] = embedding_list
 
@@ -358,9 +386,9 @@ class SentimentService:
                 logger.error(f"[情感服务] 批量向量生成失败: {exc}")
                 for index in uncached_indices:
                     if results[index] is None:
-                        results[index] = [0.0] * 384
+                        results[index] = self._fallback_embedding()
 
-        return [item if item is not None else [0.0] * 384 for item in results]
+        return [item if item is not None else self._fallback_embedding() for item in results]
 
     def cache_sentiment_result(
         self,
@@ -395,6 +423,7 @@ class SentimentService:
     def get_sentiment_from_cache(self, message_id: int) -> Optional[Dict[str, Any]]:
         """Read one sentiment result from cache."""
         try:
+            expected_dim = self._expected_embedding_dimension()
             db = get_db()
             cursor = db.execute(
                 """
@@ -410,12 +439,15 @@ class SentimentService:
 
             embedding_data = row[2]
             if embedding_data is None:
-                embedding = [0.0] * 384
-            else:
-                try:
-                    embedding = pickle.loads(embedding_data)
-                except Exception:
-                    embedding = [0.0] * 384
+                return None
+            try:
+                embedding = pickle.loads(embedding_data)
+            except Exception:
+                return None
+            if not isinstance(embedding, list) or not embedding:
+                return None
+            if expected_dim is not None and len(embedding) != expected_dim:
+                return None
 
             return {
                 "polarity": row[0],
@@ -433,6 +465,7 @@ class SentimentService:
 
         results: Dict[int, Dict[str, Any]] = {}
         try:
+            expected_dim = self._expected_embedding_dimension()
             db = get_db()
             batch_size = 500
 
@@ -451,12 +484,15 @@ class SentimentService:
                 for row in cursor.fetchall():
                     embedding_data = row[3]
                     if embedding_data is None:
-                        embedding = [0.0] * 384
-                    else:
-                        try:
-                            embedding = pickle.loads(embedding_data)
-                        except Exception:
-                            embedding = [0.0] * 384
+                        continue
+                    try:
+                        embedding = pickle.loads(embedding_data)
+                    except Exception:
+                        continue
+                    if not isinstance(embedding, list) or not embedding:
+                        continue
+                    if expected_dim is not None and len(embedding) != expected_dim:
+                        continue
 
                     results[row[0]] = {
                         "polarity": row[1],

@@ -6,7 +6,7 @@ import ipaddress
 from typing import Any
 from urllib.parse import urlparse
 
-from ..model_paths import EMBEDDING_MODEL_REPO_ID
+from ..model_paths import EMBEDDING_MODEL_DIM, EMBEDDING_MODEL_REPO_ID
 from ..wechat.account_settings import load_settings_from_file
 
 
@@ -16,7 +16,7 @@ RAG_DEFAULTS: dict[str, Any] = {
     "rag_allow_remote_embedding": False,
     "rag_embedding_provider": "local",
     "rag_embedding_model": EMBEDDING_MODEL_REPO_ID,
-    "rag_embedding_dim": 384,
+    "rag_embedding_dim": EMBEDDING_MODEL_DIM,
     "rag_privacy_mode": "balanced",
     "rag_cross_contact_style_enabled": False,
     "rag_query_scope": "latest_turn",
@@ -68,13 +68,21 @@ def apply_rag_defaults(settings: dict[str, Any]) -> dict[str, Any]:
         False,
     )
     try:
-        settings["rag_embedding_dim"] = int(settings.get("rag_embedding_dim") or 384)
+        settings["rag_embedding_dim"] = int(settings.get("rag_embedding_dim") or EMBEDDING_MODEL_DIM)
     except (TypeError, ValueError):
-        settings["rag_embedding_dim"] = 384
+        settings["rag_embedding_dim"] = EMBEDDING_MODEL_DIM
     if settings["rag_embedding_dim"] <= 0:
-        settings["rag_embedding_dim"] = 384
+        settings["rag_embedding_dim"] = EMBEDDING_MODEL_DIM
     if not str(settings.get("rag_embedding_model") or "").strip():
         settings["rag_embedding_model"] = RAG_DEFAULTS["rag_embedding_model"]
+    # 384 was the previous hard-coded projection width, not this model's
+    # native shape. Migrate that legacy default so existing installations
+    # rebuild vectors instead of silently continuing to lose half the vector.
+    if (
+        settings["rag_embedding_model"] == EMBEDDING_MODEL_REPO_ID
+        and settings["rag_embedding_dim"] == 384
+    ):
+        settings["rag_embedding_dim"] = EMBEDDING_MODEL_DIM
     if settings.get("rag_embedding_provider") not in {"local", "remote", "custom"}:
         settings["rag_embedding_provider"] = "local"
     if settings.get("rag_privacy_mode") not in {"balanced", "strict", "raw_local"}:

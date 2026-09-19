@@ -88,6 +88,9 @@
             <button class="verify-btn" :disabled="!wechatForm.dbKey.trim() || verifying || wechatImporting" @click.stop.prevent="onVerifyAndUnpack">
               {{ verifying ? '验证中...' : '验证' }}
             </button>
+            <button class="change-btn" :disabled="capturingKey || verifying || wechatImporting" @click.stop.prevent="captureDbKey">
+              {{ capturingKey ? '获取中...' : '自动获取' }}
+            </button>
           </div>
         </div>
 
@@ -181,6 +184,7 @@ const wechatErr = ref('')
 const wechatOk = ref('')
 const wechatImporting = ref(false)
 const verifying = ref(false)
+const capturingKey = ref(false)
 const importProgress = ref<ImportProgress>(null)
 const hasImportedBefore = ref(false)
 const incrementInfo = ref<IncrementInfo>(null)
@@ -502,6 +506,101 @@ async function onVerifyAndUnpack() {
   } finally {
     importProgress.value = null
     verifying.value = false
+  }
+}
+
+async function captureDbKey() {
+  if (capturingKey.value || verifying.value || wechatImporting.value) return
+
+  capturingKey.value = true
+  wechatErr.value = ''
+  wechatOk.value = ''
+
+  try {
+    await bridgeReady()
+    const captureState = await api.get_wechat_key_capture_status()
+    if (!captureState?.ok) {
+      wechatErr.value = captureState?.error || '无法检测微信登录状态。'
+      addLog(`检测微信登录状态失败：${wechatErr.value}`)
+      return
+    }
+
+    if (!captureState.running) {
+      await showDialog({
+        title: '请先启动微信',
+        message: '请启动微信并停留在登录界面，然后再次点击“自动获取”。程序会先安装数据库密钥监听，再引导你完成登录。',
+      })
+      return
+    }
+
+    if (captureState.login_state === 'logged_in') {
+      const confirmed = await showConfirm({
+        title: '需要重新登录微信',
+        message: [
+          '自动获取数据库密钥必须在登录时安装监听。检测到微信已经登录。',
+          '确认后，Chrono Trace 将关闭当前微信、重新启动微信，并在登录窗口出现后安装监听。你需要再次完成登录。',
+        ].join('\n\n'),
+      })
+      if (!confirmed) {
+        addLog('用户取消重启微信，自动获取数据库密钥未开始。')
+        return
+      }
+
+      importProgress.value = { status: '正在关闭并重新启动微信...', percent: 15 }
+      addLog('用户已确认重启微信，正在为数据库密钥获取准备登录窗口。')
+      const restarted = await api.restart_wechat_for_key_capture()
+      if (!restarted?.ok) {
+        wechatErr.value = restarted?.error || '微信重启失败。'
+        addLog(`微信重启失败：${wechatErr.value}`)
+        return
+      }
+
+      await showDialog({
+        title: '请登录微信',
+        message: [
+          '微信已重新启动到登录窗口。',
+          '点击“确定”后，Chrono Trace 会安装数据库密钥监听；看到状态提示后，请在微信中完成登录，并保持此页面打开。',
+        ].join('\n\n'),
+      })
+    } else if (captureState.login_state === 'login_required') {
+      await showDialog({
+        title: '准备安装监听',
+        message: [
+          '已检测到微信登录窗口。',
+          '点击“确定”后，Chrono Trace 会安装数据库密钥监听；看到状态提示后，请在微信中完成登录。',
+        ].join('\n\n'),
+      })
+    } else {
+      await showDialog({
+        title: '请确认微信处于登录界面',
+        message: '当前无法可靠判断微信是否已经登录。为避免意外中断你的会话，请先手动退出微信并重新启动到登录界面，再点击“确定”安装监听。',
+      })
+    }
+
+    importProgress.value = { status: '正在安装数据库密钥监听，请在微信中完成登录...', percent: 35 }
+    addLog('开始安装数据库密钥监听，等待微信登录触发密钥读取。')
+    const result = await api.capture_wechat_db_key(selectedWxid.value || undefined, 60)
+    if (!result?.ok) {
+      wechatErr.value = result?.error || '自动获取数据库密钥失败'
+      addLog(`自动获取数据库密钥失败：${wechatErr.value}`)
+      return
+    }
+
+    wechatForm.dbKey = String(result.db_key || '')
+    if (result.account_wxid) {
+      selectedWxid.value = String(result.account_wxid)
+      activeAccountWxid.value = String(result.account_wxid)
+    }
+    await loadWechatAccounts()
+    wechatOk.value = '数据库密钥已自动获取并验证成功，现在可以开始导入。'
+    addLog('自动获取数据库密钥成功')
+    await checkIncrement()
+  } catch (error: any) {
+    wechatErr.value = error?.message || '自动获取数据库密钥失败'
+    addLog(`自动获取数据库密钥失败：${wechatErr.value}`)
+  } finally {
+    importProgress.value = null
+    capturingKey.value = false
   }
 }
 

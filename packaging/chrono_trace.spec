@@ -45,6 +45,7 @@ datas += safe_copy_metadata("modelscope")
 
 hiddenimports = [
     "webview",
+    "wx_key",
     "transformers",
     "sentence_transformers",
     "modelscope",

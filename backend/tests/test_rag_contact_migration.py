@@ -14,6 +14,7 @@ from app.services.realtime.rag_retriever import RagRetriever
 from app.services.realtime.rag_store import RagStore
 from app.services.realtime.rag_context_builder import RagContextBuilder
 from app.services.realtime.llm_engine import LLMSuggestionEngine
+from app.webview.bridge import Bridge
 from app.services.realtime.privacy_redactor import PrivacyRedactor
 
 
@@ -148,6 +149,21 @@ def test_fact_memory_flows_into_prompt_and_retrieval_log(monkeypatch):
     prompt = LLMSuggestionEngine()._build_prompt("manual_request", "maintain", context)
     assert "对方喜欢手冲咖啡" in prompt
     assert "证据消息：42" in prompt
+
+
+def test_bridge_rebuild_reports_indexer_failure_to_frontend(monkeypatch):
+    bridge = Bridge.__new__(Bridge)
+    bridge._resolve_account_wxid = lambda account_wxid="": account_wxid or "account-a"
+
+    class FailedIndexer:
+        def rebuild_contact_index(self, **kwargs):
+            return {"status": "failed", "last_error": "embedding unavailable"}
+
+    monkeypatch.setattr("app.services.realtime.rag_indexer.RagIndexer", FailedIndexer)
+    result = bridge.rebuild_rag_index(7, "account-a")
+    assert result["ok"] is False
+    assert result["status"]["status"] == "failed"
+    assert result["error"] == "embedding unavailable"
 
 
 def test_fact_lifecycle_supersedes_and_allows_user_disable():

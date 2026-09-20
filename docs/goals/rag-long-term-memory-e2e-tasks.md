@@ -6,6 +6,7 @@
 - [x] Bridge 模型状态接口实测返回 `embedding_model_ready=true`、`analysis_available=true`。
 - [x] embedding 链路取消静默截断/补零，并在维度不匹配时安全降级。
 - [x] 默认开启事实记忆读侧，保留文档检索回退。
+- [x] 旧版 shadow-only 配置自动迁移为事实读侧开启，并保留后续手动关闭。
 - [x] 设置页增加“事实记忆优先”开关，并持久化到后端配置。
 - [x] 设置页增加 embedding 模型检测、下载入口和进度轮询。
 - [x] RAG 状态接口返回事实读写配置。
@@ -15,8 +16,9 @@
 - [x] 事实检索结果携带状态、置信度和证据消息，并注入回复提示词。
 - [x] 事实 ID 与 evidence ID 写入 `rag_retrieval_logs`。
 - [x] 后端回归测试：60 passed。
-- [x] 事实写入→检索→日志→提示词注入与 Bridge 契约集成测试通过（新增后共 63 passed）。
-- [x] LLM 生成入口消费事实上下文并携带 RAG 日志关联 ID（新增后共 64 passed）。
+- [x] 事实写入→检索→日志→提示词注入与 Bridge 契约集成测试通过（新增后共 64 passed）。
+- [x] LLM 生成入口消费事实上下文并携带 RAG 日志关联 ID（新增后共 65 passed）。
+- [x] 真实本地数据库副本回放：单联系人索引 ready，3131 文档/向量、1388 条事实成功生成。
 - [x] 前端生产构建通过（Vite，仅保留既有 chunk 体积提示）。
 - [x] 前端 smoke 测试通过（3 passed）。
 - [x] Python 应用源码编译检查通过。

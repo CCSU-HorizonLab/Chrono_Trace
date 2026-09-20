@@ -90,6 +90,20 @@ def test_fact_read_is_opt_in_and_returns_contact_scoped_fact(monkeypatch):
     assert result["items"][0]["doc_type"] == "fact_memory"
 
 
+def test_legacy_shadow_only_config_migrates_once_to_fact_read(monkeypatch):
+    legacy = {"rag_fact_read_enabled": False}
+    apply_rag_defaults(legacy)
+    assert legacy["rag_fact_read_enabled"] is True
+    assert legacy["_rag_fact_read_migrated_v1"] is True
+
+    user_opt_out = {
+        "rag_fact_read_enabled": False,
+        "_rag_fact_read_migrated_v1": True,
+    }
+    apply_rag_defaults(user_opt_out)
+    assert user_opt_out["rag_fact_read_enabled"] is False
+
+
 def test_fact_memory_flows_into_prompt_and_retrieval_log(monkeypatch):
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row

@@ -166,6 +166,38 @@ def test_bridge_rebuild_reports_indexer_failure_to_frontend(monkeypatch):
     assert result["error"] == "embedding unavailable"
 
 
+def test_bridge_rag_status_exposes_fact_read_settings(monkeypatch):
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        "CREATE TABLE conversations (id INTEGER PRIMARY KEY, account_wxid TEXT, display_name TEXT, username TEXT, is_deleted INTEGER DEFAULT 0, updated_at INTEGER)"
+    )
+    conn.execute(
+        "INSERT INTO conversations (id, account_wxid, display_name, username, updated_at) VALUES (1, 'account-a', 'Alice', 'alice', 1)"
+    )
+
+    class FakeBridge(Bridge):
+        def __init__(self):
+            self.settings = {
+                "rag_enabled": True,
+                "rag_remote_context_redaction": True,
+                "rag_allow_remote_embedding": False,
+                "rag_embedding_model": "tingting0514/text2vec-base-chinese",
+                "rag_embedding_dim": 768,
+                "rag_privacy_mode": "balanced",
+                "rag_fact_shadow_enabled": True,
+                "rag_fact_read_enabled": True,
+            }
+
+    monkeypatch.setattr("app.db.connection.get_db", lambda: conn)
+    monkeypatch.setattr("app.webview.bridge.get_db", lambda: conn, raising=False)
+    bridge = FakeBridge()
+    result = bridge.get_rag_status("account-a")
+    assert result["ok"] is True
+    assert result["settings"]["rag_fact_shadow_enabled"] is True
+    assert result["settings"]["rag_fact_read_enabled"] is True
+
+
 def test_fact_lifecycle_supersedes_and_allows_user_disable():
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row

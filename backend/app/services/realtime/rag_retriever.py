@@ -223,13 +223,21 @@ class RagRetriever:
         deadline: float | None,
     ) -> dict[str, Any]:
         tokens = set(self._tokens(query))
+        preferred_kinds = self._preferred_fact_kinds(query)
         items: list[dict[str, Any]] = []
         for fact in self.store.list_facts(account_wxid, conversation_id):
             if self._timed_out(started, timeout_ms, deadline):
                 return self._empty(started, self.store.get_status(account_wxid, conversation_id) or {}, degraded=True, reason="timeout", timed_out=True)
             if str(fact.get("sensitivity") or "normal") == "sensitive":
                 continue
-            fact_tokens = set(self._tokens(fact.get("content") or ""))
+            if preferred_kinds and str(fact.get("kind") or "") not in preferred_kinds:
+                continue
+            content = str(fact.get("content") or "").strip()
+            # 空事实既不能作为证据，也不应被算作“命中”。保留在表内供审计，
+            # 但从读侧彻底排除，避免出现“参考命中 N 条空记录”。
+            if not content:
+                continue
+            fact_tokens = set(self._tokens(content))
             overlap = len(tokens & fact_tokens)
             if not overlap:
                 continue
@@ -238,7 +246,7 @@ class RagRetriever:
                 {
                     "document_id": int(fact["id"]),
                     "doc_type": "fact_memory",
-                    "content": fact.get("content") or "",
+                    "content": content,
                     "score": round(
                         (float(score) * 0.8 + float(fact.get("confidence") or 0.0) * 0.2)
                         * self._fact_time_decay(fact),
@@ -255,7 +263,7 @@ class RagRetriever:
                     "doc": {
                         "id": int(fact["id"]),
                         "doc_type": "fact_memory",
-                        "content": fact.get("content") or "",
+                        "content": content,
                         "source_ts": fact.get("as_of"),
                         "sensitivity": fact.get("sensitivity") or "normal",
                         "metadata_json": json.dumps({
@@ -278,6 +286,19 @@ class RagRetriever:
             "elapsed_ms": int((time.perf_counter() - started) * 1000),
             "by_type": {"fact_memory": len(items)} if items else {},
         }
+
+    def _preferred_fact_kinds(self, query: str) -> set[str]:
+        """为明确主题问句做轻量结构化过滤，避免“我们/一起/什么”等泛词
+        把最近的付款、地点等无关事实误报成游戏记忆。没有主题提示时不限制 kind。
+        """
+        compact = re.sub(r"\s+", "", str(query or ""))
+        if any(token in compact for token in ("游戏", "玩过", "一起玩", "玩了什么")):
+            return {"hobby_or_game", "shared_memory", "marker_fallback"}
+        if any(token in compact for token in ("喜欢", "偏好", "爱不爱", "想吃", "爱吃")):
+            return {"preference", "preference_like", "preference_dislike", "food_or_place", "hobby_or_game"}
+        if any(token in compact for token in ("答应", "承诺", "约定", "计划", "什么时候")):
+            return {"promise_or_commitment", "plan_or_appointment"}
+        return set()
 
     def _fact_time_decay(self, fact: dict[str, Any]) -> float:
         try:

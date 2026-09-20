@@ -139,3 +139,24 @@ def test_self_profiler_call_llm_raises_clear_error_after_ssl_retries_exhausted(m
 
     assert "LLM network request failed" in message
     assert "EOF occurred in violation of protocol" in message
+
+
+def test_self_profiler_reserves_budget_and_json_mode_for_hybrid_model(monkeypatch):
+    conn = _build_model_db()
+    conn.execute("UPDATE llm_models SET model_id = 'deepseek-flash'")
+    conn.commit()
+    profiler = SelfProfiler(timeout=5)
+    captured = {}
+
+    monkeypatch.setattr("app.db.connection.get_db", lambda: conn)
+
+    def fake_urlopen(req, timeout=0, context=None):
+        captured.update(json.loads(req.data.decode("utf-8")))
+        return _DummyResponse()
+
+    monkeypatch.setattr("app.services.realtime.llm_http.urllib.request.urlopen", fake_urlopen)
+    result = profiler._call_llm("test prompt", 4000)
+
+    assert result["typing_style"] == "short"
+    assert captured["response_format"] == {"type": "json_object"}
+    assert captured["max_tokens"] >= 8192

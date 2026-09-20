@@ -198,6 +198,67 @@ def test_bridge_rag_status_exposes_fact_read_settings(monkeypatch):
     assert result["settings"]["rag_fact_read_enabled"] is True
 
 
+def test_llm_generate_consumes_fact_context_before_calling_provider(monkeypatch):
+    engine = LLMSuggestionEngine()
+    captured = {}
+
+    class FakeContextBuilder:
+        def enrich_context(self, context, **kwargs):
+            context["_rag_log_id"] = 99
+            context["_rag_conversation_id"] = 1
+            context["retrieval_context"] = {
+                "retrieval_status": "hit",
+                "query": "喜欢什么咖啡",
+                "memory_intent": {"mode": "memory_request"},
+                "items": [
+                    {
+                        "document_id": 7,
+                        "doc_type": "fact_memory",
+                        "content": "对方喜欢手冲咖啡",
+                        "score": 0.95,
+                        "time_label": "近期",
+                        "fact_status": "active",
+                        "fact_confidence": 0.95,
+                        "evidence_message_ids": [42],
+                    }
+                ],
+            }
+
+    monkeypatch.setattr(
+        "app.services.realtime.rag_context_builder.RagContextBuilder", FakeContextBuilder
+    )
+    monkeypatch.setattr(
+        engine,
+        "_get_active_model",
+        lambda: {
+            "name": "fake",
+            "provider": "local",
+            "model_id": "fake-chat",
+            "api_base_url": "http://127.0.0.1",
+        },
+    )
+
+    def fake_call_api(model_config, prompt, **kwargs):
+        captured["prompt"] = prompt
+        return '{"reply":"","thought_process":"基于已核验事实","summary":"记住偏好","speeches":["下次给你冲手冲咖啡"]}'
+
+    monkeypatch.setattr(engine, "_call_api", fake_call_api)
+    result = engine.generate(
+        "manual_request",
+        "maintain",
+        {
+            "account_wxid": "account-a",
+            "conversation_id": 1,
+            "recent_messages": [],
+            "user_context": "记得她喜欢什么咖啡吗",
+        },
+    )
+    assert result.summary == "记住偏好"
+    assert result.rag_log_id == 99
+    assert "对方喜欢手冲咖啡" in captured["prompt"]
+    assert "证据消息：42" in captured["prompt"]
+
+
 def test_fact_lifecycle_supersedes_and_allows_user_disable():
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row

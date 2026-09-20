@@ -66,6 +66,8 @@ class Bridge:
         self._model_download_lock = threading.Lock()
         self._suggestion_streams: dict[str, dict[str, Any]] = {}
         self._suggestion_stream_lock = threading.Lock()
+        self._wechat_key_capture_sessions: dict[str, dict[str, Any]] = {}
+        self._wechat_key_capture_lock = threading.Lock()
         self._webview_window = None  # 由 app_dev.py 注入
         self._analysis_cancel_event = None  # 用于取消好感度分析
 
@@ -495,46 +497,7 @@ class Bridge:
             )
             if not result.get("ok"):
                 return result
-
-            db_key = str(result.get("db_key") or "").strip().lower()
-            preferred_paths = self._get_wechat_custom_paths(account_wxid)
-            verified = self.wechat_service.verify_key(db_key, preferred_paths)
-            if not verified.get("ok"):
-                return {
-                    **result,
-                    "ok": False,
-                    "code": "key_verification_failed",
-                    "error": verified.get("error") or "自动获取的密钥无法验证当前数据库",
-                }
-
-            resolved_paths = preferred_paths
-            if not resolved_paths:
-                try:
-                    resolved_paths = self.wechat_service.resolve_wechat_paths()
-                except Exception:
-                    resolved_paths = None
-
-            resolved_wxid = str(
-                (resolved_paths or {}).get("account_wxid")
-                or (resolved_paths or {}).get("current_user")
-                or self._resolve_account_wxid(account_wxid)
-                or ""
-            ).strip()
-            if resolved_wxid:
-                update_wechat_account_import_state(
-                    self.settings,
-                    resolved_wxid,
-                    db_key=db_key,
-                    wechat_dir=str((resolved_paths or {}).get("wechat_dir") or "") or None,
-                )
-                self._save_settings()
-
-            return {
-                **result,
-                "ok": True,
-                "db_key": db_key,
-                "account_wxid": resolved_wxid,
-            }
+            return self._finalize_captured_wechat_db_key(result, account_wxid)
         except Exception as exc:
             logger.error("[Bridge] automatic WeChat DB key capture failed: %s", exc, exc_info=True)
             return {
@@ -543,6 +506,52 @@ class Bridge:
                 "error": str(exc),
                 "account_wxid": str(account_wxid or ""),
             }
+
+    def _finalize_captured_wechat_db_key(
+        self,
+        result: dict[str, Any],
+        account_wxid: str = "",
+    ) -> dict[str, Any]:
+        """Verify and persist a key captured by either synchronous or session flow."""
+        db_key = str(result.get("db_key") or "").strip().lower()
+        preferred_paths = self._get_wechat_custom_paths(account_wxid)
+        verified = self.wechat_service.verify_key(db_key, preferred_paths)
+        if not verified.get("ok"):
+            return {
+                **result,
+                "ok": False,
+                "code": "key_verification_failed",
+                "error": verified.get("error") or "自动获取的密钥无法验证当前数据库",
+            }
+
+        resolved_paths = preferred_paths
+        if not resolved_paths:
+            try:
+                resolved_paths = self.wechat_service.resolve_wechat_paths()
+            except Exception:
+                resolved_paths = None
+
+        resolved_wxid = str(
+            (resolved_paths or {}).get("account_wxid")
+            or (resolved_paths or {}).get("current_user")
+            or self._resolve_account_wxid(account_wxid)
+            or ""
+        ).strip()
+        if resolved_wxid:
+            update_wechat_account_import_state(
+                self.settings,
+                resolved_wxid,
+                db_key=db_key,
+                wechat_dir=str((resolved_paths or {}).get("wechat_dir") or "") or None,
+            )
+            self._save_settings()
+
+        return {
+            **result,
+            "ok": True,
+            "db_key": db_key,
+            "account_wxid": resolved_wxid,
+        }
 
     def get_wechat_key_capture_status(self) -> dict[str, Any]:
         """Inspect whether WeChat is at its login screen or already logged in."""
@@ -573,6 +582,79 @@ class Bridge:
                 "code": "restart_failed",
                 "error": str(exc),
             }
+
+    def start_wechat_db_key_capture(
+        self,
+        account_wxid: str = "",
+        timeout_seconds: int = 120,
+    ) -> dict[str, Any]:
+        """Install the Hook and return as soon as it is ready for a login event."""
+        try:
+            from ..services.wechat.key_provider import WeChatKeyProvider
+
+            session = WeChatKeyProvider().create_capture_session(
+                timeout_seconds=timeout_seconds,
+                account_wxid=account_wxid,
+            )
+            initial = session.start()
+            if initial.get("status") not in {"hook_ready", "captured"}:
+                return initial
+
+            session_id = uuid.uuid4().hex
+            with self._wechat_key_capture_lock:
+                self._wechat_key_capture_sessions[session_id] = {
+                    "session": session,
+                    "account_wxid": str(account_wxid or ""),
+                    "final_result": None,
+                    "created_at": time.time(),
+                }
+            return {
+                **initial,
+                "ok": True,
+                "session_id": session_id,
+            }
+        except Exception as exc:
+            logger.error("[Bridge] start WeChat DB key capture failed: %s", exc, exc_info=True)
+            return {
+                "ok": False,
+                "status": "failed",
+                "code": "capture_start_failed",
+                "error": str(exc),
+            }
+
+    def get_wechat_db_key_capture_session(self, session_id: str) -> dict[str, Any]:
+        """Return Hook progress; verify and persist the key once it is captured."""
+        with self._wechat_key_capture_lock:
+            entry = self._wechat_key_capture_sessions.get(str(session_id or ""))
+        if not entry:
+            return {
+                "ok": False,
+                "status": "failed",
+                "code": "capture_session_not_found",
+                "error": "数据库密钥获取会话不存在或已失效。",
+            }
+
+        session = entry["session"]
+        snapshot = session.snapshot()
+        if snapshot.get("status") != "captured":
+            return snapshot
+
+        with self._wechat_key_capture_lock:
+            final_result = entry.get("final_result")
+            if final_result is None:
+                final_result = self._finalize_captured_wechat_db_key(
+                    snapshot,
+                    str(entry.get("account_wxid") or ""),
+                )
+                entry["final_result"] = final_result
+
+        return {
+            **final_result,
+            "status": "completed" if final_result.get("ok") else "failed",
+            "message": "数据库密钥已验证，正在开始导入。"
+            if final_result.get("ok")
+            else str(final_result.get("error") or "数据库密钥验证失败。"),
+        }
 
     def import_wechat_data(
         self,

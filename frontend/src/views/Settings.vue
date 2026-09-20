@@ -97,6 +97,15 @@
           </label>
 
           <label class="row">
+            <div class="lab">事实记忆优先</div>
+            <label class="ct-switch">
+              <input v-model="form.rag_fact_read_enabled" type="checkbox" />
+              <span class="slider"></span>
+              <span class="switch-label">{{ form.rag_fact_read_enabled ? '事实优先' : '文档回退' }}</span>
+            </label>
+          </label>
+
+          <label class="row">
             <div class="lab">远程 RAG 脱敏</div>
             <label class="ct-switch">
               <input v-model="form.rag_remote_context_redaction" type="checkbox" @change="handleRagRedactionToggle" />
@@ -119,7 +128,16 @@
             <div class="rag-config-line">
               <span>{{ form.rag_embedding_model }}</span>
               <span>{{ form.rag_embedding_dim }} 维</span>
+              <CtButton variant="ghost" :disabled="ragModel.loading" @click.stop.prevent="refreshRagModelStatus">
+                {{ ragModel.loading ? '检测中...' : '检测模型' }}
+              </CtButton>
             </div>
+          </div>
+          <div v-if="ragModel.checked" class="rag-model-status" :class="ragModel.ready ? 'ready' : 'missing'">
+            <span>{{ ragModel.ready ? '✅ 本地 embedding 模型可用' : '⚠️ 本地 embedding 模型未就绪' }}</span>
+            <CtButton v-if="!ragModel.ready" variant="ghost" :disabled="ragModel.downloading" @click.stop.prevent="downloadRagModel">
+              {{ ragModel.downloading ? '下载中...' : '下载模型' }}
+            </CtButton>
           </div>
 
           <div class="rag-status-summary">
@@ -438,6 +456,7 @@ const form = reactive<{
   rag_allow_remote_embedding: boolean
   rag_embedding_model: string
   rag_embedding_dim: number
+  rag_fact_read_enabled: boolean
   rag_remote_embedding_redaction_risk_confirmed: boolean
 }>({
   wechat_use_custom_path: false,
@@ -450,7 +469,8 @@ const form = reactive<{
   rag_remote_context_redaction: true,
   rag_allow_remote_embedding: false,
   rag_embedding_model: 'tingting0514/text2vec-base-chinese',
-  rag_embedding_dim: 384,
+  rag_embedding_dim: 768,
+  rag_fact_read_enabled: true,
   rag_remote_embedding_redaction_risk_confirmed: false,
 })
 
@@ -459,6 +479,13 @@ const ragStatus = reactive({
   items: [] as any[],
   totalDocuments: 0,
   totalStorageBytes: 0,
+})
+
+const ragModel = reactive({
+  loading: false,
+  checked: false,
+  ready: false,
+  downloading: false,
 })
 
 function mergeWechatAccounts(accounts: WechatAccountOption[]) {
@@ -657,11 +684,13 @@ async function onLoad() {
       form.rag_remote_context_redaction = s.rag_remote_context_redaction !== false
       form.rag_allow_remote_embedding = Boolean(s.rag_allow_remote_embedding)
       form.rag_embedding_model = String(s.rag_embedding_model || 'tingting0514/text2vec-base-chinese')
-      form.rag_embedding_dim = Number(s.rag_embedding_dim || 384)
+      form.rag_embedding_dim = Number(s.rag_embedding_dim || 768)
+      form.rag_fact_read_enabled = s.rag_fact_read_enabled !== false
       form.rag_remote_embedding_redaction_risk_confirmed = Boolean(s.rag_remote_embedding_redaction_risk_confirmed)
     }
     await loadWechatAccounts(activeAccountWxid.value)
     await refreshRagStatus()
+    await refreshRagModelStatus()
   } catch (e) {
     console.error('加载设置失败:', e)
   } finally {
@@ -769,6 +798,7 @@ async function onSave() {
       rag_allow_remote_embedding: form.rag_allow_remote_embedding,
       rag_embedding_model: form.rag_embedding_model,
       rag_embedding_dim: form.rag_embedding_dim,
+      rag_fact_read_enabled: form.rag_fact_read_enabled,
       rag_remote_embedding_redaction_risk_confirmed: form.rag_remote_embedding_redaction_risk_confirmed,
     }
     
@@ -833,6 +863,54 @@ async function refreshRagStatus() {
     console.error('刷新 RAG 状态失败:', e)
   } finally {
     ragStatus.loading = false
+  }
+}
+
+async function refreshRagModelStatus() {
+  ragModel.loading = true
+  try {
+    await bridgeReady()
+    const result = await api.check_analysis_model_status()
+    ragModel.checked = true
+    ragModel.ready = Boolean(result?.ok && result?.embedding_model_ready)
+  } catch (e) {
+    ragModel.checked = true
+    ragModel.ready = false
+    console.error('检查 RAG 模型失败:', e)
+  } finally {
+    ragModel.loading = false
+  }
+}
+
+async function downloadRagModel() {
+  ragModel.downloading = true
+  try {
+    await bridgeReady()
+    const result = await api.download_analysis_models()
+    if (!result?.ok) {
+      await showDialog('模型下载失败: ' + (result?.error_detail || result?.error || '未知错误'))
+      return
+    }
+    if (result.task_id) {
+      let completed = false
+      for (let attempt = 0; attempt < 900; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 1000))
+        const progress = await api.get_model_download_progress(result.task_id)
+        if (progress?.status === 'completed') {
+          completed = true
+          break
+        }
+        if (progress?.status === 'failed') break
+      }
+      if (!completed) {
+        await showDialog('模型下载未完成，请检查模型目录和日志。')
+      }
+    }
+    await refreshRagModelStatus()
+  } catch (e: any) {
+    await showDialog('模型下载失败: ' + (e?.message || '未知错误'))
+  } finally {
+    ragModel.downloading = false
   }
 }
 

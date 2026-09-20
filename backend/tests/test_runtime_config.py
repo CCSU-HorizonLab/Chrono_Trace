@@ -5,22 +5,31 @@ from pathlib import Path
 import backend.app.config as config_module
 
 
-def _reload_config(monkeypatch, tmp_path: Path):
+def _reload_config(monkeypatch, tmp_path: Path, *, frozen: bool = False):
     local_appdata = tmp_path / "LocalAppData"
     monkeypatch.setenv("LOCALAPPDATA", str(local_appdata))
-    monkeypatch.setattr(sys, "frozen", False, raising=False)
+    monkeypatch.setattr(sys, "frozen", frozen, raising=False)
     monkeypatch.delattr(sys, "_MEIPASS", raising=False)
     return importlib.reload(config_module)
 
 
-def test_user_data_paths_use_localappdata(monkeypatch, tmp_path):
+def test_dev_user_data_paths_use_project_data_directory(monkeypatch, tmp_path):
     config = _reload_config(monkeypatch, tmp_path)
+
+    expected_root = config.SOURCE_ROOT_PATH / "backend" / "data"
+    assert Path(config.DATA_DIR) == expected_root
+    assert Path(config.SETTINGS_PATH) == expected_root / "settings.json"
+    assert Path(config.DB_PATH) == expected_root / "chrono_trace.db"
+    assert Path(config.LOG_DIR) == expected_root / "logs"
+
+
+def test_frozen_user_data_paths_use_production_directory(monkeypatch, tmp_path):
+    config = _reload_config(monkeypatch, tmp_path, frozen=True)
 
     expected_root = tmp_path / "LocalAppData" / "Chrono Trace"
     assert Path(config.DATA_DIR) == expected_root
     assert Path(config.SETTINGS_PATH) == expected_root / "settings.json"
     assert Path(config.DB_PATH) == expected_root / "chrono_trace.db"
-    assert Path(config.LOG_DIR) == expected_root / "logs"
 
 
 def test_frontend_dist_prefers_webdist_and_falls_back_to_legacy(monkeypatch, tmp_path):

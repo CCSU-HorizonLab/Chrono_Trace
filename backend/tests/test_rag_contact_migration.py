@@ -273,6 +273,61 @@ def test_llm_generate_consumes_fact_context_before_calling_provider(monkeypatch)
     assert "证据消息：42" in captured["prompt"]
 
 
+def test_three_way_replay_no_rag_document_fallback_and_fact_priority(monkeypatch):
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    store = RagStore(conn)
+    store.upsert_status("account-a", 1, status="ready", document_count=1, vector_count=0)
+    store.upsert_document(
+        account_wxid="account-a", conversation_id=1, doc_type="dialogue_turn",
+        source_table="messages", source_id="m1", source_ts=10,
+        content="对方说过喜欢咖啡", redacted_content="对方说过喜欢咖啡",
+    )
+    store.upsert_fact(
+        account_wxid="account-a", conversation_id=1, subject="对方",
+        kind="preference", content="对方喜欢手冲咖啡", confidence=0.95,
+        evidence_message_ids=[42],
+    )
+    ReadyIndexer = type(
+        "ReadyIndexer", (),
+        {"ensure_contact_index": lambda self, **kwargs: {"status": "ready", "document_count": 1, "vector_count": 0}},
+    )
+    intent = {
+        "should_retrieve": True,
+        "mode": "memory_request",
+        "confidence": 1.0,
+        "query": "喜欢咖啡",
+        "reason": "test",
+    }
+
+    def run(settings):
+        monkeypatch.setattr("app.services.realtime.rag_context_builder.load_rag_settings", lambda: settings)
+        monkeypatch.setattr("app.services.realtime.rag_retriever.load_rag_settings", lambda: settings)
+        context = {
+            "account_wxid": "account-a", "conversation_id": 1,
+            "recent_messages": [], "user_context": "喜欢咖啡", "memory_intent": intent,
+        }
+        RagContextBuilder(store=store, indexer=ReadyIndexer()).enrich_context(
+            context, trigger_type="manual_request", intent="maintain",
+            model_config={"provider": "local", "api_base_url": "http://127.0.0.1"},
+        )
+        return context
+
+    base = {
+        "rag_remote_context_redaction": True, "rag_allow_remote_embedding": False,
+        "rag_embedding_model": "test", "rag_embedding_dim": 768,
+        "rag_privacy_mode": "balanced", "rag_query_scope": "latest_turn",
+    }
+    no_rag = run({**base, "rag_enabled": False, "rag_fact_read_enabled": True})
+    docs = run({**base, "rag_enabled": True, "rag_fact_read_enabled": False})
+    facts = run({**base, "rag_enabled": True, "rag_fact_read_enabled": True})
+    assert "retrieval_context" not in no_rag
+    assert docs["retrieval_context"]["strategy"] == "keyword_fallback"
+    assert docs["retrieval_context"]["items"][0]["doc_type"] == "dialogue_turn"
+    assert facts["retrieval_context"]["strategy"] == "facts"
+    assert facts["retrieval_context"]["items"][0]["doc_type"] == "fact_memory"
+
+
 def test_fact_lifecycle_supersedes_and_allows_user_disable():
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row

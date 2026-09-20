@@ -866,7 +866,11 @@ class RagContextBuilder:
         total_chars = 0
         for scored in items:
             doc = scored.get("doc") or {}
-            content = str(doc.get("redacted_content") if use_redacted else doc.get("content") or "").strip()
+            # 脱敏字段只在确实生成了内容时才覆盖原文。历史索引中的部分
+            # fact_memory 没有 redacted_content；此前在 redaction=redacted 时会
+            # 将这些有效事实错误地渲染成 "None"，导致 UI 显示命中而模型拿到空证据。
+            preferred_content = doc.get("redacted_content") if use_redacted else doc.get("content")
+            content = str(preferred_content or doc.get("content") or "").strip()
             content = re.sub(r"\s+", " ", content)
             if not content:
                 continue

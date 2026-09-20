@@ -9,6 +9,7 @@
 
 import json
 import logging
+import math
 import time
 import random
 from typing import Optional
@@ -22,11 +23,13 @@ def _print(msg: str):
     logger.debug(msg)
 
 
-# Token 预算档位
-TOKEN_BUDGETS = {
-    'low': 2000,
-    'medium': 4000,
-    'high': 8000,
+# 画像档位只定义回看跨度；实际输入和输出 token 由真实消息量、prompt 长度动态决定。
+PROFILE_TIME_WINDOWS = {
+    'low': 7 * 86400,
+    'medium': 30 * 86400,
+    'high': 90 * 86400,
+    # 兼容旧客户端的 custom 参数，不再把它当作固定 token 预算。
+    'custom': 90 * 86400,
 }
 
 # 时间分桶权重（近期优先）
@@ -145,7 +148,7 @@ class SelfProfiler:
                 'estimated_total_tokens': int,
             }
         """
-        budget = custom_budget if budget_level == 'custom' and custom_budget > 0 else TOKEN_BUDGETS.get(budget_level, 4000)
+        window_seconds = PROFILE_TIME_WINDOWS.get(budget_level, PROFILE_TIME_WINDOWS['medium'])
 
         try:
             from ...db.connection import get_db
@@ -157,24 +160,25 @@ class SelfProfiler:
                 return {
                     'conversation_id': None,
                     'message_count': 0,
-                    'sample_budget': budget,
+                    'time_window_days': window_seconds // 86400,
+                    'sample_budget': 0,
                     'estimated_total_tokens': 0,
                 }
 
             return {
                 'conversation_id': conv['id'],
                 'message_count': conv['message_count'],
-                'sample_budget': budget,
-                # 粗估：采样 tokens + system prompt (~300) + 特征数据 (~500) + 输出 (~300)
-                'estimated_total_tokens': budget + 1100,
+                'time_window_days': window_seconds // 86400,
+                'sample_budget': 0,
+                'estimated_total_tokens': 0,
             }
         except Exception as e:
             _print(f"[SelfProfiler] 预估 token 失败: {e}")
             return {
                 'conversation_id': None,
                 'message_count': 0,
-                'sample_budget': budget,
-                'estimated_total_tokens': budget + 1100,
+                'time_window_days': window_seconds // 86400,
+                'estimated_total_tokens': 0,
             }
 
     def generate_profile(
@@ -195,11 +199,11 @@ class SelfProfiler:
         Returns:
             {'ok': True, 'profile': {...}} 或 {'ok': False, 'error': '...'}
         """
-        budget = custom_budget if budget_level == 'custom' and custom_budget > 0 else TOKEN_BUDGETS.get(budget_level, 4000)
+        window_seconds = PROFILE_TIME_WINDOWS.get(budget_level, PROFILE_TIME_WINDOWS['medium'])
 
         _print(f"\n{'='*60}")
         _print(f"[SelfProfiler] 开始生成画像: {display_name}")
-        _print(f"[SelfProfiler] Token 预算: {budget} ({budget_level})")
+        _print(f"[SelfProfiler] 回看范围: 最近 {window_seconds // 86400} 天 ({budget_level})；token 按实际内容动态计算")
         _print(f"{'='*60}")
 
         try:
@@ -225,7 +229,7 @@ class SelfProfiler:
             _print(f"[SelfProfiler] 特征数据收集完成: {list(features.keys())}")
 
             # 3. 采样对话轮次
-            sample = self._sample_conversation_turns(conn, conversation_id, budget)
+            sample = self._sample_conversation_turns(conn, conversation_id, window_seconds)
             _print(f"[SelfProfiler] 采样完成: {len(sample)} 条消息, 约 {self._count_tokens(sample)} tokens")
 
             # 4. 构造 prompt
@@ -233,7 +237,7 @@ class SelfProfiler:
             _print(f"[SelfProfiler] Prompt 长度: {len(user_prompt)} 字符")
 
             # 5. 调用 LLM，传入预算以动态决定输出额度
-            profile_data = self._call_llm(user_prompt, budget)
+            profile_data = self._call_llm(user_prompt)
 
             _print(f"[SelfProfiler] ✅ 画像生成成功!")
             _print(f"[SelfProfiler] 标签: {profile_data.get('personality_tags', [])}")
@@ -496,68 +500,25 @@ class SelfProfiler:
         return features
 
     def _sample_conversation_turns(
-        self, conn, conversation_id: int, token_budget: int
+        self, conn, conversation_id: int, time_window_seconds: int
     ) -> list[dict]:
         """
-        token 预算制对话轮次采样（含动态顺延剩余预算）
-        
-        按时间分桶（7天/30天/90天/更早），将上一桶未消耗尽的预算顺延到下一桶，
-        桶内随机选取完整对话轮次。
+        按画像档位选取最近时间窗内的完整对话。
+
+        档位只影响时间范围，不再预先写死输入 token 消耗；请求 token
+        由实际命中的消息和最终 prompt 动态计算。
         """
         now = int(time.time())
-        all_samples = []
-        carry_over_budget = 0
-        prev_bucket_end = now
-
-        for max_age_seconds, weight in TIME_BUCKETS:
-            # 基础预算再加上一个桶顺延下来的没用完的预算
-            bucket_budget = int(token_budget * weight) + carry_over_budget
-            
-            if max_age_seconds is not None:
-                bucket_start = now - max_age_seconds
-            else:
-                bucket_start = 0
-
-            # 查询该时间桶内所有文本消息
-            cursor = conn.execute(
-                'SELECT content, is_sender, timestamp '
-                'FROM messages '
-                'WHERE conversation_id = ? AND message_type = 1 '
-                'AND timestamp > ? AND timestamp <= ? '
-                'AND content IS NOT NULL AND content != "" '
-                'ORDER BY timestamp ASC',
-                (conversation_id, bucket_start, prev_bucket_end)
-            )
-            messages = [dict(r) for r in cursor.fetchall()]
-
-            # 更新结束时间给下一次迭代使用
-            prev_bucket_end = bucket_start
-
-            if not messages:
-                # 整个桶完全没有消息，预算全额顺延
-                carry_over_budget = bucket_budget
-                continue
-
-            # 构建对话轮次（连续的一来一回）
-            turns = self._build_turns(messages)
-
-            # 随机打乱轮次顺序后按 budget 选取
-            random.shuffle(turns)
-
-            bucket_tokens = 0
-            for turn in turns:
-                turn_tokens = sum(self._estimate_msg_tokens(m['content']) for m in turn)
-                if bucket_tokens + turn_tokens > bucket_budget:
-                    break
-                all_samples.extend(turn)
-                bucket_tokens += turn_tokens
-            
-            # 将没用完的预算顺延给更早的时间桶
-            carry_over_budget = bucket_budget - bucket_tokens
-
-        # 按时间排序最终采样
-        all_samples.sort(key=lambda m: m['timestamp'])
-        return all_samples
+        cursor = conn.execute(
+            'SELECT content, is_sender, timestamp '
+            'FROM messages '
+            'WHERE conversation_id = ? AND message_type = 1 '
+            'AND timestamp > ? AND timestamp <= ? '
+            'AND content IS NOT NULL AND content != "" '
+            'ORDER BY timestamp ASC',
+            (conversation_id, now - max(1, int(time_window_seconds)), now),
+        )
+        return [dict(row) for row in cursor.fetchall()]
 
     def _build_turns(self, messages: list[dict]) -> list[list[dict]]:
         """将消息列表切分为对话轮次（连续消息按发送者分组后配对）"""
@@ -680,7 +641,7 @@ class SelfProfiler:
 
         return "\n".join(parts)
 
-    def _call_llm(self, user_prompt: str, sample_budget: int) -> dict:
+    def _call_llm(self, user_prompt: str, _legacy_sample_budget: int | None = None) -> dict:
         """调用 LLM 生成画像"""
 
         # 获取激活的模型配置
@@ -713,14 +674,12 @@ class SelfProfiler:
         base_url = model_config['api_base_url'].rstrip('/')
         url = f"{base_url}/chat/completions"
 
-        # 根据输入的采样预算动态决定输出上限。混合推理模型（例如
-        # deepseek-flash）会把 reasoning_content 也计入 completion token；
-        # 4096 很容易在输出最终 JSON 前耗尽预算。
-        dynamic_max_tokens = max(4096, sample_budget)
-        model_id = str(model_config.get("model_id") or "").lower()
-        hybrid_reasoning_model = "flash" in model_id or "reason" in model_id
-        if hybrid_reasoning_model:
-            dynamic_max_tokens = max(dynamic_max_tokens, 8192)
+        # 输出额度随真实 prompt 变动：画像 JSON 通常远短于聊天样本，保留
+        # 约 22% 的输入规模加 JSON 固定结构余量；模型配置值只作为下限，
+        # 不再按档位或混合模型强制消耗 4096/8192 token。
+        prompt_tokens = self._estimate_msg_tokens(PROFILE_SYSTEM_PROMPT + user_prompt)
+        configured_floor = max(1, int(model_config.get('max_tokens') or 0))
+        dynamic_max_tokens = max(configured_floor, 384 + math.ceil(prompt_tokens * 0.22))
 
         payload = {
             'model': model_config['model_id'],
@@ -728,8 +687,7 @@ class SelfProfiler:
                 {'role': 'system', 'content': PROFILE_SYSTEM_PROMPT},
                 {'role': 'user', 'content': user_prompt},
             ],
-            # 画像生成和可能的推理过程需要较多 token，使用动态计算的上限
-            'max_tokens': max(model_config.get('max_tokens', 4096), dynamic_max_tokens),
+            'max_tokens': dynamic_max_tokens,
             'temperature': 0.5,  # 画像生成用较低温度
             # 画像必须落在 message.content，不能只生成 reasoning_content。
             'response_format': {'type': 'json_object'},

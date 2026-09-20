@@ -269,21 +269,16 @@
               <span class="pd-options-label">Token 预算</span>
               <div class="pd-chips">
                 <label v-for="opt in [
-                  { value: 'low', label: '~2K', tip: '粗略' },
-                  { value: 'medium', label: '~4K', tip: '推荐' },
-                  { value: 'high', label: '~8K', tip: '精细' },
-                  { value: 'custom', label: '自定义', tip: '' },
+                  { value: 'low', label: '最近 7 天', tip: '简略' },
+                  { value: 'medium', label: '最近 30 天', tip: '普通' },
+                  { value: 'high', label: '最近 90 天', tip: '详细' },
                 ]" :key="opt.value" class="pd-chip" :class="{ active: profileBudgetLevel === opt.value }">
                   <input type="radio" :value="opt.value" v-model="profileBudgetLevel" :disabled="!dialogGenerateContact" class="sr-only" />
                   <span class="pd-chip-text">{{ opt.label }}</span>
                   <span v-if="opt.tip" class="pd-chip-tip">{{ opt.tip }}</span>
                 </label>
               </div>
-              <div v-if="profileBudgetLevel === 'custom'" class="pd-custom-input">
-                <input type="number" v-model.number="profileCustomBudget" min="500" max="50000" step="500" :disabled="!dialogGenerateContact" />
-                <span>tokens</span>
-              </div>
-              <div class="pd-est">≈ {{ profileEstimatedTokens || '--' }} tokens</div>
+              <div class="pd-est">按实际聊天量动态计算 token；详细模式只扩大回看日期。</div>
             </div>
           </div>
 
@@ -303,15 +298,15 @@
               <span class="pd-options-label">扫描深度</span>
               <div class="pd-chips">
                 <label v-for="opt in [
-                  { value: 'medium', label: '~4K', tip: '标准' },
-                  { value: 'high', label: '~8K', tip: '深度' },
+                  { value: 'medium', label: '最近 30 天', tip: '普通' },
+                  { value: 'high', label: '最近 90 天', tip: '详细' },
                 ]" :key="opt.value" class="pd-chip" :class="{ active: selfProfileBudgetLevel === opt.value }">
                   <input type="radio" :value="opt.value" v-model="selfProfileBudgetLevel" :disabled="!dialogGenerateSelf" class="sr-only" />
                   <span class="pd-chip-text">{{ opt.label }}</span>
                   <span v-if="opt.tip" class="pd-chip-tip">{{ opt.tip }}</span>
                 </label>
               </div>
-              <div class="pd-est">≈ {{ selfProfileEstimatedTokens || '--' }} tokens</div>
+              <div class="pd-est">按实际聊天量动态计算 token；详细模式只扩大回看日期。</div>
             </div>
           </div>
         </div>

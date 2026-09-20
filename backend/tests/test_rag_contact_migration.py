@@ -328,6 +328,61 @@ def test_three_way_replay_no_rag_document_fallback_and_fact_priority(monkeypatch
     assert facts["retrieval_context"]["items"][0]["doc_type"] == "fact_memory"
 
 
+def test_redacted_fact_without_redacted_payload_keeps_original_evidence():
+    builder = RagContextBuilder(store=RagStore(sqlite3.connect(":memory:")))
+    items = builder._minimize_items(
+        [{
+            "doc": {
+                "id": 7,
+                "doc_type": "fact_memory",
+                "content": "对方提到：最近在玩杀戮尖塔",
+                "redacted_content": None,
+                "metadata_json": "{}",
+            },
+            "score": 0.8,
+            "fact_status": "active",
+            "fact_confidence": 0.8,
+            "evidence_message_ids": [11],
+        }],
+        use_redacted=True,
+    )
+    assert items[0]["content"] == "对方提到：最近在玩杀戮尖塔"
+
+
+def test_empty_fact_is_excluded_from_fact_retrieval():
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    store = RagStore(conn)
+    store.upsert_fact(
+        account_wxid="account-a", conversation_id=1, subject="对方",
+        kind="hobby_or_game", content="", confidence=0.99,
+    )
+    store.upsert_fact(
+        account_wxid="account-a", conversation_id=1, subject="对方",
+        kind="hobby_or_game", content="对方提到：最近在玩杀戮尖塔", confidence=0.8,
+    )
+    result = RagRetriever(store=store).retrieve(
+        account_wxid="account-a", conversation_id=1,
+        query="一起玩过什么游戏 杀戮尖塔", limit=5,
+    )
+    assert all(item["content"] for item in result["items"])
+
+
+def test_game_query_does_not_return_unrelated_purchase_fact():
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    store = RagStore(conn)
+    store.upsert_fact(
+        account_wxid="account-a", conversation_id=1, subject="对方",
+        kind="purchase_or_price", content="对方提到：后天到", confidence=0.99,
+    )
+    result = RagRetriever(store=store).retrieve(
+        account_wxid="account-a", conversation_id=1,
+        query="我们一起玩过什么游戏", limit=5,
+    )
+    assert result["items"] == []
+
+
 def test_fact_lifecycle_supersedes_and_allows_user_disable():
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row

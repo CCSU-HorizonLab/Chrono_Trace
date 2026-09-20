@@ -141,7 +141,7 @@ def test_self_profiler_call_llm_raises_clear_error_after_ssl_retries_exhausted(m
     assert "EOF occurred in violation of protocol" in message
 
 
-def test_self_profiler_reserves_budget_and_json_mode_for_hybrid_model(monkeypatch):
+def test_self_profiler_uses_dynamic_budget_and_json_mode_for_hybrid_model(monkeypatch):
     conn = _build_model_db()
     conn.execute("UPDATE llm_models SET model_id = 'deepseek-flash'")
     conn.commit()
@@ -159,4 +159,6 @@ def test_self_profiler_reserves_budget_and_json_mode_for_hybrid_model(monkeypatc
 
     assert result["typing_style"] == "short"
     assert captured["response_format"] == {"type": "json_object"}
-    assert captured["max_tokens"] >= 8192
+    # 小 prompt 使用模型配置的下限；不会因模型名称被强制放大到 8192。
+    assert captured["max_tokens"] >= 1024
+    assert captured["max_tokens"] < 8192

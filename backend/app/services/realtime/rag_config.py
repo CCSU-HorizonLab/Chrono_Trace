@@ -21,7 +21,7 @@ RAG_DEFAULTS: dict[str, Any] = {
     "rag_cross_contact_style_enabled": False,
     "rag_query_scope": "latest_turn",
     "rag_fact_shadow_enabled": True,
-    "rag_fact_read_enabled": False,
+    "rag_fact_read_enabled": True,
 }
 
 

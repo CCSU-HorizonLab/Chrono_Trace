@@ -1496,6 +1496,8 @@ class Bridge:
                         "rag_embedding_model",
                         "rag_embedding_dim",
                         "rag_privacy_mode",
+                        "rag_fact_shadow_enabled",
+                        "rag_fact_read_enabled",
                     )
                 },
                 "items": items,
@@ -1516,7 +1518,12 @@ class Bridge:
                 account_wxid=resolved_account,
                 conversation_id=int(conversation_id),
             )
-            return {"ok": True, "status": status}
+            failed = str((status or {}).get("status") or "") == "failed"
+            return {
+                "ok": not failed,
+                "status": status,
+                "error": (status or {}).get("last_error") if failed else None,
+            }
         except Exception as e:
             logger.error(f"[Bridge] 重建 RAG 索引失败: {e}")
             return {"ok": False, "error": str(e)}

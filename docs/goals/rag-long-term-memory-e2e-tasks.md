@@ -19,6 +19,7 @@
 - [x] 事实写入→检索→日志→提示词注入与 Bridge 契约集成测试通过（新增后共 64 passed）。
 - [x] LLM 生成入口消费事实上下文并携带 RAG 日志关联 ID（新增后共 65 passed）。
 - [x] 真实本地数据库副本回放：单联系人索引 ready，3131 文档/向量、1388 条事实成功生成。
+- [x] 真实数据库副本事实回放命中 `strategy=facts`，写入 `retrieval_source=fact`、fact IDs 和 evidence IDs。
 - [x] 前端生产构建通过（Vite，仅保留既有 chunk 体积提示）。
 - [x] 前端 smoke 测试通过（3 passed）。
 - [x] Python 应用源码编译检查通过。

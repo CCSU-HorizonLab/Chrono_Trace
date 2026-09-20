@@ -347,6 +347,21 @@ CREATE TABLE IF NOT EXISTS sentiment_cache (
 
 CREATE INDEX IF NOT EXISTS idx_sentiment_cache_message ON sentiment_cache(message_id);
 
+-- 实时消息轮询使用的轻量情感缓存（历史数据库也由 message_query 幂等补建）
+CREATE TABLE IF NOT EXISTS realtime_sentiment_cache (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id TEXT NOT NULL UNIQUE,
+    polarity INTEGER,
+    intensity REAL,
+    confidence REAL,
+    raw_score REAL,
+    rules_applied TEXT,
+    created_at INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_realtime_sentiment_message
+    ON realtime_sentiment_cache(message_id);
+
 
 -- ========================================
 -- 16. 好感度分析：发言单元表

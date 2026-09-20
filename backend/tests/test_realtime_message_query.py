@@ -116,6 +116,28 @@ def test_get_messages_with_sentiment_dedupes_same_sender_recaptures(monkeypatch)
     assert messages[0]["sentiment"]["polarity"] == -1
 
 
+def test_get_messages_with_sentiment_bootstraps_missing_cache_table(monkeypatch):
+    conn = _make_db()
+    conn.execute("DROP TABLE realtime_sentiment_cache")
+    conn.commit()
+    monkeypatch.setattr("app.services.realtime.message_query.get_db", lambda: conn)
+    conn.execute(
+        """
+        INSERT INTO realtime_message_buffer (
+            talker_username, talker_display_name, message_hash, runtime_id,
+            sender_attr, content, message_type, timestamp, captured_at, batch_id, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        ("friend_user", "Friend", "hash-missing-cache", "runtime-1", "friend", "你好", "text", 1, 1, "batch-1", 1),
+    )
+    conn.commit()
+    messages = get_messages_with_sentiment("batch-1", limit=10)
+    assert len(messages) == 1
+    assert conn.execute(
+        "select 1 from sqlite_master where type='table' and name='realtime_sentiment_cache'"
+    ).fetchone()
+
+
 def test_get_messages_with_sentiment_preserves_same_timestamp_visible_order(monkeypatch):
     conn = _make_db()
     monkeypatch.setattr("app.services.realtime.message_query.get_db", lambda: conn)

@@ -126,6 +126,27 @@ def test_relevance_gate_no_hit_for_implicit_history_question():
     assert decision.no_hit_eligible is True
 
 
+def test_relevance_gate_injects_low_score_fact_for_explicit_shared_history_question():
+    gate = RagRelevanceGate()
+    decision = gate.decide(
+        query="我们玩过什么游戏",
+        items=[
+            {
+                "doc": {"doc_type": "fact_memory", "sensitivity": "normal", "enabled": 1},
+                "score": 0.13,
+                "task_relevance_score": 0.04,
+            }
+        ],
+        strategy="facts",
+        output_mode="reply",
+        trigger_type="manual_request",
+        user_context="我们玩过什么游戏",
+        memory_intent={"mode": "memory_request", "no_hit_eligible": True},
+    )
+    assert decision.decision == "inject"
+    assert decision.reason == "memory_request_match"
+
+
 def test_privacy_redactor_masks_strong_sensitive_values_and_keeps_stable_placeholders():
     conn = _conn()
     redactor = PrivacyRedactor(conn)

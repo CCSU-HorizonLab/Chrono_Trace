@@ -58,6 +58,37 @@ def _has_visible_index_column(db) -> bool:
     return False
 
 
+def _ensure_realtime_sentiment_cache(db) -> None:
+    """Apply the lightweight migration needed by the polling read path.
+
+    Older databases can predate ``RealtimeSentimentService`` and therefore
+    lack its cache table.  The message query must still be safe before the
+    sentiment worker is initialized, so make the read-side dependency
+    idempotently available here as well.
+    """
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS realtime_sentiment_cache (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            message_id TEXT NOT NULL UNIQUE,
+            polarity INTEGER,
+            intensity REAL,
+            confidence REAL,
+            raw_score REAL,
+            rules_applied TEXT,
+            created_at INTEGER
+        )
+        """
+    )
+    db.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_realtime_sentiment_message
+        ON realtime_sentiment_cache(message_id)
+        """
+    )
+    db.commit()
+
+
 def _recent_message_sort_key(row) -> tuple[int, int, int, int, int]:
     timestamp = _safe_int(_row_value(row, "timestamp"))
     visible_index = _safe_int(_row_value(row, "visible_index"), -1)
@@ -78,6 +109,7 @@ def get_messages_with_sentiment(
 ):
     """获取消息及其情感分析结果."""
     db = get_db()
+    _ensure_realtime_sentiment_cache(db)
     visible_index_sql = "m.visible_index AS visible_index" if _has_visible_index_column(db) else "-1 AS visible_index"
 
     where_clause = "WHERE m.batch_id = ?"

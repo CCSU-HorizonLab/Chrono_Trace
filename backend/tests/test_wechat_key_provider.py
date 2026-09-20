@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 from backend.app.services.wechat import key_provider as key_provider_module
 from backend.app.services.wechat.key_provider import WeChatKeyProvider
 
@@ -89,3 +91,23 @@ def test_capture_db_key_cleans_up_after_timeout(monkeypatch):
     assert result["code"] == "capture_timeout"
     assert extension.cleanup_calls == 1
 
+
+def test_capture_session_reports_hook_ready_before_login_result(monkeypatch):
+    extension = FakeExtension(payloads=[None, {"key": "B" * 64}])
+    provider = WeChatKeyProvider()
+    monkeypatch.setattr(WeChatKeyProvider, "_load_extension", staticmethod(lambda: extension))
+    monkeypatch.setattr(WeChatKeyProvider, "_find_wechat_pid", staticmethod(lambda: (2468, "")))
+
+    session = provider.create_capture_session(timeout_seconds=2, account_wxid="wxid_session")
+    initial = session.start()
+
+    assert initial["status"] in {"hook_ready", "captured"}
+    assert initial["account_wxid"] == "wxid_session"
+    for _ in range(100):
+        snapshot = session.snapshot()
+        if snapshot["status"] == "captured":
+            break
+        time.sleep(0.05)
+    assert snapshot["status"] == "captured"
+    assert snapshot["db_key"] == "b" * 64
+    assert extension.cleanup_calls == 1

@@ -20,6 +20,144 @@ logger = logging.getLogger(__name__)
 _DB_KEY_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 
 
+class WeChatKeyCaptureSession:
+    """Background capture session which reports when the database Hook is ready."""
+
+    def __init__(self, *, timeout_seconds: int = 120, account_wxid: str = ""):
+        self.timeout_seconds = max(1, int(timeout_seconds or 120))
+        self.account_wxid = str(account_wxid or "")
+        self._lock = threading.Lock()
+        self._ready = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._status = "preparing"
+        self._message = "正在准备数据库密钥监听。"
+        self._result: dict[str, Any] | None = None
+
+    def start(self, ready_timeout_seconds: int = 15) -> dict[str, Any]:
+        """Start capture and wait only until Hook installation succeeds or fails."""
+        with self._lock:
+            if self._thread is None:
+                self._thread = threading.Thread(
+                    target=self._run,
+                    name="wechat-db-key-capture",
+                    daemon=True,
+                )
+                self._thread.start()
+
+        if not self._ready.wait(timeout=max(1, int(ready_timeout_seconds or 15))):
+            return {
+                "ok": False,
+                "status": "failed",
+                "code": "hook_prepare_timeout",
+                "error": "安装数据库密钥监听超时。",
+            }
+        return self.snapshot()
+
+    def snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            payload = {
+                "ok": self._status not in {"failed", "timed_out"},
+                "status": self._status,
+                "message": self._message,
+                "account_wxid": self.account_wxid,
+            }
+            if self._result:
+                payload.update(self._result)
+            return payload
+
+    def _set_result(self, status: str, message: str, result: dict[str, Any] | None = None) -> None:
+        with self._lock:
+            self._status = status
+            self._message = message
+            self._result = dict(result or {})
+
+    def _run(self) -> None:
+        extension = WeChatKeyProvider._load_extension()
+        if extension is None:
+            self._set_result(
+                "failed",
+                "未安装 wx_key 自动取密钥组件，请使用手动输入密钥。",
+                {"code": "extension_missing", "error": "未安装 wx_key 自动取密钥组件，请使用手动输入密钥。"},
+            )
+            self._ready.set()
+            return
+
+        pid, error = WeChatKeyProvider._find_wechat_pid()
+        if not pid:
+            self._set_result("failed", error, {"code": "wechat_not_running", "error": error})
+            self._ready.set()
+            return
+
+        acquired = False
+        try:
+            with WeChatKeyProvider._hook_lock:
+                try:
+                    acquired = bool(extension.initialize_hook(pid))
+                except Exception as exc:
+                    logger.warning("wx_key initialize_hook failed: %s", exc)
+                    detail = WeChatKeyProvider._last_error(extension)
+                    self._set_result(
+                        "failed",
+                        detail,
+                        {"code": "hook_initialize_failed", "error": detail, "detail": str(exc), "pid": pid},
+                    )
+                    return
+
+                if not acquired:
+                    detail = WeChatKeyProvider._last_error(extension)
+                    self._set_result(
+                        "failed",
+                        detail,
+                        {"code": "hook_initialize_failed", "error": detail, "pid": pid},
+                    )
+                    return
+
+                self._set_result(
+                    "hook_ready",
+                    "数据库密钥监听已安装，请在微信中完成登录。",
+                    {"pid": pid},
+                )
+                self._ready.set()
+                deadline = time.monotonic() + self.timeout_seconds
+                while time.monotonic() < deadline:
+                    try:
+                        payload = extension.poll_key_data()
+                    except Exception as exc:
+                        logger.warning("wx_key poll_key_data failed: %s", exc)
+                        self._set_result(
+                            "failed",
+                            "读取数据库密钥监听数据失败。",
+                            {"code": "hook_poll_failed", "error": str(exc), "pid": pid},
+                        )
+                        return
+
+                    candidate = payload.get("key") if isinstance(payload, dict) else None
+                    candidate = str(candidate or "").strip()
+                    if _DB_KEY_RE.fullmatch(candidate):
+                        self._set_result(
+                            "captured",
+                            "已捕获数据库密钥，正在验证。",
+                            {"db_key": candidate.lower(), "pid": pid},
+                        )
+                        return
+                    time.sleep(0.1)
+
+                timeout_error = "等待微信登录触发数据库密钥超时，请改用手动输入密钥。"
+                self._set_result(
+                    "timed_out",
+                    timeout_error,
+                    {"code": "capture_timeout", "error": timeout_error, "pid": pid},
+                )
+        finally:
+            if not self._ready.is_set():
+                self._ready.set()
+            if acquired:
+                try:
+                    extension.cleanup_hook()
+                except Exception:
+                    logger.debug("wx_key cleanup_hook failed", exc_info=True)
+
+
 class WeChatKeyProvider:
     """Capture a database key from the currently running WeChat process."""
 
@@ -179,3 +317,14 @@ class WeChatKeyProvider:
                     extension.cleanup_hook()
                 except Exception:
                     logger.debug("wx_key cleanup_hook failed", exc_info=True)
+
+    def create_capture_session(
+        self,
+        timeout_seconds: int = 120,
+        account_wxid: str = "",
+    ) -> WeChatKeyCaptureSession:
+        """Create a session that reports once the Hook has been installed."""
+        return WeChatKeyCaptureSession(
+            timeout_seconds=timeout_seconds,
+            account_wxid=account_wxid,
+        )

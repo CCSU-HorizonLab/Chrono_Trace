@@ -55,7 +55,12 @@ BACKEND_APP_DIR_PATH = BACKEND_DIR_PATH / "app"
 FRONTEND_DIR_PATH = RESOURCE_ROOT_PATH / "frontend"
 FRONTEND_DIST_DIR_PATH = _preferred_frontend_dist_dir(FRONTEND_DIR_PATH)
 
-USER_DATA_DIR_PATH = _local_appdata_root() / APP_NAME
+DEV_DATA_DIR_PATH = SOURCE_ROOT_PATH / "backend" / "data"
+USER_DATA_DIR_PATH = (
+    _local_appdata_root() / APP_NAME
+    if IS_FROZEN
+    else DEV_DATA_DIR_PATH
+)
 LOG_DIR_PATH = USER_DATA_DIR_PATH / "logs"
 MODELS_DIR_PATH = USER_DATA_DIR_PATH / "models"
 TEMP_DIR_PATH = USER_DATA_DIR_PATH / "temp"

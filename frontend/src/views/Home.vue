@@ -63,20 +63,18 @@
             <span class="step-title">获取数据库密钥</span>
           </div>
           <div class="step-content">
-            <a href="https://github.com/ycccccccy/wx_key" target="_blank" class="tool-link">
-              <span class="tool-icon">下载</span> 获取 `wx_key` 工具
-            </a>
+            点击“开始导入”后，程序会自动引导微信登录并获取密钥。
           </div>
         </div>
 
-        <div class="step-arrow">
+        <div v-if="manualKeyMode" class="step-arrow">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ccc" stroke-width="2"><polyline points="13 17 18 12 13 7" /><polyline points="6 17 11 12 6 7" /></svg>
         </div>
 
-        <div class="wizard-step">
+        <div v-if="manualKeyMode" class="wizard-step">
           <div class="step-header">
-            <span class="step-num bg-purple">2</span>
-            <span class="step-title">验证密钥</span>
+            <span class="step-num bg-orange">异常</span>
+            <span class="step-title">手动验证数据库密钥</span>
           </div>
           <div class="step-content flex-row">
             <input
@@ -87,9 +85,6 @@
             />
             <button class="verify-btn" :disabled="!wechatForm.dbKey.trim() || verifying || wechatImporting" @click.stop.prevent="onVerifyAndUnpack">
               {{ verifying ? '验证中...' : '验证' }}
-            </button>
-            <button class="change-btn" :disabled="capturingKey || verifying || wechatImporting" @click.stop.prevent="captureDbKey">
-              {{ capturingKey ? '获取中...' : '自动获取' }}
             </button>
           </div>
         </div>
@@ -125,12 +120,51 @@
       </div>
 
       <div class="wizard-actions">
-        <button class="btn-primary-large" :disabled="!pathInfo || !selectedWxid || wechatImporting" @click.stop.prevent="startImport">
+        <button class="btn-primary-large" :disabled="wechatImporting || capturingKey" @click.stop.prevent="startImport">
           {{ wechatImporting ? '导入中...' : (hasImportedBefore ? '重新导入' : '开始导入') }}
         </button>
-        <button class="btn-outline-large" :disabled="wechatImporting || verifying" @click.stop.prevent="resetFlow">重新配置</button>
+        <button class="btn-outline-large" :disabled="wechatImporting || verifying || capturingKey" @click.stop.prevent="resetFlow">重新配置</button>
       </div>
     </div>
+
+    <Teleport to="body">
+      <div v-if="keyCaptureDialogOpen" class="key-capture-overlay">
+        <div class="key-capture-dialog" role="dialog" aria-modal="true">
+          <div class="key-capture-header">
+            <span class="key-capture-badge">密钥</span>
+            <div>
+              <h3>微信数据库密钥获取</h3>
+              <p>请按提示完成微信登录，窗口会一直保持到密钥捕获完成。</p>
+            </div>
+          </div>
+          <div class="key-capture-steps">
+            <div :class="['key-capture-step', { active: keyCaptureStage === 'restarting' || keyCaptureStage === 'confirm_restart', done: ['installing', 'hook_ready', 'capturing', 'completed'].includes(keyCaptureStage) }]">
+              <span>1</span><strong>准备微信登录窗口</strong>
+            </div>
+            <div :class="['key-capture-step', { active: keyCaptureStage === 'installing', done: ['hook_ready', 'capturing', 'completed'].includes(keyCaptureStage) }]">
+              <span>2</span><strong>安装数据库监听</strong>
+            </div>
+            <div :class="['key-capture-step', { active: keyCaptureStage === 'hook_ready' || keyCaptureStage === 'capturing', done: keyCaptureStage === 'completed' }]">
+              <span>3</span><strong>登录并捕获密钥</strong>
+            </div>
+          </div>
+          <div class="key-capture-message">{{ keyCaptureMessage }}</div>
+          <div v-if="keyCaptureError" class="key-capture-error">{{ keyCaptureError }}</div>
+          <div v-if="keyCaptureStage === 'confirm_restart'" class="key-capture-actions">
+            <button class="btn-outline-large" @click="closeKeyCaptureGuide">取消</button>
+            <button class="btn-primary-large" @click="confirmWechatRestart">关闭并重启微信</button>
+          </div>
+          <div v-else-if="keyCaptureStage === 'need_start'" class="key-capture-actions">
+            <button class="btn-outline-large" @click="closeKeyCaptureGuide">关闭</button>
+            <button class="btn-primary-large" @click="openKeyCaptureGuide">重新检测</button>
+          </div>
+          <div v-else-if="keyCaptureStage === 'fallback'" class="key-capture-actions">
+            <button class="btn-outline-large" @click="closeKeyCaptureGuide">稍后处理</button>
+            <button class="btn-primary-large" @click="enableManualKeyFallback">改用手动输入</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
 
     <div class="home-section">
       <h2 class="section-title"><span class="dot green"></span>运行日志</h2>
@@ -185,6 +219,13 @@ const wechatOk = ref('')
 const wechatImporting = ref(false)
 const verifying = ref(false)
 const capturingKey = ref(false)
+const manualKeyMode = ref(false)
+const keyCaptureDialogOpen = ref(false)
+const keyCaptureStage = ref('checking')
+const keyCaptureMessage = ref('正在检查微信登录状态。')
+const keyCaptureError = ref('')
+const keyCaptureSessionId = ref('')
+let keyCapturePollTimer: ReturnType<typeof setTimeout> | null = null
 const importProgress = ref<ImportProgress>(null)
 const hasImportedBefore = ref(false)
 const incrementInfo = ref<IncrementInfo>(null)
@@ -509,116 +550,168 @@ async function onVerifyAndUnpack() {
   }
 }
 
-async function captureDbKey() {
-  if (capturingKey.value || verifying.value || wechatImporting.value) return
+function stopKeyCapturePolling() {
+  if (keyCapturePollTimer) {
+    clearTimeout(keyCapturePollTimer)
+    keyCapturePollTimer = null
+  }
+}
 
+function closeKeyCaptureGuide() {
+  stopKeyCapturePolling()
+  keyCaptureDialogOpen.value = false
+  capturingKey.value = false
+  importProgress.value = null
+}
+
+function showKeyCaptureFailure(message: string) {
+  stopKeyCapturePolling()
+  keyCaptureStage.value = 'fallback'
+  keyCaptureError.value = message
+  keyCaptureMessage.value = '自动获取没有完成，可以切换到手动输入数据库密钥。'
+  addLog(`自动获取数据库密钥失败：${message}`)
+}
+
+function enableManualKeyFallback() {
+  manualKeyMode.value = true
+  closeKeyCaptureGuide()
+  wechatErr.value = keyCaptureError.value || '请手动输入数据库密钥后再验证。'
+  addLog('已切换到手动输入数据库密钥模式。')
+}
+
+async function startKeyCaptureSession() {
+  keyCaptureStage.value = 'installing'
+  keyCaptureError.value = ''
+  keyCaptureMessage.value = '正在安装数据库密钥监听，请保持此窗口打开。'
+  importProgress.value = { status: '正在安装数据库密钥监听...', percent: 35 }
+  addLog('开始安装数据库密钥监听。')
+
+  const result = await api.start_wechat_db_key_capture(selectedWxid.value || undefined, 120)
+  if (!result?.ok || !result.session_id) {
+    showKeyCaptureFailure(result?.error || '数据库密钥监听安装失败。')
+    return
+  }
+
+  keyCaptureSessionId.value = String(result.session_id)
+  keyCaptureStage.value = 'hook_ready'
+  keyCaptureMessage.value = '数据库密钥监听已安装，请在微信中完成登录。登录完成前请不要关闭此窗口。'
+  importProgress.value = { status: '监听已安装，请登录微信...', percent: 55 }
+  addLog('数据库密钥监听已安装，等待微信登录触发密钥读取。')
+  pollKeyCaptureSession()
+}
+
+async function pollKeyCaptureSession() {
+  stopKeyCapturePolling()
+  if (!keyCaptureSessionId.value || !keyCaptureDialogOpen.value) return
+
+  try {
+    const result = await api.get_wechat_db_key_capture_session(keyCaptureSessionId.value)
+    if (result?.status === 'completed' && result.ok) {
+      keyCaptureStage.value = 'completed'
+      keyCaptureMessage.value = '数据库密钥已获取并验证成功，正在自动开始解包导入。'
+      importProgress.value = { status: '密钥已验证，正在开始解包导入...', percent: 75 }
+      addLog('数据库密钥已捕获并验证成功，准备自动开始导入。')
+      wechatForm.dbKey = String(result.db_key || '')
+      manualKeyMode.value = false
+      if (result.account_wxid) {
+        selectedWxid.value = String(result.account_wxid)
+        activeAccountWxid.value = String(result.account_wxid)
+      }
+      await loadWechatAccounts()
+      closeKeyCaptureGuide()
+      await startImport(true)
+      return
+    }
+    if (result?.status === 'failed' || result?.status === 'timed_out') {
+      showKeyCaptureFailure(result?.error || result?.message || '数据库密钥获取失败。')
+      return
+    }
+    keyCaptureStage.value = result?.status === 'hook_ready' ? 'hook_ready' : 'capturing'
+    keyCaptureMessage.value = result?.message || '正在等待微信登录触发数据库密钥。'
+    keyCapturePollTimer = setTimeout(pollKeyCaptureSession, 500)
+  } catch (error: any) {
+    showKeyCaptureFailure(error?.message || '读取数据库密钥获取状态失败。')
+  }
+}
+
+async function confirmWechatRestart() {
+  keyCaptureStage.value = 'restarting'
+  keyCaptureError.value = ''
+  keyCaptureMessage.value = '正在关闭当前微信并重新启动到登录窗口，请稍候。'
+  importProgress.value = { status: '正在关闭并重新启动微信...', percent: 15 }
+  addLog('用户确认重启微信，正在准备登录窗口。')
+
+  try {
+    const restarted = await api.restart_wechat_for_key_capture()
+    if (!restarted?.ok) {
+      showKeyCaptureFailure(restarted?.error || '微信重启失败。')
+      return
+    }
+    keyCaptureMessage.value = '微信已启动到登录窗口，正在安装数据库密钥监听。'
+    await startKeyCaptureSession()
+  } catch (error: any) {
+    showKeyCaptureFailure(error?.message || '微信重启失败。')
+  }
+}
+
+async function openKeyCaptureGuide() {
+  if (capturingKey.value && !keyCaptureDialogOpen.value) return
   capturingKey.value = true
   wechatErr.value = ''
   wechatOk.value = ''
+  keyCaptureDialogOpen.value = true
+  keyCaptureStage.value = 'checking'
+  keyCaptureError.value = ''
+  keyCaptureMessage.value = '正在检查微信登录状态。'
 
   try {
     await bridgeReady()
     const captureState = await api.get_wechat_key_capture_status()
     if (!captureState?.ok) {
-      wechatErr.value = captureState?.error || '无法检测微信登录状态。'
-      addLog(`检测微信登录状态失败：${wechatErr.value}`)
+      showKeyCaptureFailure(captureState?.error || '无法检测微信登录状态。')
       return
     }
-
     if (!captureState.running) {
-      await showDialog({
-        title: '请先启动微信',
-        message: '请启动微信并停留在登录界面，然后再次点击“自动获取”。程序会先安装数据库密钥监听，再引导你完成登录。',
-      })
+      keyCaptureStage.value = 'need_start'
+      keyCaptureMessage.value = '未检测到微信进程，请先启动微信并停留在登录界面。'
       return
     }
-
     if (captureState.login_state === 'logged_in') {
-      const confirmed = await showConfirm({
-        title: '需要重新登录微信',
-        message: [
-          '自动获取数据库密钥必须在登录时安装监听。检测到微信已经登录。',
-          '确认后，Chrono Trace 将关闭当前微信、重新启动微信，并在登录窗口出现后安装监听。你需要再次完成登录。',
-        ].join('\n\n'),
-      })
-      if (!confirmed) {
-        addLog('用户取消重启微信，自动获取数据库密钥未开始。')
-        return
-      }
-
-      importProgress.value = { status: '正在关闭并重新启动微信...', percent: 15 }
-      addLog('用户已确认重启微信，正在为数据库密钥获取准备登录窗口。')
-      const restarted = await api.restart_wechat_for_key_capture()
-      if (!restarted?.ok) {
-        wechatErr.value = restarted?.error || '微信重启失败。'
-        addLog(`微信重启失败：${wechatErr.value}`)
-        return
-      }
-
-      await showDialog({
-        title: '请登录微信',
-        message: [
-          '微信已重新启动到登录窗口。',
-          '点击“确定”后，Chrono Trace 会安装数据库密钥监听；看到状态提示后，请在微信中完成登录，并保持此页面打开。',
-        ].join('\n\n'),
-      })
-    } else if (captureState.login_state === 'login_required') {
-      await showDialog({
-        title: '准备安装监听',
-        message: [
-          '已检测到微信登录窗口。',
-          '点击“确定”后，Chrono Trace 会安装数据库密钥监听；看到状态提示后，请在微信中完成登录。',
-        ].join('\n\n'),
-      })
-    } else {
-      await showDialog({
-        title: '请确认微信处于登录界面',
-        message: '当前无法可靠判断微信是否已经登录。为避免意外中断你的会话，请先手动退出微信并重新启动到登录界面，再点击“确定”安装监听。',
-      })
-    }
-
-    importProgress.value = { status: '正在安装数据库密钥监听，请在微信中完成登录...', percent: 35 }
-    addLog('开始安装数据库密钥监听，等待微信登录触发密钥读取。')
-    const result = await api.capture_wechat_db_key(selectedWxid.value || undefined, 60)
-    if (!result?.ok) {
-      wechatErr.value = result?.error || '自动获取数据库密钥失败'
-      addLog(`自动获取数据库密钥失败：${wechatErr.value}`)
+      keyCaptureStage.value = 'confirm_restart'
+      keyCaptureMessage.value = '检测到微信已经登录。确认后会关闭并重新启动微信，再安装监听。'
       return
     }
-
-    wechatForm.dbKey = String(result.db_key || '')
-    if (result.account_wxid) {
-      selectedWxid.value = String(result.account_wxid)
-      activeAccountWxid.value = String(result.account_wxid)
-    }
-    await loadWechatAccounts()
-    wechatOk.value = '数据库密钥已自动获取并验证成功，现在可以开始导入。'
-    addLog('自动获取数据库密钥成功')
-    await checkIncrement()
+    await startKeyCaptureSession()
   } catch (error: any) {
-    wechatErr.value = error?.message || '自动获取数据库密钥失败'
-    addLog(`自动获取数据库密钥失败：${wechatErr.value}`)
-  } finally {
-    importProgress.value = null
-    capturingKey.value = false
+    showKeyCaptureFailure(error?.message || '准备数据库密钥监听失败。')
   }
 }
 
-async function startImport() {
-  if (wechatImporting.value || verifying.value) return
+async function startImport(autoFromCapture = false) {
+  if (wechatImporting.value || verifying.value || (capturingKey.value && !autoFromCapture)) return
+  if (!wechatForm.dbKey.trim()) {
+    if (manualKeyMode.value) {
+      wechatErr.value = '请输入数据库密钥。'
+      return
+    }
+    await openKeyCaptureGuide()
+    return
+  }
   if (!selectedWxid.value) {
-    wechatErr.value = '请先选择要导入的微信账号。'
+    await loadWechatAccounts()
+  }
+  if (!selectedWxid.value) {
+    wechatErr.value = '暂未识别到微信账号，请先完成微信登录。'
     return
   }
   if (!pathInfo.value) {
-    wechatErr.value = '请先点击“验证”并确认微信数据路径。'
-    return
+    const detected = await detectWechatPath({ silent: true, accountWxid: selectedWxid.value })
+    if (!detected) {
+      wechatErr.value = '未能自动检测到微信数据路径，请手动选择目录。'
+      return
+    }
   }
-  if (!wechatForm.dbKey.trim()) {
-    wechatErr.value = '请输入数据库密钥。'
-    return
-  }
-  if (hasImportedBefore.value) {
+  if (hasImportedBefore.value && !autoFromCapture) {
     const confirmed = await showConfirm('检测到已有导入记录。继续导入会自动跳过重复数据，是否继续？')
     if (!confirmed) return
   }
@@ -724,6 +817,8 @@ function dismissIncrementBanner() {
 }
 
 function resetFlow() {
+  closeKeyCaptureGuide()
+  manualKeyMode.value = false
   wechatErr.value = ''
   wechatOk.value = ''
   importProgress.value = null
@@ -801,6 +896,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  stopKeyCapturePolling()
   window.removeEventListener('chrono:wechat-account-changed', handleGlobalAccountChanged)
   window.removeEventListener('chrono:wechat-settings-saved', handleWechatSettingsSaved)
 })
@@ -1126,6 +1222,132 @@ onUnmounted(() => {
 
 .log-msg {
   flex: 1;
+}
+
+.key-capture-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.55);
+  backdrop-filter: blur(5px);
+}
+
+.key-capture-dialog {
+  width: min(520px, 94vw);
+  padding: 26px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 20px;
+  background: #fff;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.24);
+}
+
+.key-capture-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.key-capture-badge {
+  display: inline-flex;
+  width: 42px;
+  height: 42px;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border-radius: 14px;
+  color: #fff;
+  background: #a855f7;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.key-capture-header h3 {
+  margin: 0;
+  color: var(--ct-text-primary);
+  font-size: 18px;
+}
+
+.key-capture-header p {
+  margin: 6px 0 0;
+  color: var(--ct-text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.key-capture-steps {
+  display: grid;
+  gap: 10px;
+  margin: 24px 0 18px;
+}
+
+.key-capture-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  color: #94a3b8;
+  background: #f8fafc;
+  font-size: 13px;
+}
+
+.key-capture-step span {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: #e2e8f0;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.key-capture-step.active {
+  color: #7e22ce;
+  background: #faf5ff;
+}
+
+.key-capture-step.active span,
+.key-capture-step.done span {
+  color: #fff;
+  background: #a855f7;
+}
+
+.key-capture-step.done {
+  color: #15803d;
+  background: #f0fdf4;
+}
+
+.key-capture-message {
+  min-height: 48px;
+  padding: 14px;
+  border-radius: 10px;
+  color: var(--ct-text-primary);
+  background: #f8fafc;
+  line-height: 1.6;
+  white-space: pre-line;
+}
+
+.key-capture-error {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  color: #b91c1c;
+  background: #fef2f2;
+  line-height: 1.5;
+}
+
+.key-capture-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 20px;
 }
 
 .empty-log {

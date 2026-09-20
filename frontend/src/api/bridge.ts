@@ -35,6 +35,8 @@ type PyWebViewApi = {
   ) => Promise<any>
   get_wechat_key_capture_status: () => Promise<any>
   restart_wechat_for_key_capture: () => Promise<any>
+  start_wechat_db_key_capture: (account_wxid?: string, timeout_seconds?: number) => Promise<any>
+  get_wechat_db_key_capture_session: (session_id: string) => Promise<any>
   capture_wechat_db_key: (account_wxid?: string, timeout_seconds?: number) => Promise<any>
   import_wechat_data: (db_key: string, options?: Record<string, any>, account_wxid?: string) => Promise<any>
   refresh_wechat_contact_avatars: (

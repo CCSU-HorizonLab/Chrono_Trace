@@ -246,6 +246,12 @@ class RagRetriever:
                     ),
                     "vector_score": 0.0,
                     "keyword_score": round(float(score), 4),
+                    "fact_status": fact.get("status") or "active",
+                    "fact_confidence": float(fact.get("confidence") or 0.0),
+                    "evidence_message_ids": json.loads(fact.get("evidence_message_ids_json") or "[]"),
+                    "subject": fact.get("subject") or "",
+                    "memory_kind": fact.get("kind") or "",
+                    "as_of": fact.get("as_of"),
                     "doc": {
                         "id": int(fact["id"]),
                         "doc_type": "fact_memory",

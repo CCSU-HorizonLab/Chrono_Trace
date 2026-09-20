@@ -1,3 +1,4 @@
+import json
 import sqlite3
 import os
 import sys
@@ -11,6 +12,8 @@ from app.services.realtime.rag_config import apply_rag_defaults
 from app.services.realtime.rag_embedding import RagEmbeddingService
 from app.services.realtime.rag_retriever import RagRetriever
 from app.services.realtime.rag_store import RagStore
+from app.services.realtime.rag_context_builder import RagContextBuilder
+from app.services.realtime.llm_engine import LLMSuggestionEngine
 from app.services.realtime.privacy_redactor import PrivacyRedactor
 
 
@@ -84,6 +87,67 @@ def test_fact_read_is_opt_in_and_returns_contact_scoped_fact(monkeypatch):
     )
     assert result["strategy"] == "facts"
     assert result["items"][0]["doc_type"] == "fact_memory"
+
+
+def test_fact_memory_flows_into_prompt_and_retrieval_log(monkeypatch):
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    store = RagStore(conn)
+    store.upsert_status("account-a", 1, status="ready", document_count=0, vector_count=0)
+    store.upsert_fact(
+        account_wxid="account-a", conversation_id=1, subject="对方",
+        kind="preference", content="对方喜欢手冲咖啡", confidence=0.95,
+        evidence_message_ids=[42],
+    )
+    settings = {
+        "rag_enabled": True,
+        "rag_fact_read_enabled": True,
+        "rag_remote_context_redaction": True,
+        "rag_allow_remote_embedding": False,
+        "rag_embedding_model": "test",
+        "rag_embedding_dim": 768,
+        "rag_privacy_mode": "balanced",
+        "rag_query_scope": "latest_turn",
+    }
+    monkeypatch.setattr(
+        "app.services.realtime.rag_context_builder.load_rag_settings", lambda: settings
+    )
+    monkeypatch.setattr(
+        "app.services.realtime.rag_retriever.load_rag_settings", lambda: settings
+    )
+    context = {
+        "account_wxid": "account-a",
+        "conversation_id": 1,
+        "recent_messages": [],
+        "user_context": "记得她喜欢什么咖啡吗",
+        "memory_intent": {
+            "should_retrieve": True,
+            "mode": "memory_request",
+            "confidence": 0.95,
+            "query": "她喜欢什么咖啡",
+            "reason": "test",
+        },
+    }
+    class ReadyIndexer:
+        def ensure_contact_index(self, **kwargs):
+            return {"status": "ready", "document_count": 0, "vector_count": 0}
+
+    RagContextBuilder(store=store, indexer=ReadyIndexer()).enrich_context(
+        context,
+        trigger_type="manual_request",
+        intent="maintain",
+        model_config={"provider": "local", "api_base_url": "http://127.0.0.1"},
+    )
+    retrieval = context["retrieval_context"]
+    assert retrieval["strategy"] == "facts"
+    assert retrieval["items"][0]["evidence_message_ids"] == [42]
+    log = conn.execute("SELECT * FROM rag_retrieval_logs").fetchone()
+    assert json.loads(log["fact_ids_json"]) == [retrieval["items"][0]["document_id"]]
+    assert json.loads(log["evidence_ids_json"]) == [42]
+
+    prompt = LLMSuggestionEngine()._build_prompt("manual_request", "maintain", context)
+    assert "对方喜欢手冲咖啡" in prompt
+    assert "证据消息：42" in prompt
 
 
 def test_fact_lifecycle_supersedes_and_allows_user_disable():

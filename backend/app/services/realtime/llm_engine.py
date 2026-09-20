@@ -1220,6 +1220,14 @@ class LLMSuggestionEngine(SuggestionEngine):
                         )
                         prefix = "原文" if doc_type == "evidence_excerpt" else "内容"
                         parts.append(f"     {prefix}：{content}")
+                        if doc_type == "fact_memory":
+                            evidence_ids = item.get("evidence_message_ids") or []
+                            status = str(item.get("fact_status") or "active")
+                            confidence = float(item.get("fact_confidence") or 0.0)
+                            parts.append(
+                                f"     事实状态：{status}；置信度：{confidence:.2f}；"
+                                f"证据消息：{','.join(str(value) for value in evidence_ids) or '未知'}"
+                            )
                 if memory_items:
                     parts.append("  要求：只能基于以上结果回答历史细节；如果结果未包含具体细节，必须说没查到。")
                     parts.append("  禁止：不要把历史里的地点、游戏、偏好、约定强行带入无关的当前回复。")

@@ -30,6 +30,8 @@
 - [x] 前端 smoke 测试通过（3 passed）。
 - [x] Python 应用源码编译检查通过。
 - [x] RAG/意图/实时消息定向回归：76 passed。
+- [x] 混合推理模型自我画像启用 JSON mode，并为 reasoning 预留 8192 token。
+- [x] 自我画像请求契约与解析回归：48 passed。
 
 ## 发布前仍需人工验收
 

@@ -673,6 +673,9 @@ class ContactProfiler:
 
         # 根据输入的采样预算动态决定输出上限 (至少 4096，若预算极高则成比例放大，比如预算是 8000 时，输出上限放到 8000 以给足 reasoning 空间)
         dynamic_max_tokens = max(4096, sample_budget)
+        model_id = str(model_config.get("model_id") or "").lower()
+        if "flash" in model_id or "reason" in model_id:
+            dynamic_max_tokens = max(dynamic_max_tokens, 8192)
 
         payload = {
             'model': model_config['model_id'],
@@ -683,6 +686,7 @@ class ContactProfiler:
             # 画像生成和可能的推理过程需要较多 token，使用动态计算的上限
             'max_tokens': max(model_config.get('max_tokens', 4096), dynamic_max_tokens),
             'temperature': 0.5,  # 画像生成用较低温度
+            'response_format': {'type': 'json_object'},
         }
 
         headers = {}
@@ -700,13 +704,17 @@ class ContactProfiler:
         )
 
         message_obj = body.get('choices', [{}])[0].get('message', {})
-        content = message_obj.get('content', '')
+        content = message_obj.get('content', '') or ''
         reasoning = message_obj.get('reasoning_content', '')
 
         # 部分模型（如 deepseek-reasoner）可能将内容放在 reasoning_content 中，或者由于 max_tokens 限制没能输出 content
         if not content and reasoning:
-            content = reasoning
-            _print("[ContactProfiler] ⚠️ 最终 content 为空，尝试回退使用 reasoning_content")
+            reasoning_candidate = self._extract_json_candidate(reasoning)
+            if reasoning_candidate.lstrip().startswith("{") and reasoning_candidate.rstrip().endswith("}"):
+                content = reasoning_candidate
+                _print("[ContactProfiler] ⚠️ content 为空，使用 reasoning_content 中的 JSON 回退")
+            else:
+                _print("[ContactProfiler] ⚠️ content 为空且 reasoning_content 没有完整 JSON")
 
         usage = body.get('usage', {})
         _print(
@@ -742,6 +750,17 @@ class ContactProfiler:
         except (json.JSONDecodeError, KeyError) as e:
             _print(f"[ContactProfiler] JSON 解析失败: {e}, 原文: {text[:200]}")
             return None
+
+    def _extract_json_candidate(self, text: str) -> str:
+        """Extract a JSON object from a reasoning-enabled model response."""
+        cleaned = (text or "").strip()
+        if "```json" in cleaned:
+            return cleaned.split("```json", 1)[1].split("```", 1)[0].strip()
+        if "```" in cleaned:
+            return cleaned.split("```", 1)[1].split("```", 1)[0].strip()
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+        return cleaned[start:end + 1].strip() if start >= 0 and end > start else cleaned
 
     def _save_cache(
         self, conn, display_name: str, conversation_id: int,

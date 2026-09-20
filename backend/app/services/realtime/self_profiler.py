@@ -713,8 +713,14 @@ class SelfProfiler:
         base_url = model_config['api_base_url'].rstrip('/')
         url = f"{base_url}/chat/completions"
 
-        # 根据输入的采样预算动态决定输出上限 (至少 4096，若预算极高则成比例放大，比如预算是 8000 时，输出上限放到 8000 以给足 reasoning 空间)
+        # 根据输入的采样预算动态决定输出上限。混合推理模型（例如
+        # deepseek-flash）会把 reasoning_content 也计入 completion token；
+        # 4096 很容易在输出最终 JSON 前耗尽预算。
         dynamic_max_tokens = max(4096, sample_budget)
+        model_id = str(model_config.get("model_id") or "").lower()
+        hybrid_reasoning_model = "flash" in model_id or "reason" in model_id
+        if hybrid_reasoning_model:
+            dynamic_max_tokens = max(dynamic_max_tokens, 8192)
 
         payload = {
             'model': model_config['model_id'],
@@ -725,6 +731,8 @@ class SelfProfiler:
             # 画像生成和可能的推理过程需要较多 token，使用动态计算的上限
             'max_tokens': max(model_config.get('max_tokens', 4096), dynamic_max_tokens),
             'temperature': 0.5,  # 画像生成用较低温度
+            # 画像必须落在 message.content，不能只生成 reasoning_content。
+            'response_format': {'type': 'json_object'},
         }
 
         headers = {}
@@ -742,13 +750,18 @@ class SelfProfiler:
         )
 
         message_obj = body.get('choices', [{}])[0].get('message', {})
-        content = message_obj.get('content', '')
+        content = message_obj.get('content', '') or ''
         reasoning = message_obj.get('reasoning_content', '')
 
-        # 部分模型（如 deepseek-reasoner）可能将内容放在 reasoning_content 中，或者由于 max_tokens 限制没能输出 content
+        # 只有 reasoning 中确实包含 JSON 时才回退，避免把模型的分析草稿
+        # 当成最终画像解析；response_format + 更大的预算优先保证 content。
         if not content and reasoning:
-            content = reasoning
-            _print("[SelfProfiler] ⚠️ 最终 content 为空，尝试回退使用 reasoning_content")
+            reasoning_candidate = self._extract_json_candidate(reasoning)
+            if reasoning_candidate.lstrip().startswith("{") and reasoning_candidate.rstrip().endswith("}"):
+                content = reasoning_candidate
+                _print("[SelfProfiler] ⚠️ content 为空，使用 reasoning_content 中的 JSON 回退")
+            else:
+                _print("[SelfProfiler] ⚠️ content 为空且 reasoning_content 没有完整 JSON")
 
         usage = body.get('usage', {})
         _print(

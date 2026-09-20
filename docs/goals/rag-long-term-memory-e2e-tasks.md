@@ -3,6 +3,7 @@
 ## 已完成并验证
 
 - [x] 本地 `text2vec_base_chinese` 模型加载验证，原生输出维度为 768。
+- [x] Bridge 模型状态接口实测返回 `embedding_model_ready=true`、`analysis_available=true`。
 - [x] embedding 链路取消静默截断/补零，并在维度不匹配时安全降级。
 - [x] 默认开启事实记忆读侧，保留文档检索回退。
 - [x] 设置页增加“事实记忆优先”开关，并持久化到后端配置。

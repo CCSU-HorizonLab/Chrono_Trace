@@ -1,6 +1,12 @@
 import os
 os.environ["TORCH_COMPILE_DISABLE"] = "1"
 
+from backend.app.runtime_overrides import activate_gpu_overlay_path
+
+# 必须在导入 Bridge 和其他分析服务之前激活 CUDA overlay，
+# 否则当前开发虚拟环境中的 CPU 版 PyTorch 会先被加载。
+GPU_OVERLAY_ACTIVE = activate_gpu_overlay_path()
+
 import time
 import atexit
 import signal
@@ -16,6 +22,10 @@ from backend.app.logging_config import setup_logging, get_logger
 setup_logging(level=logging.DEBUG)
 
 logger = get_logger(__name__)
+if GPU_OVERLAY_ACTIVE:
+    logger.info("开发模式已启用 GPU 运行时")
+else:
+    logger.info("开发模式未启用 GPU 运行时，将使用当前虚拟环境中的 PyTorch")
 
 
 def cleanup_proc_tree(proc: subprocess.Popen):

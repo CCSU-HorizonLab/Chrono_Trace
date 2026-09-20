@@ -543,7 +543,12 @@ class RagContextBuilder:
                 for item in items
                 if str(item.get("doc_type") or "") == "fact_memory"
             ],
-            evidence_ids=[],
+            evidence_ids=[
+                evidence_id
+                for item in items
+                if str(item.get("doc_type") or "") == "fact_memory"
+                for evidence_id in (item.get("evidence_message_ids") or [])
+            ],
             query_scope=str(load_rag_settings().get("rag_query_scope") or "latest_turn"),
             supersession_decision=None,
         )
@@ -873,21 +878,30 @@ class RagContextBuilder:
                 metadata = json.loads(doc.get("metadata_json") or "{}")
             except Exception:
                 metadata = {}
-            minimized.append(
-                {
-                    "document_id": int(doc["id"]),
-                    "doc_type": doc.get("doc_type"),
-                    "content": content,
-                    "score": scored.get("score"),
-                    "task_relevance_score": scored.get("task_relevance_score"),
-                    "source_ts": doc.get("source_ts"),
-                    "time_label": metadata.get("time_label")
-                    or self.segmenter.time_label(int(doc.get("source_ts") or time.time())),
-                    "topics": metadata.get("topics") or [],
-                    "entities": metadata.get("entities") or [],
-                    "sensitivity": doc.get("sensitivity") or "normal",
-                }
-            )
+            item = {
+                "document_id": int(doc["id"]),
+                "doc_type": doc.get("doc_type"),
+                "content": content,
+                "score": scored.get("score"),
+                "task_relevance_score": scored.get("task_relevance_score"),
+                "source_ts": doc.get("source_ts"),
+                "time_label": metadata.get("time_label")
+                or self.segmenter.time_label(int(doc.get("source_ts") or time.time())),
+                "topics": metadata.get("topics") or [],
+                "entities": metadata.get("entities") or [],
+                "sensitivity": doc.get("sensitivity") or "normal",
+            }
+            if str(doc.get("doc_type") or "") == "fact_memory":
+                item.update(
+                    {
+                        "fact_status": scored.get("fact_status") or "active",
+                        "fact_confidence": float(scored.get("fact_confidence") or 0.0),
+                        "evidence_message_ids": scored.get("evidence_message_ids") or metadata.get("evidence_message_ids") or [],
+                        "subject": scored.get("subject") or metadata.get("subject") or "",
+                        "memory_kind": scored.get("memory_kind") or metadata.get("memory_kind") or "",
+                    }
+                )
+            minimized.append(item)
             total_chars += len(content)
         return minimized
 

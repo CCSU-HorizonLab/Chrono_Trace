@@ -24,6 +24,8 @@ RAG_DEFAULTS: dict[str, Any] = {
     "rag_fact_read_enabled": True,
 }
 
+_FACT_READ_MIGRATION_KEY = "_rag_fact_read_migrated_v1"
+
 
 def _as_bool(value: Any, default: bool = False) -> bool:
     if value is None:
@@ -42,6 +44,14 @@ def _as_bool(value: Any, default: bool = False) -> bool:
 
 def apply_rag_defaults(settings: dict[str, Any]) -> dict[str, Any]:
     """Mutate and return settings with explicit RAG defaults."""
+    # ``False`` was the old shadow-only default.  Existing settings files do
+    # not distinguish that default from an intentional user opt-out, so the
+    # first load upgrades legacy values once and records a marker.  Subsequent
+    # explicit user changes are preserved.
+    if _FACT_READ_MIGRATION_KEY not in settings:
+        if settings.get("rag_fact_read_enabled") is False:
+            settings["rag_fact_read_enabled"] = True
+        settings[_FACT_READ_MIGRATION_KEY] = True
     for key, value in RAG_DEFAULTS.items():
         settings.setdefault(key, value)
     settings["rag_enabled"] = _as_bool(settings.get("rag_enabled"), False)
@@ -65,7 +75,7 @@ def apply_rag_defaults(settings: dict[str, Any]) -> dict[str, Any]:
     )
     settings["rag_fact_read_enabled"] = _as_bool(
         settings.get("rag_fact_read_enabled"),
-        False,
+        True,
     )
     try:
         settings["rag_embedding_dim"] = int(settings.get("rag_embedding_dim") or EMBEDDING_MODEL_DIM)

@@ -218,10 +218,15 @@ def _looks_like_history_question(text: str) -> bool:
         for token in ("历史记录", "聊天记录", "RAG文档", "rag文档", "记忆文档", "文档里", "记录里", "历史里")
     )
     wants_example = any(token in compact for token in ("合适", "适合", "开启话题", "开话题", "以此为话题", "找话题"))
+    shared_experience = any(
+        token in compact
+        for token in ("玩过", "去过", "吃过", "看过", "用过", "做过", "见过", "听过")
+    )
     return (
         (has_temporal_anchor and asks_detail and has_actor)
         or (has_actor and reported_memory and asks_detail)
         or (has_actor and referential_anchor and reported_memory)
+        or (has_actor and shared_experience and asks_detail)
         or (direct_lookup and (has_temporal_anchor or reported_memory))
         or (explicit_memory_store and (direct_lookup or wants_example or asks_detail))
     )

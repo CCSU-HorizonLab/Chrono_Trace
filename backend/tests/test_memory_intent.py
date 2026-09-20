@@ -24,6 +24,7 @@ def test_memory_intent_fixed_acceptance_samples():
         ("按我们之前的关系怎么回比较好", "relationship_context", True, "suggestion"),
         ("历史记录 我说错了 你找找RAG文档里的历史记录", "memory_request", True, "reply"),
         ("那你看看文档里有没有合适的聊天记录 比如杀戮尖塔啥的", "memory_request", True, "reply"),
+        ("我们玩过什么游戏", "memory_request", True, "reply"),
     ]
 
     for text, mode, should_retrieve, shape in samples:

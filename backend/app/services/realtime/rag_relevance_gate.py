@@ -46,6 +46,10 @@ class RagRelevanceGate:
     ORDINARY_TASK_THRESHOLD = 0.62
     ORDINARY_SCORE_THRESHOLD = 0.48
     MEMORY_TASK_THRESHOLD = 0.50
+    # Fact scores include confidence and time decay, so an explicit memory
+    # question may legitimately produce a low raw score while still being the
+    # best contact-scoped answer.  Keep ordinary chat on the stricter path.
+    MEMORY_SCORE_FLOOR = 0.10
 
     def decide(
         self,
@@ -100,7 +104,13 @@ class RagRelevanceGate:
                 for item in usable
                 if self._doc_type(item) in self.MEMORY_REQUEST_TYPES
                 and not self._is_off_topic(item)
-                and self._task_relevance(item) >= self.MEMORY_TASK_THRESHOLD
+                and (
+                    self._task_relevance(item) >= self.MEMORY_TASK_THRESHOLD
+                    or (
+                        self._doc_type(item) == "fact_memory"
+                        and float(item.get("score") or 0.0) >= self.MEMORY_SCORE_FLOOR
+                    )
+                )
             ]
             if memory_items:
                 best_memory = memory_items[0]

@@ -25,6 +25,10 @@ class RagRetriever:
     """Contact-scoped retriever with vector and keyword fallback."""
 
     MIN_VECTOR_SCORE_WITHOUT_KEYWORDS = 0.30
+    GENERIC_FACT_QUERY_STOPWORDS = {
+        "我们", "一起", "之前", "上次", "提到", "说过", "什么", "哪个", "哪家",
+        "怎么", "有没有", "记得", "来着",
+    }
 
     DOC_TYPE_WEIGHTS = {
         "hot_context": 0.65,
@@ -274,7 +278,15 @@ class RagRetriever:
             vector_score = self._cosine(query_vector, vector_by_id.get(int(fact["id"]), [])) if vector_available else 0.0
             if not overlap and not vector_score:
                 continue
+            meaningful_query_tokens = tokens - self.GENERIC_FACT_QUERY_STOPWORDS
+            meaningful_fact_tokens = fact_tokens - self.GENERIC_FACT_QUERY_STOPWORDS
+            meaningful_overlap = len(meaningful_query_tokens & meaningful_fact_tokens)
             keyword_score = overlap / max(1, min(len(tokens), len(fact_tokens)))
+            if meaningful_overlap:
+                keyword_score += 0.25 * meaningful_overlap / max(
+                    1,
+                    min(len(meaningful_query_tokens), len(meaningful_fact_tokens)),
+                )
             kind_bonus = 0.1 if preferred_kinds and str(fact.get("kind") or "") in preferred_kinds else 0.0
             semantic_score = (
                 vector_score * 0.6

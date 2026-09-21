@@ -568,6 +568,37 @@ class RagStore:
             items.append(item)
         return items
 
+    def count_active_facts(self, account_wxid: str, conversation_id: int) -> int:
+        row = self.conn.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM rag_facts
+            WHERE account_wxid=? AND conversation_id=?
+              AND status='active' AND enabled=1
+            """,
+            (account_wxid, int(conversation_id)),
+        ).fetchone()
+        return int(row["count"] if row else 0)
+
+    def count_fact_embeddings(
+        self,
+        account_wxid: str,
+        conversation_id: int,
+        *,
+        embedding_model: str,
+        embedding_dim: int,
+    ) -> int:
+        row = self.conn.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM rag_fact_embeddings
+            WHERE account_wxid=? AND conversation_id=?
+              AND embedding_model=? AND embedding_dim=?
+            """,
+            (account_wxid, int(conversation_id), embedding_model, int(embedding_dim)),
+        ).fetchone()
+        return int(row["count"] if row else 0)
+
     def list_documents(self, account_wxid: str, conversation_id: int) -> list[dict[str, Any]]:
         rows = self.conn.execute(
             """

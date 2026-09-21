@@ -586,6 +586,53 @@ def test_fact_vector_retrieval_handles_semantic_match_without_keyword_overlap(mo
     assert result["items"][0]["vector_score"] == 1.0
 
 
+def test_fact_semantic_match_is_not_erased_by_long_term_time_decay(monkeypatch):
+    import time
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    store = RagStore(conn)
+    old_id = store.upsert_fact(
+        account_wxid="account-a", conversation_id=1, subject="对方",
+        kind="preference", content="对方对虾过敏", confidence=0.9,
+        as_of=int(time.time()) - 365 * 86400,
+    )
+    recent_id = store.upsert_fact(
+        account_wxid="account-a", conversation_id=1, subject="对方",
+        kind="preference", content="对方最近玩游戏", confidence=0.9,
+        as_of=int(time.time()),
+    )
+    store.upsert_fact_embedding(
+        fact_id=old_id, account_wxid="account-a", conversation_id=1,
+        embedding_model="test", embedding_dim=2, vector=[1.0, 0.0],
+    )
+    store.upsert_fact_embedding(
+        fact_id=recent_id, account_wxid="account-a", conversation_id=1,
+        embedding_model="test", embedding_dim=2, vector=[0.2, 0.98],
+    )
+
+    class WarmSentiment:
+        _embedding_model = object()
+
+        def has_local_embedding_model(self):
+            return True
+
+        def analyze_batch(self, texts):
+            return [{"embedding": [1.0, 0.0]} for _ in texts]
+
+    monkeypatch.setattr(
+        "app.services.realtime.rag_retriever.load_rag_settings",
+        lambda: {"rag_fact_read_enabled": True, "rag_embedding_model": "test", "rag_embedding_dim": 2},
+    )
+    result = RagRetriever(
+        store=store, embedding_service=RagEmbeddingService(WarmSentiment())
+    ).retrieve(
+        account_wxid="account-a", conversation_id=1,
+        query="她有什么忌口？", limit=2,
+    )
+    assert result["items"][0]["document_id"] == old_id
+
+
 def test_fact_embedding_dimension_mismatch_is_rejected():
     store = RagStore(sqlite3.connect(":memory:"))
     fact_id = store.upsert_fact(

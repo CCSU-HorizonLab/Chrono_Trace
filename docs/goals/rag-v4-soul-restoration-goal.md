@@ -2,7 +2,7 @@
 
 ## 状态
 
-进行中。P0–P2 已完成；P3 回放链路已接通，当前等待 gold ID 映射与脱敏 NLI judge 后完成发布门禁。最新阶段提交：`1ac3e75e feat：按bootstrap下界校准发布门禁`。全量后端回归：621 passed、21 skipped。
+进行中。P0–P2 已完成；P3 回放链路已接通，当前等待 gold ID 映射与脱敏 NLI judge 后完成发布门禁。最新阶段提交：`d9215c6f feat：刷新下界门禁回放报告`。全量后端回归：621 passed、21 skipped。
 
 ## 目标
 

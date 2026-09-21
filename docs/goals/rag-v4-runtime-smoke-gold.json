@@ -1,0 +1,10 @@
+{
+  "version": "runtime-smoke-2026-09",
+  "notes": "仅用于当前联系人运行日志的诊断，不替代 36 条发布 gold；fact IDs 来自本地数据库审核。",
+  "items": [
+    {"id":"runtime_game_01","category":"共同记忆","query_text":"我们玩过什么游戏？ 游戏","gold_fact_ids":[533,534],"expected_retrieve":true,"expected_scope":"latest_turn"},
+    {"id":"runtime_game_02","category":"偏好/游戏","query_text":"杀戮尖塔之类的？ 杀戮尖塔","gold_fact_ids":[935,936],"expected_retrieve":true,"expected_scope":"latest_turn"},
+    {"id":"runtime_game_03","category":"共同记忆","query_text":"我们玩过什么游戏？ 上次 之前 说过 提到 游戏","gold_fact_ids":[533,534,935,936],"expected_retrieve":true,"expected_scope":"latest_turn"},
+    {"id":"runtime_game_04","category":"共同记忆","query_text":"我们一起玩过什么游戏？ 上次 之前 说过 提到 游戏","gold_fact_ids":[533,534,935,936],"expected_retrieve":true,"expected_scope":"latest_turn"}
+  ]
+}

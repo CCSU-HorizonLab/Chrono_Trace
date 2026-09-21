@@ -1,0 +1,485 @@
+{
+  "version": 2,
+  "generated_at": 1790032226,
+  "gold_mapping_entries": 0,
+  "tracks": {
+    "no_rag": {
+      "summary": {
+        "cases": 4,
+        "matched_logs": 4,
+        "unmatched_runtime_logs": 0,
+        "gold_mapping_status": "ready",
+        "metrics_status": "ready",
+        "recall_at_5": 0.0,
+        "recall_at_5_ci": {
+          "lower": 0.0,
+          "upper": 0.0
+        },
+        "mrr": 0.0,
+        "mrr_ci": {
+          "lower": 0.0,
+          "upper": 0.0
+        },
+        "gate_skip_rate": 0.0,
+        "gate_no_hit_rate": 1.0,
+        "false_reject_rate": 1.0,
+        "correct_reject_rate": 0.0,
+        "query_scope_accuracy": 1.0,
+        "gate_reason_distribution": {
+          "rag_disabled": 4
+        }
+      },
+      "by_category": {
+        "共同记忆": {
+          "cases": 3,
+          "matched_logs": 3,
+          "recall_at_5": 0.0,
+          "mrr": 0.0,
+          "skip_rate": 0.0,
+          "no_hit_rate": 1.0
+        },
+        "偏好/游戏": {
+          "cases": 1,
+          "matched_logs": 1,
+          "recall_at_5": 0.0,
+          "mrr": 0.0,
+          "skip_rate": 0.0,
+          "no_hit_rate": 1.0
+        }
+      },
+      "faithfulness": {
+        "score": null,
+        "cases": 0,
+        "judge_version": "nli-external-required-v1",
+        "prompt_version": "rag-v4-faithfulness-v1",
+        "status": "pending_runtime_data"
+      },
+      "items": [
+        {
+          "id": "runtime_game_01",
+          "query_text": "我们玩过什么游戏？ 游戏",
+          "category": "共同记忆",
+          "found": false,
+          "rank": null,
+          "recall_at_5": false,
+          "mrr": 0.0,
+          "gate_decision": "no_hit",
+          "gate_reason": "rag_disabled",
+          "matched_log": true,
+          "retrieved_ids": [],
+          "expected_ids": [
+            "533",
+            "534"
+          ],
+          "correct_reject": false,
+          "false_reject": true,
+          "scope_expected": "latest_turn",
+          "scope_actual": "latest_turn",
+          "scope_correct": true
+        },
+        {
+          "id": "runtime_game_02",
+          "query_text": "杀戮尖塔之类的？ 杀戮尖塔",
+          "category": "偏好/游戏",
+          "found": false,
+          "rank": null,
+          "recall_at_5": false,
+          "mrr": 0.0,
+          "gate_decision": "no_hit",
+          "gate_reason": "rag_disabled",
+          "matched_log": true,
+          "retrieved_ids": [],
+          "expected_ids": [
+            "935",
+            "936"
+          ],
+          "correct_reject": false,
+          "false_reject": true,
+          "scope_expected": "latest_turn",
+          "scope_actual": "latest_turn",
+          "scope_correct": true
+        },
+        {
+          "id": "runtime_game_03",
+          "query_text": "我们玩过什么游戏？ 上次 之前 说过 提到 游戏",
+          "category": "共同记忆",
+          "found": false,
+          "rank": null,
+          "recall_at_5": false,
+          "mrr": 0.0,
+          "gate_decision": "no_hit",
+          "gate_reason": "rag_disabled",
+          "matched_log": true,
+          "retrieved_ids": [],
+          "expected_ids": [
+            "533",
+            "534",
+            "935",
+            "936"
+          ],
+          "correct_reject": false,
+          "false_reject": true,
+          "scope_expected": "latest_turn",
+          "scope_actual": "latest_turn",
+          "scope_correct": true
+        },
+        {
+          "id": "runtime_game_04",
+          "query_text": "我们一起玩过什么游戏？ 上次 之前 说过 提到 游戏",
+          "category": "共同记忆",
+          "found": false,
+          "rank": null,
+          "recall_at_5": false,
+          "mrr": 0.0,
+          "gate_decision": "no_hit",
+          "gate_reason": "rag_disabled",
+          "matched_log": true,
+          "retrieved_ids": [],
+          "expected_ids": [
+            "533",
+            "534",
+            "935",
+            "936"
+          ],
+          "correct_reject": false,
+          "false_reject": true,
+          "scope_expected": "latest_turn",
+          "scope_actual": "latest_turn",
+          "scope_correct": true
+        }
+      ]
+    },
+    "document_rag": {
+      "summary": {
+        "cases": 4,
+        "matched_logs": 4,
+        "unmatched_runtime_logs": 0,
+        "gold_mapping_status": "ready",
+        "metrics_status": "ready",
+        "recall_at_5": 0.0,
+        "recall_at_5_ci": {
+          "lower": 0.0,
+          "upper": 0.0
+        },
+        "mrr": 0.0,
+        "mrr_ci": {
+          "lower": 0.0,
+          "upper": 0.0
+        },
+        "gate_skip_rate": 0.0,
+        "gate_no_hit_rate": 0.0,
+        "false_reject_rate": 0.0,
+        "correct_reject_rate": 0.0,
+        "query_scope_accuracy": 1.0,
+        "gate_reason_distribution": {
+          "replay_retrieval_result": 4
+        }
+      },
+      "by_category": {
+        "共同记忆": {
+          "cases": 3,
+          "matched_logs": 3,
+          "recall_at_5": 0.0,
+          "mrr": 0.0,
+          "skip_rate": 0.0,
+          "no_hit_rate": 0.0
+        },
+        "偏好/游戏": {
+          "cases": 1,
+          "matched_logs": 1,
+          "recall_at_5": 0.0,
+          "mrr": 0.0,
+          "skip_rate": 0.0,
+          "no_hit_rate": 0.0
+        }
+      },
+      "faithfulness": {
+        "score": null,
+        "cases": 0,
+        "judge_version": "nli-external-required-v1",
+        "prompt_version": "rag-v4-faithfulness-v1",
+        "status": "pending_runtime_data"
+      },
+      "items": [
+        {
+          "id": "runtime_game_01",
+          "query_text": "我们玩过什么游戏？ 游戏",
+          "category": "共同记忆",
+          "found": false,
+          "rank": null,
+          "recall_at_5": false,
+          "mrr": 0.0,
+          "gate_decision": "inject",
+          "gate_reason": "replay_retrieval_result",
+          "matched_log": true,
+          "retrieved_ids": [],
+          "expected_ids": [
+            "533",
+            "534"
+          ],
+          "correct_reject": false,
+          "false_reject": false,
+          "scope_expected": "latest_turn",
+          "scope_actual": "latest_turn",
+          "scope_correct": true
+        },
+        {
+          "id": "runtime_game_02",
+          "query_text": "杀戮尖塔之类的？ 杀戮尖塔",
+          "category": "偏好/游戏",
+          "found": false,
+          "rank": null,
+          "recall_at_5": false,
+          "mrr": 0.0,
+          "gate_decision": "inject",
+          "gate_reason": "replay_retrieval_result",
+          "matched_log": true,
+          "retrieved_ids": [],
+          "expected_ids": [
+            "935",
+            "936"
+          ],
+          "correct_reject": false,
+          "false_reject": false,
+          "scope_expected": "latest_turn",
+          "scope_actual": "latest_turn",
+          "scope_correct": true
+        },
+        {
+          "id": "runtime_game_03",
+          "query_text": "我们玩过什么游戏？ 上次 之前 说过 提到 游戏",
+          "category": "共同记忆",
+          "found": false,
+          "rank": null,
+          "recall_at_5": false,
+          "mrr": 0.0,
+          "gate_decision": "inject",
+          "gate_reason": "replay_retrieval_result",
+          "matched_log": true,
+          "retrieved_ids": [],
+          "expected_ids": [
+            "533",
+            "534",
+            "935",
+            "936"
+          ],
+          "correct_reject": false,
+          "false_reject": false,
+          "scope_expected": "latest_turn",
+          "scope_actual": "latest_turn",
+          "scope_correct": true
+        },
+        {
+          "id": "runtime_game_04",
+          "query_text": "我们一起玩过什么游戏？ 上次 之前 说过 提到 游戏",
+          "category": "共同记忆",
+          "found": false,
+          "rank": null,
+          "recall_at_5": false,
+          "mrr": 0.0,
+          "gate_decision": "inject",
+          "gate_reason": "replay_retrieval_result",
+          "matched_log": true,
+          "retrieved_ids": [],
+          "expected_ids": [
+            "533",
+            "534",
+            "935",
+            "936"
+          ],
+          "correct_reject": false,
+          "false_reject": false,
+          "scope_expected": "latest_turn",
+          "scope_actual": "latest_turn",
+          "scope_correct": true
+        }
+      ]
+    },
+    "fact_path": {
+      "summary": {
+        "cases": 4,
+        "matched_logs": 4,
+        "unmatched_runtime_logs": 0,
+        "gold_mapping_status": "ready",
+        "metrics_status": "ready",
+        "recall_at_5": 0.25,
+        "recall_at_5_ci": {
+          "lower": 0.0,
+          "upper": 0.75
+        },
+        "mrr": 0.25,
+        "mrr_ci": {
+          "lower": 0.0,
+          "upper": 0.75
+        },
+        "gate_skip_rate": 0.0,
+        "gate_no_hit_rate": 0.0,
+        "false_reject_rate": 0.0,
+        "correct_reject_rate": 0.0,
+        "query_scope_accuracy": 1.0,
+        "gate_reason_distribution": {
+          "replay_retrieval_result": 4
+        }
+      },
+      "by_category": {
+        "共同记忆": {
+          "cases": 3,
+          "matched_logs": 3,
+          "recall_at_5": 0.0,
+          "mrr": 0.0,
+          "skip_rate": 0.0,
+          "no_hit_rate": 0.0
+        },
+        "偏好/游戏": {
+          "cases": 1,
+          "matched_logs": 1,
+          "recall_at_5": 1.0,
+          "mrr": 1.0,
+          "skip_rate": 0.0,
+          "no_hit_rate": 0.0
+        }
+      },
+      "faithfulness": {
+        "score": null,
+        "cases": 0,
+        "judge_version": "nli-external-required-v1",
+        "prompt_version": "rag-v4-faithfulness-v1",
+        "status": "pending_runtime_data"
+      },
+      "items": [
+        {
+          "id": "runtime_game_01",
+          "query_text": "我们玩过什么游戏？ 游戏",
+          "category": "共同记忆",
+          "found": false,
+          "rank": null,
+          "recall_at_5": false,
+          "mrr": 0.0,
+          "gate_decision": "inject",
+          "gate_reason": "replay_retrieval_result",
+          "matched_log": true,
+          "retrieved_ids": [
+            "1056",
+            "1058",
+            "1061",
+            "1042",
+            "1043",
+            "1001"
+          ],
+          "expected_ids": [
+            "533",
+            "534"
+          ],
+          "correct_reject": false,
+          "false_reject": false,
+          "scope_expected": "latest_turn",
+          "scope_actual": "latest_turn",
+          "scope_correct": true
+        },
+        {
+          "id": "runtime_game_02",
+          "query_text": "杀戮尖塔之类的？ 杀戮尖塔",
+          "category": "偏好/游戏",
+          "found": true,
+          "rank": 1,
+          "recall_at_5": true,
+          "mrr": 1.0,
+          "gate_decision": "inject",
+          "gate_reason": "replay_retrieval_result",
+          "matched_log": true,
+          "retrieved_ids": [
+            "936",
+            "935",
+            "937",
+            "938",
+            "934",
+            "304"
+          ],
+          "expected_ids": [
+            "935",
+            "936"
+          ],
+          "correct_reject": false,
+          "false_reject": false,
+          "scope_expected": "latest_turn",
+          "scope_actual": "latest_turn",
+          "scope_correct": true
+        },
+        {
+          "id": "runtime_game_03",
+          "query_text": "我们玩过什么游戏？ 上次 之前 说过 提到 游戏",
+          "category": "共同记忆",
+          "found": false,
+          "rank": null,
+          "recall_at_5": false,
+          "mrr": 0.0,
+          "gate_decision": "inject",
+          "gate_reason": "replay_retrieval_result",
+          "matched_log": true,
+          "retrieved_ids": [
+            "1056",
+            "1060",
+            "1052",
+            "1055",
+            "1058",
+            "1053"
+          ],
+          "expected_ids": [
+            "533",
+            "534",
+            "935",
+            "936"
+          ],
+          "correct_reject": false,
+          "false_reject": false,
+          "scope_expected": "latest_turn",
+          "scope_actual": "latest_turn",
+          "scope_correct": true
+        },
+        {
+          "id": "runtime_game_04",
+          "query_text": "我们一起玩过什么游戏？ 上次 之前 说过 提到 游戏",
+          "category": "共同记忆",
+          "found": false,
+          "rank": null,
+          "recall_at_5": false,
+          "mrr": 0.0,
+          "gate_decision": "inject",
+          "gate_reason": "replay_retrieval_result",
+          "matched_log": true,
+          "retrieved_ids": [
+            "1056",
+            "1060",
+            "1052",
+            "1055",
+            "1053",
+            "1058"
+          ],
+          "expected_ids": [
+            "533",
+            "534",
+            "935",
+            "936"
+          ],
+          "correct_reject": false,
+          "false_reject": false,
+          "scope_expected": "latest_turn",
+          "scope_actual": "latest_turn",
+          "scope_correct": true
+        }
+      ]
+    }
+  },
+  "release_gate": {
+    "status": "pending_runtime_data",
+    "comparable": false,
+    "fact_not_below_document": null,
+    "compared_metrics": [
+      "recall_at_5",
+      "mrr",
+      "faithfulness"
+    ],
+    "safety_and_identity": "pending_runtime_data",
+    "notes": "先冻结 no-RAG/document-RAG 基线，再按分层 bootstrap 下界设定阈值。"
+  }
+}

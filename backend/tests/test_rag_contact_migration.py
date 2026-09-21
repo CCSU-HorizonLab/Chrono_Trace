@@ -607,6 +607,33 @@ def test_fact_vector_retrieval_times_out_without_raising(monkeypatch):
     assert result["degrade_reason"] == "timeout"
 
 
+def test_document_query_with_recent_word_keeps_older_relevant_memory(monkeypatch):
+    import time
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    store = RagStore(conn)
+    store.upsert_status("account-a", 1, status="ready", document_count=1, vector_count=0)
+    store.upsert_document(
+        account_wxid="account-a", conversation_id=1, doc_type="shared_memory",
+        source_table="messages", source_id="m1", source_ts=int(time.time()) - 8 * 86400,
+        content="她之前提过想去摄影展", redacted_content="她之前提过想去摄影展",
+    )
+    monkeypatch.setattr(
+        "app.services.realtime.rag_retriever.load_rag_settings",
+        lambda: {
+            "rag_fact_read_enabled": False, "rag_embedding_model": "test",
+            "rag_embedding_dim": 2,
+        },
+    )
+    result = RagRetriever(store=store).retrieve(
+        account_wxid="account-a", conversation_id=1,
+        query="我刚下班，之前她提过想去什么展？", limit=3,
+    )
+    assert result["items"]
+    assert "摄影展" in result["items"][0]["doc"]["content"]
+
+
 def test_rag_schema_is_idempotent_and_keeps_contact_keys():
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row

@@ -6,8 +6,9 @@
 
 - [x] 使用外部 `fact_kind_hints.json` 配置 kind→同义词映射；通用检索代码不写具体领域词。
 - [x] 单测：`上次她想吃什么来的？` 能选择 `preference` / `event` 类事实。
+- [x] 补齐历史事实表具体 kind（`hobby_or_game`、`preference_like` 等）映射，并覆盖游戏/习惯问句回归单测。
 - [x] 仓库检索确认 `rag_retriever.py` 不含具体业务语料判断。
-- [x] 完成回归测试（RAG 定向 73 passed）、更新勾选并提交 `feat：泛化事实类别选择`。
+- [x] 完成回归测试（RAG 定向 79 passed；全量 620 passed、21 skipped），更新勾选并提交 `feat：补齐事实类别映射`。
 
 ## P2-2 事实注入预算与呈现
 

@@ -775,6 +775,15 @@ def test_fact_kind_hints_are_configured_and_select_food_preference():
     assert "event" in kinds
 
 
+def test_fact_kind_hints_include_concrete_legacy_fact_kinds():
+    retriever = RagRetriever()
+    kinds = retriever._preferred_fact_kinds("我们一起玩过什么游戏")
+    assert "hobby_or_game" in kinds
+
+    kinds = retriever._preferred_fact_kinds("她平时有什么习惯")
+    assert "recurring_habit" in kinds
+
+
 def test_fact_context_keeps_eight_complete_facts_with_subject_and_as_of():
     builder = RagContextBuilder(store=RagStore(sqlite3.connect(":memory:")))
     facts = []

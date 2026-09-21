@@ -224,13 +224,48 @@ class RagRetriever:
     ) -> dict[str, Any]:
         tokens = set(self._tokens(query))
         preferred_kinds = self._preferred_fact_kinds(query)
+        settings = load_rag_settings()
+        model = str(settings.get("rag_embedding_model") or "")
+        dim = int(settings.get("rag_embedding_dim") or 0)
+        vector_by_id = {
+            int(item["id"]): item.get("vector") or []
+            for item in self.store.list_facts_with_vectors(
+                account_wxid,
+                conversation_id,
+                embedding_model=model,
+                embedding_dim=dim,
+            )
+        }
+        query_vector: list[float] = []
+        vector_available = False
+        vector_reason = None
+        try:
+            if self._embedding_is_warm() and query:
+                query_vector = self.embedding_service.embed_text(query)
+                if len(query_vector) != dim:
+                    raise RagEmbeddingDimensionMismatch(
+                        f"fact query dimension mismatch: vector={len(query_vector)} configured={dim}"
+                    )
+                vector_available = True
+        except RagEmbeddingUnavailable:
+            vector_reason = "embedding_unavailable"
+        except RagEmbeddingDimensionMismatch:
+            vector_reason = "embedding_dimension_mismatch"
+        except Exception:
+            vector_reason = "vector_error"
+        if self._timed_out(started, timeout_ms, deadline):
+            return self._empty(
+                started,
+                self.store.get_status(account_wxid, conversation_id) or {},
+                degraded=True,
+                reason="timeout",
+                timed_out=True,
+            )
         items: list[dict[str, Any]] = []
         for fact in self.store.list_facts(account_wxid, conversation_id):
             if self._timed_out(started, timeout_ms, deadline):
                 return self._empty(started, self.store.get_status(account_wxid, conversation_id) or {}, degraded=True, reason="timeout", timed_out=True)
             if str(fact.get("sensitivity") or "normal") == "sensitive":
-                continue
-            if preferred_kinds and str(fact.get("kind") or "") not in preferred_kinds:
                 continue
             content = str(fact.get("content") or "").strip()
             # 空事实既不能作为证据，也不应被算作“命中”。保留在表内供审计，
@@ -239,21 +274,23 @@ class RagRetriever:
                 continue
             fact_tokens = set(self._tokens(content))
             overlap = len(tokens & fact_tokens)
-            if not overlap:
+            vector_score = self._cosine(query_vector, vector_by_id.get(int(fact["id"]), [])) if vector_available else 0.0
+            if not overlap and not vector_score:
                 continue
-            score = overlap / max(1, min(len(tokens), len(fact_tokens)))
+            keyword_score = overlap / max(1, min(len(tokens), len(fact_tokens)))
+            kind_bonus = 0.1 if preferred_kinds and str(fact.get("kind") or "") in preferred_kinds else 0.0
+            score = vector_score * 0.6 + keyword_score * 0.2 + float(fact.get("confidence") or 0.0) * 0.2 + kind_bonus
             items.append(
                 {
                     "document_id": int(fact["id"]),
                     "doc_type": "fact_memory",
                     "content": content,
                     "score": round(
-                        (float(score) * 0.8 + float(fact.get("confidence") or 0.0) * 0.2)
-                        * self._fact_time_decay(fact),
-                        4,
+                        float(score) * self._fact_time_decay(fact),
+                    4,
                     ),
-                    "vector_score": 0.0,
-                    "keyword_score": round(float(score), 4),
+                    "vector_score": round(float(vector_score), 4),
+                    "keyword_score": round(float(keyword_score), 4),
                     "fact_status": fact.get("status") or "active",
                     "fact_confidence": float(fact.get("confidence") or 0.0),
                     "evidence_message_ids": json.loads(fact.get("evidence_message_ids_json") or "[]"),
@@ -281,8 +318,8 @@ class RagRetriever:
             "strategy": "facts",
             "status": self.store.get_status(account_wxid, conversation_id) or {},
             "timed_out": False,
-            "degraded": False,
-            "degrade_reason": None,
+            "degraded": bool(vector_reason),
+            "degrade_reason": vector_reason,
             "elapsed_ms": int((time.perf_counter() - started) * 1000),
             "by_type": {"fact_memory": len(items)} if items else {},
         }

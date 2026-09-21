@@ -276,16 +276,23 @@ class RagRetriever:
                 continue
             keyword_score = overlap / max(1, min(len(tokens), len(fact_tokens)))
             kind_bonus = 0.1 if preferred_kinds and str(fact.get("kind") or "") in preferred_kinds else 0.0
-            score = vector_score * 0.6 + keyword_score * 0.2 + float(fact.get("confidence") or 0.0) * 0.2 + kind_bonus
+            semantic_score = (
+                vector_score * 0.6
+                + keyword_score * 0.2
+                + float(fact.get("confidence") or 0.0) * 0.2
+                + kind_bonus
+            )
+            # Recency is a tie-breaker, not a hard eraser for long-term
+            # memory. Applying the decay to the whole semantic score made an
+            # old exact fact lose to a recent unrelated fact in sparse legacy
+            # indexes. Keep a mild 0.75..1.0 recency multiplier instead.
+            score = semantic_score * (0.75 + 0.25 * self._fact_time_decay(fact))
             items.append(
                 {
                     "document_id": int(fact["id"]),
                     "doc_type": "fact_memory",
                     "content": content,
-                    "score": round(
-                        float(score) * self._fact_time_decay(fact),
-                    4,
-                    ),
+                    "score": round(float(score), 4),
                     "vector_score": round(float(vector_score), 4),
                     "keyword_score": round(float(keyword_score), 4),
                     "fact_status": fact.get("status") or "active",

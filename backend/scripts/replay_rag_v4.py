@@ -124,6 +124,16 @@ def replay(
     conn = _copy_database(source_db, output_db)
     store = RagStore(conn)
     retriever = retriever or RagRetriever(store=store)
+    embedding_service = getattr(retriever, "embedding_service", None)
+    warmup = getattr(embedding_service, "embed_text", None)
+    if callable(warmup):
+        try:
+            warmup("回放预热")
+        except Exception:
+            # The replay still records a safe keyword-degraded run when the
+            # local model is unavailable; the manifest will retain per-case
+            # degraded fields for diagnosis.
+            pass
     original_loader = rag_retriever_module.load_rag_settings
     base_settings = dict(load_rag_settings())
     counts = {track: 0 for track in TRACKS}

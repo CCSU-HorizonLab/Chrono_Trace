@@ -14,9 +14,45 @@ class FactExtractionError(ValueError):
     """Raised when an extractor response cannot be safely used as a fact."""
 
 
+CANONICAL_FACT_KINDS = {
+    "preference",
+    "plan",
+    "promise",
+    "personal_fact",
+    "event",
+    "boundary",
+    "mood",
+    "relation_state",
+}
+
+_KIND_ALIASES = {
+    "preference_like": "preference",
+    "preference_dislike": "preference",
+    "food_or_place": "preference",
+    "hobby_or_game": "preference",
+    "plan_or_appointment": "plan",
+    "promise_or_commitment": "promise",
+    "personal_profile": "personal_fact",
+    "relationship_boundary": "boundary",
+    "relationship_state": "relation_state",
+    "recurring_habit": "personal_fact",
+    "shared_memory": "event",
+    "marker_fallback": "event",
+}
+
+
+def normalize_fact_kind(kind: Any) -> str:
+    """Collapse extractor and legacy labels into stable maintenance buckets."""
+    normalized = str(kind or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if normalized in CANONICAL_FACT_KINDS:
+        return normalized
+    return _KIND_ALIASES.get(normalized, "event")
+
+
 class StructuredFactExtractor:
     ALLOWED_STATUS = {"active", "superseded", "uncertain"}
     REQUIRED = {"subject", "kind", "content"}
+    FUSION_ACTIONS = {"ADD", "UPDATE", "INVALIDATE", "MERGE", "NOOP"}
 
     def __init__(self, llm_call: Callable[[str], Any] | None = None):
         self.llm_call = llm_call
@@ -70,3 +106,41 @@ class StructuredFactExtractor:
             "evidence_message_ids": [int(value) for value in evidence],
             "source_window": item.get("source_window") or {},
         }
+
+    def decide_fusion(self, prompt: str, *, candidate_ids: set[int]) -> list[dict[str, Any]]:
+        """Ask the injected model how one incoming fact relates to old facts.
+
+        This intentionally validates a much narrower contract than extraction.
+        Callers treat any parsing or validation problem as ADD, because an
+        accidental supersede loses useful active memory from the read side.
+        """
+        if self.llm_call is None:
+            raise FactExtractionError("fact fusion requires an llm_call")
+        raw = self.llm_call(prompt)
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                raise FactExtractionError("fact fusion returned invalid JSON") from exc
+        if not isinstance(raw, dict):
+            raise FactExtractionError("fact fusion response must be an object")
+        decisions = raw.get("decisions")
+        if not isinstance(decisions, list):
+            raise FactExtractionError("fact fusion response requires decisions")
+        validated: list[dict[str, Any]] = []
+        seen: set[int] = set()
+        for item in decisions:
+            if not isinstance(item, dict):
+                raise FactExtractionError("fact fusion decision must be an object")
+            try:
+                fact_id = int(item.get("fact_id"))
+            except (TypeError, ValueError) as exc:
+                raise FactExtractionError("fact fusion decision requires numeric fact_id") from exc
+            action = str(item.get("action") or "").upper()
+            if fact_id not in candidate_ids or fact_id in seen:
+                raise FactExtractionError("fact fusion decision references an invalid candidate")
+            if action not in self.FUSION_ACTIONS:
+                raise FactExtractionError("fact fusion decision has an invalid action")
+            seen.add(fact_id)
+            validated.append({"fact_id": fact_id, "action": action})
+        return validated

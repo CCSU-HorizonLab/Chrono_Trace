@@ -17,7 +17,7 @@ from .rag_embedding import (
     RagEmbeddingService,
     RagEmbeddingUnavailable,
 )
-from .rag_fact_extractor import FactExtractionError, StructuredFactExtractor
+from .rag_fact_extractor import FactExtractionError, StructuredFactExtractor, normalize_fact_kind
 from .rag_semantic_memory import SemanticFactExtractor
 from .rag_segmenter import RagSegment, RagSegmenter
 from .rag_store import RAG_INDEX_VERSION, RagStore
@@ -567,23 +567,112 @@ class RagIndexer:
         except FactExtractionError as exc:
             logger.warning("[RAG Fact Shadow] quarantined invalid extraction: %s", exc)
             return
-        for fact in facts:
-            self.store.upsert_fact(
+        self._write_structured_facts(
+            account_wxid=account_wxid,
+            conversation_id=conversation_id,
+            segment=segment,
+            facts=facts,
+        )
+
+    def _write_structured_facts(
+        self,
+        *,
+        account_wxid: str,
+        conversation_id: int,
+        segment: RagSegment,
+        facts: list[dict[str, Any]],
+    ) -> None:
+        """Persist structured facts through a conservative maintenance loop."""
+        for raw_fact in facts:
+            fact = dict(raw_fact)
+            fact["kind"] = normalize_fact_kind(fact.get("kind"))
+            fact["subject"] = str(fact.get("subject") or "").strip()
+            candidates = self.store.list_active_facts_by_subject_kind(
+                account_wxid,
+                conversation_id,
+                fact["subject"],
+                fact["kind"],
+            )
+            decisions = self._decide_fact_fusion(fact, candidates)
+            replacement_ids = [
+                int(item["fact_id"])
+                for item in decisions
+                if item["action"] in {"UPDATE", "INVALIDATE"}
+            ]
+            merge_ids = [int(item["fact_id"]) for item in decisions if item["action"] == "MERGE"]
+
+            # A pure semantic duplicate augments the old fact rather than
+            # creating another active spelling of the same memory.
+            if merge_ids and not replacement_ids:
+                self.store.merge_fact_evidence(
+                    merge_ids[0],
+                    confidence=float(fact.get("confidence") or 0.0),
+                    evidence_message_ids=list(fact.get("evidence_message_ids") or []),
+                )
+                continue
+
+            new_id = self.store.upsert_fact(
                 account_wxid=account_wxid,
                 conversation_id=conversation_id,
                 subject=fact["subject"],
                 kind=fact["kind"],
                 content=fact["content"],
-                status=fact["status"],
+                status=fact.get("status") or "active",
                 as_of=fact.get("as_of") or segment.end_ts,
                 valid_from=fact.get("valid_from") or segment.start_ts,
                 valid_to=fact.get("valid_to") or segment.end_ts,
-                confidence=fact["confidence"],
-                sensitivity=fact["sensitivity"],
-                evidence_message_ids=fact["evidence_message_ids"],
+                confidence=float(fact.get("confidence") or 0.0),
+                sensitivity=fact.get("sensitivity") or "normal",
+                evidence_message_ids=list(fact.get("evidence_message_ids") or []),
                 source_window=fact.get("source_window") or {},
                 summary_method="llm_shadow",
             )
+            for old_id in replacement_ids:
+                if old_id != new_id:
+                    self.store.supersede_fact(old_id, new_id)
+
+    def _decide_fact_fusion(
+        self,
+        fact: dict[str, Any],
+        candidates: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Return safe fusion decisions; any model uncertainty becomes ADD."""
+        if not candidates or self.structured_fact_extractor is None:
+            return []
+        try:
+            prompt = json.dumps(
+                {
+                    "task": "maintain_atomic_contact_facts",
+                    "new_fact": fact,
+                    "active_candidates": [
+                        {
+                            "fact_id": item["id"],
+                            "content": item["content"],
+                            "confidence": item["confidence"],
+                            "evidence_message_ids": json.loads(item.get("evidence_message_ids_json") or "[]"),
+                        }
+                        for item in candidates
+                    ],
+                    "contract": {
+                        "output": {"decisions": [{"fact_id": "integer", "action": "ADD|UPDATE|INVALIDATE|MERGE|NOOP"}]},
+                        "meaning": {
+                            "ADD": "unrelated old fact; keep it and add the new fact",
+                            "UPDATE": "new fact corrects, qualifies, or replaces old fact",
+                            "INVALIDATE": "new fact makes old fact no longer valid",
+                            "MERGE": "same fact expressed again; merge evidence without adding",
+                            "NOOP": "no state change for this candidate",
+                        },
+                    },
+                },
+                ensure_ascii=False,
+            )
+            return self.structured_fact_extractor.decide_fusion(
+                prompt,
+                candidate_ids={int(item["id"]) for item in candidates},
+            )
+        except Exception as exc:
+            logger.warning("[RAG Fact Fusion] invalid/failed decision; falling back to ADD: %s", exc)
+            return []
 
     def _doc_payload(
         self,

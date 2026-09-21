@@ -13,6 +13,8 @@ from app.services.realtime.rag_embedding import RagEmbeddingService
 from app.services.realtime.rag_retriever import RagRetriever
 from app.services.realtime.rag_store import RagStore
 from app.services.realtime.rag_context_builder import RagContextBuilder
+from app.services.realtime.rag_indexer import RagIndexer
+from app.services.realtime.rag_segmenter import RagSegment
 from app.services.realtime.llm_engine import LLMSuggestionEngine
 from app.webview.bridge import Bridge
 from app.services.realtime.privacy_redactor import PrivacyRedactor
@@ -399,6 +401,119 @@ def test_fact_lifecycle_supersedes_and_allows_user_disable():
     assert [item["id"] for item in store.list_facts("account-a", 1)] == [new_id]
     store.set_fact_enabled(new_id, False)
     assert store.list_facts("account-a", 1) == []
+
+
+def _maintenance_segment():
+    return RagSegment(
+        segment_id="test",
+        start_ts=100,
+        end_ts=200,
+        messages=[],
+        message_ids=[],
+        topics=[],
+        entities=[],
+        time_label="测试时间",
+    )
+
+
+def test_structured_fact_fusion_supersedes_conflicting_fact_and_keeps_audit_chain():
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    store = RagStore(conn)
+    old_id = store.upsert_fact(
+        account_wxid="account-a", conversation_id=1, subject="对方",
+        kind="preference", content="对方喜欢吃虾", confidence=0.8,
+        evidence_message_ids=[1],
+    )
+
+    def llm(prompt):
+        payload = json.loads(prompt)
+        assert payload["task"] == "maintain_atomic_contact_facts"
+        return {"decisions": [{"fact_id": old_id, "action": "UPDATE"}]}
+
+    indexer = RagIndexer(store=store, structured_fact_extractor=StructuredFactExtractor(llm))
+    indexer._write_structured_facts(
+        account_wxid="account-a", conversation_id=1, segment=_maintenance_segment(), facts=[{
+            "subject": "对方", "kind": "preference", "content": "对方最近对虾过敏，不吃了",
+            "status": "active", "confidence": 0.95, "sensitivity": "normal",
+            "evidence_message_ids": [2],
+        }],
+    )
+    rows = conn.execute("SELECT * FROM rag_facts ORDER BY id").fetchall()
+    assert len(rows) == 2
+    assert rows[0]["status"] == "superseded"
+    assert rows[0]["enabled"] == 0
+    assert rows[1]["status"] == "active"
+    assert rows[1]["supersedes_fact_id"] == old_id
+    assert [item["id"] for item in store.list_facts("account-a", 1)] == [rows[1]["id"]]
+
+
+def test_structured_fact_fusion_merges_duplicate_evidence_without_new_fact():
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    store = RagStore(conn)
+    old_id = store.upsert_fact(
+        account_wxid="account-a", conversation_id=1, subject="对方",
+        kind="preference", content="对方爱吃虾", confidence=0.6,
+        evidence_message_ids=[1],
+    )
+
+    def llm(prompt):
+        payload = json.loads(prompt)
+        return {"decisions": [{"fact_id": old_id, "action": "MERGE"}]}
+
+    RagIndexer(store=store, structured_fact_extractor=StructuredFactExtractor(llm))._write_structured_facts(
+        account_wxid="account-a", conversation_id=1, segment=_maintenance_segment(), facts=[{
+            "subject": "对方", "kind": "preference_like", "content": "对方喜欢吃虾",
+            "status": "active", "confidence": 0.9, "sensitivity": "normal",
+            "evidence_message_ids": [2],
+        }],
+    )
+    rows = conn.execute("SELECT * FROM rag_facts").fetchall()
+    assert len(rows) == 1
+    assert rows[0]["confidence"] == 0.9
+    assert json.loads(rows[0]["evidence_message_ids_json"]) == [1, 2]
+
+
+def test_structured_fact_fusion_failure_falls_back_to_add():
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    store = RagStore(conn)
+    old_id = store.upsert_fact(
+        account_wxid="account-a", conversation_id=1, subject="对方",
+        kind="preference", content="对方喜欢吃虾", confidence=0.8,
+    )
+
+    def llm(_prompt):
+        return "not-json"
+
+    RagIndexer(store=store, structured_fact_extractor=StructuredFactExtractor(llm))._write_structured_facts(
+        account_wxid="account-a", conversation_id=1, segment=_maintenance_segment(), facts=[{
+            "subject": "对方", "kind": "preference", "content": "对方最近对虾过敏",
+            "status": "active", "confidence": 0.9, "sensitivity": "normal",
+            "evidence_message_ids": [],
+        }],
+    )
+    assert len(conn.execute("SELECT id FROM rag_facts").fetchall()) == 2
+    assert store.list_facts("account-a", 1)[0]["id"] != old_id
+
+
+def test_structured_fact_fusion_contract_accepts_all_maintenance_actions():
+    extractor = StructuredFactExtractor(
+        lambda _prompt: {
+            "decisions": [
+                {"fact_id": 1, "action": "ADD"},
+                {"fact_id": 2, "action": "UPDATE"},
+                {"fact_id": 3, "action": "INVALIDATE"},
+                {"fact_id": 4, "action": "MERGE"},
+                {"fact_id": 5, "action": "NOOP"},
+            ]
+        }
+    )
+    decisions = extractor.decide_fusion("{}", candidate_ids={1, 2, 3, 4, 5})
+    assert [item["action"] for item in decisions] == [
+        "ADD", "UPDATE", "INVALIDATE", "MERGE", "NOOP"
+    ]
 
 
 def test_rag_schema_is_idempotent_and_keeps_contact_keys():

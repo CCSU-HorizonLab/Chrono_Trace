@@ -4,16 +4,16 @@
 
 ## P0-1 写入侧维护循环
 
-- [ ] 为结构化事实定义并实现 kind 归一化：`preference`、`plan`、`promise`、`personal_fact`、`event`、`boundary`、`mood`、`relation_state`。
-- [ ] 在 `RagStore` 增加按 account、conversation、subject、规范化 kind 查询 active/enabled 事实的方法。
-- [ ] 定义融合判定 JSON 契约：`ADD`、`UPDATE`、`INVALIDATE`、`MERGE`、`NOOP`，以及每个候选旧事实的判定结果。
-- [ ] 在 `RagIndexer._write_structured_facts` 中接入 LLM 融合判定；异常、超时或非法 JSON 必须退回 ADD。
-- [ ] 实现 UPDATE/INVALIDATE：新事实成功入库后调用 `supersede_fact(old_id, new_id)`，保留旧行审计链。
-- [ ] 实现 MERGE：合并 evidence ID，并以不降低原值的规则更新置信度，且不新增重复事实。
-- [ ] 单测：虾偏好被过敏事实推翻后，旧事实 superseded/disabled，新事实是唯一 active 结果。
-- [ ] 单测：语义重复事实只保留一条并合并证据。
-- [ ] 单测：五种融合结果及 LLM 异常退化 ADD 均通过。
-- [ ] 完成 P0-1 回归测试、更新勾选并提交 `feat：接通事实维护融合循环`。
+- [x] 为结构化事实定义并实现 kind 归一化：`preference`、`plan`、`promise`、`personal_fact`、`event`、`boundary`、`mood`、`relation_state`。
+- [x] 在 `RagStore` 增加按 account、conversation、subject、规范化 kind 查询 active/enabled 事实的方法。
+- [x] 定义融合判定 JSON 契约：`ADD`、`UPDATE`、`INVALIDATE`、`MERGE`、`NOOP`，以及每个候选旧事实的判定结果。
+- [x] 在 `RagIndexer._write_structured_facts` 中接入 LLM 融合判定；异常、超时或非法 JSON 必须退回 ADD。
+- [x] 实现 UPDATE/INVALIDATE：新事实成功入库后调用 `supersede_fact(old_id, new_id)`，保留旧行审计链。
+- [x] 实现 MERGE：合并 evidence ID，并以不降低原值的规则更新置信度，且不新增重复事实。
+- [x] 单测：虾偏好被过敏事实推翻后，旧事实 superseded/disabled，新事实是唯一 active 结果。
+- [x] 单测：语义重复事实只保留一条并合并证据。
+- [x] 单测：五种融合结果及 LLM 异常退化 ADD 均通过。
+- [x] 完成 P0-1 回归测试、更新勾选并提交 `feat：接通事实维护融合循环`。
 
 ## P0-2 事实向量混合召回
 

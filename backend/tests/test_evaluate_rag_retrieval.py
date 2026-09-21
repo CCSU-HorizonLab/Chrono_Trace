@@ -50,6 +50,7 @@ def test_evaluator_splits_tracks_and_calculates_recall_mrr_ci():
         {"track": "fact_path", "nli_label": "entailed"},
     ])
     assert report["tracks"]["document_rag"]["summary"]["recall_at_5"] == 1.0
+    assert report["tracks"]["document_rag"]["summary"]["unmatched_runtime_logs"] == 0
     assert report["tracks"]["document_rag"]["summary"]["mrr"] == 0.5
     assert report["tracks"]["fact_path"]["summary"]["recall_at_5"] == 1.0
     assert report["tracks"]["fact_path"]["summary"]["query_scope_accuracy"] == 1.0

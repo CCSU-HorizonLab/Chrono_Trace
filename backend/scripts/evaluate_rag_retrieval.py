@@ -116,6 +116,10 @@ def _evaluate_track(
     by_query: dict[str, list[sqlite3.Row]] = defaultdict(list)
     for row in rows:
         by_query[str(row["query_text"] or "")].append(row)
+    gold_queries = {
+        str(case.get("query_text") or case.get("id") or "")
+        for case in gold
+    }
 
     results: list[dict[str, Any]] = []
     for case in gold:
@@ -169,6 +173,9 @@ def _evaluate_track(
     summary = {
         "cases": len(results),
         "matched_logs": matched_count,
+        "unmatched_runtime_logs": sum(
+            1 for row in rows if str(row["query_text"] or "") not in gold_queries
+        ),
         "metrics_status": "ready" if has_runtime_data else "pending_runtime_data",
         "recall_at_5": average(results, "recall_at_5") if has_runtime_data else None,
         "recall_at_5_ci": _bootstrap_ci(found_values) if has_runtime_data else None,

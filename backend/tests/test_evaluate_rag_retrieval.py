@@ -55,6 +55,8 @@ def test_evaluator_splits_tracks_and_calculates_recall_mrr_ci():
     assert report["tracks"]["fact_path"]["summary"]["recall_at_5"] == 1.0
     assert report["tracks"]["fact_path"]["summary"]["query_scope_accuracy"] == 1.0
     assert report["tracks"]["fact_path"]["faithfulness"]["score"] == 1.0
+    assert report["tracks"]["fact_path"]["faithfulness"]["score_ci"]["lower"] == 1.0
+    assert report["release_gate"]["metric_lower_bounds"]["mrr"]["fact_lower"] == 1.0
     assert report["release_gate"]["status"] == "pass"
 
 

@@ -142,8 +142,10 @@ def _answer_faithfulness(answers: list[dict[str, Any]], track: str) -> dict[str,
         if str(item.get("track") or "") in {"", track}
     ]
     usable = [label for label in labels if label in {"entailed", "contradicted", "unknown"}]
+    values = [float(label == "entailed") for label in usable]
     return {
-        "score": sum(label == "entailed" for label in usable) / len(usable) if usable else None,
+        "score": sum(values) / len(values) if values else None,
+        "score_ci": _bootstrap_ci(values) if values else None,
         "cases": len(usable),
         "judge_version": JUDGE_VERSION,
         "prompt_version": JUDGE_PROMPT_VERSION,
@@ -350,31 +352,72 @@ def evaluate(
     fact = tracks["fact_path"]["summary"]
     doc_faith = tracks["document_rag"]["faithfulness"].get("score")
     fact_faith = tracks["fact_path"]["faithfulness"].get("score")
-    comparable = all(doc.get(name) is not None and fact.get(name) is not None for name in ("recall_at_5", "mrr"))
+    metric_names = ("recall_at_5", "mrr")
+    comparable = all(doc.get(name) is not None and fact.get(name) is not None for name in metric_names)
     comparable = comparable and doc_faith is not None and fact_faith is not None
+
+    def _lower(summary: dict[str, Any], name: str) -> float | None:
+        ci = summary.get(f"{name}_ci")
+        if isinstance(ci, dict) and ci.get("lower") is not None:
+            return float(ci["lower"])
+        value = summary.get(name)
+        return float(value) if value is not None else None
+
+    fact_faith_ci = tracks["fact_path"]["faithfulness"].get("score_ci") or {}
+    doc_faith_ci = tracks["document_rag"]["faithfulness"].get("score_ci") or {}
+    metric_comparisons = {
+        name: {
+            "fact_lower": _lower(fact, name),
+            "document_lower": _lower(doc, name),
+        }
+        for name in metric_names
+    }
+    metric_comparisons["faithfulness"] = {
+        "fact_lower": fact_faith_ci.get("lower", fact_faith),
+        "document_lower": doc_faith_ci.get("lower", doc_faith),
+    }
     metrics_not_regressed = comparable and all(
-        fact[name] >= doc[name] for name in ("recall_at_5", "mrr")
-    ) and fact_faith >= doc_faith
-    safety = tracks["fact_path"]["summary"]["sensitive_block"]
-    identity = tracks["fact_path"]["summary"]["identity_isolation"]
-    safety_ok = safety["status"] == "not_applicable" or (
-        safety["status"] == "ready" and safety["precision"] >= 1.0 and safety["recall"] >= 1.0
+        value["fact_lower"] is not None
+        and value["document_lower"] is not None
+        and value["fact_lower"] >= value["document_lower"]
+        for value in metric_comparisons.values()
     )
-    identity_ok = identity["status"] == "not_applicable" or (
-        identity["status"] == "ready" and identity["isolation_rate"] >= 1.0
-    )
-    safety_and_identity = "pass" if safety_ok and identity_ok else "pending_runtime_data"
+
+    fact_safety = tracks["fact_path"]["summary"]["sensitive_block"]
+    doc_safety = tracks["document_rag"]["summary"]["sensitive_block"]
+    fact_identity = tracks["fact_path"]["summary"]["identity_isolation"]
+    doc_identity = tracks["document_rag"]["summary"]["identity_isolation"]
+
+    def _safety_not_regressed() -> bool:
+        if fact_safety["status"] == doc_safety["status"] == "not_applicable":
+            return True
+        if fact_safety["status"] != "ready" or doc_safety["status"] != "ready":
+            return False
+        return all(
+            fact_safety[name] >= doc_safety[name]
+            for name in ("precision", "recall")
+        )
+
+    def _identity_not_regressed() -> bool:
+        if fact_identity["status"] == doc_identity["status"] == "not_applicable":
+            return True
+        if fact_identity["status"] != "ready" or doc_identity["status"] != "ready":
+            return False
+        return fact_identity["isolation_rate"] >= doc_identity["isolation_rate"]
+
+    safety_and_identity = "pass" if _safety_not_regressed() and _identity_not_regressed() else "pending_runtime_data"
     return {
         "version": 2,
         "generated_at": int(time.time()),
         "gold_mapping_entries": len(usable_mapping),
         "tracks": tracks,
         "release_gate": {
-            "status": "pass" if metrics_not_regressed and safety_ok and identity_ok else "pending_runtime_data",
+            "status": "pass" if metrics_not_regressed and safety_and_identity == "pass" else "pending_runtime_data",
             "comparable": comparable,
             "fact_not_below_document": metrics_not_regressed if comparable else None,
             "compared_metrics": ["recall_at_5", "mrr", "faithfulness"],
             "safety_and_identity": safety_and_identity,
+            "metric_lower_bounds": metric_comparisons,
             "notes": "先冻结 no-RAG/document-RAG 基线，再按分层 bootstrap 下界设定阈值。",
         },
     }

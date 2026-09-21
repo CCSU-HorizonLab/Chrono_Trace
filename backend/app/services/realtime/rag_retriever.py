@@ -322,17 +322,15 @@ class RagRetriever:
         }
 
     def _preferred_fact_kinds(self, query: str) -> set[str]:
-        """为明确主题问句做轻量结构化过滤，避免“我们/一起/什么”等泛词
-        把最近的付款、地点等无关事实误报成游戏记忆。没有主题提示时不限制 kind。
-        """
+        """Resolve kind hints from configuration, keeping domain vocabulary out of code."""
         compact = re.sub(r"\s+", "", str(query or ""))
-        if any(token in compact for token in ("游戏", "玩过", "一起玩", "玩了什么")):
-            return {"hobby_or_game", "shared_memory", "marker_fallback"}
-        if any(token in compact for token in ("喜欢", "偏好", "爱不爱", "想吃", "爱吃")):
-            return {"preference", "preference_like", "preference_dislike", "food_or_place", "hobby_or_game"}
-        if any(token in compact for token in ("答应", "承诺", "约定", "计划", "什么时候")):
-            return {"promise_or_commitment", "plan_or_appointment"}
-        return set()
+        hints = load_rag_settings().get("rag_fact_kind_hints") or {}
+        return {
+            str(kind)
+            for kind, terms in hints.items()
+            if isinstance(terms, (list, tuple))
+            and any(str(term).strip() and str(term).strip() in compact for term in terms)
+        }
 
     def _fact_time_decay(self, fact: dict[str, Any]) -> float:
         try:

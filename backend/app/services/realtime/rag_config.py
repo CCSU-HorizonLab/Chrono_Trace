@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import ipaddress
+import json
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
@@ -23,6 +25,19 @@ RAG_DEFAULTS: dict[str, Any] = {
     "rag_fact_shadow_enabled": True,
     "rag_fact_read_enabled": True,
 }
+
+
+def _load_fact_kind_hints() -> dict[str, list[str]]:
+    path = Path(__file__).with_name("fact_kind_hints.json")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        return {
+            str(kind): [str(term) for term in terms if str(term).strip()]
+            for kind, terms in payload.items()
+            if isinstance(terms, list)
+        }
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return {}
 
 _FACT_READ_MIGRATION_KEY = "_rag_fact_read_migrated_v1"
 
@@ -54,6 +69,7 @@ def apply_rag_defaults(settings: dict[str, Any]) -> dict[str, Any]:
         settings[_FACT_READ_MIGRATION_KEY] = True
     for key, value in RAG_DEFAULTS.items():
         settings.setdefault(key, value)
+    settings.setdefault("rag_fact_kind_hints", _load_fact_kind_hints())
     settings["rag_enabled"] = _as_bool(settings.get("rag_enabled"), False)
     settings["rag_remote_context_redaction"] = _as_bool(
         settings.get("rag_remote_context_redaction"),

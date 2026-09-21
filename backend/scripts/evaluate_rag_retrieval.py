@@ -53,6 +53,14 @@ def load_gold_mapping(path: Path | None) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _usable_gold_mapping(mapping: dict[str, Any]) -> dict[str, Any]:
+    return {
+        str(key): value
+        for key, value in mapping.items()
+        if not str(key).startswith("_") and value not in (None, "")
+    }
+
+
 def resolve_gold_ids(gold: list[dict[str, Any]], mapping: dict[str, Any]) -> list[dict[str, Any]]:
     if not mapping:
         return gold
@@ -258,7 +266,8 @@ def evaluate(
     gold_mapping: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return a three-track report for callers and tests."""
-    gold = resolve_gold_ids(gold, gold_mapping or {})
+    usable_mapping = _usable_gold_mapping(gold_mapping or {})
+    gold = resolve_gold_ids(gold, usable_mapping)
     rows = conn.execute("SELECT * FROM rag_retrieval_logs ORDER BY created_at ASC, id ASC").fetchall()
     grouped: dict[str, list[sqlite3.Row]] = defaultdict(list)
     for row in rows:
@@ -277,7 +286,7 @@ def evaluate(
     return {
         "version": 2,
         "generated_at": int(time.time()),
-        "gold_mapping_entries": len(gold_mapping or {}),
+        "gold_mapping_entries": len(usable_mapping),
         "tracks": tracks,
         "release_gate": {
             "status": "pass" if metrics_not_regressed else "pending_runtime_data",

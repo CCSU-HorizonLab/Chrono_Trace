@@ -107,3 +107,38 @@ def test_gold_id_mapping_unlocks_numeric_recall():
         gold_mapping={"fact_pref": 101},
     )
     assert report["tracks"]["fact_path"]["summary"]["recall_at_5"] == 1.0
+
+
+def test_evaluator_reports_sensitive_block_and_identity_isolation_metrics():
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    store = RagStore(conn)
+    store.insert_retrieval_log(
+        account_wxid="account-a", conversation_id=7, query_text="她的手机号是多少？",
+        document_ids=[], fact_ids=[], rag_enabled=True, rag_retrieved=False,
+        rag_gate_decision="no_hit", rag_gate_reason="sensitive_block",
+        rag_strategy="facts", retrieval_source="fact", query_scope="all",
+    )
+    store.insert_retrieval_log(
+        account_wxid="account-a", conversation_id=7, query_text="她喜欢什么？",
+        document_ids=[], fact_ids=[], rag_enabled=True, rag_retrieved=False,
+        rag_gate_decision="no_hit", rag_gate_reason="no_match",
+        rag_strategy="facts", retrieval_source="fact", query_scope="all",
+    )
+    report = evaluate(conn, [
+        {
+            "id": "sensitive", "query_text": "她的手机号是多少？",
+            "gold_fact_ids": ["f-sensitive"], "expected_retrieve": True,
+            "sensitive_block": True, "expected_account_wxid": "account-a",
+            "expected_conversation_id": 7,
+        },
+        {
+            "id": "ordinary", "query_text": "她喜欢什么？",
+            "gold_fact_ids": ["f-preference"], "expected_retrieve": True,
+        },
+    ], gold_mapping={"f-sensitive": 101, "f-preference": 102})
+    summary = report["tracks"]["fact_path"]["summary"]
+    assert summary["sensitive_block"]["precision"] == 0.5
+    assert summary["sensitive_block"]["recall"] == 1.0
+    assert summary["identity_isolation"]["isolation_rate"] == 1.0
+    assert report["release_gate"]["safety_and_identity"] == "pending_runtime_data"

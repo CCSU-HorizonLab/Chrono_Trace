@@ -151,6 +151,64 @@ def _answer_faithfulness(answers: list[dict[str, Any]], track: str) -> dict[str,
     }
 
 
+def _sensitive_block_metrics(results: list[dict[str, Any]]) -> dict[str, Any]:
+    """Measure whether cases labelled as sensitive were blocked.
+
+    The gold set marks sensitive cases with ``sensitive_block`` or
+    ``expected_blocked``.  A ``skip``/``no_hit`` decision is considered a
+    block; an injected result is a false negative.  When the gold set has no
+    sensitive labels the metric is explicitly not applicable.
+    """
+    sensitive = [item for item in results if item.get("sensitive_expected")]
+    predicted = [item for item in results if item.get("blocked_predicted")]
+    true_positive = sum(
+        bool(item.get("sensitive_expected")) and bool(item.get("blocked_predicted"))
+        for item in results
+    )
+    if not sensitive:
+        return {
+            "status": "not_applicable",
+            "cases": 0,
+            "blocked_cases": len(predicted),
+            "true_positive": 0,
+            "precision": None,
+            "recall": None,
+        }
+    return {
+        "status": "ready" if all(item.get("matched_log") for item in sensitive) else "pending_runtime_data",
+        "cases": len(sensitive),
+        "blocked_cases": len(predicted),
+        "true_positive": true_positive,
+        "precision": true_positive / len(predicted) if predicted else 0.0,
+        "recall": true_positive / len(sensitive),
+    }
+
+
+def _identity_isolation_metrics(results: list[dict[str, Any]]) -> dict[str, Any]:
+    """Validate optional account/conversation labels on a gold case.
+
+    Gold cases may provide ``account_wxid``/``conversation_id`` (or the
+    ``expected_*`` aliases).  Without those labels the evaluator reports
+    ``not_applicable`` instead of guessing that a single-contact replay is
+    proof of isolation.
+    """
+    labelled = [item for item in results if item.get("identity_expected")]
+    if not labelled:
+        return {
+            "status": "not_applicable",
+            "cases": 0,
+            "matched": 0,
+            "isolation_rate": None,
+        }
+    matched = sum(bool(item.get("identity_match")) for item in labelled)
+    return {
+        "status": "ready" if all(item.get("matched_log") for item in labelled) else "pending_runtime_data",
+        "cases": len(labelled),
+        "matched": matched,
+        "isolation_rate": matched / len(labelled),
+    }
+
+
 def _evaluate_track(
     rows: list[sqlite3.Row],
     gold: list[dict[str, Any]],
@@ -178,6 +236,14 @@ def _evaluate_track(
         blocked = bool(case.get("sensitive_block") or case.get("expected_blocked"))
         correct_reject = bool(row) and (not expected_retrieve or blocked) and decision in {"skip", "no_hit"}
         false_reject = expected_retrieve and not blocked and decision in {"skip", "no_hit"}
+        expected_account = case.get("account_wxid") or case.get("expected_account_wxid")
+        expected_conversation = case.get("conversation_id") or case.get("expected_conversation_id")
+        identity_expected = expected_account is not None or expected_conversation is not None
+        identity_match = bool(row) and (
+            expected_account is None or str(row["account_wxid"] or "") == str(expected_account)
+        ) and (
+            expected_conversation is None or int(row["conversation_id"] or 0) == int(expected_conversation)
+        )
         scope_expected = case.get("expected_scope") or case.get("query_scope")
         scope_actual = str(row["query_scope"] or "") if row else ""
         results.append(
@@ -196,6 +262,10 @@ def _evaluate_track(
                 "expected_ids": sorted(expected),
                 "correct_reject": correct_reject,
                 "false_reject": false_reject,
+                "sensitive_expected": blocked,
+                "blocked_predicted": decision in {"skip", "no_hit"},
+                "identity_expected": identity_expected,
+                "identity_match": identity_match,
                 "scope_expected": scope_expected,
                 "scope_actual": scope_actual,
                 "scope_correct": bool(scope_expected and scope_actual == scope_expected),
@@ -236,6 +306,8 @@ def _evaluate_track(
         "correct_reject_rate": sum(item["correct_reject"] for item in results) / len(results) if has_runtime_data else None,
         "query_scope_accuracy": sum(item["scope_correct"] for item in expected_scope_items) / len(expected_scope_items)
         if has_runtime_data and expected_scope_items else None,
+        "sensitive_block": _sensitive_block_metrics(results),
+        "identity_isolation": _identity_isolation_metrics(results),
         "gate_reason_distribution": dict(Counter(item["gate_reason"] for item in results)),
     }
     by_category = {
@@ -283,17 +355,26 @@ def evaluate(
     metrics_not_regressed = comparable and all(
         fact[name] >= doc[name] for name in ("recall_at_5", "mrr")
     ) and fact_faith >= doc_faith
+    safety = tracks["fact_path"]["summary"]["sensitive_block"]
+    identity = tracks["fact_path"]["summary"]["identity_isolation"]
+    safety_ok = safety["status"] == "not_applicable" or (
+        safety["status"] == "ready" and safety["precision"] >= 1.0 and safety["recall"] >= 1.0
+    )
+    identity_ok = identity["status"] == "not_applicable" or (
+        identity["status"] == "ready" and identity["isolation_rate"] >= 1.0
+    )
+    safety_and_identity = "pass" if safety_ok and identity_ok else "pending_runtime_data"
     return {
         "version": 2,
         "generated_at": int(time.time()),
         "gold_mapping_entries": len(usable_mapping),
         "tracks": tracks,
         "release_gate": {
-            "status": "pass" if metrics_not_regressed else "pending_runtime_data",
+            "status": "pass" if metrics_not_regressed and safety_ok and identity_ok else "pending_runtime_data",
             "comparable": comparable,
             "fact_not_below_document": metrics_not_regressed if comparable else None,
             "compared_metrics": ["recall_at_5", "mrr", "faithfulness"],
-            "safety_and_identity": "pending_runtime_data",
+            "safety_and_identity": safety_and_identity,
             "notes": "先冻结 no-RAG/document-RAG 基线，再按分层 bootstrap 下界设定阈值。",
         },
     }

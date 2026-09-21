@@ -732,11 +732,68 @@ class RagStore:
         ).fetchall()
         return [dict(row) for row in rows]
 
-    def supersede_fact(self, old_fact_id: int, new_fact_id: int) -> None:
-        """Mark an older fact as superseded while retaining it for audit."""
+    def list_active_facts_by_subject_kind(
+        self,
+        account_wxid: str,
+        conversation_id: int,
+        subject: str,
+        kind: str,
+    ) -> list[dict[str, Any]]:
+        """Return only maintenance candidates for one subject and fact kind."""
+        rows = self.conn.execute(
+            """
+            SELECT * FROM rag_facts
+            WHERE account_wxid = ? AND conversation_id = ?
+              AND subject = ? AND kind = ?
+              AND status = 'active' AND enabled = 1
+            ORDER BY confidence DESC, updated_at DESC, id DESC
+            """,
+            (account_wxid, int(conversation_id), subject, kind),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def merge_fact_evidence(
+        self,
+        fact_id: int,
+        *,
+        confidence: float,
+        evidence_message_ids: list[int],
+    ) -> None:
+        """Merge duplicate evidence without changing the canonical fact text."""
+        row = self.conn.execute(
+            "SELECT confidence, evidence_message_ids_json FROM rag_facts WHERE id = ?",
+            (int(fact_id),),
+        ).fetchone()
+        if not row:
+            return
+        try:
+            current_evidence = json.loads(row["evidence_message_ids_json"] or "[]")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            current_evidence = []
+        merged_evidence = sorted({int(value) for value in current_evidence + list(evidence_message_ids)})
         self.conn.execute(
-            "UPDATE rag_facts SET status='superseded', enabled=0, supersedes_fact_id=?, updated_at=? WHERE id=?",
-            (int(new_fact_id), _now(), int(old_fact_id)),
+            """
+            UPDATE rag_facts
+            SET confidence = ?, evidence_message_ids_json = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                max(float(row["confidence"] or 0.0), float(confidence or 0.0)),
+                json.dumps(merged_evidence, ensure_ascii=False),
+                _now(),
+                int(fact_id),
+            ),
+        )
+
+    def supersede_fact(self, old_fact_id: int, new_fact_id: int) -> None:
+        """Retire an old fact and retain the new-to-old audit relationship."""
+        self.conn.execute(
+            "UPDATE rag_facts SET status='superseded', enabled=0, updated_at=? WHERE id=?",
+            (_now(), int(old_fact_id)),
+        )
+        self.conn.execute(
+            "UPDATE rag_facts SET supersedes_fact_id=?, updated_at=? WHERE id=?",
+            (int(old_fact_id), _now(), int(new_fact_id)),
         )
 
     def set_fact_enabled(self, fact_id: int, enabled: bool) -> None:

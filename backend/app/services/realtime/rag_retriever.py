@@ -178,13 +178,10 @@ class RagRetriever:
 
         filtered = []
         query_tokens = set(self._tokens(query))
-        time_scope = self._time_scope(query)
         memory_lookup = self._is_memory_lookup_query(query)
         for item in scored:
             doc = item["doc"]
             if memory_lookup and str(doc.get("doc_type") or "") in {"self_style_example", "communication_style"}:
-                continue
-            if not self._within_time_scope(doc, time_scope):
                 continue
             if str(doc.get("sensitivity") or "normal") == "sensitive":
                 # Sensitive memories require explicit current-topic overlap.
@@ -503,14 +500,6 @@ class RagRetriever:
             + type_score * 0.10
         )
 
-    def _time_scope(self, query: str) -> str:
-        compact = re.sub(r"\s+", "", str(query or ""))
-        if any(token in compact for token in ("刚刚", "刚才", "刚", "刚说")):
-            return "recent_24h"
-        if "上次" in compact or "上回" in compact:
-            return "recent_preferred"
-        return "all"
-
     def _is_memory_lookup_query(self, query: str) -> bool:
         compact = re.sub(r"\s+", "", str(query or ""))
         return any(
@@ -533,17 +522,6 @@ class RagRetriever:
                 "翻下",
             )
         )
-
-    def _within_time_scope(self, doc: dict[str, Any], time_scope: str) -> bool:
-        if time_scope != "recent_24h":
-            return True
-        try:
-            source_ts = int(doc.get("source_ts") or 0)
-        except (TypeError, ValueError):
-            return False
-        if source_ts <= 0:
-            return False
-        return (time.time() - source_ts) <= 86400
 
     def _count_by_type(self, items: list[dict[str, Any]]) -> dict[str, int]:
         counts: dict[str, int] = {}

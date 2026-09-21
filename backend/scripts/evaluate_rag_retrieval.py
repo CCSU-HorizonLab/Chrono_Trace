@@ -46,6 +46,32 @@ def load_answers(path: Path | None) -> list[dict[str, Any]]:
     return [item for item in payload if isinstance(item, dict)]
 
 
+def load_gold_mapping(path: Path | None) -> dict[str, Any]:
+    if not path:
+        return {}
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return payload if isinstance(payload, dict) else {}
+
+
+def resolve_gold_ids(gold: list[dict[str, Any]], mapping: dict[str, Any]) -> list[dict[str, Any]]:
+    if not mapping:
+        return gold
+    resolved: list[dict[str, Any]] = []
+    for case in gold:
+        item = dict(case)
+        for key in ("gold_fact_ids", "gold_document_ids", "gold_ids"):
+            values = item.get(key)
+            if isinstance(values, list):
+                item[key] = [
+                    mapping.get(str(value))
+                    if mapping.get(str(value)) not in (None, "")
+                    else value
+                    for value in values
+                ]
+        resolved.append(item)
+    return resolved
+
+
 def _track(row: sqlite3.Row) -> str:
     source = str(row["retrieval_source"] or "").strip().lower()
     strategy = str(row["rag_strategy"] or "").strip().lower()
@@ -225,8 +251,14 @@ def _evaluate_track(
     }
 
 
-def evaluate(conn: sqlite3.Connection, gold: list[dict[str, Any]], answers: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+def evaluate(
+    conn: sqlite3.Connection,
+    gold: list[dict[str, Any]],
+    answers: list[dict[str, Any]] | None = None,
+    gold_mapping: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Return a three-track report for callers and tests."""
+    gold = resolve_gold_ids(gold, gold_mapping or {})
     rows = conn.execute("SELECT * FROM rag_retrieval_logs ORDER BY created_at ASC, id ASC").fetchall()
     grouped: dict[str, list[sqlite3.Row]] = defaultdict(list)
     for row in rows:
@@ -245,6 +277,7 @@ def evaluate(conn: sqlite3.Connection, gold: list[dict[str, Any]], answers: list
     return {
         "version": 2,
         "generated_at": int(time.time()),
+        "gold_mapping_entries": len(gold_mapping or {}),
         "tracks": tracks,
         "release_gate": {
             "status": "pass" if metrics_not_regressed else "pending_runtime_data",
@@ -262,11 +295,17 @@ def main() -> int:
     parser.add_argument("--db", required=True, help="SQLite database containing rag_retrieval_logs")
     parser.add_argument("--gold", required=True, help="JSON list of query cases and gold fact/document IDs")
     parser.add_argument("--answers", help="Optional de-identified NLI judge labels JSON")
+    parser.add_argument("--gold-map", help="Optional JSON mapping symbolic gold IDs to runtime IDs")
     parser.add_argument("--out", help="Optional JSON report path")
     args = parser.parse_args()
     conn = sqlite3.connect(args.db)
     conn.row_factory = sqlite3.Row
-    report = evaluate(conn, load_gold(Path(args.gold)), load_answers(Path(args.answers) if args.answers else None))
+    report = evaluate(
+        conn,
+        load_gold(Path(args.gold)),
+        load_answers(Path(args.answers) if args.answers else None),
+        load_gold_mapping(Path(args.gold_map) if args.gold_map else None),
+    )
     rendered = json.dumps(report, ensure_ascii=False, indent=2)
     if args.out:
         out = Path(args.out)

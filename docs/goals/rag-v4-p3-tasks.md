@@ -10,7 +10,8 @@
 - [x] 生成 no-RAG、document-RAG、fact-path 三路报告 JSON，保存到 `docs/goals/rag-v4-eval-report.json`；当前真实库有日志但未匹配冻结 gold，指标为 pending_runtime_data。
 - [x] 增加可重复回放入口 `backend/scripts/replay_rag_v4.py`；真实库完成 36 query × 3 track = 108 条日志回放，结果见 `docs/goals/rag-v4-replay-report.json`。
 - [x] 增加 `rag-v4-gold-id-map.template.json` 与 `rag-v4-nli-answers.template.json`，并支持 `--gold-map` / `--answers` 解锁可计算 Recall 和 faithfulness。
+- [x] 增加 `prepare_rag_v4_gold_mapping.py`：当前联系人已导出 36 条本地候选，默认隐藏敏感事实内容，待人工复核后填入 gold ID 映射。
 - [ ] 设定门禁：fact-path 三项指标均不低于 document-RAG；安全和身份隔离不得回退。
 - [ ] 运行真实回放评测、冻结 baseline 后设定门禁并提交 `feat：建立长期记忆评测门禁`。
 
-运行记录：评测器与回放单测 `5 passed`；完整 backend 回归 `615 passed, 21 skipped, 24 warnings`。当前 36 条 gold 使用 `fact_*` 符号 ID，尚未映射到运行库数字 fact ID，故报告明确为 `pending_gold_id_mapping`；同时没有答案 judge 文件，发布门禁仍未通过。
+运行记录：评测器、回放和候选导出单测 `6 passed`；完整 backend 回归 `615 passed, 21 skipped, 24 warnings`。当前 36 条 gold 使用 `fact_*` 符号 ID，尚未映射到运行库数字 fact ID，故报告明确为 `pending_gold_id_mapping`；同时没有答案 judge 文件，发布门禁仍未通过。

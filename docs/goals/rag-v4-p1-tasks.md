@@ -19,8 +19,8 @@
 
 ## P1-3 检索 query 瘦身
 
-- [ ] 使检索 query 只包含 `memory_intent.query` 与最新用户输入；展示上下文继续由 hot context 承载。
-- [ ] 删除 expanded terms 的领域硬编码词表。
-- [ ] 单测：四条近聊不会污染检索 query，query 不含“我：”“对方：”前缀串。
-- [ ] 仓库检索确认通用 RAG 逻辑不再含“杀戮尖塔”等具体评测语料。
-- [ ] 完成回归测试、更新勾选并提交 `feat：瘦身长期记忆检索查询`。
+- [x] 使检索 query 只包含 `memory_intent.query` 与最新用户输入；展示上下文继续由 hot context 承载。
+- [x] 删除 expanded terms 的领域硬编码词表。
+- [x] 单测：四条近聊不会污染检索 query，query 不含“我：”“对方：”前缀串。
+- [x] 仓库检索确认通用 RAG 逻辑不再含具体评测语料。
+- [x] 完成回归测试（RAG 定向 72 passed）、更新勾选并提交 `feat：瘦身长期记忆检索查询`。

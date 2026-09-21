@@ -39,42 +39,10 @@ class RagQueryBuilder:
         parts: list[str] = []
         latest = self._latest_user_input(context)
         mode = str(getattr(memory_intent, "mode", "") or "")
-        if latest:
-            parts.append(latest)
         if mode == "memory_request" and memory_intent and memory_intent.query:
             parts.append(memory_intent.query)
-
-        recent = context.get("recent_messages") or []
-        recent_limit = 3 if mode == "memory_request" else 4
-        if isinstance(recent, list):
-            for msg in recent[-recent_limit:]:
-                if not isinstance(msg, dict):
-                    continue
-                content = str(msg.get("content") or "").strip()
-                if content:
-                    sender = "我" if msg.get("sender_attr") == "self" else "对方"
-                    parts.append(f"{sender}: {content}")
-
-        if mode in {"memory_request", "relationship_context"}:
-            for key in ("recent_summary", "conversation_summary", "chat_summary"):
-                value = context.get(key)
-                if value:
-                    parts.append(str(value))
-
-        trigger_context = context.get("trigger_context")
-        if isinstance(trigger_context, dict):
-            for key in ("user_input", "manual_input", "text", "content"):
-                value = trigger_context.get(key)
-                if value:
-                    parts.append(str(value))
-        elif trigger_context:
-            parts.append(str(trigger_context))
-
-        if mode != "memory_request" and memory_intent and memory_intent.query:
-            parts.append(memory_intent.query)
-        expanded_terms = self.expanded_terms(context, memory_intent=memory_intent)
-        if expanded_terms:
-            parts.append(" ".join(expanded_terms))
+        if latest:
+            parts.append(latest)
 
         compacted: list[str] = []
         seen = set()
@@ -92,20 +60,10 @@ class RagQueryBuilder:
         *,
         memory_intent: MemoryIntent | None = None,
     ) -> list[str]:
-        text_parts = [self._latest_user_input(context)]
-        recent = context.get("recent_messages") or []
-        if isinstance(recent, list):
-            text_parts.extend(str(msg.get("content") or "") for msg in recent[-5:] if isinstance(msg, dict))
-        text = re.sub(r"\s+", "", " ".join(text_parts))
-        terms: list[str] = []
-        if memory_intent and memory_intent.mode == "memory_request":
-            terms.extend(["上次", "之前", "说过", "提到"])
-            if any(token in text for token in ("刚刚", "刚才", "刚说")):
-                terms.append("刚刚")
-        for token in ("贵", "价格", "买", "杀戮尖塔", "游戏", "卡组", "流派", "店", "吃", "喝", "喜欢"):
-            if token in text and token not in terms:
-                terms.append(token)
-        return terms[:12]
+        # Query expansion used to inject a hand-maintained domain vocabulary.
+        # Semantic retrieval now receives only the user question; hot context
+        # remains a separate display/scoring channel.
+        return []
 
     def _latest_user_input(self, context: dict[str, Any]) -> str:
         user_context = context.get("user_context")
@@ -115,6 +73,13 @@ class RagQueryBuilder:
                     return str(msg.get("content") or "").strip()
         if isinstance(user_context, str):
             return user_context.strip()
+        recent = context.get("recent_messages") or []
+        if isinstance(recent, list):
+            for msg in reversed(recent):
+                if not isinstance(msg, dict):
+                    continue
+                if msg.get("is_sender") == 1 or msg.get("sender_attr") == "self":
+                    return str(msg.get("content") or "").strip()
         return ""
 
 

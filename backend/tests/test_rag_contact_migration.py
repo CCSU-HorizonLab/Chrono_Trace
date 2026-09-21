@@ -13,6 +13,7 @@ from app.services.realtime.rag_embedding import RagEmbeddingService
 from app.services.realtime.rag_retriever import RagRetriever
 from app.services.realtime.rag_store import RagStore
 from app.services.realtime.rag_context_builder import RagContextBuilder
+from app.services.realtime.rag_context_builder import RagQueryBuilder
 from app.services.realtime.rag_indexer import RagIndexer
 from app.services.realtime.rag_segmenter import RagSegment
 from app.services.realtime.llm_engine import LLMSuggestionEngine
@@ -65,6 +66,26 @@ def test_query_scope_defaults_to_latest_turn(monkeypatch):
     )
     assert "最新输入" in query
     assert "旧话题" not in query
+
+
+def test_context_query_contains_only_memory_question_and_latest_user_input():
+    query = RagQueryBuilder().build(
+        {
+            "user_context": "最新用户问题",
+            "recent_messages": [
+                {"sender_attr": "other", "content": "近聊噪声一"},
+                {"sender_attr": "other", "content": "近聊噪声二"},
+                {"sender_attr": "self", "content": "最新用户问题"},
+            ],
+        },
+        trigger_type="manual_request",
+        intent="maintain",
+        memory_intent=type("Intent", (), {"mode": "memory_request", "query": "记得什么偏好吗"})(),
+    )
+    assert "记得什么偏好吗" in query
+    assert "最新用户问题" in query
+    assert "近聊噪声一" not in query
+    assert "对方:" not in query
 
 
 def test_fact_read_is_opt_in_and_returns_contact_scoped_fact(monkeypatch):

@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "generated_at": 1789999376,
+  "generated_at": 1789999477,
   "tracks": {
     "no_rag": {
       "summary": {
@@ -2557,6 +2557,11 @@
     "status": "pending_runtime_data",
     "comparable": false,
     "fact_not_below_document": null,
+    "compared_metrics": [
+      "recall_at_5",
+      "mrr",
+      "faithfulness"
+    ],
     "safety_and_identity": "pending_runtime_data",
     "notes": "先冻结 no-RAG/document-RAG 基线，再按分层 bootstrap 下界设定阈值。"
   }

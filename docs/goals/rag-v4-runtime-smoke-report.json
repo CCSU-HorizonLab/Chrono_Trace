@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "generated_at": 1790034046,
+  "generated_at": 1790034666,
   "gold_mapping_entries": 0,
   "tracks": {
     "no_rag": {
@@ -25,6 +25,20 @@
         "false_reject_rate": 1.0,
         "correct_reject_rate": 0.0,
         "query_scope_accuracy": 1.0,
+        "sensitive_block": {
+          "status": "not_applicable",
+          "cases": 0,
+          "blocked_cases": 4,
+          "true_positive": 0,
+          "precision": null,
+          "recall": null
+        },
+        "identity_isolation": {
+          "status": "ready",
+          "cases": 4,
+          "matched": 4,
+          "isolation_rate": 1.0
+        },
         "gate_reason_distribution": {
           "rag_disabled": 4
         }
@@ -73,6 +87,10 @@
           ],
           "correct_reject": false,
           "false_reject": true,
+          "sensitive_expected": false,
+          "blocked_predicted": true,
+          "identity_expected": true,
+          "identity_match": true,
           "scope_expected": "latest_turn",
           "scope_actual": "latest_turn",
           "scope_correct": true
@@ -95,6 +113,10 @@
           ],
           "correct_reject": false,
           "false_reject": true,
+          "sensitive_expected": false,
+          "blocked_predicted": true,
+          "identity_expected": true,
+          "identity_match": true,
           "scope_expected": "latest_turn",
           "scope_actual": "latest_turn",
           "scope_correct": true
@@ -119,6 +141,10 @@
           ],
           "correct_reject": false,
           "false_reject": true,
+          "sensitive_expected": false,
+          "blocked_predicted": true,
+          "identity_expected": true,
+          "identity_match": true,
           "scope_expected": "latest_turn",
           "scope_actual": "latest_turn",
           "scope_correct": true
@@ -143,6 +169,10 @@
           ],
           "correct_reject": false,
           "false_reject": true,
+          "sensitive_expected": false,
+          "blocked_predicted": true,
+          "identity_expected": true,
+          "identity_match": true,
           "scope_expected": "latest_turn",
           "scope_actual": "latest_turn",
           "scope_correct": true
@@ -171,6 +201,20 @@
         "false_reject_rate": 0.0,
         "correct_reject_rate": 0.0,
         "query_scope_accuracy": 1.0,
+        "sensitive_block": {
+          "status": "not_applicable",
+          "cases": 0,
+          "blocked_cases": 0,
+          "true_positive": 0,
+          "precision": null,
+          "recall": null
+        },
+        "identity_isolation": {
+          "status": "ready",
+          "cases": 4,
+          "matched": 4,
+          "isolation_rate": 1.0
+        },
         "gate_reason_distribution": {
           "replay_retrieval_result": 4
         }
@@ -219,6 +263,10 @@
           ],
           "correct_reject": false,
           "false_reject": false,
+          "sensitive_expected": false,
+          "blocked_predicted": false,
+          "identity_expected": true,
+          "identity_match": true,
           "scope_expected": "latest_turn",
           "scope_actual": "latest_turn",
           "scope_correct": true
@@ -241,6 +289,10 @@
           ],
           "correct_reject": false,
           "false_reject": false,
+          "sensitive_expected": false,
+          "blocked_predicted": false,
+          "identity_expected": true,
+          "identity_match": true,
           "scope_expected": "latest_turn",
           "scope_actual": "latest_turn",
           "scope_correct": true
@@ -265,6 +317,10 @@
           ],
           "correct_reject": false,
           "false_reject": false,
+          "sensitive_expected": false,
+          "blocked_predicted": false,
+          "identity_expected": true,
+          "identity_match": true,
           "scope_expected": "latest_turn",
           "scope_actual": "latest_turn",
           "scope_correct": true
@@ -289,6 +345,10 @@
           ],
           "correct_reject": false,
           "false_reject": false,
+          "sensitive_expected": false,
+          "blocked_predicted": false,
+          "identity_expected": true,
+          "identity_match": true,
           "scope_expected": "latest_turn",
           "scope_actual": "latest_turn",
           "scope_correct": true
@@ -317,6 +377,20 @@
         "false_reject_rate": 0.0,
         "correct_reject_rate": 0.0,
         "query_scope_accuracy": 1.0,
+        "sensitive_block": {
+          "status": "not_applicable",
+          "cases": 0,
+          "blocked_cases": 0,
+          "true_positive": 0,
+          "precision": null,
+          "recall": null
+        },
+        "identity_isolation": {
+          "status": "ready",
+          "cases": 4,
+          "matched": 4,
+          "isolation_rate": 1.0
+        },
         "gate_reason_distribution": {
           "replay_retrieval_result": 4
         }
@@ -372,6 +446,10 @@
           ],
           "correct_reject": false,
           "false_reject": false,
+          "sensitive_expected": false,
+          "blocked_predicted": false,
+          "identity_expected": true,
+          "identity_match": true,
           "scope_expected": "latest_turn",
           "scope_actual": "latest_turn",
           "scope_correct": true
@@ -401,6 +479,10 @@
           ],
           "correct_reject": false,
           "false_reject": false,
+          "sensitive_expected": false,
+          "blocked_predicted": false,
+          "identity_expected": true,
+          "identity_match": true,
           "scope_expected": "latest_turn",
           "scope_actual": "latest_turn",
           "scope_correct": true
@@ -432,6 +514,10 @@
           ],
           "correct_reject": false,
           "false_reject": false,
+          "sensitive_expected": false,
+          "blocked_predicted": false,
+          "identity_expected": true,
+          "identity_match": true,
           "scope_expected": "latest_turn",
           "scope_actual": "latest_turn",
           "scope_correct": true
@@ -463,6 +549,10 @@
           ],
           "correct_reject": false,
           "false_reject": false,
+          "sensitive_expected": false,
+          "blocked_predicted": false,
+          "identity_expected": true,
+          "identity_match": true,
           "scope_expected": "latest_turn",
           "scope_actual": "latest_turn",
           "scope_correct": true
@@ -479,7 +569,7 @@
       "mrr",
       "faithfulness"
     ],
-    "safety_and_identity": "pending_runtime_data",
+    "safety_and_identity": "pass",
     "notes": "先冻结 no-RAG/document-RAG 基线，再按分层 bootstrap 下界设定阈值。"
   }
 }

@@ -655,6 +655,13 @@ def test_document_query_with_recent_word_keeps_older_relevant_memory(monkeypatch
     assert "摄影展" in result["items"][0]["doc"]["content"]
 
 
+def test_fact_kind_hints_are_configured_and_select_food_preference():
+    retriever = RagRetriever()
+    kinds = retriever._preferred_fact_kinds("上次她想吃什么来的？")
+    assert "preference" in kinds
+    assert "event" in kinds
+
+
 def test_rag_schema_is_idempotent_and_keeps_contact_keys():
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row

@@ -75,6 +75,16 @@ def _gold_ids(case: dict[str, Any], track: str) -> set[str]:
     return set()
 
 
+def _gold_mapping_pending(gold: list[dict[str, Any]]) -> bool:
+    """Symbolic labels must be mapped to runtime fact/document IDs before recall is valid."""
+    for case in gold:
+        for key in ("gold_fact_ids", "gold_document_ids", "gold_ids"):
+            for value in case.get(key) or []:
+                if str(value).startswith(("fact_", "gold_")):
+                    return True
+    return False
+
+
 def _bootstrap_ci(values: Iterable[float], seed: int = 41, rounds: int = 1000) -> dict[str, float] | None:
     values = list(values)
     if not values:
@@ -170,17 +180,22 @@ def _evaluate_track(
     expected_scope_items = [item for item in results if item["scope_expected"]]
     matched_count = sum(item["matched_log"] for item in results)
     has_runtime_data = matched_count > 0
+    mapping_pending = _gold_mapping_pending(gold)
+    metrics_ready = has_runtime_data and not mapping_pending
     summary = {
         "cases": len(results),
         "matched_logs": matched_count,
         "unmatched_runtime_logs": sum(
             1 for row in rows if str(row["query_text"] or "") not in gold_queries
         ),
-        "metrics_status": "ready" if has_runtime_data else "pending_runtime_data",
-        "recall_at_5": average(results, "recall_at_5") if has_runtime_data else None,
-        "recall_at_5_ci": _bootstrap_ci(found_values) if has_runtime_data else None,
-        "mrr": average(results, "mrr") if has_runtime_data else None,
-        "mrr_ci": _bootstrap_ci(mrr_values) if has_runtime_data else None,
+        "gold_mapping_status": "pending_symbolic_labels" if mapping_pending else "ready",
+        "metrics_status": "ready" if metrics_ready else (
+            "pending_gold_id_mapping" if mapping_pending else "pending_runtime_data"
+        ),
+        "recall_at_5": average(results, "recall_at_5") if metrics_ready else None,
+        "recall_at_5_ci": _bootstrap_ci(found_values) if metrics_ready else None,
+        "mrr": average(results, "mrr") if metrics_ready else None,
+        "mrr_ci": _bootstrap_ci(mrr_values) if metrics_ready else None,
         "gate_skip_rate": sum(item["gate_decision"] == "skip" for item in results) / len(results) if has_runtime_data else None,
         "gate_no_hit_rate": sum(item["gate_decision"] == "no_hit" for item in results) / len(results) if has_runtime_data else None,
         "false_reject_rate": sum(item["false_reject"] for item in results) / len(results) if has_runtime_data else None,
@@ -193,8 +208,8 @@ def _evaluate_track(
         category: {
             "cases": len(items),
             "matched_logs": sum(item["matched_log"] for item in items),
-            "recall_at_5": average(items, "recall_at_5") if any(item["matched_log"] for item in items) else None,
-            "mrr": average(items, "mrr") if any(item["matched_log"] for item in items) else None,
+            "recall_at_5": average(items, "recall_at_5") if metrics_ready else None,
+            "mrr": average(items, "mrr") if metrics_ready else None,
             "skip_rate": sum(item["gate_decision"] == "skip" for item in items) / len(items)
             if any(item["matched_log"] for item in items) else None,
             "no_hit_rate": sum(item["gate_decision"] == "no_hit" for item in items) / len(items)

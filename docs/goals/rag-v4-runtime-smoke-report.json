@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "generated_at": 1790034666,
+  "generated_at": 1790034997,
   "gold_mapping_entries": 0,
   "tracks": {
     "no_rag": {
@@ -63,6 +63,7 @@
       },
       "faithfulness": {
         "score": null,
+        "score_ci": null,
         "cases": 0,
         "judge_version": "nli-external-required-v1",
         "prompt_version": "rag-v4-faithfulness-v1",
@@ -239,6 +240,7 @@
       },
       "faithfulness": {
         "score": null,
+        "score_ci": null,
         "cases": 0,
         "judge_version": "nli-external-required-v1",
         "prompt_version": "rag-v4-faithfulness-v1",
@@ -415,6 +417,7 @@
       },
       "faithfulness": {
         "score": null,
+        "score_ci": null,
         "cases": 0,
         "judge_version": "nli-external-required-v1",
         "prompt_version": "rag-v4-faithfulness-v1",
@@ -570,6 +573,20 @@
       "faithfulness"
     ],
     "safety_and_identity": "pass",
+    "metric_lower_bounds": {
+      "recall_at_5": {
+        "fact_lower": 0.0,
+        "document_lower": 0.0
+      },
+      "mrr": {
+        "fact_lower": 0.0,
+        "document_lower": 0.0
+      },
+      "faithfulness": {
+        "fact_lower": null,
+        "document_lower": null
+      }
+    },
     "notes": "先冻结 no-RAG/document-RAG 基线，再按分层 bootstrap 下界设定阈值。"
   }
 }

@@ -1,13 +1,15 @@
 {
   "version": 2,
-  "generated_at": 1789999681,
+  "generated_at": 1790000215,
+  "gold_mapping_entries": 0,
   "tracks": {
     "no_rag": {
       "summary": {
         "cases": 36,
         "matched_logs": 0,
         "unmatched_runtime_logs": 0,
-        "metrics_status": "pending_runtime_data",
+        "gold_mapping_status": "pending_symbolic_labels",
+        "metrics_status": "pending_gold_id_mapping",
         "recall_at_5": null,
         "recall_at_5_ci": null,
         "mrr": null,
@@ -858,7 +860,8 @@
         "cases": 36,
         "matched_logs": 0,
         "unmatched_runtime_logs": 0,
-        "metrics_status": "pending_runtime_data",
+        "gold_mapping_status": "pending_symbolic_labels",
+        "metrics_status": "pending_gold_id_mapping",
         "recall_at_5": null,
         "recall_at_5_ci": null,
         "mrr": null,
@@ -1709,7 +1712,8 @@
         "cases": 36,
         "matched_logs": 0,
         "unmatched_runtime_logs": 4,
-        "metrics_status": "pending_runtime_data",
+        "gold_mapping_status": "pending_symbolic_labels",
+        "metrics_status": "pending_gold_id_mapping",
         "recall_at_5": null,
         "recall_at_5_ci": null,
         "mrr": null,

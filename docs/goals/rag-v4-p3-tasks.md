@@ -13,4 +13,4 @@
 - [ ] 设定门禁：fact-path 三项指标均不低于 document-RAG；安全和身份隔离不得回退。
 - [ ] 运行真实回放评测、冻结 baseline 后设定门禁并提交 `feat：建立长期记忆评测门禁`。
 
-运行记录：评测器与回放单测 `4 passed`；完整 backend 回归 610 passed、21 skipped、24 warnings。当前 36 条 gold 使用 `fact_*` 符号 ID，尚未映射到运行库数字 fact ID，故报告明确为 `pending_gold_id_mapping`；同时没有答案 judge 文件，发布门禁仍未通过。
+运行记录：评测器与回放单测 `5 passed`；完整 backend 回归 `615 passed, 21 skipped, 24 warnings`。当前 36 条 gold 使用 `fact_*` 符号 ID，尚未映射到运行库数字 fact ID，故报告明确为 `pending_gold_id_mapping`；同时没有答案 judge 文件，发布门禁仍未通过。

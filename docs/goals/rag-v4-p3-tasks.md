@@ -11,4 +11,4 @@
 - [ ] 设定门禁：fact-path 三项指标均不低于 document-RAG；安全和身份隔离不得回退。
 - [ ] 运行真实回放评测、冻结 baseline 后设定门禁并提交 `feat：建立长期记忆评测门禁`。
 
-运行记录：`backend/tests/test_evaluate_rag_retrieval.py` 2 passed；完整 backend 回归 610 passed、21 skipped、24 warnings。当前工作区没有可用的线上/回放 SQLite 日志和答案 judge 文件，因此不提前宣称发布门禁通过。
+运行记录：`backend/tests/test_evaluate_rag_retrieval.py` 2 passed；完整 backend 回归 610 passed、21 skipped、24 warnings。当前 `backend/data/chrono_trace.db` 有 4 条 fact-path 日志，但没有与冻结 36 条 gold query 的对照匹配，也没有答案 judge 文件；因此指标与发布门禁仍为 `pending_runtime_data`，不提前宣称通过。

@@ -107,7 +107,12 @@ def _answer_faithfulness(answers: list[dict[str, Any]], track: str) -> dict[str,
     }
 
 
-def _evaluate_track(rows: list[sqlite3.Row], gold: list[dict[str, Any]], answers: list[dict[str, Any]]) -> dict[str, Any]:
+def _evaluate_track(
+    rows: list[sqlite3.Row],
+    gold: list[dict[str, Any]],
+    track_name: str,
+    answers: list[dict[str, Any]],
+) -> dict[str, Any]:
     by_query: dict[str, list[sqlite3.Row]] = defaultdict(list)
     for row in rows:
         by_query[str(row["query_text"] or "")].append(row)
@@ -193,7 +198,7 @@ def _evaluate_track(rows: list[sqlite3.Row], gold: list[dict[str, Any]], answers
     return {
         "summary": summary,
         "by_category": by_category,
-        "faithfulness": _answer_faithfulness(answers, "fact_path"),
+        "faithfulness": _answer_faithfulness(answers, track_name),
         "items": results,
     }
 
@@ -205,11 +210,16 @@ def evaluate(conn: sqlite3.Connection, gold: list[dict[str, Any]], answers: list
     for row in rows:
         grouped[_track(row)].append(row)
     answers = answers or []
-    tracks = {track: _evaluate_track(grouped.get(track, []), gold, answers) for track in TRACKS}
+    tracks = {track: _evaluate_track(grouped.get(track, []), gold, track, answers) for track in TRACKS}
     doc = tracks["document_rag"]["summary"]
     fact = tracks["fact_path"]["summary"]
+    doc_faith = tracks["document_rag"]["faithfulness"].get("score")
+    fact_faith = tracks["fact_path"]["faithfulness"].get("score")
     comparable = all(doc.get(name) is not None and fact.get(name) is not None for name in ("recall_at_5", "mrr"))
-    metrics_not_regressed = comparable and all(fact[name] >= doc[name] for name in ("recall_at_5", "mrr"))
+    comparable = comparable and doc_faith is not None and fact_faith is not None
+    metrics_not_regressed = comparable and all(
+        fact[name] >= doc[name] for name in ("recall_at_5", "mrr")
+    ) and fact_faith >= doc_faith
     return {
         "version": 2,
         "generated_at": int(time.time()),
@@ -218,6 +228,7 @@ def evaluate(conn: sqlite3.Connection, gold: list[dict[str, Any]], answers: list
             "status": "pass" if metrics_not_regressed else "pending_runtime_data",
             "comparable": comparable,
             "fact_not_below_document": metrics_not_regressed if comparable else None,
+            "compared_metrics": ["recall_at_5", "mrr", "faithfulness"],
             "safety_and_identity": "pending_runtime_data",
             "notes": "先冻结 no-RAG/document-RAG 基线，再按分层 bootstrap 下界设定阈值。",
         },

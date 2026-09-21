@@ -172,6 +172,22 @@ class RagStore:
             )
             """
         )
+        self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS rag_fact_embeddings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                fact_id INTEGER NOT NULL,
+                account_wxid TEXT NOT NULL,
+                conversation_id INTEGER NOT NULL,
+                embedding_model TEXT NOT NULL,
+                embedding_dim INTEGER NOT NULL,
+                embedding_provider TEXT DEFAULT 'local',
+                vector_blob BLOB NOT NULL,
+                created_at INTEGER NOT NULL,
+                UNIQUE(fact_id, embedding_model, embedding_dim)
+            )
+            """
+        )
         self._ensure_document_columns()
         self._ensure_status_columns()
         self._ensure_retrieval_log_columns()
@@ -488,6 +504,69 @@ class RagStore:
                 _now(),
             ),
         )
+
+    def upsert_fact_embedding(
+        self,
+        *,
+        fact_id: int,
+        account_wxid: str,
+        conversation_id: int,
+        embedding_model: str,
+        embedding_dim: int,
+        vector: list[float],
+        embedding_provider: str = "local",
+    ) -> None:
+        safe_vector = [float(item) for item in vector]
+        if len(safe_vector) != int(embedding_dim):
+            raise ValueError(
+                f"fact embedding dimension mismatch: vector={len(safe_vector)} configured={embedding_dim}"
+            )
+        self.conn.execute(
+            """
+            INSERT INTO rag_fact_embeddings
+            (fact_id, account_wxid, conversation_id, embedding_model, embedding_dim,
+             embedding_provider, vector_blob, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(fact_id, embedding_model, embedding_dim) DO UPDATE SET
+                vector_blob = excluded.vector_blob,
+                embedding_provider = excluded.embedding_provider,
+                created_at = excluded.created_at
+            """,
+            (
+                int(fact_id), account_wxid, int(conversation_id), embedding_model,
+                int(embedding_dim), embedding_provider, pickle.dumps(safe_vector), _now(),
+            ),
+        )
+
+    def list_facts_with_vectors(
+        self,
+        account_wxid: str,
+        conversation_id: int,
+        *,
+        embedding_model: str,
+        embedding_dim: int,
+    ) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            """
+            SELECT f.*, e.vector_blob
+            FROM rag_facts f
+            INNER JOIN rag_fact_embeddings e ON e.fact_id = f.id
+            WHERE f.account_wxid = ? AND f.conversation_id = ?
+              AND f.status = 'active' AND f.enabled = 1
+              AND e.embedding_model = ? AND e.embedding_dim = ?
+            ORDER BY f.confidence DESC, f.updated_at DESC
+            """,
+            (account_wxid, int(conversation_id), embedding_model, int(embedding_dim)),
+        ).fetchall()
+        items = []
+        for row in rows:
+            item = dict(row)
+            try:
+                item["vector"] = pickle.loads(item.pop("vector_blob"))
+            except Exception:
+                item["vector"] = []
+            items.append(item)
+        return items
 
     def list_documents(self, account_wxid: str, conversation_id: int) -> list[dict[str, Any]]:
         rows = self.conn.execute(

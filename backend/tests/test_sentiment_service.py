@@ -2,17 +2,21 @@
 
 测试SnowNLP情感分类准确率 (>85%)
 测试强度映射 (-1到1)
-测试向量生成 (384维)
+测试向量生成（跟随模型原生维度）
 """
 
 import pytest
 import sys
 import sqlite3
 from pathlib import Path
-
 # 添加项目根目录到 Python 路径
 backend_root = Path(__file__).parent.parent
 sys.path.insert(0, str(backend_root))
+
+from app.services.model_paths import EMBEDDING_MODEL_DIM
+
+
+EXPECTED_EMBEDDING_DIM = EMBEDDING_MODEL_DIM
 
 
 class TestSentimentService:
@@ -249,8 +253,8 @@ class TestSentimentService:
         result = service.analyze_sentiment(text)
         embedding = result["embedding"]
 
-        assert len(embedding) == 384, \
-            f"向量维度应该为384, 实际为: {len(embedding)}"
+        assert len(embedding) == EXPECTED_EMBEDDING_DIM, \
+            f"向量维度应该为{EXPECTED_EMBEDDING_DIM}, 实际为: {len(embedding)}"
 
     def test_embedding_type(self, service):
         """测试向量为浮点数列表"""
@@ -275,7 +279,7 @@ class TestSentimentService:
         # 计算L2范数
         norm = math.sqrt(sum(x * x for x in embedding))
 
-        # 当前实现会把原始向量裁剪/补齐到384维，因此范数应为正且不超过1
+        # 向量保持模型原生维度，因此范数应为正且不超过1
         assert 0.1 <= norm <= 1.01, \
             f"向量范数异常: {norm}"
 
@@ -314,7 +318,7 @@ class TestSentimentService:
             assert "polarity" in result
             assert "intensity" in result
             assert "embedding" in result
-            assert len(result["embedding"]) == 384
+            assert len(result["embedding"]) == EXPECTED_EMBEDDING_DIM
 
     def test_batch_empty_list(self, service):
         """测试空列表批处理"""
@@ -373,14 +377,14 @@ class TestSentimentService:
                 "conversation_id": 1,
                 "polarity": 1,
                 "intensity": 0.8,
-                "embedding": [0.1] * 384
+                "embedding": [0.1] * EXPECTED_EMBEDDING_DIM
             },
             {
                 "message_id": 10002,
                 "conversation_id": 1,
                 "polarity": -1,
                 "intensity": -0.6,
-                "embedding": [0.2] * 384
+                "embedding": [0.2] * EXPECTED_EMBEDDING_DIM
             }
         ]
 
@@ -408,7 +412,7 @@ class TestSentimentService:
         # 空字符串应该返回中性值
         assert result["polarity"] == 0
         assert result["intensity"] == 0.0
-        assert len(result["embedding"]) == 384
+        assert len(result["embedding"]) == EXPECTED_EMBEDDING_DIM
 
     def test_very_long_text(self, service):
         """测试超长文本处理"""
@@ -419,7 +423,7 @@ class TestSentimentService:
         # 应该正常返回结果
         assert "polarity" in result
         assert "intensity" in result
-        assert len(result["embedding"]) == 384
+        assert len(result["embedding"]) == EXPECTED_EMBEDDING_DIM
 
     def test_special_characters(self, service):
         """测试特殊字符处理"""
@@ -437,7 +441,7 @@ class TestSentimentService:
             # 应该正常返回结果
             assert "polarity" in result
             assert "intensity" in result
-            assert len(result["embedding"]) == 384
+            assert len(result["embedding"]) == EXPECTED_EMBEDDING_DIM
 
 
 if __name__ == "__main__":

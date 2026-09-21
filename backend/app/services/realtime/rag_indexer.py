@@ -627,9 +627,47 @@ class RagIndexer:
                 source_window=fact.get("source_window") or {},
                 summary_method="llm_shadow",
             )
+            self._write_fact_embedding(
+                fact_id=new_id,
+                account_wxid=account_wxid,
+                conversation_id=conversation_id,
+                content=str(fact["content"]),
+            )
             for old_id in replacement_ids:
                 if old_id != new_id:
                     self.store.supersede_fact(old_id, new_id)
+
+    def _write_fact_embedding(
+        self,
+        *,
+        fact_id: int,
+        account_wxid: str,
+        conversation_id: int,
+        content: str,
+    ) -> None:
+        """Best-effort fact vector write; fact persistence must remain available."""
+        try:
+            settings = load_rag_settings()
+            model = str(settings["rag_embedding_model"])
+            dim = int(settings["rag_embedding_dim"])
+            vector = self.embedding_service.embed_text(content)
+            if len(vector) != dim:
+                raise RagEmbeddingDimensionMismatch(
+                    f"fact vector dimension mismatch: vector={len(vector)} configured={dim}"
+                )
+            self.store.upsert_fact_embedding(
+                fact_id=fact_id,
+                account_wxid=account_wxid,
+                conversation_id=conversation_id,
+                embedding_model=model,
+                embedding_dim=dim,
+                vector=vector,
+                embedding_provider=str(settings.get("rag_embedding_provider") or "local"),
+            )
+        except (RagEmbeddingUnavailable, RagEmbeddingDimensionMismatch, ValueError) as exc:
+            logger.warning("[RAG Fact Vector] unavailable; keyword fallback remains active: %s", exc)
+        except Exception as exc:
+            logger.warning("[RAG Fact Vector] write failed; keyword fallback remains active: %s", exc)
 
     def _decide_fact_fusion(
         self,

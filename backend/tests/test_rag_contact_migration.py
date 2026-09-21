@@ -135,7 +135,7 @@ def test_fact_memory_flows_into_prompt_and_retrieval_log(monkeypatch):
     store.upsert_fact(
         account_wxid="account-a", conversation_id=1, subject="对方",
         kind="preference", content="对方喜欢手冲咖啡", confidence=0.95,
-        evidence_message_ids=[42],
+        evidence_message_ids=[42], as_of=1700000000,
     )
     settings = {
         "rag_enabled": True,
@@ -185,6 +185,8 @@ def test_fact_memory_flows_into_prompt_and_retrieval_log(monkeypatch):
 
     prompt = LLMSuggestionEngine()._build_prompt("manual_request", "maintain", context)
     assert "对方喜欢手冲咖啡" in prompt
+    assert "主体：对方；截至：2023-11-15" in prompt
+    assert "事实状态：active；置信度：0.95" in prompt
     assert "证据消息：42" in prompt
 
 
@@ -660,6 +662,58 @@ def test_fact_kind_hints_are_configured_and_select_food_preference():
     kinds = retriever._preferred_fact_kinds("上次她想吃什么来的？")
     assert "preference" in kinds
     assert "event" in kinds
+
+
+def test_fact_context_keeps_eight_complete_facts_with_subject_and_as_of():
+    builder = RagContextBuilder(store=RagStore(sqlite3.connect(":memory:")))
+    facts = []
+    for index in range(8):
+        text = f"对方事实 {index}：" + "重要内容" * 20
+        facts.append({
+            "doc": {
+                "id": index + 1,
+                "doc_type": "fact_memory",
+                "content": text,
+                "metadata_json": "{}",
+                "source_ts": 1700000000 + index,
+            },
+            "score": 0.8,
+            "subject": "对方",
+            "as_of": 1700000000 + index,
+            "fact_status": "active",
+            "fact_confidence": 0.8,
+            "evidence_message_ids": [index + 10],
+        })
+    items = builder._minimize_items(facts, use_redacted=False)
+    assert len(items) == 8
+    assert items[-1]["content"].endswith("重要内容" * 20)
+    assert items[0]["subject"] == "对方"
+    assert items[0]["as_of"] == 1700000000
+
+
+def test_fact_context_keeps_sub_500_char_fact_without_half_sentence_cut():
+    builder = RagContextBuilder(store=RagStore(sqlite3.connect(":memory:")))
+    content = "对方的完整偏好：" + "喜欢清淡饮食，晚餐尽量少油少盐。" * 20
+    assert len(content) <= 500
+    item = builder._minimize_items(
+        [{
+            "doc": {
+                "id": 1,
+                "doc_type": "fact_memory",
+                "content": content,
+                "metadata_json": "{}",
+                "source_ts": 1700000000,
+            },
+            "score": 0.8,
+            "subject": "对方",
+            "as_of": 1700000000,
+            "fact_status": "active",
+            "fact_confidence": 0.8,
+            "evidence_message_ids": [10],
+        }],
+        use_redacted=False,
+    )
+    assert item[0]["content"] == content
 
 
 def test_rag_schema_is_idempotent_and_keeps_contact_keys():

@@ -1209,7 +1209,10 @@ class LLMSuggestionEngine(SuggestionEngine):
                     parts.append("  优先级：当前对话和用户显式需求永远高于历史记忆。")
                     parts.append("  使用边界：只在历史内容直接服务当前回复目标时参考；不要为了使用记忆而引入旧话题。")
                     parts.append("  结果：")
-                for index, item in enumerate(memory_items[:4], 1):
+                memory_limit = 8 if any(
+                    str(item.get("doc_type") or "") == "fact_memory" for item in memory_items
+                ) else 4
+                for index, item in enumerate(memory_items[:memory_limit], 1):
                     content = str(item.get("content") or "").strip()
                     if content:
                         doc_type = str(item.get("doc_type") or "memory")
@@ -1224,6 +1227,13 @@ class LLMSuggestionEngine(SuggestionEngine):
                             evidence_ids = item.get("evidence_message_ids") or []
                             status = str(item.get("fact_status") or "active")
                             confidence = float(item.get("fact_confidence") or 0.0)
+                            subject = str(item.get("subject") or "未知")
+                            as_of = item.get("as_of") or item.get("source_ts")
+                            try:
+                                as_of_label = time.strftime("%Y-%m-%d", time.localtime(int(as_of)))
+                            except (TypeError, ValueError, OverflowError):
+                                as_of_label = "未知"
+                            parts.append(f"     主体：{subject}；截至：{as_of_label}")
                             parts.append(
                                 f"     事实状态：{status}；置信度：{confidence:.2f}；"
                                 f"证据消息：{','.join(str(value) for value in evidence_ids) or '未知'}"

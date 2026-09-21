@@ -829,7 +829,15 @@ class RagContextBuilder:
 
         minimized = []
         total_chars = 0
+        fact_mode = any(
+            str((scored.get("doc") or {}).get("doc_type") or "") == "fact_memory"
+            for scored in items
+        )
+        context_budget = 1600 if fact_mode else self.MAX_CONTEXT_CHARS
+        item_limit = 8 if fact_mode else len(items)
         for scored in items:
+            if len(minimized) >= item_limit:
+                break
             doc = scored.get("doc") or {}
             # 脱敏字段只在确实生成了内容时才覆盖原文。历史索引中的部分
             # fact_memory 没有 redacted_content；此前在 redaction=redacted 时会
@@ -839,10 +847,19 @@ class RagContextBuilder:
             content = re.sub(r"\s+", " ", content)
             if not content:
                 continue
-            remaining = self.MAX_CONTEXT_CHARS - total_chars
+            is_fact = str(doc.get("doc_type") or "") == "fact_memory"
+            # StructuredFactExtractor caps facts at 500 chars. If legacy data
+            # violates that contract, drop the item instead of cutting a fact
+            # through the middle of a sentence.
+            if fact_mode and is_fact and len(content) > 500:
+                continue
+            remaining = context_budget - total_chars
             if remaining <= 0:
                 break
-            content = content[: min(160, remaining)]
+            if not (fact_mode and is_fact):
+                content = content[: min(160, remaining)]
+            elif len(content) > remaining:
+                continue
             try:
                 metadata = json.loads(doc.get("metadata_json") or "{}")
             except Exception:
@@ -854,6 +871,7 @@ class RagContextBuilder:
                 "score": scored.get("score"),
                 "task_relevance_score": scored.get("task_relevance_score"),
                 "source_ts": doc.get("source_ts"),
+                "as_of": scored.get("as_of") or doc.get("source_ts"),
                 "time_label": metadata.get("time_label")
                 or self.segmenter.time_label(int(doc.get("source_ts") or time.time())),
                 "topics": metadata.get("topics") or [],

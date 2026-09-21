@@ -97,6 +97,12 @@ class RagIndexer:
             and status.get("status") == "ready"
             and int(status.get("document_count") or 0) > 0
         ):
+            if settings.get("rag_fact_read_enabled") and self._fact_vectors_missing(
+                account_wxid,
+                conversation_id,
+                settings,
+            ):
+                RagIndexQueue.enqueue_fact_backfill(account_wxid, conversation_id)
             return status
         if (
             status
@@ -137,6 +143,87 @@ class RagIndexer:
         self.store.conn.commit()
         RagIndexQueue.enqueue(account_wxid, conversation_id)
         return self.store.get_status(account_wxid, conversation_id) or {}
+
+    def _fact_vectors_missing(
+        self,
+        account_wxid: str,
+        conversation_id: int,
+        settings: dict[str, Any],
+    ) -> bool:
+        facts = self.store.count_active_facts(account_wxid, conversation_id)
+        if facts <= 0:
+            return False
+        vectors = self.store.count_fact_embeddings(
+            account_wxid,
+            conversation_id,
+            embedding_model=str(settings["rag_embedding_model"]),
+            embedding_dim=int(settings["rag_embedding_dim"]),
+        )
+        return vectors < facts
+
+    def backfill_fact_embeddings(
+        self,
+        *,
+        account_wxid: str,
+        conversation_id: int,
+        batch_size: int = 32,
+    ) -> dict[str, Any]:
+        """Backfill vectors for legacy active facts without changing fact rows."""
+        settings = load_rag_settings()
+        model = str(settings["rag_embedding_model"])
+        dim = int(settings["rag_embedding_dim"])
+        facts = self.store.list_facts(account_wxid, conversation_id)
+        existing = {
+            int(item["id"])
+            for item in self.store.list_facts_with_vectors(
+                account_wxid,
+                conversation_id,
+                embedding_model=model,
+                embedding_dim=dim,
+            )
+        }
+        missing = [item for item in facts if int(item["id"]) not in existing]
+        written = 0
+        failures: list[dict[str, Any]] = []
+        try:
+            for offset in range(0, len(missing), max(1, int(batch_size))):
+                chunk = missing[offset:offset + max(1, int(batch_size))]
+                vectors = self.embedding_service.embed_texts(
+                    [str(item.get("content") or "") for item in chunk]
+                )
+                if len(vectors) != len(chunk):
+                    raise RagEmbeddingUnavailable("事实回填 embedding 数量不一致")
+                for fact, vector in zip(chunk, vectors):
+                    if len(vector) != dim:
+                        raise RagEmbeddingDimensionMismatch(
+                            f"fact vector dimension mismatch: vector={len(vector)} configured={dim}"
+                        )
+                    self.store.upsert_fact_embedding(
+                        fact_id=int(fact["id"]),
+                        account_wxid=account_wxid,
+                        conversation_id=conversation_id,
+                        embedding_model=model,
+                        embedding_dim=dim,
+                        vector=vector,
+                        embedding_provider=str(settings.get("rag_embedding_provider") or "local"),
+                    )
+                    written += 1
+                self.store.conn.commit()
+        except (RagEmbeddingUnavailable, RagEmbeddingDimensionMismatch, ValueError) as exc:
+            failures.append({"reason": str(exc), "offset": written})
+        except Exception as exc:
+            failures.append({"reason": str(exc), "offset": written})
+        return {
+            "account_wxid": account_wxid,
+            "conversation_id": int(conversation_id),
+            "total_active_facts": len(facts),
+            "already_indexed": len(existing),
+            "written": written,
+            "failed": len(failures),
+            "failures": failures,
+            "embedding_model": model,
+            "embedding_dim": dim,
+        }
 
     def rebuild_contact_index(self, *, account_wxid: str, conversation_id: int) -> dict[str, Any]:
         settings = load_rag_settings()
@@ -977,6 +1064,7 @@ class RagIndexQueue:
 
     _lock = threading.Lock()
     _pending: set[tuple[str, int]] = set()
+    _fact_pending: set[tuple[str, int]] = set()
     _worker: threading.Thread | None = None
 
     @classmethod
@@ -1005,19 +1093,41 @@ class RagIndexQueue:
                 cls._worker.start()
 
     @classmethod
+    def enqueue_fact_backfill(cls, account_wxid: str, conversation_id: int | None) -> None:
+        if not account_wxid or not conversation_id:
+            return
+        with cls._lock:
+            cls._fact_pending.add((account_wxid, int(conversation_id)))
+            if cls._worker is None or not cls._worker.is_alive():
+                cls._worker = threading.Thread(target=cls._run, daemon=True)
+                cls._worker.start()
+
+    @classmethod
     def _run(cls) -> None:
         time.sleep(0.8)
         while True:
             with cls._lock:
-                if not cls._pending:
+                if not cls._pending and not cls._fact_pending:
                     return
-                account_wxid, conversation_id = cls._pending.pop()
+                if cls._fact_pending:
+                    account_wxid, conversation_id = cls._fact_pending.pop()
+                    job = "fact_backfill"
+                else:
+                    account_wxid, conversation_id = cls._pending.pop()
+                    job = "rebuild"
             try:
                 if not load_rag_settings().get("rag_enabled"):
                     continue
-                RagIndexer().rebuild_contact_index(
-                    account_wxid=account_wxid,
-                    conversation_id=conversation_id,
-                )
+                indexer = RagIndexer()
+                if job == "fact_backfill":
+                    indexer.backfill_fact_embeddings(
+                        account_wxid=account_wxid,
+                        conversation_id=conversation_id,
+                    )
+                else:
+                    indexer.rebuild_contact_index(
+                        account_wxid=account_wxid,
+                        conversation_id=conversation_id,
+                    )
             except Exception as exc:
                 logger.debug("[RAG] background index skipped: %s", exc)

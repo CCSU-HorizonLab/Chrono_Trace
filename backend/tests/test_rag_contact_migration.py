@@ -630,6 +630,70 @@ def test_fact_vector_retrieval_times_out_without_raising(monkeypatch):
     assert result["degrade_reason"] == "timeout"
 
 
+def test_legacy_fact_vector_backfill_is_idempotent_and_dimension_checked(monkeypatch):
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    store = RagStore(conn)
+    first = store.upsert_fact(
+        account_wxid="account-a", conversation_id=1, subject="对方",
+        kind="preference", content="喜欢咖啡", confidence=0.8,
+    )
+    second = store.upsert_fact(
+        account_wxid="account-a", conversation_id=1, subject="对方",
+        kind="plan", content="周末去看展", confidence=0.8,
+    )
+
+    class FakeEmbedding:
+        def embed_texts(self, texts):
+            return [[1.0, 0.0] if index % 2 == 0 else [0.0, 1.0] for index, _ in enumerate(texts)]
+
+    monkeypatch.setattr(
+        "app.services.realtime.rag_indexer.load_rag_settings",
+        lambda: {"rag_embedding_model": "test", "rag_embedding_dim": 2, "rag_embedding_provider": "local"},
+    )
+    indexer = RagIndexer(store=store, embedding_service=FakeEmbedding())
+    result = indexer.backfill_fact_embeddings(account_wxid="account-a", conversation_id=1, batch_size=1)
+    assert result["written"] == 2
+    assert result["failed"] == 0
+    assert store.count_fact_embeddings("account-a", 1, embedding_model="test", embedding_dim=2) == 2
+    again = indexer.backfill_fact_embeddings(account_wxid="account-a", conversation_id=1)
+    assert again["written"] == 0
+    assert {first, second} == {row["id"] for row in store.list_facts_with_vectors("account-a", 1, embedding_model="test", embedding_dim=2)}
+
+
+def test_ready_contact_index_schedules_missing_fact_vectors(monkeypatch):
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    store = RagStore(conn)
+    store.upsert_fact(
+        account_wxid="account-a", conversation_id=1, subject="对方",
+        kind="preference", content="喜欢咖啡", confidence=0.8,
+    )
+    store.upsert_status(
+        "account-a", 1, status="ready", document_count=1,
+        embedding_model="test", embedding_dim=2, privacy_mode="balanced",
+        index_version=RagIndexer.INDEX_VERSION,
+    )
+    scheduled = []
+    monkeypatch.setattr(
+        "app.services.realtime.rag_indexer.load_rag_settings",
+        lambda: {
+            "rag_enabled": True,
+            "rag_fact_read_enabled": True,
+            "rag_embedding_model": "test",
+            "rag_embedding_dim": 2,
+            "rag_privacy_mode": "balanced",
+        },
+    )
+    monkeypatch.setattr(
+        "app.services.realtime.rag_indexer.RagIndexQueue.enqueue_fact_backfill",
+        lambda account, conversation: scheduled.append((account, conversation)),
+    )
+    status = RagIndexer(store=store).ensure_contact_index(account_wxid="account-a", conversation_id=1)
+    assert status["status"] == "ready"
+    assert scheduled == [("account-a", 1)]
+
+
 def test_document_query_with_recent_word_keeps_older_relevant_memory(monkeypatch):
     import time
 

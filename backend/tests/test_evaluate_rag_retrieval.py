@@ -89,3 +89,21 @@ def test_symbolic_gold_ids_stay_pending_until_mapped_to_runtime_ids():
     assert summary["gold_mapping_status"] == "pending_symbolic_labels"
     assert summary["recall_at_5"] is None
     assert report["release_gate"]["status"] == "pending_runtime_data"
+
+
+def test_gold_id_mapping_unlocks_numeric_recall():
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    store = RagStore(conn)
+    store.insert_retrieval_log(
+        account_wxid="a", conversation_id=1, query_text="她喜欢什么？",
+        document_ids=[101], fact_ids=[101], rag_enabled=True, rag_retrieved=True,
+        rag_gate_decision="inject", rag_gate_reason="fact_memory_match",
+        rag_strategy="facts", retrieval_source="fact", query_scope="all",
+    )
+    report = evaluate(
+        conn,
+        [{"query_text": "她喜欢什么？", "gold_fact_ids": ["fact_pref"]}],
+        gold_mapping={"fact_pref": 101},
+    )
+    assert report["tracks"]["fact_path"]["summary"]["recall_at_5"] == 1.0

@@ -1,0 +1,14 @@
+{
+  "_instructions": "只填写脱敏后的 answer/evidence 和经过批准的 NLI 判定；label 只能是 entailed、contradicted 或 unknown。",
+  "items": [
+    {
+      "id": "shared_cafe_01",
+      "track": "fact_path",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    }
+  ]
+}

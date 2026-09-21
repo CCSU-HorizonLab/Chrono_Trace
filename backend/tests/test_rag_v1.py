@@ -147,6 +147,48 @@ def test_relevance_gate_injects_low_score_fact_for_explicit_shared_history_quest
     assert decision.reason == "memory_request_match"
 
 
+def test_relevance_gate_fact_path_ignores_recent_off_topic_rerank():
+    gate = RagRelevanceGate()
+    decision = gate.decide(
+        query="她之前提过啥想去的？",
+        items=[{
+            "doc": {"doc_type": "fact_memory", "sensitivity": "normal"},
+            "score": 0.05,
+            "task_relevance_score": 0.0,
+            "off_topic_memory": True,
+            "rerank_reason": "off_topic",
+        }],
+        strategy="facts",
+        output_mode="suggestion",
+        trigger_type="manual_request",
+        recent_messages=[{"content": "最近加班很累"}],
+        memory_intent={"mode": "memory_request"},
+    )
+    assert decision.decision == "inject"
+    assert decision.reason == "memory_request_match"
+
+
+def test_relevance_gate_ordinary_fact_uses_single_score_floor():
+    gate = RagRelevanceGate()
+    base = {
+        "doc": {"doc_type": "fact_memory", "sensitivity": "normal"},
+        "task_relevance_score": 0.0,
+    }
+    low = gate.decide(
+        query="普通闲聊", items=[{**base, "score": 0.29}], strategy="facts",
+        output_mode="suggestion", trigger_type="manual_request",
+        memory_intent={"mode": "none"},
+    )
+    high = gate.decide(
+        query="普通闲聊", items=[{**base, "score": 0.30}], strategy="facts",
+        output_mode="suggestion", trigger_type="manual_request",
+        memory_intent={"mode": "none"},
+    )
+    assert low.decision == "skip"
+    assert high.decision == "inject"
+    assert high.reason == "fact_memory_match"
+
+
 def test_privacy_redactor_masks_strong_sensitive_values_and_keeps_stable_placeholders():
     conn = _conn()
     redactor = PrivacyRedactor(conn)
@@ -741,12 +783,13 @@ def test_context_builder_skips_off_topic_memory_for_ordinary_suggestion(monkeypa
         model_config={"provider": "openai", "api_base_url": "https://api.openai.com/v1"},
     )
 
-    assert "retrieval_context" not in context
+    assert context["retrieval_context"]["retrieval_status"] == "hit"
+    assert context["retrieval_context"]["gate_reason"] == "fact_memory_match"
     log = conn.execute("SELECT * FROM rag_retrieval_logs").fetchone()
     assert log["rag_retrieved"] == 1
     assert log["rag_hit_count"] == 1
-    assert log["rag_gate_reason"] == "off_topic_memory"
-    assert log["off_topic_rejected_count"] == 1
+    assert log["rag_gate_reason"] == "fact_memory_match"
+    assert log["off_topic_rejected_count"] == 0
     assert log["task_relevance_score"] > 0
 
 

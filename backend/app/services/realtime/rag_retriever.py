@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 class RagRetriever:
     """Contact-scoped retriever with vector and keyword fallback."""
 
-    MIN_VECTOR_SCORE_WITHOUT_KEYWORDS = 0.45
+    MIN_VECTOR_SCORE_WITHOUT_KEYWORDS = 0.30
 
     DOC_TYPE_WEIGHTS = {
         "hot_context": 0.65,

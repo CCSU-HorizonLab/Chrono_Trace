@@ -960,7 +960,7 @@ class RagContextBuilder:
             if (
                 injection_mode == "suggestion"
                 and memory_intent.mode not in {"memory_request", "relationship_context"}
-                and doc_type not in {"hot_context", "self_style_example", "communication_style"}
+                and doc_type not in {"hot_context", "fact_memory", "self_style_example", "communication_style"}
                 and recent_tokens
                 and recent_overlap <= 0.0
                 and task_score < 0.68

@@ -50,6 +50,7 @@ class RagRelevanceGate:
     # question may legitimately produce a low raw score while still being the
     # best contact-scoped answer.  Keep ordinary chat on the stricter path.
     MEMORY_SCORE_FLOOR = 0.10
+    FACT_SCORE_THRESHOLD = 0.30
 
     def decide(
         self,
@@ -97,6 +98,29 @@ class RagRelevanceGate:
         mode = str((memory_intent or {}).get("mode") or "")
         off_topic_count = sum(1 for item in usable if self._is_off_topic(item))
         best_task_score = max((self._task_relevance(item) for item in usable), default=0.0)
+
+        # Facts are already structured, contact-scoped and sensitivity-filtered.
+        # Do not apply utterance-specific recent-topic/off-topic gates to them.
+        fact_items = [item for item in usable if self._doc_type(item) == "fact_memory"]
+        if fact_items:
+            eligible_facts = [
+                item for item in fact_items
+                if mode == "memory_request"
+                or float(item.get("score") or 0.0) >= self.FACT_SCORE_THRESHOLD
+            ]
+            if eligible_facts:
+                self._mark_selected(eligible_facts)
+                best_fact = eligible_facts[0]
+                return RagGateDecision(
+                    "inject",
+                    "memory_request_match" if mode == "memory_request" else "fact_memory_match",
+                    round(float(best_fact.get("score") or 0.0), 4),
+                    no_hit_eligible,
+                    ("fact_memory",),
+                    self._task_relevance(best_fact),
+                    0,
+                    str(best_fact.get("rerank_reason") or "fact_memory"),
+                )
 
         if mode == "memory_request":
             memory_items = [

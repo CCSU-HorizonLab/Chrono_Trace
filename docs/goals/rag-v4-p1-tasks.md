@@ -11,11 +11,11 @@
 
 ## P1-2 事实路径单层门控
 
-- [ ] 事实命中跳过 ordinary 双闸与 utterance 专用的 recent-overlap off-topic 合取。
-- [ ] 保留一个可配置总分阈值与 `memory_request` 的放行规则；阈值初值及后续修改必须由评测报告记录。
-- [ ] document fallback 的 `MIN_VECTOR_SCORE_WITHOUT_KEYWORDS` 过渡到 0.30，记录为待 P3 校准项。
-- [ ] 单测：摄影展事实面对“加班”近聊，仍能回答“她之前提过啥想去的”。
-- [ ] 完成回归测试、更新勾选并提交 `feat：收敛事实读侧门控`。
+- [x] 事实命中跳过 ordinary 双闸与 utterance 专用的 recent-overlap off-topic 合取。
+- [x] 保留一个可配置总分阈值与 `memory_request` 的放行规则；阈值初值及后续修改必须由评测报告记录。
+- [x] document fallback 的 `MIN_VECTOR_SCORE_WITHOUT_KEYWORDS` 过渡到 0.30，记录为待 P3 校准项。
+- [x] 单测：摄影展事实面对“加班”近聊，仍能回答“她之前提过啥想去的”。
+- [x] 完成回归测试（RAG 定向 71 passed）、更新勾选并提交 `feat：收敛事实读侧门控`。
 
 ## P1-3 检索 query 瘦身
 

@@ -189,6 +189,30 @@ def test_relevance_gate_ordinary_fact_uses_single_score_floor():
     assert high.reason == "fact_memory_match"
 
 
+def test_relevance_gate_fact_floor_is_configurable(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.realtime.rag_relevance_gate.load_rag_settings",
+        lambda: {"rag_fact_score_threshold": 0.50},
+    )
+    gate = RagRelevanceGate()
+    base = {
+        "doc": {"doc_type": "fact_memory", "sensitivity": "normal"},
+        "task_relevance_score": 0.0,
+    }
+    low = gate.decide(
+        query="普通闲聊", items=[{**base, "score": 0.49}], strategy="facts",
+        output_mode="suggestion", trigger_type="manual_request",
+        memory_intent={"mode": "none"},
+    )
+    high = gate.decide(
+        query="普通闲聊", items=[{**base, "score": 0.50}], strategy="facts",
+        output_mode="suggestion", trigger_type="manual_request",
+        memory_intent={"mode": "none"},
+    )
+    assert low.decision == "skip"
+    assert high.decision == "inject"
+
+
 def test_privacy_redactor_masks_strong_sensitive_values_and_keeps_stable_placeholders():
     conn = _conn()
     redactor = PrivacyRedactor(conn)

@@ -6,6 +6,8 @@ from dataclasses import asdict, dataclass
 import re
 from typing import Any, Literal
 
+from .rag_config import load_rag_settings
+
 
 GateDecisionValue = Literal["inject", "weak_inject", "no_hit", "skip"]
 
@@ -51,6 +53,20 @@ class RagRelevanceGate:
     # best contact-scoped answer.  Keep ordinary chat on the stricter path.
     MEMORY_SCORE_FLOOR = 0.10
     FACT_SCORE_THRESHOLD = 0.30
+
+    def __init__(self, fact_score_threshold: float | None = None):
+        if fact_score_threshold is None:
+            try:
+                fact_score_threshold = load_rag_settings().get(
+                    "rag_fact_score_threshold",
+                    self.FACT_SCORE_THRESHOLD,
+                )
+            except Exception:
+                fact_score_threshold = self.FACT_SCORE_THRESHOLD
+        try:
+            self.fact_score_threshold = min(1.0, max(0.0, float(fact_score_threshold)))
+        except (TypeError, ValueError):
+            self.fact_score_threshold = self.FACT_SCORE_THRESHOLD
 
     def decide(
         self,
@@ -106,7 +122,7 @@ class RagRelevanceGate:
             eligible_facts = [
                 item for item in fact_items
                 if mode == "memory_request"
-                or float(item.get("score") or 0.0) >= self.FACT_SCORE_THRESHOLD
+                or float(item.get("score") or 0.0) >= self.fact_score_threshold
             ]
             if eligible_facts:
                 self._mark_selected(eligible_facts)

@@ -24,6 +24,7 @@ RAG_DEFAULTS: dict[str, Any] = {
     "rag_query_scope": "latest_turn",
     "rag_fact_shadow_enabled": True,
     "rag_fact_read_enabled": True,
+    "rag_fact_score_threshold": 0.30,
 }
 
 
@@ -93,6 +94,11 @@ def apply_rag_defaults(settings: dict[str, Any]) -> dict[str, Any]:
         settings.get("rag_fact_read_enabled"),
         True,
     )
+    try:
+        settings["rag_fact_score_threshold"] = float(settings.get("rag_fact_score_threshold") or 0.30)
+    except (TypeError, ValueError):
+        settings["rag_fact_score_threshold"] = 0.30
+    settings["rag_fact_score_threshold"] = min(1.0, max(0.0, settings["rag_fact_score_threshold"]))
     try:
         settings["rag_embedding_dim"] = int(settings.get("rag_embedding_dim") or EMBEDDING_MODEL_DIM)
     except (TypeError, ValueError):

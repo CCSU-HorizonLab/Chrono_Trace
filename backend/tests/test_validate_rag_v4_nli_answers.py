@@ -65,3 +65,15 @@ def test_blank_template_answer_is_not_release_ready(tmp_path):
     result = validate_answers(prepared, answers)
     assert result["status"] == "invalid"
     assert "answer_required" in {item["reason"] for item in result["errors"]}
+
+
+def test_deidentified_structured_evidence_is_valid(tmp_path):
+    prepared = tmp_path / "input.json"
+    answers = tmp_path / "answers.json"
+    _write(prepared, {"items": [{"id": "q1", "track": "fact_path"}]})
+    _write(answers, {"items": [{
+        "id": "q1", "track": "fact_path", "answer": "回答",
+        "evidence": [{"id": 1, "content": "脱敏证据", "kind": "preference"}],
+        "nli_label": "entailed",
+    }]})
+    assert validate_answers(prepared, answers)["status"] == "ready"

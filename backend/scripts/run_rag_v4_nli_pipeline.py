@@ -16,6 +16,19 @@ from typing import Any, Callable
 
 
 VALID_LABELS = {"entailed", "contradicted", "unknown"}
+SAFE_EVIDENCE_FIELDS = {"id", "sensitivity", "content", "kind", "evidence_message_ids", "time_label"}
+
+
+def _safe_evidence(values: Any) -> list[Any]:
+    if not isinstance(values, list):
+        return []
+    rendered = []
+    for value in values:
+        if isinstance(value, dict):
+            rendered.append({key: value[key] for key in SAFE_EVIDENCE_FIELDS if key in value})
+        else:
+            rendered.append(str(value))
+    return rendered
 
 
 def _load(path: Path) -> dict[str, Any]:
@@ -40,8 +53,7 @@ def _parse_json(text: str) -> dict[str, Any]:
 
 
 def _answer_messages(item: dict[str, Any]) -> list[dict[str, str]]:
-    evidence = item.get("evidence") if isinstance(item.get("evidence"), list) else []
-    payload = {"query": str(item.get("query") or ""), "evidence": [str(value) for value in evidence]}
+    payload = {"query": str(item.get("query") or ""), "evidence": _safe_evidence(item.get("evidence"))}
     return [
         {"role": "system", "content": "仅根据给定 evidence 回答 query。证据不足时明确回答证据不足。只返回 JSON：{\"answer\":\"...\"}。"},
         {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
@@ -49,11 +61,10 @@ def _answer_messages(item: dict[str, Any]) -> list[dict[str, str]]:
 
 
 def _judge_messages(item: dict[str, Any]) -> list[dict[str, str]]:
-    evidence = item.get("evidence") if isinstance(item.get("evidence"), list) else []
     payload = {
         "query": str(item.get("query") or ""),
         "answer": str(item.get("answer") or ""),
-        "evidence": [str(value) for value in evidence],
+        "evidence": _safe_evidence(item.get("evidence")),
     }
     return [
         {"role": "system", "content": "判断 answer 是否被 evidence 支持。label 只能是 entailed、contradicted、unknown。只返回 JSON：{\"label\":\"...\",\"reason\":\"...\"}。"},
@@ -66,7 +77,7 @@ def _batch_messages(items: list[dict[str, Any]], stage: str) -> list[dict[str, s
         records = [{
             "id": str(item.get("id") or ""),
             "query": str(item.get("query") or ""),
-            "evidence": [str(value) for value in item.get("evidence") or []],
+            "evidence": _safe_evidence(item.get("evidence")),
         } for item in items]
         instruction = "逐条仅根据 evidence 回答 query；证据不足时明确说证据不足。只返回 JSON：{\"items\":[{\"id\":\"...\",\"answer\":\"...\"}]}。"
     else:
@@ -74,7 +85,7 @@ def _batch_messages(items: list[dict[str, Any]], stage: str) -> list[dict[str, s
             "id": str(item.get("id") or ""),
             "query": str(item.get("query") or ""),
             "answer": str(item.get("answer") or ""),
-            "evidence": [str(value) for value in item.get("evidence") or []],
+            "evidence": _safe_evidence(item.get("evidence")),
         } for item in items]
         instruction = "逐条判断 answer 是否被 evidence 支持。label 只能是 entailed、contradicted、unknown。只返回 JSON：{\"items\":[{\"id\":\"...\",\"label\":\"...\",\"reason\":\"...\"}]}。"
     return [

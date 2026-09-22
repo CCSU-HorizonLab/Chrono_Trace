@@ -25,6 +25,18 @@ def test_answer_stage_sends_only_deidentified_query_and_evidence():
     assert "must-not-send" not in rendered and "not-forwarded" not in rendered
 
 
+def test_structured_evidence_is_whitelisted_before_model_call():
+    seen = []
+    payload = {"items": [{
+        "id": "q", "query": "q", "answer": "",
+        "evidence": [{"id": 1, "content": "脱敏", "kind": "fact", "account_wxid": "secret"}],
+    }]}
+    run_stage(payload, stage="answer", llm_call=lambda messages: seen.append(messages) or '{"answer":"a"}')
+    rendered = json.dumps(seen, ensure_ascii=False)
+    assert "脱敏" in rendered
+    assert "account_wxid" not in rendered and "secret" not in rendered
+
+
 def test_judge_stage_keeps_invalid_or_failed_parse_unknown():
     payload = {"items": [{
         "id": "q1:fact_path", "track": "fact_path", "query": "问题",

@@ -113,6 +113,41 @@ def test_fact_read_is_opt_in_and_returns_contact_scoped_fact(monkeypatch):
     assert result["items"][0]["doc_type"] == "fact_memory"
 
 
+def test_contact_fact_read_mode_can_roll_back_without_disabling_fact_writes(monkeypatch):
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    store = RagStore(conn)
+    for conversation_id in (1, 2):
+        store.upsert_status("account-a", conversation_id, status="ready", document_count=1, vector_count=0)
+        store.upsert_document(
+            account_wxid="account-a", conversation_id=conversation_id, doc_type="shared_memory",
+            source_table="messages", source_id=f"legacy-{conversation_id}", source_ts=1700000000,
+            content="旧文档记录：喜欢咖啡", redacted_content="旧文档记录：喜欢咖啡",
+        )
+        store.upsert_fact(
+            account_wxid="account-a", conversation_id=conversation_id, subject="对方",
+            kind="preference_like", content="事实记录：喜欢咖啡", confidence=0.9,
+        )
+    store.set_fact_read_mode("account-a", 1, "documents")
+    store.set_fact_read_mode("account-a", 2, "facts")
+    monkeypatch.setattr(
+        "app.services.realtime.rag_retriever.load_rag_settings",
+        lambda: {
+            "rag_fact_read_enabled": True, "rag_embedding_model": "test",
+            "rag_embedding_dim": 384,
+        },
+    )
+    retriever = RagRetriever(store=store)
+    document_result = retriever.retrieve(account_wxid="account-a", conversation_id=1, query="喜欢咖啡")
+    fact_result = retriever.retrieve(account_wxid="account-a", conversation_id=2, query="喜欢咖啡")
+    assert document_result["items"][0]["doc"]["doc_type"] == "shared_memory"
+    assert fact_result["items"][0]["doc_type"] == "fact_memory"
+    assert store.list_facts("account-a", 1)
+    assert store.get_status("account-a", 1)["fact_read_mode"] == "documents"
+    with pytest.raises(ValueError):
+        store.set_fact_read_mode("account-a", 1, "invalid")
+
+
 def test_legacy_shadow_only_config_migrates_once_to_fact_read(monkeypatch):
     legacy = {"rag_fact_read_enabled": False}
     apply_rag_defaults(legacy)
@@ -230,11 +265,17 @@ def test_bridge_rag_status_exposes_fact_read_settings(monkeypatch):
 
     monkeypatch.setattr("app.db.connection.get_db", lambda: conn)
     monkeypatch.setattr("app.webview.bridge.get_db", lambda: conn, raising=False)
+    monkeypatch.setattr("app.services.realtime.rag_store.get_db", lambda: conn)
     bridge = FakeBridge()
     result = bridge.get_rag_status("account-a")
     assert result["ok"] is True
     assert result["settings"]["rag_fact_shadow_enabled"] is True
     assert result["settings"]["rag_fact_read_enabled"] is True
+    assert result["items"][0]["fact_read_mode"] == "inherit"
+    bridge._resolve_account_wxid = lambda account_wxid="": account_wxid or "account-a"
+    switched = bridge.set_rag_fact_read_mode(1, "documents", "account-a")
+    assert switched == {"ok": True, "fact_read_mode": "documents"}
+    assert bridge.get_rag_status("account-a")["items"][0]["fact_read_mode"] == "documents"
 
 
 def test_llm_generate_consumes_fact_context_before_calling_provider(monkeypatch):

@@ -92,7 +92,15 @@ class RagRetriever:
         if status.get("status") == "failed":
             return self._empty(started, status, degraded=True, reason="index_failed")
 
-        if settings.get("rag_fact_read_enabled"):
+        fact_read_mode = str(status.get("fact_read_mode") or "inherit").lower()
+        if fact_read_mode not in {"inherit", "facts", "documents"}:
+            fact_read_mode = "inherit"
+        fact_read_enabled = (
+            bool(settings.get("rag_fact_read_enabled"))
+            if fact_read_mode == "inherit"
+            else fact_read_mode == "facts"
+        )
+        if fact_read_enabled:
             fact_result = self._retrieve_facts(
                 account_wxid=account_wxid,
                 conversation_id=conversation_id,

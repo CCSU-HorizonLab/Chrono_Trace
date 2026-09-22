@@ -49,3 +49,20 @@ def test_judge_stage_accepts_fenced_valid_label_and_resumes():
     assert result["items"][0]["judge_reason"] == "冲突"
     assert result["items"][1]["nli_label"] == "entailed"
     assert len(calls) == 1
+
+
+def test_batch_answer_stage_maps_results_by_id_and_honors_limit():
+    calls = []
+    payload = {"items": [
+        {"id": f"q{index}", "query": "q", "evidence": ["e"], "answer": ""}
+        for index in range(3)
+    ]}
+
+    def call(messages):
+        calls.append(messages)
+        return '{"items":[{"id":"q1","answer":"a1"},{"id":"q0","answer":"a0"}]}'
+
+    result = run_stage(payload, stage="answer", llm_call=call, limit=2, batch_size=8)
+    assert [item["answer"] for item in result["items"]] == ["a0", "a1", ""]
+    assert result["last_stage_processed"] == 2
+    assert len(calls) == 1

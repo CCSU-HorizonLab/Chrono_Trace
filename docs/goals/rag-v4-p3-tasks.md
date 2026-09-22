@@ -22,4 +22,4 @@
 - [ ] 设定门禁：fact-path 三项指标均不低于 document-RAG；安全和身份隔离不得回退。
 - [ ] 运行真实回放评测、冻结 baseline 后设定门禁并提交 `feat：建立长期记忆评测门禁`。
 
-运行记录：评测器、回放、候选导出、NLI 输入导出、映射校验与 NLI 结果校验单测 `14 passed`；完整 backend 回归 `629 passed, 21 skipped, 24 warnings`；前端 `npm run build` 与 smoke `3 passed`；真实库已完成非破坏性 `fact_read_mode=inherit` schema migration（169 个联系人索引状态）。已从 36 条回放生成 108 条脱敏 judge 输入。smoke 诊断已确认敏感标签与召回指标存在混合标注问题，不能据此设定发布门禁。36 条发布 gold 仍使用 `fact_*` 符号 ID，尚未映射到运行库数字 fact ID；同时没有已判定的答案 judge 文件，发布门禁仍未通过。
+运行记录：评测器、回放、候选导出、NLI 输入导出、映射校验与 NLI 结果校验单测 `14 passed`；完整 backend 回归 `629 passed, 21 skipped, 24 warnings`；前端 `npm run build` 与 smoke `3 passed`；真实库已完成非破坏性 `fact_read_mode=inherit` schema migration（169 个联系人索引状态）。已从 36 条回放生成 108 条脱敏 judge 输入；校验报告确认当前模板与输入 key 不匹配且缺少全部 108 条 judge 结果，见 `rag-v4-nli-validation-report.json`。smoke 诊断已确认敏感标签与召回指标存在混合标注问题，不能据此设定发布门禁。36 条发布 gold 仍使用 `fact_*` 符号 ID，尚未映射到运行库数字 fact ID；发布门禁仍未通过。

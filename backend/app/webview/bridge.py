@@ -1499,6 +1499,7 @@ class Bridge:
                         "rag_privacy_mode",
                         "rag_fact_shadow_enabled",
                         "rag_fact_read_enabled",
+                        "rag_fact_score_threshold",
                     )
                 },
                 "items": items,

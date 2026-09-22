@@ -7,7 +7,7 @@
 - [x] 扩展冻结 gold 集到 36 个问题→事实对，覆盖共同记忆、偏好、计划、承诺、冲突降温、敏感阻断、无命中和最新对话。
 - [x] 脚本输出 Recall@5、MRR、分层 bootstrap CI、门控 skip/no-hit 率、误拒/正确拒答和 reason 分布，并保留逐 case 明细。
 - [x] 补充敏感阻断 precision/recall 与可选联系人/会话隔离率；缺少标注时显式输出 `not_applicable` 或 `pending_runtime_data`，不将缺数据当作通过。
-- [x] 发布门禁按 Recall@5、MRR、faithfulness 的 bootstrap 下界比较事实路径与 document-RAG，安全/隔离同步执行不回退判断。
+- [x] 发布门禁按 Recall@5、MRR、faithfulness 的 bootstrap 下界比较事实路径与 document-RAG，安全/隔离同步执行不回退判断；事实读侧门槛由 `rag_fact_score_threshold` 提供待评测校准入口。
 - [x] 支持对脱敏答案与注入 evidence 的外部 NLI 判定输入，输出 faithfulness 分数、judge 版本与 prompt 版本；缺少 judge 数据时明确 pending。
 - [x] 增加只读脱敏 NLI 输入导出：按三路回放生成 query/evidence 包，敏感证据仅保留 ID，答案与标签留给外部 judge。
 - [x] 生成 no-RAG、document-RAG、fact-path 三路报告 JSON，保存到 `docs/goals/rag-v4-eval-report.json`；当前真实库有日志但未匹配冻结 gold，指标为 pending_runtime_data。
@@ -20,4 +20,4 @@
 - [ ] 设定门禁：fact-path 三项指标均不低于 document-RAG；安全和身份隔离不得回退。
 - [ ] 运行真实回放评测、冻结 baseline 后设定门禁并提交 `feat：建立长期记忆评测门禁`。
 
-运行记录：评测器、回放、候选导出、NLI 输入导出与映射校验单测 `11 passed`（含安全/隔离指标）；完整 backend 回归 `626 passed, 21 skipped, 24 warnings`；前端 `npm run build` 与 smoke `3 passed`；真实库已完成非破坏性 `fact_read_mode=inherit` schema migration（169 个联系人索引状态）。已从 36 条回放生成 108 条脱敏 judge 输入。36 条发布 gold 仍使用 `fact_*` 符号 ID，尚未映射到运行库数字 fact ID；同时没有已判定的答案 judge 文件，发布门禁仍未通过。
+运行记录：评测器、回放、候选导出、NLI 输入导出与映射校验单测 `11 passed`（含安全/隔离指标）；完整 backend 回归 `627 passed, 21 skipped, 24 warnings`；前端 `npm run build` 与 smoke `3 passed`；真实库已完成非破坏性 `fact_read_mode=inherit` schema migration（169 个联系人索引状态）。已从 36 条回放生成 108 条脱敏 judge 输入。36 条发布 gold 仍使用 `fact_*` 符号 ID，尚未映射到运行库数字 fact ID；同时没有已判定的答案 judge 文件，发布门禁仍未通过。

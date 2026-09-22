@@ -2,7 +2,7 @@
 
 ## 状态
 
-进行中。P0–P2 已完成；P3 回放链路已接通，当前等待正式 gold ID 映射与脱敏 NLI judge 后完成发布门禁。最新阶段提交：`91131fa1 feat：校准泛化记忆gold集合`。已补充 evidence 辅助排序、重建 799 条事实向量，并将 smoke 泛化 gold 校准为主题事实集合；v7 诊断回放 Recall@5=`1.0`、MRR=`0.7778`。全量后端回归：629 passed、21 skipped、24 warnings；本轮 RAG 定向回归：83 passed；前端构建与 smoke 通过。
+进行中。P0–P2 已完成；P3 已完成 36×3 回放和 108 条脱敏 answer+judge，当前仅等待正式 gold ID 映射后完成 Recall/MRR 发布门禁。事实路径 faithfulness=`0.2778`，高于 document-RAG=`0.1111` 和 no-RAG=`0.0833`；smoke 泛化 Recall@5=`1.0`、MRR=`0.7778`。全量后端回归：629 passed、21 skipped、24 warnings；NLI/结构化证据定向回归：15 passed；前端构建与 smoke 通过。
 
 ## 目标
 

@@ -54,6 +54,44 @@ def test_rag_store_is_contact_scoped_for_shadow_facts():
     assert conn.execute("select count(*) from rag_facts").fetchone()[0] == 2
 
 
+def test_rag_store_recovers_utf8_evidence_blob_for_legacy_fact_ranking():
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("CREATE TABLE messages (id INTEGER PRIMARY KEY, content TEXT)")
+    conn.execute(
+        "INSERT INTO messages(id, content) VALUES (?, ?)",
+        (14114, "你就知道天天玩你那个杀戮尖塔2"),
+    )
+    store = RagStore(conn)
+    assert "杀戮尖塔2" in store.list_fact_evidence_text([14114])
+    assert store.list_fact_evidence_text([999999]) == ""
+
+
+def test_fact_retrieval_uses_evidence_topic_when_legacy_content_is_lossy(monkeypatch):
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("CREATE TABLE messages (id INTEGER PRIMARY KEY, content TEXT)")
+    conn.execute(
+        "INSERT INTO messages(id, content) VALUES (?, ?)",
+        (7, "我们之前玩过杀戮尖塔2"),
+    )
+    store = RagStore(conn)
+    fact_id = store.upsert_fact(
+        account_wxid="account-a", conversation_id=1, subject="对方",
+        kind="hobby_or_game", content="���Ϸ����", confidence=0.9,
+        evidence_message_ids=[7],
+    )
+    monkeypatch.setattr(
+        "app.services.realtime.rag_retriever.load_rag_settings",
+        lambda: {"rag_fact_read_enabled": True, "rag_embedding_model": "test", "rag_embedding_dim": 2},
+    )
+    result = RagRetriever(store=store).retrieve(
+        account_wxid="account-a", conversation_id=1,
+        query="我们玩过什么游戏？", limit=1,
+    )
+    assert result["items"][0]["document_id"] == fact_id
+
+
 def test_query_scope_defaults_to_latest_turn(monkeypatch):
     settings = apply_rag_defaults({})
     monkeypatch.setattr(

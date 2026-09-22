@@ -872,6 +872,43 @@ class RagStore:
         ).fetchall()
         return [dict(row) for row in rows]
 
+    def list_fact_evidence_text(self, evidence_message_ids: list[int] | tuple[int, ...]) -> str:
+        """Return local evidence text for ranking without replacing fact content.
+
+        Some legacy imports stored the canonical fact text after a lossy decode,
+        while the original ``messages.content`` BLOB is still valid UTF-8.  The
+        retriever may use this text as a keyword/embedding hint, but callers
+        must continue to expose the fact and evidence IDs as the auditable
+        output.  Missing tables, malformed IDs, and decode failures are safe
+        no-ops for test databases and partial imports.
+        """
+        ids: list[int] = []
+        for value in evidence_message_ids or []:
+            try:
+                parsed = int(value)
+            except (TypeError, ValueError):
+                continue
+            if parsed > 0:
+                ids.append(parsed)
+        if not ids:
+            return ""
+        try:
+            placeholders = ",".join("?" for _ in ids)
+            rows = self.conn.execute(
+                f"SELECT CAST(content AS BLOB) AS content FROM messages WHERE id IN ({placeholders})",
+                ids,
+            ).fetchall()
+        except Exception:
+            return ""
+        texts: list[str] = []
+        for row in rows:
+            value = row[0]
+            if isinstance(value, bytes):
+                texts.append(value.decode("utf-8", errors="replace"))
+            elif value:
+                texts.append(str(value))
+        return "\n".join(texts)
+
     def list_active_facts_by_subject_kind(
         self,
         account_wxid: str,

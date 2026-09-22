@@ -232,6 +232,15 @@ class RagRetriever:
         deadline: float | None,
     ) -> dict[str, Any]:
         tokens = set(self._tokens(query))
+        # Facts may have short Chinese paraphrases whose meaningful atom is
+        # not preserved as a 2–4 character n-gram ("玩过" vs. "天天玩").
+        # Keep this fallback local to fact ranking; document retrieval keeps
+        # its stricter overlap rule so unrelated legacy text is not invented
+        # as a memory candidate.
+        tokens.update(
+            char for char in re.sub(r"\s+", "", str(query or ""))
+            if "\u4e00" <= char <= "\u9fff" or char.isalnum()
+        )
         preferred_kinds = self._preferred_fact_kinds(query)
         settings = load_rag_settings()
         model = str(settings.get("rag_embedding_model") or "")
@@ -281,19 +290,41 @@ class RagRetriever:
             # 但从读侧彻底排除，避免出现“参考命中 N 条空记录”。
             if not content:
                 continue
-            fact_tokens = set(self._tokens(content))
-            overlap = len(tokens & fact_tokens)
+            try:
+                evidence_ids = json.loads(fact.get("evidence_message_ids_json") or "[]")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                evidence_ids = []
+            # Legacy fact text can be lossy-decoded while its original local
+            # message BLOB remains intact.  Use evidence text only as a
+            # ranking hint; the canonical fact content and evidence IDs stay
+            # unchanged in the returned item and prompt.
+            evidence_text = self.store.list_fact_evidence_text(evidence_ids)
+            content_tokens = set(self._tokens(content))
+            evidence_tokens = set(self._tokens(evidence_text)) if evidence_text else set()
+            # Score canonical fact text and evidence text independently.  A
+            # long evidence window must not dilute an exact topic token by
+            # inflating the denominator; use the stronger of the two hints.
+            fact_tokens = content_tokens | evidence_tokens
+            overlap = max(len(tokens & content_tokens), len(tokens & evidence_tokens))
             vector_score = self._cosine(query_vector, vector_by_id.get(int(fact["id"]), [])) if vector_available else 0.0
             if not overlap and not vector_score:
                 continue
             meaningful_query_tokens = tokens - self.GENERIC_FACT_QUERY_STOPWORDS
-            meaningful_fact_tokens = fact_tokens - self.GENERIC_FACT_QUERY_STOPWORDS
-            meaningful_overlap = len(meaningful_query_tokens & meaningful_fact_tokens)
-            keyword_score = overlap / max(1, min(len(tokens), len(fact_tokens)))
+            meaningful_content_tokens = content_tokens - self.GENERIC_FACT_QUERY_STOPWORDS
+            meaningful_evidence_tokens = evidence_tokens - self.GENERIC_FACT_QUERY_STOPWORDS
+            content_keyword_score = len(tokens & content_tokens) / max(1, min(len(tokens), len(content_tokens)))
+            evidence_keyword_score = len(tokens & evidence_tokens) / max(1, min(len(tokens), len(evidence_tokens)))
+            keyword_score = max(content_keyword_score, evidence_keyword_score)
+            meaningful_overlap = max(
+                len(meaningful_query_tokens & meaningful_content_tokens),
+                len(meaningful_query_tokens & meaningful_evidence_tokens),
+            )
+            meaningful_fact_tokens = (
+                meaningful_content_tokens | meaningful_evidence_tokens
+            )
             if meaningful_overlap:
                 keyword_score += 0.25 * meaningful_overlap / max(
-                    1,
-                    min(len(meaningful_query_tokens), len(meaningful_fact_tokens)),
+                    1, min(len(meaningful_query_tokens), len(meaningful_fact_tokens))
                 )
             kind_bonus = 0.1 if preferred_kinds and str(fact.get("kind") or "") in preferred_kinds else 0.0
             semantic_score = (
@@ -317,7 +348,7 @@ class RagRetriever:
                     "keyword_score": round(float(keyword_score), 4),
                     "fact_status": fact.get("status") or "active",
                     "fact_confidence": float(fact.get("confidence") or 0.0),
-                    "evidence_message_ids": json.loads(fact.get("evidence_message_ids_json") or "[]"),
+                    "evidence_message_ids": evidence_ids,
                     "subject": fact.get("subject") or "",
                     "memory_kind": fact.get("kind") or "",
                     "as_of": fact.get("as_of"),
@@ -330,7 +361,7 @@ class RagRetriever:
                         "metadata_json": json.dumps({
                             "subject": fact.get("subject"),
                             "memory_kind": fact.get("kind"),
-                            "evidence_message_ids": json.loads(fact.get("evidence_message_ids_json") or "[]"),
+                            "evidence_message_ids": evidence_ids,
                         }, ensure_ascii=False),
                     },
                 }

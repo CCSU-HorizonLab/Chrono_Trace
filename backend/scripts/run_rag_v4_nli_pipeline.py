@@ -54,39 +54,74 @@ def _judge_messages(item: dict[str, Any]) -> list[dict[str, str]]:
     ]
 
 
+def _batch_messages(items: list[dict[str, Any]], stage: str) -> list[dict[str, str]]:
+    if stage == "answer":
+        records = [{
+            "id": str(item.get("id") or ""),
+            "query": str(item.get("query") or ""),
+            "evidence": [str(value) for value in item.get("evidence") or []],
+        } for item in items]
+        instruction = "逐条仅根据 evidence 回答 query；证据不足时明确说证据不足。只返回 JSON：{\"items\":[{\"id\":\"...\",\"answer\":\"...\"}]}。"
+    else:
+        records = [{
+            "id": str(item.get("id") or ""),
+            "query": str(item.get("query") or ""),
+            "answer": str(item.get("answer") or ""),
+            "evidence": [str(value) for value in item.get("evidence") or []],
+        } for item in items]
+        instruction = "逐条判断 answer 是否被 evidence 支持。label 只能是 entailed、contradicted、unknown。只返回 JSON：{\"items\":[{\"id\":\"...\",\"label\":\"...\",\"reason\":\"...\"}]}。"
+    return [
+        {"role": "system", "content": instruction},
+        {"role": "user", "content": json.dumps({"items": records}, ensure_ascii=False)},
+    ]
+
+
 def run_stage(
     payload: dict[str, Any],
     *,
     stage: str,
     llm_call: Callable[[list[dict[str, str]]], str],
     limit: int | None = None,
+    batch_size: int = 1,
 ) -> dict[str, Any]:
     items = [dict(item) for item in payload.get("items") or [] if isinstance(item, dict)]
     processed = 0
-    for item in items:
-        if limit is not None and processed >= limit:
-            break
-        if stage == "answer":
-            if str(item.get("answer") or "").strip():
-                continue
-            parsed = _parse_json(llm_call(_answer_messages(item)))
-            answer = str(parsed.get("answer") or "").strip()
-            if answer:
-                item["answer"] = answer
-                processed += 1
-        elif stage == "judge":
-            if not str(item.get("answer") or "").strip():
-                continue
-            current = str(item.get("nli_label") or "").lower()
-            if current in {"entailed", "contradicted"}:
-                continue
-            parsed = _parse_json(llm_call(_judge_messages(item)))
-            label = str(parsed.get("label") or "").lower()
-            item["nli_label"] = label if label in VALID_LABELS else "unknown"
-            item["judge_reason"] = str(parsed.get("reason") or "")[:500]
-            processed += 1
+    if stage not in {"answer", "judge"}:
+        raise ValueError(f"unsupported stage: {stage}")
+    candidates = [
+        item for item in items
+        if (
+            stage == "answer" and not str(item.get("answer") or "").strip()
+        ) or (
+            stage == "judge"
+            and str(item.get("answer") or "").strip()
+            and str(item.get("nli_label") or "").lower() not in {"entailed", "contradicted"}
+        )
+    ]
+    if limit is not None:
+        candidates = candidates[:max(0, limit)]
+    size = max(1, int(batch_size))
+    for offset in range(0, len(candidates), size):
+        chunk = candidates[offset:offset + size]
+        if len(chunk) == 1:
+            parsed = _parse_json(llm_call(_answer_messages(chunk[0]) if stage == "answer" else _judge_messages(chunk[0])))
+            responses = [dict(parsed, id=str(chunk[0].get("id") or ""))]
         else:
-            raise ValueError(f"unsupported stage: {stage}")
+            parsed = _parse_json(llm_call(_batch_messages(chunk, stage)))
+            responses = [value for value in parsed.get("items") or [] if isinstance(value, dict)]
+        by_id = {str(value.get("id") or ""): value for value in responses}
+        for item in chunk:
+            response = by_id.get(str(item.get("id") or ""), {})
+            if stage == "answer":
+                answer = str(response.get("answer") or "").strip()
+                if answer:
+                    item["answer"] = answer
+                    processed += 1
+            else:
+                label = str(response.get("label") or "").lower()
+                item["nli_label"] = label if label in VALID_LABELS else "unknown"
+                item["judge_reason"] = str(response.get("reason") or "")[:500]
+                processed += 1
     result = dict(payload)
     result["items"] = items
     result["last_stage"] = stage
@@ -100,6 +135,7 @@ def main() -> int:
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--stage", choices=("answer", "judge"), required=True)
     parser.add_argument("--limit", type=int)
+    parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--timeout", type=int, default=90)
     args = parser.parse_args()
 
@@ -124,7 +160,10 @@ def main() -> int:
         )
 
     source = args.out if args.out.exists() else args.input
-    result = run_stage(_load(source), stage=args.stage, llm_call=call, limit=args.limit)
+    result = run_stage(
+        _load(source), stage=args.stage, llm_call=call,
+        limit=args.limit, batch_size=max(1, args.batch_size),
+    )
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({"stage": args.stage, "processed": result["last_stage_processed"], "out": str(args.out)}, ensure_ascii=False))

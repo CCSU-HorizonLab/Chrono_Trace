@@ -90,6 +90,7 @@ def run_stage(
     llm_call: Callable[[list[dict[str, str]]], str],
     limit: int | None = None,
     batch_size: int = 1,
+    safe_fallback: bool = False,
 ) -> dict[str, Any]:
     items = [dict(item) for item in payload.get("items") or [] if isinstance(item, dict)]
     processed = 0
@@ -133,6 +134,11 @@ def run_stage(
                 if answer:
                     item["answer"] = answer
                     processed += 1
+                elif safe_fallback:
+                    item["answer"] = "证据不足，无法根据当前证据回答。"
+                    item["answer_status"] = "degraded_model_output"
+                    item["nli_label"] = "unknown"
+                    processed += 1
             else:
                 label = str(response.get("label") or "").lower()
                 item["nli_label"] = label if label in VALID_LABELS else "unknown"
@@ -152,6 +158,7 @@ def main() -> int:
     parser.add_argument("--stage", choices=("answer", "judge"), required=True)
     parser.add_argument("--limit", type=int)
     parser.add_argument("--batch-size", type=int, default=8)
+    parser.add_argument("--safe-fallback", action="store_true")
     parser.add_argument("--timeout", type=int, default=90)
     args = parser.parse_args()
 
@@ -178,7 +185,7 @@ def main() -> int:
     source = args.out if args.out.exists() else args.input
     result = run_stage(
         _load(source), stage=args.stage, llm_call=call,
-        limit=args.limit, batch_size=max(1, args.batch_size),
+        limit=args.limit, batch_size=max(1, args.batch_size), safe_fallback=args.safe_fallback,
     )
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

@@ -15,10 +15,11 @@
 - [x] 增加 `rag-v4-gold-id-map.template.json` 与 `rag-v4-nli-answers.template.json`，并支持 `--gold-map` / `--answers` 解锁可计算 Recall 和 faithfulness。
 - [x] 增加 `prepare_rag_v4_gold_mapping.py`：当前联系人已导出 36 条本地候选，默认隐藏敏感事实内容，待人工复核后填入 gold ID 映射。
 - [x] 增加只读 gold 映射校验：检查数字 ID、active/enabled、联系人/会话范围和重复引用；未完整限定范围时保持 pending。
+- [x] 增加脱敏 NLI 结果校验器：逐 `(case_id, track)` 检查覆盖、重复、未知输入、答案/证据类型和三种合法 label；不替 judge 推断标签。
 - [x] 接通联系人级事实读侧回滚：`inherit` / `facts` / `documents` 三档，事实写入不受回滚影响，并在设置页可切换。
 - [x] 生成当前运行库 4 条 smoke gold 并完成三路量化回放：fact-path Recall@5=`0.25`、MRR=`0.25`，document-RAG Recall@5/MRR=`0`，事实路径联系人/会话隔离率=`1.0`；该结果仅为诊断集，不能替代 36 条发布集。
 - [x] 核验 smoke gold 的敏感标注：`533/534` 在运行库中为 `sensitivity=sensitive`，事实读侧按默认安全策略不会注入；原 smoke 报告将相关案例标为 `sensitive_expected=false`，因此其中的召回失败不能直接解释为检索缺陷。`935/936` 为普通事实，“杀戮尖塔”问句已命中；后续需把混合敏感/普通事实拆成可分别计分的 gold case。
 - [ ] 设定门禁：fact-path 三项指标均不低于 document-RAG；安全和身份隔离不得回退。
 - [ ] 运行真实回放评测、冻结 baseline 后设定门禁并提交 `feat：建立长期记忆评测门禁`。
 
-运行记录：评测器、回放、候选导出、NLI 输入导出与映射校验单测 `11 passed`（含安全/隔离指标）；完整 backend 回归 `627 passed, 21 skipped, 24 warnings`；前端 `npm run build` 与 smoke `3 passed`；真实库已完成非破坏性 `fact_read_mode=inherit` schema migration（169 个联系人索引状态）。已从 36 条回放生成 108 条脱敏 judge 输入。smoke 诊断已确认敏感标签与召回指标存在混合标注问题，不能据此设定发布门禁。36 条发布 gold 仍使用 `fact_*` 符号 ID，尚未映射到运行库数字 fact ID；同时没有已判定的答案 judge 文件，发布门禁仍未通过。
+运行记录：评测器、回放、候选导出、NLI 输入导出、映射校验与 NLI 结果校验单测 `14 passed`；完整 backend 回归 `629 passed, 21 skipped, 24 warnings`；前端 `npm run build` 与 smoke `3 passed`；真实库已完成非破坏性 `fact_read_mode=inherit` schema migration（169 个联系人索引状态）。已从 36 条回放生成 108 条脱敏 judge 输入。smoke 诊断已确认敏感标签与召回指标存在混合标注问题，不能据此设定发布门禁。36 条发布 gold 仍使用 `fact_*` 符号 ID，尚未映射到运行库数字 fact ID；同时没有已判定的答案 judge 文件，发布门禁仍未通过。

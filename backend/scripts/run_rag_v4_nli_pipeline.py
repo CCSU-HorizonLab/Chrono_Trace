@@ -28,7 +28,14 @@ def _parse_json(text: str) -> dict[str, Any]:
     try:
         payload = json.loads(cleaned)
     except (TypeError, ValueError, json.JSONDecodeError):
-        return {}
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+        if start < 0 or end <= start:
+            return {}
+        try:
+            payload = json.loads(cleaned[start:end + 1])
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return {}
     return payload if isinstance(payload, dict) else {}
 
 
@@ -122,7 +129,7 @@ def run_stage(
                 )
                 response = dict(retry, id=item_id)
             if stage == "answer":
-                answer = str(response.get("answer") or "").strip()
+                answer = str(response.get("answer") or response.get("response") or response.get("content") or "").strip()
                 if answer:
                     item["answer"] = answer
                     processed += 1

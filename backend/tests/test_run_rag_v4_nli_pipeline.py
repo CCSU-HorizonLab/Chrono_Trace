@@ -84,3 +84,12 @@ def test_batch_stage_retries_only_missing_items_individually():
     result = run_stage(payload, stage="answer", llm_call=call, batch_size=8)
     assert [item["answer"] for item in result["items"]] == ["a0", "a1"]
     assert len(calls) == 2
+
+
+def test_mixed_output_model_json_is_extracted_from_surrounding_text():
+    payload = {"items": [{"id": "q", "query": "q", "evidence": ["e"], "answer": ""}]}
+    result = run_stage(
+        payload, stage="answer",
+        llm_call=lambda _: '思考完成。\n{"response":"最终回答"}\n以上。',
+    )
+    assert result["items"][0]["answer"] == "最终回答"

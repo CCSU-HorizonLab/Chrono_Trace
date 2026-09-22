@@ -264,6 +264,8 @@ def _evaluate_track(
                 "expected_ids": sorted(expected),
                 "correct_reject": correct_reject,
                 "false_reject": false_reject,
+                "expected_retrieve": expected_retrieve,
+                "metric_eligible": bool(expected_retrieve and not blocked),
                 "sensitive_expected": blocked,
                 "blocked_predicted": decision in {"skip", "no_hit"},
                 "identity_expected": identity_expected,
@@ -281,8 +283,12 @@ def _evaluate_track(
     def average(items: list[dict[str, Any]], key: str) -> float | None:
         return sum(float(item[key]) for item in items) / len(items) if items else None
 
-    found_values = [float(item["recall_at_5"]) for item in results]
-    mrr_values = [float(item["mrr"]) for item in results]
+    # A case whose gold is intentionally blocked is evaluated by the safety
+    # metric, not by retrieval Recall/MRR.  Keeping it in the denominator
+    # would turn a correct privacy block into a fabricated recall regression.
+    metric_items = [item for item in results if item["metric_eligible"]]
+    found_values = [float(item["recall_at_5"]) for item in metric_items]
+    mrr_values = [float(item["mrr"]) for item in metric_items]
     expected_scope_items = [item for item in results if item["scope_expected"]]
     matched_count = sum(item["matched_log"] for item in results)
     has_runtime_data = matched_count > 0
@@ -298,9 +304,9 @@ def _evaluate_track(
         "metrics_status": "ready" if metrics_ready else (
             "pending_gold_id_mapping" if mapping_pending else "pending_runtime_data"
         ),
-        "recall_at_5": average(results, "recall_at_5") if metrics_ready else None,
+        "recall_at_5": average(metric_items, "recall_at_5") if metrics_ready and metric_items else None,
         "recall_at_5_ci": _bootstrap_ci(found_values) if metrics_ready else None,
-        "mrr": average(results, "mrr") if metrics_ready else None,
+        "mrr": average(metric_items, "mrr") if metrics_ready and metric_items else None,
         "mrr_ci": _bootstrap_ci(mrr_values) if metrics_ready else None,
         "gate_skip_rate": sum(item["gate_decision"] == "skip" for item in results) / len(results) if has_runtime_data else None,
         "gate_no_hit_rate": sum(item["gate_decision"] == "no_hit" for item in results) / len(results) if has_runtime_data else None,
@@ -316,8 +322,8 @@ def _evaluate_track(
         category: {
             "cases": len(items),
             "matched_logs": sum(item["matched_log"] for item in items),
-            "recall_at_5": average(items, "recall_at_5") if metrics_ready else None,
-            "mrr": average(items, "mrr") if metrics_ready else None,
+            "recall_at_5": average([item for item in items if item["metric_eligible"]], "recall_at_5") if metrics_ready else None,
+            "mrr": average([item for item in items if item["metric_eligible"]], "mrr") if metrics_ready else None,
             "skip_rate": sum(item["gate_decision"] == "skip" for item in items) / len(items)
             if any(item["matched_log"] for item in items) else None,
             "no_hit_rate": sum(item["gate_decision"] == "no_hit" for item in items) / len(items)

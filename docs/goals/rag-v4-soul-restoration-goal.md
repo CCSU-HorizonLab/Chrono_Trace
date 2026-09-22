@@ -2,7 +2,7 @@
 
 ## 状态
 
-进行中。P0–P2 已完成；P3 回放链路已接通，当前等待 gold ID 映射与脱敏 NLI judge 后完成发布门禁。最新阶段提交：`de54e8b7 feat：生成脱敏NLI评测输入`。全量后端回归：623 passed、21 skipped。
+进行中。P0–P2 已完成；P3 回放链路已接通，当前等待 gold ID 映射与脱敏 NLI judge 后完成发布门禁。最新阶段提交：`1a57dd17 feat：记录脱敏judge输入产物`。全量后端回归：623 passed、21 skipped。
 
 ## 目标
 

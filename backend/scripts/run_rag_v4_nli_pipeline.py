@@ -103,6 +103,7 @@ def run_stage(
         ) or (
             stage == "judge"
             and str(item.get("answer") or "").strip()
+            and str(item.get("judge_status") or "") != "complete"
             and str(item.get("nli_label") or "").lower() not in {"entailed", "contradicted"}
         )
     ]
@@ -143,6 +144,7 @@ def run_stage(
                 label = str(response.get("label") or "").lower()
                 item["nli_label"] = label if label in VALID_LABELS else "unknown"
                 item["judge_reason"] = str(response.get("reason") or "")[:500]
+                item["judge_status"] = "complete"
                 processed += 1
     result = dict(payload)
     result["items"] = items

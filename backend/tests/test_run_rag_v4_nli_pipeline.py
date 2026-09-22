@@ -104,3 +104,12 @@ def test_answer_failure_can_be_recorded_as_safe_degradation():
     assert item["answer"] == "证据不足，无法根据当前证据回答。"
     assert item["answer_status"] == "degraded_model_output"
     assert item["nli_label"] == "unknown"
+
+
+def test_completed_unknown_judge_is_not_reprocessed():
+    payload = {"items": [{
+        "id": "q", "query": "q", "answer": "证据不足", "evidence": [],
+        "nli_label": "unknown", "judge_status": "complete",
+    }]}
+    result = run_stage(payload, stage="judge", llm_call=lambda _: (_ for _ in ()).throw(AssertionError()))
+    assert result["last_stage_processed"] == 0

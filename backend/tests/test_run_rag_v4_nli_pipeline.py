@@ -66,3 +66,21 @@ def test_batch_answer_stage_maps_results_by_id_and_honors_limit():
     assert [item["answer"] for item in result["items"]] == ["a0", "a1", ""]
     assert result["last_stage_processed"] == 2
     assert len(calls) == 1
+
+
+def test_batch_stage_retries_only_missing_items_individually():
+    calls = []
+    payload = {"items": [
+        {"id": "q0", "query": "q", "evidence": ["e"], "answer": ""},
+        {"id": "q1", "query": "q", "evidence": ["e"], "answer": ""},
+    ]}
+
+    def call(messages):
+        calls.append(messages)
+        if len(calls) == 1:
+            return '{"items":[{"id":"q0","answer":"a0"}]}'
+        return '{"answer":"a1"}'
+
+    result = run_stage(payload, stage="answer", llm_call=call, batch_size=8)
+    assert [item["answer"] for item in result["items"]] == ["a0", "a1"]
+    assert len(calls) == 2

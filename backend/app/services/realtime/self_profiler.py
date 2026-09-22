@@ -23,7 +23,7 @@ def _print(msg: str):
     logger.debug(msg)
 
 
-# 画像档位只定义回看跨度；实际输入和输出 token 由真实消息量、prompt 长度动态决定。
+# 画像档位只定义回看跨度（包含到哪层分桶）；不做 token 预算截断。
 PROFILE_TIME_WINDOWS = {
     'low': 7 * 86400,
     'medium': 30 * 86400,
@@ -32,13 +32,19 @@ PROFILE_TIME_WINDOWS = {
     'custom': 90 * 86400,
 }
 
-# 时间分桶权重（近期优先）
-TIME_BUCKETS = [
-    (7 * 86400, 0.50),     # 最近 7 天 → 50% 预算
-    (30 * 86400, 0.30),    # 8-30 天 → 30% 预算
-    (90 * 86400, 0.20),    # 31-90 天 → 20% 预算
-    (None, 0.0),           # 90天以前 → 兜底回收所有被顺延的剩余预算
-]
+# 采样时间分桶（近期优先，逐层向历史回溯）。档位决定包含到哪一层：
+# 简略=最近7天，普通=到最近30天，精细=到最近90天。桶内消息全量保留，
+# 跨度内没有任何消息时整体顺延到全部历史的最近消息（旧模式"预算顺延"
+# 的等价行为），保证不常联系的人也能取到真实聊天样本。
+PROFILE_SAMPLE_BUCKETS = (
+    (7 * 86400, '最近7天'),
+    (30 * 86400, '到最近30天'),
+    (90 * 86400, '到最近90天'),
+)
+
+# 采样字符安全上限：只有聊天量极大时才会从最旧的桶开始收敛，正常
+# 规模完全不触发；按字符计数，不按 token 预算截断。
+MAX_SAMPLE_CHARS = 80000
 
 # 缓存有效期（秒）
 PROFILE_TTL = 7 * 86400  # 7 天
@@ -503,42 +509,70 @@ class SelfProfiler:
         self, conn, conversation_id: int, time_window_seconds: int
     ) -> list[dict]:
         """
-        按画像档位选取最近时间窗内的完整对话。
+        按时间分桶采样回看跨度内的完整对话。
 
-        档位只影响时间范围，不再预先写死输入 token 消耗；请求 token
-        由实际命中的消息和最终 prompt 动态计算。
+        档位只决定回看跨度包含到哪一层分桶；桶内消息全量保留，不做
+        token 预算截断。跨度内没有任何消息时（如不常联系的人），顺延到
+        全部历史的最近消息，避免生成只有统计特征的空画像。
         """
         now = int(time.time())
-        cursor = conn.execute(
-            'SELECT content, is_sender, timestamp '
-            'FROM messages '
-            'WHERE conversation_id = ? AND message_type = 1 '
-            'AND timestamp > ? AND timestamp <= ? '
-            'AND content IS NOT NULL AND content != "" '
-            'ORDER BY timestamp ASC',
-            (conversation_id, now - max(1, int(time_window_seconds)), now),
-        )
-        messages = [dict(row) for row in cursor.fetchall()]
-        if messages:
-            return messages
+        window = max(1, int(time_window_seconds))
+        buckets = [b for b in PROFILE_SAMPLE_BUCKETS if b[0] <= window]
+        if not buckets:
+            buckets = [PROFILE_SAMPLE_BUCKETS[0]]
 
-        # 时间窗内没有消息（如不常联系的人）时回退取最近的历史消息：
-        # 没有任何真实聊天样本，模型只能看到统计特征，会生成空口头禅/
-        # 空句式的退化画像。200 条约等于旧低档预算的采样规模。
-        cursor = conn.execute(
-            'SELECT content, is_sender, timestamp '
-            'FROM messages '
-            'WHERE conversation_id = ? AND message_type = 1 '
-            'AND content IS NOT NULL AND content != "" '
-            'ORDER BY timestamp DESC '
-            'LIMIT 200',
-            (conversation_id,),
-        )
-        fallback = [dict(row) for row in cursor.fetchall()]
-        fallback.reverse()
-        if fallback:
-            _print(f"[SelfProfiler] ⚠️ 时间窗内没有消息，回退使用最近 {len(fallback)} 条历史消息")
-        return fallback
+        bucket_lists: list[list[dict]] = []
+        total_chars = 0
+        prev_end = now
+        for boundary, _label in buckets:
+            bucket_start = now - boundary
+            cursor = conn.execute(
+                'SELECT content, is_sender, timestamp '
+                'FROM messages '
+                'WHERE conversation_id = ? AND message_type = 1 '
+                'AND timestamp > ? AND timestamp <= ? '
+                'AND content IS NOT NULL AND content != "" '
+                'ORDER BY timestamp ASC',
+                (conversation_id, bucket_start, prev_end),
+            )
+            bucket_messages = [dict(row) for row in cursor.fetchall()]
+            prev_end = bucket_start
+            if not bucket_messages:
+                continue
+            bucket_lists.append(bucket_messages)
+            total_chars += sum(len(m.get('content') or '') for m in bucket_messages)
+
+        if not bucket_lists:
+            # 整个回看跨度内没有消息：顺延到全部历史取最近 200 条，
+            # 没有任何真实聊天样本时模型只能输出空板块的退化画像。
+            cursor = conn.execute(
+                'SELECT content, is_sender, timestamp '
+                'FROM messages '
+                'WHERE conversation_id = ? AND message_type = 1 '
+                'AND content IS NOT NULL AND content != "" '
+                'ORDER BY timestamp DESC '
+                'LIMIT 200',
+                (conversation_id,),
+            )
+            fallback = [dict(row) for row in cursor.fetchall()]
+            fallback.reverse()
+            if fallback:
+                _print(f"[SelfProfiler] ⚠️ 回看跨度内没有消息，顺延使用最近 {len(fallback)} 条历史消息")
+            return fallback
+
+        # 极大聊天量的兜底：从最旧的桶开始收敛，避免 prompt 无界膨胀；
+        # 正常聊天量不会触发。按字符计数，不按 token 预算截断。
+        if total_chars > MAX_SAMPLE_CHARS:
+            for bucket in reversed(bucket_lists):
+                while len(bucket) > 1 and total_chars > MAX_SAMPLE_CHARS:
+                    total_chars -= len(bucket.pop(0).get('content') or '')
+                if total_chars <= MAX_SAMPLE_CHARS:
+                    break
+            _print(f"[SelfProfiler] ⚠️ 聊天量超出采样字符上限，已从最旧消息开始收敛至 {total_chars} 字符")
+
+        samples = [m for bucket in bucket_lists for m in bucket]
+        samples.sort(key=lambda m: m['timestamp'])
+        return samples
 
     def _build_turns(self, messages: list[dict]) -> list[list[dict]]:
         """将消息列表切分为对话轮次（连续消息按发送者分组后配对）"""
@@ -699,6 +733,9 @@ class SelfProfiler:
         prompt_tokens = self._estimate_msg_tokens(PROFILE_SYSTEM_PROMPT + user_prompt)
         configured_floor = max(1, int(model_config.get('max_tokens') or 0))
         dynamic_max_tokens = max(configured_floor, 384 + math.ceil(prompt_tokens * 0.22))
+        # 画像 JSON 大小不随聊天量增长，输出额度不随 prompt 无限放大，
+        # 避免超出模型 max_tokens 上限导致请求被拒。
+        dynamic_max_tokens = min(dynamic_max_tokens, 8192)
         # 混合推理模型（deepseek-flash/reasoner 等）把 reasoning_content 也计入
         # completion token，小预算会在最终 JSON 输出前耗尽，画像解析必然失败，
         # 因此推理模型保留下限 8192、普通模型保留下限 4096。

@@ -19,10 +19,12 @@
 - [x] 从脱敏 judge 输入生成内容无关的 108 条答案骨架；模板 key/track 已完整覆盖输入，空答案保持 invalid，不能伪装成发布就绪。
 - [x] 增加可断点续跑的 NLI 模型管线：显式分为 `answer` 与 `judge` 两阶段，只向模型发送脱敏 query/evidence/answer；JSON 解析或 label 异常保持 `unknown`。
 - [x] 使用当前激活的 Deepseek Flash 完成 1 条脱敏 no-RAG answer+judge smoke；无 evidence 时生成证据不足回答并判为 `unknown`，其余 107 条未调用且发布状态保持 false。
+- [x] 完成 108 条三路 answer+judge：NLI 校验 `ready`，`entailed=17`、`unknown=91`、`contradicted=0`；模型空输出按证据不足安全降级，不编造答案。
+- [x] 合并完整 judge 与 36×3 回放：faithfulness 为 no-RAG=`0.0833`、document-RAG=`0.1111`、fact-path=`0.2778`，事实路径高于两个对照。
 - [x] 接通联系人级事实读侧回滚：`inherit` / `facts` / `documents` 三档，事实写入不受回滚影响，并在设置页可切换。
 - [x] 生成当前运行库 4 条 smoke gold 并完成三路量化回放：fact-path Recall@5=`0.25`、MRR=`0.25`，document-RAG Recall@5/MRR=`0`，事实路径联系人/会话隔离率=`1.0`；该结果仅为诊断集，不能替代 36 条发布集。
 - [x] 核验 smoke gold 的敏感标注：`533/534` 在运行库中为 `sensitivity=sensitive`，事实读侧按默认安全策略不会注入；原 smoke 报告将相关案例标为 `sensitive_expected=false`，因此其中的召回失败不能直接解释为检索缺陷。`935/936` 为普通事实，“杀戮尖塔”问句已命中；后续需把混合敏感/普通事实拆成可分别计分的 gold case。
 - [ ] 设定门禁：fact-path 三项指标均不低于 document-RAG；安全和身份隔离不得回退。
 - [ ] 运行真实回放评测、冻结 baseline 后设定门禁并提交 `feat：建立长期记忆评测门禁`。
 
-运行记录：评测器、回放、候选导出、NLI 输入导出、映射校验与 NLI 管线定向单测累计 `19 passed`；完整 backend 回归 `629 passed, 21 skipped, 24 warnings`；前端 `npm run build` 与 smoke `3 passed`；真实库已完成非破坏性 `fact_read_mode=inherit` schema migration（169 个联系人索引状态）。已从 36 条回放生成 108 条脱敏 judge 输入和完全同键的答案骨架；真实模型 smoke 已处理 1 条 no-RAG 任务，结果符合证据不足预期，见 `rag-v4-nli-model-smoke-report.json`。其余 107 条仍为空，36 条发布 gold 仍使用 `fact_*` 符号 ID；发布门禁仍未通过。
+运行记录：NLI 管线与结构化证据校验定向单测 `15 passed`；完整 backend 回归 `629 passed, 21 skipped, 24 warnings`；前端 `npm run build` 与 smoke `3 passed`。108 条脱敏任务已全部生成回答并完成 judge，内容无关校验报告为 `ready`；完整三路报告见 `rag-v4-release-eval-report.json`。faithfulness 已具备基线，但 36 条发布 gold 仍使用 `fact_*` 符号 ID，Recall/MRR 为 `pending_gold_id_mapping`，因此发布门禁仍未通过。

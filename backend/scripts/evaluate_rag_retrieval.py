@@ -407,7 +407,7 @@ def evaluate(
     def _safety_not_regressed() -> bool:
         if fact_safety["status"] != "ready" or doc_safety["status"] != "ready":
             return False
-        return all(
+        return float(fact_safety.get("recall") or 0.0) >= 1.0 and all(
             fact_safety[name] >= doc_safety[name]
             for name in ("precision", "recall")
         )

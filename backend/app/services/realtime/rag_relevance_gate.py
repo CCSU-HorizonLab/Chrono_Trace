@@ -45,6 +45,13 @@ class RagRelevanceGate:
     RELATIONSHIP_TYPES = {"relationship_state", "contact_preference", "communication_style"}
     STYLE_TYPES = {"self_style_example", "communication_style"}
     DISALLOWED_SENSITIVITY = {"sensitive"}
+    SENSITIVE_LOOKUP_TERMS = (
+        "身份证", "身份证号", "手机号", "电话号码", "银行卡", "银行卡号",
+        "详细住址", "具体住址", "家庭住址", "病历", "病史", "诊断记录",
+    )
+    SENSITIVE_LOOKUP_ACTIONS = (
+        "是多少", "是什么", "找出来", "查一下", "告诉我", "发给我", "给我看",
+    )
     ORDINARY_TASK_THRESHOLD = 0.62
     ORDINARY_SCORE_THRESHOLD = 0.48
     MEMORY_TASK_THRESHOLD = 0.50
@@ -85,6 +92,12 @@ class RagRelevanceGate:
     ) -> RagGateDecision:
         if timed_out or degraded_reason == "timeout":
             return RagGateDecision("skip", "timeout", 0.0, False)
+        compact_query = re.sub(r"\s+", "", str(query or ""))
+        if (
+            any(term in compact_query for term in self.SENSITIVE_LOOKUP_TERMS)
+            and any(action in compact_query for action in self.SENSITIVE_LOOKUP_ACTIONS)
+        ):
+            return RagGateDecision("no_hit", "sensitive_query_block", 0.0, True)
         if strategy == "none" and degraded_reason in {"conversation_disabled", "index_failed"}:
             return RagGateDecision("skip", degraded_reason or "disabled", 0.0, False)
 

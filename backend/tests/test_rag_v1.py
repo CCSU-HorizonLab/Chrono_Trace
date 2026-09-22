@@ -147,6 +147,22 @@ def test_relevance_gate_injects_low_score_fact_for_explicit_shared_history_quest
     assert decision.reason == "memory_request_match"
 
 
+def test_relevance_gate_blocks_sensitive_attribute_lookup_before_injection():
+    decision = RagRelevanceGate().decide(
+        query="她的手机号是多少？",
+        items=[{
+            "doc": {"doc_type": "fact_memory", "sensitivity": "normal", "enabled": 1},
+            "score": 0.9,
+        }],
+        strategy="facts",
+        output_mode="reply",
+        trigger_type="manual_request",
+        memory_intent={"mode": "memory_request"},
+    )
+    assert decision.decision == "no_hit"
+    assert decision.reason == "sensitive_query_block"
+
+
 def test_relevance_gate_fact_path_ignores_recent_off_topic_rerank():
     gate = RagRelevanceGate()
     decision = gate.decide(

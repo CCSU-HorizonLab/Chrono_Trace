@@ -25,6 +25,7 @@ if str(ROOT / "backend") not in sys.path:
 from app.services.realtime import rag_retriever as rag_retriever_module  # noqa: E402
 from app.services.realtime.rag_config import load_rag_settings  # noqa: E402
 from app.services.realtime.rag_retriever import RagRetriever  # noqa: E402
+from app.services.realtime.rag_relevance_gate import RagRelevanceGate  # noqa: E402
 from app.services.realtime.rag_store import RagStore  # noqa: E402
 
 
@@ -85,7 +86,17 @@ def _write_track_log(
         for item in items
         if item.get("document_id") is not None
     }
-    decision = "inject" if items else "no_hit"
+    gate = RagRelevanceGate().decide(
+        query=query,
+        items=items,
+        strategy=result.get("strategy"),
+        output_mode="reply",
+        trigger_type="manual_request",
+        memory_intent={"mode": "memory_request"},
+        timed_out=bool(result.get("timed_out")),
+        degraded_reason=result.get("degrade_reason"),
+    )
+    decision = gate.decision
     store.insert_retrieval_log(
         account_wxid=account_wxid,
         conversation_id=conversation_id,
@@ -99,10 +110,10 @@ def _write_track_log(
         degraded=bool(result.get("degraded")),
         degrade_reason=result.get("degrade_reason"),
         rag_enabled=True,
-        rag_retrieved=bool(items),
+        rag_retrieved=bool(items) and decision in {"inject", "weak_inject"},
         rag_hit_count=len(items),
         rag_gate_decision=decision,
-        rag_gate_reason="replay_retrieval_result",
+        rag_gate_reason=gate.reason,
         rag_top_score=float(items[0].get("score") or 0.0) if items else 0.0,
         rag_strategy=result.get("strategy"),
         retrieval_source="fact" if track == "fact_path" else "document",

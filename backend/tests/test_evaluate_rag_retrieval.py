@@ -142,5 +142,6 @@ def test_evaluator_reports_sensitive_block_and_identity_isolation_metrics():
     summary = report["tracks"]["fact_path"]["summary"]
     assert summary["sensitive_block"]["precision"] == 0.5
     assert summary["sensitive_block"]["recall"] == 1.0
+    assert summary["recall_at_5"] == 0.0
     assert summary["identity_isolation"]["isolation_rate"] == 1.0
     assert report["release_gate"]["safety_and_identity"] == "pending_runtime_data"

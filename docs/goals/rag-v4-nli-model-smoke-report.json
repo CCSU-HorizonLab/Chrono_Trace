@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "generated_at": "2026-09-23",
+  "model_name": "Deepseek Flash",
+  "model_id": "deepseek-flash",
+  "prepared_items": 108,
+  "answer_processed": 1,
+  "judge_processed": 1,
+  "smoke_case": {
+    "id": "shared_cafe_01:no_rag",
+    "track": "no_rag",
+    "nli_label": "unknown",
+    "expected_behavior": "无 evidence 时明确证据不足",
+    "passed": true
+  },
+  "release_ready": false,
+  "remaining_unprocessed": 107,
+  "notes": "仅记录内容无关的 smoke 摘要；实际脱敏 query/evidence/answer 保存在 ignored runtime 目录。"
+}

@@ -34,13 +34,21 @@ PROFILE_TIME_WINDOWS = {
 
 # 采样时间分桶（近期优先，逐层向历史回溯）。档位决定包含到哪一层：
 # 简略=最近7天，普通=到最近30天，精细=到最近90天。桶内消息全量保留，
-# 跨度内没有任何消息时整体顺延到全部历史的最近消息（旧模式"预算顺延"
-# 的等价行为），保证不常联系的人也能取到真实聊天样本。
+# 不按 token 预算截断。
 PROFILE_SAMPLE_BUCKETS = (
     (7 * 86400, '最近7天'),
     (30 * 86400, '到最近30天'),
     (90 * 86400, '到最近90天'),
 )
+
+# 各档位目标采样量（按字符计，不按 token）：回看跨度内的内容不足时，
+# 向更早的聊天逐段顺延补充，直到填满目标或历史取尽——不做时间硬截断。
+PROFILE_TARGET_CHARS = {
+    'low': 8000,
+    'medium': 16000,
+    'high': 30000,
+    'custom': 30000,
+}
 
 # 采样字符安全上限：只有聊天量极大时才会从最旧的桶开始收敛，正常
 # 规模完全不触发；按字符计数，不按 token 预算截断。
@@ -190,7 +198,7 @@ class ContactProfiler:
 
         _print(f"\n{'='*60}")
         _print(f"[ContactProfiler] 开始生成画像: {display_name}")
-        _print(f"[ContactProfiler] 回看范围: 最近 {window_seconds // 86400} 天 ({budget_level})；token 按实际内容动态计算")
+        _print(f"[ContactProfiler] 回看范围: 最近 {window_seconds // 86400} 天 ({budget_level})；内容不足时自动向更早聊天顺延，不做时间硬截断")
         _print(f"{'='*60}")
 
         try:
@@ -216,7 +224,10 @@ class ContactProfiler:
             _print(f"[ContactProfiler] 特征数据收集完成: {list(features.keys())}")
 
             # 3. 采样对话轮次
-            sample = self._sample_conversation_turns(conn, conversation_id, window_seconds)
+            sample = self._sample_conversation_turns(
+                conn, conversation_id, window_seconds,
+                PROFILE_TARGET_CHARS.get(budget_level, PROFILE_TARGET_CHARS['high']),
+            )
             _print(f"[ContactProfiler] 采样完成: {len(sample)} 条消息, 约 {self._count_tokens(sample)} tokens")
 
             # 4. 构造 prompt
@@ -470,14 +481,13 @@ class ContactProfiler:
         return features
 
     def _sample_conversation_turns(
-        self, conn, conversation_id: int, time_window_seconds: int
+        self, conn, conversation_id: int, time_window_seconds: int, target_chars: int
     ) -> list[dict]:
         """
         按时间分桶采样回看跨度内的完整对话。
 
-        档位只决定回看跨度包含到哪一层分桶；桶内消息全量保留，不做
-        token 预算截断。跨度内没有任何消息时（如不常联系的人），顺延到
-        全部历史的最近消息，避免生成只有统计特征的空画像。
+        跨度内消息全量保留，不做 token 预算截断；内容不足 target_chars
+        时向后逐段顺延补充，直到填满目标量或历史取尽——不按时间硬截断。
         """
         now = int(time.time())
         window = max(1, int(time_window_seconds))
@@ -485,11 +495,7 @@ class ContactProfiler:
         if not buckets:
             buckets = [PROFILE_SAMPLE_BUCKETS[0]]
 
-        bucket_lists: list[list[dict]] = []
-        total_chars = 0
-        prev_end = now
-        for boundary, _label in buckets:
-            bucket_start = now - boundary
+        def _fetch_range(range_start: int, range_end: int) -> list[dict]:
             cursor = conn.execute(
                 'SELECT content, is_sender, timestamp '
                 'FROM messages '
@@ -497,32 +503,51 @@ class ContactProfiler:
                 'AND timestamp > ? AND timestamp <= ? '
                 'AND content IS NOT NULL AND content != "" '
                 'ORDER BY timestamp ASC',
-                (conversation_id, bucket_start, prev_end),
+                (conversation_id, range_start, range_end),
             )
-            bucket_messages = [dict(row) for row in cursor.fetchall()]
+            return [dict(row) for row in cursor.fetchall()]
+
+        bucket_lists: list[list[dict]] = []
+        total_chars = 0
+        prev_end = now
+        for boundary, _label in buckets:
+            bucket_start = now - boundary
+            bucket_messages = _fetch_range(bucket_start, prev_end)
             prev_end = bucket_start
             if not bucket_messages:
                 continue
             bucket_lists.append(bucket_messages)
             total_chars += sum(len(m.get('content') or '') for m in bucket_messages)
 
-        if not bucket_lists:
-            # 整个回看跨度内没有消息：顺延到全部历史取最近 200 条，
-            # 没有任何真实聊天样本时模型只能输出空板块的退化画像。
-            cursor = conn.execute(
-                'SELECT content, is_sender, timestamp '
-                'FROM messages '
-                'WHERE conversation_id = ? AND message_type = 1 '
-                'AND content IS NOT NULL AND content != "" '
-                'ORDER BY timestamp DESC '
-                'LIMIT 200',
-                (conversation_id,),
+        # 跨度内内容不足目标量：以 30 天为段向后顺延补充，直到填满或
+        # 历史取尽。空段（聊天断档）跳过继续往前找。
+        row = conn.execute(
+            'SELECT MIN(timestamp) FROM messages '
+            'WHERE conversation_id = ? AND message_type = 1 '
+            'AND content IS NOT NULL AND content != ""',
+            (conversation_id,),
+        ).fetchone()
+        oldest_ts = row[0] if row else None
+        segment = 30 * 86400
+        extended_from = None
+        while total_chars < target_chars and oldest_ts is not None and prev_end > oldest_ts:
+            seg_start = prev_end - segment
+            seg_messages = _fetch_range(seg_start, prev_end)
+            prev_end = seg_start
+            if not seg_messages:
+                continue
+            bucket_lists.append(seg_messages)
+            extended_from = seg_start
+            total_chars += sum(len(m.get('content') or '') for m in seg_messages)
+
+        if extended_from is not None:
+            _print(
+                f"[ContactProfiler] ⚠️ 回看跨度内内容不足，已顺延至 "
+                f"{(now - extended_from) // 86400} 天前补充采样，共 {total_chars} 字符"
             )
-            fallback = [dict(row) for row in cursor.fetchall()]
-            fallback.reverse()
-            if fallback:
-                _print(f"[ContactProfiler] ⚠️ 回看跨度内没有消息，顺延使用最近 {len(fallback)} 条历史消息")
-            return fallback
+
+        if not bucket_lists:
+            return []
 
         # 极大聊天量的兜底：从最旧的桶开始收敛，避免 prompt 无界膨胀；
         # 正常聊天量不会触发。按字符计数，不按 token 预算截断。

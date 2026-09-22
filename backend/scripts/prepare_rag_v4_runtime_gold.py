@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sqlite3
 import sys
 from collections import defaultdict
@@ -17,6 +18,20 @@ if str(BACKEND) not in sys.path:
 
 from app.services.realtime.privacy_redactor import PrivacyRedactor  # noqa: E402
 from app.services.realtime.rag_store import RagStore  # noqa: E402
+
+
+def _parse_json(text: str) -> dict[str, Any]:
+    cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", str(text or "").strip(), flags=re.I)
+    for candidate in (cleaned, cleaned[cleaned.find("{"):cleaned.rfind("}") + 1]):
+        if not candidate:
+            continue
+        try:
+            payload = json.loads(candidate)
+            if isinstance(payload, dict):
+                return payload
+        except (TypeError, ValueError, json.JSONDecodeError):
+            pass
+    return {}
 
 
 def select_facts(
@@ -86,8 +101,8 @@ def generate_questions(
             {"role": "user", "content": json.dumps({"items": payload}, ensure_ascii=False)},
         ]
         try:
-            parsed = json.loads(str(llm_call(messages) or "").strip().strip("`").removeprefix("json").strip())
-        except (TypeError, ValueError, json.JSONDecodeError):
+            parsed = _parse_json(llm_call(messages))
+        except Exception:
             parsed = {}
         for item in parsed.get("items") or []:
             try:
@@ -97,6 +112,20 @@ def generate_questions(
             query = str(item.get("query") or "").strip()
             if query:
                 questions[fact_id] = query
+        for fact in chunk:
+            if fact["fact_id"] in questions:
+                continue
+            single_messages = [
+                {"role": "system", "content": "根据脱敏事实生成一个自然、简短、可由该事实回答的中文记忆问句。不要在问题中直接泄露答案。只返回 JSON：{\"query\":\"...\"}。"},
+                {"role": "user", "content": json.dumps({key: fact[key] for key in ("fact_id", "kind", "subject", "redacted_fact")}, ensure_ascii=False)},
+            ]
+            try:
+                single = _parse_json(llm_call(single_messages))
+            except Exception:
+                single = {}
+            query = str(single.get("query") or "").strip()
+            if query:
+                questions[fact["fact_id"]] = query
     output = []
     for index, fact in enumerate(facts, 1):
         query = questions.get(fact["fact_id"])

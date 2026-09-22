@@ -33,7 +33,17 @@ def _json(value: Any, default: Any) -> Any:
 def load_gold(path: Path) -> list[dict[str, Any]]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if isinstance(payload, dict):
-        payload = payload.get("items") or payload.get("cases") or []
+        expected_account = payload.get("account_wxid") or payload.get("expected_account_wxid")
+        expected_conversation = payload.get("conversation_id") or payload.get("expected_conversation_id")
+        items = payload.get("items") or payload.get("cases") or []
+        return [
+            dict(
+                item,
+                **({"expected_account_wxid": expected_account} if expected_account is not None and "expected_account_wxid" not in item else {}),
+                **({"expected_conversation_id": expected_conversation} if expected_conversation is not None and "expected_conversation_id" not in item else {}),
+            )
+            for item in items if isinstance(item, dict)
+        ]
     return [item for item in payload if isinstance(item, dict)]
 
 

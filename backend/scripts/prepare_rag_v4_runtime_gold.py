@@ -164,6 +164,9 @@ def main() -> int:
         return engine._call_api_with_messages(model, messages, max_tokens=1536, temperature=0.0, request_tag="analysis", use_json_mode=True)
 
     items = generate_questions(facts, call)
+    for item in items:
+        item["expected_account_wxid"] = args.account_wxid
+        item["expected_conversation_id"] = args.conversation_id
     payload = {
         "version": "runtime-numeric-v1",
         "origin": "llm-generated-from-redacted-active-facts",

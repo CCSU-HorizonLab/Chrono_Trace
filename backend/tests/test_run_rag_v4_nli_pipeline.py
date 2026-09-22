@@ -93,3 +93,14 @@ def test_mixed_output_model_json_is_extracted_from_surrounding_text():
         llm_call=lambda _: '思考完成。\n{"response":"最终回答"}\n以上。',
     )
     assert result["items"][0]["answer"] == "最终回答"
+
+
+def test_answer_failure_can_be_recorded_as_safe_degradation():
+    payload = {"items": [{"id": "q", "query": "q", "evidence": ["e"], "answer": ""}]}
+    result = run_stage(
+        payload, stage="answer", llm_call=lambda _: "", safe_fallback=True,
+    )
+    item = result["items"][0]
+    assert item["answer"] == "证据不足，无法根据当前证据回答。"
+    assert item["answer_status"] == "degraded_model_output"
+    assert item["nli_label"] == "unknown"

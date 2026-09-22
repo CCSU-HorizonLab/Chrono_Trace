@@ -110,13 +110,20 @@ def run_stage(
     if limit is not None:
         candidates = candidates[:max(0, limit)]
     size = max(1, int(batch_size))
+
+    def safe_call(messages: list[dict[str, str]]) -> str:
+        try:
+            return llm_call(messages)
+        except Exception as exc:
+            return json.dumps({"_pipeline_error": type(exc).__name__})
+
     for offset in range(0, len(candidates), size):
         chunk = candidates[offset:offset + size]
         if len(chunk) == 1:
-            parsed = _parse_json(llm_call(_answer_messages(chunk[0]) if stage == "answer" else _judge_messages(chunk[0])))
+            parsed = _parse_json(safe_call(_answer_messages(chunk[0]) if stage == "answer" else _judge_messages(chunk[0])))
             responses = [dict(parsed, id=str(chunk[0].get("id") or ""))]
         else:
-            parsed = _parse_json(llm_call(_batch_messages(chunk, stage)))
+            parsed = _parse_json(safe_call(_batch_messages(chunk, stage)))
             responses = [value for value in parsed.get("items") or [] if isinstance(value, dict)]
         by_id = {str(value.get("id") or ""): value for value in responses}
         for item in chunk:
@@ -127,7 +134,7 @@ def run_stage(
             # entries so completed batch items are never paid for twice.
             if not response and len(chunk) > 1:
                 retry = _parse_json(
-                    llm_call(_answer_messages(item) if stage == "answer" else _judge_messages(item))
+                    safe_call(_answer_messages(item) if stage == "answer" else _judge_messages(item))
                 )
                 response = dict(retry, id=item_id)
             if stage == "answer":

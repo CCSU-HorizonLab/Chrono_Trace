@@ -113,3 +113,17 @@ def test_completed_unknown_judge_is_not_reprocessed():
     }]}
     result = run_stage(payload, stage="judge", llm_call=lambda _: (_ for _ in ()).throw(AssertionError()))
     assert result["last_stage_processed"] == 0
+
+
+def test_network_exception_becomes_unknown_instead_of_aborting_batch():
+    payload = {"items": [{
+        "id": "q", "query": "q", "answer": "a", "evidence": ["e"],
+        "nli_label": "unknown",
+    }]}
+    result = run_stage(
+        payload, stage="judge",
+        llm_call=lambda _: (_ for _ in ()).throw(ConnectionError("offline")),
+    )
+    item = result["items"][0]
+    assert item["nli_label"] == "unknown"
+    assert item["judge_status"] == "complete"

@@ -1,776 +1,769 @@
 {
   "status": "invalid",
   "prepared_cases": 108,
-  "answer_cases": 1,
-  "missing_cases": 108,
+  "answer_cases": 108,
+  "missing_cases": 0,
   "label_counts": {
     "contradicted": 0,
     "entailed": 0,
-    "unknown": 1
+    "unknown": 108
   },
   "errors": [
     {
       "key": [
-        "shared_cafe_01",
-        "fact_path"
-      ],
-      "reason": "unknown_input"
-    },
-    {
-      "key": [
-        "deescalation_apology_01:document_rag",
-        "document_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "deescalation_apology_01:fact_path",
-        "fact_path"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "deescalation_apology_01:no_rag",
+        "shared_cafe_01:no_rag",
         "no_rag"
       ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "deescalation_pause_01:document_rag",
-        "document_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "deescalation_pause_01:fact_path",
-        "fact_path"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "deescalation_pause_01:no_rag",
-        "no_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "deescalation_space_01:document_rag",
-        "document_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "deescalation_space_01:fact_path",
-        "fact_path"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "deescalation_space_01:no_rag",
-        "no_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "deescalation_tone_01:document_rag",
-        "document_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "deescalation_tone_01:fact_path",
-        "fact_path"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "deescalation_tone_01:no_rag",
-        "no_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "deescalation_trigger_01:document_rag",
-        "document_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "deescalation_trigger_01:fact_path",
-        "fact_path"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "deescalation_trigger_01:no_rag",
-        "no_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "latest_turn_01:document_rag",
-        "document_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "latest_turn_01:fact_path",
-        "fact_path"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "latest_turn_01:no_rag",
-        "no_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "latest_turn_02:document_rag",
-        "document_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "latest_turn_02:fact_path",
-        "fact_path"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "latest_turn_02:no_rag",
-        "no_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "no_hit_game_01:document_rag",
-        "document_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "no_hit_game_01:fact_path",
-        "fact_path"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "no_hit_game_01:no_rag",
-        "no_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "no_hit_promise_01:document_rag",
-        "document_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "no_hit_promise_01:fact_path",
-        "fact_path"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "no_hit_promise_01:no_rag",
-        "no_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "no_hit_school_01:document_rag",
-        "document_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "no_hit_school_01:fact_path",
-        "fact_path"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "no_hit_school_01:no_rag",
-        "no_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "no_hit_trip_01:document_rag",
-        "document_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "no_hit_trip_01:fact_path",
-        "fact_path"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "no_hit_trip_01:no_rag",
-        "no_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "plan_dinner_01:document_rag",
-        "document_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "plan_dinner_01:fact_path",
-        "fact_path"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "plan_dinner_01:no_rag",
-        "no_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "plan_exhibition_01:document_rag",
-        "document_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "plan_exhibition_01:fact_path",
-        "fact_path"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "plan_exhibition_01:no_rag",
-        "no_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "plan_move_01:document_rag",
-        "document_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "plan_move_01:fact_path",
-        "fact_path"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "plan_move_01:no_rag",
-        "no_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "plan_trip_01:document_rag",
-        "document_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "plan_trip_01:fact_path",
-        "fact_path"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "plan_trip_01:no_rag",
-        "no_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "plan_weekend_01:document_rag",
-        "document_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "plan_weekend_01:fact_path",
-        "fact_path"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "plan_weekend_01:no_rag",
-        "no_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "preference_activity_01:document_rag",
-        "document_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "preference_activity_01:fact_path",
-        "fact_path"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "preference_activity_01:no_rag",
-        "no_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "preference_coffee_01:document_rag",
-        "document_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "preference_coffee_01:fact_path",
-        "fact_path"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "preference_coffee_01:no_rag",
-        "no_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "preference_food_01:document_rag",
-        "document_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "preference_food_01:fact_path",
-        "fact_path"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "preference_food_01:no_rag",
-        "no_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "preference_movie_01:document_rag",
-        "document_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "preference_movie_01:fact_path",
-        "fact_path"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "preference_movie_01:no_rag",
-        "no_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "preference_music_01:document_rag",
-        "document_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "preference_music_01:fact_path",
-        "fact_path"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "preference_music_01:no_rag",
-        "no_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "promise_birthday_01:document_rag",
-        "document_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "promise_birthday_01:fact_path",
-        "fact_path"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "promise_birthday_01:no_rag",
-        "no_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "promise_followup_01:document_rag",
-        "document_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "promise_followup_01:fact_path",
-        "fact_path"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "promise_followup_01:no_rag",
-        "no_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "promise_reply_01:document_rag",
-        "document_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "promise_reply_01:fact_path",
-        "fact_path"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "promise_reply_01:no_rag",
-        "no_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "promise_send_01:document_rag",
-        "document_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "promise_send_01:fact_path",
-        "fact_path"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "promise_send_01:no_rag",
-        "no_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "promise_visit_01:document_rag",
-        "document_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "promise_visit_01:fact_path",
-        "fact_path"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "promise_visit_01:no_rag",
-        "no_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "sensitive_address_01:document_rag",
-        "document_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "sensitive_address_01:fact_path",
-        "fact_path"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "sensitive_address_01:no_rag",
-        "no_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "sensitive_finance_01:document_rag",
-        "document_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "sensitive_finance_01:fact_path",
-        "fact_path"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "sensitive_finance_01:no_rag",
-        "no_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "sensitive_health_01:document_rag",
-        "document_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "sensitive_health_01:fact_path",
-        "fact_path"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "sensitive_health_01:no_rag",
-        "no_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "sensitive_id_01:document_rag",
-        "document_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "sensitive_id_01:fact_path",
-        "fact_path"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "sensitive_id_01:no_rag",
-        "no_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "sensitive_phone_01:document_rag",
-        "document_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "sensitive_phone_01:fact_path",
-        "fact_path"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "sensitive_phone_01:no_rag",
-        "no_rag"
-      ],
-      "reason": "missing_answer"
+      "reason": "answer_required"
     },
     {
       "key": [
         "shared_cafe_01:document_rag",
         "document_rag"
       ],
-      "reason": "missing_answer"
+      "reason": "answer_required"
     },
     {
       "key": [
         "shared_cafe_01:fact_path",
         "fact_path"
       ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "shared_cafe_01:no_rag",
-        "no_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "shared_cafe_02:document_rag",
-        "document_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "shared_cafe_02:fact_path",
-        "fact_path"
-      ],
-      "reason": "missing_answer"
+      "reason": "answer_required"
     },
     {
       "key": [
         "shared_cafe_02:no_rag",
         "no_rag"
       ],
-      "reason": "missing_answer"
+      "reason": "answer_required"
     },
     {
       "key": [
-        "shared_meal_01:document_rag",
+        "shared_cafe_02:document_rag",
         "document_rag"
       ],
-      "reason": "missing_answer"
+      "reason": "answer_required"
     },
     {
       "key": [
-        "shared_meal_01:fact_path",
+        "shared_cafe_02:fact_path",
         "fact_path"
       ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "shared_meal_01:no_rag",
-        "no_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "shared_movie_01:document_rag",
-        "document_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "shared_movie_01:fact_path",
-        "fact_path"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "shared_movie_01:no_rag",
-        "no_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "shared_trip_01:document_rag",
-        "document_rag"
-      ],
-      "reason": "missing_answer"
-    },
-    {
-      "key": [
-        "shared_trip_01:fact_path",
-        "fact_path"
-      ],
-      "reason": "missing_answer"
+      "reason": "answer_required"
     },
     {
       "key": [
         "shared_trip_01:no_rag",
         "no_rag"
       ],
-      "reason": "missing_answer"
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "shared_trip_01:document_rag",
+        "document_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "shared_trip_01:fact_path",
+        "fact_path"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "shared_movie_01:no_rag",
+        "no_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "shared_movie_01:document_rag",
+        "document_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "shared_movie_01:fact_path",
+        "fact_path"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "shared_meal_01:no_rag",
+        "no_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "shared_meal_01:document_rag",
+        "document_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "shared_meal_01:fact_path",
+        "fact_path"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "preference_coffee_01:no_rag",
+        "no_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "preference_coffee_01:document_rag",
+        "document_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "preference_coffee_01:fact_path",
+        "fact_path"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "preference_food_01:no_rag",
+        "no_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "preference_food_01:document_rag",
+        "document_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "preference_food_01:fact_path",
+        "fact_path"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "preference_music_01:no_rag",
+        "no_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "preference_music_01:document_rag",
+        "document_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "preference_music_01:fact_path",
+        "fact_path"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "preference_movie_01:no_rag",
+        "no_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "preference_movie_01:document_rag",
+        "document_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "preference_movie_01:fact_path",
+        "fact_path"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "preference_activity_01:no_rag",
+        "no_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "preference_activity_01:document_rag",
+        "document_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "preference_activity_01:fact_path",
+        "fact_path"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "plan_weekend_01:no_rag",
+        "no_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "plan_weekend_01:document_rag",
+        "document_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "plan_weekend_01:fact_path",
+        "fact_path"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "plan_trip_01:no_rag",
+        "no_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "plan_trip_01:document_rag",
+        "document_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "plan_trip_01:fact_path",
+        "fact_path"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "plan_dinner_01:no_rag",
+        "no_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "plan_dinner_01:document_rag",
+        "document_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "plan_dinner_01:fact_path",
+        "fact_path"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "plan_exhibition_01:no_rag",
+        "no_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "plan_exhibition_01:document_rag",
+        "document_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "plan_exhibition_01:fact_path",
+        "fact_path"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "plan_move_01:no_rag",
+        "no_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "plan_move_01:document_rag",
+        "document_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "plan_move_01:fact_path",
+        "fact_path"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "promise_reply_01:no_rag",
+        "no_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "promise_reply_01:document_rag",
+        "document_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "promise_reply_01:fact_path",
+        "fact_path"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "promise_visit_01:no_rag",
+        "no_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "promise_visit_01:document_rag",
+        "document_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "promise_visit_01:fact_path",
+        "fact_path"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "promise_send_01:no_rag",
+        "no_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "promise_send_01:document_rag",
+        "document_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "promise_send_01:fact_path",
+        "fact_path"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "promise_followup_01:no_rag",
+        "no_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "promise_followup_01:document_rag",
+        "document_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "promise_followup_01:fact_path",
+        "fact_path"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "promise_birthday_01:no_rag",
+        "no_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "promise_birthday_01:document_rag",
+        "document_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "promise_birthday_01:fact_path",
+        "fact_path"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "deescalation_pause_01:no_rag",
+        "no_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "deescalation_pause_01:document_rag",
+        "document_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "deescalation_pause_01:fact_path",
+        "fact_path"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "deescalation_tone_01:no_rag",
+        "no_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "deescalation_tone_01:document_rag",
+        "document_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "deescalation_tone_01:fact_path",
+        "fact_path"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "deescalation_apology_01:no_rag",
+        "no_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "deescalation_apology_01:document_rag",
+        "document_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "deescalation_apology_01:fact_path",
+        "fact_path"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "deescalation_space_01:no_rag",
+        "no_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "deescalation_space_01:document_rag",
+        "document_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "deescalation_space_01:fact_path",
+        "fact_path"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "deescalation_trigger_01:no_rag",
+        "no_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "deescalation_trigger_01:document_rag",
+        "document_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "deescalation_trigger_01:fact_path",
+        "fact_path"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "sensitive_id_01:no_rag",
+        "no_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "sensitive_id_01:document_rag",
+        "document_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "sensitive_id_01:fact_path",
+        "fact_path"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "sensitive_address_01:no_rag",
+        "no_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "sensitive_address_01:document_rag",
+        "document_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "sensitive_address_01:fact_path",
+        "fact_path"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "sensitive_phone_01:no_rag",
+        "no_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "sensitive_phone_01:document_rag",
+        "document_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "sensitive_phone_01:fact_path",
+        "fact_path"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "sensitive_finance_01:no_rag",
+        "no_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "sensitive_finance_01:document_rag",
+        "document_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "sensitive_finance_01:fact_path",
+        "fact_path"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "sensitive_health_01:no_rag",
+        "no_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "sensitive_health_01:document_rag",
+        "document_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "sensitive_health_01:fact_path",
+        "fact_path"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "no_hit_game_01:no_rag",
+        "no_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "no_hit_game_01:document_rag",
+        "document_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "no_hit_game_01:fact_path",
+        "fact_path"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "no_hit_school_01:no_rag",
+        "no_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "no_hit_school_01:document_rag",
+        "document_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "no_hit_school_01:fact_path",
+        "fact_path"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "no_hit_trip_01:no_rag",
+        "no_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "no_hit_trip_01:document_rag",
+        "document_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "no_hit_trip_01:fact_path",
+        "fact_path"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "no_hit_promise_01:no_rag",
+        "no_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "no_hit_promise_01:document_rag",
+        "document_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "no_hit_promise_01:fact_path",
+        "fact_path"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "latest_turn_01:no_rag",
+        "no_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "latest_turn_01:document_rag",
+        "document_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "latest_turn_01:fact_path",
+        "fact_path"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "latest_turn_02:no_rag",
+        "no_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "latest_turn_02:document_rag",
+        "document_rag"
+      ],
+      "reason": "answer_required"
+    },
+    {
+      "key": [
+        "latest_turn_02:fact_path",
+        "fact_path"
+      ],
+      "reason": "answer_required"
     }
   ]
 }

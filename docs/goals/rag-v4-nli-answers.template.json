@@ -1,8 +1,971 @@
 {
-  "_instructions": "只填写脱敏后的 answer/evidence 和经过批准的 NLI 判定；label 只能是 entailed、contradicted 或 unknown。",
+  "_instructions": "由 judge 填写脱敏 answer/evidence，并将 nli_label 设为 entailed、contradicted 或 unknown；空答案不会通过发布校验。",
   "items": [
     {
-      "id": "shared_cafe_01",
+      "id": "shared_cafe_01:no_rag",
+      "track": "no_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "shared_cafe_01:document_rag",
+      "track": "document_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "shared_cafe_01:fact_path",
+      "track": "fact_path",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "shared_cafe_02:no_rag",
+      "track": "no_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "shared_cafe_02:document_rag",
+      "track": "document_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "shared_cafe_02:fact_path",
+      "track": "fact_path",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "shared_trip_01:no_rag",
+      "track": "no_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "shared_trip_01:document_rag",
+      "track": "document_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "shared_trip_01:fact_path",
+      "track": "fact_path",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "shared_movie_01:no_rag",
+      "track": "no_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "shared_movie_01:document_rag",
+      "track": "document_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "shared_movie_01:fact_path",
+      "track": "fact_path",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "shared_meal_01:no_rag",
+      "track": "no_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "shared_meal_01:document_rag",
+      "track": "document_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "shared_meal_01:fact_path",
+      "track": "fact_path",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "preference_coffee_01:no_rag",
+      "track": "no_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "preference_coffee_01:document_rag",
+      "track": "document_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "preference_coffee_01:fact_path",
+      "track": "fact_path",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "preference_food_01:no_rag",
+      "track": "no_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "preference_food_01:document_rag",
+      "track": "document_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "preference_food_01:fact_path",
+      "track": "fact_path",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "preference_music_01:no_rag",
+      "track": "no_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "preference_music_01:document_rag",
+      "track": "document_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "preference_music_01:fact_path",
+      "track": "fact_path",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "preference_movie_01:no_rag",
+      "track": "no_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "preference_movie_01:document_rag",
+      "track": "document_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "preference_movie_01:fact_path",
+      "track": "fact_path",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "preference_activity_01:no_rag",
+      "track": "no_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "preference_activity_01:document_rag",
+      "track": "document_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "preference_activity_01:fact_path",
+      "track": "fact_path",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "plan_weekend_01:no_rag",
+      "track": "no_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "plan_weekend_01:document_rag",
+      "track": "document_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "plan_weekend_01:fact_path",
+      "track": "fact_path",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "plan_trip_01:no_rag",
+      "track": "no_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "plan_trip_01:document_rag",
+      "track": "document_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "plan_trip_01:fact_path",
+      "track": "fact_path",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "plan_dinner_01:no_rag",
+      "track": "no_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "plan_dinner_01:document_rag",
+      "track": "document_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "plan_dinner_01:fact_path",
+      "track": "fact_path",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "plan_exhibition_01:no_rag",
+      "track": "no_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "plan_exhibition_01:document_rag",
+      "track": "document_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "plan_exhibition_01:fact_path",
+      "track": "fact_path",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "plan_move_01:no_rag",
+      "track": "no_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "plan_move_01:document_rag",
+      "track": "document_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "plan_move_01:fact_path",
+      "track": "fact_path",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "promise_reply_01:no_rag",
+      "track": "no_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "promise_reply_01:document_rag",
+      "track": "document_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "promise_reply_01:fact_path",
+      "track": "fact_path",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "promise_visit_01:no_rag",
+      "track": "no_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "promise_visit_01:document_rag",
+      "track": "document_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "promise_visit_01:fact_path",
+      "track": "fact_path",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "promise_send_01:no_rag",
+      "track": "no_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "promise_send_01:document_rag",
+      "track": "document_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "promise_send_01:fact_path",
+      "track": "fact_path",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "promise_followup_01:no_rag",
+      "track": "no_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "promise_followup_01:document_rag",
+      "track": "document_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "promise_followup_01:fact_path",
+      "track": "fact_path",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "promise_birthday_01:no_rag",
+      "track": "no_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "promise_birthday_01:document_rag",
+      "track": "document_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "promise_birthday_01:fact_path",
+      "track": "fact_path",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "deescalation_pause_01:no_rag",
+      "track": "no_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "deescalation_pause_01:document_rag",
+      "track": "document_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "deescalation_pause_01:fact_path",
+      "track": "fact_path",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "deescalation_tone_01:no_rag",
+      "track": "no_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "deescalation_tone_01:document_rag",
+      "track": "document_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "deescalation_tone_01:fact_path",
+      "track": "fact_path",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "deescalation_apology_01:no_rag",
+      "track": "no_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "deescalation_apology_01:document_rag",
+      "track": "document_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "deescalation_apology_01:fact_path",
+      "track": "fact_path",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "deescalation_space_01:no_rag",
+      "track": "no_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "deescalation_space_01:document_rag",
+      "track": "document_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "deescalation_space_01:fact_path",
+      "track": "fact_path",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "deescalation_trigger_01:no_rag",
+      "track": "no_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "deescalation_trigger_01:document_rag",
+      "track": "document_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "deescalation_trigger_01:fact_path",
+      "track": "fact_path",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "sensitive_id_01:no_rag",
+      "track": "no_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "sensitive_id_01:document_rag",
+      "track": "document_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "sensitive_id_01:fact_path",
+      "track": "fact_path",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "sensitive_address_01:no_rag",
+      "track": "no_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "sensitive_address_01:document_rag",
+      "track": "document_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "sensitive_address_01:fact_path",
+      "track": "fact_path",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "sensitive_phone_01:no_rag",
+      "track": "no_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "sensitive_phone_01:document_rag",
+      "track": "document_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "sensitive_phone_01:fact_path",
+      "track": "fact_path",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "sensitive_finance_01:no_rag",
+      "track": "no_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "sensitive_finance_01:document_rag",
+      "track": "document_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "sensitive_finance_01:fact_path",
+      "track": "fact_path",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "sensitive_health_01:no_rag",
+      "track": "no_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "sensitive_health_01:document_rag",
+      "track": "document_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "sensitive_health_01:fact_path",
+      "track": "fact_path",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "no_hit_game_01:no_rag",
+      "track": "no_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "no_hit_game_01:document_rag",
+      "track": "document_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "no_hit_game_01:fact_path",
+      "track": "fact_path",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "no_hit_school_01:no_rag",
+      "track": "no_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "no_hit_school_01:document_rag",
+      "track": "document_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "no_hit_school_01:fact_path",
+      "track": "fact_path",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "no_hit_trip_01:no_rag",
+      "track": "no_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "no_hit_trip_01:document_rag",
+      "track": "document_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "no_hit_trip_01:fact_path",
+      "track": "fact_path",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "no_hit_promise_01:no_rag",
+      "track": "no_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "no_hit_promise_01:document_rag",
+      "track": "document_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "no_hit_promise_01:fact_path",
+      "track": "fact_path",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "latest_turn_01:no_rag",
+      "track": "no_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "latest_turn_01:document_rag",
+      "track": "document_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "latest_turn_01:fact_path",
+      "track": "fact_path",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "latest_turn_02:no_rag",
+      "track": "no_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "latest_turn_02:document_rag",
+      "track": "document_rag",
+      "answer": "",
+      "evidence": [],
+      "nli_label": "unknown",
+      "judge_version": "nli-external-required-v1",
+      "prompt_version": "rag-v4-faithfulness-v1"
+    },
+    {
+      "id": "latest_turn_02:fact_path",
       "track": "fact_path",
       "answer": "",
       "evidence": [],

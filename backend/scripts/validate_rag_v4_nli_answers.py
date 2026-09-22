@@ -41,6 +41,8 @@ def validate_answers(input_path: Path, answers_path: Path) -> dict[str, Any]:
             errors.append({"key": list(key), "reason": "invalid_label"})
         if not isinstance(item.get("answer"), str):
             errors.append({"key": list(key), "reason": "answer_must_be_string"})
+        elif not str(item.get("answer") or "").strip():
+            errors.append({"key": list(key), "reason": "answer_required"})
         evidence = item.get("evidence")
         if not isinstance(evidence, list) or not all(isinstance(value, str) for value in evidence):
             errors.append({"key": list(key), "reason": "evidence_must_be_string_list"})

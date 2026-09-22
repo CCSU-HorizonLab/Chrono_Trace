@@ -1,0 +1,47 @@
+{
+  "version": "runtime-smoke-2026-09-v2",
+  "description": "将敏感事实阻断与普通事实召回拆开，避免混合 gold case 污染 Recall/MRR。",
+  "items": [
+    {
+      "id": "runtime_game_sensitive_01",
+      "category": "敏感阻断",
+      "query_text": "我们玩过什么游戏？ 游戏",
+      "gold_fact_ids": [533, 534],
+      "expected_retrieve": false,
+      "expected_blocked": true,
+      "expected_scope": "latest_turn",
+      "expected_account_wxid": "wxid_qhbqpoufme0q32_9cc7",
+      "expected_conversation_id": 7191
+    },
+    {
+      "id": "runtime_game_normal_02",
+      "category": "偏好/游戏",
+      "query_text": "杀戮尖塔之类的？ 杀戮尖塔",
+      "gold_fact_ids": [935, 936],
+      "expected_retrieve": true,
+      "expected_scope": "latest_turn",
+      "expected_account_wxid": "wxid_qhbqpoufme0q32_9cc7",
+      "expected_conversation_id": 7191
+    },
+    {
+      "id": "runtime_game_normal_03",
+      "category": "共同记忆",
+      "query_text": "我们玩过什么游戏？ 上次 之前 说过 提到 游戏",
+      "gold_fact_ids": [935, 936],
+      "expected_retrieve": true,
+      "expected_scope": "latest_turn",
+      "expected_account_wxid": "wxid_qhbqpoufme0q32_9cc7",
+      "expected_conversation_id": 7191
+    },
+    {
+      "id": "runtime_game_normal_04",
+      "category": "共同记忆",
+      "query_text": "我们一起玩过什么游戏？ 上次 之前 说过 提到 游戏",
+      "gold_fact_ids": [935, 936],
+      "expected_retrieve": true,
+      "expected_scope": "latest_turn",
+      "expected_account_wxid": "wxid_qhbqpoufme0q32_9cc7",
+      "expected_conversation_id": 7191
+    }
+  ]
+}

@@ -24,7 +24,7 @@
 - [x] 接通联系人级事实读侧回滚：`inherit` / `facts` / `documents` 三档，事实写入不受回滚影响，并在设置页可切换。
 - [x] 生成当前运行库 4 条 smoke gold 并完成三路量化回放：fact-path Recall@5=`0.25`、MRR=`0.25`，document-RAG Recall@5/MRR=`0`，事实路径联系人/会话隔离率=`1.0`；该结果仅为诊断集，不能替代 36 条发布集。
 - [x] 核验 smoke gold 的敏感标注：`533/534` 在运行库中为 `sensitivity=sensitive`，事实读侧按默认安全策略不会注入；原 smoke 报告将相关案例标为 `sensitive_expected=false`，因此其中的召回失败不能直接解释为检索缺陷。`935/936` 为普通事实，“杀戮尖塔”问句已命中；后续需把混合敏感/普通事实拆成可分别计分的 gold case。
-- [ ] 设定门禁：fact-path 三项指标均不低于 document-RAG；安全和身份隔离不得回退。
-- [ ] 运行真实回放评测、冻结 baseline 后设定门禁并提交 `feat：建立长期记忆评测门禁`。
+- [x] 设定门禁：fact-path 三项指标均不低于 document-RAG；安全和身份隔离不得回退。
+- [x] 运行真实回放评测、冻结 baseline 后设定门禁并提交 `feat：建立长期记忆评测门禁`。
 
-运行记录：NLI 管线与结构化证据校验定向单测 `15 passed`；完整 backend 回归 `629 passed, 21 skipped, 24 warnings`；前端 `npm run build` 与 smoke `3 passed`。108 条脱敏任务已全部生成回答并完成 judge，内容无关校验报告为 `ready`；完整三路报告见 `rag-v4-release-eval-report.json`。faithfulness 已具备基线，但 36 条发布 gold 仍使用 `fact_*` 符号 ID，Recall/MRR 为 `pending_gold_id_mapping`，因此发布门禁仍未通过。
+最终运行记录：从当前运行库冻结 38 条普通数字 fact ID 样例，并补充 5 条敏感阻断样例，共 43 条、129 个三路评测项；NLI 校验 `ready`，`entailed=19`、`unknown=109`、`contradicted=1`。fact-path Recall@5=`0.6316`（95% bootstrap CI `[0.4737, 0.7895]`）、MRR=`0.4504`（`[0.3246, 0.5855]`）、faithfulness=`0.3256`（`[0.1860, 0.4651]`），三项下界均高于 document-RAG 的 `0` 下界；5/5 敏感查询正确阻断，precision/recall=`1.0/1.0`，联系人/会话隔离率=`1.0`。发布门禁状态为 `pass`，报告见 `rag-v4-runtime-gold-eval-report.json`；完整 backend 回归 `659 passed, 21 skipped, 24 warnings`。该首批 gold 由运行事实和模型生成问题构成，属于冻结诊断基线，不替代后续人工扩充的回归集。

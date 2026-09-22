@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sys
 from pathlib import Path
 from typing import Any, Callable
 
@@ -102,6 +103,9 @@ def main() -> int:
     parser.add_argument("--timeout", type=int, default=90)
     args = parser.parse_args()
 
+    backend_root = str(Path(__file__).resolve().parents[1])
+    if backend_root not in sys.path:
+        sys.path.insert(0, backend_root)
     from app.services.realtime.llm_engine import LLMSuggestionEngine
 
     engine = LLMSuggestionEngine(timeout=max(10, args.timeout))

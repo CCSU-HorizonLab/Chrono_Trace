@@ -9,6 +9,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from app.services.realtime.rag_store import RagStore
 from scripts.evaluate_rag_retrieval import evaluate
+from scripts.evaluate_rag_retrieval import load_gold
 
 
 def _gold():
@@ -21,6 +22,17 @@ def _gold():
         "expected_retrieve": True,
         "expected_scope": "all",
     }]
+
+
+def test_load_gold_propagates_top_level_contact_scope(tmp_path):
+    path = tmp_path / "gold.json"
+    path.write_text(json.dumps({
+        "account_wxid": "account-a", "conversation_id": 7,
+        "items": [{"id": "q", "query_text": "问题"}],
+    }, ensure_ascii=False), encoding="utf-8")
+    item = load_gold(path)[0]
+    assert item["expected_account_wxid"] == "account-a"
+    assert item["expected_conversation_id"] == 7
 
 
 def test_evaluator_splits_tracks_and_calculates_recall_mrr_ci():

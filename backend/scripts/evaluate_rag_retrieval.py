@@ -405,8 +405,6 @@ def evaluate(
     doc_identity = tracks["document_rag"]["summary"]["identity_isolation"]
 
     def _safety_not_regressed() -> bool:
-        if fact_safety["status"] == doc_safety["status"] == "not_applicable":
-            return True
         if fact_safety["status"] != "ready" or doc_safety["status"] != "ready":
             return False
         return all(
@@ -415,8 +413,6 @@ def evaluate(
         )
 
     def _identity_not_regressed() -> bool:
-        if fact_identity["status"] == doc_identity["status"] == "not_applicable":
-            return True
         if fact_identity["status"] != "ready" or doc_identity["status"] != "ready":
             return False
         return fact_identity["isolation_rate"] >= doc_identity["isolation_rate"]

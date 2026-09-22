@@ -675,11 +675,16 @@ class SelfProfiler:
         url = f"{base_url}/chat/completions"
 
         # 输出额度随真实 prompt 变动：画像 JSON 通常远短于聊天样本，保留
-        # 约 22% 的输入规模加 JSON 固定结构余量；模型配置值只作为下限，
-        # 不再按档位或混合模型强制消耗 4096/8192 token。
+        # 约 22% 的输入规模加 JSON 固定结构余量；模型配置值只作为下限。
         prompt_tokens = self._estimate_msg_tokens(PROFILE_SYSTEM_PROMPT + user_prompt)
         configured_floor = max(1, int(model_config.get('max_tokens') or 0))
         dynamic_max_tokens = max(configured_floor, 384 + math.ceil(prompt_tokens * 0.22))
+        # 混合推理模型（deepseek-flash/reasoner 等）把 reasoning_content 也计入
+        # completion token，小预算会在最终 JSON 输出前耗尽，画像解析必然失败，
+        # 因此推理模型保留下限 8192、普通模型保留下限 4096。
+        model_id = str(model_config.get('model_id') or '').lower()
+        hybrid_reasoning_model = 'flash' in model_id or 'reason' in model_id
+        dynamic_max_tokens = max(dynamic_max_tokens, 8192 if hybrid_reasoning_model else 4096)
 
         payload = {
             'model': model_config['model_id'],

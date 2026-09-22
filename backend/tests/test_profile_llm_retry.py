@@ -141,7 +141,7 @@ def test_self_profiler_call_llm_raises_clear_error_after_ssl_retries_exhausted(m
     assert "EOF occurred in violation of protocol" in message
 
 
-def test_self_profiler_uses_dynamic_budget_and_json_mode_for_hybrid_model(monkeypatch):
+def test_self_profiler_reserves_reasoning_budget_and_json_mode_for_hybrid_model(monkeypatch):
     conn = _build_model_db()
     conn.execute("UPDATE llm_models SET model_id = 'deepseek-flash'")
     conn.commit()
@@ -159,6 +159,26 @@ def test_self_profiler_uses_dynamic_budget_and_json_mode_for_hybrid_model(monkey
 
     assert result["typing_style"] == "short"
     assert captured["response_format"] == {"type": "json_object"}
-    # 小 prompt 使用模型配置的下限；不会因模型名称被强制放大到 8192。
-    assert captured["max_tokens"] >= 1024
-    assert captured["max_tokens"] < 8192
+    # 混合推理模型把 reasoning_content 计入 completion token，小预算会在
+    # 最终 JSON 输出前耗尽，导致画像解析失败，必须保留推理预算下限。
+    assert captured["max_tokens"] >= 8192
+
+
+def test_self_profiler_keeps_floor_budget_for_normal_model(monkeypatch):
+    conn = _build_model_db()
+    profiler = SelfProfiler(timeout=5)
+    captured = {}
+
+    monkeypatch.setattr("app.db.connection.get_db", lambda: conn)
+
+    def fake_urlopen(req, timeout=0, context=None):
+        captured.update(json.loads(req.data.decode("utf-8")))
+        return _DummyResponse()
+
+    monkeypatch.setattr("app.services.realtime.llm_http.urllib.request.urlopen", fake_urlopen)
+    result = profiler._call_llm("test prompt")
+
+    assert result["typing_style"] == "short"
+    # 普通模型（deepseek-chat）即使模型配置只有 1024，也要保证画像
+    # JSON 有足够的输出空间。
+    assert captured["max_tokens"] >= 4096

@@ -111,7 +111,16 @@ def run_stage(
             responses = [value for value in parsed.get("items") or [] if isinstance(value, dict)]
         by_id = {str(value.get("id") or ""): value for value in responses}
         for item in chunk:
-            response = by_id.get(str(item.get("id") or ""), {})
+            item_id = str(item.get("id") or "")
+            response = by_id.get(item_id, {})
+            # Some reasoning/mixed-output models truncate or wrap a batch even
+            # when single JSON responses are reliable. Retry only the missing
+            # entries so completed batch items are never paid for twice.
+            if not response and len(chunk) > 1:
+                retry = _parse_json(
+                    llm_call(_answer_messages(item) if stage == "answer" else _judge_messages(item))
+                )
+                response = dict(retry, id=item_id)
             if stage == "answer":
                 answer = str(response.get("answer") or "").strip()
                 if answer:

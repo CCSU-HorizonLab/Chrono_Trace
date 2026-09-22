@@ -167,6 +167,7 @@ class RagIndexer:
         account_wxid: str,
         conversation_id: int,
         batch_size: int = 32,
+        force: bool = False,
     ) -> dict[str, Any]:
         """Backfill vectors for legacy active facts without changing fact rows."""
         settings = load_rag_settings()
@@ -182,15 +183,23 @@ class RagIndexer:
                 embedding_dim=dim,
             )
         }
-        missing = [item for item in facts if int(item["id"]) not in existing]
+        missing = [item for item in facts if force or int(item["id"]) not in existing]
         written = 0
         failures: list[dict[str, Any]] = []
         try:
             for offset in range(0, len(missing), max(1, int(batch_size))):
                 chunk = missing[offset:offset + max(1, int(batch_size))]
-                vectors = self.embedding_service.embed_texts(
-                    [str(item.get("content") or "") for item in chunk]
-                )
+                vectors = self.embedding_service.embed_texts([
+                    "\n".join(
+                        part for part in (
+                            str(item.get("content") or ""),
+                            self.store.list_fact_evidence_text(
+                                json.loads(item.get("evidence_message_ids_json") or "[]")
+                            ),
+                        ) if part
+                    )
+                    for item in chunk
+                ])
                 if len(vectors) != len(chunk):
                     raise RagEmbeddingUnavailable("事实回填 embedding 数量不一致")
                 for fact, vector in zip(chunk, vectors):
@@ -1123,6 +1132,7 @@ class RagIndexQueue:
                     indexer.backfill_fact_embeddings(
                         account_wxid=account_wxid,
                         conversation_id=conversation_id,
+                        force=True,
                     )
                 else:
                     indexer.rebuild_contact_index(

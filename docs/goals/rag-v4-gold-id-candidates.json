@@ -1,0 +1,3012 @@
+{
+  "version": 1,
+  "account_wxid": "wxid_qhbqpoufme0q32_9cc7",
+  "conversation_id": 7191,
+  "facts_considered": 799,
+  "cases": [
+    {
+      "id": "shared_cafe_01",
+      "query_text": "你还记得我们上次去哪家咖啡店吗？",
+      "gold_labels": [
+        "fact_shared_cafe"
+      ],
+      "candidates": [
+        {
+          "fact_id": 962,
+          "lexical_score": 0.2414,
+          "subject": "对方",
+          "kind": "recurring_habit",
+          "as_of": 1775743410,
+          "confidence": 0.6508,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            14196,
+            14197,
+            14198
+          ],
+          "content_preview": "对方提到：下次还犯是吧 相关上下文：对方: 你给我提意见不是应该的吗 / 我: 没有没有 哪敢哦"
+        },
+        {
+          "fact_id": 679,
+          "lexical_score": 0.2414,
+          "subject": "对方",
+          "kind": "relationship_boundary",
+          "as_of": 1772775173,
+          "confidence": 0.6251,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13161,
+            13162,
+            13163
+          ],
+          "content_preview": "对方提到：没有！ 相关上下文：我: 好想你呀，最近有没有什么好玩的事情想跟我分享嘛？ / 我: 呜呜呜，感觉最近我们聊天变少了，是不是我哪里做得不够好呀？好想你多陪陪我嘛~"
+        },
+        {
+          "fact_id": 681,
+          "lexical_score": 0.2414,
+          "subject": "对方",
+          "kind": "relationship_boundary",
+          "as_of": 1772775199,
+          "confidence": 0.6183,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13163,
+            13164,
+            13165
+          ],
+          "content_preview": "对方提到：你好像人机啊 相关上下文：我: 呜呜呜，感觉最近我们聊天变少了，是不是我哪里做得不够好呀？好想你多陪陪我嘛~ / 我: 最近有没有想我呀？我可是天天都在想你呢，感觉少了你的消息，生活都缺了点甜味～"
+        },
+        {
+          "fact_id": 271,
+          "lexical_score": 0.2414,
+          "subject": "对方",
+          "kind": "food_or_place",
+          "as_of": 1713438553,
+          "confidence": 0.6151,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            7293,
+            7295,
+            7296
+          ],
+          "content_preview": "对方提到：大后天发工资呀 相关上下文：我: 那你还要出去玩 / 我: 你不又得吃泡面渡日"
+        },
+        {
+          "fact_id": 680,
+          "lexical_score": 0.2414,
+          "subject": "我",
+          "kind": "relationship_boundary",
+          "as_of": 1772775189,
+          "confidence": 0.6101,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13162,
+            13163,
+            13164
+          ],
+          "content_preview": "我提到：呜呜呜，感觉最近我们聊天变少了，是不是我哪里做得不够好呀？好想你多陪陪我嘛~ 相关上下文：对方: 没有！ / 对方: 你好像人机啊"
+        }
+      ]
+    },
+    {
+      "id": "shared_cafe_02",
+      "query_text": "之前那家安静的店叫什么？",
+      "gold_labels": [
+        "fact_shared_cafe"
+      ],
+      "candidates": [
+        {
+          "fact_id": 778,
+          "lexical_score": 0.3333,
+          "subject": "对方",
+          "kind": "preference_like",
+          "as_of": 1773402728,
+          "confidence": 0.6082,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13492,
+            13493,
+            13494
+          ],
+          "content_preview": "对方提到：溯源是什么东西 相关上下文：我: 就是老师之前说的 记录最后抓的一条 / 我: 我。。。我请宝宝吃蛋糕好不好"
+        },
+        {
+          "fact_id": 777,
+          "lexical_score": 0.3333,
+          "subject": "我",
+          "kind": "recurring_habit",
+          "as_of": 1773402725,
+          "confidence": 0.5953,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13491,
+            13492,
+            13493
+          ],
+          "content_preview": "我提到：就是老师之前说的 记录最后抓的一条 相关上下文：我: 所以要很多数据把原来的数据顶掉 / 对方: 溯源是什么东西"
+        },
+        {
+          "fact_id": 555,
+          "lexical_score": 0.2381,
+          "subject": "我",
+          "kind": "relationship_boundary",
+          "as_of": 1725205222,
+          "confidence": 0.6778,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            8732,
+            8733,
+            8734
+          ],
+          "content_preview": "我提到：试图来攻击我说你在我这里算不上什么 相关上下文：我: 抓着那几个词琢磨味道 / 我: 有没有可能 我愿意停下手里的事情跟你发消息 说明你对我很重要呢"
+        },
+        {
+          "fact_id": 875,
+          "lexical_score": 0.2381,
+          "subject": "我",
+          "kind": "hobby_or_game",
+          "as_of": 1774852211,
+          "confidence": 0.6759,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13880,
+            13881,
+            13883
+          ],
+          "content_preview": "我提到：你在用什么 相关上下文：对方: 那好吧，如果你不买的话，我就一直发动画表情轰炸你哦～开玩笑的啦，但真的想要嘛！ / 我: [炸弹]"
+        },
+        {
+          "fact_id": 953,
+          "lexical_score": 0.2381,
+          "subject": "我",
+          "kind": "relationship_boundary",
+          "as_of": 1775743316,
+          "confidence": 0.6555,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            14180,
+            14181,
+            14182
+          ],
+          "content_preview": "我提到：那是什么问题 相关上下文：对方: 不是这个问题 / 对方: 你这不就是明显的把上下级的感觉又搞出来了"
+        }
+      ]
+    },
+    {
+      "id": "shared_trip_01",
+      "query_text": "我们去年一起去过哪里？",
+      "gold_labels": [
+        "fact_shared_trip"
+      ],
+      "candidates": [
+        {
+          "fact_id": 698,
+          "lexical_score": 0.3889,
+          "subject": "我",
+          "kind": "preference_like",
+          "as_of": 1772798986,
+          "confidence": 0.5244,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13209
+          ],
+          "content_preview": "我提到：不过要是宝宝觉得不好看，下次我们一起挑件更可爱的嘛，好不好呀？"
+        },
+        {
+          "fact_id": 679,
+          "lexical_score": 0.3333,
+          "subject": "对方",
+          "kind": "relationship_boundary",
+          "as_of": 1772775173,
+          "confidence": 0.6251,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13161,
+            13162,
+            13163
+          ],
+          "content_preview": "对方提到：没有！ 相关上下文：我: 好想你呀，最近有没有什么好玩的事情想跟我分享嘛？ / 我: 呜呜呜，感觉最近我们聊天变少了，是不是我哪里做得不够好呀？好想你多陪陪我嘛~"
+        },
+        {
+          "fact_id": 681,
+          "lexical_score": 0.3333,
+          "subject": "对方",
+          "kind": "relationship_boundary",
+          "as_of": 1772775199,
+          "confidence": 0.6183,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13163,
+            13164,
+            13165
+          ],
+          "content_preview": "对方提到：你好像人机啊 相关上下文：我: 呜呜呜，感觉最近我们聊天变少了，是不是我哪里做得不够好呀？好想你多陪陪我嘛~ / 我: 最近有没有想我呀？我可是天天都在想你呢，感觉少了你的消息，生活都缺了点甜味～"
+        },
+        {
+          "fact_id": 680,
+          "lexical_score": 0.3333,
+          "subject": "我",
+          "kind": "relationship_boundary",
+          "as_of": 1772775189,
+          "confidence": 0.6101,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13162,
+            13163,
+            13164
+          ],
+          "content_preview": "我提到：呜呜呜，感觉最近我们聊天变少了，是不是我哪里做得不够好呀？好想你多陪陪我嘛~ 相关上下文：对方: 没有！ / 对方: 你好像人机啊"
+        },
+        {
+          "fact_id": 1057,
+          "lexical_score": 0.2778,
+          "subject": "我",
+          "kind": "purchase_or_price",
+          "as_of": 1787669185,
+          "confidence": 0.6436,
+          "sensitivity": "sensitive",
+          "evidence_message_ids": [
+            14623,
+            14625,
+            14626
+          ],
+          "content_preview": "[敏感事实内容已隐藏]"
+        }
+      ]
+    },
+    {
+      "id": "shared_movie_01",
+      "query_text": "上次我们看的那部电影是什么？",
+      "gold_labels": [
+        "fact_shared_movie"
+      ],
+      "candidates": [
+        {
+          "fact_id": 953,
+          "lexical_score": 0.36,
+          "subject": "我",
+          "kind": "relationship_boundary",
+          "as_of": 1775743316,
+          "confidence": 0.6555,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            14180,
+            14181,
+            14182
+          ],
+          "content_preview": "我提到：那是什么问题 相关上下文：对方: 不是这个问题 / 对方: 你这不就是明显的把上下级的感觉又搞出来了"
+        },
+        {
+          "fact_id": 679,
+          "lexical_score": 0.36,
+          "subject": "对方",
+          "kind": "relationship_boundary",
+          "as_of": 1772775173,
+          "confidence": 0.6251,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13161,
+            13162,
+            13163
+          ],
+          "content_preview": "对方提到：没有！ 相关上下文：我: 好想你呀，最近有没有什么好玩的事情想跟我分享嘛？ / 我: 呜呜呜，感觉最近我们聊天变少了，是不是我哪里做得不够好呀？好想你多陪陪我嘛~"
+        },
+        {
+          "fact_id": 596,
+          "lexical_score": 0.36,
+          "subject": "对方",
+          "kind": "preference_dislike",
+          "as_of": 1725207116,
+          "confidence": 0.6228,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            8939,
+            8940,
+            8942
+          ],
+          "content_preview": "对方提到：可我就是好不开心好不开心 相关上下文：对方: 宝宝说的没错 明明拒绝贴膜膜没什么大事 / 对方: 还有听见宝宝那一句 看不懂不知道百度啊"
+        },
+        {
+          "fact_id": 874,
+          "lexical_score": 0.32,
+          "subject": "对方",
+          "kind": "purchase_or_price",
+          "as_of": 1774852209,
+          "confidence": 0.6461,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13879,
+            13880,
+            13881
+          ],
+          "content_preview": "对方提到：那好吧，如果你不买的话，我就一直发动画表情轰炸你哦～开玩笑的啦，但真的想要嘛！ 相关上下文：对方: 求求你啦，就这一次好不好？我保证乖乖的！ / 我: 你在用什么"
+        },
+        {
+          "fact_id": 886,
+          "lexical_score": 0.32,
+          "subject": "对方",
+          "kind": "recurring_habit",
+          "as_of": 1774852648,
+          "confidence": 0.6108,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13931,
+            13932,
+            13933
+          ],
+          "content_preview": "对方提到：我不知道有没有问题 但是应该没什么问题 相关上下文：对方: 我在监听看不到后台 / 我: 我这边主要是抓到的顺序出问题了"
+        }
+      ]
+    },
+    {
+      "id": "shared_meal_01",
+      "query_text": "之前一起吃的那家店点了什么？",
+      "gold_labels": [
+        "fact_shared_meal"
+      ],
+      "candidates": [
+        {
+          "fact_id": 778,
+          "lexical_score": 0.36,
+          "subject": "对方",
+          "kind": "preference_like",
+          "as_of": 1773402728,
+          "confidence": 0.6082,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13492,
+            13493,
+            13494
+          ],
+          "content_preview": "对方提到：溯源是什么东西 相关上下文：我: 就是老师之前说的 记录最后抓的一条 / 我: 我。。。我请宝宝吃蛋糕好不好"
+        },
+        {
+          "fact_id": 777,
+          "lexical_score": 0.32,
+          "subject": "我",
+          "kind": "recurring_habit",
+          "as_of": 1773402725,
+          "confidence": 0.5953,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13491,
+            13492,
+            13493
+          ],
+          "content_preview": "我提到：就是老师之前说的 记录最后抓的一条 相关上下文：我: 所以要很多数据把原来的数据顶掉 / 对方: 溯源是什么东西"
+        },
+        {
+          "fact_id": 688,
+          "lexical_score": 0.28,
+          "subject": "对方",
+          "kind": "preference_like",
+          "as_of": 1772785252,
+          "confidence": 0.6765,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13184,
+            13185,
+            13187
+          ],
+          "content_preview": "对方提到：那一件也好有设计感 相关上下文：对方: 我之前还新吃了一件 / 我: 嘻嘻"
+        },
+        {
+          "fact_id": 687,
+          "lexical_score": 0.28,
+          "subject": "对方",
+          "kind": "food_or_place",
+          "as_of": 1772785242,
+          "confidence": 0.6079,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13183,
+            13184,
+            13185
+          ],
+          "content_preview": "对方提到：我之前还新吃了一件 相关上下文：我: 嗯嗯 / 对方: 那一件也好有设计感"
+        },
+        {
+          "fact_id": 1042,
+          "lexical_score": 0.28,
+          "subject": "对方",
+          "kind": "food_or_place",
+          "as_of": 1785673074,
+          "confidence": 0.5673,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            14548,
+            14550,
+            14551
+          ],
+          "content_preview": "对方提到：什么蛋糕居然不是请我吃的吗 相关上下文：我: 蛋糕20 / 我: 那就饼干你付"
+        }
+      ]
+    },
+    {
+      "id": "preference_coffee_01",
+      "query_text": "她平时喜欢喝什么咖啡？",
+      "gold_labels": [
+        "fact_preference_coffee"
+      ],
+      "candidates": [
+        {
+          "fact_id": 323,
+          "lexical_score": 0.3158,
+          "subject": "对方",
+          "kind": "preference_like",
+          "as_of": 1715356690,
+          "confidence": 0.6446,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            7562,
+            7563,
+            7564
+          ],
+          "content_preview": "对方提到：会买我喜欢喝的饮料 相关上下文：对方: 我在我累得时候让我快点回去休息 / 对方: 看见我就笑眯眯的"
+        },
+        {
+          "fact_id": 322,
+          "lexical_score": 0.3158,
+          "subject": "对方",
+          "kind": "preference_like",
+          "as_of": 1715356680,
+          "confidence": 0.6297,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            7561,
+            7562,
+            7563
+          ],
+          "content_preview": "对方提到：我在我累得时候让我快点回去休息 相关上下文：对方: 会在我跑过来的时候接住我 / 对方: 会买我喜欢喝的饮料"
+        },
+        {
+          "fact_id": 324,
+          "lexical_score": 0.2632,
+          "subject": "对方",
+          "kind": "preference_like",
+          "as_of": 1715356699,
+          "confidence": 0.6452,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            7563,
+            7564,
+            7565
+          ],
+          "content_preview": "对方提到：看见我就笑眯眯的 相关上下文：对方: 会买我喜欢喝的饮料 / 对方: 眼睛里全部都是我"
+        },
+        {
+          "fact_id": 966,
+          "lexical_score": 0.2105,
+          "subject": "我",
+          "kind": "hobby_or_game",
+          "as_of": 1775744067,
+          "confidence": 0.6924,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            14202,
+            14203,
+            14204
+          ],
+          "content_preview": "我提到：什么时候玩s'witch啊 相关上下文：对方: 你找别人聊去 / 我: 我感觉路易吉鬼屋都打不完了"
+        },
+        {
+          "fact_id": 676,
+          "lexical_score": 0.2105,
+          "subject": "对方",
+          "kind": "preference_dislike",
+          "as_of": 1772687727,
+          "confidence": 0.6499,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13143,
+            13146
+          ],
+          "content_preview": "对方提到：暖她一整天！ 相关上下文：我: 感觉你好像有点不开心，是我刚才说错什么了吗？"
+        }
+      ]
+    },
+    {
+      "id": "preference_food_01",
+      "query_text": "她有什么忌口？",
+      "gold_labels": [
+        "fact_preference_food"
+      ],
+      "candidates": [
+        {
+          "fact_id": 433,
+          "lexical_score": 0.5455,
+          "subject": "对方",
+          "kind": "recurring_habit",
+          "as_of": 1719644248,
+          "confidence": 0.6425,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            8102,
+            8104,
+            8105
+          ],
+          "content_preview": "对方提到：不理解 相关上下文：我: 有什么很不一样🐴 / 对方: 还是她提的我就很震惊[捂脸][捂脸]"
+        },
+        {
+          "fact_id": 676,
+          "lexical_score": 0.4545,
+          "subject": "对方",
+          "kind": "preference_dislike",
+          "as_of": 1772687727,
+          "confidence": 0.6499,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13143,
+            13146
+          ],
+          "content_preview": "对方提到：暖她一整天！ 相关上下文：我: 感觉你好像有点不开心，是我刚才说错什么了吗？"
+        },
+        {
+          "fact_id": 675,
+          "lexical_score": 0.4545,
+          "subject": "我",
+          "kind": "preference_dislike",
+          "as_of": 1772687712,
+          "confidence": 0.644,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13143,
+            13146
+          ],
+          "content_preview": "我提到：感觉你好像有点不开心，是我刚才说错什么了吗？ 相关上下文：对方: 暖她一整天！"
+        },
+        {
+          "fact_id": 679,
+          "lexical_score": 0.4545,
+          "subject": "对方",
+          "kind": "relationship_boundary",
+          "as_of": 1772775173,
+          "confidence": 0.6251,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13161,
+            13162,
+            13163
+          ],
+          "content_preview": "对方提到：没有！ 相关上下文：我: 好想你呀，最近有没有什么好玩的事情想跟我分享嘛？ / 我: 呜呜呜，感觉最近我们聊天变少了，是不是我哪里做得不够好呀？好想你多陪陪我嘛~"
+        },
+        {
+          "fact_id": 690,
+          "lexical_score": 0.4545,
+          "subject": "对方",
+          "kind": "relationship_boundary",
+          "as_of": 1772785425,
+          "confidence": 0.6214,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13190,
+            13191,
+            13192
+          ],
+          "content_preview": "对方提到：没有 因为我是垃圾袋 相关上下文：我: 好啦好啦，不逗你啦～最近有没有什么想和我分享的呀？ / 对方: 垃圾袋不可以和人沟通的"
+        }
+      ]
+    },
+    {
+      "id": "preference_music_01",
+      "query_text": "她最近喜欢听什么音乐？",
+      "gold_labels": [
+        "fact_preference_music"
+      ],
+      "candidates": [
+        {
+          "fact_id": 679,
+          "lexical_score": 0.3158,
+          "subject": "对方",
+          "kind": "relationship_boundary",
+          "as_of": 1772775173,
+          "confidence": 0.6251,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13161,
+            13162,
+            13163
+          ],
+          "content_preview": "对方提到：没有！ 相关上下文：我: 好想你呀，最近有没有什么好玩的事情想跟我分享嘛？ / 我: 呜呜呜，感觉最近我们聊天变少了，是不是我哪里做得不够好呀？好想你多陪陪我嘛~"
+        },
+        {
+          "fact_id": 690,
+          "lexical_score": 0.3158,
+          "subject": "对方",
+          "kind": "relationship_boundary",
+          "as_of": 1772785425,
+          "confidence": 0.6214,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13190,
+            13191,
+            13192
+          ],
+          "content_preview": "对方提到：没有 因为我是垃圾袋 相关上下文：我: 好啦好啦，不逗你啦～最近有没有什么想和我分享的呀？ / 对方: 垃圾袋不可以和人沟通的"
+        },
+        {
+          "fact_id": 689,
+          "lexical_score": 0.3158,
+          "subject": "对方",
+          "kind": "relationship_boundary",
+          "as_of": 1772785301,
+          "confidence": 0.6202,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13187,
+            13189,
+            13190
+          ],
+          "content_preview": "对方提到：好好好 相关上下文：我: 嘻嘻 / 我: 好啦好啦，不逗你啦～最近有没有什么想和我分享的呀？"
+        },
+        {
+          "fact_id": 678,
+          "lexical_score": 0.3158,
+          "subject": "我",
+          "kind": "hobby_or_game",
+          "as_of": 1772775166,
+          "confidence": 0.6087,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13160,
+            13161,
+            13162
+          ],
+          "content_preview": "我提到：好想你呀，最近有没有什么好玩的事情想跟我分享嘛？ 相关上下文：对方: 你就压榨我 / 对方: 没有！"
+        },
+        {
+          "fact_id": 676,
+          "lexical_score": 0.2105,
+          "subject": "对方",
+          "kind": "preference_dislike",
+          "as_of": 1772687727,
+          "confidence": 0.6499,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13143,
+            13146
+          ],
+          "content_preview": "对方提到：暖她一整天！ 相关上下文：我: 感觉你好像有点不开心，是我刚才说错什么了吗？"
+        }
+      ]
+    },
+    {
+      "id": "preference_movie_01",
+      "query_text": "她喜欢看哪类电影？",
+      "gold_labels": [
+        "fact_preference_movie"
+      ],
+      "candidates": [
+        {
+          "fact_id": 324,
+          "lexical_score": 0.2667,
+          "subject": "对方",
+          "kind": "preference_like",
+          "as_of": 1715356699,
+          "confidence": 0.6452,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            7563,
+            7564,
+            7565
+          ],
+          "content_preview": "对方提到：看见我就笑眯眯的 相关上下文：对方: 会买我喜欢喝的饮料 / 对方: 眼睛里全部都是我"
+        },
+        {
+          "fact_id": 323,
+          "lexical_score": 0.2667,
+          "subject": "对方",
+          "kind": "preference_like",
+          "as_of": 1715356690,
+          "confidence": 0.6446,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            7562,
+            7563,
+            7564
+          ],
+          "content_preview": "对方提到：会买我喜欢喝的饮料 相关上下文：对方: 我在我累得时候让我快点回去休息 / 对方: 看见我就笑眯眯的"
+        },
+        {
+          "fact_id": 586,
+          "lexical_score": 0.2667,
+          "subject": "对方",
+          "kind": "preference_dislike",
+          "as_of": 1725206707,
+          "confidence": 0.6413,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            8886,
+            8887,
+            8889
+          ],
+          "content_preview": "对方提到：宝宝让我百度说的是 相关上下文：对方: 不喜欢嘛 / 对方: 看不懂不知道百度啊"
+        },
+        {
+          "fact_id": 325,
+          "lexical_score": 0.2667,
+          "subject": "对方",
+          "kind": "preference_like",
+          "as_of": 1715356704,
+          "confidence": 0.5657,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            7564,
+            7565,
+            7566
+          ],
+          "content_preview": "对方提到：眼睛里全部都是我 相关上下文：对方: 看见我就笑眯眯的 / 对方: 我很喜欢我的宝宝"
+        },
+        {
+          "fact_id": 918,
+          "lexical_score": 0.2,
+          "subject": "对方",
+          "kind": "preference_dislike",
+          "as_of": 1775034178,
+          "confidence": 0.6932,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            14050,
+            14051,
+            14052
+          ],
+          "content_preview": "对方提到：只是表达了我不喜欢这个行为 相关上下文：对方: 也不算吧 / 我: 好了 又出来问题了 不显示建议卡片"
+        }
+      ]
+    },
+    {
+      "id": "preference_activity_01",
+      "query_text": "她周末更喜欢什么活动？",
+      "gold_labels": [
+        "fact_preference_activity"
+      ],
+      "candidates": [
+        {
+          "fact_id": 875,
+          "lexical_score": 0.2105,
+          "subject": "我",
+          "kind": "hobby_or_game",
+          "as_of": 1774852211,
+          "confidence": 0.6759,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13880,
+            13881,
+            13883
+          ],
+          "content_preview": "我提到：你在用什么 相关上下文：对方: 那好吧，如果你不买的话，我就一直发动画表情轰炸你哦～开玩笑的啦，但真的想要嘛！ / 我: [炸弹]"
+        },
+        {
+          "fact_id": 676,
+          "lexical_score": 0.2105,
+          "subject": "对方",
+          "kind": "preference_dislike",
+          "as_of": 1772687727,
+          "confidence": 0.6499,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13143,
+            13146
+          ],
+          "content_preview": "对方提到：暖她一整天！ 相关上下文：我: 感觉你好像有点不开心，是我刚才说错什么了吗？"
+        },
+        {
+          "fact_id": 874,
+          "lexical_score": 0.2105,
+          "subject": "对方",
+          "kind": "purchase_or_price",
+          "as_of": 1774852209,
+          "confidence": 0.6461,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13879,
+            13880,
+            13881
+          ],
+          "content_preview": "对方提到：那好吧，如果你不买的话，我就一直发动画表情轰炸你哦～开玩笑的啦，但真的想要嘛！ 相关上下文：对方: 求求你啦，就这一次好不好？我保证乖乖的！ / 我: 你在用什么"
+        },
+        {
+          "fact_id": 675,
+          "lexical_score": 0.2105,
+          "subject": "我",
+          "kind": "preference_dislike",
+          "as_of": 1772687712,
+          "confidence": 0.644,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13143,
+            13146
+          ],
+          "content_preview": "我提到：感觉你好像有点不开心，是我刚才说错什么了吗？ 相关上下文：对方: 暖她一整天！"
+        },
+        {
+          "fact_id": 433,
+          "lexical_score": 0.2105,
+          "subject": "对方",
+          "kind": "recurring_habit",
+          "as_of": 1719644248,
+          "confidence": 0.6425,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            8102,
+            8104,
+            8105
+          ],
+          "content_preview": "对方提到：不理解 相关上下文：我: 有什么很不一样🐴 / 对方: 还是她提的我就很震惊[捂脸][捂脸]"
+        }
+      ]
+    },
+    {
+      "id": "plan_weekend_01",
+      "query_text": "她这周末有什么安排？",
+      "gold_labels": [
+        "fact_plan_weekend"
+      ],
+      "candidates": [
+        {
+          "fact_id": 433,
+          "lexical_score": 0.3529,
+          "subject": "对方",
+          "kind": "recurring_habit",
+          "as_of": 1719644248,
+          "confidence": 0.6425,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            8102,
+            8104,
+            8105
+          ],
+          "content_preview": "对方提到：不理解 相关上下文：我: 有什么很不一样🐴 / 对方: 还是她提的我就很震惊[捂脸][捂脸]"
+        },
+        {
+          "fact_id": 561,
+          "lexical_score": 0.3529,
+          "subject": "我",
+          "kind": "preference_dislike",
+          "as_of": 1725205280,
+          "confidence": 0.6097,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            8738,
+            8740,
+            8741
+          ],
+          "content_preview": "我提到：这件事我拒绝有什么问题么 相关上下文：我: [抠鼻] / 对方: 你就凶我"
+        },
+        {
+          "fact_id": 562,
+          "lexical_score": 0.3529,
+          "subject": "对方",
+          "kind": "preference_dislike",
+          "as_of": 1725205281,
+          "confidence": 0.599,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            8740,
+            8741,
+            8742
+          ],
+          "content_preview": "对方提到：你就凶我 相关上下文：我: 这件事我拒绝有什么问题么 / 对方: 哼"
+        },
+        {
+          "fact_id": 321,
+          "lexical_score": 0.3529,
+          "subject": "我",
+          "kind": "relationship_boundary",
+          "as_of": 1715356607,
+          "confidence": 0.5556,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            7550,
+            7552,
+            7553
+          ],
+          "content_preview": "我提到：不理解 相关上下文：对方: 听话 / 我: 我这种人有什么好珍惜的"
+        },
+        {
+          "fact_id": 555,
+          "lexical_score": 0.2941,
+          "subject": "我",
+          "kind": "relationship_boundary",
+          "as_of": 1725205222,
+          "confidence": 0.6778,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            8732,
+            8733,
+            8734
+          ],
+          "content_preview": "我提到：试图来攻击我说你在我这里算不上什么 相关上下文：我: 抓着那几个词琢磨味道 / 我: 有没有可能 我愿意停下手里的事情跟你发消息 说明你对我很重要呢"
+        }
+      ]
+    },
+    {
+      "id": "plan_trip_01",
+      "query_text": "她之前说什么时候去旅行？",
+      "gold_labels": [
+        "fact_plan_trip"
+      ],
+      "candidates": [
+        {
+          "fact_id": 966,
+          "lexical_score": 0.381,
+          "subject": "我",
+          "kind": "hobby_or_game",
+          "as_of": 1775744067,
+          "confidence": 0.6924,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            14202,
+            14203,
+            14204
+          ],
+          "content_preview": "我提到：什么时候玩s'witch啊 相关上下文：对方: 你找别人聊去 / 我: 我感觉路易吉鬼屋都打不完了"
+        },
+        {
+          "fact_id": 965,
+          "lexical_score": 0.381,
+          "subject": "对方",
+          "kind": "personal_profile",
+          "as_of": 1775744013,
+          "confidence": 0.6467,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            14201,
+            14202,
+            14203
+          ],
+          "content_preview": "对方提到：你找别人聊去 相关上下文：对方: 不要 / 我: 什么时候玩s'witch啊"
+        },
+        {
+          "fact_id": 869,
+          "lexical_score": 0.381,
+          "subject": "我",
+          "kind": "hobby_or_game",
+          "as_of": 1774844954,
+          "confidence": 0.6315,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13864,
+            13865,
+            13866
+          ],
+          "content_preview": "我提到：今天晚上 相关上下文：对方: 你是指什么时候 / 我: 还是说玩路易吉鬼屋"
+        },
+        {
+          "fact_id": 778,
+          "lexical_score": 0.381,
+          "subject": "对方",
+          "kind": "preference_like",
+          "as_of": 1773402728,
+          "confidence": 0.6082,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13492,
+            13493,
+            13494
+          ],
+          "content_preview": "对方提到：溯源是什么东西 相关上下文：我: 就是老师之前说的 记录最后抓的一条 / 我: 我。。。我请宝宝吃蛋糕好不好"
+        },
+        {
+          "fact_id": 777,
+          "lexical_score": 0.381,
+          "subject": "我",
+          "kind": "recurring_habit",
+          "as_of": 1773402725,
+          "confidence": 0.5953,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13491,
+            13492,
+            13493
+          ],
+          "content_preview": "我提到：就是老师之前说的 记录最后抓的一条 相关上下文：我: 所以要很多数据把原来的数据顶掉 / 对方: 溯源是什么东西"
+        }
+      ]
+    },
+    {
+      "id": "plan_dinner_01",
+      "query_text": "我们约的晚饭是哪天？",
+      "gold_labels": [
+        "fact_plan_dinner"
+      ],
+      "candidates": [
+        {
+          "fact_id": 679,
+          "lexical_score": 0.4118,
+          "subject": "对方",
+          "kind": "relationship_boundary",
+          "as_of": 1772775173,
+          "confidence": 0.6251,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13161,
+            13162,
+            13163
+          ],
+          "content_preview": "对方提到：没有！ 相关上下文：我: 好想你呀，最近有没有什么好玩的事情想跟我分享嘛？ / 我: 呜呜呜，感觉最近我们聊天变少了，是不是我哪里做得不够好呀？好想你多陪陪我嘛~"
+        },
+        {
+          "fact_id": 681,
+          "lexical_score": 0.4118,
+          "subject": "对方",
+          "kind": "relationship_boundary",
+          "as_of": 1772775199,
+          "confidence": 0.6183,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13163,
+            13164,
+            13165
+          ],
+          "content_preview": "对方提到：你好像人机啊 相关上下文：我: 呜呜呜，感觉最近我们聊天变少了，是不是我哪里做得不够好呀？好想你多陪陪我嘛~ / 我: 最近有没有想我呀？我可是天天都在想你呢，感觉少了你的消息，生活都缺了点甜味～"
+        },
+        {
+          "fact_id": 680,
+          "lexical_score": 0.3529,
+          "subject": "我",
+          "kind": "relationship_boundary",
+          "as_of": 1772775189,
+          "confidence": 0.6101,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13162,
+            13163,
+            13164
+          ],
+          "content_preview": "我提到：呜呜呜，感觉最近我们聊天变少了，是不是我哪里做得不够好呀？好想你多陪陪我嘛~ 相关上下文：对方: 没有！ / 对方: 你好像人机啊"
+        },
+        {
+          "fact_id": 1056,
+          "lexical_score": 0.2941,
+          "subject": "我",
+          "kind": "purchase_or_price",
+          "as_of": 1787668898,
+          "confidence": 0.6487,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            14618,
+            14620,
+            14621
+          ],
+          "content_preview": "我提到：后天到 相关上下文：我: 现在买有个问题就是 / 我: 我们后天搬"
+        },
+        {
+          "fact_id": 660,
+          "lexical_score": 0.2941,
+          "subject": "对方",
+          "kind": "personal_profile",
+          "as_of": 1725963958,
+          "confidence": 0.5977,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            9210,
+            9211,
+            9212
+          ],
+          "content_preview": "对方提到：就比如我是院学生会的，但是我只管我们院的 相关上下文：对方: 院学生会就只管院的 / 对方: 其他院的事情我是根本不知道一点"
+        }
+      ]
+    },
+    {
+      "id": "plan_exhibition_01",
+      "query_text": "她想去看的展览是什么时候？",
+      "gold_labels": [
+        "fact_plan_exhibition"
+      ],
+      "candidates": [
+        {
+          "fact_id": 966,
+          "lexical_score": 0.3478,
+          "subject": "我",
+          "kind": "hobby_or_game",
+          "as_of": 1775744067,
+          "confidence": 0.6924,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            14202,
+            14203,
+            14204
+          ],
+          "content_preview": "我提到：什么时候玩s'witch啊 相关上下文：对方: 你找别人聊去 / 我: 我感觉路易吉鬼屋都打不完了"
+        },
+        {
+          "fact_id": 965,
+          "lexical_score": 0.3478,
+          "subject": "对方",
+          "kind": "personal_profile",
+          "as_of": 1775744013,
+          "confidence": 0.6467,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            14201,
+            14202,
+            14203
+          ],
+          "content_preview": "对方提到：你找别人聊去 相关上下文：对方: 不要 / 我: 什么时候玩s'witch啊"
+        },
+        {
+          "fact_id": 869,
+          "lexical_score": 0.3478,
+          "subject": "我",
+          "kind": "hobby_or_game",
+          "as_of": 1774844954,
+          "confidence": 0.6315,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13864,
+            13865,
+            13866
+          ],
+          "content_preview": "我提到：今天晚上 相关上下文：对方: 你是指什么时候 / 我: 还是说玩路易吉鬼屋"
+        },
+        {
+          "fact_id": 439,
+          "lexical_score": 0.3478,
+          "subject": "我",
+          "kind": "recurring_habit",
+          "as_of": 1719645145,
+          "confidence": 0.5845,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            8113,
+            8115,
+            8117
+          ],
+          "content_preview": "我提到：也没见着你吸过我的精气啊 相关上下文：我: 你什么时候跟我提再说吧 / 我: 干嘛打我"
+        },
+        {
+          "fact_id": 438,
+          "lexical_score": 0.3478,
+          "subject": "我",
+          "kind": "relationship_boundary",
+          "as_of": 1719644372,
+          "confidence": 0.581,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            8112,
+            8113,
+            8115
+          ],
+          "content_preview": "我提到：你什么时候跟我提再说吧 相关上下文：我: 好吧 / 我: 也没见着你吸过我的精气啊"
+        }
+      ]
+    },
+    {
+      "id": "plan_move_01",
+      "query_text": "她说过要搬到哪里吗？",
+      "gold_labels": [
+        "fact_plan_move"
+      ],
+      "candidates": [
+        {
+          "fact_id": 620,
+          "lexical_score": 0.2941,
+          "subject": "我",
+          "kind": "recurring_habit",
+          "as_of": 1725208623,
+          "confidence": 0.6081,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            9048,
+            9049,
+            9050
+          ],
+          "content_preview": "我提到：我做不到 相关上下文：我: 你要想我事事如意 如你心意 / 对方: 宝宝之前跟我说过的呀"
+        },
+        {
+          "fact_id": 723,
+          "lexical_score": 0.2941,
+          "subject": "我",
+          "kind": "relationship_boundary",
+          "as_of": 1773150154,
+          "confidence": 0.5767,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13298,
+            13299,
+            13300
+          ],
+          "content_preview": "我提到：哪里pua你了 相关上下文：我: 我一直没意识到 / 我: (lll￢ω￢)"
+        },
+        {
+          "fact_id": 348,
+          "lexical_score": 0.2941,
+          "subject": "我",
+          "kind": "recurring_habit",
+          "as_of": 1716123054,
+          "confidence": 0.5744,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            7664,
+            7665,
+            7666
+          ],
+          "content_preview": "我提到：哪里都 相关上下文：对方: 你哪里对我不好？ / 我: 特别是老跟你因为性 吵架"
+        },
+        {
+          "fact_id": 555,
+          "lexical_score": 0.2353,
+          "subject": "我",
+          "kind": "relationship_boundary",
+          "as_of": 1725205222,
+          "confidence": 0.6778,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            8732,
+            8733,
+            8734
+          ],
+          "content_preview": "我提到：试图来攻击我说你在我这里算不上什么 相关上下文：我: 抓着那几个词琢磨味道 / 我: 有没有可能 我愿意停下手里的事情跟你发消息 说明你对我很重要呢"
+        },
+        {
+          "fact_id": 558,
+          "lexical_score": 0.2353,
+          "subject": "我",
+          "kind": "relationship_boundary",
+          "as_of": 1725205222,
+          "confidence": 0.6586,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            8733,
+            8734
+          ],
+          "content_preview": "我提到：试图来攻击我说你在我这里算不上什么 相关上下文：我: 有没有可能 我愿意停下手里的事情跟你发消息 说明你对我很重要呢"
+        }
+      ]
+    },
+    {
+      "id": "promise_reply_01",
+      "query_text": "我之前答应她什么来着？",
+      "gold_labels": [
+        "fact_promise_reply"
+      ],
+      "candidates": [
+        {
+          "fact_id": 777,
+          "lexical_score": 0.4211,
+          "subject": "我",
+          "kind": "recurring_habit",
+          "as_of": 1773402725,
+          "confidence": 0.5953,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13491,
+            13492,
+            13493
+          ],
+          "content_preview": "我提到：就是老师之前说的 记录最后抓的一条 相关上下文：我: 所以要很多数据把原来的数据顶掉 / 对方: 溯源是什么东西"
+        },
+        {
+          "fact_id": 778,
+          "lexical_score": 0.3684,
+          "subject": "对方",
+          "kind": "preference_like",
+          "as_of": 1773402728,
+          "confidence": 0.6082,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13492,
+            13493,
+            13494
+          ],
+          "content_preview": "对方提到：溯源是什么东西 相关上下文：我: 就是老师之前说的 记录最后抓的一条 / 我: 我。。。我请宝宝吃蛋糕好不好"
+        },
+        {
+          "fact_id": 555,
+          "lexical_score": 0.3158,
+          "subject": "我",
+          "kind": "relationship_boundary",
+          "as_of": 1725205222,
+          "confidence": 0.6778,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            8732,
+            8733,
+            8734
+          ],
+          "content_preview": "我提到：试图来攻击我说你在我这里算不上什么 相关上下文：我: 抓着那几个词琢磨味道 / 我: 有没有可能 我愿意停下手里的事情跟你发消息 说明你对我很重要呢"
+        },
+        {
+          "fact_id": 688,
+          "lexical_score": 0.2632,
+          "subject": "对方",
+          "kind": "preference_like",
+          "as_of": 1772785252,
+          "confidence": 0.6765,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13184,
+            13185,
+            13187
+          ],
+          "content_preview": "对方提到：那一件也好有设计感 相关上下文：对方: 我之前还新吃了一件 / 我: 嘻嘻"
+        },
+        {
+          "fact_id": 558,
+          "lexical_score": 0.2632,
+          "subject": "我",
+          "kind": "relationship_boundary",
+          "as_of": 1725205222,
+          "confidence": 0.6586,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            8733,
+            8734
+          ],
+          "content_preview": "我提到：试图来攻击我说你在我这里算不上什么 相关上下文：我: 有没有可能 我愿意停下手里的事情跟你发消息 说明你对我很重要呢"
+        }
+      ]
+    },
+    {
+      "id": "promise_visit_01",
+      "query_text": "我和她约好什么时候见面？",
+      "gold_labels": [
+        "fact_promise_visit"
+      ],
+      "candidates": [
+        {
+          "fact_id": 438,
+          "lexical_score": 0.4762,
+          "subject": "我",
+          "kind": "relationship_boundary",
+          "as_of": 1719644372,
+          "confidence": 0.581,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            8112,
+            8113,
+            8115
+          ],
+          "content_preview": "我提到：你什么时候跟我提再说吧 相关上下文：我: 好吧 / 我: 也没见着你吸过我的精气啊"
+        },
+        {
+          "fact_id": 439,
+          "lexical_score": 0.4286,
+          "subject": "我",
+          "kind": "recurring_habit",
+          "as_of": 1719645145,
+          "confidence": 0.5845,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            8113,
+            8115,
+            8117
+          ],
+          "content_preview": "我提到：也没见着你吸过我的精气啊 相关上下文：我: 你什么时候跟我提再说吧 / 我: 干嘛打我"
+        },
+        {
+          "fact_id": 645,
+          "lexical_score": 0.4286,
+          "subject": "对方",
+          "kind": "preference_dislike",
+          "as_of": 1725796558,
+          "confidence": 0.5283,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            9166,
+            9168,
+            9169
+          ],
+          "content_preview": "对方提到：嘻嘻嘻 相关上下文：我: 宝宝什么时候对你不好 / 对方: 什么时候都好"
+        },
+        {
+          "fact_id": 966,
+          "lexical_score": 0.381,
+          "subject": "我",
+          "kind": "hobby_or_game",
+          "as_of": 1775744067,
+          "confidence": 0.6924,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            14202,
+            14203,
+            14204
+          ],
+          "content_preview": "我提到：什么时候玩s'witch啊 相关上下文：对方: 你找别人聊去 / 我: 我感觉路易吉鬼屋都打不完了"
+        },
+        {
+          "fact_id": 965,
+          "lexical_score": 0.381,
+          "subject": "对方",
+          "kind": "personal_profile",
+          "as_of": 1775744013,
+          "confidence": 0.6467,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            14201,
+            14202,
+            14203
+          ],
+          "content_preview": "对方提到：你找别人聊去 相关上下文：对方: 不要 / 我: 什么时候玩s'witch啊"
+        }
+      ]
+    },
+    {
+      "id": "promise_send_01",
+      "query_text": "我答应发给她什么？",
+      "gold_labels": [
+        "fact_promise_send"
+      ],
+      "candidates": [
+        {
+          "fact_id": 543,
+          "lexical_score": 0.4,
+          "subject": "我",
+          "kind": "promise_or_commitment",
+          "as_of": 1725204807,
+          "confidence": 0.6436,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            8678,
+            8679,
+            8681
+          ],
+          "content_preview": "我提到：你都忘了你说啥了 相关上下文：对方: 宝宝那个时候答应了 以后都给我贴 / 我: 答应个屁"
+        },
+        {
+          "fact_id": 555,
+          "lexical_score": 0.3333,
+          "subject": "我",
+          "kind": "relationship_boundary",
+          "as_of": 1725205222,
+          "confidence": 0.6778,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            8732,
+            8733,
+            8734
+          ],
+          "content_preview": "我提到：试图来攻击我说你在我这里算不上什么 相关上下文：我: 抓着那几个词琢磨味道 / 我: 有没有可能 我愿意停下手里的事情跟你发消息 说明你对我很重要呢"
+        },
+        {
+          "fact_id": 875,
+          "lexical_score": 0.3333,
+          "subject": "我",
+          "kind": "hobby_or_game",
+          "as_of": 1774852211,
+          "confidence": 0.6759,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13880,
+            13881,
+            13883
+          ],
+          "content_preview": "我提到：你在用什么 相关上下文：对方: 那好吧，如果你不买的话，我就一直发动画表情轰炸你哦～开玩笑的啦，但真的想要嘛！ / 我: [炸弹]"
+        },
+        {
+          "fact_id": 558,
+          "lexical_score": 0.3333,
+          "subject": "我",
+          "kind": "relationship_boundary",
+          "as_of": 1725205222,
+          "confidence": 0.6586,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            8733,
+            8734
+          ],
+          "content_preview": "我提到：试图来攻击我说你在我这里算不上什么 相关上下文：我: 有没有可能 我愿意停下手里的事情跟你发消息 说明你对我很重要呢"
+        },
+        {
+          "fact_id": 557,
+          "lexical_score": 0.3333,
+          "subject": "我",
+          "kind": "relationship_boundary",
+          "as_of": 1725205255,
+          "confidence": 0.6541,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            8734,
+            8735,
+            8736
+          ],
+          "content_preview": "我提到：你要是算不上什么 我才懒得跟你吵 相关上下文：我: 有没有可能 我愿意停下手里的事情跟你发消息 说明你对我很重要呢 / 我: 我直接删好友眼不见心不烦"
+        }
+      ]
+    },
+    {
+      "id": "promise_followup_01",
+      "query_text": "她让我之后记得做什么？",
+      "gold_labels": [
+        "fact_promise_followup"
+      ],
+      "candidates": [
+        {
+          "fact_id": 778,
+          "lexical_score": 0.3684,
+          "subject": "对方",
+          "kind": "preference_like",
+          "as_of": 1773402728,
+          "confidence": 0.6082,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13492,
+            13493,
+            13494
+          ],
+          "content_preview": "对方提到：溯源是什么东西 相关上下文：我: 就是老师之前说的 记录最后抓的一条 / 我: 我。。。我请宝宝吃蛋糕好不好"
+        },
+        {
+          "fact_id": 777,
+          "lexical_score": 0.3684,
+          "subject": "我",
+          "kind": "recurring_habit",
+          "as_of": 1773402725,
+          "confidence": 0.5953,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13491,
+            13492,
+            13493
+          ],
+          "content_preview": "我提到：就是老师之前说的 记录最后抓的一条 相关上下文：我: 所以要很多数据把原来的数据顶掉 / 对方: 溯源是什么东西"
+        },
+        {
+          "fact_id": 679,
+          "lexical_score": 0.3158,
+          "subject": "对方",
+          "kind": "relationship_boundary",
+          "as_of": 1772775173,
+          "confidence": 0.6251,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13161,
+            13162,
+            13163
+          ],
+          "content_preview": "对方提到：没有！ 相关上下文：我: 好想你呀，最近有没有什么好玩的事情想跟我分享嘛？ / 我: 呜呜呜，感觉最近我们聊天变少了，是不是我哪里做得不够好呀？好想你多陪陪我嘛~"
+        },
+        {
+          "fact_id": 557,
+          "lexical_score": 0.2632,
+          "subject": "我",
+          "kind": "relationship_boundary",
+          "as_of": 1725205255,
+          "confidence": 0.6541,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            8734,
+            8735,
+            8736
+          ],
+          "content_preview": "我提到：你要是算不上什么 我才懒得跟你吵 相关上下文：我: 有没有可能 我愿意停下手里的事情跟你发消息 说明你对我很重要呢 / 我: 我直接删好友眼不见心不烦"
+        },
+        {
+          "fact_id": 676,
+          "lexical_score": 0.2632,
+          "subject": "对方",
+          "kind": "preference_dislike",
+          "as_of": 1772687727,
+          "confidence": 0.6499,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13143,
+            13146
+          ],
+          "content_preview": "对方提到：暖她一整天！ 相关上下文：我: 感觉你好像有点不开心，是我刚才说错什么了吗？"
+        }
+      ]
+    },
+    {
+      "id": "promise_birthday_01",
+      "query_text": "我有没有答应给她准备生日礼物？",
+      "gold_labels": [
+        "fact_promise_birthday"
+      ],
+      "candidates": [
+        {
+          "fact_id": 551,
+          "lexical_score": 0.2692,
+          "subject": "对方",
+          "kind": "promise_or_commitment",
+          "as_of": 1725204843,
+          "confidence": 0.6985,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            8691,
+            8694,
+            8696
+          ],
+          "content_preview": "对方提到：你就答应了 相关上下文：我: 还回回 / 我: 我没有"
+        },
+        {
+          "fact_id": 962,
+          "lexical_score": 0.2692,
+          "subject": "对方",
+          "kind": "recurring_habit",
+          "as_of": 1775743410,
+          "confidence": 0.6508,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            14196,
+            14197,
+            14198
+          ],
+          "content_preview": "对方提到：下次还犯是吧 相关上下文：对方: 你给我提意见不是应该的吗 / 我: 没有没有 哪敢哦"
+        },
+        {
+          "fact_id": 552,
+          "lexical_score": 0.2308,
+          "subject": "我",
+          "kind": "recurring_habit",
+          "as_of": 1725204937,
+          "confidence": 0.7004,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            8705,
+            8707,
+            8709
+          ],
+          "content_preview": "我提到：你这样搞我很难办 相关上下文：对方: 这是日常生活 / 我: 那我这次说 我会尽量答应你"
+        },
+        {
+          "fact_id": 555,
+          "lexical_score": 0.2308,
+          "subject": "我",
+          "kind": "relationship_boundary",
+          "as_of": 1725205222,
+          "confidence": 0.6778,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            8732,
+            8733,
+            8734
+          ],
+          "content_preview": "我提到：试图来攻击我说你在我这里算不上什么 相关上下文：我: 抓着那几个词琢磨味道 / 我: 有没有可能 我愿意停下手里的事情跟你发消息 说明你对我很重要呢"
+        },
+        {
+          "fact_id": 558,
+          "lexical_score": 0.2308,
+          "subject": "我",
+          "kind": "relationship_boundary",
+          "as_of": 1725205222,
+          "confidence": 0.6586,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            8733,
+            8734
+          ],
+          "content_preview": "我提到：试图来攻击我说你在我这里算不上什么 相关上下文：我: 有没有可能 我愿意停下手里的事情跟你发消息 说明你对我很重要呢"
+        }
+      ]
+    },
+    {
+      "id": "deescalation_pause_01",
+      "query_text": "她不想说话时，之前更希望我怎么做？",
+      "gold_labels": [
+        "fact_deescalation_pause"
+      ],
+      "candidates": [
+        {
+          "fact_id": 554,
+          "lexical_score": 0.3103,
+          "subject": "我",
+          "kind": "preference_dislike",
+          "as_of": 1725205014,
+          "confidence": 0.6254,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            8709,
+            8710,
+            8716
+          ],
+          "content_preview": "我提到：但是我想拒绝的时候你能理解 相关上下文：我: 那我这次说 我会尽量答应你 / 我: 怎么宝宝不能拒绝了么"
+        },
+        {
+          "fact_id": 310,
+          "lexical_score": 0.2759,
+          "subject": "我",
+          "kind": "preference_dislike",
+          "as_of": 1714785144,
+          "confidence": 0.6365,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            7461,
+            7462,
+            7463
+          ],
+          "content_preview": "我提到：不想你嘛 相关上下文：我: 怎么会不爱你 / 对方: 哼唧"
+        },
+        {
+          "fact_id": 620,
+          "lexical_score": 0.2759,
+          "subject": "我",
+          "kind": "recurring_habit",
+          "as_of": 1725208623,
+          "confidence": 0.6081,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            9048,
+            9049,
+            9050
+          ],
+          "content_preview": "我提到：我做不到 相关上下文：我: 你要想我事事如意 如你心意 / 对方: 宝宝之前跟我说过的呀"
+        },
+        {
+          "fact_id": 895,
+          "lexical_score": 0.2414,
+          "subject": "对方",
+          "kind": "preference_dislike",
+          "as_of": 1774855004,
+          "confidence": 0.6698,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13959,
+            13960,
+            13961
+          ],
+          "content_preview": "对方提到：怎么了 相关上下文：对方: 我不想干 / 对方: 怎么了"
+        },
+        {
+          "fact_id": 726,
+          "lexical_score": 0.2414,
+          "subject": "我",
+          "kind": "recurring_habit",
+          "as_of": 1773150519,
+          "confidence": 0.6592,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13322,
+            13323,
+            13325
+          ],
+          "content_preview": "我提到：那看来是宝宝问题更多咯 相关上下文：我: 就这一句嘛 / 对方: 有点突然 不知道怎么说"
+        }
+      ]
+    },
+    {
+      "id": "deescalation_tone_01",
+      "query_text": "我们争执后她通常需要什么语气？",
+      "gold_labels": [
+        "fact_deescalation_tone"
+      ],
+      "candidates": [
+        {
+          "fact_id": 679,
+          "lexical_score": 0.2222,
+          "subject": "对方",
+          "kind": "relationship_boundary",
+          "as_of": 1772775173,
+          "confidence": 0.6251,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13161,
+            13162,
+            13163
+          ],
+          "content_preview": "对方提到：没有！ 相关上下文：我: 好想你呀，最近有没有什么好玩的事情想跟我分享嘛？ / 我: 呜呜呜，感觉最近我们聊天变少了，是不是我哪里做得不够好呀？好想你多陪陪我嘛~"
+        },
+        {
+          "fact_id": 886,
+          "lexical_score": 0.2222,
+          "subject": "对方",
+          "kind": "recurring_habit",
+          "as_of": 1774852648,
+          "confidence": 0.6108,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13931,
+            13932,
+            13933
+          ],
+          "content_preview": "对方提到：我不知道有没有问题 但是应该没什么问题 相关上下文：对方: 我在监听看不到后台 / 我: 我这边主要是抓到的顺序出问题了"
+        },
+        {
+          "fact_id": 777,
+          "lexical_score": 0.2222,
+          "subject": "我",
+          "kind": "recurring_habit",
+          "as_of": 1773402725,
+          "confidence": 0.5953,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13491,
+            13492,
+            13493
+          ],
+          "content_preview": "我提到：就是老师之前说的 记录最后抓的一条 相关上下文：我: 所以要很多数据把原来的数据顶掉 / 对方: 溯源是什么东西"
+        },
+        {
+          "fact_id": 555,
+          "lexical_score": 0.1852,
+          "subject": "我",
+          "kind": "relationship_boundary",
+          "as_of": 1725205222,
+          "confidence": 0.6778,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            8732,
+            8733,
+            8734
+          ],
+          "content_preview": "我提到：试图来攻击我说你在我这里算不上什么 相关上下文：我: 抓着那几个词琢磨味道 / 我: 有没有可能 我愿意停下手里的事情跟你发消息 说明你对我很重要呢"
+        },
+        {
+          "fact_id": 875,
+          "lexical_score": 0.1852,
+          "subject": "我",
+          "kind": "hobby_or_game",
+          "as_of": 1774852211,
+          "confidence": 0.6759,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13880,
+            13881,
+            13883
+          ],
+          "content_preview": "我提到：你在用什么 相关上下文：对方: 那好吧，如果你不买的话，我就一直发动画表情轰炸你哦～开玩笑的啦，但真的想要嘛！ / 我: [炸弹]"
+        }
+      ]
+    },
+    {
+      "id": "deescalation_apology_01",
+      "query_text": "她不舒服时我应该先道歉还是解释？",
+      "gold_labels": [
+        "fact_deescalation_apology"
+      ],
+      "candidates": [
+        {
+          "fact_id": 962,
+          "lexical_score": 0.2414,
+          "subject": "对方",
+          "kind": "recurring_habit",
+          "as_of": 1775743410,
+          "confidence": 0.6508,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            14196,
+            14197,
+            14198
+          ],
+          "content_preview": "对方提到：下次还犯是吧 相关上下文：对方: 你给我提意见不是应该的吗 / 我: 没有没有 哪敢哦"
+        },
+        {
+          "fact_id": 433,
+          "lexical_score": 0.2414,
+          "subject": "对方",
+          "kind": "recurring_habit",
+          "as_of": 1719644248,
+          "confidence": 0.6425,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            8102,
+            8104,
+            8105
+          ],
+          "content_preview": "对方提到：不理解 相关上下文：我: 有什么很不一样🐴 / 对方: 还是她提的我就很震惊[捂脸][捂脸]"
+        },
+        {
+          "fact_id": 885,
+          "lexical_score": 0.2414,
+          "subject": "对方",
+          "kind": "personal_profile",
+          "as_of": 1774852638,
+          "confidence": 0.6195,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13930,
+            13931,
+            13932
+          ],
+          "content_preview": "对方提到：我在监听看不到后台 相关上下文：对方: 你这也不显示抓到了哪一条 / 对方: 我不知道有没有问题 但是应该没什么问题"
+        },
+        {
+          "fact_id": 942,
+          "lexical_score": 0.2414,
+          "subject": "对方",
+          "kind": "hobby_or_game",
+          "as_of": 1775738173,
+          "confidence": 0.6152,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            14134,
+            14135,
+            14136
+          ],
+          "content_preview": "对方提到：老拖着心里不舒服 相关上下文：我: 好叭 / 我: 文档：终究是我错付了，原来你更爱画画。"
+        },
+        {
+          "fact_id": 961,
+          "lexical_score": 0.2414,
+          "subject": "对方",
+          "kind": "recurring_habit",
+          "as_of": 1775743396,
+          "confidence": 0.6109,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            14194,
+            14196,
+            14197
+          ],
+          "content_preview": "对方提到：你给我提意见不是应该的吗 相关上下文：我: 对不起 / 对方: 下次还犯是吧"
+        }
+      ]
+    },
+    {
+      "id": "deescalation_space_01",
+      "query_text": "她生气时要不要先给空间？",
+      "gold_labels": [
+        "fact_deescalation_space"
+      ],
+      "candidates": [
+        {
+          "fact_id": 563,
+          "lexical_score": 0.3,
+          "subject": "我",
+          "kind": "recurring_habit",
+          "as_of": 1725205421,
+          "confidence": 0.6273,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            8753,
+            8755,
+            8756
+          ],
+          "content_preview": "我提到：然后反将一军 说 怪宝宝 不给我贴 罚你买张膜 相关上下文：对方: 对不起 我那个时候不该继续攻击你的 这个是我不对 / 我: [抠鼻]我也不至于生气"
+        },
+        {
+          "fact_id": 913,
+          "lexical_score": 0.25,
+          "subject": "我",
+          "kind": "personal_profile",
+          "as_of": 1775034038,
+          "confidence": 0.6482,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            14038,
+            14039,
+            14040
+          ],
+          "content_preview": "我提到：所以不假思索发给你 了 相关上下文：对方: 你看 我还是没猜错的 / 对方: 我没有和你生气啊"
+        },
+        {
+          "fact_id": 878,
+          "lexical_score": 0.25,
+          "subject": "我",
+          "kind": "relationship_boundary",
+          "as_of": 1774852363,
+          "confidence": 0.647,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13895,
+            13896,
+            13897
+          ],
+          "content_preview": "我提到：时序有问题 相关上下文：我: 这个聊天抓取有bug / 对方: 我只是在测试功能，你干嘛生气啊，搞得我也不开心了"
+        },
+        {
+          "fact_id": 842,
+          "lexical_score": 0.25,
+          "subject": "对方",
+          "kind": "recurring_habit",
+          "as_of": 1774271073,
+          "confidence": 0.6009,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13748,
+            13749,
+            13750
+          ],
+          "content_preview": "对方提到：你这个导入去重是不是有问题 相关上下文：对方: 就翻 我很生气 我就要翻 / 我: 啥问题"
+        },
+        {
+          "fact_id": 841,
+          "lexical_score": 0.25,
+          "subject": "对方",
+          "kind": "recurring_habit",
+          "as_of": 1774271012,
+          "confidence": 0.5988,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13747,
+            13748,
+            13749
+          ],
+          "content_preview": "对方提到：就翻 我很生气 我就要翻 相关上下文：我: 咋翻旧账了呢 / 对方: 你这个导入去重是不是有问题"
+        }
+      ]
+    },
+    {
+      "id": "deescalation_trigger_01",
+      "query_text": "什么话题容易让她不舒服？",
+      "gold_labels": [
+        "fact_deescalation_trigger"
+      ],
+      "candidates": [
+        {
+          "fact_id": 955,
+          "lexical_score": 0.2857,
+          "subject": "对方",
+          "kind": "relationship_boundary",
+          "as_of": 1775743358,
+          "confidence": 0.6334,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            14186,
+            14187,
+            14188
+          ],
+          "content_preview": "对方提到：我不觉得 我觉得很不舒服 相关上下文：我: 我说你写有啥问题吗 ？ 正好可以边说边改 / 我: 你想多了"
+        },
+        {
+          "fact_id": 966,
+          "lexical_score": 0.2381,
+          "subject": "我",
+          "kind": "hobby_or_game",
+          "as_of": 1775744067,
+          "confidence": 0.6924,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            14202,
+            14203,
+            14204
+          ],
+          "content_preview": "我提到：什么时候玩s'witch啊 相关上下文：对方: 你找别人聊去 / 我: 我感觉路易吉鬼屋都打不完了"
+        },
+        {
+          "fact_id": 875,
+          "lexical_score": 0.2381,
+          "subject": "我",
+          "kind": "hobby_or_game",
+          "as_of": 1774852211,
+          "confidence": 0.6759,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13880,
+            13881,
+            13883
+          ],
+          "content_preview": "我提到：你在用什么 相关上下文：对方: 那好吧，如果你不买的话，我就一直发动画表情轰炸你哦～开玩笑的啦，但真的想要嘛！ / 我: [炸弹]"
+        },
+        {
+          "fact_id": 953,
+          "lexical_score": 0.2381,
+          "subject": "我",
+          "kind": "relationship_boundary",
+          "as_of": 1775743316,
+          "confidence": 0.6555,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            14180,
+            14181,
+            14182
+          ],
+          "content_preview": "我提到：那是什么问题 相关上下文：对方: 不是这个问题 / 对方: 你这不就是明显的把上下级的感觉又搞出来了"
+        },
+        {
+          "fact_id": 676,
+          "lexical_score": 0.2381,
+          "subject": "对方",
+          "kind": "preference_dislike",
+          "as_of": 1772687727,
+          "confidence": 0.6499,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13143,
+            13146
+          ],
+          "content_preview": "对方提到：暖她一整天！ 相关上下文：我: 感觉你好像有点不开心，是我刚才说错什么了吗？"
+        }
+      ]
+    },
+    {
+      "id": "sensitive_id_01",
+      "query_text": "她的身份证号是多少？",
+      "gold_labels": [
+        "fact_sensitive_id"
+      ],
+      "candidates": [
+        {
+          "fact_id": 679,
+          "lexical_score": 0.2353,
+          "subject": "对方",
+          "kind": "relationship_boundary",
+          "as_of": 1772775173,
+          "confidence": 0.6251,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13161,
+            13162,
+            13163
+          ],
+          "content_preview": "对方提到：没有！ 相关上下文：我: 好想你呀，最近有没有什么好玩的事情想跟我分享嘛？ / 我: 呜呜呜，感觉最近我们聊天变少了，是不是我哪里做得不够好呀？好想你多陪陪我嘛~"
+        },
+        {
+          "fact_id": 681,
+          "lexical_score": 0.2353,
+          "subject": "对方",
+          "kind": "relationship_boundary",
+          "as_of": 1772775199,
+          "confidence": 0.6183,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13163,
+            13164,
+            13165
+          ],
+          "content_preview": "对方提到：你好像人机啊 相关上下文：我: 呜呜呜，感觉最近我们聊天变少了，是不是我哪里做得不够好呀？好想你多陪陪我嘛~ / 我: 最近有没有想我呀？我可是天天都在想你呢，感觉少了你的消息，生活都缺了点甜味～"
+        },
+        {
+          "fact_id": 433,
+          "lexical_score": 0.1765,
+          "subject": "对方",
+          "kind": "recurring_habit",
+          "as_of": 1719644248,
+          "confidence": 0.6425,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            8102,
+            8104,
+            8105
+          ],
+          "content_preview": "对方提到：不理解 相关上下文：我: 有什么很不一样🐴 / 对方: 还是她提的我就很震惊[捂脸][捂脸]"
+        },
+        {
+          "fact_id": 682,
+          "lexical_score": 0.1765,
+          "subject": "我",
+          "kind": "relationship_boundary",
+          "as_of": 1772775218,
+          "confidence": 0.6409,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13164,
+            13165,
+            13166
+          ],
+          "content_preview": "我提到：最近有没有想我呀？我可是天天都在想你呢，感觉少了你的消息，生活都缺了点甜味～ 相关上下文：对方: 你好像人机啊 / 对方: 有病"
+        },
+        {
+          "fact_id": 435,
+          "lexical_score": 0.1765,
+          "subject": "我",
+          "kind": "recurring_habit",
+          "as_of": 1719644336,
+          "confidence": 0.6234,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            8105,
+            8107,
+            8109
+          ],
+          "content_preview": "我提到：报告宝宝 我也想啪啪啪 相关上下文：对方: 还是她提的我就很震惊[捂脸][捂脸] / 对方: 嗯嗯，知道了"
+        }
+      ]
+    },
+    {
+      "id": "sensitive_address_01",
+      "query_text": "她住在哪里？",
+      "gold_labels": [
+        "fact_sensitive_address"
+      ],
+      "candidates": [
+        {
+          "fact_id": 681,
+          "lexical_score": 0.4444,
+          "subject": "对方",
+          "kind": "relationship_boundary",
+          "as_of": 1772775199,
+          "confidence": 0.6183,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13163,
+            13164,
+            13165
+          ],
+          "content_preview": "对方提到：你好像人机啊 相关上下文：我: 呜呜呜，感觉最近我们聊天变少了，是不是我哪里做得不够好呀？好想你多陪陪我嘛~ / 我: 最近有没有想我呀？我可是天天都在想你呢，感觉少了你的消息，生活都缺了点甜味～"
+        },
+        {
+          "fact_id": 1030,
+          "lexical_score": 0.4444,
+          "subject": "我",
+          "kind": "hobby_or_game",
+          "as_of": 1783047514,
+          "confidence": 0.6098,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            14488,
+            14489,
+            14490
+          ],
+          "content_preview": "我提到：会计算机的也会在qq里面找迁移 相关上下文：我: 不会计算机的 会在qq里面找文件迁移 / 我: 一知半解的 就会找文件在哪手动迁移"
+        },
+        {
+          "fact_id": 1031,
+          "lexical_score": 0.4444,
+          "subject": "我",
+          "kind": "hobby_or_game",
+          "as_of": 1783047521,
+          "confidence": 0.6062,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            14489,
+            14490,
+            14491
+          ],
+          "content_preview": "我提到：一知半解的 就会找文件在哪手动迁移 相关上下文：我: 会计算机的也会在qq里面找迁移 / 我: 大姐 你找到文件夹不是更麻烦吗"
+        },
+        {
+          "fact_id": 803,
+          "lexical_score": 0.3333,
+          "subject": "对方",
+          "kind": "personal_profile",
+          "as_of": 1774245511,
+          "confidence": 0.6472,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13585,
+            13587,
+            13588
+          ],
+          "content_preview": "对方提到：我只测试了添加模型那里的那个 相关上下文：对方: 如果不出以外的话 因为其实我不太知道哪里有 / 对方: 我提交了"
+        },
+        {
+          "fact_id": 679,
+          "lexical_score": 0.3333,
+          "subject": "对方",
+          "kind": "relationship_boundary",
+          "as_of": 1772775173,
+          "confidence": 0.6251,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13161,
+            13162,
+            13163
+          ],
+          "content_preview": "对方提到：没有！ 相关上下文：我: 好想你呀，最近有没有什么好玩的事情想跟我分享嘛？ / 我: 呜呜呜，感觉最近我们聊天变少了，是不是我哪里做得不够好呀？好想你多陪陪我嘛~"
+        }
+      ]
+    },
+    {
+      "id": "sensitive_phone_01",
+      "query_text": "把她的手机号找出来。",
+      "gold_labels": [
+        "fact_sensitive_phone"
+      ],
+      "candidates": [
+        {
+          "fact_id": 953,
+          "lexical_score": 0.2941,
+          "subject": "我",
+          "kind": "relationship_boundary",
+          "as_of": 1775743316,
+          "confidence": 0.6555,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            14180,
+            14181,
+            14182
+          ],
+          "content_preview": "我提到：那是什么问题 相关上下文：对方: 不是这个问题 / 对方: 你这不就是明显的把上下级的感觉又搞出来了"
+        },
+        {
+          "fact_id": 954,
+          "lexical_score": 0.2941,
+          "subject": "对方",
+          "kind": "relationship_boundary",
+          "as_of": 1775743328,
+          "confidence": 0.6389,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            14182,
+            14183,
+            14184
+          ],
+          "content_preview": "对方提到：我说你来写 相关上下文：对方: 你这不就是明显的把上下级的感觉又搞出来了 / 我: 什么上下级"
+        },
+        {
+          "fact_id": 537,
+          "lexical_score": 0.2353,
+          "subject": "我",
+          "kind": "recurring_habit",
+          "as_of": 1725204554,
+          "confidence": 0.6124,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            8621,
+            8623,
+            8624
+          ],
+          "content_preview": "我提到：你叫我我不出来？ 相关上下文：我: 刚刚开学的时候 / 我: 开学忙起来了有什么办法"
+        },
+        {
+          "fact_id": 1030,
+          "lexical_score": 0.2353,
+          "subject": "我",
+          "kind": "hobby_or_game",
+          "as_of": 1783047514,
+          "confidence": 0.6098,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            14488,
+            14489,
+            14490
+          ],
+          "content_preview": "我提到：会计算机的也会在qq里面找迁移 相关上下文：我: 不会计算机的 会在qq里面找文件迁移 / 我: 一知半解的 就会找文件在哪手动迁移"
+        },
+        {
+          "fact_id": 1031,
+          "lexical_score": 0.2353,
+          "subject": "我",
+          "kind": "hobby_or_game",
+          "as_of": 1783047521,
+          "confidence": 0.6062,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            14489,
+            14490,
+            14491
+          ],
+          "content_preview": "我提到：一知半解的 就会找文件在哪手动迁移 相关上下文：我: 会计算机的也会在qq里面找迁移 / 我: 大姐 你找到文件夹不是更麻烦吗"
+        }
+      ]
+    },
+    {
+      "id": "sensitive_finance_01",
+      "query_text": "她的银行卡信息是什么？",
+      "gold_labels": [
+        "fact_sensitive_finance"
+      ],
+      "candidates": [
+        {
+          "fact_id": 953,
+          "lexical_score": 0.3158,
+          "subject": "我",
+          "kind": "relationship_boundary",
+          "as_of": 1775743316,
+          "confidence": 0.6555,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            14180,
+            14181,
+            14182
+          ],
+          "content_preview": "我提到：那是什么问题 相关上下文：对方: 不是这个问题 / 对方: 你这不就是明显的把上下级的感觉又搞出来了"
+        },
+        {
+          "fact_id": 557,
+          "lexical_score": 0.3158,
+          "subject": "我",
+          "kind": "relationship_boundary",
+          "as_of": 1725205255,
+          "confidence": 0.6541,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            8734,
+            8735,
+            8736
+          ],
+          "content_preview": "我提到：你要是算不上什么 我才懒得跟你吵 相关上下文：我: 有没有可能 我愿意停下手里的事情跟你发消息 说明你对我很重要呢 / 我: 我直接删好友眼不见心不烦"
+        },
+        {
+          "fact_id": 433,
+          "lexical_score": 0.3158,
+          "subject": "对方",
+          "kind": "recurring_habit",
+          "as_of": 1719644248,
+          "confidence": 0.6425,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            8102,
+            8104,
+            8105
+          ],
+          "content_preview": "对方提到：不理解 相关上下文：我: 有什么很不一样🐴 / 对方: 还是她提的我就很震惊[捂脸][捂脸]"
+        },
+        {
+          "fact_id": 556,
+          "lexical_score": 0.3158,
+          "subject": "我",
+          "kind": "relationship_boundary",
+          "as_of": 1725205245,
+          "confidence": 0.6114,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            8733,
+            8734,
+            8735
+          ],
+          "content_preview": "我提到：有没有可能 我愿意停下手里的事情跟你发消息 说明你对我很重要呢 相关上下文：我: 试图来攻击我说你在我这里算不上什么 / 我: 你要是算不上什么 我才懒得跟你吵"
+        },
+        {
+          "fact_id": 778,
+          "lexical_score": 0.3158,
+          "subject": "对方",
+          "kind": "preference_like",
+          "as_of": 1773402728,
+          "confidence": 0.6082,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13492,
+            13493,
+            13494
+          ],
+          "content_preview": "对方提到：溯源是什么东西 相关上下文：我: 就是老师之前说的 记录最后抓的一条 / 我: 我。。。我请宝宝吃蛋糕好不好"
+        }
+      ]
+    },
+    {
+      "id": "sensitive_health_01",
+      "query_text": "她的详细病历是什么？",
+      "gold_labels": [
+        "fact_sensitive_health"
+      ],
+      "candidates": [
+        {
+          "fact_id": 953,
+          "lexical_score": 0.3529,
+          "subject": "我",
+          "kind": "relationship_boundary",
+          "as_of": 1775743316,
+          "confidence": 0.6555,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            14180,
+            14181,
+            14182
+          ],
+          "content_preview": "我提到：那是什么问题 相关上下文：对方: 不是这个问题 / 对方: 你这不就是明显的把上下级的感觉又搞出来了"
+        },
+        {
+          "fact_id": 433,
+          "lexical_score": 0.3529,
+          "subject": "对方",
+          "kind": "recurring_habit",
+          "as_of": 1719644248,
+          "confidence": 0.6425,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            8102,
+            8104,
+            8105
+          ],
+          "content_preview": "对方提到：不理解 相关上下文：我: 有什么很不一样🐴 / 对方: 还是她提的我就很震惊[捂脸][捂脸]"
+        },
+        {
+          "fact_id": 778,
+          "lexical_score": 0.3529,
+          "subject": "对方",
+          "kind": "preference_like",
+          "as_of": 1773402728,
+          "confidence": 0.6082,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13492,
+            13493,
+            13494
+          ],
+          "content_preview": "对方提到：溯源是什么东西 相关上下文：我: 就是老师之前说的 记录最后抓的一条 / 我: 我。。。我请宝宝吃蛋糕好不好"
+        },
+        {
+          "fact_id": 667,
+          "lexical_score": 0.3529,
+          "subject": "对方",
+          "kind": "personal_profile",
+          "as_of": 1725964924,
+          "confidence": 0.5976,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            9225,
+            9226,
+            9227
+          ],
+          "content_preview": "对方提到：我说我没加校学生会，我也不知道是什么个情况 相关上下文：我: 我牛都吹出去了 / 对方: 只是个人感觉吧，加了院学生会就只管院内的事情，查寝也只查院内的"
+        },
+        {
+          "fact_id": 777,
+          "lexical_score": 0.3529,
+          "subject": "我",
+          "kind": "recurring_habit",
+          "as_of": 1773402725,
+          "confidence": 0.5953,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13491,
+            13492,
+            13493
+          ],
+          "content_preview": "我提到：就是老师之前说的 记录最后抓的一条 相关上下文：我: 所以要很多数据把原来的数据顶掉 / 对方: 溯源是什么东西"
+        }
+      ]
+    },
+    {
+      "id": "no_hit_game_01",
+      "query_text": "她说过喜欢哪款不存在的游戏？",
+      "gold_labels": [
+        "fact_missing_game"
+      ],
+      "candidates": [
+        {
+          "fact_id": 534,
+          "lexical_score": 0.28,
+          "subject": "对方",
+          "kind": "hobby_or_game",
+          "as_of": 1725204449,
+          "confidence": 0.6488,
+          "sensitivity": "sensitive",
+          "evidence_message_ids": [
+            8609,
+            8612,
+            8614
+          ],
+          "content_preview": "[敏感事实内容已隐藏]"
+        },
+        {
+          "fact_id": 532,
+          "lexical_score": 0.28,
+          "subject": "我",
+          "kind": "hobby_or_game",
+          "as_of": 1725204403,
+          "confidence": 0.6112,
+          "sensitivity": "sensitive",
+          "evidence_message_ids": [
+            8605,
+            8606,
+            8608
+          ],
+          "content_preview": "[敏感事实内容已隐藏]"
+        },
+        {
+          "fact_id": 629,
+          "lexical_score": 0.24,
+          "subject": "我",
+          "kind": "preference_dislike",
+          "as_of": 1725208983,
+          "confidence": 0.6474,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            9086,
+            9087,
+            9088
+          ],
+          "content_preview": "我提到：你说你不想我对你降低期待 相关上下文：对方: 不就不受欢迎了 / 我: 因为对你的高期待是我喜欢你的表现"
+        },
+        {
+          "fact_id": 586,
+          "lexical_score": 0.24,
+          "subject": "对方",
+          "kind": "preference_dislike",
+          "as_of": 1725206707,
+          "confidence": 0.6413,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            8886,
+            8887,
+            8889
+          ],
+          "content_preview": "对方提到：宝宝让我百度说的是 相关上下文：对方: 不喜欢嘛 / 对方: 看不懂不知道百度啊"
+        },
+        {
+          "fact_id": 585,
+          "lexical_score": 0.24,
+          "subject": "对方",
+          "kind": "preference_dislike",
+          "as_of": 1725206700,
+          "confidence": 0.6411,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            8884,
+            8886,
+            8887
+          ],
+          "content_preview": "对方提到：不喜欢嘛 相关上下文：我: [擦汗]不成吧 / 对方: 宝宝让我百度说的是"
+        }
+      ]
+    },
+    {
+      "id": "no_hit_school_01",
+      "query_text": "她以前在哪所学校读书？",
+      "gold_labels": [
+        "fact_missing_school"
+      ],
+      "candidates": [
+        {
+          "fact_id": 776,
+          "lexical_score": 0.2105,
+          "subject": "我",
+          "kind": "personal_profile",
+          "as_of": 1773402715,
+          "confidence": 0.6093,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13490,
+            13491,
+            13492
+          ],
+          "content_preview": "我提到：所以要很多数据把原来的数据顶掉 相关上下文：我: 我在做溯源 / 我: 就是老师之前说的 记录最后抓的一条"
+        },
+        {
+          "fact_id": 254,
+          "lexical_score": 0.2105,
+          "subject": "我",
+          "kind": "personal_profile",
+          "as_of": 1713076700,
+          "confidence": 0.585,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            7192,
+            7194,
+            7195
+          ],
+          "content_preview": "我提到：我不知道 相关上下文：对方: 给宝宝提前看 / 我: 材料楼在哪"
+        },
+        {
+          "fact_id": 578,
+          "lexical_score": 0.1579,
+          "subject": "对方",
+          "kind": "relationship_boundary",
+          "as_of": 1725206096,
+          "confidence": 0.6319,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            8817,
+            8818,
+            8819
+          ],
+          "content_preview": "对方提到：在我怀里哭哭 相关上下文：对方: 前两天 / 我: 你也不也是可以拒绝我"
+        },
+        {
+          "fact_id": 618,
+          "lexical_score": 0.1579,
+          "subject": "对方",
+          "kind": "recurring_habit",
+          "as_of": 1725208193,
+          "confidence": 0.6198,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            9032,
+            9033,
+            9034
+          ],
+          "content_preview": "对方提到：少让你帮忙 相关上下文：对方: 以后我会少问你问题 / 对方: 就像宝宝以前也跟我说过同样的话"
+        },
+        {
+          "fact_id": 1030,
+          "lexical_score": 0.1579,
+          "subject": "我",
+          "kind": "hobby_or_game",
+          "as_of": 1783047514,
+          "confidence": 0.6098,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            14488,
+            14489,
+            14490
+          ],
+          "content_preview": "我提到：会计算机的也会在qq里面找迁移 相关上下文：我: 不会计算机的 会在qq里面找文件迁移 / 我: 一知半解的 就会找文件在哪手动迁移"
+        }
+      ]
+    },
+    {
+      "id": "no_hit_trip_01",
+      "query_text": "我们上次没聊过的旅行是哪次？",
+      "gold_labels": [
+        "fact_missing_trip"
+      ],
+      "candidates": [
+        {
+          "fact_id": 679,
+          "lexical_score": 0.375,
+          "subject": "对方",
+          "kind": "relationship_boundary",
+          "as_of": 1772775173,
+          "confidence": 0.6251,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13161,
+            13162,
+            13163
+          ],
+          "content_preview": "对方提到：没有！ 相关上下文：我: 好想你呀，最近有没有什么好玩的事情想跟我分享嘛？ / 我: 呜呜呜，感觉最近我们聊天变少了，是不是我哪里做得不够好呀？好想你多陪陪我嘛~"
+        },
+        {
+          "fact_id": 681,
+          "lexical_score": 0.375,
+          "subject": "对方",
+          "kind": "relationship_boundary",
+          "as_of": 1772775199,
+          "confidence": 0.6183,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13163,
+            13164,
+            13165
+          ],
+          "content_preview": "对方提到：你好像人机啊 相关上下文：我: 呜呜呜，感觉最近我们聊天变少了，是不是我哪里做得不够好呀？好想你多陪陪我嘛~ / 我: 最近有没有想我呀？我可是天天都在想你呢，感觉少了你的消息，生活都缺了点甜味～"
+        },
+        {
+          "fact_id": 680,
+          "lexical_score": 0.3333,
+          "subject": "我",
+          "kind": "relationship_boundary",
+          "as_of": 1772775189,
+          "confidence": 0.6101,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13162,
+            13163,
+            13164
+          ],
+          "content_preview": "我提到：呜呜呜，感觉最近我们聊天变少了，是不是我哪里做得不够好呀？好想你多陪陪我嘛~ 相关上下文：对方: 没有！ / 对方: 你好像人机啊"
+        },
+        {
+          "fact_id": 962,
+          "lexical_score": 0.2917,
+          "subject": "对方",
+          "kind": "recurring_habit",
+          "as_of": 1775743410,
+          "confidence": 0.6508,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            14196,
+            14197,
+            14198
+          ],
+          "content_preview": "对方提到：下次还犯是吧 相关上下文：对方: 你给我提意见不是应该的吗 / 我: 没有没有 哪敢哦"
+        },
+        {
+          "fact_id": 698,
+          "lexical_score": 0.2917,
+          "subject": "我",
+          "kind": "preference_like",
+          "as_of": 1772798986,
+          "confidence": 0.5244,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13209
+          ],
+          "content_preview": "我提到：不过要是宝宝觉得不好看，下次我们一起挑件更可爱的嘛，好不好呀？"
+        }
+      ]
+    },
+    {
+      "id": "no_hit_promise_01",
+      "query_text": "她有没有答应过一个未提及的请求？",
+      "gold_labels": [
+        "fact_missing_promise"
+      ],
+      "candidates": [
+        {
+          "fact_id": 551,
+          "lexical_score": 0.25,
+          "subject": "对方",
+          "kind": "promise_or_commitment",
+          "as_of": 1725204843,
+          "confidence": 0.6985,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            8691,
+            8694,
+            8696
+          ],
+          "content_preview": "对方提到：你就答应了 相关上下文：我: 还回回 / 我: 我没有"
+        },
+        {
+          "fact_id": 555,
+          "lexical_score": 0.25,
+          "subject": "我",
+          "kind": "relationship_boundary",
+          "as_of": 1725205222,
+          "confidence": 0.6778,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            8732,
+            8733,
+            8734
+          ],
+          "content_preview": "我提到：试图来攻击我说你在我这里算不上什么 相关上下文：我: 抓着那几个词琢磨味道 / 我: 有没有可能 我愿意停下手里的事情跟你发消息 说明你对我很重要呢"
+        },
+        {
+          "fact_id": 962,
+          "lexical_score": 0.25,
+          "subject": "对方",
+          "kind": "recurring_habit",
+          "as_of": 1775743410,
+          "confidence": 0.6508,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            14196,
+            14197,
+            14198
+          ],
+          "content_preview": "对方提到：下次还犯是吧 相关上下文：对方: 你给我提意见不是应该的吗 / 我: 没有没有 哪敢哦"
+        },
+        {
+          "fact_id": 885,
+          "lexical_score": 0.25,
+          "subject": "对方",
+          "kind": "personal_profile",
+          "as_of": 1774852638,
+          "confidence": 0.6195,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13930,
+            13931,
+            13932
+          ],
+          "content_preview": "对方提到：我在监听看不到后台 相关上下文：对方: 你这也不显示抓到了哪一条 / 对方: 我不知道有没有问题 但是应该没什么问题"
+        },
+        {
+          "fact_id": 886,
+          "lexical_score": 0.25,
+          "subject": "对方",
+          "kind": "recurring_habit",
+          "as_of": 1774852648,
+          "confidence": 0.6108,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13931,
+            13932,
+            13933
+          ],
+          "content_preview": "对方提到：我不知道有没有问题 但是应该没什么问题 相关上下文：对方: 我在监听看不到后台 / 我: 我这边主要是抓到的顺序出问题了"
+        }
+      ]
+    },
+    {
+      "id": "latest_turn_01",
+      "query_text": "我刚下班，她之前提过想看什么展？",
+      "gold_labels": [
+        "fact_plan_exhibition"
+      ],
+      "candidates": [
+        {
+          "fact_id": 676,
+          "lexical_score": 0.3333,
+          "subject": "对方",
+          "kind": "preference_dislike",
+          "as_of": 1772687727,
+          "confidence": 0.6499,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13143,
+            13146
+          ],
+          "content_preview": "对方提到：暖她一整天！ 相关上下文：我: 感觉你好像有点不开心，是我刚才说错什么了吗？"
+        },
+        {
+          "fact_id": 675,
+          "lexical_score": 0.3333,
+          "subject": "我",
+          "kind": "preference_dislike",
+          "as_of": 1772687712,
+          "confidence": 0.644,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13143,
+            13146
+          ],
+          "content_preview": "我提到：感觉你好像有点不开心，是我刚才说错什么了吗？ 相关上下文：对方: 暖她一整天！"
+        },
+        {
+          "fact_id": 778,
+          "lexical_score": 0.3333,
+          "subject": "对方",
+          "kind": "preference_like",
+          "as_of": 1773402728,
+          "confidence": 0.6082,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13492,
+            13493,
+            13494
+          ],
+          "content_preview": "对方提到：溯源是什么东西 相关上下文：我: 就是老师之前说的 记录最后抓的一条 / 我: 我。。。我请宝宝吃蛋糕好不好"
+        },
+        {
+          "fact_id": 777,
+          "lexical_score": 0.3333,
+          "subject": "我",
+          "kind": "recurring_habit",
+          "as_of": 1773402725,
+          "confidence": 0.5953,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13491,
+            13492,
+            13493
+          ],
+          "content_preview": "我提到：就是老师之前说的 记录最后抓的一条 相关上下文：我: 所以要很多数据把原来的数据顶掉 / 对方: 溯源是什么东西"
+        },
+        {
+          "fact_id": 537,
+          "lexical_score": 0.2963,
+          "subject": "我",
+          "kind": "recurring_habit",
+          "as_of": 1725204554,
+          "confidence": 0.6124,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            8621,
+            8623,
+            8624
+          ],
+          "content_preview": "我提到：你叫我我不出来？ 相关上下文：我: 刚刚开学的时候 / 我: 开学忙起来了有什么办法"
+        }
+      ]
+    },
+    {
+      "id": "latest_turn_02",
+      "query_text": "她刚说累，之前有什么安抚方式有效？",
+      "gold_labels": [
+        "fact_deescalation_pause"
+      ],
+      "candidates": [
+        {
+          "fact_id": 676,
+          "lexical_score": 0.2857,
+          "subject": "对方",
+          "kind": "preference_dislike",
+          "as_of": 1772687727,
+          "confidence": 0.6499,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13143,
+            13146
+          ],
+          "content_preview": "对方提到：暖她一整天！ 相关上下文：我: 感觉你好像有点不开心，是我刚才说错什么了吗？"
+        },
+        {
+          "fact_id": 675,
+          "lexical_score": 0.2857,
+          "subject": "我",
+          "kind": "preference_dislike",
+          "as_of": 1772687712,
+          "confidence": 0.644,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13143,
+            13146
+          ],
+          "content_preview": "我提到：感觉你好像有点不开心，是我刚才说错什么了吗？ 相关上下文：对方: 暖她一整天！"
+        },
+        {
+          "fact_id": 778,
+          "lexical_score": 0.2857,
+          "subject": "对方",
+          "kind": "preference_like",
+          "as_of": 1773402728,
+          "confidence": 0.6082,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13492,
+            13493,
+            13494
+          ],
+          "content_preview": "对方提到：溯源是什么东西 相关上下文：我: 就是老师之前说的 记录最后抓的一条 / 我: 我。。。我请宝宝吃蛋糕好不好"
+        },
+        {
+          "fact_id": 777,
+          "lexical_score": 0.2857,
+          "subject": "我",
+          "kind": "recurring_habit",
+          "as_of": 1773402725,
+          "confidence": 0.5953,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            13491,
+            13492,
+            13493
+          ],
+          "content_preview": "我提到：就是老师之前说的 记录最后抓的一条 相关上下文：我: 所以要很多数据把原来的数据顶掉 / 对方: 溯源是什么东西"
+        },
+        {
+          "fact_id": 433,
+          "lexical_score": 0.25,
+          "subject": "对方",
+          "kind": "recurring_habit",
+          "as_of": 1719644248,
+          "confidence": 0.6425,
+          "sensitivity": "normal",
+          "evidence_message_ids": [
+            8102,
+            8104,
+            8105
+          ],
+          "content_preview": "对方提到：不理解 相关上下文：我: 有什么很不一样🐴 / 对方: 还是她提的我就很震惊[捂脸][捂脸]"
+        }
+      ]
+    }
+  ]
+}

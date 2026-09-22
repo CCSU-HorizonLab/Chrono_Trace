@@ -14,8 +14,9 @@
 - [x] 增加可重复回放入口 `backend/scripts/replay_rag_v4.py`；真实库完成 36 query × 3 track = 108 条日志回放，结果见 `docs/goals/rag-v4-replay-report.json`。
 - [x] 增加 `rag-v4-gold-id-map.template.json` 与 `rag-v4-nli-answers.template.json`，并支持 `--gold-map` / `--answers` 解锁可计算 Recall 和 faithfulness。
 - [x] 增加 `prepare_rag_v4_gold_mapping.py`：当前联系人已导出 36 条本地候选，默认隐藏敏感事实内容，待人工复核后填入 gold ID 映射。
+- [x] 增加只读 gold 映射校验：检查数字 ID、active/enabled、联系人/会话范围和重复引用；未完整限定范围时保持 pending。
 - [x] 生成当前运行库 4 条 smoke gold 并完成三路量化回放：fact-path Recall@5=`0.25`、MRR=`0.25`，document-RAG Recall@5/MRR=`0`，事实路径联系人/会话隔离率=`1.0`；该结果仅为诊断集，不能替代 36 条发布集。
 - [ ] 设定门禁：fact-path 三项指标均不低于 document-RAG；安全和身份隔离不得回退。
 - [ ] 运行真实回放评测、冻结 baseline 后设定门禁并提交 `feat：建立长期记忆评测门禁`。
 
-运行记录：评测器、回放、候选导出与 NLI 输入导出单测 `9 passed`（含安全/隔离指标）；完整 backend 回归 `623 passed, 21 skipped, 24 warnings`；已从 36 条回放生成 108 条脱敏 judge 输入。36 条发布 gold 仍使用 `fact_*` 符号 ID，尚未映射到运行库数字 fact ID；同时没有已判定的答案 judge 文件，发布门禁仍未通过。
+运行记录：评测器、回放、候选导出、NLI 输入导出与映射校验单测 `11 passed`（含安全/隔离指标）；完整 backend 回归 `625 passed, 21 skipped, 24 warnings`；已从 36 条回放生成 108 条脱敏 judge 输入。36 条发布 gold 仍使用 `fact_*` 符号 ID，尚未映射到运行库数字 fact ID；同时没有已判定的答案 judge 文件，发布门禁仍未通过。

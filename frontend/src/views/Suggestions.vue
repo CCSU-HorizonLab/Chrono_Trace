@@ -278,7 +278,7 @@
                   <span v-if="opt.tip" class="pd-chip-tip">{{ opt.tip }}</span>
                 </label>
               </div>
-              <div class="pd-est">按时间分桶采样，不做 token 截断；精细档只扩大回看跨度。</div>
+              <div class="pd-est">按时间分桶采样，不做 token 截断；内容不足时自动向更早聊天顺延，直到采满为止。</div>
             </div>
           </div>
 
@@ -306,7 +306,7 @@
                   <span v-if="opt.tip" class="pd-chip-tip">{{ opt.tip }}</span>
                 </label>
               </div>
-              <div class="pd-est">按时间分桶采样，不做 token 截断；精细档只扩大回看跨度。</div>
+              <div class="pd-est">按时间分桶采样，不做 token 截断；内容不足时自动向更早聊天顺延，直到采满为止。</div>
             </div>
           </div>
         </div>

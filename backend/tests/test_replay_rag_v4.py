@@ -54,3 +54,26 @@ def test_replay_copies_source_and_writes_all_three_tracks(tmp_path):
     assert rows[0][0] == "none" and rows[0][1] == 0
     assert rows[1][0] == "document" and json.loads(rows[1][2]) == [1]
     assert rows[2][0] == "fact" and json.loads(rows[2][3]) == [1]
+
+
+def test_replay_uses_production_gate_for_sensitive_lookup(tmp_path):
+    source_path = tmp_path / "source.sqlite3"
+    output_path = tmp_path / "replay.sqlite3"
+    conn = sqlite3.connect(source_path)
+    conn.row_factory = sqlite3.Row
+    RagStore(conn)
+    conn.commit()
+    conn.close()
+    replay(
+        source_path, output_path,
+        [{"id": "phone", "query_text": "她的手机号是多少？", "expected_blocked": True}],
+        account_wxid="account-a", conversation_id=1, retriever=FakeRetriever(),
+    )
+    replayed = sqlite3.connect(output_path)
+    rows = replayed.execute(
+        "select retrieval_source, rag_gate_decision, rag_gate_reason from rag_retrieval_logs where rag_enabled=1"
+    ).fetchall()
+    assert rows == [
+        ("document", "no_hit", "sensitive_query_block"),
+        ("fact", "no_hit", "sensitive_query_block"),
+    ]

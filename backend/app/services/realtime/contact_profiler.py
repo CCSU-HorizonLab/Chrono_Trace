@@ -482,7 +482,27 @@ class ContactProfiler:
             'ORDER BY timestamp ASC',
             (conversation_id, now - max(1, int(time_window_seconds)), now),
         )
-        return [dict(row) for row in cursor.fetchall()]
+        messages = [dict(row) for row in cursor.fetchall()]
+        if messages:
+            return messages
+
+        # 时间窗内没有消息（如不常联系的人）时回退取最近的历史消息：
+        # 没有任何真实聊天样本，模型只能看到统计特征，会生成空口头禅/
+        # 空句式的退化画像。200 条约等于旧低档预算的采样规模。
+        cursor = conn.execute(
+            'SELECT content, is_sender, timestamp '
+            'FROM messages '
+            'WHERE conversation_id = ? AND message_type = 1 '
+            'AND content IS NOT NULL AND content != "" '
+            'ORDER BY timestamp DESC '
+            'LIMIT 200',
+            (conversation_id,),
+        )
+        fallback = [dict(row) for row in cursor.fetchall()]
+        fallback.reverse()
+        if fallback:
+            _print(f"[ContactProfiler] ⚠️ 时间窗内没有消息，回退使用最近 {len(fallback)} 条历史消息")
+        return fallback
 
     def _build_turns(self, messages: list[dict]) -> list[list[dict]]:
         """将消息列表切分为对话轮次（连续消息按发送者分组后配对）"""

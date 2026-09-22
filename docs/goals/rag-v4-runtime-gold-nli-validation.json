@@ -1,0 +1,12 @@
+{
+  "status": "ready",
+  "prepared_cases": 129,
+  "answer_cases": 129,
+  "missing_cases": 0,
+  "label_counts": {
+    "contradicted": 1,
+    "entailed": 19,
+    "unknown": 109
+  },
+  "errors": []
+}

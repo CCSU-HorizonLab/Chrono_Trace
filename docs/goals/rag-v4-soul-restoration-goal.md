@@ -2,7 +2,7 @@
 
 ## 状态
 
-进行中。P0–P2 已完成；P3 已完成 36×3 回放和 108 条脱敏 answer+judge，当前仅等待正式 gold ID 映射后完成 Recall/MRR 发布门禁。事实路径 faithfulness=`0.2778`，高于 document-RAG=`0.1111` 和 no-RAG=`0.0833`；smoke 泛化 Recall@5=`1.0`、MRR=`0.7778`。全量后端回归：629 passed、21 skipped、24 warnings；NLI/结构化证据定向回归：15 passed；前端构建与 smoke 通过。
+已完成。P0–P3 全部通过测试与量化门禁。最终冻结集包含 38 条运行事实数字 ID 样例和 5 条敏感安全样例；fact-path Recall@5=`0.6316`、MRR=`0.4504`、faithfulness=`0.3256`，对应 bootstrap 下界均高于 document-RAG；敏感阻断 precision/recall=`1.0/1.0`，联系人/会话隔离率=`1.0`，发布门禁为 `pass`。全量后端回归：659 passed、21 skipped、24 warnings；前端构建与 smoke 在 P3 前序阶段通过。
 
 ## 目标
 

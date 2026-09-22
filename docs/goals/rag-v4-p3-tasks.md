@@ -20,4 +20,4 @@
 - [ ] 设定门禁：fact-path 三项指标均不低于 document-RAG；安全和身份隔离不得回退。
 - [ ] 运行真实回放评测、冻结 baseline 后设定门禁并提交 `feat：建立长期记忆评测门禁`。
 
-运行记录：评测器、回放、候选导出、NLI 输入导出与映射校验单测 `11 passed`（含安全/隔离指标）；完整 backend 回归 `626 passed, 21 skipped, 24 warnings`；前端 `npm run build` 通过；已从 36 条回放生成 108 条脱敏 judge 输入。36 条发布 gold 仍使用 `fact_*` 符号 ID，尚未映射到运行库数字 fact ID；同时没有已判定的答案 judge 文件，发布门禁仍未通过。
+运行记录：评测器、回放、候选导出、NLI 输入导出与映射校验单测 `11 passed`（含安全/隔离指标）；完整 backend 回归 `626 passed, 21 skipped, 24 warnings`；前端 `npm run build` 与 smoke `3 passed`；真实库已完成非破坏性 `fact_read_mode=inherit` schema migration（169 个联系人索引状态）。已从 36 条回放生成 108 条脱敏 judge 输入。36 条发布 gold 仍使用 `fact_*` 符号 ID，尚未映射到运行库数字 fact ID；同时没有已判定的答案 judge 文件，发布门禁仍未通过。

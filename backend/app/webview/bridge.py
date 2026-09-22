@@ -1474,6 +1474,7 @@ class Bridge:
                     s.last_error,
                     COALESCE(s.storage_bytes, 0) AS storage_bytes,
                     COALESCE(s.enabled, 1) AS enabled,
+                    COALESCE(s.fact_read_mode, 'inherit') AS fact_read_mode,
                     s.updated_at
                 FROM conversations c
                 LEFT JOIN rag_index_status s
@@ -1559,6 +1560,26 @@ class Bridge:
             return {"ok": True, "enabled": bool(enabled)}
         except Exception as e:
             logger.error(f"[Bridge] 更新联系人 RAG 启用状态失败: {e}")
+            return {"ok": False, "error": str(e)}
+
+    def set_rag_fact_read_mode(
+        self,
+        conversation_id: int,
+        mode: str,
+        account_wxid: str = "",
+    ) -> dict[str, Any]:
+        """Switch one contact between fact-first and document rollback reads."""
+        try:
+            from ..services.realtime.rag_store import RagStore
+
+            resolved_account = self._resolve_account_wxid(account_wxid)
+            normalized_mode = str(mode or "").strip().lower()
+            store = RagStore()
+            store.set_fact_read_mode(resolved_account, int(conversation_id), normalized_mode)
+            store.conn.commit()
+            return {"ok": True, "fact_read_mode": normalized_mode}
+        except Exception as e:
+            logger.error(f"[Bridge] 更新联系人事实读侧模式失败: {e}")
             return {"ok": False, "error": str(e)}
     
     def select_file(self, title: str = "选择文件", file_types: str = "*.*") -> dict[str, Any]:

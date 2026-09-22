@@ -87,6 +87,7 @@ class RagStore:
                 last_error TEXT,
                 storage_bytes INTEGER DEFAULT 0,
                 enabled INTEGER DEFAULT 1,
+                fact_read_mode TEXT DEFAULT 'inherit',
                 index_version TEXT DEFAULT 'v1',
                 updated_at INTEGER NOT NULL,
                 UNIQUE(account_wxid, conversation_id)
@@ -222,8 +223,13 @@ class RagStore:
                 existing.add(str(row["name"]))
             except Exception:
                 existing.add(str(row[1]))
-        if "index_version" not in existing:
-            self.conn.execute("ALTER TABLE rag_index_status ADD COLUMN index_version TEXT DEFAULT 'v1'")
+        columns = {
+            "index_version": "TEXT DEFAULT 'v1'",
+            "fact_read_mode": "TEXT DEFAULT 'inherit'",
+        }
+        for name, definition in columns.items():
+            if name not in existing:
+                self.conn.execute(f"ALTER TABLE rag_index_status ADD COLUMN {name} {definition}")
 
     def _ensure_retrieval_log_columns(self) -> None:
         existing = set()
@@ -294,6 +300,7 @@ class RagStore:
         dirty_since: int | None | object = _UNSET,
         last_error: str | None | object = _UNSET,
         enabled: bool | None = None,
+        fact_read_mode: str | None = None,
         index_version: str | None = None,
     ) -> None:
         if status not in INDEX_STATUSES:
@@ -304,14 +311,17 @@ class RagStore:
         mode = privacy_mode or current.get("privacy_mode") or RAG_DEFAULTS["rag_privacy_mode"]
         resolved_dirty_since = current.get("dirty_since") if dirty_since is _UNSET else dirty_since
         resolved_last_error = current.get("last_error") if last_error is _UNSET else last_error
+        resolved_fact_read_mode = fact_read_mode or current.get("fact_read_mode") or "inherit"
+        if resolved_fact_read_mode not in {"inherit", "facts", "documents"}:
+            raise ValueError(f"invalid fact read mode: {resolved_fact_read_mode}")
         now = _now()
         self.conn.execute(
             """
             INSERT INTO rag_index_status
             (account_wxid, conversation_id, status, embedding_model, embedding_dim, privacy_mode,
              document_count, vector_count, dirty_since, last_indexed_at, last_error, storage_bytes,
-             enabled, index_version, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             enabled, fact_read_mode, index_version, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(account_wxid, conversation_id) DO UPDATE SET
                 status = excluded.status,
                 embedding_model = excluded.embedding_model,
@@ -324,6 +334,7 @@ class RagStore:
                 last_error = excluded.last_error,
                 storage_bytes = excluded.storage_bytes,
                 enabled = excluded.enabled,
+                fact_read_mode = excluded.fact_read_mode,
                 index_version = excluded.index_version,
                 updated_at = excluded.updated_at
             """,
@@ -341,6 +352,7 @@ class RagStore:
                 resolved_last_error,
                 self.estimate_storage_bytes(account_wxid, conversation_id),
                 int(enabled if enabled is not None else current.get("enabled", 1)),
+                resolved_fact_read_mode,
                 index_version or current.get("index_version") or "v1",
                 now,
             ),
@@ -694,6 +706,24 @@ class RagStore:
             conversation_id,
             status=str((current or {}).get("status") or "pending"),
             enabled=enabled,
+        )
+
+    def set_fact_read_mode(self, account_wxid: str, conversation_id: int, mode: str) -> None:
+        """Set a per-contact read-side rollout/rollback override.
+
+        ``facts`` prefers active facts with document evidence fallback;
+        ``documents`` rolls only this contact back to the legacy document path;
+        ``inherit`` follows the global setting.  Fact writes are unaffected.
+        """
+        mode = str(mode or "").strip().lower()
+        if mode not in {"inherit", "facts", "documents"}:
+            raise ValueError(f"invalid fact read mode: {mode}")
+        current = self.get_status(account_wxid, conversation_id) or {}
+        self.upsert_status(
+            account_wxid,
+            conversation_id,
+            status=str(current.get("status") or "pending"),
+            fact_read_mode=mode,
         )
 
     def estimate_storage_bytes(self, account_wxid: str, conversation_id: int) -> int:

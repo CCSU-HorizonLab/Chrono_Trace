@@ -159,6 +159,16 @@
                 </div>
               </div>
               <div class="rag-contact-actions">
+                <select
+                  class="mini-select"
+                  :value="item.fact_read_mode || 'inherit'"
+                  title="该联系人的事实读侧模式"
+                  @change="handleFactReadModeChange(item, $event)"
+                >
+                  <option value="inherit">跟随全局</option>
+                  <option value="facts">事实优先</option>
+                  <option value="documents">文档回退</option>
+                </select>
                 <button class="mini-btn" @click.prevent="toggleRagContact(item)">
                   {{ item.enabled ? '禁用' : '启用' }}
                 </button>
@@ -939,6 +949,22 @@ async function toggleRagContact(item: any) {
   await refreshRagStatus()
 }
 
+async function handleFactReadModeChange(item: any, event: Event) {
+  const target = event.target as HTMLSelectElement
+  const mode = target.value as 'inherit' | 'facts' | 'documents'
+  const result = await api.set_rag_fact_read_mode(
+    Number(item.conversation_id),
+    mode,
+    activeAccountWxid.value,
+  )
+  if (!result?.ok) {
+    await showDialog('更新事实读侧模式失败: ' + (result?.error || '未知错误'))
+    await refreshRagStatus()
+    return
+  }
+  item.fact_read_mode = mode
+}
+
 function formatBytes(value: number) {
   if (!value) return '0 B'
   if (value < 1024) return `${value} B`
@@ -1528,6 +1554,15 @@ onMounted(() => {
   display: flex;
   flex-shrink: 0;
   gap: 8px;
+}
+.mini-select {
+  border: 1px solid var(--ct-border-color);
+  background: var(--ct-bg-secondary);
+  color: var(--ct-text-secondary);
+  border-radius: 8px;
+  padding: 5px 8px;
+  font-size: 12px;
+  max-width: 112px;
 }
 
 .maintenance-card {

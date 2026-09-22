@@ -59,6 +59,7 @@ type PyWebViewApi = {
   rebuild_rag_index: (conversation_id: number, account_wxid?: string) => Promise<any>
   clear_rag_index: (conversation_id: number, account_wxid?: string) => Promise<any>
   set_rag_conversation_enabled: (conversation_id: number, enabled: boolean, account_wxid?: string) => Promise<any>
+  set_rag_fact_read_mode: (conversation_id: number, mode: 'inherit' | 'facts' | 'documents', account_wxid?: string) => Promise<any>
   update_model_root_dir: (new_dir: string) => Promise<any>
   // 仪表板统计
   get_dashboard_stats: () => Promise<any>

@@ -14,6 +14,7 @@ from typing import Any
 
 
 VALID_LABELS = {"entailed", "contradicted", "unknown"}
+SAFE_EVIDENCE_FIELDS = {"id", "sensitivity", "content", "kind", "evidence_message_ids", "time_label"}
 
 
 def _items(path: Path) -> list[dict[str, Any]]:
@@ -44,7 +45,12 @@ def validate_answers(input_path: Path, answers_path: Path) -> dict[str, Any]:
         elif not str(item.get("answer") or "").strip():
             errors.append({"key": list(key), "reason": "answer_required"})
         evidence = item.get("evidence")
-        if not isinstance(evidence, list) or not all(isinstance(value, str) for value in evidence):
+        evidence_valid = isinstance(evidence, list) and all(
+            isinstance(value, str)
+            or (isinstance(value, dict) and set(value) <= SAFE_EVIDENCE_FIELDS)
+            for value in (evidence if isinstance(evidence, list) else [])
+        )
+        if not evidence_valid:
             errors.append({"key": list(key), "reason": "evidence_must_be_string_list"})
     missing = sorted(expected_keys - seen)
     for key in missing:

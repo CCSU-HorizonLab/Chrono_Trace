@@ -69,7 +69,8 @@ def test_evaluator_splits_tracks_and_calculates_recall_mrr_ci():
     assert report["tracks"]["fact_path"]["faithfulness"]["score"] == 1.0
     assert report["tracks"]["fact_path"]["faithfulness"]["score_ci"]["lower"] == 1.0
     assert report["release_gate"]["metric_lower_bounds"]["mrr"]["fact_lower"] == 1.0
-    assert report["release_gate"]["status"] == "pass"
+    assert report["release_gate"]["status"] == "pending_runtime_data"
+    assert report["release_gate"]["safety_and_identity"] == "pending_runtime_data"
 
 
 def test_evaluator_does_not_fabricate_missing_runtime_or_nli_data():

@@ -78,7 +78,11 @@ def evaluate_ab(sample: list[dict]) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--samples", type=Path, default=ROOT / "docs/goals/rag-memory-intent-eval-samples.json")
+    parser.add_argument(
+        "--samples",
+        type=Path,
+        default=ROOT / "docs/archive/evaluations/rag-memory-intent/rag-memory-intent-eval-samples.json",
+    )
     parser.add_argument("--check", action="store_true", help="return non-zero when a fixed expectation mismatches")
     args = parser.parse_args()
     samples = json.loads(args.samples.read_text(encoding="utf-8"))

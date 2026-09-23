@@ -10,8 +10,8 @@
 - [x] 发布门禁按 Recall@5、MRR、faithfulness 的 bootstrap 下界比较事实路径与 document-RAG，安全/隔离同步执行不回退判断；事实读侧门槛由 `rag_fact_score_threshold` 提供待评测校准入口。
 - [x] 支持对脱敏答案与注入 evidence 的外部 NLI 判定输入，输出 faithfulness 分数、judge 版本与 prompt 版本；缺少 judge 数据时明确 pending。
 - [x] 增加只读脱敏 NLI 输入导出：按三路回放生成 query/evidence 包，敏感证据仅保留 ID，答案与标签留给外部 judge。
-- [x] 生成 no-RAG、document-RAG、fact-path 三路报告 JSON，保存到 `docs/goals/rag-v4-eval-report.json`；当前真实库有日志但未匹配冻结 gold，指标为 pending_runtime_data。
-- [x] 增加可重复回放入口 `backend/scripts/replay_rag_v4.py`；真实库完成 36 query × 3 track = 108 条日志回放，结果见 `docs/goals/rag-v4-replay-report.json`。
+- [x] 生成 no-RAG、document-RAG、fact-path 三路报告 JSON，保存到 [归档评测产物](../../evaluations/rag-v4/rag-v4-eval-report.json)；当前真实库有日志但未匹配冻结 gold，指标为 pending_runtime_data。
+- [x] 增加可重复回放入口 `backend/scripts/replay_rag_v4.py`；真实库完成 36 query × 3 track = 108 条日志回放，结果见 [归档评测产物](../../evaluations/rag-v4/rag-v4-replay-report.json)。
 - [x] 增加 `rag-v4-gold-id-map.template.json` 与 `rag-v4-nli-answers.template.json`，并支持 `--gold-map` / `--answers` 解锁可计算 Recall 和 faithfulness。
 - [x] 增加 `prepare_rag_v4_gold_mapping.py`：当前联系人已导出 36 条本地候选，默认隐藏敏感事实内容，待人工复核后填入 gold ID 映射。
 - [x] 增加只读 gold 映射校验：检查数字 ID、active/enabled、联系人/会话范围和重复引用；未完整限定范围时保持 pending。

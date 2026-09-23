@@ -18,7 +18,7 @@
 | 当前事实抽取主要是 embedding 原型匹配和阈值判断，不是 LLM 结构化抽取 | 已证实 | `rag_semantic_memory.py::SemanticFactExtractor` |
 | 门控包含多种 doc_type、分数、时间和意图条件 | 已证实 | `rag_relevance_gate.py`、`rag_retriever.py`、`rag_context_builder.py` |
 | 多层门控可能把可召回事实变成 skip/no-hit | 推断 | 需要通过 `rag_retrieval_logs` 聚合验证 |
-| 当前评测样例为 8 条，主要是人工检查字段 | 已证实 | `docs/goals/rag-v1-eval-samples.json` 和评测模板 |
+| 当前评测样例为 8 条，主要是人工检查字段 | 已证实 | `docs/archive/evaluations/rag-v1/rag-v1-eval-samples.json` 和评测模板 |
 | 真实 Recall@5、MRR、faithfulness、门控 skip 基线 | 未验证 | 仓库没有已产出的运行结果 |
 
 “不可救药”“F”等措辞应保留为评审评级，不应写成运行时事实。

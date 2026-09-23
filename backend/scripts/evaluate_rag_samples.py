@@ -41,12 +41,12 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--samples",
-        default="docs/goals/rag-v1-eval-samples.json",
+        default="docs/archive/evaluations/rag-v1/rag-v1-eval-samples.json",
         help="Path to anonymized RAG v1 evaluation samples.",
     )
     parser.add_argument(
         "--out",
-        default="docs/goals/rag-v1-eval-report.template.json",
+        default="docs/archive/evaluations/rag-v1/rag-v1-eval-report.template.json",
         help="Where to write the manual comparison report template.",
     )
     parser.add_argument(

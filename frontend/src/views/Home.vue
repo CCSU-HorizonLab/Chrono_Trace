@@ -1046,6 +1046,12 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  color: #ffffff;
+}
+
+.icon-wrap svg {
+  color: #ffffff;
+  stroke: #ffffff;
 }
 
 .bg-yellow {

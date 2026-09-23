@@ -186,6 +186,7 @@
             :items="ragStatus.items"
             :loading="ragStatus.loading"
             :account-wxid="activeAccountWxid"
+            :user-avatar="getActiveAccount()?.avatar"
             @refresh="refreshRagStatus"
           />
         </div>

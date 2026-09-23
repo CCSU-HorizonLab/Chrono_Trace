@@ -1106,7 +1106,9 @@ def test_context_builder_first_contact_without_index_injects_hot_context_and_log
     context = {
         "account_wxid": "wxid_a",
         "conversation_id": 1,
-        "recent_messages": [{"sender_attr": "other", "content": "拿铁"}],
+        "recent_messages": [
+            {"sender_attr": "other", "content": "拿铁", "timestamp": int(time.time())}
+        ],
         "user_context": "她之前说过喜欢拿铁吗",
     }
 
@@ -1172,6 +1174,36 @@ def test_context_builder_does_not_treat_old_recent_messages_as_hot_context(monke
     assert "retrieval_context" not in context
     log = conn.execute("SELECT * FROM rag_retrieval_logs").fetchone()
     assert log["degrade_reason"] == "index_not_ready"
+
+
+def test_hot_context_rejects_self_echo_and_messages_without_timestamp():
+    builder = RagContextBuilder(store=RagStore(_conn()))
+
+    self_echo = builder._build_hot_context_items(
+        {
+            "recent_messages": [
+                {
+                    "sender_attr": "self",
+                    "content": "我们一起玩过什么游戏",
+                    "timestamp": int(time.time()),
+                }
+            ]
+        },
+        account_wxid="wxid_a",
+        conversation_id=1,
+        query="我们一起玩过什么游戏",
+        expanded_terms=[],
+    )
+    untrusted_legacy_time = builder._build_hot_context_items(
+        {"recent_messages": [{"sender_attr": "other", "content": "很久以前的旧消息"}]},
+        account_wxid="wxid_a",
+        conversation_id=1,
+        query="之前说过什么",
+        expanded_terms=[],
+    )
+
+    assert self_echo == []
+    assert untrusted_legacy_time == []
 
 
 def test_stale_index_uses_old_documents_and_queues_rebuild(monkeypatch):

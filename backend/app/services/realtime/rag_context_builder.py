@@ -650,7 +650,12 @@ class RagContextBuilder:
             account_wxid=account_wxid,
             conversation_id=conversation_id,
         )
-        if not messages:
+        # A manual lookup question is often present in the same realtime
+        # buffer as the conversation.  It is not evidence for itself: without
+        # at least one actual counterparty turn, a hot context would merely
+        # echo "我：我们一起玩过什么游戏" back into the prompt and be displayed
+        # as a false historical hit while the index is still pending.
+        if not messages or not any(not int(msg.get("is_sender") or 0) for msg in messages):
             return []
         rendered = []
         source_ts = 0
@@ -759,10 +764,16 @@ class RagContextBuilder:
             return None
         sender_attr = str(msg.get("sender_attr") or "").lower()
         is_sender = 1 if sender_attr == "self" or msg.get("is_sender") == 1 else 0
+        # Never manufacture a timestamp for an un-timestamped legacy row.
+        # Doing so makes an old message look like live context, letting it
+        # bypass the one-day hot-context limit and masquerade as a RAG hit.
+        raw_timestamp = msg.get("timestamp") or msg.get("created_at")
         try:
-            timestamp = int(msg.get("timestamp") or msg.get("created_at") or time.time())
+            timestamp = int(raw_timestamp)
         except (TypeError, ValueError):
-            timestamp = int(time.time())
+            return None
+        if timestamp <= 0:
+            return None
         try:
             message_id = int(msg.get("id") or 0)
         except (TypeError, ValueError):

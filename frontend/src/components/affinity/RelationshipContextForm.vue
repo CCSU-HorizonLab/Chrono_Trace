@@ -4,8 +4,11 @@
       <div v-if="modelValue" class="dialog-overlay" @click="handleClose">
         <div class="dialog-container" @click.stop>
           <div class="dialog-header">
-            <h3>📋 填写关系信息</h3>
-            <button class="close-btn" @click="handleClose">×</button>
+            <h3 style="display: flex; align-items: center; gap: 8px;">
+              <ClipboardList :size="18" style="color: var(--ct-color-primary);" />
+              <span>填写关系信息</span>
+            </h3>
+            <button class="close-btn" @click="handleClose" title="关闭"><X :size="18" /></button>
           </div>
           
           <div class="dialog-body">
@@ -29,7 +32,9 @@
                     v-model="form.relationship_type"
                     class="sr-only"
                   />
-                  <span class="radio-icon">{{ getIcon('relationship', opt.value) }}</span>
+                  <span class="radio-icon">
+                    <component :is="getIconComponent('relationship', opt.value)" :size="18" />
+                  </span>
                   <span class="radio-label">{{ opt.label }}</span>
                 </label>
               </div>
@@ -51,7 +56,9 @@
                     v-model="form.interaction_duration"
                     class="sr-only"
                   />
-                  <span class="radio-icon">{{ getIcon('duration', opt.value) }}</span>
+                  <span class="radio-icon">
+                    <component :is="getIconComponent('duration', opt.value)" :size="18" />
+                  </span>
                   <span class="radio-label">{{ opt.label }}</span>
                 </label>
               </div>
@@ -73,14 +80,19 @@
                     v-model="form.communication_style"
                     class="sr-only"
                   />
-                  <span class="radio-icon">{{ getIcon('style', opt.value) }}</span>
+                  <span class="radio-icon">
+                    <component :is="getIconComponent('style', opt.value)" :size="18" />
+                  </span>
                   <span class="radio-label">{{ opt.label }}</span>
                 </label>
               </div>
             </div>
 
             <div class="hint-box">
-              <p>💡 这些信息仅用于调整分析参数的基线，不会影响原始数据。</p>
+              <p style="display: flex; align-items: center; gap: 6px;">
+                <Lightbulb :size="14" style="color: var(--ct-color-info); flex-shrink: 0;" />
+                <span>这些信息仅用于调整分析参数的基线，不会影响原始数据。</span>
+              </p>
             </div>
           </div>
           
@@ -98,6 +110,24 @@
 
 <script setup lang="ts">
 import { ref, reactive, watch } from 'vue'
+import {
+  ClipboardList,
+  Heart,
+  Sparkles,
+  Users,
+  Briefcase,
+  Home,
+  Link2,
+  Sprout,
+  Calendar,
+  CalendarDays,
+  History,
+  MessageCircle,
+  MessageSquare,
+  VolumeX,
+  Lightbulb,
+  X
+} from 'lucide-vue-next'
 import {
   getRelationshipContext,
   saveRelationshipContext,
@@ -144,22 +174,33 @@ const options = ref<FieldOptions>({
   ],
 })
 
-// 图标映射
-function getIcon(type: string, value: string): string {
-  const icons: Record<string, Record<string, string>> = {
-    relationship: {
-      lover: '❤️', crush: '💕', friend: '🤝',
-      colleague: '💼', family: '👨‍👩‍👧', other: '🔗',
-    },
-    duration: {
-      less_1_month: '🌱', '1_to_6_months': '🌿',
-      '6_to_12_months': '🌳', over_1_year: '🏔️',
-    },
-    style: {
-      talkative: '🗣️', normal: '💬', reserved: '🤫',
-    },
-  }
-  return icons[type]?.[value] || '📌'
+const relationshipIcons: Record<string, any> = {
+  lover: Heart,
+  crush: Sparkles,
+  friend: Users,
+  colleague: Briefcase,
+  family: Home,
+  other: Link2,
+}
+
+const durationIcons: Record<string, any> = {
+  less_1_month: Sprout,
+  '1_to_6_months': Calendar,
+  '6_to_12_months': CalendarDays,
+  over_1_year: History,
+}
+
+const styleIcons: Record<string, any> = {
+  talkative: MessageCircle,
+  normal: MessageSquare,
+  reserved: VolumeX,
+}
+
+function getIconComponent(category: 'relationship' | 'duration' | 'style', value: string) {
+  if (category === 'relationship') return relationshipIcons[value] || Users
+  if (category === 'duration') return durationIcons[value] || Calendar
+  if (category === 'style') return styleIcons[value] || MessageSquare
+  return Users
 }
 
 // 弹窗打开时加载数据
@@ -344,8 +385,11 @@ const handleClose = () => {
 }
 
 .radio-icon {
-  font-size: 1.3rem;
-  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ct-color-primary);
+  height: 22px;
 }
 
 .radio-label {

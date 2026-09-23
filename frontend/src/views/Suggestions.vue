@@ -29,7 +29,7 @@
         <div v-show="monitorPanelExpanded" class="sug-command-bd">
           <!-- 注意事项 -->
           <details class="sug-notice">
-            <summary>⚠ 使用须知</summary>
+            <summary><AlertTriangle :size="14" style="vertical-align: -2px; margin-right: 4px; color: var(--ct-color-warning);" /> 使用须知</summary>
             <ul>
               <li>确保 Windows 微信已启动并登录。</li>
               <li><strong>无需强制前台</strong>：窗口允许被其他应用遮挡（但请勿彻底最小化至任务栏）。</li>
@@ -129,19 +129,19 @@
             <!-- 画像详情 -->
             <div v-if="profile.chat_style" class="sug-detail-list">
               <div class="sug-detail-row">
-                <span class="sug-detail-icon">💬</span>
+                <span class="sug-detail-icon"><MessageSquare :size="14" /></span>
                 <div><span class="sug-detail-label">聊天风格</span><span class="sug-detail-text">{{ profile.chat_style }}</span></div>
               </div>
               <div class="sug-detail-row" v-if="profile.interests?.length">
-                <span class="sug-detail-icon">🎯</span>
+                <span class="sug-detail-icon"><Target :size="14" /></span>
                 <div><span class="sug-detail-label">兴趣话题</span><span class="sug-detail-text">{{ profile.interests.join('、') }}</span></div>
               </div>
               <div class="sug-detail-row" v-if="profile.communication_tips">
-                <span class="sug-detail-icon">📌</span>
+                <span class="sug-detail-icon"><Pin :size="14" /></span>
                 <div><span class="sug-detail-label">沟通注意</span><span class="sug-detail-text">{{ profile.communication_tips }}</span></div>
               </div>
               <div class="sug-detail-row" v-if="profile.relationship_note">
-                <span class="sug-detail-icon">💡</span>
+                <span class="sug-detail-icon"><Lightbulb :size="14" /></span>
                 <div><span class="sug-detail-label">关系状态</span><span class="sug-detail-text">{{ profile.relationship_note }}</span></div>
               </div>
             </div>
@@ -174,15 +174,15 @@
             </div>
             <div v-if="selfProfile.typing_style" class="sug-detail-list">
               <div class="sug-detail-row">
-                <span class="sug-detail-icon">✍️</span>
+                <span class="sug-detail-icon"><PenTool :size="14" /></span>
                 <div><span class="sug-detail-label">排版风格</span><span class="sug-detail-text">{{ selfProfile.typing_style }}</span></div>
               </div>
               <div class="sug-detail-row" v-if="selfProfile.frequent_catchphrases?.length">
-                <span class="sug-detail-icon">🗣️</span>
+                <span class="sug-detail-icon"><MessageCircle :size="14" /></span>
                 <div><span class="sug-detail-label">常用词汇</span><span class="sug-detail-text">{{ selfProfile.frequent_catchphrases.join('、') }}</span></div>
               </div>
               <div class="sug-detail-row" v-if="selfProfile.attitude_and_role">
-                <span class="sug-detail-icon">🎭</span>
+                <span class="sug-detail-icon"><Smile :size="14" /></span>
                 <div><span class="sug-detail-label">我的态度</span><span class="sug-detail-text">{{ selfProfile.attitude_and_role }}</span></div>
               </div>
             </div>
@@ -213,9 +213,9 @@
             <div class="sug-config-group">
               <label class="sug-label">发展走向</label>
               <div class="sug-seg intent">
-                <button :class="{ active: intent === 'intimate' }" @click="setIntent('intimate')"><span class="sug-intent-icon">🔥</span>亲密</button>
-                <button :class="{ active: intent === 'maintain' }" @click="setIntent('maintain')"><span class="sug-intent-icon">⚖️</span>维持</button>
-                <button :class="{ active: intent === 'distance' }" @click="setIntent('distance')"><span class="sug-intent-icon">❄️</span>疏远</button>
+                <button :class="{ active: intent === 'intimate' }" @click="setIntent('intimate')"><span class="sug-intent-icon"><Flame :size="14" /></span>亲密</button>
+                <button :class="{ active: intent === 'maintain' }" @click="setIntent('maintain')"><span class="sug-intent-icon"><Scale :size="14" /></span>维持</button>
+                <button :class="{ active: intent === 'distance' }" @click="setIntent('distance')"><span class="sug-intent-icon"><Snowflake :size="14" /></span>疏远</button>
               </div>
             </div>
             <p class="sug-config-note">配置会同步到悬浮窗，并用于自动触发或悬浮窗内的手动生成。</p>
@@ -329,7 +329,10 @@
   <Teleport to="body">
     <div v-if="showLlmWarningDialog" class="ct-modal-overlay" @click.self="showLlmWarningDialog = false">
       <div class="ct-modal-dialog">
-        <div class="modal-title">⚠️ 尚未配置大模型</div>
+        <div class="modal-title" style="display: flex; align-items: center; gap: 8px;">
+          <AlertTriangle :size="20" style="color: var(--ct-color-warning);" />
+          <span>尚未配置大模型</span>
+        </div>
         <div class="modal-desc">
           尚未配置或激活 LLM 模型。AI 建议需要使用大语言模型才能运作。<br/>
           是否前往设置页面进行配置？
@@ -346,10 +349,15 @@
   <Teleport to="body">
     <div v-if="showGeneratingDialog" class="ct-modal-overlay">
       <div class="ct-modal-dialog">
-        <div class="modal-title">⏳ 正在生成画像</div>
+        <div class="modal-title" style="display: flex; align-items: center; gap: 8px;">
+          <Clock :size="20" style="color: var(--ct-color-primary);" />
+          <span>正在生成画像</span>
+        </div>
         <div class="modal-desc">
           正在生成画像，请稍候。<br/>
-          <strong style="color: var(--ct-color-danger); margin-top: 8px; display: inline-block;">⚠️ 生成期间不要开始监听</strong>
+          <strong style="color: var(--ct-color-danger); margin-top: 8px; display: inline-flex; align-items: center; gap: 4px;">
+            <AlertTriangle :size="14" /> 生成期间不要开始监听
+          </strong>
         </div>
       </div>
     </div>
@@ -359,7 +367,10 @@
   <Teleport to="body">
     <div v-if="generatingErrorDialog" class="ct-modal-overlay" @click.self="generatingErrorDialog = false">
       <div class="ct-modal-dialog">
-        <div class="modal-title" style="color: var(--ct-color-danger);">❌ 生成失败</div>
+        <div class="modal-title" style="color: var(--ct-color-danger); display: flex; align-items: center; gap: 8px;">
+          <AlertCircle :size="20" />
+          <span>生成失败</span>
+        </div>
         <div class="modal-desc">
           {{ generatingErrorMessage }}
         </div>
@@ -374,6 +385,21 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, computed, reactive } from 'vue'
 import { useRouter } from 'vue-router'
+import {
+  AlertTriangle,
+  AlertCircle,
+  MessageSquare,
+  Target,
+  Pin,
+  Lightbulb,
+  PenTool,
+  MessageCircle,
+  Smile,
+  Flame,
+  Scale,
+  Snowflake,
+  Clock
+} from 'lucide-vue-next'
 import { bridgeReady, api } from '@/api/bridge'
 import CtButton from '@/components/base/CtButton.vue'
 import CtAvatar from '@/components/base/CtAvatar.vue'
@@ -821,7 +847,7 @@ async function generateContactProfile() {
       profile.value = {
         name: realtimeState.talkerName,
         tags: [],
-        relationship_note: `⚠️ ${r.error || '画像生成失败'}`,
+        relationship_note: `${r.error || '画像生成失败'}`,
       }
       return { success: false, error: r.error || '画像生成失败' }
     }
@@ -830,7 +856,7 @@ async function generateContactProfile() {
     profile.value = {
       name: realtimeState.talkerName,
       tags: [],
-      relationship_note: `⚠️ ${e?.message || '画像生成异常'}`,
+      relationship_note: `${e?.message || '画像生成异常'}`,
     }
     return { success: false, error: e?.message || '画像生成异常' }
   } finally {
@@ -1043,18 +1069,6 @@ function getSentimentText(polarity: number): string {
   if (polarity > 0) return '正面'
   if (polarity < 0) return '负面'
   return '中性'
-}
-
-function getTriggerIcon(type: string): string {
-  const icons: Record<string, string> = {
-    negative_streak: '🔴',
-    emotion_shift: '⚡',
-    perfunctory: '💤',
-    silence: '🔇',
-    positive_window: '🟢',
-    topic_cooling: '🧊',
-  }
-  return icons[type] || '📌'
 }
 </script>
 
@@ -1274,7 +1288,14 @@ function getTriggerIcon(type: string): string {
 .sug-detail-list { display: flex; flex-direction: column; gap: 0; }
 .sug-detail-row { display: flex; gap: var(--ct-space-sm); padding: var(--ct-space-sm) 0; align-items: flex-start; }
 .sug-detail-row + .sug-detail-row { border-top: 1px solid var(--ct-border-color); }
-.sug-detail-icon { font-size: 15px; line-height: 1; flex-shrink: 0; margin-top: 2px; }
+.sug-detail-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--ct-color-primary);
+}
 .sug-detail-row > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .sug-detail-label { font-size: var(--ct-text-xs); color: var(--ct-text-tertiary); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
 .sug-detail-text { font-size: var(--ct-text-sm); color: var(--ct-text-secondary); line-height: 1.5; word-break: break-word; }
@@ -1304,11 +1325,20 @@ function getTriggerIcon(type: string): string {
   background: var(--ct-bg-elevated); color: var(--ct-text-secondary);
   font-size: var(--ct-text-xs); font-weight: 500; cursor: pointer;
   transition: all var(--ct-transition-fast);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
 }
 .sug-seg button:not(:last-child) { border-right: 1px solid var(--ct-border-color); }
 .sug-seg button.active { background: var(--ct-color-primary); color: white; font-weight: 600; }
 .sug-seg button:hover:not(.active) { background: var(--ct-bg-tertiary); }
-.sug-intent-icon { margin-right: 2px; }
+.sug-intent-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 2px;
+}
 .sug-config-note {
   margin: 0;
   padding: var(--ct-space-sm) var(--ct-space-md);

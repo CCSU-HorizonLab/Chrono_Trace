@@ -7,7 +7,7 @@
           <span class="fp-status-dot" :class="{ active: realtimeState.isMonitoring }"></span>
           <span class="fp-brand-name">Chrono Trace</span>
         </div>
-        <button class="fp-btn-icon close-btn" @click="exitFloating" title="退出悬浮模式">✕</button>
+        <button class="fp-btn-icon close-btn" @click="exitFloating" title="退出悬浮模式"><X :size="14" /></button>
       </div>
       <div class="fp-contact-bar">
         <CtAvatar
@@ -100,7 +100,7 @@
           <div class="fp-thread-info">
             <span class="fp-thread-label">继续指导: {{ lastThread.summary }}</span>
           </div>
-          <button class="fp-btn-icon tiny" @click.stop="lastThread = null">✕</button>
+          <button class="fp-btn-icon tiny" @click.stop="lastThread = null"><X :size="12" /></button>
         </div>
 
         <div v-if="!allSuggestions.length && !loading" class="fp-empty-slate">
@@ -121,7 +121,7 @@
           >
             <template v-if="s._type === 'suggestion'">
               <div class="fp-card-hd" @click="toggleSuggestion(s)">
-                <span class="fp-card-icon">{{ getTriggerIcon(s.trigger_type) }}</span>
+                <span class="fp-card-icon"><component :is="getTriggerIconComponent(s.trigger_type)" :size="13" /></span>
                 <span class="fp-card-title">{{ s.summary }}</span>
                 <span class="fp-card-time">{{ s.created_at ? formatMsgTime(s.created_at) : '刚刚' }}</span>
                 <button class="fp-btn-icon">
@@ -183,7 +183,7 @@
           <button class="fp-tab-btn" :class="{ active: inspectorTab === 'emotion' }" @click="toggleInspector('emotion')">情绪明细</button>
           <button class="fp-tab-btn" :class="{ active: inspectorTab === 'context' }" @click="toggleInspector('context')">AI 参考记录</button>
         </div>
-        <button class="fp-btn-icon close-rail-btn" @click="closeInspector">✕</button>
+        <button class="fp-btn-icon close-rail-btn" @click="closeInspector"><X :size="14" /></button>
       </div>
 
       <div class="fp-inspector-body">
@@ -207,7 +207,7 @@
 
           <!-- 2. Main Chart or Empty State -->
           <div v-show="!hasSufficientEmotionData" class="compact-empty">
-            <span class="fp-empty-icon">🌱</span>
+            <span class="fp-empty-icon"><Sprout :size="20" style="color: #10b981;" /></span>
             <span>数据不足以绘制图表 (暂存 {{ realtimeState.messageCount }} 条对话)</span>
           </div>
           
@@ -298,9 +298,9 @@
         <div class="fp-seg-divider"></div>
         <div class="fp-seg-group">
           <span class="fp-seg-title">关系方向</span>
-          <button class="fp-seg-btn" :class="{ active: intent === 'intimate' }" @click="setIntent('intimate')" title="生成更有感情、亲密回复">亲近</button>
-          <button class="fp-seg-btn" :class="{ active: intent === 'maintain' }" @click="setIntent('maintain')" title="维持当前氛围">维持</button>
-          <button class="fp-seg-btn" :class="{ active: intent === 'distance' }" @click="setIntent('distance')" title="生成稍带距离感回复">疏远</button>
+          <button class="fp-seg-btn" :class="{ active: intent === 'intimate' }" @click="setIntent('intimate')" title="生成更有感情、亲密回复"><Flame :size="11" />亲近</button>
+          <button class="fp-seg-btn" :class="{ active: intent === 'maintain' }" @click="setIntent('maintain')" title="维持当前氛围"><Scale :size="11" />维持</button>
+          <button class="fp-seg-btn" :class="{ active: intent === 'distance' }" @click="setIntent('distance')" title="生成稍带距离感回复"><Snowflake :size="11" />疏远</button>
         </div>
       </div>
 
@@ -326,7 +326,7 @@
       <div class="fp-composer-footer" v-if="llmModels.length > 0">
         <select v-model="activeModelId" class="fp-mini-select" @change="switchModel">
           <option v-for="m in llmModels" :key="m.id" :value="m.id" :disabled="disabledModels.has(m.id)">
-            ⚙️ 模型: {{ m.name }} {{ disabledModels.has(m.id) ? '(已失效)' : '' }}
+            模型: {{ m.name }} {{ disabledModels.has(m.id) ? '(已失效)' : '' }}
           </option>
         </select>
         <div v-if="llmError" class="fp-error-txt">{{ llmError }}</div>
@@ -365,6 +365,19 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
+import {
+  X,
+  Sprout,
+  Flame,
+  Scale,
+  Snowflake,
+  AlertCircle,
+  Zap,
+  Moon,
+  VolumeX,
+  Sparkles,
+  Pin
+} from 'lucide-vue-next'
 import { bridgeReady, api } from '@/api/bridge'
 import * as echarts from 'echarts'
 import CtAvatar from '@/components/base/CtAvatar.vue'
@@ -680,9 +693,9 @@ const triggerModes = [
 ]
 
 const intents = [
-  { value: 'intimate', icon: '🔥' },
-  { value: 'maintain', icon: '⚖️' },
-  { value: 'distance', icon: '❄️' },
+  { value: 'intimate', icon: Flame },
+  { value: 'maintain', icon: Scale },
+  { value: 'distance', icon: Snowflake },
 ]
 
 const quickPrompts = ref<string[]>([
@@ -1923,16 +1936,17 @@ function getRagBadge(ragContext: RagContextSummary | undefined | null): RagConte
   return ragContext
 }
 
-function getTriggerIcon(type: string): string {
-  const icons: Record<string, string> = {
-    negative_streak: '🔴',
-    emotion_shift: '⚡',
-    perfunctory: '💤',
-    silence: '🔇',
-    positive_window: '🟢',
-    topic_cooling: '🧊',
-  }
-  return icons[type] || '📌'
+const triggerIconComponents: Record<string, any> = {
+  negative_streak: AlertCircle,
+  emotion_shift: Zap,
+  perfunctory: Moon,
+  silence: VolumeX,
+  positive_window: Sparkles,
+  topic_cooling: Snowflake,
+}
+
+function getTriggerIconComponent(type: string): any {
+  return triggerIconComponents[type] || Pin
 }
 
 // ========== 用户交互 ==========
@@ -2358,9 +2372,13 @@ async function loadLastThread() {
 .fp-card.medium { border-left: 3px solid var(--ct-color-warning); }
 .fp-card.low { border-left: 3px solid var(--ct-color-success); }
 .fp-card-hd { display: flex; align-items: center; gap: 8px; padding: 12px; cursor: pointer; transition: background 0.15s; }
-.fp-card-hd:hover { background: var(--ct-bg-secondary); }
-.fp-card-icon { font-size: 14px; flex-shrink: 0; }
-.fp-card-title { font-size: 13.5px; font-weight: 600; color: var(--ct-text-primary); flex: 1; line-height: 1.4; }
+.fp-card-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--ct-color-primary);
+}
 .fp-card-time { font-size: 10px; color: var(--ct-text-tertiary); }
 .fp-card-bd { padding: 0 12px 12px; border-top: 1px solid var(--ct-border-color); padding-top: 12px; background: var(--ct-bg-secondary); }
 .fp-cot { background: var(--ct-bg-elevated); border-radius: var(--ct-radius-md); padding: 10px; margin-bottom: 12px; border: 1px solid var(--ct-border-color); }
@@ -2423,7 +2441,22 @@ async function loadLastThread() {
 .fp-seg-title { font-size: 11px; color: var(--ct-text-tertiary); font-weight: 500; margin-right: 2px; }
 .fp-seg-divider { width: 1px; height: 14px; background: var(--ct-border-color); margin: 0 4px; pointer-events: none; }
 .fp-seg-group { display: flex; flex: 1; padding: 2px; }
-.fp-seg-btn { flex: 1; padding: 4px; border: none; background: transparent; font-size: 11px; font-weight: 500; color: var(--ct-text-secondary); border-radius: var(--ct-radius-sm); cursor: pointer; transition: all 0.2s; text-align: center; }
+.fp-seg-btn {
+  flex: 1;
+  padding: 4px 6px;
+  border: none;
+  background: transparent;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ct-text-secondary);
+  border-radius: var(--ct-radius-sm);
+  cursor: pointer;
+  transition: all 0.2s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+}
 .fp-seg-btn.active { background: var(--ct-bg-elevated); color: var(--ct-text-primary); box-shadow: 0 1px 2px rgba(15,23,42,0.06); border: 1px solid var(--ct-border-color); }
 .fp-seg-divider { width: 1px; background: var(--ct-border-color); margin: 4px 2px; }
 
@@ -2463,7 +2496,13 @@ async function loadLastThread() {
 .fp-secondary-charts-zone { display: flex; flex-direction: column; background: var(--ct-bg-tertiary); padding-bottom: 8px; }
 .tight-config { background: transparent; border-bottom: none; padding: 6px 10px 4px; }
 .tight-rail { padding: 0 10px; }
-.fp-empty-icon { font-size: 24px; margin-bottom: 8px; opacity: 0.5; filter: grayscale(1); }
+.fp-empty-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 8px;
+  opacity: 0.8;
+}
 
 .fp-empty-val { font-size: 10.5px; color: var(--ct-text-tertiary); text-align: center; margin-top: 16px; opacity: 0.6; }
 </style>

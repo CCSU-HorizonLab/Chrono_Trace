@@ -11,13 +11,13 @@
       <div v-if="showTooltip" class="tooltip-panel" @click.stop>
         <div class="tooltip-header">
           <h4>维度权重说明</h4>
-          <button class="close-btn" @click="showTooltip = false">×</button>
+          <button class="close-btn" @click="showTooltip = false" title="关闭"><X :size="16" /></button>
         </div>
 
         <div class="tooltip-content">
           <div class="weight-section active">
             <div class="section-title">
-              <span class="status-icon">📊</span>
+              <span class="status-icon"><BarChart3 :size="14" style="color: var(--ct-color-primary);" /></span>
               维度权重分配
             </div>
             <ul class="weight-list">
@@ -41,6 +41,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { BarChart3, X } from 'lucide-vue-next'
 
 const props = defineProps<{
   hasPreferenceKeywords: boolean
@@ -174,6 +175,12 @@ const currentWeights = computed(() => {
   margin-bottom: var(--ct-space-sm);
   text-transform: uppercase;
   letter-spacing: 0.05em;
+}
+
+.status-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .weight-list {

@@ -3,24 +3,30 @@
     <div class="home-section">
       <h2 class="section-title ct-page-title">
         <div style="display:flex;align-items:center; gap: 8px;">
-          <span class="title-icon">⚙️</span>
+          <SettingsIcon :size="20" class="title-icon-svg" />
           <span class="gradient-text">通用设置</span>
         </div>
         <div class="auto-save-status glass-pill" style="margin-left: auto;">
           <span v-if="saving" class="saving">
             <span class="spinner"></span> 保存中...
           </span>
-          <span v-else-if="lastSaveTime" class="saved">✅ 已保存 {{ lastSaveTime }}</span>
-          <span v-else class="idle">✨ 自动保存已启用</span>
+          <span v-else-if="lastSaveTime" class="saved" style="display: inline-flex; align-items: center; gap: 4px;"><CheckCircle2 :size="14" />已保存 {{ lastSaveTime }}</span>
+          <span v-else class="idle" style="display: inline-flex; align-items: center; gap: 4px;"><Sparkles :size="14" />自动保存已启用</span>
         </div>
       </h2>
 
       <div class="grid">
       <!-- 模型配置（合并原通用配置 + LLM 模型管理） -->
-      <CtCard title="🤖 模型配置">
+      <CtCard title="模型配置">
+        <template #header>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <Bot :size="18" style="color: var(--ct-color-primary);" />
+            <span>模型配置</span>
+          </div>
+        </template>
         <div class="form">
           <div class="hint-box info">
-            <p>💡 配置 LLM 模型后，AI 建议将使用大语言模型生成更智能的话术。支持远程 API（DeepSeek/OpenAI）和本地推理（Ollama/LM Studio）。</p>
+            <p style="display: flex; align-items: flex-start; gap: 6px;"><Lightbulb :size="16" style="flex-shrink: 0; margin-top: 2px;" /><span>配置 LLM 模型后，AI 建议将使用大语言模型生成更智能的话术。支持远程 API（DeepSeek/OpenAI）和本地推理（Ollama/LM Studio）。</span></p>
           </div>
 
           <div class="row">
@@ -134,7 +140,11 @@
             </div>
           </div>
           <div v-if="ragModel.checked" class="rag-model-status" :class="ragModel.ready ? 'ready' : 'missing'">
-            <span>{{ ragModel.ready ? '✅ 本地 embedding 模型可用' : '⚠️ 本地 embedding 模型未就绪' }}</span>
+            <span style="display: inline-flex; align-items: center; gap: 6px;">
+              <CheckCircle2 v-if="ragModel.ready" :size="15" />
+              <AlertTriangle v-else :size="15" />
+              {{ ragModel.ready ? '本地 embedding 模型可用' : '本地 embedding 模型未就绪' }}
+            </span>
             <CtButton v-if="!ragModel.ready" variant="ghost" :disabled="ragModel.downloading" @click.stop.prevent="downloadRagModel">
               {{ ragModel.downloading ? '下载中...' : '下载模型' }}
             </CtButton>
@@ -184,7 +194,7 @@
       <CtCard title="微信数据库路径">
         <div class="form">
           <div class="hint-box info">
-            <p>💡 <strong>提示:</strong>如果自动检测的微信路径不正确,可以在此手动指定数据库文件位置</p>
+            <p style="display: flex; align-items: flex-start; gap: 6px;"><Lightbulb :size="16" style="flex-shrink: 0; margin-top: 2px;" /><span><strong>提示:</strong>如果自动检测的微信路径不正确,可以在此手动指定数据库文件位置</span></p>
           </div>
 
           <label v-if="wechatAccounts.length" class="row" style="align-items: center;">
@@ -233,10 +243,16 @@
         </div>
       </CtCard>
 
-      <CtCard title="🧰 杂项维护">
+      <CtCard title="杂项维护">
+        <template #header>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <Wrench :size="18" style="color: var(--ct-color-primary);" />
+            <span>杂项维护</span>
+          </div>
+        </template>
         <div class="form">
           <div class="hint-box info">
-            <p>💡 首次导入微信数据时，联系人头像会自动同步。</p>
+            <p style="display: flex; align-items: flex-start; gap: 6px;"><Lightbulb :size="16" style="flex-shrink: 0; margin-top: 2px;" /><span>首次导入微信数据时，联系人头像会自动同步。</span></p>
             <p style="margin-top: 8px;">这个入口只用于历史旧数据修复：重新扫描联系人库，把头像回填到已导入的联系人和会话，不会重新导入消息。</p>
           </div>
 
@@ -260,17 +276,23 @@
       </CtCard>
 
       <!-- 计算设备设置 -->
-      <CtCard title="⚡ 分析计算设备">
+      <CtCard title="分析计算设备">
+        <template #header>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <Cpu :size="18" style="color: var(--ct-color-primary);" />
+            <span>分析计算设备</span>
+          </div>
+        </template>
         <div class="form">
           <div class="hint-box info">
-            <p>💡 选择历史分析使用的计算设备。GPU 加速可大幅提升分析速度，但需要安装支持 CUDA 的 PyTorch。</p>
+            <p style="display: flex; align-items: flex-start; gap: 6px;"><Lightbulb :size="16" style="flex-shrink: 0; margin-top: 2px;" /><span>选择历史分析使用的计算设备。GPU 加速可大幅提升分析速度，但需要安装支持 CUDA 的 PyTorch。</span></p>
           </div>
 
           <div class="device-mode-options">
             <label class="device-option" :class="{ active: form.analysis_device_mode === 'auto' }">
               <input type="radio" v-model="form.analysis_device_mode" value="auto" />
               <div class="device-option-body">
-                <span class="device-option-icon">🔄</span>
+                <span class="device-option-icon"><RotateCw :size="18" /></span>
                 <div>
                   <div class="device-option-title">自动</div>
                   <div class="device-option-desc">每次分析前询问是否启用 GPU</div>
@@ -280,7 +302,7 @@
             <label class="device-option" :class="{ active: form.analysis_device_mode === 'gpu' }">
               <input type="radio" v-model="form.analysis_device_mode" value="gpu" />
               <div class="device-option-body">
-                <span class="device-option-icon">🚀</span>
+                <span class="device-option-icon"><Zap :size="18" /></span>
                 <div>
                   <div class="device-option-title">GPU 加速</div>
                   <div class="device-option-desc">始终使用 GPU，速度提升 5-10 倍</div>
@@ -290,7 +312,7 @@
             <label class="device-option" :class="{ active: form.analysis_device_mode === 'cpu' }">
               <input type="radio" v-model="form.analysis_device_mode" value="cpu" />
               <div class="device-option-body">
-                <span class="device-option-icon">💻</span>
+                <span class="device-option-icon"><Monitor :size="18" /></span>
                 <div>
                   <div class="device-option-title">CPU 模式</div>
                   <div class="device-option-desc">仅使用 CPU，兼容性最好</div>
@@ -309,24 +331,24 @@
               <div class="gpu-status-row"><span class="gpu-label">CUDA</span><span class="gpu-value">{{ gpuInfo.cuda_version }}</span></div>
               <div class="gpu-status-row"><span class="gpu-label">显存</span><span class="gpu-value">{{ (gpuInfo.gpu_memory_total_mb / 1024).toFixed(1) }} GB</span></div>
               <div class="gpu-status-row"><span class="gpu-label">PyTorch</span><span class="gpu-value">{{ gpuInfo.torch_version }}</span></div>
-              <div class="gpu-status-badge available">✅ GPU 可用</div>
+              <div class="gpu-status-badge available" style="display: inline-flex; align-items: center; gap: 4px;"><CheckCircle2 :size="14" /> GPU 可用</div>
             </div>
             <div v-else-if="gpuInfo.restart_required" class="gpu-status-detail">
-              <div class="gpu-status-badge available">⏳ GPU 运行时已安装</div>
+              <div class="gpu-status-badge available" style="display: inline-flex; align-items: center; gap: 4px;"><Clock :size="14" /> GPU 运行时已安装</div>
               <div class="gpu-status-row"><span class="gpu-label">目标 CUDA</span><span class="gpu-value">{{ gpuInfo.gpu_overlay_cuda_version || '已安装' }}</span></div>
               <div class="gpu-status-row"><span class="gpu-label">目标 PyTorch</span><span class="gpu-value">{{ gpuInfo.gpu_overlay_torch_version || '已安装' }}</span></div>
               <div class="gpu-status-row"><span class="gpu-label">当前进程</span><span class="gpu-value">{{ gpuInfo.torch_version || 'unknown' }}</span></div>
               <div class="gpu-status-badge unavailable">重启应用后切换到 GPU 运行时</div>
             </div>
             <div v-else class="gpu-status-detail">
-              <div class="gpu-status-badge unavailable">❌ GPU 不可用</div>
+              <div class="gpu-status-badge unavailable" style="display: inline-flex; align-items: center; gap: 4px;"><XCircle :size="14" /> GPU 不可用</div>
               <div class="gpu-status-row"><span class="gpu-label">PyTorch</span><span class="gpu-value">{{ gpuInfo.torch_version || '未知' }}</span></div>
               <div v-if="gpuInfo.has_nvidia_gpu && !gpuInfo.cuda_available" class="gpu-installer-box" style="margin-top: 12px; padding: 12px; background: rgba(255,152,0,0.1); border: 1px solid rgba(255,152,0,0.3); border-radius: 8px;">
-                <p style="margin: 0 0 8px 0; font-size: 13px; color: #d87c00;">
-                  ✨ 检测到系统包含 NVIDIA GPU 硬件，但当前应用还没有可用的 CUDA 运行时。
+                <p style="margin: 0 0 8px 0; font-size: 13px; color: #d87c00; display: flex; align-items: center; gap: 6px;">
+                  <Sparkles :size="15" /> 检测到系统包含 NVIDIA GPU 硬件，但当前应用还没有可用的 CUDA 运行时。
                 </p>
                 <div v-if="installStatus === 'idle'">
-                  <CtButton style="font-size: 13px; margin-top: 5px; width: 100%; border: 1px solid #d87c00;" @click.prevent="startGpuInstall">⚡下载并配置 GPU 运行时</CtButton>
+                  <CtButton style="font-size: 13px; margin-top: 5px; width: 100%; border: 1px solid #d87c00;" @click.prevent="startGpuInstall"><Download :size="14" style="vertical-align: -2px; margin-right: 4px;" />下载并配置 GPU 运行时</CtButton>
                 </div>
                 <div v-else>
                   <div style="font-size: 12px; margin-bottom: 4px; color: var(--ct-text-secondary);">
@@ -425,6 +447,22 @@
 
 <script setup lang="ts">
 import { reactive, ref, onMounted, watch, computed, onUnmounted } from 'vue'
+import {
+  Settings as SettingsIcon,
+  CheckCircle2,
+  Sparkles,
+  Bot,
+  Lightbulb,
+  AlertTriangle,
+  RotateCw,
+  Zap,
+  Monitor,
+  XCircle,
+  Clock,
+  Download,
+  Wrench,
+  Cpu
+} from 'lucide-vue-next'
 import { bridgeReady, api, type AnalysisDeviceMode, type WechatAccount } from '@/api/bridge'
 import CtCard from '@/components/base/CtCard.vue'
 import CtField from '@/components/base/CtField.vue'

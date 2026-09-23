@@ -39,9 +39,9 @@
       <div class="page-empty-badge">History Ready</div>
 
       <div class="page-empty-illustration" aria-hidden="true">
-        <div class="empty-orb empty-orb-main">🗂️</div>
-        <div class="empty-orb empty-orb-small empty-orb-chat">💬</div>
-        <div class="empty-orb empty-orb-small empty-orb-star">✦</div>
+        <div class="empty-orb empty-orb-main"><FolderArchive :size="36" style="color: var(--ct-color-primary);" /></div>
+        <div class="empty-orb empty-orb-small empty-orb-chat"><MessageSquare :size="20" style="color: #3b82f6;" /></div>
+        <div class="empty-orb empty-orb-small empty-orb-star"><Sparkles :size="18" style="color: #f59e0b;" /></div>
       </div>
 
       <h2>还没有历史记录</h2>
@@ -100,16 +100,16 @@
   <!-- TAB 1: Affinity -->
   <div v-show="currentTab === 'affinity' && selectedConversationId" class="tab-content fade-in">
     <div v-if="!analysisResult && !isGlobalAnalyzing && !isDownloadingModels" class="empty-state">
-      <div class="empty-icon">📊</div>
+      <div class="empty-icon"><BarChart3 :size="56" :stroke-width="1.5" style="color: var(--ct-color-primary);" /></div>
       <p>请点击"开始全面分析"探索你们的亲密关系维度。</p>
-      <p class="empty-hint">💡 首次分析需要1-2分钟进行数据特征提取和模型推理,请耐心等待</p>
+      <p class="empty-hint" style="display: inline-flex; align-items: center; gap: 6px;"><Lightbulb :size="14" style="color: var(--ct-color-info); flex-shrink: 0;" /> 首次分析需要1-2分钟进行数据特征提取和模型推理，请耐心等待</p>
     </div>
 
     <!-- Analyzing State -->
     <div v-if="isGlobalAnalyzing || isDownloadingModels" class="empty-state">
-      <div class="empty-icon spinning">⏳</div>
+      <div class="empty-icon spinning"><Loader2 :size="56" class="spin-icon" style="color: var(--ct-color-primary);" /></div>
       <p>{{ isDownloadingModels ? '正在下载分析模型，请耐心等待...' : '正在分析中，请耐心等待...' }}</p>
-      <p class="empty-hint">{{ isDownloadingModels ? '💡 模型下载完成后会自动继续分析流程' : '💡 我们正在处理特征提取和模型推理' }}</p>
+      <p class="empty-hint" style="display: inline-flex; align-items: center; gap: 6px;"><Lightbulb :size="14" style="color: var(--ct-color-info); flex-shrink: 0;" /> {{ isDownloadingModels ? '模型下载完成后会自动继续分析流程' : '我们正在处理特征提取和模型推理' }}</p>
     </div>
 
     <!-- Affinity Dashboard Two-Col Layout -->
@@ -204,16 +204,16 @@
   <!-- TAB 2: Features -->
   <div v-show="currentTab === 'features' && selectedConversationId" class="tab-content fade-in">
     <div v-if="!hasFeatures && !isGlobalAnalyzing && !isDownloadingModels" class="empty-state">
-      <div class="empty-icon">📈</div>
+      <div class="empty-icon"><TrendingUp :size="56" :stroke-width="1.5" style="color: var(--ct-color-primary);" /></div>
       <p>点击"开始全面分析"获取深度互动特征分析。</p>
-      <p class="empty-hint">💡 互动特征包含：回响响应分布、主动性分析、话语权比例等客观指标</p>
+      <p class="empty-hint" style="display: inline-flex; align-items: center; gap: 6px;"><Lightbulb :size="14" style="color: var(--ct-color-info); flex-shrink: 0;" /> 互动特征包含：回响响应分布、主动性分析、话语权比例等客观指标</p>
     </div>
 
     <!-- Analyzing State -->
     <div v-if="isGlobalAnalyzing || isDownloadingModels" class="empty-state">
-      <div class="empty-icon spinning">⏳</div>
+      <div class="empty-icon spinning"><Loader2 :size="56" class="spin-icon" style="color: var(--ct-color-primary);" /></div>
       <p>{{ isDownloadingModels ? '正在下载分析模型，请耐心等待...' : '正在分析中，请耐心等待...' }}</p>
-      <p class="empty-hint">{{ isDownloadingModels ? '💡 模型下载完成后会自动继续分析流程' : '💡 我们正在处理特征提取和模型推理' }}</p>
+      <p class="empty-hint" style="display: inline-flex; align-items: center; gap: 6px;"><Lightbulb :size="14" style="color: var(--ct-color-info); flex-shrink: 0;" /> {{ isDownloadingModels ? '模型下载完成后会自动继续分析流程' : '我们正在处理特征提取和模型推理' }}</p>
     </div>
 
     <div v-if="hasFeatures && !isGlobalAnalyzing && !isDownloadingModels" class="features-layout">
@@ -508,6 +508,15 @@ import CtButton from '@/components/base/CtButton.vue'
 import PersonaGallery from '@/components/persona/PersonaGallery.vue'
 import { showDialog, showConfirm } from '@/utils/dialog'
 import CtAvatar from '@/components/base/CtAvatar.vue'
+import {
+  FolderArchive,
+  MessageSquare,
+  Sparkles,
+  BarChart3,
+  TrendingUp,
+  Loader2,
+  Lightbulb
+} from 'lucide-vue-next'
 
 type Conversation = { id: number; name: string; username: string; message_count: number; last_message_time: string; avatar?: string }
 type Session = { id: number; start_time: number; end_time: number; duration: number; message_count: number; initiator: string; messages: any[] }
@@ -572,7 +581,8 @@ export default {
     components: {
         FiltersBar, DateRangeFilter, SubjectCard, EmotionLineChart, WordCloud, ConversationTimeline,
         AffinityScoreCard, DimensionRadar, SubScoreBreakdown, WeightInfoTooltip,
-        PreferenceKeywordsDialog, RelationshipContextForm, CtCard, CtButton, PersonaGallery, CtAvatar
+        PreferenceKeywordsDialog, RelationshipContextForm, CtCard, CtButton, PersonaGallery, CtAvatar,
+        FolderArchive, MessageSquare, Sparkles, BarChart3, TrendingUp, Loader2, Lightbulb
     },
     setup() {
         const currentTab = ref('affinity')
@@ -1200,7 +1210,7 @@ export default {
                             `检测到 GPU: ${gpuStatus.gpu_name}${memInfo}\n` +
                             `CUDA ${gpuStatus.cuda_version} | PyTorch ${gpuStatus.torch_version}\n\n` +
                             '启用 GPU 加速后，分析速度预计可提升 5-10 倍。\n是否启用 GPU 加速？\n\n' +
-                            '💡 此选项可随时在「通用设置」页面修改。'
+                            '提示：此选项可随时在「通用设置」页面修改。'
                     })
                     const nextMode: AnalysisDeviceMode = useGpu ? 'gpu' : 'cpu'
                     await api.set_settings({ analysis_device_mode: nextMode })
@@ -1238,7 +1248,7 @@ export default {
                         message:
                             'GPU 加速不可用，将使用 CPU 模式进行分析。\n' +
                             '如需启用 GPU，请安装支持 CUDA 的 PyTorch 版本。\n\n' +
-                            '💡 此选项可随时在「通用设置」页面修改。'
+                            '提示：此选项可随时在「通用设置」页面修改。'
                     })
                     await api.set_settings({ analysis_device_mode: 'cpu' })
                     applyAnalysisDeviceMode('cpu')
@@ -1999,7 +2009,9 @@ export default {
 }
 
 .tab-content .empty-state .empty-icon {
-  font-size: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   margin-bottom: var(--ct-space-lg);
   opacity: 0.9;
 }

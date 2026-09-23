@@ -1,12 +1,12 @@
 <template>
   <div class="persona-gallery">
     <div v-if="loading" class="persona-gallery-empty">
-      <div class="persona-gallery-icon">⏳</div>
+      <div class="persona-gallery-icon"><Clock :size="40" class="persona-loading-spin" /></div>
       <p>正在读取这位联系人的画像档案...</p>
     </div>
 
     <div v-else-if="!hasProfile" class="persona-gallery-empty">
-      <div class="persona-gallery-icon">🖼️</div>
+      <div class="persona-gallery-icon"><Images :size="40" :stroke-width="1.5" /></div>
       <p>这位联系人还没有可展示的 AI 画像。</p>
       <span>先在 AI 建议页生成联系人画像，回廊就会自动点亮。</span>
     </div>
@@ -49,6 +49,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { PropType } from 'vue'
+import { Images, Clock } from 'lucide-vue-next'
 import CtCard from '@/components/base/CtCard.vue'
 import PersonaTagsCard from './PersonaTagsCard.vue'
 import TopicUniverse from './TopicUniverse.vue'
@@ -407,7 +408,20 @@ function formatDayLabel(value: string) {
 }
 
 .persona-gallery-icon {
-  font-size: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ct-color-primary);
+  opacity: 0.85;
+}
+
+.persona-loading-spin {
+  animation: persona-spin 2s linear infinite;
+}
+
+@keyframes persona-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 @media (max-width: 1100px) {

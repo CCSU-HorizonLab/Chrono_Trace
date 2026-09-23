@@ -5,14 +5,14 @@
         <div class="dialog-container" @click.stop>
           <div class="dialog-header">
             <h3>配置喜好关键词</h3>
-            <button class="close-btn" @click="handleClose">×</button>
+            <button class="close-btn" @click="handleClose" title="关闭"><X :size="18" /></button>
           </div>
           
           <div class="dialog-body">
             <!-- 当前权重预览 -->
             <div class="weight-preview">
               <div class="preview-title">
-                <span class="icon">⚖️</span>
+                <span class="icon"><Scale :size="16" /></span>
                 当前权重配置
               </div>
               <div class="weight-grid">
@@ -33,12 +33,12 @@
               <div v-if="keywords.length > 0" class="keywords-list">
                 <div v-for="(keyword, index) in keywords" :key="index" class="keyword-tag">
                   <span class="keyword-text">{{ keyword }}</span>
-                  <button class="remove-btn" @click="removeKeyword(index)" title="删除">×</button>
+                  <button class="remove-btn" @click="removeKeyword(index)" title="删除"><X :size="12" /></button>
                 </div>
               </div>
               
               <div v-else class="empty-state">
-                <span class="empty-icon">📝</span>
+                <div class="empty-icon"><FileText :size="40" :stroke-width="1.5" /></div>
                 <p>还没有添加喜好关键词</p>
                 <p class="empty-hint">添加关键词后,喜好维度将参与好感度评分</p>
               </div>
@@ -60,7 +60,7 @@
             
             <!-- 提示信息 -->
             <div class="hint-box">
-              <p>💡 <strong>提示:</strong></p>
+              <p><Lightbulb :size="14" style="color: var(--ct-color-info); margin-right: 4px; vertical-align: -2px;" /> <strong>提示:</strong></p>
               <ul>
                 <li>关键词用于识别聊天中提及的共同喜好话题</li>
                 <li>设置关键词后,喜好维度权重为 <strong>10%</strong></li>
@@ -83,6 +83,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
+import { Scale, FileText, Lightbulb, X } from 'lucide-vue-next'
 import { getPreferenceKeywords, updatePreferenceKeywords } from '../../api/affinity'
 import { showDialog } from '../../utils/dialog'
 
@@ -251,7 +252,10 @@ const handleClose = () => {
 }
 
 .icon {
-  font-size: 1.2rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ct-color-primary);
 }
 
 .weight-grid {
@@ -357,10 +361,11 @@ const handleClose = () => {
 }
 
 .empty-icon {
-  font-size: 3rem;
-  display: block;
+  display: flex;
+  justify-content: center;
   margin-bottom: var(--ct-space-sm);
-  opacity: 0.5;
+  color: var(--ct-text-tertiary);
+  opacity: 0.6;
 }
 
 .empty-state p {

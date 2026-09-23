@@ -5,7 +5,7 @@
       <div class="features-grid">
         <div class="feature-card">
           <div class="icon-wrap bg-yellow">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2" /></svg>
+            <TrendingUp :size="22" />
           </div>
           <div>
             <h3>情绪曲线</h3>
@@ -14,7 +14,7 @@
         </div>
         <div class="feature-card">
           <div class="icon-wrap bg-purple">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M3 18v-6a9 9 0 0 1 18 0v6" /><path d="M21 19a2 2 0 0 1-2 2h-1v-6h3v4z" /><path d="M3 19a2 2 0 0 0 2 2h1v-6H3v4z" /></svg>
+            <Headphones :size="22" />
           </div>
           <div>
             <h3>实时监听</h3>
@@ -23,7 +23,7 @@
         </div>
         <div class="feature-card">
           <div class="icon-wrap bg-orange">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><rect x="3" y="11" width="18" height="10" rx="2" /><circle cx="12" cy="5" r="2" /><path d="M12 7v4" /><line x1="8" y1="16" x2="8" y2="16" /><line x1="16" y1="16" x2="16" y2="16" /></svg>
+            <Sparkles :size="22" />
           </div>
           <div>
             <h3>AI 策略</h3>
@@ -60,15 +60,19 @@
         <div class="wizard-step">
           <div class="step-header">
             <span class="step-num bg-purple">1</span>
-            <span class="step-title">获取数据库密钥</span>
+            <span class="step-title">确认数据目录</span>
           </div>
-          <div class="step-content">
-            点击“开始导入”后，程序会自动引导微信登录并获取密钥。
+          <div class="step-content flex-row">
+            <div class="path-display">
+              <FolderOpen :size="16" class="folder-svg" />
+              <span class="path-text">{{ (pathInfo && pathInfo.wechat_dir) || customWechatDir || '首次启动将自动检测微信目录...' }}</span>
+            </div>
+            <button class="change-btn" @click.stop.prevent="selectCustomPath">更改</button>
           </div>
         </div>
 
-        <div v-if="manualKeyMode" class="step-arrow">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ccc" stroke-width="2"><polyline points="13 17 18 12 13 7" /><polyline points="6 17 11 12 6 7" /></svg>
+        <div class="step-arrow">
+          <ChevronsRight :size="20" class="step-chevron" />
         </div>
 
         <div v-if="manualKeyMode" class="wizard-step">
@@ -89,21 +93,17 @@
           </div>
         </div>
 
-        <div class="step-arrow">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ccc" stroke-width="2"><polyline points="13 17 18 12 13 7" /><polyline points="6 17 11 12 6 7" /></svg>
+        <div v-if="manualKeyMode" class="step-arrow">
+          <ChevronsRight :size="20" class="step-chevron" />
         </div>
 
         <div class="wizard-step">
           <div class="step-header">
-            <span class="step-num bg-purple">3</span>
-            <span class="step-title">确认数据目录</span>
+            <span class="step-num bg-purple">{{ manualKeyMode ? 3 : 2 }}</span>
+            <span class="step-title">导入数据库</span>
           </div>
-          <div class="step-content flex-row">
-            <div class="path-display">
-              <span class="folder-icon">目录</span>
-              <span class="path-text">{{ (pathInfo && pathInfo.wechat_dir) || customWechatDir || '首次启动将自动检测微信目录...' }}</span>
-            </div>
-            <button class="change-btn" @click.stop.prevent="selectCustomPath">更改</button>
+          <div class="step-content">
+            点击“开始导入”后，程序会自动引导微信登录并获取密钥完成导入。
           </div>
         </div>
       </div>
@@ -128,42 +128,125 @@
     </div>
 
     <Teleport to="body">
-      <div v-if="keyCaptureDialogOpen" class="key-capture-overlay">
-        <div class="key-capture-dialog" role="dialog" aria-modal="true">
-          <div class="key-capture-header">
-            <span class="key-capture-badge">密钥</span>
-            <div>
-              <h3>微信数据库密钥获取</h3>
-              <p>请按提示完成微信登录，窗口会一直保持到密钥捕获完成。</p>
+      <Transition name="kc-fade">
+        <div v-if="keyCaptureDialogOpen" class="kc-overlay" @click.self="closeKeyCaptureGuide">
+          <div class="kc-dialog" role="dialog" aria-modal="true">
+            <!-- Header -->
+            <div class="kc-header">
+              <div class="kc-header-left">
+                <div class="kc-header-badge">
+                  <KeyRound :size="22" :stroke-width="2.2" />
+                </div>
+                <div class="kc-header-text">
+                  <h3>微信数据库密钥获取</h3>
+                  <p>程序将自动引导微信登录并获取解密密钥</p>
+                </div>
+              </div>
+              <button class="kc-close-btn" title="关闭" @click="closeKeyCaptureGuide">
+                <X :size="18" />
+              </button>
             </div>
-          </div>
-          <div class="key-capture-steps">
-            <div :class="['key-capture-step', { active: keyCaptureStage === 'restarting' || keyCaptureStage === 'confirm_restart', done: ['installing', 'hook_ready', 'capturing', 'completed'].includes(keyCaptureStage) }]">
-              <span>1</span><strong>准备微信登录窗口</strong>
+
+            <!-- Horizontal Stepper -->
+            <div class="kc-stepper">
+              <div :class="['kc-step-item', { active: isStepActive(1), done: isStepDone(1) }]">
+                <div class="kc-step-indicator">
+                  <Check v-if="isStepDone(1)" :size="15" :stroke-width="2.5" class="kc-check-icon" />
+                  <span v-else>1</span>
+                </div>
+                <span class="kc-step-title">准备登录</span>
+              </div>
+
+              <div :class="['kc-step-connector', { done: isStepDone(1) }]" />
+
+              <div :class="['kc-step-item', { active: isStepActive(2), done: isStepDone(2) }]">
+                <div class="kc-step-indicator">
+                  <Check v-if="isStepDone(2)" :size="15" :stroke-width="2.5" class="kc-check-icon" />
+                  <span v-else>2</span>
+                </div>
+                <span class="kc-step-title">安装监听</span>
+              </div>
+
+              <div :class="['kc-step-connector', { done: isStepDone(2) }]" />
+
+              <div :class="['kc-step-item', { active: isStepActive(3), done: isStepDone(3) }]">
+                <div class="kc-step-indicator">
+                  <Check v-if="isStepDone(3)" :size="15" :stroke-width="2.5" class="kc-check-icon" />
+                  <span v-else>3</span>
+                </div>
+                <span class="kc-step-title">登录捕获</span>
+              </div>
             </div>
-            <div :class="['key-capture-step', { active: keyCaptureStage === 'installing', done: ['hook_ready', 'capturing', 'completed'].includes(keyCaptureStage) }]">
-              <span>2</span><strong>安装数据库监听</strong>
+
+            <!-- Dynamic State Card -->
+            <div class="kc-card-area">
+              <!-- Warning / Confirm Restart -->
+              <div v-if="keyCaptureStage === 'confirm_restart'" class="kc-card kc-card-warning">
+                <div class="kc-card-badge warning">
+                  <AlertTriangle :size="20" />
+                </div>
+                <div class="kc-card-content">
+                  <h4>检测到微信正在运行</h4>
+                  <p>自动获取密钥需在微信登录初期注入监听。确认后将关闭并重新启动微信到登录窗口，请再次登录以完成捕获。</p>
+                </div>
+              </div>
+
+              <!-- Need Start -->
+              <div v-else-if="keyCaptureStage === 'need_start'" class="kc-card kc-card-info">
+                <div class="kc-card-badge info">
+                  <Info :size="20" />
+                </div>
+                <div class="kc-card-content">
+                  <h4>未检测到微信进程</h4>
+                  <p>请先打开电脑端微信并停留在登录界面，然后点击下方“重新检测”继续。</p>
+                </div>
+              </div>
+
+              <!-- Fallback / Error -->
+              <div v-else-if="keyCaptureStage === 'fallback' || keyCaptureError" class="kc-card kc-card-error">
+                <div class="kc-card-badge error">
+                  <AlertCircle :size="20" />
+                </div>
+                <div class="kc-card-content">
+                  <h4>{{ keyCaptureError || '自动获取密钥未能完成' }}</h4>
+                  <p>未能自动捕获到密钥，您可以切换到手动输入数据库密钥，或稍后重试。</p>
+                </div>
+              </div>
+
+              <!-- In-progress (checking, restarting, installing, hook_ready, capturing) -->
+              <div v-else class="kc-card kc-card-loading">
+                <div class="kc-pulse-wrap">
+                  <span class="kc-pulse-ring" />
+                  <span class="kc-pulse-core" />
+                </div>
+                <div class="kc-card-content">
+                  <h4>{{ keyCaptureMessage }}</h4>
+                  <p>{{ keyCaptureStage === 'hook_ready' || keyCaptureStage === 'capturing' ? '监听已就绪，请在微信中完成登录。捕获完成后将自动开始导入。' : '正在准备注入监听环境，请保持此窗口打开...' }}</p>
+                </div>
+              </div>
             </div>
-            <div :class="['key-capture-step', { active: keyCaptureStage === 'hook_ready' || keyCaptureStage === 'capturing', done: keyCaptureStage === 'completed' }]">
-              <span>3</span><strong>登录并捕获密钥</strong>
+
+            <!-- Actions -->
+            <div class="kc-actions">
+              <template v-if="keyCaptureStage === 'confirm_restart'">
+                <button class="kc-btn kc-btn-ghost" @click="closeKeyCaptureGuide">取消</button>
+                <button class="kc-btn kc-btn-primary" @click="confirmWechatRestart">关闭并重启微信</button>
+              </template>
+              <template v-else-if="keyCaptureStage === 'need_start'">
+                <button class="kc-btn kc-btn-ghost" @click="closeKeyCaptureGuide">关闭</button>
+                <button class="kc-btn kc-btn-primary" @click="openKeyCaptureGuide">重新检测</button>
+              </template>
+              <template v-else-if="keyCaptureStage === 'fallback'">
+                <button class="kc-btn kc-btn-ghost" @click="closeKeyCaptureGuide">稍后处理</button>
+                <button class="kc-btn kc-btn-primary" @click="enableManualKeyFallback">改用手动输入</button>
+              </template>
+              <template v-else>
+                <button class="kc-btn kc-btn-ghost" @click="closeKeyCaptureGuide">取消获取</button>
+              </template>
             </div>
-          </div>
-          <div class="key-capture-message">{{ keyCaptureMessage }}</div>
-          <div v-if="keyCaptureError" class="key-capture-error">{{ keyCaptureError }}</div>
-          <div v-if="keyCaptureStage === 'confirm_restart'" class="key-capture-actions">
-            <button class="btn-outline-large" @click="closeKeyCaptureGuide">取消</button>
-            <button class="btn-primary-large" @click="confirmWechatRestart">关闭并重启微信</button>
-          </div>
-          <div v-else-if="keyCaptureStage === 'need_start'" class="key-capture-actions">
-            <button class="btn-outline-large" @click="closeKeyCaptureGuide">关闭</button>
-            <button class="btn-primary-large" @click="openKeyCaptureGuide">重新检测</button>
-          </div>
-          <div v-else-if="keyCaptureStage === 'fallback'" class="key-capture-actions">
-            <button class="btn-outline-large" @click="closeKeyCaptureGuide">稍后处理</button>
-            <button class="btn-primary-large" @click="enableManualKeyFallback">改用手动输入</button>
           </div>
         </div>
-      </div>
+      </Transition>
     </Teleport>
 
     <div class="home-section">
@@ -183,6 +266,19 @@
 
 <script setup lang="ts">
 import { onMounted, onUnmounted, reactive, ref } from 'vue'
+import {
+  KeyRound,
+  X,
+  Check,
+  AlertTriangle,
+  AlertCircle,
+  Info,
+  FolderOpen,
+  ChevronsRight,
+  TrendingUp,
+  Headphones,
+  Sparkles
+} from 'lucide-vue-next'
 import { bridgeReady, api } from '@/api/bridge'
 import { showConfirm, showDialog } from '@/utils/dialog'
 import CtAccountSelector from '@/components/base/CtAccountSelector.vue'
@@ -557,6 +653,20 @@ function stopKeyCapturePolling() {
   }
 }
 
+function isStepActive(step: number): boolean {
+  if (step === 1) return ['checking', 'need_start', 'confirm_restart', 'restarting'].includes(keyCaptureStage.value)
+  if (step === 2) return keyCaptureStage.value === 'installing'
+  if (step === 3) return ['hook_ready', 'capturing'].includes(keyCaptureStage.value)
+  return false
+}
+
+function isStepDone(step: number): boolean {
+  if (step === 1) return ['installing', 'hook_ready', 'capturing', 'completed'].includes(keyCaptureStage.value)
+  if (step === 2) return ['hook_ready', 'capturing', 'completed'].includes(keyCaptureStage.value)
+  if (step === 3) return keyCaptureStage.value === 'completed'
+  return false
+}
+
 function closeKeyCaptureGuide() {
   stopKeyCapturePolling()
   keyCaptureDialogOpen.value = false
@@ -689,6 +799,20 @@ async function openKeyCaptureGuide() {
 
 async function startImport(autoFromCapture = false) {
   if (wechatImporting.value || verifying.value || (capturingKey.value && !autoFromCapture)) return
+
+  if (!pathInfo.value) {
+    const detected = await detectWechatPath({ silent: true, accountWxid: selectedWxid.value || undefined })
+    if (!detected) {
+      wechatErr.value = '未能自动检测到微信数据路径，请先在步骤 1 中确认数据目录。'
+      await promptManualWechatPathSelection('startup')
+      return
+    }
+  }
+
+  if (!selectedWxid.value) {
+    await loadWechatAccounts()
+  }
+
   if (!wechatForm.dbKey.trim()) {
     if (manualKeyMode.value) {
       wechatErr.value = '请输入数据库密钥。'
@@ -697,19 +821,9 @@ async function startImport(autoFromCapture = false) {
     await openKeyCaptureGuide()
     return
   }
-  if (!selectedWxid.value) {
-    await loadWechatAccounts()
-  }
-  if (!selectedWxid.value) {
+  if (!selectedWxid.value && !pathInfo.value?.current_user) {
     wechatErr.value = '暂未识别到微信账号，请先完成微信登录。'
     return
-  }
-  if (!pathInfo.value) {
-    const detected = await detectWechatPath({ silent: true, accountWxid: selectedWxid.value })
-    if (!detected) {
-      wechatErr.value = '未能自动检测到微信数据路径，请手动选择目录。'
-      return
-    }
   }
   if (hasImportedBefore.value && !autoFromCapture) {
     const confirmed = await showConfirm('检测到已有导入记录。继续导入会自动跳过重复数据，是否继续？')
@@ -1224,7 +1338,50 @@ onUnmounted(() => {
   flex: 1;
 }
 
-.key-capture-overlay {
+/* ====================================================
+   微信密钥获取 二级弹窗 (Modern Stepper Dialog)
+==================================================== */
+.kc-fade-enter-active,
+.kc-fade-leave-active {
+  transition: opacity 0.22s ease;
+}
+
+.kc-fade-enter-from,
+.kc-fade-leave-to {
+  opacity: 0;
+}
+
+.kc-fade-enter-active .kc-dialog {
+  animation: kc-dialog-in 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.kc-fade-leave-active .kc-dialog {
+  animation: kc-dialog-out 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes kc-dialog-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes kc-dialog-out {
+  from {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.96) translateY(6px);
+  }
+}
+
+.kc-overlay {
   position: fixed;
   inset: 0;
   z-index: 100000;
@@ -1232,122 +1389,328 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background: rgba(15, 23, 42, 0.55);
-  backdrop-filter: blur(5px);
+  background: rgba(15, 23, 42, 0.45);
+  backdrop-filter: blur(8px);
 }
 
-.key-capture-dialog {
+.kc-dialog {
   width: min(520px, 94vw);
-  padding: 26px;
-  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: #ffffff;
+  border: 1px solid rgba(226, 232, 240, 0.85);
   border-radius: 20px;
-  background: #fff;
-  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.24);
+  padding: 24px 26px;
+  box-shadow: 0 25px 60px -12px rgba(15, 23, 42, 0.22), 0 0 0 1px rgba(124, 77, 255, 0.05);
+  display: flex;
+  flex-direction: column;
 }
 
-.key-capture-header {
+.kc-header {
   display: flex;
   align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.kc-header-left {
+  display: flex;
+  align-items: center;
   gap: 14px;
 }
 
-.key-capture-badge {
-  display: inline-flex;
-  width: 42px;
-  height: 42px;
+.kc-header-badge {
+  width: 44px;
+  height: 44px;
+  border-radius: 13px;
+  background: linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%);
+  color: #ffffff;
+  display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  border-radius: 14px;
-  color: #fff;
-  background: #a855f7;
-  font-size: 13px;
-  font-weight: 700;
+  box-shadow: 0 6px 16px -2px rgba(109, 40, 217, 0.35);
 }
 
-.key-capture-header h3 {
+.kc-header-text h3 {
   margin: 0;
-  color: var(--ct-text-primary);
-  font-size: 18px;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--ct-text-primary, #0f172a);
 }
 
-.key-capture-header p {
-  margin: 6px 0 0;
-  color: var(--ct-text-secondary);
+.kc-header-text p {
+  margin: 4px 0 0;
   font-size: 13px;
-  line-height: 1.5;
+  color: var(--ct-text-secondary, #64748b);
+  line-height: 1.4;
 }
 
-.key-capture-steps {
-  display: grid;
-  gap: 10px;
-  margin: 24px 0 18px;
-}
-
-.key-capture-step {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  border-radius: 10px;
+.kc-close-btn {
+  background: transparent;
+  border: none;
   color: #94a3b8;
-  background: #f8fafc;
-  font-size: 13px;
-}
-
-.key-capture-step span {
-  display: inline-flex;
-  width: 22px;
-  height: 22px;
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 8px;
+  display: flex;
   align-items: center;
   justify-content: center;
+  transition: all 0.2s ease;
+  margin-top: -2px;
+  margin-right: -4px;
+}
+
+.kc-close-btn:hover {
+  background: #f1f5f9;
+  color: #334155;
+}
+
+/* Stepper */
+.kc-stepper {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 22px 0 20px;
+  padding: 0 8px;
+}
+
+.kc-step-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.kc-step-indicator {
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
-  background: #e2e8f0;
-  color: #64748b;
+  background: #f1f5f9;
+  border: 1.5px solid #e2e8f0;
+  color: #94a3b8;
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.25s ease;
 }
 
-.key-capture-step.active {
-  color: #7e22ce;
-  background: #faf5ff;
+.kc-step-title {
+  font-size: 12px;
+  color: #94a3b8;
+  font-weight: 500;
+  transition: color 0.25s ease;
 }
 
-.key-capture-step.active span,
-.key-capture-step.done span {
-  color: #fff;
-  background: #a855f7;
+.kc-step-item.active .kc-step-indicator {
+  background: var(--ct-color-primary, #7c4dff);
+  border-color: var(--ct-color-primary, #7c4dff);
+  color: #ffffff;
+  box-shadow: 0 0 0 4px rgba(124, 77, 255, 0.18);
 }
 
-.key-capture-step.done {
-  color: #15803d;
-  background: #f0fdf4;
+.kc-step-item.active .kc-step-title {
+  color: var(--ct-color-primary, #7c4dff);
+  font-weight: 600;
 }
 
-.key-capture-message {
-  min-height: 48px;
-  padding: 14px;
-  border-radius: 10px;
-  color: var(--ct-text-primary);
-  background: #f8fafc;
-  line-height: 1.6;
-  white-space: pre-line;
+.kc-step-item.done .kc-step-indicator {
+  background: #10b981;
+  border-color: #10b981;
+  color: #ffffff;
 }
 
-.key-capture-error {
-  margin-top: 12px;
-  padding: 12px 14px;
-  border-radius: 10px;
-  color: #b91c1c;
-  background: #fef2f2;
+.kc-step-item.done .kc-step-title {
+  color: #10b981;
+  font-weight: 500;
+}
+
+.kc-check-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.kc-step-connector {
+  flex: 1;
+  height: 2px;
+  margin: 0 10px 18px;
+  background: #e2e8f0;
+  transition: background 0.3s ease;
+}
+
+.kc-step-connector.done {
+  background: #10b981;
+}
+
+/* Card Area */
+.kc-card-area {
+  margin-bottom: 20px;
+}
+
+.kc-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 16px;
+  border-radius: 14px;
   line-height: 1.5;
 }
 
-.key-capture-actions {
+.kc-card-content h4 {
+  margin: 0 0 4px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.kc-card-content p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ct-text-secondary, #475569);
+  line-height: 1.5;
+}
+
+.kc-card-loading {
+  background: rgba(124, 77, 255, 0.05);
+  border: 1px solid rgba(124, 77, 255, 0.18);
+}
+
+.kc-card-loading .kc-card-content h4 {
+  color: var(--ct-color-primary, #7c4dff);
+}
+
+.kc-pulse-wrap {
+  position: relative;
+  width: 24px;
+  height: 24px;
   display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.kc-pulse-core {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--ct-color-primary, #7c4dff);
+}
+
+.kc-pulse-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid var(--ct-color-primary, #7c4dff);
+  animation: kc-pulse 1.8s cubic-bezier(0.24, 0, 0.38, 1) infinite;
+}
+
+@keyframes kc-pulse {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(1.6);
+    opacity: 0;
+  }
+}
+
+.kc-card-badge {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.kc-card-warning {
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+}
+
+.kc-card-warning .kc-card-content h4 {
+  color: #b45309;
+}
+
+.kc-card-badge.warning {
+  color: #d97706;
+}
+
+.kc-card-info {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+}
+
+.kc-card-info .kc-card-content h4 {
+  color: #15803d;
+}
+
+.kc-card-badge.info {
+  color: #16a34a;
+}
+
+.kc-card-error {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+}
+
+.kc-card-error .kc-card-content h4 {
+  color: #b91c1c;
+}
+
+.kc-card-badge.error {
+  color: #dc2626;
+}
+
+/* Actions */
+.kc-actions {
+  display: flex;
+  align-items: center;
   justify-content: flex-end;
-  gap: 12px;
-  margin-top: 20px;
+  gap: 10px;
+}
+
+.kc-btn {
+  height: 38px;
+  padding: 0 18px;
+  border-radius: 10px;
+  font-size: 13.5px;
+  font-weight: 500;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.kc-btn-ghost {
+  background: #f8fafc;
+  color: #475569;
+  border: 1px solid #e2e8f0;
+}
+
+.kc-btn-ghost:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+  border-color: #cbd5e1;
+}
+
+.kc-btn-primary {
+  background: var(--ct-color-primary, #7c4dff);
+  color: #ffffff;
+  border: none;
+  box-shadow: 0 4px 12px rgba(124, 77, 255, 0.25);
+}
+
+.kc-btn-primary:hover {
+  background: var(--ct-color-primary-hover, #651fff);
+  box-shadow: 0 6px 16px rgba(124, 77, 255, 0.35);
+  transform: translateY(-1px);
 }
 
 .empty-log {

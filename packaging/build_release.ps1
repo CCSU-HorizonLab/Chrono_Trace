@@ -114,7 +114,16 @@ function Get-ProjectVersion {
     param([string]$FrontendPackageJsonPath, [string]$RequestedVersion)
 
     if ($RequestedVersion) {
-        return $RequestedVersion
+        return [string]$RequestedVersion.Trim()
+    }
+
+    # 版本标签优先级：-Version 参数 > packaging/VERSION 文件 > package.json > 0.1.0
+    $versionFile = Join-Path $ProjectRoot "packaging\VERSION"
+    if (Test-Path -LiteralPath $versionFile) {
+        $versionLabel = (Get-Content -Path $versionFile -Raw).Trim()
+        if ($versionLabel) {
+            return $versionLabel
+        }
     }
 
     $packageJson = Get-Content -Path $FrontendPackageJsonPath -Raw | ConvertFrom-Json

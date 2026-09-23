@@ -1452,21 +1452,54 @@ class Bridge:
             **self._serialize_wechat_accounts(),
         }
 
-    def get_rag_status(self, account_wxid: str = "") -> dict[str, Any]:
+    def get_rag_status(self, account_wxid: str = "", limit: int = 1000) -> dict[str, Any]:
         """Return per-contact RAG status summary for the settings page."""
         try:
             from ..db.connection import get_db
             from ..services.realtime.rag_store import RagStore
+            from ..services.wechat.contact_filters import is_excluded_contact_username
 
             resolved_account = self._resolve_account_wxid(account_wxid)
             conn = get_db()
             RagStore(conn)
-            rows = conn.execute(
-                """
+
+            # 检查表和列结构，确保兼容测试环境的精简 schema
+            has_contacts_table = False
+            conv_cols = set()
+            ct_cols = set()
+            try:
+                table_check = conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='contacts'"
+                ).fetchone()
+                has_contacts_table = bool(table_check)
+                conv_cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(conversations)").fetchall()}
+                if has_contacts_table:
+                    ct_cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(contacts)").fetchall()}
+            except Exception:
+                pass
+
+            c_avatar_expr = "NULLIF(TRIM(c.avatar_path), '')" if "avatar_path" in conv_cols else "NULL"
+            ct_avatar_expr = "NULLIF(TRIM(ct.avatar_path), '')" if "avatar_path" in ct_cols else "NULL"
+            c_display_expr = "NULLIF(TRIM(c.display_name), '')" if "display_name" in conv_cols else "NULL"
+            ct_remark_expr = "NULLIF(TRIM(ct.remark), '')" if "remark" in ct_cols else "NULL"
+            ct_nickname_expr = "NULLIF(TRIM(ct.nickname), '')" if "nickname" in ct_cols else "NULL"
+
+            if has_contacts_table:
+                query = f"""
                 SELECT
                     c.id AS conversation_id,
-                    c.display_name,
+                    COALESCE(
+                        {ct_remark_expr},
+                        {ct_nickname_expr},
+                        {c_display_expr},
+                        NULLIF(TRIM(c.username), ''),
+                        '未知联系人'
+                    ) AS display_name,
                     c.username,
+                    COALESCE(
+                        {c_avatar_expr},
+                        {ct_avatar_expr}
+                    ) AS avatar,
                     COALESCE(s.status, 'pending') AS status,
                     COALESCE(s.document_count, 0) AS document_count,
                     COALESCE(s.vector_count, 0) AS vector_count,
@@ -1475,17 +1508,47 @@ class Bridge:
                     COALESCE(s.storage_bytes, 0) AS storage_bytes,
                     COALESCE(s.enabled, 1) AS enabled,
                     COALESCE(s.fact_read_mode, 'inherit') AS fact_read_mode,
-                    s.updated_at
+                    c.updated_at
+                FROM conversations c
+                LEFT JOIN contacts ct
+                  ON ct.account_wxid = c.account_wxid AND ct.username = c.username
+                LEFT JOIN rag_index_status s
+                  ON s.account_wxid = c.account_wxid AND s.conversation_id = c.id
+                WHERE c.account_wxid = ? AND c.is_deleted = 0
+                ORDER BY c.updated_at DESC
+                LIMIT ?
+                """
+            else:
+                query = f"""
+                SELECT
+                    c.id AS conversation_id,
+                    COALESCE({c_display_expr}, NULLIF(TRIM(c.username), ''), '未知联系人') AS display_name,
+                    c.username,
+                    {c_avatar_expr} AS avatar,
+                    COALESCE(s.status, 'pending') AS status,
+                    COALESCE(s.document_count, 0) AS document_count,
+                    COALESCE(s.vector_count, 0) AS vector_count,
+                    s.last_indexed_at,
+                    s.last_error,
+                    COALESCE(s.storage_bytes, 0) AS storage_bytes,
+                    COALESCE(s.enabled, 1) AS enabled,
+                    COALESCE(s.fact_read_mode, 'inherit') AS fact_read_mode,
+                    c.updated_at
                 FROM conversations c
                 LEFT JOIN rag_index_status s
                   ON s.account_wxid = c.account_wxid AND s.conversation_id = c.id
                 WHERE c.account_wxid = ? AND c.is_deleted = 0
                 ORDER BY c.updated_at DESC
-                LIMIT 80
-                """,
-                (resolved_account,),
-            ).fetchall()
-            items = [dict(row) for row in rows]
+                LIMIT ?
+                """
+
+            rows = conn.execute(query, (resolved_account, max(1, int(limit)))).fetchall()
+            items = []
+            for row in rows:
+                item = dict(row)
+                if is_excluded_contact_username(item.get("username")):
+                    continue
+                items.append(item)
             return {
                 "ok": True,
                 "settings": {

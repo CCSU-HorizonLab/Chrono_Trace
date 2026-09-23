@@ -87,109 +87,6 @@
         </div>
       </CtCard>
 
-      <CtCard title="联系人记忆 RAG">
-        <div class="form">
-          <div class="hint-box warning">
-            <p>关闭远程 RAG 脱敏后，未脱敏或弱脱敏的共同记忆上下文可能会发送给远程模型。只有确认风险后才应关闭。</p>
-          </div>
-
-          <label class="row">
-            <div class="lab">启用 RAG</div>
-            <label class="ct-switch">
-              <input v-model="form.rag_enabled" type="checkbox" @change="refreshRagStatus" />
-              <span class="slider"></span>
-              <span class="switch-label">{{ form.rag_enabled ? '已启用' : '已关闭' }}</span>
-            </label>
-          </label>
-
-          <label class="row">
-            <div class="lab">事实记忆优先</div>
-            <label class="ct-switch">
-              <input v-model="form.rag_fact_read_enabled" type="checkbox" />
-              <span class="slider"></span>
-              <span class="switch-label">{{ form.rag_fact_read_enabled ? '事实优先' : '文档回退' }}</span>
-            </label>
-          </label>
-
-          <label class="row">
-            <div class="lab">远程 RAG 脱敏</div>
-            <label class="ct-switch">
-              <input v-model="form.rag_remote_context_redaction" type="checkbox" @change="handleRagRedactionToggle" />
-              <span class="slider"></span>
-              <span class="switch-label">{{ form.rag_remote_context_redaction ? '默认脱敏' : '已关闭' }}</span>
-            </label>
-          </label>
-
-          <label class="row">
-            <div class="lab">远程 embedding</div>
-            <label class="ct-switch">
-              <input v-model="form.rag_allow_remote_embedding" type="checkbox" @change="handleRemoteEmbeddingToggle" />
-              <span class="slider"></span>
-              <span class="switch-label">{{ form.rag_allow_remote_embedding ? '允许' : '禁止' }}</span>
-            </label>
-          </label>
-
-          <div class="row">
-            <div class="lab">Embedding</div>
-            <div class="rag-config-line">
-              <span>{{ form.rag_embedding_model }}</span>
-              <span>{{ form.rag_embedding_dim }} 维</span>
-              <CtButton variant="ghost" :disabled="ragModel.loading" @click.stop.prevent="refreshRagModelStatus">
-                {{ ragModel.loading ? '检测中...' : '检测模型' }}
-              </CtButton>
-            </div>
-          </div>
-          <div v-if="ragModel.checked" class="rag-model-status" :class="ragModel.ready ? 'ready' : 'missing'">
-            <span style="display: inline-flex; align-items: center; gap: 6px;">
-              <CheckCircle2 v-if="ragModel.ready" :size="15" />
-              <AlertTriangle v-else :size="15" />
-              {{ ragModel.ready ? '本地 embedding 模型可用' : '本地 embedding 模型未就绪' }}
-            </span>
-            <CtButton v-if="!ragModel.ready" variant="ghost" :disabled="ragModel.downloading" @click.stop.prevent="downloadRagModel">
-              {{ ragModel.downloading ? '下载中...' : '下载模型' }}
-            </CtButton>
-          </div>
-
-          <div class="rag-status-summary">
-            <div><strong>{{ ragStatus.totalDocuments }}</strong><span>文档</span></div>
-            <div><strong>{{ formatBytes(ragStatus.totalStorageBytes) }}</strong><span>占用</span></div>
-            <CtButton variant="ghost" :disabled="ragStatus.loading" @click.stop.prevent="refreshRagStatus">
-              {{ ragStatus.loading ? '刷新中...' : '刷新状态' }}
-            </CtButton>
-          </div>
-
-          <div class="rag-contact-list">
-            <div v-if="!ragStatus.items.length" class="empty-models">暂无可展示的联系人索引状态</div>
-            <div v-for="item in ragStatus.items.slice(0, 8)" :key="item.conversation_id" class="rag-contact-row">
-              <div class="rag-contact-main">
-                <div class="rag-contact-name">{{ item.display_name || item.username }}</div>
-                <div class="rag-contact-meta">
-                  {{ item.status }} · {{ item.document_count || 0 }} 文档 · {{ item.last_indexed_at ? formatTime(item.last_indexed_at) : '未索引' }}
-                  <span v-if="item.last_error"> · {{ item.last_error }}</span>
-                </div>
-              </div>
-              <div class="rag-contact-actions">
-                <select
-                  class="mini-select"
-                  :value="item.fact_read_mode || 'inherit'"
-                  title="该联系人的事实读侧模式"
-                  @change="handleFactReadModeChange(item, $event)"
-                >
-                  <option value="inherit">跟随全局</option>
-                  <option value="facts">事实优先</option>
-                  <option value="documents">文档回退</option>
-                </select>
-                <button class="mini-btn" @click.prevent="toggleRagContact(item)">
-                  {{ item.enabled ? '禁用' : '启用' }}
-                </button>
-                <button class="mini-btn" @click.prevent="rebuildRagIndex(item)">重建</button>
-                <button class="mini-btn danger" @click.prevent="clearRagIndex(item)">清空</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </CtCard>
-
       <!-- 微信数据库路径配置 -->
       <CtCard title="微信数据库路径">
         <div class="form">
@@ -240,6 +137,57 @@
               <div class="path-hint">可以直接粘贴 WeChat Files 目录路径；回车或点击“扫描路径”会自动识别 wxid。</div>
             </div>
           </template>
+        </div>
+      </CtCard>
+
+      <CtCard title="联系人记忆 RAG" class="rag-card-full">
+        <div class="form">
+          <div class="hint-box info">
+            <p><strong>关于记忆与隐私：</strong>聊天记录的向量化与语义索引完全在本地离线运行（无需远程 API，不消耗 Token）。仅在向远程 LLM 请求“AI建议”时会用到检索结果，默认开启脱敏以保护真实姓名与电话等隐私。</p>
+          </div>
+
+          <label class="row">
+            <div class="lab">启用 RAG</div>
+            <label class="ct-switch">
+              <input v-model="form.rag_enabled" type="checkbox" @change="refreshRagStatus" />
+              <span class="slider"></span>
+              <span class="switch-label">{{ form.rag_enabled ? '已启用' : '已关闭' }}</span>
+            </label>
+          </label>
+
+          <label class="row">
+            <div class="lab">事实记忆优先</div>
+            <label class="ct-switch">
+              <input v-model="form.rag_fact_read_enabled" type="checkbox" />
+              <span class="slider"></span>
+              <span class="switch-label">{{ form.rag_fact_read_enabled ? '事实优先' : '文档回退' }}</span>
+            </label>
+          </label>
+
+          <label class="row">
+            <div class="lab">远程建议脱敏</div>
+            <label class="ct-switch">
+              <input v-model="form.rag_remote_context_redaction" type="checkbox" @change="handleRagRedactionToggle" />
+              <span class="slider"></span>
+              <span class="switch-label">{{ form.rag_remote_context_redaction ? '默认脱敏' : '已关闭' }}</span>
+            </label>
+          </label>
+
+
+          <div class="rag-status-summary">
+            <div><strong>{{ ragStatus.totalDocuments }}</strong><span>文档</span></div>
+            <div><strong>{{ formatBytes(ragStatus.totalStorageBytes) }}</strong><span>占用</span></div>
+            <CtButton variant="ghost" :disabled="ragStatus.loading" @click.stop.prevent="refreshRagStatus">
+              {{ ragStatus.loading ? '刷新中...' : '刷新状态' }}
+            </CtButton>
+          </div>
+
+          <RagContactManager
+            :items="ragStatus.items"
+            :loading="ragStatus.loading"
+            :account-wxid="activeAccountWxid"
+            @refresh="refreshRagStatus"
+          />
         </div>
       </CtCard>
 
@@ -468,6 +416,7 @@ import CtCard from '@/components/base/CtCard.vue'
 import CtField from '@/components/base/CtField.vue'
 import CtButton from '@/components/base/CtButton.vue'
 import CtAccountSelector from '@/components/base/CtAccountSelector.vue'
+import RagContactManager from '@/components/settings/RagContactManager.vue'
 import { showDialog, showConfirm } from '@/utils/dialog'
 import { clearWechatAccountProfileCache, enrichWechatAccountsWithProfiles } from '@/utils/wechatAccounts'
 
@@ -1431,17 +1380,23 @@ onMounted(() => {
 /* 整体布局 */
 .grid { 
   display: grid; 
-  grid-template-columns: repeat(2, 1fr); 
-  gap: 32px; 
-  max-width: 1400px; 
+  grid-template-columns: repeat(2, minmax(0, 1fr)); 
+  grid-auto-flow: row dense;
+  gap: 24px; 
+  max-width: 1560px; 
+  width: 100%;
   margin: 0 auto; 
   align-items: stretch;
+}
+
+.rag-card-full {
+  grid-column: 1 / -1;
 }
 
 @media (max-width: 1024px) {
   .grid {
     grid-template-columns: 1fr;
-    max-width: 900px;
+    gap: 20px;
   }
 }
 
@@ -1524,13 +1479,7 @@ onMounted(() => {
 }
 .hint-box p { margin: 0; font-size: 14px; line-height: 1.5; }
 
-.rag-config-line {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  color: var(--ct-text-secondary);
-  font-size: 13px;
-}
+
 .rag-status-summary {
   display: grid;
   grid-template-columns: 1fr 1fr auto;

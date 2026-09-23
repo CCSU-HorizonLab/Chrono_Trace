@@ -32,10 +32,10 @@ P0、P1 未完成前不实施 P2、P3 的产品逻辑。
 
 ## 任务索引
 
-- [P0：事实维护与向量召回](rag-v4-p0-tasks.md)
-- [P1：读侧收敛](rag-v4-p1-tasks.md)
-- [P2：泛化与注入](rag-v4-p2-tasks.md)
-- [P3：评测与发布门禁](rag-v4-p3-tasks.md)
+- [P0：事实维护与向量召回](../archive/execution/rag-v4/rag-v4-p0-tasks.md)
+- [P1：读侧收敛](../archive/execution/rag-v4/rag-v4-p1-tasks.md)
+- [P2：泛化与注入](../archive/execution/rag-v4/rag-v4-p2-tasks.md)
+- [P3：评测与发布门禁](../archive/execution/rag-v4/rag-v4-p3-tasks.md)
 
 ## 勾选与提交规则
 

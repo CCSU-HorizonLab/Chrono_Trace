@@ -1675,9 +1675,36 @@ class Bridge:
             )
             feedback = store.list_fact_user_feedback(resolved_account, int(conversation_id))
 
-            # Fetch evidence messages in one query. The old implementation ran
-            # one SQLite query per fact, which made the WebView dialog appear
-            # stuck on “加载中” for contacts with hundreds of facts.
+            contact_avatar = ""
+            try:
+                conv_row = conn.execute(
+                    "SELECT avatar_path FROM conversations WHERE id = ?",
+                    (int(conversation_id),),
+                ).fetchone()
+                if conv_row and conv_row["avatar_path"]:
+                    contact_avatar = str(conv_row["avatar_path"] or "").strip()
+                if not contact_avatar:
+                    c_row = conn.execute(
+                        """
+                        SELECT avatar_path FROM contacts
+                        WHERE account_wxid = ? AND username = (SELECT username FROM conversations WHERE id = ?)
+                        LIMIT 1
+                        """,
+                        (resolved_account, int(conversation_id)),
+                    ).fetchone()
+                    if c_row and c_row["avatar_path"]:
+                        contact_avatar = str(c_row["avatar_path"] or "").strip()
+            except Exception:
+                pass
+
+            user_avatar = ""
+            try:
+                user_prof = self.get_current_user_profile(account_wxid=resolved_account)
+                if user_prof.get("ok") and user_prof.get("profile"):
+                    user_avatar = str(user_prof["profile"].get("avatar") or "").strip()
+            except Exception:
+                pass
+
             evidence_ids_by_fact: dict[int, list[int]] = {}
             all_evidence_ids: set[int] = set()
             for row in rows:
@@ -1685,30 +1712,64 @@ class Bridge:
                     ids = [int(v) for v in json.loads(row["evidence_message_ids_json"] or "[]") if str(v).isdigit()]
                 except Exception:
                     ids = []
-                ids = [i for i in ids if i > 0][:2]
+                ids = [i for i in ids if i > 0][:6]
                 evidence_ids_by_fact[int(row["id"])] = ids
                 all_evidence_ids.update(ids)
 
-            evidence_text_by_id: dict[int, str] = {}
+            evidence_msg_by_id: dict[int, dict[str, Any]] = {}
             if all_evidence_ids:
                 ids = list(all_evidence_ids)
                 placeholders = ",".join("?" for _ in ids)
                 try:
+                    cols = {
+                        r["name"]
+                        for r in conn.execute("PRAGMA table_info(messages)").fetchall()
+                    }
+                    sender_col = "is_sender" if "is_sender" in cols else "0 AS is_sender"
+                    time_col = (
+                        "timestamp"
+                        if "timestamp" in cols
+                        else ("created_at" if "created_at" in cols else "0 AS timestamp")
+                    )
                     msg_rows = conn.execute(
-                        f"SELECT id, CAST(content AS BLOB) AS content FROM messages WHERE id IN ({placeholders})",
+                        f"""
+                        SELECT id, {sender_col}, {time_col}, CAST(content AS BLOB) AS content
+                        FROM messages
+                        WHERE id IN ({placeholders})
+                        ORDER BY {time_col} ASC, id ASC
+                        """,
                         ids,
                     ).fetchall()
                     for msg_row in msg_rows:
                         value = msg_row["content"]
-                        text = value.decode("utf-8", errors="replace") if isinstance(value, bytes) else str(value or "")
-                        text = " ".join(text.split())
-                        if text:
-                            evidence_text_by_id[int(msg_row["id"])] = text[:120] + ("…" if len(text) > 120 else "")
-                except Exception:
-                    evidence_text_by_id = {}
+                        text_val = value.decode("utf-8", errors="replace") if isinstance(value, bytes) else str(value or "")
+                        text_val = " ".join(text_val.split())
+                        if text_val:
+                            ts_val = (
+                                msg_row["timestamp"]
+                                if "timestamp" in msg_row.keys()
+                                else (msg_row["created_at"] if "created_at" in msg_row.keys() else 0)
+                            )
+                            evidence_msg_by_id[int(msg_row["id"])] = {
+                                "id": int(msg_row["id"]),
+                                "is_sender": bool(msg_row["is_sender"]),
+                                "timestamp": int(ts_val or 0),
+                                "text": text_val[:180] + ("…" if len(text_val) > 180 else ""),
+                            }
+                except Exception as ex:
+                    logger.warning("[Bridge] 查询证据消息失败: %s", ex)
+                    evidence_msg_by_id = {}
 
             facts = []
             for row in rows:
+                fact_msg_ids = evidence_ids_by_fact.get(int(row["id"]), [])
+                fact_evidence_msgs = [
+                    evidence_msg_by_id[i]
+                    for i in fact_msg_ids
+                    if i in evidence_msg_by_id
+                ]
+                fact_evidence_msgs.sort(key=lambda m: (m.get("timestamp") or 0, m.get("id") or 0))
+
                 facts.append(
                     {
                         "id": row["id"],
@@ -1720,17 +1781,16 @@ class Bridge:
                         "sensitive": str(row["sensitivity"] or "normal") == "sensitive",
                         "enabled": bool(row["enabled"]),
                         "user_action": feedback.get(int(row["id"])),
-                        "evidence_excerpts": [
-                            evidence_text_by_id[i]
-                            for i in evidence_ids_by_fact.get(int(row["id"]), [])
-                            if i in evidence_text_by_id
-                        ],
+                        "evidence_messages": fact_evidence_msgs,
+                        "evidence_excerpts": [m["text"] for m in fact_evidence_msgs],
                     }
                 )
             return {
                 "ok": True,
                 "conversation_id": int(conversation_id),
                 "resolved_account_wxid": resolved_account,
+                "contact_avatar": contact_avatar,
+                "user_avatar": user_avatar,
                 "raw_fact_count": raw_fact_count,
                 "total": len(facts),
                 "disabled_count": sum(1 for f in facts if not f["enabled"]),

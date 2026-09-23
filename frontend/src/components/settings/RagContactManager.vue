@@ -289,6 +289,8 @@
     :conversation-id="factDialog.conversationId"
     :account-wxid="props.accountWxid"
     :display-name="factDialog.displayName"
+    :avatar-url="factDialog.avatarUrl"
+    :user-avatar-url="props.userAvatar"
     @close="factDialog.visible = false"
   />
 </template>
@@ -332,11 +334,13 @@ const props = withDefaults(
     items: RagContactItem[]
     loading?: boolean
     accountWxid?: string
+    userAvatar?: string
   }>(),
   {
     items: () => [],
     loading: false,
     accountWxid: '',
+    userAvatar: '',
   }
 )
 
@@ -349,11 +353,13 @@ const factDialog = reactive({
   visible: false,
   conversationId: null as number | null,
   displayName: '',
+  avatarUrl: '',
 })
 
 function openFactDialog(item: RagContactItem) {
   factDialog.conversationId = Number(item.conversation_id)
   factDialog.displayName = item.display_name || item.username || ''
+  factDialog.avatarUrl = item.avatar || (item as any).avatar_url || (item as any).avatar_path || ''
   factDialog.visible = true
 }
 

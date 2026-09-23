@@ -1,0 +1,324 @@
+{
+  "schema_available": true,
+  "generated_at_utc": "2026-09-23T13:33:45.770032+00:00",
+  "database": {
+    "path": "D:\\Project\\Chrono Trace\\backend\\data\\chrono_trace.db",
+    "bytes": 125173760,
+    "sha256": "ab5cf3770fe3100e073980326610ee96ed8d51ba116e50bb74eb05ea5c3aacbc",
+    "snapshot": "sqlite mode=ro + PRAGMA query_only=ON + BEGIN (WAL-consistent read transaction)"
+  },
+  "logs": {
+    "rows": 7,
+    "time": {
+      "min": 1789914306,
+      "max": 1790123169,
+      "min_utc": "2026-09-20T14:25:06+00:00",
+      "max_utc": "2026-09-23T00:26:09+00:00"
+    },
+    "distinct_conversations": 1,
+    "intent_mode": {
+      "memory_request": 5,
+      "none": 2
+    },
+    "index_status": {
+      "ready": 5,
+      "pending": 2
+    },
+    "rag_enabled": {
+      "1": 7
+    },
+    "rag_retrieved": {
+      "1": 7
+    },
+    "hit_count": {
+      "6": 5,
+      "1": 2
+    },
+    "injection_mode": {
+      "reply": 3,
+      "suggestion": 2,
+      "none": 2
+    },
+    "gate_decision": {
+      "inject": 5,
+      "skip": 2
+    },
+    "gate_reason": {
+      "memory_request_match": 3,
+      "low_score": 2,
+      "hot_context": 2
+    },
+    "strategy": {
+      "facts": 5,
+      "hot_context": 2
+    },
+    "retrieval_source": {
+      "fact": 5,
+      "document": 2
+    },
+    "no_hit_reason": {
+      "<NULL>": 7
+    },
+    "degrade_reason": {
+      "<NULL>": 5,
+      "hot_context_only": 2
+    },
+    "query_scope": {
+      "latest_turn": 7
+    },
+    "redaction_status": {
+      "redacted": 6,
+      "raw_local": 1
+    },
+    "sensitive_pseudo_hit_candidate_document_id_minus_one": 2,
+    "source_row_counts": {
+      "fact": 5,
+      "document": 2
+    },
+    "suggestion_id_non_null": 0,
+    "suggestion_id_null": 7,
+    "json_field_presence": {
+      "fact_ids": {
+        "empty": 4,
+        "nonempty": 3
+      },
+      "evidence_ids": {
+        "empty": 4,
+        "nonempty": 3
+      }
+    }
+  },
+  "facts": {
+    "rows": 1051,
+    "kind_status_sensitivity_enabled": [
+      {
+        "kind": "recurring_habit",
+        "status": "active",
+        "sensitivity": "normal",
+        "enabled": 1,
+        "count": 347
+      },
+      {
+        "kind": "hobby_or_game",
+        "status": "active",
+        "sensitivity": "normal",
+        "enabled": 1,
+        "count": 142
+      },
+      {
+        "kind": "personal_profile",
+        "status": "active",
+        "sensitivity": "normal",
+        "enabled": 1,
+        "count": 134
+      },
+      {
+        "kind": "relationship_boundary",
+        "status": "active",
+        "sensitivity": "normal",
+        "enabled": 1,
+        "count": 119
+      },
+      {
+        "kind": "preference_dislike",
+        "status": "active",
+        "sensitivity": "normal",
+        "enabled": 1,
+        "count": 80
+      },
+      {
+        "kind": "purchase_or_price",
+        "status": "active",
+        "sensitivity": "normal",
+        "enabled": 1,
+        "count": 76
+      },
+      {
+        "kind": "preference_like",
+        "status": "active",
+        "sensitivity": "normal",
+        "enabled": 1,
+        "count": 54
+      },
+      {
+        "kind": "food_or_place",
+        "status": "active",
+        "sensitivity": "normal",
+        "enabled": 1,
+        "count": 34
+      },
+      {
+        "kind": "plan_or_appointment",
+        "status": "active",
+        "sensitivity": "normal",
+        "enabled": 1,
+        "count": 32
+      },
+      {
+        "kind": "promise_or_commitment",
+        "status": "active",
+        "sensitivity": "normal",
+        "enabled": 1,
+        "count": 23
+      },
+      {
+        "kind": "hobby_or_game",
+        "status": "active",
+        "sensitivity": "sensitive",
+        "enabled": 1,
+        "count": 4
+      },
+      {
+        "kind": "recurring_habit",
+        "status": "active",
+        "sensitivity": "sensitive",
+        "enabled": 1,
+        "count": 2
+      },
+      {
+        "kind": "personal_profile",
+        "status": "active",
+        "sensitivity": "sensitive",
+        "enabled": 1,
+        "count": 1
+      },
+      {
+        "kind": "plan_or_appointment",
+        "status": "active",
+        "sensitivity": "sensitive",
+        "enabled": 1,
+        "count": 1
+      },
+      {
+        "kind": "purchase_or_price",
+        "status": "active",
+        "sensitivity": "sensitive",
+        "enabled": 1,
+        "count": 1
+      },
+      {
+        "kind": "relationship_boundary",
+        "status": "active",
+        "sensitivity": "sensitive",
+        "enabled": 1,
+        "count": 1
+      }
+    ],
+    "status": {
+      "active": 1051
+    },
+    "sensitivity": {
+      "normal": 1041,
+      "sensitive": 10
+    },
+    "enabled": {
+      "1": 1051
+    },
+    "supersedes_fact_id_non_null": 0,
+    "confidence_bins": {
+      "lt_0_30": 0,
+      "0_30_to_lt_0_50": 0,
+      "0_50_to_lt_0_70": 1048,
+      "0_70_to_lt_0_90": 3,
+      "ge_0_90": 0
+    },
+    "updated_time": {
+      "min": 1789907449,
+      "max": 1790122887,
+      "min_utc": "2026-09-20T12:30:49+00:00",
+      "max_utc": "2026-09-23T00:21:27+00:00"
+    }
+  },
+  "documents": {
+    "rows": 2271,
+    "doc_type": {
+      "fact_memory": 1062,
+      "shared_memory": 619,
+      "topic_segment": 269,
+      "evidence_excerpt": 269,
+      "self_style_example": 48,
+      "relationship_state": 2,
+      "communication_style": 2
+    },
+    "relationship_doc_counts": {
+      "relationship_state": 2,
+      "contact_preference": 0,
+      "communication_style": 2
+    },
+    "relationship_doc_enabled": {
+      "relationship_state": {
+        "1": 2
+      },
+      "contact_preference": {},
+      "communication_style": {
+        "1": 2
+      }
+    },
+    "sensitivity": {
+      "normal": 2248,
+      "sensitive": 23
+    },
+    "superseded_by_non_null": 0,
+    "updated_time": {
+      "min": 1789907511,
+      "max": 1790122899,
+      "min_utc": "2026-09-20T12:31:51+00:00",
+      "max_utc": "2026-09-23T00:21:39+00:00"
+    }
+  },
+  "index": {
+    "rows": 169,
+    "status_and_fact_read_mode": [
+      {
+        "status": "pending",
+        "fact_read_mode": "inherit",
+        "count": 165
+      },
+      {
+        "status": "ready",
+        "fact_read_mode": "inherit",
+        "count": 3
+      },
+      {
+        "status": "pending",
+        "fact_read_mode": "documents",
+        "count": 1
+      }
+    ],
+    "embedding_dimensions": {
+      "768": 169
+    }
+  },
+  "suggestions_and_feedback": {
+    "rows": 5,
+    "trigger_type": {
+      "manual_request": 5
+    },
+    "status": {
+      "displayed": 5
+    },
+    "engine_type": {
+      "llm": 5
+    },
+    "time": {
+      "min": 1789914308,
+      "max": 1790122866,
+      "min_utc": "2026-09-20T14:25:08+00:00",
+      "max_utc": "2026-09-23T00:21:06+00:00"
+    },
+    "observation_events": {
+      "shown": 5,
+      "viewed": 5
+    },
+    "feedback_attribution_rows": 0,
+    "feedback_attribution_types": {},
+    "feedback_writeback_document_non_null": 0
+  },
+  "limitations": [
+    "The production database contains seven retrieval rows spanning one account and one conversation; it cannot estimate population-level trigger or recall rates.",
+    "All seven retrieval rows have a NULL suggestion_id, so retrieval-to-suggestion joins and causal attribution are unavailable; time proximity must not be treated as a join.",
+    "The schema has no explicit eval/test provenance flag. Production-vs-replay contamination cannot be separated from this database by SQL alone.",
+    "The two document_id=-1 rows are hot_context candidates with retrieval_source=document and rag_degraded_reason=hot_context_only; they are counted as candidates only and no longer represent a valid historical hit after the hot-context fix.",
+    "Counts are aggregates; raw query/fact/document/message content is intentionally omitted to prevent personal-data disclosure."
+  ]
+}

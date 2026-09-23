@@ -1,0 +1,119 @@
+# Dependencies
+node_modules/
+frontend/dist/
+frontend/webdist/
+
+# Environment variables
+.env
+.env.local
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+.venv/
+.venv-packaging/
+.venv-packaging-gpu/
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.coverage
+htmlcov/
+release/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+backend/data
+
+# Temporary and backup files
+*.backup
+*.bak
+*~
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# IDE and editor files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+.spyderproject
+.spyproject
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Testing
+frontend/coverage/
+.nyc_output/
+
+# Build outputs
+frontend/.vite/
+frontend/dist-ssr/
+packaging/third_party/*.exe
+packaging/generated/
+
+# Documentation build output
+docs/docs/
+
+# Temporary documentation and specs
+CARD_FIX*.md
+DARK_MODE_FIX*.md
+IMPLEMENTATION_SUMMARY.md
+frontend/DESIGN_SPEC.md
+frontend/REDESIGN.md
+frontend/THEME_UPDATE_INSTRUCTIONS.md
+
+# Local configurations
+.claude/settings.local.json
+.claude/settings.local.*.json
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# ===== ↑ 以上同步自 .gitignore（「从 .gitignore 同步」只重写以上部分）=====
+.git/
+.hg/
+.svn/
+bower_components/
+jspm_packages/
+site-packages/
+venv/
+coverage/
+lcov-report/
+cmakefiles/
+cmake-build-*/
+bazel-*/
+pods/
+deriveddata/
+storybook-static/
+playwright-report/
+test-results/
+allure-results/
+allure-report/
+cdk.out/
+*.dist-info/
+eggs/
+pip-wheel-metadata/
+wheels/
+# ----- ↑ 以上为 ZCode 默认排除规则（自定义规则请写在本行下方，不会被同步/恢复改动）-----
+# 自定义规则写在下方（本行提示可删除）

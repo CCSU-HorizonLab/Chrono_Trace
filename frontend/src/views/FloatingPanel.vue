@@ -138,7 +138,13 @@
                   <button class="fp-btn-copy" @click="copyText(sp)">复制</button>
                 </div>
                 <div v-if="getRagBadge(s.rag_context)" class="fp-rag-row">
-                  <span class="fp-rag-badge" :class="getRagBadge(s.rag_context)?.state">
+                  <span
+                    class="fp-rag-badge"
+                    :class="getRagBadge(s.rag_context)?.state"
+                    :style="canOpenRagDetail(s.rag_context) ? 'cursor:pointer' : ''"
+                    :title="canOpenRagDetail(s.rag_context) ? '点击查看参考依据' : ''"
+                    @click.stop="openRagDetail(s.rag_context)"
+                  >
                     {{ getRagBadge(s.rag_context)?.label }}
                   </span>
                 </div>
@@ -152,7 +158,13 @@
               </div>
               <div class="fp-bubble-txt">{{ s.content }}</div>
               <div v-if="getRagBadge(s.rag_context)" class="fp-rag-row">
-                <span class="fp-rag-badge" :class="getRagBadge(s.rag_context)?.state">
+                <span
+                  class="fp-rag-badge"
+                  :class="getRagBadge(s.rag_context)?.state"
+                  :style="canOpenRagDetail(s.rag_context) ? 'cursor:pointer' : ''"
+                  :title="canOpenRagDetail(s.rag_context) ? '点击查看参考依据' : ''"
+                  @click.stop="openRagDetail(s.rag_context)"
+                >
                   {{ getRagBadge(s.rag_context)?.label }}
                 </span>
               </div>
@@ -358,6 +370,51 @@
         </div>
       </div>
     </div>
+  <!-- RAG 注入详情弹层：展示本次建议实际使用的记忆及来源 -->
+  <div v-if="ragDetail.visible" class="fp-rag-detail-mask" @click.self="closeRagDetail">
+    <div class="fp-rag-detail">
+      <div class="fp-rag-detail-head">
+        <span class="fp-rag-detail-title">本次建议的记忆依据</span>
+        <button class="fp-rag-detail-close" @click="closeRagDetail">✕</button>
+      </div>
+      <div v-if="ragDetail.loading" class="fp-rag-detail-status">加载中…</div>
+      <div v-else-if="ragDetail.error" class="fp-rag-detail-status">无法加载：{{ ragDetail.error }}</div>
+      <template v-else-if="ragDetail.data">
+        <div class="fp-rag-detail-meta">
+          <span>策略：{{ ragDetail.data.log.strategy || '-' }}</span>
+          <span>门控：{{ ragDetail.data.log.gate_decision || '-' }}</span>
+          <span>耗时：{{ ragDetail.data.log.elapsed_ms ?? 0 }}ms</span>
+          <span v-if="ragDetail.data.log.degrade_reason">降级：{{ ragDetail.data.log.degrade_reason }}</span>
+        </div>
+        <div class="fp-rag-detail-candidates">
+          检索到 {{ ragDetail.data.candidates.count }} 条候选，实际注入 {{ ragDetail.data.candidates.injected_count }} 条
+        </div>
+        <div v-if="!ragDetail.data.injected.length" class="fp-rag-detail-status">
+          本次没有注入任何历史记忆
+        </div>
+        <div
+          v-for="item in ragDetail.data.injected"
+          :key="item.source + '-' + item.id"
+          class="fp-rag-item"
+        >
+          <div class="fp-rag-item-head">
+            <span class="fp-rag-item-chip" :class="item.source">
+              {{ item.source === 'fact' ? '历史事实' : item.doc_type === 'hot_context' ? '当前对话' : '历史记录' }}
+            </span>
+            <span v-if="item.as_of" class="fp-rag-item-time">{{ formatRagTime(item.as_of) }}</span>
+            <span v-if="item.confidence != null" class="fp-rag-item-conf">
+              置信 {{ (item.confidence * 100).toFixed(0) }}%
+            </span>
+          </div>
+          <div class="fp-rag-item-content">{{ item.content }}</div>
+          <div v-if="item.evidence_excerpts?.length" class="fp-rag-item-evidence">
+            <div class="fp-rag-item-evidence-title">来源原文</div>
+            <div v-for="(ev, ei) in item.evidence_excerpts" :key="ei" class="fp-rag-item-evidence-text">“{{ ev }}”</div>
+          </div>
+        </div>
+      </template>
+    </div>
+  </div>
   </Teleport>
 </template>
 
@@ -575,7 +632,16 @@ const contextUsed = ref<{ sender: string; content: string; timestamp: number }[]
 const lastThread = ref<any>(null)
 
 // AI 对话历史 (带有时间戳)
-type RagContextState = 'no_hit' | 'referenced' | 'not_referenced' | 'hidden'
+type RagContextState =
+  | 'no_hit'
+  | 'referenced'
+  | 'not_referenced'
+  | 'fact_hit'
+  | 'document_hit'
+  | 'relationship_policy'
+  | 'hot_context'
+  | 'degraded'
+  | 'hidden'
 type RagContextSummary = {
   state?: RagContextState
   label?: string
@@ -1932,8 +1998,76 @@ function copyText(text: string) {
 
 function getRagBadge(ragContext: RagContextSummary | undefined | null): RagContextSummary | null {
   if (!ragContext || ragContext.state === 'hidden' || !ragContext.label) return null
-  if (!['no_hit', 'referenced', 'not_referenced'].includes(String(ragContext.state))) return null
+  const allowedStates = [
+    'no_hit', 'referenced', 'not_referenced',
+    'fact_hit', 'document_hit', 'relationship_policy', 'hot_context', 'degraded',
+  ]
+  if (!allowedStates.includes(String(ragContext.state))) return null
   return ragContext
+}
+
+// RAG 注入详情弹层
+type RagInjectedItem = {
+  source: string
+  id: number
+  doc_type: string
+  content: string
+  subject?: string | null
+  kind?: string | null
+  as_of?: number | null
+  confidence?: number | null
+  evidence_excerpts?: string[]
+}
+type RagLogDetail = {
+  log: {
+    id: number
+    strategy?: string | null
+    gate_decision?: string | null
+    elapsed_ms?: number | null
+    degrade_reason?: string | null
+  }
+  injected: RagInjectedItem[]
+  candidates: { count: number; injected_count: number; not_injected_ids: number[] }
+}
+const ragDetail = reactive<{ visible: boolean; loading: boolean; error: string; data: RagLogDetail | null }>({
+  visible: false,
+  loading: false,
+  error: '',
+  data: null,
+})
+
+function canOpenRagDetail(rc?: RagContextSummary | null): boolean {
+  return !!(rc && rc.log_id)
+}
+
+async function openRagDetail(rc?: RagContextSummary | null) {
+  if (!canOpenRagDetail(rc) || !rc?.log_id) return
+  ragDetail.visible = true
+  ragDetail.loading = true
+  ragDetail.error = ''
+  ragDetail.data = null
+  try {
+    const res = await api.get_rag_log_detail(rc.log_id)
+    if (res?.ok) {
+      ragDetail.data = res as RagLogDetail
+    } else {
+      ragDetail.error = String(res?.error || '未知错误')
+    }
+  } catch (e: any) {
+    ragDetail.error = String(e?.message || e)
+  } finally {
+    ragDetail.loading = false
+  }
+}
+
+function closeRagDetail() {
+  ragDetail.visible = false
+}
+
+function formatRagTime(ts?: number | null): string {
+  if (!ts) return ''
+  const d = new Date(ts * 1000)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
 const triggerIconComponents: Record<string, any> = {
@@ -2393,6 +2527,33 @@ async function loadLastThread() {
 .fp-rag-badge.referenced { color: var(--ct-color-primary); border-color: rgba(124, 77, 255, 0.28); background: rgba(124, 77, 255, 0.08); }
 .fp-rag-badge.no_hit { color: var(--ct-text-secondary); background: var(--ct-bg-secondary); }
 .fp-rag-badge.not_referenced { color: #8a5a00; border-color: rgba(180, 125, 20, 0.28); background: rgba(180, 125, 20, 0.08); }
+.fp-rag-badge.fact_hit { color: var(--ct-color-primary); border-color: rgba(124, 77, 255, 0.28); background: rgba(124, 77, 255, 0.08); }
+.fp-rag-badge.document_hit { color: var(--ct-color-primary); border-color: rgba(124, 77, 255, 0.2); background: rgba(124, 77, 255, 0.05); }
+.fp-rag-badge.relationship_policy { color: #0b6b3a; border-color: rgba(22, 128, 74, 0.28); background: rgba(22, 128, 74, 0.08); }
+.fp-rag-badge.hot_context { color: var(--ct-text-tertiary); background: var(--ct-bg-secondary); }
+.fp-rag-badge.degraded { color: #8a2b2b; border-color: rgba(178, 58, 58, 0.28); background: rgba(178, 58, 58, 0.07); }
+
+/* RAG 注入详情弹层 */
+.fp-rag-detail-mask { position: fixed; inset: 0; z-index: 1000; background: rgba(0, 0, 0, 0.18); display: flex; align-items: center; justify-content: center; }
+.fp-rag-detail { width: min(420px, calc(100vw - 32px)); max-height: min(520px, 78vh); overflow-y: auto; background: var(--ct-bg-elevated, #fff); border: 1px solid var(--ct-border-color, #e5e7eb); border-radius: 12px; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.16); padding: 14px 16px; }
+.fp-rag-detail-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.fp-rag-detail-title { font-size: 13px; font-weight: 700; color: var(--ct-text-primary, #1f2937); }
+.fp-rag-detail-close { border: none; background: transparent; cursor: pointer; font-size: 14px; color: var(--ct-text-tertiary, #9ca3af); padding: 2px 6px; border-radius: 6px; }
+.fp-rag-detail-close:hover { background: var(--ct-bg-secondary, #f3f4f6); }
+.fp-rag-detail-status { font-size: 12px; color: var(--ct-text-secondary, #6b7280); padding: 12px 0; text-align: center; }
+.fp-rag-detail-meta { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 11px; color: var(--ct-text-tertiary, #9ca3af); margin-bottom: 6px; }
+.fp-rag-detail-candidates { font-size: 11.5px; color: var(--ct-text-secondary, #6b7280); background: var(--ct-bg-secondary, #f3f4f6); border-radius: 8px; padding: 6px 10px; margin-bottom: 10px; }
+.fp-rag-item { border: 1px solid var(--ct-border-color, #e5e7eb); border-radius: 10px; padding: 8px 10px; margin-bottom: 8px; }
+.fp-rag-item-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.fp-rag-item-chip { font-size: 10px; font-weight: 600; padding: 1px 7px; border-radius: 999px; }
+.fp-rag-item-chip.fact { color: var(--ct-color-primary, #7c4dff); background: rgba(124, 77, 255, 0.08); }
+.fp-rag-item-chip.document { color: #8a5a00; background: rgba(180, 125, 20, 0.08); }
+.fp-rag-item-time { font-size: 10.5px; color: var(--ct-text-tertiary, #9ca3af); }
+.fp-rag-item-conf { font-size: 10.5px; color: var(--ct-text-tertiary, #9ca3af); }
+.fp-rag-item-content { font-size: 12.5px; line-height: 1.5; color: var(--ct-text-primary, #1f2937); word-break: break-word; }
+.fp-rag-item-evidence { margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--ct-border-color, #e5e7eb); }
+.fp-rag-item-evidence-title { font-size: 10.5px; font-weight: 600; color: var(--ct-text-tertiary, #9ca3af); margin-bottom: 3px; }
+.fp-rag-item-evidence-text { font-size: 11.5px; color: var(--ct-text-secondary, #6b7280); line-height: 1.45; margin-bottom: 3px; word-break: break-word; }
 
 /* Chat Bubbles */
 .fp-bubble { max-width: 88%; padding: 10px 14px; border-radius: 12px; align-self: flex-start; background: var(--ct-bg-elevated); border: 1px solid var(--ct-border-color); border-top-left-radius: 4px; box-shadow: var(--ct-shadow-sm); }

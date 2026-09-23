@@ -573,7 +573,8 @@ def test_structured_fact_fusion_merges_duplicate_evidence_without_new_fact():
     )
     rows = conn.execute("SELECT * FROM rag_facts").fetchall()
     assert len(rows) == 1
-    assert rows[0]["confidence"] == 0.9
+    # 重复确认阶梯递增：max(0.6, 0.9) + 0.06 = 0.96，封顶 0.95
+    assert rows[0]["confidence"] == 0.95
     assert json.loads(rows[0]["evidence_message_ids_json"]) == [1, 2]
 
 

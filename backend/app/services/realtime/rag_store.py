@@ -9,6 +9,7 @@ from typing import Any
 
 from ...db.connection import get_db
 from .rag_config import RAG_DEFAULTS
+from .rag_semantic_memory import CONFIDENCE_CEILING, CONFIRMATION_STEP
 
 
 INDEX_STATUSES = {"pending", "indexing", "ready", "stale", "failed"}
@@ -169,6 +170,12 @@ class RagStore:
                 evidence_ids_json TEXT,
                 query_scope TEXT,
                 supersession_decision TEXT,
+                run_provenance TEXT DEFAULT 'production',
+                candidate_ids_json TEXT,
+                injected_item_ids_json TEXT,
+                hot_context_only INTEGER DEFAULT 0,
+                prompt_context_hash TEXT,
+                policy_ids_json TEXT,
                 created_at INTEGER NOT NULL
             )
             """
@@ -186,6 +193,20 @@ class RagStore:
                 vector_blob BLOB NOT NULL,
                 created_at INTEGER NOT NULL,
                 UNIQUE(fact_id, embedding_model, embedding_dim)
+            )
+            """
+        )
+        self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS rag_fact_user_feedback (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_wxid TEXT NOT NULL,
+                conversation_id INTEGER,
+                fact_id INTEGER NOT NULL,
+                action TEXT NOT NULL,
+                reason TEXT,
+                created_at INTEGER NOT NULL,
+                UNIQUE(fact_id)
             )
             """
         )
@@ -269,6 +290,12 @@ class RagStore:
             "evidence_ids_json": "TEXT",
             "query_scope": "TEXT",
             "supersession_decision": "TEXT",
+            "run_provenance": "TEXT DEFAULT 'production'",
+            "candidate_ids_json": "TEXT",
+            "injected_item_ids_json": "TEXT",
+            "hot_context_only": "INTEGER DEFAULT 0",
+            "prompt_context_hash": "TEXT",
+            "policy_ids_json": "TEXT",
         }
         for name, definition in columns.items():
             if name not in existing:
@@ -759,8 +786,10 @@ class RagStore:
              query_expanded_terms_json, no_hit_reason, task_relevance_score,
              off_topic_rejected_count, semantic_fact_count, style_sample_count,
              rerank_reason, retrieval_source, fact_ids_json, evidence_ids_json,
-             query_scope, supersession_decision, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             query_scope, supersession_decision, run_provenance, candidate_ids_json,
+             injected_item_ids_json, hot_context_only, prompt_context_hash,
+             policy_ids_json, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 payload.get("account_wxid") or "",
@@ -808,6 +837,12 @@ class RagStore:
                 json.dumps(payload.get("evidence_ids") or [], ensure_ascii=False),
                 payload.get("query_scope"),
                 payload.get("supersession_decision"),
+                payload.get("run_provenance") or "production",
+                json.dumps(payload.get("candidate_ids") or [], ensure_ascii=False),
+                json.dumps(payload.get("injected_item_ids") or [], ensure_ascii=False),
+                int(bool(payload.get("hot_context_only"))),
+                payload.get("prompt_context_hash"),
+                json.dumps(payload.get("policy_ids") or [], ensure_ascii=False),
                 _now(),
             ),
         )
@@ -856,9 +891,20 @@ class RagStore:
         if not row:
             return 0
         try:
-            return int(row["id"])
+            fact_id = int(row["id"])
         except (TypeError, KeyError, IndexError):
-            return int(row[0])
+            fact_id = int(row[0])
+        # 用户显式标记过「不准确/忘记」的事实是墓碑：重扫导致的 upsert
+        # 不得把 enabled 复位（否则被删除的记忆会“诈尸”重新参与建议）。
+        tombstone = self.conn.execute(
+            "SELECT 1 FROM rag_fact_user_feedback WHERE fact_id = ?", (fact_id,)
+        ).fetchone()
+        if tombstone:
+            self.conn.execute(
+                "UPDATE rag_facts SET enabled = 0, updated_at = ? WHERE id = ?",
+                (now, fact_id),
+            )
+        return fact_id
 
     def list_facts(self, account_wxid: str, conversation_id: int) -> list[dict[str, Any]]:
         rows = self.conn.execute(
@@ -936,7 +982,12 @@ class RagStore:
         confidence: float,
         evidence_message_ids: list[int],
     ) -> None:
-        """Merge duplicate evidence without changing the canonical fact text."""
+        """Merge duplicate evidence without changing the canonical fact text.
+
+        重复确认是强信号：每次合并把置信度抬一个台阶（+0.06，封顶 0.95），
+        而不是旧实现的 max(old, new) —— 那会让反复确认的事实与单窗口事实
+        永远同分。
+        """
         row = self.conn.execute(
             "SELECT confidence, evidence_message_ids_json FROM rag_facts WHERE id = ?",
             (int(fact_id),),
@@ -948,6 +999,14 @@ class RagStore:
         except (TypeError, ValueError, json.JSONDecodeError):
             current_evidence = []
         merged_evidence = sorted({int(value) for value in current_evidence + list(evidence_message_ids)})
+        old_confidence = float(row["confidence"] or 0.0)
+        merged_confidence = round(
+            min(
+                CONFIDENCE_CEILING,
+                max(old_confidence, float(confidence or 0.0)) + CONFIRMATION_STEP,
+            ),
+            4,
+        )
         self.conn.execute(
             """
             UPDATE rag_facts
@@ -955,7 +1014,7 @@ class RagStore:
             WHERE id = ?
             """,
             (
-                max(float(row["confidence"] or 0.0), float(confidence or 0.0)),
+                merged_confidence,
                 json.dumps(merged_evidence, ensure_ascii=False),
                 _now(),
                 int(fact_id),
@@ -978,6 +1037,66 @@ class RagStore:
             "UPDATE rag_facts SET enabled=?, updated_at=? WHERE id=?",
             (int(bool(enabled)), _now(), int(fact_id)),
         )
+
+    def set_fact_user_feedback(
+        self, fact_id: int, action: str, reason: str = ""
+    ) -> dict[str, Any]:
+        """Mark a fact as user-rejected (inaccurate/forget) with a tombstone.
+
+        墓碑保证增量索引重扫不会把该事实重新启用；同时立即退出检索。
+        """
+        if action not in {"inaccurate", "forget"}:
+            return {"ok": False, "error": "invalid_action"}
+        row = self.conn.execute(
+            "SELECT account_wxid, conversation_id FROM rag_facts WHERE id = ?",
+            (int(fact_id),),
+        ).fetchone()
+        if row is None:
+            return {"ok": False, "error": "fact_not_found"}
+        self.conn.execute(
+            """
+            INSERT INTO rag_fact_user_feedback
+            (account_wxid, conversation_id, fact_id, action, reason, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(fact_id) DO UPDATE SET
+              action=excluded.action, reason=excluded.reason, created_at=excluded.created_at
+            """,
+            (
+                row["account_wxid"],
+                row["conversation_id"],
+                int(fact_id),
+                action,
+                reason or "",
+                _now(),
+            ),
+        )
+        self.set_fact_enabled(int(fact_id), False)
+        return {"ok": True, "fact_id": int(fact_id), "action": action}
+
+    def restore_fact(self, fact_id: int) -> dict[str, Any]:
+        """Remove the tombstone and re-enable a user-rejected fact."""
+        row = self.conn.execute(
+            "SELECT id FROM rag_facts WHERE id = ?", (int(fact_id),)
+        ).fetchone()
+        if row is None:
+            return {"ok": False, "error": "fact_not_found"}
+        self.conn.execute(
+            "DELETE FROM rag_fact_user_feedback WHERE fact_id = ?", (int(fact_id),)
+        )
+        self.set_fact_enabled(int(fact_id), True)
+        return {"ok": True, "fact_id": int(fact_id), "action": "restore"}
+
+    def list_fact_user_feedback(
+        self, account_wxid: str, conversation_id: int
+    ) -> dict[int, str]:
+        rows = self.conn.execute(
+            """
+            SELECT fact_id, action FROM rag_fact_user_feedback
+            WHERE account_wxid = ? AND conversation_id = ?
+            """,
+            (account_wxid, int(conversation_id)),
+        ).fetchall()
+        return {int(r["fact_id"]): str(r["action"]) for r in rows}
 
     def attach_log_to_suggestion(self, log_id: int | None, suggestion_id: int) -> None:
         if not log_id:

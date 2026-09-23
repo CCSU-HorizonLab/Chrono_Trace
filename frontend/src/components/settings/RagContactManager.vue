@@ -201,6 +201,17 @@
               {{ item.enabled ? '已启用' : '已禁用' }}
             </button>
 
+            <!-- 管理记忆 -->
+            <button
+              class="rc-btn mini"
+              :disabled="!item.document_count"
+              @click.prevent="openFactDialog(item)"
+              title="查看并纠正该联系人的记忆事实（不准确 / 忘记 / 恢复）"
+            >
+              <BrainIcon :size="12" />
+              <span>记忆</span>
+            </button>
+
             <!-- 重建索引 -->
             <button
               class="rc-btn mini primary"
@@ -272,6 +283,14 @@
       </div>
     </div>
   </div>
+  <!-- 记忆管理弹窗 -->
+  <RagFactDialog
+    :visible="factDialog.visible"
+    :conversation-id="factDialog.conversationId"
+    :account-wxid="props.accountWxid"
+    :display-name="factDialog.displayName"
+    @close="factDialog.visible = false"
+  />
 </template>
 
 <script setup lang="ts">
@@ -284,9 +303,11 @@ import {
   Trash2,
   AlertCircle,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Brain as BrainIcon,
 } from 'lucide-vue-next'
 import CtAvatar from '@/components/base/CtAvatar.vue'
+import RagFactDialog from '@/components/settings/RagFactDialog.vue'
 import { api } from '@/api/bridge'
 import { showDialog, showConfirm } from '@/utils/dialog'
 
@@ -322,6 +343,19 @@ const props = withDefaults(
 const emit = defineEmits<{
   (e: 'refresh'): void
 }>()
+
+// 记忆管理弹窗
+const factDialog = reactive({
+  visible: false,
+  conversationId: null as number | null,
+  displayName: '',
+})
+
+function openFactDialog(item: RagContactItem) {
+  factDialog.conversationId = Number(item.conversation_id)
+  factDialog.displayName = item.display_name || item.username || ''
+  factDialog.visible = true
+}
 
 // 检索、筛选与排序状态
 const searchQuery = ref('')

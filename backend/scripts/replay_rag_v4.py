@@ -68,6 +68,7 @@ def _write_track_log(
             account_wxid=account_wxid,
             conversation_id=conversation_id,
             query_text=query,
+            run_provenance="replay",
             rag_enabled=False,
             rag_retrieved=False,
             rag_gate_decision="no_hit",
@@ -119,6 +120,9 @@ def _write_track_log(
         retrieval_source="fact" if track == "fact_path" else "document",
         semantic_fact_count=len(items) if track == "fact_path" else 0,
         query_scope=query_scope,
+        run_provenance="replay",
+        candidate_ids=document_ids,
+        injected_item_ids=document_ids if decision in {"inject", "weak_inject"} else [],
     )
 
 

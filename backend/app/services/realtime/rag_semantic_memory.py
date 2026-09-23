@@ -26,6 +26,39 @@ class SemanticFact:
     source_window_end_ts: int
 
 
+def calibrate_fact_confidence(
+    semantic_score: float,
+    *,
+    evidence_count: int,
+    memory_kind: str = "",
+) -> float:
+    """Convert a raw embedding-cosine score into a usable confidence signal.
+
+    原实现把余弦相似度直接当 confidence，导致分布塌缩在 0.5~0.7（text2vec
+    短文本的天然余弦区间），下游“高置信派生 / 低置信 quarantine”无从谈起。
+    校准分三部分：
+
+    1. 语义分量：把余弦域 [0.45, 0.80] 线性映射到 [0.30, 0.90]，拉开分布；
+    2. 证据加成：合并后 >=2 条证据消息时逐条加分，封顶 0.10；
+    3. 弱方法封顶：marker_fallback 只有规则标记、无语义匹配，压在 0.55 以下。
+
+    重复确认的阶梯递增由 merge_fact_evidence 在合并时执行（每次 +0.06，
+    封顶 0.95），因为它依赖历史行而与单次抽取无关。
+    """
+    score = float(semantic_score or 0.0)
+    norm = min(1.0, max(0.0, (score - 0.45) / 0.35))
+    semantic_component = 0.30 + 0.60 * norm
+    evidence_bonus = min(0.10, 0.04 * max(0, int(evidence_count) - 1))
+    calibrated = semantic_component + evidence_bonus
+    if str(memory_kind or "") == "marker_fallback":
+        calibrated = min(calibrated, 0.55)
+    return round(min(0.95, max(0.20, calibrated)), 4)
+
+
+CONFIRMATION_STEP = 0.06
+CONFIDENCE_CEILING = 0.95
+
+
 class SemanticFactExtractor:
     """Extract reusable memories by matching chat turns against semantic prototypes."""
 

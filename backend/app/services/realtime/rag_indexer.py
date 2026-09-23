@@ -506,6 +506,8 @@ class RagIndexer:
             )
             for fact_index, fact in enumerate(semantic_facts, 1):
                 if load_rag_settings().get("rag_fact_shadow_enabled", True):
+                    from .rag_semantic_memory import calibrate_fact_confidence
+
                     self.store.upsert_fact(
                         account_wxid=account_wxid,
                         conversation_id=conversation_id,
@@ -516,7 +518,11 @@ class RagIndexer:
                         as_of=int(fact.source_ts or segment.end_ts),
                         valid_from=int(fact.source_window_start_ts or segment.start_ts),
                         valid_to=int(fact.source_window_end_ts or segment.end_ts),
-                        confidence=float(fact.semantic_score),
+                        confidence=calibrate_fact_confidence(
+                            fact.semantic_score,
+                            evidence_count=len(fact.evidence_message_ids or []),
+                            memory_kind=fact.memory_kind,
+                        ),
                         sensitivity="sensitive" if self._looks_sensitive(fact.content) else "normal",
                         evidence_message_ids=fact.evidence_message_ids,
                         source_window={

@@ -495,10 +495,10 @@ def test_prompt_omits_rag_when_disabled_and_injects_constructed_context_only():
     assert "没查到就说没查到" in no_hit_prompt
 
 
-def test_llm_engine_builds_three_state_rag_context_summary():
+def test_llm_engine_builds_layered_rag_context_summary():
     engine = LLMSuggestionEngine()
 
-    referenced = engine._build_rag_context_summary(
+    fact_hit = engine._build_rag_context_summary(
         {
             "_rag_log_id": 10,
             "_rag_debug": {
@@ -507,16 +507,95 @@ def test_llm_engine_builds_three_state_rag_context_summary():
                 "rag_hit_count": 3,
                 "rag_injection_mode": "reply",
             },
-            "retrieval_context": {"items": [{"document_id": 1}, {"document_id": 2}]},
+            "retrieval_context": {
+                "items": [
+                    {"document_id": 1, "doc_type": "fact_memory"},
+                    {"document_id": 2, "doc_type": "shared_memory"},
+                ]
+            },
         }
     )
-    assert referenced == {
-        "state": "referenced",
-        "label": "参考命中 2 条记录",
+    assert fact_hit == {
+        "state": "fact_hit",
+        "label": "已参考 2 条历史事实",
         "hit_count": 3,
         "referenced_count": 2,
         "log_id": 10,
     }
+
+    document_hit = engine._build_rag_context_summary(
+        {
+            "_rag_debug": {
+                "rag_enabled": True,
+                "rag_retrieved": True,
+                "rag_hit_count": 2,
+                "rag_injection_mode": "reply",
+            },
+            "retrieval_context": {
+                "items": [{"document_id": 5, "doc_type": "dialogue_turn"}]
+            },
+        }
+    )
+    assert document_hit["state"] == "document_hit"
+    assert document_hit["label"] == "已参考 1 条历史记录"
+
+    relationship = engine._build_rag_context_summary(
+        {
+            "_rag_debug": {
+                "rag_enabled": True,
+                "rag_retrieved": True,
+                "rag_hit_count": 1,
+            },
+            "retrieval_context": {
+                "items": [{"document_id": 7, "doc_type": "relationship_state"}]
+            },
+        }
+    )
+    assert relationship["state"] == "relationship_policy"
+    assert relationship["label"] == "已参考关系画像"
+
+    # hot_context 绝不能显示为历史命中
+    hot_only = engine._build_rag_context_summary(
+        {
+            "_rag_debug": {
+                "rag_enabled": True,
+                "rag_retrieved": True,
+                "rag_hit_count": 4,
+                "hot_context_only": True,
+            },
+            "retrieval_context": {
+                "items": [{"document_id": -1, "doc_type": "hot_context"}]
+            },
+        }
+    )
+    assert hot_only["state"] == "hot_context"
+    assert hot_only["label"] == "仅参考当前对话上下文"
+    assert "历史" not in hot_only["label"]
+
+    hot_only_by_reason = engine._build_rag_context_summary(
+        {
+            "_rag_debug": {
+                "rag_enabled": True,
+                "rag_retrieved": True,
+                "rag_hit_count": 0,
+                "rag_degraded_reason": "hot_context_only",
+            },
+        }
+    )
+    assert hot_only_by_reason["state"] == "hot_context"
+
+    degraded = engine._build_rag_context_summary(
+        {
+            "_rag_debug": {
+                "rag_enabled": True,
+                "rag_retrieved": True,
+                "rag_hit_count": 0,
+                "rag_degraded_reason": "timeout",
+            },
+        }
+    )
+    assert degraded["state"] == "degraded"
+    assert degraded["label"] == "记忆检索降级"
 
     no_hit = engine._build_rag_context_summary(
         {
@@ -1971,3 +2050,201 @@ def test_feedback_attribution_handles_preface_then_reply_and_writes_positive_sam
     assert doc["index_version"] == RAG_INDEX_VERSION
     assert doc["source_kind"] == "feedback"
     assert conn.execute("SELECT 1 FROM rag_embeddings WHERE document_id = ?", (doc["id"],)).fetchone() is not None
+
+
+def test_retrieval_log_persists_provenance_and_candidate_injected_split():
+    conn = _conn()
+    store = RagStore(conn)
+
+    default_log_id = store.insert_retrieval_log(
+        account_wxid="wxid_a",
+        conversation_id=1,
+        query_text="她上次说的游戏是啥",
+    )
+    default_row = conn.execute(
+        "SELECT * FROM rag_retrieval_logs WHERE id = ?", (default_log_id,)
+    ).fetchone()
+    assert default_row["run_provenance"] == "production"
+    assert json.loads(default_row["candidate_ids_json"] or "[]") == []
+    assert json.loads(default_row["injected_item_ids_json"] or "[]") == []
+    assert default_row["hot_context_only"] == 0
+    assert default_row["prompt_context_hash"] is None
+    assert json.loads(default_row["policy_ids_json"] or "[]") == []
+
+    split_log_id = store.insert_retrieval_log(
+        account_wxid="wxid_a",
+        conversation_id=1,
+        query_text="我们一起玩过什么游戏",
+        document_ids=[11, 12],
+        run_provenance="replay",
+        candidate_ids=[11, 12, 13, 14],
+        injected_item_ids=[11, 12],
+        hot_context_only=False,
+        prompt_context_hash="a" * 64,
+        policy_ids=[],
+    )
+    row = conn.execute(
+        "SELECT * FROM rag_retrieval_logs WHERE id = ?", (split_log_id,)
+    ).fetchone()
+    assert row["run_provenance"] == "replay"
+    assert json.loads(row["candidate_ids_json"]) == [11, 12, 13, 14]
+    assert json.loads(row["injected_item_ids_json"]) == [11, 12]
+    assert json.loads(row["document_ids_json"]) == [11, 12]
+    assert row["hot_context_only"] == 0
+    assert row["prompt_context_hash"] == "a" * 64
+
+    hot_log_id = store.insert_retrieval_log(
+        account_wxid="wxid_a",
+        conversation_id=1,
+        query_text="刚聊到哪了",
+        document_ids=[-1],
+        run_provenance="eval",
+        hot_context_only=True,
+    )
+    hot_row = conn.execute(
+        "SELECT run_provenance, hot_context_only FROM rag_retrieval_logs WHERE id = ?",
+        (hot_log_id,),
+    ).fetchone()
+    assert hot_row["run_provenance"] == "eval"
+    assert hot_row["hot_context_only"] == 1
+
+
+def test_attach_log_to_suggestion_binds_and_ignores_missing_log():
+    conn = _conn()
+    store = RagStore(conn)
+
+    log_id = store.insert_retrieval_log(
+        account_wxid="wxid_a",
+        conversation_id=1,
+        query_text="query",
+    )
+    store.attach_log_to_suggestion(log_id, suggestion_id=42)
+    row = conn.execute(
+        "SELECT suggestion_id FROM rag_retrieval_logs WHERE id = ?", (log_id,)
+    ).fetchone()
+    assert row["suggestion_id"] == 42
+
+    # log_id 为空时应静默通过，不抛异常
+    store.attach_log_to_suggestion(None, suggestion_id=43)
+
+
+def test_rag_store_migrates_legacy_retrieval_log_schema():
+    conn = _conn()
+    # 模拟 v4 老库：没有 P0.1 新列
+    conn.execute(
+        """
+        CREATE TABLE rag_retrieval_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_wxid TEXT NOT NULL,
+            conversation_id INTEGER,
+            suggestion_id INTEGER,
+            query_text TEXT,
+            document_ids_json TEXT,
+            retrieval_scores_json TEXT,
+            index_status TEXT,
+            elapsed_ms INTEGER DEFAULT 0,
+            timed_out INTEGER DEFAULT 0,
+            degraded INTEGER DEFAULT 0,
+            degrade_reason TEXT,
+            created_at INTEGER NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO rag_retrieval_logs
+        (account_wxid, conversation_id, query_text, document_ids_json, created_at)
+        VALUES ('wxid_legacy', 9, '旧查询', '[]', 1000)
+        """
+    )
+
+    store = RagStore(conn)
+    columns = {
+        row["name"] for row in conn.execute("PRAGMA table_info(rag_retrieval_logs)").fetchall()
+    }
+    for column in (
+        "run_provenance",
+        "candidate_ids_json",
+        "injected_item_ids_json",
+        "hot_context_only",
+        "prompt_context_hash",
+        "policy_ids_json",
+    ):
+        assert column in columns
+
+    legacy = conn.execute(
+        "SELECT run_provenance FROM rag_retrieval_logs WHERE account_wxid = 'wxid_legacy'"
+    ).fetchone()
+    assert legacy["run_provenance"] == "production"
+
+
+def test_calibrate_fact_confidence_separates_distribution():
+    from app.services.realtime.rag_semantic_memory import calibrate_fact_confidence
+
+    # 余弦域边界映射：0.45 -> 0.30，0.80 -> 0.90
+    assert calibrate_fact_confidence(0.45, evidence_count=1) == 0.30
+    assert calibrate_fact_confidence(0.80, evidence_count=1) == 0.90
+    # 低于下界截断到 0.30 语义分量
+    assert calibrate_fact_confidence(0.30, evidence_count=1) == 0.30
+
+    # 证据加成：2 条 +0.04、3 条 +0.08、4 条及以上封顶 +0.10
+    assert calibrate_fact_confidence(0.60, evidence_count=1) == calibrate_fact_confidence(
+        0.60, evidence_count=1
+    )
+    assert calibrate_fact_confidence(0.60, evidence_count=2) == round(
+        calibrate_fact_confidence(0.60, evidence_count=1) + 0.04, 4
+    )
+    assert calibrate_fact_confidence(0.60, evidence_count=5) == round(
+        calibrate_fact_confidence(0.60, evidence_count=1) + 0.10, 4
+    )
+
+    # marker_fallback 封顶 0.55，弱方法不得高分
+    assert calibrate_fact_confidence(0.90, evidence_count=4, memory_kind="marker_fallback") == 0.55
+    assert calibrate_fact_confidence(0.46, evidence_count=1, memory_kind="marker_fallback") <= 0.55
+
+    # 整体 clamp：不超过 0.95、不低于 0.20
+    assert calibrate_fact_confidence(0.99, evidence_count=9) == 0.95
+    assert calibrate_fact_confidence(-1.0, evidence_count=0) == 0.30
+
+    # 典型余弦值映射后拉开：0.52 / 0.58 / 0.65 / 0.72 间距明显
+    values = [
+        calibrate_fact_confidence(s, evidence_count=2)
+        for s in (0.52, 0.58, 0.65, 0.72)
+    ]
+    assert values == sorted(values)
+    assert values[-1] - values[0] >= 0.30
+
+
+def test_merge_fact_evidence_ladders_confidence_on_reconfirmation():
+    conn = _conn()
+    store = RagStore(conn)
+    fact_id = store.upsert_fact(
+        account_wxid="wxid_a",
+        conversation_id=1,
+        subject="contact",
+        kind="preference_like",
+        content="对方喜欢玩杀戮尖塔",
+        confidence=0.60,
+        evidence_message_ids=[1],
+    )
+
+    store.merge_fact_evidence(fact_id, confidence=0.55, evidence_message_ids=[2])
+    first = conn.execute(
+        "SELECT confidence, evidence_message_ids_json FROM rag_facts WHERE id = ?", (fact_id,)
+    ).fetchone()
+    assert first["confidence"] == 0.66  # max(0.60, 0.55) + 0.06
+    assert json.loads(first["evidence_message_ids_json"]) == [1, 2]
+
+    store.merge_fact_evidence(fact_id, confidence=0.60, evidence_message_ids=[3])
+    second = conn.execute(
+        "SELECT confidence FROM rag_facts WHERE id = ?", (fact_id,)
+    ).fetchone()
+    assert second["confidence"] == 0.72  # 再确认再 +0.06
+
+    # 阶梯封顶 0.95：连续确认不允许无限上涨
+    for _ in range(10):
+        store.merge_fact_evidence(fact_id, confidence=0.95, evidence_message_ids=[])
+    capped = conn.execute(
+        "SELECT confidence FROM rag_facts WHERE id = ?", (fact_id,)
+    ).fetchone()
+    assert capped["confidence"] == 0.95

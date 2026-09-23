@@ -128,6 +128,11 @@ RETRYABLE_HTTP_STATUS = {429, 500, 502, 503, 504}
 MAX_API_RETRIES = 3
 BASE_RETRY_DELAY = 1.5
 
+# 与 RagRelevanceGate.RELATIONSHIP_TYPES 保持一致；本地声明避免模块级循环依赖。
+_RAG_RELATIONSHIP_DOC_TYPES = frozenset(
+    {"relationship_state", "contact_preference", "communication_style"}
+)
+
 
 class LLMSuggestionEngine(SuggestionEngine):
     """
@@ -857,7 +862,10 @@ class LLMSuggestionEngine(SuggestionEngine):
         return ""
 
     def _build_rag_context_summary(self, context: dict) -> dict:
-        """Compress internal RAG debug state into the three user-facing labels."""
+        """Layered user-facing RAG badge states.
+
+        hot_context 只代表正在进行的当前对话，绝不能展示为历史记忆命中。
+        """
         debug = context.get("_rag_debug") if isinstance(context, dict) else None
         retrieval_context = context.get("retrieval_context") if isinstance(context, dict) else None
         if not isinstance(debug, dict) or not debug.get("rag_enabled"):
@@ -870,27 +878,45 @@ class LLMSuggestionEngine(SuggestionEngine):
             }
 
         hit_count = int(debug.get("rag_hit_count") or 0)
-        referenced_count = 0
+        referenced_items = []
         if isinstance(retrieval_context, dict) and not retrieval_context.get("no_hit_guard"):
-            referenced_count = len(retrieval_context.get("items") or [])
+            referenced_items = list(retrieval_context.get("items") or [])
+        referenced_count = len(referenced_items)
 
-        if referenced_count > 0:
+        def _summary(state: str, label: str) -> dict:
             return {
-                "state": "referenced",
-                "label": f"参考命中 {referenced_count} 条记录",
+                "state": state,
+                "label": label,
                 "hit_count": hit_count,
                 "referenced_count": referenced_count,
                 "log_id": context.get("_rag_log_id"),
             }
 
-        if hit_count > 0:
-            return {
-                "state": "not_referenced",
-                "label": "未参考命中记录",
-                "hit_count": hit_count,
-                "referenced_count": 0,
-                "log_id": context.get("_rag_log_id"),
+        if referenced_count > 0:
+            doc_types = {
+                str(item.get("doc_type") or "")
+                for item in referenced_items
+                if isinstance(item, dict)
             }
+            if "fact_memory" in doc_types:
+                return _summary("fact_hit", f"已参考 {referenced_count} 条历史事实")
+            if doc_types & _RAG_RELATIONSHIP_DOC_TYPES:
+                return _summary("relationship_policy", "已参考关系画像")
+            if doc_types and doc_types <= {"hot_context"}:
+                return _summary("hot_context", "仅参考当前对话上下文")
+            return _summary("document_hit", f"已参考 {referenced_count} 条历史记录")
+
+        if debug.get("hot_context_only"):
+            return _summary("hot_context", "仅参考当前对话上下文")
+
+        degraded_reason = str(debug.get("rag_degraded_reason") or "")
+        if degraded_reason == "hot_context_only":
+            return _summary("hot_context", "仅参考当前对话上下文")
+        if degraded_reason:
+            return _summary("degraded", "记忆检索降级")
+
+        if hit_count > 0:
+            return _summary("not_referenced", "未参考命中记录")
 
         memory_mode = str(debug.get("memory_intent_mode") or "")
         gate_decision = str(debug.get("rag_gate_decision") or "")
@@ -899,21 +925,9 @@ class LLMSuggestionEngine(SuggestionEngine):
             or gate_decision == "no_hit"
             or (debug.get("rag_retrieved") and memory_mode in {"memory_request", "relationship_context"})
         ):
-            return {
-                "state": "no_hit",
-                "label": "未命中相关记录",
-                "hit_count": 0,
-                "referenced_count": 0,
-                "log_id": context.get("_rag_log_id"),
-            }
+            return _summary("no_hit", "未命中相关记录")
 
-        return {
-            "state": "hidden",
-            "label": "",
-            "hit_count": 0,
-            "referenced_count": 0,
-            "log_id": context.get("_rag_log_id"),
-        }
+        return _summary("hidden", "")
 
     def _classify_manual_request(self, context: dict) -> str:
         """

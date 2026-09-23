@@ -1179,12 +1179,27 @@ class Bridge:
                 ))
                 inserted_id = cursor.lastrowid
                 try:
+                    rag_log_id = getattr(result, 'rag_log_id', None)
+                    if rag_log_id:
+                        from ..services.realtime.rag_context_builder import RagContextBuilder
+
+                        RagContextBuilder().attach_log_to_suggestion(rag_log_id, inserted_id)
+                except Exception as rag_log_e:
+                    logger.warning(f"[Bridge] RAG 检索日志关联建议失败: {rag_log_e}")
+                try:
                     from ..services.realtime.suggestion_observer import (
                         EVENT_SHOWN,
                         EVENT_VIEWED,
                         record_observation,
                     )
 
+                    rag_summary = getattr(result, 'rag_context', None) or {}
+                    obs_metadata = {
+                        'source': 'manual_generate',
+                        'rag_state': rag_summary.get('state'),
+                        'rag_referenced_count': rag_summary.get('referenced_count', 0),
+                        'rag_log_id': getattr(result, 'rag_log_id', None),
+                    }
                     record_observation(
                         conn,
                         suggestion_id=inserted_id,
@@ -1193,7 +1208,7 @@ class Bridge:
                         batch_id=monitor.current_batch_id or 'manual',
                         display_name=monitor.current_display_name,
                         trigger_type=result.trigger_type,
-                        metadata={'source': 'manual_generate'},
+                        metadata=obs_metadata,
                         created_at=now_time,
                     )
                     record_observation(
@@ -1204,7 +1219,7 @@ class Bridge:
                         batch_id=monitor.current_batch_id or 'manual',
                         display_name=monitor.current_display_name,
                         trigger_type=result.trigger_type,
-                        metadata={'source': 'manual_generate'},
+                        metadata=obs_metadata,
                         created_at=now_time,
                     )
                     conn.execute(
@@ -1451,6 +1466,313 @@ class Bridge:
             "model_root_dir": self.settings.get(MODEL_ROOT_DIR_KEY),
             **self._serialize_wechat_accounts(),
         }
+
+    def get_rag_log_detail(self, log_id: int) -> dict[str, Any]:
+        """Return what one retrieval log actually injected, for badge drill-down.
+
+        只读、本地展示给用户本人；注入列表本身经过敏感门控，此处对
+        sensitivity=sensitive 的行做深度防御过滤，绝不回传敏感原文。
+        """
+        try:
+            from ..db.connection import get_db
+            from ..services.realtime.rag_store import RagStore
+
+            conn = get_db()
+            store = RagStore(conn)
+
+            row = conn.execute(
+                "SELECT * FROM rag_retrieval_logs WHERE id = ?", (int(log_id),)
+            ).fetchone()
+            if row is None:
+                return {"ok": False, "error": "log_not_found"}
+
+            def _load_json_ids(raw: Any) -> list[int]:
+                try:
+                    values = json.loads(raw or "[]")
+                except Exception:
+                    return []
+                ids: list[int] = []
+                for value in values:
+                    try:
+                        parsed = int(value)
+                    except (TypeError, ValueError):
+                        continue
+                    if parsed > 0:
+                        ids.append(parsed)
+                return ids
+
+            fact_ids = _load_json_ids(row["fact_ids_json"])
+            injected_ids = _load_json_ids(row["document_ids_json"])
+            candidate_ids = _load_json_ids(row["candidate_ids_json"]) or injected_ids
+            evidence_ids_all = _load_json_ids(row["evidence_ids_json"])
+
+            # fact 与 document 是两张表的自增主键，数字可能撞号；必须用与
+            # document_ids_json 同源同序的 selected_doc_types_json 区分类型，
+            # 不能只靠 fact_ids_json 推断。
+            try:
+                selected_types = [str(t or "") for t in json.loads(row["selected_doc_types_json"] or "[]")]
+            except Exception:
+                selected_types = []
+            if len(selected_types) == len(injected_ids):
+                fact_ids = [
+                    i for i, t in zip(injected_ids, selected_types) if t == "fact_memory"
+                ]
+                doc_ids = [
+                    i for i, t in zip(injected_ids, selected_types) if t != "fact_memory"
+                ]
+            else:
+                fact_id_set = set(fact_ids)
+                fact_ids = [i for i in injected_ids if i in fact_id_set]
+                doc_ids = [i for i in injected_ids if i not in fact_id_set]
+
+            def _evidence_excerpts(evidence_ids: list[int], limit: int = 3) -> list[str]:
+                if not evidence_ids:
+                    return []
+                placeholders = ",".join("?" for _ in evidence_ids)
+                try:
+                    rows = conn.execute(
+                        f"SELECT CAST(content AS BLOB) AS content FROM messages WHERE id IN ({placeholders})",
+                        evidence_ids,
+                    ).fetchall()
+                except Exception:
+                    return []
+                excerpts = []
+                for r in rows[:limit]:
+                    value = r[0]
+                    text = value.decode("utf-8", errors="replace") if isinstance(value, bytes) else str(value or "")
+                    text = " ".join(text.split())
+                    if text:
+                        excerpts.append(text[:120] + ("…" if len(text) > 120 else ""))
+                return excerpts
+
+            injected_items: list[dict[str, Any]] = []
+
+            # 事实条目（document_id 即 rag_facts.id）
+            if fact_ids:
+                placeholders = ",".join("?" for _ in fact_ids)
+                fact_rows = conn.execute(
+                    f"""
+                    SELECT id, subject, kind, content, as_of, confidence, sensitivity,
+                           evidence_message_ids_json
+                    FROM rag_facts WHERE id IN ({placeholders})
+                    """,
+                    fact_ids,
+                ).fetchall()
+                for fr in fact_rows:
+                    if str(fr["sensitivity"] or "normal") == "sensitive":
+                        continue
+                    evidence_ids = [
+                        i for i in json.loads(fr["evidence_message_ids_json"] or "[]")
+                        if isinstance(i, int)
+                    ] if fr["evidence_message_ids_json"] else []
+                    injected_items.append(
+                        {
+                            "source": "fact",
+                            "id": fr["id"],
+                            "doc_type": "fact_memory",
+                            "content": fr["content"],
+                            "subject": fr["subject"],
+                            "kind": fr["kind"],
+                            "as_of": fr["as_of"],
+                            "confidence": fr["confidence"],
+                            "evidence_excerpts": _evidence_excerpts(evidence_ids),
+                        }
+                    )
+
+            # 文档条目（shared_memory / dialogue_turn 等）
+            if doc_ids:
+                placeholders = ",".join("?" for _ in doc_ids)
+                doc_rows = conn.execute(
+                    f"""
+                    SELECT id, doc_type, content, source_ts, sensitivity
+                    FROM rag_documents WHERE id IN ({placeholders})
+                    """,
+                    doc_ids,
+                ).fetchall()
+                for dr in doc_rows:
+                    if str(dr["sensitivity"] or "normal") == "sensitive":
+                        continue
+                    injected_items.append(
+                        {
+                            "source": "document",
+                            "id": dr["id"],
+                            "doc_type": dr["doc_type"],
+                            "content": dr["content"],
+                            "subject": None,
+                            "kind": None,
+                            "as_of": dr["source_ts"],
+                            "confidence": None,
+                            "evidence_excerpts": [],
+                        }
+                    )
+
+            order = {fact_id: idx for idx, fact_id in enumerate(injected_ids)}
+            injected_items.sort(key=lambda item: order.get(item["id"], 10**9))
+
+            not_injected_ids = [i for i in candidate_ids if i not in set(injected_ids)]
+            return {
+                "ok": True,
+                "log": {
+                    "id": row["id"],
+                    "created_at": row["created_at"],
+                    "suggestion_id": row["suggestion_id"],
+                    "gate_decision": row["rag_gate_decision"],
+                    "gate_reason": row["rag_gate_reason"],
+                    "strategy": row["rag_strategy"],
+                    "injection_mode": row["rag_injection_mode"],
+                    "elapsed_ms": row["rag_latency_ms"],
+                    "hit_count": row["rag_hit_count"],
+                    "hot_context_only": bool(row["hot_context_only"]) if "hot_context_only" in row.keys() else False,
+                    "degrade_reason": row["rag_degraded_reason"],
+                    "run_provenance": row["run_provenance"] if "run_provenance" in row.keys() else "production",
+                },
+                "injected": injected_items,
+                "candidates": {
+                    "count": len(candidate_ids),
+                    "injected_count": len(injected_ids),
+                    "not_injected_ids": not_injected_ids[:20],
+                    "evidence_total": len(evidence_ids_all),
+                },
+            }
+        except Exception as e:
+            logger.error(f"[Bridge] 获取 RAG 日志详情失败: {e}")
+            return {"ok": False, "error": str(e)}
+
+    def get_contact_facts(
+        self, conversation_id: int, account_wxid: str = "", limit: int = 200
+    ) -> dict[str, Any]:
+        """List contact memory facts with evidence for user review/correction."""
+        try:
+            from ..db.connection import get_db
+            from ..services.realtime.rag_store import RagStore
+
+            resolved_account = self._resolve_account_wxid(account_wxid)
+            conn = get_db()
+            store = RagStore(conn)
+
+            rows = conn.execute(
+                """
+                SELECT id, subject, kind, content, as_of, confidence, sensitivity, enabled,
+                       evidence_message_ids_json
+                FROM rag_facts
+                WHERE account_wxid = ? AND conversation_id = ? AND status = 'active'
+                ORDER BY enabled DESC, confidence DESC, as_of DESC
+                LIMIT ?
+                """,
+                (resolved_account, int(conversation_id), max(1, min(int(limit), 200))),
+            ).fetchall()
+            raw_count_row = conn.execute(
+                "SELECT COUNT(*) FROM rag_facts WHERE account_wxid = ? AND conversation_id = ?",
+                (resolved_account, int(conversation_id)),
+            ).fetchone()
+            raw_fact_count = int(raw_count_row[0]) if raw_count_row else 0
+            logger.debug(
+                "[Bridge] get_contact_facts conv=%s account=%s raw=%s listed=%s",
+                conversation_id,
+                resolved_account,
+                raw_fact_count,
+                len(rows),
+            )
+            feedback = store.list_fact_user_feedback(resolved_account, int(conversation_id))
+
+            # Fetch evidence messages in one query. The old implementation ran
+            # one SQLite query per fact, which made the WebView dialog appear
+            # stuck on “加载中” for contacts with hundreds of facts.
+            evidence_ids_by_fact: dict[int, list[int]] = {}
+            all_evidence_ids: set[int] = set()
+            for row in rows:
+                try:
+                    ids = [int(v) for v in json.loads(row["evidence_message_ids_json"] or "[]") if str(v).isdigit()]
+                except Exception:
+                    ids = []
+                ids = [i for i in ids if i > 0][:2]
+                evidence_ids_by_fact[int(row["id"])] = ids
+                all_evidence_ids.update(ids)
+
+            evidence_text_by_id: dict[int, str] = {}
+            if all_evidence_ids:
+                ids = list(all_evidence_ids)
+                placeholders = ",".join("?" for _ in ids)
+                try:
+                    msg_rows = conn.execute(
+                        f"SELECT id, CAST(content AS BLOB) AS content FROM messages WHERE id IN ({placeholders})",
+                        ids,
+                    ).fetchall()
+                    for msg_row in msg_rows:
+                        value = msg_row["content"]
+                        text = value.decode("utf-8", errors="replace") if isinstance(value, bytes) else str(value or "")
+                        text = " ".join(text.split())
+                        if text:
+                            evidence_text_by_id[int(msg_row["id"])] = text[:120] + ("…" if len(text) > 120 else "")
+                except Exception:
+                    evidence_text_by_id = {}
+
+            facts = []
+            for row in rows:
+                facts.append(
+                    {
+                        "id": row["id"],
+                        "subject": row["subject"],
+                        "kind": row["kind"],
+                        "content": row["content"],
+                        "as_of": row["as_of"],
+                        "confidence": row["confidence"],
+                        "sensitive": str(row["sensitivity"] or "normal") == "sensitive",
+                        "enabled": bool(row["enabled"]),
+                        "user_action": feedback.get(int(row["id"])),
+                        "evidence_excerpts": [
+                            evidence_text_by_id[i]
+                            for i in evidence_ids_by_fact.get(int(row["id"]), [])
+                            if i in evidence_text_by_id
+                        ],
+                    }
+                )
+            return {
+                "ok": True,
+                "conversation_id": int(conversation_id),
+                "resolved_account_wxid": resolved_account,
+                "raw_fact_count": raw_fact_count,
+                "total": len(facts),
+                "disabled_count": sum(1 for f in facts if not f["enabled"]),
+                "document_count": int(
+                    (
+                        conn.execute(
+                            """
+                            SELECT document_count FROM rag_index_status
+                            WHERE account_wxid = ? AND conversation_id = ?
+                            """,
+                            (resolved_account, int(conversation_id)),
+                        ).fetchone()
+                        or {"document_count": 0}
+                    )["document_count"]
+                    or 0
+                ),
+                "facts": facts,
+            }
+        except Exception as e:
+            logger.error(f"[Bridge] 获取联系人记忆列表失败: {e}")
+            return {"ok": False, "error": str(e)}
+
+    def set_fact_feedback(
+        self, fact_id: int, action: str, reason: str = ""
+    ) -> dict[str, Any]:
+        """Apply user correction to one memory fact: inaccurate / forget / restore."""
+        try:
+            from ..db.connection import get_db
+            from ..services.realtime.rag_store import RagStore
+
+            conn = get_db()
+            store = RagStore(conn)
+            action = str(action or "").strip()
+            if action == "restore":
+                result = store.restore_fact(int(fact_id))
+            else:
+                result = store.set_fact_user_feedback(int(fact_id), action, reason or "")
+            store.conn.commit()
+            return result
+        except Exception as e:
+            logger.error(f"[Bridge] 记忆反馈失败: {e}")
+            return {"ok": False, "error": str(e)}
 
     def get_rag_status(self, account_wxid: str = "", limit: int = 1000) -> dict[str, Any]:
         """Return per-contact RAG status summary for the settings page."""

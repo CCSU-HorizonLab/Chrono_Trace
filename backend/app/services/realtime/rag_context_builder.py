@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import time
@@ -455,6 +456,24 @@ class RagContextBuilder:
             redaction_disabled=redaction_disabled,
         )
 
+        candidate_items = result.get("items") or []
+        injected_ids = [item.get("document_id") for item in items]
+        hot_context_only = bool(items) and (
+            str(result.get("strategy") or "") == "hot_context"
+            or all(str(item.get("doc_type") or "") == "hot_context" for item in items)
+        )
+        prompt_context_hash = None
+        if items:
+            digest = hashlib.sha256()
+            for item in items:
+                digest.update(str(item.get("document_id") or "").encode("utf-8", "ignore"))
+                digest.update(b"\x1f")
+                digest.update(str(item.get("doc_type") or "").encode("utf-8", "ignore"))
+                digest.update(b"\x1f")
+                digest.update(str(item.get("content") or "").encode("utf-8", "ignore"))
+                digest.update(b"\x1e")
+            prompt_context_hash = digest.hexdigest()
+
         log_id = self.store.insert_retrieval_log(
             account_wxid=account_wxid,
             conversation_id=conversation_id,
@@ -516,6 +535,18 @@ class RagContextBuilder:
             ],
             query_scope=str(load_rag_settings().get("rag_query_scope") or "latest_turn"),
             supersession_decision=None,
+            run_provenance=context.get("_rag_run_provenance") or "production",
+            candidate_ids=[
+                item.get("document_id")
+                for item in candidate_items
+                if item.get("document_id") is not None
+            ],
+            injected_item_ids=[
+                item_id for item_id in injected_ids if item_id is not None
+            ],
+            hot_context_only=hot_context_only,
+            prompt_context_hash=prompt_context_hash,
+            policy_ids=[],
         )
         self.store.conn.commit()
         context["_rag_log_id"] = log_id
@@ -630,6 +661,8 @@ class RagContextBuilder:
             semantic_fact_count=self._semantic_fact_count(result.get("items") or []),
             style_sample_count=self._style_sample_count(result.get("items") or []),
             rerank_reason=effective_gate_decision.rerank_reason or rerank_debug.get("rerank_reason"),
+            hot_context_only=hot_context_only,
+            run_provenance=context.get("_rag_run_provenance") or "production",
         )
 
     def attach_log_to_suggestion(self, log_id: int | None, suggestion_id: int) -> None:
@@ -1158,6 +1191,8 @@ class RagContextBuilder:
         semantic_fact_count: int = 0,
         style_sample_count: int = 0,
         rerank_reason: str | None = None,
+        hot_context_only: bool = False,
+        run_provenance: str | None = None,
     ) -> None:
         gate_decision = gate_decision or RagGateDecision("skip", degraded_reason or "not_attempted")
         task_score = task_relevance_score or gate_decision.task_relevance_score
@@ -1182,6 +1217,8 @@ class RagContextBuilder:
             "semantic_fact_count": semantic_fact_count,
             "style_sample_count": style_sample_count,
             "rerank_reason": rerank_reason or gate_decision.rerank_reason,
+            "hot_context_only": bool(hot_context_only),
+            "run_provenance": run_provenance or "production",
         }
 
     def _log_skip(
@@ -1251,6 +1288,7 @@ class RagContextBuilder:
             evidence_ids=[],
             query_scope=str(settings.get("rag_query_scope") or "latest_turn"),
             supersession_decision=None,
+            run_provenance=context.get("_rag_run_provenance") or "production",
         )
         self.store.conn.commit()
         logger.debug(

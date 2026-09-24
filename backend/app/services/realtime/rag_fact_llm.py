@@ -38,10 +38,17 @@ FACT_EXTRACTION_SYSTEM_PROMPT = """你是一个聊天记录记忆抽取器。你
 - 推测和不确定的判断
 - 敏感隐私原文（身份证号、手机号、银行卡号、住址——即使对话出现也不要输出）
 
+content 必须是自包含的完整陈述句，把口语中的代词和省略还原成具体对象：
+- 差（不可接受）："对方提到：就买一下下嘛"（买什么？没说清）
+- 差（不可接受）："你什么时候跟我提再说吧"（谁、提什么？）
+- 好："对方撒娇要求购买之前讨论过的游戏皮肤"
+- 好："对方对虾过敏"
+如果结合上下文仍无法确定指代对象（买什么/去哪里/谁说的），就不要输出这条事实。宁可少抽，不可抽含糊的。
+
 输出严格 JSON：
 {"facts": [{"subject": "对方" 或 "我", "kind": "preference|plan|promise|personal_fact|event|boundary|relation_state", "content": "一句完整的事实陈述，主语明确", "confidence": 0.0~1.0, "sensitivity": "normal" 或 "sensitive", "evidence_message_ids": [对话中的消息id]}]}
 
-content 必须是自包含的陈述句，例如"对方对虾过敏"、"我们约了周五在五道口见面"。没有可抽取事实时输出 {"facts": []}。"""
+没有可抽取事实时输出 {"facts": []}。"""
 
 
 class LLMFactExtractorAdapter:
@@ -73,19 +80,20 @@ class LLMFactExtractorAdapter:
 
     def _render_messages(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
         raw_messages = payload.get("messages") or []
+        context_messages = payload.get("context_messages") or []
         redactor = None
         if self.remote and self.redactor_factory is not None:
             try:
                 redactor = self.redactor_factory()
             except Exception:
                 redactor = None
-        lines: list[str] = []
-        for msg in raw_messages:
+
+        def _render(msg: dict[str, Any]) -> str | None:
             msg_id = int(msg.get("id") or 0)
             sender = "我" if int(msg.get("is_sender") or 0) == 1 else "对方"
             content = str(msg.get("content") or "").strip()
             if not content:
-                continue
+                return None
             if redactor is not None:
                 try:
                     content = redactor.redact(
@@ -96,13 +104,20 @@ class LLMFactExtractorAdapter:
                         source_id=str(msg_id),
                     ).redacted_text
                 except Exception:
-                    continue  # 远程脱敏失败的单条消息宁可不发
-            lines.append(f"[{msg_id}] {sender}: {content}")
-        user_prompt = (
-            "对话片段（[消息id] 发送者: 内容）：\n"
-            + "\n".join(lines)
-            + "\n\n请按系统指令抽取事实，输出 JSON。"
-        )
+                    return None  # 远程脱敏失败的单条消息宁可不发
+            return f"[{msg_id}] {sender}: {content}"
+
+        lines = [line for line in (_render(msg) for msg in raw_messages) if line]
+        context_lines = [line for line in (_render(msg) for msg in context_messages) if line]
+        user_prompt = "对话片段（[消息id] 发送者: 内容）：\n" + "\n".join(lines)
+        if context_lines:
+            user_prompt = (
+                "（上一段结尾，仅供理解指代，勿从中抽取事实或引用证据）：\n"
+                + "\n".join(context_lines)
+                + "\n\n"
+                + user_prompt
+            )
+        user_prompt += "\n\n请按系统指令抽取事实，输出 JSON。"
         return [
             {"role": "system", "content": FACT_EXTRACTION_SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},

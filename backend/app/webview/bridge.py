@@ -1640,9 +1640,13 @@ class Bridge:
 
     def get_contact_facts(
         self, conversation_id: int, account_wxid: str = "", limit: int = 200,
-        offset: int = 0,
+        offset: int = 0, sort: str = "time_desc", kind: str = "",
     ) -> dict[str, Any]:
-        """List contact memory facts with evidence for user review/correction."""
+        """List contact memory facts with evidence for user review/correction.
+
+        sort: time_desc / time_asc / conf_desc；kind 为空返回全部；
+        返回 kinds 聚合（含计数）供前端 tag 筛选器构建。
+        """
         try:
             from ..db.connection import get_db
             from ..services.realtime.rag_store import RagStore
@@ -1652,26 +1656,36 @@ class Bridge:
             store = RagStore(conn)
             page_limit = max(1, min(int(limit), 200))
             page_offset = max(0, int(offset))
+            kind_filter = str(kind or "").strip()
+            kind_clause = "AND kind = ?" if kind_filter else ""
+            kind_args = (kind_filter,) if kind_filter else ()
+
+            order_by = {
+                "time_asc": "enabled DESC, as_of ASC, id ASC",
+                "conf_desc": "enabled DESC, confidence DESC, as_of DESC, id DESC",
+            }.get(str(sort or "time_desc"), "enabled DESC, as_of DESC, id DESC")
 
             rows = conn.execute(
-                """
+                f"""
                 SELECT id, subject, kind, content, as_of, confidence, sensitivity, enabled,
                        evidence_message_ids_json
                 FROM rag_facts
                 WHERE account_wxid = ? AND conversation_id = ? AND status = 'active'
-                ORDER BY enabled DESC, confidence DESC, as_of DESC, id DESC
+                  {kind_clause}
+                ORDER BY {order_by}
                 LIMIT ? OFFSET ?
                 """,
-                (resolved_account, int(conversation_id), page_limit, page_offset),
+                (resolved_account, int(conversation_id), *kind_args, page_limit, page_offset),
             ).fetchall()
             count_row = conn.execute(
-                """
+                f"""
                 SELECT COUNT(*) AS fact_count,
                        COALESCE(SUM(CASE WHEN enabled = 1 THEN 1 ELSE 0 END), 0) AS enabled_fact_count
                 FROM rag_facts
                 WHERE account_wxid = ? AND conversation_id = ? AND status = 'active'
+                  {kind_clause}
                 """,
-                (resolved_account, int(conversation_id)),
+                (resolved_account, int(conversation_id), *kind_args),
             ).fetchone()
             raw_count_row = conn.execute(
                 "SELECT COUNT(*) FROM rag_facts WHERE account_wxid = ? AND conversation_id = ?",
@@ -1823,6 +1837,17 @@ class Bridge:
                     )["document_count"]
                     or 0
                 ),
+                "kinds": [
+                    {"kind": row["kind"], "count": int(row["n"])}
+                    for row in conn.execute(
+                        """
+                        SELECT kind, COUNT(*) AS n FROM rag_facts
+                        WHERE account_wxid = ? AND conversation_id = ? AND status = 'active'
+                        GROUP BY kind ORDER BY n DESC
+                        """,
+                        (resolved_account, int(conversation_id)),
+                    ).fetchall()
+                ],
                 "facts": facts,
             }
         except Exception as e:

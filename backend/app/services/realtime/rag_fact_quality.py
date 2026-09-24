@@ -141,6 +141,10 @@ def fact_quality_reason(
         return "system_message"
     if looks_corrupted(compact):
         return "corrupted_text"
+    # 代指残句：短句里的"一下下/这个嘛/再说吧"没有具体对象，是断上下文
+    # 的垃圾事实（"就买一下下嘛"——买什么不在句内也不在派生上下文）
+    if len(compact) <= 20 and re.search(r"一下下|这个嘛|那个嘛|再说吧|再说啦|等一下哈|就这?个吧", compact):
+        return "vague_fragment"
     if re.fullmatch(r"[\W_\d]+", compact, flags=re.UNICODE):
         return "nonsemantic_turn"
     # 疑问轮：问句助词结尾，或以疑问指代开头且较短（长句多为陈述，如"她在深圳做后端"）

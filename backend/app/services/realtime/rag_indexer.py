@@ -522,6 +522,7 @@ class RagIndexer:
         )
 
         segments = self.segmenter.segment(messages, conversation_id=conversation_id, sessions=sessions)
+        prev_tail_messages: list[dict[str, Any]] = []
         logger.debug(
             "[RAG Segment] messages=%s segments=%s sessions=%s source=sessions/reference_only",
             len(messages),
@@ -567,7 +568,13 @@ class RagIndexer:
                 account_wxid=account_wxid,
                 conversation_id=conversation_id,
                 segment=segment,
+                prev_context_messages=prev_tail_messages,
             )
+            # 供下一段抽取时消解跨段指代（"就买一下下"的"一下下"指什么）
+            prev_tail_messages = [
+                msg for msg in segment.messages[-3:]
+                if str(msg.get("content") or "").strip()
+            ]
             semantic_fact_count += len(
                 [fact for fact in semantic_facts if fact.memory_kind != "marker_fallback"]
             )
@@ -715,11 +722,14 @@ class RagIndexer:
         account_wxid: str,
         conversation_id: int,
         segment: RagSegment,
+        prev_context_messages: list[dict[str, Any]] | None = None,
     ) -> None:
         """Run an injected LLM extractor without affecting document retrieval.
 
         成本与稳定性约束（P1.2）：短段跳过、每轮每联系人段数封顶、
         连续失败中止本轮；LLM 事实过宽松质量门（基础项，不查词表）。
+        prev_context_messages 为上一段结尾消息，仅供模型消解跨段指代，
+        不作为 evidence（适配器按 messages 键过滤引用）。
         """
         if self.structured_fact_extractor is None:
             return
@@ -739,6 +749,7 @@ class RagIndexer:
                 "account_wxid": account_wxid,
                 "conversation_id": conversation_id,
                 "messages": segment.messages,
+                "context_messages": prev_context_messages or [],
                 "max_tokens": 2048,
                 "contract": {
                     "required": ["subject", "kind", "content"],

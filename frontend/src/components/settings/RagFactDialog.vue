@@ -20,6 +20,17 @@
         <!-- 顶部检索与过滤栏 -->
         <div class="rfd-toolbar">
           <input v-model="keyword" class="rfd-search" placeholder="搜索当前页的记忆与对话…" />
+          <select v-model="kindFilter" class="rfd-select" title="按记忆类型筛选">
+            <option value="">全部类型</option>
+            <option v-for="k in kinds" :key="k.kind" :value="k.kind">
+              {{ kindLabel(k.kind) }} ({{ k.count }})
+            </option>
+          </select>
+          <select v-model="sortBy" class="rfd-select" title="排序方式">
+            <option value="time_desc">时间 新→旧</option>
+            <option value="time_asc">时间 旧→新</option>
+            <option value="conf_desc">置信度 高→低</option>
+          </select>
           <label class="rfd-filter">
             <input v-model="showDisabled" type="checkbox" />
             <span>只看已停用/忘记</span>
@@ -263,6 +274,9 @@ const loading = ref(false)
 const error = ref('')
 const keyword = ref('')
 const showDisabled = ref(false)
+const sortBy = ref<'time_desc' | 'time_asc' | 'conf_desc'>('time_desc')
+const kindFilter = ref('')
+const kinds = ref<{ kind: string; count: number }[]>([])
 const busy = reactive<Record<number, boolean>>({})
 const revealed = reactive<Record<number, boolean>>({})
 const avatarLoadErrors = reactive<Record<string, boolean>>({})
@@ -441,6 +455,11 @@ function parseFact(fact: RagFact) {
   }
 }
 
+watch([sortBy, kindFilter], () => {
+  page.value = 1
+  load(1)
+})
+
 async function load(targetPage = page.value) {
   if (!props.conversationId) return
   const requestId = ++loadSequence
@@ -459,6 +478,7 @@ async function load(targetPage = page.value) {
 
     const res = await api.get_contact_facts(
       props.conversationId, props.accountWxid || '', pageSize, (targetPage - 1) * pageSize,
+      sortBy.value, kindFilter.value,
     )
     if (requestId !== loadSequence || !props.visible) return
     if (res?.ok) {
@@ -472,6 +492,7 @@ async function load(targetPage = page.value) {
       documentCount.value = Number(res.document_count || 0)
       factCount.value = Number(res.fact_count ?? res.raw_fact_count ?? facts.value.length)
       enabledFactCount.value = Number(res.enabled_fact_count ?? 0)
+      kinds.value = (res.kinds || []) as { kind: string; count: number }[]
       resolvedAccount.value = String(res.resolved_account_wxid || '')
       page.value = targetPage
       if (listElement.value) listElement.value.scrollTop = 0
@@ -640,6 +661,7 @@ watch(
 .rfd-search:focus {
   border-color: var(--ct-color-primary, #7c4dff);
 }
+.rfd-select { padding: 5px 8px; font-size: 11.5px; border: 1px solid var(--ct-border-color, #e5e7eb); border-radius: 8px; outline: none; background: var(--ct-bg-secondary, #f9fafb); color: var(--ct-text-primary, #1f2937); max-width: 150px; cursor: pointer; }
 .rfd-filter {
   display: flex;
   align-items: center;

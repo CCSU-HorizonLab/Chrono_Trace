@@ -348,3 +348,34 @@ def test_watermark_skips_already_extracted_range(monkeypatch):
         account_wxid="wxid_a", conversation_id=1, segment=late
     )
     assert len(calls) == 1
+
+
+def test_context_messages_rendered_but_not_evidence(monkeypatch):
+    payload = json.dumps(
+        {
+            "messages": [
+                {"id": 10, "is_sender": 0, "content": "就买一下下嘛"},
+                {"id": 11, "is_sender": 1, "content": "哪个皮肤"},
+                {"id": 12, "is_sender": 0, "content": "就上次说的那个限定"},
+                {"id": 13, "is_sender": 1, "content": "行吧"},
+            ],
+            "context_messages": [
+                {"id": 9, "is_sender": 1, "content": "这个游戏的皮肤好贵"},
+            ],
+        }
+    )
+    llm_output = json.dumps(
+        {"facts": [{"subject": "对方", "kind": "preference", "content": "对方想要之前讨论过的游戏皮肤",
+                    "confidence": 0.85, "evidence_message_ids": [10, 9]}]},
+        ensure_ascii=False,
+    )
+    http = _FakeHTTP(llm_output)
+    adapter = _adapter(monkeypatch, http)
+
+    result = adapter(payload)
+
+    user_text = http.captured["payload"]["messages"][1]["content"]
+    # 前段上下文出现且带"勿从中抽取"标注
+    assert "上一段结尾" in user_text and "[9]" in user_text and "勿从中抽取" in user_text
+    # 上下文消息 ID 不得成为 evidence（9 不在本段 messages 里）
+    assert result["facts"][0]["evidence_message_ids"] == [10]

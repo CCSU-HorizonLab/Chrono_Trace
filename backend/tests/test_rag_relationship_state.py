@@ -162,6 +162,69 @@ def test_refresh_skips_when_no_profile_and_no_facts(monkeypatch):
     assert result == {"ok": True, "skipped": "no_profile_and_no_facts"}
 
 
+def test_derive_accepts_llm_short_kind_facts():
+    """T3：LLM 归一化短名（boundary/preference/personal_fact/relation_state）
+    必须进入关系派生证据——此前 73 条 LLM 事实全部不在证据范围。"""
+    conn, store = _store()
+    fact_ids = [
+        store.upsert_fact(
+            account_wxid="wxid_a",
+            conversation_id=1,
+            subject="对方",
+            kind=kind,
+            content=content,
+            confidence=0.8,
+            as_of=1789900000,
+            evidence_message_ids=[21],
+            summary_method="llm_shadow",
+        )
+        for kind, content in [
+            ("boundary", "对方不喜欢我让她自己查百度，希望直接解释"),
+            ("preference", "对方喜欢喝奶茶，三分糖"),
+            ("personal_fact", "对方在深圳一家中小公司做后端开发"),
+            ("relation_state", "两人处于暧昧试探阶段"),
+            # 长名旧事实仍应被认出
+            ("relationship_boundary", "对方介意拿她和别人比较"),
+        ]
+    ]
+    profile, features = _profile_and_features()
+    draft = derive_relationship_state(
+        profile=profile,
+        features_snapshot=features,
+        facts=store.list_facts("wxid_a", 1),
+        message_count=3616,
+    )
+    for fact_id in fact_ids:
+        assert fact_id in draft.evidence_fact_ids
+    assert "百度" in draft.boundary_summary  # 短名 boundary 事实进入边界摘要
+    assert draft.confidence == 0.8
+
+
+def test_boundary_summary_separates_subjects():
+    """T3：边界聚合区分"对方的边界"与"我的边界"（subject 字段）。"""
+    conn, store = _store()
+    store.upsert_fact(
+        account_wxid="wxid_a", conversation_id=1, subject="对方", kind="boundary",
+        content="对方介意被已读不回", confidence=0.8, as_of=1789900000,
+        evidence_message_ids=[21], summary_method="llm_shadow",
+    )
+    store.upsert_fact(
+        account_wxid="wxid_a", conversation_id=1, subject="我", kind="boundary",
+        content="我介意被拿和别人比较", confidence=0.75, as_of=1789900000,
+        evidence_message_ids=[22], summary_method="llm_shadow",
+    )
+    draft = derive_relationship_state(
+        profile=None,
+        features_snapshot=None,
+        facts=store.list_facts("wxid_a", 1),
+        message_count=3616,
+    )
+    assert draft is not None
+    assert "对方的边界：" in draft.boundary_summary and "已读不回" in draft.boundary_summary
+    assert "我的边界：" in draft.boundary_summary and "拿和别人比较" in draft.boundary_summary
+    assert draft.boundary_summary.index("对方的边界") < draft.boundary_summary.index("我的边界")
+
+
 def test_refresh_writes_shadow_from_profile_and_facts(monkeypatch):
     conn, store = _store()
     _seed_boundary_fact(store, confidence=0.66)

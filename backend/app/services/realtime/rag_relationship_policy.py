@@ -1,0 +1,276 @@
+"""P1.1 contact-scoped relationship state shadow derivation.
+
+把 contact_profiler 的 LLM 画像与 rag_facts（校准后置信度）派生为结构化
+关系状态影子行（stage / closeness_band / initiative_pattern / boundary）。
+
+纪律（对应改造计划 P1.1）：
+- 只读非敏感、active/enabled 事实；sensitive 事实仅计 ID 不取内容。
+- 影子写入 ADD-only，evidence_hash 未变化不产生新版本。
+- 本模块只做影子，不参与任何读侧注入（P1.3 另行接通并门控）。
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+import hashlib
+import json
+import logging
+from typing import Any
+
+from .rag_config import load_rag_settings
+from .rag_store import RagStore
+
+logger = logging.getLogger(__name__)
+
+BOUNDARY_KINDS = {"relationship_boundary", "preference_dislike"}
+EVIDENCE_KINDS = BOUNDARY_KINDS | {"preference_like", "personal_profile"}
+
+INITIATIVE_OTHER_DOMINANT = "对方更主动"
+INITIATIVE_SELF_DOMINANT = "我更主动"
+INITIATIVE_BALANCED = "双方均衡"
+
+
+@dataclass
+class RelationshipStateDraft:
+    stage: str
+    closeness_band: str
+    initiative_pattern: str
+    boundary_summary: str = ""
+    communication_tips: str = ""
+    relationship_note: str = ""
+    evidence_fact_ids: list[int] = field(default_factory=list)
+    evidence_message_ids: list[int] = field(default_factory=list)
+    confidence: float = 0.0
+    summary_method: str = "derived_shadow"
+
+
+def derive_relationship_state(
+    *,
+    profile: dict[str, Any] | None,
+    features_snapshot: dict[str, Any] | None,
+    facts: list[dict[str, Any]],
+    message_count: int,
+) -> RelationshipStateDraft | None:
+    """Derive a structured relationship snapshot from profile + calibrated facts.
+
+    profile / features_snapshot 来自 contact_profiles 缓存；facts 为
+    rag_store.list_facts 输出（含 confidence、kind、sensitivity）。
+    无画像且无事实时返回 None（不生成空影子行）。
+    """
+    profile = profile or {}
+    features_snapshot = features_snapshot or {}
+
+    initiative = features_snapshot.get("initiative") or {}
+    total_sessions = int(initiative.get("total_sessions") or 0)
+    other_initiated = int(initiative.get("other_initiated") or 0)
+
+    if total_sessions >= 5 and other_initiated / total_sessions >= 0.6:
+        initiative_pattern = INITIATIVE_OTHER_DOMINANT
+    elif total_sessions >= 5 and other_initiated / total_sessions <= 0.4:
+        initiative_pattern = INITIATIVE_SELF_DOMINANT
+    elif total_sessions >= 5:
+        initiative_pattern = INITIATIVE_BALANCED
+    else:
+        initiative_pattern = "样本不足"
+
+    if message_count >= 2000:
+        closeness_band = "high"
+    elif message_count >= 300:
+        closeness_band = "medium"
+    else:
+        closeness_band = "low"
+
+    band_label = {"high": "高频互动", "medium": "常规往来", "low": "低频联系"}.get(
+        closeness_band, closeness_band
+    )
+    stage = f"{band_label}/{initiative_pattern}"
+
+    boundary_facts = [
+        fact for fact in facts
+        if str(fact.get("kind") or "") in BOUNDARY_KINDS
+        and str(fact.get("sensitivity") or "normal") != "sensitive"
+    ]
+    boundary_summary = "；".join(
+        str(fact.get("content") or "").split("\n")[0].strip()
+        for fact in boundary_facts[:3]
+        if str(fact.get("content") or "").strip()
+    )
+
+    evidence_facts = [
+        fact for fact in facts
+        if str(fact.get("kind") or "") in EVIDENCE_KINDS
+    ][:20]
+    evidence_fact_ids = [int(fact["id"]) for fact in evidence_facts if fact.get("id")]
+    evidence_message_ids = sorted({
+        int(mid)
+        for fact in evidence_facts
+        for mid in _parse_evidence_ids(fact.get("evidence_message_ids_json"))
+    })[:40]
+
+    if evidence_facts:
+        confidence = round(
+            sum(float(fact.get("confidence") or 0.0) for fact in evidence_facts)
+            / len(evidence_facts),
+            4,
+        )
+        summary_method = "derived_shadow_profile_and_facts"
+    else:
+        confidence = 0.5
+        summary_method = "derived_shadow_profile_only"
+
+    if not profile and not evidence_facts:
+        return None
+
+    return RelationshipStateDraft(
+        stage=stage,
+        closeness_band=closeness_band,
+        initiative_pattern=initiative_pattern,
+        boundary_summary=boundary_summary,
+        communication_tips=str(profile.get("communication_tips") or ""),
+        relationship_note=str(profile.get("relationship_note") or ""),
+        evidence_fact_ids=evidence_fact_ids,
+        evidence_message_ids=evidence_message_ids,
+        confidence=confidence,
+        summary_method=summary_method,
+    )
+
+
+def _parse_evidence_ids(raw: Any) -> list[int]:
+    try:
+        values = json.loads(raw or "[]")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return []
+    return [int(v) for v in values if isinstance(v, int) and v > 0]
+
+
+def _evidence_hash(
+    profile: dict[str, Any] | None,
+    features_snapshot: dict[str, Any] | None,
+    evidence_fact_ids: list[int],
+) -> str:
+    digest = hashlib.sha256()
+    digest.update(
+        json.dumps(profile or {}, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    )
+    digest.update(b"\x1f")
+    digest.update(
+        json.dumps(features_snapshot or {}, ensure_ascii=False, sort_keys=True).encode(
+            "utf-8"
+        )
+    )
+    digest.update(b"\x1f")
+    digest.update(",".join(str(i) for i in sorted(evidence_fact_ids)).encode("utf-8"))
+    return digest.hexdigest()
+
+
+def refresh_relationship_state_shadow(
+    store: RagStore,
+    *,
+    account_wxid: str,
+    conversation_id: int,
+    display_name: str,
+) -> dict[str, Any]:
+    """One-shot shadow refresh; guarded by rag_relationship_policy_shadow_enabled.
+
+    画像缓存缺失或派生为 None 时返回 skipped，不写影子、不抛异常——
+    影子层失败绝不影响索引主链路。
+    """
+    if not load_rag_settings().get("rag_relationship_policy_shadow_enabled"):
+        return {"ok": True, "skipped": "disabled"}
+    try:
+        profile_cache = _load_profile_cache(account_wxid, display_name)
+        facts = store.list_facts(account_wxid, conversation_id)
+        # 亲密度用真实消息量（document_count 是切块后的文档数，会低估）
+        message_count = _load_message_count(store, account_wxid, conversation_id)
+
+        draft = derive_relationship_state(
+            profile=profile_cache.get("profile") if profile_cache else None,
+            features_snapshot=profile_cache.get("features_snapshot") if profile_cache else None,
+            facts=facts,
+            message_count=message_count,
+        )
+        if draft is None:
+            return {"ok": True, "skipped": "no_profile_and_no_facts"}
+
+        evidence_hash = _evidence_hash(
+            profile_cache.get("profile") if profile_cache else None,
+            profile_cache.get("features_snapshot") if profile_cache else None,
+            draft.evidence_fact_ids,
+        )
+        result = store.upsert_relationship_state(
+            account_wxid=account_wxid,
+            conversation_id=conversation_id,
+            stage=draft.stage,
+            closeness_band=draft.closeness_band,
+            initiative_pattern=draft.initiative_pattern,
+            boundary_summary=draft.boundary_summary,
+            communication_tips=draft.communication_tips,
+            relationship_note=draft.relationship_note,
+            evidence_hash=evidence_hash,
+            evidence_fact_ids=draft.evidence_fact_ids,
+            evidence_message_ids=draft.evidence_message_ids,
+            confidence=draft.confidence,
+            summary_method=draft.summary_method,
+        )
+        store.conn.commit()
+        logger.debug(
+            "[RelationshipState] conv=%s changed=%s stage=%s confidence=%.2f",
+            conversation_id,
+            result.get("changed"),
+            draft.stage,
+            draft.confidence,
+        )
+        return result
+    except Exception as exc:
+        logger.warning("[RelationshipState] shadow refresh failed: %s", exc)
+        return {"ok": False, "error": str(exc)}
+
+
+def _load_profile_cache(
+    account_wxid: str, display_name: str
+) -> dict[str, Any] | None:
+    if not display_name:
+        return None
+    try:
+        from ...db.connection import get_db
+
+        conn = get_db()
+        row = conn.execute(
+            """
+            SELECT profile_json, features_snapshot FROM contact_profiles
+            WHERE account_wxid = ? AND display_name = ?
+            ORDER BY id DESC LIMIT 1
+            """,
+            (account_wxid, display_name),
+        ).fetchone()
+    except Exception:
+        return None
+    if not row:
+        return None
+    try:
+        profile = json.loads(row["profile_json"] or "{}")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        profile = {}
+    try:
+        features = json.loads(row["features_snapshot"] or "{}")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        features = {}
+    return {"profile": profile, "features_snapshot": features}
+
+
+def _load_message_count(store: RagStore, account_wxid: str, conversation_id: int) -> int:
+    """Prefer conversations.message_count; fall back to index document count."""
+    try:
+        row = store.conn.execute(
+            "SELECT message_count FROM conversations WHERE id = ? AND account_wxid = ?",
+            (int(conversation_id), account_wxid),
+        ).fetchone()
+        if row and int(row["message_count"] or 0) > 0:
+            return int(row["message_count"])
+    except Exception:
+        pass
+    try:
+        status = store.get_status(account_wxid, conversation_id) or {}
+        return int(status.get("document_count") or 0)
+    except Exception:
+        return 0

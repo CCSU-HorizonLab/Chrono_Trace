@@ -25,6 +25,9 @@ RAG_DEFAULTS: dict[str, Any] = {
     "rag_fact_shadow_enabled": True,
     "rag_fact_read_enabled": True,
     "rag_fact_score_threshold": 0.30,
+    "rag_relationship_policy_shadow_enabled": False,
+    "rag_structured_fact_extraction_enabled": False,
+    "rag_relationship_policy_injection_enabled": True,
 }
 
 
@@ -86,6 +89,18 @@ def apply_rag_defaults(settings: dict[str, Any]) -> dict[str, Any]:
     )
     if settings.get("rag_query_scope") not in {"latest_turn", "recent_window", "all"}:
         settings["rag_query_scope"] = "latest_turn"
+    settings["rag_relationship_policy_shadow_enabled"] = _as_bool(
+        settings.get("rag_relationship_policy_shadow_enabled"),
+        default=RAG_DEFAULTS["rag_relationship_policy_shadow_enabled"],
+    )
+    settings["rag_structured_fact_extraction_enabled"] = _as_bool(
+        settings.get("rag_structured_fact_extraction_enabled"),
+        default=RAG_DEFAULTS["rag_structured_fact_extraction_enabled"],
+    )
+    settings["rag_relationship_policy_injection_enabled"] = _as_bool(
+        settings.get("rag_relationship_policy_injection_enabled"),
+        default=RAG_DEFAULTS["rag_relationship_policy_injection_enabled"],
+    )
     settings["rag_fact_shadow_enabled"] = _as_bool(
         settings.get("rag_fact_shadow_enabled"),
         True,

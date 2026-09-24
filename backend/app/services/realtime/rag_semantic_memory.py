@@ -8,6 +8,11 @@ import re
 from typing import Any
 
 from .rag_embedding import RagEmbeddingService, RagEmbeddingUnavailable
+from .rag_fact_quality import (
+    SYSTEM_MESSAGE_MARKERS,
+    is_usable_shadow_fact,
+    looks_corrupted,
+)
 from .rag_segmenter import RagSegment, RagSegmenter
 
 
@@ -146,23 +151,78 @@ class SemanticFactExtractor:
         for item, single_vector, window_vector in zip(candidates, single_vectors, window_vectors):
             single_kind, single_score = self._best_match(single_vector, prototype_vectors)
             window_kind, window_score = self._best_match(window_vector, prototype_vectors)
-            if single_score >= self.SINGLE_THRESHOLD:
+            if single_score >= self.SINGLE_THRESHOLD and is_usable_shadow_fact(
+                single_kind,
+                item["content"],
+                context=item["window_text"],
+            ):
                 facts.append(self._build_fact(segment, item, single_kind, single_score))
-            elif window_score >= self.WINDOW_THRESHOLD and single_score >= 0.45:
+            elif (
+                window_score >= self.WINDOW_THRESHOLD
+                and single_score >= 0.45
+                and is_usable_shadow_fact(
+                    window_kind,
+                    item["content"],
+                    context=item["window_text"],
+                )
+            ):
                 facts.append(self._build_fact(segment, item, window_kind, window_score))
 
         facts.sort(key=lambda fact: (-fact.semantic_score, fact.source_ts))
-        deduped: list[SemanticFact] = []
-        seen: set[tuple[int | None, str]] = set()
-        for fact in facts:
-            key = (fact.source_id, fact.memory_kind)
-            if key in seen:
-                continue
-            seen.add(key)
-            deduped.append(fact)
-            if len(deduped) >= self.MAX_FACTS_PER_SEGMENT:
-                break
-        return sorted(deduped, key=lambda fact: fact.source_ts)
+        return self._consolidate_fact_clusters(facts)
+
+    def _consolidate_fact_clusters(self, facts: list[SemanticFact]) -> list[SemanticFact]:
+        """Collapse overlapping candidate windows into one auditable memory.
+
+        The old implementation deduplicated by source message ID, so every
+        adjacent turn became a separate active fact.  Overlapping evidence IDs
+        identify one conversational episode; retain the strongest focal turn and
+        union its evidence instead of exposing all fragments.
+        """
+        clusters: list[list[SemanticFact]] = []
+        for fact in sorted(facts, key=lambda item: item.source_ts):
+            fact_ids = set(fact.evidence_message_ids or [])
+            target: list[SemanticFact] | None = None
+            for cluster in reversed(clusters):
+                anchor = cluster[-1]
+                if anchor.memory_kind != fact.memory_kind:
+                    continue
+                if abs(int(fact.source_ts or 0) - int(anchor.source_ts or 0)) > 600:
+                    continue
+                anchor_ids = set(anchor.evidence_message_ids or [])
+                if len(fact_ids & anchor_ids) >= 2:
+                    target = cluster
+                    break
+            if target is None:
+                clusters.append([fact])
+            else:
+                target.append(fact)
+
+        consolidated: list[SemanticFact] = []
+        for cluster in clusters:
+            representative = max(cluster, key=lambda item: item.semantic_score)
+            evidence_ids = sorted({
+                evidence_id
+                for item in cluster
+                for evidence_id in (item.evidence_message_ids or [])
+            })
+            consolidated.append(
+                SemanticFact(
+                    content=representative.content,
+                    source_id=representative.source_id,
+                    source_ts=representative.source_ts,
+                    subject=representative.subject,
+                    topics=representative.topics,
+                    entities=representative.entities,
+                    memory_kind=representative.memory_kind,
+                    semantic_score=representative.semantic_score,
+                    evidence_message_ids=evidence_ids,
+                    source_window_start_ts=min(item.source_window_start_ts for item in cluster),
+                    source_window_end_ts=max(item.source_window_end_ts for item in cluster),
+                )
+            )
+        consolidated.sort(key=lambda fact: fact.source_ts)
+        return consolidated[: self.MAX_FACTS_PER_SEGMENT]
 
     def _load_prototype_vectors(self) -> dict[str, list[float]]:
         if self._prototype_vectors is not None:
@@ -194,6 +254,7 @@ class SemanticFactExtractor:
                 item
                 for item in messages[max(0, index - 1): min(len(messages), index + 2)]
                 if self._compact(item.get("content"))
+                and self._is_informative_candidate(self._compact(item.get("content")))
             ]
             output.append(
                 {
@@ -255,6 +316,14 @@ class SemanticFactExtractor:
                 normalized_source_id = int(source_id or 0) or None
             except (TypeError, ValueError):
                 normalized_source_id = None
+            if not is_usable_shadow_fact(
+                "marker_fallback",
+                fallback.get("content") or "",
+                context=segment.render_excerpt(segment, max_messages=4)
+                if hasattr(segment, "render_excerpt")
+                else "",
+            ):
+                continue
             facts.append(
                 SemanticFact(
                     content=str(fallback.get("content") or ""),
@@ -315,6 +384,12 @@ class SemanticFactExtractor:
             return False
         compact = re.sub(r"\s+", "", content)
         if compact in {"哈哈哈", "哈哈哈哈", "嗯嗯", "好的", "可以", "行吧"}:
+            return False
+        # 乱码/二进制消息（加密残留、损坏内容）：不作为焦点，也不进上下文窗口
+        if looks_corrupted(compact):
+            return False
+        # 微信系统/通知消息不是用户表达
+        if any(marker in compact for marker in SYSTEM_MESSAGE_MARKERS):
             return False
         return True
 

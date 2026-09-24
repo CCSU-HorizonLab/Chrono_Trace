@@ -37,6 +37,33 @@ def _print(*args, **kwargs):
             sys.stdout.flush()
 
 
+# P1.1 画像 TTL 修复：过期画像降级注入 + 后台续期防重入
+_profile_renewal_inflight: set = set()
+
+
+def _renew_profiles_in_background(display_name: str, account_wxid: str = "") -> None:
+    key = f"{account_wxid}:{display_name}"
+    if not display_name or key in _profile_renewal_inflight:
+        return
+    _profile_renewal_inflight.add(key)
+
+    def _run():
+        try:
+            from .contact_profiler import ContactProfiler
+            from .self_profiler import SelfProfiler
+
+            ContactProfiler().generate_profile(display_name, account_wxid=account_wxid)
+            SelfProfiler().generate_profile(display_name, account_wxid=account_wxid)
+        except Exception as renew_e:
+            _print(f"⚠️ 画像后台续期失败（保留旧缓存）: {renew_e}")
+        finally:
+            _profile_renewal_inflight.discard(key)
+
+    threading.Thread(
+        target=_run, daemon=True, name=f"profile-renewal-{display_name[:16]}"
+    ).start()
+
+
 class RealtimeMonitorService:
     """
     实时监听服务
@@ -3320,15 +3347,22 @@ class RealtimeMonitorService:
                         # 对方画像
                         c_profiler = ContactProfiler()
                         c_cached = c_profiler.get_profile(display_name, account_wxid)
-                        if c_cached and not c_cached['expired']:
+                        if c_cached:
+                            # 过期降级注入：旧画像好过无声掉线；同时后台续期
                             ctx['contact_profile'] = c_cached['profile']
-                            
+                            if c_cached['expired']:
+                                ctx['_contact_profile_stale'] = True
+                                _renew_profiles_in_background(display_name, account_wxid)
+
                         # 我方本体画像
                         s_profiler = SelfProfiler()
                         s_cached = s_profiler.get_profile(display_name, account_wxid)
-                        if s_cached and not s_cached['expired']:
+                        if s_cached:
                             ctx['self_profile'] = s_cached['profile']
                             self_profile_cache = s_cached
+                            if s_cached['expired']:
+                                ctx['_self_profile_stale'] = True
+                                _renew_profiles_in_background(display_name, account_wxid)
                     except Exception as prof_e:
                         _print(f"⚠️ 提取画像失败: {prof_e}")
 
@@ -3442,15 +3476,22 @@ class RealtimeMonitorService:
                     # 对方画像
                     c_profiler = ContactProfiler()
                     c_cached = c_profiler.get_profile(session_state['display_name'], account_wxid)
-                    if c_cached and not c_cached['expired']:
+                    if c_cached:
+                        # 过期降级注入：旧画像好过无声掉线；同时后台续期
                         ctx['contact_profile'] = c_cached['profile']
-                        
+                        if c_cached['expired']:
+                            ctx['_contact_profile_stale'] = True
+                            _renew_profiles_in_background(session_state['display_name'], account_wxid)
+
                     # 我方本体画像
                     s_profiler = SelfProfiler()
                     s_cached = s_profiler.get_profile(session_state['display_name'], account_wxid)
-                    if s_cached and not s_cached['expired']:
+                    if s_cached:
                         ctx['self_profile'] = s_cached['profile']
                         self_profile_cache = s_cached
+                        if s_cached['expired']:
+                            ctx['_self_profile_stale'] = True
+                            _renew_profiles_in_background(session_state['display_name'], account_wxid)
                 except Exception as prof_e:
                     _print(f"⚠️ 提取画像失败: {prof_e}")
 

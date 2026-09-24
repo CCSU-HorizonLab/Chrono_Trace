@@ -1379,9 +1379,9 @@ def test_rag_indexer_rebuilds_v2_multilayer_documents_and_cleans_old_auto_docs(m
         VALUES (?, 1, ?, ?, 1, ?)
         """,
         [
-            (1, 0, "我最近又在玩杀戮尖塔", now - 600),
+            (1, 0, "我最近天天在玩杀戮尖塔，这游戏太上头了", now - 600),
             (2, 1, "哪个流派呀", now - 540),
-            (3, 0, "那个卡组有点贵", now - 480),
+            (3, 0, "那家火锅店人均有点贵，不过好吃", now - 480),
             (4, 1, "宝宝不是说那个贵嘛", now - 420),
             (5, 0, "对呀上次说的", now - 360),
         ],
@@ -1425,8 +1425,25 @@ def test_rag_indexer_rebuilds_v2_multilayer_documents_and_cleans_old_auto_docs(m
     )
 
     class FakeEmbedding:
+        # 词袋向量：与真实 embedding 的契约一致（相似文本高余弦），
+        # 使 prototype kind 判定有区分度，而非全同向量退化为首个 kind
+        WORDS = (
+            "喜欢", "爱吃", "讨厌", "游戏", "卡组", "玩", "看", "运动", "音乐",
+            "餐厅", "食物", "店", "吃", "喝", "见面", "约定", "计划", "习惯",
+            "每天", "贵", "价格",
+        )
+
         def embed_texts(self, texts):
-            return [[0.1] * 384 for _ in texts]
+            vectors = []
+            for text in texts:
+                vector = [0.0] * 384
+                for i, word in enumerate(self.WORDS):
+                    if i < 384 and word in str(text or ""):
+                        vector[i] = 1.0
+                if not any(vector):
+                    vector[0] = 0.01
+                vectors.append(vector)
+            return vectors
 
     status = RagIndexer(store=store, embedding_service=FakeEmbedding()).rebuild_contact_index(
         account_wxid="wxid_a",

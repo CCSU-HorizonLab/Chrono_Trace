@@ -210,6 +210,39 @@ class RagStore:
             )
             """
         )
+        self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS rag_relationship_state (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_wxid TEXT NOT NULL,
+                conversation_id INTEGER NOT NULL,
+                stage TEXT NOT NULL,
+                closeness_band TEXT NOT NULL,
+                initiative_pattern TEXT NOT NULL,
+                boundary_summary TEXT,
+                communication_tips TEXT,
+                relationship_note TEXT,
+                evidence_hash TEXT,
+                evidence_fact_ids_json TEXT,
+                evidence_message_ids_json TEXT,
+                confidence REAL DEFAULT 0.0,
+                sensitivity TEXT DEFAULT 'normal',
+                policy_version TEXT NOT NULL,
+                summary_method TEXT DEFAULT 'derived_shadow',
+                valid_from INTEGER,
+                valid_to INTEGER,
+                supersedes_state_id INTEGER,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            )
+            """
+        )
+        self.conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_rag_relationship_state_scope
+            ON rag_relationship_state(account_wxid, conversation_id, created_at DESC)
+            """
+        )
         self._ensure_document_columns()
         self._ensure_status_columns()
         self._ensure_retrieval_log_columns()
@@ -918,6 +951,49 @@ class RagStore:
         ).fetchall()
         return [dict(row) for row in rows]
 
+    def quarantine_low_quality_shadow_facts(
+        self,
+        account_wxid: str,
+        conversation_id: int,
+    ) -> dict[str, Any]:
+        """Hide legacy semantic fragments while preserving an audit row.
+
+        Older indexes wrote every prototype match as an active fact.  Quality
+        quarantine is deliberately limited to those rows; structured LLM facts
+        and user feedback tombstones are left untouched.
+        """
+        from .rag_fact_quality import fact_quality_reason
+
+        rows = self.conn.execute(
+            """
+            SELECT id, kind, content
+            FROM rag_facts
+            WHERE account_wxid = ? AND conversation_id = ?
+              AND summary_method = 'shadow_semantic_embedding'
+              AND status = 'active' AND enabled = 1
+            """,
+            (account_wxid, int(conversation_id)),
+        ).fetchall()
+        quarantined = 0
+        reasons: dict[str, int] = {}
+        now = _now()
+        for row in rows:
+            reason = fact_quality_reason(row["kind"], row["content"])
+            if reason is None:
+                continue
+            self.conn.execute(
+                """
+                UPDATE rag_facts
+                   SET status = 'uncertain', enabled = 0,
+                       summary_method = 'quarantined_quality', updated_at = ?
+                 WHERE id = ?
+                """,
+                (now, int(row["id"])),
+            )
+            quarantined += 1
+            reasons[reason] = reasons.get(reason, 0) + 1
+        return {"scanned": len(rows), "quarantined": quarantined, "reasons": reasons}
+
     def list_fact_evidence_text(self, evidence_message_ids: list[int] | tuple[int, ...]) -> str:
         """Return local evidence text for ranking without replacing fact content.
 
@@ -1097,6 +1173,87 @@ class RagStore:
             (account_wxid, int(conversation_id)),
         ).fetchall()
         return {int(r["fact_id"]): str(r["action"]) for r in rows}
+
+    # ---- P1.1 关系状态影子层 ----
+
+    def upsert_relationship_state(self, **payload: Any) -> dict[str, Any]:
+        """ADD-only 影子写入：新版本追加行并关闭旧版本 valid_to。
+
+        evidence_hash 相同视为无变化，不产生新版本（避免每次重建索引抖动）。
+        """
+        account_wxid = payload.get("account_wxid") or ""
+        conversation_id = int(payload.get("conversation_id") or 0)
+        evidence_hash = str(payload.get("evidence_hash") or "")
+        latest = self.get_latest_relationship_state(account_wxid, conversation_id)
+        if latest and latest["evidence_hash"] == evidence_hash:
+            return {"ok": True, "state_id": latest["id"], "changed": False}
+
+        now = _now()
+        old_id = int(latest["id"]) if latest else None
+        if old_id:
+            self.conn.execute(
+                "UPDATE rag_relationship_state SET valid_to = ?, updated_at = ? WHERE id = ?",
+                (now, now, old_id),
+            )
+        cursor = self.conn.execute(
+            """
+            INSERT INTO rag_relationship_state
+            (account_wxid, conversation_id, stage, closeness_band, initiative_pattern,
+             boundary_summary, communication_tips, relationship_note, evidence_hash,
+             evidence_fact_ids_json, evidence_message_ids_json, confidence, sensitivity,
+             policy_version, summary_method, valid_from, valid_to, supersedes_state_id,
+             created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                account_wxid,
+                conversation_id,
+                str(payload.get("stage") or "unknown"),
+                str(payload.get("closeness_band") or "unknown"),
+                str(payload.get("initiative_pattern") or "unknown"),
+                payload.get("boundary_summary"),
+                payload.get("communication_tips"),
+                payload.get("relationship_note"),
+                evidence_hash,
+                json.dumps(payload.get("evidence_fact_ids") or [], ensure_ascii=False),
+                json.dumps(payload.get("evidence_message_ids") or [], ensure_ascii=False),
+                float(payload.get("confidence") or 0.0),
+                payload.get("sensitivity") or "normal",
+                f"rs-v1-{now}",
+                payload.get("summary_method") or "derived_shadow",
+                now,
+                None,
+                old_id,
+                now,
+                now,
+            ),
+        )
+        return {"ok": True, "state_id": int(cursor.lastrowid), "changed": True}
+
+    def get_latest_relationship_state(
+        self, account_wxid: str, conversation_id: int
+    ) -> dict[str, Any] | None:
+        row = self.conn.execute(
+            """
+            SELECT * FROM rag_relationship_state
+            WHERE account_wxid = ? AND conversation_id = ? AND valid_to IS NULL
+            ORDER BY id DESC LIMIT 1
+            """,
+            (account_wxid, int(conversation_id)),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def count_relationship_states(
+        self, account_wxid: str, conversation_id: int
+    ) -> int:
+        row = self.conn.execute(
+            """
+            SELECT COUNT(*) AS n FROM rag_relationship_state
+            WHERE account_wxid = ? AND conversation_id = ?
+            """,
+            (account_wxid, int(conversation_id)),
+        ).fetchone()
+        return int(row["n"]) if row else 0
 
     def attach_log_to_suggestion(self, log_id: int | None, suggestion_id: int) -> None:
         if not log_id:

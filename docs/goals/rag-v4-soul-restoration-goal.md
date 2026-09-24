@@ -2,7 +2,14 @@
 
 ## 状态
 
-已完成。P0–P3 全部通过测试与量化门禁。最终冻结集包含 38 条运行事实数字 ID 样例和 5 条敏感安全样例；fact-path Recall@5=`0.6316`、MRR=`0.4504`、faithfulness=`0.3256`，对应 bootstrap 下界均高于 document-RAG；敏感阻断 precision/recall=`1.0/1.0`，联系人/会话隔离率=`1.0`，发布门禁为 `pass`。全量后端回归：659 passed、21 skipped、24 warnings；前端构建与 smoke 在 P3 前序阶段通过。
+**定位修正（2026-09-25，P1.5）**：文首原表述“P0–P3 全部通过测试与量化门禁”已过时。P0.4a 质量门清理后，本文引用的 runtime gold 基线（fact-path Recall@5=`0.6316`/`0.7105`）已标记 **superseded**——该集 38 条 gold 事实中 87% 本身是碎片化单轮记忆，冻结数字不再构成发布依据。
+
+现行验收口径：
+- **存活 gold 命中率**：质量门清理后存活 gold 的检索命中（4/5），用于确认检索侧无回退；
+- **人工事实质量抽查**：按用户实测反馈对真实库事实逐条核对（拦截/自包含/证据可溯），结果记录于 `docs/rag-v4-improvement-plan.md` 各轮条目；
+- **全量后端回归**：当前 726 passed、21 skipped（含 P1.5 新增 15 项）。
+
+新的人工回归集（P0.3 规划的 60–100 条）**尚未建立**，建立前不得以任何冻结数字宣称“全部通过”。v4 时期的三路对照数字（fact-path Recall@5=`0.6316`、MRR=`0.4504`、faithfulness=`0.3256`；敏感阻断 precision/recall=`1.0/1.0`；当时回归 659 passed）保留仅作历史参考。
 
 口径说明（2026-09-23 统一）：上文"高于 document-RAG"中的 document-RAG 指标以 `rag-v4-runtime-gold-eval-report.json` 为准——Recall@5/MRR=`0`，faithfulness=`0.0465`（非 0）；no-RAG faithfulness=`0.0698`。faithfulness 分母统一为每 track 43 cases（含无 evidence 的 no-RAG case），judge 版本 `nli-external-required-v1`。
 

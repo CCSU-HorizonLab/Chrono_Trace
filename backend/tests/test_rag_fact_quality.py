@@ -50,3 +50,13 @@ def test_corrupted_text_detected():
     assert fact_quality_reason(
         "preference_like", "对方提到：我喜欢喝café，周末常去"
     ) is None
+
+
+def test_vague_fragments_rejected():
+    assert fact_quality_reason("preference", "对方提到：就买一下下嘛") == "vague_fragment"
+    assert fact_quality_reason("plan_or_appointment", "你什么时候跟我提再说吧") == "vague_fragment"
+    # 自包含陈述不受影响（LLM 事实走宽松模式）
+    assert fact_quality_reason(
+        "preference", "对方撒娇要求购买之前讨论过的游戏皮肤", require_kind_signal=False
+    ) is None
+    assert fact_quality_reason("plan_or_appointment", "我们约了周五在五道口那家店见面") is None

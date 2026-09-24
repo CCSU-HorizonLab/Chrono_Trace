@@ -119,6 +119,16 @@ P0 的目标是先停止“看见参考 badge 却不知道是否用于建议”�
 - **开关修复**：AI 抽取/关系影子开关此前未接入 Settings 保存链路（点了会丢），已修复持久化并直接写入运行配置。
 - 测试 +3（系统消息/乱码/水位跳过），全量回归 709 passed, 21 skipped。
 
+### P0.4c 抽取自包含强化与记忆筛选速查 ✅（2026-09-24 第三轮）
+
+用户实测反馈三类问题（对话拆两段/代指断裂/前端无筛选）的修复：
+
+- **跨段指代消解**：抽取 payload 携带上一段结尾消息（`context_messages`，远程同样脱敏），prompt 标注"仅供理解指代，勿从中抽取或引用"；evidence 过滤仍严格限定本段消息。segment 循环传递 `prev_tail_messages`。
+- **prompt 自包含强化**：差/好对照示例（"就买一下下嘛" vs "对方撒娇要求购买之前讨论过的游戏皮肤"），明确"无法确定指代对象就不输出该条；宁可少抽，不可抽含糊的"。
+- **质量门 vague_fragment**：<=20 字含"一下下/这个嘛/再说吧"等代指残句直接拦截；用户举的两条真实垃圾（"就买一下下嘛""你什么时候跟我提再说吧"）已验证拦截并从存量清理（本轮隔离 2 条，active 剩 343）。
+- **记忆筛选速查**：`get_contact_facts` 支持 `sort`（time_desc/time_asc/conf_desc）与 `kind` 过滤，返回 `kinds` 聚合（类型+计数）；前端记忆弹窗新增类型下拉（带计数）与排序下拉，变更即回第一页重载。
+- 测试 +2（vague 拦截/上下文渲染与 evidence 隔离），全量回归 711 passed, 21 skipped。
+
 ### P0.5 评测口径统一 ✅（2026-09-23 完成）
 
 goal 文档把 document-RAG faithfulness 记为 0，同版本 JSON 为 0.0465。已在 `rag-v4-soul-restoration-goal.md` 增补口径说明：document-RAG Recall@5/MRR=0、faithfulness=0.0465、no-RAG faithfulness=0.0698，分母统一为每 track 43 cases，以 `rag-v4-runtime-gold-eval-report.json` 为唯一数据源；P0.4 校准后的新回放基线（Recall@5=0.7105 / MRR=0.5026）一并落盘。

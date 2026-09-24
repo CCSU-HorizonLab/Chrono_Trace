@@ -280,10 +280,37 @@ class RagStore:
         columns = {
             "index_version": "TEXT DEFAULT 'v1'",
             "fact_read_mode": "TEXT DEFAULT 'inherit'",
+            # P1.5 断点续抽段级进度：最后成功处理（含零事实）的段末时间戳，
+            # 及抽取 prompt 版本（版本变化时水位失效全量重抽）
+            "fact_extract_watermark_ts": "INTEGER",
+            "fact_extract_prompt_version": "TEXT",
         }
         for name, definition in columns.items():
             if name not in existing:
                 self.conn.execute(f"ALTER TABLE rag_index_status ADD COLUMN {name} {definition}")
+
+    def set_fact_extract_progress(
+        self,
+        account_wxid: str,
+        conversation_id: int,
+        *,
+        watermark_ts: int,
+        prompt_version: str,
+    ) -> None:
+        """Persist per-segment LLM extraction progress (P1.5).
+
+        只更新进度两列，不触碰索引状态本体；调用方随事务提交。
+        """
+        self.conn.execute(
+            """
+            UPDATE rag_index_status
+               SET fact_extract_watermark_ts = ?,
+                   fact_extract_prompt_version = ?,
+                   updated_at = ?
+             WHERE account_wxid = ? AND conversation_id = ?
+            """,
+            (int(watermark_ts), str(prompt_version), _now(), account_wxid, int(conversation_id)),
+        )
 
     def _ensure_retrieval_log_columns(self) -> None:
         existing = set()

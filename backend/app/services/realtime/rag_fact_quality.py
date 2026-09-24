@@ -47,6 +47,8 @@ SYSTEM_MESSAGE_MARKERS = _QUALITY_PATTERNS.get("system_message_markers", ())
 VAGUE_REFERENCE_TERMS = _QUALITY_PATTERNS.get("vague_reference_terms", ())
 GENERIC_TURNS = frozenset(_QUALITY_PATTERNS.get("generic_turns", ()))
 VAGUE_REFERENCE_TERMS = _QUALITY_PATTERNS.get("vague_reference_terms", ())
+# 一次性金钱往来细节（设计蓝图排除项）：短句命中即拦截，词表外置
+TRANSACTION_DETAIL_TERMS = _QUALITY_PATTERNS.get("transaction_detail_terms", ())
 
 
 def _load_kind_signals() -> dict[str, tuple[str, ...]]:
@@ -141,6 +143,11 @@ def fact_quality_reason(
         term in compact for term in VAGUE_REFERENCE_TERMS
     ):
         return "vague_fragment"
+    # 一次性金钱往来细节（"早餐钱""转你20"）：设计蓝图排除项，非长期记忆
+    if TRANSACTION_DETAIL_TERMS and len(compact) <= 24 and any(
+        term in compact for term in TRANSACTION_DETAIL_TERMS
+    ):
+        return "transaction_detail"
     if re.fullmatch(r"[\W_\d]+", compact, flags=re.UNICODE):
         return "nonsemantic_turn"
     # 疑问轮：问句助词结尾，或以疑问指代开头且较短（长句多为陈述，如"她在深圳做后端"）

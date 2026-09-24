@@ -60,3 +60,41 @@ def test_vague_fragments_rejected():
         "preference", "对方撒娇要求购买之前讨论过的游戏皮肤", require_kind_signal=False
     ) is None
     assert fact_quality_reason("plan_or_appointment", "我们约了周五在五道口那家店见面") is None
+
+
+def test_user_reported_vague_examples_rejected():
+    """T4 第三轮：用户实测反馈的代指残留（真实库 active 事实原文）。"""
+    # 库内 fact 1058/5298
+    assert fact_quality_reason(
+        "purchase_or_price", "我提到：这玩意我们有钱了整一台"
+    ) == "vague_fragment"
+    # 库内 fact 4984/5297
+    assert fact_quality_reason("plan_or_appointment", "我提到：我们后天搬") == "vague_fragment"
+    # 用户口语原话
+    assert fact_quality_reason("purchase_or_price", "有钱了搞一台") == "vague_fragment"
+    assert fact_quality_reason("personal_profile", "对方提到：有点吊") == "too_short"
+    # 自包含版本（prompt 好例）必须放行
+    assert fact_quality_reason(
+        "plan_or_appointment", "两人计划后天把宿舍的行李搬到新租的房子", require_kind_signal=False
+    ) is None
+    assert fact_quality_reason(
+        "purchase_or_price", "两人想等有钱了买一台之前讨论过的烘干机", require_kind_signal=False
+    ) is None
+
+
+def test_transaction_details_rejected():
+    """T4：一次性金钱往来细节（设计蓝图排除项）拦截，词表在配置。"""
+    # 库内 fact 319/5203
+    assert fact_quality_reason("food_or_place", "我提到：早餐钱和冰红茶") == "transaction_detail"
+    assert fact_quality_reason(
+        "purchase_or_price", "对方提到：转你20，奶茶钱"
+    ) == "transaction_detail"
+    assert fact_quality_reason(
+        "promise_or_commitment", "我提到：记得还我钱"
+    ) == "transaction_detail"
+    # 长句偏好/约定类事实不误伤（>24 字或有明确对象）
+    assert fact_quality_reason(
+        "preference",
+        "对方坚持外出吃饭要AA平摊，认为这样谁都不欠谁，关系更轻松自在",
+        require_kind_signal=False,
+    ) is None

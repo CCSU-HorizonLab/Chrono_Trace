@@ -175,6 +175,16 @@
           </label>
 
           <label class="row">
+            <div class="lab">关系理解策略</div>
+            <label class="ct-switch">
+              <input v-model="form.rag_relationship_policy_shadow_enabled" type="checkbox" />
+              <span class="slider"></span>
+              <span class="switch-label">{{ form.rag_relationship_policy_shadow_enabled ? '已启用' : '关闭' }}</span>
+            </label>
+            <span class="hint">开启后，重建索引时从画像与事实派生联系人级关系策略（阶段/亲密度/边界/沟通建议），生成建议时自动注入。本地计算，不消耗 Token。</span>
+          </label>
+
+          <label class="row">
             <div class="lab">远程建议脱敏</div>
             <label class="ct-switch">
               <input v-model="form.rag_remote_context_redaction" type="checkbox" @change="handleRagRedactionToggle" />
@@ -466,6 +476,7 @@ const form = reactive<{
   rag_embedding_dim: number
   rag_fact_read_enabled: boolean
   rag_structured_fact_extraction_enabled: boolean
+  rag_relationship_policy_shadow_enabled: boolean
   rag_remote_embedding_redaction_risk_confirmed: boolean
 }>({
   wechat_use_custom_path: false,
@@ -481,6 +492,7 @@ const form = reactive<{
   rag_embedding_dim: 768,
   rag_fact_read_enabled: true,
   rag_structured_fact_extraction_enabled: false,
+  rag_relationship_policy_shadow_enabled: false,
   rag_remote_embedding_redaction_risk_confirmed: false,
 })
 
@@ -696,6 +708,8 @@ async function onLoad() {
       form.rag_embedding_model = String(s.rag_embedding_model || 'tingting0514/text2vec-base-chinese')
       form.rag_embedding_dim = Number(s.rag_embedding_dim || 768)
       form.rag_fact_read_enabled = s.rag_fact_read_enabled !== false
+      form.rag_structured_fact_extraction_enabled = Boolean(s.rag_structured_fact_extraction_enabled)
+      form.rag_relationship_policy_shadow_enabled = Boolean(s.rag_relationship_policy_shadow_enabled)
       form.rag_remote_embedding_redaction_risk_confirmed = Boolean(s.rag_remote_embedding_redaction_risk_confirmed)
     }
     await loadWechatAccounts(activeAccountWxid.value)
@@ -809,6 +823,8 @@ async function onSave() {
       rag_embedding_model: form.rag_embedding_model,
       rag_embedding_dim: form.rag_embedding_dim,
       rag_fact_read_enabled: form.rag_fact_read_enabled,
+      rag_structured_fact_extraction_enabled: form.rag_structured_fact_extraction_enabled,
+      rag_relationship_policy_shadow_enabled: form.rag_relationship_policy_shadow_enabled,
       rag_remote_embedding_redaction_risk_confirmed: form.rag_remote_embedding_redaction_risk_confirmed,
     }
     

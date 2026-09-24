@@ -10,8 +10,8 @@
               <span class="rfd-badge">{{ displayName || '联系人' }}</span>
             </div>
             <span class="rfd-sub">
-              {{ loading ? '正在读取记忆…' : `${activeCount} 条参与建议 / 共 ${facts.length} 条` }}
-              <span class="rfd-diag-inline">· 会话 {{ conversationId }} · 库内事实 {{ rawFactCount ?? '-' }} 条</span>
+              {{ loading ? '正在读取记忆…' : `${enabledFactCount} 条参与建议 / 共 ${factCount} 条` }}
+              <span class="rfd-diag-inline">· 会话 {{ conversationId }}</span>
             </span>
           </div>
           <button class="rfd-close" title="关闭" @click="close">✕</button>
@@ -19,12 +19,12 @@
 
         <!-- 顶部检索与过滤栏 -->
         <div class="rfd-toolbar">
-          <input v-model="keyword" class="rfd-search" placeholder="搜索记忆内容与对话关键词…" />
+          <input v-model="keyword" class="rfd-search" placeholder="搜索当前页的记忆与对话…" />
           <label class="rfd-filter">
             <input v-model="showDisabled" type="checkbox" />
             <span>只看已停用/忘记</span>
           </label>
-          <button class="rfd-btn ghost" :disabled="loading" @click="load">
+          <button class="rfd-btn ghost" :disabled="loading" @click="load(page)">
             {{ loading ? '加载中…' : '刷新' }}
           </button>
         </div>
@@ -44,7 +44,7 @@
         </div>
 
         <!-- 记忆卡片列表 -->
-        <div class="rfd-list">
+        <div ref="listElement" class="rfd-list">
           <div
             v-for="fact in filtered"
             :key="fact.id"
@@ -181,6 +181,15 @@
           </div>
         </div>
 
+        <div v-if="!loading && !error && factCount > 0" class="rfd-pagination">
+          <span>第 {{ pageStart }}–{{ pageEnd }} 条，共 {{ factCount }} 条</span>
+          <div class="rfd-page-actions">
+            <button class="rfd-btn" :disabled="page <= 1" @click="goToPage(page - 1)">上一页</button>
+            <span>{{ page }} / {{ totalPages }}</span>
+            <button class="rfd-btn" :disabled="page >= totalPages" @click="goToPage(page + 1)">下一页</button>
+          </div>
+        </div>
+
         <!-- 弹窗底栏提示 -->
         <div class="rfd-foot">
           「不准确」和「忘记」立即生效且不会被重建索引复活；「不准确」同时会作为高置信修正样本反馈给系统。
@@ -238,8 +247,15 @@ const props = defineProps<{
 const emit = defineEmits<{ (e: 'close'): void }>()
 
 const facts = ref<RagFact[]>([])
+const listElement = ref<HTMLElement | null>(null)
 const documentCount = ref(0)
-const rawFactCount = ref<number | null>(null)
+const factCount = ref(0)
+const enabledFactCount = ref(0)
+const page = ref(1)
+const pageSize = 50
+const totalPages = computed(() => Math.max(1, Math.ceil(factCount.value / pageSize)))
+const pageStart = computed(() => (page.value - 1) * pageSize + 1)
+const pageEnd = computed(() => Math.min(page.value * pageSize, factCount.value))
 const resolvedAccount = ref('')
 const contactAvatar = ref('')
 const userAvatar = ref('')
@@ -250,6 +266,7 @@ const showDisabled = ref(false)
 const busy = reactive<Record<number, boolean>>({})
 const revealed = reactive<Record<number, boolean>>({})
 const avatarLoadErrors = reactive<Record<string, boolean>>({})
+let loadSequence = 0
 
 const effectiveContactAvatar = computed(() => contactAvatar.value || props.avatarUrl || '')
 const effectiveUserAvatar = computed(() => userAvatar.value || props.userAvatarUrl || '')
@@ -272,7 +289,6 @@ const filtered = computed(() =>
     return true
   }),
 )
-const activeCount = computed(() => facts.value.filter((f) => f.enabled).length)
 
 function kindLabel(kind: string): string {
   const map: Record<string, string> = {
@@ -425,8 +441,9 @@ function parseFact(fact: RagFact) {
   }
 }
 
-async function load() {
+async function load(targetPage = page.value) {
   if (!props.conversationId) return
+  const requestId = ++loadSequence
   loading.value = true
   error.value = ''
   try {
@@ -440,7 +457,10 @@ async function load() {
       } catch {}
     }
 
-    const res = await api.get_contact_facts(props.conversationId, props.accountWxid || '', 200)
+    const res = await api.get_contact_facts(
+      props.conversationId, props.accountWxid || '', pageSize, (targetPage - 1) * pageSize,
+    )
+    if (requestId !== loadSequence || !props.visible) return
     if (res?.ok) {
       if (res.contact_avatar) contactAvatar.value = String(res.contact_avatar).trim()
       if (res.user_avatar) userAvatar.value = String(res.user_avatar).trim()
@@ -450,20 +470,29 @@ async function load() {
         enabled: Boolean(fact.enabled),
       }))
       documentCount.value = Number(res.document_count || 0)
-      rawFactCount.value = res.raw_fact_count ?? null
+      factCount.value = Number(res.fact_count ?? res.raw_fact_count ?? facts.value.length)
+      enabledFactCount.value = Number(res.enabled_fact_count ?? 0)
       resolvedAccount.value = String(res.resolved_account_wxid || '')
-      showDisabled.value = facts.value.some((f: RagFact) => !f.enabled)
+      page.value = targetPage
+      if (listElement.value) listElement.value.scrollTop = 0
     } else {
       error.value = String(res?.error || '未知错误')
     }
   } catch (e: any) {
+    if (requestId !== loadSequence || !props.visible) return
     const msg = String(e?.message || e)
     error.value = msg.includes('get_contact_facts')
       ? '后端缺少该接口，请完全退出并重启应用（新功能需要后端进程重启后生效）'
       : msg
   } finally {
-    loading.value = false
+    if (requestId === loadSequence) loading.value = false
   }
+}
+
+function goToPage(targetPage: number) {
+  if (loading.value || targetPage < 1 || targetPage > totalPages.value) return
+  keyword.value = ''
+  load(targetPage)
 }
 
 async function feedback(fact: RagFact, action: 'inaccurate' | 'forget' | 'restore') {
@@ -491,13 +520,20 @@ function close() {
 }
 
 watch(
-  [() => props.visible, () => props.conversationId],
+  [() => props.visible, () => props.conversationId, () => props.accountWxid],
   ([visible]) => {
     if (visible) {
+      page.value = 1
+      facts.value = []
+      factCount.value = 0
+      enabledFactCount.value = 0
       keyword.value = ''
       showDisabled.value = false
       Object.keys(revealed).forEach((k) => delete revealed[Number(k)])
-      load()
+      load(1)
+    } else {
+      loadSequence++
+      loading.value = false
     }
   },
 )
@@ -640,6 +676,21 @@ watch(
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+.rfd-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 18px;
+  border-top: 1px solid var(--ct-border-color, #e5e7eb);
+  color: var(--ct-text-secondary, #6b7280);
+  font-size: 12px;
+}
+.rfd-page-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 /* 单个记忆卡片 */

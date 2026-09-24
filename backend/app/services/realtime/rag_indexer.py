@@ -42,6 +42,8 @@ class RagIndexer:
     }
     # P1.2 LLM 结构化抽取的每轮预算：每次重建每联系人最多抽取的段数
     LLM_EXTRACT_SEGMENT_BUDGET = 40
+    # P1.5 断点续抽版本：抽取 prompt/质量门变化时递增，水位失效全量重抽
+    FACT_EXTRACT_PROMPT_VERSION = "p1.5"
 
     def __init__(
         self,
@@ -58,6 +60,8 @@ class RagIndexer:
         self._llm_extract_segments_used = 0
         self._llm_extract_consecutive_failures = 0
         self._llm_extract_watermark_ts: int | None = None
+        # P1.5 连续覆盖语义：段失败后冻结水位，后续成功不再越过失败段
+        self._llm_extract_round_failed = False
         if self.structured_fact_extractor is None:
             self.structured_fact_extractor = self._maybe_build_llm_extractor()
 
@@ -265,19 +269,8 @@ class RagIndexer:
     def rebuild_contact_index(self, *, account_wxid: str, conversation_id: int) -> dict[str, Any]:
         self._llm_extract_segments_used = 0
         self._llm_extract_consecutive_failures = 0
-        # 断点续抽水位：该联系人已抽取事实的最大 as_of，本轮从此后继续
-        try:
-            row = self.store.conn.execute(
-                """
-                SELECT MAX(as_of) AS watermark FROM rag_facts
-                WHERE account_wxid = ? AND conversation_id = ?
-                  AND summary_method = 'llm_shadow' AND as_of IS NOT NULL
-                """,
-                (account_wxid, conversation_id),
-            ).fetchone()
-            self._llm_extract_watermark_ts = int(row["watermark"]) if row and row["watermark"] else None
-        except Exception:
-            self._llm_extract_watermark_ts = None
+        self._llm_extract_round_failed = False
+        self._init_llm_extract_progress(account_wxid, conversation_id)
         settings = load_rag_settings()
         model = str(settings["rag_embedding_model"])
         dim = int(settings["rag_embedding_dim"])
@@ -716,6 +709,50 @@ class RagIndexer:
         )
         return docs
 
+    def _init_llm_extract_progress(self, account_wxid: str, conversation_id: int) -> None:
+        """断点续抽水位改为 rag_index_status 段级进度。
+
+        旧实现用 MAX(rag_facts.as_of) 推水位，三个缺陷：零事实段不推进、
+        段失败后被后续成功越过（永久跳过）、prompt 改进后旧段不重抽。
+        现规则：只有 prompt 版本一致时的段级连续进度才作为水位；版本变化
+        即全量重抽。
+        """
+        try:
+            status = self.store.get_status(account_wxid, conversation_id) or {}
+            stored_version = str(status.get("fact_extract_prompt_version") or "")
+            stored_watermark = status.get("fact_extract_watermark_ts")
+            if stored_version == self.FACT_EXTRACT_PROMPT_VERSION and stored_watermark:
+                self._llm_extract_watermark_ts = int(stored_watermark)
+            else:
+                self._llm_extract_watermark_ts = None
+        except Exception:
+            self._llm_extract_watermark_ts = None
+
+    def _advance_llm_extract_progress(
+        self,
+        account_wxid: str,
+        conversation_id: int,
+        segment: RagSegment,
+    ) -> None:
+        """段处理成功（含零事实）后推进连续覆盖水位并落库。"""
+        if self._llm_extract_round_failed:
+            return
+        end_ts = int(segment.end_ts or 0)
+        if end_ts <= 0:
+            return
+        self._llm_extract_watermark_ts = max(
+            int(self._llm_extract_watermark_ts or 0), end_ts
+        )
+        try:
+            self.store.set_fact_extract_progress(
+                account_wxid,
+                conversation_id,
+                watermark_ts=self._llm_extract_watermark_ts,
+                prompt_version=self.FACT_EXTRACT_PROMPT_VERSION,
+            )
+        except Exception as exc:
+            logger.debug("[RAG Fact Shadow] progress persist skipped: %s", exc)
+
     def _extract_structured_shadow_facts(
         self,
         *,
@@ -764,6 +801,8 @@ class RagIndexer:
             self._llm_extract_consecutive_failures = 0
         except FactExtractionError as exc:
             self._llm_extract_consecutive_failures += 1
+            # 段失败冻结本轮水位：后续段成功也不越过失败段，下轮从此重试
+            self._llm_extract_round_failed = True
             logger.warning(
                 "[RAG Fact Shadow] quarantined invalid extraction (%s/3): %s",
                 self._llm_extract_consecutive_failures,
@@ -772,12 +811,15 @@ class RagIndexer:
             return
         except Exception as exc:
             self._llm_extract_consecutive_failures += 1
+            self._llm_extract_round_failed = True
             logger.warning(
                 "[RAG Fact Shadow] llm extraction failed (%s/3): %s",
                 self._llm_extract_consecutive_failures,
                 exc,
             )
             return
+        # 抽取成功（含零事实）即推进段级进度——零事实段不再被反复重抽
+        self._advance_llm_extract_progress(account_wxid, conversation_id, segment)
         from .rag_fact_quality import fact_quality_reason
 
         usable = [
@@ -819,6 +861,7 @@ class RagIndexer:
                 fact["kind"],
             )
             decisions = self._decide_fact_fusion(fact, candidates)
+            self._log_fusion_decisions(fact, decisions)
             replacement_ids = [
                 int(item["fact_id"])
                 for item in decisions
@@ -936,6 +979,20 @@ class RagIndexer:
         except Exception as exc:
             logger.warning("[RAG Fact Fusion] invalid/failed decision; falling back to ADD: %s", exc)
             return []
+
+    @staticmethod
+    def _log_fusion_decisions(fact: dict[str, Any], decisions: list[dict[str, Any]]) -> None:
+        if not decisions:
+            return
+        logger.info(
+            "[RAG Fact Fusion] subject=%s kind=%s decisions=%s",
+            fact.get("subject"),
+            fact.get("kind"),
+            [
+                f"{item.get('action')}#{item.get('fact_id')}({item.get('reason') or '-'})"
+                for item in decisions
+            ],
+        )
 
     def _doc_payload(
         self,

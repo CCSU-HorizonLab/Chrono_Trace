@@ -142,5 +142,11 @@ class StructuredFactExtractor:
             if action not in self.FUSION_ACTIONS:
                 raise FactExtractionError("fact fusion decision has an invalid action")
             seen.add(fact_id)
-            validated.append({"fact_id": fact_id, "action": action})
+            validated.append(
+                {
+                    "fact_id": fact_id,
+                    "action": action,
+                    "reason": str(item.get("reason") or "").strip()[:200],
+                }
+            )
         return validated

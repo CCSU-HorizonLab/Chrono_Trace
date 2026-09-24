@@ -8,7 +8,12 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from app.services.realtime.rag_fact_llm import FACT_EXTRACTION_SYSTEM_PROMPT, LLMFactExtractorAdapter
+from app.services.realtime.rag_fact_llm import (
+    FACT_EXTRACTION_SYSTEM_PROMPT,
+    FACT_FUSION_SYSTEM_PROMPT,
+    FactRedactionUnavailable,
+    LLMFactExtractorAdapter,
+)
 from app.services.realtime.rag_fact_quality import fact_quality_reason
 from app.services.realtime.rag_indexer import RagIndexer
 from app.services.realtime.rag_store import RagStore
@@ -350,6 +355,106 @@ def test_watermark_skips_already_extracted_range(monkeypatch):
     assert len(calls) == 1
 
 
+def test_zero_fact_segment_advances_progress(monkeypatch):
+    """T5：抽取成功但零事实也要推进段级进度（不再被每轮重抽）。"""
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    store = RagStore(conn)
+    store.upsert_status("wxid_a", 1, status="ready")
+
+    from app.services.realtime.rag_fact_extractor import StructuredFactExtractor
+
+    indexer = RagIndexer(
+        store=store,
+        embedding_service=_NoopEmbedding(),
+        structured_fact_extractor=StructuredFactExtractor(lambda prompt: {"facts": []}),
+    )
+    now = 1790000000
+    segment = _segment(
+        now,
+        [(1, 0, "嗯嗯"), (2, 1, "好滴"), (3, 0, "哈哈哈哈"), (4, 1, "666")],
+    )
+    indexer._extract_structured_shadow_facts(
+        account_wxid="wxid_a", conversation_id=1, segment=segment
+    )
+    status = store.get_status("wxid_a", 1)
+    assert status["fact_extract_watermark_ts"] == segment.end_ts
+    assert status["fact_extract_prompt_version"] == indexer.FACT_EXTRACT_PROMPT_VERSION
+
+
+def test_failed_segment_freezes_watermark_for_round(monkeypatch):
+    """T5：段失败后冻结水位，后续段成功不得越过失败段（下轮重试）。"""
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    store = RagStore(conn)
+    store.upsert_status("wxid_a", 1, status="ready")
+    state = {"fail": True}
+
+    def flaky_llm(prompt):
+        payload = json.loads(prompt)
+        if state["fail"]:
+            raise ValueError("network down")
+        return {
+            "facts": [
+                {
+                    "subject": "对方",
+                    "kind": "preference",
+                    "content": "对方对虾过敏",
+                    "confidence": 0.8,
+                    "evidence_message_ids": [5],
+                }
+            ]
+        }
+
+    from app.services.realtime.rag_fact_extractor import StructuredFactExtractor
+
+    indexer = RagIndexer(
+        store=store,
+        embedding_service=_NoopEmbedding(),
+        structured_fact_extractor=StructuredFactExtractor(flaky_llm),
+    )
+    now = 1790000000
+    seg1 = _segment(
+        now,
+        [(1, 0, "我对虾过敏，千万别点虾"), (2, 1, "好"), (3, 0, "周五见"), (4, 1, "周五见")],
+    )
+    seg2 = _segment(
+        now + 100000,
+        [(5, 0, "我对虾过敏，千万别点虾"), (6, 1, "好"), (7, 0, "周五见"), (8, 1, "周五见")],
+        start_offset=100060,
+    )
+    indexer._extract_structured_shadow_facts(account_wxid="wxid_a", conversation_id=1, segment=seg1)
+    state["fail"] = False
+    indexer._extract_structured_shadow_facts(account_wxid="wxid_a", conversation_id=1, segment=seg2)
+
+    # 失败段之后：水位不推进（seg2 虽成功也不越过 seg1）
+    status = store.get_status("wxid_a", 1)
+    assert status["fact_extract_watermark_ts"] is None
+    # 但 seg2 的事实照常入库（不因冻结而丢弃）
+    rows = conn.execute("SELECT content FROM rag_facts").fetchall()
+    assert len(rows) == 1 and rows[0]["content"] == "对方对虾过敏"
+
+
+def test_prompt_version_change_invalidates_watermark():
+    """T5：prompt 版本变化时旧水位失效，全量重抽。"""
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    store = RagStore(conn)
+    store.upsert_status("wxid_a", 1, status="ready")
+    store.set_fact_extract_progress(
+        "wxid_a", 1, watermark_ts=1790000000, prompt_version="p1.2"
+    )
+    indexer = RagIndexer(store=store, embedding_service=_NoopEmbedding())
+    indexer._init_llm_extract_progress("wxid_a", 1)
+    assert indexer._llm_extract_watermark_ts is None  # 旧版本水位失效
+
+    store.set_fact_extract_progress(
+        "wxid_a", 1, watermark_ts=1790000000, prompt_version=indexer.FACT_EXTRACT_PROMPT_VERSION
+    )
+    indexer._init_llm_extract_progress("wxid_a", 1)
+    assert indexer._llm_extract_watermark_ts == 1790000000  # 同版本水位保留
+
+
 def test_context_messages_rendered_but_not_evidence(monkeypatch):
     payload = json.dumps(
         {
@@ -379,3 +484,121 @@ def test_context_messages_rendered_but_not_evidence(monkeypatch):
     assert "上一段结尾" in user_text and "[9]" in user_text and "勿从中抽取" in user_text
     # 上下文消息 ID 不得成为 evidence（9 不在本段 messages 里）
     assert result["facts"][0]["evidence_message_ids"] == [10]
+
+
+def test_remote_model_without_redactor_blocks_segment(monkeypatch):
+    """T1 红线：远程模型脱敏器不可用时阻断整段，绝不降级发原文。"""
+    payload = json.dumps(
+        {
+            "messages": [
+                {"id": 1, "is_sender": 0, "content": "我的手机号是13800000000"},
+                {"id": 2, "is_sender": 1, "content": "收到"},
+            ]
+        }
+    )
+    http = _FakeHTTP('{"facts": []}')
+
+    # factory 缺失
+    monkeypatch.setattr(
+        "app.services.realtime.rag_fact_llm.post_json_with_retries", http
+    )
+    monkeypatch.setattr(
+        "app.services.realtime.rag_fact_llm.is_remote_llm_model", lambda model: True
+    )
+    model = {"model_id": "m", "api_base_url": "https://api.example.com/v1"}
+    adapter = LLMFactExtractorAdapter(model, redactor_factory=None)
+    try:
+        adapter(payload)
+        raise AssertionError("expected FactRedactionUnavailable")
+    except FactRedactionUnavailable:
+        pass
+
+    # factory 抛异常
+    adapter = LLMFactExtractorAdapter(model, redactor_factory=lambda: (_ for _ in ()).throw(ValueError("db locked")))
+    try:
+        adapter(payload)
+        raise AssertionError("expected FactRedactionUnavailable")
+    except FactRedactionUnavailable:
+        pass
+
+    # factory 返回 None
+    adapter = LLMFactExtractorAdapter(model, redactor_factory=lambda: None)
+    try:
+        adapter(payload)
+        raise AssertionError("expected FactRedactionUnavailable")
+    except FactRedactionUnavailable:
+        pass
+
+    # 三种情况都不发任何 HTTP 请求
+    assert http.captured is None
+
+
+def test_adapter_routes_fusion_payload_to_fusion_prompt(monkeypatch):
+    """T2：融合任务（new_fact/active_candidates）走 decisions 协议。"""
+    payload = json.dumps(
+        {
+            "task": "maintain_atomic_contact_facts",
+            "account_wxid": "wxid_a",
+            "conversation_id": 1,
+            "new_fact": {
+                "subject": "对方",
+                "kind": "preference",
+                "content": "对方以前不吃香菜，现在因为一起吃过几次改观了，开始喜欢吃了",
+                "confidence": 0.8,
+            },
+            "active_candidates": [
+                {
+                    "fact_id": 501,
+                    "content": "对方不喜欢吃香菜",
+                    "confidence": 0.7,
+                    "evidence_message_ids": [11],
+                },
+                {
+                    "fact_id": 502,
+                    "content": "对方在准备考研",
+                    "confidence": 0.75,
+                    "evidence_message_ids": [12],
+                },
+            ],
+        },
+        ensure_ascii=False,
+    )
+    llm_output = json.dumps(
+        {
+            "decisions": [
+                {"fact_id": 501, "action": "UPDATE", "reason": "同一食物偏好的立场演变"},
+                {"fact_id": 502, "action": "ADD", "reason": "主题无关"},
+            ]
+        },
+        ensure_ascii=False,
+    )
+    http = _FakeHTTP(llm_output)
+    adapter = _adapter(monkeypatch, http)
+
+    result = adapter(payload)
+
+    sent = http.captured["payload"]["messages"]
+    assert "记忆事实维护器" in sent[0]["content"]
+    assert sent[0]["content"] == FACT_FUSION_SYSTEM_PROMPT
+    assert "改观" in sent[1]["content"] and "[501] 对方不喜欢吃香菜" in sent[1]["content"]
+    assert result["decisions"][0]["action"] == "UPDATE"
+    assert result["decisions"][0]["fact_id"] == 501
+
+
+def test_fusion_response_without_decisions_raises(monkeypatch):
+    payload = json.dumps(
+        {
+            "task": "maintain_atomic_contact_facts",
+            "new_fact": {"subject": "对方", "kind": "preference", "content": "对方喜欢徒步"},
+            "active_candidates": [{"fact_id": 9, "content": "对方喜欢爬山", "confidence": 0.7}],
+        },
+        ensure_ascii=False,
+    )
+    # 抽取协议的响应（facts）喂给融合任务必须报错，由上层安全回退 ADD
+    http = _FakeHTTP('{"facts": []}')
+    adapter = _adapter(monkeypatch, http)
+    try:
+        adapter(payload)
+        raise AssertionError("expected ValueError")
+    except ValueError as exc:
+        assert "decisions" in str(exc)

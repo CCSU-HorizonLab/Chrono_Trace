@@ -53,6 +53,11 @@ hiddenimports = [
     "modelscope.hub.snapshot_download",
 ]
 hiddenimports += collect_submodules("modelscope.hub")
+# SciPy 1.18 vendors array-api-compat under a private package.  Recent
+# transformers imports sklearn.metrics during lazy loading, which reaches
+# this module through SciPy.  PyInstaller cannot reliably discover the
+# dynamically referenced vendor modules, so collect them explicitly.
+hiddenimports += collect_submodules("scipy._external.array_api_compat")
 
 
 a = Analysis(

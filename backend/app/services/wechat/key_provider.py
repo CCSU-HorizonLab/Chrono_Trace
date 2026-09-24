@@ -23,9 +23,20 @@ _DB_KEY_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 class WeChatKeyCaptureSession:
     """Background capture session which reports when the database Hook is ready."""
 
-    def __init__(self, *, timeout_seconds: int = 120, account_wxid: str = ""):
+    def __init__(
+        self,
+        *,
+        timeout_seconds: int = 120,
+        account_wxid: str = "",
+        wechat_start_wait_seconds: int = 30,
+        hook_install_retry_seconds: int = 20,
+    ):
         self.timeout_seconds = max(1, int(timeout_seconds or 120))
         self.account_wxid = str(account_wxid or "")
+        # 重启流程刚拉起微信时，进程出现与模块加载完成之间存在窗口期，
+        # 两个宽限预算让会话在这段窗口内持续等待/重试而不是立刻失败。
+        self.wechat_start_wait_seconds = max(0, int(wechat_start_wait_seconds or 0))
+        self.hook_install_retry_seconds = max(0, int(hook_install_retry_seconds or 0))
         self._lock = threading.Lock()
         self._ready = threading.Event()
         self._thread: threading.Thread | None = None
@@ -33,8 +44,13 @@ class WeChatKeyCaptureSession:
         self._message = "正在准备数据库密钥监听。"
         self._result: dict[str, Any] | None = None
 
-    def start(self, ready_timeout_seconds: int = 15) -> dict[str, Any]:
-        """Start capture and wait only until Hook installation succeeds or fails."""
+    def start(self, ready_timeout_seconds: int | None = None) -> dict[str, Any]:
+        """Start capture and wait only until Hook installation succeeds or fails.
+
+        ``ready_timeout_seconds=None`` derives the wait budget from the startup
+        grace windows so callers never time out before the session itself
+        has finished waiting for WeChat to (re)start.
+        """
         with self._lock:
             if self._thread is None:
                 self._thread = threading.Thread(
@@ -44,7 +60,11 @@ class WeChatKeyCaptureSession:
                 )
                 self._thread.start()
 
-        if not self._ready.wait(timeout=max(1, int(ready_timeout_seconds or 15))):
+        if ready_timeout_seconds is None:
+            ready_timeout_seconds = (
+                self.wechat_start_wait_seconds + self.hook_install_retry_seconds + 10
+            )
+        if not self._ready.wait(timeout=max(1, int(ready_timeout_seconds))):
             return {
                 "ok": False,
                 "status": "failed",
@@ -82,35 +102,51 @@ class WeChatKeyCaptureSession:
             self._ready.set()
             return
 
-        pid, error = WeChatKeyProvider._find_wechat_pid()
-        if not pid:
-            self._set_result("failed", error, {"code": "wechat_not_running", "error": error})
-            self._ready.set()
-            return
+        # 微信可能刚被重启流程拉起：进程尚未出现时持续等待，
+        # 避免上一环节刚关闭/启动微信就直接判定“微信未运行”。
+        pid: int | None = None
+        error = ""
+        process_deadline = time.monotonic() + self.wechat_start_wait_seconds
+        while True:
+            pid, error = WeChatKeyProvider._find_wechat_pid()
+            if pid:
+                break
+            if time.monotonic() >= process_deadline:
+                self._set_result("failed", error, {"code": "wechat_not_running", "error": error})
+                self._ready.set()
+                return
+            self._set_result("preparing", "正在等待微信进程启动…")
+            time.sleep(0.5)
 
         acquired = False
         try:
             with WeChatKeyProvider._hook_lock:
-                try:
-                    acquired = bool(extension.initialize_hook(pid))
-                except Exception as exc:
-                    logger.warning("wx_key initialize_hook failed: %s", exc)
-                    detail = WeChatKeyProvider._last_error(extension)
-                    self._set_result(
-                        "failed",
-                        detail,
-                        {"code": "hook_initialize_failed", "error": detail, "detail": str(exc), "pid": pid},
-                    )
-                    return
+                # 进程已存在但模块可能还没加载完（版本信息暂时读不到），
+                # 在宽限窗口内持续重试安装 Hook，等微信初始化完成。
+                init_deadline = time.monotonic() + self.hook_install_retry_seconds
+                while True:
+                    init_detail = ""
+                    try:
+                        acquired = bool(extension.initialize_hook(pid))
+                        if not acquired:
+                            init_detail = WeChatKeyProvider._last_error(extension)
+                    except Exception as exc:
+                        logger.warning("wx_key initialize_hook failed: %s", exc)
+                        init_detail = WeChatKeyProvider._last_error(extension) or str(exc)
+                        acquired = False
 
-                if not acquired:
-                    detail = WeChatKeyProvider._last_error(extension)
-                    self._set_result(
-                        "failed",
-                        detail,
-                        {"code": "hook_initialize_failed", "error": detail, "pid": pid},
-                    )
-                    return
+                    if acquired:
+                        break
+
+                    if time.monotonic() >= init_deadline:
+                        self._set_result(
+                            "failed",
+                            init_detail,
+                            {"code": "hook_initialize_failed", "error": init_detail, "pid": pid},
+                        )
+                        return
+                    self._set_result("preparing", "微信正在启动，等待初始化完成后安装密钥监听…")
+                    time.sleep(0.5)
 
                 self._set_result(
                     "hook_ready",
@@ -322,9 +358,13 @@ class WeChatKeyProvider:
         self,
         timeout_seconds: int = 120,
         account_wxid: str = "",
+        wechat_start_wait_seconds: int = 30,
+        hook_install_retry_seconds: int = 20,
     ) -> WeChatKeyCaptureSession:
         """Create a session that reports once the Hook has been installed."""
         return WeChatKeyCaptureSession(
             timeout_seconds=timeout_seconds,
             account_wxid=account_wxid,
+            wechat_start_wait_seconds=wechat_start_wait_seconds,
+            hook_install_retry_seconds=hook_install_retry_seconds,
         )

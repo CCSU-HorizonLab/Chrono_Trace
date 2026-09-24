@@ -142,7 +142,7 @@ def inspect_wechat_login_state() -> dict[str, Any]:
     }
 
 
-def restart_wechat_for_key_capture(wait_seconds: float = 15.0) -> dict[str, Any]:
+def restart_wechat_for_key_capture(wait_seconds: float = 30.0) -> dict[str, Any]:
     """Restart WeChat after a frontend confirmation and wait for its login UI.
 
     Callers must obtain the user's confirmation before invoking this function.

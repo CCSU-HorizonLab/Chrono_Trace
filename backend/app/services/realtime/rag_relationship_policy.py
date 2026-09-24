@@ -22,8 +22,25 @@ from .rag_store import RagStore
 
 logger = logging.getLogger(__name__)
 
-BOUNDARY_KINDS = {"relationship_boundary", "preference_dislike"}
-EVIDENCE_KINDS = BOUNDARY_KINDS | {"preference_like", "personal_profile"}
+BOUNDARY_KINDS = {
+    # 原型路径长名
+    "relationship_boundary",
+    "preference_dislike",
+    # LLM 结构化抽取短名（normalize_fact_kind 规范化后）
+    "boundary",
+}
+EVIDENCE_KINDS = BOUNDARY_KINDS | {
+    "preference_like",
+    "preference",
+    "personal_profile",
+    "personal_fact",
+    "relation_state",
+    "relationship_state",
+}
+# 边界聚合的主体分组：subject 字段区分"对方的边界"与"我的边界"
+BOUNDARY_SUBJECT_LABELS = {"对方": "对方的边界", "我": "我的边界"}
+# 摘要中各主体的条数上限（对方优先——建议场景更依赖对方的雷区）
+BOUNDARY_SUBJECT_LIMITS = {"对方": 2, "我": 1}
 
 INITIATIVE_OTHER_DOMINANT = "对方更主动"
 INITIATIVE_SELF_DOMINANT = "我更主动"
@@ -87,18 +104,14 @@ def derive_relationship_state(
 
     boundary_facts = [
         fact for fact in facts
-        if str(fact.get("kind") or "") in BOUNDARY_KINDS
+        if str(fact.get("kind") or "").strip().lower() in BOUNDARY_KINDS
         and str(fact.get("sensitivity") or "normal") != "sensitive"
     ]
-    boundary_summary = "；".join(
-        str(fact.get("content") or "").split("\n")[0].strip()
-        for fact in boundary_facts[:3]
-        if str(fact.get("content") or "").strip()
-    )
+    boundary_summary = _summarize_boundaries_by_subject(boundary_facts)
 
     evidence_facts = [
         fact for fact in facts
-        if str(fact.get("kind") or "") in EVIDENCE_KINDS
+        if str(fact.get("kind") or "").strip().lower() in EVIDENCE_KINDS
     ][:20]
     evidence_fact_ids = [int(fact["id"]) for fact in evidence_facts if fact.get("id")]
     evidence_message_ids = sorted({
@@ -133,6 +146,32 @@ def derive_relationship_state(
         confidence=confidence,
         summary_method=summary_method,
     )
+
+
+def _summarize_boundaries_by_subject(boundary_facts: list[dict[str, Any]]) -> str:
+    """按 subject 分组聚合边界，避免把"我的边界"当成"对方的边界"输出。
+
+    事实表的 subject 在原型路径（发送方标签）与 LLM 抽取路径（提示词
+    契约）中一致为 "我"/"对方"；未知主体归入其原文标签，不吞不猜。
+    """
+    grouped: dict[str, list[str]] = {}
+    for fact in boundary_facts:
+        subject = str(fact.get("subject") or "").strip() or "对方"
+        content = str(fact.get("content") or "").split("\n")[0].strip()
+        if content:
+            grouped.setdefault(subject, []).append(content)
+
+    parts: list[str] = []
+    # 对方优先；未知主体排在已知主体之后，各自独立成段
+    ordered = sorted(
+        grouped.items(),
+        key=lambda item: (item[0] != "对方", item[0] != "我", item[0]),
+    )
+    for subject, contents in ordered:
+        limit = BOUNDARY_SUBJECT_LIMITS.get(subject, 1)
+        label = BOUNDARY_SUBJECT_LABELS.get(subject, f"{subject}的边界")
+        parts.append(label + "：" + "；".join(contents[:limit]))
+    return "；".join(parts)
 
 
 def _parse_evidence_ids(raw: Any) -> list[int]:

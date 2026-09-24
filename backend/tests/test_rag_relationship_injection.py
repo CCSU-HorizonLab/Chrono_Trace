@@ -12,7 +12,14 @@ from app.services.realtime.rag_context_builder import RagContextBuilder
 from app.services.realtime.rag_store import RagStore
 
 
-def _builder_with_state(monkeypatch, *, injection_enabled=True, sensitive=False):
+def _builder_with_state(
+    monkeypatch,
+    *,
+    injection_enabled=True,
+    shadow_enabled=True,
+    sensitive=False,
+    confidence=0.72,
+):
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     store = RagStore(conn)
@@ -25,14 +32,17 @@ def _builder_with_state(monkeypatch, *, injection_enabled=True, sensitive=False)
         boundary_summary="对方不喜欢被追问情绪",
         communication_tips="别讲大道理，接梗就好",
         evidence_hash="hash-1",
-        confidence=0.72,
+        confidence=confidence,
         sensitivity="sensitive" if sensitive else "normal",
     )
     store.conn.commit()
     builder = RagContextBuilder(store=store)
     monkeypatch.setattr(
         "app.services.realtime.rag_context_builder.load_rag_settings",
-        lambda: {"rag_relationship_policy_injection_enabled": injection_enabled},
+        lambda: {
+            "rag_relationship_policy_injection_enabled": injection_enabled,
+            "rag_relationship_policy_shadow_enabled": shadow_enabled,
+        },
     )
     return conn, store, builder
 
@@ -69,6 +79,35 @@ def test_inject_respects_switch_and_missing_state(monkeypatch):
         remote_model=False, redaction_disabled=False,
     ) is None
     assert "relationship_policy" not in context2
+
+
+def test_inject_stops_when_shadow_switch_off(monkeypatch):
+    """T6：影子开关关闭=停用关系策略链路，历史策略行不再注入。"""
+    conn, store, builder = _builder_with_state(monkeypatch, shadow_enabled=False)
+    context = {}
+    assert builder._inject_relationship_policy(
+        context, account_wxid="wxid_a", conversation_id=1,
+        remote_model=False, redaction_disabled=False,
+    ) is None
+    assert "relationship_policy" not in context
+
+
+def test_inject_skips_low_confidence_state(monkeypatch):
+    """T6：低于置信度下限的影子行不注入（留在影子层观察）。"""
+    conn, store, builder = _builder_with_state(monkeypatch, confidence=0.40)
+    context = {}
+    assert builder._inject_relationship_policy(
+        context, account_wxid="wxid_a", conversation_id=1,
+        remote_model=False, redaction_disabled=False,
+    ) is None
+    assert "relationship_policy" not in context
+    # 下限之上正常注入
+    conn2, store2, builder2 = _builder_with_state(monkeypatch, confidence=0.55)
+    context2 = {}
+    assert builder2._inject_relationship_policy(
+        context2, account_wxid="wxid_a", conversation_id=1,
+        remote_model=False, redaction_disabled=False,
+    ) is not None
 
 
 def test_inject_skips_sensitive_shadow_row(monkeypatch):

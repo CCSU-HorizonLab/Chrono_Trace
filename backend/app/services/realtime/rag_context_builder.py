@@ -89,6 +89,9 @@ class RagContextBuilder:
 
     MAX_CONTEXT_CHARS = 560
     HOT_CONTEXT_MAX_AGE_SECONDS = 86400
+    # P1.5 注入护栏：影子开关关闭=用户停用关系策略链路（含已生成的历史
+    # 策略行）；低置信策略不注入，只留在影子层
+    RELATIONSHIP_POLICY_MIN_CONFIDENCE = 0.55
 
     def __init__(
         self,
@@ -119,14 +122,29 @@ class RagContextBuilder:
         数据源是 P1.1 影子表（默认无数据→零行为变化）；远程模型发送前
         对文本字段脱敏；sensitivity 行深度防御跳过。返回 state_id 供
         检索日志 policy_ids 记录，无注入返回 None。
+
+        P1.5 护栏：注入前提为注入开关与影子开关同时开启（设置页只写
+        shadow 开关，关掉即全链路停用，历史策略行不再注入）；影子行
+        置信度低于下限不注入（留在影子层观察）。
         """
-        if not load_rag_settings().get("rag_relationship_policy_injection_enabled", True):
+        settings = load_rag_settings()
+        if not settings.get("rag_relationship_policy_injection_enabled", True):
+            return None
+        if not settings.get("rag_relationship_policy_shadow_enabled", False):
             return None
         try:
             state = self.store.get_latest_relationship_state(account_wxid, conversation_id)
         except Exception:
             return None
         if not state or str(state.get("sensitivity") or "normal") == "sensitive":
+            return None
+        if float(state.get("confidence") or 0.0) < self.RELATIONSHIP_POLICY_MIN_CONFIDENCE:
+            logger.debug(
+                "[RAG Policy] state=%s below confidence floor (%.2f < %.2f); keep shadow-only",
+                state.get("id"),
+                float(state.get("confidence") or 0.0),
+                self.RELATIONSHIP_POLICY_MIN_CONFIDENCE,
+            )
             return None
 
         policy = {

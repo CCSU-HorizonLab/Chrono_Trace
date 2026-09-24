@@ -250,6 +250,20 @@ P0.4a 质量门清理后事实池仅剩 242 条——原型匹配只够"排坏"�
 - 风险：上下文增多导致模型忽视当前对话；严格槽位预算、最近对话优先和 800ms deadline。
 - 回滚：关闭 policy injection，只保留 v4 fact-path。
 
+## P1.5：事实维护接通与抽取质量第三轮（2026-09-25）
+
+P1 闭环后的定位修正：碎片清理和 LLM 抽取已有实质改善，但事实维护、关系派生接线、质量验收仍有缺口。本轮七项修复（测试基线 711 → 726 passed）：
+
+- **T1 远程脱敏红线**：`rag_fact_llm` 适配器在 redactor 构造失败时曾置 None 后继续发原文。现远程模型脱敏器不可用（factory 缺失/抛异常/返回 None）即抛 `FactRedactionUnavailable` 阻断整段发送，由 indexer 按抽取失败计数中止；绝不降级发原文。
+- **T2 事实融合协议接通**：生产适配器此前把融合 payload 当抽取 payload（要求 facts 协议），9 月 25 日日志 45 次 "fact fusion response requires decisions" 全部回退 ADD，MERGE/UPDATE/INVALIDATE 从未执行。现适配器按任务特征（`task=maintain_atomic_contact_facts` 或 `new_fact` 键）分流到独立融合 prompt（新事实+候选旧事实→decisions+理由），演变链（“以前不喜欢→现在改观了”）真正走 UPDATE/supersede；融合失败仍安全回退 ADD。决策与理由落 `[RAG Fact Fusion]` 日志。
+- **T3 kind 映射统一**：关系派生层只认原型长名（relationship_boundary 等），73 条 LLM 短名事实（boundary/preference/personal_fact/relation_state）全部不在证据范围。现长短名并认；boundary_summary 按 subject 区分“对方的边界/我的边界”（各限 2/1 条，对方优先）。真实库副本重建验证：LLM 事实 20/73 进入证据集，boundary_summary 由 LLM 事实主导（含好例 5371），confidence 0.66→0.88，版本链正常。
+- **T4 抽取质量第三轮**：用户实测三类缺口（“有钱了搞一台”“我们后天搬”代指残留；“早餐钱”交易细节；“有点吊”）。prompt 增加自检指令（“删掉这段对话后还能被理解吗”）+ 差/好对照强化 + 交易排除清单；质量门 vague 词表扩充（搞一台/整一台/后天搬等）并新增 `transaction_detail_terms` 词表键——全部进 `fact_quality_patterns.json`（P2-1 纪律），代码只留结构性规则。真实库重放：用户点名 6 条 active 事实全部被拦（vague_fragment 4 + transaction_detail 4，另捕获同类“昨天饭钱”“早饭钱钱”），好例与自包含改写版放行。
+- **T5 断点续抽修正**：旧水位 `MAX(as_of)` 三缺陷（零事实段不推进/段失败被越过/prompt 改进不重抽）。现 `rag_index_status` 增段级进度列（fact_extract_watermark_ts + fact_extract_prompt_version），零事实成功段也推进；段失败冻结本轮水位（连续覆盖语义，失败段下轮重试）；prompt 版本变化（`p1.5`）水位失效全量重抽。
+- **T6 开关语义与注入护栏**：设置页只写 `rag_relationship_policy_shadow_enabled`，读侧曾只查 `rag_relationship_policy_injection_enabled`（默认 True）——关掉影子开关后历史策略仍注入。现注入前提为两开关同时开启；影子行置信度 <0.55 不注入（留影子层）。真实库副本验证注入链路：state 注入→policy_ids=[3] 落检索日志（此前全库 policy_ids 为空——查实为影子状态创建晚于最后一条检索日志，链路未经真实请求，非代码损坏）。
+- **T7 文档定位修正**：goal 文档开头“全部通过”改为如实定位（旧 gold 基线 superseded，现行验收=存活 gold 命中率+人工事实质量抽查，人工回归集待建）。
+
+**遗留观察**（不在本轮范围）：原型路径旧碎片仍可能进入“我的边界”摘要（真实库“不想你嘛”一例，subject=我的 preference_dislike 长名）；边界摘要按置信度排序，待人工回归集建立后校准来源权重。
+
 ## P2：长期闭环与真实贡献（收益高、成本高）
 
 ### P2.1 反馈从“落库”变成“可验证修正”

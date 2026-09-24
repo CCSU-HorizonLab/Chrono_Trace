@@ -149,3 +149,23 @@ def test_bridge_contact_facts_and_feedback_flow(monkeypatch):
     assert restore_result["ok"] is True
     listing = bridge.get_contact_facts(1, account_wxid="wxid_a")
     assert listing["disabled_count"] == 0
+
+
+def test_bridge_contact_facts_pagination_has_stable_order(monkeypatch):
+    conn, store = _store()
+    ids = [
+        _upsert_fact(store, content=f"第 {i} 条记忆", evidence_message_ids=[])
+        for i in range(5)
+    ]
+    monkeypatch.setattr("app.db.connection.get_db", lambda: conn)
+    bridge = Bridge.__new__(Bridge)
+
+    pages = [
+        bridge.get_contact_facts(1, account_wxid="wxid_a", limit=2, offset=offset)
+        for offset in (0, 2, 4)
+    ]
+    assert all(page["ok"] for page in pages)
+    assert [page["total"] for page in pages] == [2, 2, 1]
+    assert all(page["fact_count"] == 5 for page in pages)
+    assert all(page["enabled_fact_count"] == 5 for page in pages)
+    assert [fact["id"] for page in pages for fact in page["facts"]] == ids[::-1]

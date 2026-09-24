@@ -1639,7 +1639,8 @@ class Bridge:
             return {"ok": False, "error": str(e)}
 
     def get_contact_facts(
-        self, conversation_id: int, account_wxid: str = "", limit: int = 200
+        self, conversation_id: int, account_wxid: str = "", limit: int = 200,
+        offset: int = 0,
     ) -> dict[str, Any]:
         """List contact memory facts with evidence for user review/correction."""
         try:
@@ -1649,6 +1650,8 @@ class Bridge:
             resolved_account = self._resolve_account_wxid(account_wxid)
             conn = get_db()
             store = RagStore(conn)
+            page_limit = max(1, min(int(limit), 200))
+            page_offset = max(0, int(offset))
 
             rows = conn.execute(
                 """
@@ -1656,11 +1659,20 @@ class Bridge:
                        evidence_message_ids_json
                 FROM rag_facts
                 WHERE account_wxid = ? AND conversation_id = ? AND status = 'active'
-                ORDER BY enabled DESC, confidence DESC, as_of DESC
-                LIMIT ?
+                ORDER BY enabled DESC, confidence DESC, as_of DESC, id DESC
+                LIMIT ? OFFSET ?
                 """,
-                (resolved_account, int(conversation_id), max(1, min(int(limit), 200))),
+                (resolved_account, int(conversation_id), page_limit, page_offset),
             ).fetchall()
+            count_row = conn.execute(
+                """
+                SELECT COUNT(*) AS fact_count,
+                       COALESCE(SUM(CASE WHEN enabled = 1 THEN 1 ELSE 0 END), 0) AS enabled_fact_count
+                FROM rag_facts
+                WHERE account_wxid = ? AND conversation_id = ? AND status = 'active'
+                """,
+                (resolved_account, int(conversation_id)),
+            ).fetchone()
             raw_count_row = conn.execute(
                 "SELECT COUNT(*) FROM rag_facts WHERE account_wxid = ? AND conversation_id = ?",
                 (resolved_account, int(conversation_id)),
@@ -1792,6 +1804,10 @@ class Bridge:
                 "contact_avatar": contact_avatar,
                 "user_avatar": user_avatar,
                 "raw_fact_count": raw_fact_count,
+                "fact_count": int(count_row["fact_count"]),
+                "enabled_fact_count": int(count_row["enabled_fact_count"]),
+                "offset": page_offset,
+                "limit": page_limit,
                 "total": len(facts),
                 "disabled_count": sum(1 for f in facts if not f["enabled"]),
                 "document_count": int(

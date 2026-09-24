@@ -40,6 +40,8 @@ class RagIndexer:
         "recurring_habit",
         "preference_like",
     }
+    # P1.2 LLM 结构化抽取的每轮预算：每次重建每联系人最多抽取的段数
+    LLM_EXTRACT_SEGMENT_BUDGET = 40
 
     def __init__(
         self,
@@ -52,6 +54,32 @@ class RagIndexer:
         self.segmenter = RagSegmenter()
         self.semantic_fact_extractor = SemanticFactExtractor(self.embedding_service, self.segmenter)
         self.structured_fact_extractor = structured_fact_extractor
+        # P1.2 LLM 结构化抽取的轮内预算（每次 rebuild 重置）
+        self._llm_extract_segments_used = 0
+        self._llm_extract_consecutive_failures = 0
+        self._llm_extract_watermark_ts: int | None = None
+        if self.structured_fact_extractor is None:
+            self.structured_fact_extractor = self._maybe_build_llm_extractor()
+
+    def _maybe_build_llm_extractor(self) -> StructuredFactExtractor | None:
+        """P1.2：配置开启且模型可用时，自动注入 LLM 抽取适配器。
+
+        默认关闭（rag_structured_fact_extraction_enabled）；构造失败
+        （无模型/依赖异常）静默降级为不抽取，绝不影响索引主链路。
+        """
+        try:
+            if not load_rag_settings().get("rag_structured_fact_extraction_enabled"):
+                return None
+            from .rag_fact_llm import build_llm_fact_extractor
+
+            adapter = build_llm_fact_extractor()
+            if adapter is None:
+                logger.info("[RAG Fact LLM] 结构化抽取已开启但无激活模型，跳过")
+                return None
+            return StructuredFactExtractor(llm_call=adapter)
+        except Exception as exc:
+            logger.warning("[RAG Fact LLM] 适配器构造失败，本轮不抽取: %s", exc)
+            return None
 
     def ensure_contact_index(
         self,
@@ -235,6 +263,21 @@ class RagIndexer:
         }
 
     def rebuild_contact_index(self, *, account_wxid: str, conversation_id: int) -> dict[str, Any]:
+        self._llm_extract_segments_used = 0
+        self._llm_extract_consecutive_failures = 0
+        # 断点续抽水位：该联系人已抽取事实的最大 as_of，本轮从此后继续
+        try:
+            row = self.store.conn.execute(
+                """
+                SELECT MAX(as_of) AS watermark FROM rag_facts
+                WHERE account_wxid = ? AND conversation_id = ?
+                  AND summary_method = 'llm_shadow' AND as_of IS NOT NULL
+                """,
+                (account_wxid, conversation_id),
+            ).fetchone()
+            self._llm_extract_watermark_ts = int(row["watermark"]) if row and row["watermark"] else None
+        except Exception:
+            self._llm_extract_watermark_ts = None
         settings = load_rag_settings()
         model = str(settings["rag_embedding_model"])
         dim = int(settings["rag_embedding_dim"])
@@ -253,6 +296,18 @@ class RagIndexer:
         try:
             conversation = self._load_conversation(account_wxid, conversation_id)
             messages = self._load_messages(conversation_id)
+            quality_cleanup = self.store.quarantine_low_quality_shadow_facts(
+                account_wxid,
+                conversation_id,
+            )
+            if quality_cleanup.get("quarantined"):
+                self.store.conn.commit()
+                logger.info(
+                    "[RAG Fact Quality] quarantined=%s scanned=%s reasons=%s",
+                    quality_cleanup["quarantined"],
+                    quality_cleanup["scanned"],
+                    quality_cleanup["reasons"],
+                )
             if not conversation or not messages:
                 cleaned_old = self.store.delete_auto_documents(
                     account_wxid,
@@ -353,6 +408,18 @@ class RagIndexer:
                 index_version=self.INDEX_VERSION,
             )
             self.store.conn.commit()
+            # P1.1 关系状态影子刷新：默认关闭；失败绝不影响索引主链路
+            try:
+                from .rag_relationship_policy import refresh_relationship_state_shadow
+
+                refresh_relationship_state_shadow(
+                    self.store,
+                    account_wxid=account_wxid,
+                    conversation_id=conversation_id,
+                    display_name=str((conversation or {}).get("display_name") or ""),
+                )
+            except Exception as shadow_exc:
+                logger.debug("[RAG Index] relationship shadow refresh failed: %s", shadow_exc)
             logger.debug(
                 "[RAG Index] version=%s docs=%s vectors=%s cleaned_old=%s",
                 self.INDEX_VERSION,
@@ -649,13 +716,30 @@ class RagIndexer:
         conversation_id: int,
         segment: RagSegment,
     ) -> None:
-        """Run an injected LLM extractor without affecting document retrieval."""
+        """Run an injected LLM extractor without affecting document retrieval.
+
+        成本与稳定性约束（P1.2）：短段跳过、每轮每联系人段数封顶、
+        连续失败中止本轮；LLM 事实过宽松质量门（基础项，不查词表）。
+        """
         if self.structured_fact_extractor is None:
             return
+        if len(segment.messages) < 4:
+            return
+        if self._llm_extract_segments_used >= self.LLM_EXTRACT_SEGMENT_BUDGET:
+            return
+        if self._llm_extract_consecutive_failures >= 3:
+            return
+        # 断点续抽：跳过上一轮已覆盖的时间范围，多轮重建逐步推进历史深处
+        if self._llm_extract_watermark_ts and segment.end_ts <= self._llm_extract_watermark_ts:
+            return
+        self._llm_extract_segments_used += 1
         prompt = json.dumps(
             {
                 "task": "extract_atomic_contact_facts",
+                "account_wxid": account_wxid,
+                "conversation_id": conversation_id,
                 "messages": segment.messages,
+                "max_tokens": 2048,
                 "contract": {
                     "required": ["subject", "kind", "content"],
                     "status": ["active", "superseded", "uncertain"],
@@ -666,14 +750,42 @@ class RagIndexer:
         )
         try:
             facts = self.structured_fact_extractor.extract(prompt)
+            self._llm_extract_consecutive_failures = 0
         except FactExtractionError as exc:
-            logger.warning("[RAG Fact Shadow] quarantined invalid extraction: %s", exc)
+            self._llm_extract_consecutive_failures += 1
+            logger.warning(
+                "[RAG Fact Shadow] quarantined invalid extraction (%s/3): %s",
+                self._llm_extract_consecutive_failures,
+                exc,
+            )
             return
+        except Exception as exc:
+            self._llm_extract_consecutive_failures += 1
+            logger.warning(
+                "[RAG Fact Shadow] llm extraction failed (%s/3): %s",
+                self._llm_extract_consecutive_failures,
+                exc,
+            )
+            return
+        from .rag_fact_quality import fact_quality_reason
+
+        usable = [
+            fact for fact in facts
+            if fact_quality_reason(
+                str(fact.get("kind") or ""),
+                fact.get("content"),
+                require_kind_signal=False,
+            )
+            is None
+        ]
+        dropped = len(facts) - len(usable)
+        if dropped:
+            logger.info("[RAG Fact Shadow] quality dropped %s of %s llm facts", dropped, len(facts))
         self._write_structured_facts(
             account_wxid=account_wxid,
             conversation_id=conversation_id,
             segment=segment,
-            facts=facts,
+            facts=usable,
         )
 
     def _write_structured_facts(

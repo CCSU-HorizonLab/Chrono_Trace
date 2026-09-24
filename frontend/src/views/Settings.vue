@@ -165,6 +165,16 @@
           </label>
 
           <label class="row">
+            <div class="lab">AI 抽取记忆事实</div>
+            <label class="ct-switch">
+              <input v-model="form.rag_structured_fact_extraction_enabled" type="checkbox" />
+              <span class="slider"></span>
+              <span class="switch-label">{{ form.rag_structured_fact_extraction_enabled ? 'AI 抽取' : '关闭' }}</span>
+            </label>
+            <span class="hint">开启后，重建索引时由激活的 LLM 从对话抽取高质量记忆事实（每联系人每轮最多 40 段；远程模型发送前自动脱敏）。消耗模型 Token。</span>
+          </label>
+
+          <label class="row">
             <div class="lab">远程建议脱敏</div>
             <label class="ct-switch">
               <input v-model="form.rag_remote_context_redaction" type="checkbox" @change="handleRagRedactionToggle" />
@@ -455,6 +465,7 @@ const form = reactive<{
   rag_embedding_model: string
   rag_embedding_dim: number
   rag_fact_read_enabled: boolean
+  rag_structured_fact_extraction_enabled: boolean
   rag_remote_embedding_redaction_risk_confirmed: boolean
 }>({
   wechat_use_custom_path: false,
@@ -469,6 +480,7 @@ const form = reactive<{
   rag_embedding_model: 'tingting0514/text2vec-base-chinese',
   rag_embedding_dim: 768,
   rag_fact_read_enabled: true,
+  rag_structured_fact_extraction_enabled: false,
   rag_remote_embedding_redaction_risk_confirmed: false,
 })
 

@@ -105,6 +105,62 @@ class RagContextBuilder:
         self.relevance_gate = relevance_gate or RagRelevanceGate()
         self.segmenter = RagSegmenter()
 
+    def _inject_relationship_policy(
+        self,
+        context: dict[str, Any],
+        *,
+        account_wxid: str,
+        conversation_id: int,
+        remote_model: bool,
+        redaction_disabled: bool,
+    ) -> int | None:
+        """P1.3 分槽注入：关系策略独立于检索结果，不占事实预算。
+
+        数据源是 P1.1 影子表（默认无数据→零行为变化）；远程模型发送前
+        对文本字段脱敏；sensitivity 行深度防御跳过。返回 state_id 供
+        检索日志 policy_ids 记录，无注入返回 None。
+        """
+        if not load_rag_settings().get("rag_relationship_policy_injection_enabled", True):
+            return None
+        try:
+            state = self.store.get_latest_relationship_state(account_wxid, conversation_id)
+        except Exception:
+            return None
+        if not state or str(state.get("sensitivity") or "normal") == "sensitive":
+            return None
+
+        policy = {
+            "stage": state.get("stage") or "",
+            "closeness_band": state.get("closeness_band") or "",
+            "initiative_pattern": state.get("initiative_pattern") or "",
+            "boundary_summary": state.get("boundary_summary") or "",
+            "communication_tips": state.get("communication_tips") or "",
+            "confidence": float(state.get("confidence") or 0.0),
+            "policy_version": state.get("policy_version") or "",
+            "state_id": int(state.get("id") or 0),
+        }
+        if remote_model and not redaction_disabled:
+            try:
+                redactor = PrivacyRedactor(self.store.conn)
+                for field in ("boundary_summary", "communication_tips"):
+                    if policy[field]:
+                        policy[field] = redactor.redact(
+                            policy[field],
+                            account_wxid=account_wxid,
+                            conversation_id=conversation_id,
+                            source_table="rag_relationship_state",
+                            source_id=str(policy["state_id"]),
+                        ).redacted_text
+            except Exception:
+                # 脱敏失败时丢弃文本字段，保留结构化枚举（阶段/主动性）
+                policy["boundary_summary"] = ""
+                policy["communication_tips"] = ""
+
+        if not any((policy["stage"], policy["boundary_summary"], policy["communication_tips"])):
+            return None
+        context["relationship_policy"] = policy
+        return policy["state_id"]
+
     def enrich_context(
         self,
         context: dict[str, Any],
@@ -474,6 +530,14 @@ class RagContextBuilder:
                 digest.update(b"\x1e")
             prompt_context_hash = digest.hexdigest()
 
+        relationship_policy_state_id = self._inject_relationship_policy(
+            context,
+            account_wxid=account_wxid,
+            conversation_id=conversation_id,
+            remote_model=remote_model,
+            redaction_disabled=redaction_disabled,
+        )
+
         log_id = self.store.insert_retrieval_log(
             account_wxid=account_wxid,
             conversation_id=conversation_id,
@@ -546,7 +610,7 @@ class RagContextBuilder:
             ],
             hot_context_only=hot_context_only,
             prompt_context_hash=prompt_context_hash,
-            policy_ids=[],
+            policy_ids=[relationship_policy_state_id] if relationship_policy_state_id else [],
         )
         self.store.conn.commit()
         context["_rag_log_id"] = log_id
@@ -664,6 +728,8 @@ class RagContextBuilder:
             hot_context_only=hot_context_only,
             run_provenance=context.get("_rag_run_provenance") or "production",
         )
+        if relationship_policy_state_id:
+            context["_rag_debug"]["relationship_policy_injected"] = True
 
     def attach_log_to_suggestion(self, log_id: int | None, suggestion_id: int) -> None:
         self.store.attach_log_to_suggestion(log_id, suggestion_id)

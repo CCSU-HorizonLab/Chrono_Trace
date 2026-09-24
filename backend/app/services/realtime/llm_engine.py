@@ -26,7 +26,7 @@ SYSTEM_PROMPT = """你是一个专业的聊天沟通顾问，但你当前必须�
 
 【核心克隆规则】
 1. **千人千面，消除机味**：你必须彻底抛开所有 AI 常用的客套话、转折词、反问句、安抚腔和过度同理心。
-2. **完美模仿用户风格**：你给出的所有"建议话术"，必须【逐字逐句完全模仿】提供的「用户本体克隆画像」和「量化风格硬约束」中的打字风格、标点习惯、常用语气词、句式模板、建议字数区间和沟通态度。这非常关键！
+2. **先适配对方，再贴近自己**：建议话术首先应适合「对方画像」呈现的性格、聊天风格与沟通注意事项（策略正确优先）；在此基础上尽量贴近「用户表达风格」与「量化风格硬约束」的打字风格、标点、句式与长度（读起来像用户本人写的）。两者冲突时，选择适配对方；风格模仿不能损害当前对话目标。
 3. 内容必须贴合当前情境和已有的关系进度，严禁空泛。
 4. **身份区分**："我"是用户本人（发建议的人），"对方"是聊天对象。在引用记忆/事实时，严禁混淆谁做了什么。
 5. **【时效优先】核心注意力规则**：
@@ -900,11 +900,14 @@ class LLMSuggestionEngine(SuggestionEngine):
             }
             if "fact_memory" in doc_types:
                 return _summary("fact_hit", f"已参考 {referenced_count} 条历史事实")
-            if doc_types & _RAG_RELATIONSHIP_DOC_TYPES:
+            if doc_types & _RAG_RELATIONSHIP_DOC_TYPES or debug.get("relationship_policy_injected"):
                 return _summary("relationship_policy", "已参考关系画像")
             if doc_types and doc_types <= {"hot_context"}:
                 return _summary("hot_context", "仅参考当前对话上下文")
             return _summary("document_hit", f"已参考 {referenced_count} 条历史记录")
+
+        if debug.get("relationship_policy_injected"):
+            return _summary("relationship_policy", "已参考关系画像")
 
         if debug.get("hot_context_only"):
             return _summary("hot_context", "仅参考当前对话上下文")
@@ -1081,10 +1084,33 @@ class LLMSuggestionEngine(SuggestionEngine):
             if history_summary:
                 parts.append(f"【历史关系分析】{history_summary[:500]}")
 
-        # 联系人画像（如有）
+        # P1.3 关系策略结构化块：影子层派生的联系人级背景（独立小预算槽）
+        relationship_policy = context.get("relationship_policy")
+        if relationship_policy and not is_direct_reply:
+            parts.append("\n【当前关系策略（联系人级背景，供判断分寸）】")
+            if relationship_policy.get("stage"):
+                parts.append(f"  关系阶段: {relationship_policy['stage']}")
+            if relationship_policy.get("closeness_band"):
+                band_label = {"high": "高", "medium": "中", "low": "低"}.get(
+                    relationship_policy["closeness_band"], relationship_policy["closeness_band"]
+                )
+                parts.append(f"  亲密度: {band_label}")
+            if relationship_policy.get("initiative_pattern"):
+                parts.append(f"  主动性: {relationship_policy['initiative_pattern']}")
+            if relationship_policy.get("boundary_summary"):
+                parts.append(f"  相处边界: {relationship_policy['boundary_summary'][:160]}")
+            if relationship_policy.get("communication_tips"):
+                parts.append(f"  沟通建议: {relationship_policy['communication_tips'][:160]}")
+            confidence = relationship_policy.get("confidence")
+            if isinstance(confidence, (int, float)) and confidence > 0:
+                parts.append(f"  置信度: {int(confidence * 100)}%")
+            parts.append("  使用规则: 以上是系统从历史对话派生的关系背景，只在判断\"怎么回更合适\"时参考；不要向对方复述或主动提起这些结论")
+
+        # 联系人画像（如有）—— 策略优先参考：决定"怎么回更合适"
         profile = context.get("contact_profile")
         if profile and not is_direct_reply:
-            parts.append("\n【对方画像（低权重参考）】")
+            stale_flag = "(较旧，仅供参考)" if context.get("_contact_profile_stale") else ""
+            parts.append(f"\n【对方画像（策略优先参考）{stale_flag}】")
             tags = profile.get("personality_tags", [])
             if tags:
                 parts.append(f"  性格标签: {', '.join(tags)}")
@@ -1097,11 +1123,12 @@ class LLMSuggestionEngine(SuggestionEngine):
             note = profile.get("relationship_note", "")
             if note:
                 parts.append(f"  关系状态: {note}")
+            parts.append("  使用规则: 判断怎么回更合适时优先适配以上信息；与下方用户表达风格冲突时，以适配对方为先")
 
-        # 用户本体专属克隆画像
+        # 用户本体专属克隆画像 —— 仅约束措辞，不决定策略
         self_profile = context.get("self_profile")
         if self_profile and not is_direct_reply:
-            parts.append("\n【用户本体克隆画像（必须严格模仿，不可偏离）】")
+            parts.append("\n【用户表达风格（仅约束措辞，不决定策略）】")
             typing_style = self_profile.get("typing_style", "")
             if typing_style:
                 parts.append(f"  打字排版风格: {typing_style}")
@@ -1110,11 +1137,11 @@ class LLMSuggestionEngine(SuggestionEngine):
                 parts.append(f"  高频语气词汇: {', '.join(catchphrases)}")
             patterns = self_profile.get("sentence_patterns", [])
             if patterns:
-                parts.append(f"  常用句式模板（优先仿照这些结构写话术）: {' / '.join(patterns)}")
-                parts.append("  强制要求: 最终 3 条候选里至少 2 条沿用上述句式模板结构")
+                parts.append(f"  常用句式模板（在策略正确的前提下尽量贴近）: {' / '.join(patterns)}")
             donts = self_profile.get("do_and_donts", "")
             if donts:
                 parts.append(f"  模仿禁忌: {donts}")
+            parts.append("  使用规则: 以上仅决定话术的措辞、标点和长度，读起来像用户本人即可；不得为了模仿风格而放弃更合适的关系策略")
         elif not is_direct_reply:
             parts.append("\n【用户风格缺省约束】")
             parts.append("  当前无可用的用户画像缓存，默认每条话术不超过 15 字")

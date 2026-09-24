@@ -72,7 +72,8 @@ def test_llm_prompt_includes_historical_context_and_sentence_patterns():
     )
 
     assert "常用句式模板" in prompt
-    assert "至少 2 条沿用上述句式模板结构" in prompt
+    assert "在策略正确的前提下尽量贴近" in prompt
+    assert "至少 2 条沿用" not in prompt
     assert "本关系里的态度与角色" not in prompt
     assert "与对方共有的记忆常识" not in prompt
     assert "【量化风格硬约束（必须遵守）】" in prompt

@@ -22,6 +22,33 @@ SENSITIVE_TERMS = tuple(dict.fromkeys(
 ))
 
 
+def _load_quality_patterns() -> dict[str, tuple[str, ...]]:
+    """Load quality-gate word lists from the external patterns config.
+
+    P2-1 纪律：词表是数据不是代码——代指残句特征、微信系统消息特征
+    等语言词表外置于 fact_quality_patterns.json，扩充改配置不动代码。
+    配置缺失时安全降级为空表（不拦截），绝不让质量门崩溃。
+    """
+    path = Path(__file__).with_name("fact_quality_patterns.json")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        return {
+            key: tuple(str(term) for term in terms if str(term).strip())
+            for key, terms in payload.items()
+            if isinstance(terms, list) and not key.startswith("_")
+        }
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return {}
+
+
+_QUALITY_PATTERNS = _load_quality_patterns()
+# 微信系统/通知消息特征：不是用户表达的事实，不进记忆
+SYSTEM_MESSAGE_MARKERS = _QUALITY_PATTERNS.get("system_message_markers", ())
+VAGUE_REFERENCE_TERMS = _QUALITY_PATTERNS.get("vague_reference_terms", ())
+GENERIC_TURNS = frozenset(_QUALITY_PATTERNS.get("generic_turns", ()))
+VAGUE_REFERENCE_TERMS = _QUALITY_PATTERNS.get("vague_reference_terms", ())
+
+
 def _load_kind_signals() -> dict[str, tuple[str, ...]]:
     """Load kind signal words from the external fact_kind_hints config.
 
@@ -42,39 +69,6 @@ def _load_kind_signals() -> dict[str, tuple[str, ...]]:
 
 _KIND_SIGNALS = _load_kind_signals()
 
-_GENERIC_TURNS = {
-    "嗯",
-    "嗯嗯",
-    "哦",
-    "好的",
-    "好好好",
-    "可以",
-    "行吧",
-    "看一下吧",
-    "你看一下",
-    "怎么说",
-    "什么",
-    "哪个",
-    "666",
-    "6666",
-}
-
-# 微信系统/通知消息特征：不是用户表达的事实，不进记忆
-SYSTEM_MESSAGE_MARKERS = (
-    "我通过了你的朋友验证请求",
-    "你现在可以开始聊天",
-    "撤回了一条消息",
-    "拍了拍",
-    "以下为新消息",
-    "收到了红包",
-    "领取了红包",
-    "发出了红包",
-    "转账给你",
-    "你已收款",
-    "以上是打招呼的内容",
-)
-
-
 def looks_corrupted(text: str) -> bool:
     """Detect garbled/binary message bodies.
 
@@ -88,7 +82,7 @@ def looks_corrupted(text: str) -> bool:
     bad = sum(
         1
         for ch in compact
-        if ch == "\ufffd" or ord(ch) < 0x20 or (0x80 <= ord(ch) <= 0xFF)
+        if ch == "�" or ord(ch) < 0x20 or (0x80 <= ord(ch) <= 0xFF)
     )
     return bad / len(compact) > 0.25
 
@@ -135,15 +129,17 @@ def fact_quality_reason(
     compact = _compact(primary)
     if len(compact) < 4:
         return "too_short"
-    if compact in _GENERIC_TURNS:
+    if compact in GENERIC_TURNS:
         return "generic_turn"
     if any(marker in compact for marker in SYSTEM_MESSAGE_MARKERS):
         return "system_message"
     if looks_corrupted(compact):
         return "corrupted_text"
-    # 代指残句：短句里的"一下下/这个嘛/再说吧"没有具体对象，是断上下文
-    # 的垃圾事实（"就买一下下嘛"——买什么不在句内也不在派生上下文）
-    if len(compact) <= 20 and re.search(r"一下下|这个嘛|那个嘛|再说吧|再说啦|等一下哈|就这?个吧", compact):
+    # 代指残句：短句命中代指特征词（词表见 fact_quality_patterns.json）
+    # 且无具体对象——"就买一下下嘛"类断上下文垃圾事实
+    if VAGUE_REFERENCE_TERMS and len(compact) <= 20 and any(
+        term in compact for term in VAGUE_REFERENCE_TERMS
+    ):
         return "vague_fragment"
     if re.fullmatch(r"[\W_\d]+", compact, flags=re.UNICODE):
         return "nonsemantic_turn"

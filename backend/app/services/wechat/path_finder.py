@@ -116,9 +116,18 @@ class WeChatPathFinder:
 
     @staticmethod
     def _looks_like_wechat_user_dir(path: Path) -> bool:
+        """以目录结构特征识别微信4.0账号目录。
+
+        账号目录名不一定是 wxid_ 前缀：设置过自定义微信号的账号直接以微信号命名，
+        因此只认 db_storage 结构特征，不依赖目录名。
+        """
         if not path or not path.exists() or not path.is_dir():
             return False
-        return path.name.startswith("wxid_") and (path / "db_storage").is_dir()
+
+        if path.name.lower() in WeChatPathFinder.SYSTEM_DIR_NAMES:
+            return False
+
+        return (path / "db_storage").is_dir()
 
     @staticmethod
     def _looks_like_wechat_data_dir(path: Path) -> bool:
@@ -126,7 +135,7 @@ class WeChatPathFinder:
         if not path or not path.exists() or not path.is_dir():
             return False
 
-        if path.name.startswith("wxid_"):
+        if WeChatPathFinder._looks_like_wechat_user_dir(path):
             return False
 
         try:
@@ -153,7 +162,7 @@ class WeChatPathFinder:
             seen.add(normalized)
             candidates.append(path)
 
-        if base_path.name.startswith("wxid_"):
+        if cls._looks_like_wechat_user_dir(base_path):
             _add(base_path.parent)
         _add(base_path)
         _add(base_path / "xwechat_files")
@@ -207,7 +216,7 @@ class WeChatPathFinder:
                 child_name = child.name.lower()
                 should_descend = (
                     child_name in cls.WECHAT_DATA_DIR_NAMES
-                    or child.name.startswith("wxid_")
+                    or cls._looks_like_wechat_user_dir(child)
                     or child_name == "documents"
                     or child_name.startswith("onedrive")
                     or depth < aggressive_depth
@@ -272,10 +281,10 @@ class WeChatPathFinder:
                 continue
             seen.add(normalized)
 
-            if current.name.startswith("wxid_"):
+            if cls._looks_like_wechat_user_dir(current):
                 discovered.append(current)
-                if (current / "db_storage").is_dir():
-                    continue
+                # 账号目录内部不会再嵌套其他账号目录
+                continue
 
             if depth >= max_depth:
                 continue
@@ -288,7 +297,7 @@ class WeChatPathFinder:
             for child in children:
                 child_name = child.name.lower()
                 should_descend = (
-                    child.name.startswith("wxid_")
+                    cls._looks_like_wechat_user_dir(child)
                     or child_name in cls.WECHAT_DATA_DIR_NAMES
                     or child_name == "documents"
                     or child_name.startswith("onedrive")

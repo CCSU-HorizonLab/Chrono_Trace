@@ -109,6 +109,69 @@ def test_find_databases_accepts_direct_wxid_dir(tmp_path):
     assert databases["session"] == str(session_db)
 
 
+def test_find_all_user_wxids_discovers_custom_named_accounts(tmp_path):
+    """设置过自定义微信号的账号目录不以 wxid_ 开头，也应按结构特征被扫到。"""
+    wechat_root = tmp_path / "xwechat_files"
+    default_user = wechat_root / "wxid_default"
+    custom_user = wechat_root / "custom_wxid_account"
+
+    for user in (default_user, custom_user):
+        message_dir = user / "db_storage" / "message"
+        message_dir.mkdir(parents=True)
+        (message_dir / "message_0.db").write_text("", encoding="utf-8")
+
+    wxids = WeChatPathFinder.find_all_user_wxids(str(wechat_root))
+
+    assert "custom_wxid_account" in wxids
+    assert "wxid_default" in wxids
+
+    databases = WeChatPathFinder.find_databases("custom_wxid_account", str(wechat_root))
+    assert databases["message"] == [str(custom_user / "db_storage" / "message" / "message_0.db")]
+
+
+def test_find_wechat_data_path_detects_root_with_custom_named_accounts(monkeypatch, tmp_path):
+    documents_root = tmp_path / "Documents"
+    detected_dir = documents_root / "xwechat_files"
+    (detected_dir / "custom_account" / "db_storage" / "message").mkdir(parents=True)
+
+    monkeypatch.setattr("app.services.wechat.path_finder.Path.home", lambda: tmp_path)
+    monkeypatch.setattr(
+        "app.services.wechat.path_finder.WeChatPathFinder._get_documents_paths",
+        classmethod(lambda cls: [documents_root]),
+    )
+    monkeypatch.setattr(
+        "app.services.wechat.path_finder.WeChatPathFinder.find_wechat_install_path",
+        classmethod(lambda cls: None),
+    )
+    monkeypatch.delenv("USERPROFILE", raising=False)
+    monkeypatch.delenv("OneDrive", raising=False)
+    monkeypatch.delenv("OneDriveConsumer", raising=False)
+    monkeypatch.delenv("OneDriveCommercial", raising=False)
+    monkeypatch.setattr(
+        "app.services.wechat.path_finder.WeChatPathFinder._query_registry_value",
+        staticmethod(lambda *args, **kwargs: None),
+    )
+
+    assert WeChatPathFinder.find_wechat_data_path() == str(detected_dir)
+    assert WeChatPathFinder.find_current_user_wxid(str(detected_dir)) == "custom_account"
+
+
+def test_bridge_scan_wechat_directory_accepts_custom_named_account_dir(tmp_path):
+    user_dir = tmp_path / "xwechat_files" / "custom_account"
+    message_db = user_dir / "db_storage" / "message" / "message_0.db"
+    message_db.parent.mkdir(parents=True)
+    message_db.write_text("", encoding="utf-8")
+
+    bridge = Bridge.__new__(Bridge)
+    bridge.settings = {"wechat_accounts": []}
+
+    result = bridge.scan_wechat_directory(str(user_dir))
+
+    assert result["ok"] is True
+    assert result["wxids"] == ["custom_account"]
+    assert result["databases"]["custom_account"]["msg_dbs"] == [str(message_db)]
+
+
 def test_bridge_verify_wechat_key_prefers_saved_selected_paths():
     bridge = Bridge.__new__(Bridge)
     bridge.wechat_service = MagicMock()

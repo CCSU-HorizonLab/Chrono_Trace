@@ -2218,8 +2218,8 @@ class Bridge:
                 "accounts": [],
             }
 
-            # 兼容直接选中了某个账号目录的情况
-            if (target_dir / "db_storage").is_dir() and target_dir.name.startswith("wxid_"):
+            # 兼容直接选中了某个账号目录的情况（账号目录名不一定是 wxid_ 前缀，按结构特征识别）
+            if WeChatPathFinder._looks_like_wechat_user_dir(target_dir):
                 root_dir = target_dir.parent
                 wxid_dirs = [target_dir.name]
             else:

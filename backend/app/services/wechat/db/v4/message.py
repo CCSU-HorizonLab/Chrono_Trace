@@ -44,9 +44,10 @@ class MessageDBV4(WeChatDBBase):
         if not wxid:
             return candidates
         candidates.append(wxid)
-        # 兼容目录名形如 wxid_xxx_9cc7，去掉最后一段下划线+4~6位字母数字
-        m = re.match(r"^(wxid_[a-z0-9]+)_([a-z0-9]{4,6})$", wxid)
-        if m:
+        # 兼容目录名带后缀：wxid_xxx_9cc7 或自定义微信号_86f8——后缀是本地
+        # 多开消歧用的，name2id 里存的是无后缀真名（Linux 实测确认）
+        m = re.match(r"^(.+)_([0-9a-zA-Z]{4,6})$", wxid)
+        if m and len(m.group(1)) >= 2:
             base = m.group(1)
             if base not in candidates:
                 candidates.append(base)

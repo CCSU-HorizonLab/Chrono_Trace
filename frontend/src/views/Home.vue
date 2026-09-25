@@ -787,6 +787,11 @@ async function openKeyCaptureGuide() {
       return
     }
     if (captureState.login_state === 'logged_in') {
+      if (captureState.restart_required === false) {
+        // Linux：免重启流程——静态断点等待「退出登录后重新登录」即可
+        await startKeyCaptureSession()
+        return
+      }
       keyCaptureStage.value = 'confirm_restart'
       keyCaptureMessage.value = '检测到微信已经登录。确认后会关闭并重新启动微信，再安装监听。'
       return

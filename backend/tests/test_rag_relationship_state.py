@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from app.services.realtime.rag_config import load_rag_settings
 from app.services.realtime.rag_relationship_policy import (
     derive_relationship_state,
+    refresh_after_fact_feedback,
     refresh_relationship_state_shadow,
 )
 from app.services.realtime.rag_store import RagStore
@@ -258,3 +259,51 @@ def test_refresh_writes_shadow_from_profile_and_facts(monkeypatch):
     assert "追问情绪" in latest["boundary_summary"]
     assert json.loads(latest["evidence_fact_ids_json"])
     assert latest["summary_method"] == "derived_shadow_profile_and_facts"
+
+
+def test_refresh_after_fact_feedback_drops_disabled_evidence(monkeypatch):
+    """T9：用户标注「不准确」后关系策略刷新，evidence 剔除禁用事实。
+
+    真实库场景：5385 被用户标 inaccurate 后，01:30 生成的 state 仍引用
+    它——反馈只禁用单条，影子层不刷新。
+    """
+    conn, store = _store()
+    fact_id = _seed_boundary_fact(store, confidence=0.7)
+    profile, features = _profile_and_features()
+    store.upsert_status("wxid_a", 1, status="ready", document_count=100)
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS conversations (id INTEGER PRIMARY KEY, account_wxid TEXT, display_name TEXT, message_count INTEGER)"
+    )
+    conn.execute(
+        "INSERT INTO conversations (id, account_wxid, display_name, message_count) VALUES (1, 'wxid_a', '昕', 3616)"
+    )
+    monkeypatch.setattr(
+        "app.services.realtime.rag_relationship_policy.load_rag_settings",
+        lambda: {"rag_relationship_policy_shadow_enabled": True},
+    )
+    monkeypatch.setattr(
+        "app.services.realtime.rag_relationship_policy._load_profile_cache",
+        lambda account_wxid, display_name: {
+            "profile": profile, "features_snapshot": features,
+        },
+    )
+    # 初始影子行引用该事实
+    first = refresh_relationship_state_shadow(
+        store, account_wxid="wxid_a", conversation_id=1, display_name="昕",
+    )
+    assert first["changed"] is True
+    assert fact_id in json.loads(
+        store.get_latest_relationship_state("wxid_a", 1)["evidence_fact_ids_json"]
+    )
+
+    # 用户标注不准确 → 禁用 → 反馈后刷新
+    store.set_fact_user_feedback(fact_id, "inaccurate")
+    result = refresh_after_fact_feedback(store, fact_id)
+    assert result.get("ok") is True
+    latest = store.get_latest_relationship_state("wxid_a", 1)
+    eids = json.loads(latest["evidence_fact_ids_json"])
+    assert fact_id not in eids  # 禁用事实不再被引用
+    assert "追问情绪" not in (latest["boundary_summary"] or "")
+
+    # 事实不存在时不抛异常
+    assert refresh_after_fact_feedback(store, 999999).get("skipped") == "fact_not_found"

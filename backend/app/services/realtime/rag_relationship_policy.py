@@ -265,6 +265,57 @@ def refresh_relationship_state_shadow(
         return {"ok": False, "error": str(exc)}
 
 
+def refresh_after_fact_feedback(store: RagStore, fact_id: int) -> dict[str, Any]:
+    """用户纠错（不准确/忘记）后刷新关系策略影子，剔除已禁用事实的引用。
+
+    P2.1 最小闭环：此前「不准确」只禁用单条事实，读侧检索立即剔除，
+    但关系策略影子行的 evidence_fact_ids 仍引用它（真实库 5385 一例：
+    用户 08:44 标注不准确，01:30 生成的 state 仍引用到当晚）。
+    刷新本身走 refresh_relationship_state_shadow（受 shadow 开关保护、
+    list_facts 只取 active+enabled，禁用事实自动出证据集）；任何异常只
+    记日志，绝不阻塞反馈落库。
+    """
+    try:
+        row = store.conn.execute(
+            """
+            SELECT account_wxid, conversation_id FROM rag_facts WHERE id = ?
+            """,
+            (int(fact_id),),
+        ).fetchone()
+        if row is None:
+            return {"ok": False, "skipped": "fact_not_found"}
+        account_wxid = str(row["account_wxid"] or "")
+        conversation_id = int(row["conversation_id"] or 0)
+        if not account_wxid or conversation_id <= 0:
+            return {"ok": False, "skipped": "missing_scope"}
+        display_name = ""
+        try:
+            conv = store.conn.execute(
+                "SELECT display_name FROM conversations WHERE id = ? AND account_wxid = ?",
+                (conversation_id, account_wxid),
+            ).fetchone()
+            display_name = str(conv["display_name"] or "") if conv else ""
+        except Exception:
+            display_name = ""
+        result = refresh_relationship_state_shadow(
+            store,
+            account_wxid=account_wxid,
+            conversation_id=conversation_id,
+            display_name=display_name,
+        )
+        if result.get("ok"):
+            logger.info(
+                "[RelationshipState] refreshed after fact feedback fact=%s conv=%s changed=%s",
+                fact_id,
+                conversation_id,
+                result.get("changed"),
+            )
+        return result
+    except Exception as exc:
+        logger.warning("[RelationshipState] post-feedback refresh failed: %s", exc)
+        return {"ok": False, "error": str(exc)}
+
+
 def _load_profile_cache(
     account_wxid: str, display_name: str
 ) -> dict[str, Any] | None:

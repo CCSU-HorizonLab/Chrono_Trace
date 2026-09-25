@@ -158,3 +158,87 @@ def test_attribution_positive_writes_signal():
     assert detail["final_message"] == "多吃点，别饿着"
     assert detail["confidence"] == 0.85
     assert json.loads(signal["affected_policy_ids_json"]) == [3]
+
+
+def test_rewritten_attribution_creates_shadow_candidates(monkeypatch):
+    """P2.1 影子闭环：rewritten 正归因 → 偏好候选（uncertain 影子行，不进读侧）。"""
+    conn, store = _store()
+    monkeypatch.setattr(
+        "app.services.realtime.feedback_attribution.SuggestionFeedbackAttributor._resolve_conversation_id",
+        lambda self, suggestion: 1,
+    )
+    monkeypatch.setattr(
+        "app.services.realtime.feedback_attribution.load_rag_settings" if False else
+        "app.services.realtime.rag_config.load_rag_settings",
+        lambda settings=None: {"rag_structured_fact_extraction_enabled": True},
+    )
+    import app.services.realtime.rag_fact_llm as fact_llm
+
+    class _FakeAdapter:
+        def extract_feedback_signals(self, *, original_speech, final_message):
+            assert "多吃点" in original_speech
+            return [
+                {
+                    "subject": "我",
+                    "kind": "preference",
+                    "content": "用户倾向把建议改得更口语化，加语气词软化语气",
+                    "confidence": 0.8,
+                    "evidence": "原始建议较书面，用户加了语气词",
+                },
+                # 碎片被质量门拦截
+                {"subject": "我", "kind": "preference", "content": "好的好的",
+                 "confidence": 0.9, "evidence": "-"},
+            ]
+
+    monkeypatch.setattr(fact_llm, "build_llm_fact_extractor", lambda: _FakeAdapter())
+
+    from app.services.realtime.feedback_attribution import SuggestionFeedbackAttributor
+
+    attributor = SuggestionFeedbackAttributor(conn)
+    suggestion = {"id": 21, "account_wxid": "wxid_a", "batch_id": "b1", "created_at": int(time.time())}
+    result = {
+        "attribution_type": "rewritten",
+        "confidence": 0.85,
+        "candidate_messages": [],
+        "selected_speech": "多吃点",
+        "final_message": "多吃点呀，别饿着自己~",
+    }
+    created = attributor._try_extract_feedback_candidates(suggestion, result)
+    assert len(created) == 1  # 碎片被拦，1 条候选
+
+    row = conn.execute("SELECT * FROM rag_facts WHERE id = ?", (created[0],)).fetchone()
+    assert row["status"] == "uncertain" and row["summary_method"] == "feedback_shadow"
+    assert json.loads(row["source_window_json"])["evidence"].startswith("原始建议较书面")
+    assert store.list_facts("wxid_a", 1) == []  # uncertain 不进读侧
+
+    # 同一建议去重：再跑不重复抽取
+    again = attributor._try_extract_feedback_candidates(suggestion, result)
+    assert again == []
+    assert conn.execute(
+        "SELECT COUNT(*) FROM rag_facts WHERE summary_method='feedback_shadow'"
+    ).fetchone()[0] == 1
+
+
+def test_feedback_candidates_require_settings_and_type(monkeypatch):
+    """accepted 不触发；开关关闭不触发。"""
+    conn, store = _store()
+    monkeypatch.setattr(
+        "app.services.realtime.rag_config.load_rag_settings",
+        lambda settings=None: {"rag_structured_fact_extraction_enabled": False},
+    )
+    from app.services.realtime.feedback_attribution import SuggestionFeedbackAttributor
+
+    attributor = SuggestionFeedbackAttributor(conn)
+    suggestion = {"id": 31, "account_wxid": "wxid_a", "created_at": int(time.time())}
+    rewritten = {
+        "attribution_type": "rewritten", "confidence": 0.9,
+        "candidate_messages": [], "selected_speech": "a", "final_message": "b",
+    }
+    assert attributor._try_extract_feedback_candidates(suggestion, rewritten) == []
+
+    monkeypatch.setattr(
+        "app.services.realtime.rag_config.load_rag_settings",
+        lambda settings=None: {"rag_structured_fact_extraction_enabled": True},
+    )
+    accepted = dict(rewritten, attribution_type="accepted")
+    assert attributor._try_extract_feedback_candidates(suggestion, accepted) == []

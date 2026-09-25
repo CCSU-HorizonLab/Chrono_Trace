@@ -84,6 +84,23 @@ FACT_FUSION_SYSTEM_PROMPT = """你是一个联系人记忆事实维护器。对�
 {"decisions": [{"fact_id": 候选旧事实的id, "action": "ADD|UPDATE|INVALIDATE|MERGE|NOOP", "reason": "一句话理由"}]}"""
 
 
+FACT_FEEDBACK_EXTRACTION_PROMPT = """你是一个聊天建议反馈分析器。用户收到一条 AI 生成的回复建议后，没有直接采用，而是改写后发送。请从"原始建议"与"用户实际发送"的差异中，推断值得长期记住的偏好信号。
+
+只抽稳定的、可复用的信号（怎么对这个人说话更合适）：
+- 用户习惯的措辞风格调整（更口语/更委婉/更直接/用词偏好）
+- 用户对建议长度、语气、称呼的修改倾向
+- 反映出对方接受偏好的差异（对方吃哪一套）
+
+不要抽：
+- 一次性内容修正（只针对当时话题的改动，如换了约会时间）
+- 推测过强的结论——差异很小或语义相同时输出空
+
+输出严格 JSON：
+{"signals": [{"subject": "我" 或 "对方", "kind": "preference|boundary|relation_state", "content": "一句自包含的偏好信号陈述", "confidence": 0.0~1.0, "evidence": "差异的简短说明"}]}
+
+差异不足以推断时输出 {"signals": []}。"""
+
+
 class LLMFactExtractorAdapter:
     """Adapt the active chat model into a StructuredFactExtractor llm_call."""
 
@@ -256,6 +273,69 @@ class LLMFactExtractorAdapter:
         if not isinstance(parsed, dict) or not isinstance(parsed.get("decisions"), list):
             raise ValueError("fact fusion response requires decisions")
         return parsed
+
+    # ---- feedback signal extraction (P2.1) ----
+
+    def extract_feedback_signals(
+        self,
+        *,
+        original_speech: str,
+        final_message: str,
+    ) -> list[dict[str, Any]]:
+        """从"原始建议 vs 用户改写"差异中抽取偏好信号（P2.1 影子闭环）。
+
+        远程模型对两段文本脱敏（失败丢弃该段，两段都失败返回空）；
+        解析失败抛 ValueError 由调用方安全跳过——反馈候选绝不阻塞归因。
+        """
+        payload: dict[str, Any] = {}
+        redactor = self._require_redactor(payload)
+
+        def _prepare(text: str, source_id: str) -> str | None:
+            rendered = str(text or "").strip()[:400]
+            if not rendered:
+                return None
+            return self._redact_text(rendered, redactor, payload, source_id=source_id)
+
+        original = _prepare(original_speech, "original")
+        final = _prepare(final_message, "final")
+        if not original or not final:
+            return []
+        user_prompt = (
+            f"原始建议：\n{original}\n\n用户实际发送：\n{final}\n\n"
+            "请按系统指令分析差异，输出 JSON。"
+        )
+        body = self._call_chat(
+            [{"role": "system", "content": FACT_FEEDBACK_EXTRACTION_PROMPT},
+             {"role": "user", "content": user_prompt}],
+            max_tokens=1024,
+        )
+        content = self._extract_content(body)
+        candidate = self._json_candidate(content)
+        if not candidate:
+            raise ValueError(
+                f"feedback signal response has no JSON object (len={len(content)})"
+            )
+        parsed = json.loads(candidate)
+        signals = parsed.get("signals") if isinstance(parsed, dict) else None
+        if not isinstance(signals, list):
+            raise ValueError("feedback signal response requires signals")
+        validated: list[dict[str, Any]] = []
+        for item in signals:
+            if not isinstance(item, dict):
+                continue
+            text = str(item.get("content") or "").strip()
+            if not text:
+                continue
+            validated.append(
+                {
+                    "subject": str(item.get("subject") or "我").strip()[:80],
+                    "kind": str(item.get("kind") or "preference").strip()[:80],
+                    "content": text[:500],
+                    "confidence": min(1.0, max(0.0, float(item.get("confidence") or 0.0))),
+                    "evidence": str(item.get("evidence") or "").strip()[:200],
+                }
+            )
+        return validated
 
     # ---- HTTP ----
 

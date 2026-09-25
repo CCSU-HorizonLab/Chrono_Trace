@@ -388,6 +388,14 @@ class Bridge:
     def _get_wechat_custom_paths(self, account_wxid: str = "") -> dict[str, str] | None:
         return build_custom_paths(self._resolve_wechat_account(account_wxid))
 
+    def _key_scan_wechat_dir(self, account_wxid: str = "") -> str:
+        """供 Windows 只读扫描引擎定位数据库目录（按 salt 验证候选）；Linux 引擎不使用。"""
+        try:
+            paths = self._get_wechat_custom_paths(account_wxid) or {}
+            return str(paths.get("wechat_dir") or "")
+        except Exception:
+            return ""
+
     def _build_wechat_user_candidates(self, wxid: str) -> list[str]:
         candidates: list[str] = []
         normalized = str(wxid or "").strip()
@@ -576,14 +584,11 @@ class Bridge:
     ) -> dict[str, Any]:
         """Automatically capture, verify, and persist the active account DB key."""
         try:
-            if sys.platform != "win32":
-                from ..services.wechat.key_capture_linux import LinuxWeChatKeyProvider
+            from ..services.wechat.keys import create_key_provider
 
-                provider = LinuxWeChatKeyProvider()
-            else:
-                from ..services.wechat.key_provider import WeChatKeyProvider
-
-                provider = WeChatKeyProvider()
+            provider = create_key_provider(
+                wechat_dir=self._key_scan_wechat_dir(account_wxid)
+            )
             result = provider.capture_db_key(
                 timeout_seconds=timeout_seconds,
                 account_wxid=account_wxid,
@@ -607,8 +612,12 @@ class Bridge:
     ) -> dict[str, Any]:
         """Verify and persist a key captured by either synchronous or session flow."""
         db_key = str(result.get("db_key") or "").strip().lower()
+        key_type = str(result.get("key_type") or "passphrase").strip() or "passphrase"
+        raw_keys = result.get("raw_keys") if key_type == "raw" else None
         preferred_paths = self._get_wechat_custom_paths(account_wxid)
-        verified = self.wechat_service.verify_key(db_key, preferred_paths)
+        verified = self.wechat_service.verify_key(
+            db_key, preferred_paths, key_type=key_type, raw_keys=raw_keys
+        )
         if not verified.get("ok"):
             return {
                 **result,
@@ -636,6 +645,8 @@ class Bridge:
                     self.settings,
                     resolved_wxid,
                     db_key=db_key,
+                    key_type=key_type,
+                    raw_keys=raw_keys if key_type == "raw" else {},
                     wechat_dir=str((resolved_paths or {}).get("wechat_dir") or "") or None,
                 )
                 self._save_settings()
@@ -704,14 +715,11 @@ class Bridge:
     ) -> dict[str, Any]:
         """Install the Hook and return as soon as it is ready for a login event."""
         try:
-            if sys.platform != "win32":
-                from ..services.wechat.key_capture_linux import LinuxWeChatKeyProvider
+            from ..services.wechat.keys import create_key_provider
 
-                provider = LinuxWeChatKeyProvider()
-            else:
-                from ..services.wechat.key_provider import WeChatKeyProvider
-
-                provider = WeChatKeyProvider()
+            provider = create_key_provider(
+                wechat_dir=self._key_scan_wechat_dir(account_wxid)
+            )
             session = provider.create_capture_session(
                 timeout_seconds=timeout_seconds,
                 account_wxid=account_wxid,
@@ -813,7 +821,15 @@ class Bridge:
         else:
             logger.debug("[DEBUG Bridge] 未配置自定义路径,将使用自动检测")
 
-        result = self.wechat_service.import_wechat_data(db_key, options, custom_paths)
+        # Windows 只读扫描账号：导入需带每库 raw key 映射（passphrase 账号不传）
+        raw_keys = None
+        account = self._resolve_wechat_account(resolved_wxid) or {}
+        if str(account.get("key_type") or "passphrase") == "raw":
+            raw_keys = account.get("raw_keys") or {}
+
+        result = self.wechat_service.import_wechat_data(
+            db_key, options, custom_paths, raw_keys=raw_keys
+        )
         if result.get("ok"):
             snapshot = self.wechat_service.build_file_size_snapshot(custom_paths)
             self._save_wechat_import_baseline(snapshot, account_wxid=resolved_wxid, db_key=db_key)

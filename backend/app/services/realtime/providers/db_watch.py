@@ -83,16 +83,26 @@ class DbWatchRealtimeProvider(RealtimeProvider):
         if not message_dbs:
             raise ProviderInitError(f"未找到消息数据库: {wechat_dir}")
 
+        # Windows 只读扫描账号：按库 salt 直取 raw key（Linux GDB 产物为 passphrase）
+        raw_keys = None
+        if str(account.get("key_type") or "passphrase") == "raw":
+            raw_keys = dict(account.get("raw_keys") or {})
+
         # 密钥有效性抽查（首个分片首页 HMAC）
         from ...wechat.db_decryptor_v2 import WeChatDBDecryptorV2
+        validator = WeChatDBDecryptorV2()
+        if raw_keys:
+            validator.set_raw_key_map(raw_keys)
         first_page = Path(message_dbs[0]).read_bytes()[:4096]
-        if not WeChatDBDecryptorV2().validate_key(first_page, bytes.fromhex(db_key)):
+        if not validator.validate_key(first_page, bytes.fromhex(db_key)):
             raise ProviderInitError("密钥校验失败，请重新获取微信数据库密钥。")
 
         cache_dir = Path(TEMP_DIR_PATH) / "dbwatch"
         for shard_path in message_dbs:
             try:
-                self._watchers.append(EncryptedShardWatcher(Path(shard_path), db_key, cache_dir))
+                self._watchers.append(EncryptedShardWatcher(
+                    Path(shard_path), db_key, cache_dir, raw_keys=raw_keys
+                ))
             except Exception as exc:
                 logger.warning("[db_watch] 分片初始化失败 %s: %s", shard_path, exc)
         if not self._watchers:

@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import pytest
 
-from app.services.wechat import key_capture_linux as kcl
+from app.services.wechat.keys import gdb_linux as kcl
 from fixtures.wcdb_factory import build_synth_elf
 
 

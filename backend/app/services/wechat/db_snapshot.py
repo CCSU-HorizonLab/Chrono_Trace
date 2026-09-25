@@ -30,13 +30,17 @@ WAL_FRAME_HEADER_SIZE = 24
 class EncryptedShardWatcher:
     """单个加密 db 分片的增量解密视图。"""
 
-    def __init__(self, src: Path, key_hex: str, cache_dir: Path):
+    def __init__(self, src: Path, key_hex: str, cache_dir: Path,
+                 raw_keys: dict | None = None):
         self.src = Path(src)
         self.key_hex = str(key_hex or "").strip()
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.out_path = self.cache_dir / (self.src.stem + ".dec.db")
         self._dec = WeChatDBDecryptorV2()
+        if raw_keys:
+            # Windows 只读扫描账号：按库 salt 直取 raw key（见 db_decryptor_v2）
+            self._dec.set_raw_key_map(raw_keys)
         self._keys: tuple[bytes, bytes] | None = None
         self._page_hashes: dict[int, str] = {}
         self._conn: sqlite3.Connection | None = None

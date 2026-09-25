@@ -50,6 +50,23 @@ def _normalize_snapshot_files(raw_files: Any) -> list[dict[str, Any]]:
     return files
 
 
+def _normalize_raw_keys(raw: Any) -> dict[str, str]:
+    """规整 Windows 只读扫描产物 {salt_hex: enc_key_hex}；非法项剔除。"""
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, str] = {}
+    for salt, key in raw.items():
+        salt_s, key_s = str(salt or "").strip().lower(), str(key or "").strip().lower()
+        if len(salt_s) == 32 and len(key_s) == 64:
+            try:
+                bytes.fromhex(salt_s)
+                bytes.fromhex(key_s)
+            except ValueError:
+                continue
+            out[salt_s] = key_s
+    return out
+
+
 def normalize_wechat_account(raw: Any) -> Optional[dict[str, Any]]:
     if not isinstance(raw, dict):
         return None
@@ -63,6 +80,8 @@ def normalize_wechat_account(raw: Any) -> Optional[dict[str, Any]]:
     wechat_dir = str(raw.get("wechat_dir") or "").strip()
     source = str(raw.get("source") or "auto").strip() or "auto"
     db_key = str(raw.get("db_key") or "").strip()
+    key_type = str(raw.get("key_type") or "passphrase").strip() or "passphrase"
+    raw_keys = _normalize_raw_keys(raw.get("raw_keys"))
 
     last_import_at_raw = raw.get("last_import_at")
     last_import_at = int(last_import_at_raw) if last_import_at_raw not in (None, "") else None
@@ -74,6 +93,8 @@ def normalize_wechat_account(raw: Any) -> Optional[dict[str, Any]]:
         "wechat_dir": wechat_dir,
         "source": source,
         "db_key": db_key,
+        "key_type": key_type if key_type in {"passphrase", "raw"} else "passphrase",
+        "raw_keys": raw_keys,
         "import_completed": bool(raw.get("import_completed")),
         "last_import_at": last_import_at,
         "last_import_total_size": int(raw.get("last_import_total_size") or 0),
@@ -226,6 +247,8 @@ def update_wechat_account_import_state(
     *,
     snapshot: Optional[dict[str, Any]] = None,
     db_key: Optional[str] = None,
+    key_type: Optional[str] = None,
+    raw_keys: Optional[dict[str, Any]] = None,
     wechat_dir: Optional[str] = None,
     source: Optional[str] = None,
     label: Optional[str] = None,
@@ -238,6 +261,11 @@ def update_wechat_account_import_state(
 
     if db_key is not None:
         merged["db_key"] = db_key
+    if key_type is not None:
+        merged["key_type"] = key_type if key_type in {"passphrase", "raw"} else "passphrase"
+    if raw_keys is not None:
+        # 显式传 dict（含空）才覆盖；None 表示不变
+        merged["raw_keys"] = _normalize_raw_keys(raw_keys)
     if wechat_dir is not None:
         merged["wechat_dir"] = wechat_dir
     if source is not None:

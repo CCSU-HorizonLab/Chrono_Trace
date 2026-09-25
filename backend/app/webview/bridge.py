@@ -3316,16 +3316,34 @@ class Bridge:
 
             import threading
             self._analysis_cancel_event = threading.Event()
-            
-            # 执行特征提取（异步任务）
-            result = service.extract_features(conversation_id, cancel_event=self._analysis_cancel_event)
+
+            # 同会话已有运行中的提取：直接返回该任务，防止并发提取互相删数据
+            running_task = service.find_running_task(conversation_id)
+            if running_task:
+                return {
+                    "success": True,
+                    "data": {"task_id": running_task, "status": "started", "message": "已有进行中的提取任务，已复用"},
+                }
+
+            # 异步启动：立即返回 task_id，前端轮询 get_extraction_progress
+            # （此前同步阻塞至完成，导致切页丢进度 + 重复发起时后端叠加运行）
+            import uuid as _uuid
+            task_id = f"extract_{conversation_id}_{int(time.time())}_{_uuid.uuid4().hex[:6]}"
+            cancel_event = self._analysis_cancel_event
+            threading.Thread(
+                target=lambda: service.extract_features(
+                    conversation_id, cancel_event=cancel_event, task_id=task_id
+                ),
+                daemon=True,
+                name=f"feature-extract-{conversation_id}",
+            ).start()
 
             return {
                 "success": True,
                 "data": {
-                    "task_id": result["task_id"],
-                    "status": "completed",
-                    "message": "Feature extraction completed"
+                    "task_id": task_id,
+                    "status": "started",
+                    "message": "Feature extraction started"
                 }
             }
         except Exception as e:

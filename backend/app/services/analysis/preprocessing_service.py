@@ -1186,6 +1186,7 @@ class SessionManager:
     SLEEP_END_HOUR = 7  # 早上7点结束睡眠
 
     def __init__(self):
+        self._cancel_event = None  # 可选取消信号（分析停止时置位，嵌入分块间检查）
         pass  # get_db() removed for thread safety
         self._sentiment_service = None  # 缓存 SentimentService 实例
 
@@ -1430,12 +1431,22 @@ class SessionManager:
             else:
                 # === 常规全量计算 ===
                 texts = [unit["content"] for unit in speech_units]
-                embeddings = self._sentiment_service._embedding_model.encode(
-                    texts,
-                    normalize_embeddings=True,
-                    show_progress_bar=False,
-                    batch_size=32  # 批量处理
-                )
+                # 分块编码：每块之间检查取消信号——单次全量 encode 不可中断
+                # （实测 1400+ 条约 3 分钟），取消要等整块跑完才能生效
+                embed_model = self._sentiment_service._embedding_model
+                all_embeddings: List[Any] = []
+                CHUNK = 128
+                for chunk_start in range(0, len(texts), CHUNK):
+                    if self._cancel_event is not None and self._cancel_event.is_set():
+                        raise Exception("分析已被用户取消")
+                    chunk = texts[chunk_start:chunk_start + CHUNK]
+                    all_embeddings.extend(embed_model.encode(
+                        chunk,
+                        normalize_embeddings=True,
+                        show_progress_bar=False,
+                        batch_size=32,
+                    ))
+                embeddings = all_embeddings
 
                 # 批量计算所有相邻相似度
                 import numpy as np

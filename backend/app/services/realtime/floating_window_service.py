@@ -49,6 +49,7 @@ class FloatingWindowService:
         self._stop_tracking = threading.Event()
         self._wechat_hwnd = None
         self._webview_hwnd = None    # 缓存 PyWebView 的 HWND
+        self._tracker = None  # Linux X11 窗口跟踪器（惰性创建）
 
     def set_webview_window(self, window):
         """设置 PyWebView 窗口引用"""
@@ -306,7 +307,12 @@ class FloatingWindowService:
 
         - decorated=True: 恢复普通窗口标题栏和系统按钮
         - decorated=False: 去掉标题栏、边框以及最小化/最大化/关闭按钮
+
+        Linux：pywebview 无法动态切换 frameless，保留标题栏（成功返回 True，
+        不阻塞悬浮模式）。
         """
+        if sys.platform != "win32":
+            return True
         try:
             import win32gui
             import win32con
@@ -384,6 +390,17 @@ class FloatingWindowService:
 
         x 与 Win32 窗口矩形同为物理像素，因此宽度也需按 DPI 缩放后再参与钳制。
         """
+        if sys.platform != "win32":
+            # Linux：pywebview move 与 Xlib 坐标同为窗口像素，不做 DPI 二次缩放
+            tracker = self._get_tracker()
+            workarea = tracker.workarea if tracker else None
+            if workarea:
+                wx, _wy, ww, _wh = workarea
+                min_x = wx + margin
+                max_x = max(min_x, wx + ww - width - margin)
+                return max(min_x, min(x, max_x))
+            return max(0, x)
+
         scaled_width = int(width * self._get_window_scale())
 
         try:
@@ -408,6 +425,15 @@ class FloatingWindowService:
 
     def _save_original_rect(self):
         """保存当前窗口的位置和尺寸"""
+        if sys.platform != "win32":
+            try:
+                win = self._webview_window
+                self._original_rect = (win.x, win.y, win.width, win.height)
+                _log(f'保存原始窗口: {self._original_rect}')
+            except Exception as e:
+                _log(f'保存窗口位置失败，使用默认值: {e}')
+                self._original_rect = (100, 100, 1200, 800)
+            return
         try:
             import win32gui
             hwnd = self._webview_hwnd or self._get_webview_hwnd()
@@ -477,8 +503,29 @@ class FloatingWindowService:
             _log(f'获取 HWND 失败: {e}')
             return None
 
+    def _get_tracker(self):
+        """Linux 悬浮窗跟踪器（X11 定位微信窗口），按需创建并缓存。"""
+        if self._tracker is None:
+            try:
+                from .floating_tracker import create_tracker
+
+                self._tracker = create_tracker()
+            except Exception:
+                self._tracker = False  # 不可用标记（避免反复尝试）
+        return self._tracker or None
+
     def _find_wechat_window(self):
         """查找微信主窗口的 rect (left, top, right, bottom)"""
+        if sys.platform != "win32":
+            # Linux：X11 EWMH 定位（无 X/Wayland 时为固定档位）
+            tracker = self._get_tracker()
+            if tracker is None:
+                return None
+            rect = tracker.find()
+            if rect:
+                x, y, w, h = rect
+                return (x, y, x + w, y + h)
+            return None
         try:
             import win32gui
 
@@ -518,6 +565,14 @@ class FloatingWindowService:
 
     def _fallback_position(self):
         """未找到微信窗口时的回退定位（屏幕右侧）"""
+        if sys.platform != "win32":
+            tracker = self._get_tracker()
+            workarea = tracker.workarea if tracker else None
+            if workarea:
+                wx, wy, ww, wh = workarea
+                x = max(wx + 20, wx + ww - self.floating_width - 20)
+                return x, wy + 40, int(wh * 0.7)
+            return 800, 40, 700
         try:
             import win32api
             screen_w = win32api.GetSystemMetrics(0)
@@ -575,11 +630,52 @@ class FloatingWindowService:
 
     def _tracking_loop(self):
         """跟踪循环：每 300ms 检查微信窗口位置，必要时移动悬浮窗"""
+        if sys.platform != "win32":
+            self._tracking_loop_posix()
+            return
         try:
             import win32gui
         except ImportError:
             logger.error("pywin32 不可用，悬浮窗跟随已停用")
             return
+
+    def _tracking_loop_posix(self):
+        """Linux 跟随：X11 定位微信窗口 → pywebview move/resize（无 HWND）。"""
+        tracker = self._get_tracker()
+        if tracker is None:
+            logger.info("[悬浮窗跟踪] 当前显示服务器不支持窗口定位（Wayland?），跟随已停用")
+            return
+        interval = TRACKING_INTERVAL_MS / 1000.0
+        last_key = None
+        _log("跟踪循环(Linux)开始运行")
+        while not self._stop_tracking.is_set():
+            try:
+                rect = tracker.find()
+                if rect is None:
+                    import time as _t
+                    _t.sleep(interval)
+                    continue
+                x, y, w, h = rect
+                target_x = x + w + FLOATING_GAP
+                target_y = y
+                target_h = max(h, FLOATING_MIN_HEIGHT)
+                target_x = self._clamp_floating_x(
+                    target_x, self.floating_width, anchor_point=(w + x - 1, y + 20)
+                )
+                key = (target_x, target_y, self.floating_width, target_h)
+                if key != last_key:
+                    try:
+                        self._webview_window.resize(self.floating_width, target_h)
+                        self._webview_window.move(target_x, target_y)
+                        last_key = key
+                    except Exception as e:
+                        _log(f"移动悬浮窗失败: {e}")
+                import time as _t
+                _t.sleep(interval)
+            except Exception as e:
+                _log(f"跟踪循环异常: {e}")
+                import time as _t
+                _t.sleep(1)
 
         interval = TRACKING_INTERVAL_MS / 1000.0
         last_rect = None

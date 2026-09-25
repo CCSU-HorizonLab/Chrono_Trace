@@ -360,6 +360,7 @@ class RagContextBuilder:
                 remote_model=remote_model,
                 reason="timeout",
                 timed_out=True,
+                trigger_type=trigger_type,
                 memory_intent=memory_intent,
                 rag_enabled=rag_enabled,
                 injection_mode="none",
@@ -391,6 +392,7 @@ class RagContextBuilder:
                 remote_model=remote_model,
                 reason="timeout",
                 timed_out=True,
+                trigger_type=trigger_type,
                 memory_intent=memory_intent,
                 rag_enabled=rag_enabled,
                 injection_mode="none",
@@ -406,6 +408,7 @@ class RagContextBuilder:
                 index_status=status_name,
                 remote_model=remote_model,
                 reason="index_not_ready",
+                trigger_type=trigger_type,
                 memory_intent=memory_intent,
                 rag_enabled=rag_enabled,
                 injection_mode="none",
@@ -421,6 +424,7 @@ class RagContextBuilder:
                 index_status=status_name,
                 remote_model=remote_model,
                 reason="index_failed",
+                trigger_type=trigger_type,
                 memory_intent=memory_intent,
                 rag_enabled=rag_enabled,
                 injection_mode="none",
@@ -713,6 +717,7 @@ class RagContextBuilder:
             prompt_context_hash=prompt_context_hash,
             policy_ids=[relationship_policy_state_id] if relationship_policy_state_id else [],
             contact_preference_ids=contact_preference_ids,
+            trigger_type=trigger_type,
         )
         self.store.conn.commit()
         context["_rag_log_id"] = log_id
@@ -1404,6 +1409,7 @@ class RagContextBuilder:
         remote_model: bool,
         reason: str,
         timed_out: bool = False,
+        trigger_type: str | None = None,
         memory_intent: MemoryIntent | None = None,
         rag_enabled: bool = True,
         injection_mode: str = "none",
@@ -1460,6 +1466,7 @@ class RagContextBuilder:
             query_scope=str(settings.get("rag_query_scope") or "latest_turn"),
             supersession_decision=None,
             run_provenance=context.get("_rag_run_provenance") or "production",
+            trigger_type=trigger_type,
         )
         self.store.conn.commit()
         logger.debug(

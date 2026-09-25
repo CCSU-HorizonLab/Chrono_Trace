@@ -411,6 +411,8 @@ class RagStore:
             "prompt_context_hash": "TEXT",
             "policy_ids_json": "TEXT",
             "contact_preference_ids_json": "TEXT",
+            # P0.1 漏斗完整性：触发段（ambient/manual_request/direct_reply）
+            "trigger_type": "TEXT",
         }
         for name, definition in columns.items():
             if name not in existing:
@@ -903,8 +905,8 @@ class RagStore:
              rerank_reason, retrieval_source, fact_ids_json, evidence_ids_json,
              query_scope, supersession_decision, run_provenance, candidate_ids_json,
              injected_item_ids_json, hot_context_only, prompt_context_hash,
-             policy_ids_json, contact_preference_ids_json, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             policy_ids_json, contact_preference_ids_json, trigger_type, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 payload.get("account_wxid") or "",
@@ -959,6 +961,7 @@ class RagStore:
                 payload.get("prompt_context_hash"),
                 json.dumps(payload.get("policy_ids") or [], ensure_ascii=False),
                 json.dumps(payload.get("contact_preference_ids") or [], ensure_ascii=False),
+                payload.get("trigger_type"),
                 _now(),
             ),
         )

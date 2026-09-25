@@ -317,6 +317,14 @@ P1 闭环后的定位修正：碎片清理和 LLM 抽取已有实质改善，但
 
 修复：**进程级重建互斥**（`_REBUILD_LOCK`，忙时后来者标记 pending 入队由 RagIndexQueue 单 worker 串行跟进，不失败不等待）+ **段级 commit**（写事务窗口从"跨 LLM 抽取的数十秒"缩到毫秒级）。连带修复：`_load_profile_cache` 此前经 thread-local `get_db()` 另开连接（worker 线程会与主线程形成双连接并发写，也是测试意外触碰真实库导致 30 秒 busy 的来源），改为复用 `store.conn`。测试：并发 rebuild 用例（一个 ready、一个 pending 入队、零异常），全量 745 passed。
 
+### 数据库并发根治（2026-09-25 第五轮）：连接层 autocommit
+
+用户复报：不止重建——任何相关操作都会触发锁且**锁死**。根因比 rebuild 互斥更根本：全库连接用 sqlite3 默认 legacy 隐式事务（无显式 BEGIN/回滚管理），**任何写路径异常退出时未提交的写事务会随线程存活一直持有 WAL 写锁**，之后所有连接的写都在 busy 等待——一条坏路径毒化整个库，表现为"任何相关操作都锁、锁死"。
+
+对照实验复现：旧模式下"写后异常不 commit"的连接让其他连接阻塞 32.7 秒后报 database is locked；autocommit 下同类注入零锁错误（4 线程 40 万次混合读写，含异常注入线程，零挂起零锁错）。
+
+修复：`connection.py` 连接工厂 `isolation_level=None`（autocommit）——每条写即时提交，挂起事务从机制上不存在，异常路径无需回滚；写锁窗口缩为单语句毫秒级。`conn.commit()` 变安全 no-op、`with conn:` 块兼容。多步写（upsert+supersede）的原子性由幂等重扫收敛替代（崩溃窗口的中间态下轮重建自愈）。全量 745 passed。
+
 ## P2：长期闭环与真实贡献（收益高、成本高）
 
 ### P2.1 反馈从“落库”变成“可验证修正”

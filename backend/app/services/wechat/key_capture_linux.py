@@ -617,7 +617,14 @@ class LinuxWeChatKeyProvider:
             timeout_seconds=timeout_seconds, account_wxid=account_wxid
         )
         session.start()
+        # 一次性调用需等到终态（start 只等到 hook_ready，后台捕获仍在进行）
+        deadline = time.monotonic() + session.timeout_seconds + 5
         snapshot = session.snapshot()
+        while time.monotonic() < deadline and snapshot.get("status") not in {
+            "captured", "failed", "timed_out",
+        }:
+            time.sleep(0.3)
+            snapshot = session.snapshot()
         if snapshot.get("status") == "captured":
             return {
                 "ok": True,

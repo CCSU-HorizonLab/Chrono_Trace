@@ -43,6 +43,7 @@ FACT_EXTRACTION_SYSTEM_PROMPT = """你是一个聊天记录记忆抽取器。你
 不要抽取：
 - 单纯的应答、寒暄、表情、语气词（好的/嗯/666/哈哈）
 - 一次性的转账、收款、拼单、AA、报销、代付等金钱往来细节（如"早餐钱""转你20""记得还我"）——交易过程不是长期记忆
+- 游戏内商店、卡牌、皮肤、道具等虚拟物品的购买过程（"买了战未来""删了牌买不了东西"）——游戏内的购买操作不是消费事实；只有当它反映稳定的长期偏好（如"对方在卡牌游戏里偏好攒钱买稀有卡"）时才作为偏好抽取，且必须写明是游戏内
 - 一次性的链接、物流、快递单号等事务细节
 - 推测和不确定的判断
 - 敏感隐私原文（身份证号、手机号、银行卡号、住址——即使对话出现也不要输出）
@@ -51,6 +52,7 @@ content 必须是自包含的完整陈述句，把口语中的代词和省略还
 - 差（不可接受）："对方提到：就买一下下嘛"（买什么？没说清）
 - 差（不可接受）："有钱了搞一台"（搞一台什么？删掉对话没人看得懂）
 - 差（不可接受）："我们后天搬"（搬什么？去哪里？）
+- 差（不可接受）："直接买80的""想买便宜点的"（80 的什么？代词结尾=对象已丢失）
 - 好："对方撒娇要求购买之前讨论过的游戏皮肤"
 - 好："对方对虾过敏"
 - 好："两人计划后天把宿舍的行李搬到新租的房子"
@@ -235,12 +237,22 @@ class LLMFactExtractorAdapter:
             {"role": "system", "content": FACT_FUSION_SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},
         ]
-        body = self._call_chat(messages, max_tokens=payload.get("max_tokens") or 1024)
+        body = self._call_chat(messages, max_tokens=payload.get("max_tokens") or 2048)
         content = self._extract_content(body)
         candidate = self._json_candidate(content)
         if not candidate:
-            raise ValueError("fact fusion response has no JSON object")
-        parsed = json.loads(candidate)
+            # 诊断片段帮助区分"截断/无 JSON/围栏"——真实库失败主因是截断
+            raise ValueError(
+                f"fact fusion response has no JSON object (len={len(content)},"
+                f" head={content[:120]!r})"
+            )
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"fact fusion response invalid JSON ({exc}; candidate_len={len(candidate)},"
+                f" tail={candidate[-120:]!r})"
+            ) from exc
         if not isinstance(parsed, dict) or not isinstance(parsed.get("decisions"), list):
             raise ValueError("fact fusion response requires decisions")
         return parsed

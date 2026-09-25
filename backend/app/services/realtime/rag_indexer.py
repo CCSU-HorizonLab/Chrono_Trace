@@ -43,7 +43,11 @@ class RagIndexer:
     # P1.2 LLM 结构化抽取的每轮预算：每次重建每联系人最多抽取的段数
     LLM_EXTRACT_SEGMENT_BUDGET = 40
     # P1.5 断点续抽版本：抽取 prompt/质量门变化时递增，水位失效全量重抽
-    FACT_EXTRACT_PROMPT_VERSION = "p1.5"
+    # p1.6：游戏内购买排除+购买代词差例强化（P1.6 T11）
+    FACT_EXTRACT_PROMPT_VERSION = "p1.6"
+    # P1.6 融合候选上限：候选过多时 decisions 响应变长易截断（真实库
+    # 出现 invalid JSON/no JSON 多为 max_tokens 截断），按置信度取前 N
+    FACT_FUSION_CANDIDATE_LIMIT = 12
 
     def __init__(
         self,
@@ -945,6 +949,8 @@ class RagIndexer:
         """Return safe fusion decisions; any model uncertainty becomes ADD."""
         if not candidates or self.structured_fact_extractor is None:
             return []
+        # 候选按置信度排序后截断，防止 decisions 响应过长被 max_tokens 截断
+        fusion_candidates = candidates[: self.FACT_FUSION_CANDIDATE_LIMIT]
         try:
             prompt = json.dumps(
                 {
@@ -957,8 +963,9 @@ class RagIndexer:
                             "confidence": item["confidence"],
                             "evidence_message_ids": json.loads(item.get("evidence_message_ids_json") or "[]"),
                         }
-                        for item in candidates
+                        for item in fusion_candidates
                     ],
+                    "max_tokens": 2048,
                     "contract": {
                         "output": {"decisions": [{"fact_id": "integer", "action": "ADD|UPDATE|INVALIDATE|MERGE|NOOP"}]},
                         "meaning": {
@@ -974,7 +981,7 @@ class RagIndexer:
             )
             return self.structured_fact_extractor.decide_fusion(
                 prompt,
-                candidate_ids={int(item["id"]) for item in candidates},
+                candidate_ids={int(item["id"]) for item in fusion_candidates},
             )
         except Exception as exc:
             logger.warning("[RAG Fact Fusion] invalid/failed decision; falling back to ADD: %s", exc)

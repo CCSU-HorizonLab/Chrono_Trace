@@ -324,7 +324,7 @@ class SentimentService:
             embedding_list = embedding.tolist()
             self._set_embedding_dimension(len(embedding_list))
 
-            if len(self._embedding_cache) >= 10000:
+            if len(self._embedding_cache) >= 4000:
                 oldest_key = next(iter(self._embedding_cache))
                 del self._embedding_cache[oldest_key]
 
@@ -377,7 +377,7 @@ class SentimentService:
 
                         results[original_index] = embedding_list
 
-                        if len(self._embedding_cache) >= 10000:
+                        if len(self._embedding_cache) >= 4000:
                             oldest_key = next(iter(self._embedding_cache))
                             del self._embedding_cache[oldest_key]
                         self._embedding_cache[uncached_texts[local_index]] = embedding_list

@@ -494,7 +494,9 @@ async function ensureRealtimeAnalysisModelsReady(): Promise<boolean> {
 
 const inspectorOpen = ref(false)
 const isWideMode = ref(window.innerWidth >= 820)
-window.addEventListener('resize', () => { isWideMode.value = window.innerWidth >= 820 })
+// 提为具名函数，保证 add/remove 用同一引用，避免组件卸载后监听残留
+const handleInspectorResize = () => { isWideMode.value = window.innerWidth >= 820 }
+window.addEventListener('resize', handleInspectorResize)
 const inspectorTab = ref<'emotion' | 'context'>('emotion')
 const showSecondaryCharts = ref(false)
 watch(showSecondaryCharts, (val) => { if (val) { nextTick(() => { typeof syncCharts === 'function' && syncCharts(); typeof triggerChartResize === 'function' && triggerChartResize() }) } })
@@ -648,6 +650,12 @@ type RagContextSummary = {
   hit_count?: number
   referenced_count?: number
   log_id?: number | null
+}
+// 后端时间戳统一为 Unix 秒；此处兜底转换成毫秒（>1e12 视为已是毫秒，空值用当前时间）
+// 直接 new Date(秒) 会落到 1970 年，导致气泡时间与排序错乱
+function toMs(v: any): number {
+  const n = Number(v)
+  return (n && n > 1e12) ? n : (n ? n * 1000 : Date.now())
 }
 const conversationHistory = ref<{ role: string; content: string; ts: number; rag_context?: RagContextSummary }[]>([])
 
@@ -1223,6 +1231,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   stopPolling()
+  window.removeEventListener('resize', handleInspectorResize)
   window.removeEventListener('resize', resizeVisibleCharts)
   disposeAllCharts()
   resolveResumeChoice('skip')
@@ -1734,13 +1743,13 @@ function startPolling() {
           // 分拣气泡与卡片
           if (s.summary === '[PURE_CHAT]') {
              if (s.reply) {
-               conversationHistory.value.push({ role: 'ai', content: s.reply, ts: Math.floor(new Date(s.created_at || Date.now()).getTime()/1000) })
+               conversationHistory.value.push({ role: 'ai', content: s.reply, ts: Math.floor(toMs(s.created_at)/1000) })
              }
           } else {
              const parsedSpeeches = typeof s.speeches === 'string' ? JSON.parse(s.speeches) : (s.speeches || [])
              pendingSuggestions.value.push({ ...s, speeches: parsedSpeeches, _expanded: false, _type: 'suggestion' })
              if (s.reply) {
-               conversationHistory.value.push({ role: 'ai', content: s.reply, ts: Math.floor(new Date(s.created_at || Date.now()).getTime()/1000) })
+               conversationHistory.value.push({ role: 'ai', content: s.reply, ts: Math.floor(toMs(s.created_at)/1000) })
              }
           }
         })

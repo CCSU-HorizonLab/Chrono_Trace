@@ -193,7 +193,14 @@ class AffinityAnalysisService:
             self._check_cancelled(cancel_event)
             result.progress_percent = 20
             logger.info("[好感度分析] 步骤 2/5: 预处理数据 (这可能需要较长时间)...")
-            stats = self._preprocess_conversation(conversation_id, force_reanalyze, cancel_event)
+            def _preprocess_progress(fraction: float) -> None:
+                # 预处理阶段 20→40%：语义相似度嵌入真实进度（此前一跳 3 分钟）
+                frac = min(1.0, max(0.0, fraction))
+                result.progress_percent = 20 + int(20 * frac)
+                result.current_step = f"预处理数据 (语义相似度 {int(frac * 100)}%)"
+            stats = self._preprocess_conversation(
+                conversation_id, force_reanalyze, cancel_event, _preprocess_progress
+            )
             logger.info("[好感度分析] 步骤 2/5: 预处理完成")
             
             # 4. 计算各维度
@@ -333,11 +340,12 @@ class AffinityAnalysisService:
         self,
         conversation_id: int,
         force_reprocess: bool = False,
-        cancel_event: Optional[threading.Event] = None
+        cancel_event: Optional[threading.Event] = None,
+        progress_cb=None,
     ) -> PreprocessedStatistics:
         """执行预处理"""
         return self.preprocessing.orchestrate_preprocessing(
-            conversation_id, force_reprocess, cancel_event
+            conversation_id, force_reprocess, cancel_event, progress_cb=progress_cb
         )
     
 

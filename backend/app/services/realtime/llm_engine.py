@@ -900,13 +900,13 @@ class LLMSuggestionEngine(SuggestionEngine):
             }
             if "fact_memory" in doc_types:
                 return _summary("fact_hit", f"已参考 {referenced_count} 条历史事实")
-            if doc_types & _RAG_RELATIONSHIP_DOC_TYPES or debug.get("relationship_policy_injected"):
+            if doc_types & _RAG_RELATIONSHIP_DOC_TYPES or debug.get("relationship_policy_injected") or debug.get("contact_preference_injected"):
                 return _summary("relationship_policy", "已参考关系画像")
             if doc_types and doc_types <= {"hot_context"}:
                 return _summary("hot_context", "仅参考当前对话上下文")
             return _summary("document_hit", f"已参考 {referenced_count} 条历史记录")
 
-        if debug.get("relationship_policy_injected"):
+        if debug.get("relationship_policy_injected") or debug.get("contact_preference_injected"):
             return _summary("relationship_policy", "已参考关系画像")
 
         if debug.get("hot_context_only"):
@@ -1105,6 +1105,20 @@ class LLMSuggestionEngine(SuggestionEngine):
             if isinstance(confidence, (int, float)) and confidence > 0:
                 parts.append(f"  置信度: {int(confidence * 100)}%")
             parts.append("  使用规则: 以上是系统从历史对话派生的关系背景，只在判断\"怎么回更合适\"时参考；不要向对方复述或主动提起这些结论")
+
+        # P1.2 对方偏好/雷点速查：独立小预算槽，据此调整建议内容与措辞
+        contact_preferences = context.get("contact_preferences")
+        if contact_preferences and not is_direct_reply:
+            parts.append("\n【对方偏好与雷点（速查，据此调整建议内容与措辞）】")
+            for pref in contact_preferences[:6]:
+                kind_label = "雷点" if pref.get("slot_kind") == "avoid" else "偏好"
+                summary = str(pref.get("summary") or "")[:120]
+                if not summary:
+                    continue
+                confidence = pref.get("confidence")
+                percent = f"（置信 {int(confidence * 100)}%）" if isinstance(confidence, (int, float)) and confidence > 0 else ""
+                parts.append(f"  · [{kind_label}] {summary}{percent}")
+            parts.append("  使用规则: 建议内容尽量顺着偏好、避开雷点；这只是历史倾向，当下对话有明确不同表态时以当下为准；不要向对方复述或主动提起")
 
         # 联系人画像（如有）—— 策略优先参考：决定"怎么回更合适"
         profile = context.get("contact_profile")

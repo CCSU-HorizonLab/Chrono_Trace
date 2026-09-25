@@ -417,6 +417,18 @@ class RagIndexer:
                 )
             except Exception as shadow_exc:
                 logger.debug("[RAG Index] relationship shadow refresh failed: %s", shadow_exc)
+            # P1.2 对方偏好策略影子刷新（槽位级，聚槽用本索引器的 embedding）
+            try:
+                from .rag_contact_preference import refresh_contact_preferences_shadow
+
+                refresh_contact_preferences_shadow(
+                    self.store,
+                    account_wxid=account_wxid,
+                    conversation_id=conversation_id,
+                    embedding_service=self.embedding_service,
+                )
+            except Exception as pref_exc:
+                logger.debug("[RAG Index] contact preference refresh failed: %s", pref_exc)
             logger.debug(
                 "[RAG Index] version=%s docs=%s vectors=%s cleaned_old=%s",
                 self.INDEX_VERSION,

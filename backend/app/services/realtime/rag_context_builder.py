@@ -92,6 +92,9 @@ class RagContextBuilder:
     # P1.5 注入护栏：影子开关关闭=用户停用关系策略链路（含已生成的历史
     # 策略行）；低置信策略不注入，只留在影子层
     RELATIONSHIP_POLICY_MIN_CONFIDENCE = 0.55
+    # P1.2 对方偏好策略独立预算槽：不占事实 1600 字、不占关系策略槽
+    CONTACT_PREFERENCE_MAX_ITEMS = 6
+    CONTACT_PREFERENCE_MIN_CONFIDENCE = 0.55
 
     def __init__(
         self,
@@ -178,6 +181,79 @@ class RagContextBuilder:
             return None
         context["relationship_policy"] = policy
         return policy["state_id"]
+
+    def _inject_contact_preferences(
+        self,
+        context: dict[str, Any],
+        *,
+        account_wxid: str,
+        conversation_id: int,
+        remote_model: bool,
+        redaction_disabled: bool,
+    ) -> list[int]:
+        """P1.2 分槽注入：对方偏好/雷点速查，独立于检索与关系策略。
+
+        数据源是槽位级影子表（默认无数据→零行为变化）；注入前提同
+        T6 护栏（注入+影子开关同时开启）；低置信槽不注入；远程模型
+        对摘要脱敏（失败丢弃该槽文本保留枚举）。返回注入的 pref_id
+        列表供检索日志 contact_preference_ids 记录。
+        """
+        settings = load_rag_settings()
+        if not settings.get("rag_relationship_policy_injection_enabled", True):
+            return []
+        if not settings.get("rag_relationship_policy_shadow_enabled", False):
+            return []
+        try:
+            prefs = self.store.list_contact_preferences(account_wxid, conversation_id)
+        except Exception:
+            return []
+
+        selected: list[dict[str, Any]] = []
+        for row in prefs:
+            if len(selected) >= self.CONTACT_PREFERENCE_MAX_ITEMS:
+                break
+            if str(row.get("sensitivity") or "normal") == "sensitive":
+                continue
+            if float(row.get("confidence") or 0.0) < self.CONTACT_PREFERENCE_MIN_CONFIDENCE:
+                continue
+            summary = str(row.get("summary") or "").strip()
+            if not summary:
+                continue
+            selected.append(
+                {
+                    "pref_id": int(row.get("id") or 0),
+                    "slot_kind": str(row.get("slot_kind") or "preference"),
+                    "summary": summary,
+                    "confidence": float(row.get("confidence") or 0.0),
+                    "support_count": int(row.get("support_count") or 1),
+                    "policy_version": str(row.get("policy_version") or ""),
+                }
+            )
+        if not selected:
+            return []
+
+        if remote_model and not redaction_disabled:
+            try:
+                redactor = PrivacyRedactor(self.store.conn)
+                for pref in selected:
+                    if pref["summary"]:
+                        pref["summary"] = redactor.redact(
+                            pref["summary"],
+                            account_wxid=account_wxid,
+                            conversation_id=conversation_id,
+                            source_table="rag_contact_preferences",
+                            source_id=str(pref["pref_id"]),
+                        ).redacted_text
+            except Exception:
+                # 脱敏失败丢弃文本，保留槽位枚举（偏好/雷点类型）
+                for pref in selected:
+                    pref["summary"] = ""
+
+        usable = [pref for pref in selected if pref["summary"]]
+        if not usable:
+            return []
+        context["contact_preferences"] = usable
+        return [pref["pref_id"] for pref in usable]
 
     def enrich_context(
         self,
@@ -555,6 +631,13 @@ class RagContextBuilder:
             remote_model=remote_model,
             redaction_disabled=redaction_disabled,
         )
+        contact_preference_ids = self._inject_contact_preferences(
+            context,
+            account_wxid=account_wxid,
+            conversation_id=conversation_id,
+            remote_model=remote_model,
+            redaction_disabled=redaction_disabled,
+        )
 
         log_id = self.store.insert_retrieval_log(
             account_wxid=account_wxid,
@@ -629,6 +712,7 @@ class RagContextBuilder:
             hot_context_only=hot_context_only,
             prompt_context_hash=prompt_context_hash,
             policy_ids=[relationship_policy_state_id] if relationship_policy_state_id else [],
+            contact_preference_ids=contact_preference_ids,
         )
         self.store.conn.commit()
         context["_rag_log_id"] = log_id
@@ -748,6 +832,9 @@ class RagContextBuilder:
         )
         if relationship_policy_state_id:
             context["_rag_debug"]["relationship_policy_injected"] = True
+        if contact_preference_ids:
+            context["_rag_debug"]["contact_preference_injected"] = True
+            context["_rag_debug"]["contact_preference_ids"] = contact_preference_ids
 
     def attach_log_to_suggestion(self, log_id: int | None, suggestion_id: int) -> None:
         self.store.attach_log_to_suggestion(log_id, suggestion_id)

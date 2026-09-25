@@ -64,8 +64,17 @@ class DatabaseConnection:
         with cls._schema_lock:
             cls._db_path = db_path
         
-        # 创建连接
-        conn = sqlite3.connect(db_path, check_same_thread=False, timeout=30.0)
+        # 创建连接。
+        # isolation_level=None（autocommit）：每条写语句即时提交。
+        # 默认的 legacy 隐式事务下，任何写路径异常退出时未回滚，该线程
+        # 的连接就会永久持有写锁——之后所有连接（建议生成/设置页/索引
+        # 队列）的写都在 busy 等待，表现为"任何相关操作都触发锁且锁死"。
+        # autocommit 从机制上消灭挂起事务；写锁窗口缩为单语句毫秒级，
+        # WAL + busy_timeout=30s 下并发连接最多短暂等待。conn.commit()
+        # 变为安全 no-op，`with conn:` 块亦兼容。
+        conn = sqlite3.connect(
+            db_path, check_same_thread=False, timeout=30.0, isolation_level=None
+        )
         conn.row_factory = sqlite3.Row  # 支持字典式访问
         conn.execute("PRAGMA busy_timeout = 30000")
         conn.execute("PRAGMA synchronous = NORMAL")

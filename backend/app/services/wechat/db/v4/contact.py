@@ -15,19 +15,22 @@ class ContactDBV4(WeChatDBBase):
     主表: contact
     """
     
-    def __init__(self, db_path: str, db_key: str = None):
+    def __init__(self, db_path: str, db_key: str = None, raw_keys: dict = None):
         """
         初始化联系人数据库
-        
+
         Args:
             db_path: contact.db 文件路径
             db_key: 数据库密钥(如果需要解密)
+            raw_keys: Windows 只读扫描产物 {salt_hex: enc_key_hex}（可选，
+                设置后解密按库 salt 直取 raw key）
         """
         self.db_path = db_path
         self.db_key = db_key
+        self.raw_keys = raw_keys
         self.conn = None
         self._connect()
-    
+
     def _connect(self):
         """建立数据库连接"""
         import tempfile
@@ -40,6 +43,8 @@ class ContactDBV4(WeChatDBBase):
                 # 使用新的纯Python解密器
                 from ...db_decryptor_v2 import WeChatDBDecryptorV2
                 decryptor = WeChatDBDecryptorV2()
+                if self.raw_keys:
+                    decryptor.set_raw_key_map(self.raw_keys)
 
                 # 先验证密钥
                 if not decryptor.verify_key_from_file(self.db_path, self.db_key):

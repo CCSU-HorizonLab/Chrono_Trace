@@ -46,7 +46,7 @@ def test_upsert_contacts_syncs_conversation_display_name(monkeypatch, isolated_d
     isolated_db.commit()
 
     class FakeContactDB:
-        def __init__(self, db_path: str, db_key: str):
+        def __init__(self, db_path: str, db_key: str, raw_keys=None):
             pass
 
         def get_contacts(self):
@@ -101,7 +101,7 @@ def test_upsert_contacts_fallback_to_nickname_when_remark_empty(monkeypatch, iso
     isolated_db.commit()
 
     class FakeContactDB:
-        def __init__(self, db_path: str, db_key: str):
+        def __init__(self, db_path: str, db_key: str, raw_keys=None):
             pass
 
         def get_contacts(self):
@@ -154,7 +154,7 @@ def test_upsert_contacts_fallback_to_username_when_both_empty(monkeypatch, isola
     isolated_db.commit()
 
     class FakeContactDB:
-        def __init__(self, db_path: str, db_key: str):
+        def __init__(self, db_path: str, db_key: str, raw_keys=None):
             pass
 
         def get_contacts(self):
@@ -214,7 +214,7 @@ def test_upsert_contacts_does_not_affect_other_accounts(monkeypatch, isolated_db
     isolated_db.commit()
 
     class FakeContactDB:
-        def __init__(self, db_path: str, db_key: str):
+        def __init__(self, db_path: str, db_key: str, raw_keys=None):
             pass
 
         def get_contacts(self):

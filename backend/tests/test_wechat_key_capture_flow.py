@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from backend.app.services.wechat import key_capture_flow
+from backend.app.services.wechat.keys import flow_win as key_capture_flow
 
 
 def test_inspect_reports_not_running(monkeypatch):

@@ -32,11 +32,25 @@ class WeChatDBDecryptorV2:
         self.reserve = self.IV_SIZE + self.HMAC_SHA512_SIZE
         if self.reserve % self.AES_BLOCK_SIZE != 0:
             self.reserve = ((self.reserve // self.AES_BLOCK_SIZE) + 1) * self.AES_BLOCK_SIZE
-    
+        # Windows 只读扫描产物的 raw enc_key 模式（见 set_raw_key_map）
+        self._raw_key_map: dict = {}
+
+    def set_raw_key_map(self, raw_keys) -> None:
+        """启用 raw key 模式：{salt_hex: enc_key_hex}（Windows 只读扫描产物）。
+
+        设置后 derive_keys 优先按库 salt 直取 raw key（mac_key 以 2 轮 PBKDF2
+        从 enc_key 派生，SQLCipher raw key 语义）；salt 未命中时回落 passphrase
+        派生。传 None/空恢复纯 passphrase 模式。validate_key / verify_key_from_file /
+        decrypt_database / decrypt_page 全部自动生效。
+        """
+        self._raw_key_map = {
+            str(k).lower(): str(v).lower() for k, v in (raw_keys or {}).items()
+        } if raw_keys else {}
+
     def derive_keys(self, key: bytes, salt: bytes) -> Tuple[bytes, bytes]:
         """
         派生加密密钥和MAC密钥
-        
+
         Args:
             key: 原始密钥 (32字节)
             salt: 盐值 (16字节)
@@ -44,6 +58,13 @@ class WeChatDBDecryptorV2:
         Returns:
             (enc_key, mac_key): 加密密钥和MAC密钥
         """
+        # raw key 模式（Windows 只读扫描）：salt 命中则直接采用，key 参数被忽略
+        if self._raw_key_map:
+            hit = self._raw_key_map.get(salt.hex())
+            if hit:
+                enc_key = bytes.fromhex(hit)
+                return enc_key, self._derive_mac_key(enc_key, salt)
+
         from Crypto.Hash import SHA512
         
         # 生成加密密钥
@@ -66,7 +87,15 @@ class WeChatDBDecryptorV2:
         )
         
         return enc_key, mac_key
-    
+
+    def _derive_mac_key(self, enc_key: bytes, salt: bytes) -> bytes:
+        """从 enc_key 派生 mac_key（2 轮 PBKDF2，raw key 语义，与派生链后半段一致）。"""
+        from Crypto.Hash import SHA512
+        mac_salt = bytes(b ^ 0x3a for b in salt)
+        return PBKDF2(
+            enc_key, mac_salt, dkLen=self.KEY_SIZE, count=2, hmac_hash_module=SHA512
+        )
+
     def validate_key(self, first_page: bytes, key: bytes) -> bool:
         """
         验证密钥是否正确

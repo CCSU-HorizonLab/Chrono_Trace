@@ -54,7 +54,7 @@ class XlibTracker:
 
     def _wechat_pids(self) -> set[int]:
         try:
-            from ...wechat.key_capture_linux import find_linux_wechat_pids
+            from ...wechat.keys.gdb_linux import find_linux_wechat_pids
 
             return set(find_linux_wechat_pids())
         except Exception:

@@ -20,17 +20,20 @@ class MessageDBV4(WeChatDBBase):
     辅助表: Name2Id (username <-> rowid 映射)
     """
     
-    def __init__(self, db_paths: List[str], db_key: str = None, my_wxid: str = None):
+    def __init__(self, db_paths: List[str], db_key: str = None, my_wxid: str = None,
+                 raw_keys: dict = None):
         """
         初始化消息数据库(可能有多个分片)
-        
+
         Args:
             db_paths: message_*.db 文件路径列表
             db_key: 数据库密钥(如果需要解密)
             my_wxid: 当前用户wxid(用于判断is_sender)
+            raw_keys: Windows 只读扫描产物 {salt_hex: enc_key_hex}（可选）
         """
         self.db_paths = db_paths if isinstance(db_paths, list) else [db_paths]
         self.db_key = db_key
+        self.raw_keys = raw_keys
         self.my_wxid = my_wxid
         self._my_wxid_candidates = self._build_my_wxid_candidates(my_wxid)
         self.connections = []
@@ -69,6 +72,8 @@ class MessageDBV4(WeChatDBBase):
                     # 使用新的纯Python解密器
                     from ...db_decryptor_v2 import WeChatDBDecryptorV2
                     decryptor = WeChatDBDecryptorV2()
+                    if self.raw_keys:
+                        decryptor.set_raw_key_map(self.raw_keys)
 
                     # 验证密钥
                     if not decryptor.verify_key_from_file(db_path, self.db_key):

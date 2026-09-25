@@ -54,12 +54,15 @@ class WeChatIngestService:
                 "error": f"查找微信路径失败: {str(e)}"
             }
 
-    def verify_key(self, db_key: str, custom_paths: Optional[Dict] = None) -> Dict[str, Any]:
+    def verify_key(self, db_key: str, custom_paths: Optional[Dict] = None,
+                   key_type: str = "passphrase", raw_keys: Optional[Dict] = None) -> Dict[str, Any]:
         """
         验证密钥是否有效
 
         Args:
             db_key: 32位hex密钥
+            key_type: "passphrase"（默认）或 "raw"（Windows 只读扫描产物）
+            raw_keys: key_type="raw" 时的 {salt_hex: enc_key_hex} 映射
 
         Returns:
             dict: {"ok": bool, "error": str}
@@ -69,6 +72,9 @@ class WeChatIngestService:
             paths = self.resolve_wechat_paths(custom_paths)
             if not paths:
                 return {"ok": False, "error": "未找到微信数据库"}
+
+            if key_type == "raw" and raw_keys:
+                return self._verify_raw_keys(paths, raw_keys)
 
             # 选择第一个消息库进行验证
             message_dbs = paths["databases"]["message"]
@@ -90,6 +96,34 @@ class WeChatIngestService:
 
         except Exception as e:
             return {"ok": False, "error": f"验证失败: {str(e)}"}
+
+    def _verify_raw_keys(self, paths: Dict[str, Any], raw_keys: Dict[str, str]) -> Dict[str, Any]:
+        """Windows 只读扫描产物验证：按库 salt 逐一直取 raw key 做 HMAC 校验。"""
+        from .db_decryptor_v2 import WeChatDBDecryptorV2
+
+        databases = paths.get("databases") or {}
+        targets: list[str] = list(databases.get("message") or [])
+        targets += list(databases.get("contact") or [])
+        if not targets:
+            return {"ok": False, "error": "未找到任何数据库"}
+
+        dec = WeChatDBDecryptorV2()
+        dec.set_raw_key_map(raw_keys)
+        verified = 0
+        for db_path in targets:
+            try:
+                with open(db_path, "rb") as f:
+                    page1 = f.read(4096)
+                if len(page1) == 4096 and dec.validate_key(page1, b"\x00" * 32):
+                    verified += 1
+            except OSError:
+                continue
+        if verified:
+            return {"ok": True}
+        return {
+            "ok": False,
+            "error": "raw 密钥映射无法验证任何数据库（salt 不匹配或微信已换密钥）",
+        }
 
     def resolve_wechat_paths(self, custom_paths: Optional[Dict] = None) -> Dict[str, Any]:
         """Resolve the active WeChat data paths for import and incremental checks."""
@@ -160,7 +194,8 @@ class WeChatIngestService:
         db_key: str,
         options: Optional[Dict] = None,
         custom_paths: Optional[Dict] = None,
-        progress_callback: Optional[Callable[[str, int, int], None]] = None
+        progress_callback: Optional[Callable[[str, int, int], None]] = None,
+        raw_keys: Optional[Dict] = None,
     ) -> Dict[str, Any]:
         """
         完整的微信数据导入流程
@@ -233,6 +268,7 @@ class WeChatIngestService:
                     databases["contact"],
                     db_key,
                     account_wxid,
+                    raw_keys=raw_keys,
                 )
                 stats["inserted_contacts"] = contact_count
                 imported_contacts = True
@@ -250,7 +286,8 @@ class WeChatIngestService:
                     wxid,
                     account_wxid,
                     limit,
-                    progress_callback
+                    progress_callback,
+                    raw_keys=raw_keys,
                 )
 
                 stats["inserted_messages"] = message_stats["total"]
@@ -317,7 +354,7 @@ class WeChatIngestService:
             if not contact_db_path:
                 return {"ok": False, "error": "未找到联系人数据库"}
 
-            contact_db = ContactDBV4(contact_db_path, db_key)
+            contact_db = ContactDBV4(contact_db_path, db_key, raw_keys=raw_keys)
             try:
                 contacts_data = contact_db.get_contacts()
             finally:
@@ -340,12 +377,13 @@ class WeChatIngestService:
             logger.error(f"[DEBUG] 刷新联系人头像失败: {e}")
             return {"ok": False, "error": f"刷新联系人头像失败: {str(e)}"}
 
-    def _import_contacts_v4(self, contact_db_path: str, db_key: str, account_wxid: str) -> int:
+    def _import_contacts_v4(self, contact_db_path: str, db_key: str, account_wxid: str,
+                            raw_keys: Optional[Dict] = None) -> int:
         """导入联系人(V4版本)"""
         logger.info("\n[DEBUG] 开始导入联系人")
         logger.debug(f"[DEBUG] 联系人数据库路径: {contact_db_path}")
 
-        contact_db = ContactDBV4(contact_db_path, db_key)
+        contact_db = ContactDBV4(contact_db_path, db_key, raw_keys=raw_keys)
 
         try:
             contacts_data = contact_db.get_contacts()
@@ -565,7 +603,8 @@ class WeChatIngestService:
         wxid: str,
         account_wxid: str,
         limit: int,
-        progress_callback: Optional[Callable] = None
+        progress_callback: Optional[Callable] = None,
+        raw_keys: Optional[Dict] = None,
     ) -> Dict:
         """导入消息(V4版本)"""
         logger.info("[DEBUG] Start importing messages")
@@ -580,7 +619,7 @@ class WeChatIngestService:
         conversation_cache: dict[str, int] = {}
         touched_conversations: dict[int, int] = {}
 
-        message_db = MessageDBV4(message_db_paths, db_key, my_wxid=wxid)
+        message_db = MessageDBV4(message_db_paths, db_key, my_wxid=wxid, raw_keys=raw_keys)
 
         try:
             if progress_callback:

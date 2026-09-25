@@ -98,7 +98,11 @@ class FeatureExtractionService:
             self._update_task_status(task_id, 10, "Splitting sessions")
             logger.info("[特征提取] 步骤 1/4: 会话切分...")
             step_start = time.time()
-            sessions = self.extract_sessions(conversation_id)
+            def _split_progress(fraction: float) -> None:
+                # 步骤 1 内部 10→40%：语义相似度嵌入真实进度（此前一跳数分钟）
+                frac = min(1.0, max(0.0, fraction))
+                self._update_task_status(task_id, 10 + int(30 * frac), "Splitting sessions")
+            sessions = self.extract_sessions(conversation_id, _split_progress)
             logger.info(f"[特征提取] 步骤 1/4: 会话切分完成 ({len(sessions)} 个会话, {time.time() - step_start:.1f}s)")
 
             # 2. 响应时间计算
@@ -176,7 +180,9 @@ class FeatureExtractionService:
     # User Story 1: 会话切分
     # =========================================================================
 
-    def extract_sessions(self, conversation_id: int) -> List[Dict[str, Any]]:
+    def extract_sessions(
+        self, conversation_id: int, progress_cb=None
+    ) -> List[Dict[str, Any]]:
         """
         提取会话（User Story 1核心方法）
         使用新的 SessionManager：睡眠时间+时间间隔+语义相似度三重切分
@@ -214,7 +220,7 @@ class FeatureExtractionService:
             return []
 
         # 2.2 使用新的 SessionManager 切分会话（睡眠+时间+语义）
-        session_result = self._session_manager.split_sessions(speech_units)
+        session_result = self._session_manager.split_sessions(speech_units, progress_cb=progress_cb)
 
         # 3. 转换为数据库格式
         sessions_data = []

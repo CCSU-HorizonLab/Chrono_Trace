@@ -910,6 +910,10 @@ class RagStore:
 
     def upsert_fact(self, **payload: Any) -> int:
         now = _now()
+        # 重扫 upsert 不得复活已被维护循环退役的事实：superseded（演变链）
+        # 与 uncertain（质量隔离）是终态维护状态，同 content 重扫只允许
+        # 刷新 active 行的元数据——否则语义路径每轮重建都会把 LLM 融合
+        # UPDATE 退役的旧事实改回 active，演变链被静默抹掉。
         self.conn.execute(
             """
             INSERT INTO rag_facts
@@ -918,14 +922,19 @@ class RagStore:
              source_window_json, summary_method, supersedes_fact_id, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(account_wxid, conversation_id, kind, content) DO UPDATE SET
-              subject=excluded.subject, status=excluded.status, as_of=excluded.as_of,
+              subject=excluded.subject,
+              status=CASE WHEN rag_facts.status IN ('superseded', 'uncertain')
+                      THEN rag_facts.status ELSE excluded.status END,
+              as_of=excluded.as_of,
               valid_from=excluded.valid_from, valid_to=excluded.valid_to,
               confidence=excluded.confidence, sensitivity=excluded.sensitivity,
-              enabled=excluded.enabled,
+              enabled=CASE WHEN rag_facts.status IN ('superseded', 'uncertain')
+                      THEN rag_facts.enabled ELSE excluded.enabled END,
               evidence_message_ids_json=excluded.evidence_message_ids_json,
               source_window_json=excluded.source_window_json,
               summary_method=excluded.summary_method,
-              supersedes_fact_id=excluded.supersedes_fact_id, updated_at=excluded.updated_at
+              supersedes_fact_id=COALESCE(excluded.supersedes_fact_id, rag_facts.supersedes_fact_id),
+              updated_at=excluded.updated_at
             """,
             (
                 payload.get("account_wxid") or "",

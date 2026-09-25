@@ -1870,6 +1870,25 @@ class Bridge:
             else:
                 result = store.set_fact_user_feedback(int(fact_id), action, reason or "")
             store.conn.commit()
+            # 用户纠错后刷新关系策略影子：剔除已禁用事实的 evidence 引用
+            # （P2.1 最小闭环；刷新受 shadow 开关保护，失败绝不阻塞反馈）
+            if result.get("ok"):
+                try:
+                    from ..services.realtime.rag_relationship_policy import (
+                        refresh_after_fact_feedback,
+                    )
+
+                    refresh_result = refresh_after_fact_feedback(store, int(fact_id))
+                    store.conn.commit()
+                    logger.debug(
+                        "[Bridge] 记忆反馈后关系策略刷新 fact=%s result=%s",
+                        fact_id,
+                        refresh_result,
+                    )
+                except Exception as refresh_exc:
+                    logger.warning(
+                        "[Bridge] 记忆反馈后关系策略刷新失败（不影响反馈）: %s", refresh_exc
+                    )
             return result
         except Exception as e:
             logger.error(f"[Bridge] 记忆反馈失败: {e}")

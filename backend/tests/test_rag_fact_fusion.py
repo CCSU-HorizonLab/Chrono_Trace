@@ -225,3 +225,109 @@ def test_fusion_failure_falls_back_to_add_only(monkeypatch):
         "SELECT * FROM rag_facts WHERE content LIKE '对方现在开始喜欢吃苦瓜%'"
     ).fetchone()
     assert new is not None and new["status"] == "active"  # 新事实照常 ADD
+
+
+def test_superseded_fact_not_resurrected_by_rescan():
+    """T8：被 UPDATE 退役的旧事实不得被同内容重扫 upsert 复活。
+
+    真实库证据：融合决策日志 UPDATE 执行 8 次，库里 superseded 却为 0——
+    语义路径每轮重建把退役行改回 active，演变链被静默抹掉。
+    """
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    store = RagStore(conn)
+    old_id = _seed_old_fact(store, content="对方不喜欢吃香菜")
+    new_id = store.upsert_fact(
+        account_wxid="wxid_a", conversation_id=1, subject="对方", kind="preference",
+        content="对方以前不吃香菜，现在改观了开始喜欢", confidence=0.85,
+        evidence_message_ids=[1], summary_method="llm_shadow",
+    )
+    store.supersede_fact(old_id, new_id)
+    conn.commit()
+
+    # 语义路径重扫同 content upsert（status=active、enabled=1）
+    store.upsert_fact(
+        account_wxid="wxid_a", conversation_id=1, subject="对方", kind="preference",
+        content="对方不喜欢吃香菜", confidence=0.6,
+        evidence_message_ids=[11], summary_method="shadow_semantic_embedding",
+    )
+    conn.commit()
+    row = conn.execute("SELECT * FROM rag_facts WHERE id = ?", (old_id,)).fetchone()
+    assert row["status"] == "superseded" and row["enabled"] == 0  # 不复活
+    assert row["supersedes_fact_id"] is None  # 退役行的链不被覆盖
+
+    # 演变链新行被重扫时 supersedes_fact_id 不被清空
+    store.upsert_fact(
+        account_wxid="wxid_a", conversation_id=1, subject="对方", kind="preference",
+        content="对方以前不吃香菜，现在改观了开始喜欢", confidence=0.85,
+        evidence_message_ids=[1], summary_method="llm_shadow",
+    )
+    conn.commit()
+    new_row = conn.execute("SELECT * FROM rag_facts WHERE id = ?", (new_id,)).fetchone()
+    assert new_row["status"] == "active"
+    assert new_row["supersedes_fact_id"] == old_id  # COALESCE 保留链
+
+    # 质量隔离行同样不被复活
+    qid = store.upsert_fact(
+        account_wxid="wxid_a", conversation_id=1, subject="对方", kind="event",
+        content="对方提到：嗯嗯就这样吧", confidence=0.5,
+        summary_method="shadow_semantic_embedding",
+    )
+    conn.execute(
+        "UPDATE rag_facts SET status='uncertain', enabled=0 WHERE id=?", (qid,)
+    )
+    store.upsert_fact(
+        account_wxid="wxid_a", conversation_id=1, subject="对方", kind="event",
+        content="对方提到：嗯嗯就这样吧", confidence=0.5,
+        summary_method="shadow_semantic_embedding",
+    )
+    conn.commit()
+    qrow = conn.execute("SELECT status, enabled FROM rag_facts WHERE id=?", (qid,)).fetchone()
+    assert qrow["status"] == "uncertain" and qrow["enabled"] == 0
+
+
+def test_fusion_candidates_capped_by_confidence(monkeypatch):
+    """T10：融合候选按置信度截断，防止 decisions 响应过长被截断。"""
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    store = RagStore(conn)
+    for i in range(15):
+        _seed_old_fact(store, content=f"对方的事实编号{i}", kind="preference")
+
+    seen = {}
+
+    def llm(prompt):
+        payload = json.loads(prompt)
+        if payload.get("task") == "maintain_atomic_contact_facts" or "new_fact" in payload:
+            seen["candidates"] = payload.get("active_candidates") or []
+            return {
+                "decisions": [
+                    {"fact_id": item["fact_id"], "action": "ADD", "reason": "-"}
+                    for item in seen["candidates"]
+                ]
+            }
+        return {
+            "facts": [
+                {
+                    "subject": "对方",
+                    "kind": "preference",
+                    "content": "对方喜欢徒步",
+                    "confidence": 0.8,
+                    "evidence_message_ids": [1],
+                }
+            ]
+        }
+
+    indexer = _indexer(store, llm)
+    monkeypatch.setattr(
+        "app.services.realtime.rag_indexer.load_rag_settings",
+        lambda: {"rag_fact_shadow_enabled": False},
+    )
+    now = 1790000000
+    segment = _segment(
+        now, [(1, 0, "我喜欢徒步"), (2, 1, "哦"), (3, 0, "周末常去"), (4, 1, "好的")]
+    )
+    indexer._extract_structured_shadow_facts(
+        account_wxid="wxid_a", conversation_id=1, segment=segment
+    )
+    assert len(seen["candidates"]) == indexer.FACT_FUSION_CANDIDATE_LIMIT

@@ -125,6 +125,62 @@ def _resolve_event_context(conn, suggestion_id: int) -> dict[str, Any]:
     }
 
 
+def _record_outcome_policy_signal(
+    conn,
+    *,
+    suggestion_id: int,
+    account_wxid: str | None,
+    event_type: str,
+    detail: dict[str, Any] | None = None,
+) -> None:
+    """P2.1：建议终态（adopted/rewritten/preface_then_reply）影子信号。
+
+    只记录不决策——把该建议实际使用的策略（检索日志 policy_ids/
+    contact_preference_ids/injected facts）与终态绑定，为后续
+    "反馈→策略修正"提供审计底账。任何异常静默跳过，绝不阻塞事件。
+    """
+    try:
+        from .rag_store import RagStore
+
+        store = RagStore(conn)
+        existing = conn.execute(
+            """
+            SELECT 1 FROM rag_feedback_policy_signals
+            WHERE suggestion_id = ? AND action = ? LIMIT 1
+            """,
+            (int(suggestion_id), str(event_type)),
+        ).fetchone()
+        if existing:
+            return
+        log = conn.execute(
+            """
+            SELECT id, account_wxid, conversation_id, policy_ids_json,
+                   contact_preference_ids_json, injected_item_ids_json
+            FROM rag_retrieval_logs WHERE suggestion_id = ? ORDER BY id DESC LIMIT 1
+            """,
+            (int(suggestion_id),),
+        ).fetchone()
+        if log is None:
+            return
+        store.record_feedback_policy_signal(
+            account_wxid=str(log["account_wxid"] or account_wxid or ""),
+            conversation_id=log["conversation_id"],
+            suggestion_id=int(suggestion_id),
+            action=str(event_type),
+            signal_kind="suggestion_outcome",
+            affected_policy_ids=json.loads(log["policy_ids_json"] or "[]"),
+            outcome="recorded",
+            retrieval_log_id=int(log["id"]),
+            detail={
+                "contact_preference_ids": json.loads(log["contact_preference_ids_json"] or "[]"),
+                "injected_item_ids": json.loads(log["injected_item_ids_json"] or "[]"),
+                **(detail or {}),
+            },
+        )
+    except Exception:
+        pass
+
+
 def record_observation(
     conn,
     *,
@@ -182,6 +238,14 @@ def record_observation(
                 payload["created_at"],
             ),
         )
+        if event_type in {"adopted", "rewritten", "preface_then_reply"}:
+            _record_outcome_policy_signal(
+                conn,
+                suggestion_id=int(suggestion_id),
+                account_wxid=payload["account_wxid"],
+                event_type=event_type,
+                detail={"selected_speech": (selected_speech or "")[:200]},
+            )
         return
 
     conn.execute(

@@ -265,15 +265,15 @@ def refresh_relationship_state_shadow(
         return {"ok": False, "error": str(exc)}
 
 
-def refresh_after_fact_feedback(store: RagStore, fact_id: int) -> dict[str, Any]:
-    """用户纠错（不准确/忘记）后刷新关系策略影子，剔除已禁用事实的引用。
+def refresh_after_fact_feedback(store: RagStore, fact_id: int, *, action: str = "inaccurate") -> dict[str, Any]:
+    """用户纠错（不准确/忘记/还原）后刷新策略层并记录 P2.1 影子信号。
 
-    P2.1 最小闭环：此前「不准确」只禁用单条事实，读侧检索立即剔除，
-    但关系策略影子行的 evidence_fact_ids 仍引用它（真实库 5385 一例：
-    用户 08:44 标注不准确，01:30 生成的 state 仍引用到当晚）。
-    刷新本身走 refresh_relationship_state_shadow（受 shadow 开关保护、
-    list_facts 只取 active+enabled，禁用事实自动出证据集）；任何异常只
-    记日志，绝不阻塞反馈落库。
+    真实库场景（5385）：用户标注不准确后旧 state 仍引用——刷新走
+    refresh_relationship_state_shadow（受 shadow 开关保护、list_facts
+    只取 active+enabled，禁用事实自动出证据集）。P2.1 信号：先回查
+    该事实被哪些活跃策略引用（关系 state + 偏好槽），刷新后把结果
+    写 rag_feedback_policy_signals——只记录不决策。任何异常只记日志，
+    绝不阻塞反馈落库。
     """
     try:
         row = store.conn.execute(
@@ -288,6 +288,17 @@ def refresh_after_fact_feedback(store: RagStore, fact_id: int) -> dict[str, Any]
         conversation_id = int(row["conversation_id"] or 0)
         if not account_wxid or conversation_id <= 0:
             return {"ok": False, "skipped": "missing_scope"}
+
+        # 回查引用该事实的活跃策略（信号审计用；restore 不需要前置引用）
+        affected_policy_ids: list[int] = []
+        if action != "restore":
+            state = store.get_latest_relationship_state(account_wxid, conversation_id)
+            if state and fact_id in _parse_evidence_ids(state.get("evidence_fact_ids_json")):
+                affected_policy_ids.append(int(state["id"]))
+            for pref in store.list_contact_preferences(account_wxid, conversation_id):
+                if fact_id in _parse_evidence_ids(pref.get("evidence_fact_ids_json")):
+                    affected_policy_ids.append(int(pref["id"]))
+
         display_name = ""
         try:
             conv = store.conn.execute(
@@ -312,7 +323,7 @@ def refresh_after_fact_feedback(store: RagStore, fact_id: int) -> dict[str, Any]
                 store,
                 account_wxid=account_wxid,
                 conversation_id=conversation_id,
-                touched_fact_id=int(fact_id),
+                touched_fact_id=None if action == "restore" else int(fact_id),
             )
         except Exception as pref_exc:
             logger.debug(
@@ -325,6 +336,23 @@ def refresh_after_fact_feedback(store: RagStore, fact_id: int) -> dict[str, Any]
                 conversation_id,
                 result.get("changed"),
             )
+        # P2.1 影子信号：反馈对策略层的实际影响，append-only
+        try:
+            store.record_feedback_policy_signal(
+                account_wxid=account_wxid,
+                conversation_id=conversation_id,
+                fact_id=int(fact_id),
+                action=action,
+                signal_kind="fact_feedback",
+                affected_policy_ids=affected_policy_ids,
+                outcome=(
+                    result.get("skipped")
+                    or ("refreshed" if result.get("changed") else "no_change")
+                ),
+                detail={"relationship_changed": bool(result.get("changed"))},
+            )
+        except Exception as signal_exc:
+            logger.debug("[RelationshipState] feedback signal write skipped: %s", signal_exc)
         return result
     except Exception as exc:
         logger.warning("[RelationshipState] post-feedback refresh failed: %s", exc)

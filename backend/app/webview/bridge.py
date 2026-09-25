@@ -2487,6 +2487,8 @@ class Bridge:
 
     def run_realtime_uia_recovery(self) -> dict[str, Any]:
         """Run the pending WeChat UIA recovery flow after the user confirms it in the frontend."""
+        if sys.platform != "win32":
+            return {"ok": False, "code": "unsupported_on_platform", "error": "UIA 界面修复为 Windows 专属能力；Linux 使用 db_watch 数据库监听，无需修复界面。"}
         try:
             from ..services.realtime.monitor_service import RealtimeMonitorService
 

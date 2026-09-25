@@ -1205,6 +1205,7 @@ class SessionManager:
         Returns:
             相似度 (0.0 到 1.0)
         """
+        self._raise_if_cancelled()
         try:
             from .sentiment_service import SentimentService
 
@@ -1273,11 +1274,17 @@ class SessionManager:
             logger.error(f"[会话管理器] 检查睡眠时间失败: {e}")
             return False
 
+    def _raise_if_cancelled(self) -> None:
+        """停止分析时中断预处理（相似度嵌入的分块/分区间检查点）。"""
+        if self._cancel_event is not None and self._cancel_event.is_set():
+            raise Exception("分析已被用户取消")
+
     def split_sessions(
         self,
         speech_units: List[Dict[str, Any]],
         conversation_id: int = None,  # 添加可选参数，保持向后兼容
         progress_cb=None,  # Optional[Callable[[float], None]]：相似度嵌入进度 0~1
+        cancel_event=None,  # Optional[threading.Event]：停止分析时置位，嵌入分块间生效
     ) -> List[Dict[str, Any]]:
         """
         通过时间间隔+睡眠时间+语义相似度切分会话
@@ -1327,6 +1334,10 @@ class SessionManager:
         # 第一步：强制执行时间间隔和睡眠时间切分（保底机制）
         # 这些切分点是必须的，不依赖于语义相似度计算
         # ================================================================
+        # 取消信号接线（好感度路径经 orchestrator 传入；特征提取路径经属性注入）
+        if cancel_event is not None:
+            self._cancel_event = cancel_event
+
         mandatory_split_points = set()
         
         for i in range(len(speech_units) - 1):
@@ -1382,6 +1393,7 @@ class SessionManager:
                 if sample_indices[-1] != len(speech_units) - 1:
                     sample_indices.append(len(speech_units) - 1)
                 
+                self._raise_if_cancelled()
                 sample_texts = [speech_units[i]["content"] for i in sample_indices]
                 logger.debug(f"[会话管理器] 第一阶段：粗采样 {len(sample_texts)} 个文本...")
                 
@@ -1413,6 +1425,7 @@ class SessionManager:
                 similarities = [0.8] * (len(speech_units) - 1)
                 
                 for start, end in candidate_regions:
+                    self._raise_if_cancelled()
                     region_texts = [speech_units[i]["content"] for i in range(start, end + 1)]
                     region_embeddings = self._sentiment_service._get_embeddings_batch(
                         region_texts,
@@ -1440,8 +1453,7 @@ class SessionManager:
                 all_embeddings: List[Any] = []
                 CHUNK = 128
                 for chunk_start in range(0, len(texts), CHUNK):
-                    if self._cancel_event is not None and self._cancel_event.is_set():
-                        raise Exception("分析已被用户取消")
+                    self._raise_if_cancelled()
                     chunk = texts[chunk_start:chunk_start + CHUNK]
                     all_embeddings.extend(embed_service._get_embeddings_batch(chunk))
                     if progress_cb:
@@ -1473,10 +1485,14 @@ class SessionManager:
             logger.info(f"[会话管理器] 语义相似度计算完成 ({len(similarities)} 个相似度)")
 
         except Exception as e:
+            # 取消信号必须穿透：不能回退到逐对计算（那会继续全量编码且无检查点）
+            if self._cancel_event is not None and self._cancel_event.is_set():
+                raise
             logger.error(f"[会话管理器] 批量计算语义相似度失败，回退到逐个计算: {e}")
             # 回退到逐个计算
             similarities = []
             for i in range(len(speech_units) - 1):
+                self._raise_if_cancelled()
                 sim = self.calculate_semantic_similarity(
                     speech_units[i]["content"],
                     speech_units[i + 1]["content"]

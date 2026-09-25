@@ -159,6 +159,40 @@ def test_preprocess_conversation():
     print(f"\n📊 缓存统计: 该会话已缓存 {cached_count} 条消息")
 
 
+def test_split_sessions_cancel_event_interrupts_embedding():
+    """停止分析：取消事件在相似度嵌入分块间生效（深度推理阶段停不掉的回归）。"""
+    import threading as _threading
+
+    import pytest
+
+    from app.services.analysis.preprocessing_service import SessionManager
+
+    sm = SessionManager()
+    cancelled = _threading.Event()
+    cancelled.set()  # 预置取消：首个检查点应立即抛出，不触达嵌入模型
+
+    class _StubEmbed:
+        _embedding_model = object()  # 已加载态，跳过模型加载
+
+        def _get_embeddings_batch(self, texts, **kwargs):
+            raise AssertionError("取消后不应继续编码")
+
+    sm._sentiment_service = _StubEmbed()
+
+    units = [
+        {
+            "content": f"消息{i}",
+            "start_timestamp": 1700000000 + i * 60,
+            "end_timestamp": 1700000000 + i * 60 + 10,
+            "sender_id": 1,
+            "message_ids": [i],
+        }
+        for i in range(5)
+    ]
+    with pytest.raises(Exception, match="取消"):
+        sm.split_sessions(units, cancel_event=cancelled)
+
+
 if __name__ == "__main__":
     print("\n🚀 开始测试预处理模块")
     print("="*60)

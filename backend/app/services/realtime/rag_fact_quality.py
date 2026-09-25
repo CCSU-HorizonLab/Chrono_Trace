@@ -174,6 +174,13 @@ def fact_quality_reason(
     if not require_kind_signal:
         return None
 
+    # 原型路径长度门槛（P2 收紧）：真实库 93 条 active 原型事实中 74 条
+    # （80%）焦点 <12 字且无一值得长期保留（"不想你嘛""答应个屁"）。
+    # LLM 路径不受限（宽松模式已在上方 return）——模型负责自包含判断。
+    # 放在精确分类规则之后作兜底：已有词表命中的仍按原 reason 归因。
+    if len(compact) < 12:
+        return "prototype_too_short"
+
     if str(kind or "") == "marker_fallback":
         signals = tuple(dict.fromkeys(signal for values in _KIND_SIGNALS.values() for signal in values))
     else:

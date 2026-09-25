@@ -157,7 +157,9 @@ class PreprocessingOrchestrator:
         stats.bidirectional_pairs = pair_stats.get("bidirectional_pairs", 0)
         stats.same_parity_pairs = pair_stats.get("same_parity_pairs", 0)
 
-        sessions = self.session_manager.split_sessions(speech_units, progress_cb=progress_cb)
+        sessions = self.session_manager.split_sessions(
+            speech_units, progress_cb=progress_cb, cancel_event=cancel_event
+        )
         self.session_manager.save_sessions(conversation_id, sessions)
         session_stats = self.session_manager.collect_session_statistics(sessions)
         initiator_stats = self.session_manager.identify_session_initiators(sessions)

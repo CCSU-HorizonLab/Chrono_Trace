@@ -2,10 +2,19 @@
 import logging
 import os
 import re
-import winreg
+import sys
 from collections import deque
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
+
+
+if sys.platform == "win32":
+    import winreg
+else:
+    # Linux/macOS 无注册表。保留模块属性（而非函数内导入），因为
+    # backend/tests/test_wechat_path_flow.py 通过 monkeypatch
+    # "app.services.wechat.path_finder.winreg.OpenKey" 打桩。
+    winreg = None
 
 
 logger = logging.getLogger(__name__)
@@ -46,8 +55,14 @@ class WeChatPathFinder:
     def _query_registry_value(
         key_path: str,
         value_name: str,
-        hives: Tuple[int, ...] = (winreg.HKEY_CURRENT_USER,),
+        hives: Optional[Tuple[int, ...]] = None,
     ) -> Optional[str]:
+        if winreg is None:
+            return None
+        if hives is None:
+            # 默认值需在函数内求值：Linux 上模块级 winreg 为 None，且测试桩
+            # 会整体替换 winreg 模块属性（def 期默认值会冻结成空元组）
+            hives = (winreg.HKEY_CURRENT_USER,)
         for hive in hives:
             key = None
             try:
@@ -112,7 +127,41 @@ class WeChatPathFinder:
             _add(expanded)
             _add(expanded / "Documents")
 
+        # Linux：XDG user-dirs（如本机 XDG_DOCUMENTS_DIR="$HOME/文档"）与常见候选
+        xdg_documents = cls._read_xdg_user_dir("XDG_DOCUMENTS_DIR")
+        if xdg_documents:
+            _add(xdg_documents)
+        _add(home / "文档")
+        xdg_data_home = os.environ.get("XDG_DATA_HOME")
+        if xdg_data_home:
+            _add(Path(xdg_data_home))
+
         return paths
+
+    @staticmethod
+    def _read_xdg_user_dir(key: str) -> Optional[Path]:
+        """解析 ~/.config/user-dirs.dirs 中的 XDG 目录项（如 XDG_DOCUMENTS_DIR="$HOME/文档"）。"""
+        config_path = Path.home() / ".config" / "user-dirs.dirs"
+        try:
+            if not config_path.is_file():
+                return None
+            for line in config_path.read_text(encoding="utf-8").splitlines():
+                stripped = line.strip()
+                if not stripped or stripped.startswith("#") or "=" not in stripped:
+                    continue
+                name, _, value = stripped.partition("=")
+                if name.strip() != key:
+                    continue
+                raw = value.strip().strip('"').strip("'")
+                if not raw:
+                    return None
+                expanded = os.path.expandvars(raw)
+                if not expanded or expanded.startswith("$"):
+                    return None
+                return Path(expanded)
+        except OSError:
+            return None
+        return None
 
     @staticmethod
     def _looks_like_wechat_user_dir(path: Path) -> bool:
@@ -414,6 +463,8 @@ class WeChatPathFinder:
         Returns:
             str: 微信安装路径,失败返回None
         """
+        if winreg is None:
+            return None
         return cls._query_registry_value(
             r"Software\Tencent\WeChat",
             "InstallPath",

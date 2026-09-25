@@ -1384,7 +1384,7 @@ class SessionManager:
                 sample_texts = [speech_units[i]["content"] for i in sample_indices]
                 logger.debug(f"[会话管理器] 第一阶段：粗采样 {len(sample_texts)} 个文本...")
                 
-                sample_embeddings = self._sentiment_service._embedding_model.encode(
+                sample_embeddings = self._sentiment_service._get_embeddings_batch(
                     sample_texts,
                     normalize_embeddings=True,
                     show_progress_bar=False,
@@ -1413,7 +1413,7 @@ class SessionManager:
                 
                 for start, end in candidate_regions:
                     region_texts = [speech_units[i]["content"] for i in range(start, end + 1)]
-                    region_embeddings = self._sentiment_service._embedding_model.encode(
+                    region_embeddings = self._sentiment_service._get_embeddings_batch(
                         region_texts,
                         normalize_embeddings=True,
                         show_progress_bar=False,
@@ -1433,19 +1433,16 @@ class SessionManager:
                 texts = [unit["content"] for unit in speech_units]
                 # 分块编码：每块之间检查取消信号——单次全量 encode 不可中断
                 # （实测 1400+ 条约 3 分钟），取消要等整块跑完才能生效
-                embed_model = self._sentiment_service._embedding_model
+                # 走缓存版批量编码：特征提取与好感度两阶段的同文本
+                # 发言单元直接命中缓存（此前直调模型导致双倍全量编码）
+                embed_service = self._sentiment_service
                 all_embeddings: List[Any] = []
                 CHUNK = 128
                 for chunk_start in range(0, len(texts), CHUNK):
                     if self._cancel_event is not None and self._cancel_event.is_set():
                         raise Exception("分析已被用户取消")
                     chunk = texts[chunk_start:chunk_start + CHUNK]
-                    all_embeddings.extend(embed_model.encode(
-                        chunk,
-                        normalize_embeddings=True,
-                        show_progress_bar=False,
-                        batch_size=32,
-                    ))
+                    all_embeddings.extend(embed_service._get_embeddings_batch(chunk))
                 embeddings = all_embeddings
 
                 # 批量计算所有相邻相似度

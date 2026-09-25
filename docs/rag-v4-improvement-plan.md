@@ -201,11 +201,21 @@ P0.4a 质量门清理后事实池仅剩 242 条——原型匹配只够"排坏"�
 - 端到端 smoke（deepseek-flash 远程 + 真实对话）：琐事段正确抽 0 条；游戏话题段抽 6 条全部过质量门、evidence 全真实（含 boundary 类"对方介意别人把杀戮尖塔说成垃圾"、relation_state 类等待信号——P1.1 影子层的直接食粮）。
 - 测试 `test_rag_fact_llm.py` 7 用例（prompt 契约/evidence 过滤/远程脱敏/推理回退/宽松门/预算与短段跳过/连续失败中止/入库 llm_shadow）；全量回归 699 passed, 21 skipped。
 
-### P1.2 `contact_preference` 与安全关系策略
+### P1.2 `contact_preference` 与安全关系策略 ✅（2026-09-25 槽位级影子层完成；读侧注入同日接通）
 
 状态（2026-09-25）：前置 T2 事实融合接通已在 P1.5 完成并验收，**可实施**；分槽/验收要求见下，记账详见 P1.5 映射小节。
 
-**改动**
+**已实施（P1.2 槽位级）**：
+
+- 新增 `rag_contact_preferences` 表（ADD-only 版本链：slot_key 级 evidence_hash 去重、supersedes 链、本轮消失的槽关闭活跃行保留审计）与 `rag_contact_preference.py` 派生模块：subject=对方的 preference/preference_like/preference_dislike/food_or_place 事实（非敏感、过质量门宽松模式——已隔离质量的碎片不因聚槽洗白）按 embedding 相似度 ≥0.72 聚为主题槽（代表=最高置信、证据并集、support_count 记重复确认），上限 10 槽。
+- **分槽注入**：`_inject_contact_preferences` 独立预算槽（≤6 条、置信度 ≥0.55、敏感行深度防御、远程脱敏失败丢弃文本保留枚举），不占事实 1600 字与关系策略槽；注入的 pref_ids 落检索日志新列 `contact_preference_ids_json`。注入前提复用 T6 护栏（注入+影子开关同时开启，单一开关控制全链路）。
+- **prompt 块**：【对方偏好与雷点（速查，据此调整建议内容与措辞）】——每条 [偏好/雷点]+摘要+置信度，含"当下对话明确不同表态时以当下为准"与防复述规则；badge 复用"已参考关系画像"。
+- **刷新挂钩**：rebuild 完成点（带 embedding 聚槽）与用户纠错后（`touched_fact_id` 定向刷新：事实不在任何活跃槽证据中则跳过，防退化拆槽；证据含禁用事实的槽重派生/退役）。
+- **防误判**：schema 层强制 subject=对方——"用户自己的习惯"（subject=我）在候选过滤即排除。
+- 真实库副本验证（昕）：33 条候选事实 → 10 槽；高质量 LLM 偏好成槽（"喜欢由我贴手机膜"conf=0.90、"喜欢被夸奖成品"、"穿着还能穿就穿"、"电影省钱倾向"）；质量门拦截"没那么想要"槽（retired）；注入 6 条 + contact_preference_ids 落日志。
+- **如实记录**：原型碎片仍会成槽（"只是表达了我不喜欢这个行为" support=4、"我要去买吃的"）——槽位层忠实反映事实池质量，根治理是已记账的"原型路径收紧"决策；偏好/雷点遵守率的量化验收待 P0.3 人工集。
+
+**改动（原计划）**
 
 - 在 `rag_semantic_memory.py`/`rag_indexer.py` 增加对方偏好、雷点、有效沟通方式的结构化候选；候选必须有对方消息 evidence、场景条件和 confidence。
 - 将现有 `preference_like/dislike`、`relationship_boundary` facts 映射为策略候选，但不改变原 fact 的 sensitivity 和门控。

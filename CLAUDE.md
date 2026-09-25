@@ -10,10 +10,13 @@ Chrono Trace（时痕）：基于 PyWebView + Vue 3 + Python 的 **Windows 专�
 
 ## 平台约束（重要）
 
-- 运行目标仅为 **Windows 10/11**。微信数据目录扫描、密钥捕获、实时监听（pywinauto/UIA）、悬浮窗（win32gui）均为 Windows 专属。
-- `requirements.txt` 在 Linux/macOS 上**无法直接安装**：含 `pywin32`、`pywinauto` 和 `packaging/vendor/wx_key-*-win_amd64.whl`（Windows cp312 专用 wheel）。
-- Win32 相关导入全部是**函数内延迟导入**（`import win32gui` 等位于函数体内）。新增 Windows 专属代码必须保持这一模式，否则纯逻辑测试在非 Windows 环境会直接 import 失败。
-- 在非 Windows 环境（如 Linux 开发机）上可做：前端开发（Vite）、纯逻辑后端测试（需手动安装跨平台依赖子集，跳过 pywin32/pywinauto/wx_key wheel）。不可做：启动完整应用、微信导入、实时监听、打包（PowerShell + PyInstaller + Inno Setup）。
+- **双平台支持**（LinuxVersion 分支，2026-09）：Windows 全功能；Linux 支持导入/分析/RAG/实时监听/悬浮窗（X11 跟随、Wayland 固定档位）。
+- Windows：微信 PC 4.x 数据目录扫描、wx_key hook 密钥捕获、native_uia 实时监听、win32 悬浮窗。
+- Linux：`~/文档/xwechat_files`（XDG 发现）、GDB 断点密钥捕获（`key_capture_linux.py`，免重启、重登触发）、`db_watch` provider 实时监听（加密库 mtime+WAL 增量解密直读）、X11 悬浮窗跟随。
+- 密钥格式两平台同构：db_key = 32 字节 passphrase hex，按库 salt 经 PBKDF2-HMAC-SHA512(256000) 派生（`db_decryptor_v2`）。
+- Linux 断点地址换算必须走 PT_LOAD 程序头（`va_to_runtime_addr`）——微信二进制 .text vaddr 从 0x44EC000 起，「映射基址+VA」会偏移 4.5MB。
+- Win32 相关导入全部是**函数内延迟导入**。新增平台专属代码：Windows 走延迟导入，Linux 走 `sys.platform != "win32"` 分支或独立模块（`key_capture_linux.py`/`db_snapshot.py`/`floating_tracker.py`/`providers/db_watch.py`）。
+- Linux 依赖见 `requirements-linux.txt`（去 pywin32/pywinauto/wx_key wheel）；pywebview 用 Qt 后端（需 qtpy 垫片）。
 
 ## 常用命令
 

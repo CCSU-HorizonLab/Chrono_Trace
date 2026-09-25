@@ -9,7 +9,7 @@
 [![Python](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
 [![Vue](https://img.shields.io/badge/Vue-3.x-green.svg)](https://vuejs.org/)
 [![Vite](https://img.shields.io/badge/Vite-5.x-646CFF.svg)](https://vitejs.dev/)
-[![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6.svg)](https://www.microsoft.com/windows)
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%2010%2F11%20%7C%20Linux-0078D6.svg)](#环境要求)
 [![Status](https://img.shields.io/badge/Status-Beta%201.1-brightgreen.svg)](./docs/release-notes-v1.1.0-beta.1.md)
 [![License](https://img.shields.io/badge/License-PolyForm%20Noncommercial%201.0.0-blue.svg)](./LICENSE)
 
@@ -250,19 +250,25 @@ requirements.txt
 
 | 项目    | 要求                                       |
 | ------- | ------------------------------------------ |
-| OS      | Windows 10 / 11                            |
-| Python  | 3.12（依赖含 cp312 专用 wheel）            |
+| OS      | Windows 10 / 11；Linux（X11 桌面，Wayland 悬浮窗为固定档位） |
+| Python  | Windows 3.12（依赖含 cp312 专用 wheel）；Linux 3.10+ |
 | Node.js | 18+（Vite 5 要求）                         |
-| 微信 PC | 4.x                                        |
+| 微信     | Windows PC 4.x / Linux 微信 4.x（原生版）   |
 
-首次使用分析/实时建议时会从 ModelScope 自动下载本地情感模型，需要网络。
+Windows 首次使用分析/实时建议时会从 ModelScope 自动下载本地情感模型，需要网络。
 
 ## 快速开始
 
 ### 1. 安装依赖
 
 ```bash
+# Windows
 pip install -r requirements.txt
+
+# Linux（Debian/Ubuntu 示例）
+sudo apt install gdb          # 密钥捕获需要
+pip install -r requirements-linux.txt
+pip install torch --index-url https://download.pytorch.org/whl/cpu
 
 cd frontend
 npm install
@@ -290,13 +296,16 @@ python app.py
 
 ### 3. 获取微信数据库密钥
 
-推荐使用应用内置的**登录捕获**：
+Windows 推荐应用内置的**登录捕获**（重启微信引导流程）。
 
-1. 在应用中发起密钥获取
-2. 程序会自动引导微信登录，并在本机捕获解密密钥
-3. 捕获失败时可重试，或改用手动输入
+Linux 使用 **GDB 断点捕获**（免重启）：
 
-手动方式需自行获取密钥（如使用 [`wx_key`](https://github.com/ycccccccy/wx_key)），结果应为 `64` 位十六进制字符串：
+1. 保持微信已登录，在应用中发起密钥获取
+2. 应用自动分析微信二进制并附加断点
+3. 在微信中「退出登录」→ 重新扫码/手机确认登录
+4. 密钥自动捕获、验证并保存（一次性，后续直接使用）
+
+手动方式（两平台通用）需自行获取密钥（如使用 [`wx_key`](https://github.com/ycccccccy/wx_key)），结果应为 `64` 位十六进制字符串：
 
 ```text
 1a2b3c4d5e6f7890abcdef1234567890abcdef1234567890abcdef1234567890
@@ -328,10 +337,9 @@ C:\Users\<用户名>\xwechat_files\wxid_xxx\db_storage\
 
 ## 当前边界
 
-- 仅支持 Windows
-- 仅面向微信 PC 端
-- 实时监听运行时统一使用项目内 `native_uia`
-- 监听依赖微信主窗口可见，最小化或后台不可见时不保证有效
+- Windows 全功能；Linux 支持导入/分析/RAG 记忆/实时建议/悬浮窗（X11 跟随，Wayland 固定档位）
+- Linux 实时监听走 `db_watch`（加密库文件直读 + WAL 增量），无需微信窗口可见；Windows 走 `native_uia`（依赖微信主窗口可见，最小化或后台不可见时不保证有效）
+- Linux 密钥捕获需要 gdb 与 ptrace 权限（`ptrace_scope=0` 或 sudo）；微信更新后首次需重新登录一次以重新捕获
 - 当前以单人聊天为主，不支持多会话并发监听
 - 群聊不是当前主目标
 - 文件、语音、视频、小程序卡片等复杂消息类型仍以规则识别和占位处理为主

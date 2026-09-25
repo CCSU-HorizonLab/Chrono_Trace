@@ -14,7 +14,7 @@ def test_durable_fact_requires_kind_aligned_signal():
         "recurring_habit",
         "我提到：我每次压力大的时候都会去江边散步",
     )
-    assert fact_quality_reason("recurring_habit", "我提到：家里还要做家务") == "kind_signal_missing"
+    assert fact_quality_reason("recurring_habit", "我提到：家里还有一大堆家务要做完") == "kind_signal_missing"
 
 
 def test_short_conversational_fragments_are_quarantined():
@@ -22,9 +22,30 @@ def test_short_conversational_fragments_are_quarantined():
         assert not is_usable_shadow_fact("personal_profile", content)
 
 
+def test_prototype_path_requires_minimal_length():
+    """P2 收紧：原型路径焦点 <12 字一律拦截（真实库 80% 碎片）。
+
+    LLM 宽松模式不受限——短而自包含的 LLM 事实（"对方对虾过敏"）
+    由模型的自包含判断负责。
+    """
+    assert fact_quality_reason("preference_like", "对方提到：不吃香菜") == "prototype_too_short"
+    assert fact_quality_reason("hobby_or_game", "我提到：不想你嘛") == "prototype_too_short"
+    assert fact_quality_reason("personal_fact", "对方对虾过敏", require_kind_signal=False) is None
+    # 12 字及以上仍走原有规则
+    assert fact_quality_reason(
+        "food_or_place", "对方提到：早餐一般吃豆浆配油条，很少换花样"
+    ) is None
+
+
 def test_generic_message_cannot_become_hobby_fact_without_object():
-    assert fact_quality_reason("hobby_or_game", "我提到：随便玩了") == "hobby_object_missing"
-    assert is_usable_shadow_fact("hobby_or_game", "我提到：最近在玩杀戮尖塔")
+    # 短的 generic 活动句被长度门槛拦截（原 hobby_object_missing 场景
+    # 在 <12 字区间与 prototype_too_short 重叠）；短而有效的爱好陈述
+    # 由 LLM 路径负责（宽松模式放行）
+    assert fact_quality_reason("hobby_or_game", "我提到：随便玩了") == "prototype_too_short"
+    assert fact_quality_reason(
+        "hobby_or_game", "最近在玩杀戮尖塔", require_kind_signal=False
+    ) is None
+    assert is_usable_shadow_fact("hobby_or_game", "我提到：最近一直在玩杀戮尖塔这个卡组")
 
 
 def test_sensitive_shadow_fact_is_quarantined():
@@ -106,21 +127,21 @@ def test_pricing_question_turns_rejected():
     assert fact_quality_reason("purchase_or_price", "对方提到：这个几块") == "question_turn"
     # 陈述句不受影响
     assert fact_quality_reason(
-        "food_or_place", "对方提到：早餐一般吃豆浆油条"
+        "food_or_place", "对方提到：早餐一般吃豆浆配油条，很少换花样"
     ) is None
 
 
 def test_purchase_pronoun_ending_rejected():
     """T11 第四轮：购买类"……的"结尾=代指，对象已丢失（用户标注"直接买80的"等）。"""
     assert fact_quality_reason(
-        "purchase_or_price", "我提到：我到时候直接买80的"
+        "purchase_or_price", "我提到：暑假打工赚钱后我到时候直接买80的"
     ) == "object_missing"
     assert fact_quality_reason(
-        "purchase_or_price", "对方提到：想买便宜点的"
+        "purchase_or_price", "对方提到：钱包丢了所以最近只想买便宜点的"
     ) == "object_missing"
     # 写明具体物品的购买事实放行
     assert fact_quality_reason(
-        "purchase_or_price", "对方提到：想买那款限定的游戏皮肤"
+        "purchase_or_price", "对方提到：想买那款联动的限定游戏皮肤"
     ) is None
 
 
@@ -130,5 +151,5 @@ def test_weak_preference_fragments_rejected():
     assert fact_quality_reason("preference_like", "对方提到：没那么想吃") == "vague_fragment"
     # 有对象的弱化表达放行
     assert fact_quality_reason(
-        "preference_like", "对方提到：没那么想要那款键盘了"
+        "preference_like", "对方提到：没那么想要那款机械键盘了，先不买"
     ) is None

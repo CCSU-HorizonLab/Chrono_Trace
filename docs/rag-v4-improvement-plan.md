@@ -325,6 +325,13 @@ P1 闭环后的定位修正：碎片清理和 LLM 抽取已有实质改善，但
 
 修复：`connection.py` 连接工厂 `isolation_level=None`（autocommit）——每条写即时提交，挂起事务从机制上不存在，异常路径无需回滚；写锁窗口缩为单语句毫秒级。`conn.commit()` 变安全 no-op、`with conn:` 块兼容。多步写（upsert+supersede）的原子性由幂等重扫收敛替代（崩溃窗口的中间态下轮重建自愈）。全量 745 passed。
 
+### 收尾轮（2026-09-25 第六轮）：漏斗补齐 + P2.1 影子闭环 + 现行验收执行
+
+- **V3 trigger_type 落库**（P0.1 漏斗"触发"段缺口）：`rag_retrieval_logs` 新增 trigger_type 列，enrich_context 与全部 skip 路径写入——触发→召回→gate→注入五段漏斗首次完整可查（此前 trigger 只在内存）。
+- **V4 P2.1 影子闭环完成版**：rewritten 正归因（conf≥0.65，跟 `rag_structured_fact_extraction_enabled` 开关，同建议去重）→ `extract_feedback_signals` 专用 prompt 从"原始建议 vs 实际发送"差异抽偏好信号 → 质量门宽松 → **uncertain 影子行**（`summary_method='feedback_shadow'`，不进读侧）+ 信号表记录。远程模型两段文本脱敏、原始文本不入库。转正待 P0.3 校准——accepted 不触发（无差异文本）。
+- **V2 现行验收执行——检索自洽性**：旧 runtime gold 输入文件已缺失且本就 superseded，改用当前事实池口径：conv 7191 各 kind 抽样 10 条 LLM 事实构造查询、真实 embedding 检索 top-6，**命中 9/10**（唯一未中为高敏感 boundary，属不应轻易召回类型）。取代"存活 gold 4/5"旧口径，goal 文档已同步。
+- **V1 goal 文档**：状态段更新至当前（P1 完成/P2.1 影子闭环/并发根治/745 测试/9-10 自洽性）。
+
 ## P2：长期闭环与真实贡献（收益高、成本高）
 
 ### P2.1 反馈从“落库”变成“可验证修正”

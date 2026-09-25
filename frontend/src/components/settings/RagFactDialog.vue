@@ -1,42 +1,125 @@
 <template>
   <Teleport to="body">
-    <div v-if="visible" class="rfd-mask" @click.self="close">
+    <div v-if="visible" class="rfd-mask" @click.self="close" @wheel="handleMaskWheel">
       <div class="rfd-panel">
-        <!-- 弹窗顶栏 -->
+        <!-- 弹窗顶栏：干净无重复徽章、显式关闭图标 -->
         <div class="rfd-head">
-          <div class="rfd-title-wrap">
-            <div class="rfd-title-row">
-              <span class="rfd-title">记忆管理</span>
-              <span class="rfd-badge">{{ displayName || '联系人' }}</span>
+          <div class="rfd-head-left-box">
+            <div class="rfd-head-avatar">
+              <img
+                v-if="effectiveContactAvatar && !avatarLoadErrors[effectiveContactAvatar]"
+                :src="effectiveContactAvatar"
+                class="rfd-head-avatar-img"
+                referrerpolicy="no-referrer"
+                alt=""
+                @error="avatarLoadErrors[effectiveContactAvatar] = true"
+              />
+              <svg v-else class="rfd-head-avatar-svg" viewBox="0 0 36 36" fill="none">
+                <rect width="36" height="36" rx="8" fill="#ede9fe" />
+                <circle cx="18" cy="13" r="5.5" fill="#7c4dff" />
+                <path d="M7 29C7 24.0294 11.0294 20 16 20H20C24.9706 20 29 24.0294 29 29V31C29 32.1046 28.1046 33 27 33H9C7.89543 33 7 32.1046 7 31V29Z" fill="#7c4dff" />
+              </svg>
             </div>
-            <span class="rfd-sub">
-              {{ loading ? '正在读取记忆…' : `${enabledFactCount} 条参与建议 / 共 ${factCount} 条` }}
-              <span class="rfd-diag-inline">· 会话 {{ conversationId }}</span>
-            </span>
+            <div class="rfd-title-wrap">
+              <div class="rfd-title-row">
+                <span class="rfd-title">记忆管理</span>
+                <span class="rfd-name-tag">{{ displayName || '联系人' }}</span>
+              </div>
+              <div class="rfd-sub">
+                <template v-if="loading">正在同步联系人结构化记忆与对话溯源…</template>
+                <template v-else>
+                  共 {{ factCount }} 条记忆（<strong>{{ enabledFactCount }} 条已启用</strong> · {{ Math.max(0, factCount - enabledFactCount) }} 条已停用） · 会话 ID {{ conversationId }}
+                </template>
+              </div>
+            </div>
           </div>
-          <button class="rfd-close" title="关闭" @click="close">✕</button>
+          <button type="button" class="rfd-close-btn" title="关闭" @click="close">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+              <path d="M18 6 6 18M6 6l12 12" />
+            </svg>
+          </button>
         </div>
 
-        <!-- 顶部检索与过滤栏 -->
+        <!-- 顶部检索与过滤栏：严格单行、图标不压字、浅灰底槽分段器、横向刷新按钮 -->
         <div class="rfd-toolbar">
-          <input v-model="keyword" class="rfd-search" placeholder="搜索当前页的记忆与对话…" />
+          <div class="rfd-search-box">
+            <svg class="rfd-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="8" />
+              <path d="m21 21-4.3-4.3" />
+            </svg>
+            <input
+              v-model="keyword"
+              type="text"
+              class="rfd-search-input"
+              placeholder="搜索当前页的记忆或对话内容…"
+            />
+            <button
+              v-if="keyword"
+              type="button"
+              class="rfd-search-clear"
+              title="清空搜索"
+              @click="keyword = ''"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
+                <path d="M18 6 6 18M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+
+          <div class="rfd-seg">
+            <button
+              type="button"
+              class="rfd-seg-btn"
+              :class="{ active: !showDisabled }"
+              @click="showDisabled = false"
+            >
+              已启用 <span class="rfd-seg-count">{{ enabledFactCount }}</span>
+            </button>
+            <button
+              type="button"
+              class="rfd-seg-btn"
+              :class="{ active: showDisabled }"
+              @click="showDisabled = true"
+            >
+              已停用 <span class="rfd-seg-count">{{ Math.max(0, factCount - enabledFactCount) }}</span>
+            </button>
+          </div>
+
           <select v-model="kindFilter" class="rfd-select" title="按记忆类型筛选">
             <option value="">全部类型</option>
             <option v-for="k in kinds" :key="k.kind" :value="k.kind">
               {{ kindLabel(k.kind) }} ({{ k.count }})
             </option>
           </select>
+
           <select v-model="sortBy" class="rfd-select" title="排序方式">
             <option value="time_desc">时间 新→旧</option>
             <option value="time_asc">时间 旧→新</option>
             <option value="conf_desc">置信度 高→低</option>
           </select>
-          <label class="rfd-filter">
-            <input v-model="showDisabled" type="checkbox" />
-            <span>只看已停用/忘记</span>
-          </label>
-          <button class="rfd-btn ghost" :disabled="loading" @click="load(page)">
-            {{ loading ? '加载中…' : '刷新' }}
+
+          <button
+            type="button"
+            class="rfd-refresh-btn"
+            :disabled="loading"
+            title="刷新当前记忆列表"
+            @click="load(page)"
+          >
+            <svg
+              width="13"
+              height="13"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              :class="{ 'rfd-spin': loading }"
+            >
+              <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
+              <path d="M21 3v5h-5" />
+            </svg>
+            <span>{{ loading ? '刷新中' : '刷新' }}</span>
           </button>
         </div>
 
@@ -87,7 +170,7 @@
 
                 <!-- 状态与分类标签 -->
                 <span class="rfd-chip" :class="fact.enabled ? 'active' : 'off'">
-                  {{ fact.enabled ? '参与建议' : fact.user_action === 'inaccurate' ? '已标记不准确' : '已忘记' }}
+                  {{ fact.enabled ? '已启用' : fact.user_action === 'inaccurate' ? '已标记不准确' : '已忘记' }}
                 </span>
                 <span v-if="fact.kind" class="rfd-kind">{{ kindLabel(fact.kind) }}</span>
               </div>
@@ -193,17 +276,24 @@
         </div>
 
         <div v-if="!loading && !error && factCount > 0" class="rfd-pagination">
-          <span>第 {{ pageStart }}–{{ pageEnd }} 条，共 {{ factCount }} 条</span>
+          <span class="rfd-page-info">显示第 {{ pageStart }}–{{ pageEnd }} 条 · 共 {{ factCount }} 条</span>
           <div class="rfd-page-actions">
-            <button class="rfd-btn" :disabled="page <= 1" @click="goToPage(page - 1)">上一页</button>
-            <span>{{ page }} / {{ totalPages }}</span>
-            <button class="rfd-btn" :disabled="page >= totalPages" @click="goToPage(page + 1)">下一页</button>
+            <button class="rfd-page-btn" :disabled="page <= 1" @click="goToPage(page - 1)">
+              <ChevronLeft :size="14" />
+              <span>上一页</span>
+            </button>
+            <span class="rfd-page-num">{{ page }} <span class="rfd-page-slash">/</span> {{ totalPages }}</span>
+            <button class="rfd-page-btn" :disabled="page >= totalPages" @click="goToPage(page + 1)">
+              <span>下一页</span>
+              <ChevronRight :size="14" />
+            </button>
           </div>
         </div>
 
         <!-- 弹窗底栏提示 -->
         <div class="rfd-foot">
-          「不准确」和「忘记」立即生效且不会被重建索引复活；「不准确」同时会作为高置信修正样本反馈给系统。
+          <span class="rfd-foot-dot"></span>
+          <span>「不准确」和「忘记」立即生效且不会被重建索引复活；「不准确」同时会作为高置信修正样本反馈给系统。</span>
         </div>
       </div>
     </div>
@@ -211,9 +301,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
-import { Lock } from 'lucide-vue-next'
+import { computed, onUnmounted, reactive, ref, watch } from 'vue'
+import { Lock, Search, X, RotateCw, ChevronLeft, ChevronRight } from 'lucide-vue-next'
 import { api } from '@/api/bridge'
+import { showConfirm, showDialog } from '@/utils/dialog'
 
 type EvidenceMessage = {
   id: number
@@ -287,6 +378,49 @@ const effectiveUserAvatar = computed(() => userAvatar.value || props.userAvatarU
 
 function getBubbleAvatar(isSelf: boolean): string {
   return isSelf ? effectiveUserAvatar.value : effectiveContactAvatar.value
+}
+
+/**
+ * 拦截遮罩层及弹窗边界的滚轮穿透，确保底层被遮罩的页面绝对不会滚动
+ */
+function handleMaskWheel(e: WheelEvent) {
+  const listEl = listElement.value
+  const target = e.target as Node | null
+  if (!listEl || !target || !listEl.contains(target)) {
+    e.preventDefault()
+    return
+  }
+  const { scrollTop, scrollHeight, clientHeight } = listEl
+  if (scrollHeight <= clientHeight) {
+    e.preventDefault()
+    return
+  }
+  const isAtTop = scrollTop <= 0 && e.deltaY < 0
+  const isAtBottom = scrollTop + clientHeight >= scrollHeight - 1 && e.deltaY > 0
+  if (isAtTop || isAtBottom) {
+    e.preventDefault()
+  }
+}
+
+function lockBodyScroll(lock: boolean) {
+  const targets = [
+    document.documentElement,
+    document.body,
+    document.querySelector('.settings-page') as HTMLElement | null,
+    document.querySelector('.ct-content') as HTMLElement | null,
+  ]
+  for (const el of targets) {
+    if (!el) continue
+    if (lock) {
+      if (el.dataset.rfdPrevOverflow === undefined) {
+        el.dataset.rfdPrevOverflow = el.style.overflow || ''
+      }
+      el.style.overflow = 'hidden'
+    } else if (el.dataset.rfdPrevOverflow !== undefined) {
+      el.style.overflow = el.dataset.rfdPrevOverflow
+      delete el.dataset.rfdPrevOverflow
+    }
+  }
 }
 
 const filtered = computed(() =>
@@ -518,7 +652,13 @@ function goToPage(targetPage: number) {
 
 async function feedback(fact: RagFact, action: 'inaccurate' | 'forget' | 'restore') {
   if (action === 'forget') {
-    const ok = window.confirm('确定让系统忘记这条记忆吗？\n它将立即退出所有建议，且重建索引不会恢复。')
+    const ok = await showConfirm({
+      title: '忘记这条记忆',
+      message: '确定让系统忘记这条记忆吗？\n它将立即退出所有回复建议，且重建索引不会恢复。',
+      type: 'warning',
+      confirmText: '确认忘记',
+      cancelText: '取消',
+    })
     if (!ok) return
   }
   busy[fact.id] = true
@@ -527,10 +667,18 @@ async function feedback(fact: RagFact, action: 'inaccurate' | 'forget' | 'restor
     if (res?.ok) {
       await load()
     } else {
-      window.alert('操作失败: ' + (res?.error || '未知错误'))
+      await showDialog({
+        title: '操作失败',
+        message: String(res?.error || '未知错误'),
+        type: 'error',
+      })
     }
   } catch (e: any) {
-    window.alert('操作异常: ' + (e?.message || e))
+    await showDialog({
+      title: '操作异常',
+      message: String(e?.message || e),
+      type: 'error',
+    })
   } finally {
     busy[fact.id] = false
   }
@@ -543,6 +691,7 @@ function close() {
 watch(
   [() => props.visible, () => props.conversationId, () => props.accountWxid],
   ([visible]) => {
+    lockBodyScroll(Boolean(visible))
     if (visible) {
       page.value = 1
       facts.value = []
@@ -557,45 +706,79 @@ watch(
       loading.value = false
     }
   },
+  { immediate: true },
 )
+
+onUnmounted(() => {
+  lockBodyScroll(false)
+})
 </script>
 
 <style scoped>
 .rfd-mask {
   position: fixed;
   inset: 0;
-  z-index: 1100;
-  background: rgba(0, 0, 0, 0.35);
-  backdrop-filter: blur(4px);
+  z-index: 9000;
+  background: rgba(15, 23, 42, 0.48);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
   display: flex;
   align-items: center;
   justify-content: center;
+  overscroll-behavior: contain;
 }
 
 .rfd-panel {
-  width: min(780px, calc(100vw - 32px));
+  width: min(820px, calc(100vw - 36px));
   max-height: 86vh;
   display: flex;
   flex-direction: column;
-  background: var(--ct-bg-elevated, #ffffff);
-  border: 1px solid var(--ct-border-color, #e5e7eb);
-  border-radius: 14px;
-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.22);
+  background: var(--ct-bg-card, #ffffff);
+  border: 1px solid var(--ct-border, rgba(148, 163, 184, 0.24));
+  border-radius: 16px;
+  box-shadow:
+    0 24px 60px rgba(15, 23, 42, 0.28),
+    0 4px 16px rgba(15, 23, 42, 0.08);
   overflow: hidden;
+  overscroll-behavior: contain;
 }
 
-/* 顶栏 */
+/* 顶栏：干净无重复胶囊、显式关闭图标 */
 .rfd-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 18px 10px;
-  border-bottom: 1px solid var(--ct-border-color, #f0f0f0);
+  padding: 14px 20px;
+  background: var(--ct-bg-card, #ffffff);
+  border-bottom: 1px solid var(--ct-border, #f1f5f9);
+}
+.rfd-head-left-box {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.rfd-head-avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 9px;
+  overflow: hidden;
+  flex-shrink: 0;
+  border: 1px solid rgba(124, 77, 255, 0.18);
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.05);
+}
+.rfd-head-avatar-img,
+.rfd-head-avatar-svg {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 .rfd-title-wrap {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
+  min-width: 0;
 }
 .rfd-title-row {
   display: flex;
@@ -603,82 +786,232 @@ watch(
   gap: 8px;
 }
 .rfd-title {
-  font-size: 16px;
+  font-size: 15.5px;
   font-weight: 700;
-  color: var(--ct-text-primary, #111827);
+  color: var(--ct-text-primary, #0f172a);
 }
-.rfd-badge {
-  font-size: 11px;
+.rfd-name-tag {
+  font-size: 12px;
   font-weight: 600;
-  padding: 1px 7px;
-  border-radius: 999px;
-  background: var(--ct-bg-secondary, #f3f4f6);
-  color: var(--ct-text-secondary, #4b5563);
+  padding: 2px 9px;
+  border-radius: 6px;
+  background: #f3f0ff;
+  color: #6d28d9;
 }
 .rfd-sub {
-  font-size: 11.5px;
-  color: var(--ct-text-tertiary, #9ca3af);
+  font-size: 12px;
+  color: var(--ct-text-secondary, #64748b);
+  line-height: 1.4;
 }
-.rfd-diag-inline {
-  opacity: 0.75;
+.rfd-sub strong {
+  color: #059669;
+  font-weight: 600;
 }
-.rfd-close {
-  border: none;
-  background: transparent;
+.rfd-close-btn {
+  width: 32px !important;
+  height: 32px !important;
+  padding: 0 !important;
+  border-radius: 8px !important;
+  border: 1px solid #e2e8f0 !important;
+  background: #f8fafc !important;
+  color: #64748b !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
   cursor: pointer;
-  font-size: 16px;
-  color: var(--ct-text-tertiary, #9ca3af);
-  padding: 4px 8px;
-  border-radius: 6px;
-  transition: all 0.15s;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
 }
-.rfd-close:hover {
-  background: var(--ct-bg-secondary, #f3f4f6);
-  color: var(--ct-text-primary, #111827);
+.rfd-close-btn:hover {
+  background: #fef2f2 !important;
+  color: #ef4444 !important;
+  border-color: #fecaca !important;
 }
 
-/* 过滤搜索条 */
+/* 顶部过滤搜索条：严格单行、图标不压字、浅灰底槽分段器、横向刷新按钮 */
 .rfd-toolbar {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 18px;
-  background: var(--ct-bg-secondary, #fafafa);
-  border-bottom: 1px solid var(--ct-border-color, #f0f0f0);
+  gap: 8px;
+  padding: 10px 20px;
+  background: var(--ct-bg-surface, #f8fafc);
+  border-bottom: 1px solid var(--ct-border, #e2e8f0);
+  flex-wrap: nowrap;
 }
-.rfd-search {
+.rfd-search-box {
+  position: relative;
   flex: 1;
-  min-width: 0;
-  padding: 6px 12px;
-  font-size: 12.5px;
-  border: 1px solid var(--ct-border-color, #e5e7eb);
-  border-radius: 8px;
-  outline: none;
-  background: var(--ct-bg-elevated, #ffffff);
-  color: var(--ct-text-primary, #111827);
-  transition: border-color 0.15s;
-}
-.rfd-search:focus {
-  border-color: var(--ct-color-primary, #7c4dff);
-}
-.rfd-select { padding: 5px 8px; font-size: 11.5px; border: 1px solid var(--ct-border-color, #e5e7eb); border-radius: 8px; outline: none; background: var(--ct-bg-secondary, #f9fafb); color: var(--ct-text-primary, #1f2937); max-width: 150px; cursor: pointer; }
-.rfd-filter {
+  min-width: 150px;
   display: flex;
   align-items: center;
-  gap: 5px;
-  font-size: 12px;
-  color: var(--ct-text-secondary, #6b7280);
-  white-space: nowrap;
+}
+.rfd-search-icon {
+  position: absolute;
+  left: 10px;
+  color: #94a3b8;
+  pointer-events: none;
+  z-index: 1;
+}
+.rfd-search-input {
+  width: 100% !important;
+  height: 32px !important;
+  padding: 0 28px 0 32px !important;
+  font-size: 12.5px !important;
+  color: var(--ct-text-primary, #0f172a) !important;
+  background: var(--ct-bg-card, #ffffff) !important;
+  border: 1px solid #cbd5e1 !important;
+  border-radius: 8px !important;
+  outline: none !important;
+  box-sizing: border-box !important;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.rfd-search-input:hover {
+  border-color: rgba(124, 77, 255, 0.45) !important;
+}
+.rfd-search-input:focus {
+  border-color: #7c4dff !important;
+  box-shadow: 0 0 0 2px rgba(124, 77, 255, 0.12) !important;
+}
+.rfd-search-clear {
+  position: absolute;
+  right: 8px;
+  width: 18px !important;
+  height: 18px !important;
+  padding: 0 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  border: none !important;
+  border-radius: 50% !important;
+  background: rgba(148, 163, 184, 0.22) !important;
+  color: #64748b !important;
   cursor: pointer;
-  user-select: none;
+}
+.rfd-search-clear:hover {
+  background: rgba(148, 163, 184, 0.38) !important;
+  color: #0f172a !important;
+}
+
+/* 浅灰底槽分段器（绝不会两个按钮同时变紫） */
+.rfd-seg {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px;
+  height: 32px;
+  background: #e2e8f0;
+  border-radius: 8px;
+  flex-shrink: 0;
+  box-sizing: border-box;
+}
+.rfd-seg-btn {
+  height: 26px !important;
+  padding: 0 10px !important;
+  border-radius: 6px !important;
+  border: none !important;
+  background: transparent !important;
+  color: #475569 !important;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 5px !important;
+  cursor: pointer;
+  white-space: nowrap !important;
+  box-shadow: none !important;
+  transition: all 0.15s ease;
+}
+.rfd-seg-btn:hover:not(.active) {
+  color: #0f172a !important;
+}
+.rfd-seg-btn.active {
+  background: #ffffff !important;
+  color: #6d28d9 !important;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.1) !important;
+}
+.rfd-seg-count {
+  font-size: 11px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: rgba(100, 116, 139, 0.16);
+  color: #475569;
+  line-height: 1.4;
+}
+.rfd-seg-btn.active .rfd-seg-count {
+  background: rgba(109, 40, 217, 0.12);
+  color: #6d28d9;
+}
+
+.rfd-select {
+  height: 32px !important;
+  padding: 0 24px 0 10px !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  color: #334155 !important;
+  background-color: #ffffff !important;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") !important;
+  background-repeat: no-repeat !important;
+  background-position: right 7px center !important;
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  border: 1px solid #cbd5e1 !important;
+  border-radius: 8px !important;
+  outline: none !important;
+  cursor: pointer;
+  flex-shrink: 0;
+  width: auto !important;
+  max-width: 132px;
+  box-sizing: border-box !important;
+}
+.rfd-select:hover {
+  border-color: rgba(124, 77, 255, 0.45) !important;
+}
+.rfd-select:focus {
+  border-color: #7c4dff !important;
+  box-shadow: 0 0 0 2px rgba(124, 77, 255, 0.12) !important;
+}
+
+.rfd-refresh-btn {
+  width: auto !important;
+  height: 32px !important;
+  padding: 0 12px !important;
+  border-radius: 8px !important;
+  border: 1px solid #cbd5e1 !important;
+  background: #ffffff !important;
+  color: #334155 !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 5px !important;
+  cursor: pointer;
+  white-space: nowrap !important;
+  flex-shrink: 0 !important;
+  transition: all 0.15s ease;
+}
+.rfd-refresh-btn:hover:not(:disabled) {
+  border-color: #7c4dff !important;
+  color: #7c4dff !important;
+  background: rgba(124, 77, 255, 0.04) !important;
+}
+.rfd-refresh-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.rfd-spin {
+  animation: rfd-rotate 0.9s linear infinite;
+}
+@keyframes rfd-rotate {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 /* 状态提示 */
 .rfd-status {
   font-size: 13px;
-  color: var(--ct-text-secondary, #6b7280);
+  color: var(--ct-text-secondary, #64748b);
   text-align: center;
-  padding: 36px 16px;
+  padding: 44px 20px;
   line-height: 1.6;
 }
 .rfd-status.rfd-error {
@@ -686,15 +1019,16 @@ watch(
   background: rgba(239, 68, 68, 0.05);
 }
 .rfd-hint {
-  font-size: 11px;
-  color: var(--ct-text-tertiary, #9ca3af);
+  font-size: 11.5px;
+  color: var(--ct-text-muted, #94a3b8);
 }
 
 /* 记忆列表区 */
 .rfd-list {
   flex: 1;
   overflow-y: auto;
-  padding: 12px 18px;
+  overscroll-behavior: contain;
+  padding: 14px 22px;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -704,15 +1038,51 @@ watch(
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 10px 18px;
-  border-top: 1px solid var(--ct-border-color, #e5e7eb);
-  color: var(--ct-text-secondary, #6b7280);
+  padding: 10px 22px;
+  background: var(--ct-bg-surface, #f8fafc);
+  border-top: 1px solid var(--ct-border, #e2e8f0);
+  color: var(--ct-text-secondary, #64748b);
   font-size: 12px;
+}
+.rfd-page-info {
+  font-weight: 500;
 }
 .rfd-page-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
+}
+.rfd-page-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  border: 1px solid var(--ct-border, #cbd5e1);
+  border-radius: 7px;
+  background: var(--ct-bg-card, #ffffff);
+  color: var(--ct-text-primary, #0f172a);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.rfd-page-btn:hover:not(:disabled) {
+  border-color: var(--ct-color-primary, #7c4dff);
+  color: var(--ct-color-primary, #7c4dff);
+}
+.rfd-page-btn:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+.rfd-page-num {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ct-text-primary, #0f172a);
+  padding: 0 4px;
+}
+.rfd-page-slash {
+  color: var(--ct-text-muted, #94a3b8);
+  margin: 0 2px;
 }
 
 /* 单个记忆卡片 */
@@ -1136,10 +1506,20 @@ watch(
 
 /* 弹窗底部说明条 */
 .rfd-foot {
-  padding: 10px 18px 12px;
-  font-size: 11px;
-  color: var(--ct-text-tertiary, #9ca3af);
-  border-top: 1px solid var(--ct-border-color, #f0f0f0);
-  background: var(--ct-bg-elevated, #ffffff);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 22px 12px;
+  font-size: 11.5px;
+  color: var(--ct-text-secondary, #64748b);
+  border-top: 1px solid var(--ct-border, #e2e8f0);
+  background: var(--ct-bg-card, #ffffff);
+}
+.rfd-foot-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ct-color-primary, #7c4dff);
+  flex-shrink: 0;
 }
 </style>

@@ -177,28 +177,38 @@
 
           <!-- 右侧：控制与操作项（杜绝折行） -->
           <div class="rc-col-actions">
-            <!-- 事实读侧模式选择 -->
-            <select
-              class="rc-select"
-              :value="item.fact_read_mode || 'inherit'"
-              title="事实读侧模式"
-              :disabled="rowLoading[item.conversation_id]"
-              @change="handleFactReadMode(item, $event)"
-            >
-              <option value="inherit">跟随全局</option>
-              <option value="facts">事实优先</option>
-              <option value="documents">文档回退</option>
-            </select>
+            <!-- 事实读侧模式选择 + 悬浮提醒说明 (Teleport 逃逸父容器裁剪) -->
+            <div class="rc-mode-group">
+              <select
+                class="rc-select"
+                :value="item.fact_read_mode || 'inherit'"
+                title="切换该联系人的记忆读取模式"
+                :disabled="rowLoading[item.conversation_id]"
+                @change="handleFactReadMode(item, $event)"
+              >
+                <option value="inherit">跟随全局</option>
+                <option value="facts">事实优先</option>
+                <option value="documents">文档回退</option>
+              </select>
+              <CtHelpTip :width="280" :size="13">
+                <strong>记忆读取模式说明：</strong><br />
+                • <strong>跟随全局</strong>：遵循上方「事实记忆优先」全局开关；<br />
+                • <strong>事实优先</strong>：优先读取提炼出的结构化事实（偏好/约定/边界），不足时以原始对话兜底；<br />
+                • <strong>文档回退</strong>：仅使用原始聊天记录片段检索，不使用提炼事实（适合单人事实不准时回退）。
+              </CtHelpTip>
+            </div>
 
-            <!-- 启用/禁用 -->
+            <!-- 启用/禁用开关（统一文案：已启用 / 已禁用） -->
             <button
-              class="rc-btn mini"
-              :class="{ active: item.enabled }"
-              :disabled="rowLoading[item.conversation_id]"
+              type="button"
+              class="rc-switch-btn"
+              :class="[item.enabled ? 'on is-on' : 'is-off']"
+              :disabled="Boolean(rowLoading[item.conversation_id])"
               @click.prevent="handleToggleEnabled(item)"
               :title="item.enabled ? '点击禁用该联系人的 RAG 检索' : '点击启用该联系人的 RAG 检索'"
             >
-              {{ item.enabled ? '已启用' : '已禁用' }}
+              <span class="rc-switch-track"><span class="rc-switch-thumb"></span></span>
+              <span class="rc-switch-text">{{ item.enabled ? '已启用' : '已禁用' }}</span>
             </button>
 
             <!-- 管理记忆 -->
@@ -309,6 +319,7 @@ import {
   Brain as BrainIcon,
 } from 'lucide-vue-next'
 import CtAvatar from '@/components/base/CtAvatar.vue'
+import CtHelpTip from '@/components/base/CtHelpTip.vue'
 import RagFactDialog from '@/components/settings/RagFactDialog.vue'
 import { api } from '@/api/bridge'
 import { showDialog, showConfirm } from '@/utils/dialog'
@@ -1020,6 +1031,14 @@ async function batchIndexPending() {
   margin-left: auto;
 }
 
+.rc-mode-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  position: relative;
+  flex-shrink: 0;
+}
+
 .rc-select {
   border: 1px solid var(--ct-border-color, rgba(0, 0, 0, 0.12));
   background: var(--ct-bg-secondary, rgba(0, 0, 0, 0.02));
@@ -1032,10 +1051,140 @@ async function batchIndexPending() {
   white-space: nowrap !important;
   word-break: keep-all;
   flex-shrink: 0 !important;
-  width: 90px !important;
-  min-width: 90px !important;
-  max-width: 90px !important;
+  width: 86px !important;
+  min-width: 86px !important;
+  max-width: 86px !important;
   box-sizing: border-box !important;
+  transition: border-color 0.15s;
+}
+
+.rc-select:hover,
+.rc-select:focus {
+  border-color: var(--ct-color-primary, #7c4dff);
+}
+
+.rc-help-icon {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  color: var(--ct-text-tertiary, #9ca3af);
+  cursor: help;
+  outline: none;
+  transition: color 0.15s, background 0.15s;
+}
+
+.rc-help-icon:hover,
+.rc-help-icon:focus-visible {
+  color: var(--ct-color-primary, #7c4dff);
+  background: rgba(124, 77, 255, 0.12);
+}
+
+.rc-help-tooltip {
+  position: absolute;
+  bottom: calc(100% + 9px);
+  right: -8px;
+  width: 280px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #1e1b4b;
+  color: #f8fafc;
+  font-size: 11.5px;
+  font-weight: 400;
+  line-height: 1.55;
+  box-shadow: 0 10px 28px rgba(30, 27, 75, 0.28);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(4px);
+  transition: opacity 0.18s ease, transform 0.18s ease, visibility 0.18s;
+  pointer-events: none;
+  z-index: 400;
+  text-align: left;
+  white-space: normal;
+}
+
+.rc-help-tooltip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  right: 11px;
+  border: 5px solid transparent;
+  border-top-color: #1e1b4b;
+}
+
+.rc-help-icon:hover .rc-help-tooltip,
+.rc-help-icon:focus-visible .rc-help-tooltip {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+
+/* 直观的联系人启用/禁用拨动开关 */
+.rc-switch-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px 3px 5px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  background: var(--ct-bg-secondary, rgba(0, 0, 0, 0.04));
+  color: var(--ct-text-secondary, #555);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  white-space: nowrap !important;
+  flex-shrink: 0 !important;
+}
+
+.rc-switch-btn.is-on {
+  background: rgba(16, 185, 129, 0.1);
+  border-color: rgba(16, 185, 129, 0.28);
+  color: #059669;
+}
+
+.rc-switch-btn.is-off {
+  background: rgba(107, 114, 128, 0.12);
+  border-color: rgba(107, 114, 128, 0.24);
+  color: #6b7280;
+}
+
+.rc-switch-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+}
+
+.rc-switch-track {
+  position: relative;
+  width: 24px;
+  height: 14px;
+  border-radius: 999px;
+  background: #9ca3af;
+  transition: background 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+}
+
+.rc-switch-btn.is-on .rc-switch-track {
+  background: #10b981;
+}
+
+.rc-switch-thumb {
+  position: absolute;
+  left: 2px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.rc-switch-btn.is-on .rc-switch-thumb {
+  transform: translateX(10px);
 }
 
 .rc-btn {

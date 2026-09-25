@@ -2,6 +2,10 @@
 
 这里只保留当前仍需要维护的说明、计划和发布证据。已经完成或被 v4 取代的方案、施工单和评测快照统一放在 [`archive/`](archive/README.md)。
 
+## 发布说明
+
+- [Beta 1.1（v1.1.0-beta.1，2026-09-25）](release-notes-v1.1.0-beta.1.md)：记忆系统（RAG v4）集中落地版本。
+
 ## 当前文档
 
 - [RAG v4 分阶段改造计划](rag-v4-improvement-plan.md)：当前待实施的产品和工程改造项。

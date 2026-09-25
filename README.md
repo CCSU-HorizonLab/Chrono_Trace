@@ -1,12 +1,16 @@
 # Chrono Trace
 
+<div align="center">
+  <img src="docs/images/logo.png" width="96" alt="Chrono Trace Logo" />
+</div>
+
 > 面向微信聊天记录的本地分析与实时辅助桌面工具。
 
-[![Python](https://img.shields.io/badge/Python-3.8%2B-blue.svg)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
 [![Vue](https://img.shields.io/badge/Vue-3.x-green.svg)](https://vuejs.org/)
 [![Vite](https://img.shields.io/badge/Vite-5.x-646CFF.svg)](https://vitejs.dev/)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6.svg)](https://www.microsoft.com/windows)
-[![Status](https://img.shields.io/badge/Status-Core%20Flow%20Ready-brightgreen.svg)](#当前边界)
+[![Status](https://img.shields.io/badge/Status-Beta%201.1-brightgreen.svg)](./docs/release-notes-v1.1.0-beta.1.md)
 [![License](https://img.shields.io/badge/License-PolyForm%20Noncommercial%201.0.0-blue.svg)](./LICENSE)
 
 > 镌刻对话年轮，丈量心动间距
@@ -23,27 +27,93 @@ Chrono Trace 不是腾讯或微信的官方项目，也未获得腾讯或微信�
 
 ## 项目简介
 
-Chrono Trace 是一个基于 `PyWebView + Vue 3 + Python` 的 Windows 桌面应用，围绕微信聊天数据提供两条主链路：
+Chrono Trace 是一个基于 `PyWebView + Vue 3 + Python` 的 Windows 桌面应用，围绕微信聊天数据提供三条主链路：
 
 - 历史聊天导入与本地分析
 - 实时监听与 AI 沟通建议
+- 联系人长期记忆（RAG）：事实抽取、演变维护与纠错闭环
 
 默认情况下，聊天数据解密、导入、存储和分析都在本机完成。只有在你启用 LLM 建议时，系统才会把生成建议所需的必要上下文发送到你配置的模型接口。
 
-本地数据默认写入：
+本地数据默认写入（安装版）：
 
 ```text
 %LOCALAPPDATA%\Chrono Trace\chrono_trace.db
 ```
 
+开发模式下数据写入仓库内 `backend\data\`。
+
+## 界面预览
+
+> 当前为占位图，截图待补。替换 `docs/images/screenshots/` 下的同名 PNG 文件即可，README 无需再改动。
+
+### 首页与数据导入
+
+**首页总览** —— 仪表板统计、账号切换、微信导入状态卡片、功能入口
+
+![首页总览](docs/images/screenshots/home-overview.png)
+
+**微信数据导入（设置页）** —— 自动扫描 / 手动指定路径、密钥登录捕获、验证与增量导入
+
+![微信数据导入](docs/images/screenshots/wechat-import.png)
+
+### 历史分析工作台（分析页）
+
+**情绪分析** —— 情绪趋势曲线、词云、情绪分布
+
+![情绪分析](docs/images/screenshots/analytics-emotion.png)
+
+**互动分析** —— 消息时间线、响应时间、主动率、字数投入比例
+
+![互动分析](docs/images/screenshots/analytics-interaction.png)
+
+**关系评估** —— 好感度总分、四维雷达图、分维度明细
+
+![关系评估](docs/images/screenshots/analytics-affinity.png)
+
+**辅助信息** —— 活跃日历、偏好关键词配置、关系补充信息
+
+![辅助信息](docs/images/screenshots/analytics-assist.png)
+
+### 实时建议与记忆（建议页）
+
+**实时监听与 AI 建议** —— 监听状态、最近上下文、建议卡片与参考话术
+
+![实时监听与 AI 建议](docs/images/screenshots/realtime-suggestions.png)
+
+**记忆管理** —— 联系人事实列表、置信度徽章分层、类型筛选与排序
+
+![记忆管理](docs/images/screenshots/memory-manager.png)
+
+**记忆事实详情** —— 证据链、来源消息定位、纠错反馈操作
+
+![记忆事实详情](docs/images/screenshots/memory-evidence.png)
+
+### 悬浮辅助窗
+
+**悬浮窗** —— 联系人摘要与建议卡片、最近上下文、模型切换
+
+![悬浮辅助窗](docs/images/screenshots/floating-panel.png)
+
+### 设置
+
+**模型配置（设置页）** —— 供应商、接口地址、模型列表获取、连通测试
+
+![模型配置](docs/images/screenshots/settings-model.png)
+
+**联系人记忆 RAG（设置页）** —— 启用开关、读取模式、索引重建
+
+![联系人记忆 RAG](docs/images/screenshots/settings-rag.png)
+
 ## 核心能力
 
 ### 微信数据导入
 
-- 自动扫描微信 `4.x` 数据目录
-- 支持手动指定微信数据路径
-- 使用 `wx_key` 获取的密钥做数据库校验与解密
-- 联系人、会话、消息逐步入库，支持增量导入
+- 内置密钥「登录捕获」：自动引导微信登录并在本机获取解密密钥，无需外部工具
+- 保留手动输入密钥方式（可配合 `wx_key` 等工具获取）
+- 自动扫描微信 `4.x` 数据目录，支持手动指定路径
+- 多微信账号管理：账号切换、按账号隔离联系人与监听数据
+- 联系人、会话、消息逐步入库，支持增量导入与导入统计
 
 ### 历史分析工作台
 
@@ -70,6 +140,17 @@ Chrono Trace 是一个基于 `PyWebView + Vue 3 + Python` 的 Windows 桌面应�
 - 配置了喜好关键词时，权重为 `35 / 35 / 20 / 10`
 - 未配置喜好关键词时，偏好维度不参与，权重调整为 `40 / 35 / 25 / 0`
 
+### 联系人长期记忆（RAG）
+
+Beta 1.1 集中落地的记忆子系统，按联系人维护可追溯的长期记忆：
+
+- **事实抽取**：从聊天记录中经 LLM 结构化抽取记忆事实，质量门拦截碎片化残句、一次性交易细节等噪音；支持断点续抽
+- **事实演变链**：新事实修正/取代旧事实时保留完整审计记录（「以前不喜欢 → 现在改观了」），不再产生自相矛盾的重复记忆
+- **偏好与雷点策略槽**：同一偏好的多次表达自动聚合为独立速查清单，生成建议时分开注入，顺着偏好、避开雷点
+- **关系策略**：关系阶段、亲密度、相处边界（区分对方边界与我的边界）与沟通建议
+- **纠错闭环**：在记忆管理界面标记「不准确/忘记」后，引用该记忆的策略即时刷新；「还原」同样生效
+- **全链路可观测**：每次建议生成可追溯触发类型 → 召回 → 门控 → 注入 → 使用的策略版本
+
 ### 实时监听与 AI 建议
 
 实时建议链路当前是：
@@ -77,8 +158,9 @@ Chrono Trace 是一个基于 `PyWebView + Vue 3 + Python` 的 Windows 桌面应�
 1. 选择联系人并启动监听
 2. 建立启动基线，避免把屏幕上已有旧消息当成新增消息
 3. 对增量消息做去重、情绪判断和上下文整理
-4. 按触发条件调用 LLM 生成建议
-5. 在建议页和悬浮窗中查看结果
+4. 按触发条件检索联系人记忆（召回 → 相关性门控 → 分槽注入）
+5. 调用 LLM 生成建议（远程模型发送前默认脱敏，脱敏器不可用时阻断发送）
+6. 在建议页和悬浮窗中查看结果
 
 当前已落地的关键保护：
 
@@ -100,15 +182,15 @@ Chrono Trace 是一个基于 `PyWebView + Vue 3 + Python` 的 Windows 桌面应�
 
 通过设置页配置 OpenAI 兼容模型，当前已适配：
 
-| 供应商 / 形态      | 说明                 |
-| ------------------ | -------------------- |
-| DeepSeek           | 在线 API             |
-| OpenAI             | 在线 API             |
-| 智谱 GLM           | 在线 API             |
-| Moonshot / Kimi    | 在线 API             |
-| MiniMax            | 在线 API             |
-| Ollama / LM Studio | 本地推理<br />       |
-| 自定义             | 任意 OpenAI 兼容接口 |
+| 供应商 / 形态      | 说明                          |
+| ------------------ | ----------------------------- |
+| DeepSeek           | 在线 API                      |
+| OpenAI             | 在线 API                      |
+| 智谱 GLM           | 在线 API                      |
+| Moonshot / Kimi    | 在线 API                      |
+| MiniMax            | 在线 API                      |
+| Ollama             | 本地推理                      |
+| 自定义             | LM Studio 等任意 OpenAI 兼容接口 |
 
 ## 技术架构
 
@@ -122,14 +204,15 @@ Chrono Trace 是一个基于 `PyWebView + Vue 3 + Python` 的 Windows 桌面应�
 │ Backend                     │
 │ Python Services             │
 │ ├─ analysis/   历史分析      │
-│ ├─ realtime/   实时监听      │
-│ └─ wechat/     数据导入      │
+│ ├─ realtime/   实时监听+RAG  │
+│ ├─ wechat/     数据导入      │
+│ └─ gpu/        GPU runtime  │
 └──────────┬──────────────────┘
            │
 ┌──────────▼──────────────────┐
 │ Data Layer                  │
 │ SQLite 本地存储              │
-│ 微信数据库解密 + native_uia  │
+│ 微信数据库解密（SQLCipher）  │
 └─────────────────────────────┘
 ```
 
@@ -141,16 +224,22 @@ backend/
     db/              # SQLite schema、连接、迁移
     services/
       analysis/      # 历史分析、好感度分析
-      realtime/      # 实时监听、情绪分析、AI 建议
-      wechat/        # 微信数据库扫描、解密、导入
+      realtime/      # 实时监听、情绪分析、AI 建议、联系人记忆（rag_*）
+      wechat/        # 微信数据库扫描、解密、导入（含 V3/V4 适配层）
+      gpu/           # CPU 安装包的 GPU runtime 下载
     webview/         # 前后端桥接
+  scripts/           # 评测、回放、维护脚本
   tests/             # 后端测试
 
 frontend/
   src/
     views/           # Home / Analytics / Suggestions / Settings / FloatingPanel
-    components/      # 图表、分析组件、基础组件
+    components/      # 图表、好感度、人像、记忆管理等组件
     api/             # Bridge API 封装
+
+docs/                # 方案、发布说明、评测产物
+packaging/           # PyInstaller spec、Inno Setup、打包脚本
+tools/               # 辅助验证工具
 
 app.py               # 生产入口
 app_dev.py           # 开发入口
@@ -159,12 +248,14 @@ requirements.txt
 
 ## 环境要求
 
-| 项目    | 要求            |
-| ------- | --------------- |
-| OS      | Windows 10 / 11 |
-| Python  | 3.8+            |
-| Node.js | 16+             |
-| 微信 PC | 4.x             |
+| 项目    | 要求                                       |
+| ------- | ------------------------------------------ |
+| OS      | Windows 10 / 11                            |
+| Python  | 3.12（依赖含 cp312 专用 wheel）            |
+| Node.js | 18+（Vite 5 要求）                         |
+| 微信 PC | 4.x                                        |
+
+首次使用分析/实时建议时会从 ModelScope 自动下载本地情感模型，需要网络。
 
 ## 快速开始
 
@@ -199,12 +290,13 @@ python app.py
 
 ### 3. 获取微信数据库密钥
 
-推荐使用 `wx_key`：
+推荐使用应用内置的**登录捕获**：
 
-- 仓库：[https://github.com/ycccccccy/wx_key](https://github.com/ycccccccy/wx_key)
-- 结果应为 `64` 位十六进制字符串
+1. 在应用中发起密钥获取
+2. 程序会自动引导微信登录，并在本机捕获解密密钥
+3. 捕获失败时可重试，或改用手动输入
 
-示例：
+手动方式需自行获取密钥（如使用 [`wx_key`](https://github.com/ycccccccy/wx_key)），结果应为 `64` 位十六进制字符串：
 
 ```text
 1a2b3c4d5e6f7890abcdef1234567890abcdef1234567890abcdef1234567890
@@ -212,7 +304,7 @@ python app.py
 
 ### 4. 导入聊天数据
 
-1. 启动应用并输入微信数据库密钥
+1. 启动应用并选择密钥获取方式（登录捕获或手动输入）
 2. 让应用自动扫描微信目录
 3. 若自动扫描失败，在界面里手动指定微信数据路径
 4. 验证成功后开始导入
@@ -243,6 +335,8 @@ C:\Users\<用户名>\xwechat_files\wxid_xxx\db_storage\
 - 当前以单人聊天为主，不支持多会话并发监听
 - 群聊不是当前主目标
 - 文件、语音、视频、小程序卡片等复杂消息类型仍以规则识别和占位处理为主
+- 建议质量的量化验收体系（人工回归集）建设中，当前以检索自洽性与人工事实抽查为准
+- 偏好候选自动学习暂为影子模式（仅记录，不进入记忆）
 
 ## 开发
 
@@ -274,11 +368,15 @@ pytest backend/tests/
 
 ### 推荐先看的模块
 
-- `backend/app/services/wechat/`：微信路径扫描、解密、导入
+- `backend/app/services/wechat/`：微信路径扫描、密钥捕获、解密、导入
 - `backend/app/services/analysis/`：历史分析与好感度计算
 - `backend/app/services/realtime/`：实时监听、触发、LLM 建议
+- `backend/app/services/realtime/rag_*.py`：联系人长期记忆子系统（存储、抽取、召回、门控、注入）
 - `backend/app/webview/bridge.py`：前后端桥接接口
 - `frontend/src/views/`：主要页面入口
+- `backend/scripts/`：评测、回放、维护脚本
+
+更多文档见 [docs/](./docs/README.md)（含各版本发布说明索引）。
 
 ### 打包发布
 
@@ -362,8 +460,9 @@ release\installer\ChronoTraceSetup-版本号-GPU.exe
 
 ### 密钥验证失败
 
+- 优先重试应用内的登录捕获
 - 确认密钥是 `64` 位十六进制字符串
-- 重新运行 `wx_key`
+- 手动方式可重新运行 `wx_key` 获取
 
 ### 导入成功但数据为 0
 
@@ -380,6 +479,7 @@ release\installer\ChronoTraceSetup-版本号-GPU.exe
 ## 隐私与安全
 
 - 聊天数据默认只保存在本地
+- 事实记忆为本地处理；使用远程大模型时内容默认脱敏，脱敏器不可用时阻断发送（绝不降级发原文）
 - 解密过程中产生的临时文件应由程序自行清理
 - 启用在线模型前，请自行评估上下文发送范围和隐私边界
 
@@ -398,4 +498,4 @@ release\installer\ChronoTraceSetup-版本号-GPU.exe
 
 ---
 
-最后更新：2026-04-19
+最后更新：2026-09-25

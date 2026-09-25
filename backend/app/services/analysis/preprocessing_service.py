@@ -1276,7 +1276,8 @@ class SessionManager:
     def split_sessions(
         self,
         speech_units: List[Dict[str, Any]],
-        conversation_id: int = None  # 添加可选参数，保持向后兼容
+        conversation_id: int = None,  # 添加可选参数，保持向后兼容
+        progress_cb=None,  # Optional[Callable[[float], None]]：相似度嵌入进度 0~1
     ) -> List[Dict[str, Any]]:
         """
         通过时间间隔+睡眠时间+语义相似度切分会话
@@ -1443,6 +1444,11 @@ class SessionManager:
                         raise Exception("分析已被用户取消")
                     chunk = texts[chunk_start:chunk_start + CHUNK]
                     all_embeddings.extend(embed_service._get_embeddings_batch(chunk))
+                    if progress_cb:
+                        try:
+                            progress_cb(min(1.0, (chunk_start + len(chunk)) / max(1, len(texts))))
+                        except Exception:
+                            pass
                 embeddings = all_embeddings
 
                 # 批量计算所有相邻相似度

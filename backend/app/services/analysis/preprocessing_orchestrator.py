@@ -90,7 +90,8 @@ class PreprocessingOrchestrator:
         self,
         conversation_id: int,
         force_reprocess: bool = False,
-        cancel_event: Optional[threading.Event] = None
+        cancel_event: Optional[threading.Event] = None,
+        progress_cb=None,
     ) -> PreprocessedStatistics:
         start_time = time.time()
         self._sync_analysis_device_mode()
@@ -102,7 +103,7 @@ class PreprocessingOrchestrator:
                 logger.info(f"[预处理] 命中缓存，会话 {conversation_id}")
                 return cached
 
-        stats = self._collect_all_statistics(conversation_id, cancel_event)
+        stats = self._collect_all_statistics(conversation_id, cancel_event, progress_cb=progress_cb)
         stats.preprocessing_duration_ms = int((time.time() - start_time) * 1000)
         self._save_preprocessing_results(conversation_id, stats)
         logger.info(
@@ -110,7 +111,7 @@ class PreprocessingOrchestrator:
         )
         return stats
 
-    def _collect_all_statistics(self, conversation_id: int, cancel_event: Optional[threading.Event] = None) -> PreprocessedStatistics:
+    def _collect_all_statistics(self, conversation_id: int, cancel_event: Optional[threading.Event] = None, progress_cb=None) -> PreprocessedStatistics:
         stats = PreprocessedStatistics(
             conversation_id=conversation_id,
             preprocessing_timestamp=int(time.time()),
@@ -156,7 +157,7 @@ class PreprocessingOrchestrator:
         stats.bidirectional_pairs = pair_stats.get("bidirectional_pairs", 0)
         stats.same_parity_pairs = pair_stats.get("same_parity_pairs", 0)
 
-        sessions = self.session_manager.split_sessions(speech_units)
+        sessions = self.session_manager.split_sessions(speech_units, progress_cb=progress_cb)
         self.session_manager.save_sessions(conversation_id, sessions)
         session_stats = self.session_manager.collect_session_statistics(sessions)
         initiator_stats = self.session_manager.identify_session_initiators(sessions)

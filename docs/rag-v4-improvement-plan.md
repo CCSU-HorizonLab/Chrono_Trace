@@ -297,7 +297,16 @@ P1 闭环后的定位修正：碎片清理和 LLM 抽取已有实质改善，但
 - **T11 质量第四轮**：疑问结尾扩“多少/几块”（“早餐多少”→question_turn，真实库 2 条）；购买类“……的”结尾代指判 object_missing（“直接买80的”）；新增 `weak_attitude_terms` 词表键（“没那么想要”类残句 ≤8 字拦截，带宾语放行）；敏感词检查提到疑问判定之前（“手机号是多少”应判敏感）。prompt 增加游戏内商店/虚拟物品购买排除与“……的”代词差例；抽取版本 bump p1.6（存量段自动重抽）。副本重放：93 条 active 原型新拦 5 条（没那么想要×2/自己喝完/早餐多少×2），无误伤。
 - **学生会场景定位**（未在本轮自动化）：5383（院学生会）与 5385（非校学生会）语义上可并存——是范围（校级/院级）未澄清的 canonical 化问题，属 P1.2 contact_preference 的策略对象统一，T8/T9 保证了纠错生效与引用剔除，范围澄清待对话证据重抽后由融合链完成。
 
-**运行面遗留**（供下轮决策）：旧原型路径仍占 active 事实 53%（93/176），其中 87 条焦点 <20 字；LLM 事实 83 条中 28 条 <20 字、20 条证据不足。原型路径的结构性收紧/退役（LLM 全量覆盖后）待用户确认后实施。
+**运行面遗留更新（2026-09-25 第三轮处理）**：原型路径收紧已实施——`prototype_too_short` 结构性门槛（原型路径焦点 <12 字一律拦截，真实库 93 条 active 原型中 74 条即 80% 属此；LLM 宽松模式不受限）。副本存量重放：88 条 active 原型隔离 69 条、保留 19 条长事实，LLM 事实不动。真实库已见 **2 条 superseded llm_shadow**（此前 0）——p1.6 重抽的融合 UPDATE 真实执行且防复活保住了演变链。
+
+### P2.1 补充（2026-09-25 第三轮）：反馈策略信号影子层 ✅（记录闭环）
+
+- 新增 `rag_feedback_policy_signals` 表（append-only）与三路接线：
+  - **fact_feedback**：「不准确/忘记/还原」反馈时回查该事实被哪些活跃策略（关系 state + 偏好槽）引用，刷新后把受影响策略与结果落信号；还原路径全量重刷新。
+  - **suggestion_outcome**：adopted/rewritten 点击事件绑定该建议检索日志的 policy_ids/contact_preference_ids/injected_item_ids（singleton 去重）。
+  - **suggestion_attribution**：3-10 分钟窗口正归因（accepted/rewritten/preface_then_reply，conf≥0.65）落信号，含实际发送文本前 200 字（strong_mask 由既有 feedback_example 路径覆盖）。
+- **只记录不决策**（纪律红线）：accepted/rewritten 自动生成新策略候选不在本轮做——待信号积累到量后按 P0.3 人工集校准再启用，防止把改写文本直接当偏好写入。
+- 基建（2026-09-25 第三轮）：P0.3 挖掘脚本 `backend/scripts/mine_regression_scenarios.py`（retrieval_log 源 + memory_reference 源，输出脱敏 JSONL 待标注）与标注流程 `docs/p0.3-regression-labeling-guide.md`（两轮自一致性 + 仲裁 + 度量口径）——数据到量即可直接标注建集。
 
 ## P2：长期闭环与真实贡献（收益高、成本高）
 

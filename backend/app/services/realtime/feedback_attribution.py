@@ -343,6 +343,45 @@ class SuggestionFeedbackAttributor:
                 int(time.time()),
             ),
         )
+        # P2.1 影子信号：正归因绑定该建议实际使用的策略/注入项——
+        # "反馈→策略修正"的审计底账（只记录不决策），失败不影响归因
+        if result["attribution_type"] in POSITIVE_ATTRIBUTIONS:
+            try:
+                self._write_policy_signal(suggestion, result, conversation_id)
+            except Exception:
+                pass
+
+    def _write_policy_signal(
+        self, suggestion: dict[str, Any], result: dict[str, Any], conversation_id: int | None
+    ) -> None:
+        from .rag_store import RagStore
+
+        log = self.conn.execute(
+            """
+            SELECT id, policy_ids_json, contact_preference_ids_json, injected_item_ids_json
+            FROM rag_retrieval_logs WHERE suggestion_id = ? ORDER BY id DESC LIMIT 1
+            """,
+            (int(suggestion["id"]),),
+        ).fetchone()
+        if log is None:
+            return
+        RagStore(self.conn).record_feedback_policy_signal(
+            account_wxid=str(suggestion.get("account_wxid") or ""),
+            conversation_id=conversation_id,
+            suggestion_id=int(suggestion["id"]),
+            action=str(result["attribution_type"]),
+            signal_kind="suggestion_attribution",
+            affected_policy_ids=json.loads(log["policy_ids_json"] or "[]"),
+            outcome="recorded",
+            retrieval_log_id=int(log["id"]),
+            detail={
+                "confidence": result["confidence"],
+                "contact_preference_ids": json.loads(log["contact_preference_ids_json"] or "[]"),
+                "injected_item_ids": json.loads(log["injected_item_ids_json"] or "[]"),
+                "selected_speech": (result.get("selected_speech") or "")[:200],
+                "final_message": (result.get("final_message") or "")[:200],
+            },
+        )
 
     def _resolve_conversation_id(self, suggestion: dict[str, Any]) -> int | None:
         trigger_context = {}

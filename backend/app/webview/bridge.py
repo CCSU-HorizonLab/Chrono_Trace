@@ -1641,6 +1641,7 @@ class Bridge:
     def get_contact_facts(
         self, conversation_id: int, account_wxid: str = "", limit: int = 200,
         offset: int = 0, sort: str = "time_desc", kind: str = "",
+        enabled: bool | None = None,
     ) -> dict[str, Any]:
         """List contact memory facts with evidence for user review/correction.
 
@@ -1659,6 +1660,8 @@ class Bridge:
             kind_filter = str(kind or "").strip()
             kind_clause = "AND kind = ?" if kind_filter else ""
             kind_args = (kind_filter,) if kind_filter else ()
+            enabled_clause = "AND enabled = ?" if enabled is not None else ""
+            enabled_args = (int(bool(enabled)),) if enabled is not None else ()
 
             order_by = {
                 "time_asc": "enabled DESC, as_of ASC, id ASC",
@@ -1671,11 +1674,11 @@ class Bridge:
                        evidence_message_ids_json
                 FROM rag_facts
                 WHERE account_wxid = ? AND conversation_id = ? AND status = 'active'
-                  {kind_clause}
+                  {kind_clause} {enabled_clause}
                 ORDER BY {order_by}
                 LIMIT ? OFFSET ?
                 """,
-                (resolved_account, int(conversation_id), *kind_args, page_limit, page_offset),
+                (resolved_account, int(conversation_id), *kind_args, *enabled_args, page_limit, page_offset),
             ).fetchall()
             count_row = conn.execute(
                 f"""
@@ -1820,6 +1823,13 @@ class Bridge:
                 "raw_fact_count": raw_fact_count,
                 "fact_count": int(count_row["fact_count"]),
                 "enabled_fact_count": int(count_row["enabled_fact_count"]),
+                "selected_fact_count": (
+                    int(count_row["fact_count"])
+                    if enabled is None else (
+                        int(count_row["enabled_fact_count"])
+                        if enabled else int(count_row["fact_count"]) - int(count_row["enabled_fact_count"])
+                    )
+                ),
                 "offset": page_offset,
                 "limit": page_limit,
                 "total": len(facts),
@@ -1871,17 +1881,20 @@ class Bridge:
                 result = store.set_fact_user_feedback(int(fact_id), action, reason or "")
             store.conn.commit()
             # 用户纠错后刷新关系策略影子：剔除已禁用事实的 evidence 引用
-            # （P2.1 最小闭环；刷新受 shadow 开关保护，失败绝不阻塞反馈）
+            # （P2.1 闭环；刷新受 shadow 开关保护，失败绝不阻塞反馈）
             if result.get("ok"):
                 try:
                     from ..services.realtime.rag_relationship_policy import (
                         refresh_after_fact_feedback,
                     )
 
-                    refresh_result = refresh_after_fact_feedback(store, int(fact_id))
+                    normalized = "restore" if action == "restore" else action
+                    refresh_result = refresh_after_fact_feedback(
+                        store, int(fact_id), action=normalized
+                    )
                     store.conn.commit()
                     logger.debug(
-                        "[Bridge] 记忆反馈后关系策略刷新 fact=%s result=%s",
+                        "[Bridge] 记忆反馈后策略刷新 fact=%s result=%s",
                         fact_id,
                         refresh_result,
                     )

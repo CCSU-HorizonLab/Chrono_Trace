@@ -273,6 +273,30 @@ class RagStore:
             ON rag_contact_preferences(account_wxid, conversation_id, created_at DESC)
             """
         )
+        self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS rag_feedback_policy_signals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_wxid TEXT NOT NULL,
+                conversation_id INTEGER,
+                fact_id INTEGER,
+                suggestion_id INTEGER,
+                action TEXT NOT NULL,
+                signal_kind TEXT NOT NULL DEFAULT 'fact_feedback',
+                affected_policy_ids_json TEXT,
+                outcome TEXT,
+                retrieval_log_id INTEGER,
+                detail_json TEXT,
+                created_at INTEGER NOT NULL
+            )
+            """
+        )
+        self.conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_rag_feedback_policy_signals_scope
+            ON rag_feedback_policy_signals(account_wxid, conversation_id, created_at DESC)
+            """
+        )
         self._ensure_document_columns()
         self._ensure_status_columns()
         self._ensure_retrieval_log_columns()
@@ -1411,6 +1435,55 @@ class RagStore:
             (account_wxid, int(conversation_id)),
         ).fetchone()
         return int(row["n"]) if row else 0
+
+    # ---- P2.1 反馈策略信号影子层 ----
+
+    def record_feedback_policy_signal(self, **payload: Any) -> int:
+        """Append-only 影子信号：反馈/建议终态对策略层的影响审计。
+
+        只记录不决策——信号积累到量后才驱动 accepted/rewritten 生成
+        新策略候选（P2.1 后半程），本轮先保证可追溯。
+        """
+        cursor = self.conn.execute(
+            """
+            INSERT INTO rag_feedback_policy_signals
+            (account_wxid, conversation_id, fact_id, suggestion_id, action,
+             signal_kind, affected_policy_ids_json, outcome, retrieval_log_id,
+             detail_json, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                payload.get("account_wxid") or "",
+                payload.get("conversation_id"),
+                payload.get("fact_id"),
+                payload.get("suggestion_id"),
+                str(payload.get("action") or ""),
+                str(payload.get("signal_kind") or "fact_feedback"),
+                json.dumps(payload.get("affected_policy_ids") or [], ensure_ascii=False),
+                payload.get("outcome"),
+                payload.get("retrieval_log_id"),
+                json.dumps(payload.get("detail") or {}, ensure_ascii=False),
+                _now(),
+            ),
+        )
+        return int(cursor.lastrowid)
+
+    def list_feedback_policy_signals(
+        self,
+        account_wxid: str,
+        conversation_id: int,
+        *,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            """
+            SELECT * FROM rag_feedback_policy_signals
+            WHERE account_wxid = ? AND conversation_id = ?
+            ORDER BY id DESC LIMIT ?
+            """,
+            (account_wxid, int(conversation_id), max(1, int(limit))),
+        ).fetchall()
+        return [dict(row) for row in rows]
 
     def attach_log_to_suggestion(self, log_id: int | None, suggestion_id: int) -> None:
         if not log_id:

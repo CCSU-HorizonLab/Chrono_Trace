@@ -127,6 +127,15 @@ class AffinityAnalysisService:
         self._task_status[task_id] = result
         return result
 
+    def find_running_task(self, conversation_id: int) -> Optional[str]:
+        """返回该会话仍在进行中的任务 ID（重复启动时复用，防取消事件被替换）。"""
+        for task_id, result in self._task_status.items():
+            if result.conversation_id != conversation_id:
+                continue
+            if result.status not in {"completed", "failed", "cancelled"}:
+                return task_id
+        return None
+
     def analyze(
         self,
         conversation_id: int,

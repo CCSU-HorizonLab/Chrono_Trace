@@ -3281,16 +3281,18 @@ class Bridge:
             service.config = self._build_feature_config(config)
             service.config.validate()
 
-            import threading
-            self._analysis_cancel_event = threading.Event()
-
-            # 同会话已有运行中的提取：直接返回该任务，防止并发提取互相删数据
+            # 同会话已有运行中的提取：直接返回该任务，防止并发提取互相删数据。
+            # 必须在新建取消事件之前判断——否则运行中线程持有的旧事件被替换，
+            # 之后点「停止」设置的将是新事件，旧任务再也停不掉
             running_task = service.find_running_task(conversation_id)
             if running_task:
                 return {
                     "success": True,
                     "data": {"task_id": running_task, "status": "started", "message": "已有进行中的提取任务，已复用"},
                 }
+
+            import threading
+            self._analysis_cancel_event = threading.Event()
 
             # 异步启动：立即返回 task_id，前端轮询 get_extraction_progress
             # （此前同步阻塞至完成，导致切页丢进度 + 重复发起时后端叠加运行）
@@ -4489,6 +4491,20 @@ class Bridge:
         try:
             import threading
             import time as _time
+
+            # 复用守卫：旧服务实例上仍有本会话的运行中任务时不重复启动。
+            # 此处必须查旧实例（本方法每次 reload 出新类，新实例看不到旧任务）；
+            # 重复启动会替换取消事件，导致运行中的任务再也停不掉
+            prev_service = self._affinity_service
+            if prev_service is not None:
+                running = prev_service.find_running_task(conversation_id)
+                if running:
+                    return {
+                        "ok": True,
+                        "task_id": running,
+                        "status": "started",
+                        "message": "已有进行中的好感度分析，已复用",
+                    }
 
             AffinityAnalysisService = self._get_fresh_affinity_service_class()
             service = AffinityAnalysisService()            # 保存服务实例引用，供 get_affinity_progress 查询进度

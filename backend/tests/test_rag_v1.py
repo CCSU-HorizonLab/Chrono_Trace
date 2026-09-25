@@ -2265,3 +2265,115 @@ def test_merge_fact_evidence_ladders_confidence_on_reconfirmation():
         "SELECT confidence FROM rag_facts WHERE id = ?", (fact_id,)
     ).fetchone()
     assert capped["confidence"] == 0.95
+
+
+def test_concurrent_rebuilds_queue_instead_of_locking(monkeypatch):
+    """并发重建互斥：第二个 rebuild 不失败不等待，标记 pending 入队。
+
+    用户实测：连点两个联系人重建 → 两个 bridge 线程并行 rebuild，
+    LLM 抽取长事务占 WAL 写锁互相 busy 超时，两边全失败。
+    修复后：进程级互斥，后来者 pending+入队（由队列单 worker 串行）。
+    """
+    import threading as _threading
+
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    store = RagStore(conn)
+    now = int(time.time())
+    conn.executescript(
+        """
+        CREATE TABLE conversations (
+            id INTEGER PRIMARY KEY,
+            account_wxid TEXT NOT NULL,
+            username TEXT NOT NULL,
+            display_name TEXT,
+            message_count INTEGER DEFAULT 0,
+            updated_at INTEGER DEFAULT 0,
+            is_deleted INTEGER DEFAULT 0
+        );
+        CREATE TABLE messages (
+            id INTEGER PRIMARY KEY,
+            conversation_id INTEGER NOT NULL,
+            is_sender INTEGER NOT NULL,
+            content TEXT,
+            message_type INTEGER NOT NULL,
+            timestamp INTEGER NOT NULL
+        );
+        """
+    )
+    for conv_id in (1, 2):
+        conn.execute(
+            "INSERT INTO conversations (id, account_wxid, username, display_name, message_count, updated_at)"
+            " VALUES (?, 'wxid_a', ?, ?, 3, ?)",
+            (conv_id, f"u{conv_id}", f"U{conv_id}", now),
+        )
+        conn.executemany(
+            "INSERT INTO messages (id, conversation_id, is_sender, content, message_type, timestamp)"
+            " VALUES (?, ?, ?, ?, 1, ?)",
+            [
+                (conv_id * 10 + 1, conv_id, 1, "最近忙吗", now - 120),
+                (conv_id * 10 + 2, conv_id, 0, "我每次压力大的时候都会去江边散步", now - 60),
+                (conv_id * 10 + 3, conv_id, 1, "听起来挺舒服", now),
+            ],
+        )
+    monkeypatch.setattr(
+        "app.services.realtime.rag_indexer.load_rag_settings",
+        lambda: {
+            "rag_embedding_model": "tingting0514/text2vec-base-chinese",
+            "rag_embedding_dim": 384,
+            "rag_privacy_mode": "balanced",
+        },
+    )
+    # 影子刷新关闭：避免测试线程经 thread-local get_db 触碰真实库
+    monkeypatch.setattr(
+        "app.services.realtime.rag_relationship_policy.load_rag_settings",
+        lambda: {"rag_relationship_policy_shadow_enabled": False},
+    )
+    monkeypatch.setattr(
+        "app.services.realtime.rag_contact_preference.load_rag_settings",
+        lambda: {"rag_relationship_policy_shadow_enabled": False},
+    )
+
+    entered_embedding = _threading.Event()
+    release_embedding = _threading.Event()
+    enqueued = []
+
+    class SlowEmbedding:
+        def embed_texts(self, texts):
+            if not entered_embedding.is_set():
+                entered_embedding.set()
+                release_embedding.wait(timeout=10)
+            return [[0.0] * 384 for _ in texts]
+
+    monkeypatch.setattr(
+        "app.services.realtime.rag_indexer.RagIndexQueue.enqueue",
+        staticmethod(lambda account_wxid, conversation_id: enqueued.append((account_wxid, conversation_id))),
+    )
+
+    indexer1 = RagIndexer(store=store, embedding_service=SlowEmbedding())
+    indexer2 = RagIndexer(store=store, embedding_service=SlowEmbedding())
+    results = {}
+
+    def run(indexer, conv_id):
+        try:
+            results[conv_id] = indexer.rebuild_contact_index(
+                account_wxid="wxid_a", conversation_id=conv_id
+            )
+        except Exception as exc:  # noqa: BLE001
+            results[conv_id] = {"status": "raised", "error": str(exc)}
+
+    t1 = _threading.Thread(target=run, args=(indexer1, 1))
+    t1.start()
+    assert entered_embedding.wait(timeout=10)  # t1 持锁中
+    t2 = _threading.Thread(target=run, args=(indexer2, 2))
+    t2.start()
+    t2.join(timeout=10)
+    release_embedding.set()
+    t1.join(timeout=30)
+
+    # 第二个 rebuild：不抛异常、不等待 t1，标记 pending 并入队
+    assert results[2]["status"] == "pending"
+    assert enqueued == [("wxid_a", 2)]
+    # 第一个 rebuild 正常完成
+    assert results[1]["status"] == "ready"
+    assert "raised" not in {v.get("status") for v in results.values()}

@@ -155,7 +155,7 @@ def test_refresh_skips_when_no_profile_and_no_facts(monkeypatch):
     )
     monkeypatch.setattr(
         "app.services.realtime.rag_relationship_policy._load_profile_cache",
-        lambda account_wxid, display_name: None,
+        lambda account_wxid, display_name, conn=None: None,
     )
     result = refresh_relationship_state_shadow(
         store, account_wxid="wxid_a", conversation_id=1, display_name="某人",
@@ -244,7 +244,7 @@ def test_refresh_writes_shadow_from_profile_and_facts(monkeypatch):
     )
     monkeypatch.setattr(
         "app.services.realtime.rag_relationship_policy._load_profile_cache",
-        lambda account_wxid, display_name: {
+        lambda account_wxid, display_name, conn=None: {
             "profile": profile, "features_snapshot": features,
         },
     )
@@ -283,7 +283,7 @@ def test_refresh_after_fact_feedback_drops_disabled_evidence(monkeypatch):
     )
     monkeypatch.setattr(
         "app.services.realtime.rag_relationship_policy._load_profile_cache",
-        lambda account_wxid, display_name: {
+        lambda account_wxid, display_name, conn=None: {
             "profile": profile, "features_snapshot": features,
         },
     )

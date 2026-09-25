@@ -275,8 +275,8 @@
           </div>
         </div>
 
-        <div v-if="!loading && !error && factCount > 0" class="rfd-pagination">
-          <span class="rfd-page-info">显示第 {{ pageStart }}–{{ pageEnd }} 条 · 共 {{ factCount }} 条</span>
+        <div v-if="!loading && !error && selectedFactCount > 0" class="rfd-pagination">
+          <span class="rfd-page-info">显示第 {{ pageStart }}–{{ pageEnd }} 条 · 共 {{ selectedFactCount }} 条</span>
           <div class="rfd-page-actions">
             <button class="rfd-page-btn" :disabled="page <= 1" @click="goToPage(page - 1)">
               <ChevronLeft :size="14" />
@@ -353,11 +353,12 @@ const listElement = ref<HTMLElement | null>(null)
 const documentCount = ref(0)
 const factCount = ref(0)
 const enabledFactCount = ref(0)
+const selectedFactCount = ref(0)
 const page = ref(1)
 const pageSize = 50
-const totalPages = computed(() => Math.max(1, Math.ceil(factCount.value / pageSize)))
+const totalPages = computed(() => Math.max(1, Math.ceil(selectedFactCount.value / pageSize)))
 const pageStart = computed(() => (page.value - 1) * pageSize + 1)
-const pageEnd = computed(() => Math.min(page.value * pageSize, factCount.value))
+const pageEnd = computed(() => Math.min(page.value * pageSize, selectedFactCount.value))
 const resolvedAccount = ref('')
 const contactAvatar = ref('')
 const userAvatar = ref('')
@@ -589,7 +590,7 @@ function parseFact(fact: RagFact) {
   }
 }
 
-watch([sortBy, kindFilter], () => {
+watch([sortBy, kindFilter, showDisabled], () => {
   page.value = 1
   load(1)
 })
@@ -612,7 +613,7 @@ async function load(targetPage = page.value) {
 
     const res = await api.get_contact_facts(
       props.conversationId, props.accountWxid || '', pageSize, (targetPage - 1) * pageSize,
-      sortBy.value, kindFilter.value,
+      sortBy.value, kindFilter.value, !showDisabled.value,
     )
     if (requestId !== loadSequence || !props.visible) return
     if (res?.ok) {
@@ -626,8 +627,14 @@ async function load(targetPage = page.value) {
       documentCount.value = Number(res.document_count || 0)
       factCount.value = Number(res.fact_count ?? res.raw_fact_count ?? facts.value.length)
       enabledFactCount.value = Number(res.enabled_fact_count ?? 0)
+      selectedFactCount.value = Number(res.selected_fact_count ?? (showDisabled.value
+        ? factCount.value - enabledFactCount.value : enabledFactCount.value))
       kinds.value = (res.kinds || []) as { kind: string; count: number }[]
       resolvedAccount.value = String(res.resolved_account_wxid || '')
+      if (targetPage > totalPages.value) {
+        await load(totalPages.value)
+        return
+      }
       page.value = targetPage
       if (listElement.value) listElement.value.scrollTop = 0
     } else {
@@ -697,6 +704,7 @@ watch(
       facts.value = []
       factCount.value = 0
       enabledFactCount.value = 0
+      selectedFactCount.value = 0
       keyword.value = ''
       showDisabled.value = false
       Object.keys(revealed).forEach((k) => delete revealed[Number(k)])

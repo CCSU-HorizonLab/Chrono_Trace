@@ -134,6 +134,7 @@ def test_realtime_message_exposes_compatibility_properties():
     assert msg.is_self is True
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="win32 窗口探测专属")
 def test_detector_maps_qt_window_to_405_profile_when_exe_matches_legacy_client():
     assert (
         _map_version_to_profile(
@@ -146,6 +147,7 @@ def test_detector_maps_qt_window_to_405_profile_when_exe_matches_legacy_client()
     )
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="win32 窗口探测专属")
 def test_detector_maps_qt_window_to_41x_profile_when_exe_matches_weixin_client():
     assert (
         _map_version_to_profile(
@@ -214,11 +216,14 @@ def test_merge_rect_clusters_combines_nearby_spans_and_preserves_distant_noise()
 
 
 def test_normalize_listener_backend_maps_legacy_values_to_native_uia():
-    assert normalize_listener_backend(None) == "native_uia"
-    assert normalize_listener_backend("") == "native_uia"
+    # 平台默认：Windows native_uia，Linux db_watch（阶段三移植）
+    expected_default = "native_uia" if sys.platform == "win32" else "db_watch"
+    assert normalize_listener_backend(None) == expected_default
+    assert normalize_listener_backend("") == expected_default
     assert normalize_listener_backend("auto") == "native_uia"
     assert normalize_listener_backend("wxauto") == "native_uia"
     assert normalize_listener_backend("native_uia") == "native_uia"
+    assert normalize_listener_backend("db_watch") == "db_watch"
 
 
 def test_factory_auto_prefers_native_provider(monkeypatch):

@@ -38,7 +38,7 @@ def test_import_contacts_persists_avatar_without_blank_overwrite(monkeypatch, is
     isolated_db.commit()
 
     class FakeContactDB:
-        def __init__(self, db_path: str, db_key: str):
+        def __init__(self, db_path: str, db_key: str, raw_keys=None):
             assert db_path == "fake_contact.db"
             assert db_key == "secret-key"
 
@@ -89,7 +89,7 @@ def test_import_contacts_persists_avatar_without_blank_overwrite(monkeypatch, is
 
 def test_import_contacts_filters_wechat_system_accounts(monkeypatch, isolated_db):
     class FakeContactDB:
-        def __init__(self, db_path: str, db_key: str):
+        def __init__(self, db_path: str, db_key: str, raw_keys=None):
             assert db_path == "fake_contact.db"
             assert db_key == "secret-key"
 
@@ -187,7 +187,7 @@ def test_refresh_contact_avatars_backfills_conversations(monkeypatch, isolated_d
     isolated_db.commit()
 
     class FakeContactDB:
-        def __init__(self, db_path: str, db_key: str):
+        def __init__(self, db_path: str, db_key: str, raw_keys=None):
             assert db_path == "fake_contact.db"
             assert db_key == "secret-key"
 

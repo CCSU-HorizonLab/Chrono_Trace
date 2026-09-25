@@ -843,7 +843,14 @@ class Bridge:
     ) -> dict[str, Any]:
         """Refresh imported contact avatar metadata without reimporting messages."""
         preferred_paths = custom_paths or self._get_wechat_custom_paths(account_wxid)
-        result = self.wechat_service.refresh_contact_avatars(db_key, preferred_paths)
+        # Windows 只读扫描账号：头像回读同样需要每库 raw key 映射
+        raw_keys = None
+        account = self._resolve_wechat_account(account_wxid) or {}
+        if str(account.get("key_type") or "passphrase") == "raw":
+            raw_keys = account.get("raw_keys") or {}
+        result = self.wechat_service.refresh_contact_avatars(
+            db_key, preferred_paths, raw_keys=raw_keys
+        )
         if result.get("ok") and preferred_paths:
             resolved_wxid = str(preferred_paths.get("account_wxid") or preferred_paths.get("current_user") or self._resolve_account_wxid(account_wxid))
             if resolved_wxid:

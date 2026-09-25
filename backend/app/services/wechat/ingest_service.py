@@ -345,6 +345,7 @@ class WeChatIngestService:
         self,
         db_key: str,
         custom_paths: Optional[Dict] = None,
+        raw_keys: Optional[Dict] = None,
     ) -> Dict[str, Any]:
         """Re-read the WeChat contact DB and backfill avatar metadata only."""
         try:

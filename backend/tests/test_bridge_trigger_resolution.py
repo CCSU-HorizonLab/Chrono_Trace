@@ -4,6 +4,7 @@ import os
 import json
 import sqlite3
 import sys
+import threading
 import time
 
 
@@ -129,6 +130,11 @@ def test_bridge_manual_generate_uses_manual_request_without_explicit_trigger(mon
 
 def test_bridge_suggestion_stream_returns_events_and_final_result(monkeypatch):
     bridge = Bridge.__new__(Bridge)
+    # partial Bridge：_prune_task_dicts 会触碰的任务字典与锁（__init__ 未运行）
+    bridge._wechat_key_capture_lock = threading.Lock()
+    bridge._wechat_key_capture_sessions = {}
+    bridge._model_download_lock = threading.Lock()
+    bridge._model_download_status = {}
     engine = FakeStreamingEngine()
     conn = _setup_db()
 

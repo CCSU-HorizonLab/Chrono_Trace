@@ -848,7 +848,7 @@ def test_llm_generate_repairs_meta_response_before_returning_result(monkeypatch)
             "temperature": 0.7,
         },
     )
-    monkeypatch.setattr(engine, "_build_prompt", lambda trigger_type, intent, context: "prompt")
+    monkeypatch.setattr(engine, "_build_prompt", lambda trigger_type, intent, context, model_config=None: "prompt")
     monkeypatch.setattr(
         engine,
         "_generate_reasoning_analysis",

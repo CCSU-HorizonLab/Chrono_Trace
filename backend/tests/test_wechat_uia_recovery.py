@@ -6,6 +6,8 @@ import os
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+import pytest
+
 from app.services.realtime.providers.recovery import (
     classify_visible_descendants,
     launch_narrator,
@@ -13,6 +15,10 @@ from app.services.realtime.providers.recovery import (
     pick_wechat_launch_path,
     recover_shell_only_wechat_uia,
     resolve_wechat_launch_path,
+)
+
+pytestmark = pytest.mark.skipif(
+    sys.platform != "win32", reason="UIA 恢复链路依赖 Windows 微信窗口/pywinauto"
 )
 
 

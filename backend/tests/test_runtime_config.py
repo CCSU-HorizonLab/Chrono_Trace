@@ -24,9 +24,15 @@ def test_dev_user_data_paths_use_project_data_directory(monkeypatch, tmp_path):
 
 
 def test_frozen_user_data_paths_use_production_directory(monkeypatch, tmp_path):
-    config = _reload_config(monkeypatch, tmp_path, frozen=True)
-
-    expected_root = tmp_path / "LocalAppData" / "Chrono Trace"
+    if sys.platform != "win32":
+        # Linux frozen 走 XDG 数据目录（LOCALAPPDATA 不参与）
+        xdg_data = tmp_path / "XDGData"
+        monkeypatch.setenv("XDG_DATA_HOME", str(xdg_data))
+        config = _reload_config(monkeypatch, tmp_path, frozen=True)
+        expected_root = xdg_data / "Chrono Trace"
+    else:
+        config = _reload_config(monkeypatch, tmp_path, frozen=True)
+        expected_root = tmp_path / "LocalAppData" / "Chrono Trace"
     assert Path(config.DATA_DIR) == expected_root
     assert Path(config.SETTINGS_PATH) == expected_root / "settings.json"
     assert Path(config.DB_PATH) == expected_root / "chrono_trace.db"

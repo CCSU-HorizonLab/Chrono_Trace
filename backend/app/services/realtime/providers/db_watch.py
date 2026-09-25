@@ -129,6 +129,9 @@ class DbWatchRealtimeProvider(RealtimeProvider):
             return []
         for watcher in self._watchers:
             watcher.refresh()
+        # 窗口游标随刷新前移到最新 sort_seq——否则 open_chat 之后新到的消息
+        # 被「<= 初始游标」过滤，实时监听永远收不到新消息
+        self._upper_seq = max(self._upper_seq, self._max_seq(self._table))
 
         limit = self.WINDOW + max(0, self._extra_older)
         rows: list[tuple[int, dict]] = []

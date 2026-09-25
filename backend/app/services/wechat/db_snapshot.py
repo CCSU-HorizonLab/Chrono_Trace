@@ -178,7 +178,12 @@ class EncryptedShardWatcher:
         return self._decrypt_raw(raw, page_no)
 
     def _apply_wal(self, main_file, out, total_pages: int) -> None:
-        """把 -wal 中的提交帧覆盖到解密视图（帧 salt 与 wal 头一致才应用）。"""
+        """把 -wal 中的已提交帧覆盖到解密视图（帧 salt 与 wal 头一致才应用）。
+
+        WAL 头与帧头字段均为大端序（SQLite 文件格式规定）——此前误用小端解包，
+        真实 WAL 的 magic 读为 0x82067F37 导致整段合并在真实文件上从未生效。
+        只应用到「最后一次 commit 帧」为止：宁少读不错读，不应用未提交/回滚数据。
+        """
         wal_path = Path(str(self.src) + "-wal")
         if not wal_path.exists():
             return
@@ -190,26 +195,38 @@ class EncryptedShardWatcher:
             header = wal.read(WAL_HEADER_SIZE)
             if len(header) < WAL_HEADER_SIZE:
                 return
-            magic, = struct.unpack_from("<I", header, 0)
+            magic, = struct.unpack_from(">I", header, 0)
             if magic not in (0x377F0682, 0x377F0683):
                 return
-            page_size, = struct.unpack_from("<I", header, 8)
+            page_size, = struct.unpack_from(">I", header, 8)
             if page_size != PAGE_SIZE:
-                page_size = PAGE_SIZE  # 大端存储的异常值兜底
-            salt1, salt2 = struct.unpack_from("<QQ", header, 16)
+                return  # 页大小不符（如 65536 特殊值）：无法按 4096 布局合并
+            salt1, salt2 = struct.unpack_from(">II", header, 16)
 
+            frames: list[tuple[int, bytes]] = []
+            last_commit = 0
             while True:
                 fh = wal.read(WAL_FRAME_HEADER_SIZE)
                 if len(fh) < WAL_FRAME_HEADER_SIZE:
                     break
-                page_no, _commit, fsalt1, fsalt2, _ck1, _ck2 = struct.unpack("<IIIIII", fh)
+                page_no, commit_size, fsalt1, fsalt2, _ck1, _ck2 = struct.unpack(">IIIIII", fh)
                 if (fsalt1, fsalt2) != (salt1, salt2):
                     break  # 代际不一致：之后的帧属于上一轮 checkpoint，停止
                 raw = wal.read(PAGE_SIZE)
                 if len(raw) < PAGE_SIZE:
                     break
+                frames.append((page_no, raw))
+                if commit_size:
+                    last_commit = len(frames)
+
+            for page_no, raw in frames[:last_commit]:
+                if not (1 <= page_no <= 1_000_000):
+                    continue  # 垃圾页号护栏（防 seek 出稀疏巨文件）
+                try:
+                    wal_data = self._decrypt_raw(raw, page_no)
+                except RuntimeError:
+                    continue  # 单帧损坏不拖垮整个合并
                 out.seek((page_no - 1) * PAGE_SIZE)
-                wal_data = self._decrypt_raw(raw, page_no)
                 if page_no == 1:
                     wal_data = self._dec.SQLITE_HEADER + wal_data
                 out.write(wal_data)

@@ -1,4 +1,5 @@
 import sys
+import threading
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 import tempfile
@@ -154,11 +155,21 @@ class TestAnalysisDeviceMode:
 
             fake_service = MagicMock()
             fake_service.config = FeatureExtractionConfig()
-            fake_service.extract_features.return_value = {"task_id": "t1"}
+            fake_service.find_running_task.return_value = None
+            called = threading.Event()
+
+            def _fake_extract(*_args, **_kwargs):
+                called.set()
+                return {"task_id": "t1"}
+
+            fake_service.extract_features.side_effect = _fake_extract
             bridge._feature_service = fake_service
             result = bridge.extract_features(42, {"analysis_device_mode": "cpu"})
 
             assert result["success"] is True
+            # 异步启动：bridge 立即返回 task_id，后台线程随后调 service.extract_features
+            assert result["data"]["task_id"].startswith("extract_42_")
+            assert called.wait(timeout=5)
             assert fake_service.extract_features.called
             assert fake_service.config.analysis_device_mode == "cpu"
         finally:

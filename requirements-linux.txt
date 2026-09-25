@@ -1,0 +1,26 @@
+# Chrono Trace Linux 依赖
+# 与 requirements.txt 的差异：去除 pywin32 / pywinauto / wx_key win_amd64 wheel
+# （Linux 密钥提取走 /proc/<pid>/mem 内存扫描，监听走 db_watch provider）
+
+# UI（pywebview Qt 后端：纯 pip 可装，支持 move/resize/on_top）
+pywebview>=5.0
+PyQt6>=6.6
+PyQt6-WebEngine>=6.6
+
+# 解密/分析（通用）
+pycryptodome>=3.20.0  # 纯 Python 实现的 SQLCipher 4 解密
+Pillow>=10.0.0
+jieba>=0.42.1
+numpy>=1.24.0
+snownlp>=0.12.3
+sentence-transformers>=2.2.0
+scikit-learn>=1.3.0
+transformers>=4.30.0  # 实时消息情感分析
+modelscope>=1.17.1
+pytest>=7.0.0
+
+# 悬浮窗 X11 跟随（可选；Wayland 下自动降级为固定档位）
+python-xlib>=0.33; sys_platform != "win32"
+
+# torch 建议 CPU 版（有 NVIDIA 显卡可换对应 CUDA 索引）：
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu

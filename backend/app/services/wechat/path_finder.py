@@ -618,11 +618,20 @@ class WeChatPathFinder:
             db_files = [f.name for f in contact_dir.iterdir() if f.suffix.lower() == ".db"]
             logger.debug(f"[DEBUG PathFinder] contact下的.db文件: {db_files}")
 
-            for file in contact_dir.iterdir():
-                if file.suffix.lower() == ".db":
-                    result["contact"] = str(file)
-                    logger.info(f"[DEBUG PathFinder] ✅ 找到contact.db: {file}")
-                    break
+            # Linux 微信的 contact 目录含多个库（contact_fts/fmessage_new/wa_contact_new），
+            # 必须精确取 contact.db，iterdir 顺序不可靠
+            contact_file = next(
+                (f for f in contact_dir.iterdir() if f.name.lower() == "contact.db"),
+                None,
+            )
+            if contact_file is None:
+                contact_file = next(
+                    (f for f in contact_dir.iterdir() if f.suffix.lower() == ".db"),
+                    None,
+                )
+            if contact_file is not None:
+                result["contact"] = str(contact_file)
+                logger.info(f"[DEBUG PathFinder] ✅ 找到contact.db: {contact_file}")
 
         # 查找消息数据库(可能有多个分片)
         message_dir = db_storage_dir / "message"
@@ -648,11 +657,19 @@ class WeChatPathFinder:
             db_files = [f.name for f in session_dir.iterdir() if f.suffix.lower() == ".db"]
             logger.debug(f"[DEBUG PathFinder] session下的.db文件: {db_files}")
 
-            for file in session_dir.iterdir():
-                if file.suffix.lower() == ".db":
-                    result["session"] = str(file)
-                    logger.info(f"[DEBUG PathFinder] ✅ 找到session.db: {file}")
-                    break
+            # 同 contact：精确取 session.db，避免目录内其他库被误选
+            session_file = next(
+                (f for f in session_dir.iterdir() if f.name.lower() == "session.db"),
+                None,
+            )
+            if session_file is None:
+                session_file = next(
+                    (f for f in session_dir.iterdir() if f.suffix.lower() == ".db"),
+                    None,
+                )
+            if session_file is not None:
+                result["session"] = str(session_file)
+                logger.info(f"[DEBUG PathFinder] ✅ 找到session.db: {session_file}")
 
         return result
 

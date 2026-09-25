@@ -173,6 +173,11 @@ const updateChart = () => {
 
 let resizeObserver: ResizeObserver | null = null
 
+// 提为具名函数，保证 add/remove 用同一引用，否则监听永远移除不掉
+const handleWindowResize = () => {
+  chartInstance?.resize()
+}
+
 onMounted(() => {
   nextTick(() => {
     initChart()
@@ -183,10 +188,8 @@ onMounted(() => {
       resizeObserver.observe(chartRef.value)
     }
   })
-  
-  window.addEventListener('resize', () => {
-    chartInstance?.resize()
-  })
+
+  window.addEventListener('resize', handleWindowResize)
 })
 
 onUnmounted(() => {
@@ -194,9 +197,7 @@ onUnmounted(() => {
     resizeObserver.disconnect()
   }
   chartInstance?.dispose()
-  window.removeEventListener('resize', () => {
-    chartInstance?.resize()
-  })
+  window.removeEventListener('resize', handleWindowResize)
 })
 
 watch(() => props.dimensionScores, () => {

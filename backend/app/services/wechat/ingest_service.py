@@ -209,7 +209,7 @@ class WeChatIngestService:
             if progress_callback:
                 progress_callback("查找数据库路径...", 0, 100)
 
-            logger.info(f"\n[DEBUG] === 开始导入流程 ===")
+            logger.info("\n[DEBUG] === 开始导入流程 ===")
             logger.debug(f"[DEBUG] custom_paths: {custom_paths}")
 
             paths = self.resolve_wechat_paths(custom_paths)
@@ -280,7 +280,7 @@ class WeChatIngestService:
             # - 按联系人独立处理,数据量小,不易中断
             # - 用户可选择性分析感兴趣的联系人
             # 注: 如需批量预处理,可调用 _auto_preprocess_messages() 和 _auto_extract_features()
-            logger.info(f"[INFO] 数据导入完成,预处理将在首次分析时自动执行")
+            logger.info("[INFO] 数据导入完成,预处理将在首次分析时自动执行")
 
             # 6. 更新导入记录
             if import_id is not None:
@@ -342,7 +342,7 @@ class WeChatIngestService:
 
     def _import_contacts_v4(self, contact_db_path: str, db_key: str, account_wxid: str) -> int:
         """导入联系人(V4版本)"""
-        logger.info(f"\n[DEBUG] 开始导入联系人")
+        logger.info("\n[DEBUG] 开始导入联系人")
         logger.debug(f"[DEBUG] 联系人数据库路径: {contact_db_path}")
 
         contact_db = ContactDBV4(contact_db_path, db_key)
@@ -860,7 +860,7 @@ class WeChatIngestService:
             预处理的消息数量
         """
         try:
-            logger.info(f"\n[预处理] 开始自动预处理新导入的消息...")
+            logger.info("\n[预处理] 开始自动预处理新导入的消息...")
 
             # 查找未预处理的消息（不在缓存表中的消息）
             cursor = get_db().execute("""
@@ -921,7 +921,7 @@ class WeChatIngestService:
             特征提取统计信息
         """
         try:
-            logger.info(f"\n[特征提取] 开始自动特征提取...")
+            logger.info("\n[特征提取] 开始自动特征提取...")
 
             # 延迟导入特征提取服务（避免循环导入）
             from ..analysis.feature_extraction_service import FeatureExtractionService
@@ -937,7 +937,7 @@ class WeChatIngestService:
             conversations = cursor.fetchall()
 
             if not conversations:
-                logger.debug(f"[特征提取] 没有找到会话")
+                logger.debug("[特征提取] 没有找到会话")
                 return {
                     "total_conversations": 0,
                     "processed": 0,

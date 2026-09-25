@@ -126,7 +126,7 @@ def mine_memory_reference_scenarios(conn, redactor, *, conversation_id, days, li
         WHERE m.message_type = 1 AND m.content IS NOT NULL AND TRIM(m.content) != ''
           AND (? = 0 OR m.conversation_id = ?)
           AND m.timestamp >= ?
-          AND ({" OR ".join(f"m.content LIKE '%' || ? || '%'" for _ in terms)})
+          AND ({" OR ".join("m.content LIKE '%' || ? || '%'" for _ in terms)})
         ORDER BY m.timestamp DESC LIMIT ?
         """,
         (conversation_id or 0, conversation_id or 0, int(time.time()) - days * 86400, *terms, limit),
@@ -209,7 +209,7 @@ def main() -> int:
         by_source[scenario["source"]] = by_source.get(scenario["source"], 0) + 1
     print(f"mined {len(scenarios)} scenarios -> {args.out}")
     print(f"  by source: {by_source}")
-    print(f"  next: 按 docs/p0.3-regression-labeling-guide.md 两轮标注（间隔>=48h）")
+    print("  next: 按 docs/p0.3-regression-labeling-guide.md 两轮标注（间隔>=48h）")
     return 0
 
 

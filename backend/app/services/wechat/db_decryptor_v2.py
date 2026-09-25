@@ -4,7 +4,7 @@ import hmac
 import struct
 import time
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Tuple
 from Crypto.Cipher import AES
 from Crypto.Protocol.KDF import PBKDF2
 import logging

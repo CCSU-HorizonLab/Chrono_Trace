@@ -5,7 +5,6 @@
 """
 
 import threading
-import time
 import logging
 import sys
 
@@ -576,8 +575,11 @@ class FloatingWindowService:
 
     def _tracking_loop(self):
         """跟踪循环：每 300ms 检查微信窗口位置，必要时移动悬浮窗"""
-        import win32gui
-        import win32con
+        try:
+            import win32gui
+        except ImportError:
+            logger.error("pywin32 不可用，悬浮窗跟随已停用")
+            return
 
         interval = TRACKING_INTERVAL_MS / 1000.0
         last_rect = None

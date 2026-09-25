@@ -5,7 +5,6 @@ import logging
 import re
 import threading
 import time
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import jieba
@@ -14,7 +13,6 @@ from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 from ...db.connection import get_db
 from ..analysis.feature_extraction_config import (
-    ANALYSIS_DEVICE_MODE_AUTO,
     ANALYSIS_DEVICE_MODE_CPU,
     ANALYSIS_DEVICE_MODE_GPU,
     FeatureExtractionConfig,

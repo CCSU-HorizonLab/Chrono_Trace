@@ -2,10 +2,15 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
+import shutil
 from pathlib import Path
 from typing import Any, Optional
 
 from ...config import SETTINGS_PATH
+
+logger = logging.getLogger(__name__)
 
 
 WECHAT_ACCOUNTS_KEY = "wechat_accounts"
@@ -269,8 +274,21 @@ def load_settings_from_file(path: Optional[Path] = None) -> dict[str, Any]:
     else:
         try:
             settings = json.loads(settings_path.read_text(encoding="utf-8"))
-        except Exception:
+        except Exception as exc:
+            # 解析失败不再静默吞掉：打日志并尝试从备份恢复，避免密钥等数据无声丢失
+            logger.error("[账号设置] 解析设置文件失败 (%s): %s", settings_path, exc)
             settings = {}
+            backup_path = settings_path.with_name(settings_path.name + ".bak")
+            if backup_path.exists():
+                try:
+                    settings = json.loads(backup_path.read_text(encoding="utf-8"))
+                    logger.warning("[账号设置] 已从备份 %s 恢复设置", backup_path)
+                except Exception as backup_exc:
+                    logger.error(
+                        "[账号设置] 备份 %s 也无法解析: %s，回退为空设置",
+                        backup_path,
+                        backup_exc,
+                    )
 
     migrate_legacy_wechat_settings(settings)
     try:
@@ -285,8 +303,27 @@ def load_settings_from_file(path: Optional[Path] = None) -> dict[str, Any]:
 def save_settings_to_file(settings: dict[str, Any], path: Optional[Path] = None) -> None:
     settings_path = path or default_settings_path()
     settings_path.parent.mkdir(parents=True, exist_ok=True)
-    settings_path.write_text(
-        json.dumps(settings, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
+
+    # 写入前把现有文件备份为 .bak，供解析失败时回滚（best-effort，不阻塞保存）
+    backup_path = settings_path.with_name(settings_path.name + ".bak")
+    try:
+        if settings_path.exists():
+            shutil.copy2(settings_path, backup_path)
+    except Exception as exc:
+        logger.warning("[账号设置] 备份设置文件失败 (忽略): %s", exc)
+
+    # 原子写：先写同目录临时文件，再 os.replace 覆盖，避免写一半时进程退出导致文件损坏
+    tmp_path = settings_path.with_name(settings_path.name + ".tmp")
+    try:
+        tmp_path.write_text(
+            json.dumps(settings, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        os.replace(tmp_path, settings_path)
+    finally:
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
 

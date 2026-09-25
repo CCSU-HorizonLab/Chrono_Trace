@@ -507,6 +507,7 @@ import CtCard from '@/components/base/CtCard.vue'
 import CtButton from '@/components/base/CtButton.vue'
 import PersonaGallery from '@/components/persona/PersonaGallery.vue'
 import { showDialog, showConfirm } from '@/utils/dialog'
+import { toLocalDateKey } from '@/utils/datetime'
 import CtAvatar from '@/components/base/CtAvatar.vue'
 import {
   FolderArchive,
@@ -796,8 +797,9 @@ export default {
             const to = anchorDate ? new Date(anchorDate) : new Date()
             const from = new Date(to)
             from.setDate(to.getDate() - (days - 1))
-            dates.from = from.toISOString().slice(0, 10)
-            dates.to = to.toISOString().slice(0, 10)
+            // 用本地时区日期键，避免 toISOString() 的 UTC 日期在东八区凌晨少一天
+            dates.from = toLocalDateKey(from)
+            dates.to = toLocalDateKey(to)
         }
 
         function applyAnalysisDeviceMode(mode: AnalysisDeviceMode) {

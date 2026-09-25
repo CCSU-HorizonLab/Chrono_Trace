@@ -64,8 +64,20 @@ type PyWebViewApi = {
   set_rag_conversation_enabled: (conversation_id: number, enabled: boolean, account_wxid?: string) => Promise<any>
   set_rag_fact_read_mode: (conversation_id: number, mode: 'inherit' | 'facts' | 'documents', account_wxid?: string) => Promise<any>
   update_model_root_dir: (new_dir: string) => Promise<any>
-  // 仪表板统计
-  get_dashboard_stats: () => Promise<any>
+  // 好感度分析与配置（与 backend Bridge 方法一一对应，F8）
+  get_relationship_context: (conversation_id: number) => Promise<any>
+  save_relationship_context: (conversation_id: number, context: Record<string, any>) => Promise<any>
+  get_relationship_field_options: () => Promise<any>
+  get_affinity_config: (conversation_id: number) => Promise<any>
+  update_affinity_config: (conversation_id: number, config: Record<string, any>) => Promise<any>
+  get_affinity_keywords: () => Promise<any>
+  add_affinity_keywords: (category: string, keywords: any[]) => Promise<any>
+  remove_affinity_keywords: (category: string, keywords: any[]) => Promise<any>
+  get_preference_keywords: (conversation_id: number) => Promise<any>
+  update_preference_keywords: (conversation_id: number, keywords: any[]) => Promise<any>
+  cancel_analysis: () => Promise<any>
+  analyze_affinity: (conversation_id: number, force_reanalyze?: boolean, config_overrides?: Record<string, any>) => Promise<any>
+  get_affinity_scores: (conversation_id: number) => Promise<any>
   // 文件/目录选择
   select_file: (title?: string, file_types?: string) => Promise<any>
   select_directory: (title?: string) => Promise<any>

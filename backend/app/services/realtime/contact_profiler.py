@@ -12,7 +12,6 @@ import json
 import logging
 import math
 import time
-import random
 from typing import Optional
 from .llm_http import post_json_with_retries
 from ..wechat.account_settings import get_active_wechat_account_wxid, load_settings_from_file
@@ -207,10 +206,10 @@ class ContactProfiler:
             resolved_account_wxid = self._resolve_account_wxid(account_wxid)
 
             # 1. 查找 conversation_id
-            _print(f"[ContactProfiler] 步骤1: 查找会话...")
+            _print("[ContactProfiler] 步骤1: 查找会话...")
             conv = self._find_conversation(conn, display_name, resolved_account_wxid)
             if not conv:
-                _print(f"[ContactProfiler] ⚠️ 未找到精确匹配的会话，尝试模糊匹配...")
+                _print("[ContactProfiler] ⚠️ 未找到精确匹配的会话，尝试模糊匹配...")
                 conv = self._find_conversation_fuzzy(conn, display_name, resolved_account_wxid)
             if not conv:
                 _print(f"[ContactProfiler] ❌ 未找到联系人「{display_name}」的历史聊天记录")
@@ -237,7 +236,7 @@ class ContactProfiler:
             # 5. 调用 LLM，传入预算以动态决定输出额度
             profile_data = self._call_llm(user_prompt)
 
-            _print(f"[ContactProfiler] ✅ 画像生成成功!")
+            _print("[ContactProfiler] ✅ 画像生成成功!")
             _print(f"[ContactProfiler] 标签: {profile_data.get('personality_tags', [])}")
 
             # 6. 缓存
@@ -283,7 +282,7 @@ class ContactProfiler:
                 return dict(row)
 
         # 策略2: 通过 contacts 表反查 username(wxid)
-        _print(f"[ContactProfiler] 直接匹配失败，尝试通过 contacts 表反查...")
+        _print("[ContactProfiler] 直接匹配失败，尝试通过 contacts 表反查...")
         contact_cursor = conn.execute(
             'SELECT username, nickname, remark FROM contacts '
             'WHERE account_wxid = ? AND (nickname = ? OR remark = ?) '
@@ -621,7 +620,7 @@ class ContactProfiler:
         first_date = datetime.fromtimestamp(conv.get('created_at', 0)).strftime('%Y-%m-%d')
         last_date = datetime.fromtimestamp(conv.get('updated_at', 0)).strftime('%Y-%m-%d')
 
-        parts.append(f"【基础信息】")
+        parts.append("【基础信息】")
         parts.append(f"- 联系人名称: {display_name}")
         parts.append(f"- 消息总数: {conv.get('message_count', 0)}")
         parts.append(f"- 时间跨度: {first_date} ~ {last_date}")

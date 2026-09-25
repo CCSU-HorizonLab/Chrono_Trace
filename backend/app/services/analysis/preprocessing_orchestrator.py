@@ -21,6 +21,12 @@ from .sentiment_service import SentimentService
 
 logger = logging.getLogger(__name__)
 
+# 预处理算法版本号：凡是会影响 preprocessing_stats 统计口径的算法/常量变更，
+# 必须将此版本 +1（当前为 2，v1 是无版本号的旧 key）。
+# 例如调整 MERGE_TIME_THRESHOLD / TIME_GAP_THRESHOLD / SLEEP_END_HOUR 等切分、
+# 合并常量或统计逻辑时。版本进入缓存 key，旧 key 读不到即自然失效重算。
+PREPROCESSING_ALGO_VERSION = 2
+
 
 def _step_elapsed(start_time: float) -> str:
     return f"{time.time() - start_time:.1f}s"
@@ -72,7 +78,8 @@ class PreprocessingOrchestrator:
         self.attitude_service = AttitudePreprocessingService(keyword_lib=self.keyword_lib)
 
     def _cache_key(self, conversation_id: int) -> str:
-        return f"preprocessing_stats_{conversation_id}"
+        # key 携带算法版本（见 PREPROCESSING_ALGO_VERSION 注释），改算法不改 key 会读到脏缓存
+        return f"preprocessing_stats_v{PREPROCESSING_ALGO_VERSION}_{conversation_id}"
 
     def _sync_analysis_device_mode(self) -> None:
         self.sentiment_service.configure_device_mode(

@@ -15,7 +15,7 @@ import logging
 import webview
 import requests
 from backend.app.webview.bridge import Bridge
-from backend.app.config import FRONTEND_DIR, DEV_URL_DEFAULT, DEV_WINDOW_TITLE
+from backend.app.config import FRONTEND_DIR, DEV_WINDOW_TITLE
 from backend.app.logging_config import setup_logging, get_logger
 
 # 配置全局日志（开发模式也写入文件）

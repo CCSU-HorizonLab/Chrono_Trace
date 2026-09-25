@@ -11,7 +11,6 @@ from typing import Any, Dict, List, Optional
 from ...db.connection import get_db
 from ..model_paths import EMBEDDING_MODEL_DIM, EMBEDDING_MODEL_REPO_ID, get_embedding_model_dir
 from .feature_extraction_config import (
-    ANALYSIS_DEVICE_MODE_AUTO,
     ANALYSIS_DEVICE_MODE_CPU,
     ANALYSIS_DEVICE_MODE_GPU,
     FeatureExtractionConfig,

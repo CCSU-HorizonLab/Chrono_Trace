@@ -303,6 +303,21 @@ def refresh_after_fact_feedback(store: RagStore, fact_id: int) -> dict[str, Any]
             conversation_id=conversation_id,
             display_name=display_name,
         )
+        # 同步刷新对方偏好策略影子（P1.2 槽位级，剔除禁用事实同理）；
+        # 单独捕获——偏好刷新失败不影响关系状态刷新结果
+        try:
+            from .rag_contact_preference import refresh_contact_preferences_shadow
+
+            refresh_contact_preferences_shadow(
+                store,
+                account_wxid=account_wxid,
+                conversation_id=conversation_id,
+                touched_fact_id=int(fact_id),
+            )
+        except Exception as pref_exc:
+            logger.debug(
+                "[RelationshipState] post-feedback preference refresh skipped: %s", pref_exc
+            )
         if result.get("ok"):
             logger.info(
                 "[RelationshipState] refreshed after fact feedback fact=%s conv=%s changed=%s",

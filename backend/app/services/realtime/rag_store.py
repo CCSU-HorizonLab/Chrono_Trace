@@ -243,6 +243,36 @@ class RagStore:
             ON rag_relationship_state(account_wxid, conversation_id, created_at DESC)
             """
         )
+        self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS rag_contact_preferences (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_wxid TEXT NOT NULL,
+                conversation_id INTEGER NOT NULL,
+                slot_key TEXT NOT NULL,
+                slot_kind TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                evidence_hash TEXT,
+                evidence_fact_ids_json TEXT,
+                evidence_message_ids_json TEXT,
+                support_count INTEGER DEFAULT 1,
+                confidence REAL DEFAULT 0.0,
+                sensitivity TEXT DEFAULT 'normal',
+                policy_version TEXT NOT NULL,
+                valid_from INTEGER,
+                valid_to INTEGER,
+                supersedes_pref_id INTEGER,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            )
+            """
+        )
+        self.conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_rag_contact_preferences_scope
+            ON rag_contact_preferences(account_wxid, conversation_id, created_at DESC)
+            """
+        )
         self._ensure_document_columns()
         self._ensure_status_columns()
         self._ensure_retrieval_log_columns()
@@ -356,6 +386,7 @@ class RagStore:
             "hot_context_only": "INTEGER DEFAULT 0",
             "prompt_context_hash": "TEXT",
             "policy_ids_json": "TEXT",
+            "contact_preference_ids_json": "TEXT",
         }
         for name, definition in columns.items():
             if name not in existing:
@@ -848,8 +879,8 @@ class RagStore:
              rerank_reason, retrieval_source, fact_ids_json, evidence_ids_json,
              query_scope, supersession_decision, run_provenance, candidate_ids_json,
              injected_item_ids_json, hot_context_only, prompt_context_hash,
-             policy_ids_json, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             policy_ids_json, contact_preference_ids_json, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 payload.get("account_wxid") or "",
@@ -903,6 +934,7 @@ class RagStore:
                 int(bool(payload.get("hot_context_only"))),
                 payload.get("prompt_context_hash"),
                 json.dumps(payload.get("policy_ids") or [], ensure_ascii=False),
+                json.dumps(payload.get("contact_preference_ids") or [], ensure_ascii=False),
                 _now(),
             ),
         )
@@ -1285,6 +1317,95 @@ class RagStore:
         row = self.conn.execute(
             """
             SELECT COUNT(*) AS n FROM rag_relationship_state
+            WHERE account_wxid = ? AND conversation_id = ?
+            """,
+            (account_wxid, int(conversation_id)),
+        ).fetchone()
+        return int(row["n"]) if row else 0
+
+    # ---- P1.2 对方偏好策略影子层 ----
+
+    def upsert_contact_preference(self, **payload: Any) -> dict[str, Any]:
+        """槽位级 ADD-only 版本写入：evidence_hash 未变化不产生新版本。
+
+        同一 slot_key 的活跃版本存在且 hash 相同 → 跳过；hash 变化 →
+        关闭旧版本 valid_to 并追加新行（supersedes 链保留审计）。
+        """
+        account_wxid = payload.get("account_wxid") or ""
+        conversation_id = int(payload.get("conversation_id") or 0)
+        slot_key = str(payload.get("slot_key") or "")
+        if not account_wxid or conversation_id <= 0 or not slot_key:
+            return {"ok": False, "error": "missing_slot_scope"}
+        evidence_hash = str(payload.get("evidence_hash") or "")
+        current = self.conn.execute(
+            """
+            SELECT id, evidence_hash FROM rag_contact_preferences
+            WHERE account_wxid = ? AND conversation_id = ? AND slot_key = ?
+              AND valid_to IS NULL
+            ORDER BY id DESC LIMIT 1
+            """,
+            (account_wxid, conversation_id, slot_key),
+        ).fetchone()
+        if current and current["evidence_hash"] == evidence_hash:
+            return {"ok": True, "pref_id": int(current["id"]), "changed": False}
+
+        now = _now()
+        old_id = int(current["id"]) if current else None
+        if old_id:
+            self.conn.execute(
+                "UPDATE rag_contact_preferences SET valid_to = ?, updated_at = ? WHERE id = ?",
+                (now, now, old_id),
+            )
+        cursor = self.conn.execute(
+            """
+            INSERT INTO rag_contact_preferences
+            (account_wxid, conversation_id, slot_key, slot_kind, summary,
+             evidence_hash, evidence_fact_ids_json, evidence_message_ids_json,
+             support_count, confidence, sensitivity, policy_version,
+             valid_from, valid_to, supersedes_pref_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                account_wxid,
+                conversation_id,
+                slot_key,
+                str(payload.get("slot_kind") or "preference"),
+                str(payload.get("summary") or ""),
+                evidence_hash,
+                json.dumps(payload.get("evidence_fact_ids") or [], ensure_ascii=False),
+                json.dumps(payload.get("evidence_message_ids") or [], ensure_ascii=False),
+                int(payload.get("support_count") or 1),
+                float(payload.get("confidence") or 0.0),
+                payload.get("sensitivity") or "normal",
+                f"cp-v1-{now}",
+                now,
+                None,
+                old_id,
+                now,
+                now,
+            ),
+        )
+        return {"ok": True, "pref_id": int(cursor.lastrowid), "changed": True}
+
+    def list_contact_preferences(
+        self, account_wxid: str, conversation_id: int
+    ) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            """
+            SELECT * FROM rag_contact_preferences
+            WHERE account_wxid = ? AND conversation_id = ? AND valid_to IS NULL
+            ORDER BY confidence DESC, id DESC
+            """,
+            (account_wxid, int(conversation_id)),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def count_contact_preferences(
+        self, account_wxid: str, conversation_id: int
+    ) -> int:
+        row = self.conn.execute(
+            """
+            SELECT COUNT(*) AS n FROM rag_contact_preferences
             WHERE account_wxid = ? AND conversation_id = ?
             """,
             (account_wxid, int(conversation_id)),

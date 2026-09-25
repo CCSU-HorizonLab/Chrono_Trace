@@ -160,3 +160,15 @@ packaging\third_party\MicrosoftEdgeWebview2Setup.exe
 ```
 
 Inno Setup 脚本会自动检测并接入安装流程。
+
+## Linux 打包
+
+Linux 链路（`packaging/build_release_linux.sh`，根目录 `build_release_linux.sh` 透传）与 Windows 职责对齐：前端 npm 构建 → `.venv-packaging-linux` 自举（torch 走 CPU 轮子索引，依赖哈希不变则复用）→ PyInstaller onedir（`chrono_trace_linux.spec`，去 wx_key/win32）→ `release/pyinstaller-linux/Chrono Trace/` + `release/chrono-trace-<版本>-linux.tar.gz` + `.desktop` 模板。
+
+```bash
+./build_release_linux.sh              # 完整打包
+./build_release_linux.sh --fast       # 快速模式（不 clean、前端产物复用）
+./build_release_linux.sh -v 1.2.0     # 指定版本号
+```
+
+与 Windows 差异：无 Inno Setup/注册表/WebView2 引导；无 cpu/gpu 变体（仅 CPU 轮子）；`.desktop` 中的 `%APPPATH%` 安装时替换为可执行文件绝对路径。AppImage/deb 为后续可选。

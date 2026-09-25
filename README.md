@@ -45,63 +45,31 @@ Chrono Trace 是一个基于 `PyWebView + Vue 3 + Python` 的 Windows 桌面应�
 
 ## 界面预览
 
-> 当前为占位图，截图待补。替换 `docs/images/screenshots/` 下的同名 PNG 文件即可，README 无需再改动。
+### 首页
 
-### 首页与数据导入
-
-**首页总览** —— 仪表板统计、账号切换、微信导入状态卡片、功能入口
+**首页总览** —— 功能入口、账号切换、微信数据导入与运行日志
 
 ![首页总览](docs/images/screenshots/home-overview.png)
 
-**微信数据导入（设置页）** —— 自动扫描 / 手动指定路径、密钥登录捕获、验证与增量导入
+### 历史分析工作台（历史数据页）
 
-![微信数据导入](docs/images/screenshots/wechat-import.png)
-
-### 历史分析工作台（分析页）
-
-**情绪分析** —— 情绪趋势曲线、词云、情绪分布
-
-![情绪分析](docs/images/screenshots/analytics-emotion.png)
-
-**互动分析** —— 消息时间线、响应时间、主动率、字数投入比例
-
-![互动分析](docs/images/screenshots/analytics-interaction.png)
-
-**关系评估** —— 好感度总分、四维雷达图、分维度明细
+**关系评估** —— 好感度总分、四维雷达图与分维度明细（情绪趋势、互动分析等页签同屏切换）
 
 ![关系评估](docs/images/screenshots/analytics-affinity.png)
 
-**辅助信息** —— 活跃日历、偏好关键词配置、关系补充信息
+### AI 建议
 
-![辅助信息](docs/images/screenshots/analytics-assist.png)
+**对象画像与建议策略** —— 联系人画像、聊天风格与关系策略、AI 建议生成配置
 
-### 实时建议与记忆（建议页）
-
-**实时监听与 AI 建议** —— 监听状态、最近上下文、建议卡片与参考话术
-
-![实时监听与 AI 建议](docs/images/screenshots/realtime-suggestions.png)
-
-**记忆管理** —— 联系人事实列表、置信度徽章分层、类型筛选与排序
-
-![记忆管理](docs/images/screenshots/memory-manager.png)
-
-**记忆事实详情** —— 证据链、来源消息定位、纠错反馈操作
-
-![记忆事实详情](docs/images/screenshots/memory-evidence.png)
-
-### 悬浮辅助窗
-
-**悬浮窗** —— 联系人摘要与建议卡片、最近上下文、模型切换
-
-![悬浮辅助窗](docs/images/screenshots/floating-panel.png)
+![对象画像与建议策略](docs/images/screenshots/realtime-suggestions.png)
 
 ### 设置
 
-**模型配置（设置页）** —— 供应商、接口地址、模型列表获取、连通测试
+**模型配置** —— 供应商/本地推理配置管理、微信数据库路径与密钥管理
 
 ![模型配置](docs/images/screenshots/settings-model.png)
 
-**联系人记忆 RAG（设置页）** —— 启用开关、读取模式、索引重建
+**联系人记忆 RAG** —— 启用开关、索引状态统计、按联系人索引管理
 
 ![联系人记忆 RAG](docs/images/screenshots/settings-rag.png)
 
@@ -506,4 +474,4 @@ release\installer\ChronoTraceSetup-版本号-GPU.exe
 
 ---
 
-最后更新：2026-09-25
+最后更新：2026-09-26

@@ -395,7 +395,7 @@ class Bridge:
             return candidates
         candidates.append(normalized)
         match = re.match(r"^(.+)_([0-9a-zA-Z]{4,6})$", normalized)
-        if match:
+        if match and len(match.group(1)) >= 2:
             base_wxid = match.group(1)
             if base_wxid not in candidates:
                 candidates.append(base_wxid)

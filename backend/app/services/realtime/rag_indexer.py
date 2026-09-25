@@ -639,10 +639,11 @@ class RagIndexer:
                 [fact for fact in semantic_facts if fact.memory_kind != "marker_fallback"]
             )
             for fact_index, fact in enumerate(semantic_facts, 1):
+                fact_row_active = True  # 影子层关闭时无从判定退役状态，维持文档生成
                 if load_rag_settings().get("rag_fact_shadow_enabled", True):
                     from .rag_semantic_memory import calibrate_fact_confidence
 
-                    self.store.upsert_fact(
+                    fact_id = self.store.upsert_fact(
                         account_wxid=account_wxid,
                         conversation_id=conversation_id,
                         subject=fact.subject,
@@ -665,6 +666,27 @@ class RagIndexer:
                         },
                         summary_method="shadow_semantic_embedding",
                     )
+                    # G1：被演变链（superseded）/质量隔离（uncertain）/用户墓碑
+                    # 退役的事实，不得经"文档孪生"路径复活——upsert_fact 已保留
+                    # 终态，这里以落库后的实际状态门控文档生成。
+                    if fact_id:
+                        row = self.store.conn.execute(
+                            "SELECT status, enabled FROM rag_facts WHERE id = ?", (fact_id,)
+                        ).fetchone()
+                        try:
+                            fact_row_active = (
+                                bool(row)
+                                and row["status"] == "active"
+                                and int(row["enabled"] or 0) == 1
+                            )
+                        except (TypeError, KeyError, IndexError):
+                            fact_row_active = (
+                                bool(row) and row[0] == "active" and int(row[1] or 0) == 1
+                            )
+                    else:
+                        fact_row_active = False
+                if not fact_row_active:
+                    continue  # 退役事实：跳过 fact_memory / shared_memory 文档生成
                 fact_metadata = self._metadata(
                     segment,
                     source_kind="historical",

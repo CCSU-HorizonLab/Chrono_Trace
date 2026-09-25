@@ -90,6 +90,7 @@ class RealtimeMonitorService:
             self.current_display_name = None    # 当前监听对象显示名
             self.current_account_wxid = ""
             self.is_monitoring = False          # 监听状态
+            self._session_generation = 0        # 会话代数：start_monitoring/run_backfill 接管单例时递增（R2）
             self._chat_ready = False            # 聊天切换是否完成
             self._chat_error = ''               # 聊天切换出错信息
             self._chat_ui_inaccessible = False
@@ -241,6 +242,7 @@ class RealtimeMonitorService:
             _print(f"[RealtimeMonitorService] 开始监听: {talker_display_name} (batch_id: {self.current_batch_id})")
             
             # 4. 立即设置状态（让前端可以先进入悬浮模式）
+            self._session_generation += 1  # 新会话接管单例（R2）：使进行中的回溯不再清理本会话状态
             self.is_monitoring = True
             self._chat_ready = False
             self._chat_error = ''
@@ -1899,6 +1901,8 @@ class RealtimeMonitorService:
         
         gdi_fail_count = 0  # GDI 异常连续失败计数（Bug 3）
         GDI_MAX_CONSECUTIVE = 5  # 连续 GDI 失败上限
+        poll_fail_count = 0  # 非已知类别异常连续失败计数（R1）
+        POLL_MAX_CONSECUTIVE = 10  # 连续失败上限：超过视为监听通道失效（如微信已关闭）
         
         while self._session_should_continue(session_state, stop_event):
             try:
@@ -1909,6 +1913,7 @@ class RealtimeMonitorService:
                 try:
                     new_messages = self.wx.GetAllMessage()
                     gdi_fail_count = 0  # 成功则重置计数
+                    poll_fail_count = 0
                 except Exception as gdi_err:
                     err_msg = str(gdi_err)
                     # Bug 3: GDI 截图异常专项捕获
@@ -1946,9 +1951,17 @@ class RealtimeMonitorService:
                 time.sleep(1)
                 
             except Exception as e:
-                _print(f"❌ 轮询出错: {e}")
+                poll_fail_count += 1
+                _print(f"❌ 轮询出错 ({poll_fail_count}/{POLL_MAX_CONSECUTIVE}): {e}")
                 import traceback
                 traceback.print_exc()
+                if poll_fail_count >= POLL_MAX_CONSECUTIVE:
+                    # 连续失败视为监听通道失效（如微信已关闭/UIA 不可访问）：
+                    # 置错误状态并停止轮询，前端经 get_status 的 chat_error 可见，
+                    # 不再无限自旋刷日志（R1）
+                    self._chat_error = f'消息轮询连续失败 {poll_fail_count} 次，监听已停止：{e}'
+                    self.is_monitoring = False
+                    break
                 time.sleep(1)
         
         _print(f"🛑 轮询线程已停止")
@@ -2286,15 +2299,8 @@ class RealtimeMonitorService:
         from ...db.connection import get_db
 
         conn = get_db()
-        runtime_id = str(message_data.get('runtime_id') or '').strip()
-        if runtime_id.isdigit():
-            row = conn.execute(
-                'SELECT id FROM messages WHERE conversation_id = ? AND local_id = ? LIMIT 1',
-                (conversation_id, int(runtime_id))
-            ).fetchone()
-            if row:
-                return True
-
+        # 注意：不按 runtime_id 查 local_id —— 实时 runtime_id 与微信库 local_id 属于
+        # 两个无关 ID 空间，数值撞车会把真实新消息误判为已存在而静默丢弃（W1）。
         row = conn.execute(
             '''
             SELECT id
@@ -2619,8 +2625,8 @@ class RealtimeMonitorService:
                     )
                 continue
 
-            runtime_id = str(message_data.get('runtime_id') or '').strip()
-            local_id = int(runtime_id) if runtime_id.isdigit() else None
+            # runtime_id 与微信库 local_id 属不同 ID 空间，实时消息不占用 local_id（W1）
+            local_id = None
             cursor = conn.execute(
                 '''
                 INSERT OR IGNORE INTO messages
@@ -2963,6 +2969,8 @@ class RealtimeMonitorService:
                 'gap_seconds': probe.get('gap_seconds', 0),
             }
 
+        self._session_generation += 1  # 回溯接管单例（R2）
+        backfill_generation = self._session_generation
         self.current_display_name = talker_display_name
         self.current_talker = talker_username
         self._last_known_ts = 0
@@ -2992,10 +3000,15 @@ class RealtimeMonitorService:
                 wheel_times=wheel_times,
             )
         finally:
-            self.current_display_name = None
-            self.current_talker = None
-            self._last_known_ts = 0
-            self._reset_wechat_instance()
+            if self._session_generation != backfill_generation:
+                # 回溯期间已有新监听会话启动并接管单例状态：
+                # 不得清空新会话字段、不得销毁新会话的 wx 实例（R2）
+                _print("⏭️ 回溯结束：检测到新监听会话已启动，跳过单例状态清理")
+            else:
+                self.current_display_name = None
+                self.current_talker = None
+                self._last_known_ts = 0
+                self._reset_wechat_instance()
 
     def _migrate_buffer_to_messages(self, batch_id: str, talker_username: str, talker_display_name: str) -> int:
         """Move realtime buffered messages into the historical messages table."""
@@ -3023,8 +3036,8 @@ class RealtimeMonitorService:
             if self._message_exists_in_history(conversation_id, msg):
                 continue
 
-            runtime_id = str(msg.get('runtime_id') or '').strip()
-            local_id = int(runtime_id) if runtime_id.isdigit() else None
+            # runtime_id 与微信库 local_id 属不同 ID 空间，实时消息不占用 local_id（W1）
+            local_id = None
             timestamp = int(msg.get('timestamp') or int(time.time()))
             latest_ts = max(latest_ts, timestamp)
 

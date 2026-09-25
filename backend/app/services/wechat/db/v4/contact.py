@@ -32,35 +32,40 @@ class ContactDBV4(WeChatDBBase):
         """建立数据库连接"""
         import tempfile
         import os
-        
-        if self.db_key:
-            logger.info(f"[DEBUG ContactDB] 开始解密联系人数据库: {self.db_path}")
-            
-            # 使用新的纯Python解密器
-            from ...db_decryptor_v2 import WeChatDBDecryptorV2
-            decryptor = WeChatDBDecryptorV2()
-            
-            # 先验证密钥
-            if not decryptor.verify_key_from_file(self.db_path, self.db_key):
-                raise ValueError(f"密钥验证失败: {self.db_path}")
-            
-            logger.info(f"[DEBUG ContactDB] ✅ 密钥验证成功")
-            
-            # 解密到临时文件
-            self.temp_db_path = tempfile.mktemp(suffix='.db')
-            logger.debug(f"[DEBUG ContactDB] 解密到临时文件: {self.temp_db_path}")
-            
-            decryptor.decrypt_database(self.db_path, self.temp_db_path, self.db_key)
-            logger.info(f"[DEBUG ContactDB] ✅ 解密完成")
-            
-            # 连接解密后的数据库
-            self.conn = sqlite3.connect(self.temp_db_path)
-            self.conn.row_factory = sqlite3.Row
-        else:
-            # 明文数据库
-            self.temp_db_path = None
-            self.conn = sqlite3.connect(self.db_path)
-            self.conn.row_factory = sqlite3.Row
+
+        self.temp_db_path = None
+        try:
+            if self.db_key:
+                logger.info(f"[DEBUG ContactDB] 开始解密联系人数据库: {self.db_path}")
+
+                # 使用新的纯Python解密器
+                from ...db_decryptor_v2 import WeChatDBDecryptorV2
+                decryptor = WeChatDBDecryptorV2()
+
+                # 先验证密钥
+                if not decryptor.verify_key_from_file(self.db_path, self.db_key):
+                    raise ValueError(f"密钥验证失败: {self.db_path}")
+
+                logger.info(f"[DEBUG ContactDB] ✅ 密钥验证成功")
+
+                # 解密到临时文件
+                self.temp_db_path = tempfile.mktemp(suffix='.db')
+                logger.debug(f"[DEBUG ContactDB] 解密到临时文件: {self.temp_db_path}")
+
+                decryptor.decrypt_database(self.db_path, self.temp_db_path, self.db_key)
+                logger.info(f"[DEBUG ContactDB] ✅ 解密完成")
+
+                # 连接解密后的数据库
+                self.conn = sqlite3.connect(self.temp_db_path)
+                self.conn.row_factory = sqlite3.Row
+            else:
+                # 明文数据库
+                self.conn = sqlite3.connect(self.db_path)
+                self.conn.row_factory = sqlite3.Row
+        except Exception:
+            # 构造中途失败也必须清理已解密的明文临时库（W2：close() 可达性）
+            self.close()
+            raise
     
     def get_contacts(self) -> List[dict]:
         """

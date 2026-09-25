@@ -1686,6 +1686,13 @@ class SessionManager:
         """写入会话到数据库"""
         try:
             import time
+            # 重跑预处理时先清掉本会话的历史来源会话行（A2）：表无唯一约束，
+            # 否则每次好感度分析都会追加一整代重复行，污染基于 sessions 的统计。
+            # 仅清 source='long'，不触碰可能存在的实时来源行。
+            get_db().execute(
+                "DELETE FROM sessions WHERE conversation_id = ? AND source = 'long'",
+                (conversation_id,),
+            )
             for session in sessions:
                 get_db().execute("""
                     INSERT OR REPLACE INTO sessions

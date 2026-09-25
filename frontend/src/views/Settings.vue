@@ -1278,6 +1278,7 @@ onUnmounted(() => {
   void flushPendingSave()
   document.removeEventListener('click', handleDropdownClickOutside)
   window.removeEventListener('chrono:wechat-account-changed', handleGlobalAccountChanged)
+  if (installTimer) { clearInterval(installTimer); installTimer = null } // F7：卸载时停止 GPU 安装轮询
 })
 
 const modelIdPlaceholder = computed(() => {

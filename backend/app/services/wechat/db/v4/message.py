@@ -59,38 +59,44 @@ class MessageDBV4(WeChatDBBase):
         import tempfile
         
         self.temp_db_paths = []  # 存储临时文件路径
-        
-        for idx, db_path in enumerate(self.db_paths):
-            logger.debug(f"[DEBUG MessageDB] 连接数据库 {idx+1}/{len(self.db_paths)}: {db_path}")
-            
-            if self.db_key:
-                # 使用新的纯Python解密器
-                from ...db_decryptor_v2 import WeChatDBDecryptorV2
-                decryptor = WeChatDBDecryptorV2()
-                
-                # 验证密钥
-                if not decryptor.verify_key_from_file(db_path, self.db_key):
-                    logger.error(f"[WARN] 跳过: 密钥验证失败 {db_path}")
-                    continue
-                
-                logger.info(f"[DEBUG MessageDB] ✅ 密钥验证成功")
-                
-                # 解密到临时文件
-                temp_path = tempfile.mktemp(suffix=f'_message_{idx}.db')
-                self.temp_db_paths.append(temp_path)
-                
-                logger.debug(f"[DEBUG MessageDB] 解密到: {temp_path}")
-                decryptor.decrypt_database(db_path, temp_path, self.db_key)
-                logger.info(f"[DEBUG MessageDB] ✅ 解密完成")
-                
-                # 连接解密后的数据库
-                conn = sqlite3.connect(temp_path)
-                conn.row_factory = sqlite3.Row
-            else:
-                conn = sqlite3.connect(db_path)
-                conn.row_factory = sqlite3.Row
-            
-            self.connections.append(conn)
+
+        try:
+            for idx, db_path in enumerate(self.db_paths):
+                logger.debug(f"[DEBUG MessageDB] 连接数据库 {idx+1}/{len(self.db_paths)}: {db_path}")
+
+                if self.db_key:
+                    # 使用新的纯Python解密器
+                    from ...db_decryptor_v2 import WeChatDBDecryptorV2
+                    decryptor = WeChatDBDecryptorV2()
+
+                    # 验证密钥
+                    if not decryptor.verify_key_from_file(db_path, self.db_key):
+                        logger.error(f"[WARN] 跳过: 密钥验证失败 {db_path}")
+                        continue
+
+                    logger.info(f"[DEBUG MessageDB] ✅ 密钥验证成功")
+
+                    # 解密到临时文件
+                    temp_path = tempfile.mktemp(suffix=f'_message_{idx}.db')
+                    self.temp_db_paths.append(temp_path)
+
+                    logger.debug(f"[DEBUG MessageDB] 解密到: {temp_path}")
+                    decryptor.decrypt_database(db_path, temp_path, self.db_key)
+                    logger.info(f"[DEBUG MessageDB] ✅ 解密完成")
+
+                    # 连接解密后的数据库
+                    conn = sqlite3.connect(temp_path)
+                    conn.row_factory = sqlite3.Row
+                else:
+                    conn = sqlite3.connect(db_path)
+                    conn.row_factory = sqlite3.Row
+
+                self.connections.append(conn)
+        except Exception:
+            # 构造中途失败也必须清理已解密的明文临时库，避免全量聊天记录
+            # 残留在 %TEMP%（W2：close() 可达性）
+            self.close()
+            raise
     
     def _get_table_columns(self, conn: sqlite3.Connection, table_name: str) -> Set[str]:
         """获取指定表的列名集合（缓存）"""
@@ -152,7 +158,7 @@ class MessageDBV4(WeChatDBBase):
         messages = []
         
         # 在所有数据库分片中查找
-        for conn in self.connections:
+        for shard_idx, conn in enumerate(self.connections):
             try:
                 msgs = self._query_messages_from_db(
                     conn, table_name, username, time_range, limit
@@ -160,6 +166,14 @@ class MessageDBV4(WeChatDBBase):
                 messages.extend(msgs)
             except sqlite3.OperationalError:
                 # 表不存在,尝试下一个数据库
+                continue
+            except sqlite3.DatabaseError as e:
+                # 分片含无法解密的页面（解密时已重试并告警）：记录后继续其余分片，
+                # 不再让整段会话被上层静默跳过（W3）
+                logger.error(
+                    "[消息读取] 分片 #%d 读取 %s 失败（页面解密缺口？）: %s",
+                    shard_idx, table_name, e,
+                )
                 continue
         
         # 按时间排序

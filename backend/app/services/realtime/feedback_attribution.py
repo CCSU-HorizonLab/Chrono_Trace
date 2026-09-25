@@ -346,13 +346,122 @@ class SuggestionFeedbackAttributor:
         # P2.1 影子信号：正归因绑定该建议实际使用的策略/注入项——
         # "反馈→策略修正"的审计底账（只记录不决策），失败不影响归因
         if result["attribution_type"] in POSITIVE_ATTRIBUTIONS:
+            candidate_ids: list[int] = []
             try:
-                self._write_policy_signal(suggestion, result, conversation_id)
+                candidate_ids = self._try_extract_feedback_candidates(suggestion, result)
+            except Exception:
+                candidate_ids = []
+            try:
+                self._write_policy_signal(
+                    suggestion, result, conversation_id, extra_detail={"candidate_fact_ids": candidate_ids}
+                )
             except Exception:
                 pass
 
+    def _try_extract_feedback_candidates(
+        self, suggestion: dict[str, Any], result: dict[str, Any]
+    ) -> list[int]:
+        """P2.1 影子闭环：rewritten 差异 → 偏好候选（uncertain 影子行）。
+
+        候选 status='uncertain'（读侧 list_facts 只取 active，不参与检索
+        与注入）；积累到量并经 P0.3 人工集校准后，才批量转正。跟随
+        rag_structured_fact_extraction_enabled 开关；同一建议只抽一次；
+        任何失败静默返回空，绝不阻塞归因主链路。
+        """
+        if str(result.get("attribution_type") or "") != "rewritten":
+            return []
+        if float(result.get("confidence") or 0.0) < 0.65:
+            return []
+        from .rag_config import load_rag_settings
+
+        if not load_rag_settings().get("rag_structured_fact_extraction_enabled"):
+            return []
+        suggestion_id = int(suggestion.get("id") or 0)
+        if not suggestion_id:
+            return []
+        existing = self.conn.execute(
+            """
+            SELECT 1 FROM rag_feedback_policy_signals
+            WHERE suggestion_id = ? AND action = 'rewritten'
+              AND outcome = 'candidate_created' LIMIT 1
+            """,
+            (suggestion_id,),
+        ).fetchone()
+        if existing:
+            return []
+
+        original = str(result.get("selected_speech") or "")
+        final = str(result.get("final_message") or "")
+        if not original or not final:
+            return []
+        from .rag_fact_llm import build_llm_fact_extractor
+
+        adapter = build_llm_fact_extractor()
+        if adapter is None:
+            return []
+        signals = adapter.extract_feedback_signals(
+            original_speech=original, final_message=final
+        )
+        from .rag_fact_quality import fact_quality_reason
+
+        account_wxid = str(suggestion.get("account_wxid") or "")
+        conversation_id = self._resolve_conversation_id(suggestion)
+        created: list[int] = []
+        now = int(time.time())
+        for signal in signals[:5]:
+            if fact_quality_reason(
+                signal.get("kind"), signal.get("content"), require_kind_signal=False
+            ) is not None:
+                continue
+            cursor = self.conn.execute(
+                """
+                INSERT INTO rag_facts
+                (account_wxid, conversation_id, subject, kind, content, status, as_of,
+                 confidence, sensitivity, enabled, evidence_message_ids_json,
+                 source_window_json, summary_method, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, 'uncertain', ?, ?, 'normal', 1, '[]', ?,
+                        'feedback_shadow', ?, ?)
+                """,
+                (
+                    account_wxid,
+                    conversation_id,
+                    signal.get("subject") or "我",
+                    signal.get("kind") or "preference",
+                    signal.get("content"),
+                    now,
+                    min(0.75, float(signal.get("confidence") or 0.0)),
+                    # evidence 为模型基于（远程时已脱敏）输入生成的差异说明；
+                    # 原始建议/发送文本不入库
+                    json.dumps({"evidence": signal.get("evidence") or ""}, ensure_ascii=False),
+                    now,
+                    now,
+                ),
+            )
+            created.append(int(cursor.lastrowid or 0))
+        if not created and signals:
+            outcome = "no_qualified_candidate"
+        else:
+            outcome = "candidate_created" if created else "no_candidate"
+        try:
+            from .rag_store import RagStore
+
+            RagStore(self.conn).record_feedback_policy_signal(
+                account_wxid=account_wxid,
+                conversation_id=conversation_id,
+                suggestion_id=suggestion_id,
+                action="rewritten",
+                signal_kind="feedback_candidate_extraction",
+                affected_policy_ids=[],
+                outcome=outcome,
+                detail={"signals": len(signals), "candidate_fact_ids": created},
+            )
+        except Exception:
+            pass
+        return created
+
     def _write_policy_signal(
-        self, suggestion: dict[str, Any], result: dict[str, Any], conversation_id: int | None
+        self, suggestion: dict[str, Any], result: dict[str, Any], conversation_id: int | None,
+        extra_detail: dict[str, Any] | None = None,
     ) -> None:
         from .rag_store import RagStore
 

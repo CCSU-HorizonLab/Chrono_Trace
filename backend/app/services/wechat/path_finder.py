@@ -408,7 +408,7 @@ class WeChatPathFinder:
             return []
 
         candidates = [normalized]
-        match = re.match(r"^(wxid_[a-z0-9]+)_([a-z0-9]{4,6})$", normalized)
+        match = re.match(r"^(.+)_([0-9a-zA-Z]{4,6})$", normalized)
         if match:
             base_wxid = match.group(1)
             if base_wxid not in candidates:

@@ -49,6 +49,9 @@ GENERIC_TURNS = frozenset(_QUALITY_PATTERNS.get("generic_turns", ()))
 VAGUE_REFERENCE_TERMS = _QUALITY_PATTERNS.get("vague_reference_terms", ())
 # 一次性金钱往来细节（设计蓝图排除项）：短句命中即拦截，词表外置
 TRANSACTION_DETAIL_TERMS = _QUALITY_PATTERNS.get("transaction_detail_terms", ())
+# 弱化态度残句（"没那么想要"）：仅当整句极短（无宾语）时拦截；
+# 与 vague_reference_terms 分键——后者出现即拦，前者要短于宾语长度
+WEAK_ATTITUDE_TERMS = _QUALITY_PATTERNS.get("weak_attitude_terms", ())
 
 
 def _load_kind_signals() -> dict[str, tuple[str, ...]]:
@@ -150,13 +153,21 @@ def fact_quality_reason(
         return "transaction_detail"
     if re.fullmatch(r"[\W_\d]+", compact, flags=re.UNICODE):
         return "nonsemantic_turn"
+    # 敏感词优先于疑问判定："对方手机号是多少"是敏感查询而非普通问句
+    if any(term in compact for term in SENSITIVE_TERMS):
+        return "sensitive_quarantine"
+    # 弱化态度残句：整句极短（<=8 字）且命中弱化词——"没那么想要"类
+    # 无宾语残句；带宾语（"没那么想要那款键盘了"）放行给后续检查
+    if WEAK_ATTITUDE_TERMS and len(compact) <= 8 and any(
+        term in compact for term in WEAK_ATTITUDE_TERMS
+    ):
+        return "vague_fragment"
     # 疑问轮：问句助词结尾，或以疑问指代开头且较短（长句多为陈述，如"她在深圳做后端"）
-    if compact.endswith(("吗", "么", "呢", "？", "?")):
+    # "多少/几块"结尾是询价（"早餐多少"），同为问句形态
+    if compact.endswith(("吗", "么", "呢", "？", "?", "多少", "几块")):
         return "question_turn"
     if len(compact) < 15 and re.match(r"^(你|她|他|哪|什么|怎么|是不是|啥)", compact):
         return "question_turn"
-    if any(term in compact for term in SENSITIVE_TERMS):
-        return "sensitive_quarantine"
     if re.fullmatch(r"(?:好的|好滴|好|嗯|哦|噢|行|可以|哈哈|嘿嘿|666|啊|呀|吧|滴)+", compact):
         return "acknowledgement"
 
@@ -188,6 +199,10 @@ def fact_quality_reason(
         if len(object_text) < 4:
             return "hobby_object_missing"
     if kind in {"preference_like", "preference_dislike", "food_or_place"} and not _has_object(primary, signals):
+        return "object_missing"
+    # 购买类"……的"结尾是代指（"直接买80的""想买便宜点的"）——买的
+    # 具体物品已丢失，无法自包含
+    if kind == "purchase_or_price" and compact.endswith("的"):
         return "object_missing"
     return None
 

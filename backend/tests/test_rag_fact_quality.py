@@ -98,3 +98,37 @@ def test_transaction_details_rejected():
         "对方坚持外出吃饭要AA平摊，认为这样谁都不欠谁，关系更轻松自在",
         require_kind_signal=False,
     ) is None
+
+
+def test_pricing_question_turns_rejected():
+    """T11 第四轮："多少/几块"结尾是询价不是事实（真实库"早餐多少"x2）。"""
+    assert fact_quality_reason("food_or_place", "我提到：早餐多少") == "question_turn"
+    assert fact_quality_reason("purchase_or_price", "对方提到：这个几块") == "question_turn"
+    # 陈述句不受影响
+    assert fact_quality_reason(
+        "food_or_place", "对方提到：早餐一般吃豆浆油条"
+    ) is None
+
+
+def test_purchase_pronoun_ending_rejected():
+    """T11 第四轮：购买类"……的"结尾=代指，对象已丢失（用户标注"直接买80的"等）。"""
+    assert fact_quality_reason(
+        "purchase_or_price", "我提到：我到时候直接买80的"
+    ) == "object_missing"
+    assert fact_quality_reason(
+        "purchase_or_price", "对方提到：想买便宜点的"
+    ) == "object_missing"
+    # 写明具体物品的购买事实放行
+    assert fact_quality_reason(
+        "purchase_or_price", "对方提到：想买那款限定的游戏皮肤"
+    ) is None
+
+
+def test_weak_preference_fragments_rejected():
+    """T11 第四轮："没那么想要"类弱化残句（真实库 #280/#5195 active）。"""
+    assert fact_quality_reason("preference_like", "对方提到：没那么想要") == "vague_fragment"
+    assert fact_quality_reason("preference_like", "对方提到：没那么想吃") == "vague_fragment"
+    # 有对象的弱化表达放行
+    assert fact_quality_reason(
+        "preference_like", "对方提到：没那么想要那款键盘了"
+    ) is None

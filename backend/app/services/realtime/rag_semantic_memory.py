@@ -316,12 +316,13 @@ class SemanticFactExtractor:
                 normalized_source_id = int(source_id or 0) or None
             except (TypeError, ValueError):
                 normalized_source_id = None
+            # G6：render_excerpt 在 RagSegmenter 上而非 RagSegment（原
+            # hasattr 判断恒为 False，context 恒空串）。复用本类既有
+            # segmenter 实例取真实摘录，质量门拿到段上下文再做拦截。
             if not is_usable_shadow_fact(
                 "marker_fallback",
                 fallback.get("content") or "",
-                context=segment.render_excerpt(segment, max_messages=4)
-                if hasattr(segment, "render_excerpt")
-                else "",
+                context=self.segmenter.render_excerpt(segment, max_messages=4),
             ):
                 continue
             facts.append(

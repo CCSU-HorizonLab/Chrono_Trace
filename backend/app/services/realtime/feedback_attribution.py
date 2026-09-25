@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import difflib
 import json
+import logging
 import threading
 import time
 from typing import Any
@@ -16,6 +17,8 @@ from .rag_embedding import (
 )
 from .rag_store import RAG_INDEX_VERSION, RagStore
 
+
+logger = logging.getLogger(__name__)
 
 POSITIVE_ATTRIBUTIONS = {"accepted", "rewritten", "preface_then_reply"}
 
@@ -349,14 +352,21 @@ class SuggestionFeedbackAttributor:
             candidate_ids: list[int] = []
             try:
                 candidate_ids = self._try_extract_feedback_candidates(suggestion, result)
-            except Exception:
+            except Exception as exc:
+                # G7：抽取失败不再完全静默（其余候选被丢弃属于异常路径，
+                # 需要留痕）；归因主链路仍不受影响
+                logger.warning(
+                    "[FeedbackAttribution] candidate extraction failed: %s", exc
+                )
                 candidate_ids = []
             try:
                 self._write_policy_signal(
                     suggestion, result, conversation_id, extra_detail={"candidate_fact_ids": candidate_ids}
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning(
+                    "[FeedbackAttribution] policy signal write failed: %s", exc
+                )
 
     def _try_extract_feedback_candidates(
         self, suggestion: dict[str, Any], result: dict[str, Any]
@@ -415,7 +425,7 @@ class SuggestionFeedbackAttributor:
                 continue
             cursor = self.conn.execute(
                 """
-                INSERT INTO rag_facts
+                INSERT OR IGNORE INTO rag_facts
                 (account_wxid, conversation_id, subject, kind, content, status, as_of,
                  confidence, sensitivity, enabled, evidence_message_ids_json,
                  source_window_json, summary_method, created_at, updated_at)
@@ -437,7 +447,26 @@ class SuggestionFeedbackAttributor:
                     now,
                 ),
             )
-            created.append(int(cursor.lastrowid or 0))
+            if cursor.rowcount:
+                created.append(int(cursor.lastrowid or 0))
+            else:
+                # G7：同内容信号第二次触发会撞 UNIQUE(account,conversation,
+                # kind,content)——忽略本次插入并回查已存在行 id 继续用作
+                # 候选，不再让 IntegrityError 把其余候选一起吞掉
+                existing_fact = self.conn.execute(
+                    """
+                    SELECT id FROM rag_facts
+                    WHERE account_wxid=? AND conversation_id=? AND kind=? AND content=?
+                    """,
+                    (
+                        account_wxid,
+                        conversation_id,
+                        signal.get("kind") or "preference",
+                        signal.get("content"),
+                    ),
+                ).fetchone()
+                if existing_fact is not None:
+                    created.append(int(existing_fact["id"]))
         if not created and signals:
             outcome = "no_qualified_candidate"
         else:

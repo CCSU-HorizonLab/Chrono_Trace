@@ -12,6 +12,11 @@ logger = logging.getLogger(__name__)
 class AnalysisService:
     """历史数据分析服务（统一分析入口）"""
 
+    # 历史分析页词云/统计读取消息的上限（防内存失控）。
+    # 情感时间序列是全量统计，这里给一个远大于旧默认 10000 的显式上限，
+    # 达到上限时在响应中标记 truncated 并补全真实消息总数，保证同一响应内口径可感知。
+    ANALYSIS_MESSAGE_LIMIT = 50000
+
     def __init__(self):
         pass  # get_db() removed for thread safety
         self.wordcloud_gen = WordCloudGenerator()
@@ -142,12 +147,29 @@ class AnalysisService:
             logger.info(f"[DEBUG] 会话详情: {subject_info}")
             
             # 3. 使用预处理服务获取清洗后的消息（默认使用缓存）
+            # 显式传大 limit：旧默认 10000 会截断词云/统计，而 timeseries 是全量统计，
+            # 造成同一响应内口径不一致
             preprocessed = self.preprocessor.preprocess_conversation(
-                conversation_id, from_ts, to_ts, use_cache=True
+                conversation_id, from_ts, to_ts,
+                limit=self.ANALYSIS_MESSAGE_LIMIT, use_cache=True
             )
-            
+
             msg_count = preprocessed["total_messages"]
             valid_count = preprocessed["valid_messages"]
+
+            # 词云/统计被截断时：msgCount 改用同口径（文本消息+时间范围）的全量
+            # COUNT，并在响应里附带 truncated/message_count，让前端可感知截断
+            truncated = msg_count >= self.ANALYSIS_MESSAGE_LIMIT
+            message_count = msg_count
+            if truncated:
+                message_count = self._count_messages_in_range(
+                    conversation_id, from_ts, to_ts
+                )
+                logger.warning(
+                    f"[分析] 会话 {conversation_id} 消息数达到上限 "
+                    f"{self.ANALYSIS_MESSAGE_LIMIT}，词云/统计基于前 "
+                    f"{self.ANALYSIS_MESSAGE_LIMIT} 条计算（实际共 {message_count} 条）"
+                )
             
             logger.debug(f"[DEBUG] 查询到 {msg_count} 条消息, 有效消息 {valid_count} 条")
             logger.debug(f"[DEBUG] 预处理统计: {preprocessed['stats']}")
@@ -161,13 +183,14 @@ class AnalysisService:
             logger.debug(f"[DEBUG] 生成词云: {len(wordcloud)} 个词")
             
             # 5. 组装返回数据
+            # msgCount 使用全量计数（未截断时即预处理统计值），与 timeseries 的全量口径一致
             return {
                 "subject": {
                     "id": subject_info["id"],
                     "name": subject_info["name"],
                     "avatar": subject_info.get("avatar"),
                     "stats": {
-                        "msgCount": msg_count,
+                        "msgCount": message_count,
                         "validMsgCount": valid_count,
                         "avgCharCount": preprocessed["stats"]["avg_char_count"],
                         "avgWordCount": preprocessed["stats"]["avg_word_count"],
@@ -177,7 +200,11 @@ class AnalysisService:
                     }
                 },
                 "timeseries": sentiment_summary["timeseries"],
-                "wordcloud": wordcloud
+                "wordcloud": wordcloud,
+                # 附加字段：词云/统计是否被 ANALYSIS_MESSAGE_LIMIT 截断及范围内真实消息总数
+                # （旧前端不读取这两个字段也不会受影响）
+                "truncated": truncated,
+                "message_count": message_count
             }
         
         except Exception as e:
@@ -191,6 +218,24 @@ class AnalysisService:
                 "wordcloud": []
             }
     
+    def _count_messages_in_range(
+        self,
+        conversation_id: int,
+        from_ts: int,
+        to_ts: int
+    ) -> int:
+        """统计时间范围内的文本消息总数（与 preprocess_conversation 的筛选口径一致）"""
+        cursor = get_db().execute("""
+            SELECT COUNT(*)
+            FROM messages
+            WHERE conversation_id = ?
+                AND message_type = 1
+                AND timestamp >= ?
+                AND timestamp <= ?
+        """, (conversation_id, from_ts, to_ts))
+
+        return cursor.fetchone()[0] or 0
+
     def _build_sentiment_timeseries(
         self,
         conversation_id: int,

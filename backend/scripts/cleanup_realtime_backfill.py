@@ -10,10 +10,10 @@ def resolve_db_path(db_path: str | None) -> Path:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Delete realtime_backfill test data for a conversation.")
+    parser = argparse.ArgumentParser(description="Delete realtime_backfill test data for a conversation (dry-run by default; pass --apply to delete).")
     parser.add_argument("--conversation-id", type=int, required=True, help="Target conversation_id")
     parser.add_argument("--db", type=str, default=None, help="Optional chrono_trace.db path")
-    parser.add_argument("--dry-run", action="store_true", help="Only show rows that would be deleted")
+    parser.add_argument("--apply", action="store_true", help="Actually delete rows (default is dry-run)")
     args = parser.parse_args()
 
     db_path = resolve_db_path(args.db)
@@ -41,10 +41,11 @@ def main() -> int:
             f"content={row['content']!r}"
         )
 
-    if args.dry_run:
-        print("dry_run=true, no rows deleted")
+    if not args.apply:
+        print(f"dry_run=true (default), no rows deleted. Re-run with --apply to delete {len(rows)} rows.")
         return 0
 
+    print(f"backup_hint: DELETE is irreversible; consider copying the db file first: {db_path}")
     conn.execute(
         """
         DELETE FROM messages

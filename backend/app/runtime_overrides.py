@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import sys
-from pathlib import Path
 from typing import Any
 
 from .config import IS_FROZEN, RESOURCE_ROOT_PATH, USER_DATA_DIR_PATH, ensure_directory

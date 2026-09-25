@@ -225,7 +225,7 @@ class FeedbackRuleExtractor:
             result["outcome"] = "adopted"
             return result
 
-        _print(f"[FeedbackRule] 🔍 偏差较大，启动 LLM 深度对比分析...")
+        _print("[FeedbackRule] 🔍 偏差较大，启动 LLM 深度对比分析...")
         rule = self._llm_compare(ai_speeches, user_actual_message)
         if rule:
             self.save_rule(
@@ -427,7 +427,7 @@ class FeedbackRuleExtractor:
 
             data = json.loads(cleaned.strip())
             if 'rule' not in data or not data['rule']:
-                _print(f"[FeedbackRule] ⚠️ 规则内容为空")
+                _print("[FeedbackRule] ⚠️ 规则内容为空")
                 return None
             return data
         except (json.JSONDecodeError, KeyError) as e:

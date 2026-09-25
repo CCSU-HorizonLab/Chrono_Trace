@@ -94,7 +94,7 @@ class PreferenceCompatibilityService:
         
         debug_log(f"\n{'*'*40}")
         debug_log(f"【喜好兼容度】开始计分 (会话 ID {conversation_id})")
-        debug_log(f"*[??] ????????????? 2 ????*")
+        debug_log("*[??] ????????????? 2 ????*")
         
         # 如果没有喜好关键词，返回 0 分
         if not self.preference_keywords:
@@ -120,7 +120,7 @@ class PreferenceCompatibilityService:
         result.topic_mention_score = self.calculate_topic_mention_score(
             len(preference_sessions), stats.total_sessions
         )
-        debug_log(f"\n[喜好兼容度调试] --- 1. 话题提及频率 (权重40%) ---")
+        debug_log("\n[喜好兼容度调试] --- 1. 话题提及频率 (权重40%) ---")
         debug_log(f"占比(频率): {result.topic_mention_frequency*100:.1f}% -> 得分: {result.topic_mention_score}")
         
         # 2. 喜好话题延续性 (60%)
@@ -130,7 +130,7 @@ class PreferenceCompatibilityService:
         result.topic_continuity_score = self.calculate_topic_continuity_score(
             conversation_id, preference_sessions
         )
-        debug_log(f"\n[喜好兼容度调试] --- 2. 喜好话题延续性 (权重60%) ---")
+        debug_log("\n[喜好兼容度调试] --- 2. 喜好话题延续性 (权重60%) ---")
         debug_log(f"包含喜好的会话的平均相关度: {result.avg_continuity:.3f} -> 得分: {result.topic_continuity_score}")
         
         # 综合评分

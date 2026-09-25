@@ -361,7 +361,6 @@ class PreprocessingService:
     
     def _batch_cache_messages(self, messages: List[Dict[str, Any]]):
         """批量写入缓存"""
-        import time
         
         for msg in messages:
             try:
@@ -582,11 +581,13 @@ class BasicPreprocessingService:
             }
         """
         # 构建查询
+        # 注意：活跃天数按本地时区分桶（'localtime'），与情感共振维度的
+        # active_days 口径一致；用 UTC 会在东八区把 00:00-08:00 的消息算进前一天
         sql = """
             SELECT
                 MIN(timestamp) as start_ts,
                 MAX(timestamp) as end_ts,
-                COUNT(DISTINCT DATE(timestamp, 'unixepoch')) as chat_days
+                COUNT(DISTINCT DATE(timestamp, 'unixepoch', 'localtime')) as chat_days
             FROM messages
             WHERE conversation_id = ? AND message_type = 1
         """
@@ -1424,7 +1425,7 @@ class SessionManager:
                         similarity = float(np.dot(vec1, vec2) / (np.linalg.norm(vec1) * np.linalg.norm(vec2)))
                         similarities[start + i] = similarity
                 
-                logger.info(f"[会话管理器] 精细检测完成")
+                logger.info("[会话管理器] 精细检测完成")
                 
             else:
                 # === 常规全量计算 ===

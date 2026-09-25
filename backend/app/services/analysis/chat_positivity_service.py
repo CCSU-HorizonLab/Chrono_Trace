@@ -103,37 +103,37 @@ class ChatPositivityService:
         
         debug_log(f"\n{'*'*40}")
         debug_log(f"【聊天积极度】开始计分 (会话 ID {conversation_id})")
-        debug_log(f"*[注] 该项占总分30%权重，自身包含6个子维度*")
+        debug_log("*[注] 该项占总分30%权重，自身包含6个子维度*")
         
         # 1. 日均消息数 (10%)
         result.daily_message_count = self._calculate_daily_message_count_raw(stats)
         result.daily_message_score = self.calculate_daily_message_score(stats)
-        debug_log(f"\n[聊天积极度调试] --- 1. 日均消息数 (权重10%) ---")
+        debug_log("\n[聊天积极度调试] --- 1. 日均消息数 (权重10%) ---")
         debug_log(f"总消息数: {stats.total_message_count}, 持续天数: {stats.conversation_duration_days:.1f}")
         debug_log(f"日均消息数: {result.daily_message_count:.2f} (满分基准: {self.DAILY_MESSAGE_BASELINE}) -> 得分: {result.daily_message_score}")
         
         # 2. 回复及时率 (20%)
         result.reply_timeliness_rate = self._calculate_reply_timeliness_raw(conversation_id)
         result.reply_timeliness_score = self.calculate_reply_timeliness_score(conversation_id)
-        debug_log(f"\n[聊天积极度调试] --- 2. 回复及时率 (权重20%) ---")
+        debug_log("\n[聊天积极度调试] --- 2. 回复及时率 (权重20%) ---")
         debug_log(f"及时回复比例: {result.reply_timeliness_rate*100:.1f}% -> 得分: {result.reply_timeliness_score}")
         
         # 3. 话题延续性 (25%)
         result.topic_continuity_avg = self._calculate_topic_continuity_raw(conversation_id)
         result.topic_continuity_score = self.calculate_topic_continuity_score(conversation_id)
-        debug_log(f"\n[聊天积极度调试] --- 3. 话题延续性 (权重25%) ---")
+        debug_log("\n[聊天积极度调试] --- 3. 话题延续性 (权重25%) ---")
         debug_log(f"平均语义相似度: {result.topic_continuity_avg:.3f} (满分基准: 0.5) -> 得分: {result.topic_continuity_score}")
         
         # 4. 主动发起率 (35%)
         result.active_initiation_rate = self._calculate_active_initiation_raw(stats)
         result.active_initiation_score = self.calculate_active_initiation_score(stats)
-        debug_log(f"\n[聊天积极度调试] --- 4. 主动发起率 (权重35%) ---")
+        debug_log("\n[聊天积极度调试] --- 4. 主动发起率 (权重35%) ---")
         debug_log(f"对方发起的会话比例: {result.active_initiation_rate*100:.1f}% (满分基准: 50.0%) -> 得分: {result.active_initiation_score}")
 
         # 5. 加分项: 长文本占比 (最高 10 分)
         result.long_text_ratio = self._calculate_long_text_ratio_raw(conversation_id, stats)
         result.long_text_bonus = self.calculate_long_text_bonus(conversation_id, stats)
-        debug_log(f"\n[聊天积极度调试] --- 5. 加分项: 长文本占比 ---")
+        debug_log("\n[聊天积极度调试] --- 5. 加分项: 长文本占比 ---")
         debug_log(f"长文本(>{self.LONG_TEXT_THRESHOLD}字)占比: {result.long_text_ratio*100:.1f}% (满分基准: 30.0%) -> 加分: +{result.long_text_bonus}")
         
         # 综合评分
@@ -144,7 +144,7 @@ class ChatPositivityService:
             relationship_confidence,
             self.NEUTRAL_POSITIVITY_BASELINE,
         )
-        debug_log(f"\n[聊天积极度调试] --- 6. 综合评分收缩 ---")
+        debug_log("\n[聊天积极度调试] --- 6. 综合评分收缩 ---")
         debug_log(
             f"原始综合得分: {raw_overall_score:.2f}, 关系置信度: {relationship_confidence:.2f} -> "
             f"收缩后得分: {result.overall_score:.2f}"

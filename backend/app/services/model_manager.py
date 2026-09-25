@@ -21,6 +21,10 @@ VERSION_FILE = "model_version.json"
 class ModelManager:
     """Manage a local model directory and download missing assets from ModelScope."""
 
+    # 类级下载锁：调用方（如 Bridge）每次都新建 ModelManager 实例，实例级锁无法跨实例互斥；
+    # 而下载共用按目录名固定的 temp/backup 目录，并发下载会互删中间产物，因此全局串行
+    _download_lock = threading.Lock()
+
     def __init__(self, model_dir: str, repo_id: str):
         self.model_dir = Path(model_dir)
         self.repo_id = repo_id
@@ -28,7 +32,6 @@ class ModelManager:
         self._retry_delay_seconds = 2
         self._request_timeout_seconds = 30
         self._download_status: Dict[str, Dict[str, Any]] = {}
-        self._download_lock = threading.Lock()
 
     def _run_with_retries(self, operation_name: str, func, timeout_seconds: Optional[int] = None):
         timeout = timeout_seconds or self._request_timeout_seconds
@@ -158,108 +161,110 @@ class ModelManager:
         temp_dir = self.model_dir.parent / f"{self.model_dir.name}_download_temp"
         backup_dir = self.model_dir.parent / f"{self.model_dir.name}_download_backup"
 
-        try:
+        # 类级锁串行化下载：temp/backup 目录名固定，跨实例并发会互删目录
+        with self._download_lock:
             try:
-                from modelscope.hub.snapshot_download import snapshot_download
-            except ImportError:
-                return {
-                    "success": False,
-                    "model_dir": str(self.model_dir),
-                    "error": "缺少 modelscope 依赖，无法下载模型",
-                    "error_code": "MODELSCOPE_NOT_INSTALLED",
-                }
+                try:
+                    from modelscope.hub.snapshot_download import snapshot_download
+                except ImportError:
+                    return {
+                        "success": False,
+                        "model_dir": str(self.model_dir),
+                        "error": "缺少 modelscope 依赖，无法下载模型",
+                        "error_code": "MODELSCOPE_NOT_INSTALLED",
+                    }
 
-            if progress_callback:
-                progress_callback("正在准备模型下载...", 5.0)
+                if progress_callback:
+                    progress_callback("正在准备模型下载...", 5.0)
 
-            if temp_dir.exists():
-                shutil.rmtree(temp_dir, ignore_errors=True)
-            temp_dir.parent.mkdir(parents=True, exist_ok=True)
-
-            if progress_callback:
-                progress_callback("正在从 ModelScope 下载模型文件...", 30.0)
-
-            revision = self._run_with_retries(
-                "下载模型",
-                lambda: snapshot_download(
-                    self.repo_id,
-                    cache_dir=str(temp_dir.parent),
-                    local_dir=str(temp_dir),
-                    ),
-                timeout_seconds=120,
-            )
-            if revision is None:
                 if temp_dir.exists():
                     shutil.rmtree(temp_dir, ignore_errors=True)
-                return {
-                    "success": False,
-                    "model_dir": str(self.model_dir),
-                    "error": f"模型下载失败: {self.repo_id}",
-                    "error_code": "NETWORK_ERROR",
-                }
+                temp_dir.parent.mkdir(parents=True, exist_ok=True)
 
-            if progress_callback:
-                progress_callback("正在校验模型文件...", 80.0)
+                if progress_callback:
+                    progress_callback("正在从 ModelScope 下载模型文件...", 30.0)
 
-            downloaded_manager = ModelManager(model_dir=str(temp_dir), repo_id=self.repo_id)
-            downloaded_diagnosis = downloaded_manager.diagnose_model_status()
-            if downloaded_diagnosis["issue"]:
-                shutil.rmtree(temp_dir, ignore_errors=True)
-                return {
-                    "success": False,
-                    "model_dir": str(self.model_dir),
-                    "error": downloaded_diagnosis["issue"],
-                    "error_code": "MODEL_VALIDATION_FAILED",
-                }
+                revision = self._run_with_retries(
+                    "下载模型",
+                    lambda: snapshot_download(
+                        self.repo_id,
+                        cache_dir=str(temp_dir.parent),
+                        local_dir=str(temp_dir),
+                        ),
+                    timeout_seconds=120,
+                )
+                if revision is None:
+                    if temp_dir.exists():
+                        shutil.rmtree(temp_dir, ignore_errors=True)
+                    return {
+                        "success": False,
+                        "model_dir": str(self.model_dir),
+                        "error": f"模型下载失败: {self.repo_id}",
+                        "error_code": "NETWORK_ERROR",
+                    }
 
-            if progress_callback:
-                progress_callback("正在替换本地模型...", 90.0)
+                if progress_callback:
+                    progress_callback("正在校验模型文件...", 80.0)
 
-            if backup_dir.exists():
-                shutil.rmtree(backup_dir, ignore_errors=True)
-            if self.model_dir.exists():
-                shutil.move(str(self.model_dir), str(backup_dir))
+                downloaded_manager = ModelManager(model_dir=str(temp_dir), repo_id=self.repo_id)
+                downloaded_diagnosis = downloaded_manager.diagnose_model_status()
+                if downloaded_diagnosis["issue"]:
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+                    return {
+                        "success": False,
+                        "model_dir": str(self.model_dir),
+                        "error": downloaded_diagnosis["issue"],
+                        "error_code": "MODEL_VALIDATION_FAILED",
+                    }
 
-            shutil.move(str(temp_dir), str(self.model_dir))
-            self._save_local_version("master")
+                if progress_callback:
+                    progress_callback("正在替换本地模型...", 90.0)
 
-            final_diagnosis = self.diagnose_model_status()
-            if final_diagnosis["issue"]:
-                if self.model_dir.exists():
-                    shutil.rmtree(self.model_dir, ignore_errors=True)
                 if backup_dir.exists():
-                    shutil.move(str(backup_dir), str(self.model_dir))
+                    shutil.rmtree(backup_dir, ignore_errors=True)
+                if self.model_dir.exists():
+                    shutil.move(str(self.model_dir), str(backup_dir))
+
+                shutil.move(str(temp_dir), str(self.model_dir))
+                self._save_local_version("master")
+
+                final_diagnosis = self.diagnose_model_status()
+                if final_diagnosis["issue"]:
+                    if self.model_dir.exists():
+                        shutil.rmtree(self.model_dir, ignore_errors=True)
+                    if backup_dir.exists():
+                        shutil.move(str(backup_dir), str(self.model_dir))
+                    return {
+                        "success": False,
+                        "model_dir": str(self.model_dir),
+                        "error": final_diagnosis["issue"],
+                        "error_code": "MODEL_VALIDATION_FAILED",
+                    }
+
+                if backup_dir.exists():
+                    shutil.rmtree(backup_dir, ignore_errors=True)
+
+                if progress_callback:
+                    progress_callback("模型下载完成", 100.0)
+
+                return {
+                    "success": True,
+                    "model_dir": str(self.model_dir),
+                    "error": None,
+                    "error_code": None,
+                    "version": "master",
+                }
+            except Exception as exc:
+                logger.error("[模型管理] 模型下载失败: %s: %s", type(exc).__name__, exc, exc_info=True)
                 return {
                     "success": False,
                     "model_dir": str(self.model_dir),
-                    "error": final_diagnosis["issue"],
-                    "error_code": "MODEL_VALIDATION_FAILED",
+                    "error": f"{type(exc).__name__}: {exc}",
+                    "error_code": "UNKNOWN_ERROR",
                 }
-
-            if backup_dir.exists():
-                shutil.rmtree(backup_dir, ignore_errors=True)
-
-            if progress_callback:
-                progress_callback("模型下载完成", 100.0)
-
-            return {
-                "success": True,
-                "model_dir": str(self.model_dir),
-                "error": None,
-                "error_code": None,
-                "version": "master",
-            }
-        except Exception as exc:
-            logger.error("[模型管理] 模型下载失败: %s: %s", type(exc).__name__, exc, exc_info=True)
-            return {
-                "success": False,
-                "model_dir": str(self.model_dir),
-                "error": f"{type(exc).__name__}: {exc}",
-                "error_code": "UNKNOWN_ERROR",
-            }
-        finally:
-            if temp_dir.exists():
-                shutil.rmtree(temp_dir, ignore_errors=True)
+            finally:
+                if temp_dir.exists():
+                    shutil.rmtree(temp_dir, ignore_errors=True)
 
     def download_model_async(self) -> str:
         task_id = f"model_download_{int(time.time())}_{uuid4().hex[:8]}"

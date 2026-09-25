@@ -54,6 +54,8 @@ class Bridge:
     def __init__(self):
         self.wechat_service = WeChatIngestService()
         self.settings_file = Path(SETTINGS_PATH)
+        # 设置读写锁：每个 JS 调用跑在独立线程，settings 的「读-改-写」复合操作必须串行化
+        self._settings_lock = threading.RLock()
         self._load_settings()
 
         # 延迟加载特征提取服务（避免循环导入）
@@ -73,20 +75,22 @@ class Bridge:
 
     def _load_settings(self):
         """加载设置"""
-        self.settings = load_settings_from_file(self.settings_file)
-        self.settings["analysis_device_mode"] = normalize_analysis_device_mode(
-            self.settings.get("analysis_device_mode", ANALYSIS_DEVICE_MODE_AUTO)
-        )
-        self.settings[MODEL_ROOT_DIR_KEY] = normalize_model_root_dir(
-            self.settings.get(MODEL_ROOT_DIR_KEY)
-        )
+        with self._settings_lock:
+            self.settings = load_settings_from_file(self.settings_file)
+            self.settings["analysis_device_mode"] = normalize_analysis_device_mode(
+                self.settings.get("analysis_device_mode", ANALYSIS_DEVICE_MODE_AUTO)
+            )
+            self.settings[MODEL_ROOT_DIR_KEY] = normalize_model_root_dir(
+                self.settings.get(MODEL_ROOT_DIR_KEY)
+            )
 
     def _save_settings(self):
         """保存设置"""
-        try:
-            save_settings_to_file(self.settings, self.settings_file)
-        except Exception as e:
-            logger.error(f"保存设置失败: {e}")
+        with self._settings_lock:
+            try:
+                save_settings_to_file(self.settings, self.settings_file)
+            except Exception as e:
+                logger.error(f"保存设置失败: {e}")
 
     def _get_wechat_accounts(self) -> list[dict[str, Any]]:
         return get_wechat_accounts(self.settings)
@@ -185,15 +189,92 @@ class Bridge:
         }
 
     def _update_model_download_status(self, task_id: str, **updates: Any) -> None:
+        now_ms = int(time.time() * 1000)
         with self._model_download_lock:
+            is_new = task_id not in self._model_download_status
             current = self._model_download_status.get(task_id, {}).copy()
+            if is_new:
+                current["created_at"] = now_ms
+            current["updated_at"] = now_ms
             current.update(updates)
             self._model_download_status[task_id] = current
+        if is_new:
+            # 新增条目时顺带清理过期任务，防止长驻进程内存无界增长。
+            # 注意：必须在锁外调用，避免与 _prune_task_dicts 内部加锁形成 ABBA 死锁
+            self._prune_task_dicts()
 
     def _get_model_download_status(self, task_id: str) -> dict[str, Any]:
         with self._model_download_lock:
             status = self._model_download_status.get(task_id)
         return status.copy() if status else {}
+
+    def _prune_task_dicts(self, max_age_hours: float = 24.0) -> None:
+        """按 TTL 清理三个任务字典（建议流/密钥捕获/模型下载）中的过期条目。
+
+        - 终态条目（建议流 done/error、捕获已出结果、下载 completed/failed）
+          超过 1 小时即删除；
+        - 运行中条目超过 max_age_hours（默认 24 小时）也删除（视作僵死任务）。
+        时间戳兼容秒/毫秒两种单位。调用方不得在持有这三个任务锁时调用（会死锁）。
+        """
+        now_ms = int(time.time() * 1000)
+        terminal_max_age_ms = 60 * 60 * 1000  # 终态条目保留 1 小时
+        running_max_age_ms = int(max_age_hours * 3600 * 1000)
+
+        def _entry_ts_ms(entry: dict[str, Any]) -> int | None:
+            for key in ("updated_at", "created_at"):
+                raw = entry.get(key)
+                if raw is None:
+                    continue
+                try:
+                    value = int(raw)
+                except (TypeError, ValueError):
+                    continue
+                if value <= 0:
+                    continue
+                # 小于 1e12 视为秒级时间戳，统一换算成毫秒
+                return value if value > 10**12 else value * 1000
+            return None
+
+        with self._suggestion_stream_lock:
+            expired = []
+            for stream_id, state in self._suggestion_streams.items():
+                ts = _entry_ts_ms(state)
+                if ts is None:
+                    continue
+                status = str(state.get("status") or "")
+                is_terminal = status in {"done", "error", "completed", "failed", "cancelled"}
+                deadline = terminal_max_age_ms if is_terminal else running_max_age_ms
+                if now_ms - ts > deadline:
+                    expired.append(stream_id)
+            for stream_id in expired:
+                self._suggestion_streams.pop(stream_id, None)
+
+        with self._wechat_key_capture_lock:
+            expired = []
+            for session_id, entry in self._wechat_key_capture_sessions.items():
+                ts = _entry_ts_ms(entry)
+                if ts is None:
+                    continue
+                is_terminal = entry.get("final_result") is not None
+                deadline = terminal_max_age_ms if is_terminal else running_max_age_ms
+                if now_ms - ts > deadline:
+                    expired.append(session_id)
+            for session_id in expired:
+                self._wechat_key_capture_sessions.pop(session_id, None)
+
+        with self._model_download_lock:
+            expired = []
+            for task_id, entry in self._model_download_status.items():
+                ts = _entry_ts_ms(entry)
+                if ts is None:
+                    continue
+                status = str(entry.get("status") or "")
+                is_terminal = status in {"completed", "failed", "cancelled"}
+                deadline = terminal_max_age_ms if is_terminal else running_max_age_ms
+                if now_ms - ts > deadline:
+                    expired.append(task_id)
+            for task_id in expired:
+                self._model_download_status.pop(task_id, None)
 
     def _get_sentiment_model_manager(self):
         from ..services.model_manager import ModelManager
@@ -225,49 +306,50 @@ class Bridge:
         return get_model_root_dir(self.settings)
 
     def _migrate_model_root_dir(self, target_dir: str) -> dict[str, Any]:
-        current_root = self._get_model_root_dir()
-        next_root = Path(normalize_model_root_dir(target_dir))
-        next_root.mkdir(parents=True, exist_ok=True)
+        with self._settings_lock:
+            current_root = self._get_model_root_dir()
+            next_root = Path(normalize_model_root_dir(target_dir))
+            next_root.mkdir(parents=True, exist_ok=True)
 
-        if current_root == next_root:
-            self.settings[MODEL_ROOT_DIR_KEY] = str(next_root)
-            self._save_settings()
-            return {
-                "ok": True,
-                "model_root_dir": str(next_root),
-                "migrated_models": [],
-                "skipped_models": [SENTIMENT_MODEL_DIRNAME, EMBEDDING_MODEL_DIRNAME],
-            }
+            if current_root == next_root:
+                self.settings[MODEL_ROOT_DIR_KEY] = str(next_root)
+                self._save_settings()
+                return {
+                    "ok": True,
+                    "model_root_dir": str(next_root),
+                    "migrated_models": [],
+                    "skipped_models": [SENTIMENT_MODEL_DIRNAME, EMBEDDING_MODEL_DIRNAME],
+                }
 
-        moved: list[tuple[Path, Path]] = []
-        skipped: list[str] = []
-        try:
-            for dirname in (SENTIMENT_MODEL_DIRNAME, EMBEDDING_MODEL_DIRNAME):
-                source = current_root / dirname
-                destination = next_root / dirname
-                if not source.exists():
-                    skipped.append(dirname)
-                    continue
-                if destination.exists():
-                    raise FileExistsError(f"目标目录已存在: {destination}")
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(source), str(destination))
-                moved.append((source, destination))
+            moved: list[tuple[Path, Path]] = []
+            skipped: list[str] = []
+            try:
+                for dirname in (SENTIMENT_MODEL_DIRNAME, EMBEDDING_MODEL_DIRNAME):
+                    source = current_root / dirname
+                    destination = next_root / dirname
+                    if not source.exists():
+                        skipped.append(dirname)
+                        continue
+                    if destination.exists():
+                        raise FileExistsError(f"目标目录已存在: {destination}")
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.move(str(source), str(destination))
+                    moved.append((source, destination))
 
-            self.settings[MODEL_ROOT_DIR_KEY] = str(next_root)
-            self._save_settings()
-            return {
-                "ok": True,
-                "model_root_dir": str(next_root),
-                "migrated_models": [dst.name for _, dst in moved],
-                "skipped_models": skipped,
-            }
-        except Exception:
-            for source, destination in reversed(moved):
-                if destination.exists() and not source.exists():
-                    source.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.move(str(destination), str(source))
-            raise
+                self.settings[MODEL_ROOT_DIR_KEY] = str(next_root)
+                self._save_settings()
+                return {
+                    "ok": True,
+                    "model_root_dir": str(next_root),
+                    "migrated_models": [dst.name for _, dst in moved],
+                    "skipped_models": skipped,
+                }
+            except Exception:
+                for source, destination in reversed(moved):
+                    if destination.exists() and not source.exists():
+                        source.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.move(str(destination), str(source))
+                raise
 
     def update_model_root_dir(self, new_dir: str) -> dict[str, Any]:
         try:
@@ -328,15 +410,16 @@ class Bridge:
         resolved_wxid = self._resolve_account_wxid(account_wxid) or str(snapshot.get("account_wxid") or snapshot.get("current_user") or "")
         if not resolved_wxid:
             return
-        update_wechat_account_import_state(
-            self.settings,
-            resolved_wxid,
-            snapshot=snapshot,
-            db_key=db_key,
-            wechat_dir=str(snapshot.get("wechat_dir") or "") or None,
-            import_completed=True,
-        )
-        self._save_settings()
+        with self._settings_lock:
+            update_wechat_account_import_state(
+                self.settings,
+                resolved_wxid,
+                snapshot=snapshot,
+                db_key=db_key,
+                wechat_dir=str(snapshot.get("wechat_dir") or "") or None,
+                import_completed=True,
+            )
+            self._save_settings()
 
     def _build_wechat_account_candidate(
         self,
@@ -363,24 +446,25 @@ class Bridge:
         }
 
     def _sync_wechat_account_candidates(self, accounts: list[dict[str, Any]]) -> None:
-        changed = False
-        for account in accounts:
-            normalized = self._build_wechat_account_candidate(
-                str(account.get("wxid") or ""),
-                wechat_dir=str(account.get("wechat_dir") or ""),
-                source=str(account.get("source") or "auto"),
-                db_key=str(account.get("db_key") or ""),
-                avatar=str(account.get("avatar") or ""),
-                label=str(account.get("label") or "") or None,
-            )
-            if not normalized["wxid"]:
-                continue
-            existing = self._get_wechat_account(normalized["wxid"]) or {}
-            if existing != normalized:
-                upsert_wechat_account(self.settings, normalized)
-                changed = True
-        if changed:
-            self._save_settings()
+        with self._settings_lock:
+            changed = False
+            for account in accounts:
+                normalized = self._build_wechat_account_candidate(
+                    str(account.get("wxid") or ""),
+                    wechat_dir=str(account.get("wechat_dir") or ""),
+                    source=str(account.get("source") or "auto"),
+                    db_key=str(account.get("db_key") or ""),
+                    avatar=str(account.get("avatar") or ""),
+                    label=str(account.get("label") or "") or None,
+                )
+                if not normalized["wxid"]:
+                    continue
+                existing = self._get_wechat_account(normalized["wxid"]) or {}
+                if existing != normalized:
+                    upsert_wechat_account(self.settings, normalized)
+                    changed = True
+            if changed:
+                self._save_settings()
 
     # ==================== 微信数据导入相关 ====================
 
@@ -390,8 +474,9 @@ class Bridge:
 
     def set_active_wechat_account(self, wxid: str) -> dict[str, Any]:
         try:
-            active_wxid = set_active_wechat_account(self.settings, wxid)
-            self._save_settings()
+            with self._settings_lock:
+                active_wxid = set_active_wechat_account(self.settings, wxid)
+                self._save_settings()
             return {"ok": True, "active_account_wxid": active_wxid}
         except Exception as e:
             return {"ok": False, "error": str(e)}
@@ -472,14 +557,15 @@ class Bridge:
         if result.get("ok") and preferred_paths:
             resolved_wxid = str(preferred_paths.get("account_wxid") or preferred_paths.get("current_user") or self._resolve_account_wxid(account_wxid))
             if resolved_wxid:
-                update_wechat_account_import_state(
-                    self.settings,
-                    resolved_wxid,
-                    db_key=db_key,
-                    wechat_dir=str(preferred_paths.get("wechat_dir") or "") or None,
-                    source="custom" if custom_paths else None,
-                )
-                self._save_settings()
+                with self._settings_lock:
+                    update_wechat_account_import_state(
+                        self.settings,
+                        resolved_wxid,
+                        db_key=db_key,
+                        wechat_dir=str(preferred_paths.get("wechat_dir") or "") or None,
+                        source="custom" if custom_paths else None,
+                    )
+                    self._save_settings()
         return result
 
     def capture_wechat_db_key(
@@ -538,13 +624,14 @@ class Bridge:
             or ""
         ).strip()
         if resolved_wxid:
-            update_wechat_account_import_state(
-                self.settings,
-                resolved_wxid,
-                db_key=db_key,
-                wechat_dir=str((resolved_paths or {}).get("wechat_dir") or "") or None,
-            )
-            self._save_settings()
+            with self._settings_lock:
+                update_wechat_account_import_state(
+                    self.settings,
+                    resolved_wxid,
+                    db_key=db_key,
+                    wechat_dir=str((resolved_paths or {}).get("wechat_dir") or "") or None,
+                )
+                self._save_settings()
 
         return {
             **result,
@@ -601,13 +688,17 @@ class Bridge:
                 return initial
 
             session_id = uuid.uuid4().hex
+            now_ms = int(time.time() * 1000)
             with self._wechat_key_capture_lock:
                 self._wechat_key_capture_sessions[session_id] = {
                     "session": session,
                     "account_wxid": str(account_wxid or ""),
                     "final_result": None,
-                    "created_at": time.time(),
+                    "created_at": now_ms,
+                    "updated_at": now_ms,
                 }
+            # 新增条目时顺带清理过期会话（锁外调用，避免锁内嵌套死锁）
+            self._prune_task_dicts()
             return {
                 **initial,
                 "ok": True,
@@ -647,6 +738,7 @@ class Bridge:
                     str(entry.get("account_wxid") or ""),
                 )
                 entry["final_result"] = final_result
+                entry["updated_at"] = int(time.time() * 1000)
 
         return {
             **final_result,
@@ -686,7 +778,7 @@ class Bridge:
         if custom_paths:
             logger.debug(f"[DEBUG Bridge] 使用自定义路径: {custom_paths}")
         else:
-            logger.debug(f"[DEBUG Bridge] 未配置自定义路径,将使用自动检测")
+            logger.debug("[DEBUG Bridge] 未配置自定义路径,将使用自动检测")
 
         result = self.wechat_service.import_wechat_data(db_key, options, custom_paths)
         if result.get("ok"):
@@ -706,13 +798,14 @@ class Bridge:
         if result.get("ok") and preferred_paths:
             resolved_wxid = str(preferred_paths.get("account_wxid") or preferred_paths.get("current_user") or self._resolve_account_wxid(account_wxid))
             if resolved_wxid:
-                update_wechat_account_import_state(
-                    self.settings,
-                    resolved_wxid,
-                    db_key=db_key,
-                    wechat_dir=str(preferred_paths.get("wechat_dir") or "") or None,
-                )
-                self._save_settings()
+                with self._settings_lock:
+                    update_wechat_account_import_state(
+                        self.settings,
+                        resolved_wxid,
+                        db_key=db_key,
+                        wechat_dir=str(preferred_paths.get("wechat_dir") or "") or None,
+                    )
+                    self._save_settings()
         return result
 
     def detect_wechat_import_increment(self, account_wxid: str = "") -> dict[str, Any]:
@@ -767,52 +860,6 @@ class Bridge:
 
     def ingest_data(self, file_path: str, options: dict[str, Any] | None = None) -> dict[str, Any]:
         return {"ok": True, "file_path": file_path, "options": options or {}}
-    # ==================== 长程对话继承 ====================
-    def get_latest_thread(self, display_name: str) -> dict[str, Any]:
-        """获取联系人最近的一次会话归档，用于“继续上次指导”"""
-        try:
-            from ..services.realtime.session_thread_service import SessionThreadService
-            thread = SessionThreadService().get_latest_thread(display_name)
-            if thread:
-                return {"ok": True, "thread": thread}
-            return {"ok": False}
-        except Exception as e:
-            logger.error(f"[Bridge] 获取最近线程异常: {e}")
-            return {"ok": False, "error": str(e)}
-
-    def load_thread_context(self, thread_id: int) -> dict[str, Any]:
-        """加载历史线程的完整对话上下文与建议"""
-        try:
-            from ..services.realtime.session_thread_service import SessionThreadService
-            data = SessionThreadService().load_thread_context(thread_id)
-            if data:
-                # 确保所有值都是 JSON 可序列化的
-                safe_data = {}
-                for k, v in data.items():
-                    if isinstance(v, bytes):
-                        safe_data[k] = v.decode('utf-8', errors='replace')
-                    elif isinstance(v, (dict, list, str, int, float, bool)) or v is None:
-                        safe_data[k] = v
-                    else:
-                        safe_data[k] = str(v)
-                
-                result = {"ok": True, "data": safe_data}
-                # 预检序列化
-                try:
-                    import json as _json
-                    test = _json.dumps(result, ensure_ascii=False)
-                    logger.info(f"[Bridge] load_thread_context 返回成功: keys={list(safe_data.keys())}, "
-                               f"suggestions={len(safe_data.get('suggestions', []))}, "
-                               f"messages={len(safe_data.get('messages', []))}, "
-                               f"json_size={len(test)}")
-                except Exception as je:
-                    logger.error(f"[Bridge] load_thread_context 序列化预检失败: {je}")
-                    return {"ok": False, "error": f"序列化失败: {je}"}
-                return result
-            return {"ok": False, "error": "未找到上下文"}
-        except Exception as e:
-            logger.error(f"[Bridge] 加载线程上下文异常: {e}")
-            return {"ok": False, "error": str(e)}
 
     # ==================== 历史数据分析相关 ====================
     
@@ -903,6 +950,8 @@ class Bridge:
             }
             events.append(item)
             state["next_seq"] = seq + 1
+            # 事件持续到达视为活跃，刷新 TTL 基准
+            state["updated_at"] = int(time.time() * 1000)
             # Keep the bridge memory bounded; frontend polls frequently.
             if len(events) > 400:
                 del events[:-400]
@@ -923,6 +972,8 @@ class Bridge:
                 "created_at": now_ms,
                 "updated_at": now_ms,
             }
+        # 新增条目时顺带清理过期流（锁外调用，避免锁内嵌套死锁）
+        self._prune_task_dicts()
 
         def _run() -> None:
             try:
@@ -1277,32 +1328,33 @@ class Bridge:
 
     def get_settings(self) -> dict[str, Any]:
         """获取设置"""
-        try:
-            from ..services.realtime.rag_config import apply_rag_defaults
+        with self._settings_lock:
+            try:
+                from ..services.realtime.rag_config import apply_rag_defaults
 
-            apply_rag_defaults(self.settings)
-        except Exception:
-            pass
-        self.settings["analysis_device_mode"] = normalize_analysis_device_mode(
-            self.settings.get("analysis_device_mode", ANALYSIS_DEVICE_MODE_AUTO)
-        )
-        self.settings[MODEL_ROOT_DIR_KEY] = normalize_model_root_dir(self.settings.get(MODEL_ROOT_DIR_KEY))
-        payload = dict(self.settings)
-        active_account = self._get_active_wechat_account() or {}
-        payload[WECHAT_ACCOUNTS_KEY] = self._get_wechat_accounts()
-        payload[WECHAT_ACTIVE_ACCOUNT_KEY] = self._get_active_wechat_account_wxid()
-        payload[MODEL_ROOT_DIR_KEY] = self.settings[MODEL_ROOT_DIR_KEY]
-        payload["default_model_root_dir"] = str(get_default_model_root_dir())
-        payload["sentiment_model_dir"] = str(get_sentiment_model_dir(self.settings))
-        payload["embedding_model_dir"] = str(get_embedding_model_dir(self.settings))
-        payload["wechat_use_custom_path"] = str(active_account.get("source") or "") == "custom"
-        payload["wechat_data_dir"] = active_account.get("wechat_dir") or ""
-        payload["wechat_user_wxid"] = active_account.get("wxid") or ""
-        payload["wechat_db_key"] = active_account.get("db_key") or ""
-        payload["wechat_import_completed"] = bool(active_account.get("import_completed"))
-        payload["wechat_last_import_at"] = active_account.get("last_import_at")
-        payload["wechat_last_import_total_size"] = int(active_account.get("last_import_total_size") or 0)
-        payload["wechat_last_import_files"] = active_account.get("last_import_files") or []
+                apply_rag_defaults(self.settings)
+            except Exception:
+                pass
+            self.settings["analysis_device_mode"] = normalize_analysis_device_mode(
+                self.settings.get("analysis_device_mode", ANALYSIS_DEVICE_MODE_AUTO)
+            )
+            self.settings[MODEL_ROOT_DIR_KEY] = normalize_model_root_dir(self.settings.get(MODEL_ROOT_DIR_KEY))
+            payload = dict(self.settings)
+            active_account = self._get_active_wechat_account() or {}
+            payload[WECHAT_ACCOUNTS_KEY] = self._get_wechat_accounts()
+            payload[WECHAT_ACTIVE_ACCOUNT_KEY] = self._get_active_wechat_account_wxid()
+            payload[MODEL_ROOT_DIR_KEY] = self.settings[MODEL_ROOT_DIR_KEY]
+            payload["default_model_root_dir"] = str(get_default_model_root_dir())
+            payload["sentiment_model_dir"] = str(get_sentiment_model_dir(self.settings))
+            payload["embedding_model_dir"] = str(get_embedding_model_dir(self.settings))
+            payload["wechat_use_custom_path"] = str(active_account.get("source") or "") == "custom"
+            payload["wechat_data_dir"] = active_account.get("wechat_dir") or ""
+            payload["wechat_user_wxid"] = active_account.get("wxid") or ""
+            payload["wechat_db_key"] = active_account.get("db_key") or ""
+            payload["wechat_import_completed"] = bool(active_account.get("import_completed"))
+            payload["wechat_last_import_at"] = active_account.get("last_import_at")
+            payload["wechat_last_import_total_size"] = int(active_account.get("last_import_total_size") or 0)
+            payload["wechat_last_import_files"] = active_account.get("last_import_files") or []
         return payload
 
     def get_current_user_profile(self, account_wxid: str = "") -> dict[str, Any]:
@@ -1426,46 +1478,49 @@ class Bridge:
         if MODEL_ROOT_DIR_KEY in payload:
             payload[MODEL_ROOT_DIR_KEY] = normalize_model_root_dir(payload[MODEL_ROOT_DIR_KEY])
 
-        if WECHAT_ACCOUNTS_KEY in payload:
-            self.settings[WECHAT_ACCOUNTS_KEY] = normalize_wechat_accounts(payload.pop(WECHAT_ACCOUNTS_KEY))
-        if WECHAT_ACTIVE_ACCOUNT_KEY in payload:
-            set_active_wechat_account(self.settings, str(payload.pop(WECHAT_ACTIVE_ACCOUNT_KEY) or ""))
+        with self._settings_lock:
+            # 微信账号相关键先从 payload 摘出并合并进当前设置，避免与 self.settings.update 相互覆盖
+            if WECHAT_ACCOUNTS_KEY in payload:
+                self.settings[WECHAT_ACCOUNTS_KEY] = normalize_wechat_accounts(payload.pop(WECHAT_ACCOUNTS_KEY))
+            if WECHAT_ACTIVE_ACCOUNT_KEY in payload:
+                set_active_wechat_account(self.settings, str(payload.pop(WECHAT_ACTIVE_ACCOUNT_KEY) or ""))
 
-        legacy_keys = {key: payload.pop(key) for key in list(payload.keys()) if key in LEGACY_WECHAT_KEYS}
-        if legacy_keys:
-            target_wxid = str(
-                legacy_keys.get("wechat_user_wxid")
-                or self._get_active_wechat_account_wxid()
-                or ""
-            ).strip()
-            if target_wxid:
-                update_wechat_account_import_state(
-                    self.settings,
-                    target_wxid,
-                    db_key=str(legacy_keys.get("wechat_db_key") or "") if "wechat_db_key" in legacy_keys else None,
-                    wechat_dir=str(legacy_keys.get("wechat_data_dir") or "") if "wechat_data_dir" in legacy_keys else None,
-                    source="custom" if legacy_keys.get("wechat_use_custom_path") else "auto",
-                    import_completed=legacy_keys.get("wechat_import_completed") if "wechat_import_completed" in legacy_keys else None,
-                )
-                merged_account = dict(self._get_wechat_account(target_wxid) or {"wxid": target_wxid})
-                if "wechat_last_import_at" in legacy_keys:
-                    merged_account["last_import_at"] = legacy_keys.get("wechat_last_import_at")
-                if "wechat_last_import_total_size" in legacy_keys:
-                    merged_account["last_import_total_size"] = legacy_keys.get("wechat_last_import_total_size")
-                if "wechat_last_import_files" in legacy_keys:
-                    merged_account["last_import_files"] = legacy_keys.get("wechat_last_import_files") or []
-                upsert_wechat_account(self.settings, merged_account)
-                if legacy_keys.get("wechat_user_wxid"):
-                    set_active_wechat_account(self.settings, target_wxid)
+            legacy_keys = {key: payload.pop(key) for key in list(payload.keys()) if key in LEGACY_WECHAT_KEYS}
+            if legacy_keys:
+                target_wxid = str(
+                    legacy_keys.get("wechat_user_wxid")
+                    or self._get_active_wechat_account_wxid()
+                    or ""
+                ).strip()
+                if target_wxid:
+                    update_wechat_account_import_state(
+                        self.settings,
+                        target_wxid,
+                        db_key=str(legacy_keys.get("wechat_db_key") or "") if "wechat_db_key" in legacy_keys else None,
+                        wechat_dir=str(legacy_keys.get("wechat_data_dir") or "") if "wechat_data_dir" in legacy_keys else None,
+                        source="custom" if legacy_keys.get("wechat_use_custom_path") else "auto",
+                        import_completed=legacy_keys.get("wechat_import_completed") if "wechat_import_completed" in legacy_keys else None,
+                    )
+                    merged_account = dict(self._get_wechat_account(target_wxid) or {"wxid": target_wxid})
+                    if "wechat_last_import_at" in legacy_keys:
+                        merged_account["last_import_at"] = legacy_keys.get("wechat_last_import_at")
+                    if "wechat_last_import_total_size" in legacy_keys:
+                        merged_account["last_import_total_size"] = legacy_keys.get("wechat_last_import_total_size")
+                    if "wechat_last_import_files" in legacy_keys:
+                        merged_account["last_import_files"] = legacy_keys.get("wechat_last_import_files") or []
+                    upsert_wechat_account(self.settings, merged_account)
+                    if legacy_keys.get("wechat_user_wxid"):
+                        set_active_wechat_account(self.settings, target_wxid)
 
-        self.settings.update(payload)
-        self._save_settings()
-        return {
-            "saved": True,
-            "payload": payload,
-            "model_root_dir": self.settings.get(MODEL_ROOT_DIR_KEY),
-            **self._serialize_wechat_accounts(),
-        }
+            self.settings.update(payload)
+            self._save_settings()
+            response = {
+                "saved": True,
+                "payload": payload,
+                "model_root_dir": self.settings.get(MODEL_ROOT_DIR_KEY),
+                **self._serialize_wechat_accounts(),
+            }
+        return response
 
     def get_rag_log_detail(self, log_id: int) -> dict[str, Any]:
         """Return what one retrieval log actually injected, for badge drill-down.
@@ -2851,13 +2906,14 @@ class Bridge:
             from ..services.realtime.providers.factory import normalize_listener_backend
 
             # 1. 更新通用设置文件
-            for key in ('trigger_mode', 'intent', 'auto_rate_limit', 'listener_backend'):
-                if key in config:
-                    if key == 'listener_backend':
-                        self.settings[key] = normalize_listener_backend(config[key])
-                    else:
-                        self.settings[key] = config[key]
-            self._save_settings()
+            with self._settings_lock:
+                for key in ('trigger_mode', 'intent', 'auto_rate_limit', 'listener_backend'):
+                    if key in config:
+                        if key == 'listener_backend':
+                            self.settings[key] = normalize_listener_backend(config[key])
+                        else:
+                            self.settings[key] = config[key]
+                self._save_settings()
 
             # 2. 同时热更新给运行中的 RealtimeMonitorService
             try:
@@ -2878,7 +2934,6 @@ class Bridge:
         """获取所有已配置的 LLM 模型列表"""
         try:
             from ..db.connection import get_db
-            import time as _time
 
             conn = get_db()
 
@@ -3937,7 +3992,8 @@ class Bridge:
                     "status": "completed",
                 }
 
-            task_id = f"analysis_model_download_{int(time.time())}"
+            # 加 uuid 后缀防撞号：同秒内重复点击下载时按秒生成的 task_id 会互相覆盖
+            task_id = f"analysis_model_download_{int(time.time())}_{uuid.uuid4().hex[:8]}"
             self._update_model_download_status(
                 task_id,
                 status="downloading",
@@ -4422,8 +4478,10 @@ class Bridge:
             self._analysis_cancel_event = threading.Event()
             effective_force_reanalyze = True
 
-            # 预生成 task_id，与 service.analyze 内部生成的保持一致
-            task_id = f"affinity_{conversation_id}_{int(_time.time())}"
+            # 显式生成 task_id（带 uuid 后缀防撞号）并传给 analyze()，
+            # 保证返回给前端的 task_id 与服务内注册的完全一致，无需 sleep+扫描猜测
+            task_id = f"affinity_{conversation_id}_{int(_time.time())}_{uuid.uuid4().hex[:6]}"
+            service.register_task(task_id, conversation_id)
 
             def _run_analysis():
                 try:
@@ -4432,6 +4490,7 @@ class Bridge:
                         effective_force_reanalyze,
                         config_overrides,
                         cancel_event=self._analysis_cancel_event,
+                        task_id=task_id,
                     )
                 except Exception as e:
                     logger.error(f"[Bridge] 异步好感度分析失败: {e}")
@@ -4441,19 +4500,9 @@ class Bridge:
             t = threading.Thread(target=_run_analysis, daemon=True)
             t.start()
 
-            # 等一小段时间让 service.analyze 初始化 task_id
-            _time.sleep(0.1)
-
-            # 从 service._task_status 中找到真正的 task_id
-            real_task_id = None
-            for tid in service._task_status:
-                if tid.startswith(f"affinity_{conversation_id}_"):
-                    real_task_id = tid
-                    break
-
             return {
                 "ok": True,
-                "task_id": real_task_id or task_id
+                "task_id": task_id
             }
         except Exception as e:
             logger.error(f"[Bridge] 好感度分析启动失败: {e}")

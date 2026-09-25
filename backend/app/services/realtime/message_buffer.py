@@ -2,7 +2,6 @@
 实时消息暂存表数据访问层
 负责消息的增删改查操作
 """
-import sys
 import logging
 import time
 import threading

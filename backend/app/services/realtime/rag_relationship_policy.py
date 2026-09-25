@@ -319,11 +319,26 @@ def refresh_after_fact_feedback(store: RagStore, fact_id: int, *, action: str = 
         try:
             from .rag_contact_preference import refresh_contact_preferences_shadow
 
+            # G4：纠错触发的定向刷新此前不带 embedding，derive 侧退化成
+            # "每事实一槽"，会把索引轮聚好的槽拆散。这里复用本地 embedding
+            # 服务聚槽；模型缺失/构造失败时保持降级派生并告警，不阻塞反馈。
+            pref_embedding_service = None
+            try:
+                from .rag_embedding import RagEmbeddingService
+
+                pref_embedding_service = RagEmbeddingService()
+            except Exception as emb_exc:
+                logger.warning(
+                    "[RelationshipState] preference embedding unavailable; "
+                    "slots degrade to per-fact: %s",
+                    emb_exc,
+                )
             refresh_contact_preferences_shadow(
                 store,
                 account_wxid=account_wxid,
                 conversation_id=conversation_id,
                 touched_fact_id=None if action == "restore" else int(fact_id),
+                embedding_service=pref_embedding_service,
             )
         except Exception as pref_exc:
             logger.debug(

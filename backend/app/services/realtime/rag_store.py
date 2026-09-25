@@ -755,6 +755,32 @@ class RagStore:
         ).fetchone()
         return int(row["count"] if row else 0)
 
+    def count_active_fact_embeddings(
+        self,
+        account_wxid: str,
+        conversation_id: int,
+        *,
+        embedding_model: str,
+        embedding_dim: int,
+    ) -> int:
+        """G5：只数活跃事实的向量，与 count_active_facts 口径对齐。
+
+        旧口径把 superseded/uncertain/禁用事实遗留的向量也算进来，活跃
+        事实缺向量时 vectors>=facts 会让回填判定误判"已齐"而跳过。
+        """
+        row = self.conn.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM rag_fact_embeddings e
+            INNER JOIN rag_facts f ON f.id = e.fact_id
+            WHERE e.account_wxid=? AND e.conversation_id=?
+              AND e.embedding_model=? AND e.embedding_dim=?
+              AND f.status='active' AND f.enabled=1
+            """,
+            (account_wxid, int(conversation_id), embedding_model, int(embedding_dim)),
+        ).fetchone()
+        return int(row["count"] if row else 0)
+
     def list_documents(self, account_wxid: str, conversation_id: int) -> list[dict[str, Any]]:
         rows = self.conn.execute(
             """
@@ -1196,6 +1222,8 @@ class RagStore:
 
     def supersede_fact(self, old_fact_id: int, new_fact_id: int) -> None:
         """Retire an old fact and retain the new-to-old audit relationship."""
+        # 注意：supersedes_fact_id 是单值列，多旧一新时循环调用会把指针
+        # 覆盖成最后一个旧 id——完整链请配合 record_supersede_batch 留档。
         self.conn.execute(
             "UPDATE rag_facts SET status='superseded', enabled=0, updated_at=? WHERE id=?",
             (_now(), int(old_fact_id)),
@@ -1203,6 +1231,55 @@ class RagStore:
         self.conn.execute(
             "UPDATE rag_facts SET supersedes_fact_id=?, updated_at=? WHERE id=?",
             (int(old_fact_id), _now(), int(new_fact_id)),
+        )
+
+    def record_supersede_batch(self, new_fact_id: int, old_fact_ids: list[int]) -> None:
+        """G3：一次融合"多旧一新"时留档完整被退役列表，补齐审计链。
+
+        表结构限制：supersedes_fact_id 只有一格，supersede_fact 循环覆盖
+        后只剩最后一个旧 id，其余旧→新的关系凭空丢失。rag_facts 没有专用
+        备注列（不宜为此 ALTER），source_window_json 目前仅作落库留痕、
+        无任何读取方，故把完整 old_ids 合并写入其 "superseded_fact_ids"
+        键；同时把单链指针钉在最早落库的旧事实上，保证演变链至少不断
+        在最早一环（与循环覆盖的"最后一个"相比可复现，不依赖调用顺序）。
+        """
+        ids = sorted({int(value) for value in old_fact_ids if int(value) != int(new_fact_id)})
+        if not ids:
+            return
+        row = self.conn.execute(
+            "SELECT source_window_json FROM rag_facts WHERE id = ?",
+            (int(new_fact_id),),
+        ).fetchone()
+        if row is None:
+            return
+        try:
+            window = json.loads(row["source_window_json"] or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            window = {}
+        if not isinstance(window, dict):
+            window = {}
+        recorded = {int(value) for value in window.get("superseded_fact_ids") or []}
+        recorded |= set(ids)
+        window["superseded_fact_ids"] = sorted(recorded)
+        placeholders = ",".join("?" for _ in ids)
+        anchor_row = self.conn.execute(
+            f"""
+            SELECT id FROM rag_facts
+            WHERE id IN ({placeholders})
+            ORDER BY COALESCE(valid_from, created_at) ASC, id ASC
+            LIMIT 1
+            """,
+            ids,
+        ).fetchone()
+        anchor = int(anchor_row["id"]) if anchor_row else None
+        self.conn.execute(
+            """
+            UPDATE rag_facts
+            SET source_window_json=?, supersedes_fact_id=COALESCE(?, supersedes_fact_id),
+                updated_at=?
+            WHERE id=?
+            """,
+            (json.dumps(window, ensure_ascii=False), anchor, _now(), int(new_fact_id)),
         )
 
     def set_fact_enabled(self, fact_id: int, enabled: bool) -> None:

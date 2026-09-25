@@ -3,14 +3,13 @@ import logging
 import statistics
 import time
 import threading
-import threading
-from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Any, Optional, Tuple
+from datetime import datetime, timedelta
+from typing import Dict, List, Any, Optional
 
 from .feature_extraction_config import FeatureExtractionConfig
 from .preprocessing_service import PreprocessingService
 from .sentiment_service import SentimentService
-from ...db.connection import get_db, batch_insert, execute_transaction
+from ...db.connection import get_db, batch_insert
 
 
 # 配置日志
@@ -75,13 +74,13 @@ class FeatureExtractionService:
             # 0. 清理旧数据，防止重复插入
             if cancel_event and cancel_event.is_set(): raise Exception("分析已被用户取消")
             self._update_task_status(task_id, 5, "Clearing old data")
-            logger.info(f"[特征提取] 步骤 0/4: 清理旧数据...")
+            logger.info("[特征提取] 步骤 0/4: 清理旧数据...")
             self.delete_analysis_data(conversation_id)
 
             # 1. 会话切分
             if cancel_event and cancel_event.is_set(): raise Exception("分析已被用户取消")
             self._update_task_status(task_id, 10, "Splitting sessions")
-            logger.info(f"[特征提取] 步骤 1/4: 会话切分...")
+            logger.info("[特征提取] 步骤 1/4: 会话切分...")
             step_start = time.time()
             sessions = self.extract_sessions(conversation_id)
             logger.info(f"[特征提取] 步骤 1/4: 会话切分完成 ({len(sessions)} 个会话, {time.time() - step_start:.1f}s)")
@@ -89,7 +88,7 @@ class FeatureExtractionService:
             # 2. 响应时间计算
             if cancel_event and cancel_event.is_set(): raise Exception("分析已被用户取消")
             self._update_task_status(task_id, 40, "Calculating response times")
-            logger.info(f"[特征提取] 步骤 2/4: 计算响应时间...")
+            logger.info("[特征提取] 步骤 2/4: 计算响应时间...")
             step_start = time.time()
             response_time_stats = self.extract_response_times(conversation_id)
             logger.info(f"[特征提取] 步骤 2/4: 响应时间计算完成 ({response_time_stats.get('count', 0)} 条有效记录, {time.time() - step_start:.1f}s)")
@@ -97,7 +96,7 @@ class FeatureExtractionService:
             # 3. 主动性统计
             if cancel_event and cancel_event.is_set(): raise Exception("分析已被用户取消")
             self._update_task_status(task_id, 70, "Calculating initiative stats")
-            logger.info(f"[特征提取] 步骤 3/4: 计算主动性统计...")
+            logger.info("[特征提取] 步骤 3/4: 计算主动性统计...")
             step_start = time.time()
             initiative_stats = self.calculate_initiative_stats(conversation_id, sessions)
             logger.info(f"[特征提取] 步骤 3/4: 主动性统计完成 ({time.time() - step_start:.1f}s)")
@@ -105,7 +104,7 @@ class FeatureExtractionService:
             # 4. 字数统计
             if cancel_event and cancel_event.is_set(): raise Exception("分析已被用户取消")
             self._update_task_status(task_id, 90, "Calculating word counts")
-            logger.info(f"[特征提取] 步骤 4/4: 计算字数统计...")
+            logger.info("[特征提取] 步骤 4/4: 计算字数统计...")
             step_start = time.time()
             word_counts = self.calculate_word_counts(conversation_id, sessions)
             logger.info(f"[特征提取] 步骤 4/4: 字数统计完成 ({time.time() - step_start:.1f}s)")
@@ -319,8 +318,10 @@ class FeatureExtractionService:
         Returns:
             是否跨越睡眠时间
         """
-        start_dt = datetime.fromtimestamp(start_ts, tz=timezone.utc)
-        end_dt = datetime.fromtimestamp(end_ts, tz=timezone.utc)
+        # 使用本地时区而不是UTC（与 SessionManager._check_crosses_sleep_time 口径一致）：
+        # 睡眠时段是用户的本地概念，用 UTC 判定会对东八区用户错切/错扣白天时段（08:00-15:00）
+        start_dt = datetime.fromtimestamp(start_ts)
+        end_dt = datetime.fromtimestamp(end_ts)
 
         # 检查是否跨越午夜
         if start_dt.date() != end_dt.date():
@@ -497,8 +498,10 @@ class FeatureExtractionService:
         Returns:
             调整后的响应时间（秒）
         """
-        start_dt = datetime.fromtimestamp(start_ts, tz=timezone.utc)
-        end_dt = datetime.fromtimestamp(end_ts, tz=timezone.utc)
+        # 使用本地时区而不是UTC（与 _check_crosses_sleep_time 口径一致）：
+        # 00:00-07:00 指用户本地时间的睡眠时段，UTC 扣除的会是东八区的白天 08:00-15:00
+        start_dt = datetime.fromtimestamp(start_ts)
+        end_dt = datetime.fromtimestamp(end_ts)
 
         sleep_seconds = 0
         current_dt = start_dt

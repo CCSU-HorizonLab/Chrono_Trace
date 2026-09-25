@@ -31,7 +31,6 @@ class ContactDBV4(WeChatDBBase):
     def _connect(self):
         """建立数据库连接"""
         import tempfile
-        import os
 
         self.temp_db_path = None
         try:
@@ -46,14 +45,14 @@ class ContactDBV4(WeChatDBBase):
                 if not decryptor.verify_key_from_file(self.db_path, self.db_key):
                     raise ValueError(f"密钥验证失败: {self.db_path}")
 
-                logger.info(f"[DEBUG ContactDB] ✅ 密钥验证成功")
+                logger.info("[DEBUG ContactDB] ✅ 密钥验证成功")
 
                 # 解密到临时文件
                 self.temp_db_path = tempfile.mktemp(suffix='.db')
                 logger.debug(f"[DEBUG ContactDB] 解密到临时文件: {self.temp_db_path}")
 
                 decryptor.decrypt_database(self.db_path, self.temp_db_path, self.db_key)
-                logger.info(f"[DEBUG ContactDB] ✅ 解密完成")
+                logger.info("[DEBUG ContactDB] ✅ 解密完成")
 
                 # 连接解密后的数据库
                 self.conn = sqlite3.connect(self.temp_db_path)

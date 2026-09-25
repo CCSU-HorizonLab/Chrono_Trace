@@ -74,7 +74,7 @@ class MessageDBV4(WeChatDBBase):
                         logger.error(f"[WARN] 跳过: 密钥验证失败 {db_path}")
                         continue
 
-                    logger.info(f"[DEBUG MessageDB] ✅ 密钥验证成功")
+                    logger.info("[DEBUG MessageDB] ✅ 密钥验证成功")
 
                     # 解密到临时文件
                     temp_path = tempfile.mktemp(suffix=f'_message_{idx}.db')
@@ -82,7 +82,7 @@ class MessageDBV4(WeChatDBBase):
 
                     logger.debug(f"[DEBUG MessageDB] 解密到: {temp_path}")
                     decryptor.decrypt_database(db_path, temp_path, self.db_key)
-                    logger.info(f"[DEBUG MessageDB] ✅ 解密完成")
+                    logger.info("[DEBUG MessageDB] ✅ 解密完成")
 
                     # 连接解密后的数据库
                     conn = sqlite3.connect(temp_path)

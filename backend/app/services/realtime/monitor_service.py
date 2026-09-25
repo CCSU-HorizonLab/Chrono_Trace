@@ -237,7 +237,7 @@ class RealtimeMonitorService:
             
             # 创建情绪追踪器
             self.emotion_tracker = EmotionStateTracker()
-            _print(f"[RealtimeMonitorService] 情绪追踪器已创建")
+            _print("[RealtimeMonitorService] 情绪追踪器已创建")
             
             _print(f"[RealtimeMonitorService] 开始监听: {talker_display_name} (batch_id: {self.current_batch_id})")
             
@@ -251,7 +251,7 @@ class RealtimeMonitorService:
             _print(f"✅ 监听已启动！批次ID: {self.current_batch_id[:8]}...")
             
             # 5. 启动轮询线程（ChatWith 和模型预加载在线程中异步执行）
-            _print(f"🔄 启动消息轮询线程...")
+            _print("🔄 启动消息轮询线程...")
             self.stop_polling = False
             self.polling_thread = threading.Thread(
                 target=self._polling_loop,
@@ -1735,7 +1735,7 @@ class RealtimeMonitorService:
     def _polling_loop(self, session_token: int, stop_event):
         """轮询线程：先完成聊天切换和模型预加载，再开始抓取消息"""
         session_state = self._build_session_state(session_token)
-        _print(f"🔄 轮询线程已启动")
+        _print("🔄 轮询线程已启动")
         
         # -- 1. 将微信窗口置顶 --
         self._bring_wechat_to_front()
@@ -1751,7 +1751,7 @@ class RealtimeMonitorService:
 
         for attempt in range(1, MAX_CHAT_RETRIES + 1):
             if not self._session_should_continue(session_state, stop_event):
-                _print(f"🛑 收到停止信号，中止聊天切换重试")
+                _print("🛑 收到停止信号，中止聊天切换重试")
                 return
             
             _print(f"🔄 聊天切换尝试 {attempt}/{MAX_CHAT_RETRIES}...")
@@ -1800,7 +1800,7 @@ class RealtimeMonitorService:
             RECOVERY_INTERVAL = 10  # 每 10 秒重试一次
             while self._session_should_continue(session_state, stop_event):
                 time.sleep(RECOVERY_INTERVAL)
-                _print(f"🔄 [等待恢复] 重试聊天切换...")
+                _print("🔄 [等待恢复] 重试聊天切换...")
                 try:
                     if self.wx is None:
                         self._create_wechat_instance_with_recovery(phase="chat_recovery_loop")
@@ -1833,7 +1833,7 @@ class RealtimeMonitorService:
                     _print("🛑 微信 UIA 树当前不可访问，轮询线程退出")
                     self.is_monitoring = False
                     return
-                _print(f"🛑 等待恢复被中断（收到停止信号），轮询线程退出")
+                _print("🛑 等待恢复被中断（收到停止信号），轮询线程退出")
                 return
 
         if not self._session_should_continue(session_state, stop_event):
@@ -1842,38 +1842,54 @@ class RealtimeMonitorService:
         
         if self._resume_mode == 'backfill':
             _print("[Backfill] 已并入监听启动头部，开始补全历史消息")
-            probe = self.get_resume_probe(
-                talker_display_name=session_state.get('display_name') or '',
-                talker_username=session_state.get('talker_username') or '',
-                threshold_seconds=300,
-            )
-            if probe.get('has_checkpoint') and probe.get('should_offer_resume'):
-                backfill_result = self._run_backfill_in_current_chat_context(
-                    probe=probe,
-                    talker_username=session_state.get('talker_username') or '',
+            # 回溯段（probe 查库 + UIA 滚动抓取）在主循环之前执行，若异常未捕获会
+            # 直接杀死轮询线程，导致 is_monitoring 永久卡 True，这里统一兜底（R3）
+            try:
+                probe = self.get_resume_probe(
                     talker_display_name=session_state.get('display_name') or '',
-                    max_scroll_rounds=80,
-                    wheel_times=3,
+                    talker_username=session_state.get('talker_username') or '',
+                    threshold_seconds=300,
                 )
-                if not backfill_result.get('success'):
-                    self._chat_error = backfill_result.get('message') or '回溯补全失败'
-                    self.is_monitoring = False
-                    _print(f"[Backfill] 监听启动前回溯失败: {self._chat_error}")
-                    return
-                _print(
-                    f"[Backfill] 启动前回溯完成: inserted={backfill_result.get('inserted_count', 0)}, "
-                    f"existing={backfill_result.get('existing_count', 0)}"
-                )
-                self._scroll_chat_to_latest()
-            else:
-                _print("[Backfill] 未命中回溯条件，直接进入正常监听")
-            self._resume_mode = 'skip'
+                if probe.get('has_checkpoint') and probe.get('should_offer_resume'):
+                    backfill_result = self._run_backfill_in_current_chat_context(
+                        probe=probe,
+                        talker_username=session_state.get('talker_username') or '',
+                        talker_display_name=session_state.get('display_name') or '',
+                        max_scroll_rounds=80,
+                        wheel_times=3,
+                    )
+                    if not backfill_result.get('success'):
+                        self._chat_error = backfill_result.get('message') or '回溯补全失败'
+                        self.is_monitoring = False
+                        _print(f"[Backfill] 监听启动前回溯失败: {self._chat_error}")
+                        return
+                    _print(
+                        f"[Backfill] 启动前回溯完成: inserted={backfill_result.get('inserted_count', 0)}, "
+                        f"existing={backfill_result.get('existing_count', 0)}"
+                    )
+                    self._scroll_chat_to_latest()
+                else:
+                    _print("[Backfill] 未命中回溯条件，直接进入正常监听")
+                self._resume_mode = 'skip'
+            except Exception as e:
+                self._chat_error = f'监听启动前回溯异常: {e}'
+                self.is_monitoring = False
+                _print(f"❌ {self._chat_error}")
+                return
 
         if not self._session_should_continue(session_state, stop_event):
             _print("🛑 回溯/启动基线前检测到会话已停止，轮询线程退出")
             return
 
-        seeded_count = self._seed_visible_message_baseline(session_state)
+        # 启动基线内部会调用 UIA 抓取当前可见消息，主循环之前同样需要兜底，
+        # 避免异常直接杀死轮询线程导致 is_monitoring 永久卡 True（R3）
+        try:
+            seeded_count = self._seed_visible_message_baseline(session_state)
+        except Exception as e:
+            self._chat_error = f'建立启动基线异常: {e}'
+            self.is_monitoring = False
+            _print(f"❌ {self._chat_error}")
+            return
         if seeded_count:
             _print(f"[RealtimeMonitorService] 已建立启动基线，忽略当前可见历史消息 {seeded_count} 条")
 
@@ -1882,13 +1898,13 @@ class RealtimeMonitorService:
             return
 
         # -- 3. 预加载情感分析模型 --
-        _print(f"🤖 正在预加载情感分析模型...")
+        _print("🤖 正在预加载情感分析模型...")
         try:
             self.sentiment_service.analyze("测试")
-            _print(f"✅ 情感分析模型加载完成")
+            _print("✅ 情感分析模型加载完成")
         except Exception as e:
             _print(f"⚠️ 情感分析模型加载失败: {e}")
-            _print(f"💡 将继续监听,但情感分析功能可能不可用")
+            _print("💡 将继续监听,但情感分析功能可能不可用")
 
         if not self._session_should_continue(session_state, stop_event):
             _print("🛑 模型预加载完成后检测到会话已停止，轮询线程退出")
@@ -1897,7 +1913,7 @@ class RealtimeMonitorService:
         # -- 4. 标记就绪 --
         self._chat_ready = True
         self._chat_error = ''
-        _print(f"🟢 准备就绪，开始抓取消息...")
+        _print("🟢 准备就绪，开始抓取消息...")
         
         gdi_fail_count = 0  # GDI 异常连续失败计数（Bug 3）
         GDI_MAX_CONSECUTIVE = 5  # 连续 GDI 失败上限
@@ -1964,7 +1980,7 @@ class RealtimeMonitorService:
                     break
                 time.sleep(1)
         
-        _print(f"🛑 轮询线程已停止")
+        _print("🛑 轮询线程已停止")
     
     def _process_message(
         self,
@@ -2109,7 +2125,7 @@ class RealtimeMonitorService:
                 # 显示统计
                 _print(f"✅ 已保存！累计: {len(self.seen_hashes)} 条\n")
             else:
-                _print(f"❌ 保存失败！\n")
+                _print("❌ 保存失败！\n")
             
         except Exception as e:
             _print(f"❌ 消息处理出错: {e}")
@@ -2153,10 +2169,15 @@ class RealtimeMonitorService:
 
         matched = re.match(r'^(\d{1,2}):(\d{2})$', text)
         if matched:
-            return int(datetime(
+            parsed = int(datetime(
                 now_dt.year, now_dt.month, now_dt.day,
                 int(matched.group(1)), int(matched.group(2))
             ).timestamp())
+            # 微信对今天消息只显示 HH:MM；若解析值落在未来（超出 60 秒容差），
+            # 说明标签属于昨天（如刚跨零点时仍显示昨日时刻），回退为昨天同一时刻（R5）
+            if parsed > int(now_dt.timestamp()) + 60:
+                parsed -= 86400
+            return parsed
 
         matched = re.match(r'^昨天\s+(\d{1,2}):(\d{2})$', text)
         if matched:
@@ -2211,7 +2232,9 @@ class RealtimeMonitorService:
             matched = re.match(rf'^{re.escape(prefix)}\s+(\d{{1,2}}):(\d{{2}})$', text)
             if not matched:
                 continue
-            day = now_dt - timedelta(days=(now_dt.weekday() - weekday) % 7)
+            # 微信对今天消息只显示 HH:MM，带星期的标签必属过去 7 天；差值为 0 时
+            # 应取上周同一天而不是今天，故统一映射到 [1, 7] 天前（R5）
+            day = now_dt - timedelta(days=((now_dt.weekday() - weekday - 1) % 7) + 1)
             return int(datetime(
                 day.year, day.month, day.day,
                 int(matched.group(1)), int(matched.group(2))
@@ -2294,33 +2317,50 @@ class RealtimeMonitorService:
         except Exception as exc:
             logger.debug("[RAG] prewarm on monitor start skipped: %s", exc)
 
-    def _message_exists_in_history(self, conversation_id: int, message_data: dict) -> bool:
-        """Check whether a buffered realtime message has already been migrated."""
+    def _message_exists_in_history(
+        self,
+        conversation_id: int,
+        message_data: dict,
+        occurrence_index: int = 1,
+    ) -> bool:
+        """Check whether a buffered realtime message has already been migrated.
+
+        occurrence_index 为该消息在缓冲区同签名（发送方+类型+时间戳+内容）消息中的
+        序号（从 1 开始）：历史表中同签名消息数达到该序号才判为已存在。
+        """
         from ...db.connection import get_db
 
         conn = get_db()
         # 注意：不按 runtime_id 查 local_id —— 实时 runtime_id 与微信库 local_id 属于
         # 两个无关 ID 空间，数值撞车会把真实新消息误判为已存在而静默丢弃（W1）。
-        row = conn.execute(
+        # UIA 时间标签只有分钟精度、实时侧时间戳按分钟截断，同分钟消息落库后时间戳
+        # 可能有秒级偏差，精确等值判重会把同分钟连发的相同内容消息静默丢掉；这里放宽
+        # 为 ±59 秒窗口并按签名计数，仅当历史同签名数 >= 缓冲内序号时才判已存在（R4）。
+        try:
+            occurrence_index = max(1, int(occurrence_index))
+        except (TypeError, ValueError):
+            occurrence_index = 1
+        timestamp = int(message_data.get('timestamp') or 0)
+        count = conn.execute(
             '''
-            SELECT id
+            SELECT COUNT(*)
             FROM messages
             WHERE conversation_id = ?
               AND is_sender = ?
               AND message_type = ?
-              AND timestamp = ?
+              AND timestamp BETWEEN ? - 59 AND ? + 59
               AND COALESCE(content, '') = ?
-            LIMIT 1
             ''',
             (
                 conversation_id,
                 1 if message_data.get('sender_attr') == 'self' else 0,
                 self._map_message_type(message_data.get('message_type')),
-                int(message_data.get('timestamp') or 0),
+                timestamp,
+                timestamp,
                 message_data.get('content') or '',
             )
-        ).fetchone()
-        return row is not None
+        ).fetchone()[0]
+        return int(count or 0) >= occurrence_index
 
     def _ensure_checkpoint_table(self) -> None:
         """Ensure the realtime checkpoint table exists for resume probing."""
@@ -2615,9 +2655,23 @@ class RealtimeMonitorService:
         inserted_samples: list[str] = []
         existing_samples: list[str] = []
 
+        # 遍历时累计同签名（发送方+类型+时间戳+内容）出现次数作为判重序号，
+        # 配合 ±59 秒窗口计数判重，避免同分钟连发的相同内容消息被静默丢掉（R4）
+        occurrence_counts: dict[tuple, int] = {}
         for message_data in messages:
             latest_ts = max(latest_ts, int(message_data.get('timestamp') or 0))
-            if self._message_exists_in_history(conversation_id, message_data):
+            signature = (
+                1 if message_data.get('sender_attr') == 'self' else 0,
+                self._map_message_type(message_data.get('message_type')),
+                int(message_data.get('timestamp') or 0),
+                message_data.get('content') or '',
+            )
+            occurrence_counts[signature] = occurrence_counts.get(signature, 0) + 1
+            if self._message_exists_in_history(
+                conversation_id,
+                message_data,
+                occurrence_index=occurrence_counts[signature],
+            ):
                 existing += 1
                 if len(existing_samples) < 12:
                     existing_samples.append(
@@ -3030,10 +3084,24 @@ class RealtimeMonitorService:
         migrated = 0
         latest_ts = 0
 
+        # 遍历时累计同签名（发送方+类型+时间戳+内容）出现次数作为判重序号，
+        # 配合 ±59 秒窗口计数判重，避免同分钟连发的相同内容消息被静默丢掉（R4）
+        occurrence_counts: dict[tuple, int] = {}
         for msg in buffer_messages:
             if msg.get('sender_attr') == 'system':
                 continue
-            if self._message_exists_in_history(conversation_id, msg):
+            signature = (
+                1 if msg.get('sender_attr') == 'self' else 0,
+                self._map_message_type(msg.get('message_type')),
+                int(msg.get('timestamp') or 0),
+                msg.get('content') or '',
+            )
+            occurrence_counts[signature] = occurrence_counts.get(signature, 0) + 1
+            if self._message_exists_in_history(
+                conversation_id,
+                msg,
+                occurrence_index=occurrence_counts[signature],
+            ):
                 continue
 
             # runtime_id 与微信库 local_id 属不同 ID 空间，实时消息不占用 local_id（W1）
@@ -3101,11 +3169,11 @@ class RealtimeMonitorService:
                 'message': str
             }
         """
-        _print(f"\n🛑 收到停止监听请求")
+        _print("\n🛑 收到停止监听请求")
         _print(f"📊 当前监听状态: is_monitoring={self.is_monitoring}")
         
         if not self.is_monitoring:
-            _print(f"⚠️  当前没有活跃的监听任务")
+            _print("⚠️  当前没有活跃的监听任务")
             return {
                 'success': False,
                 'message': '当前没有监听任务',
@@ -3120,15 +3188,15 @@ class RealtimeMonitorService:
             stop_event = self._stop_event
             if stop_event is not None:
                 stop_event.set()
-            _print(f"🛑 已发送停止轮询信号")
+            _print("🛑 已发送停止轮询信号")
             
             # 2. 清理状态标志（防止前端继续查询时认为还在监听）
             self.is_monitoring = False
-            _print(f"✅ 监听状态已设为 False")
+            _print("✅ 监听状态已设为 False")
             
             # 3. 等待轮询线程结束（最多约5秒，给当前轮处理留出收尾时间）
             if self.polling_thread and self.polling_thread.is_alive():
-                _print(f"⏳ 等待轮询线程结束...")
+                _print("⏳ 等待轮询线程结束...")
                 waited = 0.0
                 while self.polling_thread.is_alive() and waited < 5.0:
                     self.polling_thread.join(timeout=0.5)
@@ -3141,7 +3209,7 @@ class RealtimeMonitorService:
             # 4. 不调用 RemoveListenChat（避免卡顿）
             if self.wx and self.current_display_name:
                 try:
-                    _print(f"⚠️  跳过 RemoveListenChat 调用（避免卡顿）")
+                    _print("⚠️  跳过 RemoveListenChat 调用（避免卡顿）")
                 except Exception as e:
                     _print(f"❌ 移除监听异常: {e}")
             

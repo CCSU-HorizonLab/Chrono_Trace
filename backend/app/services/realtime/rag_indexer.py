@@ -196,7 +196,10 @@ class RagIndexer:
         facts = self.store.count_active_facts(account_wxid, conversation_id)
         if facts <= 0:
             return False
-        vectors = self.store.count_fact_embeddings(
+        # G5：分子分母口径必须一致——count_active_facts 只数活跃事实，
+        # 向量侧若把退役事实的遗留向量也算进来，缺向量的活跃事实会被
+        # 误判"已齐"而跳过回填
+        vectors = self.store.count_active_fact_embeddings(
             account_wxid,
             conversation_id,
             embedding_model=str(settings["rag_embedding_model"]),
@@ -968,13 +971,16 @@ class RagIndexer:
                 )
                 continue
 
+            # G8：LLM 抽取的 status 字段不透传——退役（superseded/uncertain）
+            # 只能由融合维护或用户反馈触发，模型输出一句 status 会把无后继
+            # 的 active 事实静默退役，演变链从此断头。
             new_id = self.store.upsert_fact(
                 account_wxid=account_wxid,
                 conversation_id=conversation_id,
                 subject=fact["subject"],
                 kind=fact["kind"],
                 content=fact["content"],
-                status=fact.get("status") or "active",
+                status="active",
                 as_of=fact.get("as_of") or segment.end_ts,
                 valid_from=fact.get("valid_from") or segment.start_ts,
                 valid_to=fact.get("valid_to") or segment.end_ts,
@@ -993,6 +999,9 @@ class RagIndexer:
             for old_id in replacement_ids:
                 if old_id != new_id:
                     self.store.supersede_fact(old_id, new_id)
+            # G3：多旧一新时单链指针会被循环覆盖只剩最后一个，把完整
+            # 被退役列表留档到新事实，演变链审计不因覆盖断链
+            self.store.record_supersede_batch(new_id, replacement_ids)
 
     def _write_fact_embedding(
         self,

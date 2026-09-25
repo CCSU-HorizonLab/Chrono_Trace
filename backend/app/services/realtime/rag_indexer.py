@@ -280,7 +280,19 @@ class RagIndexer:
             "embedding_dim": dim,
         }
 
-    def rebuild_contact_index(self, *, account_wxid: str, conversation_id: int) -> dict[str, Any]:
+    def rebuild_contact_index(
+        self,
+        *,
+        account_wxid: str,
+        conversation_id: int,
+        queue_mode: bool = False,
+    ) -> dict[str, Any]:
+        """重建联系人索引。
+
+        queue_mode=True 由 RagIndexQueue worker 调用：撞锁时不重复入队
+        （否则 pop→busy→enqueue→pop 自旋空转，高频写库还会把锁持有者的
+        首个 DB 写饿死成活性死锁），改由 worker 放回集合并退避重试。
+        """
         settings = load_rag_settings()
         model = str(settings["rag_embedding_model"])
         dim = int(settings["rag_embedding_dim"])
@@ -303,7 +315,10 @@ class RagIndexer:
                     index_version=self.INDEX_VERSION,
                 )
                 self.store.conn.commit()
-                RagIndexQueue.enqueue(account_wxid, conversation_id)
+                if not queue_mode:
+                    RagIndexQueue.enqueue(account_wxid, conversation_id)
+                else:
+                    RagIndexQueue.requeue(account_wxid, conversation_id)
             except Exception as exc:
                 logger.warning("[RAG Index] busy-queue fallback failed: %s", exc)
             return self.store.get_status(account_wxid, conversation_id) or {}
@@ -1389,6 +1404,14 @@ class RagIndexQueue:
                 cls._worker.start()
 
     @classmethod
+    def requeue(cls, account_wxid: str, conversation_id: int | None) -> None:
+        """队列 worker 撞锁时放回任务（不触发新 worker，由调用方退避）。"""
+        if not account_wxid or not conversation_id:
+            return
+        with cls._lock:
+            cls._pending.add((account_wxid, int(conversation_id)))
+
+    @classmethod
     def enqueue_fact_backfill(cls, account_wxid: str, conversation_id: int | None) -> None:
         if not account_wxid or not conversation_id:
             return
@@ -1425,6 +1448,9 @@ class RagIndexQueue:
                     indexer.rebuild_contact_index(
                         account_wxid=account_wxid,
                         conversation_id=conversation_id,
+                        queue_mode=True,
                     )
+                    # 撞锁场景 requeue 后退避，避免高频重试风暴饿死锁持有者
+                    time.sleep(1.0)
             except Exception as exc:
                 logger.debug("[RAG] background index skipped: %s", exc)

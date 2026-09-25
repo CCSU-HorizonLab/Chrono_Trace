@@ -146,52 +146,67 @@
             <p><strong>关于记忆与隐私：</strong>聊天记录的向量化与语义索引完全在本地离线运行（无需远程 API，不消耗 Token）。仅在向远程 LLM 请求“AI建议”时会用到检索结果，默认开启脱敏以保护真实姓名与电话等隐私。</p>
           </div>
 
-          <label class="row">
-            <div class="lab">启用 RAG</div>
-            <label class="ct-switch">
-              <input v-model="form.rag_enabled" type="checkbox" @change="refreshRagStatus" />
-              <span class="slider"></span>
-              <span class="switch-label">{{ form.rag_enabled ? '已启用' : '已关闭' }}</span>
-            </label>
-          </label>
+          <div class="rag-switches-grid">
+            <div class="rag-switch-item">
+              <div class="lab lab-with-help">
+                <span>启用 RAG</span>
+                <CtHelpTip content="开启后，在生成回复建议时检索该联系人的历史聊天记忆与事实。向量化与语义索引完全在本地离线运行，不消耗 Token。" />
+              </div>
+              <label class="ct-switch">
+                <input v-model="form.rag_enabled" type="checkbox" @change="refreshRagStatus" />
+                <span class="slider"></span>
+                <span class="switch-label">{{ form.rag_enabled ? '已启用' : '已禁用' }}</span>
+              </label>
+            </div>
 
-          <label class="row">
-            <div class="lab">事实记忆优先</div>
-            <label class="ct-switch">
-              <input v-model="form.rag_fact_read_enabled" type="checkbox" />
-              <span class="slider"></span>
-              <span class="switch-label">{{ form.rag_fact_read_enabled ? '事实优先' : '文档回退' }}</span>
-            </label>
-          </label>
+            <div class="rag-switch-item">
+              <div class="lab lab-with-help">
+                <span>事实记忆优先</span>
+                <CtHelpTip content="开启后优先检索提炼出的结构化记忆事实（如偏好、约定、关系边界）；关闭则回退为仅检索原始历史对话文档。" />
+              </div>
+              <label class="ct-switch">
+                <input v-model="form.rag_fact_read_enabled" type="checkbox" />
+                <span class="slider"></span>
+                <span class="switch-label">{{ form.rag_fact_read_enabled ? '已启用' : '已禁用' }}</span>
+              </label>
+            </div>
 
-          <label class="row">
-            <div class="lab">AI 抽取记忆事实</div>
-            <label class="ct-switch">
-              <input v-model="form.rag_structured_fact_extraction_enabled" type="checkbox" />
-              <span class="slider"></span>
-              <span class="switch-label">{{ form.rag_structured_fact_extraction_enabled ? 'AI 抽取' : '关闭' }}</span>
-            </label>
-            <span class="hint">开启后，重建索引时由激活的 LLM 从对话抽取高质量记忆事实（每联系人每轮最多 40 段；远程模型发送前自动脱敏）。消耗模型 Token。</span>
-          </label>
+            <div class="rag-switch-item">
+              <div class="lab lab-with-help">
+                <span>AI 抽取记忆事实</span>
+                <CtHelpTip content="开启后，重建索引时由激活的 LLM 从对话抽取高质量记忆事实（每联系人每轮最多 40 段；远程模型发送前自动脱敏）。会消耗模型 Token。" />
+              </div>
+              <label class="ct-switch">
+                <input v-model="form.rag_structured_fact_extraction_enabled" type="checkbox" />
+                <span class="slider"></span>
+                <span class="switch-label">{{ form.rag_structured_fact_extraction_enabled ? '已启用' : '已禁用' }}</span>
+              </label>
+            </div>
 
-          <label class="row">
-            <div class="lab">关系理解策略</div>
-            <label class="ct-switch">
-              <input v-model="form.rag_relationship_policy_shadow_enabled" type="checkbox" />
-              <span class="slider"></span>
-              <span class="switch-label">{{ form.rag_relationship_policy_shadow_enabled ? '已启用' : '关闭' }}</span>
-            </label>
-            <span class="hint">开启后，重建索引时从画像与事实派生联系人级关系策略（阶段/亲密度/边界/沟通建议），生成建议时自动注入。本地计算，不消耗 Token。</span>
-          </label>
+            <div class="rag-switch-item">
+              <div class="lab lab-with-help">
+                <span>关系理解策略</span>
+                <CtHelpTip content="开启后，重建索引时从画像与事实派生联系人级关系策略（阶段/亲密度/边界/沟通建议），生成建议时自动注入。本地计算，不消耗 Token。" />
+              </div>
+              <label class="ct-switch">
+                <input v-model="form.rag_relationship_policy_shadow_enabled" type="checkbox" />
+                <span class="slider"></span>
+                <span class="switch-label">{{ form.rag_relationship_policy_shadow_enabled ? '已启用' : '已禁用' }}</span>
+              </label>
+            </div>
 
-          <label class="row">
-            <div class="lab">远程建议脱敏</div>
-            <label class="ct-switch">
-              <input v-model="form.rag_remote_context_redaction" type="checkbox" @change="handleRagRedactionToggle" />
-              <span class="slider"></span>
-              <span class="switch-label">{{ form.rag_remote_context_redaction ? '默认脱敏' : '已关闭' }}</span>
-            </label>
-          </label>
+            <div class="rag-switch-item">
+              <div class="lab lab-with-help">
+                <span>远程建议脱敏</span>
+                <CtHelpTip content="开启后，向远程大模型发送检索结果前自动掩码替换真实姓名、手机号、微信号等敏感隐私信息。" />
+              </div>
+              <label class="ct-switch">
+                <input v-model="form.rag_remote_context_redaction" type="checkbox" @change="handleRagRedactionToggle" />
+                <span class="slider"></span>
+                <span class="switch-label">{{ form.rag_remote_context_redaction ? '已启用' : '已禁用' }}</span>
+              </label>
+            </div>
+          </div>
 
 
           <div class="rag-status-summary">
@@ -437,6 +452,7 @@ import CtCard from '@/components/base/CtCard.vue'
 import CtField from '@/components/base/CtField.vue'
 import CtButton from '@/components/base/CtButton.vue'
 import CtAccountSelector from '@/components/base/CtAccountSelector.vue'
+import CtHelpTip from '@/components/base/CtHelpTip.vue'
 import RagContactManager from '@/components/settings/RagContactManager.vue'
 import { showDialog, showConfirm } from '@/utils/dialog'
 import { clearWechatAccountProfileCache, enrichWechatAccountsWithProfiles } from '@/utils/wechatAccounts'
@@ -1435,6 +1451,56 @@ onMounted(() => {
   .row { grid-template-columns: 1fr; gap: 8px; }
 }
 .lab { color: var(--ct-text-secondary); font-weight: 500; }
+
+/* RAG 开关矩阵与悬浮提醒 Tooltip */
+.rag-switches-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(252px, 1fr));
+  gap: 12px;
+}
+
+.rag-switch-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 16px;
+  border-radius: 10px;
+  background: var(--ct-bg-secondary, rgba(0, 0, 0, 0.02));
+  border: 1px solid var(--ct-border-color, rgba(0, 0, 0, 0.08));
+  transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+}
+
+.rag-switch-item:hover {
+  border-color: rgba(124, 77, 255, 0.28);
+  background: var(--ct-bg-1, #fff);
+  box-shadow: 0 4px 12px rgba(124, 77, 255, 0.06);
+}
+
+.rag-switch-item .ct-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.rag-switch-item .switch-label {
+  white-space: nowrap;
+  flex-shrink: 0;
+  min-width: 38px;
+  text-align: right;
+}
+
+.lab-with-help {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ct-text-primary, #1f2937);
+  white-space: nowrap;
+}
 
 /* 页面标题 & 渐变 */
 .ct-page-title {

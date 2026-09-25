@@ -2,6 +2,7 @@
 import hashlib
 import hmac
 import struct
+import time
 from pathlib import Path
 from typing import Optional, Tuple
 from Crypto.Cipher import AES
@@ -174,12 +175,12 @@ class WeChatDBDecryptorV2:
             return False
     
     def decrypt_database(
-        self, 
-        input_path: str, 
-        output_path: str, 
+        self,
+        input_path: str,
+        output_path: str,
         key_hex: str,
         progress_callback=None
-    ) -> None:
+    ) -> bool:
         """
         解密整个数据库
         
@@ -207,34 +208,62 @@ class WeChatDBDecryptorV2:
         total_pages = (file_size + self.PAGE_SIZE - 1) // self.PAGE_SIZE
         
         # 解密所有页面
+        failed_pages: list[int] = []
         with open(input_path, 'rb') as input_file:
             with open(output_path, 'wb') as output_file:
                 # 写入SQLite头
                 output_file.write(self.SQLITE_HEADER)
-                
+
                 for page_num in range(total_pages):
                     page_buf = input_file.read(self.PAGE_SIZE)
-                    
+
                     if len(page_buf) == 0:
                         break
-                    
+
                     # 检查是否全为零
                     if page_buf == b'\x00' * len(page_buf):
                         output_file.write(page_buf)
                         continue
-                    
+
                     # 解密页面
                     try:
                         decrypted = self.decrypt_page(page_buf, enc_key, mac_key, page_num)
                         output_file.write(decrypted)
                     except Exception as e:
-                        logger.error(f"[WARN] 解密页面 {page_num} 失败: {e}")
-                        # 写入原始数据
-                        output_file.write(page_buf)
-                    
+                        # 撕裂页通常源于微信并发写入：短暂等待后从源文件重读该页再试
+                        # （W3：避免把密文页静默写进"明文"库导致整段会话丢失）
+                        recovered = False
+                        with open(input_path, 'rb') as retry_file:
+                            for _ in range(2):
+                                time.sleep(0.2)
+                                retry_file.seek(page_num * self.PAGE_SIZE)
+                                fresh = retry_file.read(self.PAGE_SIZE)
+                                if len(fresh) != self.PAGE_SIZE:
+                                    continue
+                                try:
+                                    decrypted = self.decrypt_page(fresh, enc_key, mac_key, page_num)
+                                    output_file.write(decrypted)
+                                    recovered = True
+                                    break
+                                except Exception:
+                                    page_buf = fresh
+                        if not recovered:
+                            logger.error(f"[WARN] 解密页面 {page_num} 失败（重试后仍失败）: {e}")
+                            # 写入原始数据（该页所在会话读取会失败并计入统计）
+                            output_file.write(page_buf)
+                            failed_pages.append(page_num)
+
                     # 进度回调
                     if progress_callback:
                         progress_callback(page_num + 1, total_pages)
+
+        if failed_pages:
+            preview = failed_pages[:10]
+            logger.warning(
+                f"[解密] {input_path}: {len(failed_pages)} 个页面重试后仍无法解密"
+                f"（保留密文页，相关会话可能缺失）：{preview}{'...' if len(failed_pages) > 10 else ''}"
+            )
+        return len(failed_pages) == 0
 
 
 # 保持向后兼容

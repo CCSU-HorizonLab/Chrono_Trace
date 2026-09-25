@@ -213,14 +213,18 @@ class PreferenceCompatibilityService:
                 content = " ".join(msg_content_map.get(mid, "") for mid in msg_ids)
                 unit_contents[unit_id] = content
             
-            # 获取会话边界信息
+            # 获取会话边界信息（A1：sessions 表实际列为 start_time/end_time，
+            # 无 start_unit_id/end_unit_id；改按单元首条消息时间戳判定归属）
             cursor = get_db().execute("""
-                SELECT id, start_unit_id, end_unit_id
+                SELECT id, start_time, end_time
                 FROM sessions
                 WHERE conversation_id = ?
             """, (conversation_id,))
             sessions = cursor.fetchall()
-            
+
+            # 发言单元首条消息时间戳（用于归属判定）
+            unit_first_ts = {unit[0]: int(unit[2] or 0) for unit in speech_units}
+
             # 如果没有会话表，使用简化逻辑
             if not sessions:
                 for unit_id, content in unit_contents.items():
@@ -230,12 +234,13 @@ class PreferenceCompatibilityService:
                             preference_session_ids.add(unit_id)
                             matched_keywords.add(keyword)
                 return list(preference_session_ids), list(matched_keywords)
-            
+
             # 有会话表，检查每个会话
             for session in sessions:
-                session_id, start_unit_id, end_unit_id = session
+                session_id, start_time, end_time = session
                 for unit_id, content in unit_contents.items():
-                    if start_unit_id <= unit_id <= end_unit_id:
+                    unit_ts = unit_first_ts.get(unit_id, 0)
+                    if start_time <= unit_ts <= end_time:
                         content_lower = content.lower()
                         for keyword in self.preference_keywords:
                             if keyword.lower() in content_lower:
@@ -310,19 +315,26 @@ class PreferenceCompatibilityService:
         """
         if not preference_session_ids:
             return 0.0
-        
+
         try:
-            # 获取所有交互对的语义相似度
-            cursor = get_db().execute("""
-                SELECT AVG(semantic_similarity)
-                FROM interaction_pairs
-                WHERE conversation_id = ?
-                    AND semantic_similarity IS NOT NULL
-            """, (conversation_id,))
-            
+            # A5：限定"喜好会话内"的交互对——按发言单元首条消息时间戳归属会话，
+            # 取喜好会话时间窗内交互对的语义相似度均值。
+            # （此前 preference_session_ids 参数被完全忽略，算的是全会话均值，
+            #   导致该子分与关键词配置无关）
+            placeholders = ','.join('?' * len(preference_session_ids))
+            cursor = get_db().execute(f"""
+                SELECT AVG(ip.semantic_similarity)
+                FROM interaction_pairs ip
+                JOIN speech_units fu ON fu.id = ip.from_speech_unit_id
+                JOIN sessions s ON s.id IN ({placeholders})
+                WHERE ip.conversation_id = ?
+                    AND ip.semantic_similarity IS NOT NULL
+                    AND fu.first_message_timestamp BETWEEN s.start_time AND s.end_time
+            """, (*preference_session_ids, conversation_id))
+
             row = cursor.fetchone()
             avg_similarity = row[0] if row[0] is not None else 0.0
-            
+
             return max(0.0, min(1.0, avg_similarity))
             
         except Exception as e:

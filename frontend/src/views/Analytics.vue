@@ -623,6 +623,8 @@ export default {
         const isGlobalAnalyzing = ref(false)
         const isStopping = ref(false)
         const activeTimer = ref<any>(null)
+        const viewEpoch = ref(0)                 // 视图代数：切换联系人时递增，丢弃过期异步结果（F1）
+        const modelDownloadTimer = ref<any>(null) // 模型下载轮询句柄（F2：卸载时清理）
         const globalProgressPercent = ref(0)
         const globalProgressStep = ref('')
         const isDownloadingModels = ref(false)
@@ -917,6 +919,7 @@ export default {
         }
 
         async function onConversationChange(id: number) {
+            viewEpoch.value++ // 使进行中的加载与分析轮询结果全部过期（F1）
             selectedConversationId.value = id
             setDefaultDates(30, getConversationAnchorDate(id))
             hasFeatures.value = false
@@ -952,8 +955,10 @@ export default {
             }
 
             loadingPersonaProfile.value = true
+            const epoch = viewEpoch.value
             try {
                 const res = await api.get_contact_profile(displayName, activeAccountWxid.value || undefined)
+                if (epoch !== viewEpoch.value) return // 已切换联系人，丢弃过期结果（F1）
                 if (res.ok && res.has_profile) {
                     personaProfile.value = res.profile || null
                     personaProfileMeta.createdAt = res.created_at || null
@@ -965,9 +970,9 @@ export default {
                     personaProfileMeta.estimatedTokens = Number(res?.estimated_tokens || 0)
                 }
             } catch (e) {
-                resetPersonaProfile()
+                if (epoch === viewEpoch.value) resetPersonaProfile()
             } finally {
-                loadingPersonaProfile.value = false
+                if (epoch === viewEpoch.value) loadingPersonaProfile.value = false
             }
         }
 
@@ -985,8 +990,10 @@ export default {
 
         async function tryLoadAffinityScores() {
             if (!selectedConversationId.value) return
+            const epoch = viewEpoch.value
             try {
                 const scores = await getAffinityScores(selectedConversationId.value)
+                if (epoch !== viewEpoch.value) return // 已切换联系人（F1）
                 if (scores && scores.cache_version >= 4) {
                     analysisResult.value = scores
                 } else {
@@ -999,6 +1006,7 @@ export default {
 
         async function tryLoadExistingFeatures() {
             if (!selectedConversationId.value) return
+            const epoch = viewEpoch.value
             hasFeatures.value = false
             try {
                 const [rtData, iniData, wcData, activityData] = await Promise.all([
@@ -1007,6 +1015,7 @@ export default {
                     api.get_word_counts(selectedConversationId.value, false),
                     api.get_activity_calendar(selectedConversationId.value)
                 ])
+                if (epoch !== viewEpoch.value) return // 已切换联系人（F1）
                 if (hasExistingFeatureData(rtData, iniData, wcData, activityData)) {
                     hasFeatures.value = true
                     await Promise.all([
@@ -1033,11 +1042,13 @@ export default {
 
         async function loadAnalysis() {
             if (!selectedConversationId.value) return
+            const epoch = viewEpoch.value
             loading.value = true
             error.value = ''
             try {
                 await bridgeReady()
                 const res = await api.get_analysis({ conversation_id: selectedConversationId.value, from: dates.from, to: dates.to })
+                if (epoch !== viewEpoch.value) return // 已切换联系人（F1）
                 if (res.error) { error.value = res.error; return }
                 analysis.timeseries = res?.timeseries ?? []
                 analysis.wordcloud = res?.wordcloud ?? []
@@ -1050,10 +1061,12 @@ export default {
 
         async function loadSessions() {
             if (!selectedConversationId.value) return
+            const epoch = viewEpoch.value
             loadingSessions.value = true
             try {
                 await bridgeReady()
                 const res = await api.get_sessions(selectedConversationId.value, 50, 0)
+                if (epoch !== viewEpoch.value) return // 已切换联系人（F1）
                 if (res.success && res.data && res.data.sessions) {
                     sessions.value = res.data.sessions.map((s: any) => ({
                         ...s,
@@ -1081,7 +1094,9 @@ export default {
         async function waitForModelDownload(taskId: string): Promise<boolean> {
             modelDownloadTaskId.value = taskId
             return new Promise((resolve, reject) => {
-                const timer = setInterval(async () => {
+                let timer: any = null
+                timer = setInterval(async () => {
+                    modelDownloadTimer.value = timer // 记录句柄供组件卸载时清理（F2）
                     try {
                         const prog = await api.get_model_download_progress(taskId)
                         if (!prog.ok) {
@@ -1089,7 +1104,6 @@ export default {
                             reject(new Error(prog.error_detail || prog.error || '模型下载失败'))
                             return
                         }
-
                         modelDownloadProgress.value = Number(prog.overall_progress || 0)
                         modelDownloadStep.value = prog.current_step || '正在下载模型...'
                         globalProgressPercent.value = modelDownloadProgress.value
@@ -1283,6 +1297,7 @@ export default {
         async function startGlobalAnalysis() {
             let isCancelled = false
             if (!selectedConversationId.value) return
+            const analysisConversationId = selectedConversationId.value // 分析发起时的联系人（F1）
             isGlobalAnalyzing.value = true
             globalProgressPercent.value = 0
             globalProgressStep.value = '即将开始...'
@@ -1313,6 +1328,11 @@ export default {
                             cancelCurrentAnalysis = () => reject(new Error('分析已取消'))
                             activeTimer.value = setInterval(async () => {
                                 try {
+                                    if (selectedConversationId.value !== analysisConversationId) {
+                                        clearInterval(activeTimer.value) // 已切换联系人，停止过期轮询（F1）
+                                        resolve()
+                                        return
+                                    }
                                     const prog = await api.get_extraction_progress(taskId)
                                     const d = prog.data || prog
                                     if (prog.success || prog.ok) {
@@ -1350,6 +1370,11 @@ export default {
                     cancelCurrentAnalysis = () => reject(new Error('分析已取消'))
                     activeTimer.value = setInterval(async () => {
                         try {
+                            if (selectedConversationId.value !== analysisConversationId) {
+                                clearInterval(activeTimer.value) // 已切换联系人，丢弃过期分析结果（F1）
+                                resolve()
+                                return
+                            }
                             const prog = await getAffinityProgress(affinityTaskId)
                             if (prog.ok) {
                                 globalProgressPercent.value = 50 + prog.progress_percent * 0.5
@@ -1611,6 +1636,8 @@ export default {
         onUnmounted(() => {
             window.removeEventListener('resize', handleResize)
             window.removeEventListener('chrono:wechat-account-changed', handleAccountChanged)
+            if (activeTimer.value) { clearInterval(activeTimer.value); activeTimer.value = null } // F2：卸载时停止分析轮询
+            if (modelDownloadTimer.value) { clearInterval(modelDownloadTimer.value); modelDownloadTimer.value = null } // F2
             responseTimeChartInstance?.dispose(); activityCalendarChartInstance?.dispose(); wordCountChartInstance?.dispose()
         })
 

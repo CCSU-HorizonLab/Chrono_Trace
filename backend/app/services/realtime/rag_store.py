@@ -777,6 +777,9 @@ class RagStore:
         index_version: str = RAG_INDEX_VERSION,
         source_kinds: tuple[str, ...] = ("historical", "realtime"),
     ) -> int:
+        # G2：删除不过滤 index_version——读侧（list_documents*）本就不区分版本，
+        # 若只删当前版本，v1/v2 时期遗留的文档+向量会在升级后永久残留并被
+        # 重复召回。index_version 参数保留以兼容既有调用方，但不再约束范围。
         placeholders = ",".join("?" for _ in source_kinds)
         rows = self.conn.execute(
             f"""
@@ -784,10 +787,9 @@ class RagStore:
             FROM rag_documents
             WHERE account_wxid = ?
               AND conversation_id = ?
-              AND index_version = ?
               AND source_kind IN ({placeholders})
             """,
-            (account_wxid, conversation_id, index_version, *source_kinds),
+            (account_wxid, conversation_id, *source_kinds),
         ).fetchall()
         ids = [int(row["id"]) for row in rows]
         if not ids:

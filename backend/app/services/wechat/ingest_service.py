@@ -575,6 +575,7 @@ class WeChatIngestService:
         total_messages = 0
         conversations_set = set()
         skipped_conversations = 0
+        failed_conversations = 0
         skipped_messages = 0
         conversation_cache: dict[str, int] = {}
         touched_conversations: dict[int, int] = {}
@@ -645,7 +646,8 @@ class WeChatIngestService:
                         skipped_messages += batch_stats["skipped"]
 
                 except Exception as e:
-                    # 某个对话导入失败,跳过继续
+                    # 某个对话导入失败,跳过继续（W3：计数并汇总，不再只留零散日志）
+                    failed_conversations += 1
                     logger.error(f"[DEBUG] 导入对话 {username} 失败: {e}")
                     import traceback
                     traceback.print_exc()
@@ -665,11 +667,18 @@ class WeChatIngestService:
 
         logger.info(f"[DEBUG] Messages imported: {total_messages}, conversations: {len(conversations_set)}")
         logger.debug(f"[DEBUG] Filtered conversations: {skipped_conversations}")
+        if failed_conversations:
+            # 解密缺口/读取异常等导致的会话级失败（W3）：显式汇总，避免静默缺失
+            logger.warning(
+                f"[导入] {failed_conversations} 个对话导入失败（常见原因：微信在线写入导致"
+                "个别页面解密失败；可关闭微信后重新导入补全）"
+            )
 
         return {
             "total": total_messages,
             "conversations": len(conversations_set),
-            "skipped": skipped_messages
+            "skipped": skipped_messages,
+            "failed_conversations": failed_conversations,
         }
 
     def _insert_message_batch(
@@ -741,6 +750,43 @@ class WeChatIngestService:
             except Exception as e:
                 logger.error(f"[DEBUG] 插入消息失败: {e}")
                 pass  # 忽略单条错误
+
+        # 实时与导入消息对账（W1）：实时行不再占用 local_id 后，同一物理消息可能
+        # 同时存在 realtime 行（UIA 分钟级时间戳）与 long 行（微信库精确时间戳）。
+        # 对含实时行的会话，删除已被权威导入数据覆盖（同发送方/类型/内容、±59 秒
+        # 窗口容差）的冗余实时行，避免统计、预处理与 RAG 重复计数。
+        reconciled = 0
+        for conv_id in touched_conversations:
+            has_realtime = db.execute(
+                """
+                SELECT 1 FROM messages
+                WHERE conversation_id = ? AND source IN ('realtime', 'realtime_backfill')
+                LIMIT 1
+                """,
+                (conv_id,),
+            ).fetchone()
+            if not has_realtime:
+                continue
+            cursor = db.execute(
+                """
+                DELETE FROM messages
+                WHERE conversation_id = ?
+                  AND source IN ('realtime', 'realtime_backfill')
+                  AND EXISTS (
+                      SELECT 1 FROM messages m2
+                      WHERE m2.conversation_id = messages.conversation_id
+                        AND m2.source = 'long'
+                        AND m2.is_sender = messages.is_sender
+                        AND m2.message_type = messages.message_type
+                        AND m2.timestamp BETWEEN messages.timestamp - 59 AND messages.timestamp + 59
+                        AND COALESCE(m2.content, '') = COALESCE(messages.content, '')
+                  )
+                """,
+                (conv_id,),
+            )
+            reconciled += cursor.rowcount or 0
+        if reconciled:
+            logger.info(f"[导入对账] 清理被导入数据覆盖的冗余实时消息 {reconciled} 条")
 
         db.commit()
         return {"inserted": inserted, "skipped": skipped}

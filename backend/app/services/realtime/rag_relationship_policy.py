@@ -217,7 +217,7 @@ def refresh_relationship_state_shadow(
     if not load_rag_settings().get("rag_relationship_policy_shadow_enabled"):
         return {"ok": True, "skipped": "disabled"}
     try:
-        profile_cache = _load_profile_cache(account_wxid, display_name)
+        profile_cache = _load_profile_cache(account_wxid, display_name, conn=store.conn)
         facts = store.list_facts(account_wxid, conversation_id)
         # 亲密度用真实消息量（document_count 是切块后的文档数，会低估）
         message_count = _load_message_count(store, account_wxid, conversation_id)
@@ -360,14 +360,17 @@ def refresh_after_fact_feedback(store: RagStore, fact_id: int, *, action: str = 
 
 
 def _load_profile_cache(
-    account_wxid: str, display_name: str
+    account_wxid: str,
+    display_name: str,
+    conn: Any | None = None,
 ) -> dict[str, Any] | None:
     if not display_name:
         return None
     try:
-        from ...db.connection import get_db
+        if conn is None:
+            from ...db.connection import get_db
 
-        conn = get_db()
+            conn = get_db()
         row = conn.execute(
             """
             SELECT profile_json, features_snapshot FROM contact_profiles

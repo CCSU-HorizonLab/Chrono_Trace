@@ -25,6 +25,13 @@ from .rag_store import RAG_INDEX_VERSION, RagStore
 
 logger = logging.getLogger(__name__)
 
+# P2 并发修复：进程级重建互斥。pywebview 的每个 bridge 调用跑在独立
+# 线程——连点两个联系人的重建就是两个并行 rebuild；两次 commit 之间
+# 夹着 LLM 抽取（每段数秒到数十秒）的长事务会占住 WAL 写锁，另一路
+# busy 等待超时后 "database is locked"，互相交错导致两边全失败。
+# 同一时刻只允许一个 rebuild；忙时把后来者标记 pending 并入队串行跟进。
+_REBUILD_LOCK = threading.Lock()
+
 
 class RagIndexer:
     """Build a minimal but useful per-contact RAG index."""
@@ -271,14 +278,54 @@ class RagIndexer:
         }
 
     def rebuild_contact_index(self, *, account_wxid: str, conversation_id: int) -> dict[str, Any]:
-        self._llm_extract_segments_used = 0
-        self._llm_extract_consecutive_failures = 0
-        self._llm_extract_round_failed = False
-        self._init_llm_extract_progress(account_wxid, conversation_id)
         settings = load_rag_settings()
         model = str(settings["rag_embedding_model"])
         dim = int(settings["rag_embedding_dim"])
         privacy_mode = str(settings["rag_privacy_mode"])
+        if not _REBUILD_LOCK.acquire(blocking=False):
+            # 另一个重建正在进行：不失败、不等待——标记 pending 入队，
+            # 由 RagIndexQueue 单 worker 串行跟进（并发兼容）。
+            logger.info(
+                "[RAG Index] another rebuild in progress; conv=%s queued as pending", conversation_id
+            )
+            try:
+                self.store.upsert_status(
+                    account_wxid,
+                    conversation_id,
+                    status="pending",
+                    embedding_model=model,
+                    embedding_dim=dim,
+                    privacy_mode=privacy_mode,
+                    dirty_since=int(time.time()),
+                    index_version=self.INDEX_VERSION,
+                )
+                self.store.conn.commit()
+                RagIndexQueue.enqueue(account_wxid, conversation_id)
+            except Exception as exc:
+                logger.warning("[RAG Index] busy-queue fallback failed: %s", exc)
+            return self.store.get_status(account_wxid, conversation_id) or {}
+        try:
+            return self._rebuild_contact_index_locked(
+                account_wxid=account_wxid, conversation_id=conversation_id,
+                settings=settings, model=model, dim=dim, privacy_mode=privacy_mode,
+            )
+        finally:
+            _REBUILD_LOCK.release()
+
+    def _rebuild_contact_index_locked(
+        self,
+        *,
+        account_wxid: str,
+        conversation_id: int,
+        settings: dict[str, Any],
+        model: str,
+        dim: int,
+        privacy_mode: str,
+    ) -> dict[str, Any]:
+        self._llm_extract_segments_used = 0
+        self._llm_extract_consecutive_failures = 0
+        self._llm_extract_round_failed = False
+        self._init_llm_extract_progress(account_wxid, conversation_id)
         self.store.upsert_status(
             account_wxid,
             conversation_id,
@@ -584,6 +631,10 @@ class RagIndexer:
                 msg for msg in segment.messages[-3:]
                 if str(msg.get("content") or "").strip()
             ]
+            # 段级提交：LLM 抽取每段耗时数秒到数十秒，跨段挂着的未提交
+            # 写会长期占住 WAL 写锁，与并发的其他连接（手动重建/检索日
+            # 志写入）互相 busy 超时。每段落盘，写事务窗口缩到毫秒级。
+            self.store.conn.commit()
             semantic_fact_count += len(
                 [fact for fact in semantic_facts if fact.memory_kind != "marker_fallback"]
             )

@@ -308,6 +308,15 @@ P1 闭环后的定位修正：碎片清理和 LLM 抽取已有实质改善，但
 - **只记录不决策**（纪律红线）：accepted/rewritten 自动生成新策略候选不在本轮做——待信号积累到量后按 P0.3 人工集校准再启用，防止把改写文本直接当偏好写入。
 - 基建（2026-09-25 第三轮）：P0.3 挖掘脚本 `backend/scripts/mine_regression_scenarios.py`（retrieval_log 源 + memory_reference 源，输出脱敏 JSONL 待标注）与标注流程 `docs/p0.3-regression-labeling-guide.md`（两轮自一致性 + 仲裁 + 度量口径）——数据到量即可直接标注建集。
 
+### 索引并发修复（2026-09-25 第四轮）：重建互斥 + 段级提交
+
+用户实测：连点两个联系人的重建 → 两个 bridge 线程并行 rebuild → 全部 "database is locked" 失败。根因两层：
+
+1. pywebview 每个 bridge 调用独立线程，rebuild 无互斥；
+2. 两次 commit 之间夹着 LLM 抽取（每段数秒到数十秒）的未提交写长期占住 WAL 写锁，另一路 busy 等待 30 秒超时，互相交错两边全败。
+
+修复：**进程级重建互斥**（`_REBUILD_LOCK`，忙时后来者标记 pending 入队由 RagIndexQueue 单 worker 串行跟进，不失败不等待）+ **段级 commit**（写事务窗口从"跨 LLM 抽取的数十秒"缩到毫秒级）。连带修复：`_load_profile_cache` 此前经 thread-local `get_db()` 另开连接（worker 线程会与主线程形成双连接并发写，也是测试意外触碰真实库导致 30 秒 busy 的来源），改为复用 `store.conn`。测试：并发 rebuild 用例（一个 ready、一个 pending 入队、零异常），全量 745 passed。
+
 ## P2：长期闭环与真实贡献（收益高、成本高）
 
 ### P2.1 反馈从“落库”变成“可验证修正”

@@ -48,21 +48,37 @@ class FeatureExtractionService:
     # 主入口
     # =========================================================================
 
-    def extract_features(self, conversation_id: int, cancel_event: Optional[threading.Event] = None) -> Dict[str, Any]:
+    def find_running_task(self, conversation_id: int) -> Optional[str]:
+        """返回该会话正在运行的提取任务 id（无则 None）——防同会话并发提取互相删数据。"""
+        prefix = f"extract_{conversation_id}_"
+        for tid, status in self._task_status.items():
+            if tid.startswith(prefix) and status.get("status") == "in_progress":
+                return tid
+        return None
+
+    def extract_features(
+        self,
+        conversation_id: int,
+        cancel_event: Optional[threading.Event] = None,
+        task_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        self._extract_cancel_event = cancel_event
         """
         执行完整的特征提取流程
 
         Args:
             conversation_id: 对话ID
+            cancel_event: 取消信号
+            task_id: 显式任务 id（bridge 异步启动时预生成，保证前端拿到的
+                     id 与任务注册一致；None 时按时间戳自生成）
 
         Returns:
             提取结果字典，包含sessions, response_times, initiative_stats, word_counts
         """
-        #logger.info(f"开始特征提取: conversation_id={conversation_id}")
-
         self._apply_analysis_device_mode()
 
-        task_id = f"extract_{conversation_id}_{int(time.time())}"
+        if task_id is None:
+            task_id = f"extract_{conversation_id}_{int(time.time())}"
         self._task_status[task_id] = {
             "status": "in_progress",
             "progress": 0.0,
@@ -188,6 +204,8 @@ class FeatureExtractionService:
 
         if self._session_manager is None:
             self._session_manager = SessionManager()
+        # 取消信号透传给会话切分（语义相似度的分块编码之间检查）
+        self._session_manager._cancel_event = self._extract_cancel_event
 
         # 2.1 构建发言单元（合并5分钟内同发送者的消息）
         speech_units = self._pair_service.build_speech_units(messages)

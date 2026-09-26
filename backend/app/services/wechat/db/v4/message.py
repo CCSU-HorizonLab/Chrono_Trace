@@ -69,6 +69,26 @@ class MessageDBV4(WeChatDBBase):
                 logger.debug(f"[DEBUG MessageDB] 连接数据库 {idx+1}/{len(self.db_paths)}: {db_path}")
 
                 if self.db_key:
+                    # 优先走共享增量快照（首次全量≈原路径，后续增量秒级）
+                    snapshot_ok = False
+                    try:
+                        from ...snapshot_manager import get_snapshot_manager
+                        decrypted = get_snapshot_manager().get_decrypted_path(
+                            db_path, self.db_key, raw_keys=self.raw_keys
+                        )
+                        if decrypted and decrypted.exists():
+                            conn = sqlite3.connect(str(decrypted))
+                            conn.row_factory = sqlite3.Row
+                            self.temp_db_paths.append(None)  # 占位：共享快照不归本实例清理
+                            snapshot_ok = True
+                            logger.info("[DEBUG MessageDB] ✅ 使用共享增量快照: %s", decrypted)
+                    except Exception as snap_e:
+                        logger.warning("[DEBUG MessageDB] 共享快照不可用，回退全量: %s", snap_e)
+                    if snapshot_ok:
+                        self.connections.append(conn)
+                        continue
+
+                    # 原路径：全量解密到临时文件（首次或快照失败时的兜底）
                     # 使用新的纯Python解密器
                     from ...db_decryptor_v2 import WeChatDBDecryptorV2
                     decryptor = WeChatDBDecryptorV2()
@@ -449,6 +469,8 @@ class MessageDBV4(WeChatDBBase):
         if hasattr(self, 'temp_db_paths'):
             import os
             for temp_path in self.temp_db_paths:
+                if temp_path is None:
+                    continue  # 共享快照不归本实例清理
                 try:
                     os.remove(temp_path)
                     logger.debug(f"[DEBUG MessageDB] 已删除临时文件: {temp_path}")

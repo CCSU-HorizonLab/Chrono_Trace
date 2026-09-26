@@ -32,12 +32,28 @@ class ContactDBV4(WeChatDBBase):
         self._connect()
 
     def _connect(self):
-        """建立数据库连接"""
+        """建立数据库连接（优先复用共享增量快照，免全量重解密）"""
         import tempfile
 
         self.temp_db_path = None
+        self._owns_snapshot = False  # 标记是否需要 close 时清理临时文件
         try:
             if self.db_key:
+                # 优先走共享增量快照（首次全量≈原路径，后续增量秒级）
+                try:
+                    from ...snapshot_manager import get_snapshot_manager
+                    decrypted = get_snapshot_manager().get_decrypted_path(
+                        self.db_path, self.db_key, raw_keys=self.raw_keys
+                    )
+                    if decrypted and decrypted.exists():
+                        self.conn = sqlite3.connect(str(decrypted))
+                        self.conn.row_factory = sqlite3.Row
+                        logger.info("[DEBUG ContactDB] ✅ 使用共享增量快照: %s", decrypted)
+                        return
+                except Exception as snap_e:
+                    logger.warning("[DEBUG ContactDB] 共享快照不可用，回退全量解密: %s", snap_e)
+
+                # 原路径：全量解密到临时文件（首次或快照失败时的兜底）
                 logger.info(f"[DEBUG ContactDB] 开始解密联系人数据库: {self.db_path}")
 
                 # 使用新的纯Python解密器
@@ -54,6 +70,7 @@ class ContactDBV4(WeChatDBBase):
 
                 # 解密到临时文件
                 self.temp_db_path = tempfile.mktemp(suffix='.db')
+                self._owns_snapshot = True
                 logger.debug(f"[DEBUG ContactDB] 解密到临时文件: {self.temp_db_path}")
 
                 decryptor.decrypt_database(self.db_path, self.temp_db_path, self.db_key)

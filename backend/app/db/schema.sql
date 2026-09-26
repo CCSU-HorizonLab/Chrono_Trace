@@ -909,5 +909,4 @@ INSERT OR IGNORE INTO settings (key, value, updated_at) VALUES
     ('rag_embedding_provider', 'local', strftime('%s', 'now')),
     ('rag_embedding_model', 'tingting0514/text2vec-base-chinese', strftime('%s', 'now')),
     ('rag_embedding_dim', '384', strftime('%s', 'now')),
-    ('rag_privacy_mode', 'balanced', strftime('%s', 'now')),
-    ('rag_cross_contact_style_enabled', '0', strftime('%s', 'now'));
+    ('rag_privacy_mode', 'balanced', strftime('%s', 'now'));

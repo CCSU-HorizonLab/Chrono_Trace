@@ -46,13 +46,13 @@
 
       <h2>还没有历史记录</h2>
       <p class="page-empty-lead">当前还没有可分析的聊天会话，但这个页面不该再是空白的。</p>
-      <p class="page-empty-hint">先去首页导入微信数据，完成后这里会自动显示联系人、分析入口和时间线内容。</p>
+      <p class="page-empty-hint">先去<a href="/" style="color: var(--ct-color-primary); text-decoration: underline;">首页</a>导入微信数据，完成后这里会自动显示联系人、分析入口和时间线内容。</p>
     </div>
 
     <div class="page-empty-grid">
       <div class="page-empty-card">
         <span class="page-empty-card-label">下一步</span>
-        <strong>去首页导入聊天数据</strong>
+        <strong>去<a href="/" style="color: var(--ct-color-primary); text-decoration: underline;">首页</a>导入聊天数据</strong>
         <p>导入完成后，历史记录页会自动恢复完整展示。</p>
       </div>
 
@@ -460,6 +460,16 @@
   <!-- TAB 4: Persona Gallery -->
   <div v-show="currentTab === 'persona' && selectedConversationId" class="tab-content fade-in">
     <div class="persona-tab-shell">
+      <div style="display: flex; justify-content: flex-end; align-items: center; gap: 10px; margin-bottom: 12px;">
+        <button
+          class="ct-btn primary"
+          @click="showPortraitDialog = true"
+          :disabled="loadingPersonaProfile"
+          style="font-size: 13px; padding: 6px 16px;"
+        >
+          {{ personaProfile ? '更新画像' : '生成画像' }}
+        </button>
+      </div>
       <PersonaGallery
         :loading="loadingPersonaProfile"
         :contact-name="currentContactName"
@@ -478,6 +488,19 @@
   <!-- Dialogs -->
   <PreferenceKeywordsDialog v-if="selectedConversationId" v-model="showKeywordsDialog"
     :conversation-id="selectedConversationId" @updated="handleKeywordsUpdated" />
+  <PortraitGenerateDialog
+    :visible="showPortraitDialog"
+    :display-name="currentContactName"
+    :account-wxid="activeAccountWxid || undefined"
+    :show-self-panel="true"
+    @close="showPortraitDialog = false"
+    @generated="handlePortraitGenerated"
+    @error="(msg: string) => { portraitGenError = msg; }"
+  />
+  <div v-if="portraitGenError" style="position: fixed; bottom: 20px; right: 20px; z-index: 4000; background: #e74c3c; color: #fff; padding: 10px 16px; border-radius: 8px; font-size: 13px; box-shadow: 0 4px 12px rgba(0,0,0,0.3);">
+    {{ portraitGenError }}
+    <button @click="portraitGenError = ''" style="margin-left: 10px; background: none; border: none; color: #fff; cursor: pointer; font-size: 16px;">&times;</button>
+  </div>
   <RelationshipContextForm v-if="selectedConversationId" v-model="showContextForm"
     :conversation-id="selectedConversationId" @saved="handleContextSaved" />
 </section>
@@ -498,9 +521,10 @@ import WordCloud from '@/components/charts/WordCloud.vue'
 import ConversationTimeline from '@/components/timeline/ConversationTimeline.vue'
 
 import AffinityScoreCard from '@/components/affinity/AffinityScoreCard.vue'
+import PortraitGenerateDialog from '@/components/persona/PortraitGenerateDialog.vue'
+import { loadSharedContact, saveSharedContact, CONTACT_CHANGED_EVENT } from '@/utils/sharedContact'
 import DimensionRadar from '@/components/affinity/DimensionRadar.vue'
 import SubScoreBreakdown from '@/components/affinity/SubScoreBreakdown.vue'
-import WeightInfoTooltip from '@/components/affinity/WeightInfoTooltip.vue'
 import PreferenceKeywordsDialog from '@/components/affinity/PreferenceKeywordsDialog.vue'
 import RelationshipContextForm from '@/components/affinity/RelationshipContextForm.vue'
 import CtCard from '@/components/base/CtCard.vue'
@@ -581,8 +605,7 @@ type ActivityCalendarData = {
 export default {
     components: {
         FiltersBar, DateRangeFilter, SubjectCard, EmotionLineChart, WordCloud, ConversationTimeline,
-        AffinityScoreCard, DimensionRadar, SubScoreBreakdown, WeightInfoTooltip,
-        PreferenceKeywordsDialog, RelationshipContextForm, CtCard, CtButton, PersonaGallery, CtAvatar,
+        AffinityScoreCard, DimensionRadar, SubScoreBreakdown,         PreferenceKeywordsDialog, RelationshipContextForm, CtCard, CtButton, PersonaGallery, CtAvatar,
         FolderArchive, MessageSquare, Sparkles, BarChart3, TrendingUp, Loader2, Lightbulb
     },
     setup() {
@@ -592,6 +615,16 @@ export default {
         // Core State
         const conversations = ref<Conversation[]>([])
         const selectedConversationId = ref<number | null>(null)
+
+// 联系人选中变化：写入跨页共享状态 + 通知
+watch(selectedConversationId, (id) => {
+  if (id) {
+    const c = conversations.value.find((x: any) => x.id === id)
+    if (c) {
+      saveSharedContact({ conversationId: id, displayName: c.name || c.username || '', avatar: c.avatar })
+    }
+  }
+})
         const dates = reactive({ from: '', to: '' })
         const loading = ref(false)
         const loadingSessions = ref(false)
@@ -619,6 +652,8 @@ export default {
         const analysisResult = ref<AffinityAnalysisResult | null>(null)
         const displayScore = ref(0)
         const showKeywordsDialog = ref(false)
+const showPortraitDialog = ref(false)
+const portraitGenError = ref('')
         const showContextForm = ref(false)
         const analysisLaunchPending = ref(false)
         const isGlobalAnalyzing = ref(false)
@@ -961,7 +996,13 @@ export default {
             personaProfileMeta.estimatedTokens = 0
         }
 
-        async function loadPersonaProfile(conversationId = selectedConversationId.value || undefined) {
+        function handlePortraitGenerated() {
+  portraitGenError.value = ''
+  // 画像生成完成后刷新画像数据
+  if (typeof loadPersonaProfile === 'function') loadPersonaProfile()
+}
+
+async function loadPersonaProfile(conversationId = selectedConversationId.value || undefined) {
             if (!conversationId) {
                 resetPersonaProfile()
                 return
@@ -1708,7 +1749,14 @@ export default {
             await loadAnalysisDeviceMode()
             await refreshAccountContext()
             await loadConversations()
-            const savedResume = loadAnalysisResume()
+            // 恢复跨页共享的联系人选中
+    const sharedContact = loadSharedContact()
+    if (sharedContact && !selectedConversationId.value) {
+      if (conversations.value.some((c: any) => c.id === sharedContact.conversationId)) {
+        selectedConversationId.value = sharedContact.conversationId
+      }
+    }
+    const savedResume = loadAnalysisResume()
             if (savedResume) void resumeAnalysisFromSaved(savedResume)
             window.addEventListener('resize', handleResize)
             window.addEventListener('chrono:wechat-account-changed', handleAccountChanged)

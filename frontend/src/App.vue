@@ -14,8 +14,8 @@
       <!-- 居中导航菜单 -->
       <nav class="ct-menu">
         <router-link to="/" class="menu-item">首页</router-link>
-        <router-link to="/analytics" class="menu-item">历史数据</router-link>
-        <router-link to="/suggestions" class="menu-item">AI建议</router-link>
+        <router-link to="/analytics" class="menu-item">联系人洞察</router-link>
+        <router-link to="/suggestions" class="menu-item">实时助手</router-link>
         <router-link to="/settings" class="menu-item">设置</router-link>
       </nav>
 

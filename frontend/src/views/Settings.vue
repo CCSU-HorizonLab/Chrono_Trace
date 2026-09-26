@@ -50,6 +50,22 @@
             <div class="path-hint">修改后会自动迁移已下载模型；若新目录下已存在同名模型目录，将阻止迁移以避免覆盖。</div>
           </div>
 
+          <!-- 实时建议快速模式 -->
+          <div class="maintenance-card">
+            <div class="maintenance-copy">
+              <div class="maintenance-title lab-with-help">
+                <span>实时建议快速模式</span>
+                <CtHelpTip content="开启后，在向思考型大模型请求实时回复建议时自动前置 /no_think 指令，将建议响应耗时从 30–60 秒缩短至约 2 秒；深度画像与关系分析不受影响。" />
+              </div>
+              <div class="maintenance-desc">思考模型前置 /no_think（建议生成 30-60s → 约 2s；深度分析不受影响）。</div>
+            </div>
+            <label class="ct-switch maint-switch">
+              <input type="checkbox" v-model="form.llm_fast_suggestion_mode" />
+              <span class="slider"></span>
+              <span class="switch-label">{{ form.llm_fast_suggestion_mode ? '已启用' : '已禁用' }}</span>
+            </label>
+          </div>
+
           <!-- 引擎固定为 LLM -->
 
           <!-- 模型列表 -->
@@ -140,17 +156,17 @@
         </div>
       </CtCard>
 
-      <CtCard title="联系人记忆 RAG" class="rag-card-full">
+      <CtCard title="联系人记忆" class="rag-card-full">
         <div class="form">
           <div class="hint-box info">
-            <p><strong>关于记忆与隐私：</strong>聊天记录的向量化与语义索引完全在本地离线运行（无需远程 API，不消耗 Token）。仅在向远程 LLM 请求“AI建议”时会用到检索结果，默认开启脱敏以保护真实姓名与电话等隐私。</p>
+            <p><strong>关于记忆与隐私：</strong>聊天记录的记忆提炼与本地检索完全在设备离线运行（无需远程 API，不消耗 Token）。仅在向远程大模型请求“AI建议”时会注入相关记忆，默认开启脱敏以保护真实姓名与电话等隐私。</p>
           </div>
 
           <div class="rag-switches-grid">
             <div class="rag-switch-item">
               <div class="lab lab-with-help">
-                <span>启用 RAG</span>
-                <CtHelpTip content="开启后，在生成回复建议时检索该联系人的历史聊天记忆与事实。向量化与语义索引完全在本地离线运行，不消耗 Token。" />
+                <span>启用记忆</span>
+                <CtHelpTip content="开启后，在生成回复建议时自动调取该联系人的历史聊天记忆与事实。本地记忆检索完全离线运行，不消耗 Token。" />
               </div>
               <label class="ct-switch">
                 <input v-model="form.rag_enabled" type="checkbox" @change="refreshRagStatus" />
@@ -162,7 +178,7 @@
             <div class="rag-switch-item">
               <div class="lab lab-with-help">
                 <span>事实记忆优先</span>
-                <CtHelpTip content="开启后优先检索提炼出的结构化记忆事实（如偏好、约定、关系边界）；关闭则回退为仅检索原始历史对话文档。" />
+                <CtHelpTip content="开启后优先调取提炼出的结构化记忆事实（如偏好、约定、关系边界）；关闭则回退为仅参考原始历史对话片段。" />
               </div>
               <label class="ct-switch">
                 <input v-model="form.rag_fact_read_enabled" type="checkbox" />
@@ -174,7 +190,7 @@
             <div class="rag-switch-item">
               <div class="lab lab-with-help">
                 <span>AI 抽取记忆事实</span>
-                <CtHelpTip content="开启后，重建索引时由激活的 LLM 从对话抽取高质量记忆事实（每联系人每轮最多 40 段；远程模型发送前自动脱敏）。会消耗模型 Token。" />
+                <CtHelpTip content="开启后，构建记忆时由激活的 LLM 从对话抽取高质量记忆事实（每联系人每轮最多 40 段；远程模型发送前自动脱敏）。会消耗模型 Token。" />
               </div>
               <label class="ct-switch">
                 <input v-model="form.rag_structured_fact_extraction_enabled" type="checkbox" />
@@ -186,7 +202,7 @@
             <div class="rag-switch-item">
               <div class="lab lab-with-help">
                 <span>关系理解策略</span>
-                <CtHelpTip content="开启后，重建索引时从画像与事实派生联系人级关系策略（阶段/亲密度/边界/沟通建议），生成建议时自动注入。本地计算，不消耗 Token。" />
+                <CtHelpTip content="开启后，构建记忆时从画像与事实派生联系人级关系策略（阶段/亲密度/边界/沟通建议），生成建议时自动注入。本地计算，不消耗 Token。" />
               </div>
               <label class="ct-switch">
                 <input v-model="form.rag_relationship_policy_shadow_enabled" type="checkbox" />
@@ -198,7 +214,7 @@
             <div class="rag-switch-item">
               <div class="lab lab-with-help">
                 <span>远程建议脱敏</span>
-                <CtHelpTip content="开启后，向远程大模型发送检索结果前自动掩码替换真实姓名、手机号、微信号等敏感隐私信息。" />
+                <CtHelpTip content="开启后，向远程大模型发送记忆上下文前自动掩码替换真实姓名、手机号、微信号等敏感隐私信息。" />
               </div>
               <label class="ct-switch">
                 <input v-model="form.rag_remote_context_redaction" type="checkbox" @change="handleRagRedactionToggle" />
@@ -210,7 +226,7 @@
 
 
           <div class="rag-status-summary">
-            <div><strong>{{ ragStatus.totalDocuments }}</strong><span>文档</span></div>
+            <div><strong>{{ ragStatus.totalFacts }}</strong><span>条记忆</span></div>
             <div><strong>{{ formatBytes(ragStatus.totalStorageBytes) }}</strong><span>占用</span></div>
             <CtButton variant="ghost" :disabled="ragStatus.loading" @click.stop.prevent="refreshRagStatus">
               {{ ragStatus.loading ? '刷新中...' : '刷新状态' }}
@@ -236,14 +252,51 @@
         </template>
         <div class="form">
           <div class="hint-box info">
-            <p style="display: flex; align-items: flex-start; gap: 6px;"><Lightbulb :size="16" style="flex-shrink: 0; margin-top: 2px;" /><span>首次导入微信数据时，联系人头像会自动同步。</span></p>
-            <p style="margin-top: 8px;">这个入口只用于历史旧数据修复：重新扫描联系人库，把头像回填到已导入的联系人和会话，不会重新导入消息。</p>
+            <p style="display: flex; align-items: flex-start; gap: 6px;"><Lightbulb :size="16" style="flex-shrink: 0; margin-top: 2px;" /><span>系统常规行为偏好与历史数据修复工具。首次导入微信数据时联系人头像会自动同步，下方工具仅用于旧数据回填。</span></p>
           </div>
 
+          <!-- 1. 关闭按钮行为（分段胶囊选择器，单行不折行） -->
+          <div class="maintenance-card">
+            <div class="maintenance-copy">
+              <div class="maintenance-title lab-with-help">
+                <span>关闭按钮行为</span>
+                <CtHelpTip content="控制点击主窗口右上角 ✕ 关闭按钮时的执行动作：可选择每次弹窗询问、直接最小化到任务栏保留后台监听，或直接退出程序。" />
+              </div>
+              <div class="maintenance-desc">点击窗口右上角关闭按钮（✕）时的默认处理方式。</div>
+            </div>
+            <div class="maint-seg-group" role="radiogroup" aria-label="关闭按钮行为">
+              <button
+                type="button"
+                class="maint-seg-btn"
+                :class="{ active: form.close_button_behavior === 'ask' }"
+                @click="form.close_button_behavior = 'ask'"
+              >
+                每次询问
+              </button>
+              <button
+                type="button"
+                class="maint-seg-btn"
+                :class="{ active: form.close_button_behavior === 'minimize' }"
+                @click="form.close_button_behavior = 'minimize'"
+              >
+                最小化
+              </button>
+              <button
+                type="button"
+                class="maint-seg-btn"
+                :class="{ active: form.close_button_behavior === 'exit' }"
+                @click="form.close_button_behavior = 'exit'"
+              >
+                直接退出
+              </button>
+            </div>
+          </div>
+
+          <!-- 2. 补齐已导入联系人头像 -->
           <div class="maintenance-card">
             <div class="maintenance-copy">
               <div class="maintenance-title">补齐已导入联系人头像</div>
-              <div class="maintenance-desc">适用于早期导入时还没有头像字段的历史数据。</div>
+              <div class="maintenance-desc">重新扫描联系人库并将头像回填到历史会话，不会重复导入聊天消息。</div>
             </div>
             <CtButton
               :loading="avatarRefreshLoading"
@@ -303,31 +356,6 @@
                 </div>
               </div>
             </label>
-          </div>
-
-          <div class="row" style="margin-top: 16px;">
-            <div class="lab">关闭按钮行为</div>
-            <div style="display: flex; gap: 14px; align-items: center; font-size: 13px;">
-              <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
-                <input type="radio" v-model="form.close_button_behavior" value="ask" /> 每次询问
-              </label>
-              <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
-                <input type="radio" v-model="form.close_button_behavior" value="minimize" /> 最小化
-              </label>
-              <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
-                <input type="radio" v-model="form.close_button_behavior" value="exit" /> 直接退出
-              </label>
-            </div>
-          </div>
-
-          <div class="row" style="margin-top: 12px;">
-            <div class="lab">实时建议快速模式</div>
-            <div style="display: flex; align-items: center; gap: 10px; font-size: 13px;">
-              <input type="checkbox" v-model="form.llm_fast_suggestion_mode" />
-              <span style="font-size: 12px; opacity: 0.7;">
-                思考模型前置 /no_think（建议生成 30-60s → 约 2s；深度分析不受影响）
-              </span>
-            </div>
           </div>
 
           <div class="gpu-status-card">
@@ -544,6 +572,7 @@ const form = reactive<{
 const ragStatus = reactive({
   loading: false,
   items: [] as any[],
+  totalFacts: 0,
   totalDocuments: 0,
   totalStorageBytes: 0,
 })
@@ -903,7 +932,7 @@ async function handleRagRedactionToggle() {
     return
   }
   const confirmed = await showConfirm({
-    title: '关闭远程 RAG 脱敏',
+    title: '关闭远程记忆脱敏',
     message: '关闭后，远程模型可能收到未脱敏或弱脱敏的共同记忆上下文。确认继续？',
   })
   if (!confirmed) {
@@ -915,8 +944,8 @@ async function handleRagRedactionToggle() {
 async function handleRemoteEmbeddingToggle() {
   if (form.rag_allow_remote_embedding && !form.rag_remote_context_redaction) {
     const confirmed = await showConfirm({
-      title: '确认远程 embedding 风险',
-      message: '你同时允许远程 embedding 且关闭远程 RAG 脱敏。远程服务可能收到未脱敏记忆上下文。确认继续？',
+      title: '确认远程记忆编码风险',
+      message: '你同时允许远程记忆编码且关闭远程记忆脱敏。远程服务可能收到未脱敏记忆上下文。确认继续？',
     })
     form.rag_remote_embedding_redaction_risk_confirmed = confirmed
     if (!confirmed) form.rag_allow_remote_embedding = false
@@ -930,11 +959,12 @@ async function refreshRagStatus() {
     const result = await api.get_rag_status(activeAccountWxid.value)
     if (result?.ok) {
       ragStatus.items = result.items || []
+      ragStatus.totalFacts = Number(result.total_facts || 0)
       ragStatus.totalDocuments = Number(result.total_documents || 0)
       ragStatus.totalStorageBytes = Number(result.total_storage_bytes || 0)
     }
   } catch (e) {
-    console.error('刷新 RAG 状态失败:', e)
+    console.error('刷新记忆状态失败:', e)
   } finally {
     ragStatus.loading = false
   }
@@ -950,7 +980,7 @@ async function refreshRagModelStatus() {
   } catch (e) {
     ragModel.checked = true
     ragModel.ready = false
-    console.error('检查 RAG 模型失败:', e)
+    console.error('检查记忆模型失败:', e)
   } finally {
     ragModel.loading = false
   }
@@ -995,7 +1025,7 @@ async function rebuildRagIndex(item: any) {
 }
 
 async function clearRagIndex(item: any) {
-  const confirmed = await showConfirm('确定清空该联系人的 RAG 数据？原始聊天记录不会删除。')
+  const confirmed = await showConfirm('确定清空该联系人的记忆数据？原始聊天记录不会删除。')
   if (!confirmed) return
   const result = await api.clear_rag_index(Number(item.conversation_id), activeAccountWxid.value)
   if (!result?.ok) await showDialog('清空失败: ' + (result?.error || '未知错误'))
@@ -1116,6 +1146,25 @@ async function scanWeChatDirectory(wechatDir: string) {
     console.log('[DEBUG] 扫描结果:', scanResult)
     
     if (!scanResult.ok) {
+      if (scanResult.code === 'legacy_wechat_v3') {
+        const users = scanResult.v3?.users || []
+        const accountNote = users.length
+          ? `检测到 ${users.length} 个账号：${users.slice(0, 3).join('、')}${users.length > 3 ? ' 等' : ''}`
+          : ''
+        showDialog({
+          title: '请升级微信至 4.0 及以上版本',
+          type: 'wechat_upgrade',
+          detectedPath: scanResult.v3?.wechat_dir || wechatDir,
+          detectedAccounts: accountNote,
+          quickLinkTitle: '微信，是一个生活方式',
+          quickLinkUrl: 'https://weixin.qq.com/',
+          message:
+            '检测到旧版微信（3.9）数据目录：\n' +
+            (scanResult.v3?.wechat_dir || wechatDir) +
+            '\n\nChrono Trace 仅支持微信 4.0 及以上版本（新版数据结构与密钥获取方式不同），请升级微信后重试：\n微信「设置 → 关于微信 → 检查更新」，或前往 weixin.qq.com 下载最新版。',
+        })
+        return
+      }
       showDialog('扫描失败：' + (scanResult.error || '未知错误'))
       return
     }
@@ -1707,6 +1756,60 @@ onMounted(() => {
   font-size: 13px;
   color: var(--ct-text-secondary);
   line-height: 1.5;
+}
+
+.maint-seg-group {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px;
+  height: 34px;
+  background: #e2e8f0;
+  border-radius: 9px;
+  flex-shrink: 0;
+  box-sizing: border-box;
+}
+
+.maint-seg-btn {
+  height: 28px !important;
+  padding: 0 12px !important;
+  border-radius: 7px !important;
+  border: none !important;
+  background: transparent !important;
+  color: #475569 !important;
+  font-size: 12.5px !important;
+  font-weight: 600 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  cursor: pointer;
+  white-space: nowrap !important;
+  box-shadow: none !important;
+  transition: all 0.15s ease;
+}
+
+.maint-seg-btn:hover:not(.active) {
+  color: #0f172a !important;
+}
+
+.maint-seg-btn.active {
+  background: #ffffff !important;
+  color: #6d28d9 !important;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.1) !important;
+}
+
+.maint-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.maint-switch .switch-label {
+  white-space: nowrap;
+  flex-shrink: 0;
+  min-width: 42px;
+  text-align: right;
 }
 
 .maintenance-feedback {

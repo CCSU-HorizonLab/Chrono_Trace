@@ -139,6 +139,7 @@ type PyWebViewApi = {
   // 会话线程归档与继承
   get_latest_thread: (display_name: string, account_wxid?: string) => Promise<any>
   load_thread_context: (thread_id: number) => Promise<any>
+  open_external_url: (url: string) => Promise<any>
 }
 
 function getApi(): PyWebViewApi {

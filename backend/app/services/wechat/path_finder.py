@@ -1,11 +1,11 @@
-"""微信数据库路径自动寻址模块 (仅支持V4)"""
+"""微信数据库路径自动寻址模块 (V4 用于导入；3.9 旧版仅检测用于升级引导)"""
 import logging
 import os
 import re
 import sys
 from collections import deque
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 
 if sys.platform == "win32":
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 class WeChatPathFinder:
-    """微信数据库路径查找器 (仅支持微信4.0+版本)"""
+    """微信数据库路径查找器 (支持微信4.0+版本；3.9旧版仅做检测用于升级引导)"""
 
     WECHAT_DATA_DIR_NAMES = {"xwechat_files", "wechat files"}
     SYSTEM_DIR_NAMES = {"all users", "applet", "wmpf"}
@@ -177,6 +177,42 @@ class WeChatPathFinder:
             return False
 
         return (path / "db_storage").is_dir()
+
+    @staticmethod
+    def _looks_like_wechat_user_dir_v3(path: Path) -> bool:
+        """以目录结构特征识别微信3.9账号目录 (WeChat Files/<wxid>/Msg/...)。
+
+        仅用于检测与升级引导，不用于导入。v4 账号目录可能存在同名
+        attachment 目录（Windows 大小写不敏感），故必须以库文件内容为准；
+        命中 v4 特征 (db_storage) 时优先按 v4 处理。
+        """
+        if not path or not path.exists() or not path.is_dir():
+            return False
+
+        if path.name.lower() in WeChatPathFinder.SYSTEM_DIR_NAMES:
+            return False
+
+        if WeChatPathFinder._looks_like_wechat_user_dir(path):
+            return False
+
+        msg_dir = path / "Msg"
+        if not msg_dir.is_dir():
+            return False
+
+        if (msg_dir / "MicroMsg.db").is_file():
+            return True
+
+        multi_dir = msg_dir / "Multi"
+        try:
+            if multi_dir.is_dir() and any(
+                file.name.lower().startswith("msg") and file.suffix.lower() == ".db"
+                for file in multi_dir.iterdir()
+            ):
+                return True
+        except OSError:
+            pass
+
+        return False
 
     @staticmethod
     def _looks_like_wechat_data_dir(path: Path) -> bool:
@@ -472,13 +508,8 @@ class WeChatPathFinder:
         )
 
     @classmethod
-    def find_wechat_data_path(cls) -> Optional[str]:
-        """
-        查找微信数据目录(支持新版xwechat_files和旧版WeChat Files)
-
-        Returns:
-            str: 微信数据目录路径
-        """
+    def _build_data_dir_candidates(cls) -> List[Tuple[Path, int]]:
+        """汇聚自动扫描的数据目录候选（注册表/文档/主目录/安装目录附近）。"""
         candidate_paths: List[Tuple[Path, int]] = []
         seen: Dict[str, int] = {}
 
@@ -524,10 +555,67 @@ class WeChatPathFinder:
                 nearby_paths.append(install_dir.parent.parent)
             cls._append_unique_paths(candidate_paths, seen, nearby_paths, aggressive_depth=1)
 
-        for candidate_path, aggressive_depth in candidate_paths:
+        return candidate_paths
+
+    @classmethod
+    def find_wechat_data_path(cls) -> Optional[str]:
+        """
+        查找微信4.0+数据目录(支持新版xwechat_files和旧版命名)
+
+        Returns:
+            str: 微信数据目录路径
+        """
+        for candidate_path, aggressive_depth in cls._build_data_dir_candidates():
             resolved = cls._resolve_wechat_data_dir(candidate_path, aggressive_depth=aggressive_depth)
             if resolved:
                 return str(resolved)
+
+        return None
+
+    @classmethod
+    def _inspect_legacy_v3_root(cls, candidate: Path) -> Optional[Dict[str, Any]]:
+        """在候选目录内探测3.9旧版数据（兼容直接选中 WeChat Files / 其上级 / 账号目录）。"""
+        for root in (candidate, candidate / "WeChat Files"):
+            if not root.is_dir():
+                continue
+
+            if cls._looks_like_wechat_user_dir_v3(root):
+                parent = root.parent
+                wechat_dir = (
+                    parent
+                    if parent.is_dir() and parent.name.lower() in cls.WECHAT_DATA_DIR_NAMES
+                    else root
+                )
+                return {"wechat_dir": str(wechat_dir), "users": [root.name]}
+
+            try:
+                user_dirs = [
+                    child
+                    for child in sorted(root.iterdir())
+                    if child.is_dir() and cls._looks_like_wechat_user_dir_v3(child)
+                ]
+            except OSError:
+                continue
+
+            if user_dirs:
+                return {
+                    "wechat_dir": str(root),
+                    "users": [user_dir.name for user_dir in user_dirs],
+                }
+
+        return None
+
+    @classmethod
+    def find_legacy_v3_info(cls) -> Optional[Dict[str, Any]]:
+        """自动探测旧版微信3.9数据目录（仅在4.0+未命中时用于升级引导）。
+
+        Returns:
+            {"wechat_dir": "C:/.../WeChat Files", "users": ["wxid_xxx", ...]} 或 None
+        """
+        for candidate_path, _aggressive_depth in cls._build_data_dir_candidates():
+            info = cls._inspect_legacy_v3_root(candidate_path)
+            if info:
+                return info
 
         return None
 

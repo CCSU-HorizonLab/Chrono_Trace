@@ -328,6 +328,7 @@ const incrementInfo = ref<IncrementInfo>(null)
 const incrementDismissed = ref(false)
 const pathInfo = ref<any>(null)
 const customWechatDir = ref('')
+const legacyV3Info = ref<{ wechat_dir?: string; users?: string[] } | null>(null)
 const availableAccounts = ref<WechatAccount[]>([])
 const activeAccountWxid = ref('')
 const selectedWxid = ref('')
@@ -449,7 +450,14 @@ async function detectWechatPath(options?: { silent?: boolean; accountWxid?: stri
   try {
     const accountWxid = options?.accountWxid || selectedWxid.value || activeAccountWxid.value || undefined
     const pathRes = await api.get_wechat_paths(accountWxid)
-    if (!pathRes?.ok || !pathRes.data) return false
+    if (!pathRes?.ok || !pathRes.data) {
+      if (pathRes?.code === 'legacy_wechat_v3') {
+        legacyV3Info.value = pathRes.v3 || null
+        wechatErr.value = '检测到旧版微信 3.9 数据目录，请将微信升级到 4.0 及以上版本后重试。'
+        addLog(`检测到旧版微信 3.9 数据目录：${pathRes.v3?.wechat_dir || '未知位置'}`)
+      }
+      return false
+    }
 
     pathInfo.value = pathRes.data
     mergeAccounts(await enrichWechatAccountsWithProfiles((pathRes.accounts || pathRes.data.accounts || []) as WechatAccount[]))
@@ -479,6 +487,40 @@ async function detectWechatPath(options?: { silent?: boolean; accountWxid?: stri
     console.error('[Home] detectWechatPath failed', error)
     return false
   }
+}
+
+function legacyV3GuidanceMessage(v3: { wechat_dir?: string; users?: string[] } | null | undefined) {
+  const dir = v3?.wechat_dir || '（未知位置）'
+  const users = v3?.users || []
+  const accountNote = users.length
+    ? `检测到 ${users.length} 个账号：${users.slice(0, 3).join('、')}${users.length > 3 ? ' 等' : ''}`
+    : ''
+  return [
+    '已检测到旧版微信（3.9）的数据目录：',
+    dir,
+    accountNote,
+    '',
+    'Chrono Trace 仅支持微信 4.0 及以上版本：新版数据结构与密钥获取方式不同，旧版数据库无法导入。',
+    '',
+    '请升级微信后重试：微信「设置 → 关于微信 → 检查更新」，或前往 weixin.qq.com 下载最新版，登录同一账号后再回到本页。'
+  ].filter(Boolean).join('\n')
+}
+
+async function showLegacyV3Guidance(v3: { wechat_dir?: string; users?: string[] } | null | undefined) {
+  const dir = v3?.wechat_dir || '（未识别具体目录）'
+  const users = Array.isArray(v3?.users) ? v3!.users : []
+  const accountNote = users.length
+    ? `检测到 ${users.length} 个账号：${users.slice(0, 3).join('、')}${users.length > 3 ? ' 等' : ''}`
+    : ''
+  await showDialog({
+    title: '请升级微信至 4.0 及以上版本',
+    type: 'wechat_upgrade',
+    detectedPath: dir,
+    detectedAccounts: accountNote,
+    quickLinkTitle: '微信，是一个生活方式',
+    quickLinkUrl: 'https://weixin.qq.com/',
+    message: legacyV3GuidanceMessage(v3)
+  })
 }
 
 async function promptManualWechatPathSelection(context: 'startup' | 'verify') {
@@ -523,8 +565,12 @@ async function loadSavedPaths() {
     if (!pathInfo.value) {
       const detected = await detectWechatPath({ accountWxid: targetWxid || undefined })
       if (!detected) {
-        addLog('暂未自动检测到微信数据目录，可稍后手动选择。')
-        await promptManualWechatPathSelection('startup')
+        if (legacyV3Info.value) {
+          await showLegacyV3Guidance(legacyV3Info.value)
+        } else {
+          addLog('暂未自动检测到微信数据目录，可稍后手动选择。')
+          await promptManualWechatPathSelection('startup')
+        }
       }
     }
 
@@ -896,6 +942,13 @@ async function scanAndSetCustomPath(wechatDir: string) {
     addLog('正在扫描微信目录。')
     const scanResult = await api.scan_wechat_directory(wechatDir)
     if (!scanResult.ok || !scanResult.accounts?.length) {
+      if (scanResult.code === 'legacy_wechat_v3') {
+        legacyV3Info.value = scanResult.v3 || null
+        wechatErr.value = '该目录为旧版微信 3.9 数据目录，请将微信升级到 4.0 及以上版本后重试。'
+        addLog(`所选目录为旧版微信 3.9 数据：${scanResult.v3?.wechat_dir || wechatDir}`)
+        await showLegacyV3Guidance(scanResult.v3)
+        return
+      }
       wechatErr.value = '未在该目录下找到微信数据。'
       addLog('扫描失败：未找到可用的微信账号目录。')
       return

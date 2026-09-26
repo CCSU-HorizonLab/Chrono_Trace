@@ -332,3 +332,123 @@ def test_find_wechat_data_path_discovers_linux_xdg_documents(monkeypatch, tmp_pa
 
     assert WeChatPathFinder.find_wechat_data_path() == str(detected_dir)
     assert WeChatPathFinder.find_all_user_wxids(str(detected_dir)) == ["lishao378_86f8"]
+
+
+def _shield_auto_candidates(monkeypatch, tmp_path, documents_root):
+    """屏蔽宿主机环境，让自动扫描只看到 documents_root。"""
+    _install_fake_winreg(monkeypatch, tmp_path / "RegistryMissing")
+    monkeypatch.setattr("app.services.wechat.path_finder.Path.home", lambda: tmp_path)
+    monkeypatch.setattr(
+        "app.services.wechat.path_finder.WeChatPathFinder._get_documents_paths",
+        classmethod(lambda cls: [documents_root]),
+    )
+    monkeypatch.setattr(
+        "app.services.wechat.path_finder.WeChatPathFinder.find_wechat_install_path",
+        classmethod(lambda cls: None),
+    )
+    monkeypatch.delenv("USERPROFILE", raising=False)
+    monkeypatch.delenv("OneDrive", raising=False)
+    monkeypatch.delenv("OneDriveConsumer", raising=False)
+    monkeypatch.delenv("OneDriveCommercial", raising=False)
+
+
+def _make_v39_user_dir(base: Path, name: str = "wxid_old") -> Path:
+    user_dir = base / name
+    msg_dir = user_dir / "Msg"
+    multi_dir = msg_dir / "Multi"
+    multi_dir.mkdir(parents=True)
+    (msg_dir / "MicroMsg.db").write_text("", encoding="utf-8")
+    (multi_dir / "MSG0.db").write_text("", encoding="utf-8")
+    (multi_dir / "MSG1.db").write_text("", encoding="utf-8")
+    return user_dir
+
+
+def test_find_legacy_v3_info_detects_wechat_39_structure(monkeypatch, tmp_path):
+    documents_root = tmp_path / "Documents"
+    v3_root = documents_root / "WeChat Files"
+    _make_v39_user_dir(v3_root)
+
+    _shield_auto_candidates(monkeypatch, tmp_path, documents_root)
+
+    assert WeChatPathFinder.find_legacy_v3_info() == {
+        "wechat_dir": str(v3_root),
+        "users": ["wxid_old"],
+    }
+
+
+def test_find_legacy_v3_info_returns_none_when_only_v4(monkeypatch, tmp_path):
+    documents_root = tmp_path / "Documents"
+    v4_root = documents_root / "xwechat_files"
+    user_dir = v4_root / "wxid_new"
+    (user_dir / "db_storage" / "message").mkdir(parents=True)
+    (user_dir / "db_storage" / "message" / "message_0.db").write_text("", encoding="utf-8")
+
+    _shield_auto_candidates(monkeypatch, tmp_path, documents_root)
+
+    assert WeChatPathFinder.find_legacy_v3_info() is None
+
+
+def test_find_legacy_v3_info_ignores_dir_without_db_evidence(tmp_path):
+    decoy = tmp_path / "wxid_decoy"
+    (decoy / "Msg").mkdir(parents=True)  # 只有 Msg 目录、无任何库文件
+
+    assert WeChatPathFinder._inspect_legacy_v3_root(tmp_path) is None
+
+
+def test_get_wechat_paths_reports_legacy_v3_when_only_v39_present(monkeypatch, tmp_path):
+    documents_root = tmp_path / "Documents"
+    v3_root = documents_root / "WeChat Files"
+    _make_v39_user_dir(v3_root)
+
+    _shield_auto_candidates(monkeypatch, tmp_path, documents_root)
+
+    result = WeChatIngestService().get_wechat_paths()
+
+    assert result["ok"] is False
+    assert result["code"] == "legacy_wechat_v3"
+    assert result["v3"]["wechat_dir"] == str(v3_root)
+    assert result["v3"]["users"] == ["wxid_old"]
+
+
+def test_bridge_scan_wechat_directory_reports_legacy_v3(tmp_path):
+    v3_root = tmp_path / "WeChat Files"
+    _make_v39_user_dir(v3_root)
+
+    bridge = Bridge.__new__(Bridge)
+    bridge._settings_lock = __import__('threading').RLock()
+    bridge.settings = {"wechat_accounts": []}
+
+    result = bridge.scan_wechat_directory(str(v3_root))
+
+    assert result["ok"] is False
+    assert result["code"] == "legacy_wechat_v3"
+    assert result["v3"]["users"] == ["wxid_old"]
+
+
+def test_bridge_scan_wechat_directory_reports_legacy_v3_for_account_dir(tmp_path):
+    v3_root = tmp_path / "WeChat Files"
+    user_dir = _make_v39_user_dir(v3_root)
+
+    bridge = Bridge.__new__(Bridge)
+    bridge._settings_lock = __import__('threading').RLock()
+    bridge.settings = {"wechat_accounts": []}
+
+    result = bridge.scan_wechat_directory(str(user_dir))
+
+    assert result["ok"] is False
+    assert result["code"] == "legacy_wechat_v3"
+    assert result["v3"]["wechat_dir"] == str(v3_root)
+    assert result["v3"]["users"] == ["wxid_old"]
+
+
+def test_detect_wechat_version_recognizes_v3_structure(tmp_path):
+    from app.services.wechat.db.detector import detect_wechat_version
+
+    user_dir = _make_v39_user_dir(tmp_path)
+    assert detect_wechat_version(str(user_dir)) == "v3"
+
+    v4_dir = tmp_path / "wxid_new"
+    (v4_dir / "db_storage").mkdir(parents=True)
+    assert detect_wechat_version(str(v4_dir)) == "v4"
+
+    assert detect_wechat_version(str(tmp_path / "not_exists")) == "unknown"

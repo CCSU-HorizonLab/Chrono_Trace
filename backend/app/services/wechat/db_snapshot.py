@@ -62,11 +62,15 @@ class EncryptedShardWatcher:
         if not force and state == self._state:
             return False
 
+        tmp_out_path = self.out_path.with_name(self.out_path.name + ".tmp")
         try:
             with open(self.src, "rb") as f:
                 size = os.fstat(f.fileno()).st_size
                 total_pages = max(1, size // PAGE_SIZE)
-                out = open(self.out_path, "wb")
+                # 写临时文件、成功后原子替换：此前直接 "wb" 打开 out 会先清零，
+                # 而未变化页又要从 out 读旧内容——同文件边读边写，回退路径必然
+                # 触发且页 1 漏拼 SQLite 头（「file is not a database」根源）
+                out = open(tmp_out_path, "wb")
                 try:
                     changed = 0
                     failed_pages = 0
@@ -101,11 +105,17 @@ class EncryptedShardWatcher:
                         )
                 finally:
                     out.close()
+                    os.replace(tmp_out_path, self.out_path)
         except OSError as e:
             logger.warning("[dbwatch] 读取 %s 失败: %s", self.src, e)
             return False
         except Exception as e:
-            # 解密/WAL 合并中途失败：不提交新 state（见上），下一轮自动重试
+            # 解密/WAL 合并中途失败：不提交新 state（见上），下一轮自动重试；
+            # 旧快照原封未动（写的是 .tmp），直接丢弃临时文件
+            try:
+                tmp_out_path.unlink(missing_ok=True)
+            except OSError:
+                pass
             logger.warning("[dbwatch] 刷新 %s 中途失败（保留旧快照，待重试）: %s", self.src, e)
             return False
 
@@ -127,7 +137,8 @@ class EncryptedShardWatcher:
 
     def close(self) -> None:
         self._close_conn()
-        for p in (self.out_path, Path(str(self.out_path) + "-wal"), Path(str(self.out_path) + "-shm")):
+        for p in (self.out_path, Path(str(self.out_path) + ".tmp"),
+                  Path(str(self.out_path) + "-wal"), Path(str(self.out_path) + "-shm")):
             try:
                 p.unlink(missing_ok=True)
             except OSError:
@@ -184,13 +195,24 @@ class EncryptedShardWatcher:
                     return data
         except OSError:
             pass
-        # 输出文件还没有该页（首建）：回退到直接解密
+        # 输出文件还没有该页（上次刷新中断被截短，但哈希缓存仍在）：
+        # 回退直接解密；WAL-only 尾页必然 HMAC 失败——返回零占位与主循环
+        # 同策略，交给本轮稍后的 _apply_wal 用帧覆盖。此前此处无兜底，
+        # RuntimeError 直接打断整轮刷新且每次重试卡死在同一页
+        # （实测 message_1 页 15859 恒失败 → 监听恒 0 条）。
         with open(self.src, "rb") as f:
             f.seek((page_no - 1) * PAGE_SIZE)
             raw = f.read(PAGE_SIZE)
         raw = raw + b"\x00" * (PAGE_SIZE - len(raw))
         self._page_hashes[page_no] = hashlib.sha1(raw).hexdigest()
-        return self._decrypt_raw(raw, page_no)
+        try:
+            data = self._decrypt_raw(raw, page_no)
+        except Exception:
+            return b"\x00" * PAGE_SIZE
+        if page_no == 1:
+            # 页1 解密产物 4080B（跳过 salt）——与主循环一致补 16B SQLite 头
+            data = self._dec.SQLITE_HEADER + data
+        return data
 
     def _apply_wal(self, main_file, out, total_pages: int) -> None:
         """把 -wal 中的已提交帧覆盖到解密视图（帧 salt 与 wal 头一致才应用）。

@@ -1762,6 +1762,7 @@ function startPolling() {
               _type: 'live_msg', id: m.id, sender_attr: m.sender_attr,
               content: m.content, ts: m.timestamp,
             })
+            setTimeout(scrollToBottom, 50)
           }
         })
         .catch(() => {})
@@ -2017,7 +2018,8 @@ async function manualGenerate() {
 
 /** 自动滚动建议列表到底部 */
 function scrollToBottom() {
-  const listEl = suggestionsRef.value?.querySelector('.fp-suggestions-list')
+  // .fp-scroll-area 自身即滚动容器（此前 querySelector 查的类名不存在）
+  const listEl = suggestionsRef.value
   if (listEl) {
     listEl.scrollTop = listEl.scrollHeight
   }
@@ -2573,9 +2575,9 @@ async function loadLastThread() {
 .fp-card-bd { padding: 0 12px 12px; border-top: 1px solid var(--ct-border-color); padding-top: 12px; background: var(--ct-bg-secondary); }
 .fp-cot { background: var(--ct-bg-elevated); border-radius: var(--ct-radius-md); padding: 10px; margin-bottom: 12px; border: 1px solid var(--ct-border-color); }
 .fp-cot summary { font-size: 11px; color: var(--ct-text-secondary); cursor: pointer; user-select: none; font-weight: 600; outline: none; }
-.fp-cot-txt { font-size: 12px; line-height: 1.6; color: var(--ct-text-secondary); margin-top: 8px; border-top: 1px dashed var(--ct-border-color); padding-top: 8px; white-space: pre-wrap; }
+.fp-cot-txt { user-select: text; -webkit-user-select: text; font-size: 12px; line-height: 1.6; color: var(--ct-text-secondary); margin-top: 8px; border-top: 1px dashed var(--ct-border-color); padding-top: 8px; white-space: pre-wrap; }
 .fp-speech-item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: var(--ct-bg-elevated); border-radius: var(--ct-radius-md); margin-bottom: 8px; border: 1px solid var(--ct-border-color); box-shadow: 0 1px 2px rgba(15,23,42,0.02); }
-.fp-speech-text { font-size: 13px; line-height: 1.6; color: var(--ct-text-primary); flex: 1; }
+.fp-speech-text { font-size: 13px; line-height: 1.6; color: var(--ct-text-primary); flex: 1; user-select: text; -webkit-user-select: text; }
 .fp-btn-copy { font-size: 11px; font-weight: 500; color: var(--ct-text-secondary); background: var(--ct-bg-secondary); border: 1px solid var(--ct-border-color); padding: 4px 10px; border-radius: var(--ct-radius-sm); cursor: pointer; transition: all 0.2s; flex-shrink: 0; }
 .fp-btn-copy:hover { color: var(--ct-color-primary); border-color: var(--ct-color-primary); background: white; box-shadow: var(--ct-shadow-sm); }
 .fp-rag-row { display: flex; justify-content: flex-end; margin-top: 8px; min-height: 18px; }
@@ -2619,7 +2621,7 @@ async function loadLastThread() {
 .fp-bubble.user .fp-bubble-avatar { color: white; background: rgba(0,0,0,0.15); }
 .fp-bubble-time { font-size: 10px; color: var(--ct-text-tertiary); opacity: 0.8; }
 .fp-bubble.user .fp-bubble-time { color: rgba(255,255,255,0.8); }
-.fp-bubble-txt { font-size: 14px; line-height: 1.5; word-break: break-word; white-space: pre-wrap; }
+.fp-bubble-txt { font-size: 14px; line-height: 1.5; word-break: break-word; white-space: pre-wrap; user-select: text; -webkit-user-select: text; cursor: text; }
 .fp-bubble .fp-rag-row { margin-top: 7px; }
 
 /* Loading State */

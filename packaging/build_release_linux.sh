@@ -135,6 +135,15 @@ fi
 DIST_DIR="$RELEASE_ROOT/pyinstaller-linux/Chrono Trace"
 [[ -d "$DIST_DIR" ]] || { echo "打包产物目录缺失: $DIST_DIR" >&2; exit 1; }
 
+# ---------- 选择性 strip（瘦身）----------
+# spec 内全量 strip 会打坏 scipy OpenBLAS 的 ELF 布局（load 对齐校验失败），
+# 故只对大体积、耐裁的 .so 手工裁符号：torch/Qt 主力收益在此。
+# 排除 scipy*/numpy* 的 vendored 库与其余小文件。
+log "选择性 strip 大体积 .so…"
+find "$DIST_DIR/_internal" -type f -name "*.so*" -size +5M \
+  ! -path "*scipy*" ! -path "*numpy*" ! -path "*OpenBLAS*" ! -path "*openblas*" \
+  -exec strip --strip-unneeded {} \; 2>/dev/null || true
+
 # ---------- tar.gz + .desktop ----------
 log "生成 tar.gz 与 .desktop…"
 TARBALL="$RELEASE_ROOT/chrono-trace-${VERSION}-linux.tar.gz"

@@ -57,6 +57,28 @@ hiddenimports += collect_submodules("modelscope.hub")
 hiddenimports += collect_submodules("scipy._external.array_api_compat")
 
 
+# ---------- Linux 产物瘦身 ----------
+# 1) Qt 模块裁剪：只保留 Qt 后端 + WebEngine 实际依赖（WebEngine 需要
+#    Qml/Quick/WebChannel/QuickControls/Network/Wayland/Xcb 等，勿删）
+_QT_MODULE_EXCLUDES = (
+    # 注：libQt6Positioning 是 WebEngineCore/Widgets 的硬链接依赖（ldd 核实），不可裁
+    "libQt6Multimedia", "libQt6SpatialAudio",
+    "libQt6Pdf",
+    "libQt6RemoteObjects", "libQt6Sensors", "libQt6SerialPort",
+    "libQt6Test", "libQt6TextToSpeech", "libQt6StateMachine",
+    "libQt6QuickTest",
+)
+# 2) 数据裁剪：Qt 翻译只留中英、去 WebEngine devtools 资源（仅远程调试用）
+def _keep_data(name: str) -> bool:
+    if "qtwebengine_devtools_resources" in name:
+        return False
+    if "Qt6/translations/" in name or "/translations/" in name:
+        if "qtwebengine_locales" in name:
+            return "zh-CN" in name or "zh_CN" in name or "en-US" in name or name.endswith("en.pak")
+        return False  # qt_*.qm 全部不需要（应用界面语言由前端控制）
+    return True
+
+
 a = Analysis(
     [str(PROJECT_ROOT / "app.py")],
     pathex=[str(PROJECT_ROOT)],
@@ -88,6 +110,9 @@ a = Analysis(
     ],
     noarchive=False,
 )
+# 瘦身过滤（见上方清单）：未用 Qt 模块与翻译资源在进包前剔除
+a.binaries = [b for b in a.binaries if not any(pat in b[0] for pat in _QT_MODULE_EXCLUDES)]
+a.datas = [d for d in a.datas if _keep_data(d[0])]
 pyz = PYZ(a.pure)
 
 exe = EXE(
@@ -98,7 +123,7 @@ exe = EXE(
     name=APP_NAME,
     debug=False,
     bootloader_ignore_signals=False,
-    strip=False,
+    strip=False,  # 全量 strip 会打坏 scipy OpenBLAS 的 ELF 布局——瘦身由构建脚本选择性 strip
     upx=False,
     console=False,
     disable_windowed_traceback=False,

@@ -7,6 +7,7 @@ activate_gpu_overlay_path()
 import webview
 import logging
 from backend.app.webview.bridge import Bridge
+from backend.app.webview.close_guard import attach_close_guard
 from backend.app.config import get_dist_index_path, PROD_WINDOW_TITLE
 from backend.app.logging_config import setup_logging, get_logger
 
@@ -27,6 +28,8 @@ def main():
     def on_started():
         """窗口启动后，将窗口引用注入 Bridge（供 Win32 悬浮窗服务使用）"""
         bridge.set_webview_window(window)
+
+    attach_close_guard(window, bridge)
 
     webview.start(func=on_started)
 

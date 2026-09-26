@@ -74,6 +74,7 @@ class Bridge:
         self._webview_window = None  # 由 app_dev.py 注入
         self._analysis_cancel_event = None  # 用于取消好感度分析
         self._affinity_service = None  # 好感度分析服务实例（analyze_affinity 中懒创建）
+        self._close_actions: dict[str, Any] = {}  # 关闭守卫动作（close_guard 装配）
 
     def _load_settings(self):
         """加载设置"""
@@ -3861,6 +3862,26 @@ class Bridge:
             }
 
     # ==================== 悬浮窗管理 ====================
+
+    def set_close_actions(self, minimize=None, exit=None) -> None:
+        """由 close_guard 装配关闭确认动作（见 webview/close_guard.py）。"""
+        self._close_actions = {"minimize": minimize, "exit": exit}
+
+    def perform_close_action(self, action: str) -> dict[str, Any]:
+        """执行关闭按钮选择（前端关闭确认对话框调用）。
+
+        action: "minimize"（最小化到任务栏）| "exit"（退出应用）
+        """
+        action = str(action or "").strip().lower()
+        fn = self._close_actions.get(action)
+        if fn is None:
+            return {"ok": False, "error": f"未知关闭动作: {action or '(空)'}"}
+        try:
+            fn()
+            return {"ok": True, "action": action}
+        except Exception as e:
+            logger.error(f"[Bridge] 关闭动作执行失败: {e}")
+            return {"ok": False, "error": str(e)}
 
     def set_webview_window(self, window):
         """设置 PyWebView 窗口引用（由 app_dev.py 启动后注入）"""

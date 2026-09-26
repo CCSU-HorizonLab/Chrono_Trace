@@ -305,6 +305,21 @@
             </label>
           </div>
 
+          <div class="row" style="margin-top: 16px;">
+            <div class="lab">关闭按钮行为</div>
+            <div style="display: flex; gap: 14px; align-items: center; font-size: 13px;">
+              <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
+                <input type="radio" v-model="form.close_button_behavior" value="ask" /> 每次询问
+              </label>
+              <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
+                <input type="radio" v-model="form.close_button_behavior" value="minimize" /> 最小化
+              </label>
+              <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
+                <input type="radio" v-model="form.close_button_behavior" value="exit" /> 直接退出
+              </label>
+            </div>
+          </div>
+
           <div class="gpu-status-card">
             <div class="gpu-status-header">当前 GPU 检测状态</div>
             <div v-if="gpuInfoLoading" class="gpu-status-loading">
@@ -484,6 +499,7 @@ const form = reactive<{
   wechat_user_wxid: string
   wechat_db_key: string
   analysis_device_mode: AnalysisDeviceMode
+  close_button_behavior: string
   model_root_dir: string
   rag_enabled: boolean
   rag_remote_context_redaction: boolean
@@ -500,6 +516,7 @@ const form = reactive<{
   wechat_user_wxid: '',
   wechat_db_key: '',
   analysis_device_mode: 'auto',
+  close_button_behavior: 'ask',
   model_root_dir: '',
   rag_enabled: false,
   rag_remote_context_redaction: true,
@@ -718,6 +735,8 @@ async function onLoad() {
       // 计算设备模式
       const dm = s.analysis_device_mode
       form.analysis_device_mode = (dm === 'gpu' || dm === 'cpu' || dm === 'auto') ? dm : 'auto'
+      const cb = String(s.close_button_behavior || 'ask')
+      form.close_button_behavior = (cb === 'minimize' || cb === 'exit') ? cb : 'ask'
       form.rag_enabled = Boolean(s.rag_enabled)
       form.rag_remote_context_redaction = s.rag_remote_context_redaction !== false
       form.rag_allow_remote_embedding = Boolean(s.rag_allow_remote_embedding)

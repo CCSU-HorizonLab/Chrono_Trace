@@ -515,7 +515,9 @@ class AffinityAnalysisService:
             relationship_stability_confidence,
             self.NEUTRAL_OVERALL_BASELINE,
         )
-        result.overall_score = min(100.0, self._sigmoid_calibrate(shrunk_score))
+        # 去掉 sigmoid 校准（双重压缩根因）：置信度收缩已是唯一保守化步骤
+        # 此前 60.8 → 收缩39 → sigmoid25 的管线与维度分严重不一致
+        result.overall_score = round(max(0.0, min(100.0, shrunk_score)), 2)
         logger.info(
             "综合评分计算完成: %.1f分 (base=%.1f, bonus=%.1f, total=%.1f, confidence=%.2f)",
             result.overall_score,
@@ -658,14 +660,16 @@ class AffinityAnalysisService:
         affinity_debug_log(f"{'='*80}\n")
     
     def _generate_overall_interpretation(self, score: float) -> str:
-        """生成综合解释"""
-        if score >= 80:
+        """生成综合解释（区间按去掉 sigmoid 后的新分数分布调整）"""
+        if score >= 75:
             return "总体好感度非常高，对方对这段关系非常重视，表现出强烈的情感投入"
-        elif score >= 55:
+        elif score >= 60:
             return "总体好感度较高，对方对这段关系较为重视，愿意投入时间和精力"
+        elif score >= 45:
+            return "总体好感度中等，对方有基本好感，关系有发展空间"
         elif score >= 35:
             return "总体好感度一般，对方态度较为平淡，可能需要更多互动来培养感情"
-        elif score >= 20:
+        elif score >= 25:
             return "总体好感度较低，对方可能兴趣不大，建议观察更多互动信号"
         else:
             return "总体好感度很低，对方可能对这段关系不太感兴趣"

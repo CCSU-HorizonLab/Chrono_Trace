@@ -2111,6 +2111,26 @@ class Bridge:
                 """
 
             rows = conn.execute(query, (resolved_account, max(1, int(limit)))).fetchall()
+            fact_counts_by_conv: dict[int, tuple[int, int]] = {}
+            try:
+                for f_row in conn.execute(
+                    """
+                    SELECT conversation_id,
+                           COUNT(*) AS fact_count,
+                           COALESCE(SUM(CASE WHEN enabled = 1 THEN 1 ELSE 0 END), 0) AS enabled_fact_count
+                    FROM rag_facts
+                    WHERE account_wxid = ? AND status = 'active'
+                    GROUP BY conversation_id
+                    """,
+                    (resolved_account,),
+                ).fetchall():
+                    fact_counts_by_conv[int(f_row["conversation_id"])] = (
+                        int(f_row["fact_count"] or 0),
+                        int(f_row["enabled_fact_count"] or 0),
+                    )
+            except Exception:
+                pass
+
             from ..services.realtime.rag.indexer import get_active_and_queued
             live_states = get_active_and_queued()
             items = []
@@ -2118,7 +2138,11 @@ class Bridge:
                 item = dict(row)
                 if is_excluded_contact_username(item.get("username")):
                     continue
-                live = live_states.get((resolved_account, int(item.get("conversation_id") or 0)))
+                conv_id = int(item.get("conversation_id") or 0)
+                f_total, f_enabled = fact_counts_by_conv.get(conv_id, (0, 0))
+                item["fact_count"] = f_total
+                item["enabled_fact_count"] = f_enabled
+                live = live_states.get((resolved_account, conv_id))
                 if live:
                     # 后台真值优先：构建中/排队中（DB status 在此期间不更新）
                     item["status"] = live
@@ -2141,6 +2165,7 @@ class Bridge:
                     )
                 },
                 "items": items,
+                "total_facts": sum(int(item.get("fact_count") or 0) for item in items),
                 "total_documents": sum(int(item.get("document_count") or 0) for item in items),
                 "total_storage_bytes": sum(int(item.get("storage_bytes") or 0) for item in items),
             }
@@ -2448,6 +2473,18 @@ class Bridge:
                 wxid_dirs = WeChatPathFinder.find_all_user_wxids(str(root_dir))
 
             if not wxid_dirs:
+                # V4 未命中：探测 3.9 旧版结构，命中则引导用户升级微信
+                legacy_v3 = WeChatPathFinder._inspect_legacy_v3_root(target_dir)
+                if legacy_v3:
+                    return {
+                        "ok": False,
+                        "code": "legacy_wechat_v3",
+                        "error": "该目录为旧版微信 3.9 数据目录，请将微信升级到 4.0 及以上版本后重试",
+                        "v3": legacy_v3,
+                        "wxids": [],
+                        "databases": {},
+                        "accounts": [],
+                    }
                 return {
                     "ok": False,
                     "error": f"未在目录中找到微信 V4 数据目录: {wechat_dir}",
@@ -4867,3 +4904,17 @@ class Bridge:
         except Exception as e:
             logger.error(f"[Bridge] 加载线程上下文失败: {e}")
             return {"ok": False, "error": str(e)}
+
+    def open_external_url(self, url: str) -> dict[str, Any]:
+        """在系统默认浏览器中打开外部链接"""
+        try:
+            import webbrowser
+            target = str(url or "").strip()
+            if not target.startswith(("http://", "https://")):
+                return {"ok": False, "error": "仅允许打开 http/https 链接"}
+            webbrowser.open(target)
+            return {"ok": True}
+        except Exception as e:
+            logger.error(f"[Bridge] 打开外部链接失败: {e}")
+            return {"ok": False, "error": str(e)}
+

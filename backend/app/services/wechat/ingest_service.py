@@ -39,6 +39,15 @@ class WeChatIngestService:
             paths = WeChatPathFinder.find_all_wechat_dbs()
 
             if not paths:
+                # 4.0+ 未命中：探测 3.9 旧版结构，命中则引导用户升级微信
+                legacy_v3 = WeChatPathFinder.find_legacy_v3_info()
+                if legacy_v3:
+                    return {
+                        "ok": False,
+                        "code": "legacy_wechat_v3",
+                        "error": "检测到旧版微信 3.9 数据目录，请将微信升级到 4.0 及以上版本后重试",
+                        "v3": legacy_v3,
+                    }
                 return {
                     "ok": False,
                     "error": "未找到微信数据目录,请确保微信已安装并登录"

@@ -117,6 +117,7 @@
           <div
             v-for="s in allSuggestions"
             :key="s.id || s._tempId"
+            :data-sid="s.id || 'manual'"
             :class="{
               'fp-card': s._type === 'suggestion',
               [s.severity || 'medium']: s._type === 'suggestion',
@@ -1852,6 +1853,8 @@ async function setIntent(newIntent: string) {
   intent.value = newIntent as any
   try { await api.set_suggestion_config({ intent: newIntent }) }
   catch (e) { console.error('设置走向失败:', e) }
+  // 走向切换可能触发新一轮建议生成——延时滚动让新内容可见
+  setTimeout(scrollToBottom, 500)
 }
 
 // ========== 模型配置 ==========
@@ -2027,13 +2030,25 @@ function scrollToBottom() {
 
 function toggleSuggestion(s: any) {
   const id = String(s.id || 'manual')
-  if (expandedIds.value.has(id)) {
+  const wasExpanded = expandedIds.value.has(id)
+  if (wasExpanded) {
     expandedIds.value.delete(id)
   } else {
     expandedIds.value.add(id)
   }
   // 触发响应式更新
   expandedIds.value = new Set(expandedIds.value)
+  // 展开时滚动让卡片可见（内容撑高可能超出视口）
+  if (!wasExpanded) {
+    nextTick(() => {
+      const el = suggestionsRef.value?.querySelector(`[data-sid="${id}"]`)
+      if (el) {
+        (el as HTMLElement).scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+      } else {
+        scrollToBottom()
+      }
+    })
+  }
 }
 
 function isSuggestionExpanded(s: any): boolean {

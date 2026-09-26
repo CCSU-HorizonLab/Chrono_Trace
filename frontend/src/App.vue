@@ -58,18 +58,23 @@
   </div>
   <!-- 关闭按钮确认对话框（close_guard 拦截 X 点击后触发） -->
   <teleport to="body">
-    <div v-if="showCloseDialog" class="close-confirm-mask">
-      <div class="close-confirm-card">
-        <h3 class="close-confirm-title">关闭 Chrono_Trace</h3>
-        <p class="close-confirm-text">正在进行中的分析/监听会随退出中断，确定要退出吗？</p>
+    <div v-if="showCloseDialog" class="close-confirm-mask" @click.self="showCloseDialog = false">
+      <div class="close-confirm-card" role="dialog" aria-modal="true">
+        <div class="close-confirm-head">
+          <span class="close-confirm-icon" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          </span>
+          <h3 class="close-confirm-title">要退出 Chrono_Trace 吗？</h3>
+        </div>
+        <p class="close-confirm-text">退出会中断正在进行的分析与实时监听；最小化则保留在任务栏继续运行。</p>
         <label class="close-confirm-remember">
           <input type="checkbox" v-model="rememberCloseChoice" />
-          记住我的选择（可在设置中改回询问）
+          <span>记住我的选择（设置 → 关闭按钮行为 可改回）</span>
         </label>
         <div class="close-confirm-actions">
           <button class="cc-btn ghost" @click="showCloseDialog = false">取消</button>
           <button class="cc-btn ghost" @click="handleCloseChoice('minimize')">最小化</button>
-          <button class="cc-btn primary" @click="handleCloseChoice('exit')">退出</button>
+          <button class="cc-btn primary" @click="handleCloseChoice('exit')">退出应用</button>
         </div>
       </div>
     </div>
@@ -393,27 +398,76 @@ onUnmounted(() => {
 /* 关闭确认对话框 */
 .close-confirm-mask {
   position: fixed; inset: 0; z-index: 3000;
-  background: rgba(15, 18, 25, 0.55);
+  background: rgba(10, 12, 18, 0.6);
+  backdrop-filter: blur(2px);
   display: flex; align-items: center; justify-content: center;
+  animation: cc-fade-in 0.14s ease;
 }
 .close-confirm-card {
-  width: 360px; padding: 20px 22px; border-radius: 12px;
+  width: 380px; padding: 22px 24px 18px; border-radius: 14px;
   background: var(--ct-bg-elevated, #1d222c); color: var(--ct-text-main, #e8eaf0);
-  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  box-shadow: 0 22px 56px rgba(0, 0, 0, 0.5);
+  animation: cc-pop-in 0.16s ease;
 }
-.close-confirm-title { margin: 0 0 8px; font-size: 16px; }
-.close-confirm-text { margin: 0 0 12px; font-size: 13px; opacity: 0.8; line-height: 1.5; }
+.close-confirm-head {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
+}
+.close-confirm-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; border-radius: 10px; flex-shrink: 0;
+  background: rgba(108, 92, 231, 0.14); color: #8b7ff0;
+}
+.close-confirm-title { margin: 0; font-size: 16px; font-weight: 600; letter-spacing: 0.2px; }
+.close-confirm-text {
+  margin: 0 0 14px; font-size: 13px; line-height: 1.65;
+  color: var(--ct-text-secondary, rgba(232, 234, 240, 0.72));
+}
 .close-confirm-remember {
-  display: flex; align-items: center; gap: 6px;
-  font-size: 12px; opacity: 0.75; margin-bottom: 16px; cursor: pointer;
+  display: flex; align-items: center; gap: 9px;
+  font-size: 12.5px; color: var(--ct-text-secondary, rgba(232, 234, 240, 0.65));
+  margin-bottom: 18px; cursor: pointer; user-select: none;
+  padding: 8px 10px; border-radius: 9px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  transition: background 0.15s ease;
 }
-.close-confirm-actions { display: flex; justify-content: flex-end; gap: 10px; }
+.close-confirm-remember:hover { background: rgba(255, 255, 255, 0.06); }
+.close-confirm-remember input[type='checkbox'] {
+  appearance: none; -webkit-appearance: none;
+  width: 16px; height: 16px; margin: 0; flex-shrink: 0;
+  border-radius: 5px; cursor: pointer; position: relative;
+  border: 1.5px solid rgba(255, 255, 255, 0.28);
+  background: rgba(255, 255, 255, 0.04);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.close-confirm-remember input[type='checkbox']:hover { border-color: #8b7ff0; }
+.close-confirm-remember input[type='checkbox']:checked {
+  background: #6c5ce7; border-color: #6c5ce7;
+}
+.close-confirm-remember input[type='checkbox']:checked::after {
+  content: ''; position: absolute; left: 4.5px; top: 1.5px;
+  width: 5px; height: 9px;
+  border: solid #fff; border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+.close-confirm-actions {
+  display: flex; justify-content: flex-end; gap: 10px;
+  padding-top: 4px; border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
 .cc-btn {
-  padding: 7px 16px; border-radius: 8px; border: 1px solid transparent;
-  font-size: 13px; cursor: pointer;
+  padding: 8px 18px; border-radius: 9px; border: 1px solid transparent;
+  font-size: 13px; font-weight: 500; cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
 }
-.cc-btn.ghost { background: transparent; border-color: rgba(255,255,255,0.18); color: inherit; }
+.cc-btn:active { transform: scale(0.97); }
+.cc-btn.ghost {
+  background: transparent; color: inherit;
+  border-color: rgba(255, 255, 255, 0.16);
+}
+.cc-btn.ghost:hover { background: rgba(255, 255, 255, 0.07); border-color: rgba(255, 255, 255, 0.26); }
 .cc-btn.primary { background: #6c5ce7; color: #fff; }
 .cc-btn.primary:hover { background: #5a4bd1; }
-.cc-btn.ghost:hover { background: rgba(255,255,255,0.06); }
+@keyframes cc-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes cc-pop-in { from { opacity: 0; transform: translateY(6px) scale(0.98); } to { opacity: 1; transform: none; } }
 </style>

@@ -2756,6 +2756,7 @@ class Bridge:
                 return {"ok": False, "error": "缺少 batch_id"}
             resolved = self._resolve_account_wxid(account_wxid)
             rows = MessageBuffer().get_batch_messages(batch_id, account_wxid=resolved)
+            limit = max(1, int(limit))
             items = [
                 {
                     "id": row.get("id"),
@@ -2764,8 +2765,28 @@ class Bridge:
                     "message_type": row.get("message_type"),
                     "timestamp": row.get("timestamp") or row.get("created_at"),
                 }
-                for row in rows[-max(1, int(limit)):]
+                for row in rows[-limit:]
             ]
+            # 新消息不足时并入监听基线尾部（启动前窗口内最近对话）——
+            # 用户预期「进入监听能看到前几条聊天数据」，此前基线按设计不落
+            # buffer 导致起始空白
+            if len(items) < limit:
+                try:
+                    from ..services.realtime.monitor_service import RealtimeMonitorService
+                    monitor = RealtimeMonitorService()
+                    baseline_tail = getattr(monitor, "_baseline_tail", None) or []
+                    for idx, msg in enumerate(baseline_tail):
+                        pseudo_id = -(idx + 1)  # 负数伪 id 避免与 buffer 冲突
+                        items.insert(0, {
+                            "id": pseudo_id,
+                            "sender_attr": msg.get("sender_attr"),
+                            "content": msg.get("content"),
+                            "message_type": msg.get("message_type"),
+                            "timestamp": msg.get("timestamp"),
+                        })
+                    items = items[-limit:]
+                except Exception as exc:
+                    logger.debug("[Bridge] 基线尾部并入跳过: %s", exc)
             return {"ok": True, "messages": items}
         except Exception as e:
             return {"ok": False, "error": str(e)}
@@ -2823,7 +2844,8 @@ class Bridge:
                 SELECT id, trigger_type, intent, severity, summary, speeches,
                        confidence, engine_type, trigger_context, status, created_at, reply, thought_process
                 FROM realtime_suggestions
-                WHERE account_wxid = ? AND batch_id = ? AND status = 'pending'
+                WHERE account_wxid = ? AND batch_id = ?
+                  AND status IN ('pending', 'attribution_window', 'feedback_processing')
                 ORDER BY created_at DESC
                 LIMIT 20
             ''', (resolved_account_wxid, batch_id))

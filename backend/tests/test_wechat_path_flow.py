@@ -290,6 +290,7 @@ def test_bridge_refresh_wechat_contact_avatars_prefers_saved_selected_paths():
             "current_user": "wxid_selected",
             "account_wxid": "wxid_selected",
         },
+        raw_keys=None,
     )
 
 

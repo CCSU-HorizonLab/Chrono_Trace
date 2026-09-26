@@ -51,11 +51,16 @@ class EncryptedShardWatcher:
     # ---------- 对外接口 ----------
 
     def refresh(self, force: bool = False) -> bool:
-        """源文件变化时增量刷新解密视图，返回是否刷新。"""
+        """源文件变化时增量刷新解密视图，返回是否刷新。
+
+        _state 只在刷新完整成功后提交：中途异常（如微信写入瞬间的撕裂页
+        HMAC 失败）保留旧 state，下一轮 stat 仍不同 → 自动重试。此前在
+        开头就提交新 state，一次失败即永久短路（stat 不再变化），新消息
+        从此收不到（实测 12:02 页 11507 异常后监听恒 0 条）。
+        """
         state = self._stat_state()
         if not force and state == self._state:
             return False
-        self._state = state
 
         try:
             with open(self.src, "rb") as f:
@@ -99,7 +104,13 @@ class EncryptedShardWatcher:
         except OSError as e:
             logger.warning("[dbwatch] 读取 %s 失败: %s", self.src, e)
             return False
+        except Exception as e:
+            # 解密/WAL 合并中途失败：不提交新 state（见上），下一轮自动重试
+            logger.warning("[dbwatch] 刷新 %s 中途失败（保留旧快照，待重试）: %s", self.src, e)
+            return False
 
+        # 全量处理成功才提交新 state
+        self._state = state
         # 连接重建（immutable 只读，避免在解密副本上产生 -shm/-wal）
         self._close_conn()
         logger.debug("[dbwatch] %s 刷新 %d 页", self.src.name, changed)

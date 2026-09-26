@@ -14,7 +14,7 @@ import threading
 from pathlib import Path
 
 from .db_snapshot import EncryptedShardWatcher
-from ....config import TEMP_DIR_PATH
+from ...config import TEMP_DIR_PATH
 
 logger = logging.getLogger(__name__)
 

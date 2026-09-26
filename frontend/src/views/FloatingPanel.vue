@@ -7,7 +7,10 @@
           <span class="fp-status-dot" :class="{ active: realtimeState.isMonitoring }"></span>
           <span class="fp-brand-name">Chrono Trace</span>
         </div>
-        <button class="fp-btn-icon close-btn" @click="exitFloating" title="退出悬浮模式"><X :size="14" /></button>
+        <button class="fp-btn-back" @click="exitFloating" title="退出悬浮模式并结束监听，返回应用主界面">
+          <Maximize2 :size="13" />
+          <span>返回主界面</span>
+        </button>
       </div>
       <div class="fp-contact-bar">
         <CtAvatar
@@ -424,6 +427,7 @@ import { ref, reactive, computed, onMounted, onBeforeUnmount, watch, nextTick } 
 import { useRouter } from 'vue-router'
 import {
   X,
+  Maximize2,
   Sprout,
   Flame,
   Scale,
@@ -2401,6 +2405,16 @@ async function loadLastThread() {
 /* Replaced old Workbench CSS Block fully */
 /* Remove old layout */
 /* Base Buttons */
+.fp-btn-back {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 10px; border-radius: 999px;
+  background: rgba(108, 92, 231, 0.15); color: #8b7ff0;
+  border: 1px solid rgba(108, 92, 231, 0.35);
+  font-size: 12px; cursor: pointer; white-space: nowrap;
+  transition: background 0.15s ease;
+}
+.fp-btn-back:hover { background: rgba(108, 92, 231, 0.28); }
+
 .fp-btn-icon { background: transparent; border: none; cursor: pointer; color: var(--ct-text-tertiary); display: inline-flex; align-items: center; justify-content: center; padding: 4px; border-radius: var(--ct-radius-sm); transition: all 0.2s; }
 .fp-btn-icon:hover { background: var(--ct-bg-secondary); color: var(--ct-text-primary); }
 .fp-btn-sm { font-size: 11px; font-weight: 500; padding: 4px 10px; border-radius: var(--ct-radius-sm); background: var(--ct-color-primary-light); color: var(--ct-color-primary); border: 1px solid var(--ct-color-primary); cursor: pointer; }

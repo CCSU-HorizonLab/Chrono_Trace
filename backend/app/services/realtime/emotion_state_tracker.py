@@ -366,6 +366,7 @@ class EmotionStateTracker:
                 'avg_polarity': float,      # 平均极性
                 'avg_intensity': float,     # 平均强度
                 'trend': str,               # 'positive' / 'neutral' / 'negative'
+                'insight': str,             # 一句话态势解读（前端头部展示）
                 'recent_polarities': list,  # 最近极性序列
             }
         """
@@ -375,6 +376,7 @@ class EmotionStateTracker:
                 'avg_polarity': 0.0,
                 'avg_intensity': 0.0,
                 'trend': 'neutral',
+                'insight': '正在分析情绪数据...',
                 'recent_polarities': [],
             }
 
@@ -406,10 +408,25 @@ class EmotionStateTracker:
             'avg_polarity': round(avg_polarity, 3),
             'avg_intensity': round(avg_intensity, 3),
             'trend': trend,
+            'insight': self._build_insight(trend, entries),
             'recent_polarities': [e['polarity'] for e in entries],
             'latest_intent': entries[-1].get('interaction_intent'),
             'recent_intents': [e.get('interaction_intent') for e in entries if e.get('interaction_intent')],
         }
+
+    @staticmethod
+    def _build_insight(trend: str, entries: list[dict]) -> str:
+        """一句话态势解读：意图信号优先于极性趋势（婉拒/不耐是更强的行动线索）。"""
+        latest_intent = entries[-1].get('interaction_intent') if entries else None
+        if latest_intent == 'decline':
+            return '对方近期有婉拒信号，建议放缓节奏、给足空间'
+        if latest_intent == 'impatience':
+            return '对方略显不耐烦，建议先倾听、减少连续追问'
+        if trend == 'positive':
+            return '对方情绪积极，互动意愿强，适合推进话题'
+        if trend == 'negative':
+            return '对方情绪偏负面，建议先共情安抚再继续'
+        return '对方情绪平稳，保持自然节奏即可'
 
     def reset(self):
         """重置追踪器状态"""

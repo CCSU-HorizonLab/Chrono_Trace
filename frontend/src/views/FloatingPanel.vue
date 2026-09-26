@@ -243,7 +243,7 @@
           <!-- 2. Main Chart or Empty State -->
           <div v-show="!hasSufficientEmotionData" class="compact-empty">
             <span class="fp-empty-icon"><Sprout :size="20" style="color: #10b981;" /></span>
-            <span>数据不足以绘制图表 (暂存 {{ realtimeState.messageCount }} 条对话)</span>
+            <span>数据不足以绘制图表 (暂存 {{ (realtimeState.messages || []).length }} 条对话)</span>
           </div>
           
           <div v-show="hasSufficientEmotionData" class="fp-chart-workspace">
@@ -527,7 +527,8 @@ const inspectorTab = ref<'emotion' | 'context'>('emotion')
 const inspectorDocked = ref(false)  // 分屏模式：面板停靠底部，主内容仍可见
 const showSecondaryCharts = ref(false)
 watch(showSecondaryCharts, (val) => { if (val) { nextTick(() => { typeof syncCharts === 'function' && syncCharts(); typeof triggerChartResize === 'function' && triggerChartResize() }) } })
-const hasSufficientEmotionData = computed(() => realtimeState.messageCount >= 4 && emotionHistory.value && emotionHistory.value.length > 2)
+// 用合并了基线的消息数组（含预热 sentiment），而非仅 buffer 计数——否则开场恒判数据不足
+const hasSufficientEmotionData = computed(() => (realtimeState.messages || []).length >= 4 && emotionHistory.value && emotionHistory.value.length > 2)
 function triggerChartResize() {
   requestAnimationFrame(() => {
     setTimeout(() => { typeof syncCharts === 'function' && syncCharts(); typeof resizeVisibleCharts === 'function' && resizeVisibleCharts(); }, 50)

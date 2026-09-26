@@ -98,6 +98,7 @@ type PyWebViewApi = {
   ) => Promise<any>
   // AI 建议
   get_pending_suggestions: (batch_id: string, account_wxid?: string) => Promise<any>
+  get_realtime_recent_messages: (batch_id: string, limit?: number, account_wxid?: string) => Promise<any>
   dismiss_suggestion: (suggestion_id: number) => Promise<any>
   get_suggestion_config: () => Promise<any>
   set_suggestion_config: (config: any) => Promise<any>

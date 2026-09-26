@@ -107,7 +107,10 @@
         </div>
 
         <div v-if="!allSuggestions.length && !loading" class="fp-empty-slate">
-          等待接收聊天数据...
+          <template v-if="realtimeState.isMonitoring && realtimeState.messageCount > 0">
+            已接收 {{ realtimeState.messageCount }} 条消息 · AI 正在生成建议（思考模型约需 30-60 秒）…
+          </template>
+          <template v-else>等待接收聊天数据…</template>
         </div>
 
         <div class="fp-sug-list">
@@ -117,9 +120,9 @@
             :class="{
               'fp-card': s._type === 'suggestion',
               [s.severity || 'medium']: s._type === 'suggestion',
-              'fp-bubble': s._type === 'chat',
-              user: s._type === 'chat' && s.role === 'user',
-              ai: s._type === 'chat' && s.role === 'ai'
+              'fp-bubble': s._type === 'chat' || s._type === 'live_msg',
+              user: (s._type === 'chat' && s.role === 'user') || (s._type === 'live_msg' && s.sender_attr === 'self'),
+              ai: (s._type === 'chat' && s.role === 'ai') || (s._type === 'live_msg' && s.sender_attr !== 'self')
             }"
           >
             <template v-if="s._type === 'suggestion'">
@@ -152,6 +155,14 @@
                   </span>
                 </div>
               </div>
+            </template>
+
+            <template v-else-if="s._type === 'live_msg'">
+              <div class="fp-bubble-meta">
+                 <span class="fp-bubble-avatar">{{ s.sender_attr === 'self' ? '我' : '对方' }}</span>
+                 <span class="fp-bubble-time">{{ formatMsgTime(s.created_at) }}</span>
+              </div>
+              <div class="fp-bubble-txt">{{ s.content }}</div>
             </template>
 
             <template v-else-if="s._type === 'chat'">
@@ -629,6 +640,9 @@ let resumeDialogResolver: ((value: 'skip' | 'backfill') => void) | null = null
 
 // 建议数据
 const pendingSuggestions = ref<any[]>([])
+// 原始消息即时回显（不等 LLM 建议——思考模型一次调用 30-60s，此前面板全程空白）
+const liveEchoMessages = ref<any[]>([])
+const echoedMessageIds = new Set<number>()
 const manualSuggestion = ref<any>(null)
 const expandedIds = ref<Set<string>>(new Set(['manual']))  // 展开状态管理
 const showContext = ref(false)  // 是否展示 AI 参考记录
@@ -852,6 +866,11 @@ const allSuggestions = computed(() => {
   conversationHistory.value.forEach((c, idx) => {
     list.push({ ...c, _type: 'chat', _tempId: `chat_${idx}`, created_at: c.ts })
   })
+
+  // 原始消息回显（微信消息秒级上屏，AI 建议稍后跟进）
+  for (const m of liveEchoMessages.value) {
+    list.push({ ...m, _type: 'live_msg', created_at: m.ts })
+  }
 
   // 按时间升序排序（旧的在上，新的在下，像聊天软件）
   list.sort((a, b) => {
@@ -1733,6 +1752,19 @@ function startPolling() {
     if (!realtimeState.batchId) return
     try {
       await bridgeReady()
+      api.get_realtime_recent_messages(realtimeState.batchId, 12, activeAccountWxid.value || undefined)
+        .then((mr: any) => {
+          if (!mr?.ok || !Array.isArray(mr.messages)) return
+          for (const m of mr.messages) {
+            if (!m?.id || echoedMessageIds.has(m.id)) continue
+            echoedMessageIds.add(m.id)
+            liveEchoMessages.value.push({
+              _type: 'live_msg', id: m.id, sender_attr: m.sender_attr,
+              content: m.content, ts: m.timestamp,
+            })
+          }
+        })
+        .catch(() => {})
       const r = await api.get_pending_suggestions(realtimeState.batchId, activeAccountWxid.value || undefined)
       if (r.ok) {
         let addedNew = false

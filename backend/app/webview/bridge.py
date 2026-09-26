@@ -2746,6 +2746,30 @@ class Bridge:
 
     # ==================== AI 建议相关 ====================
 
+    def get_realtime_recent_messages(self, batch_id: str, limit: int = 12,
+                                      account_wxid: str = "") -> dict[str, Any]:
+        """返回批次内最近收到的原始消息（悬浮面板即时回显，不等 LLM 建议）。"""
+        try:
+            from ..services.realtime.message_buffer import MessageBuffer
+
+            if not str(batch_id or "").strip():
+                return {"ok": False, "error": "缺少 batch_id"}
+            resolved = self._resolve_account_wxid(account_wxid)
+            rows = MessageBuffer().get_batch_messages(batch_id, account_wxid=resolved)
+            items = [
+                {
+                    "id": row.get("id"),
+                    "sender_attr": row.get("sender_attr"),
+                    "content": row.get("content"),
+                    "message_type": row.get("message_type"),
+                    "timestamp": row.get("timestamp") or row.get("created_at"),
+                }
+                for row in rows[-max(1, int(limit)):]
+            ]
+            return {"ok": True, "messages": items}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
     def get_pending_suggestions(self, batch_id: str, account_wxid: str = "") -> dict[str, Any]:
         """
         获取当前批次的待处理 AI 建议

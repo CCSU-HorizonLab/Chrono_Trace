@@ -535,6 +535,14 @@ async function loadContacts() {
       if (selectedConversationId.value && !contacts.value.some((contact: any) => contact.id === selectedConversationId.value)) {
         selectedConversationId.value = null
       }
+      // 恢复跨页共享的联系人选中（联系人洞察页切换过来时同步）
+      if (!selectedConversationId.value) {
+        const shared = loadSharedContact()
+        if (shared && contacts.value.some((c: any) => c.id === shared.conversationId)) {
+          selectedConversationId.value = shared.conversationId
+          console.log('[Suggestions] 恢复共享联系人:', shared.displayName)
+        }
+      }
     }
   } catch (e) {
     console.error('加载联系人列表失败:', e)

@@ -2109,14 +2109,21 @@ class Bridge:
                 """
 
             rows = conn.execute(query, (resolved_account, max(1, int(limit)))).fetchall()
+            from ..services.realtime.rag.indexer import get_active_and_queued
+            live_states = get_active_and_queued()
             items = []
             for row in rows:
                 item = dict(row)
                 if is_excluded_contact_username(item.get("username")):
                     continue
+                live = live_states.get((resolved_account, int(item.get("conversation_id") or 0)))
+                if live:
+                    # 后台真值优先：构建中/排队中（DB status 在此期间不更新）
+                    item["status"] = live
                 items.append(item)
             return {
                 "ok": True,
+                "has_live": bool(live_states),
                 "settings": {
                     key: self.settings.get(key)
                     for key in (
@@ -2140,20 +2147,46 @@ class Bridge:
             return {"ok": False, "error": str(e), "items": []}
 
     def rebuild_rag_index(self, conversation_id: int, account_wxid: str = "") -> dict[str, Any]:
-        """Rebuild one contact RAG index."""
+        """Rebuild one contact RAG index (always async via the single-worker queue).
+
+        原实现锁空闲时在端点内联同步重建（阻塞分钟级且 UI 无构建中真值），
+        现统一入队：状态经 get_rag_status 的 building/queued 覆盖可查。
+        """
         try:
-            from ..services.realtime.rag.indexer import RagIndexer
+            from ..services.realtime.rag.config import load_rag_settings
+            from ..services.realtime.rag.indexer import RagIndexQueue, get_active_and_queued
 
             resolved_account = self._resolve_account_wxid(account_wxid)
-            status = RagIndexer().rebuild_contact_index(
-                account_wxid=resolved_account,
-                conversation_id=int(conversation_id),
-            )
-            failed = str((status or {}).get("status") or "") == "failed"
+            if not load_rag_settings().get("rag_enabled"):
+                # 主开关关闭时队列 worker 会丢弃任务——保持旧行为内联同步重建
+                from ..services.realtime.rag.indexer import RagIndexer
+                status = RagIndexer().rebuild_contact_index(
+                    account_wxid=resolved_account,
+                    conversation_id=int(conversation_id),
+                )
+                failed = str((status or {}).get("status") or "") == "failed"
+                return {
+                    "ok": not failed,
+                    "status": status,
+                    "error": (status or {}).get("last_error") if failed else None,
+                }
+            key = (resolved_account, int(conversation_id))
+            live = get_active_and_queued().get(key)
+            if live:
+                return {
+                    "ok": True,
+                    "queued": True,
+                    "already": True,
+                    "state": live,
+                    "message": "该联系人正在构建索引，无需重复发起" if live == "building"
+                    else "该联系人已在索引队列中",
+                }
+            RagIndexQueue.enqueue(resolved_account, int(conversation_id))
             return {
-                "ok": not failed,
-                "status": status,
-                "error": (status or {}).get("last_error") if failed else None,
+                "ok": True,
+                "queued": True,
+                "state": "queued",
+                "message": "已加入索引队列（单 worker 串行执行）",
             }
         except Exception as e:
             logger.error(f"[Bridge] 重建 RAG 索引失败: {e}")

@@ -538,9 +538,13 @@ async function loadContacts() {
       // 恢复跨页共享的联系人选中（联系人洞察页切换过来时同步）
       if (!selectedConversationId.value) {
         const shared = loadSharedContact()
-        if (shared && contacts.value.some((c: any) => c.id === shared.conversationId)) {
+        const match = contacts.value.find((c: any) => c.id === shared?.conversationId)
+        if (shared && match) {
           selectedConversationId.value = shared.conversationId
+          realtimeState.talkerName = match.name || match.username || ''
           console.log('[Suggestions] 恢复共享联系人:', shared.displayName)
+          // 触发画像检查（与手动选择行为一致）
+          checkPortraitProfiles(realtimeState.talkerName)
         }
       }
     }

@@ -666,6 +666,12 @@ class FloatingWindowService:
                 target_x = x + w + FLOATING_GAP
                 target_y = y
                 target_h = max(h, FLOATING_MIN_HEIGHT)
+                # 跟随循环同样压高：微信最大化时 h 为全屏高度，不 cap 会把悬浮窗拉成全屏
+                if sys.platform != "win32":
+                    workarea = tracker.workarea if hasattr(tracker, 'workarea') else None
+                    if workarea and workarea[3] > 0:
+                        target_h = min(target_h, int(workarea[3] * 0.72))
+                        target_h = max(target_h, FLOATING_MIN_HEIGHT)
                 target_x = self._clamp_floating_x(
                     target_x, self.floating_width, anchor_point=(w + x - 1, y + 20)
                 )

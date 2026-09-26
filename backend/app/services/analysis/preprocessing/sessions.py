@@ -249,9 +249,7 @@ class SessionManager:
                     chunk = sample_texts[cs:cs + SAMPLE_CHUNK]
                     sample_embeddings.extend(self._sentiment_service._get_embeddings_batch(
                         chunk,
-                        normalize_embeddings=True,
-                        show_progress_bar=False,
-                        batch_size=64  # 采样时可用更大批次
+                        batch_size=64,  # 采样分块可用更大批次
                     ))
                     if progress_cb:
                         try:
@@ -292,9 +290,7 @@ class SessionManager:
                     region_texts = [speech_units[i]["content"] for i in range(start, end + 1)]
                     region_embeddings = self._sentiment_service._get_embeddings_batch(
                         region_texts,
-                        normalize_embeddings=True,
-                        show_progress_bar=False,
-                        batch_size=32
+                        batch_size=32,
                     )
                     
                     for i in range(len(region_embeddings) - 1):

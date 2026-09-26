@@ -401,6 +401,8 @@ import {
   Clock
 } from 'lucide-vue-next'
 import { bridgeReady, api } from '@/api/bridge'
+import { loadSharedContact, saveSharedContact } from '@/utils/sharedContact'
+import IntentModeSelector from '@/components/base/IntentModeSelector.vue'
 import CtButton from '@/components/base/CtButton.vue'
 import CtAvatar from '@/components/base/CtAvatar.vue'
 import FiltersBar from '@/components/analytics/FiltersBar.vue'
@@ -496,6 +498,16 @@ function goToSettings() {
 const contacts = ref<any[]>([])
 const contactsLoading = ref(false)
 const selectedConversationId = ref<number | null>(null)
+
+// 联系人选中变化：写入跨页共享状态
+watch(selectedConversationId, (id) => {
+  if (id) {
+    const c = contacts.value.find((x: any) => x.id === id)
+    if (c) {
+      saveSharedContact({ conversationId: id, displayName: c.name || c.username || '', avatar: c.avatar })
+    }
+  }
+})
 const activeContact = computed(() => {
   if (selectedConversationId.value) {
     return contacts.value.find((contact: any) => contact.id === selectedConversationId.value) || null

@@ -2752,15 +2752,40 @@ class Bridge:
         """
         try:
             from ..services.realtime.message_query import get_messages_with_sentiment
-            
+
             messages = get_messages_with_sentiment(
                 batch_id,
                 limit,
                 account_wxid=self._resolve_account_wxid(""),
-            )
-            
+            ) or []
+
+            # 新消息不足时并入监听基线尾部（预热已带 sentiment）——
+            # 前端统计（发言比例/回复率/正面率）与情绪图表全部读本端点，
+            # 此前基线不落 buffer 导致开场恒显 N/A/「正在分析」
+            if len(messages) < int(limit):
+                try:
+                    from ..services.realtime.monitor_service import RealtimeMonitorService
+
+                    baseline_tail = getattr(RealtimeMonitorService(), "_baseline_tail", None) or []
+                    if baseline_tail:
+                        baseline_items = [
+                            {
+                                "id": -(idx + 1),  # 负数伪 id 避免与 buffer 冲突
+                                "sender": msg.get("sender_attr"),
+                                "sender_attr": msg.get("sender_attr"),
+                                "content": msg.get("content"),
+                                "message_type": msg.get("message_type"),
+                                "timestamp": msg.get("timestamp"),
+                                "sentiment": msg.get("sentiment"),
+                            }
+                            for idx, msg in enumerate(baseline_tail)
+                        ]
+                        messages = (baseline_items + messages)[-int(limit):]
+                except Exception as exc:
+                    logger.debug("[Bridge] 基线尾部并入消息列表跳过: %s", exc)
+
             # 只在消息数量变化时打印（避免每 3 秒重复刷屏）
-            count = len(messages) if messages else 0
+            count = len(messages)
             cache_key = f"_last_msg_count_{batch_id[:8]}"
             last_count = getattr(self, cache_key, 0)
             if count != last_count:
@@ -2812,16 +2837,19 @@ class Bridge:
                     from ..services.realtime.monitor_service import RealtimeMonitorService
                     monitor = RealtimeMonitorService()
                     baseline_tail = getattr(monitor, "_baseline_tail", None) or []
-                    for idx, msg in enumerate(baseline_tail):
-                        pseudo_id = -(idx + 1)  # 负数伪 id 避免与 buffer 冲突
-                        items.insert(0, {
-                            "id": pseudo_id,
-                            "sender_attr": msg.get("sender_attr"),
-                            "content": msg.get("content"),
-                            "message_type": msg.get("message_type"),
-                            "timestamp": msg.get("timestamp"),
-                        })
-                    items = items[-limit:]
+                    if baseline_tail:
+                        # 逐条 insert(0) 会把时间序倒置——先组好基线段再整体前置
+                        baseline_items = [
+                            {
+                                "id": -(idx + 1),  # 负数伪 id 避免与 buffer 冲突
+                                "sender_attr": msg.get("sender_attr"),
+                                "content": msg.get("content"),
+                                "message_type": msg.get("message_type"),
+                                "timestamp": msg.get("timestamp"),
+                            }
+                            for idx, msg in enumerate(baseline_tail)
+                        ]
+                        items = (baseline_items + items)[-limit:]
                 except Exception as exc:
                     logger.debug("[Bridge] 基线尾部并入跳过: %s", exc)
             return {"ok": True, "messages": items}

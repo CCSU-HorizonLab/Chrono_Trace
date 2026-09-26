@@ -234,6 +234,7 @@ class RealtimeMonitorService:
             
             # 创建情绪追踪器
             self.emotion_tracker = EmotionStateTracker()
+            self._baseline_tail = []  # 会话隔离：旧会话基线不得泄入新会话显示
             _print("[RealtimeMonitorService] 情绪追踪器已创建")
             
             _print(f"[RealtimeMonitorService] 开始监听: {talker_display_name} (batch_id: {self.current_batch_id})")
@@ -1762,6 +1763,9 @@ class RealtimeMonitorService:
                     for msg, content in zip(warmup_msgs, warmup_texts):
                         try:
                             sentiment = self.sentiment_service.analyze(content)
+                            # sentiment 附到基线尾部——bridge 合并基线给前端时，
+                            # 图表统计/情绪历史才能拿到极性信号（否则比例恒 N/A）
+                            msg['sentiment'] = sentiment
                             self.emotion_tracker.update(
                                 sentiment,
                                 {
@@ -1772,8 +1776,9 @@ class RealtimeMonitorService:
                             )
                         except Exception as sent_e:
                             # 单条失败不阻断——降级中性占位
+                            msg['sentiment'] = {'polarity': 0, 'intensity': 0.0, 'confidence': 0.0, 'rules_applied': []}
                             self.emotion_tracker.update(
-                                {'polarity': 0, 'intensity': 0.0, 'confidence': 0.0, 'rules_applied': []},
+                                msg['sentiment'],
                                 {'content': content, 'sender_attr': msg.get('sender_attr'),
                                  'timestamp': int(msg.get('timestamp') or 0)},
                             )

@@ -2057,7 +2057,24 @@ function isSuggestionExpanded(s: any): boolean {
 }
 
 function copyText(text: string) {
-  navigator.clipboard?.writeText(text)
+  // navigator.clipboard API 在 QtWebEngine 嵌入式浏览器中不可靠（需要安全上下文
+  // 且实现可能闪退渲染进程）——改用 document.execCommand('copy') 传统方案，
+  // 在嵌入式 WebView 中广泛兼容
+  try {
+    const textarea = document.createElement('textarea')
+    textarea.value = text
+    textarea.style.cssText = 'position:fixed;left:-9999px;top:-9999px;opacity:0;'
+    document.body.appendChild(textarea)
+    textarea.focus()
+    textarea.select()
+    const ok = document.execCommand('copy')
+    document.body.removeChild(textarea)
+    if (!ok) {
+      console.warn('[FloatingPanel] 复制失败（execCommand 返回 false）')
+    }
+  } catch (e) {
+    console.error('[FloatingPanel] 复制异常:', e)
+  }
 }
 
 function getRagBadge(ragContext: RagContextSummary | undefined | null): RagContextSummary | null {

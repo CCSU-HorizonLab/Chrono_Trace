@@ -73,6 +73,7 @@ class Bridge:
         self._wechat_key_capture_lock = threading.Lock()
         self._webview_window = None  # 由 app_dev.py 注入
         self._analysis_cancel_event = None  # 用于取消好感度分析
+        self._affinity_service = None  # 好感度分析服务实例（analyze_affinity 中懒创建）
 
     def _load_settings(self):
         """加载设置"""
@@ -4586,7 +4587,7 @@ class Bridge:
             # 复用守卫：旧服务实例上仍有本会话的运行中任务时不重复启动。
             # 此处必须查旧实例（本方法每次 reload 出新类，新实例看不到旧任务）；
             # 重复启动会替换取消事件，导致运行中的任务再也停不掉
-            prev_service = self._affinity_service
+            prev_service = getattr(self, "_affinity_service", None)
             if prev_service is not None:
                 running = prev_service.find_running_task(conversation_id)
                 if running:

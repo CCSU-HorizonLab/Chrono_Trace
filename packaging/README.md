@@ -172,3 +172,13 @@ Linux 链路（`packaging/build_release_linux.sh`，根目录 `build_release_lin
 ```
 
 与 Windows 差异：无 Inno Setup/注册表/WebView2 引导；无 cpu/gpu 变体（仅 CPU 轮子）；`.desktop` 中的 `%APPPATH%` 安装时替换为可执行文件绝对路径。AppImage/deb 为后续可选。
+
+### tar.gz 产物使用
+
+```bash
+tar -xzf release/chrono-trace-<版本>-linux.tar.gz
+cd "Chrono Trace"
+./"Chrono Trace"        # onedir 自带 Python/Qt/torch，glibc>=2.34 即可运行
+```
+
+桌面集成：将 `release/chrono-trace.desktop` 的 `%APPPATH%` 替换为可执行文件绝对路径后放入 `~/.local/share/applications/`。密钥捕获仍需系统 `gdb`（见主 README「获取微信数据库密钥」）。

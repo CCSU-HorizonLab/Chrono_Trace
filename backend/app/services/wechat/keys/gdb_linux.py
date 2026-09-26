@@ -178,14 +178,16 @@ def _load_elf_sections(binary_path: pathlib.Path) -> dict[str, _ELFSection]:
 
 def _find_rip_relative_refs(text: _ELFSection, opcode: bytes, target_va: int) -> list[int]:
     hits = []
-    limit = max(0, len(text.data) - 7)
-    for offset in range(limit + 1):
-        if text.data[offset: offset + 3] != opcode:
-            continue
-        disp = struct.unpack_from("<i", text.data, offset + 3)[0]
-        resolved = text.addr + offset + 7 + disp
+    # bytes.find 为 C 速度扫描：纯 Python 逐字节循环扫 ~100MB .text 需 ~1 分钟，
+    # 会拖爆 start() 的 ready 等待（release 版「准备超时」根因）
+    limit = len(text.data) - 7
+    pos = text.data.find(opcode, 0, limit + 1)
+    while pos != -1:
+        disp = struct.unpack_from("<i", text.data, pos + 3)[0]
+        resolved = text.addr + pos + 7 + disp
         if resolved == target_va:
-            hits.append(offset)
+            hits.append(pos)
+        pos = text.data.find(opcode, pos + 1)
     return hits
 
 
@@ -527,7 +529,8 @@ class LinuxKeyCaptureSession:
                 )
                 self._thread.start()
         if ready_timeout_seconds is None:
-            ready_timeout_seconds = 30
+            # 冷启动 ELF 锚点分析余量（bytes.find 优化后秒级，90s 为异常兜底）
+            ready_timeout_seconds = 90
         if not self._ready.wait(timeout=max(1, int(ready_timeout_seconds))):
             return {
                 "ok": False,

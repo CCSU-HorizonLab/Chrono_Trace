@@ -602,3 +602,32 @@ def test_fusion_response_without_decisions_raises(monkeypatch):
         raise AssertionError("expected ValueError")
     except ValueError as exc:
         assert "decisions" in str(exc)
+
+
+def test_json_candidates_prefers_after_think_tail():
+    """思考模型（Qwen3.5-9B 实测形态）：思考段回显模板 JSON，真答案在 </think> 之后。"""
+    from app.services.realtime.rag.fact_llm import LLMFactExtractorAdapter
+
+    probe = (
+        "我们需要分析……只输出JSON对象 {\"facts\":[{\"content\":\"...\",\"kind\":\"...\"}]} "
+        "对话里 B 只是提醒……因此无事实。输出 {\"facts\":[]}。\n</think>\n\n{\"facts\":[]}"
+    )
+    candidates = LLMFactExtractorAdapter._json_candidates(probe)
+    assert candidates, "应至少解析出一个候选"
+    assert candidates[-1] == "{\"facts\":[]}", f"末尾真答案应被选中: {candidates}"
+
+
+def test_json_candidates_extra_data_salvage():
+    """原「首个 { 到末个 }」跨度在多对象场景必然 Extra data——现应逐对象可解析。"""
+    from app.services.realtime.rag.fact_llm import LLMFactExtractorAdapter
+
+    text = '前言 {"facts":[{"content":"示例"}]} 中间说明 {"facts":[]} 结尾废话}'
+    candidates = LLMFactExtractorAdapter._json_candidates(text)
+    assert '{"facts":[]}' in candidates
+    # 旧实现返回 text[first{:last}] 必然 json 失败；新 _json_candidate 返回可解析末位
+    assert LLMFactExtractorAdapter._json_candidate(text) == '{"facts":[]}'
+
+
+def test_json_candidates_no_json_returns_empty():
+    from app.services.realtime.rag.fact_llm import LLMFactExtractorAdapter
+    assert LLMFactExtractorAdapter._json_candidates("没有任何对象") == []

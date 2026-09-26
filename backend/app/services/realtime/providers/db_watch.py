@@ -138,7 +138,12 @@ class DbWatchRealtimeProvider(RealtimeProvider):
         if not self._table:
             return []
         for watcher in self._watchers:
-            watcher.refresh()
+            try:
+                watcher.refresh()
+            except Exception as exc:
+                # 单分片刷新失败（如 WeChat 写入瞬间的撕裂页/WAL 代际切换）：
+                # 本轮沿用旧快照，下一轮 mtime 再触发——异常上抛会打断整个取数循环
+                logger.debug("[db_watch] 分片刷新失败（沿用旧快照）: %s", exc)
         # 窗口游标随刷新前移到最新 sort_seq——否则 open_chat 之后新到的消息
         # 被「<= 初始游标」过滤，实时监听永远收不到新消息
         self._upper_seq = max(self._upper_seq, self._max_seq(self._table))

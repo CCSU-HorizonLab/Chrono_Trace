@@ -464,7 +464,10 @@ class LLMSuggestionEngine(SuggestionEngine):
 
     def _is_reasoning_model(self, model_id: str) -> bool:
         normalized = (model_id or "").lower()
-        return "reasoner" in normalized or "deepseek-r1" in normalized
+        return any(tag in normalized for tag in (
+            "reasoner", "deepseek-r1", "-r1", "qwen3", "qwq",
+            "o1", "o3", "thinking",
+        ))
 
     def generate(
         self,
@@ -1540,15 +1543,17 @@ class LLMSuggestionEngine(SuggestionEngine):
         if not is_reasoning_model:
             return max_tokens
 
+        # 思维链本身耗 500-2000+ token（实测 Qwen3.5-9B），预算需覆盖
+        # 思考段+结构化结果，否则截断到无 JSON/无建议
         if request_tag == "analysis":
-            return max(max_tokens, 1536)
+            return max(max_tokens, 4096)
         if request_tag == "repair":
-            return max(max_tokens, 768)
+            return max(max_tokens, 2048)
         if request_tag == "suggestion":
-            return max(max_tokens, 1024)
+            return max(max_tokens, 3072)
         if request_tag == "format":
-            return max(max_tokens, 768)
-        return max_tokens
+            return max(max_tokens, 2048)
+        return max(max_tokens, 2048)
 
     def _estimate_message_tokens(self, messages: list[dict]) -> int:
         """Rough local estimate used only to size completion budget before the API call."""

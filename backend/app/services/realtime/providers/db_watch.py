@@ -12,9 +12,12 @@ db_key/wechat_dir 取自激活微信账号设置。
 """
 from __future__ import annotations
 
+import ctypes
 import hashlib
 import logging
 import re
+import select
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -26,6 +29,34 @@ from ...wechat.db_snapshot import EncryptedShardWatcher
 from ...wechat.path_finder import WeChatPathFinder
 
 logger = logging.getLogger(__name__)
+
+# inotify 事件掩码（ctypes 直调系统调用，零第三方依赖）
+_IN_MODIFY = 0x00000002
+_IN_CLOSE_WRITE = 0x00000008
+_IN_NONBLOCK = 0o4000  # O_NONBLOCK
+_INOTIFY_EVENT_SIZE = 16  # struct inotify_event 固定头（不含 name）
+
+
+def _inotify_available() -> bool:
+    """进程级探测：inotify_init1 可调用即视为可用。"""
+    global _INOTIFY_OK
+    if _INOTIFY_OK is None:
+        try:
+            libc = ctypes.CDLL("libc.so.6", use_errno=True)
+            fd = libc.inotify_init1(_IN_NONBLOCK)
+            if fd >= 0:
+                import os as _os
+                _os.close(fd)
+                _INOTIFY_OK = True
+            else:
+                _INOTIFY_OK = False
+        except Exception:
+            _INOTIFY_OK = False
+    return _INOTIFY_OK
+
+
+_INOTIFY_OK: bool | None = None
+
 
 # local_type → 监听器词表（与 native_uia 的映射保持一致口径）
 LOCAL_TYPE_TO_MESSAGE_TYPE = {
@@ -64,6 +95,11 @@ class DbWatchRealtimeProvider(RealtimeProvider):
         self._username = ""
         self._upper_seq = 0
         self._extra_older = 0
+        # inotify 文件变化通知（不可用时降级为 stat 轮询——行为不变）
+        self._wakeup_event = threading.Event()
+        self._inotify_fd: int = -1
+        self._inotify_thread: threading.Thread | None = None
+        self._last_nochange_result: list | None = None  # 无变化缓存的上一轮消息
 
     # ---------- 契约实现 ----------
 
@@ -109,6 +145,7 @@ class DbWatchRealtimeProvider(RealtimeProvider):
             raise ProviderInitError("消息数据库分片全部初始化失败。")
         self.account_name = wxid
         logger.info("[db_watch] 已初始化 %d 个消息分片", len(self._watchers))
+        self._start_inotify()
 
     def activate_main_window(self) -> bool:
         return True  # DB 方案不依赖窗口焦点
@@ -137,16 +174,29 @@ class DbWatchRealtimeProvider(RealtimeProvider):
     def list_visible_messages(self) -> list:
         if not self._table:
             return []
+
+        # inotify 可用时：等事件（毫秒级响应）而非 stat 轮询；
+        # 不可用时直接走 stat 轮询路径（每秒被 monitor 调用，行为不变）
+        if self._inotify_fd >= 0:
+            # 已有待处理事件或超时 → 走刷新；否则返回缓存（跳过全部 stat+SQL）
+            if not self._wakeup_event.is_set():
+                self._wakeup_event.wait(timeout=0.05)
+            if not self._wakeup_event.is_set() and self._last_nochange_result is not None:
+                return self._last_nochange_result
+            self._wakeup_event.clear()
+
+        any_refreshed = False
         for watcher in self._watchers:
             try:
-                watcher.refresh()
+                if watcher.refresh():
+                    any_refreshed = True
             except Exception as exc:
-                # 单分片刷新失败（如 WeChat 写入瞬间的撕裂页/WAL 代际切换）：
-                # 本轮沿用旧快照，下一轮 mtime 再触发——异常上抛会打断整个取数循环
                 logger.debug("[db_watch] 分片刷新失败（沿用旧快照）: %s", exc)
-        # 窗口游标随刷新前移到最新 sort_seq——否则 open_chat 之后新到的消息
-        # 被「<= 初始游标」过滤，实时监听永远收不到新消息
         self._upper_seq = max(self._upper_seq, self._max_seq(self._table))
+
+        # inotify 模式下无变化：缓存本轮结果供下次短路
+        if self._inotify_fd >= 0 and not any_refreshed and self._last_nochange_result is not None:
+            return self._last_nochange_result
 
         limit = self.WINDOW + max(0, self._extra_older)
         rows: list[tuple[int, dict]] = []
@@ -169,25 +219,101 @@ class DbWatchRealtimeProvider(RealtimeProvider):
         messages: list[RealtimeMessage] = []
         for visible_index, (shard_idx, row) in enumerate(rows):
             messages.append(self._to_message(shard_idx, row, visible_index))
+        self._last_nochange_result = messages
         return messages
 
     def scroll_up(self, wheel_times: int = 2) -> bool:
         self._extra_older += self.PAGE * max(1, wheel_times)
+        self._last_nochange_result = None  # 窗口扩展需重查
         return True
 
     def scroll_down(self, wheel_times: int = 4) -> bool:
         self._extra_older = max(0, self._extra_older - self.PAGE * max(1, wheel_times))
+        self._last_nochange_result = None  # 窗口收缩需重查
         return True
 
     def close(self) -> None:
+        self._stop_inotify()
         for watcher in self._watchers:
             try:
                 watcher.close()
             except Exception:
                 pass
         self._watchers = []
+        self._last_nochange_result = None
 
     # ---------- 内部 ----------
+
+    # ---------- inotify 文件变化通知 ----------
+
+    def _start_inotify(self) -> None:
+        """为每个分片的 .db 和 -wal 注册 inotify 监听；失败静默降级 stat 轮询。"""
+        if not _inotify_available():
+            logger.info("[db_watch] inotify 不可用，降级为 stat 轮询")
+            return
+        try:
+            libc = ctypes.CDLL("libc.so.6", use_errno=True)
+            fd = libc.inotify_init1(_IN_NONBLOCK)
+            if fd < 0:
+                logger.warning("[db_watch] inotify_init1 失败: errno={}".format(ctypes.get_errno()))
+                return
+            import os as _os
+            watched = 0
+            for watcher in self._watchers:
+                for path in (str(watcher.src), str(watcher.src) + "-wal"):
+                    if _os.path.exists(path):
+                        wd = libc.inotify_add_watch(fd, path.encode(), _IN_MODIFY | _IN_CLOSE_WRITE)
+                        if wd >= 0:
+                            watched += 1
+            if watched == 0:
+                _os.close(fd)
+                logger.warning("[db_watch] inotify 无可监听文件，降级为 stat 轮询")
+                return
+            self._inotify_fd = fd
+            self._inotify_thread = threading.Thread(
+                target=self._inotify_loop, daemon=True, name="db-watch-inotify"
+            )
+            self._inotify_thread.start()
+            logger.info("[db_watch] inotify 监听 %d 个文件（毫秒级变化通知）", watched)
+        except Exception as exc:
+            logger.warning("[db_watch] inotify 启动失败（降级 stat 轮询）: %s", exc)
+            self._stop_inotify()
+
+    def _stop_inotify(self) -> None:
+        if self._inotify_fd >= 0:
+            try:
+                import os as _os
+                _os.close(self._inotify_fd)
+            except Exception:
+                pass
+            self._inotify_fd = -1
+        self._inotify_thread = None
+
+    def _inotify_loop(self) -> None:
+        """inotify 事件循环：select() 无忙等，事件到达设 wakeup_event。"""
+        import os as _os
+        buf = b""
+        while self._inotify_fd >= 0:
+            try:
+                readable, _, _ = select.select([self._inotify_fd], [], [], 30.0)
+                if not readable:
+                    continue  # 30s 超时——保持 fd 存活检查
+                chunk = _os.read(self._inotify_fd, 65536)
+                if not chunk:
+                    break
+                buf += chunk
+                # 解析事件（只需要知道「有事件」而非哪个文件——refresh 全分片 stat）
+                while len(buf) >= _INOTIFY_EVENT_SIZE:
+                    event_len = _INOTIFY_EVENT_SIZE + int.from_bytes(buf[16:20], "little")
+                    if len(buf) < event_len:
+                        break
+                    buf = buf[event_len:]
+                self._wakeup_event.set()
+            except Exception:
+                import time as _t
+                _t.sleep(0.5)
+                if self._inotify_fd < 0:
+                    return
 
     def _max_seq(self, table: str) -> int:
         best = 0

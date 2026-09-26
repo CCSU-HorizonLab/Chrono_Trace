@@ -2004,7 +2004,7 @@ class RealtimeMonitorService:
                         self._handle_trigger_events([silence_event], session_state=session_state)
                 
                 # 每1秒检查一次
-                time.sleep(1)
+                time.sleep(0.3)
                 
             except Exception as e:
                 poll_fail_count += 1

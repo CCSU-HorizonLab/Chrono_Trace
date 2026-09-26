@@ -2918,10 +2918,7 @@ class Bridge:
     def get_suggestion_config(self) -> dict[str, Any]:
         """获取 AI 建议配置（从系统设置读取）"""
         try:
-            from ..services.realtime.providers.factory import (
-                DEFAULT_LISTENER_BACKEND,
-                normalize_listener_backend,
-            )
+            from ..services.realtime.providers.factory import resolve_effective_listener_backend
 
             return {
                 "ok": True, 
@@ -2930,8 +2927,8 @@ class Bridge:
                     "intent": self.settings.get("intent", "maintain"),
                     "auto_rate_limit": int(self.settings.get("auto_rate_limit", 10)),
                     "engine_type": "llm",
-                    "listener_backend": normalize_listener_backend(
-                        self.settings.get("listener_backend", DEFAULT_LISTENER_BACKEND)
+                    "listener_backend": resolve_effective_listener_backend(
+                        self.settings.get("listener_backend")
                     ),
                 }
             }

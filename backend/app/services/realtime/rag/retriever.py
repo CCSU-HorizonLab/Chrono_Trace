@@ -320,6 +320,37 @@ class RagRetriever:
             int(item["id"]): item.get("vector") or []
             for item in cached["items"]
         }
+
+        # 证据文本预取（N+1 消除：此前每条事实单独查一次 messages 表）
+        all_evidence_ids: list[int] = []
+        evidence_ids_by_fact: dict[int, list[int]] = {}
+        for item in cached["items"]:
+            fact_id = int(item["id"])
+            try:
+                ids = json.loads(item.get("evidence_message_ids_json") or "[]")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                ids = []
+            evidence_ids_by_fact[fact_id] = ids
+            all_evidence_ids.extend(int(i) for i in ids if str(i).isdigit())
+        evidence_text_map: dict[int, str] = {}
+        if all_evidence_ids:
+            try:
+                rows = self.store.conn.execute(
+                    "SELECT id, content FROM messages WHERE id IN (%s)" % ",".join("?" * len(set(all_evidence_ids))),
+                    list(set(all_evidence_ids)),
+                ).fetchall()
+                for row in rows:
+                    try:
+                        evidence_text_map[int(row["id"])] = bytes(row["content"] or b"").decode("utf-8", errors="replace")
+                    except Exception:
+                        pass
+            except Exception:
+                pass  # 表不存在或查询失败：跳过证据文本增强
+        # 按事实分配证据文本
+        evidence_texts_by_fact: dict[int, str] = {}
+        for fact_id, ids in evidence_ids_by_fact.items():
+            parts = [evidence_text_map[int(i)] for i in ids if int(i) in evidence_text_map]
+            evidence_texts_by_fact[fact_id] = " ".join(parts)
         query_vector: list[float] = []
         vector_available = False
         vector_reason = None
@@ -364,7 +395,7 @@ class RagRetriever:
             # message BLOB remains intact.  Use evidence text only as a
             # ranking hint; the canonical fact content and evidence IDs stay
             # unchanged in the returned item and prompt.
-            evidence_text = self.store.list_fact_evidence_text(evidence_ids)
+            evidence_text = evidence_texts_by_fact.get(int(fact["id"]), "")
             content_tokens = set(self._tokens(content))
             evidence_tokens = set(self._tokens(evidence_text)) if evidence_text else set()
             # Score canonical fact text and evidence text independently.  A

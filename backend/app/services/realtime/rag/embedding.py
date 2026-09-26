@@ -57,3 +57,7 @@ class RagEmbeddingService:
     def embed_text(self, text: str) -> list[float]:
         vectors = self.embed_texts([text])
         return vectors[0] if vectors else []
+
+    def is_warm(self) -> bool:
+        """公共 API：嵌入模型是否已加载（此前调用方探测私有 _embedding_model）。"""
+        return bool(getattr(self._get_shared_service(), "_embedding_model", None))

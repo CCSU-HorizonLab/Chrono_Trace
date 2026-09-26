@@ -386,7 +386,39 @@ class RagIndexer:
         self.store.conn.commit()
         try:
             conversation = self._load_conversation(account_wxid, conversation_id)
-            messages = self._load_messages(conversation_id)
+
+            # ---- 真增量判断：水位有效且配置未变 → 只处理新增消息 ----
+            status_row = self.store.get_status(account_wxid, conversation_id) or {}
+            watermark_ts = int(status_row.get("message_watermark_ts") or 0)
+            config_match = (
+                str(status_row.get("embedding_model") or "") == model
+                and int(status_row.get("embedding_dim") or 0) == dim
+                and str(status_row.get("privacy_mode") or "") == privacy_mode
+                and str(status_row.get("index_version") or "") == self.INDEX_VERSION
+                and watermark_ts > 0
+            )
+            if config_match:
+                # 增量模式：只加载水位之后的新消息
+                new_messages = self._load_messages_after(conversation_id, watermark_ts)
+                if not new_messages:
+                    # 无新消息：直接标记 ready，跳过全部重嵌入
+                    self.store.upsert_status(
+                        account_wxid, conversation_id,
+                        status="ready", dirty_since=None, last_error=None,
+                        index_version=self.INDEX_VERSION,
+                    )
+                    self.store.conn.commit()
+                    logger.debug("[RAG Index] incremental skip: no new messages after watermark=%s", watermark_ts)
+                    return self.store.get_status(account_wxid, conversation_id) or {}
+                messages = new_messages
+                incremental = True
+                logger.info(
+                    "[RAG Index] incremental rebuild: %s new messages after watermark=%s",
+                    len(new_messages), watermark_ts,
+                )
+            else:
+                messages = self._load_messages(conversation_id)
+                incremental = False
             quality_cleanup = self.store.quarantine_low_quality_shadow_facts(
                 account_wxid,
                 conversation_id,
@@ -422,12 +454,15 @@ class RagIndexer:
                 )
                 return self.store.get_status(account_wxid, conversation_id) or {}
 
-            cleaned_old = self.store.delete_auto_documents(
-                account_wxid,
-                conversation_id,
-                index_version=self.INDEX_VERSION,
-            )
-            self.store.conn.commit()
+            if not incremental:
+                cleaned_old = self.store.delete_auto_documents(
+                    account_wxid,
+                    conversation_id,
+                    index_version=self.INDEX_VERSION,
+                )
+                self.store.conn.commit()
+            else:
+                cleaned_old = 0  # 增量模式不清旧文档
             docs = self._build_documents(account_wxid, conversation_id, conversation, messages)
             self.store.conn.commit()
             docs.extend(self._load_feedback_documents_for_embedding(account_wxid, conversation_id))
@@ -485,6 +520,15 @@ class RagIndexer:
                     vector_count,
                 )
 
+            # 推进消息水位（增量模式下次从最新时间戳开始；全量模式首次设置）
+            new_watermark = max((int(m.get("timestamp") or 0) for m in messages), default=watermark_ts if incremental else 0)
+            self.store.conn.execute(
+                """
+                UPDATE rag_index_status SET message_watermark_ts = ?
+                WHERE account_wxid = ? AND conversation_id = ?
+                """,
+                (new_watermark, account_wxid, int(conversation_id)),
+            )
             self.store.upsert_status(
                 account_wxid,
                 conversation_id,
@@ -570,6 +614,23 @@ class RagIndexer:
             (account_wxid, conversation_id),
         ).fetchone()
         return dict(row) if row else None
+
+    def _load_messages_after(self, conversation_id: int, watermark_ts: int) -> list[dict[str, Any]]:
+        """加载水位之后的新消息（真增量：不重载全量会话）。"""
+        rows = self.store.conn.execute(
+            """
+            SELECT id, conversation_id, is_sender, content, timestamp, message_type
+            FROM messages
+            WHERE conversation_id = ?
+              AND message_type = 1
+              AND content IS NOT NULL
+              AND TRIM(content) != ''
+              AND timestamp > ?
+            ORDER BY timestamp ASC, id ASC
+            """,
+            (conversation_id, int(watermark_ts)),
+        ).fetchall()
+        return [dict(row) for row in rows]
 
     def _load_messages(self, conversation_id: int) -> list[dict[str, Any]]:
         rows = self.store.conn.execute(
@@ -1047,6 +1108,51 @@ class RagIndexer:
             # 被退役列表留档到新事实，演变链审计不因覆盖断链
             self.store.record_supersede_batch(new_id, replacement_ids)
 
+    def _write_fact_embeddings_batch(
+        self,
+        facts: list[dict[str, Any]],
+        *,
+        account_wxid: str,
+        conversation_id: int,
+    ) -> int:
+        """批量写入事实向量（此前逐条嵌入+逐条写=N 次推理+N 次 INSERT）。
+
+        facts: [{"id": int, "content": str}, ...]
+        返回成功写入数；任何失败静默降级关键词（与单条版语义一致）。
+        """
+        if not facts:
+            return 0
+        try:
+            settings = load_rag_settings()
+            model = str(settings["rag_embedding_model"])
+            dim = int(settings["rag_embedding_dim"])
+            vectors = self.embedding_service.embed_texts(
+                [f["content"] for f in facts]
+            )
+            if len(vectors) != len(facts):
+                return 0
+            written = 0
+            for fact, vector in zip(facts, vectors):
+                if len(vector) != dim:
+                    continue
+                self.store.upsert_fact_embedding(
+                    fact_id=int(fact["id"]),
+                    account_wxid=account_wxid,
+                    conversation_id=conversation_id,
+                    embedding_model=model,
+                    embedding_dim=dim,
+                    vector=vector,
+                    embedding_provider=str(settings.get("rag_embedding_provider") or "local"),
+                )
+                written += 1
+            return written
+        except (RagEmbeddingUnavailable, RagEmbeddingDimensionMismatch, ValueError) as exc:
+            logger.warning("[RAG Fact Vector] batch unavailable; keyword fallback: %s", exc)
+            return 0
+        except Exception as exc:
+            logger.warning("[RAG Fact Vector] batch write failed; keyword fallback: %s", exc)
+            return 0
+
     def _write_fact_embedding(
         self,
         *,
@@ -1075,7 +1181,7 @@ class RagIndexer:
                 embedding_provider=str(settings.get("rag_embedding_provider") or "local"),
             )
         except (RagEmbeddingUnavailable, RagEmbeddingDimensionMismatch, ValueError) as exc:
-            logger.warning("[RAG Fact Vector] unavailable; keyword fallback remains active: %s", exc)
+            logger.warning("[RAG Fact Vector] embedding unavailable (model not loaded?); keyword-only retrieval until next rebuild: %s", exc)
         except Exception as exc:
             logger.warning("[RAG Fact Vector] write failed; keyword fallback remains active: %s", exc)
 
@@ -1527,4 +1633,4 @@ class RagIndexQueue:
                     # 撞锁场景 requeue 后退避，避免高频重试风暴饿死锁持有者
                     time.sleep(1.0)
             except Exception as exc:
-                logger.debug("[RAG] background index skipped: %s", exc)
+                logger.warning("[RAG] background index task failed (contact may need manual rebuild): %s", exc)

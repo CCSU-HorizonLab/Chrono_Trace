@@ -396,6 +396,8 @@ class RagStore:
             # 及抽取 prompt 版本（版本变化时水位失效全量重抽）
             "fact_extract_watermark_ts": "INTEGER",
             "fact_extract_prompt_version": "TEXT",
+            # 文档/语义嵌入的消息级水位（真增量：只处理新增消息，不重嵌旧段）
+            "message_watermark_ts": "INTEGER",
         }
         for name, definition in columns.items():
             if name not in existing:
@@ -1155,25 +1157,27 @@ class RagStore:
             """,
             (account_wxid, int(conversation_id)),
         ).fetchall()
-        quarantined = 0
+        to_quarantine: list[tuple[int, str]] = []
         reasons: dict[str, int] = {}
-        now = _now()
         for row in rows:
             reason = fact_quality_reason(row["kind"], row["content"])
             if reason is None:
                 continue
-            self.conn.execute(
+            to_quarantine.append((int(row["id"]), reason))
+            reasons[reason] = reasons.get(reason, 0) + 1
+        if to_quarantine:
+            now = _now()
+            # 批量 UPDATE（此前逐行执行 N 次）
+            self.conn.executemany(
                 """
                 UPDATE rag_facts
                    SET status = 'uncertain', enabled = 0,
                        summary_method = 'quarantined_quality', updated_at = ?
                  WHERE id = ?
                 """,
-                (now, int(row["id"])),
+                [(now, fact_id) for fact_id, _ in to_quarantine],
             )
-            quarantined += 1
-            reasons[reason] = reasons.get(reason, 0) + 1
-        return {"scanned": len(rows), "quarantined": quarantined, "reasons": reasons}
+        return {"scanned": len(rows), "quarantined": len(to_quarantine), "reasons": reasons}
 
     def list_fact_evidence_text(self, evidence_message_ids: list[int] | tuple[int, ...]) -> str:
         """Return local evidence text for ranking without replacing fact content.

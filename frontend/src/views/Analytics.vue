@@ -606,7 +606,7 @@ export default {
     components: {
         FiltersBar, DateRangeFilter, SubjectCard, EmotionLineChart, WordCloud, ConversationTimeline,
         AffinityScoreCard, DimensionRadar, SubScoreBreakdown,         PreferenceKeywordsDialog, RelationshipContextForm, CtCard, CtButton, PersonaGallery, CtAvatar,
-        FolderArchive, MessageSquare, Sparkles, BarChart3, TrendingUp, Loader2, Lightbulb
+        FolderArchive, MessageSquare, Sparkles, BarChart3, TrendingUp, Loader2, Lightbulb, PortraitGenerateDialog
     },
     setup() {
         const currentTab = ref('affinity')
@@ -1779,7 +1779,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
         return {
             currentTab, conversations, selectedConversationId, dates, loading, loadingSessions, error, analysis, subject, sessions,
             personaProfile, loadingPersonaProfile, personaProfileMeta,
-            analysisResult, displayScore, showKeywordsDialog, showContextForm, isGlobalAnalyzing, isStopping, activeTimer, handleStopAnalysis, globalProgressPercent, globalProgressStep, isDownloadingModels, modelDownloadProgress, modelDownloadStep, modelDownloadTaskId, gpuMode,
+            analysisResult, displayScore, showKeywordsDialog, showContextForm, showPortraitDialog, portraitGenError, handlePortraitGenerated, isGlobalAnalyzing, isStopping, activeTimer, handleStopAnalysis, globalProgressPercent, globalProgressStep, isDownloadingModels, modelDownloadProgress, modelDownloadStep, modelDownloadTaskId, gpuMode,
             hasConversations, hasFeatures, hasCachedAffinityAnalysis, featureStats, responseTimeStats, initiativeStats, wordCountsStats, displayWordRatioLabel, activityCalendar,
             responseTimeChart, activityCalendarChart, wordCountChart, stats, currentContactName, headerAvatarSrc, hasPreferenceKeywords, allDimensions, emotionalResonanceDisplaySubScores,
             currentRangeLabel, hasContentAnalysis, circumference, strokeDashoffset, formatNumber, formatTime, getResponseTimeLabel, getMergedResponseTimeLabel, getResponseTimePercent, onConversationChange, onDatesChange, handleExport, handleStartGlobalAnalysis, handleContextSaved, handleKeywordsUpdated,

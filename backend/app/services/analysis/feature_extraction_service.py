@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional
 
 from .feature_extraction_config import FeatureExtractionConfig
-from .preprocessing_service import PreprocessingService
+from .preprocessing import PreprocessingService
 from .sentiment_service import SentimentService
 from ...db.connection import get_db, batch_insert
 
@@ -202,7 +202,7 @@ class FeatureExtractionService:
             return []
 
         # 2. 使用新的预处理服务构建发言单元和切分会话
-        from .preprocessing_service import PairPreprocessingService, SessionManager
+        from .preprocessing import PairPreprocessingService, SessionManager
 
         # 使用缓存的实例（避免重复加载模型）
         if self._pair_service is None:

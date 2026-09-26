@@ -16,8 +16,8 @@ from app.services.realtime.emotion_state_tracker import (
 )
 from app.services.realtime import feedback_rule_extractor
 from app.services.realtime.llm_engine import LLMSuggestionEngine
-import replay_grace_buglog_live as replay_live
-from replay_grace_buglog_live import CASES, detect_trigger
+from scripts import replay_grace_buglog_live as replay_live
+from scripts.replay_grace_buglog_live import CASES, detect_trigger
 
 
 def _build_recent_messages(raw_messages: list[tuple[str, str]]) -> list[dict]:

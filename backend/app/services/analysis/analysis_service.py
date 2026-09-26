@@ -3,7 +3,7 @@ from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime, timedelta
 from ...db.connection import get_db
 from .wordcloud_generator import WordCloudGenerator
-from .preprocessing_service import PreprocessingService
+from .preprocessing import PreprocessingService
 from ..wechat.contact_filters import is_excluded_contact_username
 import logging
 

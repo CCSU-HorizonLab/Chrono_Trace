@@ -21,13 +21,13 @@ class TestInteractionPairs:
     @pytest.fixture
     def preprocessing_service(self):
         """创建预处理服务实例"""
-        from app.services.analysis.preprocessing_service import PairPreprocessingService
+        from app.services.analysis.preprocessing import PairPreprocessingService
         return PairPreprocessingService()
 
     @pytest.fixture
     def pair_storage_db(self, monkeypatch):
         """创建仅包含交互对相关表的临时数据库。"""
-        from app.services.analysis import preprocessing_service as preprocessing_module
+        from app.services.analysis.preprocessing import pairs as preprocessing_module
 
         conn = sqlite3.connect(":memory:")
         conn.execute("""
@@ -519,7 +519,7 @@ class TestInteractionPairs:
 
     def test_session_split_with_time_gap(self, preprocessing_service):
         """测试基于时间间隔的会话切分 (> 30分钟强制切分)"""
-        from app.services.analysis.preprocessing_service import SessionManager
+        from app.services.analysis.preprocessing import SessionManager
 
         base_timestamp = datetime(2024, 1, 1, 12, 0, 0).timestamp()
 
@@ -558,7 +558,7 @@ class TestInteractionPairs:
 
     def test_session_no_split_with_short_time_gap(self, preprocessing_service):
         """测试短时间间隔不会切分会话 (< 30分钟)"""
-        from app.services.analysis.preprocessing_service import SessionManager
+        from app.services.analysis.preprocessing import SessionManager
 
         base_timestamp = datetime(2024, 1, 1, 12, 0, 0).timestamp()
 
@@ -582,7 +582,7 @@ class TestInteractionPairs:
 
     def test_session_split_with_midnight_cross(self, preprocessing_service):
         """测试跨越午夜时的会话切分"""
-        from app.services.analysis.preprocessing_service import SessionManager
+        from app.services.analysis.preprocessing import SessionManager
 
         # 2024-01-01 23:50
         before_midnight = datetime(2024, 1, 1, 23, 50, 0).timestamp()
@@ -623,7 +623,7 @@ class TestInteractionPairs:
 
     def test_session_split_in_sleep_hours(self, preprocessing_service):
         """测试在睡眠时段（00:00-07:00）内的会话切分"""
-        from app.services.analysis.preprocessing_service import SessionManager
+        from app.services.analysis.preprocessing import SessionManager
 
         # 2024-01-01 03:00 (睡眠时段内)
         sleep_time_1 = datetime(2024, 1, 1, 3, 0, 0).timestamp()

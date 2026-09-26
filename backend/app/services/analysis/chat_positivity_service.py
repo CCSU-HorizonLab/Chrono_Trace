@@ -420,7 +420,7 @@ class ChatPositivityService:
 
     def _get_pair_service(self):
         if self._pair_service is None:
-            from .preprocessing_service import PairPreprocessingService
+            from .preprocessing import PairPreprocessingService
             self._pair_service = PairPreprocessingService()
         return self._pair_service
 

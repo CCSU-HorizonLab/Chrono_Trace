@@ -1,6 +1,6 @@
 """测试预处理模块"""
 from app.db.connection import DatabaseConnection
-from app.services.analysis.preprocessing_service import PreprocessingService
+from app.services.analysis.preprocessing import PreprocessingService
 
 
 def test_clean_content():
@@ -165,7 +165,7 @@ def test_split_sessions_cancel_event_interrupts_embedding():
 
     import pytest
 
-    from app.services.analysis.preprocessing_service import SessionManager
+    from app.services.analysis.preprocessing import SessionManager
 
     sm = SessionManager()
     cancelled = _threading.Event()

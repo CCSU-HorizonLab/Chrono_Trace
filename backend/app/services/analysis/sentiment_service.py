@@ -135,6 +135,18 @@ class SentimentService:
         if self._embedding_load_failed:
             return
 
+        # CPU 线程调优：限制为物理核数（超线程争抢反而降低吞吐，实测 8 逻辑核
+        # 全用时 600%+ CPU 但墙钟时间不降；4 物理核最优）
+        import os as _os
+        import torch as _torch
+        _physical_cores = max(1, _os.cpu_count() // 2)
+        if _torch.get_num_threads() != _physical_cores:
+            _torch.set_num_threads(_physical_cores)
+            logger.info(
+                "[情感服务] torch 线程数: %d (物理核 %d, 逻辑核 %d)",
+                _physical_cores, _physical_cores, _os.cpu_count(),
+            )
+
         local_model_path = self._resolve_local_embedding_model_path()
         if self._embedding_model is None and not local_model_path:
             logger.error(

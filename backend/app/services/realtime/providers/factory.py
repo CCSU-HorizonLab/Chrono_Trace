@@ -16,8 +16,10 @@ DEFAULT_LISTENER_BACKEND = "db_watch" if sys.platform != "win32" else "native_ui
 def normalize_listener_backend(value: str | None, default: str = DEFAULT_LISTENER_BACKEND) -> str:
     """Collapse legacy backend names onto supported providers."""
     raw_value = str(value or default).strip().lower()
-    if raw_value in {"", "auto", "wxauto", "native_uia"}:
-        return "native_uia"
+    # auto/空/旧名收敛到平台默认（Linux=db_watch，Windows=native_uia）——
+    # 此前硬编码 native_uia，Linux 上无存储值时必然错路由到 Windows 版本探测器
+    if raw_value in {"", "auto", "wxauto"}:
+        return default if default in {"db_watch", "native_uia"} else DEFAULT_LISTENER_BACKEND
     if raw_value == "db_watch":
         return "db_watch"
     return raw_value
@@ -38,6 +40,9 @@ class RealtimeProviderFactory:
     @classmethod
     def create(cls, backend: str | None = None):
         selected_backend = normalize_listener_backend(backend or _load_listener_backend())
+        if selected_backend == "native_uia" and sys.platform != "win32":
+            # Linux 无 pywinauto/UIA：显式选择 native_uia 也收敛到 db_watch
+            selected_backend = "db_watch"
 
         if selected_backend == "db_watch":
             from .db_watch import DbWatchRealtimeProvider

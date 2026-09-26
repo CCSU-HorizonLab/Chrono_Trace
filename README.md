@@ -424,6 +424,39 @@ release\installer\ChronoTraceSetup-版本号-GPU.exe
 - `GPU` 安装包在构建时直接带入 CUDA 版 PyTorch
 - `CPU` 包内如果检测到 NVIDIA GPU，可额外下载独立 GPU runtime 到 `%LOCALAPPDATA%\Chrono Trace\runtime\gpu`，重启应用后生效
 
+### Linux 打包与使用
+
+构建：
+
+```bash
+./build_release_linux.sh              # 完整打包（可加 --fast / -v 版本号）
+```
+
+产物：
+
+```text
+release/pyinstaller-linux/Chrono Trace/        # onedir 目录（可直接运行）
+release/chrono-trace-版本号-linux.tar.gz       # 便携分发包
+release/chrono-trace.desktop                  # 桌面快捷方式模板
+```
+
+**tar.gz 的使用（终端启动）**：
+
+```bash
+tar -xzf chrono-trace-版本号-linux.tar.gz
+cd "Chrono Trace"
+./"Chrono Trace"
+```
+
+**安装为桌面应用（可选）**：把 `release/chrono-trace.desktop` 中的 `%APPPATH%` 替换为解压后 `Chrono Trace` 可执行文件的绝对路径，复制到 `~/.local/share/applications/` 即可从应用菜单启动。
+
+运行要求与说明：
+
+- 系统 glibc ≥ 2.34（Debian 12 / Ubuntu 22.04 及更新版本）；包内已自带 Python 与全部依赖（含 Qt）
+- 密钥捕获需要系统安装 gdb（`sudo apt install gdb`）与 ptrace 权限，详见「获取微信数据库密钥」
+- 首次使用分析/实时建议时会从 ModelScope 自动下载本地情感模型，需要网络
+- 应用数据写入 `~/.local/share/Chrono Trace/`
+
 ### 调试建议
 
 - 导入问题优先看路径扫描、密钥校验和数据库解密日志

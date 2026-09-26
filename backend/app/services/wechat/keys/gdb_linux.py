@@ -363,6 +363,19 @@ def _pid_alive(pid: int) -> bool:
     return _process_state(pid) not in {"", "Z"}
 
 
+def _pdeathsig() -> None:  # pragma: no cover - 子进程侧执行
+    """gdb 子进程随父（线程）退出被内核回收——防孤儿调试器永久占用微信 ptrace。
+
+    实测事故：应用退出时 Python 清理不执行，gdb 野进程（PPID=1）持续附加微信，
+    导致后续捕获报「微信进程已被 PID=xxx 的调试器占用」。
+    """
+    try:
+        import ctypes
+        ctypes.CDLL("libc.so.6", use_errno=True).prctl(1, 9)  # PR_SET_PDEATHSIG, SIGKILL
+    except Exception:
+        pass
+
+
 def _wait_for_new_wechat_pid(old_pid: int, timeout: float = 20.0) -> Optional[int]:
     """等待「退出登录」拉起的新微信进程（旧 pid 死亡后出现的新 pid）。"""
     deadline = time.monotonic() + timeout
@@ -428,6 +441,7 @@ def capture_passphrase_via_gdb(pid: int, timeout: int = 180) -> str:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            preexec_fn=_pdeathsig,
         )
 
     try:

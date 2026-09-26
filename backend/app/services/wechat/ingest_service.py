@@ -10,7 +10,7 @@ from .db.v4.contact import ContactDBV4
 from .db.v4.message import MessageDBV4
 from .contact_filters import EXCLUDED_CONTACT_USERNAMES, is_excluded_contact_username
 from ...db.connection import get_db
-from ..analysis.preprocessing_service import PreprocessingService
+from ..analysis.preprocessing import PreprocessingService
 
 
 logger = logging.getLogger(__name__)
@@ -698,7 +698,7 @@ class WeChatIngestService:
 
         self._refresh_conversation_stats(touched_conversations)
         try:
-            from ..realtime.rag_indexer import RagIndexQueue
+            from ..realtime.rag.indexer import RagIndexQueue
 
             for conversation_id in touched_conversations:
                 RagIndexQueue.mark_dirty(account_wxid, conversation_id)

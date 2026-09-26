@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 from ...db.connection import get_db
 from .feature_extraction_config import FeatureExtractionConfig
 from .keyword_libraries import KeywordLibraries
-from .preprocessing_service import (
+from .preprocessing import (
     AttitudePreprocessingService,
     BasicPreprocessingService,
     PairPreprocessingService,

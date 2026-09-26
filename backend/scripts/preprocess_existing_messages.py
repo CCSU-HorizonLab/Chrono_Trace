@@ -15,7 +15,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from backend.app.db.connection import get_db
-from backend.app.services.analysis.preprocessing_service import PreprocessingService
+from backend.app.services.analysis.preprocessing import PreprocessingService
 
 
 def preprocess_all_messages(limit: int = 0, conversation_id: int = None):

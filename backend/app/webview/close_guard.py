@@ -15,8 +15,10 @@ import threading
 
 logger = logging.getLogger(__name__)
 
+# 返回布尔：true=已派发给前端（取消本次关闭）；false/None=前端未就绪（放行）
 _CLOSE_REQUEST_JS = (
-    "if (window.__chronoHandleCloseRequest) { window.__chronoHandleCloseRequest(); }"
+    "(() => { if (window.__chronoHandleCloseRequest) "
+    "{ window.__chronoHandleCloseRequest(); return true; } return false; })()"
 )
 
 
@@ -28,11 +30,13 @@ def attach_close_guard(window, bridge) -> None:
         if state["allow"]:
             return True
         try:
-            window.evaluate_js(_CLOSE_REQUEST_JS)
+            dispatched = window.evaluate_js(_CLOSE_REQUEST_JS)
         except Exception as exc:
             logger.warning("[CloseGuard] 前端关闭确认不可用，放行关闭: %s", exc)
             return True
-        return False
+        # 页面加载中/刷新中：前端回调未注册（求值无异常但返回 false）——放行，
+        # 否则点 X 无任何反应且无法退出（此前返回 False 无条件吞掉关闭事件）
+        return not bool(dispatched)
 
     try:
         window.events.closing += _on_closing
@@ -45,7 +49,15 @@ def attach_close_guard(window, bridge) -> None:
 
     def _exit() -> None:
         state["allow"] = True
-        threading.Timer(0.15, window.destroy).start()
+
+        def _destroy() -> None:
+            try:
+                window.destroy()
+            except Exception as exc:  # Timer 线程内异常不能无声吞掉——否则窗口卡在“已退出未退出”
+                logger.error("[CloseGuard] 窗口销毁失败: %s", exc)
+
+        # 0.5s：js_api 返回序列化慢于 0.15s 时仍可能在调用进行中销毁（互等）
+        threading.Timer(0.5, _destroy).start()
 
     bridge.set_close_actions(minimize=_minimize, exit=_exit)
     logger.info("[CloseGuard] 关闭确认已启用")

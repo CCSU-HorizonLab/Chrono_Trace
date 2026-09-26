@@ -34,15 +34,23 @@ def _load_listener_backend(default: str = DEFAULT_LISTENER_BACKEND) -> str:
     return normalize_listener_backend(default, default=default)
 
 
+def resolve_effective_listener_backend(value: str | None) -> str:
+    """归一并按平台收敛：Linux 上 native_uia（无 pywinauto）收敛为 db_watch。
+
+    供 create 与设置展示共用——避免设置页显示与实际运行后端不一致。
+    """
+    backend = normalize_listener_backend(value)
+    if backend == "native_uia" and sys.platform != "win32":
+        backend = "db_watch"
+    return backend
+
+
 class RealtimeProviderFactory:
     """Create the appropriate provider for the current environment."""
 
     @classmethod
     def create(cls, backend: str | None = None):
-        selected_backend = normalize_listener_backend(backend or _load_listener_backend())
-        if selected_backend == "native_uia" and sys.platform != "win32":
-            # Linux 无 pywinauto/UIA：显式选择 native_uia 也收敛到 db_watch
-            selected_backend = "db_watch"
+        selected_backend = resolve_effective_listener_backend(backend or _load_listener_backend())
 
         if selected_backend == "db_watch":
             from .db_watch import DbWatchRealtimeProvider

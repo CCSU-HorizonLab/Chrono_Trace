@@ -365,12 +365,23 @@ const emit = defineEmits<{
 
 // 构建中/排队中的服务端真值轮询：有活动任务时 3s 刷新，无则停
 let livePollTimer: ReturnType<typeof setInterval> | null = null
+let livePollCount = 0
 const hasLiveWork = computed(() => props.items.some((item) => isLive(item)))
 watch(
   hasLiveWork,
   (live) => {
     if (live && livePollTimer === null) {
-      livePollTimer = setInterval(() => emit('refresh'), 3000)
+      livePollCount = 0
+      livePollTimer = setInterval(() => {
+        livePollCount += 1
+        if (livePollCount > 600) {
+          // 上限 30 分钟：父级 refresh 失败/items 引用不变时防永久轮询
+          clearInterval(livePollTimer!)
+          livePollTimer = null
+          return
+        }
+        emit('refresh')
+      }, 3000)
     } else if (!live && livePollTimer !== null) {
       clearInterval(livePollTimer)
       livePollTimer = null
@@ -510,6 +521,8 @@ function resetFilters() {
 
 function getBadgeClass(item: RagContactItem) {
   if (!item.enabled) return 'badge-gray'
+  // 构建中/排队中优先于历史 failed（否则排队期间闪显异常，结束又闪回）
+  if (isLive(item)) return 'badge-blue'
   if (item.status === 'failed' || item.last_error) return 'badge-red'
   if (item.status === 'ready' && item.document_count > 0) return 'badge-green'
   return 'badge-amber'
@@ -521,10 +534,9 @@ function isLive(item: RagContactItem): boolean {
 
 function getStatusText(item: RagContactItem) {
   if (!item.enabled) return '已禁用'
+  if (isLive(item)) return item.status === 'building' ? '构建中' : '排队中'
   if (item.status === 'failed' || item.last_error) return '异常'
   if (item.status === 'ready' && item.document_count > 0) return '已就绪'
-  if (item.status === 'building') return '构建中'
-  if (item.status === 'queued') return '排队中'
   return '待索引'
 }
 
@@ -998,6 +1010,16 @@ async function batchIndexPending() {
 }
 .badge-green .badge-dot {
   background: #10b981;
+}
+
+.badge-blue {
+  background: rgba(108, 92, 231, 0.14);
+  color: #8b7ff0;
+  border: 1px solid rgba(108, 92, 231, 0.3);
+}
+
+.badge-blue .badge-dot {
+  background: #6c5ce7;
 }
 
 .badge-amber {

@@ -101,6 +101,13 @@ class FloatingWindowService:
                 x = wechat_rect[2] + FLOATING_GAP  # right + gap
                 y = wechat_rect[1]                   # top 对齐
                 height = max(wechat_rect[3] - wechat_rect[1], FLOATING_MIN_HEIGHT)
+                if sys.platform != "win32":
+                    # Linux 保留标题栏：全高面板观感近似「最大化」——压到工作区 72%
+                    tracker = self._get_tracker()
+                    workarea = tracker.workarea if tracker else None
+                    if workarea and workarea[3] > 0:
+                        height = min(height, int(workarea[3] * 0.72))
+                        height = max(height, FLOATING_MIN_HEIGHT)
                 x = self._clamp_floating_x(
                     x,
                     self.floating_width,

@@ -20,7 +20,6 @@ RAG_DEFAULTS: dict[str, Any] = {
     "rag_embedding_model": EMBEDDING_MODEL_REPO_ID,
     "rag_embedding_dim": EMBEDDING_MODEL_DIM,
     "rag_privacy_mode": "balanced",
-    "rag_cross_contact_style_enabled": False,
     "rag_query_scope": "latest_turn",
     "rag_fact_shadow_enabled": True,
     "rag_fact_read_enabled": True,
@@ -83,10 +82,6 @@ def apply_rag_defaults(settings: dict[str, Any]) -> dict[str, Any]:
     )
     settings["rag_allow_remote_embedding"] = _as_bool(
         settings.get("rag_allow_remote_embedding"),
-        False,
-    )
-    settings["rag_cross_contact_style_enabled"] = _as_bool(
-        settings.get("rag_cross_contact_style_enabled"),
         False,
     )
     if settings.get("rag_query_scope") not in {"latest_turn", "recent_window", "all"}:

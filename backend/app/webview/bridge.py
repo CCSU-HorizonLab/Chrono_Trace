@@ -663,7 +663,7 @@ class Bridge:
         try:
             if sys.platform != "win32":
                 # Linux：无需重启微信，只需「退出登录后重新登录」触发断点
-                from ..services.wechat.key_capture_linux import find_linux_wechat_pids
+                from ..services.wechat.keys.gdb_linux import find_linux_wechat_pids
 
                 pids = find_linux_wechat_pids()
                 return {
@@ -673,7 +673,7 @@ class Bridge:
                     "processes": [{"pid": p} for p in pids],
                     "restart_required": False,
                 }
-            from ..services.wechat.key_capture_flow import inspect_wechat_login_state
+            from ..services.wechat.keys.flow_win import inspect_wechat_login_state
 
             return inspect_wechat_login_state()
         except Exception as exc:
@@ -697,7 +697,7 @@ class Bridge:
                 "message": "Linux 无需重启微信，请在微信中退出登录后重新登录。",
             }
         try:
-            from ..services.wechat.key_capture_flow import restart_wechat_for_key_capture
+            from ..services.wechat.keys.flow_win import restart_wechat_for_key_capture
 
             return restart_wechat_for_key_capture()
         except Exception as exc:

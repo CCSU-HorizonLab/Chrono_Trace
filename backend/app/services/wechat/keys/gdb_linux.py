@@ -664,7 +664,7 @@ class LinuxWeChatKeyProvider:
 
 
 if __name__ == "__main__":
-    # CLI 冒烟：python -m app.services.wechat.key_capture_linux
+    # CLI 冒烟：python -m app.services.wechat.keys.gdb_linux
     import sys as _sys
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")

@@ -5,7 +5,7 @@ import time
 import logging
 from typing import Dict, Any, Optional, Callable
 from .path_finder import WeChatPathFinder
-from .db_decryptor import WeChatDBDecryptor
+from .db_decryptor_v2 import WeChatDBDecryptor  # V1 已退役，V2 尾部同名兼容类
 from .db.v4.contact import ContactDBV4
 from .db.v4.message import MessageDBV4
 from .contact_filters import EXCLUDED_CONTACT_USERNAMES, is_excluded_contact_username

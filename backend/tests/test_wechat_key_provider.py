@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import time
 
-from backend.app.services.wechat.keys import wx_key_win as key_provider_module
-from backend.app.services.wechat.keys.wx_key_win import WeChatKeyProvider
+from app.services.wechat.keys import wx_key_win as key_provider_module
+from app.services.wechat.keys.wx_key_win import WeChatKeyProvider
 
 
 class FakeExtension:

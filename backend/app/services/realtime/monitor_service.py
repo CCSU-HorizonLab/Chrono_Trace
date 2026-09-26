@@ -1739,28 +1739,45 @@ class RealtimeMonitorService:
         session_state['baseline_tail'] = tail_messages[-12:]
         self._baseline_tail = session_state['baseline_tail']  # 供 bridge 最近消息端点读取
 
-        # 情绪追踪器用基线上下文预热：否则开场只反映本次新抓的消息（前几
-        # 分钟恒显「正在分析情绪数据」），与开场建议所用对话记录脱节
+        # 情绪追踪器用基线上下文真实预热：跑情感模型而非中性占位——
+        # 此前 polarity=0/confidence=0 导致 UI 恒显「正在分析情绪数据」
+        # 和比例 N/A（有窗口数据但全是零，没有有效情绪信号）
         if self.emotion_tracker:
             try:
+                warmup_texts = []
+                warmup_msgs = []
                 for msg in session_state['baseline_tail']:
                     if msg.get('sender_attr') not in ('self', 'friend'):
                         continue
                     if str(msg.get('message_type') or 'text') != 'text':
                         continue
-                    self.emotion_tracker.update(
-                        {
-                            'polarity': 0,
-                            'intensity': 0.0,
-                            'confidence': 0.0,
-                            'rules_applied': [],
-                        },
-                        {
-                            'content': msg.get('content') or '',
-                            'sender_attr': msg.get('sender_attr'),
-                            'timestamp': int(msg.get('timestamp') or 0),
-                        },
-                    )
+                    content = str(msg.get('content') or '').strip()
+                    if not content:
+                        continue
+                    warmup_texts.append(content)
+                    warmup_msgs.append(msg)
+
+                if warmup_texts:
+                    _print(f"🌡️ 情绪基线预热: {len(warmup_texts)} 条消息跑情感模型…")
+                    for msg, content in zip(warmup_msgs, warmup_texts):
+                        try:
+                            sentiment = self.sentiment_service.analyze(content)
+                            self.emotion_tracker.update(
+                                sentiment,
+                                {
+                                    'content': content,
+                                    'sender_attr': msg.get('sender_attr'),
+                                    'timestamp': int(msg.get('timestamp') or 0),
+                                },
+                            )
+                        except Exception as sent_e:
+                            # 单条失败不阻断——降级中性占位
+                            self.emotion_tracker.update(
+                                {'polarity': 0, 'intensity': 0.0, 'confidence': 0.0, 'rules_applied': []},
+                                {'content': content, 'sender_attr': msg.get('sender_attr'),
+                                 'timestamp': int(msg.get('timestamp') or 0)},
+                            )
+                    _print(f"✅ 情绪基线预热完成（{len(warmup_texts)} 条真实分析）")
             except Exception as exc:
                 _print(f"⚠️ 情绪基线预热失败: {exc}")
         self._last_known_ts = 0

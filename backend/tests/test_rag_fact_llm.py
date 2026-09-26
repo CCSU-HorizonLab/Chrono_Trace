@@ -8,19 +8,19 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from app.services.realtime.rag_fact_llm import (
+from app.services.realtime.rag.fact_llm import (
     FACT_EXTRACTION_SYSTEM_PROMPT,
     FACT_FUSION_SYSTEM_PROMPT,
     FactRedactionUnavailable,
     LLMFactExtractorAdapter,
 )
-from app.services.realtime.rag_fact_quality import fact_quality_reason
-from app.services.realtime.rag_indexer import RagIndexer
-from app.services.realtime.rag_store import RagStore
+from app.services.realtime.rag.fact_quality import fact_quality_reason
+from app.services.realtime.rag.indexer import RagIndexer
+from app.services.realtime.rag.store import RagStore
 
 
 def _segment(now, messages_spec, start_offset=600):
-    from app.services.realtime.rag_segmenter import RagSegment
+    from app.services.realtime.rag.segmenter import RagSegment
 
     messages = [
         {
@@ -60,10 +60,10 @@ class _FakeHTTP:
 
 def _adapter(monkeypatch, http, *, remote=False, redactor=None):
     monkeypatch.setattr(
-        "app.services.realtime.rag_fact_llm.post_json_with_retries", http
+        "app.services.realtime.rag.fact_llm.post_json_with_retries", http
     )
     monkeypatch.setattr(
-        "app.services.realtime.rag_fact_llm.is_remote_llm_model",
+        "app.services.realtime.rag.fact_llm.is_remote_llm_model",
         lambda model: remote,
     )
     model = {
@@ -184,7 +184,7 @@ def test_indexer_budget_and_short_segment_skip(monkeypatch):
         calls.append(prompt)
         return {"facts": []}
 
-    from app.services.realtime.rag_fact_extractor import StructuredFactExtractor
+    from app.services.realtime.rag.fact_extractor import StructuredFactExtractor
 
     indexer = RagIndexer(
         store=store,
@@ -229,7 +229,7 @@ def test_indexer_consecutive_failure_aborts_round(monkeypatch):
     def broken_llm(prompt):
         raise ValueError("network down")
 
-    from app.services.realtime.rag_fact_extractor import StructuredFactExtractor
+    from app.services.realtime.rag.fact_extractor import StructuredFactExtractor
 
     indexer = RagIndexer(
         store=store,
@@ -283,7 +283,7 @@ def test_llm_facts_written_as_llm_shadow_through_quality_gate(monkeypatch):
             ]
         }
 
-    from app.services.realtime.rag_fact_extractor import StructuredFactExtractor
+    from app.services.realtime.rag.fact_extractor import StructuredFactExtractor
 
     indexer = RagIndexer(
         store=store,
@@ -291,7 +291,7 @@ def test_llm_facts_written_as_llm_shadow_through_quality_gate(monkeypatch):
         structured_fact_extractor=StructuredFactExtractor(good_llm),
     )
     monkeypatch.setattr(
-        "app.services.realtime.rag_indexer.load_rag_settings",
+        "app.services.realtime.rag.indexer.load_rag_settings",
         lambda: {"rag_fact_shadow_enabled": False},
     )
     now = 1790000000
@@ -325,7 +325,7 @@ def test_watermark_skips_already_extracted_range(monkeypatch):
         calls.append(json.loads(prompt)["messages"])
         return {"facts": []}
 
-    from app.services.realtime.rag_fact_extractor import StructuredFactExtractor
+    from app.services.realtime.rag.fact_extractor import StructuredFactExtractor
 
     indexer = RagIndexer(
         store=store,
@@ -362,7 +362,7 @@ def test_zero_fact_segment_advances_progress(monkeypatch):
     store = RagStore(conn)
     store.upsert_status("wxid_a", 1, status="ready")
 
-    from app.services.realtime.rag_fact_extractor import StructuredFactExtractor
+    from app.services.realtime.rag.fact_extractor import StructuredFactExtractor
 
     indexer = RagIndexer(
         store=store,
@@ -406,7 +406,7 @@ def test_failed_segment_freezes_watermark_for_round(monkeypatch):
             ]
         }
 
-    from app.services.realtime.rag_fact_extractor import StructuredFactExtractor
+    from app.services.realtime.rag.fact_extractor import StructuredFactExtractor
 
     indexer = RagIndexer(
         store=store,
@@ -500,10 +500,10 @@ def test_remote_model_without_redactor_blocks_segment(monkeypatch):
 
     # factory 缺失
     monkeypatch.setattr(
-        "app.services.realtime.rag_fact_llm.post_json_with_retries", http
+        "app.services.realtime.rag.fact_llm.post_json_with_retries", http
     )
     monkeypatch.setattr(
-        "app.services.realtime.rag_fact_llm.is_remote_llm_model", lambda model: True
+        "app.services.realtime.rag.fact_llm.is_remote_llm_model", lambda model: True
     )
     model = {"model_id": "m", "api_base_url": "https://api.example.com/v1"}
     adapter = LLMFactExtractorAdapter(model, redactor_factory=None)

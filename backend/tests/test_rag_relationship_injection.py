@@ -8,8 +8,8 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from app.services.realtime.llm_engine import LLMSuggestionEngine
-from app.services.realtime.rag_context_builder import RagContextBuilder
-from app.services.realtime.rag_store import RagStore
+from app.services.realtime.rag.context_builder import RagContextBuilder
+from app.services.realtime.rag.store import RagStore
 
 
 def _builder_with_state(
@@ -38,7 +38,7 @@ def _builder_with_state(
     store.conn.commit()
     builder = RagContextBuilder(store=store)
     monkeypatch.setattr(
-        "app.services.realtime.rag_context_builder.load_rag_settings",
+        "app.services.realtime.rag.context_builder.load_rag_settings",
         lambda: {
             "rag_relationship_policy_injection_enabled": injection_enabled,
             "rag_relationship_policy_shadow_enabled": shadow_enabled,
@@ -129,7 +129,7 @@ def test_inject_redacts_text_fields_for_remote_model(monkeypatch):
             return _R()
 
     monkeypatch.setattr(
-        "app.services.realtime.rag_context_builder.PrivacyRedactor",
+        "app.services.realtime.rag.context_builder.PrivacyRedactor",
         lambda conn: _Redactor(),
     )
     context = {}
@@ -152,7 +152,7 @@ def test_inject_redaction_failure_keeps_enums_drops_text(monkeypatch):
             raise RuntimeError("redaction blew up")
 
     monkeypatch.setattr(
-        "app.services.realtime.rag_context_builder.PrivacyRedactor",
+        "app.services.realtime.rag.context_builder.PrivacyRedactor",
         lambda conn: _BrokenRedactor(),
     )
     context = {}

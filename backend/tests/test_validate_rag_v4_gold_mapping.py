@@ -6,7 +6,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from app.services.realtime.rag_store import RagStore
+from app.services.realtime.rag.store import RagStore
 from scripts.validate_rag_v4_gold_mapping import validate_mapping
 
 

@@ -152,7 +152,7 @@ class Bridge:
         context: dict[str, Any] | None = None,
     ) -> None:
         try:
-            from ..services.realtime.rag_config import load_rag_settings
+            from ..services.realtime.rag.config import load_rag_settings
 
             if not load_rag_settings().get("rag_enabled"):
                 return
@@ -168,7 +168,7 @@ class Bridge:
                 return
             if context is not None:
                 context.setdefault("conversation_id", conversation_id)
-            from ..services.realtime.rag_indexer import RagIndexer
+            from ..services.realtime.rag.indexer import RagIndexer
 
             RagIndexer().ensure_contact_index(
                 account_wxid=str(account_wxid),
@@ -1288,7 +1288,7 @@ class Bridge:
                 try:
                     rag_log_id = getattr(result, 'rag_log_id', None)
                     if rag_log_id:
-                        from ..services.realtime.rag_context_builder import RagContextBuilder
+                        from ..services.realtime.rag.context_builder import RagContextBuilder
 
                         RagContextBuilder().attach_log_to_suggestion(rag_log_id, inserted_id)
                 except Exception as rag_log_e:
@@ -1386,7 +1386,7 @@ class Bridge:
         """获取设置"""
         with self._settings_lock:
             try:
-                from ..services.realtime.rag_config import apply_rag_defaults
+                from ..services.realtime.rag.config import apply_rag_defaults
 
                 apply_rag_defaults(self.settings)
             except Exception:
@@ -1586,7 +1586,7 @@ class Bridge:
         """
         try:
             from ..db.connection import get_db
-            from ..services.realtime.rag_store import RagStore
+            from ..services.realtime.rag.store import RagStore
 
             conn = get_db()
             store = RagStore(conn)
@@ -1761,7 +1761,7 @@ class Bridge:
         """
         try:
             from ..db.connection import get_db
-            from ..services.realtime.rag_store import RagStore
+            from ..services.realtime.rag.store import RagStore
 
             resolved_account = self._resolve_account_wxid(account_wxid)
             conn = get_db()
@@ -1981,7 +1981,7 @@ class Bridge:
         """Apply user correction to one memory fact: inaccurate / forget / restore."""
         try:
             from ..db.connection import get_db
-            from ..services.realtime.rag_store import RagStore
+            from ..services.realtime.rag.store import RagStore
 
             conn = get_db()
             store = RagStore(conn)
@@ -1995,7 +1995,7 @@ class Bridge:
             # （P2.1 闭环；刷新受 shadow 开关保护，失败绝不阻塞反馈）
             if result.get("ok"):
                 try:
-                    from ..services.realtime.rag_relationship_policy import (
+                    from ..services.realtime.rag.relationship_policy import (
                         refresh_after_fact_feedback,
                     )
 
@@ -2022,7 +2022,7 @@ class Bridge:
         """Return per-contact RAG status summary for the settings page."""
         try:
             from ..db.connection import get_db
-            from ..services.realtime.rag_store import RagStore
+            from ..services.realtime.rag.store import RagStore
             from ..services.wechat.contact_filters import is_excluded_contact_username
 
             resolved_account = self._resolve_account_wxid(account_wxid)
@@ -2142,7 +2142,7 @@ class Bridge:
     def rebuild_rag_index(self, conversation_id: int, account_wxid: str = "") -> dict[str, Any]:
         """Rebuild one contact RAG index."""
         try:
-            from ..services.realtime.rag_indexer import RagIndexer
+            from ..services.realtime.rag.indexer import RagIndexer
 
             resolved_account = self._resolve_account_wxid(account_wxid)
             status = RagIndexer().rebuild_contact_index(
@@ -2162,7 +2162,7 @@ class Bridge:
     def clear_rag_index(self, conversation_id: int, account_wxid: str = "") -> dict[str, Any]:
         """Clear one contact RAG data without touching original messages."""
         try:
-            from ..services.realtime.rag_store import RagStore
+            from ..services.realtime.rag.store import RagStore
 
             resolved_account = self._resolve_account_wxid(account_wxid)
             store = RagStore()
@@ -2181,7 +2181,7 @@ class Bridge:
     ) -> dict[str, Any]:
         """Enable or disable one contact's RAG candidates."""
         try:
-            from ..services.realtime.rag_store import RagStore
+            from ..services.realtime.rag.store import RagStore
 
             resolved_account = self._resolve_account_wxid(account_wxid)
             store = RagStore()
@@ -2200,7 +2200,7 @@ class Bridge:
     ) -> dict[str, Any]:
         """Switch one contact between fact-first and document rollback reads."""
         try:
-            from ..services.realtime.rag_store import RagStore
+            from ..services.realtime.rag.store import RagStore
 
             resolved_account = self._resolve_account_wxid(account_wxid)
             normalized_mode = str(mode or "").strip().lower()

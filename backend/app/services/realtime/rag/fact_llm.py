@@ -19,8 +19,8 @@ import json
 import logging
 from typing import Any, Callable
 
-from .llm_http import post_json_with_retries
-from .rag_config import is_remote_llm_model
+from ..llm_http import post_json_with_retries
+from .config import is_remote_llm_model
 
 logger = logging.getLogger(__name__)
 
@@ -412,7 +412,7 @@ class LLMFactExtractorAdapter:
 
 def get_active_model_config() -> dict[str, Any] | None:
     """Read the active chat model; returns None when unconfigured."""
-    from ...db.connection import get_db
+    from ....db.connection import get_db
 
     conn = get_db()
     row = conn.execute(
@@ -431,8 +431,8 @@ def build_llm_fact_extractor() -> "LLMFactExtractorAdapter | None":
         return None
 
     def _redactor_factory():
-        from ...db.connection import get_db
-        from .privacy_redactor import PrivacyRedactor
+        from ....db.connection import get_db
+        from ..privacy_redactor import PrivacyRedactor
 
         return PrivacyRedactor(get_db())
 

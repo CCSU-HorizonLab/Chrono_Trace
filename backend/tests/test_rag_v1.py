@@ -12,14 +12,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from app.services.realtime.feedback_attribution import SuggestionFeedbackAttributor
 from app.services.realtime.llm_engine import LLMSuggestionEngine
 from app.services.realtime.privacy_redactor import PrivacyRedactor
-from app.services.realtime.rag_config import apply_rag_defaults, is_remote_llm_model
-from app.services.realtime.rag_context_builder import RagContextBuilder
-from app.services.realtime.rag_embedding import RagEmbeddingService, RagEmbeddingUnavailable
-from app.services.realtime.rag_indexer import RagIndexer, RagIndexQueue
-from app.services.realtime.rag_relevance_gate import RagRelevanceGate
-from app.services.realtime.rag_retriever import RagRetriever
-from app.services.realtime.rag_segmenter import RagSegmenter
-from app.services.realtime.rag_store import RAG_INDEX_VERSION, RagStore
+from app.services.realtime.rag.config import apply_rag_defaults, is_remote_llm_model
+from app.services.realtime.rag.context_builder import RagContextBuilder
+from app.services.realtime.rag.embedding import RagEmbeddingService, RagEmbeddingUnavailable
+from app.services.realtime.rag.indexer import RagIndexer, RagIndexQueue
+from app.services.realtime.rag.relevance_gate import RagRelevanceGate
+from app.services.realtime.rag.retriever import RagRetriever
+from app.services.realtime.rag.segmenter import RagSegmenter
+from app.services.realtime.rag.store import RAG_INDEX_VERSION, RagStore
 
 
 def _conn():
@@ -207,7 +207,7 @@ def test_relevance_gate_ordinary_fact_uses_single_score_floor():
 
 def test_relevance_gate_fact_floor_is_configurable(monkeypatch):
     monkeypatch.setattr(
-        "app.services.realtime.rag_relevance_gate.load_rag_settings",
+        "app.services.realtime.rag.relevance_gate.load_rag_settings",
         lambda: {"rag_fact_score_threshold": 0.50},
     )
     gate = RagRelevanceGate()
@@ -353,7 +353,7 @@ def test_rag_indexer_extracts_semantic_fact_without_marker_keywords(monkeypatch)
         ],
     )
     monkeypatch.setattr(
-        "app.services.realtime.rag_indexer.load_rag_settings",
+        "app.services.realtime.rag.indexer.load_rag_settings",
         lambda: {
             "rag_embedding_model": "tingting0514/text2vec-base-chinese",
             "rag_embedding_dim": 384,
@@ -651,7 +651,7 @@ def test_context_builder_uses_redacted_content_for_remote_model_and_logs_trace(m
     conn.commit()
 
     monkeypatch.setattr(
-        "app.services.realtime.rag_context_builder.load_rag_settings",
+        "app.services.realtime.rag.context_builder.load_rag_settings",
         lambda: {
             "rag_enabled": True,
             "rag_remote_context_redaction": True,
@@ -662,7 +662,7 @@ def test_context_builder_uses_redacted_content_for_remote_model_and_logs_trace(m
         },
     )
     monkeypatch.setattr(
-        "app.services.realtime.rag_retriever.load_rag_settings",
+        "app.services.realtime.rag.retriever.load_rag_settings",
         lambda: {
             "rag_enabled": True,
             "rag_embedding_model": "tingting0514/text2vec-base-chinese",
@@ -715,7 +715,7 @@ def test_context_builder_marks_redaction_disabled_when_user_explicitly_turns_it_
     conn.commit()
 
     monkeypatch.setattr(
-        "app.services.realtime.rag_context_builder.load_rag_settings",
+        "app.services.realtime.rag.context_builder.load_rag_settings",
         lambda: {
             "rag_enabled": True,
             "rag_remote_context_redaction": False,
@@ -726,7 +726,7 @@ def test_context_builder_marks_redaction_disabled_when_user_explicitly_turns_it_
         },
     )
     monkeypatch.setattr(
-        "app.services.realtime.rag_retriever.load_rag_settings",
+        "app.services.realtime.rag.retriever.load_rag_settings",
         lambda: {
             "rag_enabled": True,
             "rag_embedding_model": "tingting0514/text2vec-base-chinese",
@@ -759,7 +759,7 @@ def test_context_builder_logs_missing_scope_before_retrieval(monkeypatch, caplog
     conn = _conn()
     store = RagStore(conn)
     monkeypatch.setattr(
-        "app.services.realtime.rag_context_builder.load_rag_settings",
+        "app.services.realtime.rag.context_builder.load_rag_settings",
         lambda: {
             "rag_enabled": True,
             "rag_remote_context_redaction": True,
@@ -774,7 +774,7 @@ def test_context_builder_logs_missing_scope_before_retrieval(monkeypatch, caplog
         "user_context": "她上次说什么贵来着 我不记得了",
         "display_name": "Grace.",
     }
-    with caplog.at_level("DEBUG", logger="app.services.realtime.rag_context_builder"):
+    with caplog.at_level("DEBUG", logger="app.services.realtime.rag.context_builder"):
         RagContextBuilder(store=store).enrich_context(
             context,
             trigger_type="manual_request",
@@ -803,7 +803,7 @@ def test_context_builder_attempts_retrieval_then_gate_skips_when_memory_intent_i
         redacted_content="对方喜欢拿铁",
     )
     monkeypatch.setattr(
-        "app.services.realtime.rag_context_builder.load_rag_settings",
+        "app.services.realtime.rag.context_builder.load_rag_settings",
         lambda: {
             "rag_enabled": True,
             "rag_remote_context_redaction": True,
@@ -872,7 +872,7 @@ def test_context_builder_skips_off_topic_memory_for_ordinary_suggestion(monkeypa
             }
 
     monkeypatch.setattr(
-        "app.services.realtime.rag_context_builder.load_rag_settings",
+        "app.services.realtime.rag.context_builder.load_rag_settings",
         lambda: {
             "rag_enabled": True,
             "rag_remote_context_redaction": True,
@@ -950,7 +950,7 @@ def test_context_builder_does_not_inject_topic_segment_for_ordinary_suggestion(m
             }
 
     monkeypatch.setattr(
-        "app.services.realtime.rag_context_builder.load_rag_settings",
+        "app.services.realtime.rag.context_builder.load_rag_settings",
         lambda: {
             "rag_enabled": True,
             "rag_remote_context_redaction": True,
@@ -1002,7 +1002,7 @@ def test_context_builder_injects_no_hit_guard_after_empty_retrieval(monkeypatch)
         redacted_content="对方喜欢拿铁",
     )
     monkeypatch.setattr(
-        "app.services.realtime.rag_context_builder.load_rag_settings",
+        "app.services.realtime.rag.context_builder.load_rag_settings",
         lambda: {
             "rag_enabled": True,
             "rag_remote_context_redaction": True,
@@ -1013,7 +1013,7 @@ def test_context_builder_injects_no_hit_guard_after_empty_retrieval(monkeypatch)
         },
     )
     monkeypatch.setattr(
-        "app.services.realtime.rag_retriever.load_rag_settings",
+        "app.services.realtime.rag.retriever.load_rag_settings",
         lambda: {
             "rag_enabled": True,
             "rag_embedding_model": "tingting0514/text2vec-base-chinese",
@@ -1060,7 +1060,7 @@ def test_context_builder_masks_no_hit_query_for_remote_prompt(monkeypatch):
         redacted_content="对方喜欢拿铁",
     )
     monkeypatch.setattr(
-        "app.services.realtime.rag_context_builder.load_rag_settings",
+        "app.services.realtime.rag.context_builder.load_rag_settings",
         lambda: {
             "rag_enabled": True,
             "rag_remote_context_redaction": True,
@@ -1071,7 +1071,7 @@ def test_context_builder_masks_no_hit_query_for_remote_prompt(monkeypatch):
         },
     )
     monkeypatch.setattr(
-        "app.services.realtime.rag_retriever.load_rag_settings",
+        "app.services.realtime.rag.retriever.load_rag_settings",
         lambda: {
             "rag_enabled": True,
             "rag_embedding_model": "tingting0514/text2vec-base-chinese",
@@ -1110,7 +1110,7 @@ def test_first_contact_without_index_does_not_rebuild_synchronously(monkeypatch)
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("sync rebuild should not run")),
     )
     monkeypatch.setattr(
-        "app.services.realtime.rag_indexer.load_rag_settings",
+        "app.services.realtime.rag.indexer.load_rag_settings",
         lambda: {
             "rag_embedding_model": "tingting0514/text2vec-base-chinese",
             "rag_embedding_dim": 384,
@@ -1141,7 +1141,7 @@ def test_failed_embedding_index_retries_when_model_becomes_available(monkeypatch
 
     monkeypatch.setattr(RagIndexQueue, "enqueue", lambda account_wxid, conversation_id: queued.append((account_wxid, conversation_id)))
     monkeypatch.setattr(
-        "app.services.realtime.rag_indexer.load_rag_settings",
+        "app.services.realtime.rag.indexer.load_rag_settings",
         lambda: {
             "rag_embedding_model": "tingting0514/text2vec-base-chinese",
             "rag_embedding_dim": 384,
@@ -1164,7 +1164,7 @@ def test_context_builder_first_contact_without_index_injects_hot_context_and_log
     store = RagStore(conn)
     monkeypatch.setattr(RagIndexQueue, "enqueue", lambda account_wxid, conversation_id: None)
     monkeypatch.setattr(
-        "app.services.realtime.rag_context_builder.load_rag_settings",
+        "app.services.realtime.rag.context_builder.load_rag_settings",
         lambda: {
             "rag_enabled": True,
             "rag_remote_context_redaction": True,
@@ -1175,7 +1175,7 @@ def test_context_builder_first_contact_without_index_injects_hot_context_and_log
         },
     )
     monkeypatch.setattr(
-        "app.services.realtime.rag_indexer.load_rag_settings",
+        "app.services.realtime.rag.indexer.load_rag_settings",
         lambda: {
             "rag_embedding_model": "tingting0514/text2vec-base-chinese",
             "rag_embedding_dim": 384,
@@ -1212,7 +1212,7 @@ def test_context_builder_does_not_treat_old_recent_messages_as_hot_context(monke
     store = RagStore(conn)
     monkeypatch.setattr(RagIndexQueue, "enqueue", lambda account_wxid, conversation_id: None)
     monkeypatch.setattr(
-        "app.services.realtime.rag_context_builder.load_rag_settings",
+        "app.services.realtime.rag.context_builder.load_rag_settings",
         lambda: {
             "rag_enabled": True,
             "rag_remote_context_redaction": True,
@@ -1223,7 +1223,7 @@ def test_context_builder_does_not_treat_old_recent_messages_as_hot_context(monke
         },
     )
     monkeypatch.setattr(
-        "app.services.realtime.rag_indexer.load_rag_settings",
+        "app.services.realtime.rag.indexer.load_rag_settings",
         lambda: {
             "rag_embedding_model": "tingting0514/text2vec-base-chinese",
             "rag_embedding_dim": 384,
@@ -1303,7 +1303,7 @@ def test_stale_index_uses_old_documents_and_queues_rebuild(monkeypatch):
     queued = []
     monkeypatch.setattr(RagIndexQueue, "enqueue", lambda account_wxid, conversation_id: queued.append((account_wxid, conversation_id)))
     monkeypatch.setattr(
-        "app.services.realtime.rag_context_builder.load_rag_settings",
+        "app.services.realtime.rag.context_builder.load_rag_settings",
         lambda: {
             "rag_enabled": True,
             "rag_remote_context_redaction": True,
@@ -1416,7 +1416,7 @@ def test_rag_indexer_rebuilds_v2_multilayer_documents_and_cleans_old_auto_docs(m
     )
 
     monkeypatch.setattr(
-        "app.services.realtime.rag_indexer.load_rag_settings",
+        "app.services.realtime.rag.indexer.load_rag_settings",
         lambda: {
             "rag_embedding_model": "tingting0514/text2vec-base-chinese",
             "rag_embedding_dim": 384,
@@ -1561,7 +1561,7 @@ def test_context_builder_injects_low_score_memory_document_for_explicit_lookup(m
         index_version=RAG_INDEX_VERSION,
     )
     monkeypatch.setattr(
-        "app.services.realtime.rag_context_builder.load_rag_settings",
+        "app.services.realtime.rag.context_builder.load_rag_settings",
         lambda: {
             "rag_enabled": True,
             "rag_remote_context_redaction": True,
@@ -1572,7 +1572,7 @@ def test_context_builder_injects_low_score_memory_document_for_explicit_lookup(m
         },
     )
     monkeypatch.setattr(
-        "app.services.realtime.rag_retriever.load_rag_settings",
+        "app.services.realtime.rag.retriever.load_rag_settings",
         lambda: {
             "rag_enabled": True,
             "rag_embedding_model": "tingting0514/text2vec-base-chinese",
@@ -1775,7 +1775,7 @@ def test_context_builder_timeout_omits_rag_and_logs_timeout(monkeypatch):
             }
 
     monkeypatch.setattr(
-        "app.services.realtime.rag_context_builder.load_rag_settings",
+        "app.services.realtime.rag.context_builder.load_rag_settings",
         lambda: {
             "rag_enabled": True,
             "rag_remote_context_redaction": True,
@@ -1831,7 +1831,7 @@ def test_redaction_failure_uses_strong_mask_and_drops_sensitive_items(monkeypatc
         sensitivity="sensitive",
     )
     monkeypatch.setattr(
-        "app.services.realtime.rag_context_builder.load_rag_settings",
+        "app.services.realtime.rag.context_builder.load_rag_settings",
         lambda: {
             "rag_enabled": True,
             "rag_remote_context_redaction": True,
@@ -1880,7 +1880,7 @@ def test_strong_mask_failure_blocks_remote_rag(monkeypatch):
         redacted_content="手机号 13800138000 拿铁",
     )
     monkeypatch.setattr(
-        "app.services.realtime.rag_context_builder.load_rag_settings",
+        "app.services.realtime.rag.context_builder.load_rag_settings",
         lambda: {
             "rag_enabled": True,
             "rag_remote_context_redaction": True,
@@ -2196,7 +2196,7 @@ def test_rag_store_migrates_legacy_retrieval_log_schema():
 
 
 def test_calibrate_fact_confidence_separates_distribution():
-    from app.services.realtime.rag_semantic_memory import calibrate_fact_confidence
+    from app.services.realtime.rag.semantic_memory import calibrate_fact_confidence
 
     # 余弦域边界映射：0.45 -> 0.30，0.80 -> 0.90
     assert calibrate_fact_confidence(0.45, evidence_count=1) == 0.30
@@ -2317,7 +2317,7 @@ def test_concurrent_rebuilds_queue_instead_of_locking(monkeypatch):
             ],
         )
     monkeypatch.setattr(
-        "app.services.realtime.rag_indexer.load_rag_settings",
+        "app.services.realtime.rag.indexer.load_rag_settings",
         lambda: {
             "rag_embedding_model": "tingting0514/text2vec-base-chinese",
             "rag_embedding_dim": 384,
@@ -2326,11 +2326,11 @@ def test_concurrent_rebuilds_queue_instead_of_locking(monkeypatch):
     )
     # 影子刷新关闭：避免测试线程经 thread-local get_db 触碰真实库
     monkeypatch.setattr(
-        "app.services.realtime.rag_relationship_policy.load_rag_settings",
+        "app.services.realtime.rag.relationship_policy.load_rag_settings",
         lambda: {"rag_relationship_policy_shadow_enabled": False},
     )
     monkeypatch.setattr(
-        "app.services.realtime.rag_contact_preference.load_rag_settings",
+        "app.services.realtime.rag.contact_preference.load_rag_settings",
         lambda: {"rag_relationship_policy_shadow_enabled": False},
     )
 
@@ -2346,7 +2346,7 @@ def test_concurrent_rebuilds_queue_instead_of_locking(monkeypatch):
             return [[0.0] * 384 for _ in texts]
 
     monkeypatch.setattr(
-        "app.services.realtime.rag_indexer.RagIndexQueue.enqueue",
+        "app.services.realtime.rag.indexer.RagIndexQueue.enqueue",
         staticmethod(lambda account_wxid, conversation_id: enqueued.append((account_wxid, conversation_id))),
     )
 

@@ -7,15 +7,15 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import pytest
 
-from app.services.realtime.rag_fact_extractor import FactExtractionError, StructuredFactExtractor
-from app.services.realtime.rag_config import apply_rag_defaults
-from app.services.realtime.rag_embedding import RagEmbeddingService
-from app.services.realtime.rag_retriever import RagRetriever
-from app.services.realtime.rag_store import RagStore
-from app.services.realtime.rag_context_builder import RagContextBuilder
-from app.services.realtime.rag_context_builder import RagQueryBuilder
-from app.services.realtime.rag_indexer import RagIndexer
-from app.services.realtime.rag_segmenter import RagSegment
+from app.services.realtime.rag.fact_extractor import FactExtractionError, StructuredFactExtractor
+from app.services.realtime.rag.config import apply_rag_defaults
+from app.services.realtime.rag.embedding import RagEmbeddingService
+from app.services.realtime.rag.retriever import RagRetriever
+from app.services.realtime.rag.store import RagStore
+from app.services.realtime.rag.context_builder import RagContextBuilder
+from app.services.realtime.rag.context_builder import RagQueryBuilder
+from app.services.realtime.rag.indexer import RagIndexer
+from app.services.realtime.rag.segmenter import RagSegment
 from app.services.realtime.llm_engine import LLMSuggestionEngine
 from app.webview.bridge import Bridge
 from app.services.realtime.privacy_redactor import PrivacyRedactor
@@ -82,7 +82,7 @@ def test_fact_retrieval_uses_evidence_topic_when_legacy_content_is_lossy(monkeyp
         evidence_message_ids=[7],
     )
     monkeypatch.setattr(
-        "app.services.realtime.rag_retriever.load_rag_settings",
+        "app.services.realtime.rag.retriever.load_rag_settings",
         lambda: {"rag_fact_read_enabled": True, "rag_embedding_model": "test", "rag_embedding_dim": 2},
     )
     result = RagRetriever(store=store).retrieve(
@@ -95,7 +95,7 @@ def test_fact_retrieval_uses_evidence_topic_when_legacy_content_is_lossy(monkeyp
 def test_query_scope_defaults_to_latest_turn(monkeypatch):
     settings = apply_rag_defaults({})
     monkeypatch.setattr(
-        "app.services.realtime.rag_retriever.load_rag_settings", lambda: settings
+        "app.services.realtime.rag.retriever.load_rag_settings", lambda: settings
     )
     query = RagRetriever().build_query(
         {"recent_messages": [{"content": "旧话题"}, {"content": "最新输入"}]},
@@ -137,7 +137,7 @@ def test_fact_read_is_opt_in_and_returns_contact_scoped_fact(monkeypatch):
         evidence_message_ids=[3],
     )
     monkeypatch.setattr(
-        "app.services.realtime.rag_retriever.load_rag_settings",
+        "app.services.realtime.rag.retriever.load_rag_settings",
         lambda: {
             "rag_fact_read_enabled": True,
             "rag_embedding_model": "test",
@@ -169,7 +169,7 @@ def test_contact_fact_read_mode_can_roll_back_without_disabling_fact_writes(monk
     store.set_fact_read_mode("account-a", 1, "documents")
     store.set_fact_read_mode("account-a", 2, "facts")
     monkeypatch.setattr(
-        "app.services.realtime.rag_retriever.load_rag_settings",
+        "app.services.realtime.rag.retriever.load_rag_settings",
         lambda: {
             "rag_fact_read_enabled": True, "rag_embedding_model": "test",
             "rag_embedding_dim": 384,
@@ -221,10 +221,10 @@ def test_fact_memory_flows_into_prompt_and_retrieval_log(monkeypatch):
         "rag_query_scope": "latest_turn",
     }
     monkeypatch.setattr(
-        "app.services.realtime.rag_context_builder.load_rag_settings", lambda: settings
+        "app.services.realtime.rag.context_builder.load_rag_settings", lambda: settings
     )
     monkeypatch.setattr(
-        "app.services.realtime.rag_retriever.load_rag_settings", lambda: settings
+        "app.services.realtime.rag.retriever.load_rag_settings", lambda: settings
     )
     context = {
         "account_wxid": "account-a",
@@ -271,7 +271,7 @@ def test_bridge_rebuild_reports_indexer_failure_to_frontend(monkeypatch):
         def rebuild_contact_index(self, **kwargs):
             return {"status": "failed", "last_error": "embedding unavailable"}
 
-    monkeypatch.setattr("app.services.realtime.rag_indexer.RagIndexer", FailedIndexer)
+    monkeypatch.setattr("app.services.realtime.rag.indexer.RagIndexer", FailedIndexer)
     result = bridge.rebuild_rag_index(7, "account-a")
     assert result["ok"] is False
     assert result["status"]["status"] == "failed"
@@ -303,7 +303,7 @@ def test_bridge_rag_status_exposes_fact_read_settings(monkeypatch):
 
     monkeypatch.setattr("app.db.connection.get_db", lambda: conn)
     monkeypatch.setattr("app.webview.bridge.get_db", lambda: conn, raising=False)
-    monkeypatch.setattr("app.services.realtime.rag_store.get_db", lambda: conn)
+    monkeypatch.setattr("app.services.realtime.rag.store.get_db", lambda: conn)
     bridge = FakeBridge()
     result = bridge.get_rag_status("account-a")
     assert result["ok"] is True
@@ -343,7 +343,7 @@ def test_llm_generate_consumes_fact_context_before_calling_provider(monkeypatch)
             }
 
     monkeypatch.setattr(
-        "app.services.realtime.rag_context_builder.RagContextBuilder", FakeContextBuilder
+        "app.services.realtime.rag.context_builder.RagContextBuilder", FakeContextBuilder
     )
     monkeypatch.setattr(
         engine,
@@ -405,8 +405,8 @@ def test_three_way_replay_no_rag_document_fallback_and_fact_priority(monkeypatch
     }
 
     def run(settings):
-        monkeypatch.setattr("app.services.realtime.rag_context_builder.load_rag_settings", lambda: settings)
-        monkeypatch.setattr("app.services.realtime.rag_retriever.load_rag_settings", lambda: settings)
+        monkeypatch.setattr("app.services.realtime.rag.context_builder.load_rag_settings", lambda: settings)
+        monkeypatch.setattr("app.services.realtime.rag.retriever.load_rag_settings", lambda: settings)
         context = {
             "account_wxid": "account-a", "conversation_id": 1,
             "recent_messages": [], "user_context": "喜欢咖啡", "memory_intent": intent,
@@ -651,7 +651,7 @@ def test_fact_vector_retrieval_handles_semantic_match_without_keyword_overlap(mo
             return [{"embedding": [1.0, 0.0]} for _ in texts]
 
     monkeypatch.setattr(
-        "app.services.realtime.rag_retriever.load_rag_settings",
+        "app.services.realtime.rag.retriever.load_rag_settings",
         lambda: {"rag_fact_read_enabled": True, "rag_embedding_model": "test", "rag_embedding_dim": 2},
     )
     result = RagRetriever(
@@ -701,7 +701,7 @@ def test_fact_semantic_match_is_not_erased_by_long_term_time_decay(monkeypatch):
             return [{"embedding": [1.0, 0.0]} for _ in texts]
 
     monkeypatch.setattr(
-        "app.services.realtime.rag_retriever.load_rag_settings",
+        "app.services.realtime.rag.retriever.load_rag_settings",
         lambda: {"rag_fact_read_enabled": True, "rag_embedding_model": "test", "rag_embedding_dim": 2},
     )
     result = RagRetriever(
@@ -744,7 +744,7 @@ def test_fact_vector_retrieval_times_out_without_raising(monkeypatch):
             return [{"embedding": [1.0, 0.0]} for _ in texts]
 
     monkeypatch.setattr(
-        "app.services.realtime.rag_retriever.load_rag_settings",
+        "app.services.realtime.rag.retriever.load_rag_settings",
         lambda: {"rag_fact_read_enabled": True, "rag_embedding_model": "test", "rag_embedding_dim": 2},
     )
     result = RagRetriever(
@@ -775,7 +775,7 @@ def test_legacy_fact_vector_backfill_is_idempotent_and_dimension_checked(monkeyp
             return [[1.0, 0.0] if index % 2 == 0 else [0.0, 1.0] for index, _ in enumerate(texts)]
 
     monkeypatch.setattr(
-        "app.services.realtime.rag_indexer.load_rag_settings",
+        "app.services.realtime.rag.indexer.load_rag_settings",
         lambda: {"rag_embedding_model": "test", "rag_embedding_dim": 2, "rag_embedding_provider": "local"},
     )
     indexer = RagIndexer(store=store, embedding_service=FakeEmbedding())
@@ -803,7 +803,7 @@ def test_ready_contact_index_schedules_missing_fact_vectors(monkeypatch):
     )
     scheduled = []
     monkeypatch.setattr(
-        "app.services.realtime.rag_indexer.load_rag_settings",
+        "app.services.realtime.rag.indexer.load_rag_settings",
         lambda: {
             "rag_enabled": True,
             "rag_fact_read_enabled": True,
@@ -813,7 +813,7 @@ def test_ready_contact_index_schedules_missing_fact_vectors(monkeypatch):
         },
     )
     monkeypatch.setattr(
-        "app.services.realtime.rag_indexer.RagIndexQueue.enqueue_fact_backfill",
+        "app.services.realtime.rag.indexer.RagIndexQueue.enqueue_fact_backfill",
         lambda account, conversation: scheduled.append((account, conversation)),
     )
     status = RagIndexer(store=store).ensure_contact_index(account_wxid="account-a", conversation_id=1)
@@ -834,7 +834,7 @@ def test_document_query_with_recent_word_keeps_older_relevant_memory(monkeypatch
         content="她之前提过想去摄影展", redacted_content="她之前提过想去摄影展",
     )
     monkeypatch.setattr(
-        "app.services.realtime.rag_retriever.load_rag_settings",
+        "app.services.realtime.rag.retriever.load_rag_settings",
         lambda: {
             "rag_fact_read_enabled": False, "rag_embedding_model": "test",
             "rag_embedding_dim": 2,

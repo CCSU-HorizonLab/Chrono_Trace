@@ -138,7 +138,7 @@ class MessageBuffer:
                         ),
                     ).fetchone()
                     if row:
-                        from .rag_indexer import RagIndexQueue
+                        from .rag.indexer import RagIndexQueue
 
                         RagIndexQueue.mark_dirty(self._resolve_account_wxid(account_wxid), int(row["id"]))
                 except Exception as rag_e:

@@ -2280,7 +2280,7 @@ class RealtimeMonitorService:
 
     def _prewarm_rag_index_for_current_contact(self) -> None:
         try:
-            from .rag_config import load_rag_settings
+            from .rag.config import load_rag_settings
 
             if not load_rag_settings().get("rag_enabled"):
                 return
@@ -2305,7 +2305,7 @@ class RealtimeMonitorService:
             ).fetchone()
             if not row:
                 return
-            from .rag_indexer import RagIndexer
+            from .rag.indexer import RagIndexer
 
             RagIndexer().ensure_contact_index(
                 account_wxid=account_wxid,
@@ -3686,7 +3686,7 @@ class RealtimeMonitorService:
             try:
                 rag_log_id = getattr(result, 'rag_log_id', None)
                 if rag_log_id:
-                    from .rag_context_builder import RagContextBuilder
+                    from .rag.context_builder import RagContextBuilder
 
                     RagContextBuilder().attach_log_to_suggestion(rag_log_id, suggestion_id)
             except Exception as rag_log_e:

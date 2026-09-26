@@ -17,8 +17,8 @@ import json
 import logging
 from typing import Any
 
-from .rag_config import load_rag_settings
-from .rag_store import RagStore
+from .config import load_rag_settings
+from .store import RagStore
 
 logger = logging.getLogger(__name__)
 
@@ -317,14 +317,14 @@ def refresh_after_fact_feedback(store: RagStore, fact_id: int, *, action: str = 
         # 同步刷新对方偏好策略影子（P1.2 槽位级，剔除禁用事实同理）；
         # 单独捕获——偏好刷新失败不影响关系状态刷新结果
         try:
-            from .rag_contact_preference import refresh_contact_preferences_shadow
+            from .contact_preference import refresh_contact_preferences_shadow
 
             # G4：纠错触发的定向刷新此前不带 embedding，derive 侧退化成
             # "每事实一槽"，会把索引轮聚好的槽拆散。这里复用本地 embedding
             # 服务聚槽；模型缺失/构造失败时保持降级派生并告警，不阻塞反馈。
             pref_embedding_service = None
             try:
-                from .rag_embedding import RagEmbeddingService
+                from .embedding import RagEmbeddingService
 
                 pref_embedding_service = RagEmbeddingService()
             except Exception as emb_exc:
@@ -383,7 +383,7 @@ def _load_profile_cache(
         return None
     try:
         if conn is None:
-            from ...db.connection import get_db
+            from ....db.connection import get_db
 
             conn = get_db()
         row = conn.execute(

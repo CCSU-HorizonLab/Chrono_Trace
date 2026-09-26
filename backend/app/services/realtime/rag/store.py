@@ -7,9 +7,9 @@ import pickle
 import time
 from typing import Any
 
-from ...db.connection import get_db
-from .rag_config import RAG_DEFAULTS
-from .rag_semantic_memory import CONFIDENCE_CEILING, CONFIRMATION_STEP
+from ....db.connection import get_db
+from .config import RAG_DEFAULTS
+from .semantic_memory import CONFIDENCE_CEILING, CONFIRMATION_STEP
 
 
 INDEX_STATUSES = {"pending", "indexing", "ready", "stale", "failed"}
@@ -1085,7 +1085,7 @@ class RagStore:
         quarantine is deliberately limited to those rows; structured LLM facts
         and user feedback tombstones are left untouched.
         """
-        from .rag_fact_quality import fact_quality_reason
+        from .fact_quality import fact_quality_reason
 
         rows = self.conn.execute(
             """

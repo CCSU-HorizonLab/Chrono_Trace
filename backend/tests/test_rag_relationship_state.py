@@ -9,13 +9,13 @@ import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from app.services.realtime.rag_config import load_rag_settings
-from app.services.realtime.rag_relationship_policy import (
+from app.services.realtime.rag.config import load_rag_settings
+from app.services.realtime.rag.relationship_policy import (
     derive_relationship_state,
     refresh_after_fact_feedback,
     refresh_relationship_state_shadow,
 )
-from app.services.realtime.rag_store import RagStore
+from app.services.realtime.rag.store import RagStore
 
 
 def _store():
@@ -137,7 +137,7 @@ def test_shadow_upsert_versions_and_dedupes_by_evidence_hash():
 def test_refresh_respects_disabled_switch(monkeypatch):
     conn, store = _store()
     monkeypatch.setattr(
-        "app.services.realtime.rag_relationship_policy.load_rag_settings",
+        "app.services.realtime.rag.relationship_policy.load_rag_settings",
         lambda: {"rag_relationship_policy_shadow_enabled": False},
     )
     result = refresh_relationship_state_shadow(
@@ -150,11 +150,11 @@ def test_refresh_respects_disabled_switch(monkeypatch):
 def test_refresh_skips_when_no_profile_and_no_facts(monkeypatch):
     conn, store = _store()
     monkeypatch.setattr(
-        "app.services.realtime.rag_relationship_policy.load_rag_settings",
+        "app.services.realtime.rag.relationship_policy.load_rag_settings",
         lambda: {"rag_relationship_policy_shadow_enabled": True},
     )
     monkeypatch.setattr(
-        "app.services.realtime.rag_relationship_policy._load_profile_cache",
+        "app.services.realtime.rag.relationship_policy._load_profile_cache",
         lambda account_wxid, display_name, conn=None: None,
     )
     result = refresh_relationship_state_shadow(
@@ -239,11 +239,11 @@ def test_refresh_writes_shadow_from_profile_and_facts(monkeypatch):
     )
 
     monkeypatch.setattr(
-        "app.services.realtime.rag_relationship_policy.load_rag_settings",
+        "app.services.realtime.rag.relationship_policy.load_rag_settings",
         lambda: {"rag_relationship_policy_shadow_enabled": True},
     )
     monkeypatch.setattr(
-        "app.services.realtime.rag_relationship_policy._load_profile_cache",
+        "app.services.realtime.rag.relationship_policy._load_profile_cache",
         lambda account_wxid, display_name, conn=None: {
             "profile": profile, "features_snapshot": features,
         },
@@ -278,11 +278,11 @@ def test_refresh_after_fact_feedback_drops_disabled_evidence(monkeypatch):
         "INSERT INTO conversations (id, account_wxid, display_name, message_count) VALUES (1, 'wxid_a', '昕', 3616)"
     )
     monkeypatch.setattr(
-        "app.services.realtime.rag_relationship_policy.load_rag_settings",
+        "app.services.realtime.rag.relationship_policy.load_rag_settings",
         lambda: {"rag_relationship_policy_shadow_enabled": True},
     )
     monkeypatch.setattr(
-        "app.services.realtime.rag_relationship_policy._load_profile_cache",
+        "app.services.realtime.rag.relationship_policy._load_profile_cache",
         lambda account_wxid, display_name, conn=None: {
             "profile": profile, "features_snapshot": features,
         },

@@ -13,9 +13,9 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from app.services.realtime.rag_fact_extractor import StructuredFactExtractor
-from app.services.realtime.rag_indexer import RagIndexer
-from app.services.realtime.rag_store import RagStore
+from app.services.realtime.rag.fact_extractor import StructuredFactExtractor
+from app.services.realtime.rag.indexer import RagIndexer
+from app.services.realtime.rag.store import RagStore
 
 
 class _NoopEmbedding:
@@ -24,7 +24,7 @@ class _NoopEmbedding:
 
 
 def _segment(now, messages_spec, start_offset=600):
-    from app.services.realtime.rag_segmenter import RagSegment
+    from app.services.realtime.rag.segmenter import RagSegment
 
     messages = [
         {
@@ -111,7 +111,7 @@ def test_evolution_chain_supersedes_old_fact(monkeypatch):
     )
     indexer = _indexer(store, llm)
     monkeypatch.setattr(
-        "app.services.realtime.rag_indexer.load_rag_settings",
+        "app.services.realtime.rag.indexer.load_rag_settings",
         lambda: {"rag_fact_shadow_enabled": False},
     )
 
@@ -155,7 +155,7 @@ def test_merge_decision_augments_old_fact_without_new_row(monkeypatch):
     )
     indexer = _indexer(store, llm)
     monkeypatch.setattr(
-        "app.services.realtime.rag_indexer.load_rag_settings",
+        "app.services.realtime.rag.indexer.load_rag_settings",
         lambda: {"rag_fact_shadow_enabled": False},
     )
 
@@ -207,7 +207,7 @@ def test_fusion_failure_falls_back_to_add_only(monkeypatch):
 
     indexer = _indexer(store, broken_fusion_llm)
     monkeypatch.setattr(
-        "app.services.realtime.rag_indexer.load_rag_settings",
+        "app.services.realtime.rag.indexer.load_rag_settings",
         lambda: {"rag_fact_shadow_enabled": False},
     )
     now = 1790000000
@@ -320,7 +320,7 @@ def test_fusion_candidates_capped_by_confidence(monkeypatch):
 
     indexer = _indexer(store, llm)
     monkeypatch.setattr(
-        "app.services.realtime.rag_indexer.load_rag_settings",
+        "app.services.realtime.rag.indexer.load_rag_settings",
         lambda: {"rag_fact_shadow_enabled": False},
     )
     now = 1790000000

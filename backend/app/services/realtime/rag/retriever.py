@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import math
 import re
 import time
@@ -19,6 +20,53 @@ from .store import RagStore
 
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# 联系人级向量缓存：检索每次全量 pickle.loads 所有向量 + 暴力余弦，
+# 每次建议生成重复解码同一批向量（实测千级事实/文档）。失效钩子在
+# 重建/回填/清空/纠错刷新四处显式调用 invalidate_vector_cache。
+# ---------------------------------------------------------------------------
+_VECTOR_CACHE: dict[tuple, dict] = {}
+_VECTOR_CACHE_LOCK = threading.Lock()
+_VECTOR_CACHE_MAX = 8  # 联系人级 LRU 上限（单账号场景足够）
+_VECTOR_CACHE_ORDER: "list[tuple]" = []
+
+
+def invalidate_vector_cache(account_wxid: str | None = None, conversation_id: int | None = None) -> None:
+    """失效向量缓存；不带参数时全清。"""
+    with _VECTOR_CACHE_LOCK:
+        if account_wxid is None:
+            _VECTOR_CACHE.clear()
+            _VECTOR_CACHE_ORDER.clear()
+            return
+        keys = [
+            key for key in list(_VECTOR_CACHE)
+            if key[0] == account_wxid
+            and (conversation_id is None or key[1] == int(conversation_id))
+        ]
+        for key in keys:
+            _VECTOR_CACHE.pop(key, None)
+            if key in _VECTOR_CACHE_ORDER:
+                _VECTOR_CACHE_ORDER.remove(key)
+
+
+def _cache_get(key: tuple) -> dict | None:
+    with _VECTOR_CACHE_LOCK:
+        item = _VECTOR_CACHE.get(key)
+        if item is not None and key in _VECTOR_CACHE_ORDER:
+            _VECTOR_CACHE_ORDER.remove(key)
+            _VECTOR_CACHE_ORDER.append(key)
+        return item
+
+
+def _cache_put(key: tuple, value: dict) -> None:
+    with _VECTOR_CACHE_LOCK:
+        _VECTOR_CACHE[key] = value
+        if key not in _VECTOR_CACHE_ORDER:
+            _VECTOR_CACHE_ORDER.append(key)
+        while len(_VECTOR_CACHE_ORDER) > _VECTOR_CACHE_MAX:
+            evict = _VECTOR_CACHE_ORDER.pop(0)
+            _VECTOR_CACHE.pop(evict, None)
 
 
 class RagRetriever:
@@ -115,12 +163,21 @@ class RagRetriever:
 
         degrade_reason: str | None = None
         try:
-            docs = self.store.list_documents_with_vectors(
-                account_wxid,
-                conversation_id,
-                embedding_model=model,
-                embedding_dim=dim,
-            )
+            doc_cache_key = (account_wxid, int(conversation_id), "docs", model, dim)
+            doc_stamp = self.store.rag_data_stamp(account_wxid, conversation_id)
+            doc_cached = _cache_get(doc_cache_key)
+            if doc_cached is None or doc_cached.get("stamp") != doc_stamp:
+                doc_cached = {
+                    "stamp": doc_stamp,
+                    "items": self.store.list_documents_with_vectors(
+                        account_wxid,
+                        conversation_id,
+                        embedding_model=model,
+                        embedding_dim=dim,
+                    ),
+                }
+                _cache_put(doc_cache_key, doc_cached)
+            docs = doc_cached["items"]
         except Exception as exc:
             logger.debug("[RAG Retriever] vector document load failed: %s", exc)
             docs = []
@@ -245,14 +302,23 @@ class RagRetriever:
         settings = load_rag_settings()
         model = str(settings.get("rag_embedding_model") or "")
         dim = int(settings.get("rag_embedding_dim") or 0)
+        cache_key = (account_wxid, int(conversation_id), "facts", model, dim)
+        data_stamp = self.store.rag_data_stamp(account_wxid, conversation_id)
+        cached = _cache_get(cache_key)
+        if cached is None or cached.get("stamp") != data_stamp:
+            cached = {
+                "stamp": data_stamp,
+                "items": self.store.list_facts_with_vectors(
+                    account_wxid,
+                    conversation_id,
+                    embedding_model=model,
+                    embedding_dim=dim,
+                ),
+            }
+            _cache_put(cache_key, cached)
         vector_by_id = {
             int(item["id"]): item.get("vector") or []
-            for item in self.store.list_facts_with_vectors(
-                account_wxid,
-                conversation_id,
-                embedding_model=model,
-                embedding_dim=dim,
-            )
+            for item in cached["items"]
         }
         query_vector: list[float] = []
         vector_available = False

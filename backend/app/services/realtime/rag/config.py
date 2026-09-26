@@ -73,7 +73,9 @@ def apply_rag_defaults(settings: dict[str, Any]) -> dict[str, Any]:
         settings[_FACT_READ_MIGRATION_KEY] = True
     for key, value in RAG_DEFAULTS.items():
         settings.setdefault(key, value)
-    settings.setdefault("rag_fact_kind_hints", _load_fact_kind_hints())
+    # 条件赋值：setdefault 实参先求值，键已存在时也会读一遍 hints JSON
+    if "rag_fact_kind_hints" not in settings:
+        settings["rag_fact_kind_hints"] = _load_fact_kind_hints()
     settings["rag_enabled"] = _as_bool(settings.get("rag_enabled"), False)
     settings["rag_remote_context_redaction"] = _as_bool(
         settings.get("rag_remote_context_redaction"),
@@ -137,9 +139,32 @@ def apply_rag_defaults(settings: dict[str, Any]) -> dict[str, Any]:
     return settings
 
 
+_settings_file_cache: dict[str, Any] = {"key": None, "payload": None}
+
+
 def load_rag_settings(settings: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Load persisted RAG settings with normalized defaults."""
-    return apply_rag_defaults(dict(settings if settings is not None else load_settings_from_file()))
+    """Load persisted RAG settings with normalized defaults.
+
+    无参（读文件）路径带 (mtime_ns, size) 门控的进程内缓存：一次检索链路
+    会加载 3-4 次（retriever/indexer/context_builder 各自调），每次都全量
+    读盘+归一化。set_settings 落盘会改变 mtime → 缓存自动失效。
+    """
+    if settings is not None:
+        return apply_rag_defaults(dict(settings))
+    from ...wechat.account_settings import default_settings_path
+    path = default_settings_path()
+    try:
+        stat = path.stat()
+        cache_key = (str(path), stat.st_mtime_ns, stat.st_size)
+    except OSError:
+        cache_key = None
+    if cache_key is not None and _settings_file_cache["key"] == cache_key:
+        return dict(_settings_file_cache["payload"])
+    payload = apply_rag_defaults(dict(load_settings_from_file()))
+    if cache_key is not None:
+        _settings_file_cache["key"] = cache_key
+        _settings_file_cache["payload"] = dict(payload)
+    return payload
 
 
 def is_remote_llm_model(model_config: dict[str, Any] | None) -> bool:

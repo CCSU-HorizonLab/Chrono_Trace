@@ -6,6 +6,7 @@ import logging
 import json
 import re
 import threading
+from collections import deque
 import time
 from typing import Any
 
@@ -287,6 +288,8 @@ class RagIndexer:
             failures.append({"reason": str(exc), "offset": written})
         except Exception as exc:
             failures.append({"reason": str(exc), "offset": written})
+        from .retriever import invalidate_vector_cache
+        invalidate_vector_cache(account_wxid, conversation_id)
         return {
             "account_wxid": account_wxid,
             "conversation_id": int(conversation_id),
@@ -352,6 +355,8 @@ class RagIndexer:
         finally:
             with _ACTIVE_LOCK:
                 _ACTIVE.discard(active_key)
+            from .retriever import invalidate_vector_cache
+            invalidate_vector_cache(account_wxid, conversation_id)
             _REBUILD_LOCK.release()
 
     def _rebuild_contact_index_locked(
@@ -1398,9 +1403,12 @@ class RagIndexQueue:
     """Best-effort coalescing background index queue."""
 
     _lock = threading.Lock()
-    _pending: set[tuple[str, int]] = set()
+    _pending: set[tuple[str, int]] = set()      # 去重集合
+    _pending_order: "deque[tuple[str, int]]" = deque()  # FIFO 顺序（set.pop 乱序）
     _fact_pending: set[tuple[str, int]] = set()
+    _fact_order: "deque[tuple[str, int]]" = deque()
     _worker: threading.Thread | None = None
+    _logs_pruned_at: float = 0.0
 
     @classmethod
     def mark_dirty(cls, account_wxid: str, conversation_id: int | None) -> None:
@@ -1412,7 +1420,10 @@ class RagIndexQueue:
         except Exception as exc:
             logger.debug("[RAG] mark dirty skipped: %s", exc)
         with cls._lock:
-            cls._pending.add((account_wxid, int(conversation_id)))
+            key = (account_wxid, int(conversation_id))
+            if key not in cls._pending:
+                cls._pending.add(key)
+                cls._pending_order.append(key)
             if cls._worker is None or not cls._worker.is_alive():
                 cls._worker = threading.Thread(target=cls._run, daemon=True)
                 cls._worker.start()
@@ -1422,47 +1433,86 @@ class RagIndexQueue:
         if not account_wxid or not conversation_id:
             return
         with cls._lock:
-            cls._pending.add((account_wxid, int(conversation_id)))
+            key = (account_wxid, int(conversation_id))
+            if key not in cls._pending:
+                cls._pending.add(key)
+                cls._pending_order.append(key)
             if cls._worker is None or not cls._worker.is_alive():
                 cls._worker = threading.Thread(target=cls._run, daemon=True)
                 cls._worker.start()
 
     @classmethod
     def requeue(cls, account_wxid: str, conversation_id: int | None) -> None:
-        """队列 worker 撞锁时放回任务（不触发新 worker，由调用方退避）。"""
+        """队列 worker 撞锁时放回任务（队头重试，不触发新 worker）。"""
         if not account_wxid or not conversation_id:
             return
         with cls._lock:
-            cls._pending.add((account_wxid, int(conversation_id)))
+            key = (account_wxid, int(conversation_id))
+            if key not in cls._pending:
+                cls._pending.add(key)
+                cls._pending_order.appendleft(key)
 
     @classmethod
     def enqueue_fact_backfill(cls, account_wxid: str, conversation_id: int | None) -> None:
         if not account_wxid or not conversation_id:
             return
         with cls._lock:
-            cls._fact_pending.add((account_wxid, int(conversation_id)))
+            key = (account_wxid, int(conversation_id))
+            if key not in cls._fact_pending:
+                cls._fact_pending.add(key)
+                cls._fact_order.append(key)
             if cls._worker is None or not cls._worker.is_alive():
                 cls._worker = threading.Thread(target=cls._run, daemon=True)
                 cls._worker.start()
 
     @classmethod
+    def _pop_job(cls):
+        """按 FIFO 弹出下一任务：fact 回填优先。
+
+        返回 (account_wxid, conversation_id, job) / "empty"（队列空）/
+        None（rag_enabled 关闭——任务保留在队列，等开关恢复）。
+        """
+        if not load_rag_settings().get("rag_enabled"):
+            return None
+        with cls._lock:
+            if cls._fact_order:
+                key = cls._fact_order.popleft()
+                cls._fact_pending.discard(key)
+                return (*key, "fact_backfill")
+            if cls._pending_order:
+                key = cls._pending_order.popleft()
+                cls._pending.discard(key)
+                return (*key, "rebuild")
+            return "empty"
+
+    @classmethod
+    def _maybe_prune_logs(cls) -> None:
+        """检索审计日志保留清理（一天最多一次）。"""
+        now = time.time()
+        if now - cls._logs_pruned_at < 86400:
+            return
+        cls._logs_pruned_at = now
+        try:
+            RagStore(get_db()).prune_retrieval_logs(days=90)
+        except Exception as exc:
+            logger.debug("[RAG] logs prune failed: %s", exc)
+
+    @classmethod
     def _run(cls) -> None:
         time.sleep(0.8)
         while True:
-            with cls._lock:
-                if not cls._pending and not cls._fact_pending:
-                    return
-                if cls._fact_pending:
-                    account_wxid, conversation_id = cls._fact_pending.pop()
-                    job = "fact_backfill"
-                else:
-                    account_wxid, conversation_id = cls._pending.pop()
-                    job = "rebuild"
+            job = cls._pop_job()
+            if job == "empty":
+                return
+            if job is None:
+                # 主开关关闭：任务保留，低频等待（此前 pop 后直接丢弃）
+                time.sleep(5.0)
+                continue
+            account_wxid, conversation_id, job_name = job
+            cls._maybe_prune_logs()
             try:
-                if not load_rag_settings().get("rag_enabled"):
-                    continue
                 indexer = RagIndexer()
-                if job == "fact_backfill":
+                if job_name == "fact_backfill":
                     indexer.backfill_fact_embeddings(
                         account_wxid=account_wxid,
                         conversation_id=conversation_id,

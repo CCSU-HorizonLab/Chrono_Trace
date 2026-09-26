@@ -289,6 +289,10 @@ def refresh_after_fact_feedback(store: RagStore, fact_id: int, *, action: str = 
         if not account_wxid or conversation_id <= 0:
             return {"ok": False, "skipped": "missing_scope"}
 
+        # 纠错会改变事实/偏好集——检索向量缓存立即失效
+        from .retriever import invalidate_vector_cache
+        invalidate_vector_cache(account_wxid, conversation_id)
+
         # 回查引用该事实的活跃策略（信号审计用；restore 不需要前置引用）
         affected_policy_ids: list[int] = []
         if action != "restore":

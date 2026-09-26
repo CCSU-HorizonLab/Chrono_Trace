@@ -24,6 +24,57 @@ def _now() -> int:
 class RagStore:
     """Small SQLite-backed store for RAG documents, vectors, status and logs."""
 
+    def rag_data_stamp(self, account_wxid: str, conversation_id: int) -> tuple:
+        """范围数据版本戳（供检索向量缓存判定新鲜度）。
+
+        覆盖文档/事实/两侧向量的行数与最近更新时间——任何未被显式失效
+        钩子覆盖的突变也会改变戳，缓存自然失效。两条轻量聚合查询。
+        """
+        row = self.conn.execute(
+            """
+            SELECT
+              (SELECT COUNT(*) FROM rag_documents
+                 WHERE account_wxid = ? AND conversation_id = ?),
+              (SELECT COALESCE(SUM(updated_at + id), 0) FROM rag_documents
+                 WHERE account_wxid = ? AND conversation_id = ?),
+              (SELECT COALESCE(SUM(LENGTH(content)), 0) FROM rag_documents
+                 WHERE account_wxid = ? AND conversation_id = ?),
+              (SELECT COUNT(*) FROM rag_facts
+                 WHERE account_wxid = ? AND conversation_id = ?),
+              (SELECT COALESCE(SUM(updated_at + id), 0) FROM rag_facts
+                 WHERE account_wxid = ? AND conversation_id = ?),
+              (SELECT COALESCE(SUM(LENGTH(content)), 0) FROM rag_facts
+                 WHERE account_wxid = ? AND conversation_id = ?),
+              (SELECT COUNT(*) FROM rag_embeddings
+                 WHERE account_wxid = ? AND conversation_id = ?),
+              (SELECT COALESCE(SUM(id), 0) FROM rag_embeddings
+                 WHERE account_wxid = ? AND conversation_id = ?),
+              (SELECT COALESCE(SUM(LENGTH(vector_blob)), 0) FROM rag_embeddings
+                 WHERE account_wxid = ? AND conversation_id = ?),
+              (SELECT COUNT(*) FROM rag_fact_embeddings
+                 WHERE account_wxid = ? AND conversation_id = ?),
+              (SELECT COALESCE(SUM(id), 0) FROM rag_fact_embeddings
+                 WHERE account_wxid = ? AND conversation_id = ?),
+              (SELECT COALESCE(SUM(LENGTH(vector_blob)), 0) FROM rag_fact_embeddings
+                 WHERE account_wxid = ? AND conversation_id = ?)
+            """,
+            tuple([account_wxid, int(conversation_id)]) * 12,
+        ).fetchone()
+        return tuple(int(v or 0) for v in row)
+
+    def prune_retrieval_logs(self, days: int = 90) -> int:
+        """清理过期检索审计日志（append-only 表无界增长治理），返回删除行数。"""
+        try:
+            cutoff = int(time.time()) - int(days) * 86400
+            cur = self.conn.execute(
+                "DELETE FROM rag_retrieval_logs WHERE created_at < ?", (cutoff,)
+            )
+            self.conn.commit()
+            return cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
+        except Exception as exc:
+            logger.debug("[RAG] retrieval logs prune skipped: %s", exc)
+            return 0
+
     def __init__(self, conn: Any | None = None):
         self.conn = conn or get_db()
         self.ensure_schema()
@@ -241,6 +292,13 @@ class RagStore:
             """
             CREATE INDEX IF NOT EXISTS idx_rag_relationship_state_scope
             ON rag_relationship_state(account_wxid, conversation_id, created_at DESC)
+            """
+        )
+        # 审计大宽表（53 列 append-only）：按范围查/清都走这个索引
+        self.conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_rag_retrieval_logs_scope
+            ON rag_retrieval_logs(account_wxid, conversation_id, created_at DESC)
             """
         )
         self.conn.execute(

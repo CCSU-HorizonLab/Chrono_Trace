@@ -2173,6 +2173,67 @@ class Bridge:
             logger.error(f"[Bridge] 获取 RAG 状态失败: {e}")
             return {"ok": False, "error": str(e), "items": []}
 
+    def get_monitor_rag_status(self, account_wxid: str = "") -> dict[str, Any]:
+        """当前监听联系人的 RAG 索引状态（悬浮面板「建议依据」提醒用）。
+
+        没有索引时 AI 建议只靠近期对话（记忆槽为空），前端需提醒并可
+        一键构建。监听启动虽有 prewarm，但 RAG 关闭/解析失败/空历史时
+        仍然缺索引。
+        """
+        try:
+            from ..services.realtime.monitor_service import RealtimeMonitorService
+            from ..services.realtime.rag.config import load_rag_settings
+
+            monitor = RealtimeMonitorService()
+            rag_enabled = bool(load_rag_settings().get("rag_enabled"))
+            base = {
+                "ok": True,
+                "monitoring": bool(getattr(monitor, "is_monitoring", False)),
+                "display_name": getattr(monitor, "current_display_name", "") or "",
+                "enabled": rag_enabled,
+                "conversation_id": None,
+                "status": "none",
+                "document_count": 0,
+                "vector_count": 0,
+                "has_index": False,
+            }
+            if not base["monitoring"] or not rag_enabled:
+                return base
+
+            resolved_account = self._resolve_account_wxid(
+                account_wxid or getattr(monitor, "current_account_wxid", "") or ""
+            )
+            conversation_id = self._resolve_current_conversation_id(
+                account_wxid=resolved_account,
+                display_name=base["display_name"],
+                username=getattr(monitor, "current_talker", "") or "",
+            )
+            if not conversation_id:
+                return base
+            base["conversation_id"] = int(conversation_id)
+
+            from ..db.connection import get_db
+
+            row = get_db().execute(
+                """
+                SELECT status, document_count, vector_count
+                FROM rag_index_status
+                WHERE account_wxid = ? AND conversation_id = ?
+                """,
+                (resolved_account, int(conversation_id)),
+            ).fetchone()
+            if row:
+                base["status"] = str(row["status"] or "none")
+                base["document_count"] = int(row["document_count"] or 0)
+                base["vector_count"] = int(row["vector_count"] or 0)
+            # 有向量才算可用索引：document_count>0 但 vector_count=0 的
+            # 半成品状态同样视为不可用（检索拿不到任何东西）
+            base["has_index"] = base["document_count"] > 0 and base["vector_count"] > 0
+            return base
+        except Exception as e:
+            logger.error(f"[Bridge] 获取监听 RAG 状态失败: {e}")
+            return {"ok": False, "error": str(e), "has_index": False, "enabled": False}
+
     def rebuild_rag_index(self, conversation_id: int, account_wxid: str = "") -> dict[str, Any]:
         """Rebuild one contact RAG index (always async via the single-worker queue).
 

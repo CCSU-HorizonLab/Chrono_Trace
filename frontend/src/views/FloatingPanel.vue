@@ -299,6 +299,24 @@
 
         <!-- CONTEXT TAB -->
         <div v-show="inspectorTab === 'context'" class="fp-inspector-tab-content">
+          <!-- RAG 提醒：无索引时建议只基于近期对话，记忆槽为空 -->
+          <div v-if="ragNeedsAttention" class="fp-rag-notice">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            <div class="fp-rag-notice-body">
+              <template v-if="ragStatus && !ragStatus.enabled">
+                长期记忆（RAG）未启用，AI 建议仅参考近期对话。可在「设置 → 长期记忆」中开启。
+              </template>
+              <template v-else-if="ragStatus && (ragStatus.status === 'queued' || ragStatus.status === 'building')">
+                正在为「{{ ragStatus.display_name }}」构建记忆索引，完成后建议将自动携带长期记忆。
+              </template>
+              <template v-else>
+                尚未为「{{ ragStatus?.display_name || '该联系人' }}」建立长期记忆索引，当前建议仅基于近期对话。
+                <button class="fp-rag-notice-btn" :disabled="ragBuilding" @click="buildRagIndex">
+                  {{ ragBuilding ? '提交中…' : '立即构建' }}
+                </button>
+              </template>
+            </div>
+          </div>
           <div class="fp-context-meta">基于最近 {{ contextUsed.length }} 条主要聊天记录</div>
           <div v-if="!contextUsed.length" class="fp-context-empty">暂无可用参考记录。</div>
           <div class="fp-context-list stream-layout">
@@ -553,6 +571,52 @@ async function toggleInspector(tab: 'emotion' | 'context') {
     if (tab === 'emotion') {
       nextTick(() => { if (typeof syncCharts === 'function') syncCharts(); typeof triggerChartResize === 'function' && triggerChartResize() })
     }
+    if (tab === 'context') {
+      loadMonitorRagStatus()
+    }
+  }
+}
+
+// ===== RAG 索引状态（建议依据提醒）=====
+// 无索引时 AI 建议只基于近期对话（记忆槽为空），需要在此提醒并可一键构建
+const ragStatus = ref<any>(null)
+const ragBuilding = ref(false)
+
+async function loadMonitorRagStatus() {
+  try {
+    await bridgeReady()
+    const r = await api.get_monitor_rag_status(activeAccountWxid.value || undefined)
+    if (r?.ok) ragStatus.value = r
+  } catch (e) {
+    console.debug('[FloatingPanel] RAG 状态获取失败:', e)
+  }
+}
+
+const ragNeedsAttention = computed(() => {
+  const s = ragStatus.value
+  if (!s || !s.monitoring) return false
+  if (!s.enabled) return true
+  return !s.has_index
+})
+
+async function buildRagIndex() {
+  const s = ragStatus.value
+  if (!s?.conversation_id || ragBuilding.value) return
+  ragBuilding.value = true
+  try {
+    await bridgeReady()
+    const r = await api.rebuild_rag_index(s.conversation_id, activeAccountWxid.value || undefined)
+    if (r?.ok) {
+      // 队列串行构建，完成后状态经下次打开/轮询刷新
+      ragStatus.value = { ...s, status: r.state || 'queued' }
+      // 构建中稍后回查一次，横幅能自动消失（队列串行，15s 通常不够全量，
+      // 回查后仍在构建则由再次打开面板兜底）
+      setTimeout(loadMonitorRagStatus, 15000)
+    }
+  } catch (e) {
+    console.error('[FloatingPanel] RAG 索引构建发起失败:', e)
+  } finally {
+    ragBuilding.value = false
   }
 }
 
@@ -2550,6 +2614,25 @@ async function loadLastThread() {
 .compact-empty { font-size: 11px; color: var(--ct-text-tertiary); text-align: center; padding: 24px; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100px; }
 /* Context Sub-Tab */
 .fp-context-meta { font-size: 10px; color: var(--ct-text-tertiary); padding: 4px 8px 0; text-align: left; }
+/* RAG 缺索引提醒横幅：建议只基于近期对话时提示并引导构建 */
+.fp-rag-notice {
+  display: flex; align-items: flex-start; gap: 8px;
+  margin: 8px 8px 2px; padding: 8px 10px;
+  border-radius: 8px; text-align: left;
+  background: rgba(245, 158, 11, 0.10);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  color: #f0b429;
+}
+.fp-rag-notice svg { flex-shrink: 0; margin-top: 1px; }
+.fp-rag-notice-body { font-size: 11px; line-height: 1.6; color: var(--ct-text-secondary); }
+.fp-rag-notice-btn {
+  margin-left: 8px; padding: 2px 10px; border-radius: 6px;
+  font-size: 11px; font-weight: 600; cursor: pointer;
+  border: 1px solid rgba(245, 158, 11, 0.4); background: rgba(245, 158, 11, 0.12);
+  color: #f0b429;
+}
+.fp-rag-notice-btn:hover { background: rgba(245, 158, 11, 0.2); }
+.fp-rag-notice-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .fp-context-empty { font-size: 12px; color: var(--ct-text-secondary); text-align: center; padding: 24px; }
 .stream-layout { padding: 4px 8px 8px; display: flex; flex-direction: column; gap: 6px; }
 .fp-ctx-msg { background: var(--ct-bg-elevated); border-radius: var(--ct-radius-sm); padding: 6px 8px; border: 1px solid var(--ct-border-color); width: 96%; align-self: flex-start; box-shadow: var(--ct-shadow-sm); }

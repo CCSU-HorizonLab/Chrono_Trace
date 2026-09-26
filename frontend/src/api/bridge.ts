@@ -57,6 +57,7 @@ type PyWebViewApi = {
   set_settings: (payload: Record<string, any>) => Promise<any>
   perform_close_action: (action: string) => Promise<any>
   get_rag_status: (account_wxid?: string) => Promise<any>
+  get_monitor_rag_status: (account_wxid?: string) => Promise<any>
   get_rag_log_detail: (log_id: number) => Promise<any>
   get_contact_facts: (conversation_id: number, account_wxid?: string, limit?: number, offset?: number, sort?: string, kind?: string, enabled?: boolean) => Promise<any>
   set_fact_feedback: (fact_id: number, action: string, reason?: string) => Promise<any>

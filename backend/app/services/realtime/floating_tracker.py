@@ -116,6 +116,24 @@ class XlibTracker:
                         pass
                 if not matched:
                     continue
+                # 过滤隐藏（最小化）窗口：WM 对最小化窗口的几何报告不可靠
+                # （实测部分 WM 报 (0,0,全屏)，悬浮窗跟随会变成「最大化」）
+                try:
+                    state_prop = window.get_full_property(
+                        self._atom("_NET_WM_STATE"), self._X.AnyPropertyType
+                    )
+                    if state_prop and state_prop.value:
+                        atoms = self._display.get_atom_name
+                        state_names = []
+                        for state_atom in state_prop.value:
+                            try:
+                                state_names.append(atoms(state_atom))
+                            except Exception:
+                                pass
+                        if any("_NET_WM_STATE_HIDDEN" in name for name in state_names):
+                            continue  # 最小化/隐藏窗口——跳过
+                except Exception:
+                    pass
                 geom = self._abs_geometry(window)
                 if geom is None:
                     continue

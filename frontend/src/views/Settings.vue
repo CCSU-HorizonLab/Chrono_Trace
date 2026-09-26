@@ -320,6 +320,16 @@
             </div>
           </div>
 
+          <div class="row" style="margin-top: 12px;">
+            <div class="lab">实时建议快速模式</div>
+            <div style="display: flex; align-items: center; gap: 10px; font-size: 13px;">
+              <input type="checkbox" v-model="form.llm_fast_suggestion_mode" />
+              <span style="font-size: 12px; opacity: 0.7;">
+                思考模型前置 /no_think（建议生成 30-60s → 约 2s；深度分析不受影响）
+              </span>
+            </div>
+          </div>
+
           <div class="gpu-status-card">
             <div class="gpu-status-header">当前 GPU 检测状态</div>
             <div v-if="gpuInfoLoading" class="gpu-status-loading">
@@ -500,6 +510,7 @@ const form = reactive<{
   wechat_db_key: string
   analysis_device_mode: AnalysisDeviceMode
   close_button_behavior: string
+  llm_fast_suggestion_mode: boolean
   model_root_dir: string
   rag_enabled: boolean
   rag_remote_context_redaction: boolean
@@ -517,6 +528,7 @@ const form = reactive<{
   wechat_db_key: '',
   analysis_device_mode: 'auto',
   close_button_behavior: 'ask',
+  llm_fast_suggestion_mode: true,
   model_root_dir: '',
   rag_enabled: false,
   rag_remote_context_redaction: true,
@@ -737,6 +749,7 @@ async function onLoad() {
       form.analysis_device_mode = (dm === 'gpu' || dm === 'cpu' || dm === 'auto') ? dm : 'auto'
       const cb = String(s.close_button_behavior || 'ask')
       form.close_button_behavior = (cb === 'minimize' || cb === 'exit') ? cb : 'ask'
+      form.llm_fast_suggestion_mode = s.llm_fast_suggestion_mode !== false
       form.rag_enabled = Boolean(s.rag_enabled)
       form.rag_remote_context_redaction = s.rag_remote_context_redaction !== false
       form.rag_allow_remote_embedding = Boolean(s.rag_allow_remote_embedding)

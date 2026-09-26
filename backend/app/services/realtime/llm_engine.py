@@ -1799,6 +1799,24 @@ class LLMSuggestionEngine(SuggestionEngine):
             return "".join(reasoning_parts)
         return ""
 
+    def _fast_suggestion_mode_enabled(self) -> bool:
+        """实时建议快速模式：思考模型前置 /no_think（实测 Qwen3.5 30-60s→1.5s）。
+
+        深度类调用（RAG 事实抽取/分析）不走此开关，保留思考能力。
+        """
+        try:
+            from ..wechat.account_settings import load_settings_from_file
+            return bool(load_settings_from_file().get("llm_fast_suggestion_mode", True))
+        except Exception:
+            return True
+
+    def _suggestion_system_prompt(self, model_config: dict) -> str:
+        if self._fast_suggestion_mode_enabled() and self._is_reasoning_model(
+            str(model_config.get("model_id") or "")
+        ):
+            return "/no_think\n" + SYSTEM_PROMPT
+        return SYSTEM_PROMPT
+
     def _call_api(
         self,
         model_config: dict,
@@ -1810,7 +1828,7 @@ class LLMSuggestionEngine(SuggestionEngine):
         return self._call_api_with_messages(
             model_config,
             [
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": self._suggestion_system_prompt(model_config)},
                 {"role": "user", "content": user_prompt},
             ],
             request_tag="suggestion",

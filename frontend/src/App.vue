@@ -56,6 +56,24 @@
       </div>
     </main>
   </div>
+  <!-- 关闭按钮确认对话框（close_guard 拦截 X 点击后触发） -->
+  <teleport to="body">
+    <div v-if="showCloseDialog" class="close-confirm-mask">
+      <div class="close-confirm-card">
+        <h3 class="close-confirm-title">关闭 Chrono_Trace</h3>
+        <p class="close-confirm-text">正在进行中的分析/监听会随退出中断，确定要退出吗？</p>
+        <label class="close-confirm-remember">
+          <input type="checkbox" v-model="rememberCloseChoice" />
+          记住我的选择（可在设置中改回询问）
+        </label>
+        <div class="close-confirm-actions">
+          <button class="cc-btn ghost" @click="showCloseDialog = false">取消</button>
+          <button class="cc-btn ghost" @click="handleCloseChoice('minimize')">最小化</button>
+          <button class="cc-btn primary" @click="handleCloseChoice('exit')">退出</button>
+        </div>
+      </div>
+    </div>
+  </teleport>
 </template>
 
 <script setup lang="ts">
@@ -155,6 +173,43 @@ watch(() => route.fullPath, () => {
     loadCurrentUserProfile()
   }
 }, { immediate: true })
+
+// ---- 关闭按钮确认（后端 close_guard 拦截 X 后调用 window.__chronoHandleCloseRequest）----
+const showCloseDialog = ref(false)
+const rememberCloseChoice = ref(false)
+
+async function __chronoHandleCloseRequest() {
+  try {
+    const result = await api.get_settings()
+    const behavior = String(result?.close_button_behavior || 'ask').toLowerCase()
+    if (behavior === 'minimize') {
+      await api.perform_close_action('minimize')
+      return
+    }
+    if (behavior === 'exit') {
+      await api.perform_close_action('exit')
+      return
+    }
+  } catch {
+    // 设置读取失败按询问处理
+  }
+  showCloseDialog.value = true
+}
+
+async function handleCloseChoice(action: 'minimize' | 'exit') {
+  showCloseDialog.value = false
+  try {
+    if (rememberCloseChoice.value) {
+      await api.set_settings({ close_button_behavior: action })
+    }
+  } catch {
+    // 记忆失败不影响本次动作
+  }
+  await api.perform_close_action(action)
+}
+
+// 挂到 window 供后端 evaluate_js 调用（类型声明见 env.d.ts）
+;(window as any).__chronoHandleCloseRequest = __chronoHandleCloseRequest
 
 onMounted(() => {
   window.addEventListener('chrono:user-avatar-refresh', handleProfileRefresh)
@@ -334,4 +389,31 @@ onUnmounted(() => {
     gap: var(--ct-space-md);
   }
 }
+
+/* 关闭确认对话框 */
+.close-confirm-mask {
+  position: fixed; inset: 0; z-index: 3000;
+  background: rgba(15, 18, 25, 0.55);
+  display: flex; align-items: center; justify-content: center;
+}
+.close-confirm-card {
+  width: 360px; padding: 20px 22px; border-radius: 12px;
+  background: var(--ct-bg-elevated, #1d222c); color: var(--ct-text-main, #e8eaf0);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+}
+.close-confirm-title { margin: 0 0 8px; font-size: 16px; }
+.close-confirm-text { margin: 0 0 12px; font-size: 13px; opacity: 0.8; line-height: 1.5; }
+.close-confirm-remember {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; opacity: 0.75; margin-bottom: 16px; cursor: pointer;
+}
+.close-confirm-actions { display: flex; justify-content: flex-end; gap: 10px; }
+.cc-btn {
+  padding: 7px 16px; border-radius: 8px; border: 1px solid transparent;
+  font-size: 13px; cursor: pointer;
+}
+.cc-btn.ghost { background: transparent; border-color: rgba(255,255,255,0.18); color: inherit; }
+.cc-btn.primary { background: #6c5ce7; color: #fff; }
+.cc-btn.primary:hover { background: #5a4bd1; }
+.cc-btn.ghost:hover { background: rgba(255,255,255,0.06); }
 </style>

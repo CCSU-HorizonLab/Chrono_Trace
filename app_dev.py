@@ -87,6 +87,9 @@ def start_frontend_dev(cwd_path: str):
 
 
 
+from backend.app.webview.close_guard import attach_close_guard
+
+
 def main():
     frontend_dir = FRONTEND_DIR
     if not os.path.isdir(frontend_dir):
@@ -117,6 +120,8 @@ def main():
     def on_started():
         """窗口启动后，将窗口引用注入 Bridge（供悬浮窗服务使用）"""
         bridge.set_webview_window(window)
+
+    attach_close_guard(window, bridge)
 
     webview.start(func=on_started, debug=True)
 

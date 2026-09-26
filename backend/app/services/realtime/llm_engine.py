@@ -510,7 +510,7 @@ class LLMSuggestionEngine(SuggestionEngine):
             context["_rag_output_mode"] = "suggestion"
 
         try:
-            from .rag_context_builder import RagContextBuilder
+            from .rag.context_builder import RagContextBuilder
 
             self._emit_stream(stream_callback, "stage", stage="rag", message="检索上下文")
             RagContextBuilder().enrich_context(
@@ -1007,7 +1007,7 @@ class LLMSuggestionEngine(SuggestionEngine):
         失败时按项目红线返回占位符并记录错误，绝不把原文发往远端。
         """
         try:
-            from .rag_config import is_remote_llm_model, load_rag_settings
+            from .rag.config import is_remote_llm_model, load_rag_settings
 
             redaction_required = is_remote_llm_model(model_config) and bool(
                 load_rag_settings().get("rag_remote_context_redaction")

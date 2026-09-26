@@ -25,8 +25,8 @@ import math
 import time
 from typing import Any
 
-from .rag_config import load_rag_settings
-from .rag_store import RagStore
+from .config import load_rag_settings
+from .store import RagStore
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +73,7 @@ def derive_contact_preferences(
     # 槽位代表必须过质量门（宽松模式）：已隔离质量的碎片（"没那么想要"
     # 类）不因聚槽而洗白成策略。词表驱动的拦截随 fact_quality_patterns
     # 演化，此处不新增语言规则。
-    from .rag_fact_quality import fact_quality_reason
+    from .fact_quality import fact_quality_reason
 
     candidates = [
         fact for fact in candidates

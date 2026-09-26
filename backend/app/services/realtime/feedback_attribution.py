@@ -9,13 +9,13 @@ import threading
 import time
 from typing import Any
 
-from .rag_config import load_rag_settings
-from .rag_embedding import (
+from .rag.config import load_rag_settings
+from .rag.embedding import (
     RagEmbeddingDimensionMismatch,
     RagEmbeddingService,
     RagEmbeddingUnavailable,
 )
-from .rag_store import RAG_INDEX_VERSION, RagStore
+from .rag.store import RAG_INDEX_VERSION, RagStore
 
 
 logger = logging.getLogger(__name__)
@@ -382,7 +382,7 @@ class SuggestionFeedbackAttributor:
             return []
         if float(result.get("confidence") or 0.0) < 0.65:
             return []
-        from .rag_config import load_rag_settings
+        from .rag.config import load_rag_settings
 
         if not load_rag_settings().get("rag_structured_fact_extraction_enabled"):
             return []
@@ -404,7 +404,7 @@ class SuggestionFeedbackAttributor:
         final = str(result.get("final_message") or "")
         if not original or not final:
             return []
-        from .rag_fact_llm import build_llm_fact_extractor
+        from .rag.fact_llm import build_llm_fact_extractor
 
         adapter = build_llm_fact_extractor()
         if adapter is None:
@@ -412,7 +412,7 @@ class SuggestionFeedbackAttributor:
         signals = adapter.extract_feedback_signals(
             original_speech=original, final_message=final
         )
-        from .rag_fact_quality import fact_quality_reason
+        from .rag.fact_quality import fact_quality_reason
 
         account_wxid = str(suggestion.get("account_wxid") or "")
         conversation_id = self._resolve_conversation_id(suggestion)
@@ -472,7 +472,7 @@ class SuggestionFeedbackAttributor:
         else:
             outcome = "candidate_created" if created else "no_candidate"
         try:
-            from .rag_store import RagStore
+            from .rag.store import RagStore
 
             RagStore(self.conn).record_feedback_policy_signal(
                 account_wxid=account_wxid,
@@ -492,7 +492,7 @@ class SuggestionFeedbackAttributor:
         self, suggestion: dict[str, Any], result: dict[str, Any], conversation_id: int | None,
         extra_detail: dict[str, Any] | None = None,
     ) -> None:
-        from .rag_store import RagStore
+        from .rag.store import RagStore
 
         log = self.conn.execute(
             """
@@ -582,7 +582,7 @@ class SuggestionFeedbackAttributor:
 
     def _mark_feedback_dirty(self, account_wxid: str, conversation_id: int) -> None:
         try:
-            from .rag_indexer import RagIndexQueue
+            from .rag.indexer import RagIndexQueue
 
             RagIndexQueue.mark_dirty(account_wxid, conversation_id)
         except Exception:

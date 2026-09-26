@@ -6,7 +6,7 @@ from dataclasses import asdict, dataclass
 import re
 from typing import Any, Literal
 
-from .rag_config import load_rag_settings
+from .config import load_rag_settings
 
 
 GateDecisionValue = Literal["inject", "weak_inject", "no_hit", "skip"]

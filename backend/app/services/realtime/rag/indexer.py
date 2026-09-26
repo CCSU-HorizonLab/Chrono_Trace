@@ -9,18 +9,18 @@ import threading
 import time
 from typing import Any
 
-from ...db.connection import get_db
-from .privacy_redactor import PrivacyRedactor
-from .rag_config import load_rag_settings
-from .rag_embedding import (
+from ....db.connection import get_db
+from ..privacy_redactor import PrivacyRedactor
+from .config import load_rag_settings
+from .embedding import (
     RagEmbeddingDimensionMismatch,
     RagEmbeddingService,
     RagEmbeddingUnavailable,
 )
-from .rag_fact_extractor import FactExtractionError, StructuredFactExtractor, normalize_fact_kind
-from .rag_semantic_memory import SemanticFactExtractor
-from .rag_segmenter import RagSegment, RagSegmenter
-from .rag_store import RAG_INDEX_VERSION, RagStore
+from .fact_extractor import FactExtractionError, StructuredFactExtractor, normalize_fact_kind
+from .semantic_memory import SemanticFactExtractor
+from .segmenter import RagSegment, RagSegmenter
+from .store import RAG_INDEX_VERSION, RagStore
 
 
 logger = logging.getLogger(__name__)
@@ -85,7 +85,7 @@ class RagIndexer:
         try:
             if not load_rag_settings().get("rag_structured_fact_extraction_enabled"):
                 return None
-            from .rag_fact_llm import build_llm_fact_extractor
+            from .fact_llm import build_llm_fact_extractor
 
             adapter = build_llm_fact_extractor()
             if adapter is None:
@@ -472,7 +472,7 @@ class RagIndexer:
             self.store.conn.commit()
             # P1.1 关系状态影子刷新：默认关闭；失败绝不影响索引主链路
             try:
-                from .rag_relationship_policy import refresh_relationship_state_shadow
+                from .relationship_policy import refresh_relationship_state_shadow
 
                 refresh_relationship_state_shadow(
                     self.store,
@@ -484,7 +484,7 @@ class RagIndexer:
                 logger.debug("[RAG Index] relationship shadow refresh failed: %s", shadow_exc)
             # P1.2 对方偏好策略影子刷新（槽位级，聚槽用本索引器的 embedding）
             try:
-                from .rag_contact_preference import refresh_contact_preferences_shadow
+                from .contact_preference import refresh_contact_preferences_shadow
 
                 refresh_contact_preferences_shadow(
                     self.store,
@@ -659,7 +659,7 @@ class RagIndexer:
             for fact_index, fact in enumerate(semantic_facts, 1):
                 fact_row_active = True  # 影子层关闭时无从判定退役状态，维持文档生成
                 if load_rag_settings().get("rag_fact_shadow_enabled", True):
-                    from .rag_semantic_memory import calibrate_fact_confidence
+                    from .semantic_memory import calibrate_fact_confidence
 
                     fact_id = self.store.upsert_fact(
                         account_wxid=account_wxid,
@@ -927,7 +927,7 @@ class RagIndexer:
             return
         # 抽取成功（含零事实）即推进段级进度——零事实段不再被反复重抽
         self._advance_llm_extract_progress(account_wxid, conversation_id, segment)
-        from .rag_fact_quality import fact_quality_reason
+        from .fact_quality import fact_quality_reason
 
         usable = [
             fact for fact in facts

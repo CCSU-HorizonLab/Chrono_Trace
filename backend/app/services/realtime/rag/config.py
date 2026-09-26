@@ -8,8 +8,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from ..model_paths import EMBEDDING_MODEL_DIM, EMBEDDING_MODEL_REPO_ID
-from ..wechat.account_settings import load_settings_from_file
+from ...model_paths import EMBEDDING_MODEL_DIM, EMBEDDING_MODEL_REPO_ID
+from ...wechat.account_settings import load_settings_from_file
 
 
 RAG_DEFAULTS: dict[str, Any] = {

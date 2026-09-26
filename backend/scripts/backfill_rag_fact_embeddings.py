@@ -12,8 +12,8 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT / "backend") not in sys.path:
     sys.path.insert(0, str(ROOT / "backend"))
 
-from app.services.realtime.rag_indexer import RagIndexer
-from app.services.realtime.rag_store import RagStore
+from app.services.realtime.rag.indexer import RagIndexer
+from app.services.realtime.rag.store import RagStore
 
 
 def main() -> int:

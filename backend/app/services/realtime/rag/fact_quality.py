@@ -13,7 +13,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from .rag_relevance_gate import RagRelevanceGate
+from .relevance_gate import RagRelevanceGate
 
 # 敏感查询阻断清单（rag_relevance_gate）＋ 事实入库前的补充强敏词；
 # 前者服务于"查询端阻断"，密码/密钥/宽泛住址只影响入库质量层。

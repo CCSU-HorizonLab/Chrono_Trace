@@ -7,13 +7,13 @@ import math
 import re
 from typing import Any
 
-from .rag_embedding import RagEmbeddingService, RagEmbeddingUnavailable
-from .rag_fact_quality import (
+from .embedding import RagEmbeddingService, RagEmbeddingUnavailable
+from .fact_quality import (
     SYSTEM_MESSAGE_MARKERS,
     is_usable_shadow_fact,
     looks_corrupted,
 )
-from .rag_segmenter import RagSegment, RagSegmenter
+from .segmenter import RagSegment, RagSegmenter
 
 
 @dataclass(frozen=True)

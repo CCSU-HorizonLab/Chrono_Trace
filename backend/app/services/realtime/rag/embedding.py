@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Iterable
 
-from ..analysis.sentiment_service import SentimentService
-from ..model_paths import EMBEDDING_MODEL_REPO_ID
+from ...analysis.sentiment_service import SentimentService
+from ...model_paths import EMBEDDING_MODEL_REPO_ID
 
 
 class RagEmbeddingUnavailable(RuntimeError):

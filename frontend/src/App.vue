@@ -424,24 +424,27 @@ onUnmounted(() => {
   color: var(--ct-text-secondary, rgba(232, 234, 240, 0.72));
 }
 .close-confirm-remember {
-  display: flex; align-items: center; gap: 9px;
-  font-size: 12.5px; color: var(--ct-text-secondary, rgba(232, 234, 240, 0.65));
+  display: flex; align-items: center; gap: 10px;
+  font-size: 12.5px; color: var(--ct-text-main, rgba(232, 234, 240, 0.85));
   margin-bottom: 18px; cursor: pointer; user-select: none;
-  padding: 8px 10px; border-radius: 9px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  transition: background 0.15s ease;
+  padding: 9px 12px; border-radius: 9px;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
-.close-confirm-remember:hover { background: rgba(255, 255, 255, 0.06); }
+.close-confirm-remember:hover {
+  background: rgba(255, 255, 255, 0.11);
+  border-color: rgba(255, 255, 255, 0.22);
+}
 .close-confirm-remember input[type='checkbox'] {
   appearance: none; -webkit-appearance: none;
   width: 16px; height: 16px; margin: 0; flex-shrink: 0;
   border-radius: 5px; cursor: pointer; position: relative;
-  border: 1.5px solid rgba(255, 255, 255, 0.28);
-  background: rgba(255, 255, 255, 0.04);
+  border: 1.5px solid rgba(255, 255, 255, 0.45);
+  background: rgba(255, 255, 255, 0.1);
   transition: border-color 0.15s ease, background 0.15s ease;
 }
-.close-confirm-remember input[type='checkbox']:hover { border-color: #8b7ff0; }
+.close-confirm-remember input[type='checkbox']:hover { border-color: #a99cf2; }
 .close-confirm-remember input[type='checkbox']:checked {
   background: #6c5ce7; border-color: #6c5ce7;
 }
@@ -462,10 +465,13 @@ onUnmounted(() => {
 }
 .cc-btn:active { transform: scale(0.97); }
 .cc-btn.ghost {
-  background: transparent; color: inherit;
-  border-color: rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.09); color: var(--ct-text-main, #e8eaf0);
+  border-color: rgba(255, 255, 255, 0.32);
 }
-.cc-btn.ghost:hover { background: rgba(255, 255, 255, 0.07); border-color: rgba(255, 255, 255, 0.26); }
+.cc-btn.ghost:hover {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.45);
+}
 .cc-btn.primary { background: #6c5ce7; color: #fff; }
 .cc-btn.primary:hover { background: #5a4bd1; }
 @keyframes cc-fade-in { from { opacity: 0; } to { opacity: 1; } }

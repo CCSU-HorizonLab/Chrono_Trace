@@ -1017,7 +1017,8 @@ async function applyMonitoringStatus(status: any) {
 
   try {
     const tRes = await api.get_latest_thread(realtimeState.talkerName, activeAccountWxid.value || undefined)
-    if (tRes.ok && tRes.thread) {
+    // 空会话（0 条消息，如空闲归档器产生的空档）没有可续内容——不显示横幅
+    if (tRes.ok && tRes.thread && Number(tRes.thread.message_count || 0) > 0) {
       lastThread.value = tRes.thread
     }
   } catch (e) {
@@ -1215,7 +1216,7 @@ onMounted(async () => {
     // 查询是否有上次会话线程
     try {
       const tRes = await api.get_latest_thread(realtimeState.talkerName, activeAccountWxid.value || undefined)
-      if (tRes.ok && tRes.thread) {
+      if (tRes.ok && tRes.thread && Number(tRes.thread.message_count || 0) > 0) {
         lastThread.value = tRes.thread
       }
     } catch (e) {

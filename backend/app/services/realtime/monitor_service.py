@@ -1697,6 +1697,7 @@ class RealtimeMonitorService:
             return 0
 
         seeded = 0
+        tail_messages: list[dict] = []
         visible_messages = self.wx.GetAllMessage() or []
         if not visible_messages:
             return 0
@@ -1724,8 +1725,18 @@ class RealtimeMonitorService:
                 if message_hash:
                     self.seen_hashes.add(message_hash)
                 seeded += 1
+                # 暂存窗口尾部（开场建议的上下文源——基线消息按设计不落
+                # realtime_message_buffer，批量查询查不到，此前导致开场建议
+                # 恒判「消息不足」）
+                tail_messages.append({
+                    'sender_attr': sender_attr,
+                    'content': content,
+                    'timestamp': resolved_timestamp,
+                    'message_type': message_type,
+                })
             except Exception:
                 continue
+        session_state['baseline_tail'] = tail_messages[-12:]
         self._last_known_ts = 0
         return seeded
 
@@ -3631,8 +3642,13 @@ class RealtimeMonitorService:
                 trigger_context={'source': 'listen_start', 'note': '基于最近对话生成的开场建议'},
             )
             if len(ctx.get('recent_messages') or []) < 4:
-                _print("💭 最近消息不足 4 条，跳过开场建议")
-                return
+                # 基线消息不落 buffer——回退到基线暂存的窗口尾部
+                tail = session_state.get('baseline_tail') or []
+                if len(tail) >= 4:
+                    ctx['recent_messages'] = tail
+                else:
+                    _print("💭 最近消息不足 4 条，跳过开场建议")
+                    return
             intent = self._suggestion_config.get('intent', 'maintain')
             from .emotion_state_tracker import TriggerEvent
             from .suggestion_engine import SuggestionEngineFactory

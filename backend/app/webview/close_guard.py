@@ -26,17 +26,30 @@ def attach_close_guard(window, bridge) -> None:
     """在窗口与 Bridge 之间装配关闭确认链路（app.py / app_dev.py 各调用一次）。"""
     state = {"allow": False}
 
+    def _safe_destroy() -> None:
+        try:
+            window.destroy()
+        except Exception as exc:
+            logger.error("[CloseGuard] 窗口销毁失败: %s", exc)
+
+    def _dispatch_close_request() -> None:
+        dispatched = False
+        try:
+            dispatched = bool(window.evaluate_js(_CLOSE_REQUEST_JS))
+        except Exception as exc:
+            logger.warning("[CloseGuard] 前端关闭确认不可用，放行关闭: %s", exc)
+        if not dispatched:
+            # 前端未就绪/不可用：放行真实关闭
+            state["allow"] = True
+            threading.Timer(0.1, _safe_destroy).start()
+
     def _on_closing():
         if state["allow"]:
             return True
-        try:
-            dispatched = window.evaluate_js(_CLOSE_REQUEST_JS)
-        except Exception as exc:
-            logger.warning("[CloseGuard] 前端关闭确认不可用，放行关闭: %s", exc)
-            return True
-        # 页面加载中/刷新中：前端回调未注册（求值无异常但返回 false）——放行，
-        # 否则点 X 无任何反应且无法退出（此前返回 False 无条件吞掉关闭事件）
-        return not bool(dispatched)
+        # GUI 线程内同步 evaluate_js 会与 pending 的 JS↔Python 桥接调用互等
+        # 死锁（实测：桥接忙时点 X 整窗卡死）——改为后台线程派发
+        threading.Timer(0.05, _dispatch_close_request).start()
+        return False
 
     try:
         window.events.closing += _on_closing
@@ -49,15 +62,8 @@ def attach_close_guard(window, bridge) -> None:
 
     def _exit() -> None:
         state["allow"] = True
-
-        def _destroy() -> None:
-            try:
-                window.destroy()
-            except Exception as exc:  # Timer 线程内异常不能无声吞掉——否则窗口卡在“已退出未退出”
-                logger.error("[CloseGuard] 窗口销毁失败: %s", exc)
-
-        # 0.5s：js_api 返回序列化慢于 0.15s 时仍可能在调用进行中销毁（互等）
-        threading.Timer(0.5, _destroy).start()
+        # 0.5s：js_api 返回序列化慢时仍可能在调用进行中销毁（互等）
+        threading.Timer(0.5, _safe_destroy).start()
 
     bridge.set_close_actions(minimize=_minimize, exit=_exit)
     logger.info("[CloseGuard] 关闭确认已启用")

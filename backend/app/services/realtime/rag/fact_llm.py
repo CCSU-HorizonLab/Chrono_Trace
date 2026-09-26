@@ -115,7 +115,7 @@ class LLMFactExtractorAdapter:
         if self._is_fusion_payload(payload):
             return self._fusion_call(payload)
         messages = self._render_messages(payload)
-        body = self._call_chat(messages, max_tokens=payload.get("max_tokens") or 2048)
+        body = self._call_chat(messages, max_tokens=max(int(payload.get("max_tokens") or 0), 6144))
         content = self._extract_content(body)
         facts = self._parse_facts(content)
         self._filter_evidence(facts, payload)
@@ -254,7 +254,7 @@ class LLMFactExtractorAdapter:
             {"role": "system", "content": FACT_FUSION_SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},
         ]
-        body = self._call_chat(messages, max_tokens=payload.get("max_tokens") or 2048)
+        body = self._call_chat(messages, max_tokens=max(int(payload.get("max_tokens") or 0), 6144))
         content = self._extract_content(body)
         candidate = self._json_candidate(content)
         if not candidate:
@@ -307,7 +307,7 @@ class LLMFactExtractorAdapter:
         body = self._call_chat(
             [{"role": "system", "content": FACT_FEEDBACK_EXTRACTION_PROMPT},
              {"role": "user", "content": user_prompt}],
-            max_tokens=1024,
+            max_tokens=3072,
         )
         content = self._extract_content(body)
         candidate = self._json_candidate(content)
@@ -373,24 +373,85 @@ class LLMFactExtractorAdapter:
 
     @staticmethod
     def _json_candidate(text: str) -> str:
-        start = text.find("{")
-        end = text.rfind("}")
-        if start >= 0 and end > start:
-            return text[start:end + 1]
-        return ""
+        """兼容旧签名：返回最可能的可解析 JSON 对象串（末尾优先）。"""
+        candidates = LLMFactExtractorAdapter._json_candidates(text)
+        return candidates[-1] if candidates else ""
+
+    @staticmethod
+    def _json_candidates(text: str) -> list[str]:
+        """按可信度返回候选 JSON 对象串。
+
+        思考模型（实测 Qwen3.5-9B/Ollama）把推理写进 content 且思考段会
+        回显模板 JSON——原「首个 { 到末个 }」的跨度必然拼出非法串
+        （"Extra data"）。策略：优先扫 </think> 之后的应答段；全段扫描时
+        候选按出现序返回，调用方倒序尝试（真答案在末尾）。
+        """
+        def scan(src: str) -> list[str]:
+            objs: list[str] = []
+            depth = 0
+            start: int | None = None
+            in_str = False
+            esc = False
+            for i, ch in enumerate(src):
+                if in_str:
+                    if esc:
+                        esc = False
+                    elif ch == "\\":
+                        esc = True
+                    elif ch == '"':
+                        in_str = False
+                    continue
+                if ch == '"':
+                    in_str = True
+                elif ch == "{":
+                    if depth == 0:
+                        start = i
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                    if depth == 0 and start is not None:
+                        objs.append(src[start:i + 1])
+                        start = None
+            return objs
+
+        parsed_ok: list[str] = []
+        for candidate in scan(text):
+            try:
+                json.loads(candidate)
+            except Exception:
+                continue
+            parsed_ok.append(candidate)
+        if not parsed_ok:
+            return []
+        if "</think>" in text:
+            tail = text.rsplit("</think>", 1)[-1]
+            tail_ok = [c for c in parsed_ok if c in tail or tail.find(c) >= 0]
+            if tail_ok:
+                return tail_ok
+        return parsed_ok
 
     def _parse_facts(self, content: str) -> list[dict[str, Any]]:
-        candidate = self._json_candidate(content)
-        if not candidate:
-            raise ValueError("fact extractor response has no JSON object")
-        parsed = json.loads(candidate)
-        if isinstance(parsed, dict):
-            facts = parsed.get("facts") or []
-        else:
-            facts = parsed
-        if not isinstance(facts, list):
-            raise ValueError("facts must be a list")
-        return facts
+        candidates = self._json_candidates(content)
+        if not candidates:
+            raise ValueError(
+                f"fact extractor response has no JSON object (len={len(content)},"
+                f" head={content[:120]!r})"
+            )
+        parsed = None
+        last_exc: Exception | None = None
+        for candidate in reversed(candidates):  # 思考模型真答案在末尾
+            try:
+                parsed = json.loads(candidate)
+                if isinstance(parsed, dict):
+                    facts = parsed.get("facts")
+                    if isinstance(facts, list):
+                        return facts
+                elif isinstance(parsed, list):
+                    return parsed
+                last_exc = ValueError("facts must be a list")
+            except Exception as exc:
+                last_exc = exc
+        raise last_exc or ValueError("fact extractor response has no usable JSON")
 
     @staticmethod
     def _filter_evidence(facts: list[dict[str, Any]], payload: dict[str, Any]) -> None:

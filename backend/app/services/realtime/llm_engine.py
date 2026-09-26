@@ -1885,6 +1885,16 @@ class LLMSuggestionEngine(SuggestionEngine):
             use_json_mode=False,
         )
 
+    @staticmethod
+    def _strip_reasoning_text(text: str) -> str:
+        """思考模型把思维链写进 content（实测 Qwen3.5-9B/Ollama：content =
+        思考段 + </think> + 真答案）。取最后一个 </think> 之后；无标记原样返回。
+        此前思维链直接漏进建议 summary（用户可见的泄漏）。"""
+        if "</think>" not in text:
+            return text
+        tail = text.rsplit("</think>", 1)[-1].strip()
+        return tail or text
+
     def _extract_message_text(
         self,
         message_obj: dict,
@@ -1892,7 +1902,7 @@ class LLMSuggestionEngine(SuggestionEngine):
         allow_reasoning_fallback: bool = True,
     ) -> str:
         """兼容不同 OpenAI 兼容厂商返回的文本字段。"""
-        content = message_obj.get("content", "") or ""
+        content = self._strip_reasoning_text(message_obj.get("content", "") or "")
         reasoning = message_obj.get("reasoning_content", "") or ""
 
         if not content and reasoning and allow_reasoning_fallback:
@@ -1929,6 +1939,42 @@ class LLMSuggestionEngine(SuggestionEngine):
 
         if cleaned.startswith("{") and cleaned.endswith("}"):
             return cleaned
+
+        # 思考模型残段含多个 JSON（回显模板+真答案）：首个 { 到末个 } 的跨度
+        # 会拼出非法串——平衡扫描取最后一个可解析对象（真答案在末尾）
+        candidates: list[str] = []
+        depth = 0
+        start: int | None = None
+        in_str = False
+        esc = False
+        for i, ch in enumerate(cleaned):
+            if in_str:
+                if esc:
+                    esc = False
+                elif ch == "\\":
+                    esc = True
+                elif ch == '"':
+                    in_str = False
+                continue
+            if ch == '"':
+                in_str = True
+            elif ch == "{":
+                if depth == 0:
+                    start = i
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0 and start is not None:
+                    candidates.append(cleaned[start:i + 1])
+                    start = None
+        for cand in reversed(candidates):
+            try:
+                json.loads(cand)
+                return cand
+            except Exception:
+                continue
+        if candidates:
+            return candidates[-1]
 
         start = cleaned.find("{")
         end = cleaned.rfind("}")

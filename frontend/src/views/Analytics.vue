@@ -1331,7 +1331,8 @@ export default {
                             globalProgressPercent.value = 5 + (d.progress || 0) * 0.45
                             globalProgressStep.value = `[特征分析] ${d.message || d.current_step || '分析中...'}`
                             if (d.status === 'completed') { clearInterval(activeTimer.value); resolve() }
-                            else if (d.status === 'failed' || d.status === 'cancelled') { clearInterval(activeTimer.value); reject(new Error(d.error || '分析已取消')) } // Don't block affinity if features fail
+                            else if (d.status === 'failed' || d.status === 'cancelled') { clearInterval(activeTimer.value); reject(new Error(d.error || d.message || '分析已取消')) }
+                            else if (d.status === 'not_found') { clearInterval(activeTimer.value); reject(new Error('分析任务已过期')) }
                         }
                     } catch (e) { clearInterval(activeTimer.value); resolve() }
                 }, 500)
@@ -1378,7 +1379,8 @@ export default {
                                 }
                                 await Promise.all(followUpTasks)
                                 resolve()
-                            } else if (prog.status === 'failed' || prog.status === 'cancelled') {
+                            } else if (prog.status === 'not_found') { clearInterval(activeTimer.value); reject(new Error('分析任务已过期')) }
+                            else if (prog.status === 'failed' || prog.status === 'cancelled') {
                                 clearInterval(activeTimer.value); reject(new Error(prog.error || '分析已取消'))
                             }
                         }

@@ -169,8 +169,14 @@ class FeatureExtractionService:
 
     def _update_task_status(self, task_id: str, progress: float, step: str, message: str = ""):
         """更新任务状态"""
+        # step 为终态词时直接采用（此前 progress=-1 被 <100 判为 in_progress，
+        # 导致取消后前端轮询永远拿不到 cancelled 状态，界面卡在「分析中」）
+        if step in ("completed", "failed", "cancelled"):
+            status = step
+        else:
+            status = "in_progress" if 0 <= progress < 100 else ("completed" if progress >= 100 else "failed")
         self._task_status[task_id] = {
-            "status": "in_progress" if progress < 100 else ("completed" if progress == 100 else "failed"),
+            "status": status,
             "progress": progress,
             "current_step": step,
             "message": message

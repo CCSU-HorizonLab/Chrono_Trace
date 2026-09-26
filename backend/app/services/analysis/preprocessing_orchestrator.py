@@ -124,7 +124,17 @@ class PreprocessingOrchestrator:
             return stats
 
         step_start = time.time()
-        self._ensure_sentiment_analysis(conversation_id, messages, cancel_event)
+        def _sentiment_progress(fraction: float) -> None:
+            if progress_cb:
+                progress_cb(0.75 * min(1.0, max(0.0, fraction)))
+
+        def _similarity_progress(fraction: float) -> None:
+            if progress_cb:
+                progress_cb(0.75 + 0.25 * min(1.0, max(0.0, fraction)))
+
+        self._ensure_sentiment_analysis(
+            conversation_id, messages, cancel_event, progress_cb=_sentiment_progress
+        )
         logger.info(f"[预处理] 情感分析完成 ({_step_elapsed(step_start)})")
 
         basic_stats = self.basic_service.collect_message_statistics(conversation_id)
@@ -158,7 +168,7 @@ class PreprocessingOrchestrator:
         stats.same_parity_pairs = pair_stats.get("same_parity_pairs", 0)
 
         sessions = self.session_manager.split_sessions(
-            speech_units, progress_cb=progress_cb, cancel_event=cancel_event
+            speech_units, progress_cb=_similarity_progress, cancel_event=cancel_event
         )
         self.session_manager.save_sessions(conversation_id, sessions)
         session_stats = self.session_manager.collect_session_statistics(sessions)
@@ -202,7 +212,8 @@ class PreprocessingOrchestrator:
         self,
         conversation_id: int,
         messages: List[Dict[str, Any]],
-        cancel_event: Optional[threading.Event] = None
+        cancel_event: Optional[threading.Event] = None,
+        progress_cb=None,
     ):
         text_messages = [msg for msg in messages if msg["message_type"] == 1]
         all_ids = [msg["id"] for msg in text_messages]
@@ -255,6 +266,11 @@ class PreprocessingOrchestrator:
 
             time.sleep(0.1)
             processed = min(start + batch_size, total_to_analyze)
+            if progress_cb:
+                try:
+                    progress_cb(processed / total_to_analyze)
+                except Exception:
+                    pass
             percentage = (processed / total_to_analyze) * 100 if total_to_analyze else 100
             logger.info(
                 f"[预处理] 情感分析批次 {batch_index}/{total_batches}: "

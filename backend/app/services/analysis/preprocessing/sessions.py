@@ -235,17 +235,30 @@ class SessionManager:
                 sample_indices = list(range(0, len(speech_units), SAMPLE_INTERVAL))
                 if sample_indices[-1] != len(speech_units) - 1:
                     sample_indices.append(len(speech_units) - 1)
-                
+
                 self._raise_if_cancelled()
                 sample_texts = [speech_units[i]["content"] for i in sample_indices]
                 logger.debug(f"[会话管理器] 第一阶段：粗采样 {len(sample_texts)} 个文本...")
-                
-                sample_embeddings = self._sentiment_service._get_embeddings_batch(
-                    sample_texts,
-                    normalize_embeddings=True,
-                    show_progress_bar=False,
-                    batch_size=64  # 采样时可用更大批次
-                )
+
+                # 分块编码采样文本：单次全量 encode 不可中断也无进度（82k 消息
+                # 首跑实测采样集 ~1.6 万条，整段无回调致 UI 长时间冻结）
+                sample_embeddings: List[Any] = []
+                SAMPLE_CHUNK = 256
+                for cs in range(0, len(sample_texts), SAMPLE_CHUNK):
+                    self._raise_if_cancelled()
+                    chunk = sample_texts[cs:cs + SAMPLE_CHUNK]
+                    sample_embeddings.extend(self._sentiment_service._get_embeddings_batch(
+                        chunk,
+                        normalize_embeddings=True,
+                        show_progress_bar=False,
+                        batch_size=64  # 采样时可用更大批次
+                    ))
+                    if progress_cb:
+                        try:
+                            # 采样阶段占整体 0→0.6
+                            progress_cb(min(0.6, 0.6 * (cs + len(chunk)) / max(1, len(sample_texts))))
+                        except Exception:
+                            pass
                 
                 # 找出候选切分区域（相似度较低的区域）
                 import numpy as np
@@ -266,9 +279,16 @@ class SessionManager:
                 # 第二阶段：对候选区域进行精细检测
                 # 初始化 similarities 数组（默认高相似度，不切分）
                 similarities = [0.8] * (len(speech_units) - 1)
-                
-                for start, end in candidate_regions:
+                total_regions = len(candidate_regions)
+
+                for region_idx, (start, end) in enumerate(candidate_regions):
                     self._raise_if_cancelled()
+                    if progress_cb:
+                        try:
+                            # 精细检测占整体 0.6→1.0
+                            progress_cb(min(1.0, 0.6 + 0.4 * (region_idx + 1) / max(1, total_regions)))
+                        except Exception:
+                            pass
                     region_texts = [speech_units[i]["content"] for i in range(start, end + 1)]
                     region_embeddings = self._sentiment_service._get_embeddings_batch(
                         region_texts,

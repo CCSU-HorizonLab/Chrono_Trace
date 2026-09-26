@@ -225,13 +225,17 @@
             <!-- 重建索引 -->
             <button
               class="rc-btn mini primary"
-              :disabled="rowLoading[item.conversation_id]"
+              :disabled="rowLoading[item.conversation_id] || item.status === 'building' || item.status === 'queued'"
               @click.prevent="handleRebuild(item)"
               title="重新为该联系人的历史记录构建向量与记忆索引"
             >
-              <span v-if="rowLoading[item.conversation_id] === 'rebuild'" class="rc-spinner micro"></span>
+              <span v-if="rowLoading[item.conversation_id] === 'rebuild' || item.status === 'building' || item.status === 'queued'" class="rc-spinner micro"></span>
               <RotateCw v-else :size="12" />
-              <span>{{ rowLoading[item.conversation_id] === 'rebuild' ? '构建中' : (item.document_count ? '重建' : '索引') }}</span>
+              <span>{{
+                (rowLoading[item.conversation_id] === 'rebuild' || item.status === 'building') ? '构建中'
+                : item.status === 'queued' ? '排队中'
+                : (item.document_count ? '重建' : '索引')
+              }}</span>
             </button>
 
             <!-- 清空索引 -->
@@ -306,7 +310,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, reactive } from 'vue'
+import { ref, computed, watch, reactive, onUnmounted } from 'vue'
 import {
   Search,
   X,
@@ -358,6 +362,28 @@ const props = withDefaults(
 const emit = defineEmits<{
   (e: 'refresh'): void
 }>()
+
+// 构建中/排队中的服务端真值轮询：有活动任务时 3s 刷新，无则停
+let livePollTimer: ReturnType<typeof setInterval> | null = null
+const hasLiveWork = computed(() => props.items.some((item) => isLive(item)))
+watch(
+  hasLiveWork,
+  (live) => {
+    if (live && livePollTimer === null) {
+      livePollTimer = setInterval(() => emit('refresh'), 3000)
+    } else if (!live && livePollTimer !== null) {
+      clearInterval(livePollTimer)
+      livePollTimer = null
+    }
+  },
+  { immediate: true }
+)
+onUnmounted(() => {
+  if (livePollTimer !== null) {
+    clearInterval(livePollTimer)
+    livePollTimer = null
+  }
+})
 
 // 记忆管理弹窗
 const factDialog = reactive({
@@ -489,11 +515,16 @@ function getBadgeClass(item: RagContactItem) {
   return 'badge-amber'
 }
 
+function isLive(item: RagContactItem): boolean {
+  return item.status === 'building' || item.status === 'queued'
+}
+
 function getStatusText(item: RagContactItem) {
   if (!item.enabled) return '已禁用'
   if (item.status === 'failed' || item.last_error) return '异常'
   if (item.status === 'ready' && item.document_count > 0) return '已就绪'
   if (item.status === 'building') return '构建中'
+  if (item.status === 'queued') return '排队中'
   return '待索引'
 }
 
@@ -539,6 +570,8 @@ async function handleRebuild(item: RagContactItem) {
     const result = await api.rebuild_rag_index(Number(item.conversation_id), props.accountWxid)
     if (!result?.ok) {
       await showDialog('重建失败: ' + (result?.error || '未知错误'))
+    } else if (result?.already && result?.message) {
+      await showDialog(result.message)
     }
     emit('refresh')
   } catch (e: any) {

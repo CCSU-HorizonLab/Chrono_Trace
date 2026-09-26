@@ -32,6 +32,25 @@ logger = logging.getLogger(__name__)
 # 同一时刻只允许一个 rebuild；忙时把后来者标记 pending 并入队串行跟进。
 _REBUILD_LOCK = threading.Lock()
 
+# 重建持锁期间的活跃登记（UI「构建中/排队中」的真值来源，跨面板/跨轮询可恢复）
+_ACTIVE: set[tuple[str, int]] = set()
+_ACTIVE_LOCK = threading.Lock()
+
+
+def get_active_and_queued() -> dict[tuple[str, int], str]:
+    """返回 {(account_wxid, conversation_id): "building" | "queued"}。"""
+    out: dict[tuple[str, int], str] = {}
+    with _ACTIVE_LOCK:
+        for key in _ACTIVE:
+            out[key] = "building"
+    with RagIndexQueue._lock:
+        for key in RagIndexQueue._pending:
+            out.setdefault(key, "queued")
+        for key in RagIndexQueue._fact_pending:
+            out.setdefault(key, "queued")
+    return out
+
+
 
 class RagIndexer:
     """Build a minimal but useful per-contact RAG index."""
@@ -322,12 +341,17 @@ class RagIndexer:
             except Exception as exc:
                 logger.warning("[RAG Index] busy-queue fallback failed: %s", exc)
             return self.store.get_status(account_wxid, conversation_id) or {}
+        active_key = (account_wxid, int(conversation_id))
+        with _ACTIVE_LOCK:
+            _ACTIVE.add(active_key)
         try:
             return self._rebuild_contact_index_locked(
                 account_wxid=account_wxid, conversation_id=conversation_id,
                 settings=settings, model=model, dim=dim, privacy_mode=privacy_mode,
             )
         finally:
+            with _ACTIVE_LOCK:
+                _ACTIVE.discard(active_key)
             _REBUILD_LOCK.release()
 
     def _rebuild_contact_index_locked(

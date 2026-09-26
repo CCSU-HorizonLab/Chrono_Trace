@@ -2203,6 +2203,8 @@ class Bridge:
             store = RagStore()
             deleted = store.clear_conversation(resolved_account, int(conversation_id))
             store.conn.commit()
+            from ..services.realtime.rag.retriever import invalidate_vector_cache
+            invalidate_vector_cache(resolved_account, int(conversation_id))
             return {"ok": True, "deleted": deleted}
         except Exception as e:
             logger.error(f"[Bridge] 清空 RAG 索引失败: {e}")

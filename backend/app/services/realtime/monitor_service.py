@@ -1737,6 +1737,7 @@ class RealtimeMonitorService:
             except Exception:
                 continue
         session_state['baseline_tail'] = tail_messages[-12:]
+        self._baseline_tail = session_state['baseline_tail']  # 供 bridge 最近消息端点读取
         self._last_known_ts = 0
         return seeded
 

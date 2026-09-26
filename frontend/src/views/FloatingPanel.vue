@@ -2000,6 +2000,7 @@ async function manualGenerate() {
     })
     if (r.ok && r.suggestion) {
       appendSuggestionResult(r)
+      nextTick(() => scrollToBottom())  // AI 回复入列后滚动
     } else {
       loading.value = false
       __stopThinkingTimer()
@@ -2154,6 +2155,7 @@ async function sendUserContext() {
   conversationHistory.value.push({ role: 'user', content, ts: Math.floor(Date.now() / 1000) })
   userInput.value = ''
   loading.value = true
+  nextTick(() => scrollToBottom())  // 用户消息/快速联想入列后立即滚到底
   __startThinkingTimer()
   resetSuggestionStreamUi()
   llmError.value = ''
@@ -2167,8 +2169,10 @@ async function sendUserContext() {
     })
     if (r.ok && r.suggestion) {
       appendSuggestionResult(r)
+      nextTick(() => scrollToBottom())  // AI 回复入列后滚动
     } else {
       conversationHistory.value.push({ role: 'ai', content: `[生成失败] ${r.error || '未知错误'}`, ts: Math.floor(Date.now() / 1000) })
+      nextTick(() => scrollToBottom())
       handleLlmError(r.error || '生成失败')
     }
   } catch (e: any) {

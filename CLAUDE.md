@@ -31,7 +31,6 @@ Chrono Trace（时痕）：基于 PyWebView + Vue 3 + Python 的**双平台**（
 - 密钥类型两种：**passphrase**（32B 口令 hex，按库 salt 经 PBKDF2-HMAC-SHA512(256000) 派生——Linux GDB 与 Windows wx_key 产物）与 **raw**（Windows 只读扫描产物，每库派生密钥 `{salt_hex: enc_key_hex}`，无法反推 passphrase）。
 - raw key 消费通道：`db_decryptor_v2.set_raw_key_map()` 在 `derive_keys` 单点按 salt 覆盖，validate/verify/decrypt/ingest/db_snapshot/db_watch 全链自动生效；账号设置存 `key_type` + `raw_keys` 字段。
 - Linux 断点地址换算必须走 PT_LOAD 程序头（`keys/gdb_linux.va_to_runtime_addr`）——微信二进制 .text vaddr 从 0x44EC000 起，「映射基址+VA」会偏移 4.5MB。
-- 旧路径 `key_provider.py`/`key_capture_flow.py`/`key_capture_linux.py` 为兼容 shim，勿在新代码中引用。
 
 ## 常用命令
 

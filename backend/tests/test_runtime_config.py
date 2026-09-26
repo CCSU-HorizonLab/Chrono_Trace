@@ -2,7 +2,7 @@ import importlib
 import sys
 from pathlib import Path
 
-import backend.app.config as config_module
+import app.config as config_module
 
 
 def _reload_config(monkeypatch, tmp_path: Path, *, frozen: bool = False):

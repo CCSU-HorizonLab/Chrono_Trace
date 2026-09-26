@@ -20,9 +20,6 @@ from ..wechat.account_settings import get_active_wechat_account_wxid, load_setti
 
 logger = logging.getLogger(__name__)
 def _print(*args, **kwargs):
-    """强制刷新的打印函数"""
-    print(*args, **kwargs, flush=True)
-def _print(*args, **kwargs):
     kwargs.setdefault("flush", True)
     try:
         print(*args, **kwargs)

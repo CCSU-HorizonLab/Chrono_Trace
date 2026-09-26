@@ -1,5 +1,5 @@
 <template>
-  <div class="fp-layout" :class="{ 'is-inspector-open': inspectorOpen }">
+  <div class="fp-layout">
     <!-- 1. Header (Fixed) -->
     <header class="fp-site-header">
       <div class="fp-header-drag-zone">
@@ -81,7 +81,7 @@
       <!-- LEFT/MAIN COLUMN -->
       <main class="fp-main-column">
         <!-- Narrow Mode Insights Strip -->
-        <div class="fp-insights-strip" @click="toggleInspector('emotion')">
+        <div class="fp-insights-strip" @click="toggleInspector('emotion')" title="点击展开情绪明细图表">
       <div class="fp-insight-primary">
         <span class="fp-trend-badge" :class="emotionSummary?.trend || 'neutral'">
           {{ emotionSummary?.trend === 'positive' ? '正面向上' : emotionSummary?.trend === 'negative' ? '负面向下' : '稳定平缓' }}
@@ -204,11 +204,19 @@
       </main>
 
       <!-- RIGHT SUPPORT RAIL (or Narrow Shared Inspector) -->
-      <aside class="fp-support-rail fp-inspector">
+      <teleport to="body" :disabled="inspectorDocked">
+    <aside class="fp-inspector-overlay" :class="{ 'is-visible': inspectorOpen, 'is-docked': inspectorDocked }" @click.self="!inspectorDocked && closeInspector()">
+        <div class="fp-inspector">
       <div class="fp-inspector-header">
+        <span class="fp-inspector-title">AI 生成建议时使用的上下文</span>
         <div class="fp-inspector-tabs">
-          <button class="fp-tab-btn" :class="{ active: inspectorTab === 'emotion' }" @click="toggleInspector('emotion')">情绪明细</button>
-          <button class="fp-tab-btn" :class="{ active: inspectorTab === 'context' }" @click="toggleInspector('context')">AI 参考记录</button>
+          <button class="fp-dock-toggle" @click="inspectorDocked = !inspectorDocked"
+                  :title="inspectorDocked ? '切换为浮层模式' : '切换为分屏模式（主内容仍可见）'">
+            {{ inspectorDocked ? '收起分屏' : '分屏' }}
+          </button>
+          <button class="fp-btn-icon fp-inspector-close" @click="closeInspector" title="收起面板"><X :size="12" /></button>
+          <button class="fp-tab-btn" :class="{ active: inspectorTab === 'emotion' }" @click="toggleInspector('emotion')">情绪趋势</button>
+          <button class="fp-tab-btn" :class="{ active: inspectorTab === 'context' }" @click="toggleInspector('context')">建议依据</button>
         </div>
         <button class="fp-btn-icon close-rail-btn" @click="closeInspector"><X :size="14" /></button>
       </div>
@@ -304,7 +312,9 @@
           </div>
         </div>
       </div>
-    </aside>
+          </div>
+</aside>
+  </teleport>
 
     </div>
   <footer class="fp-composer">
@@ -313,7 +323,7 @@
         <div class="fp-quick-prompts">
           <button v-for="q in quickPrompts" :key="q" class="fp-qp-btn" @click="sendQuickPrompt(q)">{{ q }}</button>
         </div>
-        <button class="fp-ctx-btn" @click="toggleInspector('context')" :class="{ 'is-active': inspectorOpen && inspectorTab === 'context' }" title="查看AI参考记录">参考</button>
+        <button class="fp-ctx-btn" @click="toggleInspector('context')" :class="{ 'is-active': inspectorOpen && inspectorTab === 'context' }" title="查看生成建议时 AI 参考的全部聊天记录、记忆与情绪数据">AI建议依据</button>
       </div>
 
       <!-- Settings Strip -->
@@ -514,6 +524,7 @@ const isWideMode = ref(window.innerWidth >= 820)
 const handleInspectorResize = () => { isWideMode.value = window.innerWidth >= 820 }
 window.addEventListener('resize', handleInspectorResize)
 const inspectorTab = ref<'emotion' | 'context'>('emotion')
+const inspectorDocked = ref(false)  // 分屏模式：面板停靠底部，主内容仍可见
 const showSecondaryCharts = ref(false)
 watch(showSecondaryCharts, (val) => { if (val) { nextTick(() => { typeof syncCharts === 'function' && syncCharts(); typeof triggerChartResize === 'function' && triggerChartResize() }) } })
 const hasSufficientEmotionData = computed(() => realtimeState.messageCount >= 4 && emotionHistory.value && emotionHistory.value.length > 2)
@@ -527,12 +538,8 @@ function triggerChartResize() {
 
 async function closeInspector() {
   inspectorOpen.value = false
+  inspectorDocked.value = false
   showSecondaryCharts.value = false
-  try {
-    if (api && api.set_floating_expanded) await api.set_floating_expanded(false)
-  } catch (e) {
-    console.error(e)
-  }
 }
 
 async function toggleInspector(tab: 'emotion' | 'context') {
@@ -542,11 +549,6 @@ async function toggleInspector(tab: 'emotion' | 'context') {
     inspectorOpen.value = true
     inspectorTab.value = tab
     showSecondaryCharts.value = false
-    try {
-      if (api && api.set_floating_expanded) await api.set_floating_expanded(true)
-    } catch (e) {
-      console.error(e)
-    }
     if (tab === 'emotion') {
       nextTick(() => { if (typeof syncCharts === 'function') syncCharts(); typeof triggerChartResize === 'function' && triggerChartResize() })
     }
@@ -2395,86 +2397,9 @@ async function loadLastThread() {
   z-index: 10;
 }
 
-.fp-support-rail {
-  grid-area: inspector;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.2s;
-  display: flex !important;
-  flex-direction: column;
-  overflow: hidden;
-  background: var(--ct-bg-app);
-  border-bottom: 1px solid var(--ct-border-color);
-  z-index: 5;
-  min-height: 0;
-}
 
-/* 1. Narrow mode + open behavior */
-@media (max-width: 819px) {
-  .fp-layout.is-inspector-open .fp-workbench-container {
-    grid-template-rows: auto clamp(160px, 30%, 220px) 1fr;
-  }
-  .fp-layout.is-inspector-open .fp-support-rail {
-    opacity: 1;
-    pointer-events: auto;
-  }
-}
 
-/* 2. Wide mode + open behavior (Explicit Coupling) */
-@media (min-width: 820px) {
-  .fp-layout.is-inspector-open .fp-chart-rail {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    grid-auto-flow: row;
-    overflow-x: hidden;
-    overflow-y: auto;
-    padding-bottom: 24px;
-    height: auto;
-  }
-
-  .fp-layout.is-inspector-open .fp-workbench-container {
-    display: flex;
-    flex-direction: row;
-    min-height: 0;
-    overflow: hidden;
-    flex: 1;
-    width: 100%;
-  }
-  .fp-layout.is-inspector-open .fp-main-column {
-    display: flex;
-    flex-direction: column;
-    flex: 1;
-    min-width: 0;
-    min-height: 0;
-    overflow: hidden;
-  }
-  .fp-layout.is-inspector-open .fp-main-stack { 
-    flex: 1; 
-    overflow: hidden; 
-    position: relative; 
-    min-height: 0; 
-    display: flex;
-    flex-direction: column;
-  }
-  .fp-layout.is-inspector-open .fp-insights-strip { display: none; }
-  
-  .fp-layout.is-inspector-open .fp-support-rail {
-    flex-shrink: 0;
-    width: 320px;
-    border-bottom: none;
-    border-left: 1px solid var(--ct-border-color);
-    box-shadow: -2px 0 8px rgba(0,0,0,0.015);
-    opacity: 1;
-    pointer-events: auto;
-    height: 100%;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-}
-/* Replaced old Workbench CSS Block fully */
-/* Remove old layout */
+/* 检查器已改为 teleport 全屏浮层：主布局不再随 inspectorOpen 变化 */
 /* Base Buttons */
 .fp-btn-back {
   display: inline-flex; align-items: center; gap: 5px;
@@ -2544,9 +2469,61 @@ async function loadLastThread() {
 .fp-arr.arr-up { transform: rotate(-90deg); }
 
 /* 3. SHARED INSPECTOR PANEL */
-.fp-inspector { display: flex; flex-direction: column; flex: 0 0 auto; height: clamp(184px, 31%, 236px); min-height: 184px; background: var(--ct-bg-app); border-bottom: 1px solid var(--ct-border-color); box-shadow: inset 0 -4px 8px rgba(0,0,0,0.015); z-index: 5; }
+/* 检查器浮层：teleport 到 body，显式深色确保主题无关 */
+.fp-inspector-overlay {
+  position: fixed !important; inset: 0 !important; z-index: 9999 !important;
+  background: rgba(8, 10, 16, 0.45) !important;
+  backdrop-filter: blur(3px) !important;
+  display: flex; align-items: flex-end;
+  opacity: 0; pointer-events: none; transition: opacity 0.18s ease;
+}
+.fp-inspector-overlay.is-visible {
+  opacity: 1 !important; pointer-events: auto !important;
+}
+/* 分屏模式：teleport 回布局内（在滚动区与交互区之间），不遮挡交互区 */
+.fp-inspector-overlay.is-docked {
+  position: static !important;
+  background: transparent !important;
+  backdrop-filter: none !important;
+  pointer-events: auto !important;
+  opacity: 1 !important;
+  flex-shrink: 0;
+  height: clamp(180px, 38%, 260px);
+}
+.fp-inspector-overlay.is-docked .fp-inspector {
+  height: 100%;
+  transform: none !important;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,0.06);
+}
+.fp-inspector {
+  width: 100%; height: 72%;
+  display: flex; flex-direction: column;
+  background: #1a1e28 !important; color: #e8eaf0 !important;
+  border-top: 1px solid rgba(255,255,255,0.1);
+  border-radius: 16px 16px 0 0;
+  box-shadow: 0 -12px 40px rgba(0,0,0,0.4);
+  transform: translateY(100%); transition: transform 0.22s ease;
+}
+.fp-inspector-overlay.is-visible .fp-inspector { transform: translateY(0); }
 .fp-inspector-header { display: flex; justify-content: space-between; align-items: center; padding: 3px 8px; border-bottom: 1px solid var(--ct-border-color); background: var(--ct-bg-elevated); gap: 6px; }
-.fp-inspector-tabs { display: flex; gap: 6px; min-width: 0; }
+.fp-inspector-title { font-size: 13px; font-weight: 600; color: var(--ct-text-secondary); }
+.fp-inspector-tabs { display: flex; gap: 6px; min-width: 0; flex: 1; align-items: center; }
+.fp-dock-toggle {
+  font-size: 11px; font-weight: 600;
+  color: rgba(139, 127, 240, 0.9);
+  background: rgba(108, 92, 231, 0.15);
+  border: 1px solid rgba(108, 92, 231, 0.3);
+  padding: 3px 10px; border-radius: 999px;
+  cursor: pointer; white-space: nowrap;
+  transition: all 0.15s ease;
+}
+.fp-dock-toggle:hover {
+  background: rgba(108, 92, 231, 0.28);
+  border-color: rgba(108, 92, 231, 0.5);
+}
+.fp-inspector-close { margin-left: auto; color: var(--ct-text-secondary); }
+.fp-inspector-close:hover { color: var(--ct-text-primary); }
 .fp-tab-btn { background: var(--ct-bg-secondary); border: 1px solid transparent; font-size: 11px; font-weight: 600; color: var(--ct-text-secondary); cursor: pointer; padding: 2px 8px; border-radius: 4px; transition: all 0.2s; white-space: nowrap; }
 .fp-tab-btn.active { color: var(--ct-color-primary); border-color: rgba(124, 77, 255, 0.2); background: rgba(124, 77, 255, 0.08); box-shadow: inset 0 0 0 1px rgba(124, 77, 255, 0.06); }
 .fp-inspector-body { flex: 1; overflow-y: auto; padding: 0; background: var(--ct-bg-tertiary); display: flex; flex-direction: column; }

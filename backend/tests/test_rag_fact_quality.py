@@ -3,7 +3,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from app.services.realtime.rag_fact_quality import (
+from app.services.realtime.rag.fact_quality import (
     fact_quality_reason,
     is_usable_shadow_fact,
 )

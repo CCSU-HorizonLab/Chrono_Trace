@@ -1,0 +1,1962 @@
+"""Contact-scoped lazy and incremental RAG indexing."""
+
+from __future__ import annotations
+
+import logging
+import json
+import re
+import threading
+from collections import deque
+import time
+from typing import Any
+
+from ....db.connection import get_db
+from ..privacy_redactor import PrivacyRedactor
+from .config import load_rag_settings
+from .embedding import (
+    RagEmbeddingDimensionMismatch,
+    RagEmbeddingService,
+    RagEmbeddingUnavailable,
+)
+from .fact_extractor import FactExtractionError, StructuredFactExtractor, normalize_fact_kind
+from .semantic_memory import SemanticFactExtractor
+from .segmenter import RagSegment, RagSegmenter
+from .store import RAG_INDEX_VERSION, RagStore
+
+
+logger = logging.getLogger(__name__)
+
+# P2 并发修复：进程级重建互斥。pywebview 的每个 bridge 调用跑在独立
+# 线程——连点两个联系人的重建就是两个并行 rebuild；两次 commit 之间
+# 夹着 LLM 抽取（每段数秒到数十秒）的长事务会占住 WAL 写锁，另一路
+# busy 等待超时后 "database is locked"，互相交错导致两边全失败。
+# 同一时刻只允许一个 rebuild；忙时把后来者标记 pending 并入队串行跟进。
+_REBUILD_LOCK = threading.Lock()
+
+# 重建持锁期间的活跃登记（UI「构建中/排队中」的真值来源，跨面板/跨轮询可恢复）
+_ACTIVE: set[tuple[str, int]] = set()
+_ACTIVE_LOCK = threading.Lock()
+
+
+def get_active_and_queued() -> dict[tuple[str, int], str]:
+    """返回 {(account_wxid, conversation_id): "building" | "queued"}。"""
+    out: dict[tuple[str, int], str] = {}
+    with _ACTIVE_LOCK:
+        for key in _ACTIVE:
+            out[key] = "building"
+    with RagIndexQueue._lock:
+        for key in RagIndexQueue._pending:
+            out.setdefault(key, "queued")
+        for key in RagIndexQueue._fact_pending:
+            out.setdefault(key, "queued")
+    return out
+
+
+
+class RagIndexer:
+    """Build a minimal but useful per-contact RAG index."""
+
+    INDEX_VERSION = RAG_INDEX_VERSION
+    SELF_STYLE_LIMIT = 24
+    EMBED_BATCH_SIZE = 64
+    WRITE_COMMIT_INTERVAL = 64
+    SHARED_MEMORY_KINDS = {
+        "plan_or_appointment",
+        "hobby_or_game",
+        "food_or_place",
+        "recurring_habit",
+        "preference_like",
+    }
+    # P1.2 LLM 结构化抽取的每轮预算：每次重建每联系人最多抽取的段数
+    LLM_EXTRACT_SEGMENT_BUDGET = 40
+    # 回补（欠账）场景专用预算：用户知情主动触发（token 成本预期），
+    # 且队列串行+互斥锁已保证长任务安全——小步慢走的防误操作预算
+    # 在 156 联系人欠账场景下不合理（几十次手动重建才抽完一人）
+    LLM_EXTRACT_BACKFILL_BUDGET = 200
+    # 回补并发：LLM 调用是纯 IO 等待（单次 1-30s），3 路并发约 3 倍
+    # 吞吐；写库与水位推进在主线程按提交序串行，语义不变
+    LLM_EXTRACT_CONCURRENCY = 3
+    # P1.5 断点续抽版本：抽取 prompt/质量门变化时递增，水位失效全量重抽
+    # p1.6：游戏内购买排除+购买代词差例强化（P1.6 T11）
+    # p1.7：消费类原型降级（LLM-only）+ 检索增强上下文（跨天代指还原）
+    FACT_EXTRACT_PROMPT_VERSION = "p1.7"
+    # P1.6 融合候选上限：候选过多时 decisions 响应变长易截断（真实库
+    # 出现 invalid JSON/no JSON 多为 max_tokens 截断），按置信度取前 N
+    FACT_FUSION_CANDIDATE_LIMIT = 12
+
+    def __init__(
+        self,
+        store: RagStore | None = None,
+        embedding_service: RagEmbeddingService | None = None,
+        structured_fact_extractor: StructuredFactExtractor | None = None,
+    ):
+        self.store = store or RagStore()
+        self.embedding_service = embedding_service or RagEmbeddingService()
+        self.segmenter = RagSegmenter()
+        self.semantic_fact_extractor = SemanticFactExtractor(self.embedding_service, self.segmenter)
+        self.structured_fact_extractor = structured_fact_extractor
+        # P1.2 LLM 结构化抽取的轮内预算（每次 rebuild 重置）；
+        # 常规 40，回补场景临时抬到 LLM_EXTRACT_BACKFILL_BUDGET
+        self._llm_extract_segments_used = 0
+        self._llm_extract_budget_limit = self.LLM_EXTRACT_SEGMENT_BUDGET
+        self._llm_extract_consecutive_failures = 0
+        self._llm_extract_watermark_ts: int | None = None
+        # P1.5 连续覆盖语义：段失败后冻结水位，后续成功不再越过失败段
+        self._llm_extract_round_failed = False
+        if self.structured_fact_extractor is None:
+            self.structured_fact_extractor = self._maybe_build_llm_extractor()
+
+    def _maybe_build_llm_extractor(self) -> StructuredFactExtractor | None:
+        """P1.2：配置开启且模型可用时，自动注入 LLM 抽取适配器。
+
+        默认关闭（rag_structured_fact_extraction_enabled）；构造失败
+        （无模型/依赖异常）静默降级为不抽取，绝不影响索引主链路。
+        """
+        try:
+            if not load_rag_settings().get("rag_structured_fact_extraction_enabled"):
+                return None
+            from .fact_llm import build_llm_fact_extractor
+
+            adapter = build_llm_fact_extractor()
+            if adapter is None:
+                logger.info("[RAG Fact LLM] 结构化抽取已开启但无激活模型，跳过")
+                return None
+            return StructuredFactExtractor(llm_call=adapter)
+        except Exception as exc:
+            logger.warning("[RAG Fact LLM] 适配器构造失败，本轮不抽取: %s", exc)
+            return None
+
+    def ensure_contact_index(
+        self,
+        *,
+        account_wxid: str,
+        conversation_id: int,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        settings = load_rag_settings()
+        self.store.mark_stale_for_config_change(
+            account_wxid,
+            embedding_model=str(settings["rag_embedding_model"]),
+            embedding_dim=int(settings["rag_embedding_dim"]),
+            privacy_mode=str(settings["rag_privacy_mode"]),
+            index_version=self.INDEX_VERSION,
+        )
+        status = self.store.get_status(account_wxid, conversation_id)
+        if (
+            status
+            and status.get("enabled", 1)
+            and status.get("index_version") != self.INDEX_VERSION
+            and status.get("status") in {"ready", "stale"}
+        ):
+            self.store.upsert_status(
+                account_wxid,
+                conversation_id,
+                status="stale",
+                dirty_since=int(time.time()),
+                index_version=self.INDEX_VERSION,
+            )
+            self.store.conn.commit()
+            status = self.store.get_status(account_wxid, conversation_id)
+        if force:
+            return self.rebuild_contact_index(
+                account_wxid=account_wxid,
+                conversation_id=conversation_id,
+            )
+        if status and not status.get("enabled", 1):
+            return status
+        if (
+            status
+            and status.get("enabled", 1)
+            and status.get("status") == "ready"
+            and int(status.get("document_count") or 0) > 0
+        ):
+            if settings.get("rag_fact_read_enabled") and self._fact_vectors_missing(
+                account_wxid,
+                conversation_id,
+                settings,
+            ):
+                RagIndexQueue.enqueue_fact_backfill(account_wxid, conversation_id)
+            return status
+        if (
+            status
+            and status.get("enabled", 1)
+            and status.get("status") == "stale"
+            and int(status.get("document_count") or 0) > 0
+        ):
+            RagIndexQueue.enqueue(account_wxid, conversation_id)
+            return status
+        if status and status.get("status") == "failed":
+            if self._can_retry_failed_status(status):
+                self.store.upsert_status(
+                    account_wxid,
+                    conversation_id,
+                    status="pending",
+                    embedding_model=str(settings["rag_embedding_model"]),
+                    embedding_dim=int(settings["rag_embedding_dim"]),
+                    privacy_mode=str(settings["rag_privacy_mode"]),
+                    dirty_since=int(time.time()),
+                    last_error=None,
+                    index_version=self.INDEX_VERSION,
+                )
+                self.store.conn.commit()
+                RagIndexQueue.enqueue(account_wxid, conversation_id)
+                return self.store.get_status(account_wxid, conversation_id) or {}
+            return status
+
+        self.store.upsert_status(
+            account_wxid,
+            conversation_id,
+            status="pending",
+            embedding_model=str(settings["rag_embedding_model"]),
+            embedding_dim=int(settings["rag_embedding_dim"]),
+            privacy_mode=str(settings["rag_privacy_mode"]),
+            dirty_since=int(time.time()),
+            index_version=self.INDEX_VERSION,
+        )
+        self.store.conn.commit()
+        RagIndexQueue.enqueue(account_wxid, conversation_id)
+        return self.store.get_status(account_wxid, conversation_id) or {}
+
+    def _fact_vectors_missing(
+        self,
+        account_wxid: str,
+        conversation_id: int,
+        settings: dict[str, Any],
+    ) -> bool:
+        facts = self.store.count_active_facts(account_wxid, conversation_id)
+        if facts <= 0:
+            return False
+        # G5：分子分母口径必须一致——count_active_facts 只数活跃事实，
+        # 向量侧若把退役事实的遗留向量也算进来，缺向量的活跃事实会被
+        # 误判"已齐"而跳过回填
+        vectors = self.store.count_active_fact_embeddings(
+            account_wxid,
+            conversation_id,
+            embedding_model=str(settings["rag_embedding_model"]),
+            embedding_dim=int(settings["rag_embedding_dim"]),
+        )
+        return vectors < facts
+
+    def backfill_fact_embeddings(
+        self,
+        *,
+        account_wxid: str,
+        conversation_id: int,
+        batch_size: int = 32,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        """Backfill vectors for legacy active facts without changing fact rows."""
+        settings = load_rag_settings()
+        model = str(settings["rag_embedding_model"])
+        dim = int(settings["rag_embedding_dim"])
+        facts = self.store.list_facts(account_wxid, conversation_id)
+        existing = {
+            int(item["id"])
+            for item in self.store.list_facts_with_vectors(
+                account_wxid,
+                conversation_id,
+                embedding_model=model,
+                embedding_dim=dim,
+            )
+        }
+        missing = [item for item in facts if force or int(item["id"]) not in existing]
+        written = 0
+        failures: list[dict[str, Any]] = []
+        try:
+            for offset in range(0, len(missing), max(1, int(batch_size))):
+                chunk = missing[offset:offset + max(1, int(batch_size))]
+                vectors = self.embedding_service.embed_texts([
+                    "\n".join(
+                        part for part in (
+                            str(item.get("content") or ""),
+                            self.store.list_fact_evidence_text(
+                                json.loads(item.get("evidence_message_ids_json") or "[]")
+                            ),
+                        ) if part
+                    )
+                    for item in chunk
+                ])
+                if len(vectors) != len(chunk):
+                    raise RagEmbeddingUnavailable("事实回填 embedding 数量不一致")
+                for fact, vector in zip(chunk, vectors):
+                    if len(vector) != dim:
+                        raise RagEmbeddingDimensionMismatch(
+                            f"fact vector dimension mismatch: vector={len(vector)} configured={dim}"
+                        )
+                    self.store.upsert_fact_embedding(
+                        fact_id=int(fact["id"]),
+                        account_wxid=account_wxid,
+                        conversation_id=conversation_id,
+                        embedding_model=model,
+                        embedding_dim=dim,
+                        vector=vector,
+                        embedding_provider=str(settings.get("rag_embedding_provider") or "local"),
+                    )
+                    written += 1
+                self.store.conn.commit()
+        except (RagEmbeddingUnavailable, RagEmbeddingDimensionMismatch, ValueError) as exc:
+            failures.append({"reason": str(exc), "offset": written})
+        except Exception as exc:
+            failures.append({"reason": str(exc), "offset": written})
+        from .retriever import invalidate_vector_cache
+        invalidate_vector_cache(account_wxid, conversation_id)
+        return {
+            "account_wxid": account_wxid,
+            "conversation_id": int(conversation_id),
+            "total_active_facts": len(facts),
+            "already_indexed": len(existing),
+            "written": written,
+            "failed": len(failures),
+            "failures": failures,
+            "embedding_model": model,
+            "embedding_dim": dim,
+        }
+
+    def rebuild_contact_index(
+        self,
+        *,
+        account_wxid: str,
+        conversation_id: int,
+        queue_mode: bool = False,
+    ) -> dict[str, Any]:
+        """重建联系人索引。
+
+        queue_mode=True 由 RagIndexQueue worker 调用：撞锁时不重复入队
+        （否则 pop→busy→enqueue→pop 自旋空转，高频写库还会把锁持有者的
+        首个 DB 写饿死成活性死锁），改由 worker 放回集合并退避重试。
+        """
+        settings = load_rag_settings()
+        model = str(settings["rag_embedding_model"])
+        dim = int(settings["rag_embedding_dim"])
+        privacy_mode = str(settings["rag_privacy_mode"])
+        if not _REBUILD_LOCK.acquire(blocking=False):
+            # 另一个重建正在进行：不失败、不等待——标记 pending 入队，
+            # 由 RagIndexQueue 单 worker 串行跟进（并发兼容）。
+            logger.info(
+                "[RAG Index] another rebuild in progress; conv=%s queued as pending", conversation_id
+            )
+            try:
+                self.store.upsert_status(
+                    account_wxid,
+                    conversation_id,
+                    status="pending",
+                    embedding_model=model,
+                    embedding_dim=dim,
+                    privacy_mode=privacy_mode,
+                    dirty_since=int(time.time()),
+                    index_version=self.INDEX_VERSION,
+                )
+                self.store.conn.commit()
+                if not queue_mode:
+                    RagIndexQueue.enqueue(account_wxid, conversation_id)
+                else:
+                    RagIndexQueue.requeue(account_wxid, conversation_id)
+            except Exception as exc:
+                logger.warning("[RAG Index] busy-queue fallback failed: %s", exc)
+            return self.store.get_status(account_wxid, conversation_id) or {}
+        active_key = (account_wxid, int(conversation_id))
+        with _ACTIVE_LOCK:
+            _ACTIVE.add(active_key)
+        try:
+            return self._rebuild_contact_index_locked(
+                account_wxid=account_wxid, conversation_id=conversation_id,
+                settings=settings, model=model, dim=dim, privacy_mode=privacy_mode,
+            )
+        finally:
+            with _ACTIVE_LOCK:
+                _ACTIVE.discard(active_key)
+            from .retriever import invalidate_vector_cache
+            invalidate_vector_cache(account_wxid, conversation_id)
+            _REBUILD_LOCK.release()
+
+    def _rebuild_contact_index_locked(
+        self,
+        *,
+        account_wxid: str,
+        conversation_id: int,
+        settings: dict[str, Any],
+        model: str,
+        dim: int,
+        privacy_mode: str,
+    ) -> dict[str, Any]:
+        self._llm_extract_segments_used = 0
+        self._llm_extract_consecutive_failures = 0
+        self._llm_extract_round_failed = False
+        self._init_llm_extract_progress(account_wxid, conversation_id)
+        self.store.upsert_status(
+            account_wxid,
+            conversation_id,
+            status="indexing",
+            embedding_model=model,
+            embedding_dim=dim,
+            privacy_mode=privacy_mode,
+            last_error=None,
+            index_version=self.INDEX_VERSION,
+        )
+        self.store.conn.commit()
+        try:
+            conversation = self._load_conversation(account_wxid, conversation_id)
+
+            # ---- 真增量判断：水位有效且配置未变 → 只处理新增消息 ----
+            status_row = self.store.get_status(account_wxid, conversation_id) or {}
+            watermark_ts = int(status_row.get("message_watermark_ts") or 0)
+            config_match = (
+                str(status_row.get("embedding_model") or "") == model
+                and int(status_row.get("embedding_dim") or 0) == dim
+                and str(status_row.get("privacy_mode") or "") == privacy_mode
+                and str(status_row.get("index_version") or "") == self.INDEX_VERSION
+                and watermark_ts > 0
+            )
+            if config_match:
+                # 增量模式：只加载水位之后的新消息。
+                # LLM 抽取欠账判定：无 LLM 时的构建会把消息水位推到最新
+                # 而抽取水位不动——后配 LLM 重建若只看消息水位会被增量
+                # 短路，历史事实永远抽不到（用户实测：删库重导先无 LLM
+                # 构建、配 LLM 后重建不动）。
+                new_messages = self._load_messages_after(conversation_id, watermark_ts)
+                llm_behind = self._llm_extraction_behind(status_row, watermark_ts)
+                if llm_behind:
+                    self._backfill_llm_extraction(account_wxid, conversation_id)
+                if not new_messages:
+                    # 无新消息（且抽取无欠账）：直接标记 ready，跳过重嵌入
+                    self.store.upsert_status(
+                        account_wxid, conversation_id,
+                        status="ready", dirty_since=None, last_error=None,
+                        index_version=self.INDEX_VERSION,
+                    )
+                    self.store.conn.commit()
+                    if llm_behind:
+                        self._refresh_policy_shadows(account_wxid, conversation_id, conversation)
+                    logger.debug("[RAG Index] incremental skip: no new messages after watermark=%s", watermark_ts)
+                    return self.store.get_status(account_wxid, conversation_id) or {}
+                messages = new_messages
+                incremental = True
+                logger.info(
+                    "[RAG Index] incremental rebuild: %s new messages after watermark=%s",
+                    len(new_messages), watermark_ts,
+                )
+            else:
+                messages = self._load_messages(conversation_id)
+                incremental = False
+            quality_cleanup = self.store.quarantine_low_quality_shadow_facts(
+                account_wxid,
+                conversation_id,
+            )
+            if quality_cleanup.get("quarantined"):
+                self.store.conn.commit()
+                logger.info(
+                    "[RAG Fact Quality] quarantined=%s scanned=%s reasons=%s",
+                    quality_cleanup["quarantined"],
+                    quality_cleanup["scanned"],
+                    quality_cleanup["reasons"],
+                )
+            if not conversation or not messages:
+                cleaned_old = self.store.delete_auto_documents(
+                    account_wxid,
+                    conversation_id,
+                    index_version=self.INDEX_VERSION,
+                )
+                self.store.upsert_status(
+                    account_wxid,
+                    conversation_id,
+                    status="ready",
+                    document_count=0,
+                    vector_count=0,
+                    dirty_since=None,
+                    index_version=self.INDEX_VERSION,
+                )
+                self.store.conn.commit()
+                logger.debug(
+                    "[RAG Index] version=%s docs=0 vectors=0 cleaned_old=%s",
+                    self.INDEX_VERSION,
+                    cleaned_old,
+                )
+                return self.store.get_status(account_wxid, conversation_id) or {}
+
+            if not incremental:
+                cleaned_old = self.store.delete_auto_documents(
+                    account_wxid,
+                    conversation_id,
+                    index_version=self.INDEX_VERSION,
+                )
+                self.store.conn.commit()
+            else:
+                cleaned_old = 0  # 增量模式不清旧文档
+            docs = self._build_documents(account_wxid, conversation_id, conversation, messages)
+            self.store.conn.commit()
+            docs.extend(self._load_feedback_documents_for_embedding(account_wxid, conversation_id))
+            if not docs:
+                self.store.upsert_status(
+                    account_wxid,
+                    conversation_id,
+                    status="ready",
+                    document_count=0,
+                    vector_count=0,
+                    dirty_since=None,
+                    index_version=self.INDEX_VERSION,
+                )
+                self.store.conn.commit()
+                logger.debug(
+                    "[RAG Index] version=%s docs=0 vectors=0 cleaned_old=%s",
+                    self.INDEX_VERSION,
+                    cleaned_old,
+                )
+                return self.store.get_status(account_wxid, conversation_id) or {}
+
+            document_count = 0
+            vector_count = 0
+            for start in range(0, len(docs), self.EMBED_BATCH_SIZE):
+                batch = docs[start:start + self.EMBED_BATCH_SIZE]
+                vectors = self.embedding_service.embed_texts([doc["content"] for doc in batch])
+                raw_dimensions = getattr(self.embedding_service, "last_raw_dimensions", [])
+                if raw_dimensions and any(int(item or 0) != dim for item in raw_dimensions):
+                    raise RagEmbeddingDimensionMismatch(
+                        f"embedding dimension mismatch: model={raw_dimensions} configured={dim}"
+                    )
+                for doc, vector in zip(batch, vectors):
+                    existing_document_id = doc.pop("_existing_document_id", None)
+                    if existing_document_id:
+                        document_id = int(existing_document_id)
+                    else:
+                        document_id = self.store.upsert_document(**doc)
+                        document_count += 1
+                    self.store.upsert_embedding(
+                        document_id=document_id,
+                        account_wxid=account_wxid,
+                        conversation_id=conversation_id,
+                        embedding_model=model,
+                        embedding_dim=dim,
+                        vector=vector,
+                        embedding_provider="local",
+                    )
+                    vector_count += 1
+                self.store.conn.commit()
+                logger.debug(
+                    "[RAG Index] progress version=%s docs=%s/%s vectors=%s",
+                    self.INDEX_VERSION,
+                    min(start + len(batch), len(docs)),
+                    len(docs),
+                    vector_count,
+                )
+
+            # 增量分支的历史抽取欠账回补：新段已随段循环抽取，这里补齐
+            # 更早的未覆盖段（无 LLM 时期的存量）
+            if incremental and llm_behind:
+                self._backfill_llm_extraction(account_wxid, conversation_id)
+            # 推进消息水位（增量模式下次从最新时间戳开始；全量模式首次设置）
+            new_watermark = max((int(m.get("timestamp") or 0) for m in messages), default=watermark_ts if incremental else 0)
+            self.store.conn.execute(
+                """
+                UPDATE rag_index_status SET message_watermark_ts = ?
+                WHERE account_wxid = ? AND conversation_id = ?
+                """,
+                (new_watermark, account_wxid, int(conversation_id)),
+            )
+            self.store.upsert_status(
+                account_wxid,
+                conversation_id,
+                status="ready",
+                embedding_model=model,
+                embedding_dim=dim,
+                privacy_mode=privacy_mode,
+                document_count=self._count_indexed_documents(account_wxid, conversation_id),
+                vector_count=vector_count,
+                dirty_since=None,
+                last_error=None,
+                index_version=self.INDEX_VERSION,
+            )
+            self.store.conn.commit()
+            # P1.1 关系状态影子刷新：默认关闭；失败绝不影响索引主链路
+            try:
+                from .relationship_policy import refresh_relationship_state_shadow
+
+                refresh_relationship_state_shadow(
+                    self.store,
+                    account_wxid=account_wxid,
+                    conversation_id=conversation_id,
+                    display_name=str((conversation or {}).get("display_name") or ""),
+                )
+            except Exception as shadow_exc:
+                logger.debug("[RAG Index] relationship shadow refresh failed: %s", shadow_exc)
+            # P1.2 对方偏好策略影子刷新（槽位级，聚槽用本索引器的 embedding）
+            try:
+                from .contact_preference import refresh_contact_preferences_shadow
+
+                refresh_contact_preferences_shadow(
+                    self.store,
+                    account_wxid=account_wxid,
+                    conversation_id=conversation_id,
+                    embedding_service=self.embedding_service,
+                )
+            except Exception as pref_exc:
+                logger.debug("[RAG Index] contact preference refresh failed: %s", pref_exc)
+            logger.debug(
+                "[RAG Index] version=%s docs=%s vectors=%s cleaned_old=%s",
+                self.INDEX_VERSION,
+                document_count,
+                vector_count,
+                cleaned_old,
+            )
+            return self.store.get_status(account_wxid, conversation_id) or {}
+        except (RagEmbeddingUnavailable, RagEmbeddingDimensionMismatch) as exc:
+            self.store.upsert_status(
+                account_wxid,
+                conversation_id,
+                status="failed",
+                embedding_model=model,
+                embedding_dim=dim,
+                privacy_mode=privacy_mode,
+                last_error=str(exc),
+                index_version=self.INDEX_VERSION,
+            )
+            self.store.conn.commit()
+            return self.store.get_status(account_wxid, conversation_id) or {}
+        except Exception as exc:
+            logger.exception("[RAG] contact index failed")
+            self.store.upsert_status(
+                account_wxid,
+                conversation_id,
+                status="failed",
+                embedding_model=model,
+                embedding_dim=dim,
+                privacy_mode=privacy_mode,
+                last_error=type(exc).__name__,
+                index_version=self.INDEX_VERSION,
+            )
+            self.store.conn.commit()
+            return self.store.get_status(account_wxid, conversation_id) or {}
+
+    def _load_conversation(self, account_wxid: str, conversation_id: int) -> dict[str, Any] | None:
+        row = self.store.conn.execute(
+            """
+            SELECT *
+            FROM conversations
+            WHERE account_wxid = ? AND id = ?
+            LIMIT 1
+            """,
+            (account_wxid, conversation_id),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def _load_messages_after(self, conversation_id: int, watermark_ts: int) -> list[dict[str, Any]]:
+        """加载水位之后的新消息（真增量：不重载全量会话）。"""
+        rows = self.store.conn.execute(
+            """
+            SELECT id, conversation_id, is_sender, content, timestamp, message_type
+            FROM messages
+            WHERE conversation_id = ?
+              AND message_type = 1
+              AND content IS NOT NULL
+              AND TRIM(content) != ''
+              AND timestamp > ?
+            ORDER BY timestamp ASC, id ASC
+            """,
+            (conversation_id, int(watermark_ts)),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def _load_messages(self, conversation_id: int) -> list[dict[str, Any]]:
+        rows = self.store.conn.execute(
+            """
+            SELECT id, conversation_id, is_sender, content, timestamp, message_type
+            FROM messages
+            WHERE conversation_id = ?
+              AND message_type = 1
+              AND content IS NOT NULL
+              AND TRIM(content) != ''
+            ORDER BY timestamp ASC, id ASC
+            """,
+            (conversation_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def _build_documents(
+        self,
+        account_wxid: str,
+        conversation_id: int,
+        conversation: dict[str, Any],
+        messages: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        redactor = PrivacyRedactor(self.store.conn)
+        docs: list[dict[str, Any]] = []
+        sessions = self._load_sessions_reference(conversation_id)
+        display_name = (
+            str(conversation.get("display_name") or conversation.get("username") or "").strip()
+        )
+        first_ts = int(messages[0].get("timestamp") or 0)
+        last_ts = int(messages[-1].get("timestamp") or 0)
+        relationship = (
+            f"与 {display_name} 的关系状态摘要：累计 {conversation.get('message_count') or len(messages)} 条消息，"
+            f"最近对话时间 {last_ts}。当前建议仍以最近对话为最高优先级。"
+        )
+        docs.append(
+            self._doc_payload(
+                redactor,
+                account_wxid,
+                conversation_id,
+                "relationship_state",
+                relationship,
+                "conversations",
+                str(conversation_id),
+                last_ts or first_ts,
+                metadata=self._metadata(
+                    segment=None,
+                    source_kind="historical",
+                    summary_method="rules",
+                    extra={"display_name": display_name},
+                ),
+            )
+        )
+
+        segments = self.segmenter.segment(messages, conversation_id=conversation_id, sessions=sessions)
+        prev_tail_messages: list[dict[str, Any]] = []
+        logger.debug(
+            "[RAG Segment] messages=%s segments=%s sessions=%s source=sessions/reference_only",
+            len(messages),
+            len(segments),
+            len(sessions),
+        )
+
+        semantic_fact_count = 0
+        for index, segment in enumerate(segments, 1):
+            topic_content = self.segmenter.render_segment(segment)
+            sensitivity = "sensitive" if self._looks_sensitive(topic_content) else "normal"
+            docs.append(
+                self._doc_payload(
+                    redactor,
+                    account_wxid,
+                    conversation_id,
+                    "topic_segment",
+                    topic_content,
+                    "messages",
+                    f"segment:{index}:{segment.start_ts}:{segment.end_ts}",
+                    segment.end_ts,
+                    sensitivity=sensitivity,
+                    metadata=self._metadata(segment, source_kind="historical", summary_method="rules"),
+                )
+            )
+            excerpt_content = self.segmenter.render_excerpt(segment)
+            docs.append(
+                self._doc_payload(
+                    redactor,
+                    account_wxid,
+                    conversation_id,
+                    "evidence_excerpt",
+                    excerpt_content,
+                    "messages",
+                    f"evidence:{index}:{segment.start_ts}:{segment.end_ts}",
+                    segment.end_ts,
+                    sensitivity="sensitive" if self._looks_sensitive(excerpt_content) else "normal",
+                    metadata=self._metadata(segment, source_kind="historical", summary_method="rules"),
+                )
+            )
+            semantic_facts = self.semantic_fact_extractor.extract(segment)
+            self._extract_structured_shadow_facts(
+                account_wxid=account_wxid,
+                conversation_id=conversation_id,
+                segment=segment,
+                prev_context_messages=prev_tail_messages,
+            )
+            # 供下一段抽取时消解跨段指代（"就买一下下"的"一下下"指什么）
+            prev_tail_messages = [
+                msg for msg in segment.messages[-3:]
+                if str(msg.get("content") or "").strip()
+            ]
+            # 段级提交：LLM 抽取每段耗时数秒到数十秒，跨段挂着的未提交
+            # 写会长期占住 WAL 写锁，与并发的其他连接（手动重建/检索日
+            # 志写入）互相 busy 超时。每段落盘，写事务窗口缩到毫秒级。
+            self.store.conn.commit()
+            semantic_fact_count += len(
+                [fact for fact in semantic_facts if fact.memory_kind != "marker_fallback"]
+            )
+            for fact_index, fact in enumerate(semantic_facts, 1):
+                fact_row_active = True  # 影子层关闭时无从判定退役状态，维持文档生成
+                if load_rag_settings().get("rag_fact_shadow_enabled", True):
+                    from .semantic_memory import calibrate_fact_confidence
+
+                    fact_id = self.store.upsert_fact(
+                        account_wxid=account_wxid,
+                        conversation_id=conversation_id,
+                        subject=fact.subject,
+                        kind=fact.memory_kind,
+                        content=fact.content,
+                        status="active",
+                        as_of=int(fact.source_ts or segment.end_ts),
+                        valid_from=int(fact.source_window_start_ts or segment.start_ts),
+                        valid_to=int(fact.source_window_end_ts or segment.end_ts),
+                        confidence=calibrate_fact_confidence(
+                            fact.semantic_score,
+                            evidence_count=len(fact.evidence_message_ids or []),
+                            memory_kind=fact.memory_kind,
+                        ),
+                        sensitivity="sensitive" if self._looks_sensitive(fact.content) else "normal",
+                        evidence_message_ids=fact.evidence_message_ids,
+                        source_window={
+                            "start_ts": fact.source_window_start_ts,
+                            "end_ts": fact.source_window_end_ts,
+                        },
+                        summary_method="shadow_semantic_embedding",
+                    )
+                    # G1：被演变链（superseded）/质量隔离（uncertain）/用户墓碑
+                    # 退役的事实，不得经"文档孪生"路径复活——upsert_fact 已保留
+                    # 终态，这里以落库后的实际状态门控文档生成。
+                    if fact_id:
+                        row = self.store.conn.execute(
+                            "SELECT status, enabled FROM rag_facts WHERE id = ?", (fact_id,)
+                        ).fetchone()
+                        try:
+                            fact_row_active = (
+                                bool(row)
+                                and row["status"] == "active"
+                                and int(row["enabled"] or 0) == 1
+                            )
+                        except (TypeError, KeyError, IndexError):
+                            fact_row_active = (
+                                bool(row) and row[0] == "active" and int(row[1] or 0) == 1
+                            )
+                    else:
+                        fact_row_active = False
+                if not fact_row_active:
+                    continue  # 退役事实：跳过 fact_memory / shared_memory 文档生成
+                fact_metadata = self._metadata(
+                    segment,
+                    source_kind="historical",
+                    summary_method="semantic_embedding"
+                    if fact.memory_kind != "marker_fallback"
+                    else "marker_fallback",
+                    extra={
+                        "fact_source_id": fact.source_id,
+                        "subject": fact.subject,
+                        "topics": fact.topics or segment.topics,
+                        "entities": fact.entities or segment.entities,
+                        "memory_kind": fact.memory_kind,
+                        "semantic_score": fact.semantic_score,
+                        "evidence_message_ids": fact.evidence_message_ids,
+                        "source_window_start_ts": fact.source_window_start_ts,
+                        "source_window_end_ts": fact.source_window_end_ts,
+                    },
+                )
+                docs.append(
+                    self._doc_payload(
+                        redactor,
+                        account_wxid,
+                        conversation_id,
+                        "fact_memory",
+                        f"时间：{segment.time_label}\n{fact.content}",
+                        "messages",
+                        f"fact:{index}:{fact_index}:{fact.source_id or 'window'}:{fact.memory_kind}",
+                        int(fact.source_ts or segment.end_ts),
+                        sensitivity="sensitive" if self._looks_sensitive(fact.content) else "normal",
+                        metadata=fact_metadata,
+                    )
+                )
+                if fact.memory_kind in self.SHARED_MEMORY_KINDS:
+                    shared_metadata = dict(fact_metadata)
+                    shared_metadata["summary_method"] = "shared_memory_shadow"
+                    docs.append(
+                        self._doc_payload(
+                            redactor,
+                            account_wxid,
+                            conversation_id,
+                            "shared_memory",
+                            f"时间：{segment.time_label}\n{fact.content}",
+                            "messages",
+                            f"shared:{index}:{fact_index}:{fact.source_id or 'window'}:{fact.memory_kind}",
+                            int(fact.source_ts or segment.end_ts),
+                            sensitivity="sensitive" if self._looks_sensitive(fact.content) else "normal",
+                            metadata=shared_metadata,
+                        )
+                    )
+
+        self_messages = self._select_style_samples(messages, last_ts=last_ts)
+        for index, content in enumerate(self_messages, 1):
+            docs.append(
+                self._doc_payload(
+                    redactor,
+                    account_wxid,
+                    conversation_id,
+                    "self_style_example",
+                    content,
+                    "messages",
+                    f"style:{index}:{hash(content)}",
+                    last_ts,
+                    metadata=self._metadata(
+                        segment=None,
+                        source_kind="historical",
+                        summary_method="rules",
+                        extra={
+                            "style_sample": True,
+                            "style_sample_rank": index,
+                            "style_sample_strategy": "recent_quality",
+                        },
+                    ),
+                )
+            )
+
+        style_lines = [
+            self._compact_content(msg.get("content"))
+            for msg in messages
+            if int(msg.get("is_sender") or 0) and self._is_style_sample(msg.get("content"))
+        ]
+        if style_lines:
+            communication_style = self._build_communication_style_summary(style_lines, self_messages)
+            docs.append(
+                self._doc_payload(
+                    redactor,
+                    account_wxid,
+                    conversation_id,
+                    "communication_style",
+                    communication_style,
+                    "messages",
+                    f"communication_style:{conversation_id}",
+                    last_ts,
+                    metadata=self._metadata(
+                        segment=None,
+                        source_kind="historical",
+                        summary_method="rules",
+                        extra={
+                            "style_sample": True,
+                            "style_sample_count": len(self_messages),
+                            "semantic_fact_count": semantic_fact_count,
+                        },
+                    ),
+                )
+            )
+        logger.debug(
+            "[RAG Index] semantic_facts=%s style_samples=%s",
+            semantic_fact_count,
+            len(self_messages),
+        )
+        return docs
+
+    def _segment_worth_extraction(self, segment: RagSegment) -> bool:
+        """回补预筛：纯寒暄/水聊段不送 LLM（抽出必为零，纯耗 token）。
+
+        判据保守（宁可多送勿漏抽）：段总字符 >=30 且非纯应答消息占比
+        >=0.4（长度 <4 或命中通用应答集视为无信息量）。
+        """
+        from .fact_quality import GENERIC_TURNS
+
+        msgs = [m for m in segment.messages if str(m.get("content") or "").strip()]
+        informative_chars = 0
+        informative_count = 0
+        for m in msgs:
+            compact = "".join(str(m.get("content") or "").split())
+            if len(compact) >= 4 and compact not in GENERIC_TURNS:
+                informative_chars += len(compact)
+                informative_count += 1
+        # 信息密集的短段（"我对虾过敏，千万别点虾"）必须放行——按
+        # informative 总字数而非段总字数判，纯应答段（嗯/哈哈/好的）
+        # informative 字数趋近于 0 被拦
+        return informative_chars >= 24 and informative_count >= 2
+
+    def _llm_extraction_behind(self, status_row: dict[str, Any], message_watermark_ts: int) -> bool:
+        """LLM 抽取欠账：抽取已启用但未覆盖到消息水位（或版本变化）。"""
+        if self.structured_fact_extractor is None:
+            return False
+        if str(status_row.get("fact_extract_prompt_version") or "") != self.FACT_EXTRACT_PROMPT_VERSION:
+            return True
+        extract_wm = int(status_row.get("fact_extract_watermark_ts") or 0)
+        return extract_wm < int(message_watermark_ts)
+
+    def _backfill_llm_extraction(self, account_wxid: str, conversation_id: int) -> int:
+        """历史段抽取回补：全量消息切段，只跑 LLM 抽取，不动文档/向量。
+
+        断点续抽水位（fact_extract_watermark_ts + 版本）保证多轮 rebuild
+        逐步推进（每轮 40 段预算），已覆盖段自动跳过。
+        """
+        if self.structured_fact_extractor is None:
+            return 0
+        self._llm_extract_segments_used = 0
+        self._llm_extract_consecutive_failures = 0
+        self._llm_extract_round_failed = False
+        self._llm_extract_budget_limit = self.LLM_EXTRACT_BACKFILL_BUDGET
+        self._init_llm_extract_progress(account_wxid, conversation_id)
+        messages = self._load_messages(conversation_id)
+        if not messages:
+            return 0
+        sessions = self._load_sessions_reference(conversation_id)
+        segments = self.segmenter.segment(messages, conversation_id=conversation_id, sessions=sessions)
+        prev_tail: list[dict[str, Any]] = []
+        extracted = 0
+        # 提速：水聊段预筛不送 LLM（真实对话大量寒暄段，纯应答段抽出
+        # 零事实）；LLM 调用 3 路并发（纯 IO 等待，单连接写库仍在主
+        # 线程按提交序串行——水位连续覆盖语义不变）
+        from collections import deque
+        from concurrent.futures import ThreadPoolExecutor
+
+        def _drain_one(pending: deque) -> bool:
+            """等最旧的调用完成并按序落库；返回该段是否实际抽取。"""
+            segment, prompt, prev_tail_snapshot, future = pending.popleft()
+            try:
+                facts = future.result()
+                self._llm_extract_consecutive_failures = 0
+            except Exception as exc:
+                self._llm_extract_consecutive_failures += 1
+                self._llm_extract_round_failed = True
+                logger.warning(
+                    "[RAG Fact Shadow] backfill extraction failed (%s/3): %s",
+                    self._llm_extract_consecutive_failures, exc,
+                )
+                return False
+            from .fact_quality import fact_quality_reason
+
+            usable = [
+                fact for fact in facts
+                if fact_quality_reason(
+                    str(fact.get("kind") or ""), fact.get("content"),
+                    require_kind_signal=False,
+                ) is None
+            ]
+            self._write_structured_facts(
+                account_wxid=account_wxid,
+                conversation_id=conversation_id,
+                segment=segment,
+                facts=usable,
+            )
+            self._advance_llm_extract_progress(account_wxid, conversation_id, segment)
+            self.store.conn.commit()
+            return True
+
+        executor = ThreadPoolExecutor(max_workers=self.LLM_EXTRACT_CONCURRENCY)
+        pending: deque = deque()
+        try:
+            for segment in segments:
+                if self._llm_extract_consecutive_failures >= 3:
+                    break
+                if self._llm_extract_segments_used >= self._llm_extract_budget_limit:
+                    break
+                # 断点续抽：已覆盖段跳过（预筛前先查水位）
+                if self._llm_extract_watermark_ts and segment.end_ts <= self._llm_extract_watermark_ts:
+                    continue
+                if len(segment.messages) < 4:
+                    continue
+                if not self._segment_worth_extraction(segment):
+                    # 无价值段：不送 LLM 但推进水位（不推进会被每轮重扫）
+                    self._advance_llm_extract_progress(account_wxid, conversation_id, segment)
+                    continue
+                self._llm_extract_segments_used += 1
+                related = self._retrieve_related_history_messages(
+                    account_wxid=account_wxid, conversation_id=conversation_id, segment=segment,
+                )
+                prompt = json.dumps(
+                    {
+                        "task": "extract_atomic_contact_facts",
+                        "account_wxid": account_wxid,
+                        "conversation_id": conversation_id,
+                        "messages": segment.messages,
+                        "context_messages": prev_tail,
+                        "related_context_messages": related,
+                        "max_tokens": 2048,
+                        "contract": {
+                            "required": ["subject", "kind", "content"],
+                            "status": ["active", "superseded", "uncertain"],
+                            "evidence_message_ids": "integer array",
+                        },
+                    },
+                    ensure_ascii=False,
+                )
+                future = executor.submit(self.structured_fact_extractor.extract, prompt)
+                pending.append((segment, prompt, list(prev_tail), future))
+                prev_tail = [
+                    msg for msg in segment.messages[-3:]
+                    if str(msg.get("content") or "").strip()
+                ]
+                if len(pending) >= self.LLM_EXTRACT_CONCURRENCY:
+                    if _drain_one(pending):
+                        extracted += 1
+            while pending:
+                if _drain_one(pending):
+                    extracted += 1
+        finally:
+            executor.shutdown(wait=True, cancel_futures=True)
+            self._llm_extract_budget_limit = self.LLM_EXTRACT_SEGMENT_BUDGET
+        if extracted:
+            logger.info(
+                "[RAG Index] llm extraction backfill: %s segments (conv=%s)", extracted, conversation_id
+            )
+            # 仍有欠账且本轮有推进 → 自动续轮（队列 worker 下一轮继续，
+            # 无需用户反复点重建；水位无推进时不续，防失败死循环）
+            try:
+                status_now = self.store.get_status(account_wxid, conversation_id) or {}
+                msg_wm = int(status_now.get("message_watermark_ts") or 0)
+                ext_wm = int(status_now.get("fact_extract_watermark_ts") or 0)
+                if msg_wm > 0 and ext_wm < msg_wm:
+                    RagIndexQueue.enqueue(account_wxid, conversation_id)
+                    logger.info(
+                        "[RAG Index] extraction debt remains (ext=%s < msg=%s), re-queued conv=%s",
+                        ext_wm, msg_wm, conversation_id,
+                    )
+            except Exception as requeue_exc:
+                logger.debug("[RAG Index] backfill re-queue skipped: %s", requeue_exc)
+        return extracted
+
+    def _refresh_policy_shadows(
+        self, account_wxid: str, conversation_id: int, conversation: dict[str, Any] | None
+    ) -> None:
+        """关系状态+偏好策略影子刷新（失败只日志，不影响主链路）。"""
+        try:
+            from .relationship_policy import refresh_relationship_state_shadow
+
+            refresh_relationship_state_shadow(
+                self.store,
+                account_wxid=account_wxid,
+                conversation_id=conversation_id,
+                display_name=str((conversation or {}).get("display_name") or ""),
+            )
+        except Exception as shadow_exc:
+            logger.debug("[RAG Index] relationship shadow refresh failed: %s", shadow_exc)
+        try:
+            from .contact_preference import refresh_contact_preferences_shadow
+
+            refresh_contact_preferences_shadow(
+                self.store,
+                account_wxid=account_wxid,
+                conversation_id=conversation_id,
+                embedding_service=self.embedding_service,
+            )
+        except Exception as pref_exc:
+            logger.debug("[RAG Index] contact preference refresh failed: %s", pref_exc)
+
+    def _init_llm_extract_progress(self, account_wxid: str, conversation_id: int) -> None:
+        """断点续抽水位改为 rag_index_status 段级进度。
+
+        旧实现用 MAX(rag_facts.as_of) 推水位，三个缺陷：零事实段不推进、
+        段失败后被后续成功越过（永久跳过）、prompt 改进后旧段不重抽。
+        现规则：只有 prompt 版本一致时的段级连续进度才作为水位；版本变化
+        即全量重抽。
+        """
+        try:
+            status = self.store.get_status(account_wxid, conversation_id) or {}
+            stored_version = str(status.get("fact_extract_prompt_version") or "")
+            stored_watermark = status.get("fact_extract_watermark_ts")
+            if stored_version == self.FACT_EXTRACT_PROMPT_VERSION and stored_watermark:
+                self._llm_extract_watermark_ts = int(stored_watermark)
+            else:
+                self._llm_extract_watermark_ts = None
+        except Exception:
+            self._llm_extract_watermark_ts = None
+
+    def _advance_llm_extract_progress(
+        self,
+        account_wxid: str,
+        conversation_id: int,
+        segment: RagSegment,
+    ) -> None:
+        """段处理成功（含零事实）后推进连续覆盖水位并落库。"""
+        if self._llm_extract_round_failed:
+            return
+        end_ts = int(segment.end_ts or 0)
+        if end_ts <= 0:
+            return
+        self._llm_extract_watermark_ts = max(
+            int(self._llm_extract_watermark_ts or 0), end_ts
+        )
+        try:
+            self.store.set_fact_extract_progress(
+                account_wxid,
+                conversation_id,
+                watermark_ts=self._llm_extract_watermark_ts,
+                prompt_version=self.FACT_EXTRACT_PROMPT_VERSION,
+            )
+        except Exception as exc:
+            logger.debug("[RAG Fact Shadow] progress persist skipped: %s", exc)
+
+    RELATED_HISTORY_MAX_DOCS = 2
+    # 阈值经真实案例校准（conv 7191 烘干机代指）：目标历史段余弦 0.642，
+    # 无关历史（测试闲聊/硬盘话题）0.565-0.582——text2vec 短文本区分度
+    # 窄，0.62 拒噪声留 0.04 余量
+    RELATED_HISTORY_MIN_SCORE = 0.62
+    RELATED_HISTORY_MAX_MESSAGES = 8
+
+    def _retrieve_related_history_messages(
+        self,
+        *,
+        account_wxid: str,
+        conversation_id: int,
+        segment: RagSegment,
+    ) -> list[dict[str, Any]]:
+        """为 LLM 抽取检索语义相关的历史消息（消解跨段/跨天代指）。
+
+        消费决策的上下文天然分布在多天（种草→犹豫→决策），物理相邻的
+        上一段结尾 3 条追不上——"这玩意""搞一台"的指代对象定义常在几
+        天前。用段尾部内容做向量检索，取历史 topic_segment/evidence 文
+        档命中的时间窗消息。本段文档此刻尚未写库，检索天然只见历史；
+        增量模式下旧段文档同样在库。失败静默返回空（抽取退回物理相邻
+        上下文，不阻塞）。
+        """
+        try:
+            query_text = " ".join(
+                str(msg.get("content") or "").strip()
+                for msg in segment.messages[-6:]
+                if str(msg.get("content") or "").strip()
+            )[:200]
+            if not query_text:
+                return []
+            settings = load_rag_settings()
+            model = str(settings["rag_embedding_model"])
+            dim = int(settings["rag_embedding_dim"])
+            query_vector = self.embedding_service.embed_text(query_text)
+            if len(query_vector) != dim:
+                return []
+            docs = self.store.list_documents_with_vectors(
+                account_wxid, conversation_id, embedding_model=model, embedding_dim=dim
+            )
+            scored = []
+            for doc in docs:
+                if str(doc.get("doc_type") or "") not in {"topic_segment", "evidence_excerpt"}:
+                    continue
+                # 只要历史：本段及之后时间窗的文档不含指代定义
+                if int(doc.get("source_ts") or 0) >= segment.start_ts:
+                    continue
+                vector = doc.get("vector") or []
+                if not vector:
+                    continue
+                score = self._cosine(query_vector, vector)
+                if score >= self.RELATED_HISTORY_MIN_SCORE:
+                    scored.append((score, doc))
+            scored.sort(key=lambda pair: -pair[0])
+            messages: list[dict[str, Any]] = []
+            seen_windows: set[tuple[int, int]] = set()
+            for _score, doc in scored[: self.RELATED_HISTORY_MAX_DOCS]:
+                parts = str(doc.get("source_id") or "").split(":")
+                if len(parts) < 4:
+                    continue
+                try:
+                    window = (int(parts[-2]), int(parts[-1]))
+                except ValueError:
+                    continue
+                if window in seen_windows:
+                    continue
+                seen_windows.add(window)
+                rows = self.store.conn.execute(
+                    """
+                    SELECT id, conversation_id, is_sender, content, timestamp, message_type
+                    FROM messages
+                    WHERE conversation_id = ? AND message_type = 1
+                      AND content IS NOT NULL AND TRIM(content) != ''
+                      AND timestamp >= ? AND timestamp <= ?
+                    ORDER BY timestamp ASC LIMIT ?
+                    """,
+                    (conversation_id, window[0], window[1], self.RELATED_HISTORY_MAX_MESSAGES),
+                ).fetchall()
+                for row in rows:
+                    messages.append(
+                        {
+                            "id": int(row["id"] or 0),
+                            "is_sender": int(row["is_sender"] or 0),
+                            "content": str(row["content"] or ""),
+                            "timestamp": int(row["timestamp"] or 0),
+                        }
+                    )
+            return messages[: self.RELATED_HISTORY_MAX_MESSAGES * self.RELATED_HISTORY_MAX_DOCS]
+        except Exception as exc:
+            logger.debug("[RAG Fact Shadow] related history retrieval skipped: %s", exc)
+            return []
+
+    @staticmethod
+    def _cosine(a: list[float], b: list[float]) -> float:
+        import math as _math
+
+        if not a or not b:
+            return 0.0
+        size = min(len(a), len(b))
+        dot = sum(float(a[i]) * float(b[i]) for i in range(size))
+        norm_a = _math.sqrt(sum(float(x) ** 2 for x in a[:size]))
+        norm_b = _math.sqrt(sum(float(x) ** 2 for x in b[:size]))
+        if norm_a <= 0 or norm_b <= 0:
+            return 0.0
+        return dot / (norm_a * norm_b)
+
+    def _extract_structured_shadow_facts(
+        self,
+        *,
+        account_wxid: str,
+        conversation_id: int,
+        segment: RagSegment,
+        prev_context_messages: list[dict[str, Any]] | None = None,
+    ) -> None:
+        """Run an injected LLM extractor without affecting document retrieval.
+
+        成本与稳定性约束（P1.2）：短段跳过、每轮每联系人段数封顶、
+        连续失败中止本轮；LLM 事实过宽松质量门（基础项，不查词表）。
+        prev_context_messages 为上一段结尾消息，仅供模型消解跨段指代，
+        不作为 evidence（适配器按 messages 键过滤引用）。
+        """
+        if self.structured_fact_extractor is None:
+            return
+        if len(segment.messages) < 4:
+            return
+        if self._llm_extract_segments_used >= self._llm_extract_budget_limit:
+            return
+        if self._llm_extract_consecutive_failures >= 3:
+            return
+        # 断点续抽：跳过上一轮已覆盖的时间范围，多轮重建逐步推进历史深处
+        if self._llm_extract_watermark_ts and segment.end_ts <= self._llm_extract_watermark_ts:
+            return
+        self._llm_extract_segments_used += 1
+        # 检索增强上下文：语义相关的历史消息（跨段/跨天代指的定义处），
+        # 失败静默退回物理相邻上下文
+        related_context_messages = self._retrieve_related_history_messages(
+            account_wxid=account_wxid,
+            conversation_id=conversation_id,
+            segment=segment,
+        )
+        prompt = json.dumps(
+            {
+                "task": "extract_atomic_contact_facts",
+                "account_wxid": account_wxid,
+                "conversation_id": conversation_id,
+                "messages": segment.messages,
+                "context_messages": prev_context_messages or [],
+                "related_context_messages": related_context_messages,
+                "max_tokens": 2048,
+                "contract": {
+                    "required": ["subject", "kind", "content"],
+                    "status": ["active", "superseded", "uncertain"],
+                    "evidence_message_ids": "integer array",
+                },
+            },
+            ensure_ascii=False,
+        )
+        try:
+            facts = self.structured_fact_extractor.extract(prompt)
+            self._llm_extract_consecutive_failures = 0
+        except FactExtractionError as exc:
+            self._llm_extract_consecutive_failures += 1
+            # 段失败冻结本轮水位：后续段成功也不越过失败段，下轮从此重试
+            self._llm_extract_round_failed = True
+            logger.warning(
+                "[RAG Fact Shadow] quarantined invalid extraction (%s/3): %s",
+                self._llm_extract_consecutive_failures,
+                exc,
+            )
+            return
+        except Exception as exc:
+            self._llm_extract_consecutive_failures += 1
+            self._llm_extract_round_failed = True
+            logger.warning(
+                "[RAG Fact Shadow] llm extraction failed (%s/3): %s",
+                self._llm_extract_consecutive_failures,
+                exc,
+            )
+            return
+        # 抽取成功（含零事实）即推进段级进度——零事实段不再被反复重抽
+        self._advance_llm_extract_progress(account_wxid, conversation_id, segment)
+        from .fact_quality import fact_quality_reason
+
+        usable = [
+            fact for fact in facts
+            if fact_quality_reason(
+                str(fact.get("kind") or ""),
+                fact.get("content"),
+                require_kind_signal=False,
+            )
+            is None
+        ]
+        dropped = len(facts) - len(usable)
+        if dropped:
+            logger.info("[RAG Fact Shadow] quality dropped %s of %s llm facts", dropped, len(facts))
+        self._write_structured_facts(
+            account_wxid=account_wxid,
+            conversation_id=conversation_id,
+            segment=segment,
+            facts=usable,
+        )
+
+    def _write_structured_facts(
+        self,
+        *,
+        account_wxid: str,
+        conversation_id: int,
+        segment: RagSegment,
+        facts: list[dict[str, Any]],
+    ) -> None:
+        """Persist structured facts through a conservative maintenance loop."""
+        for raw_fact in facts:
+            fact = dict(raw_fact)
+            fact["kind"] = normalize_fact_kind(fact.get("kind"))
+            fact["subject"] = str(fact.get("subject") or "").strip()
+            candidates = self.store.list_active_facts_by_subject_kind(
+                account_wxid,
+                conversation_id,
+                fact["subject"],
+                fact["kind"],
+            )
+            decisions = self._decide_fact_fusion(fact, candidates)
+            self._log_fusion_decisions(fact, decisions)
+            replacement_ids = [
+                int(item["fact_id"])
+                for item in decisions
+                if item["action"] in {"UPDATE", "INVALIDATE"}
+            ]
+            merge_ids = [int(item["fact_id"]) for item in decisions if item["action"] == "MERGE"]
+
+            # A pure semantic duplicate augments the old fact rather than
+            # creating another active spelling of the same memory.
+            if merge_ids and not replacement_ids:
+                self.store.merge_fact_evidence(
+                    merge_ids[0],
+                    confidence=float(fact.get("confidence") or 0.0),
+                    evidence_message_ids=list(fact.get("evidence_message_ids") or []),
+                )
+                continue
+
+            # G8：LLM 抽取的 status 字段不透传——退役（superseded/uncertain）
+            # 只能由融合维护或用户反馈触发，模型输出一句 status 会把无后继
+            # 的 active 事实静默退役，演变链从此断头。
+            new_id = self.store.upsert_fact(
+                account_wxid=account_wxid,
+                conversation_id=conversation_id,
+                subject=fact["subject"],
+                kind=fact["kind"],
+                content=fact["content"],
+                status="active",
+                as_of=fact.get("as_of") or segment.end_ts,
+                valid_from=fact.get("valid_from") or segment.start_ts,
+                valid_to=fact.get("valid_to") or segment.end_ts,
+                confidence=float(fact.get("confidence") or 0.0),
+                sensitivity=fact.get("sensitivity") or "normal",
+                evidence_message_ids=list(fact.get("evidence_message_ids") or []),
+                source_window=fact.get("source_window") or {},
+                summary_method="llm_shadow",
+            )
+            self._write_fact_embedding(
+                fact_id=new_id,
+                account_wxid=account_wxid,
+                conversation_id=conversation_id,
+                content=str(fact["content"]),
+            )
+            for old_id in replacement_ids:
+                if old_id != new_id:
+                    self.store.supersede_fact(old_id, new_id)
+            # G3：多旧一新时单链指针会被循环覆盖只剩最后一个，把完整
+            # 被退役列表留档到新事实，演变链审计不因覆盖断链
+            self.store.record_supersede_batch(new_id, replacement_ids)
+
+    def _write_fact_embeddings_batch(
+        self,
+        facts: list[dict[str, Any]],
+        *,
+        account_wxid: str,
+        conversation_id: int,
+    ) -> int:
+        """批量写入事实向量（此前逐条嵌入+逐条写=N 次推理+N 次 INSERT）。
+
+        facts: [{"id": int, "content": str}, ...]
+        返回成功写入数；任何失败静默降级关键词（与单条版语义一致）。
+        """
+        if not facts:
+            return 0
+        try:
+            settings = load_rag_settings()
+            model = str(settings["rag_embedding_model"])
+            dim = int(settings["rag_embedding_dim"])
+            vectors = self.embedding_service.embed_texts(
+                [f["content"] for f in facts]
+            )
+            if len(vectors) != len(facts):
+                return 0
+            written = 0
+            for fact, vector in zip(facts, vectors):
+                if len(vector) != dim:
+                    continue
+                self.store.upsert_fact_embedding(
+                    fact_id=int(fact["id"]),
+                    account_wxid=account_wxid,
+                    conversation_id=conversation_id,
+                    embedding_model=model,
+                    embedding_dim=dim,
+                    vector=vector,
+                    embedding_provider=str(settings.get("rag_embedding_provider") or "local"),
+                )
+                written += 1
+            return written
+        except (RagEmbeddingUnavailable, RagEmbeddingDimensionMismatch, ValueError) as exc:
+            logger.warning("[RAG Fact Vector] batch unavailable; keyword fallback: %s", exc)
+            return 0
+        except Exception as exc:
+            logger.warning("[RAG Fact Vector] batch write failed; keyword fallback: %s", exc)
+            return 0
+
+    def _write_fact_embedding(
+        self,
+        *,
+        fact_id: int,
+        account_wxid: str,
+        conversation_id: int,
+        content: str,
+    ) -> None:
+        """Best-effort fact vector write; fact persistence must remain available."""
+        try:
+            settings = load_rag_settings()
+            model = str(settings["rag_embedding_model"])
+            dim = int(settings["rag_embedding_dim"])
+            vector = self.embedding_service.embed_text(content)
+            if len(vector) != dim:
+                raise RagEmbeddingDimensionMismatch(
+                    f"fact vector dimension mismatch: vector={len(vector)} configured={dim}"
+                )
+            self.store.upsert_fact_embedding(
+                fact_id=fact_id,
+                account_wxid=account_wxid,
+                conversation_id=conversation_id,
+                embedding_model=model,
+                embedding_dim=dim,
+                vector=vector,
+                embedding_provider=str(settings.get("rag_embedding_provider") or "local"),
+            )
+        except (RagEmbeddingUnavailable, RagEmbeddingDimensionMismatch, ValueError) as exc:
+            logger.warning("[RAG Fact Vector] embedding unavailable (model not loaded?); keyword-only retrieval until next rebuild: %s", exc)
+        except Exception as exc:
+            logger.warning("[RAG Fact Vector] write failed; keyword fallback remains active: %s", exc)
+
+    def _decide_fact_fusion(
+        self,
+        fact: dict[str, Any],
+        candidates: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Return safe fusion decisions; any model uncertainty becomes ADD."""
+        if not candidates or self.structured_fact_extractor is None:
+            return []
+        # 候选按置信度排序后截断，防止 decisions 响应过长被 max_tokens 截断
+        fusion_candidates = candidates[: self.FACT_FUSION_CANDIDATE_LIMIT]
+        try:
+            prompt = json.dumps(
+                {
+                    "task": "maintain_atomic_contact_facts",
+                    "new_fact": fact,
+                    "active_candidates": [
+                        {
+                            "fact_id": item["id"],
+                            "content": item["content"],
+                            "confidence": item["confidence"],
+                            "evidence_message_ids": json.loads(item.get("evidence_message_ids_json") or "[]"),
+                        }
+                        for item in fusion_candidates
+                    ],
+                    "max_tokens": 2048,
+                    "contract": {
+                        "output": {"decisions": [{"fact_id": "integer", "action": "ADD|UPDATE|INVALIDATE|MERGE|NOOP"}]},
+                        "meaning": {
+                            "ADD": "unrelated old fact; keep it and add the new fact",
+                            "UPDATE": "new fact corrects, qualifies, or replaces old fact",
+                            "INVALIDATE": "new fact makes old fact no longer valid",
+                            "MERGE": "same fact expressed again; merge evidence without adding",
+                            "NOOP": "no state change for this candidate",
+                        },
+                    },
+                },
+                ensure_ascii=False,
+            )
+            return self.structured_fact_extractor.decide_fusion(
+                prompt,
+                candidate_ids={int(item["id"]) for item in fusion_candidates},
+            )
+        except Exception as exc:
+            logger.warning("[RAG Fact Fusion] invalid/failed decision; falling back to ADD: %s", exc)
+            return []
+
+    @staticmethod
+    def _log_fusion_decisions(fact: dict[str, Any], decisions: list[dict[str, Any]]) -> None:
+        if not decisions:
+            return
+        logger.info(
+            "[RAG Fact Fusion] subject=%s kind=%s decisions=%s",
+            fact.get("subject"),
+            fact.get("kind"),
+            [
+                f"{item.get('action')}#{item.get('fact_id')}({item.get('reason') or '-'})"
+                for item in decisions
+            ],
+        )
+
+    def _doc_payload(
+        self,
+        redactor: PrivacyRedactor,
+        account_wxid: str,
+        conversation_id: int,
+        doc_type: str,
+        content: str,
+        source_table: str,
+        source_id: str,
+        source_ts: int,
+        *,
+        sensitivity: str = "normal",
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        metadata = dict(metadata or {})
+        metadata.setdefault("index_version", self.INDEX_VERSION)
+        metadata.setdefault("source_kind", "historical")
+        metadata.setdefault("summary_method", "rules")
+        redacted = redactor.redact(
+            content,
+            account_wxid=account_wxid,
+            conversation_id=conversation_id,
+            source_table=source_table,
+            source_id=source_id,
+        )
+        return {
+            "account_wxid": account_wxid,
+            "conversation_id": conversation_id,
+            "doc_type": doc_type,
+            "content": content,
+            "source_table": source_table,
+            "source_id": source_id,
+            "source_ts": int(source_ts or time.time()),
+            "redacted_content": redacted.redacted_text,
+            "entity_map_json": redacted.entity_map_json,
+            "pii_flags_json": redacted.pii_flags_json,
+            "metadata": metadata,
+            "sensitivity": sensitivity,
+            "index_version": self.INDEX_VERSION,
+            "source_kind": str(metadata.get("source_kind") or "historical"),
+        }
+
+    def _compact_content(self, content: Any) -> str:
+        text = re.sub(r"\s+", " ", str(content or "")).strip()
+        return text[:180]
+
+    def _is_style_sample(self, content: Any) -> bool:
+        text = self._compact_content(content)
+        if not (1 <= len(text) <= 80) or self._looks_sensitive(text):
+            return False
+        if not re.search(r"[A-Za-z0-9\u4e00-\u9fff]", text):
+            return False
+        if re.fullmatch(r"[\W_]+", text, flags=re.UNICODE):
+            return False
+        compact = re.sub(r"\s+", "", text)
+        if compact in {"哈哈", "哈哈哈", "哈哈哈哈", "嗯", "嗯嗯", "哦", "好的", "可以", "行吧"}:
+            return False
+        meta_markers = (
+            "请帮我",
+            "帮我生成",
+            "根据以上",
+            "以下是",
+            "作为AI",
+            "作为ai",
+            "模型",
+            "prompt",
+            "system",
+        )
+        return not any(marker in compact for marker in meta_markers)
+
+    def _select_style_samples(self, messages: list[dict[str, Any]], *, last_ts: int) -> list[str]:
+        candidates: list[tuple[float, int, str]] = []
+        recent_cutoff = int(last_ts or time.time()) - 30 * 86400
+        for index, msg in enumerate(messages):
+            if not int(msg.get("is_sender") or 0):
+                continue
+            content = self._compact_content(msg.get("content"))
+            if not self._is_style_sample(content):
+                continue
+            try:
+                source_ts = int(msg.get("timestamp") or 0)
+            except (TypeError, ValueError):
+                source_ts = 0
+            length = len(content)
+            score = 0.0
+            if source_ts >= recent_cutoff:
+                score += 3.0
+            if 4 <= length <= 36:
+                score += 1.0
+            if 37 <= length <= 80:
+                score += 0.4
+            if re.search(r"[？?]", content):
+                score += 0.35
+            if self._count_emoji(content) > 0:
+                score += 0.25
+            age_days = max(0.0, (int(last_ts or time.time()) - source_ts) / 86400) if source_ts else 365.0
+            score += max(0.0, 1.0 - age_days / 90.0)
+            candidates.append((score, index, content))
+
+        candidates.sort(key=lambda item: (-item[0], -item[1]))
+        selected: list[str] = []
+        seen = set()
+        for _score, _index, content in candidates:
+            if content in seen:
+                continue
+            seen.add(content)
+            selected.append(content)
+            if len(selected) >= self.SELF_STYLE_LIMIT:
+                break
+        return selected
+
+    def _build_communication_style_summary(self, style_lines: list[str], samples: list[str]) -> str:
+        lines = style_lines[:80]
+        avg_len = sum(len(line) for line in lines) / max(1, len(lines))
+        question_ratio = sum(1 for line in lines if re.search(r"[？?]", line)) / max(1, len(lines))
+        emoji_count = sum(self._count_emoji(line) for line in lines)
+        emoji_ratio = emoji_count / max(1, len(lines))
+        repeated_punct = sum(1 for line in lines if re.search(r"([!?！？。~～])\1+", line)) / max(1, len(lines))
+        communication_type = (
+            "proactive"
+            if question_ratio >= 0.32 or avg_len >= 22
+            else "reactive"
+            if avg_len <= 8 and question_ratio < 0.18
+            else "balanced"
+        )
+        emotional_style = (
+            "warm"
+            if emoji_ratio >= 0.20 or repeated_punct >= 0.18
+            else "cold"
+            if avg_len <= 7 and emoji_ratio <= 0.05
+            else "neutral"
+        )
+        sample_text = " / ".join(samples[:8])
+        return (
+            "用户表达风格摘要："
+            f"平均长度 {avg_len:.1f} 字；"
+            f"问句比例 {question_ratio:.0%}；"
+            f"emoji 使用率 {emoji_ratio:.0%}；"
+            f"重复标点比例 {repeated_punct:.0%}；"
+            f"沟通类型 {communication_type}；"
+            f"情感风格 {emotional_style}。"
+            f"近期高质量样例：{sample_text}"
+        )
+
+    def _count_emoji(self, text: str) -> int:
+        return len(
+            re.findall(
+                r"[\U0001F300-\U0001FAFF\u2600-\u27BF]",
+                str(text or ""),
+            )
+        )
+
+    def _looks_sensitive(self, text: str) -> bool:
+        keywords = ("秘密", "保密", "身份证", "银行卡", "密码", "密钥", "住址", "地址", "电话")
+        return any(keyword in str(text or "") for keyword in keywords)
+
+    def _metadata(
+        self,
+        segment: RagSegment | None,
+        *,
+        source_kind: str,
+        summary_method: str,
+        extra: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        metadata = dict(extra or {})
+        if segment:
+            metadata.update(
+                {
+                    "segment_id": segment.segment_id,
+                    "start_ts": segment.start_ts,
+                    "end_ts": segment.end_ts,
+                    "time_label": segment.time_label,
+                    "message_ids": segment.message_ids,
+                    "topics": metadata.get("topics") or segment.topics,
+                    "entities": metadata.get("entities") or segment.entities,
+                    "session_id": segment.session_id,
+                }
+            )
+        metadata["source_kind"] = source_kind
+        metadata["summary_method"] = summary_method
+        metadata["index_version"] = self.INDEX_VERSION
+        return metadata
+
+    def _load_sessions_reference(self, conversation_id: int) -> list[dict[str, Any]]:
+        try:
+            rows = self.store.conn.execute(
+                """
+                SELECT id, start_time, end_time, message_count, initiator
+                FROM sessions
+                WHERE conversation_id = ?
+                ORDER BY start_time ASC
+                """,
+                (conversation_id,),
+            ).fetchall()
+            return [dict(row) for row in rows]
+        except Exception:
+            return []
+
+    def _load_feedback_documents_for_embedding(self, account_wxid: str, conversation_id: int) -> list[dict[str, Any]]:
+        settings = load_rag_settings()
+        rows = self.store.conn.execute(
+            """
+            SELECT d.*
+            FROM rag_documents d
+            LEFT JOIN rag_embeddings e
+              ON e.document_id = d.id
+             AND e.embedding_model = ?
+             AND e.embedding_dim = ?
+            WHERE d.account_wxid = ?
+              AND d.conversation_id = ?
+              AND d.doc_type = 'feedback_example'
+              AND d.enabled = 1
+              AND d.superseded_by IS NULL
+              AND e.id IS NULL
+            """,
+            (
+                str(settings["rag_embedding_model"]),
+                int(settings["rag_embedding_dim"]),
+                account_wxid,
+                conversation_id,
+            ),
+        ).fetchall()
+        docs = []
+        for row in rows:
+            item = dict(row)
+            docs.append(
+                {
+                    "_existing_document_id": int(item["id"]),
+                    "content": item.get("content") or "",
+                }
+            )
+        return docs
+
+    def _count_indexed_documents(self, account_wxid: str, conversation_id: int) -> int:
+        row = self.store.conn.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM rag_documents
+            WHERE account_wxid = ?
+              AND conversation_id = ?
+              AND enabled = 1
+              AND superseded_by IS NULL
+            """,
+            (account_wxid, conversation_id),
+        ).fetchone()
+        return int(row["count"] if row else 0)
+
+    def _can_retry_failed_status(self, status: dict[str, Any]) -> bool:
+        last_error = str(status.get("last_error") or "").lower()
+        if "embedding" not in last_error and "模型缺失" not in last_error and "模型" not in last_error:
+            return False
+        try:
+            self.embedding_service.ensure_available()
+            return True
+        except RagEmbeddingUnavailable:
+            return False
+        except Exception:
+            return False
+
+
+class RagIndexQueue:
+    """Best-effort coalescing background index queue."""
+
+    _lock = threading.Lock()
+    _pending: set[tuple[str, int]] = set()      # 去重集合
+    _pending_order: "deque[tuple[str, int]]" = deque()  # FIFO 顺序（set.pop 乱序）
+    _fact_pending: set[tuple[str, int]] = set()
+    _fact_order: "deque[tuple[str, int]]" = deque()
+    _worker: threading.Thread | None = None
+    _logs_pruned_at: float = 0.0
+
+    @classmethod
+    def mark_dirty(cls, account_wxid: str, conversation_id: int | None) -> None:
+        if not account_wxid or not conversation_id:
+            return
+        try:
+            RagStore(get_db()).mark_dirty(account_wxid, int(conversation_id))
+            get_db().commit()
+        except Exception as exc:
+            logger.debug("[RAG] mark dirty skipped: %s", exc)
+        with cls._lock:
+            key = (account_wxid, int(conversation_id))
+            if key not in cls._pending:
+                cls._pending.add(key)
+                cls._pending_order.append(key)
+            if cls._worker is None or not cls._worker.is_alive():
+                cls._worker = threading.Thread(target=cls._run, daemon=True)
+                cls._worker.start()
+
+    @classmethod
+    def enqueue(cls, account_wxid: str, conversation_id: int | None) -> None:
+        if not account_wxid or not conversation_id:
+            return
+        with cls._lock:
+            key = (account_wxid, int(conversation_id))
+            if key not in cls._pending:
+                cls._pending.add(key)
+                cls._pending_order.append(key)
+            if cls._worker is None or not cls._worker.is_alive():
+                cls._worker = threading.Thread(target=cls._run, daemon=True)
+                cls._worker.start()
+
+    @classmethod
+    def requeue(cls, account_wxid: str, conversation_id: int | None) -> None:
+        """队列 worker 撞锁时放回任务（队头重试，不触发新 worker）。"""
+        if not account_wxid or not conversation_id:
+            return
+        with cls._lock:
+            key = (account_wxid, int(conversation_id))
+            if key not in cls._pending:
+                cls._pending.add(key)
+                cls._pending_order.appendleft(key)
+
+    @classmethod
+    def enqueue_fact_backfill(cls, account_wxid: str, conversation_id: int | None) -> None:
+        if not account_wxid or not conversation_id:
+            return
+        with cls._lock:
+            key = (account_wxid, int(conversation_id))
+            if key not in cls._fact_pending:
+                cls._fact_pending.add(key)
+                cls._fact_order.append(key)
+            if cls._worker is None or not cls._worker.is_alive():
+                cls._worker = threading.Thread(target=cls._run, daemon=True)
+                cls._worker.start()
+
+    @classmethod
+    def _pop_job(cls):
+        """按 FIFO 弹出下一任务：fact 回填优先。
+
+        返回 (account_wxid, conversation_id, job) / "empty"（队列空）/
+        None（rag_enabled 关闭——任务保留在队列，等开关恢复）。
+        """
+        if not load_rag_settings().get("rag_enabled"):
+            return None
+        with cls._lock:
+            if cls._fact_order:
+                key = cls._fact_order.popleft()
+                cls._fact_pending.discard(key)
+                return (*key, "fact_backfill")
+            if cls._pending_order:
+                key = cls._pending_order.popleft()
+                cls._pending.discard(key)
+                return (*key, "rebuild")
+            return "empty"
+
+    @classmethod
+    def _maybe_prune_logs(cls) -> None:
+        """检索审计日志保留清理（一天最多一次）。"""
+        now = time.time()
+        if now - cls._logs_pruned_at < 86400:
+            return
+        cls._logs_pruned_at = now
+        try:
+            RagStore(get_db()).prune_retrieval_logs(days=90)
+        except Exception as exc:
+            logger.debug("[RAG] logs prune failed: %s", exc)
+
+    @classmethod
+    def _run(cls) -> None:
+        time.sleep(0.8)
+        while True:
+            job = cls._pop_job()
+            if job == "empty":
+                return
+            if job is None:
+                # 主开关关闭：任务保留，低频等待（此前 pop 后直接丢弃）
+                time.sleep(5.0)
+                continue
+            account_wxid, conversation_id, job_name = job
+            cls._maybe_prune_logs()
+            try:
+                indexer = RagIndexer()
+                if job_name == "fact_backfill":
+                    indexer.backfill_fact_embeddings(
+                        account_wxid=account_wxid,
+                        conversation_id=conversation_id,
+                        force=True,
+                    )
+                else:
+                    indexer.rebuild_contact_index(
+                        account_wxid=account_wxid,
+                        conversation_id=conversation_id,
+                        queue_mode=True,
+                    )
+                    # 撞锁场景 requeue 后退避，避免高频重试风暴饿死锁持有者
+                    time.sleep(1.0)
+            except Exception as exc:
+                logger.warning("[RAG] background index task failed (contact may need manual rebuild): %s", exc)

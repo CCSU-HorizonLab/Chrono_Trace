@@ -11,12 +11,15 @@
 使用方法:
     cd backend
     python scripts/export_for_labeling.py
+    python scripts/export_for_labeling.py --force   # 覆盖已存在的标注文件(慎用)
 """
 
+import argparse
 import csv
 import os
 import sqlite3
 import sys
+from datetime import datetime
 
 # 添加backend到路径
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -196,10 +199,29 @@ def generate_prefilled_samples():
     return samples
 
 
-def create_training_csv(db_messages, prefilled_samples):
+def resolve_output_csv(force):
+    """
+    决定最终标注文件的写入路径
+
+    已存在的 sentiment_training.csv 可能包含人工标注成果,默认不覆盖:
+    改写到带时间戳的新文件;仅当 --force 时才覆盖原文件。
+    """
+    if force or not os.path.exists(TEMPLATE_CSV):
+        return TEMPLATE_CSV
+
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    output_csv = os.path.join(OUTPUT_DIR, f'sentiment_training_{timestamp}.csv')
+    print(f"\n⚠️ 检测到已有标注文件: {TEMPLATE_CSV}")
+    print("   为避免丢失其中的人工标签,旧文件保留不动,本次输出到新文件:")
+    print(f"   {output_csv}")
+    print("   如确认要用全新内容覆盖旧文件,请加 --force 参数重新运行。")
+    return output_csv
+
+
+def create_training_csv(db_messages, prefilled_samples, output_csv):
     """合并数据库消息和预填充样本,生成最终标注文件"""
-    
-    with open(TEMPLATE_CSV, 'w', encoding='utf-8-sig', newline='') as f:
+
+    with open(output_csv, 'w', encoding='utf-8-sig', newline='') as f:
         writer = csv.writer(f)
         writer.writerow(['text', 'label'])
         
@@ -217,13 +239,21 @@ def create_training_csv(db_messages, prefilled_samples):
                 unlabeled_count += 1
     
     total = len(prefilled_samples) + unlabeled_count
-    print(f"\n📄 最终标注文件: {TEMPLATE_CSV}")
+    print(f"\n📄 最终标注文件: {output_csv}")
     print(f"   已标注(预填充): {len(prefilled_samples)} 条")
     print(f"   待标注(你的数据): {unlabeled_count} 条")
     print(f"   总计: {total} 条")
 
 
 def main():
+    parser = argparse.ArgumentParser(description="导出消息数据用于情感分析标注")
+    parser.add_argument(
+        '--force',
+        action='store_true',
+        help='覆盖已存在的 sentiment_training.csv(会丢失其中的人工标签,慎用)'
+    )
+    args = parser.parse_args()
+
     print("=" * 60)
     print("情感分析训练数据准备工具")
     print("=" * 60)
@@ -241,7 +271,8 @@ def main():
     
     # 3. 合并生成最终文件
     print("\n📊 步骤3: 生成最终标注文件...")
-    create_training_csv(db_messages, prefilled)
+    output_csv = resolve_output_csv(args.force)
+    create_training_csv(db_messages, prefilled, output_csv)
     
     # 4. 提示
     print("\n" + "=" * 60)
@@ -249,7 +280,7 @@ def main():
     print("=" * 60)
     print()
     print("📋 下一步操作:")
-    print(f"   1. 打开文件: {TEMPLATE_CSV}")
+    print(f"   1. 打开文件: {output_csv}")
     print("   2. 用Excel或文本编辑器打开")
     print("   3. 检查预填充样本的标签是否合理,不合理的请修改")
     print("   4. 给label为空的行标注标签:")

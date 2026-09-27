@@ -134,6 +134,7 @@ def test_realtime_message_exposes_compatibility_properties():
     assert msg.is_self is True
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="win32 窗口探测专属")
 def test_detector_maps_qt_window_to_405_profile_when_exe_matches_legacy_client():
     assert (
         _map_version_to_profile(
@@ -146,6 +147,7 @@ def test_detector_maps_qt_window_to_405_profile_when_exe_matches_legacy_client()
     )
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="win32 窗口探测专属")
 def test_detector_maps_qt_window_to_41x_profile_when_exe_matches_weixin_client():
     assert (
         _map_version_to_profile(
@@ -214,13 +216,18 @@ def test_merge_rect_clusters_combines_nearby_spans_and_preserves_distant_noise()
 
 
 def test_normalize_listener_backend_maps_legacy_values_to_native_uia():
-    assert normalize_listener_backend(None) == "native_uia"
-    assert normalize_listener_backend("") == "native_uia"
-    assert normalize_listener_backend("auto") == "native_uia"
-    assert normalize_listener_backend("wxauto") == "native_uia"
+    # 平台默认：Windows native_uia，Linux db_watch（阶段三移植）
+    expected_default = "native_uia" if sys.platform == "win32" else "db_watch"
+    assert normalize_listener_backend(None) == expected_default
+    assert normalize_listener_backend("") == expected_default
+    # auto/wxauto 收敛到平台默认（Linux=db_watch——此前硬编码 native_uia 导致错路由）
+    assert normalize_listener_backend("auto") == expected_default
+    assert normalize_listener_backend("wxauto") == expected_default
     assert normalize_listener_backend("native_uia") == "native_uia"
+    assert normalize_listener_backend("db_watch") == "db_watch"
 
 
+@pytest.mark.skipif(sys.platform != 'win32', reason='auto/wxauto 在 Linux 收敛 db_watch')
 def test_factory_auto_prefers_native_provider(monkeypatch):
     monkeypatch.setattr(
         "app.services.realtime.providers.factory.detect_running_wechat",
@@ -246,6 +253,7 @@ def test_factory_auto_prefers_native_provider(monkeypatch):
     assert provider.wechat_version == "4.1.2.0"
 
 
+@pytest.mark.skipif(sys.platform != 'win32', reason='auto/wxauto 在 Linux 收敛 db_watch')
 def test_factory_legacy_wxauto_setting_still_resolves_to_native_provider(monkeypatch):
     monkeypatch.setattr(
         "app.services.realtime.providers.factory.detect_running_wechat",
@@ -271,6 +279,7 @@ def test_factory_legacy_wxauto_setting_still_resolves_to_native_provider(monkeyp
     assert provider.wechat_version == "4.0.5.18"
 
 
+@pytest.mark.skipif(sys.platform != 'win32', reason='auto/wxauto 在 Linux 收敛 db_watch')
 def test_factory_native_errors_are_not_silently_fallbacked(monkeypatch):
     monkeypatch.setattr(
         "app.services.realtime.providers.factory.detect_running_wechat",
@@ -607,6 +616,7 @@ def test_native_provider_sender_screenshot_uses_all_screens(monkeypatch):
     assert calls[0]["all_screens"] is True
 
 
+@pytest.mark.skipif(sys.platform != 'win32', reason='版本门禁属 native_uia 路径')
 def test_factory_rejects_unsupported_versions(monkeypatch):
     monkeypatch.setattr(
         "app.services.realtime.providers.factory.detect_running_wechat",

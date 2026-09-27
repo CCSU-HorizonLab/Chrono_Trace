@@ -4,12 +4,20 @@ import CtDialog from '../components/base/CtDialog.vue';
 export interface DialogOptions {
   title?: string;
   message: string;
+  type?: 'info' | 'warning' | 'error' | 'wechat_upgrade';
+  confirmText?: string;
+  cancelText?: string;
+  detectedPath?: string;
+  detectedAccounts?: string;
+  quickLinkUrl?: string;
+  quickLinkTitle?: string;
 }
 
 export function showDialog(options: DialogOptions | string): Promise<void> {
   return new Promise((resolve) => {
-    let message = typeof options === 'string' ? options : options.message;
-    let title = typeof options === 'string' ? '提示' : (options.title || '提示');
+    const opts: DialogOptions =
+      typeof options === 'string' ? { title: '提示', message: options } : options;
+    const title = opts.title || '提示';
 
     const container = document.createElement('div');
     document.body.appendChild(container);
@@ -22,10 +30,20 @@ export function showDialog(options: DialogOptions | string): Promise<void> {
 
     const vnode = createVNode(CtDialog, {
       title,
-      message,
+      message: opts.message,
+      type: opts.type,
+      confirmText: opts.confirmText,
+      cancelText: opts.cancelText,
+      detectedPath: opts.detectedPath,
+      detectedAccounts: opts.detectedAccounts,
+      quickLinkUrl: opts.quickLinkUrl,
+      quickLinkTitle: opts.quickLinkTitle,
       onConfirm: () => {
         removeDialog();
-      }
+      },
+      onCancel: () => {
+        removeDialog();
+      },
     });
 
     render(vnode, container);
@@ -37,8 +55,9 @@ export function showDialog(options: DialogOptions | string): Promise<void> {
 
 export function showConfirm(options: DialogOptions | string): Promise<boolean> {
   return new Promise((resolve) => {
-    let message = typeof options === 'string' ? options : options.message;
-    let title = typeof options === 'string' ? '提问' : (options.title || '提问');
+    const opts: DialogOptions =
+      typeof options === 'string' ? { title: '确认操作', message: options } : options;
+    const title = opts.title || '确认操作';
 
     const container = document.createElement('div');
     document.body.appendChild(container);
@@ -50,7 +69,10 @@ export function showConfirm(options: DialogOptions | string): Promise<boolean> {
 
     const vnode = createVNode(CtDialog, {
       title,
-      message,
+      message: opts.message,
+      type: opts.type || 'warning',
+      confirmText: opts.confirmText,
+      cancelText: opts.cancelText,
       showCancel: true,
       onConfirm: () => {
         removeDialog();
@@ -59,7 +81,7 @@ export function showConfirm(options: DialogOptions | string): Promise<boolean> {
       onCancel: () => {
         removeDialog();
         resolve(false);
-      }
+      },
     });
 
     render(vnode, container);

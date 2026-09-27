@@ -7,15 +7,15 @@
           <span class="rc-pill-label">总联系人</span>
           <span class="rc-pill-val">{{ items.length }}</span>
         </div>
-        <div class="rc-pill success" title="已成功建立索引的联系人">
+        <div class="rc-pill success" title="已成功建立记忆的联系人">
           <span class="rc-pill-label">已就绪</span>
           <span class="rc-pill-val">{{ readyCount }}</span>
         </div>
-        <div class="rc-pill warning" title="待建立索引的联系人">
-          <span class="rc-pill-label">待索引</span>
+        <div class="rc-pill warning" title="待构建记忆的联系人">
+          <span class="rc-pill-label">待构建</span>
           <span class="rc-pill-val">{{ pendingCount }}</span>
         </div>
-        <div v-if="errorCount > 0" class="rc-pill danger" title="索引失败的联系人">
+        <div v-if="errorCount > 0" class="rc-pill danger" title="记忆构建失败的联系人">
           <span class="rc-pill-label">异常</span>
           <span class="rc-pill-val">{{ errorCount }}</span>
         </div>
@@ -27,17 +27,27 @@
           class="rc-btn primary outline"
           :disabled="batchIndexing"
           @click.prevent="batchIndexPending"
-          title="一键为所有待处理联系人建立 RAG 索引"
+          title="一键为所有待处理联系人构建动态记忆"
         >
           <span v-if="batchIndexing" class="rc-spinner mini"></span>
           <Play v-else :size="13" />
-          <span>{{ batchIndexing ? `批量索引中 (${batchIndexCurrent}/${pendingCount})...` : '一键索引待处理' }}</span>
+          <span>{{ batchIndexing ? `批量构建中 (${batchIndexCurrent}/${pendingCount})...` : '一键构建待处理' }}</span>
+        </button>
+        <button
+          class="rc-btn ghost"
+          :disabled="loading || batchIndexing || backfilling"
+          @click.prevent="handleBackfillAll"
+          title="为历史消息尚未提炼记忆的联系人排队 AI 抽取（消耗 Token，后台逐个完成）"
+        >
+          <span v-if="backfilling" class="rc-spinner mini"></span>
+          <Sparkles v-else :size="13" />
+          <span>{{ backfilling ? '回补排队中...' : '回补记忆抽取' }}</span>
         </button>
         <button
           class="rc-btn ghost"
           :disabled="loading || batchIndexing"
           @click.prevent="$emit('refresh')"
-          title="刷新联系人 RAG 索引状态"
+          title="刷新联系人记忆状态"
         >
           <RotateCw :size="13" :class="{ 'rc-spin': loading }" />
           <span>刷新</span>
@@ -85,7 +95,7 @@
           :class="{ active: currentFilter === 'pending' }"
           @click="currentFilter = 'pending'"
         >
-          待索引 <span class="tab-badge amber">{{ pendingCount }}</span>
+          待构建 <span class="tab-badge amber">{{ pendingCount }}</span>
         </button>
         <button
           class="rc-filter-tab"
@@ -107,7 +117,7 @@
       <div class="rc-sort-wrap">
         <select v-model="currentSort" class="rc-sort-select" title="排序方式">
           <option value="updated">按最近活跃</option>
-          <option value="docs_desc">按文档数量</option>
+          <option value="docs_desc">按记忆数量</option>
           <option value="name">按联系人姓名</option>
         </select>
       </div>
@@ -117,7 +127,7 @@
     <div class="rc-list-container">
       <div v-if="loading && !items.length" class="rc-empty-box">
         <span class="rc-spinner"></span>
-        <p>正在加载联系人 RAG 索引状态...</p>
+        <p>正在加载联系人记忆状态...</p>
       </div>
 
       <div v-else-if="!items.length" class="rc-empty-box">
@@ -160,12 +170,12 @@
                 </span>
               </div>
               <div class="rc-sub-line">
-                <span class="rc-metric-text">{{ item.document_count || 0 }} 篇文档</span>
+                <span class="rc-metric-text">{{ item.fact_count || 0 }} 条记忆</span>
                 <span v-if="item.storage_bytes" class="rc-dot">·</span>
                 <span v-if="item.storage_bytes" class="rc-metric-text">{{ formatBytes(item.storage_bytes) }}</span>
                 <span class="rc-dot">·</span>
                 <span class="rc-time-text">
-                  {{ item.last_indexed_at ? formatTime(item.last_indexed_at) : '未索引' }}
+                  {{ item.last_indexed_at ? formatTime(item.last_indexed_at) : '未构建' }}
                 </span>
               </div>
               <div v-if="item.last_error" class="rc-error-text" :title="item.last_error">
@@ -188,13 +198,13 @@
               >
                 <option value="inherit">跟随全局</option>
                 <option value="facts">事实优先</option>
-                <option value="documents">文档回退</option>
+                <option value="documents">对话回退</option>
               </select>
               <CtHelpTip :width="280" :size="13">
                 <strong>记忆读取模式说明：</strong><br />
                 • <strong>跟随全局</strong>：遵循上方「事实记忆优先」全局开关；<br />
                 • <strong>事实优先</strong>：优先读取提炼出的结构化事实（偏好/约定/边界），不足时以原始对话兜底；<br />
-                • <strong>文档回退</strong>：仅使用原始聊天记录片段检索，不使用提炼事实（适合单人事实不准时回退）。
+                • <strong>对话回退</strong>：仅使用原始聊天记录片段匹配，不使用提炼事实（适合单人事实不准时回退）。
               </CtHelpTip>
             </div>
 
@@ -205,7 +215,7 @@
               :class="[item.enabled ? 'on is-on' : 'is-off']"
               :disabled="Boolean(rowLoading[item.conversation_id])"
               @click.prevent="handleToggleEnabled(item)"
-              :title="item.enabled ? '点击禁用该联系人的 RAG 检索' : '点击启用该联系人的 RAG 检索'"
+              :title="item.enabled ? '点击禁用该联系人的记忆调取' : '点击启用该联系人的记忆调取'"
             >
               <span class="rc-switch-track"><span class="rc-switch-thumb"></span></span>
               <span class="rc-switch-text">{{ item.enabled ? '已启用' : '已禁用' }}</span>
@@ -214,32 +224,36 @@
             <!-- 管理记忆 -->
             <button
               class="rc-btn mini"
-              :disabled="!item.document_count"
+              :disabled="!item.fact_count && !item.document_count"
               @click.prevent="openFactDialog(item)"
-              title="查看并纠正该联系人的记忆事实（不准确 / 忘记 / 恢复）"
+              title="查看并管理该联系人的记忆事实（不准确 / 忘记 / 恢复）"
             >
               <BrainIcon :size="12" />
               <span>记忆</span>
             </button>
 
-            <!-- 重建索引 -->
+            <!-- 重建记忆 -->
             <button
               class="rc-btn mini primary"
-              :disabled="rowLoading[item.conversation_id]"
+              :disabled="rowLoading[item.conversation_id] || item.status === 'building' || item.status === 'queued'"
               @click.prevent="handleRebuild(item)"
-              title="重新为该联系人的历史记录构建向量与记忆索引"
+              title="重新为该联系人的历史记录提炼并构建动态记忆"
             >
-              <span v-if="rowLoading[item.conversation_id] === 'rebuild'" class="rc-spinner micro"></span>
+              <span v-if="rowLoading[item.conversation_id] === 'rebuild' || item.status === 'building' || item.status === 'queued'" class="rc-spinner micro"></span>
               <RotateCw v-else :size="12" />
-              <span>{{ rowLoading[item.conversation_id] === 'rebuild' ? '构建中' : (item.document_count ? '重建' : '索引') }}</span>
+              <span>{{
+                (rowLoading[item.conversation_id] === 'rebuild' || item.status === 'building') ? '构建中'
+                : item.status === 'queued' ? '排队中'
+                : (item.document_count ? '重建' : '构建')
+              }}</span>
             </button>
 
-            <!-- 清空索引 -->
+            <!-- 清空记忆 -->
             <button
               class="rc-btn mini danger"
               :disabled="rowLoading[item.conversation_id] || !item.document_count"
               @click.prevent="handleClear(item)"
-              title="清空该联系人的 RAG 向量和文档数据（不删除原始聊天记录）"
+              title="清空该联系人的动态记忆数据（不删除原始聊天记录）"
             >
               <Trash2 :size="12" />
               <span>清空</span>
@@ -306,7 +320,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, reactive } from 'vue'
+import { ref, computed, watch, reactive, onUnmounted } from 'vue'
 import {
   Search,
   X,
@@ -317,6 +331,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Brain as BrainIcon,
+  Sparkles,
 } from 'lucide-vue-next'
 import CtAvatar from '@/components/base/CtAvatar.vue'
 import CtHelpTip from '@/components/base/CtHelpTip.vue'
@@ -330,6 +345,8 @@ export type RagContactItem = {
   username: string
   avatar?: string
   status: 'ready' | 'pending' | 'failed' | 'building' | string
+  fact_count?: number
+  enabled_fact_count?: number
   document_count: number
   vector_count?: number
   storage_bytes: number
@@ -359,6 +376,39 @@ const emit = defineEmits<{
   (e: 'refresh'): void
 }>()
 
+// 构建中/排队中的服务端真值轮询：有活动任务时 3s 刷新，无则停
+let livePollTimer: ReturnType<typeof setInterval> | null = null
+let livePollCount = 0
+const hasLiveWork = computed(() => props.items.some((item) => isLive(item)))
+watch(
+  hasLiveWork,
+  (live) => {
+    if (live && livePollTimer === null) {
+      livePollCount = 0
+      livePollTimer = setInterval(() => {
+        livePollCount += 1
+        if (livePollCount > 600) {
+          // 上限 30 分钟：父级 refresh 失败/items 引用不变时防永久轮询
+          clearInterval(livePollTimer!)
+          livePollTimer = null
+          return
+        }
+        emit('refresh')
+      }, 3000)
+    } else if (!live && livePollTimer !== null) {
+      clearInterval(livePollTimer)
+      livePollTimer = null
+    }
+  },
+  { immediate: true }
+)
+onUnmounted(() => {
+  if (livePollTimer !== null) {
+    clearInterval(livePollTimer)
+    livePollTimer = null
+  }
+})
+
 // 记忆管理弹窗
 const factDialog = reactive({
   visible: false,
@@ -387,6 +437,7 @@ const pageSize = ref(10)
 const rowLoading = reactive<Record<number, string | boolean>>({})
 // 批量索引状态
 const batchIndexing = ref(false)
+const backfilling = ref(false)
 const batchIndexCurrent = ref(0)
 
 // 各种状态计数
@@ -435,7 +486,7 @@ const filteredItems = computed(() => {
 
   // 3. 排序
   if (currentSort.value === 'docs_desc') {
-    list.sort((a, b) => (b.document_count || 0) - (a.document_count || 0))
+    list.sort((a, b) => (b.fact_count || 0) - (a.fact_count || 0) || (b.document_count || 0) - (a.document_count || 0))
   } else if (currentSort.value === 'name') {
     list.sort((a, b) => (a.display_name || a.username || '').localeCompare(b.display_name || b.username || '', 'zh'))
   } else {
@@ -484,17 +535,23 @@ function resetFilters() {
 
 function getBadgeClass(item: RagContactItem) {
   if (!item.enabled) return 'badge-gray'
+  // 构建中/排队中优先于历史 failed（否则排队期间闪显异常，结束又闪回）
+  if (isLive(item)) return 'badge-blue'
   if (item.status === 'failed' || item.last_error) return 'badge-red'
   if (item.status === 'ready' && item.document_count > 0) return 'badge-green'
   return 'badge-amber'
 }
 
+function isLive(item: RagContactItem): boolean {
+  return item.status === 'building' || item.status === 'queued'
+}
+
 function getStatusText(item: RagContactItem) {
   if (!item.enabled) return '已禁用'
+  if (isLive(item)) return item.status === 'building' ? '构建中' : '排队中'
   if (item.status === 'failed' || item.last_error) return '异常'
   if (item.status === 'ready' && item.document_count > 0) return '已就绪'
-  if (item.status === 'building') return '构建中'
-  return '待索引'
+  return '待构建'
 }
 
 function formatBytes(value: number) {
@@ -505,7 +562,7 @@ function formatBytes(value: number) {
 }
 
 function formatTime(ts: number) {
-  if (!ts) return '未索引'
+  if (!ts) return '未构建'
   const date = new Date(Number(ts) * 1000)
   return `${date.getMonth() + 1}/${date.getDate()} ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`
 }
@@ -539,6 +596,8 @@ async function handleRebuild(item: RagContactItem) {
     const result = await api.rebuild_rag_index(Number(item.conversation_id), props.accountWxid)
     if (!result?.ok) {
       await showDialog('重建失败: ' + (result?.error || '未知错误'))
+    } else if (result?.already && result?.message) {
+      await showDialog(result.message)
     }
     emit('refresh')
   } catch (e: any) {
@@ -548,9 +607,32 @@ async function handleRebuild(item: RagContactItem) {
   }
 }
 
+async function handleBackfillAll() {
+  const confirmed = await showConfirm(
+    `为所有历史消息尚未提炼记忆的联系人排队 AI 抽取？
+
+将使用当前激活的大模型逐段提炼记忆事实（消耗 Token，可在后台逐步完成，期间可正常使用）。`
+  )
+  if (!confirmed) return
+  backfilling.value = true
+  try {
+    const result = await api.backfill_all_rag_extraction(props.accountWxid)
+    if (!result?.ok) {
+      await showDialog('回补排队失败: ' + (result?.error || '未知错误'))
+    } else {
+      await showDialog(`已排队 ${result.queued || 0} 个联系人的记忆抽取，将在后台逐步完成。`)
+      emit('refresh')
+    }
+  } catch (e: any) {
+    await showDialog('回补排队失败: ' + (e?.message || e))
+  } finally {
+    backfilling.value = false
+  }
+}
+
 async function handleClear(item: RagContactItem) {
   const confirmed = await showConfirm(
-    `确定清空联系人「${item.display_name || item.username}」的 RAG 索引吗？\n该操作仅清空向量与摘要记忆，原始聊天记录不受影响。`
+    `确定清空联系人「${item.display_name || item.username}」的记忆数据吗？\n该操作仅清空提炼的动态记忆与摘要（事实、关系画像、偏好），原始聊天记录不受影响。清空后该联系人的记忆功能将停用，可重新启用并重建。`
   )
   if (!confirmed) return
 
@@ -965,6 +1047,16 @@ async function batchIndexPending() {
 }
 .badge-green .badge-dot {
   background: #10b981;
+}
+
+.badge-blue {
+  background: rgba(108, 92, 231, 0.14);
+  color: #8b7ff0;
+  border: 1px solid rgba(108, 92, 231, 0.3);
+}
+
+.badge-blue .badge-dot {
+  background: #6c5ce7;
 }
 
 .badge-amber {

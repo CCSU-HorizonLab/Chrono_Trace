@@ -7,7 +7,7 @@ import pytest
 from unittest.mock import Mock, patch
 from datetime import datetime
 
-from app.services.analysis.preprocessing_service import (
+from app.services.analysis.preprocessing import (
     AttitudePreprocessingService,
     AttitudeStatistics
 )

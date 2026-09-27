@@ -8,19 +8,19 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from app.services.realtime.rag_fact_llm import (
+from app.services.realtime.rag.fact_llm import (
     FACT_EXTRACTION_SYSTEM_PROMPT,
     FACT_FUSION_SYSTEM_PROMPT,
     FactRedactionUnavailable,
     LLMFactExtractorAdapter,
 )
-from app.services.realtime.rag_fact_quality import fact_quality_reason
-from app.services.realtime.rag_indexer import RagIndexer
-from app.services.realtime.rag_store import RagStore
+from app.services.realtime.rag.fact_quality import fact_quality_reason
+from app.services.realtime.rag.indexer import RagIndexer
+from app.services.realtime.rag.store import RagStore
 
 
 def _segment(now, messages_spec, start_offset=600):
-    from app.services.realtime.rag_segmenter import RagSegment
+    from app.services.realtime.rag.segmenter import RagSegment
 
     messages = [
         {
@@ -60,10 +60,10 @@ class _FakeHTTP:
 
 def _adapter(monkeypatch, http, *, remote=False, redactor=None):
     monkeypatch.setattr(
-        "app.services.realtime.rag_fact_llm.post_json_with_retries", http
+        "app.services.realtime.rag.fact_llm.post_json_with_retries", http
     )
     monkeypatch.setattr(
-        "app.services.realtime.rag_fact_llm.is_remote_llm_model",
+        "app.services.realtime.rag.fact_llm.is_remote_llm_model",
         lambda model: remote,
     )
     model = {
@@ -184,7 +184,7 @@ def test_indexer_budget_and_short_segment_skip(monkeypatch):
         calls.append(prompt)
         return {"facts": []}
 
-    from app.services.realtime.rag_fact_extractor import StructuredFactExtractor
+    from app.services.realtime.rag.fact_extractor import StructuredFactExtractor
 
     indexer = RagIndexer(
         store=store,
@@ -229,7 +229,7 @@ def test_indexer_consecutive_failure_aborts_round(monkeypatch):
     def broken_llm(prompt):
         raise ValueError("network down")
 
-    from app.services.realtime.rag_fact_extractor import StructuredFactExtractor
+    from app.services.realtime.rag.fact_extractor import StructuredFactExtractor
 
     indexer = RagIndexer(
         store=store,
@@ -283,7 +283,7 @@ def test_llm_facts_written_as_llm_shadow_through_quality_gate(monkeypatch):
             ]
         }
 
-    from app.services.realtime.rag_fact_extractor import StructuredFactExtractor
+    from app.services.realtime.rag.fact_extractor import StructuredFactExtractor
 
     indexer = RagIndexer(
         store=store,
@@ -291,7 +291,7 @@ def test_llm_facts_written_as_llm_shadow_through_quality_gate(monkeypatch):
         structured_fact_extractor=StructuredFactExtractor(good_llm),
     )
     monkeypatch.setattr(
-        "app.services.realtime.rag_indexer.load_rag_settings",
+        "app.services.realtime.rag.indexer.load_rag_settings",
         lambda: {"rag_fact_shadow_enabled": False},
     )
     now = 1790000000
@@ -325,7 +325,7 @@ def test_watermark_skips_already_extracted_range(monkeypatch):
         calls.append(json.loads(prompt)["messages"])
         return {"facts": []}
 
-    from app.services.realtime.rag_fact_extractor import StructuredFactExtractor
+    from app.services.realtime.rag.fact_extractor import StructuredFactExtractor
 
     indexer = RagIndexer(
         store=store,
@@ -362,7 +362,7 @@ def test_zero_fact_segment_advances_progress(monkeypatch):
     store = RagStore(conn)
     store.upsert_status("wxid_a", 1, status="ready")
 
-    from app.services.realtime.rag_fact_extractor import StructuredFactExtractor
+    from app.services.realtime.rag.fact_extractor import StructuredFactExtractor
 
     indexer = RagIndexer(
         store=store,
@@ -406,7 +406,7 @@ def test_failed_segment_freezes_watermark_for_round(monkeypatch):
             ]
         }
 
-    from app.services.realtime.rag_fact_extractor import StructuredFactExtractor
+    from app.services.realtime.rag.fact_extractor import StructuredFactExtractor
 
     indexer = RagIndexer(
         store=store,
@@ -500,10 +500,10 @@ def test_remote_model_without_redactor_blocks_segment(monkeypatch):
 
     # factory 缺失
     monkeypatch.setattr(
-        "app.services.realtime.rag_fact_llm.post_json_with_retries", http
+        "app.services.realtime.rag.fact_llm.post_json_with_retries", http
     )
     monkeypatch.setattr(
-        "app.services.realtime.rag_fact_llm.is_remote_llm_model", lambda model: True
+        "app.services.realtime.rag.fact_llm.is_remote_llm_model", lambda model: True
     )
     model = {"model_id": "m", "api_base_url": "https://api.example.com/v1"}
     adapter = LLMFactExtractorAdapter(model, redactor_factory=None)
@@ -602,3 +602,64 @@ def test_fusion_response_without_decisions_raises(monkeypatch):
         raise AssertionError("expected ValueError")
     except ValueError as exc:
         assert "decisions" in str(exc)
+
+
+def test_json_candidates_prefers_after_think_tail():
+    """思考模型（Qwen3.5-9B 实测形态）：思考段回显模板 JSON，真答案在 </think> 之后。"""
+    from app.services.realtime.rag.fact_llm import LLMFactExtractorAdapter
+
+    probe = (
+        "我们需要分析……只输出JSON对象 {\"facts\":[{\"content\":\"...\",\"kind\":\"...\"}]} "
+        "对话里 B 只是提醒……因此无事实。输出 {\"facts\":[]}。\n</think>\n\n{\"facts\":[]}"
+    )
+    candidates = LLMFactExtractorAdapter._json_candidates(probe)
+    assert candidates, "应至少解析出一个候选"
+    assert candidates[-1] == "{\"facts\":[]}", f"末尾真答案应被选中: {candidates}"
+
+
+def test_json_candidates_extra_data_salvage():
+    """原「首个 { 到末个 }」跨度在多对象场景必然 Extra data——现应逐对象可解析。"""
+    from app.services.realtime.rag.fact_llm import LLMFactExtractorAdapter
+
+    text = '前言 {"facts":[{"content":"示例"}]} 中间说明 {"facts":[]} 结尾废话}'
+    candidates = LLMFactExtractorAdapter._json_candidates(text)
+    assert '{"facts":[]}' in candidates
+    # 旧实现返回 text[first{:last}] 必然 json 失败；新 _json_candidate 返回可解析末位
+    assert LLMFactExtractorAdapter._json_candidate(text) == '{"facts":[]}'
+
+
+def test_json_candidates_no_json_returns_empty():
+    from app.services.realtime.rag.fact_llm import LLMFactExtractorAdapter
+    assert LLMFactExtractorAdapter._json_candidates("没有任何对象") == []
+
+
+def test_related_context_rendered_for_cross_day_anaphora(monkeypatch):
+    """p1.7 检索增强上下文：跨天代指（"这玩意"）的历史定义处进入 prompt。"""
+    payload = json.dumps(
+        {
+            "messages": [
+                {"id": 20, "is_sender": 1, "content": "我们后天搬"},
+                {"id": 21, "is_sender": 0, "content": "嘶"},
+                {"id": 22, "is_sender": 0, "content": "那我们问房东要一下快递地址"},
+                {"id": 23, "is_sender": 1, "content": "这玩意我们有钱了整一台"},
+            ],
+            "context_messages": [
+                {"id": 19, "is_sender": 0, "content": "可以吗"},
+            ],
+            "related_context_messages": [
+                {"id": 5, "is_sender": 0, "content": "这个烘干机好像不错"},
+                {"id": 6, "is_sender": 1, "content": "是有点贵，等有钱了说"},
+            ],
+        },
+        ensure_ascii=False,
+    )
+    http = _FakeHTTP('{"facts": []}')
+    adapter = _adapter(monkeypatch, http)
+    adapter(payload)
+    user_text = http.captured["payload"]["messages"][1]["content"]
+    assert "更早的相关讨论" in user_text
+    assert "[5] 对方: 这个烘干机好像不错" in user_text
+    # 层次顺序：相关讨论 → 上一段结尾 → 对话片段
+    assert user_text.index("更早的相关讨论") < user_text.index("上一段结尾") < user_text.index("对话片段")
+    # evidence 隔离不受影响（相关消息 id 不在本段）
+    assert "[5]" in user_text.split("对话片段")[0]

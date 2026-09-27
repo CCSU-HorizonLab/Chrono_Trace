@@ -258,7 +258,7 @@ class TestAffinityAnalysisService:
     def test_interpretation_medium_score(self, service):
         """测试中等分解释"""
         interpretation = service._generate_overall_interpretation(45)
-        assert "一般" in interpretation
+        assert "中等" in interpretation
 
     def test_interpretation_low_score(self, service):
         """测试低分解释"""

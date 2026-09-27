@@ -140,7 +140,7 @@ def _record_outcome_policy_signal(
     "反馈→策略修正"提供审计底账。任何异常静默跳过，绝不阻塞事件。
     """
     try:
-        from .rag_store import RagStore
+        from .rag.store import RagStore
 
         store = RagStore(conn)
         existing = conn.execute(

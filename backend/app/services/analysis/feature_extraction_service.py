@@ -3,14 +3,13 @@ import logging
 import statistics
 import time
 import threading
-import threading
-from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Any, Optional, Tuple
+from datetime import datetime, timedelta
+from typing import Dict, List, Any, Optional
 
 from .feature_extraction_config import FeatureExtractionConfig
-from .preprocessing_service import PreprocessingService
+from .preprocessing import PreprocessingService
 from .sentiment_service import SentimentService
-from ...db.connection import get_db, batch_insert, execute_transaction
+from ...db.connection import get_db, batch_insert
 
 
 # 配置日志
@@ -49,21 +48,37 @@ class FeatureExtractionService:
     # 主入口
     # =========================================================================
 
-    def extract_features(self, conversation_id: int, cancel_event: Optional[threading.Event] = None) -> Dict[str, Any]:
+    def find_running_task(self, conversation_id: int) -> Optional[str]:
+        """返回该会话正在运行的提取任务 id（无则 None）——防同会话并发提取互相删数据。"""
+        prefix = f"extract_{conversation_id}_"
+        for tid, status in self._task_status.items():
+            if tid.startswith(prefix) and status.get("status") == "in_progress":
+                return tid
+        return None
+
+    def extract_features(
+        self,
+        conversation_id: int,
+        cancel_event: Optional[threading.Event] = None,
+        task_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        self._extract_cancel_event = cancel_event
         """
         执行完整的特征提取流程
 
         Args:
             conversation_id: 对话ID
+            cancel_event: 取消信号
+            task_id: 显式任务 id（bridge 异步启动时预生成，保证前端拿到的
+                     id 与任务注册一致；None 时按时间戳自生成）
 
         Returns:
             提取结果字典，包含sessions, response_times, initiative_stats, word_counts
         """
-        #logger.info(f"开始特征提取: conversation_id={conversation_id}")
-
         self._apply_analysis_device_mode()
 
-        task_id = f"extract_{conversation_id}_{int(time.time())}"
+        if task_id is None:
+            task_id = f"extract_{conversation_id}_{int(time.time())}"
         self._task_status[task_id] = {
             "status": "in_progress",
             "progress": 0.0,
@@ -75,21 +90,25 @@ class FeatureExtractionService:
             # 0. 清理旧数据，防止重复插入
             if cancel_event and cancel_event.is_set(): raise Exception("分析已被用户取消")
             self._update_task_status(task_id, 5, "Clearing old data")
-            logger.info(f"[特征提取] 步骤 0/4: 清理旧数据...")
+            logger.info("[特征提取] 步骤 0/4: 清理旧数据...")
             self.delete_analysis_data(conversation_id)
 
             # 1. 会话切分
             if cancel_event and cancel_event.is_set(): raise Exception("分析已被用户取消")
             self._update_task_status(task_id, 10, "Splitting sessions")
-            logger.info(f"[特征提取] 步骤 1/4: 会话切分...")
+            logger.info("[特征提取] 步骤 1/4: 会话切分...")
             step_start = time.time()
-            sessions = self.extract_sessions(conversation_id)
+            def _split_progress(fraction: float) -> None:
+                # 步骤 1 内部 10→40%：语义相似度嵌入真实进度（此前一跳数分钟）
+                frac = min(1.0, max(0.0, fraction))
+                self._update_task_status(task_id, 10 + int(30 * frac), "Splitting sessions")
+            sessions = self.extract_sessions(conversation_id, _split_progress)
             logger.info(f"[特征提取] 步骤 1/4: 会话切分完成 ({len(sessions)} 个会话, {time.time() - step_start:.1f}s)")
 
             # 2. 响应时间计算
             if cancel_event and cancel_event.is_set(): raise Exception("分析已被用户取消")
             self._update_task_status(task_id, 40, "Calculating response times")
-            logger.info(f"[特征提取] 步骤 2/4: 计算响应时间...")
+            logger.info("[特征提取] 步骤 2/4: 计算响应时间...")
             step_start = time.time()
             response_time_stats = self.extract_response_times(conversation_id)
             logger.info(f"[特征提取] 步骤 2/4: 响应时间计算完成 ({response_time_stats.get('count', 0)} 条有效记录, {time.time() - step_start:.1f}s)")
@@ -97,7 +116,7 @@ class FeatureExtractionService:
             # 3. 主动性统计
             if cancel_event and cancel_event.is_set(): raise Exception("分析已被用户取消")
             self._update_task_status(task_id, 70, "Calculating initiative stats")
-            logger.info(f"[特征提取] 步骤 3/4: 计算主动性统计...")
+            logger.info("[特征提取] 步骤 3/4: 计算主动性统计...")
             step_start = time.time()
             initiative_stats = self.calculate_initiative_stats(conversation_id, sessions)
             logger.info(f"[特征提取] 步骤 3/4: 主动性统计完成 ({time.time() - step_start:.1f}s)")
@@ -105,13 +124,21 @@ class FeatureExtractionService:
             # 4. 字数统计
             if cancel_event and cancel_event.is_set(): raise Exception("分析已被用户取消")
             self._update_task_status(task_id, 90, "Calculating word counts")
-            logger.info(f"[特征提取] 步骤 4/4: 计算字数统计...")
+            logger.info("[特征提取] 步骤 4/4: 计算字数统计...")
             step_start = time.time()
             word_counts = self.calculate_word_counts(conversation_id, sessions)
             logger.info(f"[特征提取] 步骤 4/4: 字数统计完成 ({time.time() - step_start:.1f}s)")
 
             self._update_task_status(task_id, 100, "completed", "completed")
             logger.info(f"[特征提取] 全部特征提取完成 (conversation_id={conversation_id})")
+
+            # 分析完成：清 stale + 快照消息集规模（好感度阶段随后会再刷新一次）
+            try:
+                from .analysis_state import mark_analysis_complete
+
+                mark_analysis_complete(conversation_id)
+            except Exception as state_e:
+                logger.debug("[分析状态] 完成标记跳过: %s", state_e)
 
             return {
                 "task_id": task_id,
@@ -150,8 +177,14 @@ class FeatureExtractionService:
 
     def _update_task_status(self, task_id: str, progress: float, step: str, message: str = ""):
         """更新任务状态"""
+        # step 为终态词时直接采用（此前 progress=-1 被 <100 判为 in_progress，
+        # 导致取消后前端轮询永远拿不到 cancelled 状态，界面卡在「分析中」）
+        if step in ("completed", "failed", "cancelled"):
+            status = step
+        else:
+            status = "in_progress" if 0 <= progress < 100 else ("completed" if progress >= 100 else "failed")
         self._task_status[task_id] = {
-            "status": "in_progress" if progress < 100 else ("completed" if progress == 100 else "failed"),
+            "status": status,
             "progress": progress,
             "current_step": step,
             "message": message
@@ -161,7 +194,9 @@ class FeatureExtractionService:
     # User Story 1: 会话切分
     # =========================================================================
 
-    def extract_sessions(self, conversation_id: int) -> List[Dict[str, Any]]:
+    def extract_sessions(
+        self, conversation_id: int, progress_cb=None
+    ) -> List[Dict[str, Any]]:
         """
         提取会话（User Story 1核心方法）
         使用新的 SessionManager：睡眠时间+时间间隔+语义相似度三重切分
@@ -181,7 +216,7 @@ class FeatureExtractionService:
             return []
 
         # 2. 使用新的预处理服务构建发言单元和切分会话
-        from .preprocessing_service import PairPreprocessingService, SessionManager
+        from .preprocessing import PairPreprocessingService, SessionManager
 
         # 使用缓存的实例（避免重复加载模型）
         if self._pair_service is None:
@@ -189,6 +224,8 @@ class FeatureExtractionService:
 
         if self._session_manager is None:
             self._session_manager = SessionManager()
+        # 取消信号透传给会话切分（语义相似度的分块编码之间检查）
+        self._session_manager._cancel_event = self._extract_cancel_event
 
         # 2.1 构建发言单元（合并5分钟内同发送者的消息）
         speech_units = self._pair_service.build_speech_units(messages)
@@ -197,7 +234,7 @@ class FeatureExtractionService:
             return []
 
         # 2.2 使用新的 SessionManager 切分会话（睡眠+时间+语义）
-        session_result = self._session_manager.split_sessions(speech_units)
+        session_result = self._session_manager.split_sessions(speech_units, progress_cb=progress_cb)
 
         # 3. 转换为数据库格式
         sessions_data = []
@@ -319,8 +356,10 @@ class FeatureExtractionService:
         Returns:
             是否跨越睡眠时间
         """
-        start_dt = datetime.fromtimestamp(start_ts, tz=timezone.utc)
-        end_dt = datetime.fromtimestamp(end_ts, tz=timezone.utc)
+        # 使用本地时区而不是UTC（与 SessionManager._check_crosses_sleep_time 口径一致）：
+        # 睡眠时段是用户的本地概念，用 UTC 判定会对东八区用户错切/错扣白天时段（08:00-15:00）
+        start_dt = datetime.fromtimestamp(start_ts)
+        end_dt = datetime.fromtimestamp(end_ts)
 
         # 检查是否跨越午夜
         if start_dt.date() != end_dt.date():
@@ -497,8 +536,10 @@ class FeatureExtractionService:
         Returns:
             调整后的响应时间（秒）
         """
-        start_dt = datetime.fromtimestamp(start_ts, tz=timezone.utc)
-        end_dt = datetime.fromtimestamp(end_ts, tz=timezone.utc)
+        # 使用本地时区而不是UTC（与 _check_crosses_sleep_time 口径一致）：
+        # 00:00-07:00 指用户本地时间的睡眠时段，UTC 扣除的会是东八区的白天 08:00-15:00
+        start_dt = datetime.fromtimestamp(start_ts)
+        end_dt = datetime.fromtimestamp(end_ts)
 
         sleep_seconds = 0
         current_dt = start_dt

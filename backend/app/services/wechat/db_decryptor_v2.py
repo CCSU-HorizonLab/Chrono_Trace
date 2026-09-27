@@ -2,8 +2,9 @@
 import hashlib
 import hmac
 import struct
+import time
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Tuple
 from Crypto.Cipher import AES
 from Crypto.Protocol.KDF import PBKDF2
 import logging
@@ -31,11 +32,25 @@ class WeChatDBDecryptorV2:
         self.reserve = self.IV_SIZE + self.HMAC_SHA512_SIZE
         if self.reserve % self.AES_BLOCK_SIZE != 0:
             self.reserve = ((self.reserve // self.AES_BLOCK_SIZE) + 1) * self.AES_BLOCK_SIZE
-    
+        # Windows 只读扫描产物的 raw enc_key 模式（见 set_raw_key_map）
+        self._raw_key_map: dict = {}
+
+    def set_raw_key_map(self, raw_keys) -> None:
+        """启用 raw key 模式：{salt_hex: enc_key_hex}（Windows 只读扫描产物）。
+
+        设置后 derive_keys 优先按库 salt 直取 raw key（mac_key 以 2 轮 PBKDF2
+        从 enc_key 派生，SQLCipher raw key 语义）；salt 未命中时回落 passphrase
+        派生。传 None/空恢复纯 passphrase 模式。validate_key / verify_key_from_file /
+        decrypt_database / decrypt_page 全部自动生效。
+        """
+        self._raw_key_map = {
+            str(k).lower(): str(v).lower() for k, v in (raw_keys or {}).items()
+        } if raw_keys else {}
+
     def derive_keys(self, key: bytes, salt: bytes) -> Tuple[bytes, bytes]:
         """
         派生加密密钥和MAC密钥
-        
+
         Args:
             key: 原始密钥 (32字节)
             salt: 盐值 (16字节)
@@ -43,6 +58,13 @@ class WeChatDBDecryptorV2:
         Returns:
             (enc_key, mac_key): 加密密钥和MAC密钥
         """
+        # raw key 模式（Windows 只读扫描）：salt 命中则直接采用，key 参数被忽略
+        if self._raw_key_map:
+            hit = self._raw_key_map.get(salt.hex())
+            if hit:
+                enc_key = bytes.fromhex(hit)
+                return enc_key, self._derive_mac_key(enc_key, salt)
+
         from Crypto.Hash import SHA512
         
         # 生成加密密钥
@@ -65,7 +87,15 @@ class WeChatDBDecryptorV2:
         )
         
         return enc_key, mac_key
-    
+
+    def _derive_mac_key(self, enc_key: bytes, salt: bytes) -> bytes:
+        """从 enc_key 派生 mac_key（2 轮 PBKDF2，raw key 语义，与派生链后半段一致）。"""
+        from Crypto.Hash import SHA512
+        mac_salt = bytes(b ^ 0x3a for b in salt)
+        return PBKDF2(
+            enc_key, mac_salt, dkLen=self.KEY_SIZE, count=2, hmac_hash_module=SHA512
+        )
+
     def validate_key(self, first_page: bytes, key: bytes) -> bool:
         """
         验证密钥是否正确
@@ -174,12 +204,12 @@ class WeChatDBDecryptorV2:
             return False
     
     def decrypt_database(
-        self, 
-        input_path: str, 
-        output_path: str, 
+        self,
+        input_path: str,
+        output_path: str,
         key_hex: str,
         progress_callback=None
-    ) -> None:
+    ) -> bool:
         """
         解密整个数据库
         
@@ -207,34 +237,62 @@ class WeChatDBDecryptorV2:
         total_pages = (file_size + self.PAGE_SIZE - 1) // self.PAGE_SIZE
         
         # 解密所有页面
+        failed_pages: list[int] = []
         with open(input_path, 'rb') as input_file:
             with open(output_path, 'wb') as output_file:
                 # 写入SQLite头
                 output_file.write(self.SQLITE_HEADER)
-                
+
                 for page_num in range(total_pages):
                     page_buf = input_file.read(self.PAGE_SIZE)
-                    
+
                     if len(page_buf) == 0:
                         break
-                    
+
                     # 检查是否全为零
                     if page_buf == b'\x00' * len(page_buf):
                         output_file.write(page_buf)
                         continue
-                    
+
                     # 解密页面
                     try:
                         decrypted = self.decrypt_page(page_buf, enc_key, mac_key, page_num)
                         output_file.write(decrypted)
                     except Exception as e:
-                        logger.error(f"[WARN] 解密页面 {page_num} 失败: {e}")
-                        # 写入原始数据
-                        output_file.write(page_buf)
-                    
+                        # 撕裂页通常源于微信并发写入：短暂等待后从源文件重读该页再试
+                        # （W3：避免把密文页静默写进"明文"库导致整段会话丢失）
+                        recovered = False
+                        with open(input_path, 'rb') as retry_file:
+                            for _ in range(2):
+                                time.sleep(0.2)
+                                retry_file.seek(page_num * self.PAGE_SIZE)
+                                fresh = retry_file.read(self.PAGE_SIZE)
+                                if len(fresh) != self.PAGE_SIZE:
+                                    continue
+                                try:
+                                    decrypted = self.decrypt_page(fresh, enc_key, mac_key, page_num)
+                                    output_file.write(decrypted)
+                                    recovered = True
+                                    break
+                                except Exception:
+                                    page_buf = fresh
+                        if not recovered:
+                            logger.error(f"[WARN] 解密页面 {page_num} 失败（重试后仍失败）: {e}")
+                            # 写入原始数据（该页所在会话读取会失败并计入统计）
+                            output_file.write(page_buf)
+                            failed_pages.append(page_num)
+
                     # 进度回调
                     if progress_callback:
                         progress_callback(page_num + 1, total_pages)
+
+        if failed_pages:
+            preview = failed_pages[:10]
+            logger.warning(
+                f"[解密] {input_path}: {len(failed_pages)} 个页面重试后仍无法解密"
+                f"（保留密文页，相关会话可能缺失）：{preview}{'...' if len(failed_pages) > 10 else ''}"
+            )
+        return len(failed_pages) == 0
 
 
 # 保持向后兼容

@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 from ...db.connection import get_db
 from .feature_extraction_config import FeatureExtractionConfig
 from .keyword_libraries import KeywordLibraries
-from .preprocessing_service import (
+from .preprocessing import (
     AttitudePreprocessingService,
     BasicPreprocessingService,
     PairPreprocessingService,
@@ -20,6 +20,12 @@ from .sentiment_service import SentimentService
 
 
 logger = logging.getLogger(__name__)
+
+# 预处理算法版本号：凡是会影响 preprocessing_stats 统计口径的算法/常量变更，
+# 必须将此版本 +1（当前为 2，v1 是无版本号的旧 key）。
+# 例如调整 MERGE_TIME_THRESHOLD / TIME_GAP_THRESHOLD / SLEEP_END_HOUR 等切分、
+# 合并常量或统计逻辑时。版本进入缓存 key，旧 key 读不到即自然失效重算。
+PREPROCESSING_ALGO_VERSION = 2
 
 
 def _step_elapsed(start_time: float) -> str:
@@ -72,7 +78,8 @@ class PreprocessingOrchestrator:
         self.attitude_service = AttitudePreprocessingService(keyword_lib=self.keyword_lib)
 
     def _cache_key(self, conversation_id: int) -> str:
-        return f"preprocessing_stats_{conversation_id}"
+        # key 携带算法版本（见 PREPROCESSING_ALGO_VERSION 注释），改算法不改 key 会读到脏缓存
+        return f"preprocessing_stats_v{PREPROCESSING_ALGO_VERSION}_{conversation_id}"
 
     def _sync_analysis_device_mode(self) -> None:
         self.sentiment_service.configure_device_mode(
@@ -83,7 +90,8 @@ class PreprocessingOrchestrator:
         self,
         conversation_id: int,
         force_reprocess: bool = False,
-        cancel_event: Optional[threading.Event] = None
+        cancel_event: Optional[threading.Event] = None,
+        progress_cb=None,
     ) -> PreprocessedStatistics:
         start_time = time.time()
         self._sync_analysis_device_mode()
@@ -95,7 +103,7 @@ class PreprocessingOrchestrator:
                 logger.info(f"[预处理] 命中缓存，会话 {conversation_id}")
                 return cached
 
-        stats = self._collect_all_statistics(conversation_id, cancel_event)
+        stats = self._collect_all_statistics(conversation_id, cancel_event, progress_cb=progress_cb)
         stats.preprocessing_duration_ms = int((time.time() - start_time) * 1000)
         self._save_preprocessing_results(conversation_id, stats)
         logger.info(
@@ -103,7 +111,7 @@ class PreprocessingOrchestrator:
         )
         return stats
 
-    def _collect_all_statistics(self, conversation_id: int, cancel_event: Optional[threading.Event] = None) -> PreprocessedStatistics:
+    def _collect_all_statistics(self, conversation_id: int, cancel_event: Optional[threading.Event] = None, progress_cb=None) -> PreprocessedStatistics:
         stats = PreprocessedStatistics(
             conversation_id=conversation_id,
             preprocessing_timestamp=int(time.time()),
@@ -116,7 +124,17 @@ class PreprocessingOrchestrator:
             return stats
 
         step_start = time.time()
-        self._ensure_sentiment_analysis(conversation_id, messages, cancel_event)
+        def _sentiment_progress(fraction: float) -> None:
+            if progress_cb:
+                progress_cb(0.75 * min(1.0, max(0.0, fraction)))
+
+        def _similarity_progress(fraction: float) -> None:
+            if progress_cb:
+                progress_cb(0.75 + 0.25 * min(1.0, max(0.0, fraction)))
+
+        self._ensure_sentiment_analysis(
+            conversation_id, messages, cancel_event, progress_cb=_sentiment_progress
+        )
         logger.info(f"[预处理] 情感分析完成 ({_step_elapsed(step_start)})")
 
         basic_stats = self.basic_service.collect_message_statistics(conversation_id)
@@ -149,7 +167,9 @@ class PreprocessingOrchestrator:
         stats.bidirectional_pairs = pair_stats.get("bidirectional_pairs", 0)
         stats.same_parity_pairs = pair_stats.get("same_parity_pairs", 0)
 
-        sessions = self.session_manager.split_sessions(speech_units)
+        sessions = self.session_manager.split_sessions(
+            speech_units, progress_cb=_similarity_progress, cancel_event=cancel_event
+        )
         self.session_manager.save_sessions(conversation_id, sessions)
         session_stats = self.session_manager.collect_session_statistics(sessions)
         initiator_stats = self.session_manager.identify_session_initiators(sessions)
@@ -192,7 +212,8 @@ class PreprocessingOrchestrator:
         self,
         conversation_id: int,
         messages: List[Dict[str, Any]],
-        cancel_event: Optional[threading.Event] = None
+        cancel_event: Optional[threading.Event] = None,
+        progress_cb=None,
     ):
         text_messages = [msg for msg in messages if msg["message_type"] == 1]
         all_ids = [msg["id"] for msg in text_messages]
@@ -245,6 +266,11 @@ class PreprocessingOrchestrator:
 
             time.sleep(0.1)
             processed = min(start + batch_size, total_to_analyze)
+            if progress_cb:
+                try:
+                    progress_cb(processed / total_to_analyze)
+                except Exception:
+                    pass
             percentage = (processed / total_to_analyze) * 100 if total_to_analyze else 100
             logger.info(
                 f"[预处理] 情感分析批次 {batch_index}/{total_batches}: "

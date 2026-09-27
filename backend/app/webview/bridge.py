@@ -4,6 +4,7 @@ import os
 import logging
 import importlib
 import shutil
+import sys
 import threading
 import time
 import re
@@ -54,6 +55,8 @@ class Bridge:
     def __init__(self):
         self.wechat_service = WeChatIngestService()
         self.settings_file = Path(SETTINGS_PATH)
+        # 设置读写锁：每个 JS 调用跑在独立线程，settings 的「读-改-写」复合操作必须串行化
+        self._settings_lock = threading.RLock()
         self._load_settings()
 
         # 延迟加载特征提取服务（避免循环导入）
@@ -70,23 +73,27 @@ class Bridge:
         self._wechat_key_capture_lock = threading.Lock()
         self._webview_window = None  # 由 app_dev.py 注入
         self._analysis_cancel_event = None  # 用于取消好感度分析
+        self._affinity_service = None  # 好感度分析服务实例（analyze_affinity 中懒创建）
+        self._close_actions: dict[str, Any] = {}  # 关闭守卫动作（close_guard 装配）
 
     def _load_settings(self):
         """加载设置"""
-        self.settings = load_settings_from_file(self.settings_file)
-        self.settings["analysis_device_mode"] = normalize_analysis_device_mode(
-            self.settings.get("analysis_device_mode", ANALYSIS_DEVICE_MODE_AUTO)
-        )
-        self.settings[MODEL_ROOT_DIR_KEY] = normalize_model_root_dir(
-            self.settings.get(MODEL_ROOT_DIR_KEY)
-        )
+        with self._settings_lock:
+            self.settings = load_settings_from_file(self.settings_file)
+            self.settings["analysis_device_mode"] = normalize_analysis_device_mode(
+                self.settings.get("analysis_device_mode", ANALYSIS_DEVICE_MODE_AUTO)
+            )
+            self.settings[MODEL_ROOT_DIR_KEY] = normalize_model_root_dir(
+                self.settings.get(MODEL_ROOT_DIR_KEY)
+            )
 
     def _save_settings(self):
         """保存设置"""
-        try:
-            save_settings_to_file(self.settings, self.settings_file)
-        except Exception as e:
-            logger.error(f"保存设置失败: {e}")
+        with self._settings_lock:
+            try:
+                save_settings_to_file(self.settings, self.settings_file)
+            except Exception as e:
+                logger.error(f"保存设置失败: {e}")
 
     def _get_wechat_accounts(self) -> list[dict[str, Any]]:
         return get_wechat_accounts(self.settings)
@@ -147,7 +154,7 @@ class Bridge:
         context: dict[str, Any] | None = None,
     ) -> None:
         try:
-            from ..services.realtime.rag_config import load_rag_settings
+            from ..services.realtime.rag.config import load_rag_settings
 
             if not load_rag_settings().get("rag_enabled"):
                 return
@@ -163,7 +170,7 @@ class Bridge:
                 return
             if context is not None:
                 context.setdefault("conversation_id", conversation_id)
-            from ..services.realtime.rag_indexer import RagIndexer
+            from ..services.realtime.rag.indexer import RagIndexer
 
             RagIndexer().ensure_contact_index(
                 account_wxid=str(account_wxid),
@@ -185,15 +192,92 @@ class Bridge:
         }
 
     def _update_model_download_status(self, task_id: str, **updates: Any) -> None:
+        now_ms = int(time.time() * 1000)
         with self._model_download_lock:
+            is_new = task_id not in self._model_download_status
             current = self._model_download_status.get(task_id, {}).copy()
+            if is_new:
+                current["created_at"] = now_ms
+            current["updated_at"] = now_ms
             current.update(updates)
             self._model_download_status[task_id] = current
+        if is_new:
+            # 新增条目时顺带清理过期任务，防止长驻进程内存无界增长。
+            # 注意：必须在锁外调用，避免与 _prune_task_dicts 内部加锁形成 ABBA 死锁
+            self._prune_task_dicts()
 
     def _get_model_download_status(self, task_id: str) -> dict[str, Any]:
         with self._model_download_lock:
             status = self._model_download_status.get(task_id)
         return status.copy() if status else {}
+
+    def _prune_task_dicts(self, max_age_hours: float = 24.0) -> None:
+        """按 TTL 清理三个任务字典（建议流/密钥捕获/模型下载）中的过期条目。
+
+        - 终态条目（建议流 done/error、捕获已出结果、下载 completed/failed）
+          超过 1 小时即删除；
+        - 运行中条目超过 max_age_hours（默认 24 小时）也删除（视作僵死任务）。
+        时间戳兼容秒/毫秒两种单位。调用方不得在持有这三个任务锁时调用（会死锁）。
+        """
+        now_ms = int(time.time() * 1000)
+        terminal_max_age_ms = 60 * 60 * 1000  # 终态条目保留 1 小时
+        running_max_age_ms = int(max_age_hours * 3600 * 1000)
+
+        def _entry_ts_ms(entry: dict[str, Any]) -> int | None:
+            for key in ("updated_at", "created_at"):
+                raw = entry.get(key)
+                if raw is None:
+                    continue
+                try:
+                    value = int(raw)
+                except (TypeError, ValueError):
+                    continue
+                if value <= 0:
+                    continue
+                # 小于 1e12 视为秒级时间戳，统一换算成毫秒
+                return value if value > 10**12 else value * 1000
+            return None
+
+        with self._suggestion_stream_lock:
+            expired = []
+            for stream_id, state in self._suggestion_streams.items():
+                ts = _entry_ts_ms(state)
+                if ts is None:
+                    continue
+                status = str(state.get("status") or "")
+                is_terminal = status in {"done", "error", "completed", "failed", "cancelled"}
+                deadline = terminal_max_age_ms if is_terminal else running_max_age_ms
+                if now_ms - ts > deadline:
+                    expired.append(stream_id)
+            for stream_id in expired:
+                self._suggestion_streams.pop(stream_id, None)
+
+        with self._wechat_key_capture_lock:
+            expired = []
+            for session_id, entry in self._wechat_key_capture_sessions.items():
+                ts = _entry_ts_ms(entry)
+                if ts is None:
+                    continue
+                is_terminal = entry.get("final_result") is not None
+                deadline = terminal_max_age_ms if is_terminal else running_max_age_ms
+                if now_ms - ts > deadline:
+                    expired.append(session_id)
+            for session_id in expired:
+                self._wechat_key_capture_sessions.pop(session_id, None)
+
+        with self._model_download_lock:
+            expired = []
+            for task_id, entry in self._model_download_status.items():
+                ts = _entry_ts_ms(entry)
+                if ts is None:
+                    continue
+                status = str(entry.get("status") or "")
+                is_terminal = status in {"completed", "failed", "cancelled"}
+                deadline = terminal_max_age_ms if is_terminal else running_max_age_ms
+                if now_ms - ts > deadline:
+                    expired.append(task_id)
+            for task_id in expired:
+                self._model_download_status.pop(task_id, None)
 
     def _get_sentiment_model_manager(self):
         from ..services.model_manager import ModelManager
@@ -225,49 +309,50 @@ class Bridge:
         return get_model_root_dir(self.settings)
 
     def _migrate_model_root_dir(self, target_dir: str) -> dict[str, Any]:
-        current_root = self._get_model_root_dir()
-        next_root = Path(normalize_model_root_dir(target_dir))
-        next_root.mkdir(parents=True, exist_ok=True)
+        with self._settings_lock:
+            current_root = self._get_model_root_dir()
+            next_root = Path(normalize_model_root_dir(target_dir))
+            next_root.mkdir(parents=True, exist_ok=True)
 
-        if current_root == next_root:
-            self.settings[MODEL_ROOT_DIR_KEY] = str(next_root)
-            self._save_settings()
-            return {
-                "ok": True,
-                "model_root_dir": str(next_root),
-                "migrated_models": [],
-                "skipped_models": [SENTIMENT_MODEL_DIRNAME, EMBEDDING_MODEL_DIRNAME],
-            }
+            if current_root == next_root:
+                self.settings[MODEL_ROOT_DIR_KEY] = str(next_root)
+                self._save_settings()
+                return {
+                    "ok": True,
+                    "model_root_dir": str(next_root),
+                    "migrated_models": [],
+                    "skipped_models": [SENTIMENT_MODEL_DIRNAME, EMBEDDING_MODEL_DIRNAME],
+                }
 
-        moved: list[tuple[Path, Path]] = []
-        skipped: list[str] = []
-        try:
-            for dirname in (SENTIMENT_MODEL_DIRNAME, EMBEDDING_MODEL_DIRNAME):
-                source = current_root / dirname
-                destination = next_root / dirname
-                if not source.exists():
-                    skipped.append(dirname)
-                    continue
-                if destination.exists():
-                    raise FileExistsError(f"目标目录已存在: {destination}")
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(source), str(destination))
-                moved.append((source, destination))
+            moved: list[tuple[Path, Path]] = []
+            skipped: list[str] = []
+            try:
+                for dirname in (SENTIMENT_MODEL_DIRNAME, EMBEDDING_MODEL_DIRNAME):
+                    source = current_root / dirname
+                    destination = next_root / dirname
+                    if not source.exists():
+                        skipped.append(dirname)
+                        continue
+                    if destination.exists():
+                        raise FileExistsError(f"目标目录已存在: {destination}")
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.move(str(source), str(destination))
+                    moved.append((source, destination))
 
-            self.settings[MODEL_ROOT_DIR_KEY] = str(next_root)
-            self._save_settings()
-            return {
-                "ok": True,
-                "model_root_dir": str(next_root),
-                "migrated_models": [dst.name for _, dst in moved],
-                "skipped_models": skipped,
-            }
-        except Exception:
-            for source, destination in reversed(moved):
-                if destination.exists() and not source.exists():
-                    source.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.move(str(destination), str(source))
-            raise
+                self.settings[MODEL_ROOT_DIR_KEY] = str(next_root)
+                self._save_settings()
+                return {
+                    "ok": True,
+                    "model_root_dir": str(next_root),
+                    "migrated_models": [dst.name for _, dst in moved],
+                    "skipped_models": skipped,
+                }
+            except Exception:
+                for source, destination in reversed(moved):
+                    if destination.exists() and not source.exists():
+                        source.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.move(str(destination), str(source))
+                raise
 
     def update_model_root_dir(self, new_dir: str) -> dict[str, Any]:
         try:
@@ -305,14 +390,22 @@ class Bridge:
     def _get_wechat_custom_paths(self, account_wxid: str = "") -> dict[str, str] | None:
         return build_custom_paths(self._resolve_wechat_account(account_wxid))
 
+    def _key_scan_wechat_dir(self, account_wxid: str = "") -> str:
+        """供 Windows 只读扫描引擎定位数据库目录（按 salt 验证候选）；Linux 引擎不使用。"""
+        try:
+            paths = self._get_wechat_custom_paths(account_wxid) or {}
+            return str(paths.get("wechat_dir") or "")
+        except Exception:
+            return ""
+
     def _build_wechat_user_candidates(self, wxid: str) -> list[str]:
         candidates: list[str] = []
         normalized = str(wxid or "").strip()
         if not normalized:
             return candidates
         candidates.append(normalized)
-        match = re.match(r"^(wxid_[a-z0-9]+)_([a-z0-9]{4,6})$", normalized)
-        if match:
+        match = re.match(r"^(.+)_([0-9a-zA-Z]{4,6})$", normalized)
+        if match and len(match.group(1)) >= 2:
             base_wxid = match.group(1)
             if base_wxid not in candidates:
                 candidates.append(base_wxid)
@@ -324,19 +417,23 @@ class Bridge:
         *,
         account_wxid: str = "",
         db_key: str | None = None,
+        import_watermark_ts: int | None = None,
     ) -> None:
         resolved_wxid = self._resolve_account_wxid(account_wxid) or str(snapshot.get("account_wxid") or snapshot.get("current_user") or "")
         if not resolved_wxid:
             return
-        update_wechat_account_import_state(
-            self.settings,
-            resolved_wxid,
-            snapshot=snapshot,
-            db_key=db_key,
-            wechat_dir=str(snapshot.get("wechat_dir") or "") or None,
-            import_completed=True,
-        )
-        self._save_settings()
+        with self._settings_lock:
+            update_wechat_account_import_state(
+                self.settings,
+                resolved_wxid,
+                snapshot=snapshot,
+                db_key=db_key,
+                wechat_dir=str(snapshot.get("wechat_dir") or "") or None,
+                import_completed=True,
+                # 消息水位与文件基线同锁同批落库（导入成功路径才会到这）
+                import_watermark_ts=import_watermark_ts,
+            )
+            self._save_settings()
 
     def _build_wechat_account_candidate(
         self,
@@ -363,24 +460,25 @@ class Bridge:
         }
 
     def _sync_wechat_account_candidates(self, accounts: list[dict[str, Any]]) -> None:
-        changed = False
-        for account in accounts:
-            normalized = self._build_wechat_account_candidate(
-                str(account.get("wxid") or ""),
-                wechat_dir=str(account.get("wechat_dir") or ""),
-                source=str(account.get("source") or "auto"),
-                db_key=str(account.get("db_key") or ""),
-                avatar=str(account.get("avatar") or ""),
-                label=str(account.get("label") or "") or None,
-            )
-            if not normalized["wxid"]:
-                continue
-            existing = self._get_wechat_account(normalized["wxid"]) or {}
-            if existing != normalized:
-                upsert_wechat_account(self.settings, normalized)
-                changed = True
-        if changed:
-            self._save_settings()
+        with self._settings_lock:
+            changed = False
+            for account in accounts:
+                normalized = self._build_wechat_account_candidate(
+                    str(account.get("wxid") or ""),
+                    wechat_dir=str(account.get("wechat_dir") or ""),
+                    source=str(account.get("source") or "auto"),
+                    db_key=str(account.get("db_key") or ""),
+                    avatar=str(account.get("avatar") or ""),
+                    label=str(account.get("label") or "") or None,
+                )
+                if not normalized["wxid"]:
+                    continue
+                existing = self._get_wechat_account(normalized["wxid"]) or {}
+                if existing != normalized:
+                    upsert_wechat_account(self.settings, normalized)
+                    changed = True
+            if changed:
+                self._save_settings()
 
     # ==================== 微信数据导入相关 ====================
 
@@ -390,8 +488,9 @@ class Bridge:
 
     def set_active_wechat_account(self, wxid: str) -> dict[str, Any]:
         try:
-            active_wxid = set_active_wechat_account(self.settings, wxid)
-            self._save_settings()
+            with self._settings_lock:
+                active_wxid = set_active_wechat_account(self.settings, wxid)
+                self._save_settings()
             return {"ok": True, "active_account_wxid": active_wxid}
         except Exception as e:
             return {"ok": False, "error": str(e)}
@@ -472,14 +571,15 @@ class Bridge:
         if result.get("ok") and preferred_paths:
             resolved_wxid = str(preferred_paths.get("account_wxid") or preferred_paths.get("current_user") or self._resolve_account_wxid(account_wxid))
             if resolved_wxid:
-                update_wechat_account_import_state(
-                    self.settings,
-                    resolved_wxid,
-                    db_key=db_key,
-                    wechat_dir=str(preferred_paths.get("wechat_dir") or "") or None,
-                    source="custom" if custom_paths else None,
-                )
-                self._save_settings()
+                with self._settings_lock:
+                    update_wechat_account_import_state(
+                        self.settings,
+                        resolved_wxid,
+                        db_key=db_key,
+                        wechat_dir=str(preferred_paths.get("wechat_dir") or "") or None,
+                        source="custom" if custom_paths else None,
+                    )
+                    self._save_settings()
         return result
 
     def capture_wechat_db_key(
@@ -489,9 +589,12 @@ class Bridge:
     ) -> dict[str, Any]:
         """Automatically capture, verify, and persist the active account DB key."""
         try:
-            from ..services.wechat.key_provider import WeChatKeyProvider
+            from ..services.wechat.keys import create_key_provider
 
-            result = WeChatKeyProvider().capture_db_key(
+            provider = create_key_provider(
+                wechat_dir=self._key_scan_wechat_dir(account_wxid)
+            )
+            result = provider.capture_db_key(
                 timeout_seconds=timeout_seconds,
                 account_wxid=account_wxid,
             )
@@ -514,8 +617,12 @@ class Bridge:
     ) -> dict[str, Any]:
         """Verify and persist a key captured by either synchronous or session flow."""
         db_key = str(result.get("db_key") or "").strip().lower()
+        key_type = str(result.get("key_type") or "passphrase").strip() or "passphrase"
+        raw_keys = result.get("raw_keys") if key_type == "raw" else None
         preferred_paths = self._get_wechat_custom_paths(account_wxid)
-        verified = self.wechat_service.verify_key(db_key, preferred_paths)
+        verified = self.wechat_service.verify_key(
+            db_key, preferred_paths, key_type=key_type, raw_keys=raw_keys
+        )
         if not verified.get("ok"):
             return {
                 **result,
@@ -538,13 +645,16 @@ class Bridge:
             or ""
         ).strip()
         if resolved_wxid:
-            update_wechat_account_import_state(
-                self.settings,
-                resolved_wxid,
-                db_key=db_key,
-                wechat_dir=str((resolved_paths or {}).get("wechat_dir") or "") or None,
-            )
-            self._save_settings()
+            with self._settings_lock:
+                update_wechat_account_import_state(
+                    self.settings,
+                    resolved_wxid,
+                    db_key=db_key,
+                    key_type=key_type,
+                    raw_keys=raw_keys if key_type == "raw" else {},
+                    wechat_dir=str((resolved_paths or {}).get("wechat_dir") or "") or None,
+                )
+                self._save_settings()
 
         return {
             **result,
@@ -556,7 +666,19 @@ class Bridge:
     def get_wechat_key_capture_status(self) -> dict[str, Any]:
         """Inspect whether WeChat is at its login screen or already logged in."""
         try:
-            from ..services.wechat.key_capture_flow import inspect_wechat_login_state
+            if sys.platform != "win32":
+                # Linux：无需重启微信，只需「退出登录后重新登录」触发断点
+                from ..services.wechat.keys.gdb_linux import find_linux_wechat_pids
+
+                pids = find_linux_wechat_pids()
+                return {
+                    "ok": True,
+                    "running": bool(pids),
+                    "login_state": "logged_in" if pids else "not_running",
+                    "processes": [{"pid": p} for p in pids],
+                    "restart_required": False,
+                }
+            from ..services.wechat.keys.flow_win import inspect_wechat_login_state
 
             return inspect_wechat_login_state()
         except Exception as exc:
@@ -571,8 +693,16 @@ class Bridge:
 
     def restart_wechat_for_key_capture(self) -> dict[str, Any]:
         """Restart WeChat for key capture after the frontend obtains confirmation."""
+        if sys.platform != "win32":
+            # Linux 密钥捕获不需要重启微信（静态内存断点等待重新登录即可）
+            return {
+                "ok": True,
+                "restarted": False,
+                "restart_required": False,
+                "message": "Linux 无需重启微信，请在微信中退出登录后重新登录。",
+            }
         try:
-            from ..services.wechat.key_capture_flow import restart_wechat_for_key_capture
+            from ..services.wechat.keys.flow_win import restart_wechat_for_key_capture
 
             return restart_wechat_for_key_capture()
         except Exception as exc:
@@ -590,9 +720,12 @@ class Bridge:
     ) -> dict[str, Any]:
         """Install the Hook and return as soon as it is ready for a login event."""
         try:
-            from ..services.wechat.key_provider import WeChatKeyProvider
+            from ..services.wechat.keys import create_key_provider
 
-            session = WeChatKeyProvider().create_capture_session(
+            provider = create_key_provider(
+                wechat_dir=self._key_scan_wechat_dir(account_wxid)
+            )
+            session = provider.create_capture_session(
                 timeout_seconds=timeout_seconds,
                 account_wxid=account_wxid,
             )
@@ -601,13 +734,17 @@ class Bridge:
                 return initial
 
             session_id = uuid.uuid4().hex
+            now_ms = int(time.time() * 1000)
             with self._wechat_key_capture_lock:
                 self._wechat_key_capture_sessions[session_id] = {
                     "session": session,
                     "account_wxid": str(account_wxid or ""),
                     "final_result": None,
-                    "created_at": time.time(),
+                    "created_at": now_ms,
+                    "updated_at": now_ms,
                 }
+            # 新增条目时顺带清理过期会话（锁外调用，避免锁内嵌套死锁）
+            self._prune_task_dicts()
             return {
                 **initial,
                 "ok": True,
@@ -647,6 +784,7 @@ class Bridge:
                     str(entry.get("account_wxid") or ""),
                 )
                 entry["final_result"] = final_result
+                entry["updated_at"] = int(time.time() * 1000)
 
         return {
             **final_result,
@@ -686,12 +824,28 @@ class Bridge:
         if custom_paths:
             logger.debug(f"[DEBUG Bridge] 使用自定义路径: {custom_paths}")
         else:
-            logger.debug(f"[DEBUG Bridge] 未配置自定义路径,将使用自动检测")
+            logger.debug("[DEBUG Bridge] 未配置自定义路径,将使用自动检测")
 
-        result = self.wechat_service.import_wechat_data(db_key, options, custom_paths)
+        # Windows 只读扫描账号：导入需带每库 raw key 映射（passphrase 账号不传）
+        raw_keys = None
+        account = self._resolve_wechat_account(resolved_wxid) or {}
+        if str(account.get("key_type") or "passphrase") == "raw":
+            raw_keys = account.get("raw_keys") or {}
+
+        # 注入账号消息水位（时间增量读取；force_full 由 options 显式覆盖，service 侧忽略水位）
+        if "import_watermark_ts" not in options:
+            options["import_watermark_ts"] = int(account.get("import_watermark_ts") or 0)
+
+        result = self.wechat_service.import_wechat_data(
+            db_key, options, custom_paths, raw_keys=raw_keys
+        )
         if result.get("ok"):
             snapshot = self.wechat_service.build_file_size_snapshot(custom_paths)
-            self._save_wechat_import_baseline(snapshot, account_wxid=resolved_wxid, db_key=db_key)
+            watermark_out = (result.get("stats") or {}).get("import_watermark_ts")
+            self._save_wechat_import_baseline(
+                snapshot, account_wxid=resolved_wxid, db_key=db_key,
+                import_watermark_ts=watermark_out,
+            )
         return result
 
     def refresh_wechat_contact_avatars(
@@ -702,17 +856,25 @@ class Bridge:
     ) -> dict[str, Any]:
         """Refresh imported contact avatar metadata without reimporting messages."""
         preferred_paths = custom_paths or self._get_wechat_custom_paths(account_wxid)
-        result = self.wechat_service.refresh_contact_avatars(db_key, preferred_paths)
+        # Windows 只读扫描账号：头像回读同样需要每库 raw key 映射
+        raw_keys = None
+        account = self._resolve_wechat_account(account_wxid) or {}
+        if str(account.get("key_type") or "passphrase") == "raw":
+            raw_keys = account.get("raw_keys") or {}
+        result = self.wechat_service.refresh_contact_avatars(
+            db_key, preferred_paths, raw_keys=raw_keys
+        )
         if result.get("ok") and preferred_paths:
             resolved_wxid = str(preferred_paths.get("account_wxid") or preferred_paths.get("current_user") or self._resolve_account_wxid(account_wxid))
             if resolved_wxid:
-                update_wechat_account_import_state(
-                    self.settings,
-                    resolved_wxid,
-                    db_key=db_key,
-                    wechat_dir=str(preferred_paths.get("wechat_dir") or "") or None,
-                )
-                self._save_settings()
+                with self._settings_lock:
+                    update_wechat_account_import_state(
+                        self.settings,
+                        resolved_wxid,
+                        db_key=db_key,
+                        wechat_dir=str(preferred_paths.get("wechat_dir") or "") or None,
+                    )
+                    self._save_settings()
         return result
 
     def detect_wechat_import_increment(self, account_wxid: str = "") -> dict[str, Any]:
@@ -767,52 +929,6 @@ class Bridge:
 
     def ingest_data(self, file_path: str, options: dict[str, Any] | None = None) -> dict[str, Any]:
         return {"ok": True, "file_path": file_path, "options": options or {}}
-    # ==================== 长程对话继承 ====================
-    def get_latest_thread(self, display_name: str) -> dict[str, Any]:
-        """获取联系人最近的一次会话归档，用于“继续上次指导”"""
-        try:
-            from ..services.realtime.session_thread_service import SessionThreadService
-            thread = SessionThreadService().get_latest_thread(display_name)
-            if thread:
-                return {"ok": True, "thread": thread}
-            return {"ok": False}
-        except Exception as e:
-            logger.error(f"[Bridge] 获取最近线程异常: {e}")
-            return {"ok": False, "error": str(e)}
-
-    def load_thread_context(self, thread_id: int) -> dict[str, Any]:
-        """加载历史线程的完整对话上下文与建议"""
-        try:
-            from ..services.realtime.session_thread_service import SessionThreadService
-            data = SessionThreadService().load_thread_context(thread_id)
-            if data:
-                # 确保所有值都是 JSON 可序列化的
-                safe_data = {}
-                for k, v in data.items():
-                    if isinstance(v, bytes):
-                        safe_data[k] = v.decode('utf-8', errors='replace')
-                    elif isinstance(v, (dict, list, str, int, float, bool)) or v is None:
-                        safe_data[k] = v
-                    else:
-                        safe_data[k] = str(v)
-                
-                result = {"ok": True, "data": safe_data}
-                # 预检序列化
-                try:
-                    import json as _json
-                    test = _json.dumps(result, ensure_ascii=False)
-                    logger.info(f"[Bridge] load_thread_context 返回成功: keys={list(safe_data.keys())}, "
-                               f"suggestions={len(safe_data.get('suggestions', []))}, "
-                               f"messages={len(safe_data.get('messages', []))}, "
-                               f"json_size={len(test)}")
-                except Exception as je:
-                    logger.error(f"[Bridge] load_thread_context 序列化预检失败: {je}")
-                    return {"ok": False, "error": f"序列化失败: {je}"}
-                return result
-            return {"ok": False, "error": "未找到上下文"}
-        except Exception as e:
-            logger.error(f"[Bridge] 加载线程上下文异常: {e}")
-            return {"ok": False, "error": str(e)}
 
     # ==================== 历史数据分析相关 ====================
     
@@ -903,6 +1019,8 @@ class Bridge:
             }
             events.append(item)
             state["next_seq"] = seq + 1
+            # 事件持续到达视为活跃，刷新 TTL 基准
+            state["updated_at"] = int(time.time() * 1000)
             # Keep the bridge memory bounded; frontend polls frequently.
             if len(events) > 400:
                 del events[:-400]
@@ -923,6 +1041,8 @@ class Bridge:
                 "created_at": now_ms,
                 "updated_at": now_ms,
             }
+        # 新增条目时顺带清理过期流（锁外调用，避免锁内嵌套死锁）
+        self._prune_task_dicts()
 
         def _run() -> None:
             try:
@@ -1181,7 +1301,7 @@ class Bridge:
                 try:
                     rag_log_id = getattr(result, 'rag_log_id', None)
                     if rag_log_id:
-                        from ..services.realtime.rag_context_builder import RagContextBuilder
+                        from ..services.realtime.rag.context_builder import RagContextBuilder
 
                         RagContextBuilder().attach_log_to_suggestion(rag_log_id, inserted_id)
                 except Exception as rag_log_e:
@@ -1277,32 +1397,33 @@ class Bridge:
 
     def get_settings(self) -> dict[str, Any]:
         """获取设置"""
-        try:
-            from ..services.realtime.rag_config import apply_rag_defaults
+        with self._settings_lock:
+            try:
+                from ..services.realtime.rag.config import apply_rag_defaults
 
-            apply_rag_defaults(self.settings)
-        except Exception:
-            pass
-        self.settings["analysis_device_mode"] = normalize_analysis_device_mode(
-            self.settings.get("analysis_device_mode", ANALYSIS_DEVICE_MODE_AUTO)
-        )
-        self.settings[MODEL_ROOT_DIR_KEY] = normalize_model_root_dir(self.settings.get(MODEL_ROOT_DIR_KEY))
-        payload = dict(self.settings)
-        active_account = self._get_active_wechat_account() or {}
-        payload[WECHAT_ACCOUNTS_KEY] = self._get_wechat_accounts()
-        payload[WECHAT_ACTIVE_ACCOUNT_KEY] = self._get_active_wechat_account_wxid()
-        payload[MODEL_ROOT_DIR_KEY] = self.settings[MODEL_ROOT_DIR_KEY]
-        payload["default_model_root_dir"] = str(get_default_model_root_dir())
-        payload["sentiment_model_dir"] = str(get_sentiment_model_dir(self.settings))
-        payload["embedding_model_dir"] = str(get_embedding_model_dir(self.settings))
-        payload["wechat_use_custom_path"] = str(active_account.get("source") or "") == "custom"
-        payload["wechat_data_dir"] = active_account.get("wechat_dir") or ""
-        payload["wechat_user_wxid"] = active_account.get("wxid") or ""
-        payload["wechat_db_key"] = active_account.get("db_key") or ""
-        payload["wechat_import_completed"] = bool(active_account.get("import_completed"))
-        payload["wechat_last_import_at"] = active_account.get("last_import_at")
-        payload["wechat_last_import_total_size"] = int(active_account.get("last_import_total_size") or 0)
-        payload["wechat_last_import_files"] = active_account.get("last_import_files") or []
+                apply_rag_defaults(self.settings)
+            except Exception:
+                pass
+            self.settings["analysis_device_mode"] = normalize_analysis_device_mode(
+                self.settings.get("analysis_device_mode", ANALYSIS_DEVICE_MODE_AUTO)
+            )
+            self.settings[MODEL_ROOT_DIR_KEY] = normalize_model_root_dir(self.settings.get(MODEL_ROOT_DIR_KEY))
+            payload = dict(self.settings)
+            active_account = self._get_active_wechat_account() or {}
+            payload[WECHAT_ACCOUNTS_KEY] = self._get_wechat_accounts()
+            payload[WECHAT_ACTIVE_ACCOUNT_KEY] = self._get_active_wechat_account_wxid()
+            payload[MODEL_ROOT_DIR_KEY] = self.settings[MODEL_ROOT_DIR_KEY]
+            payload["default_model_root_dir"] = str(get_default_model_root_dir())
+            payload["sentiment_model_dir"] = str(get_sentiment_model_dir(self.settings))
+            payload["embedding_model_dir"] = str(get_embedding_model_dir(self.settings))
+            payload["wechat_use_custom_path"] = str(active_account.get("source") or "") == "custom"
+            payload["wechat_data_dir"] = active_account.get("wechat_dir") or ""
+            payload["wechat_user_wxid"] = active_account.get("wxid") or ""
+            payload["wechat_db_key"] = active_account.get("db_key") or ""
+            payload["wechat_import_completed"] = bool(active_account.get("import_completed"))
+            payload["wechat_last_import_at"] = active_account.get("last_import_at")
+            payload["wechat_last_import_total_size"] = int(active_account.get("last_import_total_size") or 0)
+            payload["wechat_last_import_files"] = active_account.get("last_import_files") or []
         return payload
 
     def get_current_user_profile(self, account_wxid: str = "") -> dict[str, Any]:
@@ -1426,46 +1547,49 @@ class Bridge:
         if MODEL_ROOT_DIR_KEY in payload:
             payload[MODEL_ROOT_DIR_KEY] = normalize_model_root_dir(payload[MODEL_ROOT_DIR_KEY])
 
-        if WECHAT_ACCOUNTS_KEY in payload:
-            self.settings[WECHAT_ACCOUNTS_KEY] = normalize_wechat_accounts(payload.pop(WECHAT_ACCOUNTS_KEY))
-        if WECHAT_ACTIVE_ACCOUNT_KEY in payload:
-            set_active_wechat_account(self.settings, str(payload.pop(WECHAT_ACTIVE_ACCOUNT_KEY) or ""))
+        with self._settings_lock:
+            # 微信账号相关键先从 payload 摘出并合并进当前设置，避免与 self.settings.update 相互覆盖
+            if WECHAT_ACCOUNTS_KEY in payload:
+                self.settings[WECHAT_ACCOUNTS_KEY] = normalize_wechat_accounts(payload.pop(WECHAT_ACCOUNTS_KEY))
+            if WECHAT_ACTIVE_ACCOUNT_KEY in payload:
+                set_active_wechat_account(self.settings, str(payload.pop(WECHAT_ACTIVE_ACCOUNT_KEY) or ""))
 
-        legacy_keys = {key: payload.pop(key) for key in list(payload.keys()) if key in LEGACY_WECHAT_KEYS}
-        if legacy_keys:
-            target_wxid = str(
-                legacy_keys.get("wechat_user_wxid")
-                or self._get_active_wechat_account_wxid()
-                or ""
-            ).strip()
-            if target_wxid:
-                update_wechat_account_import_state(
-                    self.settings,
-                    target_wxid,
-                    db_key=str(legacy_keys.get("wechat_db_key") or "") if "wechat_db_key" in legacy_keys else None,
-                    wechat_dir=str(legacy_keys.get("wechat_data_dir") or "") if "wechat_data_dir" in legacy_keys else None,
-                    source="custom" if legacy_keys.get("wechat_use_custom_path") else "auto",
-                    import_completed=legacy_keys.get("wechat_import_completed") if "wechat_import_completed" in legacy_keys else None,
-                )
-                merged_account = dict(self._get_wechat_account(target_wxid) or {"wxid": target_wxid})
-                if "wechat_last_import_at" in legacy_keys:
-                    merged_account["last_import_at"] = legacy_keys.get("wechat_last_import_at")
-                if "wechat_last_import_total_size" in legacy_keys:
-                    merged_account["last_import_total_size"] = legacy_keys.get("wechat_last_import_total_size")
-                if "wechat_last_import_files" in legacy_keys:
-                    merged_account["last_import_files"] = legacy_keys.get("wechat_last_import_files") or []
-                upsert_wechat_account(self.settings, merged_account)
-                if legacy_keys.get("wechat_user_wxid"):
-                    set_active_wechat_account(self.settings, target_wxid)
+            legacy_keys = {key: payload.pop(key) for key in list(payload.keys()) if key in LEGACY_WECHAT_KEYS}
+            if legacy_keys:
+                target_wxid = str(
+                    legacy_keys.get("wechat_user_wxid")
+                    or self._get_active_wechat_account_wxid()
+                    or ""
+                ).strip()
+                if target_wxid:
+                    update_wechat_account_import_state(
+                        self.settings,
+                        target_wxid,
+                        db_key=str(legacy_keys.get("wechat_db_key") or "") if "wechat_db_key" in legacy_keys else None,
+                        wechat_dir=str(legacy_keys.get("wechat_data_dir") or "") if "wechat_data_dir" in legacy_keys else None,
+                        source="custom" if legacy_keys.get("wechat_use_custom_path") else "auto",
+                        import_completed=legacy_keys.get("wechat_import_completed") if "wechat_import_completed" in legacy_keys else None,
+                    )
+                    merged_account = dict(self._get_wechat_account(target_wxid) or {"wxid": target_wxid})
+                    if "wechat_last_import_at" in legacy_keys:
+                        merged_account["last_import_at"] = legacy_keys.get("wechat_last_import_at")
+                    if "wechat_last_import_total_size" in legacy_keys:
+                        merged_account["last_import_total_size"] = legacy_keys.get("wechat_last_import_total_size")
+                    if "wechat_last_import_files" in legacy_keys:
+                        merged_account["last_import_files"] = legacy_keys.get("wechat_last_import_files") or []
+                    upsert_wechat_account(self.settings, merged_account)
+                    if legacy_keys.get("wechat_user_wxid"):
+                        set_active_wechat_account(self.settings, target_wxid)
 
-        self.settings.update(payload)
-        self._save_settings()
-        return {
-            "saved": True,
-            "payload": payload,
-            "model_root_dir": self.settings.get(MODEL_ROOT_DIR_KEY),
-            **self._serialize_wechat_accounts(),
-        }
+            self.settings.update(payload)
+            self._save_settings()
+            response = {
+                "saved": True,
+                "payload": payload,
+                "model_root_dir": self.settings.get(MODEL_ROOT_DIR_KEY),
+                **self._serialize_wechat_accounts(),
+            }
+        return response
 
     def get_rag_log_detail(self, log_id: int) -> dict[str, Any]:
         """Return what one retrieval log actually injected, for badge drill-down.
@@ -1475,7 +1599,7 @@ class Bridge:
         """
         try:
             from ..db.connection import get_db
-            from ..services.realtime.rag_store import RagStore
+            from ..services.realtime.rag.store import RagStore
 
             conn = get_db()
             store = RagStore(conn)
@@ -1650,7 +1774,7 @@ class Bridge:
         """
         try:
             from ..db.connection import get_db
-            from ..services.realtime.rag_store import RagStore
+            from ..services.realtime.rag.store import RagStore
 
             resolved_account = self._resolve_account_wxid(account_wxid)
             conn = get_db()
@@ -1870,7 +1994,7 @@ class Bridge:
         """Apply user correction to one memory fact: inaccurate / forget / restore."""
         try:
             from ..db.connection import get_db
-            from ..services.realtime.rag_store import RagStore
+            from ..services.realtime.rag.store import RagStore
 
             conn = get_db()
             store = RagStore(conn)
@@ -1884,7 +2008,7 @@ class Bridge:
             # （P2.1 闭环；刷新受 shadow 开关保护，失败绝不阻塞反馈）
             if result.get("ok"):
                 try:
-                    from ..services.realtime.rag_relationship_policy import (
+                    from ..services.realtime.rag.relationship_policy import (
                         refresh_after_fact_feedback,
                     )
 
@@ -1911,7 +2035,7 @@ class Bridge:
         """Return per-contact RAG status summary for the settings page."""
         try:
             from ..db.connection import get_db
-            from ..services.realtime.rag_store import RagStore
+            from ..services.realtime.rag.store import RagStore
             from ..services.wechat.contact_filters import is_excluded_contact_username
 
             resolved_account = self._resolve_account_wxid(account_wxid)
@@ -1998,14 +2122,45 @@ class Bridge:
                 """
 
             rows = conn.execute(query, (resolved_account, max(1, int(limit)))).fetchall()
+            fact_counts_by_conv: dict[int, tuple[int, int]] = {}
+            try:
+                for f_row in conn.execute(
+                    """
+                    SELECT conversation_id,
+                           COUNT(*) AS fact_count,
+                           COALESCE(SUM(CASE WHEN enabled = 1 THEN 1 ELSE 0 END), 0) AS enabled_fact_count
+                    FROM rag_facts
+                    WHERE account_wxid = ? AND status = 'active'
+                    GROUP BY conversation_id
+                    """,
+                    (resolved_account,),
+                ).fetchall():
+                    fact_counts_by_conv[int(f_row["conversation_id"])] = (
+                        int(f_row["fact_count"] or 0),
+                        int(f_row["enabled_fact_count"] or 0),
+                    )
+            except Exception:
+                pass
+
+            from ..services.realtime.rag.indexer import get_active_and_queued
+            live_states = get_active_and_queued()
             items = []
             for row in rows:
                 item = dict(row)
                 if is_excluded_contact_username(item.get("username")):
                     continue
+                conv_id = int(item.get("conversation_id") or 0)
+                f_total, f_enabled = fact_counts_by_conv.get(conv_id, (0, 0))
+                item["fact_count"] = f_total
+                item["enabled_fact_count"] = f_enabled
+                live = live_states.get((resolved_account, conv_id))
+                if live:
+                    # 后台真值优先：构建中/排队中（DB status 在此期间不更新）
+                    item["status"] = live
                 items.append(item)
             return {
                 "ok": True,
+                "has_live": bool(live_states),
                 "settings": {
                     key: self.settings.get(key)
                     for key in (
@@ -2021,6 +2176,7 @@ class Bridge:
                     )
                 },
                 "items": items,
+                "total_facts": sum(int(item.get("fact_count") or 0) for item in items),
                 "total_documents": sum(int(item.get("document_count") or 0) for item in items),
                 "total_storage_bytes": sum(int(item.get("storage_bytes") or 0) for item in items),
             }
@@ -2028,21 +2184,108 @@ class Bridge:
             logger.error(f"[Bridge] 获取 RAG 状态失败: {e}")
             return {"ok": False, "error": str(e), "items": []}
 
-    def rebuild_rag_index(self, conversation_id: int, account_wxid: str = "") -> dict[str, Any]:
-        """Rebuild one contact RAG index."""
+    def get_monitor_rag_status(self, account_wxid: str = "") -> dict[str, Any]:
+        """当前监听联系人的 RAG 索引状态（悬浮面板「建议依据」提醒用）。
+
+        没有索引时 AI 建议只靠近期对话（记忆槽为空），前端需提醒并可
+        一键构建。监听启动虽有 prewarm，但 RAG 关闭/解析失败/空历史时
+        仍然缺索引。
+        """
         try:
-            from ..services.realtime.rag_indexer import RagIndexer
+            from ..services.realtime.monitor_service import RealtimeMonitorService
+            from ..services.realtime.rag.config import load_rag_settings
+
+            monitor = RealtimeMonitorService()
+            rag_enabled = bool(load_rag_settings().get("rag_enabled"))
+            base = {
+                "ok": True,
+                "monitoring": bool(getattr(monitor, "is_monitoring", False)),
+                "display_name": getattr(monitor, "current_display_name", "") or "",
+                "enabled": rag_enabled,
+                "conversation_id": None,
+                "status": "none",
+                "document_count": 0,
+                "vector_count": 0,
+                "has_index": False,
+            }
+            if not base["monitoring"] or not rag_enabled:
+                return base
+
+            resolved_account = self._resolve_account_wxid(
+                account_wxid or getattr(monitor, "current_account_wxid", "") or ""
+            )
+            conversation_id = self._resolve_current_conversation_id(
+                account_wxid=resolved_account,
+                display_name=base["display_name"],
+                username=getattr(monitor, "current_talker", "") or "",
+            )
+            if not conversation_id:
+                return base
+            base["conversation_id"] = int(conversation_id)
+
+            from ..db.connection import get_db
+
+            row = get_db().execute(
+                """
+                SELECT status, document_count, vector_count
+                FROM rag_index_status
+                WHERE account_wxid = ? AND conversation_id = ?
+                """,
+                (resolved_account, int(conversation_id)),
+            ).fetchone()
+            if row:
+                base["status"] = str(row["status"] or "none")
+                base["document_count"] = int(row["document_count"] or 0)
+                base["vector_count"] = int(row["vector_count"] or 0)
+            # 有向量才算可用索引：document_count>0 但 vector_count=0 的
+            # 半成品状态同样视为不可用（检索拿不到任何东西）
+            base["has_index"] = base["document_count"] > 0 and base["vector_count"] > 0
+            return base
+        except Exception as e:
+            logger.error(f"[Bridge] 获取监听 RAG 状态失败: {e}")
+            return {"ok": False, "error": str(e), "has_index": False, "enabled": False}
+
+    def rebuild_rag_index(self, conversation_id: int, account_wxid: str = "") -> dict[str, Any]:
+        """Rebuild one contact RAG index (always async via the single-worker queue).
+
+        原实现锁空闲时在端点内联同步重建（阻塞分钟级且 UI 无构建中真值），
+        现统一入队：状态经 get_rag_status 的 building/queued 覆盖可查。
+        """
+        try:
+            from ..services.realtime.rag.config import load_rag_settings
+            from ..services.realtime.rag.indexer import RagIndexQueue, get_active_and_queued
 
             resolved_account = self._resolve_account_wxid(account_wxid)
-            status = RagIndexer().rebuild_contact_index(
-                account_wxid=resolved_account,
-                conversation_id=int(conversation_id),
-            )
-            failed = str((status or {}).get("status") or "") == "failed"
+            if not load_rag_settings().get("rag_enabled"):
+                # 主开关关闭时队列 worker 会丢弃任务——保持旧行为内联同步重建
+                from ..services.realtime.rag.indexer import RagIndexer
+                status = RagIndexer().rebuild_contact_index(
+                    account_wxid=resolved_account,
+                    conversation_id=int(conversation_id),
+                )
+                failed = str((status or {}).get("status") or "") == "failed"
+                return {
+                    "ok": not failed,
+                    "status": status,
+                    "error": (status or {}).get("last_error") if failed else None,
+                }
+            key = (resolved_account, int(conversation_id))
+            live = get_active_and_queued().get(key)
+            if live:
+                return {
+                    "ok": True,
+                    "queued": True,
+                    "already": True,
+                    "state": live,
+                    "message": "该联系人正在构建索引，无需重复发起" if live == "building"
+                    else "该联系人已在索引队列中",
+                }
+            RagIndexQueue.enqueue(resolved_account, int(conversation_id))
             return {
-                "ok": not failed,
-                "status": status,
-                "error": (status or {}).get("last_error") if failed else None,
+                "ok": True,
+                "queued": True,
+                "state": "queued",
+                "message": "已加入索引队列（单 worker 串行执行）",
             }
         except Exception as e:
             logger.error(f"[Bridge] 重建 RAG 索引失败: {e}")
@@ -2051,15 +2294,60 @@ class Bridge:
     def clear_rag_index(self, conversation_id: int, account_wxid: str = "") -> dict[str, Any]:
         """Clear one contact RAG data without touching original messages."""
         try:
-            from ..services.realtime.rag_store import RagStore
+            from ..services.realtime.rag.store import RagStore
 
             resolved_account = self._resolve_account_wxid(account_wxid)
             store = RagStore()
             deleted = store.clear_conversation(resolved_account, int(conversation_id))
+            # 清空后停用该联系人记忆：否则 ensure_contact_index 检测到
+            # 无状态会在下次建议时自动排队重建，事实被重抽复活——违背
+            # "清空"语义。用户可重新启用并手动重建。
+            store.set_conversation_enabled(resolved_account, int(conversation_id), False)
             store.conn.commit()
+            from ..services.realtime.rag.retriever import invalidate_vector_cache
+            invalidate_vector_cache(resolved_account, int(conversation_id))
             return {"ok": True, "deleted": deleted}
         except Exception as e:
             logger.error(f"[Bridge] 清空 RAG 索引失败: {e}")
+            return {"ok": False, "error": str(e)}
+
+    def backfill_all_rag_extraction(self, account_wxid: str = "") -> dict[str, Any]:
+        """为全部有抽取欠账的联系人排队回补 LLM 记忆抽取（用户主动触发）。
+
+        欠账 = 消息水位已推进但抽取水位未覆盖（含从未抽取）。队列单
+        worker 串行消化，回补未完成自动续轮，直至全部抽平。成本与
+        AI 抽取开关同级（每段一次远程调用），由前端确认弹窗明示。
+        """
+        try:
+            from ..db.connection import get_db
+            from ..services.realtime.rag.indexer import RagIndexer, RagIndexQueue
+
+            resolved_account = self._resolve_account_wxid(account_wxid)
+            conn = get_db()
+            rows = conn.execute(
+                """
+                SELECT s.conversation_id,
+                       s.message_watermark_ts, s.fact_extract_watermark_ts,
+                       s.fact_extract_prompt_version, s.enabled
+                FROM rag_index_status s
+                WHERE s.account_wxid = ?
+                  AND s.message_watermark_ts > 0
+                  AND s.enabled = 1
+                """,
+                (resolved_account,),
+            ).fetchall()
+            queued = 0
+            for row in rows:
+                msg_wm = int(row["message_watermark_ts"] or 0)
+                ext_wm = int(row["fact_extract_watermark_ts"] or 0)
+                version = str(row["fact_extract_prompt_version"] or "")
+                if version != RagIndexer.FACT_EXTRACT_PROMPT_VERSION or ext_wm < msg_wm:
+                    RagIndexQueue.enqueue(resolved_account, int(row["conversation_id"]))
+                    queued += 1
+            logger.info("[Bridge] 批量回补记忆抽取: 排队 %s 个联系人", queued)
+            return {"ok": True, "queued": queued}
+        except Exception as e:
+            logger.error(f"[Bridge] 批量回补失败: {e}")
             return {"ok": False, "error": str(e)}
 
     def set_rag_conversation_enabled(
@@ -2070,7 +2358,7 @@ class Bridge:
     ) -> dict[str, Any]:
         """Enable or disable one contact's RAG candidates."""
         try:
-            from ..services.realtime.rag_store import RagStore
+            from ..services.realtime.rag.store import RagStore
 
             resolved_account = self._resolve_account_wxid(account_wxid)
             store = RagStore()
@@ -2089,7 +2377,7 @@ class Bridge:
     ) -> dict[str, Any]:
         """Switch one contact between fact-first and document rollback reads."""
         try:
-            from ..services.realtime.rag_store import RagStore
+            from ..services.realtime.rag.store import RagStore
 
             resolved_account = self._resolve_account_wxid(account_wxid)
             normalized_mode = str(mode or "").strip().lower()
@@ -2300,6 +2588,18 @@ class Bridge:
                 wxid_dirs = WeChatPathFinder.find_all_user_wxids(str(root_dir))
 
             if not wxid_dirs:
+                # V4 未命中：探测 3.9 旧版结构，命中则引导用户升级微信
+                legacy_v3 = WeChatPathFinder._inspect_legacy_v3_root(target_dir)
+                if legacy_v3:
+                    return {
+                        "ok": False,
+                        "code": "legacy_wechat_v3",
+                        "error": "该目录为旧版微信 3.9 数据目录，请将微信升级到 4.0 及以上版本后重试",
+                        "v3": legacy_v3,
+                        "wxids": [],
+                        "databases": {},
+                        "accounts": [],
+                    }
                 return {
                     "ok": False,
                     "error": f"未在目录中找到微信 V4 数据目录: {wechat_dir}",
@@ -2399,6 +2699,8 @@ class Bridge:
 
     def run_realtime_uia_recovery(self) -> dict[str, Any]:
         """Run the pending WeChat UIA recovery flow after the user confirms it in the frontend."""
+        if sys.platform != "win32":
+            return {"ok": False, "code": "unsupported_on_platform", "error": "UIA 界面修复为 Windows 专属能力；Linux 使用 db_watch 数据库监听，无需修复界面。"}
         try:
             from ..services.realtime.monitor_service import RealtimeMonitorService
 
@@ -2565,15 +2867,40 @@ class Bridge:
         """
         try:
             from ..services.realtime.message_query import get_messages_with_sentiment
-            
+
             messages = get_messages_with_sentiment(
                 batch_id,
                 limit,
                 account_wxid=self._resolve_account_wxid(""),
-            )
-            
+            ) or []
+
+            # 新消息不足时并入监听基线尾部（预热已带 sentiment）——
+            # 前端统计（发言比例/回复率/正面率）与情绪图表全部读本端点，
+            # 此前基线不落 buffer 导致开场恒显 N/A/「正在分析」
+            if len(messages) < int(limit):
+                try:
+                    from ..services.realtime.monitor_service import RealtimeMonitorService
+
+                    baseline_tail = getattr(RealtimeMonitorService(), "_baseline_tail", None) or []
+                    if baseline_tail:
+                        baseline_items = [
+                            {
+                                "id": -(idx + 1),  # 负数伪 id 避免与 buffer 冲突
+                                "sender": msg.get("sender_attr"),
+                                "sender_attr": msg.get("sender_attr"),
+                                "content": msg.get("content"),
+                                "message_type": msg.get("message_type"),
+                                "timestamp": msg.get("timestamp"),
+                                "sentiment": msg.get("sentiment"),
+                            }
+                            for idx, msg in enumerate(baseline_tail)
+                        ]
+                        messages = (baseline_items + messages)[-int(limit):]
+                except Exception as exc:
+                    logger.debug("[Bridge] 基线尾部并入消息列表跳过: %s", exc)
+
             # 只在消息数量变化时打印（避免每 3 秒重复刷屏）
-            count = len(messages) if messages else 0
+            count = len(messages)
             cache_key = f"_last_msg_count_{batch_id[:8]}"
             last_count = getattr(self, cache_key, 0)
             if count != last_count:
@@ -2595,6 +2922,54 @@ class Bridge:
             }
 
     # ==================== AI 建议相关 ====================
+
+    def get_realtime_recent_messages(self, batch_id: str, limit: int = 12,
+                                      account_wxid: str = "") -> dict[str, Any]:
+        """返回批次内最近收到的原始消息（悬浮面板即时回显，不等 LLM 建议）。"""
+        try:
+            from ..services.realtime.message_buffer import MessageBuffer
+
+            if not str(batch_id or "").strip():
+                return {"ok": False, "error": "缺少 batch_id"}
+            resolved = self._resolve_account_wxid(account_wxid)
+            rows = MessageBuffer().get_batch_messages(batch_id, account_wxid=resolved)
+            limit = max(1, int(limit))
+            items = [
+                {
+                    "id": row.get("id"),
+                    "sender_attr": row.get("sender_attr"),
+                    "content": row.get("content"),
+                    "message_type": row.get("message_type"),
+                    "timestamp": row.get("timestamp") or row.get("created_at"),
+                }
+                for row in rows[-limit:]
+            ]
+            # 新消息不足时并入监听基线尾部（启动前窗口内最近对话）——
+            # 用户预期「进入监听能看到前几条聊天数据」，此前基线按设计不落
+            # buffer 导致起始空白
+            if len(items) < limit:
+                try:
+                    from ..services.realtime.monitor_service import RealtimeMonitorService
+                    monitor = RealtimeMonitorService()
+                    baseline_tail = getattr(monitor, "_baseline_tail", None) or []
+                    if baseline_tail:
+                        # 逐条 insert(0) 会把时间序倒置——先组好基线段再整体前置
+                        baseline_items = [
+                            {
+                                "id": -(idx + 1),  # 负数伪 id 避免与 buffer 冲突
+                                "sender_attr": msg.get("sender_attr"),
+                                "content": msg.get("content"),
+                                "message_type": msg.get("message_type"),
+                                "timestamp": msg.get("timestamp"),
+                            }
+                            for idx, msg in enumerate(baseline_tail)
+                        ]
+                        items = (baseline_items + items)[-limit:]
+                except Exception as exc:
+                    logger.debug("[Bridge] 基线尾部并入跳过: %s", exc)
+            return {"ok": True, "messages": items}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
 
     def get_pending_suggestions(self, batch_id: str, account_wxid: str = "") -> dict[str, Any]:
         """
@@ -2649,7 +3024,8 @@ class Bridge:
                 SELECT id, trigger_type, intent, severity, summary, speeches,
                        confidence, engine_type, trigger_context, status, created_at, reply, thought_process
                 FROM realtime_suggestions
-                WHERE account_wxid = ? AND batch_id = ? AND status = 'pending'
+                WHERE account_wxid = ? AND batch_id = ?
+                  AND status IN ('pending', 'attribution_window', 'feedback_processing')
                 ORDER BY created_at DESC
                 LIMIT 20
             ''', (resolved_account_wxid, batch_id))
@@ -2770,7 +3146,7 @@ class Bridge:
     def get_suggestion_config(self) -> dict[str, Any]:
         """获取 AI 建议配置（从系统设置读取）"""
         try:
-            from ..services.realtime.providers.factory import normalize_listener_backend
+            from ..services.realtime.providers.factory import resolve_effective_listener_backend
 
             return {
                 "ok": True, 
@@ -2779,8 +3155,8 @@ class Bridge:
                     "intent": self.settings.get("intent", "maintain"),
                     "auto_rate_limit": int(self.settings.get("auto_rate_limit", 10)),
                     "engine_type": "llm",
-                    "listener_backend": normalize_listener_backend(
-                        self.settings.get("listener_backend", "native_uia")
+                    "listener_backend": resolve_effective_listener_backend(
+                        self.settings.get("listener_backend")
                     ),
                 }
             }
@@ -2851,13 +3227,14 @@ class Bridge:
             from ..services.realtime.providers.factory import normalize_listener_backend
 
             # 1. 更新通用设置文件
-            for key in ('trigger_mode', 'intent', 'auto_rate_limit', 'listener_backend'):
-                if key in config:
-                    if key == 'listener_backend':
-                        self.settings[key] = normalize_listener_backend(config[key])
-                    else:
-                        self.settings[key] = config[key]
-            self._save_settings()
+            with self._settings_lock:
+                for key in ('trigger_mode', 'intent', 'auto_rate_limit', 'listener_backend'):
+                    if key in config:
+                        if key == 'listener_backend':
+                            self.settings[key] = normalize_listener_backend(config[key])
+                        else:
+                            self.settings[key] = config[key]
+                self._save_settings()
 
             # 2. 同时热更新给运行中的 RealtimeMonitorService
             try:
@@ -2878,7 +3255,6 @@ class Bridge:
         """获取所有已配置的 LLM 模型列表"""
         try:
             from ..db.connection import get_db
-            import time as _time
 
             conn = get_db()
 
@@ -3226,18 +3602,38 @@ class Bridge:
             service.config = self._build_feature_config(config)
             service.config.validate()
 
+            # 同会话已有运行中的提取：直接返回该任务，防止并发提取互相删数据。
+            # 必须在新建取消事件之前判断——否则运行中线程持有的旧事件被替换，
+            # 之后点「停止」设置的将是新事件，旧任务再也停不掉
+            running_task = service.find_running_task(conversation_id)
+            if running_task:
+                return {
+                    "success": True,
+                    "data": {"task_id": running_task, "status": "started", "message": "已有进行中的提取任务，已复用"},
+                }
+
             import threading
             self._analysis_cancel_event = threading.Event()
-            
-            # 执行特征提取（异步任务）
-            result = service.extract_features(conversation_id, cancel_event=self._analysis_cancel_event)
+
+            # 异步启动：立即返回 task_id，前端轮询 get_extraction_progress
+            # （此前同步阻塞至完成，导致切页丢进度 + 重复发起时后端叠加运行）
+            import uuid as _uuid
+            task_id = f"extract_{conversation_id}_{int(time.time())}_{_uuid.uuid4().hex[:6]}"
+            cancel_event = self._analysis_cancel_event
+            threading.Thread(
+                target=lambda: service.extract_features(
+                    conversation_id, cancel_event=cancel_event, task_id=task_id
+                ),
+                daemon=True,
+                name=f"feature-extract-{conversation_id}",
+            ).start()
 
             return {
                 "success": True,
                 "data": {
-                    "task_id": result["task_id"],
-                    "status": "completed",
-                    "message": "Feature extraction completed"
+                    "task_id": task_id,
+                    "status": "started",
+                    "message": "Feature extraction started"
                 }
             }
         except Exception as e:
@@ -3692,10 +4088,47 @@ class Bridge:
 
     # ==================== 悬浮窗管理 ====================
 
+    def set_close_actions(self, minimize=None, exit=None) -> None:
+        """由 close_guard 装配关闭确认动作（见 webview/close_guard.py）。"""
+        self._close_actions = {"minimize": minimize, "exit": exit}
+
+    def perform_close_action(self, action: str) -> dict[str, Any]:
+        """执行关闭按钮选择（前端关闭确认对话框调用）。
+
+        action: "minimize"（最小化到任务栏）| "exit"（退出应用）
+        """
+        action = str(action or "").strip().lower()
+        fn = self._close_actions.get(action)
+        if fn is None:
+            return {"ok": False, "error": f"未知关闭动作: {action or '(空)'}"}
+        try:
+            fn()
+            return {"ok": True, "action": action}
+        except Exception as e:
+            logger.error(f"[Bridge] 关闭动作执行失败: {e}")
+            return {"ok": False, "error": str(e)}
+
     def set_webview_window(self, window):
         """设置 PyWebView 窗口引用（由 app_dev.py 启动后注入）"""
         self._webview_window = window
         self._floating_service.set_webview_window(window)
+
+    def prepare_exit(self) -> None:
+        """进程退出前的优雅停机（close_guard 在销毁窗口前调用，尽力而为）。
+
+        监听活跃时直接销毁窗口会让 Qt 在 C++ 层 terminate（实测 exit 134）；
+        先走 stop_monitoring 完成 checkpoint 与缓冲迁移，再放行销毁。
+        """
+        try:
+            from ..services.realtime.monitor_service import RealtimeMonitorService
+
+            monitor = RealtimeMonitorService()
+            if getattr(monitor, "is_monitoring", False):
+                logger.info("[Bridge] 退出前停止实时监听（checkpoint+迁移）…")
+                result = monitor.stop_monitoring()
+                logger.info("[Bridge] 退出前监听已停止: %s", (result or {}).get("message", ""))
+        except Exception as exc:
+            logger.warning("[Bridge] 退出前停止监听失败（继续退出）: %s}", exc)
 
     def enter_floating_mode(self) -> dict[str, Any]:
         """
@@ -3937,7 +4370,8 @@ class Bridge:
                     "status": "completed",
                 }
 
-            task_id = f"analysis_model_download_{int(time.time())}"
+            # 加 uuid 后缀防撞号：同秒内重复点击下载时按秒生成的 task_id 会互相覆盖
+            task_id = f"analysis_model_download_{int(time.time())}_{uuid.uuid4().hex[:8]}"
             self._update_model_download_status(
                 task_id,
                 status="downloading",
@@ -4416,14 +4850,30 @@ class Bridge:
             import threading
             import time as _time
 
+            # 复用守卫：旧服务实例上仍有本会话的运行中任务时不重复启动。
+            # 此处必须查旧实例（本方法每次 reload 出新类，新实例看不到旧任务）；
+            # 重复启动会替换取消事件，导致运行中的任务再也停不掉
+            prev_service = getattr(self, "_affinity_service", None)
+            if prev_service is not None:
+                running = prev_service.find_running_task(conversation_id)
+                if running:
+                    return {
+                        "ok": True,
+                        "task_id": running,
+                        "status": "started",
+                        "message": "已有进行中的好感度分析，已复用",
+                    }
+
             AffinityAnalysisService = self._get_fresh_affinity_service_class()
             service = AffinityAnalysisService()            # 保存服务实例引用，供 get_affinity_progress 查询进度
             self._affinity_service = service
             self._analysis_cancel_event = threading.Event()
             effective_force_reanalyze = True
 
-            # 预生成 task_id，与 service.analyze 内部生成的保持一致
-            task_id = f"affinity_{conversation_id}_{int(_time.time())}"
+            # 显式生成 task_id（带 uuid 后缀防撞号）并传给 analyze()，
+            # 保证返回给前端的 task_id 与服务内注册的完全一致，无需 sleep+扫描猜测
+            task_id = f"affinity_{conversation_id}_{int(_time.time())}_{uuid.uuid4().hex[:6]}"
+            service.register_task(task_id, conversation_id)
 
             def _run_analysis():
                 try:
@@ -4432,6 +4882,7 @@ class Bridge:
                         effective_force_reanalyze,
                         config_overrides,
                         cancel_event=self._analysis_cancel_event,
+                        task_id=task_id,
                     )
                 except Exception as e:
                     logger.error(f"[Bridge] 异步好感度分析失败: {e}")
@@ -4441,19 +4892,9 @@ class Bridge:
             t = threading.Thread(target=_run_analysis, daemon=True)
             t.start()
 
-            # 等一小段时间让 service.analyze 初始化 task_id
-            _time.sleep(0.1)
-
-            # 从 service._task_status 中找到真正的 task_id
-            real_task_id = None
-            for tid in service._task_status:
-                if tid.startswith(f"affinity_{conversation_id}_"):
-                    real_task_id = tid
-                    break
-
             return {
                 "ok": True,
-                "task_id": real_task_id or task_id
+                "task_id": task_id
             }
         except Exception as e:
             logger.error(f"[Bridge] 好感度分析启动失败: {e}")
@@ -4529,17 +4970,27 @@ class Bridge:
             }
 
     def get_affinity_scores(self, conversation_id: int) -> dict[str, Any]:
-        """获取好感度分析结果"""
+        """获取好感度分析结果（附分析新鲜度：导入新消息后前端提示重分析）"""
         try:
             from dataclasses import asdict
-            
+
             AffinityAnalysisService = self._get_fresh_affinity_service_class()
             service = AffinityAnalysisService()
             result = service.get_scores(conversation_id)
-            
+
+            freshness = {"stale": False, "pending_message_count": 0}
+            try:
+                from ..services.analysis.analysis_state import get_analysis_freshness
+
+                freshness = get_analysis_freshness(int(conversation_id))
+            except Exception as fresh_e:
+                logger.debug("[Bridge] 分析新鲜度读取跳过: %s", fresh_e)
+
             return {
                 "ok": True,
-                "result": asdict(result) if result else None
+                "result": asdict(result) if result else None,
+                "analysis_stale": freshness.get("stale", False),
+                "pending_message_count": freshness.get("pending_message_count", 0),
             }
         except Exception as e:
             logger.error(f"[Bridge] 获取好感度结果失败: {e}")
@@ -4623,3 +5074,17 @@ class Bridge:
         except Exception as e:
             logger.error(f"[Bridge] 加载线程上下文失败: {e}")
             return {"ok": False, "error": str(e)}
+
+    def open_external_url(self, url: str) -> dict[str, Any]:
+        """在系统默认浏览器中打开外部链接"""
+        try:
+            import webbrowser
+            target = str(url or "").strip()
+            if not target.startswith(("http://", "https://")):
+                return {"ok": False, "error": "仅允许打开 http/https 链接"}
+            webbrowser.open(target)
+            return {"ok": True}
+        except Exception as e:
+            logger.error(f"[Bridge] 打开外部链接失败: {e}")
+            return {"ok": False, "error": str(e)}
+

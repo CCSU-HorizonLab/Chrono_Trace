@@ -11,7 +11,6 @@ import json
 import logging
 import math
 import time
-import random
 from typing import Optional
 from .llm_http import post_json_with_retries
 from ..wechat.account_settings import get_active_wechat_account_wxid, load_settings_from_file
@@ -53,6 +52,10 @@ PROFILE_TARGET_CHARS = {
 # 采样字符安全上限：只有聊天量极大时才会从最旧的桶开始收敛，正常
 # 规模完全不触发；按字符计数，不按 token 预算截断。
 MAX_SAMPLE_CHARS = 80000
+
+# 输出额度重试上限：混合推理模型的思考计入 completion 且长度波动极大，
+# 首次请求按保守额度发出，被截断时逐级加倍直到该上限。
+MAX_OUTPUT_TOKEN_BUDGET = 32768
 
 # 缓存有效期（秒）
 PROFILE_TTL = 7 * 86400  # 7 天
@@ -226,10 +229,10 @@ class SelfProfiler:
             resolved_account_wxid = self._resolve_account_wxid(account_wxid)
 
             # 1. 查找 conversation_id
-            _print(f"[SelfProfiler] 步骤1: 查找会话...")
+            _print("[SelfProfiler] 步骤1: 查找会话...")
             conv = self._find_conversation(conn, display_name, resolved_account_wxid)
             if not conv:
-                _print(f"[SelfProfiler] ⚠️ 未找到精确匹配的会话，尝试模糊匹配...")
+                _print("[SelfProfiler] ⚠️ 未找到精确匹配的会话，尝试模糊匹配...")
                 conv = self._find_conversation_fuzzy(conn, display_name, resolved_account_wxid)
             if not conv:
                 _print(f"[SelfProfiler] ❌ 未找到联系人「{display_name}」的历史聊天记录")
@@ -256,7 +259,7 @@ class SelfProfiler:
             # 5. 调用 LLM，传入预算以动态决定输出额度
             profile_data = self._call_llm(user_prompt)
 
-            _print(f"[SelfProfiler] ✅ 画像生成成功!")
+            _print("[SelfProfiler] ✅ 画像生成成功!")
             _print(f"[SelfProfiler] 标签: {profile_data.get('personality_tags', [])}")
 
             # 6. 缓存
@@ -302,7 +305,7 @@ class SelfProfiler:
                 return dict(row)
 
         # 策略2: 通过 contacts 表反查 username(wxid)
-        _print(f"[SelfProfiler] 直接匹配失败，尝试通过 contacts 表反查...")
+        _print("[SelfProfiler] 直接匹配失败，尝试通过 contacts 表反查...")
         contact_cursor = conn.execute(
             'SELECT username, nickname, remark FROM contacts '
             'WHERE account_wxid = ? AND (nickname = ? OR remark = ?) '
@@ -657,7 +660,7 @@ class SelfProfiler:
         first_date = datetime.fromtimestamp(conv.get('created_at', 0)).strftime('%Y-%m-%d')
         last_date = datetime.fromtimestamp(conv.get('updated_at', 0)).strftime('%Y-%m-%d')
 
-        parts.append(f"【基础信息】")
+        parts.append("【基础信息】")
         parts.append(f"- 联系人名称: {display_name}")
         parts.append(f"- 消息总数: {conv.get('message_count', 0)}")
         parts.append(f"- 时间跨度: {first_date} ~ {last_date}")
@@ -774,7 +777,6 @@ class SelfProfiler:
                 {'role': 'system', 'content': PROFILE_SYSTEM_PROMPT},
                 {'role': 'user', 'content': user_prompt},
             ],
-            'max_tokens': dynamic_max_tokens,
             'temperature': 0.5,  # 画像生成用较低温度
             # 画像必须落在 message.content，不能只生成 reasoning_content。
             'response_format': {'type': 'json_object'},
@@ -785,37 +787,60 @@ class SelfProfiler:
         if api_key:
             headers['Authorization'] = f'Bearer {api_key}'
 
-        body = post_json_with_retries(
-            url=url,
-            payload=payload,
-            headers=headers,
-            timeout=self.timeout,
-            log=_print,
-            log_prefix='[SelfProfiler]',
-        )
+        # 混合推理模型的思考长度随输入规模大幅波动且计入 completion 额度，
+        # 无法事先预测；输出被 max_tokens 截断时逐级加倍重试。
+        attempt_budget = dynamic_max_tokens
+        parsed = None
+        while True:
+            payload['max_tokens'] = attempt_budget
+            body = post_json_with_retries(
+                url=url,
+                payload=payload,
+                headers=headers,
+                timeout=self.timeout,
+                log=_print,
+                log_prefix='[SelfProfiler]',
+            )
 
-        message_obj = body.get('choices', [{}])[0].get('message', {})
-        content = message_obj.get('content', '') or ''
-        reasoning = message_obj.get('reasoning_content', '')
+            choice = (body.get('choices') or [{}])[0]
+            message_obj = choice.get('message', {})
+            content = message_obj.get('content', '') or ''
+            reasoning = message_obj.get('reasoning_content', '')
 
-        # 只有 reasoning 中确实包含 JSON 时才回退，避免把模型的分析草稿
-        # 当成最终画像解析；response_format + 更大的预算优先保证 content。
-        if not content and reasoning:
-            reasoning_candidate = self._extract_json_candidate(reasoning)
-            if reasoning_candidate.lstrip().startswith("{") and reasoning_candidate.rstrip().endswith("}"):
-                content = reasoning_candidate
-                _print("[SelfProfiler] ⚠️ content 为空，使用 reasoning_content 中的 JSON 回退")
-            else:
-                _print("[SelfProfiler] ⚠️ content 为空且 reasoning_content 没有完整 JSON")
+            # 只有 reasoning 中确实包含 JSON 时才回退，避免把模型的分析草稿
+            # 当成最终画像解析；response_format + 更大的预算优先保证 content。
+            if not content and reasoning:
+                reasoning_candidate = self._extract_json_candidate(reasoning)
+                if reasoning_candidate.lstrip().startswith("{") and reasoning_candidate.rstrip().endswith("}"):
+                    content = reasoning_candidate
+                    _print("[SelfProfiler] ⚠️ content 为空，使用 reasoning_content 中的 JSON 回退")
+                else:
+                    _print("[SelfProfiler] ⚠️ content 为空且 reasoning_content 没有完整 JSON")
 
-        usage = body.get('usage', {})
-        _print(
-            f"[SelfProfiler] 📥 tokens: prompt={usage.get('prompt_tokens', '?')}, "
-            f"completion={usage.get('completion_tokens', '?')}, "
-            f"total={usage.get('total_tokens', '?')}"
-        )
+            usage = body.get('usage', {})
+            _print(
+                f"[SelfProfiler] 📥 tokens: prompt={usage.get('prompt_tokens', '?')}, "
+                f"completion={usage.get('completion_tokens', '?')}, "
+                f"total={usage.get('total_tokens', '?')}"
+            )
 
-        parsed = self._parse_profile_json(content)
+            parsed = self._parse_profile_json(content)
+            if parsed:
+                break
+
+            completion_tokens = usage.get('completion_tokens') or 0
+            truncated = (
+                choice.get('finish_reason') == 'length'
+                or completion_tokens >= attempt_budget
+            )
+            if not truncated or attempt_budget >= MAX_OUTPUT_TOKEN_BUDGET:
+                break
+            attempt_budget = min(attempt_budget * 2, MAX_OUTPUT_TOKEN_BUDGET)
+            _print(
+                f"[SelfProfiler] ⚠️ 输出在 {attempt_budget // 2} token 处被截断"
+                f"（推理模型的思考计入了输出额度），加大到 {attempt_budget} 重试"
+            )
+
         if not parsed:
             raise ValueError('LLM 返回内容解析失败：未得到合法画像 JSON')
 

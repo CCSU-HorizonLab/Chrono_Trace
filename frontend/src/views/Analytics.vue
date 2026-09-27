@@ -46,13 +46,13 @@
 
       <h2>还没有历史记录</h2>
       <p class="page-empty-lead">当前还没有可分析的聊天会话，但这个页面不该再是空白的。</p>
-      <p class="page-empty-hint">先去首页导入微信数据，完成后这里会自动显示联系人、分析入口和时间线内容。</p>
+      <p class="page-empty-hint">先去<a href="/" style="color: var(--ct-color-primary); text-decoration: underline;">首页</a>导入微信数据，完成后这里会自动显示联系人、分析入口和时间线内容。</p>
     </div>
 
     <div class="page-empty-grid">
       <div class="page-empty-card">
         <span class="page-empty-card-label">下一步</span>
-        <strong>去首页导入聊天数据</strong>
+        <strong>去<a href="/" style="color: var(--ct-color-primary); text-decoration: underline;">首页</a>导入聊天数据</strong>
         <p>导入完成后，历史记录页会自动恢复完整展示。</p>
       </div>
 
@@ -124,6 +124,11 @@
                 <div class="trend-badge" v-if="analysisResult.score_trend">
                   较上周 <span :class="analysisResult.score_trend >= 0 ? 'up' : 'down'">{{ analysisResult.score_trend > 0 ? '↑' : '↓' }}{{ Math.abs(analysisResult.score_trend) }}%</span>
                 </div>
+                <span
+                  v-if="analysisResult.analysis_stale"
+                  class="stale-badge"
+                  :title="analysisResult.pending_message_count ? `有 ${analysisResult.pending_message_count} 条新消息未纳入当前分数` : '消息集已变化，建议重新分析'"
+                >{{ analysisResult.pending_message_count ? `${analysisResult.pending_message_count} 条新消息待分析` : '结果待更新' }}</span>
               </div>
               
               <div class="score-visual">
@@ -460,6 +465,16 @@
   <!-- TAB 4: Persona Gallery -->
   <div v-show="currentTab === 'persona' && selectedConversationId" class="tab-content fade-in">
     <div class="persona-tab-shell">
+      <div style="display: flex; justify-content: flex-end; align-items: center; gap: 10px; margin-bottom: 12px;">
+        <button
+          class="ct-btn primary"
+          @click="showPortraitDialog = true"
+          :disabled="loadingPersonaProfile"
+          style="font-size: 13px; padding: 6px 16px;"
+        >
+          {{ personaProfile ? '更新画像' : '生成画像' }}
+        </button>
+      </div>
       <PersonaGallery
         :loading="loadingPersonaProfile"
         :contact-name="currentContactName"
@@ -478,6 +493,19 @@
   <!-- Dialogs -->
   <PreferenceKeywordsDialog v-if="selectedConversationId" v-model="showKeywordsDialog"
     :conversation-id="selectedConversationId" @updated="handleKeywordsUpdated" />
+  <PortraitGenerateDialog
+    :visible="showPortraitDialog"
+    :display-name="currentContactName"
+    :account-wxid="activeAccountWxid || undefined"
+    :show-self-panel="true"
+    @close="showPortraitDialog = false"
+    @generated="handlePortraitGenerated"
+    @error="(msg: string) => { portraitGenError = msg; }"
+  />
+  <div v-if="portraitGenError" style="position: fixed; bottom: 20px; right: 20px; z-index: 4000; background: #e74c3c; color: #fff; padding: 10px 16px; border-radius: 8px; font-size: 13px; box-shadow: 0 4px 12px rgba(0,0,0,0.3);">
+    {{ portraitGenError }}
+    <button @click="portraitGenError = ''" style="margin-left: 10px; background: none; border: none; color: #fff; cursor: pointer; font-size: 16px;">&times;</button>
+  </div>
   <RelationshipContextForm v-if="selectedConversationId" v-model="showContextForm"
     :conversation-id="selectedConversationId" @saved="handleContextSaved" />
 </section>
@@ -498,15 +526,17 @@ import WordCloud from '@/components/charts/WordCloud.vue'
 import ConversationTimeline from '@/components/timeline/ConversationTimeline.vue'
 
 import AffinityScoreCard from '@/components/affinity/AffinityScoreCard.vue'
+import PortraitGenerateDialog from '@/components/persona/PortraitGenerateDialog.vue'
+import { loadSharedContact, saveSharedContact, CONTACT_CHANGED_EVENT } from '@/utils/sharedContact'
 import DimensionRadar from '@/components/affinity/DimensionRadar.vue'
 import SubScoreBreakdown from '@/components/affinity/SubScoreBreakdown.vue'
-import WeightInfoTooltip from '@/components/affinity/WeightInfoTooltip.vue'
 import PreferenceKeywordsDialog from '@/components/affinity/PreferenceKeywordsDialog.vue'
 import RelationshipContextForm from '@/components/affinity/RelationshipContextForm.vue'
 import CtCard from '@/components/base/CtCard.vue'
 import CtButton from '@/components/base/CtButton.vue'
 import PersonaGallery from '@/components/persona/PersonaGallery.vue'
 import { showDialog, showConfirm } from '@/utils/dialog'
+import { toLocalDateKey } from '@/utils/datetime'
 import CtAvatar from '@/components/base/CtAvatar.vue'
 import {
   FolderArchive,
@@ -580,9 +610,8 @@ type ActivityCalendarData = {
 export default {
     components: {
         FiltersBar, DateRangeFilter, SubjectCard, EmotionLineChart, WordCloud, ConversationTimeline,
-        AffinityScoreCard, DimensionRadar, SubScoreBreakdown, WeightInfoTooltip,
-        PreferenceKeywordsDialog, RelationshipContextForm, CtCard, CtButton, PersonaGallery, CtAvatar,
-        FolderArchive, MessageSquare, Sparkles, BarChart3, TrendingUp, Loader2, Lightbulb
+        AffinityScoreCard, DimensionRadar, SubScoreBreakdown,         PreferenceKeywordsDialog, RelationshipContextForm, CtCard, CtButton, PersonaGallery, CtAvatar,
+        FolderArchive, MessageSquare, Sparkles, BarChart3, TrendingUp, Loader2, Lightbulb, PortraitGenerateDialog
     },
     setup() {
         const currentTab = ref('affinity')
@@ -591,6 +620,16 @@ export default {
         // Core State
         const conversations = ref<Conversation[]>([])
         const selectedConversationId = ref<number | null>(null)
+
+// 联系人选中变化：写入跨页共享状态 + 通知
+watch(selectedConversationId, (id) => {
+  if (id) {
+    const c = conversations.value.find((x: any) => x.id === id)
+    if (c) {
+      saveSharedContact({ conversationId: id, displayName: c.name || c.username || '', avatar: c.avatar })
+    }
+  }
+})
         const dates = reactive({ from: '', to: '' })
         const loading = ref(false)
         const loadingSessions = ref(false)
@@ -618,11 +657,33 @@ export default {
         const analysisResult = ref<AffinityAnalysisResult | null>(null)
         const displayScore = ref(0)
         const showKeywordsDialog = ref(false)
+const showPortraitDialog = ref(false)
+const portraitGenError = ref('')
         const showContextForm = ref(false)
         const analysisLaunchPending = ref(false)
         const isGlobalAnalyzing = ref(false)
         const isStopping = ref(false)
         const activeTimer = ref<any>(null)
+        const viewEpoch = ref(0)                 // 视图代数：切换联系人时递增，丢弃过期异步结果（F1）
+        const modelDownloadTimer = ref<any>(null) // 模型下载轮询句柄（F2：卸载时清理）
+
+        // ===== 进行中分析的跨页面恢复（切走再回来接续进度而非重新分析） =====
+        const ANALYSIS_RESUME_KEY = 'chrono_analytics_active_analysis'
+        type AnalysisResumeState = { conversationId: number; phase: 'extract' | 'affinity'; taskId: string }
+        function saveAnalysisResume(state: AnalysisResumeState) {
+            try { sessionStorage.setItem(ANALYSIS_RESUME_KEY, JSON.stringify(state)) } catch { /* 忽略存储异常 */ }
+        }
+        function clearAnalysisResume() {
+            try { sessionStorage.removeItem(ANALYSIS_RESUME_KEY) } catch { /* 忽略 */ }
+        }
+        function loadAnalysisResume(): AnalysisResumeState | null {
+            try {
+                const raw = sessionStorage.getItem(ANALYSIS_RESUME_KEY)
+                const parsed = raw ? JSON.parse(raw) : null
+                if (parsed && parsed.conversationId && parsed.taskId && parsed.phase) return parsed
+                return null
+            } catch { return null }
+        }
         const globalProgressPercent = ref(0)
         const globalProgressStep = ref('')
         const isDownloadingModels = ref(false)
@@ -794,8 +855,9 @@ export default {
             const to = anchorDate ? new Date(anchorDate) : new Date()
             const from = new Date(to)
             from.setDate(to.getDate() - (days - 1))
-            dates.from = from.toISOString().slice(0, 10)
-            dates.to = to.toISOString().slice(0, 10)
+            // 用本地时区日期键，避免 toISOString() 的 UTC 日期在东八区凌晨少一天
+            dates.from = toLocalDateKey(from)
+            dates.to = toLocalDateKey(to)
         }
 
         function applyAnalysisDeviceMode(mode: AnalysisDeviceMode) {
@@ -917,6 +979,7 @@ export default {
         }
 
         async function onConversationChange(id: number) {
+            viewEpoch.value++ // 使进行中的加载与分析轮询结果全部过期（F1）
             selectedConversationId.value = id
             setDefaultDates(30, getConversationAnchorDate(id))
             hasFeatures.value = false
@@ -938,7 +1001,13 @@ export default {
             personaProfileMeta.estimatedTokens = 0
         }
 
-        async function loadPersonaProfile(conversationId = selectedConversationId.value || undefined) {
+        function handlePortraitGenerated() {
+  portraitGenError.value = ''
+  // 画像生成完成后刷新画像数据
+  if (typeof loadPersonaProfile === 'function') loadPersonaProfile()
+}
+
+async function loadPersonaProfile(conversationId = selectedConversationId.value || undefined) {
             if (!conversationId) {
                 resetPersonaProfile()
                 return
@@ -952,8 +1021,10 @@ export default {
             }
 
             loadingPersonaProfile.value = true
+            const epoch = viewEpoch.value
             try {
                 const res = await api.get_contact_profile(displayName, activeAccountWxid.value || undefined)
+                if (epoch !== viewEpoch.value) return // 已切换联系人，丢弃过期结果（F1）
                 if (res.ok && res.has_profile) {
                     personaProfile.value = res.profile || null
                     personaProfileMeta.createdAt = res.created_at || null
@@ -965,9 +1036,9 @@ export default {
                     personaProfileMeta.estimatedTokens = Number(res?.estimated_tokens || 0)
                 }
             } catch (e) {
-                resetPersonaProfile()
+                if (epoch === viewEpoch.value) resetPersonaProfile()
             } finally {
-                loadingPersonaProfile.value = false
+                if (epoch === viewEpoch.value) loadingPersonaProfile.value = false
             }
         }
 
@@ -985,8 +1056,10 @@ export default {
 
         async function tryLoadAffinityScores() {
             if (!selectedConversationId.value) return
+            const epoch = viewEpoch.value
             try {
                 const scores = await getAffinityScores(selectedConversationId.value)
+                if (epoch !== viewEpoch.value) return // 已切换联系人（F1）
                 if (scores && scores.cache_version >= 4) {
                     analysisResult.value = scores
                 } else {
@@ -999,6 +1072,7 @@ export default {
 
         async function tryLoadExistingFeatures() {
             if (!selectedConversationId.value) return
+            const epoch = viewEpoch.value
             hasFeatures.value = false
             try {
                 const [rtData, iniData, wcData, activityData] = await Promise.all([
@@ -1007,6 +1081,7 @@ export default {
                     api.get_word_counts(selectedConversationId.value, false),
                     api.get_activity_calendar(selectedConversationId.value)
                 ])
+                if (epoch !== viewEpoch.value) return // 已切换联系人（F1）
                 if (hasExistingFeatureData(rtData, iniData, wcData, activityData)) {
                     hasFeatures.value = true
                     await Promise.all([
@@ -1033,11 +1108,13 @@ export default {
 
         async function loadAnalysis() {
             if (!selectedConversationId.value) return
+            const epoch = viewEpoch.value
             loading.value = true
             error.value = ''
             try {
                 await bridgeReady()
                 const res = await api.get_analysis({ conversation_id: selectedConversationId.value, from: dates.from, to: dates.to })
+                if (epoch !== viewEpoch.value) return // 已切换联系人（F1）
                 if (res.error) { error.value = res.error; return }
                 analysis.timeseries = res?.timeseries ?? []
                 analysis.wordcloud = res?.wordcloud ?? []
@@ -1050,10 +1127,12 @@ export default {
 
         async function loadSessions() {
             if (!selectedConversationId.value) return
+            const epoch = viewEpoch.value
             loadingSessions.value = true
             try {
                 await bridgeReady()
                 const res = await api.get_sessions(selectedConversationId.value, 50, 0)
+                if (epoch !== viewEpoch.value) return // 已切换联系人（F1）
                 if (res.success && res.data && res.data.sessions) {
                     sessions.value = res.data.sessions.map((s: any) => ({
                         ...s,
@@ -1081,7 +1160,9 @@ export default {
         async function waitForModelDownload(taskId: string): Promise<boolean> {
             modelDownloadTaskId.value = taskId
             return new Promise((resolve, reject) => {
-                const timer = setInterval(async () => {
+                let timer: any = null
+                timer = setInterval(async () => {
+                    modelDownloadTimer.value = timer // 记录句柄供组件卸载时清理（F2）
                     try {
                         const prog = await api.get_model_download_progress(taskId)
                         if (!prog.ok) {
@@ -1089,7 +1170,6 @@ export default {
                             reject(new Error(prog.error_detail || prog.error || '模型下载失败'))
                             return
                         }
-
                         modelDownloadProgress.value = Number(prog.overall_progress || 0)
                         modelDownloadStep.value = prog.current_step || '正在下载模型...'
                         globalProgressPercent.value = modelDownloadProgress.value
@@ -1280,9 +1360,94 @@ export default {
             }
         }
 
+        // 轮询特征提取任务直到终态（供正常发起与跨页面恢复共用）
+        function waitForExtractionTask(taskId: string, analysisConversationId: number): Promise<void> {
+            return new Promise<void>((resolve, reject) => {
+                cancelCurrentAnalysis = () => reject(new Error('分析已取消'))
+                activeTimer.value = setInterval(async () => {
+                    try {
+                        if (selectedConversationId.value !== analysisConversationId) {
+                            clearInterval(activeTimer.value) // 已切换联系人，停止过期轮询（F1）
+                            resolve()
+                            return
+                        }
+                        const prog = await api.get_extraction_progress(taskId)
+                        const d = prog.data || prog
+                        if (prog.success || prog.ok) {
+                            globalProgressPercent.value = 5 + (d.progress || 0) * 0.45
+                            globalProgressStep.value = `[特征分析] ${d.message || d.current_step || '分析中...'}`
+                            if (d.status === 'completed') { clearInterval(activeTimer.value); resolve() }
+                            else if (d.status === 'failed' || d.status === 'cancelled') { clearInterval(activeTimer.value); reject(new Error(d.error || d.message || '分析已取消')) }
+                            else if (d.status === 'not_found') { clearInterval(activeTimer.value); reject(new Error('分析任务已过期')) }
+                        }
+                    } catch (e) { clearInterval(activeTimer.value); resolve() }
+                }, 500)
+            })
+        }
+
+        // 轮询好感度任务直到终态（完成时落结果并刷新跟随数据）
+        function waitForAffinityTask(affinityTaskId: string, analysisConversationId: number): Promise<void> {
+            return new Promise<void>((resolve, reject) => {
+                cancelCurrentAnalysis = () => reject(new Error('分析已取消'))
+                activeTimer.value = setInterval(async () => {
+                    try {
+                        if (selectedConversationId.value !== analysisConversationId) {
+                            clearInterval(activeTimer.value) // 已切换联系人，丢弃过期分析结果（F1）
+                            resolve()
+                            return
+                        }
+                        const prog = await getAffinityProgress(affinityTaskId)
+                        if (prog.ok) {
+                            globalProgressPercent.value = 50 + prog.progress_percent * 0.5
+                            globalProgressStep.value = `[深度推理] ${prog.current_step || '分析中...'}`
+                            if (prog.status === 'completed') {
+                                clearInterval(activeTimer.value)
+                                if (prog.result) {
+                                    analysisResult.value = prog.result as AffinityAnalysisResult
+                                }
+
+                                const scores = await getAffinityScores(analysisConversationId)
+                                if (
+                                    scores &&
+                                    (
+                                        !analysisResult.value ||
+                                        (scores.cache_updated_at || 0) >= (analysisResult.value.cache_updated_at || 0)
+                                    )
+                                ) {
+                                    analysisResult.value = scores
+                                }
+                                const followUpTasks = [
+                                    loadSessions(),
+                                    loadActivityCalendar(activityCalendar.value.year)
+                                ]
+                                if (shouldLoadContentAnalysis.value) {
+                                    followUpTasks.unshift(loadAnalysis())
+                                }
+                                await Promise.all(followUpTasks)
+                                resolve()
+                            } else if (prog.status === 'not_found') { clearInterval(activeTimer.value); reject(new Error('分析任务已过期')) }
+                            else if (prog.status === 'failed' || prog.status === 'cancelled') {
+                                clearInterval(activeTimer.value); reject(new Error(prog.error || '分析已取消'))
+                            }
+                        }
+                    } catch (e) { }
+                }, 500)
+            })
+        }
+
+        // 第二阶段：发起好感度分析并轮询到终态
+        async function runAffinityStage(analysisConversationId: number): Promise<void> {
+            globalProgressPercent.value = 50
+            globalProgressStep.value = '正在进行深度关系推理...'
+            const affinityTaskId = await analyzeAffinity(analysisConversationId, true)
+            saveAnalysisResume({ conversationId: analysisConversationId, phase: 'affinity', taskId: affinityTaskId })
+            await waitForAffinityTask(affinityTaskId, analysisConversationId)
+        }
+
         async function startGlobalAnalysis() {
             let isCancelled = false
             if (!selectedConversationId.value) return
+            const analysisConversationId = selectedConversationId.value // 分析发起时的联系人（F1）
             isGlobalAnalyzing.value = true
             globalProgressPercent.value = 0
             globalProgressStep.value = '即将开始...'
@@ -1309,21 +1474,8 @@ export default {
                 if (extractRes.success || extractRes.ok) {
                     const taskId = (extractRes.data || extractRes).task_id
                     if ((extractRes.data || extractRes).status !== 'completed') {
-                        await new Promise<void>((resolve, reject) => {
-                            cancelCurrentAnalysis = () => reject(new Error('分析已取消'))
-                            activeTimer.value = setInterval(async () => {
-                                try {
-                                    const prog = await api.get_extraction_progress(taskId)
-                                    const d = prog.data || prog
-                                    if (prog.success || prog.ok) {
-                                        globalProgressPercent.value = 5 + (d.progress || 0) * 0.45
-                                        globalProgressStep.value = `[特征分析] ${d.message || d.current_step || '分析中...'}`
-                                        if (d.status === 'completed') { clearInterval(activeTimer.value); resolve() }
-                                        else if (d.status === 'failed' || d.status === 'cancelled') { clearInterval(activeTimer.value); reject(new Error(d.error || '分析已取消')) } // Don't block affinity if features fail
-                                    }
-                                } catch (e) { clearInterval(activeTimer.value); resolve() }
-                            }, 500)
-                        })
+                        saveAnalysisResume({ conversationId: analysisConversationId, phase: 'extract', taskId })
+                        await waitForExtractionTask(taskId, analysisConversationId)
                     }
                     hasFeatures.value = true
                     await Promise.all([
@@ -1338,59 +1490,19 @@ export default {
                 }
 
                 // Stage 2: Affinity Model
-                globalProgressPercent.value = 50
-                globalProgressStep.value = '正在进行深度关系推理...'
-                const affinityTaskId = await analyzeAffinity(selectedConversationId.value, true)
-                
-                if (!isGlobalAnalyzing.value) {
-                    throw new Error('分析已取消')
+                await runAffinityStage(analysisConversationId)
+
+                if (selectedConversationId.value === analysisConversationId) {
+                    globalProgressPercent.value = 100
+                    globalProgressStep.value = '全面分析完成'
+                    clearAnalysisResume()
+                } else {
+                    // 用户已切走（软放弃）：后端仍在跑，保留恢复状态供回访接续
+                    globalProgressStep.value = '分析正在后台继续，回到该联系人可接续进度'
                 }
-                
-                await new Promise<void>((resolve, reject) => {
-                    cancelCurrentAnalysis = () => reject(new Error('分析已取消'))
-                    activeTimer.value = setInterval(async () => {
-                        try {
-                            const prog = await getAffinityProgress(affinityTaskId)
-                            if (prog.ok) {
-                                globalProgressPercent.value = 50 + prog.progress_percent * 0.5
-                                globalProgressStep.value = `[深度推理] ${prog.current_step || '分析中...'}`
-                                if (prog.status === 'completed') {
-                                    clearInterval(activeTimer.value)
-                                    if (prog.result) {
-                                        analysisResult.value = prog.result as AffinityAnalysisResult
-                                    }
-
-                                    const scores = await getAffinityScores(selectedConversationId.value!)
-                                    if (
-                                        scores &&
-                                        (
-                                            !analysisResult.value ||
-                                            (scores.cache_updated_at || 0) >= (analysisResult.value.cache_updated_at || 0)
-                                        )
-                                    ) {
-                                        analysisResult.value = scores
-                                    }
-                                    const followUpTasks = [
-                                        loadSessions(),
-                                        loadActivityCalendar(activityCalendar.value.year)
-                                    ]
-                                    if (shouldLoadContentAnalysis.value) {
-                                        followUpTasks.unshift(loadAnalysis())
-                                    }
-                                    await Promise.all(followUpTasks)
-                                    resolve()
-                                } else if (prog.status === 'failed' || prog.status === 'cancelled') {
-                                    clearInterval(activeTimer.value); reject(new Error(prog.error || '分析已取消'))
-                                }
-                            }
-                        } catch (e) { }
-                    }, 500)
-                })
-
-                globalProgressPercent.value = 100
-                globalProgressStep.value = '全面分析完成'
             } catch (e: any) {
                 isCancelled = String(e).includes('已取消')
+                clearAnalysisResume() // 终态失败/取消：清除恢复状态（切走导致的软放弃不在此路径）
                 if (isCancelled) {
                     globalProgressStep.value = '分析已停止'
                 } else {
@@ -1599,11 +1711,58 @@ export default {
         function onWordSelect(word: string) { console.debug('selected', word) }
         function handleResize() { responseTimeChartInstance?.resize(); activityCalendarChartInstance?.resize(); wordCountChartInstance?.resize() }
 
+        // 跨页面恢复：重挂组件时若存在未完成的分析任务，接续轮询而非重新分析
+        async function resumeAnalysisFromSaved(saved: AnalysisResumeState) {
+            if (!saved?.conversationId || !saved.taskId) { clearAnalysisResume(); return }
+            if (!conversations.value.some((c: any) => c.id === saved.conversationId)) {
+                clearAnalysisResume(); return
+            }
+            if (selectedConversationId.value !== saved.conversationId) {
+                await onConversationChange(saved.conversationId)
+            }
+            isGlobalAnalyzing.value = true
+            analysisLaunchPending.value = true
+            globalProgressStep.value = '检测到未完成的分析，正在接续进度...'
+            globalProgressPercent.value = saved.phase === 'extract' ? 10 : 55
+            try {
+                if (saved.phase === 'extract') {
+                    await waitForExtractionTask(saved.taskId, saved.conversationId)
+                    hasFeatures.value = true
+                    await Promise.all([loadFeatureData(), loadSessions(), loadActivityCalendar()])
+                    await runAffinityStage(saved.conversationId)
+                } else {
+                    await waitForAffinityTask(saved.taskId, saved.conversationId)
+                }
+                if (selectedConversationId.value === saved.conversationId) {
+                    globalProgressPercent.value = 100
+                    globalProgressStep.value = '全面分析完成'
+                    clearAnalysisResume()
+                } else {
+                    globalProgressStep.value = '分析正在后台继续，回到该联系人可接续进度'
+                }
+            } catch {
+                clearAnalysisResume()
+            } finally {
+                analysisLaunchPending.value = false
+                cancelCurrentAnalysis = null
+                setTimeout(() => { isGlobalAnalyzing.value = false }, 2000)
+            }
+        }
+
         onMounted(async () => {
             if (!dates.from || !dates.to) setDefaultDates(30)
             await loadAnalysisDeviceMode()
             await refreshAccountContext()
             await loadConversations()
+            // 恢复跨页共享的联系人选中
+    const sharedContact = loadSharedContact()
+    if (sharedContact && !selectedConversationId.value) {
+      if (conversations.value.some((c: any) => c.id === sharedContact.conversationId)) {
+        selectedConversationId.value = sharedContact.conversationId
+      }
+    }
+    const savedResume = loadAnalysisResume()
+            if (savedResume) void resumeAnalysisFromSaved(savedResume)
             window.addEventListener('resize', handleResize)
             window.addEventListener('chrono:wechat-account-changed', handleAccountChanged)
         })
@@ -1611,6 +1770,8 @@ export default {
         onUnmounted(() => {
             window.removeEventListener('resize', handleResize)
             window.removeEventListener('chrono:wechat-account-changed', handleAccountChanged)
+            if (activeTimer.value) { clearInterval(activeTimer.value); activeTimer.value = null } // F2：卸载时停止分析轮询
+            if (modelDownloadTimer.value) { clearInterval(modelDownloadTimer.value); modelDownloadTimer.value = null } // F2
             responseTimeChartInstance?.dispose(); activityCalendarChartInstance?.dispose(); wordCountChartInstance?.dispose()
         })
 
@@ -1623,7 +1784,7 @@ export default {
         return {
             currentTab, conversations, selectedConversationId, dates, loading, loadingSessions, error, analysis, subject, sessions,
             personaProfile, loadingPersonaProfile, personaProfileMeta,
-            analysisResult, displayScore, showKeywordsDialog, showContextForm, isGlobalAnalyzing, isStopping, activeTimer, handleStopAnalysis, globalProgressPercent, globalProgressStep, isDownloadingModels, modelDownloadProgress, modelDownloadStep, modelDownloadTaskId, gpuMode,
+            analysisResult, displayScore, showKeywordsDialog, showContextForm, showPortraitDialog, portraitGenError, handlePortraitGenerated, isGlobalAnalyzing, isStopping, activeTimer, handleStopAnalysis, globalProgressPercent, globalProgressStep, isDownloadingModels, modelDownloadProgress, modelDownloadStep, modelDownloadTaskId, gpuMode,
             hasConversations, hasFeatures, hasCachedAffinityAnalysis, featureStats, responseTimeStats, initiativeStats, wordCountsStats, displayWordRatioLabel, activityCalendar,
             responseTimeChart, activityCalendarChart, wordCountChart, stats, currentContactName, headerAvatarSrc, hasPreferenceKeywords, allDimensions, emotionalResonanceDisplaySubScores,
             currentRangeLabel, hasContentAnalysis, circumference, strokeDashoffset, formatNumber, formatTime, getResponseTimeLabel, getMergedResponseTimeLabel, getResponseTimePercent, onConversationChange, onDatesChange, handleExport, handleStartGlobalAnalysis, handleContextSaved, handleKeywordsUpdated,
@@ -2097,6 +2258,18 @@ export default {
 
 .trend-badge .up { color: var(--ct-color-success); }
 .trend-badge .down { color: var(--ct-color-error); }
+
+/* 分析新鲜度徽标：导入新消息未重分析时提示 */
+.stale-badge {
+  margin-left: 8px;
+  font-size: var(--ct-text-xs);
+  padding: 2px 8px;
+  border-radius: var(--ct-radius-sm);
+  color: #f0b429;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  cursor: help;
+}
 
 .score-visual {
   display: flex;

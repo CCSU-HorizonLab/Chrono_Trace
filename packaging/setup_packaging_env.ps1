@@ -70,6 +70,11 @@ $needsInstall = $ForceReinstall -or (-not $venvExists) -or ($storedHash -ne $var
 if (-not $needsInstall) {
     try {
         & $VenvPython -m PyInstaller --version | Out-Null
+        # Native commands do not throw on non-zero exit, so check the exit code
+        # explicitly (e.g. venv exists but PyInstaller is missing/broken).
+        if ($LASTEXITCODE -ne 0) {
+            $needsInstall = $true
+        }
     } catch {
         $needsInstall = $true
     }
@@ -77,13 +82,23 @@ if (-not $needsInstall) {
 
 if ($needsInstall) {
     Write-Host "==> Sync packaging dependencies ($Variant)" -ForegroundColor Cyan
-    & $VenvPython -m pip install -r $RequirementsPath
-    Assert-LastExitCode "Packaging dependency install"
+    # requirements-packaging.txt references the vendored wheel with a path
+    # relative to the repository root, and pip resolves it against the current
+    # working directory. Run pip from the repository root no matter where this
+    # script was invoked from.
+    Push-Location $ProjectRoot
+    try {
+        & $VenvPython -m pip install -r $RequirementsPath
+        Assert-LastExitCode "Packaging dependency install"
 
-    if ($Variant -eq "gpu") {
-        Write-Host "==> Replace CPU torch with CUDA torch ($torchVersion)" -ForegroundColor Cyan
-        & $VenvPython -m pip install --upgrade --force-reinstall --no-cache-dir --index-url $GpuTorchIndexUrl "torch==$torchVersion"
-        Assert-LastExitCode "GPU torch install"
+        if ($Variant -eq "gpu") {
+            Write-Host "==> Replace CPU torch with CUDA torch ($torchVersion)" -ForegroundColor Cyan
+            & $VenvPython -m pip install --upgrade --force-reinstall --no-cache-dir --index-url $GpuTorchIndexUrl "torch==$torchVersion"
+            Assert-LastExitCode "GPU torch install"
+        }
+    }
+    finally {
+        Pop-Location
     }
 
     Set-Content -LiteralPath $HashPath -Value $variantHashSeed -NoNewline

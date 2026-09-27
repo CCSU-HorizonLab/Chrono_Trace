@@ -4,18 +4,21 @@ from __future__ import annotations
 
 import difflib
 import json
+import logging
 import threading
 import time
 from typing import Any
 
-from .rag_config import load_rag_settings
-from .rag_embedding import (
+from .rag.config import load_rag_settings
+from .rag.embedding import (
     RagEmbeddingDimensionMismatch,
     RagEmbeddingService,
     RagEmbeddingUnavailable,
 )
-from .rag_store import RAG_INDEX_VERSION, RagStore
+from .rag.store import RAG_INDEX_VERSION, RagStore
 
+
+logger = logging.getLogger(__name__)
 
 POSITIVE_ATTRIBUTIONS = {"accepted", "rewritten", "preface_then_reply"}
 
@@ -349,14 +352,21 @@ class SuggestionFeedbackAttributor:
             candidate_ids: list[int] = []
             try:
                 candidate_ids = self._try_extract_feedback_candidates(suggestion, result)
-            except Exception:
+            except Exception as exc:
+                # G7：抽取失败不再完全静默（其余候选被丢弃属于异常路径，
+                # 需要留痕）；归因主链路仍不受影响
+                logger.warning(
+                    "[FeedbackAttribution] candidate extraction failed: %s", exc
+                )
                 candidate_ids = []
             try:
                 self._write_policy_signal(
                     suggestion, result, conversation_id, extra_detail={"candidate_fact_ids": candidate_ids}
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning(
+                    "[FeedbackAttribution] policy signal write failed: %s", exc
+                )
 
     def _try_extract_feedback_candidates(
         self, suggestion: dict[str, Any], result: dict[str, Any]
@@ -372,7 +382,7 @@ class SuggestionFeedbackAttributor:
             return []
         if float(result.get("confidence") or 0.0) < 0.65:
             return []
-        from .rag_config import load_rag_settings
+        from .rag.config import load_rag_settings
 
         if not load_rag_settings().get("rag_structured_fact_extraction_enabled"):
             return []
@@ -394,7 +404,7 @@ class SuggestionFeedbackAttributor:
         final = str(result.get("final_message") or "")
         if not original or not final:
             return []
-        from .rag_fact_llm import build_llm_fact_extractor
+        from .rag.fact_llm import build_llm_fact_extractor
 
         adapter = build_llm_fact_extractor()
         if adapter is None:
@@ -402,7 +412,7 @@ class SuggestionFeedbackAttributor:
         signals = adapter.extract_feedback_signals(
             original_speech=original, final_message=final
         )
-        from .rag_fact_quality import fact_quality_reason
+        from .rag.fact_quality import fact_quality_reason
 
         account_wxid = str(suggestion.get("account_wxid") or "")
         conversation_id = self._resolve_conversation_id(suggestion)
@@ -415,7 +425,7 @@ class SuggestionFeedbackAttributor:
                 continue
             cursor = self.conn.execute(
                 """
-                INSERT INTO rag_facts
+                INSERT OR IGNORE INTO rag_facts
                 (account_wxid, conversation_id, subject, kind, content, status, as_of,
                  confidence, sensitivity, enabled, evidence_message_ids_json,
                  source_window_json, summary_method, created_at, updated_at)
@@ -437,13 +447,32 @@ class SuggestionFeedbackAttributor:
                     now,
                 ),
             )
-            created.append(int(cursor.lastrowid or 0))
+            if cursor.rowcount:
+                created.append(int(cursor.lastrowid or 0))
+            else:
+                # G7：同内容信号第二次触发会撞 UNIQUE(account,conversation,
+                # kind,content)——忽略本次插入并回查已存在行 id 继续用作
+                # 候选，不再让 IntegrityError 把其余候选一起吞掉
+                existing_fact = self.conn.execute(
+                    """
+                    SELECT id FROM rag_facts
+                    WHERE account_wxid=? AND conversation_id=? AND kind=? AND content=?
+                    """,
+                    (
+                        account_wxid,
+                        conversation_id,
+                        signal.get("kind") or "preference",
+                        signal.get("content"),
+                    ),
+                ).fetchone()
+                if existing_fact is not None:
+                    created.append(int(existing_fact["id"]))
         if not created and signals:
             outcome = "no_qualified_candidate"
         else:
             outcome = "candidate_created" if created else "no_candidate"
         try:
-            from .rag_store import RagStore
+            from .rag.store import RagStore
 
             RagStore(self.conn).record_feedback_policy_signal(
                 account_wxid=account_wxid,
@@ -463,7 +492,7 @@ class SuggestionFeedbackAttributor:
         self, suggestion: dict[str, Any], result: dict[str, Any], conversation_id: int | None,
         extra_detail: dict[str, Any] | None = None,
     ) -> None:
-        from .rag_store import RagStore
+        from .rag.store import RagStore
 
         log = self.conn.execute(
             """
@@ -553,7 +582,7 @@ class SuggestionFeedbackAttributor:
 
     def _mark_feedback_dirty(self, account_wxid: str, conversation_id: int) -> None:
         try:
-            from .rag_indexer import RagIndexQueue
+            from .rag.indexer import RagIndexQueue
 
             RagIndexQueue.mark_dirty(account_wxid, conversation_id)
         except Exception:

@@ -9,8 +9,8 @@ import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from app.services.realtime.rag_relationship_policy import refresh_after_fact_feedback
-from app.services.realtime.rag_store import RagStore
+from app.services.realtime.rag.relationship_policy import refresh_after_fact_feedback
+from app.services.realtime.rag.store import RagStore
 from app.services.realtime.suggestion_observer import record_observation
 
 
@@ -46,7 +46,7 @@ def test_fact_feedback_writes_policy_signal(monkeypatch):
     )
     conn.commit()
     monkeypatch.setattr(
-        "app.services.realtime.rag_relationship_policy.load_rag_settings",
+        "app.services.realtime.rag.relationship_policy.load_rag_settings",
         lambda: {"rag_relationship_policy_shadow_enabled": True},
     )
 
@@ -67,7 +67,7 @@ def test_unreferenced_fact_feedback_records_noop(monkeypatch):
     conn, store = _store()
     fact_id = _seed_fact(store)
     monkeypatch.setattr(
-        "app.services.realtime.rag_relationship_policy.load_rag_settings",
+        "app.services.realtime.rag.relationship_policy.load_rag_settings",
         lambda: {"rag_relationship_policy_shadow_enabled": False},
     )
     refresh_after_fact_feedback(store, fact_id, action="forget")
@@ -169,10 +169,10 @@ def test_rewritten_attribution_creates_shadow_candidates(monkeypatch):
     )
     monkeypatch.setattr(
         "app.services.realtime.feedback_attribution.load_rag_settings" if False else
-        "app.services.realtime.rag_config.load_rag_settings",
+        "app.services.realtime.rag.config.load_rag_settings",
         lambda settings=None: {"rag_structured_fact_extraction_enabled": True},
     )
-    import app.services.realtime.rag_fact_llm as fact_llm
+    import app.services.realtime.rag.fact_llm as fact_llm
 
     class _FakeAdapter:
         def extract_feedback_signals(self, *, original_speech, final_message):
@@ -223,7 +223,7 @@ def test_feedback_candidates_require_settings_and_type(monkeypatch):
     """accepted 不触发；开关关闭不触发。"""
     conn, store = _store()
     monkeypatch.setattr(
-        "app.services.realtime.rag_config.load_rag_settings",
+        "app.services.realtime.rag.config.load_rag_settings",
         lambda settings=None: {"rag_structured_fact_extraction_enabled": False},
     )
     from app.services.realtime.feedback_attribution import SuggestionFeedbackAttributor
@@ -237,7 +237,7 @@ def test_feedback_candidates_require_settings_and_type(monkeypatch):
     assert attributor._try_extract_feedback_candidates(suggestion, rewritten) == []
 
     monkeypatch.setattr(
-        "app.services.realtime.rag_config.load_rag_settings",
+        "app.services.realtime.rag.config.load_rag_settings",
         lambda settings=None: {"rag_structured_fact_extraction_enabled": True},
     )
     accepted = dict(rewritten, attribution_type="accepted")

@@ -1,5 +1,4 @@
 import sys
-import os
 from pathlib import Path
 
 # 添加后端根目录到 sys.path，以便能够导入 app 模块

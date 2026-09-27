@@ -2534,3 +2534,89 @@ def test_incremental_skip_respects_llm_extraction_debt(monkeypatch):
     status2 = indexer2.rebuild_contact_index(account_wxid="wxid_a", conversation_id=1)
     assert status2["status"] == "ready"
     assert calls == [], "水位已覆盖后应短路"
+
+
+def test_backfill_uses_elevated_budget_and_requeues(monkeypatch):
+    """回补预算分级：200 段/轮（非 40），未抽完自动续轮（水位推进才续）。"""
+    import json as _json
+    import threading as _threading
+
+    conn = _conn()
+    store = RagStore(conn)
+    now = 1790000000
+    conn.executescript(
+        """
+        CREATE TABLE conversations (
+            id INTEGER PRIMARY KEY, account_wxid TEXT NOT NULL, username TEXT NOT NULL,
+            display_name TEXT, message_count INTEGER DEFAULT 0,
+            updated_at INTEGER DEFAULT 0, is_deleted INTEGER DEFAULT 0
+        );
+        CREATE TABLE messages (
+            id INTEGER PRIMARY KEY, conversation_id INTEGER NOT NULL,
+            is_sender INTEGER NOT NULL, content TEXT, message_type INTEGER NOT NULL,
+            timestamp INTEGER NOT NULL
+        );
+        """
+    )
+    conn.execute("INSERT INTO conversations VALUES (1, 'wxid_a', 'u1', 'U1', 300, ?, 0)", (now,))
+    # 60 段（每段 4 条消息、间隔 2 分钟成段、段间隔 3 小时强制切段）
+    rows = []
+    ts = now - 60 * 4 * 3600
+    mid = 1
+    for seg in range(60):
+        base = ts + seg * 4 * 3600
+        rows.append((mid, 0, "对方说今天也想吃火锅配奶茶", base))
+        rows.append((mid + 1, 1, "好呀老地方见", base + 120))
+        rows.append((mid + 2, 0, "周五见", base + 240))
+        rows.append((mid + 3, 1, "周五见，老地方", base + 360))
+        mid += 4
+    conn.executemany("INSERT INTO messages VALUES (?, 1, ?, ?, 1, ?)", rows)
+    store.upsert_status("wxid_a", 1, status="ready", document_count=10)
+    # 消息水位 = 最后一条消息的时间戳（与 rebuild 的推进语义一致）
+    last_msg_ts = now - 4 * 3600 + 360
+    conn.execute(
+        "UPDATE rag_index_status SET message_watermark_ts = ? WHERE account_wxid='wxid_a' AND conversation_id=1",
+        (last_msg_ts,),
+    )
+    conn.commit()
+    monkeypatch.setattr(
+        "app.services.realtime.rag.indexer.load_rag_settings",
+        lambda: {
+            "rag_embedding_model": "tingting0514/text2vec-base-chinese",
+            "rag_embedding_dim": 384,
+            "rag_privacy_mode": "balanced",
+        },
+    )
+    calls = []
+
+    def fake_llm(prompt):
+        payload = _json.loads(prompt)
+        calls.append(len(payload["messages"]))
+        return {"facts": []}
+
+    from app.services.realtime.rag.fact_extractor import StructuredFactExtractor
+
+    class _Embed:
+        def embed_texts(self, texts):
+            return [[0.0] * 384 for _ in texts]
+
+    enqueued = []
+    monkeypatch.setattr(
+        "app.services.realtime.rag.indexer.RagIndexQueue.enqueue",
+        staticmethod(lambda account_wxid, conversation_id: enqueued.append((account_wxid, conversation_id))),
+    )
+
+    indexer = RagIndexer(
+        store=store,
+        embedding_service=_Embed(),
+        structured_fact_extractor=StructuredFactExtractor(fake_llm),
+    )
+    extracted = indexer._backfill_llm_extraction("wxid_a", 1)
+    # 常规预算是 40——60 段全部抽到证明回补预算 200 生效
+    assert extracted == 60, f"回补应抽满 60 段（预算200），实际 {extracted}"
+    assert len(calls) == 60
+    # 全部抽平：不续轮
+    assert enqueued == []
+    # 抽取水位推进到消息末尾（= 最后一段 end_ts，与消息水位持平）
+    status = store.get_status("wxid_a", 1)
+    assert int(status["fact_extract_watermark_ts"]) >= last_msg_ts

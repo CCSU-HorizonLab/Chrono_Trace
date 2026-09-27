@@ -69,6 +69,10 @@ class RagIndexer:
     }
     # P1.2 LLM 结构化抽取的每轮预算：每次重建每联系人最多抽取的段数
     LLM_EXTRACT_SEGMENT_BUDGET = 40
+    # 回补（欠账）场景专用预算：用户知情主动触发（token 成本预期），
+    # 且队列串行+互斥锁已保证长任务安全——小步慢走的防误操作预算
+    # 在 156 联系人欠账场景下不合理（几十次手动重建才抽完一人）
+    LLM_EXTRACT_BACKFILL_BUDGET = 200
     # P1.5 断点续抽版本：抽取 prompt/质量门变化时递增，水位失效全量重抽
     # p1.6：游戏内购买排除+购买代词差例强化（P1.6 T11）
     # p1.7：消费类原型降级（LLM-only）+ 检索增强上下文（跨天代指还原）
@@ -88,8 +92,10 @@ class RagIndexer:
         self.segmenter = RagSegmenter()
         self.semantic_fact_extractor = SemanticFactExtractor(self.embedding_service, self.segmenter)
         self.structured_fact_extractor = structured_fact_extractor
-        # P1.2 LLM 结构化抽取的轮内预算（每次 rebuild 重置）
+        # P1.2 LLM 结构化抽取的轮内预算（每次 rebuild 重置）；
+        # 常规 40，回补场景临时抬到 LLM_EXTRACT_BACKFILL_BUDGET
         self._llm_extract_segments_used = 0
+        self._llm_extract_budget_limit = self.LLM_EXTRACT_SEGMENT_BUDGET
         self._llm_extract_consecutive_failures = 0
         self._llm_extract_watermark_ts: int | None = None
         # P1.5 连续覆盖语义：段失败后冻结水位，后续成功不再越过失败段
@@ -940,6 +946,7 @@ class RagIndexer:
         self._llm_extract_segments_used = 0
         self._llm_extract_consecutive_failures = 0
         self._llm_extract_round_failed = False
+        self._llm_extract_budget_limit = self.LLM_EXTRACT_BACKFILL_BUDGET
         self._init_llm_extract_progress(account_wxid, conversation_id)
         messages = self._load_messages(conversation_id)
         if not messages:
@@ -965,12 +972,27 @@ class RagIndexer:
             ]
             if self._llm_extract_consecutive_failures >= 3:
                 break
-            if self._llm_extract_segments_used >= self.LLM_EXTRACT_SEGMENT_BUDGET:
+            if self._llm_extract_segments_used >= self._llm_extract_budget_limit:
                 break
+        self._llm_extract_budget_limit = self.LLM_EXTRACT_SEGMENT_BUDGET
         if extracted:
             logger.info(
                 "[RAG Index] llm extraction backfill: %s segments (conv=%s)", extracted, conversation_id
             )
+            # 仍有欠账且本轮有推进 → 自动续轮（队列 worker 下一轮继续，
+            # 无需用户反复点重建；水位无推进时不续，防失败死循环）
+            try:
+                status_now = self.store.get_status(account_wxid, conversation_id) or {}
+                msg_wm = int(status_now.get("message_watermark_ts") or 0)
+                ext_wm = int(status_now.get("fact_extract_watermark_ts") or 0)
+                if msg_wm > 0 and ext_wm < msg_wm:
+                    RagIndexQueue.enqueue(account_wxid, conversation_id)
+                    logger.info(
+                        "[RAG Index] extraction debt remains (ext=%s < msg=%s), re-queued conv=%s",
+                        ext_wm, msg_wm, conversation_id,
+                    )
+            except Exception as requeue_exc:
+                logger.debug("[RAG Index] backfill re-queue skipped: %s", requeue_exc)
         return extracted
 
     def _refresh_policy_shadows(
@@ -1169,7 +1191,7 @@ class RagIndexer:
             return
         if len(segment.messages) < 4:
             return
-        if self._llm_extract_segments_used >= self.LLM_EXTRACT_SEGMENT_BUDGET:
+        if self._llm_extract_segments_used >= self._llm_extract_budget_limit:
             return
         if self._llm_extract_consecutive_failures >= 3:
             return

@@ -38,7 +38,14 @@
               />
               <div class="dropdown-copy">
                 <span class="dropdown-name">{{ conv.name || conv.username || '未知联系人' }}</span>
-                <span class="dropdown-meta">{{ conv.message_count }}条</span>
+                <span class="dropdown-meta">
+                  {{ conv.message_count }}条
+                  <span
+                    v-if="conv.analysis_stale"
+                    class="dropdown-stale-badge"
+                    :title="conv.pending_message_count == null ? '尚未分析' : `有 ${conv.pending_message_count} 条新消息未纳入分析`"
+                  >{{ conv.pending_message_count == null ? '未分析' : '待更新' }}</span>
+                </span>
               </div>
             </li>
             <li v-if="visibleConversations.length < filteredConversations.length"
@@ -67,6 +74,8 @@ type Conversation = {
   username?: string
   message_count: number
   avatar?: string
+  analysis_stale?: boolean
+  pending_message_count?: number | null
 }
 
 const props = defineProps<{ 
@@ -306,5 +315,17 @@ function onInputFocus() {
   font-size: 12px;
   opacity: 0.8;
   flex-shrink: 0;
+}
+/* 分析新鲜度徽标：导入新消息未重分析时提示 */
+.dropdown-stale-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-size: 10px;
+  line-height: 1.4;
+  color: #f0b429;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.3);
 }
 </style>

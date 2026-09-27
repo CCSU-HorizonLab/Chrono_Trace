@@ -4899,17 +4899,27 @@ class Bridge:
             }
 
     def get_affinity_scores(self, conversation_id: int) -> dict[str, Any]:
-        """获取好感度分析结果"""
+        """获取好感度分析结果（附分析新鲜度：导入新消息后前端提示重分析）"""
         try:
             from dataclasses import asdict
-            
+
             AffinityAnalysisService = self._get_fresh_affinity_service_class()
             service = AffinityAnalysisService()
             result = service.get_scores(conversation_id)
-            
+
+            freshness = {"stale": False, "pending_message_count": 0}
+            try:
+                from ..services.analysis.analysis_state import get_analysis_freshness
+
+                freshness = get_analysis_freshness(int(conversation_id))
+            except Exception as fresh_e:
+                logger.debug("[Bridge] 分析新鲜度读取跳过: %s", fresh_e)
+
             return {
                 "ok": True,
-                "result": asdict(result) if result else None
+                "result": asdict(result) if result else None,
+                "analysis_stale": freshness.get("stale", False),
+                "pending_message_count": freshness.get("pending_message_count", 0),
             }
         except Exception as e:
             logger.error(f"[Bridge] 获取好感度结果失败: {e}")

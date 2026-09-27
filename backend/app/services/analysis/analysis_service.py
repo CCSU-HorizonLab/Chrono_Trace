@@ -64,7 +64,9 @@ class AnalysisService:
                     COALESCE(
                         NULLIF(TRIM(c.avatar_path), ''),
                         NULLIF(TRIM(ct.avatar_path), '')
-                    ) as avatar
+                    ) as avatar,
+                    c.analysis_stale,
+                    c.analysis_message_count
                 FROM conversations c
                 LEFT JOIN contacts ct
                     ON c.account_wxid = ct.account_wxid
@@ -79,6 +81,11 @@ class AnalysisService:
             for row in cursor.fetchall():
                 if is_excluded_contact_username(row[1]):
                     continue
+                analyzed_count = row[8]
+                pending = (
+                    None if analyzed_count is None
+                    else max(0, (row[4] or 0) - (analyzed_count or 0))
+                )
                 conversations.append({
                     "id": row[0],
                     "username": row[1],
@@ -86,6 +93,8 @@ class AnalysisService:
                     "message_count": row[4],
                     "last_message_time": datetime.fromtimestamp(row[5]).strftime("%Y-%m-%d %H:%M"),
                     "avatar": row[6],
+                    "analysis_stale": bool(row[7]),
+                    "pending_message_count": pending,  # None=从未分析
                 })
             
             logger.debug(f"[DEBUG] 查询到 {len(conversations)} 个联系人")

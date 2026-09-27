@@ -8,9 +8,6 @@ import time
 from typing import Any, Dict, List, Optional
 
 import jieba
-import torch
-from transformers import AutoModelForSequenceClassification, AutoTokenizer
-
 from ...db.connection import get_db
 from ..analysis.feature_extraction_config import (
     ANALYSIS_DEVICE_MODE_CPU,
@@ -30,18 +27,6 @@ from .sentiment_rules import (
     is_perfunctory,
     is_transition_word,
 )
-
-
-def _safe_disable_dynamo(fn):
-    """Best-effort guard against PyTorch dynamo issues."""
-    try:
-        import torch._dynamo
-
-        if hasattr(torch._dynamo, "disable"):
-            return torch._dynamo.disable(fn)
-    except Exception:
-        pass
-    return fn
 
 
 def singleton(cls):
@@ -104,16 +89,6 @@ class RealtimeSentimentService:
         logger.info(f"[实时情感分析] 切换分析设备模式: {normalized_mode}")
         return self._device_mode
 
-    def _resolve_runtime_device(self) -> str:
-        if self._device_mode == ANALYSIS_DEVICE_MODE_CPU:
-            return "cpu"
-        if self._device_mode == ANALYSIS_DEVICE_MODE_GPU:
-            if torch.cuda.is_available():
-                return "cuda"
-            logger.warning("[实时情感分析] 已选择 GPU 模式，但当前 CUDA 不可用，回退到 CPU")
-            return "cpu"
-        return "cuda" if torch.cuda.is_available() else "cpu"
-
     def _ensure_table_exists(self):
         """Ensure the realtime sentiment cache table exists."""
         try:
@@ -145,65 +120,26 @@ class RealtimeSentimentService:
         return self._model is not None
 
     def _load_model(self):
-        """Load the local classifier on the configured device."""
+        """Load the ONNX classifier."""
         if self._model is not None:
             return
 
         with self._lock:
             if self._model is not None:
                 return
-
             try:
-                self._refresh_model_manager()
-                logger.debug("[实时情感分析] 正在加载情感分析模型...")
-                if not self._model_manager.ensure_model_exists():
-                    raise FileNotFoundError(
-                        f"情感分类模型不存在: {self._model_manager.model_dir}\n"
-                        f"模型仓库: {self._model_manager.repo_id}\n"
-                        "请先通过“历史记录分析”页面的自动下载功能从 ModelScope 获取模型。"
-                    )
-                    raise FileNotFoundError(
-                        f"本地模型不存在: {self._model_manager.model_dir}"
-                    )
+                from ..analysis.onnx_inference import get_shared_engine
 
-                model_path = str(self._model_manager.model_dir)
-                self._tokenizer = AutoTokenizer.from_pretrained(model_path)
-                self._model = AutoModelForSequenceClassification.from_pretrained(
-                    model_path,
-                    low_cpu_mem_usage=False,
-                )
-
-                target_device = self._resolve_runtime_device()
-                if target_device == "cuda":
-                    try:
-                        gpu_name = torch.cuda.get_device_name(0)
-                        self._model = self._model.to("cuda")
-                        self._device = "cuda"
-                        logger.info(f"[实时情感分析] 模型已迁移到 GPU: {gpu_name}")
-                    except Exception as exc:
-                        self._device = "cpu"
-                        logger.warning(f"[实时情感分析] GPU 迁移失败，回退到 CPU: {exc}")
-                else:
-                    self._device = "cpu"
-
-                self._model.eval()
-                device_display = self._device.upper()
-                if self._device == "cuda":
-                    device_display = f"CUDA:0 ({torch.cuda.get_device_name(0)})"
+                engine = get_shared_engine("classifier", device_mode=self._device_mode)
+                self._model = engine
+                self._tokenizer = None
+                self._device = engine.device_tag
                 logger.info(
-                    f"[实时情感分析] 模型加载成功 | 分类数: {self._model.config.num_labels} | 设备: {device_display}"
+                    "[实时情感分析] ONNX 情感模型已加载 (device=%s, providers=%s)",
+                    engine.device_tag, engine.providers,
                 )
-            except ImportError:
-                logger.warning("[实时情感分析] transformers 未安装")
-                raise
             except Exception as exc:
-                logger.error(
-                    f"[实时情感分析] 模型加载失败: {type(exc).__name__}: {exc}\n"
-                    f"  模型路径: {self._model_manager.model_dir}\n"
-                    f"  模型仓库: {self._model_manager.repo_id}\n"
-                    "  可能原因: 模型文件不完整或已损坏，建议重新下载。"
-                )
-                logger.error(f"[实时情感分析] 模型加载失败: {exc}")
+                logger.error(f"[实时情感分析] ONNX 模型加载失败: {exc}")
                 raise
 
     def _preprocess(self, text: str) -> Dict[str, Any]:
@@ -274,44 +210,40 @@ class RealtimeSentimentService:
         features["is_question"] = text.endswith("?") or text.endswith("？") or "吗" in text
         return features
 
-    @_safe_disable_dynamo
+    @staticmethod
+    def _result_from_probs(probs: list) -> Dict[str, Any]:
+        """logits→softmax→极性映射（共用后处理）。"""
+        predicted_class = max(range(len(probs)), key=lambda i: probs[i])
+        confidence = float(probs[predicted_class])
+        polarity = {0: -1, 1: 1, 2: 0}.get(predicted_class, 0)
+        raw_score = probs[1] - probs[0] if len(probs) >= 3 else 0.0
+        probs_3class = [
+            probs[0],
+            probs[2] if len(probs) >= 3 else 0.0,
+            probs[1] if len(probs) >= 2 else 0.0,
+        ]
+        return {
+            "polarity": polarity,
+            "raw_score": raw_score,
+            "confidence": confidence,
+            "probabilities": probs_3class,
+        }
+
+    @staticmethod
+    def _softmax_numpy(logits) -> list:
+        import numpy as np
+
+        shifted = logits - logits.max()
+        exps = np.exp(shifted)
+        return (exps / exps.sum()).tolist()
+
     def _model_predict(self, text: str) -> Dict[str, Any]:
         """Run one forward pass for one text."""
         try:
             self._load_model()
-
-            inputs = self._tokenizer(
-                text,
-                return_tensors="pt",
-                truncation=True,
-                max_length=512,
-                padding=True,
-            )
-            if self._device != "cpu":
-                inputs = {key: value.to(self._device) for key, value in inputs.items()}
-
-            with torch.no_grad():
-                with self._lock:
-                    outputs = self._model(**inputs)
-                    probabilities = torch.softmax(outputs.logits, dim=1)[0]
-
-            probs = probabilities.cpu().numpy().tolist()
-            predicted_class = probabilities.argmax().item()
-            confidence = float(probabilities.max().item())
-            polarity = {0: -1, 1: 1, 2: 0}.get(predicted_class, 0)
-            raw_score = probs[1] - probs[0] if len(probs) >= 3 else 0.0
-            probs_3class = [
-                probs[0],
-                probs[2] if len(probs) >= 3 else 0.0,
-                probs[1] if len(probs) >= 2 else 0.0,
-            ]
-
-            return {
-                "polarity": polarity,
-                "raw_score": raw_score,
-                "confidence": confidence,
-                "probabilities": probs_3class,
-            }
+            with self._lock:
+                logits = self._model.predict_logits([text])[0]
+            return self._result_from_probs(self._softmax_numpy(logits))
         except Exception as exc:
             logger.error(f"[实时情感分析] 模型推理失败: {exc}")
             return {
@@ -321,62 +253,24 @@ class RealtimeSentimentService:
                 "probabilities": [0.33, 0.34, 0.33],
             }
 
-    @_safe_disable_dynamo
     def _model_predict_batch(self, texts: List[str], batch_size: int = 32) -> List[Dict[str, Any]]:
-        """Run true batched inference for multiple texts."""
+        """Run batched ONNX inference for multiple texts."""
         try:
             self._load_model()
-            all_results: List[Dict[str, Any]] = []
-
-            for start in range(0, len(texts), batch_size):
-                batch_texts = texts[start:start + batch_size]
-                inputs = self._tokenizer(
-                    batch_texts,
-                    return_tensors="pt",
-                    truncation=True,
-                    max_length=512,
-                    padding=True,
-                )
-
-                if self._device != "cpu":
-                    inputs = {key: value.to(self._device) for key, value in inputs.items()}
-
-                with torch.no_grad():
-                    with self._lock:
-                        outputs = self._model(**inputs)
-                        probabilities = torch.softmax(outputs.logits, dim=1)
-
-                probs_batch = probabilities.cpu().numpy()
-                for row in probs_batch:
-                    probs = row.tolist()
-                    predicted_class = int(row.argmax())
-                    confidence = float(row.max())
-                    polarity = {0: -1, 1: 1, 2: 0}.get(predicted_class, 0)
-                    raw_score = probs[1] - probs[0] if len(probs) >= 3 else 0.0
-                    probs_3class = [
-                        probs[0],
-                        probs[2] if len(probs) >= 3 else 0.0,
-                        probs[1] if len(probs) >= 2 else 0.0,
-                    ]
-                    all_results.append({
-                        "polarity": polarity,
-                        "raw_score": raw_score,
-                        "confidence": confidence,
-                        "probabilities": probs_3class,
-                    })
-
-            return all_results
+            with self._lock:
+                logits_batch = self._model.predict_logits(texts, batch_size=batch_size)
+            return [
+                self._result_from_probs(self._softmax_numpy(row)) for row in logits_batch
+            ]
         except Exception as exc:
             logger.error(f"[实时情感分析] 批量模型推理失败: {exc}")
-            return [
-                {
-                    "polarity": 0,
-                    "raw_score": 0.0,
-                    "confidence": 0.0,
-                    "probabilities": [0.33, 0.34, 0.33],
-                }
-                for _ in texts
-            ]
+            fallback = {
+                "polarity": 0,
+                "raw_score": 0.0,
+                "confidence": 0.0,
+                "probabilities": [0.33, 0.34, 0.33],
+            }
+            return [dict(fallback) for _ in texts]
 
     def _apply_rules(
         self,

@@ -9,9 +9,8 @@ numpy>=1.24.0
 pycryptodome>=3.20.0
 packaging/vendor/wx_key-2.1.1-cp312-cp312-win_amd64.whl
 snownlp>=0.12.3
-sentence-transformers>=2.2.0
 scikit-learn>=1.3.0
-torch==2.5.1
-transformers>=4.30.0
 modelscope>=1.17.1
 pyinstaller==6.19.0
+onnxruntime-directml>=1.17.0
+tokenizers>=0.15.0  # ONNX 推理后端

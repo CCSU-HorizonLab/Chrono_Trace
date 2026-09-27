@@ -28,7 +28,15 @@ WAL_FRAME_HEADER_SIZE = 24
 
 
 class EncryptedShardWatcher:
-    """单个加密 db 分片的增量解密视图。"""
+    """单个加密 db 分片的增量解密视图。
+
+    跨进程复用：页哈希与 stat 状态持久化到 sidecar（.meta.json），进程
+    重启后 __init__ 直接恢复——源未变时零解密开销（此前页哈希只在内存，
+    每次重启都要全量重解 19 个分片 ~40s）。密钥指纹绑定 salt，错密钥/
+    换库绝不复用旧状态。
+    """
+
+    META_VERSION = 1
 
     def __init__(self, src: Path, key_hex: str, cache_dir: Path,
                  raw_keys: dict | None = None):
@@ -45,8 +53,15 @@ class EncryptedShardWatcher:
         self._page_hashes: dict[int, str] = {}
         self._conn: sqlite3.Connection | None = None
         self._state: tuple[int, int, int, int] = (0, 0, 0, 0)
-        # 初始全量解密（100MB 分片约 2-5s）
-        self.refresh(force=True)
+        self.resumed_from_disk = False  # sidecar 命中（跨进程零/增量解密）
+        if self._load_meta():
+            # 恢复成功：源未变 → refresh 立即 stat 短路（零解密）；
+            # 源已变 → 按恢复的页哈希增量解密
+            self.resumed_from_disk = True
+            self.refresh()
+        else:
+            # 初始全量解密（100MB 分片约 2-5s）
+            self.refresh(force=True)
 
     # ---------- 对外接口 ----------
 
@@ -121,6 +136,7 @@ class EncryptedShardWatcher:
 
         # 全量处理成功才提交新 state
         self._state = state
+        self._save_meta()
         # 连接重建（immutable 只读，避免在解密副本上产生 -shm/-wal）
         self._close_conn()
         logger.debug("[dbwatch] %s 刷新 %d 页", self.src.name, changed)
@@ -138,6 +154,7 @@ class EncryptedShardWatcher:
     def close(self) -> None:
         self._close_conn()
         for p in (self.out_path, Path(str(self.out_path) + ".tmp"),
+                  self._meta_path(), Path(str(self._meta_path()) + ".tmp"),
                   Path(str(self.out_path) + "-wal"), Path(str(self.out_path) + "-shm")):
             try:
                 p.unlink(missing_ok=True)
@@ -145,6 +162,68 @@ class EncryptedShardWatcher:
                 pass
 
     # ---------- 内部 ----------
+
+    def _meta_path(self) -> Path:
+        return Path(str(self.out_path) + ".meta.json")
+
+    def _key_fingerprint(self) -> str:
+        """密钥+库 salt 指纹：错密钥/换库绝不复用旧解密状态。"""
+        salt_hex = ""
+        try:
+            with open(self.src, "rb") as f:
+                salt_hex = f.read(16).hex()
+        except OSError:
+            pass
+        return hashlib.sha1(f"{self.key_hex}:{salt_hex}".encode("utf-8")).hexdigest()
+
+    def _load_meta(self) -> bool:
+        """从 sidecar 恢复页哈希与 stat 状态。任何不一致都拒绝（回退全量）。"""
+        try:
+            import json
+
+            meta = json.loads(self._meta_path().read_text(encoding="utf-8"))
+            if meta.get("version") != self.META_VERSION:
+                return False
+            if meta.get("key_fp") != self._key_fingerprint():
+                return False
+            if not self.out_path.exists():
+                return False
+            pages = meta.get("pages")
+            hashes = meta.get("page_hashes")
+            if not isinstance(pages, int) or pages <= 0 or not isinstance(hashes, dict):
+                return False
+            # 解密副本完整性锚点：页数×页大小必须吻合（截断/膨胀即弃）
+            if self.out_path.stat().st_size != pages * PAGE_SIZE:
+                return False
+            if len(hashes) != pages:
+                return False
+            self._page_hashes = {int(k): str(v) for k, v in hashes.items()}
+            state = meta.get("state") or []
+            if len(state) != 4:
+                return False
+            self._state = (int(state[0]), int(state[1]), int(state[2]), int(state[3]))
+            return True
+        except Exception:
+            return False
+
+    def _save_meta(self) -> None:
+        """刷新成功后原子保存 sidecar（失败只丢跨进程复用，不影响当次）。"""
+        try:
+            import json
+
+            payload = {
+                "version": self.META_VERSION,
+                "key_fp": self._key_fingerprint(),
+                "pages": len(self._page_hashes),
+                "state": list(self._state),
+                "page_hashes": {str(k): v for k, v in self._page_hashes.items()},
+            }
+            meta_path = self._meta_path()
+            tmp = Path(str(meta_path) + ".tmp")
+            tmp.write_text(json.dumps(payload), encoding="utf-8")
+            os.replace(tmp, meta_path)
+        except Exception as e:
+            logger.debug("[dbwatch] %s sidecar 保存失败（忽略）: %s", self.src.name, e)
 
     def _stat_state(self) -> tuple[int, int, int, int]:
         def st(p: Path) -> tuple[int, int]:

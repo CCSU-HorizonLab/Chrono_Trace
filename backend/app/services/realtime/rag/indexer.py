@@ -399,16 +399,25 @@ class RagIndexer:
                 and watermark_ts > 0
             )
             if config_match:
-                # 增量模式：只加载水位之后的新消息
+                # 增量模式：只加载水位之后的新消息。
+                # LLM 抽取欠账判定：无 LLM 时的构建会把消息水位推到最新
+                # 而抽取水位不动——后配 LLM 重建若只看消息水位会被增量
+                # 短路，历史事实永远抽不到（用户实测：删库重导先无 LLM
+                # 构建、配 LLM 后重建不动）。
                 new_messages = self._load_messages_after(conversation_id, watermark_ts)
+                llm_behind = self._llm_extraction_behind(status_row, watermark_ts)
+                if llm_behind:
+                    self._backfill_llm_extraction(account_wxid, conversation_id)
                 if not new_messages:
-                    # 无新消息：直接标记 ready，跳过全部重嵌入
+                    # 无新消息（且抽取无欠账）：直接标记 ready，跳过重嵌入
                     self.store.upsert_status(
                         account_wxid, conversation_id,
                         status="ready", dirty_since=None, last_error=None,
                         index_version=self.INDEX_VERSION,
                     )
                     self.store.conn.commit()
+                    if llm_behind:
+                        self._refresh_policy_shadows(account_wxid, conversation_id, conversation)
                     logger.debug("[RAG Index] incremental skip: no new messages after watermark=%s", watermark_ts)
                     return self.store.get_status(account_wxid, conversation_id) or {}
                 messages = new_messages
@@ -521,6 +530,10 @@ class RagIndexer:
                     vector_count,
                 )
 
+            # 增量分支的历史抽取欠账回补：新段已随段循环抽取，这里补齐
+            # 更早的未覆盖段（无 LLM 时期的存量）
+            if incremental and llm_behind:
+                self._backfill_llm_extraction(account_wxid, conversation_id)
             # 推进消息水位（增量模式下次从最新时间戳开始；全量模式首次设置）
             new_watermark = max((int(m.get("timestamp") or 0) for m in messages), default=watermark_ts if incremental else 0)
             self.store.conn.execute(
@@ -906,6 +919,86 @@ class RagIndexer:
             len(self_messages),
         )
         return docs
+
+    def _llm_extraction_behind(self, status_row: dict[str, Any], message_watermark_ts: int) -> bool:
+        """LLM 抽取欠账：抽取已启用但未覆盖到消息水位（或版本变化）。"""
+        if self.structured_fact_extractor is None:
+            return False
+        if str(status_row.get("fact_extract_prompt_version") or "") != self.FACT_EXTRACT_PROMPT_VERSION:
+            return True
+        extract_wm = int(status_row.get("fact_extract_watermark_ts") or 0)
+        return extract_wm < int(message_watermark_ts)
+
+    def _backfill_llm_extraction(self, account_wxid: str, conversation_id: int) -> int:
+        """历史段抽取回补：全量消息切段，只跑 LLM 抽取，不动文档/向量。
+
+        断点续抽水位（fact_extract_watermark_ts + 版本）保证多轮 rebuild
+        逐步推进（每轮 40 段预算），已覆盖段自动跳过。
+        """
+        if self.structured_fact_extractor is None:
+            return 0
+        self._llm_extract_segments_used = 0
+        self._llm_extract_consecutive_failures = 0
+        self._llm_extract_round_failed = False
+        self._init_llm_extract_progress(account_wxid, conversation_id)
+        messages = self._load_messages(conversation_id)
+        if not messages:
+            return 0
+        sessions = self._load_sessions_reference(conversation_id)
+        segments = self.segmenter.segment(messages, conversation_id=conversation_id, sessions=sessions)
+        prev_tail: list[dict[str, Any]] = []
+        extracted = 0
+        for segment in segments:
+            before = self._llm_extract_segments_used
+            self._extract_structured_shadow_facts(
+                account_wxid=account_wxid,
+                conversation_id=conversation_id,
+                segment=segment,
+                prev_context_messages=prev_tail,
+            )
+            if self._llm_extract_segments_used > before:
+                extracted += 1
+                self.store.conn.commit()
+            prev_tail = [
+                msg for msg in segment.messages[-3:]
+                if str(msg.get("content") or "").strip()
+            ]
+            if self._llm_extract_consecutive_failures >= 3:
+                break
+            if self._llm_extract_segments_used >= self.LLM_EXTRACT_SEGMENT_BUDGET:
+                break
+        if extracted:
+            logger.info(
+                "[RAG Index] llm extraction backfill: %s segments (conv=%s)", extracted, conversation_id
+            )
+        return extracted
+
+    def _refresh_policy_shadows(
+        self, account_wxid: str, conversation_id: int, conversation: dict[str, Any] | None
+    ) -> None:
+        """关系状态+偏好策略影子刷新（失败只日志，不影响主链路）。"""
+        try:
+            from .relationship_policy import refresh_relationship_state_shadow
+
+            refresh_relationship_state_shadow(
+                self.store,
+                account_wxid=account_wxid,
+                conversation_id=conversation_id,
+                display_name=str((conversation or {}).get("display_name") or ""),
+            )
+        except Exception as shadow_exc:
+            logger.debug("[RAG Index] relationship shadow refresh failed: %s", shadow_exc)
+        try:
+            from .contact_preference import refresh_contact_preferences_shadow
+
+            refresh_contact_preferences_shadow(
+                self.store,
+                account_wxid=account_wxid,
+                conversation_id=conversation_id,
+                embedding_service=self.embedding_service,
+            )
+        except Exception as pref_exc:
+            logger.debug("[RAG Index] contact preference refresh failed: %s", pref_exc)
 
     def _init_llm_extract_progress(self, account_wxid: str, conversation_id: int) -> None:
         """断点续抽水位改为 rag_index_status 段级进度。

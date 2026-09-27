@@ -250,6 +250,22 @@ class AffinityAnalysisService:
             except Exception as state_e:
                 logger.debug("[分析状态] 完成标记跳过: %s", state_e)
 
+            # 全面分析完成点：构建该联系人记忆索引。导入后默认冷构建
+            # （不自动建），此处是主动构建入口——分析完成后用户预期记忆
+            # 随即可用；联系人画像仍由用户在洞察页手动触发生成。
+            try:
+                from ...db.connection import get_db
+                from ..realtime.rag.indexer import RagIndexQueue
+
+                row = get_db().execute(
+                    "SELECT account_wxid FROM conversations WHERE id = ? LIMIT 1",
+                    (conversation_id,),
+                ).fetchone()
+                if row and str(row["account_wxid"] or "").strip():
+                    RagIndexQueue.enqueue(str(row["account_wxid"]), int(conversation_id))
+            except Exception as rag_e:
+                logger.debug("[分析完成] 记忆索引构建入队跳过: %s", rag_e)
+
             logger.info(
                 f"好感度分析完成: {result.overall_score:.1f} 分, "
                 f"耗时 {result.analysis_duration_ms}ms (会话 {conversation_id})"

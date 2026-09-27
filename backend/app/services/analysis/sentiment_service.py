@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 
 from ...db.connection import get_db
 from ..model_paths import EMBEDDING_MODEL_DIM, EMBEDDING_MODEL_REPO_ID, get_embedding_model_dir
+from .embedding_cache_store import EmbeddingCacheStore
 from .feature_extraction_config import (
     ANALYSIS_DEVICE_MODE_CPU,
     ANALYSIS_DEVICE_MODE_GPU,
@@ -316,39 +317,25 @@ class SentimentService:
 
     @_safe_disable_dynamo
     def _get_embedding(self, text: str) -> List[float]:
-        """Encode one text using the local model's native vector dimension."""
+        """Encode one text using the local model's native vector dimension.
 
+        委托批量路径：L1/L2 缓存与维度校验单点维护（此前单条直调 encode
+        绕过 L2，是与 interaction_pairs 同源的缓存旁路）。
+        """
         try:
-            self._load_embedding_model()
-            if self._embedding_model is None:
-                return self._fallback_embedding()
-            cached = self._embedding_cache.get(text)
-            if cached is not None and len(cached) == self._embedding_dimension:
-                return cached
-
-            with self._lock:
-                embedding = self._embedding_model.encode(
-                    text,
-                    normalize_embeddings=True,
-                    show_progress_bar=False,
-                )
-
-            embedding_list = embedding.tolist()
-            self._set_embedding_dimension(len(embedding_list))
-
-            if len(self._embedding_cache) >= 4000:
-                oldest_key = next(iter(self._embedding_cache))
-                del self._embedding_cache[oldest_key]
-
-            self._embedding_cache[text] = embedding_list
-            return embedding_list
+            return self._get_embeddings_batch([text])[0]
         except Exception as exc:
             logger.error(f"[情感服务] 向量生成失败: {exc}")
             return self._fallback_embedding()
 
     @_safe_disable_dynamo
     def _get_embeddings_batch(self, texts: List[str], batch_size: int = 64) -> List[List[float]]:
-        """Encode a batch using the local model's native vector dimension."""
+        """Encode a batch using the local model's native vector dimension.
+
+        三级缓存：L1 内存 dict（进程内）→ L2 embedding_cache 表（跨进程，
+        键=content_sha1+model+device）→ 模型 encode。重复分析/增量导入后
+        重分析只嵌新文本（嵌入占分析耗时 99%）。
+        """
         if not texts:
             return []
 
@@ -369,6 +356,28 @@ class SentimentService:
                 uncached_indices.append(index)
                 uncached_texts.append(text)
 
+        # L2 持久缓存：命中回填 L1（后续同文本内存级命中）
+        l2_store = self._embedding_cache_store()
+        if l2_store is not None and uncached_texts:
+            try:
+                l2_hits = l2_store.batch_lookup(uncached_texts)
+            except Exception as exc:
+                logger.debug("[情感服务] 嵌入 L2 查询失败（忽略）: %s", exc)
+                l2_hits = {}
+            if l2_hits:
+                remaining_indices: List[int] = []
+                remaining_texts: List[str] = []
+                for index, text in zip(uncached_indices, uncached_texts):
+                    vector = l2_hits.get(text)
+                    if vector is not None:
+                        results[index] = vector
+                        self._embedding_cache[text] = vector
+                    else:
+                        remaining_indices.append(index)
+                        remaining_texts.append(text)
+                uncached_indices = remaining_indices
+                uncached_texts = remaining_texts
+
         if uncached_texts:
             try:
                 if self._embedding_model is None:
@@ -383,16 +392,26 @@ class SentimentService:
                             batch_size=batch_size,
                         )
 
+                    new_vectors: List[List[float]] = []
                     for local_index, original_index in enumerate(uncached_indices):
                         embedding_list = embeddings[local_index].tolist()
                         self._set_embedding_dimension(len(embedding_list))
 
                         results[original_index] = embedding_list
+                        new_vectors.append(embedding_list)
 
                         if len(self._embedding_cache) >= 4000:
                             oldest_key = next(iter(self._embedding_cache))
                             del self._embedding_cache[oldest_key]
                         self._embedding_cache[uncached_texts[local_index]] = embedding_list
+
+                    # L2 落库：模型已加载（gate 在 _embedding_cache_store），零向量
+                    # 兜底不会进入此分支；INSERT OR IGNORE 幂等
+                    if l2_store is not None:
+                        try:
+                            l2_store.batch_store(uncached_texts, new_vectors)
+                        except Exception as exc:
+                            logger.debug("[情感服务] 嵌入 L2 写入失败（忽略）: %s", exc)
             except Exception as exc:
                 logger.error(f"[情感服务] 批量向量生成失败: {exc}")
                 for index in uncached_indices:
@@ -400,6 +419,20 @@ class SentimentService:
                         results[index] = self._fallback_embedding()
 
         return [item if item is not None else self._fallback_embedding() for item in results]
+
+    def _embedding_cache_store(self) -> Optional[EmbeddingCacheStore]:
+        """L2 持久缓存句柄。
+
+        模型未加载/加载失败时返回 None——此路径产出的是零向量兜底，
+        读写 L2 都会毒化缓存（把「无模型跑过一次」固化成假命中）。
+        """
+        if self._embedding_model is None or self._embedding_load_failed:
+            return None
+        dim = self._embedding_dimension or EMBEDDING_MODEL_DIM
+        try:
+            return EmbeddingCacheStore(EMBEDDING_MODEL_REPO_ID, self._embedding_device, dim)
+        except Exception:
+            return None
 
     def cache_sentiment_result(
         self,

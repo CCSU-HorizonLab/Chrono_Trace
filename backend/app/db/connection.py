@@ -149,6 +149,7 @@ class DatabaseConnection:
             "self_profiles",
             "contact_profiles",
             "sentiment_cache",
+            "embedding_cache",
             "interaction_pairs",
             "speech_units",
             "word_counts",

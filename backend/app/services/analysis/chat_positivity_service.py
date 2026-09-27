@@ -395,12 +395,9 @@ class ChatPositivityService:
             if sentiment_service._embedding_model is None:
                 return None
 
-            embeddings = sentiment_service._embedding_model.encode(
-                texts,
-                normalize_embeddings=True,
-                show_progress_bar=False,
-                batch_size=32
-            )
+            # 走缓存版批量编码（L1+L2），与主链路共享向量——直调 encode
+            # 会绕过持久缓存（本兜底路径多为重复文本，命中率极高）
+            embeddings = sentiment_service._get_embeddings_batch(texts, batch_size=32)
 
             import numpy as np
 

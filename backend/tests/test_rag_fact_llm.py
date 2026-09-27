@@ -631,3 +631,35 @@ def test_json_candidates_extra_data_salvage():
 def test_json_candidates_no_json_returns_empty():
     from app.services.realtime.rag.fact_llm import LLMFactExtractorAdapter
     assert LLMFactExtractorAdapter._json_candidates("没有任何对象") == []
+
+
+def test_related_context_rendered_for_cross_day_anaphora(monkeypatch):
+    """p1.7 检索增强上下文：跨天代指（"这玩意"）的历史定义处进入 prompt。"""
+    payload = json.dumps(
+        {
+            "messages": [
+                {"id": 20, "is_sender": 1, "content": "我们后天搬"},
+                {"id": 21, "is_sender": 0, "content": "嘶"},
+                {"id": 22, "is_sender": 0, "content": "那我们问房东要一下快递地址"},
+                {"id": 23, "is_sender": 1, "content": "这玩意我们有钱了整一台"},
+            ],
+            "context_messages": [
+                {"id": 19, "is_sender": 0, "content": "可以吗"},
+            ],
+            "related_context_messages": [
+                {"id": 5, "is_sender": 0, "content": "这个烘干机好像不错"},
+                {"id": 6, "is_sender": 1, "content": "是有点贵，等有钱了说"},
+            ],
+        },
+        ensure_ascii=False,
+    )
+    http = _FakeHTTP('{"facts": []}')
+    adapter = _adapter(monkeypatch, http)
+    adapter(payload)
+    user_text = http.captured["payload"]["messages"][1]["content"]
+    assert "更早的相关讨论" in user_text
+    assert "[5] 对方: 这个烘干机好像不错" in user_text
+    # 层次顺序：相关讨论 → 上一段结尾 → 对话片段
+    assert user_text.index("更早的相关讨论") < user_text.index("上一段结尾") < user_text.index("对话片段")
+    # evidence 隔离不受影响（相关消息 id 不在本段）
+    assert "[5]" in user_text.split("对话片段")[0]

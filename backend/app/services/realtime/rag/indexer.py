@@ -1951,6 +1951,19 @@ class RagIndexQueue:
             cls._maybe_prune_logs()
             try:
                 indexer = RagIndexer()
+                # 停用门：clear_rag_index 清空后会停用联系人，队列任务
+                # （分析完成入队/导入 mark_dirty 等）不得绕过停用把它
+                # 复活——手动「立即构建」入口会先重新启用再入队
+                try:
+                    _status = indexer.store.get_status(account_wxid, conversation_id) or {}
+                    if not _status.get("enabled", 1):
+                        logger.debug(
+                            "[RAG] queue skip disabled contact %s/%s (%s)",
+                            account_wxid, conversation_id, job_name,
+                        )
+                        continue
+                except Exception as _gate_e:
+                    logger.debug("[RAG] enabled gate check failed, proceed: %s", _gate_e)
                 if job_name == "fact_backfill":
                     indexer.backfill_fact_embeddings(
                         account_wxid=account_wxid,

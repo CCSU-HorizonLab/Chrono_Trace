@@ -15,6 +15,10 @@ import threading
 
 logger = logging.getLogger(__name__)
 
+# 销毁延迟上限：给停监听（checkpoint/迁移）留窗口，超时无论完成与否都销毁
+# （监听线程均为 daemon，进程退出即终止；不为此卡住用户）
+_DESTROY_DELAY = 1.5
+
 # 返回布尔：true=已派发给前端（取消本次关闭）；false/None=前端未就绪（放行）
 _CLOSE_REQUEST_JS = (
     "(() => { if (window.__chronoHandleCloseRequest) "
@@ -39,9 +43,22 @@ def attach_close_guard(window, bridge) -> None:
         except Exception as exc:
             logger.warning("[CloseGuard] 前端关闭确认不可用，放行关闭: %s", exc)
         if not dispatched:
-            # 前端未就绪/不可用：放行真实关闭
+            # 前端未就绪/不可用：放行真实关闭（同样先停监听）
+            _graceful_stop()
             state["allow"] = True
-            threading.Timer(0.1, _safe_destroy).start()
+            threading.Timer(_DESTROY_DELAY, _safe_destroy).start()
+
+    def _graceful_stop() -> None:
+        """退出前尽力停掉实时监听——监听活跃时直接销毁窗口会让 Qt 在
+        C++ 层 terminate（实测 exit 134：stop_monitoring 未跑，轮询/
+        LLM 线程仍持有桥调用）。失败不阻断退出。"""
+        prepare = getattr(bridge, "prepare_exit", None)
+        if not callable(prepare):
+            return
+        try:
+            prepare()
+        except Exception as exc:
+            logger.warning("[CloseGuard] 退出前停机失败（继续退出）: %s", exc)
 
     def _on_closing():
         if state["allow"]:
@@ -61,9 +78,10 @@ def attach_close_guard(window, bridge) -> None:
         window.minimize()
 
     def _exit() -> None:
+        # 先停监听（同步尽力，占用于用户已确认退出后），再放行销毁
+        _graceful_stop()
         state["allow"] = True
-        # 0.5s：js_api 返回序列化慢时仍可能在调用进行中销毁（互等）
-        threading.Timer(0.5, _safe_destroy).start()
+        threading.Timer(_DESTROY_DELAY, _safe_destroy).start()
 
     bridge.set_close_actions(minimize=_minimize, exit=_exit)
     logger.info("[CloseGuard] 关闭确认已启用")

@@ -4070,6 +4070,23 @@ class Bridge:
         self._webview_window = window
         self._floating_service.set_webview_window(window)
 
+    def prepare_exit(self) -> None:
+        """进程退出前的优雅停机（close_guard 在销毁窗口前调用，尽力而为）。
+
+        监听活跃时直接销毁窗口会让 Qt 在 C++ 层 terminate（实测 exit 134）；
+        先走 stop_monitoring 完成 checkpoint 与缓冲迁移，再放行销毁。
+        """
+        try:
+            from ..services.realtime.monitor_service import RealtimeMonitorService
+
+            monitor = RealtimeMonitorService()
+            if getattr(monitor, "is_monitoring", False):
+                logger.info("[Bridge] 退出前停止实时监听（checkpoint+迁移）…")
+                result = monitor.stop_monitoring()
+                logger.info("[Bridge] 退出前监听已停止: %s", (result or {}).get("message", ""))
+        except Exception as exc:
+            logger.warning("[Bridge] 退出前停止监听失败（继续退出）: %s}", exc)
+
     def enter_floating_mode(self) -> dict[str, Any]:
         """
         进入悬浮窗模式：窗口变为紧凑悬浮面板，跟随微信窗口

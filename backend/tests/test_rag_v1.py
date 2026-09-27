@@ -2565,10 +2565,10 @@ def test_backfill_uses_elevated_budget_and_requeues(monkeypatch):
     mid = 1
     for seg in range(60):
         base = ts + seg * 4 * 3600
-        rows.append((mid, 0, "对方说今天也想吃火锅配奶茶", base))
-        rows.append((mid + 1, 1, "好呀老地方见", base + 120))
-        rows.append((mid + 2, 0, "周五见", base + 240))
-        rows.append((mid + 3, 1, "周五见，老地方", base + 360))
+        rows.append((mid, 0, "对方说今天也想吃火锅配奶茶，微辣锅底", base))
+        rows.append((mid + 1, 1, "好呀就去老地方那家店见面", base + 120))
+        rows.append((mid + 2, 0, "周五见，别忘了", base + 240))
+        rows.append((mid + 3, 1, "周五见，老地方不见不散", base + 360))
         mid += 4
     conn.executemany("INSERT INTO messages VALUES (?, 1, ?, ?, 1, ?)", rows)
     store.upsert_status("wxid_a", 1, status="ready", document_count=10)
@@ -2620,3 +2620,32 @@ def test_backfill_uses_elevated_budget_and_requeues(monkeypatch):
     # 抽取水位推进到消息末尾（= 最后一段 end_ts，与消息水位持平）
     status = store.get_status("wxid_a", 1)
     assert int(status["fact_extract_watermark_ts"]) >= last_msg_ts
+
+
+def test_backfill_prescreen_filters_smalltalk_keeps_dense_short_segments():
+    """预筛：纯寒暄段拦（不耗 token），信息密集短段放行（虾过敏类）。"""
+    from app.services.realtime.rag.segmenter import RagSegment
+
+    indexer = RagIndexer(store=RagStore(_conn()), embedding_service=None)
+    indexer.structured_fact_extractor = None
+
+    def _seg(contents):
+        msgs = [
+            {"id": i + 1, "is_sender": i % 2, "content": c, "timestamp": 1000 + i * 60, "message_type": 1}
+            for i, c in enumerate(contents)
+        ]
+        return RagSegment(segment_id="s", start_ts=1000, end_ts=1000 + len(msgs) * 60,
+                          messages=msgs, message_ids=[m["id"] for m in msgs],
+                          topics=[], entities=[], time_label="t")
+
+    # 纯寒暄段：拦
+    assert indexer._segment_worth_extraction(_seg(["嗯嗯", "哈哈", "好的", "666", "行吧", "好的"])) is False
+    assert indexer._segment_worth_extraction(_seg(["嗯", "哦", "好", "好吧"])) is False
+    # 信息密集短段（虾过敏类）：放行
+    assert indexer._segment_worth_extraction(
+        _seg(["我对虾过敏，千万别点虾", "好，那我们吃火锅", "周五见", "周五见，老地方"])
+    ) is True
+    # 正常对话段：放行
+    assert indexer._segment_worth_extraction(
+        _seg(["对方说今天也想吃火锅配奶茶，微辣锅底", "好呀就去老地方那家店见面", "周五见，别忘了", "周五见，老地方不见不散"])
+    ) is True

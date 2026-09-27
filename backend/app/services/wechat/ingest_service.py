@@ -234,6 +234,9 @@ class WeChatIngestService:
         import_contacts = options.get("import_contacts", True)
         import_messages = options.get("import_messages", True)
         limit = options.get("limit", 0)
+        # 水位增量：bridge 注入账号当前水位；force_full 显式忽略走全量（逃生门）
+        force_full = bool(options.get("force_full"))
+        watermark_in = 0 if force_full else int(options.get("import_watermark_ts") or 0)
 
         warnings = []
         stats = {
@@ -297,10 +300,13 @@ class WeChatIngestService:
                     limit,
                     progress_callback,
                     raw_keys=raw_keys,
+                    watermark_ts=watermark_in,
                 )
 
                 stats["inserted_messages"] = message_stats["total"]
                 stats["skipped"] += message_stats.get("skipped", 0)
+                # 成功后才透出新水位（bridge 在基线保存处落库；异常路径不携带）
+                stats["import_watermark_ts"] = message_stats.get("watermark_ts", watermark_in)
                 logger.debug(f"[DEBUG] 消息导入结果: {message_stats}")
 
             if imported_contacts:
@@ -615,11 +621,26 @@ class WeChatIngestService:
         limit: int,
         progress_callback: Optional[Callable] = None,
         raw_keys: Optional[Dict] = None,
+        watermark_ts: int = 0,
     ) -> Dict:
-        """导入消息(V4版本)"""
+        """导入消息(V4版本)
+
+        watermark_ts > 0 时启用时间水位增量读取：只读 [水位-24h, now+24h]
+        窗口（安全窗覆盖 WAL 延迟/偶发乱序，窗内重扫由判重集合去重）。
+        返回 stats 带 watermark_ts = max(水位, 本次见过最大 create_time)，
+        只增不减；导入异常时调用方不落库 → 水位不推进 → 下次重扫（安全方向）。
+        """
         logger.info("[DEBUG] Start importing messages")
         logger.debug(f"[DEBUG] 消息数据库数量: {len(message_db_paths)}")
         logger.debug(f"[DEBUG] 我的wxid: {wxid}")
+
+        # 24h 安全窗：微信 create_time 实际单调、WAL 延迟秒级，一天冗余足够保守
+        SAFETY_WINDOW = 86400
+        if watermark_ts > 0:
+            read_range = (max(0, watermark_ts - SAFETY_WINDOW), int(time.time()) + SAFETY_WINDOW)
+            logger.info(f"[导入] 水位增量读取: watermark={watermark_ts}, 窗口起点={read_range[0]}")
+        else:
+            read_range = None  # 首导/force_full：全量
 
         total_messages = 0
         conversations_set = set()
@@ -628,12 +649,20 @@ class WeChatIngestService:
         skipped_messages = 0
         conversation_cache: dict[str, int] = {}
         touched_conversations: dict[int, int] = {}
+        max_seen_ts = 0
+
+        t_read = 0.0
+        t_insert = 0.0
+        t_total = time.time()
 
         message_db = MessageDBV4(message_db_paths, db_key, my_wxid=wxid, raw_keys=raw_keys)
 
         try:
             if progress_callback:
                 progress_callback("扫描消息表...", 30, 100)
+
+            # 预载判重集合（一次 SELECT 替代逐条 OR IGNORE 的 20 万次 execute）
+            existing_keys = self._load_existing_message_keys()
 
             # 获取所有对话username
             all_usernames = message_db.get_all_conversation_usernames()
@@ -653,17 +682,23 @@ class WeChatIngestService:
 
                 # 获取该用户的消息
                 try:
+                    t0 = time.time()
                     messages_data = message_db.get_messages(
                         username,
-                        time_range=None,
+                        time_range=read_range,
                         limit=limit if limit > 0 else None
                     )
+                    t_read += time.time() - t0
 
                    # logger.debug(f"[DEBUG] 会话 {username}: 读取到 {len(messages_data)} 条消息")
 
                     # 批量插入
                     batch = []
                     for msg_dict in messages_data:
+                        ts = int(msg_dict.get('timestamp') or 0)
+                        if ts > max_seen_ts:
+                            max_seen_ts = ts
+
                         if is_excluded_contact_username(msg_dict.get('talker')):
                             skipped_messages += 1
                             continue
@@ -673,24 +708,30 @@ class WeChatIngestService:
 
                         # 每1000条批量插入
                         if len(batch) >= 1000:
+                            t0 = time.time()
                             batch_stats = self._insert_message_batch(
                                 batch,
                                 account_wxid,
                                 conversation_cache,
-                                touched_conversations
+                                touched_conversations,
+                                existing_keys=existing_keys
                             )
+                            t_insert += time.time() - t0
                             total_messages += batch_stats["inserted"]
                             skipped_messages += batch_stats["skipped"]
                             batch = []
 
                     # 插入剩余
                     if batch:
+                        t0 = time.time()
                         batch_stats = self._insert_message_batch(
                             batch,
                             account_wxid,
                             conversation_cache,
-                            touched_conversations
+                            touched_conversations,
+                            existing_keys=existing_keys
                         )
+                        t_insert += time.time() - t0
                         total_messages += batch_stats["inserted"]
                         skipped_messages += batch_stats["skipped"]
 
@@ -723,7 +764,11 @@ class WeChatIngestService:
         except Exception as stale_e:
             logger.debug("[分析状态] import stale mark skipped: %s", stale_e)
 
-        logger.info(f"[DEBUG] Messages imported: {total_messages}, conversations: {len(conversations_set)}")
+        logger.info(
+            f"[DEBUG] Messages imported: {total_messages}, conversations: {len(conversations_set)}"
+            f" (读取 {t_read:.1f}s / 插入 {t_insert:.1f}s / 总 {time.time() - t_total:.1f}s"
+            f"{' / 水位增量' if read_range else ' / 全量'})"
+        )
         logger.debug(f"[DEBUG] Filtered conversations: {skipped_conversations}")
         if failed_conversations:
             # 解密缺口/读取异常等导致的会话级失败（W3）：显式汇总，避免静默缺失
@@ -737,6 +782,22 @@ class WeChatIngestService:
             "conversations": len(conversations_set),
             "skipped": skipped_messages,
             "failed_conversations": failed_conversations,
+            # 只增不减；零消息读取（无新聊天）时维持原水位
+            "watermark_ts": max(watermark_ts, max_seen_ts),
+        }
+
+    def _load_existing_message_keys(self) -> set:
+        """预载 (conversation_id, local_id) 判重集合。
+
+        替代此前逐条 OR IGNORE 的 20 万次 execute：一次 SELECT 建立，
+        导入全程内存判重，新插入的 key 增量补入。local_id IS NULL 的
+        实时行不参与（它们本来就不受唯一索引约束）。
+        """
+        return {
+            (row[0], row[1])
+            for row in get_db().execute(
+                "SELECT conversation_id, local_id FROM messages WHERE local_id IS NOT NULL"
+            )
         }
 
     def _insert_message_batch(
@@ -744,70 +805,81 @@ class WeChatIngestService:
         messages: list,
         account_wxid: str,
         conversation_cache: dict[str, int],
-        touched_conversations: dict[int, int]
+        touched_conversations: dict[int, int],
+        existing_keys: Optional[set] = None,
     ) -> Dict[str, int]:  # pyright: ignore[reportMissingTypeArgument]
-        """批量插入消息"""
+        """批量插入消息（内存判重 + 分会话 executemany）。
+
+        existing_keys 由调用方在导入全程预载一次并传递（跨批去重）；
+        None 时本调用自载（直接调用/测试场景）。返回 inserted/skipped
+        语义与旧逐条路径一致；touched 仅含有新插入的会话。
+        """
         inserted = 0
         skipped = 0
         db = get_db()
+        if existing_keys is None:
+            existing_keys = self._load_existing_message_keys()
+
+        # 收集新消息：会话确保仅 cache miss 时执行（每 talker 一次，
+        # 此前在 per-message 循环里跑了 20 万次）
+        rows_by_conv: dict[int, list] = {}
+        now = int(time.time())
         for msg in messages:
-            try:
-                talker = msg['talker']
+            talker = msg.get('talker')
+            if not talker or is_excluded_contact_username(talker):
+                skipped += 1
+                continue
 
-                if is_excluded_contact_username(talker):
-                    skipped += 1
-                    continue
-
-                # 确保会话存在 (修复: 使用 username 字段而不是 name)
+            conversation_id = conversation_cache.get(talker)
+            if conversation_id is None:
                 db.execute("""
                     INSERT OR IGNORE INTO conversations
                     (account_wxid, username, display_name, platform, created_at, updated_at, message_count)
                     VALUES (?, ?, ?, 'wechat', ?, ?, 0)
-                """, (account_wxid, talker, talker, int(time.time()), int(time.time())))
-
-                conversation_id = conversation_cache.get(talker)
-                if conversation_id is None:
-                    cursor = db.execute(
-                        "SELECT id FROM conversations WHERE account_wxid = ? AND username = ? AND platform = 'wechat'",
-                        (account_wxid, talker)
-                    )
-                    row = cursor.fetchone()
-                    if not row:
-                        skipped += 1
-                        continue
-                    conversation_id = row[0]
-                    conversation_cache[talker] = conversation_id
-
-                # 插入消息 (修复: 添加必需的字段)
-                is_sender = 1 if msg['is_sender'] else 0
-
-                cursor = db.execute("""
-                    INSERT OR IGNORE INTO messages
-                    (conversation_id, local_id, talker, sender, is_sender, message_type, content, timestamp, source, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'long', ?)
-                """, (
-                    conversation_id,
-                    msg.get('local_id'),
-                    talker,
-                    msg.get('sender', ''),
-                    is_sender,
-                    msg.get('message_type', 1),
-                    msg['content'],
-                    msg['timestamp'],
-                    int(time.time())
-                ))
-                if cursor.rowcount == 1:
-                    inserted += 1
-                    touched_conversations[conversation_id] = max(
-                        touched_conversations.get(conversation_id, 0),
-                        int(msg['timestamp'])
-                    )
-                else:
+                """, (account_wxid, talker, talker, now, now))
+                row = db.execute(
+                    "SELECT id FROM conversations WHERE account_wxid = ? AND username = ? AND platform = 'wechat'",
+                    (account_wxid, talker)
+                ).fetchone()
+                if not row:
                     skipped += 1
+                    continue
+                conversation_id = row[0]
+                conversation_cache[talker] = conversation_id
 
-            except Exception as e:
-                logger.error(f"[DEBUG] 插入消息失败: {e}")
-                pass  # 忽略单条错误
+            local_id = msg.get('local_id')
+            key = (conversation_id, local_id) if local_id is not None else None
+            if key is not None and key in existing_keys:
+                skipped += 1
+                continue
+            if key is not None:
+                # 同批重复 key：首条计插入，后续按已存在跳过（与旧 OR IGNORE 行为一致）
+                existing_keys.add(key)
+
+            inserted += 1
+            ts = int(msg.get('timestamp') or 0)
+            touched_conversations[conversation_id] = max(
+                touched_conversations.get(conversation_id, 0), ts
+            )
+            rows_by_conv.setdefault(conversation_id, []).append((
+                conversation_id,
+                local_id,
+                talker,
+                msg.get('sender', ''),
+                1 if msg.get('is_sender') else 0,
+                msg.get('message_type', 1),
+                msg['content'],
+                ts,
+                now,
+            ))
+
+        # 分会话 executemany（插入语句保持 OR IGNORE 兜底并发安全）
+        for rows in rows_by_conv.values():
+            db.executemany("""
+                INSERT OR IGNORE INTO messages
+                (conversation_id, local_id, talker, sender, is_sender, message_type, content, timestamp, source, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'long', ?)
+            """, rows)
 
         # 实时与导入消息对账（W1）：实时行不再占用 local_id 后，同一物理消息可能
         # 同时存在 realtime 行（UIA 分钟级时间戳）与 long 行（微信库精确时间戳）。

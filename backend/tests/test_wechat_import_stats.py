@@ -129,4 +129,5 @@ def test_import_wechat_data_reports_current_totals_and_incremental_counts(monkey
         "inserted_contacts": 0,
         "inserted_messages": 0,
         "skipped": 99,
+        "import_watermark_ts": 0,
     }

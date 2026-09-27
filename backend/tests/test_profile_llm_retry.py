@@ -182,3 +182,97 @@ def test_self_profiler_keeps_floor_budget_for_normal_model(monkeypatch):
     # 普通模型（deepseek-chat）即使模型配置只有 1024，也要保证画像
     # JSON 有足够的输出空间。
     assert captured["max_tokens"] >= 4096
+
+
+class _QueuedResponse:
+    status = 200
+
+    def __init__(self, payload):
+        self.payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def read(self):
+        return json.dumps(self.payload).encode("utf-8")
+
+
+def _truncated_payload(completion_tokens, finish_reason=None):
+    return {
+        "choices": [
+            {
+                "finish_reason": finish_reason,
+                "message": {"content": "", "reasoning_content": "让我想想这段聊天记录……"},
+            }
+        ],
+        "usage": {
+            "prompt_tokens": 10,
+            "completion_tokens": completion_tokens,
+            "total_tokens": 10 + completion_tokens,
+        },
+    }
+
+
+def _ok_payload():
+    return {
+        "choices": [
+            {
+                "finish_reason": "stop",
+                "message": {"content": json.dumps({"typing_style": "short"})},
+            }
+        ],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 100, "total_tokens": 110},
+    }
+
+
+def test_self_profiler_escalates_output_budget_when_output_truncated(monkeypatch):
+    """输出撞到 max_tokens（推理模型思考耗尽额度）时逐级加倍重试。"""
+    conn = _build_model_db()
+    conn.execute("UPDATE llm_models SET model_id = 'deepseek-flash'")
+    conn.commit()
+    profiler = SelfProfiler(timeout=5)
+    captured_budgets = []
+
+    monkeypatch.setattr("app.db.connection.get_db", lambda: conn)
+
+    # 第一次响应不带 finish_reason，靠 completion 撞顶判定截断
+    responses = [_QueuedResponse(_truncated_payload(8192)), _QueuedResponse(_ok_payload())]
+
+    def fake_urlopen(req, timeout=0, context=None):
+        captured_budgets.append(json.loads(req.data.decode("utf-8"))["max_tokens"])
+        return responses.pop(0)
+
+    monkeypatch.setattr("app.services.realtime.llm_http.urllib.request.urlopen", fake_urlopen)
+    result = profiler._call_llm("test prompt")
+
+    assert result["typing_style"] == "short"
+    assert captured_budgets == [8192, 16384]
+
+
+def test_self_profiler_raises_after_output_budget_escalation_exhausted(monkeypatch):
+    """加到重试上限仍未输出合法 JSON 时，抛出明确错误而不是静默失败。"""
+    conn = _build_model_db()
+    conn.execute("UPDATE llm_models SET model_id = 'deepseek-flash'")
+    conn.commit()
+    profiler = SelfProfiler(timeout=5)
+    captured_budgets = []
+
+    monkeypatch.setattr("app.db.connection.get_db", lambda: conn)
+
+    def fake_urlopen(req, timeout=0, context=None):
+        captured_budgets.append(json.loads(req.data.decode("utf-8"))["max_tokens"])
+        return _QueuedResponse(_truncated_payload(999, finish_reason="length"))
+
+    monkeypatch.setattr("app.services.realtime.llm_http.urllib.request.urlopen", fake_urlopen)
+
+    try:
+        profiler._call_llm("test prompt")
+    except ValueError as exc:
+        assert "未得到合法画像 JSON" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError")
+
+    assert captured_budgets == [8192, 16384, 32768]

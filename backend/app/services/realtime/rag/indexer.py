@@ -69,9 +69,17 @@ class RagIndexer:
     }
     # P1.2 LLM 结构化抽取的每轮预算：每次重建每联系人最多抽取的段数
     LLM_EXTRACT_SEGMENT_BUDGET = 40
+    # 回补（欠账）场景专用预算：用户知情主动触发（token 成本预期），
+    # 且队列串行+互斥锁已保证长任务安全——小步慢走的防误操作预算
+    # 在 156 联系人欠账场景下不合理（几十次手动重建才抽完一人）
+    LLM_EXTRACT_BACKFILL_BUDGET = 200
+    # 回补并发：LLM 调用是纯 IO 等待（单次 1-30s），3 路并发约 3 倍
+    # 吞吐；写库与水位推进在主线程按提交序串行，语义不变
+    LLM_EXTRACT_CONCURRENCY = 3
     # P1.5 断点续抽版本：抽取 prompt/质量门变化时递增，水位失效全量重抽
     # p1.6：游戏内购买排除+购买代词差例强化（P1.6 T11）
-    FACT_EXTRACT_PROMPT_VERSION = "p1.6"
+    # p1.7：消费类原型降级（LLM-only）+ 检索增强上下文（跨天代指还原）
+    FACT_EXTRACT_PROMPT_VERSION = "p1.7"
     # P1.6 融合候选上限：候选过多时 decisions 响应变长易截断（真实库
     # 出现 invalid JSON/no JSON 多为 max_tokens 截断），按置信度取前 N
     FACT_FUSION_CANDIDATE_LIMIT = 12
@@ -87,8 +95,10 @@ class RagIndexer:
         self.segmenter = RagSegmenter()
         self.semantic_fact_extractor = SemanticFactExtractor(self.embedding_service, self.segmenter)
         self.structured_fact_extractor = structured_fact_extractor
-        # P1.2 LLM 结构化抽取的轮内预算（每次 rebuild 重置）
+        # P1.2 LLM 结构化抽取的轮内预算（每次 rebuild 重置）；
+        # 常规 40，回补场景临时抬到 LLM_EXTRACT_BACKFILL_BUDGET
         self._llm_extract_segments_used = 0
+        self._llm_extract_budget_limit = self.LLM_EXTRACT_SEGMENT_BUDGET
         self._llm_extract_consecutive_failures = 0
         self._llm_extract_watermark_ts: int | None = None
         # P1.5 连续覆盖语义：段失败后冻结水位，后续成功不再越过失败段
@@ -398,16 +408,25 @@ class RagIndexer:
                 and watermark_ts > 0
             )
             if config_match:
-                # 增量模式：只加载水位之后的新消息
+                # 增量模式：只加载水位之后的新消息。
+                # LLM 抽取欠账判定：无 LLM 时的构建会把消息水位推到最新
+                # 而抽取水位不动——后配 LLM 重建若只看消息水位会被增量
+                # 短路，历史事实永远抽不到（用户实测：删库重导先无 LLM
+                # 构建、配 LLM 后重建不动）。
                 new_messages = self._load_messages_after(conversation_id, watermark_ts)
+                llm_behind = self._llm_extraction_behind(status_row, watermark_ts)
+                if llm_behind:
+                    self._backfill_llm_extraction(account_wxid, conversation_id)
                 if not new_messages:
-                    # 无新消息：直接标记 ready，跳过全部重嵌入
+                    # 无新消息（且抽取无欠账）：直接标记 ready，跳过重嵌入
                     self.store.upsert_status(
                         account_wxid, conversation_id,
                         status="ready", dirty_since=None, last_error=None,
                         index_version=self.INDEX_VERSION,
                     )
                     self.store.conn.commit()
+                    if llm_behind:
+                        self._refresh_policy_shadows(account_wxid, conversation_id, conversation)
                     logger.debug("[RAG Index] incremental skip: no new messages after watermark=%s", watermark_ts)
                     return self.store.get_status(account_wxid, conversation_id) or {}
                 messages = new_messages
@@ -520,6 +539,10 @@ class RagIndexer:
                     vector_count,
                 )
 
+            # 增量分支的历史抽取欠账回补：新段已随段循环抽取，这里补齐
+            # 更早的未覆盖段（无 LLM 时期的存量）
+            if incremental and llm_behind:
+                self._backfill_llm_extraction(account_wxid, conversation_id)
             # 推进消息水位（增量模式下次从最新时间戳开始；全量模式首次设置）
             new_watermark = max((int(m.get("timestamp") or 0) for m in messages), default=watermark_ts if incremental else 0)
             self.store.conn.execute(
@@ -906,6 +929,195 @@ class RagIndexer:
         )
         return docs
 
+    def _segment_worth_extraction(self, segment: RagSegment) -> bool:
+        """回补预筛：纯寒暄/水聊段不送 LLM（抽出必为零，纯耗 token）。
+
+        判据保守（宁可多送勿漏抽）：段总字符 >=30 且非纯应答消息占比
+        >=0.4（长度 <4 或命中通用应答集视为无信息量）。
+        """
+        from .fact_quality import GENERIC_TURNS
+
+        msgs = [m for m in segment.messages if str(m.get("content") or "").strip()]
+        informative_chars = 0
+        informative_count = 0
+        for m in msgs:
+            compact = "".join(str(m.get("content") or "").split())
+            if len(compact) >= 4 and compact not in GENERIC_TURNS:
+                informative_chars += len(compact)
+                informative_count += 1
+        # 信息密集的短段（"我对虾过敏，千万别点虾"）必须放行——按
+        # informative 总字数而非段总字数判，纯应答段（嗯/哈哈/好的）
+        # informative 字数趋近于 0 被拦
+        return informative_chars >= 24 and informative_count >= 2
+
+    def _llm_extraction_behind(self, status_row: dict[str, Any], message_watermark_ts: int) -> bool:
+        """LLM 抽取欠账：抽取已启用但未覆盖到消息水位（或版本变化）。"""
+        if self.structured_fact_extractor is None:
+            return False
+        if str(status_row.get("fact_extract_prompt_version") or "") != self.FACT_EXTRACT_PROMPT_VERSION:
+            return True
+        extract_wm = int(status_row.get("fact_extract_watermark_ts") or 0)
+        return extract_wm < int(message_watermark_ts)
+
+    def _backfill_llm_extraction(self, account_wxid: str, conversation_id: int) -> int:
+        """历史段抽取回补：全量消息切段，只跑 LLM 抽取，不动文档/向量。
+
+        断点续抽水位（fact_extract_watermark_ts + 版本）保证多轮 rebuild
+        逐步推进（每轮 40 段预算），已覆盖段自动跳过。
+        """
+        if self.structured_fact_extractor is None:
+            return 0
+        self._llm_extract_segments_used = 0
+        self._llm_extract_consecutive_failures = 0
+        self._llm_extract_round_failed = False
+        self._llm_extract_budget_limit = self.LLM_EXTRACT_BACKFILL_BUDGET
+        self._init_llm_extract_progress(account_wxid, conversation_id)
+        messages = self._load_messages(conversation_id)
+        if not messages:
+            return 0
+        sessions = self._load_sessions_reference(conversation_id)
+        segments = self.segmenter.segment(messages, conversation_id=conversation_id, sessions=sessions)
+        prev_tail: list[dict[str, Any]] = []
+        extracted = 0
+        # 提速：水聊段预筛不送 LLM（真实对话大量寒暄段，纯应答段抽出
+        # 零事实）；LLM 调用 3 路并发（纯 IO 等待，单连接写库仍在主
+        # 线程按提交序串行——水位连续覆盖语义不变）
+        from collections import deque
+        from concurrent.futures import ThreadPoolExecutor
+
+        def _drain_one(pending: deque) -> bool:
+            """等最旧的调用完成并按序落库；返回该段是否实际抽取。"""
+            segment, prompt, prev_tail_snapshot, future = pending.popleft()
+            try:
+                facts = future.result()
+                self._llm_extract_consecutive_failures = 0
+            except Exception as exc:
+                self._llm_extract_consecutive_failures += 1
+                self._llm_extract_round_failed = True
+                logger.warning(
+                    "[RAG Fact Shadow] backfill extraction failed (%s/3): %s",
+                    self._llm_extract_consecutive_failures, exc,
+                )
+                return False
+            from .fact_quality import fact_quality_reason
+
+            usable = [
+                fact for fact in facts
+                if fact_quality_reason(
+                    str(fact.get("kind") or ""), fact.get("content"),
+                    require_kind_signal=False,
+                ) is None
+            ]
+            self._write_structured_facts(
+                account_wxid=account_wxid,
+                conversation_id=conversation_id,
+                segment=segment,
+                facts=usable,
+            )
+            self._advance_llm_extract_progress(account_wxid, conversation_id, segment)
+            self.store.conn.commit()
+            return True
+
+        executor = ThreadPoolExecutor(max_workers=self.LLM_EXTRACT_CONCURRENCY)
+        pending: deque = deque()
+        try:
+            for segment in segments:
+                if self._llm_extract_consecutive_failures >= 3:
+                    break
+                if self._llm_extract_segments_used >= self._llm_extract_budget_limit:
+                    break
+                # 断点续抽：已覆盖段跳过（预筛前先查水位）
+                if self._llm_extract_watermark_ts and segment.end_ts <= self._llm_extract_watermark_ts:
+                    continue
+                if len(segment.messages) < 4:
+                    continue
+                if not self._segment_worth_extraction(segment):
+                    # 无价值段：不送 LLM 但推进水位（不推进会被每轮重扫）
+                    self._advance_llm_extract_progress(account_wxid, conversation_id, segment)
+                    continue
+                self._llm_extract_segments_used += 1
+                related = self._retrieve_related_history_messages(
+                    account_wxid=account_wxid, conversation_id=conversation_id, segment=segment,
+                )
+                prompt = json.dumps(
+                    {
+                        "task": "extract_atomic_contact_facts",
+                        "account_wxid": account_wxid,
+                        "conversation_id": conversation_id,
+                        "messages": segment.messages,
+                        "context_messages": prev_tail,
+                        "related_context_messages": related,
+                        "max_tokens": 2048,
+                        "contract": {
+                            "required": ["subject", "kind", "content"],
+                            "status": ["active", "superseded", "uncertain"],
+                            "evidence_message_ids": "integer array",
+                        },
+                    },
+                    ensure_ascii=False,
+                )
+                future = executor.submit(self.structured_fact_extractor.extract, prompt)
+                pending.append((segment, prompt, list(prev_tail), future))
+                prev_tail = [
+                    msg for msg in segment.messages[-3:]
+                    if str(msg.get("content") or "").strip()
+                ]
+                if len(pending) >= self.LLM_EXTRACT_CONCURRENCY:
+                    if _drain_one(pending):
+                        extracted += 1
+            while pending:
+                if _drain_one(pending):
+                    extracted += 1
+        finally:
+            executor.shutdown(wait=True, cancel_futures=True)
+            self._llm_extract_budget_limit = self.LLM_EXTRACT_SEGMENT_BUDGET
+        if extracted:
+            logger.info(
+                "[RAG Index] llm extraction backfill: %s segments (conv=%s)", extracted, conversation_id
+            )
+            # 仍有欠账且本轮有推进 → 自动续轮（队列 worker 下一轮继续，
+            # 无需用户反复点重建；水位无推进时不续，防失败死循环）
+            try:
+                status_now = self.store.get_status(account_wxid, conversation_id) or {}
+                msg_wm = int(status_now.get("message_watermark_ts") or 0)
+                ext_wm = int(status_now.get("fact_extract_watermark_ts") or 0)
+                if msg_wm > 0 and ext_wm < msg_wm:
+                    RagIndexQueue.enqueue(account_wxid, conversation_id)
+                    logger.info(
+                        "[RAG Index] extraction debt remains (ext=%s < msg=%s), re-queued conv=%s",
+                        ext_wm, msg_wm, conversation_id,
+                    )
+            except Exception as requeue_exc:
+                logger.debug("[RAG Index] backfill re-queue skipped: %s", requeue_exc)
+        return extracted
+
+    def _refresh_policy_shadows(
+        self, account_wxid: str, conversation_id: int, conversation: dict[str, Any] | None
+    ) -> None:
+        """关系状态+偏好策略影子刷新（失败只日志，不影响主链路）。"""
+        try:
+            from .relationship_policy import refresh_relationship_state_shadow
+
+            refresh_relationship_state_shadow(
+                self.store,
+                account_wxid=account_wxid,
+                conversation_id=conversation_id,
+                display_name=str((conversation or {}).get("display_name") or ""),
+            )
+        except Exception as shadow_exc:
+            logger.debug("[RAG Index] relationship shadow refresh failed: %s", shadow_exc)
+        try:
+            from .contact_preference import refresh_contact_preferences_shadow
+
+            refresh_contact_preferences_shadow(
+                self.store,
+                account_wxid=account_wxid,
+                conversation_id=conversation_id,
+                embedding_service=self.embedding_service,
+            )
+        except Exception as pref_exc:
+            logger.debug("[RAG Index] contact preference refresh failed: %s", pref_exc)
+
     def _init_llm_extract_progress(self, account_wxid: str, conversation_id: int) -> None:
         """断点续抽水位改为 rag_index_status 段级进度。
 
@@ -950,6 +1162,112 @@ class RagIndexer:
         except Exception as exc:
             logger.debug("[RAG Fact Shadow] progress persist skipped: %s", exc)
 
+    RELATED_HISTORY_MAX_DOCS = 2
+    # 阈值经真实案例校准（conv 7191 烘干机代指）：目标历史段余弦 0.642，
+    # 无关历史（测试闲聊/硬盘话题）0.565-0.582——text2vec 短文本区分度
+    # 窄，0.62 拒噪声留 0.04 余量
+    RELATED_HISTORY_MIN_SCORE = 0.62
+    RELATED_HISTORY_MAX_MESSAGES = 8
+
+    def _retrieve_related_history_messages(
+        self,
+        *,
+        account_wxid: str,
+        conversation_id: int,
+        segment: RagSegment,
+    ) -> list[dict[str, Any]]:
+        """为 LLM 抽取检索语义相关的历史消息（消解跨段/跨天代指）。
+
+        消费决策的上下文天然分布在多天（种草→犹豫→决策），物理相邻的
+        上一段结尾 3 条追不上——"这玩意""搞一台"的指代对象定义常在几
+        天前。用段尾部内容做向量检索，取历史 topic_segment/evidence 文
+        档命中的时间窗消息。本段文档此刻尚未写库，检索天然只见历史；
+        增量模式下旧段文档同样在库。失败静默返回空（抽取退回物理相邻
+        上下文，不阻塞）。
+        """
+        try:
+            query_text = " ".join(
+                str(msg.get("content") or "").strip()
+                for msg in segment.messages[-6:]
+                if str(msg.get("content") or "").strip()
+            )[:200]
+            if not query_text:
+                return []
+            settings = load_rag_settings()
+            model = str(settings["rag_embedding_model"])
+            dim = int(settings["rag_embedding_dim"])
+            query_vector = self.embedding_service.embed_text(query_text)
+            if len(query_vector) != dim:
+                return []
+            docs = self.store.list_documents_with_vectors(
+                account_wxid, conversation_id, embedding_model=model, embedding_dim=dim
+            )
+            scored = []
+            for doc in docs:
+                if str(doc.get("doc_type") or "") not in {"topic_segment", "evidence_excerpt"}:
+                    continue
+                # 只要历史：本段及之后时间窗的文档不含指代定义
+                if int(doc.get("source_ts") or 0) >= segment.start_ts:
+                    continue
+                vector = doc.get("vector") or []
+                if not vector:
+                    continue
+                score = self._cosine(query_vector, vector)
+                if score >= self.RELATED_HISTORY_MIN_SCORE:
+                    scored.append((score, doc))
+            scored.sort(key=lambda pair: -pair[0])
+            messages: list[dict[str, Any]] = []
+            seen_windows: set[tuple[int, int]] = set()
+            for _score, doc in scored[: self.RELATED_HISTORY_MAX_DOCS]:
+                parts = str(doc.get("source_id") or "").split(":")
+                if len(parts) < 4:
+                    continue
+                try:
+                    window = (int(parts[-2]), int(parts[-1]))
+                except ValueError:
+                    continue
+                if window in seen_windows:
+                    continue
+                seen_windows.add(window)
+                rows = self.store.conn.execute(
+                    """
+                    SELECT id, conversation_id, is_sender, content, timestamp, message_type
+                    FROM messages
+                    WHERE conversation_id = ? AND message_type = 1
+                      AND content IS NOT NULL AND TRIM(content) != ''
+                      AND timestamp >= ? AND timestamp <= ?
+                    ORDER BY timestamp ASC LIMIT ?
+                    """,
+                    (conversation_id, window[0], window[1], self.RELATED_HISTORY_MAX_MESSAGES),
+                ).fetchall()
+                for row in rows:
+                    messages.append(
+                        {
+                            "id": int(row["id"] or 0),
+                            "is_sender": int(row["is_sender"] or 0),
+                            "content": str(row["content"] or ""),
+                            "timestamp": int(row["timestamp"] or 0),
+                        }
+                    )
+            return messages[: self.RELATED_HISTORY_MAX_MESSAGES * self.RELATED_HISTORY_MAX_DOCS]
+        except Exception as exc:
+            logger.debug("[RAG Fact Shadow] related history retrieval skipped: %s", exc)
+            return []
+
+    @staticmethod
+    def _cosine(a: list[float], b: list[float]) -> float:
+        import math as _math
+
+        if not a or not b:
+            return 0.0
+        size = min(len(a), len(b))
+        dot = sum(float(a[i]) * float(b[i]) for i in range(size))
+        norm_a = _math.sqrt(sum(float(x) ** 2 for x in a[:size]))
+        norm_b = _math.sqrt(sum(float(x) ** 2 for x in b[:size]))
+        if norm_a <= 0 or norm_b <= 0:
+            return 0.0
+        return dot / (norm_a * norm_b)
+
     def _extract_structured_shadow_facts(
         self,
         *,
@@ -969,7 +1287,7 @@ class RagIndexer:
             return
         if len(segment.messages) < 4:
             return
-        if self._llm_extract_segments_used >= self.LLM_EXTRACT_SEGMENT_BUDGET:
+        if self._llm_extract_segments_used >= self._llm_extract_budget_limit:
             return
         if self._llm_extract_consecutive_failures >= 3:
             return
@@ -977,6 +1295,13 @@ class RagIndexer:
         if self._llm_extract_watermark_ts and segment.end_ts <= self._llm_extract_watermark_ts:
             return
         self._llm_extract_segments_used += 1
+        # 检索增强上下文：语义相关的历史消息（跨段/跨天代指的定义处），
+        # 失败静默退回物理相邻上下文
+        related_context_messages = self._retrieve_related_history_messages(
+            account_wxid=account_wxid,
+            conversation_id=conversation_id,
+            segment=segment,
+        )
         prompt = json.dumps(
             {
                 "task": "extract_atomic_contact_facts",
@@ -984,6 +1309,7 @@ class RagIndexer:
                 "conversation_id": conversation_id,
                 "messages": segment.messages,
                 "context_messages": prev_context_messages or [],
+                "related_context_messages": related_context_messages,
                 "max_tokens": 2048,
                 "contract": {
                     "required": ["subject", "kind", "content"],

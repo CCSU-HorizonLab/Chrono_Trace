@@ -1,9 +1,9 @@
 #define AppName "Chrono Trace"
-#define AppExeName "Chrono Trace.exe"
+#define AppExeName "ChronoTrace.exe"
 #define AppIconFile "..\chrono Trace.ico"
 
 #ifndef BuildRoot
-  #define BuildRoot "..\release\pyinstaller\Chrono Trace"
+  #define BuildRoot "..\release\pyinstaller\ChronoTrace"
 #endif
 
 #ifndef ProjectVersion
@@ -31,7 +31,7 @@ SetupIconFile={#AppIconFile}
 DefaultDirName={localappdata}\Programs\{#AppName}
 DefaultGroupName={#AppName}
 OutputDir=..\release\installer
-OutputBaseFilename=Chrono Trace {#AppVersion} Setup{#InstallerSuffix}
+OutputBaseFilename=ChronoTrace-{#AppVersion}-Setup{#InstallerSuffix}
 Compression=lzma2
 SolidCompression=yes
 ArchitecturesInstallIn64BitMode=x64compatible

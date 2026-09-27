@@ -154,7 +154,7 @@ function Get-VariantSettings {
             PackagingPython = Join-Path $ProjectRoot ".venv-packaging-gpu\Scripts\python.exe"
             BuildRoot = Join-Path $ReleaseRoot "build-gpu"
             DistRoot = Join-Path $ReleaseRoot "pyinstaller-gpu"
-            AppDistDir = Join-Path $ReleaseRoot "pyinstaller-gpu\Chrono Trace"
+            AppDistDir = Join-Path $ReleaseRoot "pyinstaller-gpu\ChronoTrace"
             InstallerSuffix = "-GPU"
         }
     }
@@ -166,7 +166,7 @@ function Get-VariantSettings {
         PackagingPython = Join-Path $ProjectRoot ".venv-packaging\Scripts\python.exe"
         BuildRoot = Join-Path $ReleaseRoot "build"
         DistRoot = Join-Path $ReleaseRoot "pyinstaller"
-        AppDistDir = Join-Path $ReleaseRoot "pyinstaller\Chrono Trace"
+        AppDistDir = Join-Path $ReleaseRoot "pyinstaller\ChronoTrace"
         InstallerSuffix = ""
     }
 }

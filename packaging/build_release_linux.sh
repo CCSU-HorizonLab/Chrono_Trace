@@ -3,7 +3,7 @@
 #
 # 用法：./build_release_linux.sh [-f|--fast] [-v|--version <版本号>] [--skip-frontend-install]
 # 流程：前端 npm 构建 → .venv-packaging-linux 自举/复用 → PyInstaller onedir → tar.gz + .desktop
-# 产物：release/pyinstaller-linux/Chrono Trace/ 与 release/chrono-trace-<版本>-linux.tar.gz
+# 产物：release/pyinstaller-linux/ChronoTrace/ 与 release/chrono-trace-<版本>-linux.tar.gz
 #
 # 与 Windows 链路差异：无 Inno Setup / 注册表 / WebView2 引导；无 cpu/gpu 变体
 # （Linux 暂只出 CPU 轮子，GPU runtime 下载机制未接入 Linux）。
@@ -155,7 +155,7 @@ fi
   "${CLEAN_FLAG[@]}" \
   "$SPEC_PATH"
 
-DIST_DIR="$RELEASE_ROOT/pyinstaller-linux/Chrono Trace"
+DIST_DIR="$RELEASE_ROOT/pyinstaller-linux/ChronoTrace"
 [[ -d "$DIST_DIR" ]] || { echo "打包产物目录缺失: $DIST_DIR" >&2; exit 1; }
 
 # ---------- 选择性 strip（瘦身）----------
@@ -170,7 +170,7 @@ find "$DIST_DIR/_internal" -type f -name "*.so*" -size +5M \
 # ---------- tar.gz + .desktop ----------
 log "生成 tar.gz 与 .desktop…"
 TARBALL="$RELEASE_ROOT/chrono-trace-${VERSION}-linux.tar.gz"
-tar -czf "$TARBALL" -C "$RELEASE_ROOT/pyinstaller-linux" "Chrono Trace"
+tar -czf "$TARBALL" -C "$RELEASE_ROOT/pyinstaller-linux" "ChronoTrace"
 
 cat > "$RELEASE_ROOT/chrono-trace.desktop" <<'DESKTOP'
 [Desktop Entry]

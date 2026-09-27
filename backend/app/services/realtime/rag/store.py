@@ -917,12 +917,45 @@ class RagStore:
         return items
 
     def clear_conversation(self, account_wxid: str, conversation_id: int) -> int:
+        """Clear ALL derived memory data for one contact (messages untouched).
+
+        此前只删文档层（documents/embeddings/status），事实/事实向量/
+        关系策略/偏好槽全部残留——前端清空后记忆弹窗依旧有数据、检索
+        照常命中，与"清空提炼的动态记忆"的承诺不符。清空语义 = 全部
+        提炼数据（含用户墓碑与反馈信号，facts 已清则墓碑无意义）。
+        调用方负责随后停用该联系人（防止 ensure_contact_index 自动
+        重建复活）。
+        """
         self.conn.execute(
             "DELETE FROM rag_embeddings WHERE account_wxid = ? AND conversation_id = ?",
             (account_wxid, conversation_id),
         )
         cursor = self.conn.execute(
             "DELETE FROM rag_documents WHERE account_wxid = ? AND conversation_id = ?",
+            (account_wxid, conversation_id),
+        )
+        self.conn.execute(
+            "DELETE FROM rag_fact_embeddings WHERE account_wxid = ? AND conversation_id = ?",
+            (account_wxid, conversation_id),
+        )
+        self.conn.execute(
+            "DELETE FROM rag_facts WHERE account_wxid = ? AND conversation_id = ?",
+            (account_wxid, conversation_id),
+        )
+        self.conn.execute(
+            "DELETE FROM rag_fact_user_feedback WHERE account_wxid = ? AND conversation_id = ?",
+            (account_wxid, conversation_id),
+        )
+        self.conn.execute(
+            "DELETE FROM rag_relationship_state WHERE account_wxid = ? AND conversation_id = ?",
+            (account_wxid, conversation_id),
+        )
+        self.conn.execute(
+            "DELETE FROM rag_contact_preferences WHERE account_wxid = ? AND conversation_id = ?",
+            (account_wxid, conversation_id),
+        )
+        self.conn.execute(
+            "DELETE FROM rag_feedback_policy_signals WHERE account_wxid = ? AND conversation_id = ?",
             (account_wxid, conversation_id),
         )
         self.conn.execute(

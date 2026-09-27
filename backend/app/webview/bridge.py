@@ -2299,6 +2299,10 @@ class Bridge:
             resolved_account = self._resolve_account_wxid(account_wxid)
             store = RagStore()
             deleted = store.clear_conversation(resolved_account, int(conversation_id))
+            # 清空后停用该联系人记忆：否则 ensure_contact_index 检测到
+            # 无状态会在下次建议时自动排队重建，事实被重抽复活——违背
+            # "清空"语义。用户可重新启用并手动重建。
+            store.set_conversation_enabled(resolved_account, int(conversation_id), False)
             store.conn.commit()
             from ..services.realtime.rag.retriever import invalidate_vector_cache
             invalidate_vector_cache(resolved_account, int(conversation_id))

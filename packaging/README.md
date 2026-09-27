@@ -106,8 +106,8 @@ packaging\build_release.ps1
 PyInstaller 目录版输出到：
 
 ```text
-release\pyinstaller\Chrono Trace\
-release\pyinstaller-gpu\Chrono Trace\
+release\pyinstaller\ChronoTrace\
+release\pyinstaller-gpu\ChronoTrace\
 ```
 
 安装包输出到：
@@ -130,6 +130,27 @@ release\build\
 ```
 
 那是 PyInstaller 中间产物。
+
+## 包体积构成（当前：模型内置）
+
+推理栈切换 ONNX 后，安装包**内置 fp16 模型**（约 409MB 原始 / ~300MB 压缩后），换取新装机开箱即用：
+
+| 项 | 旧 torch 版 | 当前 ONNX 版 |
+|---|---|---|
+| 安装包 | ~190MB（不含模型） | ~400MB（含模型） |
+| 首次运行 | 需下载 1.17GB 模型 | 无下载，直接可用 |
+| 用户总获取量 | ~1.36GB | ~400MB |
+
+### 备选：小安装包方案（未实施，视需求启用）
+
+若更在意安装包体积，可改为「首次运行时只下载 ONNX 产物」：
+
+1. 把 `backend/data/models/<name>/onnx/` 两个目录上传到对应 ModelScope 仓库
+   （`tingting0514/text2vec-base-chinese`、`tingting0514/chrono-trace-sentiment`）
+2. 打包侧：删掉两个 spec 里的 onnx datas（安装包回到 ~100-150MB）
+3. 运行时：`ensure_models_for_export.py` 的下载逻辑改为应用内触发，
+   `snapshot_download(..., allow_patterns=["onnx/*"])` 只拉 ~409MB（避免整仓库 1.2GB）
+4. 回退开关：ModelScope 下载失败时仍可手动放置 onnx 目录
 
 ## 推荐用法
 

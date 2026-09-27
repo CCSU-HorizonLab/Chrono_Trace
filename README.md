@@ -366,7 +366,9 @@ pytest backend/tests/
 
 项目当前已经接入 Windows 安装包与 Linux 便携包两条打包链路。
 
-> **首次打包会自动下载模型**：构建脚本检测到 ONNX 产物缺失时，自动从 ModelScope 拉取源模型（约 1.2GB，一次性）并导出 fp16 产物打进安装包（模型内置、开箱即用）。产物缓存后后续构建秒级跳过；手动执行 `python backend/scripts/ensure_models_for_export.py --with-export`。
+> **首次打包会自动下载模型**：构建脚本检测到 ONNX 产物缺失时，自动从 ModelScope 拉取源模型（约 1.2GB，一次性）并导出 fp16 产物打进安装包。产物缓存后后续构建秒级跳过；手动执行 `python backend/scripts/ensure_models_for_export.py --with-export`。
+>
+> **安装包体积**：当前安装包内置 fp16 模型（约 400MB），新装机开箱即用、无需联网下载；旧 torch 版安装包虽小（~190MB）但首次运行需另下 1.17GB 模型——用户总获取量从 ~1.36GB 降到 ~400MB。若偏好小安装包，备选的「模型上传 ModelScope + 首次运行只下载 onnx」方案记录在 `packaging/README.md`。
 
 Windows 一键打包：
 

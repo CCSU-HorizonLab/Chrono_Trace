@@ -2433,3 +2433,104 @@ def test_clear_conversation_wipes_all_derived_memory_and_disables(monkeypatch):
     status = store.get_status("wxid_a", 1)
     assert status is not None and status.get("enabled") == 0  # 停用（防复活）
     assert deleted >= 0
+
+
+def test_incremental_skip_respects_llm_extraction_debt(monkeypatch):
+    """无 LLM 构建推高消息水位后，配 LLM 重建不得被增量短路（用户实测场景）。
+
+    修复前：skip 只看消息水位 → 'no new messages' 直接 ready，历史事实
+    永远抽不到。修复后：抽取欠账（启用但未覆盖）触发历史段回补。
+    """
+    import json as _json
+
+    conn = _conn()
+    store = RagStore(conn)
+    now = 1790000000
+    conn.executescript(
+        """
+        CREATE TABLE conversations (
+            id INTEGER PRIMARY KEY, account_wxid TEXT NOT NULL, username TEXT NOT NULL,
+            display_name TEXT, message_count INTEGER DEFAULT 0,
+            updated_at INTEGER DEFAULT 0, is_deleted INTEGER DEFAULT 0
+        );
+        CREATE TABLE messages (
+            id INTEGER PRIMARY KEY, conversation_id INTEGER NOT NULL,
+            is_sender INTEGER NOT NULL, content TEXT, message_type INTEGER NOT NULL,
+            timestamp INTEGER NOT NULL
+        );
+        """
+    )
+    conn.execute(
+        "INSERT INTO conversations VALUES (1, 'wxid_a', 'u1', 'U1', 4, ?, 0)", (now,)
+    )
+    conn.executemany(
+        "INSERT INTO messages VALUES (?, 1, ?, ?, 1, ?)",
+        [
+            (1, 0, "我对虾过敏，千万别点虾", now - 240),
+            (2, 1, "好，那我们吃火锅", now - 180),
+            (3, 0, "周五见", now - 120),
+            (4, 1, "周五见，老地方", now - 60),
+        ],
+    )
+    # 模拟"无 LLM 时期已完成构建"：消息水位已推到最新、抽取水位为空
+    store.upsert_status("wxid_a", 1, status="ready", document_count=4)
+    conn.execute(
+        "UPDATE rag_index_status SET message_watermark_ts = ? WHERE account_wxid='wxid_a' AND conversation_id=1",
+        (now,),
+    )
+    conn.commit()
+    monkeypatch.setattr(
+        "app.services.realtime.rag.indexer.load_rag_settings",
+        lambda: {
+            "rag_embedding_model": "tingting0514/text2vec-base-chinese",
+            "rag_embedding_dim": 384,
+            "rag_privacy_mode": "balanced",
+        },
+    )
+
+    calls = []
+
+    def fake_llm(prompt):
+        payload = _json.loads(prompt)
+        calls.append(payload["messages"])
+        return {
+            "facts": [
+                {
+                    "subject": "对方",
+                    "kind": "preference",
+                    "content": "对方对虾过敏",
+                    "confidence": 0.85,
+                    "evidence_message_ids": [1],
+                }
+            ]
+        }
+
+    from app.services.realtime.rag.fact_extractor import StructuredFactExtractor
+
+    class _Embed:
+        def embed_texts(self, texts):
+            return [[0.0] * 384 for _ in texts]
+
+    # 配好 LLM 后重建：不得被 incremental skip 短路
+    indexer = RagIndexer(
+        store=store,
+        embedding_service=_Embed(),
+        structured_fact_extractor=StructuredFactExtractor(fake_llm),
+    )
+    status = indexer.rebuild_contact_index(account_wxid="wxid_a", conversation_id=1)
+    assert status["status"] == "ready"
+    assert len(calls) >= 1, "抽取被增量短路，历史事实未回补"
+    rows = conn.execute(
+        "SELECT content FROM rag_facts WHERE conversation_id = 1 AND summary_method = 'llm_shadow'"
+    ).fetchall()
+    assert any("对虾过敏" in r["content"] for r in rows)
+    # 抽取水位已推进：第二次重建（无新消息）正常短路
+    calls.clear()
+    indexer2 = RagIndexer(
+        store=store,
+        embedding_service=_Embed(),
+        structured_fact_extractor=StructuredFactExtractor(fake_llm),
+    )
+    status2 = indexer2.rebuild_contact_index(account_wxid="wxid_a", conversation_id=1)
+    assert status2["status"] == "ready"
+    assert calls == [], "水位已覆盖后应短路"

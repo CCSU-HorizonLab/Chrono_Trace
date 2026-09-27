@@ -35,6 +35,16 @@
         </button>
         <button
           class="rc-btn ghost"
+          :disabled="loading || batchIndexing || backfilling"
+          @click.prevent="handleBackfillAll"
+          title="为历史消息尚未提炼记忆的联系人排队 AI 抽取（消耗 Token，后台逐个完成）"
+        >
+          <span v-if="backfilling" class="rc-spinner mini"></span>
+          <Sparkles v-else :size="13" />
+          <span>{{ backfilling ? '回补排队中...' : '回补记忆抽取' }}</span>
+        </button>
+        <button
+          class="rc-btn ghost"
           :disabled="loading || batchIndexing"
           @click.prevent="$emit('refresh')"
           title="刷新联系人记忆状态"
@@ -321,6 +331,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Brain as BrainIcon,
+  Sparkles,
 } from 'lucide-vue-next'
 import CtAvatar from '@/components/base/CtAvatar.vue'
 import CtHelpTip from '@/components/base/CtHelpTip.vue'
@@ -426,6 +437,7 @@ const pageSize = ref(10)
 const rowLoading = reactive<Record<number, string | boolean>>({})
 // 批量索引状态
 const batchIndexing = ref(false)
+const backfilling = ref(false)
 const batchIndexCurrent = ref(0)
 
 // 各种状态计数
@@ -595,9 +607,32 @@ async function handleRebuild(item: RagContactItem) {
   }
 }
 
+async function handleBackfillAll() {
+  const confirmed = await showConfirm(
+    `为所有历史消息尚未提炼记忆的联系人排队 AI 抽取？
+
+将使用当前激活的大模型逐段提炼记忆事实（消耗 Token，可在后台逐步完成，期间可正常使用）。`
+  )
+  if (!confirmed) return
+  backfilling.value = true
+  try {
+    const result = await api.backfill_all_rag_extraction(props.accountWxid)
+    if (!result?.ok) {
+      await showDialog('回补排队失败: ' + (result?.error || '未知错误'))
+    } else {
+      await showDialog(`已排队 ${result.queued || 0} 个联系人的记忆抽取，将在后台逐步完成。`)
+      emit('refresh')
+    }
+  } catch (e: any) {
+    await showDialog('回补排队失败: ' + (e?.message || e))
+  } finally {
+    backfilling.value = false
+  }
+}
+
 async function handleClear(item: RagContactItem) {
   const confirmed = await showConfirm(
-    `确定清空联系人「${item.display_name || item.username}」的记忆数据吗？\n该操作仅清空提炼的动态记忆与摘要，原始聊天记录不受影响。`
+    `确定清空联系人「${item.display_name || item.username}」的记忆数据吗？\n该操作仅清空提炼的动态记忆与摘要（事实、关系画像、偏好），原始聊天记录不受影响。清空后该联系人的记忆功能将停用，可重新启用并重建。`
   )
   if (!confirmed) return
 

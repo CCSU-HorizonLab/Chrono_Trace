@@ -1384,6 +1384,9 @@ def test_rag_indexer_rebuilds_v2_multilayer_documents_and_cleans_old_auto_docs(m
             (3, 0, "那家火锅店人均有点贵，不过好吃", now - 480),
             (4, 1, "宝宝不是说那个贵嘛", now - 420),
             (5, 0, "对呀上次说的", now - 360),
+            # 消费类（p1.7 起只走 LLM 路径）之外需有非消费命中以产出
+            # fact_memory/shared_memory 的多层结构断言
+            (6, 0, "好呀那我们周五见面去吃，约定了", now - 300),
         ],
     )
     conn.execute(
@@ -1456,6 +1459,10 @@ def test_rag_indexer_rebuilds_v2_multilayer_documents_and_cleans_old_auto_docs(m
     docs = conn.execute("SELECT * FROM rag_documents WHERE conversation_id = 1").fetchall()
     doc_types = {row["doc_type"] for row in docs}
     assert {"topic_segment", "fact_memory", "evidence_excerpt", "shared_memory"} <= doc_types
+    # p1.7：消费类原型不再直接入库（火锅/贵/买对话只留 LLM 路径判断）
+    assert conn.execute(
+        "SELECT COUNT(*) FROM rag_facts WHERE kind IN ('food_or_place', 'purchase_or_price')"
+    ).fetchone()[0] == 0
     assert conn.execute("SELECT 1 FROM rag_documents WHERE id = ?", (feedback_id,)).fetchone() is not None
     assert conn.execute("SELECT 1 FROM rag_embeddings WHERE document_id = ?", (feedback_id,)).fetchone() is not None
     fact = conn.execute("SELECT * FROM rag_documents WHERE doc_type = 'fact_memory' LIMIT 1").fetchone()
@@ -2377,3 +2384,268 @@ def test_concurrent_rebuilds_queue_instead_of_locking(monkeypatch):
     # 第一个 rebuild 正常完成
     assert results[1]["status"] == "ready"
     assert "raised" not in {v.get("status") for v in results.values()}
+
+
+def test_clear_conversation_wipes_all_derived_memory_and_disables(monkeypatch):
+    """清空语义修复：事实/向量/策略/偏好全清 + 停用防自动重建复活。
+
+    此前 clear 只删文档层三张表，rag_facts 等全部残留——前端清空后
+    记忆弹窗依旧有数据。
+    """
+    conn = _conn()
+    store = RagStore(conn)
+    store.upsert_status("wxid_a", 1, status="ready", document_count=5)
+    fid = store.upsert_fact(
+        account_wxid="wxid_a", conversation_id=1, subject="对方", kind="preference",
+        content="对方对虾过敏", confidence=0.8, as_of=1789900000,
+        evidence_message_ids=[1], summary_method="llm_shadow",
+    )
+    store.upsert_fact_embedding(
+        fact_id=fid, account_wxid="wxid_a", conversation_id=1,
+        embedding_model="m", embedding_dim=2, vector=[0.1, 0.2],
+    )
+    store.upsert_relationship_state(
+        account_wxid="wxid_a", conversation_id=1, stage="s", closeness_band="high",
+        initiative_pattern="i", evidence_hash="h", confidence=0.7,
+    )
+    store.upsert_contact_preference(
+        account_wxid="wxid_a", conversation_id=1, slot_key="preference:1",
+        slot_kind="preference", summary="对方喜欢喝奶茶", evidence_hash="h1",
+        confidence=0.8,
+    )
+    store.record_feedback_policy_signal(
+        account_wxid="wxid_a", conversation_id=1, fact_id=fid, action="inaccurate",
+    )
+    store.set_fact_user_feedback(fid, "inaccurate")
+    conn.commit()
+
+    deleted = store.clear_conversation("wxid_a", 1)
+    store.set_conversation_enabled("wxid_a", 1, False)
+    conn.commit()
+
+    for table in (
+        "rag_facts", "rag_fact_embeddings", "rag_relationship_state",
+        "rag_contact_preferences", "rag_feedback_policy_signals",
+        "rag_fact_user_feedback", "rag_documents", "rag_embeddings",
+    ):
+        n = conn.execute(f"SELECT COUNT(*) FROM {table} WHERE conversation_id = 1").fetchone()[0]
+        assert n == 0, f"{table} 残留 {n} 行"
+    status = store.get_status("wxid_a", 1)
+    assert status is not None and status.get("enabled") == 0  # 停用（防复活）
+    assert deleted >= 0
+
+
+def test_incremental_skip_respects_llm_extraction_debt(monkeypatch):
+    """无 LLM 构建推高消息水位后，配 LLM 重建不得被增量短路（用户实测场景）。
+
+    修复前：skip 只看消息水位 → 'no new messages' 直接 ready，历史事实
+    永远抽不到。修复后：抽取欠账（启用但未覆盖）触发历史段回补。
+    """
+    import json as _json
+
+    conn = _conn()
+    store = RagStore(conn)
+    now = 1790000000
+    conn.executescript(
+        """
+        CREATE TABLE conversations (
+            id INTEGER PRIMARY KEY, account_wxid TEXT NOT NULL, username TEXT NOT NULL,
+            display_name TEXT, message_count INTEGER DEFAULT 0,
+            updated_at INTEGER DEFAULT 0, is_deleted INTEGER DEFAULT 0
+        );
+        CREATE TABLE messages (
+            id INTEGER PRIMARY KEY, conversation_id INTEGER NOT NULL,
+            is_sender INTEGER NOT NULL, content TEXT, message_type INTEGER NOT NULL,
+            timestamp INTEGER NOT NULL
+        );
+        """
+    )
+    conn.execute(
+        "INSERT INTO conversations VALUES (1, 'wxid_a', 'u1', 'U1', 4, ?, 0)", (now,)
+    )
+    conn.executemany(
+        "INSERT INTO messages VALUES (?, 1, ?, ?, 1, ?)",
+        [
+            (1, 0, "我对虾过敏，千万别点虾", now - 240),
+            (2, 1, "好，那我们吃火锅", now - 180),
+            (3, 0, "周五见", now - 120),
+            (4, 1, "周五见，老地方", now - 60),
+        ],
+    )
+    # 模拟"无 LLM 时期已完成构建"：消息水位已推到最新、抽取水位为空
+    store.upsert_status("wxid_a", 1, status="ready", document_count=4)
+    conn.execute(
+        "UPDATE rag_index_status SET message_watermark_ts = ? WHERE account_wxid='wxid_a' AND conversation_id=1",
+        (now,),
+    )
+    conn.commit()
+    monkeypatch.setattr(
+        "app.services.realtime.rag.indexer.load_rag_settings",
+        lambda: {
+            "rag_embedding_model": "tingting0514/text2vec-base-chinese",
+            "rag_embedding_dim": 384,
+            "rag_privacy_mode": "balanced",
+        },
+    )
+
+    calls = []
+
+    def fake_llm(prompt):
+        payload = _json.loads(prompt)
+        calls.append(payload["messages"])
+        return {
+            "facts": [
+                {
+                    "subject": "对方",
+                    "kind": "preference",
+                    "content": "对方对虾过敏",
+                    "confidence": 0.85,
+                    "evidence_message_ids": [1],
+                }
+            ]
+        }
+
+    from app.services.realtime.rag.fact_extractor import StructuredFactExtractor
+
+    class _Embed:
+        def embed_texts(self, texts):
+            return [[0.0] * 384 for _ in texts]
+
+    # 配好 LLM 后重建：不得被 incremental skip 短路
+    indexer = RagIndexer(
+        store=store,
+        embedding_service=_Embed(),
+        structured_fact_extractor=StructuredFactExtractor(fake_llm),
+    )
+    status = indexer.rebuild_contact_index(account_wxid="wxid_a", conversation_id=1)
+    assert status["status"] == "ready"
+    assert len(calls) >= 1, "抽取被增量短路，历史事实未回补"
+    rows = conn.execute(
+        "SELECT content FROM rag_facts WHERE conversation_id = 1 AND summary_method = 'llm_shadow'"
+    ).fetchall()
+    assert any("对虾过敏" in r["content"] for r in rows)
+    # 抽取水位已推进：第二次重建（无新消息）正常短路
+    calls.clear()
+    indexer2 = RagIndexer(
+        store=store,
+        embedding_service=_Embed(),
+        structured_fact_extractor=StructuredFactExtractor(fake_llm),
+    )
+    status2 = indexer2.rebuild_contact_index(account_wxid="wxid_a", conversation_id=1)
+    assert status2["status"] == "ready"
+    assert calls == [], "水位已覆盖后应短路"
+
+
+def test_backfill_uses_elevated_budget_and_requeues(monkeypatch):
+    """回补预算分级：200 段/轮（非 40），未抽完自动续轮（水位推进才续）。"""
+    import json as _json
+    import threading as _threading
+
+    conn = _conn()
+    store = RagStore(conn)
+    now = 1790000000
+    conn.executescript(
+        """
+        CREATE TABLE conversations (
+            id INTEGER PRIMARY KEY, account_wxid TEXT NOT NULL, username TEXT NOT NULL,
+            display_name TEXT, message_count INTEGER DEFAULT 0,
+            updated_at INTEGER DEFAULT 0, is_deleted INTEGER DEFAULT 0
+        );
+        CREATE TABLE messages (
+            id INTEGER PRIMARY KEY, conversation_id INTEGER NOT NULL,
+            is_sender INTEGER NOT NULL, content TEXT, message_type INTEGER NOT NULL,
+            timestamp INTEGER NOT NULL
+        );
+        """
+    )
+    conn.execute("INSERT INTO conversations VALUES (1, 'wxid_a', 'u1', 'U1', 300, ?, 0)", (now,))
+    # 60 段（每段 4 条消息、间隔 2 分钟成段、段间隔 3 小时强制切段）
+    rows = []
+    ts = now - 60 * 4 * 3600
+    mid = 1
+    for seg in range(60):
+        base = ts + seg * 4 * 3600
+        rows.append((mid, 0, "对方说今天也想吃火锅配奶茶，微辣锅底", base))
+        rows.append((mid + 1, 1, "好呀就去老地方那家店见面", base + 120))
+        rows.append((mid + 2, 0, "周五见，别忘了", base + 240))
+        rows.append((mid + 3, 1, "周五见，老地方不见不散", base + 360))
+        mid += 4
+    conn.executemany("INSERT INTO messages VALUES (?, 1, ?, ?, 1, ?)", rows)
+    store.upsert_status("wxid_a", 1, status="ready", document_count=10)
+    # 消息水位 = 最后一条消息的时间戳（与 rebuild 的推进语义一致）
+    last_msg_ts = now - 4 * 3600 + 360
+    conn.execute(
+        "UPDATE rag_index_status SET message_watermark_ts = ? WHERE account_wxid='wxid_a' AND conversation_id=1",
+        (last_msg_ts,),
+    )
+    conn.commit()
+    monkeypatch.setattr(
+        "app.services.realtime.rag.indexer.load_rag_settings",
+        lambda: {
+            "rag_embedding_model": "tingting0514/text2vec-base-chinese",
+            "rag_embedding_dim": 384,
+            "rag_privacy_mode": "balanced",
+        },
+    )
+    calls = []
+
+    def fake_llm(prompt):
+        payload = _json.loads(prompt)
+        calls.append(len(payload["messages"]))
+        return {"facts": []}
+
+    from app.services.realtime.rag.fact_extractor import StructuredFactExtractor
+
+    class _Embed:
+        def embed_texts(self, texts):
+            return [[0.0] * 384 for _ in texts]
+
+    enqueued = []
+    monkeypatch.setattr(
+        "app.services.realtime.rag.indexer.RagIndexQueue.enqueue",
+        staticmethod(lambda account_wxid, conversation_id: enqueued.append((account_wxid, conversation_id))),
+    )
+
+    indexer = RagIndexer(
+        store=store,
+        embedding_service=_Embed(),
+        structured_fact_extractor=StructuredFactExtractor(fake_llm),
+    )
+    extracted = indexer._backfill_llm_extraction("wxid_a", 1)
+    # 常规预算是 40——60 段全部抽到证明回补预算 200 生效
+    assert extracted == 60, f"回补应抽满 60 段（预算200），实际 {extracted}"
+    assert len(calls) == 60
+    # 全部抽平：不续轮
+    assert enqueued == []
+    # 抽取水位推进到消息末尾（= 最后一段 end_ts，与消息水位持平）
+    status = store.get_status("wxid_a", 1)
+    assert int(status["fact_extract_watermark_ts"]) >= last_msg_ts
+
+
+def test_backfill_prescreen_filters_smalltalk_keeps_dense_short_segments():
+    """预筛：纯寒暄段拦（不耗 token），信息密集短段放行（虾过敏类）。"""
+    from app.services.realtime.rag.segmenter import RagSegment
+
+    indexer = RagIndexer(store=RagStore(_conn()), embedding_service=None)
+    indexer.structured_fact_extractor = None
+
+    def _seg(contents):
+        msgs = [
+            {"id": i + 1, "is_sender": i % 2, "content": c, "timestamp": 1000 + i * 60, "message_type": 1}
+            for i, c in enumerate(contents)
+        ]
+        return RagSegment(segment_id="s", start_ts=1000, end_ts=1000 + len(msgs) * 60,
+                          messages=msgs, message_ids=[m["id"] for m in msgs],
+                          topics=[], entities=[], time_label="t")
+
+    # 纯寒暄段：拦
+    assert indexer._segment_worth_extraction(_seg(["嗯嗯", "哈哈", "好的", "666", "行吧", "好的"])) is False
+    assert indexer._segment_worth_extraction(_seg(["嗯", "哦", "好", "好吧"])) is False
+    # 信息密集短段（虾过敏类）：放行
+    assert indexer._segment_worth_extraction(
+        _seg(["我对虾过敏，千万别点虾", "好，那我们吃火锅", "周五见", "周五见，老地方"])
+    ) is True
+    # 正常对话段：放行
+    assert indexer._segment_worth_extraction(
+        _seg(["对方说今天也想吃火锅配奶茶，微辣锅底", "好呀就去老地方那家店见面", "周五见，别忘了", "周五见，老地方不见不散"])
+    ) is True

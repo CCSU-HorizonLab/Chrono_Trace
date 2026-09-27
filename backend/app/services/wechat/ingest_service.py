@@ -747,11 +747,16 @@ class WeChatIngestService:
             message_db.close()
 
         self._refresh_conversation_stats(touched_conversations)
+        # 导入后冷构建：只写脏标记（dirty_since），不自动入队重建——
+        # 大批量导入后全量构建耗时且用户无预期；首次建议/打开记忆时由
+        # ensure_contact_index 按需构建，或由"全面分析"完成点主动触发。
         try:
-            from ..realtime.rag.indexer import RagIndexQueue
+            from ..realtime.rag.store import RagStore
 
+            store = RagStore()
             for conversation_id in touched_conversations:
-                RagIndexQueue.mark_dirty(account_wxid, conversation_id)
+                store.mark_dirty(account_wxid, int(conversation_id))
+            store.conn.commit()
         except Exception as rag_e:
             logger.debug("[RAG] import dirty mark skipped: %s", rag_e)
 

@@ -203,11 +203,25 @@ class LLMFactExtractorAdapter:
 
         lines = [line for line in (_render(msg) for msg in raw_messages) if line]
         context_lines = [line for line in (_render(msg) for msg in context_messages) if line]
+        related_messages = payload.get("related_context_messages") or []
+        related_lines = [line for line in (_render(msg) for msg in related_messages) if line]
         user_prompt = "对话片段（[消息id] 发送者: 内容）：\n" + "\n".join(lines)
+        # 拼接顺序按时间距离：相关讨论（最远）→ 上一段结尾（近）→ 正文
         if context_lines:
             user_prompt = (
                 "（上一段结尾，仅供理解指代，勿从中抽取事实或引用证据）：\n"
                 + "\n".join(context_lines)
+                + "\n\n"
+                + user_prompt
+            )
+        if related_lines:
+            # 检索增强：语义相关的更早讨论（可能含"这玩意/搞一台"等代指
+            # 的定义处，常在几天前）；同上一段上下文一样不作为 evidence
+            user_prompt = (
+                "（更早的相关讨论，按语义检索提供，仅供理解指代对象——"
+                "如本段说\"搞一台\"而这里提到过具体物品，请据此还原；"
+                "勿从中抽取事实或引用证据）：\n"
+                + "\n".join(related_lines)
                 + "\n\n"
                 + user_prompt
             )

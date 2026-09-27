@@ -71,6 +71,12 @@ class SemanticFactExtractor:
     WINDOW_THRESHOLD = 0.52
     MAX_FACTS_PER_SEGMENT = 8
 
+    # 消费类原型（真实库垃圾率 93%/90%）是"话题检测器"而非"记忆提取器"：
+    # 命中只说明在聊钱/聊吃，不代表有值得长期记的事实——聊消费的段落
+    # 留给 LLM 路径做语义判断（是否反映稳定偏好/计划），原型不再直接
+    # 入库。段本身仍会送 LLM 抽取，"值得细看"的信号并未丢失。
+    LLM_ONLY_KINDS = {"purchase_or_price", "food_or_place"}
+
     PROTOTYPES: dict[str, tuple[str, ...]] = {
         "preference_like": (
             "对方表达了喜欢、偏好、想要、感兴趣的事物",
@@ -151,15 +157,22 @@ class SemanticFactExtractor:
         for item, single_vector, window_vector in zip(candidates, single_vectors, window_vectors):
             single_kind, single_score = self._best_match(single_vector, prototype_vectors)
             window_kind, window_score = self._best_match(window_vector, prototype_vectors)
-            if single_score >= self.SINGLE_THRESHOLD and is_usable_shadow_fact(
-                single_kind,
-                item["content"],
-                context=item["window_text"],
+            # 消费类 kind 只走 LLM 路径：命中消费类不产出，但允许另一侧
+            # 的非消费 kind（如聊买的过程中形成的"约定"以 plan 入库）
+            if (
+                single_score >= self.SINGLE_THRESHOLD
+                and single_kind not in self.LLM_ONLY_KINDS
+                and is_usable_shadow_fact(
+                    single_kind,
+                    item["content"],
+                    context=item["window_text"],
+                )
             ):
                 facts.append(self._build_fact(segment, item, single_kind, single_score))
             elif (
                 window_score >= self.WINDOW_THRESHOLD
                 and single_score >= 0.45
+                and window_kind not in self.LLM_ONLY_KINDS
                 and is_usable_shadow_fact(
                     window_kind,
                     item["content"],

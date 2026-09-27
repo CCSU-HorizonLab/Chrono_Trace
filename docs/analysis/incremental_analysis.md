@@ -43,12 +43,14 @@ encode。统一入口 `SentimentService._get_embeddings_batch`；会话切分 / 
 | 限制 | 现状 | 后续方向 |
 |---|---|---|
 | **撤回消息永不修正** | `INSERT OR IGNORE` 不更新已入库内容；微信库里被撤回消息 local_id 不变，本地保留撤回前文本 | 冲突时 content 不同则 UPSERT（需谨慎：编辑/撤回与重导的区分） |
+| **24h 安全窗外的迟到消息会漏**（导入水位） | 水位增量只读 `[水位-24h, now+24h]`；更早到达的乱序消息不在窗内（微信 create_time 实际单调、WAL 延迟秒级，风险极低） | `force_full` 选项兜底全量重扫（UI 暂未暴露） |
 | realtime↔long 对账窗口 ±59s | UIA 实时时间戳为分钟级截断；超出 59s 的同一物理消息会双份留存 | 以微信库 sort_seq 为权威做二次对账 |
 | cpu/cuda 各存一份嵌入 | 键隔离的必然代价（正确性优先） | 接受；可跑 `clear_embedding_cache.py --clear` 回收 |
 | 模型文件原地替换但 repo id 不变 | 会读到旧向量（脏缓存） | 换模型必须改 `EMBEDDING_MODEL_REPO_ID` 或跑 clear 脚本 |
 | sentiment_cache 仅按维度校验 | 无模型身份字段（既有债务，本方案未扩大） | 迁移加 model 列 |
 | word_counts 按会话行 | 恒为全零占位（既有问题） | 修 `calculate_word_counts` 的 session_id 传递 |
 | 中途取消的分析 | delete-first 语义下中间态允许存在（四表已删未重建），stale 不会误清 | 可接受：重跑即恢复 |
+| 预载判重集合内存 ~30MB | 导入时一次性加载 (conversation_id, local_id) 全集 | 换掉 20 万次逐条 execute，值得 |
 
 ## 维护
 

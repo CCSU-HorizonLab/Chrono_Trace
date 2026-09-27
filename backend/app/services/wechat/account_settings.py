@@ -86,6 +86,9 @@ def normalize_wechat_account(raw: Any) -> Optional[dict[str, Any]]:
     last_import_at_raw = raw.get("last_import_at")
     last_import_at = int(last_import_at_raw) if last_import_at_raw not in (None, "") else None
 
+    watermark_raw = raw.get("import_watermark_ts")
+    import_watermark_ts = int(watermark_raw) if watermark_raw not in (None, "") else 0
+
     return {
         "wxid": wxid,
         "label": label,
@@ -99,6 +102,7 @@ def normalize_wechat_account(raw: Any) -> Optional[dict[str, Any]]:
         "last_import_at": last_import_at,
         "last_import_total_size": int(raw.get("last_import_total_size") or 0),
         "last_import_files": _normalize_snapshot_files(raw.get("last_import_files")),
+        "import_watermark_ts": max(0, import_watermark_ts),
     }
 
 
@@ -254,6 +258,7 @@ def update_wechat_account_import_state(
     label: Optional[str] = None,
     avatar: Optional[str] = None,
     import_completed: Optional[bool] = None,
+    import_watermark_ts: Optional[int] = None,
     clear_import_state: bool = False,
 ) -> dict[str, Any]:
     current = get_wechat_account(settings, wxid) or {"wxid": wxid}
@@ -280,6 +285,14 @@ def update_wechat_account_import_state(
         merged["last_import_at"] = None
         merged["last_import_total_size"] = 0
         merged["last_import_files"] = []
+        merged["import_watermark_ts"] = 0  # force_full 重置语义：下次导入回到全量
+
+    if import_watermark_ts is not None:
+        # 只增不减（None 表示不变；0 显式重置走 clear_import_state）
+        merged["import_watermark_ts"] = max(
+            0, int(import_watermark_ts),
+            int(merged.get("import_watermark_ts") or 0) if not clear_import_state else 0,
+        )
 
     if snapshot is not None:
         merged["import_completed"] = True if import_completed is None else bool(import_completed)

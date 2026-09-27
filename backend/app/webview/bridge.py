@@ -417,6 +417,7 @@ class Bridge:
         *,
         account_wxid: str = "",
         db_key: str | None = None,
+        import_watermark_ts: int | None = None,
     ) -> None:
         resolved_wxid = self._resolve_account_wxid(account_wxid) or str(snapshot.get("account_wxid") or snapshot.get("current_user") or "")
         if not resolved_wxid:
@@ -429,6 +430,8 @@ class Bridge:
                 db_key=db_key,
                 wechat_dir=str(snapshot.get("wechat_dir") or "") or None,
                 import_completed=True,
+                # 消息水位与文件基线同锁同批落库（导入成功路径才会到这）
+                import_watermark_ts=import_watermark_ts,
             )
             self._save_settings()
 
@@ -829,12 +832,20 @@ class Bridge:
         if str(account.get("key_type") or "passphrase") == "raw":
             raw_keys = account.get("raw_keys") or {}
 
+        # 注入账号消息水位（时间增量读取；force_full 由 options 显式覆盖，service 侧忽略水位）
+        if "import_watermark_ts" not in options:
+            options["import_watermark_ts"] = int(account.get("import_watermark_ts") or 0)
+
         result = self.wechat_service.import_wechat_data(
             db_key, options, custom_paths, raw_keys=raw_keys
         )
         if result.get("ok"):
             snapshot = self.wechat_service.build_file_size_snapshot(custom_paths)
-            self._save_wechat_import_baseline(snapshot, account_wxid=resolved_wxid, db_key=db_key)
+            watermark_out = (result.get("stats") or {}).get("import_watermark_ts")
+            self._save_wechat_import_baseline(
+                snapshot, account_wxid=resolved_wxid, db_key=db_key,
+                import_watermark_ts=watermark_out,
+            )
         return result
 
     def refresh_wechat_contact_avatars(

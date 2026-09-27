@@ -1,0 +1,19 @@
+# Chrono Trace Linux 打包环境依赖（ASCII only，与 requirements-packaging.txt 口径一致）
+# 差异：无 pywin32 / pywinauto / wx_key win_amd64 wheel；pywebview 走 Qt 后端
+pywebview>=5.0
+PyQt6>=6.6
+PyQt6-WebEngine>=6.6
+qtpy>=0.0.0
+python-xlib>=0.33; sys_platform != "win32"
+Pillow>=10.0.0
+jieba>=0.42.1
+numpy>=1.24.0
+pycryptodome>=3.20.0
+snownlp>=0.12.3
+sentence-transformers>=2.2.0
+scikit-learn>=1.3.0
+torch==2.5.1
+transformers>=4.30.0
+modelscope>=1.17.1
+pyinstaller==6.19.0
+# torch 建议 CPU 轮子（setup 脚本会用 --index-url https://download.pytorch.org/whl/cpu 覆盖安装）

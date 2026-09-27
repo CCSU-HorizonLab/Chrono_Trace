@@ -464,7 +464,10 @@ class LLMSuggestionEngine(SuggestionEngine):
 
     def _is_reasoning_model(self, model_id: str) -> bool:
         normalized = (model_id or "").lower()
-        return "reasoner" in normalized or "deepseek-r1" in normalized
+        return any(tag in normalized for tag in (
+            "reasoner", "deepseek-r1", "-r1", "qwen3", "qwq",
+            "o1", "o3", "thinking",
+        ))
 
     def generate(
         self,
@@ -510,7 +513,7 @@ class LLMSuggestionEngine(SuggestionEngine):
             context["_rag_output_mode"] = "suggestion"
 
         try:
-            from .rag_context_builder import RagContextBuilder
+            from .rag.context_builder import RagContextBuilder
 
             self._emit_stream(stream_callback, "stage", stage="rag", message="检索上下文")
             RagContextBuilder().enrich_context(
@@ -524,7 +527,7 @@ class LLMSuggestionEngine(SuggestionEngine):
 
         # 构造 prompt
         style_constraints = self._resolve_style_constraints(context)
-        user_prompt = self._build_prompt(trigger_type, intent, context)
+        user_prompt = self._build_prompt(trigger_type, intent, context, model_config=model_config)
         self._emit_stream(
             stream_callback,
             "stage",
@@ -596,10 +599,10 @@ class LLMSuggestionEngine(SuggestionEngine):
                     setattr(result, "rag_conversation_id", context.get("_rag_conversation_id"))
                 result.rag_context = self._build_rag_context_summary(context)
                 if result.summary == "[SILENT]":
-                    _print(f"[LLM Engine] 😶 LLM 决定保持沉默，无建议也不需回复。")
+                    _print("[LLM Engine] 😶 LLM 决定保持沉默，无建议也不需回复。")
                     return result
 
-                _print(f"[LLM Engine] ✅ LLM 生成成功!")
+                _print("[LLM Engine] ✅ LLM 生成成功!")
                 _print(f"[LLM Engine] 思考过程: {result.thought_process}")
                 _print(f"[LLM Engine] 摘要: {result.summary}")
                 _print(f"[LLM Engine] 话术: {result.speeches}")
@@ -999,7 +1002,61 @@ class LLMSuggestionEngine(SuggestionEngine):
             return True
         return any(keyword in normalized for keyword in self.MANUAL_ADVICE_CONTEXT_HINTS)
 
-    def _build_prompt(self, trigger_type: str, intent: str, context: dict) -> str:
+    def _make_prompt_redactor(self, model_config: Optional[dict], context: dict) -> Callable[[str, str], str]:
+        """构造 prompt 段落脱敏函数。
+
+        与 RAG 上下文脱敏同条件：远程模型 + 脱敏开关开启才生效（本地模型跳过）。
+        返回的函数签名为 (text, source_id) -> 脱敏后文本；需要脱敏但初始化或执行
+        失败时按项目红线返回占位符并记录错误，绝不把原文发往远端。
+        """
+        try:
+            from .rag.config import is_remote_llm_model, load_rag_settings
+
+            redaction_required = is_remote_llm_model(model_config) and bool(
+                load_rag_settings().get("rag_remote_context_redaction")
+            )
+        except Exception as e:
+            logger.error("[LLM Engine] 读取脱敏开关失败，远程 prompt 将按需脱敏处理: %s", e)
+            redaction_required = True
+
+        if not redaction_required:
+            return lambda text, source_id: text
+
+        redactor = None
+        try:
+            from ...db.connection import get_db
+            from .privacy_redactor import PrivacyRedactor
+
+            redactor = PrivacyRedactor(get_db())
+        except Exception as e:
+            logger.error("[LLM Engine] prompt 脱敏器初始化失败，相关原文段将被省略: %s", e)
+
+        account_wxid = str(context.get("account_wxid") or "")
+        raw_conversation_id = context.get("conversation_id") or context.get("_rag_conversation_id")
+        try:
+            conversation_id = int(raw_conversation_id) if raw_conversation_id else None
+        except (TypeError, ValueError):
+            conversation_id = None
+
+        def _redact_segment(text: str, source_id: str) -> str:
+            raw = str(text or "")
+            if redactor is None:
+                return "[脱敏失败，已省略]"
+            try:
+                return redactor.redact(
+                    raw,
+                    account_wxid=account_wxid,
+                    conversation_id=conversation_id,
+                    source_table="llm_prompt",
+                    source_id=source_id,
+                ).redacted_text
+            except Exception as e:
+                logger.error("[LLM Engine] prompt 段脱敏失败(source=%s)，已按红线省略该段原文: %s", source_id, e)
+                return "[脱敏失败，已省略]"
+
+        return _redact_segment
+
+    def _build_prompt(self, trigger_type: str, intent: str, context: dict, model_config: Optional[dict] = None) -> str:
         """构造用户 prompt"""
         parts = []
         manual_request_kind = (
@@ -1009,6 +1066,9 @@ class LLMSuggestionEngine(SuggestionEngine):
         )
         is_direct_reply = manual_request_kind == "direct_reply"
         style_constraints = self._resolve_style_constraints(context)
+
+        # 远程模型发送前对最近对话/用户需求原文逐段脱敏（本地模型原样保留）
+        redact_segment = self._make_prompt_redactor(model_config, context)
 
         # 触发原因
         trigger_desc = TRIGGER_DESCRIPTIONS.get(
@@ -1033,10 +1093,13 @@ class LLMSuggestionEngine(SuggestionEngine):
                 f"越新的消息权重越高，最后 {min(self.RECENT_ATTENTION_TAIL, len(recent_window))} 条优先级最高。"
             )
             if compressed_summary:
-                parts.append(f"  {compressed_summary}")
-            for msg in recent_window:
+                parts.append(f"  {redact_segment(compressed_summary, 'recent_summary')}")
+            for idx, msg in enumerate(recent_window):
                 sender = "我" if msg.get("sender_attr") == "self" else "对方"
-                content = str(msg.get("content", ""))[: self.RECENT_MESSAGE_RENDER_CHARS]
+                # 先脱敏全文再截断，避免敏感串被截断后绕过模式匹配
+                content = redact_segment(
+                    str(msg.get("content", "")), f"recent_{idx}"
+                )[: self.RECENT_MESSAGE_RENDER_CHARS]
                 parts.append(f"  {sender}：{content}")
 
         # 情绪摘要
@@ -1072,11 +1135,14 @@ class LLMSuggestionEngine(SuggestionEngine):
             if isinstance(user_context, list):
                 # 对话历史格式: [{role: 'user', content: '...'}, ...]
                 parts.append("【用户需求与反馈】")
-                for msg in user_context[-4:]:
+                for idx, msg in enumerate(user_context[-4:]):
                     role_label = "用户" if msg.get("role") == "user" else "AI"
-                    parts.append(f"  {role_label}：{msg.get('content', '')[:140]}")
+                    content = redact_segment(
+                        str(msg.get("content", "")), f"user_context_{idx}"
+                    )[:140]
+                    parts.append(f"  {role_label}：{content}")
             elif isinstance(user_context, str):
-                parts.append(f"【用户需求】{user_context[:320]}")
+                parts.append(f"【用户需求】{redact_segment(user_context, 'user_context')[:320]}")
 
         # 历史聊天分析摘要（如请求包含历史数据）
         if context.get("include_history") and not is_direct_reply:
@@ -1477,15 +1543,17 @@ class LLMSuggestionEngine(SuggestionEngine):
         if not is_reasoning_model:
             return max_tokens
 
+        # 思维链本身耗 500-2000+ token（实测 Qwen3.5-9B），预算需覆盖
+        # 思考段+结构化结果，否则截断到无 JSON/无建议
         if request_tag == "analysis":
-            return max(max_tokens, 1536)
+            return max(max_tokens, 4096)
         if request_tag == "repair":
-            return max(max_tokens, 768)
+            return max(max_tokens, 2048)
         if request_tag == "suggestion":
-            return max(max_tokens, 1024)
+            return max(max_tokens, 3072)
         if request_tag == "format":
-            return max(max_tokens, 768)
-        return max_tokens
+            return max(max_tokens, 2048)
+        return max(max_tokens, 2048)
 
     def _estimate_message_tokens(self, messages: list[dict]) -> int:
         """Rough local estimate used only to size completion budget before the API call."""
@@ -1584,6 +1652,24 @@ class LLMSuggestionEngine(SuggestionEngine):
         streamed_content = ""
         for attempt in range(MAX_API_RETRIES + 1):
             start_time = time.time()
+            # 记录本轮是否已向前端下发过流式增量：一旦发过，超时就不能再静默从头重试，
+            # 否则重试会把同样的 delta 再发一遍，前端拼接出重复文本。
+            emitted_any_delta = False
+            emitted_content_parts: list[str] = []
+            emitted_reasoning_parts: list[str] = []
+
+            def _tracked_stream_callback(event: dict[str, Any]) -> None:
+                nonlocal emitted_any_delta
+                if stream_callback is None:
+                    return
+                if event.get("type") == "delta":
+                    emitted_any_delta = True
+                    if event.get("channel") == "reasoning":
+                        emitted_reasoning_parts.append(str(event.get("text") or ""))
+                    else:
+                        emitted_content_parts.append(str(event.get("text") or ""))
+                stream_callback(event)
+
             try:
                 data = json.dumps(payload).encode("utf-8")
                 req = urllib.request.Request(url, data=data, headers=headers, method="POST")
@@ -1592,7 +1678,7 @@ class LLMSuggestionEngine(SuggestionEngine):
                     if payload.get("stream"):
                         streamed_content = self._read_streaming_response(
                             resp,
-                            stream_callback=stream_callback,
+                            stream_callback=_tracked_stream_callback,
                             allow_reasoning_fallback=not use_json_mode,
                         )
                         body = {"choices": [{"message": {"content": streamed_content}}], "usage": {}}
@@ -1628,6 +1714,21 @@ class LLMSuggestionEngine(SuggestionEngine):
                 raise
             except Exception as e:
                 if self._is_timeout_error(e) and attempt < MAX_API_RETRIES:
+                    if emitted_any_delta:
+                        # 本轮已下发过增量，重试会导致前端重复拼接；
+                        # 放弃重试，把已收到的部分作为截断结果返回，
+                        # 交给上层与"JSON 截断"一致的兜底解析路径处理。
+                        partial = "".join(emitted_content_parts)
+                        if not partial and not use_json_mode:
+                            partial = "".join(emitted_reasoning_parts)
+                        if partial:
+                            _print(
+                                "[LLM Engine] ⚠️ 流式响应中途超时且已下发增量，"
+                                f"放弃重试，按截断结果返回已收到的 {len(partial)} 字符"
+                            )
+                            return partial.strip()
+                        _print("[LLM Engine] ⚠️ 流式响应中途超时且已下发增量但无可用文本，按超时失败处理")
+                        raise
                     delay = self._compute_retry_delay(attempt)
                     _print(f"[LLM Engine] Retry on timeout after {delay:.1f}s (attempt {attempt + 1})")
                     time.sleep(delay)
@@ -1698,6 +1799,24 @@ class LLMSuggestionEngine(SuggestionEngine):
             return "".join(reasoning_parts)
         return ""
 
+    def _fast_suggestion_mode_enabled(self) -> bool:
+        """实时建议快速模式：思考模型前置 /no_think（实测 Qwen3.5 30-60s→1.5s）。
+
+        深度类调用（RAG 事实抽取/分析）不走此开关，保留思考能力。
+        """
+        try:
+            from ..wechat.account_settings import load_settings_from_file
+            return bool(load_settings_from_file().get("llm_fast_suggestion_mode", True))
+        except Exception:
+            return True
+
+    def _suggestion_system_prompt(self, model_config: dict) -> str:
+        if self._fast_suggestion_mode_enabled() and self._is_reasoning_model(
+            str(model_config.get("model_id") or "")
+        ):
+            return "/no_think\n" + SYSTEM_PROMPT
+        return SYSTEM_PROMPT
+
     def _call_api(
         self,
         model_config: dict,
@@ -1709,7 +1828,7 @@ class LLMSuggestionEngine(SuggestionEngine):
         return self._call_api_with_messages(
             model_config,
             [
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": self._suggestion_system_prompt(model_config)},
                 {"role": "user", "content": user_prompt},
             ],
             request_tag="suggestion",
@@ -1784,6 +1903,16 @@ class LLMSuggestionEngine(SuggestionEngine):
             use_json_mode=False,
         )
 
+    @staticmethod
+    def _strip_reasoning_text(text: str) -> str:
+        """思考模型把思维链写进 content（实测 Qwen3.5-9B/Ollama：content =
+        思考段 + </think> + 真答案）。取最后一个 </think> 之后；无标记原样返回。
+        此前思维链直接漏进建议 summary（用户可见的泄漏）。"""
+        if "</think>" not in text:
+            return text
+        tail = text.rsplit("</think>", 1)[-1].strip()
+        return tail or text
+
     def _extract_message_text(
         self,
         message_obj: dict,
@@ -1791,7 +1920,7 @@ class LLMSuggestionEngine(SuggestionEngine):
         allow_reasoning_fallback: bool = True,
     ) -> str:
         """兼容不同 OpenAI 兼容厂商返回的文本字段。"""
-        content = message_obj.get("content", "") or ""
+        content = self._strip_reasoning_text(message_obj.get("content", "") or "")
         reasoning = message_obj.get("reasoning_content", "") or ""
 
         if not content and reasoning and allow_reasoning_fallback:
@@ -1828,6 +1957,42 @@ class LLMSuggestionEngine(SuggestionEngine):
 
         if cleaned.startswith("{") and cleaned.endswith("}"):
             return cleaned
+
+        # 思考模型残段含多个 JSON（回显模板+真答案）：首个 { 到末个 } 的跨度
+        # 会拼出非法串——平衡扫描取最后一个可解析对象（真答案在末尾）
+        candidates: list[str] = []
+        depth = 0
+        start: int | None = None
+        in_str = False
+        esc = False
+        for i, ch in enumerate(cleaned):
+            if in_str:
+                if esc:
+                    esc = False
+                elif ch == "\\":
+                    esc = True
+                elif ch == '"':
+                    in_str = False
+                continue
+            if ch == '"':
+                in_str = True
+            elif ch == "{":
+                if depth == 0:
+                    start = i
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0 and start is not None:
+                    candidates.append(cleaned[start:i + 1])
+                    start = None
+        for cand in reversed(candidates):
+            try:
+                json.loads(cand)
+                return cand
+            except Exception:
+                continue
+        if candidates:
+            return candidates[-1]
 
         start = cleaned.find("{")
         end = cleaned.rfind("}")
@@ -2409,7 +2574,7 @@ class LLMSuggestionEngine(SuggestionEngine):
         context = context or {}
 
         _print(f"\n{'='*60}")
-        _print(f"[LLM Engine] 开始生成动态联想词")
+        _print("[LLM Engine] 开始生成动态联想词")
         _print(f"{'='*60}")
 
         model_config = self._get_active_model()
@@ -2426,15 +2591,21 @@ class LLMSuggestionEngine(SuggestionEngine):
 
         recent = self._normalize_recent_messages(context.get("recent_messages", []))
         if recent:
+            # 与建议主链路同口径（L2 同类）：联想词 prompt 的最近对话块在发送
+            # 远端前同样过脱敏器，本地模型不生效，脱敏失败按红线省略原文。
+            redact_segment = self._make_prompt_redactor(model_config, context)
             _older_messages, recent_window = self._select_recent_messages(recent)
             prompt += "【最近对话】\n"
             prompt += (
                 f"注意力分配：按时间顺序理解最近 {len(recent_window)} 条，"
                 f"越新的消息权重越高，最后 {min(self.RECENT_ATTENTION_TAIL, len(recent_window))} 条优先级最高。\n"
             )
-            for msg in recent_window:
+            for idx, msg in enumerate(recent_window, 1):
                 sender = "我" if msg.get("sender_attr") == "self" else "对方"
-                content = str(msg.get("content", ""))[: self.QUICK_PROMPT_RENDER_CHARS]
+                content = redact_segment(
+                    str(msg.get("content", ""))[: self.QUICK_PROMPT_RENDER_CHARS],
+                    f"quick_prompt_recent_{idx}",
+                )
                 prompt += f"{sender}：{content}\n"
         else:
             prompt += "【最近对话】暂无。\n"

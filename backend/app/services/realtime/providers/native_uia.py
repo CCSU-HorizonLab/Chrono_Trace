@@ -555,7 +555,9 @@ class NativeUIARealtimeProvider(RealtimeProvider):
                 target.click_input()
             except Exception as exc:
                 logger.debug("Direct session click failed: %s", exc)
-        elif not self._focus_search_and_open(search_name):
+                # 点击会话条目失败时置空并回退搜索路径，而不是吞掉异常直接继续（R7）
+                target = None
+        if target is None and not self._focus_search_and_open(search_name):
             raise ProviderInitError(f"Unable to locate chat '{search_name}'")
 
         last_error = ""

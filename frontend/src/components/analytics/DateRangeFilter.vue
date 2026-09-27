@@ -29,7 +29,10 @@ const emit = defineEmits<{
   (e: 'export'): void 
 }>()
 
-function fmt(d: Date) { return d.toISOString().slice(0, 10) }
+import { toLocalDateKey } from '@/utils/datetime'
+
+// 用本地时区日期键，避免 toISOString() 的 UTC 日期在东八区凌晨少一天
+function fmt(d: Date) { return toLocalDateKey(d) }
 function quick(days: number) {
   const to = new Date()
   const from = new Date()

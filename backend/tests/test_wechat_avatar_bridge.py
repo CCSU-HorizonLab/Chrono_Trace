@@ -12,7 +12,10 @@ from app.webview.bridge import Bridge
 
 
 def test_bridge_refresh_wechat_contact_avatars_prefers_saved_selected_paths():
+    import threading
     bridge = Bridge.__new__(Bridge)
+    bridge._settings_lock = threading.Lock()
+    bridge._save_settings = lambda: None
     bridge.wechat_service = MagicMock()
     bridge.wechat_service.refresh_contact_avatars.return_value = {"ok": True, "stats": {"scanned": 1}}
     bridge.settings = {
@@ -42,6 +45,7 @@ def test_bridge_refresh_wechat_contact_avatars_prefers_saved_selected_paths():
             "current_user": "wxid_selected",
             "account_wxid": "wxid_selected",
         },
+        raw_keys=None,
     )
 
 

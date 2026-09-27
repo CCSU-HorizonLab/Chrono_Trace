@@ -17,7 +17,7 @@ if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
 
 from app.services.realtime.privacy_redactor import PrivacyRedactor  # noqa: E402
-from app.services.realtime.rag_store import RagStore  # noqa: E402
+from app.services.realtime.rag.store import RagStore  # noqa: E402
 
 
 def _parse_json(text: str) -> dict[str, Any]:

@@ -69,8 +69,23 @@ class PrivacyRedactor:
                         continue
                 matches.append((match.start(), match.end(), entity_type, value))
 
+        # 重叠消解：多个模式的匹配区间可能交叠（如地址模式的尾段会吞掉紧跟其后的电话号码），
+        # 直接按原始偏移逐个切片替换会把已写入的占位符再次切开，产出损坏文本。
+        # 这里按起点升序（同起点取更长区间）贪心保留互不重叠的匹配，丢弃与已保留区间
+        # 重叠的后续匹配，保证任意字符至多被一个占位符替换。
+        resolved: list[tuple[int, int, str, str]] = []
+        kept_end = -1
+        for start, end, entity_type, value in sorted(
+            matches,
+            key=lambda item: (item[0], -(item[1] - item[0])),
+        ):
+            if start < kept_end:
+                continue
+            resolved.append((start, end, entity_type, value))
+            kept_end = end
+
         # Replace from the end so offsets remain stable.
-        for start, end, entity_type, value in sorted(matches, key=lambda item: item[0], reverse=True):
+        for start, end, entity_type, value in sorted(resolved, key=lambda item: item[0], reverse=True):
             placeholder = self._placeholder(
                 account_wxid,
                 conversation_id,

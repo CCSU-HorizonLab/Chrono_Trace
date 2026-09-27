@@ -2,10 +2,15 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
+import shutil
 from pathlib import Path
 from typing import Any, Optional
 
 from ...config import SETTINGS_PATH
+
+logger = logging.getLogger(__name__)
 
 
 WECHAT_ACCOUNTS_KEY = "wechat_accounts"
@@ -45,6 +50,23 @@ def _normalize_snapshot_files(raw_files: Any) -> list[dict[str, Any]]:
     return files
 
 
+def _normalize_raw_keys(raw: Any) -> dict[str, str]:
+    """规整 Windows 只读扫描产物 {salt_hex: enc_key_hex}；非法项剔除。"""
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, str] = {}
+    for salt, key in raw.items():
+        salt_s, key_s = str(salt or "").strip().lower(), str(key or "").strip().lower()
+        if len(salt_s) == 32 and len(key_s) == 64:
+            try:
+                bytes.fromhex(salt_s)
+                bytes.fromhex(key_s)
+            except ValueError:
+                continue
+            out[salt_s] = key_s
+    return out
+
+
 def normalize_wechat_account(raw: Any) -> Optional[dict[str, Any]]:
     if not isinstance(raw, dict):
         return None
@@ -58,9 +80,14 @@ def normalize_wechat_account(raw: Any) -> Optional[dict[str, Any]]:
     wechat_dir = str(raw.get("wechat_dir") or "").strip()
     source = str(raw.get("source") or "auto").strip() or "auto"
     db_key = str(raw.get("db_key") or "").strip()
+    key_type = str(raw.get("key_type") or "passphrase").strip() or "passphrase"
+    raw_keys = _normalize_raw_keys(raw.get("raw_keys"))
 
     last_import_at_raw = raw.get("last_import_at")
     last_import_at = int(last_import_at_raw) if last_import_at_raw not in (None, "") else None
+
+    watermark_raw = raw.get("import_watermark_ts")
+    import_watermark_ts = int(watermark_raw) if watermark_raw not in (None, "") else 0
 
     return {
         "wxid": wxid,
@@ -69,10 +96,13 @@ def normalize_wechat_account(raw: Any) -> Optional[dict[str, Any]]:
         "wechat_dir": wechat_dir,
         "source": source,
         "db_key": db_key,
+        "key_type": key_type if key_type in {"passphrase", "raw"} else "passphrase",
+        "raw_keys": raw_keys,
         "import_completed": bool(raw.get("import_completed")),
         "last_import_at": last_import_at,
         "last_import_total_size": int(raw.get("last_import_total_size") or 0),
         "last_import_files": _normalize_snapshot_files(raw.get("last_import_files")),
+        "import_watermark_ts": max(0, import_watermark_ts),
     }
 
 
@@ -221,11 +251,14 @@ def update_wechat_account_import_state(
     *,
     snapshot: Optional[dict[str, Any]] = None,
     db_key: Optional[str] = None,
+    key_type: Optional[str] = None,
+    raw_keys: Optional[dict[str, Any]] = None,
     wechat_dir: Optional[str] = None,
     source: Optional[str] = None,
     label: Optional[str] = None,
     avatar: Optional[str] = None,
     import_completed: Optional[bool] = None,
+    import_watermark_ts: Optional[int] = None,
     clear_import_state: bool = False,
 ) -> dict[str, Any]:
     current = get_wechat_account(settings, wxid) or {"wxid": wxid}
@@ -233,6 +266,11 @@ def update_wechat_account_import_state(
 
     if db_key is not None:
         merged["db_key"] = db_key
+    if key_type is not None:
+        merged["key_type"] = key_type if key_type in {"passphrase", "raw"} else "passphrase"
+    if raw_keys is not None:
+        # 显式传 dict（含空）才覆盖；None 表示不变
+        merged["raw_keys"] = _normalize_raw_keys(raw_keys)
     if wechat_dir is not None:
         merged["wechat_dir"] = wechat_dir
     if source is not None:
@@ -247,6 +285,14 @@ def update_wechat_account_import_state(
         merged["last_import_at"] = None
         merged["last_import_total_size"] = 0
         merged["last_import_files"] = []
+        merged["import_watermark_ts"] = 0  # force_full 重置语义：下次导入回到全量
+
+    if import_watermark_ts is not None:
+        # 只增不减（None 表示不变；0 显式重置走 clear_import_state）
+        merged["import_watermark_ts"] = max(
+            0, int(import_watermark_ts),
+            int(merged.get("import_watermark_ts") or 0) if not clear_import_state else 0,
+        )
 
     if snapshot is not None:
         merged["import_completed"] = True if import_completed is None else bool(import_completed)
@@ -269,12 +315,25 @@ def load_settings_from_file(path: Optional[Path] = None) -> dict[str, Any]:
     else:
         try:
             settings = json.loads(settings_path.read_text(encoding="utf-8"))
-        except Exception:
+        except Exception as exc:
+            # 解析失败不再静默吞掉：打日志并尝试从备份恢复，避免密钥等数据无声丢失
+            logger.error("[账号设置] 解析设置文件失败 (%s): %s", settings_path, exc)
             settings = {}
+            backup_path = settings_path.with_name(settings_path.name + ".bak")
+            if backup_path.exists():
+                try:
+                    settings = json.loads(backup_path.read_text(encoding="utf-8"))
+                    logger.warning("[账号设置] 已从备份 %s 恢复设置", backup_path)
+                except Exception as backup_exc:
+                    logger.error(
+                        "[账号设置] 备份 %s 也无法解析: %s，回退为空设置",
+                        backup_path,
+                        backup_exc,
+                    )
 
     migrate_legacy_wechat_settings(settings)
     try:
-        from ..realtime.rag_config import apply_rag_defaults
+        from ..realtime.rag.config import apply_rag_defaults
 
         apply_rag_defaults(settings)
     except Exception:
@@ -285,8 +344,27 @@ def load_settings_from_file(path: Optional[Path] = None) -> dict[str, Any]:
 def save_settings_to_file(settings: dict[str, Any], path: Optional[Path] = None) -> None:
     settings_path = path or default_settings_path()
     settings_path.parent.mkdir(parents=True, exist_ok=True)
-    settings_path.write_text(
-        json.dumps(settings, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
+
+    # 写入前把现有文件备份为 .bak，供解析失败时回滚（best-effort，不阻塞保存）
+    backup_path = settings_path.with_name(settings_path.name + ".bak")
+    try:
+        if settings_path.exists():
+            shutil.copy2(settings_path, backup_path)
+    except Exception as exc:
+        logger.warning("[账号设置] 备份设置文件失败 (忽略): %s", exc)
+
+    # 原子写：先写同目录临时文件，再 os.replace 覆盖，避免写一半时进程退出导致文件损坏
+    tmp_path = settings_path.with_name(settings_path.name + ".tmp")
+    try:
+        tmp_path.write_text(
+            json.dumps(settings, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        os.replace(tmp_path, settings_path)
+    finally:
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
 

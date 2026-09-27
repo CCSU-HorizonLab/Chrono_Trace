@@ -29,10 +29,9 @@
 
 import csv
 import os
-import sys
+import shutil
 import time
 import random
-from pathlib import Path
 
 # 配置
 TRAINING_CSV = os.path.join(os.path.dirname(__file__), '..', 'data', 'training', 'sentiment_training.csv')
@@ -186,7 +185,7 @@ def train():
     print("=" * 60)
     
     # ======== 第1步: 加载数据 ========
-    print(f"\n📦 步骤1: 加载标注数据...")
+    print("\n📦 步骤1: 加载标注数据...")
     if not os.path.exists(TRAINING_CSV):
         print(f"❌ 找不到训练数据: {TRAINING_CSV}")
         return
@@ -197,7 +196,7 @@ def train():
         return
     
     # ======== 第2步: 划分数据集 ========
-    print(f"\n📊 步骤2: 划分训练集/验证集...")
+    print("\n📊 步骤2: 划分训练集/验证集...")
     train_texts, train_labels, val_texts, val_labels = split_data(texts, labels)
     
     # ======== 第3步: 加载预训练模型 ========
@@ -219,7 +218,7 @@ def train():
     print(f"   模型参数量: {sum(p.numel() for p in model.parameters()) / 1e6:.1f}M")
     
     # ======== 第4步: 准备数据加载器 ========
-    print(f"\n📐 步骤4: 编码文本数据...")
+    print("\n📐 步骤4: 编码文本数据...")
     train_dataset = SentimentDataset(train_texts, train_labels, tokenizer, MAX_LENGTH)
     val_dataset = SentimentDataset(val_texts, val_labels, tokenizer, MAX_LENGTH)
     
@@ -305,22 +304,55 @@ def train():
     print(f"   最佳准确率: {best_accuracy:.1%} (第{best_epoch}轮)")
     
     # ======== 第7步: 保存模型 ========
-    print(f"\n💾 步骤6: 保存微调后的模型...")
-    os.makedirs(MODEL_OUTPUT_DIR, exist_ok=True)
-    
-    model.save_pretrained(MODEL_OUTPUT_DIR)
-    tokenizer.save_pretrained(MODEL_OUTPUT_DIR)
-    
+    print("\n💾 步骤6: 保存微调后的模型...")
+
+    # 非原子覆写会让应用正在使用的线上目录中途损坏:
+    # 先写入临时目录,全部成功后再整体切换,中途失败时线上目录保持原样
+    staging_dir = MODEL_OUTPUT_DIR + '_new'
+    backup_dir = MODEL_OUTPUT_DIR + '_backup_old'
+
+    if os.path.exists(staging_dir):
+        print(f"   清理上次残留的临时目录: {staging_dir}")
+        shutil.rmtree(staging_dir)
+
+    os.makedirs(staging_dir, exist_ok=True)
+    print(f"   写入临时目录: {staging_dir}")
+
+    model.save_pretrained(staging_dir)
+    tokenizer.save_pretrained(staging_dir)
+
     # 保存标签映射
     import json
     label_map = {"0": "negative", "1": "positive", "2": "neutral"}
-    with open(os.path.join(MODEL_OUTPUT_DIR, 'label_map.json'), 'w', encoding='utf-8') as f:
+    with open(os.path.join(staging_dir, 'label_map.json'), 'w', encoding='utf-8') as f:
         json.dump(label_map, f, ensure_ascii=False, indent=2)
-    
+
+    # 切换: 线上目录(若有) -> 备份目录, 临时目录 -> 线上目录
+    if os.path.exists(MODEL_OUTPUT_DIR):
+        if os.path.exists(backup_dir):
+            print(f"   删除旧备份目录: {backup_dir}")
+            shutil.rmtree(backup_dir)
+        print(f"   线上模型目录重命名为备份: {MODEL_OUTPUT_DIR} -> {backup_dir}")
+        os.rename(MODEL_OUTPUT_DIR, backup_dir)
+
+    try:
+        print(f"   临时目录切换为线上目录: {staging_dir} -> {MODEL_OUTPUT_DIR}")
+        os.rename(staging_dir, MODEL_OUTPUT_DIR)
+    except Exception:
+        # 切换失败时回滚,恢复原线上目录
+        if os.path.exists(backup_dir) and not os.path.exists(MODEL_OUTPUT_DIR):
+            print(f"   ⚠️ 切换失败,回滚备份目录: {backup_dir} -> {MODEL_OUTPUT_DIR}")
+            os.rename(backup_dir, MODEL_OUTPUT_DIR)
+        raise
+
+    if os.path.exists(backup_dir):
+        print(f"   删除备份目录: {backup_dir}")
+        shutil.rmtree(backup_dir)
+
     print(f"   模型已保存到: {MODEL_OUTPUT_DIR}")
     
     # ======== 第8步: 快速验证 ========
-    print(f"\n🧪 步骤7: 快速验证...")
+    print("\n🧪 步骤7: 快速验证...")
     test_texts = [
         "今天心情超好😊",
         "去死吧",
@@ -353,8 +385,8 @@ def train():
     print(f"\n{'=' * 60}")
     print("✅ 训练完成!")
     print("=" * 60)
-    print(f"\n📋 下一步:")
-    print(f"   告诉我训练结果,我将把模型集成到项目中")
+    print("\n📋 下一步:")
+    print("   告诉我训练结果,我将把模型集成到项目中")
     print(f"   模型路径: {MODEL_OUTPUT_DIR}")
 
 

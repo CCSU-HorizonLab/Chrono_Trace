@@ -13,6 +13,7 @@
           <input 
             type="text" 
             v-model="searchQuery"
+              @input="onSearchInput"
             @focus="onInputFocus"
             :placeholder="selectedConversationName || '-- 请选择联系人 --'"
             :disabled="loading"
@@ -23,7 +24,7 @@
           </svg>
           <ul v-show="showDropdown" class="dropdown-list">
             <li 
-              v-for="conv in filteredConversations" 
+              v-for="conv in visibleConversations" 
               :key="conv.id"
               @click="selectConversation(conv.id)"
               :class="{ active: conv.id === selectedConversationId }"
@@ -37,8 +38,21 @@
               />
               <div class="dropdown-copy">
                 <span class="dropdown-name">{{ conv.name || conv.username || '未知联系人' }}</span>
-                <span class="dropdown-meta">{{ conv.message_count }}条</span>
+                <span class="dropdown-meta">
+                  {{ conv.message_count }}条
+                  <span
+                    v-if="conv.analysis_stale"
+                    class="dropdown-stale-badge"
+                    :title="conv.pending_message_count == null ? '尚未分析' : `有 ${conv.pending_message_count} 条新消息未纳入分析`"
+                  >{{ conv.pending_message_count == null ? '未分析' : '待更新' }}</span>
+                </span>
               </div>
+            </li>
+            <li v-if="visibleConversations.length < filteredConversations.length"
+                class="dropdown-item load-more"
+                @click="loadMore"
+            >
+              加载更多（{{ filteredConversations.length - visibleConversations.length }} 条）…
             </li>
             <li v-if="filteredConversations.length === 0" class="dropdown-item no-results">
               无匹配联系人
@@ -60,6 +74,8 @@ type Conversation = {
   username?: string
   message_count: number
   avatar?: string
+  analysis_stale?: boolean
+  pending_message_count?: number | null
 }
 
 const props = defineProps<{ 
@@ -75,6 +91,8 @@ const emit = defineEmits<{
 const dropdownRef = ref<HTMLElement | null>(null)
 const showDropdown = ref(false)
 const searchQuery = ref('')
+const displayCount = ref(50)  // 懒加载：初始只渲染 50 条
+let searchDebounce: ReturnType<typeof setTimeout> | null = null
 const selectedConversation = computed(() => (
   props.conversations.find(c => c.id === props.selectedConversationId)
 ))
@@ -104,6 +122,20 @@ const filteredConversations = computed(() => {
   // 按消息数量递减排序
   return list.sort((a, b) => (b.message_count || 0) - (a.message_count || 0))
 })
+
+// 懒加载：只渲染前 displayCount 条（1459 联系人全部渲染卡顿）
+const visibleConversations = computed(() => {
+  return filteredConversations.value.slice(0, displayCount.value)
+})
+
+function onSearchInput() {
+  // 搜索输入时重置分页（新结果集从第一页开始）
+  displayCount.value = 50
+}
+
+function loadMore() {
+  displayCount.value += 50
+}
 
 function selectConversation(id: number) {
   emit('update:conversation-id', id)
@@ -248,12 +280,18 @@ function onInputFocus() {
   font-weight: 500;
 }
 
+.dropdown-item.load-more { text-align: center; color: var(--ct-text-secondary); font-size: 12px; cursor: pointer; padding: 8px; }
+.dropdown-item.load-more:hover { background: var(--ct-bg-tertiary); }
+
 .dropdown-item.no-results {
   color: var(--ct-text-secondary);
   text-align: center;
   cursor: default;
   justify-content: center;
 }
+.dropdown-item.load-more { text-align: center; color: var(--ct-text-secondary); font-size: 12px; cursor: pointer; padding: 8px; }
+.dropdown-item.load-more:hover { background: var(--ct-bg-tertiary); }
+
 .dropdown-item.no-results:hover {
   background-color: transparent;
 }
@@ -277,5 +315,17 @@ function onInputFocus() {
   font-size: 12px;
   opacity: 0.8;
   flex-shrink: 0;
+}
+/* 分析新鲜度徽标：导入新消息未重分析时提示 */
+.dropdown-stale-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-size: 10px;
+  line-height: 1.4;
+  color: #f0b429;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.3);
 }
 </style>

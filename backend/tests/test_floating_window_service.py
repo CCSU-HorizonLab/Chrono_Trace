@@ -45,6 +45,8 @@ def test_log_falls_back_when_stdout_cannot_encode_unicode(monkeypatch):
 
 
 def test_set_window_decorations_toggles_style_bits(monkeypatch):
+    # 该用例验证 win32 样式位切换路径（阶段四移植后 Linux 走 posix 短路，需显式声明平台）
+    monkeypatch.setattr(sys, "platform", "win32")
     service = FloatingWindowService()
     service._webview_hwnd = 1001
 

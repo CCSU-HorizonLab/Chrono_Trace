@@ -22,11 +22,11 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT / "backend") not in sys.path:
     sys.path.insert(0, str(ROOT / "backend"))
 
-from app.services.realtime import rag_retriever as rag_retriever_module  # noqa: E402
-from app.services.realtime.rag_config import load_rag_settings  # noqa: E402
-from app.services.realtime.rag_retriever import RagRetriever  # noqa: E402
-from app.services.realtime.rag_relevance_gate import RagRelevanceGate  # noqa: E402
-from app.services.realtime.rag_store import RagStore  # noqa: E402
+from app.services.realtime.rag import retriever as rag_retriever_module  # noqa: E402
+from app.services.realtime.rag.config import load_rag_settings  # noqa: E402
+from app.services.realtime.rag.retriever import RagRetriever  # noqa: E402
+from app.services.realtime.rag.relevance_gate import RagRelevanceGate  # noqa: E402
+from app.services.realtime.rag.store import RagStore  # noqa: E402
 
 
 TRACKS = ("no_rag", "document_rag", "fact_path")

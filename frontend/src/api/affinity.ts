@@ -72,6 +72,9 @@ export interface AffinityAnalysisResult {
     emotional_resonance: DimensionScore | null
     chat_positivity: DimensionScore | null
     attitude_tendency: DimensionScore | null
+    /** 分析新鲜度（读取时由 bridge 附加，非落库字段） */
+    analysis_stale?: boolean
+    pending_message_count?: number | null
     preference_compatibility: DimensionScore | null
     conversation_id: number
     analysis_timestamp: number
@@ -134,7 +137,13 @@ export async function getAffinityProgress(taskId: string): Promise<AffinityProgr
 export async function getAffinityScores(conversationId: number): Promise<AffinityAnalysisResult | null> {
     const res = await api.get_affinity_scores(conversationId)
     if (!res.ok) throw new Error(res.error || 'Failed to get scores')
-    return res.result
+    if (!res.result) return null
+    // 附加分析新鲜度（导入新消息未重分析时前端提示用）
+    return {
+        ...res.result,
+        analysis_stale: Boolean(res.analysis_stale),
+        pending_message_count: res.pending_message_count ?? null,
+    }
 }
 
 /**

@@ -26,6 +26,12 @@ def _install_root() -> Path:
 
 
 def _local_appdata_root() -> Path:
+    if sys.platform != "win32":
+        # Linux：XDG 数据目录（打包/frozen 场景；开发模式仍走仓库内 backend/data）
+        xdg_data = os.environ.get("XDG_DATA_HOME")
+        if xdg_data:
+            return Path(xdg_data).expanduser().resolve()
+        return (Path.home() / ".local" / "share").resolve()
     raw = os.environ.get("LOCALAPPDATA")
     if raw:
         return Path(raw).expanduser().resolve()

@@ -12,14 +12,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from app.services.realtime.feedback_attribution import SuggestionFeedbackAttributor
 from app.services.realtime.llm_engine import LLMSuggestionEngine
 from app.services.realtime.privacy_redactor import PrivacyRedactor
-from app.services.realtime.rag_config import apply_rag_defaults, is_remote_llm_model
-from app.services.realtime.rag_context_builder import RagContextBuilder
-from app.services.realtime.rag_embedding import RagEmbeddingService, RagEmbeddingUnavailable
-from app.services.realtime.rag_indexer import RagIndexer, RagIndexQueue
-from app.services.realtime.rag_relevance_gate import RagRelevanceGate
-from app.services.realtime.rag_retriever import RagRetriever
-from app.services.realtime.rag_segmenter import RagSegmenter
-from app.services.realtime.rag_store import RAG_INDEX_VERSION, RagStore
+from app.services.realtime.rag.config import apply_rag_defaults, is_remote_llm_model
+from app.services.realtime.rag.context_builder import RagContextBuilder
+from app.services.realtime.rag.embedding import RagEmbeddingService, RagEmbeddingUnavailable
+from app.services.realtime.rag.indexer import RagIndexer, RagIndexQueue
+from app.services.realtime.rag.relevance_gate import RagRelevanceGate
+from app.services.realtime.rag.retriever import RagRetriever
+from app.services.realtime.rag.segmenter import RagSegmenter
+from app.services.realtime.rag.store import RAG_INDEX_VERSION, RagStore
 
 
 def _conn():
@@ -207,7 +207,7 @@ def test_relevance_gate_ordinary_fact_uses_single_score_floor():
 
 def test_relevance_gate_fact_floor_is_configurable(monkeypatch):
     monkeypatch.setattr(
-        "app.services.realtime.rag_relevance_gate.load_rag_settings",
+        "app.services.realtime.rag.relevance_gate.load_rag_settings",
         lambda: {"rag_fact_score_threshold": 0.50},
     )
     gate = RagRelevanceGate()
@@ -353,7 +353,7 @@ def test_rag_indexer_extracts_semantic_fact_without_marker_keywords(monkeypatch)
         ],
     )
     monkeypatch.setattr(
-        "app.services.realtime.rag_indexer.load_rag_settings",
+        "app.services.realtime.rag.indexer.load_rag_settings",
         lambda: {
             "rag_embedding_model": "tingting0514/text2vec-base-chinese",
             "rag_embedding_dim": 384,
@@ -651,7 +651,7 @@ def test_context_builder_uses_redacted_content_for_remote_model_and_logs_trace(m
     conn.commit()
 
     monkeypatch.setattr(
-        "app.services.realtime.rag_context_builder.load_rag_settings",
+        "app.services.realtime.rag.context_builder.load_rag_settings",
         lambda: {
             "rag_enabled": True,
             "rag_remote_context_redaction": True,
@@ -662,7 +662,7 @@ def test_context_builder_uses_redacted_content_for_remote_model_and_logs_trace(m
         },
     )
     monkeypatch.setattr(
-        "app.services.realtime.rag_retriever.load_rag_settings",
+        "app.services.realtime.rag.retriever.load_rag_settings",
         lambda: {
             "rag_enabled": True,
             "rag_embedding_model": "tingting0514/text2vec-base-chinese",
@@ -715,7 +715,7 @@ def test_context_builder_marks_redaction_disabled_when_user_explicitly_turns_it_
     conn.commit()
 
     monkeypatch.setattr(
-        "app.services.realtime.rag_context_builder.load_rag_settings",
+        "app.services.realtime.rag.context_builder.load_rag_settings",
         lambda: {
             "rag_enabled": True,
             "rag_remote_context_redaction": False,
@@ -726,7 +726,7 @@ def test_context_builder_marks_redaction_disabled_when_user_explicitly_turns_it_
         },
     )
     monkeypatch.setattr(
-        "app.services.realtime.rag_retriever.load_rag_settings",
+        "app.services.realtime.rag.retriever.load_rag_settings",
         lambda: {
             "rag_enabled": True,
             "rag_embedding_model": "tingting0514/text2vec-base-chinese",
@@ -759,7 +759,7 @@ def test_context_builder_logs_missing_scope_before_retrieval(monkeypatch, caplog
     conn = _conn()
     store = RagStore(conn)
     monkeypatch.setattr(
-        "app.services.realtime.rag_context_builder.load_rag_settings",
+        "app.services.realtime.rag.context_builder.load_rag_settings",
         lambda: {
             "rag_enabled": True,
             "rag_remote_context_redaction": True,
@@ -774,7 +774,7 @@ def test_context_builder_logs_missing_scope_before_retrieval(monkeypatch, caplog
         "user_context": "她上次说什么贵来着 我不记得了",
         "display_name": "Grace.",
     }
-    with caplog.at_level("DEBUG", logger="app.services.realtime.rag_context_builder"):
+    with caplog.at_level("DEBUG", logger="app.services.realtime.rag.context_builder"):
         RagContextBuilder(store=store).enrich_context(
             context,
             trigger_type="manual_request",
@@ -803,7 +803,7 @@ def test_context_builder_attempts_retrieval_then_gate_skips_when_memory_intent_i
         redacted_content="对方喜欢拿铁",
     )
     monkeypatch.setattr(
-        "app.services.realtime.rag_context_builder.load_rag_settings",
+        "app.services.realtime.rag.context_builder.load_rag_settings",
         lambda: {
             "rag_enabled": True,
             "rag_remote_context_redaction": True,
@@ -872,7 +872,7 @@ def test_context_builder_skips_off_topic_memory_for_ordinary_suggestion(monkeypa
             }
 
     monkeypatch.setattr(
-        "app.services.realtime.rag_context_builder.load_rag_settings",
+        "app.services.realtime.rag.context_builder.load_rag_settings",
         lambda: {
             "rag_enabled": True,
             "rag_remote_context_redaction": True,
@@ -950,7 +950,7 @@ def test_context_builder_does_not_inject_topic_segment_for_ordinary_suggestion(m
             }
 
     monkeypatch.setattr(
-        "app.services.realtime.rag_context_builder.load_rag_settings",
+        "app.services.realtime.rag.context_builder.load_rag_settings",
         lambda: {
             "rag_enabled": True,
             "rag_remote_context_redaction": True,
@@ -1002,7 +1002,7 @@ def test_context_builder_injects_no_hit_guard_after_empty_retrieval(monkeypatch)
         redacted_content="对方喜欢拿铁",
     )
     monkeypatch.setattr(
-        "app.services.realtime.rag_context_builder.load_rag_settings",
+        "app.services.realtime.rag.context_builder.load_rag_settings",
         lambda: {
             "rag_enabled": True,
             "rag_remote_context_redaction": True,
@@ -1013,7 +1013,7 @@ def test_context_builder_injects_no_hit_guard_after_empty_retrieval(monkeypatch)
         },
     )
     monkeypatch.setattr(
-        "app.services.realtime.rag_retriever.load_rag_settings",
+        "app.services.realtime.rag.retriever.load_rag_settings",
         lambda: {
             "rag_enabled": True,
             "rag_embedding_model": "tingting0514/text2vec-base-chinese",
@@ -1060,7 +1060,7 @@ def test_context_builder_masks_no_hit_query_for_remote_prompt(monkeypatch):
         redacted_content="对方喜欢拿铁",
     )
     monkeypatch.setattr(
-        "app.services.realtime.rag_context_builder.load_rag_settings",
+        "app.services.realtime.rag.context_builder.load_rag_settings",
         lambda: {
             "rag_enabled": True,
             "rag_remote_context_redaction": True,
@@ -1071,7 +1071,7 @@ def test_context_builder_masks_no_hit_query_for_remote_prompt(monkeypatch):
         },
     )
     monkeypatch.setattr(
-        "app.services.realtime.rag_retriever.load_rag_settings",
+        "app.services.realtime.rag.retriever.load_rag_settings",
         lambda: {
             "rag_enabled": True,
             "rag_embedding_model": "tingting0514/text2vec-base-chinese",
@@ -1110,7 +1110,7 @@ def test_first_contact_without_index_does_not_rebuild_synchronously(monkeypatch)
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("sync rebuild should not run")),
     )
     monkeypatch.setattr(
-        "app.services.realtime.rag_indexer.load_rag_settings",
+        "app.services.realtime.rag.indexer.load_rag_settings",
         lambda: {
             "rag_embedding_model": "tingting0514/text2vec-base-chinese",
             "rag_embedding_dim": 384,
@@ -1141,7 +1141,7 @@ def test_failed_embedding_index_retries_when_model_becomes_available(monkeypatch
 
     monkeypatch.setattr(RagIndexQueue, "enqueue", lambda account_wxid, conversation_id: queued.append((account_wxid, conversation_id)))
     monkeypatch.setattr(
-        "app.services.realtime.rag_indexer.load_rag_settings",
+        "app.services.realtime.rag.indexer.load_rag_settings",
         lambda: {
             "rag_embedding_model": "tingting0514/text2vec-base-chinese",
             "rag_embedding_dim": 384,
@@ -1164,7 +1164,7 @@ def test_context_builder_first_contact_without_index_injects_hot_context_and_log
     store = RagStore(conn)
     monkeypatch.setattr(RagIndexQueue, "enqueue", lambda account_wxid, conversation_id: None)
     monkeypatch.setattr(
-        "app.services.realtime.rag_context_builder.load_rag_settings",
+        "app.services.realtime.rag.context_builder.load_rag_settings",
         lambda: {
             "rag_enabled": True,
             "rag_remote_context_redaction": True,
@@ -1175,7 +1175,7 @@ def test_context_builder_first_contact_without_index_injects_hot_context_and_log
         },
     )
     monkeypatch.setattr(
-        "app.services.realtime.rag_indexer.load_rag_settings",
+        "app.services.realtime.rag.indexer.load_rag_settings",
         lambda: {
             "rag_embedding_model": "tingting0514/text2vec-base-chinese",
             "rag_embedding_dim": 384,
@@ -1212,7 +1212,7 @@ def test_context_builder_does_not_treat_old_recent_messages_as_hot_context(monke
     store = RagStore(conn)
     monkeypatch.setattr(RagIndexQueue, "enqueue", lambda account_wxid, conversation_id: None)
     monkeypatch.setattr(
-        "app.services.realtime.rag_context_builder.load_rag_settings",
+        "app.services.realtime.rag.context_builder.load_rag_settings",
         lambda: {
             "rag_enabled": True,
             "rag_remote_context_redaction": True,
@@ -1223,7 +1223,7 @@ def test_context_builder_does_not_treat_old_recent_messages_as_hot_context(monke
         },
     )
     monkeypatch.setattr(
-        "app.services.realtime.rag_indexer.load_rag_settings",
+        "app.services.realtime.rag.indexer.load_rag_settings",
         lambda: {
             "rag_embedding_model": "tingting0514/text2vec-base-chinese",
             "rag_embedding_dim": 384,
@@ -1303,7 +1303,7 @@ def test_stale_index_uses_old_documents_and_queues_rebuild(monkeypatch):
     queued = []
     monkeypatch.setattr(RagIndexQueue, "enqueue", lambda account_wxid, conversation_id: queued.append((account_wxid, conversation_id)))
     monkeypatch.setattr(
-        "app.services.realtime.rag_context_builder.load_rag_settings",
+        "app.services.realtime.rag.context_builder.load_rag_settings",
         lambda: {
             "rag_enabled": True,
             "rag_remote_context_redaction": True,
@@ -1384,6 +1384,9 @@ def test_rag_indexer_rebuilds_v2_multilayer_documents_and_cleans_old_auto_docs(m
             (3, 0, "那家火锅店人均有点贵，不过好吃", now - 480),
             (4, 1, "宝宝不是说那个贵嘛", now - 420),
             (5, 0, "对呀上次说的", now - 360),
+            # 消费类（p1.7 起只走 LLM 路径）之外需有非消费命中以产出
+            # fact_memory/shared_memory 的多层结构断言
+            (6, 0, "好呀那我们周五见面去吃，约定了", now - 300),
         ],
     )
     conn.execute(
@@ -1416,7 +1419,7 @@ def test_rag_indexer_rebuilds_v2_multilayer_documents_and_cleans_old_auto_docs(m
     )
 
     monkeypatch.setattr(
-        "app.services.realtime.rag_indexer.load_rag_settings",
+        "app.services.realtime.rag.indexer.load_rag_settings",
         lambda: {
             "rag_embedding_model": "tingting0514/text2vec-base-chinese",
             "rag_embedding_dim": 384,
@@ -1456,6 +1459,10 @@ def test_rag_indexer_rebuilds_v2_multilayer_documents_and_cleans_old_auto_docs(m
     docs = conn.execute("SELECT * FROM rag_documents WHERE conversation_id = 1").fetchall()
     doc_types = {row["doc_type"] for row in docs}
     assert {"topic_segment", "fact_memory", "evidence_excerpt", "shared_memory"} <= doc_types
+    # p1.7：消费类原型不再直接入库（火锅/贵/买对话只留 LLM 路径判断）
+    assert conn.execute(
+        "SELECT COUNT(*) FROM rag_facts WHERE kind IN ('food_or_place', 'purchase_or_price')"
+    ).fetchone()[0] == 0
     assert conn.execute("SELECT 1 FROM rag_documents WHERE id = ?", (feedback_id,)).fetchone() is not None
     assert conn.execute("SELECT 1 FROM rag_embeddings WHERE document_id = ?", (feedback_id,)).fetchone() is not None
     fact = conn.execute("SELECT * FROM rag_documents WHERE doc_type = 'fact_memory' LIMIT 1").fetchone()
@@ -1561,7 +1568,7 @@ def test_context_builder_injects_low_score_memory_document_for_explicit_lookup(m
         index_version=RAG_INDEX_VERSION,
     )
     monkeypatch.setattr(
-        "app.services.realtime.rag_context_builder.load_rag_settings",
+        "app.services.realtime.rag.context_builder.load_rag_settings",
         lambda: {
             "rag_enabled": True,
             "rag_remote_context_redaction": True,
@@ -1572,7 +1579,7 @@ def test_context_builder_injects_low_score_memory_document_for_explicit_lookup(m
         },
     )
     monkeypatch.setattr(
-        "app.services.realtime.rag_retriever.load_rag_settings",
+        "app.services.realtime.rag.retriever.load_rag_settings",
         lambda: {
             "rag_enabled": True,
             "rag_embedding_model": "tingting0514/text2vec-base-chinese",
@@ -1775,7 +1782,7 @@ def test_context_builder_timeout_omits_rag_and_logs_timeout(monkeypatch):
             }
 
     monkeypatch.setattr(
-        "app.services.realtime.rag_context_builder.load_rag_settings",
+        "app.services.realtime.rag.context_builder.load_rag_settings",
         lambda: {
             "rag_enabled": True,
             "rag_remote_context_redaction": True,
@@ -1831,7 +1838,7 @@ def test_redaction_failure_uses_strong_mask_and_drops_sensitive_items(monkeypatc
         sensitivity="sensitive",
     )
     monkeypatch.setattr(
-        "app.services.realtime.rag_context_builder.load_rag_settings",
+        "app.services.realtime.rag.context_builder.load_rag_settings",
         lambda: {
             "rag_enabled": True,
             "rag_remote_context_redaction": True,
@@ -1880,7 +1887,7 @@ def test_strong_mask_failure_blocks_remote_rag(monkeypatch):
         redacted_content="手机号 13800138000 拿铁",
     )
     monkeypatch.setattr(
-        "app.services.realtime.rag_context_builder.load_rag_settings",
+        "app.services.realtime.rag.context_builder.load_rag_settings",
         lambda: {
             "rag_enabled": True,
             "rag_remote_context_redaction": True,
@@ -2196,7 +2203,7 @@ def test_rag_store_migrates_legacy_retrieval_log_schema():
 
 
 def test_calibrate_fact_confidence_separates_distribution():
-    from app.services.realtime.rag_semantic_memory import calibrate_fact_confidence
+    from app.services.realtime.rag.semantic_memory import calibrate_fact_confidence
 
     # 余弦域边界映射：0.45 -> 0.30，0.80 -> 0.90
     assert calibrate_fact_confidence(0.45, evidence_count=1) == 0.30
@@ -2317,7 +2324,7 @@ def test_concurrent_rebuilds_queue_instead_of_locking(monkeypatch):
             ],
         )
     monkeypatch.setattr(
-        "app.services.realtime.rag_indexer.load_rag_settings",
+        "app.services.realtime.rag.indexer.load_rag_settings",
         lambda: {
             "rag_embedding_model": "tingting0514/text2vec-base-chinese",
             "rag_embedding_dim": 384,
@@ -2326,11 +2333,11 @@ def test_concurrent_rebuilds_queue_instead_of_locking(monkeypatch):
     )
     # 影子刷新关闭：避免测试线程经 thread-local get_db 触碰真实库
     monkeypatch.setattr(
-        "app.services.realtime.rag_relationship_policy.load_rag_settings",
+        "app.services.realtime.rag.relationship_policy.load_rag_settings",
         lambda: {"rag_relationship_policy_shadow_enabled": False},
     )
     monkeypatch.setattr(
-        "app.services.realtime.rag_contact_preference.load_rag_settings",
+        "app.services.realtime.rag.contact_preference.load_rag_settings",
         lambda: {"rag_relationship_policy_shadow_enabled": False},
     )
 
@@ -2346,7 +2353,7 @@ def test_concurrent_rebuilds_queue_instead_of_locking(monkeypatch):
             return [[0.0] * 384 for _ in texts]
 
     monkeypatch.setattr(
-        "app.services.realtime.rag_indexer.RagIndexQueue.enqueue",
+        "app.services.realtime.rag.indexer.RagIndexQueue.enqueue",
         staticmethod(lambda account_wxid, conversation_id: enqueued.append((account_wxid, conversation_id))),
     )
 
@@ -2377,3 +2384,268 @@ def test_concurrent_rebuilds_queue_instead_of_locking(monkeypatch):
     # 第一个 rebuild 正常完成
     assert results[1]["status"] == "ready"
     assert "raised" not in {v.get("status") for v in results.values()}
+
+
+def test_clear_conversation_wipes_all_derived_memory_and_disables(monkeypatch):
+    """清空语义修复：事实/向量/策略/偏好全清 + 停用防自动重建复活。
+
+    此前 clear 只删文档层三张表，rag_facts 等全部残留——前端清空后
+    记忆弹窗依旧有数据。
+    """
+    conn = _conn()
+    store = RagStore(conn)
+    store.upsert_status("wxid_a", 1, status="ready", document_count=5)
+    fid = store.upsert_fact(
+        account_wxid="wxid_a", conversation_id=1, subject="对方", kind="preference",
+        content="对方对虾过敏", confidence=0.8, as_of=1789900000,
+        evidence_message_ids=[1], summary_method="llm_shadow",
+    )
+    store.upsert_fact_embedding(
+        fact_id=fid, account_wxid="wxid_a", conversation_id=1,
+        embedding_model="m", embedding_dim=2, vector=[0.1, 0.2],
+    )
+    store.upsert_relationship_state(
+        account_wxid="wxid_a", conversation_id=1, stage="s", closeness_band="high",
+        initiative_pattern="i", evidence_hash="h", confidence=0.7,
+    )
+    store.upsert_contact_preference(
+        account_wxid="wxid_a", conversation_id=1, slot_key="preference:1",
+        slot_kind="preference", summary="对方喜欢喝奶茶", evidence_hash="h1",
+        confidence=0.8,
+    )
+    store.record_feedback_policy_signal(
+        account_wxid="wxid_a", conversation_id=1, fact_id=fid, action="inaccurate",
+    )
+    store.set_fact_user_feedback(fid, "inaccurate")
+    conn.commit()
+
+    deleted = store.clear_conversation("wxid_a", 1)
+    store.set_conversation_enabled("wxid_a", 1, False)
+    conn.commit()
+
+    for table in (
+        "rag_facts", "rag_fact_embeddings", "rag_relationship_state",
+        "rag_contact_preferences", "rag_feedback_policy_signals",
+        "rag_fact_user_feedback", "rag_documents", "rag_embeddings",
+    ):
+        n = conn.execute(f"SELECT COUNT(*) FROM {table} WHERE conversation_id = 1").fetchone()[0]
+        assert n == 0, f"{table} 残留 {n} 行"
+    status = store.get_status("wxid_a", 1)
+    assert status is not None and status.get("enabled") == 0  # 停用（防复活）
+    assert deleted >= 0
+
+
+def test_incremental_skip_respects_llm_extraction_debt(monkeypatch):
+    """无 LLM 构建推高消息水位后，配 LLM 重建不得被增量短路（用户实测场景）。
+
+    修复前：skip 只看消息水位 → 'no new messages' 直接 ready，历史事实
+    永远抽不到。修复后：抽取欠账（启用但未覆盖）触发历史段回补。
+    """
+    import json as _json
+
+    conn = _conn()
+    store = RagStore(conn)
+    now = 1790000000
+    conn.executescript(
+        """
+        CREATE TABLE conversations (
+            id INTEGER PRIMARY KEY, account_wxid TEXT NOT NULL, username TEXT NOT NULL,
+            display_name TEXT, message_count INTEGER DEFAULT 0,
+            updated_at INTEGER DEFAULT 0, is_deleted INTEGER DEFAULT 0
+        );
+        CREATE TABLE messages (
+            id INTEGER PRIMARY KEY, conversation_id INTEGER NOT NULL,
+            is_sender INTEGER NOT NULL, content TEXT, message_type INTEGER NOT NULL,
+            timestamp INTEGER NOT NULL
+        );
+        """
+    )
+    conn.execute(
+        "INSERT INTO conversations VALUES (1, 'wxid_a', 'u1', 'U1', 4, ?, 0)", (now,)
+    )
+    conn.executemany(
+        "INSERT INTO messages VALUES (?, 1, ?, ?, 1, ?)",
+        [
+            (1, 0, "我对虾过敏，千万别点虾", now - 240),
+            (2, 1, "好，那我们吃火锅", now - 180),
+            (3, 0, "周五见", now - 120),
+            (4, 1, "周五见，老地方", now - 60),
+        ],
+    )
+    # 模拟"无 LLM 时期已完成构建"：消息水位已推到最新、抽取水位为空
+    store.upsert_status("wxid_a", 1, status="ready", document_count=4)
+    conn.execute(
+        "UPDATE rag_index_status SET message_watermark_ts = ? WHERE account_wxid='wxid_a' AND conversation_id=1",
+        (now,),
+    )
+    conn.commit()
+    monkeypatch.setattr(
+        "app.services.realtime.rag.indexer.load_rag_settings",
+        lambda: {
+            "rag_embedding_model": "tingting0514/text2vec-base-chinese",
+            "rag_embedding_dim": 384,
+            "rag_privacy_mode": "balanced",
+        },
+    )
+
+    calls = []
+
+    def fake_llm(prompt):
+        payload = _json.loads(prompt)
+        calls.append(payload["messages"])
+        return {
+            "facts": [
+                {
+                    "subject": "对方",
+                    "kind": "preference",
+                    "content": "对方对虾过敏",
+                    "confidence": 0.85,
+                    "evidence_message_ids": [1],
+                }
+            ]
+        }
+
+    from app.services.realtime.rag.fact_extractor import StructuredFactExtractor
+
+    class _Embed:
+        def embed_texts(self, texts):
+            return [[0.0] * 384 for _ in texts]
+
+    # 配好 LLM 后重建：不得被 incremental skip 短路
+    indexer = RagIndexer(
+        store=store,
+        embedding_service=_Embed(),
+        structured_fact_extractor=StructuredFactExtractor(fake_llm),
+    )
+    status = indexer.rebuild_contact_index(account_wxid="wxid_a", conversation_id=1)
+    assert status["status"] == "ready"
+    assert len(calls) >= 1, "抽取被增量短路，历史事实未回补"
+    rows = conn.execute(
+        "SELECT content FROM rag_facts WHERE conversation_id = 1 AND summary_method = 'llm_shadow'"
+    ).fetchall()
+    assert any("对虾过敏" in r["content"] for r in rows)
+    # 抽取水位已推进：第二次重建（无新消息）正常短路
+    calls.clear()
+    indexer2 = RagIndexer(
+        store=store,
+        embedding_service=_Embed(),
+        structured_fact_extractor=StructuredFactExtractor(fake_llm),
+    )
+    status2 = indexer2.rebuild_contact_index(account_wxid="wxid_a", conversation_id=1)
+    assert status2["status"] == "ready"
+    assert calls == [], "水位已覆盖后应短路"
+
+
+def test_backfill_uses_elevated_budget_and_requeues(monkeypatch):
+    """回补预算分级：200 段/轮（非 40），未抽完自动续轮（水位推进才续）。"""
+    import json as _json
+    import threading as _threading
+
+    conn = _conn()
+    store = RagStore(conn)
+    now = 1790000000
+    conn.executescript(
+        """
+        CREATE TABLE conversations (
+            id INTEGER PRIMARY KEY, account_wxid TEXT NOT NULL, username TEXT NOT NULL,
+            display_name TEXT, message_count INTEGER DEFAULT 0,
+            updated_at INTEGER DEFAULT 0, is_deleted INTEGER DEFAULT 0
+        );
+        CREATE TABLE messages (
+            id INTEGER PRIMARY KEY, conversation_id INTEGER NOT NULL,
+            is_sender INTEGER NOT NULL, content TEXT, message_type INTEGER NOT NULL,
+            timestamp INTEGER NOT NULL
+        );
+        """
+    )
+    conn.execute("INSERT INTO conversations VALUES (1, 'wxid_a', 'u1', 'U1', 300, ?, 0)", (now,))
+    # 60 段（每段 4 条消息、间隔 2 分钟成段、段间隔 3 小时强制切段）
+    rows = []
+    ts = now - 60 * 4 * 3600
+    mid = 1
+    for seg in range(60):
+        base = ts + seg * 4 * 3600
+        rows.append((mid, 0, "对方说今天也想吃火锅配奶茶，微辣锅底", base))
+        rows.append((mid + 1, 1, "好呀就去老地方那家店见面", base + 120))
+        rows.append((mid + 2, 0, "周五见，别忘了", base + 240))
+        rows.append((mid + 3, 1, "周五见，老地方不见不散", base + 360))
+        mid += 4
+    conn.executemany("INSERT INTO messages VALUES (?, 1, ?, ?, 1, ?)", rows)
+    store.upsert_status("wxid_a", 1, status="ready", document_count=10)
+    # 消息水位 = 最后一条消息的时间戳（与 rebuild 的推进语义一致）
+    last_msg_ts = now - 4 * 3600 + 360
+    conn.execute(
+        "UPDATE rag_index_status SET message_watermark_ts = ? WHERE account_wxid='wxid_a' AND conversation_id=1",
+        (last_msg_ts,),
+    )
+    conn.commit()
+    monkeypatch.setattr(
+        "app.services.realtime.rag.indexer.load_rag_settings",
+        lambda: {
+            "rag_embedding_model": "tingting0514/text2vec-base-chinese",
+            "rag_embedding_dim": 384,
+            "rag_privacy_mode": "balanced",
+        },
+    )
+    calls = []
+
+    def fake_llm(prompt):
+        payload = _json.loads(prompt)
+        calls.append(len(payload["messages"]))
+        return {"facts": []}
+
+    from app.services.realtime.rag.fact_extractor import StructuredFactExtractor
+
+    class _Embed:
+        def embed_texts(self, texts):
+            return [[0.0] * 384 for _ in texts]
+
+    enqueued = []
+    monkeypatch.setattr(
+        "app.services.realtime.rag.indexer.RagIndexQueue.enqueue",
+        staticmethod(lambda account_wxid, conversation_id: enqueued.append((account_wxid, conversation_id))),
+    )
+
+    indexer = RagIndexer(
+        store=store,
+        embedding_service=_Embed(),
+        structured_fact_extractor=StructuredFactExtractor(fake_llm),
+    )
+    extracted = indexer._backfill_llm_extraction("wxid_a", 1)
+    # 常规预算是 40——60 段全部抽到证明回补预算 200 生效
+    assert extracted == 60, f"回补应抽满 60 段（预算200），实际 {extracted}"
+    assert len(calls) == 60
+    # 全部抽平：不续轮
+    assert enqueued == []
+    # 抽取水位推进到消息末尾（= 最后一段 end_ts，与消息水位持平）
+    status = store.get_status("wxid_a", 1)
+    assert int(status["fact_extract_watermark_ts"]) >= last_msg_ts
+
+
+def test_backfill_prescreen_filters_smalltalk_keeps_dense_short_segments():
+    """预筛：纯寒暄段拦（不耗 token），信息密集短段放行（虾过敏类）。"""
+    from app.services.realtime.rag.segmenter import RagSegment
+
+    indexer = RagIndexer(store=RagStore(_conn()), embedding_service=None)
+    indexer.structured_fact_extractor = None
+
+    def _seg(contents):
+        msgs = [
+            {"id": i + 1, "is_sender": i % 2, "content": c, "timestamp": 1000 + i * 60, "message_type": 1}
+            for i, c in enumerate(contents)
+        ]
+        return RagSegment(segment_id="s", start_ts=1000, end_ts=1000 + len(msgs) * 60,
+                          messages=msgs, message_ids=[m["id"] for m in msgs],
+                          topics=[], entities=[], time_label="t")
+
+    # 纯寒暄段：拦
+    assert indexer._segment_worth_extraction(_seg(["嗯嗯", "哈哈", "好的", "666", "行吧", "好的"])) is False
+    assert indexer._segment_worth_extraction(_seg(["嗯", "哦", "好", "好吧"])) is False
+    # 信息密集短段（虾过敏类）：放行
+    assert indexer._segment_worth_extraction(
+        _seg(["我对虾过敏，千万别点虾", "好，那我们吃火锅", "周五见", "周五见，老地方"])
+    ) is True
+    # 正常对话段：放行
+    assert indexer._segment_worth_extraction(
+        _seg(["对方说今天也想吃火锅配奶茶，微辣锅底", "好呀就去老地方那家店见面", "周五见，别忘了", "周五见，老地方不见不散"])
+    ) is True

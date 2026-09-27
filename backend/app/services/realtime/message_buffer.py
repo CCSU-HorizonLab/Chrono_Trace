@@ -2,7 +2,6 @@
 实时消息暂存表数据访问层
 负责消息的增删改查操作
 """
-import sys
 import logging
 import time
 import threading
@@ -139,7 +138,7 @@ class MessageBuffer:
                         ),
                     ).fetchone()
                     if row:
-                        from .rag_indexer import RagIndexQueue
+                        from .rag.indexer import RagIndexQueue
 
                         RagIndexQueue.mark_dirty(self._resolve_account_wxid(account_wxid), int(row["id"]))
                 except Exception as rag_e:

@@ -175,6 +175,7 @@
 import { ref, computed } from 'vue'
 import CtButton from '@/components/base/CtButton.vue'
 import { api } from '@/api/bridge'
+import { toLocalDateKey } from '@/utils/datetime'
 
 type Message = {
   id: number
@@ -211,7 +212,8 @@ const groupedByDate = computed(() => {
   const groups: Record<string, Session[]> = {}
 
   props.sessions.forEach(session => {
-    const date = new Date(session.start_time).toISOString().split('T')[0]
+    // 用本地时区日期键，避免 toISOString() 的 UTC 日期把凌晨会话归入前一天
+    const date = toLocalDateKey(new Date(session.start_time))
     if (!groups[date]) {
       groups[date] = []
     }
@@ -314,10 +316,11 @@ function formatDate(dateStr: string | number): string {
   const yesterday = new Date(today)
   yesterday.setDate(yesterday.getDate() - 1)
 
-  if (dateStr === today.toISOString().split('T')[0]) {
+  // 与 groupedByDate 的本地日期键保持同一格式，才能正确命中“今天/昨天”
+  if (dateStr === toLocalDateKey(today)) {
     return '今天'
   }
-  if (dateStr === yesterday.toISOString().split('T')[0]) {
+  if (dateStr === toLocalDateKey(yesterday)) {
     return '昨天'
   }
 

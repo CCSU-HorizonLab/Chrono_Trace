@@ -18,6 +18,9 @@ CREATE TABLE IF NOT EXISTS conversations (
     updated_at INTEGER NOT NULL,             -- 最后一条消息时间戳（秒）
     message_count INTEGER DEFAULT 0,         -- 消息总数
     is_deleted INTEGER DEFAULT 0,            -- 是否已删除（软删除）
+    analysis_stale INTEGER NOT NULL DEFAULT 1, -- 分析结果待更新（导入/监听写入新消息时置1）
+    analysis_message_count INTEGER,          -- 最近一次分析完成时的消息数快照
+    analysis_watermark_ts INTEGER,           -- 最近一次分析完成时 MAX(timestamp)（展示/行级增量预留）
     UNIQUE(account_wxid, username, platform)
 );
 
@@ -346,6 +349,27 @@ CREATE TABLE IF NOT EXISTS sentiment_cache (
 );
 
 CREATE INDEX IF NOT EXISTS idx_sentiment_cache_message ON sentiment_cache(message_id);
+
+-- ========================================
+-- 15.5 嵌入向量持久缓存（分析增量化的 L2）
+-- ========================================
+-- text→vector 是模型的纯函数：按 (content_sha1, model, device) 落库后，
+-- 重复分析/增量导入后重分析只嵌新文本，其余走缓存（实测嵌入占分析
+-- 耗时 99%）。ALGO_VERSION bump 不需要清本表；换模型 repo id / 切换
+-- 设备自动键隔离；零向量兜底禁止写入。
+CREATE TABLE IF NOT EXISTS embedding_cache (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    content_sha1 TEXT NOT NULL,              -- sha1(text utf-8)
+    model TEXT NOT NULL,                     -- EMBEDDING_MODEL_REPO_ID
+    device TEXT NOT NULL,                    -- 解析后设备 'cpu'|'cuda'（auto 漂移不入键）
+    dim INTEGER NOT NULL,                    -- 模型原生维度（768）
+    vector BLOB NOT NULL,                    -- float32 little-endian 原始字节（非 pickle 非 fp16）
+    created_at INTEGER NOT NULL,
+    UNIQUE(content_sha1, model, device)
+);
+
+CREATE INDEX IF NOT EXISTS idx_embedding_cache_created ON embedding_cache(created_at);
+
 
 -- 实时消息轮询使用的轻量情感缓存（历史数据库也由 message_query 幂等补建）
 CREATE TABLE IF NOT EXISTS realtime_sentiment_cache (
@@ -909,5 +933,4 @@ INSERT OR IGNORE INTO settings (key, value, updated_at) VALUES
     ('rag_embedding_provider', 'local', strftime('%s', 'now')),
     ('rag_embedding_model', 'tingting0514/text2vec-base-chinese', strftime('%s', 'now')),
     ('rag_embedding_dim', '384', strftime('%s', 'now')),
-    ('rag_privacy_mode', 'balanced', strftime('%s', 'now')),
-    ('rag_cross_contact_style_enabled', '0', strftime('%s', 'now'));
+    ('rag_privacy_mode', 'balanced', strftime('%s', 'now'));

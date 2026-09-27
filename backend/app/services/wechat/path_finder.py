@@ -1,18 +1,27 @@
-"""微信数据库路径自动寻址模块 (仅支持V4)"""
+"""微信数据库路径自动寻址模块 (V4 用于导入；3.9 旧版仅检测用于升级引导)"""
 import logging
 import os
 import re
-import winreg
+import sys
 from collections import deque
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+
+if sys.platform == "win32":
+    import winreg
+else:
+    # Linux/macOS 无注册表。保留模块属性（而非函数内导入），因为
+    # backend/tests/test_wechat_path_flow.py 通过 monkeypatch
+    # "app.services.wechat.path_finder.winreg.OpenKey" 打桩。
+    winreg = None
 
 
 logger = logging.getLogger(__name__)
 
 
 class WeChatPathFinder:
-    """微信数据库路径查找器 (仅支持微信4.0+版本)"""
+    """微信数据库路径查找器 (支持微信4.0+版本；3.9旧版仅做检测用于升级引导)"""
 
     WECHAT_DATA_DIR_NAMES = {"xwechat_files", "wechat files"}
     SYSTEM_DIR_NAMES = {"all users", "applet", "wmpf"}
@@ -46,8 +55,14 @@ class WeChatPathFinder:
     def _query_registry_value(
         key_path: str,
         value_name: str,
-        hives: Tuple[int, ...] = (winreg.HKEY_CURRENT_USER,),
+        hives: Optional[Tuple[int, ...]] = None,
     ) -> Optional[str]:
+        if winreg is None:
+            return None
+        if hives is None:
+            # 默认值需在函数内求值：Linux 上模块级 winreg 为 None，且测试桩
+            # 会整体替换 winreg 模块属性（def 期默认值会冻结成空元组）
+            hives = (winreg.HKEY_CURRENT_USER,)
         for hive in hives:
             key = None
             try:
@@ -112,7 +127,41 @@ class WeChatPathFinder:
             _add(expanded)
             _add(expanded / "Documents")
 
+        # Linux：XDG user-dirs（如本机 XDG_DOCUMENTS_DIR="$HOME/文档"）与常见候选
+        xdg_documents = cls._read_xdg_user_dir("XDG_DOCUMENTS_DIR")
+        if xdg_documents:
+            _add(xdg_documents)
+        _add(home / "文档")
+        xdg_data_home = os.environ.get("XDG_DATA_HOME")
+        if xdg_data_home:
+            _add(Path(xdg_data_home))
+
         return paths
+
+    @staticmethod
+    def _read_xdg_user_dir(key: str) -> Optional[Path]:
+        """解析 ~/.config/user-dirs.dirs 中的 XDG 目录项（如 XDG_DOCUMENTS_DIR="$HOME/文档"）。"""
+        config_path = Path.home() / ".config" / "user-dirs.dirs"
+        try:
+            if not config_path.is_file():
+                return None
+            for line in config_path.read_text(encoding="utf-8").splitlines():
+                stripped = line.strip()
+                if not stripped or stripped.startswith("#") or "=" not in stripped:
+                    continue
+                name, _, value = stripped.partition("=")
+                if name.strip() != key:
+                    continue
+                raw = value.strip().strip('"').strip("'")
+                if not raw:
+                    return None
+                expanded = os.path.expandvars(raw)
+                if not expanded or expanded.startswith("$"):
+                    return None
+                return Path(expanded)
+        except OSError:
+            return None
+        return None
 
     @staticmethod
     def _looks_like_wechat_user_dir(path: Path) -> bool:
@@ -128,6 +177,42 @@ class WeChatPathFinder:
             return False
 
         return (path / "db_storage").is_dir()
+
+    @staticmethod
+    def _looks_like_wechat_user_dir_v3(path: Path) -> bool:
+        """以目录结构特征识别微信3.9账号目录 (WeChat Files/<wxid>/Msg/...)。
+
+        仅用于检测与升级引导，不用于导入。v4 账号目录可能存在同名
+        attachment 目录（Windows 大小写不敏感），故必须以库文件内容为准；
+        命中 v4 特征 (db_storage) 时优先按 v4 处理。
+        """
+        if not path or not path.exists() or not path.is_dir():
+            return False
+
+        if path.name.lower() in WeChatPathFinder.SYSTEM_DIR_NAMES:
+            return False
+
+        if WeChatPathFinder._looks_like_wechat_user_dir(path):
+            return False
+
+        msg_dir = path / "Msg"
+        if not msg_dir.is_dir():
+            return False
+
+        if (msg_dir / "MicroMsg.db").is_file():
+            return True
+
+        multi_dir = msg_dir / "Multi"
+        try:
+            if multi_dir.is_dir() and any(
+                file.name.lower().startswith("msg") and file.suffix.lower() == ".db"
+                for file in multi_dir.iterdir()
+            ):
+                return True
+        except OSError:
+            pass
+
+        return False
 
     @staticmethod
     def _looks_like_wechat_data_dir(path: Path) -> bool:
@@ -359,8 +444,8 @@ class WeChatPathFinder:
             return []
 
         candidates = [normalized]
-        match = re.match(r"^(wxid_[a-z0-9]+)_([a-z0-9]{4,6})$", normalized)
-        if match:
+        match = re.match(r"^(.+)_([0-9a-zA-Z]{4,6})$", normalized)
+        if match and len(match.group(1)) >= 2:
             base_wxid = match.group(1)
             if base_wxid not in candidates:
                 candidates.append(base_wxid)
@@ -414,6 +499,8 @@ class WeChatPathFinder:
         Returns:
             str: 微信安装路径,失败返回None
         """
+        if winreg is None:
+            return None
         return cls._query_registry_value(
             r"Software\Tencent\WeChat",
             "InstallPath",
@@ -421,13 +508,8 @@ class WeChatPathFinder:
         )
 
     @classmethod
-    def find_wechat_data_path(cls) -> Optional[str]:
-        """
-        查找微信数据目录(支持新版xwechat_files和旧版WeChat Files)
-
-        Returns:
-            str: 微信数据目录路径
-        """
+    def _build_data_dir_candidates(cls) -> List[Tuple[Path, int]]:
+        """汇聚自动扫描的数据目录候选（注册表/文档/主目录/安装目录附近）。"""
         candidate_paths: List[Tuple[Path, int]] = []
         seen: Dict[str, int] = {}
 
@@ -473,10 +555,67 @@ class WeChatPathFinder:
                 nearby_paths.append(install_dir.parent.parent)
             cls._append_unique_paths(candidate_paths, seen, nearby_paths, aggressive_depth=1)
 
-        for candidate_path, aggressive_depth in candidate_paths:
+        return candidate_paths
+
+    @classmethod
+    def find_wechat_data_path(cls) -> Optional[str]:
+        """
+        查找微信4.0+数据目录(支持新版xwechat_files和旧版命名)
+
+        Returns:
+            str: 微信数据目录路径
+        """
+        for candidate_path, aggressive_depth in cls._build_data_dir_candidates():
             resolved = cls._resolve_wechat_data_dir(candidate_path, aggressive_depth=aggressive_depth)
             if resolved:
                 return str(resolved)
+
+        return None
+
+    @classmethod
+    def _inspect_legacy_v3_root(cls, candidate: Path) -> Optional[Dict[str, Any]]:
+        """在候选目录内探测3.9旧版数据（兼容直接选中 WeChat Files / 其上级 / 账号目录）。"""
+        for root in (candidate, candidate / "WeChat Files"):
+            if not root.is_dir():
+                continue
+
+            if cls._looks_like_wechat_user_dir_v3(root):
+                parent = root.parent
+                wechat_dir = (
+                    parent
+                    if parent.is_dir() and parent.name.lower() in cls.WECHAT_DATA_DIR_NAMES
+                    else root
+                )
+                return {"wechat_dir": str(wechat_dir), "users": [root.name]}
+
+            try:
+                user_dirs = [
+                    child
+                    for child in sorted(root.iterdir())
+                    if child.is_dir() and cls._looks_like_wechat_user_dir_v3(child)
+                ]
+            except OSError:
+                continue
+
+            if user_dirs:
+                return {
+                    "wechat_dir": str(root),
+                    "users": [user_dir.name for user_dir in user_dirs],
+                }
+
+        return None
+
+    @classmethod
+    def find_legacy_v3_info(cls) -> Optional[Dict[str, Any]]:
+        """自动探测旧版微信3.9数据目录（仅在4.0+未命中时用于升级引导）。
+
+        Returns:
+            {"wechat_dir": "C:/.../WeChat Files", "users": ["wxid_xxx", ...]} 或 None
+        """
+        for candidate_path, _aggressive_depth in cls._build_data_dir_candidates():
+            info = cls._inspect_legacy_v3_root(candidate_path)
+            if info:
+                return info
 
         return None
 
@@ -567,11 +706,20 @@ class WeChatPathFinder:
             db_files = [f.name for f in contact_dir.iterdir() if f.suffix.lower() == ".db"]
             logger.debug(f"[DEBUG PathFinder] contact下的.db文件: {db_files}")
 
-            for file in contact_dir.iterdir():
-                if file.suffix.lower() == ".db":
-                    result["contact"] = str(file)
-                    logger.info(f"[DEBUG PathFinder] ✅ 找到contact.db: {file}")
-                    break
+            # Linux 微信的 contact 目录含多个库（contact_fts/fmessage_new/wa_contact_new），
+            # 必须精确取 contact.db，iterdir 顺序不可靠
+            contact_file = next(
+                (f for f in contact_dir.iterdir() if f.name.lower() == "contact.db"),
+                None,
+            )
+            if contact_file is None:
+                contact_file = next(
+                    (f for f in contact_dir.iterdir() if f.suffix.lower() == ".db"),
+                    None,
+                )
+            if contact_file is not None:
+                result["contact"] = str(contact_file)
+                logger.info(f"[DEBUG PathFinder] ✅ 找到contact.db: {contact_file}")
 
         # 查找消息数据库(可能有多个分片)
         message_dir = db_storage_dir / "message"
@@ -597,11 +745,19 @@ class WeChatPathFinder:
             db_files = [f.name for f in session_dir.iterdir() if f.suffix.lower() == ".db"]
             logger.debug(f"[DEBUG PathFinder] session下的.db文件: {db_files}")
 
-            for file in session_dir.iterdir():
-                if file.suffix.lower() == ".db":
-                    result["session"] = str(file)
-                    logger.info(f"[DEBUG PathFinder] ✅ 找到session.db: {file}")
-                    break
+            # 同 contact：精确取 session.db，避免目录内其他库被误选
+            session_file = next(
+                (f for f in session_dir.iterdir() if f.name.lower() == "session.db"),
+                None,
+            )
+            if session_file is None:
+                session_file = next(
+                    (f for f in session_dir.iterdir() if f.suffix.lower() == ".db"),
+                    None,
+                )
+            if session_file is not None:
+                result["session"] = str(session_file)
+                logger.info(f"[DEBUG PathFinder] ✅ 找到session.db: {session_file}")
 
         return result
 

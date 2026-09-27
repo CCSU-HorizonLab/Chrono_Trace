@@ -18,7 +18,6 @@ import argparse
 import hashlib
 import json
 import sqlite3
-import time
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path

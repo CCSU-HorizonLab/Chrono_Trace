@@ -1,5 +1,5 @@
 <template>
-  <div class="fp-layout" :class="{ 'is-inspector-open': inspectorOpen }">
+  <div class="fp-layout">
     <!-- 1. Header (Fixed) -->
     <header class="fp-site-header">
       <div class="fp-header-drag-zone">
@@ -7,7 +7,10 @@
           <span class="fp-status-dot" :class="{ active: realtimeState.isMonitoring }"></span>
           <span class="fp-brand-name">Chrono Trace</span>
         </div>
-        <button class="fp-btn-icon close-btn" @click="exitFloating" title="退出悬浮模式"><X :size="14" /></button>
+        <button class="fp-btn-back" @click="exitFloating" title="退出悬浮模式并结束监听，返回应用主界面">
+          <Maximize2 :size="13" />
+          <span>返回主界面</span>
+        </button>
       </div>
       <div class="fp-contact-bar">
         <CtAvatar
@@ -78,7 +81,7 @@
       <!-- LEFT/MAIN COLUMN -->
       <main class="fp-main-column">
         <!-- Narrow Mode Insights Strip -->
-        <div class="fp-insights-strip" @click="toggleInspector('emotion')">
+        <div class="fp-insights-strip" @click="toggleInspector('emotion')" title="点击展开情绪明细图表">
       <div class="fp-insight-primary">
         <span class="fp-trend-badge" :class="emotionSummary?.trend || 'neutral'">
           {{ emotionSummary?.trend === 'positive' ? '正面向上' : emotionSummary?.trend === 'negative' ? '负面向下' : '稳定平缓' }}
@@ -104,19 +107,23 @@
         </div>
 
         <div v-if="!allSuggestions.length && !loading" class="fp-empty-slate">
-          等待接收聊天数据...
+          <template v-if="realtimeState.isMonitoring && realtimeState.messageCount > 0">
+            已接收 {{ realtimeState.messageCount }} 条消息 · AI 正在生成建议（思考模型约需 30-60 秒）…
+          </template>
+          <template v-else>等待接收聊天数据…</template>
         </div>
 
         <div class="fp-sug-list">
           <div
             v-for="s in allSuggestions"
             :key="s.id || s._tempId"
+            :data-sid="s.id || 'manual'"
             :class="{
               'fp-card': s._type === 'suggestion',
               [s.severity || 'medium']: s._type === 'suggestion',
-              'fp-bubble': s._type === 'chat',
-              user: s._type === 'chat' && s.role === 'user',
-              ai: s._type === 'chat' && s.role === 'ai'
+              'fp-bubble': s._type === 'chat' || s._type === 'live_msg',
+              user: (s._type === 'chat' && s.role === 'user') || (s._type === 'live_msg' && s.sender_attr === 'self'),
+              ai: (s._type === 'chat' && s.role === 'ai') || (s._type === 'live_msg' && s.sender_attr !== 'self')
             }"
           >
             <template v-if="s._type === 'suggestion'">
@@ -149,6 +156,14 @@
                   </span>
                 </div>
               </div>
+            </template>
+
+            <template v-else-if="s._type === 'live_msg'">
+              <div class="fp-bubble-meta">
+                 <span class="fp-bubble-avatar">{{ s.sender_attr === 'self' ? '我' : '对方' }}</span>
+                 <span class="fp-bubble-time">{{ formatMsgTime(s.created_at) }}</span>
+              </div>
+              <div class="fp-bubble-txt">{{ s.content }}</div>
             </template>
 
             <template v-else-if="s._type === 'chat'">
@@ -189,11 +204,19 @@
       </main>
 
       <!-- RIGHT SUPPORT RAIL (or Narrow Shared Inspector) -->
-      <aside class="fp-support-rail fp-inspector">
+      <teleport to="body" :disabled="inspectorDocked">
+    <aside class="fp-inspector-overlay" :class="{ 'is-visible': inspectorOpen, 'is-docked': inspectorDocked }" @click.self="!inspectorDocked && closeInspector()">
+        <div class="fp-inspector">
       <div class="fp-inspector-header">
+        <span class="fp-inspector-title">AI 生成建议时使用的上下文</span>
         <div class="fp-inspector-tabs">
-          <button class="fp-tab-btn" :class="{ active: inspectorTab === 'emotion' }" @click="toggleInspector('emotion')">情绪明细</button>
-          <button class="fp-tab-btn" :class="{ active: inspectorTab === 'context' }" @click="toggleInspector('context')">AI 参考记录</button>
+          <button class="fp-dock-toggle" @click="inspectorDocked = !inspectorDocked"
+                  :title="inspectorDocked ? '切换为浮层模式' : '切换为分屏模式（主内容仍可见）'">
+            {{ inspectorDocked ? '收起分屏' : '分屏' }}
+          </button>
+          <button class="fp-btn-icon fp-inspector-close" @click="closeInspector" title="收起面板"><X :size="12" /></button>
+          <button class="fp-tab-btn" :class="{ active: inspectorTab === 'emotion' }" @click="toggleInspector('emotion')">情绪趋势</button>
+          <button class="fp-tab-btn" :class="{ active: inspectorTab === 'context' }" @click="toggleInspector('context')">建议依据</button>
         </div>
         <button class="fp-btn-icon close-rail-btn" @click="closeInspector"><X :size="14" /></button>
       </div>
@@ -220,7 +243,7 @@
           <!-- 2. Main Chart or Empty State -->
           <div v-show="!hasSufficientEmotionData" class="compact-empty">
             <span class="fp-empty-icon"><Sprout :size="20" style="color: #10b981;" /></span>
-            <span>数据不足以绘制图表 (暂存 {{ realtimeState.messageCount }} 条对话)</span>
+            <span>数据不足以绘制图表 (暂存 {{ (realtimeState.messages || []).length }} 条对话)</span>
           </div>
           
           <div v-show="hasSufficientEmotionData" class="fp-chart-workspace">
@@ -276,6 +299,24 @@
 
         <!-- CONTEXT TAB -->
         <div v-show="inspectorTab === 'context'" class="fp-inspector-tab-content">
+          <!-- RAG 提醒：无索引时建议只基于近期对话，记忆槽为空 -->
+          <div v-if="ragNeedsAttention" class="fp-rag-notice">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            <div class="fp-rag-notice-body">
+              <template v-if="ragStatus && !ragStatus.enabled">
+                长期记忆（RAG）未启用，AI 建议仅参考近期对话。可在「设置 → 长期记忆」中开启。
+              </template>
+              <template v-else-if="ragStatus && (ragStatus.status === 'queued' || ragStatus.status === 'building')">
+                正在为「{{ ragStatus.display_name }}」构建记忆索引，完成后建议将自动携带长期记忆。
+              </template>
+              <template v-else>
+                尚未为「{{ ragStatus?.display_name || '该联系人' }}」建立长期记忆索引，当前建议仅基于近期对话。
+                <button class="fp-rag-notice-btn" :disabled="ragBuilding" @click="buildRagIndex">
+                  {{ ragBuilding ? '提交中…' : '立即构建' }}
+                </button>
+              </template>
+            </div>
+          </div>
           <div class="fp-context-meta">基于最近 {{ contextUsed.length }} 条主要聊天记录</div>
           <div v-if="!contextUsed.length" class="fp-context-empty">暂无可用参考记录。</div>
           <div class="fp-context-list stream-layout">
@@ -289,7 +330,9 @@
           </div>
         </div>
       </div>
-    </aside>
+          </div>
+</aside>
+  </teleport>
 
     </div>
   <footer class="fp-composer">
@@ -298,7 +341,7 @@
         <div class="fp-quick-prompts">
           <button v-for="q in quickPrompts" :key="q" class="fp-qp-btn" @click="sendQuickPrompt(q)">{{ q }}</button>
         </div>
-        <button class="fp-ctx-btn" @click="toggleInspector('context')" :class="{ 'is-active': inspectorOpen && inspectorTab === 'context' }" title="查看AI参考记录">参考</button>
+        <button class="fp-ctx-btn" @click="toggleInspector('context')" :class="{ 'is-active': inspectorOpen && inspectorTab === 'context' }" title="查看生成建议时 AI 参考的全部聊天记录、记忆与情绪数据">AI建议依据</button>
       </div>
 
       <!-- Settings Strip -->
@@ -424,6 +467,7 @@ import { ref, reactive, computed, onMounted, onBeforeUnmount, watch, nextTick } 
 import { useRouter } from 'vue-router'
 import {
   X,
+  Maximize2,
   Sprout,
   Flame,
   Scale,
@@ -494,11 +538,15 @@ async function ensureRealtimeAnalysisModelsReady(): Promise<boolean> {
 
 const inspectorOpen = ref(false)
 const isWideMode = ref(window.innerWidth >= 820)
-window.addEventListener('resize', () => { isWideMode.value = window.innerWidth >= 820 })
+// 提为具名函数，保证 add/remove 用同一引用，避免组件卸载后监听残留
+const handleInspectorResize = () => { isWideMode.value = window.innerWidth >= 820 }
+window.addEventListener('resize', handleInspectorResize)
 const inspectorTab = ref<'emotion' | 'context'>('emotion')
+const inspectorDocked = ref(false)  // 分屏模式：面板停靠底部，主内容仍可见
 const showSecondaryCharts = ref(false)
 watch(showSecondaryCharts, (val) => { if (val) { nextTick(() => { typeof syncCharts === 'function' && syncCharts(); typeof triggerChartResize === 'function' && triggerChartResize() }) } })
-const hasSufficientEmotionData = computed(() => realtimeState.messageCount >= 4 && emotionHistory.value && emotionHistory.value.length > 2)
+// 用合并了基线的消息数组（含预热 sentiment），而非仅 buffer 计数——否则开场恒判数据不足
+const hasSufficientEmotionData = computed(() => (realtimeState.messages || []).length >= 4 && emotionHistory.value && emotionHistory.value.length > 2)
 function triggerChartResize() {
   requestAnimationFrame(() => {
     setTimeout(() => { typeof syncCharts === 'function' && syncCharts(); typeof resizeVisibleCharts === 'function' && resizeVisibleCharts(); }, 50)
@@ -509,12 +557,8 @@ function triggerChartResize() {
 
 async function closeInspector() {
   inspectorOpen.value = false
+  inspectorDocked.value = false
   showSecondaryCharts.value = false
-  try {
-    if (api && api.set_floating_expanded) await api.set_floating_expanded(false)
-  } catch (e) {
-    console.error(e)
-  }
 }
 
 async function toggleInspector(tab: 'emotion' | 'context') {
@@ -524,14 +568,55 @@ async function toggleInspector(tab: 'emotion' | 'context') {
     inspectorOpen.value = true
     inspectorTab.value = tab
     showSecondaryCharts.value = false
-    try {
-      if (api && api.set_floating_expanded) await api.set_floating_expanded(true)
-    } catch (e) {
-      console.error(e)
-    }
     if (tab === 'emotion') {
       nextTick(() => { if (typeof syncCharts === 'function') syncCharts(); typeof triggerChartResize === 'function' && triggerChartResize() })
     }
+    if (tab === 'context') {
+      loadMonitorRagStatus()
+    }
+  }
+}
+
+// ===== RAG 索引状态（建议依据提醒）=====
+// 无索引时 AI 建议只基于近期对话（记忆槽为空），需要在此提醒并可一键构建
+const ragStatus = ref<any>(null)
+const ragBuilding = ref(false)
+
+async function loadMonitorRagStatus() {
+  try {
+    await bridgeReady()
+    const r = await api.get_monitor_rag_status(activeAccountWxid.value || undefined)
+    if (r?.ok) ragStatus.value = r
+  } catch (e) {
+    console.debug('[FloatingPanel] RAG 状态获取失败:', e)
+  }
+}
+
+const ragNeedsAttention = computed(() => {
+  const s = ragStatus.value
+  if (!s || !s.monitoring) return false
+  if (!s.enabled) return true
+  return !s.has_index
+})
+
+async function buildRagIndex() {
+  const s = ragStatus.value
+  if (!s?.conversation_id || ragBuilding.value) return
+  ragBuilding.value = true
+  try {
+    await bridgeReady()
+    const r = await api.rebuild_rag_index(s.conversation_id, activeAccountWxid.value || undefined)
+    if (r?.ok) {
+      // 队列串行构建，完成后状态经下次打开/轮询刷新
+      ragStatus.value = { ...s, status: r.state || 'queued' }
+      // 构建中稍后回查一次，横幅能自动消失（队列串行，15s 通常不够全量，
+      // 回查后仍在构建则由再次打开面板兜底）
+      setTimeout(loadMonitorRagStatus, 15000)
+    }
+  } catch (e) {
+    console.error('[FloatingPanel] RAG 索引构建发起失败:', e)
+  } finally {
+    ragBuilding.value = false
   }
 }
 
@@ -623,6 +708,9 @@ let resumeDialogResolver: ((value: 'skip' | 'backfill') => void) | null = null
 
 // 建议数据
 const pendingSuggestions = ref<any[]>([])
+// 原始消息即时回显（不等 LLM 建议——思考模型一次调用 30-60s，此前面板全程空白）
+const liveEchoMessages = ref<any[]>([])
+const echoedMessageIds = new Set<number>()
 const manualSuggestion = ref<any>(null)
 const expandedIds = ref<Set<string>>(new Set(['manual']))  // 展开状态管理
 const showContext = ref(false)  // 是否展示 AI 参考记录
@@ -648,6 +736,12 @@ type RagContextSummary = {
   hit_count?: number
   referenced_count?: number
   log_id?: number | null
+}
+// 后端时间戳统一为 Unix 秒；此处兜底转换成毫秒（>1e12 视为已是毫秒，空值用当前时间）
+// 直接 new Date(秒) 会落到 1970 年，导致气泡时间与排序错乱
+function toMs(v: any): number {
+  const n = Number(v)
+  return (n && n > 1e12) ? n : (n ? n * 1000 : Date.now())
 }
 const conversationHistory = ref<{ role: string; content: string; ts: number; rag_context?: RagContextSummary }[]>([])
 
@@ -841,6 +935,11 @@ const allSuggestions = computed(() => {
     list.push({ ...c, _type: 'chat', _tempId: `chat_${idx}`, created_at: c.ts })
   })
 
+  // 原始消息回显（微信消息秒级上屏，AI 建议稍后跟进）
+  for (const m of liveEchoMessages.value) {
+    list.push({ ...m, _type: 'live_msg', created_at: m.ts })
+  }
+
   // 按时间升序排序（旧的在上，新的在下，像聊天软件）
   list.sort((a, b) => {
     const timeA = a.created_at || Math.floor(Date.now() / 1000)
@@ -1005,7 +1104,8 @@ async function applyMonitoringStatus(status: any) {
 
   try {
     const tRes = await api.get_latest_thread(realtimeState.talkerName, activeAccountWxid.value || undefined)
-    if (tRes.ok && tRes.thread) {
+    // 空会话（0 条消息，如空闲归档器产生的空档）没有可续内容——不显示横幅
+    if (tRes.ok && tRes.thread && Number(tRes.thread.message_count || 0) > 0) {
       lastThread.value = tRes.thread
     }
   } catch (e) {
@@ -1203,7 +1303,7 @@ onMounted(async () => {
     // 查询是否有上次会话线程
     try {
       const tRes = await api.get_latest_thread(realtimeState.talkerName, activeAccountWxid.value || undefined)
-      if (tRes.ok && tRes.thread) {
+      if (tRes.ok && tRes.thread && Number(tRes.thread.message_count || 0) > 0) {
         lastThread.value = tRes.thread
       }
     } catch (e) {
@@ -1223,6 +1323,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   stopPolling()
+  window.removeEventListener('resize', handleInspectorResize)
   window.removeEventListener('resize', resizeVisibleCharts)
   disposeAllCharts()
   resolveResumeChoice('skip')
@@ -1719,6 +1820,20 @@ function startPolling() {
     if (!realtimeState.batchId) return
     try {
       await bridgeReady()
+      api.get_realtime_recent_messages(realtimeState.batchId, 12, activeAccountWxid.value || undefined)
+        .then((mr: any) => {
+          if (!mr?.ok || !Array.isArray(mr.messages)) return
+          for (const m of mr.messages) {
+            if (!m?.id || echoedMessageIds.has(m.id)) continue
+            echoedMessageIds.add(m.id)
+            liveEchoMessages.value.push({
+              _type: 'live_msg', id: m.id, sender_attr: m.sender_attr,
+              content: m.content, ts: m.timestamp,
+            })
+            setTimeout(scrollToBottom, 50)
+          }
+        })
+        .catch(() => {})
       const r = await api.get_pending_suggestions(realtimeState.batchId, activeAccountWxid.value || undefined)
       if (r.ok) {
         let addedNew = false
@@ -1734,13 +1849,13 @@ function startPolling() {
           // 分拣气泡与卡片
           if (s.summary === '[PURE_CHAT]') {
              if (s.reply) {
-               conversationHistory.value.push({ role: 'ai', content: s.reply, ts: Math.floor(new Date(s.created_at || Date.now()).getTime()/1000) })
+               conversationHistory.value.push({ role: 'ai', content: s.reply, ts: Math.floor(toMs(s.created_at)/1000) })
              }
           } else {
              const parsedSpeeches = typeof s.speeches === 'string' ? JSON.parse(s.speeches) : (s.speeches || [])
              pendingSuggestions.value.push({ ...s, speeches: parsedSpeeches, _expanded: false, _type: 'suggestion' })
              if (s.reply) {
-               conversationHistory.value.push({ role: 'ai', content: s.reply, ts: Math.floor(new Date(s.created_at || Date.now()).getTime()/1000) })
+               conversationHistory.value.push({ role: 'ai', content: s.reply, ts: Math.floor(toMs(s.created_at)/1000) })
              }
           }
         })
@@ -1805,6 +1920,8 @@ async function setIntent(newIntent: string) {
   intent.value = newIntent as any
   try { await api.set_suggestion_config({ intent: newIntent }) }
   catch (e) { console.error('设置走向失败:', e) }
+  // 走向切换可能触发新一轮建议生成——延时滚动让新内容可见
+  setTimeout(scrollToBottom, 500)
 }
 
 // ========== 模型配置 ==========
@@ -1950,6 +2067,7 @@ async function manualGenerate() {
     })
     if (r.ok && r.suggestion) {
       appendSuggestionResult(r)
+      nextTick(() => scrollToBottom())  // AI 回复入列后滚动
     } else {
       loading.value = false
       __stopThinkingTimer()
@@ -1971,7 +2089,8 @@ async function manualGenerate() {
 
 /** 自动滚动建议列表到底部 */
 function scrollToBottom() {
-  const listEl = suggestionsRef.value?.querySelector('.fp-suggestions-list')
+  // .fp-scroll-area 自身即滚动容器（此前 querySelector 查的类名不存在）
+  const listEl = suggestionsRef.value
   if (listEl) {
     listEl.scrollTop = listEl.scrollHeight
   }
@@ -1979,13 +2098,25 @@ function scrollToBottom() {
 
 function toggleSuggestion(s: any) {
   const id = String(s.id || 'manual')
-  if (expandedIds.value.has(id)) {
+  const wasExpanded = expandedIds.value.has(id)
+  if (wasExpanded) {
     expandedIds.value.delete(id)
   } else {
     expandedIds.value.add(id)
   }
   // 触发响应式更新
   expandedIds.value = new Set(expandedIds.value)
+  // 展开时滚动让卡片可见（内容撑高可能超出视口）
+  if (!wasExpanded) {
+    nextTick(() => {
+      const el = suggestionsRef.value?.querySelector(`[data-sid="${id}"]`)
+      if (el) {
+        (el as HTMLElement).scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+      } else {
+        scrollToBottom()
+      }
+    })
+  }
 }
 
 function isSuggestionExpanded(s: any): boolean {
@@ -1993,7 +2124,24 @@ function isSuggestionExpanded(s: any): boolean {
 }
 
 function copyText(text: string) {
-  navigator.clipboard?.writeText(text)
+  // navigator.clipboard API 在 QtWebEngine 嵌入式浏览器中不可靠（需要安全上下文
+  // 且实现可能闪退渲染进程）——改用 document.execCommand('copy') 传统方案，
+  // 在嵌入式 WebView 中广泛兼容
+  try {
+    const textarea = document.createElement('textarea')
+    textarea.value = text
+    textarea.style.cssText = 'position:fixed;left:-9999px;top:-9999px;opacity:0;'
+    document.body.appendChild(textarea)
+    textarea.focus()
+    textarea.select()
+    const ok = document.execCommand('copy')
+    document.body.removeChild(textarea)
+    if (!ok) {
+      console.warn('[FloatingPanel] 复制失败（execCommand 返回 false）')
+    }
+  } catch (e) {
+    console.error('[FloatingPanel] 复制异常:', e)
+  }
 }
 
 function getRagBadge(ragContext: RagContextSummary | undefined | null): RagContextSummary | null {
@@ -2091,6 +2239,7 @@ async function sendUserContext() {
   conversationHistory.value.push({ role: 'user', content, ts: Math.floor(Date.now() / 1000) })
   userInput.value = ''
   loading.value = true
+  nextTick(() => scrollToBottom())  // 用户消息/快速联想入列后立即滚到底
   __startThinkingTimer()
   resetSuggestionStreamUi()
   llmError.value = ''
@@ -2104,8 +2253,10 @@ async function sendUserContext() {
     })
     if (r.ok && r.suggestion) {
       appendSuggestionResult(r)
+      nextTick(() => scrollToBottom())  // AI 回复入列后滚动
     } else {
       conversationHistory.value.push({ role: 'ai', content: `[生成失败] ${r.error || '未知错误'}`, ts: Math.floor(Date.now() / 1000) })
+      nextTick(() => scrollToBottom())
       handleLlmError(r.error || '生成失败')
     }
   } catch (e: any) {
@@ -2311,87 +2462,20 @@ async function loadLastThread() {
   z-index: 10;
 }
 
-.fp-support-rail {
-  grid-area: inspector;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.2s;
-  display: flex !important;
-  flex-direction: column;
-  overflow: hidden;
-  background: var(--ct-bg-app);
-  border-bottom: 1px solid var(--ct-border-color);
-  z-index: 5;
-  min-height: 0;
-}
 
-/* 1. Narrow mode + open behavior */
-@media (max-width: 819px) {
-  .fp-layout.is-inspector-open .fp-workbench-container {
-    grid-template-rows: auto clamp(160px, 30%, 220px) 1fr;
-  }
-  .fp-layout.is-inspector-open .fp-support-rail {
-    opacity: 1;
-    pointer-events: auto;
-  }
-}
 
-/* 2. Wide mode + open behavior (Explicit Coupling) */
-@media (min-width: 820px) {
-  .fp-layout.is-inspector-open .fp-chart-rail {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    grid-auto-flow: row;
-    overflow-x: hidden;
-    overflow-y: auto;
-    padding-bottom: 24px;
-    height: auto;
-  }
-
-  .fp-layout.is-inspector-open .fp-workbench-container {
-    display: flex;
-    flex-direction: row;
-    min-height: 0;
-    overflow: hidden;
-    flex: 1;
-    width: 100%;
-  }
-  .fp-layout.is-inspector-open .fp-main-column {
-    display: flex;
-    flex-direction: column;
-    flex: 1;
-    min-width: 0;
-    min-height: 0;
-    overflow: hidden;
-  }
-  .fp-layout.is-inspector-open .fp-main-stack { 
-    flex: 1; 
-    overflow: hidden; 
-    position: relative; 
-    min-height: 0; 
-    display: flex;
-    flex-direction: column;
-  }
-  .fp-layout.is-inspector-open .fp-insights-strip { display: none; }
-  
-  .fp-layout.is-inspector-open .fp-support-rail {
-    flex-shrink: 0;
-    width: 320px;
-    border-bottom: none;
-    border-left: 1px solid var(--ct-border-color);
-    box-shadow: -2px 0 8px rgba(0,0,0,0.015);
-    opacity: 1;
-    pointer-events: auto;
-    height: 100%;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-}
-/* Replaced old Workbench CSS Block fully */
-/* Remove old layout */
+/* 检查器已改为 teleport 全屏浮层：主布局不再随 inspectorOpen 变化 */
 /* Base Buttons */
+.fp-btn-back {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 10px; border-radius: 999px;
+  background: rgba(108, 92, 231, 0.15); color: #8b7ff0;
+  border: 1px solid rgba(108, 92, 231, 0.35);
+  font-size: 12px; cursor: pointer; white-space: nowrap;
+  transition: background 0.15s ease;
+}
+.fp-btn-back:hover { background: rgba(108, 92, 231, 0.28); }
+
 .fp-btn-icon { background: transparent; border: none; cursor: pointer; color: var(--ct-text-tertiary); display: inline-flex; align-items: center; justify-content: center; padding: 4px; border-radius: var(--ct-radius-sm); transition: all 0.2s; }
 .fp-btn-icon:hover { background: var(--ct-bg-secondary); color: var(--ct-text-primary); }
 .fp-btn-sm { font-size: 11px; font-weight: 500; padding: 4px 10px; border-radius: var(--ct-radius-sm); background: var(--ct-color-primary-light); color: var(--ct-color-primary); border: 1px solid var(--ct-color-primary); cursor: pointer; }
@@ -2450,9 +2534,61 @@ async function loadLastThread() {
 .fp-arr.arr-up { transform: rotate(-90deg); }
 
 /* 3. SHARED INSPECTOR PANEL */
-.fp-inspector { display: flex; flex-direction: column; flex: 0 0 auto; height: clamp(184px, 31%, 236px); min-height: 184px; background: var(--ct-bg-app); border-bottom: 1px solid var(--ct-border-color); box-shadow: inset 0 -4px 8px rgba(0,0,0,0.015); z-index: 5; }
+/* 检查器浮层：teleport 到 body，显式深色确保主题无关 */
+.fp-inspector-overlay {
+  position: fixed !important; inset: 0 !important; z-index: 9999 !important;
+  background: rgba(8, 10, 16, 0.45) !important;
+  backdrop-filter: blur(3px) !important;
+  display: flex; align-items: flex-end;
+  opacity: 0; pointer-events: none; transition: opacity 0.18s ease;
+}
+.fp-inspector-overlay.is-visible {
+  opacity: 1 !important; pointer-events: auto !important;
+}
+/* 分屏模式：teleport 回布局内（在滚动区与交互区之间），不遮挡交互区 */
+.fp-inspector-overlay.is-docked {
+  position: static !important;
+  background: transparent !important;
+  backdrop-filter: none !important;
+  pointer-events: auto !important;
+  opacity: 1 !important;
+  flex-shrink: 0;
+  height: clamp(180px, 38%, 260px);
+}
+.fp-inspector-overlay.is-docked .fp-inspector {
+  height: 100%;
+  transform: none !important;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,0.06);
+}
+.fp-inspector {
+  width: 100%; height: 72%;
+  display: flex; flex-direction: column;
+  background: #1a1e28 !important; color: #e8eaf0 !important;
+  border-top: 1px solid rgba(255,255,255,0.1);
+  border-radius: 16px 16px 0 0;
+  box-shadow: 0 -12px 40px rgba(0,0,0,0.4);
+  transform: translateY(100%); transition: transform 0.22s ease;
+}
+.fp-inspector-overlay.is-visible .fp-inspector { transform: translateY(0); }
 .fp-inspector-header { display: flex; justify-content: space-between; align-items: center; padding: 3px 8px; border-bottom: 1px solid var(--ct-border-color); background: var(--ct-bg-elevated); gap: 6px; }
-.fp-inspector-tabs { display: flex; gap: 6px; min-width: 0; }
+.fp-inspector-title { font-size: 13px; font-weight: 600; color: var(--ct-text-secondary); }
+.fp-inspector-tabs { display: flex; gap: 6px; min-width: 0; flex: 1; align-items: center; }
+.fp-dock-toggle {
+  font-size: 11px; font-weight: 600;
+  color: rgba(139, 127, 240, 0.9);
+  background: rgba(108, 92, 231, 0.15);
+  border: 1px solid rgba(108, 92, 231, 0.3);
+  padding: 3px 10px; border-radius: 999px;
+  cursor: pointer; white-space: nowrap;
+  transition: all 0.15s ease;
+}
+.fp-dock-toggle:hover {
+  background: rgba(108, 92, 231, 0.28);
+  border-color: rgba(108, 92, 231, 0.5);
+}
+.fp-inspector-close { margin-left: auto; color: var(--ct-text-secondary); }
+.fp-inspector-close:hover { color: var(--ct-text-primary); }
 .fp-tab-btn { background: var(--ct-bg-secondary); border: 1px solid transparent; font-size: 11px; font-weight: 600; color: var(--ct-text-secondary); cursor: pointer; padding: 2px 8px; border-radius: 4px; transition: all 0.2s; white-space: nowrap; }
 .fp-tab-btn.active { color: var(--ct-color-primary); border-color: rgba(124, 77, 255, 0.2); background: rgba(124, 77, 255, 0.08); box-shadow: inset 0 0 0 1px rgba(124, 77, 255, 0.06); }
 .fp-inspector-body { flex: 1; overflow-y: auto; padding: 0; background: var(--ct-bg-tertiary); display: flex; flex-direction: column; }
@@ -2478,6 +2614,25 @@ async function loadLastThread() {
 .compact-empty { font-size: 11px; color: var(--ct-text-tertiary); text-align: center; padding: 24px; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100px; }
 /* Context Sub-Tab */
 .fp-context-meta { font-size: 10px; color: var(--ct-text-tertiary); padding: 4px 8px 0; text-align: left; }
+/* RAG 缺索引提醒横幅：建议只基于近期对话时提示并引导构建 */
+.fp-rag-notice {
+  display: flex; align-items: flex-start; gap: 8px;
+  margin: 8px 8px 2px; padding: 8px 10px;
+  border-radius: 8px; text-align: left;
+  background: rgba(245, 158, 11, 0.10);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  color: #f0b429;
+}
+.fp-rag-notice svg { flex-shrink: 0; margin-top: 1px; }
+.fp-rag-notice-body { font-size: 11px; line-height: 1.6; color: var(--ct-text-secondary); }
+.fp-rag-notice-btn {
+  margin-left: 8px; padding: 2px 10px; border-radius: 6px;
+  font-size: 11px; font-weight: 600; cursor: pointer;
+  border: 1px solid rgba(245, 158, 11, 0.4); background: rgba(245, 158, 11, 0.12);
+  color: #f0b429;
+}
+.fp-rag-notice-btn:hover { background: rgba(245, 158, 11, 0.2); }
+.fp-rag-notice-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .fp-context-empty { font-size: 12px; color: var(--ct-text-secondary); text-align: center; padding: 24px; }
 .stream-layout { padding: 4px 8px 8px; display: flex; flex-direction: column; gap: 6px; }
 .fp-ctx-msg { background: var(--ct-bg-elevated); border-radius: var(--ct-radius-sm); padding: 6px 8px; border: 1px solid var(--ct-border-color); width: 96%; align-self: flex-start; box-shadow: var(--ct-shadow-sm); }
@@ -2517,9 +2672,9 @@ async function loadLastThread() {
 .fp-card-bd { padding: 0 12px 12px; border-top: 1px solid var(--ct-border-color); padding-top: 12px; background: var(--ct-bg-secondary); }
 .fp-cot { background: var(--ct-bg-elevated); border-radius: var(--ct-radius-md); padding: 10px; margin-bottom: 12px; border: 1px solid var(--ct-border-color); }
 .fp-cot summary { font-size: 11px; color: var(--ct-text-secondary); cursor: pointer; user-select: none; font-weight: 600; outline: none; }
-.fp-cot-txt { font-size: 12px; line-height: 1.6; color: var(--ct-text-secondary); margin-top: 8px; border-top: 1px dashed var(--ct-border-color); padding-top: 8px; white-space: pre-wrap; }
+.fp-cot-txt { user-select: text; -webkit-user-select: text; font-size: 12px; line-height: 1.6; color: var(--ct-text-secondary); margin-top: 8px; border-top: 1px dashed var(--ct-border-color); padding-top: 8px; white-space: pre-wrap; }
 .fp-speech-item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: var(--ct-bg-elevated); border-radius: var(--ct-radius-md); margin-bottom: 8px; border: 1px solid var(--ct-border-color); box-shadow: 0 1px 2px rgba(15,23,42,0.02); }
-.fp-speech-text { font-size: 13px; line-height: 1.6; color: var(--ct-text-primary); flex: 1; }
+.fp-speech-text { font-size: 13px; line-height: 1.6; color: var(--ct-text-primary); flex: 1; user-select: text; -webkit-user-select: text; }
 .fp-btn-copy { font-size: 11px; font-weight: 500; color: var(--ct-text-secondary); background: var(--ct-bg-secondary); border: 1px solid var(--ct-border-color); padding: 4px 10px; border-radius: var(--ct-radius-sm); cursor: pointer; transition: all 0.2s; flex-shrink: 0; }
 .fp-btn-copy:hover { color: var(--ct-color-primary); border-color: var(--ct-color-primary); background: white; box-shadow: var(--ct-shadow-sm); }
 .fp-rag-row { display: flex; justify-content: flex-end; margin-top: 8px; min-height: 18px; }
@@ -2563,7 +2718,7 @@ async function loadLastThread() {
 .fp-bubble.user .fp-bubble-avatar { color: white; background: rgba(0,0,0,0.15); }
 .fp-bubble-time { font-size: 10px; color: var(--ct-text-tertiary); opacity: 0.8; }
 .fp-bubble.user .fp-bubble-time { color: rgba(255,255,255,0.8); }
-.fp-bubble-txt { font-size: 14px; line-height: 1.5; word-break: break-word; white-space: pre-wrap; }
+.fp-bubble-txt { font-size: 14px; line-height: 1.5; word-break: break-word; white-space: pre-wrap; user-select: text; -webkit-user-select: text; cursor: text; }
 .fp-bubble .fp-rag-row { margin-top: 7px; }
 
 /* Loading State */

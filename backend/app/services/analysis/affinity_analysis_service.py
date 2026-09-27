@@ -1,10 +1,8 @@
-"""?????????
+"""好感度分析编排服务：汇总四个维度的评分结果。
 
-??????????????????
-
-???????
-- ??????????????? 40%?????? 35%????? 25%
-- ???????????????????????? sigmoid ?????
+维度与默认权重（未配置喜好关键词时）：
+- 情感共振率 40% / 聊天积极度 35% / 态度倾向 25%（配置喜好关键词后调整为 35/35/20/10）
+- 各维度分数归一后加权合成总分，附总体解读
 """
 
 import time
@@ -12,13 +10,14 @@ import json
 import logging
 import threading
 import math
+import hashlib
 from dataclasses import dataclass, asdict, field
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 
 from ...db.connection import get_db
 from .preprocessing_orchestrator import PreprocessingOrchestrator, PreprocessedStatistics
-from .chat_positivity_service import ChatPositivityService, ChatPositivityResult
-from .preference_compatibility_service import PreferenceCompatibilityService, PreferenceCompatibilityResult
+from .chat_positivity_service import ChatPositivityService
+from .preference_compatibility_service import PreferenceCompatibilityService
 from .emotional_resonance_service import EmotionalResonanceService
 from .attitude_tendency_service import AttitudeTendencyService
 from .affinity_config import AffinityConfigService, AffinityConfig
@@ -112,28 +111,55 @@ class AffinityAnalysisService:
         # 任务状态存储
         self._task_status: Dict[str, AffinityAnalysisResult] = {}
     
+    def register_task(self, task_id: str, conversation_id: int) -> AffinityAnalysisResult:
+        """预注册任务状态，供调用方在启动后台线程前就能用该 task_id 查询进度。
+
+        analyze() 处理传入的 task_id 时会覆盖同键条目，因此预注册不会残留脏状态。
+        """
+        result = AffinityAnalysisResult()
+        result.conversation_id = conversation_id
+        result.task_id = task_id
+        result.cache_version = self.CACHE_SCHEMA_VERSION
+        result.status = "running"
+        result.current_step = "初始化"
+        self._task_status[task_id] = result
+        return result
+
+    def find_running_task(self, conversation_id: int) -> Optional[str]:
+        """返回该会话仍在进行中的任务 ID（重复启动时复用，防取消事件被替换）。"""
+        for task_id, result in self._task_status.items():
+            if result.conversation_id != conversation_id:
+                continue
+            if result.status not in {"completed", "failed", "cancelled"}:
+                return task_id
+        return None
+
     def analyze(
         self,
         conversation_id: int,
         force_reanalyze: bool = False,
         config_overrides: Optional[Dict[str, Any]] = None,
-        cancel_event: Optional[threading.Event] = None
+        cancel_event: Optional[threading.Event] = None,
+        task_id: Optional[str] = None
     ) -> AffinityAnalysisResult:
         """
         主入口 - 触发完整分析流程
-        
+
         Args:
             conversation_id: 会话 ID
             force_reanalyze: 是否强制重新分析
             config_overrides: 配置覆盖
-            
+            cancel_event: 取消事件
+            task_id: 显式任务 ID（优先使用）；None 时保持原有按时间生成逻辑
+
         Returns:
             AffinityAnalysisResult: 分析结果
         """
         start_time = time.time()
-        
-        # 生成任务 ID
-        task_id = f"affinity_{conversation_id}_{int(start_time)}"
+
+        # 生成任务 ID（优先使用调用方显式传入的 task_id，避免按秒生成撞号或前后端猜测不一致）
+        if not task_id:
+            task_id = f"affinity_{conversation_id}_{int(start_time)}"
         
         # 初始化结果
         result = AffinityAnalysisResult()
@@ -166,29 +192,36 @@ class AffinityAnalysisService:
             result.current_step = "加载配置"
             self._check_cancelled(cancel_event)
             result.progress_percent = 10
-            logger.info(f"[好感度分析] 步骤 1/5: 加载配置...")
+            logger.info("[好感度分析] 步骤 1/5: 加载配置...")
             config = self._load_config(conversation_id, config_overrides)
             
             # 3. 执行预处理
             result.current_step = "预处理数据"
             self._check_cancelled(cancel_event)
             result.progress_percent = 20
-            logger.info(f"[好感度分析] 步骤 2/5: 预处理数据 (这可能需要较长时间)...")
-            stats = self._preprocess_conversation(conversation_id, force_reanalyze, cancel_event)
-            logger.info(f"[好感度分析] 步骤 2/5: 预处理完成")
+            logger.info("[好感度分析] 步骤 2/5: 预处理数据 (这可能需要较长时间)...")
+            def _preprocess_progress(fraction: float) -> None:
+                # 预处理阶段 20→40%：语义相似度嵌入真实进度（此前一跳 3 分钟）
+                frac = min(1.0, max(0.0, fraction))
+                result.progress_percent = 20 + int(20 * frac)
+                result.current_step = f"预处理数据 (语义相似度 {int(frac * 100)}%)"
+            stats = self._preprocess_conversation(
+                conversation_id, force_reanalyze, cancel_event, _preprocess_progress
+            )
+            logger.info("[好感度分析] 步骤 2/5: 预处理完成")
             
             # 4. 计算各维度
             result.current_step = "计算维度评分"
             self._check_cancelled(cancel_event)
             result.progress_percent = 40
-            logger.info(f"[好感度分析] 步骤 3/5: 计算四大维度评分...")
+            logger.info("[好感度分析] 步骤 3/5: 计算四大维度评分...")
             self._calculate_all_dimensions(result, conversation_id, stats, config, cancel_event)
             
             # 5. 计算综合评分
             self._check_cancelled(cancel_event)
             result.current_step = "计算综合评分"
             result.progress_percent = 80
-            logger.info(f"[好感度分析] 步骤 4/5: 计算综合评分...")
+            logger.info("[好感度分析] 步骤 4/5: 计算综合评分...")
             self._calculate_overall_score(result, config)
             
             # 6. 生成解释
@@ -206,9 +239,33 @@ class AffinityAnalysisService:
             result.cache_version = self.CACHE_SCHEMA_VERSION
 
             # 7. 保存结果
-            logger.info(f"[好感度分析] 步骤 5/5: 保存结果...")
+            logger.info("[好感度分析] 步骤 5/5: 保存结果...")
             self._save_results(conversation_id, result)
-            
+
+            # 全流程终点：清 stale + 快照消息集规模（此后 UI「待更新」消失）
+            try:
+                from .analysis_state import mark_analysis_complete
+
+                mark_analysis_complete(conversation_id)
+            except Exception as state_e:
+                logger.debug("[分析状态] 完成标记跳过: %s", state_e)
+
+            # 全面分析完成点：构建该联系人记忆索引。导入后默认冷构建
+            # （不自动建），此处是主动构建入口——分析完成后用户预期记忆
+            # 随即可用；联系人画像仍由用户在洞察页手动触发生成。
+            try:
+                from ...db.connection import get_db
+                from ..realtime.rag.indexer import RagIndexQueue
+
+                row = get_db().execute(
+                    "SELECT account_wxid FROM conversations WHERE id = ? LIMIT 1",
+                    (conversation_id,),
+                ).fetchone()
+                if row and str(row["account_wxid"] or "").strip():
+                    RagIndexQueue.enqueue(str(row["account_wxid"]), int(conversation_id))
+            except Exception as rag_e:
+                logger.debug("[分析完成] 记忆索引构建入队跳过: %s", rag_e)
+
             logger.info(
                 f"好感度分析完成: {result.overall_score:.1f} 分, "
                 f"耗时 {result.analysis_duration_ms}ms (会话 {conversation_id})"
@@ -231,7 +288,7 @@ class AffinityAnalysisService:
                 logger.error(f"好感度分析失败: {e}", exc_info=True)
         
         # 添加调试日志
-        logger.info(f"=== 好感度分析结果 ===")
+        logger.info("=== 好感度分析结果 ===")
         logger.info(f"总分: {result.overall_score:.1f}")
         if result.emotional_resonance:
             logger.info(f"情感共振率: score={result.emotional_resonance.score:.1f}, weight={result.emotional_resonance.weight}, weighted={result.emotional_resonance.weighted_score:.1f}")
@@ -314,11 +371,12 @@ class AffinityAnalysisService:
         self,
         conversation_id: int,
         force_reprocess: bool = False,
-        cancel_event: Optional[threading.Event] = None
+        cancel_event: Optional[threading.Event] = None,
+        progress_cb=None,
     ) -> PreprocessedStatistics:
         """执行预处理"""
         return self.preprocessing.orchestrate_preprocessing(
-            conversation_id, force_reprocess, cancel_event
+            conversation_id, force_reprocess, cancel_event, progress_cb=progress_cb
         )
     
 
@@ -346,7 +404,7 @@ class AffinityAnalysisService:
         result.progress_percent = 45
         result.progress_percent = 45
         result.current_step = "计算维度评分: 情感共振率"
-        logger.info(f"[好感度分析] 维度 1/4: 情感共振率...")
+        logger.info("[好感度分析] 维度 1/4: 情感共振率...")
         resonance_result = self.resonance_service.calculate_overall_resonance(
             conversation_id
         )
@@ -373,7 +431,7 @@ class AffinityAnalysisService:
         result.progress_percent = 55
         result.progress_percent = 55
         result.current_step = "计算维度评分: 聊天积极度"
-        logger.info(f"[好感度分析] 维度 2/4: 聊天积极度...")
+        logger.info("[好感度分析] 维度 2/4: 聊天积极度...")
         self.positivity_service.timeliness_threshold = config.reply_timeliness_threshold_seconds
         positivity_result = self.positivity_service.calculate_scores(
             conversation_id, stats
@@ -401,7 +459,7 @@ class AffinityAnalysisService:
         result.progress_percent = 65
         result.progress_percent = 65
         result.current_step = "计算维度评分: 态度倾向"
-        logger.info(f"[好感度分析] 维度 3/4: 态度倾向...")
+        logger.info("[好感度分析] 维度 3/4: 态度倾向...")
         attitude_result = self.attitude_service.calculate_overall_attitude(
             conversation_id
         )
@@ -424,7 +482,7 @@ class AffinityAnalysisService:
         result.progress_percent = 75
         result.progress_percent = 75
         result.current_step = "计算维度评分: 喜好兼容度"
-        logger.info(f"[好感度分析] 维度 4/4: 喜好兼容度...")
+        logger.info("[好感度分析] 维度 4/4: 喜好兼容度...")
         self.preference_service.set_preference_keywords(config.preference_keywords)
         preference_result = self.preference_service.calculate_scores(
             conversation_id, stats
@@ -481,7 +539,9 @@ class AffinityAnalysisService:
             relationship_stability_confidence,
             self.NEUTRAL_OVERALL_BASELINE,
         )
-        result.overall_score = min(100.0, self._sigmoid_calibrate(shrunk_score))
+        # 去掉 sigmoid 校准（双重压缩根因）：置信度收缩已是唯一保守化步骤
+        # 此前 60.8 → 收缩39 → sigmoid25 的管线与维度分严重不一致
+        result.overall_score = round(max(0.0, min(100.0, shrunk_score)), 2)
         logger.info(
             "综合评分计算完成: %.1f分 (base=%.1f, bonus=%.1f, total=%.1f, confidence=%.2f)",
             result.overall_score,
@@ -602,7 +662,7 @@ class AffinityAnalysisService:
             
             # 输出子维度
             if dim.sub_scores:
-                affinity_debug_log(f"  ├─ [基础维度详情]")
+                affinity_debug_log("  ├─ [基础维度详情]")
                 for sub_key, sub_val in dim.sub_scores.items():
                     if isinstance(sub_val, (int, float)):
                         affinity_debug_log(f"  │  ├─ {sub_key}: {sub_val:.2f}")
@@ -611,7 +671,7 @@ class AffinityAnalysisService:
                         
             # 输出附加加分项
             if hasattr(dim, 'bonus_scores') and dim.bonus_scores:
-                affinity_debug_log(f"  ├─ [额外加分详情]")
+                affinity_debug_log("  ├─ [额外加分详情]")
                 for sub_key, sub_val in dim.bonus_scores.items():
                     if isinstance(sub_val, (int, float)):
                         affinity_debug_log(f"  │  ├─ {sub_key}: +{sub_val:.2f}")
@@ -624,24 +684,60 @@ class AffinityAnalysisService:
         affinity_debug_log(f"{'='*80}\n")
     
     def _generate_overall_interpretation(self, score: float) -> str:
-        """生成综合解释"""
-        if score >= 80:
+        """生成综合解释（区间按去掉 sigmoid 后的新分数分布调整）"""
+        if score >= 75:
             return "总体好感度非常高，对方对这段关系非常重视，表现出强烈的情感投入"
-        elif score >= 55:
+        elif score >= 60:
             return "总体好感度较高，对方对这段关系较为重视，愿意投入时间和精力"
+        elif score >= 45:
+            return "总体好感度中等，对方有基本好感，关系有发展空间"
         elif score >= 35:
             return "总体好感度一般，对方态度较为平淡，可能需要更多互动来培养感情"
-        elif score >= 20:
+        elif score >= 25:
             return "总体好感度较低，对方可能兴趣不大，建议观察更多互动信号"
         else:
             return "总体好感度很低，对方可能对这段关系不太感兴趣"
     
+    def _config_fingerprint(self, conversation_id: int) -> str:
+        """计算影响评分的配置指纹（sha1 前 12 位），用于结果缓存失效判定。
+
+        覆盖会改变四维得分的配置项：喜好关键词、回复及时阈值、喜好加分系数，
+        以及其余参与各维度计算的调优参数。用户改配置后指纹变化，旧缓存即视为脏数据。
+        config_service 不可用（如测试中未经 __init__ 构造）时退化为默认配置指纹。
+        """
+        config_service = getattr(self, "config_service", None)
+        try:
+            config = (
+                config_service.get_config(conversation_id)
+                if config_service is not None
+                else AffinityConfig()
+            )
+        except Exception as e:
+            logger.warning(f"读取好感度配置失败，配置指纹退化为默认配置: {e}")
+            config = AffinityConfig()
+
+        # 注意：不包含 conversation_id / updated_at 等元数据，也不包含三个维度
+        # 权重（当前评分实际使用 get_dimension_weights 的固定权重，与配置无关）
+        fingerprint_payload = json.dumps({
+            "preference_keywords": sorted(config.preference_keywords or []),
+            "reply_timeliness_threshold_seconds": config.reply_timeliness_threshold_seconds,
+            "preference_bonus_factor": config.preference_bonus_factor,
+            "topic_continuity_window_days": config.topic_continuity_window_days,
+            "similarity_threshold": config.similarity_threshold,
+            "sliding_window_size": config.sliding_window_size,
+            "long_text_threshold": config.long_text_threshold,
+        }, sort_keys=True, ensure_ascii=False)
+        return hashlib.sha1(fingerprint_payload.encode("utf-8")).hexdigest()[:12]
+
     def _save_results(self, conversation_id: int, result: AffinityAnalysisResult):
         """保存分析结果到数据库"""
         try:
             cache_updated_at = int(time.time())
             result.cache_version = self.CACHE_SCHEMA_VERSION
             result.cache_updated_at = cache_updated_at
+
+            # 记录生成结果时的配置指纹，读取时校验，配置变更后旧缓存失效
+            config_fingerprint = self._config_fingerprint(conversation_id)
 
             # 序列化结果
             result_dict = {
@@ -658,6 +754,7 @@ class AffinityAnalysisService:
                 "status": result.status,
                 "cache_version": result.cache_version,
                 "cache_updated_at": result.cache_updated_at,
+                "config_fingerprint": config_fingerprint,
             }
             
             result_json = json.dumps(result_dict, ensure_ascii=False)
@@ -701,6 +798,18 @@ class AffinityAnalysisService:
                     f"忽略过期的好感度缓存结果 "
                     f"(会话 {conversation_id}, version={result_dict.get('cache_version')}, "
                     f"expected={self.CACHE_SCHEMA_VERSION})"
+                )
+                return None
+
+            # 校验配置指纹：配置（喜好关键词/阈值/加分系数等）变更后旧缓存视为失效
+            # （不含指纹字段的历史缓存同样视为失效）
+            cached_fingerprint = result_dict.get("config_fingerprint")
+            expected_fingerprint = self._config_fingerprint(conversation_id)
+            if cached_fingerprint != expected_fingerprint:
+                logger.info(
+                    f"忽略配置已变更的好感度缓存结果 "
+                    f"(会话 {conversation_id}, fingerprint={cached_fingerprint}, "
+                    f"expected={expected_fingerprint})"
                 )
                 return None
             

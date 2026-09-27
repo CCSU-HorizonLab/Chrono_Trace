@@ -9,12 +9,12 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from app.services.realtime.llm_engine import LLMSuggestionEngine
-from app.services.realtime.rag_contact_preference import (
+from app.services.realtime.rag.contact_preference import (
     derive_contact_preferences,
     refresh_contact_preferences_shadow,
 )
-from app.services.realtime.rag_context_builder import RagContextBuilder
-from app.services.realtime.rag_store import RagStore
+from app.services.realtime.rag.context_builder import RagContextBuilder
+from app.services.realtime.rag.store import RagStore
 
 
 class _StubEmbedding:
@@ -106,7 +106,7 @@ def test_derive_avoid_kind_and_no_embedding_fallback():
 def test_shadow_refresh_versions_and_dedupes(monkeypatch):
     conn, store = _store()
     monkeypatch.setattr(
-        "app.services.realtime.rag_contact_preference.load_rag_settings",
+        "app.services.realtime.rag.contact_preference.load_rag_settings",
         lambda: {"rag_relationship_policy_shadow_enabled": True},
     )
     embedding = _StubEmbedding()
@@ -139,7 +139,7 @@ def test_shadow_refresh_versions_and_dedupes(monkeypatch):
 
     # 开关关闭：跳过
     monkeypatch.setattr(
-        "app.services.realtime.rag_contact_preference.load_rag_settings",
+        "app.services.realtime.rag.contact_preference.load_rag_settings",
         lambda: {"rag_relationship_policy_shadow_enabled": False},
     )
     disabled = refresh_contact_preferences_shadow(
@@ -164,7 +164,7 @@ def test_inject_respects_guards_and_budget(monkeypatch):
     conn.commit()
     builder = RagContextBuilder(store=store)
     monkeypatch.setattr(
-        "app.services.realtime.rag_context_builder.load_rag_settings",
+        "app.services.realtime.rag.context_builder.load_rag_settings",
         lambda: {
             "rag_relationship_policy_injection_enabled": True,
             "rag_relationship_policy_shadow_enabled": True,
@@ -182,7 +182,7 @@ def test_inject_respects_guards_and_budget(monkeypatch):
 
     # 影子开关关闭 → 不注入（T6 同款护栏）
     monkeypatch.setattr(
-        "app.services.realtime.rag_context_builder.load_rag_settings",
+        "app.services.realtime.rag.context_builder.load_rag_settings",
         lambda: {
             "rag_relationship_policy_injection_enabled": True,
             "rag_relationship_policy_shadow_enabled": False,
@@ -206,7 +206,7 @@ def test_inject_redacts_for_remote_model(monkeypatch):
     conn.commit()
     builder = RagContextBuilder(store=store)
     monkeypatch.setattr(
-        "app.services.realtime.rag_context_builder.load_rag_settings",
+        "app.services.realtime.rag.context_builder.load_rag_settings",
         lambda: {
             "rag_relationship_policy_injection_enabled": True,
             "rag_relationship_policy_shadow_enabled": True,
@@ -220,7 +220,7 @@ def test_inject_redacts_for_remote_model(monkeypatch):
             return _R()
 
     monkeypatch.setattr(
-        "app.services.realtime.rag_context_builder.PrivacyRedactor",
+        "app.services.realtime.rag.context_builder.PrivacyRedactor",
         lambda conn: _Redactor(),
     )
     context = {}
@@ -252,7 +252,7 @@ def test_feedback_refresh_drops_disabled_preference(monkeypatch):
     conn, store = _store()
     fid = _fact(store, kind="preference", content="对方对虾过敏，点菜避开虾", confidence=0.85)
     monkeypatch.setattr(
-        "app.services.realtime.rag_contact_preference.load_rag_settings",
+        "app.services.realtime.rag.contact_preference.load_rag_settings",
         lambda: {"rag_relationship_policy_shadow_enabled": True},
     )
     embedding = _StubEmbedding()

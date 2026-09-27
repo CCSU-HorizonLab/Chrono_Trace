@@ -22,7 +22,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "backend"))
 
-from app.services.realtime.rag_semantic_memory import calibrate_fact_confidence  # noqa: E402
+from app.services.realtime.rag.semantic_memory import calibrate_fact_confidence  # noqa: E402
 
 DEFAULT_DB = ROOT / "backend" / "data" / "chrono_trace.db"
 

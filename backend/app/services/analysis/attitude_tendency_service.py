@@ -18,7 +18,6 @@
 - 前端显示原始频率值（低负面频率 = 好）
 """
 
-import os
 from typing import Dict, Any, List
 from ...db.connection import get_db
 from .preprocessing_orchestrator import PreprocessingOrchestrator
@@ -177,14 +176,15 @@ class AttitudeTendencyService:
         negative_score = max(0.0, min(100.0, 100 - effective_neg_freq))
         
         # 信任倾诉加分（独立项，不混入负面得分）
-        # 放大系数20，上限30分
+        # 公式：倾诉率（对他人负面消息数 / 总消息数）× 放大系数 20，上限 15 分（TRUST_BONUS_MAX）
+        # 注意：此前误乘 *100 导致倾诉率 0.75% 即触顶，此处只做倍率放大不做百分比换算
         trust_bonus = min(
             self.TRUST_BONUS_MAX,
-            (to_others_count / stats.total_message_count) * 20 * 100,
+            (to_others_count / max(1, stats.total_message_count)) * 20,
         )
         
         if DEBUG_TRACE:
-            debug_log(f"\n[态度调试] === 负面频率汇总 ===")
+            debug_log("\n[态度调试] === 负面频率汇总 ===")
             debug_log(f"[态度调试] to_me: {to_me_count}, to_others: {to_others_count}, ambiguous: {ambiguous_count}")
             debug_log(f"[态度调试] 原始负面频率(前端显示): {raw_frequency:.2f}%")
             debug_log(f"[态度调试] 有效负面频率(仅to_me): {effective_neg_freq:.2f}%")
@@ -462,7 +462,7 @@ class AttitudeTendencyService:
         overall_score = weighted_total + total_bonus
         overall_score = max(0.0, min(100.0, overall_score))
         
-        debug_log(f"\n[态度调试] === 最终加权计算 ===")
+        debug_log("\n[态度调试] === 最终加权计算 ===")
         debug_log(f"[态度调试] 正面情绪频率: {positive_freq:.2f} × 0.50 = {positive_freq*0.50:.2f}")
         debug_log(f"[态度调试] 负面情绪得分: {negative_score:.2f} × 0.50 = {negative_score*0.50:.2f}")
         debug_log(f"[态度调试] 2主维度加权合计: {weighted_total:.2f}")

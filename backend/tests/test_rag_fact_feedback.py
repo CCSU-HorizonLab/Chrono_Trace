@@ -7,7 +7,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from app.services.realtime.rag_store import RagStore
+from app.services.realtime.rag.store import RagStore
 from app.webview.bridge import Bridge
 
 

@@ -383,7 +383,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, computed, reactive } from 'vue'
+import { ref, watch, onMounted, onBeforeUnmount, computed, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   AlertTriangle,
@@ -401,6 +401,8 @@ import {
   Clock
 } from 'lucide-vue-next'
 import { bridgeReady, api } from '@/api/bridge'
+import { loadSharedContact, saveSharedContact } from '@/utils/sharedContact'
+import IntentModeSelector from '@/components/base/IntentModeSelector.vue'
 import CtButton from '@/components/base/CtButton.vue'
 import CtAvatar from '@/components/base/CtAvatar.vue'
 import FiltersBar from '@/components/analytics/FiltersBar.vue'
@@ -496,6 +498,16 @@ function goToSettings() {
 const contacts = ref<any[]>([])
 const contactsLoading = ref(false)
 const selectedConversationId = ref<number | null>(null)
+
+// 联系人选中变化：写入跨页共享状态
+watch(selectedConversationId, (id) => {
+  if (id) {
+    const c = contacts.value.find((x: any) => x.id === id)
+    if (c) {
+      saveSharedContact({ conversationId: id, displayName: c.name || c.username || '', avatar: c.avatar })
+    }
+  }
+})
 const activeContact = computed(() => {
   if (selectedConversationId.value) {
     return contacts.value.find((contact: any) => contact.id === selectedConversationId.value) || null
@@ -522,6 +534,18 @@ async function loadContacts() {
       contacts.value = r.conversations
       if (selectedConversationId.value && !contacts.value.some((contact: any) => contact.id === selectedConversationId.value)) {
         selectedConversationId.value = null
+      }
+      // 恢复跨页共享的联系人选中（联系人洞察页切换过来时同步）
+      if (!selectedConversationId.value) {
+        const shared = loadSharedContact()
+        const match = contacts.value.find((c: any) => c.id === shared?.conversationId)
+        if (shared && match) {
+          selectedConversationId.value = shared.conversationId
+          realtimeState.talkerName = match.name || match.username || ''
+          console.log('[Suggestions] 恢复共享联系人:', shared.displayName)
+          // 触发画像检查（与手动选择行为一致）
+          checkPortraitProfiles(realtimeState.talkerName)
+        }
       }
     }
   } catch (e) {

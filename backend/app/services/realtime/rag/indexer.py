@@ -415,9 +415,12 @@ class RagIndexer:
                 # 构建、配 LLM 后重建不动）。
                 new_messages = self._load_messages_after(conversation_id, watermark_ts)
                 llm_behind = self._llm_extraction_behind(status_row, watermark_ts)
-                if llm_behind:
-                    self._backfill_llm_extraction(account_wxid, conversation_id)
+                # 抽取欠账回补只在一条路径上跑：无新消息在此处补；有新
+                # 消息在嵌入循环后统一补——此前两处都跑，全量重载消息+
+                # 重分段×2、段预算清零×2（单次 rebuild 送出双倍 LLM 调用）
                 if not new_messages:
+                    if llm_behind:
+                        self._backfill_llm_extraction(account_wxid, conversation_id)
                     # 无新消息（且抽取无欠账）：直接标记 ready，跳过重嵌入
                     self.store.upsert_status(
                         account_wxid, conversation_id,

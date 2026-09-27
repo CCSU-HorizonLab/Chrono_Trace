@@ -9,7 +9,7 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy
 
 SPEC_FILE = globals().get("__file__") or globals().get("SPEC")
 PROJECT_ROOT = Path(SPEC_FILE).resolve().parents[1] if SPEC_FILE else Path(os.getcwd()).resolve()
-APP_NAME = "Chrono Trace"
+APP_NAME = "ChronoTrace"  # 产物文件名不带空格；用户数据目录名在 config.APP_NAME（未改）
 FRONTEND_DIST_DIR = PROJECT_ROOT / "frontend" / "webdist"
 APP_ICON = PROJECT_ROOT / "chrono Trace.ico"
 BUILD_INFO_FILE = PROJECT_ROOT / "packaging" / "generated" / "build_info.json"

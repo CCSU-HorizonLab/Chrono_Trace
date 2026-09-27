@@ -14,6 +14,7 @@ import math
 import time
 from typing import Optional
 from .llm_http import post_json_with_retries
+from .profile_llm_retry import call_profile_llm_with_budget_retry
 from ..wechat.account_settings import get_active_wechat_account_wxid, load_settings_from_file
 from ..wechat.contact_filters import is_excluded_contact_username
 
@@ -55,7 +56,7 @@ MAX_SAMPLE_CHARS = 80000
 
 # 输出额度重试上限：混合推理模型的思考计入 completion 且长度波动极大，
 # 首次请求按保守额度发出，被截断时逐级加倍直到该上限。
-MAX_OUTPUT_TOKEN_BUDGET = 32768
+# 输出预算上限移至 profile_llm_retry（与 self_profiler 共用单点）
 
 # 缓存有效期（秒）
 PROFILE_TTL = 7 * 86400  # 7 天
@@ -742,59 +743,18 @@ class ContactProfiler:
         if api_key:
             headers['Authorization'] = f'Bearer {api_key}'
 
-        # 混合推理模型的思考长度随输入规模大幅波动且计入 completion 额度，
-        # 无法事先预测；输出被 max_tokens 截断时逐级加倍重试。
-        attempt_budget = dynamic_max_tokens
-        parsed = None
-        while True:
-            payload['max_tokens'] = attempt_budget
-            body = post_json_with_retries(
-                url=url,
-                payload=payload,
-                headers=headers,
-                timeout=self.timeout,
-                log=_print,
-                log_prefix='[ContactProfiler]',
-            )
-
-            choice = (body.get('choices') or [{}])[0]
-            message_obj = choice.get('message', {})
-            content = message_obj.get('content', '') or ''
-            reasoning = message_obj.get('reasoning_content', '')
-
-            # 部分模型（如 deepseek-reasoner）可能将内容放在 reasoning_content 中，或者由于 max_tokens 限制没能输出 content
-            if not content and reasoning:
-                reasoning_candidate = self._extract_json_candidate(reasoning)
-                if reasoning_candidate.lstrip().startswith("{") and reasoning_candidate.rstrip().endswith("}"):
-                    content = reasoning_candidate
-                    _print("[ContactProfiler] ⚠️ content 为空，使用 reasoning_content 中的 JSON 回退")
-                else:
-                    _print("[ContactProfiler] ⚠️ content 为空且 reasoning_content 没有完整 JSON")
-
-            usage = body.get('usage', {})
-            _print(
-                f"[ContactProfiler] 📥 tokens: prompt={usage.get('prompt_tokens', '?')}, "
-                f"completion={usage.get('completion_tokens', '?')}, "
-                f"total={usage.get('total_tokens', '?')}"
-            )
-
-            parsed = self._parse_profile_json(content)
-            if parsed:
-                break
-
-            completion_tokens = usage.get('completion_tokens') or 0
-            truncated = (
-                choice.get('finish_reason') == 'length'
-                or completion_tokens >= attempt_budget
-            )
-            if not truncated or attempt_budget >= MAX_OUTPUT_TOKEN_BUDGET:
-                break
-            attempt_budget = min(attempt_budget * 2, MAX_OUTPUT_TOKEN_BUDGET)
-            _print(
-                f"[ContactProfiler] ⚠️ 输出在 {attempt_budget // 2} token 处被截断"
-                f"（推理模型的思考计入了输出额度），加大到 {attempt_budget} 重试"
-            )
-
+        parsed = call_profile_llm_with_budget_retry(
+            url=url,
+            payload=payload,
+            headers=headers,
+            timeout=self.timeout,
+            initial_budget=dynamic_max_tokens,
+            parse_json=self._parse_profile_json,
+            extract_json_candidate=self._extract_json_candidate,
+            post_json=post_json_with_retries,
+            log=_print,
+            log_prefix='[ContactProfiler]',
+        )
         if not parsed:
             raise ValueError('LLM 返回内容解析失败：未得到合法画像 JSON')
 

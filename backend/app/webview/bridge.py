@@ -2254,6 +2254,7 @@ class Bridge:
         try:
             from ..services.realtime.rag.config import load_rag_settings
             from ..services.realtime.rag.indexer import RagIndexQueue, get_active_and_queued
+            from ..services.realtime.rag.store import RagStore
 
             resolved_account = self._resolve_account_wxid(account_wxid)
             if not load_rag_settings().get("rag_enabled"):
@@ -2280,6 +2281,16 @@ class Bridge:
                     "message": "该联系人正在构建索引，无需重复发起" if live == "building"
                     else "该联系人已在索引队列中",
                 }
+            # 手动「立即构建」= 用户显式选择开启：clear 后停用的联系人
+            # 重新启用（队列 worker 对停用联系人跳过，防自动复活）
+            try:
+                from ..db.connection import get_db as _get_db
+
+                RagStore(_get_db()).set_conversation_enabled(
+                    resolved_account, int(conversation_id), True
+                )
+            except Exception as enable_e:
+                logger.debug("[Bridge] 重新启用联系人跳过: %s", enable_e)
             RagIndexQueue.enqueue(resolved_account, int(conversation_id))
             return {
                 "ok": True,

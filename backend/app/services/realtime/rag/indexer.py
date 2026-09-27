@@ -73,6 +73,9 @@ class RagIndexer:
     # 且队列串行+互斥锁已保证长任务安全——小步慢走的防误操作预算
     # 在 156 联系人欠账场景下不合理（几十次手动重建才抽完一人）
     LLM_EXTRACT_BACKFILL_BUDGET = 200
+    # 回补并发：LLM 调用是纯 IO 等待（单次 1-30s），3 路并发约 3 倍
+    # 吞吐；写库与水位推进在主线程按提交序串行，语义不变
+    LLM_EXTRACT_CONCURRENCY = 3
     # P1.5 断点续抽版本：抽取 prompt/质量门变化时递增，水位失效全量重抽
     # p1.6：游戏内购买排除+购买代词差例强化（P1.6 T11）
     # p1.7：消费类原型降级（LLM-only）+ 检索增强上下文（跨天代指还原）
@@ -926,6 +929,27 @@ class RagIndexer:
         )
         return docs
 
+    def _segment_worth_extraction(self, segment: RagSegment) -> bool:
+        """回补预筛：纯寒暄/水聊段不送 LLM（抽出必为零，纯耗 token）。
+
+        判据保守（宁可多送勿漏抽）：段总字符 >=30 且非纯应答消息占比
+        >=0.4（长度 <4 或命中通用应答集视为无信息量）。
+        """
+        from .fact_quality import GENERIC_TURNS
+
+        msgs = [m for m in segment.messages if str(m.get("content") or "").strip()]
+        informative_chars = 0
+        informative_count = 0
+        for m in msgs:
+            compact = "".join(str(m.get("content") or "").split())
+            if len(compact) >= 4 and compact not in GENERIC_TURNS:
+                informative_chars += len(compact)
+                informative_count += 1
+        # 信息密集的短段（"我对虾过敏，千万别点虾"）必须放行——按
+        # informative 总字数而非段总字数判，纯应答段（嗯/哈哈/好的）
+        # informative 字数趋近于 0 被拦
+        return informative_chars >= 24 and informative_count >= 2
+
     def _llm_extraction_behind(self, status_row: dict[str, Any], message_watermark_ts: int) -> bool:
         """LLM 抽取欠账：抽取已启用但未覆盖到消息水位（或版本变化）。"""
         if self.structured_fact_extractor is None:
@@ -955,26 +979,98 @@ class RagIndexer:
         segments = self.segmenter.segment(messages, conversation_id=conversation_id, sessions=sessions)
         prev_tail: list[dict[str, Any]] = []
         extracted = 0
-        for segment in segments:
-            before = self._llm_extract_segments_used
-            self._extract_structured_shadow_facts(
+        # 提速：水聊段预筛不送 LLM（真实对话大量寒暄段，纯应答段抽出
+        # 零事实）；LLM 调用 3 路并发（纯 IO 等待，单连接写库仍在主
+        # 线程按提交序串行——水位连续覆盖语义不变）
+        from collections import deque
+        from concurrent.futures import ThreadPoolExecutor
+
+        def _drain_one(pending: deque) -> bool:
+            """等最旧的调用完成并按序落库；返回该段是否实际抽取。"""
+            segment, prompt, prev_tail_snapshot, future = pending.popleft()
+            try:
+                facts = future.result()
+                self._llm_extract_consecutive_failures = 0
+            except Exception as exc:
+                self._llm_extract_consecutive_failures += 1
+                self._llm_extract_round_failed = True
+                logger.warning(
+                    "[RAG Fact Shadow] backfill extraction failed (%s/3): %s",
+                    self._llm_extract_consecutive_failures, exc,
+                )
+                return False
+            from .fact_quality import fact_quality_reason
+
+            usable = [
+                fact for fact in facts
+                if fact_quality_reason(
+                    str(fact.get("kind") or ""), fact.get("content"),
+                    require_kind_signal=False,
+                ) is None
+            ]
+            self._write_structured_facts(
                 account_wxid=account_wxid,
                 conversation_id=conversation_id,
                 segment=segment,
-                prev_context_messages=prev_tail,
+                facts=usable,
             )
-            if self._llm_extract_segments_used > before:
-                extracted += 1
-                self.store.conn.commit()
-            prev_tail = [
-                msg for msg in segment.messages[-3:]
-                if str(msg.get("content") or "").strip()
-            ]
-            if self._llm_extract_consecutive_failures >= 3:
-                break
-            if self._llm_extract_segments_used >= self._llm_extract_budget_limit:
-                break
-        self._llm_extract_budget_limit = self.LLM_EXTRACT_SEGMENT_BUDGET
+            self._advance_llm_extract_progress(account_wxid, conversation_id, segment)
+            self.store.conn.commit()
+            return True
+
+        executor = ThreadPoolExecutor(max_workers=self.LLM_EXTRACT_CONCURRENCY)
+        pending: deque = deque()
+        try:
+            for segment in segments:
+                if self._llm_extract_consecutive_failures >= 3:
+                    break
+                if self._llm_extract_segments_used >= self._llm_extract_budget_limit:
+                    break
+                # 断点续抽：已覆盖段跳过（预筛前先查水位）
+                if self._llm_extract_watermark_ts and segment.end_ts <= self._llm_extract_watermark_ts:
+                    continue
+                if len(segment.messages) < 4:
+                    continue
+                if not self._segment_worth_extraction(segment):
+                    # 无价值段：不送 LLM 但推进水位（不推进会被每轮重扫）
+                    self._advance_llm_extract_progress(account_wxid, conversation_id, segment)
+                    continue
+                self._llm_extract_segments_used += 1
+                related = self._retrieve_related_history_messages(
+                    account_wxid=account_wxid, conversation_id=conversation_id, segment=segment,
+                )
+                prompt = json.dumps(
+                    {
+                        "task": "extract_atomic_contact_facts",
+                        "account_wxid": account_wxid,
+                        "conversation_id": conversation_id,
+                        "messages": segment.messages,
+                        "context_messages": prev_tail,
+                        "related_context_messages": related,
+                        "max_tokens": 2048,
+                        "contract": {
+                            "required": ["subject", "kind", "content"],
+                            "status": ["active", "superseded", "uncertain"],
+                            "evidence_message_ids": "integer array",
+                        },
+                    },
+                    ensure_ascii=False,
+                )
+                future = executor.submit(self.structured_fact_extractor.extract, prompt)
+                pending.append((segment, prompt, list(prev_tail), future))
+                prev_tail = [
+                    msg for msg in segment.messages[-3:]
+                    if str(msg.get("content") or "").strip()
+                ]
+                if len(pending) >= self.LLM_EXTRACT_CONCURRENCY:
+                    if _drain_one(pending):
+                        extracted += 1
+            while pending:
+                if _drain_one(pending):
+                    extracted += 1
+        finally:
+            executor.shutdown(wait=True, cancel_futures=True)
+            self._llm_extract_budget_limit = self.LLM_EXTRACT_SEGMENT_BUDGET
         if extracted:
             logger.info(
                 "[RAG Index] llm extraction backfill: %s segments (conv=%s)", extracted, conversation_id

@@ -2618,7 +2618,42 @@ class RealtimeMonitorService:
         checkpoint['threshold_seconds'] = int(threshold_seconds)
         checkpoint['gap_seconds'] = gap_seconds
         checkpoint['should_offer_resume'] = gap_seconds >= int(threshold_seconds)
+
+        # 缺口已被导入覆盖则不再询问：距上次监听超阈值就弹「是否补全」的
+        # 提示，从不检查缺口消息是否已通过增量导入进库——频繁导入的用户
+        # 每次进监听都被打扰（实测：丰瑶会话每次必弹）。
+        if checkpoint['should_offer_resume'] and self._checkpoint_gap_covered_by_import(
+            checkpoint, resolved_account_wxid
+        ):
+            checkpoint['should_offer_resume'] = False
+            checkpoint['resume_skip_reason'] = 'covered_by_import'
         return checkpoint
+
+    def _checkpoint_gap_covered_by_import(self, checkpoint: dict, account_wxid: str) -> bool:
+        """检查 checkpoint 之后该会话是否已有导入消息（缺口已被导入补上）。"""
+        try:
+            from ...db.connection import get_db
+
+            talker_username = str(checkpoint.get('talker_username') or '').strip()
+            if not talker_username:
+                return False
+            conn = get_db()
+            conv = conn.execute(
+                "SELECT id FROM conversations WHERE account_wxid = ? AND username = ? "
+                "AND is_deleted = 0",
+                (account_wxid, talker_username),
+            ).fetchone()
+            if not conv:
+                return False
+            covered = conn.execute(
+                "SELECT 1 FROM messages WHERE conversation_id = ? AND source = 'long' "
+                "AND timestamp > ? LIMIT 1",
+                (conv['id'], int(checkpoint.get('last_message_timestamp') or 0)),
+            ).fetchone()
+            return covered is not None
+        except Exception as exc:
+            logger.debug("[Checkpoint] 缺口覆盖检查失败（按未覆盖处理）: %s", exc)
+            return False
 
     def _checkpoint_match_reason(
         self,

@@ -63,6 +63,7 @@ type PyWebViewApi = {
   set_fact_feedback: (fact_id: number, action: string, reason?: string) => Promise<any>
   rebuild_rag_index: (conversation_id: number, account_wxid?: string) => Promise<any>
   clear_rag_index: (conversation_id: number, account_wxid?: string) => Promise<any>
+  backfill_all_rag_extraction: (account_wxid?: string) => Promise<any>
   set_rag_conversation_enabled: (conversation_id: number, enabled: boolean, account_wxid?: string) => Promise<any>
   set_rag_fact_read_mode: (conversation_id: number, mode: 'inherit' | 'facts' | 'documents', account_wxid?: string) => Promise<any>
   update_model_root_dir: (new_dir: string) => Promise<any>

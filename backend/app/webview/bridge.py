@@ -2311,6 +2311,45 @@ class Bridge:
             logger.error(f"[Bridge] 清空 RAG 索引失败: {e}")
             return {"ok": False, "error": str(e)}
 
+    def backfill_all_rag_extraction(self, account_wxid: str = "") -> dict[str, Any]:
+        """为全部有抽取欠账的联系人排队回补 LLM 记忆抽取（用户主动触发）。
+
+        欠账 = 消息水位已推进但抽取水位未覆盖（含从未抽取）。队列单
+        worker 串行消化，回补未完成自动续轮，直至全部抽平。成本与
+        AI 抽取开关同级（每段一次远程调用），由前端确认弹窗明示。
+        """
+        try:
+            from ..db.connection import get_db
+            from ..services.realtime.rag.indexer import RagIndexer, RagIndexQueue
+
+            resolved_account = self._resolve_account_wxid(account_wxid)
+            conn = get_db()
+            rows = conn.execute(
+                """
+                SELECT s.conversation_id,
+                       s.message_watermark_ts, s.fact_extract_watermark_ts,
+                       s.fact_extract_prompt_version, s.enabled
+                FROM rag_index_status s
+                WHERE s.account_wxid = ?
+                  AND s.message_watermark_ts > 0
+                  AND s.enabled = 1
+                """,
+                (resolved_account,),
+            ).fetchall()
+            queued = 0
+            for row in rows:
+                msg_wm = int(row["message_watermark_ts"] or 0)
+                ext_wm = int(row["fact_extract_watermark_ts"] or 0)
+                version = str(row["fact_extract_prompt_version"] or "")
+                if version != RagIndexer.FACT_EXTRACT_PROMPT_VERSION or ext_wm < msg_wm:
+                    RagIndexQueue.enqueue(resolved_account, int(row["conversation_id"]))
+                    queued += 1
+            logger.info("[Bridge] 批量回补记忆抽取: 排队 %s 个联系人", queued)
+            return {"ok": True, "queued": queued}
+        except Exception as e:
+            logger.error(f"[Bridge] 批量回补失败: {e}")
+            return {"ok": False, "error": str(e)}
+
     def set_rag_conversation_enabled(
         self,
         conversation_id: int,

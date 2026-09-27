@@ -1384,6 +1384,9 @@ def test_rag_indexer_rebuilds_v2_multilayer_documents_and_cleans_old_auto_docs(m
             (3, 0, "那家火锅店人均有点贵，不过好吃", now - 480),
             (4, 1, "宝宝不是说那个贵嘛", now - 420),
             (5, 0, "对呀上次说的", now - 360),
+            # 消费类（p1.7 起只走 LLM 路径）之外需有非消费命中以产出
+            # fact_memory/shared_memory 的多层结构断言
+            (6, 0, "好呀那我们周五见面去吃，约定了", now - 300),
         ],
     )
     conn.execute(
@@ -1456,6 +1459,10 @@ def test_rag_indexer_rebuilds_v2_multilayer_documents_and_cleans_old_auto_docs(m
     docs = conn.execute("SELECT * FROM rag_documents WHERE conversation_id = 1").fetchall()
     doc_types = {row["doc_type"] for row in docs}
     assert {"topic_segment", "fact_memory", "evidence_excerpt", "shared_memory"} <= doc_types
+    # p1.7：消费类原型不再直接入库（火锅/贵/买对话只留 LLM 路径判断）
+    assert conn.execute(
+        "SELECT COUNT(*) FROM rag_facts WHERE kind IN ('food_or_place', 'purchase_or_price')"
+    ).fetchone()[0] == 0
     assert conn.execute("SELECT 1 FROM rag_documents WHERE id = ?", (feedback_id,)).fetchone() is not None
     assert conn.execute("SELECT 1 FROM rag_embeddings WHERE document_id = ?", (feedback_id,)).fetchone() is not None
     fact = conn.execute("SELECT * FROM rag_documents WHERE doc_type = 'fact_memory' LIMIT 1").fetchone()
@@ -2377,3 +2384,52 @@ def test_concurrent_rebuilds_queue_instead_of_locking(monkeypatch):
     # 第一个 rebuild 正常完成
     assert results[1]["status"] == "ready"
     assert "raised" not in {v.get("status") for v in results.values()}
+
+
+def test_clear_conversation_wipes_all_derived_memory_and_disables(monkeypatch):
+    """清空语义修复：事实/向量/策略/偏好全清 + 停用防自动重建复活。
+
+    此前 clear 只删文档层三张表，rag_facts 等全部残留——前端清空后
+    记忆弹窗依旧有数据。
+    """
+    conn = _conn()
+    store = RagStore(conn)
+    store.upsert_status("wxid_a", 1, status="ready", document_count=5)
+    fid = store.upsert_fact(
+        account_wxid="wxid_a", conversation_id=1, subject="对方", kind="preference",
+        content="对方对虾过敏", confidence=0.8, as_of=1789900000,
+        evidence_message_ids=[1], summary_method="llm_shadow",
+    )
+    store.upsert_fact_embedding(
+        fact_id=fid, account_wxid="wxid_a", conversation_id=1,
+        embedding_model="m", embedding_dim=2, vector=[0.1, 0.2],
+    )
+    store.upsert_relationship_state(
+        account_wxid="wxid_a", conversation_id=1, stage="s", closeness_band="high",
+        initiative_pattern="i", evidence_hash="h", confidence=0.7,
+    )
+    store.upsert_contact_preference(
+        account_wxid="wxid_a", conversation_id=1, slot_key="preference:1",
+        slot_kind="preference", summary="对方喜欢喝奶茶", evidence_hash="h1",
+        confidence=0.8,
+    )
+    store.record_feedback_policy_signal(
+        account_wxid="wxid_a", conversation_id=1, fact_id=fid, action="inaccurate",
+    )
+    store.set_fact_user_feedback(fid, "inaccurate")
+    conn.commit()
+
+    deleted = store.clear_conversation("wxid_a", 1)
+    store.set_conversation_enabled("wxid_a", 1, False)
+    conn.commit()
+
+    for table in (
+        "rag_facts", "rag_fact_embeddings", "rag_relationship_state",
+        "rag_contact_preferences", "rag_feedback_policy_signals",
+        "rag_fact_user_feedback", "rag_documents", "rag_embeddings",
+    ):
+        n = conn.execute(f"SELECT COUNT(*) FROM {table} WHERE conversation_id = 1").fetchone()[0]
+        assert n == 0, f"{table} 残留 {n} 行"
+    status = store.get_status("wxid_a", 1)
+    assert status is not None and status.get("enabled") == 0  # 停用（防复活）
+    assert deleted >= 0

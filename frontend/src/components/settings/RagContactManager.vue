@@ -597,7 +597,7 @@ async function handleRebuild(item: RagContactItem) {
 
 async function handleClear(item: RagContactItem) {
   const confirmed = await showConfirm(
-    `确定清空联系人「${item.display_name || item.username}」的记忆数据吗？\n该操作仅清空提炼的动态记忆与摘要，原始聊天记录不受影响。`
+    `确定清空联系人「${item.display_name || item.username}」的记忆数据吗？\n该操作仅清空提炼的动态记忆与摘要（事实、关系画像、偏好），原始聊天记录不受影响。清空后该联系人的记忆功能将停用，可重新启用并重建。`
   )
   if (!confirmed) return
 

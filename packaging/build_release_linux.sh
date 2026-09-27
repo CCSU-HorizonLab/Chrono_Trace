@@ -169,7 +169,8 @@ find "$DIST_DIR/_internal" -type f -name "*.so*" -size +5M \
 
 # ---------- tar.gz + .desktop ----------
 log "生成 tar.gz 与 .desktop…"
-TARBALL="$RELEASE_ROOT/chrono-trace-${VERSION}-linux.tar.gz"
+FILE_VERSION="${VERSION// /-}"  # 文件名不含空格（显示版本不变）
+TARBALL="$RELEASE_ROOT/chrono-trace-${FILE_VERSION}-linux.tar.gz"
 tar -czf "$TARBALL" -C "$RELEASE_ROOT/pyinstaller-linux" "ChronoTrace"
 
 cat > "$RELEASE_ROOT/chrono-trace.desktop" <<'DESKTOP'

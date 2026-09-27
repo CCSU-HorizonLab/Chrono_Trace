@@ -10,6 +10,10 @@
   #define ProjectVersion "0.1.0"
 #endif
 
+#ifndef SetupVersion
+  #define SetupVersion "0.1.0"  // 文件名用（无空格）；显示版本走 AppVersion
+#endif
+
 #ifndef InstallerSuffix
   #define InstallerSuffix ""
 #endif
@@ -31,7 +35,7 @@ SetupIconFile={#AppIconFile}
 DefaultDirName={localappdata}\Programs\{#AppName}
 DefaultGroupName={#AppName}
 OutputDir=..\release\installer
-OutputBaseFilename=ChronoTrace-{#AppVersion}-Setup{#InstallerSuffix}
+OutputBaseFilename=ChronoTrace-{#SetupVersion}-Setup{#InstallerSuffix}
 Compression=lzma2
 SolidCompression=yes
 ArchitecturesInstallIn64BitMode=x64compatible

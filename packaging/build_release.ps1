@@ -341,9 +341,12 @@ foreach ($targetVariant in $variantList) {
             throw "ISCC.exe not found. Install Inno Setup 6 first."
         }
 
+        # File-name version must not contain spaces (display version unchanged)
+        $setupVersion = ($packageVersion -replace '[ /]', '-')
         $installerArgs = @(
             "/DBuildRoot=$($settings.AppDistDir)",
             "/DProjectVersion=$packageVersion",
+            "/DSetupVersion=$setupVersion",
             "/DInstallerSuffix=$($settings.InstallerSuffix)",
             $InstallerScript
         )

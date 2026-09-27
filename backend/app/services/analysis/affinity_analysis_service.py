@@ -241,7 +241,15 @@ class AffinityAnalysisService:
             # 7. 保存结果
             logger.info("[好感度分析] 步骤 5/5: 保存结果...")
             self._save_results(conversation_id, result)
-            
+
+            # 全流程终点：清 stale + 快照消息集规模（此后 UI「待更新」消失）
+            try:
+                from .analysis_state import mark_analysis_complete
+
+                mark_analysis_complete(conversation_id)
+            except Exception as state_e:
+                logger.debug("[分析状态] 完成标记跳过: %s", state_e)
+
             logger.info(
                 f"好感度分析完成: {result.overall_score:.1f} 分, "
                 f"耗时 {result.analysis_duration_ms}ms (会话 {conversation_id})"

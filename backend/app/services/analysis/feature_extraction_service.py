@@ -132,6 +132,14 @@ class FeatureExtractionService:
             self._update_task_status(task_id, 100, "completed", "completed")
             logger.info(f"[特征提取] 全部特征提取完成 (conversation_id={conversation_id})")
 
+            # 分析完成：清 stale + 快照消息集规模（好感度阶段随后会再刷新一次）
+            try:
+                from .analysis_state import mark_analysis_complete
+
+                mark_analysis_complete(conversation_id)
+            except Exception as state_e:
+                logger.debug("[分析状态] 完成标记跳过: %s", state_e)
+
             return {
                 "task_id": task_id,
                 "sessions": sessions,

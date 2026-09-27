@@ -18,6 +18,9 @@ CREATE TABLE IF NOT EXISTS conversations (
     updated_at INTEGER NOT NULL,             -- 最后一条消息时间戳（秒）
     message_count INTEGER DEFAULT 0,         -- 消息总数
     is_deleted INTEGER DEFAULT 0,            -- 是否已删除（软删除）
+    analysis_stale INTEGER NOT NULL DEFAULT 1, -- 分析结果待更新（导入/监听写入新消息时置1）
+    analysis_message_count INTEGER,          -- 最近一次分析完成时的消息数快照
+    analysis_watermark_ts INTEGER,           -- 最近一次分析完成时 MAX(timestamp)（展示/行级增量预留）
     UNIQUE(account_wxid, username, platform)
 );
 

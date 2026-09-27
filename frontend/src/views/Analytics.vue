@@ -124,6 +124,11 @@
                 <div class="trend-badge" v-if="analysisResult.score_trend">
                   较上周 <span :class="analysisResult.score_trend >= 0 ? 'up' : 'down'">{{ analysisResult.score_trend > 0 ? '↑' : '↓' }}{{ Math.abs(analysisResult.score_trend) }}%</span>
                 </div>
+                <span
+                  v-if="analysisResult.analysis_stale"
+                  class="stale-badge"
+                  :title="analysisResult.pending_message_count ? `有 ${analysisResult.pending_message_count} 条新消息未纳入当前分数` : '消息集已变化，建议重新分析'"
+                >{{ analysisResult.pending_message_count ? `${analysisResult.pending_message_count} 条新消息待分析` : '结果待更新' }}</span>
               </div>
               
               <div class="score-visual">
@@ -2253,6 +2258,18 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
 
 .trend-badge .up { color: var(--ct-color-success); }
 .trend-badge .down { color: var(--ct-color-error); }
+
+/* 分析新鲜度徽标：导入新消息未重分析时提示 */
+.stale-badge {
+  margin-left: 8px;
+  font-size: var(--ct-text-xs);
+  padding: 2px 8px;
+  border-radius: var(--ct-radius-sm);
+  color: #f0b429;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  cursor: help;
+}
 
 .score-visual {
   display: flex;

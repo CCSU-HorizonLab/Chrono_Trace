@@ -245,6 +245,30 @@ class DatabaseConnection:
         conn.commit()
 
     @classmethod
+    def _migrate_conversations_analysis_columns(cls, conn: sqlite3.Connection) -> None:
+        """conversations 补分析新鲜度三列（纯增量 ALTER，老代码不读不炸）。
+
+        analysis_stale 默认 1：存量会话分析新鲜度未知，诚实显示「待更新」。
+        """
+        additions = (
+            ("analysis_stale", "INTEGER NOT NULL DEFAULT 1"),
+            ("analysis_message_count", "INTEGER"),
+            ("analysis_watermark_ts", "INTEGER"),
+        )
+        existing = cls._table_columns(conn, "conversations")
+        if not existing:
+            return
+        changed = False
+        for column_name, column_type in additions:
+            if column_name not in existing:
+                conn.execute(
+                    f"ALTER TABLE conversations ADD COLUMN {column_name} {column_type}"
+                )
+                changed = True
+        if changed:
+            conn.commit()
+
+    @classmethod
     def _run_compat_migrations(cls):
         """Apply lightweight compatibility migrations for existing databases."""
         conn = cls._get_instance()
@@ -252,6 +276,7 @@ class DatabaseConnection:
             return
 
         cls._migrate_wechat_account_isolation(conn)
+        cls._migrate_conversations_analysis_columns(conn)
 
         conn.execute(
             """

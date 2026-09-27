@@ -714,6 +714,15 @@ class WeChatIngestService:
         except Exception as rag_e:
             logger.debug("[RAG] import dirty mark skipped: %s", rag_e)
 
+        # 分析结果打脏：touched 只含本批有新插入消息的会话（OR IGNORE 全
+        # 跳过的重复导入不进入），stale 由分析完成点清除
+        try:
+            from ..analysis.analysis_state import mark_conversations_stale
+
+            mark_conversations_stale(touched_conversations)
+        except Exception as stale_e:
+            logger.debug("[分析状态] import stale mark skipped: %s", stale_e)
+
         logger.info(f"[DEBUG] Messages imported: {total_messages}, conversations: {len(conversations_set)}")
         logger.debug(f"[DEBUG] Filtered conversations: {skipped_conversations}")
         if failed_conversations:

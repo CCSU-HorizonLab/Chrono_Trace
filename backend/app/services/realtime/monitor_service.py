@@ -2790,6 +2790,13 @@ class RealtimeMonitorService:
                 )
             )
             conn.commit()
+            # 回溯写入也是消息集变化：分析结果打脏（失败仅丢提示）
+            try:
+                from ..analysis.analysis_state import mark_conversations_stale
+
+                mark_conversations_stale([conversation_id])
+            except Exception as stale_e:
+                logger.debug("[分析状态] backfill stale mark skipped: %s", stale_e)
 
         if messages:
             _print(f"[Backfill] 已存在样本({existing}/{len(messages)}): {existing_samples}")
@@ -3212,6 +3219,13 @@ class RealtimeMonitorService:
                 )
             )
             conn.commit()
+            # 监听期间的消息并入历史：分析结果打脏（失败仅丢提示）
+            try:
+                from ..analysis.analysis_state import mark_conversations_stale
+
+                mark_conversations_stale([conversation_id])
+            except Exception as stale_e:
+                logger.debug("[分析状态] migrate stale mark skipped: %s", stale_e)
         else:
             conn.commit()
 

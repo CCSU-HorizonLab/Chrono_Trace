@@ -902,6 +902,9 @@ async function startImport(autoFromCapture = false) {
 
     const stats = res.stats || {}
     wechatOk.value = `导入成功：当前共联系人 ${stats.contacts || 0}，消息 ${stats.messages || 0}，会话 ${stats.conversations || 0}；本次新增联系人 ${stats.inserted_contacts || 0}，消息 ${stats.inserted_messages || 0}，跳过重复 ${stats.skipped || 0}。`
+    if ((stats.inserted_messages || 0) > 0) {
+      wechatOk.value += ' 已导入新消息：相关联系人的分析结果待更新（联系人洞察页有标记，重新分析通常秒级完成）。'
+    }
     hasImportedBefore.value = true
     incrementInfo.value = null
     incrementDismissed.value = false

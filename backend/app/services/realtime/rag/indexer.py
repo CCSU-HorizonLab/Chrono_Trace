@@ -1033,6 +1033,10 @@ class RagIndexer:
                 if self._llm_extract_watermark_ts and segment.end_ts <= self._llm_extract_watermark_ts:
                     continue
                 if len(segment.messages) < 4:
+                    # 短段不送 LLM 但同样推进水位（与无价值段一致）——不推进
+                    # 的话历史尾部全是短段时抽取水位永远追不上消息水位，
+                    # 每轮 rebuild/backfill 都重扫这些段（无限欠账）
+                    self._advance_llm_extract_progress(account_wxid, conversation_id, segment)
                     continue
                 if not self._segment_worth_extraction(segment):
                     # 无价值段：不送 LLM 但推进水位（不推进会被每轮重扫）

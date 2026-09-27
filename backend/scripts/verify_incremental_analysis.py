@@ -167,7 +167,11 @@ def append_synthetic(db_path: Path, conversation_id: int, count: int) -> None:
     conn.close()
 
 
-def diff_snapshots(a: dict, b: dict) -> list:
+def diff_snapshots(a: dict, b: dict, atol: float = 0.0) -> list:
+    """逐表 row-diff。atol=0 精确相等（同一初始编码的暖跑/增量路径）；
+    跨独立冷跑对照需 atol≈1e-6——torch 编码结果随批组合有 float32 epsilon
+    级噪声（实测 ~1.2e-7），远低于任何阈值语义，非缓存缺陷。
+    """
     problems = []
     for name in a:
         rows_a, rows_b = a[name], b[name]
@@ -177,7 +181,7 @@ def diff_snapshots(a: dict, b: dict) -> list:
         for i, (ra, rb) in enumerate(zip(rows_a, rows_b)):
             for j, (va, vb) in enumerate(zip(ra, rb)):
                 if isinstance(va, float) or isinstance(vb, float):
-                    if va != vb and abs((va or 0) - (vb or 0)) > 0:
+                    if va != vb and abs((va or 0) - (vb or 0)) > atol:
                         problems.append(f"{name}[{i}].col{j}: {va!r} != {vb!r}")
                 elif va != vb:
                     problems.append(f"{name}[{i}].col{j}: {va!r} != {vb!r}")
@@ -224,7 +228,7 @@ def main():
         timings["④ 金标准冷跑"] = run_analysis(gold_db, args.conversation_id)
         golden_snap = snapshot_tables(gold_db, args.conversation_id)
 
-        gold_diff = diff_snapshots(golden_snap, incremental_snap)
+        gold_diff = diff_snapshots(golden_snap, incremental_snap, atol=1e-6)
 
     print("\n" + "=" * 56)
     print("    增量分析实测报告")

@@ -21,6 +21,13 @@ encode。统一入口 `SentimentService._get_embeddings_batch`；会话切分 / 
 `backend/tests/test_ingest_idempotency.py`（导入幂等与对账）+
 `backend/scripts/verify_incremental_analysis.py`（真实库冷/暖/增量/金标准计时对照）。
 
+**等价性口径**（真实库实测 590 条消息，2026-09）：
+- 同一初始编码的**暖跑/增量路径 bit 级一致**（暖跑 diff 恒为空）——L2 往返无损；
+- 两次**独立冷跑**之间的相似度有 ≤1e-6 的 torch 批组合噪声（编码结果随
+  batch 分组在 float32 epsilon 级漂移，实测 ~1.2e-7）——金标准对照用 1e-6
+  容差，非缓存缺陷；
+- 实测加速：冷跑 110s → 暖跑 5.2s（21x）、增量 30 条后重跑 9.1s（12x）。
+
 ## 关键不变量
 
 1. **`text→vector` 是模型的纯函数**：`PREPROCESSING_ALGO_VERSION` bump 只失效统计缓存，

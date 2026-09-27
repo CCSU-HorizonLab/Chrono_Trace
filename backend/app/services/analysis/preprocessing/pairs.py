@@ -37,12 +37,10 @@ class PairPreprocessingService:
                 return {}
 
             texts = [(unit.get("content") or "").strip() for unit in speech_units]
-            embeddings = sentiment_service._embedding_model.encode(
-                texts,
-                normalize_embeddings=True,
-                show_progress_bar=False,
-                batch_size=32
-            )
+            # 走缓存版批量编码（L1 内存 + L2 embedding_cache 表）——
+            # 此前直调 model.encode 绕过缓存，与 split_sessions 同跑内
+            # 对相同 unit 文本各嵌一遍（冷跑双倍全量编码的主因）
+            embeddings = sentiment_service._get_embeddings_batch(texts, batch_size=32)
 
             similarities: Dict[int, float] = {}
             for idx in range(len(speech_units) - 1):

@@ -4146,32 +4146,47 @@ class Bridge:
             return {'ok': False, 'error': str(e)}
 
     def check_gpu_status(self) -> dict[str, Any]:
-        """检测 GPU 加速可用性。"""
+        """检测 GPU 加速可用性（ONNX 为主通道：DML/CUDA providers；torch 可选）。"""
         try:
-            import torch
             from ..services.gpu.gpu_installer import GpuInstallerService
             from ..runtime_overrides import get_build_variant, get_gpu_install_state, has_gpu_overlay
 
             overlay_state = get_gpu_install_state()
             overlay_installed = has_gpu_overlay()
-            current_cuda_version = torch.version.cuda
+
+            torch_version = ""       # torch 已移出运行栈（字段保留兼容前端）
+            cuda_version = None
+
+            # ONNX providers 是 GPU 真通道（DirectML=Windows 免 CUDA / CUDA=Linux）
+            onnx_providers: list[str] = []
+            dml_available = False
+            onnx_cuda_available = False
+            try:
+                import onnxruntime as ort
+
+                onnx_providers = list(ort.get_available_providers())
+                dml_available = "DmlExecutionProvider" in onnx_providers
+                onnx_cuda_available = "CUDAExecutionProvider" in onnx_providers
+            except Exception:
+                pass
+
             build_variant = get_build_variant()
             overlay_restart_required = bool(
                 build_variant != "dev"
                 and overlay_installed
                 and (
-                    str(torch.__version__) != str(overlay_state.get("torch_version") or "")
-                    or str(current_cuda_version or "") != str(overlay_state.get("cuda_version") or "")
+                    str(torch_version) != str(overlay_state.get("torch_version") or "")
+                    or str(cuda_version or "") != str(overlay_state.get("cuda_version") or "")
                 )
             )
 
             result = {
                 "ok": True,
-                "cuda_available": torch.cuda.is_available(),
+                "cuda_available": onnx_cuda_available,
                 "has_nvidia_gpu": GpuInstallerService.has_nvidia_gpu(),
                 "gpu_name": None,
-                "torch_version": torch.__version__,
-                "cuda_version": current_cuda_version,
+                "torch_version": torch_version,
+                "cuda_version": cuda_version,
                 "gpu_memory_total_mb": 0,
                 "gpu_memory_free_mb": 0,
                 "build_variant": build_variant,
@@ -4179,9 +4194,15 @@ class Bridge:
                 "gpu_overlay_torch_version": overlay_state.get("torch_version"),
                 "gpu_overlay_cuda_version": overlay_state.get("cuda_version"),
                 "restart_required": overlay_restart_required,
+                # ONNX 通道（阶段 B 起 GPU 主路径）
+                "onnx_providers": onnx_providers,
+                "directml_available": dml_available,
+                "onnx_cuda_available": onnx_cuda_available,
             }
 
-            if result["cuda_available"]:
+            if cuda_available:
+                import torch
+
                 result["gpu_name"] = torch.cuda.get_device_name(0)
 
                 mem_total = torch.cuda.get_device_properties(0).total_memory
@@ -4245,8 +4266,35 @@ class Bridge:
     # -- 关系上下文 --
 
     def check_analysis_model_status(self) -> dict[str, Any]:
-        """Check whether analysis models are available locally with detailed diagnosis."""
+        """Check whether analysis models are available locally with detailed diagnosis.
+
+        ONNX 后端口径：fp16 产物存在即就绪（torch 格式的 config.json 不再是
+        必需品——打包版内置目录只有 onnx/，此前按 torch 标记判活导致安装包
+        自带模型还被提示缺失并引导无谓下载）。
+        """
         try:
+            onnx_ready = False
+            try:
+                from ..services.analysis.onnx_inference import has_onnx_models
+
+                onnx_ready = has_onnx_models()
+            except Exception as exc:
+                logger.debug("[Bridge] ONNX 模型探测失败: %s", exc)
+
+            if onnx_ready:
+                empty_diagnosis = {"repo_id": "", "issue": None, "detail": "ONNX fp16 ready"}
+                return {
+                    "ok": True,
+                    "analysis_available": True,
+                    "sentiment_model_ready": True,
+                    "embedding_model_ready": True,
+                    "missing_models": [],
+                    "missing_details": [],
+                    "sentiment_diagnosis": empty_diagnosis,
+                    "embedding_diagnosis": empty_diagnosis,
+                    "backend": "onnx",
+                }
+
             sentiment_manager = self._get_sentiment_model_manager()
             sentiment_diagnosis = sentiment_manager.diagnose_model_status()
             embedding_diagnosis = self._diagnose_embedding_model_status()
@@ -4264,7 +4312,7 @@ class Bridge:
                     "model_key": "sentiment",
                     "repo_id": sentiment_diagnosis.get("repo_id"),
                     "issue": sentiment_diagnosis.get("issue") or "情感分类模型不可用",
-                    "can_auto_download": True,
+                    "can_auto_download": False,
                 })
 
             if not embedding_model_ready:
@@ -4274,8 +4322,14 @@ class Bridge:
                     "model_key": "embedding",
                     "repo_id": embedding_diagnosis.get("repo_id"),
                     "issue": embedding_diagnosis.get("issue") or "文本向量模型不可用",
-                    "can_auto_download": embedding_diagnosis.get("can_recover", True),
+                    "can_auto_download": False,
                 })
+            for item in missing_details:
+                item["issue"] = (
+                    f"{item['issue']}（推理为 ONNX 单后端：运行 "
+                    "python backend/scripts/ensure_models_for_export.py --with-export "
+                    "下载源模型并生成 ONNX 产物）"
+                )
 
             return {
                 "ok": True,

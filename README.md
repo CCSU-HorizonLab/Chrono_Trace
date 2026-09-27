@@ -366,6 +366,8 @@ pytest backend/tests/
 
 项目当前已经接入 Windows 安装包与 Linux 便携包两条打包链路。
 
+> **首次打包会自动下载模型**：构建脚本检测到 ONNX 产物缺失时，自动从 ModelScope 拉取源模型（约 1.2GB，一次性）并导出 fp16 产物打进安装包（模型内置、开箱即用）。产物缓存后后续构建秒级跳过；手动执行 `python backend/scripts/ensure_models_for_export.py --with-export`。
+
 Windows 一键打包：
 
 ```powershell

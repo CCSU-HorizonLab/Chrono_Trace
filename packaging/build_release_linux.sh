@@ -113,6 +113,29 @@ setup_venv() {
     log "打包环境未变化，复用 $VENV_DIR"
   fi
 }
+# ---------- ONNX 模型导出（打包前置：产物缺失时用独立 export 环境生成） ----------
+ensure_onnx_models() {
+  echo "==> ONNX 模型（首次构建自动从 ModelScope 下载源模型并导出）"
+  local models_root="backend/data/models"
+  if [ -f "$models_root/text2vec_base_chinese/onnx/model.fp16.onnx" ] && \
+     [ -f "$models_root/sentiment_3class/onnx/model.fp16.onnx" ]; then
+    echo "ONNX 产物已存在，跳过下载与导出。"
+    return
+  fi
+
+  # torch 仅作导出工具（独立环境，不进产物）；modelscope 按需下载源模型
+  local export_venv=".venv-model-export"
+  if [ ! -x "$export_venv/bin/python" ]; then
+    echo "创建模型导出环境 ($export_venv)..."
+    python3 -m venv "$export_venv"
+    "$export_venv/bin/pip" install --quiet -i https://pypi.tuna.tsinghua.edu.cn/simple torch --extra-index-url https://download.pytorch.org/whl/cpu
+    "$export_venv/bin/pip" install --quiet -i https://pypi.tuna.tsinghua.edu.cn/simple "transformers>=4.30" "onnx>=1.15" "onnxruntime>=1.17" onnxconverter-common "modelscope>=1.17"
+  fi
+  "$export_venv/bin/python" backend/scripts/ensure_models_for_export.py --with-export
+}
+
+ensure_onnx_models
+
 setup_venv
 
 # ---------- build_info（变体标识进产物，runtime_overrides 读取） ----------

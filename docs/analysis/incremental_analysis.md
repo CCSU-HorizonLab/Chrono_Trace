@@ -4,6 +4,24 @@
 
 2026-09 落地的增量分析方案 = **嵌入持久缓存（L2）+ 全算法重算 + stale 状态机**。
 
+### ONNX 推理后端（阶段 B，2026-09）
+
+推理栈切换为 **onnxruntime + fp16 ONNX 模型**（torch 为回退栈）：
+
+- **切换开关**：环境变量 `CHRONO_INFERENCE_BACKEND` > settings `inference_backend` > auto
+  （fp16 模型存在即 onnx，否则 torch）
+- **产物**：`models/<name>/onnx/model.fp16.onnx`（`backend/scripts/export_models_onnx.py` 生成，
+  发行前跑一次）；模型 1.17GB fp32 → 409MB fp16
+- **等价性**（`verify_onnx_equivalence.py` 实测 999 条真实消息）：嵌入 cosine=1.0、边界一致率
+  99.9%、分类一致率 100%；完整管线对照（590 条冷跑）sessions/统计**完全相等**，
+  交互对相似度 max|Δ|=0.0004——**embedding_cache 与 RAG 向量无需重建**
+- **GPU**：Windows 走 `onnxruntime-directml`（系统内建免 CUDA，单包 CPU/GPU 合一，
+  边际成本 ~40MB）；Linux 走 CUDA EP（缺库自动回退 CPU）；providers 按可用性探测，CPU 永远兜底
+- **性能权衡**：CPU 冷跑 fp16 比 torch 慢 ~50%（fp16→fp32 内部转换）；**暖跑不受影响**
+  （L2 缓存命中零推理）；DirectML/CUDA 上 fp16 原生更快。CPU 密集且在意冷跑速度可临时
+  `CHRONO_INFERENCE_BACKEND=torch` 回退
+- **int8 弃用**：动态量化对该 BERT 权重分布精度崩坏（cosine 0.37-0.70，per-channel 更差）
+
 成本勘察结论：历史分析 99% 耗时在嵌入（text2vec-base-chinese CPU）。因此增量化的核心
 是把 `text→vector` 落库复用（`embedding_cache` 表，键 = `content_sha1 + model + device`），
 算法本身保持全量重算语义——乱序到达、回填、撤回后重导等任何消息集变化都天然正确，

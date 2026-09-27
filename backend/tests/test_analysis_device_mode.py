@@ -1,3 +1,4 @@
+import pytest
 import sys
 import threading
 from pathlib import Path
@@ -33,47 +34,6 @@ class TestAnalysisDeviceMode:
     def teardown_method(self):
         reset_sentiment_services()
 
-    def test_realtime_service_cpu_mode_ignores_cuda(self):
-        service = RealtimeSentimentService(skip_db_init=True)
-        service.configure_device_mode("cpu")
-
-        fake_model = MagicMock()
-        fake_model.config.num_labels = 3
-        fake_model.to = MagicMock(return_value=fake_model)
-        fake_model.eval = MagicMock()
-
-        with patch("app.services.realtime.realtime_sentiment_service.AutoTokenizer.from_pretrained", return_value=object()), \
-             patch("app.services.realtime.realtime_sentiment_service.AutoModelForSequenceClassification.from_pretrained", return_value=fake_model), \
-             patch("app.services.realtime.realtime_sentiment_service.torch.cuda.is_available", return_value=True), \
-             patch.object(service._model_manager, "ensure_model_exists", return_value=True):
-            service._model = None
-            service._tokenizer = None
-            service._load_model()
-
-        fake_model.to.assert_not_called()
-        assert service._device == "cpu"
-
-    def test_realtime_service_gpu_mode_uses_cuda_when_available(self):
-        service = RealtimeSentimentService(skip_db_init=True)
-        service.configure_device_mode("gpu")
-
-        fake_model = MagicMock()
-        fake_model.config.num_labels = 3
-        fake_model.to = MagicMock(return_value=fake_model)
-        fake_model.eval = MagicMock()
-
-        with patch("app.services.realtime.realtime_sentiment_service.AutoTokenizer.from_pretrained", return_value=object()), \
-             patch("app.services.realtime.realtime_sentiment_service.AutoModelForSequenceClassification.from_pretrained", return_value=fake_model), \
-             patch("app.services.realtime.realtime_sentiment_service.torch.cuda.is_available", return_value=True), \
-             patch("app.services.realtime.realtime_sentiment_service.torch.cuda.get_device_name", return_value="Fake GPU"), \
-             patch.object(service._model_manager, "ensure_model_exists", return_value=True):
-            service._model = None
-            service._tokenizer = None
-            service._load_model()
-
-        fake_model.to.assert_called_once_with("cuda")
-        assert service._device == "cuda"
-
     def test_sentiment_service_mode_switch_resets_cached_models(self):
         service = SentimentService()
         realtime_service = RealtimeSentimentService(skip_db_init=True)
@@ -82,6 +42,8 @@ class TestAnalysisDeviceMode:
         service._realtime_service = realtime_service
         realtime_service._model = object()
         realtime_service._tokenizer = object()
+        service._device_mode = "auto"  # 单例可能残留同模式导致早退分支
+        realtime_service._device_mode = "auto"
 
         service.configure_device_mode("cpu")
 
@@ -91,33 +53,16 @@ class TestAnalysisDeviceMode:
         assert realtime_service._tokenizer is None
         assert service._device_mode == "cpu"
 
-    def test_sentiment_service_loads_embedding_from_local_path_only(self):
+    def test_sentiment_service_skips_load_without_onnx_models(self):
         service = SentimentService()
         service._embedding_model = None
         service._embedding_load_failed = False
 
-        fake_model = MagicMock()
-
-        with tempfile.TemporaryDirectory() as temp_dir, \
-             patch.object(service, "_resolve_local_embedding_model_path", return_value=temp_dir), \
-             patch("sentence_transformers.SentenceTransformer", return_value=fake_model) as mock_sentence_transformer:
-            service._load_embedding_model()
-
-        mock_sentence_transformer.assert_called_once()
-        assert mock_sentence_transformer.call_args.args[0] == temp_dir
-        assert mock_sentence_transformer.call_args.kwargs["local_files_only"] is True
-
-    def test_sentiment_service_skips_embedding_load_without_local_model(self):
-        service = SentimentService()
-        service._embedding_model = None
-        service._embedding_load_failed = False
-
-        with patch.object(service, "_resolve_local_embedding_model_path", return_value=None), \
-             patch("sentence_transformers.SentenceTransformer") as mock_sentence_transformer:
+        with patch("app.services.analysis.onnx_inference.has_onnx_models", return_value=False):
             service._load_embedding_model()
 
         assert service._embedding_load_failed is True
-        mock_sentence_transformer.assert_not_called()
+        assert service._embedding_model is None
 
     def test_sentiment_service_preserves_native_embedding_dimension(self):
         class NativeVector(list):

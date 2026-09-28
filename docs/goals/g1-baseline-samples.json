@@ -1,0 +1,912 @@
+{
+  "meta": {
+    "loader_version": "g1-baseline-loader-v1",
+    "frozen_at": 1790604136,
+    "code_commit": "653d99ffc1a9cfcecbf7c7e5705d3e216b01071d",
+    "db": {
+      "path": "D:\\Project\\Chrono Trace\\backend\\data\\chrono_trace.db",
+      "size_bytes": 427212800,
+      "mtime": 1790601929,
+      "conversations": 167,
+      "retrieval_logs": 3,
+      "suggestions": 5
+    },
+    "active_model": {
+      "name": "deepseek",
+      "provider": "deepseek",
+      "model_id": "deepseek-flash"
+    },
+    "sample_count": 24,
+    "dimension_coverage": {
+      "task_routing": 6,
+      "contact_binding": 3,
+      "notification_pollution": 3,
+      "redaction_misfire": 6,
+      "policy_adaptation": 3,
+      "missing_scope_degrade": 3
+    },
+    "notes": [
+      "expected_annotation=human_required 的样例在人工判定前不得作为门禁依据。",
+      "authored 样例预期由任务路由器自动给出(auto_pending_human),供人工确认。"
+    ]
+  },
+  "samples": [
+    {
+      "sample_id": "real-1",
+      "dimension": "redaction_misfire",
+      "source": "real_log",
+      "input": [
+        {
+          "role": "user",
+          "content": "我们玩过什么游戏"
+        }
+      ],
+      "account_wxid": "wxid_qhbqpoufme0q32_9cc7",
+      "conversation_id": 91,
+      "display_name": "昕（农1.10）",
+      "requires_ambiguous_twin": false,
+      "expected": null,
+      "expected_annotation": "human_required",
+      "baseline": {
+        "retrieval_log_id": 1,
+        "legacy_task": "direct_reply",
+        "memory_intent_mode": "memory_request",
+        "gate_decision": "inject",
+        "fact_ids": [
+          613,
+          588,
+          376,
+          374
+        ],
+        "policy_ids": [
+          29
+        ],
+        "contact_preference_ids": [
+          9,
+          8,
+          11,
+          10,
+          13,
+          12
+        ],
+        "prompt_context_hash": "6865fe6453e834ffafa80bd37ea3cc1cbd54cbd5aac1ca9e16fb52e0d007c52d",
+        "redaction_status": "redacted",
+        "degraded_reason": null,
+        "suggestion_id": 3,
+        "suggestion_summary": "[PURE_CHAT]",
+        "suggestion_speeches": [],
+        "created_at": 1790513907
+      },
+      "replay": {}
+    },
+    {
+      "sample_id": "real-2",
+      "dimension": "redaction_misfire",
+      "source": "real_log",
+      "input": [
+        {
+          "role": "user",
+          "content": "我想约她打游戏 我们玩过什么游戏 我想约她打游戏"
+        }
+      ],
+      "account_wxid": "wxid_qhbqpoufme0q32_9cc7",
+      "conversation_id": 91,
+      "display_name": "昕（农1.10）",
+      "requires_ambiguous_twin": false,
+      "expected": null,
+      "expected_annotation": "human_required",
+      "baseline": {
+        "retrieval_log_id": 2,
+        "legacy_task": "direct_reply",
+        "memory_intent_mode": "memory_request",
+        "gate_decision": "inject",
+        "fact_ids": [
+          588,
+          372,
+          376,
+          600
+        ],
+        "policy_ids": [
+          29
+        ],
+        "contact_preference_ids": [
+          9,
+          8,
+          11,
+          10,
+          13,
+          12
+        ],
+        "prompt_context_hash": "16448d2858cb34a7204cfb4369d86f3f38ecd86756ecb69fd685a8a372bacc50",
+        "redaction_status": "redacted",
+        "degraded_reason": null,
+        "suggestion_id": 3,
+        "suggestion_summary": "[PURE_CHAT]",
+        "suggestion_speeches": [],
+        "created_at": 1790513935
+      },
+      "replay": {}
+    },
+    {
+      "sample_id": "real-3",
+      "dimension": "redaction_misfire",
+      "source": "real_log",
+      "input": [
+        {
+          "role": "user",
+          "content": "没有建议么 我们玩过什么游戏 没有建议么"
+        }
+      ],
+      "account_wxid": "wxid_qhbqpoufme0q32_9cc7",
+      "conversation_id": 91,
+      "display_name": "昕（农1.10）",
+      "requires_ambiguous_twin": false,
+      "expected": null,
+      "expected_annotation": "human_required",
+      "baseline": {
+        "retrieval_log_id": 3,
+        "legacy_task": "direct_reply",
+        "memory_intent_mode": "memory_request",
+        "gate_decision": "inject",
+        "fact_ids": [
+          373,
+          376,
+          375,
+          374
+        ],
+        "policy_ids": [
+          29
+        ],
+        "contact_preference_ids": [
+          9,
+          8,
+          11,
+          10,
+          13,
+          12
+        ],
+        "prompt_context_hash": "4c2f93382d1287257768b2127887adf7482e404d0aebab9070fa941ca81b270c",
+        "redaction_status": "redacted",
+        "degraded_reason": null,
+        "suggestion_id": 3,
+        "suggestion_summary": "[PURE_CHAT]",
+        "suggestion_speeches": [],
+        "created_at": 1790513953
+      },
+      "replay": {}
+    },
+    {
+      "sample_id": "authored-task_routing-00",
+      "dimension": "task_routing",
+      "source": "authored",
+      "input": [
+        {
+          "role": "user",
+          "content": "我想约她打游戏"
+        }
+      ],
+      "note": "施工单首个目标样例:邀约",
+      "requires_ambiguous_twin": false,
+      "expected": {
+        "task": "invitation_planning",
+        "output": "answer_with_speeches",
+        "knowledge_needs": [
+          "facts",
+          "contact_profile",
+          "user_style",
+          "relationship_signals"
+        ],
+        "scope": "ok",
+        "must_use": [
+          "共同游戏/对方游戏偏好类事实(若存在)"
+        ],
+        "forbidden": [
+          "无游戏关联的偏好抢占预算"
+        ],
+        "safety": [],
+        "auto_reason": "invitation_signal"
+      },
+      "expected_annotation": "auto_pending_human",
+      "baseline": null,
+      "replay": {},
+      "account_wxid": "wxid_qhbqpoufme0q32_9cc7",
+      "conversation_id": 71,
+      "display_name": "wxid_fd12aov2ut6z22"
+    },
+    {
+      "sample_id": "authored-task_routing-01",
+      "dimension": "task_routing",
+      "source": "authored",
+      "input": [
+        {
+          "role": "user",
+          "content": "怎么回她关于周末的邀约"
+        }
+      ],
+      "note": "显式回复求助,话题与邀约相关",
+      "requires_ambiguous_twin": false,
+      "expected": {
+        "task": "reply_suggestion",
+        "output": "suggestion_card",
+        "knowledge_needs": [
+          "facts",
+          "contact_profile",
+          "user_style",
+          "relationship_signals"
+        ],
+        "scope": "ok",
+        "must_use": [],
+        "forbidden": [],
+        "safety": [],
+        "auto_reason": "advice_keyword"
+      },
+      "expected_annotation": "auto_pending_human",
+      "baseline": null,
+      "replay": {},
+      "account_wxid": "wxid_qhbqpoufme0q32_9cc7",
+      "conversation_id": 71,
+      "display_name": "wxid_fd12aov2ut6z22"
+    },
+    {
+      "sample_id": "authored-task_routing-02",
+      "dimension": "task_routing",
+      "source": "authored",
+      "input": [
+        {
+          "role": "user",
+          "content": "她喜欢什么"
+        }
+      ],
+      "note": "偏好查询→记忆问答",
+      "requires_ambiguous_twin": false,
+      "expected": {
+        "task": "memory_qa",
+        "output": "direct_answer",
+        "knowledge_needs": [
+          "facts"
+        ],
+        "scope": "ok",
+        "must_use": [],
+        "forbidden": [
+          "用户口头禅/建议风格块",
+          "建议卡片"
+        ],
+        "safety": [],
+        "auto_reason": "history_answer_signal"
+      },
+      "expected_annotation": "auto_pending_human",
+      "baseline": null,
+      "replay": {},
+      "account_wxid": "wxid_qhbqpoufme0q32_9cc7",
+      "conversation_id": 71,
+      "display_name": "wxid_fd12aov2ut6z22"
+    },
+    {
+      "sample_id": "authored-task_routing-03",
+      "dimension": "task_routing",
+      "source": "authored",
+      "input": [
+        {
+          "role": "user",
+          "content": "怎么回她关于游戏的邀约比较好?"
+        },
+        {
+          "role": "assistant",
+          "content": "可以顺着游戏聊,给出话术。"
+        },
+        {
+          "role": "user",
+          "content": "没有建议么"
+        }
+      ],
+      "note": "三轮任务切换:求助→追问",
+      "requires_ambiguous_twin": false,
+      "expected": {
+        "task": "reply_suggestion",
+        "output": "suggestion_card",
+        "knowledge_needs": [
+          "facts",
+          "contact_profile",
+          "user_style",
+          "relationship_signals"
+        ],
+        "scope": "ok",
+        "must_use": [],
+        "forbidden": [],
+        "safety": [],
+        "auto_reason": "advice_followup_inherited"
+      },
+      "expected_annotation": "auto_pending_human",
+      "baseline": null,
+      "replay": {},
+      "account_wxid": "wxid_qhbqpoufme0q32_9cc7",
+      "conversation_id": 71,
+      "display_name": "wxid_fd12aov2ut6z22"
+    },
+    {
+      "sample_id": "authored-task_routing-04",
+      "dimension": "task_routing",
+      "source": "authored",
+      "input": [
+        {
+          "role": "user",
+          "content": "你好呀"
+        }
+      ],
+      "note": "普通闲聊→安全直答",
+      "requires_ambiguous_twin": false,
+      "expected": {
+        "task": "general_qa",
+        "output": "direct_answer",
+        "knowledge_needs": [
+          "facts"
+        ],
+        "scope": "ok",
+        "must_use": [],
+        "forbidden": [],
+        "safety": [],
+        "auto_reason": "general_qa_default"
+      },
+      "expected_annotation": "auto_pending_human",
+      "baseline": null,
+      "replay": {},
+      "account_wxid": "wxid_qhbqpoufme0q32_9cc7",
+      "conversation_id": 71,
+      "display_name": "wxid_fd12aov2ut6z22"
+    },
+    {
+      "sample_id": "authored-task_routing-05",
+      "dimension": "task_routing",
+      "source": "authored",
+      "input": [
+        {
+          "role": "user",
+          "content": "我们玩过什么游戏"
+        }
+      ],
+      "note": "历史问答(如有真实日志则优先 real_log)",
+      "requires_ambiguous_twin": false,
+      "expected": {
+        "task": "memory_qa",
+        "output": "direct_answer",
+        "knowledge_needs": [
+          "facts"
+        ],
+        "scope": "ok",
+        "must_use": [],
+        "forbidden": [
+          "用户口头禅/建议风格块",
+          "建议卡片"
+        ],
+        "safety": [],
+        "auto_reason": "history_answer_signal"
+      },
+      "expected_annotation": "auto_pending_human",
+      "baseline": null,
+      "replay": {},
+      "account_wxid": "wxid_qhbqpoufme0q32_9cc7",
+      "conversation_id": 71,
+      "display_name": "wxid_fd12aov2ut6z22"
+    },
+    {
+      "sample_id": "authored-contact_binding-06",
+      "dimension": "contact_binding",
+      "source": "authored",
+      "input": [
+        {
+          "role": "user",
+          "content": "我想约她打游戏"
+        }
+      ],
+      "note": "歧义同名:需在回放副本注入同名会话",
+      "requires_ambiguous_twin": true,
+      "expected": {
+        "task": "invitation_planning",
+        "output": "answer_with_speeches",
+        "knowledge_needs": [
+          "facts",
+          "contact_profile",
+          "user_style",
+          "relationship_signals"
+        ],
+        "scope": "missing_or_ambiguous",
+        "must_use": [
+          "共同游戏/对方游戏偏好类事实(若存在)"
+        ],
+        "forbidden": [
+          "无游戏关联的偏好抢占预算"
+        ],
+        "safety": [
+          "不得注入任何联系人历史知识",
+          "RAG 必须 missing_scope 跳过",
+          "仍生成通用帮助回复"
+        ],
+        "auto_reason": "invitation_signal"
+      },
+      "expected_annotation": "auto_pending_human",
+      "baseline": null,
+      "replay": {},
+      "account_wxid": "wxid_qhbqpoufme0q32_9cc7",
+      "conversation_id": null,
+      "display_name": "昕（农1.10）"
+    },
+    {
+      "sample_id": "authored-contact_binding-07",
+      "dimension": "contact_binding",
+      "source": "authored",
+      "input": [
+        {
+          "role": "user",
+          "content": "怎么回她"
+        }
+      ],
+      "note": "无效会话 ID:跨账号会话",
+      "requires_ambiguous_twin": false,
+      "expected": {
+        "task": "reply_suggestion",
+        "output": "suggestion_card",
+        "knowledge_needs": [
+          "facts",
+          "contact_profile",
+          "user_style",
+          "relationship_signals"
+        ],
+        "scope": "ok",
+        "must_use": [],
+        "forbidden": [],
+        "safety": [],
+        "auto_reason": "advice_keyword"
+      },
+      "expected_annotation": "auto_pending_human",
+      "baseline": null,
+      "replay": {},
+      "account_wxid": "wxid_qhbqpoufme0q32_9cc7",
+      "conversation_id": 999999,
+      "display_name": "wxid_fd12aov2ut6z22"
+    },
+    {
+      "sample_id": "authored-contact_binding-08",
+      "dimension": "contact_binding",
+      "source": "authored",
+      "input": [
+        {
+          "role": "user",
+          "content": "怎么回她"
+        }
+      ],
+      "note": "有效显式会话 ID:正对照",
+      "requires_ambiguous_twin": false,
+      "expected": {
+        "task": "reply_suggestion",
+        "output": "suggestion_card",
+        "knowledge_needs": [
+          "facts",
+          "contact_profile",
+          "user_style",
+          "relationship_signals"
+        ],
+        "scope": "ok",
+        "must_use": [],
+        "forbidden": [],
+        "safety": [],
+        "auto_reason": "advice_keyword"
+      },
+      "expected_annotation": "auto_pending_human",
+      "baseline": null,
+      "replay": {},
+      "account_wxid": "wxid_qhbqpoufme0q32_9cc7",
+      "conversation_id": 91,
+      "display_name": "昕（农1.10）"
+    },
+    {
+      "sample_id": "authored-notification_pollution-09",
+      "dimension": "notification_pollution",
+      "source": "authored",
+      "input": [
+        {
+          "role": "user",
+          "content": "她是不是不想理我了"
+        }
+      ],
+      "note": "转账密集窗口的关系推断",
+      "requires_ambiguous_twin": false,
+      "expected": {
+        "task": "general_qa",
+        "output": "direct_answer",
+        "knowledge_needs": [
+          "facts"
+        ],
+        "scope": "ok",
+        "must_use": [],
+        "forbidden": [],
+        "safety": [],
+        "auto_reason": "general_qa_default"
+      },
+      "expected_annotation": "auto_pending_human",
+      "baseline": null,
+      "replay": {},
+      "account_wxid": "wxid_qhbqpoufme0q32_9cc7",
+      "conversation_id": 91,
+      "display_name": "昕（农1.10）"
+    },
+    {
+      "sample_id": "authored-notification_pollution-10",
+      "dimension": "notification_pollution",
+      "source": "authored",
+      "input": [
+        {
+          "role": "user",
+          "content": "怎么回她"
+        }
+      ],
+      "note": "通知混入窗口的建议生成",
+      "requires_ambiguous_twin": false,
+      "expected": {
+        "task": "reply_suggestion",
+        "output": "suggestion_card",
+        "knowledge_needs": [
+          "facts",
+          "contact_profile",
+          "user_style",
+          "relationship_signals"
+        ],
+        "scope": "ok",
+        "must_use": [],
+        "forbidden": [],
+        "safety": [],
+        "auto_reason": "advice_keyword"
+      },
+      "expected_annotation": "auto_pending_human",
+      "baseline": null,
+      "replay": {},
+      "account_wxid": "wxid_qhbqpoufme0q32_9cc7",
+      "conversation_id": 91,
+      "display_name": "昕（农1.10）"
+    },
+    {
+      "sample_id": "authored-notification_pollution-11",
+      "dimension": "notification_pollution",
+      "source": "authored",
+      "input": [
+        {
+          "role": "user",
+          "content": "现在聊什么好"
+        }
+      ],
+      "note": "纯通知窗口守卫",
+      "requires_ambiguous_twin": false,
+      "expected": {
+        "task": "general_qa",
+        "output": "direct_answer",
+        "knowledge_needs": [
+          "facts"
+        ],
+        "scope": "ok",
+        "must_use": [],
+        "forbidden": [],
+        "safety": [],
+        "auto_reason": "general_qa_default"
+      },
+      "expected_annotation": "auto_pending_human",
+      "baseline": null,
+      "replay": {},
+      "account_wxid": "wxid_qhbqpoufme0q32_9cc7",
+      "conversation_id": 91,
+      "display_name": "昕（农1.10）"
+    },
+    {
+      "sample_id": "authored-redaction_misfire-12",
+      "dimension": "redaction_misfire",
+      "source": "authored",
+      "input": [
+        {
+          "role": "user",
+          "content": "我们玩过什么游戏"
+        }
+      ],
+      "note": "游戏事实脱敏完整性(绑事实最密的会话)",
+      "requires_ambiguous_twin": false,
+      "expected": {
+        "task": "memory_qa",
+        "output": "direct_answer",
+        "knowledge_needs": [
+          "facts"
+        ],
+        "scope": "ok",
+        "must_use": [],
+        "forbidden": [
+          "用户口头禅/建议风格块",
+          "建议卡片"
+        ],
+        "safety": [],
+        "auto_reason": "history_answer_signal"
+      },
+      "expected_annotation": "auto_pending_human",
+      "baseline": null,
+      "replay": {},
+      "account_wxid": "wxid_qhbqpoufme0q32_9cc7",
+      "conversation_id": 71,
+      "display_name": "wxid_fd12aov2ut6z22"
+    },
+    {
+      "sample_id": "authored-redaction_misfire-13",
+      "dimension": "redaction_misfire",
+      "source": "authored",
+      "input": [
+        {
+          "role": "user",
+          "content": "她说过她家在哪吗"
+        }
+      ],
+      "note": "真实地址脱敏(应脱敏且标记不可引用)",
+      "requires_ambiguous_twin": false,
+      "expected": {
+        "task": "memory_qa",
+        "output": "direct_answer",
+        "knowledge_needs": [
+          "facts"
+        ],
+        "scope": "ok",
+        "must_use": [],
+        "forbidden": [
+          "用户口头禅/建议风格块",
+          "建议卡片"
+        ],
+        "safety": [],
+        "auto_reason": "history_answer_signal"
+      },
+      "expected_annotation": "auto_pending_human",
+      "baseline": null,
+      "replay": {},
+      "account_wxid": "wxid_qhbqpoufme0q32_9cc7",
+      "conversation_id": 71,
+      "display_name": "wxid_fd12aov2ut6z22"
+    },
+    {
+      "sample_id": "authored-redaction_misfire-14",
+      "dimension": "redaction_misfire",
+      "source": "authored",
+      "input": [
+        {
+          "role": "user",
+          "content": "她电话多少"
+        }
+      ],
+      "note": "电话号码脱敏",
+      "requires_ambiguous_twin": false,
+      "expected": {
+        "task": "general_qa",
+        "output": "direct_answer",
+        "knowledge_needs": [
+          "facts"
+        ],
+        "scope": "ok",
+        "must_use": [],
+        "forbidden": [],
+        "safety": [],
+        "auto_reason": "general_qa_default"
+      },
+      "expected_annotation": "auto_pending_human",
+      "baseline": null,
+      "replay": {},
+      "account_wxid": "wxid_qhbqpoufme0q32_9cc7",
+      "conversation_id": 71,
+      "display_name": "wxid_fd12aov2ut6z22"
+    },
+    {
+      "sample_id": "authored-policy_adaptation-15",
+      "dimension": "policy_adaptation",
+      "source": "authored",
+      "input": [
+        {
+          "role": "user",
+          "content": "她是不是讨厌我"
+        }
+      ],
+      "note": "关系讨论:允许画像+关系信号",
+      "requires_ambiguous_twin": false,
+      "expected": {
+        "task": "relationship_discussion",
+        "output": "direct_answer",
+        "knowledge_needs": [
+          "facts",
+          "contact_profile",
+          "relationship_signals"
+        ],
+        "scope": "ok",
+        "must_use": [],
+        "forbidden": [],
+        "safety": [],
+        "auto_reason": "relationship_discussion_signal"
+      },
+      "expected_annotation": "auto_pending_human",
+      "baseline": null,
+      "replay": {},
+      "account_wxid": "wxid_qhbqpoufme0q32_9cc7",
+      "conversation_id": 91,
+      "display_name": "昕（农1.10）"
+    },
+    {
+      "sample_id": "authored-policy_adaptation-16",
+      "dimension": "policy_adaptation",
+      "source": "authored",
+      "input": [
+        {
+          "role": "user",
+          "content": "我们算什么关系了,我该怎么推进"
+        }
+      ],
+      "note": "关系讨论+行动求助",
+      "requires_ambiguous_twin": false,
+      "expected": {
+        "task": "relationship_discussion",
+        "output": "answer_with_speeches",
+        "knowledge_needs": [
+          "facts",
+          "contact_profile",
+          "relationship_signals"
+        ],
+        "scope": "ok",
+        "must_use": [],
+        "forbidden": [],
+        "safety": [],
+        "auto_reason": "relationship_discussion_signal"
+      },
+      "expected_annotation": "auto_pending_human",
+      "baseline": null,
+      "replay": {},
+      "account_wxid": "wxid_qhbqpoufme0q32_9cc7",
+      "conversation_id": 71,
+      "display_name": "wxid_fd12aov2ut6z22"
+    },
+    {
+      "sample_id": "authored-policy_adaptation-17",
+      "dimension": "policy_adaptation",
+      "source": "authored",
+      "input": [
+        {
+          "role": "user",
+          "content": "怎么开玩笑不越界"
+        }
+      ],
+      "note": "边界适配",
+      "requires_ambiguous_twin": false,
+      "expected": {
+        "task": "general_qa",
+        "output": "direct_answer",
+        "knowledge_needs": [
+          "facts"
+        ],
+        "scope": "ok",
+        "must_use": [],
+        "forbidden": [],
+        "safety": [],
+        "auto_reason": "general_qa_default"
+      },
+      "expected_annotation": "auto_pending_human",
+      "baseline": null,
+      "replay": {},
+      "account_wxid": "wxid_qhbqpoufme0q32_9cc7",
+      "conversation_id": 91,
+      "display_name": "昕（农1.10）"
+    },
+    {
+      "sample_id": "authored-missing_scope_degrade-18",
+      "dimension": "missing_scope_degrade",
+      "source": "authored",
+      "input": [
+        {
+          "role": "user",
+          "content": "怎么回她"
+        }
+      ],
+      "note": "无账号范围:空 account",
+      "requires_ambiguous_twin": false,
+      "expected": {
+        "task": "reply_suggestion",
+        "output": "suggestion_card",
+        "knowledge_needs": [
+          "facts",
+          "contact_profile",
+          "user_style",
+          "relationship_signals"
+        ],
+        "scope": "missing_or_ambiguous",
+        "must_use": [],
+        "forbidden": [],
+        "safety": [
+          "不得注入任何联系人历史知识",
+          "RAG 必须 missing_scope 跳过",
+          "仍生成通用帮助回复"
+        ],
+        "auto_reason": "advice_keyword"
+      },
+      "expected_annotation": "auto_pending_human",
+      "baseline": null,
+      "replay": {},
+      "account_wxid": "",
+      "conversation_id": null,
+      "display_name": "查无此人-9x7q"
+    },
+    {
+      "sample_id": "authored-missing_scope_degrade-19",
+      "dimension": "missing_scope_degrade",
+      "source": "authored",
+      "input": [
+        {
+          "role": "user",
+          "content": "怎么回她"
+        }
+      ],
+      "note": "无联系人范围:空 display/conversation",
+      "requires_ambiguous_twin": false,
+      "expected": {
+        "task": "reply_suggestion",
+        "output": "suggestion_card",
+        "knowledge_needs": [
+          "facts",
+          "contact_profile",
+          "user_style",
+          "relationship_signals"
+        ],
+        "scope": "missing_or_ambiguous",
+        "must_use": [],
+        "forbidden": [],
+        "safety": [
+          "不得注入任何联系人历史知识",
+          "RAG 必须 missing_scope 跳过",
+          "仍生成通用帮助回复"
+        ],
+        "auto_reason": "advice_keyword"
+      },
+      "expected_annotation": "auto_pending_human",
+      "baseline": null,
+      "replay": {},
+      "account_wxid": "wxid_qhbqpoufme0q32_9cc7",
+      "conversation_id": null,
+      "display_name": ""
+    },
+    {
+      "sample_id": "authored-missing_scope_degrade-20",
+      "dimension": "missing_scope_degrade",
+      "source": "authored",
+      "input": [
+        {
+          "role": "user",
+          "content": "怎么约她出来"
+        }
+      ],
+      "note": "查无此联系人",
+      "requires_ambiguous_twin": false,
+      "expected": {
+        "task": "invitation_planning",
+        "output": "answer_with_speeches",
+        "knowledge_needs": [
+          "facts",
+          "contact_profile",
+          "user_style",
+          "relationship_signals"
+        ],
+        "scope": "missing_or_ambiguous",
+        "must_use": [
+          "共同游戏/对方游戏偏好类事实(若存在)"
+        ],
+        "forbidden": [
+          "无游戏关联的偏好抢占预算"
+        ],
+        "safety": [
+          "不得注入任何联系人历史知识",
+          "RAG 必须 missing_scope 跳过",
+          "仍生成通用帮助回复"
+        ],
+        "auto_reason": "invitation_signal"
+      },
+      "expected_annotation": "auto_pending_human",
+      "baseline": null,
+      "replay": {},
+      "account_wxid": "wxid_qhbqpoufme0q32_9cc7",
+      "conversation_id": null,
+      "display_name": "查无此人-9x7q"
+    }
+  ]
+}

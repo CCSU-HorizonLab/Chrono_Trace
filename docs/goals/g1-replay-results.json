@@ -1,0 +1,4579 @@
+{
+  "runs": [
+    {
+      "replay_version": "g1-baseline-replay-v1",
+      "ran_at": 1790604151,
+      "live": false,
+      "chains": [
+        "no_rag",
+        "legacy",
+        "g1"
+      ],
+      "sample_file": "D:\\Project\\Chrono Trace\\docs\\goals\\g1-baseline-samples.json",
+      "source_db_frozen_at": 1790604136,
+      "baseline_code_commit": "653d99ffc1a9cfcecbf7c7e5705d3e216b01071d",
+      "failures": 0,
+      "results": [
+        {
+          "sample_id": "real-1",
+          "dimension": "redaction_misfire",
+          "chain": "no_rag",
+          "chain_note": "",
+          "routing": {
+            "task": "memory_qa",
+            "output": "direct_answer",
+            "knowledge_needs": [
+              "facts"
+            ],
+            "confidence": 0.8,
+            "reason": "history_answer_signal",
+            "wants_speeches": false,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 91,
+            "request_id": "67450c71f3ad"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 290,
+          "elapsed_ms": 11,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [],
+            "excluded": [
+              {
+                "kind": "contact_profile",
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "self_profile",
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "feedback_rules",
+                "reason": "task_knowledge_not_needed"
+              }
+            ],
+            "prompt_hash": "bd6862439285747941e721ca9a8c372ac0ceccd6c6b53b9ef05ca833445d204a"
+          },
+          "rag": {
+            "log_id": null,
+            "hit_count": 0,
+            "gate_decision": "skip",
+            "degraded_reason": "rag_disabled",
+            "memory_intent_mode": "memory_request"
+          },
+          "badge": {
+            "state": "hidden",
+            "label": "",
+            "hit_count": 0,
+            "referenced_count": 0,
+            "log_id": null
+          }
+        },
+        {
+          "sample_id": "real-1",
+          "dimension": "redaction_misfire",
+          "chain": "legacy",
+          "chain_note": "行为等价重建(旧二分路由+未净化窗口)",
+          "routing": {
+            "task": "general_qa",
+            "output": "direct_answer",
+            "knowledge_needs": [],
+            "confidence": 0.6,
+            "reason": "legacy_direct_reply",
+            "wants_speeches": false,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 91,
+            "request_id": "7c3536cf72b2"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 2099,
+          "elapsed_ms": 32,
+          "manifest": {
+            "fact_ids": [
+              376,
+              532,
+              581,
+              606
+            ],
+            "document_ids": [
+              376,
+              532,
+              581,
+              606
+            ],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [
+              "retrieval_memory"
+            ],
+            "excluded": [
+              {
+                "kind": "relationship_policy",
+                "id": 30,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "contact_preferences",
+                "id": null,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "contact_profile",
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "self_profile",
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "feedback_rules",
+                "reason": "task_knowledge_not_needed"
+              }
+            ],
+            "prompt_hash": "e6bb2c197fa99c0cd115c9ce6587c12d745cf7a9ba37d0802cb96a66a00aa3ec"
+          },
+          "rag": {
+            "log_id": 4,
+            "hit_count": 6,
+            "gate_decision": "inject",
+            "degraded_reason": null,
+            "memory_intent_mode": "memory_request"
+          },
+          "badge": {
+            "state": "fact_hit",
+            "label": "已参考 4 条历史事实",
+            "hit_count": 6,
+            "referenced_count": 4,
+            "log_id": 4
+          }
+        },
+        {
+          "sample_id": "real-1",
+          "dimension": "redaction_misfire",
+          "chain": "g1",
+          "chain_note": "",
+          "routing": {
+            "task": "memory_qa",
+            "output": "direct_answer",
+            "knowledge_needs": [
+              "facts"
+            ],
+            "confidence": 0.8,
+            "reason": "history_answer_signal",
+            "wants_speeches": false,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 91,
+            "request_id": "3950dfaa4394"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 2538,
+          "elapsed_ms": 21,
+          "manifest": {
+            "fact_ids": [
+              376,
+              532,
+              581,
+              606
+            ],
+            "document_ids": [
+              376,
+              532,
+              581,
+              606
+            ],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [
+              "retrieval_memory"
+            ],
+            "excluded": [
+              {
+                "kind": "relationship_policy",
+                "id": 30,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "contact_preferences",
+                "id": null,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "contact_profile",
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "self_profile",
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "feedback_rules",
+                "reason": "task_knowledge_not_needed"
+              }
+            ],
+            "prompt_hash": "3cb3d909c6e2f0831ae1212321a856363310f104d0ff411e9f1e2151a56c7002"
+          },
+          "rag": {
+            "log_id": 5,
+            "hit_count": 6,
+            "gate_decision": "inject",
+            "degraded_reason": null,
+            "memory_intent_mode": "memory_request"
+          },
+          "badge": {
+            "state": "fact_hit",
+            "label": "已参考 4 条历史事实",
+            "hit_count": 6,
+            "referenced_count": 4,
+            "log_id": 5
+          }
+        },
+        {
+          "sample_id": "real-2",
+          "dimension": "redaction_misfire",
+          "chain": "no_rag",
+          "chain_note": "",
+          "routing": {
+            "task": "memory_qa",
+            "output": "direct_answer",
+            "knowledge_needs": [
+              "facts"
+            ],
+            "confidence": 0.8,
+            "reason": "history_answer_signal",
+            "wants_speeches": false,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 91,
+            "request_id": "7ea1721d0f9d"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 306,
+          "elapsed_ms": 1,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [],
+            "excluded": [
+              {
+                "kind": "contact_profile",
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "self_profile",
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "feedback_rules",
+                "reason": "task_knowledge_not_needed"
+              }
+            ],
+            "prompt_hash": "f8ef97a8b0a9ee6a758c5ef7aa9119b113781bd2a2030024e5ee35d342ed897f"
+          },
+          "rag": {
+            "log_id": null,
+            "hit_count": 0,
+            "gate_decision": "skip",
+            "degraded_reason": "rag_disabled",
+            "memory_intent_mode": "memory_request"
+          },
+          "badge": {
+            "state": "hidden",
+            "label": "",
+            "hit_count": 0,
+            "referenced_count": 0,
+            "log_id": null
+          }
+        },
+        {
+          "sample_id": "real-2",
+          "dimension": "redaction_misfire",
+          "chain": "legacy",
+          "chain_note": "行为等价重建(旧二分路由+未净化窗口)",
+          "routing": {
+            "task": "general_qa",
+            "output": "direct_answer",
+            "knowledge_needs": [],
+            "confidence": 0.6,
+            "reason": "legacy_direct_reply",
+            "wants_speeches": false,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 91,
+            "request_id": "f8079746e7e2"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 2141,
+          "elapsed_ms": 26,
+          "manifest": {
+            "fact_ids": [
+              376,
+              372,
+              532,
+              581
+            ],
+            "document_ids": [
+              376,
+              372,
+              532,
+              581
+            ],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [
+              "retrieval_memory"
+            ],
+            "excluded": [
+              {
+                "kind": "relationship_policy",
+                "id": 30,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "contact_preferences",
+                "id": null,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "contact_profile",
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "self_profile",
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "feedback_rules",
+                "reason": "task_knowledge_not_needed"
+              }
+            ],
+            "prompt_hash": "66f1fded048d838358ef716eb96e28a4b89804ef031c9e2bf8bfb526b994d436"
+          },
+          "rag": {
+            "log_id": 6,
+            "hit_count": 6,
+            "gate_decision": "inject",
+            "degraded_reason": null,
+            "memory_intent_mode": "memory_request"
+          },
+          "badge": {
+            "state": "fact_hit",
+            "label": "已参考 4 条历史事实",
+            "hit_count": 6,
+            "referenced_count": 4,
+            "log_id": 6
+          }
+        },
+        {
+          "sample_id": "real-2",
+          "dimension": "redaction_misfire",
+          "chain": "g1",
+          "chain_note": "",
+          "routing": {
+            "task": "memory_qa",
+            "output": "direct_answer",
+            "knowledge_needs": [
+              "facts"
+            ],
+            "confidence": 0.8,
+            "reason": "history_answer_signal",
+            "wants_speeches": false,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 91,
+            "request_id": "dda97c22e8f8"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 2580,
+          "elapsed_ms": 25,
+          "manifest": {
+            "fact_ids": [
+              376,
+              372,
+              532,
+              581
+            ],
+            "document_ids": [
+              376,
+              372,
+              532,
+              581
+            ],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [
+              "retrieval_memory"
+            ],
+            "excluded": [
+              {
+                "kind": "relationship_policy",
+                "id": 30,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "contact_preferences",
+                "id": null,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "contact_profile",
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "self_profile",
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "feedback_rules",
+                "reason": "task_knowledge_not_needed"
+              }
+            ],
+            "prompt_hash": "12a946804d46814fcf983e62f07114fea7cf735fd2b3ad8371879a8ad7452cdf"
+          },
+          "rag": {
+            "log_id": 7,
+            "hit_count": 6,
+            "gate_decision": "inject",
+            "degraded_reason": null,
+            "memory_intent_mode": "memory_request"
+          },
+          "badge": {
+            "state": "fact_hit",
+            "label": "已参考 4 条历史事实",
+            "hit_count": 6,
+            "referenced_count": 4,
+            "log_id": 7
+          }
+        },
+        {
+          "sample_id": "real-3",
+          "dimension": "redaction_misfire",
+          "chain": "no_rag",
+          "chain_note": "",
+          "routing": {
+            "task": "memory_qa",
+            "output": "direct_answer",
+            "knowledge_needs": [
+              "facts"
+            ],
+            "confidence": 0.8,
+            "reason": "history_answer_signal",
+            "wants_speeches": false,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 91,
+            "request_id": "c29506c77878"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 302,
+          "elapsed_ms": 1,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [],
+            "excluded": [
+              {
+                "kind": "contact_profile",
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "self_profile",
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "feedback_rules",
+                "reason": "task_knowledge_not_needed"
+              }
+            ],
+            "prompt_hash": "e2cf744ea1c94df166c96cc51268e2a91f83ba795eea2b2b2147e395fb8d5218"
+          },
+          "rag": {
+            "log_id": null,
+            "hit_count": 0,
+            "gate_decision": "skip",
+            "degraded_reason": "rag_disabled",
+            "memory_intent_mode": "memory_request"
+          },
+          "badge": {
+            "state": "hidden",
+            "label": "",
+            "hit_count": 0,
+            "referenced_count": 0,
+            "log_id": null
+          }
+        },
+        {
+          "sample_id": "real-3",
+          "dimension": "redaction_misfire",
+          "chain": "legacy",
+          "chain_note": "行为等价重建(旧二分路由+未净化窗口)",
+          "routing": {
+            "task": "general_qa",
+            "output": "direct_answer",
+            "knowledge_needs": [],
+            "confidence": 0.6,
+            "reason": "legacy_direct_reply",
+            "wants_speeches": false,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 91,
+            "request_id": "7cc415c1c9e5"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 2088,
+          "elapsed_ms": 23,
+          "manifest": {
+            "fact_ids": [
+              376,
+              532,
+              581,
+              614
+            ],
+            "document_ids": [
+              376,
+              532,
+              581,
+              614
+            ],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [
+              "retrieval_memory"
+            ],
+            "excluded": [
+              {
+                "kind": "relationship_policy",
+                "id": 30,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "contact_preferences",
+                "id": null,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "contact_profile",
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "self_profile",
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "feedback_rules",
+                "reason": "task_knowledge_not_needed"
+              }
+            ],
+            "prompt_hash": "08f2c63ce2601d24ac5f9f8d5cb5f1fbc8bb2a620d26a83c22ff4994f8e94be7"
+          },
+          "rag": {
+            "log_id": 8,
+            "hit_count": 6,
+            "gate_decision": "inject",
+            "degraded_reason": null,
+            "memory_intent_mode": "memory_request"
+          },
+          "badge": {
+            "state": "fact_hit",
+            "label": "已参考 4 条历史事实",
+            "hit_count": 6,
+            "referenced_count": 4,
+            "log_id": 8
+          }
+        },
+        {
+          "sample_id": "real-3",
+          "dimension": "redaction_misfire",
+          "chain": "g1",
+          "chain_note": "",
+          "routing": {
+            "task": "memory_qa",
+            "output": "direct_answer",
+            "knowledge_needs": [
+              "facts"
+            ],
+            "confidence": 0.8,
+            "reason": "history_answer_signal",
+            "wants_speeches": false,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 91,
+            "request_id": "074f0c71a19b"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 2527,
+          "elapsed_ms": 23,
+          "manifest": {
+            "fact_ids": [
+              376,
+              532,
+              581,
+              614
+            ],
+            "document_ids": [
+              376,
+              532,
+              581,
+              614
+            ],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [
+              "retrieval_memory"
+            ],
+            "excluded": [
+              {
+                "kind": "relationship_policy",
+                "id": 30,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "contact_preferences",
+                "id": null,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "contact_profile",
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "self_profile",
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "feedback_rules",
+                "reason": "task_knowledge_not_needed"
+              }
+            ],
+            "prompt_hash": "5eccda8ee6dac71c19bf15255e5b766025b34f6f44735123e1ac5fc1cd9a1633"
+          },
+          "rag": {
+            "log_id": 9,
+            "hit_count": 6,
+            "gate_decision": "inject",
+            "degraded_reason": null,
+            "memory_intent_mode": "memory_request"
+          },
+          "badge": {
+            "state": "fact_hit",
+            "label": "已参考 4 条历史事实",
+            "hit_count": 6,
+            "referenced_count": 4,
+            "log_id": 9
+          }
+        },
+        {
+          "sample_id": "authored-task_routing-00",
+          "dimension": "task_routing",
+          "chain": "no_rag",
+          "chain_note": "",
+          "routing": {
+            "task": "invitation_planning",
+            "output": "answer_with_speeches",
+            "knowledge_needs": [
+              "facts",
+              "contact_profile",
+              "user_style",
+              "relationship_signals"
+            ],
+            "confidence": 0.85,
+            "reason": "invitation_signal",
+            "wants_speeches": true,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 71,
+            "request_id": "b4ba2ea981a7"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 801,
+          "elapsed_ms": 3,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [
+              "style_constraints",
+              "relationship_signal"
+            ],
+            "excluded": [],
+            "prompt_hash": "18dc5f6cd23921ae88a7021e8e2221b1ae19252694af692d2bae8007a68758a9"
+          },
+          "rag": {
+            "log_id": null,
+            "hit_count": 0,
+            "gate_decision": "skip",
+            "degraded_reason": "rag_disabled",
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "hidden",
+            "label": "",
+            "hit_count": 0,
+            "referenced_count": 0,
+            "log_id": null
+          }
+        },
+        {
+          "sample_id": "authored-task_routing-00",
+          "dimension": "task_routing",
+          "chain": "legacy",
+          "chain_note": "行为等价重建(旧二分路由+未净化窗口)",
+          "routing": {
+            "task": "general_qa",
+            "output": "direct_answer",
+            "knowledge_needs": [],
+            "confidence": 0.6,
+            "reason": "legacy_direct_reply",
+            "wants_speeches": false,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 71,
+            "request_id": "7104b08ce308"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 1476,
+          "elapsed_ms": 48,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [],
+            "excluded": [
+              {
+                "kind": "relationship_policy",
+                "id": 11,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "contact_preferences",
+                "id": null,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "feedback_rules",
+                "reason": "task_knowledge_not_needed"
+              }
+            ],
+            "prompt_hash": "5bd1c9f556c556f706aa7f548d45469f133e288cded0b6394c431a11f7bd853c"
+          },
+          "rag": {
+            "log_id": 10,
+            "hit_count": 6,
+            "gate_decision": "skip",
+            "degraded_reason": null,
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "not_referenced",
+            "label": "未参考命中记录",
+            "hit_count": 6,
+            "referenced_count": 0,
+            "log_id": 10
+          }
+        },
+        {
+          "sample_id": "authored-task_routing-00",
+          "dimension": "task_routing",
+          "chain": "g1",
+          "chain_note": "",
+          "routing": {
+            "task": "invitation_planning",
+            "output": "answer_with_speeches",
+            "knowledge_needs": [
+              "facts",
+              "contact_profile",
+              "user_style",
+              "relationship_signals"
+            ],
+            "confidence": 0.85,
+            "reason": "invitation_signal",
+            "wants_speeches": true,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 71,
+            "request_id": "ac59c008a1d6"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 2345,
+          "elapsed_ms": 42,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [
+              11
+            ],
+            "contact_preference_ids": [
+              4
+            ],
+            "blocks": [
+              "relationship_policy",
+              "contact_preferences",
+              "style_constraints",
+              "relationship_signal"
+            ],
+            "excluded": [],
+            "prompt_hash": "9ec9c2e2435f6ae365e7b9a4e709529f47b0666f7f944706f0281000e96b8a6c"
+          },
+          "rag": {
+            "log_id": 11,
+            "hit_count": 6,
+            "gate_decision": "skip",
+            "degraded_reason": null,
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "relationship_policy",
+            "label": "已参考关系画像",
+            "hit_count": 6,
+            "referenced_count": 0,
+            "log_id": 11
+          }
+        },
+        {
+          "sample_id": "authored-task_routing-01",
+          "dimension": "task_routing",
+          "chain": "no_rag",
+          "chain_note": "",
+          "routing": {
+            "task": "reply_suggestion",
+            "output": "suggestion_card",
+            "knowledge_needs": [
+              "facts",
+              "contact_profile",
+              "user_style",
+              "relationship_signals"
+            ],
+            "confidence": 0.9,
+            "reason": "advice_keyword",
+            "wants_speeches": true,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 71,
+            "request_id": "fedb1398a62d"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 725,
+          "elapsed_ms": 0,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [
+              "style_constraints",
+              "relationship_signal"
+            ],
+            "excluded": [],
+            "prompt_hash": "f8f9a2c961023e38a94757df42b32549429b1fdf02e29ddd29df6232b335ec3d"
+          },
+          "rag": {
+            "log_id": null,
+            "hit_count": 0,
+            "gate_decision": "skip",
+            "degraded_reason": "rag_disabled",
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "hidden",
+            "label": "",
+            "hit_count": 0,
+            "referenced_count": 0,
+            "log_id": null
+          }
+        },
+        {
+          "sample_id": "authored-task_routing-01",
+          "dimension": "task_routing",
+          "chain": "legacy",
+          "chain_note": "行为等价重建(旧二分路由+未净化窗口)",
+          "routing": {
+            "task": "reply_suggestion",
+            "output": "suggestion_card",
+            "knowledge_needs": [
+              "facts",
+              "contact_profile",
+              "user_style",
+              "relationship_signals"
+            ],
+            "confidence": 0.8,
+            "reason": "legacy_advice_request",
+            "wants_speeches": true,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 71,
+            "request_id": "d6d9a38796dc"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 2269,
+          "elapsed_ms": 47,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [
+              11
+            ],
+            "contact_preference_ids": [
+              4
+            ],
+            "blocks": [
+              "relationship_policy",
+              "contact_preferences",
+              "style_constraints",
+              "relationship_signal"
+            ],
+            "excluded": [],
+            "prompt_hash": "27bd80758b07e20a711cd29cead0c453dc41b58e89e8189d3d437ac31ebca22c"
+          },
+          "rag": {
+            "log_id": 12,
+            "hit_count": 2,
+            "gate_decision": "skip",
+            "degraded_reason": null,
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "relationship_policy",
+            "label": "已参考关系画像",
+            "hit_count": 2,
+            "referenced_count": 0,
+            "log_id": 12
+          }
+        },
+        {
+          "sample_id": "authored-task_routing-01",
+          "dimension": "task_routing",
+          "chain": "g1",
+          "chain_note": "",
+          "routing": {
+            "task": "reply_suggestion",
+            "output": "suggestion_card",
+            "knowledge_needs": [
+              "facts",
+              "contact_profile",
+              "user_style",
+              "relationship_signals"
+            ],
+            "confidence": 0.9,
+            "reason": "advice_keyword",
+            "wants_speeches": true,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 71,
+            "request_id": "e10b286001e0"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 2269,
+          "elapsed_ms": 48,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [
+              11
+            ],
+            "contact_preference_ids": [
+              4
+            ],
+            "blocks": [
+              "relationship_policy",
+              "contact_preferences",
+              "style_constraints",
+              "relationship_signal"
+            ],
+            "excluded": [],
+            "prompt_hash": "27bd80758b07e20a711cd29cead0c453dc41b58e89e8189d3d437ac31ebca22c"
+          },
+          "rag": {
+            "log_id": 13,
+            "hit_count": 2,
+            "gate_decision": "skip",
+            "degraded_reason": null,
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "relationship_policy",
+            "label": "已参考关系画像",
+            "hit_count": 2,
+            "referenced_count": 0,
+            "log_id": 13
+          }
+        },
+        {
+          "sample_id": "authored-task_routing-02",
+          "dimension": "task_routing",
+          "chain": "no_rag",
+          "chain_note": "",
+          "routing": {
+            "task": "memory_qa",
+            "output": "direct_answer",
+            "knowledge_needs": [
+              "facts"
+            ],
+            "confidence": 0.8,
+            "reason": "history_answer_signal",
+            "wants_speeches": false,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 71,
+            "request_id": "b37f3a935257"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 287,
+          "elapsed_ms": 0,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [],
+            "excluded": [
+              {
+                "kind": "feedback_rules",
+                "reason": "task_knowledge_not_needed"
+              }
+            ],
+            "prompt_hash": "4e17c5cfc524b75b39a18a1101eedf0adcc802fbb3016af88567c9a6a4b26ee9"
+          },
+          "rag": {
+            "log_id": null,
+            "hit_count": 0,
+            "gate_decision": "skip",
+            "degraded_reason": "rag_disabled",
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "hidden",
+            "label": "",
+            "hit_count": 0,
+            "referenced_count": 0,
+            "log_id": null
+          }
+        },
+        {
+          "sample_id": "authored-task_routing-02",
+          "dimension": "task_routing",
+          "chain": "legacy",
+          "chain_note": "行为等价重建(旧二分路由+未净化窗口)",
+          "routing": {
+            "task": "general_qa",
+            "output": "direct_answer",
+            "knowledge_needs": [],
+            "confidence": 0.6,
+            "reason": "legacy_direct_reply",
+            "wants_speeches": false,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 71,
+            "request_id": "5f936b6356a4"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 1474,
+          "elapsed_ms": 47,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [],
+            "excluded": [
+              {
+                "kind": "relationship_policy",
+                "id": 11,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "contact_preferences",
+                "id": null,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "feedback_rules",
+                "reason": "task_knowledge_not_needed"
+              }
+            ],
+            "prompt_hash": "c74aa6b05dbf54fe13c66261f4806b1b6d89aaa42279fa2f18a4fbda031a3fd2"
+          },
+          "rag": {
+            "log_id": 14,
+            "hit_count": 6,
+            "gate_decision": "skip",
+            "degraded_reason": null,
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "not_referenced",
+            "label": "未参考命中记录",
+            "hit_count": 6,
+            "referenced_count": 0,
+            "log_id": 14
+          }
+        },
+        {
+          "sample_id": "authored-task_routing-02",
+          "dimension": "task_routing",
+          "chain": "g1",
+          "chain_note": "",
+          "routing": {
+            "task": "memory_qa",
+            "output": "direct_answer",
+            "knowledge_needs": [
+              "facts"
+            ],
+            "confidence": 0.8,
+            "reason": "history_answer_signal",
+            "wants_speeches": false,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 71,
+            "request_id": "5615b6492dcf"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 1479,
+          "elapsed_ms": 45,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [],
+            "excluded": [
+              {
+                "kind": "relationship_policy",
+                "id": 11,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "contact_preferences",
+                "id": null,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "feedback_rules",
+                "reason": "task_knowledge_not_needed"
+              }
+            ],
+            "prompt_hash": "96e04b118ed6ac1eded291f915dfe7e24862bca5be0f4d56068cc9124d49e8c0"
+          },
+          "rag": {
+            "log_id": 15,
+            "hit_count": 6,
+            "gate_decision": "skip",
+            "degraded_reason": null,
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "not_referenced",
+            "label": "未参考命中记录",
+            "hit_count": 6,
+            "referenced_count": 0,
+            "log_id": 15
+          }
+        },
+        {
+          "sample_id": "authored-task_routing-03",
+          "dimension": "task_routing",
+          "chain": "no_rag",
+          "chain_note": "",
+          "routing": {
+            "task": "reply_suggestion",
+            "output": "suggestion_card",
+            "knowledge_needs": [
+              "facts",
+              "contact_profile",
+              "user_style",
+              "relationship_signals"
+            ],
+            "confidence": 0.85,
+            "reason": "advice_followup_inherited",
+            "wants_speeches": true,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 71,
+            "request_id": "0a427e81943e"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 759,
+          "elapsed_ms": 1,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [
+              "style_constraints",
+              "relationship_signal"
+            ],
+            "excluded": [],
+            "prompt_hash": "d6842f36c1b6f2d2b36db2fa1f0283b9981da544203d9c488b6fe36c6ac80eaa"
+          },
+          "rag": {
+            "log_id": null,
+            "hit_count": 0,
+            "gate_decision": "skip",
+            "degraded_reason": "rag_disabled",
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "hidden",
+            "label": "",
+            "hit_count": 0,
+            "referenced_count": 0,
+            "log_id": null
+          }
+        },
+        {
+          "sample_id": "authored-task_routing-03",
+          "dimension": "task_routing",
+          "chain": "legacy",
+          "chain_note": "行为等价重建(旧二分路由+未净化窗口)",
+          "routing": {
+            "task": "general_qa",
+            "output": "direct_answer",
+            "knowledge_needs": [],
+            "confidence": 0.6,
+            "reason": "legacy_direct_reply",
+            "wants_speeches": false,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 71,
+            "request_id": "5983a3a69357"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 1514,
+          "elapsed_ms": 48,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [],
+            "excluded": [
+              {
+                "kind": "relationship_policy",
+                "id": 11,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "contact_preferences",
+                "id": null,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "feedback_rules",
+                "reason": "task_knowledge_not_needed"
+              }
+            ],
+            "prompt_hash": "3268cd7f733a2792b21f0c51014669553547e2e826df667b088005eca904f81b"
+          },
+          "rag": {
+            "log_id": 16,
+            "hit_count": 2,
+            "gate_decision": "skip",
+            "degraded_reason": null,
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "not_referenced",
+            "label": "未参考命中记录",
+            "hit_count": 2,
+            "referenced_count": 0,
+            "log_id": 16
+          }
+        },
+        {
+          "sample_id": "authored-task_routing-03",
+          "dimension": "task_routing",
+          "chain": "g1",
+          "chain_note": "",
+          "routing": {
+            "task": "reply_suggestion",
+            "output": "suggestion_card",
+            "knowledge_needs": [
+              "facts",
+              "contact_profile",
+              "user_style",
+              "relationship_signals"
+            ],
+            "confidence": 0.85,
+            "reason": "advice_followup_inherited",
+            "wants_speeches": true,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 71,
+            "request_id": "71150dd210c0"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 2303,
+          "elapsed_ms": 41,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [
+              11
+            ],
+            "contact_preference_ids": [
+              4
+            ],
+            "blocks": [
+              "relationship_policy",
+              "contact_preferences",
+              "style_constraints",
+              "relationship_signal"
+            ],
+            "excluded": [],
+            "prompt_hash": "e01e43dafbfe936f79df738eb8e94f444cb7f3c8914e5da262ad2c5eb1378acd"
+          },
+          "rag": {
+            "log_id": 17,
+            "hit_count": 2,
+            "gate_decision": "skip",
+            "degraded_reason": null,
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "relationship_policy",
+            "label": "已参考关系画像",
+            "hit_count": 2,
+            "referenced_count": 0,
+            "log_id": 17
+          }
+        },
+        {
+          "sample_id": "authored-task_routing-04",
+          "dimension": "task_routing",
+          "chain": "no_rag",
+          "chain_note": "",
+          "routing": {
+            "task": "general_qa",
+            "output": "direct_answer",
+            "knowledge_needs": [
+              "facts"
+            ],
+            "confidence": 0.55,
+            "reason": "general_qa_default",
+            "wants_speeches": false,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 71,
+            "request_id": "9f6660649100"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 280,
+          "elapsed_ms": 0,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [],
+            "excluded": [
+              {
+                "kind": "feedback_rules",
+                "reason": "task_knowledge_not_needed"
+              }
+            ],
+            "prompt_hash": "7faf51e9913c5dbdc197fa6c215a1945ff59597a24df00bb322b05d7a66bd91e"
+          },
+          "rag": {
+            "log_id": null,
+            "hit_count": 0,
+            "gate_decision": "skip",
+            "degraded_reason": "rag_disabled",
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "hidden",
+            "label": "",
+            "hit_count": 0,
+            "referenced_count": 0,
+            "log_id": null
+          }
+        },
+        {
+          "sample_id": "authored-task_routing-04",
+          "dimension": "task_routing",
+          "chain": "legacy",
+          "chain_note": "行为等价重建(旧二分路由+未净化窗口)",
+          "routing": {
+            "task": "general_qa",
+            "output": "direct_answer",
+            "knowledge_needs": [],
+            "confidence": 0.6,
+            "reason": "legacy_direct_reply",
+            "wants_speeches": false,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 71,
+            "request_id": "89152acd51d9"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 1472,
+          "elapsed_ms": 72,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [],
+            "excluded": [
+              {
+                "kind": "relationship_policy",
+                "id": 11,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "contact_preferences",
+                "id": null,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "feedback_rules",
+                "reason": "task_knowledge_not_needed"
+              }
+            ],
+            "prompt_hash": "accc5de53e38527d088dceeeaaf030d7f174873d3d3462c251ce7fdc4a7fbe78"
+          },
+          "rag": {
+            "log_id": 18,
+            "hit_count": 2,
+            "gate_decision": "skip",
+            "degraded_reason": "embedding_cold",
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "degraded",
+            "label": "记忆检索降级",
+            "hit_count": 2,
+            "referenced_count": 0,
+            "log_id": 18
+          }
+        },
+        {
+          "sample_id": "authored-task_routing-04",
+          "dimension": "task_routing",
+          "chain": "g1",
+          "chain_note": "",
+          "routing": {
+            "task": "general_qa",
+            "output": "direct_answer",
+            "knowledge_needs": [
+              "facts"
+            ],
+            "confidence": 0.55,
+            "reason": "general_qa_default",
+            "wants_speeches": false,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 71,
+            "request_id": "4b954b185d00"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 1472,
+          "elapsed_ms": 65,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [],
+            "excluded": [
+              {
+                "kind": "relationship_policy",
+                "id": 11,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "contact_preferences",
+                "id": null,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "feedback_rules",
+                "reason": "task_knowledge_not_needed"
+              }
+            ],
+            "prompt_hash": "accc5de53e38527d088dceeeaaf030d7f174873d3d3462c251ce7fdc4a7fbe78"
+          },
+          "rag": {
+            "log_id": 19,
+            "hit_count": 2,
+            "gate_decision": "skip",
+            "degraded_reason": "embedding_cold",
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "degraded",
+            "label": "记忆检索降级",
+            "hit_count": 2,
+            "referenced_count": 0,
+            "log_id": 19
+          }
+        },
+        {
+          "sample_id": "authored-task_routing-05",
+          "dimension": "task_routing",
+          "chain": "no_rag",
+          "chain_note": "",
+          "routing": {
+            "task": "memory_qa",
+            "output": "direct_answer",
+            "knowledge_needs": [
+              "facts"
+            ],
+            "confidence": 0.8,
+            "reason": "history_answer_signal",
+            "wants_speeches": false,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 71,
+            "request_id": "216a201faf2a"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 290,
+          "elapsed_ms": 0,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [],
+            "excluded": [
+              {
+                "kind": "feedback_rules",
+                "reason": "task_knowledge_not_needed"
+              }
+            ],
+            "prompt_hash": "bd6862439285747941e721ca9a8c372ac0ceccd6c6b53b9ef05ca833445d204a"
+          },
+          "rag": {
+            "log_id": null,
+            "hit_count": 0,
+            "gate_decision": "skip",
+            "degraded_reason": "rag_disabled",
+            "memory_intent_mode": "memory_request"
+          },
+          "badge": {
+            "state": "hidden",
+            "label": "",
+            "hit_count": 0,
+            "referenced_count": 0,
+            "log_id": null
+          }
+        },
+        {
+          "sample_id": "authored-task_routing-05",
+          "dimension": "task_routing",
+          "chain": "legacy",
+          "chain_note": "行为等价重建(旧二分路由+未净化窗口)",
+          "routing": {
+            "task": "general_qa",
+            "output": "direct_answer",
+            "knowledge_needs": [],
+            "confidence": 0.6,
+            "reason": "legacy_direct_reply",
+            "wants_speeches": false,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 71,
+            "request_id": "f3938eb97c8c"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 2537,
+          "elapsed_ms": 41,
+          "manifest": {
+            "fact_ids": [
+              145,
+              142,
+              151,
+              154
+            ],
+            "document_ids": [
+              145,
+              142,
+              151,
+              154
+            ],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [
+              "retrieval_memory"
+            ],
+            "excluded": [
+              {
+                "kind": "relationship_policy",
+                "id": 11,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "contact_preferences",
+                "id": null,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "feedback_rules",
+                "reason": "task_knowledge_not_needed"
+              }
+            ],
+            "prompt_hash": "2427f355429e60eb7218fc8718e08d42d9c7fc639c4c3c332deceec52c0306c5"
+          },
+          "rag": {
+            "log_id": 20,
+            "hit_count": 6,
+            "gate_decision": "inject",
+            "degraded_reason": null,
+            "memory_intent_mode": "memory_request"
+          },
+          "badge": {
+            "state": "fact_hit",
+            "label": "已参考 4 条历史事实",
+            "hit_count": 6,
+            "referenced_count": 4,
+            "log_id": 20
+          }
+        },
+        {
+          "sample_id": "authored-task_routing-05",
+          "dimension": "task_routing",
+          "chain": "g1",
+          "chain_note": "",
+          "routing": {
+            "task": "memory_qa",
+            "output": "direct_answer",
+            "knowledge_needs": [
+              "facts"
+            ],
+            "confidence": 0.8,
+            "reason": "history_answer_signal",
+            "wants_speeches": false,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 71,
+            "request_id": "e8572a6a7091"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 2542,
+          "elapsed_ms": 70,
+          "manifest": {
+            "fact_ids": [
+              145,
+              142,
+              151,
+              154
+            ],
+            "document_ids": [
+              145,
+              142,
+              151,
+              154
+            ],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [
+              "retrieval_memory"
+            ],
+            "excluded": [
+              {
+                "kind": "relationship_policy",
+                "id": 11,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "contact_preferences",
+                "id": null,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "feedback_rules",
+                "reason": "task_knowledge_not_needed"
+              }
+            ],
+            "prompt_hash": "ab6cd3081b4af867e32044071a25b84df7f0f928838a4c8f383689fbc8c32fc1"
+          },
+          "rag": {
+            "log_id": 21,
+            "hit_count": 6,
+            "gate_decision": "inject",
+            "degraded_reason": null,
+            "memory_intent_mode": "memory_request"
+          },
+          "badge": {
+            "state": "fact_hit",
+            "label": "已参考 4 条历史事实",
+            "hit_count": 6,
+            "referenced_count": 4,
+            "log_id": 21
+          }
+        },
+        {
+          "sample_id": "authored-contact_binding-06",
+          "dimension": "contact_binding",
+          "chain": "no_rag",
+          "chain_note": "",
+          "routing": {
+            "task": "invitation_planning",
+            "output": "answer_with_speeches",
+            "knowledge_needs": [
+              "facts",
+              "contact_profile",
+              "user_style",
+              "relationship_signals"
+            ],
+            "confidence": 0.85,
+            "reason": "invitation_signal",
+            "wants_speeches": true,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "unique_contact_match",
+            "conversation_id": 91,
+            "request_id": "30047aae0194"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 2494,
+          "elapsed_ms": 1,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [
+              "contact_profile",
+              "self_profile",
+              "style_constraints",
+              "relationship_signal"
+            ],
+            "excluded": [],
+            "prompt_hash": "8d836751ca588ab39cf1095c55af56247000e68f65e17c38840024ef5a442348"
+          },
+          "rag": {
+            "log_id": null,
+            "hit_count": 0,
+            "gate_decision": "skip",
+            "degraded_reason": "rag_disabled",
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "hidden",
+            "label": "",
+            "hit_count": 0,
+            "referenced_count": 0,
+            "log_id": null
+          }
+        },
+        {
+          "sample_id": "authored-contact_binding-06",
+          "dimension": "contact_binding",
+          "chain": "legacy",
+          "chain_note": "行为等价重建(旧二分路由+未净化窗口)",
+          "routing": {
+            "task": "general_qa",
+            "output": "direct_answer",
+            "knowledge_needs": [],
+            "confidence": 0.6,
+            "reason": "legacy_direct_reply",
+            "wants_speeches": false,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ambiguous_contact",
+            "reason": "ambiguous_display_name_matches=2",
+            "conversation_id": null,
+            "request_id": "a2fdab1c8cd9"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 284,
+          "elapsed_ms": 0,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [],
+            "excluded": [],
+            "prompt_hash": "fb1149afb00758fcf0df5d64db9373c644cfa1d0986e7e8ea8ee8316bd500b22"
+          },
+          "rag": {
+            "log_id": null,
+            "hit_count": 0,
+            "gate_decision": "skip",
+            "degraded_reason": "missing_scope",
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "degraded",
+            "label": "记忆检索降级",
+            "hit_count": 0,
+            "referenced_count": 0,
+            "log_id": null
+          }
+        },
+        {
+          "sample_id": "authored-contact_binding-06",
+          "dimension": "contact_binding",
+          "chain": "g1",
+          "chain_note": "",
+          "routing": {
+            "task": "invitation_planning",
+            "output": "answer_with_speeches",
+            "knowledge_needs": [
+              "facts",
+              "contact_profile",
+              "user_style",
+              "relationship_signals"
+            ],
+            "confidence": 0.85,
+            "reason": "invitation_signal",
+            "wants_speeches": true,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ambiguous_contact",
+            "reason": "ambiguous_display_name_matches=3",
+            "conversation_id": null,
+            "request_id": "2ec25f24cc93"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 801,
+          "elapsed_ms": 0,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [
+              "style_constraints",
+              "relationship_signal"
+            ],
+            "excluded": [],
+            "prompt_hash": "18dc5f6cd23921ae88a7021e8e2221b1ae19252694af692d2bae8007a68758a9"
+          },
+          "rag": {
+            "log_id": null,
+            "hit_count": 0,
+            "gate_decision": "skip",
+            "degraded_reason": "missing_scope",
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "relationship_policy",
+            "label": "已参考关系画像",
+            "hit_count": 0,
+            "referenced_count": 0,
+            "log_id": null
+          }
+        },
+        {
+          "sample_id": "authored-contact_binding-07",
+          "dimension": "contact_binding",
+          "chain": "no_rag",
+          "chain_note": "",
+          "routing": {
+            "task": "reply_suggestion",
+            "output": "suggestion_card",
+            "knowledge_needs": [
+              "facts",
+              "contact_profile",
+              "user_style",
+              "relationship_signals"
+            ],
+            "confidence": 0.9,
+            "reason": "advice_keyword",
+            "wants_speeches": true,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "invalid_conversation",
+            "reason": "conversation_not_owned_or_missing",
+            "conversation_id": 999999,
+            "request_id": "2402f7152d50"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 718,
+          "elapsed_ms": 0,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [
+              "style_constraints",
+              "relationship_signal"
+            ],
+            "excluded": [],
+            "prompt_hash": "453ee19a569105811a25b111e9b2f02d2b60d40e96d5a6c9cd5951289e0e22da"
+          },
+          "rag": {
+            "log_id": null,
+            "hit_count": 0,
+            "gate_decision": "skip",
+            "degraded_reason": "rag_disabled",
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "hidden",
+            "label": "",
+            "hit_count": 0,
+            "referenced_count": 0,
+            "log_id": null
+          }
+        },
+        {
+          "sample_id": "authored-contact_binding-07",
+          "dimension": "contact_binding",
+          "chain": "legacy",
+          "chain_note": "行为等价重建(旧二分路由+未净化窗口)",
+          "routing": {
+            "task": "reply_suggestion",
+            "output": "suggestion_card",
+            "knowledge_needs": [
+              "facts",
+              "contact_profile",
+              "user_style",
+              "relationship_signals"
+            ],
+            "confidence": 0.8,
+            "reason": "legacy_advice_request",
+            "wants_speeches": true,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "invalid_conversation",
+            "reason": "conversation_not_owned_or_missing",
+            "conversation_id": 999999,
+            "request_id": "a5be5dea51f7"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 718,
+          "elapsed_ms": 0,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [
+              "style_constraints",
+              "relationship_signal"
+            ],
+            "excluded": [],
+            "prompt_hash": "453ee19a569105811a25b111e9b2f02d2b60d40e96d5a6c9cd5951289e0e22da"
+          },
+          "rag": {
+            "log_id": null,
+            "hit_count": 0,
+            "gate_decision": "skip",
+            "degraded_reason": "missing_scope",
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "relationship_policy",
+            "label": "已参考关系画像",
+            "hit_count": 0,
+            "referenced_count": 0,
+            "log_id": null
+          }
+        },
+        {
+          "sample_id": "authored-contact_binding-07",
+          "dimension": "contact_binding",
+          "chain": "g1",
+          "chain_note": "",
+          "routing": {
+            "task": "reply_suggestion",
+            "output": "suggestion_card",
+            "knowledge_needs": [
+              "facts",
+              "contact_profile",
+              "user_style",
+              "relationship_signals"
+            ],
+            "confidence": 0.9,
+            "reason": "advice_keyword",
+            "wants_speeches": true,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "invalid_conversation",
+            "reason": "conversation_not_owned_or_missing",
+            "conversation_id": 999999,
+            "request_id": "628d43ea4f08"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 718,
+          "elapsed_ms": 0,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [
+              "style_constraints",
+              "relationship_signal"
+            ],
+            "excluded": [],
+            "prompt_hash": "453ee19a569105811a25b111e9b2f02d2b60d40e96d5a6c9cd5951289e0e22da"
+          },
+          "rag": {
+            "log_id": null,
+            "hit_count": 0,
+            "gate_decision": "skip",
+            "degraded_reason": "missing_scope",
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "relationship_policy",
+            "label": "已参考关系画像",
+            "hit_count": 0,
+            "referenced_count": 0,
+            "log_id": null
+          }
+        },
+        {
+          "sample_id": "authored-contact_binding-08",
+          "dimension": "contact_binding",
+          "chain": "no_rag",
+          "chain_note": "",
+          "routing": {
+            "task": "reply_suggestion",
+            "output": "suggestion_card",
+            "knowledge_needs": [
+              "facts",
+              "contact_profile",
+              "user_style",
+              "relationship_signals"
+            ],
+            "confidence": 0.9,
+            "reason": "advice_keyword",
+            "wants_speeches": true,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 91,
+            "request_id": "ef5efbb7503b"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 2411,
+          "elapsed_ms": 0,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [
+              "contact_profile",
+              "self_profile",
+              "style_constraints",
+              "relationship_signal"
+            ],
+            "excluded": [],
+            "prompt_hash": "6b810e13f7a75829cbf053bcb0123b2d6b752140c0e8148038f357e16fb2bd1c"
+          },
+          "rag": {
+            "log_id": null,
+            "hit_count": 0,
+            "gate_decision": "skip",
+            "degraded_reason": "rag_disabled",
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "hidden",
+            "label": "",
+            "hit_count": 0,
+            "referenced_count": 0,
+            "log_id": null
+          }
+        },
+        {
+          "sample_id": "authored-contact_binding-08",
+          "dimension": "contact_binding",
+          "chain": "legacy",
+          "chain_note": "行为等价重建(旧二分路由+未净化窗口)",
+          "routing": {
+            "task": "reply_suggestion",
+            "output": "suggestion_card",
+            "knowledge_needs": [
+              "facts",
+              "contact_profile",
+              "user_style",
+              "relationship_signals"
+            ],
+            "confidence": 0.8,
+            "reason": "legacy_advice_request",
+            "wants_speeches": true,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 91,
+            "request_id": "9605db0074e7"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 4126,
+          "elapsed_ms": 30,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [
+              30
+            ],
+            "contact_preference_ids": [
+              9,
+              8,
+              11,
+              10,
+              13,
+              12
+            ],
+            "blocks": [
+              "relationship_policy",
+              "contact_preferences",
+              "contact_profile",
+              "self_profile",
+              "style_constraints",
+              "relationship_signal"
+            ],
+            "excluded": [],
+            "prompt_hash": "f2fedb348b3388e71ef06f98425b1316899fb59d785edade830da331ecfd9445"
+          },
+          "rag": {
+            "log_id": 22,
+            "hit_count": 3,
+            "gate_decision": "skip",
+            "degraded_reason": null,
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "relationship_policy",
+            "label": "已参考关系画像",
+            "hit_count": 3,
+            "referenced_count": 0,
+            "log_id": 22
+          }
+        },
+        {
+          "sample_id": "authored-contact_binding-08",
+          "dimension": "contact_binding",
+          "chain": "g1",
+          "chain_note": "",
+          "routing": {
+            "task": "reply_suggestion",
+            "output": "suggestion_card",
+            "knowledge_needs": [
+              "facts",
+              "contact_profile",
+              "user_style",
+              "relationship_signals"
+            ],
+            "confidence": 0.9,
+            "reason": "advice_keyword",
+            "wants_speeches": true,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 91,
+            "request_id": "f3c32921699c"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 4561,
+          "elapsed_ms": 164,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [
+              30
+            ],
+            "contact_preference_ids": [
+              9,
+              8,
+              11,
+              10,
+              13,
+              12
+            ],
+            "blocks": [
+              "relationship_policy",
+              "contact_preferences",
+              "contact_profile",
+              "self_profile",
+              "style_constraints",
+              "relationship_signal"
+            ],
+            "excluded": [],
+            "prompt_hash": "fb89191b11308688f010839c6beef044d0641997d133462d9a7de4ea221ffe50"
+          },
+          "rag": {
+            "log_id": 23,
+            "hit_count": 3,
+            "gate_decision": "skip",
+            "degraded_reason": null,
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "relationship_policy",
+            "label": "已参考关系画像",
+            "hit_count": 3,
+            "referenced_count": 0,
+            "log_id": 23
+          }
+        },
+        {
+          "sample_id": "authored-notification_pollution-09",
+          "dimension": "notification_pollution",
+          "chain": "no_rag",
+          "chain_note": "",
+          "routing": {
+            "task": "general_qa",
+            "output": "direct_answer",
+            "knowledge_needs": [
+              "facts"
+            ],
+            "confidence": 0.55,
+            "reason": "general_qa_default",
+            "wants_speeches": false,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 91,
+            "request_id": "8a58e36db623"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 286,
+          "elapsed_ms": 29,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [],
+            "excluded": [
+              {
+                "kind": "contact_profile",
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "self_profile",
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "feedback_rules",
+                "reason": "task_knowledge_not_needed"
+              }
+            ],
+            "prompt_hash": "83428cc27a7a89ddf50750e1f0ff4a9c6fe57e72f1edaf3d76b5d6c23a96a583"
+          },
+          "rag": {
+            "log_id": null,
+            "hit_count": 0,
+            "gate_decision": "skip",
+            "degraded_reason": "rag_disabled",
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "hidden",
+            "label": "",
+            "hit_count": 0,
+            "referenced_count": 0,
+            "log_id": null
+          }
+        },
+        {
+          "sample_id": "authored-notification_pollution-09",
+          "dimension": "notification_pollution",
+          "chain": "legacy",
+          "chain_note": "行为等价重建(旧二分路由+未净化窗口)",
+          "routing": {
+            "task": "general_qa",
+            "output": "direct_answer",
+            "knowledge_needs": [],
+            "confidence": 0.6,
+            "reason": "legacy_direct_reply",
+            "wants_speeches": false,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 91,
+            "request_id": "56966f3497d3"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 1165,
+          "elapsed_ms": 182,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [],
+            "excluded": [
+              {
+                "kind": "relationship_policy",
+                "id": 30,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "contact_preferences",
+                "id": null,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "contact_profile",
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "self_profile",
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "feedback_rules",
+                "reason": "task_knowledge_not_needed"
+              }
+            ],
+            "prompt_hash": "ec787b51dc3527580b091b7de9b6d7288a5f840d8113dbe428fec877102db368"
+          },
+          "rag": {
+            "log_id": 24,
+            "hit_count": 6,
+            "gate_decision": "skip",
+            "degraded_reason": null,
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "not_referenced",
+            "label": "未参考命中记录",
+            "hit_count": 6,
+            "referenced_count": 0,
+            "log_id": 24
+          }
+        },
+        {
+          "sample_id": "authored-notification_pollution-09",
+          "dimension": "notification_pollution",
+          "chain": "g1",
+          "chain_note": "",
+          "routing": {
+            "task": "general_qa",
+            "output": "direct_answer",
+            "knowledge_needs": [
+              "facts"
+            ],
+            "confidence": 0.55,
+            "reason": "general_qa_default",
+            "wants_speeches": false,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 91,
+            "request_id": "3507a4fc6981"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 1599,
+          "elapsed_ms": 124,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [],
+            "excluded": [
+              {
+                "kind": "relationship_policy",
+                "id": 30,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "contact_preferences",
+                "id": null,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "contact_profile",
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "self_profile",
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "feedback_rules",
+                "reason": "task_knowledge_not_needed"
+              }
+            ],
+            "prompt_hash": "b9ad930a67276b929bd0ff6d8ea127a9d70cb84c124a8ea0a2247f4d00c53f2b"
+          },
+          "rag": {
+            "log_id": 25,
+            "hit_count": 6,
+            "gate_decision": "skip",
+            "degraded_reason": null,
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "not_referenced",
+            "label": "未参考命中记录",
+            "hit_count": 6,
+            "referenced_count": 0,
+            "log_id": 25
+          }
+        },
+        {
+          "sample_id": "authored-notification_pollution-10",
+          "dimension": "notification_pollution",
+          "chain": "no_rag",
+          "chain_note": "",
+          "routing": {
+            "task": "reply_suggestion",
+            "output": "suggestion_card",
+            "knowledge_needs": [
+              "facts",
+              "contact_profile",
+              "user_style",
+              "relationship_signals"
+            ],
+            "confidence": 0.9,
+            "reason": "advice_keyword",
+            "wants_speeches": true,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 91,
+            "request_id": "e88d9f4d1c69"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 2411,
+          "elapsed_ms": 2,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [
+              "contact_profile",
+              "self_profile",
+              "style_constraints",
+              "relationship_signal"
+            ],
+            "excluded": [],
+            "prompt_hash": "6b810e13f7a75829cbf053bcb0123b2d6b752140c0e8148038f357e16fb2bd1c"
+          },
+          "rag": {
+            "log_id": null,
+            "hit_count": 0,
+            "gate_decision": "skip",
+            "degraded_reason": "rag_disabled",
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "hidden",
+            "label": "",
+            "hit_count": 0,
+            "referenced_count": 0,
+            "log_id": null
+          }
+        },
+        {
+          "sample_id": "authored-notification_pollution-10",
+          "dimension": "notification_pollution",
+          "chain": "legacy",
+          "chain_note": "行为等价重建(旧二分路由+未净化窗口)",
+          "routing": {
+            "task": "reply_suggestion",
+            "output": "suggestion_card",
+            "knowledge_needs": [
+              "facts",
+              "contact_profile",
+              "user_style",
+              "relationship_signals"
+            ],
+            "confidence": 0.8,
+            "reason": "legacy_advice_request",
+            "wants_speeches": true,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 91,
+            "request_id": "1ebd865f2d53"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 4126,
+          "elapsed_ms": 53,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [
+              30
+            ],
+            "contact_preference_ids": [
+              9,
+              8,
+              11,
+              10,
+              13,
+              12
+            ],
+            "blocks": [
+              "relationship_policy",
+              "contact_preferences",
+              "contact_profile",
+              "self_profile",
+              "style_constraints",
+              "relationship_signal"
+            ],
+            "excluded": [],
+            "prompt_hash": "f2fedb348b3388e71ef06f98425b1316899fb59d785edade830da331ecfd9445"
+          },
+          "rag": {
+            "log_id": 26,
+            "hit_count": 3,
+            "gate_decision": "skip",
+            "degraded_reason": null,
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "relationship_policy",
+            "label": "已参考关系画像",
+            "hit_count": 3,
+            "referenced_count": 0,
+            "log_id": 26
+          }
+        },
+        {
+          "sample_id": "authored-notification_pollution-10",
+          "dimension": "notification_pollution",
+          "chain": "g1",
+          "chain_note": "",
+          "routing": {
+            "task": "reply_suggestion",
+            "output": "suggestion_card",
+            "knowledge_needs": [
+              "facts",
+              "contact_profile",
+              "user_style",
+              "relationship_signals"
+            ],
+            "confidence": 0.9,
+            "reason": "advice_keyword",
+            "wants_speeches": true,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 91,
+            "request_id": "1c139542b58c"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 4561,
+          "elapsed_ms": 28,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [
+              30
+            ],
+            "contact_preference_ids": [
+              9,
+              8,
+              11,
+              10,
+              13,
+              12
+            ],
+            "blocks": [
+              "relationship_policy",
+              "contact_preferences",
+              "contact_profile",
+              "self_profile",
+              "style_constraints",
+              "relationship_signal"
+            ],
+            "excluded": [],
+            "prompt_hash": "fb89191b11308688f010839c6beef044d0641997d133462d9a7de4ea221ffe50"
+          },
+          "rag": {
+            "log_id": 27,
+            "hit_count": 3,
+            "gate_decision": "skip",
+            "degraded_reason": null,
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "relationship_policy",
+            "label": "已参考关系画像",
+            "hit_count": 3,
+            "referenced_count": 0,
+            "log_id": 27
+          }
+        },
+        {
+          "sample_id": "authored-notification_pollution-11",
+          "dimension": "notification_pollution",
+          "chain": "no_rag",
+          "chain_note": "",
+          "routing": {
+            "task": "general_qa",
+            "output": "direct_answer",
+            "knowledge_needs": [
+              "facts"
+            ],
+            "confidence": 0.55,
+            "reason": "general_qa_default",
+            "wants_speeches": false,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 91,
+            "request_id": "837310ddfcc1"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 283,
+          "elapsed_ms": 1,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [],
+            "excluded": [
+              {
+                "kind": "contact_profile",
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "self_profile",
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "feedback_rules",
+                "reason": "task_knowledge_not_needed"
+              }
+            ],
+            "prompt_hash": "388e5992d3dda15830bddb52d7b8c30dc7a0584205def2a2daec60b7aa6edd27"
+          },
+          "rag": {
+            "log_id": null,
+            "hit_count": 0,
+            "gate_decision": "skip",
+            "degraded_reason": "rag_disabled",
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "hidden",
+            "label": "",
+            "hit_count": 0,
+            "referenced_count": 0,
+            "log_id": null
+          }
+        },
+        {
+          "sample_id": "authored-notification_pollution-11",
+          "dimension": "notification_pollution",
+          "chain": "legacy",
+          "chain_note": "行为等价重建(旧二分路由+未净化窗口)",
+          "routing": {
+            "task": "general_qa",
+            "output": "direct_answer",
+            "knowledge_needs": [],
+            "confidence": 0.6,
+            "reason": "legacy_direct_reply",
+            "wants_speeches": false,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 91,
+            "request_id": "a23e2575635b"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 1162,
+          "elapsed_ms": 27,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [],
+            "excluded": [
+              {
+                "kind": "relationship_policy",
+                "id": 30,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "contact_preferences",
+                "id": null,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "contact_profile",
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "self_profile",
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "feedback_rules",
+                "reason": "task_knowledge_not_needed"
+              }
+            ],
+            "prompt_hash": "7eb575df210de4ad2195746d5387c9cea30b45039ab22ddbe363ac7942278a1f"
+          },
+          "rag": {
+            "log_id": 28,
+            "hit_count": 6,
+            "gate_decision": "skip",
+            "degraded_reason": null,
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "not_referenced",
+            "label": "未参考命中记录",
+            "hit_count": 6,
+            "referenced_count": 0,
+            "log_id": 28
+          }
+        },
+        {
+          "sample_id": "authored-notification_pollution-11",
+          "dimension": "notification_pollution",
+          "chain": "g1",
+          "chain_note": "",
+          "routing": {
+            "task": "general_qa",
+            "output": "direct_answer",
+            "knowledge_needs": [
+              "facts"
+            ],
+            "confidence": 0.55,
+            "reason": "general_qa_default",
+            "wants_speeches": false,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 91,
+            "request_id": "3e36af6c8193"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 1596,
+          "elapsed_ms": 29,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [],
+            "excluded": [
+              {
+                "kind": "relationship_policy",
+                "id": 30,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "contact_preferences",
+                "id": null,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "contact_profile",
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "self_profile",
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "feedback_rules",
+                "reason": "task_knowledge_not_needed"
+              }
+            ],
+            "prompt_hash": "829721f7906282992733cca557ed41aadd9f58f99e9717492daf962eaffa8d40"
+          },
+          "rag": {
+            "log_id": 29,
+            "hit_count": 6,
+            "gate_decision": "skip",
+            "degraded_reason": null,
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "not_referenced",
+            "label": "未参考命中记录",
+            "hit_count": 6,
+            "referenced_count": 0,
+            "log_id": 29
+          }
+        },
+        {
+          "sample_id": "authored-redaction_misfire-12",
+          "dimension": "redaction_misfire",
+          "chain": "no_rag",
+          "chain_note": "",
+          "routing": {
+            "task": "memory_qa",
+            "output": "direct_answer",
+            "knowledge_needs": [
+              "facts"
+            ],
+            "confidence": 0.8,
+            "reason": "history_answer_signal",
+            "wants_speeches": false,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 71,
+            "request_id": "df6983b97c36"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 290,
+          "elapsed_ms": 3,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [],
+            "excluded": [
+              {
+                "kind": "feedback_rules",
+                "reason": "task_knowledge_not_needed"
+              }
+            ],
+            "prompt_hash": "bd6862439285747941e721ca9a8c372ac0ceccd6c6b53b9ef05ca833445d204a"
+          },
+          "rag": {
+            "log_id": null,
+            "hit_count": 0,
+            "gate_decision": "skip",
+            "degraded_reason": "rag_disabled",
+            "memory_intent_mode": "memory_request"
+          },
+          "badge": {
+            "state": "hidden",
+            "label": "",
+            "hit_count": 0,
+            "referenced_count": 0,
+            "log_id": null
+          }
+        },
+        {
+          "sample_id": "authored-redaction_misfire-12",
+          "dimension": "redaction_misfire",
+          "chain": "legacy",
+          "chain_note": "行为等价重建(旧二分路由+未净化窗口)",
+          "routing": {
+            "task": "general_qa",
+            "output": "direct_answer",
+            "knowledge_needs": [],
+            "confidence": 0.6,
+            "reason": "legacy_direct_reply",
+            "wants_speeches": false,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 71,
+            "request_id": "2766b41667ca"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 2537,
+          "elapsed_ms": 47,
+          "manifest": {
+            "fact_ids": [
+              145,
+              142,
+              151,
+              154
+            ],
+            "document_ids": [
+              145,
+              142,
+              151,
+              154
+            ],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [
+              "retrieval_memory"
+            ],
+            "excluded": [
+              {
+                "kind": "relationship_policy",
+                "id": 11,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "contact_preferences",
+                "id": null,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "feedback_rules",
+                "reason": "task_knowledge_not_needed"
+              }
+            ],
+            "prompt_hash": "2427f355429e60eb7218fc8718e08d42d9c7fc639c4c3c332deceec52c0306c5"
+          },
+          "rag": {
+            "log_id": 30,
+            "hit_count": 6,
+            "gate_decision": "inject",
+            "degraded_reason": null,
+            "memory_intent_mode": "memory_request"
+          },
+          "badge": {
+            "state": "fact_hit",
+            "label": "已参考 4 条历史事实",
+            "hit_count": 6,
+            "referenced_count": 4,
+            "log_id": 30
+          }
+        },
+        {
+          "sample_id": "authored-redaction_misfire-12",
+          "dimension": "redaction_misfire",
+          "chain": "g1",
+          "chain_note": "",
+          "routing": {
+            "task": "memory_qa",
+            "output": "direct_answer",
+            "knowledge_needs": [
+              "facts"
+            ],
+            "confidence": 0.8,
+            "reason": "history_answer_signal",
+            "wants_speeches": false,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 71,
+            "request_id": "364f0afe3e6f"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 2542,
+          "elapsed_ms": 46,
+          "manifest": {
+            "fact_ids": [
+              145,
+              142,
+              151,
+              154
+            ],
+            "document_ids": [
+              145,
+              142,
+              151,
+              154
+            ],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [
+              "retrieval_memory"
+            ],
+            "excluded": [
+              {
+                "kind": "relationship_policy",
+                "id": 11,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "contact_preferences",
+                "id": null,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "feedback_rules",
+                "reason": "task_knowledge_not_needed"
+              }
+            ],
+            "prompt_hash": "ab6cd3081b4af867e32044071a25b84df7f0f928838a4c8f383689fbc8c32fc1"
+          },
+          "rag": {
+            "log_id": 31,
+            "hit_count": 6,
+            "gate_decision": "inject",
+            "degraded_reason": null,
+            "memory_intent_mode": "memory_request"
+          },
+          "badge": {
+            "state": "fact_hit",
+            "label": "已参考 4 条历史事实",
+            "hit_count": 6,
+            "referenced_count": 4,
+            "log_id": 31
+          }
+        },
+        {
+          "sample_id": "authored-redaction_misfire-13",
+          "dimension": "redaction_misfire",
+          "chain": "no_rag",
+          "chain_note": "",
+          "routing": {
+            "task": "memory_qa",
+            "output": "direct_answer",
+            "knowledge_needs": [
+              "facts"
+            ],
+            "confidence": 0.8,
+            "reason": "history_answer_signal",
+            "wants_speeches": false,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 71,
+            "request_id": "b7d68b0a9e9b"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 290,
+          "elapsed_ms": 1,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [],
+            "excluded": [
+              {
+                "kind": "feedback_rules",
+                "reason": "task_knowledge_not_needed"
+              }
+            ],
+            "prompt_hash": "545650ed5468bcedad836b3f196ecc3bb8116476130f92487ed9666c5a113bae"
+          },
+          "rag": {
+            "log_id": null,
+            "hit_count": 0,
+            "gate_decision": "skip",
+            "degraded_reason": "rag_disabled",
+            "memory_intent_mode": "memory_request"
+          },
+          "badge": {
+            "state": "hidden",
+            "label": "",
+            "hit_count": 0,
+            "referenced_count": 0,
+            "log_id": null
+          }
+        },
+        {
+          "sample_id": "authored-redaction_misfire-13",
+          "dimension": "redaction_misfire",
+          "chain": "legacy",
+          "chain_note": "行为等价重建(旧二分路由+未净化窗口)",
+          "routing": {
+            "task": "general_qa",
+            "output": "direct_answer",
+            "knowledge_needs": [],
+            "confidence": 0.6,
+            "reason": "legacy_direct_reply",
+            "wants_speeches": false,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 71,
+            "request_id": "3c785b197578"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 2489,
+          "elapsed_ms": 70,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [
+              3861,
+              3748,
+              3736,
+              3862
+            ],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [
+              "retrieval_memory"
+            ],
+            "excluded": [
+              {
+                "kind": "relationship_policy",
+                "id": 11,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "contact_preferences",
+                "id": null,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "feedback_rules",
+                "reason": "task_knowledge_not_needed"
+              }
+            ],
+            "prompt_hash": "b3722a866a7090564ce5c5fdfe479a79c23c2d8711dc22be8e844a79cc297f95"
+          },
+          "rag": {
+            "log_id": 32,
+            "hit_count": 5,
+            "gate_decision": "inject",
+            "degraded_reason": "embedding_cold",
+            "memory_intent_mode": "memory_request"
+          },
+          "badge": {
+            "state": "document_hit",
+            "label": "已参考 4 条历史记录",
+            "hit_count": 5,
+            "referenced_count": 4,
+            "log_id": 32
+          }
+        },
+        {
+          "sample_id": "authored-redaction_misfire-13",
+          "dimension": "redaction_misfire",
+          "chain": "g1",
+          "chain_note": "",
+          "routing": {
+            "task": "memory_qa",
+            "output": "direct_answer",
+            "knowledge_needs": [
+              "facts"
+            ],
+            "confidence": 0.8,
+            "reason": "history_answer_signal",
+            "wants_speeches": false,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 71,
+            "request_id": "2bdb45438dca"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 2494,
+          "elapsed_ms": 71,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [
+              3861,
+              3748,
+              3736,
+              3862
+            ],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [
+              "retrieval_memory"
+            ],
+            "excluded": [
+              {
+                "kind": "relationship_policy",
+                "id": 11,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "contact_preferences",
+                "id": null,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "feedback_rules",
+                "reason": "task_knowledge_not_needed"
+              }
+            ],
+            "prompt_hash": "a28abd27020cc77078d223e17e675258a1c3731830990decba176771c75c792b"
+          },
+          "rag": {
+            "log_id": 33,
+            "hit_count": 5,
+            "gate_decision": "inject",
+            "degraded_reason": "embedding_cold",
+            "memory_intent_mode": "memory_request"
+          },
+          "badge": {
+            "state": "document_hit",
+            "label": "已参考 4 条历史记录",
+            "hit_count": 5,
+            "referenced_count": 4,
+            "log_id": 33
+          }
+        },
+        {
+          "sample_id": "authored-redaction_misfire-14",
+          "dimension": "redaction_misfire",
+          "chain": "no_rag",
+          "chain_note": "",
+          "routing": {
+            "task": "general_qa",
+            "output": "direct_answer",
+            "knowledge_needs": [
+              "facts"
+            ],
+            "confidence": 0.55,
+            "reason": "general_qa_default",
+            "wants_speeches": false,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 71,
+            "request_id": "391671a8b5a3"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 282,
+          "elapsed_ms": 1,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [],
+            "excluded": [
+              {
+                "kind": "feedback_rules",
+                "reason": "task_knowledge_not_needed"
+              }
+            ],
+            "prompt_hash": "1c3d80a0f6e708f8aa3d8bfa83a37b68fe805f0e3d68ae5c75327ac61579283e"
+          },
+          "rag": {
+            "log_id": null,
+            "hit_count": 0,
+            "gate_decision": "skip",
+            "degraded_reason": "rag_disabled",
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "hidden",
+            "label": "",
+            "hit_count": 0,
+            "referenced_count": 0,
+            "log_id": null
+          }
+        },
+        {
+          "sample_id": "authored-redaction_misfire-14",
+          "dimension": "redaction_misfire",
+          "chain": "legacy",
+          "chain_note": "行为等价重建(旧二分路由+未净化窗口)",
+          "routing": {
+            "task": "general_qa",
+            "output": "direct_answer",
+            "knowledge_needs": [],
+            "confidence": 0.6,
+            "reason": "legacy_direct_reply",
+            "wants_speeches": false,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 71,
+            "request_id": "972b05fef704"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 1474,
+          "elapsed_ms": 61,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [],
+            "excluded": [
+              {
+                "kind": "relationship_policy",
+                "id": 11,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "contact_preferences",
+                "id": null,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "feedback_rules",
+                "reason": "task_knowledge_not_needed"
+              }
+            ],
+            "prompt_hash": "e3f6c45c0c56f8925f4f174ac0819d64cd38d5df2fec8b8caa9dbd28194459a5"
+          },
+          "rag": {
+            "log_id": 34,
+            "hit_count": 1,
+            "gate_decision": "skip",
+            "degraded_reason": "embedding_cold",
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "degraded",
+            "label": "记忆检索降级",
+            "hit_count": 1,
+            "referenced_count": 0,
+            "log_id": 34
+          }
+        },
+        {
+          "sample_id": "authored-redaction_misfire-14",
+          "dimension": "redaction_misfire",
+          "chain": "g1",
+          "chain_note": "",
+          "routing": {
+            "task": "general_qa",
+            "output": "direct_answer",
+            "knowledge_needs": [
+              "facts"
+            ],
+            "confidence": 0.55,
+            "reason": "general_qa_default",
+            "wants_speeches": false,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 71,
+            "request_id": "c002f4ed8916"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 1474,
+          "elapsed_ms": 63,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [],
+            "excluded": [
+              {
+                "kind": "relationship_policy",
+                "id": 11,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "contact_preferences",
+                "id": null,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "feedback_rules",
+                "reason": "task_knowledge_not_needed"
+              }
+            ],
+            "prompt_hash": "e3f6c45c0c56f8925f4f174ac0819d64cd38d5df2fec8b8caa9dbd28194459a5"
+          },
+          "rag": {
+            "log_id": 35,
+            "hit_count": 1,
+            "gate_decision": "skip",
+            "degraded_reason": "embedding_cold",
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "degraded",
+            "label": "记忆检索降级",
+            "hit_count": 1,
+            "referenced_count": 0,
+            "log_id": 35
+          }
+        },
+        {
+          "sample_id": "authored-policy_adaptation-15",
+          "dimension": "policy_adaptation",
+          "chain": "no_rag",
+          "chain_note": "",
+          "routing": {
+            "task": "relationship_discussion",
+            "output": "direct_answer",
+            "knowledge_needs": [
+              "facts",
+              "contact_profile",
+              "relationship_signals"
+            ],
+            "confidence": 0.78,
+            "reason": "relationship_discussion_signal",
+            "wants_speeches": false,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 91,
+            "request_id": "535c3f5bda2c"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 1465,
+          "elapsed_ms": 1,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [
+              "contact_profile",
+              "relationship_signal"
+            ],
+            "excluded": [
+              {
+                "kind": "self_profile",
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "feedback_rules",
+                "reason": "task_knowledge_not_needed"
+              }
+            ],
+            "prompt_hash": "0548479baafdae061f2f3a4ce9b8ebda4e6ac362f77db8e4ebd4b10a5f37f86b"
+          },
+          "rag": {
+            "log_id": null,
+            "hit_count": 0,
+            "gate_decision": "skip",
+            "degraded_reason": "rag_disabled",
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "hidden",
+            "label": "",
+            "hit_count": 0,
+            "referenced_count": 0,
+            "log_id": null
+          }
+        },
+        {
+          "sample_id": "authored-policy_adaptation-15",
+          "dimension": "policy_adaptation",
+          "chain": "legacy",
+          "chain_note": "行为等价重建(旧二分路由+未净化窗口)",
+          "routing": {
+            "task": "general_qa",
+            "output": "direct_answer",
+            "knowledge_needs": [],
+            "confidence": 0.6,
+            "reason": "legacy_direct_reply",
+            "wants_speeches": false,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 91,
+            "request_id": "e48e8aefdcb9"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 1163,
+          "elapsed_ms": 24,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [],
+            "excluded": [
+              {
+                "kind": "relationship_policy",
+                "id": 30,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "contact_preferences",
+                "id": null,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "contact_profile",
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "self_profile",
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "feedback_rules",
+                "reason": "task_knowledge_not_needed"
+              }
+            ],
+            "prompt_hash": "c4bdcd9ac443627e2c2c3eadaba864b5aadf842b943722c7071c93d7f34e7a7d"
+          },
+          "rag": {
+            "log_id": 36,
+            "hit_count": 6,
+            "gate_decision": "skip",
+            "degraded_reason": null,
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "not_referenced",
+            "label": "未参考命中记录",
+            "hit_count": 6,
+            "referenced_count": 0,
+            "log_id": 36
+          }
+        },
+        {
+          "sample_id": "authored-policy_adaptation-15",
+          "dimension": "policy_adaptation",
+          "chain": "g1",
+          "chain_note": "",
+          "routing": {
+            "task": "relationship_discussion",
+            "output": "direct_answer",
+            "knowledge_needs": [
+              "facts",
+              "contact_profile",
+              "relationship_signals"
+            ],
+            "confidence": 0.78,
+            "reason": "relationship_discussion_signal",
+            "wants_speeches": false,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 91,
+            "request_id": "0efb6e05b901"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 3615,
+          "elapsed_ms": 28,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [
+              30
+            ],
+            "contact_preference_ids": [
+              9,
+              8,
+              11,
+              10,
+              13,
+              12
+            ],
+            "blocks": [
+              "relationship_policy",
+              "contact_preferences",
+              "contact_profile",
+              "relationship_signal"
+            ],
+            "excluded": [
+              {
+                "kind": "self_profile",
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "feedback_rules",
+                "reason": "task_knowledge_not_needed"
+              }
+            ],
+            "prompt_hash": "61f58421dfc790064c69def291ba864cf7f7d7faa5f056ae24007fae35ebbeab"
+          },
+          "rag": {
+            "log_id": 37,
+            "hit_count": 6,
+            "gate_decision": "skip",
+            "degraded_reason": null,
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "relationship_policy",
+            "label": "已参考关系画像",
+            "hit_count": 6,
+            "referenced_count": 0,
+            "log_id": 37
+          }
+        },
+        {
+          "sample_id": "authored-policy_adaptation-16",
+          "dimension": "policy_adaptation",
+          "chain": "no_rag",
+          "chain_note": "",
+          "routing": {
+            "task": "relationship_discussion",
+            "output": "answer_with_speeches",
+            "knowledge_needs": [
+              "facts",
+              "contact_profile",
+              "relationship_signals"
+            ],
+            "confidence": 0.78,
+            "reason": "relationship_discussion_signal",
+            "wants_speeches": true,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 71,
+            "request_id": "3f3ebe6f4e86"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 640,
+          "elapsed_ms": 1,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [
+              "relationship_signal"
+            ],
+            "excluded": [
+              {
+                "kind": "feedback_rules",
+                "reason": "task_knowledge_not_needed"
+              }
+            ],
+            "prompt_hash": "4818ab0e0fb6f873fbbeda696be2be4567217c5d27b4c4a8785c6f420755977f"
+          },
+          "rag": {
+            "log_id": null,
+            "hit_count": 0,
+            "gate_decision": "skip",
+            "degraded_reason": "rag_disabled",
+            "memory_intent_mode": "relationship_context"
+          },
+          "badge": {
+            "state": "hidden",
+            "label": "",
+            "hit_count": 0,
+            "referenced_count": 0,
+            "log_id": null
+          }
+        },
+        {
+          "sample_id": "authored-policy_adaptation-16",
+          "dimension": "policy_adaptation",
+          "chain": "legacy",
+          "chain_note": "行为等价重建(旧二分路由+未净化窗口)",
+          "routing": {
+            "task": "general_qa",
+            "output": "direct_answer",
+            "knowledge_needs": [],
+            "confidence": 0.6,
+            "reason": "legacy_direct_reply",
+            "wants_speeches": false,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 71,
+            "request_id": "99b20164ccf6"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 1484,
+          "elapsed_ms": 46,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [],
+            "excluded": [
+              {
+                "kind": "relationship_policy",
+                "id": 11,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "contact_preferences",
+                "id": null,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "feedback_rules",
+                "reason": "task_knowledge_not_needed"
+              }
+            ],
+            "prompt_hash": "38632fe5a50b9e2c59951cddaf93a1643a1e8b02589bdd5bd473f01820577fa0"
+          },
+          "rag": {
+            "log_id": 38,
+            "hit_count": 4,
+            "gate_decision": "skip",
+            "degraded_reason": null,
+            "memory_intent_mode": "relationship_context"
+          },
+          "badge": {
+            "state": "not_referenced",
+            "label": "未参考命中记录",
+            "hit_count": 4,
+            "referenced_count": 0,
+            "log_id": 38
+          }
+        },
+        {
+          "sample_id": "authored-policy_adaptation-16",
+          "dimension": "policy_adaptation",
+          "chain": "g1",
+          "chain_note": "",
+          "routing": {
+            "task": "relationship_discussion",
+            "output": "answer_with_speeches",
+            "knowledge_needs": [
+              "facts",
+              "contact_profile",
+              "relationship_signals"
+            ],
+            "confidence": 0.78,
+            "reason": "relationship_discussion_signal",
+            "wants_speeches": true,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 71,
+            "request_id": "cfffc9b81fe9"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 2184,
+          "elapsed_ms": 49,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [
+              11
+            ],
+            "contact_preference_ids": [
+              4
+            ],
+            "blocks": [
+              "relationship_policy",
+              "contact_preferences",
+              "relationship_signal"
+            ],
+            "excluded": [
+              {
+                "kind": "feedback_rules",
+                "reason": "task_knowledge_not_needed"
+              }
+            ],
+            "prompt_hash": "95b305b24607be3dc133c261da49c2aa3304b722c8aa0884ef34991f2be0597e"
+          },
+          "rag": {
+            "log_id": 39,
+            "hit_count": 4,
+            "gate_decision": "skip",
+            "degraded_reason": null,
+            "memory_intent_mode": "relationship_context"
+          },
+          "badge": {
+            "state": "relationship_policy",
+            "label": "已参考关系画像",
+            "hit_count": 4,
+            "referenced_count": 0,
+            "log_id": 39
+          }
+        },
+        {
+          "sample_id": "authored-policy_adaptation-17",
+          "dimension": "policy_adaptation",
+          "chain": "no_rag",
+          "chain_note": "",
+          "routing": {
+            "task": "general_qa",
+            "output": "direct_answer",
+            "knowledge_needs": [
+              "facts"
+            ],
+            "confidence": 0.55,
+            "reason": "general_qa_default",
+            "wants_speeches": false,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 91,
+            "request_id": "cd8bce0212a1"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 285,
+          "elapsed_ms": 1,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [],
+            "excluded": [
+              {
+                "kind": "contact_profile",
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "self_profile",
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "feedback_rules",
+                "reason": "task_knowledge_not_needed"
+              }
+            ],
+            "prompt_hash": "45b0be66abdfffba87d43a5d26e5db4143c88e692ceefc6db9ac059b7cd78670"
+          },
+          "rag": {
+            "log_id": null,
+            "hit_count": 0,
+            "gate_decision": "skip",
+            "degraded_reason": "rag_disabled",
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "hidden",
+            "label": "",
+            "hit_count": 0,
+            "referenced_count": 0,
+            "log_id": null
+          }
+        },
+        {
+          "sample_id": "authored-policy_adaptation-17",
+          "dimension": "policy_adaptation",
+          "chain": "legacy",
+          "chain_note": "行为等价重建(旧二分路由+未净化窗口)",
+          "routing": {
+            "task": "general_qa",
+            "output": "direct_answer",
+            "knowledge_needs": [],
+            "confidence": 0.6,
+            "reason": "legacy_direct_reply",
+            "wants_speeches": false,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 91,
+            "request_id": "996ba010494e"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 1164,
+          "elapsed_ms": 23,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [],
+            "excluded": [
+              {
+                "kind": "relationship_policy",
+                "id": 30,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "contact_preferences",
+                "id": null,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "contact_profile",
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "self_profile",
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "feedback_rules",
+                "reason": "task_knowledge_not_needed"
+              }
+            ],
+            "prompt_hash": "5dfa20bab2cdce3c3f26d4bedb67560fe8fad6074ac1a1a6af4ba80e461d018b"
+          },
+          "rag": {
+            "log_id": 40,
+            "hit_count": 3,
+            "gate_decision": "skip",
+            "degraded_reason": null,
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "not_referenced",
+            "label": "未参考命中记录",
+            "hit_count": 3,
+            "referenced_count": 0,
+            "log_id": 40
+          }
+        },
+        {
+          "sample_id": "authored-policy_adaptation-17",
+          "dimension": "policy_adaptation",
+          "chain": "g1",
+          "chain_note": "",
+          "routing": {
+            "task": "general_qa",
+            "output": "direct_answer",
+            "knowledge_needs": [
+              "facts"
+            ],
+            "confidence": 0.55,
+            "reason": "general_qa_default",
+            "wants_speeches": false,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 91,
+            "request_id": "1bea0ff369ed"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 1598,
+          "elapsed_ms": 401,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [],
+            "excluded": [
+              {
+                "kind": "relationship_policy",
+                "id": 30,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "contact_preferences",
+                "id": null,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "contact_profile",
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "self_profile",
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "feedback_rules",
+                "reason": "task_knowledge_not_needed"
+              }
+            ],
+            "prompt_hash": "b7941d60d024fe402c50a6583b0614f123534d3e637dcf9b0742a55d8326ba6f"
+          },
+          "rag": {
+            "log_id": 41,
+            "hit_count": 3,
+            "gate_decision": "skip",
+            "degraded_reason": null,
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "not_referenced",
+            "label": "未参考命中记录",
+            "hit_count": 3,
+            "referenced_count": 0,
+            "log_id": 41
+          }
+        },
+        {
+          "sample_id": "authored-missing_scope_degrade-18",
+          "dimension": "missing_scope_degrade",
+          "chain": "no_rag",
+          "chain_note": "",
+          "routing": {
+            "task": "reply_suggestion",
+            "output": "suggestion_card",
+            "knowledge_needs": [
+              "facts",
+              "contact_profile",
+              "user_style",
+              "relationship_signals"
+            ],
+            "confidence": 0.9,
+            "reason": "advice_keyword",
+            "wants_speeches": true,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "missing_scope",
+            "reason": "no_account_scope",
+            "conversation_id": null,
+            "request_id": "9075bdb822c4"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 718,
+          "elapsed_ms": 3,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [
+              "style_constraints",
+              "relationship_signal"
+            ],
+            "excluded": [],
+            "prompt_hash": "453ee19a569105811a25b111e9b2f02d2b60d40e96d5a6c9cd5951289e0e22da"
+          },
+          "rag": {
+            "log_id": null,
+            "hit_count": 0,
+            "gate_decision": "skip",
+            "degraded_reason": "rag_disabled",
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "hidden",
+            "label": "",
+            "hit_count": 0,
+            "referenced_count": 0,
+            "log_id": null
+          }
+        },
+        {
+          "sample_id": "authored-missing_scope_degrade-18",
+          "dimension": "missing_scope_degrade",
+          "chain": "legacy",
+          "chain_note": "行为等价重建(旧二分路由+未净化窗口)",
+          "routing": {
+            "task": "reply_suggestion",
+            "output": "suggestion_card",
+            "knowledge_needs": [
+              "facts",
+              "contact_profile",
+              "user_style",
+              "relationship_signals"
+            ],
+            "confidence": 0.8,
+            "reason": "legacy_advice_request",
+            "wants_speeches": true,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "missing_scope",
+            "reason": "no_account_scope",
+            "conversation_id": null,
+            "request_id": "19fc3cfa1564"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 718,
+          "elapsed_ms": 4,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [
+              "style_constraints",
+              "relationship_signal"
+            ],
+            "excluded": [],
+            "prompt_hash": "453ee19a569105811a25b111e9b2f02d2b60d40e96d5a6c9cd5951289e0e22da"
+          },
+          "rag": {
+            "log_id": null,
+            "hit_count": 0,
+            "gate_decision": "skip",
+            "degraded_reason": "missing_scope",
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "relationship_policy",
+            "label": "已参考关系画像",
+            "hit_count": 0,
+            "referenced_count": 0,
+            "log_id": null
+          }
+        },
+        {
+          "sample_id": "authored-missing_scope_degrade-18",
+          "dimension": "missing_scope_degrade",
+          "chain": "g1",
+          "chain_note": "",
+          "routing": {
+            "task": "reply_suggestion",
+            "output": "suggestion_card",
+            "knowledge_needs": [
+              "facts",
+              "contact_profile",
+              "user_style",
+              "relationship_signals"
+            ],
+            "confidence": 0.9,
+            "reason": "advice_keyword",
+            "wants_speeches": true,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "missing_scope",
+            "reason": "no_account_scope",
+            "conversation_id": null,
+            "request_id": "e456f24826d6"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 718,
+          "elapsed_ms": 1,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [
+              "style_constraints",
+              "relationship_signal"
+            ],
+            "excluded": [],
+            "prompt_hash": "453ee19a569105811a25b111e9b2f02d2b60d40e96d5a6c9cd5951289e0e22da"
+          },
+          "rag": {
+            "log_id": null,
+            "hit_count": 0,
+            "gate_decision": "skip",
+            "degraded_reason": "missing_scope",
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "relationship_policy",
+            "label": "已参考关系画像",
+            "hit_count": 0,
+            "referenced_count": 0,
+            "log_id": null
+          }
+        },
+        {
+          "sample_id": "authored-missing_scope_degrade-19",
+          "dimension": "missing_scope_degrade",
+          "chain": "no_rag",
+          "chain_note": "",
+          "routing": {
+            "task": "reply_suggestion",
+            "output": "suggestion_card",
+            "knowledge_needs": [
+              "facts",
+              "contact_profile",
+              "user_style",
+              "relationship_signals"
+            ],
+            "confidence": 0.9,
+            "reason": "advice_keyword",
+            "wants_speeches": true,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "missing_scope",
+            "reason": "no_contact_scope",
+            "conversation_id": null,
+            "request_id": "bdb99f08eddb"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 718,
+          "elapsed_ms": 0,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [
+              "style_constraints",
+              "relationship_signal"
+            ],
+            "excluded": [],
+            "prompt_hash": "453ee19a569105811a25b111e9b2f02d2b60d40e96d5a6c9cd5951289e0e22da"
+          },
+          "rag": {
+            "log_id": null,
+            "hit_count": 0,
+            "gate_decision": "skip",
+            "degraded_reason": "rag_disabled",
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "hidden",
+            "label": "",
+            "hit_count": 0,
+            "referenced_count": 0,
+            "log_id": null
+          }
+        },
+        {
+          "sample_id": "authored-missing_scope_degrade-19",
+          "dimension": "missing_scope_degrade",
+          "chain": "legacy",
+          "chain_note": "行为等价重建(旧二分路由+未净化窗口)",
+          "routing": {
+            "task": "reply_suggestion",
+            "output": "suggestion_card",
+            "knowledge_needs": [
+              "facts",
+              "contact_profile",
+              "user_style",
+              "relationship_signals"
+            ],
+            "confidence": 0.8,
+            "reason": "legacy_advice_request",
+            "wants_speeches": true,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "missing_scope",
+            "reason": "no_contact_scope",
+            "conversation_id": null,
+            "request_id": "44a3579ed4ed"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 718,
+          "elapsed_ms": 4,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [
+              "style_constraints",
+              "relationship_signal"
+            ],
+            "excluded": [],
+            "prompt_hash": "453ee19a569105811a25b111e9b2f02d2b60d40e96d5a6c9cd5951289e0e22da"
+          },
+          "rag": {
+            "log_id": null,
+            "hit_count": 0,
+            "gate_decision": "skip",
+            "degraded_reason": "missing_scope",
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "relationship_policy",
+            "label": "已参考关系画像",
+            "hit_count": 0,
+            "referenced_count": 0,
+            "log_id": null
+          }
+        },
+        {
+          "sample_id": "authored-missing_scope_degrade-19",
+          "dimension": "missing_scope_degrade",
+          "chain": "g1",
+          "chain_note": "",
+          "routing": {
+            "task": "reply_suggestion",
+            "output": "suggestion_card",
+            "knowledge_needs": [
+              "facts",
+              "contact_profile",
+              "user_style",
+              "relationship_signals"
+            ],
+            "confidence": 0.9,
+            "reason": "advice_keyword",
+            "wants_speeches": true,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "missing_scope",
+            "reason": "no_contact_scope",
+            "conversation_id": null,
+            "request_id": "a40c00f279bb"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 718,
+          "elapsed_ms": 1,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [
+              "style_constraints",
+              "relationship_signal"
+            ],
+            "excluded": [],
+            "prompt_hash": "453ee19a569105811a25b111e9b2f02d2b60d40e96d5a6c9cd5951289e0e22da"
+          },
+          "rag": {
+            "log_id": null,
+            "hit_count": 0,
+            "gate_decision": "skip",
+            "degraded_reason": "missing_scope",
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "relationship_policy",
+            "label": "已参考关系画像",
+            "hit_count": 0,
+            "referenced_count": 0,
+            "log_id": null
+          }
+        },
+        {
+          "sample_id": "authored-missing_scope_degrade-20",
+          "dimension": "missing_scope_degrade",
+          "chain": "no_rag",
+          "chain_note": "",
+          "routing": {
+            "task": "invitation_planning",
+            "output": "answer_with_speeches",
+            "knowledge_needs": [
+              "facts",
+              "contact_profile",
+              "user_style",
+              "relationship_signals"
+            ],
+            "confidence": 0.85,
+            "reason": "invitation_signal",
+            "wants_speeches": true,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "missing_scope",
+            "reason": "no_matching_contact",
+            "conversation_id": null,
+            "request_id": "4b0c34f3fb33"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 800,
+          "elapsed_ms": 1,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [
+              "style_constraints",
+              "relationship_signal"
+            ],
+            "excluded": [],
+            "prompt_hash": "231a7ab8a26ca87787819f9731e1c16e3765659f79c9901b1b9fca59d4b5fa42"
+          },
+          "rag": {
+            "log_id": null,
+            "hit_count": 0,
+            "gate_decision": "skip",
+            "degraded_reason": "rag_disabled",
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "hidden",
+            "label": "",
+            "hit_count": 0,
+            "referenced_count": 0,
+            "log_id": null
+          }
+        },
+        {
+          "sample_id": "authored-missing_scope_degrade-20",
+          "dimension": "missing_scope_degrade",
+          "chain": "legacy",
+          "chain_note": "行为等价重建(旧二分路由+未净化窗口)",
+          "routing": {
+            "task": "general_qa",
+            "output": "direct_answer",
+            "knowledge_needs": [],
+            "confidence": 0.6,
+            "reason": "legacy_direct_reply",
+            "wants_speeches": false,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "missing_scope",
+            "reason": "no_matching_contact",
+            "conversation_id": null,
+            "request_id": "d3b25718e47d"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 283,
+          "elapsed_ms": 2,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [],
+            "excluded": [],
+            "prompt_hash": "71c6547476953bb20a642d9a388285e7e0a7720ae75ca8d144072c35a2e0b50a"
+          },
+          "rag": {
+            "log_id": null,
+            "hit_count": 0,
+            "gate_decision": "skip",
+            "degraded_reason": "missing_scope",
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "degraded",
+            "label": "记忆检索降级",
+            "hit_count": 0,
+            "referenced_count": 0,
+            "log_id": null
+          }
+        },
+        {
+          "sample_id": "authored-missing_scope_degrade-20",
+          "dimension": "missing_scope_degrade",
+          "chain": "g1",
+          "chain_note": "",
+          "routing": {
+            "task": "invitation_planning",
+            "output": "answer_with_speeches",
+            "knowledge_needs": [
+              "facts",
+              "contact_profile",
+              "user_style",
+              "relationship_signals"
+            ],
+            "confidence": 0.85,
+            "reason": "invitation_signal",
+            "wants_speeches": true,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "missing_scope",
+            "reason": "no_matching_contact",
+            "conversation_id": null,
+            "request_id": "180674fd74fc"
+          },
+          "model": "deepseek-flash",
+          "prompt_chars": 800,
+          "elapsed_ms": 2,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [
+              "style_constraints",
+              "relationship_signal"
+            ],
+            "excluded": [],
+            "prompt_hash": "231a7ab8a26ca87787819f9731e1c16e3765659f79c9901b1b9fca59d4b5fa42"
+          },
+          "rag": {
+            "log_id": null,
+            "hit_count": 0,
+            "gate_decision": "skip",
+            "degraded_reason": "missing_scope",
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "relationship_policy",
+            "label": "已参考关系画像",
+            "hit_count": 0,
+            "referenced_count": 0,
+            "log_id": null
+          }
+        }
+      ]
+    }
+  ]
+}

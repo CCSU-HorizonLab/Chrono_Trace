@@ -1,13 +1,14 @@
 # G1-04 端到端验收(G7 发布门禁)
 
 - **上游文档**:`docs/goals/g1-generation-goal.md` 第三节 G7、第七节阶段完成定义
-- **状态**:施工中
+- **状态**:三路回放器已落地并完成首轮 dry-run 对照(0 失败);live 对照、人工评估、NLI 判定待做
 
 ## 任务清单
 
-- [ ] 对 G0 冻结样例运行 no-RAG、旧链路、G1 链路三路对照(`backend/scripts/g1_baseline_replay.py`)。
+- [x] 对 G0 冻结样例运行 no-RAG、旧链路、G1 链路三路对照(`backend/scripts/g1_baseline_replay.py`,首轮 dry-run 72 条链路结果 0 失败)。
+- [ ] live 三路对照(`--live`,真实调用激活模型)并保存输出。
 - [ ] 人工评估维度:任务识别、联系人隔离、证据使用、边界遵守、无关旧事、可发送性、隐私。
-- [ ] 记录延迟、超时、降级率和失败原因到 `docs/goals/g1-e2e-report.md`。
+- [ ] 记录延迟、超时、降级率和失败原因到 `docs/goals/g1-e2e-report.md`(dry-run 延迟已记录在 `g1-replay-results.json`)。
 - [ ] 对模型输出用脱敏 evidence 做 `entailed / contradicted / unknown` 判定(复用 rag-v4 NLI 管道)。
 - [ ] 结果保存模型版本、prompt 版本、评测版本和原始判定。
 - [ ] 安全指标回退时按联系人切回旧读侧或 `inherit`(fact_read_mode 已有开关,补充切换脚本)。

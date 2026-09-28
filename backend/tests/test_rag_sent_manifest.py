@@ -175,6 +175,21 @@ def test_badge_falls_back_without_manifest():
     assert badge["referenced_count"] == 1
 
 
+def test_scope_missing_suppresses_relationship_signal_block():
+    """G1 红线:范围缺失时不得渲染关系信号块(端到端回放发现的泄漏)。"""
+    engine = _engine()
+    context = {
+        "user_context": [{"role": "user", "content": "她是不是不想理我了"}],
+        "_generation_scope_missing": True,
+        "recent_messages": [
+            {"id": 1, "timestamp": 100, "sender_attr": "friend", "content": "在忙"},
+        ],
+    }
+    prompt = engine._build_prompt("manual_request", "maintain", context)
+    assert "【关系信号" not in prompt
+    assert "relationship_signal" not in (context["_rag_sent_manifest"]["blocks"])
+
+
 def test_store_sent_manifest_roundtrip():
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row

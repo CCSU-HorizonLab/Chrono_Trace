@@ -1599,7 +1599,9 @@ class LLMSuggestionEngine(SuggestionEngine):
                 parts.append(f"  {line}")
 
         # G5:好感分析以"带时间与不确定性的关系信号"注入,不直接等同亲密度。
-        if needs_signals:
+        # G1 红线:联系人范围缺失/歧义时不注入——即使数据只来自当前窗口,
+        # 也不给模型任何可归因到具体联系人的关系结论素材。
+        if needs_signals and not context.get("_generation_scope_missing"):
             signal_lines = self._build_relationship_signal_lines(context, purified)
             if signal_lines:
                 sent_blocks.append("relationship_signal")

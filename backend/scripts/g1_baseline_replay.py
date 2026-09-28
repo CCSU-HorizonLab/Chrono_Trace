@@ -164,6 +164,8 @@ def replay_sample(
     conn: sqlite3.Connection,
     live: bool,
 ) -> dict[str, Any]:
+    import app.services.realtime.rag.context_builder as cb_module
+
     from app.services.realtime.generation_context import assemble_generation_context
     from app.services.realtime.llm_engine import LLMSuggestionEngine
     from app.services.realtime.rag.context_builder import RagContextBuilder
@@ -171,12 +173,20 @@ def replay_sample(
     engine = LLMSuggestionEngine()
     model_config = engine._get_active_model()
 
+    # no_rag 是"无记忆检索"对照,不是"无上下文"对照:当前窗口、范围解析、
+    # 孪生注入对所有链路一视同仁,唯一差异是 rag_enabled=False。
     context: dict[str, Any] = {"user_context": sample["input"]}
-    if sample.get("conversation_id") and chain != "no_rag":
+    if sample.get("conversation_id"):
         context["recent_messages"] = build_recent_messages(conn, int(sample["conversation_id"]))
 
-    if sample.get("requires_ambiguous_twin") and chain != "no_rag":
+    if sample.get("requires_ambiguous_twin"):
         inject_ambiguous_twin(conn, sample, chain)
+
+    no_rag_patch = None
+    if chain == "no_rag":
+        original = cb_module.load_rag_settings
+        no_rag_patch = original
+        cb_module.load_rag_settings = lambda: {**original(), "rag_enabled": False}
 
     started = time.perf_counter()
     scope = assemble_generation_context(
@@ -211,30 +221,25 @@ def replay_sample(
         "model": (model_config or {}).get("model_id"),
     }
 
-    if chain == "no_rag":
-        import app.services.realtime.rag.context_builder as cb_module
-
-        original = cb_module.load_rag_settings
-        cb_module.load_rag_settings = lambda: {**original(), "rag_enabled": False}
-        try:
+    try:
+        if live:
+            try:
+                suggestion = engine.generate("manual_request", "maintain", context)
+                result["output"] = {
+                    "summary": suggestion.summary,
+                    "speeches": suggestion.speeches,
+                    "reply": suggestion.reply,
+                    "rag_badge": getattr(suggestion, "rag_context", None),
+                }
+            except Exception as exc:
+                result["error"] = f"{type(exc).__name__}: {exc}"
+            result["elapsed_ms"] = int((time.perf_counter() - started) * 1000)
+            _collect_manifest(context, result)
+        else:
             _run_dry(context, engine, model_config, result, started)
-        finally:
-            cb_module.load_rag_settings = original
-    elif live:
-        try:
-            suggestion = engine.generate("manual_request", "maintain", context)
-            result["output"] = {
-                "summary": suggestion.summary,
-                "speeches": suggestion.speeches,
-                "reply": suggestion.reply,
-                "rag_badge": getattr(suggestion, "rag_context", None),
-            }
-        except Exception as exc:
-            result["error"] = f"{type(exc).__name__}: {exc}"
-        result["elapsed_ms"] = int((time.perf_counter() - started) * 1000)
-        _collect_manifest(context, result)
-    else:
-        _run_dry(context, engine, model_config, result, started)
+    finally:
+        if no_rag_patch is not None:
+            cb_module.load_rag_settings = no_rag_patch
     return result
 
 

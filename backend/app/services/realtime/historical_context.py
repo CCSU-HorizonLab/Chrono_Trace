@@ -57,16 +57,22 @@ def augment_context_with_historical_data(
     *,
     self_profile_cache: dict[str, Any] | None = None,
     load_style_inputs: Callable[[int | None], tuple[Any, Any] | tuple[None, None]] | None = None,
+    conversation_id: int | None = None,
 ) -> dict[str, Any]:
-    """Merge cached historical/style inputs into an existing runtime context."""
-    conversation_id = None
+    """Merge cached historical/style inputs into an existing runtime context.
+
+    审核返工 2:``conversation_id`` 显式传入时优先(来自统一范围解析),
+    不再依赖自我画像缓存里带的会话号——缓存缺失也能拿到好感/量化风格。
+    """
+    resolved_conversation_id = conversation_id
     self_profile_features = None
     if self_profile_cache:
-        conversation_id = self_profile_cache.get("conversation_id")
+        if resolved_conversation_id is None:
+            resolved_conversation_id = self_profile_cache.get("conversation_id")
         self_profile_features = self_profile_cache.get("features_snapshot") or None
 
     style_loader = load_style_inputs or load_cached_style_inputs
-    preprocessed_stats, affinity_result = style_loader(conversation_id)
+    preprocessed_stats, affinity_result = style_loader(resolved_conversation_id)
 
     historical_context = ctx.get("historical_context", {})
     if not isinstance(historical_context, dict):

@@ -227,10 +227,10 @@ class RagContextBuilder:
         except Exception:
             return []
 
+        # 审核返工 2:先收集全部合格候选,按任务相关性排序后再截预算——
+        # "先截断再排序"会让排在第 7 位的相关偏好永远进不来。
         selected: list[dict[str, Any]] = []
         for row in prefs:
-            if len(selected) >= self.CONTACT_PREFERENCE_MAX_ITEMS:
-                break
             if str(row.get("sensitivity") or "normal") == "sensitive":
                 continue
             if float(row.get("confidence") or 0.0) < self.CONTACT_PREFERENCE_MIN_CONFIDENCE:
@@ -250,6 +250,11 @@ class RagContextBuilder:
             )
         if not selected:
             return []
+
+        routing = TaskRouting.from_dict(context.get("_task_routing"))
+        routing_task = routing.task if routing is not None else ""
+        selected = self._rank_preferences_for_task(selected, routing_task)
+        selected = selected[: self.CONTACT_PREFERENCE_MAX_ITEMS]
 
         if remote_model and not redaction_disabled:
             try:
@@ -271,13 +276,42 @@ class RagContextBuilder:
         usable = [pref for pref in selected if pref["summary"]]
         if not usable:
             return []
-        # G5:按任务排序偏好槽——邀约场景游戏/娱乐类偏好优先,
-        # 不让贴膜、穿衣等无关偏好抢占预算(上限不变)。
-        routing = TaskRouting.from_dict(context.get("_task_routing"))
-        if routing is not None and routing.task == TASK_INVITATION_PLANNING:
-            usable.sort(key=lambda pref: 0 if _GAME_PREF_RE.search(pref["summary"]) else 1)
         context["contact_preferences"] = usable
         return [pref["pref_id"] for pref in usable]
+
+    @staticmethod
+    def _rank_preferences_for_task(prefs: list[dict[str, Any]], routing_task: str) -> list[dict[str, Any]]:
+        """按任务对全部合格偏好排序(排序在前,截断在后)。
+
+        - 邀约:游戏/娱乐类偏好优先(吃饭邀约场景用餐类其次);
+        - 关系讨论:雷点(avoid)与边界类优先——讨论分寸时最该知道什么不能碰;
+        - 其他任务:维持置信度降序(SQL 原序)。
+        """
+        if routing_task == TASK_INVITATION_PLANNING:
+            food_re = re.compile(r"吃|餐|饭|菜|火锅|咖啡|奶茶|喝|店|电影|看")
+
+            def _invitation_key(pref: dict[str, Any]) -> tuple[int, int, float]:
+                summary = pref["summary"]
+                if _GAME_PREF_RE.search(summary):
+                    tier = 0
+                elif food_re.search(summary):
+                    tier = 1
+                else:
+                    tier = 2
+                avoid = 1 if pref.get("slot_kind") == "avoid" else 0
+                return (tier, avoid, -float(pref.get("confidence") or 0.0))
+
+            return sorted(prefs, key=_invitation_key)
+        if routing_task == TASK_RELATIONSHIP_DISCUSSION:
+            boundary_re = re.compile(r"介意|雷区|不要|不能接受|不舒服|边界|讨厌|不喜欢")
+
+            def _relationship_key(pref: dict[str, Any]) -> tuple[int, float]:
+                avoid = 0 if pref.get("slot_kind") == "avoid" else 1
+                boundary_hit = 0 if boundary_re.search(pref["summary"]) else 1
+                return (avoid, boundary_hit * 10 + (1 - float(pref.get("confidence") or 0.0)))
+
+            return sorted(prefs, key=_relationship_key)
+        return prefs
 
     def enrich_context(
         self,

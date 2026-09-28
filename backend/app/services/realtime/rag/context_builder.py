@@ -10,7 +10,13 @@ import logging
 from typing import Any
 
 from ....db.connection import get_db
-from ..privacy_redactor import PrivacyRedactor
+from ..privacy_redactor import PrivacyRedactor, evidence_core_intact
+from ..task_router import (
+    TASK_GENERAL_QA,
+    TASK_INVITATION_PLANNING,
+    TASK_RELATIONSHIP_DISCUSSION,
+    TaskRouting,
+)
 from .config import is_remote_llm_model, load_rag_settings
 from .indexer import RagIndexer
 from .retriever import RagRetriever
@@ -22,6 +28,19 @@ from ..memory_intent import MemoryIntent, detect_memory_intent
 
 
 logger = logging.getLogger(__name__)
+
+# G5:邀约场景优先的事实种类与偏好关键词(hobby_or_game 见 fact_kind_hints.json)。
+_INVITATION_FACT_KINDS = frozenset(
+    {"hobby_or_game", "event", "plan_or_appointment", "preference_like"}
+)
+_RELATIONSHIP_FACT_KINDS = frozenset(
+    {"relationship_boundary", "personal_profile", "event"}
+)
+_GAME_PREF_RE = re.compile(
+    r"游戏|switch|ps\d|steam|xbox|王者|原神|塞尔达|马里奥|路易吉|吃鸡|"
+    r"csgo|lol|联机|开黑|主机|掌机|手游|端游|一起玩|打球|运动|剧本杀|密室",
+    re.IGNORECASE,
+)
 
 
 class RagQueryBuilder:
@@ -252,6 +271,11 @@ class RagContextBuilder:
         usable = [pref for pref in selected if pref["summary"]]
         if not usable:
             return []
+        # G5:按任务排序偏好槽——邀约场景游戏/娱乐类偏好优先,
+        # 不让贴膜、穿衣等无关偏好抢占预算(上限不变)。
+        routing = TaskRouting.from_dict(context.get("_task_routing"))
+        if routing is not None and routing.task == TASK_INVITATION_PLANNING:
+            usable.sort(key=lambda pref: 0 if _GAME_PREF_RE.search(pref["summary"]) else 1)
         context["contact_preferences"] = usable
         return [pref["pref_id"] for pref in usable]
 
@@ -543,11 +567,17 @@ class RagContextBuilder:
             result["degraded"] = True
             result["degrade_reason"] = "compression_failed"
 
+        evidence_unusable: list[Any] = []
         if remote_model and not redaction_disabled and items:
             try:
                 if self._budget_exhausted(deadline):
                     raise TimeoutError("rag budget exhausted before redaction")
                 redactor = PrivacyRedactor(self.store.conn)
+                originals = {
+                    id(item): str(item.get("content") or "")
+                    for item in items
+                    if item.get("sensitivity") != "sensitive"
+                }
                 for item in items:
                     if item.get("sensitivity") == "sensitive":
                         continue
@@ -558,6 +588,23 @@ class RagContextBuilder:
                         source_table="rag_context",
                         source_id=str(item.get("document_id") or ""),
                     ).redacted_text
+                # G4:脱敏后核心对象完整性检查——事实的核心实体(游戏名等)
+                # 被占位符吃掉时,该证据不可引用,不得计为有效注入。
+                usable_items: list[dict[str, Any]] = []
+                for item in items:
+                    original = originals.get(id(item))
+                    if original is None:
+                        usable_items.append(item)
+                        continue
+                    if evidence_core_intact(original, str(item.get("content") or "")):
+                        usable_items.append(item)
+                    else:
+                        evidence_unusable.append(item.get("document_id"))
+                        logger.debug(
+                            "[RAG Redaction] evidence_redacted_unusable document_id=%s",
+                            item.get("document_id"),
+                        )
+                items = usable_items
             except TimeoutError:
                 items = []
                 result["timed_out"] = True
@@ -718,10 +765,18 @@ class RagContextBuilder:
             policy_ids=[relationship_policy_state_id] if relationship_policy_state_id else [],
             contact_preference_ids=contact_preference_ids,
             trigger_type=trigger_type,
+            request_id=context.get("_generation_request_id"),
+            entrypoint=context.get("_generation_entrypoint"),
+            excluded_reasons=[
+                {"kind": "retrieval_item", "id": item_id, "reason": "evidence_redacted_unusable"}
+                for item_id in evidence_unusable
+                if item_id is not None
+            ],
         )
         self.store.conn.commit()
         context["_rag_log_id"] = log_id
         context["_rag_conversation_id"] = conversation_id
+        context["_rag_evidence_unusable_ids"] = evidence_unusable
         logger.debug(
             "[RAG] retrieved hit_count=%s latency=%sms degraded=%s reason=%s",
             hit_count,
@@ -1017,6 +1072,10 @@ class RagContextBuilder:
         return json.dumps(data, ensure_ascii=False, sort_keys=True)
 
     def _resolve_conversation_id(self, context: dict[str, Any], account_wxid: str) -> int | None:
+        # G1:统一装配层已判定范围缺失/歧义时,禁止再用显示名兜底猜一个会话,
+        # 否则会出现"画像属于当前联系人,RAG 却检索了另一个同名联系人"。
+        if context.get("_generation_scope_missing"):
+            return None
         raw = context.get("conversation_id") or context.get("_rag_conversation_id")
         try:
             if raw:
@@ -1124,6 +1183,8 @@ class RagContextBuilder:
         recent_text = self._recent_task_text(context)
         query_tokens = set(self.segmenter.extract_topics(query))
         recent_tokens = set(self.segmenter.extract_topics(recent_text))
+        routing = TaskRouting.from_dict(context.get("_task_routing"))
+        routing_task = routing.task if routing is not None else ""
         output: list[dict[str, Any]] = []
         off_topic_count = 0
         for item in items:
@@ -1152,12 +1213,31 @@ class RagContextBuilder:
             elif doc_type in {"self_style_example", "communication_style"}:
                 task_score = max(vector_score * 0.75, keyword_score, lexical_score, 0.35)
                 reason = "style_context"
+                if routing_task == TASK_GENERAL_QA:
+                    # G5:普通问答不需要风格样本,压低排序避免挤占预算。
+                    task_score *= 0.5
+                    reason = "style_context_general_qa_dampened"
             else:
                 task_score = max(vector_score * 0.90, keyword_score, lexical_score)
                 reason = "semantic_rerank" if vector_score else "keyword_rerank"
                 if memory_intent.mode == "memory_request" and (keyword_score > 0 or lexical_score > 0):
                     task_score = max(task_score, 0.50)
                     reason = "memory_request_anchor"
+                if doc_type == "fact_memory" and routing_task:
+                    fact_kind = str(
+                        item.get("memory_kind") or metadata.get("memory_kind") or ""
+                    )
+                    if routing_task == TASK_INVITATION_PLANNING and fact_kind in _INVITATION_FACT_KINDS:
+                        # G5:邀约优先共同游戏/共同经历/对方游戏偏好,
+                        # 不让无关事实抢占前 4 个注入名额。
+                        task_score = max(task_score, 0.62)
+                        reason = "invitation_kind_boost"
+                    elif (
+                        routing_task == TASK_RELATIONSHIP_DISCUSSION
+                        and fact_kind in _RELATIONSHIP_FACT_KINDS
+                    ):
+                        task_score = max(task_score, 0.58)
+                        reason = "relationship_kind_boost"
 
             off_topic = False
             if (

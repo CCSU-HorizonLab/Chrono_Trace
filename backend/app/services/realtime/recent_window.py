@@ -21,7 +21,8 @@ KIND_SYSTEM_NOTICE = "system_notice"
 KIND_UNPARSEABLE = "unparseable"
 
 # 资金事件:只匹配事件性文本,正常文字提及转账("我昨天给你转了钱记得收")
-# 不含下列强模式,不会被误伤。
+# 不含下列强模式,不会被误伤。真实缓冲区样例:"￥40.00 已收款 微信转账"、
+# "￥42.50 已被接收 微信转账"(后者曾被上游标成 friend 普通消息)。
 TRANSFER_TEXT_PATTERNS = (
     "[转账]",
     "[收款]",
@@ -30,12 +31,14 @@ TRANSFER_TEXT_PATTERNS = (
     "给你转账",
     "已收款",
     "已收钱",
+    "已被接收",
     "收到转账",
     "朋友转账",
     "微信转账",
     "转账给你",
     "退还转账",
     "已退还",
+    "已存入零钱",
     "领取了红包",
     "发出红包",
     "微信支付收款",
@@ -73,6 +76,8 @@ MAX_TRANSFER_EVENTS_IN_WINDOW = 2
 _SYSTEM_NOTICE_RE = re.compile("|".join(re.escape(pattern) for pattern in SYSTEM_NOTICE_PATTERNS))
 _TRANSFER_RE = re.compile("|".join(re.escape(pattern) for pattern in TRANSFER_TEXT_PATTERNS))
 _UNPARSEABLE_RE = re.compile("|".join(re.escape(pattern) for pattern in UNPARSEABLE_PATTERNS))
+# 金额引导的资金事件(￥/$/¥ + 数字,后接转账/收款措辞),兜底覆盖措辞变体。
+_TRANSFER_AMOUNT_RE = re.compile(r"^[￥$¥]\s*\d+(?:\.\d+)?(?:\s*元)?.{0,20}(?:转账|收款|红包|接收|存入)")
 
 
 def classify_message_kind(message: dict[str, Any] | None) -> str:
@@ -95,6 +100,8 @@ def classify_message_kind(message: dict[str, Any] | None) -> str:
         return KIND_UNPARSEABLE
     if _TRANSFER_RE.search(content) and len(content) <= 60:
         # 事件性气泡通常很短;长文本里"顺带提到"转账的仍是人工聊天。
+        return KIND_TRANSFER_EVENT
+    if _TRANSFER_AMOUNT_RE.match(content) and len(content) <= 60:
         return KIND_TRANSFER_EVENT
     if _SYSTEM_NOTICE_RE.search(content) and len(content) <= 60:
         return KIND_SYSTEM_NOTICE

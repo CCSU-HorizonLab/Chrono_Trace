@@ -1207,10 +1207,25 @@ class LLMSuggestionEngine(SuggestionEngine):
             parts.append(f"【用户目标】{intent_desc}")
 
         # G3:净化后再选窗,系统通知不占聊天名额,转账渲染为事件行。
+        # ``_legacy_prompt_chain``:G0/G7 三路对照用的旧链路等价开关——
+        # 跳过净化,保持改造前的窗口选择行为(路由等价映射由回放脚本注入)。
         recent = self._normalize_recent_messages(context.get("recent_messages", []))
-        purified = purify_recent_window(recent, limit=self.RECENT_MESSAGE_LIMIT)
-        window_messages = self._normalize_recent_messages(purified["window"])
-        _older_messages, recent_window = self._select_recent_messages(window_messages)
+        if context.get("_legacy_prompt_chain"):
+            _older_messages, recent_window = self._select_recent_messages(recent)
+            purified = {
+                "window": recent_window,
+                "chat_window": recent_window,
+                "all_chats": recent,
+                "dropped_notices": 0,
+                "dropped_unparseable": 0,
+                "transfer_events": [],
+                "chat_count": len(recent_window),
+                "notice_only": False,
+            }
+        else:
+            purified = purify_recent_window(recent, limit=self.RECENT_MESSAGE_LIMIT)
+            window_messages = self._normalize_recent_messages(purified["window"])
+            _older_messages, recent_window = self._select_recent_messages(window_messages)
         compressed_summary = self._compress_messages(purified["all_chats"], recent_window)
         if recent_window:
             parts.append("\n【最近对话】")

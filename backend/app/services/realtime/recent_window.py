@@ -73,6 +73,17 @@ UNPARSEABLE_PATTERNS = (
 # 事件行在窗口里的渲染上限:转账密集时最多保留最近这几条做背景。
 MAX_TRANSFER_EVENTS_IN_WINDOW = 2
 
+# 审核返工 3:资金/通知事件的文本判定必须"长得像事件气泡",不能只凭
+# 包含关键词——"我明天给你转账"是承诺、"你收到转账了吗"是追问、
+# "别再给我拍了拍了"是边界表达,都是生成建议需要的正常聊天。
+_TRANSFER_EXACT_PHRASES = frozenset(
+    (
+        "已收款", "已收钱", "已被接收", "收到转账", "微信转账", "已存入零钱",
+        "收款到账", "退还转账", "已退还", "领取了红包", "发出红包", "朋友转账",
+    )
+)
+_SYSTEM_TEXT_HEADS = "对你以已请加"
+
 _SYSTEM_NOTICE_RE = re.compile("|".join(re.escape(pattern) for pattern in SYSTEM_NOTICE_PATTERNS))
 _TRANSFER_RE = re.compile("|".join(re.escape(pattern) for pattern in TRANSFER_TEXT_PATTERNS))
 _UNPARSEABLE_RE = re.compile("|".join(re.escape(pattern) for pattern in UNPARSEABLE_PATTERNS))
@@ -80,8 +91,39 @@ _UNPARSEABLE_RE = re.compile("|".join(re.escape(pattern) for pattern in UNPARSEA
 _TRANSFER_AMOUNT_RE = re.compile(r"^[￥$¥]\s*\d+(?:\.\d+)?(?:\s*元)?.{0,20}(?:转账|收款|红包|接收|存入)")
 
 
+def _looks_like_transfer_bubble(content: str) -> bool:
+    text = content.strip()
+    if not text:
+        return False
+    if _TRANSFER_AMOUNT_RE.match(text):
+        return True
+    if text.startswith("[") and any(token in text for token in ("[转账]", "[收款]", "[红包]")):
+        return True
+    if text in _TRANSFER_EXACT_PHRASES:
+        return True
+    # "向你转账100元"这类带金额的短事件措辞;无金额一律视为人工聊天。
+    if (
+        any(token in text for token in ("向你转账", "给你转账", "转账给你"))
+        and re.search(r"\d+(?:\.\d+)?", text)
+        and len(text) <= 30
+    ):
+        return True
+    return False
+
+
+def _looks_like_system_notice_text(content: str) -> bool:
+    text = content.strip()
+    # 系统通知开头主语固定(对方/你/以下/已/请/加入…);"别再给我拍了拍了"
+    # 这类以"别"开头的边界表达不是通知。
+    return bool(text) and len(text) <= 40 and text[0] in _SYSTEM_TEXT_HEADS and bool(_SYSTEM_NOTICE_RE.search(text))
+
+
 def classify_message_kind(message: dict[str, Any] | None) -> str:
-    """把单条消息分类为 human_chat / transfer_event / system_notice / unparseable。"""
+    """把单条消息分类为 human_chat / transfer_event / system_notice / unparseable。
+
+    判定优先级:消息类型/发送者标记(结构性证据)> 严格事件气泡文本。
+    正常文字里"提到"转账/撤回/拍了拍的一律保留为人工聊天。
+    """
     if not isinstance(message, dict):
         return KIND_UNPARSEABLE
 
@@ -98,12 +140,9 @@ def classify_message_kind(message: dict[str, Any] | None) -> str:
         return KIND_UNPARSEABLE
     if _UNPARSEABLE_RE.search(content):
         return KIND_UNPARSEABLE
-    if _TRANSFER_RE.search(content) and len(content) <= 60:
-        # 事件性气泡通常很短;长文本里"顺带提到"转账的仍是人工聊天。
+    if _looks_like_transfer_bubble(content):
         return KIND_TRANSFER_EVENT
-    if _TRANSFER_AMOUNT_RE.match(content) and len(content) <= 60:
-        return KIND_TRANSFER_EVENT
-    if _SYSTEM_NOTICE_RE.search(content) and len(content) <= 60:
+    if _looks_like_system_notice_text(content):
         return KIND_SYSTEM_NOTICE
     return KIND_HUMAN_CHAT
 

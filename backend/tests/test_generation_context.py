@@ -214,9 +214,10 @@ def test_assemble_uses_unified_keys_for_valid_scope(monkeypatch):
         "app.services.realtime.self_profiler.SelfProfiler.get_profile",
         lambda self, display_name, account_wxid="": None,
     )
+    memory_calls = []
     monkeypatch.setattr(
         "app.services.realtime.session_thread_service.SessionThreadService.retrieve_relevant_memories",
-        lambda self, display_name, messages, top_k=2, min_score=0.15, account_wxid="": [{"summary": "m"}],
+        lambda self, display_name, messages, **kw: memory_calls.append(display_name) or [{"summary": "m"}],
     )
 
     ctx = {}
@@ -233,7 +234,9 @@ def test_assemble_uses_unified_keys_for_valid_scope(monkeypatch):
     assert scope.conversation_id == 1
     assert ctx["_generation_entrypoint"] == "manual"
     assert ctx["conversation_id"] == 1
-    assert ctx["relevant_memories"] == [{"summary": "m"}]
+    # 返工 1:昕 在账号内同名(conversation 2),画像/线程记忆必须跳过
+    assert memory_calls == []
+    assert "relevant_memories" not in ctx
 
 
 def test_new_request_id_unique():

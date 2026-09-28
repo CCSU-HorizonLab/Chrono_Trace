@@ -154,11 +154,13 @@ def resolve_generation_scope(
             rows = _query_conversation_rows(account, conversation_id=explicit_conversation_id)
             if len(rows) == 1:
                 row = rows[0]
+                # 审核返工 1:校验成功后以数据库身份为准——调用方传错的
+                # display_name 不得继续用于画像/记忆读取(串用风险)。
                 return GenerationScope(
                     account_wxid=account,
                     conversation_id=int(row["id"]),
-                    display_name=display or str(row.get("display_name") or ""),
-                    username=user or str(row.get("username") or ""),
+                    display_name=str(row.get("display_name") or "") or display,
+                    username=str(row.get("username") or "") or user,
                     entrypoint=entry,
                     request_id=request,
                     status=SCOPE_OK,
@@ -186,7 +188,7 @@ def resolve_generation_scope(
                 return GenerationScope(
                     account_wxid=account,
                     conversation_id=int(row["id"]),
-                    display_name=display or str(row.get("display_name") or ""),
+                    display_name=str(row.get("display_name") or "") or display,
                     username=user,
                     entrypoint=entry,
                     request_id=request,
@@ -198,8 +200,8 @@ def resolve_generation_scope(
         return GenerationScope(
             account_wxid=account,
             conversation_id=int(row["id"]),
-            display_name=display or str(row.get("display_name") or ""),
-            username=user or str(row.get("username") or ""),
+            display_name=str(row.get("display_name") or "") or display,
+            username=str(row.get("username") or "") or user,
             entrypoint=entry,
             request_id=request,
             status=SCOPE_OK,
@@ -223,7 +225,8 @@ def apply_generation_scope(context: dict[str, Any], scope: GenerationScope) -> N
     if scope.valid:
         context["conversation_id"] = scope.conversation_id
         if scope.display_name:
-            context.setdefault("display_name", scope.display_name)
+            # 数据库身份覆盖调用方传入的显示名(审核返工 1)
+            context["display_name"] = scope.display_name
         context.pop("_generation_scope_missing", None)
         return
 
@@ -241,6 +244,32 @@ def apply_generation_scope(context: dict[str, Any], scope: GenerationScope) -> N
         scope.status,
         scope.reason,
     )
+
+
+def _display_name_unique_for_account(account_wxid: str, display_name: str, except_conversation_id: int | None) -> bool:
+    """显示名在账号内是否唯一(排除当前会话自身)。
+
+    contact_profiles / session_threads 只按 account+display_name 键控,
+    同名联系人的画像与线程记忆天然歧义——唯一时才允许读取。
+    """
+    if not account_wxid or not display_name:
+        return False
+    try:
+        from ...db.connection import get_db
+
+        rows = get_db().execute(
+            """
+            SELECT COUNT(DISTINCT id) AS n
+            FROM conversations
+            WHERE account_wxid = ? AND display_name = ? AND is_deleted = 0
+              AND id != COALESCE(?, -1)
+            """,
+            (account_wxid, display_name, except_conversation_id),
+        ).fetchone()
+        return int(rows["n"]) == 0
+    except Exception as exc:
+        logger.debug("[GenerationScope] 显示名唯一性检查失败,按不唯一处理: %s", exc)
+        return False
 
 
 def assemble_generation_context(
@@ -289,30 +318,50 @@ def assemble_generation_context(
         except Exception as exc:
             logger.warning("[GenerationContext] 获取最近消息失败: %s", exc)
 
-    # 画像与历史增强只在范围有效时注入(display_name 键控,歧义/缺失时跳过)。
+    # 画像与历史增强只在范围有效时注入(审核返工 1):
+    # - contact_profiles / session_threads 按 account+display_name 键控,
+    #   同名联系人的数据天然歧义 → 显示名不唯一时跳过;
+    # - self_profiles 带 conversation_id → 与本次范围不一致时丢弃,
+    #   防止拿到别的会话的自我画像/量化风格;
+    # - 好感/预处理缓存按 conversation_id 读取,以解析出的会话为准,
+    #   不再依赖画像缓存里带的会话号。
     self_profile_cache = None
     if scope.valid and scope.display_name and "contact_profile" not in ctx:
+        name_unique = _display_name_unique_for_account(
+            scope.account_wxid, scope.display_name, scope.conversation_id
+        )
+        if not name_unique:
+            logger.debug(
+                "[GenerationContext] 显示名在账号内不唯一,跳过画像/线程记忆(conversation=%s)",
+                scope.conversation_id,
+            )
         try:
             from .contact_profiler import ContactProfiler
             from .self_profiler import SelfProfiler
 
-            c_cached = ContactProfiler().get_profile(scope.display_name, scope.account_wxid)
-            if c_cached:
-                ctx["contact_profile"] = c_cached["profile"]
-                if c_cached.get("expired"):
-                    ctx["_contact_profile_stale"] = True
-                    if renew_stale_profiles:
-                        renew_stale_profiles(scope.display_name, scope.account_wxid)
-
-            if "self_profile" not in ctx:
-                s_cached = SelfProfiler().get_profile(scope.display_name, scope.account_wxid)
-                if s_cached:
-                    ctx["self_profile"] = s_cached["profile"]
-                    self_profile_cache = s_cached
-                    if s_cached.get("expired"):
-                        ctx["_self_profile_stale"] = True
+            if name_unique:
+                c_cached = ContactProfiler().get_profile(scope.display_name, scope.account_wxid)
+                if c_cached:
+                    ctx["contact_profile"] = c_cached["profile"]
+                    if c_cached.get("expired"):
+                        ctx["_contact_profile_stale"] = True
                         if renew_stale_profiles:
                             renew_stale_profiles(scope.display_name, scope.account_wxid)
+
+                if "self_profile" not in ctx:
+                    s_cached = SelfProfiler().get_profile(scope.display_name, scope.account_wxid)
+                    if s_cached and int(s_cached.get("conversation_id") or 0) == int(scope.conversation_id or 0):
+                        ctx["self_profile"] = s_cached["profile"]
+                        self_profile_cache = s_cached
+                        if s_cached.get("expired"):
+                            ctx["_self_profile_stale"] = True
+                            if renew_stale_profiles:
+                                renew_stale_profiles(scope.display_name, scope.account_wxid)
+                    elif s_cached:
+                        logger.debug(
+                            "[GenerationContext] 自我画像会话不匹配(profile=%s scope=%s),已丢弃",
+                            s_cached.get("conversation_id"), scope.conversation_id,
+                        )
         except Exception as exc:
             logger.warning("[GenerationContext] 提取画像失败: %s", exc)
 
@@ -322,11 +371,18 @@ def assemble_generation_context(
         augment_context_with_historical_data(
             ctx,
             self_profile_cache=self_profile_cache,
+            conversation_id=scope.conversation_id if scope.valid else None,
         )
     except Exception as exc:
         logger.warning("[GenerationContext] 构建 historical_context 失败: %s", exc)
 
-    if scope.valid and scope.display_name and include_session_memories and "relevant_memories" not in ctx:
+    if (
+        scope.valid
+        and scope.display_name
+        and include_session_memories
+        and "relevant_memories" not in ctx
+        and _display_name_unique_for_account(scope.account_wxid, scope.display_name, scope.conversation_id)
+    ):
         try:
             from .session_thread_service import SessionThreadService
 

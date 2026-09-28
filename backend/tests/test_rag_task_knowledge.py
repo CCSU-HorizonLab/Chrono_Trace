@@ -115,5 +115,6 @@ def test_invitation_preferences_put_game_slots_first(monkeypatch):
         remote_model=False,
         redaction_disabled=False,
     )
-    assert ids == [2, 1, 3]
+    # 返工 2:先排序后截断——游戏类第一,其余按置信度降序
+    assert ids == [2, 3, 1]
     assert context["contact_preferences"][0]["summary"].startswith("喜欢联机开黑")

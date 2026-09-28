@@ -272,7 +272,8 @@ def test_bridge_manual_generate_injects_style_constraints_from_cached_history(mo
     monkeypatch.setattr(
         "app.services.realtime.self_profiler.SelfProfiler.get_profile",
         lambda self, display_name, account_wxid="": {
-            "conversation_id": 7,
+            # 返工 1:自我画像必须属于本次会话(conversations 夹具里 Grace. 是 id=1)
+            "conversation_id": 1,
             "profile": {"typing_style": "短句"},
             "features_snapshot": {"user_msg_style": {"avg_chars_per_msg": 9.0}},
             "created_at": 0,

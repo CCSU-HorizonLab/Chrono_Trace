@@ -1024,12 +1024,20 @@ class LLMSuggestionEngine(SuggestionEngine):
     def _build_relationship_signal_lines(self, context: dict, purified: dict) -> list[str]:
         """G5:把好感分析与配对统计渲染成"带时间与不确定性"的关系信号块。
 
-        缺失数据一律输出 unknown,不生成"没有昵称习惯"式的伪结论;
-        并显式列出不能推出的结论,防止模型把聊天数量当亲密度。
+        审核返工 2:真实分析服务返回 ``AffinityAnalysisResult`` 数据类,
+        这里必须同时接受对象与 dict(时间字段 ``analysis_timestamp``),
+        不能因为类型不符就把 70 分渲染成 unknown。
         """
+        from dataclasses import asdict, is_dataclass
+
         from .recent_window import compute_pairing_stats
 
         affinity = context.get("affinity_result")
+        if is_dataclass(affinity) and not isinstance(affinity, type):
+            try:
+                affinity = asdict(affinity)
+            except Exception:
+                affinity = {}
         if not isinstance(affinity, dict):
             affinity = {}
         pairing = compute_pairing_stats(purified.get("chat_window") or [])
@@ -1039,13 +1047,18 @@ class LLMSuggestionEngine(SuggestionEngine):
         lines: list[str] = []
 
         overall_score = affinity.get("overall_score")
-        if isinstance(overall_score, (int, float)):
+        if isinstance(overall_score, (int, float)) and overall_score > 0:
             interpretation = str(affinity.get("overall_interpretation") or "").strip()
             lines.append(f"  好感综合分: {float(overall_score):.0f}/100" + (f"（{interpretation[:60]}）" if interpretation else ""))
         else:
             lines.append("  好感综合分: unknown（缺少分析数据，不要虚构分数）")
 
-        analyzed_at = affinity.get("analyzed_at") or affinity.get("updated_at") or affinity.get("generated_at")
+        analyzed_at = (
+            affinity.get("analysis_timestamp")
+            or affinity.get("cache_updated_at")
+            or affinity.get("analyzed_at")
+            or affinity.get("updated_at")
+        )
         if analyzed_at:
             try:
                 lines.append(f"  分析时间: {time.strftime('%Y-%m-%d %H:%M', time.localtime(int(analyzed_at)))}")
@@ -1062,7 +1075,7 @@ class LLMSuggestionEngine(SuggestionEngine):
         lines.append("  可用于: 判断语气分寸、邀约时机、是否需要降温")
         lines.append(
             "  不能推出: 聊天数量多不等于亲密度高；分数不授权推进关系或表白；"
-            "未及时回复不能直接解读为拒绝；不要把这些信号说给对方听"
+            "未及时回复不能直接解读为拒绝；资金往来事件不反映对方态度；不要把这些信号说给对方听"
         )
         return lines
 
@@ -1197,6 +1210,14 @@ class LLMSuggestionEngine(SuggestionEngine):
         )
         parts.append(f"【触发原因】{trigger_desc}")
 
+        # 审核返工 3:范围降级时显式封死"无依据具体化"——通用建议不得
+        # 虚构店铺/地点/时间/承诺(对应 missing_scope_degrade-20 的教训)。
+        if context.get("_generation_scope_missing"):
+            parts.append(
+                "【范围降级说明】当前缺少该联系人的记忆与画像:不要引用任何具体历史;"
+                "不要虚构具体地点、店铺、时间或已发生的约定;给通用建议并说明信息不足。"
+            )
+
         # 走向目标
         task_label = self._TASK_LABELS.get(routing.task, routing.task)
         if is_direct_reply:
@@ -1246,6 +1267,11 @@ class LLMSuggestionEngine(SuggestionEngine):
                     str(msg.get("content", "")), f"recent_{idx}"
                 )[: self.RECENT_MESSAGE_RENDER_CHARS]
                 parts.append(f"  {sender}：{content}")
+            if purified["transfer_events"]:
+                parts.append(
+                    "  ⚠️ 上方【事件】行是资金往来,不代表对方态度;"
+                    "不得用它推断冷淡、热情或关系进展,也不得作为'她回应了我'的证据。"
+                )
             if purified["notice_only"]:
                 parts.append(
                     "  ⚠️ 当前窗口没有任何有效人工聊天，以上只有系统事件；"
@@ -1349,7 +1375,10 @@ class LLMSuggestionEngine(SuggestionEngine):
                 confidence = pref.get("confidence")
                 percent = f"（置信 {int(confidence * 100)}%）" if isinstance(confidence, (int, float)) and confidence > 0 else ""
                 parts.append(f"  · [{kind_label}] {summary}{percent}")
-            parts.append("  使用规则: 建议内容尽量顺着偏好、避开雷点；这只是历史倾向，当下对话有明确不同表态时以当下为准；不要向对方复述或主动提起")
+            parts.append(
+                "  使用规则: 建议内容尽量顺着偏好、避开雷点；给出每条话术前自查一遍——"
+                "不得与上述任何雷点/偏好冲突；这只是历史倾向，当下对话有明确不同表态时以当下为准；不要向对方复述或主动提起"
+            )
 
         # 联系人画像（如有）—— 策略优先参考：决定"怎么回更合适"
         profile = context.get("contact_profile")
@@ -1550,6 +1579,10 @@ class LLMSuggestionEngine(SuggestionEngine):
                             )
                 if memory_items:
                     parts.append("  要求：只能基于以上结果回答历史细节；如果结果未包含具体细节，必须说没查到。")
+                    parts.append(
+                        "  区分：只有标注 主体=共同 的事实是双方共同经历；主体=对方/我 的是各自的兴趣或行为，"
+                        "回答\"我们一起/我们玩过\"类问题时不得把各自兴趣说成共同经历。"
+                    )
                     parts.append("  禁止：不要把历史里的地点、游戏、偏好、约定强行带入无关的当前回复。")
                     if is_direct_reply:
                         parts.append("  直接回答用户问题；不要生成建议卡片，除非用户明确要求话术。")
@@ -1638,6 +1671,7 @@ class LLMSuggestionEngine(SuggestionEngine):
                     "\n【手动求助模式】当前更像是用户在直接和 AI 说话/提问，"
                     "不是在请教怎么回复对方。"
                     "此时必须优先在 `reply` 字段直接回应用户，"
+                    "`reply` 不得为空字符串——没有回答比回答得不好更糟糕；"
                     "并将 `summary` 设为空字符串、`speeches` 设为空数组，"
                     "不要生成建议卡片。"
                     "reply 必须使用自然、简洁的助手口吻，"
@@ -1650,11 +1684,13 @@ class LLMSuggestionEngine(SuggestionEngine):
                     "再在 `speeches` 中给出 2-3 条用户可以直接发送给对方的原话。"
                     "`reply` 和 `speeches` 都必须有内容；"
                     "不要只给分析不给话术，也不要把话术写进 reply。"
+                    "话术必须贴合用户输入的目标——不得擅自引入用户没提到的行动、地点或既成事实。"
                 )
             else:
                 parts.append(
                     "\n【手动求助模式】当前是用户在请教怎么回复对方或怎么开启话题。"
-                    "请基于当前上下文给出可发送的话术，"
+                    "请基于当前上下文给出可发送的话术；"
+                    "话术必须贴合用户输入的目标，不得擅自引入用户没提到的行动、地点或既成事实。"
                     "并且必须严格只输出 JSON，不要输出解释、前言或额外文本。"
                 )
 

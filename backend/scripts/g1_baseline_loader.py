@@ -230,6 +230,21 @@ def load_samples(db_path: str) -> dict[str, Any]:
             sample["account_wxid"] = "" if "无账号" in note else (anchor["account_wxid"] if anchor else "")
             sample["conversation_id"] = None
             sample["display_name"] = "" if "无联系人" in note else "查无此人-9x7q"
+        elif "纯通知窗口" in note:
+            # 冻结的纯通知窗口:回放不读库,保证"纯通知守卫"场景真实可复现
+            # (此前从库读窗口混有正常聊天,验证不到守卫)。
+            if anchor:
+                sample["account_wxid"] = anchor["account_wxid"]
+                sample["conversation_id"] = int(anchor["id"])
+                sample["display_name"] = anchor["display_name"]
+            sample["window_override"] = [
+                {"id": 1, "timestamp": 101, "sender_attr": "system", "content": "星期四 20:12", "message_type": "text"},
+                {"id": 2, "timestamp": 102, "sender_attr": "friend", "content": "￥40.00 已收款 微信转账", "message_type": "text"},
+                {"id": 3, "timestamp": 103, "sender_attr": "system", "content": "对方撤回了一条消息", "message_type": "text"},
+                {"id": 4, "timestamp": 104, "sender_attr": "friend", "content": "￥42.50 已被接收 微信转账", "message_type": "text"},
+                {"id": 5, "timestamp": 105, "sender_attr": "system", "content": "对方拍了拍我", "message_type": "text"},
+                {"id": 6, "timestamp": 106, "sender_attr": "friend", "content": "￥8.80 微信红包存入零钱", "message_type": "text"},
+            ]
         elif dimension == "contact_binding" and "无效" in note:
             # 跨账号:绑定另一账号下存在的会话 ID,回放应判 invalid_conversation
             foreign = next(

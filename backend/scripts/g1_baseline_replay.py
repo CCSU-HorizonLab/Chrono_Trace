@@ -58,6 +58,18 @@ def copy_database(db_path: str, workdir: Path) -> str:
     return copy_path
 
 
+def _decode_content(value: Any) -> str:
+    """messages.content 可能是 BLOB(bytes);直接 str() 会产生 b'\\x..' 乱码进 prompt。"""
+    if isinstance(value, bytes):
+        for encoding in ("utf-8", "gbk"):
+            try:
+                return value.decode(encoding)
+            except UnicodeDecodeError:
+                continue
+        return value.decode("utf-8", errors="replace")
+    return str(value or "")
+
+
 def build_recent_messages(conn: sqlite3.Connection, conversation_id: int, limit: int = 50) -> list[dict[str, Any]]:
     """从 messages 表回放近期窗口(映射到生成侧消息结构)。"""
     rows = conn.execute(
@@ -78,10 +90,29 @@ def build_recent_messages(conn: sqlite3.Connection, conversation_id: int, limit:
             "id": row["id"],
             "timestamp": row["timestamp"],
             "sender_attr": sender_attr,
-            "content": str(row["content"] or ""),
+            "content": _decode_content(row["content"]),
             "message_type": "text",
         })
     return messages
+
+
+def _redact_for_snapshot(messages: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """快照落盘前本地脱敏(窗口是真实聊天,结果文件会被审核 agent 读取)。"""
+    from app.services.realtime.privacy_redactor import PrivacyRedactor
+
+    redactor = PrivacyRedactor()
+    snapshot = []
+    for msg in messages[-12:]:
+        content = str(msg.get("content") or "")
+        try:
+            content = redactor.redact(content, account_wxid="", conversation_id=None).redacted_text
+        except Exception:
+            pass
+        snapshot.append({
+            "sender": str(msg.get("sender_attr") or ""),
+            "content": content[:120],
+        })
+    return snapshot
 
 
 def inject_ambiguous_twin(conn: sqlite3.Connection, sample: dict[str, Any], chain: str) -> None:
@@ -176,8 +207,13 @@ def replay_sample(
     # no_rag 是"无记忆检索"对照,不是"无上下文"对照:当前窗口、范围解析、
     # 孪生注入对所有链路一视同仁,唯一差异是 rag_enabled=False。
     context: dict[str, Any] = {"user_context": sample["input"]}
-    if sample.get("conversation_id"):
-        context["recent_messages"] = build_recent_messages(conn, int(sample["conversation_id"]))
+    window_from_db = None
+    if sample.get("window_override"):
+        # 冻结的窗口构造(如"纯通知窗口"样例):不读库,保证场景可复现。
+        context["recent_messages"] = [dict(m) for m in sample["window_override"]]
+    elif sample.get("conversation_id"):
+        window_from_db = build_recent_messages(conn, int(sample["conversation_id"]))
+        context["recent_messages"] = window_from_db
 
     if sample.get("requires_ambiguous_twin"):
         inject_ambiguous_twin(conn, sample, chain)
@@ -240,6 +276,31 @@ def replay_sample(
     finally:
         if no_rag_patch is not None:
             cb_module.load_rag_settings = no_rag_patch
+
+    # 审核返工 4:冻结本次实际输入的窗口快照与实际发送的证据文本,
+    # 审核包/NLI 一律以此为准,不再事后重读数据库。快照统一再脱敏
+    # 一次兜底(本地模型回放时 items 可能未走远程脱敏)。
+    from app.services.realtime.privacy_redactor import PrivacyRedactor as _PR
+
+    _snap_redactor = _PR()
+
+    def _snap_mask(text: str) -> str:
+        try:
+            return _snap_redactor.redact(str(text or ""), account_wxid="", conversation_id=None).redacted_text
+        except Exception:
+            return str(text or "")
+
+    result["context_snapshot"] = {
+        "window_source": "window_override" if sample.get("window_override") else "db",
+        "recent_window": _redact_for_snapshot(
+            sample.get("window_override") or window_from_db or []
+        ),
+        "sent_evidence": [
+            {"fact_id": item.get("document_id"), "content": _snap_mask(item.get("content"))[:300]}
+            for item in (context.get("retrieval_context") or {}).get("items") or []
+            if str(item.get("doc_type") or "") == "fact_memory"
+        ],
+    }
     return result
 
 

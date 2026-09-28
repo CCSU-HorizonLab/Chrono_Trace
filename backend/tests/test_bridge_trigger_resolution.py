@@ -88,6 +88,25 @@ def _setup_db():
         )
         """
     )
+    # G1:统一上下文装配按 account_wxid + display_name 解析 conversations 范围。
+    conn.execute(
+        """
+        CREATE TABLE conversations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_wxid TEXT NOT NULL,
+            display_name TEXT,
+            username TEXT,
+            is_deleted INTEGER DEFAULT 0,
+            updated_at INTEGER
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO conversations (id, account_wxid, display_name, username, is_deleted, updated_at)
+        VALUES (1, 'wxid_test', 'Grace.', 'wxid_grace', 0, 1000)
+        """
+    )
     ensure_observation_table(conn)
     return conn
 

@@ -1148,66 +1148,31 @@ class Bridge:
                 monitor.current_batch_id or "manual",
             )
 
-            # 自动补充上下文：情绪摘要
-            if 'emotion_summary' not in context and monitor.emotion_tracker:
-                context['emotion_summary'] = monitor.emotion_tracker.get_emotion_summary()
-
-            # 自动补充上下文：最近消息
-            if 'recent_messages' not in context and monitor.current_batch_id:
-                try:
-                    from ..services.realtime.message_query import get_messages_with_sentiment
-                    recent = get_messages_with_sentiment(
-                        monitor.current_batch_id,
-                        50,
-                        account_wxid=account_wxid,
-                    )
-                    context['recent_messages'] = recent
-                except Exception as e:
-                    logger.error(f"[Bridge] 获取最近消息失败: {e}")
-
-            # 自动补充上下文：联系人画像与本体画像
-            self_profile_cache = None
-            if monitor.current_display_name:
-                try:
-                    from ..services.realtime.contact_profiler import ContactProfiler
-                    from ..services.realtime.self_profiler import SelfProfiler
-                    
-                    if 'contact_profile' not in context:
-                        profiler = ContactProfiler()
-                        cached = profiler.get_profile(monitor.current_display_name)
-                        if cached and not cached['expired']:
-                            context['contact_profile'] = cached['profile']
-                            
-                    if 'self_profile' not in context:
-                        s_profiler = SelfProfiler()
-                        s_cached = s_profiler.get_profile(monitor.current_display_name)
-                        if s_cached and not s_cached['expired']:
-                            context['self_profile'] = s_cached['profile']
-                            self_profile_cache = s_cached
-                except Exception as e:
-                    logger.error(f"[Bridge] 获取画像失败: {e}")
-
+            # G1:手动入口统一走 assemble_generation_context——绑定稳定
+            # account_wxid + conversation_id,范围缺失时安全降级为通用帮助。
             try:
-                from ..services.realtime.historical_context import (
-                    augment_context_with_historical_data,
-                )
+                from ..services.realtime.generation_context import assemble_generation_context
 
-                augment_context_with_historical_data(
+                assemble_generation_context(
                     context,
-                    self_profile_cache=self_profile_cache,
+                    entrypoint="manual",
+                    account_wxid=account_wxid,
+                    conversation_id=context.get("conversation_id") or context.get("_rag_conversation_id"),
+                    display_name=str(
+                        getattr(monitor, "current_display_name", "") or context.get("display_name") or ""
+                    ),
+                    username=str(getattr(monitor, "current_talker", "") or ""),
+                    batch_id=str(monitor.current_batch_id or ""),
+                    emotion_summary=(
+                        monitor.emotion_tracker.get_emotion_summary() if monitor.emotion_tracker else None
+                    ),
+                    recent_limit=50,
+                    prewarm_rag_index=True,
                 )
-            except Exception as e:
-                logger.error(f"[Bridge] 构建 historical_context 失败: {e}")
-
-            # 传递联系人名称以便查询调教规则
-            if monitor.current_display_name:
-                context['display_name'] = monitor.current_display_name
-            self._prewarm_current_rag_index(
-                account_wxid=account_wxid,
-                display_name=str(monitor.current_display_name or context.get("display_name") or ""),
-                username=str(getattr(monitor, "current_talker", "") or ""),
-                context=context,
-            )
+            except Exception as assemble_e:
+                logger.error(f"[Bridge] 统一上下文装配失败: {assemble_e}")
+                if getattr(monitor, "current_display_name", ""):
+                    context['display_name'] = monitor.current_display_name
 
             from ..services.realtime.trigger_resolver import resolve_suggestion_trigger
 

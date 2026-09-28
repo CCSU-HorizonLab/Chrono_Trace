@@ -242,7 +242,12 @@ def test_self_profiler_escalates_output_budget_when_output_truncated(monkeypatch
     responses = [_QueuedResponse(_truncated_payload(8192)), _QueuedResponse(_ok_payload())]
 
     def fake_urlopen(req, timeout=0, context=None):
-        captured_budgets.append(json.loads(req.data.decode("utf-8"))["max_tokens"])
+        payload = json.loads(req.data.decode("utf-8"))
+        # 全量顺序下前序测试遗留的后台线程也会打 LLM（共享全局 urlopen），
+        # 只捕获本用例 prompt 的调用，预算序列不被串扰；外来调用原样放行
+        # 由 responses 队列语义保持不变（外来者不属于本用例断言范围）
+        if any(str(m.get("content") or "") == "test prompt" for m in payload.get("messages", [])):
+            captured_budgets.append(payload["max_tokens"])
         return responses.pop(0)
 
     monkeypatch.setattr("app.services.realtime.llm_http.urllib.request.urlopen", fake_urlopen)
@@ -263,7 +268,12 @@ def test_self_profiler_raises_after_output_budget_escalation_exhausted(monkeypat
     monkeypatch.setattr("app.db.connection.get_db", lambda: conn)
 
     def fake_urlopen(req, timeout=0, context=None):
-        captured_budgets.append(json.loads(req.data.decode("utf-8"))["max_tokens"])
+        payload = json.loads(req.data.decode("utf-8"))
+        # 全量顺序下前序测试遗留的后台线程也会打 LLM（共享全局 urlopen），
+        # 只捕获本用例 prompt 的调用，预算序列不被串扰；外来调用原样放行
+        # 由 responses 队列语义保持不变（外来者不属于本用例断言范围）
+        if any(str(m.get("content") or "") == "test prompt" for m in payload.get("messages", [])):
+            captured_budgets.append(payload["max_tokens"])
         return _QueuedResponse(_truncated_payload(999, finish_reason="length"))
 
     monkeypatch.setattr("app.services.realtime.llm_http.urllib.request.urlopen", fake_urlopen)

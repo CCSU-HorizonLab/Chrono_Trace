@@ -123,9 +123,13 @@ class TestAnalysisDeviceMode:
 
     def test_preprocessing_orchestrator_uses_batch_cache_path(self):
         orchestrator = PreprocessingOrchestrator()
-        orchestrator.sentiment_service.batch_get_sentiment_from_cache = MagicMock(return_value={1: {"polarity": 1}})
-        orchestrator.sentiment_service.analyze_batch = MagicMock(return_value=[{"polarity": 0, "intensity": 0.0, "embedding": [0.0] * 384}])
-        orchestrator.sentiment_service.batch_cache_sentiments = MagicMock()
+        # 整体替换而非在共享单例上打补丁：全量顺序下遗留后台线程
+        # （RAG worker 等）会调单例同名方法，污染 mock 计数（实测 10+ 次）
+        orchestrator.sentiment_service = MagicMock(
+            batch_get_sentiment_from_cache=MagicMock(return_value={1: {"polarity": 1}}),
+            analyze_batch=MagicMock(return_value=[{"polarity": 0, "intensity": 0.0, "embedding": [0.0] * 384}]),
+            batch_cache_sentiments=MagicMock(),
+        )
 
         messages = [
             {"id": 1, "message_type": 1, "content": "cached"},

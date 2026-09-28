@@ -11,8 +11,9 @@
 - [x] 覆盖维度:任务切换(6)、联系人绑定(3)、通知污染(3)、脱敏误伤(6)、策略适配(3)、缺失降级(3)。
 - [x] 冻结模型版本、数据库指纹、代码 commit、装载器版本(写入样例文件 `meta`)。
 - [x] 回放命令可重复:`python backend/scripts/g1_baseline_replay.py --chain no_rag|legacy|g1 [--sample <id>] [--live]`。
-- [ ] 每条样例的预期任务经人工确认(确认前不作为发布门禁依据)。
-- [ ] 三路 live 输出与人工判定回填进样例文件。
+- [x] 预期标注 `backend/scripts/g1_annotate_expected.py`:24 条全部给出 task/output/knowledge_needs/must_use/forbidden/safety 与判定依据(`ai_first_pass_pending_human`,人工终审前不作门禁)。
+- [ ] 每条样例的预期任务经人工终审(确认前不作为发布门禁依据)。
+- [x] 三路 live 输出已完成并归档(`g1-replay-results.json`,72+15 条 live 结果 0 失败)。
 
 ## 验收
 

@@ -1,12 +1,12 @@
 {
   "meta": {
     "loader_version": "g1-baseline-loader-v1",
-    "frozen_at": 1790605376,
-    "code_commit": "8b614b64cf19d999b77548994dea0a942fb458ec",
+    "frozen_at": 1790608848,
+    "code_commit": "6b2eb4df9fef92a46c5ccb777d668c487bc5b83e",
     "db": {
       "path": "D:\\Project\\Chrono Trace\\backend\\data\\chrono_trace.db",
-      "size_bytes": 427212800,
-      "mtime": 1790604227,
+      "size_bytes": 427220992,
+      "mtime": 1790608826,
       "conversations": 167,
       "retrieval_logs": 3,
       "suggestions": 5
@@ -31,7 +31,7 @@
     ],
     "expected_annotation": {
       "version": "g1-expected-annotate-v1",
-      "annotated_at": 1790605377,
+      "annotated_at": 1790608848,
       "applied": 24,
       "pending_human_review": true,
       "note": "AI 初判+依据;人工终审通过前仅用于差异报告,不作发布门禁"
@@ -752,7 +752,51 @@
       "replay": {},
       "account_wxid": "wxid_qhbqpoufme0q32_9cc7",
       "conversation_id": 91,
-      "display_name": "昕（农1.10）"
+      "display_name": "昕（农1.10）",
+      "window_override": [
+        {
+          "id": 1,
+          "timestamp": 101,
+          "sender_attr": "system",
+          "content": "星期四 20:12",
+          "message_type": "text"
+        },
+        {
+          "id": 2,
+          "timestamp": 102,
+          "sender_attr": "friend",
+          "content": "￥40.00 已收款 微信转账",
+          "message_type": "text"
+        },
+        {
+          "id": 3,
+          "timestamp": 103,
+          "sender_attr": "system",
+          "content": "对方撤回了一条消息",
+          "message_type": "text"
+        },
+        {
+          "id": 4,
+          "timestamp": 104,
+          "sender_attr": "friend",
+          "content": "￥42.50 已被接收 微信转账",
+          "message_type": "text"
+        },
+        {
+          "id": 5,
+          "timestamp": 105,
+          "sender_attr": "system",
+          "content": "对方拍了拍我",
+          "message_type": "text"
+        },
+        {
+          "id": 6,
+          "timestamp": 106,
+          "sender_attr": "friend",
+          "content": "￥8.80 微信红包存入零钱",
+          "message_type": "text"
+        }
+      ]
     },
     {
       "sample_id": "authored-redaction_misfire-12",

@@ -152,6 +152,53 @@ def test_negation_is_not_advice():
     assert routing.task == TASK_GENERAL_QA
 
 
+def test_explicit_advice_followup_after_memory_qa_turn():
+    """真实日志序列:记忆问答→AI作答→"没有建议么"——显式追问永远继承建议任务。"""
+    routing = _manual(
+        "没有建议么",
+        history=[
+            ("user", "我们玩过什么游戏"),
+            ("assistant", "没查到一起玩过的记录。只翻到你吐槽过对方天天打杀戮尖塔。"),
+        ],
+    )
+    assert routing.task == TASK_REPLY_SUGGESTION
+    assert routing.output == OUTPUT_SUGGESTION_CARD
+    assert routing.wants_speeches is True
+
+
+def test_phone_number_lookup_routes_to_memory_qa():
+    routing = _manual("她电话多少")
+    assert routing.task == TASK_MEMORY_QA
+    assert routing.output == OUTPUT_DIRECT_ANSWER
+
+
+def test_invitation_after_memory_qa_turn_stays_invitation():
+    """真实日志序列:记忆问答→AI作答→"我想约她打游戏"——新意图不被追问继承吞掉。"""
+    routing = _manual(
+        "我想约她打游戏",
+        history=[
+            ("user", "我们玩过什么游戏"),
+            ("assistant", "没查到一起玩过的记录。只翻到你吐槽过对方天天打杀戮尖塔。"),
+        ],
+    )
+    assert routing.task == TASK_INVITATION_PLANNING
+    assert routing.output == OUTPUT_ANSWER_WITH_SPEECHES
+
+
+def test_subjectless_boundary_question_routes_to_relationship_discussion():
+    routing = _manual("怎么开玩笑不越界")
+    assert routing.task == TASK_RELATIONSHIP_DISCUSSION
+    assert routing.wants_speeches is True
+
+
+def test_being_ignored_concern_routes_to_relationship_discussion():
+    """live 回放发现:"她是不是不想理我了"曾漏判成 general_qa。"""
+    routing = _manual("她是不是不想理我了")
+    assert routing.task == TASK_RELATIONSHIP_DISCUSSION
+    assert routing.output == OUTPUT_DIRECT_ANSWER
+    assert routing.needs(KN_RELATIONSHIP_SIGNALS)
+
+
 def test_routing_roundtrip_via_dict():
     routing = _manual("我想约她打游戏")
     restored = TaskRouting.from_dict(routing.to_dict())

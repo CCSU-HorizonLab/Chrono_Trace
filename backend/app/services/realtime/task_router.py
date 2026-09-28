@@ -226,6 +226,10 @@ RELATIONSHIP_DISCUSSION_PATTERNS = (
     "在乎我吗",
     "对我冷",
     "对我冷淡",
+    "不想理我",
+    "不理我",
+    "不理人",
+    "不回我消息",
     "是不是不喜欢我",
     "是不是不喜欢",
     "有没有戏",
@@ -233,10 +237,15 @@ RELATIONSHIP_DISCUSSION_PATTERNS = (
     "还要不要继续",
 )
 
-# 记忆问答补充:偏好类事实查询("她喜欢什么")。
-_PREFERENCE_LOOKUP_VERBS = ("喜欢", "讨厌", "爱", "想要", "生日", "多大", "属什么", "星座", "在哪", "哪里人")
-_ASK_MARKERS = ("什么", "吗", "么", "哪", "谁", "?", "？", "咋")
+# 记忆问答补充:偏好类事实查询("她喜欢什么"/"她电话多少")。
+_PREFERENCE_LOOKUP_VERBS = (
+    "喜欢", "讨厌", "爱", "想要", "生日", "多大", "属什么", "星座",
+    "在哪", "哪里人", "电话", "号码", "微信号", "联系方式",
+)
+_ASK_MARKERS = ("什么", "吗", "么", "哪", "谁", "多少", "?", "？", "咋")
 _THIRD_PARTY_MARKERS = ("她", "他", "对方", "ta", "TA", "人家")
+# 无第三人称主语时的分寸/边界词:仍视为关系讨论("怎么开玩笑不越界")。
+_BOUNDARY_ALONE_MARKERS = ("越界", "分寸", "边界", "雷区", "红线")
 
 
 @dataclass(frozen=True)
@@ -377,7 +386,16 @@ def _looks_like_invitation(normalized: str) -> bool:
 def _looks_like_relationship_discussion(normalized: str) -> bool:
     if any(pattern in normalized for pattern in RELATIONSHIP_DISCUSSION_PATTERNS):
         return True
-    return _looks_like_relationship_question(normalized)
+    if _looks_like_relationship_question(normalized):
+        return True
+    # 无主语的分寸求助("怎么开玩笑不越界"):策略词+关系轴/边界词即可命中。
+    asks_strategy = any(token in normalized for token in ("怎么", "如何", "该不该", "能不能"))
+    relation_axis = any(
+        token in normalized
+        for token in ("开玩笑", "玩笑", "调侃", "关系", "边界", "分寸", "相处", "沟通", "习惯", "风格")
+    )
+    boundary_alone = any(token in normalized for token in _BOUNDARY_ALONE_MARKERS)
+    return asks_strategy and (relation_axis or boundary_alone)
 
 
 def _looks_like_preference_lookup(normalized: str) -> bool:
@@ -425,16 +443,30 @@ def route_generation_task(context: dict[str, Any] | None, trigger_type: str = ""
 
     normalized = _compact(latest)
 
-    # 1) 建议追问:继承上一轮建议任务并修正输出,而不是回落成纯聊天。
-    if _has_advice_context(context) and (
-        _looks_like_advice_followup(normalized) or _looks_like_topic_followup_in_advice(normalized)
-    ):
+    # 1) 建议追问:显式追问("没有建议么/再来几条")永远继承建议任务——
+    #    即使上一轮是记忆问答,用户此刻要的就是话术;松散话题追问仍需
+    #    已有建议上下文,避免把首次输入的普通提问误判成求助。
+    if _looks_like_advice_followup(normalized):
+        return TaskRouting(
+            task=TASK_REPLY_SUGGESTION,
+            output=OUTPUT_SUGGESTION_CARD,
+            knowledge_needs=_NEEDS_ALL,
+            confidence=0.82,
+            reason=(
+                "advice_followup_inherited"
+                if _has_advice_context(context)
+                else "explicit_advice_followup"
+            ),
+            wants_speeches=True,
+            manual_request=True,
+        )
+    if _has_advice_context(context) and _looks_like_topic_followup_in_advice(normalized):
         return TaskRouting(
             task=TASK_REPLY_SUGGESTION,
             output=OUTPUT_SUGGESTION_CARD,
             knowledge_needs=_NEEDS_ALL,
             confidence=0.85,
-            reason="advice_followup_inherited",
+            reason="advice_topic_followup_inherited",
             wants_speeches=True,
             manual_request=True,
         )
@@ -450,7 +482,12 @@ def route_generation_task(context: dict[str, Any] | None, trigger_type: str = ""
             wants_speeches=False,
             manual_request=True,
         )
-    if _memory_followup(context) and len(normalized) <= 16:
+    if (
+        _memory_followup(context)
+        and len(normalized) <= 16
+        and not _looks_like_invitation(normalized)
+        and not any(keyword in normalized for keyword in ADVICE_KEYWORDS)
+    ):
         return TaskRouting(
             task=TASK_MEMORY_QA,
             output=OUTPUT_DIRECT_ANSWER,
@@ -489,7 +526,11 @@ def route_generation_task(context: dict[str, Any] | None, trigger_type: str = ""
     # 5) 关系讨论:允许画像与关系证据;要不要话术取决于是否求"怎么办"。
     if _looks_like_relationship_discussion(normalized):
         wants_speeches = any(
-            keyword in normalized for keyword in ("怎么回", "怎么说", "怎么办", "怎么开口", "怎么推进", "如何推进", "怎么破", "该怎么做")
+            keyword in normalized
+            for keyword in (
+                "怎么回", "怎么说", "怎么办", "怎么开口", "怎么推进", "如何推进",
+                "怎么破", "该怎么做", "怎么开", "开玩笑", "怎么聊", "怎么相处", "怎么把握",
+            )
         )
         return TaskRouting(
             task=TASK_RELATIONSHIP_DISCUSSION,

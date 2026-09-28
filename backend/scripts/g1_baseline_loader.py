@@ -177,9 +177,9 @@ def load_samples(db_path: str) -> dict[str, Any]:
         conv = conversations.get(int(log.get("conversation_id") or -1))
         if not conv:
             continue
-        user_context = [{"role": "user", "content": str(log.get("query_text") or "")}]
         dimension = _classify_log_dimension(log, conv, transfer_density, fact_stats)
         suggestion = _match_suggestion(suggestions, log)
+        user_context = _reconstruct_user_context(log, suggestion)
         samples.append({
             "sample_id": f"real-{log['id']}",
             "dimension": dimension,
@@ -299,15 +299,42 @@ def _classify_log_dimension(log: dict, conv: dict, transfer_density: dict, fact_
 
 
 def _match_suggestion(suggestions: list[dict], log: dict) -> dict | None:
+    """多条命中时取创建时间最接近的建议(密集手测时 ±120s 内可能有多条)。"""
     query = str(log.get("query_text") or "")
+    log_time = int(log.get("created_at") or 0)
+    best = None
+    best_diff = None
     for suggestion in suggestions:
         trigger_context = str(suggestion.get("trigger_context") or "")
         user_ctx = _json(trigger_context, {}).get("user_context") if trigger_context else None
         text = _latest_user_text(user_ctx) if user_ctx else ""
-        if text and text in query:
-            if abs(int(suggestion["created_at"] or 0) - int(log.get("created_at") or 0)) <= 120:
-                return suggestion
-    return None
+        if not (text and text in query):
+            continue
+        diff = abs(int(suggestion["created_at"] or 0) - log_time)
+        if diff <= 120 and (best_diff is None or diff < best_diff):
+            best = suggestion
+            best_diff = diff
+    return best
+
+
+def _reconstruct_user_context(log: dict, suggestion: dict | None) -> list[dict[str, str]]:
+    """优先用建议日志里保存的真实多轮 user_context(含 AI 回复),
+    保留"追问继承"的时序;退化时用检索 query 拼单轮。"""
+    if suggestion:
+        trigger_context = _json(str(suggestion.get("trigger_context") or ""), {})
+        user_context = trigger_context.get("user_context") if isinstance(trigger_context, dict) else None
+        if isinstance(user_context, list) and user_context:
+            normalized = []
+            for msg in user_context:
+                if not isinstance(msg, dict):
+                    continue
+                role = "assistant" if str(msg.get("role") or "") in {"ai", "assistant"} else "user"
+                content = str(msg.get("content") or "").strip()
+                if content:
+                    normalized.append({"role": role, "content": content})
+            if normalized:
+                return normalized
+    return [{"role": "user", "content": str(log.get("query_text") or "")}]
 
 
 def _legacy_classify(user_context: list[dict[str, str]]) -> str:

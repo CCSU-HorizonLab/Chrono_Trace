@@ -158,7 +158,14 @@ def build_packet(samples_path: Path, results_path: Path, db_path: str) -> tuple[
             sections.append(f"  {role}: {msg.get('content')}")
         sections.append("")
         sections.append("**当前窗口(模型看到的最近聊天,已脱敏):**")
-        sections.append(render_window(db_path, sample.get("conversation_id")))
+        frozen_window = ((outputs.get((sid, "g1")) or {}).get("context_snapshot") or {}).get("recent_window")
+        if frozen_window:
+            sections.append(f"  (来源:回放冻结快照,{((outputs.get((sid, 'g1')) or {}).get('context_snapshot') or {}).get('window_source')})")
+            for line in frozen_window:
+                who = {"self": "我", "friend": "对方", "system": "系统"}.get(str(line.get("sender")), str(line.get("sender")))
+                sections.append(f"  {who}: {line.get('content')}")
+        else:
+            sections.append(render_window(db_path, sample.get("conversation_id")))
         sections.append("")
         sections.append("**AI 初判预期:**")
         sections.append(f"  task={expected.get('task')} / output={expected.get('output')} / needs={expected.get('knowledge_needs')}")

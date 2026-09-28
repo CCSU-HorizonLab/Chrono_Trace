@@ -17,7 +17,6 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import sqlite3
 import sys
 import time
 from pathlib import Path
@@ -25,6 +24,7 @@ from typing import Any
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 JUDGE_VERSION = "g1-nli-judge-v1"
 JUDGE_PROMPT_VERSION = "g1-faithfulness-v1"
@@ -51,28 +51,15 @@ def collect_g1_live_results(results_path: Path) -> dict[str, dict[str, Any]]:
     return latest
 
 
-def load_redacted_evidence(db_path: str, fact_ids: list[int]) -> list[dict[str, str]]:
-    """按发送清单取事实原文,本地脱敏后作为 judge 证据(不回退明文)。"""
-    from app.services.realtime.privacy_redactor import PrivacyRedactor
-
-    if not fact_ids:
-        return []
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-    conn.row_factory = sqlite3.Row
-    placeholders = ",".join("?" for _ in fact_ids)
-    rows = conn.execute(
-        f"SELECT id, kind, content FROM rag_facts WHERE id IN ({placeholders}) AND status = 'active'",
-        fact_ids,
-    ).fetchall()
-    conn.close()
-    redactor = PrivacyRedactor()
+def load_frozen_evidence(result: dict[str, Any]) -> list[dict[str, str]]:
+    """审核返工 4:证据一律取回放时冻结的 context_snapshot.sent_evidence
+    (回放时已脱敏)——不再事后重读数据库,杜绝"判定的证据不是当时发送的"。"""
+    snapshot = result.get("context_snapshot") or {}
     evidence = []
-    for row in rows:
-        content = str(row["content"] or "").strip()
-        if not content:
-            continue
-        redacted = redactor.strong_mask(content)
-        evidence.append({"fact_id": int(row["id"]), "kind": row["kind"], "evidence": redacted})
+    for item in snapshot.get("sent_evidence") or []:
+        content = str(item.get("content") or "").strip()
+        if content:
+            evidence.append({"fact_id": item.get("fact_id"), "kind": "fact", "evidence": content})
     return evidence
 
 
@@ -91,13 +78,14 @@ def extract_claims(result: dict[str, Any]) -> list[str]:
 
 
 JUDGE_SYSTEM_PROMPT = """你是忠实度判定器。给定【证据】(来自记忆库的历史事实,已脱敏)和【陈述】
-(一条面向用户的建议输出),逐条判断每条陈述相对证据的关系:
-- entailed: 陈述的具体内容可由证据直接支持;
-- contradicted: 陈述与证据明确冲突;
-- unknown: 证据不足以判定(包括没有任何相关证据)。
+(建议输出中的话术或回答),逐条判断陈述相对证据的关系:
+- entailed: 陈述中的具体事实性内容可由证据直接支持;
+- contradicted: 陈述中的具体事实性内容与证据明确冲突;
+- unknown: 陈述不含事实性断言(纯邀请/寒暄措辞),或证据不足以判定。
 
-只依据给出的证据判断,不要用常识脑补,不要给聊天建议,不要输出分析过程。
-只输出一个 JSON 对象(不要 Markdown、不要多余文本):
+注意:话术是行动建议,不是事实陈述——只判断其中出现的具体事实(游戏名、
+时间、地点、承诺、对方行为),纯措辞不算事实;没有相关证据时一律 unknown,
+不得用常识脑补。只输出一个 JSON 对象(不要 Markdown、不要多余文本):
 {"judgments": [{"claim": 1, "label": "entailed|contradicted|unknown", "reason": "一句话"}]}"""
 
 
@@ -147,7 +135,6 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--results", default=str(Path(__file__).resolve().parents[2] / "docs" / "goals" / "g1-replay-results.json"))
     parser.add_argument("--samples", default=str(Path(__file__).resolve().parents[2] / "docs" / "goals" / "g1-baseline-samples.json"))
-    parser.add_argument("--db", default=str(Path(__file__).resolve().parents[1] / "data" / "chrono_trace.db"))
     parser.add_argument("--sample", action="append", default=None)
     parser.add_argument("--out", default=str(Path(__file__).resolve().parents[2] / "docs" / "goals" / "g1-nli-judgments.json"))
     args = parser.parse_args()
@@ -170,12 +157,17 @@ def main() -> int:
 
     judged: list[dict[str, Any]] = []
     label_counts = {label: 0 for label in LABELS}
+    unparsed_count = 0
+    frozen_missing = 0
     for sample_id, result in sorted(latest.items()):
         claims = extract_claims(result)
         if not claims:
             continue
-        fact_ids = [int(fid) for fid in (result.get("manifest") or {}).get("fact_ids") or [] if fid]
-        evidence = load_redacted_evidence(args.db, fact_ids)
+        snapshot = result.get("context_snapshot") or {}
+        if not snapshot.get("sent_evidence") and (result.get("manifest") or {}).get("fact_ids"):
+            frozen_missing += 1
+        evidence = load_frozen_evidence(result)
+        fact_ids = [int(item.get("fact_id") or 0) for item in evidence if item.get("fact_id")]
         prompt = build_judge_prompt(claims, evidence)
         started = time.perf_counter()
         try:
@@ -198,6 +190,8 @@ def main() -> int:
             raw = f"{type(exc).__name__}: {exc}"
         for judgment in judgments:
             label_counts[judgment["label"]] += 1
+            if judgment.get("reason") in {"judge_response_unparseable", "missing_judgment"}:
+                unparsed_count += 1
         judged.append({
             "sample_id": sample_id,
             "claims": claims,
@@ -209,12 +203,18 @@ def main() -> int:
         summary = ", ".join(f"{j['claim']}={j['label']}" for j in judgments)
         print(f"  {sample_id:>34} | facts={len(fact_ids)} | {summary}")
 
+    # 输出指纹:回放输出变化后本判定即过期(报告会比对)。
+    from g1_e2e_report import _outputs_fingerprint
+
     payload = {
         "judge_version": JUDGE_VERSION,
         "judge_prompt_version": JUDGE_PROMPT_VERSION,
         "model": {k: model_config.get(k) for k in ("provider", "model_id", "name")},
         "judged_at": int(time.time()),
         "status": "model_judged_pending_human",
+        "outputs_fingerprint": _outputs_fingerprint(latest),
+        "unparsed_count": unparsed_count,
+        "frozen_evidence_missing_samples": frozen_missing,
         "label_counts": label_counts,
         "judgments": judged,
     }

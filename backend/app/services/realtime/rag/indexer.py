@@ -258,6 +258,9 @@ class RagIndexer:
                 embedding_model=model,
                 embedding_dim=dim,
             )
+            # 零范数向量视为缺失:ONNX 故障窗口期写入过 199 条零向量,
+            # JOIN 能命中但余弦恒 0,不重灌检索会静默失效。
+            if item.get("vector") and any(float(x) != 0.0 for x in item["vector"])
         }
         missing = [item for item in facts if force or int(item["id"]) not in existing]
         written = 0

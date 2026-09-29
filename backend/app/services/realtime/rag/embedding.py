@@ -51,7 +51,9 @@ class RagEmbeddingService:
         for result in results:
             vector = list(result.get("embedding") or [])
             self.last_raw_dimensions.append(len(vector))
-            if not vector:
+            # 零向量同样视为模型不可用:ONNX 故障窗口期曾产出零向量并被
+            # 落库,导致 199 条事实余弦恒 0、检索静默失效。
+            if not vector or all(float(x) == 0.0 for x in vector):
                 raise RagEmbeddingUnavailable("本地 embedding 模型未返回可用向量")
             vectors.append(vector)
         return vectors

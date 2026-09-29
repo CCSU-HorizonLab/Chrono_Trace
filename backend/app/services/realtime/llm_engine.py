@@ -942,6 +942,10 @@ class LLMSuggestionEngine(SuggestionEngine):
                     return _summary("hot_context", "仅参考当前对话上下文")
                 if manifest_policy_sent:
                     return _summary("relationship_policy", "已参考关系画像")
+                # 有发送清单但全部证据被剔除（fact/doc/policy 全 0）→ hidden
+                # 而非"已参考 0 条"——badge 语义是"有没有用上"，不是计数
+                if referenced_count == 0 and manifest_doc_count == 0:
+                    return _summary("hidden", "")
                 return _summary("document_hit", f"已参考 {referenced_count} 条历史记录")
             if "fact_memory" in doc_types:
                 return _summary("fact_hit", f"已参考 {referenced_count} 条历史事实")
@@ -1540,7 +1544,7 @@ class LLMSuggestionEngine(SuggestionEngine):
                     parts.append("\n【历史记忆检索结果】")
                     parts.append("  检索状态：hit")
                     parts.append(f"  查询意图：{query_mode}")
-                    parts.append("  时间策略：{time_strategy}")
+                    parts.append(f"  时间策略：{time_strategy}")
                     parts.append("  优先级：当前对话和用户显式需求永远高于历史记忆。")
                     parts.append("  使用边界：只在历史内容直接服务当前回复目标时参考；不要为了使用记忆而引入旧话题。")
                     parts.append("  结果：")
@@ -1709,10 +1713,16 @@ class LLMSuggestionEngine(SuggestionEngine):
             _print("[LLM Engine] ⚠️ Prompt 较长，建议检查最近对话窗口和压缩逻辑")
 
         # G6:候选命中但未渲染的条目记录排除原因,区分"召回/选中/实际发送"。
+        # evidence_redacted_unusable 的条目先从 items 排除（下方单独记录），
+        # 不再落入 prompt_budget 分支——同一 document 不双计
         rendered_id_set = {str(value) for value in rendered_doc_ids if value is not None}
+        unusable_id_set = {str(v) for v in context.get("_rag_evidence_unusable_ids") or []}
         if isinstance(retrieval_context, dict):
             for item in retrieval_context.get("items") or []:
-                if str(item.get("document_id")) not in rendered_id_set:
+                item_id = str(item.get("document_id"))
+                if item_id in unusable_id_set:
+                    continue  # 由 evidence_redacted_unusable 单独记录
+                if item_id not in rendered_id_set:
                     excluded_reasons.append({
                         "kind": "retrieval_item",
                         "id": item.get("document_id"),

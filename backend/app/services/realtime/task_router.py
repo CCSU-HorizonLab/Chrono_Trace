@@ -247,6 +247,15 @@ _THIRD_PARTY_MARKERS = ("她", "他", "对方", "ta", "TA", "人家")
 # 无第三人称主语时的分寸/边界词:仍视为关系讨论("怎么开玩笑不越界")。
 _BOUNDARY_ALONE_MARKERS = ("越界", "分寸", "边界", "雷区", "红线")
 
+# 祈使式内容生成请求("表达想念""夸她一下""道个歉"):用户要的是话术本身。
+# 真实使用发现这类短祈使句曾误判 general_qa,只能靠模型违规输出话术兜底。
+_CONTENT_REQUEST_VERBS = (
+    "表达", "夸", "夸夸", "哄", "道歉", "道个歉", "赔个不是", "赔不是",
+    "安抚", "安慰", "关心", "问候", "打招呼", "祝福", "生日快乐",
+    "表白", "告白", "撒娇", "卖个萌", "撩",
+)
+_CONTENT_REQUEST_OBJECTS = ("她", "他", "对方", "ta", "TA", "人家")
+
 
 @dataclass(frozen=True)
 class TaskRouting:
@@ -383,6 +392,34 @@ def _looks_like_invitation(normalized: str) -> bool:
     return any(pattern in normalized for pattern in INVITATION_PATTERNS)
 
 
+def _looks_like_content_request(normalized: str) -> bool:
+    """祈使式内容生成:短输入、动词打头(或"帮我/给我+动词")、指向对方。
+
+    "表达想念"/"夸她一下"/"哄哄她"/"帮我道个歉" → 用户要话术,不是提问。
+    """
+    if len(normalized) > 16:
+        return False
+    body = normalized
+    implied_object = False
+    for prefix in ("帮我", "给我", "想", "怎么"):
+        if body.startswith(prefix):
+            implied_object = prefix in ("帮我", "给我")  # "帮我道个歉"隐含对方
+            body = body[len(prefix):]
+            break
+    if not body:
+        return False
+    has_verb = any(body.startswith(verb) for verb in _CONTENT_REQUEST_VERBS) or any(
+        verb in body[:4] for verb in _CONTENT_REQUEST_VERBS
+    )
+    has_object = (
+        any(obj in body for obj in _CONTENT_REQUEST_OBJECTS)
+        or any(token in body for token in ("想念", "思念", "晚安", "早安", "晚安问候"))
+        or implied_object
+    )
+    asks_question = any(marker in normalized for marker in ("什么", "吗", "呢", "怎么", "为什么", "?", "？"))
+    return has_verb and has_object and not asks_question
+
+
 def _looks_like_relationship_discussion(normalized: str) -> bool:
     if any(pattern in normalized for pattern in RELATIONSHIP_DISCUSSION_PATTERNS):
         return True
@@ -511,7 +548,19 @@ def route_generation_task(context: dict[str, Any] | None, trigger_type: str = ""
             manual_request=True,
         )
 
-    # 4) 邀约策划:给回答 + 可直接发送的邀约话术。
+    # 4) 祈使式内容生成("表达想念"/"夸她一下"):给回答附话术。
+    if _looks_like_content_request(normalized):
+        return TaskRouting(
+            task=TASK_REPLY_SUGGESTION,
+            output=OUTPUT_ANSWER_WITH_SPEECHES,
+            knowledge_needs=_NEEDS_ALL,
+            confidence=0.78,
+            reason="content_generation_imperative",
+            wants_speeches=True,
+            manual_request=True,
+        )
+
+    # 5) 邀约策划:给回答 + 可直接发送的邀约话术。
     if _looks_like_invitation(normalized):
         return TaskRouting(
             task=TASK_INVITATION_PLANNING,

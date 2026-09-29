@@ -1038,24 +1038,38 @@ class LLMSuggestionEngine(SuggestionEngine):
     _TRANSFER_HINT_RE = re.compile(r"转账|红包|收款|转了钱|转你|转我|来回转|转了|那笔钱|笔钱")
     _RELATION_HINT_RE = re.compile(
         r"关系正常|关系好|不讨厌|讨厌你|不喜欢你|喜欢你|态度|冷淡|冷处理|"
-        r"热情|在意你|在乎你|理你|回应你|积极|没生你的气"
+        r"热情|在意你|在乎你|理你|回应你|积极|没生你的气|人还在|没回话|不想理|疏远|冷落"
     )
 
     def _check_output_contracts(self, result: "SuggestionResult", context: dict) -> list[str]:
-        """检测输出是否违反硬契约。当前规则:窗口含资金事件时,输出不得把
-        资金往来当作对方态度/关系结论的证据(句级共现判定)。"""
-        if int(context.get("_window_transfer_event_count") or 0) <= 0:
-            return []
+        """检测输出是否违反硬契约。
+
+        - 资金推断:窗口含资金事件时,输出不得把资金往来当作对方态度/关系
+          结论的证据(句级共现;真实使用发现"她转账说明人还在"类措辞,已入词表);
+        - 输出形式:direct_answer 不得带建议卡片话术;要话术的输出不得空话术
+          (真实使用发现"表达想念"被判直答但模型违规给了话术)。
+        """
         violations: list[str] = []
-        fields = [("reply", result.reply or ""), ("summary", result.summary or "")]
-        fields.extend(("speeches", speech) for speech in (result.speeches or []))
-        for field_name, text in fields:
-            for sentence in re.split(r"[。！？!?\n；;]+", str(text)):
-                sentence = sentence.strip()
-                if len(sentence) < 4:
-                    continue
-                if self._TRANSFER_HINT_RE.search(sentence) and self._RELATION_HINT_RE.search(sentence):
-                    violations.append(f"资金推断({field_name}):「{sentence[:60]}」")
+
+        routing_output = str((context.get("_task_routing") or {}).get("output") or "")
+        has_speeches = bool([s for s in (result.speeches or []) if str(s).strip()])
+        if routing_output == "direct_answer" and has_speeches:
+            violations.append(
+                f"输出形式:任务判定为直接回答,但生成了 {len(result.speeches)} 条建议卡片话术"
+            )
+        if routing_output not in ("", "direct_answer") and not has_speeches:
+            violations.append("输出形式:任务需要话术,但 speeches 为空")
+
+        if int(context.get("_window_transfer_event_count") or 0) > 0:
+            fields = [("reply", result.reply or ""), ("summary", result.summary or "")]
+            fields.extend(("speeches", speech) for speech in (result.speeches or []))
+            for field_name, text in fields:
+                for sentence in re.split(r"[。！？!?\n；;]+", str(text)):
+                    sentence = sentence.strip()
+                    if len(sentence) < 4:
+                        continue
+                    if self._TRANSFER_HINT_RE.search(sentence) and self._RELATION_HINT_RE.search(sentence):
+                        violations.append(f"资金推断({field_name}):「{sentence[:60]}」")
         return violations
 
     def _build_contract_repair_prompt(self, user_prompt: str, violations: list[str]) -> str:

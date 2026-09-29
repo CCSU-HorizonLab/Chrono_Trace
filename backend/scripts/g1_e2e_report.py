@@ -105,6 +105,10 @@ def check_task_contract(samples: list[dict], results: dict[tuple[str, str], dict
             })
         output = result.get("output") or {}
         wants_speeches = str(routing.get("output")) != "direct_answer"
+        # dry 回落结果无 LLM 输出（output 为空 dict）——不是契约违规，
+        # 是「没跑 live」；路由已由上方 match/mismatch 覆盖
+        if not output:
+            continue
         if wants_speeches and not [s for s in output.get("speeches") or [] if str(s).strip()]:
             output_violations.append({"sample_id": sample["sample_id"], "issue": "要话术但 speeches 为空"})
         if not wants_speeches and not str(output.get("reply") or "").strip():
@@ -332,7 +336,13 @@ def build_report(samples_path: Path, results_path: Path, judgments_path: Path) -
         for judgment in entry.get("judgments") or []
         if judgment.get("reason") in {"judge_response_unparseable", "missing_judgment"}
     )
-    nli_stale = bool(nli.get("outputs_fingerprint")) and nli.get("outputs_fingerprint") != _outputs_fingerprint(results)
+    # 指纹比对只用 g1 链路子集——judge 只判 g1（键为裸 sample_id），报告的
+    # results 含三链路（键为 (sid, chain) 元组），直接全量比对恒不等
+    g1_subset = {
+        k: v for k, v in results.items()
+        if (isinstance(k, tuple) and str(k[1]) == "g1") or not isinstance(k, tuple)
+    }
+    nli_stale = bool(nli.get("outputs_fingerprint")) and nli.get("outputs_fingerprint") != _outputs_fingerprint(g1_subset)
     lines.append("## 忠实度(NLI 初判,冻结证据)")
     lines.append("")
     lines.append(f"- judge:{nli.get('judge_version')} / prompt `{nli.get('judge_prompt_version')}` / 模型 {(nli.get('model') or {}).get('model_id')}")

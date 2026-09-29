@@ -121,7 +121,16 @@ class SentimentService:
     def _load_embedding_model(self):
         """Load the ONNX embedding model using the configured device mode."""
         if self._embedding_load_failed:
-            return
+            # 失败可能只是暂时的(onnxruntime 后装、模型后导出):文件就位时
+            # 允许重试,避免整个进程生命周期被一次瞬时失败锁死。
+            try:
+                from .onnx_inference import has_onnx_models
+
+                if not has_onnx_models():
+                    return
+            except Exception:
+                return
+            self._embedding_load_failed = False
         if self._embedding_model is not None:
             return
         with self._lock:

@@ -114,19 +114,14 @@
         </div>
 
         <div class="fp-sug-list">
-          <div
-            v-for="s in allSuggestions"
-            :key="s.id || s._tempId"
-            :data-sid="s.id || 'manual'"
-            :class="{
-              'fp-card': s._type === 'suggestion',
-              [s.severity || 'medium']: s._type === 'suggestion',
-              'fp-bubble': s._type === 'chat' || s._type === 'live_msg',
-              user: (s._type === 'chat' && s.role === 'user') || (s._type === 'live_msg' && s.sender_attr === 'self'),
-              ai: (s._type === 'chat' && s.role === 'ai') || (s._type === 'live_msg' && s.sender_attr !== 'self')
-            }"
-          >
-            <template v-if="s._type === 'suggestion'">
+          <template v-for="s in allSuggestions" :key="s.id || s._tempId">
+            <!-- 1. AI 策略建议卡片 -->
+            <div
+              v-if="s._type === 'suggestion'"
+              :data-sid="s.id || 'manual'"
+              class="fp-card"
+              :class="[s.severity || 'medium']"
+            >
               <div class="fp-card-hd" @click="toggleSuggestion(s)">
                 <span class="fp-card-icon"><component :is="getTriggerIconComponent(s.trigger_type)" :size="13" /></span>
                 <span class="fp-card-title">{{ s.summary }}</span>
@@ -156,35 +151,128 @@
                   </span>
                 </div>
               </div>
-            </template>
+            </div>
 
-            <template v-else-if="s._type === 'live_msg'">
-              <div class="fp-bubble-meta">
-                 <span class="fp-bubble-avatar">{{ s.sender_attr === 'self' ? '我' : '对方' }}</span>
-                 <span class="fp-bubble-time">{{ formatMsgTime(s.created_at) }}</span>
+            <!-- 2. 微信抓取实时消息行（含真实头像 + 仿微信引用消息块） -->
+            <div
+              v-else-if="s._type === 'live_msg'"
+              class="fp-msg-row"
+              :class="s.sender_attr === 'self' ? 'right' : 'left'"
+            >
+              <div class="fp-msg-avatar" :class="s.sender_attr === 'self' ? 'self' : 'contact'">
+                <img
+                  v-if="getBubbleAvatar(s.sender_attr === 'self') && !avatarLoadErrors[getBubbleAvatar(s.sender_attr === 'self')]"
+                  :src="getBubbleAvatar(s.sender_attr === 'self')"
+                  class="fp-msg-avatar-img"
+                  referrerpolicy="no-referrer"
+                  :alt="s.sender_attr === 'self' ? '我' : (realtimeState.talkerName || '对方')"
+                  @error="avatarLoadErrors[getBubbleAvatar(s.sender_attr === 'self')] = true"
+                />
+                <svg v-else class="fp-msg-avatar-svg" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <rect width="36" height="36" rx="6" :fill="s.sender_attr === 'self' ? '#10b981' : '#dfdfdf'" />
+                  <circle cx="18" cy="13" r="5.5" fill="#ffffff" />
+                  <path d="M7 29C7 24.0294 11.0294 20 16 20H20C24.9706 20 29 24.0294 29 29V31C29 32.1046 28.1046 33 27 33H9C7.89543 33 7 32.1046 7 31V29Z" fill="#ffffff" />
+                </svg>
               </div>
-              <div class="fp-bubble-txt">{{ s.content }}</div>
-            </template>
 
-            <template v-else-if="s._type === 'chat'">
-              <div class="fp-bubble-meta">
-                 <span class="fp-bubble-avatar">{{ s.role === 'user' ? '我' : 'AI' }}</span>
-                 <span class="fp-bubble-time">{{ formatMsgTime(s.created_at) }}</span>
+              <div class="fp-bubble" :class="s.sender_attr === 'self' ? 'wechat-self' : 'wechat-other'">
+                <div class="fp-bubble-meta">
+                  <span class="fp-bubble-badge" :class="s.sender_attr === 'self' ? 'wechat-self' : 'wechat-other'">
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                    </svg>
+                    <span>{{ s.sender_attr === 'self' ? '微信 · 我' : `微信 · ${realtimeState.talkerName || '对方'}` }}</span>
+                  </span>
+                  <span class="fp-bubble-time">{{ formatMsgTime(s.created_at) }}</span>
+                </div>
+                <template v-if="parseWechatQuoteMessage(s.content).isQuote">
+                  <div class="fp-bubble-txt">{{ parseWechatQuoteMessage(s.content).replyText }}</div>
+                  <div
+                    class="fp-wechat-quote"
+                    :class="{ 'is-expanded': isQuoteExpanded(String(s.id || s.created_at || s.content)) }"
+                    title="点击展开或收起引用全文"
+                    @click.stop="toggleQuoteExpand(String(s.id || s.created_at || s.content))"
+                  >
+                    <span class="fp-wechat-quote-bar"></span>
+                    <div class="fp-wechat-quote-body">
+                      <div class="fp-wechat-quote-text">
+                        <span class="fp-wechat-quote-author">{{ parseWechatQuoteMessage(s.content).quoteAuthor }}：</span>
+                        <span>{{ parseWechatQuoteMessage(s.content).quoteText }}</span>
+                      </div>
+                      <span v-if="parseWechatQuoteMessage(s.content).quoteText.length > 42" class="fp-wechat-quote-toggle">
+                        {{ isQuoteExpanded(String(s.id || s.created_at || s.content)) ? '收起' : '展开全文' }}
+                      </span>
+                    </div>
+                  </div>
+                </template>
+                <div v-else class="fp-bubble-txt">{{ s.content }}</div>
               </div>
-              <div class="fp-bubble-txt">{{ s.content }}</div>
-              <div v-if="getRagBadge(s.rag_context)" class="fp-rag-row">
-                <span
-                  class="fp-rag-badge"
-                  :class="getRagBadge(s.rag_context)?.state"
-                  :style="canOpenRagDetail(s.rag_context) ? 'cursor:pointer' : ''"
-                  :title="canOpenRagDetail(s.rag_context) ? '点击查看参考依据' : ''"
-                  @click.stop="openRagDetail(s.rag_context)"
-                >
-                  {{ getRagBadge(s.rag_context)?.label }}
-                </span>
+            </div>
+
+            <!-- 3. 用户与 AI 军师对话行（含用户头像 / AI 专属图标） -->
+            <div
+              v-else-if="s._type === 'chat'"
+              class="fp-msg-row"
+              :class="s.role === 'user' ? 'right' : 'left'"
+            >
+              <div class="fp-msg-avatar" :class="s.role === 'user' ? 'ai-user-av' : 'ai-bot-av'">
+                <template v-if="s.role === 'user'">
+                  <img
+                    v-if="userAvatar && !avatarLoadErrors[userAvatar]"
+                    :src="userAvatar"
+                    class="fp-msg-avatar-img"
+                    referrerpolicy="no-referrer"
+                    alt="我"
+                    @error="avatarLoadErrors[userAvatar] = true"
+                  />
+                  <svg v-else class="fp-msg-avatar-svg" viewBox="0 0 36 36" fill="none">
+                    <rect width="36" height="36" rx="6" fill="#7c4dff" />
+                    <circle cx="18" cy="13" r="5.5" fill="#ffffff" />
+                    <path d="M7 29C7 24.0294 11.0294 20 16 20H20C24.9706 20 29 24.0294 29 29V31C29 32.1046 28.1046 33 27 33H9C7.89543 33 7 32.1046 7 31V29Z" fill="#ffffff" />
+                  </svg>
+                </template>
+                <svg v-else class="fp-msg-avatar-svg" viewBox="0 0 36 36" fill="none">
+                  <rect width="36" height="36" rx="6" fill="#ede9fe" />
+                  <rect x="9" y="13" width="18" height="12" rx="3" stroke="#6d28d9" stroke-width="2.2" fill="#ffffff" />
+                  <circle cx="18" cy="8" r="2" fill="#6d28d9" />
+                  <path d="M18 10v3" stroke="#6d28d9" stroke-width="2.2" stroke-linecap="round" />
+                  <circle cx="14.5" cy="19" r="1.5" fill="#6d28d9" />
+                  <circle cx="21.5" cy="19" r="1.5" fill="#6d28d9" />
+                </svg>
               </div>
-            </template>
-          </div>
+
+              <div class="fp-bubble" :class="s.role === 'user' ? 'ai-user' : 'ai-assistant'">
+                <div class="fp-bubble-meta">
+                  <span class="fp-bubble-badge" :class="s.role === 'user' ? 'ai-user' : 'ai-assistant'">
+                    <svg v-if="s.role === 'user'" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                      <circle cx="12" cy="12" r="10"></circle>
+                      <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+                      <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                    </svg>
+                    <svg v-else width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                      <rect x="3" y="11" width="18" height="10" rx="2"></rect>
+                      <circle cx="12" cy="5" r="2"></circle>
+                      <path d="M12 7v4"></path>
+                    </svg>
+                    <span>{{ s.role === 'user' ? '向 AI 提问' : 'AI 助手' }}</span>
+                  </span>
+                  <span class="fp-bubble-time">{{ formatMsgTime(s.created_at) }}</span>
+                </div>
+                <div class="fp-bubble-txt">{{ s.content }}</div>
+                <div v-if="getRagBadge(s.rag_context)" class="fp-rag-row">
+                  <span
+                    class="fp-rag-badge"
+                    :class="getRagBadge(s.rag_context)?.state"
+                    :style="canOpenRagDetail(s.rag_context) ? 'cursor:pointer' : ''"
+                    :title="canOpenRagDetail(s.rag_context) ? '点击查看参考依据' : ''"
+                    @click.stop="openRagDetail(s.rag_context)"
+                  >
+                    {{ getRagBadge(s.rag_context)?.label }}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </template>
 
           <div v-if="loading" class="fp-loading-state">
             <div class="fp-spinner"></div>
@@ -325,7 +413,19 @@
                  <span class="fp-ctx-sender">{{ msg.sender }}</span>
                  <span v-if="msg.timestamp" class="fp-ctx-time">{{ formatMsgTime(msg.timestamp) }}</span>
               </div>
-              <div class="fp-ctx-txt">{{ msg.content }}</div>
+              <template v-if="parseWechatQuoteMessage(msg.content).isQuote">
+                <div class="fp-ctx-txt">{{ parseWechatQuoteMessage(msg.content).replyText }}</div>
+                <div class="fp-wechat-quote">
+                  <span class="fp-wechat-quote-bar"></span>
+                  <div class="fp-wechat-quote-body">
+                    <div class="fp-wechat-quote-text">
+                      <span class="fp-wechat-quote-author">{{ parseWechatQuoteMessage(msg.content).quoteAuthor }}：</span>
+                      <span>{{ parseWechatQuoteMessage(msg.content).quoteText }}</span>
+                    </div>
+                  </div>
+                </div>
+              </template>
+              <div v-else class="fp-ctx-txt">{{ msg.content }}</div>
             </div>
           </div>
         </div>
@@ -413,52 +513,19 @@
         </div>
       </div>
     </div>
-  <!-- RAG 注入详情弹层：展示本次建议实际使用的记忆及来源 -->
-  <div v-if="ragDetail.visible" class="fp-rag-detail-mask" @click.self="closeRagDetail">
-    <div class="fp-rag-detail">
-      <div class="fp-rag-detail-head">
-        <span class="fp-rag-detail-title">本次建议的记忆依据</span>
-        <button class="fp-rag-detail-close" @click="closeRagDetail">✕</button>
-      </div>
-      <div v-if="ragDetail.loading" class="fp-rag-detail-status">加载中…</div>
-      <div v-else-if="ragDetail.error" class="fp-rag-detail-status">无法加载：{{ ragDetail.error }}</div>
-      <template v-else-if="ragDetail.data">
-        <div class="fp-rag-detail-meta">
-          <span>策略：{{ ragDetail.data.log.strategy || '-' }}</span>
-          <span>门控：{{ ragDetail.data.log.gate_decision || '-' }}</span>
-          <span>耗时：{{ ragDetail.data.log.elapsed_ms ?? 0 }}ms</span>
-          <span v-if="ragDetail.data.log.degrade_reason">降级：{{ ragDetail.data.log.degrade_reason }}</span>
-        </div>
-        <div class="fp-rag-detail-candidates">
-          检索到 {{ ragDetail.data.candidates.count }} 条候选，实际注入 {{ ragDetail.data.candidates.injected_count }} 条
-        </div>
-        <div v-if="!ragDetail.data.injected.length" class="fp-rag-detail-status">
-          本次没有注入任何历史记忆
-        </div>
-        <div
-          v-for="item in ragDetail.data.injected"
-          :key="item.source + '-' + item.id"
-          class="fp-rag-item"
-        >
-          <div class="fp-rag-item-head">
-            <span class="fp-rag-item-chip" :class="item.source">
-              {{ item.source === 'fact' ? '历史事实' : item.doc_type === 'hot_context' ? '当前对话' : '历史记录' }}
-            </span>
-            <span v-if="item.as_of" class="fp-rag-item-time">{{ formatRagTime(item.as_of) }}</span>
-            <span v-if="item.confidence != null" class="fp-rag-item-conf">
-              置信 {{ (item.confidence * 100).toFixed(0) }}%
-            </span>
-          </div>
-          <div class="fp-rag-item-content">{{ item.content }}</div>
-          <div v-if="item.evidence_excerpts?.length" class="fp-rag-item-evidence">
-            <div class="fp-rag-item-evidence-title">来源原文</div>
-            <div v-for="(ev, ei) in item.evidence_excerpts" :key="ei" class="fp-rag-item-evidence-text">“{{ ev }}”</div>
-          </div>
-        </div>
-      </template>
-    </div>
-  </div>
   </Teleport>
+
+  <!-- 直接复用设置页现成的「记忆管理」弹窗组件 RagFactDialog -->
+  <RagFactDialog
+    :visible="ragDetail.visible"
+    :log-id="ragDetail.logId"
+    :conversation-id="ragStatus?.conversation_id || null"
+    :account-wxid="activeAccountWxid"
+    :display-name="realtimeState.talkerName"
+    :avatar-url="contactAvatar"
+    :user-avatar-url="userAvatar"
+    @close="closeRagDetail"
+  />
 </template>
 
 
@@ -482,6 +549,7 @@ import {
 import { bridgeReady, api } from '@/api/bridge'
 import * as echarts from 'echarts'
 import CtAvatar from '@/components/base/CtAvatar.vue'
+import RagFactDialog from '@/components/settings/RagFactDialog.vue'
 import { showConfirm, showDialog } from '@/utils/dialog'
 
 const router = useRouter()
@@ -940,7 +1008,8 @@ const allSuggestions = computed(() => {
     // UIA 会返回日期/时间分隔线（sender_attr=system）。它们不是聊天消息，
     // 不能按“非我方”渲染成对方气泡；后端已过滤，这里保留防御性兜底。
     if (String(m.sender_attr || '').toLowerCase() === 'system'
-      || String(m.message_type || '').toLowerCase() === 'system') continue
+      || String(m.message_type || '').toLowerCase() === 'system'
+      || isSystemTimeLabel(m.content)) continue
     list.push({ ...m, _type: 'live_msg', created_at: m.ts })
   }
 
@@ -953,6 +1022,62 @@ const allSuggestions = computed(() => {
 
   return list
 })
+
+const SYSTEM_TIME_LABEL_RE = /^(?:(?:\d{4}[-/年]\d{1,2}[-/月]\d{1,2}日?(?:\s*(?:星期[一二三四五六日天]|周[一二三四五六日天]))?\s*)?(?:昨天|前天|今天)?\s*(?:凌晨|早上|上午|中午|下午|傍晚|晚上)?\s*\d{1,2}:\d{2}(?::\d{2})?|(?:昨天|前天|今天|星期[一二三四五六日天]|周[一二三四五六日天])(?:\s*(?:凌晨|早上|上午|中午|下午|傍晚|晚上)?\s*\d{1,2}:\d{2})?|\d{1,2}月\d{1,2}日(?:\s*(?:星期[一二三四五六日天]|周[一二三四五六日天]))?(?:\s*(?:凌晨|早上|上午|中午|下午|傍晚|晚上)?\s*\d{1,2}:\d{2})?)$/
+
+function isSystemTimeLabel(raw: any): boolean {
+  const s = String(raw || '').trim()
+  if (!s || s.length > 36) return false
+  return SYSTEM_TIME_LABEL_RE.test(s)
+}
+
+type ParsedWechatQuote = {
+  replyText: string
+  isQuote: boolean
+  hasQuote: boolean
+  quoteAuthor: string
+  quoteText: string
+}
+
+const WECHAT_QUOTE_RE = /^([\s\S]+?)\s+引用\s+([^\n]{1,64}?)\s+的消息\s*[:：]\s*([\s\S]+)$/
+
+function parseWechatQuoteMessage(raw: any): ParsedWechatQuote {
+  const text = String(raw || '').trim()
+  const m = text.match(WECHAT_QUOTE_RE)
+  if (!m) {
+    return {
+      replyText: text,
+      isQuote: false,
+      hasQuote: false,
+      quoteAuthor: '',
+      quoteText: '',
+    }
+  }
+  return {
+    replyText: (m[1] || '').trim(),
+    isQuote: true,
+    hasQuote: true,
+    quoteAuthor: (m[2] || '').trim(),
+    quoteText: (m[3] || '').trim(),
+  }
+}
+
+const expandedQuoteKeys = ref<Set<string>>(new Set())
+
+function isQuoteExpanded(key: string): boolean {
+  return expandedQuoteKeys.value.has(String(key))
+}
+
+function toggleQuoteExpand(key: string) {
+  const k = String(key)
+  const next = new Set(expandedQuoteKeys.value)
+  if (next.has(k)) {
+    next.delete(k)
+  } else {
+    next.add(k)
+  }
+  expandedQuoteKeys.value = next
+}
 
 function parseSuggestionSpeeches(raw: any): string[] {
   if (Array.isArray(raw)) return raw
@@ -2158,68 +2283,42 @@ function getRagBadge(ragContext: RagContextSummary | undefined | null): RagConte
   return ragContext
 }
 
-// RAG 注入详情弹层
-type RagInjectedItem = {
-  source: string
-  id: number
-  doc_type: string
-  content: string
-  subject?: string | null
-  kind?: string | null
-  as_of?: number | null
-  confidence?: number | null
-  evidence_excerpts?: string[]
-}
-type RagLogDetail = {
-  log: {
-    id: number
-    strategy?: string | null
-    gate_decision?: string | null
-    elapsed_ms?: number | null
-    degrade_reason?: string | null
-  }
-  injected: RagInjectedItem[]
-  candidates: { count: number; injected_count: number; not_injected_ids: number[] }
-}
-const ragDetail = reactive<{ visible: boolean; loading: boolean; error: string; data: RagLogDetail | null }>({
+// 记忆管理弹窗（直接复用 RagFactDialog 组件）
+const ragDetail = reactive<{ visible: boolean; logId: number | null }>({
   visible: false,
-  loading: false,
-  error: '',
-  data: null,
+  logId: null,
 })
+
+const userAvatar = ref('')
+const avatarLoadErrors = reactive<Record<string, boolean>>({})
+
+function getBubbleAvatar(isSelf: boolean): string {
+  return isSelf ? userAvatar.value : contactAvatar.value
+}
+
+async function resolveUserAvatar() {
+  try {
+    await bridgeReady()
+    const uRes = await api.get_current_user_profile(activeAccountWxid.value || '')
+    if (uRes?.ok && uRes?.profile?.avatar) {
+      userAvatar.value = String(uRes.profile.avatar).trim()
+    }
+  } catch {}
+}
 
 function canOpenRagDetail(rc?: RagContextSummary | null): boolean {
   return !!(rc && rc.log_id)
 }
 
-async function openRagDetail(rc?: RagContextSummary | null) {
+function openRagDetail(rc?: RagContextSummary | null) {
   if (!canOpenRagDetail(rc) || !rc?.log_id) return
+  ragDetail.logId = Number(rc.log_id)
   ragDetail.visible = true
-  ragDetail.loading = true
-  ragDetail.error = ''
-  ragDetail.data = null
-  try {
-    const res = await api.get_rag_log_detail(rc.log_id)
-    if (res?.ok) {
-      ragDetail.data = res as RagLogDetail
-    } else {
-      ragDetail.error = String(res?.error || '未知错误')
-    }
-  } catch (e: any) {
-    ragDetail.error = String(e?.message || e)
-  } finally {
-    ragDetail.loading = false
-  }
 }
 
 function closeRagDetail() {
   ragDetail.visible = false
-}
-
-function formatRagTime(ts?: number | null): string {
-  if (!ts) return ''
-  const d = new Date(ts * 1000)
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  ragDetail.logId = null
 }
 
 const triggerIconComponents: Record<string, any> = {
@@ -2316,6 +2415,7 @@ async function retryConnection() {
 
 // ========== 画像 ==========
 async function resolveContactAvatar(displayName: string) {
+  void resolveUserAvatar()
   const name = String(displayName || '').trim()
   if (!name) {
     contactAvatar.value = ''
@@ -2692,38 +2792,89 @@ async function loadLastThread() {
 .fp-rag-badge.hot_context { color: var(--ct-text-tertiary); background: var(--ct-bg-secondary); }
 .fp-rag-badge.degraded { color: #8a2b2b; border-color: rgba(178, 58, 58, 0.28); background: rgba(178, 58, 58, 0.07); }
 
-/* RAG 注入详情弹层 */
-.fp-rag-detail-mask { position: fixed; inset: 0; z-index: 1000; background: rgba(0, 0, 0, 0.18); display: flex; align-items: center; justify-content: center; }
-.fp-rag-detail { width: min(420px, calc(100vw - 32px)); max-height: min(520px, 78vh); overflow-y: auto; background: var(--ct-bg-elevated, #fff); border: 1px solid var(--ct-border-color, #e5e7eb); border-radius: 12px; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.16); padding: 14px 16px; }
-.fp-rag-detail-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
-.fp-rag-detail-title { font-size: 13px; font-weight: 700; color: var(--ct-text-primary, #1f2937); }
-.fp-rag-detail-close { border: none; background: transparent; cursor: pointer; font-size: 14px; color: var(--ct-text-tertiary, #9ca3af); padding: 2px 6px; border-radius: 6px; }
-.fp-rag-detail-close:hover { background: var(--ct-bg-secondary, #f3f4f6); }
-.fp-rag-detail-status { font-size: 12px; color: var(--ct-text-secondary, #6b7280); padding: 12px 0; text-align: center; }
-.fp-rag-detail-meta { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 11px; color: var(--ct-text-tertiary, #9ca3af); margin-bottom: 6px; }
-.fp-rag-detail-candidates { font-size: 11.5px; color: var(--ct-text-secondary, #6b7280); background: var(--ct-bg-secondary, #f3f4f6); border-radius: 8px; padding: 6px 10px; margin-bottom: 10px; }
-.fp-rag-item { border: 1px solid var(--ct-border-color, #e5e7eb); border-radius: 10px; padding: 8px 10px; margin-bottom: 8px; }
-.fp-rag-item-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
-.fp-rag-item-chip { font-size: 10px; font-weight: 600; padding: 1px 7px; border-radius: 999px; }
-.fp-rag-item-chip.fact { color: var(--ct-color-primary, #7c4dff); background: rgba(124, 77, 255, 0.08); }
-.fp-rag-item-chip.document { color: #8a5a00; background: rgba(180, 125, 20, 0.08); }
-.fp-rag-item-time { font-size: 10.5px; color: var(--ct-text-tertiary, #9ca3af); }
+/* RAG 注入详情弹层（与设置页「记忆管理」视觉对称） */
+.fp-rag-detail-mask { position: fixed; inset: 0; z-index: 1000; background: rgba(15, 23, 42, 0.35); backdrop-filter: blur(2px); display: flex; align-items: center; justify-content: center; }
+.fp-rag-detail { width: min(440px, calc(100vw - 24px)); max-height: min(560px, 82vh); overflow-y: auto; background: var(--ct-bg-elevated, #fff); border: 1px solid var(--ct-border-color, #e5e7eb); border-radius: 14px; box-shadow: 0 16px 44px rgba(15, 23, 42, 0.18); padding: 14px 16px; }
+.fp-rag-detail-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--ct-border-color, #e5e7eb); }
+.fp-rag-detail-title-wrap { display: flex; align-items: center; gap: 8px; }
+.fp-rag-detail-icon { width: 24px; height: 24px; border-radius: 7px; background: rgba(124, 77, 255, 0.1); color: var(--ct-color-primary, #7c4dff); display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.fp-rag-detail-title { font-size: 13.5px; font-weight: 700; color: var(--ct-text-primary, #1f2937); }
+.fp-rag-detail-close { border: none; background: transparent; cursor: pointer; font-size: 14px; color: var(--ct-text-tertiary, #9ca3af); padding: 3px 7px; border-radius: 6px; transition: background 0.15s; }
+.fp-rag-detail-close:hover { background: var(--ct-bg-secondary, #f3f4f6); color: var(--ct-text-primary, #1f2937); }
+.fp-rag-detail-status { font-size: 12px; color: var(--ct-text-secondary, #6b7280); padding: 14px 0; text-align: center; }
+.fp-rag-detail-summary-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; background: var(--ct-bg-secondary, #f8fafc); border: 1px solid var(--ct-border-color, #e5e7eb); border-radius: 9px; padding: 7px 11px; margin-bottom: 12px; font-size: 11.5px; }
+.fp-rag-summary-stat { color: var(--ct-text-secondary, #475569); }
+.fp-rag-summary-stat strong { color: var(--ct-color-primary, #7c4dff); font-weight: 700; }
+.fp-rag-summary-meta { display: flex; align-items: center; gap: 8px; color: var(--ct-text-tertiary, #94a3b8); font-size: 11px; }
+.fp-rag-item { border: 1px solid var(--ct-border-color, #e5e7eb); border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; background: var(--ct-bg-elevated, #fff); transition: opacity 0.2s, border-color 0.2s; }
+.fp-rag-item.is-disabled { opacity: 0.62; background: var(--ct-bg-secondary, #f8fafc); border-style: dashed; }
+.fp-rag-item-head { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.fp-rag-item-chip { font-size: 10.5px; font-weight: 600; padding: 2px 8px; border-radius: 999px; }
+.fp-rag-item-chip.fact { color: var(--ct-color-primary, #7c4dff); background: rgba(124, 77, 255, 0.1); }
+.fp-rag-item-chip.document { color: #8a5a00; background: rgba(180, 125, 20, 0.1); }
+.fp-rag-item-kind-pill { font-size: 10.5px; font-weight: 500; padding: 1px 7px; border-radius: 6px; background: var(--ct-bg-secondary, #f1f5f9); color: var(--ct-text-secondary, #475569); border: 1px solid var(--ct-border-color, #e2e8f0); }
+.fp-rag-item-status-pill { font-size: 10px; font-weight: 600; padding: 1px 7px; border-radius: 6px; }
+.fp-rag-item-status-pill.inaccurate { color: #b45309; background: rgba(245, 158, 11, 0.14); }
+.fp-rag-item-status-pill.forget { color: #b91c1c; background: rgba(239, 68, 68, 0.12); }
+.fp-rag-item-time { font-size: 10.5px; color: var(--ct-text-tertiary, #9ca3af); margin-left: auto; }
 .fp-rag-item-conf { font-size: 10.5px; color: var(--ct-text-tertiary, #9ca3af); }
-.fp-rag-item-content { font-size: 12.5px; line-height: 1.5; color: var(--ct-text-primary, #1f2937); word-break: break-word; }
-.fp-rag-item-evidence { margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--ct-border-color, #e5e7eb); }
+.fp-rag-item-content { font-size: 12.5px; line-height: 1.55; color: var(--ct-text-primary, #1f2937); word-break: break-word; }
+.fp-rag-item-evidence { margin-top: 8px; padding-top: 7px; border-top: 1px dashed var(--ct-border-color, #e5e7eb); }
 .fp-rag-item-evidence-title { font-size: 10.5px; font-weight: 600; color: var(--ct-text-tertiary, #9ca3af); margin-bottom: 3px; }
 .fp-rag-item-evidence-text { font-size: 11.5px; color: var(--ct-text-secondary, #6b7280); line-height: 1.45; margin-bottom: 3px; word-break: break-word; }
+.fp-rag-item-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; margin-top: 8px; padding-top: 7px; border-top: 1px solid var(--ct-border-color, #f1f5f9); }
+.fp-rag-act-btn { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 6px; border: 1px solid var(--ct-border-color, #e2e8f0); background: var(--ct-bg-secondary, #f8fafc); color: var(--ct-text-secondary, #475569); cursor: pointer; transition: all 0.15s; }
+.fp-rag-act-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.fp-rag-act-btn.warn:hover:not(:disabled) { color: #b45309; border-color: rgba(245, 158, 11, 0.45); background: rgba(245, 158, 11, 0.1); }
+.fp-rag-act-btn.danger:hover:not(:disabled) { color: #b91c1c; border-color: rgba(239, 68, 68, 0.45); background: rgba(239, 68, 68, 0.1); }
+.fp-rag-act-btn.restore { color: var(--ct-color-primary, #7c4dff); border-color: rgba(124, 77, 255, 0.35); background: rgba(124, 77, 255, 0.08); }
+.fp-rag-act-btn.restore:hover:not(:disabled) { background: rgba(124, 77, 255, 0.15); }
 
-/* Chat Bubbles */
-.fp-bubble { max-width: 88%; padding: 10px 14px; border-radius: 12px; align-self: flex-start; background: var(--ct-bg-elevated); border: 1px solid var(--ct-border-color); border-top-left-radius: 4px; box-shadow: var(--ct-shadow-sm); }
-.fp-bubble.user { align-self: flex-end; background: var(--ct-color-primary); color: white; border: none; border-top-left-radius: 12px; border-top-right-radius: 4px; box-shadow: 0 2px 8px rgba(124, 77, 255, 0.2); }
-.fp-bubble-meta { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; gap: 16px; }
-.fp-bubble-avatar { font-size: 10px; font-weight: 700; color: var(--ct-text-tertiary); background: var(--ct-bg-secondary); padding: 2px 6px; border-radius: 4px; }
-.fp-bubble.user .fp-bubble-avatar { color: white; background: rgba(0,0,0,0.15); }
-.fp-bubble-time { font-size: 10px; color: var(--ct-text-tertiary); opacity: 0.8; }
-.fp-bubble.user .fp-bubble-time { color: rgba(255,255,255,0.8); }
-.fp-bubble-txt { font-size: 14px; line-height: 1.5; word-break: break-word; white-space: pre-wrap; user-select: text; -webkit-user-select: text; cursor: text; }
+/* Chat Message Row & Avatar — 与 RagFactDialog 保持一致的左右头像气泡布局 */
+.fp-msg-row { display: flex; align-items: flex-start; gap: 8px; width: 100%; }
+.fp-msg-row.left { flex-direction: row; justify-content: flex-start; }
+.fp-msg-row.right { flex-direction: row-reverse; justify-content: flex-start; }
+.fp-msg-avatar { width: 32px; height: 32px; border-radius: 6px; overflow: hidden; flex-shrink: 0; border: 1px solid rgba(148, 163, 184, 0.22); background: #f8fafc; box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06); }
+.fp-msg-avatar-img, .fp-msg-avatar-svg { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+/* Chat Bubbles — 区分「微信实时消息」与「AI 军师对话」双通道 */
+.fp-bubble { max-width: calc(100% - 44px); padding: 10px 13px; border-radius: 12px; background: var(--ct-bg-elevated); border: 1px solid var(--ct-border-color); border-top-left-radius: 4px; box-shadow: var(--ct-shadow-sm); }
+/* 通道 1：微信抓取消息（对方 = 白底左绿线；我 = 微信浅绿底） */
+.fp-bubble.wechat-other { background: #ffffff; border: 1px solid #e2e8f0; border-left: 3px solid #07c160; border-top-left-radius: 4px; color: #1e293b; }
+.fp-bubble.wechat-self { background: #e8f8ee; border: 1px solid #bbf0ce; border-top-left-radius: 12px; border-top-right-radius: 4px; color: #14532d; box-shadow: 0 1px 4px rgba(7, 193, 96, 0.08); }
+/* 通道 2：用户向 AI 提问 & AI 助手回复（品牌紫体系） */
+.fp-bubble.ai-user { background: linear-gradient(135deg, #7c4dff 0%, #6535f3 100%); color: #ffffff; border: none; border-top-left-radius: 12px; border-top-right-radius: 4px; box-shadow: 0 3px 10px rgba(124, 77, 255, 0.24); }
+.fp-bubble.ai-assistant { background: #f6f4ff; border: 1px solid rgba(124, 77, 255, 0.28); border-left: 3px solid #7c4dff; border-top-left-radius: 4px; color: #1e1b4b; }
+
+.fp-bubble-meta { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; gap: 12px; }
+.fp-bubble-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 5px; line-height: 1.2; }
+.fp-bubble-badge.wechat-other { color: #059669; background: rgba(7, 193, 96, 0.1); }
+.fp-bubble-badge.wechat-self { color: #047857; background: rgba(7, 193, 96, 0.16); }
+.fp-bubble-badge.ai-user { color: #ffffff; background: rgba(255, 255, 255, 0.2); }
+.fp-bubble-badge.ai-assistant { color: #6d28d9; background: rgba(124, 77, 255, 0.12); }
+
+.fp-bubble-time { font-size: 10px; color: var(--ct-text-tertiary); opacity: 0.85; }
+.fp-bubble.wechat-self .fp-bubble-time { color: #166534; opacity: 0.75; }
+.fp-bubble.ai-user .fp-bubble-time { color: rgba(255, 255, 255, 0.82); }
+.fp-bubble.ai-assistant .fp-bubble-time { color: #6d28d9; opacity: 0.7; }
+
+.fp-bubble-txt { font-size: 13.5px; line-height: 1.55; word-break: break-word; white-space: pre-wrap; user-select: text; -webkit-user-select: text; cursor: text; }
 .fp-bubble .fp-rag-row { margin-top: 7px; }
+
+/* 仿微信 4.0 引用消息块（左侧竖线 + 浅灰底 + 默认两行省略，点击展开全文） */
+.fp-wechat-quote { display: flex; align-items: stretch; gap: 7px; margin-top: 6px; padding: 6px 9px; border-radius: 6px; background: rgba(15, 23, 42, 0.045); cursor: pointer; user-select: none; transition: background 0.15s; }
+.fp-bubble.wechat-self .fp-wechat-quote { background: rgba(20, 83, 45, 0.065); }
+.fp-wechat-quote:hover { background: rgba(15, 23, 42, 0.075); }
+.fp-bubble.wechat-self .fp-wechat-quote:hover { background: rgba(20, 83, 45, 0.1); }
+.fp-wechat-quote-bar { width: 2.5px; border-radius: 2px; background: rgba(100, 116, 139, 0.45); flex-shrink: 0; }
+.fp-bubble.wechat-self .fp-wechat-quote-bar { background: rgba(22, 101, 52, 0.45); }
+.fp-wechat-quote-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.fp-wechat-quote-text { font-size: 11.5px; line-height: 1.45; color: #64748b; word-break: break-word; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.fp-bubble.wechat-self .fp-wechat-quote-text { color: #3f624d; }
+.fp-wechat-quote.is-expanded .fp-wechat-quote-text { display: block; -webkit-line-clamp: unset; overflow: visible; white-space: pre-wrap; }
+.fp-wechat-quote-author { font-weight: 600; color: #475569; margin-right: 2px; }
+.fp-bubble.wechat-self .fp-wechat-quote-author { color: #166534; }
+.fp-wechat-quote-toggle { font-size: 10px; font-weight: 600; color: var(--ct-color-primary, #7c4dff); align-self: flex-end; margin-top: 1px; }
 
 /* Loading State */
 .fp-loading-state { padding: 18px 20px; display: flex; align-items: flex-start; justify-content: center; gap: 8px; font-size: 12px; color: var(--ct-color-primary); font-weight: 500; }

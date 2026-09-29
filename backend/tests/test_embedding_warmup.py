@@ -59,6 +59,49 @@ def test_warm_service_never_kicks_prewarm():
     assert fake.prewarm_calls == 0
 
 
+def test_assemble_and_module_kick_trigger_process_prewarm(monkeypatch):
+    """监听启动/上下文装配即触发进程级预热(22:39 首查冷窗口的根治)。"""
+    import app.services.realtime.rag.embedding as emb
+
+    calls = []
+
+    class _FakeSvc:
+        def prewarm(self) -> bool:
+            calls.append(1)
+            return True
+
+    monkeypatch.setattr(emb, "RagEmbeddingService", lambda: _FakeSvc())
+    monkeypatch.setattr(emb, "_prewarm_started", False)
+
+    emb.kick_background_prewarm()
+    deadline = time.time() + 5
+    while not calls and time.time() < deadline:
+        time.sleep(0.02)
+    assert calls, "进程级预热未触发"
+
+    emb.kick_background_prewarm()  # 二次调用不重复触发
+    assert len(calls) == 1
+
+    # assemble_generation_context 也会触发(重置标记后)
+    monkeypatch.setattr(emb, "_prewarm_started", False)
+    import sqlite3 as _sq
+
+    from app.services.realtime.generation_context import assemble_generation_context
+
+    conn = _sq.connect(":memory:")
+    conn.row_factory = _sq.Row
+    conn.execute(
+        "CREATE TABLE conversations (id INTEGER PRIMARY KEY AUTOINCREMENT, account_wxid TEXT, "
+        "display_name TEXT, username TEXT, is_deleted INTEGER DEFAULT 0, updated_at INTEGER)"
+    )
+    monkeypatch.setattr("app.db.connection.get_db", lambda: conn)
+    assemble_generation_context({}, entrypoint="manual", account_wxid="wxid_a", display_name="无此人")
+    deadline = time.time() + 5
+    while len(calls) < 2 and time.time() < deadline:
+        time.sleep(0.02)
+    assert len(calls) == 2, "装配入口未触发进程级预热"
+
+
 def test_load_failure_latch_retries_when_models_appear(monkeypatch):
     """onnxruntime 后装/模型后导出的场景:失败锁死不得永久生效。"""
     from app.services.analysis import sentiment_service as ss

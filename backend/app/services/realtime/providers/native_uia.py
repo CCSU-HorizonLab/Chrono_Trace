@@ -16,16 +16,16 @@ from .models import (
 
 logger = logging.getLogger(__name__)
 
+_PERIOD_OPT = r"(?:(?:凌晨|早上|上午|中午|下午|傍晚|晚上|夜间)\s*)?"
+_WEEKDAY_OPT = r"(?:(?:星期|周)[一二三四五六日天]\s+)?"
 TIME_LABEL_RE = re.compile(
-    r"^("
-    r"\d{1,2}:\d{2}"
-    r"|昨天\s+\d{1,2}:\d{2}"
-    r"|前天\s+\d{1,2}:\d{2}"
-    r"|\d{1,2}[/-]\d{1,2}\s+\d{1,2}:\d{2}"
-    r"|\d{4}年\d{1,2}月\d{1,2}日\s+\d{1,2}:\d{2}"
-    r"|星期[一二三四五六日天]\s+\d{1,2}:\d{2}"
-    r"|周[一二三四五六日天]\s+\d{1,2}:\d{2}"
-    r")$"
+    r"^\s*(?:"
+    rf"{_PERIOD_OPT}\d{{1,2}}:\d{{2}}"
+    rf"|(?:昨天|前天)\s+{_PERIOD_OPT}\d{{1,2}}:\d{{2}}"
+    rf"|(?:星期|周)[一二三四五六日天]\s+{_PERIOD_OPT}\d{{1,2}}:\d{{2}}"
+    rf"|(?:\d{{4}}[/-])?\d{{1,2}}[/-]\d{{1,2}}\s+{_WEEKDAY_OPT}{_PERIOD_OPT}\d{{1,2}}:\d{{2}}"
+    rf"|(?:\d{{4}}年)?\d{{1,2}}月\d{{1,2}}日\s+{_WEEKDAY_OPT}{_PERIOD_OPT}\d{{1,2}}:\d{{2}}"
+    r")\s*$"
 )
 EMOJI_ONLY_RE = re.compile(r"^[\W_]{1,8}$")
 SYSTEM_TEXT_PREFIXES = (

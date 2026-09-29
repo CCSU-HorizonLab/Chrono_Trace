@@ -266,6 +266,9 @@ def replay_sample(
                     "speeches": suggestion.speeches,
                     "reply": suggestion.reply,
                     "rag_badge": getattr(suggestion, "rag_context", None),
+                    # 复审 2:输出契约留痕(资金推断等)供报告质量红线与终审使用
+                    "contract_warnings": list(getattr(suggestion, "contract_warnings", None) or []),
+                    "contract_repair": getattr(suggestion, "contract_repair", None),
                 }
             except Exception as exc:
                 result["error"] = f"{type(exc).__name__}: {exc}"

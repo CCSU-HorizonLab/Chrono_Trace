@@ -17,8 +17,24 @@ import urllib.error
 from typing import Any, Callable, Optional
 
 from .providers.models import normalize_text
+from .recent_window import KIND_TRANSFER_EVENT, purify_recent_window, transfer_event_line
 from .suggestion_engine import SuggestionEngine, SuggestionResult
 from .style_constraints import StyleConstraints, compute_style_constraints
+from .task_router import (
+    KN_CONTACT_PROFILE,
+    KN_FACTS,
+    KN_RELATIONSHIP_SIGNALS,
+    KN_USER_STYLE,
+    OUTPUT_ANSWER_WITH_SPEECHES,
+    OUTPUT_DIRECT_ANSWER,
+    TASK_GENERAL_QA,
+    TASK_INVITATION_PLANNING,
+    TASK_MEMORY_QA,
+    TASK_RELATIONSHIP_DISCUSSION,
+    TASK_REPLY_SUGGESTION,
+    TaskRouting,
+    route_generation_task,
+)
 
 
 # Prompt 系统模板
@@ -44,6 +60,7 @@ SYSTEM_PROMPT = """你是一个专业的聊天沟通顾问，但你当前必须�
 7. **【极其重要】判定模式机制**：
    - 模式 A（纯聊天/指令/修改规则）：如果用户输入只是打招呼（如“你好”）、闲聊、或是要求修改你的回复规则，你**绝对不可提供任何对话建议**！你只能在 `reply` 字段内回答他，同时**必须**将 `summary` 设为空字符串 `""`，`speeches` 设为空数组 `[]`！禁止硬凑无关紧要的建议卡片！
    - 模式 B（请求指导/冷场）：只有在用户明确请教怎么回复对方、或者你检测到聊天即将冷场必须介入时，才能提供 `summary` 和 `speeches`。
+   - 模式 C（具体事项求助）：用户在请教一件具体事项（例如想约对方见面/打游戏、想推进关系）时，在 `reply` 中直接回应用户的想法，同时在 `speeches` 中给出 2-3 条可直接发送给对方的原话；`summary` 概括建议。两者都要有内容，缺一不可。
 8. **反 AI 腔**：禁止输出下列典型句式或近似表达：“我理解你的感受”“别太难过了”“你说得对”“有什么我能帮到你的吗”“要不要我陪你聊聊”“你值得被温柔以待”“加油哦”“抱抱你”。
 9. **短句优先**：真人微信更像碎片化短句，不要为了完整而完整，不要硬凑主谓宾，不要把一句话写成小作文。
 10. 严格按 JSON 格式输出，禁止输出引导语或 Markdown。
@@ -503,14 +520,12 @@ class LLMSuggestionEngine(SuggestionEngine):
         _print(f"[LLM Engine] API URL: {model_config.get('api_base_url')}")
         self._emit_stream(stream_callback, "stage", stage="model_ready", message="模型已就绪")
 
-        if trigger_type == "manual_request":
-            context["_rag_output_mode"] = (
-                "reply"
-                if self._classify_manual_request(context) == "direct_reply"
-                else "suggestion"
-            )
-        else:
-            context["_rag_output_mode"] = "suggestion"
+        # G2 任务路由:task / output / knowledge_needs 三元组替代 direct_reply 二分。
+        routing = self._resolve_task_routing(context, trigger_type)
+        context["_task_routing"] = routing.to_dict()
+        context["_rag_output_mode"] = (
+            "reply" if routing.output == OUTPUT_DIRECT_ANSWER else "suggestion"
+        )
 
         try:
             from .rag.context_builder import RagContextBuilder
@@ -598,6 +613,8 @@ class LLMSuggestionEngine(SuggestionEngine):
                     setattr(result, "rag_log_id", context.get("_rag_log_id"))
                     setattr(result, "rag_conversation_id", context.get("_rag_conversation_id"))
                 result.rag_context = self._build_rag_context_summary(context)
+                # G6 发送审计:最终 prompt 渲染完才有清单,这里回填检索日志。
+                self._persist_sent_manifest(context)
                 if result.summary == "[SILENT]":
                     _print("[LLM Engine] 😶 LLM 决定保持沉默，无建议也不需回复。")
                     return result
@@ -868,9 +885,12 @@ class LLMSuggestionEngine(SuggestionEngine):
         """Layered user-facing RAG badge states.
 
         hot_context 只代表正在进行的当前对话，绝不能展示为历史记忆命中。
+        G6:badge 只依据"实际发送清单"(_rag_sent_manifest,脱敏并渲染进最终
+        prompt 的那部分),候选命中但未注入/未渲染时不得显示"已参考"。
         """
         debug = context.get("_rag_debug") if isinstance(context, dict) else None
         retrieval_context = context.get("retrieval_context") if isinstance(context, dict) else None
+        manifest = context.get("_rag_sent_manifest") if isinstance(context, dict) else None
         if not isinstance(debug, dict) or not debug.get("rag_enabled"):
             return {
                 "state": "hidden",
@@ -885,6 +905,19 @@ class LLMSuggestionEngine(SuggestionEngine):
         if isinstance(retrieval_context, dict) and not retrieval_context.get("no_hit_guard"):
             referenced_items = list(retrieval_context.get("items") or [])
         referenced_count = len(referenced_items)
+
+        # G6:有发送清单时以清单为准(它是渲染进最终 prompt 的真子集)。
+        manifest_fact_count = 0
+        manifest_doc_count = 0
+        manifest_policy_sent = False
+        if isinstance(manifest, dict):
+            manifest_fact_count = len(manifest.get("fact_ids") or [])
+            manifest_doc_count = len(manifest.get("document_ids") or [])
+            blocks = set(manifest.get("blocks") or [])
+            manifest_policy_sent = bool(
+                blocks & {"relationship_policy", "contact_preferences", "relationship_signal"}
+            )
+            referenced_count = manifest_doc_count
 
         def _summary(state: str, label: str) -> dict:
             return {
@@ -901,6 +934,15 @@ class LLMSuggestionEngine(SuggestionEngine):
                 for item in referenced_items
                 if isinstance(item, dict)
             }
+            hot_only = bool(referenced_items) and doc_types <= {"hot_context"}
+            if isinstance(manifest, dict):
+                if manifest_fact_count > 0:
+                    return _summary("fact_hit", f"已参考 {manifest_fact_count} 条历史事实")
+                if hot_only:
+                    return _summary("hot_context", "仅参考当前对话上下文")
+                if manifest_policy_sent:
+                    return _summary("relationship_policy", "已参考关系画像")
+                return _summary("document_hit", f"已参考 {referenced_count} 条历史记录")
             if "fact_memory" in doc_types:
                 return _summary("fact_hit", f"已参考 {referenced_count} 条历史事实")
             if doc_types & _RAG_RELATIONSHIP_DOC_TYPES or debug.get("relationship_policy_injected") or debug.get("contact_preference_injected"):
@@ -909,7 +951,11 @@ class LLMSuggestionEngine(SuggestionEngine):
                 return _summary("hot_context", "仅参考当前对话上下文")
             return _summary("document_hit", f"已参考 {referenced_count} 条历史记录")
 
-        if debug.get("relationship_policy_injected") or debug.get("contact_preference_injected"):
+        if not isinstance(manifest, dict) and (
+            debug.get("relationship_policy_injected") or debug.get("contact_preference_injected")
+        ):
+            return _summary("relationship_policy", "已参考关系画像")
+        if isinstance(manifest, dict) and manifest_policy_sent:
             return _summary("relationship_policy", "已参考关系画像")
 
         if debug.get("hot_context_only"):
@@ -935,27 +981,103 @@ class LLMSuggestionEngine(SuggestionEngine):
 
         return _summary("hidden", "")
 
+    def _resolve_task_routing(self, context: dict, trigger_type: str) -> TaskRouting:
+        """读取本次请求的任务路由结果;generate() 已缓存时直接复用。"""
+        cached = TaskRouting.from_dict(context.get("_task_routing") if isinstance(context, dict) else None)
+        if cached is not None:
+            return cached
+        return route_generation_task(context, trigger_type)
+
     def _classify_manual_request(self, context: dict) -> str:
         """
-        区分两类手动输入：
+        区分两类手动输入（兼容层:委托 G2 任务路由器）：
         - direct_reply: 用户在直接和 AI 说话，希望 AI 回他
-        - advice_request: 用户在请教怎么回复对方/怎么开启话题
+        - advice_request: 用户在请教怎么回复对方/怎么开启话题/策划邀约
         """
-        latest_user_input = self._get_latest_user_input(context)
-        if not latest_user_input:
-            return "advice_request"
+        routing = self._resolve_task_routing(context, "manual_request")
+        return "direct_reply" if routing.output == OUTPUT_DIRECT_ANSWER else "advice_request"
 
-        normalized = re.sub(r"\s+", "", latest_user_input)
-        if any(keyword in normalized for keyword in self.MANUAL_ADVICE_KEYWORDS):
-            return "advice_request"
-        if self._has_manual_advice_context(context) and self._looks_like_advice_followup(normalized):
-            return "advice_request"
-        if (
-            any(keyword in normalized for keyword in self.MANUAL_REWRITE_KEYWORDS)
-            and self._has_manual_advice_context(context)
-        ):
-            return "advice_request"
-        return "direct_reply"
+    def _persist_sent_manifest(self, context: dict) -> None:
+        """G6:把最终 prompt 发送清单回填到 rag_retrieval_logs(尽力而为,不阻塞生成)。"""
+        manifest = context.get("_rag_sent_manifest") if isinstance(context, dict) else None
+        log_id = context.get("_rag_log_id") if isinstance(context, dict) else None
+        if not isinstance(manifest, dict) or not manifest.get("prompt_hash") or not log_id:
+            return
+        try:
+            from ...db.connection import get_db
+            from .rag.store import RagStore
+
+            snapshot = None
+            try:
+                from .rag.config import load_rag_settings
+
+                if load_rag_settings().get("rag_prompt_snapshot_enabled"):
+                    snapshot = context.get("_rag_final_prompt")
+            except Exception:
+                snapshot = None
+            RagStore(get_db()).update_retrieval_log_sent_manifest(
+                int(log_id), manifest, prompt_snapshot=snapshot
+            )
+        except Exception as exc:
+            logger.debug("[LLM Engine] 发送清单回填失败(log=%s): %s", log_id, exc)
+
+    def _build_relationship_signal_lines(self, context: dict, purified: dict) -> list[str]:
+        """G5:把好感分析与配对统计渲染成"带时间与不确定性"的关系信号块。
+
+        审核返工 2:真实分析服务返回 ``AffinityAnalysisResult`` 数据类,
+        这里必须同时接受对象与 dict(时间字段 ``analysis_timestamp``),
+        不能因为类型不符就把 70 分渲染成 unknown。
+        """
+        from dataclasses import asdict, is_dataclass
+
+        from .recent_window import compute_pairing_stats
+
+        affinity = context.get("affinity_result")
+        if is_dataclass(affinity) and not isinstance(affinity, type):
+            try:
+                affinity = asdict(affinity)
+            except Exception:
+                affinity = {}
+        if not isinstance(affinity, dict):
+            affinity = {}
+        pairing = compute_pairing_stats(purified.get("chat_window") or [])
+
+        friend_count = int(pairing.get("friend_msg_count") or 0)
+        self_count = int(pairing.get("self_msg_count") or 0)
+        lines: list[str] = []
+
+        overall_score = affinity.get("overall_score")
+        if isinstance(overall_score, (int, float)) and overall_score > 0:
+            interpretation = str(affinity.get("overall_interpretation") or "").strip()
+            lines.append(f"  好感综合分: {float(overall_score):.0f}/100" + (f"（{interpretation[:60]}）" if interpretation else ""))
+        else:
+            lines.append("  好感综合分: unknown（缺少分析数据，不要虚构分数）")
+
+        analyzed_at = (
+            affinity.get("analysis_timestamp")
+            or affinity.get("cache_updated_at")
+            or affinity.get("analyzed_at")
+            or affinity.get("updated_at")
+        )
+        if analyzed_at:
+            try:
+                lines.append(f"  分析时间: {time.strftime('%Y-%m-%d %H:%M', time.localtime(int(analyzed_at)))}")
+            except (TypeError, ValueError, OverflowError):
+                lines.append("  分析时间: unknown")
+        else:
+            lines.append("  分析时间: unknown（缓存里没有时间戳）")
+
+        lines.append(f"  数据量: 本次窗口人工聊天 我 {self_count} 条 / 对方 {friend_count} 条")
+        trend = affinity.get("trend")
+        lines.append(f"  趋势: {trend if trend else 'unknown（缺少趋势数据）'}")
+        confidence = "低（样本不足，谨慎使用）" if friend_count + self_count < 10 else "中（基于近期窗口）"
+        lines.append(f"  置信度: {confidence}")
+        lines.append("  可用于: 判断语气分寸、邀约时机、是否需要降温")
+        lines.append(
+            "  不能推出: 聊天数量多不等于亲密度高；分数不授权推进关系或表白；"
+            "未及时回复不能直接解读为拒绝；资金往来事件不反映对方态度；不要把这些信号说给对方听"
+        )
+        return lines
 
     def _looks_like_advice_followup(self, normalized_latest_input: str) -> bool:
         """判断已在建议上下文中时，当前输入是否仍在追问给对方怎么说。"""
@@ -1056,15 +1178,27 @@ class LLMSuggestionEngine(SuggestionEngine):
 
         return _redact_segment
 
+    _TASK_LABELS = {
+        TASK_MEMORY_QA: "回答关于历史聊天/记忆的问题",
+        TASK_REPLY_SUGGESTION: "提供发给对方的回复建议",
+        TASK_INVITATION_PLANNING: "帮用户策划一次邀约并给出可发送话术",
+        TASK_RELATIONSHIP_DISCUSSION: "和用户讨论这段关系的分寸",
+        TASK_GENERAL_QA: "直接回答用户的问题",
+    }
+
     def _build_prompt(self, trigger_type: str, intent: str, context: dict, model_config: Optional[dict] = None) -> str:
         """构造用户 prompt"""
         parts = []
-        manual_request_kind = (
-            self._classify_manual_request(context)
-            if trigger_type == "manual_request"
-            else None
-        )
-        is_direct_reply = manual_request_kind == "direct_reply"
+        # G2:任务三元组决定输出契约与知识注入,不再用 direct_reply 一票否决知识块。
+        routing = self._resolve_task_routing(context, trigger_type)
+        is_direct_reply = routing.output == OUTPUT_DIRECT_ANSWER
+        needs_facts = routing.needs(KN_FACTS)
+        needs_profile = routing.needs(KN_CONTACT_PROFILE)
+        needs_style = routing.needs(KN_USER_STYLE)
+        needs_signals = routing.needs(KN_RELATIONSHIP_SIGNALS)
+        show_context_stats = (not is_direct_reply) or needs_signals
+        sent_blocks: list[str] = []
+        excluded_reasons: list[dict] = []
         style_constraints = self._resolve_style_constraints(context)
 
         # 远程模型发送前对最近对话/用户需求原文逐段脱敏（本地模型原样保留）
@@ -1076,16 +1210,44 @@ class LLMSuggestionEngine(SuggestionEngine):
         )
         parts.append(f"【触发原因】{trigger_desc}")
 
+        # 审核返工 3:范围降级时显式封死"无依据具体化"——通用建议不得
+        # 虚构店铺/地点/时间/承诺(对应 missing_scope_degrade-20 的教训)。
+        if context.get("_generation_scope_missing"):
+            parts.append(
+                "【范围降级说明】当前缺少该联系人的记忆与画像:不要引用任何具体历史;"
+                "不要虚构具体地点、店铺、时间或已发生的约定;给通用建议并说明信息不足。"
+            )
+
         # 走向目标
+        task_label = self._TASK_LABELS.get(routing.task, routing.task)
         if is_direct_reply:
-            parts.append("【当前任务】直接回复用户本人，不是代用户给第三方发消息")
+            parts.append(f"【当前任务】{task_label}；直接回复用户本人，不是代用户给第三方发消息")
         else:
             intent_desc = INTENT_DESCRIPTIONS.get(intent, intent)
+            parts.append(f"【当前任务】{task_label}")
             parts.append(f"【用户目标】{intent_desc}")
 
+        # G3:净化后再选窗,系统通知不占聊天名额,转账渲染为事件行。
+        # ``_legacy_prompt_chain``:G0/G7 三路对照用的旧链路等价开关——
+        # 跳过净化,保持改造前的窗口选择行为(路由等价映射由回放脚本注入)。
         recent = self._normalize_recent_messages(context.get("recent_messages", []))
-        _older_messages, recent_window = self._select_recent_messages(recent)
-        compressed_summary = self._compress_messages(recent, recent_window)
+        if context.get("_legacy_prompt_chain"):
+            _older_messages, recent_window = self._select_recent_messages(recent)
+            purified = {
+                "window": recent_window,
+                "chat_window": recent_window,
+                "all_chats": recent,
+                "dropped_notices": 0,
+                "dropped_unparseable": 0,
+                "transfer_events": [],
+                "chat_count": len(recent_window),
+                "notice_only": False,
+            }
+        else:
+            purified = purify_recent_window(recent, limit=self.RECENT_MESSAGE_LIMIT)
+            window_messages = self._normalize_recent_messages(purified["window"])
+            _older_messages, recent_window = self._select_recent_messages(window_messages)
+        compressed_summary = self._compress_messages(purified["all_chats"], recent_window)
         if recent_window:
             parts.append("\n【最近对话】")
             parts.append(
@@ -1095,16 +1257,30 @@ class LLMSuggestionEngine(SuggestionEngine):
             if compressed_summary:
                 parts.append(f"  {redact_segment(compressed_summary, 'recent_summary')}")
             for idx, msg in enumerate(recent_window):
+                if msg.get("_window_kind") == KIND_TRANSFER_EVENT:
+                    # 转账/收款是事件,不是发言;不得据此推断对方态度。
+                    parts.append(f"  {transfer_event_line(msg)}")
+                    continue
                 sender = "我" if msg.get("sender_attr") == "self" else "对方"
                 # 先脱敏全文再截断，避免敏感串被截断后绕过模式匹配
                 content = redact_segment(
                     str(msg.get("content", "")), f"recent_{idx}"
                 )[: self.RECENT_MESSAGE_RENDER_CHARS]
                 parts.append(f"  {sender}：{content}")
+            if purified["transfer_events"]:
+                parts.append(
+                    "  ⚠️ 上方【事件】行是资金往来,不代表对方态度;"
+                    "不得用它推断冷淡、热情或关系进展,也不得作为'她回应了我'的证据。"
+                )
+            if purified["notice_only"]:
+                parts.append(
+                    "  ⚠️ 当前窗口没有任何有效人工聊天，以上只有系统事件；"
+                    "不得据此推断对方冷淡、拒绝或已读不回。"
+                )
 
         # 情绪摘要
         emotion = context.get("emotion_summary")
-        if emotion and not is_direct_reply:
+        if emotion and show_context_stats:
             trend_map = {"positive": "正面", "negative": "负面", "neutral": "中性"}
             trend = trend_map.get(emotion.get("trend", ""), "未知")
             parts.append(
@@ -1151,8 +1327,16 @@ class LLMSuggestionEngine(SuggestionEngine):
                 parts.append(f"【历史关系分析】{history_summary[:500]}")
 
         # P1.3 关系策略结构化块：影子层派生的联系人级背景（独立小预算槽）
+        # G2:是否注入由任务知识需求决定——关系讨论即使直接回答也允许使用。
         relationship_policy = context.get("relationship_policy")
-        if relationship_policy and not is_direct_reply:
+        if relationship_policy and not (needs_signals or needs_profile):
+            excluded_reasons.append({
+                "kind": "relationship_policy",
+                "id": relationship_policy.get("state_id"),
+                "reason": "task_knowledge_not_needed",
+            })
+        if relationship_policy and (needs_signals or needs_profile):
+            sent_blocks.append("relationship_policy")
             parts.append("\n【当前关系策略（联系人级背景，供判断分寸）】")
             if relationship_policy.get("stage"):
                 parts.append(f"  关系阶段: {relationship_policy['stage']}")
@@ -1174,7 +1358,14 @@ class LLMSuggestionEngine(SuggestionEngine):
 
         # P1.2 对方偏好/雷点速查：独立小预算槽，据此调整建议内容与措辞
         contact_preferences = context.get("contact_preferences")
-        if contact_preferences and not is_direct_reply:
+        if contact_preferences and not (needs_signals or needs_profile):
+            excluded_reasons.append({
+                "kind": "contact_preferences",
+                "id": None,
+                "reason": "task_knowledge_not_needed",
+            })
+        if contact_preferences and (needs_signals or needs_profile):
+            sent_blocks.append("contact_preferences")
             parts.append("\n【对方偏好与雷点（速查，据此调整建议内容与措辞）】")
             for pref in contact_preferences[:6]:
                 kind_label = "雷点" if pref.get("slot_kind") == "avoid" else "偏好"
@@ -1184,11 +1375,20 @@ class LLMSuggestionEngine(SuggestionEngine):
                 confidence = pref.get("confidence")
                 percent = f"（置信 {int(confidence * 100)}%）" if isinstance(confidence, (int, float)) and confidence > 0 else ""
                 parts.append(f"  · [{kind_label}] {summary}{percent}")
-            parts.append("  使用规则: 建议内容尽量顺着偏好、避开雷点；这只是历史倾向，当下对话有明确不同表态时以当下为准；不要向对方复述或主动提起")
+            parts.append(
+                "  使用规则: 建议内容尽量顺着偏好、避开雷点；给出每条话术前自查一遍——"
+                "不得与上述任何雷点/偏好冲突；这只是历史倾向，当下对话有明确不同表态时以当下为准；不要向对方复述或主动提起"
+            )
 
         # 联系人画像（如有）—— 策略优先参考：决定"怎么回更合适"
         profile = context.get("contact_profile")
-        if profile and not is_direct_reply:
+        if profile and not needs_profile:
+            excluded_reasons.append({
+                "kind": "contact_profile",
+                "reason": "task_knowledge_not_needed",
+            })
+        if profile and needs_profile:
+            sent_blocks.append("contact_profile")
             stale_flag = "(较旧，仅供参考)" if context.get("_contact_profile_stale") else ""
             parts.append(f"\n【对方画像（策略优先参考）{stale_flag}】")
             tags = profile.get("personality_tags", [])
@@ -1203,11 +1403,21 @@ class LLMSuggestionEngine(SuggestionEngine):
             note = profile.get("relationship_note", "")
             if note:
                 parts.append(f"  关系状态: {note}")
-            parts.append("  使用规则: 判断怎么回更合适时优先适配以上信息；与下方用户表达风格冲突时，以适配对方为先")
+            parts.append(
+                "  使用规则: 判断怎么回更合适时优先适配以上信息；与下方用户表达风格冲突时，以适配对方为先；"
+                "画像中的兴趣只作话题线索，不等于双方共同经历"
+            )
 
         # 用户本体专属克隆画像 —— 仅约束措辞，不决定策略
+        # G2:纯历史问答/普通问答不强行注入用户口头禅与建议风格。
         self_profile = context.get("self_profile")
-        if self_profile and not is_direct_reply:
+        if self_profile and not needs_style:
+            excluded_reasons.append({
+                "kind": "self_profile",
+                "reason": "task_knowledge_not_needed",
+            })
+        if self_profile and needs_style:
+            sent_blocks.append("self_profile")
             parts.append("\n【用户表达风格（仅约束措辞，不决定策略）】")
             typing_style = self_profile.get("typing_style", "")
             if typing_style:
@@ -1222,12 +1432,13 @@ class LLMSuggestionEngine(SuggestionEngine):
             if donts:
                 parts.append(f"  模仿禁忌: {donts}")
             parts.append("  使用规则: 以上仅决定话术的措辞、标点和长度，读起来像用户本人即可；不得为了模仿风格而放弃更合适的关系策略")
-        elif not is_direct_reply:
+        elif needs_style:
             parts.append("\n【用户风格缺省约束】")
             parts.append("  当前无可用的用户画像缓存，默认每条话术不超过 15 字")
             parts.append("  禁止 emoji、连续感叹号、连续问号，优先短句和口语")
 
-        if not is_direct_reply:
+        if needs_style:
+            sent_blocks.append("style_constraints")
             parts.append("\n【量化风格硬约束（必须遵守）】")
             if self._has_empirical_style_constraints(style_constraints):
                 if style_constraints.avg_msg_length > 0:
@@ -1269,7 +1480,7 @@ class LLMSuggestionEngine(SuggestionEngine):
             recent_window or recent,
             context.get("relevant_memories", []),
         )
-        if relevant_memories and not is_direct_reply:
+        if relevant_memories and needs_facts:
             parts.append("\n【被唤醒的历史记忆（仅作辅助，不要盖过当前对话）】")
             for mem in relevant_memories:
                 summary = str(mem.get("summary", "")).strip()
@@ -1279,6 +1490,8 @@ class LLMSuggestionEngine(SuggestionEngine):
                 parts.append(f"  {time_label}: {summary}")
 
         retrieval_context = context.get("retrieval_context")
+        rendered_fact_ids: list[Any] = []
+        rendered_doc_ids: list[Any] = []
         if retrieval_context:
             items = retrieval_context.get("items") or []
             no_hit_guard = bool(retrieval_context.get("no_hit_guard"))
@@ -1311,6 +1524,7 @@ class LLMSuggestionEngine(SuggestionEngine):
                     if content:
                         time_label = str(item.get("time_label") or "").strip()
                         parts.append(f"  {index}. 时间：{time_label or '未知'}；内容：{content}")
+                        rendered_doc_ids.append(item.get("document_id"))
             elif items:
                 style_items = [
                     item
@@ -1326,16 +1540,20 @@ class LLMSuggestionEngine(SuggestionEngine):
                     parts.append("\n【历史记忆检索结果】")
                     parts.append("  检索状态：hit")
                     parts.append(f"  查询意图：{query_mode}")
-                    parts.append(f"  时间策略：{time_strategy}")
+                    parts.append("  时间策略：{time_strategy}")
                     parts.append("  优先级：当前对话和用户显式需求永远高于历史记忆。")
                     parts.append("  使用边界：只在历史内容直接服务当前回复目标时参考；不要为了使用记忆而引入旧话题。")
                     parts.append("  结果：")
+                    sent_blocks.append("retrieval_memory")
                 memory_limit = 8 if any(
                     str(item.get("doc_type") or "") == "fact_memory" for item in memory_items
                 ) else 4
                 for index, item in enumerate(memory_items[:memory_limit], 1):
                     content = str(item.get("content") or "").strip()
                     if content:
+                        rendered_doc_ids.append(item.get("document_id"))
+                        if str(item.get("doc_type") or "") == "fact_memory":
+                            rendered_fact_ids.append(item.get("document_id"))
                         doc_type = str(item.get("doc_type") or "memory")
                         time_label = str(item.get("time_label") or "").strip()
                         parts.append(
@@ -1361,20 +1579,26 @@ class LLMSuggestionEngine(SuggestionEngine):
                             )
                 if memory_items:
                     parts.append("  要求：只能基于以上结果回答历史细节；如果结果未包含具体细节，必须说没查到。")
+                    parts.append(
+                        "  区分：只有标注 主体=共同 的事实是双方共同经历；主体=对方/我 的是各自的兴趣或行为，"
+                        "回答\"我们一起/我们玩过\"类问题时不得把各自兴趣说成共同经历。"
+                    )
                     parts.append("  禁止：不要把历史里的地点、游戏、偏好、约定强行带入无关的当前回复。")
                     if is_direct_reply:
                         parts.append("  直接回答用户问题；不要生成建议卡片，除非用户明确要求话术。")
                 if style_items:
                     parts.append("\n【用户表达风格参考】")
                     parts.append("  说明：以下只用于语气、长度、标点和亲密度；不得当作历史事实。")
+                    sent_blocks.append("retrieval_style")
                     for index, item in enumerate(style_items[:3], 1):
                         content = str(item.get("content") or "").strip()
                         if content:
                             parts.append(f"  {index}. {content}")
+                            rendered_doc_ids.append(item.get("document_id"))
 
         historical_ctx = context.get("historical_context", {})
         history_lines = []
-        if historical_ctx and not is_direct_reply:
+        if historical_ctx and show_context_stats:
             profile_ctx = historical_ctx.get("profile") or {}
             profile_bits = []
             if profile_ctx.get("chat_style"):
@@ -1407,9 +1631,24 @@ class LLMSuggestionEngine(SuggestionEngine):
             for line in history_lines:
                 parts.append(f"  {line}")
 
+        # G5:好感分析以"带时间与不确定性的关系信号"注入,不直接等同亲密度。
+        # G1 红线:联系人范围缺失/歧义时不注入——即使数据只来自当前窗口,
+        # 也不给模型任何可归因到具体联系人的关系结论素材。
+        if needs_signals and not context.get("_generation_scope_missing"):
+            signal_lines = self._build_relationship_signal_lines(context, purified)
+            if signal_lines:
+                sent_blocks.append("relationship_signal")
+                parts.append("\n【关系信号（带时间与不确定性，仅供参考）】")
+                parts.extend(signal_lines)
+
         # 用户调教规则（最高优先级）
         display_name = context.get("display_name")
-        if display_name and not is_direct_reply:
+        if display_name and not needs_style:
+            excluded_reasons.append({
+                "kind": "feedback_rules",
+                "reason": "task_knowledge_not_needed",
+            })
+        if display_name and needs_style:
             try:
                 from .feedback_rule_extractor import FeedbackRuleExtractor
                 rules = self._filter_style_rules(
@@ -1419,6 +1658,7 @@ class LLMSuggestionEngine(SuggestionEngine):
                     )
                 )
                 if rules:
+                    sent_blocks.append("feedback_rules")
                     parts.append("\n【表达偏好参考（仅影响措辞，不决定话题）】")
                     for i, rule in enumerate(rules, 1):
                         parts.append(f"  规则{i}: {rule}")
@@ -1431,15 +1671,26 @@ class LLMSuggestionEngine(SuggestionEngine):
                     "\n【手动求助模式】当前更像是用户在直接和 AI 说话/提问，"
                     "不是在请教怎么回复对方。"
                     "此时必须优先在 `reply` 字段直接回应用户，"
+                    "`reply` 不得为空字符串——没有回答比回答得不好更糟糕；"
                     "并将 `summary` 设为空字符串、`speeches` 设为空数组，"
                     "不要生成建议卡片。"
                     "reply 必须使用自然、简洁的助手口吻，"
                     "不要模仿用户给对方说话的口吻，不要使用对方专属称呼。"
                 )
+            elif routing.output == OUTPUT_ANSWER_WITH_SPEECHES:
+                parts.append(
+                    "\n【手动求助模式】当前是用户在请教一件具体事项（如邀约、关系推进）。"
+                    "先在 `reply` 字段直接回应用户的问题或想法，"
+                    "再在 `speeches` 中给出 2-3 条用户可以直接发送给对方的原话。"
+                    "`reply` 和 `speeches` 都必须有内容；"
+                    "不要只给分析不给话术，也不要把话术写进 reply。"
+                    "话术必须贴合用户输入的目标——不得擅自引入用户没提到的行动、地点或既成事实。"
+                )
             else:
                 parts.append(
                     "\n【手动求助模式】当前是用户在请教怎么回复对方或怎么开启话题。"
-                    "请基于当前上下文给出可发送的话术，"
+                    "请基于当前上下文给出可发送的话术；"
+                    "话术必须贴合用户输入的目标，不得擅自引入用户没提到的行动、地点或既成事实。"
                     "并且必须严格只输出 JSON，不要输出解释、前言或额外文本。"
                 )
 
@@ -1456,6 +1707,49 @@ class LLMSuggestionEngine(SuggestionEngine):
         _print(f"[LLM Engine] 📏 Prompt 总长度: {total_chars} 字符")
         if total_chars > 3000:
             _print("[LLM Engine] ⚠️ Prompt 较长，建议检查最近对话窗口和压缩逻辑")
+
+        # G6:候选命中但未渲染的条目记录排除原因,区分"召回/选中/实际发送"。
+        rendered_id_set = {str(value) for value in rendered_doc_ids if value is not None}
+        if isinstance(retrieval_context, dict):
+            for item in retrieval_context.get("items") or []:
+                if str(item.get("document_id")) not in rendered_id_set:
+                    excluded_reasons.append({
+                        "kind": "retrieval_item",
+                        "id": item.get("document_id"),
+                        "reason": "prompt_budget_or_not_rendered",
+                    })
+        for unusable_id in context.get("_rag_evidence_unusable_ids") or []:
+            excluded_reasons.append({
+                "kind": "retrieval_item",
+                "id": unusable_id,
+                "reason": "evidence_redacted_unusable",
+            })
+
+        import hashlib as _hashlib
+
+        context["_rag_sent_manifest"] = {
+            "request_id": context.get("_generation_request_id"),
+            "entrypoint": context.get("_generation_entrypoint"),
+            "task": routing.task,
+            "output": routing.output,
+            "blocks": sent_blocks,
+            "fact_ids": [value for value in rendered_fact_ids if value is not None],
+            "document_ids": [value for value in rendered_doc_ids if value is not None],
+            "policy_ids": (
+                [relationship_policy.get("state_id")]
+                if "relationship_policy" in sent_blocks and relationship_policy
+                else []
+            ),
+            "contact_preference_ids": (
+                [pref.get("pref_id") for pref in (contact_preferences or [])[:6] if pref.get("pref_id")]
+                if "contact_preferences" in sent_blocks
+                else []
+            ),
+            "excluded": excluded_reasons,
+            "prompt_chars": total_chars,
+            "prompt_hash": _hashlib.sha256(prompt.encode("utf-8", "ignore")).hexdigest(),
+        }
+        context["_rag_final_prompt"] = prompt
         return prompt
 
     def _fetch_available_models(self, base_url: str, api_key: str = "") -> list[str] | None:

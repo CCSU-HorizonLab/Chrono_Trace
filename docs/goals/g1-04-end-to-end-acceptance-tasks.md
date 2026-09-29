@@ -3,7 +3,9 @@
 - **上游文档**:`docs/goals/g1-generation-goal.md` 第三节 G7、第七节阶段完成定义
 - **状态**:更强审核 agent 首轮终审**退回修订**(六类缺陷);返工已完成并重新三路 live 回放,门禁含 incomplete 语义后全绿;**人工终审与真实入口冒烟仍未完成,G1 不关闭**
 
-## 审核返工记录(2026-09-28,首轮审核结论:暂不通过)
+## 审核返工记录
+
+### 首轮(2026-09-28,结论:暂不通过)
 
 审核发现的六类缺陷与修复(每项先补复现测试再修,`test_g1_rework_regressions.py` 锁定):
 
@@ -14,11 +16,23 @@
 - [x] prompt 契约六项:资金事件不得推断态度、范围降级禁虚构店铺/地点、话术贴合目标禁擅自引入行动地点、共同经历与各自兴趣区分、雷点冲突自查、直答 reply 非空。
 - [x] 验收工具:回放冻结窗口与发送证据快照(`context_snapshot`,审核包/NLI 以此为准)、bytes 内容解码、纯通知窗口样例(window_override 冻结构造)、门禁缺失结果记 incomplete 不再默认通过、NLI 输出指纹过期检测与解析失败单列。
 
+### 复审(2026-09-29,结论:返工质量明显提升但仍不能关闭)
+
+复审指出四项,处理如下(`test_g1_contract_and_rollback.py` 锁定):
+
+- [x] **NLI 判定过期实为指纹比对 bug**:judge 对 g1 子集算指纹、报告对全链路算,永远不一致。已统一为 g1 子集,重判后报告无过期警告。
+- [x] **`policy_adaptation-15` 资金推断违约**:新增**输出契约校验层**——窗口含资金事件时,输出句级检测"资金词+关系结论词"共现;违规先做一次带硬约束的修复重试,仍违规在结果上留痕 `contract_warnings`(回放带入报告)。重放后该样例从源头改善(依据真实聊天行为而非转账推断),新增"质量红线(资金推断)"门禁,当前违规 0。
+- [x] **按联系人回滚脚本**:`backend/scripts/g1_rollback_contact.py`(`--list/--mode documents|inherit/--disable`,默认 dry-run,`--yes` 落库;只改 `rag_index_status`,事实/策略/审计全保留)。脚本级演练已完成(单测覆盖),**真实库演练仍待做**。
+- [ ] 人工质量终审 24 条(审核包已按最新重放重新生成,待复审 agent + 用户)。
+- [ ] 自动/开场/全自动入口真实冒烟(需真实微信监听)。
+- [x] NLI 重跑:分块判定(每块 ≤3 条陈述)后解析失败从 12 降到 4(单列呈报,不计入 unknown);contradicted=0。
+
 ### 已知未闭环(如实呈报,不做全绿掩饰)
 
-- prompt 契约存在≠模型完全遵守:重放后 `task_routing-01`(仍引入"地铁口碰")与 `policy_adaptation-15`(仍用转账佐证关系正常)有轻微偏离,已原样保留在审核包供终审裁决。
+- prompt 契约与输出校验降低但不消除模型偏离:`task_routing-01` 仍会引入窗口语境里的"地铁口碰"类细节,已原样保留在审核包供终审裁决。
 - 回放只覆盖手动入口;自动/开场/全自动入口待真实环境冒烟。
 - `real-3` 重放出现检索 timeout 降级(输出仍正常)——800ms 预算与解码后真实文本的检索成本需要复核。
+- NLI 仍有 4 条解析失败(判定器思考截断),已单列,不冒充 unknown。
 
 ## 任务清单
 
@@ -26,9 +40,9 @@
 - [x] live 三路对照(真实调用 deepseek-flash;窗口与证据随回放冻结)。
 - [ ] 人工评估维度:任务识别、联系人隔离、证据使用、边界遵守、无关旧事、可发送性、隐私(待更强 agent 复审 + 用户终审)。
 - [x] 延迟、失败与降级记录:`docs/goals/g1-e2e-report.md`。
-- [x] 对模型输出用**冻结的发送证据**做 `entailed / contradicted / unknown` 判定(`backend/scripts/g1_nli_judge.py`,输出指纹防过期,解析失败单列;`model_judged_pending_human`)。
+- [x] 对模型输出用**冻结的发送证据**做 `entailed / contradicted / unknown` 判定(`backend/scripts/g1_nli_judge.py`,分块判定,输出指纹防过期,解析失败单列;`model_judged_pending_human`)。
 - [x] 结果保存模型版本、prompt 版本、评测版本和原始判定(判定文件含 judge_raw_response 全文)。
-- [ ] 安全指标回退时按联系人切回旧读侧或 `inherit`(fact_read_mode 已有开关,补充切换脚本)。
+- [x] 按联系人切回旧读侧或 `inherit` 的切换脚本(`g1_rollback_contact.py`,默认 dry-run;真实库演练待做)。
 - [ ] 真实环境冒烟:自动触发、开场、全自动入口各验证一次(需真实微信监听)。
 
 ## 返工后门禁结论(g1-e2e-report.md,含 incomplete 语义)

@@ -531,7 +531,26 @@ class RagRetriever:
         service = getattr(self.embedding_service, "sentiment_service", None)
         if service is None:
             return True
-        return getattr(service, "_embedding_model", None) is not None
+        warm = getattr(service, "_embedding_model", None) is not None
+        if not warm:
+            # 冷启动自愈:暖机检查只探测不加载,这里后台触发一次加载,
+            # 让向量通道最迟从第二次检索起可用,不再永久 embedding_cold。
+            self._kick_embedding_prewarm()
+        return warm
+
+    def _kick_embedding_prewarm(self) -> None:
+        if getattr(self, "_prewarm_kicked", False):
+            return
+        self._prewarm_kicked = True
+
+        def _warm():
+            try:
+                if self.embedding_service.prewarm():
+                    logger.info("[RAG Retriever] embedding 引擎后台预热完成")
+            except Exception as exc:
+                logger.debug("[RAG Retriever] embedding 预热失败: %s", exc)
+
+        threading.Thread(target=_warm, daemon=True, name="rag-embedding-prewarm").start()
 
     def _empty(
         self,

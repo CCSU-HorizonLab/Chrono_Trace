@@ -58,6 +58,19 @@ class RagEmbeddingService:
         vectors = self.embed_texts([text])
         return vectors[0] if vectors else []
 
+    def prewarm(self) -> bool:
+        """暖机:触发 embedding 引擎加载。
+
+        模型是懒加载,而检索路径的暖机检查只探测不加载——没有任何前置
+        调用(实时情感/好感分析)时,RAG 向量通道会以 embedding_cold 永久
+        降级 keyword_fallback,记忆注入随之失效。调用方应在后台线程执行。
+        """
+        try:
+            self.embed_texts(["预热"])
+            return True
+        except Exception:
+            return False
+
     def is_warm(self) -> bool:
         """公共 API：嵌入模型是否已加载（此前调用方探测私有 _embedding_model）。"""
         return bool(getattr(self._get_shared_service(), "_embedding_model", None))

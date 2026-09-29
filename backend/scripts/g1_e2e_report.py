@@ -156,6 +156,50 @@ def check_manifest_badge_consistency(samples: list[dict], results: dict[tuple[st
     }
 
 
+def check_quality_redline(results: dict[tuple[str, str], dict]) -> dict[str, Any]:
+    """质量红线:资金推断违约(分支合并时曾被冲掉,现恢复)。
+
+    双路信号:生成时输出契约校验的留痕(`contract_warnings`),以及对
+    g1 live 输出的独立句级扫描——窗口快照含资金事件时,输出不得把资金
+    往来当对方态度/关系结论的证据。真实使用发现的"她转账说明人还在"
+    措辞已入词表。
+    """
+    import re as _re
+
+    transfer_re = _re.compile(r"转账|红包|收款|转了钱|转你|转我|来回转|转了|那笔钱|笔钱")
+    relation_re = _re.compile(
+        r"关系正常|关系好|不讨厌|讨厌你|不喜欢你|喜欢你|态度|冷淡|冷处理|"
+        r"热情|在意你|在乎你|理你|回应你|积极|没生你的气|人还在|没回话|不想理|疏远|冷落"
+    )
+    violations: list[dict[str, Any]] = []
+    checked = 0
+    missing = 0
+    for (sample_id, chain), result in results.items():
+        if chain != "g1":
+            continue
+        output = result.get("output")
+        if not output:
+            missing += 1
+            continue
+        checked += 1
+        for warning in output.get("contract_warnings") or []:
+            violations.append({"sample_id": sample_id, "source": "engine_contract", "detail": str(warning)[:120]})
+        window = (result.get("context_snapshot") or {}).get("recent_window") or []
+        window_had_transfer = any(transfer_re.search(str(line.get("content") or "")) for line in window)
+        if not window_had_transfer:
+            continue
+        texts = [str(output.get("reply") or ""), str(output.get("summary") or "")] + [
+            str(s) for s in output.get("speeches") or []
+        ]
+        for text in texts:
+            for sentence in _re.split(r"[。！？!?\n；;]+", text):
+                sentence = sentence.strip()
+                if len(sentence) >= 4 and transfer_re.search(sentence) and relation_re.search(sentence):
+                    violations.append({"sample_id": sample_id, "source": "report_scan", "detail": sentence[:120]})
+    status = "incomplete" if (missing or checked == 0) else ("fail" if violations else "ok")
+    return {"checked": checked, "violations": violations, "missing": missing, "status": status, "pass": status == "ok"}
+
+
 def check_privacy_redline(samples: list[dict], results: dict[tuple[str, str], dict], judgments_path: Path) -> dict[str, Any]:
     """隐私红线门禁:回放结果与判定文件中不得出现明文手机号/身份证;
     evidence_redacted_unusable 的排除原因必须留痕。"""
@@ -242,6 +286,7 @@ def build_report(samples_path: Path, results_path: Path, judgments_path: Path) -
     isolation = check_contact_isolation(samples, results)
     contract = check_task_contract(samples, results)
     consistency = check_manifest_badge_consistency(samples, results)
+    quality = check_quality_redline(results)
     privacy = check_privacy_redline(samples, results, judgments_path)
     stats = latency_stats(results)
 
@@ -285,6 +330,13 @@ def build_report(samples_path: Path, results_path: Path, judgments_path: Path) -
         f"| 隐私红线 | {_gate_mark(privacy)} | "
         f"明文泄漏 {len(privacy['leaks'])};evidence_redacted_unusable 留痕 {privacy['evidence_redacted_unusable']} |"
     )
+    lines.append(
+        f"| 质量红线(资金推断) | {_gate_mark(quality)} | "
+        f"检查 {quality['checked']} 条 g1 live 输出(窗口含资金事件时,输出不得把资金当态度证据),"
+        f"违规 {len(quality['violations'])},缺结果 {quality.get('missing', 0)} |"
+    )
+    for violation in (quality.get("violations") or [])[:6]:
+        lines.append(f"  - {violation['sample_id']} [{violation['source']}]: {violation['detail']}")
     lines.append("")
 
     lines.append("## 任务识别三链对照(g1 live)")
@@ -364,6 +416,7 @@ def build_report(samples_path: Path, results_path: Path, judgments_path: Path) -
         "任务契约": contract,
         "发送清单一致性": consistency,
         "隐私红线": privacy,
+        "质量红线(资金推断)": quality,
     }
     for gate, check in gates.items():
         lines.append(f"- {_gate_mark(check)} {gate}(`{check.get('status')}`)")

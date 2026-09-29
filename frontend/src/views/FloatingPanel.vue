@@ -937,6 +937,10 @@ const allSuggestions = computed(() => {
 
   // 原始消息回显（微信消息秒级上屏，AI 建议稍后跟进）
   for (const m of liveEchoMessages.value) {
+    // UIA 会返回日期/时间分隔线（sender_attr=system）。它们不是聊天消息，
+    // 不能按“非我方”渲染成对方气泡；后端已过滤，这里保留防御性兜底。
+    if (String(m.sender_attr || '').toLowerCase() === 'system'
+      || String(m.message_type || '').toLowerCase() === 'system') continue
     list.push({ ...m, _type: 'live_msg', created_at: m.ts })
   }
 

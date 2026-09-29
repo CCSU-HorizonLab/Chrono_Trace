@@ -53,6 +53,7 @@ SYSTEM_PROMPT = """你是一个专业的聊天沟通顾问，但你当前必须�
    - 如果历史记忆与当前对话无关，直接忽略它
    - 规则、画像和长期偏好只能约束“怎么说”，不能决定“聊什么”
    - 如果规则/画像与【最近对话】冲突，必须以【最近对话】和当前触发为准
+   - **仲裁规则：【用户需求与反馈】里用户的显式提问,永远高于你对【最近对话】走向的自行解读**。用户问"怎么回 X",就必须回答怎么回 X;不得因为窗口看起来"话题已变/事情已过去"而改答别的或宣布"不用再提 X"。窗口与提问冲突时,先回答用户问的,再把窗口里的新情况作为补充。
    - 如果触发是 emotion_shift，只能围绕对方最新那条偏负面的表达做轻量关心或顺势接话，禁止脑补重大心事或过度安慰
 6. **回应用户与纯对话**：如果【用户需求与反馈】中有用户的提问或想法，你必须在 reply 字段直接回应他的问题。
    - 当 `reply` 是 AI 对用户本人说的话时，必须使用自然、简洁的助手口吻。
@@ -609,6 +610,12 @@ class LLMSuggestionEngine(SuggestionEngine):
                             style_constraints=style_constraints,
                         )
             if result:
+                # 复审 2:输出契约校验(资金推断等安全红线)——prompt 契约
+                # 之外在输出侧再拦一道,违规先修复重试,仍违规则留痕。
+                result = self._enforce_output_contracts(
+                    result, context, model_config, user_prompt,
+                    trigger_type, intent, style_constraints,
+                )
                 if context.get("_rag_log_id"):
                     setattr(result, "rag_log_id", context.get("_rag_log_id"))
                     setattr(result, "rag_conversation_id", context.get("_rag_conversation_id"))
@@ -1025,6 +1032,76 @@ class LLMSuggestionEngine(SuggestionEngine):
         except Exception as exc:
             logger.debug("[LLM Engine] 发送清单回填失败(log=%s): %s", log_id, exc)
 
+    # ---- 输出契约校验层(复审 2) ------------------------------------------
+    # prompt 契约存在 ≠ 模型遵守;资金推断这类安全边界必须在输出侧再拦一道。
+
+    _TRANSFER_HINT_RE = re.compile(r"转账|红包|收款|转了钱|转你|转我|来回转|转了|那笔钱|笔钱")
+    _RELATION_HINT_RE = re.compile(
+        r"关系正常|关系好|不讨厌|讨厌你|不喜欢你|喜欢你|态度|冷淡|冷处理|"
+        r"热情|在意你|在乎你|理你|回应你|积极|没生你的气"
+    )
+
+    def _check_output_contracts(self, result: "SuggestionResult", context: dict) -> list[str]:
+        """检测输出是否违反硬契约。当前规则:窗口含资金事件时,输出不得把
+        资金往来当作对方态度/关系结论的证据(句级共现判定)。"""
+        if int(context.get("_window_transfer_event_count") or 0) <= 0:
+            return []
+        violations: list[str] = []
+        fields = [("reply", result.reply or ""), ("summary", result.summary or "")]
+        fields.extend(("speeches", speech) for speech in (result.speeches or []))
+        for field_name, text in fields:
+            for sentence in re.split(r"[。！？!?\n；;]+", str(text)):
+                sentence = sentence.strip()
+                if len(sentence) < 4:
+                    continue
+                if self._TRANSFER_HINT_RE.search(sentence) and self._RELATION_HINT_RE.search(sentence):
+                    violations.append(f"资金推断({field_name}):「{sentence[:60]}」")
+        return violations
+
+    def _build_contract_repair_prompt(self, user_prompt: str, violations: list[str]) -> str:
+        return (
+            f"{user_prompt}\n\n【硬性约束违规,必须重新生成】\n上一版输出违反了以下硬约束:\n"
+            + "\n".join(f"- {v}" for v in violations)
+            + "\n重新生成时严格遵守:资金往来(转账/红包/收款)只是事件,不能用来推断对方态度、"
+            "关系冷热,也不能作为\"她不讨厌你/关系正常\"的证据;需要判断态度时,只能依据对方的"
+            "文字聊天内容,证据不足就明说信息不足。其余要求不变,只输出 JSON。"
+        )
+
+    def _enforce_output_contracts(
+        self,
+        result: "SuggestionResult",
+        context: dict,
+        model_config: Optional[dict],
+        user_prompt: str,
+        trigger_type: str,
+        intent: str,
+        style_constraints: "StyleConstraints",
+    ) -> "SuggestionResult":
+        """违规时做一次修复重试;仍违规则保留输出并在结果上留痕 contract_warnings。"""
+        violations = self._check_output_contracts(result, context)
+        if not violations:
+            return result
+        _print(f"[LLM Engine] ⚠️ 输出契约违规 {len(violations)} 条,尝试修复重试")
+        if model_config and not self._is_reasoning_model(model_config.get("model_id", "")):
+            try:
+                retry_prompt = self._build_contract_repair_prompt(user_prompt, violations)
+                retry_text = self._call_api(model_config, retry_prompt)
+                retry_result = self._parse_response(
+                    retry_text, trigger_type, intent, style_constraints=style_constraints,
+                )
+                if retry_result and not self._check_output_contracts(retry_result, context):
+                    setattr(retry_result, "contract_repair", "retry_fixed")
+                    setattr(retry_result, "contract_warnings", [])
+                    _print("[LLM Engine] ✅ 契约修复重试成功")
+                    return retry_result
+                if retry_result:
+                    result = retry_result  # 重试未完全修复也采用新输出,下面统一留痕
+            except Exception as exc:
+                _print(f"[LLM Engine] 契约修复重试失败: {exc}")
+        setattr(result, "contract_warnings", violations)
+        _print(f"[LLM Engine] ⚠️ 输出仍带契约违规 {len(violations)} 条,已留痕")
+        return result
+
     def _build_relationship_signal_lines(self, context: dict, purified: dict) -> list[str]:
         """G5:把好感分析与配对统计渲染成"带时间与不确定性"的关系信号块。
 
@@ -1080,6 +1157,10 @@ class LLMSuggestionEngine(SuggestionEngine):
         lines.append(
             "  不能推出: 聊天数量多不等于亲密度高；分数不授权推进关系或表白；"
             "未及时回复不能直接解读为拒绝；资金往来事件不反映对方态度；不要把这些信号说给对方听"
+        )
+        lines.append(
+            "  表述要求: 涉及对方想法/态度的判断必须保留不确定性(可能/或许/更像),"
+            "证据不足时明说'信息不足,无法判断',禁止下确定性结论"
         )
         return lines
 
@@ -1276,6 +1357,8 @@ class LLMSuggestionEngine(SuggestionEngine):
                     "  ⚠️ 上方【事件】行是资金往来,不代表对方态度;"
                     "不得用它推断冷淡、热情或关系进展,也不得作为'她回应了我'的证据。"
                 )
+            # 供输出契约校验层使用:窗口里确实存在资金事件时才启用资金推断检测。
+            context["_window_transfer_event_count"] = len(purified["transfer_events"])
             if purified["notice_only"]:
                 parts.append(
                     "  ⚠️ 当前窗口没有任何有效人工聊天，以上只有系统事件；"

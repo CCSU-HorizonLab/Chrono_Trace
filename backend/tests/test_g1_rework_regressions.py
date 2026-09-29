@@ -260,3 +260,23 @@ def test_prompt_contracts_present():
         {"user_context": [{"role": "user", "content": "我们玩过什么游戏"}]},
     )
     assert "`reply` 不得为空字符串" in prompt
+
+
+# ---- 三审修复:用户提问优先仲裁 + 关系判断不确定性 ---------------------------
+
+def test_system_prompt_has_user_question_arbitration_rule():
+    """三审 major(task_routing-01 偏题):用户显式提问必须高于窗口走向的自行解读。"""
+    from app.services.realtime.llm_engine import SYSTEM_PROMPT
+
+    assert "仲裁规则" in SYSTEM_PROMPT
+    assert "永远高于你对【最近对话】走向的自行解读" in SYSTEM_PROMPT
+    assert "不得因为窗口看起来" in SYSTEM_PROMPT
+
+
+def test_relationship_signal_requires_uncertain_phrasing():
+    """三审 minor(09 过度确定):关系信号块要求不确定性表述。"""
+    engine = LLMSuggestionEngine()
+    lines = engine._build_relationship_signal_lines({}, {"chat_window": []})
+    text = "\n".join(lines)
+    assert "保留不确定性" in text
+    assert "禁止下确定性结论" in text

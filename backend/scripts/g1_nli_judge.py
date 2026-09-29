@@ -159,6 +159,7 @@ def main() -> int:
     label_counts = {label: 0 for label in LABELS}
     unparsed_count = 0
     frozen_missing = 0
+    CLAIMS_PER_CALL = 3  # 分块判定:一次判定太多条会让判定器思考过长而截断
     for sample_id, result in sorted(latest.items()):
         claims = extract_claims(result)
         if not claims:
@@ -168,27 +169,37 @@ def main() -> int:
             frozen_missing += 1
         evidence = load_frozen_evidence(result)
         fact_ids = [int(item.get("fact_id") or 0) for item in evidence if item.get("fact_id")]
-        prompt = build_judge_prompt(claims, evidence)
         started = time.perf_counter()
-        try:
-            # 不走 _call_api(它强制挂聊天顾问系统提示);判定器用自己的系统提示。
-            response_text = engine._call_api_with_messages(
-                model_config,
-                [
-                    {"role": "system", "content": JUDGE_SYSTEM_PROMPT},
-                    {"role": "user", "content": prompt},
-                ],
-                max_tokens=2400,
-                temperature=0.1,
-                request_tag="g1_nli_judge",
-                use_json_mode=False,
-            )
-            judgments = parse_judge_response(response_text, len(claims))
-            raw = str(response_text)[:2000]
-        except Exception as exc:
-            judgments = [{"claim": i + 1, "label": "unknown", "reason": f"judge_error: {exc}"} for i in range(len(claims))]
-            raw = f"{type(exc).__name__}: {exc}"
-        for judgment in judgments:
+        all_judgments: list[dict[str, Any]] = []
+        raw_parts: list[str] = []
+        for chunk_start in range(0, len(claims), CLAIMS_PER_CALL):
+            chunk = claims[chunk_start : chunk_start + CLAIMS_PER_CALL]
+            prompt = build_judge_prompt(chunk, evidence)
+            try:
+                # 不走 _call_api(它强制挂聊天顾问系统提示);判定器用自己的系统提示。
+                response_text = engine._call_api_with_messages(
+                    model_config,
+                    [
+                        {"role": "system", "content": JUDGE_SYSTEM_PROMPT},
+                        {"role": "user", "content": prompt},
+                    ],
+                    max_tokens=4000,
+                    temperature=0.1,
+                    request_tag="g1_nli_judge",
+                    use_json_mode=False,
+                )
+                chunk_judgments = parse_judge_response(response_text, len(chunk))
+                raw_parts.append(str(response_text)[:1200])
+            except Exception as exc:
+                chunk_judgments = [
+                    {"claim": i + 1, "label": "unknown", "reason": f"judge_error: {exc}"} for i in range(len(chunk))
+                ]
+                raw_parts.append(f"{type(exc).__name__}: {exc}")
+            # 分块内序号归一到样例全局序号
+            for judgment in chunk_judgments:
+                judgment["claim"] = chunk_start + int(judgment.get("claim") or 1)
+                all_judgments.append(judgment)
+        for judgment in all_judgments:
             label_counts[judgment["label"]] += 1
             if judgment.get("reason") in {"judge_response_unparseable", "missing_judgment"}:
                 unparsed_count += 1
@@ -196,11 +207,11 @@ def main() -> int:
             "sample_id": sample_id,
             "claims": claims,
             "evidence_fact_ids": fact_ids,
-            "judgments": judgments,
-            "judge_raw_response": raw,
+            "judgments": all_judgments,
+            "judge_raw_response": "\n---chunk---\n".join(raw_parts)[:3000],
             "elapsed_ms": int((time.perf_counter() - started) * 1000),
         })
-        summary = ", ".join(f"{j['claim']}={j['label']}" for j in judgments)
+        summary = ", ".join(f"{j['claim']}={j['label']}" for j in all_judgments)
         print(f"  {sample_id:>34} | facts={len(fact_ids)} | {summary}")
 
     # 输出指纹:回放输出变化后本判定即过期(报告会比对)。

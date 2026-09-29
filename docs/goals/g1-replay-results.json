@@ -9555,6 +9555,347 @@
           }
         }
       ]
+    },
+    {
+      "replay_version": "g1-baseline-replay-v1",
+      "ran_at": 1790695419,
+      "live": true,
+      "chains": [
+        "g1"
+      ],
+      "sample_file": "D:\\Project\\Chrono Trace\\docs\\goals\\g1-baseline-samples.json",
+      "source_db_frozen_at": 1790608848,
+      "baseline_code_commit": "6b2eb4df9fef92a46c5ccb777d668c487bc5b83e",
+      "failures": 0,
+      "results": [
+        {
+          "sample_id": "real-2",
+          "dimension": "redaction_misfire",
+          "chain": "g1",
+          "chain_note": "",
+          "routing": {
+            "task": "invitation_planning",
+            "output": "answer_with_speeches",
+            "knowledge_needs": [
+              "facts",
+              "contact_profile",
+              "user_style",
+              "relationship_signals"
+            ],
+            "confidence": 0.85,
+            "reason": "invitation_signal",
+            "wants_speeches": true,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 91,
+            "request_id": "91bd78987271"
+          },
+          "model": "deepseek-flash",
+          "output": {
+            "summary": "趁热直接约，先问时间再定游戏，别安排她",
+            "speeches": [
+              "宝宝，晚上有空一起打游戏嘛",
+              "你玩啥我陪啥，你挑",
+              "杀戮尖塔带我一个好叭"
+            ],
+            "reply": "直接约就行，她玩心重又是她主动多，你别磨叽。挑她没课的时间点，先问一句再定游戏，别指挥她。",
+            "rag_badge": {
+              "state": "fact_hit",
+              "label": "已参考 4 条历史事实",
+              "hit_count": 7,
+              "referenced_count": 4,
+              "log_id": 34
+            },
+            "contract_warnings": [],
+            "contract_repair": null
+          },
+          "elapsed_ms": 3097,
+          "manifest": {
+            "fact_ids": [
+              376,
+              372,
+              601,
+              600
+            ],
+            "document_ids": [
+              376,
+              372,
+              601,
+              600
+            ],
+            "policy_ids": [
+              30
+            ],
+            "contact_preference_ids": [
+              19,
+              11,
+              17,
+              9,
+              8,
+              10
+            ],
+            "blocks": [
+              "relationship_policy",
+              "contact_preferences",
+              "contact_profile",
+              "self_profile",
+              "style_constraints",
+              "retrieval_memory",
+              "relationship_signal"
+            ],
+            "excluded": [],
+            "prompt_hash": "2850e84477b7961e1870a419952a4d048f1d926bc9d99fb9c1580df4b6b642f8"
+          },
+          "rag": {
+            "log_id": 34,
+            "hit_count": 7,
+            "gate_decision": "inject",
+            "degraded_reason": null,
+            "memory_intent_mode": "memory_request"
+          },
+          "badge": {
+            "state": "fact_hit",
+            "label": "已参考 4 条历史事实",
+            "hit_count": 7,
+            "referenced_count": 4,
+            "log_id": 34
+          },
+          "context_snapshot": {
+            "window_source": "db",
+            "recent_window": [
+              {
+                "sender": "self",
+                "content": "宝宝在忙嘛"
+              },
+              {
+                "sender": "self",
+                "content": "杀戮尖塔带我一个，我陪你玩"
+              },
+              {
+                "sender": "friend",
+                "content": "￥49.52 已收款 微信转账"
+              },
+              {
+                "sender": "self",
+                "content": "￥49.52 已被接收 微信转账"
+              },
+              {
+                "sender": "self",
+                "content": "后面你用onnx分支测试，关键技术或者其它文档里面需要的材料从代码提炼一些出来。"
+              },
+              {
+                "sender": "self",
+                "content": "宝宝在忙吗"
+              },
+              {
+                "sender": "self",
+                "content": "忙完记得理我一下，今天有点想你"
+              },
+              {
+                "sender": "friend",
+                "content": "￥40.00 已收款 微信转账"
+              },
+              {
+                "sender": "self",
+                "content": "￥40.00 已被接收 微信转账"
+              },
+              {
+                "sender": "self",
+                "content": "行，那你专心弄你的"
+              },
+              {
+                "sender": "self",
+                "content": "后面你用onnx分支测试，关键技术或者其它文档里面需要的材料从代码提炼一些出来。"
+              },
+              {
+                "sender": "friend",
+                "content": "就坐我旁边整这些肉麻巴拉的"
+              }
+            ],
+            "sent_evidence": [
+              {
+                "fact_id": 376,
+                "content": "我提到：我感觉路易吉鬼屋都打不完了 相关上下文：我: 什么时候玩s'witch啊 / 我: 呜呜呜"
+              },
+              {
+                "fact_id": 372,
+                "content": "我提到：路易吉鬼屋好玩吗？带带我嘛～我也想玩那个！ 相关上下文：对方: 可是我想玩路易吉鬼屋 / 我: 宝宝~"
+              },
+              {
+                "fact_id": 601,
+                "content": "对方与我计划后天搬家，把东西搬到新住处，并打算向房东要快递地址以便寄送物品。"
+              },
+              {
+                "fact_id": 600,
+                "content": "用户（我）提出两人找住处时可以选择住得远一些，只要附近有地铁站且通勤时间在30分钟以内，对方表示同意。"
+              }
+            ]
+          }
+        },
+        {
+          "sample_id": "authored-redaction_misfire-12",
+          "dimension": "redaction_misfire",
+          "chain": "g1",
+          "chain_note": "",
+          "routing": {
+            "task": "memory_qa",
+            "output": "direct_answer",
+            "knowledge_needs": [
+              "facts"
+            ],
+            "confidence": 0.8,
+            "reason": "history_answer_signal",
+            "wants_speeches": false,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 71,
+            "request_id": "a2a592e8cd65"
+          },
+          "model": "deepseek-flash",
+          "output": {
+            "summary": "[PURE_CHAT]",
+            "speeches": [],
+            "reply": "没查到你们一起玩过什么游戏的记录。记忆里只有：你自己玩过塞尔达、聊过原神（11-23），还提过想挑个打折游戏送对方当生日礼物（12-19）。这些是你单方面聊的，不算共同经历。",
+            "rag_badge": {
+              "state": "fact_hit",
+              "label": "已参考 4 条历史事实",
+              "hit_count": 6,
+              "referenced_count": 4,
+              "log_id": 35
+            },
+            "contract_warnings": [],
+            "contract_repair": null
+          },
+          "elapsed_ms": 1498,
+          "manifest": {
+            "fact_ids": [
+              145,
+              142,
+              151,
+              154
+            ],
+            "document_ids": [
+              145,
+              142,
+              151,
+              154
+            ],
+            "policy_ids": [],
+            "contact_preference_ids": [],
+            "blocks": [
+              "retrieval_memory"
+            ],
+            "excluded": [
+              {
+                "kind": "relationship_policy",
+                "id": 11,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "contact_preferences",
+                "id": null,
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "feedback_rules",
+                "reason": "task_knowledge_not_needed"
+              }
+            ],
+            "prompt_hash": "507ba19e5993497dab29cc27cdb263b011d2d8c8060fb0a8f10e63874a24c732"
+          },
+          "rag": {
+            "log_id": 35,
+            "hit_count": 6,
+            "gate_decision": "inject",
+            "degraded_reason": null,
+            "memory_intent_mode": "memory_request"
+          },
+          "badge": {
+            "state": "fact_hit",
+            "label": "已参考 4 条历史事实",
+            "hit_count": 6,
+            "referenced_count": 4,
+            "log_id": 35
+          },
+          "context_snapshot": {
+            "window_source": "db",
+            "recent_window": [
+              {
+                "sender": "friend",
+                "content": "谢谢学长"
+              },
+              {
+                "sender": "friend",
+                "content": "(�/�`�\u0005�\u0016\u0000�p�\" m�\u0006_��S_���Z\u0004��\f\b!U<�F!��\u0005\n4\u0005\b\u0001�\u0015�\u0000w\u0000r\u0000MD�\u0010\u000f\u0002\u0002\u0003�(R,�\u0007�\u0019�\u0018;�u(�^p�@�pI)���y�\u00035��T�e�\")~.�7�Zk&+�\u0017�e�h3�0v"
+              },
+              {
+                "sender": "self",
+                "content": "(�/� p\u0015\u0003\u0000�\u0005\u0015\u001a��\r��4B�t3Y1���hN��P���`^\u001a��G��f =\u0000;k��\u0015�G@��\"\u0017��\u0018��\u001d�0\u0015\u001a\b0Q�>\u0016�4�TF2r%�n�`��Aq\t�~�\u0003\u0000�\u0002)���\\�\f"
+              },
+              {
+                "sender": "self",
+                "content": "(�/� p\u0015\u0003\u0000�\u0005\u0015\u001a��\r��4B�t3Y1���hN��\u0012���`^\u001a��G��& =��5��\n�# �B���h\f�a��\u0000J�(W\u001f\u000bC\u001ac\"%P�\u0012D7^��٠��n�k\u0003\u0000�\u0002)���\\�\f"
+              },
+              {
+                "sender": "friend",
+                "content": "姐，你手机呢？"
+              },
+              {
+                "sender": "friend",
+                "content": "你咋拿学长的手机发"
+              },
+              {
+                "sender": "friend",
+                "content": "你手机没电了？"
+              },
+              {
+                "sender": "friend",
+                "content": "(�/�`4\u0006\r\u0017\u0000\u0006��\"@k�\u0003�\f\u0012\r�]�\u000f���pS\u000e��O�v�)I6��EQt7�\u0000r\u0000r\u0000M;4$\u0012\u0002�\u0018\u0015�����1\u0006�7$;��\u0017��\"���T\u0002��< \u00141�rk��\"�wn�\u0016�;s�U����*�\u001cJ\u0018t�ʄ\u0014"
+              },
+              {
+                "sender": "self",
+                "content": "(�/� p\u0015\u0003\u0000�\u0005\u0015\u001a��\r��4B�t3Y1���hN\u001a��`^\u001a��G��&J\u000f��\u001awx��\u0011\u0010e���~4��q�0L#\r\u0010f W\u001f\u000bC\u001ac\u001aJ�r%�n�`��Aq\t�~�\u0003\u0000�\u0002)���\\�\f"
+              },
+              {
+                "sender": "friend",
+                "content": "(�/�`�\u0005�\u0013\u0000��v!@K��\u0006lH]��\u001b-�\u0003�\u0005ڙ��ak-�)D?�\u001d�a�7q\u0000m\u0000h\u0000ڔ\u0002��2�\u001c��1�匕G��Xs��;���\u001e���$I��8:�\u001a��2H[>2����*�\u0000��\u000fS�g�jq��2�%\bn�?L"
+              },
+              {
+                "sender": "friend",
+                "content": "姐，你们现在可以出发了"
+              },
+              {
+                "sender": "friend",
+                "content": "我准备上地铁了"
+              }
+            ],
+            "sent_evidence": [
+              {
+                "fact_id": 145,
+                "content": "我提到：塞尔达的游戏性暴打原神[捂脸] 相关上下文：我: 好了 我在玩过55h塞尔达之后我可以评价是 / 我: 之前老听原神抄塞尔达 我可以说原神根本没抄到精髓 只是空有皮囊 剧情都不如塞尔达"
+              },
+              {
+                "fact_id": 142,
+                "content": "我提到：到这个水平玩啥游戏基本没瓶颈了 相关上下文：我: 我没记错的话 / 对方: 我好好看一看"
+              },
+              {
+                "fact_id": 151,
+                "content": "对方提到：学长，大可不必，我估计等到那个时候我也没什么时间玩[捂脸][捂脸] 相关上下文：我: 哪怕没钱给你送 借你玩几个月也不是不行 / 我: 这不用等到那个时候"
+              },
+              {
+                "fact_id": 154,
+                "content": "我提到：这段时间大量游戏打折 我挑一个送你 算你的生日礼物[呲牙] 相关上下文：我: 你喜欢玩啥类型的 / 我: 你不晕3d吧"
+              }
+            ]
+          }
+        }
+      ]
     }
   ]
 }

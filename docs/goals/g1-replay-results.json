@@ -2,7 +2,7 @@
   "runs": [
     {
       "replay_version": "g1-baseline-replay-v1",
-      "ran_at": 1790608967,
+      "ran_at": 1790685554,
       "live": true,
       "chains": [
         "g1"
@@ -32,22 +32,24 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 91,
-            "request_id": "9a0558da548a"
+            "request_id": "e0c28582ef87"
           },
           "model": "deepseek-flash",
           "output": {
             "summary": "[PURE_CHAT]",
             "speeches": [],
-            "reply": "没查到你们明确「一起玩过」的游戏记录。只查到几个各自提过的：你提过《路易吉鬼屋》打不完、想玩 Switch；对方长期玩《杀戮尖塔2》，爱用机器人角色喊「电流相生」。刚才你还说想陪她打杀戮尖塔，可以顺着这个聊。",
+            "reply": "记忆里没查到你们明确一起玩过的游戏记录。只知道你自己提过《路易吉鬼屋》没打完，对方长期玩《杀戮尖塔2》（习惯玩机器人、会喊「电流相生」）。你刚还在约她一起玩杀戮尖塔。",
             "rag_badge": {
               "state": "fact_hit",
               "label": "已参考 4 条历史事实",
               "hit_count": 6,
               "referenced_count": 4,
               "log_id": 4
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 3606,
+          "elapsed_ms": 2522,
           "manifest": {
             "fact_ids": [
               376,
@@ -201,26 +203,28 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 91,
-            "request_id": "e4876ba9536e"
+            "request_id": "408890679747"
           },
           "model": "deepseek-flash",
           "output": {
-            "summary": "用杀戮尖塔切入，给具体时间，不施压",
+            "summary": "顺着她玩的游戏约，让她带你，别用指挥口气",
             "speeches": [
-              "宝宝今晚打不打杀戮尖塔嘛",
-              "带我一个，我给你喊电流相生[旺柴]",
-              "你玩机器人我玩别的，不抢你角色"
+              "宝宝带我一把杀戮尖塔嘛",
+              "你玩机器人我围观也行呀",
+              "电流相生给我整一个[旺柴]"
             ],
-            "reply": "直接拿她天天玩的杀戮尖塔切进去就行，别问“要不要一起”，问具体时间她更容易接。她上课不敢玩，就提晚上。",
+            "reply": "约她最好的切入口就是她正在玩的杀戮尖塔2，别约Switch，她上课不敢玩。姿态放低点让她带你，别用\"我带你\"那种语气，她会觉得像上下级。",
             "rag_badge": {
               "state": "fact_hit",
               "label": "已参考 4 条历史事实",
               "hit_count": 6,
               "referenced_count": 4,
               "log_id": 5
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 3788,
+          "elapsed_ms": 3185,
           "manifest": {
             "fact_ids": [
               376,
@@ -366,29 +370,41 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 91,
-            "request_id": "1dd7aec5a916"
+            "request_id": "d95485dfecd6"
           },
           "model": "deepseek-flash",
           "output": {
-            "summary": "轻邀她带一局杀戮尖塔，不问忙不忙，给她选。",
+            "summary": "用陪玩杀戮尖塔轻邀约，给她拒绝空间，别问忙不忙",
             "speeches": [
-              "宝宝带我一个嘛",
-              "杀戮尖塔你带带我呀",
-              "开了喊我，我随叫随到[旺柴]"
+              "宝宝打两把嘛 我陪你",
+              "杀戮尖塔带我一个惹",
+              "你开我就跟 你说了算"
             ],
-            "reply": "有，这就给你。她已经收转账了，别追着问忙不忙，直接抛个轻邀约，把主动权给她就行。",
+            "reply": "她天天玩杀戮尖塔，直接从这切入就行，别问忙不忙。她不肯上课玩，别提Switch那些。",
             "rag_badge": {
-              "state": "relationship_policy",
-              "label": "已参考关系画像",
-              "hit_count": 0,
-              "referenced_count": 0,
+              "state": "fact_hit",
+              "label": "已参考 4 条历史事实",
+              "hit_count": 6,
+              "referenced_count": 4,
               "log_id": 6
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 7168,
+          "elapsed_ms": 2807,
           "manifest": {
-            "fact_ids": [],
-            "document_ids": [],
+            "fact_ids": [
+              376,
+              532,
+              581,
+              614
+            ],
+            "document_ids": [
+              376,
+              532,
+              581,
+              614
+            ],
             "policy_ids": [
               30
             ],
@@ -406,23 +422,24 @@
               "contact_profile",
               "self_profile",
               "style_constraints",
+              "retrieval_memory",
               "relationship_signal"
             ],
             "excluded": [],
-            "prompt_hash": "fac3dc18cd88ac191cfdbd48738449032faf52098b686d3d4b1a4ec206c6995c"
+            "prompt_hash": "f84c56db6119857cd14fa4f929269b71a5a9453551953a6c6b3f7dea2e7e580a"
           },
           "rag": {
             "log_id": 6,
-            "hit_count": 0,
-            "gate_decision": "skip",
-            "degraded_reason": "timeout",
+            "hit_count": 6,
+            "gate_decision": "inject",
+            "degraded_reason": null,
             "memory_intent_mode": "memory_request"
           },
           "badge": {
-            "state": "relationship_policy",
-            "label": "已参考关系画像",
-            "hit_count": 0,
-            "referenced_count": 0,
+            "state": "fact_hit",
+            "label": "已参考 4 条历史事实",
+            "hit_count": 6,
+            "referenced_count": 4,
             "log_id": 6
           },
           "context_snapshot": {
@@ -477,7 +494,24 @@
                 "content": "￥49.52 已被接收 微信转账"
               }
             ],
-            "sent_evidence": []
+            "sent_evidence": [
+              {
+                "fact_id": 376,
+                "content": "我提到：我感觉路易吉鬼屋都打不完了 相关上下文：我: 什么时候玩s'witch啊 / 我: 呜呜呜"
+              },
+              {
+                "fact_id": 532,
+                "content": "对方在上课期间不会和'我'一起玩游戏（如Switch），因为对方不敢在课上玩。"
+              },
+              {
+                "fact_id": 581,
+                "content": "对方长期玩《杀戮尖塔2》，游戏中习惯玩机器人角色并会喊「电流相生」。"
+              },
+              {
+                "fact_id": 614,
+                "content": "我近期手头比较紧，没有钱"
+              }
+            ]
           }
         },
         {
@@ -503,26 +537,28 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 71,
-            "request_id": "3372b8424f0a"
+            "request_id": "86a64c3f0361"
           },
           "model": "deepseek-flash",
           "output": {
-            "summary": "今晚等对方忙完再轻描淡写约一把",
+            "summary": "趁出门空档轻问一句打游戏，时间让她定，不催。",
             "speeches": [
-              "你晚点有空吗",
-              "忙完一起打两把",
-              "回头打游戏喊我"
+              "忙完了打把游戏？",
+              "晚点有空一起开黑",
+              "你几点到家，打游戏吗"
             ],
-            "reply": "她现在正在出门赴约，现在约打游戏大概率没空。可以等晚点，或者顺口问一句留个口子，别硬约。",
+            "reply": "她正在出门路上，现在直接约容易被打断。先轻轻问一句，把时间留给她定，别催别追问。三条话术按熟络程度挑一条就行。",
             "rag_badge": {
               "state": "relationship_policy",
               "label": "已参考关系画像",
               "hit_count": 0,
               "referenced_count": 0,
               "log_id": 7
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 6347,
+          "elapsed_ms": 3352,
           "manifest": {
             "fact_ids": [],
             "document_ids": [],
@@ -633,26 +669,28 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 71,
-            "request_id": "df49086c2cac"
+            "request_id": "d14c5973aed3"
           },
           "model": "deepseek-flash",
           "output": {
-            "summary": "先接出发，短句确认周末",
+            "summary": "回确认出发+路上注意，简短即可",
             "speeches": [
-              "好，我们这就走",
-              "周末那事见面定",
-              "行，地铁口碰吧"
+              "好，那我也出发了",
+              "我也往那边走了",
+              "路上注意安全"
             ],
-            "reply": "从她最后两条看，她已经在报出发进度了，你先接住这个动作，周末邀约可以顺势确认或见面再细聊，别单独发一大段。",
+            "reply": "她已经在上地铁了，直接回确认出发的话就好，不用再提邀约本身。",
             "rag_badge": {
               "state": "relationship_policy",
               "label": "已参考关系画像",
-              "hit_count": 2,
+              "hit_count": 0,
               "referenced_count": 0,
               "log_id": 8
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 3880,
+          "elapsed_ms": 4481,
           "manifest": {
             "fact_ids": [],
             "document_ids": [],
@@ -673,15 +711,15 @@
           },
           "rag": {
             "log_id": 8,
-            "hit_count": 2,
+            "hit_count": 0,
             "gate_decision": "skip",
-            "degraded_reason": null,
+            "degraded_reason": "timeout",
             "memory_intent_mode": "none"
           },
           "badge": {
             "state": "relationship_policy",
             "label": "已参考关系画像",
-            "hit_count": 2,
+            "hit_count": 0,
             "referenced_count": 0,
             "log_id": 8
           },
@@ -760,22 +798,24 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 71,
-            "request_id": "977f438196cb"
+            "request_id": "c61f27d37b24"
           },
           "model": "deepseek-flash",
           "output": {
             "summary": "[PURE_CHAT]",
             "speeches": [],
-            "reply": "最近的对话里没出现她喜欢什么，被折叠的早前消息内容也是乱码，我读不出来。你要是记得她之前提过什么，或者想让我从哪些话题切入，告诉我一声，我帮你挑个方向。",
+            "reply": "这批聊天里没有她明确的喜好信息，能看出的只有她生日、叫你姐/学长、说话比较随意。想判断她喜欢什么，得多给我点她说过的话或者朋友圈内容。",
             "rag_badge": {
-              "state": "degraded",
-              "label": "记忆检索降级",
-              "hit_count": 0,
+              "state": "not_referenced",
+              "label": "未参考命中记录",
+              "hit_count": 6,
               "referenced_count": 0,
               "log_id": 9
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 4798,
+          "elapsed_ms": 3319,
           "manifest": {
             "fact_ids": [],
             "document_ids": [],
@@ -802,15 +842,15 @@
           },
           "rag": {
             "log_id": 9,
-            "hit_count": 0,
+            "hit_count": 6,
             "gate_decision": "skip",
-            "degraded_reason": "timeout",
+            "degraded_reason": null,
             "memory_intent_mode": "none"
           },
           "badge": {
-            "state": "degraded",
-            "label": "记忆检索降级",
-            "hit_count": 0,
+            "state": "not_referenced",
+            "label": "未参考命中记录",
+            "hit_count": 6,
             "referenced_count": 0,
             "log_id": 9
           },
@@ -892,26 +932,28 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 71,
-            "request_id": "ea25ee6eb5b0"
+            "request_id": "ce426b2700b0"
           },
           "model": "deepseek-flash",
           "output": {
-            "summary": "先回应出门，再顺势提游戏，语气轻不催",
+            "summary": "顺着应下游戏邀约，短句不多问",
             "speeches": [
-              "好，到了说一声，游戏等你",
-              "路上慢点，几点开打你说",
-              "行，等你上号，一起打两把"
+              "行 到家喊我 我上线",
+              "好 你到了说一声 一起玩",
+              "可以 你忙完再开"
             ],
-            "reply": "她刚上地铁，先接住出门这句，再顺一句游戏邀约就行，别追太紧。",
+            "reply": "下面几条直接挑一条发。她刚说准备上地铁，你就顺着应下游戏邀约，顺口提一句到家/上线再说，别追问太多。",
             "rag_badge": {
               "state": "relationship_policy",
               "label": "已参考关系画像",
-              "hit_count": 0,
+              "hit_count": 2,
               "referenced_count": 0,
               "log_id": 10
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 6590,
+          "elapsed_ms": 4015,
           "manifest": {
             "fact_ids": [],
             "document_ids": [],
@@ -932,15 +974,15 @@
           },
           "rag": {
             "log_id": 10,
-            "hit_count": 0,
+            "hit_count": 2,
             "gate_decision": "skip",
-            "degraded_reason": "timeout",
+            "degraded_reason": null,
             "memory_intent_mode": "none"
           },
           "badge": {
             "state": "relationship_policy",
             "label": "已参考关系画像",
-            "hit_count": 0,
+            "hit_count": 2,
             "referenced_count": 0,
             "log_id": 10
           },
@@ -1019,28 +1061,36 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 71,
-            "request_id": "48951badc7df"
+            "request_id": "18c02b826502"
           },
           "model": "deepseek-flash",
           "output": {
             "summary": "[PURE_CHAT]",
             "speeches": [],
-            "reply": "你好呀，我在。需要我帮你想怎么回复对方，随时说。",
+            "reply": "你好呀！需要我帮你看看接下来怎么回对方吗？",
             "rag_badge": {
-              "state": "degraded",
-              "label": "记忆检索降级",
-              "hit_count": 0,
-              "referenced_count": 0,
+              "state": "fact_hit",
+              "label": "已参考 1 条历史事实",
+              "hit_count": 6,
+              "referenced_count": 1,
               "log_id": 11
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 6672,
+          "elapsed_ms": 2041,
           "manifest": {
-            "fact_ids": [],
-            "document_ids": [],
+            "fact_ids": [
+              3740
+            ],
+            "document_ids": [
+              3740
+            ],
             "policy_ids": [],
             "contact_preference_ids": [],
-            "blocks": [],
+            "blocks": [
+              "retrieval_memory"
+            ],
             "excluded": [
               {
                 "kind": "relationship_policy",
@@ -1057,20 +1107,20 @@
                 "reason": "task_knowledge_not_needed"
               }
             ],
-            "prompt_hash": "c61022b282794c3f39f76aa55333c3393c0f25cc578eba4936d4bc406a65e5ba"
+            "prompt_hash": "d7b207516875885a92f7520b68f56dec67acaefc0ac709d4545ea9187db2e49e"
           },
           "rag": {
             "log_id": 11,
-            "hit_count": 0,
-            "gate_decision": "skip",
-            "degraded_reason": "timeout",
+            "hit_count": 6,
+            "gate_decision": "inject",
+            "degraded_reason": null,
             "memory_intent_mode": "none"
           },
           "badge": {
-            "state": "degraded",
-            "label": "记忆检索降级",
-            "hit_count": 0,
-            "referenced_count": 0,
+            "state": "fact_hit",
+            "label": "已参考 1 条历史事实",
+            "hit_count": 6,
+            "referenced_count": 1,
             "log_id": 11
           },
           "context_snapshot": {
@@ -1125,7 +1175,12 @@
                 "content": "我准备上地铁了"
               }
             ],
-            "sent_evidence": []
+            "sent_evidence": [
+              {
+                "fact_id": 3740,
+                "content": "时间：2025-10-23 下午 对方提到：然后再买的同时把游戏性能给提好点 相关上下文：我: 我知道要办公"
+              }
+            ]
           }
         },
         {
@@ -1148,22 +1203,24 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 71,
-            "request_id": "3631575451d2"
+            "request_id": "9664dc7bef08"
           },
           "model": "deepseek-flash",
           "output": {
             "summary": "[PURE_CHAT]",
             "speeches": [],
-            "reply": "我翻了下你们最近的聊天记录，只有发红包、生日快乐、约出发上地铁这些内容，没提到一起玩过什么游戏，这段记忆里确实查不到。",
+            "reply": "我在目前的聊天记录里没看到你们一起玩过游戏的记录，只有生日快乐、发红包和约出门这些内容。你记得大概是聊游戏还是真的一起玩过？说个关键词我再帮你找。",
             "rag_badge": {
               "state": "degraded",
               "label": "记忆检索降级",
               "hit_count": 0,
               "referenced_count": 0,
               "log_id": 12
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 5358,
+          "elapsed_ms": 5740,
           "manifest": {
             "fact_ids": [],
             "document_ids": [],
@@ -1280,26 +1337,28 @@
             "status": "ambiguous_contact",
             "reason": "ambiguous_display_name_matches=2",
             "conversation_id": null,
-            "request_id": "d2898c7a557d"
+            "request_id": "5858c7c75467"
           },
           "model": "deepseek-flash",
           "output": {
-            "summary": "轻量邀约打游戏，给台阶不施压",
+            "summary": "轻松随口问，给时段也留退路",
             "speeches": [
-              "我这会在打游戏，来吗",
-              "上线了叫我一声",
-              "有空一起玩两把"
+              "今晚有空打两把吗",
+              "要不要一起打会儿游戏",
+              "想打游戏了 你来不"
             ],
-            "reply": "约打游戏算低压力的，别问得太正式，给个能拒绝的余地就行。先说你在玩，问她来不来，比直接约时间更好接。",
+            "reply": "约游戏是低压力邀约，适合保持舒服的距离。别问得太正式，给个具体时段加个退出选项就行，对方拒绝也不尴尬。",
             "rag_badge": {
               "state": "degraded",
               "label": "记忆检索降级",
               "hit_count": 0,
               "referenced_count": 0,
               "log_id": null
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 3965,
+          "elapsed_ms": 3103,
           "manifest": {
             "fact_ids": [],
             "document_ids": [],
@@ -1354,28 +1413,28 @@
             "status": "invalid_conversation",
             "reason": "conversation_not_owned_or_missing",
             "conversation_id": 999999,
-            "request_id": "8e5ae8b20877"
+            "request_id": "01f4416d7888"
           },
           "model": "deepseek-flash",
           "output": {
-            "summary": "信息不足，先要原话；给几句安全通用回复。",
+            "summary": "信息不足，用中性短句顺着对方话头接。",
             "speeches": [
-              "嗯嗯，我在听",
+              "嗯，然后呢",
               "刚看到，你说",
-              "行，我这边没问题",
-              "好呀，听你的",
-              "回头聊，先忙会儿"
+              "怎么了，说说看"
             ],
-            "reply": "你把她的原话发我，我才能给准的。不然只能给几句兜底的。",
+            "reply": "没看到你俩最近聊的内容，先给你几条通用的，你挑着用。",
             "rag_badge": {
               "state": "degraded",
               "label": "记忆检索降级",
               "hit_count": 0,
               "referenced_count": 0,
               "log_id": null
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 3080,
+          "elapsed_ms": 2967,
           "manifest": {
             "fact_ids": [],
             "document_ids": [],
@@ -1430,39 +1489,31 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 91,
-            "request_id": "6d8bcab6c88f"
+            "request_id": "435b8b433cc5"
           },
           "model": "deepseek-flash",
           "output": {
-            "summary": "不催，补一句下课再玩就行",
+            "summary": "轻量收尾，不催她，留个随时能接的台阶",
             "speeches": [
-              "不急，下课再玩也行",
-              "忙就先忙，等你",
-              "有空了叫我一声"
+              "忙的话你先忙，我等你",
+              "开黑随时喊我一声",
+              "不打也行，就是有点想你"
             ],
-            "reply": "她要是还没回，就别追第二条消息了。可以补一句轻松的下课再说，别催，也别问钱的事。",
+            "reply": "她已经知道你在等她玩了，别再追问。丢一句轻的给她，忙就让她忙，不催。",
             "rag_badge": {
-              "state": "fact_hit",
-              "label": "已参考 4 条历史事实",
-              "hit_count": 6,
-              "referenced_count": 4,
+              "state": "relationship_policy",
+              "label": "已参考关系画像",
+              "hit_count": 0,
+              "referenced_count": 0,
               "log_id": 13
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 4270,
+          "elapsed_ms": 4161,
           "manifest": {
-            "fact_ids": [
-              587,
-              551,
-              515,
-              626
-            ],
-            "document_ids": [
-              587,
-              551,
-              515,
-              626
-            ],
+            "fact_ids": [],
+            "document_ids": [],
             "policy_ids": [
               30
             ],
@@ -1478,24 +1529,23 @@
               "relationship_policy",
               "contact_preferences",
               "style_constraints",
-              "retrieval_memory",
               "relationship_signal"
             ],
             "excluded": [],
-            "prompt_hash": "9235a16a5e4df8346a8f9ac1e056cdde6ac41783b6ca2b1c7333804a898462f9"
+            "prompt_hash": "cc5fb9a6f05b27e832e1b2da5b3a7454437a13a62b072a01a235406de8f79000"
           },
           "rag": {
             "log_id": 13,
-            "hit_count": 6,
-            "gate_decision": "inject",
-            "degraded_reason": null,
+            "hit_count": 0,
+            "gate_decision": "skip",
+            "degraded_reason": "timeout",
             "memory_intent_mode": "none"
           },
           "badge": {
-            "state": "fact_hit",
-            "label": "已参考 4 条历史事实",
-            "hit_count": 6,
-            "referenced_count": 4,
+            "state": "relationship_policy",
+            "label": "已参考关系画像",
+            "hit_count": 0,
+            "referenced_count": 0,
             "log_id": 13
           },
           "context_snapshot": {
@@ -1550,24 +1600,7 @@
                 "content": "￥49.52 已被接收 微信转账"
               }
             ],
-            "sent_evidence": [
-              {
-                "fact_id": 587,
-                "content": "对方认为我给她提意见本身是应该的、可以接受的，只是不接受命令式的态度。"
-              },
-              {
-                "fact_id": 551,
-                "content": "对方介意用户明明在看手机却不回她的消息，会因此很不开心。"
-              },
-              {
-                "fact_id": 515,
-                "content": "对方明确表示她不喜欢被用户拿来和别人作比较，认为这种比较行为是她讨厌的。"
-              },
-              {
-                "fact_id": 626,
-                "content": "对方比较在意不给别人添麻烦，尤其不想麻烦孙梨姐，认为不必再给孙梨姐看项目图片。"
-              }
-            ]
+            "sent_evidence": []
           }
         },
         {
@@ -1592,35 +1625,27 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 91,
-            "request_id": "ce456adbd963"
+            "request_id": "d89b2027b85f"
           },
           "model": "deepseek-flash",
           "output": {
             "summary": "[PURE_CHAT]",
             "speeches": [],
-            "reply": "别急，她回你平均也就五六分钟，现在多半在上课或者忙。你那条“宝宝在忙嘛”发出去还没多久，先别追着问第二遍，越问越显得没底。等半小时没动静就换个轻松的话题再提一次。",
+            "reply": "不像。她前面还回你“没办法呀”，也一直在接话。慢回大概率是忙或在上课，不是不理你。此刻别连发追问，等她自己接话，或者再补一句轻松的就行。",
             "rag_badge": {
-              "state": "fact_hit",
-              "label": "已参考 4 条历史事实",
-              "hit_count": 6,
-              "referenced_count": 4,
+              "state": "relationship_policy",
+              "label": "已参考关系画像",
+              "hit_count": 0,
+              "referenced_count": 0,
               "log_id": 14
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 4165,
+          "elapsed_ms": 6599,
           "manifest": {
-            "fact_ids": [
-              446,
-              460,
-              556,
-              476
-            ],
-            "document_ids": [
-              446,
-              460,
-              556,
-              476
-            ],
+            "fact_ids": [],
+            "document_ids": [],
             "policy_ids": [
               30
             ],
@@ -1635,7 +1660,6 @@
             "blocks": [
               "relationship_policy",
               "contact_preferences",
-              "retrieval_memory",
               "relationship_signal"
             ],
             "excluded": [
@@ -1644,20 +1668,20 @@
                 "reason": "task_knowledge_not_needed"
               }
             ],
-            "prompt_hash": "20baf09564fcd399ebbff37b7a2366599640e6dce2b9fe3021af994daeafdd6c"
+            "prompt_hash": "b414e40c961b240dd3bf8d7650c947dd77342e7e926641dffb2ef549ffbf19b5"
           },
           "rag": {
             "log_id": 14,
-            "hit_count": 6,
-            "gate_decision": "inject",
-            "degraded_reason": null,
+            "hit_count": 0,
+            "gate_decision": "skip",
+            "degraded_reason": "timeout",
             "memory_intent_mode": "none"
           },
           "badge": {
-            "state": "fact_hit",
-            "label": "已参考 4 条历史事实",
-            "hit_count": 6,
-            "referenced_count": 4,
+            "state": "relationship_policy",
+            "label": "已参考关系画像",
+            "hit_count": 0,
+            "referenced_count": 0,
             "log_id": 14
           },
           "context_snapshot": {
@@ -1712,24 +1736,7 @@
                 "content": "￥49.52 已被接收 微信转账"
               }
             ],
-            "sent_evidence": [
-              {
-                "fact_id": 446,
-                "content": "对方希望我多对她表达想念，抱怨我一天不见面也不说想她。"
-              },
-              {
-                "fact_id": 460,
-                "content": "我的妈妈一年到头很少主动联系我"
-              },
-              {
-                "fact_id": 556,
-                "content": "对方不想我对她降低期待。"
-              },
-              {
-                "fact_id": 476,
-                "content": "我的表妹不知道我有女朋友。"
-              }
-            ]
+            "sent_evidence": []
           }
         },
         {
@@ -1755,39 +1762,31 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 91,
-            "request_id": "7400328f7abc"
+            "request_id": "36b1611f1f0f"
           },
           "model": "deepseek-flash",
           "output": {
-            "summary": "轻放一句收尾，别追问，等对方接话",
+            "summary": "轻补一句给台阶，不催不施压",
             "speeches": [
-              "宝宝你先忙，不急",
-              "忙完喊我，我等你",
-              "那我先自己玩会儿"
+              "忙完喊我就行",
+              "不急，你先忙你的",
+              "有空跟我说一声"
             ],
-            "reply": "别追着问，轻放一句就行，别连发。她要是回了你再接，不回就先放着，不尴尬。",
+            "reply": "她还没回的话别追着问，补一句给个台阶就行，别催。",
             "rag_badge": {
-              "state": "fact_hit",
-              "label": "已参考 4 条历史事实",
-              "hit_count": 6,
-              "referenced_count": 4,
+              "state": "relationship_policy",
+              "label": "已参考关系画像",
+              "hit_count": 0,
+              "referenced_count": 0,
               "log_id": 15
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 4150,
+          "elapsed_ms": 4196,
           "manifest": {
-            "fact_ids": [
-              587,
-              551,
-              515,
-              626
-            ],
-            "document_ids": [
-              587,
-              551,
-              515,
-              626
-            ],
+            "fact_ids": [],
+            "document_ids": [],
             "policy_ids": [
               30
             ],
@@ -1803,24 +1802,23 @@
               "relationship_policy",
               "contact_preferences",
               "style_constraints",
-              "retrieval_memory",
               "relationship_signal"
             ],
             "excluded": [],
-            "prompt_hash": "9235a16a5e4df8346a8f9ac1e056cdde6ac41783b6ca2b1c7333804a898462f9"
+            "prompt_hash": "cc5fb9a6f05b27e832e1b2da5b3a7454437a13a62b072a01a235406de8f79000"
           },
           "rag": {
             "log_id": 15,
-            "hit_count": 6,
-            "gate_decision": "inject",
-            "degraded_reason": null,
+            "hit_count": 0,
+            "gate_decision": "skip",
+            "degraded_reason": "timeout",
             "memory_intent_mode": "none"
           },
           "badge": {
-            "state": "fact_hit",
-            "label": "已参考 4 条历史事实",
-            "hit_count": 6,
-            "referenced_count": 4,
+            "state": "relationship_policy",
+            "label": "已参考关系画像",
+            "hit_count": 0,
+            "referenced_count": 0,
             "log_id": 15
           },
           "context_snapshot": {
@@ -1875,24 +1873,7 @@
                 "content": "￥49.52 已被接收 微信转账"
               }
             ],
-            "sent_evidence": [
-              {
-                "fact_id": 587,
-                "content": "对方认为我给她提意见本身是应该的、可以接受的，只是不接受命令式的态度。"
-              },
-              {
-                "fact_id": 551,
-                "content": "对方介意用户明明在看手机却不回她的消息，会因此很不开心。"
-              },
-              {
-                "fact_id": 515,
-                "content": "对方明确表示她不喜欢被用户拿来和别人作比较，认为这种比较行为是她讨厌的。"
-              },
-              {
-                "fact_id": 626,
-                "content": "对方比较在意不给别人添麻烦，尤其不想麻烦孙梨姐，认为不必再给孙梨姐看项目图片。"
-              }
-            ]
+            "sent_evidence": []
           }
         },
         {
@@ -1915,22 +1896,24 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 91,
-            "request_id": "150fb2a7274e"
+            "request_id": "3841a2df7c7d"
           },
           "model": "deepseek-flash",
           "output": {
             "summary": "[PURE_CHAT]",
             "speeches": [],
-            "reply": "最近窗口里只有转账和红包，没有实际聊天可接。最自然的切入是你们约定今晚一起弄的项目文档方案，问一句框架有没有跑出来、要不要现在对一下；或者顺嘴提一句刚才那笔转账/红包的事。",
+            "reply": "窗口里其实没有真人聊天记录，全是转账红包，所以别硬接。可以从最近的事起头：问对方那份项目文档框架跑出来没、第一版看了感觉怎么样。或者直接一句“今天忙啥呢”，别堆表情。",
             "rag_badge": {
               "state": "fact_hit",
               "label": "已参考 4 条历史事实",
               "hit_count": 6,
               "referenced_count": 4,
               "log_id": 16
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 3603,
+          "elapsed_ms": 2745,
           "manifest": {
             "fact_ids": [
               496,
@@ -2049,22 +2032,24 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 71,
-            "request_id": "caef14552c13"
+            "request_id": "7273ae2f6715"
           },
           "model": "deepseek-flash",
           "output": {
             "summary": "[PURE_CHAT]",
             "speeches": [],
-            "reply": "我翻了下记录，没查到你们「一起玩过」哪款游戏的具体记录。只有各自的兴趣：你玩过55h塞尔达、提过送对方游戏当生日礼物，对方说过想玩的游戏太吃操作就没啥想玩的。",
+            "reply": "没查到你们一起玩过哪款游戏的具体记录。只翻到些各自兴趣：你提过塞尔达（玩过55h）、原神，还说过想挑个打折游戏送对方当生日礼物；对方说过想玩的游戏太吃操作所以没想玩的。要确认共同游戏，还得问本人。",
             "rag_badge": {
               "state": "fact_hit",
               "label": "已参考 4 条历史事实",
               "hit_count": 6,
               "referenced_count": 4,
               "log_id": 17
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 2865,
+          "elapsed_ms": 2045,
           "manifest": {
             "fact_ids": [
               168,
@@ -2207,22 +2192,24 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 71,
-            "request_id": "0ce4d2fb3356"
+            "request_id": "9865747291fa"
           },
           "model": "deepseek-flash",
           "output": {
             "summary": "[PURE_CHAT]",
             "speeches": [],
-            "reply": "没查到。历史聊天里没有她提过家庭住址或位置的内容，检索到的几条都跟游戏、做饭相关，和“她家在哪”无关。",
+            "reply": "没查到。记忆里没有她说过家庭住址或位置的记录，只有游戏、做饭那些闲聊。要确认的话，直接问她到哪站下最快。",
             "rag_badge": {
               "state": "fact_hit",
               "label": "已参考 4 条历史事实",
               "hit_count": 6,
               "referenced_count": 4,
               "log_id": 18
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 3300,
+          "elapsed_ms": 1420,
           "manifest": {
             "fact_ids": [
               158,
@@ -2365,22 +2352,24 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 71,
-            "request_id": "ed919b75b294"
+            "request_id": "0186e62c8fbf"
           },
           "model": "deepseek-flash",
           "output": {
             "summary": "[PURE_CHAT]",
             "speeches": [],
-            "reply": "我这边没查到她的电话号码。聊天记录里没有出现过，你可以翻一下她的微信资料或之前的通话记录。",
+            "reply": "我这边没有她的电话号码记录，聊天记忆里也没查到。你可以翻一下手机通讯录、微信资料页或者之前的通话记录。",
             "rag_badge": {
               "state": "fact_hit",
               "label": "已参考 4 条历史事实",
               "hit_count": 6,
               "referenced_count": 4,
               "log_id": 19
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 2238,
+          "elapsed_ms": 1640,
           "manifest": {
             "fact_ids": [
               166,
@@ -2525,22 +2514,24 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 91,
-            "request_id": "87ecb9ecd414"
+            "request_id": "c955dac7929e"
           },
           "model": "deepseek-flash",
           "output": {
             "summary": "[PURE_CHAT]",
             "speeches": [],
-            "reply": "不讨厌。她刚说“没办法呀”，你俩还来回转了49.52，关系正常得很。别自己吓自己，等她忙完再看要不要一起玩就行。",
+            "reply": "不像讨厌你。她之前老主动找你，这回也没翻脸，只是可能真在忙没顾上回。你自己正缺钱心慌，容易往坏处想。别追着问\"是不是烦我\"，等她空了她自己会接话。",
             "rag_badge": {
               "state": "fact_hit",
               "label": "已参考 4 条历史事实",
               "hit_count": 6,
               "referenced_count": 4,
               "log_id": 20
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 2883,
+          "elapsed_ms": 2043,
           "manifest": {
             "fact_ids": [
               486,
@@ -2687,26 +2678,28 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 71,
-            "request_id": "cca47ae6f399"
+            "request_id": "8ad5071807e7"
           },
           "model": "deepseek-flash",
           "output": {
-            "summary": "先接住碰头，别急着定性，见面后自然推进",
+            "summary": "别急着定义，先顺今天的见面自然相处",
             "speeches": [
-              "是我在发，姐手机没电了",
-              "好，我也出发了，你到哪站",
-              "到了跟我说，我在出口等你"
+              "好，我也差不多出发了",
+              "到了跟我说一声",
+              "路上慢点，不着急"
             ],
-            "reply": "她一直叫你学长，还把手机的事跟\"姐\"弄混了，说明现在就是熟人学长这一层。别急着定名，先把这次碰头接住，见面自然相处再谈别的。",
+            "reply": "现在更像熟人往上的阶段，对方一直叫你学长，说明还隔着一层。别急着定关系或表白，先把今天见面这一步走顺，让她觉得跟你待着舒服。推进靠的是多见几次、自然的互动，不是一句话确认。",
             "rag_badge": {
               "state": "fact_hit",
               "label": "已参考 4 条历史事实",
               "hit_count": 6,
               "referenced_count": 4,
               "log_id": 21
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 6661,
+          "elapsed_ms": 5007,
           "manifest": {
             "fact_ids": [
               148,
@@ -2848,25 +2841,28 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 91,
-            "request_id": "7f493dd8e2ba"
+            "request_id": "5de74a105f66"
           },
           "model": "deepseek-flash",
           "output": {
-            "summary": "玩笑只黑事不黑人，她一沉脸立刻收口用夸的圆回来。",
+            "summary": "玩笑只自嘲，不碰钱课情绪，她回短就收。",
             "speeches": [
-              "我嘴欠，罚我自己笑一个",
-              "你行你上，我认输，笑死"
+              "行你先忙，等你忙完带我飞",
+              "我菜是菜了点，但背锅一流",
+              "不逗你了，我是真的菜"
             ],
-            "reply": "原则就一条：拿事开玩笑，别拿人。她的记账、花钱、能力、长相、还有和别人比——一个都别碰。她语气一变就立刻收，别硬顶，夸一句圆回来。她不怕玩笑，怕的是被当真贬低。",
+            "reply": "开玩笑不越界就一条：梗只砸自己身上，别碰她的钱、课、长相和情绪。她回短了或者只回个表情，就当玩笑结束，别追着解释或加码。想活跃气氛就自嘲或者拿游戏里的事调侃，不用拿她当靶子。",
             "rag_badge": {
               "state": "fact_hit",
               "label": "已参考 4 条历史事实",
               "hit_count": 6,
               "referenced_count": 4,
               "log_id": 22
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 7341,
+          "elapsed_ms": 4134,
           "manifest": {
             "fact_ids": [
               376,
@@ -3014,27 +3010,28 @@
             "status": "missing_scope",
             "reason": "no_account_scope",
             "conversation_id": null,
-            "request_id": "351ba1d96b03"
+            "request_id": "6cc1cd15b1ef"
           },
           "model": "deepseek-flash",
           "output": {
-            "summary": "信息不足，先给通用安全短句，需补对方原话",
+            "summary": "信息不足，先给不冒进的通用接话",
             "speeches": [
-              "嗯，然后呢",
-              "哈哈，这样啊",
-              "行，听你的",
-              "好，我知道了"
+              "嗯，刚看到，怎么了",
+              "在的，你说",
+              "好，我想想再回你"
             ],
-            "reply": "你没贴她最后发的那条，我不好精准接。把她的原话发我，我给你贴合的。先给你几条通用安全的短回复，按她实际内容挑一个改。",
+            "reply": "你没贴她发了什么，我只能给保守通用款。把她的原话发我，能给更贴的。",
             "rag_badge": {
               "state": "degraded",
               "label": "记忆检索降级",
               "hit_count": 0,
               "referenced_count": 0,
               "log_id": null
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 3744,
+          "elapsed_ms": 3076,
           "manifest": {
             "fact_ids": [],
             "document_ids": [],
@@ -3089,27 +3086,28 @@
             "status": "missing_scope",
             "reason": "no_contact_scope",
             "conversation_id": null,
-            "request_id": "93eacc550f4c"
+            "request_id": "b6bbe740e2f8"
           },
           "model": "deepseek-flash",
           "output": {
-            "summary": "信息不足，先用中性短句兜底，别越界",
+            "summary": "信息不足，先补她最后一句再定话术",
             "speeches": [
-              "嗯，然后呢",
-              "哈哈这样啊",
-              "看情况吧，再说",
-              "行，我知道啦"
+              "嗯，我在",
+              "刚看到，怎么了",
+              "行，你说"
             ],
-            "reply": "你没发她说了什么，我只能给几句通用兜底。把她的原话贴过来，我能回得更准。",
+            "reply": "你还没告诉我她最后发了什么，光说“怎么回她”我没法给准话。把她的原话贴过来，我再帮你配回复。",
             "rag_badge": {
               "state": "degraded",
               "label": "记忆检索降级",
               "hit_count": 0,
               "referenced_count": 0,
               "log_id": null
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 3927,
+          "elapsed_ms": 3082,
           "manifest": {
             "fact_ids": [],
             "document_ids": [],
@@ -3164,26 +3162,28 @@
             "status": "missing_scope",
             "reason": "no_matching_contact",
             "conversation_id": null,
-            "request_id": "95d60fb45d47"
+            "request_id": "f467be0d9328"
           },
           "model": "deepseek-flash",
           "output": {
-            "summary": "轻邀约，先问时间再提见面，不施压",
+            "summary": "轻松问有空没，给退路不逼定。",
             "speeches": [
-              "最近忙不忙",
-              "这周有空出来走走吗",
-              "想请你吃个饭，方便吗"
+              "最近有空出来吗？",
+              "你方便时见个面？",
+              "不用勉强，有空再说。"
             ],
-            "reply": "别一上来就定死时间地点。先问她最近忙不忙，把选择权给她，约不成也不尴尬。",
+            "reply": "低压力问一句，给她退路，别追问。先问有没有空，不急着定死。",
             "rag_badge": {
               "state": "degraded",
               "label": "记忆检索降级",
               "hit_count": 0,
               "referenced_count": 0,
               "log_id": null
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 2851,
+          "elapsed_ms": 4203,
           "manifest": {
             "fact_ids": [],
             "document_ids": [],
@@ -3219,7 +3219,7 @@
     },
     {
       "replay_version": "g1-baseline-replay-v1",
-      "ran_at": 1790609131,
+      "ran_at": 1790685647,
       "live": true,
       "chains": [
         "legacy"
@@ -3247,22 +3247,24 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 91,
-            "request_id": "ab08f894e4e4"
+            "request_id": "198d51d6ff88"
           },
           "model": "deepseek-flash",
           "output": {
             "summary": "[PURE_CHAT]",
             "speeches": [],
-            "reply": "记忆里没查到明确的“我们一起玩过”的游戏记录。能翻到的只有：你提过路易吉鬼屋没打完，对方上课期间不敢玩Switch，还有对方自己长期在玩《杀戮尖塔2》（爱用机器人角色）。近期你还发过“杀戮尖塔带我一个”。",
+            "reply": "记忆里没查到你们一起玩过的游戏记录。只看到你提过路易吉鬼屋还没打完，对方长期玩《杀戮尖塔2》、习惯用机器人喊「电流相生」。最近你倒是主动喊过杀戮尖塔带上你。",
             "rag_badge": {
               "state": "fact_hit",
               "label": "已参考 4 条历史事实",
               "hit_count": 6,
               "referenced_count": 4,
               "log_id": 4
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 3162,
+          "elapsed_ms": 2163,
           "manifest": {
             "fact_ids": [
               376,
@@ -3411,22 +3413,24 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 91,
-            "request_id": "f87a348746ce"
+            "request_id": "659968a31388"
           },
           "model": "deepseek-flash",
           "output": {
             "summary": "[PURE_CHAT]",
             "speeches": [],
-            "reply": "别绕弯子，直接说想跟她一起玩《杀戮尖塔2》。她天天打这个，你说\"你打的时候喊我一声，我帮你记牌也行\"，比问\"有空吗\"好使。",
+            "reply": "约她最近在打的《杀戮尖塔2》最自然，说你也想入坑让她带；或者提Switch上她感兴趣的路易吉鬼屋。记得避开她上课时间。",
             "rag_badge": {
               "state": "fact_hit",
               "label": "已参考 4 条历史事实",
               "hit_count": 6,
               "referenced_count": 4,
               "log_id": 5
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 4210,
+          "elapsed_ms": 3436,
           "manifest": {
             "fact_ids": [
               376,
@@ -3575,22 +3579,24 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 91,
-            "request_id": "3521a1b4be89"
+            "request_id": "0451b665356e"
           },
           "model": "deepseek-flash",
           "output": {
             "summary": "[PURE_CHAT]",
             "speeches": [],
-            "reply": "有的，直接发这两条就行：\n1「今晚杀戮尖塔带我一个？」\n2「你啥时候玩，喊我一声，我开个号」\n别问忙不忙了，她转账回得挺快，说明不烦你，就是等你说正事。",
+            "reply": "她刚只回了转账、没接你“在忙嘛”，别再问忙不忙。直接抛一句轻邀请：“杀戮尖塔带我一把？”或“今晚联机Switch，你定时间”。就发一条，别连发。",
             "rag_badge": {
               "state": "degraded",
               "label": "记忆检索降级",
               "hit_count": 0,
               "referenced_count": 0,
               "log_id": 6
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 6965,
+          "elapsed_ms": 4576,
           "manifest": {
             "fact_ids": [],
             "document_ids": [],
@@ -3710,26 +3716,24 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 71,
-            "request_id": "ab29cdb86eea"
+            "request_id": "19527741cb28"
           },
           "model": "deepseek-flash",
           "output": {
-            "summary": "等碰面或她到了再顺势约游戏，别在她赶路时单发邀约",
-            "speeches": [
-              "到了先打两把？",
-              "一会吃完饭开黑不",
-              "等你有空带我打两局呗"
-            ],
-            "reply": "可以约，但别现在单独甩一句\"打游戏吗\"——她正在上地铁、你们马上要碰面，等见面了顺口提最自然；如果是想线上开黑，就等她说到了之后再问。",
+            "summary": "[PURE_CHAT]",
+            "speeches": [],
+            "reply": "现在她还在路上，别急着定；可以顺一句\"到了晚上有时间开两把不\"，先摸她今晚有没有空，答应了再约具体时间。",
             "rag_badge": {
               "state": "degraded",
               "label": "记忆检索降级",
               "hit_count": 0,
               "referenced_count": 0,
               "log_id": 7
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 8265,
+          "elapsed_ms": 5238,
           "manifest": {
             "fact_ids": [],
             "document_ids": [],
@@ -3846,26 +3850,28 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 71,
-            "request_id": "0fb58cba17ac"
+            "request_id": "9b531c617216"
           },
           "model": "deepseek-flash",
           "output": {
-            "summary": "简短确认周末时间地点，不主动加戏",
+            "summary": "先接出发，再轻问周末安排",
             "speeches": [
-              "周末可以，你定时间",
-              "行，几点在哪见",
-              "可以，到时候我过去"
+              "行，我们也出发了",
+              "周末那事见面定吧",
+              "周末你几点方便？"
             ],
-            "reply": "顺着回一句确认就行，把时间地点交给她定，别多说别的，保持现在这个分寸。",
+            "reply": "她刚说在等你们出发，先接住这句，再顺口把周末的安排问一句就行，别单独开一段。",
             "rag_badge": {
               "state": "relationship_policy",
               "label": "已参考关系画像",
-              "hit_count": 0,
+              "hit_count": 2,
               "referenced_count": 0,
               "log_id": 8
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 7923,
+          "elapsed_ms": 2736,
           "manifest": {
             "fact_ids": [],
             "document_ids": [],
@@ -3886,15 +3892,15 @@
           },
           "rag": {
             "log_id": 8,
-            "hit_count": 0,
+            "hit_count": 2,
             "gate_decision": "skip",
-            "degraded_reason": "timeout",
+            "degraded_reason": null,
             "memory_intent_mode": "none"
           },
           "badge": {
             "state": "relationship_policy",
             "label": "已参考关系画像",
-            "hit_count": 0,
+            "hit_count": 2,
             "referenced_count": 0,
             "log_id": 8
           },
@@ -3971,22 +3977,24 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 71,
-            "request_id": "5f1796747f53"
+            "request_id": "6c372012791c"
           },
           "model": "deepseek-flash",
           "output": {
             "summary": "[PURE_CHAT]",
             "speeches": [],
-            "reply": "从现在的对话里看不出她喜欢什么，只有生日、发红包、地铁这些信息。想摸喜好，最快的办法是翻她朋友圈，或问她最近在追什么剧、听什么歌、吃什么，比直接问“你喜欢什么”自然。",
+            "reply": "你们最近的聊天里没出现她明确喜欢什么的线索，只有生日、红包和要出发这些事。真想送东西或找话题，直接问她本人最省事，或者从她刚提到的生日安排里顺口打听。",
             "rag_badge": {
-              "state": "not_referenced",
-              "label": "未参考命中记录",
-              "hit_count": 6,
+              "state": "degraded",
+              "label": "记忆检索降级",
+              "hit_count": 0,
               "referenced_count": 0,
               "log_id": 9
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 3419,
+          "elapsed_ms": 4078,
           "manifest": {
             "fact_ids": [],
             "document_ids": [],
@@ -4013,15 +4021,15 @@
           },
           "rag": {
             "log_id": 9,
-            "hit_count": 6,
+            "hit_count": 0,
             "gate_decision": "skip",
-            "degraded_reason": null,
+            "degraded_reason": "timeout",
             "memory_intent_mode": "none"
           },
           "badge": {
-            "state": "not_referenced",
-            "label": "未参考命中记录",
-            "hit_count": 6,
+            "state": "degraded",
+            "label": "记忆检索降级",
+            "hit_count": 0,
             "referenced_count": 0,
             "log_id": 9
           },
@@ -4098,22 +4106,24 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 71,
-            "request_id": "318756366297"
+            "request_id": "abaaadce3199"
           },
           "model": "deepseek-flash",
           "output": {
             "summary": "[PURE_CHAT]",
             "speeches": [],
-            "reply": "她最新两条是\"可以出发了\"\"我准备上地铁了\"，没提游戏。先去接这句：回\"好，我们这就出发，你到了说一声\"，游戏的事等碰头再聊，别特意绕回去。",
+            "reply": "她刚说上地铁了，先接这句再聊游戏。可以回：「好，你到了说一声。晚上想玩啥，开黑吗？」重点是先回应出行、再自然带出游戏，别单刀直入。",
             "rag_badge": {
-              "state": "not_referenced",
-              "label": "未参考命中记录",
-              "hit_count": 2,
+              "state": "degraded",
+              "label": "记忆检索降级",
+              "hit_count": 0,
               "referenced_count": 0,
               "log_id": 10
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 4276,
+          "elapsed_ms": 4355,
           "manifest": {
             "fact_ids": [],
             "document_ids": [],
@@ -4140,15 +4150,15 @@
           },
           "rag": {
             "log_id": 10,
-            "hit_count": 2,
+            "hit_count": 0,
             "gate_decision": "skip",
-            "degraded_reason": null,
+            "degraded_reason": "timeout",
             "memory_intent_mode": "none"
           },
           "badge": {
-            "state": "not_referenced",
-            "label": "未参考命中记录",
-            "hit_count": 2,
+            "state": "degraded",
+            "label": "记忆检索降级",
+            "hit_count": 0,
             "referenced_count": 0,
             "log_id": 10
           },
@@ -4225,22 +4235,24 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 71,
-            "request_id": "da3ff0a72c41"
+            "request_id": "981db4529552"
           },
           "model": "deepseek-flash",
           "output": {
             "summary": "[PURE_CHAT]",
             "speeches": [],
-            "reply": "你好呀，我在。需要我帮你捋一捋接下来怎么回对方吗？",
+            "reply": "你好呀，我在。看到对方最后说“姐，你们现在可以出发了，我准备上地铁了”，需要我帮你想怎么接这句吗？还是先聊点别的？",
             "rag_badge": {
               "state": "degraded",
               "label": "记忆检索降级",
               "hit_count": 0,
               "referenced_count": 0,
               "log_id": 11
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 4362,
+          "elapsed_ms": 5019,
           "manifest": {
             "fact_ids": [],
             "document_ids": [],
@@ -4352,22 +4364,24 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 71,
-            "request_id": "930c04652340"
+            "request_id": "97088c425731"
           },
           "model": "deepseek-flash",
           "output": {
             "summary": "[PURE_CHAT]",
             "speeches": [],
-            "reply": "我这边没有你俩一起玩过游戏的记录，最近聊天里也没提到过。你可以翻翻聊天记录搜关键词，或者告诉我大概时间，我帮你回忆。",
+            "reply": "我这边没查到你们玩过游戏的记录，之前的聊天内容大部分是乱码，看不到具体聊了什么。你还记得大概是什么时候说的吗？或者提一下是哪个平台（王者、双人成行之类），我帮你对一下。",
             "rag_badge": {
               "state": "degraded",
               "label": "记忆检索降级",
               "hit_count": 0,
               "referenced_count": 0,
               "log_id": 12
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 7658,
+          "elapsed_ms": 3449,
           "manifest": {
             "fact_ids": [],
             "document_ids": [],
@@ -4479,22 +4493,24 @@
             "status": "ambiguous_contact",
             "reason": "ambiguous_display_name_matches=2",
             "conversation_id": null,
-            "request_id": "7ae1e2bbc38c"
+            "request_id": "18a16cb582f2"
           },
           "model": "deepseek-flash",
           "output": {
             "summary": "[PURE_CHAT]",
             "speeches": [],
-            "reply": "直接问就行，别绕。用你们常玩的那款游戏开口，比如「今晚开一把？」比「在吗」好接，也给了她拒绝的余地。",
+            "reply": "约游戏别铺垫太多，直接问一句就行，比如「今晚有空一起打吗」。挑她平时玩的游戏，给个具体时间点比「有空吗」好约。她要是说忙，就顺着说下次，别追问。",
             "rag_badge": {
               "state": "degraded",
               "label": "记忆检索降级",
               "hit_count": 0,
               "referenced_count": 0,
               "log_id": null
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 5958,
+          "elapsed_ms": 2313,
           "manifest": {
             "fact_ids": [],
             "document_ids": [],
@@ -4547,26 +4563,30 @@
             "status": "invalid_conversation",
             "reason": "conversation_not_owned_or_missing",
             "conversation_id": 999999,
-            "request_id": "cba9adc4cbfa"
+            "request_id": "a8916754b9ca"
           },
           "model": "deepseek-flash",
           "output": {
-            "summary": "信息不足，先用不越界的轻接话。",
+            "summary": "信息不足，先给万能短句，请补对方原话",
             "speeches": [
-              "刚看到，咋啦",
-              "嗯嗯，你接着说",
-              "在忙啥呢"
+              "刚看到，怎么啦",
+              "嗯嗯，你说",
+              "在忙，等下细聊",
+              "好，我知道了",
+              "然后呢"
             ],
-            "reply": "你没把她发的消息贴出来，我不好判断她想聊什么。先发我那句，我给你配。",
+            "reply": "你没贴她发的内容，我看不到上下文，只能给几条保底话术。你把原话发我，我按情况改。",
             "rag_badge": {
               "state": "degraded",
               "label": "记忆检索降级",
               "hit_count": 0,
               "referenced_count": 0,
               "log_id": null
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 7606,
+          "elapsed_ms": 2459,
           "manifest": {
             "fact_ids": [],
             "document_ids": [],
@@ -4621,39 +4641,31 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 91,
-            "request_id": "51568a85ec0d"
+            "request_id": "d97fe6357918"
           },
           "model": "deepseek-flash",
           "output": {
-            "summary": "别追游戏，轻问一句她在忙什么",
+            "summary": "别催游戏，给个软台阶让她自己接话",
             "speeches": [
-              "宝宝忙完没",
-              "不玩也行，聊两句",
-              "忙的话晚点再说"
+              "你先忙，我不急",
+              "下课喊我一声",
+              "那我先自己开一把"
             ],
-            "reply": "她只回了转账、没接你游戏那句，别追着问，轻轻问一句她在干嘛就行。",
+            "reply": null,
             "rag_badge": {
-              "state": "fact_hit",
-              "label": "已参考 4 条历史事实",
-              "hit_count": 6,
-              "referenced_count": 4,
+              "state": "relationship_policy",
+              "label": "已参考关系画像",
+              "hit_count": 0,
+              "referenced_count": 0,
               "log_id": 13
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 6256,
+          "elapsed_ms": 4511,
           "manifest": {
-            "fact_ids": [
-              587,
-              551,
-              515,
-              626
-            ],
-            "document_ids": [
-              587,
-              551,
-              515,
-              626
-            ],
+            "fact_ids": [],
+            "document_ids": [],
             "policy_ids": [
               30
             ],
@@ -4669,24 +4681,23 @@
               "relationship_policy",
               "contact_preferences",
               "style_constraints",
-              "retrieval_memory",
               "relationship_signal"
             ],
             "excluded": [],
-            "prompt_hash": "3929462024ad79b5955772497ab75d3b7af853e8fe9bac3498e529319e8484e8"
+            "prompt_hash": "977cb7a97a9b6277912e2461d67336dc355da2cdd57f7b5e0710a913003ead36"
           },
           "rag": {
             "log_id": 13,
-            "hit_count": 6,
-            "gate_decision": "inject",
-            "degraded_reason": null,
+            "hit_count": 0,
+            "gate_decision": "skip",
+            "degraded_reason": "timeout",
             "memory_intent_mode": "none"
           },
           "badge": {
-            "state": "fact_hit",
-            "label": "已参考 4 条历史事实",
-            "hit_count": 6,
-            "referenced_count": 4,
+            "state": "relationship_policy",
+            "label": "已参考关系画像",
+            "hit_count": 0,
+            "referenced_count": 0,
             "log_id": 13
           },
           "context_snapshot": {
@@ -4741,24 +4752,7 @@
                 "content": "￥49.52 已被接收 微信转账"
               }
             ],
-            "sent_evidence": [
-              {
-                "fact_id": 587,
-                "content": "对方认为我给她提意见本身是应该的、可以接受的，只是不接受命令式的态度。"
-              },
-              {
-                "fact_id": 551,
-                "content": "对方介意用户明明在看手机却不回她的消息，会因此很不开心。"
-              },
-              {
-                "fact_id": 515,
-                "content": "对方明确表示她不喜欢被用户拿来和别人作比较，认为这种比较行为是她讨厌的。"
-              },
-              {
-                "fact_id": 626,
-                "content": "对方比较在意不给别人添麻烦，尤其不想麻烦孙梨姐，认为不必再给孙梨姐看项目图片。"
-              }
-            ]
+            "sent_evidence": []
           }
         },
         {
@@ -4779,22 +4773,24 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 91,
-            "request_id": "e9a777735ae8"
+            "request_id": "2742c53248ab"
           },
           "model": "deepseek-flash",
           "output": {
             "summary": "[PURE_CHAT]",
             "speeches": [],
-            "reply": "从记录看，她在正常收转账，不是故意晾你。你连发两条游戏邀请后又追转账消息，她只是没接游戏那句。别急着定性成\"不想理\"，等她下一句再判断，或者直接问一句游戏来不来。",
+            "reply": "就收转账没打字，不能直接说不理你。可能真在忙，也可能这笔钱她不想接话。先别再连发，等半天看看她回不回，别自己先慌。",
             "rag_badge": {
               "state": "fact_hit",
               "label": "已参考 4 条历史事实",
               "hit_count": 6,
               "referenced_count": 4,
               "log_id": 14
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 11927,
+          "elapsed_ms": 2731,
           "manifest": {
             "fact_ids": [
               446,
@@ -4940,39 +4936,31 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 91,
-            "request_id": "1cafb9fbc2e2"
+            "request_id": "c889f70f1f56"
           },
           "model": "deepseek-flash",
           "output": {
-            "summary": "不催不追，给台阶，留一句随时能接的话。",
+            "summary": "轻推一句，不施压不追邀约",
             "speeches": [
-              "你先忙，我挂着",
-              "忙完喊我，不急",
-              "不玩也行，陪你说会话"
+              "忙就先忙，不催你",
+              "那我先自己玩，等你",
+              "忙完叫我就行"
             ],
-            "reply": "她没接你邀约，多半在忙。别追问，给她个台阶，语气松一点就行。",
+            "reply": "她只回转账没接游戏邀约，别追着问。轻推一句，给她回旋空间就行。",
             "rag_badge": {
-              "state": "fact_hit",
-              "label": "已参考 4 条历史事实",
-              "hit_count": 6,
-              "referenced_count": 4,
+              "state": "relationship_policy",
+              "label": "已参考关系画像",
+              "hit_count": 0,
+              "referenced_count": 0,
               "log_id": 15
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 11648,
+          "elapsed_ms": 6013,
           "manifest": {
-            "fact_ids": [
-              587,
-              551,
-              515,
-              626
-            ],
-            "document_ids": [
-              587,
-              551,
-              515,
-              626
-            ],
+            "fact_ids": [],
+            "document_ids": [],
             "policy_ids": [
               30
             ],
@@ -4988,24 +4976,23 @@
               "relationship_policy",
               "contact_preferences",
               "style_constraints",
-              "retrieval_memory",
               "relationship_signal"
             ],
             "excluded": [],
-            "prompt_hash": "3929462024ad79b5955772497ab75d3b7af853e8fe9bac3498e529319e8484e8"
+            "prompt_hash": "977cb7a97a9b6277912e2461d67336dc355da2cdd57f7b5e0710a913003ead36"
           },
           "rag": {
             "log_id": 15,
-            "hit_count": 6,
-            "gate_decision": "inject",
-            "degraded_reason": null,
+            "hit_count": 0,
+            "gate_decision": "skip",
+            "degraded_reason": "timeout",
             "memory_intent_mode": "none"
           },
           "badge": {
-            "state": "fact_hit",
-            "label": "已参考 4 条历史事实",
-            "hit_count": 6,
-            "referenced_count": 4,
+            "state": "relationship_policy",
+            "label": "已参考关系画像",
+            "hit_count": 0,
+            "referenced_count": 0,
             "log_id": 15
           },
           "context_snapshot": {
@@ -5060,24 +5047,7 @@
                 "content": "￥49.52 已被接收 微信转账"
               }
             ],
-            "sent_evidence": [
-              {
-                "fact_id": 587,
-                "content": "对方认为我给她提意见本身是应该的、可以接受的，只是不接受命令式的态度。"
-              },
-              {
-                "fact_id": 551,
-                "content": "对方介意用户明明在看手机却不回她的消息，会因此很不开心。"
-              },
-              {
-                "fact_id": 515,
-                "content": "对方明确表示她不喜欢被用户拿来和别人作比较，认为这种比较行为是她讨厌的。"
-              },
-              {
-                "fact_id": 626,
-                "content": "对方比较在意不给别人添麻烦，尤其不想麻烦孙梨姐，认为不必再给孙梨姐看项目图片。"
-              }
-            ]
+            "sent_evidence": []
           }
         },
         {
@@ -5098,22 +5068,24 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 91,
-            "request_id": "484d5dbddc5d"
+            "request_id": "c3a5b87a93f0"
           },
           "model": "deepseek-flash",
           "output": {
             "summary": "[PURE_CHAT]",
             "speeches": [],
-            "reply": "没文字消息就顺着刚才那波操作接：问他撤回的是啥、拍你是手滑还是有事、转这些钱是凑什么。别干巴巴问“在吗”，也别堆emoji。",
+            "reply": "对方光转账和拍一拍没说话，别想太多。可以直接问“你这红包是干嘛的”，或者回拍一下接茬，再顺势聊今天的事，别硬找话题。",
             "rag_badge": {
               "state": "fact_hit",
               "label": "已参考 4 条历史事实",
               "hit_count": 6,
               "referenced_count": 4,
               "log_id": 16
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 3823,
+          "elapsed_ms": 2728,
           "manifest": {
             "fact_ids": [
               496,
@@ -5230,22 +5202,24 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 71,
-            "request_id": "08e2bbccd81b"
+            "request_id": "5771ba9865b8"
           },
           "model": "deepseek-flash",
           "output": {
             "summary": "[PURE_CHAT]",
             "speeches": [],
-            "reply": "没查到你们一起玩过游戏的具体记录。只找到几条相关的：你之前挑过游戏送对方当生日礼物（2025-12-19），你自己玩过55小时塞尔达，对方提过想玩的游戏太吃操作——这些都不是共同经历。",
+            "reply": "没查到你们一起玩过什么游戏的记录。记忆里只有：你玩过55小时塞尔达、说过要挑个打折游戏送对方当生日礼物，对方提过想玩的游戏太吃操作——这些都不是共同经历。",
             "rag_badge": {
               "state": "fact_hit",
               "label": "已参考 4 条历史事实",
               "hit_count": 6,
               "referenced_count": 4,
               "log_id": 17
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 2830,
+          "elapsed_ms": 1996,
           "manifest": {
             "fact_ids": [
               168,
@@ -5386,22 +5360,24 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 71,
-            "request_id": "f35cfb39289d"
+            "request_id": "7b1aa47737e8"
           },
           "model": "deepseek-flash",
           "output": {
             "summary": "[PURE_CHAT]",
             "speeches": [],
-            "reply": "没查到。翻过的记录里她没提过具体住址或家里位置，只有这次说到上地铁、让你们出发。",
+            "reply": "没查到。历史记录里没有她说过具体住哪的信息，只有一些关于游戏、做饭的旧消息。你要确认她家的位置，可能得直接在群里问，或者私聊她问一句。",
             "rag_badge": {
               "state": "fact_hit",
               "label": "已参考 4 条历史事实",
               "hit_count": 6,
               "referenced_count": 4,
               "log_id": 18
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 3257,
+          "elapsed_ms": 1668,
           "manifest": {
             "fact_ids": [
               158,
@@ -5542,22 +5518,24 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 71,
-            "request_id": "a1fd9c92f7dd"
+            "request_id": "9b8b3756a073"
           },
           "model": "deepseek-flash",
           "output": {
             "summary": "[PURE_CHAT]",
             "speeches": [],
-            "reply": "没查到她的电话号码，历史记录里没有。你翻翻通讯录或者之前的通话记录吧，微信聊天里应该也没有直接发过号码。",
+            "reply": "我这边没存到她的电话，历史记录里也没查到。翻下手机通讯录，或者往上翻聊天记录看她有没有发过。",
             "rag_badge": {
               "state": "fact_hit",
               "label": "已参考 4 条历史事实",
               "hit_count": 6,
               "referenced_count": 4,
               "log_id": 19
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 2839,
+          "elapsed_ms": 2144,
           "manifest": {
             "fact_ids": [
               166,
@@ -5698,22 +5676,24 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 91,
-            "request_id": "63a10a0d2800"
+            "request_id": "a5a145305b1e"
           },
           "model": "deepseek-flash",
           "output": {
             "summary": "[PURE_CHAT]",
             "speeches": [],
-            "reply": "不像讨厌。她转账收了、消息也回了，只是回得短。约游戏那条她还没接上，先别急着下结论，等会儿看她回不回。",
+            "reply": "不像讨厌。她收了转账、也没拒你，只是没接打游戏那句——更像在忙或者不想开麦，不一定是冲你。别自己吓自己，等她回。",
             "rag_badge": {
               "state": "fact_hit",
               "label": "已参考 4 条历史事实",
               "hit_count": 6,
               "referenced_count": 4,
               "log_id": 20
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 3479,
+          "elapsed_ms": 1848,
           "manifest": {
             "fact_ids": [
               486,
@@ -5854,22 +5834,24 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 71,
-            "request_id": "86b95da9ea7a"
+            "request_id": "114f7e50facc"
           },
           "model": "deepseek-flash",
           "output": {
             "summary": "[PURE_CHAT]",
             "speeches": [],
-            "reply": "从聊天看，你们更像关系不错的学妹和学长，有点暧昧但还没挑明。对方对你没防备，愿意分享日常，这是好基础。推进别急着表白，先多点单独相处——约一起打游戏、吃饭，把线下频率拉起来，关系自然会往前走。想更进一步时，找个轻松时机直接说你的感觉就行。",
+            "reply": "从聊天看，对方现在把你当信得过的学长/熟人，还没到能直接定性的程度。今天见面别急着把关系挑明，先单独多待、多聊，看她愿不愿意主动找你、接你的邀约。想推进就稳定约线下，别靠红包和游戏撑场。",
             "rag_badge": {
               "state": "fact_hit",
               "label": "已参考 4 条历史事实",
               "hit_count": 6,
               "referenced_count": 4,
               "log_id": 21
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 4891,
+          "elapsed_ms": 4007,
           "manifest": {
             "fact_ids": [
               148,
@@ -6010,22 +5992,24 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 91,
-            "request_id": "12e1b7da3f77"
+            "request_id": "a943cc15ec8e"
           },
           "model": "deepseek-flash",
           "output": {
             "summary": "[PURE_CHAT]",
             "speeches": [],
-            "reply": "开玩笑不越界的核心就三条：一是先自嘲，别先拿对方开刀；二是避开真在意的点——钱、家人、身材、长相、能力；三是看反应，对方只回个“嗯”“哦”或者不接梗，就是踩到了，赶紧自己接一句“我瞎说的”收回来。真正安全的玩笑是两个人一起笑，不是只有你笑。",
+            "reply": "开玩笑不越界就看三点：对方当下情绪好不好、这事是不是他真正在意的（钱、家人、外貌别碰）、他接不住就立刻收。你这情况刚聊到钱的事，别拿穷和转账当梗，往游戏、吃的这种轻松话题上逗就行。",
             "rag_badge": {
               "state": "fact_hit",
               "label": "已参考 4 条历史事实",
               "hit_count": 6,
               "referenced_count": 4,
               "log_id": 22
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 3413,
+          "elapsed_ms": 2883,
           "manifest": {
             "fact_ids": [
               376,
@@ -6171,27 +6155,29 @@
             "status": "missing_scope",
             "reason": "no_account_scope",
             "conversation_id": null,
-            "request_id": "9a3163277679"
+            "request_id": "34410d58a6cb"
           },
           "model": "deepseek-flash",
           "output": {
-            "summary": "缺上下文，先给中性短句并让用户贴对方原话",
+            "summary": "信息不足，给中性短回复，先保持舒适距离",
             "speeches": [
-              "嗯，然后呢",
-              "好，我知道了",
-              "行，你说",
-              "收到"
+              "嗯嗯，然后呢",
+              "这样啊",
+              "好，我看看",
+              "行，回头说"
             ],
-            "reply": "你把她最近发的消息贴给我，我才能给你准话。现在信息太少，只能先给几条中性、不推近也不冷场的回法。",
+            "reply": "没看到对方发了啥，把那条原话发我，我好帮你定。先给几个万能短回。",
             "rag_badge": {
               "state": "degraded",
               "label": "记忆检索降级",
               "hit_count": 0,
               "referenced_count": 0,
               "log_id": null
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 2927,
+          "elapsed_ms": 2188,
           "manifest": {
             "fact_ids": [],
             "document_ids": [],
@@ -6246,26 +6232,29 @@
             "status": "missing_scope",
             "reason": "no_contact_scope",
             "conversation_id": null,
-            "request_id": "42836916a17a"
+            "request_id": "4b7b2a15dffd"
           },
           "model": "deepseek-flash",
           "output": {
-            "summary": "信息不足，先给通用接话，发原话更准。",
+            "summary": "信息不足，先补对方原话；备几条通用短回复",
             "speeches": [
-              "嗯，你说",
-              "然后呢",
-              "在的，怎么啦"
+              "嗯嗯，我刚看到",
+              "好呀，你说",
+              "最近咋样",
+              "行，听你的"
             ],
-            "reply": "你没贴她说了什么，我只能先给几句通用接话。把她原话发我，我能回得更准。",
+            "reply": "你还没把对方发的那条贴过来，我这边看不到她说了什么。先发我看看，我再给你准话术。",
             "rag_badge": {
               "state": "degraded",
               "label": "记忆检索降级",
               "hit_count": 0,
               "referenced_count": 0,
               "log_id": null
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 3288,
+          "elapsed_ms": 2214,
           "manifest": {
             "fact_ids": [],
             "document_ids": [],
@@ -6315,22 +6304,24 @@
             "status": "missing_scope",
             "reason": "no_matching_contact",
             "conversation_id": null,
-            "request_id": "e9b6517b3fad"
+            "request_id": "7264a6737061"
           },
           "model": "deepseek-flash",
           "output": {
             "summary": "[PURE_CHAT]",
             "speeches": [],
-            "reply": "别直接说'出来玩'，太空。找个具体由头：一起吃个饭、看个展、帮个小忙，时间地点都给两三个选项让她选，比开放式邀约好答应。",
+            "reply": "给具体选项，别问\"有空吗\"——比如\"周三或周六，一起吃个饭？\"。挑她提过的事当由头。你这边信息太少，先说说你俩现在聊到哪了。",
             "rag_badge": {
               "state": "degraded",
               "label": "记忆检索降级",
               "hit_count": 0,
               "referenced_count": 0,
               "log_id": null
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 3281,
+          "elapsed_ms": 2747,
           "manifest": {
             "fact_ids": [],
             "document_ids": [],
@@ -6364,7 +6355,7 @@
     },
     {
       "replay_version": "g1-baseline-replay-v1",
-      "ran_at": 1790609227,
+      "ran_at": 1790685715,
       "live": true,
       "chains": [
         "no_rag"
@@ -6394,22 +6385,24 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 91,
-            "request_id": "8869a2fe6ab2"
+            "request_id": "ca5adcde2222"
           },
           "model": "deepseek-flash",
           "output": {
             "summary": "[PURE_CHAT]",
             "speeches": [],
-            "reply": "从记录里能确认的游戏是《杀戮尖塔》，你刚还邀对方一起玩。其他聊天记录是乱码/已折叠，看不出别的游戏名。要我再帮你从哪段找找？",
+            "reply": "目前记录里能看到的只有《杀戮尖塔》，就是你刚发的「杀戮尖塔带我一个」。再往前的聊天内容是乱码/已折叠，扒不出其他游戏名。想让我按关键词再筛一遍吗？",
             "rag_badge": {
               "state": "hidden",
               "label": "",
               "hit_count": 0,
               "referenced_count": 0,
               "log_id": null
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 2869,
+          "elapsed_ms": 2186,
           "manifest": {
             "fact_ids": [],
             "document_ids": [],
@@ -6524,26 +6517,28 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 91,
-            "request_id": "8dcaa86b24fc"
+            "request_id": "36afba08e07e"
           },
           "model": "deepseek-flash",
           "output": {
-            "summary": "顺着杀戮尖塔轻邀约，给退路不施压",
+            "summary": "撒娇式顺势重提杀戮尖塔，低门槛邀约",
             "speeches": [
-              "宝宝在打啥呀，带我一个嘛",
-              "杀戮尖塔也行喔，我陪你打",
-              "忙就先忙，回头喊我一声哈"
+              "宝宝 杀戮尖塔带我一个嘛",
+              "我陪你玩 不添乱[旺柴]",
+              "就一局 打完随你安排"
             ],
-            "reply": "直接顺着你刚说的杀戮尖塔开口最自然，别搞太正式。轻问一句、把选择权给她，不接也不尴尬，接了就顺势玩[旺柴]",
+            "reply": "她玩心重又吃撒娇这套，别用「要不要」那种正式问法，直接黏上去说带我一个就行，给个不费劲的台阶（一局/陪你打）。之前你提过杀戮尖塔，顺着接着提最自然。",
             "rag_badge": {
               "state": "hidden",
               "label": "",
               "hit_count": 0,
               "referenced_count": 0,
               "log_id": null
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 4475,
+          "elapsed_ms": 2780,
           "manifest": {
             "fact_ids": [],
             "document_ids": [],
@@ -6650,26 +6645,28 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 91,
-            "request_id": "4d10442e5540"
+            "request_id": "d56651342272"
           },
           "model": "deepseek-flash",
           "output": {
-            "summary": "别追问忙不忙，直接轻量抛游戏邀约，给她定时间。",
+            "summary": "不追问忙不忙，轻量邀约让她定时间",
             "speeches": [
-              "宝宝今晚打两把Switch嘛",
-              "杀戮尖塔带我一个呀[旺柴]",
-              "你定时间，我随叫随到喔"
+              "宝宝今晚打两把嘛[旺柴]",
+              "傻宝宝带我一个咯",
+              "你定时间 我随叫随到"
             ],
-            "reply": "上条漏了具体话术，这三条你挑一条直接发就行。别再问忙不忙了，直接抛邀请，给她选的余地。",
+            "reply": "抱歉刚漏了，这就给你。别追问她在忙啥，直接抛轻量邀请，把球踢给她定时间，压力最小。",
             "rag_badge": {
               "state": "hidden",
               "label": "",
               "hit_count": 0,
               "referenced_count": 0,
               "log_id": null
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 3472,
+          "elapsed_ms": 2315,
           "manifest": {
             "fact_ids": [],
             "document_ids": [],
@@ -6776,26 +6773,28 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 71,
-            "request_id": "6d2e002377da"
+            "request_id": "87f39a51caab"
           },
           "model": "deepseek-flash",
           "output": {
-            "summary": "等她忙完再轻问一句打游戏，别追问",
+            "summary": "等她到家后轻描淡写地约一局游戏",
             "speeches": [
-              "晚上有空打两局吗",
-              "忙完叫我，打游戏",
-              "等你到家，开黑不"
+              "到家了喊我，打两把",
+              "晚上有空打游戏不",
+              "上地铁了？晚上开黑不"
             ],
-            "reply": "她刚上地铁要出门，现在别急着约。等她到家或晚上闲下来再轻轻提一句，问句收尾，别追问、别定死时间。",
+            "reply": "她刚上地铁，这会儿别急着约。等她到家安顿下来再抛邀约更自然，别显得在催。",
             "rag_badge": {
               "state": "hidden",
               "label": "",
               "hit_count": 0,
               "referenced_count": 0,
               "log_id": null
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 4512,
+          "elapsed_ms": 1847,
           "manifest": {
             "fact_ids": [],
             "document_ids": [],
@@ -6900,26 +6899,28 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 71,
-            "request_id": "a9cdda4f78f9"
+            "request_id": "c70db7ddc0c4"
           },
           "model": "deepseek-flash",
           "output": {
-            "summary": "确认出发，简短收尾，保持自然节奏",
+            "summary": "先接住出发的话，再顺口问周末安排",
             "speeches": [
-              "好，我们这就出发",
-              "行，路上注意安全",
-              "收到，到了说一声"
+              "好，我们马上出发",
+              "周末那事你定好了吗",
+              "到了当面聊周末吧"
             ],
-            "reply": "她已经在准备出发了，你直接确认动身就行，别多问别客套。",
+            "reply": "先顺着她刚说的出门/地铁这条接一下，再顺势确认周末的事，别显得只盯着邀约。",
             "rag_badge": {
               "state": "hidden",
               "label": "",
               "hit_count": 0,
               "referenced_count": 0,
               "log_id": null
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 3940,
+          "elapsed_ms": 3232,
           "manifest": {
             "fact_ids": [],
             "document_ids": [],
@@ -7021,22 +7022,24 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 71,
-            "request_id": "7745af47afa9"
+            "request_id": "d16b9aba66ee"
           },
           "model": "deepseek-flash",
           "output": {
             "summary": "[PURE_CHAT]",
             "speeches": [],
-            "reply": "翻了下最近的记录，没提到她喜欢什么。只有她喊你“姐”、准备上地铁跟你们会合。想知道就直接问，或者见面时顺口带出来。",
+            "reply": "翻了一遍记忆和最近的聊天，没存过她喜欢什么，最近也没聊到。想送东西或约她的话，直接问她一句，或者看她平时朋友圈发什么，比猜靠谱。",
             "rag_badge": {
               "state": "hidden",
               "label": "",
               "hit_count": 0,
               "referenced_count": 0,
               "log_id": null
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 3908,
+          "elapsed_ms": 2580,
           "manifest": {
             "fact_ids": [],
             "document_ids": [],
@@ -7143,26 +7146,29 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 71,
-            "request_id": "e58107641ab5"
+            "request_id": "98b1570d1d48"
           },
           "model": "deepseek-flash",
           "output": {
-            "summary": "游戏邀约就轻快接住，约个大概时间，不用铺垫。",
+            "summary": "轻松接住游戏邀约，先问清再定，别急着承诺。",
             "speeches": [
-              "行，几点开？",
-              "你先上线，我马上来",
-              "等我几分钟，别先开"
+              "啥游戏，我看看",
+              "行，等会儿上线",
+              "可以，几点开始",
+              "今晚有点事，明天行吗"
             ],
-            "reply": "关于游戏邀约，她主动提就打蛇随棍上，别太热也别冷。下面几条你挑顺口的发。",
+            "reply": "刚才那种情况确实不好接。给你几条，按你想推进的程度挑：想接就答应但别显得太急，想保持距离就先问清楚再说。",
             "rag_badge": {
               "state": "hidden",
               "label": "",
               "hit_count": 0,
               "referenced_count": 0,
               "log_id": null
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 4172,
+          "elapsed_ms": 3301,
           "manifest": {
             "fact_ids": [],
             "document_ids": [],
@@ -7264,22 +7270,24 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 71,
-            "request_id": "529b67a7a626"
+            "request_id": "7893d2555fa2"
           },
           "model": "deepseek-flash",
           "output": {
             "summary": "[PURE_CHAT]",
             "speeches": [],
-            "reply": "你好呀～有什么想聊的随时说。如果是要帮你想想怎么回对方消息，把你想表达的意思或者截图情况告诉我就行。",
+            "reply": "你好！我在呢。刚看了你和对方的聊天记录，需要我帮你捋捋接下来怎么回复吗？直接说就行。",
             "rag_badge": {
               "state": "hidden",
               "label": "",
               "hit_count": 0,
               "referenced_count": 0,
               "log_id": null
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 2440,
+          "elapsed_ms": 1206,
           "manifest": {
             "fact_ids": [],
             "document_ids": [],
@@ -7383,22 +7391,24 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 71,
-            "request_id": "253422853b95"
+            "request_id": "6b3164c2f021"
           },
           "model": "deepseek-flash",
           "output": {
             "summary": "[PURE_CHAT]",
             "speeches": [],
-            "reply": "翻了下最近的聊天记录，没找到你们玩过什么游戏的信息，最近聊的都是发红包、生日快乐、你拿学长手机发消息和你们要出发这些。要是你告诉我是哪个对象／哪段时间，我可以再帮你看看。",
+            "reply": "翻了下你们的聊天记录，没找到一起打游戏的记录，之前主要是生日红包、祝福和约出发这类内容。如果你记得大概时间或游戏名，我可以再帮你找找。",
             "rag_badge": {
               "state": "hidden",
               "label": "",
               "hit_count": 0,
               "referenced_count": 0,
               "log_id": null
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 2783,
+          "elapsed_ms": 1387,
           "manifest": {
             "fact_ids": [],
             "document_ids": [],
@@ -7505,26 +7515,28 @@
             "status": "ambiguous_contact",
             "reason": "ambiguous_display_name_matches=2",
             "conversation_id": null,
-            "request_id": "2171c7b16568"
+            "request_id": "27282a59a18b"
           },
           "model": "deepseek-flash",
           "output": {
-            "summary": "轻松开口约游戏，留退路不施压",
+            "summary": "轻松约游戏，给足退路，别像正式邀约",
             "speeches": [
-              "晚上打游戏吗",
-              "有空一起开一把",
-              "我缺个队友 来不来"
+              "晚上有空吗 打两把",
+              "缺人 来凑个热闹",
+              "想玩就一起 不玩也没事"
             ],
-            "reply": "约打游戏别太正式，轻松问一句就行，给她拒绝的空间",
+            "reply": "约游戏比约见面轻，适合保持距离。关键是语气随意、给足退路，别用正式邀约的说法。挑她可能空闲的时段发，发完不用等秒回。",
             "rag_badge": {
               "state": "hidden",
               "label": "",
               "hit_count": 0,
               "referenced_count": 0,
               "log_id": null
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 2393,
+          "elapsed_ms": 2392,
           "manifest": {
             "fact_ids": [],
             "document_ids": [],
@@ -7579,26 +7591,29 @@
             "status": "invalid_conversation",
             "reason": "conversation_not_owned_or_missing",
             "conversation_id": 999999,
-            "request_id": "eef89e587ab3"
+            "request_id": "9d8931e0f6d1"
           },
           "model": "deepseek-flash",
           "output": {
-            "summary": "缺少她原话，先按通用短句回，或补发原话",
+            "summary": "信息不足，先给不推进、不冷场的通用短句",
             "speeches": [
-              "嗯，你说",
-              "在的，怎么了",
-              "刚看到，你说"
+              "嗯，刚看到消息",
+              "行，那就先这样",
+              "好，你忙你的",
+              "知道了，回聊"
             ],
-            "reply": "我这边没看到她的最后一条消息，你把她原话发我，我再给你具体的回法。",
+            "reply": "没看到你们最近聊了什么，我只能给通用短句。你把她最后一句发我，我给你定准的。",
             "rag_badge": {
               "state": "hidden",
               "label": "",
               "hit_count": 0,
               "referenced_count": 0,
               "log_id": null
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 3991,
+          "elapsed_ms": 1647,
           "manifest": {
             "fact_ids": [],
             "document_ids": [],
@@ -7653,26 +7668,28 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 91,
-            "request_id": "91a3340b82db"
+            "request_id": "b2d0822d1e14"
           },
           "model": "deepseek-flash",
           "output": {
-            "summary": "别追发，补一句不催的软话收尾，等对方回应。",
+            "summary": "别再追问，补一句不催的短话就好",
             "speeches": [
-              "不急，你忙完喊我",
-              "我先自己开一局",
-              "有空再一起打"
+              "不急，忙完喊我",
+              "你先忙，等你",
+              "打的时候叫我一声"
             ],
-            "reply": "你刚发了两条，先别急着追。给她点空隙，等她回你再说，不然容易显得催。",
+            "reply": "她还没回就别追着问了，轻轻补一句不催的话就行，保持你平时的短句风格。",
             "rag_badge": {
               "state": "hidden",
               "label": "",
               "hit_count": 0,
               "referenced_count": 0,
               "log_id": null
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 3484,
+          "elapsed_ms": 2634,
           "manifest": {
             "fact_ids": [],
             "document_ids": [],
@@ -7776,22 +7793,24 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 91,
-            "request_id": "02c0a1af7400"
+            "request_id": "659dfad4ce70"
           },
           "model": "deepseek-flash",
           "output": {
             "summary": "[PURE_CHAT]",
             "speeches": [],
-            "reply": "她刚还回过你“没办法呀”，不算不理。你最后那句是邀约，得给她点时间看消息。别连发追问，等半小时没回再轻描淡写抛一句就行。",
+            "reply": "不像。她刚收了转账、消息也没隔多久，只是还没看手机。你两条连发已经够了，别再追第三条，等她自己回。",
             "rag_badge": {
               "state": "hidden",
               "label": "",
               "hit_count": 0,
               "referenced_count": 0,
               "log_id": null
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 3176,
+          "elapsed_ms": 2358,
           "manifest": {
             "fact_ids": [],
             "document_ids": [],
@@ -7900,26 +7919,28 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 91,
-            "request_id": "04b8aedd3848"
+            "request_id": "e850f3ee2c50"
           },
           "model": "deepseek-flash",
           "output": {
-            "summary": "不追发，补一句不催的轻邀约留台阶。",
+            "summary": "等她回，轻量补一句，不催不连发。",
             "speeches": [
-              "忙完喊我，不急",
-              "不玩也行，就问问你",
-              "那我先自己开一局"
+              "不急，忙完喊我",
+              "宝宝忙完说一声",
+              "我先上线等你"
             ],
-            "reply": "她还没回就别连发，等一等。要补就补一句给台阶的，别催。",
+            "reply": "她还没回就先别追着发。等她忙完，轻量接一句就行，别催。",
             "rag_badge": {
               "state": "hidden",
               "label": "",
               "hit_count": 0,
               "referenced_count": 0,
               "log_id": null
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 3466,
+          "elapsed_ms": 2137,
           "manifest": {
             "fact_ids": [],
             "document_ids": [],
@@ -8021,22 +8042,24 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 91,
-            "request_id": "50bf6ff7e408"
+            "request_id": "991505d5e0ac"
           },
           "model": "deepseek-flash",
           "output": {
             "summary": "[PURE_CHAT]",
             "speeches": [],
-            "reply": "现在没有实际聊天记录，只有两笔转账/红包，没法接上一句具体的话。可以自己起个头：顺着刚转的42.5或红包问一句用途，或者直接甩个轻松话题（吃了没、在干嘛、分享个小东西）重新开局。想让我给几条能直接发的话，把你俩关系和大致的聊天状态说一下。",
+            "reply": "现在窗口里只有转账和红包的系统记录，没有真正聊起来的内容。可以顺手拿这个当话题，比如问她今天买啥了、红包是抢的还是发的；或者干脆换新话题，分享个你刚看到的好玩的事，比干巴巴问“在干嘛”自然。",
             "rag_badge": {
               "state": "hidden",
               "label": "",
               "hit_count": 0,
               "referenced_count": 0,
               "log_id": null
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 3480,
+          "elapsed_ms": 1895,
           "manifest": {
             "fact_ids": [],
             "document_ids": [],
@@ -8116,22 +8139,24 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 71,
-            "request_id": "c29c1eeb1dc7"
+            "request_id": "0bdb68c52416"
           },
           "model": "deepseek-flash",
           "output": {
             "summary": "[PURE_CHAT]",
             "speeches": [],
-            "reply": "我这边翻到的聊天记录里没提到你们玩过什么游戏，主要就是发红包、生日快乐、还有约着出发这些。你要是能说个大概时间或游戏类型，我再帮你找找。",
+            "reply": "现有记录里没看到你们一起玩过游戏的痕迹，能确认的只有生日、发红包、坐地铁这些。要是有印象里的游戏名，发我，我帮你往回对。",
             "rag_badge": {
               "state": "hidden",
               "label": "",
               "hit_count": 0,
               "referenced_count": 0,
               "log_id": null
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 2644,
+          "elapsed_ms": 2432,
           "manifest": {
             "fact_ids": [],
             "document_ids": [],
@@ -8235,22 +8260,24 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 71,
-            "request_id": "7302c66fd72c"
+            "request_id": "ba97fe899454"
           },
           "model": "deepseek-flash",
           "output": {
             "summary": "[PURE_CHAT]",
             "speeches": [],
-            "reply": "我这边没看到她说过家里具体位置。最近的消息里只有上地铁、出发这类安排，地址相关的内容没出现。要确认的话，直接问她到哪站下、或者让她发个定位就行。",
+            "reply": "翻了下你们最近的记录，没看到她说具体住哪儿，只有\"准备上地铁\"这类模糊信息。想确认的话可以顺口问一句，或者直接问\"你家那站到这儿多久\"。",
             "rag_badge": {
               "state": "hidden",
               "label": "",
               "hit_count": 0,
               "referenced_count": 0,
               "log_id": null
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 3579,
+          "elapsed_ms": 1709,
           "manifest": {
             "fact_ids": [],
             "document_ids": [],
@@ -8354,22 +8381,24 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 71,
-            "request_id": "2463ab08db45"
+            "request_id": "9e30965ddec5"
           },
           "model": "deepseek-flash",
           "output": {
             "summary": "[PURE_CHAT]",
             "speeches": [],
-            "reply": "我这边没有她的电话号码，聊天记录里也查不到。你要不直接发消息问一下，或者翻翻通讯录/微信资料页。",
+            "reply": "我这边没有存她的电话号码，聊天记录里也没出现过，你翻下手机通讯录或者之前的通话记录看看吧。",
             "rag_badge": {
               "state": "hidden",
               "label": "",
               "hit_count": 0,
               "referenced_count": 0,
               "log_id": null
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 2914,
+          "elapsed_ms": 1759,
           "manifest": {
             "fact_ids": [],
             "document_ids": [],
@@ -8475,22 +8504,24 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 91,
-            "request_id": "86fc3a05f6b7"
+            "request_id": "4b535f038498"
           },
           "model": "deepseek-flash",
           "output": {
             "summary": "[PURE_CHAT]",
             "speeches": [],
-            "reply": "看不出讨厌。回复率0.59、平均5分多钟回一次，就是慢热、不主动那种，不是不理你。刚发的邀约才多久，别急着下结论，等半天到一天没动静再说。你越慌越往里塞消息，反而把节奏压死了。",
+            "reply": "没有讨厌的迹象。她回了你“没办法呀”，回复率也有0.59，只是慢，不是冷。你刚说完“实在穷”，马上又喊她打游戏，她可能一时不知道怎么接。别急，等她缓一下再发一条轻的就行。",
             "rag_badge": {
               "state": "hidden",
               "label": "",
               "hit_count": 0,
               "referenced_count": 0,
               "log_id": null
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 3238,
+          "elapsed_ms": 2885,
           "manifest": {
             "fact_ids": [],
             "document_ids": [],
@@ -8598,26 +8629,28 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 71,
-            "request_id": "62405e6a59ee"
+            "request_id": "95de3a5bbf63"
           },
           "model": "deepseek-flash",
           "output": {
-            "summary": "别急着定性，先把这次见面处舒服，再观察升温。",
+            "summary": "先接住见面安排，关系自然走，别急着定义或推进。",
             "speeches": [
-              "好，我们这就出发，到了跟你说",
-              "地铁上注意点，到了发个消息",
-              "行，那待会儿见，别急"
+              "好，我这就出门，到了跟你说",
+              "行，那你先上，我稍后到",
+              "顺利到了说一声，我等你"
             ],
-            "reply": "现在别急着定义关系，对方还在用「学长/姐」这种客气称呼，积极度也不高，硬推容易把人推远。你目标是对的就先稳住：把这次见面顺顺当当走完，看对方线下什么状态，再谈推进不迟。",
+            "reply": "关系这事先别急着定义。对方现在在赶来的路上，还是集体局，你顺势把见面接住就行，今晚相处自然点，别刻意推。",
             "rag_badge": {
               "state": "hidden",
               "label": "",
               "hit_count": 0,
               "referenced_count": 0,
               "log_id": null
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 5044,
+          "elapsed_ms": 3881,
           "manifest": {
             "fact_ids": [],
             "document_ids": [],
@@ -8725,25 +8758,28 @@
             "status": "ok",
             "reason": "explicit_conversation_id",
             "conversation_id": 91,
-            "request_id": "0c9afe5d732c"
+            "request_id": "0463eec8ce4c"
           },
           "model": "deepseek-flash",
           "output": {
-            "summary": "玩笑拿自己开刀，别碰钱和感情，给对方留退路",
+            "summary": "玩笑只往自己身上放，对方冷回时别追第二句。",
             "speeches": [
-              "开玩笑的，你先忙，想玩了叫我",
-              "不催你，就是馋个队友"
+              "带你一个，我翻车你看着就行",
+              "我穷得只剩这游戏了，赏个脸",
+              "行，我认，菜是原罪，求带"
             ],
-            "reply": "开玩笑只往自己身上戳：自嘲、游戏梗都行，别碰她的钱、家人、外貌和感情定性。她没接就自己找台阶，不追问。'宝宝'这种称呼先少用，换名字更稳。",
+            "reply": "玩笑别落在她的钱、家里事、长相和工作上，这些你俩都聊过，一碰就扎。最稳的是往自己身上自嘲——她笑了就顺势收，别追第二句，别在她刚冷回一句的时候加码。",
             "rag_badge": {
               "state": "hidden",
               "label": "",
               "hit_count": 0,
               "referenced_count": 0,
               "log_id": null
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 5826,
+          "elapsed_ms": 4453,
           "manifest": {
             "fact_ids": [],
             "document_ids": [],
@@ -8852,27 +8888,28 @@
             "status": "missing_scope",
             "reason": "no_account_scope",
             "conversation_id": null,
-            "request_id": "4db392644f3b"
+            "request_id": "3793a5a40f38"
           },
           "model": "deepseek-flash",
           "output": {
-            "summary": "信息不足，先给通用短句接话",
+            "summary": "信息不足，先给能收能放的通用接话",
             "speeches": [
-              "刚看到，怎么了",
-              "在呢，你说",
-              "嗯嗯，然后呢",
-              "好，我想想再回你"
+              "嗯，然后呢",
+              "这样啊，知道了",
+              "好，我回头看看"
             ],
-            "reply": "你没贴她发的内容，我只能给通用的。你把她的原话发我，我能给更贴的。",
+            "reply": "没看到她的消息内容，你把最后几条贴出来我帮你接。先给几句通用兜底，能接住又不热络。",
             "rag_badge": {
               "state": "hidden",
               "label": "",
               "hit_count": 0,
               "referenced_count": 0,
               "log_id": null
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 3055,
+          "elapsed_ms": 1823,
           "manifest": {
             "fact_ids": [],
             "document_ids": [],
@@ -8927,27 +8964,28 @@
             "status": "missing_scope",
             "reason": "no_contact_scope",
             "conversation_id": null,
-            "request_id": "68d93e998c54"
+            "request_id": "0d5be34aaf1e"
           },
           "model": "deepseek-flash",
           "output": {
-            "summary": "信息不足，先看对方原话；给通用保底回复",
+            "summary": "通用回复：接她的话头，简短不追问",
             "speeches": [
-              "嗯嗯，然后呢",
-              "怎么啦，你说",
-              "我在，慢慢说",
-              "好，我听着"
+              "嗯，然后呢",
+              "哈哈这个有意思",
+              "我先忙会，晚点聊"
             ],
-            "reply": "把对方最后一条消息发我，才好判断怎么接。现在只有目标没有场景，我只能给几句不涉及具体事的通用保底话。",
+            "reply": "你没把她的消息发过来，我只能给通用的。想稳一点，就接她最后一句、别急着开新话题。",
             "rag_badge": {
               "state": "hidden",
               "label": "",
               "hit_count": 0,
               "referenced_count": 0,
               "log_id": null
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 4780,
+          "elapsed_ms": 1819,
           "manifest": {
             "fact_ids": [],
             "document_ids": [],
@@ -9002,26 +9040,28 @@
             "status": "missing_scope",
             "reason": "no_matching_contact",
             "conversation_id": null,
-            "request_id": "a2d5f000a1a5"
+            "request_id": "1ee4151da2a7"
           },
           "model": "deepseek-flash",
           "output": {
-            "summary": "低压邀约，先探口风，给她退路",
+            "summary": "轻事由约一次，给对方拒绝空间，别追。",
             "speeches": [
-              "最近有空吗",
-              "想约你吃个饭",
-              "不着急，你方便再说"
+              "最近有空吗，一起吃个饭",
+              "周末想出去走走，一起吗",
+              "想请你喝杯咖啡，方便吗"
             ],
-            "reply": "先别急着定时间地点，用低压力邀约最稳。给她留退路，比如先问有没有空，再看她回应调整。别一次约太满，轻松点更容易成。",
+            "reply": "信息不多，我按通用来给。别铺垫太长，也别问'有空吗'就没下文——直接给个轻量的事由，再给对方台阶。被拒就不追问，隔几天再聊别的。",
             "rag_badge": {
               "state": "hidden",
               "label": "",
               "hit_count": 0,
               "referenced_count": 0,
               "log_id": null
-            }
+            },
+            "contract_warnings": [],
+            "contract_repair": null
           },
-          "elapsed_ms": 3097,
+          "elapsed_ms": 2871,
           "manifest": {
             "fact_ids": [],
             "document_ids": [],
@@ -9050,6 +9090,293 @@
           "context_snapshot": {
             "window_source": "db",
             "recent_window": [],
+            "sent_evidence": []
+          }
+        }
+      ]
+    },
+    {
+      "replay_version": "g1-baseline-replay-v1",
+      "ran_at": 1790687560,
+      "live": true,
+      "chains": [
+        "g1"
+      ],
+      "sample_file": "D:\\Project\\Chrono Trace\\docs\\goals\\g1-baseline-samples.json",
+      "source_db_frozen_at": 1790608848,
+      "baseline_code_commit": "6b2eb4df9fef92a46c5ccb777d668c487bc5b83e",
+      "failures": 0,
+      "results": [
+        {
+          "sample_id": "authored-task_routing-01",
+          "dimension": "task_routing",
+          "chain": "g1",
+          "chain_note": "",
+          "routing": {
+            "task": "reply_suggestion",
+            "output": "suggestion_card",
+            "knowledge_needs": [
+              "facts",
+              "contact_profile",
+              "user_style",
+              "relationship_signals"
+            ],
+            "confidence": 0.9,
+            "reason": "advice_keyword",
+            "wants_speeches": true,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 71,
+            "request_id": "f0c7e435f2be"
+          },
+          "model": "deepseek-flash",
+          "output": {
+            "summary": "顺着她的节奏确认周末安排，短句应下",
+            "speeches": [
+              "行 周末我空着 你定",
+              "周末去哪 你说时间",
+              "好 到时候你喊我就行"
+            ],
+            "reply": "先确认她说的周末具体安排，别自己补细节。如果她还没说时间地点，就主动问一句；如果已经说好了，直接应下就行。",
+            "rag_badge": {
+              "state": "relationship_policy",
+              "label": "已参考关系画像",
+              "hit_count": 2,
+              "referenced_count": 0,
+              "log_id": 4
+            },
+            "contract_warnings": [],
+            "contract_repair": null
+          },
+          "elapsed_ms": 2915,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [
+              11
+            ],
+            "contact_preference_ids": [
+              4
+            ],
+            "blocks": [
+              "relationship_policy",
+              "contact_preferences",
+              "style_constraints",
+              "relationship_signal"
+            ],
+            "excluded": [],
+            "prompt_hash": "e326423f571ec029bfe92c7fd2e09a9f6e23e23987deb0cea9b9383f9c8aaf8b"
+          },
+          "rag": {
+            "log_id": 4,
+            "hit_count": 2,
+            "gate_decision": "skip",
+            "degraded_reason": null,
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "relationship_policy",
+            "label": "已参考关系画像",
+            "hit_count": 2,
+            "referenced_count": 0,
+            "log_id": 4
+          },
+          "context_snapshot": {
+            "window_source": "db",
+            "recent_window": [
+              {
+                "sender": "friend",
+                "content": "谢谢学长"
+              },
+              {
+                "sender": "friend",
+                "content": "(�/�`�\u0005�\u0016\u0000�p�\" m�\u0006_��S_���Z\u0004��\f\b!U<�F!��\u0005\n4\u0005\b\u0001�\u0015�\u0000w\u0000r\u0000MD�\u0010\u000f\u0002\u0002\u0003�(R,�\u0007�\u0019�\u0018;�u(�^p�@�pI)���y�\u00035��T�e�\")~.�7�Zk&+�\u0017�e�h3�0v"
+              },
+              {
+                "sender": "self",
+                "content": "(�/� p\u0015\u0003\u0000�\u0005\u0015\u001a��\r��4B�t3Y1���hN��P���`^\u001a��G��f =\u0000;k��\u0015�G@��\"\u0017��\u0018��\u001d�0\u0015\u001a\b0Q�>\u0016�4�TF2r%�n�`��Aq\t�~�\u0003\u0000�\u0002)���\\�\f"
+              },
+              {
+                "sender": "self",
+                "content": "(�/� p\u0015\u0003\u0000�\u0005\u0015\u001a��\r��4B�t3Y1���hN��\u0012���`^\u001a��G��& =��5��\n�# �B���h\f�a��\u0000J�(W\u001f\u000bC\u001ac\"%P�\u0012D7^��٠��n�k\u0003\u0000�\u0002)���\\�\f"
+              },
+              {
+                "sender": "friend",
+                "content": "姐，你手机呢？"
+              },
+              {
+                "sender": "friend",
+                "content": "你咋拿学长的手机发"
+              },
+              {
+                "sender": "friend",
+                "content": "你手机没电了？"
+              },
+              {
+                "sender": "friend",
+                "content": "(�/�`4\u0006\r\u0017\u0000\u0006��\"@k�\u0003�\f\u0012\r�]�\u000f���pS\u000e��O�v�)I6��EQt7�\u0000r\u0000r\u0000M;4$\u0012\u0002�\u0018\u0015�����1\u0006�7$;��\u0017��\"���T\u0002��< \u00141�rk��\"�wn�\u0016�;s�U����*�\u001cJ\u0018t�ʄ\u0014"
+              },
+              {
+                "sender": "self",
+                "content": "(�/� p\u0015\u0003\u0000�\u0005\u0015\u001a��\r��4B�t3Y1���hN\u001a��`^\u001a��G��&J\u000f��\u001awx��\u0011\u0010e���~4��q�0L#\r\u0010f W\u001f\u000bC\u001ac\u001aJ�r%�n�`��Aq\t�~�\u0003\u0000�\u0002)���\\�\f"
+              },
+              {
+                "sender": "friend",
+                "content": "(�/�`�\u0005�\u0013\u0000��v!@K��\u0006lH]��\u001b-�\u0003�\u0005ڙ��ak-�)D?�\u001d�a�7q\u0000m\u0000h\u0000ڔ\u0002��2�\u001c��1�匕G��Xs��;���\u001e���$I��8:�\u001a��2H[>2����*�\u0000��\u000fS�g�jq��2�%\bn�?L"
+              },
+              {
+                "sender": "friend",
+                "content": "姐，你们现在可以出发了"
+              },
+              {
+                "sender": "friend",
+                "content": "我准备上地铁了"
+              }
+            ],
+            "sent_evidence": []
+          }
+        },
+        {
+          "sample_id": "authored-notification_pollution-09",
+          "dimension": "notification_pollution",
+          "chain": "g1",
+          "chain_note": "",
+          "routing": {
+            "task": "relationship_discussion",
+            "output": "direct_answer",
+            "knowledge_needs": [
+              "facts",
+              "contact_profile",
+              "relationship_signals"
+            ],
+            "confidence": 0.78,
+            "reason": "relationship_discussion_signal",
+            "wants_speeches": false,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 91,
+            "request_id": "8e7329559593"
+          },
+          "model": "deepseek-flash",
+          "output": {
+            "summary": "[PURE_CHAT]",
+            "speeches": [],
+            "reply": "不太像。她平时回得就慢，平均五分多钟，你那条游戏邀约又正好撞上她上课不玩游戏的规矩。数据太少，别急着下结论，等一等再看。",
+            "rag_badge": {
+              "state": "relationship_policy",
+              "label": "已参考关系画像",
+              "hit_count": 6,
+              "referenced_count": 0,
+              "log_id": 5
+            },
+            "contract_warnings": [],
+            "contract_repair": null
+          },
+          "elapsed_ms": 3791,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [
+              30
+            ],
+            "contact_preference_ids": [
+              11,
+              10,
+              15,
+              9,
+              8,
+              13
+            ],
+            "blocks": [
+              "relationship_policy",
+              "contact_preferences",
+              "contact_profile",
+              "relationship_signal"
+            ],
+            "excluded": [
+              {
+                "kind": "self_profile",
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "feedback_rules",
+                "reason": "task_knowledge_not_needed"
+              }
+            ],
+            "prompt_hash": "b4b29bed694a1d5d88b07768f77eeb2ad9ce345cda14ed2023554487e3df3842"
+          },
+          "rag": {
+            "log_id": 5,
+            "hit_count": 6,
+            "gate_decision": "skip",
+            "degraded_reason": null,
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "relationship_policy",
+            "label": "已参考关系画像",
+            "hit_count": 6,
+            "referenced_count": 0,
+            "log_id": 5
+          },
+          "context_snapshot": {
+            "window_source": "db",
+            "recent_window": [
+              {
+                "sender": "friend",
+                "content": "(�/�`�\u0003M\u0013\u0000�^m? ��\r\u0018��'\u0010\u0002\u0010��c5X���(\u0014 r\u0013C�ţ�\u0011\u001fo��K+�\r��l�\u0001A`rs4Ea\u0016�&�c-��\u0000)\u000f\u0000\u001ed\u0000`\u0000V\u0000$!\u001c!F\u0007I�\u0007'\u0003��\u0001\u0004\u001cw\n%A68!\u001c��-�����B�Cǁȇ\t"
+              },
+              {
+                "sender": "self",
+                "content": "(�/�`x\u0003�\u0012\u00006\u001ek?Pk�\u0003H��NTU�?;�e?�1�(�\u0018�\u000fS\u0017��23����\u0016�+�)�,�_��\u0007��\bwS\u0013\u0011\"S�@�0\u0013d�\u0003j\u0000V\u0000T\u0000\u0018!\t\u001b@0\u0018� L�4x@2T\b-�\u0010�B�\u0010\u000f���\t�l�<�\u000f\b\u0012"
+              },
+              {
+                "sender": "friend",
+                "content": "￥42.50 已被接收 微信转账"
+              },
+              {
+                "sender": "self",
+                "content": "￥42.50 已收款 微信转账"
+              },
+              {
+                "sender": "self",
+                "content": "￥49.52 已被接收 微信转账"
+              },
+              {
+                "sender": "self",
+                "content": "￥49.52 已收款 微信转账"
+              },
+              {
+                "sender": "self",
+                "content": "￥40.00 已收款 微信转账"
+              },
+              {
+                "sender": "self",
+                "content": "￥40.00 已被接收 微信转账"
+              },
+              {
+                "sender": "self",
+                "content": "宝宝在忙嘛"
+              },
+              {
+                "sender": "self",
+                "content": "杀戮尖塔带我一个，我陪你玩"
+              },
+              {
+                "sender": "friend",
+                "content": "￥49.52 已收款 微信转账"
+              },
+              {
+                "sender": "self",
+                "content": "￥49.52 已被接收 微信转账"
+              }
+            ],
             "sent_evidence": []
           }
         }

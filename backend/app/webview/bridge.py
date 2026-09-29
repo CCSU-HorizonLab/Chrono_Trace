@@ -2859,6 +2859,9 @@ class Bridge:
 
                     baseline_tail = getattr(RealtimeMonitorService(), "_baseline_tail", None) or []
                     if baseline_tail:
+                        # 基线来自 UIA 当前可见列表，其中包含微信的日期/时间分隔线。
+                        # 这些行不是聊天消息，不能并入消息气泡，否则前端会按
+                        # sender_attr != self 误显示为“对方”。
                         baseline_items = [
                             {
                                 "id": -(idx + 1),  # 负数伪 id 避免与 buffer 冲突
@@ -2870,6 +2873,8 @@ class Bridge:
                                 "sentiment": msg.get("sentiment"),
                             }
                             for idx, msg in enumerate(baseline_tail)
+                            if str(msg.get("sender_attr") or "").strip().lower() in {"self", "friend"}
+                            and str(msg.get("message_type") or "text").strip().lower() != "system"
                         ]
                         messages = (baseline_items + messages)[-int(limit):]
                 except Exception as exc:
@@ -2919,6 +2924,8 @@ class Bridge:
                     "timestamp": row.get("timestamp") or row.get("created_at"),
                 }
                 for row in rows[-limit:]
+                if str(row.get("sender_attr") or "").strip().lower() in {"self", "friend"}
+                and str(row.get("message_type") or "text").strip().lower() != "system"
             ]
             # 新消息不足时并入监听基线尾部（启动前窗口内最近对话）——
             # 用户预期「进入监听能看到前几条聊天数据」，此前基线按设计不落
@@ -2939,6 +2946,8 @@ class Bridge:
                                 "timestamp": msg.get("timestamp"),
                             }
                             for idx, msg in enumerate(baseline_tail)
+                            if str(msg.get("sender_attr") or "").strip().lower() in {"self", "friend"}
+                            and str(msg.get("message_type") or "text").strip().lower() != "system"
                         ]
                         items = (baseline_items + items)[-limit:]
                 except Exception as exc:

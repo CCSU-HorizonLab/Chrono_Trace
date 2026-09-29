@@ -9094,6 +9094,293 @@
           }
         }
       ]
+    },
+    {
+      "replay_version": "g1-baseline-replay-v1",
+      "ran_at": 1790687560,
+      "live": true,
+      "chains": [
+        "g1"
+      ],
+      "sample_file": "D:\\Project\\Chrono Trace\\docs\\goals\\g1-baseline-samples.json",
+      "source_db_frozen_at": 1790608848,
+      "baseline_code_commit": "6b2eb4df9fef92a46c5ccb777d668c487bc5b83e",
+      "failures": 0,
+      "results": [
+        {
+          "sample_id": "authored-task_routing-01",
+          "dimension": "task_routing",
+          "chain": "g1",
+          "chain_note": "",
+          "routing": {
+            "task": "reply_suggestion",
+            "output": "suggestion_card",
+            "knowledge_needs": [
+              "facts",
+              "contact_profile",
+              "user_style",
+              "relationship_signals"
+            ],
+            "confidence": 0.9,
+            "reason": "advice_keyword",
+            "wants_speeches": true,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 71,
+            "request_id": "f0c7e435f2be"
+          },
+          "model": "deepseek-flash",
+          "output": {
+            "summary": "顺着她的节奏确认周末安排，短句应下",
+            "speeches": [
+              "行 周末我空着 你定",
+              "周末去哪 你说时间",
+              "好 到时候你喊我就行"
+            ],
+            "reply": "先确认她说的周末具体安排，别自己补细节。如果她还没说时间地点，就主动问一句；如果已经说好了，直接应下就行。",
+            "rag_badge": {
+              "state": "relationship_policy",
+              "label": "已参考关系画像",
+              "hit_count": 2,
+              "referenced_count": 0,
+              "log_id": 4
+            },
+            "contract_warnings": [],
+            "contract_repair": null
+          },
+          "elapsed_ms": 2915,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [
+              11
+            ],
+            "contact_preference_ids": [
+              4
+            ],
+            "blocks": [
+              "relationship_policy",
+              "contact_preferences",
+              "style_constraints",
+              "relationship_signal"
+            ],
+            "excluded": [],
+            "prompt_hash": "e326423f571ec029bfe92c7fd2e09a9f6e23e23987deb0cea9b9383f9c8aaf8b"
+          },
+          "rag": {
+            "log_id": 4,
+            "hit_count": 2,
+            "gate_decision": "skip",
+            "degraded_reason": null,
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "relationship_policy",
+            "label": "已参考关系画像",
+            "hit_count": 2,
+            "referenced_count": 0,
+            "log_id": 4
+          },
+          "context_snapshot": {
+            "window_source": "db",
+            "recent_window": [
+              {
+                "sender": "friend",
+                "content": "谢谢学长"
+              },
+              {
+                "sender": "friend",
+                "content": "(�/�`�\u0005�\u0016\u0000�p�\" m�\u0006_��S_���Z\u0004��\f\b!U<�F!��\u0005\n4\u0005\b\u0001�\u0015�\u0000w\u0000r\u0000MD�\u0010\u000f\u0002\u0002\u0003�(R,�\u0007�\u0019�\u0018;�u(�^p�@�pI)���y�\u00035��T�e�\")~.�7�Zk&+�\u0017�e�h3�0v"
+              },
+              {
+                "sender": "self",
+                "content": "(�/� p\u0015\u0003\u0000�\u0005\u0015\u001a��\r��4B�t3Y1���hN��P���`^\u001a��G��f =\u0000;k��\u0015�G@��\"\u0017��\u0018��\u001d�0\u0015\u001a\b0Q�>\u0016�4�TF2r%�n�`��Aq\t�~�\u0003\u0000�\u0002)���\\�\f"
+              },
+              {
+                "sender": "self",
+                "content": "(�/� p\u0015\u0003\u0000�\u0005\u0015\u001a��\r��4B�t3Y1���hN��\u0012���`^\u001a��G��& =��5��\n�# �B���h\f�a��\u0000J�(W\u001f\u000bC\u001ac\"%P�\u0012D7^��٠��n�k\u0003\u0000�\u0002)���\\�\f"
+              },
+              {
+                "sender": "friend",
+                "content": "姐，你手机呢？"
+              },
+              {
+                "sender": "friend",
+                "content": "你咋拿学长的手机发"
+              },
+              {
+                "sender": "friend",
+                "content": "你手机没电了？"
+              },
+              {
+                "sender": "friend",
+                "content": "(�/�`4\u0006\r\u0017\u0000\u0006��\"@k�\u0003�\f\u0012\r�]�\u000f���pS\u000e��O�v�)I6��EQt7�\u0000r\u0000r\u0000M;4$\u0012\u0002�\u0018\u0015�����1\u0006�7$;��\u0017��\"���T\u0002��< \u00141�rk��\"�wn�\u0016�;s�U����*�\u001cJ\u0018t�ʄ\u0014"
+              },
+              {
+                "sender": "self",
+                "content": "(�/� p\u0015\u0003\u0000�\u0005\u0015\u001a��\r��4B�t3Y1���hN\u001a��`^\u001a��G��&J\u000f��\u001awx��\u0011\u0010e���~4��q�0L#\r\u0010f W\u001f\u000bC\u001ac\u001aJ�r%�n�`��Aq\t�~�\u0003\u0000�\u0002)���\\�\f"
+              },
+              {
+                "sender": "friend",
+                "content": "(�/�`�\u0005�\u0013\u0000��v!@K��\u0006lH]��\u001b-�\u0003�\u0005ڙ��ak-�)D?�\u001d�a�7q\u0000m\u0000h\u0000ڔ\u0002��2�\u001c��1�匕G��Xs��;���\u001e���$I��8:�\u001a��2H[>2����*�\u0000��\u000fS�g�jq��2�%\bn�?L"
+              },
+              {
+                "sender": "friend",
+                "content": "姐，你们现在可以出发了"
+              },
+              {
+                "sender": "friend",
+                "content": "我准备上地铁了"
+              }
+            ],
+            "sent_evidence": []
+          }
+        },
+        {
+          "sample_id": "authored-notification_pollution-09",
+          "dimension": "notification_pollution",
+          "chain": "g1",
+          "chain_note": "",
+          "routing": {
+            "task": "relationship_discussion",
+            "output": "direct_answer",
+            "knowledge_needs": [
+              "facts",
+              "contact_profile",
+              "relationship_signals"
+            ],
+            "confidence": 0.78,
+            "reason": "relationship_discussion_signal",
+            "wants_speeches": false,
+            "manual_request": true
+          },
+          "scope": {
+            "status": "ok",
+            "reason": "explicit_conversation_id",
+            "conversation_id": 91,
+            "request_id": "8e7329559593"
+          },
+          "model": "deepseek-flash",
+          "output": {
+            "summary": "[PURE_CHAT]",
+            "speeches": [],
+            "reply": "不太像。她平时回得就慢，平均五分多钟，你那条游戏邀约又正好撞上她上课不玩游戏的规矩。数据太少，别急着下结论，等一等再看。",
+            "rag_badge": {
+              "state": "relationship_policy",
+              "label": "已参考关系画像",
+              "hit_count": 6,
+              "referenced_count": 0,
+              "log_id": 5
+            },
+            "contract_warnings": [],
+            "contract_repair": null
+          },
+          "elapsed_ms": 3791,
+          "manifest": {
+            "fact_ids": [],
+            "document_ids": [],
+            "policy_ids": [
+              30
+            ],
+            "contact_preference_ids": [
+              11,
+              10,
+              15,
+              9,
+              8,
+              13
+            ],
+            "blocks": [
+              "relationship_policy",
+              "contact_preferences",
+              "contact_profile",
+              "relationship_signal"
+            ],
+            "excluded": [
+              {
+                "kind": "self_profile",
+                "reason": "task_knowledge_not_needed"
+              },
+              {
+                "kind": "feedback_rules",
+                "reason": "task_knowledge_not_needed"
+              }
+            ],
+            "prompt_hash": "b4b29bed694a1d5d88b07768f77eeb2ad9ce345cda14ed2023554487e3df3842"
+          },
+          "rag": {
+            "log_id": 5,
+            "hit_count": 6,
+            "gate_decision": "skip",
+            "degraded_reason": null,
+            "memory_intent_mode": "none"
+          },
+          "badge": {
+            "state": "relationship_policy",
+            "label": "已参考关系画像",
+            "hit_count": 6,
+            "referenced_count": 0,
+            "log_id": 5
+          },
+          "context_snapshot": {
+            "window_source": "db",
+            "recent_window": [
+              {
+                "sender": "friend",
+                "content": "(�/�`�\u0003M\u0013\u0000�^m? ��\r\u0018��'\u0010\u0002\u0010��c5X���(\u0014 r\u0013C�ţ�\u0011\u001fo��K+�\r��l�\u0001A`rs4Ea\u0016�&�c-��\u0000)\u000f\u0000\u001ed\u0000`\u0000V\u0000$!\u001c!F\u0007I�\u0007'\u0003��\u0001\u0004\u001cw\n%A68!\u001c��-�����B�Cǁȇ\t"
+              },
+              {
+                "sender": "self",
+                "content": "(�/�`x\u0003�\u0012\u00006\u001ek?Pk�\u0003H��NTU�?;�e?�1�(�\u0018�\u000fS\u0017��23����\u0016�+�)�,�_��\u0007��\bwS\u0013\u0011\"S�@�0\u0013d�\u0003j\u0000V\u0000T\u0000\u0018!\t\u001b@0\u0018� L�4x@2T\b-�\u0010�B�\u0010\u000f���\t�l�<�\u000f\b\u0012"
+              },
+              {
+                "sender": "friend",
+                "content": "￥42.50 已被接收 微信转账"
+              },
+              {
+                "sender": "self",
+                "content": "￥42.50 已收款 微信转账"
+              },
+              {
+                "sender": "self",
+                "content": "￥49.52 已被接收 微信转账"
+              },
+              {
+                "sender": "self",
+                "content": "￥49.52 已收款 微信转账"
+              },
+              {
+                "sender": "self",
+                "content": "￥40.00 已收款 微信转账"
+              },
+              {
+                "sender": "self",
+                "content": "￥40.00 已被接收 微信转账"
+              },
+              {
+                "sender": "self",
+                "content": "宝宝在忙嘛"
+              },
+              {
+                "sender": "self",
+                "content": "杀戮尖塔带我一个，我陪你玩"
+              },
+              {
+                "sender": "friend",
+                "content": "￥49.52 已收款 微信转账"
+              },
+              {
+                "sender": "self",
+                "content": "￥49.52 已被接收 微信转账"
+              }
+            ],
+            "sent_evidence": []
+          }
+        }
+      ]
     }
   ]
 }

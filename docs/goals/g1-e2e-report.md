@@ -2,7 +2,7 @@
 
 - 报告版本:`g1-e2e-report-v1`
 - 样例:`g1-baseline-samples.json`(24 条,装载器 g1-baseline-loader-v1)
-- 预期标注:g1-expected-annotate-v1(AI 初判;确认 -/改判 -;**人工终审前不作门禁**)
+- 预期标注:g1-apply-review-v1(third-review-agent;确认 24/改判 0;**人工终审前不作门禁**)
 - 模型:deepseek / deepseek-flash
 - 基线代码:`6b2eb4df9fef`
 
@@ -24,7 +24,7 @@
 | real-2 | redaction_misfire | invitation_planning/answer_with_speeches | invitation_planning/answer_with_speeches | general_qa/direct_answer | invitation_planning/answer_with_speeches | 顺着她玩的游戏约，让她带你，别用指挥口气 +3话术 |
 | real-3 | redaction_misfire | reply_suggestion/suggestion_card | reply_suggestion/suggestion_card | general_qa/direct_answer | reply_suggestion/suggestion_card | 用陪玩杀戮尖塔轻邀约，给她拒绝空间，别问忙不忙 +3话术 |
 | authored-task_routing-00 | task_routing | invitation_planning/answer_with_speeches | invitation_planning/answer_with_speeches | general_qa/direct_answer | invitation_planning/answer_with_speeches | 趁出门空档轻问一句打游戏，时间让她定，不催。 +3话术 |
-| authored-task_routing-01 | task_routing | reply_suggestion/suggestion_card | reply_suggestion/suggestion_card | reply_suggestion/suggestion_card | reply_suggestion/suggestion_card | 回确认出发+路上注意，简短即可 +3话术 |
+| authored-task_routing-01 | task_routing | reply_suggestion/suggestion_card | reply_suggestion/suggestion_card | reply_suggestion/suggestion_card | reply_suggestion/suggestion_card | 顺着她的节奏确认周末安排，短句应下 +3话术 |
 | authored-task_routing-02 | task_routing | memory_qa/direct_answer | memory_qa/direct_answer | general_qa/direct_answer | memory_qa/direct_answer | [PURE_CHAT] |
 | authored-task_routing-03 | task_routing | reply_suggestion/suggestion_card | reply_suggestion/suggestion_card | general_qa/direct_answer | reply_suggestion/suggestion_card | 顺着应下游戏邀约，短句不多问 +3话术 |
 | authored-task_routing-04 | task_routing | general_qa/direct_answer | general_qa/direct_answer | general_qa/direct_answer | general_qa/direct_answer | [PURE_CHAT] |
@@ -51,14 +51,14 @@
 | --- | --- | --- | --- | --- |
 | no_rag | 24 | 2397ms | 2358ms | 4453ms |
 | legacy | 24 | 3229ms | 2747ms | 6013ms |
-| g1 | 24 | 3412ms | 3185ms | 6599ms |
+| g1 | 24 | 3230ms | 3103ms | 5740ms |
 
 - 失败数:0
 
 ## 忠实度(NLI 初判,冻结证据)
 
 - judge:g1-nli-judge-v1 / prompt `g1-faithfulness-v1` / 模型 deepseek-flash
-- 汇总:**entailed=3, contradicted=0, unknown=77, 解析失败=4(单列,不计入 unknown)**
+- 汇总:**entailed=6, contradicted=0, unknown=74, 解析失败=1(单列,不计入 unknown)**
 - 说明:建议话术多为新措辞,unknown 占多数是预期分布;关键红线是 contradicted=0(输出不得与已发送事实冲突)。
 - 证据来源:回放结果内冻结的 `context_snapshot.sent_evidence`(不再事后重读数据库)
 - 状态:`model_judged_pending_human`

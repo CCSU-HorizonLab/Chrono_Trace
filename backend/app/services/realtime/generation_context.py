@@ -292,6 +292,15 @@ def assemble_generation_context(
     所有生成入口(手动/半自动/全自动/开场)共用本函数;scope 缺失时仍会
     装配当前窗口上下文(最近消息、情绪),但按联系人键控的历史知识一律不注入。
     """
+    # 进程级预热:任何入口的第一次装配就触发 embedding 后台加载,
+    # 消除首查冷窗口(事实因向量分缺失被门禁丢弃的问题)。
+    try:
+        from .rag.embedding import kick_background_prewarm
+
+        kick_background_prewarm()
+    except Exception:
+        pass
+
     scope = resolve_generation_scope(
         account_wxid=account_wxid,
         conversation_id=conversation_id,

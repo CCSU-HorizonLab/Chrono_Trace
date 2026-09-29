@@ -2643,8 +2643,16 @@ class Bridge:
         """
         try:
             from ..services.realtime.monitor_service import RealtimeMonitorService
-            
+
             logger.debug(f"[Bridge] 启动实时监听: {talker_display_name}")
+            # 监听启动即后台预热 embedding:用户第一次提问前模型就绪,
+            # 避免首查落在懒加载窗口内导致事实被门禁丢弃。
+            try:
+                from ..services.realtime.rag.embedding import kick_background_prewarm
+
+                kick_background_prewarm()
+            except Exception:
+                pass
             monitor_service = RealtimeMonitorService()
             result = monitor_service.start_monitoring(
                 talker_username="",  # 由监听后端自行解析

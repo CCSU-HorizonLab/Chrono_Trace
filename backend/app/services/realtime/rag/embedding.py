@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import threading
 from typing import Iterable
 
 from ...analysis.sentiment_service import SentimentService
@@ -74,3 +76,32 @@ class RagEmbeddingService:
     def is_warm(self) -> bool:
         """公共 API：嵌入模型是否已加载（此前调用方探测私有 _embedding_model）。"""
         return bool(getattr(self._get_shared_service(), "_embedding_model", None))
+
+
+_prewarm_lock = threading.Lock()
+_prewarm_started = False
+logger = logging.getLogger(__name__)
+
+
+def kick_background_prewarm(embedding_service: "RagEmbeddingService | None" = None) -> None:
+    """进程级一次性后台预热。
+
+    在监听启动/上下文装配时调用,使 embedding 引擎在用户第一次提问前
+    就绪——否则首次检索落在懒加载窗口内,事实会因向量分缺失被门禁丢弃
+    (真实使用:22:39 首查 selected=1 仅 hot_context,预热同秒才完成)。
+    """
+    global _prewarm_started
+    with _prewarm_lock:
+        if _prewarm_started:
+            return
+        _prewarm_started = True
+
+    def _warm():
+        try:
+            service = embedding_service or RagEmbeddingService()
+            if service.prewarm():
+                logger.info("[RAG Embedding] 进程级后台预热完成")
+        except Exception as exc:
+            logger.debug("[RAG Embedding] 进程级预热失败: %s", exc)
+
+    threading.Thread(target=_warm, daemon=True, name="rag-embedding-prewarm-app").start()

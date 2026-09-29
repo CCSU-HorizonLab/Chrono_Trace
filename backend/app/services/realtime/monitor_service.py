@@ -15,6 +15,7 @@ from .realtime_sentiment_service import RealtimeSentimentService
 from .emotion_state_tracker import EmotionStateTracker
 from .providers.base import UINotAccessibleError
 from .providers.models import build_message_hash, normalize_text
+from .providers.native_uia import TIME_LABEL_RE
 from .providers.factory import normalize_listener_backend
 from ..wechat.account_settings import get_active_wechat_account_wxid, load_settings_from_file
 
@@ -1425,12 +1426,14 @@ class RealtimeMonitorService:
         for msg in visible_messages or []:
             is_self = getattr(msg, 'is_self', False)
             is_system = getattr(msg, 'is_system', False)
+            content = str(getattr(msg, 'content', '') or '')
+            message_type = str(getattr(msg, 'type', 'text') or 'text')
+            if not is_system and content and TIME_LABEL_RE.match(content.strip()):
+                is_system = True
+                message_type = 'system'
             sender_attr = 'self' if is_self else 'friend'
             if is_system:
                 sender_attr = 'system'
-
-            content = str(getattr(msg, 'content', '') or '')
-            message_type = str(getattr(msg, 'type', 'text') or 'text')
             runtime_id = str(getattr(msg, 'id', '') or '')
             visible_index = str(getattr(msg, 'visible_index', '') or '')
             explicit_timestamp = int(getattr(msg, 'timestamp', 0) or 0)
@@ -2258,15 +2261,19 @@ class RealtimeMonitorService:
                 int(matched.group(1)), int(matched.group(2))
             ).timestamp())
 
-        matched = re.match(r'^(\d{1,2})月(\d{1,2})日\s+(\d{1,2}):(\d{2})$', text)
+        matched = re.match(
+            r'^(?:(\d{4})年)?(\d{1,2})月(\d{1,2})日\s+(?:(?:星期|周)[一二三四五六日天]\s+)?(?:(?:凌晨|早上|上午|中午|下午|傍晚|晚上|夜间)\s*)?(\d{1,2}):(\d{2})$',
+            text,
+        )
         if matched:
-            month = int(matched.group(1))
-            day = int(matched.group(2))
-            hour = int(matched.group(3))
-            minute = int(matched.group(4))
-            year = now_dt.year
+            explicit_year = int(matched.group(1)) if matched.group(1) else None
+            month = int(matched.group(2))
+            day = int(matched.group(3))
+            hour = int(matched.group(4))
+            minute = int(matched.group(5))
+            year = explicit_year or now_dt.year
             candidate = datetime(year, month, day, hour, minute)
-            if candidate > now_dt + timedelta(days=1):
+            if explicit_year is None and candidate > now_dt + timedelta(days=1):
                 candidate = datetime(year - 1, month, day, hour, minute)
             return int(candidate.timestamp())
 

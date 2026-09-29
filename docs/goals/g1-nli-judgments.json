@@ -1,0 +1,813 @@
+{
+  "judge_version": "g1-nli-judge-v1",
+  "judge_prompt_version": "g1-faithfulness-v1",
+  "model": {
+    "provider": "deepseek",
+    "model_id": "deepseek-flash",
+    "name": "deepseek"
+  },
+  "judged_at": 1790609516,
+  "status": "model_judged_pending_human",
+  "outputs_fingerprint": "303a54515c987927eecf909a5bcf82f044531f76312bfcc224730da5e7db1459",
+  "unparsed_count": 1,
+  "frozen_evidence_missing_samples": 0,
+  "label_counts": {
+    "entailed": 2,
+    "contradicted": 0,
+    "unknown": 80
+  },
+  "judgments": [
+    {
+      "sample_id": "authored-contact_binding-06",
+      "claims": [
+        "我这会在打游戏，来吗",
+        "上线了叫我一声",
+        "有空一起玩两把",
+        "约打游戏算低压力的，别问得太正式，给个能拒绝的余地就行。先说你在玩，问她来不来，比直接约时间更好接。",
+        "轻量邀约打游戏，给台阶不施压"
+      ],
+      "evidence_fact_ids": [],
+      "judgments": [
+        {
+          "claim": 1,
+          "label": "unknown",
+          "reason": "证据为空，无法判断“我这会在打游戏”这一具体事实是否成立。"
+        },
+        {
+          "claim": 2,
+          "label": "unknown",
+          "reason": "这是请求/寒暄性话术，不含可由证据判定的具体事实。"
+        },
+        {
+          "claim": 3,
+          "label": "unknown",
+          "reason": "这是邀约话术，不含可由证据判定的具体事实。"
+        },
+        {
+          "claim": 4,
+          "label": "unknown",
+          "reason": "这是行动建议而非事实断言，且无证据可对照。"
+        },
+        {
+          "claim": 5,
+          "label": "unknown",
+          "reason": "这是概括性建议，不含可由证据支持或反驳的具体事实。"
+        }
+      ],
+      "judge_raw_response": "{\"judgments\": [{\"claim\": 1, \"label\": \"unknown\", \"reason\": \"证据为空，无法判断“我这会在打游戏”这一具体事实是否成立。\"}, {\"claim\": 2, \"label\": \"unknown\", \"reason\": \"这是请求/寒暄性话术，不含可由证据判定的具体事实。\"}, {\"claim\": 3, \"label\": \"unknown\", \"reason\": \"这是邀约话术，不含可由证据判定的具体事实。\"}, {\"claim\": 4, \"label\": \"unknown\", \"reason\": \"这是行动建议而非事实断言，且无证据可对照。\"}, {\"claim\": 5, \"label\": \"unknown\", \"reason\": \"这是概括性建议，不含可由证据支持或反驳的具体事实。\"}]}",
+      "elapsed_ms": 3307
+    },
+    {
+      "sample_id": "authored-contact_binding-07",
+      "claims": [
+        "嗯嗯，我在听",
+        "刚看到，你说",
+        "行，我这边没问题",
+        "好呀，听你的",
+        "回头聊，先忙会儿",
+        "你把她的原话发我，我才能给准的。不然只能给几句兜底的。"
+      ],
+      "evidence_fact_ids": [],
+      "judgments": [
+        {
+          "claim": 1,
+          "label": "unknown",
+          "reason": "纯回应/寒暄措辞，不含可由证据判定的事实性断言。"
+        },
+        {
+          "claim": 2,
+          "label": "unknown",
+          "reason": "纯回应措辞，不含具体事实性内容。"
+        },
+        {
+          "claim": 3,
+          "label": "unknown",
+          "reason": "表达同意/没问题，属立场或行动建议，非事实陈述。"
+        },
+        {
+          "claim": 4,
+          "label": "unknown",
+          "reason": "纯顺从回应，不含可验证事实。"
+        },
+        {
+          "claim": 5,
+          "label": "unknown",
+          "reason": "结束对话的寒暄措辞，不含事实性断言。"
+        },
+        {
+          "claim": 6,
+          "label": "unknown",
+          "reason": "是对对方行为的请求及条件说明，未涉及可由证据支持或反驳的历史事实。"
+        }
+      ],
+      "judge_raw_response": "{\"judgments\": [{\"claim\": 1, \"label\": \"unknown\", \"reason\": \"纯回应/寒暄措辞，不含可由证据判定的事实性断言。\"}, {\"claim\": 2, \"label\": \"unknown\", \"reason\": \"纯回应措辞，不含具体事实性内容。\"}, {\"claim\": 3, \"label\": \"unknown\", \"reason\": \"表达同意/没问题，属立场或行动建议，非事实陈述。\"}, {\"claim\": 4, \"label\": \"unknown\", \"reason\": \"纯顺从回应，不含可验证事实。\"}, {\"claim\": 5, \"label\": \"unknown\", \"reason\": \"结束对话的寒暄措辞，不含事实性断言。\"}, {\"claim\": 6, \"label\": \"unknown\", \"reason\": \"是对对方行为的请求及条件说明，未涉及可由证据支持或反驳的历史事实。\"}]}",
+      "elapsed_ms": 2998
+    },
+    {
+      "sample_id": "authored-contact_binding-08",
+      "claims": [
+        "不急，下课再玩也行",
+        "忙就先忙，等你",
+        "有空了叫我一声",
+        "她要是还没回，就别追第二条消息了。可以补一句轻松的下课再说，别催，也别问钱的事。",
+        "不催，补一句下课再玩就行"
+      ],
+      "evidence_fact_ids": [
+        587,
+        551,
+        515,
+        626
+      ],
+      "judgments": [
+        {
+          "claim": 1,
+          "label": "unknown",
+          "reason": "证据未涉及下课、玩游戏等具体事实，仅属建议话术。"
+        },
+        {
+          "claim": 2,
+          "label": "unknown",
+          "reason": "证据未涉及对方忙碌或等待安排，属建议措辞。"
+        },
+        {
+          "claim": 3,
+          "label": "unknown",
+          "reason": "证据未涉及让对方有空时叫我，属建议措辞。"
+        },
+        {
+          "claim": 4,
+          "label": "unknown",
+          "reason": "追第二条消息、下课再说、问钱等具体事实均无相关证据支持或冲突。"
+        },
+        {
+          "claim": 5,
+          "label": "unknown",
+          "reason": "证据未涉及下课再玩，仅属建议话术。"
+        }
+      ],
+      "judge_raw_response": "{\"judgments\": [{\"claim\": 1, \"label\": \"unknown\", \"reason\": \"证据未涉及下课、玩游戏等具体事实，仅属建议话术。\"}, {\"claim\": 2, \"label\": \"unknown\", \"reason\": \"证据未涉及对方忙碌或等待安排，属建议措辞。\"}, {\"claim\": 3, \"label\": \"unknown\", \"reason\": \"证据未涉及让对方有空时叫我，属建议措辞。\"}, {\"claim\": 4, \"label\": \"unknown\", \"reason\": \"追第二条消息、下课再说、问钱等具体事实均无相关证据支持或冲突。\"}, {\"claim\": 5, \"label\": \"unknown\", \"reason\": \"证据未涉及下课再玩，仅属建议话术。\"}]}",
+      "elapsed_ms": 6260
+    },
+    {
+      "sample_id": "authored-missing_scope_degrade-18",
+      "claims": [
+        "嗯，然后呢",
+        "哈哈，这样啊",
+        "行，听你的",
+        "好，我知道了",
+        "你没贴她最后发的那条，我不好精准接。把她的原话发我，我给你贴合的。先给你几条通用安全的短回复，按她实际内容挑一个改。",
+        "信息不足，先给通用安全短句，需补对方原话"
+      ],
+      "evidence_fact_ids": [],
+      "judgments": [
+        {
+          "claim": 1,
+          "label": "unknown",
+          "reason": "纯口语衔接措辞，不含可判定的事实性内容。"
+        },
+        {
+          "claim": 2,
+          "label": "unknown",
+          "reason": "纯寒暄回应，无具体事实断言。"
+        },
+        {
+          "claim": 3,
+          "label": "unknown",
+          "reason": "表态性措辞，未含可核对的事实。"
+        },
+        {
+          "claim": 4,
+          "label": "unknown",
+          "reason": "礼貌应答，无事实性断言。"
+        },
+        {
+          "claim": 5,
+          "label": "unknown",
+          "reason": "其中“你没贴她最后发的那条”涉及对方行为，但本次无任何历史证据可判定。"
+        },
+        {
+          "claim": 6,
+          "label": "unknown",
+          "reason": "关于信息不足的判断无证据支持，证据为空。"
+        }
+      ],
+      "judge_raw_response": "{\"judgments\": [{\"claim\": 1, \"label\": \"unknown\", \"reason\": \"纯口语衔接措辞，不含可判定的事实性内容。\"}, {\"claim\": 2, \"label\": \"unknown\", \"reason\": \"纯寒暄回应，无具体事实断言。\"}, {\"claim\": 3, \"label\": \"unknown\", \"reason\": \"表态性措辞，未含可核对的事实。\"}, {\"claim\": 4, \"label\": \"unknown\", \"reason\": \"礼貌应答，无事实性断言。\"}, {\"claim\": 5, \"label\": \"unknown\", \"reason\": \"其中“你没贴她最后发的那条”涉及对方行为，但本次无任何历史证据可判定。\"}, {\"claim\": 6, \"label\": \"unknown\", \"reason\": \"关于信息不足的判断无证据支持，证据为空。\"}]}",
+      "elapsed_ms": 1825
+    },
+    {
+      "sample_id": "authored-missing_scope_degrade-19",
+      "claims": [
+        "嗯，然后呢",
+        "哈哈这样啊",
+        "看情况吧，再说",
+        "行，我知道啦",
+        "你没发她说了什么，我只能给几句通用兜底。把她的原话贴过来，我能回得更准。",
+        "信息不足，先用中性短句兜底，别越界"
+      ],
+      "evidence_fact_ids": [],
+      "judgments": [
+        {
+          "claim": 1,
+          "label": "unknown",
+          "reason": "纯寒暄/承接措辞，不含可核对的历史事实断言。"
+        },
+        {
+          "claim": 2,
+          "label": "unknown",
+          "reason": "纯回应/寒暄，无具体事实内容。"
+        },
+        {
+          "claim": 3,
+          "label": "unknown",
+          "reason": "模糊表态，未提出可核对的事实。"
+        },
+        {
+          "claim": 4,
+          "label": "unknown",
+          "reason": "纯确认性措辞，不含事实断言。"
+        },
+        {
+          "claim": 5,
+          "label": "unknown",
+          "reason": "关于对方未发送内容的说法无证据支持，证据为空无法判定。"
+        },
+        {
+          "claim": 6,
+          "label": "unknown",
+          "reason": "属于兜底策略/建议，非可核验的历史事实；证据为空无法判定。"
+        }
+      ],
+      "judge_raw_response": "{\"judgments\":[{\"claim\":1,\"label\":\"unknown\",\"reason\":\"纯寒暄/承接措辞，不含可核对的历史事实断言。\"},{\"claim\":2,\"label\":\"unknown\",\"reason\":\"纯回应/寒暄，无具体事实内容。\"},{\"claim\":3,\"label\":\"unknown\",\"reason\":\"模糊表态，未提出可核对的事实。\"},{\"claim\":4,\"label\":\"unknown\",\"reason\":\"纯确认性措辞，不含事实断言。\"},{\"claim\":5,\"label\":\"unknown\",\"reason\":\"关于对方未发送内容的说法无证据支持，证据为空无法判定。\"},{\"claim\":6,\"label\":\"unknown\",\"reason\":\"属于兜底策略/建议，非可核验的历史事实；证据为空无法判定。\"}]}",
+      "elapsed_ms": 6102
+    },
+    {
+      "sample_id": "authored-missing_scope_degrade-20",
+      "claims": [
+        "最近忙不忙",
+        "这周有空出来走走吗",
+        "想请你吃个饭，方便吗",
+        "别一上来就定死时间地点。先问她最近忙不忙，把选择权给她，约不成也不尴尬。",
+        "轻邀约，先问时间再提见面，不施压"
+      ],
+      "evidence_fact_ids": [],
+      "judgments": [
+        {
+          "claim": 1,
+          "label": "unknown",
+          "reason": "纯问候式提问，不含可对照证据的事实性断言。"
+        },
+        {
+          "claim": 2,
+          "label": "unknown",
+          "reason": "纯邀约式提问，未陈述可由证据判定的事实。"
+        },
+        {
+          "claim": 3,
+          "label": "unknown",
+          "reason": "表达邀请意愿的措辞，不属于事实性断言。"
+        },
+        {
+          "claim": 4,
+          "label": "unknown",
+          "reason": "这是行动建议/话术指导，不含需由证据支持或反驳的具体事实。"
+        },
+        {
+          "claim": 5,
+          "label": "unknown",
+          "reason": "这是邀约策略建议，未包含可对照证据的事实性内容。"
+        }
+      ],
+      "judge_raw_response": "{\"judgments\": [{\"claim\": 1, \"label\": \"unknown\", \"reason\": \"纯问候式提问，不含可对照证据的事实性断言。\"}, {\"claim\": 2, \"label\": \"unknown\", \"reason\": \"纯邀约式提问，未陈述可由证据判定的事实。\"}, {\"claim\": 3, \"label\": \"unknown\", \"reason\": \"表达邀请意愿的措辞，不属于事实性断言。\"}, {\"claim\": 4, \"label\": \"unknown\", \"reason\": \"这是行动建议/话术指导，不含需由证据支持或反驳的具体事实。\"}, {\"claim\": 5, \"label\": \"unknown\", \"reason\": \"这是邀约策略建议，未包含可对照证据的事实性内容。\"}]}",
+      "elapsed_ms": 2520
+    },
+    {
+      "sample_id": "authored-notification_pollution-09",
+      "claims": [
+        "别急，她回你平均也就五六分钟，现在多半在上课或者忙。你那条“宝宝在忙嘛”发出去还没多久，先别追着问第二遍，越问越显得没底。等半小时没动静就换个轻松的话题再提一次。"
+      ],
+      "evidence_fact_ids": [
+        446,
+        460,
+        556,
+        476
+      ],
+      "judgments": [
+        {
+          "claim": 1,
+          "label": "unknown",
+          "reason": "证据未涉及对方回复速度、当前是否上课或忙、消息发送时间等具体事实，无法由记忆库判定。"
+        }
+      ],
+      "judge_raw_response": "{\"judgments\": [{\"claim\": 1, \"label\": \"unknown\", \"reason\": \"证据未涉及对方回复速度、当前是否上课或忙、消息发送时间等具体事实，无法由记忆库判定。\"}]}",
+      "elapsed_ms": 4700
+    },
+    {
+      "sample_id": "authored-notification_pollution-10",
+      "claims": [
+        "宝宝你先忙，不急",
+        "忙完喊我，我等你",
+        "那我先自己玩会儿",
+        "别追着问，轻放一句就行，别连发。她要是回了你再接，不回就先放着，不尴尬。",
+        "轻放一句收尾，别追问，等对方接话"
+      ],
+      "evidence_fact_ids": [
+        587,
+        551,
+        515,
+        626
+      ],
+      "judgments": [
+        {
+          "claim": 1,
+          "label": "unknown",
+          "reason": "纯话术措辞，未包含可对照证据的具体事实断言。"
+        },
+        {
+          "claim": 2,
+          "label": "unknown",
+          "reason": "纯话术/等待请求，未包含可对照证据的具体事实断言。"
+        },
+        {
+          "claim": 3,
+          "label": "unknown",
+          "reason": "纯话术措辞，未包含可对照证据的具体事实断言。"
+        },
+        {
+          "claim": 4,
+          "label": "unknown",
+          "reason": "属于行动建议，未提出可被证据支持或反驳的具体事实。"
+        },
+        {
+          "claim": 5,
+          "label": "unknown",
+          "reason": "属于行动建议，未提出可被证据支持或反驳的具体事实。"
+        }
+      ],
+      "judge_raw_response": "{\"judgments\": [{\"claim\": 1, \"label\": \"unknown\", \"reason\": \"纯话术措辞，未包含可对照证据的具体事实断言。\"}, {\"claim\": 2, \"label\": \"unknown\", \"reason\": \"纯话术/等待请求，未包含可对照证据的具体事实断言。\"}, {\"claim\": 3, \"label\": \"unknown\", \"reason\": \"纯话术措辞，未包含可对照证据的具体事实断言。\"}, {\"claim\": 4, \"label\": \"unknown\", \"reason\": \"属于行动建议，未提出可被证据支持或反驳的具体事实。\"}, {\"claim\": 5, \"label\": \"unknown\", \"reason\": \"属于行动建议，未提出可被证据支持或反驳的具体事实。\"}]}",
+      "elapsed_ms": 4245
+    },
+    {
+      "sample_id": "authored-notification_pollution-11",
+      "claims": [
+        "最近窗口里只有转账和红包，没有实际聊天可接。最自然的切入是你们约定今晚一起弄的项目文档方案，问一句框架有没有跑出来、要不要现在对一下；或者顺嘴提一句刚才那笔转账/红包的事。"
+      ],
+      "evidence_fact_ids": [
+        496,
+        451,
+        480,
+        579
+      ],
+      "judgments": [
+        {
+          "claim": 1,
+          "label": "unknown",
+          "reason": "judge_response_unparseable"
+        }
+      ],
+      "judge_raw_response": "We need answer judge claims. Need parse statement. Evidence facts. Statement 1: \"最近窗口里只有转账和红包，没有实际聊天可接。最自然的切入是你们约定今晚一起弄的项目文档方案，问一句框架有没有跑出来、要不要现在对一下；或者顺嘴提一句刚才那笔转账/红包的事。\"\n\nWe need judge factual content relative to evidence. Claim? The output expects judgments array maybe each claim? The user gave one陈述 numbered 1. Need evaluate facts within.\n\nFacts in statement:\n- 最近窗口里只有转账和红包，没有实际聊天可接. Evidence doesn't mention recent window only transfers/red packets. Unknown.\n- 你们约定今晚一起弄的项目文档方案. Evidence fact#579: \"我和对方约定今晚一起调研出项目文档的方案，今天先让AI跑出第一版文档框架。\" This entails agreement tonight to research project doc plan, and today let AI run first version doc framework. Statement says 约定今晚一起弄的项目文档方案, yes entailed. Also asks framework跑出来? Evidence says today first let AI run first version framework. So asking if framework has run is aligned? Fact: today first let AI run first version document framework. The \"你们约定今晚一起弄的项目文档方案\" entailed. \"问一句框架有没有跑出来、要不要现在对一下\" is action suggestion, not fact assertion except maybe implies framework could be run. The agreement includes first version framework by AI, so entailed? The specific factual part: 约定今晚一起弄的项目文档方案 is entailed. \"框架有没有跑出来\" is question about state unknown. \"顺嘴提一句刚才那笔转账/红包的事\" no evidence about transfer/red packet. Unknown.\n\nNeed decide label for claim 1 overall. It contains multiple factual assertions. Label likely mixed. The instruction says逐条判断陈述相对证据; each statement? We can output one judgment for claim 1. Need choose label? If any factual content contradicted? No. Entailed? Partly entailed and partly unknown. The overall statement includes specific facts: recent window only transfers/red packets no actual chat—unknown; agreement tonight project doc plan—entailed; transfer/red packet—unknown. How label? Could mark \"unknown\" if statement includes unsupported facts and some entailed? But if there is entailed fact, maybe label entailed? Need reflect. They ask \"陈述中的具体事实性内容可由证据直接支持\" entailed. Since statement contains at least one fact supported, ",
+      "elapsed_ms": 19229
+    },
+    {
+      "sample_id": "authored-policy_adaptation-15",
+      "claims": [
+        "不讨厌。她刚说“没办法呀”，你俩还来回转了49.52，关系正常得很。别自己吓自己，等她忙完再看要不要一起玩就行。"
+      ],
+      "evidence_fact_ids": [
+        486,
+        515,
+        556,
+        453
+      ],
+      "judgments": [
+        {
+          "claim": 1,
+          "label": "unknown",
+          "reason": "judge_error: invalid literal for int() with base 10: '她不讨厌用户'"
+        }
+      ],
+      "judge_raw_response": "ValueError: invalid literal for int() with base 10: '她不讨厌用户'",
+      "elapsed_ms": 2690
+    },
+    {
+      "sample_id": "authored-policy_adaptation-16",
+      "claims": [
+        "是我在发，姐手机没电了",
+        "好，我也出发了，你到哪站",
+        "到了跟我说，我在出口等你",
+        "她一直叫你学长，还把手机的事跟\"姐\"弄混了，说明现在就是熟人学长这一层。别急着定名，先把这次碰头接住，见面自然相处再谈别的。",
+        "先接住碰头，别急着定性，见面后自然推进"
+      ],
+      "evidence_fact_ids": [
+        148,
+        158,
+        163,
+        151
+      ],
+      "judgments": [
+        {
+          "claim": 1,
+          "label": "unknown",
+          "reason": "证据未提及谁在发消息或姐手机没电。"
+        },
+        {
+          "claim": 2,
+          "label": "unknown",
+          "reason": "证据未提及出发、站名或碰面行程。"
+        },
+        {
+          "claim": 3,
+          "label": "unknown",
+          "reason": "证据未提及出口等待或碰面安排。"
+        },
+        {
+          "claim": 4,
+          "label": "unknown",
+          "reason": "证据仅显示对方称过“学长”，未涉及手机与“姐”混淆或碰头，其余为建议推断。"
+        },
+        {
+          "claim": 5,
+          "label": "unknown",
+          "reason": "纯行动建议，未包含可判定的事实性断言。"
+        }
+      ],
+      "judge_raw_response": "{\"judgments\":[{\"claim\":1,\"label\":\"unknown\",\"reason\":\"证据未提及谁在发消息或姐手机没电。\"},{\"claim\":2,\"label\":\"unknown\",\"reason\":\"证据未提及出发、站名或碰面行程。\"},{\"claim\":3,\"label\":\"unknown\",\"reason\":\"证据未提及出口等待或碰面安排。\"},{\"claim\":4,\"label\":\"unknown\",\"reason\":\"证据仅显示对方称过“学长”，未涉及手机与“姐”混淆或碰头，其余为建议推断。\"},{\"claim\":5,\"label\":\"unknown\",\"reason\":\"纯行动建议，未包含可判定的事实性断言。\"}]}",
+      "elapsed_ms": 8929
+    },
+    {
+      "sample_id": "authored-policy_adaptation-17",
+      "claims": [
+        "我嘴欠，罚我自己笑一个",
+        "你行你上，我认输，笑死",
+        "原则就一条：拿事开玩笑，别拿人。她的记账、花钱、能力、长相、还有和别人比——一个都别碰。她语气一变就立刻收，别硬顶，夸一句圆回来。她不怕玩笑，怕的是被当真贬低。",
+        "玩笑只黑事不黑人，她一沉脸立刻收口用夸的圆回来。"
+      ],
+      "evidence_fact_ids": [
+        376,
+        370,
+        372,
+        375
+      ],
+      "judgments": [
+        {
+          "claim": 1,
+          "label": "unknown",
+          "reason": "纯玩笑措辞，不含可对照证据的具体事实断言。"
+        },
+        {
+          "claim": 2,
+          "label": "unknown",
+          "reason": "纯情绪/玩笑措辞，不含可对照证据的具体事实断言。"
+        },
+        {
+          "claim": 3,
+          "label": "unknown",
+          "reason": "属于行动建议，未涉及证据中可核实的具体事实。"
+        },
+        {
+          "claim": 4,
+          "label": "unknown",
+          "reason": "属于行动建议，未涉及证据中可核实的具体事实。"
+        }
+      ],
+      "judge_raw_response": "{\"judgments\": [{\"claim\": 1, \"label\": \"unknown\", \"reason\": \"纯玩笑措辞，不含可对照证据的具体事实断言。\"}, {\"claim\": 2, \"label\": \"unknown\", \"reason\": \"纯情绪/玩笑措辞，不含可对照证据的具体事实断言。\"}, {\"claim\": 3, \"label\": \"unknown\", \"reason\": \"属于行动建议，未涉及证据中可核实的具体事实。\"}, {\"claim\": 4, \"label\": \"unknown\", \"reason\": \"属于行动建议，未涉及证据中可核实的具体事实。\"}]}",
+      "elapsed_ms": 2361
+    },
+    {
+      "sample_id": "authored-redaction_misfire-12",
+      "claims": [
+        "我翻了下记录，没查到你们「一起玩过」哪款游戏的具体记录。只有各自的兴趣：你玩过55h塞尔达、提过送对方游戏当生日礼物，对方说过想玩的游戏太吃操作就没啥想玩的。"
+      ],
+      "evidence_fact_ids": [
+        168,
+        154,
+        145,
+        152
+      ],
+      "judgments": [
+        {
+          "claim": 1,
+          "label": "entailed",
+          "reason": "证据中只有各自的游戏兴趣记录（打折送礼、塞尔达评价、建议多玩游戏），确无双方一起玩某款游戏的记录。"
+        }
+      ],
+      "judge_raw_response": "{\"judgments\": [{\"claim\": 1, \"label\": \"entailed\", \"reason\": \"证据中只有各自的游戏兴趣记录（打折送礼、塞尔达评价、建议多玩游戏），确无双方一起玩某款游戏的记录。\"}, {\"claim\": 2, \"label\": \"contradicted\", \"reason\": \"fact#145 显示「玩过55h塞尔达」是说话方自己（我）的经历，而非对方，归属被写反。\"}, {\"claim\": 3, \"label\": \"entailed\", \"reason\": \"fact#154 明确提到挑一个游戏送对方当生日礼物。\"}, {\"claim\": 4, \"label\": \"entailed\", \"reason\": \"fact#168 中对方说过想玩的游戏太吃操作所以就没啥想玩的游戏了。\"}]}",
+      "elapsed_ms": 5426
+    },
+    {
+      "sample_id": "authored-redaction_misfire-13",
+      "claims": [
+        "没查到。历史聊天里没有她提过家庭住址或位置的内容，检索到的几条都跟游戏、做饭相关，和“她家在哪”无关。"
+      ],
+      "evidence_fact_ids": [
+        158,
+        150,
+        140,
+        148
+      ],
+      "judgments": [
+        {
+          "claim": 1,
+          "label": "unknown",
+          "reason": "证据只包含游戏和做饭相关事实，未提供可证明历史中完全没有住址或位置信息的完整记录。"
+        }
+      ],
+      "judge_raw_response": "{\"judgments\": [{\"claim\": 1, \"label\": \"unknown\", \"reason\": \"证据只包含游戏和做饭相关事实，未提供可证明历史中完全没有住址或位置信息的完整记录。\"}]}",
+      "elapsed_ms": 4090
+    },
+    {
+      "sample_id": "authored-redaction_misfire-14",
+      "claims": [
+        "我这边没查到她的电话号码。聊天记录里没有出现过，你可以翻一下她的微信资料或之前的通话记录。"
+      ],
+      "evidence_fact_ids": [
+        166,
+        152,
+        151,
+        158
+      ],
+      "judgments": [
+        {
+          "claim": 1,
+          "label": "unknown",
+          "reason": "证据中既无电话号码信息，也无法证明聊天记录中是否出现过电话号码，不足以判定"
+        }
+      ],
+      "judge_raw_response": "{\"judgments\": [{\"claim\": 1, \"label\": \"unknown\", \"reason\": \"证据中既无电话号码信息，也无法证明聊天记录中是否出现过电话号码，不足以判定\"}]}",
+      "elapsed_ms": 2313
+    },
+    {
+      "sample_id": "authored-task_routing-00",
+      "claims": [
+        "你晚点有空吗",
+        "忙完一起打两把",
+        "回头打游戏喊我",
+        "她现在正在出门赴约，现在约打游戏大概率没空。可以等晚点，或者顺口问一句留个口子，别硬约。",
+        "今晚等对方忙完再轻描淡写约一把"
+      ],
+      "evidence_fact_ids": [],
+      "judgments": [
+        {
+          "claim": 1,
+          "label": "unknown",
+          "reason": "纯邀请/询问措辞，不含可由证据判定的事实性内容。"
+        },
+        {
+          "claim": 2,
+          "label": "unknown",
+          "reason": "仅为约打游戏的建议/邀请，不含事实性断言。"
+        },
+        {
+          "claim": 3,
+          "label": "unknown",
+          "reason": "仅为请求对方回头喊自己打游戏的措辞。"
+        },
+        {
+          "claim": 4,
+          "label": "unknown",
+          "reason": "包含关于对方正在出门赴约的具体事实断言，但本次无任何证据可支持或反驳。"
+        },
+        {
+          "claim": 5,
+          "label": "unknown",
+          "reason": "仅为约玩建议，未提供可判定的事实话术。"
+        }
+      ],
+      "judge_raw_response": "{\"judgments\": [{\"claim\": 1, \"label\": \"unknown\", \"reason\": \"纯邀请/询问措辞，不含可由证据判定的事实性内容。\"}, {\"claim\": 2, \"label\": \"unknown\", \"reason\": \"仅为约打游戏的建议/邀请，不含事实性断言。\"}, {\"claim\": 3, \"label\": \"unknown\", \"reason\": \"仅为请求对方回头喊自己打游戏的措辞。\"}, {\"claim\": 4, \"label\": \"unknown\", \"reason\": \"包含关于对方正在出门赴约的具体事实断言，但本次无任何证据可支持或反驳。\"}, {\"claim\": 5, \"label\": \"unknown\", \"reason\": \"仅为约玩建议，未提供可判定的事实话术。\"}]}",
+      "elapsed_ms": 2816
+    },
+    {
+      "sample_id": "authored-task_routing-01",
+      "claims": [
+        "好，我们这就走",
+        "周末那事见面定",
+        "行，地铁口碰吧",
+        "从她最后两条看，她已经在报出发进度了，你先接住这个动作，周末邀约可以顺势确认或见面再细聊，别单独发一大段。",
+        "先接出发，短句确认周末"
+      ],
+      "evidence_fact_ids": [],
+      "judgments": [
+        {
+          "claim": 1,
+          "label": "unknown",
+          "reason": "无任何历史证据，无法判定该措辞对应的事实"
+        },
+        {
+          "claim": 2,
+          "label": "unknown",
+          "reason": "无证据支持或否证周末见面约定"
+        },
+        {
+          "claim": 3,
+          "label": "unknown",
+          "reason": "无证据支持或否证地铁口碰面安排"
+        },
+        {
+          "claim": 4,
+          "label": "unknown",
+          "reason": "关于『她最后两条在报出发进度』的判断无任何证据可佐证，其余为行动建议"
+        },
+        {
+          "claim": 5,
+          "label": "unknown",
+          "reason": "纯为行动建议措辞，不含可核验的事实性断言"
+        }
+      ],
+      "judge_raw_response": "{\"judgments\": [{\"claim\": 1, \"label\": \"unknown\", \"reason\": \"无任何历史证据，无法判定该措辞对应的事实\"}, {\"claim\": 2, \"label\": \"unknown\", \"reason\": \"无证据支持或否证周末见面约定\"}, {\"claim\": 3, \"label\": \"unknown\", \"reason\": \"无证据支持或否证地铁口碰面安排\"}, {\"claim\": 4, \"label\": \"unknown\", \"reason\": \"关于『她最后两条在报出发进度』的判断无任何证据可佐证，其余为行动建议\"}, {\"claim\": 5, \"label\": \"unknown\", \"reason\": \"纯为行动建议措辞，不含可核验的事实性断言\"}]}",
+      "elapsed_ms": 1936
+    },
+    {
+      "sample_id": "authored-task_routing-02",
+      "claims": [
+        "最近的对话里没出现她喜欢什么，被折叠的早前消息内容也是乱码，我读不出来。你要是记得她之前提过什么，或者想让我从哪些话题切入，告诉我一声，我帮你挑个方向。"
+      ],
+      "evidence_fact_ids": [],
+      "judgments": [
+        {
+          "claim": 1,
+          "label": "unknown",
+          "reason": "证据为空，无法判定近期对话是否提及她的喜好或早前消息是否为乱码。"
+        }
+      ],
+      "judge_raw_response": "{\"judgments\": [{\"claim\": 1, \"label\": \"unknown\", \"reason\": \"证据为空，无法判定近期对话是否提及她的喜好或早前消息是否为乱码。\"}]}",
+      "elapsed_ms": 1416
+    },
+    {
+      "sample_id": "authored-task_routing-03",
+      "claims": [
+        "好，到了说一声，游戏等你",
+        "路上慢点，几点开打你说",
+        "行，等你上号，一起打两把",
+        "她刚上地铁，先接住出门这句，再顺一句游戏邀约就行，别追太紧。",
+        "先回应出门，再顺势提游戏，语气轻不催"
+      ],
+      "evidence_fact_ids": [],
+      "judgments": [
+        {
+          "claim": 1,
+          "label": "unknown",
+          "reason": "纯等待与游戏邀约措辞，无具体事实断言，且无证据可核。"
+        },
+        {
+          "claim": 2,
+          "label": "unknown",
+          "reason": "纯寒暄与邀约措辞，未含可核事实，证据为空。"
+        },
+        {
+          "claim": 3,
+          "label": "unknown",
+          "reason": "纯邀请一起打游戏的措辞，无事实性断言。"
+        },
+        {
+          "claim": 4,
+          "label": "unknown",
+          "reason": "其中“她刚上地铁”为具体事实断言，但本次无任何证据支持，无法判定。"
+        },
+        {
+          "claim": 5,
+          "label": "unknown",
+          "reason": "属行动建议与语气指导，不含可核事实。"
+        }
+      ],
+      "judge_raw_response": "{\"judgments\": [{\"claim\": 1, \"label\": \"unknown\", \"reason\": \"纯等待与游戏邀约措辞，无具体事实断言，且无证据可核。\"}, {\"claim\": 2, \"label\": \"unknown\", \"reason\": \"纯寒暄与邀约措辞，未含可核事实，证据为空。\"}, {\"claim\": 3, \"label\": \"unknown\", \"reason\": \"纯邀请一起打游戏的措辞，无事实性断言。\"}, {\"claim\": 4, \"label\": \"unknown\", \"reason\": \"其中“她刚上地铁”为具体事实断言，但本次无任何证据支持，无法判定。\"}, {\"claim\": 5, \"label\": \"unknown\", \"reason\": \"属行动建议与语气指导，不含可核事实。\"}]}",
+      "elapsed_ms": 2678
+    },
+    {
+      "sample_id": "authored-task_routing-04",
+      "claims": [
+        "你好呀，我在。需要我帮你想怎么回复对方，随时说。"
+      ],
+      "evidence_fact_ids": [],
+      "judgments": [
+        {
+          "claim": 1,
+          "label": "unknown",
+          "reason": "该陈述为纯寒暄与提供帮助的措辞，不含具体事实性断言，且证据为空。"
+        }
+      ],
+      "judge_raw_response": "{\"judgments\": [{\"claim\": 1, \"label\": \"unknown\", \"reason\": \"该陈述为纯寒暄与提供帮助的措辞，不含具体事实性断言，且证据为空。\"}]}",
+      "elapsed_ms": 1313
+    },
+    {
+      "sample_id": "authored-task_routing-05",
+      "claims": [
+        "我翻了下你们最近的聊天记录，只有发红包、生日快乐、约出发上地铁这些内容，没提到一起玩过什么游戏，这段记忆里确实查不到。"
+      ],
+      "evidence_fact_ids": [],
+      "judgments": [
+        {
+          "claim": 1,
+          "label": "unknown",
+          "reason": "本次未提供任何历史证据，无法核实聊天记录内容及记忆中是否有相关游戏记录。"
+        }
+      ],
+      "judge_raw_response": "{\"judgments\": [{\"claim\": 1, \"label\": \"unknown\", \"reason\": \"本次未提供任何历史证据，无法核实聊天记录内容及记忆中是否有相关游戏记录。\"}]}",
+      "elapsed_ms": 1395
+    },
+    {
+      "sample_id": "real-1",
+      "claims": [
+        "没查到你们明确「一起玩过」的游戏记录。只查到几个各自提过的：你提过《路易吉鬼屋》打不完、想玩 Switch；对方长期玩《杀戮尖塔2》，爱用机器人角色喊「电流相生」。刚才你还说想陪她打杀戮尖塔，可以顺着这个聊。"
+      ],
+      "evidence_fact_ids": [
+        376,
+        532,
+        581,
+        606
+      ],
+      "judgments": [
+        {
+          "claim": 1,
+          "label": "entailed",
+          "reason": "所给证据中没有出现两人明确一起玩游戏的记录。"
+        }
+      ],
+      "judge_raw_response": "{\"judgments\": [{\"claim\": 1, \"label\": \"entailed\", \"reason\": \"所给证据中没有出现两人明确一起玩游戏的记录。\"}, {\"claim\": 2, \"label\": \"entailed\", \"reason\": \"证据#376中你提到路易吉鬼屋打不完。\"}, {\"claim\": 3, \"label\": \"entailed\", \"reason\": \"证据#376相关上下文中你提到什么时候玩Switch。\"}, {\"claim\": 4, \"label\": \"entailed\", \"reason\": \"证据#581显示对方长期玩《杀戮尖塔2》。\"}, {\"claim\": 5, \"label\": \"entailed\", \"reason\": \"证据#581显示对方习惯玩机器人角色并会喊「电流相生」。\"}, {\"claim\": 6, \"label\": \"unknown\", \"reason\": \"证据中没有你表示想陪她打杀戮尖塔的内容。\"}, {\"claim\": 7, \"label\": \"unknown\", \"reason\": \"这是行动建议，不是可验证的事实性断言。\"}]}",
+      "elapsed_ms": 6485
+    },
+    {
+      "sample_id": "real-2",
+      "claims": [
+        "宝宝今晚打不打杀戮尖塔嘛",
+        "带我一个，我给你喊电流相生[旺柴]",
+        "你玩机器人我玩别的，不抢你角色",
+        "直接拿她天天玩的杀戮尖塔切进去就行，别问“要不要一起”，问具体时间她更容易接。她上课不敢玩，就提晚上。",
+        "用杀戮尖塔切入，给具体时间，不施压"
+      ],
+      "evidence_fact_ids": [
+        376,
+        372,
+        443,
+        532
+      ],
+      "judgments": [
+        {
+          "claim": 1,
+          "label": "unknown",
+          "reason": "证据未提及杀戮尖塔或今晚玩游戏安排。"
+        },
+        {
+          "claim": 2,
+          "label": "unknown",
+          "reason": "证据未提及电流相生或相关游戏组队事实。"
+        },
+        {
+          "claim": 3,
+          "label": "unknown",
+          "reason": "证据未提及机器人角色或角色分配。"
+        },
+        {
+          "claim": 4,
+          "label": "unknown",
+          "reason": "“她上课不敢玩”与证据一致，但“她天天玩杀戮尖塔”无证据支持，整体无法判定。"
+        },
+        {
+          "claim": 5,
+          "label": "unknown",
+          "reason": "证据未提及用杀戮尖塔切入或相关时间施压策略。"
+        }
+      ],
+      "judge_raw_response": "{\"judgments\": [{\"claim\": 1, \"label\": \"unknown\", \"reason\": \"证据未提及杀戮尖塔或今晚玩游戏安排。\"}, {\"claim\": 2, \"label\": \"unknown\", \"reason\": \"证据未提及电流相生或相关游戏组队事实。\"}, {\"claim\": 3, \"label\": \"unknown\", \"reason\": \"证据未提及机器人角色或角色分配。\"}, {\"claim\": 4, \"label\": \"unknown\", \"reason\": \"“她上课不敢玩”与证据一致，但“她天天玩杀戮尖塔”无证据支持，整体无法判定。\"}, {\"claim\": 5, \"label\": \"unknown\", \"reason\": \"证据未提及用杀戮尖塔切入或相关时间施压策略。\"}]}",
+      "elapsed_ms": 31107
+    },
+    {
+      "sample_id": "real-3",
+      "claims": [
+        "宝宝带我一个嘛",
+        "杀戮尖塔你带带我呀",
+        "开了喊我，我随叫随到[旺柴]",
+        "有，这就给你。她已经收转账了，别追着问忙不忙，直接抛个轻邀约，把主动权给她就行。",
+        "轻邀她带一局杀戮尖塔，不问忙不忙，给她选。"
+      ],
+      "evidence_fact_ids": [],
+      "judgments": [
+        {
+          "claim": 1,
+          "label": "unknown",
+          "reason": "证据为空，无法判定该邀请措辞涉及的任何事实。"
+        },
+        {
+          "claim": 2,
+          "label": "unknown",
+          "reason": "证据为空，无法判定邀请对方带玩《杀戮尖塔》这一事实。"
+        },
+        {
+          "claim": 3,
+          "label": "unknown",
+          "reason": "证据为空，无法判定对方是否会开游戏或是否会喊我。"
+        },
+        {
+          "claim": 4,
+          "label": "unknown",
+          "reason": "证据为空，无法判定“她已经收转账了”等具体事实。"
+        },
+        {
+          "claim": 5,
+          "label": "unknown",
+          "reason": "证据为空，无法判定轻邀其带玩《杀戮尖塔》及相关行为建议所涉事实。"
+        }
+      ],
+      "judge_raw_response": "{\"judgments\": [{\"claim\": 1, \"label\": \"unknown\", \"reason\": \"证据为空，无法判定该邀请措辞涉及的任何事实。\"}, {\"claim\": 2, \"label\": \"unknown\", \"reason\": \"证据为空，无法判定邀请对方带玩《杀戮尖塔》这一事实。\"}, {\"claim\": 3, \"label\": \"unknown\", \"reason\": \"证据为空，无法判定对方是否会开游戏或是否会喊我。\"}, {\"claim\": 4, \"label\": \"unknown\", \"reason\": \"证据为空，无法判定“她已经收转账了”等具体事实。\"}, {\"claim\": 5, \"label\": \"unknown\", \"reason\": \"证据为空，无法判定轻邀其带玩《杀戮尖塔》及相关行为建议所涉事实。\"}]}",
+      "elapsed_ms": 2853
+    }
+  ]
+}

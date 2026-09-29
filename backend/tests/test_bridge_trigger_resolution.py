@@ -88,6 +88,25 @@ def _setup_db():
         )
         """
     )
+    # G1:统一上下文装配按 account_wxid + display_name 解析 conversations 范围。
+    conn.execute(
+        """
+        CREATE TABLE conversations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_wxid TEXT NOT NULL,
+            display_name TEXT,
+            username TEXT,
+            is_deleted INTEGER DEFAULT 0,
+            updated_at INTEGER
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO conversations (id, account_wxid, display_name, username, is_deleted, updated_at)
+        VALUES (1, 'wxid_test', 'Grace.', 'wxid_grace', 0, 1000)
+        """
+    )
     ensure_observation_table(conn)
     return conn
 
@@ -253,7 +272,8 @@ def test_bridge_manual_generate_injects_style_constraints_from_cached_history(mo
     monkeypatch.setattr(
         "app.services.realtime.self_profiler.SelfProfiler.get_profile",
         lambda self, display_name, account_wxid="": {
-            "conversation_id": 7,
+            # 返工 1:自我画像必须属于本次会话(conversations 夹具里 Grace. 是 id=1)
+            "conversation_id": 1,
             "profile": {"typing_style": "短句"},
             "features_snapshot": {"user_msg_style": {"avg_chars_per_msg": 9.0}},
             "created_at": 0,

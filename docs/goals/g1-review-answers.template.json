@@ -1,0 +1,222 @@
+{
+  "packet_version": "g1-review-packet-v1",
+  "instructions": "逐条审核 sample 的 expected(task/output/knowledge_needs/must_use/forbidden/safety)。verdict=agree 表示认可 AI 初判;override 时必须给出 expected_task/expected_output 与理由。issues 里记录:话术不可发送/编造事实/越过边界/泄露隐私等具体问题。",
+  "answers": [
+    {
+      "sample_id": "real-1",
+      "verdict": null,
+      "expected_task": null,
+      "expected_output": null,
+      "knowledge_needs": null,
+      "issues": [],
+      "severity": null
+    },
+    {
+      "sample_id": "real-2",
+      "verdict": null,
+      "expected_task": null,
+      "expected_output": null,
+      "knowledge_needs": null,
+      "issues": [],
+      "severity": null
+    },
+    {
+      "sample_id": "real-3",
+      "verdict": null,
+      "expected_task": null,
+      "expected_output": null,
+      "knowledge_needs": null,
+      "issues": [],
+      "severity": null
+    },
+    {
+      "sample_id": "authored-task_routing-00",
+      "verdict": null,
+      "expected_task": null,
+      "expected_output": null,
+      "knowledge_needs": null,
+      "issues": [],
+      "severity": null
+    },
+    {
+      "sample_id": "authored-task_routing-01",
+      "verdict": null,
+      "expected_task": null,
+      "expected_output": null,
+      "knowledge_needs": null,
+      "issues": [],
+      "severity": null
+    },
+    {
+      "sample_id": "authored-task_routing-02",
+      "verdict": null,
+      "expected_task": null,
+      "expected_output": null,
+      "knowledge_needs": null,
+      "issues": [],
+      "severity": null
+    },
+    {
+      "sample_id": "authored-task_routing-03",
+      "verdict": null,
+      "expected_task": null,
+      "expected_output": null,
+      "knowledge_needs": null,
+      "issues": [],
+      "severity": null
+    },
+    {
+      "sample_id": "authored-task_routing-04",
+      "verdict": null,
+      "expected_task": null,
+      "expected_output": null,
+      "knowledge_needs": null,
+      "issues": [],
+      "severity": null
+    },
+    {
+      "sample_id": "authored-task_routing-05",
+      "verdict": null,
+      "expected_task": null,
+      "expected_output": null,
+      "knowledge_needs": null,
+      "issues": [],
+      "severity": null
+    },
+    {
+      "sample_id": "authored-contact_binding-06",
+      "verdict": null,
+      "expected_task": null,
+      "expected_output": null,
+      "knowledge_needs": null,
+      "issues": [],
+      "severity": null
+    },
+    {
+      "sample_id": "authored-contact_binding-07",
+      "verdict": null,
+      "expected_task": null,
+      "expected_output": null,
+      "knowledge_needs": null,
+      "issues": [],
+      "severity": null
+    },
+    {
+      "sample_id": "authored-contact_binding-08",
+      "verdict": null,
+      "expected_task": null,
+      "expected_output": null,
+      "knowledge_needs": null,
+      "issues": [],
+      "severity": null
+    },
+    {
+      "sample_id": "authored-notification_pollution-09",
+      "verdict": null,
+      "expected_task": null,
+      "expected_output": null,
+      "knowledge_needs": null,
+      "issues": [],
+      "severity": null
+    },
+    {
+      "sample_id": "authored-notification_pollution-10",
+      "verdict": null,
+      "expected_task": null,
+      "expected_output": null,
+      "knowledge_needs": null,
+      "issues": [],
+      "severity": null
+    },
+    {
+      "sample_id": "authored-notification_pollution-11",
+      "verdict": null,
+      "expected_task": null,
+      "expected_output": null,
+      "knowledge_needs": null,
+      "issues": [],
+      "severity": null
+    },
+    {
+      "sample_id": "authored-redaction_misfire-12",
+      "verdict": null,
+      "expected_task": null,
+      "expected_output": null,
+      "knowledge_needs": null,
+      "issues": [],
+      "severity": null
+    },
+    {
+      "sample_id": "authored-redaction_misfire-13",
+      "verdict": null,
+      "expected_task": null,
+      "expected_output": null,
+      "knowledge_needs": null,
+      "issues": [],
+      "severity": null
+    },
+    {
+      "sample_id": "authored-redaction_misfire-14",
+      "verdict": null,
+      "expected_task": null,
+      "expected_output": null,
+      "knowledge_needs": null,
+      "issues": [],
+      "severity": null
+    },
+    {
+      "sample_id": "authored-policy_adaptation-15",
+      "verdict": null,
+      "expected_task": null,
+      "expected_output": null,
+      "knowledge_needs": null,
+      "issues": [],
+      "severity": null
+    },
+    {
+      "sample_id": "authored-policy_adaptation-16",
+      "verdict": null,
+      "expected_task": null,
+      "expected_output": null,
+      "knowledge_needs": null,
+      "issues": [],
+      "severity": null
+    },
+    {
+      "sample_id": "authored-policy_adaptation-17",
+      "verdict": null,
+      "expected_task": null,
+      "expected_output": null,
+      "knowledge_needs": null,
+      "issues": [],
+      "severity": null
+    },
+    {
+      "sample_id": "authored-missing_scope_degrade-18",
+      "verdict": null,
+      "expected_task": null,
+      "expected_output": null,
+      "knowledge_needs": null,
+      "issues": [],
+      "severity": null
+    },
+    {
+      "sample_id": "authored-missing_scope_degrade-19",
+      "verdict": null,
+      "expected_task": null,
+      "expected_output": null,
+      "knowledge_needs": null,
+      "issues": [],
+      "severity": null
+    },
+    {
+      "sample_id": "authored-missing_scope_degrade-20",
+      "verdict": null,
+      "expected_task": null,
+      "expected_output": null,
+      "knowledge_needs": null,
+      "issues": [],
+      "severity": null
+    }
+  ]
+}

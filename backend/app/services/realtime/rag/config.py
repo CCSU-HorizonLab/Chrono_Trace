@@ -27,6 +27,7 @@ RAG_DEFAULTS: dict[str, Any] = {
     "rag_relationship_policy_shadow_enabled": False,
     "rag_structured_fact_extraction_enabled": False,
     "rag_relationship_policy_injection_enabled": True,
+    "rag_prompt_snapshot_enabled": False,
 }
 
 

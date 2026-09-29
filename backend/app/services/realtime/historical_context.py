@@ -8,41 +8,15 @@ from .style_constraints import compute_style_constraints, load_cached_style_inpu
 
 
 def compute_chart_stats(messages: list[dict] | None) -> dict:
-    """Build lightweight chat statistics for prompt conditioning."""
-    msgs = messages or []
-    friend_msgs = [msg for msg in msgs if msg.get("sender_attr") == "friend"]
-    self_msgs = [msg for msg in msgs if msg.get("sender_attr") == "self"]
+    """Build lightweight chat statistics for prompt conditioning.
 
-    replied_count = 0
-    for index, msg in enumerate(msgs):
-        if msg.get("sender_attr") != "self":
-            continue
-        if any(next_msg.get("sender_attr") == "friend" for next_msg in msgs[index + 1:]):
-            replied_count += 1
+    G3:配对修复——回复率要求"我方消息的紧邻下一条是对方",回复间隔
+    取"我方消息 → 对方回复"的时延;统计只看人工聊天,转账/系统通知
+    (即使被上游误标成 friend)不参与,避免通知污染派生关系结论。
+    """
+    from .recent_window import compute_pairing_stats
 
-    positive_count = sum(1 for msg in friend_msgs if (msg.get("sentiment") or {}).get("polarity", 0) > 0)
-    positive_rate = f"{positive_count / len(friend_msgs):.2f}" if friend_msgs else "N/A"
-    reply_rate = f"{replied_count / len(self_msgs):.2f}" if self_msgs else "N/A"
-    msg_ratio = f"{len(self_msgs)}:{len(friend_msgs)}" if (self_msgs or friend_msgs) else "N/A"
-
-    gaps: list[int] = []
-    for index in range(1, len(friend_msgs)):
-        prev_ts = int(friend_msgs[index - 1].get("timestamp", 0) or 0)
-        current_ts = int(friend_msgs[index].get("timestamp", 0) or 0)
-        gap = current_ts - prev_ts
-        if 0 < gap < 3600:
-            gaps.append(gap)
-
-    avg_reply_gap = round(sum(gaps) / len(gaps)) if gaps else None
-
-    return {
-        "reply_rate": reply_rate,
-        "positive_rate": positive_rate,
-        "msg_ratio": msg_ratio,
-        "avg_reply_gap": avg_reply_gap,
-        "friend_msg_count": len(friend_msgs),
-        "self_msg_count": len(self_msgs),
-    }
+    return compute_pairing_stats(messages or [])
 
 
 def build_historical_context(
@@ -83,16 +57,22 @@ def augment_context_with_historical_data(
     *,
     self_profile_cache: dict[str, Any] | None = None,
     load_style_inputs: Callable[[int | None], tuple[Any, Any] | tuple[None, None]] | None = None,
+    conversation_id: int | None = None,
 ) -> dict[str, Any]:
-    """Merge cached historical/style inputs into an existing runtime context."""
-    conversation_id = None
+    """Merge cached historical/style inputs into an existing runtime context.
+
+    审核返工 2:``conversation_id`` 显式传入时优先(来自统一范围解析),
+    不再依赖自我画像缓存里带的会话号——缓存缺失也能拿到好感/量化风格。
+    """
+    resolved_conversation_id = conversation_id
     self_profile_features = None
     if self_profile_cache:
-        conversation_id = self_profile_cache.get("conversation_id")
+        if resolved_conversation_id is None:
+            resolved_conversation_id = self_profile_cache.get("conversation_id")
         self_profile_features = self_profile_cache.get("features_snapshot") or None
 
     style_loader = load_style_inputs or load_cached_style_inputs
-    preprocessed_stats, affinity_result = style_loader(conversation_id)
+    preprocessed_stats, affinity_result = style_loader(resolved_conversation_id)
 
     historical_context = ctx.get("historical_context", {})
     if not isinstance(historical_context, dict):

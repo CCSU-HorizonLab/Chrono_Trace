@@ -26,6 +26,103 @@ class RedactionResult:
         return json.loads(self.pii_flags_json or "{}")
 
 
+# G4:受保护的作品译名片段——这些词含"路/街/道"等字符,会被地址模式
+# 误伤(如"路易吉鬼屋"的"路"被当成路名后缀)。命中即整体豁免地址判定。
+PROTECTED_NAME_FRAGMENTS: tuple[str, ...] = (
+    "路易吉",
+    "马里奥",
+    "塞尔达",
+    "皮卡丘",
+    "宝可梦",
+    "海拉鲁",
+    "原神",
+    "星穹铁道",
+    "艾尔登",
+    "法环",
+    "黑神话",
+    "悟空传",
+    "霍格沃茨",
+    "哈利波特",
+    "中土世界",
+    "赛博朋克",
+)
+
+# G4:裸路名(无门牌数字)需要居住/方位语境才判为地址,否则大概率是
+# 作品名、游戏地名(中路/上路)或普通名词。
+_ADDRESS_ROAD_SUFFIXES = ("路", "街", "巷", "道")
+_ADDRESS_CONTEXT_MARKERS = (
+    "住在",
+    "家在",
+    "位于",
+    "地址",
+    "址在",
+    "搬到",
+    "迁至",
+    "小区",
+    "号楼",
+    "单元",
+    "宿舍",
+    "公寓",
+    "门店",
+    "校区",
+)
+
+
+def _address_match_is_false_positive(original: str, start: int, end: int) -> bool:
+    """裸路名误伤判定:路/街/巷/道 后缀且无门牌数字、无居住语境 → 判伪。"""
+    value = original[start:end]
+    road_index = -1
+    for index in range(2, len(value)):
+        if value[index] in _ADDRESS_ROAD_SUFFIXES:
+            road_index = index
+            break
+    if road_index < 0:
+        # 行政区划后缀(省/市/区/县等)或门牌后缀(号楼/单元/室),不按裸路名判伪。
+        return False
+    tail = value[road_index + 1 :]
+    if any(char.isdigit() for char in tail):
+        return False  # 带门牌号,按真实地址处理
+    context_window = original[max(0, start - 6) : start + road_index]
+    if any(marker in context_window for marker in _ADDRESS_CONTEXT_MARKERS):
+        return False
+    return True
+
+
+_PLACEHOLDER_RE = re.compile(r"\[[A-Z][A-Z_]+(?:_[0-9A-F]{1,8})?\]")
+_CJK_CHAR_RE = re.compile(r"[\u4e00-\u9fa5]")
+
+
+def _cjk_bigrams(text: str) -> set[str]:
+    chars = _CJK_CHAR_RE.findall(text)
+    return {chars[index] + chars[index + 1] for index in range(len(chars) - 1)}
+
+
+def evidence_core_intact(original: str, redacted: str, *, min_ratio: float = 0.45) -> bool:
+    """G4:脱敏后事实的核心对象是否仍然可理解。
+
+    判定规则:
+
+    - 非中文内容交由占位符密度判断,无法判定时保守认为可用(占位符本身
+      可追溯);
+    - 短事实(≤8 个汉字)只要出现占位符就视为核心对象丢失;
+    - 长事实用 CJK bigram 保留率衡量,低于阈值说明实体被整体吃掉。
+    """
+    original_text = str(original or "")
+    redacted_text = str(redacted or "")
+    original_clean = _PLACEHOLDER_RE.sub("", original_text)
+    han_chars = _CJK_CHAR_RE.findall(original_clean)
+    if not han_chars:
+        return True
+    if len(han_chars) <= 8:
+        return not _PLACEHOLDER_RE.search(redacted_text)
+    original_grams = _cjk_bigrams(original_clean)
+    if not original_grams:
+        return True
+    redacted_grams = _cjk_bigrams(_PLACEHOLDER_RE.sub("", redacted_text))
+    kept_ratio = len(original_grams & redacted_grams) / len(original_grams)
+    return kept_ratio >= min_ratio
+
+
 class PrivacyRedactor:
     """Rule based redactor with stable placeholders per account/conversation."""
 
@@ -57,16 +154,31 @@ class PrivacyRedactor:
         entity_map: dict[str, str] = {}
         pii_flags: dict[str, bool] = {}
         counters: dict[str, int] = {}
-        redacted = original
+
+        # G4:受保护作品译名先用等长 PUA 哨兵替换(保持偏移不变),
+        # 让地址模式无法跨越它们匹配;脱敏完成后原样恢复。
+        protected_restore: list[tuple[str, str]] = []
+        scan_text = original
+        for index, fragment in enumerate(PROTECTED_NAME_FRAGMENTS):
+            if fragment and fragment in scan_text:
+                sentinel = chr(0xF0000 + index) * len(fragment)
+                protected_restore.append((sentinel, fragment))
+                scan_text = scan_text.replace(fragment, sentinel)
+
+        redacted = scan_text
 
         matches: list[tuple[int, int, str, str]] = []
         for entity_type, pattern in self.PATTERNS:
-            for match in pattern.finditer(original):
+            for match in pattern.finditer(scan_text):
                 value = match.group(0)
                 if entity_type == "bank_card":
                     digits = re.sub(r"\D", "", value)
                     if len(digits) < 16:
                         continue
+                if entity_type == "address" and _address_match_is_false_positive(
+                    scan_text, match.start(), match.end()
+                ):
+                    continue
                 matches.append((match.start(), match.end(), entity_type, value))
 
         # 重叠消解：多个模式的匹配区间可能交叠（如地址模式的尾段会吞掉紧跟其后的电话号码），
@@ -97,6 +209,10 @@ class PrivacyRedactor:
             entity_map[placeholder] = self._hash_value(value)
             pii_flags[entity_type] = True
             self._persist_entity(account_wxid, conversation_id, entity_type, value, placeholder)
+
+        # G4:恢复被哨兵保护的作品译名(它们不应被地址规则吃掉)。
+        for sentinel, fragment in protected_restore:
+            redacted = redacted.replace(sentinel, fragment)
 
         result = RedactionResult(
             redacted_text=redacted,

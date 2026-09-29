@@ -1,0 +1,1152 @@
+{
+  "meta": {
+    "loader_version": "g1-baseline-loader-v1",
+    "frozen_at": 1790608848,
+    "code_commit": "6b2eb4df9fef92a46c5ccb777d668c487bc5b83e",
+    "db": {
+      "path": "D:\\Project\\Chrono Trace\\backend\\data\\chrono_trace.db",
+      "size_bytes": 427220992,
+      "mtime": 1790608826,
+      "conversations": 167,
+      "retrieval_logs": 3,
+      "suggestions": 5
+    },
+    "active_model": {
+      "name": "deepseek",
+      "provider": "deepseek",
+      "model_id": "deepseek-flash"
+    },
+    "sample_count": 24,
+    "dimension_coverage": {
+      "task_routing": 6,
+      "contact_binding": 3,
+      "notification_pollution": 3,
+      "redaction_misfire": 6,
+      "policy_adaptation": 3,
+      "missing_scope_degrade": 3
+    },
+    "notes": [
+      "expected_annotation=human_required 的样例在人工判定前不得作为门禁依据。",
+      "authored 样例预期由任务路由器自动给出(auto_pending_human),供人工确认。"
+    ],
+    "expected_annotation": {
+      "version": "g1-expected-annotate-v1",
+      "annotated_at": 1790608848,
+      "applied": 24,
+      "pending_human_review": true,
+      "note": "AI 初判+依据;人工终审通过前仅用于差异报告,不作发布门禁"
+    }
+  },
+  "samples": [
+    {
+      "sample_id": "real-1",
+      "dimension": "redaction_misfire",
+      "source": "real_log",
+      "input": [
+        {
+          "role": "user",
+          "content": "我们玩过什么游戏"
+        }
+      ],
+      "account_wxid": "wxid_qhbqpoufme0q32_9cc7",
+      "conversation_id": 91,
+      "display_name": "昕（农1.10）",
+      "requires_ambiguous_twin": false,
+      "expected": {
+        "task": "memory_qa",
+        "output": "direct_answer",
+        "knowledge_needs": [
+          "facts"
+        ],
+        "scope": "ok",
+        "must_use": [
+          "游戏类事实(hobby_or_game,若命中)"
+        ],
+        "forbidden": [
+          "用户表达风格块",
+          "量化风格硬约束",
+          "建议卡片(speeches 应为空)"
+        ],
+        "safety": [
+          "未命中时明确说没查到",
+          "不得编造时间/地点/游戏名/事件"
+        ],
+        "annotation_basis": "G2 契约:纯历史问答直接回答,不注入用户口头禅与建议风格;真实日志中旧行为是 PURE_CHAT 空话术"
+      },
+      "expected_annotation": "ai_first_pass_pending_human",
+      "baseline": {
+        "retrieval_log_id": 1,
+        "legacy_task": "direct_reply",
+        "memory_intent_mode": "memory_request",
+        "gate_decision": "inject",
+        "fact_ids": [
+          613,
+          588,
+          376,
+          374
+        ],
+        "policy_ids": [
+          29
+        ],
+        "contact_preference_ids": [
+          9,
+          8,
+          11,
+          10,
+          13,
+          12
+        ],
+        "prompt_context_hash": "6865fe6453e834ffafa80bd37ea3cc1cbd54cbd5aac1ca9e16fb52e0d007c52d",
+        "redaction_status": "redacted",
+        "degraded_reason": null,
+        "suggestion_id": 3,
+        "suggestion_summary": "[PURE_CHAT]",
+        "suggestion_speeches": [],
+        "created_at": 1790513907
+      },
+      "replay": {}
+    },
+    {
+      "sample_id": "real-2",
+      "dimension": "redaction_misfire",
+      "source": "real_log",
+      "input": [
+        {
+          "role": "user",
+          "content": "我们玩过什么游戏"
+        },
+        {
+          "role": "assistant",
+          "content": "没查到你们一起玩过什么游戏的具体记录。只翻到两条相关的：你提过想约对方一起玩 Switch（还没定时间），另外你吐槽过对方天天打《杀戮尖塔2》。"
+        },
+        {
+          "role": "user",
+          "content": "我想约她打游戏"
+        }
+      ],
+      "account_wxid": "wxid_qhbqpoufme0q32_9cc7",
+      "conversation_id": 91,
+      "display_name": "昕（农1.10）",
+      "requires_ambiguous_twin": false,
+      "expected": {
+        "task": "invitation_planning",
+        "output": "answer_with_speeches",
+        "knowledge_needs": [
+          "facts",
+          "contact_profile",
+          "user_style",
+          "relationship_signals"
+        ],
+        "scope": "ok",
+        "must_use": [
+          "共同游戏/对方游戏偏好类事实",
+          "邀约话术须像用户本人"
+        ],
+        "forbidden": [
+          "贴膜/穿衣等无关偏好抢占预算"
+        ],
+        "safety": [
+          "话术必须可直接发送",
+          "不得替用户编造未发生的约定或承诺"
+        ],
+        "annotation_basis": "施工单首个目标样例:约昕打游戏;上一轮已得到游戏事实答案,本轮给邀约话术(对应真实建议#5)"
+      },
+      "expected_annotation": "ai_first_pass_pending_human",
+      "baseline": {
+        "retrieval_log_id": 2,
+        "legacy_task": "direct_reply",
+        "memory_intent_mode": "memory_request",
+        "gate_decision": "inject",
+        "fact_ids": [
+          588,
+          372,
+          376,
+          600
+        ],
+        "policy_ids": [
+          29
+        ],
+        "contact_preference_ids": [
+          9,
+          8,
+          11,
+          10,
+          13,
+          12
+        ],
+        "prompt_context_hash": "16448d2858cb34a7204cfb4369d86f3f38ecd86756ecb69fd685a8a372bacc50",
+        "redaction_status": "redacted",
+        "degraded_reason": null,
+        "suggestion_id": 4,
+        "suggestion_summary": "[PURE_CHAT]",
+        "suggestion_speeches": [],
+        "created_at": 1790513935
+      },
+      "replay": {}
+    },
+    {
+      "sample_id": "real-3",
+      "dimension": "redaction_misfire",
+      "source": "real_log",
+      "input": [
+        {
+          "role": "user",
+          "content": "我们玩过什么游戏"
+        },
+        {
+          "role": "assistant",
+          "content": "没查到你们一起玩过什么游戏的具体记录。只翻到两条相关的：你提过想约对方一起玩 Switch（还没定时间），另外你吐槽过对方天天打《杀戮尖塔2》。"
+        },
+        {
+          "role": "user",
+          "content": "我想约她打游戏"
+        },
+        {
+          "role": "assistant",
+          "content": "她刚回了转账，没接你“在忙嘛”那句，别追问忙不忙了。直接抛轻量邀请，给她选项就行，比如“今晚打两把Switch？”或“周末找个时间联机，你定”。她天天打杀戮尖塔，你也可以说陪她玩那个。"
+        },
+        {
+          "role": "user",
+          "content": "没有建议么"
+        }
+      ],
+      "account_wxid": "wxid_qhbqpoufme0q32_9cc7",
+      "conversation_id": 91,
+      "display_name": "昕（农1.10）",
+      "requires_ambiguous_twin": false,
+      "expected": {
+        "task": "reply_suggestion",
+        "output": "suggestion_card",
+        "knowledge_needs": [
+          "facts",
+          "contact_profile",
+          "user_style",
+          "relationship_signals"
+        ],
+        "scope": "ok",
+        "must_use": [
+          "上一轮已召回的游戏事实作为话术素材"
+        ],
+        "forbidden": [
+          "回落成纯聊天(空 speeches)"
+        ],
+        "safety": [
+          "话术必须可直接发送",
+          "不得替用户编造未发生的约定或承诺"
+        ],
+        "annotation_basis": "G2 契约:'没有建议么'继承建议任务并修正输出;真实序列是 记忆问答→AI作答→追问建议"
+      },
+      "expected_annotation": "ai_first_pass_pending_human",
+      "baseline": {
+        "retrieval_log_id": 3,
+        "legacy_task": "direct_reply",
+        "memory_intent_mode": "memory_request",
+        "gate_decision": "inject",
+        "fact_ids": [
+          373,
+          376,
+          375,
+          374
+        ],
+        "policy_ids": [
+          29
+        ],
+        "contact_preference_ids": [
+          9,
+          8,
+          11,
+          10,
+          13,
+          12
+        ],
+        "prompt_context_hash": "4c2f93382d1287257768b2127887adf7482e404d0aebab9070fa941ca81b270c",
+        "redaction_status": "redacted",
+        "degraded_reason": null,
+        "suggestion_id": 5,
+        "suggestion_summary": "跳过寒暄，直接给两个轻量游戏邀约选项",
+        "suggestion_speeches": [
+          "今晚打两把Switch？",
+          "杀戮尖塔带我一个，我陪你玩",
+          "周末联机，时间你定"
+        ],
+        "created_at": 1790513953
+      },
+      "replay": {}
+    },
+    {
+      "sample_id": "authored-task_routing-00",
+      "dimension": "task_routing",
+      "source": "authored",
+      "input": [
+        {
+          "role": "user",
+          "content": "我想约她打游戏"
+        }
+      ],
+      "note": "施工单首个目标样例:邀约",
+      "requires_ambiguous_twin": false,
+      "expected": {
+        "task": "invitation_planning",
+        "output": "answer_with_speeches",
+        "knowledge_needs": [
+          "facts",
+          "contact_profile",
+          "user_style",
+          "relationship_signals"
+        ],
+        "scope": "ok",
+        "must_use": [
+          "共同游戏/对方游戏偏好类事实(若存在)"
+        ],
+        "forbidden": [
+          "无游戏关联的偏好抢占预算"
+        ],
+        "safety": [
+          "话术必须可直接发送",
+          "不得替用户编造未发生的约定或承诺"
+        ],
+        "annotation_basis": "施工单目标样例原文"
+      },
+      "expected_annotation": "ai_first_pass_pending_human",
+      "baseline": null,
+      "replay": {},
+      "account_wxid": "wxid_qhbqpoufme0q32_9cc7",
+      "conversation_id": 71,
+      "display_name": "wxid_fd12aov2ut6z22"
+    },
+    {
+      "sample_id": "authored-task_routing-01",
+      "dimension": "task_routing",
+      "source": "authored",
+      "input": [
+        {
+          "role": "user",
+          "content": "怎么回她关于周末的邀约"
+        }
+      ],
+      "note": "显式回复求助,话题与邀约相关",
+      "requires_ambiguous_twin": false,
+      "expected": {
+        "task": "reply_suggestion",
+        "output": "suggestion_card",
+        "knowledge_needs": [
+          "facts",
+          "contact_profile",
+          "user_style",
+          "relationship_signals"
+        ],
+        "scope": "ok",
+        "must_use": [
+          "关系策略/边界(若注入链路开启)"
+        ],
+        "forbidden": [
+          "把邀约误判成纯聊天"
+        ],
+        "safety": [
+          "话术必须可直接发送",
+          "不得替用户编造未发生的约定或承诺"
+        ],
+        "annotation_basis": "显式回复求助('怎么回')优先于邀约话题;需要关系策略约束分寸"
+      },
+      "expected_annotation": "ai_first_pass_pending_human",
+      "baseline": null,
+      "replay": {},
+      "account_wxid": "wxid_qhbqpoufme0q32_9cc7",
+      "conversation_id": 71,
+      "display_name": "wxid_fd12aov2ut6z22"
+    },
+    {
+      "sample_id": "authored-task_routing-02",
+      "dimension": "task_routing",
+      "source": "authored",
+      "input": [
+        {
+          "role": "user",
+          "content": "她喜欢什么"
+        }
+      ],
+      "note": "偏好查询→记忆问答",
+      "requires_ambiguous_twin": false,
+      "expected": {
+        "task": "memory_qa",
+        "output": "direct_answer",
+        "knowledge_needs": [
+          "facts"
+        ],
+        "scope": "ok",
+        "must_use": [
+          "对方偏好类事实(若命中)"
+        ],
+        "forbidden": [
+          "用户表达风格块",
+          "建议卡片"
+        ],
+        "safety": [
+          "未命中时明确说没查到",
+          "不得编造时间/地点/游戏名/事件"
+        ],
+        "annotation_basis": "偏好事实查询;只回答事实,不给话术"
+      },
+      "expected_annotation": "ai_first_pass_pending_human",
+      "baseline": null,
+      "replay": {},
+      "account_wxid": "wxid_qhbqpoufme0q32_9cc7",
+      "conversation_id": 71,
+      "display_name": "wxid_fd12aov2ut6z22"
+    },
+    {
+      "sample_id": "authored-task_routing-03",
+      "dimension": "task_routing",
+      "source": "authored",
+      "input": [
+        {
+          "role": "user",
+          "content": "怎么回她关于游戏的邀约比较好?"
+        },
+        {
+          "role": "assistant",
+          "content": "可以顺着游戏聊,给出话术。"
+        },
+        {
+          "role": "user",
+          "content": "没有建议么"
+        }
+      ],
+      "note": "三轮任务切换:求助→追问",
+      "requires_ambiguous_twin": false,
+      "expected": {
+        "task": "reply_suggestion",
+        "output": "suggestion_card",
+        "knowledge_needs": [
+          "facts",
+          "contact_profile",
+          "user_style",
+          "relationship_signals"
+        ],
+        "scope": "ok",
+        "must_use": [
+          "继承上一轮的任务上下文"
+        ],
+        "forbidden": [
+          "回落成纯聊天"
+        ],
+        "safety": [
+          "话术必须可直接发送",
+          "不得替用户编造未发生的约定或承诺"
+        ],
+        "annotation_basis": "G2 契约:建议追问继承;三轮序列 求助→建议→追问"
+      },
+      "expected_annotation": "ai_first_pass_pending_human",
+      "baseline": null,
+      "replay": {},
+      "account_wxid": "wxid_qhbqpoufme0q32_9cc7",
+      "conversation_id": 71,
+      "display_name": "wxid_fd12aov2ut6z22"
+    },
+    {
+      "sample_id": "authored-task_routing-04",
+      "dimension": "task_routing",
+      "source": "authored",
+      "input": [
+        {
+          "role": "user",
+          "content": "你好呀"
+        }
+      ],
+      "note": "普通闲聊→安全直答",
+      "requires_ambiguous_twin": false,
+      "expected": {
+        "task": "general_qa",
+        "output": "direct_answer",
+        "knowledge_needs": [
+          "facts"
+        ],
+        "scope": "ok",
+        "must_use": [],
+        "forbidden": [
+          "建议卡片",
+          "替用户生成发给对方的话术"
+        ],
+        "safety": [
+          "reply 用助手口吻,不模仿用户对第三方说话"
+        ],
+        "annotation_basis": "普通闲聊:安全输出,不代发话术"
+      },
+      "expected_annotation": "ai_first_pass_pending_human",
+      "baseline": null,
+      "replay": {},
+      "account_wxid": "wxid_qhbqpoufme0q32_9cc7",
+      "conversation_id": 71,
+      "display_name": "wxid_fd12aov2ut6z22"
+    },
+    {
+      "sample_id": "authored-task_routing-05",
+      "dimension": "task_routing",
+      "source": "authored",
+      "input": [
+        {
+          "role": "user",
+          "content": "我们玩过什么游戏"
+        }
+      ],
+      "note": "历史问答(如有真实日志则优先 real_log)",
+      "requires_ambiguous_twin": false,
+      "expected": {
+        "task": "memory_qa",
+        "output": "direct_answer",
+        "knowledge_needs": [
+          "facts"
+        ],
+        "scope": "ok",
+        "must_use": [
+          "游戏类事实(若命中)"
+        ],
+        "forbidden": [
+          "用户口头禅/建议风格"
+        ],
+        "safety": [
+          "未命中时明确说没查到",
+          "不得编造时间/地点/游戏名/事件"
+        ],
+        "annotation_basis": "G2 契约原文:'我们玩过什么游戏'进入事实问答"
+      },
+      "expected_annotation": "ai_first_pass_pending_human",
+      "baseline": null,
+      "replay": {},
+      "account_wxid": "wxid_qhbqpoufme0q32_9cc7",
+      "conversation_id": 71,
+      "display_name": "wxid_fd12aov2ut6z22"
+    },
+    {
+      "sample_id": "authored-contact_binding-06",
+      "dimension": "contact_binding",
+      "source": "authored",
+      "input": [
+        {
+          "role": "user",
+          "content": "我想约她打游戏"
+        }
+      ],
+      "note": "歧义同名:需在回放副本注入同名会话",
+      "requires_ambiguous_twin": true,
+      "expected": {
+        "task": "invitation_planning",
+        "output": "answer_with_speeches",
+        "knowledge_needs": [
+          "facts",
+          "contact_profile",
+          "user_style",
+          "relationship_signals"
+        ],
+        "scope": "missing_or_ambiguous",
+        "must_use": [],
+        "forbidden": [
+          "任何联系人历史知识注入"
+        ],
+        "safety": [
+          "不得注入任何联系人历史知识",
+          "RAG 必须 missing_scope 跳过",
+          "仍生成通用帮助回复"
+        ],
+        "annotation_basis": "同名歧义:任务识别照常,但范围必须拒绝自动选取"
+      },
+      "expected_annotation": "ai_first_pass_pending_human",
+      "baseline": null,
+      "replay": {},
+      "account_wxid": "wxid_qhbqpoufme0q32_9cc7",
+      "conversation_id": null,
+      "display_name": "昕（农1.10）"
+    },
+    {
+      "sample_id": "authored-contact_binding-07",
+      "dimension": "contact_binding",
+      "source": "authored",
+      "input": [
+        {
+          "role": "user",
+          "content": "怎么回她"
+        }
+      ],
+      "note": "无效会话 ID:跨账号会话",
+      "requires_ambiguous_twin": false,
+      "expected": {
+        "task": "reply_suggestion",
+        "output": "suggestion_card",
+        "knowledge_needs": [
+          "facts",
+          "contact_profile",
+          "user_style",
+          "relationship_signals"
+        ],
+        "scope": "invalid_conversation",
+        "must_use": [],
+        "forbidden": [
+          "他账号会话的任何数据"
+        ],
+        "safety": [
+          "不得回退显示名猜测会话",
+          "不得注入任何联系人历史知识",
+          "RAG 必须 missing_scope 跳过",
+          "仍生成通用帮助回复"
+        ],
+        "annotation_basis": "跨账号会话 ID:显式范围不属于当前账号,必须 invalid_conversation"
+      },
+      "expected_annotation": "ai_first_pass_pending_human",
+      "baseline": null,
+      "replay": {},
+      "account_wxid": "wxid_qhbqpoufme0q32_9cc7",
+      "conversation_id": 999999,
+      "display_name": "wxid_fd12aov2ut6z22"
+    },
+    {
+      "sample_id": "authored-contact_binding-08",
+      "dimension": "contact_binding",
+      "source": "authored",
+      "input": [
+        {
+          "role": "user",
+          "content": "怎么回她"
+        }
+      ],
+      "note": "有效显式会话 ID:正对照",
+      "requires_ambiguous_twin": false,
+      "expected": {
+        "task": "reply_suggestion",
+        "output": "suggestion_card",
+        "knowledge_needs": [
+          "facts",
+          "contact_profile",
+          "user_style",
+          "relationship_signals"
+        ],
+        "scope": "ok",
+        "must_use": [
+          "会话 91(昕)的事实/策略,而非其他联系人"
+        ],
+        "forbidden": [
+          "跨联系人注入"
+        ],
+        "safety": [
+          "话术必须可直接发送",
+          "不得替用户编造未发生的约定或承诺"
+        ],
+        "annotation_basis": "正对照:有效显式会话 ID,知识按该联系人注入"
+      },
+      "expected_annotation": "ai_first_pass_pending_human",
+      "baseline": null,
+      "replay": {},
+      "account_wxid": "wxid_qhbqpoufme0q32_9cc7",
+      "conversation_id": 91,
+      "display_name": "昕（农1.10）"
+    },
+    {
+      "sample_id": "authored-notification_pollution-09",
+      "dimension": "notification_pollution",
+      "source": "authored",
+      "input": [
+        {
+          "role": "user",
+          "content": "她是不是不想理我了"
+        }
+      ],
+      "note": "转账密集窗口的关系推断",
+      "requires_ambiguous_twin": false,
+      "expected": {
+        "task": "relationship_discussion",
+        "output": "direct_answer",
+        "knowledge_needs": [
+          "facts",
+          "contact_profile",
+          "relationship_signals"
+        ],
+        "scope": "ok",
+        "must_use": [
+          "配对统计(排除转账事件)"
+        ],
+        "forbidden": [
+          "把'对方只发过转账'当成冷淡/拒绝证据"
+        ],
+        "safety": [
+          "不得据此下'她讨厌你'的结论;数据不足时输出 unknown"
+        ],
+        "annotation_basis": "转账密集窗口的关系推断:允许关系信号,但不得把转账事件解读成冷淡"
+      },
+      "expected_annotation": "ai_first_pass_pending_human",
+      "baseline": null,
+      "replay": {},
+      "account_wxid": "wxid_qhbqpoufme0q32_9cc7",
+      "conversation_id": 91,
+      "display_name": "昕（农1.10）"
+    },
+    {
+      "sample_id": "authored-notification_pollution-10",
+      "dimension": "notification_pollution",
+      "source": "authored",
+      "input": [
+        {
+          "role": "user",
+          "content": "怎么回她"
+        }
+      ],
+      "note": "通知混入窗口的建议生成",
+      "requires_ambiguous_twin": false,
+      "expected": {
+        "task": "reply_suggestion",
+        "output": "suggestion_card",
+        "knowledge_needs": [
+          "facts",
+          "contact_profile",
+          "user_style",
+          "relationship_signals"
+        ],
+        "scope": "ok",
+        "must_use": [
+          "净化后的聊天窗口"
+        ],
+        "forbidden": [
+          "系统通知占用聊天窗口名额"
+        ],
+        "safety": [
+          "话术必须可直接发送",
+          "不得替用户编造未发生的约定或承诺"
+        ],
+        "annotation_basis": "通知混入窗口:生成照常,窗口净化后仍保留有效聊天"
+      },
+      "expected_annotation": "ai_first_pass_pending_human",
+      "baseline": null,
+      "replay": {},
+      "account_wxid": "wxid_qhbqpoufme0q32_9cc7",
+      "conversation_id": 91,
+      "display_name": "昕（农1.10）"
+    },
+    {
+      "sample_id": "authored-notification_pollution-11",
+      "dimension": "notification_pollution",
+      "source": "authored",
+      "input": [
+        {
+          "role": "user",
+          "content": "现在聊什么好"
+        }
+      ],
+      "note": "纯通知窗口守卫",
+      "requires_ambiguous_twin": false,
+      "expected": {
+        "task": "general_qa",
+        "output": "direct_answer",
+        "knowledge_needs": [
+          "facts"
+        ],
+        "scope": "ok",
+        "must_use": [],
+        "forbidden": [
+          "基于纯通知窗口推断冷淡/已读不回"
+        ],
+        "safety": [
+          "prompt 必须携带纯通知守卫说明"
+        ],
+        "annotation_basis": "纯通知窗口守卫:没有有效聊天时不得推导关系结论"
+      },
+      "expected_annotation": "ai_first_pass_pending_human",
+      "baseline": null,
+      "replay": {},
+      "account_wxid": "wxid_qhbqpoufme0q32_9cc7",
+      "conversation_id": 91,
+      "display_name": "昕（农1.10）",
+      "window_override": [
+        {
+          "id": 1,
+          "timestamp": 101,
+          "sender_attr": "system",
+          "content": "星期四 20:12",
+          "message_type": "text"
+        },
+        {
+          "id": 2,
+          "timestamp": 102,
+          "sender_attr": "friend",
+          "content": "￥40.00 已收款 微信转账",
+          "message_type": "text"
+        },
+        {
+          "id": 3,
+          "timestamp": 103,
+          "sender_attr": "system",
+          "content": "对方撤回了一条消息",
+          "message_type": "text"
+        },
+        {
+          "id": 4,
+          "timestamp": 104,
+          "sender_attr": "friend",
+          "content": "￥42.50 已被接收 微信转账",
+          "message_type": "text"
+        },
+        {
+          "id": 5,
+          "timestamp": 105,
+          "sender_attr": "system",
+          "content": "对方拍了拍我",
+          "message_type": "text"
+        },
+        {
+          "id": 6,
+          "timestamp": 106,
+          "sender_attr": "friend",
+          "content": "￥8.80 微信红包存入零钱",
+          "message_type": "text"
+        }
+      ]
+    },
+    {
+      "sample_id": "authored-redaction_misfire-12",
+      "dimension": "redaction_misfire",
+      "source": "authored",
+      "input": [
+        {
+          "role": "user",
+          "content": "我们玩过什么游戏"
+        }
+      ],
+      "note": "游戏事实脱敏完整性(绑事实最密的会话)",
+      "requires_ambiguous_twin": false,
+      "expected": {
+        "task": "memory_qa",
+        "output": "direct_answer",
+        "knowledge_needs": [
+          "facts"
+        ],
+        "scope": "ok",
+        "must_use": [
+          "游戏类事实且核心实体未被占位符吃掉"
+        ],
+        "forbidden": [
+          "游戏名被 [ADDRESS_xxx] 类占位符替换后仍计为有效注入"
+        ],
+        "safety": [
+          "核心对象丢失时标记 evidence_redacted_unusable 并剔除"
+        ],
+        "annotation_basis": "游戏事实脱敏完整性:游戏名(路易吉/杀戮尖塔/塞尔达等)在远程 prompt 中保持可理解"
+      },
+      "expected_annotation": "ai_first_pass_pending_human",
+      "baseline": null,
+      "replay": {},
+      "account_wxid": "wxid_qhbqpoufme0q32_9cc7",
+      "conversation_id": 71,
+      "display_name": "wxid_fd12aov2ut6z22"
+    },
+    {
+      "sample_id": "authored-redaction_misfire-13",
+      "dimension": "redaction_misfire",
+      "source": "authored",
+      "input": [
+        {
+          "role": "user",
+          "content": "她说过她家在哪吗"
+        }
+      ],
+      "note": "真实地址脱敏(应脱敏且标记不可引用)",
+      "requires_ambiguous_twin": false,
+      "expected": {
+        "task": "memory_qa",
+        "output": "direct_answer",
+        "knowledge_needs": [
+          "facts"
+        ],
+        "scope": "ok",
+        "must_use": [
+          "地址事实先脱敏再判定可用性"
+        ],
+        "forbidden": [
+          "把未脱敏地址发往远程模型"
+        ],
+        "safety": [
+          "脱敏失败 fail-closed,不回退发送原文"
+        ],
+        "annotation_basis": "真实地址必须脱敏;脱敏后地址事实不可引用(核心对象即地址)"
+      },
+      "expected_annotation": "ai_first_pass_pending_human",
+      "baseline": null,
+      "replay": {},
+      "account_wxid": "wxid_qhbqpoufme0q32_9cc7",
+      "conversation_id": 71,
+      "display_name": "wxid_fd12aov2ut6z22"
+    },
+    {
+      "sample_id": "authored-redaction_misfire-14",
+      "dimension": "redaction_misfire",
+      "source": "authored",
+      "input": [
+        {
+          "role": "user",
+          "content": "她电话多少"
+        }
+      ],
+      "note": "电话号码脱敏",
+      "requires_ambiguous_twin": false,
+      "expected": {
+        "task": "memory_qa",
+        "output": "direct_answer",
+        "knowledge_needs": [
+          "facts"
+        ],
+        "scope": "ok",
+        "must_use": [],
+        "forbidden": [
+          "明文号码进入 prompt"
+        ],
+        "safety": [
+          "占位符替换后按证据完整性规则处理"
+        ],
+        "annotation_basis": "电话号码必须脱敏;查询本身不得把号码带入远程 prompt"
+      },
+      "expected_annotation": "ai_first_pass_pending_human",
+      "baseline": null,
+      "replay": {},
+      "account_wxid": "wxid_qhbqpoufme0q32_9cc7",
+      "conversation_id": 71,
+      "display_name": "wxid_fd12aov2ut6z22"
+    },
+    {
+      "sample_id": "authored-policy_adaptation-15",
+      "dimension": "policy_adaptation",
+      "source": "authored",
+      "input": [
+        {
+          "role": "user",
+          "content": "她是不是讨厌我"
+        }
+      ],
+      "note": "关系讨论:允许画像+关系信号",
+      "requires_ambiguous_twin": false,
+      "expected": {
+        "task": "relationship_discussion",
+        "output": "direct_answer",
+        "knowledge_needs": [
+          "facts",
+          "contact_profile",
+          "relationship_signals"
+        ],
+        "scope": "ok",
+        "must_use": [
+          "关系信号块(带时间与不确定性)"
+        ],
+        "forbidden": [
+          "把聊天数量/好感分直接当成'她喜欢你'的证据"
+        ],
+        "safety": [
+          "分数不授权推进关系;数据缺失输出 unknown"
+        ],
+        "annotation_basis": "关系讨论:即使直接回答也允许画像与关系信号;好感分不等于亲密度"
+      },
+      "expected_annotation": "ai_first_pass_pending_human",
+      "baseline": null,
+      "replay": {},
+      "account_wxid": "wxid_qhbqpoufme0q32_9cc7",
+      "conversation_id": 91,
+      "display_name": "昕（农1.10）"
+    },
+    {
+      "sample_id": "authored-policy_adaptation-16",
+      "dimension": "policy_adaptation",
+      "source": "authored",
+      "input": [
+        {
+          "role": "user",
+          "content": "我们算什么关系了,我该怎么推进"
+        }
+      ],
+      "note": "关系讨论+行动求助",
+      "requires_ambiguous_twin": false,
+      "expected": {
+        "task": "relationship_discussion",
+        "output": "answer_with_speeches",
+        "knowledge_needs": [
+          "facts",
+          "contact_profile",
+          "relationship_signals",
+          "user_style"
+        ],
+        "scope": "ok",
+        "must_use": [
+          "边界事实(relationship_boundary)约束话术分寸"
+        ],
+        "forbidden": [
+          "越过已知边界的推进话术"
+        ],
+        "safety": [
+          "话术必须可直接发送",
+          "不得替用户编造未发生的约定或承诺"
+        ],
+        "annotation_basis": "关系讨论+行动求助('怎么推进'):回答附话术"
+      },
+      "expected_annotation": "ai_first_pass_pending_human",
+      "baseline": null,
+      "replay": {},
+      "account_wxid": "wxid_qhbqpoufme0q32_9cc7",
+      "conversation_id": 71,
+      "display_name": "wxid_fd12aov2ut6z22"
+    },
+    {
+      "sample_id": "authored-policy_adaptation-17",
+      "dimension": "policy_adaptation",
+      "source": "authored",
+      "input": [
+        {
+          "role": "user",
+          "content": "怎么开玩笑不越界"
+        }
+      ],
+      "note": "边界适配",
+      "requires_ambiguous_twin": false,
+      "expected": {
+        "task": "relationship_discussion",
+        "output": "answer_with_speeches",
+        "knowledge_needs": [
+          "facts",
+          "contact_profile",
+          "relationship_signals"
+        ],
+        "scope": "ok",
+        "must_use": [
+          "对方边界/雷点(若命中)"
+        ],
+        "forbidden": [
+          "无边界数据时编造'她不介意'"
+        ],
+        "safety": [
+          "边界未知时明确 unknown,给保守话术"
+        ],
+        "annotation_basis": "无主语分寸求助('怎么开玩笑不越界'):策略词+边界词即可命中关系讨论"
+      },
+      "expected_annotation": "ai_first_pass_pending_human",
+      "baseline": null,
+      "replay": {},
+      "account_wxid": "wxid_qhbqpoufme0q32_9cc7",
+      "conversation_id": 91,
+      "display_name": "昕（农1.10）"
+    },
+    {
+      "sample_id": "authored-missing_scope_degrade-18",
+      "dimension": "missing_scope_degrade",
+      "source": "authored",
+      "input": [
+        {
+          "role": "user",
+          "content": "怎么回她"
+        }
+      ],
+      "note": "无账号范围:空 account",
+      "requires_ambiguous_twin": false,
+      "expected": {
+        "task": "reply_suggestion",
+        "output": "suggestion_card",
+        "knowledge_needs": [
+          "facts",
+          "contact_profile",
+          "user_style",
+          "relationship_signals"
+        ],
+        "scope": "missing_or_ambiguous",
+        "must_use": [],
+        "forbidden": [
+          "任何历史知识注入"
+        ],
+        "safety": [
+          "不得注入任何联系人历史知识",
+          "RAG 必须 missing_scope 跳过",
+          "仍生成通用帮助回复"
+        ],
+        "annotation_basis": "空账号:范围解析失败,安全降级"
+      },
+      "expected_annotation": "ai_first_pass_pending_human",
+      "baseline": null,
+      "replay": {},
+      "account_wxid": "",
+      "conversation_id": null,
+      "display_name": "查无此人-9x7q"
+    },
+    {
+      "sample_id": "authored-missing_scope_degrade-19",
+      "dimension": "missing_scope_degrade",
+      "source": "authored",
+      "input": [
+        {
+          "role": "user",
+          "content": "怎么回她"
+        }
+      ],
+      "note": "无联系人范围:空 display/conversation",
+      "requires_ambiguous_twin": false,
+      "expected": {
+        "task": "reply_suggestion",
+        "output": "suggestion_card",
+        "knowledge_needs": [
+          "facts",
+          "contact_profile",
+          "user_style",
+          "relationship_signals"
+        ],
+        "scope": "missing_or_ambiguous",
+        "must_use": [],
+        "forbidden": [
+          "按显示名猜会话",
+          "任何历史知识注入"
+        ],
+        "safety": [
+          "不得注入任何联系人历史知识",
+          "RAG 必须 missing_scope 跳过",
+          "仍生成通用帮助回复"
+        ],
+        "annotation_basis": "无联系人范围:安全降级为通用帮助"
+      },
+      "expected_annotation": "ai_first_pass_pending_human",
+      "baseline": null,
+      "replay": {},
+      "account_wxid": "wxid_qhbqpoufme0q32_9cc7",
+      "conversation_id": null,
+      "display_name": ""
+    },
+    {
+      "sample_id": "authored-missing_scope_degrade-20",
+      "dimension": "missing_scope_degrade",
+      "source": "authored",
+      "input": [
+        {
+          "role": "user",
+          "content": "怎么约她出来"
+        }
+      ],
+      "note": "查无此联系人",
+      "requires_ambiguous_twin": false,
+      "expected": {
+        "task": "invitation_planning",
+        "output": "answer_with_speeches",
+        "knowledge_needs": [
+          "facts",
+          "contact_profile",
+          "user_style",
+          "relationship_signals"
+        ],
+        "scope": "missing_or_ambiguous",
+        "must_use": [],
+        "forbidden": [
+          "任何历史知识注入"
+        ],
+        "safety": [
+          "通用邀约建议(不引用具体记忆)",
+          "不得注入任何联系人历史知识",
+          "RAG 必须 missing_scope 跳过",
+          "仍生成通用帮助回复"
+        ],
+        "annotation_basis": "查无此联系人:任务识别照常,知识注入关闭"
+      },
+      "expected_annotation": "ai_first_pass_pending_human",
+      "baseline": null,
+      "replay": {},
+      "account_wxid": "wxid_qhbqpoufme0q32_9cc7",
+      "conversation_id": null,
+      "display_name": "查无此人-9x7q"
+    }
+  ]
+}

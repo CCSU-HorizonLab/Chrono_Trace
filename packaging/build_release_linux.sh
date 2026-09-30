@@ -102,11 +102,8 @@ setup_venv() {
     need_install=1
   fi
   if [[ $need_install -eq 1 ]]; then
-    log "安装打包依赖（torch 用 CPU 轮子）…"
+    log "安装打包依赖（推理栈为 ONNX，无 torch）…"
     "$VENV_DIR/bin/python" -m pip install --upgrade pip
-    # 先装 CPU torch：requirements 中的 torch==pin 随后命中已装版本，避免先拉 CUDA 巨包
-    "$VENV_DIR/bin/python" -m pip install \
-      --index-url https://download.pytorch.org/whl/cpu torch==2.5.1
     "$VENV_DIR/bin/python" -m pip install -r "$REQUIREMENTS_PATH"
     echo "$requirements_hash" > "$hash_file"
   else

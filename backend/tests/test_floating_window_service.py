@@ -118,7 +118,8 @@ def test_set_window_decorations_toggles_style_bits(monkeypatch):
 
     assert service._set_window_decorations(False) is True
     assert style_state["style"] & fake_win32con.WS_CAPTION == 0
-    assert style_state["style"] & fake_win32con.WS_THICKFRAME == 0
+    # 保留 WS_THICKFRAME，使无标题栏悬浮窗仍可从边缘调整大小。
+    assert style_state["style"] & fake_win32con.WS_THICKFRAME
     assert style_state["style"] & fake_win32con.WS_MINIMIZEBOX == 0
     assert style_state["style"] & fake_win32con.WS_MAXIMIZEBOX == 0
     assert style_state["style"] & fake_win32con.WS_SYSMENU == 0

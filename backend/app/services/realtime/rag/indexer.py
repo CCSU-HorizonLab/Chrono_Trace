@@ -258,6 +258,9 @@ class RagIndexer:
                 embedding_model=model,
                 embedding_dim=dim,
             )
+            # 零范数向量视为缺失:ONNX 故障窗口期写入过 199 条零向量,
+            # JOIN 能命中但余弦恒 0,不重灌检索会静默失效。
+            if item.get("vector") and any(float(x) != 0.0 for x in item["vector"])
         }
         missing = [item for item in facts if force or int(item["id"]) not in existing]
         written = 0
@@ -415,9 +418,12 @@ class RagIndexer:
                 # 构建、配 LLM 后重建不动）。
                 new_messages = self._load_messages_after(conversation_id, watermark_ts)
                 llm_behind = self._llm_extraction_behind(status_row, watermark_ts)
-                if llm_behind:
-                    self._backfill_llm_extraction(account_wxid, conversation_id)
+                # 抽取欠账回补只在一条路径上跑：无新消息在此处补；有新
+                # 消息在嵌入循环后统一补——此前两处都跑，全量重载消息+
+                # 重分段×2、段预算清零×2（单次 rebuild 送出双倍 LLM 调用）
                 if not new_messages:
+                    if llm_behind:
+                        self._backfill_llm_extraction(account_wxid, conversation_id)
                     # 无新消息（且抽取无欠账）：直接标记 ready，跳过重嵌入
                     self.store.upsert_status(
                         account_wxid, conversation_id,
@@ -1030,6 +1036,10 @@ class RagIndexer:
                 if self._llm_extract_watermark_ts and segment.end_ts <= self._llm_extract_watermark_ts:
                     continue
                 if len(segment.messages) < 4:
+                    # 短段不送 LLM 但同样推进水位（与无价值段一致）——不推进
+                    # 的话历史尾部全是短段时抽取水位永远追不上消息水位，
+                    # 每轮 rebuild/backfill 都重扫这些段（无限欠账）
+                    self._advance_llm_extract_progress(account_wxid, conversation_id, segment)
                     continue
                 if not self._segment_worth_extraction(segment):
                     # 无价值段：不送 LLM 但推进水位（不推进会被每轮重扫）
@@ -1944,6 +1954,19 @@ class RagIndexQueue:
             cls._maybe_prune_logs()
             try:
                 indexer = RagIndexer()
+                # 停用门：clear_rag_index 清空后会停用联系人，队列任务
+                # （分析完成入队/导入 mark_dirty 等）不得绕过停用把它
+                # 复活——手动「立即构建」入口会先重新启用再入队
+                try:
+                    _status = indexer.store.get_status(account_wxid, conversation_id) or {}
+                    if not _status.get("enabled", 1):
+                        logger.debug(
+                            "[RAG] queue skip disabled contact %s/%s (%s)",
+                            account_wxid, conversation_id, job_name,
+                        )
+                        continue
+                except Exception as _gate_e:
+                    logger.debug("[RAG] enabled gate check failed, proceed: %s", _gate_e)
                 if job_name == "fact_backfill":
                     indexer.backfill_fact_embeddings(
                         account_wxid=account_wxid,

@@ -1148,66 +1148,31 @@ class Bridge:
                 monitor.current_batch_id or "manual",
             )
 
-            # 自动补充上下文：情绪摘要
-            if 'emotion_summary' not in context and monitor.emotion_tracker:
-                context['emotion_summary'] = monitor.emotion_tracker.get_emotion_summary()
-
-            # 自动补充上下文：最近消息
-            if 'recent_messages' not in context and monitor.current_batch_id:
-                try:
-                    from ..services.realtime.message_query import get_messages_with_sentiment
-                    recent = get_messages_with_sentiment(
-                        monitor.current_batch_id,
-                        50,
-                        account_wxid=account_wxid,
-                    )
-                    context['recent_messages'] = recent
-                except Exception as e:
-                    logger.error(f"[Bridge] 获取最近消息失败: {e}")
-
-            # 自动补充上下文：联系人画像与本体画像
-            self_profile_cache = None
-            if monitor.current_display_name:
-                try:
-                    from ..services.realtime.contact_profiler import ContactProfiler
-                    from ..services.realtime.self_profiler import SelfProfiler
-                    
-                    if 'contact_profile' not in context:
-                        profiler = ContactProfiler()
-                        cached = profiler.get_profile(monitor.current_display_name)
-                        if cached and not cached['expired']:
-                            context['contact_profile'] = cached['profile']
-                            
-                    if 'self_profile' not in context:
-                        s_profiler = SelfProfiler()
-                        s_cached = s_profiler.get_profile(monitor.current_display_name)
-                        if s_cached and not s_cached['expired']:
-                            context['self_profile'] = s_cached['profile']
-                            self_profile_cache = s_cached
-                except Exception as e:
-                    logger.error(f"[Bridge] 获取画像失败: {e}")
-
+            # G1:手动入口统一走 assemble_generation_context——绑定稳定
+            # account_wxid + conversation_id,范围缺失时安全降级为通用帮助。
             try:
-                from ..services.realtime.historical_context import (
-                    augment_context_with_historical_data,
-                )
+                from ..services.realtime.generation_context import assemble_generation_context
 
-                augment_context_with_historical_data(
+                assemble_generation_context(
                     context,
-                    self_profile_cache=self_profile_cache,
+                    entrypoint="manual",
+                    account_wxid=account_wxid,
+                    conversation_id=context.get("conversation_id") or context.get("_rag_conversation_id"),
+                    display_name=str(
+                        getattr(monitor, "current_display_name", "") or context.get("display_name") or ""
+                    ),
+                    username=str(getattr(monitor, "current_talker", "") or ""),
+                    batch_id=str(monitor.current_batch_id or ""),
+                    emotion_summary=(
+                        monitor.emotion_tracker.get_emotion_summary() if monitor.emotion_tracker else None
+                    ),
+                    recent_limit=50,
+                    prewarm_rag_index=True,
                 )
-            except Exception as e:
-                logger.error(f"[Bridge] 构建 historical_context 失败: {e}")
-
-            # 传递联系人名称以便查询调教规则
-            if monitor.current_display_name:
-                context['display_name'] = monitor.current_display_name
-            self._prewarm_current_rag_index(
-                account_wxid=account_wxid,
-                display_name=str(monitor.current_display_name or context.get("display_name") or ""),
-                username=str(getattr(monitor, "current_talker", "") or ""),
-                context=context,
-            )
+            except Exception as assemble_e:
+                logger.error(f"[Bridge] 统一上下文装配失败: {assemble_e}")
+                if getattr(monitor, "current_display_name", ""):
+                    context['display_name'] = monitor.current_display_name
 
             from ..services.realtime.trigger_resolver import resolve_suggestion_trigger
 
@@ -1669,6 +1634,54 @@ class Bridge:
                         excerpts.append(text[:120] + ("…" if len(text) > 120 else ""))
                 return excerpts
 
+            def _evidence_messages(evidence_ids: list[int], limit: int = 6) -> list[dict[str, Any]]:
+                if not evidence_ids:
+                    return []
+                ids = [i for i in evidence_ids if i > 0][:limit]
+                if not ids:
+                    return []
+                placeholders = ",".join("?" for _ in ids)
+                try:
+                    cols = {
+                        r["name"]
+                        for r in conn.execute("PRAGMA table_info(messages)").fetchall()
+                    }
+                    sender_col = "is_sender" if "is_sender" in cols else "0 AS is_sender"
+                    time_col = (
+                        "timestamp"
+                        if "timestamp" in cols
+                        else ("created_at" if "created_at" in cols else "0 AS timestamp")
+                    )
+                    rows = conn.execute(
+                        f"""
+                        SELECT id, {sender_col}, {time_col}, CAST(content AS BLOB) AS content
+                        FROM messages
+                        WHERE id IN ({placeholders})
+                        ORDER BY {time_col} ASC, id ASC
+                        """,
+                        ids,
+                    ).fetchall()
+                    msgs: list[dict[str, Any]] = []
+                    for msg_row in rows:
+                        value = msg_row["content"]
+                        text_val = value.decode("utf-8", errors="replace") if isinstance(value, bytes) else str(value or "")
+                        text_val = " ".join(text_val.split())
+                        if text_val:
+                            ts_val = (
+                                msg_row["timestamp"]
+                                if "timestamp" in msg_row.keys()
+                                else (msg_row["created_at"] if "created_at" in msg_row.keys() else 0)
+                            )
+                            msgs.append({
+                                "id": int(msg_row["id"]),
+                                "is_sender": bool(msg_row["is_sender"]),
+                                "timestamp": int(ts_val or 0),
+                                "text": text_val[:180] + ("…" if len(text_val) > 180 else ""),
+                            })
+                    return msgs
+                except Exception:
+                    return []
+
             injected_items: list[dict[str, Any]] = []
 
             # 事实条目（document_id 即 rag_facts.id）
@@ -1677,11 +1690,25 @@ class Bridge:
                 fact_rows = conn.execute(
                     f"""
                     SELECT id, subject, kind, content, as_of, confidence, sensitivity,
-                           evidence_message_ids_json
+                           enabled, evidence_message_ids_json
                     FROM rag_facts WHERE id IN ({placeholders})
                     """,
                     fact_ids,
                 ).fetchall()
+                feedback_map: dict[int, str] = {}
+                try:
+                    fb_rows = conn.execute(
+                        f"""
+                        SELECT fact_id, action FROM rag_fact_user_feedback
+                        WHERE fact_id IN ({placeholders})
+                        ORDER BY updated_at ASC, id ASC
+                        """,
+                        fact_ids,
+                    ).fetchall()
+                    for fbr in fb_rows:
+                        feedback_map[int(fbr["fact_id"])] = str(fbr["action"] or "")
+                except Exception:
+                    pass
                 for fr in fact_rows:
                     if str(fr["sensitivity"] or "normal") == "sensitive":
                         continue
@@ -1689,17 +1716,23 @@ class Bridge:
                         i for i in json.loads(fr["evidence_message_ids_json"] or "[]")
                         if isinstance(i, int)
                     ] if fr["evidence_message_ids_json"] else []
+                    fid = int(fr["id"])
+                    ev_msgs = _evidence_messages(evidence_ids)
                     injected_items.append(
                         {
                             "source": "fact",
-                            "id": fr["id"],
+                            "id": fid,
                             "doc_type": "fact_memory",
                             "content": fr["content"],
                             "subject": fr["subject"],
                             "kind": fr["kind"],
                             "as_of": fr["as_of"],
                             "confidence": fr["confidence"],
-                            "evidence_excerpts": _evidence_excerpts(evidence_ids),
+                            "sensitive": False,
+                            "enabled": bool(fr["enabled"]),
+                            "user_action": feedback_map.get(fid),
+                            "evidence_messages": ev_msgs,
+                            "evidence_excerpts": [m["text"] for m in ev_msgs[:3]] or _evidence_excerpts(evidence_ids),
                         }
                     )
 
@@ -1723,9 +1756,12 @@ class Bridge:
                             "doc_type": dr["doc_type"],
                             "content": dr["content"],
                             "subject": None,
-                            "kind": None,
+                            "kind": dr["doc_type"],
                             "as_of": dr["source_ts"],
                             "confidence": None,
+                            "sensitive": False,
+                            "enabled": True,
+                            "evidence_messages": [],
                             "evidence_excerpts": [],
                         }
                     )
@@ -1733,9 +1769,48 @@ class Bridge:
             order = {fact_id: idx for idx, fact_id in enumerate(injected_ids)}
             injected_items.sort(key=lambda item: order.get(item["id"], 10**9))
 
+            log_conv_id = int(row["conversation_id"]) if "conversation_id" in row.keys() and row["conversation_id"] else 0
+            log_account = str(row["account_wxid"] or "") if "account_wxid" in row.keys() else ""
+            resolved_account = self._resolve_account_wxid(log_account)
+
+            contact_avatar = ""
+            if log_conv_id > 0:
+                try:
+                    conv_row = conn.execute(
+                        "SELECT avatar_path FROM conversations WHERE id = ?",
+                        (log_conv_id,),
+                    ).fetchone()
+                    if conv_row and conv_row["avatar_path"]:
+                        contact_avatar = str(conv_row["avatar_path"] or "").strip()
+                    if not contact_avatar:
+                        c_row = conn.execute(
+                            """
+                            SELECT avatar_path FROM contacts
+                            WHERE account_wxid = ? AND username = (SELECT username FROM conversations WHERE id = ?)
+                            LIMIT 1
+                            """,
+                            (resolved_account, log_conv_id),
+                        ).fetchone()
+                        if c_row and c_row["avatar_path"]:
+                            contact_avatar = str(c_row["avatar_path"] or "").strip()
+                except Exception:
+                    pass
+
+            user_avatar = ""
+            try:
+                user_prof = self.get_current_user_profile(account_wxid=resolved_account)
+                if user_prof.get("ok") and user_prof.get("profile"):
+                    user_avatar = str(user_prof["profile"].get("avatar") or "").strip()
+            except Exception:
+                pass
+
             not_injected_ids = [i for i in candidate_ids if i not in set(injected_ids)]
             return {
                 "ok": True,
+                "conversation_id": log_conv_id,
+                "account_wxid": resolved_account,
+                "contact_avatar": contact_avatar,
+                "user_avatar": user_avatar,
                 "log": {
                     "id": row["id"],
                     "created_at": row["created_at"],
@@ -2254,6 +2329,7 @@ class Bridge:
         try:
             from ..services.realtime.rag.config import load_rag_settings
             from ..services.realtime.rag.indexer import RagIndexQueue, get_active_and_queued
+            from ..services.realtime.rag.store import RagStore
 
             resolved_account = self._resolve_account_wxid(account_wxid)
             if not load_rag_settings().get("rag_enabled"):
@@ -2280,6 +2356,16 @@ class Bridge:
                     "message": "该联系人正在构建索引，无需重复发起" if live == "building"
                     else "该联系人已在索引队列中",
                 }
+            # 手动「立即构建」= 用户显式选择开启：clear 后停用的联系人
+            # 重新启用（队列 worker 对停用联系人跳过，防自动复活）
+            try:
+                from ..db.connection import get_db as _get_db
+
+                RagStore(_get_db()).set_conversation_enabled(
+                    resolved_account, int(conversation_id), True
+                )
+            except Exception as enable_e:
+                logger.debug("[Bridge] 重新启用联系人跳过: %s", enable_e)
             RagIndexQueue.enqueue(resolved_account, int(conversation_id))
             return {
                 "ok": True,
@@ -2667,8 +2753,16 @@ class Bridge:
         """
         try:
             from ..services.realtime.monitor_service import RealtimeMonitorService
-            
+
             logger.debug(f"[Bridge] 启动实时监听: {talker_display_name}")
+            # 监听启动即后台预热 embedding:用户第一次提问前模型就绪,
+            # 避免首查落在懒加载窗口内导致事实被门禁丢弃。
+            try:
+                from ..services.realtime.rag.embedding import kick_background_prewarm
+
+                kick_background_prewarm()
+            except Exception:
+                pass
             monitor_service = RealtimeMonitorService()
             result = monitor_service.start_monitoring(
                 talker_username="",  # 由监听后端自行解析
@@ -2880,9 +2974,13 @@ class Bridge:
             if len(messages) < int(limit):
                 try:
                     from ..services.realtime.monitor_service import RealtimeMonitorService
+                    from ..services.realtime.providers.native_uia import TIME_LABEL_RE
 
                     baseline_tail = getattr(RealtimeMonitorService(), "_baseline_tail", None) or []
                     if baseline_tail:
+                        # 基线来自 UIA 当前可见列表，其中包含微信的日期/时间分隔线。
+                        # 这些行不是聊天消息，不能并入消息气泡，否则前端会按
+                        # sender_attr != self 误显示为“对方”。
                         baseline_items = [
                             {
                                 "id": -(idx + 1),  # 负数伪 id 避免与 buffer 冲突
@@ -2894,8 +2992,14 @@ class Bridge:
                                 "sentiment": msg.get("sentiment"),
                             }
                             for idx, msg in enumerate(baseline_tail)
+                            if str(msg.get("sender_attr") or "").strip().lower() in {"self", "friend"}
+                            and str(msg.get("message_type") or "text").strip().lower() != "system"
+                            and not TIME_LABEL_RE.match(str(msg.get("content") or "").strip())
                         ]
-                        messages = (baseline_items + messages)[-int(limit):]
+                        messages = [
+                            m for m in (baseline_items + messages)
+                            if not TIME_LABEL_RE.match(str(m.get("content") or "").strip())
+                        ][-int(limit):]
                 except Exception as exc:
                     logger.debug("[Bridge] 基线尾部并入消息列表跳过: %s", exc)
 
@@ -2928,6 +3032,7 @@ class Bridge:
         """返回批次内最近收到的原始消息（悬浮面板即时回显，不等 LLM 建议）。"""
         try:
             from ..services.realtime.message_buffer import MessageBuffer
+            from ..services.realtime.providers.native_uia import TIME_LABEL_RE
 
             if not str(batch_id or "").strip():
                 return {"ok": False, "error": "缺少 batch_id"}
@@ -2943,6 +3048,9 @@ class Bridge:
                     "timestamp": row.get("timestamp") or row.get("created_at"),
                 }
                 for row in rows[-limit:]
+                if str(row.get("sender_attr") or "").strip().lower() in {"self", "friend"}
+                and str(row.get("message_type") or "text").strip().lower() != "system"
+                and not TIME_LABEL_RE.match(str(row.get("content") or "").strip())
             ]
             # 新消息不足时并入监听基线尾部（启动前窗口内最近对话）——
             # 用户预期「进入监听能看到前几条聊天数据」，此前基线按设计不落
@@ -2963,6 +3071,9 @@ class Bridge:
                                 "timestamp": msg.get("timestamp"),
                             }
                             for idx, msg in enumerate(baseline_tail)
+                            if str(msg.get("sender_attr") or "").strip().lower() in {"self", "friend"}
+                            and str(msg.get("message_type") or "text").strip().lower() != "system"
+                            and not TIME_LABEL_RE.match(str(msg.get("content") or "").strip())
                         ]
                         items = (baseline_items + items)[-limit:]
                 except Exception as exc:
@@ -4189,54 +4300,85 @@ class Bridge:
             return {'ok': False, 'error': str(e)}
 
     def check_gpu_status(self) -> dict[str, Any]:
-        """检测 GPU 加速可用性。"""
+        """检测 GPU 加速可用性（ONNX 为主通道：DML/CUDA providers；torch 可选）。"""
         try:
-            import torch
             from ..services.gpu.gpu_installer import GpuInstallerService
             from ..runtime_overrides import get_build_variant, get_gpu_install_state, has_gpu_overlay
 
             overlay_state = get_gpu_install_state()
             overlay_installed = has_gpu_overlay()
-            current_cuda_version = torch.version.cuda
-            build_variant = get_build_variant()
-            overlay_restart_required = bool(
-                build_variant != "dev"
-                and overlay_installed
-                and (
-                    str(torch.__version__) != str(overlay_state.get("torch_version") or "")
-                    or str(current_cuda_version or "") != str(overlay_state.get("cuda_version") or "")
-                )
-            )
 
+            torch_version = ""       # torch 已移出运行栈（字段保留兼容前端）
+            cuda_version = None
+
+            # ONNX providers 是 GPU 真通道（DirectML=Windows 免 CUDA / CUDA=Linux）
+            onnx_providers: list[str] = []
+            onnx_version = ""
+            dml_available = False
+            onnx_cuda_available = False
+            try:
+                import onnxruntime as ort
+
+                onnx_version = getattr(ort, "__version__", "") or ""
+                onnx_providers = list(ort.get_available_providers())
+                dml_available = "DmlExecutionProvider" in onnx_providers
+                onnx_cuda_available = "CUDAExecutionProvider" in onnx_providers
+            except Exception:
+                pass
+
+            gpu_available = bool(dml_available or onnx_cuda_available)
+            if dml_available:
+                accelerator_label = "DirectML (Windows 原生 GPU 加速)"
+            elif onnx_cuda_available:
+                accelerator_label = "CUDA (NVIDIA GPU 加速)"
+            else:
+                accelerator_label = "CPU (ONNX 多核推理)"
+
+            gpu_name = None
+            gpu_memory_total_mb = 0
+            try:
+                import subprocess as _sp
+
+                proc = _sp.run(
+                    ["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"],
+                    capture_output=True,
+                    text=True,
+                    timeout=2,
+                    creationflags=getattr(_sp, "CREATE_NO_WINDOW", 0),
+                )
+                if proc.returncode == 0 and proc.stdout.strip():
+                    first_line = proc.stdout.strip().splitlines()[0]
+                    parts = [p.strip() for p in first_line.split(",")]
+                    if parts:
+                        gpu_name = parts[0]
+                    if len(parts) > 1 and parts[1].isdigit():
+                        gpu_memory_total_mb = int(parts[1])
+            except Exception:
+                pass
+
+            build_variant = get_build_variant()
             result = {
                 "ok": True,
-                "cuda_available": torch.cuda.is_available(),
+                "cuda_available": gpu_available,
+                "gpu_available": gpu_available,
                 "has_nvidia_gpu": GpuInstallerService.has_nvidia_gpu(),
-                "gpu_name": None,
-                "torch_version": torch.__version__,
-                "cuda_version": current_cuda_version,
-                "gpu_memory_total_mb": 0,
+                "gpu_name": gpu_name,
+                "torch_version": f"ONNX Runtime {onnx_version}".strip() if onnx_version else "ONNX Runtime",
+                "onnx_version": onnx_version or "已就绪",
+                "accelerator_label": accelerator_label,
+                "cuda_version": "DirectML" if dml_available else ("CUDA" if onnx_cuda_available else None),
+                "gpu_memory_total_mb": gpu_memory_total_mb,
                 "gpu_memory_free_mb": 0,
                 "build_variant": build_variant,
                 "gpu_overlay_installed": overlay_installed,
                 "gpu_overlay_torch_version": overlay_state.get("torch_version"),
                 "gpu_overlay_cuda_version": overlay_state.get("cuda_version"),
-                "restart_required": overlay_restart_required,
+                "restart_required": False,
+                # ONNX 通道（阶段 B 起 GPU 主路径）
+                "onnx_providers": onnx_providers,
+                "directml_available": dml_available,
+                "onnx_cuda_available": onnx_cuda_available,
             }
-
-            if result["cuda_available"]:
-                result["gpu_name"] = torch.cuda.get_device_name(0)
-
-                mem_total = torch.cuda.get_device_properties(0).total_memory
-                try:
-                    mem_free, mem_total_runtime = torch.cuda.mem_get_info(0)
-                    result["gpu_memory_total_mb"] = int(mem_total_runtime / 1024 / 1024)
-                    result["gpu_memory_free_mb"] = int(mem_free / 1024 / 1024)
-                except Exception:
-                    mem_free = mem_total - torch.cuda.memory_allocated(0)
-                    result["gpu_memory_total_mb"] = int(mem_total / 1024 / 1024)
-                    result["gpu_memory_free_mb"] = int(mem_free / 1024 / 1024)
-
             return result
 
         except Exception as e:
@@ -4288,8 +4430,35 @@ class Bridge:
     # -- 关系上下文 --
 
     def check_analysis_model_status(self) -> dict[str, Any]:
-        """Check whether analysis models are available locally with detailed diagnosis."""
+        """Check whether analysis models are available locally with detailed diagnosis.
+
+        ONNX 后端口径：fp16 产物存在即就绪（torch 格式的 config.json 不再是
+        必需品——打包版内置目录只有 onnx/，此前按 torch 标记判活导致安装包
+        自带模型还被提示缺失并引导无谓下载）。
+        """
         try:
+            onnx_ready = False
+            try:
+                from ..services.analysis.onnx_inference import has_onnx_models
+
+                onnx_ready = has_onnx_models()
+            except Exception as exc:
+                logger.debug("[Bridge] ONNX 模型探测失败: %s", exc)
+
+            if onnx_ready:
+                empty_diagnosis = {"repo_id": "", "issue": None, "detail": "ONNX fp16 ready"}
+                return {
+                    "ok": True,
+                    "analysis_available": True,
+                    "sentiment_model_ready": True,
+                    "embedding_model_ready": True,
+                    "missing_models": [],
+                    "missing_details": [],
+                    "sentiment_diagnosis": empty_diagnosis,
+                    "embedding_diagnosis": empty_diagnosis,
+                    "backend": "onnx",
+                }
+
             sentiment_manager = self._get_sentiment_model_manager()
             sentiment_diagnosis = sentiment_manager.diagnose_model_status()
             embedding_diagnosis = self._diagnose_embedding_model_status()
@@ -4307,7 +4476,7 @@ class Bridge:
                     "model_key": "sentiment",
                     "repo_id": sentiment_diagnosis.get("repo_id"),
                     "issue": sentiment_diagnosis.get("issue") or "情感分类模型不可用",
-                    "can_auto_download": True,
+                    "can_auto_download": False,
                 })
 
             if not embedding_model_ready:
@@ -4317,8 +4486,14 @@ class Bridge:
                     "model_key": "embedding",
                     "repo_id": embedding_diagnosis.get("repo_id"),
                     "issue": embedding_diagnosis.get("issue") or "文本向量模型不可用",
-                    "can_auto_download": embedding_diagnosis.get("can_recover", True),
+                    "can_auto_download": False,
                 })
+            for item in missing_details:
+                item["issue"] = (
+                    f"{item['issue']}（推理为 ONNX 单后端：运行 "
+                    "python backend/scripts/ensure_models_for_export.py --with-export "
+                    "下载源模型并生成 ONNX 产物）"
+                )
 
             return {
                 "ok": True,

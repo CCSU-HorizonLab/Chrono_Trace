@@ -321,13 +321,16 @@ class RagRetriever:
             for item in cached["items"]
         }
 
-        # 证据文本预取（N+1 消除：此前每条事实单独查一次 messages 表）
+        # 证据文本预取（N+1 消除：此前每条事实单独查一次 messages 表）。
+        # 证据 ID 集合取权威 list_facts——cached 来自「带向量」INNER JOIN，
+        # 无向量事实（如 legacy 乱码事实，恰靠证据主题检索）在里面缺席，
+        # 曾导致证据增强对它们永远为空
         all_evidence_ids: list[int] = []
         evidence_ids_by_fact: dict[int, list[int]] = {}
-        for item in cached["items"]:
-            fact_id = int(item["id"])
+        for fact in self.store.list_facts(account_wxid, conversation_id):
+            fact_id = int(fact["id"])
             try:
-                ids = json.loads(item.get("evidence_message_ids_json") or "[]")
+                ids = json.loads(fact.get("evidence_message_ids_json") or "[]")
             except (TypeError, ValueError, json.JSONDecodeError):
                 ids = []
             evidence_ids_by_fact[fact_id] = ids
@@ -341,7 +344,14 @@ class RagRetriever:
                 ).fetchall()
                 for row in rows:
                     try:
-                        evidence_text_map[int(row["id"])] = bytes(row["content"] or b"").decode("utf-8", errors="replace")
+                        raw = row["content"]
+                        # messages.content 是 TEXT 列（str）；此前 bytes(str)
+                        # 直接 TypeError 被 pass 吞掉——证据文本增强从未生效，
+                        # 乱码 legacy 事实永远检索不到（测试恰好锚定此路径）
+                        if isinstance(raw, bytes):
+                            evidence_text_map[int(row["id"])] = raw.decode("utf-8", errors="replace")
+                        else:
+                            evidence_text_map[int(row["id"])] = str(raw or "")
                     except Exception:
                         pass
             except Exception:
@@ -521,7 +531,26 @@ class RagRetriever:
         service = getattr(self.embedding_service, "sentiment_service", None)
         if service is None:
             return True
-        return getattr(service, "_embedding_model", None) is not None
+        warm = getattr(service, "_embedding_model", None) is not None
+        if not warm:
+            # 冷启动自愈:暖机检查只探测不加载,这里后台触发一次加载,
+            # 让向量通道最迟从第二次检索起可用,不再永久 embedding_cold。
+            self._kick_embedding_prewarm()
+        return warm
+
+    def _kick_embedding_prewarm(self) -> None:
+        if getattr(self, "_prewarm_kicked", False):
+            return
+        self._prewarm_kicked = True
+
+        def _warm():
+            try:
+                if self.embedding_service.prewarm():
+                    logger.info("[RAG Retriever] embedding 引擎后台预热完成")
+            except Exception as exc:
+                logger.debug("[RAG Retriever] embedding 预热失败: %s", exc)
+
+        threading.Thread(target=_warm, daemon=True, name="rag-embedding-prewarm").start()
 
     def _empty(
         self,

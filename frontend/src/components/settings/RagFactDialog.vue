@@ -22,13 +22,16 @@
             </div>
             <div class="rfd-title-wrap">
               <div class="rfd-title-row">
-                <span class="rfd-title">记忆管理</span>
+                <span class="rfd-title">{{ isLogMode ? '本次建议的记忆依据' : '记忆管理' }}</span>
                 <span class="rfd-name-tag">{{ displayName || '联系人' }}</span>
               </div>
               <div class="rfd-sub">
                 <template v-if="loading">正在同步联系人结构化记忆与对话溯源…</template>
+                <template v-else-if="isLogMode">
+                  检索 {{ logMeta.candidatesCount }} 条候选记忆 · 实际采用 <strong>{{ logMeta.injectedCount }} 条</strong> · 耗时 {{ logMeta.elapsedMs }}ms
+                </template>
                 <template v-else>
-                  共 {{ factCount }} 条记忆（<strong>{{ enabledFactCount }} 条已启用</strong> · {{ Math.max(0, factCount - enabledFactCount) }} 条已停用） · 会话 ID {{ conversationId }}
+                  共 {{ factCount }} 条记忆（<strong>{{ enabledFactCount }} 条已启用</strong> · {{ Math.max(0, factCount - enabledFactCount) }} 条已停用）<template v-if="effectiveConversationId"> · 会话 ID {{ effectiveConversationId }}</template>
                 </template>
               </div>
             </div>
@@ -66,7 +69,26 @@
             </button>
           </div>
 
-          <div class="rfd-seg">
+          <div v-if="props.logId && effectiveConversationId" class="rfd-seg">
+            <button
+              type="button"
+              class="rfd-seg-btn"
+              :class="{ active: scopeMode === 'log' }"
+              @click="scopeMode = 'log'"
+            >
+              本次依据 <span class="rfd-seg-count">{{ logMeta.injectedCount }}</span>
+            </button>
+            <button
+              type="button"
+              class="rfd-seg-btn"
+              :class="{ active: scopeMode === 'all' }"
+              @click="scopeMode = 'all'"
+            >
+              全部记忆
+            </button>
+          </div>
+
+          <div v-if="!isLogMode" class="rfd-seg">
             <button
               type="button"
               class="rfd-seg-btn"
@@ -85,14 +107,14 @@
             </button>
           </div>
 
-          <select v-model="kindFilter" class="rfd-select" title="按记忆类型筛选">
+          <select v-if="!isLogMode" v-model="kindFilter" class="rfd-select" title="按记忆类型筛选">
             <option value="">全部类型</option>
             <option v-for="k in kinds" :key="k.kind" :value="k.kind">
               {{ kindLabel(k.kind) }} ({{ k.count }})
             </option>
           </select>
 
-          <select v-model="sortBy" class="rfd-select" title="排序方式">
+          <select v-if="!isLogMode" v-model="sortBy" class="rfd-select" title="排序方式">
             <option value="time_desc">时间 新→旧</option>
             <option value="time_asc">时间 旧→新</option>
             <option value="conf_desc">置信度 高→低</option>
@@ -130,6 +152,7 @@
         </div>
         <div v-else-if="!loading && filtered.length === 0" class="rfd-status">
           <template v-if="facts.length > 0">没有匹配的记忆条目</template>
+          <template v-else-if="isLogMode">本次建议未注入任何历史记忆条目</template>
           <template v-else-if="documentCount > 0">
             索引包含 {{ documentCount }} 条文档，但尚未抽取到结构化记忆事实<br />
             <span class="rfd-hint">该联系人可能只建立了文档索引；记忆事实会在回复与建议链路中逐步沉淀</span>
@@ -177,7 +200,7 @@
 
               <div class="rfd-head-right">
                 <span v-if="fact.as_of" class="rfd-time">{{ formatDate(fact.as_of) }}</span>
-                <span class="rfd-conf" :class="confClass(fact.confidence)">置信 {{ Math.round((fact.confidence ?? 0) * 100) }}%</span>
+                <span v-if="fact.confidence != null" class="rfd-conf" :class="confClass(fact.confidence)">置信 {{ Math.round((fact.confidence ?? 0) * 100) }}%</span>
                 <span v-if="fact.sensitive" class="rfd-sens" title="敏感记忆：默认不参与建议，仅供查看">敏感</span>
               </div>
             </div>
@@ -192,7 +215,12 @@
             <!-- 微信对话现场还原窗口 -->
             <div v-if="!fact.sensitive || revealed[fact.id]" class="rfd-wechat-window">
               <div class="rfd-wechat-header">
-                <span class="rfd-chat-title">💬 微信对话现场还原</span>
+                <span class="rfd-chat-title">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -2px; margin-right: 4px;">
+                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                  </svg>
+                  <span>微信对话现场还原</span>
+                </span>
               </div>
 
               <div class="rfd-wechat-body">
@@ -226,9 +254,22 @@
                     </div>
 
                     <div class="rfd-bubble" :class="[bubble.isSelf ? 'right' : 'left', { anchor: bubble.isAnchor }]">
-                      <span class="rfd-bubble-text">{{ bubble.text }}</span>
+                      <template v-if="parseWechatQuote(bubble.text).isQuote">
+                        <span class="rfd-bubble-text">{{ parseWechatQuote(bubble.text).replyText }}</span>
+                        <div class="rfd-wechat-quote">
+                          <span class="rfd-wechat-quote-bar"></span>
+                          <div class="rfd-wechat-quote-content">
+                            <span class="rfd-wechat-quote-author">{{ parseWechatQuote(bubble.text).quoteAuthor }}：</span>
+                            <span>{{ parseWechatQuote(bubble.text).quoteText }}</span>
+                          </div>
+                        </div>
+                      </template>
+                      <span v-else class="rfd-bubble-text">{{ bubble.text }}</span>
                       <span v-if="bubble.isAnchor" class="rfd-anchor-badge" title="此条消息是触发该记忆抽取的关键锚点">
-                        ★ 记忆锚点
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" stroke="none" style="vertical-align: -1px; margin-right: 2px;">
+                          <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+                        </svg>
+                        <span>记忆锚点</span>
                       </span>
                     </div>
                   </div>
@@ -243,7 +284,7 @@
             </div>
 
             <!-- 操作按钮栏 -->
-            <div class="rfd-actions">
+            <div v-if="fact.source !== 'document'" class="rfd-actions">
               <template v-if="fact.enabled">
                 <button
                   class="rfd-btn warn"
@@ -315,6 +356,7 @@ type EvidenceMessage = {
 
 type RagFact = {
   id: number
+  source?: string
   subject?: string | null
   kind?: string | null
   content: string
@@ -339,7 +381,8 @@ type ChatBubbleItem = {
 
 const props = defineProps<{
   visible: boolean
-  conversationId: number | null
+  conversationId?: number | null
+  logId?: number | null
   accountWxid?: string
   displayName?: string
   avatarUrl?: string
@@ -347,6 +390,33 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{ (e: 'close'): void }>()
+
+const scopeMode = ref<'log' | 'all'>('all')
+const resolvedConversationId = ref<number | null>(null)
+const effectiveConversationId = computed(() => props.conversationId || resolvedConversationId.value || null)
+const isLogMode = computed(() => Boolean(props.logId && scopeMode.value === 'log'))
+
+const logMeta = reactive({
+  candidatesCount: 0,
+  injectedCount: 0,
+  elapsedMs: 0,
+})
+
+const WECHAT_QUOTE_RE = /^([\s\S]+?)\s+引用\s+([^\n]{1,64}?)\s+的消息\s*[:：]\s*([\s\S]+)$/
+
+function parseWechatQuote(raw: any) {
+  const text = String(raw || '').trim()
+  const m = text.match(WECHAT_QUOTE_RE)
+  if (!m) {
+    return { isQuote: false, replyText: text, quoteAuthor: '', quoteText: '' }
+  }
+  return {
+    isQuote: true,
+    replyText: (m[1] || '').trim(),
+    quoteAuthor: (m[2] || '').trim(),
+    quoteText: (m[3] || '').trim(),
+  }
+}
 
 const facts = ref<RagFact[]>([])
 const listElement = ref<HTMLElement | null>(null)
@@ -426,8 +496,10 @@ function lockBodyScroll(lock: boolean) {
 
 const filtered = computed(() =>
   facts.value.filter((f) => {
-    if (showDisabled.value && f.enabled) return false
-    if (!showDisabled.value && !f.enabled) return false
+    if (!isLogMode.value) {
+      if (showDisabled.value && f.enabled) return false
+      if (!showDisabled.value && !f.enabled) return false
+    }
     if (keyword.value.trim()) {
       const q = keyword.value.trim().toLowerCase()
       return (
@@ -590,13 +662,13 @@ function parseFact(fact: RagFact) {
   }
 }
 
-watch([sortBy, kindFilter, showDisabled], () => {
+watch([sortBy, kindFilter, showDisabled, scopeMode], () => {
   page.value = 1
   load(1)
 })
 
 async function load(targetPage = page.value) {
-  if (!props.conversationId) return
+  if (!isLogMode.value && !effectiveConversationId.value) return
   const requestId = ++loadSequence
   loading.value = true
   error.value = ''
@@ -611,8 +683,47 @@ async function load(targetPage = page.value) {
       } catch {}
     }
 
+    if (isLogMode.value && props.logId) {
+      const res = await api.get_rag_log_detail(props.logId)
+      if (requestId !== loadSequence || !props.visible) return
+      if (res?.ok) {
+        if (res.conversation_id) resolvedConversationId.value = Number(res.conversation_id)
+        if (res.contact_avatar) contactAvatar.value = String(res.contact_avatar).trim()
+        if (res.user_avatar) userAvatar.value = String(res.user_avatar).trim()
+        logMeta.candidatesCount = Number(res.candidates?.count ?? 0)
+        logMeta.injectedCount = Number(res.candidates?.injected_count ?? (res.injected || []).length)
+        logMeta.elapsedMs = Number(res.log?.elapsed_ms ?? 0)
+
+        const items: RagFact[] = (res.injected || []).map((item: any) => ({
+          id: Number(item.id),
+          source: String(item.source || 'fact'),
+          subject: item.subject ?? null,
+          kind: item.kind ?? item.doc_type ?? null,
+          content: String(item.content || ''),
+          as_of: item.as_of ?? null,
+          confidence: item.confidence ?? null,
+          sensitive: Boolean(item.sensitive),
+          enabled: item.enabled !== false,
+          user_action: item.user_action ?? null,
+          evidence_messages: Array.isArray(item.evidence_messages) ? item.evidence_messages : [],
+          evidence_excerpts: Array.isArray(item.evidence_excerpts) ? item.evidence_excerpts : [],
+        }))
+        facts.value = items
+        factCount.value = items.length
+        enabledFactCount.value = items.filter((f) => f.enabled).length
+        selectedFactCount.value = items.length
+        page.value = 1
+        if (listElement.value) listElement.value.scrollTop = 0
+      } else {
+        error.value = String(res?.error || '未知错误')
+      }
+      return
+    }
+
+    const convId = effectiveConversationId.value
+    if (!convId) return
     const res = await api.get_contact_facts(
-      props.conversationId, props.accountWxid || '', pageSize, (targetPage - 1) * pageSize,
+      convId, props.accountWxid || '', pageSize, (targetPage - 1) * pageSize,
       sortBy.value, kindFilter.value, !showDisabled.value,
     )
     if (requestId !== loadSequence || !props.visible) return
@@ -696,10 +807,11 @@ function close() {
 }
 
 watch(
-  [() => props.visible, () => props.conversationId, () => props.accountWxid],
-  ([visible]) => {
+  [() => props.visible, () => props.conversationId, () => props.logId, () => props.accountWxid],
+  ([visible, , newLogId]) => {
     lockBodyScroll(Boolean(visible))
     if (visible) {
+      scopeMode.value = newLogId ? 'log' : 'all'
       page.value = 1
       facts.value = []
       factCount.value = 0
@@ -1529,5 +1641,58 @@ onUnmounted(() => {
   border-radius: 50%;
   background: var(--ct-color-primary, #7c4dff);
   flex-shrink: 0;
+}
+
+/* 微信现场气泡内的引用块 */
+.rfd-wechat-quote {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  margin-top: 5px;
+  padding: 5px 8px;
+  border-radius: 5px;
+  background: rgba(15, 23, 42, 0.055);
+}
+.rfd-wechat-quote-bar {
+  width: 2.5px;
+  border-radius: 2px;
+  background: rgba(100, 116, 139, 0.45);
+  flex-shrink: 0;
+}
+.rfd-wechat-quote-content {
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: #64748b;
+  word-break: break-word;
+}
+.rfd-wechat-quote-author {
+  font-weight: 600;
+  color: #475569;
+}
+
+/* 悬浮窗窄宽度自适应 */
+@media (max-width: 640px) {
+  .rfd-panel {
+    width: calc(100vw - 16px);
+    max-height: 90vh;
+    border-radius: 12px;
+  }
+  .rfd-head {
+    padding: 11px 14px;
+  }
+  .rfd-toolbar {
+    padding: 8px 14px;
+    flex-wrap: wrap;
+  }
+  .rfd-search-box {
+    min-width: 100%;
+    flex: 1 1 100%;
+  }
+  .rfd-list {
+    padding: 10px 12px;
+  }
+  .rfd-foot {
+    padding: 8px 14px 10px;
+  }
 }
 </style>

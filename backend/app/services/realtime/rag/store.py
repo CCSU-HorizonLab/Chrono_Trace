@@ -473,6 +473,14 @@ class RagStore:
             "contact_preference_ids_json": "TEXT",
             # P0.1 漏斗完整性：触发段（ambient/manual_request/direct_reply）
             "trigger_type": "TEXT",
+            # G6 最终发送审计：request 级关联与"实际发送清单"
+            "request_id": "TEXT",
+            "entrypoint": "TEXT",
+            "sent_manifest_json": "TEXT",
+            "final_prompt_hash": "TEXT",
+            "excluded_reasons_json": "TEXT",
+            # 仅诊断模式写入的脱敏 prompt 快照（默认 NULL）
+            "final_prompt_snapshot": "TEXT",
         }
         for name, definition in columns.items():
             if name not in existing:
@@ -1026,8 +1034,9 @@ class RagStore:
              rerank_reason, retrieval_source, fact_ids_json, evidence_ids_json,
              query_scope, supersession_decision, run_provenance, candidate_ids_json,
              injected_item_ids_json, hot_context_only, prompt_context_hash,
-             policy_ids_json, contact_preference_ids_json, trigger_type, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             policy_ids_json, contact_preference_ids_json, trigger_type,
+             request_id, entrypoint, excluded_reasons_json, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 payload.get("account_wxid") or "",
@@ -1083,10 +1092,63 @@ class RagStore:
                 json.dumps(payload.get("policy_ids") or [], ensure_ascii=False),
                 json.dumps(payload.get("contact_preference_ids") or [], ensure_ascii=False),
                 payload.get("trigger_type"),
+                payload.get("request_id"),
+                payload.get("entrypoint"),
+                json.dumps(payload.get("excluded_reasons") or [], ensure_ascii=False),
                 _now(),
             ),
         )
         return int(cursor.lastrowid)
+
+    def update_retrieval_log_sent_manifest(
+        self,
+        log_id: int,
+        manifest: dict[str, Any],
+        *,
+        prompt_snapshot: str | None = None,
+    ) -> None:
+        """G6:建议生成完成后回填最终 prompt 发送清单与 hash。
+
+        普通日志只记录 ID/版本/hash/原因;``prompt_snapshot`` 仅在诊断
+        模式下由调用方传入,默认不落盘。
+        """
+        if not log_id:
+            return
+        excluded = list(manifest.get("excluded") or [])
+        self.conn.execute(
+            """
+            UPDATE rag_retrieval_logs
+            SET request_id = ?,
+                entrypoint = ?,
+                sent_manifest_json = ?,
+                final_prompt_hash = ?,
+                excluded_reasons_json = ?,
+                final_prompt_snapshot = COALESCE(?, final_prompt_snapshot)
+            WHERE id = ?
+            """,
+            (
+                manifest.get("request_id"),
+                manifest.get("entrypoint"),
+                json.dumps(
+                    {
+                        "blocks": manifest.get("blocks") or [],
+                        "fact_ids": manifest.get("fact_ids") or [],
+                        "document_ids": manifest.get("document_ids") or [],
+                        "policy_ids": manifest.get("policy_ids") or [],
+                        "contact_preference_ids": manifest.get("contact_preference_ids") or [],
+                        "task": manifest.get("task"),
+                        "output": manifest.get("output"),
+                        "prompt_chars": manifest.get("prompt_chars") or 0,
+                    },
+                    ensure_ascii=False,
+                ),
+                manifest.get("prompt_hash"),
+                json.dumps(excluded, ensure_ascii=False),
+                prompt_snapshot,
+                int(log_id),
+            ),
+        )
+        self.conn.commit()
 
     def upsert_fact(self, **payload: Any) -> int:
         now = _now()

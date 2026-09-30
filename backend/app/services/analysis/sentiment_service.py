@@ -19,16 +19,6 @@ from .feature_extraction_config import (
 )
 
 
-def _safe_disable_dynamo(fn):
-    """Best-effort guard against PyTorch dynamo issues."""
-    try:
-        import torch._dynamo
-
-        if hasattr(torch._dynamo, "disable"):
-            return torch._dynamo.disable(fn)
-    except Exception:
-        pass
-    return fn
 
 
 def singleton(cls):
@@ -68,13 +58,15 @@ class SentimentService:
             logger.error(f"[情感服务] 实时情感分析服务预加载失败: {exc}")
 
     def has_local_embedding_model(self) -> bool:
-        """Return whether the embedding model is available locally."""
+        """Return whether the embedding model is available locally (ONNX fp16)."""
         if self._embedding_model is not None:
             return True
-        if self._embedding_model_path and Path(self._embedding_model_path).exists():
-            return True
+        try:
+            from .onnx_inference import has_onnx_models
 
-        return self._resolve_local_embedding_model_path() is not None
+            return has_onnx_models()
+        except Exception:
+            return False
 
     def _resolve_local_embedding_model_path(self) -> Optional[str]:
         """Resolve a usable local embedding model path without any network access."""
@@ -103,23 +95,18 @@ class SentimentService:
         self._embedding_cache.clear()
         self._embedding_device = "cpu"
         self._embedding_model_path = None
+        try:
+            # ONNX 共享 session 按 providers 缓存，模式切换需重建
+            from .onnx_inference import reset_shared_engines
+
+            reset_shared_engines()
+        except Exception:
+            pass
         if self._realtime_service is not None:
             self._realtime_service.configure_device_mode(normalized_mode)
 
         logger.info(f"[情感服务] 切换分析设备模式: {normalized_mode}")
         return self._device_mode
-
-    def _resolve_embedding_device(self) -> str:
-        import torch
-
-        if self._device_mode == ANALYSIS_DEVICE_MODE_CPU:
-            return "cpu"
-        if self._device_mode == ANALYSIS_DEVICE_MODE_GPU:
-            if torch.cuda.is_available():
-                return "cuda"
-            logger.warning("[情感服务] 已选择 GPU 模式，但当前 CUDA 不可用，回退到 CPU")
-            return "cpu"
-        return "cuda" if torch.cuda.is_available() else "cpu"
 
     def _load_realtime_service(self):
         """Load realtime sentiment service lazily and keep device mode in sync."""
@@ -132,88 +119,42 @@ class SentimentService:
         logger.debug("[情感服务] 实时情感分析服务加载成功")
 
     def _load_embedding_model(self):
-        """Load the embedding model using the configured device mode."""
+        """Load the ONNX embedding model using the configured device mode."""
         if self._embedding_load_failed:
-            return
+            # 失败可能只是暂时的(onnxruntime 后装、模型后导出):文件就位时
+            # 允许重试,避免整个进程生命周期被一次瞬时失败锁死。
+            try:
+                from .onnx_inference import has_onnx_models
 
-        # CPU 线程调优：限制为物理核数（超线程争抢反而降低吞吐，实测 8 逻辑核
-        # 全用时 600%+ CPU 但墙钟时间不降；4 物理核最优）
-        import os as _os
-        import torch as _torch
-        _physical_cores = max(1, _os.cpu_count() // 2)
-        if _torch.get_num_threads() != _physical_cores:
-            _torch.set_num_threads(_physical_cores)
-            logger.info(
-                "[情感服务] torch 线程数: %d (物理核 %d, 逻辑核 %d)",
-                _physical_cores, _physical_cores, _os.cpu_count(),
-            )
-
-        local_model_path = self._resolve_local_embedding_model_path()
-        if self._embedding_model is None and not local_model_path:
-            logger.error(
-                "[情感服务] 本地未找到 embedding 模型 (%s)。"
-                "请先通过“历史记录分析”页面的自动下载功能从 ModelScope 获取模型。",
-                EMBEDDING_MODEL_REPO_ID,
-            )
-            logger.error("[情感服务] 本地未找到 embedding 模型目录，跳过运行时联网加载")
-            self._embedding_load_failed = True
-            return
-
+                if not has_onnx_models():
+                    return
+            except Exception:
+                return
+            self._embedding_load_failed = False
         if self._embedding_model is not None:
             return
-
         with self._lock:
             if self._embedding_model is not None:
                 return
-
             try:
-                from sentence_transformers import SentenceTransformer
-                import torch
+                from .onnx_inference import get_shared_engine, has_onnx_models
 
-                device = self._resolve_embedding_device()
-                if device == "cuda":
-                    logger.debug(f"[情感服务] 检测到 GPU: {torch.cuda.get_device_name(0)}")
-                else:
-                    logger.debug("[情感服务] 使用 CPU 模式加载 embedding 模型")
-
-                model_path = local_model_path or self._resolve_local_embedding_model_path()
-                if not model_path:
-                    logger.error("[鎯呮劅鏈嶅姟] embedding 妯″瀷鏈湴璺緞瑙ｆ瀽澶辫触")
-                    self._embedding_load_failed = True
-                    return
-                old_hf_hub_offline = os.environ.get("HF_HUB_OFFLINE")
-                old_transformers_offline = os.environ.get("TRANSFORMERS_OFFLINE")
-                os.environ["HF_HUB_OFFLINE"] = "1"
-                os.environ["TRANSFORMERS_OFFLINE"] = "1"
-
-                try:
-                    self._embedding_model = SentenceTransformer(
-                        model_path,
-                        device=device,
-                        local_files_only=True,
+                if not has_onnx_models():
+                    raise FileNotFoundError(
+                        "缺少 ONNX fp16 嵌入模型（models/<name>/onnx/model.fp16.onnx；"
+                        "开发机先跑 backend/scripts/export_models_onnx.py，打包版应内置）"
                     )
-                    self._embedding_device = device
-                    self._set_embedding_dimension_from_model()
-                finally:
-                    if old_hf_hub_offline is None:
-                        os.environ.pop("HF_HUB_OFFLINE", None)
-                    else:
-                        os.environ["HF_HUB_OFFLINE"] = old_hf_hub_offline
-
-                    if old_transformers_offline is None:
-                        os.environ.pop("TRANSFORMERS_OFFLINE", None)
-                    else:
-                        os.environ["TRANSFORMERS_OFFLINE"] = old_transformers_offline
-
+                engine = get_shared_engine("embedding", device_mode=self._device_mode)
+                self._embedding_model = engine
+                self._embedding_device = engine.device_tag
+                self._embedding_load_failed = False
+                self._set_embedding_dimension_from_model()
                 logger.info(
-                    f"[情感服务] 本地缓存向量模型加载成功: {model_path} (设备: {self._embedding_device})"
+                    "[情感服务] ONNX 嵌入模型已加载 (device=%s, providers=%s)",
+                    engine.device_tag, engine.providers,
                 )
-            except ImportError:
-                logger.warning("[情感服务] sentence-transformers 未安装")
-                self._embedding_load_failed = True
             except Exception as exc:
-                logger.error(f"[情感服务] 向量模型加载失败: {exc}")
-                logger.debug("[情感服务] 将使用零向量替代，不影响核心分析流程")
+                logger.error("[情感服务] ONNX 嵌入模型加载失败: %s}", exc)
                 self._embedding_load_failed = True
 
     def _set_embedding_dimension_from_model(self) -> None:
@@ -315,7 +256,6 @@ class SentimentService:
 
         return results
 
-    @_safe_disable_dynamo
     def _get_embedding(self, text: str) -> List[float]:
         """Encode one text using the local model's native vector dimension.
 
@@ -328,7 +268,6 @@ class SentimentService:
             logger.error(f"[情感服务] 向量生成失败: {exc}")
             return self._fallback_embedding()
 
-    @_safe_disable_dynamo
     def _get_embeddings_batch(self, texts: List[str], batch_size: int = 64) -> List[List[float]]:
         """Encode a batch using the local model's native vector dimension.
 
@@ -544,7 +483,7 @@ class SentimentService:
                         "embedding": embedding,
                     }
         except Exception as exc:
-            logger.error(f"[情感服务] 批量缓存读取失败: {exc}")
+            logger.debug(f"[情感服务] 批量缓存读取跳过（含旧 torch pickle 行，按 miss 处理）: {exc}")
 
         return results
 

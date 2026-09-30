@@ -154,7 +154,7 @@ function Get-VariantSettings {
             PackagingPython = Join-Path $ProjectRoot ".venv-packaging-gpu\Scripts\python.exe"
             BuildRoot = Join-Path $ReleaseRoot "build-gpu"
             DistRoot = Join-Path $ReleaseRoot "pyinstaller-gpu"
-            AppDistDir = Join-Path $ReleaseRoot "pyinstaller-gpu\Chrono Trace"
+            AppDistDir = Join-Path $ReleaseRoot "pyinstaller-gpu\ChronoTrace"
             InstallerSuffix = "-GPU"
         }
     }
@@ -166,7 +166,7 @@ function Get-VariantSettings {
         PackagingPython = Join-Path $ProjectRoot ".venv-packaging\Scripts\python.exe"
         BuildRoot = Join-Path $ReleaseRoot "build"
         DistRoot = Join-Path $ReleaseRoot "pyinstaller"
-        AppDistDir = Join-Path $ReleaseRoot "pyinstaller\Chrono Trace"
+        AppDistDir = Join-Path $ReleaseRoot "pyinstaller\ChronoTrace"
         InstallerSuffix = ""
     }
 }
@@ -254,6 +254,38 @@ finally {
     Pop-Location
 }
 
+# ---------- ONNX model export (pre-packaging; uses isolated export venv when artifacts missing) ----------
+function Ensure-OnnxModels {
+    Write-Host ""
+    Write-Host "==> ONNX models (auto download from ModelScope on first build, then export)" -ForegroundColor Cyan
+    $ensureScript = Join-Path $ProjectRoot "backend\scripts\ensure_models_for_export.py"
+    $modelsRoot = Join-Path $ProjectRoot "backend\data\models"
+    $fp16a = Join-Path $modelsRoot "text2vec_base_chinese\onnx\model.fp16.onnx"
+    $fp16b = Join-Path $modelsRoot "sentiment_3class\onnx\model.fp16.onnx"
+    if ((Test-Path $fp16a) -and (Test-Path $fp16b)) {
+        Write-Host "ONNX artifacts already exist, skipping download and export."
+        return
+    }
+
+    # torch is used only as an export tool (isolated venv, never bundled into
+    # the installer); modelscope downloads the source models on demand.
+    $exportVenv = Join-Path $ProjectRoot ".venv-model-export"
+    $exportPython = Join-Path $exportVenv "Scripts\python.exe"
+    if (-not (Test-Path $exportPython)) {
+        Write-Host "Creating model export venv (.venv-model-export)..."
+        python -m venv $exportVenv
+        Assert-LastExitCode "export venv create"
+        # CN mirror: PyPI official host times out on this build machine
+        & $exportPython -m pip install --quiet -i https://pypi.tuna.tsinghua.edu.cn/simple torch
+        Assert-LastExitCode "export venv torch"
+        & $exportPython -m pip install --quiet -i https://pypi.tuna.tsinghua.edu.cn/simple "transformers>=4.30" "onnx>=1.15" "onnxruntime>=1.17" onnxconverter-common "modelscope>=1.17"
+        Assert-LastExitCode "export venv deps"
+    }
+    & $exportPython $ensureScript --with-export
+    Assert-LastExitCode "ONNX model ensure/export"
+}
+Ensure-OnnxModels
+
 $results = @()
 
 foreach ($targetVariant in $variantList) {
@@ -309,9 +341,12 @@ foreach ($targetVariant in $variantList) {
             throw "ISCC.exe not found. Install Inno Setup 6 first."
         }
 
+        # File-name version must not contain spaces (display version unchanged)
+        $setupVersion = ($packageVersion -replace '[ /]', '-')
         $installerArgs = @(
             "/DBuildRoot=$($settings.AppDistDir)",
             "/DProjectVersion=$packageVersion",
+            "/DSetupVersion=$setupVersion",
             "/DInstallerSuffix=$($settings.InstallerSuffix)",
             $InstallerScript
         )

@@ -31,3 +31,15 @@ def _reset_rag_caches():
         rag_config._settings_file_cache["payload"] = None
     except Exception:
         pass
+    # 清队列残留：前序用例入队的任务会由活 worker 持 _REBUILD_LOCK 处理，
+    # 后续用例的直接 rebuild 调用撞锁只得 pending（rag_v1 顺序失败根因）
+    try:
+        from app.services.realtime.rag.indexer import RagIndexQueue
+
+        with RagIndexQueue._lock:
+            RagIndexQueue._pending.clear()
+            RagIndexQueue._pending_order.clear()
+            RagIndexQueue._fact_pending.clear()
+            RagIndexQueue._fact_order.clear()
+    except Exception:
+        pass

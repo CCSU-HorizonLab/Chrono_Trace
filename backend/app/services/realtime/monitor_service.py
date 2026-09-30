@@ -15,6 +15,7 @@ from .realtime_sentiment_service import RealtimeSentimentService
 from .emotion_state_tracker import EmotionStateTracker
 from .providers.base import UINotAccessibleError
 from .providers.models import build_message_hash, normalize_text
+from .providers.native_uia import TIME_LABEL_RE
 from .providers.factory import normalize_listener_backend
 from ..wechat.account_settings import get_active_wechat_account_wxid, load_settings_from_file
 
@@ -140,6 +141,7 @@ class RealtimeMonitorService:
                     'engine_type': 'llm',           # llm
                 }
             self._last_auto_suggestion_time = 0
+            self._listen_start_suggestion_at = 0
             try:
                 self.current_account_wxid = get_active_wechat_account_wxid(load_settings_from_file())
             except Exception:
@@ -1424,12 +1426,14 @@ class RealtimeMonitorService:
         for msg in visible_messages or []:
             is_self = getattr(msg, 'is_self', False)
             is_system = getattr(msg, 'is_system', False)
+            content = str(getattr(msg, 'content', '') or '')
+            message_type = str(getattr(msg, 'type', 'text') or 'text')
+            if not is_system and content and TIME_LABEL_RE.match(content.strip()):
+                is_system = True
+                message_type = 'system'
             sender_attr = 'self' if is_self else 'friend'
             if is_system:
                 sender_attr = 'system'
-
-            content = str(getattr(msg, 'content', '') or '')
-            message_type = str(getattr(msg, 'type', 'text') or 'text')
             runtime_id = str(getattr(msg, 'id', '') or '')
             visible_index = str(getattr(msg, 'visible_index', '') or '')
             explicit_timestamp = int(getattr(msg, 'timestamp', 0) or 0)
@@ -2257,15 +2261,19 @@ class RealtimeMonitorService:
                 int(matched.group(1)), int(matched.group(2))
             ).timestamp())
 
-        matched = re.match(r'^(\d{1,2})月(\d{1,2})日\s+(\d{1,2}):(\d{2})$', text)
+        matched = re.match(
+            r'^(?:(\d{4})年)?(\d{1,2})月(\d{1,2})日\s+(?:(?:星期|周)[一二三四五六日天]\s+)?(?:(?:凌晨|早上|上午|中午|下午|傍晚|晚上|夜间)\s*)?(\d{1,2}):(\d{2})$',
+            text,
+        )
         if matched:
-            month = int(matched.group(1))
-            day = int(matched.group(2))
-            hour = int(matched.group(3))
-            minute = int(matched.group(4))
-            year = now_dt.year
+            explicit_year = int(matched.group(1)) if matched.group(1) else None
+            month = int(matched.group(2))
+            day = int(matched.group(3))
+            hour = int(matched.group(4))
+            minute = int(matched.group(5))
+            year = explicit_year or now_dt.year
             candidate = datetime(year, month, day, hour, minute)
-            if candidate > now_dt + timedelta(days=1):
+            if explicit_year is None and candidate > now_dt + timedelta(days=1):
                 candidate = datetime(year - 1, month, day, hour, minute)
             return int(candidate.timestamp())
 
@@ -3511,74 +3519,39 @@ class RealtimeMonitorService:
             try:
                 if not self._session_is_current(session_state):
                     return
+                # 开场建议后的冷却窗:silence 触发通常源于监听启动前的旧静默
+                # 基线,与开场建议内容重复,直接跳过。
+                if (
+                    trigger.trigger_type == 'silence'
+                    and time.time() - getattr(self, '_listen_start_suggestion_at', 0) < 60
+                ):
+                    _print("🔕 [开场冷却] 跳过与开场建议重复的 silence 触发")
+                    continue
                 _print(f"🔔 触发事件: {trigger.trigger_type} (severity={trigger.severity})")
                 
                 # 构建完整的 context (融合 trigger.context 和 画外特征)
+                # G1:所有入口统一走 assemble_generation_context,绑定稳定联系人范围。
                 ctx = trigger.context.copy() if trigger.context else {}
 
-                if 'emotion_summary' not in ctx and self.emotion_tracker:
-                    ctx['emotion_summary'] = self.emotion_tracker.get_emotion_summary()
-
-                if 'recent_messages' not in ctx and batch_id:
-                    try:
-                        from .message_query import get_messages_with_sentiment
-                        ctx['recent_messages'] = get_messages_with_sentiment(
-                            batch_id,
-                            50,
-                            account_wxid=account_wxid,
-                        )
-                    except Exception as msg_e:
-                        _print(f"⚠️ 获取最近消息失败: {msg_e}")
-                
-                self_profile_cache = None
-                if display_name:
-                    try:
-                        from .contact_profiler import ContactProfiler
-                        from .self_profiler import SelfProfiler
-                        
-                        # 对方画像
-                        c_profiler = ContactProfiler()
-                        c_cached = c_profiler.get_profile(display_name, account_wxid)
-                        if c_cached:
-                            # 过期降级注入：旧画像好过无声掉线；同时后台续期
-                            ctx['contact_profile'] = c_cached['profile']
-                            if c_cached['expired']:
-                                ctx['_contact_profile_stale'] = True
-                                _renew_profiles_in_background(display_name, account_wxid)
-
-                        # 我方本体画像
-                        s_profiler = SelfProfiler()
-                        s_cached = s_profiler.get_profile(display_name, account_wxid)
-                        if s_cached:
-                            ctx['self_profile'] = s_cached['profile']
-                            self_profile_cache = s_cached
-                            if s_cached['expired']:
-                                ctx['_self_profile_stale'] = True
-                                _renew_profiles_in_background(display_name, account_wxid)
-                    except Exception as prof_e:
-                        _print(f"⚠️ 提取画像失败: {prof_e}")
-
-                self._build_augmented_historical_context(
-                    ctx,
-                    self_profile_cache=self_profile_cache,
-                )
-
-                # 传递联系人名称以便查询调教规则
-                ctx['display_name'] = display_name
-                ctx['account_wxid'] = account_wxid
-
-                # RAG：检索相关历史记忆
                 try:
-                    from .session_thread_service import SessionThreadService
-                    thread_svc = SessionThreadService()
-                    recent = ctx.get('recent_messages', [])
-                    memories = thread_svc.retrieve_relevant_memories(
-                        display_name, recent, account_wxid=account_wxid
+                    from .generation_context import assemble_generation_context
+                    assemble_generation_context(
+                        ctx,
+                        entrypoint='semi_auto_trigger',
+                        account_wxid=account_wxid,
+                        display_name=str(display_name or ''),
+                        username=str(session_state.get('talker_username') or ''),
+                        batch_id=str(batch_id or ''),
+                        emotion_summary=(
+                            self.emotion_tracker.get_emotion_summary() if self.emotion_tracker else None
+                        ),
+                        recent_limit=50,
+                        renew_stale_profiles=_renew_profiles_in_background,
                     )
-                    if memories:
-                        ctx['relevant_memories'] = memories
-                except Exception as rag_e:
-                    _print(f"⚠️ RAG 检索失败: {rag_e}")
+                except Exception as assemble_e:
+                    _print(f"⚠️ 统一上下文装配失败,退回最小上下文: {assemble_e}")
+                    ctx['display_name'] = display_name
+                    ctx['account_wxid'] = account_wxid
 
                 # 生成建议
                 from .suggestion_engine import SuggestionEngineFactory
@@ -3668,62 +3641,27 @@ class RealtimeMonitorService:
         ctx = {'mode': mode}
         if trigger_context:
             ctx['trigger_context'] = {**trigger_context, 'mode': mode}
-        if self.emotion_tracker:
-            ctx['emotion_summary'] = self.emotion_tracker.get_emotion_summary()
-        if session_state.get('batch_id'):
-            try:
-                from .message_query import get_messages_with_sentiment
-                ctx['recent_messages'] = get_messages_with_sentiment(
-                    session_state['batch_id'], recent_limit, account_wxid=account_wxid,
-                )
-            except Exception as msg_e:
-                _print(f"⚠️ 获取最近消息失败: {msg_e}")
-        self_profile_cache = None
-        if session_state.get('display_name'):
-            try:
-                from .contact_profiler import ContactProfiler
-                from .self_profiler import SelfProfiler
-
-                c_profiler = ContactProfiler()
-                c_cached = c_profiler.get_profile(session_state['display_name'], account_wxid)
-                if c_cached:
-                    # 过期降级注入：旧画像好过无声掉线；同时后台续期
-                    ctx['contact_profile'] = c_cached['profile']
-                    if c_cached['expired']:
-                        ctx['_contact_profile_stale'] = True
-                        _renew_profiles_in_background(session_state['display_name'], account_wxid)
-
-                s_profiler = SelfProfiler()
-                s_cached = s_profiler.get_profile(session_state['display_name'], account_wxid)
-                if s_cached:
-                    ctx['self_profile'] = s_cached['profile']
-                    self_profile_cache = s_cached
-                    if s_cached['expired']:
-                        ctx['_self_profile_stale'] = True
-                        _renew_profiles_in_background(session_state['display_name'], account_wxid)
-            except Exception as prof_e:
-                _print(f"⚠️ 提取画像失败: {prof_e}")
-
-        self._build_augmented_historical_context(
-            ctx, self_profile_cache=self_profile_cache,
-        )
-
-        if session_state.get('display_name'):
-            ctx['display_name'] = session_state['display_name']
-            ctx['account_wxid'] = account_wxid
-
-        if session_state.get('display_name'):
-            try:
-                from .session_thread_service import SessionThreadService
-                thread_svc = SessionThreadService()
-                recent = ctx.get('recent_messages', [])
-                memories = thread_svc.retrieve_relevant_memories(
-                    session_state['display_name'], recent, account_wxid=account_wxid
-                )
-                if memories:
-                    ctx['relevant_memories'] = memories
-            except Exception as rag_e:
-                _print(f"⚠️ RAG 检索失败: {rag_e}")
+        # G1:统一装配函数,绑定稳定联系人范围;范围缺失时安全降级。
+        try:
+            from .generation_context import assemble_generation_context
+            assemble_generation_context(
+                ctx,
+                entrypoint=str(mode or 'auto'),
+                account_wxid=account_wxid,
+                display_name=str(session_state.get('display_name') or ''),
+                username=str(session_state.get('talker_username') or ''),
+                batch_id=str(session_state.get('batch_id') or ''),
+                emotion_summary=(
+                    self.emotion_tracker.get_emotion_summary() if self.emotion_tracker else None
+                ),
+                recent_limit=recent_limit,
+                renew_stale_profiles=_renew_profiles_in_background,
+            )
+        except Exception as assemble_e:
+            _print(f"⚠️ 统一上下文装配失败,退回最小上下文: {assemble_e}")
+            if session_state.get('display_name'):
+                ctx['display_name'] = session_state['display_name']
+                ctx['account_wxid'] = account_wxid
         return ctx
 
     def _generate_listen_start_suggestion(self, session_state: dict | None = None) -> None:
@@ -3763,7 +3701,10 @@ class RealtimeMonitorService:
                 context=ctx.get('trigger_context', {'source': 'listen_start'}),
             )
             self._save_suggestion_to_db(trigger, result, session_state=session_state)
-            _print("💡 [开场] 基于最近对话的建议已生成")
+            # 开场建议已覆盖"当前该说什么";短时间内跳过 silence 类自动触发,
+            # 避免监听刚启动就同时弹出"开场建议+体面降温"两条重复卡片。
+            self._listen_start_suggestion_at = time.time()
+            _print("💡 [开场] 基于最近对话的建议已生成(60s 内抑制 silence 自动触发)")
         except Exception as e:
             _print(f"⚠️ [开场] 生成建议失败: {e}")
 

@@ -1,0 +1,236 @@
+{
+  "packet_version": "g1-review-packet-v1",
+  "reviewer": "终审 agent",
+  "review_scope": "回答质量终审；基于冻结审核包逐条判定",
+  "answers": [
+    {
+      "sample_id": "real-1",
+      "verdict": "agree",
+      "expected_task": null,
+      "expected_output": null,
+      "knowledge_needs": null,
+      "issues": [],
+      "severity": "none"
+    },
+    {
+      "sample_id": "real-2",
+      "verdict": "agree",
+      "expected_task": null,
+      "expected_output": null,
+      "knowledge_needs": null,
+      "issues": [],
+      "severity": "none"
+    },
+    {
+      "sample_id": "real-3",
+      "verdict": "agree",
+      "expected_task": null,
+      "expected_output": null,
+      "knowledge_needs": null,
+      "issues": [],
+      "severity": "none"
+    },
+    {
+      "sample_id": "authored-task_routing-00",
+      "verdict": "agree",
+      "expected_task": null,
+      "expected_output": null,
+      "knowledge_needs": null,
+      "issues": [],
+      "severity": "none"
+    },
+    {
+      "sample_id": "authored-task_routing-01",
+      "verdict": "agree",
+      "expected_task": null,
+      "expected_output": null,
+      "knowledge_needs": null,
+      "issues": [
+        "authored-task_routing-01：g1 reply 为“她已经在上地铁了，直接回确认出发的话就好，不用再提邀约本身”，三条话术为“好，那我也出发了”“我也往那边走了”“路上注意安全”；用户问的是“怎么回她关于周末的邀约”，输出完全没有提供周末邀约回复，属于严重偏题。"
+      ],
+      "severity": "major"
+    },
+    {
+      "sample_id": "authored-task_routing-02",
+      "verdict": "agree",
+      "expected_task": null,
+      "expected_output": null,
+      "knowledge_needs": null,
+      "issues": [],
+      "severity": "none"
+    },
+    {
+      "sample_id": "authored-task_routing-03",
+      "verdict": "agree",
+      "expected_task": null,
+      "expected_output": null,
+      "knowledge_needs": null,
+      "issues": [],
+      "severity": "none"
+    },
+    {
+      "sample_id": "authored-task_routing-04",
+      "verdict": "agree",
+      "expected_task": null,
+      "expected_output": null,
+      "knowledge_needs": null,
+      "issues": [],
+      "severity": "none"
+    },
+    {
+      "sample_id": "authored-task_routing-05",
+      "verdict": "agree",
+      "expected_task": null,
+      "expected_output": null,
+      "knowledge_needs": null,
+      "issues": [],
+      "severity": "none"
+    },
+    {
+      "sample_id": "authored-contact_binding-06",
+      "verdict": "agree",
+      "expected_task": null,
+      "expected_output": null,
+      "knowledge_needs": null,
+      "issues": [],
+      "severity": "none"
+    },
+    {
+      "sample_id": "authored-contact_binding-07",
+      "verdict": "agree",
+      "expected_task": null,
+      "expected_output": null,
+      "knowledge_needs": null,
+      "issues": [],
+      "severity": "none"
+    },
+    {
+      "sample_id": "authored-contact_binding-08",
+      "verdict": "agree",
+      "expected_task": null,
+      "expected_output": null,
+      "knowledge_needs": null,
+      "issues": [],
+      "severity": "none"
+    },
+    {
+      "sample_id": "authored-notification_pollution-09",
+      "verdict": "agree",
+      "expected_task": null,
+      "expected_output": null,
+      "knowledge_needs": null,
+      "issues": [
+        "authored-notification_pollution-09：g1 reply 为“慢回大概率是忙或在上课，不是不理你”，虽然没有把转账事件当作证据，但在冻结窗口主要是通知/资金事件且证据有限时，这个关系判断仍偏确定，建议保留 unknown 或明确说明只是可能性。"
+      ],
+      "severity": "minor"
+    },
+    {
+      "sample_id": "authored-notification_pollution-10",
+      "verdict": "agree",
+      "expected_task": null,
+      "expected_output": null,
+      "knowledge_needs": null,
+      "issues": [],
+      "severity": "none"
+    },
+    {
+      "sample_id": "authored-notification_pollution-11",
+      "verdict": "agree",
+      "expected_task": null,
+      "expected_output": null,
+      "knowledge_needs": null,
+      "issues": [],
+      "severity": "none"
+    },
+    {
+      "sample_id": "authored-redaction_misfire-12",
+      "verdict": "agree",
+      "expected_task": null,
+      "expected_output": null,
+      "knowledge_needs": null,
+      "issues": [],
+      "severity": "none"
+    },
+    {
+      "sample_id": "authored-redaction_misfire-13",
+      "verdict": "agree",
+      "expected_task": null,
+      "expected_output": null,
+      "knowledge_needs": null,
+      "issues": [],
+      "severity": "none"
+    },
+    {
+      "sample_id": "authored-redaction_misfire-14",
+      "verdict": "agree",
+      "expected_task": null,
+      "expected_output": null,
+      "knowledge_needs": null,
+      "issues": [],
+      "severity": "none"
+    },
+    {
+      "sample_id": "authored-policy_adaptation-15",
+      "verdict": "agree",
+      "expected_task": null,
+      "expected_output": null,
+      "knowledge_needs": null,
+      "issues": [],
+      "severity": "none"
+    },
+    {
+      "sample_id": "authored-policy_adaptation-16",
+      "verdict": "agree",
+      "expected_task": null,
+      "expected_output": null,
+      "knowledge_needs": null,
+      "issues": [],
+      "severity": "none"
+    },
+    {
+      "sample_id": "authored-policy_adaptation-17",
+      "verdict": "agree",
+      "expected_task": null,
+      "expected_output": null,
+      "knowledge_needs": null,
+      "issues": [],
+      "severity": "none"
+    },
+    {
+      "sample_id": "authored-missing_scope_degrade-18",
+      "verdict": "agree",
+      "expected_task": null,
+      "expected_output": null,
+      "knowledge_needs": null,
+      "issues": [],
+      "severity": "none"
+    },
+    {
+      "sample_id": "authored-missing_scope_degrade-19",
+      "verdict": "agree",
+      "expected_task": null,
+      "expected_output": null,
+      "knowledge_needs": null,
+      "issues": [],
+      "severity": "none"
+    },
+    {
+      "sample_id": "authored-missing_scope_degrade-20",
+      "verdict": "agree",
+      "expected_task": null,
+      "expected_output": null,
+      "knowledge_needs": null,
+      "issues": [],
+      "severity": "none"
+    }
+  ],
+  "summary": {
+    "verdict": "退回",
+    "reason": "authored-task_routing-01 存在 major 级任务偏题；authored-notification_pollution-09 存在 minor 级关系判断过度确定。",
+    "remaining_for_g1_close": [
+      "修复或人工豁免 authored-task_routing-01 的周末邀约回复偏题",
+      "完成自动触发、开场、全自动入口真实冒烟",
+      "完成按联系人回滚真实库演练并保留事实与审计数据"
+    ]
+  }
+}

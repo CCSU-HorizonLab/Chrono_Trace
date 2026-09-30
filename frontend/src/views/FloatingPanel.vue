@@ -2,32 +2,43 @@
   <div class="fp-layout">
     <!-- 1. Header (Fixed) -->
     <header class="fp-site-header">
-      <div class="fp-header-drag-zone">
+      <div class="fp-header-drag-zone" @mousedown="startFloatingDrag">
         <div class="fp-brand">
           <span class="fp-status-dot" :class="{ active: realtimeState.isMonitoring }"></span>
           <span class="fp-brand-name">Chrono Trace</span>
+          <span v-if="realtimeState.isMonitoring" class="fp-brand-pulse-badge">实时</span>
         </div>
         <button class="fp-btn-back" @click="exitFloating" title="退出悬浮模式并结束监听，返回应用主界面">
-          <Maximize2 :size="13" />
+          <Maximize2 :size="12" />
           <span>返回主界面</span>
         </button>
       </div>
-      <div class="fp-contact-bar">
+
+      <div class="fp-contact-bar" @click="profileExpanded = !profileExpanded" title="点击展开/收起人物画像详情">
         <CtAvatar
           class="fp-avatar"
           :src="contactAvatar"
-          :name="profile.name || realtimeState.talkerName"
-          :size="34"
-          radius="10px"
+          :name="contactDisplayName"
+          :size="32"
+          radius="8px"
         />
         <div class="fp-contact-info">
-          <div class="fp-contact-name">{{ profile.name || realtimeState.talkerName || '等待对象...' }}</div>
-          <div class="fp-contact-tags" v-if="!profileExpanded && profile.personality_tags?.length">
-            <span v-for="t in profile.personality_tags.slice(0, 3)" :key="t" class="fp-tag">{{ t }}</span>
+          <div class="fp-contact-name-row">
+            <span class="fp-contact-name" :title="contactDisplayName">{{ contactDisplayName }}</span>
+            <span class="fp-monitor-tag" :class="{ active: realtimeState.isMonitoring }">
+              {{ realtimeState.isMonitoring ? '监听中' : '未就绪' }}
+            </span>
+          </div>
+          <div class="fp-contact-sub-row">
+            <div class="fp-contact-tags" v-if="profile.personality_tags?.length">
+              <span v-for="t in profile.personality_tags.slice(0, 2)" :key="t" class="fp-tag">{{ t }}</span>
+              <span v-if="profile.personality_tags.length > 2" class="fp-tag more">+{{ profile.personality_tags.length - 2 }}</span>
+            </div>
+            <span v-else class="fp-contact-empty-hint">暂无画像特征</span>
           </div>
         </div>
-        <button class="fp-btn-icon profile-toggle" :class="{ 'is-open': profileExpanded }" @click="profileExpanded = !profileExpanded">
-           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>
+        <button class="fp-btn-icon profile-toggle" :class="{ 'is-open': profileExpanded }">
+           <ChevronDown :size="14" />
         </button>
       </div>
 
@@ -80,38 +91,72 @@
       
       <!-- LEFT/MAIN COLUMN -->
       <main class="fp-main-column">
-        <!-- Narrow Mode Insights Strip -->
-        <div class="fp-insights-strip" @click="toggleInspector('emotion')" title="点击展开情绪明细图表">
-      <div class="fp-insight-primary">
-        <span class="fp-trend-badge" :class="emotionSummary?.trend || 'neutral'">
-          {{ emotionSummary?.trend === 'positive' ? '正面向上' : emotionSummary?.trend === 'negative' ? '负面向下' : '稳定平缓' }}
-        </span>
-        <span class="fp-insight-text">{{ emotionSummary?.insight || '正在分析情绪数据...' }}</span>
-      </div>
-      <div class="fp-insight-metrics">
-        <span v-if="computedChartStats?.msg_ratio" class="fp-metric-pill">比例 {{ computedChartStats.msg_ratio }}</span>
-        <span class="fp-arr" :class="{'arr-up': inspectorOpen && inspectorTab === 'emotion'}">›</span>
-      </div>
-    </div>
-
-    <!-- 3. SHARED INSPECTOR PANEL (Shared fixed height block) -->
+        <!-- Compact Context & Insights Ribbon (Micro status bar) -->
+        <div class="fp-insights-strip">
+          <div class="fp-insight-primary" @click="toggleInspector('emotion')" title="点击展开情绪走势明细">
+            <span class="fp-trend-badge" :class="emotionSummary?.trend || 'neutral'">
+              {{ emotionSummary?.trend === 'positive' ? '正面向上' : emotionSummary?.trend === 'negative' ? '负面向下' : '稳定平缓' }}
+            </span>
+            <span class="fp-insight-text">{{ emotionSummary?.insight || '正在分析情绪数据...' }}</span>
+          </div>
+          <div class="fp-insight-actions">
+            <button
+              class="fp-ribbon-btn fp-rag-btn"
+              :class="{ 'has-rag': !!latestRagContext, 'active': inspectorOpen && inspectorTab === 'context' }"
+              @click.stop="openLatestRagDetail"
+              title="查看与管理 AI 建议的参考依据及长期记忆"
+            >
+              <Brain :size="12" />
+              <span>依据与记忆</span>
+            </button>
+            <button
+              class="fp-ribbon-btn fp-chart-btn"
+              :class="{ 'active': inspectorOpen && inspectorTab === 'emotion' }"
+              @click.stop="toggleInspector('emotion')"
+              title="展开/收起情绪走势图"
+            >
+              <Activity :size="12" />
+            </button>
+          </div>
+        </div>
 
         <!-- 4. Suggestion & Chat Area (Main scroll view) -->
         <div class="fp-main-stack">
-      <div class="fp-scroll-area" ref="suggestionsRef">
-        <div v-if="lastThread" class="fp-thread-banner compress" @click="loadLastThread">
-          <div class="fp-thread-info">
-            <span class="fp-thread-label">继续指导: {{ lastThread.summary }}</span>
-          </div>
-          <button class="fp-btn-icon tiny" @click.stop="lastThread = null"><X :size="12" /></button>
-        </div>
+          <div class="fp-scroll-area" ref="suggestionsRef">
+            <div v-if="lastThread" class="fp-thread-banner compress" @click="loadLastThread">
+              <div class="fp-thread-info">
+                <span class="fp-thread-label">继续指导: {{ lastThread.summary }}</span>
+              </div>
+              <button class="fp-btn-icon tiny" @click.stop="lastThread = null"><X :size="12" /></button>
+            </div>
 
-        <div v-if="!allSuggestions.length && !loading" class="fp-empty-slate">
-          <template v-if="realtimeState.isMonitoring && realtimeState.messageCount > 0">
-            已接收 {{ realtimeState.messageCount }} 条消息 · AI 正在生成建议（思考模型约需 30-60 秒）…
-          </template>
-          <template v-else>等待接收聊天数据…</template>
-        </div>
+            <div v-if="!allSuggestions.length && !loading" class="fp-empty-slate">
+              <div class="fp-empty-card">
+                <div class="fp-empty-icon-wrap">
+                  <MessageSquare :size="24" class="fp-empty-svg" />
+                </div>
+                <div class="fp-empty-title">
+                  <span v-if="realtimeState.isMonitoring && realtimeState.messageCount > 0">正在分析微信对话…</span>
+                  <span v-else-if="realtimeState.isMonitoring">监听已就绪，等待新消息</span>
+                  <span v-else>等待启动监听</span>
+                </div>
+                <div class="fp-empty-desc">
+                  <template v-if="realtimeState.isMonitoring && realtimeState.messageCount > 0">
+                    已捕获 {{ realtimeState.messageCount }} 条消息，AI 正在生成策略建议（深度思考模型约需 30-60 秒）…
+                  </template>
+                  <template v-else-if="realtimeState.isMonitoring">
+                    在微信中与「{{ contactDisplayName }}」展开对话，AI 军师将在此实时提供高情商回复与策略指导。
+                  </template>
+                  <template v-else>
+                    请在微信中打开聊天窗口，系统将自动绑定并开启实时军师建议。
+                  </template>
+                </div>
+                <div class="fp-empty-tip">
+                  <Sparkles :size="12" />
+                  <span>可在下方直接向 AI 军师提问或手动生成</span>
+                </div>
+              </div>
+            </div>
 
         <div class="fp-sug-list">
           <template v-for="s in allSuggestions" :key="s.id || s._tempId">
@@ -165,7 +210,7 @@
                   :src="getBubbleAvatar(s.sender_attr === 'self')"
                   class="fp-msg-avatar-img"
                   referrerpolicy="no-referrer"
-                  :alt="s.sender_attr === 'self' ? '我' : (realtimeState.talkerName || '对方')"
+                  :alt="s.sender_attr === 'self' ? '我' : (contactDisplayName || '对方')"
                   @error="avatarLoadErrors[getBubbleAvatar(s.sender_attr === 'self')] = true"
                 />
                 <svg v-else class="fp-msg-avatar-svg" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -181,7 +226,7 @@
                     <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
                       <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
                     </svg>
-                    <span>{{ s.sender_attr === 'self' ? '微信 · 我' : `微信 · ${realtimeState.talkerName || '对方'}` }}</span>
+                    <span>{{ s.sender_attr === 'self' ? '微信 · 我' : `微信 · ${contactDisplayName}` }}</span>
                   </span>
                   <span class="fp-bubble-time">{{ formatMsgTime(s.created_at) }}</span>
                 </div>
@@ -436,55 +481,113 @@
 
     </div>
   <footer class="fp-composer">
-      <!-- Top strip -->
-      <div class="fp-composer-top">
+      <!-- 5.1 Quick Prompts Strip (Only when valid prompts exist) -->
+      <div v-if="quickPrompts.length > 0 && quickPrompts.some(q => q && q !== '加载中...')" class="fp-quick-prompts-bar">
         <div class="fp-quick-prompts">
-          <button v-for="q in quickPrompts" :key="q" class="fp-qp-btn" @click="sendQuickPrompt(q)">{{ q }}</button>
-        </div>
-        <button class="fp-ctx-btn" @click="toggleInspector('context')" :class="{ 'is-active': inspectorOpen && inspectorTab === 'context' }" title="查看生成建议时 AI 参考的全部聊天记录、记忆与情绪数据">AI建议依据</button>
-      </div>
-
-      <!-- Settings Strip -->
-      <div class="fp-composer-settings">
-        <div class="fp-seg-group">
-          <span class="fp-seg-title">触发模式</span>
-          <button v-for="m in triggerModes" :key="m.value" class="fp-seg-btn" :class="{ active: triggerMode === m.value }" @click="setTriggerMode(m.value)" :title="m.value === 'full_auto' ? '自动分析所有新消息' : m.value === 'semi_auto' ? '需要时自动给出建议' : '仅在手动点击生成时分析'">{{ m.label }}</button>
-        </div>
-        <div class="fp-seg-divider"></div>
-        <div class="fp-seg-group">
-          <span class="fp-seg-title">关系方向</span>
-          <button class="fp-seg-btn" :class="{ active: intent === 'intimate' }" @click="setIntent('intimate')" title="生成更有感情、亲密回复"><Flame :size="11" />亲近</button>
-          <button class="fp-seg-btn" :class="{ active: intent === 'maintain' }" @click="setIntent('maintain')" title="维持当前氛围"><Scale :size="11" />维持</button>
-          <button class="fp-seg-btn" :class="{ active: intent === 'distance' }" @click="setIntent('distance')" title="生成稍带距离感回复"><Snowflake :size="11" />疏远</button>
+          <button
+            v-for="q in quickPrompts.filter(q => q && q !== '加载中...')"
+            :key="q"
+            class="fp-qp-chip"
+            @click="sendQuickPrompt(q)"
+          >
+            <Sparkles :size="10" />
+            <span>{{ q }}</span>
+          </button>
         </div>
       </div>
 
-      <!-- Input Strip -->
+      <!-- 5.2 Unified Slim Strategy Bar (Single Row: Trigger Mode + Relationship Direction) -->
+      <div class="fp-strategy-bar">
+        <div class="fp-seg-group mode-seg">
+          <button
+            v-for="m in triggerModes"
+            :key="m.value"
+            class="fp-seg-btn"
+            :class="{ active: triggerMode === m.value }"
+            @click="setTriggerMode(m.value)"
+            :title="m.value === 'full_auto' ? '自动分析所有新消息' : m.value === 'semi_auto' ? '需要时自动给出建议' : '仅在手动点击生成时分析'"
+          >
+            {{ m.label }}
+          </button>
+        </div>
+
+        <div class="fp-strategy-divider"></div>
+
+        <div class="fp-seg-group intent-seg">
+          <button
+            class="fp-seg-btn"
+            :class="{ active: intent === 'intimate' }"
+            @click="setIntent('intimate')"
+            title="生成更有感情、亲密回复"
+          >
+            <Flame :size="11" />
+            <span>亲近</span>
+          </button>
+          <button
+            class="fp-seg-btn"
+            :class="{ active: intent === 'maintain' }"
+            @click="setIntent('maintain')"
+            title="维持当前氛围"
+          >
+            <Scale :size="11" />
+            <span>维持</span>
+          </button>
+          <button
+            class="fp-seg-btn"
+            :class="{ active: intent === 'distance' }"
+            @click="setIntent('distance')"
+            title="生成稍带距离感回复"
+          >
+            <Snowflake :size="11" />
+            <span>疏远</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- 5.3 Action Input Row (The Hero Row, input box guaranteed space) -->
       <div class="fp-input-row">
         <input
           v-model="userInput"
           type="text"
           class="fp-composer-input"
-          :placeholder="llmError ? '模型异常' : '告诉 AI 下一步意图…'"
+          :placeholder="llmError ? '模型异常，请检查配置' : '向 AI 军师提问或输入要求…'"
           :disabled="!!llmError || loading"
-          @keydown.enter.exact.prevent="sendUserContext"
+          @keydown.enter.exact.prevent="handleInputEnter"
         />
-        <button class="fp-btn-main act-send" :disabled="!userInput.trim() || loading || !!llmError" @click="sendUserContext">
-           发送
+        <button
+          v-if="userInput.trim()"
+          class="fp-btn-act primary send-btn"
+          :disabled="loading || !!llmError"
+          @click="sendUserContext"
+          title="发送指令/问题给 AI (Enter)"
+        >
+          <Send :size="13" />
+          <span>发送</span>
         </button>
-        <button class="fp-btn-main act-gen" :disabled="loading || !!llmError" @click="manualGenerate">
-           生成
+        <button
+          class="fp-btn-act"
+          :class="userInput.trim() ? 'secondary gen-sub-btn' : 'primary gen-btn'"
+          :disabled="loading || !!llmError"
+          @click="manualGenerate"
+          :title="userInput.trim() ? '直接基于最新聊天生成建议' : '根据最新对话生成策略回复建议'"
+        >
+          <Sparkles :size="13" />
+          <span>{{ userInput.trim() ? '生成' : '生成建议' }}</span>
         </button>
       </div>
 
-      <!-- Footer Info -->
-      <div class="fp-composer-footer" v-if="llmModels.length > 0">
-        <select v-model="activeModelId" class="fp-mini-select" @change="switchModel">
-          <option v-for="m in llmModels" :key="m.id" :value="m.id" :disabled="disabledModels.has(m.id)">
-            模型: {{ m.name }} {{ disabledModels.has(m.id) ? '(已失效)' : '' }}
-          </option>
-        </select>
-        <div v-if="llmError" class="fp-error-txt">{{ llmError }}</div>
+      <!-- 5.4 Micro Footer (Model Selector & Status) -->
+      <div class="fp-composer-footer">
+        <div class="fp-model-picker" v-if="llmModels.length > 0">
+          <select v-model="activeModelId" class="fp-mini-select" @change="switchModel">
+            <option v-for="m in llmModels" :key="m.id" :value="m.id" :disabled="disabledModels.has(m.id)">
+              模型: {{ m.name }} {{ disabledModels.has(m.id) ? '(已失效)' : '' }}
+            </option>
+          </select>
+          <ChevronDown :size="10" class="fp-select-arrow" />
+        </div>
+        <div v-if="llmError" class="fp-error-txt" :title="llmError">{{ llmError }}</div>
+        <div v-else class="fp-footer-hint">Enter 发送</div>
       </div>
     </footer>
   </div>
@@ -544,7 +647,12 @@ import {
   Moon,
   VolumeX,
   Sparkles,
-  Pin
+  Pin,
+  ChevronDown,
+  Brain,
+  Activity,
+  MessageSquare,
+  Send,
 } from 'lucide-vue-next'
 import { bridgeReady, api } from '@/api/bridge'
 import * as echarts from 'echarts'
@@ -926,11 +1034,37 @@ const intents = [
   { value: 'distance', icon: Snowflake },
 ]
 
-const quickPrompts = ref<string[]>([
-  '加载中...',
-])
+const quickPrompts = ref<string[]>([])
 
-// ========== 计算属性 ==========
+// ========== 计算属性与交互辅助 ==========
+const contactDisplayName = computed(() => {
+  const name = (profile.value?.name || realtimeState.talkerName || '').trim()
+  return name || '等待监听对象...'
+})
+
+const latestRagContext = computed(() => {
+  for (let i = allSuggestions.value.length - 1; i >= 0; i--) {
+    const s = allSuggestions.value[i]
+    if (s.rag_context?.log_id) return s.rag_context
+  }
+  return null
+})
+
+function openLatestRagDetail() {
+  if (latestRagContext.value) {
+    openRagDetail(latestRagContext.value)
+  } else {
+    toggleInspector('context')
+  }
+}
+
+function handleInputEnter() {
+  if (userInput.value.trim()) {
+    sendUserContext()
+  } else if (!loading.value && !llmError.value) {
+    manualGenerate()
+  }
+}
 const chartVisibilityStorageKey = computed(() => {
   const displayName = (realtimeState.talkerName || profile.value.name || 'default').trim() || 'default'
   const account = (activeAccountWxid.value || 'default').trim() || 'default'
@@ -1491,6 +1625,35 @@ async function exitFloating() {
   }
   // 跳转回建议页
   router.push('/suggestions')
+}
+
+async function startFloatingDrag(event: MouseEvent) {
+  // 返回按钮和其它交互控件保留点击行为，不触发窗口拖动。
+  if ((event.target as HTMLElement | null)?.closest('button, a, input, select, textarea')) return
+  event.preventDefault()
+  let lastX = event.screenX
+  let lastY = event.screenY
+  let moving = true
+  let moveQueue = Promise.resolve()
+  const move = async (moveEvent: MouseEvent) => {
+    if (!moving) return
+    const dx = moveEvent.screenX - lastX
+    const dy = moveEvent.screenY - lastY
+    lastX = moveEvent.screenX
+    lastY = moveEvent.screenY
+    if (!dx && !dy) return
+    moveQueue = moveQueue.then(async () => {
+      await bridgeReady()
+      await api.move_floating_window(dx, dy)
+    }).catch((e) => console.error('移动悬浮窗失败:', e))
+  }
+  const stop = () => {
+    moving = false
+    window.removeEventListener('mousemove', move)
+    window.removeEventListener('mouseup', stop)
+  }
+  window.addEventListener('mousemove', move)
+  window.addEventListener('mouseup', stop, { once: true })
 }
 
 /** 仅退回建议页（不停止监听，用于状态恢复失败时） */
@@ -2517,7 +2680,15 @@ async function loadLastThread() {
 </script>
 
 <style scoped>
-
+/* Scoped Reset to prevent any global button/flex hijacking */
+.fp-layout, .fp-layout * {
+  box-sizing: border-box;
+}
+.fp-layout button {
+  width: auto;
+  min-height: unset;
+  max-width: 100%;
+}
 
 /* Workbench Structural Layout */
 .fp-layout {
@@ -2526,116 +2697,396 @@ async function loadLastThread() {
   height: 100vh;
   overflow: hidden;
   background: var(--ct-bg-app, #f8fafc);
-  font-family: var(--ct-font-body, Inter, sans-serif);
+  font-family: var(--ct-font-body, Inter, -apple-system, sans-serif);
 }
 
-/* Base states: Compact Default (Closed) */
 .fp-workbench-container {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   flex: 1;
   min-height: 0;
   width: 100%;
-  overflow: hidden; /* Strict bound */
-  grid-template-columns: 1fr;
-  grid-template-rows: auto 0 1fr;
-  grid-template-areas:
-    "insights"
-    "inspector"
-    "main";
-  transition: grid-template-rows 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  overflow: hidden;
 }
 
 .fp-main-column {
-  display: contents; /* Grid flattening fallback */
-}
-.fp-insights-strip { grid-area: insights; }
-
-.fp-main-stack { 
-  grid-area: main; 
-  overflow: hidden; 
-  position: relative; 
   display: flex;
   flex-direction: column;
+  flex: 1;
   min-height: 0;
-  background: var(--ct-bg-tertiary);
+  overflow: hidden;
+}
+
+.fp-main-stack { 
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+  background: var(--ct-bg-tertiary, #f8fafc);
   width: 100%;
 }
 
-.fp-composer { 
-  flex-shrink: 0; 
-  z-index: 10;
-}
-
-
-
-/* 检查器已改为 teleport 全屏浮层：主布局不再随 inspectorOpen 变化 */
 /* Base Buttons */
 .fp-btn-back {
-  display: inline-flex; align-items: center; gap: 5px;
-  padding: 4px 10px; border-radius: 999px;
-  background: rgba(108, 92, 231, 0.15); color: #8b7ff0;
-  border: 1px solid rgba(108, 92, 231, 0.35);
-  font-size: 12px; cursor: pointer; white-space: nowrap;
-  transition: background 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  height: 22px;
+  border-radius: 999px;
+  background: rgba(124, 77, 255, 0.08);
+  color: var(--ct-color-primary, #7c4dff);
+  border: 1px solid rgba(124, 77, 255, 0.22);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  -webkit-app-region: no-drag;
+  transition: all 0.15s ease;
 }
-.fp-btn-back:hover { background: rgba(108, 92, 231, 0.28); }
+.fp-btn-back:hover {
+  background: rgba(124, 77, 255, 0.16);
+  border-color: rgba(124, 77, 255, 0.35);
+}
 
-.fp-btn-icon { background: transparent; border: none; cursor: pointer; color: var(--ct-text-tertiary); display: inline-flex; align-items: center; justify-content: center; padding: 4px; border-radius: var(--ct-radius-sm); transition: all 0.2s; }
-.fp-btn-icon:hover { background: var(--ct-bg-secondary); color: var(--ct-text-primary); }
-.fp-btn-sm { font-size: 11px; font-weight: 500; padding: 4px 10px; border-radius: var(--ct-radius-sm); background: var(--ct-color-primary-light); color: var(--ct-color-primary); border: 1px solid var(--ct-color-primary); cursor: pointer; }
-.fp-btn-base { font-size: 13px; font-weight: 500; padding: 6px 14px; border-radius: var(--ct-radius-md); cursor: pointer; border: none; transition: all 0.2s; }
-.fp-btn-base.primary { background: var(--ct-color-primary); color: white; }
-.fp-btn-base.primary:hover { background: var(--ct-color-primary-hover); }
-.fp-btn-base.ghost { background: transparent; border: 1px solid var(--ct-border-color); color: var(--ct-text-secondary); }
-.fp-btn-text { font-size: 11px; font-weight: 500; color: var(--ct-color-primary); background: none; border: none; cursor: pointer; padding: 0; }
-.fp-btn-text:hover { text-decoration: underline; }
+.fp-btn-icon {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--ct-text-tertiary, #94a3b8);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border-radius: var(--ct-radius-sm, 6px);
+  transition: all 0.15s;
+}
+.fp-btn-icon:hover {
+  background: var(--ct-bg-secondary, #f1f5f9);
+  color: var(--ct-text-primary, #0f172a);
+}
+.fp-btn-sm {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 8px;
+  border-radius: var(--ct-radius-sm, 6px);
+  background: var(--ct-color-primary-light, #f0e6ff);
+  color: var(--ct-color-primary, #7c4dff);
+  border: 1px solid var(--ct-color-primary, #7c4dff);
+  cursor: pointer;
+}
+.fp-btn-base {
+  font-size: 12.5px;
+  font-weight: 500;
+  padding: 6px 14px;
+  border-radius: var(--ct-radius-md, 8px);
+  cursor: pointer;
+  border: none;
+  transition: all 0.15s;
+}
+.fp-btn-base.primary {
+  background: var(--ct-color-primary, #7c4dff);
+  color: white;
+}
+.fp-btn-base.primary:hover {
+  background: var(--ct-color-primary-hover, #651fff);
+}
+.fp-btn-base.ghost {
+  background: transparent;
+  border: 1px solid var(--ct-border-color, #e2e8f0);
+  color: var(--ct-text-secondary, #475569);
+}
+.fp-btn-text {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ct-color-primary, #7c4dff);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+}
+.fp-btn-text:hover {
+  text-decoration: underline;
+}
 
-/* 1. Header */
-.fp-site-header { background: var(--ct-bg-elevated); border-bottom: 1px solid var(--ct-border-color); flex-shrink: 0; position: relative; z-index: 10; box-shadow: 0 1px 3px rgba(15,23,42,0.02); }
-.fp-header-drag-zone { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; -webkit-app-region: drag; }
-.fp-brand { display: flex; align-items: center; gap: 8px; }
-.fp-status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ct-text-tertiary); }
-.fp-status-dot.active { background: var(--ct-color-success); box-shadow: 0 0 6px var(--ct-color-success); }
-.fp-brand-name { font-family: var(--ct-font-display); font-size: 12px; font-weight: 600; color: var(--ct-text-secondary); }
-.close-btn { -webkit-app-region: no-drag; }
-.fp-contact-bar { display: flex; align-items: center; gap: 10px; padding: 4px 12px 12px; -webkit-app-region: no-drag; cursor: pointer; }
-.fp-avatar { background: var(--ct-bg-tertiary); color: var(--ct-color-primary); font-weight: 700; font-size: 15px; border: 1px solid var(--ct-border-color); }
-.fp-contact-info { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; }
-.fp-contact-name { font-size: 14px; font-weight: 600; color: var(--ct-text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.2; }
-.fp-contact-tags { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; }
-.fp-tag { font-size: 10px; font-weight: 500; background: var(--ct-bg-tertiary); color: var(--ct-text-secondary); padding: 2px 6px; border-radius: 4px; }
-.profile-toggle.is-open { transform: rotate(180deg); }
+/* 1. Header (Compact 2-Tier Design) */
+.fp-site-header {
+  background: var(--ct-bg-elevated, #ffffff);
+  border-bottom: 1px solid var(--ct-border-color, #e2e8f0);
+  flex-shrink: 0;
+  position: relative;
+  z-index: 10;
+  box-shadow: 0 1px 3px rgba(15,23,42,0.03);
+}
+.fp-header-drag-zone {
+  height: 34px;
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  -webkit-app-region: drag;
+  cursor: move;
+  user-select: none;
+}
+.fp-brand {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.fp-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ct-text-tertiary, #94a3b8);
+  transition: all 0.2s;
+}
+.fp-status-dot.active {
+  background: var(--ct-color-success, #10b981);
+  box-shadow: 0 0 6px rgba(16, 185, 129, 0.6);
+}
+.fp-brand-name {
+  font-family: var(--ct-font-display, 'Playfair Display', serif);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ct-text-primary, #1e293b);
+  white-space: nowrap;
+  letter-spacing: -0.2px;
+}
+.fp-brand-pulse-badge {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(16, 185, 129, 0.12);
+  color: #047857;
+  line-height: 1.1;
+}
+
+.fp-contact-bar {
+  height: 44px;
+  padding: 0 10px 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  -webkit-app-region: no-drag;
+  cursor: pointer;
+  user-select: none;
+}
+.fp-avatar {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  background: var(--ct-bg-tertiary, #f1f5f9);
+  color: var(--ct-color-primary, #7c4dff);
+  font-weight: 700;
+  font-size: 13px;
+  border: 1px solid var(--ct-border-color, #e2e8f0);
+}
+.fp-contact-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+}
+.fp-contact-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.fp-contact-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ct-text-primary, #0f172a);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: calc(100% - 48px);
+  line-height: 1.25;
+}
+.fp-monitor-tag {
+  font-size: 9.5px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #f1f5f9;
+  color: #64748b;
+  white-space: nowrap;
+  flex-shrink: 0;
+  line-height: 1.15;
+}
+.fp-monitor-tag.active {
+  background: rgba(16, 185, 129, 0.12);
+  color: #047857;
+}
+.fp-contact-sub-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.fp-contact-tags {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  overflow: hidden;
+}
+.fp-tag {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  color: #475569;
+  white-space: nowrap;
+  flex-shrink: 0;
+  line-height: 1.2;
+}
+.fp-tag.more {
+  color: var(--ct-color-primary, #7c4dff);
+  border-color: rgba(124, 77, 255, 0.2);
+}
+.fp-contact-empty-hint {
+  font-size: 10px;
+  color: #94a3b8;
+}
+.profile-toggle {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  color: #64748b;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: transform 0.2s ease, background 0.15s;
+}
+.profile-toggle:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+.profile-toggle.is-open {
+  transform: rotate(180deg);
+}
 
 /* Absolute Profile Dropdown */
-.fp-profile-dropdown { position: absolute; top: 100%; left: 0; right: 0; background: var(--ct-bg-elevated); border-bottom: 1px solid var(--ct-border-color); box-shadow: 0 8px 24px rgba(15,23,42,0.06); padding: 12px; z-index: 9; }
-.all-tags { margin-bottom: 12px; }
-.fp-attr { display: flex; gap: 8px; font-size: 12px; line-height: 1.5; margin-bottom: 8px; }
-.fp-attr-lbl { color: var(--ct-text-primary); font-weight: 600; flex-shrink: 0; }
-.fp-attr-val { color: var(--ct-text-secondary); word-break: break-word; }
-.fp-profile-empty { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-top: 1px dashed var(--ct-border-color); }
-.fp-txt-sub { font-size: 11px; color: var(--ct-text-tertiary); }
+.fp-profile-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: var(--ct-bg-elevated, #ffffff);
+  border-bottom: 1px solid var(--ct-border-color, #e2e8f0);
+  box-shadow: 0 8px 24px rgba(15,23,42,0.08);
+  padding: 12px;
+  z-index: 20;
+}
+.all-tags { margin-bottom: 10px; }
+.fp-attr { display: flex; gap: 8px; font-size: 12px; line-height: 1.5; margin-bottom: 6px; }
+.fp-attr-lbl { color: var(--ct-text-primary, #0f172a); font-weight: 600; flex-shrink: 0; }
+.fp-attr-val { color: var(--ct-text-secondary, #475569); word-break: break-word; }
+.fp-profile-empty { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-top: 1px dashed var(--ct-border-color, #e2e8f0); }
+.fp-txt-sub { font-size: 11px; color: var(--ct-text-tertiary, #94a3b8); }
 
 /* Banners */
 .fp-banners { flex-shrink: 0; z-index: 8; position: relative; }
-.fp-banner { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; font-size: 11px; font-weight: 500; }
+.fp-banner { display: flex; justify-content: space-between; align-items: center; padding: 7px 10px; font-size: 11px; font-weight: 500; }
 .fp-banner.error { background: #fef2f2; color: #991b1b; border-bottom: 1px solid #fca5a5; }
 .fp-banner.info { background: #eff6ff; color: #1d4ed8; border-bottom: 1px solid #93c5fd; }
 .fp-banner-copy { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .fp-banner-sub { font-size: 10px; color: rgba(29, 78, 216, 0.8); line-height: 1.35; word-break: break-word; }
 
-/* 2. Insights Strip */
-.fp-insights-strip { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: var(--ct-bg-elevated); border-bottom: 1px solid var(--ct-border-color); cursor: pointer; flex-shrink: 0; transition: background 0.2s; position: relative; z-index: 7; }
-.fp-insights-strip:hover { background: var(--ct-bg-secondary); }
-.fp-insight-primary { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.fp-trend-badge { font-size: 10px; font-weight: 600; padding: 2px 6px; border-radius: 4px; }
-.fp-trend-badge.positive { background: var(--ct-color-success-light); color: var(--ct-color-success); }
-.fp-trend-badge.negative { background: var(--ct-color-error-light); color: var(--ct-color-error); }
-.fp-trend-badge.neutral { background: var(--ct-bg-tertiary); color: var(--ct-text-secondary); }
-.fp-insight-text { font-size: 11px; color: var(--ct-text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.fp-insight-metrics { display: flex; align-items: center; gap: 6px; }
-.fp-metric-pill { font-size: 10px; color: var(--ct-text-tertiary); font-variant-numeric: tabular-nums; }
-.fp-arr { font-size: 14px; color: var(--ct-text-tertiary); margin-top: -2px; font-family: monospace; transition: transform 0.2s; }
-.fp-arr.arr-up { transform: rotate(-90deg); }
+/* 2. Compact Insights & Memory Ribbon */
+.fp-insights-strip {
+  height: 32px;
+  padding: 0 10px;
+  background: var(--ct-bg-elevated, #ffffff);
+  border-bottom: 1px solid var(--ct-border-color, #e2e8f0);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 7;
+}
+.fp-insight-primary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+  cursor: pointer;
+}
+.fp-trend-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.fp-trend-badge.positive { background: rgba(16, 185, 129, 0.12); color: #047857; }
+.fp-trend-badge.negative { background: rgba(239, 68, 68, 0.12); color: #b91c1c; }
+.fp-trend-badge.neutral { background: var(--ct-bg-tertiary, #f1f5f9); color: var(--ct-text-secondary, #475569); }
+.fp-insight-text {
+  font-size: 11px;
+  color: var(--ct-text-secondary, #475569);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.fp-insight-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.fp-ribbon-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 2px 7px;
+  height: 22px;
+  border-radius: 5px;
+  border: 1px solid var(--ct-border-color, #cbd5e1);
+  background: #ffffff;
+  color: var(--ct-text-secondary, #475569);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.fp-ribbon-btn:hover {
+  border-color: var(--ct-color-primary, #7c4dff);
+  color: var(--ct-color-primary, #7c4dff);
+  background: rgba(124, 77, 255, 0.05);
+}
+.fp-ribbon-btn.has-rag {
+  border-color: rgba(124, 77, 255, 0.35);
+  color: var(--ct-color-primary, #7c4dff);
+  background: rgba(124, 77, 255, 0.08);
+}
+.fp-ribbon-btn.active {
+  background: var(--ct-color-primary, #7c4dff);
+  color: #ffffff;
+  border-color: var(--ct-color-primary, #7c4dff);
+}
 
 /* 3. SHARED INSPECTOR PANEL */
 /* 检查器浮层：teleport 到 body，显式深色确保主题无关 */
@@ -2896,54 +3347,250 @@ async function loadLastThread() {
 }
 @keyframes fp-spin { to { transform: rotate(360deg); } }
 
-/* 6. Bottom Composer */
-.fp-composer { background: var(--ct-bg-elevated); border-top: 1px solid var(--ct-border-color); padding: 12px; flex-shrink: 0; position: relative; z-index: 10; box-shadow: 0 -4px 16px rgba(15,23,42,0.04); display: flex; flex-direction: column; gap: 10px; }
-.fp-composer-top { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
-.fp-quick-prompts { flex: 1; display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; }
-.fp-quick-prompts::-webkit-scrollbar { display: none; }
-.fp-qp-btn { font-size: 11px; font-weight: 500; padding: 4px 12px; background: var(--ct-bg-secondary); border: 1px solid var(--ct-border-color); border-radius: 12px; color: var(--ct-text-secondary); cursor: pointer; white-space: nowrap; transition: all 0.2s; }
-.fp-qp-btn:hover { background: var(--ct-bg-elevated); border-color: var(--ct-color-primary); color: var(--ct-color-primary); box-shadow: var(--ct-shadow-sm); }
-.fp-ctx-btn { font-size: 11px; font-weight: 600; color: var(--ct-color-primary); background: var(--ct-color-primary-light); border: none; cursor: pointer; flex-shrink: 0; padding: 4px 10px; border-radius: var(--ct-radius-sm); transition: all 0.2s; }
-.fp-ctx-btn:hover { opacity: 0.9; }
-.fp-ctx-btn.is-active { background: var(--ct-color-primary); color: white; }
+/* 6. Bottom Composer (Ergonomic Control Console) */
+.fp-composer {
+  background: var(--ct-bg-elevated, #ffffff);
+  border-top: 1px solid var(--ct-border-color, #e2e8f0);
+  padding: 8px 10px;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 10;
+  box-shadow: 0 -2px 10px rgba(15, 23, 42, 0.04);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
 
-.fp-composer-settings { display: flex; align-items: center; gap: 8px; justify-content: space-between; background: var(--ct-bg-secondary); padding: 4px; border-radius: var(--ct-radius-md); border: 1px solid var(--ct-border-color); }
+/* Quick Prompts Strip */
+.fp-quick-prompts-bar {
+  width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding-bottom: 2px;
+}
+.fp-quick-prompts-bar::-webkit-scrollbar { display: none; }
+.fp-quick-prompts { display: flex; gap: 5px; }
+.fp-qp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10.5px;
+  font-weight: 500;
+  padding: 2px 8px;
+  height: 22px;
+  border-radius: 999px;
+  background: var(--ct-bg-secondary, #f8fafc);
+  border: 1px solid var(--ct-border-color, #e2e8f0);
+  color: var(--ct-text-secondary, #475569);
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+}
+.fp-qp-chip:hover {
+  background: rgba(124, 77, 255, 0.08);
+  color: var(--ct-color-primary, #7c4dff);
+  border-color: rgba(124, 77, 255, 0.3);
+}
 
-.fp-seg-title { font-size: 11px; color: var(--ct-text-tertiary); font-weight: 500; margin-right: 2px; }
-.fp-seg-divider { width: 1px; height: 14px; background: var(--ct-border-color); margin: 0 4px; pointer-events: none; }
-.fp-seg-group { display: flex; flex: 1; padding: 2px; }
+/* Strategy Bar (Single Row: 触发模式 + 关系方向) */
+.fp-strategy-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  height: 28px;
+  background: var(--ct-bg-tertiary, #f1f5f9);
+  border: 1px solid var(--ct-border-color, #e2e8f0);
+  border-radius: 7px;
+  padding: 2px;
+  box-sizing: border-box;
+}
+.fp-seg-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
 .fp-seg-btn {
   flex: 1;
-  padding: 4px 6px;
+  min-width: 0;
+  height: 22px;
+  padding: 0 4px;
   border: none;
   background: transparent;
+  border-radius: 5px;
   font-size: 11px;
   font-weight: 500;
-  color: var(--ct-text-secondary);
-  border-radius: var(--ct-radius-sm);
+  color: var(--ct-text-secondary, #64748b);
   cursor: pointer;
-  transition: all 0.2s;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 3px;
+  gap: 2px;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+  user-select: none;
 }
-.fp-seg-btn.active { background: var(--ct-bg-elevated); color: var(--ct-text-primary); box-shadow: 0 1px 2px rgba(15,23,42,0.06); border: 1px solid var(--ct-border-color); }
-.fp-seg-divider { width: 1px; background: var(--ct-border-color); margin: 4px 2px; }
+.fp-seg-btn:hover:not(.active) {
+  color: var(--ct-text-primary, #0f172a);
+  background: rgba(255, 255, 255, 0.5);
+}
+.fp-seg-btn.active {
+  background: #ffffff;
+  color: var(--ct-color-primary, #7c4dff);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+}
+.fp-strategy-divider {
+  width: 1px;
+  height: 14px;
+  background: var(--ct-border-color, #cbd5e1);
+  flex-shrink: 0;
+  margin: 0 2px;
+}
 
-.fp-input-row { display: flex; gap: 8px; align-items: stretch; }
-.fp-composer-input { flex: 1; min-width: 0; background: var(--ct-bg-primary); border: 1px solid var(--ct-border-color); border-radius: var(--ct-radius-md); padding: 10px 12px; font-size: 13px; color: var(--ct-text-primary); outline: none; transition: border-color 0.2s; box-shadow: inset 0 1px 2px rgba(15,23,42,0.02); }
-.fp-composer-input:focus { border-color: var(--ct-color-primary); box-shadow: 0 0 0 2px var(--ct-color-primary-light); }
-.fp-btn-main { border: none; border-radius: var(--ct-radius-md); font-size: 13px; font-weight: 600; padding: 0 16px; cursor: pointer; transition: all 0.2s; display: flex; align-items: center; justify-content: center; }
-.fp-btn-main:disabled { opacity: 0.5; cursor: not-allowed; }
-.act-send { background: var(--ct-bg-secondary); border: 1px solid var(--ct-border-color); color: var(--ct-text-primary); padding: 0 12px; }
-.act-send:hover:not(:disabled) { background: var(--ct-border-color-hover); }
-.act-gen { background: var(--ct-color-primary); color: white; box-shadow: var(--ct-shadow-sm); }
-.act-gen:hover:not(:disabled) { background: var(--ct-color-primary-hover); box-shadow: var(--ct-shadow-md); }
+/* Input Row (Hero Row: Input protected flex-grow, Buttons flex-shrink 0) */
+.fp-input-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 36px;
+}
+.fp-composer-input {
+  flex: 1 1 auto;
+  min-width: 130px;
+  height: 36px;
+  padding: 0 10px;
+  font-size: 12.5px;
+  border-radius: 7px;
+  border: 1px solid var(--ct-border-color, #cbd5e1);
+  background: #ffffff;
+  color: var(--ct-text-primary, #0f172a);
+  outline: none;
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.03);
+  transition: border-color 0.15s, box-shadow 0.15s;
+  box-sizing: border-box;
+}
+.fp-composer-input:focus {
+  border-color: var(--ct-color-primary, #7c4dff);
+  box-shadow: 0 0 0 2px var(--ct-color-primary-light, rgba(124, 77, 255, 0.15));
+}
+.fp-composer-input:disabled {
+  background: var(--ct-bg-secondary, #f8fafc);
+  color: var(--ct-text-tertiary, #94a3b8);
+  cursor: not-allowed;
+}
 
-.fp-composer-footer { display: flex; align-items: center; justify-content: space-between; margin-top: -2px; }
-.fp-mini-select { font-size: 10px; color: var(--ct-text-tertiary); background: transparent; border: none; outline: none; cursor: pointer; max-width: 200px; padding: 0; font-family: inherit; }
-.fp-error-txt { font-size: 10px; color: var(--ct-color-error); }
+.fp-btn-act {
+  flex: 0 0 auto;
+  height: 36px;
+  padding: 0 10px;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  white-space: nowrap;
+  border: none;
+  transition: all 0.15s ease;
+  user-select: none;
+  box-sizing: border-box;
+}
+.fp-btn-act:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none !important;
+  box-shadow: none !important;
+}
+.fp-btn-act.primary {
+  background: var(--ct-color-primary, #7c4dff);
+  color: #ffffff;
+  box-shadow: 0 1px 3px rgba(124, 77, 255, 0.28);
+}
+.fp-btn-act.primary:hover:not(:disabled) {
+  background: var(--ct-color-primary-hover, #651fff);
+  box-shadow: 0 2px 6px rgba(124, 77, 255, 0.35);
+}
+.fp-btn-act.secondary {
+  background: var(--ct-bg-secondary, #f8fafc);
+  color: var(--ct-text-secondary, #475569);
+  border: 1px solid var(--ct-border-color, #cbd5e1);
+}
+.fp-btn-act.secondary:hover:not(:disabled) {
+  background: var(--ct-bg-tertiary, #f1f5f9);
+  color: var(--ct-text-primary, #0f172a);
+  border-color: #94a3b8;
+}
+.fp-btn-act.send-btn {
+  min-width: 58px;
+}
+.fp-btn-act.gen-btn {
+  min-width: 86px;
+}
+.fp-btn-act.gen-sub-btn {
+  min-width: 56px;
+}
+
+/* Footer (Micro Info & Model Selector) */
+.fp-composer-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 16px;
+  margin-top: -1px;
+}
+.fp-model-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  position: relative;
+  max-width: 70%;
+}
+.fp-mini-select {
+  font-size: 10px;
+  color: var(--ct-text-tertiary, #94a3b8);
+  background: transparent;
+  border: none;
+  outline: none;
+  cursor: pointer;
+  padding: 0 14px 0 0;
+  -webkit-appearance: none;
+  appearance: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+  max-width: 100%;
+}
+.fp-mini-select:hover {
+  color: var(--ct-color-primary, #7c4dff);
+}
+.fp-select-arrow {
+  position: absolute;
+  right: 0;
+  pointer-events: none;
+  color: var(--ct-text-tertiary, #94a3b8);
+}
+.fp-footer-hint {
+  font-size: 10px;
+  color: var(--ct-text-tertiary, #94a3b8);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.fp-error-txt {
+  font-size: 10px;
+  color: var(--ct-color-error, #ef4444);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
 
 /* Modals */
 .fp-modal-overlay { position: fixed; inset: 0; background: rgba(15,23,42,0.5); display: flex; align-items: center; justify-content: center; z-index: 9999; backdrop-filter: blur(2px); }
@@ -2952,6 +3599,34 @@ async function loadLastThread() {
 .fp-modal-desc { font-size: 13px; color: var(--ct-text-secondary); margin-bottom: 16px; line-height: 1.5; }
 .fp-modal-box { padding: 12px; background: var(--ct-bg-secondary); border-radius: var(--ct-radius-md); font-size: 12px; color: var(--ct-text-secondary); margin-bottom: 20px; border: 1px dashed var(--ct-border-color); line-height: 1.5; word-break: break-word; }
 .fp-modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* Responsive Media Queries (Never break elements, maintain strict scale) */
+@media (max-width: 480px) {
+  .fp-header-drag-zone { padding: 0 8px; }
+  .fp-contact-bar { padding: 0 8px 6px; }
+  .fp-insights-strip { padding: 0 8px; }
+  .fp-composer { padding: 7px 8px; gap: 5px; }
+  .fp-scroll-area { padding: 8px 8px; }
+  .fp-seg-btn { font-size: 10.5px; padding: 0 2px; }
+  .fp-input-row { gap: 5px; }
+  .fp-composer-input { font-size: 12px; padding: 0 8px; }
+}
+
+@media (max-width: 360px) {
+  .fp-btn-back span { display: none; }
+  .fp-btn-back { padding: 3px 6px; }
+  .fp-brand-name { font-size: 11px; }
+  .fp-brand-pulse-badge { display: none; }
+  .fp-monitor-tag { display: none; }
+  .fp-ribbon-btn span { display: none; }
+  .fp-ribbon-btn { padding: 2px 5px; }
+  .fp-seg-btn span { display: none; }
+  .fp-btn-act.send-btn { min-width: 36px; padding: 0 6px; }
+  .fp-btn-act.send-btn span { display: none; }
+  .fp-btn-act.gen-sub-btn { min-width: 36px; padding: 0 6px; }
+  .fp-btn-act.gen-sub-btn span { display: none; }
+  .fp-btn-act.gen-btn { min-width: 60px; font-size: 11px; padding: 0 8px; }
+}
 
 /* QA Emotion Tab CSS */
 .fp-emotion-summary-cards { display: flex; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--ct-border-color); background: var(--ct-bg-tertiary); }

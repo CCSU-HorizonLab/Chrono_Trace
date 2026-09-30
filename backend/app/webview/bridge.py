@@ -4299,6 +4299,22 @@ class Bridge:
             traceback.print_exc()
             return {'ok': False, 'error': str(e)}
 
+    def start_floating_drag(self) -> dict[str, Any]:
+        """从悬浮面板页头启动原生窗口拖动。"""
+        try:
+            return self._floating_service.start_drag()
+        except Exception as e:
+            logger.error(f"[Bridge] 启动悬浮窗拖动失败: {e}")
+            return {'ok': False, 'error': str(e)}
+
+    def move_floating_window(self, dx: float, dy: float) -> dict[str, Any]:
+        """按屏幕位移移动悬浮窗。"""
+        try:
+            return self._floating_service.move_by(float(dx), float(dy))
+        except Exception as e:
+            logger.error(f"[Bridge] 移动悬浮窗失败: {e}")
+            return {'ok': False, 'error': str(e)}
+
     def check_gpu_status(self) -> dict[str, Any]:
         """检测 GPU 加速可用性（ONNX 为主通道：DML/CUDA providers；torch 可选）。"""
         try:

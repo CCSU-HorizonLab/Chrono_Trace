@@ -9,7 +9,7 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy
 
 SPEC_FILE = globals().get("__file__") or globals().get("SPEC")
 PROJECT_ROOT = Path(SPEC_FILE).resolve().parents[1] if SPEC_FILE else Path(os.getcwd()).resolve()
-APP_NAME = "Chrono Trace"
+APP_NAME = "ChronoTrace"  # 产物文件名不带空格；用户数据目录名在 config.APP_NAME（未改）
 FRONTEND_DIST_DIR = PROJECT_ROOT / "frontend" / "webdist"
 APP_ICON = PROJECT_ROOT / "chrono Trace.ico"
 BUILD_INFO_FILE = PROJECT_ROOT / "packaging" / "generated" / "build_info.json"
@@ -38,16 +38,28 @@ if BUILD_INFO_FILE.exists():
 datas += collect_data_files("webview")
 datas += collect_data_files("jieba")
 datas += copy_metadata("pywebview")
-datas += copy_metadata("transformers")
-datas += copy_metadata("sentence-transformers")
 datas += safe_copy_metadata("modelscope")
+# ONNX 模型内置（阶段 B：安装包捆绑 fp16 产物，免运行时下载）；
+# 由 build 脚本在打包前运行 backend/scripts/export_models_onnx.py 生成
+_MODELS_ROOT = PROJECT_ROOT / "backend" / "data" / "models"
+for _model_name in ("text2vec_base_chinese", "sentiment_3class"):
+    # 只打发行所需文件（fp16 + tokenizer）——开发目录里的 fp32 基准与
+    # 弃用的 int8/pc8 实验产物不进包（此前整目录收集让包体多了 1.5GB）
+    _fp16 = _MODELS_ROOT / _model_name / "onnx" / "model.fp16.onnx"
+    _tokenizer = _MODELS_ROOT / _model_name / "onnx" / "tokenizer"
+    if _fp16.exists():
+        datas.append((str(_fp16), f"models/{_model_name}/onnx"))
+        if _tokenizer.exists():
+            datas.append((str(_tokenizer), f"models/{_model_name}/onnx/tokenizer"))
+    else:
+        print(f"[chrono_trace.spec] WARNING: missing {_fp16} (run backend/scripts/export_models_onnx.py first)")
+
+
 
 
 hiddenimports = [
     "webview",
     "wx_key",
-    "transformers",
-    "sentence_transformers",
     "modelscope",
     "modelscope.hub",
     "modelscope.hub.snapshot_download",
@@ -76,8 +88,11 @@ a = Analysis(
         "tensorflow",
         "tensorboard",
         "tensorboardX",
+        "torch",
         "torchvision",
         "torchaudio",
+        "transformers",
+        "sentence_transformers",
         "IPython",
         "notebook",
         "jupyter",

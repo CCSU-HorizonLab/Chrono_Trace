@@ -77,7 +77,7 @@ def test_fact_retrieval_uses_evidence_topic_when_legacy_content_is_lossy(monkeyp
     )
     store = RagStore(conn)
     fact_id = store.upsert_fact(
-        account_wxid="account-a", conversation_id=1, subject="对方",
+        account_wxid="account-evidence-legacy", conversation_id=907, subject="对方",
         kind="hobby_or_game", content="���Ϸ����", confidence=0.9,
         evidence_message_ids=[7],
     )
@@ -86,7 +86,7 @@ def test_fact_retrieval_uses_evidence_topic_when_legacy_content_is_lossy(monkeyp
         lambda: {"rag_fact_read_enabled": True, "rag_embedding_model": "test", "rag_embedding_dim": 2},
     )
     result = RagRetriever(store=store).retrieve(
-        account_wxid="account-a", conversation_id=1,
+        account_wxid="account-evidence-legacy", conversation_id=907,
         query="我们玩过什么游戏？", limit=1,
     )
     assert result["items"][0]["document_id"] == fact_id
@@ -264,6 +264,12 @@ def test_fact_memory_flows_into_prompt_and_retrieval_log(monkeypatch):
 
 
 def test_bridge_rebuild_reports_indexer_failure_to_frontend(monkeypatch):
+    # 密闭：真实 settings 的 rag_enabled=True 会改走队列路径（ok=True），
+    # 本用例锚定内联失败上报——钉死主开关为关
+    monkeypatch.setattr(
+        "app.services.realtime.rag.config.load_rag_settings",
+        lambda: {"rag_enabled": False},
+    )
     bridge = Bridge.__new__(Bridge)
     bridge._resolve_account_wxid = lambda account_wxid="": account_wxid or "account-a"
 

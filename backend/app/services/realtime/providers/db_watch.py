@@ -59,14 +59,22 @@ _INOTIFY_OK: bool | None = None
 
 
 # local_type → 监听器词表（与 native_uia 的映射保持一致口径）
+# 微信 V4 的 local_type 高 32 位是 flag（如 25769803825 & 0xFFFFFFFF = 49），
+# 查表前必须先掩码——此前巨型值落默认 "text" 把压缩二进制当文本显示
 LOCAL_TYPE_TO_MESSAGE_TYPE = {
     1: "text",
     3: "image",
     34: "voice",
     43: "video",
     47: "emoji",
-    49: "file",
+    48: "location",
+    49: "appmsg",
+    50: "voip",
+    51: "status_notify",
+    42: "card",
+    62: "video_channel",
     10000: "system",
+    10002: "system",
 }
 
 NON_TEXT_PLACEHOLDER = {
@@ -74,8 +82,28 @@ NON_TEXT_PLACEHOLDER = {
     "voice": "[语音]",
     "video": "[视频]",
     "emoji": "[表情]",
+    "location": "[位置]",
+    "appmsg": "[链接/小程序]",
+    "voip": "[通话]",
+    "card": "[名片]",
+    "video_channel": "[视频号]",
     "file": "[文件]",
 }
+
+# zstd 压缩 magic（compress_content 里的转发/小程序/图片等全部是压缩二进制，
+# 不能 UTF-8 强解——此前产生乱码直接进显示与 buffer）
+_ZSTD_MAGIC = b"\x28\xb5\x2f\xfd"
+
+
+def _looks_binary(raw: bytes | str) -> bool:
+    """内容疑似压缩二进制（zstd magic 或高比例不可打印字符）。"""
+    if isinstance(raw, bytes):
+        return raw[:4] == _ZSTD_MAGIC
+    if isinstance(raw, str) and len(raw) > 8:
+        sample = raw[:64]
+        non_printable = sum(1 for ch in sample if not (ch.isprintable() or ch in "\n\r\t"))
+        return non_printable / len(sample) > 0.3
+    return False
 
 
 class DbWatchRealtimeProvider(RealtimeProvider):
@@ -379,13 +407,19 @@ class DbWatchRealtimeProvider(RealtimeProvider):
         return None
 
     def _to_message(self, shard_idx: int, row: dict, visible_index: int) -> RealtimeMessage:
-        local_type = int(row.get("local_type") or 1)
+        local_type = int(row.get("local_type") or 1) & 0xFFFFFFFF  # 去 flag 高位
         message_type = LOCAL_TYPE_TO_MESSAGE_TYPE.get(local_type, "text")
         raw_content = row.get("message_content") or ""
+        raw_binary = raw_content if isinstance(raw_content, bytes) else raw_content.encode("utf-8", errors="replace")
         if isinstance(raw_content, bytes):
             raw_content = raw_content.decode("utf-8", errors="replace")
         if message_type == "text":
-            content = str(raw_content)
+            # 压缩二进制守卫：type 误标或 compress_content 泄入文本通道时
+            # 不把乱码当文本（此前转发/小程序全部按乱码显示）
+            if _looks_binary(raw_binary):
+                content = "[链接/小程序]"
+            else:
+                content = str(raw_content)
         elif message_type == "system":
             content = re.sub(r"<[^>]+>", "", str(raw_content))[:80] or "[系统消息]"
         else:

@@ -35,9 +35,12 @@ function Assert-LastExitCode {
 function Get-TorchVersion {
     param([string]$RequirementsFile)
 
+    # torch is no longer part of the runtime stack (ONNX backend, DirectML for
+    # GPU). A pinned torch line is optional and only consumed by the legacy
+    # GPU-variant CUDA swap below.
     $torchLine = Get-Content -LiteralPath $RequirementsFile | Where-Object { $_ -match '^torch==' } | Select-Object -First 1
     if (-not $torchLine) {
-        throw "requirements-packaging.txt must pin torch with torch==<version>"
+        return ""
     }
     return ($torchLine -replace '^torch==', '').Trim()
 }
@@ -91,7 +94,9 @@ if ($needsInstall) {
         & $VenvPython -m pip install -r $RequirementsPath
         Assert-LastExitCode "Packaging dependency install"
 
-        if ($Variant -eq "gpu") {
+        if ($Variant -eq "gpu" -and $torchVersion) {
+            # Legacy path: torch-based GPU variant. The ONNX/DirectML build no
+            # longer ships torch, so this only runs when a pin is present.
             Write-Host "==> Replace CPU torch with CUDA torch ($torchVersion)" -ForegroundColor Cyan
             & $VenvPython -m pip install --upgrade --force-reinstall --no-cache-dir --index-url $GpuTorchIndexUrl "torch==$torchVersion"
             Assert-LastExitCode "GPU torch install"

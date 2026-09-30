@@ -3,7 +3,7 @@
 #
 # 用法：./build_release_linux.sh [-f|--fast] [-v|--version <版本号>] [--skip-frontend-install]
 # 流程：前端 npm 构建 → .venv-packaging-linux 自举/复用 → PyInstaller onedir → tar.gz + .desktop
-# 产物：release/pyinstaller-linux/Chrono Trace/ 与 release/chrono-trace-<版本>-linux.tar.gz
+# 产物：release/pyinstaller-linux/ChronoTrace/ 与 release/chrono-trace-<版本>-linux.tar.gz
 #
 # 与 Windows 链路差异：无 Inno Setup / 注册表 / WebView2 引导；无 cpu/gpu 变体
 # （Linux 暂只出 CPU 轮子，GPU runtime 下载机制未接入 Linux）。
@@ -113,6 +113,29 @@ setup_venv() {
     log "打包环境未变化，复用 $VENV_DIR"
   fi
 }
+# ---------- ONNX 模型导出（打包前置：产物缺失时用独立 export 环境生成） ----------
+ensure_onnx_models() {
+  echo "==> ONNX 模型（首次构建自动从 ModelScope 下载源模型并导出）"
+  local models_root="backend/data/models"
+  if [ -f "$models_root/text2vec_base_chinese/onnx/model.fp16.onnx" ] && \
+     [ -f "$models_root/sentiment_3class/onnx/model.fp16.onnx" ]; then
+    echo "ONNX 产物已存在，跳过下载与导出。"
+    return
+  fi
+
+  # torch 仅作导出工具（独立环境，不进产物）；modelscope 按需下载源模型
+  local export_venv=".venv-model-export"
+  if [ ! -x "$export_venv/bin/python" ]; then
+    echo "创建模型导出环境 ($export_venv)..."
+    python3 -m venv "$export_venv"
+    "$export_venv/bin/pip" install --quiet -i https://pypi.tuna.tsinghua.edu.cn/simple torch --extra-index-url https://download.pytorch.org/whl/cpu
+    "$export_venv/bin/pip" install --quiet -i https://pypi.tuna.tsinghua.edu.cn/simple "transformers>=4.30" "onnx>=1.15" "onnxruntime>=1.17" onnxconverter-common "modelscope>=1.17"
+  fi
+  "$export_venv/bin/python" backend/scripts/ensure_models_for_export.py --with-export
+}
+
+ensure_onnx_models
+
 setup_venv
 
 # ---------- build_info（变体标识进产物，runtime_overrides 读取） ----------
@@ -132,7 +155,7 @@ fi
   "${CLEAN_FLAG[@]}" \
   "$SPEC_PATH"
 
-DIST_DIR="$RELEASE_ROOT/pyinstaller-linux/Chrono Trace"
+DIST_DIR="$RELEASE_ROOT/pyinstaller-linux/ChronoTrace"
 [[ -d "$DIST_DIR" ]] || { echo "打包产物目录缺失: $DIST_DIR" >&2; exit 1; }
 
 # ---------- 选择性 strip（瘦身）----------
@@ -146,8 +169,9 @@ find "$DIST_DIR/_internal" -type f -name "*.so*" -size +5M \
 
 # ---------- tar.gz + .desktop ----------
 log "生成 tar.gz 与 .desktop…"
-TARBALL="$RELEASE_ROOT/chrono-trace-${VERSION}-linux.tar.gz"
-tar -czf "$TARBALL" -C "$RELEASE_ROOT/pyinstaller-linux" "Chrono Trace"
+FILE_VERSION="${VERSION// /-}"  # 文件名不含空格（显示版本不变）
+TARBALL="$RELEASE_ROOT/chrono-trace-${FILE_VERSION}-linux.tar.gz"
+tar -czf "$TARBALL" -C "$RELEASE_ROOT/pyinstaller-linux" "ChronoTrace"
 
 cat > "$RELEASE_ROOT/chrono-trace.desktop" <<'DESKTOP'
 [Desktop Entry]

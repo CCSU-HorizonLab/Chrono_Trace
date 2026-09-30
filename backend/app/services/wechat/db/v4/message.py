@@ -375,7 +375,7 @@ class MessageDBV4(WeChatDBBase):
                 'talker': username,
                 'sender': sender_username,
                 'is_sender': 1 if is_sender else 0,
-                'message_type': row['local_type'],
+                'message_type': int(row['local_type'] or 1) & 0xFFFFFFFF,  # 去 flag 高位
                 'content': content,
                 'timestamp': row['create_time'],
                 'media_path': None

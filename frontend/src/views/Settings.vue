@@ -322,7 +322,7 @@
         </template>
         <div class="form">
           <div class="hint-box info">
-            <p style="display: flex; align-items: flex-start; gap: 6px;"><Lightbulb :size="16" style="flex-shrink: 0; margin-top: 2px;" /><span>选择历史分析使用的计算设备。GPU 加速可大幅提升分析速度，但需要安装支持 CUDA 的 PyTorch。</span></p>
+            <p style="display: flex; align-items: flex-start; gap: 6px;"><Lightbulb :size="16" style="flex-shrink: 0; margin-top: 2px;" /><span>选择历史分析与本地记忆编码使用的计算设备。基于 ONNX Runtime 推理引擎，Windows 下支持 DirectML 免配置 GPU 加速。</span></p>
           </div>
 
           <div class="device-mode-options">
@@ -332,7 +332,7 @@
                 <span class="device-option-icon"><RotateCw :size="18" /></span>
                 <div>
                   <div class="device-option-title">自动</div>
-                  <div class="device-option-desc">每次分析前询问是否启用 GPU</div>
+                  <div class="device-option-desc">优先使用可用 GPU，不可用时自动回退 CPU</div>
                 </div>
               </div>
             </label>
@@ -342,7 +342,7 @@
                 <span class="device-option-icon"><Zap :size="18" /></span>
                 <div>
                   <div class="device-option-title">GPU 加速</div>
-                  <div class="device-option-desc">始终使用 GPU，速度提升 5-10 倍</div>
+                  <div class="device-option-desc">启用 DirectML / CUDA 硬件加速推理</div>
                 </div>
               </div>
             </label>
@@ -352,53 +352,47 @@
                 <span class="device-option-icon"><Monitor :size="18" /></span>
                 <div>
                   <div class="device-option-title">CPU 模式</div>
-                  <div class="device-option-desc">仅使用 CPU，兼容性最好</div>
+                  <div class="device-option-desc">仅使用 CPU 多核推理，兼容性最好</div>
                 </div>
               </div>
             </label>
           </div>
 
           <div class="gpu-status-card">
-            <div class="gpu-status-header">当前 GPU 检测状态</div>
+            <div class="gpu-status-header">当前推理运行时状态</div>
             <div v-if="gpuInfoLoading" class="gpu-status-loading">
               <span class="spinner"></span> 正在检测...
             </div>
-            <div v-else-if="gpuInfo.cuda_available" class="gpu-status-detail">
-              <div class="gpu-status-row"><span class="gpu-label">GPU</span><span class="gpu-value">{{ gpuInfo.gpu_name }}</span></div>
-              <div class="gpu-status-row"><span class="gpu-label">CUDA</span><span class="gpu-value">{{ gpuInfo.cuda_version }}</span></div>
-              <div class="gpu-status-row"><span class="gpu-label">显存</span><span class="gpu-value">{{ (gpuInfo.gpu_memory_total_mb / 1024).toFixed(1) }} GB</span></div>
-              <div class="gpu-status-row"><span class="gpu-label">PyTorch</span><span class="gpu-value">{{ gpuInfo.torch_version }}</span></div>
-              <div class="gpu-status-badge available" style="display: inline-flex; align-items: center; gap: 4px;"><CheckCircle2 :size="14" /> GPU 可用</div>
-            </div>
-            <div v-else-if="gpuInfo.restart_required" class="gpu-status-detail">
-              <div class="gpu-status-badge available" style="display: inline-flex; align-items: center; gap: 4px;"><Clock :size="14" /> GPU 运行时已安装</div>
-              <div class="gpu-status-row"><span class="gpu-label">目标 CUDA</span><span class="gpu-value">{{ gpuInfo.gpu_overlay_cuda_version || '已安装' }}</span></div>
-              <div class="gpu-status-row"><span class="gpu-label">目标 PyTorch</span><span class="gpu-value">{{ gpuInfo.gpu_overlay_torch_version || '已安装' }}</span></div>
-              <div class="gpu-status-row"><span class="gpu-label">当前进程</span><span class="gpu-value">{{ gpuInfo.torch_version || 'unknown' }}</span></div>
-              <div class="gpu-status-badge unavailable">重启应用后切换到 GPU 运行时</div>
-            </div>
             <div v-else class="gpu-status-detail">
-              <div class="gpu-status-badge unavailable" style="display: inline-flex; align-items: center; gap: 4px;"><XCircle :size="14" /> GPU 不可用</div>
-              <div class="gpu-status-row"><span class="gpu-label">PyTorch</span><span class="gpu-value">{{ gpuInfo.torch_version || '未知' }}</span></div>
-              <div v-if="gpuInfo.has_nvidia_gpu && !gpuInfo.cuda_available" class="gpu-installer-box" style="margin-top: 12px; padding: 12px; background: rgba(255,152,0,0.1); border: 1px solid rgba(255,152,0,0.3); border-radius: 8px;">
-                <p style="margin: 0 0 8px 0; font-size: 13px; color: #d87c00; display: flex; align-items: center; gap: 6px;">
-                  <Sparkles :size="15" /> 检测到系统包含 NVIDIA GPU 硬件，但当前应用还没有可用的 CUDA 运行时。
-                </p>
-                <div v-if="installStatus === 'idle'">
-                  <CtButton style="font-size: 13px; margin-top: 5px; width: 100%; border: 1px solid #d87c00;" @click.prevent="startGpuInstall"><Download :size="14" style="vertical-align: -2px; margin-right: 4px;" />下载并配置 GPU 运行时</CtButton>
-                </div>
-                <div v-else>
-                  <div style="font-size: 12px; margin-bottom: 4px; color: var(--ct-text-secondary);">
-                    状态: {{ installStatus }} ({{ installProgress.toFixed(1) }}%)
-                  </div>
-                  <div style="width: 100%; height: 6px; background: var(--ct-bg-tertiary); border-radius: 3px; overflow: hidden; margin-bottom: 8px;">
-                    <div :style="{ width: installProgress + '%', height: '100%', background: 'var(--ct-color-primary)', transition: 'width 0.3s ease' }"></div>
-                  </div>
-                  <div style="font-size: 11px; color: var(--ct-text-tertiary); font-family: monospace; background: rgba(0,0,0,0.05); padding: 4px; border-radius: 4px;">
-                    {{ installMessage }}
-                  </div>
-                  <div v-if="installError" style="color: red; font-size: 12px; margin-top: 4px;">{{ installError }}</div>
-                </div>
+              <div
+                v-if="gpuInfo.cuda_available || gpuInfo.directml_available"
+                class="gpu-status-badge available"
+                style="display: inline-flex; align-items: center; gap: 4px; margin-bottom: 6px;"
+              >
+                <CheckCircle2 :size="14" /> GPU 加速已就绪
+              </div>
+              <div
+                v-else
+                class="gpu-status-badge unavailable"
+                style="display: inline-flex; align-items: center; gap: 4px; margin-bottom: 6px;"
+              >
+                <Monitor :size="14" /> 当前为 CPU 推理模式
+              </div>
+              <div class="gpu-status-row">
+                <span class="gpu-label">推理引擎</span>
+                <span class="gpu-value">ONNX Runtime {{ gpuInfo.onnx_version || '' }}</span>
+              </div>
+              <div class="gpu-status-row">
+                <span class="gpu-label">加速通道</span>
+                <span class="gpu-value">{{ gpuInfo.accelerator_label || (gpuInfo.directml_available ? 'DirectML (Windows 原生 GPU)' : gpuInfo.cuda_available ? 'CUDA' : 'CPUExecutionProvider') }}</span>
+              </div>
+              <div v-if="gpuInfo.gpu_name || gpuInfo.directml_available" class="gpu-status-row">
+                <span class="gpu-label">显卡设备</span>
+                <span class="gpu-value">{{ gpuInfo.gpu_name || 'DirectX 12 兼容 GPU' }}</span>
+              </div>
+              <div v-if="gpuInfo.gpu_memory_total_mb > 0" class="gpu-status-row">
+                <span class="gpu-label">显存容量</span>
+                <span class="gpu-value">{{ (gpuInfo.gpu_memory_total_mb / 1024).toFixed(1) }} GB</span>
               </div>
             </div>
           </div>
@@ -654,9 +648,12 @@ async function loadWechatAccounts(preferredWxid = '') {
 // GPU 检测状态
 const gpuInfo = reactive<{
   cuda_available: boolean
+  directml_available: boolean
   has_nvidia_gpu: boolean
   gpu_name: string | null
   torch_version: string
+  onnx_version: string
+  accelerator_label: string
   cuda_version: string | null
   gpu_memory_total_mb: number
   gpu_memory_free_mb: number
@@ -666,9 +663,12 @@ const gpuInfo = reactive<{
   restart_required: boolean
 }>({
   cuda_available: false,
+  directml_available: false,
   has_nvidia_gpu: false,
   gpu_name: null,
-  torch_version: 'unknown',
+  torch_version: 'ONNX Runtime',
+  onnx_version: '',
+  accelerator_label: '',
   cuda_version: null,
   gpu_memory_total_mb: 0,
   gpu_memory_free_mb: 0,
@@ -736,10 +736,13 @@ async function loadGpuInfo() {
     await bridgeReady()
     const status = await api.check_gpu_status()
     if (status) {
-      gpuInfo.cuda_available = Boolean(status.cuda_available)
+      gpuInfo.cuda_available = Boolean(status.cuda_available || status.gpu_available)
+      gpuInfo.directml_available = Boolean(status.directml_available)
       gpuInfo.has_nvidia_gpu = Boolean(status.has_nvidia_gpu)
       gpuInfo.gpu_name = status.gpu_name ?? null
-      gpuInfo.torch_version = status.torch_version ?? 'unknown'
+      gpuInfo.torch_version = status.torch_version ?? 'ONNX Runtime'
+      gpuInfo.onnx_version = status.onnx_version ?? ''
+      gpuInfo.accelerator_label = status.accelerator_label ?? ''
       gpuInfo.cuda_version = status.cuda_version ?? null
       gpuInfo.gpu_memory_total_mb = status.gpu_memory_total_mb ?? 0
       gpuInfo.gpu_memory_free_mb = status.gpu_memory_free_mb ?? 0

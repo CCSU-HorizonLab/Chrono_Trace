@@ -10,10 +10,8 @@ jieba>=0.42.1
 numpy>=1.24.0
 pycryptodome>=3.20.0
 snownlp>=0.12.3
-sentence-transformers>=2.2.0
 scikit-learn>=1.3.0
-torch==2.5.1
-transformers>=4.30.0
 modelscope>=1.17.1
 pyinstaller==6.19.0
-# torch 建议 CPU 轮子（setup 脚本会用 --index-url https://download.pytorch.org/whl/cpu 覆盖安装）
+onnxruntime>=1.17.0
+tokenizers>=0.15.0  # ONNX 推理后端

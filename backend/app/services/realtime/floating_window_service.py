@@ -250,6 +250,57 @@ class FloatingWindowService:
             _log(f'❌ 切换悬浮窗展开态失败: {e}')
             return {'ok': False, 'error': str(e)}
 
+    def start_drag(self) -> dict:
+        """把当前鼠标按下位置交给 Windows 原生标题栏拖动处理。"""
+        if not self._is_floating:
+            return {'ok': False, 'error': '当前不在悬浮模式'}
+        if sys.platform != 'win32':
+            return {'ok': False, 'error': '当前平台不支持原生拖动'}
+        try:
+            import win32con
+            import win32gui
+
+            hwnd = self._webview_hwnd or self._get_webview_hwnd()
+            if not hwnd:
+                return {'ok': False, 'error': '无法获取悬浮窗句柄'}
+            # WM_NCLBUTTONDOWN + HTCAPTION 会启动系统级拖动，
+            # 不依赖 WebView 对 -webkit-app-region 的支持。
+            win32gui.ReleaseCapture()
+            win32gui.SendMessage(hwnd, win32con.WM_NCLBUTTONDOWN, win32con.HTCAPTION, 0)
+            return {'ok': True}
+        except Exception as e:
+            _log(f'启动悬浮窗拖动失败: {e}')
+            return {'ok': False, 'error': str(e)}
+
+    def move_by(self, dx: float, dy: float) -> dict:
+        """按屏幕上的位移移动悬浮窗，供前端拖动回调使用。"""
+        if not self._is_floating or not self._webview_window:
+            return {'ok': False, 'error': '当前不在悬浮模式'}
+        try:
+            if sys.platform == 'win32':
+                import win32con
+                import win32gui
+                hwnd = self._webview_hwnd or self._get_webview_hwnd()
+                if not hwnd:
+                    return {'ok': False, 'error': '无法获取悬浮窗句柄'}
+                left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+                scale = self._get_window_scale(hwnd)
+                win32gui.SetWindowPos(
+                    hwnd, 0,
+                    left + round(dx * scale), top + round(dy * scale),
+                    right - left, bottom - top,
+                    win32con.SWP_NOZORDER | win32con.SWP_NOACTIVATE,
+                )
+            else:
+                self._webview_window.move(
+                    round(getattr(self._webview_window, 'x', 0) + dx),
+                    round(getattr(self._webview_window, 'y', 0) + dy),
+                )
+            return {'ok': True}
+        except Exception as e:
+            _log(f'移动悬浮窗失败: {e}')
+            return {'ok': False, 'error': str(e)}
+
     # ==================== Win32 直接操作 ====================
 
     def _win32_move_resize(self, x: int, y: int, w: int, h: int, scale_height: bool = False) -> bool:
@@ -313,7 +364,8 @@ class FloatingWindowService:
         动态切换原生窗口边框。
 
         - decorated=True: 恢复普通窗口标题栏和系统按钮
-        - decorated=False: 去掉标题栏、边框以及最小化/最大化/关闭按钮
+        - decorated=False: 去掉标题栏和系统按钮，但保留可调整大小的边框。
+          这样悬浮窗仍可通过无边框区域拖动，并可从窗口边缘调整尺寸。
 
         Linux：pywebview 无法动态切换 frameless，保留标题栏（成功返回 True，
         不阻塞悬浮模式）。
@@ -343,7 +395,6 @@ class FloatingWindowService:
 
                 target_style = current_style & ~(
                     win32con.WS_CAPTION
-                    | win32con.WS_THICKFRAME
                     | win32con.WS_MINIMIZEBOX
                     | win32con.WS_MAXIMIZEBOX
                     | win32con.WS_SYSMENU

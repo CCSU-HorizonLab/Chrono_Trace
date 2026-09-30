@@ -130,6 +130,8 @@ type PyWebViewApi = {
   exit_floating_mode: () => Promise<any>
   get_floating_status: () => Promise<any>
   set_floating_expanded: (expanded: boolean) => Promise<any>
+  start_floating_drag: () => Promise<any>
+  move_floating_window: (dx: number, dy: number) => Promise<any>
   // 好感度分析进度
   check_gpu_status: () => Promise<any>
   start_gpu_install: () => Promise<any>

@@ -950,6 +950,94 @@ class Bridge:
         service = AnalysisService()
         return service.get_conversation_list(self._resolve_account_wxid(account_wxid))
     
+    def export_chat_records(
+        self,
+        conversation_id: int,
+        format: str = "txt",
+        start_date: str = "",
+        end_date: str = "",
+    ) -> dict[str, Any]:
+        """导出聊天记录为 TXT/CSV/HTML 文件。
+
+        Args:
+            conversation_id: 会话 ID
+            format: "txt" | "csv" | "html"
+            start_date/end_date: "YYYY-MM-DD" 可选日期范围
+
+        Returns:
+            {"ok": True, "file_path": "...", "file_name": "...", "record_count": N}
+        """
+        try:
+            import time as _time
+
+            from ..db.connection import get_db
+            from ..services.analysis.chat_export import (
+                format_csv, format_html, format_txt,
+            )
+
+            conn = get_db()
+            conv_row = conn.execute(
+                "SELECT display_name, username FROM conversations WHERE id = ?",
+                (int(conversation_id),),
+            ).fetchone()
+            if not conv_row:
+                return {"ok": False, "error": f"会话不存在: {conversation_id}"}
+            conv_name = conv_row["display_name"] or conv_row["username"] or "聊天记录"
+
+            conditions = ["conversation_id = ?"]
+            params: list[Any] = [int(conversation_id)]
+            if start_date:
+                conditions.append("timestamp >= ?")
+                params.append(int(_time.mktime(_time.strptime(start_date, "%Y-%m-%d"))))
+            if end_date:
+                # end_date 当天 23:59:59
+                conditions.append("timestamp < ?")
+                import datetime as _dt
+                end_dt = _dt.datetime.strptime(end_date, "%Y-%m-%d") + _dt.timedelta(days=1)
+                params.append(int(end_dt.timestamp()))
+            sql = f"""
+                SELECT id, talker, sender, is_sender, message_type, content, timestamp
+                FROM messages WHERE {" AND ".join(conditions)}
+                ORDER BY timestamp ASC
+            """
+            messages = [dict(row) for row in conn.execute(sql, params).fetchall()]
+            if not messages:
+                return {"ok": False, "error": "所选范围内没有消息"}
+
+            fmt = str(format or "txt").lower()
+            if fmt == "csv":
+                text = format_csv(messages)
+                ext = "csv"
+            elif fmt == "html":
+                text = format_html(messages, conv_name)
+                ext = "html"
+            else:
+                text = format_txt(messages, conv_name)
+                ext = "txt"
+
+            # 写入临时目录，前端拿到后用 save_file 对话框让用户选保存位置
+            import tempfile
+            from pathlib import Path as _Path
+            safe_name = "".join(c for c in conv_name if c.isalnum() or c in "（）()-_ ").strip() or "chat"
+            file_name = f"{safe_name}_{_time.strftime('%Y%m%d')}.{ext}"
+            tmp_dir = _Path(tempfile.gettempdir()) / "chrono_trace_export"
+            tmp_dir.mkdir(exist_ok=True)
+            file_path = tmp_dir / file_name
+            file_path.write_text(text, encoding="utf-8")
+
+            return {
+                "ok": True,
+                "file_path": str(file_path),
+                "file_name": file_name,
+                "record_count": len(messages),
+                "format": ext,
+            }
+        except Exception as e:
+            import traceback
+            logger.error(f"[Bridge] 导出聊天记录失败: {e}")
+            traceback.print_exc()
+            return {"ok": False, "error": str(e)}
+
     def get_analysis(self, date_range: dict[str, str]) -> dict[str, Any]:
         """
         获取历史数据分析（词云 + 统计）

@@ -510,6 +510,45 @@
     :conversation-id="selectedConversationId" @saved="handleContextSaved" />
 </section>
 
+    <!-- 导出聊天记录弹窗 -->
+    <Teleport to="body">
+      <div v-if="exportDialogVisible" class="ct-modal-overlay" @click.self="exportDialogVisible = false">
+        <div class="export-dialog">
+          <div class="pd-header">
+            <h3 class="pd-title">导出聊天记录</h3>
+            <button class="pd-close" @click="exportDialogVisible = false">✕</button>
+          </div>
+          <div v-if="!exportResult" class="export-body">
+            <div class="export-formats">
+              <label v-for="opt in [
+                { value: 'txt', label: 'TXT 纯文本', tip: '打印/备忘录' },
+                { value: 'csv', label: 'CSV 表格', tip: 'Excel/分析' },
+                { value: 'html', label: 'HTML 聊天页', tip: '分享/存档' },
+              ]" :key="opt.value" class="export-fmt" :class="{ active: exportFormat === opt.value }">
+                <input type="radio" :value="opt.value" v-model="exportFormat" class="sr-only" />
+                <span class="export-fmt-label">{{ opt.label }}</span>
+                <span class="export-fmt-tip">{{ opt.tip }}</span>
+              </label>
+            </div>
+            <div class="export-hint">导出当前选中联系人的全部聊天记录（含日期范围筛选）。</div>
+          </div>
+          <div v-else class="export-body">
+            <div class="export-success">
+              <p>✅ 已导出 {{ exportResult.count }} 条消息</p>
+              <p class="export-path">{{ exportResult.path }}</p>
+              <button class="ct-btn-secondary" @click="openExportFolder">打开所在文件夹</button>
+            </div>
+          </div>
+          <div class="pd-footer">
+            <button v-if="!exportResult" class="pd-btn pd-btn-ghost" @click="exportDialogVisible = false">取消</button>
+            <button v-if="!exportResult" class="pd-btn pd-btn-primary" :disabled="exporting" @click="confirmExport">
+              {{ exporting ? '导出中…' : '导出' }}
+            </button>
+            <button v-else class="pd-btn pd-btn-primary" @click="exportDialogVisible = false">完成</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
 </template>
 
 <script lang="ts">
@@ -1048,10 +1087,47 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
             loadAnalysis()
         }
 
+        const exportDialogVisible = ref(false)
+        const exportFormat = ref<'txt' | 'csv' | 'html'>('txt')
+        const exporting = ref(false)
+        const exportResult = ref<{ path: string; count: number } | null>(null)
+
         const handleExport = () => {
-            // Note: export function might just redirect or emit. Assuming an unimplemented function for now
-            console.warn('Export to CSV is clicked.')
-            showDialog('导出功能尚未实现。')
+            if (!selectedConversationId.value) {
+                showDialog('请先选择联系人。')
+                return
+            }
+            exportResult.value = null
+            exportDialogVisible.value = true
+        }
+
+        async function confirmExport() {
+            if (exporting.value || !selectedConversationId.value) return
+            exporting.value = true
+            try {
+                await bridgeReady()
+                const res = await api.export_chat_records(
+                    selectedConversationId.value,
+                    exportFormat.value,
+                    dates.from || undefined,
+                    dates.to || undefined,
+                )
+                if (res.ok) {
+                    exportResult.value = { path: res.file_path, count: res.record_count }
+                } else {
+                    showDialog(res.error || '导出失败')
+                }
+            } catch (e: any) {
+                showDialog(e?.message || '导出异常')
+            } finally {
+                exporting.value = false
+            }
+        }
+
+        function openExportFolder() {
+            if (!exportResult.value) return
+            api.open_external_url(exportResult.value.path.replace(/[/\\][^/\\]+$/, ''))
+                .catch(() => {})
         }
 
         async function tryLoadAffinityScores() {
@@ -1788,6 +1864,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
             hasConversations, hasFeatures, hasCachedAffinityAnalysis, featureStats, responseTimeStats, initiativeStats, wordCountsStats, displayWordRatioLabel, activityCalendar,
             responseTimeChart, activityCalendarChart, wordCountChart, stats, currentContactName, headerAvatarSrc, hasPreferenceKeywords, allDimensions, emotionalResonanceDisplaySubScores,
             currentRangeLabel, hasContentAnalysis, circumference, strokeDashoffset, formatNumber, formatTime, getResponseTimeLabel, getMergedResponseTimeLabel, getResponseTimePercent, onConversationChange, onDatesChange, handleExport, handleStartGlobalAnalysis, handleContextSaved, handleKeywordsUpdated,
+            exportDialogVisible, exportFormat, exporting, exportResult, confirmExport, openExportFolder,
             getScoreColor, scrollToDetails, handlePreferenceDisabledClick, onWordSelect, loadAnalysis, loadSessions, handleActivityYearChange
         }
     }
@@ -3181,4 +3258,45 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
     }
 }
 
+/* 导出弹窗 */
+.export-dialog {
+  width: 420px; max-width: 92vw;
+  background: var(--ct-bg-elevated, #1d222c);
+  border-radius: 16px; border: 1px solid var(--ct-border-color);
+  box-shadow: 0 24px 64px rgba(0,0,0,0.45);
+  overflow: hidden;
+}
+.export-body { padding: 16px 20px; }
+.export-formats { display: flex; gap: 8px; }
+.export-fmt {
+  flex: 1; padding: 12px 8px; border-radius: 10px; cursor: pointer;
+  border: 1px solid var(--ct-border-color); background: var(--ct-bg-secondary);
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  transition: all 0.15s;
+}
+.export-fmt.active { border-color: rgba(108,92,231,0.4); background: rgba(108,92,231,0.08); }
+.export-fmt-label { font-size: 13px; font-weight: 600; }
+.export-fmt-tip { font-size: 10px; color: var(--ct-text-tertiary); }
+.export-hint { margin-top: 12px; font-size: 11px; color: var(--ct-text-tertiary); line-height: 1.5; }
+.export-success { text-align: center; padding: 12px 0; }
+.export-success p { margin: 4px 0; font-size: 14px; }
+.export-path { font-size: 11px; color: var(--ct-text-tertiary); word-break: break-all; }
+.ct-btn-secondary {
+  margin-top: 8px; padding: 6px 16px; border-radius: 8px; font-size: 12px;
+  background: var(--ct-bg-tertiary); border: 1px solid var(--ct-border-color);
+  color: var(--ct-text-secondary); cursor: pointer;
+}
+.ct-btn-secondary:hover { background: var(--ct-bg-elevated); }
+.pd-header { display: flex; align-items: center; gap: 12px; padding: 18px 20px; border-bottom: 1px solid var(--ct-border-color); }
+.pd-title { margin: 0; font-size: 17px; font-weight: 600; flex: 1; }
+.pd-close { background: none; border: none; cursor: pointer; color: var(--ct-text-secondary); font-size: 16px; padding: 4px 8px; }
+.pd-close:hover { color: var(--ct-text-primary); }
+.pd-footer { display: flex; justify-content: flex-end; gap: 10px; padding: 14px 20px; border-top: 1px solid var(--ct-border-color); }
+.pd-btn { padding: 8px 20px; border-radius: 10px; font-size: 13px; font-weight: 600; cursor: pointer; border: 1px solid transparent; }
+.pd-btn-ghost { background: transparent; color: var(--ct-text-secondary); border-color: var(--ct-border-color); }
+.pd-btn-ghost:hover { background: var(--ct-bg-tertiary); }
+.pd-btn-primary { background: #6c5ce7; color: #fff; }
+.pd-btn-primary:hover { background: #5a4bd1; }
+.pd-btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+.sr-only { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 </style>

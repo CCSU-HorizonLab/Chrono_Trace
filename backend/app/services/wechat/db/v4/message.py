@@ -403,11 +403,9 @@ class MessageDBV4(WeChatDBBase):
         except:
             return '[媒体消息]'
     
-    def get_all_conversation_usernames(self) -> List[str]:
+    def get_all_conversation_usernames(self, include_chatroom: bool = False) -> List[str]:
         """
-        获取所有对话的username列表
-        
-        通过扫描 Name2Id 表实现,并过滤群聊和公众号
+        获取所有对话的username列表（include_chatroom=True 放行群聊，导入链路用）
         
         Returns:
             List[str]: username列表(不包括群聊和公众号)
@@ -419,7 +417,9 @@ class MessageDBV4(WeChatDBBase):
                 cursor = conn.execute("SELECT user_name FROM Name2Id")
                 for row in cursor:
                     username = row['user_name']
-                    if username and not is_excluded_contact_username(username):
+                    if username and not is_excluded_contact_username(
+                        username, exclude_chatroom=not include_chatroom
+                    ):
                         usernames.add(username)
             except:
                 continue

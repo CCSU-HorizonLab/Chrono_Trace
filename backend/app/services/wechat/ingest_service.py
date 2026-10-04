@@ -372,7 +372,7 @@ class WeChatIngestService:
 
             contact_db = ContactDBV4(contact_db_path, db_key, raw_keys=raw_keys)
             try:
-                contacts_data = contact_db.get_contacts()
+                contacts_data = contact_db.get_contacts(include_chatroom=True)
             finally:
                 contact_db.close()
 
@@ -435,7 +435,7 @@ class WeChatIngestService:
                 filtered += 1
                 continue
 
-            if is_excluded_contact_username(username):
+            if is_excluded_contact_username(username, exclude_chatroom=False):
                 filtered += 1
                 continue
 
@@ -665,14 +665,14 @@ class WeChatIngestService:
             existing_keys = self._load_existing_message_keys()
 
             # 获取所有对话username
-            all_usernames = message_db.get_all_conversation_usernames()
+            all_usernames = message_db.get_all_conversation_usernames(include_chatroom=True)
             logger.debug(f"[DEBUG] Found conversations: {len(all_usernames)}")
 
             if len(all_usernames) > 0:
                 logger.debug(f"[DEBUG] 前3个会话: {all_usernames[:3]}")
 
             for idx, username in enumerate(all_usernames):
-                if is_excluded_contact_username(username):
+                if is_excluded_contact_username(username, exclude_chatroom=False):
                     skipped_conversations += 1
                     continue
 
@@ -699,7 +699,7 @@ class WeChatIngestService:
                         if ts > max_seen_ts:
                             max_seen_ts = ts
 
-                        if is_excluded_contact_username(msg_dict.get('talker')):
+                        if is_excluded_contact_username(msg_dict.get('talker'), exclude_chatroom=False):
                             skipped_messages += 1
                             continue
 
@@ -831,17 +831,19 @@ class WeChatIngestService:
         now = int(time.time())
         for msg in messages:
             talker = msg.get('talker')
-            if not talker or is_excluded_contact_username(talker):
+            if not talker or is_excluded_contact_username(talker, exclude_chatroom=False):
                 skipped += 1
                 continue
 
             conversation_id = conversation_cache.get(talker)
             if conversation_id is None:
+                from .chatroom import is_chatroom_username
+                conv_type = "group" if is_chatroom_username(talker) else "private"
                 db.execute("""
                     INSERT OR IGNORE INTO conversations
-                    (account_wxid, username, display_name, platform, created_at, updated_at, message_count)
-                    VALUES (?, ?, ?, 'wechat', ?, ?, 0)
-                """, (account_wxid, talker, talker, now, now))
+                    (account_wxid, username, display_name, platform, conversation_type, created_at, updated_at, message_count)
+                    VALUES (?, ?, ?, 'wechat', ?, ?, ?, 0)
+                """, (account_wxid, talker, talker, conv_type, now, now))
                 row = db.execute(
                     "SELECT id FROM conversations WHERE account_wxid = ? AND username = ? AND platform = 'wechat'",
                     (account_wxid, talker)

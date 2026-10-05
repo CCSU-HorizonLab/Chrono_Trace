@@ -121,7 +121,16 @@
 
       <div class="wizard-actions">
         <button class="btn-primary-large" :disabled="wechatImporting || capturingKey" @click.stop.prevent="startImport">
-          {{ wechatImporting ? '导入中...' : (hasImportedBefore ? '重新导入' : '开始导入') }}
+          {{ wechatImporting ? '导入中...' : (hasImportedBefore ? '增量导入' : '开始导入') }}
+        </button>
+        <button
+          v-if="hasImportedBefore"
+          class="btn-outline-large"
+          :disabled="wechatImporting || capturingKey"
+          title="忽略增量水位重新扫描全部消息库，补齐历史窗口外的消息（如群聊旧记录）"
+          @click.stop.prevent="startFullImport"
+        >
+          全量重扫
         </button>
         <button class="btn-outline-large" :disabled="wechatImporting || verifying || capturingKey" @click.stop.prevent="resetFlow">重新配置</button>
       </div>
@@ -848,9 +857,18 @@ async function openKeyCaptureGuide() {
   }
 }
 
-async function startImport(autoFromCapture = false) {
-  if (wechatImporting.value || verifying.value || (capturingKey.value && !autoFromCapture)) return
+/** 全量重扫：重操作，先确认再走 force_full 导入（已导入消息自动判重） */
+async function startFullImport() {
+  const confirmed = await showConfirm({
+    title: '全量重扫确认',
+    message: '将忽略增量水位重新扫描全部消息库，用于补齐增量窗口外的历史消息（如群聊旧记录）。耗时数分钟，已导入的消息会自动判重、不会重复。是否继续？',
+  })
+  if (!confirmed) return
+  await startImport(false, true)
+}
 
+async function startImport(autoFromCapture = false, forceFull = false) {
+  if (wechatImporting.value || verifying.value || (capturingKey.value && !autoFromCapture)) return
   if (!pathInfo.value) {
     const detected = await detectWechatPath({ silent: true, accountWxid: selectedWxid.value || undefined })
     if (!detected) {
@@ -876,22 +894,19 @@ async function startImport(autoFromCapture = false) {
     wechatErr.value = '暂未识别到微信账号，请先完成微信登录。'
     return
   }
-  if (hasImportedBefore.value && !autoFromCapture) {
-    const confirmed = await showConfirm('检测到已有导入记录。继续导入会自动跳过重复数据，是否继续？')
-    if (!confirmed) return
-  }
-
+  // 按钮已显式表达意图（增量导入/全量重扫），不再二次确认
   wechatImporting.value = true
   wechatErr.value = ''
   wechatOk.value = ''
-  addLog('开始导入微信数据。')
+  addLog(forceFull ? '开始全量重扫微信数据（忽略增量水位）。' : '开始导入微信数据。')
 
   try {
     await bridgeReady()
     importProgress.value = { status: '正在导入数据...', percent: 20 }
     const res = await api.import_wechat_data(wechatForm.dbKey, {
       import_contacts: wechatForm.importContacts,
-      import_messages: wechatForm.importMessages
+      import_messages: wechatForm.importMessages,
+      force_full: forceFull
     }, selectedWxid.value)
 
     if (!res.ok) {

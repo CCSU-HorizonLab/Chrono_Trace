@@ -7,17 +7,25 @@
 from __future__ import annotations
 
 import json
-import random
-import socket
+import logging
 import time
 import urllib.error
 import urllib.request
 from typing import Any, Callable, Optional
 
-BASE_RETRY_DELAY = 1.5
-MAX_RETRIES = 3
+from .llm_http import (
+    DEFAULT_MAX_RETRIES as MAX_API_RETRIES,
+    DEFAULT_RETRYABLE_HTTP_STATUS as RETRYABLE_HTTP_STATUS,
+    compute_retry_delay,
+    is_timeout_error,
+)
 
-_print = print
+logger = logging.getLogger(__name__)
+
+
+def _print(msg: str):
+    """统一打印"""
+    logger.debug(msg)
 
 
 SYSTEM_PROMPT = """你是一个专业的聊天沟通顾问，但你当前必须作为【用户本人】的思考替身。你的任务是根据当前的对话情绪状态和长期记忆，为用户提供接下来该怎么回复的建议。
@@ -99,31 +107,9 @@ QUICK_PROMPTS_SYSTEM_PROMPT = """你是一个聊天联想词生成器。
 4. 如果上下文很少，也要基于当前最后几句聊天给出最可能的 4 个方向，不要拒答。
 """
 
-BASE_RETRY_DELAY = 1.5
-
-MAX_API_RETRIES = 3
-
-RETRYABLE_HTTP_STATUS = {429, 500, 502, 503, 504}
-
 
 class LlmClientMixin:
     """API 客户端：网络调用/重试/流式读取/token 预算/模型发现。"""
-
-    def _is_timeout_error(self, err: Exception) -> bool:
-        if isinstance(err, (TimeoutError, socket.timeout)):
-            return True
-        if isinstance(err, urllib.error.URLError):
-            reason = getattr(err, "reason", None)
-            return isinstance(reason, (TimeoutError, socket.timeout))
-        return False
-
-    def _compute_retry_delay(self, attempt: int, retry_after: Optional[str] = None) -> float:
-        if retry_after:
-            try:
-                return max(0.0, float(retry_after))
-            except (TypeError, ValueError):
-                pass
-        return BASE_RETRY_DELAY * (2 ** attempt) + random.uniform(0.0, 0.5)
 
     def _is_reasoning_model(self, model_id: str) -> bool:
         normalized = (model_id or "").lower()
@@ -381,13 +367,13 @@ class LlmClientMixin:
                         stream_callback=None,
                     )
                 if status_code in RETRYABLE_HTTP_STATUS and attempt < MAX_API_RETRIES:
-                    delay = self._compute_retry_delay(attempt, e.headers.get("Retry-After"))
+                    delay = compute_retry_delay(attempt, e.headers.get("Retry-After"))
                     _print(f"[LLM Engine] Retry on HTTP {status_code} after {delay:.1f}s (attempt {attempt + 1})")
                     time.sleep(delay)
                     continue
                 raise
             except Exception as e:
-                if self._is_timeout_error(e) and attempt < MAX_API_RETRIES:
+                if is_timeout_error(e) and attempt < MAX_API_RETRIES:
                     if emitted_any_delta:
                         # 本轮已下发过增量，重试会导致前端重复拼接；
                         # 放弃重试，把已收到的部分作为截断结果返回，
@@ -403,7 +389,7 @@ class LlmClientMixin:
                             return partial.strip()
                         _print("[LLM Engine] ⚠️ 流式响应中途超时且已下发增量但无可用文本，按超时失败处理")
                         raise
-                    delay = self._compute_retry_delay(attempt)
+                    delay = compute_retry_delay(attempt)
                     _print(f"[LLM Engine] Retry on timeout after {delay:.1f}s (attempt {attempt + 1})")
                     time.sleep(delay)
                     continue

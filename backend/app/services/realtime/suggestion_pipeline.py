@@ -1,18 +1,18 @@
-"""Suggestion generation pipeline.
+"""建议生成管线。
 
-Extracted from monitor_service.py (step 4D). Trigger event handling,
-full-auto suggestion, listen-start suggestion, feedback checking.
-Dependencies injected via session_state dict + self attributes.
+自 monitor_service.py 拆出（步骤 4D）。触发事件处理、全自动建议、
+开场建议、反馈检查。依赖经 session_state dict + self 属性注入。
 """
 from __future__ import annotations
 
 import json
 import logging
+import sys
 import time
-from typing import Any
+
+from .generation_context import renew_profiles_in_background
 
 logger = logging.getLogger(__name__)
-import sys
 
 def _print(*args, **kwargs):
     kwargs.setdefault("flush", True)
@@ -30,7 +30,7 @@ def _print(*args, **kwargs):
 
 
 class SuggestionPipelineMixin:
-    """Suggestion generation pipeline."""
+    """建议生成管线：触发处理、上下文装配、建议落库。"""
 
     def _log_runtime_event(self, event_type: str, payload: dict):
         """
@@ -112,7 +112,7 @@ class SuggestionPipelineMixin:
                             self.emotion_tracker.get_emotion_summary() if self.emotion_tracker else None
                         ),
                         recent_limit=50,
-                        renew_stale_profiles=_renew_profiles_in_background,
+                        renew_stale_profiles=renew_profiles_in_background,
                     )
                 except Exception as assemble_e:
                     _print(f"⚠️ 统一上下文装配失败,退回最小上下文: {assemble_e}")
@@ -221,7 +221,7 @@ class SuggestionPipelineMixin:
                     self.emotion_tracker.get_emotion_summary() if self.emotion_tracker else None
                 ),
                 recent_limit=recent_limit,
-                renew_stale_profiles=_renew_profiles_in_background,
+                renew_stale_profiles=renew_profiles_in_background,
             )
         except Exception as assemble_e:
             _print(f"⚠️ 统一上下文装配失败,退回最小上下文: {assemble_e}")
@@ -287,38 +287,7 @@ class SuggestionPipelineMixin:
             from ...db.connection import get_db
             
             conn = get_db()
-            
-            # 确保表存在
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS realtime_suggestions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    account_wxid TEXT NOT NULL,
-                    batch_id TEXT NOT NULL,
-                    trigger_type TEXT NOT NULL,
-                    intent TEXT NOT NULL,
-                    severity TEXT DEFAULT 'medium',
-                    summary TEXT NOT NULL,
-                    speeches TEXT NOT NULL,
-                    confidence REAL DEFAULT 1.0,
-                    status TEXT DEFAULT 'pending',
-                    engine_type TEXT DEFAULT 'llm',
-                    trigger_context TEXT,
-                    created_at INTEGER NOT NULL,
-                    read_at INTEGER,
-                    dismissed_at INTEGER,
-                    reply TEXT,
-                    thought_process TEXT
-                )
-            ''')
-            try:
-                conn.execute("ALTER TABLE realtime_suggestions ADD COLUMN reply TEXT")
-            except:
-                pass
-            try:
-                conn.execute("ALTER TABLE realtime_suggestions ADD COLUMN thought_process TEXT")
-            except:
-                pass
-            
+
             cursor = conn.cursor()
             account_wxid = self._resolve_account_wxid(session_state.get('account_wxid'))
             cursor.execute('''

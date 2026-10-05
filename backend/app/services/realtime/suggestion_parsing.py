@@ -8,14 +8,18 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Any, Callable, Optional
+from typing import Optional
 
 from .llm_client import REPAIR_SYSTEM_PROMPT
-from .style_constraints import StyleConstraints, compute_style_constraints, load_cached_style_inputs
+from .style_constraints import StyleConstraints, compute_style_constraints
 from .suggestion_engine import SuggestionResult
 
 logger = logging.getLogger(__name__)
-_print = print
+
+
+def _print(msg: str):
+    """统一打印"""
+    logger.debug(msg)
 
 
 class SuggestionParsingMixin:

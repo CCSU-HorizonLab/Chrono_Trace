@@ -500,12 +500,7 @@
     :show-self-panel="true"
     @close="showPortraitDialog = false"
     @generated="handlePortraitGenerated"
-    @error="(msg: string) => { portraitGenError = msg; }"
   />
-  <div v-if="portraitGenError" style="position: fixed; bottom: 20px; right: 20px; z-index: 4000; background: #e74c3c; color: #fff; padding: 10px 16px; border-radius: 8px; font-size: 13px; box-shadow: 0 4px 12px rgba(0,0,0,0.3);">
-    {{ portraitGenError }}
-    <button @click="portraitGenError = ''" style="margin-left: 10px; background: none; border: none; color: #fff; cursor: pointer; font-size: 16px;">&times;</button>
-  </div>
   <RelationshipContextForm v-if="selectedConversationId" v-model="showContextForm"
     :conversation-id="selectedConversationId" @saved="handleContextSaved" />
 </section>
@@ -697,7 +692,6 @@ watch(selectedConversationId, (id) => {
         const displayScore = ref(0)
         const showKeywordsDialog = ref(false)
 const showPortraitDialog = ref(false)
-const portraitGenError = ref('')
         const showContextForm = ref(false)
         const analysisLaunchPending = ref(false)
         const isGlobalAnalyzing = ref(false)
@@ -1041,7 +1035,6 @@ const portraitGenError = ref('')
         }
 
         function handlePortraitGenerated() {
-  portraitGenError.value = ''
   // 画像生成完成后刷新画像数据
   if (typeof loadPersonaProfile === 'function') loadPersonaProfile()
 }
@@ -1860,7 +1853,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
         return {
             currentTab, conversations, selectedConversationId, dates, loading, loadingSessions, error, analysis, subject, sessions,
             personaProfile, loadingPersonaProfile, personaProfileMeta,
-            analysisResult, displayScore, showKeywordsDialog, showContextForm, showPortraitDialog, portraitGenError, handlePortraitGenerated, isGlobalAnalyzing, isStopping, activeTimer, handleStopAnalysis, globalProgressPercent, globalProgressStep, isDownloadingModels, modelDownloadProgress, modelDownloadStep, modelDownloadTaskId, gpuMode,
+            analysisResult, displayScore, showKeywordsDialog, showContextForm, showPortraitDialog, handlePortraitGenerated, isGlobalAnalyzing, isStopping, activeTimer, handleStopAnalysis, globalProgressPercent, globalProgressStep, isDownloadingModels, modelDownloadProgress, modelDownloadStep, modelDownloadTaskId, gpuMode,
             hasConversations, hasFeatures, hasCachedAffinityAnalysis, featureStats, responseTimeStats, initiativeStats, wordCountsStats, displayWordRatioLabel, activityCalendar,
             responseTimeChart, activityCalendarChart, wordCountChart, stats, currentContactName, headerAvatarSrc, hasPreferenceKeywords, allDimensions, emotionalResonanceDisplaySubScores,
             currentRangeLabel, hasContentAnalysis, circumference, strokeDashoffset, formatNumber, formatTime, getResponseTimeLabel, getMergedResponseTimeLabel, getResponseTimePercent, onConversationChange, onDatesChange, handleExport, handleStartGlobalAnalysis, handleContextSaved, handleKeywordsUpdated,

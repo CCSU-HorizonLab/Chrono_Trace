@@ -80,6 +80,8 @@ class Bridge(
         self._suggestion_stream_lock = threading.Lock()
         self._wechat_key_capture_sessions: dict[str, dict[str, Any]] = {}
         self._wechat_key_capture_lock = threading.Lock()
+        self._wechat_import_tasks: dict[str, dict[str, Any]] = {}
+        self._wechat_import_lock = threading.Lock()
         self._webview_window = None  # 由 app_dev.py 注入
         self._analysis_cancel_event = None  # 用于取消好感度分析
         self._affinity_service = None  # 好感度分析服务实例（analyze_affinity 中懒创建）
@@ -186,13 +188,47 @@ class Bridge(
             status = self._model_download_status.get(task_id)
         return status.copy() if status else {}
 
-    def _prune_task_dicts(self, max_age_hours: float = 24.0) -> None:
-        """按 TTL 清理三个任务字典（建议流/密钥捕获/模型下载）中的过期条目。
+    def _update_wechat_import_status(self, task_id: str, **updates: Any) -> None:
+        now_ms = int(time.time() * 1000)
+        with self._wechat_import_lock:
+            is_new = task_id not in self._wechat_import_tasks
+            current = self._wechat_import_tasks.get(task_id, {}).copy()
+            if is_new:
+                current["created_at"] = now_ms
+            current["updated_at"] = now_ms
+            current.update(updates)
+            self._wechat_import_tasks[task_id] = current
+        if is_new:
+            # 新增条目时顺带清理过期任务（锁外触发，防 ABBA 死锁，同上）
+            self._prune_task_dicts()
 
-        - 终态条目（建议流 done/error、捕获已出结果、下载 completed/failed）
-          超过 1 小时即删除；
+    def _get_wechat_import_status(self, task_id: str) -> dict[str, Any]:
+        with self._wechat_import_lock:
+            status = self._wechat_import_tasks.get(task_id)
+        return status.copy() if status else {}
+
+    def _find_running_wechat_import(self) -> str | None:
+        """返回当前运行中的导入任务 id（无则 None）。
+
+        thread 存活判定兜底：条目缺 thread 键（如测试手工注入）时保守
+        视为存活，宁可复用也不并发双跑。
+        """
+        with self._wechat_import_lock:
+            for task_id, entry in self._wechat_import_tasks.items():
+                if entry.get("status") != "running":
+                    continue
+                thread = entry.get("thread")
+                if thread is None or thread.is_alive():
+                    return task_id
+        return None
+
+    def _prune_task_dicts(self, max_age_hours: float = 24.0) -> None:
+        """按 TTL 清理四个任务字典（建议流/密钥捕获/模型下载/微信导入）中的过期条目。
+
+        - 终态条目（建议流 done/error、捕获已出结果、下载 completed/failed、
+          导入 completed/failed）超过 1 小时即删除；
         - 运行中条目超过 max_age_hours（默认 24 小时）也删除（视作僵死任务）。
-        时间戳兼容秒/毫秒两种单位。调用方不得在持有这三个任务锁时调用（会死锁）。
+        时间戳兼容秒/毫秒两种单位。调用方不得在持有这四个任务锁时调用（会死锁）。
         """
         now_ms = int(time.time() * 1000)
         terminal_max_age_ms = 60 * 60 * 1000  # 终态条目保留 1 小时
@@ -253,6 +289,20 @@ class Bridge(
                     expired.append(task_id)
             for task_id in expired:
                 self._model_download_status.pop(task_id, None)
+
+        with self._wechat_import_lock:
+            expired = []
+            for task_id, entry in self._wechat_import_tasks.items():
+                ts = _entry_ts_ms(entry)
+                if ts is None:
+                    continue
+                status = str(entry.get("status") or "")
+                is_terminal = status in {"completed", "failed"}
+                deadline = terminal_max_age_ms if is_terminal else running_max_age_ms
+                if now_ms - ts > deadline:
+                    expired.append(task_id)
+            for task_id in expired:
+                self._wechat_import_tasks.pop(task_id, None)
 
 
     def ping(self) -> str:

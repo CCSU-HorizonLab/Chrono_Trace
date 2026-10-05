@@ -1865,6 +1865,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
             responseTimeChart, activityCalendarChart, wordCountChart, stats, currentContactName, headerAvatarSrc, hasPreferenceKeywords, allDimensions, emotionalResonanceDisplaySubScores,
             currentRangeLabel, hasContentAnalysis, circumference, strokeDashoffset, formatNumber, formatTime, getResponseTimeLabel, getMergedResponseTimeLabel, getResponseTimePercent, onConversationChange, onDatesChange, handleExport, handleStartGlobalAnalysis, handleContextSaved, handleKeywordsUpdated,
             exportDialogVisible, exportFormat, exporting, exportResult, confirmExport, openExportFolder,
+            activeAccountWxid,
             getScoreColor, scrollToDetails, handlePreferenceDisabledClick, onWordSelect, loadAnalysis, loadSessions, handleActivityYearChange
         }
     }

@@ -145,7 +145,9 @@ class UiaRecoveryMixin:
         self._uia_manual_restart_guard_phase = ""
 
     def _has_active_uia_manual_restart_guard(self) -> bool:
-        guard_until = float(getattr(self, "_uia_manual_restart_guard_until", 0.0) or 0.0)
+        # 直接属性访问（__init__ 无条件初始化）：误删初始化时此处显式炸出，
+        # 而不是 getattr 默认值把重启守卫静默变成永不拦截
+        guard_until = float(self._uia_manual_restart_guard_until)
         if guard_until <= 0:
             return False
         if time.time() >= guard_until:
@@ -172,7 +174,7 @@ class UiaRecoveryMixin:
     ) -> str:
         remaining_seconds = max(
             1,
-            int(float(getattr(self, "_uia_manual_restart_guard_until", 0.0) or 0.0) - time.time()),
+            int(float(self._uia_manual_restart_guard_until) - time.time()),
         )
         prefix = ""
         if include_prefix:

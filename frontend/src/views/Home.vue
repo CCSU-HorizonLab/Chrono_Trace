@@ -293,7 +293,15 @@ import { showConfirm, showDialog } from '@/utils/dialog'
 import CtAccountSelector from '@/components/base/CtAccountSelector.vue'
 import { clearWechatAccountProfileCache, enrichWechatAccountsWithProfiles } from '@/utils/wechatAccounts'
 
-type ImportProgress = { status: string; percent: number } | null
+type ImportProgress = {
+  status: string; percent: number
+  phase?: string
+  conversationIdx?: number
+  conversationTotal?: number
+  insertedMessages?: number
+  elapsedMs?: number
+  etaMs?: number | null
+} | null
 type IncrementInfo = {
   incrementSize: number
   changedFiles: Array<{ path: string; delta: number }>
@@ -332,6 +340,9 @@ const keyCaptureError = ref('')
 const keyCaptureSessionId = ref('')
 let keyCapturePollTimer: ReturnType<typeof setTimeout> | null = null
 const importProgress = ref<ImportProgress>(null)
+let importPollTimer: ReturnType<typeof setInterval> | null = null
+// ETA 样本：最近若干轮询的 (时刻, 会话序号)，按会话推进速率平滑估算剩余
+let importEtaSamples: Array<{ t: number; idx: number }> = []
 const hasImportedBefore = ref(false)
 const incrementInfo = ref<IncrementInfo>(null)
 const incrementDismissed = ref(false)
@@ -799,6 +810,80 @@ async function pollKeyCaptureSession() {
   }
 }
 
+/** 停止导入轮询并清空 ETA 样本（终态/失败/组件卸载三处调用） */
+function stopImportPolling() {
+  if (importPollTimer) { clearInterval(importPollTimer); importPollTimer = null }
+  importEtaSamples = []
+}
+
+/** 毫秒 →「12:34 / 1:02:03」中文场景耗时格式 */
+function formatDuration(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000))
+  const h = Math.floor(total / 3600)
+  const m = Math.floor((total % 3600) / 60)
+  const s = total % 60
+  const mm = String(m).padStart(2, '0')
+  const ss = String(s).padStart(2, '0')
+  return h > 0 ? `${h}:${mm}:${ss}` : `${m}:${ss}`
+}
+
+/**
+ * 轮询导入任务直至终态（1s 间隔，对齐模型下载的 Analytics 轮询模式）。
+ * resolve(完整 result) / reject(Error)；期间持续更新 importProgress。
+ */
+function waitForImportTask(taskId: string): Promise<any> {
+  return new Promise((resolve, reject) => {
+    importPollTimer = setInterval(async () => {
+      try {
+        const prog = await api.get_import_progress(taskId)
+        if (!prog.ok) {
+          stopImportPolling()
+          reject(new Error(prog.error || '导入任务已失效。'))
+          return
+        }
+        // ETA：会话序号有推进才采样（大群导入时 idx 停留、消息数在涨，
+        // 此时 ETA 显示「计算中」比硬估算更诚实）
+        let etaMs: number | null = null
+        const idx = Number(prog.conversation_idx || 0)
+        const total = Number(prog.conversation_total || 0)
+        if (idx > 0 && total > idx) {
+          importEtaSamples.push({ t: Date.now(), idx })
+          if (importEtaSamples.length > 10) importEtaSamples.shift()
+          if (importEtaSamples.length >= 2) {
+            const first = importEtaSamples[0]
+            const last = importEtaSamples[importEtaSamples.length - 1]
+            const dIdx = last.idx - first.idx
+            const dt = last.t - first.t
+            if (dIdx > 0 && dt > 0) etaMs = Math.round(((total - last.idx) / (dIdx / dt)) * 1000)
+          }
+        }
+        importProgress.value = {
+          status: prog.phase_label || '正在导入数据...',
+          percent: Math.min(100, Math.max(0, Number(prog.percent || 0))),
+          phase: prog.phase,
+          conversationIdx: idx || undefined,
+          conversationTotal: total || undefined,
+          insertedMessages: Number(prog.inserted_messages || 0) || undefined,
+          elapsedMs: Number(prog.elapsed_ms || 0),
+          etaMs,
+        }
+        if (prog.status === 'completed') {
+          stopImportPolling()
+          resolve(prog.result || { ok: true })
+          return
+        }
+        if (prog.status === 'failed') {
+          stopImportPolling()
+          reject(new Error(prog.error || '导入失败。'))
+        }
+      } catch (error) {
+        stopImportPolling()
+        reject(error)
+      }
+    }, 1000)
+  })
+}
+
 async function confirmWechatRestart() {
   keyCaptureStage.value = 'restarting'
   keyCaptureError.value = ''
@@ -902,20 +987,30 @@ async function startImport(autoFromCapture = false, forceFull = false) {
 
   try {
     await bridgeReady()
-    importProgress.value = { status: '正在导入数据...', percent: 20 }
+    importProgress.value = { status: '正在启动导入任务...', percent: 0, phase: 'resolving_paths' }
     const res = await api.import_wechat_data(wechatForm.dbKey, {
       import_contacts: wechatForm.importContacts,
       import_messages: wechatForm.importMessages,
       force_full: forceFull
     }, selectedWxid.value)
 
-    if (!res.ok) {
-      wechatErr.value = res.error || '导入失败。'
+    if (!res.ok || !res.task_id) {
+      wechatErr.value = res.error || '导入任务启动失败。'
+      addLog(`导入失败：${wechatErr.value}`)
+      return
+    }
+    if (res.reused) addLog('检测到已有导入任务在运行，接入其进度。')
+
+    // 后端异步执行，此处每秒收到进度更新直至终态
+    const result = await waitForImportTask(String(res.task_id))
+
+    if (!result.ok) {
+      wechatErr.value = result.error || '导入失败。'
       addLog(`导入失败：${wechatErr.value}`)
       return
     }
 
-    const stats = res.stats || {}
+    const stats = result.stats || {}
     wechatOk.value = `导入成功：当前共联系人 ${stats.contacts || 0}，消息 ${stats.messages || 0}，会话 ${stats.conversations || 0}；本次新增联系人 ${stats.inserted_contacts || 0}，消息 ${stats.inserted_messages || 0}，跳过重复 ${stats.skipped || 0}。`
     if ((stats.inserted_messages || 0) > 0) {
       wechatOk.value += ' 已导入新消息：相关联系人的分析结果待更新（联系人洞察页有标记，重新分析通常秒级完成）。'
@@ -933,10 +1028,16 @@ async function startImport(autoFromCapture = false, forceFull = false) {
     wechatErr.value = error?.message || '导入异常。'
     addLog(`导入异常：${wechatErr.value}`)
   } finally {
-    importProgress.value = { status: '完成', percent: 100 }
-    setTimeout(() => {
+    stopImportPolling()
+    if (wechatOk.value) {
+      // 仅成功闪「完成 100%」；失败直接收起进度条（错误文案走 error-msg）
+      importProgress.value = { status: '完成', percent: 100, phase: 'done' }
+      setTimeout(() => {
+        importProgress.value = null
+      }, 1500)
+    } else {
       importProgress.value = null
-    }, 1500)
+    }
     wechatImporting.value = false
   }
 }

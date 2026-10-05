@@ -203,7 +203,7 @@ class WeChatIngestService:
         db_key: str,
         options: Optional[Dict] = None,
         custom_paths: Optional[Dict] = None,
-        progress_callback: Optional[Callable[[str, int, int], None]] = None,
+        progress_callback: Optional[Callable[..., None]] = None,
         raw_keys: Optional[Dict] = None,
     ) -> Dict[str, Any]:
         """
@@ -217,7 +217,10 @@ class WeChatIngestService:
                 "limit": int                # 消息数量限制(0=全部)
             }
             custom_paths: 自定义路径(如果提供则使用,否则自动检测)
-            progress_callback: 进度回调 callback(status, current, total)
+            progress_callback: 进度回调 callback(status, current, total, detail=None)。
+                detail 为结构化进度（可选键：phase / conversation_idx /
+                conversation_total / inserted_messages），供 bridge 侧任务
+                注册表展示「阶段徽章 + 对话 x/y + 已新增 N 条」
 
         Returns:
             dict: {
@@ -254,7 +257,7 @@ class WeChatIngestService:
         try:
             # 1. 获取数据库路径
             if progress_callback:
-                progress_callback("查找数据库路径...", 0, 100)
+                progress_callback("查找数据库路径...", 0, 100, {"phase": "resolving_paths"})
 
             logger.info("\n[DEBUG] === 开始导入流程 ===")
             logger.debug(f"[DEBUG] custom_paths: {custom_paths}")
@@ -274,7 +277,7 @@ class WeChatIngestService:
             logger.debug(f"\n[DEBUG] import_contacts={import_contacts}, has contact db={databases.get('contact')}")
             if import_contacts and databases.get("contact"):
                 if progress_callback:
-                    progress_callback("导入联系人...", 10, 100)
+                    progress_callback("导入联系人...", 10, 100, {"phase": "contacts"})
 
                 contact_count = self._import_contacts_v4(
                     databases["contact"],
@@ -290,7 +293,7 @@ class WeChatIngestService:
             logger.debug(f"\n[DEBUG] import_messages={import_messages}, message dbs={databases.get('message')}")
             if import_messages and databases.get("message"):
                 if progress_callback:
-                    progress_callback("导入消息...", 30, 100)
+                    progress_callback("导入消息...", 30, 100, {"phase": "messages"})
 
                 message_stats = self._import_messages_v4(
                     databases["message"],
@@ -339,7 +342,7 @@ class WeChatIngestService:
                 self._update_import_record(import_id, "success", stats, account_wxid=account_wxid)
 
             if progress_callback:
-                progress_callback("导入完成", 100, 100)
+                progress_callback("导入完成", 100, 100, {"phase": "done"})
 
             return {
                 "ok": True,
@@ -662,7 +665,7 @@ class WeChatIngestService:
 
         try:
             if progress_callback:
-                progress_callback("扫描消息表...", 30, 100)
+                progress_callback("扫描消息表...", 30, 100, {"phase": "scanning"})
 
             # 预载判重集合（一次 SELECT 替代逐条 OR IGNORE 的 20 万次 execute）
             existing_keys = self._load_existing_message_keys()
@@ -670,6 +673,14 @@ class WeChatIngestService:
             # 获取所有对话username
             all_usernames = message_db.get_all_conversation_usernames(include_chatroom=True)
             logger.debug(f"[DEBUG] Found conversations: {len(all_usernames)}")
+
+            # 会话总数先推给前端：进度条不必等首个会话处理完才有 x/y
+            if progress_callback and all_usernames:
+                progress_callback(
+                    f"共 {len(all_usernames)} 个对话待导入...",
+                    30, 100,
+                    {"phase": "scanning", "conversation_total": len(all_usernames)},
+                )
 
             if len(all_usernames) > 0:
                 logger.debug(f"[DEBUG] 前3个会话: {all_usernames[:3]}")
@@ -681,7 +692,16 @@ class WeChatIngestService:
 
                 if progress_callback:
                     progress = 30 + int((idx / max(len(all_usernames), 1)) * 60)
-                    progress_callback(f"导入对话 {idx+1}/{len(all_usernames)}...", progress, 100)
+                    progress_callback(
+                        f"导入对话 {idx+1}/{len(all_usernames)}...",
+                        progress, 100,
+                        {
+                            "phase": "conversations",
+                            "conversation_idx": idx + 1,
+                            "conversation_total": len(all_usernames),
+                            "inserted_messages": total_messages,
+                        },
+                    )
 
                 # 获取该用户的消息
                 try:

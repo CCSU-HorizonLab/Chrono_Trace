@@ -269,6 +269,30 @@ class DatabaseConnection:
             conn.commit()
 
     @classmethod
+    def _migrate_realtime_suggestions_columns(cls, conn: sqlite3.Connection) -> None:
+        """realtime_suggestions 补对话回复/思考过程两列（纯增量 ALTER）。
+
+        老库该表缺 reply/thought_process 时在此统一补齐；
+        建表本身由 schema.sql（CREATE IF NOT EXISTS）负责。
+        """
+        additions = (
+            ("reply", "TEXT"),
+            ("thought_process", "TEXT"),
+        )
+        existing = cls._table_columns(conn, "realtime_suggestions")
+        if not existing:
+            return
+        changed = False
+        for column_name, column_type in additions:
+            if column_name not in existing:
+                conn.execute(
+                    f"ALTER TABLE realtime_suggestions ADD COLUMN {column_name} {column_type}"
+                )
+                changed = True
+        if changed:
+            conn.commit()
+
+    @classmethod
     def _run_compat_migrations(cls):
         """Apply lightweight compatibility migrations for existing databases."""
         conn = cls._get_instance()
@@ -277,6 +301,7 @@ class DatabaseConnection:
 
         cls._migrate_wechat_account_isolation(conn)
         cls._migrate_conversations_analysis_columns(conn)
+        cls._migrate_realtime_suggestions_columns(conn)
 
         conn.execute(
             """

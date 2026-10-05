@@ -1,13 +1,12 @@
-"""Checkpoint context matching and backfill scroll strategy (pure functions).
+"""断点上下文匹配与回溯滚动策略（纯函数）。
 
-Extracted from monitor_service.py (step 4B). Deterministic algorithms only.
+自 monitor_service.py 拆出（步骤 4B）。仅确定性算法。
 """
 from __future__ import annotations
 
 import logging
 import re
-import time
-from typing import Any, Optional
+import sys
 
 logger = logging.getLogger(__name__)
 

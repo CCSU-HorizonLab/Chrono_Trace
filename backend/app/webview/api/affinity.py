@@ -5,11 +5,8 @@ Bridge 继承此 Mixin，方法名不变、前端 API 面与测试零破坏。
 from __future__ import annotations
 
 import logging
-import json
 import threading
-import time
-from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -275,7 +272,6 @@ class AffinityApiMixin:
     def analyze_affinity(self, conversation_id: int, force_reanalyze: bool = True, config_overrides: dict = None) -> dict[str, Any]:
         """执行好感度分析（异步，立即返回 task_id 供轮询）"""
         try:
-            import threading
             import time as _time
 
             # 复用守卫：旧服务实例上仍有本会话的运行中任务时不重复启动。

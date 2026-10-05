@@ -12,7 +12,21 @@ from typing import Any, Optional
 logger = logging.getLogger(__name__)
 
 
-_print = print
+import sys
+
+def _print(*args, **kwargs):
+    kwargs.setdefault("flush", True)
+    try:
+        print(*args, **kwargs)
+    except UnicodeEncodeError:
+        sep = kwargs.get("sep", " ")
+        end = kwargs.get("end", "\n")
+        text = sep.join(str(arg) for arg in args) + end
+        encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+        safe_text = text.encode(encoding, errors="replace").decode(encoding, errors="replace")
+        sys.stdout.write(safe_text)
+        if kwargs.get("flush", False):
+            sys.stdout.flush()
 from datetime import datetime, timedelta
 import json
 from .providers.models import normalize_text

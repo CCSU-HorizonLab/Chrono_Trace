@@ -9,7 +9,6 @@ import uuid
 import json
 import threading
 import re
-from datetime import datetime, timedelta
 from .message_buffer import MessageBuffer
 from .realtime_sentiment_service import RealtimeSentimentService
 from .emotion_state_tracker import EmotionStateTracker
@@ -33,33 +32,6 @@ def _print(*args, **kwargs):
         sys.stdout.write(safe_text)
         if kwargs.get("flush", False):
             sys.stdout.flush()
-
-
-# P1.1 画像 TTL 修复：过期画像降级注入 + 后台续期防重入
-_profile_renewal_inflight: set = set()
-
-
-def _renew_profiles_in_background(display_name: str, account_wxid: str = "") -> None:
-    key = f"{account_wxid}:{display_name}"
-    if not display_name or key in _profile_renewal_inflight:
-        return
-    _profile_renewal_inflight.add(key)
-
-    def _run():
-        try:
-            from .contact_profiler import ContactProfiler
-            from .self_profiler import SelfProfiler
-
-            ContactProfiler().generate_profile(display_name, account_wxid=account_wxid)
-            SelfProfiler().generate_profile(display_name, account_wxid=account_wxid)
-        except Exception as renew_e:
-            _print(f"⚠️ 画像后台续期失败（保留旧缓存）: {renew_e}")
-        finally:
-            _profile_renewal_inflight.discard(key)
-
-    threading.Thread(
-        target=_run, daemon=True, name=f"profile-renewal-{display_name[:16]}"
-    ).start()
 
 
 from .uia_recovery import UiaRecoveryMixin

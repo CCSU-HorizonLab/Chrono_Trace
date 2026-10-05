@@ -1,21 +1,35 @@
-"""Windows UIA recovery: detection and auto-recovery.
+"""Windows UIA 恢复：检测与自动/手动恢复。
 
-Extracted from monitor_service.py (step 4A). Windows-specific (lazy win32 imports).
+自 monitor_service.py 拆出（步骤 4A）。Windows 专属（win32 全部延迟导入）。
 """
 from __future__ import annotations
 
 import logging
+import sys
 import time
-from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
 from .providers.base import UINotAccessibleError
-_print = print
+
+
+def _print(*args, **kwargs):
+    kwargs.setdefault("flush", True)
+    try:
+        print(*args, **kwargs)
+    except UnicodeEncodeError:
+        sep = kwargs.get("sep", " ")
+        end = kwargs.get("end", "\n")
+        text = sep.join(str(arg) for arg in args) + end
+        encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+        safe_text = text.encode(encoding, errors="replace").decode(encoding, errors="replace")
+        sys.stdout.write(safe_text)
+        if kwargs.get("flush", False):
+            sys.stdout.flush()
 
 class UiaRecoveryMixin:
-    """UIA recovery: shell detection / auto/manual recovery."""
+    """UIA 恢复：壳检测 / 自动与手动恢复。"""
 
     def _bring_wechat_to_front(self):
         """使用 Win32 API 将微信窗口强制置顶到所有窗口之上"""
@@ -87,7 +101,7 @@ class UiaRecoveryMixin:
             return False
 
     def _reset_wechat_instance(self):
-        """Reset the cached listener instance so the next retry starts clean."""
+        """重置缓存的微信实例，让下一次重试从干净状态开始。"""
         if self.wx is not None:
             try:
                 stop_listening = getattr(self.wx, 'StopListening', None)
@@ -102,7 +116,7 @@ class UiaRecoveryMixin:
         self._wechat_version = ''
 
     def _create_wechat_instance(self):
-        """Create a fresh realtime provider instance."""
+        """新建一个实时监听 provider 实例。"""
         try:
             from backend.wxauto4 import WeChat
         except ModuleNotFoundError:
@@ -266,7 +280,7 @@ class UiaRecoveryMixin:
         }
 
     def _attempt_auto_recover_shell_only_uia(self, phase: str, error_text: str = "") -> bool:
-        """Mark shell-only UIA recovery as pending and wait for explicit user confirmation."""
+        """标记壳级 UIA 恢复待确认，等待前端用户显式确认后执行。"""
         if self._has_active_uia_manual_restart_guard():
             self._uia_recovery_required = False
             self._uia_recovery_in_progress = False
@@ -299,7 +313,7 @@ class UiaRecoveryMixin:
         return False
 
     def run_confirmed_uia_recovery(self) -> dict:
-        """Run the UIA recovery flow after the user confirms it in the frontend."""
+        """用户在前端确认后执行 UIA 恢复流程。"""
         if self._uia_recovery_in_progress:
             return {
                 "success": False,
@@ -489,7 +503,7 @@ class UiaRecoveryMixin:
         )
 
     def _get_foreground_window_info(self) -> dict:
-        """Return basic diagnostics for the current foreground window."""
+        """返回当前前台窗口的基础诊断信息。"""
         try:
             import ctypes
 

@@ -1,17 +1,17 @@
-"""Backfill store and message migration.
+"""回溯落库与消息迁移。
 
-Extracted from monitor_service.py (step 4C). DB-only operations:
-checkpoint backfill storage, buffer-to-messages migration, dedup.
+自 monitor_service.py 拆出（步骤 4C）。仅数据库操作：
+断点回溯存储、缓冲区消息迁移、去重。
 """
 from __future__ import annotations
 
 import logging
-import re
+import sys
 import time
-from typing import Any
+
+from .providers.models import build_message_hash
 
 logger = logging.getLogger(__name__)
-import sys
 
 def _print(*args, **kwargs):
     kwargs.setdefault("flush", True)
@@ -29,7 +29,7 @@ def _print(*args, **kwargs):
 
 
 class BackfillStoreMixin:
-    """Backfill DB operations."""
+    """回溯相关数据库操作。"""
 
     def _map_message_type(self, message_type: str) -> int:
         """Map normalized listener message types to the app's integer message types."""

@@ -1,6 +1,6 @@
 <template>
   <Teleport to="body">
-    <div v-if="visible" class="ct-modal-overlay" @click.self="$emit('close')">
+    <div v-if="visible" class="ct-modal-overlay" @click.self="!generating && $emit('close')">
       <div class="portrait-dialog">
         <div class="pd-header">
           <div class="pd-icon-wrap">
@@ -11,10 +11,10 @@
             </svg>
           </div>
           <div class="pd-title-area">
-            <h3 class="pd-title">生成画像</h3>
-            <p class="pd-subtitle">围绕「<strong>{{ displayName }}</strong>」历史聊天，按需生成画像</p>
+            <h3 class="pd-title">{{ generating ? '正在生成画像' : '生成画像' }}</h3>
+            <p class="pd-subtitle">{{ generating ? 'LLM 分析历史聊天中，完成后自动更新（期间请勿开始监听）' : `围绕「${displayName}」历史聊天，按需生成画像` }}</p>
           </div>
-          <button class="pd-close" @click="$emit('close')" aria-label="关闭">
+          <button v-if="!generating" class="pd-close" @click="$emit('close')" aria-label="关闭">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
           </button>
         </div>
@@ -66,10 +66,18 @@
         </div>
 
         <div class="pd-footer">
-          <button class="pd-btn pd-btn-ghost" @click="$emit('close')">取消</button>
-          <button class="pd-btn pd-btn-primary" @click="handleGenerate" :disabled="!generateContact && (!showSelfPanel || !generateSelf)">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-            确认生成
+          <p v-if="genError" class="pd-error">{{ genError }}</p>
+          <button class="pd-btn pd-btn-ghost" :disabled="generating" @click="$emit('close')">取消</button>
+          <button
+            class="pd-btn pd-btn-primary"
+            @click="handleGenerate"
+            :disabled="generating || (!generateContact && (!showSelfPanel || !generateSelf))"
+          >
+            <svg
+              width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"
+              :class="{ spin: generating }"
+            ><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+            {{ generating ? '生成中…' : '确认生成' }}
           </button>
         </div>
       </div>
@@ -99,13 +107,14 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   (e: 'close'): void
   (e: 'generated', kind: 'contact' | 'self' | 'both'): void
-  (e: 'error', message: string): void
 }>()
 
 const generateContact = ref(props.defaultContact)
 const generateSelf = ref(props.defaultSelf)
-const contactBudget = ref('medium')
+const contactBudget = ref(localStorage.getItem('chrono:portraitContactBudget') || 'medium')
 const selfBudget = ref('medium')
+const generating = ref(false)
+const genError = ref('')
 
 const contactBudgetOptions = [
   { value: 'low', label: '最近 7 天', tip: '简略' },
@@ -118,7 +127,9 @@ const selfBudgetOptions = [
 ]
 
 async function handleGenerate() {
-  emit('close')
+  if (generating.value) return
+  generating.value = true
+  genError.value = ''
   let hasError = false
   let errorMsg = ''
   let generatedKind: 'contact' | 'self' | 'both' = 'contact'
@@ -127,6 +138,8 @@ async function handleGenerate() {
     await bridgeReady()
 
     if (generateContact.value) {
+      // 记住档位：Analytics 快捷「更新画像」与弹窗下次默认保持一致
+      localStorage.setItem('chrono:portraitContactBudget', contactBudget.value)
       const res = await api.generate_contact_profile(
         props.displayName, contactBudget.value, undefined, props.accountWxid || undefined
       )
@@ -152,9 +165,12 @@ async function handleGenerate() {
     errorMsg = e?.message || '生成异常'
   }
 
+  generating.value = false
   if (hasError) {
-    emit('error', errorMsg)
+    // 失败留在弹窗内联展示：秒关弹窗会让用户以为没触发（此前正是此问题）
+    genError.value = errorMsg
   } else {
+    emit('close')
     emit('generated', generatedKind)
   }
 }
@@ -223,8 +239,22 @@ async function handleGenerate() {
 .pd-chip-tip { font-size: 10px; color: var(--ct-text-tertiary); }
 .pd-est { margin-top: 8px; font-size: 10px; color: var(--ct-text-tertiary); line-height: 1.5; }
 .pd-footer {
-  display: flex; justify-content: flex-end; gap: 10px;
+  display: flex; justify-content: flex-end; gap: 10px; align-items: center;
   padding: 14px 20px; border-top: 1px solid var(--ct-border-color);
+}
+/* 生成失败内联提示：弹窗保持打开，避免「秒关无反馈」体感 */
+.pd-error {
+  flex: 1; margin: 0; text-align: left;
+  font-size: 12px; color: var(--ct-color-danger, #ef4444);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* 生成中图标旋转 */
+.spin {
+  animation: pd-rotate 1s linear infinite;
+}
+@keyframes pd-rotate {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 .pd-btn {
   display: inline-flex; align-items: center; gap: 6px;

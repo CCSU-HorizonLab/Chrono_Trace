@@ -5,28 +5,13 @@
 from __future__ import annotations
 
 import logging
-import sys
 import time
 
 logger = logging.getLogger(__name__)
 
 
 from .providers.base import UINotAccessibleError
-
-
-def _print(*args, **kwargs):
-    kwargs.setdefault("flush", True)
-    try:
-        print(*args, **kwargs)
-    except UnicodeEncodeError:
-        sep = kwargs.get("sep", " ")
-        end = kwargs.get("end", "\n")
-        text = sep.join(str(arg) for arg in args) + end
-        encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
-        safe_text = text.encode(encoding, errors="replace").decode(encoding, errors="replace")
-        sys.stdout.write(safe_text)
-        if kwargs.get("flush", False):
-            sys.stdout.flush()
+from .safe_print import safe_print as _print
 
 class UiaRecoveryMixin:
     """UIA 恢复：壳检测 / 自动与手动恢复。"""

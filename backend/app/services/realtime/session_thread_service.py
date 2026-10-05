@@ -17,13 +17,9 @@ import urllib.error
 from collections import Counter
 from typing import Optional
 from ..wechat.account_settings import get_active_wechat_account_wxid, load_settings_from_file
+from .safe_print import safe_print as _print
 
 logger = logging.getLogger(__name__)
-
-
-def _print(msg: str):
-    """统一打印"""
-    print(msg, flush=True)
 
 
 # LLM 总结用 System Prompt

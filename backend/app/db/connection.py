@@ -311,14 +311,19 @@ class DatabaseConnection:
                   SELECT MIN(id)
                   FROM messages
                   WHERE local_id IS NOT NULL
-                  GROUP BY conversation_id, local_id
+                  GROUP BY conversation_id, local_id, timestamp
               )
             """
         )
+        # 判重键升级：(conversation_id, local_id) → 追加 timestamp。
+        # 微信 V4 分片库的 local_id 是分片内自增（每片都从 1 开始），
+        # 旧键会把后续分片的同号消息全部误判为重复吞掉（实测 02自动化
+        # 23482 条只进 7519 条）。同名旧索引需先 DROP 再按新列建。
+        conn.execute("DROP INDEX IF EXISTS idx_messages_conv_local_unique")
         conn.execute(
             """
             CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_conv_local_unique
-            ON messages(conversation_id, local_id)
+            ON messages(conversation_id, local_id, timestamp)
             WHERE local_id IS NOT NULL
             """
         )

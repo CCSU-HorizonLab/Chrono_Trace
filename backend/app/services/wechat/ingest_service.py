@@ -795,16 +795,18 @@ class WeChatIngestService:
         }
 
     def _load_existing_message_keys(self) -> set:
-        """预载 (conversation_id, local_id) 判重集合。
+        """预载 (conversation_id, local_id, timestamp) 判重集合。
 
         替代此前逐条 OR IGNORE 的 20 万次 execute：一次 SELECT 建立，
         导入全程内存判重，新插入的 key 增量补入。local_id IS NULL 的
         实时行不参与（它们本来就不受唯一索引约束）。
+        timestamp 必须进键：微信 V4 分片库 local_id 是分片内自增，
+        跨分片同号消息会被旧二元键误判为重复而整片吞掉。
         """
         return {
-            (row[0], row[1])
+            (row[0], row[1], row[2])
             for row in get_db().execute(
-                "SELECT conversation_id, local_id FROM messages WHERE local_id IS NOT NULL"
+                "SELECT conversation_id, local_id, timestamp FROM messages WHERE local_id IS NOT NULL"
             )
         }
 
@@ -858,7 +860,9 @@ class WeChatIngestService:
                 conversation_cache[talker] = conversation_id
 
             local_id = msg.get('local_id')
-            key = (conversation_id, local_id) if local_id is not None else None
+            ts = int(msg.get('timestamp') or 0)
+            # 判重键含 timestamp：local_id 仅分片内唯一（见 _load_existing_message_keys）
+            key = (conversation_id, local_id, ts) if local_id is not None else None
             if key is not None and key in existing_keys:
                 skipped += 1
                 continue
@@ -867,7 +871,6 @@ class WeChatIngestService:
                 existing_keys.add(key)
 
             inserted += 1
-            ts = int(msg.get('timestamp') or 0)
             touched_conversations[conversation_id] = max(
                 touched_conversations.get(conversation_id, 0), ts
             )

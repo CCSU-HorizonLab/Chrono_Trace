@@ -49,7 +49,7 @@ def test_upsert_contacts_syncs_conversation_display_name(monkeypatch, isolated_d
         def __init__(self, db_path: str, db_key: str, raw_keys=None):
             pass
 
-        def get_contacts(self):
+        def get_contacts(self, include_chatroom: bool = False):
             return [
                 {
                     "username": "wxid_friend",
@@ -104,7 +104,7 @@ def test_upsert_contacts_fallback_to_nickname_when_remark_empty(monkeypatch, iso
         def __init__(self, db_path: str, db_key: str, raw_keys=None):
             pass
 
-        def get_contacts(self):
+        def get_contacts(self, include_chatroom: bool = False):
             return [
                 {
                     "username": "wxid_friend",
@@ -157,7 +157,7 @@ def test_upsert_contacts_fallback_to_username_when_both_empty(monkeypatch, isola
         def __init__(self, db_path: str, db_key: str, raw_keys=None):
             pass
 
-        def get_contacts(self):
+        def get_contacts(self, include_chatroom: bool = False):
             return [
                 {
                     "username": "wxid_friend",
@@ -217,7 +217,7 @@ def test_upsert_contacts_does_not_affect_other_accounts(monkeypatch, isolated_db
         def __init__(self, db_path: str, db_key: str, raw_keys=None):
             pass
 
-        def get_contacts(self):
+        def get_contacts(self, include_chatroom: bool = False):
             return [
                 {
                     "username": "wxid_friend",

@@ -80,7 +80,10 @@ class AnalysisService:
             
             conversations = []
             for row in cursor.fetchall():
-                if is_excluded_contact_username(row[1]):
+                # exclude_chatroom=False：群聊会话要在下拉里可见（浏览/导出
+                # 的唯一入口），前端按 conversation_type 标识；系统号/公众号
+                # 仍默认排除
+                if is_excluded_contact_username(row[1], exclude_chatroom=False):
                     continue
                 analyzed_count = row[9]
                 pending = (

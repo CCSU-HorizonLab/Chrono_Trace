@@ -402,7 +402,10 @@ class WeChatIngestService:
         contact_db = ContactDBV4(contact_db_path, db_key, raw_keys=raw_keys)
 
         try:
-            contacts_data = contact_db.get_contacts()
+            # include_chatroom=True：群聊联系人一并入库，群名(nick_name)
+            # 经 _upsert_contacts 回填 conversations.display_name——否则群
+            # 会话在下拉里只显示 xxx@chatroom 原始 ID，无法辨认
+            contacts_data = contact_db.get_contacts(include_chatroom=True)
             logger.debug(f"[DEBUG] 从数据库读取到 {len(contacts_data)} 个联系人")
             store_stats = self._upsert_contacts(contacts_data, account_wxid)
             logger.info(

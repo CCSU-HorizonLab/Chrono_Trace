@@ -136,7 +136,9 @@ class ContactDBV4(WeChatDBBase):
         
         for row in cursor:
             username = row['username']
-            if is_excluded_contact_username(username):
+            # exclude_chatroom 跟随调用方意图：include_chatroom=True 时此处
+            # 必须放行，否则 SQL 放开了行过滤又把群丢掉（include 形同虚设）
+            if is_excluded_contact_username(username, exclude_chatroom=not include_chatroom):
                 continue
             contact = {
                 'username': username,
@@ -145,7 +147,9 @@ class ContactDBV4(WeChatDBBase):
                 'alias': row['alias'] or '',
                 'phone': '',  # V4 不直接存储电话
                 'is_friend': row['local_type'] == 1,
-                'is_chatroom': row['local_type'] == 2,
+                # 实测 V4 库群聊行 local_type 多为 1（非文档宣称的 2），
+                # 群判定以 @chatroom 后缀为准
+                'is_chatroom': row['local_type'] == 2 or '@chatroom' in username,
                 'avatar_url': row['big_head_url'] or row['small_head_url'] or '',
                 'extra': self._parse_extra_buffer(row['extra_buffer']) if row['extra_buffer'] else {}
             }

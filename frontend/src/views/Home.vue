@@ -110,6 +110,14 @@
 
       <div class="status-area">
         <div v-if="importProgress" class="progress-box">
+          <div class="progress-meta">
+            <span v-if="phaseBadgeText" class="phase-badge">{{ phaseBadgeText }}</span>
+            <span class="progress-detail">
+              <template v-if="importProgress.conversationTotal">对话 {{ importProgress.conversationIdx || 0 }}/{{ importProgress.conversationTotal }} · </template>
+              <template v-if="importProgress.insertedMessages">已新增 {{ importProgress.insertedMessages }} 条 · </template>
+              {{ formatDuration(importProgress.elapsedMs || 0) }}<template v-if="importProgress.etaMs"> · 预计剩余 {{ formatDuration(importProgress.etaMs) }}</template>
+            </span>
+          </div>
           <p>{{ importProgress.status }}</p>
           <div class="progress-bar">
             <div class="progress-fill" :style="{ width: importProgress.percent + '%' }" />
@@ -274,7 +282,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import {
   KeyRound,
   X,
@@ -343,6 +351,19 @@ const importProgress = ref<ImportProgress>(null)
 let importPollTimer: ReturnType<typeof setInterval> | null = null
 // ETA 样本：最近若干轮询的 (时刻, 会话序号)，按会话推进速率平滑估算剩余
 let importEtaSamples: Array<{ t: number; idx: number }> = []
+const phaseBadgeText = computed(() => {
+  const phase = importProgress.value?.phase
+  if (!phase) return ''
+  const map: Record<string, string> = {
+    resolving_paths: '定位数据库',
+    contacts: '联系人',
+    messages: '导入消息',
+    scanning: '扫描',
+    conversations: '导入对话',
+    done: '完成',
+  }
+  return map[phase] || ''
+})
 const hasImportedBefore = ref(false)
 const incrementInfo = ref<IncrementInfo>(null)
 const incrementDismissed = ref(false)
@@ -1188,6 +1209,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   stopKeyCapturePolling()
+  stopImportPolling()
   window.removeEventListener('chrono:wechat-account-changed', handleGlobalAccountChanged)
   window.removeEventListener('chrono:wechat-settings-saved', handleWechatSettingsSaved)
 })
@@ -1488,6 +1510,33 @@ onUnmounted(() => {
   height: 100%;
   background: var(--ct-color-primary);
   transition: width 0.3s ease;
+}
+
+/* 进度元信息行：阶段徽章 + 计数/耗时（计数为主、百分比条为参考） */
+.progress-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+  font-size: 12px;
+  color: var(--ct-text-secondary, #64748b);
+}
+
+.phase-badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #fff;
+  background: var(--ct-color-primary, #6366f1);
+  white-space: nowrap;
+}
+
+.progress-detail {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .log-container {

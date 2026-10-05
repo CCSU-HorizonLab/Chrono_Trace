@@ -2719,23 +2719,6 @@ class RealtimeMonitorService:
 
         return 'content_exact' if exact_match else 'content_truncated_prefix'
 
-    def _checkpoint_matches_message(
-        self,
-        checkpoint: dict,
-        msg,
-        resolved_timestamp: int,
-        visible_messages: list | None = None,
-        visible_index: int = -1,
-    ) -> bool:
-        """Check whether a visible message corresponds to the stored checkpoint."""
-        return self._checkpoint_match_reason(
-            checkpoint,
-            msg,
-            resolved_timestamp,
-            visible_messages=visible_messages,
-            visible_index=visible_index,
-        ) is not None
-
     def _store_backfill_messages(
         self,
         talker_username: str,
@@ -3825,23 +3808,6 @@ class RealtimeMonitorService:
         if 'listener_backend' in config:
             self._listener_backend = normalize_listener_backend(config['listener_backend'])
         _print(f"[RealtimeMonitorService] 建议配置已更新: {self._suggestion_config}")
-
-    def _build_augmented_historical_context(
-        self,
-        ctx: dict,
-        *,
-        self_profile_cache: dict | None = None,
-    ) -> None:
-        """构建带量化风格约束的 historical_context。"""
-        try:
-            from .historical_context import augment_context_with_historical_data
-
-            augment_context_with_historical_data(
-                ctx,
-                self_profile_cache=self_profile_cache,
-            )
-        except Exception as hist_e:
-            _print(f"⚠️ historical_context 构建失败: {hist_e}")
 
     def _check_feedback(
         self,

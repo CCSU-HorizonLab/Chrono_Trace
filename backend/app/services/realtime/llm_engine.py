@@ -877,17 +877,6 @@ class LLMSuggestionEngine(SuggestionEngine):
             )
         return filtered
 
-    def _get_latest_user_input(self, context: dict) -> str:
-        """提取手动输入框里的最后一条用户输入。"""
-        user_context = context.get("user_context")
-        if isinstance(user_context, list):
-            for msg in reversed(user_context):
-                if msg.get("role") == "user":
-                    return str(msg.get("content", "")).strip()
-        elif isinstance(user_context, str):
-            return user_context.strip()
-        return ""
-
     def _build_rag_context_summary(self, context: dict) -> dict:
         """Layered user-facing RAG badge states.
 
@@ -998,15 +987,6 @@ class LLMSuggestionEngine(SuggestionEngine):
         if cached is not None:
             return cached
         return route_generation_task(context, trigger_type)
-
-    def _classify_manual_request(self, context: dict) -> str:
-        """
-        区分两类手动输入（兼容层:委托 G2 任务路由器）：
-        - direct_reply: 用户在直接和 AI 说话，希望 AI 回他
-        - advice_request: 用户在请教怎么回复对方/怎么开启话题/策划邀约
-        """
-        routing = self._resolve_task_routing(context, "manual_request")
-        return "direct_reply" if routing.output == OUTPUT_DIRECT_ANSWER else "advice_request"
 
     def _persist_sent_manifest(self, context: dict) -> None:
         """G6:把最终 prompt 发送清单回填到 rag_retrieval_logs(尽力而为,不阻塞生成)。"""
@@ -1177,31 +1157,6 @@ class LLMSuggestionEngine(SuggestionEngine):
             "证据不足时明说'信息不足,无法判断',禁止下确定性结论"
         )
         return lines
-
-    def _looks_like_advice_followup(self, normalized_latest_input: str) -> bool:
-        """判断已在建议上下文中时，当前输入是否仍在追问给对方怎么说。"""
-        if not normalized_latest_input:
-            return False
-        third_party_hints = ("她", "他", "对方", "ta", "TA", "人家")
-        memory_or_topic_hints = (
-            "上次",
-            "之前",
-            "刚刚",
-            "说的",
-            "提到",
-            "流派",
-            "话题",
-            "游戏",
-            "店",
-            "吃",
-            "喝",
-            "不知道",
-            "不记得",
-            "忘了",
-        )
-        return any(hint in normalized_latest_input for hint in third_party_hints) and any(
-            hint in normalized_latest_input for hint in memory_or_topic_hints
-        )
 
     def _has_manual_advice_context(self, context: dict) -> bool:
         """判断当前用户输入前，是否已经在围绕“给建议/改话术”这个任务继续追问。"""

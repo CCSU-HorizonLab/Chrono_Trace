@@ -112,49 +112,6 @@ def test_build_historical_context_skips_default_style_constraints_without_inputs
     assert "style_constraints" not in historical
 
 
-def test_monitor_service_builds_augmented_historical_context_from_cache(monkeypatch):
-    service = RealtimeMonitorService()
-    ctx = {
-        "recent_messages": [
-            {"sender_attr": "other", "content": "有点累", "timestamp": 100},
-            {"sender_attr": "self", "content": "早点休息", "timestamp": 101},
-        ]
-    }
-
-    monkeypatch.setattr(
-        "app.services.realtime.historical_context.load_cached_style_inputs",
-        lambda conversation_id: (
-            PreprocessedStatistics(
-                total_message_count=20,
-                average_message_length=12.0,
-                emoji_message_count=0,
-                sender_initiated_count=4,
-                contact_initiated_count=16,
-                nickname_message_count=0,
-                sender_nickname_message_count=0,
-                contact_nickname_message_count=0,
-            ),
-            {
-                "emotional_resonance": {"score": 35},
-                "attitude_tendency": {"score": 35},
-            },
-        ),
-    )
-
-    service._build_augmented_historical_context(
-        ctx,
-        self_profile_cache={
-            "conversation_id": 123,
-            "features_snapshot": {"user_msg_style": {"avg_chars_per_msg": 7.0}},
-        },
-    )
-
-    style_constraints = ctx["historical_context"]["style_constraints"]
-    assert style_constraints["avg_msg_length"] == 7.0
-    assert style_constraints["max_speech_length"] == 17
-    assert style_constraints["communication_type"] == "reactive"
-    assert style_constraints["emotional_style"] == "cold"
-
 
 def test_augment_context_with_historical_data_merges_shared_cached_inputs(monkeypatch):
     ctx = {

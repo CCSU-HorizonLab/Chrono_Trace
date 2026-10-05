@@ -8,9 +8,7 @@ LLM 建议引擎
 
 import json
 import logging
-import random
 import re
-import socket
 import time
 import urllib.request
 import urllib.error
@@ -19,9 +17,9 @@ from typing import Any, Callable, Optional
 from .providers.models import normalize_text
 from .recent_window import KIND_TRANSFER_EVENT, purify_recent_window, transfer_event_line
 from .suggestion_engine import SuggestionEngine, SuggestionResult
-from .llm_client import LlmClientMixin, ANALYSIS_SYSTEM_PROMPT, BASE_RETRY_DELAY, MAX_API_RETRIES, QUICK_PROMPTS_SYSTEM_PROMPT, REPAIR_SYSTEM_PROMPT, RETRYABLE_HTTP_STATUS, SYSTEM_PROMPT
+# SYSTEM_PROMPT 仅为兼容旧测试的 llm_engine.SYSTEM_PROMPT 引用而再导出
+from .llm_client import LlmClientMixin, SYSTEM_PROMPT
 from .suggestion_parsing import SuggestionParsingMixin
-from .style_constraints import StyleConstraints, compute_style_constraints
 from .task_router import (
     KN_CONTACT_PROFILE,
     KN_FACTS,
@@ -37,9 +35,6 @@ from .task_router import (
     TaskRouting,
     route_generation_task,
 )
-
-
-# Prompt 系统模板
 
 
 # 触发类型的中文描述

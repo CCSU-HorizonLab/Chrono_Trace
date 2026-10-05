@@ -2,8 +2,6 @@ from typing import Any, Optional
 import json
 import os
 import logging
-import importlib
-import shutil
 import sys
 import threading
 import time
@@ -35,15 +33,11 @@ from ..services.analysis.feature_extraction_config import (
     normalize_analysis_device_mode,
 )
 from ..services.model_paths import (
-    EMBEDDING_MODEL_DIRNAME,
     EMBEDDING_MODEL_DIM,
     EMBEDDING_MODEL_REPO_ID,
     MODEL_ROOT_DIR_KEY,
-    SENTIMENT_MODEL_DIRNAME,
-    SENTIMENT_MODEL_REPO_ID,
     get_default_model_root_dir,
     get_embedding_model_dir,
-    get_model_root_dir,
     get_sentiment_model_dir,
     normalize_model_root_dir,
 )
@@ -930,35 +924,6 @@ class Bridge(
                 import time as _time
                 from ..db.connection import get_db
                 conn = get_db()
-                conn.execute('''
-                    CREATE TABLE IF NOT EXISTS realtime_suggestions (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        account_wxid TEXT NOT NULL,
-                        batch_id TEXT NOT NULL,
-                        trigger_type TEXT NOT NULL,
-                        intent TEXT NOT NULL,
-                        severity TEXT DEFAULT 'medium',
-                        summary TEXT NOT NULL,
-                        speeches TEXT NOT NULL,
-                        confidence REAL DEFAULT 1.0,
-                        status TEXT DEFAULT 'pending',
-                        engine_type TEXT DEFAULT 'llm',
-                        trigger_context TEXT,
-                        created_at INTEGER NOT NULL,
-                        read_at INTEGER,
-                        dismissed_at INTEGER,
-                        reply TEXT,
-                        thought_process TEXT
-                    )
-                ''')
-                try:
-                    conn.execute("ALTER TABLE realtime_suggestions ADD COLUMN reply TEXT")
-                except:
-                    pass
-                try:
-                    conn.execute("ALTER TABLE realtime_suggestions ADD COLUMN thought_process TEXT")
-                except:
-                    pass
                 now_time = int(_time.time())
                 cursor = conn.cursor()
                 cursor.execute('''
@@ -1905,37 +1870,6 @@ class Bridge(
             conn = get_db()
             resolved_account_wxid = self._resolve_account_wxid(account_wxid)
 
-            # 确保表存在
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS realtime_suggestions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    account_wxid TEXT NOT NULL,
-                    batch_id TEXT NOT NULL,
-                    trigger_type TEXT NOT NULL,
-                    intent TEXT NOT NULL,
-                    severity TEXT DEFAULT 'medium',
-                    summary TEXT NOT NULL,
-                    speeches TEXT NOT NULL,
-                    confidence REAL DEFAULT 1.0,
-                    status TEXT DEFAULT 'pending',
-                    engine_type TEXT DEFAULT 'llm',
-                    trigger_context TEXT,
-                    created_at INTEGER NOT NULL,
-                    read_at INTEGER,
-                    dismissed_at INTEGER,
-                    reply TEXT,
-                    thought_process TEXT
-                    )
-                ''')
-            try:
-                conn.execute("ALTER TABLE realtime_suggestions ADD COLUMN reply TEXT")
-            except:
-                pass
-            try:
-                conn.execute("ALTER TABLE realtime_suggestions ADD COLUMN thought_process TEXT")
-            except:
-                pass
-
             # 查询 pending 状态的建议
             cursor = conn.execute('''
                 SELECT id, trigger_type, intent, severity, summary, speeches,
@@ -2166,9 +2100,6 @@ class Bridge(
             logger.error(f"[Bridge] 设置建议配置失败: {e}")
             return {"ok": False, "error": str(e)}
 
-    # ==================== LLM 模型管理 ====================
-
-
     # ==================== 特征提取分析相关 ====================
 
     def _get_feature_service(self):
@@ -2301,16 +2232,7 @@ class Bridge(
             }
 
 
-    # ==================== 悬浮窗管理 ====================
-
-
-    # ==================== 好感度分析相关 ====================
-
-    # -- 关系上下文 --
-
-
-    # -- 好感度配置 --
-
+    # ==================== 实时监听恢复与回溯 ====================
 
     def get_realtime_resume_info(
         self,

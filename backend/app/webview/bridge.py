@@ -480,24 +480,25 @@ class Bridge(
         options: dict[str, Any] | None = None,
         account_wxid: str = "",
     ) -> dict[str, Any]:
-        """
-        导入微信数据（完整流程）
-        
+        """启动异步微信数据导入，立即返回 task_id 供 get_import_progress 轮询。
+
+        导入在 daemon 线程执行（全量重扫可达数十分钟，同步阻塞会让前端
+        进度全程冻结）；同一时刻只允许一个导入任务，重复调用复用运行中
+        任务。
+
         Args:
             db_key: 32位hex密钥
             options: 导入选项 {
                 "import_contacts": bool,
                 "import_messages": bool,
-                "limit": int
+                "limit": int,
+                "force_full": bool
             }
-            
+
         Returns:
-            {
-                "ok": True,
-                "stats": {"contacts": 120, "messages": 15230, "conversations": 45},
-                "warnings": [...]
-            }
+            {"ok": True, "task_id": "...", "reused": bool}
         """
+        # —— 配置解析保留在调用线程（读 settings 的快操作）——
         options = dict(options or {})
         resolved_wxid = self._resolve_account_wxid(str(options.pop("account_wxid", "") or account_wxid))
         custom_paths = self._get_wechat_custom_paths(resolved_wxid)
@@ -516,17 +517,116 @@ class Bridge(
         if "import_watermark_ts" not in options:
             options["import_watermark_ts"] = int(account.get("import_watermark_ts") or 0)
 
-        result = self.wechat_service.import_wechat_data(
-            db_key, options, custom_paths, raw_keys=raw_keys
-        )
-        if result.get("ok"):
-            snapshot = self.wechat_service.build_file_size_snapshot(custom_paths)
-            watermark_out = (result.get("stats") or {}).get("import_watermark_ts")
-            self._save_wechat_import_baseline(
-                snapshot, account_wxid=resolved_wxid, db_key=db_key,
-                import_watermark_ts=watermark_out,
-            )
-        return result
+        # —— 防重入与预注册在同一锁区间，杜绝「检查后、注册前」窗口双跑 ——
+        with self._wechat_import_lock:
+            for existing_id, entry in self._wechat_import_tasks.items():
+                if entry.get("status") != "running":
+                    continue
+                thread = entry.get("thread")
+                if thread is None or thread.is_alive():
+                    return {"ok": True, "task_id": existing_id, "reused": True}
+            task_id = f"wechat_import_{int(time.time())}_{uuid.uuid4().hex[:8]}"
+            now_ms = int(time.time() * 1000)
+            self._wechat_import_tasks[task_id] = {
+                "task_id": task_id,
+                "status": "running",
+                "phase": "resolving_paths",
+                "phase_label": "查找数据库路径...",
+                "percent": 0.0,
+                "conversation_idx": 0,
+                "conversation_total": 0,
+                "inserted_messages": 0,
+                "inserted_contacts": 0,
+                "started_at": now_ms,
+                "created_at": now_ms,
+                "updated_at": now_ms,
+                "error": None,
+                "result": None,
+                "thread": None,
+            }
+
+        def _progress(status_text: str, current: int, total: int, detail: dict | None = None) -> None:
+            # 回调写入失败绝不杀死导入线程
+            try:
+                detail = detail or {}
+                updates: dict[str, Any] = {
+                    "status": "running",
+                    "phase_label": status_text,
+                    "percent": float(current),
+                }
+                if detail.get("phase"):
+                    updates["phase"] = detail["phase"]
+                for key in ("conversation_idx", "conversation_total", "inserted_messages"):
+                    if key in detail:
+                        updates[key] = int(detail[key] or 0)
+                self._update_wechat_import_status(task_id, **updates)
+            except Exception as exc:
+                logger.debug("[Bridge] 导入进度回调写入失败(忽略): %s", exc)
+
+        def _run() -> None:
+            try:
+                result = self.wechat_service.import_wechat_data(
+                    db_key, options, custom_paths, progress_callback=_progress, raw_keys=raw_keys
+                )
+                if result.get("ok"):
+                    # 基线保存在 worker 线程完成（内部走 self._settings_lock，线程安全）
+                    snapshot = self.wechat_service.build_file_size_snapshot(custom_paths)
+                    watermark_out = (result.get("stats") or {}).get("import_watermark_ts")
+                    self._save_wechat_import_baseline(
+                        snapshot, account_wxid=resolved_wxid, db_key=db_key,
+                        import_watermark_ts=watermark_out,
+                    )
+                    self._update_wechat_import_status(
+                        task_id, status="completed", phase="done", percent=100.0,
+                        phase_label="导入完成",
+                        inserted_contacts=(result.get("stats") or {}).get("inserted_contacts", 0),
+                        result=result,
+                    )
+                else:
+                    self._update_wechat_import_status(
+                        task_id, status="failed",
+                        error=str(result.get("error") or "导入失败"), result=result,
+                    )
+            except Exception as exc:
+                logger.error("[Bridge] 异步微信导入失败: %s", exc, exc_info=True)
+                self._update_wechat_import_status(task_id, status="failed", error=str(exc))
+
+        thread = threading.Thread(target=_run, name=f"WechatImport-{task_id}", daemon=True)
+        with self._wechat_import_lock:
+            self._wechat_import_tasks[task_id]["thread"] = thread
+        thread.start()
+        return {"ok": True, "task_id": task_id, "reused": False}
+
+    def get_import_progress(self, task_id: str) -> dict[str, Any]:
+        """查询导入任务进度（前端 1s 轮询；终态时 result 携带完整 stats）。"""
+        entry = self._get_wechat_import_status(str(task_id or ""))
+        if not entry:
+            return {"ok": False, "status": "not_found", "error": "导入任务不存在或已过期"}
+        now_ms = int(time.time() * 1000)
+        # 终态冻结耗时（updated_at-started_at），运行中实时计算
+        try:
+            started = int(entry.get("started_at") or 0)
+            if entry.get("status") in {"completed", "failed"}:
+                elapsed = max(0, int(entry.get("updated_at") or now_ms) - started)
+            else:
+                elapsed = max(0, now_ms - started)
+        except (TypeError, ValueError):
+            elapsed = 0
+        return {
+            "ok": True,
+            "task_id": entry.get("task_id"),
+            "status": entry.get("status"),
+            "phase": entry.get("phase"),
+            "phase_label": entry.get("phase_label"),
+            "percent": float(entry.get("percent") or 0.0),
+            "conversation_idx": int(entry.get("conversation_idx") or 0),
+            "conversation_total": int(entry.get("conversation_total") or 0),
+            "inserted_messages": int(entry.get("inserted_messages") or 0),
+            "inserted_contacts": int(entry.get("inserted_contacts") or 0),
+            "elapsed_ms": elapsed,
+            "error": entry.get("error"),
+            "result": entry.get("result"),
+        }
 
     def refresh_wechat_contact_avatars(
         self,

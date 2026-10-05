@@ -2,7 +2,6 @@
 实时消息监听服务
 基于监听 provider 实现单对象消息监听
 """
-import sys
 import logging
 import time
 import uuid
@@ -16,22 +15,10 @@ from .providers.base import UINotAccessibleError
 from .providers.models import build_message_hash, normalize_text
 from .providers.native_uia import TIME_LABEL_RE
 from .providers.factory import normalize_listener_backend
+from .safe_print import safe_print as _print
 from ..wechat.account_settings import get_active_wechat_account_wxid, load_settings_from_file
 
 logger = logging.getLogger(__name__)
-def _print(*args, **kwargs):
-    kwargs.setdefault("flush", True)
-    try:
-        print(*args, **kwargs)
-    except UnicodeEncodeError:
-        sep = kwargs.get("sep", " ")
-        end = kwargs.get("end", "\n")
-        text = sep.join(str(arg) for arg in args) + end
-        encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
-        safe_text = text.encode(encoding, errors="replace").decode(encoding, errors="replace")
-        sys.stdout.write(safe_text)
-        if kwargs.get("flush", False):
-            sys.stdout.flush()
 
 
 from .uia_recovery import UiaRecoveryMixin

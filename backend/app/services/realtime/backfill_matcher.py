@@ -6,32 +6,17 @@ from __future__ import annotations
 
 import logging
 import re
-import sys
 
 logger = logging.getLogger(__name__)
 
-
-import sys
-
-def _print(*args, **kwargs):
-    kwargs.setdefault("flush", True)
-    try:
-        print(*args, **kwargs)
-    except UnicodeEncodeError:
-        sep = kwargs.get("sep", " ")
-        end = kwargs.get("end", "\n")
-        text = sep.join(str(arg) for arg in args) + end
-        encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
-        safe_text = text.encode(encoding, errors="replace").decode(encoding, errors="replace")
-        sys.stdout.write(safe_text)
-        if kwargs.get("flush", False):
-            sys.stdout.flush()
 from datetime import datetime, timedelta
 import json
+
 from .providers.models import normalize_text
+from .safe_print import safe_print as _print
 
 class BackfillMatcherMixin:
-    """Checkpoint matching + scroll strategy."""
+    """断点匹配 + 滚动策略（纯函数）。"""
 
     def _normalize_checkpoint_context_value(self, token: str) -> str:
         """Normalize checkpoint context tokens so relative time labels stay stable across days."""

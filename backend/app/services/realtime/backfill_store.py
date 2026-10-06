@@ -205,6 +205,14 @@ class BackfillStoreMixin:
                 mark_conversations_stale([conversation_id])
             except Exception as stale_e:
                 logger.debug("[分析状态] backfill stale mark skipped: %s", stale_e)
+            # RAG 索引同样要感知：不标脏则回溯历史永不进记忆
+            # （id 游标只认 messages.id，插入即推进，等下次重建被拾起）
+            try:
+                from .rag.indexer import RagIndexQueue
+
+                RagIndexQueue.mark_dirty(self._resolve_account_wxid(self.current_account_wxid), int(conversation_id))
+            except Exception as rag_e:
+                logger.debug("[RAG] backfill dirty mark skipped: %s", rag_e)
 
         if messages:
             _print(f"[Backfill] 已存在样本({existing}/{len(messages)}): {existing_samples}")

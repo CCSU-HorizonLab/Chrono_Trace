@@ -571,7 +571,18 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, UiaRec
             if not self.wx:
                 raise RuntimeError("No realtime provider instance")
             expected_name = (self.current_display_name or target_name or "").strip()
-            self.wx.ChatWith(target_name, expected_display_name=expected_name)
+            # db_watch 后端用 return False（不抛异常）表示切换失败：
+            # 返回值必须检查，否则失败被当成功，监听「正常」启动但永远
+            # 抓不到消息且无任何报错
+            chat_ok = self.wx.ChatWith(target_name, expected_display_name=expected_name)
+            if chat_ok is False:
+                self._chat_error = (
+                    f"切换聊天窗口失败（open_chat 返回 False）"
+                    f"，target='{target_name}'，expected='{expected_name}'"
+                    f"（常见原因：本地库解析不到该联系人或消息表不在任何分片）"
+                )
+                _print(f"[OpenChat] open_chat 返回 False: {self._chat_error}")
+                return False
             _print(
                 f"[OpenChat] 已调用 provider.open_chat(search='{target_name}', expected='{expected_name}')"
             )

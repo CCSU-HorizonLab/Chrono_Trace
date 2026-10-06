@@ -764,6 +764,7 @@ CREATE TABLE IF NOT EXISTS rag_documents (
     sensitivity TEXT DEFAULT 'normal',
     enabled INTEGER DEFAULT 1,
     superseded_by INTEGER,
+    fact_id INTEGER,
     index_version TEXT DEFAULT 'v1',
     source_kind TEXT DEFAULT 'historical',
     created_at INTEGER NOT NULL,
@@ -862,6 +863,7 @@ CREATE TABLE IF NOT EXISTS rag_index_status (
     storage_bytes INTEGER DEFAULT 0,
     enabled INTEGER DEFAULT 1,
     index_version TEXT DEFAULT 'v1',
+    last_message_id INTEGER NOT NULL DEFAULT 0,
     updated_at INTEGER NOT NULL,
     UNIQUE(account_wxid, conversation_id),
     CHECK(status IN ('pending', 'indexing', 'ready', 'stale', 'failed'))

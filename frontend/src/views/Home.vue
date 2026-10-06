@@ -351,6 +351,9 @@ const importProgress = ref<ImportProgress>(null)
 let importPollTimer: ReturnType<typeof setInterval> | null = null
 // ETA 样本：最近若干轮询的 (时刻, 会话序号)，按会话推进速率平滑估算剩余
 let importEtaSamples: Array<{ t: number; idx: number }> = []
+// 挂起的导入轮询 promise 的 reject：卸载时 stopImportPolling 主动了结，
+// 否则 await 永久悬挂、startImport 的 finally 永不执行
+let importPollRejecter: ((error: Error) => void) | null = null
 const phaseBadgeText = computed(() => {
   const phase = importProgress.value?.phase
   if (!phase) return ''
@@ -835,6 +838,11 @@ async function pollKeyCaptureSession() {
 function stopImportPolling() {
   if (importPollTimer) { clearInterval(importPollTimer); importPollTimer = null }
   importEtaSamples = []
+  if (importPollRejecter) {
+    const reject = importPollRejecter
+    importPollRejecter = null
+    reject(new Error('导入轮询已停止（页面已离开或导入中断）。'))
+  }
 }
 
 /** 毫秒 →「12:34 / 1:02:03」中文场景耗时格式 */
@@ -848,17 +856,25 @@ function formatDuration(ms: number): string {
   return h > 0 ? `${h}:${mm}:${ss}` : `${m}:${ss}`
 }
 
+/** 终态路径收尾：先解除 rejecter 再停轮询（stopImportPolling 的主动
+ * reject 只服务「页面卸载中断」场景，不能覆盖既定的 resolve/reject） */
+function finishImportPolling() {
+  importPollRejecter = null
+  stopImportPolling()
+}
+
 /**
  * 轮询导入任务直至终态（1s 间隔，对齐模型下载的 Analytics 轮询模式）。
  * resolve(完整 result) / reject(Error)；期间持续更新 importProgress。
  */
 function waitForImportTask(taskId: string): Promise<any> {
   return new Promise((resolve, reject) => {
+    importPollRejecter = reject
     importPollTimer = setInterval(async () => {
       try {
         const prog = await api.get_import_progress(taskId)
         if (!prog.ok) {
-          stopImportPolling()
+          finishImportPolling()
           reject(new Error(prog.error || '导入任务已失效。'))
           return
         }
@@ -889,16 +905,16 @@ function waitForImportTask(taskId: string): Promise<any> {
           etaMs,
         }
         if (prog.status === 'completed') {
-          stopImportPolling()
+          finishImportPolling()
           resolve(prog.result || { ok: true })
           return
         }
         if (prog.status === 'failed') {
-          stopImportPolling()
+          finishImportPolling()
           reject(new Error(prog.error || '导入失败。'))
         }
       } catch (error) {
-        stopImportPolling()
+        finishImportPolling()
         reject(error)
       }
     }, 1000)

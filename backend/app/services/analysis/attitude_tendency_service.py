@@ -64,8 +64,6 @@ class AttitudeTendencyService:
         
         公式: (加权正面消息数 / (正面消息数 + 负面消息数)) × 100%
         """
-        stats = self.orchestrator.get_preprocessed_statistics(conversation_id)
-
         # 态度维度语义是「对方的态度」：分子分母都必须只统计对方消息。
         # basic.py 的 total_positive/negative_count 不过滤发送方（含用户
         # 自己的消息），直接使用会把用户自己的积极/消极发言计入对方

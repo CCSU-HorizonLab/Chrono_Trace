@@ -25,6 +25,7 @@ class AffinityApiMixin:
             "backend.app.services.analysis.affinity_weights",
             "backend.app.services.analysis.intimacy_signals_service",
             "backend.app.services.analysis.relationship_llm_service",
+            "backend.app.services.analysis.affinity_history",
         ]
         reloaded = None
         for module_name in module_names:
@@ -418,11 +419,20 @@ class AffinityApiMixin:
             except Exception as fresh_e:
                 logger.debug("[Bridge] 分析新鲜度读取跳过: %s", fresh_e)
 
+            history: dict[str, Any] = {}
+            try:
+                from ...services.analysis.affinity_history import compute_trend
+
+                history = compute_trend(int(conversation_id))
+            except Exception as hist_e:
+                logger.debug("[Bridge] 历史趋势读取跳过: %s", hist_e)
+
             return {
                 "ok": True,
                 "result": asdict(result) if result else None,
                 "analysis_stale": freshness.get("stale", False),
                 "pending_message_count": freshness.get("pending_message_count", 0),
+                "history": history,
             }
         except Exception as e:
             logger.error(f"[Bridge] 获取好感度结果失败: {e}")

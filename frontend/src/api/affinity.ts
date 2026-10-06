@@ -83,6 +83,9 @@ export interface AffinityAnalysisResult {
     llm_relationship_absent_reason?: string | null
     /** 评分口径版本（跨口径趋势不可比） */
     analysis_caliber?: number
+    /** 与上次分析的分差（同口径才有值，读取时由 bridge 附加） */
+    score_trend?: number | null
+    last_analysis_at?: number | null
     conversation_id: number
     analysis_timestamp: number
     analysis_duration_ms: number
@@ -99,6 +102,10 @@ export interface AffinityConfig {
     weight_emotional_resonance: number
     weight_chat_positivity: number
     weight_attitude_tendency: number
+    weight_preference_compatibility?: number
+    weight_intimacy_signals?: number
+    weight_llm_relationship?: number
+    llm_relationship_enabled?: boolean
     preference_bonus_factor?: number
     reply_timeliness_threshold_seconds: number
     session_gap_threshold_seconds: number
@@ -145,11 +152,14 @@ export async function getAffinityScores(conversationId: number): Promise<Affinit
     const res = await api.get_affinity_scores(conversationId)
     if (!res.ok) throw new Error(res.error || 'Failed to get scores')
     if (!res.result) return null
-    // 附加分析新鲜度（导入新消息未重分析时前端提示用）
+    // 附加分析新鲜度与历史趋势（趋势跨口径不可比时 score_trend 为空）
+    const history = (res as any).history || {}
     return {
         ...res.result,
         analysis_stale: Boolean(res.analysis_stale),
         pending_message_count: res.pending_message_count ?? null,
+        score_trend: history.comparable ? (history.score_trend ?? null) : null,
+        last_analysis_at: history.last_analysis_at ?? null,
     }
 }
 

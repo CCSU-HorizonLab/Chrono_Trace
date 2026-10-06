@@ -850,7 +850,21 @@ class AffinityAnalysisService:
             
             get_db().commit()
             logger.debug(f"分析结果已保存 (会话 {conversation_id})")
-            
+
+            # 历史分数落库（只增不删；失败不影响主流程）
+            try:
+                from .affinity_history import record_score_history
+
+                stats = self.preprocessing.get_preprocessed_statistics(conversation_id)
+                record_score_history(
+                    conversation_id,
+                    result,
+                    stats=stats,
+                    config_snapshot={"config_fingerprint": config_fingerprint},
+                )
+            except Exception as hist_e:
+                logger.debug(f"[历史分数] 落库跳过: {hist_e}")
+
         except Exception as e:
             logger.error(f"保存分析结果失败: {e}")
     

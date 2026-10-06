@@ -1,8 +1,10 @@
-"""好感度分析编排服务：汇总四个维度的评分结果。
+"""好感度分析编排服务：汇总各维度评分结果。
 
-维度与默认权重（未配置喜好关键词时）：
-- 情感共振率 40% / 聊天积极度 35% / 态度倾向 25%（配置喜好关键词后调整为 35/35/20/10）
-- 各维度分数归一后加权合成总分，附总体解读
+六维点数制权重 + 归一引擎（affinity_weights）：
+- 情感共振率 / 聊天积极度 / 态度倾向 / 喜好兼容度（配关键词时启用）
+  / 亲密度信号 / LLM 关系评估（配模型且开关开时启用）
+- 各维 declared 权重不要求和为 1；总分阶段按在场集合归一（缺席维度
+  自动从分母剔除），再经置信度收缩得到总分。
 """
 
 import time
@@ -66,6 +68,7 @@ class AffinityAnalysisResult:
     task_id: str = ""
     cache_version: int = 0
     cache_updated_at: int = 0
+    analysis_caliber: int = 0
     
     # 状态
     status: str = "pending"  # pending, running, completed, failed
@@ -77,7 +80,9 @@ class AffinityAnalysisResult:
 class AffinityAnalysisService:
     """好感度分析编排器"""
 
-    CACHE_SCHEMA_VERSION = 9
+    CACHE_SCHEMA_VERSION = 10
+    # 口径版本：评分口径结构性变化时 +1（落历史行与缓存，跨口径趋势不可比）
+    CALIBER_VERSION = 2
     NEUTRAL_OVERALL_BASELINE = 35.0
     OVERALL_SESSION_CONFIDENCE_TARGET = 30
     OVERALL_ACTIVE_DAY_CONFIDENCE_TARGET = 30
@@ -87,15 +92,6 @@ class AffinityAnalysisService:
     SCORE_SIGMOID_MIDPOINT = 55.0
     SCORE_SIGMOID_STEEPNESS = 0.07
     PREFERENCE_BONUS_FACTOR = 0.10
-    PREFERENCE_BONUS_DECAY_START = 60
-    PREFERENCE_BONUS_DECAY_END = 90
-
-    # 默认维度权重仅保留为内部常量，实际主维度权重固定为 40/35/25
-    # 喜好兼容度不参与主维度加权，统一作为额外加分项处理
-    DEFAULT_WEIGHT_EMOTIONAL = 0.40
-    DEFAULT_WEIGHT_POSITIVITY = 0.35
-    DEFAULT_WEIGHT_ATTITUDE = 0.25
-    DEFAULT_WEIGHT_PREFERENCE = 0.00
     
     def __init__(self):
         pass  # get_db() removed for thread safety
@@ -394,10 +390,19 @@ class AffinityAnalysisService:
         cancel_event: Optional[threading.Event] = None
     ):
         """计算所有维度评分"""
-        
-        # 获取固定主维度权重与喜好加分展示权重
-        weights = self.config_service.get_dimension_weights(conversation_id)
-        logger.info(f"使用固定主维度权重与喜好加分配置: {weights}")
+
+        # 解析六维权重计划（config 覆盖默认；缺席维度 declared 置 0）。
+        # A 期 LLM 维固定缺席（llm_available=False），C 期接入真实探测
+        from .affinity_weights import resolve_dimension_plan
+        plan = resolve_dimension_plan(config, llm_available=False)
+        logger.info(
+            "维度权重计划: %s",
+            {k: (v["declared"] if v["enabled"] else 0.0) for k, v in plan.items()},
+        )
+        weights = {
+            key: (entry["declared"] if entry["enabled"] else 0.0)
+            for key, entry in plan.items()
+        }
         
         # 1. 情感共振率
         self._check_cancelled(cancel_event)
@@ -494,8 +499,8 @@ class AffinityAnalysisService:
         result.preference_compatibility = DimensionScore(
             name="喜好兼容度",
             score=preference_result.overall_score,
-            weight=0.0,
-            weighted_score=0.0,
+            weight=weights['preference_compatibility'],
+            weighted_score=preference_result.overall_score * weights['preference_compatibility'],
             interpretation=preference_result.interpretation,
             sub_scores={
                 "topic_mention": preference_result.topic_mention_score,
@@ -516,26 +521,28 @@ class AffinityAnalysisService:
         result: AffinityAnalysisResult,
         config: AffinityConfig
     ):
+        # 权重归一：在场维度（declared>0 且结果非 None）按点数归一，
+        # 覆写各维 weight/weighted_score——LLM 维缺席在此自动剔除
+        from .affinity_weights import apply_weight_normalization
+        effective_weights = apply_weight_normalization(result)
+
         base_score = 0.0
-        for dim in [
-            result.emotional_resonance,
-            result.chat_positivity,
-            result.attitude_tendency,
-        ]:
+        for dim_key in (
+            "emotional_resonance",
+            "chat_positivity",
+            "attitude_tendency",
+            "preference_compatibility",
+            "intimacy_signals",
+            "llm_relationship",
+        ):
+            dim = getattr(result, dim_key, None)
             if dim:
                 base_score += dim.weighted_score
-
-        raw_bonus = 0.0
-        if result.preference_compatibility and result.preference_compatibility.bonus_scores:
-            raw_bonus = result.preference_compatibility.bonus_scores.get("preference_bonus", 0.0)
-
-        preference_bonus = self._calculate_decayed_bonus(base_score, raw_bonus)
-        total_with_bonus = base_score + preference_bonus
 
         stats = self.preprocessing.get_preprocessed_statistics(result.conversation_id)
         relationship_stability_confidence = self._calculate_relationship_stability_confidence(stats)
         shrunk_score = self._apply_confidence_shrinkage(
-            total_with_bonus,
+            base_score,
             relationship_stability_confidence,
             self.NEUTRAL_OVERALL_BASELINE,
         )
@@ -543,48 +550,22 @@ class AffinityAnalysisService:
         # 此前 60.8 → 收缩39 → sigmoid25 的管线与维度分严重不一致
         result.overall_score = round(max(0.0, min(100.0, shrunk_score)), 2)
         logger.info(
-            "综合评分计算完成: %.1f分 (base=%.1f, bonus=%.1f, total=%.1f, confidence=%.2f)",
+            "综合评分计算完成: %.1f分 (base=%.1f, confidence=%.2f, effective_weights=%s)",
             result.overall_score,
             base_score,
-            preference_bonus,
-            total_with_bonus,
             relationship_stability_confidence,
+            {k: round(v, 3) for k, v in effective_weights.items()},
         )
         affinity_debug_log(
             "[Affinity Overall] "
             f"base={base_score:.2f}, "
-            f"raw_bonus={raw_bonus:.2f}, "
-            f"bonus={preference_bonus:.2f}, "
-            f"total={total_with_bonus:.2f}, "
             f"shrunk={shrunk_score:.2f}, "
-            f"sigmoid={result.overall_score:.2f}, "
-            f"confidence={relationship_stability_confidence:.2f}"
+            f"total={result.overall_score:.2f}, "
+            f"confidence={relationship_stability_confidence:.2f}, "
+            f"weights={ {k: round(v, 3) for k, v in effective_weights.items()} }"
         )
         self._log_debug_summary(result)
         return
-
-    def _calculate_decayed_bonus(self, base_score: float, raw_bonus: float) -> float:
-        """Apply dynamic decay to the preference bonus based on the base score."""
-        if raw_bonus <= 0:
-            return 0.0
-
-        if base_score >= self.PREFERENCE_BONUS_DECAY_END:
-            decay_factor = 0.0
-        elif base_score <= self.PREFERENCE_BONUS_DECAY_START:
-            decay_factor = 1.0
-        else:
-            decay_factor = (
-                (self.PREFERENCE_BONUS_DECAY_END - base_score)
-                / (self.PREFERENCE_BONUS_DECAY_END - self.PREFERENCE_BONUS_DECAY_START)
-            )
-
-        decayed = raw_bonus * decay_factor
-        affinity_debug_log(
-            "[Preference Bonus] "
-            f"base={base_score:.2f}, raw_bonus={raw_bonus:.2f}, "
-            f"decay_factor={decay_factor:.2f}, final_bonus={decayed:.2f}"
-        )
-        return max(0.0, round(decayed, 2))
 
     def _calculate_relationship_stability_confidence(
         self, stats: PreprocessedStatistics
@@ -716,8 +697,9 @@ class AffinityAnalysisService:
             logger.warning(f"读取好感度配置失败，配置指纹退化为默认配置: {e}")
             config = AffinityConfig()
 
-        # 注意：不包含 conversation_id / updated_at 等元数据，也不包含三个维度
-        # 权重（当前评分实际使用 get_dimension_weights 的固定权重，与配置无关）
+        # 不含 conversation_id / updated_at 等元数据。权重参与计分，
+        # 必须入指纹（改权重后旧缓存失效自动重算）；新增影响分数的
+        # 配置项必须同步登记到这里
         fingerprint_payload = json.dumps({
             "preference_keywords": sorted(config.preference_keywords or []),
             "reply_timeliness_threshold_seconds": config.reply_timeliness_threshold_seconds,
@@ -726,6 +708,13 @@ class AffinityAnalysisService:
             "similarity_threshold": config.similarity_threshold,
             "sliding_window_size": config.sliding_window_size,
             "long_text_threshold": config.long_text_threshold,
+            "weight_emotional_resonance": config.weight_emotional_resonance,
+            "weight_chat_positivity": config.weight_chat_positivity,
+            "weight_attitude_tendency": config.weight_attitude_tendency,
+            "weight_preference_compatibility": config.weight_preference_compatibility,
+            "weight_intimacy_signals": config.weight_intimacy_signals,
+            "weight_llm_relationship": config.weight_llm_relationship,
+            "llm_relationship_enabled": bool(config.llm_relationship_enabled),
         }, sort_keys=True, ensure_ascii=False)
         return hashlib.sha1(fingerprint_payload.encode("utf-8")).hexdigest()[:12]
 
@@ -735,6 +724,7 @@ class AffinityAnalysisService:
             cache_updated_at = int(time.time())
             result.cache_version = self.CACHE_SCHEMA_VERSION
             result.cache_updated_at = cache_updated_at
+            result.analysis_caliber = self.CALIBER_VERSION
 
             # 记录生成结果时的配置指纹，读取时校验，配置变更后旧缓存失效
             config_fingerprint = self._config_fingerprint(conversation_id)
@@ -754,6 +744,7 @@ class AffinityAnalysisService:
                 "status": result.status,
                 "cache_version": result.cache_version,
                 "cache_updated_at": result.cache_updated_at,
+                "analysis_caliber": self.CALIBER_VERSION,
                 "config_fingerprint": config_fingerprint,
             }
             
@@ -824,6 +815,7 @@ class AffinityAnalysisService:
             result.status = result_dict.get("status", "completed")
             result.cache_version = result_dict.get("cache_version", 0)
             result.cache_updated_at = result_dict.get("cache_updated_at", row[1] or 0)
+            result.analysis_caliber = result_dict.get("analysis_caliber", 0)
             
             # 重建维度分数
             for dim_name in ["emotional_resonance", "chat_positivity", 

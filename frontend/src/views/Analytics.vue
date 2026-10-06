@@ -174,11 +174,11 @@
             :weight="analysisResult.attitude_tendency.weight"
             :interpretation="analysisResult.attitude_tendency.interpretation" />
           <AffinityScoreCard v-if="analysisResult.preference_compatibility" title="喜好兼容度"
-            :score="analysisResult.preference_compatibility.score" 
+            :score="analysisResult.preference_compatibility.score"
             :max-score="100"
             :weight="analysisResult.preference_compatibility.weight"
             :interpretation="analysisResult.preference_compatibility.interpretation"
-            :is-bonus="true"
+            :is-bonus="!(analysisResult.preference_compatibility.weight > 0)"
             :bonus-value="analysisResult.preference_compatibility.bonus_scores?.preference_bonus" />
         </div>
       </div>

@@ -311,10 +311,9 @@ class RealtimeSentimentService:
         if features["has_transition"]:
             rules_applied.append("转折规则")
 
-        if features["negation_words"] and len(features["negation_words"]) % 2 == 1:
-            polarity = -polarity
-            raw_score = -raw_score
-            rules_applied.append("否定翻转")
+        # 否定翻转规则已退役：ONNX 模型自身已建模否定（"不开心"判负），
+        # 规则时代的二次翻转会把它翻回正面。历史分析链路
+        # （analysis/sentiment_service）从未有此规则，删除后口径一致。
 
         if features["degree_words"]:
             strong_degrees = [item for item in features["degree_words"] if item["level"] == "strong"]

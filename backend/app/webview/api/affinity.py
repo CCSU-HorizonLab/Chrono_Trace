@@ -21,6 +21,8 @@ class AffinityApiMixin:
         module_names = [
             "backend.app.services.analysis.emotional_resonance_service",
             "backend.app.services.analysis.affinity_analysis_service",
+            "backend.app.services.analysis.affinity_config",
+            "backend.app.services.analysis.affinity_weights",
         ]
         reloaded = None
         for module_name in module_names:

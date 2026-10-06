@@ -180,6 +180,11 @@
             :interpretation="analysisResult.preference_compatibility.interpretation"
             :is-bonus="!(analysisResult.preference_compatibility.weight > 0)"
             :bonus-value="analysisResult.preference_compatibility.bonus_scores?.preference_bonus" />
+          <AffinityScoreCard v-if="analysisResult.intimacy_signals" title="亲密度信号"
+            :score="analysisResult.intimacy_signals.score"
+            :max-score="100"
+            :weight="analysisResult.intimacy_signals.weight"
+            :interpretation="analysisResult.intimacy_signals.interpretation" />
         </div>
       </div>
 
@@ -200,6 +205,9 @@
               :sub-scores="analysisResult.attitude_tendency.sub_scores" />
             <SubScoreBreakdown v-if="analysisResult.preference_compatibility" title="喜好兼容度"
               :sub-scores="analysisResult.preference_compatibility.sub_scores" />
+            <SubScoreBreakdown v-if="analysisResult.intimacy_signals" title="亲密度信号"
+              :sub-scores="analysisResult.intimacy_signals.sub_scores"
+              :confidence-meta="analysisResult.intimacy_signals.confidence_meta" />
           </div>
         </CtCard>
       </div>
@@ -795,7 +803,8 @@ const showPortraitDialog = ref(false)
                 emotional_resonance: analysisResult.value.emotional_resonance || undefined,
                 chat_positivity: analysisResult.value.chat_positivity || undefined,
                 attitude_tendency: analysisResult.value.attitude_tendency || undefined,
-                preference_compatibility: analysisResult.value.preference_compatibility || undefined
+                preference_compatibility: analysisResult.value.preference_compatibility || undefined,
+                intimacy_signals: analysisResult.value.intimacy_signals || undefined
             }
         })
 

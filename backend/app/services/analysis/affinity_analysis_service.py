@@ -60,6 +60,7 @@ class AffinityAnalysisResult:
     chat_positivity: Optional[DimensionScore] = None
     attitude_tendency: Optional[DimensionScore] = None
     preference_compatibility: Optional[DimensionScore] = None
+    intimacy_signals: Optional[DimensionScore] = None
     
     # 元数据
     conversation_id: int = 0
@@ -80,9 +81,9 @@ class AffinityAnalysisResult:
 class AffinityAnalysisService:
     """好感度分析编排器"""
 
-    CACHE_SCHEMA_VERSION = 10
+    CACHE_SCHEMA_VERSION = 11
     # 口径版本：评分口径结构性变化时 +1（落历史行与缓存，跨口径趋势不可比）
-    CALIBER_VERSION = 2
+    CALIBER_VERSION = 3
     NEUTRAL_OVERALL_BASELINE = 35.0
     OVERALL_SESSION_CONFIDENCE_TARGET = 30
     OVERALL_ACTIVE_DAY_CONFIDENCE_TARGET = 30
@@ -103,6 +104,8 @@ class AffinityAnalysisService:
         self.positivity_service = ChatPositivityService()
         self.attitude_service = AttitudeTendencyService()
         self.preference_service = PreferenceCompatibilityService()
+        from .intimacy_signals_service import IntimacySignalsService
+        self.intimacy_service = IntimacySignalsService()
 
         # 任务状态存储
         self._task_status: Dict[str, AffinityAnalysisResult] = {}
@@ -515,6 +518,31 @@ class AffinityAnalysisService:
             preference_result.overall_score,
             raw_bonus,
         )
+
+        # 5. 亲密度信号（称谓演变/时段投入/回复对称性）
+        self._check_cancelled(cancel_event)
+        result.progress_percent = 77
+        result.current_step = "计算维度评分: 亲密度信号"
+        logger.info("[好感度分析] 维度 5/6: 亲密度信号...")
+        intimacy_result = self.intimacy_service.calculate_overall_intimacy(
+            conversation_id,
+            stats,
+            long_text_threshold=int(getattr(config, "long_text_threshold", 100)),
+        )
+        result.intimacy_signals = DimensionScore(
+            name="亲密度信号",
+            score=intimacy_result['overall_score'],
+            weight=weights['intimacy_signals'],
+            weighted_score=intimacy_result['overall_score'] * weights['intimacy_signals'],
+            interpretation=intimacy_result['interpretation'],
+            sub_scores=intimacy_result['sub_scores'],
+            confidence_meta=intimacy_result.get('confidence_meta', {}),
+        )
+        logger.info(
+            "亲密度信号计算完成: %.1f分 (权重: %.1f%%)",
+            intimacy_result['overall_score'],
+            weights['intimacy_signals'] * 100,
+        )
     
     def _calculate_overall_score(
         self,
@@ -737,6 +765,7 @@ class AffinityAnalysisService:
                 "chat_positivity": asdict(result.chat_positivity) if result.chat_positivity else None,
                 "attitude_tendency": asdict(result.attitude_tendency) if result.attitude_tendency else None,
                 "preference_compatibility": asdict(result.preference_compatibility) if result.preference_compatibility else None,
+                "intimacy_signals": asdict(result.intimacy_signals) if result.intimacy_signals else None,
                 "conversation_id": result.conversation_id,
                 "analysis_timestamp": result.analysis_timestamp,
                 "analysis_duration_ms": result.analysis_duration_ms,
@@ -818,8 +847,9 @@ class AffinityAnalysisService:
             result.analysis_caliber = result_dict.get("analysis_caliber", 0)
             
             # 重建维度分数
-            for dim_name in ["emotional_resonance", "chat_positivity", 
-                           "attitude_tendency", "preference_compatibility"]:
+            for dim_name in ["emotional_resonance", "chat_positivity",
+                           "attitude_tendency", "preference_compatibility",
+                           "intimacy_signals"]:
                 dim_dict = result_dict.get(dim_name)
                 if dim_dict:
                     dim = DimensionScore(**dim_dict)

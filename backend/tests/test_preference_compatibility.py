@@ -215,16 +215,27 @@ class TestAffinityConfigService:
         assert service.validate_config(config) == True
 
     def test_validate_config_invalid_weights(self, service):
-        """测试验证无效权重"""
+        """点数制：各权 0-1、至少一个 > 0（旧"总和恰为 1"校验已退役）"""
         from app.services.analysis.affinity_config import AffinityConfig
-        
+
         config = AffinityConfig()
-        config.weight_emotional_resonance = 0.5
-        # 总权重 = 0.5 + 0.3 + 0.2 + 0.2 = 1.2
-        
+        config.weight_emotional_resonance = 1.5  # 超出 0-1
+
         with pytest.raises(ValueError) as excinfo:
             service.validate_config(config)
-        assert "权重总和" in str(excinfo.value)
+        assert "0-1 之间" in str(excinfo.value)
+
+        config = AffinityConfig(
+            weight_emotional_resonance=0.0,
+            weight_chat_positivity=0.0,
+            weight_attitude_tendency=0.0,
+            weight_preference_compatibility=0.0,
+            weight_intimacy_signals=0.0,
+            weight_llm_relationship=0.0,
+        )
+        with pytest.raises(ValueError) as excinfo:
+            service.validate_config(config)
+        assert "至少一个" in str(excinfo.value)
 
     def test_validate_config_negative_threshold(self, service):
         """测试验证负阈值"""

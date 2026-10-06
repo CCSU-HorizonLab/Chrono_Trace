@@ -130,8 +130,9 @@ class TestRealtimeSentiment:
         
         for text in test_cases:
             result = service.analyze(text)
-            # 否定词应该导致负面情感
-            assert result['polarity'] in [-1, 0, 1]
+            # ONNX 模型已建模否定：否定句不得判为正面（旧否定翻转规则
+            # 会把模型正确的负面判定翻成正面，已退役）
+            assert result['polarity'] <= 0, f"'{text}' 判为正面: {result['polarity']}"
             print(f"✓ 否定句 '{text}': polarity={result['polarity']}")
     
     # ========== 反讽检测测试 ==========

@@ -14,9 +14,15 @@ logger = logging.getLogger(__name__)
 class AffinityConfig:
     """Affinity analysis configuration."""
 
+    # 六维 declared 权重（点数制，不要求和为 1；评分引擎按在场维度归一，
+    # 见 affinity_weights.resolve_dimension_plan）
     weight_emotional_resonance: float = 0.40
     weight_chat_positivity: float = 0.35
     weight_attitude_tendency: float = 0.25
+    weight_preference_compatibility: float = 0.10
+    weight_intimacy_signals: float = 0.12
+    weight_llm_relationship: float = 0.08
+    llm_relationship_enabled: bool = True
     preference_bonus_factor: float = 0.10
 
     reply_timeliness_threshold_seconds: int = 300
@@ -29,6 +35,16 @@ class AffinityConfig:
 
     conversation_id: int = 0
     updated_at: int = 0
+
+    #: 参与评分与配置指纹的全部权重字段（新增权重必须同步登记）
+    WEIGHT_FIELDS = (
+        "weight_emotional_resonance",
+        "weight_chat_positivity",
+        "weight_attitude_tendency",
+        "weight_preference_compatibility",
+        "weight_intimacy_signals",
+        "weight_llm_relationship",
+    )
 
 
 class AffinityConfigService:
@@ -51,7 +67,6 @@ class AffinityConfigService:
             row = cursor.fetchone()
             if row:
                 config_dict = json.loads(row[0])
-                config_dict.pop("weight_preference_compatibility", None)
 
                 config = AffinityConfig(**config_dict)
                 config.conversation_id = conversation_id
@@ -69,7 +84,6 @@ class AffinityConfigService:
     def update_config(self, conversation_id: int, **kwargs) -> AffinityConfig:
         """Update and persist config for a conversation."""
         config = self.get_config(conversation_id)
-        kwargs.pop("weight_preference_compatibility", None)
 
         for key, value in kwargs.items():
             if hasattr(config, key):
@@ -101,15 +115,21 @@ class AffinityConfigService:
         return config
 
     def validate_config(self, config: AffinityConfig) -> bool:
-        """Validate a config object."""
-        total_weight = (
-            config.weight_emotional_resonance
-            + config.weight_chat_positivity
-            + config.weight_attitude_tendency
-        )
+        """Validate a config object.
 
-        if not (0.99 <= total_weight <= 1.01):
-            raise ValueError(f"维度权重总和必须为 1.0，当前为 {total_weight}")
+        权重为点数制：各维 0-1、至少一个 > 0（归一由评分引擎完成）——
+        此前要求三权和恰为 1 是旧二档口径的遗留。
+        """
+        for name in AffinityConfig.WEIGHT_FIELDS:
+            value = getattr(config, name)
+            if not (0.0 <= value <= 1.0):
+                raise ValueError(f"{name} 必须在 0-1 之间，当前为 {value}")
+
+        if all(getattr(config, name) <= 0 for name in AffinityConfig.WEIGHT_FIELDS):
+            raise ValueError("至少一个维度权重要大于 0")
+
+        if not isinstance(config.llm_relationship_enabled, bool):
+            raise ValueError("llm_relationship_enabled 必须是布尔值")
 
         if config.reply_timeliness_threshold_seconds < 0:
             raise ValueError("回复及时阈值不能为负数")
@@ -141,12 +161,3 @@ class AffinityConfigService:
         cleaned = [k.strip() for k in keywords if k.strip()]
         config = self.update_config(conversation_id, preference_keywords=cleaned)
         return config.preference_keywords
-
-    def get_dimension_weights(self, conversation_id: int) -> dict:
-        """Return fixed display weights for all dimensions."""
-        return {
-            "emotional_resonance": 0.40,
-            "chat_positivity": 0.35,
-            "attitude_tendency": 0.25,
-            "preference_compatibility": 0.00,
-        }

@@ -28,7 +28,9 @@ MIN_PAIRS = 10
 MAX_TOTAL_INPUT_CHARS = 8000
 PER_UNIT_CHAR_LIMIT = 120
 TIMEOUT_SECONDS = 90
-MAX_TOKENS = 1024
+# 思考模型（实测 Qwen3.5-9B）把推理写进 content：1024 会被 think 段
+# 耗尽导致 JSON 未闭合即截断（finish_reason=length）——真答案在最后
+MAX_TOKENS = 3072
 
 SYSTEM_PROMPT = """你是一位关系分析专家。基于给出的两人聊天交互对样本（[对方] 与 [我]），
 评估这两人的关系质量。注意：衡量的不是单方情绪，而是双方关系的亲密与
@@ -104,7 +106,27 @@ class RelationshipLLMService:
         messages = self._render_prompt(pair_texts, context or {})
         body = self._call_chat(messages)
         content = self._extract_content(body)
-        result = self._parse_response(content)
+        finish_reason = ""
+        try:
+            finish_reason = str(body["choices"][0].get("finish_reason") or "")
+        except (KeyError, IndexError, TypeError):
+            pass
+        if finish_reason == "length":
+            raise RelationshipLLMAbsent(
+                f"LLM 输出被 max_tokens={MAX_TOKENS} 截断（思考模型推理段过长）"
+            )
+        try:
+            result = self._parse_response(content)
+        except RelationshipLLMAbsent:
+            # 带上下文的缺席原因：下次定位不用再盲猜输出形态
+            logger.debug(
+                "[关系评估] 解析失败 content(len=%d, finish=%s) 前300字: %s",
+                len(content), finish_reason, content[:300],
+            )
+            raise RelationshipLLMAbsent(
+                f"LLM 输出未包含可解析的 JSON 评估"
+                f"（finish={finish_reason or 'unknown'}, len={len(content)}）"
+            ) from None
 
         result["meta"] = {
             "model_name": str(self.model_config.get("name") or self.model_config.get("model_id") or ""),

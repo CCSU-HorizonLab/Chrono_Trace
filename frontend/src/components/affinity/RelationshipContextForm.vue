@@ -88,6 +88,26 @@
               </div>
             </div>
 
+            <!-- 维度权重（点数制：不需要凑成 100，系统按在场维度自动归一） -->
+            <div class="form-group">
+              <label class="form-label">评分维度权重 <span class="weight-hint">（点数制，按比例折算；某维设 0 即不参与）</span></label>
+              <div class="weight-rows">
+                <div v-for="dim in weightDims" :key="dim.field" class="weight-row">
+                  <span class="weight-name">{{ dim.label }}</span>
+                  <input
+                    type="number" min="0" max="100" step="1"
+                    class="weight-input"
+                    v-model.number="weightForm[dim.field]"
+                  />
+                  <span class="weight-pct">{{ weightPercent(dim.field) }}</span>
+                </div>
+                <label class="weight-llm-toggle">
+                  <input type="checkbox" v-model="weightForm.llm_relationship_enabled" />
+                  启用 AI 关系评估维度（需先在设置中配置 LLM 模型）
+                </label>
+              </div>
+            </div>
+
             <div class="hint-box">
               <p style="display: flex; align-items: center; gap: 6px;">
                 <Lightbulb :size="14" style="color: var(--ct-color-info); flex-shrink: 0;" />
@@ -109,7 +129,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, watch } from 'vue'
+import { ref, reactive, watch, computed } from 'vue'
 import {
   ClipboardList,
   Heart,
@@ -132,6 +152,8 @@ import {
   getRelationshipContext,
   saveRelationshipContext,
   getRelationshipFieldOptions,
+  getAffinityConfig,
+  updateAffinityConfig,
   type FieldOptions
 } from '../../api/affinity'
 import { showDialog } from '../../utils/dialog'
@@ -150,6 +172,36 @@ const form = reactive({
   interaction_duration: '1_to_6_months',
   communication_style: 'normal',
 })
+
+// 六维权重（0-100 点数制；保存为 0-1 的小数权重）
+const weightDims = [
+  { field: 'weight_emotional_resonance', label: '情感共振率', default: 40 },
+  { field: 'weight_chat_positivity', label: '聊天积极度', default: 35 },
+  { field: 'weight_attitude_tendency', label: '态度倾向', default: 25 },
+  { field: 'weight_preference_compatibility', label: '喜好兼容度', default: 10 },
+  { field: 'weight_intimacy_signals', label: '亲密度信号', default: 12 },
+  { field: 'weight_llm_relationship', label: 'AI 关系评估', default: 8 },
+] as const
+
+const weightForm = reactive({
+  weight_emotional_resonance: 40,
+  weight_chat_positivity: 35,
+  weight_attitude_tendency: 25,
+  weight_preference_compatibility: 10,
+  weight_intimacy_signals: 12,
+  weight_llm_relationship: 8,
+  llm_relationship_enabled: true,
+})
+
+const weightTotal = computed(() =>
+  weightDims.reduce((sum, d) => sum + Math.max(0, Number(weightForm[d.field]) || 0), 0)
+)
+
+function weightPercent(field: string): string {
+  const value = Math.max(0, Number((weightForm as any)[field]) || 0)
+  if (weightTotal.value <= 0) return '—'
+  return `${(value / weightTotal.value * 100).toFixed(0)}%`
+}
 
 // 默认选项（硬编码兜底，防止API失败时无法显示）
 const options = ref<FieldOptions>({
@@ -225,16 +277,47 @@ watch(() => props.modelValue, async (show) => {
     } catch (e) {
       console.warn('加载关系上下文失败', e)
     }
+
+    // 回填已保存的维度权重
+    try {
+      const cfg = await getAffinityConfig(props.conversationId)
+      for (const dim of weightDims) {
+        const saved = (cfg as any)[dim.field]
+        if (typeof saved === 'number' && saved >= 0) {
+          ;(weightForm as any)[dim.field] = Math.round(saved * 100)
+        }
+      }
+      if (typeof cfg.llm_relationship_enabled === 'boolean') {
+        weightForm.llm_relationship_enabled = cfg.llm_relationship_enabled
+      }
+    } catch (e) {
+      console.warn('加载维度权重失败（沿用默认）', e)
+    }
   }
 }, { immediate: true })
 
 const handleSave = async () => {
+  // 全零预校验（后端 validate 同款口径）
+  if (weightTotal.value <= 0) {
+    showDialog('至少一个维度权重要大于 0')
+    return
+  }
   isSaving.value = true
   try {
     await saveRelationshipContext(props.conversationId, {
       relationship_type: form.relationship_type,
       interaction_duration: form.interaction_duration,
       communication_style: form.communication_style,
+    })
+    // 权重并联保存（点数 → 0-1 小数；触发缓存失效自动重算）
+    await updateAffinityConfig(props.conversationId, {
+      weight_emotional_resonance: Math.max(0, Number(weightForm.weight_emotional_resonance) || 0) / 100,
+      weight_chat_positivity: Math.max(0, Number(weightForm.weight_chat_positivity) || 0) / 100,
+      weight_attitude_tendency: Math.max(0, Number(weightForm.weight_attitude_tendency) || 0) / 100,
+      weight_preference_compatibility: Math.max(0, Number(weightForm.weight_preference_compatibility) || 0) / 100,
+      weight_intimacy_signals: Math.max(0, Number(weightForm.weight_intimacy_signals) || 0) / 100,
+      weight_llm_relationship: Math.max(0, Number(weightForm.weight_llm_relationship) || 0) / 100,
+      llm_relationship_enabled: weightForm.llm_relationship_enabled,
     })
     emit('saved')
     emit('update:modelValue', false)
@@ -400,6 +483,59 @@ const handleClose = () => {
 }
 
 /* 提示框 */
+/* 维度权重（点数制编辑：名称 + 0-100 输入 + 实时归一百分比） */
+.weight-hint {
+  font-size: 12px;
+  font-weight: normal;
+  color: var(--ct-text-secondary, #64748b);
+}
+
+.weight-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.weight-row {
+  display: grid;
+  grid-template-columns: 1fr 76px 48px;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.weight-name {
+  color: var(--ct-text-primary);
+}
+
+.weight-input {
+  width: 100%;
+  padding: 4px 8px;
+  border: 1px solid var(--ct-border-color);
+  border-radius: 6px;
+  background: var(--ct-bg-input, transparent);
+  color: var(--ct-text-primary);
+  font-size: 13px;
+  text-align: right;
+}
+
+.weight-pct {
+  text-align: right;
+  color: var(--ct-text-secondary, #64748b);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.weight-llm-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ct-text-secondary, #64748b);
+  cursor: pointer;
+  margin-top: 2px;
+}
+
 .hint-box {
   background: var(--ct-color-info-muted);
   border-left: 3px solid var(--ct-color-info);

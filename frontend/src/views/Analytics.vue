@@ -121,8 +121,9 @@
             <div class="score-section">
               <div class="score-header">
                 <span class="score-title">总体好感度</span>
-                <div class="trend-badge" v-if="analysisResult.score_trend">
-                  较上周 <span :class="analysisResult.score_trend >= 0 ? 'up' : 'down'">{{ analysisResult.score_trend > 0 ? '↑' : '↓' }}{{ Math.abs(analysisResult.score_trend) }}%</span>
+                <div class="trend-badge" v-if="analysisResult.score_trend != null"
+                  :title="analysisResult.analysis_caliber ? '与上次分析的分数差（同评分口径）' : '与上次分析的分数差'">
+                  较上次 <span :class="analysisResult.score_trend >= 0 ? 'up' : 'down'">{{ analysisResult.score_trend > 0 ? '↑' : '↓' }}{{ Math.abs(analysisResult.score_trend).toFixed(1) }} 分</span>
                 </div>
                 <span
                   v-if="analysisResult.analysis_stale"

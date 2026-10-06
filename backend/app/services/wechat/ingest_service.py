@@ -899,6 +899,9 @@ class WeChatIngestService:
                 touched_conversations.get(conversation_id, 0), ts
             )
             content = msg['content']
+            if isinstance(content, bytes):
+                # 微信库部分行 content 为 BLOB，正则（str 模式）遇 bytes 必炸
+                content = content.decode('utf-8', errors='replace')
             sender_label = msg.get('sender', '')
             if is_chatroom_username(talker):
                 # 群消息存储前剥离 'wxid_xxx:\n' 前缀：不剥离会污染词频/

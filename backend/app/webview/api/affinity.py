@@ -23,6 +23,7 @@ class AffinityApiMixin:
             "backend.app.services.analysis.affinity_analysis_service",
             "backend.app.services.analysis.affinity_config",
             "backend.app.services.analysis.affinity_weights",
+            "backend.app.services.analysis.intimacy_signals_service",
         ]
         reloaded = None
         for module_name in module_names:

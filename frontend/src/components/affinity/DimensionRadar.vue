@@ -13,6 +13,8 @@ const props = defineProps<{
     chat_positivity?: { score: number; weight: number }
     attitude_tendency?: { score: number; weight: number }
     preference_compatibility?: { score: number; weight: number }
+    intimacy_signals?: { score: number; weight: number }
+    llm_relationship?: { score: number; weight: number }
   }
 }>()
 
@@ -54,6 +56,20 @@ const getOption = (): EChartsOption => {
       fullName: '态度倾向',
       score: props.dimensionScores.attitude_tendency?.score || 0,
       weight: props.dimensionScores.attitude_tendency?.weight || 0
+    },
+    {
+      key: 'intimacy_signals',
+      name: '亲密度\n信号',
+      fullName: '亲密度信号',
+      score: props.dimensionScores.intimacy_signals?.score || 0,
+      weight: props.dimensionScores.intimacy_signals?.weight || 0
+    },
+    {
+      key: 'llm_relationship',
+      name: 'AI 关系\n评估',
+      fullName: 'AI 关系评估',
+      score: props.dimensionScores.llm_relationship?.score || 0,
+      weight: props.dimensionScores.llm_relationship?.weight || 0
     }
   ]
 

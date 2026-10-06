@@ -76,6 +76,10 @@ export interface AffinityAnalysisResult {
     analysis_stale?: boolean
     pending_message_count?: number | null
     preference_compatibility: DimensionScore | null
+    /** 亲密度信号（称谓演变/时段投入/回复对称性） */
+    intimacy_signals?: DimensionScore | null
+    /** 评分口径版本（跨口径趋势不可比） */
+    analysis_caliber?: number
     conversation_id: number
     analysis_timestamp: number
     analysis_duration_ms: number

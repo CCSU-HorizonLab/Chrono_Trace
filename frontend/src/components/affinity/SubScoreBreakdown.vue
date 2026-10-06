@@ -79,6 +79,12 @@ const LABELS: Record<string, string> = {
   holiday_greeting: '节日祝福',
   topic_mention: '共同话题提及',
   preference_bonus: '喜好加分',
+  address_term_evolution: '称谓演变',
+  time_investment: '时段与投入',
+  reply_asymmetry: '回复对称性',
+  communication_quality: '沟通质量',
+  relationship_warmth: '关系温度',
+  risk_signals: '风险信号',
 }
 
 const BONUS_KEYS = new Set([
@@ -89,6 +95,7 @@ const BONUS_KEYS = new Set([
 const INVERSE_KEYS = new Set([
   'negative_emotion_frequency',
   'negative_word_frequency',
+  'risk_signals',
 ])
 
 const getLabel = (key: string): string => {

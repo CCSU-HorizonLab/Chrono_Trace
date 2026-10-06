@@ -167,6 +167,7 @@ class TestAffinityAnalysisService:
             result.chat_positivity,
             result.attitude_tendency,
             result.preference_compatibility,
+            result.intimacy_signals,
         ]
         present = [d for d in dims if d is not None and d.weight > 0]
         assert present, "至少三老维应在场"

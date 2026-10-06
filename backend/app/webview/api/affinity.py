@@ -30,7 +30,11 @@ class AffinityApiMixin:
         reloaded = None
         for module_name in module_names:
             module = importlib.import_module(module_name)
-            reloaded = importlib.reload(module)
+            importlib.reload(module)
+            # 返回类取自编排器模块本身——列表追加模块后 reloaded 会指向
+            # 最后一个（affinity_history），后者没有 AffinityAnalysisService
+            if module_name.endswith("affinity_analysis_service"):
+                reloaded = module
         return reloaded.AffinityAnalysisService
 
     def get_relationship_context(self, conversation_id: int) -> dict[str, Any]:

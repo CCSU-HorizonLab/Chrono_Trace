@@ -315,31 +315,75 @@ class DatabaseConnection:
             )
 
             updates = []
+            cleaned_updates = []
+            touched_conversations: set[int] = set()
             rows = conn.execute(
                 """
-                SELECT m.id, m.content, m.sender
+                SELECT m.id, m.content, m.sender, m.conversation_id,
+                       mp.cleaned_content
                 FROM messages m
                 JOIN conversations c ON c.id = m.conversation_id
+                LEFT JOIN message_preprocessed mp ON mp.message_id = m.id
                 WHERE c.conversation_type = 'group'
-                  AND m.content LIKE '%' || ':' || char(10) || '%'
+                  AND (m.content LIKE '%' || ':' || char(10) || '%'
+                       OR mp.cleaned_content LIKE '%' || ':' || char(10) || '%')
                 """
             ).fetchall()
             for row in rows:
                 content = row["content"] if isinstance(row["content"], str) else ""
                 member_wxid, clean = parse_chatroom_message(content)
-                if member_wxid is None:
-                    continue
                 sender = row["sender"] or ""
-                if not sender.strip():
-                    sender = resolve_chatroom_display_name(member_wxid)
-                updates.append((clean, sender, row["id"]))
+                cleaned = row["cleaned_content"] if isinstance(row["cleaned_content"], str) else ""
+                cleaned_member, cleaned_clean = parse_chatroom_message(cleaned)
+                if member_wxid is None and cleaned_member is None:
+                    continue
+                touched_conversations.add(int(row["conversation_id"]))
+                if member_wxid is not None:
+                    if not sender.strip():
+                        sender = resolve_chatroom_display_name(member_wxid)
+                    updates.append((clean, sender, row["id"]))
+                if cleaned_member is not None:
+                    # cleaned_content 是清洗产物，前缀可能独立残存，须单独剥离
+                    cleaned_updates.append((cleaned_clean, row["id"]))
             if updates:
                 conn.executemany(
                     "UPDATE messages SET content = ?, sender = ? WHERE id = ?",
                     updates,
                 )
+            if cleaned_updates:
+                conn.executemany(
+                    "UPDATE message_preprocessed SET cleaned_content = ? WHERE message_id = ?",
+                    cleaned_updates,
+                )
+            if touched_conversations:
+                # 派生层自愈：分析结果打脏（重分析秒级）、RAG 队列标脏
+                # （文档/事实基于旧文本重建）。speech_units 不存内容，无需清洗
+                try:
+                    from ..services.analysis.analysis_state import mark_conversations_stale
+
+                    mark_conversations_stale(sorted(touched_conversations))
+                except Exception as stale_e:
+                    logger.debug("[迁移] 群清洗后分析打脏跳过: %s", stale_e)
+                try:
+                    from ..services.realtime.rag.indexer import RagIndexQueue
+
+                    for acc_wxid, conv_id in conn.execute(
+                        "SELECT DISTINCT account_wxid, id FROM conversations "
+                        "WHERE id IN (%s)" % ",".join(
+                            str(c) for c in sorted(touched_conversations)
+                        )
+                    ).fetchall():
+                        RagIndexQueue.mark_dirty(str(acc_wxid), int(conv_id))
+                except Exception as rag_e:
+                    logger.debug("[迁移] 群清洗后 RAG 标脏跳过: %s", rag_e)
+            if updates or cleaned_updates:
                 conn.commit()
-                print(f"[迁移] 已清理 {len(updates)} 条群消息的发送者前缀")
+                from ..services.realtime.safe_print import safe_print
+
+                safe_print(
+                    f"[迁移] 已清理 {len(updates)} 条群消息与 "
+                    f"{len(cleaned_updates)} 条预处理净文本的发送者前缀"
+                )
             conn.execute(
                 "INSERT OR REPLACE INTO settings (key, value, updated_at) "
                 "VALUES ('migration_chatroom_prefix_stripped', ?, strftime('%s', 'now'))",

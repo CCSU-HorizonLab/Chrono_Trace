@@ -143,9 +143,9 @@ async function handleGenerate() {
       const res = await api.generate_contact_profile(
         props.displayName, contactBudget.value, undefined, props.accountWxid || undefined
       )
-      if (res && res.success === false) {
+      if (!res || !res.ok) {
         hasError = true
-        errorMsg = res.error || '联系人画像生成失败'
+        errorMsg = res?.error || '联系人画像生成失败'
       }
     }
 
@@ -153,9 +153,9 @@ async function handleGenerate() {
       const res = await api.generate_self_profile(
         props.displayName, selfBudget.value, undefined, props.accountWxid || undefined
       )
-      if (res && res.success === false) {
+      if (!res || !res.ok) {
         hasError = true
-        errorMsg = res.error || '自我克隆画像提取失败'
+        errorMsg = res?.error || '自我克隆画像提取失败'
       }
       if (generateContact.value) generatedKind = 'both'
       else generatedKind = 'self'

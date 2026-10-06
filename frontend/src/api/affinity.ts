@@ -78,6 +78,9 @@ export interface AffinityAnalysisResult {
     preference_compatibility: DimensionScore | null
     /** 亲密度信号（称谓演变/时段投入/回复对称性） */
     intimacy_signals?: DimensionScore | null
+    /** LLM 关系评估（未配置/调用失败时缺席） */
+    llm_relationship?: DimensionScore | null
+    llm_relationship_absent_reason?: string | null
     /** 评分口径版本（跨口径趋势不可比） */
     analysis_caliber?: number
     conversation_id: number

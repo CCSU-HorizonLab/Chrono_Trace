@@ -43,6 +43,12 @@
         </tbody>
       </table>
     </div>
+    <div v-if="notes && notes.length" class="evidence-notes">
+      <div v-for="(note, idx) in notes" :key="idx" class="evidence-note">
+        <span class="evidence-month">{{ note.month }}</span>
+        <span class="evidence-quote">"{{ note.quote }}"</span>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -54,6 +60,8 @@ const props = defineProps<{
   title: string
   subScores: Record<string, number>
   confidenceMeta?: ResonanceConfidenceMeta
+  /** 证据条目（LLM 关系评估的原文引用），可选 */
+  notes?: Array<{ quote: string; month: string }>
 }>()
 
 const LOW_CONFIDENCE_THRESHOLD = 0.55
@@ -324,5 +332,31 @@ const showLowConfidenceHint = computed(() => {
 .badge-danger {
   background: var(--ct-color-error-light);
   color: var(--ct-color-error);
+}
+
+/* LLM 关系评估证据条目 */
+.evidence-notes {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.evidence-note {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 12px;
+  color: var(--ct-text-secondary, #64748b);
+}
+
+.evidence-month {
+  flex-shrink: 0;
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+.evidence-quote {
+  font-style: italic;
 }
 </style>

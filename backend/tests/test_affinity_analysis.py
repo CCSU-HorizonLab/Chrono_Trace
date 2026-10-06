@@ -46,7 +46,8 @@ class TestAffinityAnalysisService:
              patch('app.services.analysis.affinity_analysis_service.ChatPositivityService') as MockPositivity, \
              patch('app.services.analysis.affinity_analysis_service.PreferenceCompatibilityService') as MockPreference, \
              patch('app.services.analysis.affinity_analysis_service.EmotionalResonanceService') as MockResonance, \
-             patch('app.services.analysis.affinity_analysis_service.AttitudeTendencyService') as MockAttitude:
+             patch('app.services.analysis.affinity_analysis_service.AttitudeTendencyService') as MockAttitude, \
+             patch('app.services.analysis.relationship_llm_service.build_relationship_llm_service', return_value=None):
             
             # 配置 mock
             MockPreprocessing.return_value.orchestrate_preprocessing.return_value = mock_stats

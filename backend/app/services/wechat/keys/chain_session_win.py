@@ -55,7 +55,7 @@ class WindowsChainSession:
         if inner is not None and not self._inner_terminal:
             snap = inner.snapshot()
             if snap.get("status") in {"captured", "failed", "timed_out"}:
-                self._inner_terminal = True
+                self._absorb_inner_terminal(snap)
             return snap
         with self._lock:
             payload = {
@@ -76,6 +76,26 @@ class WindowsChainSession:
             self._status = status
             self._message = message
             self._result = dict(result or {})
+
+    def _absorb_inner_terminal(self, snap: dict[str, Any]) -> None:
+        """内层终态落地为本会话终态缓存。
+
+        此前只翻 _inner_terminal 标志：监视线程（0.3s 一轮）抢先观测到
+        captured 后，后续所有 snapshot 都落入外层分支返回过期的
+        preparing——已捕获的密钥被丢弃，导入 UI 永久等待。落地后终态
+        可重复返回，密钥正常交付。
+        """
+        result = {
+            k: v for k, v in snap.items()
+            if k not in {"ok", "status", "message", "account_wxid"}
+        }
+        self._set_result(
+            snap.get("status") or "failed",
+            snap.get("message") or snap.get("status") or "",
+            result,
+        )
+        with self._lock:
+            self._inner_terminal = True
 
     def _run(self) -> None:
         # 阶段一：只读扫描（免重启；wechat_dir 缺失时跳过）
@@ -115,11 +135,10 @@ class WindowsChainSession:
             return
 
         initial = inner.start(ready_timeout_seconds=45)
+        if initial.get("status") in {"captured", "failed", "timed_out"}:
+            self._absorb_inner_terminal(initial)
         with self._lock:
             self._inner = inner
-            self._inner_terminal = initial.get("status") in {
-                "captured", "failed", "timed_out",
-            }
         self._ready.set()
 
         # 代理等待内层终态
@@ -127,7 +146,6 @@ class WindowsChainSession:
         while time.monotonic() < deadline:
             snap = inner.snapshot()
             if snap.get("status") in {"captured", "failed", "timed_out"}:
-                with self._lock:
-                    self._inner_terminal = True
+                self._absorb_inner_terminal(snap)
                 return
             time.sleep(0.3)

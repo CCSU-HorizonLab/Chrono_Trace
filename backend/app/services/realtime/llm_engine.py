@@ -1658,10 +1658,12 @@ class LLMSuggestionEngine(SuggestionParsingMixin, LlmClientMixin, SuggestionEngi
             )
             for idx, msg in enumerate(recent_window, 1):
                 sender = "我" if msg.get("sender_attr") == "self" else "对方"
+                # 先脱敏全文再截断（与建议主链路同序）：截断边界会撕裂
+                # 手机号等敏感串使正则失配，半截 PII 随 prompt 出网
                 content = redact_segment(
-                    str(msg.get("content", ""))[: self.QUICK_PROMPT_RENDER_CHARS],
+                    str(msg.get("content", "")),
                     f"quick_prompt_recent_{idx}",
-                )
+                )[: self.QUICK_PROMPT_RENDER_CHARS]
                 prompt += f"{sender}：{content}\n"
         else:
             prompt += "【最近对话】暂无。\n"

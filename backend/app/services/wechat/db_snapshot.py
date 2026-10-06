@@ -120,7 +120,10 @@ class EncryptedShardWatcher:
                         )
                 finally:
                     out.close()
-                    os.replace(tmp_out_path, self.out_path)
+                # 原子替换仅在页循环 + WAL 合并完整成功后执行：中途异常由
+                # 外层 except 丢弃 .tmp。此前 replace 写在 finally 里无条件
+                # 执行，半截临时文件会覆盖完好的旧快照（malformed 库根源）
+                os.replace(tmp_out_path, self.out_path)
         except OSError as e:
             logger.warning("[dbwatch] 读取 %s 失败: %s", self.src, e)
             return False

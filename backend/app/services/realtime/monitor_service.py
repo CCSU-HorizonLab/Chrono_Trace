@@ -1376,6 +1376,7 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, UiaRec
         account_wxid: str = '',
     ) -> dict:
         """Return whether the UI should offer resume/backfill for this talker."""
+        resolved_account_wxid = self._resolve_account_wxid(account_wxid)
         checkpoint = self.get_resume_checkpoint(talker_display_name, talker_username, account_wxid)
         if not checkpoint.get('has_checkpoint'):
             return {

@@ -360,11 +360,15 @@ class AffinityApiMixin:
 
             progress = service.get_progress(task_id)
             if not progress:
+                # 未注册的 task_id（典型：切会话再分析后 _affinity_service 被
+                # 整体替换，旧任务失联）：必须显式 not_found 让前端停轮询，
+                # 此前伪装成 pending 会让前端 500ms 死轮询、分析按钮卡死
                 return {
-                    "ok": True,
-                    "status": "pending",
+                    "ok": False,
+                    "error": "分析任务不存在或已失效",
+                    "status": "not_found",
                     "progress_percent": 0,
-                    "current_step": "等待启动..."
+                    "current_step": ""
                 }
 
             response = {

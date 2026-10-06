@@ -541,29 +541,23 @@ class FeatureExtractionService:
         start_dt = datetime.fromtimestamp(start_ts)
         end_dt = datetime.fromtimestamp(end_ts)
 
-        sleep_seconds = 0
+        sleep_seconds = 0.0
         current_dt = start_dt
 
         while current_dt < end_dt:
-            # 进入00:00
-            if current_dt.hour == 0 and current_dt.minute < 60:
-                sleep_start = current_dt.replace(hour=0, minute=0, second=0, microsecond=0)
-                sleep_end = current_dt.replace(hour=7, minute=0, second=0, microsecond=0)
+            # 只扣「当天 00:00-07:00 睡眠窗 ∩ [start, end] 消息区间」的交集：
+            # 此前按整窗扣减，区间从窗内开始（如 00:30 发消息）会把区间外
+            # 的时间也扣掉，产生负响应时间入库污染统计
+            day_start = current_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+            sleep_end = day_start + timedelta(hours=7)
+            overlap_start = max(day_start, start_dt)
+            overlap_end = min(sleep_end, end_dt)
+            if overlap_end > overlap_start:
+                sleep_seconds += (overlap_end - overlap_start).total_seconds()
+            # 跳到下一个00:00
+            current_dt = day_start + timedelta(days=1)
 
-                # 计算本次睡眠时段的时长
-                if sleep_end > end_dt:
-                    sleep_end = end_dt
-
-                sleep_seconds += (sleep_end - sleep_start).total_seconds()
-                current_dt = sleep_end
-            else:
-                # 跳到下一个00:00
-                next_day = current_dt.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
-                if next_day > end_dt:
-                    break
-                current_dt = next_day
-
-        return (end_ts - start_ts) - sleep_seconds
+        return max(0.0, (end_ts - start_ts) - sleep_seconds)
 
     def _calculate_response_time_stats(self, response_times: List[float]) -> Dict[str, Any]:
         """

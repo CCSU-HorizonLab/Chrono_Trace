@@ -65,15 +65,33 @@ class AttitudeTendencyService:
         公式: (加权正面消息数 / (正面消息数 + 负面消息数)) × 100%
         """
         stats = self.orchestrator.get_preprocessed_statistics(conversation_id)
-        
-        total_emotional = stats.total_positive_count + stats.total_negative_count
+
+        # 态度维度语义是「对方的态度」：分子分母都必须只统计对方消息。
+        # basic.py 的 total_positive/negative_count 不过滤发送方（含用户
+        # 自己的消息），直接使用会把用户自己的积极/消极发言计入对方
+        # 态度——正面被自己抬高、负面分母也被自己撑大，与负面侧
+        # _get_negative_messages 仅取 is_sender=0 的口径不对称。
+        cursor = get_db().execute("""
+            SELECT
+                SUM(CASE WHEN sc.polarity = 1 THEN 1 ELSE 0 END),
+                SUM(CASE WHEN sc.polarity = -1 THEN 1 ELSE 0 END)
+            FROM messages m
+            INNER JOIN sentiment_cache sc ON m.id = sc.message_id
+            WHERE m.conversation_id = ?
+              AND m.is_sender = 0
+              AND m.message_type = 1
+        """, (conversation_id,))
+        other_pos_total, other_neg_total = cursor.fetchone() or (0, 0)
+        other_pos_total = other_pos_total or 0
+        other_neg_total = other_neg_total or 0
+
+        total_emotional = other_pos_total + other_neg_total
         if total_emotional == 0:
             return 0.0
-            
+
         # 查询属于“对方主动发起的会话”中的由“对方发送”的正面情绪消息数
-        # 由于 orchestrator.get_preprocessed_statistics 已经包含了全部的正面情绪数量，我们还需要进一步细分
         cursor = get_db().execute("""
-            SELECT COUNT(*) 
+            SELECT COUNT(*)
             FROM messages m
             INNER JOIN sentiment_cache sc ON m.id = sc.message_id
             INNER JOIN sessions s ON m.timestamp BETWEEN s.start_time AND s.end_time AND m.conversation_id = s.conversation_id
@@ -83,9 +101,9 @@ class AttitudeTendencyService:
               AND sc.polarity = 1
               AND s.initiator = 'other'
         """, (conversation_id,))
-        
+
         other_initiated_positive_count = cursor.fetchone()[0] or 0
-        normal_positive_count = stats.total_positive_count - other_initiated_positive_count
+        normal_positive_count = other_pos_total - other_initiated_positive_count
         
         # 对方主动找我时的正面情绪，乘以1.5倍系数
         weighted_positive_count = normal_positive_count + (other_initiated_positive_count * 1.5)
@@ -94,11 +112,11 @@ class AttitudeTendencyService:
         
         if DEBUG_TRACE:
             debug_log("\n[态度调试] === 正面情绪频率（含语境主动性） ===")
-            debug_log(f"[态度调试] 全部正面消息数: {stats.total_positive_count}")
+            debug_log(f"[态度调试] 对方正面消息数: {other_pos_total}")
             debug_log(f"[态度调试] 其中对方主动发起会话时的正面数: {other_initiated_positive_count} (权重x1.5)")
             debug_log(f"[态度调试] 其中其他情况的正面数: {normal_positive_count} (权重x1.0)")
             debug_log(f"[态度调试] 加权后的正面得分基数: {weighted_positive_count:.2f}")
-            debug_log(f"[态度调试] 负面消息数: {stats.total_negative_count}")
+            debug_log(f"[态度调试] 对方负面消息数: {other_neg_total}")
             debug_log(f"[态度调试] 有效情绪总数(原始正+负): {total_emotional}")
             debug_log(f"[态度调试] 频率: {frequency:.2f}%")
         

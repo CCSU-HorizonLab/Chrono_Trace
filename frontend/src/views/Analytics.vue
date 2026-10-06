@@ -1466,38 +1466,42 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
                             return
                         }
                         const prog = await getAffinityProgress(affinityTaskId)
-                        if (prog.ok) {
-                            globalProgressPercent.value = 50 + prog.progress_percent * 0.5
-                            globalProgressStep.value = `[深度推理] ${prog.current_step || '分析中...'}`
-                            if (prog.status === 'completed') {
-                                clearInterval(activeTimer.value)
-                                if (prog.result) {
-                                    analysisResult.value = prog.result as AffinityAnalysisResult
-                                }
-
-                                const scores = await getAffinityScores(analysisConversationId)
-                                if (
-                                    scores &&
-                                    (
-                                        !analysisResult.value ||
-                                        (scores.cache_updated_at || 0) >= (analysisResult.value.cache_updated_at || 0)
-                                    )
-                                ) {
-                                    analysisResult.value = scores
-                                }
-                                const followUpTasks = [
-                                    loadSessions(),
-                                    loadActivityCalendar(activityCalendar.value.year)
-                                ]
-                                if (shouldLoadContentAnalysis.value) {
-                                    followUpTasks.unshift(loadAnalysis())
-                                }
-                                await Promise.all(followUpTasks)
-                                resolve()
-                            } else if (prog.status === 'not_found') { clearInterval(activeTimer.value); reject(new Error('分析任务已过期')) }
-                            else if (prog.status === 'failed' || prog.status === 'cancelled') {
-                                clearInterval(activeTimer.value); reject(new Error(prog.error || '分析已取消'))
+                        // 失败/失效先于 ok 门控分派：否则 not_found（ok:false）
+                        // 会落空导致 500ms 死轮询、分析按钮永久卡住
+                        if (!prog.ok) {
+                            clearInterval(activeTimer.value)
+                            reject(new Error(prog.error || '分析任务已失效'))
+                            return
+                        }
+                        globalProgressPercent.value = 50 + prog.progress_percent * 0.5
+                        globalProgressStep.value = `[深度推理] ${prog.current_step || '分析中...'}`
+                        if (prog.status === 'completed') {
+                            clearInterval(activeTimer.value)
+                            if (prog.result) {
+                                analysisResult.value = prog.result as AffinityAnalysisResult
                             }
+
+                            const scores = await getAffinityScores(analysisConversationId)
+                            if (
+                                scores &&
+                                (
+                                    !analysisResult.value ||
+                                    (scores.cache_updated_at || 0) >= (analysisResult.value.cache_updated_at || 0)
+                                )
+                            ) {
+                                analysisResult.value = scores
+                            }
+                            const followUpTasks = [
+                                loadSessions(),
+                                loadActivityCalendar(activityCalendar.value.year)
+                            ]
+                            if (shouldLoadContentAnalysis.value) {
+                                followUpTasks.unshift(loadAnalysis())
+                            }
+                            await Promise.all(followUpTasks)
+                            resolve()
+                        } else if (prog.status === 'failed' || prog.status === 'cancelled') {
+                            clearInterval(activeTimer.value); reject(new Error(prog.error || '分析已取消'))
                         }
                     } catch (e) { }
                 }, 500)

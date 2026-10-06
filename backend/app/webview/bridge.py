@@ -207,20 +207,29 @@ class Bridge(
             status = self._wechat_import_tasks.get(task_id)
         return status.copy() if status else {}
 
-    def _find_running_wechat_import(self) -> str | None:
-        """返回当前运行中的导入任务 id（无则 None）。
+    def _find_running_wechat_import(self, account_wxid: str = "") -> tuple[str | None, str | None]:
+        """返回 (同账号运行任务 id, 异账号运行任务 id)。
 
         thread 存活判定兜底：条目缺 thread 键（如测试手工注入）时保守
-        视为存活，宁可复用也不并发双跑。
+        视为存活，宁可复用也不并发双跑。持锁调用 _scan_running_import。
         """
         with self._wechat_import_lock:
-            for task_id, entry in self._wechat_import_tasks.items():
-                if entry.get("status") != "running":
-                    continue
-                thread = entry.get("thread")
-                if thread is None or thread.is_alive():
-                    return task_id
-        return None
+            return self._scan_running_import(account_wxid)
+
+    def _scan_running_import(self, account_wxid: str) -> tuple[str | None, str | None]:
+        """无锁版运行扫描（调用方必须已持有 _wechat_import_lock）。"""
+        same: str | None = None
+        other: str | None = None
+        for task_id, entry in self._wechat_import_tasks.items():
+            if entry.get("status") != "running":
+                continue
+            thread = entry.get("thread")
+            if thread is None or thread.is_alive():
+                if not account_wxid or str(entry.get("account_wxid") or "") == account_wxid:
+                    same = same or task_id
+                else:
+                    other = other or task_id
+        return same, other
 
     def _prune_task_dicts(self, max_age_hours: float = 24.0) -> None:
         """按 TTL 清理四个任务字典（建议流/密钥捕获/模型下载/微信导入）中的过期条目。
@@ -519,16 +528,21 @@ class Bridge(
 
         # —— 防重入与预注册在同一锁区间，杜绝「检查后、注册前」窗口双跑 ——
         with self._wechat_import_lock:
-            for existing_id, entry in self._wechat_import_tasks.items():
-                if entry.get("status") != "running":
-                    continue
-                thread = entry.get("thread")
-                if thread is None or thread.is_alive():
-                    return {"ok": True, "task_id": existing_id, "reused": True}
+            running_same, running_other = self._scan_running_import(resolved_wxid)
+            if running_same:
+                return {"ok": True, "task_id": running_same, "reused": True}
+            if running_other:
+                # 不同账号的导入不能复用也不能吞掉：显式报错优于静默
+                # 把 B 账号的导入归因到 A 的任务结果上
+                return {
+                    "ok": False,
+                    "error": "另一微信账号的导入正在进行中，请等待其完成后再切换账号导入",
+                }
             task_id = f"wechat_import_{int(time.time())}_{uuid.uuid4().hex[:8]}"
             now_ms = int(time.time() * 1000)
             self._wechat_import_tasks[task_id] = {
                 "task_id": task_id,
+                "account_wxid": resolved_wxid,
                 "status": "running",
                 "phase": "resolving_paths",
                 "phase_label": "查找数据库路径...",

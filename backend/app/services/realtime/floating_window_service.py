@@ -698,19 +698,6 @@ class FloatingWindowService:
             return
         self._tracking_loop_win32(win32gui)
 
-    def _tracking_loop_win32(self, win32gui):
-        """Windows 跟随：win32gui 轮询微信窗口位置 → Win32 API 移动悬浮窗。
-
-        历史事故：本段曾被错误缩进进 _tracking_loop_posix 尾部成为死代码
-        （Windows 只定位一次不再跟随），归位时保持与 Linux 侧对称的
-        「平台分派在 _tracking_loop 单点」结构。
-        """
-        interval = TRACKING_INTERVAL_MS / 1000.0
-        last_rect = None
-        miss_count = 0
-
-        _log("跟踪循环开始运行")
-
     def _tracking_loop_posix(self):
         """Linux 跟随：X11 定位微信窗口 → pywebview move/resize（无 HWND）。"""
         tracker = self._get_tracker()
@@ -756,6 +743,18 @@ class FloatingWindowService:
                 _t.sleep(1)
 
     def _tracking_loop_win32(self, win32gui):
+        """Windows 跟随：win32gui 轮询微信窗口位置 → Win32 API 移动悬浮窗。
+
+        历史事故一：本段曾被错误缩进进 _tracking_loop_posix 尾部成为死
+        代码（Windows 只定位一次不再跟随）；历史事故二：归位时误留双定
+        义，后定义覆盖前定义导致 interval 等未初始化即使用。保持与
+        Linux 侧对称的「平台分派在 _tracking_loop 单点」结构。
+        """
+        interval = TRACKING_INTERVAL_MS / 1000.0
+        last_rect = None
+        miss_count = 0
+
+        _log("跟踪循环开始运行")
 
         while not self._stop_tracking.is_set():
             try:

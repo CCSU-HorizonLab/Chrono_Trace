@@ -150,6 +150,23 @@ def test_import_reentry_reuses_running_task():
     assert bridge.get_import_progress(first["task_id"])["status"] == "completed"
 
 
+def test_import_other_account_rejected_while_running():
+    # 运行中的导入属于另一账号：不得复用也不得吞掉，显式报错
+    gate = threading.Event()
+    bridge = make_bridge(FakeImportService(gate=gate))
+    first = bridge.import_wechat_data("k", {}, "wxid_test")
+    assert first["ok"] is True
+
+    bridge._resolve_account_wxid = lambda wxid="": "wxid_other"
+    second = bridge.import_wechat_data("k", {}, "wxid_other")
+    assert second["ok"] is False
+    assert "正在进行中" in (second.get("error") or "")
+    assert len(bridge._wechat_import_tasks) == 1
+
+    gate.set()
+    assert join_task(bridge, first["task_id"])
+
+
 def test_import_failure_marks_failed():
     # worker 内抛异常 → failed 终态
     bridge = make_bridge(FakeImportService(error=RuntimeError("boom")))

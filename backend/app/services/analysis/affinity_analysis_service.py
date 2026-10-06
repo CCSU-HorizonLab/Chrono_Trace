@@ -576,9 +576,21 @@ class AffinityAnalysisService:
                         }
                 except Exception as ctx_e:
                     logger.debug("[关系评估] 关系背景读取跳过: %s", ctx_e)
+                # 脱敏 scope 必须带真实账号：PrivacyRedactor 以 account_wxid
+                # 做实体占位符一致性键与审计归属键（此前读不存在的
+                # config._account_wxid 恒为空串，跨入口占位符编号漂移）
+                account_wxid = ""
+                try:
+                    row = get_db().execute(
+                        "SELECT account_wxid FROM conversations WHERE id = ?",
+                        (int(conversation_id),),
+                    ).fetchone()
+                    account_wxid = str(row["account_wxid"] or "") if row else ""
+                except Exception as acc_e:
+                    logger.debug("[关系评估] 账号读取跳过: %s", acc_e)
                 llm_result = llm_service.evaluate(
                     conversation_id,
-                    account_wxid=str(getattr(config, "_account_wxid", "") or ""),
+                    account_wxid=account_wxid,
                     context=context,
                 )
                 confidence_meta = dict(llm_result.get("meta") or {})
@@ -602,8 +614,13 @@ class AffinityAnalysisService:
                 result.llm_relationship_absent_reason = str(absent)
                 logger.info("[关系评估] 缺席: %s", absent)
         else:
+            # 三种缺席各自成文，前端徽章可区分（否则卡片与说明同时消失）
             if llm_service is None:
-                result.llm_relationship_absent_reason = "未配置 LLM 模型"
+                result.llm_relationship_absent_reason = "未配置 LLM 模型（可在设置页添加）"
+            elif not bool(getattr(config, "llm_relationship_enabled", True)):
+                result.llm_relationship_absent_reason = "已在关系配置中关闭 AI 评估"
+            else:
+                result.llm_relationship_absent_reason = "AI 评估权重为 0，未参与本次评分"
     
     def _calculate_overall_score(
         self,

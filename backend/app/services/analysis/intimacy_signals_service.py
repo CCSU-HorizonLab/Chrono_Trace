@@ -321,8 +321,8 @@ class IntimacySignalsService:
             balance = 0.5
         else:
             balance = other_chars / total_chars
-            # 每偏离均衡 10% 扣 8 分
-            balance_score = max(0.0, 100.0 - abs(balance - 0.5) * 200 * 0.8)
+            # 每偏离均衡 10 个百分点扣 8 分：|b-0.5|*100=百分点数，×0.8
+            balance_score = max(0.0, 100.0 - abs(balance - 0.5) * 100 * 0.8)
         meta["char_balance"] = round(balance, 4)
 
         # 长消息占比差

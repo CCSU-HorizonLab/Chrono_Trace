@@ -124,19 +124,39 @@ class RelationshipLLMService:
         speech_units 不存内容（只有 message_ids/sender/时间戳），单元
         文本经 message_ids 回查 messages 拼接。
         """
-        rows = get_db().execute(
+        # SQL 侧按桶 LIMIT（ROW_NUMBER 分层 + 每桶配额）：此前全量拉取
+        # 再 Python 采样，数万交互对的会话每次分析都白读 99% 数据
+        bucket_count = get_db().execute(
             """
-            SELECT ip.from_polarity, ip.to_polarity, ip.time_gap,
-                   fs.message_ids AS from_ids, fs.sender AS from_sender,
-                   fs.first_message_timestamp AS from_ts,
-                   ts.message_ids AS to_ids, ts.sender AS to_sender
-            FROM interaction_pairs ip
-            JOIN speech_units fs ON fs.id = ip.from_speech_unit_id
-            JOIN speech_units ts ON ts.id = ip.to_speech_unit_id
-            WHERE ip.conversation_id = ?
-            ORDER BY fs.first_message_timestamp DESC
+            SELECT COUNT(DISTINCT from_polarity || ':' || to_polarity)
+            FROM interaction_pairs WHERE conversation_id = ?
             """,
             (conversation_id,),
+        ).fetchone()[0]
+        if not bucket_count:
+            return []
+        quota = max(2, MAX_PAIRS // int(bucket_count))
+        rows = get_db().execute(
+            """
+            SELECT * FROM (
+                SELECT ip.from_polarity, ip.to_polarity, ip.time_gap,
+                       fs.message_ids AS from_ids, fs.sender AS from_sender,
+                       fs.first_message_timestamp AS from_ts,
+                       ts.message_ids AS to_ids, ts.sender AS to_sender,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY ip.from_polarity, ip.to_polarity
+                           ORDER BY fs.first_message_timestamp DESC
+                       ) AS bucket_rank
+                FROM interaction_pairs ip
+                JOIN speech_units fs ON fs.id = ip.from_speech_unit_id
+                JOIN speech_units ts ON ts.id = ip.to_speech_unit_id
+                WHERE ip.conversation_id = ?
+            ) ranked
+            WHERE bucket_rank <= ?
+            ORDER BY from_ts DESC
+            LIMIT ?
+            """,
+            (conversation_id, quota, MAX_PAIRS),
         ).fetchall()
         if not rows:
             return []
@@ -173,19 +193,8 @@ class RelationshipLLMService:
                         parts.append(text)
             return " ".join(parts)[:PER_UNIT_CHAR_LIMIT]
 
-        # 9 桶：按 (from_polarity, to_polarity) 分层，桶内近期优先
-        buckets: Dict[tuple, List[Any]] = {}
-        for row in rows:
-            key = (int(row["from_polarity"] or 0), int(row["to_polarity"] or 0))
-            buckets.setdefault(key, []).append(row)
-
-        quota = max(2, MAX_PAIRS // max(1, len(buckets)))
-        sampled: List[Any] = []
-        for members in buckets.values():
-            sampled.extend(members[:quota])
-        sampled = sampled[:MAX_PAIRS]
-        # 时间正序渲染（旧→新，便于模型读演变）
-        sampled.sort(key=lambda r: int(r["from_ts"] or 0))
+        # SQL 已按桶配额采样（≤40 对）；时间正序渲染（旧→新，便于读演变）
+        sampled = sorted(rows, key=lambda r: int(r["from_ts"] or 0))
 
         pairs: List[Dict[str, Any]] = []
         for row in sampled:

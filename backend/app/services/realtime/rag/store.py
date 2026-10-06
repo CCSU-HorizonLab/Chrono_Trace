@@ -375,9 +375,26 @@ class RagStore:
             # 事实派生文档的溯源键：supersede/用户忘记时据此同步启停文档
             "fact_id": "INTEGER",
         }
+        need_fact_backfill = "fact_id" not in existing
         for name, definition in columns.items():
             if name not in existing:
                 self.conn.execute(f"ALTER TABLE rag_documents ADD COLUMN {name} {definition}")
+        if need_fact_backfill:
+            # 存量回填：fact 文档 content = "时间：{label}\n{fact.content}"，
+            # 按会话 + 内容后缀匹配挂回 fact_id。匹配不上的（内容已被质量
+            # 门改写等）保持 NULL——其启停需一次全量索引重建才会对齐
+            self.conn.execute(
+                """
+                UPDATE rag_documents SET fact_id = (
+                    SELECT f.id FROM rag_facts f
+                    WHERE f.conversation_id = rag_documents.conversation_id
+                      AND rag_documents.content LIKE '%' || f.content
+                    LIMIT 1
+                )
+                WHERE fact_id IS NULL
+                  AND doc_type IN ('fact_memory', 'shared_memory')
+                """
+            )
         fact_columns = set()
         for row in self.conn.execute("PRAGMA table_info(rag_facts)").fetchall():
             try:

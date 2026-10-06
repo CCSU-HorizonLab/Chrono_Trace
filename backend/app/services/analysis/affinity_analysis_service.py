@@ -61,6 +61,8 @@ class AffinityAnalysisResult:
     attitude_tendency: Optional[DimensionScore] = None
     preference_compatibility: Optional[DimensionScore] = None
     intimacy_signals: Optional[DimensionScore] = None
+    llm_relationship: Optional[DimensionScore] = None
+    llm_relationship_absent_reason: Optional[str] = None
     
     # 元数据
     conversation_id: int = 0
@@ -81,9 +83,9 @@ class AffinityAnalysisResult:
 class AffinityAnalysisService:
     """好感度分析编排器"""
 
-    CACHE_SCHEMA_VERSION = 11
+    CACHE_SCHEMA_VERSION = 12
     # 口径版本：评分口径结构性变化时 +1（落历史行与缓存，跨口径趋势不可比）
-    CALIBER_VERSION = 3
+    CALIBER_VERSION = 4
     NEUTRAL_OVERALL_BASELINE = 35.0
     OVERALL_SESSION_CONFIDENCE_TARGET = 30
     OVERALL_ACTIVE_DAY_CONFIDENCE_TARGET = 30
@@ -395,9 +397,20 @@ class AffinityAnalysisService:
         """计算所有维度评分"""
 
         # 解析六维权重计划（config 覆盖默认；缺席维度 declared 置 0）。
-        # A 期 LLM 维固定缺席（llm_available=False），C 期接入真实探测
+        # LLM 维可用性 = 激活模型存在（构造不发起网络调用；真正的调用
+        # 失败在维度计算期按缺席处理，归一时自动剔除）
         from .affinity_weights import resolve_dimension_plan
-        plan = resolve_dimension_plan(config, llm_available=False)
+        from .relationship_llm_service import (
+            RelationshipLLMAbsent,
+            build_relationship_llm_service,
+        )
+        # probe 容错：测试/异常环境下构建失败按"无 LLM"处理，不影响主流程
+        try:
+            llm_service = build_relationship_llm_service()
+        except Exception as probe_e:
+            logger.debug("[关系评估] 服务构建失败按缺席处理: %s", probe_e)
+            llm_service = None
+        plan = resolve_dimension_plan(config, llm_available=llm_service is not None)
         logger.info(
             "维度权重计划: %s",
             {k: (v["declared"] if v["enabled"] else 0.0) for k, v in plan.items()},
@@ -543,6 +556,54 @@ class AffinityAnalysisService:
             intimacy_result['overall_score'],
             weights['intimacy_signals'] * 100,
         )
+
+        # 6. LLM 关系评估（缺席不阻断：权重归一自动剔除该维）
+        if llm_service is not None and weights.get('llm_relationship', 0.0) > 0:
+            self._check_cancelled(cancel_event)
+            result.progress_percent = 79
+            result.current_step = "LLM 关系评估（可能需要约1分钟）"
+            logger.info("[好感度分析] 维度 6/6: LLM 关系评估...")
+            try:
+                context: Dict[str, str] = {}
+                try:
+                    from .relationship_context_service import RelationshipContextService
+                    ctx_obj = RelationshipContextService().get_context(conversation_id)
+                    if ctx_obj is not None:
+                        context = {
+                            "relationship_type": str(getattr(ctx_obj, "relationship_type", "") or ""),
+                            "interaction_duration": str(getattr(ctx_obj, "interaction_duration", "") or ""),
+                            "communication_style": str(getattr(ctx_obj, "communication_style", "") or ""),
+                        }
+                except Exception as ctx_e:
+                    logger.debug("[关系评估] 关系背景读取跳过: %s", ctx_e)
+                llm_result = llm_service.evaluate(
+                    conversation_id,
+                    account_wxid=str(getattr(config, "_account_wxid", "") or ""),
+                    context=context,
+                )
+                confidence_meta = dict(llm_result.get("meta") or {})
+                confidence_meta["evidence"] = llm_result.get("evidence") or []
+                result.llm_relationship = DimensionScore(
+                    name="AI 关系评估",
+                    score=llm_result['score'],
+                    weight=weights['llm_relationship'],
+                    weighted_score=llm_result['score'] * weights['llm_relationship'],
+                    interpretation=llm_result.get('insight') or "LLM 关系评估完成",
+                    sub_scores=llm_result['sub_scores'],
+                    confidence_meta=confidence_meta,
+                )
+                logger.info(
+                    "LLM 关系评估完成: %.1f分 (模型: %s)",
+                    llm_result['score'],
+                    (llm_result.get("meta") or {}).get("model_name", ""),
+                )
+            except RelationshipLLMAbsent as absent:
+                result.llm_relationship = None
+                result.llm_relationship_absent_reason = str(absent)
+                logger.info("[关系评估] 缺席: %s", absent)
+        else:
+            if llm_service is None:
+                result.llm_relationship_absent_reason = "未配置 LLM 模型"
     
     def _calculate_overall_score(
         self,
@@ -766,6 +827,8 @@ class AffinityAnalysisService:
                 "attitude_tendency": asdict(result.attitude_tendency) if result.attitude_tendency else None,
                 "preference_compatibility": asdict(result.preference_compatibility) if result.preference_compatibility else None,
                 "intimacy_signals": asdict(result.intimacy_signals) if result.intimacy_signals else None,
+                "llm_relationship": asdict(result.llm_relationship) if result.llm_relationship else None,
+                "llm_relationship_absent_reason": result.llm_relationship_absent_reason,
                 "conversation_id": result.conversation_id,
                 "analysis_timestamp": result.analysis_timestamp,
                 "analysis_duration_ms": result.analysis_duration_ms,
@@ -849,11 +912,14 @@ class AffinityAnalysisService:
             # 重建维度分数
             for dim_name in ["emotional_resonance", "chat_positivity",
                            "attitude_tendency", "preference_compatibility",
-                           "intimacy_signals"]:
+                           "intimacy_signals", "llm_relationship"]:
                 dim_dict = result_dict.get(dim_name)
                 if dim_dict:
                     dim = DimensionScore(**dim_dict)
                     setattr(result, dim_name, dim)
+            result.llm_relationship_absent_reason = result_dict.get(
+                "llm_relationship_absent_reason"
+            )
             
             return result
             

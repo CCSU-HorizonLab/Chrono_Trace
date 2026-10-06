@@ -185,6 +185,11 @@
             :max-score="100"
             :weight="analysisResult.intimacy_signals.weight"
             :interpretation="analysisResult.intimacy_signals.interpretation" />
+          <AffinityScoreCard v-if="analysisResult.llm_relationship" title="AI 关系评估"
+            :score="analysisResult.llm_relationship.score"
+            :max-score="100"
+            :weight="analysisResult.llm_relationship.weight"
+            :interpretation="analysisResult.llm_relationship.interpretation" />
         </div>
       </div>
 
@@ -208,6 +213,12 @@
             <SubScoreBreakdown v-if="analysisResult.intimacy_signals" title="亲密度信号"
               :sub-scores="analysisResult.intimacy_signals.sub_scores"
               :confidence-meta="analysisResult.intimacy_signals.confidence_meta" />
+            <SubScoreBreakdown v-if="analysisResult.llm_relationship" title="AI 关系评估"
+              :sub-scores="analysisResult.llm_relationship.sub_scores"
+              :notes="llmEvidenceNotes" />
+            <p v-else-if="analysisResult.llm_relationship_absent_reason" class="llm-absent-note">
+              AI 关系评估未参与本次评分：{{ analysisResult.llm_relationship_absent_reason }}
+            </p>
           </div>
         </CtCard>
       </div>
@@ -804,8 +815,18 @@ const showPortraitDialog = ref(false)
                 chat_positivity: analysisResult.value.chat_positivity || undefined,
                 attitude_tendency: analysisResult.value.attitude_tendency || undefined,
                 preference_compatibility: analysisResult.value.preference_compatibility || undefined,
-                intimacy_signals: analysisResult.value.intimacy_signals || undefined
+                intimacy_signals: analysisResult.value.intimacy_signals || undefined,
+                llm_relationship: analysisResult.value.llm_relationship || undefined
             }
+        })
+
+        // LLM 关系评估的证据条目（[{quote, month}]，来自 confidence_meta.evidence）
+        const llmEvidenceNotes = computed<Array<{ quote: string; month: string }> | undefined>(() => {
+            const meta = analysisResult.value?.llm_relationship?.confidence_meta as any
+            const evidence = meta?.evidence
+            return Array.isArray(evidence) && evidence.length
+                ? evidence.map((e: any) => ({ quote: String(e.quote || ''), month: String(e.month || '') }))
+                : undefined
         })
 
         const emotionalResonanceDisplaySubScores = computed(() => {
@@ -1869,7 +1890,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
             analysisResult, displayScore, showKeywordsDialog, showContextForm, showPortraitDialog, handlePortraitGenerated, isGlobalAnalyzing, isStopping, activeTimer, handleStopAnalysis, globalProgressPercent, globalProgressStep, isDownloadingModels, modelDownloadProgress, modelDownloadStep, modelDownloadTaskId, gpuMode,
             hasConversations, hasFeatures, hasCachedAffinityAnalysis, featureStats, responseTimeStats, initiativeStats, wordCountsStats, displayWordRatioLabel, activityCalendar,
             responseTimeChart, activityCalendarChart, wordCountChart, stats, currentContactName, headerAvatarSrc, hasPreferenceKeywords, allDimensions, emotionalResonanceDisplaySubScores,
-            currentRangeLabel, hasContentAnalysis, circumference, strokeDashoffset, formatNumber, formatTime, getResponseTimeLabel, getMergedResponseTimeLabel, getResponseTimePercent, onConversationChange, onDatesChange, handleExport, handleStartGlobalAnalysis, handleContextSaved, handleKeywordsUpdated,
+            currentRangeLabel, hasContentAnalysis, circumference, strokeDashoffset, formatNumber, formatTime, getResponseTimeLabel, getMergedResponseTimeLabel, getResponseTimePercent, onConversationChange, onDatesChange, handleExport, handleStartGlobalAnalysis, handleContextSaved, handleKeywordsUpdated, llmEvidenceNotes,
             exportDialogVisible, exportFormat, exporting, exportResult, confirmExport, openExportFolder,
             activeAccountWxid,
             getScoreColor, scrollToDetails, handlePreferenceDisabledClick, onWordSelect, loadAnalysis, loadSessions, handleActivityYearChange
@@ -3263,6 +3284,13 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
         width: auto;
         text-align: left;
     }
+}
+
+/* LLM 关系评估缺席说明（灰字，不阻断其余维度展示） */
+.llm-absent-note {
+  font-size: 12px;
+  color: var(--ct-text-secondary, #64748b);
+  margin: 4px 0 0;
 }
 
 /* 导出弹窗 */

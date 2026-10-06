@@ -5,6 +5,11 @@ import time
 import logging
 from typing import Dict, Any, Optional, Callable
 from .path_finder import WeChatPathFinder
+from .chatroom import (
+    is_chatroom_username,
+    parse_chatroom_message,
+    resolve_chatroom_display_name,
+)
 from .db_decryptor_v2 import WeChatDBDecryptor  # V1 已退役，V2 尾部同名兼容类
 from .db.v4.contact import ContactDBV4
 from .db.v4.message import MessageDBV4
@@ -862,7 +867,6 @@ class WeChatIngestService:
 
             conversation_id = conversation_cache.get(talker)
             if conversation_id is None:
-                from .chatroom import is_chatroom_username
                 conv_type = "group" if is_chatroom_username(talker) else "private"
                 db.execute("""
                     INSERT OR IGNORE INTO conversations
@@ -894,14 +898,22 @@ class WeChatIngestService:
             touched_conversations[conversation_id] = max(
                 touched_conversations.get(conversation_id, 0), ts
             )
+            content = msg['content']
+            sender_label = msg.get('sender', '')
+            if is_chatroom_username(talker):
+                # 群消息存储前剥离 'wxid_xxx:\n' 前缀：不剥离会污染词频/
+                # 情感/事实抽取/出网 prompt 全链路；群内发送者记入 sender
+                member_wxid, content = parse_chatroom_message(content)
+                if member_wxid:
+                    sender_label = resolve_chatroom_display_name(member_wxid) or sender_label
             rows_by_conv.setdefault(conversation_id, []).append((
                 conversation_id,
                 local_id,
                 talker,
-                msg.get('sender', ''),
+                sender_label,
                 1 if msg.get('is_sender') else 0,
                 msg.get('message_type', 1),
-                msg['content'],
+                content,
                 ts,
                 now,
             ))
@@ -920,34 +932,65 @@ class WeChatIngestService:
         # 窗口容差）的冗余实时行，避免统计、预处理与 RAG 重复计数。
         reconciled = 0
         for conv_id in touched_conversations:
-            has_realtime = db.execute(
+            realtime_rows = db.execute(
                 """
-                SELECT 1 FROM messages
+                SELECT id, is_sender, message_type, COALESCE(content, '') AS content, timestamp
+                FROM messages
                 WHERE conversation_id = ? AND source IN ('realtime', 'realtime_backfill')
-                LIMIT 1
                 """,
                 (conv_id,),
-            ).fetchone()
-            if not has_realtime:
+            ).fetchall()
+            if not realtime_rows:
                 continue
-            cursor = db.execute(
+            long_rows = db.execute(
                 """
-                DELETE FROM messages
-                WHERE conversation_id = ?
-                  AND source IN ('realtime', 'realtime_backfill')
-                  AND EXISTS (
-                      SELECT 1 FROM messages m2
-                      WHERE m2.conversation_id = messages.conversation_id
-                        AND m2.source = 'long'
-                        AND m2.is_sender = messages.is_sender
-                        AND m2.message_type = messages.message_type
-                        AND m2.timestamp BETWEEN messages.timestamp - 59 AND messages.timestamp + 59
-                        AND COALESCE(m2.content, '') = COALESCE(messages.content, '')
-                  )
+                SELECT id, is_sender, message_type, COALESCE(content, '') AS content, timestamp
+                FROM messages
+                WHERE conversation_id = ? AND source = 'long'
                 """,
                 (conv_id,),
-            )
-            reconciled += cursor.rowcount or 0
+            ).fetchall()
+
+            # 同（发送方/类型/内容）桶内一对一贪心最近匹配，±59s 容差保留
+            # （UIA 实时行为分钟级时间戳，与微信库精确时间戳天然有偏差）。
+            # 此前 EXISTS + 时间窗允许一条 long 吸收窗口内多条同文 realtime：
+            # 一分钟内连发两条相同文本时，第二条的 realtime 行被第一条的
+            # long 行误删，而它自己的 long 行尚未导入（此后若不再导入，
+            # 该消息永久丢失）。一对一后每条 realtime 只会被「自己的」
+            # long 行覆盖。
+            by_key: dict[tuple, list[tuple]] = {}
+            for row in long_rows:
+                by_key.setdefault(
+                    (row["is_sender"], row["message_type"], row["content"]), []
+                ).append((row["timestamp"], row["id"]))
+            used_long: set[int] = set()
+            matched_ids: list[int] = []
+            for rt in realtime_rows:
+                candidates = by_key.get(
+                    (rt["is_sender"], rt["message_type"], rt["content"])
+                )
+                if not candidates:
+                    continue
+                best_long_id = None
+                best_dt = None
+                for lts, lid in candidates:
+                    if lid in used_long:
+                        continue
+                    dt = abs(lts - rt["timestamp"])
+                    if dt > 59:
+                        continue
+                    if best_dt is None or dt < best_dt:
+                        best_long_id = lid
+                        best_dt = dt
+                if best_long_id is not None:
+                    used_long.add(best_long_id)
+                    matched_ids.append(rt["id"])
+            if matched_ids:
+                db.executemany(
+                    "DELETE FROM messages WHERE id = ?",
+                    [(mid,) for mid in matched_ids],
+                )
+                reconciled += len(matched_ids)
         if reconciled:
             logger.info(f"[导入对账] 清理被导入数据覆盖的冗余实时消息 {reconciled} 条")
 

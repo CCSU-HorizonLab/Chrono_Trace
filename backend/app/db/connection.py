@@ -1,4 +1,5 @@
 """数据库连接与初始化模块"""
+import logging
 import sqlite3
 from pathlib import Path
 from typing import Optional
@@ -6,6 +7,8 @@ from typing import Optional
 from ..config import DB_PATH, DB_SCHEMA_PATH
 
 import threading
+
+logger = logging.getLogger(__name__)
 
 class DatabaseConnection:
     """数据库连接管理器"""
@@ -293,6 +296,60 @@ class DatabaseConnection:
             conn.commit()
 
     @classmethod
+    def _migrate_strip_chatroom_prefixes(cls, conn: sqlite3.Connection) -> None:
+        """一次性清理存量群消息的 'wxid_xxx:\\n' 发送者前缀。
+
+        摄入端已改为存储剥离后的干净内容；本迁移处理修复前导入的存量
+        （不清理则词频/情感/事实抽取/出网 prompt 持续被前缀污染）。
+        settings 表键做一次性标记，避免每次启动重复扫描。
+        """
+        try:
+            flag = conn.execute(
+                "SELECT value FROM settings WHERE key = 'migration_chatroom_prefix_stripped'"
+            ).fetchone()
+            if flag:
+                return
+            from ..services.wechat.chatroom import (
+                parse_chatroom_message,
+                resolve_chatroom_display_name,
+            )
+
+            updates = []
+            rows = conn.execute(
+                """
+                SELECT m.id, m.content, m.sender
+                FROM messages m
+                JOIN conversations c ON c.id = m.conversation_id
+                WHERE c.conversation_type = 'group'
+                  AND m.content LIKE '%' || ':' || char(10) || '%'
+                """
+            ).fetchall()
+            for row in rows:
+                content = row["content"] if isinstance(row["content"], str) else ""
+                member_wxid, clean = parse_chatroom_message(content)
+                if member_wxid is None:
+                    continue
+                sender = row["sender"] or ""
+                if not sender.strip():
+                    sender = resolve_chatroom_display_name(member_wxid)
+                updates.append((clean, sender, row["id"]))
+            if updates:
+                conn.executemany(
+                    "UPDATE messages SET content = ?, sender = ? WHERE id = ?",
+                    updates,
+                )
+                conn.commit()
+                print(f"[迁移] 已清理 {len(updates)} 条群消息的发送者前缀")
+            conn.execute(
+                "INSERT OR REPLACE INTO settings (key, value, updated_at) "
+                "VALUES ('migration_chatroom_prefix_stripped', ?, strftime('%s', 'now'))",
+                (str(len(updates)),),
+            )
+            conn.commit()
+        except Exception as exc:
+            logger.warning("[迁移] 群消息前缀清理失败（下次启动重试）: %s", exc)
+
+    @classmethod
     def _run_compat_migrations(cls):
         """Apply lightweight compatibility migrations for existing databases."""
         conn = cls._get_instance()
@@ -302,6 +359,7 @@ class DatabaseConnection:
         cls._migrate_wechat_account_isolation(conn)
         cls._migrate_conversations_analysis_columns(conn)
         cls._migrate_realtime_suggestions_columns(conn)
+        cls._migrate_strip_chatroom_prefixes(conn)
 
         conn.execute(
             """

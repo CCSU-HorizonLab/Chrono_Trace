@@ -403,12 +403,13 @@ class RagIndexer:
             # ---- 真增量判断：水位有效且配置未变 → 只处理新增消息 ----
             status_row = self.store.get_status(account_wxid, conversation_id) or {}
             watermark_ts = int(status_row.get("message_watermark_ts") or 0)
+            last_message_id = int(status_row.get("last_message_id") or 0)
             config_match = (
                 str(status_row.get("embedding_model") or "") == model
                 and int(status_row.get("embedding_dim") or 0) == dim
                 and str(status_row.get("privacy_mode") or "") == privacy_mode
                 and str(status_row.get("index_version") or "") == self.INDEX_VERSION
-                and watermark_ts > 0
+                and last_message_id > 0
             )
             if config_match:
                 # 增量模式：只加载水位之后的新消息。
@@ -416,7 +417,7 @@ class RagIndexer:
                 # 而抽取水位不动——后配 LLM 重建若只看消息水位会被增量
                 # 短路，历史事实永远抽不到（用户实测：删库重导先无 LLM
                 # 构建、配 LLM 后重建不动）。
-                new_messages = self._load_messages_after(conversation_id, watermark_ts)
+                new_messages = self._load_messages_after(conversation_id, last_message_id)
                 llm_behind = self._llm_extraction_behind(status_row, watermark_ts)
                 # 抽取欠账回补只在一条路径上跑：无新消息在此处补；有新
                 # 消息在嵌入循环后统一补——此前两处都跑，全量重载消息+
@@ -433,13 +434,13 @@ class RagIndexer:
                     self.store.conn.commit()
                     if llm_behind:
                         self._refresh_policy_shadows(account_wxid, conversation_id, conversation)
-                    logger.debug("[RAG Index] incremental skip: no new messages after watermark=%s", watermark_ts)
+                    logger.debug("[RAG Index] incremental skip: no new messages after cursor id=%s", last_message_id)
                     return self.store.get_status(account_wxid, conversation_id) or {}
                 messages = new_messages
                 incremental = True
                 logger.info(
-                    "[RAG Index] incremental rebuild: %s new messages after watermark=%s",
-                    len(new_messages), watermark_ts,
+                    "[RAG Index] incremental rebuild: %s new messages after cursor id=%s",
+                    len(new_messages), last_message_id,
                 )
             else:
                 messages = self._load_messages(conversation_id)
@@ -549,14 +550,15 @@ class RagIndexer:
             # 更早的未覆盖段（无 LLM 时期的存量）
             if incremental and llm_behind:
                 self._backfill_llm_extraction(account_wxid, conversation_id)
-            # 推进消息水位（增量模式下次从最新时间戳开始；全量模式首次设置）
+            # 推进消息水位与摄取游标（游标用单调 id，保证后写消息必被处理）
             new_watermark = max((int(m.get("timestamp") or 0) for m in messages), default=watermark_ts if incremental else 0)
+            new_last_id = max((int(m.get("id") or 0) for m in messages), default=last_message_id if incremental else 0)
             self.store.conn.execute(
                 """
-                UPDATE rag_index_status SET message_watermark_ts = ?
+                UPDATE rag_index_status SET message_watermark_ts = ?, last_message_id = ?
                 WHERE account_wxid = ? AND conversation_id = ?
                 """,
-                (new_watermark, account_wxid, int(conversation_id)),
+                (new_watermark, new_last_id, account_wxid, int(conversation_id)),
             )
             self.store.upsert_status(
                 account_wxid,
@@ -644,8 +646,13 @@ class RagIndexer:
         ).fetchone()
         return dict(row) if row else None
 
-    def _load_messages_after(self, conversation_id: int, watermark_ts: int) -> list[dict[str, Any]]:
-        """加载水位之后的新消息（真增量：不重载全量会话）。"""
+    def _load_messages_after(self, conversation_id: int, last_message_id: int) -> list[dict[str, Any]]:
+        """加载摄取游标之后的新消息（真增量：不重载全量会话）。
+
+        游标用单调递增的 messages.id 而非秒级事件时间：timestamp 不随
+        写入顺序单调（同秒第二条、回溯插入、延迟摄取都会产生「时间戳
+        ≤ 水位但更晚写入」的行），严格 timestamp > 水位会永久漏掉它们。
+        """
         rows = self.store.conn.execute(
             """
             SELECT id, conversation_id, is_sender, content, timestamp, message_type
@@ -654,10 +661,10 @@ class RagIndexer:
               AND message_type = 1
               AND content IS NOT NULL
               AND TRIM(content) != ''
-              AND timestamp > ?
-            ORDER BY timestamp ASC, id ASC
+              AND id > ?
+            ORDER BY id ASC
             """,
-            (conversation_id, int(watermark_ts)),
+            (conversation_id, int(last_message_id)),
         ).fetchall()
         return [dict(row) for row in rows]
 
@@ -854,6 +861,7 @@ class RagIndexer:
                         int(fact.source_ts or segment.end_ts),
                         sensitivity="sensitive" if self._looks_sensitive(fact.content) else "normal",
                         metadata=fact_metadata,
+                        fact_id=fact_id,
                     )
                 )
                 if fact.memory_kind in self.SHARED_MEMORY_KINDS:
@@ -871,6 +879,7 @@ class RagIndexer:
                             int(fact.source_ts or segment.end_ts),
                             sensitivity="sensitive" if self._looks_sensitive(fact.content) else "normal",
                             metadata=shared_metadata,
+                            fact_id=fact_id,
                         )
                     )
 
@@ -1594,6 +1603,7 @@ class RagIndexer:
         *,
         sensitivity: str = "normal",
         metadata: dict[str, Any] | None = None,
+        fact_id: int | None = None,
     ) -> dict[str, Any]:
         metadata = dict(metadata or {})
         metadata.setdefault("index_version", self.INDEX_VERSION)
@@ -1621,6 +1631,7 @@ class RagIndexer:
             "sensitivity": sensitivity,
             "index_version": self.INDEX_VERSION,
             "source_kind": str(metadata.get("source_kind") or "historical"),
+            "fact_id": int(fact_id) if fact_id else None,
         }
 
     def _compact_content(self, content: Any) -> str:

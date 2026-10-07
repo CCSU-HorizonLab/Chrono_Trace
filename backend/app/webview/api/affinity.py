@@ -182,6 +182,11 @@ class AffinityApiMixin:
             service = KeywordLibraries()
             added_count = service.add_keywords(category, keywords)
             updated_keywords = service.get_keywords(category)
+            # 词库已入库：同步刷新进程级共享实例——共享缓存只懒加载一次，
+            # 不刷新则同进程后续好感度分析仍用旧词库，重启才生效
+            from ...services.analysis.keyword_libraries import get_shared_keyword_libraries
+
+            get_shared_keyword_libraries().reload_cache()
             
             return {
                 "ok": True,
@@ -212,6 +217,10 @@ class AffinityApiMixin:
             service = KeywordLibraries()
             removed_count = service.remove_keywords(category, keywords)
             updated_keywords = service.get_keywords(category)
+            # 同上：删除也要刷新共享实例，防同进程分析读到已删词
+            from ...services.analysis.keyword_libraries import get_shared_keyword_libraries
+
+            get_shared_keyword_libraries().reload_cache()
             
             return {
                 "ok": True,

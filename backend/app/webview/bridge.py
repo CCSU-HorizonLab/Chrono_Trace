@@ -91,6 +91,16 @@ class Bridge(
         """加载设置"""
         with self._settings_lock:
             self.settings = load_settings_from_file(self.settings_file)
+            # 启动期一次性 RAG 嵌入变体迁移（settings 旧元组 vs 激活变体，
+            # 命中即落盘更正并触发按联系人懒重建）；读路径的内存改写不落盘
+            try:
+                from ..services.realtime.rag.config import (
+                    persist_rag_variant_migration_if_needed,
+                )
+
+                persist_rag_variant_migration_if_needed()
+            except Exception as migrate_e:
+                logger.debug("[设置] RAG 嵌入变体迁移跳过: %s", migrate_e)
             self.settings["analysis_device_mode"] = normalize_analysis_device_mode(
                 self.settings.get("analysis_device_mode", ANALYSIS_DEVICE_MODE_AUTO)
             )
@@ -1403,6 +1413,15 @@ class Bridge(
                         set_active_wechat_account(self.settings, target_wxid)
 
             self.settings.update(payload)
+            # 嵌入变体迁移守卫：合并后的最终态若仍是旧变体元组（UI 提交
+            # 旧值/部分键合并残留），落盘前统一更正为当前变体，防止把已
+            # 迁移的 settings.json 冲回死锁态（幂等，remote 不受影响）
+            try:
+                from ..services.realtime.rag.config import migrate_stale_variant_tuple
+
+                migrate_stale_variant_tuple(self.settings)
+            except Exception as guard_e:
+                logger.debug("[设置] 嵌入变体迁移守卫跳过: %s", guard_e)
             self._save_settings()
             response = {
                 "saved": True,

@@ -12,6 +12,9 @@ from .wechat.account_settings import load_settings_from_file
 
 
 MODEL_ROOT_DIR_KEY = "model_root_dir"
+#: 激活的嵌入模型变体（settings 键）；bge-small 24M 参数约为 text2vec
+#: （102M）的 1/4 计算量，C-MTEB 同档——CPU 吞吐主升级路径
+EMBEDDING_VARIANT_KEY = "embedding_model_variant"
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +26,50 @@ EMBEDDING_MODEL_DIM = 768
 
 SENTIMENT_MODEL_DIRNAME = "sentiment_3class"
 EMBEDDING_MODEL_DIRNAME = "text2vec_base_chinese"
+
+#: 嵌入模型变体注册表：dirname/repo_id/维度。L2 嵌入缓存按 repo_id 隔离，
+#: RAG 按模型名+维度触发全量重建——切换变体自动隔离旧向量，无需迁移
+EMBEDDING_VARIANTS: dict[str, dict] = {
+    "text2vec_base_chinese": {
+        "dirname": "text2vec_base_chinese",
+        "repo_id": EMBEDDING_MODEL_REPO_ID,
+        "dim": 768,
+    },
+    "bge_small_zh_v15": {
+        "dirname": "bge_small_zh_v15",
+        "repo_id": "BAAI/bge-small-zh-v1.5",
+        "dim": 512,
+    },
+}
+DEFAULT_EMBEDDING_VARIANT = "text2vec_base_chinese"
+
+
+def resolve_embedding_variant(settings: Optional[dict[str, Any]] = None) -> str:
+    """解析激活的嵌入变体，带回退链：配置值 → bge（若目录在）→ 默认。
+
+    配置指向的变体目录缺 ONNX 产物时回落 text2vec，保证升级前老安装
+    不因配置漂移而找不到模型。
+    """
+    current = settings if settings is not None else load_settings_from_file()
+    raw = str(current.get(EMBEDDING_VARIANT_KEY) or "").strip()
+    if raw and raw in EMBEDDING_VARIANTS:
+        model_root = get_model_root_dir(current)
+        if (model_root / EMBEDDING_VARIANTS[raw]["dirname"] / "onnx" / "model.fp16.onnx").exists():
+            return raw
+        logger.info("[模型路径] 配置的嵌入变体 %s 无产物，回落 %s", raw, DEFAULT_EMBEDDING_VARIANT)
+    return DEFAULT_EMBEDDING_VARIANT
+
+
+def get_embedding_variant_info(settings: Optional[dict[str, Any]] = None) -> dict:
+    return EMBEDDING_VARIANTS[resolve_embedding_variant(settings)]
+
+
+def get_embedding_model_repo_id(settings: Optional[dict[str, Any]] = None) -> str:
+    return str(get_embedding_variant_info(settings)["repo_id"])
+
+
+def get_embedding_model_dim(settings: Optional[dict[str, Any]] = None) -> int:
+    return int(get_embedding_variant_info(settings)["dim"])
 
 
 def normalize_model_root_dir(value: Optional[str]) -> str:
@@ -66,7 +113,7 @@ def get_sentiment_model_dir(settings: Optional[dict[str, Any]] = None) -> Path:
 
 
 def get_embedding_model_dir(settings: Optional[dict[str, Any]] = None) -> Path:
-    return get_model_root_dir(settings) / EMBEDDING_MODEL_DIRNAME
+    return get_model_root_dir(settings) / get_embedding_variant_info(settings)["dirname"]
 
 
 def ensure_model_root_dir(settings: Optional[dict[str, Any]] = None) -> Path:

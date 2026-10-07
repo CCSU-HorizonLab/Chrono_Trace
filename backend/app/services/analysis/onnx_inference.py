@@ -29,8 +29,11 @@ from ..model_paths import (
 
 logger = logging.getLogger(__name__)
 
-EMBEDDING_MAX_LENGTH = 128          # sentence_bert_config.json 同值
-CLASSIFIER_MAX_LENGTH = 512         # 与原 transformers 路径一致
+EMBEDDING_MAX_LENGTH = 64           # 聊天消息实测 97% ≤64 字（中位 6 字）；
+                                    # 动态 padding 下仅影响 3% 长文本，降档
+                                    # 只省注意力计算不伤短消息精度
+CLASSIFIER_MAX_LENGTH = 128         # 情感三分类输入同为聊天消息，512 是
+                                    # transformers 时代遗留的保守值
 
 
 def resolve_inference_backend() -> str:
@@ -228,7 +231,11 @@ _engine_cache: dict[str, _BaseOnnxModel] = {}
 
 def get_shared_engine(kind: str, device_mode: str = "auto") -> _BaseOnnxModel:
     """进程内共享 session（204MB 模型加载一次）。"""
-    key = f"{kind}:{device_tag_of(resolve_providers(device_mode)[1])}"
+    from ..model_paths import get_embedding_variant_info
+
+    variant = get_embedding_variant_info()["dirname"] if kind == "embedding" else ""
+    # 键含嵌入变体：切换模型后取新 session，旧变体实例交由 GC
+    key = f"{kind}:{variant}:{device_tag_of(resolve_providers(device_mode)[1])}"
     with _engine_lock:
         if key not in _engine_cache:
             cls = OnnxEmbeddingModel if kind == "embedding" else OnnxClassifierModel

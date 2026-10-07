@@ -9,7 +9,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ...db.connection import get_db
-from ..model_paths import EMBEDDING_MODEL_DIM, EMBEDDING_MODEL_REPO_ID, get_embedding_model_dir
+from ..model_paths import (
+    EMBEDDING_MODEL_DIM,
+    get_embedding_model_dir,
+    get_embedding_model_dim,
+    get_embedding_model_repo_id,
+)
 from .embedding_cache_store import EmbeddingCacheStore
 from .feature_extraction_config import (
     ANALYSIS_DEVICE_MODE_CPU,
@@ -367,9 +372,12 @@ class SentimentService:
         """
         if self._embedding_model is None or self._embedding_load_failed:
             return None
-        dim = self._embedding_dimension or EMBEDDING_MODEL_DIM
+        # 维度与模型名跟随激活变体：L2 键含 repo_id，切模型自动隔离旧向量
+        dim = self._embedding_dimension or get_embedding_model_dim() or EMBEDDING_MODEL_DIM
         try:
-            return EmbeddingCacheStore(EMBEDDING_MODEL_REPO_ID, self._embedding_device, dim)
+            return EmbeddingCacheStore(
+                get_embedding_model_repo_id(), self._embedding_device, dim
+            )
         except Exception:
             return None
 

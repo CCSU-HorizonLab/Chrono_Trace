@@ -1341,15 +1341,18 @@ class Bridge(
             if bool_key in payload:
                 payload[bool_key] = bool(payload[bool_key])
         if "rag_embedding_dim" in payload:
+            from ..services.model_paths import get_embedding_model_dim, get_embedding_model_repo_id
+
+            active_dim = get_embedding_model_dim() or EMBEDDING_MODEL_DIM
             try:
-                payload["rag_embedding_dim"] = int(payload["rag_embedding_dim"] or EMBEDDING_MODEL_DIM)
+                payload["rag_embedding_dim"] = int(payload["rag_embedding_dim"] or active_dim)
             except (TypeError, ValueError):
-                payload["rag_embedding_dim"] = EMBEDDING_MODEL_DIM
+                payload["rag_embedding_dim"] = active_dim
             if (
-                payload.get("rag_embedding_model") == EMBEDDING_MODEL_REPO_ID
+                payload.get("rag_embedding_model") == get_embedding_model_repo_id()
                 and payload["rag_embedding_dim"] == 384
             ):
-                payload["rag_embedding_dim"] = EMBEDDING_MODEL_DIM
+                payload["rag_embedding_dim"] = active_dim
         if (
             payload.get("rag_allow_remote_embedding")
             and payload.get("rag_remote_context_redaction") is False

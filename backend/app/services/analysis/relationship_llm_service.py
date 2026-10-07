@@ -183,14 +183,22 @@ class RelationshipLLMService:
         if not rows:
             return []
 
-        # 批量取全部涉及消息的文本（优先预处理净文本，回退原文）
+        # 批量取全部涉及消息的文本（优先预处理净文本，回退原文）。
+        # message_ids 实际存在两种形态：纯逗号分隔（schema 注释口径）与
+        # Python list 的 repr（'[123, 124]'，部分写入路径产出）——统一剥
+        # 方括号解析（此前取数循环漏剥，全库 list-repr 形态下采样恒为空）
+        def _parse_message_ids(ids_raw: Any) -> List[int]:
+            ids: List[int] = []
+            for part in str(ids_raw or "").split(","):
+                part = part.strip().strip("[]").strip()
+                if part.isdigit():
+                    ids.append(int(part))
+            return ids
+
         all_ids: List[int] = []
         for row in rows:
             for field in ("from_ids", "to_ids"):
-                for part in str(row[field] or "").split(","):
-                    part = part.strip()
-                    if part.isdigit():
-                        all_ids.append(int(part))
+                all_ids.extend(_parse_message_ids(row[field]))
         content_by_id: Dict[int, str] = {}
         if all_ids:
             placeholders = ",".join("?" * len(all_ids))
@@ -206,14 +214,10 @@ class RelationshipLLMService:
             content_by_id = {int(r["id"]): str(r["text"] or "") for r in msg_rows}
 
         def _unit_text(ids_raw: Any) -> str:
-            # message_ids 实际存在两种形态：纯逗号分隔（schema 注释口径）
-            # 与 Python list 的 repr（'[123, 124]'，部分写入路径产出）——
-            # strip 掉方括号与空白统一兼容
             parts = []
-            for part in str(ids_raw or "").split(","):
-                part = part.strip().strip("[]").strip()
-                if part.isdigit() and int(part) in content_by_id:
-                    text = content_by_id[int(part)].strip()
+            for mid in _parse_message_ids(ids_raw):
+                if mid in content_by_id:
+                    text = content_by_id[mid].strip()
                     if text:
                         parts.append(text)
             return " ".join(parts)[:PER_UNIT_CHAR_LIMIT]

@@ -17,6 +17,52 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+# 跨阶段共享最近一次切分结果（进程级 memo）：
+# 「重新分析」= 特征提取(Stage1) → 好感度(Stage2)，两阶段各自完整跑一遍
+# build_speech_units + split_sessions（含嵌入与落库）。Stage1 完成后把切分
+# 结果挂在这里，Stage2 的预处理直接取用（10 分钟有效期，防止跨次分析串数据）
+_recent_split_cache: dict = {}
+_SPLIT_CACHE_TTL_SECONDS = 600
+
+
+def _remember_split(conversation_id: int, speech_units, sessions) -> None:
+    import time as _time
+
+    _recent_split_cache[int(conversation_id)] = {
+        "speech_units": speech_units,
+        "sessions": sessions,
+        # 消息集规模校验：导入新消息后 memo 自动失效（时间戳 TTL 之外
+        # 的第二道防线）
+        "message_count": sum(u.get("message_count", 1) for u in speech_units),
+        "ts": _time.time(),
+    }
+
+
+def take_recent_split(conversation_id: int, expected_message_count: Optional[int] = None):
+    """一次性取用最近切分结果；过期/消息数不符/不存在返回 (None, None)。
+
+    消费即弹出：memo 只服务「Stage1 → 紧随的 Stage2」这一次衔接，
+    独立触发的预处理不受进程历史影响（否则结果依赖执行顺序）。
+    """
+    import time as _time
+
+    entry = _recent_split_cache.pop(int(conversation_id), None)
+    if not entry:
+        return None, None
+    if _time.time() - entry["ts"] > _SPLIT_CACHE_TTL_SECONDS:
+        return None, None
+    if (
+        expected_message_count is not None
+        and entry.get("message_count") != int(expected_message_count)
+    ):
+        return None, None
+    return entry["speech_units"], entry["sessions"]
+
+
+def invalidate_recent_split(conversation_id: int) -> None:
+    _recent_split_cache.pop(int(conversation_id), None)
+
+
 class FeatureExtractionService:
     """特征提取服务主类"""
 
@@ -235,6 +281,8 @@ class FeatureExtractionService:
 
         # 2.2 使用新的 SessionManager 切分会话（睡眠+时间+语义）
         session_result = self._session_manager.split_sessions(speech_units, progress_cb=progress_cb)
+        # 挂到进程级 memo：紧随其后的 Stage2 预处理直接取用，免二次切分
+        _remember_split(conversation_id, speech_units, session_result)
 
         # 3. 转换为数据库格式
         sessions_data = []
@@ -780,6 +828,8 @@ class FeatureExtractionService:
             是否成功
         """
         try:
+            # 清理旧数据同时使切分 memo 失效（防取到上一代的切分结果）
+            invalidate_recent_split(conversation_id)
             get_db().execute("DELETE FROM sessions WHERE conversation_id = ?", (conversation_id,))
             get_db().execute("DELETE FROM response_times WHERE conversation_id = ?", (conversation_id,))
             get_db().execute("DELETE FROM initiative_stats WHERE conversation_id = ?", (conversation_id,))

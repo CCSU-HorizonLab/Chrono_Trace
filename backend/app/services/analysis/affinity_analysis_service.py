@@ -420,15 +420,94 @@ class AffinityAnalysisService:
             for key, entry in plan.items()
         }
         
-        # 1. 情感共振率
+        # ===== 六维并行计算 =====
+        # 六个维度全部只读（无共享可写状态、get_db 线程本地、WAL 多读者
+        # 并发安全），此前严格串行——LLM 维 90s 网络等待白白阻塞五个本地
+        # 维度。改为线程池并行，维度阶段耗时 → max(单维)。
+        # 进度展示取舍：并行期间不逐维跳进度（多线程写 result 会竞态），
+        # 汇总装配阶段再顺序推进锚点。
         self._check_cancelled(cancel_event)
         result.progress_percent = 45
-        result.progress_percent = 45
-        result.current_step = "计算维度评分: 情感共振率"
-        logger.info("[好感度分析] 维度 1/4: 情感共振率...")
-        resonance_result = self.resonance_service.calculate_overall_resonance(
-            conversation_id
-        )
+        result.current_step = "并行计算六维评分（共振/积极度/态度/喜好/亲密度/AI评估）..."
+        logger.info("[好感度分析] 六维并行计算开始...")
+
+        # LLM 维前置准备（主线程完成后即提交，网络等待与其他维度重叠）
+        llm_context: Dict[str, str] = {}
+        llm_account_wxid = ""
+        if llm_service is not None and weights.get('llm_relationship', 0.0) > 0:
+            try:
+                from .relationship_context_service import RelationshipContextService
+                ctx_obj = RelationshipContextService().get_context(conversation_id)
+                if ctx_obj is not None:
+                    llm_context = {
+                        "relationship_type": str(getattr(ctx_obj, "relationship_type", "") or ""),
+                        "interaction_duration": str(getattr(ctx_obj, "interaction_duration", "") or ""),
+                        "communication_style": str(getattr(ctx_obj, "communication_style", "") or ""),
+                    }
+            except Exception as ctx_e:
+                logger.debug("[关系评估] 关系背景读取跳过: %s", ctx_e)
+            # 脱敏 scope 必须带真实账号：PrivacyRedactor 以 account_wxid
+            # 做实体占位符一致性键与审计归属键
+            try:
+                row = get_db().execute(
+                    "SELECT account_wxid FROM conversations WHERE id = ?",
+                    (int(conversation_id),),
+                ).fetchone()
+                llm_account_wxid = str(row["account_wxid"] or "") if row else ""
+            except Exception as acc_e:
+                logger.debug("[关系评估] 账号读取跳过: %s", acc_e)
+
+        # 积极度阈值属实例可变状态，提交前在主线程设置
+        self.positivity_service.timeliness_threshold = config.reply_timeliness_threshold_seconds
+        self.preference_service.set_preference_keywords(config.preference_keywords)
+
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            fut_resonance = pool.submit(
+                self.resonance_service.calculate_overall_resonance, conversation_id
+            )
+            fut_positivity = pool.submit(
+                self.positivity_service.calculate_scores, conversation_id, stats
+            )
+            fut_attitude = pool.submit(
+                self.attitude_service.calculate_overall_attitude, conversation_id
+            )
+            fut_preference = pool.submit(
+                self.preference_service.calculate_scores, conversation_id, stats
+            )
+            fut_intimacy = pool.submit(
+                self.intimacy_service.calculate_overall_intimacy,
+                conversation_id,
+                stats,
+                int(getattr(config, "long_text_threshold", 100)),
+            )
+            fut_llm = None
+            if llm_service is not None and weights.get('llm_relationship', 0.0) > 0:
+                fut_llm = pool.submit(
+                    llm_service.evaluate,
+                    conversation_id,
+                    account_wxid=llm_account_wxid,
+                    context=llm_context,
+                )
+
+            # result() 抛出的异常（含取消）原样在主线程重放。
+            # LLM 维例外：缺席（样本不足/脱敏不可用/超时等）是正常分支，
+            # 在此捕获转 None，装配阶段按缺席处理——否则会杀死整个分析
+            resonance_result = fut_resonance.result()
+            positivity_result = fut_positivity.result()
+            attitude_result = fut_attitude.result()
+            preference_result = fut_preference.result()
+            intimacy_result = fut_intimacy.result()
+            llm_result = None
+            llm_absent_error: Optional[BaseException] = None
+            if fut_llm is not None:
+                try:
+                    llm_result = fut_llm.result()
+                except RelationshipLLMAbsent as absent:
+                    llm_absent_error = absent
+
+        # ===== 顺序装配（纯内存操作，毫秒级） =====
         result.emotional_resonance = DimensionScore(
             name="情感共振率",
             score=resonance_result['overall_score'],
@@ -446,17 +525,7 @@ class AffinityAnalysisService:
             confidence_meta=resonance_result.get('confidence_meta', {}),
         )
         logger.info(f"情感共振率计算完成: {resonance_result['overall_score']:.1f}分 (权重: {weights['emotional_resonance']*100}%)")
-        
-        # 2. 聊天积极度
-        self._check_cancelled(cancel_event)
-        result.progress_percent = 55
-        result.progress_percent = 55
-        result.current_step = "计算维度评分: 聊天积极度"
-        logger.info("[好感度分析] 维度 2/4: 聊天积极度...")
-        self.positivity_service.timeliness_threshold = config.reply_timeliness_threshold_seconds
-        positivity_result = self.positivity_service.calculate_scores(
-            conversation_id, stats
-        )
+
         result.chat_positivity = DimensionScore(
             name="聊天积极度",
             score=positivity_result.overall_score,
@@ -474,16 +543,7 @@ class AffinityAnalysisService:
             }
         )
         logger.info(f"聊天积极度计算完成: {positivity_result.overall_score:.1f}分 (权重: {weights['chat_positivity']*100}%)")
-        
-        # 3. 态度倾向
-        self._check_cancelled(cancel_event)
-        result.progress_percent = 65
-        result.progress_percent = 65
-        result.current_step = "计算维度评分: 态度倾向"
-        logger.info("[好感度分析] 维度 3/4: 态度倾向...")
-        attitude_result = self.attitude_service.calculate_overall_attitude(
-            conversation_id
-        )
+
         result.attitude_tendency = DimensionScore(
             name="态度倾向",
             score=attitude_result['overall_score'],
@@ -497,17 +557,7 @@ class AffinityAnalysisService:
             bonus_scores=attitude_result.get('bonus_scores', {})
         )
         logger.info(f"态度倾向计算完成: {attitude_result['overall_score']:.1f}分 (权重: {weights['attitude_tendency']*100}%)")
-        
-        # 4. 喜好兼容度
-        self._check_cancelled(cancel_event)
-        result.progress_percent = 75
-        result.progress_percent = 75
-        result.current_step = "计算维度评分: 喜好兼容度"
-        logger.info("[好感度分析] 维度 4/4: 喜好兼容度...")
-        self.preference_service.set_preference_keywords(config.preference_keywords)
-        preference_result = self.preference_service.calculate_scores(
-            conversation_id, stats
-        )
+
         raw_bonus = (
             preference_result.overall_score
             * getattr(config, "preference_bonus_factor", self.PREFERENCE_BONUS_FACTOR)
@@ -532,16 +582,6 @@ class AffinityAnalysisService:
             raw_bonus,
         )
 
-        # 5. 亲密度信号（称谓演变/时段投入/回复对称性）
-        self._check_cancelled(cancel_event)
-        result.progress_percent = 77
-        result.current_step = "计算维度评分: 亲密度信号"
-        logger.info("[好感度分析] 维度 5/6: 亲密度信号...")
-        intimacy_result = self.intimacy_service.calculate_overall_intimacy(
-            conversation_id,
-            stats,
-            long_text_threshold=int(getattr(config, "long_text_threshold", 100)),
-        )
         result.intimacy_signals = DimensionScore(
             name="亲密度信号",
             score=intimacy_result['overall_score'],
@@ -557,62 +597,36 @@ class AffinityAnalysisService:
             weights['intimacy_signals'] * 100,
         )
 
-        # 6. LLM 关系评估（缺席不阻断：权重归一自动剔除该维）
-        if llm_service is not None and weights.get('llm_relationship', 0.0) > 0:
-            self._check_cancelled(cancel_event)
-            result.progress_percent = 79
-            result.current_step = "LLM 关系评估（可能需要约1分钟）"
-            logger.info("[好感度分析] 维度 6/6: LLM 关系评估...")
+        # LLM 关系评估装配（缺席不阻断：权重归一自动剔除该维）
+        if llm_result is not None:
+            confidence_meta = dict(llm_result.get("meta") or {})
+            confidence_meta["evidence"] = llm_result.get("evidence") or []
+            result.llm_relationship = DimensionScore(
+                name="AI 关系评估",
+                score=llm_result['score'],
+                weight=weights['llm_relationship'],
+                weighted_score=llm_result['score'] * weights['llm_relationship'],
+                interpretation=llm_result.get('insight') or "LLM 关系评估完成",
+                sub_scores=llm_result['sub_scores'],
+                confidence_meta=confidence_meta,
+            )
+            logger.info(
+                "LLM 关系评估完成: %.1f分 (模型: %s)",
+                llm_result['score'],
+                (llm_result.get("meta") or {}).get("model_name", ""),
+            )
+        elif llm_absent_error is not None:
+            result.llm_relationship = None
+            result.llm_relationship_absent_reason = str(llm_absent_error)
+            logger.info("[关系评估] 缺席: %s", llm_absent_error)
+        elif fut_llm is not None:
+            # 已提交但失败：取出异常转缺席（不阻断其余维度）
             try:
-                context: Dict[str, str] = {}
-                try:
-                    from .relationship_context_service import RelationshipContextService
-                    ctx_obj = RelationshipContextService().get_context(conversation_id)
-                    if ctx_obj is not None:
-                        context = {
-                            "relationship_type": str(getattr(ctx_obj, "relationship_type", "") or ""),
-                            "interaction_duration": str(getattr(ctx_obj, "interaction_duration", "") or ""),
-                            "communication_style": str(getattr(ctx_obj, "communication_style", "") or ""),
-                        }
-                except Exception as ctx_e:
-                    logger.debug("[关系评估] 关系背景读取跳过: %s", ctx_e)
-                # 脱敏 scope 必须带真实账号：PrivacyRedactor 以 account_wxid
-                # 做实体占位符一致性键与审计归属键（此前读不存在的
-                # config._account_wxid 恒为空串，跨入口占位符编号漂移）
-                account_wxid = ""
-                try:
-                    row = get_db().execute(
-                        "SELECT account_wxid FROM conversations WHERE id = ?",
-                        (int(conversation_id),),
-                    ).fetchone()
-                    account_wxid = str(row["account_wxid"] or "") if row else ""
-                except Exception as acc_e:
-                    logger.debug("[关系评估] 账号读取跳过: %s", acc_e)
-                llm_result = llm_service.evaluate(
-                    conversation_id,
-                    account_wxid=account_wxid,
-                    context=context,
-                )
-                confidence_meta = dict(llm_result.get("meta") or {})
-                confidence_meta["evidence"] = llm_result.get("evidence") or []
-                result.llm_relationship = DimensionScore(
-                    name="AI 关系评估",
-                    score=llm_result['score'],
-                    weight=weights['llm_relationship'],
-                    weighted_score=llm_result['score'] * weights['llm_relationship'],
-                    interpretation=llm_result.get('insight') or "LLM 关系评估完成",
-                    sub_scores=llm_result['sub_scores'],
-                    confidence_meta=confidence_meta,
-                )
-                logger.info(
-                    "LLM 关系评估完成: %.1f分 (模型: %s)",
-                    llm_result['score'],
-                    (llm_result.get("meta") or {}).get("model_name", ""),
-                )
-            except RelationshipLLMAbsent as absent:
+                fut_llm.result()
+            except Exception as absent_e:
                 result.llm_relationship = None
-                result.llm_relationship_absent_reason = str(absent)
-                logger.info("[关系评估] 缺席: %s", absent)
+                result.llm_relationship_absent_reason = f"评估异常: {absent_e}"
+                logger.info("[关系评估] 缺席: %s", absent_e)
         else:
             # 三种缺席各自成文，前端徽章可区分（否则卡片与说明同时消失）
             if llm_service is None:
@@ -621,6 +635,7 @@ class AffinityAnalysisService:
                 result.llm_relationship_absent_reason = "已在关系配置中关闭 AI 评估"
             else:
                 result.llm_relationship_absent_reason = "AI 评估权重为 0，未参与本次评分"
+        result.progress_percent = 79
     
     def _calculate_overall_score(
         self,

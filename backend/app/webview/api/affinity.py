@@ -411,7 +411,9 @@ class AffinityApiMixin:
         try:
             from dataclasses import asdict
 
-            AffinityAnalysisService = self._get_fresh_affinity_service_class()
+            # 只读路径不 reload（此前每次打开联系人页都重编译 7 个分析
+            # 模块+重建正则/词库，纯浪费；热重载语义仅分析写入路径需要）
+            from ...services.analysis.affinity_analysis_service import AffinityAnalysisService
             service = AffinityAnalysisService()
             result = service.get_scores(conversation_id)
 

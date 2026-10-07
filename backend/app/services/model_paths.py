@@ -41,8 +41,8 @@ EMBEDDING_VARIANTS: dict[str, dict] = {
         "dim": 512,
     },
 }
-# 默认 bge（24M 参数，实测 6.3× 提速、fp16 无损）。Windows 安装包仍内置
-# text2vec——回退链自动兜底（默认变体无产物 → 任选有产物者），行为不变。
+# 默认 bge（24M 参数，实测 6.3× 提速）。双平台安装包均内置 bge fp32；
+# 回退链仅在开发机配置异常时兜底（默认变体无产物 → 任选有产物者）
 DEFAULT_EMBEDDING_VARIANT = "bge_small_zh_v15"
 
 # 回落只提示一次：resolve 每个嵌入批次都会重算（引擎 key 组成部分），
@@ -53,7 +53,7 @@ _fallback_logged_variants: set[str] = set()
 def resolve_embedding_variant(settings: Optional[dict[str, Any]] = None) -> str:
     """解析激活的嵌入变体，带回退链：配置值 → 默认 → 任一存在产物者。
 
-    打包版可能只内置 bge（47MB）不内置 text2vec（195MB）——配置指向
+    打包版双平台均只内置 bge（fp32 91MB）、不内置 text2vec——配置指向
     的变体缺产物时依次尝试：默认变体 → 另一变体，保证至少能找到
     一个可用模型。
     """
@@ -62,8 +62,9 @@ def resolve_embedding_variant(settings: Optional[dict[str, Any]] = None) -> str:
     model_root = get_model_root_dir(current)
 
     def _has_products(variant: str) -> bool:
+        # 嵌入发行产物定死 fp32（CPU 实测比 fp16 快 32%），单一文件不混放
         return (
-            model_root / EMBEDDING_VARIANTS[variant]["dirname"] / "onnx" / "model.fp16.onnx"
+            model_root / EMBEDDING_VARIANTS[variant]["dirname"] / "onnx" / "model.onnx"
         ).exists()
 
     if raw and raw in EMBEDDING_VARIANTS and _has_products(raw):
@@ -108,11 +109,10 @@ def normalize_model_root_dir(value: Optional[str]) -> str:
 
     if IS_FROZEN:
         bundled = Path(RESOURCE_ROOT_PATH) / "models"
-        # 内置判定按「任一嵌入变体有产物」——各平台 spec 内置的变体不同
-        # （Linux 仅 bge、Windows 仍 text2vec），写死单变体名会让另一平台
-        # 的打包版绕过内置目录、找不到自带的模型
+        # 内置判定按「任一嵌入变体有产物」——写死单变体名或文件名会在
+        # 变体/精度调整时让打包版绕过内置目录、找不到自带的模型
         bundled_has_embedding = any(
-            (bundled / v["dirname"] / "onnx" / "model.fp16.onnx").exists()
+            (bundled / v["dirname"] / "onnx" / "model.onnx").exists()
             for v in EMBEDDING_VARIANTS.values()
         )
         if bundled_has_embedding:

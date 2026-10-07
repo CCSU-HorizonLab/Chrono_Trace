@@ -450,11 +450,17 @@ class PairPreprocessingService:
                 )
                 for unit in speech_units
             ]
-            # executemany 批量插入 + 自增 id 顺序映射（同表同会话连续
-            # 插入，lastrowid 顺序递增；此前逐行 execute 在 autocommit 下
-            # 每行一个事务，5 万单元 = 5 万次 WAL 帧）
+            # executemany 批量插入 + 自增 id 顺序映射。AUTOINCREMENT 的下
+            # 一个 id = max(sqlite_sequence.seq, MAX(id)) + 1——重跑场景先
+            # DELETE 本会话旧行，MAX(id) 低于历史高水位，只看 MAX 会错位
+            # （此前逐行 execute 在 autocommit 下每行一个事务，5 万单元 =
+            # 5 万次 WAL 帧）
             if rows:
-                first_id = db.execute("SELECT MAX(id) FROM speech_units").fetchone()[0] or 0
+                seq_row = db.execute(
+                    "SELECT seq FROM sqlite_sequence WHERE name = 'speech_units'"
+                ).fetchone()
+                max_row = db.execute("SELECT MAX(id) FROM speech_units").fetchone()[0] or 0
+                first_id = max(int(seq_row[0]) if seq_row else 0, int(max_row))
                 db.executemany("""
                     INSERT INTO speech_units
                     (conversation_id, sender, first_message_timestamp,

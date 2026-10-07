@@ -13,10 +13,11 @@ from pathlib import Path
 backend_root = Path(__file__).parent.parent
 sys.path.insert(0, str(backend_root))
 
-from app.services.model_paths import EMBEDDING_MODEL_DIM
+from app.services.model_paths import EMBEDDING_MODEL_DIM, get_embedding_model_dim
 
 
-EXPECTED_EMBEDDING_DIM = EMBEDDING_MODEL_DIM
+# 跟随激活变体（bge=512 / text2vec=768），不再绑定单一模型
+EXPECTED_EMBEDDING_DIM = get_embedding_model_dim() or EMBEDDING_MODEL_DIM
 
 
 class TestSentimentService:

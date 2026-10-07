@@ -254,17 +254,10 @@ class PreprocessingOrchestrator:
 
             self.sentiment_service.batch_cache_sentiments(cache_data)
 
-            try:
-                import gc
-                import torch
+            # 已删固定开销三件套（torch 栈移除后它们只剩副作用）：
+            # import torch 每批全盘查找失败 ×260、gc.collect 全代回收 ×260、
+            # sleep(0.1) 纯睡眠累计 26 秒——进度回调本身已足够让出节奏
 
-                gc.collect()
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-            except Exception:
-                pass
-
-            time.sleep(0.1)
             processed = min(start + batch_size, total_to_analyze)
             if progress_cb:
                 try:

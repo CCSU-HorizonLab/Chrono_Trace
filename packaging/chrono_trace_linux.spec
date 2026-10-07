@@ -77,11 +77,16 @@ hiddenimports += collect_submodules("scipy._external.array_api_compat")
 #    Qml/Quick/WebChannel/QuickControls/Network/Wayland/Xcb 等，勿删）
 _QT_MODULE_EXCLUDES = (
     # 注：libQt6Positioning 是 WebEngineCore/Widgets 的硬链接依赖（ldd 核实），不可裁
+    # 注：libQt6Qml/Quick 也是 WebEngineCore 的 ldd 硬依赖，不可裁
     "libQt6Multimedia", "libQt6SpatialAudio",
     "libQt6Pdf",
     "libQt6RemoteObjects", "libQt6Sensors", "libQt6SerialPort",
     "libQt6Test", "libQt6TextToSpeech", "libQt6StateMachine",
     "libQt6QuickTest",
+    # Quick3D 系列：WebEngine 不依赖（ldd 核实无 Quick3D），pywebview 不用
+    "libQt6Quick3D",
+    "libQt6PositioningQuick",
+    "libQt6EglFSDeviceIntegration",
 )
 # 2) 数据裁剪：Qt 翻译只留中英、去 WebEngine devtools 资源（仅远程调试用）
 def _keep_data(name: str) -> bool:

@@ -86,16 +86,21 @@ def export_one(model_dir: Path, out_dir: Path, model_type: str) -> None:
     print(f"[导出] {model_dir.name} fp32 → {onnx_path} ({onnx_path.stat().st_size / 1e6:.0f}MB)")
 
     # fp16 半精度：对该 BERT 权重分布精度无损（实测 cosine=1.0）；
-    # int8（含 per-channel）实测崩坏（cosine 0.37-0.70）不可用
-    import onnx
-    from onnxconverter_common import float16
+    # int8（含 per-channel）实测崩坏（cosine 0.37-0.70）不可用。
+    # 精度择优（CPU 实测）：嵌入 fp32 快 32%——发行产物即上面导出的
+    # fp32，跳过 fp16 转换；分类器 fp16 反快 14%——仍转换
+    if mtype == "embedding":
+        print("[量化] 嵌入产物为 fp32（CPU 实测更快），跳过 fp16 转换")
+    else:
+        import onnx
+        from onnxconverter_common import float16
 
-    fp16_path = out_dir / "model.fp16.onnx"
-    fp16_model = float16.convert_float_to_float16(
-        onnx.load(str(onnx_path)), keep_io_types=True
-    )
-    onnx.save(fp16_model, str(fp16_path))
-    print(f"[量化] fp16 → {fp16_path} ({fp16_path.stat().st_size / 1e6:.0f}MB)")
+        fp16_path = out_dir / "model.fp16.onnx"
+        fp16_model = float16.convert_float_to_float16(
+            onnx.load(str(onnx_path)), keep_io_types=True
+        )
+        onnx.save(fp16_model, str(fp16_path))
+        print(f"[量化] fp16 → {fp16_path} ({fp16_path.stat().st_size / 1e6:.0f}MB)")
 
     # tokenizer 原样复制 + 生成 fast tokenizer.json（运行时 tokenizers 直读，
     # 无 vocab.txt-only 模型也免 transformers 依赖）

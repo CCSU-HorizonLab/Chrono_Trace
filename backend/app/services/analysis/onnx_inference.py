@@ -1,4 +1,4 @@
-"""ONNX 推理引擎（阶段 B）：fp16 模型 + onnxruntime + HF tokenizers。
+"""ONNX 推理引擎（阶段 B）：onnxruntime + HF tokenizers（嵌入 fp32 / 分类器 fp16，按实测择优）。
 
 替代 torch/sentence-transformers/transformers 的推理职责：
 - 包体：torch 栈 ~890MB → onnxruntime ~60-105MB；模型 fp32 1.17GB → fp16 409MB
@@ -43,8 +43,8 @@ def resolve_inference_backend() -> str:
 
 
 def has_onnx_models() -> bool:
-    """两个 fp16 模型文件是否齐备（tokenizer 由引擎按需回退 transformers）。"""
-    return _onnx_path("embedding").exists() and _onnx_path("classifier").exists()
+    """两个模型文件是否齐备（嵌入 fp32 / 分类器 fp16；tokenizer 按需回退）。"""
+    return _onnx_path("embedding", fp32=True).exists() and _onnx_path("classifier").exists()
 
 
 def _onnx_path(kind: str, fp32: bool = False) -> Path:
@@ -54,6 +54,14 @@ def _onnx_path(kind: str, fp32: bool = False) -> Path:
     if kind == "embedding":
         return get_embedding_model_dir() / "onnx" / name
     return get_model_root_dir() / SENTIMENT_MODEL_DIRNAME / "onnx" / name
+
+
+def _embedding_model_path() -> Path:
+    """嵌入产物定死 fp32（bge-small 实测 CPU 上比 fp16 快 32%——82→108 条/s，
+    fp16 在 CPU 需逐层 cast 回 fp32 计算；输出 cosine=1.0 无损）。分类器
+    相反（fp16 快 14%），维持 fp16。每个模型只进包一个文件。
+    """
+    return _onnx_path("embedding", fp32=True)
 
 
 def _tokenizer_dir(kind: str) -> Path:
@@ -175,7 +183,7 @@ class OnnxEmbeddingModel(_BaseOnnxModel):
 
     def __init__(self, device_mode: str = "auto"):
         super().__init__(
-            _onnx_path("embedding"), _tokenizer_dir("embedding"),
+            _onnx_path("embedding", fp32=True), _tokenizer_dir("embedding"),
             device_mode, EMBEDDING_MAX_LENGTH,
         )
 

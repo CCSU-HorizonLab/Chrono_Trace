@@ -29,7 +29,7 @@ def frozen_env(tmp_path, monkeypatch):
 def _make_variant_products(bundled_root: Path, dirname: str) -> None:
     onnx_dir = bundled_root / dirname / "onnx"
     onnx_dir.mkdir(parents=True)
-    (onnx_dir / "model.fp16.onnx").write_bytes(b"x")
+    (onnx_dir / "model.onnx").write_bytes(b"x")
 
 
 def test_frozen_bge_only_bundle_uses_bundled_dir(frozen_env):

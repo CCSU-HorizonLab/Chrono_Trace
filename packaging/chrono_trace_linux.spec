@@ -42,20 +42,22 @@ datas += safe_copy_metadata("modelscope")
 # ONNX 模型内置（阶段 B：安装包捆绑 fp16 产物，免运行时下载）；
 # 由 build 脚本在打包前运行 backend/scripts/export_models_onnx.py 生成
 _MODELS_ROOT = PROJECT_ROOT / "backend" / "data" / "models"
-# bge-small 是激活嵌入变体（6.3× 提速 + 仅 47MB vs text2vec 195MB）；
+# bge-small 是激活嵌入变体（6.3× 提速，fp32 产物 91MB）；
 # 打包只内置 bge，variant 回退链兜底（model_paths.resolve_embedding_variant
 # 会自动选有产物的变体）。text2vec 不再进包，省 148MB。
 for _model_name in ("bge_small_zh_v15", "sentiment_3class"):
-    # 只打发行所需文件（fp16 + tokenizer）——开发目录里的 fp32 基准与
-    # 弃用的 int8/pc8 实验产物不进包（此前整目录收集让包体多了 1.5GB）
-    _fp16 = _MODELS_ROOT / _model_name / "onnx" / "model.fp16.onnx"
+    # 只打发行所需文件——按精度实测择优（嵌入 fp32：bge CPU 快 32%；
+    # 分类器 fp16：反快 14%），弃用的 int8/pc8 实验产物不进包
+    _need_fp32 = _model_name.startswith("bge")
+    _fname = "model.onnx" if _need_fp32 else "model.fp16.onnx"
+    _model = _MODELS_ROOT / _model_name / "onnx" / _fname
     _tokenizer = _MODELS_ROOT / _model_name / "onnx" / "tokenizer"
-    if _fp16.exists():
-        datas.append((str(_fp16), f"models/{_model_name}/onnx"))
+    if _model.exists():
+        datas.append((str(_model), f"models/{_model_name}/onnx"))
         if _tokenizer.exists():
             datas.append((str(_tokenizer), f"models/{_model_name}/onnx/tokenizer"))
     else:
-        print(f"[chrono_trace.spec] WARNING: missing {_fp16} (run backend/scripts/export_models_onnx.py first)")
+        print(f"[chrono_trace.spec] WARNING: missing {_model} (run backend/scripts/export_models_onnx.py first)")
 
 
 

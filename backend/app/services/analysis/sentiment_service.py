@@ -475,7 +475,7 @@ class SentimentService:
                 placeholders = ",".join("?" * len(batch_ids))
                 cursor = db.execute(
                     f"""
-                    SELECT message_id, polarity, intensity, embedding_vector
+                    SELECT message_id, polarity, intensity
                     FROM sentiment_cache
                     WHERE message_id IN ({placeholders})
                     """,
@@ -483,23 +483,13 @@ class SentimentService:
                 )
 
                 for row in cursor.fetchall():
-                    # 有效性只看行存在：embedding_vector 现为可选（预处理
-                    # 不再写入），且旧 torch pickle 行按 None 容忍——极性/
-                    # 强度才是消费方（pairs 直读 SQL、orchestrator 只判跳过）
-                    embedding_data = row[3]
-                    embedding = None
-                    if embedding_data is not None:
-                        try:
-                            loaded = pickle.loads(embedding_data)
-                            if isinstance(loaded, list) and loaded:
-                                embedding = loaded
-                        except Exception:
-                            embedding = None
-
+                    # 存在性即有效：不 SELECT 向量列（旧库十万行 768 维
+                    # torch pickle 的反序列化纯浪费），极性/强度是唯一
+                    # 被消费的字段（pairs 直读 SQL、orchestrator 只判跳过）
                     results[row[0]] = {
                         "polarity": row[1],
                         "intensity": row[2],
-                        "embedding": embedding,
+                        "embedding": None,
                     }
         except Exception as exc:
             logger.debug(f"[情感服务] 批量缓存读取跳过（含旧 torch pickle 行，按 miss 处理）: {exc}")

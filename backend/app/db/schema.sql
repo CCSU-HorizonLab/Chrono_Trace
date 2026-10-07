@@ -365,7 +365,7 @@ CREATE TABLE IF NOT EXISTS embedding_cache (
     dim INTEGER NOT NULL,                    -- 模型原生维度（768）
     vector BLOB NOT NULL,                    -- float32 little-endian 原始字节（非 pickle 非 fp16）
     created_at INTEGER NOT NULL,
-    UNIQUE(content_sha1, model, device)
+    UNIQUE(content_sha1, model, device)  -- 此 UNIQUE 自动建索引，L2 批查(sha1 IN + model + device)直接命中；已有两轮审查误判缺索引
 );
 
 CREATE INDEX IF NOT EXISTS idx_embedding_cache_created ON embedding_cache(created_at);

@@ -107,26 +107,34 @@ class ChatPositivityService:
         
         # 1. 日均消息数 (10%)
         result.daily_message_count = self._calculate_daily_message_count_raw(stats)
-        result.daily_message_score = self.calculate_daily_message_score(stats)
+        result.daily_message_score = self.calculate_daily_message_score(
+            stats, raw_count=result.daily_message_count
+        )
         debug_log("\n[聊天积极度调试] --- 1. 日均消息数 (权重10%) ---")
         debug_log(f"总消息数: {stats.total_message_count}, 持续天数: {stats.conversation_duration_days:.1f}")
         debug_log(f"日均消息数: {result.daily_message_count:.2f} (满分基准: {self.DAILY_MESSAGE_BASELINE}) -> 得分: {result.daily_message_score}")
         
         # 2. 回复及时率 (20%)
         result.reply_timeliness_rate = self._calculate_reply_timeliness_raw(conversation_id)
-        result.reply_timeliness_score = self.calculate_reply_timeliness_score(conversation_id)
+        result.reply_timeliness_score = self.calculate_reply_timeliness_score(
+            conversation_id, raw_rate=result.reply_timeliness_rate
+        )
         debug_log("\n[聊天积极度调试] --- 2. 回复及时率 (权重20%) ---")
         debug_log(f"及时回复比例: {result.reply_timeliness_rate*100:.1f}% -> 得分: {result.reply_timeliness_score}")
         
         # 3. 话题延续性 (25%)
         result.topic_continuity_avg = self._calculate_topic_continuity_raw(conversation_id)
-        result.topic_continuity_score = self.calculate_topic_continuity_score(conversation_id)
+        result.topic_continuity_score = self.calculate_topic_continuity_score(
+            conversation_id, raw_avg=result.topic_continuity_avg
+        )
         debug_log("\n[聊天积极度调试] --- 3. 话题延续性 (权重25%) ---")
         debug_log(f"平均语义相似度: {result.topic_continuity_avg:.3f} (满分基准: 0.5) -> 得分: {result.topic_continuity_score}")
         
         # 4. 主动发起率 (35%)
         result.active_initiation_rate = self._calculate_active_initiation_raw(stats)
-        result.active_initiation_score = self.calculate_active_initiation_score(stats)
+        result.active_initiation_score = self.calculate_active_initiation_score(
+            stats, raw_rate=result.active_initiation_rate
+        )
         debug_log("\n[聊天积极度调试] --- 4. 主动发起率 (权重35%) ---")
         debug_log(f"对方发起的会话比例: {result.active_initiation_rate*100:.1f}% (满分基准: 50.0%) -> 得分: {result.active_initiation_score}")
 
@@ -160,14 +168,21 @@ class ChatPositivityService:
     # 子维度分数计算方法
     # ========================================
     
-    def calculate_daily_message_score(self, stats: PreprocessedStatistics) -> float:
+    def calculate_daily_message_score(
+        self, stats: PreprocessedStatistics, raw_count: Optional[float] = None
+    ) -> float:
         """
         计算日均消息数得分 (0-100)
-        
+
         公式: min(日均消息数 / 基准值 * 100, 100)
         基准值: 10 条/天
+        raw_count：调用方已算过的原始值，透传免双算
         """
-        daily_count = self._calculate_daily_message_count_raw(stats)
+        daily_count = (
+            raw_count
+            if raw_count is not None
+            else self._calculate_daily_message_count_raw(stats)
+        )
         score = min((daily_count / self.DAILY_MESSAGE_BASELINE) * 100, 100)
         return round(score, 2)
     
@@ -177,14 +192,21 @@ class ChatPositivityService:
             return 0.0
         return stats.total_message_count / max(stats.conversation_duration_days, 1.0)
     
-    def calculate_reply_timeliness_score(self, conversation_id: int) -> float:
+    def calculate_reply_timeliness_score(
+        self, conversation_id: int, raw_rate: Optional[float] = None
+    ) -> float:
         """
         计算回复及时率得分 (0-100)
-        
+
         公式: (及时回复交互对数 / 总交互对数) × 100
         及时: 回复时间 <= timeliness_threshold
+        raw_rate：调用方已算过的原始值，透传免双算
         """
-        timeliness_rate = self._calculate_reply_timeliness_raw(conversation_id)
+        timeliness_rate = (
+            raw_rate
+            if raw_rate is not None
+            else self._calculate_reply_timeliness_raw(conversation_id)
+        )
 
         try:
             cursor = get_db().execute(
@@ -273,13 +295,20 @@ class ChatPositivityService:
             logger.error(f"计算长文本占比失败: {e}")
             return 0.0
     
-    def calculate_topic_continuity_score(self, conversation_id: int) -> float:
+    def calculate_topic_continuity_score(
+        self, conversation_id: int, raw_avg: Optional[float] = None
+    ) -> float:
         """
         计算话题延续性得分 (0-100)
-        
+
         公式: min((平均语义相似度 / 0.5) * 100, 100)
+        raw_avg：调用方已算过的原始值，透传免双算
         """
-        continuity = self._calculate_topic_continuity_raw(conversation_id)
+        continuity = (
+            raw_avg
+            if raw_avg is not None
+            else self._calculate_topic_continuity_raw(conversation_id)
+        )
         # 满分阈值为 0.5
         score = min((continuity / 0.5) * 100, 100)
         return round(score, 2)
@@ -427,13 +456,20 @@ class ChatPositivityService:
             self._sentiment_service = SentimentService()
         return self._sentiment_service
 
-    def calculate_active_initiation_score(self, stats: PreprocessedStatistics) -> float:
+    def calculate_active_initiation_score(
+        self, stats: PreprocessedStatistics, raw_rate: Optional[float] = None
+    ) -> float:
         """
         计算主动发起率得分 (0-100)
-        
+
         公式: min((对方发起会话数 / 总会话数 / 0.5) * 100, 100)
+        raw_rate：调用方已算过的原始值，透传免双算
         """
-        rate = self._calculate_active_initiation_raw(stats)
+        rate = (
+            raw_rate
+            if raw_rate is not None
+            else self._calculate_active_initiation_raw(stats)
+        )
         score = min((rate / 0.5) * 100, 100)
         return round(score, 2)
     

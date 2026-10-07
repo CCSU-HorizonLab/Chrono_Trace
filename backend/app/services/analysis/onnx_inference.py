@@ -24,6 +24,7 @@ import numpy as np
 from ..model_paths import (
     EMBEDDING_MODEL_DIRNAME,
     SENTIMENT_MODEL_DIRNAME,
+    get_embedding_model_dir,
     get_model_root_dir,
 )
 
@@ -48,13 +49,17 @@ def has_onnx_models() -> bool:
 
 def _onnx_path(kind: str, fp32: bool = False) -> Path:
     name = "model.onnx" if fp32 else "model.fp16.onnx"
-    dirname = EMBEDDING_MODEL_DIRNAME if kind == "embedding" else SENTIMENT_MODEL_DIRNAME
-    return get_model_root_dir() / dirname / "onnx" / name
+    # 嵌入模型目录跟随变体（bge/text2vec 切换）；此前用硬编码常量
+    # EMBEDDING_MODEL_DIRNAME，变体机制被完全绕过
+    if kind == "embedding":
+        return get_embedding_model_dir() / "onnx" / name
+    return get_model_root_dir() / SENTIMENT_MODEL_DIRNAME / "onnx" / name
 
 
 def _tokenizer_dir(kind: str) -> Path:
-    dirname = EMBEDDING_MODEL_DIRNAME if kind == "embedding" else SENTIMENT_MODEL_DIRNAME
-    return get_model_root_dir() / dirname / "onnx" / "tokenizer"
+    if kind == "embedding":
+        return get_embedding_model_dir() / "onnx" / "tokenizer"
+    return get_model_root_dir() / SENTIMENT_MODEL_DIRNAME / "onnx" / "tokenizer"
 
 
 def resolve_providers(device_mode: str) -> tuple[list[str], list[str]]:

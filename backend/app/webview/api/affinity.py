@@ -305,35 +305,41 @@ class AffinityApiMixin:
             # 短路判定：无新消息且配置指纹未变 → 直接返回缓存（亚秒级），
             # 跳过全链路重算。用户点「重新分析」且数据没变时不再白跑
             # 五分钟。有新消息（stale）或首次分析时照常全量。
+            # config_overrides 例外：缓存指纹不含临时覆盖项，带覆盖调用
+            # 必须走全量，否则会返回"无覆盖口径"的旧缓存
             effective_force_reanalyze = False
-            try:
-                from ...services.analysis.analysis_state import get_analysis_freshness
-
-                freshness = get_analysis_freshness(int(conversation_id))
-                if freshness.get("stale") or freshness.get("pending_message_count"):
-                    effective_force_reanalyze = True
-                    logger.info(
-                        "[Bridge] 好感度短路判定：有 %s 条新消息，走全量",
-                        freshness.get("pending_message_count"),
-                    )
-                else:
-                    # 消息未变，再查配置指纹（改权重/阈值后仍需重算）——
-                    # 直接用 _load_cached_scores：它内部已含指纹校验，
-                    # 返回 None 即缓存不可用（版本/指纹不匹配）
-                    fingerprint_ok = False
-                    try:
-                        cached_result = service.get_scores(conversation_id)
-                        fingerprint_ok = cached_result is not None
-                    except Exception as fp_e:
-                        logger.debug("[Bridge] 缓存指纹探测失败，按全量处理: %s", fp_e)
-                    if not fingerprint_ok:
-                        effective_force_reanalyze = True
-                        logger.info("[Bridge] 好感度短路判定：配置已变更，走全量")
-                    else:
-                        logger.info("[Bridge] 好感度短路判定：数据与配置均未变，使用缓存")
-            except Exception as short_circuit_e:
-                logger.debug("[Bridge] 好感度短路判定失败，按全量处理: %s", short_circuit_e)
+            if config_overrides:
                 effective_force_reanalyze = True
+                logger.info("[Bridge] 好感度短路判定：携带 config_overrides，走全量")
+            else:
+                try:
+                    from ...services.analysis.analysis_state import get_analysis_freshness
+
+                    freshness = get_analysis_freshness(int(conversation_id))
+                    if freshness.get("stale") or freshness.get("pending_message_count"):
+                        effective_force_reanalyze = True
+                        logger.info(
+                            "[Bridge] 好感度短路判定：有 %s 条新消息，走全量",
+                            freshness.get("pending_message_count"),
+                        )
+                    else:
+                        # 消息未变，再查配置指纹（改权重/阈值后仍需重算）——
+                        # 直接用 _load_cached_scores：它内部已含指纹校验，
+                        # 返回 None 即缓存不可用（版本/指纹不匹配）
+                        fingerprint_ok = False
+                        try:
+                            cached_result = service.get_scores(conversation_id)
+                            fingerprint_ok = cached_result is not None
+                        except Exception as fp_e:
+                            logger.debug("[Bridge] 缓存指纹探测失败，按全量处理: %s", fp_e)
+                        if not fingerprint_ok:
+                            effective_force_reanalyze = True
+                            logger.info("[Bridge] 好感度短路判定：配置已变更，走全量")
+                        else:
+                            logger.info("[Bridge] 好感度短路判定：数据与配置均未变，使用缓存")
+                except Exception as short_circuit_e:
+                    logger.debug("[Bridge] 好感度短路判定失败，按全量处理: %s", short_circuit_e)
+                    effective_force_reanalyze = True
 
             # 显式生成 task_id（带 uuid 后缀防撞号）并传给 analyze()，
             # 保证返回给前端的 task_id 与服务内注册的完全一致，无需 sleep+扫描猜测

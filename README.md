@@ -38,8 +38,10 @@ Chrono Trace 是一个基于 `PyWebView + Vue 3 + Python` 的 Windows / Linux �
 本地数据默认写入（安装版）：
 
 ```text
-%LOCALAPPDATA%\Chrono Trace\chrono_trace.db
+%LOCALAPPDATA%\ChronoTrace\chrono_trace.db
 ```
+
+旧版本（数据目录带空格 `Chrono Trace`）首次启动新版本时会自动整目录迁移，数据不丢。
 
 开发模式下数据写入仓库内 `backend\data\`。
 
@@ -447,7 +449,7 @@ release\installer\ChronoTraceSetup-版本号-GPU.exe
 
 - `CPU` 安装包默认内置 CPU 版 PyTorch
 - `GPU` 安装包在构建时直接带入 CUDA 版 PyTorch
-- `CPU` 包内如果检测到 NVIDIA GPU，可额外下载独立 GPU runtime 到 `%LOCALAPPDATA%\Chrono Trace\runtime\gpu`，重启应用后生效
+- `CPU` 包内如果检测到 NVIDIA GPU，可额外下载独立 GPU runtime 到 `%LOCALAPPDATA%\ChronoTrace\runtime\gpu`，重启应用后生效
 
 ### Linux 打包与使用
 
@@ -480,7 +482,7 @@ cd ChronoTrace
 - 系统 glibc ≥ 2.34（Debian 12 / Ubuntu 22.04 及更新版本）；包内已自带 Python 与全部依赖（含 Qt）
 - 密钥捕获需要系统安装 gdb（`sudo apt install gdb`）与 ptrace 权限，详见「获取微信数据库密钥」
 - 安装包已内置 fp16 模型；开发环境首次使用分析/实时建议时会从 ModelScope 自动下载，需要网络
-- 应用数据写入 `~/.local/share/Chrono Trace/`（注意：用户数据目录带空格，与打包产物名 `ChronoTrace` 不同）
+- 应用数据写入 `~/.local/share/ChronoTrace/`（与打包产物名一致，无空格）；旧版本带空格目录首次启动时自动迁移
 
 ### 调试建议
 

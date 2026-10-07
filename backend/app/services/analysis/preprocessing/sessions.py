@@ -290,7 +290,7 @@ class SessionManager:
                     region_texts = [speech_units[i]["content"] for i in range(start, end + 1)]
                     region_embeddings = self._sentiment_service._get_embeddings_batch(
                         region_texts,
-                        batch_size=32,
+                        batch_size=64,
                     )
                     
                     for i in range(len(region_embeddings) - 1):

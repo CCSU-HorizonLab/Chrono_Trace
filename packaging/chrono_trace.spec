@@ -42,7 +42,10 @@ datas += safe_copy_metadata("modelscope")
 # ONNX 模型内置（阶段 B：安装包捆绑 fp16 产物，免运行时下载）；
 # 由 build 脚本在打包前运行 backend/scripts/export_models_onnx.py 生成
 _MODELS_ROOT = PROJECT_ROOT / "backend" / "data" / "models"
-for _model_name in ("text2vec_base_chinese", "sentiment_3class"):
+# 双平台统一 bge（6.3× 提速、fp16 无损；公开中文基准不输 text2vec，
+# 参数仅 1/4）——与 chrono_trace_linux.spec 同清单，默认变体直接命中。
+# 变体机制保留：质量有诉求时可导出 text2vec 产物配置切回。
+for _model_name in ("bge_small_zh_v15", "sentiment_3class"):
     # 只打发行所需文件（fp16 + tokenizer）——开发目录里的 fp32 基准与
     # 弃用的 int8/pc8 实验产物不进包（此前整目录收集让包体多了 1.5GB）
     _fp16 = _MODELS_ROOT / _model_name / "onnx" / "model.fp16.onnx"

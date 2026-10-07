@@ -34,8 +34,11 @@ def test_rag_defaults_are_privacy_preserving():
     assert settings["rag_enabled"] is False
     assert settings["rag_remote_context_redaction"] is True
     assert settings["rag_allow_remote_embedding"] is False
-    assert settings["rag_embedding_model"] == "tingting0514/text2vec-base-chinese"
-    assert settings["rag_embedding_dim"] == 768
+    # 默认模型名/维度跟随激活变体（本机 bge-small=512；text2vec 变体激活时为 768）
+    from app.services.model_paths import get_embedding_model_dim, get_embedding_model_repo_id
+
+    assert settings["rag_embedding_model"] == get_embedding_model_repo_id()
+    assert settings["rag_embedding_dim"] == get_embedding_model_dim()
 
 
 def test_rag_defaults_migrate_legacy_384_projection_for_default_model():
@@ -45,7 +48,11 @@ def test_rag_defaults_migrate_legacy_384_projection_for_default_model():
             "rag_embedding_dim": 384,
         }
     )
-    assert settings["rag_embedding_dim"] == 768
+    # 旧默认标签+384 → 迁移到当前激活变体的标签与维度（隔离机制触发重建）
+    from app.services.model_paths import get_embedding_model_dim, get_embedding_model_repo_id
+
+    assert settings["rag_embedding_model"] == get_embedding_model_repo_id()
+    assert settings["rag_embedding_dim"] == get_embedding_model_dim()
 
 
 def test_remote_llm_detection_uses_actual_host_not_provider_label():

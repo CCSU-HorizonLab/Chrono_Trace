@@ -14,7 +14,13 @@ logger = logging.getLogger(__name__)
 
 
 import shutil, uuid
-from ...services.model_paths import EMBEDDING_MODEL_DIRNAME, EMBEDDING_MODEL_REPO_ID, MODEL_ROOT_DIR_KEY, SENTIMENT_MODEL_DIRNAME, SENTIMENT_MODEL_REPO_ID, get_embedding_model_dir, get_model_root_dir, get_sentiment_model_dir, normalize_model_root_dir
+from ...services.model_paths import EMBEDDING_VARIANTS, MODEL_ROOT_DIR_KEY, SENTIMENT_MODEL_DIRNAME, SENTIMENT_MODEL_REPO_ID, get_embedding_model_dir, get_embedding_model_repo_id, get_model_root_dir, get_sentiment_model_dir, normalize_model_root_dir
+
+
+def _embedding_dir_names() -> list[str]:
+    """全部嵌入变体目录名（迁移/清点用——本机可能存在任一变体产物）。"""
+    return [v["dirname"] for v in EMBEDDING_VARIANTS.values()]
+
 
 class ModelMgmtApiMixin:
     """分析模型状态与下载管理"""
@@ -32,7 +38,7 @@ class ModelMgmtApiMixin:
 
         diagnosis = ModelManager(
             model_dir=str(get_embedding_model_dir(self.settings)),
-            repo_id=EMBEDDING_MODEL_REPO_ID,
+            repo_id=get_embedding_model_repo_id(self.settings),
         ).diagnose_model_status()
         diagnosis["can_recover"] = True
         return diagnosis
@@ -42,7 +48,7 @@ class ModelMgmtApiMixin:
 
         return ModelManager(
             model_dir=str(get_embedding_model_dir(self.settings)),
-            repo_id=EMBEDDING_MODEL_REPO_ID,
+            repo_id=get_embedding_model_repo_id(self.settings),
         ).download_model(progress_callback=progress_callback)
 
     def _get_model_root_dir(self) -> Path:
@@ -61,13 +67,13 @@ class ModelMgmtApiMixin:
                     "ok": True,
                     "model_root_dir": str(next_root),
                     "migrated_models": [],
-                    "skipped_models": [SENTIMENT_MODEL_DIRNAME, EMBEDDING_MODEL_DIRNAME],
+                    "skipped_models": _embedding_dir_names() + [SENTIMENT_MODEL_DIRNAME],
                 }
 
             moved: list[tuple[Path, Path]] = []
             skipped: list[str] = []
             try:
-                for dirname in (SENTIMENT_MODEL_DIRNAME, EMBEDDING_MODEL_DIRNAME):
+                for dirname in (SENTIMENT_MODEL_DIRNAME, *_embedding_dir_names()):
                     source = current_root / dirname
                     destination = next_root / dirname
                     if not source.exists():

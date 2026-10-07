@@ -45,18 +45,31 @@ DEFAULT_EMBEDDING_VARIANT = "text2vec_base_chinese"
 
 
 def resolve_embedding_variant(settings: Optional[dict[str, Any]] = None) -> str:
-    """解析激活的嵌入变体，带回退链：配置值 → bge（若目录在）→ 默认。
+    """解析激活的嵌入变体，带回退链：配置值 → 默认 → 任一存在产物者。
 
-    配置指向的变体目录缺 ONNX 产物时回落 text2vec，保证升级前老安装
-    不因配置漂移而找不到模型。
+    打包版可能只内置 bge（47MB）不内置 text2vec（195MB）——配置指向
+    的变体缺产物时依次尝试：默认变体 → 另一变体，保证至少能找到
+    一个可用模型。
     """
     current = settings if settings is not None else load_settings_from_file()
     raw = str(current.get(EMBEDDING_VARIANT_KEY) or "").strip()
-    if raw and raw in EMBEDDING_VARIANTS:
-        model_root = get_model_root_dir(current)
-        if (model_root / EMBEDDING_VARIANTS[raw]["dirname"] / "onnx" / "model.fp16.onnx").exists():
-            return raw
-        logger.info("[模型路径] 配置的嵌入变体 %s 无产物，回落 %s", raw, DEFAULT_EMBEDDING_VARIANT)
+    model_root = get_model_root_dir(current)
+
+    def _has_products(variant: str) -> bool:
+        return (
+            model_root / EMBEDDING_VARIANTS[variant]["dirname"] / "onnx" / "model.fp16.onnx"
+        ).exists()
+
+    if raw and raw in EMBEDDING_VARIANTS and _has_products(raw):
+        return raw
+    if _has_products(DEFAULT_EMBEDDING_VARIANT):
+        return DEFAULT_EMBEDDING_VARIANT
+    for variant in EMBEDDING_VARIANTS:
+        if variant != DEFAULT_EMBEDDING_VARIANT and _has_products(variant):
+            logger.info(
+                "[模型路径] 默认变体 %s 无产物，回落 %s", DEFAULT_EMBEDDING_VARIANT, variant
+            )
+            return variant
     return DEFAULT_EMBEDDING_VARIANT
 
 

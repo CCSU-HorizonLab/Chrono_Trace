@@ -108,8 +108,10 @@ class EmbeddingCacheStore:
                 blob = row["vector"]
                 try:
                     # np.frombuffer 零拷贝视图 + 一次 tolist：比 struct.unpack
-                    # 逐元素装箱快 2-3×（暖跑主路径的固定税）
-                    vector = np.frombuffer(blob, dtype=np.float32).tolist()
+                    # 逐元素装箱快 2-3×（暖跑主路径的固定税）。
+                    # dtype 显式小端 '<f4' 与写入侧 struct.pack("<Nf") 对齐，
+                    # 不依赖平台字节序
+                    vector = np.frombuffer(blob, dtype="<f4").tolist()
                 except Exception:
                     continue
                 if len(vector) == self._dim:

@@ -219,7 +219,7 @@ class ChatPositivityService:
             )
             pair_count = cursor.fetchone()[0] or 0
         except Exception as e:
-            logger.error(f"鑾峰彇浜や簰瀵规暟閲忓け璐? {e}")
+            logger.error(f"获取交互对数量失败: {e}")
             pair_count = 0
 
         pair_dampening = min(1.0, pair_count / 15.0)

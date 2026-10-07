@@ -41,7 +41,13 @@ EMBEDDING_VARIANTS: dict[str, dict] = {
         "dim": 512,
     },
 }
-DEFAULT_EMBEDDING_VARIANT = "text2vec_base_chinese"
+# 默认 bge（24M 参数，实测 6.3× 提速、fp16 无损）。Windows 安装包仍内置
+# text2vec——回退链自动兜底（默认变体无产物 → 任选有产物者），行为不变。
+DEFAULT_EMBEDDING_VARIANT = "bge_small_zh_v15"
+
+# 回落只提示一次：resolve 每个嵌入批次都会重算（引擎 key 组成部分），
+# 不去重会在冷跑分析中刷上千行相同 INFO
+_fallback_logged_variants: set[str] = set()
 
 
 def resolve_embedding_variant(settings: Optional[dict[str, Any]] = None) -> str:
@@ -66,9 +72,11 @@ def resolve_embedding_variant(settings: Optional[dict[str, Any]] = None) -> str:
         return DEFAULT_EMBEDDING_VARIANT
     for variant in EMBEDDING_VARIANTS:
         if variant != DEFAULT_EMBEDDING_VARIANT and _has_products(variant):
-            logger.info(
-                "[模型路径] 默认变体 %s 无产物，回落 %s", DEFAULT_EMBEDDING_VARIANT, variant
-            )
+            if variant not in _fallback_logged_variants:
+                _fallback_logged_variants.add(variant)
+                logger.info(
+                    "[模型路径] 默认变体 %s 无产物，回落 %s", DEFAULT_EMBEDDING_VARIANT, variant
+                )
             return variant
     return DEFAULT_EMBEDDING_VARIANT
 
@@ -100,10 +108,20 @@ def normalize_model_root_dir(value: Optional[str]) -> str:
 
     if IS_FROZEN:
         bundled = Path(RESOURCE_ROOT_PATH) / "models"
-        if (bundled / "text2vec_base_chinese" / "onnx").exists():
+        # 内置判定按「任一嵌入变体有产物」——各平台 spec 内置的变体不同
+        # （Linux 仅 bge、Windows 仍 text2vec），写死单变体名会让另一平台
+        # 的打包版绕过内置目录、找不到自带的模型
+        bundled_has_embedding = any(
+            (bundled / v["dirname"] / "onnx" / "model.fp16.onnx").exists()
+            for v in EMBEDDING_VARIANTS.values()
+        )
+        if bundled_has_embedding:
             if not resolved_custom or resolved_custom == default_user_dir:
                 return str(bundled.resolve())
-            if not (Path(resolved_custom) / "text2vec_base_chinese" / "onnx").exists():
+            if not any(
+                (Path(resolved_custom) / v["dirname"] / "onnx").exists()
+                for v in EMBEDDING_VARIANTS.values()
+            ):
                 logger.info(
                     "[模型路径] 配置目录 %s 无 ONNX 模型，回落安装包内置目录",
                     resolved_custom,

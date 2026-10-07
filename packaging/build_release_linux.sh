@@ -117,7 +117,8 @@ setup_venv() {
 ensure_onnx_models() {
   echo "==> ONNX 模型（首次构建自动从 ModelScope 下载源模型并导出）"
   local models_root="backend/data/models"
-  if [ -f "$models_root/text2vec_base_chinese/onnx/model.fp16.onnx" ] && \
+  # 与 spec 内置清单对齐：Linux 只打 bge + sentiment（text2vec 不进包）
+  if [ -f "$models_root/bge_small_zh_v15/onnx/model.fp16.onnx" ] && \
      [ -f "$models_root/sentiment_3class/onnx/model.fp16.onnx" ]; then
     echo "ONNX 产物已存在，跳过下载与导出。"
     return

@@ -103,8 +103,11 @@ setup_venv() {
   fi
   if [[ $need_install -eq 1 ]]; then
     log "安装打包依赖（推理栈为 ONNX，无 torch）…"
-    "$VENV_DIR/bin/python" -m pip install --upgrade pip
-    "$VENV_DIR/bin/python" -m pip install -r "$REQUIREMENTS_PATH"
+    # 清华镜像：默认 PyPI 在弱网下实测 87KB/s（116MB 轮子要 20 分钟+），
+    # 与模型导出环境（ensure_onnx_models）保持同源
+    local pip_index=(-i https://pypi.tuna.tsinghua.edu.cn/simple)
+    "$VENV_DIR/bin/python" -m pip install "${pip_index[@]}" --upgrade pip
+    "$VENV_DIR/bin/python" -m pip install "${pip_index[@]}" -r "$REQUIREMENTS_PATH"
     echo "$requirements_hash" > "$hash_file"
   else
     log "打包环境未变化，复用 $VENV_DIR"

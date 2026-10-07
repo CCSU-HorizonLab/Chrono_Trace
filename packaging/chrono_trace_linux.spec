@@ -110,6 +110,11 @@ a = Analysis(
     runtime_hooks=[],
     excludes=[
         "pytest",
+        # GTK 栈（PyGObject/pycairo）是 pywebview 的可选 GTK 后端依赖；
+        # 本项目 Linux 定死 Qt 后端——即便打包环境被误装（曾因调研 GTK
+        # 后端引入，拖进 117M 图标/主题/重复ICU），也绝不进产物
+        "gi",
+        "pycairo",
         "tkinter",
         "matplotlib",
         "tensorflow",

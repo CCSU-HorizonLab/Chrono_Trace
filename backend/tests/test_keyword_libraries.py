@@ -396,6 +396,51 @@ class TestKeywordLibraries:
         assert '新负面词' in keywords
 
 
+
+    # ===== 共享实例缓存一致性（CRUD 后必须 reload，回归见方法注释）=====
+
+    def test_shared_instance_sees_crud_via_reload(self, mock_db):
+        from app.services.analysis.keyword_libraries import (
+            KeywordLibraries,
+            get_shared_keyword_libraries,
+        )
+
+        with patch(
+            'app.services.analysis.keyword_libraries.get_db', return_value=mock_db
+        ):
+            shared = get_shared_keyword_libraries()
+            shared.reload_cache()
+            assert "美滋滋" not in shared.get_keywords(KeywordLibraries.POSITIVE)
+
+            # 桥接 CRUD 行为：新实例写库，随后刷新共享实例
+            crud = KeywordLibraries()
+            crud.add_keywords(KeywordLibraries.POSITIVE, ["美滋滋"])
+            shared.reload_cache()
+
+            assert "美滋滋" in shared.get_keywords(KeywordLibraries.POSITIVE)
+
+            # 删除同样闭环
+            crud.remove_keywords(KeywordLibraries.POSITIVE, ["美滋滋"])
+            shared.reload_cache()
+            assert "美滋滋" not in shared.get_keywords(KeywordLibraries.POSITIVE)
+    def test_shared_instance_stale_without_reload(self, mock_db):
+        """反向用例：不 reload 时共享实例确实读不到（证明上例的刷新是必要的）。"""
+        from app.services.analysis.keyword_libraries import (
+            KeywordLibraries,
+            get_shared_keyword_libraries,
+        )
+
+        with patch(
+            'app.services.analysis.keyword_libraries.get_db', return_value=mock_db
+        ):
+            shared = get_shared_keyword_libraries()
+            shared.reload_cache()
+
+            crud = KeywordLibraries()
+            crud.add_keywords(KeywordLibraries.POSITIVE, ["另一个新词"])
+            # 不刷新共享实例：旧缓存仍在（这就是 CRUD 后必须 reload 的原因）
+            assert "另一个新词" not in shared.get_keywords(KeywordLibraries.POSITIVE)
+
 class TestKeywordMatchingBoundaries:
     """关键词匹配边界测试 - T012"""
     

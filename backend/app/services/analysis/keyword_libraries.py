@@ -10,6 +10,24 @@ import re
 
 # 使用相对导入避免循环依赖
 from ...db.connection import get_db
+_shared_instance = None
+_shared_lock = __import__("threading").Lock()
+
+
+def get_shared_keyword_libraries() -> "KeywordLibraries":
+    """进程级共享实例：词库 SELECT + 正则编译只做一次。
+
+    此前每个服务实例各自 new（resonance/attitude 每次分析 ≥2 份），
+    _load_cache 的全量 SELECT 和正则编译重复执行。
+    """
+    global _shared_instance
+    if _shared_instance is None:
+        with _shared_lock:
+            if _shared_instance is None:
+                _shared_instance = KeywordLibraries()
+    return _shared_instance
+
+
 class KeywordLibraries:
     """关键词库管理类"""
 

@@ -3,6 +3,7 @@ import re
 import json
 import logging
 import time
+import numpy as np
 from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
 from ....db.connection import get_db
@@ -61,8 +62,6 @@ class SessionManager:
             emb2 = self._sentiment_service._get_embedding(text2)
 
             # encode 已 L2 归一：cosine == 裸点积
-            import numpy as np
-
             return float(np.dot(np.asarray(emb1), np.asarray(emb2)))
 
         except Exception as e:
@@ -248,7 +247,6 @@ class SessionManager:
                             pass
                 
                 # 找出候选切分区域（相似度较低的区域）
-                import numpy as np
                 candidate_regions = []
                 for i in range(len(sample_indices) - 1):
                     vec1 = sample_embeddings[i]

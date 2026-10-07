@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional
 
 from ...db.connection import get_db
 from .feature_extraction_config import FeatureExtractionConfig
-from .keyword_libraries import KeywordLibraries
+from .keyword_libraries import KeywordLibraries, get_shared_keyword_libraries
 from .preprocessing import (
     AttitudePreprocessingService,
     BasicPreprocessingService,
@@ -74,7 +74,7 @@ class PreprocessingOrchestrator:
         self.basic_service = BasicPreprocessingService()
         self.pair_service = PairPreprocessingService()
         self.session_manager = SessionManager()
-        self.keyword_lib = KeywordLibraries()
+        self.keyword_lib = get_shared_keyword_libraries()
         self.attitude_service = AttitudePreprocessingService(keyword_lib=self.keyword_lib)
 
     def _cache_key(self, conversation_id: int) -> str:

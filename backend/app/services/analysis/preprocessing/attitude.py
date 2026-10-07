@@ -60,12 +60,12 @@ class AttitudePreprocessingService:
         初始化服务
 
         Args:
-            keyword_lib: 关键词库实例(可选,默认创建新实例)
+            keyword_lib: 关键词库实例(可选,默认取进程级共享实例)
         """
-        from ..keyword_libraries import KeywordLibraries
+        from ..keyword_libraries import KeywordLibraries, get_shared_keyword_libraries
         from ..holiday_library import HolidayLibrary
-        
-        self.keyword_lib = keyword_lib or KeywordLibraries()
+
+        self.keyword_lib = keyword_lib or get_shared_keyword_libraries()
         self.holiday_lib = HolidayLibrary()
         self._keywords_cache = None
 

@@ -206,9 +206,12 @@ class RelationshipLLMService:
             content_by_id = {int(r["id"]): str(r["text"] or "") for r in msg_rows}
 
         def _unit_text(ids_raw: Any) -> str:
+            # message_ids 实际存在两种形态：纯逗号分隔（schema 注释口径）
+            # 与 Python list 的 repr（'[123, 124]'，部分写入路径产出）——
+            # strip 掉方括号与空白统一兼容
             parts = []
             for part in str(ids_raw or "").split(","):
-                part = part.strip()
+                part = part.strip().strip("[]").strip()
                 if part.isdigit() and int(part) in content_by_id:
                     text = content_by_id[int(part)].strip()
                     if text:

@@ -261,7 +261,11 @@ class FeatureExtractionService:
                 "end_time": session["end_timestamp"],
                 "message_count": message_count,
                 "initiator": initiator,
-                "source": messages[0].get("source", "long"),  # 使用消息的来源
+                # 特征提取的会话基于导入快照（long 源消息），此前取
+                # messages[0].source：首条若是 realtime 行则写出
+                # source='realtime'，好感度侧 DELETE source='long' 清不掉
+                # 它 → sessions 表残留重复行污染统计
+                "source": "long",
                 "created_at": int(time.time())
             })
 

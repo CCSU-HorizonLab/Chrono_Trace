@@ -189,14 +189,19 @@ class PreferenceCompatibilityService:
                 except:
                     pass
             
-            # 批量查询消息内容
+            # 批量查询消息内容（分块 IN：SQLite 单语句变量上限 32766）
             msg_content_map = {}
             if all_msg_ids:
-                placeholders = ','.join('?' * len(all_msg_ids))
-                cursor = get_db().execute(f"""
-                    SELECT id, content FROM messages WHERE id IN ({placeholders})
-                """, all_msg_ids)
-                for row in cursor.fetchall():
+                _CHUNK = 800
+                _rows = []
+                for _cs in range(0, len(all_msg_ids), _CHUNK):
+                    _chunk = all_msg_ids[_cs:_cs + _CHUNK]
+                    placeholders = ','.join('?' * len(_chunk))
+                    cursor = get_db().execute(f"""
+                        SELECT id, content FROM messages WHERE id IN ({placeholders})
+                    """, _chunk)
+                    _rows.extend(cursor.fetchall())
+                for row in _rows:
                     content = row[1]
                     if isinstance(content, bytes):
                         try:
@@ -235,19 +240,38 @@ class PreferenceCompatibilityService:
                             matched_keywords.add(keyword)
                 return list(preference_session_ids), list(matched_keywords)
 
-            # 有会话表，检查每个会话
-            for session in sessions:
-                session_id, start_time, end_time = session
-                for unit_id, content in unit_contents.items():
-                    unit_ts = unit_first_ts.get(unit_id, 0)
+            # 有会话表：单元按时间排序 + 会话按 start_time 排序后双指针对齐
+            # 归属（此前 sessions×units 双重循环，13 万级会话 = 1.5 亿次
+            # 迭代的纯 CPU 热点；两序列均单调后线性扫描即可）
+            keywords_lower = [kw.lower() for kw in self.preference_keywords]
+            sorted_units = sorted(
+                unit_contents.items(), key=lambda kv: unit_first_ts.get(kv[0], 0)
+            )
+            sorted_sessions = sorted(sessions, key=lambda s: int(s[1] or 0))
+
+            session_index = 0
+            for unit_id, content in sorted_units:
+                unit_ts = unit_first_ts.get(unit_id, 0)
+                # 前进到首个 end_time >= unit_ts 的会话（区间可能重叠，
+                # 取满足 start<=ts<=end 的第一个）
+                while (
+                    session_index < len(sorted_sessions)
+                    and int(sorted_sessions[session_index][2] or 0) < unit_ts
+                ):
+                    session_index += 1
+                for session in sorted_sessions[session_index:]:
+                    start_time, end_time = int(session[1] or 0), int(session[2] or 0)
+                    if start_time > unit_ts:
+                        break
                     if start_time <= unit_ts <= end_time:
                         content_lower = content.lower()
-                        for keyword in self.preference_keywords:
-                            if keyword.lower() in content_lower:
-                                preference_session_ids.add(session_id)
+                        for keyword in keywords_lower:
+                            if keyword in content_lower:
+                                preference_session_ids.add(session[0])
                                 matched_keywords.add(keyword)
                                 break
-            
+                        break
+
             return list(preference_session_ids), list(matched_keywords)
             
         except Exception as e:

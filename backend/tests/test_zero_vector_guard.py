@@ -30,7 +30,7 @@ def test_embedding_service_rejects_zero_vectors():
     def _service(embedding):
         return RagEmbeddingService(
             sentiment_service=SimpleNamespace(
-                analyze_batch=lambda texts: [{"embedding": embedding} for _ in texts],
+                analyze_batch=lambda texts, include_embeddings=False: [{"embedding": embedding} for _ in texts],
                 has_local_embedding_model=lambda: True,
             )
         )

@@ -222,8 +222,15 @@ class SentimentService:
                 "embedding": self._fallback_embedding(),
             }
 
-    def analyze_batch(self, texts: List[str]) -> List[Dict[str, Any]]:
-        """Analyze a batch of texts."""
+    def analyze_batch(
+        self, texts: List[str], include_embeddings: bool = False
+    ) -> List[Dict[str, Any]]:
+        """Analyze a batch of texts.
+
+        include_embeddings 默认 False：预处理阶段的调用方只消费极性/强度
+        （相似度走 pairs 自己的 L2 嵌入缓存），此前每条消息白嵌一遍并把
+        768 维向量 pickle 进库（13 万条会话 ≈400MB 胀库 + 双倍计算）。
+        """
         if not texts:
             return []
 
@@ -240,7 +247,11 @@ class SentimentService:
 
         self._load_realtime_service()
         sentiment_results = self._realtime_service.analyze_batch(safe_texts)
-        embeddings = self._get_embeddings_batch(safe_texts)
+        embeddings = (
+            self._get_embeddings_batch(safe_texts)
+            if include_embeddings
+            else [None] * len(safe_texts)
+        )
 
         results: List[Dict[str, Any]] = []
         for index, text in enumerate(safe_texts):
@@ -456,7 +467,6 @@ class SentimentService:
 
         results: Dict[int, Dict[str, Any]] = {}
         try:
-            expected_dim = self._expected_embedding_dimension()
             db = get_db()
             batch_size = 500
 
@@ -473,17 +483,18 @@ class SentimentService:
                 )
 
                 for row in cursor.fetchall():
+                    # 有效性只看行存在：embedding_vector 现为可选（预处理
+                    # 不再写入），且旧 torch pickle 行按 None 容忍——极性/
+                    # 强度才是消费方（pairs 直读 SQL、orchestrator 只判跳过）
                     embedding_data = row[3]
-                    if embedding_data is None:
-                        continue
-                    try:
-                        embedding = pickle.loads(embedding_data)
-                    except Exception:
-                        continue
-                    if not isinstance(embedding, list) or not embedding:
-                        continue
-                    if expected_dim is not None and len(embedding) != expected_dim:
-                        continue
+                    embedding = None
+                    if embedding_data is not None:
+                        try:
+                            loaded = pickle.loads(embedding_data)
+                            if isinstance(loaded, list) and loaded:
+                                embedding = loaded
+                        except Exception:
+                            embedding = None
 
                     results[row[0]] = {
                         "polarity": row[1],
@@ -505,12 +516,13 @@ class SentimentService:
             now = int(time.time())
             batch_data = []
             for result in results:
+                embedding = result.get("embedding")
                 batch_data.append(
                     (
                         result["message_id"],
                         result["polarity"],
                         result["intensity"],
-                        pickle.dumps(result["embedding"]),
+                        pickle.dumps(embedding) if embedding is not None else None,
                         now,
                     )
                 )

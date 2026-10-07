@@ -308,16 +308,16 @@ class TestSentimentService:
             "还好吧"
         ]
 
-        results = service.analyze_batch(texts)
+        results = service.analyze_batch(texts, include_embeddings=True)
 
         assert len(results) == len(texts), \
             f"批处理结果数量不匹配: {len(results)} vs {len(texts)}"
 
-        # 验证每个结果都有必需的字段
+        # 验证每个结果都有必需的字段（include_embeddings=True 时才有向量）
         for result in results:
             assert "polarity" in result
             assert "intensity" in result
-            assert "embedding" in result
+            assert result["embedding"] is not None
             assert len(result["embedding"]) == EXPECTED_EMBEDDING_DIM
 
     def test_batch_empty_list(self, service):

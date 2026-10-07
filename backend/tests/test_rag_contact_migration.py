@@ -653,7 +653,7 @@ def test_fact_vector_retrieval_handles_semantic_match_without_keyword_overlap(mo
         def has_local_embedding_model(self):
             return True
 
-        def analyze_batch(self, texts):
+        def analyze_batch(self, texts, include_embeddings=False):
             return [{"embedding": [1.0, 0.0]} for _ in texts]
 
     monkeypatch.setattr(
@@ -703,7 +703,7 @@ def test_fact_semantic_match_is_not_erased_by_long_term_time_decay(monkeypatch):
         def has_local_embedding_model(self):
             return True
 
-        def analyze_batch(self, texts):
+        def analyze_batch(self, texts, include_embeddings=False):
             return [{"embedding": [1.0, 0.0]} for _ in texts]
 
     monkeypatch.setattr(
@@ -744,7 +744,7 @@ def test_fact_vector_retrieval_times_out_without_raising(monkeypatch):
         def has_local_embedding_model(self):
             return True
 
-        def analyze_batch(self, texts):
+        def analyze_batch(self, texts, include_embeddings=False):
             import time
             time.sleep(0.02)
             return [{"embedding": [1.0, 0.0]} for _ in texts]
@@ -965,7 +965,7 @@ def test_embedding_adapter_exposes_raw_dimension_before_index_validation():
         def has_local_embedding_model(self):
             return True
 
-        def analyze_batch(self, texts):
+        def analyze_batch(self, texts, include_embeddings=False):
             return [{"embedding": [0.1] * 768} for _ in texts]
 
     service = RagEmbeddingService(FakeSentiment())

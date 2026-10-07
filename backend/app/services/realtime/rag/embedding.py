@@ -45,7 +45,10 @@ class RagEmbeddingService:
             return []
         self.ensure_available()
         # Reuse the existing analysis service to avoid a second model stack.
-        results = self.sentiment_service.analyze_batch(safe_texts)
+        # include_embeddings=True：RAG 真正消费向量（预处理路径默认不嵌）
+        results = self.sentiment_service.analyze_batch(
+            safe_texts, include_embeddings=True
+        )
         vectors = []
         self.last_raw_dimensions = []
         for result in results:

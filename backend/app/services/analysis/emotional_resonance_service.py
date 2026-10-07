@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Sequence
 
 from ...db.connection import get_db
-from .keyword_libraries import KeywordLibraries
+from .keyword_libraries import KeywordLibraries, get_shared_keyword_libraries
 from .negative_direction_service import NegativeDirectionService
 from .preprocessing_orchestrator import PreprocessingOrchestrator
 
@@ -200,7 +200,7 @@ class EmotionalResonanceService:
 
     def __init__(self):
         self.orchestrator = PreprocessingOrchestrator()
-        self.keyword_lib = KeywordLibraries()
+        self.keyword_lib = get_shared_keyword_libraries()
         self.direction_service = NegativeDirectionService()
         # 交互对实例级缓存（见 _get_interaction_pairs 的六处调用）
         self._pairs_cache: Dict[int, List[Dict[str, Any]]] = {}

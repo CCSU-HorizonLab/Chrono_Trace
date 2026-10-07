@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Tuple
 
 from ...db.connection import get_db
 from .affinity_debug_logger import affinity_debug_log
-from .keyword_libraries import KeywordLibraries
+from .keyword_libraries import KeywordLibraries, get_shared_keyword_libraries
 from .preprocessing_orchestrator import PreprocessedStatistics
 
 logger = logging.getLogger(__name__)
@@ -56,7 +56,7 @@ class IntimacySignalsService:
     """亲密度信号维度评分服务。"""
 
     def __init__(self):
-        self.keyword_libraries = KeywordLibraries()
+        self.keyword_libraries = get_shared_keyword_libraries()
 
     # ---------- 编排 ----------
 

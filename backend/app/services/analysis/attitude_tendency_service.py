@@ -21,7 +21,7 @@
 from typing import Dict, Any, List
 from ...db.connection import get_db
 from .preprocessing_orchestrator import PreprocessingOrchestrator
-from .keyword_libraries import KeywordLibraries
+from .keyword_libraries import KeywordLibraries, get_shared_keyword_libraries
 from .negative_direction_service import NegativeDirectionService
 from .relationship_context_service import RelationshipContextService
 
@@ -48,7 +48,7 @@ class AttitudeTendencyService:
     def __init__(self):
         pass  # get_db() removed for thread safety
         self.orchestrator = PreprocessingOrchestrator()
-        self.keyword_lib = KeywordLibraries()
+        self.keyword_lib = get_shared_keyword_libraries()
         self.direction_service = NegativeDirectionService()
         self.relationship_context_service = RelationshipContextService()
     

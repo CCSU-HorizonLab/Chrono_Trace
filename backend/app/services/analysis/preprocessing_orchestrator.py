@@ -249,7 +249,7 @@ class PreprocessingOrchestrator:
                     "message_id": msg["id"],
                     "polarity": result["polarity"],
                     "intensity": result["intensity"],
-                    "embedding": result["embedding"],
+                    "embedding": result.get("embedding"),
                 })
 
             self.sentiment_service.batch_cache_sentiments(cache_data)

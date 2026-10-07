@@ -326,10 +326,7 @@ class AffinityAnalysisService:
         """
         logger.info(f"[好感度分析] 开始重新分析会话 {conversation_id}，准备清理缓存...")
 
-        # 清除预处理缓存
-        self.preprocessing.invalidate_cache(conversation_id)
-        
-        # 清除分析结果缓存
+        # 清除预处理缓存与分析结果缓存
         self.preprocessing.invalidate_cache(conversation_id)
         self._invalidate_cache(conversation_id)
         logger.info(f"[好感度分析] 缓存清理完成，开始重新计算 (会话 {conversation_id})")
@@ -461,9 +458,15 @@ class AffinityAnalysisService:
         self.positivity_service.timeliness_threshold = config.reply_timeliness_threshold_seconds
         self.preference_service.set_preference_keywords(config.preference_keywords)
 
-        from concurrent.futures import ThreadPoolExecutor
+        from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait as futures_wait
 
-        with ThreadPoolExecutor(max_workers=4) as pool:
+        # 取消响应：此前 with 块 exit 的 shutdown(wait=True) 会等满全部维度
+        # （LLM 维最长 90s），且维度任务不感知取消事件——用户点停止后要
+        # 干等整段。改为 0.5s 轮询取消信号 + 任一维度异常立即退出 +
+        # shutdown(cancel_futures=True) 丢弃未启动任务；已运行维度任务
+        # 只读（无共享可写状态），放其自然跑完即回收
+        pool = ThreadPoolExecutor(max_workers=4)
+        try:
             fut_resonance = pool.submit(
                 self.resonance_service.calculate_overall_resonance, conversation_id
             )
@@ -491,7 +494,25 @@ class AffinityAnalysisService:
                     context=llm_context,
                 )
 
-            # result() 抛出的异常（含取消）原样在主线程重放。
+            pending = {
+                f for f in (
+                    fut_resonance, fut_positivity, fut_attitude,
+                    fut_preference, fut_intimacy, fut_llm,
+                ) if f is not None
+            }
+            while pending:
+                done, pending = futures_wait(
+                    pending, timeout=0.5, return_when=FIRST_EXCEPTION
+                )
+                # 取消信号 ≤0.5s 内生效，不再等维度自然结束
+                self._check_cancelled(cancel_event)
+                for f in done:
+                    # 维度异常立即重放退出；LLM 维缺席是正常分支，由下方特判
+                    if f is not fut_llm and f.exception() is not None:
+                        f.result()
+
+            # 走到这里全部 future 已完成，result() 即取即得。
+            # 异常（含取消）原样在主线程重放。
             # LLM 维例外：缺席（样本不足/脱敏不可用/超时等）是正常分支，
             # 在此捕获转 None，装配阶段按缺席处理——否则会杀死整个分析
             resonance_result = fut_resonance.result()
@@ -506,6 +527,11 @@ class AffinityAnalysisService:
                     llm_result = fut_llm.result()
                 except RelationshipLLMAbsent as absent:
                     llm_absent_error = absent
+                    # 真因（网络失败/解析失败等）只在 debug 留完整链，缺席
+                    # 本身是正常分支不刷 info 噪音
+                    logger.debug("[关系评估] 维度缺席原因", exc_info=absent)
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
 
         # ===== 顺序装配（纯内存操作，毫秒级） =====
         result.emotional_resonance = DimensionScore(

@@ -46,7 +46,7 @@
 - Qt 模块裁剪(Quick3D/PositioningQuick/EglFS 等,ldd 核实 WebEngine 不依赖):-18M;
 - 排除 GTK 栈(gi/pycairo,pywebview 可选后端依赖,本项目定死 Qt 后端):-58M;
 - torch 预装移除;打包依赖改清华镜像(弱网下 87KB/s→镜像直连)。
-- 便携包 568M→**510M**,onedir 952M。
+- 便携包 568M→**521M**,onedir 998M(fp32 嵌入仅比 fp16 版大 11M——压缩吸收了绝大部分体积差)。
 
 ## 数据目录与命名统一
 

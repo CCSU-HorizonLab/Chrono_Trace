@@ -167,9 +167,27 @@ class PreprocessingOrchestrator:
         stats.bidirectional_pairs = pair_stats.get("bidirectional_pairs", 0)
         stats.same_parity_pairs = pair_stats.get("same_parity_pairs", 0)
 
-        sessions = self.session_manager.split_sessions(
-            speech_units, progress_cb=_similarity_progress, cancel_event=cancel_event
-        )
+        # 会话切分优先复用特征提取阶段（Stage1）刚算出的结果——同一批
+        # 消息两阶段各切一遍（含嵌入查询与落库）是最外层重复；memo 带
+        # TTL 且仅进程内有效，独立触发好感度分析时无缓存照常自算
+        try:
+            from .feature_extraction_service import take_recent_split
+
+            cached_units, cached_sessions = take_recent_split(
+                conversation_id, expected_message_count=len(messages)
+            )
+        except Exception:
+            cached_units, cached_sessions = None, None
+        if cached_sessions is not None:
+            sessions = cached_sessions
+            logger.info(
+                "[预处理] 复用特征提取阶段的切分结果 (%d 个会话，免二次切分)",
+                len(sessions),
+            )
+        else:
+            sessions = self.session_manager.split_sessions(
+                speech_units, progress_cb=_similarity_progress, cancel_event=cancel_event
+            )
         self.session_manager.save_sessions(conversation_id, sessions)
         session_stats = self.session_manager.collect_session_statistics(sessions)
         initiator_stats = self.session_manager.identify_session_initiators(sessions)

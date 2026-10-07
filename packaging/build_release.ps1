@@ -260,7 +260,7 @@ function Ensure-OnnxModels {
     Write-Host "==> ONNX models (auto download from ModelScope on first build, then export)" -ForegroundColor Cyan
     $ensureScript = Join-Path $ProjectRoot "backend\scripts\ensure_models_for_export.py"
     $modelsRoot = Join-Path $ProjectRoot "backend\data\models"
-    $fp16a = Join-Path $modelsRoot "text2vec_base_chinese\onnx\model.fp16.onnx"
+    $fp16a = Join-Path $modelsRoot "bge_small_zh_v15\onnx\model.fp16.onnx"
     $fp16b = Join-Path $modelsRoot "sentiment_3class\onnx\model.fp16.onnx"
     if ((Test-Path $fp16a) -and (Test-Path $fp16b)) {
         Write-Host "ONNX artifacts already exist, skipping download and export."

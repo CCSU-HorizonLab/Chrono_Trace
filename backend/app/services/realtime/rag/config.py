@@ -8,7 +8,10 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from ...model_paths import EMBEDDING_MODEL_DIM, EMBEDDING_MODEL_REPO_ID
+from ...model_paths import (
+    get_embedding_model_dim,
+    get_embedding_model_repo_id,
+)
 from ...wechat.account_settings import load_settings_from_file
 
 
@@ -17,8 +20,10 @@ RAG_DEFAULTS: dict[str, Any] = {
     "rag_remote_context_redaction": True,
     "rag_allow_remote_embedding": False,
     "rag_embedding_provider": "local",
-    "rag_embedding_model": EMBEDDING_MODEL_REPO_ID,
-    "rag_embedding_dim": EMBEDDING_MODEL_DIM,
+    # 默认模型名/维度跟随激活变体（text2vec=768 / bge-small=512）——
+    # 写死常量会让另一变体激活的新装机 RAG 全量撞维度守卫
+    "rag_embedding_model": get_embedding_model_repo_id(),
+    "rag_embedding_dim": get_embedding_model_dim(),
     "rag_privacy_mode": "balanced",
     "rag_query_scope": "latest_turn",
     "rag_fact_shadow_enabled": True,
@@ -112,22 +117,28 @@ def apply_rag_defaults(settings: dict[str, Any]) -> dict[str, Any]:
     except (TypeError, ValueError):
         settings["rag_fact_score_threshold"] = 0.30
     settings["rag_fact_score_threshold"] = min(1.0, max(0.0, settings["rag_fact_score_threshold"]))
+    resolved_dim = get_embedding_model_dim(settings)
+    resolved_repo = get_embedding_model_repo_id(settings)
     try:
-        settings["rag_embedding_dim"] = int(settings.get("rag_embedding_dim") or EMBEDDING_MODEL_DIM)
+        settings["rag_embedding_dim"] = int(settings.get("rag_embedding_dim") or resolved_dim)
     except (TypeError, ValueError):
-        settings["rag_embedding_dim"] = EMBEDDING_MODEL_DIM
+        settings["rag_embedding_dim"] = resolved_dim
     if settings["rag_embedding_dim"] <= 0:
-        settings["rag_embedding_dim"] = EMBEDDING_MODEL_DIM
+        settings["rag_embedding_dim"] = resolved_dim
     if not str(settings.get("rag_embedding_model") or "").strip():
-        settings["rag_embedding_model"] = RAG_DEFAULTS["rag_embedding_model"]
+        settings["rag_embedding_model"] = resolved_repo
     # 384 was the previous hard-coded projection width, not this model's
     # native shape. Migrate that legacy default so existing installations
     # rebuild vectors instead of silently continuing to lose half the vector.
+    # 兼容旧默认标签（text2vec 时代写入 settings 的值）：命中即重打为
+    # 当前变体标签+维度，让索引隔离机制强制干净重建
+    _LEGACY_TEXT2VEC_LABEL = "tingting0514/text2vec-base-chinese"
     if (
-        settings["rag_embedding_model"] == EMBEDDING_MODEL_REPO_ID
+        settings["rag_embedding_model"] in (resolved_repo, _LEGACY_TEXT2VEC_LABEL)
         and settings["rag_embedding_dim"] == 384
     ):
-        settings["rag_embedding_dim"] = EMBEDDING_MODEL_DIM
+        settings["rag_embedding_model"] = resolved_repo
+        settings["rag_embedding_dim"] = resolved_dim
     if settings.get("rag_embedding_provider") not in {"local", "remote", "custom"}:
         settings["rag_embedding_provider"] = "local"
     if settings.get("rag_privacy_mode") not in {"balanced", "strict", "raw_local"}:

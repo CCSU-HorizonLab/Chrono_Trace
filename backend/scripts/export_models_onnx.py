@@ -7,7 +7,7 @@
 
 用法：
   python export_models_onnx.py                # 全部模型
-  python export_models_onnx.py --only text2vec
+  python export_models_onnx.py --only embedding
 """
 import argparse
 import shutil
@@ -112,15 +112,17 @@ def export_one(model_dir: Path, out_dir: Path, model_type: str) -> None:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--only", choices=["text2vec", "sentiment"], default=None)
+    parser.add_argument("--only", choices=["embedding", "sentiment"], default=None)
     args = parser.parse_args()
 
     from app.services.model_paths import (
-        EMBEDDING_MODEL_DIRNAME, SENTIMENT_MODEL_DIRNAME, get_model_root_dir,
+        SENTIMENT_MODEL_DIRNAME, get_embedding_variant_info, get_model_root_dir,
     )
 
+    # 嵌入导出跟随激活变体（默认 bge；text2vec 需产物时先在 settings 配置变体）
+    _emb = get_embedding_variant_info()
     jobs = [
-        ("text2vec", get_model_root_dir() / EMBEDDING_MODEL_DIRNAME, "embedding"),
+        ("embedding", get_model_root_dir() / _emb["dirname"], "embedding"),
         ("sentiment", get_model_root_dir() / SENTIMENT_MODEL_DIRNAME, "classification"),
     ]
     for name, model_dir, mtype in jobs:

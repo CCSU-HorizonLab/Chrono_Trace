@@ -552,7 +552,7 @@ const form = reactive<{
   close_button_behavior: 'ask',
   llm_fast_suggestion_mode: true,
   model_root_dir: '',
-  rag_enabled: false,
+  rag_enabled: true,
   rag_remote_context_redaction: true,
   rag_allow_remote_embedding: false,
   rag_embedding_model: 'tingting0514/text2vec-base-chinese',

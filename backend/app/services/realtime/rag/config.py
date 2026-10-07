@@ -17,7 +17,8 @@ from ...wechat.account_settings import load_settings_from_file
 
 
 RAG_DEFAULTS: dict[str, Any] = {
-    "rag_enabled": False,
+    # 记忆默认开启：本地离线检索不耗 Token，远程路径另由脱敏开关守卫
+    "rag_enabled": True,
     "rag_remote_context_redaction": True,
     "rag_allow_remote_embedding": False,
     "rag_embedding_provider": "local",
@@ -118,7 +119,7 @@ def apply_rag_defaults(settings: dict[str, Any]) -> dict[str, Any]:
     # 条件赋值：setdefault 实参先求值，键已存在时也会读一遍 hints JSON
     if "rag_fact_kind_hints" not in settings:
         settings["rag_fact_kind_hints"] = _load_fact_kind_hints()
-    settings["rag_enabled"] = _as_bool(settings.get("rag_enabled"), False)
+    settings["rag_enabled"] = _as_bool(settings.get("rag_enabled"), True)
     settings["rag_remote_context_redaction"] = _as_bool(
         settings.get("rag_remote_context_redaction"),
         True,

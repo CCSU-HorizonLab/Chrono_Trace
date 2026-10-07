@@ -44,7 +44,7 @@ def _conn():
 def test_rag_defaults_are_privacy_preserving():
     settings = apply_rag_defaults({})
 
-    assert settings["rag_enabled"] is False
+    assert settings["rag_enabled"] is True
     assert settings["rag_remote_context_redaction"] is True
     assert settings["rag_allow_remote_embedding"] is False
     # 默认模型名/维度跟随激活变体（本机 bge-small=512；text2vec 变体激活时为 768）

@@ -179,7 +179,7 @@ Exec=%APPPATH% --no-sandbox
 Terminal=false
 Categories=Utility;
 DESKTOP
-log "已生成 $RELEASE_ROOT/chrono-trace.desktop（安装时把 %APPPATH% 替换为 Chrono Trace 可执行文件绝对路径）"
+log "已生成 $RELEASE_ROOT/chrono-trace.desktop（安装时把 %APPPATH% 替换为 ChronoTrace 可执行文件绝对路径）"
 
 log "完成：$DIST_DIR"
 log "归档：$TARBALL"

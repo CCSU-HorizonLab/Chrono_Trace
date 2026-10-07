@@ -27,7 +27,7 @@ Chrono Trace 不是腾讯或微信的官方项目，也未获得腾讯或微信�
 
 ## 项目简介
 
-Chrono Trace 是一个基于 `PyWebView + Vue 3 + Python` 的 Windows 桌面应用，围绕微信聊天数据提供三条主链路：
+Chrono Trace 是一个基于 `PyWebView + Vue 3 + Python` 的 Windows / Linux 双平台桌面应用，围绕微信聊天数据提供三条主链路：
 
 - 历史聊天导入与本地分析
 - 实时监听与 AI 沟通建议
@@ -53,7 +53,7 @@ Chrono Trace 是一个基于 `PyWebView + Vue 3 + Python` 的 Windows 桌面应�
 
 ### 历史分析工作台（历史数据页）
 
-**关系评估** —— 好感度总分、四维雷达图与分维度明细（情绪趋势、互动分析等页签同屏切换）
+**关系评估** —— 好感度总分、分维度雷达图与分维度明细（情绪趋势、互动分析等页签同屏切换）
 
 ![关系评估](docs/images/screenshots/analytics-affinity.png)
 
@@ -96,19 +96,21 @@ Chrono Trace 是一个基于 `PyWebView + Vue 3 + Python` 的 Windows 桌面应�
 | 关系评估 | 好感度总分与分维度结果                 |
 | 辅助信息 | 活跃日历、关系补充信息、偏好关键词配置 |
 
-好感度分析目前采用四个维度：
+好感度分析目前采用六个维度（点数制权重，按在场维度归一化）：
 
-| 维度       | 默认权重   | 说明                                       |
+| 维度       | 默认点数   | 说明                                       |
 | ---------- | ---------- | ------------------------------------------ |
-| 情感共振率 | 35% 或 40% | 情绪响应、极性一致性、强度匹配、共情信号   |
-| 聊天积极度 | 35%        | 日均消息、回复及时性、话题延续性、主动发起 |
-| 态度倾向   | 20% 或 25% | 正负向表达、称呼、隐私分享、节假日互动等   |
-| 偏好兼容度 | 10%        | 用户配置喜好关键词后参与评分               |
+| 情感共振率 | 0.40       | 情绪响应、极性一致性、强度匹配、共情信号   |
+| 聊天积极度 | 0.35       | 日均消息、回复及时性、话题延续性、主动发起 |
+| 态度倾向   | 0.25       | 正负向表达、称呼、隐私分享、节假日互动等   |
+| 亲密度信号 | 0.12       | 称谓演变、时段与投入、回复对称性           |
+| 喜好兼容度 | 0.10       | 用户配置喜好关键词后参与评分               |
+| LLM 关系评估 | 0.08     | 配置大模型且开启开关后参与评分（脱敏后采样评估，缺席自动剔除） |
 
 说明：
 
-- 配置了喜好关键词时，权重为 `35 / 35 / 20 / 10`
-- 未配置喜好关键词时，偏好维度不参与，权重调整为 `40 / 35 / 25 / 0`
+- 权重为点数制，实际得分按「在场维度」归一化计算：未配置喜好关键词时偏好维度缺席，未配置模型或未开启时 LLM 维缺席，剩余维度权重自动归一补足
+- 各维权重可在关系信息弹窗中自定义调整
 - 导入新消息后，相关联系人会显示「待更新」标记，提示重新分析
 - 分析结果带持久化嵌入缓存：重复分析只计算新增消息，秒级完成（首次全量分析需一次性等待）
 - **聊天记录导出**：支持 TXT（纯文本/打印友好）、CSV（Excel/数据分析）、HTML（聊天气泡风格/分享存档）三种格式，可选日期范围，群聊导出含成员昵称区分
@@ -243,7 +245,7 @@ requirements.txt
 | Node.js | 18+（Vite 5 要求）                         |
 | 微信     | Windows PC 4.x / Linux 微信 4.x（原生版）   |
 
-Windows 首次使用分析/实时建议时会从 ModelScope 自动下载本地情感模型，需要网络。
+安装包已内置 fp16 模型，开箱即用；开发环境（或模型缺失时）首次使用分析/实时建议会从 ModelScope 自动下载本地情感模型，需要网络。
 
 ## 快速开始
 
@@ -256,7 +258,6 @@ pip install -r requirements.txt
 # Linux（Debian/Ubuntu 示例）
 sudo apt install gdb          # 密钥捕获需要
 pip install -r requirements-linux.txt
-pip install torch --index-url https://download.pytorch.org/whl/cpu
 
 cd frontend
 npm install
@@ -333,7 +334,7 @@ C:\Users\<用户名>\xwechat_files\wxid_xxx\db_storage\
 - Linux 实时监听走 `db_watch`（加密库文件直读 + WAL 增量），无需微信窗口可见；Windows 走 `native_uia`（依赖微信主窗口可见，最小化或后台不可见时不保证有效）
 - Linux 密钥捕获需要 gdb 与 ptrace 权限（`ptrace_scope=0` 或 sudo）；微信更新后首次需重新登录一次以重新捕获
 - 当前以单人聊天为主，不支持多会话并发监听
-- 群聊支持导入、浏览与导出（L1+L2）；群基础分析（活跃度/话题统计）与成员关系分析为后续规划，好感度四维评分不做群聊适配（双人语义不可扩展到 N 方）
+- 群聊支持导入、浏览与导出（L1+L2）；群基础分析（活跃度/话题统计）与成员关系分析为后续规划，好感度多维评分不做群聊适配（双人语义不可扩展到 N 方）
 - 文件、语音、视频、小程序卡片等复杂消息类型仍以规则识别和占位处理为主
 - 建议质量的量化验收体系（人工回归集）建设中，当前以检索自洽性与人工事实抽查为准
 - 偏好候选自动学习暂为影子模式（仅记录，不进入记忆）
@@ -430,8 +431,8 @@ packaging\build_release.ps1
 打包产物位置：
 
 ```text
-release\pyinstaller\Chrono Trace\
-release\pyinstaller-gpu\Chrono Trace\
+release\pyinstaller\ChronoTrace\
+release\pyinstaller-gpu\ChronoTrace\
 release\installer\
 ```
 
@@ -459,7 +460,7 @@ release\installer\ChronoTraceSetup-版本号-GPU.exe
 产物：
 
 ```text
-release/pyinstaller-linux/Chrono Trace/        # onedir 目录（可直接运行）
+release/pyinstaller-linux/ChronoTrace/        # onedir 目录（可直接运行）
 release/chrono-trace-版本号-linux.tar.gz       # 便携分发包
 release/chrono-trace.desktop                  # 桌面快捷方式模板
 ```
@@ -468,18 +469,18 @@ release/chrono-trace.desktop                  # 桌面快捷方式模板
 
 ```bash
 tar -xzf chrono-trace-版本号-linux.tar.gz
-cd "Chrono Trace"
-./"Chrono Trace"
+cd ChronoTrace
+./ChronoTrace
 ```
 
-**安装为桌面应用（可选）**：把 `release/chrono-trace.desktop` 中的 `%APPPATH%` 替换为解压后 `Chrono Trace` 可执行文件的绝对路径，复制到 `~/.local/share/applications/` 即可从应用菜单启动。
+**安装为桌面应用（可选）**：把 `release/chrono-trace.desktop` 中的 `%APPPATH%` 替换为解压后 `ChronoTrace` 可执行文件的绝对路径，复制到 `~/.local/share/applications/` 即可从应用菜单启动。
 
 运行要求与说明：
 
 - 系统 glibc ≥ 2.34（Debian 12 / Ubuntu 22.04 及更新版本）；包内已自带 Python 与全部依赖（含 Qt）
 - 密钥捕获需要系统安装 gdb（`sudo apt install gdb`）与 ptrace 权限，详见「获取微信数据库密钥」
-- 首次使用分析/实时建议时会从 ModelScope 自动下载本地情感模型，需要网络
-- 应用数据写入 `~/.local/share/Chrono Trace/`
+- 安装包已内置 fp16 模型；开发环境首次使用分析/实时建议时会从 ModelScope 自动下载，需要网络
+- 应用数据写入 `~/.local/share/Chrono Trace/`（注意：用户数据目录带空格，与打包产物名 `ChronoTrace` 不同）
 
 ### 调试建议
 
@@ -535,4 +536,4 @@ cd "Chrono Trace"
 
 ---
 
-最后更新：2026-09-26
+最后更新：2026-10-07

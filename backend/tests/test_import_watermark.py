@@ -46,7 +46,7 @@ class FakeMsgDB:
     def __init__(self, paths, key, my_wxid=None, raw_keys=None):
         pass
 
-    def get_all_conversation_usernames(self):
+    def get_all_conversation_usernames(self, include_chatroom=False):
         return list(FakeMsgDB.data.keys())
 
     def get_messages(self, username, time_range=None, limit=None):

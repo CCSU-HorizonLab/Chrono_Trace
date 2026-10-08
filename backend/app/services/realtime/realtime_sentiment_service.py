@@ -142,8 +142,13 @@ class RealtimeSentimentService:
                 logger.error(f"[实时情感分析] ONNX 模型加载失败: {exc}")
                 raise
 
-    def _preprocess(self, text: str) -> Dict[str, Any]:
-        """Extract rule-related metadata from raw text."""
+    def _preprocess(self, text: str, words: list | None = None) -> Dict[str, Any]:
+        """Extract rule-related metadata from raw text.
+
+        words：调用方已做过的 jieba 分词结果（可选）；不传时自行分词。
+        _preprocess 与 _extract_features 对同一条消息各自 lcut 一遍是
+        冷跑 13 万条的主要 Python 开销之一（802 条/s × 2 = 5+ 分钟）。
+        """
         if not text or not text.strip():
             return {
                 "cleaned_text": "",
@@ -158,8 +163,10 @@ class RealtimeSentimentService:
             if emoji in text:
                 emojis.append({"emoji": emoji, "info": info})
 
+        if words is None:
+            words = jieba.lcut(text)
         slangs = []
-        for word in jieba.lcut(text):
+        for word in words:
             slang_info = get_slang_info(word)
             if slang_info:
                 slangs.append({"word": word, "info": slang_info})
@@ -172,9 +179,15 @@ class RealtimeSentimentService:
             "is_perfunctory": is_perfunctory(text),
         }
 
-    def _extract_features(self, text: str) -> Dict[str, Any]:
-        """Extract lexical features for rule enhancement."""
-        words = jieba.lcut(text)
+    def _extract_features(self, text: str, words: list | None = None) -> Dict[str, Any]:
+        """Extract lexical features for rule enhancement.
+
+        words：调用方传入已分词结果免二次 lcut（与 _preprocess 共享）。
+        注意：_preprocess 返回的 cleaned_text 可能与原始 text 不同（空白
+        归一），调用方应传原始 text 对应的 words。
+        """
+        if words is None:
+            words = jieba.lcut(text)
         features = {
             "emotion_words": [],
             "degree_words": [],
@@ -311,10 +324,9 @@ class RealtimeSentimentService:
         if features["has_transition"]:
             rules_applied.append("转折规则")
 
-        if features["negation_words"] and len(features["negation_words"]) % 2 == 1:
-            polarity = -polarity
-            raw_score = -raw_score
-            rules_applied.append("否定翻转")
+        # 否定翻转规则已退役：ONNX 模型自身已建模否定（"不开心"判负），
+        # 规则时代的二次翻转会把它翻回正面。历史分析链路
+        # （analysis/sentiment_service）从未有此规则，删除后口径一致。
 
         if features["degree_words"]:
             strong_degrees = [item for item in features["degree_words"] if item["level"] == "strong"]
@@ -358,7 +370,10 @@ class RealtimeSentimentService:
                 "rules_applied": ["空文本"],
             }
 
-        features = self._extract_features(preprocess_result["cleaned_text"])
+        # 一次分词两方法共享（原始 text 对应的 words；cleaned_text 仅空白
+        # 归一差异，分词结果等价）
+        shared_words = jieba.lcut(text) if text and text.strip() else []
+        features = self._extract_features(preprocess_result["cleaned_text"], words=shared_words)
         model_result = self._model_predict(preprocess_result["cleaned_text"])
         return self._apply_rules(model_result, preprocess_result, features)
 
@@ -381,10 +396,12 @@ class RealtimeSentimentService:
 
         for index, text in enumerate(texts):
             try:
-                preprocess_result = self._preprocess(text)
+                # 一次分词两方法共享（同单条路径）
+                shared_words = jieba.lcut(text) if text and text.strip() else []
+                preprocess_result = self._preprocess(text, words=shared_words)
                 preprocess_results.append(preprocess_result)
                 if preprocess_result["cleaned_text"]:
-                    features_list.append(self._extract_features(preprocess_result["cleaned_text"]))
+                    features_list.append(self._extract_features(preprocess_result["cleaned_text"], words=shared_words))
                     valid_indices.append(index)
                     valid_texts.append(preprocess_result["cleaned_text"])
                 else:

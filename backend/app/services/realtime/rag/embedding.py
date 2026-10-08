@@ -7,7 +7,7 @@ import threading
 from typing import Iterable
 
 from ...analysis.sentiment_service import SentimentService
-from ...model_paths import EMBEDDING_MODEL_REPO_ID
+from ...model_paths import get_embedding_model_repo_id
 
 
 class RagEmbeddingUnavailable(RuntimeError):
@@ -21,7 +21,10 @@ class RagEmbeddingDimensionMismatch(RuntimeError):
 class RagEmbeddingService:
     """Thin adapter over the existing local text2vec model."""
 
-    model_name = EMBEDDING_MODEL_REPO_ID
+    @property
+    def model_name(self) -> str:
+        # 跟随激活变体（错误提示与诊断口径一致）
+        return get_embedding_model_repo_id()
     _shared_sentiment_service: SentimentService | None = None
 
     def __init__(self, sentiment_service: SentimentService | None = None):
@@ -45,7 +48,10 @@ class RagEmbeddingService:
             return []
         self.ensure_available()
         # Reuse the existing analysis service to avoid a second model stack.
-        results = self.sentiment_service.analyze_batch(safe_texts)
+        # include_embeddings=True：RAG 真正消费向量（预处理路径默认不嵌）
+        results = self.sentiment_service.analyze_batch(
+            safe_texts, include_embeddings=True
+        )
         vectors = []
         self.last_raw_dimensions = []
         for result in results:

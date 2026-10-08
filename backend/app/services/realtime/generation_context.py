@@ -13,11 +13,43 @@
 from __future__ import annotations
 
 import logging
+import threading
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
+
+# P1.1 画像 TTL 修复：过期画像降级注入 + 后台续期防重入
+_profile_renewal_inflight: set = set()
+
+
+def renew_profiles_in_background(display_name: str, account_wxid: str = "") -> None:
+    """后台续期联系人/本体画像（防重入；失败保留旧缓存）。
+
+    由 assemble_generation_context 的调用方经 ``renew_stale_profiles``
+    参数注入：上下文装配发现画像过期时触发，不阻塞生成链路。
+    """
+    key = f"{account_wxid}:{display_name}"
+    if not display_name or key in _profile_renewal_inflight:
+        return
+    _profile_renewal_inflight.add(key)
+
+    def _run():
+        try:
+            from .contact_profiler import ContactProfiler
+            from .self_profiler import SelfProfiler
+
+            ContactProfiler().generate_profile(display_name, account_wxid=account_wxid)
+            SelfProfiler().generate_profile(display_name, account_wxid=account_wxid)
+        except Exception as renew_e:
+            logger.warning(f"画像后台续期失败（保留旧缓存）: {renew_e}")
+        finally:
+            _profile_renewal_inflight.discard(key)
+
+    threading.Thread(
+        target=_run, daemon=True, name=f"profile-renewal-{display_name[:16]}"
+    ).start()
 
 # 范围状态:ok 之外都视为"缺失范围",走安全降级。
 SCOPE_OK = "ok"

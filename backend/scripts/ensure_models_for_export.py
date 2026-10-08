@@ -47,16 +47,17 @@ def main():
     args = parser.parse_args()
 
     from app.services.model_paths import (
-        EMBEDDING_MODEL_DIRNAME,
-        EMBEDDING_MODEL_REPO_ID,
         SENTIMENT_MODEL_DIRNAME,
         SENTIMENT_MODEL_REPO_ID,
+        get_embedding_variant_info,
         get_model_root_dir,
     )
 
     root = get_model_root_dir()
+    # 嵌入源模型跟随激活变体（spec 双平台均内置 bge；text2vec 仅按需）
+    _emb = get_embedding_variant_info()
     jobs = [
-        (EMBEDDING_MODEL_REPO_ID, root / EMBEDDING_MODEL_DIRNAME),
+        (_emb["repo_id"], root / _emb["dirname"]),
         (SENTIMENT_MODEL_REPO_ID, root / SENTIMENT_MODEL_DIRNAME),
     ]
 

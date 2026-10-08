@@ -42,7 +42,7 @@ def test_import_contacts_persists_avatar_without_blank_overwrite(monkeypatch, is
             assert db_path == "fake_contact.db"
             assert db_key == "secret-key"
 
-        def get_contacts(self):
+        def get_contacts(self, include_chatroom=False):
             return [
                 {
                     "username": "wxid_new",
@@ -93,7 +93,7 @@ def test_import_contacts_filters_wechat_system_accounts(monkeypatch, isolated_db
             assert db_path == "fake_contact.db"
             assert db_key == "secret-key"
 
-        def get_contacts(self):
+        def get_contacts(self, include_chatroom=False):
             return [
                 {
                     "username": "notifymessage",
@@ -191,7 +191,7 @@ def test_refresh_contact_avatars_backfills_conversations(monkeypatch, isolated_d
             assert db_path == "fake_contact.db"
             assert db_key == "secret-key"
 
-        def get_contacts(self):
+        def get_contacts(self, include_chatroom=False):
             return [
                 {
                     "username": "wxid_target",

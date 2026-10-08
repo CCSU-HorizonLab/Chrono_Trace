@@ -184,7 +184,7 @@ Inno Setup 脚本会自动检测并接入安装流程。
 
 ## Linux 打包
 
-Linux 链路（`packaging/build_release_linux.sh`，根目录 `build_release_linux.sh` 透传）与 Windows 职责对齐：前端 npm 构建 → `.venv-packaging-linux` 自举（torch 走 CPU 轮子索引，依赖哈希不变则复用）→ PyInstaller onedir（`chrono_trace_linux.spec`，去 wx_key/win32）→ `release/pyinstaller-linux/Chrono Trace/` + `release/chrono-trace-<版本>-linux.tar.gz` + `.desktop` 模板。
+Linux 链路（`packaging/build_release_linux.sh`，根目录 `build_release_linux.sh` 透传）与 Windows 职责对齐：前端 npm 构建 → `.venv-packaging-linux` 自举（推理栈为 ONNX 无 torch，torch 仅存在于独立导出环境，不进产物；依赖哈希不变则复用）→ PyInstaller onedir（`chrono_trace_linux.spec`，去 wx_key/win32）→ `release/pyinstaller-linux/ChronoTrace/` + `release/chrono-trace-<版本>-linux.tar.gz` + `.desktop` 模板。
 
 ```bash
 ./build_release_linux.sh              # 完整打包
@@ -198,8 +198,8 @@ Linux 链路（`packaging/build_release_linux.sh`，根目录 `build_release_lin
 
 ```bash
 tar -xzf release/chrono-trace-<版本>-linux.tar.gz
-cd "Chrono Trace"
-./"Chrono Trace"        # onedir 自带 Python/Qt/torch，glibc>=2.34 即可运行
+cd ChronoTrace
+./ChronoTrace          # onedir 自带 Python/Qt（推理栈 ONNX 无 torch），glibc>=2.34 即可运行
 ```
 
 桌面集成：将 `release/chrono-trace.desktop` 的 `%APPPATH%` 替换为可执行文件绝对路径后放入 `~/.local/share/applications/`。密钥捕获仍需系统 `gdb`（见主 README「获取微信数据库密钥」）。

@@ -5,6 +5,11 @@ import time
 import logging
 from typing import Dict, Any, Optional, Callable
 from .path_finder import WeChatPathFinder
+from .chatroom import (
+    is_chatroom_username,
+    parse_chatroom_message,
+    resolve_chatroom_display_name,
+)
 from .db_decryptor_v2 import WeChatDBDecryptor  # V1 已退役，V2 尾部同名兼容类
 from .db.v4.contact import ContactDBV4
 from .db.v4.message import MessageDBV4
@@ -203,7 +208,7 @@ class WeChatIngestService:
         db_key: str,
         options: Optional[Dict] = None,
         custom_paths: Optional[Dict] = None,
-        progress_callback: Optional[Callable[[str, int, int], None]] = None,
+        progress_callback: Optional[Callable[..., None]] = None,
         raw_keys: Optional[Dict] = None,
     ) -> Dict[str, Any]:
         """
@@ -217,7 +222,10 @@ class WeChatIngestService:
                 "limit": int                # 消息数量限制(0=全部)
             }
             custom_paths: 自定义路径(如果提供则使用,否则自动检测)
-            progress_callback: 进度回调 callback(status, current, total)
+            progress_callback: 进度回调 callback(status, current, total, detail=None)。
+                detail 为结构化进度（可选键：phase / conversation_idx /
+                conversation_total / inserted_messages），供 bridge 侧任务
+                注册表展示「阶段徽章 + 对话 x/y + 已新增 N 条」
 
         Returns:
             dict: {
@@ -254,7 +262,7 @@ class WeChatIngestService:
         try:
             # 1. 获取数据库路径
             if progress_callback:
-                progress_callback("查找数据库路径...", 0, 100)
+                progress_callback("查找数据库路径...", 0, 100, {"phase": "resolving_paths"})
 
             logger.info("\n[DEBUG] === 开始导入流程 ===")
             logger.debug(f"[DEBUG] custom_paths: {custom_paths}")
@@ -274,7 +282,7 @@ class WeChatIngestService:
             logger.debug(f"\n[DEBUG] import_contacts={import_contacts}, has contact db={databases.get('contact')}")
             if import_contacts and databases.get("contact"):
                 if progress_callback:
-                    progress_callback("导入联系人...", 10, 100)
+                    progress_callback("导入联系人...", 10, 100, {"phase": "contacts"})
 
                 contact_count = self._import_contacts_v4(
                     databases["contact"],
@@ -290,7 +298,7 @@ class WeChatIngestService:
             logger.debug(f"\n[DEBUG] import_messages={import_messages}, message dbs={databases.get('message')}")
             if import_messages and databases.get("message"):
                 if progress_callback:
-                    progress_callback("导入消息...", 30, 100)
+                    progress_callback("导入消息...", 30, 100, {"phase": "messages"})
 
                 message_stats = self._import_messages_v4(
                     databases["message"],
@@ -339,7 +347,7 @@ class WeChatIngestService:
                 self._update_import_record(import_id, "success", stats, account_wxid=account_wxid)
 
             if progress_callback:
-                progress_callback("导入完成", 100, 100)
+                progress_callback("导入完成", 100, 100, {"phase": "done"})
 
             return {
                 "ok": True,
@@ -372,7 +380,7 @@ class WeChatIngestService:
 
             contact_db = ContactDBV4(contact_db_path, db_key, raw_keys=raw_keys)
             try:
-                contacts_data = contact_db.get_contacts()
+                contacts_data = contact_db.get_contacts(include_chatroom=True)
             finally:
                 contact_db.close()
 
@@ -402,7 +410,10 @@ class WeChatIngestService:
         contact_db = ContactDBV4(contact_db_path, db_key, raw_keys=raw_keys)
 
         try:
-            contacts_data = contact_db.get_contacts()
+            # include_chatroom=True：群聊联系人一并入库，群名(nick_name)
+            # 经 _upsert_contacts 回填 conversations.display_name——否则群
+            # 会话在下拉里只显示 xxx@chatroom 原始 ID，无法辨认
+            contacts_data = contact_db.get_contacts(include_chatroom=True)
             logger.debug(f"[DEBUG] 从数据库读取到 {len(contacts_data)} 个联系人")
             store_stats = self._upsert_contacts(contacts_data, account_wxid)
             logger.info(
@@ -435,7 +446,7 @@ class WeChatIngestService:
                 filtered += 1
                 continue
 
-            if is_excluded_contact_username(username):
+            if is_excluded_contact_username(username, exclude_chatroom=False):
                 filtered += 1
                 continue
 
@@ -659,26 +670,43 @@ class WeChatIngestService:
 
         try:
             if progress_callback:
-                progress_callback("扫描消息表...", 30, 100)
+                progress_callback("扫描消息表...", 30, 100, {"phase": "scanning"})
 
             # 预载判重集合（一次 SELECT 替代逐条 OR IGNORE 的 20 万次 execute）
             existing_keys = self._load_existing_message_keys()
 
             # 获取所有对话username
-            all_usernames = message_db.get_all_conversation_usernames()
+            all_usernames = message_db.get_all_conversation_usernames(include_chatroom=True)
             logger.debug(f"[DEBUG] Found conversations: {len(all_usernames)}")
+
+            # 会话总数先推给前端：进度条不必等首个会话处理完才有 x/y
+            if progress_callback and all_usernames:
+                progress_callback(
+                    f"共 {len(all_usernames)} 个对话待导入...",
+                    30, 100,
+                    {"phase": "scanning", "conversation_total": len(all_usernames)},
+                )
 
             if len(all_usernames) > 0:
                 logger.debug(f"[DEBUG] 前3个会话: {all_usernames[:3]}")
 
             for idx, username in enumerate(all_usernames):
-                if is_excluded_contact_username(username):
+                if is_excluded_contact_username(username, exclude_chatroom=False):
                     skipped_conversations += 1
                     continue
 
                 if progress_callback:
                     progress = 30 + int((idx / max(len(all_usernames), 1)) * 60)
-                    progress_callback(f"导入对话 {idx+1}/{len(all_usernames)}...", progress, 100)
+                    progress_callback(
+                        f"导入对话 {idx+1}/{len(all_usernames)}...",
+                        progress, 100,
+                        {
+                            "phase": "conversations",
+                            "conversation_idx": idx + 1,
+                            "conversation_total": len(all_usernames),
+                            "inserted_messages": total_messages,
+                        },
+                    )
 
                 # 获取该用户的消息
                 try:
@@ -699,7 +727,7 @@ class WeChatIngestService:
                         if ts > max_seen_ts:
                             max_seen_ts = ts
 
-                        if is_excluded_contact_username(msg_dict.get('talker')):
+                        if is_excluded_contact_username(msg_dict.get('talker'), exclude_chatroom=False):
                             skipped_messages += 1
                             continue
 
@@ -792,16 +820,18 @@ class WeChatIngestService:
         }
 
     def _load_existing_message_keys(self) -> set:
-        """预载 (conversation_id, local_id) 判重集合。
+        """预载 (conversation_id, local_id, timestamp) 判重集合。
 
         替代此前逐条 OR IGNORE 的 20 万次 execute：一次 SELECT 建立，
         导入全程内存判重，新插入的 key 增量补入。local_id IS NULL 的
         实时行不参与（它们本来就不受唯一索引约束）。
+        timestamp 必须进键：微信 V4 分片库 local_id 是分片内自增，
+        跨分片同号消息会被旧二元键误判为重复而整片吞掉。
         """
         return {
-            (row[0], row[1])
+            (row[0], row[1], row[2])
             for row in get_db().execute(
-                "SELECT conversation_id, local_id FROM messages WHERE local_id IS NOT NULL"
+                "SELECT conversation_id, local_id, timestamp FROM messages WHERE local_id IS NOT NULL"
             )
         }
 
@@ -831,17 +861,18 @@ class WeChatIngestService:
         now = int(time.time())
         for msg in messages:
             talker = msg.get('talker')
-            if not talker or is_excluded_contact_username(talker):
+            if not talker or is_excluded_contact_username(talker, exclude_chatroom=False):
                 skipped += 1
                 continue
 
             conversation_id = conversation_cache.get(talker)
             if conversation_id is None:
+                conv_type = "group" if is_chatroom_username(talker) else "private"
                 db.execute("""
                     INSERT OR IGNORE INTO conversations
-                    (account_wxid, username, display_name, platform, created_at, updated_at, message_count)
-                    VALUES (?, ?, ?, 'wechat', ?, ?, 0)
-                """, (account_wxid, talker, talker, now, now))
+                    (account_wxid, username, display_name, platform, conversation_type, created_at, updated_at, message_count)
+                    VALUES (?, ?, ?, 'wechat', ?, ?, ?, 0)
+                """, (account_wxid, talker, talker, conv_type, now, now))
                 row = db.execute(
                     "SELECT id FROM conversations WHERE account_wxid = ? AND username = ? AND platform = 'wechat'",
                     (account_wxid, talker)
@@ -853,7 +884,9 @@ class WeChatIngestService:
                 conversation_cache[talker] = conversation_id
 
             local_id = msg.get('local_id')
-            key = (conversation_id, local_id) if local_id is not None else None
+            ts = int(msg.get('timestamp') or 0)
+            # 判重键含 timestamp：local_id 仅分片内唯一（见 _load_existing_message_keys）
+            key = (conversation_id, local_id, ts) if local_id is not None else None
             if key is not None and key in existing_keys:
                 skipped += 1
                 continue
@@ -862,18 +895,28 @@ class WeChatIngestService:
                 existing_keys.add(key)
 
             inserted += 1
-            ts = int(msg.get('timestamp') or 0)
             touched_conversations[conversation_id] = max(
                 touched_conversations.get(conversation_id, 0), ts
             )
+            content = msg['content']
+            if isinstance(content, bytes):
+                # 微信库部分行 content 为 BLOB，正则（str 模式）遇 bytes 必炸
+                content = content.decode('utf-8', errors='replace')
+            sender_label = msg.get('sender', '')
+            if is_chatroom_username(talker):
+                # 群消息存储前剥离 'wxid_xxx:\n' 前缀：不剥离会污染词频/
+                # 情感/事实抽取/出网 prompt 全链路；群内发送者记入 sender
+                member_wxid, content = parse_chatroom_message(content)
+                if member_wxid:
+                    sender_label = resolve_chatroom_display_name(member_wxid) or sender_label
             rows_by_conv.setdefault(conversation_id, []).append((
                 conversation_id,
                 local_id,
                 talker,
-                msg.get('sender', ''),
+                sender_label,
                 1 if msg.get('is_sender') else 0,
                 msg.get('message_type', 1),
-                msg['content'],
+                content,
                 ts,
                 now,
             ))
@@ -892,34 +935,65 @@ class WeChatIngestService:
         # 窗口容差）的冗余实时行，避免统计、预处理与 RAG 重复计数。
         reconciled = 0
         for conv_id in touched_conversations:
-            has_realtime = db.execute(
+            realtime_rows = db.execute(
                 """
-                SELECT 1 FROM messages
+                SELECT id, is_sender, message_type, COALESCE(content, '') AS content, timestamp
+                FROM messages
                 WHERE conversation_id = ? AND source IN ('realtime', 'realtime_backfill')
-                LIMIT 1
                 """,
                 (conv_id,),
-            ).fetchone()
-            if not has_realtime:
+            ).fetchall()
+            if not realtime_rows:
                 continue
-            cursor = db.execute(
+            long_rows = db.execute(
                 """
-                DELETE FROM messages
-                WHERE conversation_id = ?
-                  AND source IN ('realtime', 'realtime_backfill')
-                  AND EXISTS (
-                      SELECT 1 FROM messages m2
-                      WHERE m2.conversation_id = messages.conversation_id
-                        AND m2.source = 'long'
-                        AND m2.is_sender = messages.is_sender
-                        AND m2.message_type = messages.message_type
-                        AND m2.timestamp BETWEEN messages.timestamp - 59 AND messages.timestamp + 59
-                        AND COALESCE(m2.content, '') = COALESCE(messages.content, '')
-                  )
+                SELECT id, is_sender, message_type, COALESCE(content, '') AS content, timestamp
+                FROM messages
+                WHERE conversation_id = ? AND source = 'long'
                 """,
                 (conv_id,),
-            )
-            reconciled += cursor.rowcount or 0
+            ).fetchall()
+
+            # 同（发送方/类型/内容）桶内一对一贪心最近匹配，±59s 容差保留
+            # （UIA 实时行为分钟级时间戳，与微信库精确时间戳天然有偏差）。
+            # 此前 EXISTS + 时间窗允许一条 long 吸收窗口内多条同文 realtime：
+            # 一分钟内连发两条相同文本时，第二条的 realtime 行被第一条的
+            # long 行误删，而它自己的 long 行尚未导入（此后若不再导入，
+            # 该消息永久丢失）。一对一后每条 realtime 只会被「自己的」
+            # long 行覆盖。
+            by_key: dict[tuple, list[tuple]] = {}
+            for row in long_rows:
+                by_key.setdefault(
+                    (row["is_sender"], row["message_type"], row["content"]), []
+                ).append((row["timestamp"], row["id"]))
+            used_long: set[int] = set()
+            matched_ids: list[int] = []
+            for rt in realtime_rows:
+                candidates = by_key.get(
+                    (rt["is_sender"], rt["message_type"], rt["content"])
+                )
+                if not candidates:
+                    continue
+                best_long_id = None
+                best_dt = None
+                for lts, lid in candidates:
+                    if lid in used_long:
+                        continue
+                    dt = abs(lts - rt["timestamp"])
+                    if dt > 59:
+                        continue
+                    if best_dt is None or dt < best_dt:
+                        best_long_id = lid
+                        best_dt = dt
+                if best_long_id is not None:
+                    used_long.add(best_long_id)
+                    matched_ids.append(rt["id"])
+            if matched_ids:
+                db.executemany(
+                    "DELETE FROM messages WHERE id = ?",
+                    [(mid,) for mid in matched_ids],
+                )
+                reconciled += len(matched_ids)
         if reconciled:
             logger.info(f"[导入对账] 清理被导入数据覆盖的冗余实时消息 {reconciled} 条")
 

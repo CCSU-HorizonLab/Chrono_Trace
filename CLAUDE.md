@@ -68,7 +68,8 @@ cd frontend && npm run test:smoke
 Vue 3 + TS + Vite (frontend/src)
         │  window.pywebview.api.*（frontend/src/api/bridge.ts 的 PyWebViewApi 类型）
         ▼
-Bridge (backend/app/webview/bridge.py，所有暴露给前端的方法)
+Bridge (backend/app/webview/bridge.py 组合 webview/api/ 下 9 个域 mixin，
+        所有暴露给前端的方法)
         ▼
 Python services (backend/app/services/{wechat,analysis,realtime,gpu})
         ▼
@@ -77,16 +78,16 @@ SQLite（线程本地连接 backend/app/db/connection.py）
 
 ### 关键机制
 
-- **Bridge 是唯一前后端边界**：新增前端可调用的 API 必须同时改 `backend/app/webview/bridge.py`（加方法）和 `frontend/src/api/bridge.ts`（加 `PyWebViewApi` 类型声明），二者需保持同步。
-- **数据库**：全新库由 `backend/app/db/schema.sql` 初始化；已有库通过 `db/migrations/*.sql` 和 `connection.py` 内的 Python 兼容迁移（如账号隔离 `account_wxid` 列）升级。开发模式数据写入 `backend/data/chrono_trace.db`（打包后 Windows 为 `%LOCALAPPDATA%\Chrono Trace\`，Linux 为 `$XDG_DATA_HOME/Chrono Trace/`）。
+- **Bridge 是唯一前后端边界**：新增前端可调用的 API 必须同时改后端（按 API 域加到 `backend/app/webview/api/*.py` 对应 mixin；导入/监听桥接/建议流等核心域仍在 `bridge.py`）和 `frontend/src/api/bridge.ts`（加 `PyWebViewApi` 类型声明），二者需保持同步。
+- **数据库**：全新库由 `backend/app/db/schema.sql` 初始化；已有库通过 `db/migrations/*.sql` 和 `connection.py` 内的 Python 兼容迁移（如账号隔离 `account_wxid` 列）升级。开发模式数据写入 `backend/data/chrono_trace.db`（打包后 Windows 为 `%LOCALAPPDATA%\ChronoTrace\`，Linux 为 `$XDG_DATA_HOME/ChronoTrace/`；旧版带空格目录由 `config._resolve_user_data_dir` 启动时自动整目录迁移，显示名 `APP_NAME` 仍带空格）。
 - **导入 `backend/app/config.py` 有副作用**：模块加载即创建 `backend/data/{logs,models,temp}` 目录并写入 settings 路径。
 - **测试导入约定**：部分测试文件以 `backend/` 为导入根（`sys.path.insert` 后 `from app...`），部分以仓库根（`from backend.app...`，需在仓库根运行 pytest）——新测试优先用前者。
 
 ### services 分层
 
 - `wechat/`：微信 4.x 数据目录扫描（`path_finder.py`）、密钥提取（`keys/` 包，见上节）、SQLCipher 解密（`db_decryptor_v2.py`，纯 Python，raw key 通道见上节）、V4 数据库适配层（`db/`，消息表为 `Msg_{md5(username)}` 每联系人一表，经 `Name2Id` 映射发送者）、增量导入编排（`ingest_service.py`）、增量解密快照（`db_snapshot.py`，db_watch 的地基）。
-- `analysis/`：历史分析。`preprocessing_service.py`（清洗/表情/XML 去除/会话切分）→ `preprocessing_orchestrator.py` → `feature_extraction_service.py`（嵌入/分类推理走 `onnx_inference.py`：fp16 ONNX + onnxruntime，单后端无 torch 回退）→ `affinity_analysis_service.py` 编排四维度评分：情感共振率、聊天积极度、态度倾向、偏好兼容度（配置偏好关键词时权重 35/35/20/10，未配置时 40/35/25/0）。模型 fp16 产物由 `backend/scripts/export_models_onnx.py` 生成（需独立 export 环境，build 脚本已自动处理），安装包内置 `models/<name>/onnx/`。
-- `realtime/`：核心是 `monitor_service.py`（监听编排、启动基线、去重、checkpoint backfill）。消息采集经 `providers/`（见平台接缝表）。触发判定 `trigger_resolver.py` → `llm_engine.py`（OpenAI 兼容接口，适配 DeepSeek/GLM/Kimi/Ollama 等）。`rag_*` 系列构成联系人级长期记忆（RAG v4）：`rag_store.py`（事实存储+supersede 演变链）、`rag_indexer.py`（分段/嵌入索引）、`rag_retriever.py` + `rag_relevance_gate.py`（混合召回+门控）、`rag_fact_llm.py`/`rag_fact_quality.py`（LLM 结构化抽取+质量门）、`rag_context_builder.py`（分槽注入）。`privacy_redactor.py` 在发送远程 LLM 前做脱敏，失败即阻断。
+- `analysis/`：历史分析。`preprocessing_service.py`（清洗/表情/XML 去除/会话切分）→ `preprocessing_orchestrator.py` → `feature_extraction_service.py`（嵌入/分类推理走 `onnx_inference.py`：fp16 ONNX + onnxruntime，单后端无 torch 回退）→ `affinity_analysis_service.py` 编排六维度评分：情感共振率、聊天积极度、态度倾向、喜好兼容度（配关键词时启用）、亲密度信号、LLM 关系评估（配模型且开关开时启用）。权重为点数制（默认 0.40/0.35/0.25/0.10/0.12/0.08），由 `affinity_weights.py` 按在场维度归一，缺席自动剔除；用户可在关系信息弹窗配置各维权重。模型 fp16 产物由 `backend/scripts/export_models_onnx.py` 生成（需独立 export 环境，build 脚本已自动处理），安装包内置 `models/<name>/onnx/`。
+- `realtime/`：核心是 `monitor_service.py`（监听编排、启动基线、去重、checkpoint backfill；UIA 恢复/断点匹配/回溯落库/建议管线拆为 4 个 mixin：`uia_recovery.py`、`backfill_matcher.py`、`backfill_store.py`、`suggestion_pipeline.py`；画像后台续期在 `generation_context.py`）。消息采集经 `providers/`（见平台接缝表）。触发判定 `trigger_resolver.py` → `llm_engine.py`（OpenAI 兼容接口，适配 DeepSeek/GLM/Kimi/Ollama 等；API 客户端层与响应解析拆为 `llm_client.py`、`suggestion_parsing.py`）。`rag_*` 系列构成联系人级长期记忆（RAG v4）：`rag_store.py`（事实存储+supersede 演变链）、`rag_indexer.py`（分段/嵌入索引）、`rag_retriever.py` + `rag_relevance_gate.py`（混合召回+门控）、`rag_fact_llm.py`/`rag_fact_quality.py`（LLM 结构化抽取+质量门）、`rag_context_builder.py`（分槽注入）。`privacy_redactor.py` 在发送远程 LLM 前做脱敏，失败即阻断。
 - `gpu/`：CPU 安装包运行时下载独立 GPU runtime（仅 Windows 打包变体）。
 
 ### RAG v4 文档

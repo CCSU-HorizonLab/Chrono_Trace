@@ -1,4 +1,4 @@
-"""ONNX 推理引擎（阶段 B）：fp16 模型 + onnxruntime + HF tokenizers。
+"""ONNX 推理引擎（阶段 B）：onnxruntime + HF tokenizers（嵌入 fp32 / 分类器 fp16，按实测择优）。
 
 替代 torch/sentence-transformers/transformers 的推理职责：
 - 包体：torch 栈 ~890MB → onnxruntime ~60-105MB；模型 fp32 1.17GB → fp16 409MB
@@ -24,13 +24,17 @@ import numpy as np
 from ..model_paths import (
     EMBEDDING_MODEL_DIRNAME,
     SENTIMENT_MODEL_DIRNAME,
+    get_embedding_model_dir,
     get_model_root_dir,
 )
 
 logger = logging.getLogger(__name__)
 
-EMBEDDING_MAX_LENGTH = 128          # sentence_bert_config.json 同值
-CLASSIFIER_MAX_LENGTH = 512         # 与原 transformers 路径一致
+EMBEDDING_MAX_LENGTH = 64           # 聊天消息实测 97% ≤64 字（中位 6 字）；
+                                    # 动态 padding 下仅影响 3% 长文本，降档
+                                    # 只省注意力计算不伤短消息精度
+CLASSIFIER_MAX_LENGTH = 128         # 情感三分类输入同为聊天消息，512 是
+                                    # transformers 时代遗留的保守值
 
 
 def resolve_inference_backend() -> str:
@@ -39,19 +43,31 @@ def resolve_inference_backend() -> str:
 
 
 def has_onnx_models() -> bool:
-    """两个 fp16 模型文件是否齐备（tokenizer 由引擎按需回退 transformers）。"""
-    return _onnx_path("embedding").exists() and _onnx_path("classifier").exists()
+    """两个模型文件是否齐备（嵌入 fp32 / 分类器 fp16；tokenizer 按需回退）。"""
+    return _onnx_path("embedding", fp32=True).exists() and _onnx_path("classifier").exists()
 
 
 def _onnx_path(kind: str, fp32: bool = False) -> Path:
     name = "model.onnx" if fp32 else "model.fp16.onnx"
-    dirname = EMBEDDING_MODEL_DIRNAME if kind == "embedding" else SENTIMENT_MODEL_DIRNAME
-    return get_model_root_dir() / dirname / "onnx" / name
+    # 嵌入模型目录跟随变体（bge/text2vec 切换）；此前用硬编码常量
+    # EMBEDDING_MODEL_DIRNAME，变体机制被完全绕过
+    if kind == "embedding":
+        return get_embedding_model_dir() / "onnx" / name
+    return get_model_root_dir() / SENTIMENT_MODEL_DIRNAME / "onnx" / name
+
+
+def _embedding_model_path() -> Path:
+    """嵌入产物定死 fp32（bge-small 实测 CPU 上比 fp16 快 32%——82→108 条/s，
+    fp16 在 CPU 需逐层 cast 回 fp32 计算；输出 cosine=1.0 无损）。分类器
+    相反（fp16 快 14%），维持 fp16。每个模型只进包一个文件。
+    """
+    return _onnx_path("embedding", fp32=True)
 
 
 def _tokenizer_dir(kind: str) -> Path:
-    dirname = EMBEDDING_MODEL_DIRNAME if kind == "embedding" else SENTIMENT_MODEL_DIRNAME
-    return get_model_root_dir() / dirname / "onnx" / "tokenizer"
+    if kind == "embedding":
+        return get_embedding_model_dir() / "onnx" / "tokenizer"
+    return get_model_root_dir() / SENTIMENT_MODEL_DIRNAME / "onnx" / "tokenizer"
 
 
 def resolve_providers(device_mode: str) -> tuple[list[str], list[str]]:
@@ -167,7 +183,7 @@ class OnnxEmbeddingModel(_BaseOnnxModel):
 
     def __init__(self, device_mode: str = "auto"):
         super().__init__(
-            _onnx_path("embedding"), _tokenizer_dir("embedding"),
+            _onnx_path("embedding", fp32=True), _tokenizer_dir("embedding"),
             device_mode, EMBEDDING_MAX_LENGTH,
         )
 
@@ -228,7 +244,11 @@ _engine_cache: dict[str, _BaseOnnxModel] = {}
 
 def get_shared_engine(kind: str, device_mode: str = "auto") -> _BaseOnnxModel:
     """进程内共享 session（204MB 模型加载一次）。"""
-    key = f"{kind}:{device_tag_of(resolve_providers(device_mode)[1])}"
+    from ..model_paths import get_embedding_variant_info
+
+    variant = get_embedding_variant_info()["dirname"] if kind == "embedding" else ""
+    # 键含嵌入变体：切换模型后取新 session，旧变体实例交由 GC
+    key = f"{kind}:{variant}:{device_tag_of(resolve_providers(device_mode)[1])}"
     with _engine_lock:
         if key not in _engine_cache:
             cls = OnnxEmbeddingModel if kind == "embedding" else OnnxClassifierModel

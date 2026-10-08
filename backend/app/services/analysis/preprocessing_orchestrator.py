@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional
 
 from ...db.connection import get_db
 from .feature_extraction_config import FeatureExtractionConfig
-from .keyword_libraries import KeywordLibraries
+from .keyword_libraries import KeywordLibraries, get_shared_keyword_libraries
 from .preprocessing import (
     AttitudePreprocessingService,
     BasicPreprocessingService,
@@ -74,7 +74,7 @@ class PreprocessingOrchestrator:
         self.basic_service = BasicPreprocessingService()
         self.pair_service = PairPreprocessingService()
         self.session_manager = SessionManager()
-        self.keyword_lib = KeywordLibraries()
+        self.keyword_lib = get_shared_keyword_libraries()
         self.attitude_service = AttitudePreprocessingService(keyword_lib=self.keyword_lib)
 
     def _cache_key(self, conversation_id: int) -> str:
@@ -167,9 +167,27 @@ class PreprocessingOrchestrator:
         stats.bidirectional_pairs = pair_stats.get("bidirectional_pairs", 0)
         stats.same_parity_pairs = pair_stats.get("same_parity_pairs", 0)
 
-        sessions = self.session_manager.split_sessions(
-            speech_units, progress_cb=_similarity_progress, cancel_event=cancel_event
-        )
+        # 会话切分优先复用特征提取阶段（Stage1）刚算出的结果——同一批
+        # 消息两阶段各切一遍（含嵌入查询与落库）是最外层重复；memo 带
+        # TTL 且仅进程内有效，独立触发好感度分析时无缓存照常自算
+        try:
+            from .feature_extraction_service import take_recent_split
+
+            cached_units, cached_sessions = take_recent_split(
+                conversation_id, expected_message_count=len(messages)
+            )
+        except Exception:
+            cached_units, cached_sessions = None, None
+        if cached_sessions is not None:
+            sessions = cached_sessions
+            logger.info(
+                "[预处理] 复用特征提取阶段的切分结果 (%d 个会话，免二次切分)",
+                len(sessions),
+            )
+        else:
+            sessions = self.session_manager.split_sessions(
+                speech_units, progress_cb=_similarity_progress, cancel_event=cancel_event
+            )
         self.session_manager.save_sessions(conversation_id, sessions)
         session_stats = self.session_manager.collect_session_statistics(sessions)
         initiator_stats = self.session_manager.identify_session_initiators(sessions)
@@ -249,22 +267,15 @@ class PreprocessingOrchestrator:
                     "message_id": msg["id"],
                     "polarity": result["polarity"],
                     "intensity": result["intensity"],
-                    "embedding": result["embedding"],
+                    "embedding": result.get("embedding"),
                 })
 
             self.sentiment_service.batch_cache_sentiments(cache_data)
 
-            try:
-                import gc
-                import torch
+            # 已删固定开销三件套（torch 栈移除后它们只剩副作用）：
+            # import torch 每批全盘查找失败 ×260、gc.collect 全代回收 ×260、
+            # sleep(0.1) 纯睡眠累计 26 秒——进度回调本身已足够让出节奏
 
-                gc.collect()
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-            except Exception:
-                pass
-
-            time.sleep(0.1)
             processed = min(start + batch_size, total_to_analyze)
             if progress_cb:
                 try:

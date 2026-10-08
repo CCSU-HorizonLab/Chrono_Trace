@@ -47,8 +47,13 @@ class SharedSnapshotManager:
                         src_path, key_hex, self._cache_dir, raw_keys=raw_keys
                     )
                     self._watchers[cache_key] = watcher
-                    logger.info("[SnapshotManager] 首次解密 %s → %s",
-                                src_path.name, watcher.out_path)
+                    if watcher.resumed_from_disk:
+                        # sidecar 命中：跨进程复用已解密副本，仅增量刷新变化页
+                        logger.info("[SnapshotManager] 复用磁盘快照 %s（增量刷新）→ %s",
+                                    src_path.name, watcher.out_path)
+                    else:
+                        logger.info("[SnapshotManager] 首次全量解密 %s → %s",
+                                    src_path.name, watcher.out_path)
                 except Exception as exc:
                     logger.warning("[SnapshotManager] 首次解密失败 %s: %s", src_path, exc)
                     return None

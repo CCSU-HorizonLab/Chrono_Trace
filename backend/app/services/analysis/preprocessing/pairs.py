@@ -53,6 +53,64 @@ class PairPreprocessingService:
             logger.warning(f"[交互对预处理] 计算语义相似度失败，将保留为空值: {e}")
             return {}
 
+    def _preload_unit_sentiments(
+        self, speech_units: List[Dict[str, Any]]
+    ) -> Dict[int, Dict[str, Any]]:
+        """批量预载全部发言单元的平均情感（分块 IN，单次组装）。
+
+        与 _get_sentiment_for_unit 同口径：单元内消息极性均值四舍五入、
+        强度均值 round2；缺数据的单元不在返回表里（调用方取默认 0）。
+        """
+        unit_msg_pairs = []
+        all_msg_ids = []
+        for unit in speech_units:
+            msg_ids = unit.get("message_ids") or []
+            if msg_ids and isinstance(msg_ids[0], dict):
+                msg_ids = [m.get("id", m) for m in msg_ids]
+            if msg_ids:
+                unit_msg_pairs.append((unit["id"], msg_ids))
+                all_msg_ids.extend(msg_ids)
+        if not unit_msg_pairs:
+            return {}
+
+        polarity_map: Dict[int, Any] = {}
+        intensity_map: Dict[int, Any] = {}
+        chunk_size = 800  # SQLite IN 变量上限防护
+        ids = list(dict.fromkeys(all_msg_ids))
+        for cs in range(0, len(ids), chunk_size):
+            chunk = ids[cs : cs + chunk_size]
+            placeholders = ",".join("?" * len(chunk))
+            cursor = get_db().execute(
+                f"SELECT message_id, polarity, intensity FROM sentiment_cache "
+                f"WHERE message_id IN ({placeholders})",
+                chunk,
+            )
+            for row in cursor.fetchall():
+                polarity_map[row[0]] = row[1]
+                intensity_map[row[0]] = row[2]
+
+        result: Dict[int, Dict[str, Any]] = {}
+        for unit_id, msg_ids in unit_msg_pairs:
+            polarities = [
+                polarity_map[mid]
+                for mid in msg_ids
+                if polarity_map.get(mid) is not None
+            ]
+            intensities = [
+                intensity_map[mid]
+                for mid in msg_ids
+                if intensity_map.get(mid) is not None
+            ]
+            if not polarities or not intensities:
+                continue
+            avg_polarity = sum(polarities) / len(polarities)
+            avg_intensity = sum(intensities) / len(intensities)
+            result[unit_id] = {
+                "polarity": max(-1, min(1, round(avg_polarity))),
+                "intensity": round(avg_intensity, 2),
+            }
+        return result
+
     def _get_sentiment_for_unit(self, message_ids: List[int]) -> Dict[str, Any]:
         """
         获取发言单元的平均情感数据
@@ -241,6 +299,10 @@ class PairPreprocessingService:
         interaction_pairs = []
         adjacent_similarities = self._calculate_unit_similarities(speech_units)
 
+        # 情感预载：一次性拉全部涉及消息的极性/强度（此前每对 2 次
+        # SQL 的 N+1，13 万级会话 = 6-10 万次独立查询）
+        unit_sentiments = self._preload_unit_sentiments(speech_units)
+
         for i in range(len(speech_units) - 1):
             first_unit = speech_units[i]
             second_unit = speech_units[i + 1]
@@ -251,10 +313,14 @@ class PairPreprocessingService:
 
             # 计算时间间隔
             time_gap = second_unit["start_timestamp"] - first_unit["end_timestamp"]
-            
-            # 获取情感数据
-            first_sentiment = self._get_sentiment_for_unit(first_unit["message_ids"])
-            second_sentiment = self._get_sentiment_for_unit(second_unit["message_ids"])
+
+            # 获取情感数据（命中预载表，无 SQL）
+            first_sentiment = unit_sentiments.get(
+                first_unit["id"], {"polarity": 0, "intensity": 0.0}
+            )
+            second_sentiment = unit_sentiments.get(
+                second_unit["id"], {"polarity": 0, "intensity": 0.0}
+            )
 
             pair = {
                 "id": None,  # 稍后分配
@@ -372,22 +438,37 @@ class PairPreprocessingService:
             unit_id_map: Dict[int, int] = {}
             created_at = int(time.time())
 
-            for unit in speech_units:
-                cursor = db.execute("""
-                    INSERT INTO speech_units
-                    (conversation_id, sender, first_message_timestamp,
-                     last_message_timestamp, message_count, message_ids, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (
+            rows = [
+                (
                     conversation_id,
                     'user' if unit["is_sender"] == 1 else 'other',
                     int(unit["start_timestamp"]),
                     int(unit["end_timestamp"]),
                     unit["message_count"],
                     json.dumps(unit["message_ids"]),
-                    created_at
-                ))
-                unit_id_map[unit["id"]] = cursor.lastrowid
+                    created_at,
+                )
+                for unit in speech_units
+            ]
+            # executemany 批量插入 + 自增 id 顺序映射。AUTOINCREMENT 的下
+            # 一个 id = max(sqlite_sequence.seq, MAX(id)) + 1——重跑场景先
+            # DELETE 本会话旧行，MAX(id) 低于历史高水位，只看 MAX 会错位
+            # （此前逐行 execute 在 autocommit 下每行一个事务，5 万单元 =
+            # 5 万次 WAL 帧）
+            if rows:
+                seq_row = db.execute(
+                    "SELECT seq FROM sqlite_sequence WHERE name = 'speech_units'"
+                ).fetchone()
+                max_row = db.execute("SELECT MAX(id) FROM speech_units").fetchone()[0] or 0
+                first_id = max(int(seq_row[0]) if seq_row else 0, int(max_row))
+                db.executemany("""
+                    INSERT INTO speech_units
+                    (conversation_id, sender, first_message_timestamp,
+                     last_message_timestamp, message_count, message_ids, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, rows)
+                for offset, unit in enumerate(speech_units, start=1):
+                    unit_id_map[unit["id"]] = first_id + offset
 
             db.commit()
             logger.debug(f"[交互对预处理] 已保存 {len(speech_units)} 个发言单元并建立 ID 映射")
@@ -405,15 +486,9 @@ class PairPreprocessingService:
         """写入交互对到数据库"""
         try:
             import time
-            for pair in interaction_pairs:
-                get_db().execute("""
-                    INSERT OR REPLACE INTO interaction_pairs
-                    (conversation_id, from_speech_unit_id, to_speech_unit_id, 
-                     time_gap, semantic_similarity, from_polarity, to_polarity,
-                     from_intensity, to_intensity, is_negative_initiation, 
-                     is_empathetic_response, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
+            now = int(time.time())
+            rows = [
+                (
                     conversation_id,
                     pair["first_unit_id"],  # 映射到 from_speech_unit_id
                     pair["second_unit_id"], # 映射到 to_speech_unit_id
@@ -425,8 +500,19 @@ class PairPreprocessingService:
                     pair.get("to_intensity", 0.0),
                     pair.get("is_negative_initiation", 0),
                     pair.get("is_empathetic_response", 0),
-                    int(time.time())
-                ))
+                    now,
+                )
+                for pair in interaction_pairs
+            ]
+            if rows:
+                get_db().executemany("""
+                    INSERT OR REPLACE INTO interaction_pairs
+                    (conversation_id, from_speech_unit_id, to_speech_unit_id,
+                     time_gap, semantic_similarity, from_polarity, to_polarity,
+                     from_intensity, to_intensity, is_negative_initiation,
+                     is_empathetic_response, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, rows)
 
             get_db().commit()
             logger.debug(f"[交互对预处理] 已保存 {len(interaction_pairs)} 个交互对")

@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Sequence
 
 from ...db.connection import get_db
-from .keyword_libraries import KeywordLibraries
+from .keyword_libraries import KeywordLibraries, get_shared_keyword_libraries
 from .negative_direction_service import NegativeDirectionService
 from .preprocessing_orchestrator import PreprocessingOrchestrator
 
@@ -20,6 +20,17 @@ def debug_log(msg: str):
         from .affinity_debug_logger import affinity_debug_log
 
         affinity_debug_log(msg)
+
+
+
+# SQLite 单语句变量上限 32766：13 万级会话的巨型 IN 会直接抛错，
+# 全部 IN 查询统一按 800 一块分块（无分块前的既有崩溃隐患）
+_SQL_IN_CHUNK = 800
+
+
+def _chunked(ids: List[Any]) -> List[List[Any]]:
+    ids = list(ids)
+    return [ids[i : i + _SQL_IN_CHUNK] for i in range(0, len(ids), _SQL_IN_CHUNK)]
 
 
 class EmotionalResonanceService:
@@ -189,8 +200,10 @@ class EmotionalResonanceService:
 
     def __init__(self):
         self.orchestrator = PreprocessingOrchestrator()
-        self.keyword_lib = KeywordLibraries()
+        self.keyword_lib = get_shared_keyword_libraries()
         self.direction_service = NegativeDirectionService()
+        # 交互对实例级缓存（见 _get_interaction_pairs 的六处调用）
+        self._pairs_cache: Dict[int, List[Dict[str, Any]]] = {}
 
     def calculate_bidirectional_positive_response(self, conversation_id: int) -> float:
         """Score how well positive emotion is reciprocated."""
@@ -479,7 +492,15 @@ class EmotionalResonanceService:
         return "情感共振很弱，缺乏情感连接"
 
     def _get_interaction_pairs(self, conversation_id: int) -> List[Dict[str, Any]]:
-        """Load interaction pair records for a conversation."""
+        """Load interaction pair records for a conversation.
+
+        带实例级缓存：单个会话的六处调用（5 子分+汇总）此前各自全量
+        重建（交互对 + 全部单元元数据 + 全部消息内容拼串），13 万条
+        会话 = 同一大结果集完整载入 6 遍。切会话即失效。
+        """
+        cached = self._pairs_cache.get(conversation_id)
+        if cached is not None:
+            return cached
         cursor = get_db().execute(
             """
             SELECT
@@ -506,7 +527,7 @@ class EmotionalResonanceService:
                 all_unit_ids.add(row[7])
 
         unit_metadata_map = self._batch_get_speech_unit_metadata(all_unit_ids)
-        return [
+        pairs = [
             {
                 "from_speech_unit_id": row[7],
                 "to_speech_unit_id": row[6],
@@ -523,6 +544,8 @@ class EmotionalResonanceService:
             }
             for row in rows
         ]
+        self._pairs_cache[conversation_id] = pairs
+        return pairs
 
     def _is_within_positive_response_window(self, pair: Dict[str, Any]) -> bool:
         time_gap = pair.get("time_gap")
@@ -840,19 +863,21 @@ class EmotionalResonanceService:
 
         result_map: Dict[int, Dict[str, Any]] = {}
         unit_id_list = list(unit_ids)
-        placeholders = ",".join("?" * len(unit_id_list))
-        cursor = get_db().execute(
-            (
-                f"SELECT id, message_ids, first_message_timestamp "
-                f"FROM speech_units WHERE id IN ({placeholders})"
-            ),
-            unit_id_list,
-        )
-
         unit_msg_map: Dict[int, List[int]] = {}
         unit_ts_map: Dict[int, int] = {}
         all_msg_ids = set()
-        for row in cursor.fetchall():
+        fetched_units = []
+        for chunk in _chunked(unit_id_list):
+            placeholders = ",".join("?" * len(chunk))
+            cursor = get_db().execute(
+                (
+                    f"SELECT id, message_ids, first_message_timestamp "
+                    f"FROM speech_units WHERE id IN ({placeholders})"
+                ),
+                chunk,
+            )
+            fetched_units.extend(cursor.fetchall())
+        for row in fetched_units:
             try:
                 msg_ids = json.loads(row[1])
             except Exception:
@@ -864,20 +889,20 @@ class EmotionalResonanceService:
 
         msg_content_map: Dict[int, str] = {}
         if all_msg_ids:
-            msg_id_list = list(all_msg_ids)
-            placeholders = ",".join("?" * len(msg_id_list))
-            cursor = get_db().execute(
-                f"SELECT id, content FROM messages WHERE id IN ({placeholders})",
-                msg_id_list,
-            )
-            for row in cursor.fetchall():
-                content = row[1]
-                if isinstance(content, bytes):
-                    try:
-                        content = content.decode("utf-8", errors="replace")
-                    except Exception:
-                        content = ""
-                msg_content_map[row[0]] = content or ""
+            for chunk in _chunked(all_msg_ids):
+                placeholders = ",".join("?" * len(chunk))
+                cursor = get_db().execute(
+                    f"SELECT id, content FROM messages WHERE id IN ({placeholders})",
+                    chunk,
+                )
+                for row in cursor.fetchall():
+                    content = row[1]
+                    if isinstance(content, bytes):
+                        try:
+                            content = content.decode("utf-8", errors="replace")
+                        except Exception:
+                            content = ""
+                    msg_content_map[row[0]] = content or ""
 
         for unit_id in unit_id_list:
             msg_ids = unit_msg_map.get(unit_id, [])
@@ -1009,16 +1034,17 @@ class EmotionalResonanceService:
             span_days = max(1, (last_ts - first_ts) // 86400 + 1)
             return active_days, span_days
 
-        unit_id_list = list(unit_ids)
-        placeholders = ",".join("?" * len(unit_id_list))
-        cursor = get_db().execute(
-            (
-                f"SELECT first_message_timestamp FROM speech_units "
-                f"WHERE conversation_id = ? AND id IN ({placeholders})"
-            ),
-            [conversation_id, *unit_id_list],
-        )
-        timestamps = [int(row[0] or 0) for row in cursor.fetchall() if row[0]]
+        timestamps = []
+        for chunk in _chunked(unit_ids):
+            placeholders = ",".join("?" * len(chunk))
+            cursor = get_db().execute(
+                (
+                    f"SELECT first_message_timestamp FROM speech_units "
+                    f"WHERE conversation_id = ? AND id IN ({placeholders})"
+                ),
+                [conversation_id, *chunk],
+            )
+            timestamps.extend(int(row[0] or 0) for row in cursor.fetchall() if row[0])
         if not timestamps:
             return 0, 0
         active_days = len(

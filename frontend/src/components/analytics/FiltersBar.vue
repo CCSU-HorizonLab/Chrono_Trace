@@ -37,7 +37,10 @@
                 :size="28"
               />
               <div class="dropdown-copy">
-                <span class="dropdown-name">{{ conv.name || conv.username || '未知联系人' }}</span>
+                <span class="dropdown-name">
+                  {{ conv.name || conv.username || '未知联系人' }}
+                  <span v-if="conv.conversation_type === 'group'" class="dropdown-group-badge" title="群聊">群</span>
+                </span>
                 <span class="dropdown-meta">
                   {{ conv.message_count }}条
                   <span
@@ -74,6 +77,7 @@ type Conversation = {
   username?: string
   message_count: number
   avatar?: string
+  conversation_type?: 'private' | 'group'
   analysis_stale?: boolean
   pending_message_count?: number | null
 }
@@ -327,5 +331,17 @@ function onInputFocus() {
   color: #f0b429;
   background: rgba(245, 158, 11, 0.12);
   border: 1px solid rgba(245, 158, 11, 0.3);
+}
+/* 群聊徽标：与私聊区分，提示四维好感度对群聊意义有限 */
+.dropdown-group-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-size: 10px;
+  line-height: 1.4;
+  color: #38b2ac;
+  background: rgba(56, 178, 172, 0.12);
+  border: 1px solid rgba(56, 178, 172, 0.3);
 }
 </style>

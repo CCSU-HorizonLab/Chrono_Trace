@@ -9,7 +9,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ...db.connection import get_db
-from ..model_paths import EMBEDDING_MODEL_DIM, EMBEDDING_MODEL_REPO_ID, get_embedding_model_dir
+from ..model_paths import (
+    EMBEDDING_MODEL_DIM,
+    get_embedding_model_dir,
+    get_embedding_model_dim,
+    get_embedding_model_repo_id,
+)
 from .embedding_cache_store import EmbeddingCacheStore
 from .feature_extraction_config import (
     ANALYSIS_DEVICE_MODE_CPU,
@@ -217,8 +222,15 @@ class SentimentService:
                 "embedding": self._fallback_embedding(),
             }
 
-    def analyze_batch(self, texts: List[str]) -> List[Dict[str, Any]]:
-        """Analyze a batch of texts."""
+    def analyze_batch(
+        self, texts: List[str], include_embeddings: bool = False
+    ) -> List[Dict[str, Any]]:
+        """Analyze a batch of texts.
+
+        include_embeddings 默认 False：预处理阶段的调用方只消费极性/强度
+        （相似度走 pairs 自己的 L2 嵌入缓存），此前每条消息白嵌一遍并把
+        768 维向量 pickle 进库（13 万条会话 ≈400MB 胀库 + 双倍计算）。
+        """
         if not texts:
             return []
 
@@ -235,7 +247,11 @@ class SentimentService:
 
         self._load_realtime_service()
         sentiment_results = self._realtime_service.analyze_batch(safe_texts)
-        embeddings = self._get_embeddings_batch(safe_texts)
+        embeddings = (
+            self._get_embeddings_batch(safe_texts)
+            if include_embeddings
+            else [None] * len(safe_texts)
+        )
 
         results: List[Dict[str, Any]] = []
         for index, text in enumerate(safe_texts):
@@ -367,9 +383,12 @@ class SentimentService:
         """
         if self._embedding_model is None or self._embedding_load_failed:
             return None
-        dim = self._embedding_dimension or EMBEDDING_MODEL_DIM
+        # 维度与模型名跟随激活变体：L2 键含 repo_id，切模型自动隔离旧向量
+        dim = self._embedding_dimension or get_embedding_model_dim() or EMBEDDING_MODEL_DIM
         try:
-            return EmbeddingCacheStore(EMBEDDING_MODEL_REPO_ID, self._embedding_device, dim)
+            return EmbeddingCacheStore(
+                get_embedding_model_repo_id(), self._embedding_device, dim
+            )
         except Exception:
             return None
 
@@ -448,7 +467,6 @@ class SentimentService:
 
         results: Dict[int, Dict[str, Any]] = {}
         try:
-            expected_dim = self._expected_embedding_dimension()
             db = get_db()
             batch_size = 500
 
@@ -457,7 +475,7 @@ class SentimentService:
                 placeholders = ",".join("?" * len(batch_ids))
                 cursor = db.execute(
                     f"""
-                    SELECT message_id, polarity, intensity, embedding_vector
+                    SELECT message_id, polarity, intensity
                     FROM sentiment_cache
                     WHERE message_id IN ({placeholders})
                     """,
@@ -465,22 +483,13 @@ class SentimentService:
                 )
 
                 for row in cursor.fetchall():
-                    embedding_data = row[3]
-                    if embedding_data is None:
-                        continue
-                    try:
-                        embedding = pickle.loads(embedding_data)
-                    except Exception:
-                        continue
-                    if not isinstance(embedding, list) or not embedding:
-                        continue
-                    if expected_dim is not None and len(embedding) != expected_dim:
-                        continue
-
+                    # 存在性即有效：不 SELECT 向量列（旧库十万行 768 维
+                    # torch pickle 的反序列化纯浪费），极性/强度是唯一
+                    # 被消费的字段（pairs 直读 SQL、orchestrator 只判跳过）
                     results[row[0]] = {
                         "polarity": row[1],
                         "intensity": row[2],
-                        "embedding": embedding,
+                        "embedding": None,
                     }
         except Exception as exc:
             logger.debug(f"[情感服务] 批量缓存读取跳过（含旧 torch pickle 行，按 miss 处理）: {exc}")
@@ -497,12 +506,13 @@ class SentimentService:
             now = int(time.time())
             batch_data = []
             for result in results:
+                embedding = result.get("embedding")
                 batch_data.append(
                     (
                         result["message_id"],
                         result["polarity"],
                         result["intensity"],
-                        pickle.dumps(result["embedding"]),
+                        pickle.dumps(embedding) if embedding is not None else None,
                         now,
                     )
                 )

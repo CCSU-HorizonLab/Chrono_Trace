@@ -73,7 +73,7 @@ CREATE TABLE IF NOT EXISTS messages (
 
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, timestamp DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_conv_local_unique
-ON messages(conversation_id, local_id)
+ON messages(conversation_id, local_id, timestamp)
 WHERE local_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_source ON messages(source);
@@ -365,7 +365,7 @@ CREATE TABLE IF NOT EXISTS embedding_cache (
     dim INTEGER NOT NULL,                    -- 模型原生维度（768）
     vector BLOB NOT NULL,                    -- float32 little-endian 原始字节（非 pickle 非 fp16）
     created_at INTEGER NOT NULL,
-    UNIQUE(content_sha1, model, device)
+    UNIQUE(content_sha1, model, device)  -- 此 UNIQUE 自动建索引，L2 批查(sha1 IN + model + device)直接命中；已有两轮审查误判缺索引
 );
 
 CREATE INDEX IF NOT EXISTS idx_embedding_cache_created ON embedding_cache(created_at);
@@ -764,6 +764,7 @@ CREATE TABLE IF NOT EXISTS rag_documents (
     sensitivity TEXT DEFAULT 'normal',
     enabled INTEGER DEFAULT 1,
     superseded_by INTEGER,
+    fact_id INTEGER,
     index_version TEXT DEFAULT 'v1',
     source_kind TEXT DEFAULT 'historical',
     created_at INTEGER NOT NULL,
@@ -862,6 +863,7 @@ CREATE TABLE IF NOT EXISTS rag_index_status (
     storage_bytes INTEGER DEFAULT 0,
     enabled INTEGER DEFAULT 1,
     index_version TEXT DEFAULT 'v1',
+    last_message_id INTEGER NOT NULL DEFAULT 0,
     updated_at INTEGER NOT NULL,
     UNIQUE(account_wxid, conversation_id),
     CHECK(status IN ('pending', 'indexing', 'ready', 'stale', 'failed'))

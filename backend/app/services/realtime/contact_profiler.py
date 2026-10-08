@@ -277,7 +277,7 @@ class ContactProfiler:
         )
         row = cursor.fetchone()
         if row:
-            if is_excluded_contact_username(row['username']):
+            if is_excluded_contact_username(row['username'], exclude_chatroom=False):
                 _print(f"[ContactProfiler] 跳过系统联系人会话: username={row['username']}")
             else:
                 _print(f"[ContactProfiler] ✅ 直接匹配成功: id={row['id']}, "
@@ -314,7 +314,7 @@ class ContactProfiler:
                 )
                 conv_row = conv_cursor.fetchone()
                 if conv_row:
-                    if is_excluded_contact_username(conv_row['username']):
+                    if is_excluded_contact_username(conv_row['username'], exclude_chatroom=False):
                         _print(f"[ContactProfiler] 跳过系统联系人反查结果: username={conv_row['username']}")
                         continue
                     _print(f"[ContactProfiler] ✅ contacts 反查匹配成功: "
@@ -347,7 +347,7 @@ class ContactProfiler:
         if rows:
             valid_rows = [
                 row for row in rows
-                if not is_excluded_contact_username(row['username'])
+                if not is_excluded_contact_username(row['username'], exclude_chatroom=False)
             ]
             if valid_rows:
                 _print(f"[ContactProfiler] 模糊匹配 conversations 结果: "
@@ -380,7 +380,7 @@ class ContactProfiler:
                 )
                 conv_row = conv_cursor.fetchone()
                 if conv_row:
-                    if is_excluded_contact_username(conv_row['username']):
+                    if is_excluded_contact_username(conv_row['username'], exclude_chatroom=False):
                         _print(f"[ContactProfiler] 跳过系统联系人模糊反查结果: username={conv_row['username']}")
                         continue
                     _print(f"[ContactProfiler] ✅ 模糊反查匹配成功: "

@@ -42,17 +42,22 @@ datas += safe_copy_metadata("modelscope")
 # ONNX 模型内置（阶段 B：安装包捆绑 fp16 产物，免运行时下载）；
 # 由 build 脚本在打包前运行 backend/scripts/export_models_onnx.py 生成
 _MODELS_ROOT = PROJECT_ROOT / "backend" / "data" / "models"
-for _model_name in ("text2vec_base_chinese", "sentiment_3class"):
-    # 只打发行所需文件（fp16 + tokenizer）——开发目录里的 fp32 基准与
-    # 弃用的 int8/pc8 实验产物不进包（此前整目录收集让包体多了 1.5GB）
-    _fp16 = _MODELS_ROOT / _model_name / "onnx" / "model.fp16.onnx"
+# bge-small 是激活嵌入变体（6.3× 提速，fp32 产物 91MB）；
+# 打包只内置 bge，variant 回退链兜底（model_paths.resolve_embedding_variant
+# 会自动选有产物的变体）。text2vec 不再进包，省 148MB。
+for _model_name in ("bge_small_zh_v15", "sentiment_3class"):
+    # 只打发行所需文件——按精度实测择优（嵌入 fp32：bge CPU 快 32%；
+    # 分类器 fp16：反快 14%），弃用的 int8/pc8 实验产物不进包
+    _need_fp32 = _model_name.startswith("bge")
+    _fname = "model.onnx" if _need_fp32 else "model.fp16.onnx"
+    _model = _MODELS_ROOT / _model_name / "onnx" / _fname
     _tokenizer = _MODELS_ROOT / _model_name / "onnx" / "tokenizer"
-    if _fp16.exists():
-        datas.append((str(_fp16), f"models/{_model_name}/onnx"))
+    if _model.exists():
+        datas.append((str(_model), f"models/{_model_name}/onnx"))
         if _tokenizer.exists():
             datas.append((str(_tokenizer), f"models/{_model_name}/onnx/tokenizer"))
     else:
-        print(f"[chrono_trace.spec] WARNING: missing {_fp16} (run backend/scripts/export_models_onnx.py first)")
+        print(f"[chrono_trace.spec] WARNING: missing {_model} (run backend/scripts/export_models_onnx.py first)")
 
 
 
@@ -74,11 +79,16 @@ hiddenimports += collect_submodules("scipy._external.array_api_compat")
 #    Qml/Quick/WebChannel/QuickControls/Network/Wayland/Xcb 等，勿删）
 _QT_MODULE_EXCLUDES = (
     # 注：libQt6Positioning 是 WebEngineCore/Widgets 的硬链接依赖（ldd 核实），不可裁
+    # 注：libQt6Qml/Quick 也是 WebEngineCore 的 ldd 硬依赖，不可裁
     "libQt6Multimedia", "libQt6SpatialAudio",
     "libQt6Pdf",
     "libQt6RemoteObjects", "libQt6Sensors", "libQt6SerialPort",
     "libQt6Test", "libQt6TextToSpeech", "libQt6StateMachine",
     "libQt6QuickTest",
+    # Quick3D 系列：WebEngine 不依赖（ldd 核实无 Quick3D），pywebview 不用
+    "libQt6Quick3D",
+    "libQt6PositioningQuick",
+    "libQt6EglFSDeviceIntegration",
 )
 # 2) 数据裁剪：Qt 翻译只留中英、去 WebEngine devtools 资源（仅远程调试用）
 def _keep_data(name: str) -> bool:
@@ -102,6 +112,11 @@ a = Analysis(
     runtime_hooks=[],
     excludes=[
         "pytest",
+        # GTK 栈（PyGObject/pycairo）是 pywebview 的可选 GTK 后端依赖；
+        # 本项目 Linux 定死 Qt 后端——即便打包环境被误装（曾因调研 GTK
+        # 后端引入，拖进 117M 图标/主题/重复ICU），也绝不进产物
+        "gi",
+        "pycairo",
         "tkinter",
         "matplotlib",
         "tensorflow",

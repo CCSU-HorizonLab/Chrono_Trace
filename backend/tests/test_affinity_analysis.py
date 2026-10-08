@@ -46,7 +46,8 @@ class TestAffinityAnalysisService:
              patch('app.services.analysis.affinity_analysis_service.ChatPositivityService') as MockPositivity, \
              patch('app.services.analysis.affinity_analysis_service.PreferenceCompatibilityService') as MockPreference, \
              patch('app.services.analysis.affinity_analysis_service.EmotionalResonanceService') as MockResonance, \
-             patch('app.services.analysis.affinity_analysis_service.AttitudeTendencyService') as MockAttitude:
+             patch('app.services.analysis.affinity_analysis_service.AttitudeTendencyService') as MockAttitude, \
+             patch('app.services.analysis.relationship_llm_service.build_relationship_llm_service', return_value=None):
             
             # 配置 mock
             MockPreprocessing.return_value.orchestrate_preprocessing.return_value = mock_stats
@@ -154,31 +155,26 @@ class TestAffinityAnalysisService:
         assert result.emotional_resonance.bonus_scores["base_resonance_score"] == 80.0
         assert result.emotional_resonance.bonus_scores["empathy_recognition_bonus"] == 8.0
 
-    def test_preference_bonus_only_increases_score(self, service):
+    def test_preference_participates_in_weighted_total(self, service):
+        """点数制归一后：在场维度权重和为 1，各维 weighted=score×weight。
+
+        旧加分制（_calculate_decayed_bonus 相加）已随权重引擎退役——
+        偏好维现在作为正式维度参与归一，不再叠加 bonus。
+        """
         result = service.analyze(1)
 
-        base_score = (
-            result.emotional_resonance.weighted_score
-            + result.chat_positivity.weighted_score
-            + result.attitude_tendency.weighted_score
-        )
-
-        assert result.preference_compatibility.bonus_scores["preference_bonus"] > 0
-        assert service._calculate_decayed_bonus(base_score, 6.0) >= 0
-
-    @pytest.mark.parametrize(
-        ("base_score", "raw_bonus", "expected"),
-        [
-            (40, 8.0, 8.0),
-            (60, 8.0, 8.0),
-            (70, 8.0, 5.33),
-            (80, 8.0, 2.67),
-            (90, 8.0, 0.0),
-            (95, 8.0, 0.0),
-        ],
-    )
-    def test_calculate_decayed_bonus_boundaries(self, service, base_score, raw_bonus, expected):
-        assert service._calculate_decayed_bonus(base_score, raw_bonus) == pytest.approx(expected, abs=0.01)
+        dims = [
+            result.emotional_resonance,
+            result.chat_positivity,
+            result.attitude_tendency,
+            result.preference_compatibility,
+            result.intimacy_signals,
+        ]
+        present = [d for d in dims if d is not None and d.weight > 0]
+        assert present, "至少三老维应在场"
+        assert sum(d.weight for d in present) == pytest.approx(1.0, abs=1e-9)
+        for d in present:
+            assert d.weighted_score == pytest.approx(d.score * d.weight, abs=1e-9)
 
     def test_analyze_calculates_overall_score(self, service):
         """测试计算综合评分"""

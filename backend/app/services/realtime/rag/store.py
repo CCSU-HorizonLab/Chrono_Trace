@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import pickle
 import time
 from typing import Any
@@ -10,6 +11,8 @@ from typing import Any
 from ....db.connection import get_db
 from .config import RAG_DEFAULTS
 from .semantic_memory import CONFIDENCE_CEILING, CONFIRMATION_STEP
+
+logger = logging.getLogger(__name__)
 
 
 INDEX_STATUSES = {"pending", "indexing", "ready", "stale", "failed"}
@@ -369,10 +372,29 @@ class RagStore:
         columns = {
             "index_version": "TEXT DEFAULT 'v1'",
             "source_kind": "TEXT DEFAULT 'historical'",
+            # 事实派生文档的溯源键：supersede/用户忘记时据此同步启停文档
+            "fact_id": "INTEGER",
         }
+        need_fact_backfill = "fact_id" not in existing
         for name, definition in columns.items():
             if name not in existing:
                 self.conn.execute(f"ALTER TABLE rag_documents ADD COLUMN {name} {definition}")
+        if need_fact_backfill:
+            # 存量回填：fact 文档 content = "时间：{label}\n{fact.content}"，
+            # 按会话 + 内容后缀匹配挂回 fact_id。匹配不上的（内容已被质量
+            # 门改写等）保持 NULL——其启停需一次全量索引重建才会对齐
+            self.conn.execute(
+                """
+                UPDATE rag_documents SET fact_id = (
+                    SELECT f.id FROM rag_facts f
+                    WHERE f.conversation_id = rag_documents.conversation_id
+                      AND rag_documents.content LIKE '%' || f.content
+                    LIMIT 1
+                )
+                WHERE fact_id IS NULL
+                  AND doc_type IN ('fact_memory', 'shared_memory')
+                """
+            )
         fact_columns = set()
         for row in self.conn.execute("PRAGMA table_info(rag_facts)").fetchall():
             try:
@@ -398,10 +420,44 @@ class RagStore:
             "fact_extract_prompt_version": "TEXT",
             # 文档/语义嵌入的消息级水位（真增量：只处理新增消息，不重嵌旧段）
             "message_watermark_ts": "INTEGER",
+            # 摄取游标（单调递增的 messages.id）：秒级事件时间做游标会漏
+            # 「同秒第二条、回溯插入、延迟摄取」的消息（timestamp 不随
+            # 写入顺序单调），id 游标保证后写必被处理
+            "last_message_id": "INTEGER NOT NULL DEFAULT 0",
         }
+        need_cursor_seed = "last_message_id" not in existing
         for name, definition in columns.items():
             if name not in existing:
                 self.conn.execute(f"ALTER TABLE rag_index_status ADD COLUMN {name} {definition}")
+        if need_cursor_seed:
+            # 测试库可能是仅 RAG 表、或 messages 列不全的最小表：探测
+            # 表与关键列齐备才播种，否则跳过（游标保持 0 → 全量口径）
+            try:
+                has_columns = bool(
+                    self.conn.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='messages'"
+                    ).fetchone()
+                ) and {
+                    "id", "conversation_id", "timestamp"
+                } <= {
+                    str(r["name"] if not isinstance(r, tuple) else r[1])
+                    for r in self.conn.execute("PRAGMA table_info(messages)").fetchall()
+                }
+            except Exception:
+                has_columns = False
+            if has_columns:
+                # 一次性播种：按旧 ts 水位换算等价 id 游标（ts<=水位的最大
+                # id），存量会话免全量重嵌。播种口径与旧增量口径一致；此前
+                # 同秒漏网的消息如需找回，对相应会话做一次全量重建即可
+                self.conn.execute(
+                    """
+                    UPDATE rag_index_status SET last_message_id = COALESCE((
+                        SELECT MAX(m.id) FROM messages m
+                        WHERE m.conversation_id = rag_index_status.conversation_id
+                          AND m.timestamp <= rag_index_status.message_watermark_ts
+                    ), 0)
+                    """
+                )
 
     def set_fact_extract_progress(
         self,
@@ -634,6 +690,7 @@ class RagStore:
         enabled: bool = True,
         index_version: str = "v1",
         source_kind: str = "historical",
+        fact_id: int | None = None,
     ) -> int:
         now = _now()
         cursor = self.conn.execute(
@@ -641,8 +698,8 @@ class RagStore:
             INSERT INTO rag_documents
             (account_wxid, conversation_id, doc_type, source_table, source_id, source_ts,
              content, redacted_content, entity_map_json, pii_flags_json, metadata_json,
-             sensitivity, enabled, index_version, source_kind, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             sensitivity, enabled, index_version, source_kind, fact_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(account_wxid, conversation_id, doc_type, source_table, source_id)
             DO UPDATE SET
                 source_ts = excluded.source_ts,
@@ -655,6 +712,7 @@ class RagStore:
                 enabled = excluded.enabled,
                 index_version = excluded.index_version,
                 source_kind = excluded.source_kind,
+                fact_id = COALESCE(excluded.fact_id, rag_documents.fact_id),
                 updated_at = excluded.updated_at
             """,
             (
@@ -673,6 +731,7 @@ class RagStore:
                 int(enabled),
                 index_version,
                 source_kind,
+                int(fact_id) if fact_id else None,
                 now,
                 now,
             ),
@@ -1385,6 +1444,31 @@ class RagStore:
             "UPDATE rag_facts SET status='superseded', enabled=0, updated_at=? WHERE id=?",
             (_now(), int(old_fact_id)),
         )
+        # 旧事实的派生文档同步退役（superseded_by 指向新事实 id）；新事实
+        # 的文档由下一次索引重建生成——标脏让队列尽快拾起
+        self.conn.execute(
+            """
+            UPDATE rag_documents
+            SET enabled = 0, superseded_by = ?, updated_at = ?
+            WHERE fact_id = ? AND enabled = 1
+              AND doc_type IN ('fact_memory', 'shared_memory')
+            """,
+            (int(new_fact_id), _now(), int(old_fact_id)),
+        )
+        try:
+            row = self.conn.execute(
+                "SELECT account_wxid, conversation_id FROM rag_facts WHERE id = ?",
+                (int(old_fact_id),),
+            ).fetchone()
+            if row is not None:
+                # 延迟导入避免 store↔indexer 循环
+                from .indexer import RagIndexQueue
+
+                RagIndexQueue.mark_dirty(
+                    str(row["account_wxid"]), int(row["conversation_id"])
+                )
+        except Exception as exc:
+            logger.debug("[RAG] supersede 后标脏跳过: %s", exc)
         self.conn.execute(
             "UPDATE rag_facts SET supersedes_fact_id=?, updated_at=? WHERE id=?",
             (int(old_fact_id), _now(), int(new_fact_id)),
@@ -1440,8 +1524,21 @@ class RagStore:
         )
 
     def set_fact_enabled(self, fact_id: int, enabled: bool) -> None:
+        """启停事实，并同步其派生文档（fact_memory/shared_memory）。
+
+        文档不同步则被否定/禁用的内容仍经文档路径召回注入 prompt——
+        用户可见的「忘记」被静默撤销，直到下一次全量重建。
+        """
         self.conn.execute(
             "UPDATE rag_facts SET enabled=?, updated_at=? WHERE id=?",
+            (int(bool(enabled)), _now(), int(fact_id)),
+        )
+        self.conn.execute(
+            """
+            UPDATE rag_documents
+            SET enabled = ?, updated_at = ?
+            WHERE fact_id = ? AND doc_type IN ('fact_memory', 'shared_memory')
+            """,
             (int(bool(enabled)), _now(), int(fact_id)),
         )
 

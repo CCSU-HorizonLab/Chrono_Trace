@@ -121,8 +121,9 @@
             <div class="score-section">
               <div class="score-header">
                 <span class="score-title">总体好感度</span>
-                <div class="trend-badge" v-if="analysisResult.score_trend">
-                  较上周 <span :class="analysisResult.score_trend >= 0 ? 'up' : 'down'">{{ analysisResult.score_trend > 0 ? '↑' : '↓' }}{{ Math.abs(analysisResult.score_trend) }}%</span>
+                <div class="trend-badge" v-if="analysisResult.score_trend != null"
+                  :title="analysisResult.analysis_caliber ? '与上次分析的分数差（同评分口径）' : '与上次分析的分数差'">
+                  较上次 <span :class="analysisResult.score_trend >= 0 ? 'up' : 'down'">{{ analysisResult.score_trend > 0 ? '↑' : '↓' }}{{ Math.abs(analysisResult.score_trend).toFixed(1) }} 分</span>
                 </div>
                 <span
                   v-if="analysisResult.analysis_stale"
@@ -174,12 +175,22 @@
             :weight="analysisResult.attitude_tendency.weight"
             :interpretation="analysisResult.attitude_tendency.interpretation" />
           <AffinityScoreCard v-if="analysisResult.preference_compatibility" title="喜好兼容度"
-            :score="analysisResult.preference_compatibility.score" 
+            :score="analysisResult.preference_compatibility.score"
             :max-score="100"
             :weight="analysisResult.preference_compatibility.weight"
             :interpretation="analysisResult.preference_compatibility.interpretation"
-            :is-bonus="true"
+            :is-bonus="!(analysisResult.preference_compatibility.weight > 0)"
             :bonus-value="analysisResult.preference_compatibility.bonus_scores?.preference_bonus" />
+          <AffinityScoreCard v-if="analysisResult.intimacy_signals" title="亲密度信号"
+            :score="analysisResult.intimacy_signals.score"
+            :max-score="100"
+            :weight="analysisResult.intimacy_signals.weight"
+            :interpretation="analysisResult.intimacy_signals.interpretation" />
+          <AffinityScoreCard v-if="analysisResult.llm_relationship" title="AI 关系评估"
+            :score="analysisResult.llm_relationship.score"
+            :max-score="100"
+            :weight="analysisResult.llm_relationship.weight"
+            :interpretation="analysisResult.llm_relationship.interpretation" />
         </div>
       </div>
 
@@ -200,6 +211,15 @@
               :sub-scores="analysisResult.attitude_tendency.sub_scores" />
             <SubScoreBreakdown v-if="analysisResult.preference_compatibility" title="喜好兼容度"
               :sub-scores="analysisResult.preference_compatibility.sub_scores" />
+            <SubScoreBreakdown v-if="analysisResult.intimacy_signals" title="亲密度信号"
+              :sub-scores="analysisResult.intimacy_signals.sub_scores"
+              :confidence-meta="analysisResult.intimacy_signals.confidence_meta" />
+            <SubScoreBreakdown v-if="analysisResult.llm_relationship" title="AI 关系评估"
+              :sub-scores="analysisResult.llm_relationship.sub_scores"
+              :notes="llmEvidenceNotes" />
+            <p v-else-if="analysisResult.llm_relationship_absent_reason" class="llm-absent-note">
+              AI 关系评估未参与本次评分：{{ analysisResult.llm_relationship_absent_reason }}
+            </p>
           </div>
         </CtCard>
       </div>
@@ -500,16 +520,50 @@
     :show-self-panel="true"
     @close="showPortraitDialog = false"
     @generated="handlePortraitGenerated"
-    @error="(msg: string) => { portraitGenError = msg; }"
   />
-  <div v-if="portraitGenError" style="position: fixed; bottom: 20px; right: 20px; z-index: 4000; background: #e74c3c; color: #fff; padding: 10px 16px; border-radius: 8px; font-size: 13px; box-shadow: 0 4px 12px rgba(0,0,0,0.3);">
-    {{ portraitGenError }}
-    <button @click="portraitGenError = ''" style="margin-left: 10px; background: none; border: none; color: #fff; cursor: pointer; font-size: 16px;">&times;</button>
-  </div>
   <RelationshipContextForm v-if="selectedConversationId" v-model="showContextForm"
     :conversation-id="selectedConversationId" @saved="handleContextSaved" />
 </section>
 
+    <!-- 导出聊天记录弹窗 -->
+    <Teleport to="body">
+      <div v-if="exportDialogVisible" class="ct-modal-overlay" @click.self="exportDialogVisible = false">
+        <div class="export-dialog">
+          <div class="pd-header">
+            <h3 class="pd-title">导出聊天记录</h3>
+            <button class="pd-close" @click="exportDialogVisible = false">✕</button>
+          </div>
+          <div v-if="!exportResult" class="export-body">
+            <div class="export-formats">
+              <label v-for="opt in [
+                { value: 'txt', label: 'TXT 纯文本', tip: '打印/备忘录' },
+                { value: 'csv', label: 'CSV 表格', tip: 'Excel/分析' },
+                { value: 'html', label: 'HTML 聊天页', tip: '分享/存档' },
+              ]" :key="opt.value" class="export-fmt" :class="{ active: exportFormat === opt.value }">
+                <input type="radio" :value="opt.value" v-model="exportFormat" class="sr-only" />
+                <span class="export-fmt-label">{{ opt.label }}</span>
+                <span class="export-fmt-tip">{{ opt.tip }}</span>
+              </label>
+            </div>
+            <div class="export-hint">导出当前选中联系人的全部聊天记录（含日期范围筛选）。</div>
+          </div>
+          <div v-else class="export-body">
+            <div class="export-success">
+              <p>✅ 已导出 {{ exportResult.count }} 条消息</p>
+              <p class="export-path">{{ exportResult.path }}</p>
+              <button class="ct-btn-secondary" @click="openExportFolder">打开所在文件夹</button>
+            </div>
+          </div>
+          <div class="pd-footer">
+            <button v-if="!exportResult" class="pd-btn pd-btn-ghost" @click="exportDialogVisible = false">取消</button>
+            <button v-if="!exportResult" class="pd-btn pd-btn-primary" :disabled="exporting" @click="confirmExport">
+              {{ exporting ? '导出中…' : '导出' }}
+            </button>
+            <button v-else class="pd-btn pd-btn-primary" @click="exportDialogVisible = false">完成</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
 </template>
 
 <script lang="ts">
@@ -658,7 +712,6 @@ watch(selectedConversationId, (id) => {
         const displayScore = ref(0)
         const showKeywordsDialog = ref(false)
 const showPortraitDialog = ref(false)
-const portraitGenError = ref('')
         const showContextForm = ref(false)
         const analysisLaunchPending = ref(false)
         const isGlobalAnalyzing = ref(false)
@@ -762,8 +815,19 @@ const portraitGenError = ref('')
                 emotional_resonance: analysisResult.value.emotional_resonance || undefined,
                 chat_positivity: analysisResult.value.chat_positivity || undefined,
                 attitude_tendency: analysisResult.value.attitude_tendency || undefined,
-                preference_compatibility: analysisResult.value.preference_compatibility || undefined
+                preference_compatibility: analysisResult.value.preference_compatibility || undefined,
+                intimacy_signals: analysisResult.value.intimacy_signals || undefined,
+                llm_relationship: analysisResult.value.llm_relationship || undefined
             }
+        })
+
+        // LLM 关系评估的证据条目（[{quote, month}]，来自 confidence_meta.evidence）
+        const llmEvidenceNotes = computed<Array<{ quote: string; month: string }> | undefined>(() => {
+            const meta = analysisResult.value?.llm_relationship?.confidence_meta as any
+            const evidence = meta?.evidence
+            return Array.isArray(evidence) && evidence.length
+                ? evidence.map((e: any) => ({ quote: String(e.quote || ''), month: String(e.month || '') }))
+                : undefined
         })
 
         const emotionalResonanceDisplaySubScores = computed(() => {
@@ -1002,7 +1066,6 @@ const portraitGenError = ref('')
         }
 
         function handlePortraitGenerated() {
-  portraitGenError.value = ''
   // 画像生成完成后刷新画像数据
   if (typeof loadPersonaProfile === 'function') loadPersonaProfile()
 }
@@ -1048,10 +1111,47 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
             loadAnalysis()
         }
 
+        const exportDialogVisible = ref(false)
+        const exportFormat = ref<'txt' | 'csv' | 'html'>('txt')
+        const exporting = ref(false)
+        const exportResult = ref<{ path: string; count: number } | null>(null)
+
         const handleExport = () => {
-            // Note: export function might just redirect or emit. Assuming an unimplemented function for now
-            console.warn('Export to CSV is clicked.')
-            showDialog('导出功能尚未实现。')
+            if (!selectedConversationId.value) {
+                showDialog('请先选择联系人。')
+                return
+            }
+            exportResult.value = null
+            exportDialogVisible.value = true
+        }
+
+        async function confirmExport() {
+            if (exporting.value || !selectedConversationId.value) return
+            exporting.value = true
+            try {
+                await bridgeReady()
+                const res = await api.export_chat_records(
+                    selectedConversationId.value,
+                    exportFormat.value,
+                    dates.from || undefined,
+                    dates.to || undefined,
+                )
+                if (res.ok) {
+                    exportResult.value = { path: res.file_path, count: res.record_count }
+                } else {
+                    showDialog(res.error || '导出失败')
+                }
+            } catch (e: any) {
+                showDialog(e?.message || '导出异常')
+            } finally {
+                exporting.value = false
+            }
+        }
+
+        function openExportFolder() {
+            if (!exportResult.value) return
+            api.open_external_url(exportResult.value.path.replace(/[/\\][^/\\]+$/, ''))
+                .catch(() => {})
         }
 
         async function tryLoadAffinityScores() {
@@ -1397,38 +1497,42 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
                             return
                         }
                         const prog = await getAffinityProgress(affinityTaskId)
-                        if (prog.ok) {
-                            globalProgressPercent.value = 50 + prog.progress_percent * 0.5
-                            globalProgressStep.value = `[深度推理] ${prog.current_step || '分析中...'}`
-                            if (prog.status === 'completed') {
-                                clearInterval(activeTimer.value)
-                                if (prog.result) {
-                                    analysisResult.value = prog.result as AffinityAnalysisResult
-                                }
-
-                                const scores = await getAffinityScores(analysisConversationId)
-                                if (
-                                    scores &&
-                                    (
-                                        !analysisResult.value ||
-                                        (scores.cache_updated_at || 0) >= (analysisResult.value.cache_updated_at || 0)
-                                    )
-                                ) {
-                                    analysisResult.value = scores
-                                }
-                                const followUpTasks = [
-                                    loadSessions(),
-                                    loadActivityCalendar(activityCalendar.value.year)
-                                ]
-                                if (shouldLoadContentAnalysis.value) {
-                                    followUpTasks.unshift(loadAnalysis())
-                                }
-                                await Promise.all(followUpTasks)
-                                resolve()
-                            } else if (prog.status === 'not_found') { clearInterval(activeTimer.value); reject(new Error('分析任务已过期')) }
-                            else if (prog.status === 'failed' || prog.status === 'cancelled') {
-                                clearInterval(activeTimer.value); reject(new Error(prog.error || '分析已取消'))
+                        // 失败/失效先于 ok 门控分派：否则 not_found（ok:false）
+                        // 会落空导致 500ms 死轮询、分析按钮永久卡住
+                        if (!prog.ok) {
+                            clearInterval(activeTimer.value)
+                            reject(new Error(prog.error || '分析任务已失效'))
+                            return
+                        }
+                        globalProgressPercent.value = 50 + prog.progress_percent * 0.5
+                        globalProgressStep.value = `[深度推理] ${prog.current_step || '分析中...'}`
+                        if (prog.status === 'completed') {
+                            clearInterval(activeTimer.value)
+                            if (prog.result) {
+                                analysisResult.value = prog.result as AffinityAnalysisResult
                             }
+
+                            const scores = await getAffinityScores(analysisConversationId)
+                            if (
+                                scores &&
+                                (
+                                    !analysisResult.value ||
+                                    (scores.cache_updated_at || 0) >= (analysisResult.value.cache_updated_at || 0)
+                                )
+                            ) {
+                                analysisResult.value = scores
+                            }
+                            const followUpTasks = [
+                                loadSessions(),
+                                loadActivityCalendar(activityCalendar.value.year)
+                            ]
+                            if (shouldLoadContentAnalysis.value) {
+                                followUpTasks.unshift(loadAnalysis())
+                            }
+                            await Promise.all(followUpTasks)
+                            resolve()
+                        } else if (prog.status === 'failed' || prog.status === 'cancelled') {
+                            clearInterval(activeTimer.value); reject(new Error(prog.error || '分析已取消'))
                         }
                     } catch (e) { }
                 }, 500)
@@ -1784,10 +1888,12 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
         return {
             currentTab, conversations, selectedConversationId, dates, loading, loadingSessions, error, analysis, subject, sessions,
             personaProfile, loadingPersonaProfile, personaProfileMeta,
-            analysisResult, displayScore, showKeywordsDialog, showContextForm, showPortraitDialog, portraitGenError, handlePortraitGenerated, isGlobalAnalyzing, isStopping, activeTimer, handleStopAnalysis, globalProgressPercent, globalProgressStep, isDownloadingModels, modelDownloadProgress, modelDownloadStep, modelDownloadTaskId, gpuMode,
+            analysisResult, displayScore, showKeywordsDialog, showContextForm, showPortraitDialog, handlePortraitGenerated, isGlobalAnalyzing, isStopping, activeTimer, handleStopAnalysis, globalProgressPercent, globalProgressStep, isDownloadingModels, modelDownloadProgress, modelDownloadStep, modelDownloadTaskId, gpuMode,
             hasConversations, hasFeatures, hasCachedAffinityAnalysis, featureStats, responseTimeStats, initiativeStats, wordCountsStats, displayWordRatioLabel, activityCalendar,
             responseTimeChart, activityCalendarChart, wordCountChart, stats, currentContactName, headerAvatarSrc, hasPreferenceKeywords, allDimensions, emotionalResonanceDisplaySubScores,
-            currentRangeLabel, hasContentAnalysis, circumference, strokeDashoffset, formatNumber, formatTime, getResponseTimeLabel, getMergedResponseTimeLabel, getResponseTimePercent, onConversationChange, onDatesChange, handleExport, handleStartGlobalAnalysis, handleContextSaved, handleKeywordsUpdated,
+            currentRangeLabel, hasContentAnalysis, circumference, strokeDashoffset, formatNumber, formatTime, getResponseTimeLabel, getMergedResponseTimeLabel, getResponseTimePercent, onConversationChange, onDatesChange, handleExport, handleStartGlobalAnalysis, handleContextSaved, handleKeywordsUpdated, llmEvidenceNotes,
+            exportDialogVisible, exportFormat, exporting, exportResult, confirmExport, openExportFolder,
+            activeAccountWxid,
             getScoreColor, scrollToDetails, handlePreferenceDisabledClick, onWordSelect, loadAnalysis, loadSessions, handleActivityYearChange
         }
     }
@@ -3181,4 +3287,52 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
     }
 }
 
+/* LLM 关系评估缺席说明（灰字，不阻断其余维度展示） */
+.llm-absent-note {
+  font-size: 12px;
+  color: var(--ct-text-secondary, #64748b);
+  margin: 4px 0 0;
+}
+
+/* 导出弹窗 */
+.export-dialog {
+  width: 420px; max-width: 92vw;
+  background: var(--ct-bg-elevated, #1d222c);
+  border-radius: 16px; border: 1px solid var(--ct-border-color);
+  box-shadow: 0 24px 64px rgba(0,0,0,0.45);
+  overflow: hidden;
+}
+.export-body { padding: 16px 20px; }
+.export-formats { display: flex; gap: 8px; }
+.export-fmt {
+  flex: 1; padding: 12px 8px; border-radius: 10px; cursor: pointer;
+  border: 1px solid var(--ct-border-color); background: var(--ct-bg-secondary);
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  transition: all 0.15s;
+}
+.export-fmt.active { border-color: rgba(108,92,231,0.4); background: rgba(108,92,231,0.08); }
+.export-fmt-label { font-size: 13px; font-weight: 600; }
+.export-fmt-tip { font-size: 10px; color: var(--ct-text-tertiary); }
+.export-hint { margin-top: 12px; font-size: 11px; color: var(--ct-text-tertiary); line-height: 1.5; }
+.export-success { text-align: center; padding: 12px 0; }
+.export-success p { margin: 4px 0; font-size: 14px; }
+.export-path { font-size: 11px; color: var(--ct-text-tertiary); word-break: break-all; }
+.ct-btn-secondary {
+  margin-top: 8px; padding: 6px 16px; border-radius: 8px; font-size: 12px;
+  background: var(--ct-bg-tertiary); border: 1px solid var(--ct-border-color);
+  color: var(--ct-text-secondary); cursor: pointer;
+}
+.ct-btn-secondary:hover { background: var(--ct-bg-elevated); }
+.pd-header { display: flex; align-items: center; gap: 12px; padding: 18px 20px; border-bottom: 1px solid var(--ct-border-color); }
+.pd-title { margin: 0; font-size: 17px; font-weight: 600; flex: 1; }
+.pd-close { background: none; border: none; cursor: pointer; color: var(--ct-text-secondary); font-size: 16px; padding: 4px 8px; }
+.pd-close:hover { color: var(--ct-text-primary); }
+.pd-footer { display: flex; justify-content: flex-end; gap: 10px; padding: 14px 20px; border-top: 1px solid var(--ct-border-color); }
+.pd-btn { padding: 8px 20px; border-radius: 10px; font-size: 13px; font-weight: 600; cursor: pointer; border: 1px solid transparent; }
+.pd-btn-ghost { background: transparent; color: var(--ct-text-secondary); border-color: var(--ct-border-color); }
+.pd-btn-ghost:hover { background: var(--ct-bg-tertiary); }
+.pd-btn-primary { background: #6c5ce7; color: #fff; }
+.pd-btn-primary:hover { background: #5a4bd1; }
+.pd-btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+.sr-only { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 </style>

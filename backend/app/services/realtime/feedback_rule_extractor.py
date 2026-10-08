@@ -14,6 +14,7 @@ import urllib.error
 import re
 from typing import Optional
 from ..wechat.account_settings import get_active_wechat_account_wxid, load_settings_from_file
+from .safe_print import safe_print as _print
 
 logger = logging.getLogger(__name__)
 
@@ -53,10 +54,6 @@ EMOJI_PATTERN = re.compile(
     flags=re.UNICODE,
 )
 
-
-def _print(msg: str):
-    """统一打印"""
-    print(msg, flush=True)
 
 
 # ==================== 轻量文本相似度 ====================

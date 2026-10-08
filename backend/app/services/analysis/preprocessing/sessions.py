@@ -3,6 +3,7 @@ import re
 import json
 import logging
 import time
+import numpy as np
 from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
 from ....db.connection import get_db
@@ -60,21 +61,8 @@ class SessionManager:
             emb1 = self._sentiment_service._get_embedding(text1)
             emb2 = self._sentiment_service._get_embedding(text2)
 
-            # 计算余弦相似度
-            import numpy as np
-            vec1 = np.array(emb1)
-            vec2 = np.array(emb2)
-
-            dot_product = np.dot(vec1, vec2)
-            norm1 = np.linalg.norm(vec1)
-            norm2 = np.linalg.norm(vec2)
-
-            if norm1 == 0 or norm2 == 0:
-                return 0.0
-
-            similarity = dot_product / (norm1 * norm2)
-
-            return float(similarity)
+            # encode 已 L2 归一：cosine == 裸点积
+            return float(np.dot(np.asarray(emb1), np.asarray(emb2)))
 
         except Exception as e:
             logger.error(f"[会话管理器] 计算相似度失败: {e}")
@@ -237,7 +225,7 @@ class SessionManager:
                     sample_indices.append(len(speech_units) - 1)
 
                 self._raise_if_cancelled()
-                sample_texts = [speech_units[i]["content"] for i in sample_indices]
+                sample_texts = [(speech_units[i].get("content") or "").strip() for i in sample_indices]
                 logger.debug(f"[会话管理器] 第一阶段：粗采样 {len(sample_texts)} 个文本...")
 
                 # 分块编码采样文本：单次全量 encode 不可中断也无进度（82k 消息
@@ -259,12 +247,12 @@ class SessionManager:
                             pass
                 
                 # 找出候选切分区域（相似度较低的区域）
-                import numpy as np
                 candidate_regions = []
                 for i in range(len(sample_indices) - 1):
                     vec1 = sample_embeddings[i]
                     vec2 = sample_embeddings[i + 1]
-                    similarity = float(np.dot(vec1, vec2) / (np.linalg.norm(vec1) * np.linalg.norm(vec2)))
+                    # encode 已 L2 归一：cosine == 裸点积（此前逐对重算 norm 纯浪费）
+                    similarity = float(np.dot(vec1, vec2))
                     
                     if similarity < self.SIMILARITY_THRESHOLD + 0.2:  # 粗筛阈值稍高
                         # 记录需要精细检测的区域
@@ -287,23 +275,27 @@ class SessionManager:
                             progress_cb(min(1.0, 0.6 + 0.4 * (region_idx + 1) / max(1, total_regions)))
                         except Exception:
                             pass
-                    region_texts = [speech_units[i]["content"] for i in range(start, end + 1)]
+                    region_texts = [(speech_units[i].get("content") or "").strip() for i in range(start, end + 1)]
                     region_embeddings = self._sentiment_service._get_embeddings_batch(
                         region_texts,
-                        batch_size=32,
+                        batch_size=64,
                     )
                     
                     for i in range(len(region_embeddings) - 1):
                         vec1 = region_embeddings[i]
                         vec2 = region_embeddings[i + 1]
-                        similarity = float(np.dot(vec1, vec2) / (np.linalg.norm(vec1) * np.linalg.norm(vec2)))
+                        # encode 已 L2 归一：cosine == 裸点积（此前逐对重算 norm 纯浪费）
+                        similarity = float(np.dot(vec1, vec2))
                         similarities[start + i] = similarity
                 
                 logger.info("[会话管理器] 精细检测完成")
                 
             else:
                 # === 常规全量计算 ===
-                texts = [unit["content"] for unit in speech_units]
+                # strip 口径与 pairs._calculate_unit_similarities 统一：
+                # 此前这里用未 strip 的 content，首尾带空白的文本 sha1
+                # 不同 → L1/L2 全 miss → 同一批单元被完整重编码一遍
+                texts = [(unit.get("content") or "").strip() for unit in speech_units]
                 # 分块编码：每块之间检查取消信号——单次全量 encode 不可中断
                 # （实测 1400+ 条约 3 分钟），取消要等整块跑完才能生效
                 # 走缓存版批量编码：特征提取与好感度两阶段的同文本
@@ -322,24 +314,16 @@ class SessionManager:
                             pass
                 embeddings = all_embeddings
 
-                # 批量计算所有相邻相似度
-                import numpy as np
-                similarities = []
-                for i in range(len(speech_units) - 1):
-                    vec1 = embeddings[i]
-                    vec2 = embeddings[i + 1]
-
-                    # 计算余弦相似度
-                    dot_product = np.dot(vec1, vec2)
-                    norm1 = np.linalg.norm(vec1)
-                    norm2 = np.linalg.norm(vec2)
-
-                    if norm1 == 0 or norm2 == 0:
-                        similarity = 0.0
-                    else:
-                        similarity = float(dot_product / (norm1 * norm2))
-
-                    similarities.append(similarity)
+                # 批量计算所有相邻相似度（矩阵乘向量化）：
+                # encode 已 L2 归一 → cosine == 相邻行点积；此前逐对循环
+                # ×(np.dot + 2×np.linalg.norm + 新建 ndarray)，万级单元下
+                # 是可观的纯 Python 开销
+                matrix = np.asarray(embeddings, dtype=np.float32)
+                if matrix.ndim == 2 and len(matrix) > 1:
+                    dots = np.einsum("ij,ij->i", matrix[:-1], matrix[1:])
+                    similarities = [float(d) for d in dots]
+                else:
+                    similarities = []
 
             logger.info(f"[会话管理器] 语义相似度计算完成 ({len(similarities)} 个相似度)")
 
@@ -583,21 +567,28 @@ class SessionManager:
                 "DELETE FROM sessions WHERE conversation_id = ? AND source = 'long'",
                 (conversation_id,),
             )
-            for session in sessions:
-                get_db().execute("""
-                    INSERT OR REPLACE INTO sessions
-                    (conversation_id, start_time, end_time, message_count,
-                     initiator, source, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (
+            now = int(time.time())
+            rows = [
+                (
                     conversation_id,
                     session["start_timestamp"],  # 映射到 start_time
                     session["end_timestamp"],    # 映射到 end_time
                     session["unit_count"],       # 映射到 message_count
                     'user' if session["initiator_is_sender"] == 1 else 'other',  # 转换为 initiator
                     'long',
-                    int(time.time())
-                ))
+                    now,
+                )
+                for session in sessions
+            ]
+            # executemany 批量插入（units/pairs 同款改造；此前逐行 execute
+            # 在 autocommit 下每行一个 WAL 帧）
+            if rows:
+                get_db().executemany("""
+                    INSERT OR REPLACE INTO sessions
+                    (conversation_id, start_time, end_time, message_count,
+                     initiator, source, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, rows)
 
             get_db().commit()
             logger.debug(f"[会话管理器] 已保存 {len(sessions)} 个会话")

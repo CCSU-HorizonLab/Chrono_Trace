@@ -65,6 +65,7 @@ class AnalysisService:
                         NULLIF(TRIM(c.avatar_path), ''),
                         NULLIF(TRIM(ct.avatar_path), '')
                     ) as avatar,
+                    c.conversation_type,
                     c.analysis_stale,
                     c.analysis_message_count
                 FROM conversations c
@@ -79,9 +80,12 @@ class AnalysisService:
             
             conversations = []
             for row in cursor.fetchall():
-                if is_excluded_contact_username(row[1]):
+                # exclude_chatroom=False：群聊会话要在下拉里可见（浏览/导出
+                # 的唯一入口），前端按 conversation_type 标识；系统号/公众号
+                # 仍默认排除
+                if is_excluded_contact_username(row[1], exclude_chatroom=False):
                     continue
-                analyzed_count = row[8]
+                analyzed_count = row[9]
                 pending = (
                     None if analyzed_count is None
                     else max(0, (row[4] or 0) - (analyzed_count or 0))
@@ -93,7 +97,8 @@ class AnalysisService:
                     "message_count": row[4],
                     "last_message_time": datetime.fromtimestamp(row[5]).strftime("%Y-%m-%d %H:%M"),
                     "avatar": row[6],
-                    "analysis_stale": bool(row[7]),
+                    "conversation_type": row[7] or "private",
+                    "analysis_stale": bool(row[8]),
                     "pending_message_count": pending,  # None=从未分析
                 })
             

@@ -426,12 +426,15 @@ def capture_passphrase_via_gdb(pid: int, timeout: int = 180) -> str:
             "[LinuxKey] 转挂 PID=%s 断点: %s",
             target_pid, ", ".join(f"0x{a:X}" for a in breakpoint_addrs),
         )
+        # 注意：模板已经过 textwrap.dedent，实例化行位于零缩进——搜索串
+        # 与替换行都不能带前导空格，否则 replace 永不匹配（历史上多断点
+        # 扩展因此静默失效，只装了第一个候选断点）
         breakpoint_lines = "\n".join(
-            f'    CaptureBreakpoint("*{addr:#x}")' for addr in breakpoint_addrs
+            f'CaptureBreakpoint("*{addr:#x}")' for addr in breakpoint_addrs
         )
         script = _GDB_SCRIPT_TEMPLATE.format(pid=target_pid, breakpoint_addr=breakpoint_addrs[0])
         script = script.replace(
-            f'    CaptureBreakpoint("*{breakpoint_addrs[0]:#x}")', breakpoint_lines
+            f'CaptureBreakpoint("*{breakpoint_addrs[0]:#x}")', breakpoint_lines
         )
         tmpdir = tempfile.mkdtemp(prefix="chrono-key-")
         script_path = pathlib.Path(tmpdir) / "capture.gdb"

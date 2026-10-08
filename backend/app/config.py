@@ -5,6 +5,10 @@ from pathlib import Path
 
 
 APP_NAME = "Chrono Trace"
+# 文件系统统一命名（无空格）：打包产物名与用户数据目录一致（spec 的 APP_NAME 同名）。
+# 旧版本安装的数据目录带空格，首次启动新版本时整目录改名迁移（见 _resolve_user_data_dir）。
+USER_DATA_DIR_NAME = "ChronoTrace"
+LEGACY_USER_DATA_DIR_NAME = "Chrono Trace"
 FRONTEND_BUILD_DIR_NAME = "webdist"
 LEGACY_FRONTEND_BUILD_DIR_NAME = "dist"
 
@@ -62,11 +66,30 @@ FRONTEND_DIR_PATH = RESOURCE_ROOT_PATH / "frontend"
 FRONTEND_DIST_DIR_PATH = _preferred_frontend_dist_dir(FRONTEND_DIR_PATH)
 
 DEV_DATA_DIR_PATH = SOURCE_ROOT_PATH / "backend" / "data"
-USER_DATA_DIR_PATH = (
-    _local_appdata_root() / APP_NAME
-    if IS_FROZEN
-    else DEV_DATA_DIR_PATH
-)
+
+
+def _resolve_user_data_dir() -> Path:
+    """解析用户数据目录，处理旧版带空格目录名的一次性迁移。
+
+    迁移规则（仅 frozen 生效，开发模式写仓库内 backend/data 无此历史）：
+    - 新目录不存在且旧目录存在 → 整目录 rename（db/日志/模型/GPU runtime 一起搬）
+    - rename 失败（权限/占用）→ 降级继续用旧目录，数据不丢
+    - 两者都存在（罕见：新版曾以空目录启动过）→ 用新目录不动旧目录
+    """
+    if not IS_FROZEN:
+        return DEV_DATA_DIR_PATH
+    root = _local_appdata_root()
+    data_dir = root / USER_DATA_DIR_NAME
+    legacy_dir = root / LEGACY_USER_DATA_DIR_NAME
+    if not data_dir.exists() and legacy_dir.exists():
+        try:
+            legacy_dir.rename(data_dir)
+        except OSError:
+            return legacy_dir
+    return data_dir
+
+
+USER_DATA_DIR_PATH = _resolve_user_data_dir()
 LOG_DIR_PATH = USER_DATA_DIR_PATH / "logs"
 MODELS_DIR_PATH = USER_DATA_DIR_PATH / "models"
 TEMP_DIR_PATH = USER_DATA_DIR_PATH / "temp"

@@ -1,4 +1,5 @@
 """数据库连接与初始化模块"""
+import logging
 import sqlite3
 from pathlib import Path
 from typing import Optional
@@ -6,6 +7,8 @@ from typing import Optional
 from ..config import DB_PATH, DB_SCHEMA_PATH
 
 import threading
+
+logger = logging.getLogger(__name__)
 
 class DatabaseConnection:
     """数据库连接管理器"""
@@ -269,6 +272,128 @@ class DatabaseConnection:
             conn.commit()
 
     @classmethod
+    def _migrate_realtime_suggestions_columns(cls, conn: sqlite3.Connection) -> None:
+        """realtime_suggestions 补对话回复/思考过程两列（纯增量 ALTER）。
+
+        老库该表缺 reply/thought_process 时在此统一补齐；
+        建表本身由 schema.sql（CREATE IF NOT EXISTS）负责。
+        """
+        additions = (
+            ("reply", "TEXT"),
+            ("thought_process", "TEXT"),
+        )
+        existing = cls._table_columns(conn, "realtime_suggestions")
+        if not existing:
+            return
+        changed = False
+        for column_name, column_type in additions:
+            if column_name not in existing:
+                conn.execute(
+                    f"ALTER TABLE realtime_suggestions ADD COLUMN {column_name} {column_type}"
+                )
+                changed = True
+        if changed:
+            conn.commit()
+
+    @classmethod
+    def _migrate_strip_chatroom_prefixes(cls, conn: sqlite3.Connection) -> None:
+        """一次性清理存量群消息的 'wxid_xxx:\\n' 发送者前缀。
+
+        摄入端已改为存储剥离后的干净内容；本迁移处理修复前导入的存量
+        （不清理则词频/情感/事实抽取/出网 prompt 持续被前缀污染）。
+        settings 表键做一次性标记，避免每次启动重复扫描。
+        """
+        try:
+            flag = conn.execute(
+                "SELECT value FROM settings WHERE key = 'migration_chatroom_prefix_stripped'"
+            ).fetchone()
+            if flag:
+                return
+            from ..services.wechat.chatroom import (
+                parse_chatroom_message,
+                resolve_chatroom_display_name,
+            )
+
+            updates = []
+            cleaned_updates = []
+            touched_conversations: set[int] = set()
+            rows = conn.execute(
+                """
+                SELECT m.id, m.content, m.sender, m.conversation_id,
+                       mp.cleaned_content
+                FROM messages m
+                JOIN conversations c ON c.id = m.conversation_id
+                LEFT JOIN message_preprocessed mp ON mp.message_id = m.id
+                WHERE c.conversation_type = 'group'
+                  AND (m.content LIKE '%' || ':' || char(10) || '%'
+                       OR mp.cleaned_content LIKE '%' || ':' || char(10) || '%')
+                """
+            ).fetchall()
+            for row in rows:
+                content = row["content"] if isinstance(row["content"], str) else ""
+                member_wxid, clean = parse_chatroom_message(content)
+                sender = row["sender"] or ""
+                cleaned = row["cleaned_content"] if isinstance(row["cleaned_content"], str) else ""
+                cleaned_member, cleaned_clean = parse_chatroom_message(cleaned)
+                if member_wxid is None and cleaned_member is None:
+                    continue
+                touched_conversations.add(int(row["conversation_id"]))
+                if member_wxid is not None:
+                    if not sender.strip():
+                        sender = resolve_chatroom_display_name(member_wxid)
+                    updates.append((clean, sender, row["id"]))
+                if cleaned_member is not None:
+                    # cleaned_content 是清洗产物，前缀可能独立残存，须单独剥离
+                    cleaned_updates.append((cleaned_clean, row["id"]))
+            if updates:
+                conn.executemany(
+                    "UPDATE messages SET content = ?, sender = ? WHERE id = ?",
+                    updates,
+                )
+            if cleaned_updates:
+                conn.executemany(
+                    "UPDATE message_preprocessed SET cleaned_content = ? WHERE message_id = ?",
+                    cleaned_updates,
+                )
+            if touched_conversations:
+                # 派生层自愈：分析结果打脏（重分析秒级）、RAG 队列标脏
+                # （文档/事实基于旧文本重建）。speech_units 不存内容，无需清洗
+                try:
+                    from ..services.analysis.analysis_state import mark_conversations_stale
+
+                    mark_conversations_stale(sorted(touched_conversations))
+                except Exception as stale_e:
+                    logger.debug("[迁移] 群清洗后分析打脏跳过: %s", stale_e)
+                try:
+                    from ..services.realtime.rag.indexer import RagIndexQueue
+
+                    for acc_wxid, conv_id in conn.execute(
+                        "SELECT DISTINCT account_wxid, id FROM conversations "
+                        "WHERE id IN (%s)" % ",".join(
+                            str(c) for c in sorted(touched_conversations)
+                        )
+                    ).fetchall():
+                        RagIndexQueue.mark_dirty(str(acc_wxid), int(conv_id))
+                except Exception as rag_e:
+                    logger.debug("[迁移] 群清洗后 RAG 标脏跳过: %s", rag_e)
+            if updates or cleaned_updates:
+                conn.commit()
+                from ..services.realtime.safe_print import safe_print
+
+                safe_print(
+                    f"[迁移] 已清理 {len(updates)} 条群消息与 "
+                    f"{len(cleaned_updates)} 条预处理净文本的发送者前缀"
+                )
+            conn.execute(
+                "INSERT OR REPLACE INTO settings (key, value, updated_at) "
+                "VALUES ('migration_chatroom_prefix_stripped', ?, strftime('%s', 'now'))",
+                (str(len(updates)),),
+            )
+            conn.commit()
+        except Exception as exc:
+            logger.warning("[迁移] 群消息前缀清理失败（下次启动重试）: %s", exc)
+
+    @classmethod
     def _run_compat_migrations(cls):
         """Apply lightweight compatibility migrations for existing databases."""
         conn = cls._get_instance()
@@ -277,6 +402,8 @@ class DatabaseConnection:
 
         cls._migrate_wechat_account_isolation(conn)
         cls._migrate_conversations_analysis_columns(conn)
+        cls._migrate_realtime_suggestions_columns(conn)
+        cls._migrate_strip_chatroom_prefixes(conn)
 
         conn.execute(
             """
@@ -286,14 +413,19 @@ class DatabaseConnection:
                   SELECT MIN(id)
                   FROM messages
                   WHERE local_id IS NOT NULL
-                  GROUP BY conversation_id, local_id
+                  GROUP BY conversation_id, local_id, timestamp
               )
             """
         )
+        # 判重键升级：(conversation_id, local_id) → 追加 timestamp。
+        # 微信 V4 分片库的 local_id 是分片内自增（每片都从 1 开始），
+        # 旧键会把后续分片的同号消息全部误判为重复吞掉（实测 02自动化
+        # 23482 条只进 7519 条）。同名旧索引需先 DROP 再按新列建。
+        conn.execute("DROP INDEX IF EXISTS idx_messages_conv_local_unique")
         conn.execute(
             """
             CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_conv_local_unique
-            ON messages(conversation_id, local_id)
+            ON messages(conversation_id, local_id, timestamp)
             WHERE local_id IS NOT NULL
             """
         )

@@ -103,8 +103,11 @@ setup_venv() {
   fi
   if [[ $need_install -eq 1 ]]; then
     log "安装打包依赖（推理栈为 ONNX，无 torch）…"
-    "$VENV_DIR/bin/python" -m pip install --upgrade pip
-    "$VENV_DIR/bin/python" -m pip install -r "$REQUIREMENTS_PATH"
+    # 清华镜像：默认 PyPI 在弱网下实测 87KB/s（116MB 轮子要 20 分钟+），
+    # 与模型导出环境（ensure_onnx_models）保持同源
+    local pip_index=(-i https://pypi.tuna.tsinghua.edu.cn/simple)
+    "$VENV_DIR/bin/python" -m pip install "${pip_index[@]}" --upgrade pip
+    "$VENV_DIR/bin/python" -m pip install "${pip_index[@]}" -r "$REQUIREMENTS_PATH"
     echo "$requirements_hash" > "$hash_file"
   else
     log "打包环境未变化，复用 $VENV_DIR"
@@ -114,7 +117,8 @@ setup_venv() {
 ensure_onnx_models() {
   echo "==> ONNX 模型（首次构建自动从 ModelScope 下载源模型并导出）"
   local models_root="backend/data/models"
-  if [ -f "$models_root/text2vec_base_chinese/onnx/model.fp16.onnx" ] && \
+  # 与 spec 内置清单对齐：Linux 只打 bge + sentiment（text2vec 不进包）
+  if [ -f "$models_root/bge_small_zh_v15/onnx/model.onnx" ] && \
      [ -f "$models_root/sentiment_3class/onnx/model.fp16.onnx" ]; then
     echo "ONNX 产物已存在，跳过下载与导出。"
     return
@@ -179,7 +183,7 @@ Exec=%APPPATH% --no-sandbox
 Terminal=false
 Categories=Utility;
 DESKTOP
-log "已生成 $RELEASE_ROOT/chrono-trace.desktop（安装时把 %APPPATH% 替换为 Chrono Trace 可执行文件绝对路径）"
+log "已生成 $RELEASE_ROOT/chrono-trace.desktop（安装时把 %APPPATH% 替换为 ChronoTrace 可执行文件绝对路径）"
 
 log "完成：$DIST_DIR"
 log "归档：$TARBALL"

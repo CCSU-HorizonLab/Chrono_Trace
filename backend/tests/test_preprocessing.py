@@ -193,6 +193,51 @@ def test_split_sessions_cancel_event_interrupts_embedding():
         sm.split_sessions(units, cancel_event=cancelled)
 
 
+def test_split_sessions_non_sampling_takes_vectorized_path():
+    """非采样分支必须走 einsum 向量化：numpy 曾只在采样分支导入，
+    非采样分支 np.asarray 抛 UnboundLocalError 被 except 吞掉后静默
+    回退逐对计算——向量化与 strip 统一全部失效且无任何报错。"""
+    from app.services.analysis.preprocessing import SessionManager
+
+    class _StubEmbed:
+        _embedding_model = object()
+
+        def __init__(self):
+            self.batch_calls = 0
+
+        def _get_embeddings_batch(self, texts, **kwargs):
+            self.batch_calls += 1
+            # 同话题→[1,0] / 换话题→[0,1]，模拟 L2 归一输出
+            return [[1.0, 0.0] if t.startswith("同") else [0.0, 1.0] for t in texts]
+
+    fake = _StubEmbed()
+    sm = SessionManager()
+    sm._sentiment_service = fake
+
+    # 回退探针：向量化正常时一次都不该被调用
+    fallback = []
+    orig = sm.calculate_semantic_similarity
+    sm.calculate_semantic_similarity = lambda a, b: (fallback.append(a), 0.0)[1]
+
+    units = [
+        {
+            "id": i,
+            "content": "同话题续聊" if (i // 5) % 2 == 0 else "换话题新开",
+            "start_timestamp": 1700000000 + i * 90,
+            "end_timestamp": 1700000000 + i * 90 + 60,
+            "is_sender": i % 2,
+            "message_count": 2,
+        }
+        for i in range(20)
+    ]  # ≤1000 单元 → 非采样分支（P0 崩溃路径）
+
+    sessions = sm.split_sessions(units)
+
+    assert fake.batch_calls >= 1, "未走批量编码路径"
+    assert not fallback, f"向量化失败回退逐对计算 {len(fallback)} 次（P0 复现）"
+    assert len(sessions) == 4, f"语义切分错误：期望 4 组，实得 {len(sessions)}"
+
+
 if __name__ == "__main__":
     print("\n🚀 开始测试预处理模块")
     print("="*60)

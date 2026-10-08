@@ -10,6 +10,24 @@ import re
 
 # 使用相对导入避免循环依赖
 from ...db.connection import get_db
+_shared_instance = None
+_shared_lock = __import__("threading").Lock()
+
+
+def get_shared_keyword_libraries() -> "KeywordLibraries":
+    """进程级共享实例：词库 SELECT + 正则编译只做一次。
+
+    此前每个服务实例各自 new（resonance/attitude 每次分析 ≥2 份），
+    _load_cache 的全量 SELECT 和正则编译重复执行。
+    """
+    global _shared_instance
+    if _shared_instance is None:
+        with _shared_lock:
+            if _shared_instance is None:
+                _shared_instance = KeywordLibraries()
+    return _shared_instance
+
+
 class KeywordLibraries:
     """关键词库管理类"""
 
@@ -235,6 +253,11 @@ class KeywordLibraries:
         
         return bool(regex.search(text))
 
+    # 进程级正则缓存：共振维每交互对×每关键词组都调本方法，13 万级会话
+    # 此前每次调用重新 re.compile 整个关键词表（纯浪费的 CPU 热点）
+    _static_regex_cache: Dict[str, "re.Pattern"] = {}
+    _STATIC_REGEX_CACHE_LIMIT = 256
+
     @staticmethod
     def check_keywords_in_text(text: str, keywords: List[str]) -> bool:
         """
@@ -249,7 +272,7 @@ class KeywordLibraries:
         """
         if not text or not keywords:
             return False
-        
+
         # 处理 bytes 类型
         if isinstance(text, bytes):
             try:
@@ -264,12 +287,18 @@ class KeywordLibraries:
             except:
                 return False
 
-        # 使用正则表达式优化
+        # 使用正则表达式优化（带进程级缓存：同样的关键词组只编译一次）
         pattern = '|'.join(re.escape(kw) for kw in keywords if kw)
         if not pattern:
             return False
-        
-        regex = re.compile(pattern, re.IGNORECASE)
+
+        cache = KeywordLibraries._static_regex_cache
+        regex = cache.get(pattern)
+        if regex is None:
+            regex = re.compile(pattern, re.IGNORECASE)
+            if len(cache) >= KeywordLibraries._STATIC_REGEX_CACHE_LIMIT:
+                cache.clear()
+            cache[pattern] = regex
         return bool(regex.search(text))
 
     def check_text(self, text: str, category: str) -> bool:

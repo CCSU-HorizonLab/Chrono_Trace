@@ -29,13 +29,58 @@ def test_frozen_user_data_paths_use_production_directory(monkeypatch, tmp_path):
         xdg_data = tmp_path / "XDGData"
         monkeypatch.setenv("XDG_DATA_HOME", str(xdg_data))
         config = _reload_config(monkeypatch, tmp_path, frozen=True)
-        expected_root = xdg_data / "Chrono Trace"
+        expected_root = xdg_data / "ChronoTrace"
     else:
         config = _reload_config(monkeypatch, tmp_path, frozen=True)
-        expected_root = tmp_path / "LocalAppData" / "Chrono Trace"
+        expected_root = tmp_path / "LocalAppData" / "ChronoTrace"
     assert Path(config.DATA_DIR) == expected_root
     assert Path(config.SETTINGS_PATH) == expected_root / "settings.json"
     assert Path(config.DB_PATH) == expected_root / "chrono_trace.db"
+
+
+def test_frozen_migrates_legacy_spaced_data_dir(monkeypatch, tmp_path):
+    """旧版带空格数据目录在首次启动新版本时整目录迁移到无空格目录。"""
+    if sys.platform != "win32":
+        xdg_data = tmp_path / "XDGData"
+        monkeypatch.setenv("XDG_DATA_HOME", str(xdg_data))
+        root = xdg_data
+    else:
+        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "LocalAppData"))
+        root = tmp_path / "LocalAppData"
+
+    legacy = root / "Chrono Trace"
+    legacy.mkdir(parents=True)
+    (legacy / "chrono_trace.db").write_text("db")
+    (legacy / "logs").mkdir()
+
+    config = _reload_config(monkeypatch, tmp_path, frozen=True)
+
+    new_dir = root / "ChronoTrace"
+    assert Path(config.DATA_DIR) == new_dir
+    assert (new_dir / "chrono_trace.db").read_text() == "db"  # 数据随目录一起搬
+    assert not legacy.exists()  # 旧目录已改名，无残留副本
+
+
+def test_frozen_both_dirs_exist_prefers_new(monkeypatch, tmp_path):
+    """新旧目录都在（新版曾以空目录启动过）时用新目录、不动旧目录。"""
+    if sys.platform != "win32":
+        xdg_data = tmp_path / "XDGData"
+        monkeypatch.setenv("XDG_DATA_HOME", str(xdg_data))
+        root = xdg_data
+    else:
+        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "LocalAppData"))
+        root = tmp_path / "LocalAppData"
+
+    legacy = root / "Chrono Trace"
+    legacy.mkdir(parents=True)
+    (legacy / "chrono_trace.db").write_text("old")
+    new_dir = root / "ChronoTrace"
+    new_dir.mkdir(parents=True)
+
+    config = _reload_config(monkeypatch, tmp_path, frozen=True)
+
+    assert Path(config.DATA_DIR) == new_dir
+    assert legacy.exists()  # 不做合并，旧目录保留原处
 
 
 def test_frontend_dist_prefers_webdist_and_falls_back_to_legacy(monkeypatch, tmp_path):

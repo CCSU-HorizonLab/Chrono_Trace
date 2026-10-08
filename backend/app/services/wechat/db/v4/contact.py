@@ -88,7 +88,7 @@ class ContactDBV4(WeChatDBBase):
             self.close()
             raise
     
-    def get_contacts(self) -> List[dict]:
+    def get_contacts(self, include_chatroom: bool = False) -> List[dict]:
         """
         获取所有联系人
         
@@ -106,7 +106,8 @@ class ContactDBV4(WeChatDBBase):
         Returns:
             List[dict]: 联系人列表
         """
-        sql = """
+        chatroom_filter = "" if include_chatroom else " AND username NOT LIKE '%@chatroom%'"
+        sql = f"""
             SELECT 
                 username,
                 alias,
@@ -121,7 +122,7 @@ class ContactDBV4(WeChatDBBase):
                 quan_pin
             FROM contact
             WHERE local_type IN (1, 2, 5)
-            AND username NOT LIKE '%@chatroom%'
+            {chatroom_filter}
             AND username NOT LIKE 'gh_%'
             ORDER BY 
                 CASE 
@@ -135,7 +136,9 @@ class ContactDBV4(WeChatDBBase):
         
         for row in cursor:
             username = row['username']
-            if is_excluded_contact_username(username):
+            # exclude_chatroom 跟随调用方意图：include_chatroom=True 时此处
+            # 必须放行，否则 SQL 放开了行过滤又把群丢掉（include 形同虚设）
+            if is_excluded_contact_username(username, exclude_chatroom=not include_chatroom):
                 continue
             contact = {
                 'username': username,
@@ -144,6 +147,9 @@ class ContactDBV4(WeChatDBBase):
                 'alias': row['alias'] or '',
                 'phone': '',  # V4 不直接存储电话
                 'is_friend': row['local_type'] == 1,
+                # 实测 V4 库群聊行 local_type 多为 1（非文档宣称的 2），
+                # 群判定以 @chatroom 后缀为准
+                'is_chatroom': row['local_type'] == 2 or '@chatroom' in username,
                 'avatar_url': row['big_head_url'] or row['small_head_url'] or '',
                 'extra': self._parse_extra_buffer(row['extra_buffer']) if row['extra_buffer'] else {}
             }
@@ -192,6 +198,7 @@ class ContactDBV4(WeChatDBBase):
             'alias': row['alias'] or '',
             'phone': '',
             'is_friend': row['local_type'] == 1,
+                'is_chatroom': row['local_type'] == 2,
             'avatar_url': row['big_head_url'] or row['small_head_url'] or '',
             'extra': self._parse_extra_buffer(row['extra_buffer']) if row['extra_buffer'] else {}
         }

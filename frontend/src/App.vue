@@ -6,7 +6,7 @@
       <div class="topbar-brand">
         <!-- 暂时取消实际Logo图片或复杂图标，保留文字排版 -->
         <div class="brand-text">
-          <h1 class="brand-title">Chrono_Trace</h1>
+          <h1 class="brand-title">Chrono Trace</h1>
           <p class="brand-tagline">镌刻对话年轮，丈量心动间距</p>
         </div>
       </div>

@@ -39,6 +39,7 @@ type PyWebViewApi = {
   get_wechat_db_key_capture_session: (session_id: string) => Promise<any>
   capture_wechat_db_key: (account_wxid?: string, timeout_seconds?: number) => Promise<any>
   import_wechat_data: (db_key: string, options?: Record<string, any>, account_wxid?: string) => Promise<any>
+  get_import_progress: (task_id: string) => Promise<any>
   refresh_wechat_contact_avatars: (
     db_key: string,
     custom_paths?: WechatCustomPaths,
@@ -48,6 +49,7 @@ type PyWebViewApi = {
   // 通用导入与分析
   ingest_data: (file_path: string, options?: Record<string, any>) => Promise<any>
   get_conversation_list: (account_wxid?: string) => Promise<any>
+  export_chat_records: (conversation_id: number, format?: string, start_date?: string, end_date?: string) => Promise<any>
   get_analysis: (params: { conversation_id: number; from: string; to: string }) => Promise<any>
   generate_suggestion: (intent: string, context: Record<string, any>) => Promise<any>
   start_suggestion_stream: (intent: string, context: Record<string, any>) => Promise<any>

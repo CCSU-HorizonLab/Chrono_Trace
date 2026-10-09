@@ -1313,46 +1313,34 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
             }
 
             if (!hasPersistedAnalysisDeviceMode(analysisDeviceMode.value)) {
-                applyAnalysisDeviceMode('cpu')
+                // 一次性设备选择向导：仅在「确有 GPU 加速可决策」时弹窗；
+                // 无卡/通道不可用时静默走 auto 语义（后端自动回退 CPU）——
+                // 不弹无选择余地的告知框，也不把 cpu 落库覆盖用户的 auto 选择
                 try {
-                const gpuStatus = await api.check_gpu_status()
-                if (gpuStatus.ok && gpuStatus.cuda_available) {
-                    const memInfo = gpuStatus.gpu_memory_total_mb
-                        ? ` (${(gpuStatus.gpu_memory_total_mb / 1024).toFixed(1)}GB)`
-                        : ''
-                    const useGpu = await showConfirm({
-                        title: 'GPU 加速可用',
-                        message:
-                            `检测到 GPU: ${gpuStatus.gpu_name}${memInfo}\n` +
-                            `加速通道: ${gpuStatus.accelerator_label || gpuStatus.cuda_version} | ${gpuStatus.torch_version}\n\n` +
-                            '启用 GPU 加速后，分析速度预计可提升 5-10 倍。\n是否启用 GPU 加速？\n\n' +
-                            '提示：此选项可随时在「设置 → 分析计算设备」卡片修改。'
-                    })
-                    const nextMode: AnalysisDeviceMode = useGpu ? 'gpu' : 'cpu'
-                    await api.set_settings({ analysis_device_mode: nextMode })
-                    applyAnalysisDeviceMode(nextMode)
-                } else if (gpuStatus.ok && gpuStatus.has_nvidia_gpu) {
-                    await showDialog({
-                        title: 'GPU 加速通道不可用',
-                        message:
-                            '检测到 NVIDIA 显卡，但 GPU 加速通道未能就绪（可能是显卡驱动过旧或系统组件异常）。\n' +
-                            '本次将使用 CPU 模式进行分析；更新显卡驱动后可在「设置 → 分析计算设备」重新选择。'
-                    })
-                    await api.set_settings({ analysis_device_mode: 'cpu' })
-                    applyAnalysisDeviceMode('cpu')
-                } else {
-                    await showDialog({
-                        title: 'CPU 模式',
-                        message:
-                            'GPU 加速不可用，将使用 CPU 模式进行分析。\n\n' +
-                            '提示：此选项可随时在「设置 → 分析计算设备」卡片修改。'
-                    })
-                    await api.set_settings({ analysis_device_mode: 'cpu' })
-                    applyAnalysisDeviceMode('cpu')
-                }
+                    const gpuStatus = await api.check_gpu_status()
+                    if (gpuStatus.ok && gpuStatus.cuda_available) {
+                        // DirectML 支持任意 DX12 GPU（N/A 卡、核显均可）；
+                        // gpu_name 来自 nvidia-smi，A 卡/核显为空时以通道名兜底
+                        const gpuNameText = gpuStatus.gpu_name || 'GPU'
+                        const memInfo = gpuStatus.gpu_memory_total_mb
+                            ? ` (${(gpuStatus.gpu_memory_total_mb / 1024).toFixed(1)}GB)`
+                            : ''
+                        const useGpu = await showConfirm({
+                            title: 'GPU 加速可用',
+                            message:
+                                `检测到 GPU 加速可用: ${gpuNameText}${memInfo}\n` +
+                                `加速通道: ${gpuStatus.accelerator_label || gpuStatus.cuda_version} | ${gpuStatus.torch_version}\n\n` +
+                                '启用 GPU 加速后，分析速度预计可提升 5-10 倍。\n是否启用 GPU 加速？\n\n' +
+                                '提示：此选项可随时在「设置 → 分析计算设备」卡片修改。'
+                        })
+                        const nextMode: AnalysisDeviceMode = useGpu ? 'gpu' : 'cpu'
+                        await api.set_settings({ analysis_device_mode: nextMode })
+                        applyAnalysisDeviceMode(nextMode)
+                    }
+                    // 无 GPU / 通道不可用：保持 auto（本次分析后端自动用 CPU），
+                    // 设备状态在设置页「分析计算设备」卡片随时可见
                 } catch (e) {
-                    await api.set_settings({ analysis_device_mode: 'cpu' })
-                    applyAnalysisDeviceMode('cpu')
+                    // 状态探测失败不阻塞分析，按 auto 继续
                 }
             }
             await startGlobalAnalysis()

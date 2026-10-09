@@ -136,8 +136,6 @@ type PyWebViewApi = {
   move_floating_window: (dx: number, dy: number) => Promise<any>
   // 好感度分析进度
   check_gpu_status: () => Promise<any>
-  start_gpu_install: () => Promise<any>
-  get_gpu_install_progress: () => Promise<any>
   check_analysis_model_status: () => Promise<any>
   download_analysis_models: () => Promise<any>
   get_model_download_progress: (task_id: string) => Promise<any>

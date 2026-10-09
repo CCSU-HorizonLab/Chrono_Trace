@@ -837,6 +837,9 @@ async function onSave() {
       wechat_use_custom_path: form.wechat_use_custom_path,
       wechat_accounts: wechatAccounts.value,
       wechat_active_account_wxid: activeAccountWxid.value,
+      // 修复：这两键此前缺失——开关能操作、界面显示"已保存"但从不落库，重启即丢
+      close_button_behavior: form.close_button_behavior,
+      llm_fast_suggestion_mode: form.llm_fast_suggestion_mode,
       analysis_device_mode: form.analysis_device_mode,
       model_root_dir: form.model_root_dir.trim() || defaultModelRootDir.value.trim(),
       rag_enabled: form.rag_enabled,

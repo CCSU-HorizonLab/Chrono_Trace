@@ -124,7 +124,7 @@
             <CtField 
               v-model="form.wechat_db_key" 
               type="password"
-              placeholder="输入64位hex密钥 (可保存以便下次使用)" 
+              placeholder="输入 64 位十六进制密钥（可保存以便下次使用）" 
             />
           </label>
 
@@ -384,7 +384,7 @@
               </div>
               <div class="gpu-status-row">
                 <span class="gpu-label">加速通道</span>
-                <span class="gpu-value">{{ gpuInfo.accelerator_label || (gpuInfo.directml_available ? 'DirectML (Windows 原生 GPU)' : gpuInfo.cuda_available ? 'CUDA' : 'CPUExecutionProvider') }}</span>
+                <span class="gpu-value">{{ gpuInfo.accelerator_label || (gpuInfo.directml_available ? 'DirectML (Windows 原生 GPU)' : gpuInfo.cuda_available ? 'CUDA' : 'CPU（多核推理）') }}</span>
               </div>
               <div v-if="gpuInfo.gpu_name || gpuInfo.directml_available" class="gpu-status-row">
                 <span class="gpu-label">显卡设备</span>

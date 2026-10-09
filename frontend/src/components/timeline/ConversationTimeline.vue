@@ -1,7 +1,6 @@
 <template>
   <div class="conversation-timeline">
     <div class="timeline-header">
-      <h3>交互时间线</h3>
       <div class="timeline-controls">
         <CtButton
           v-for="view in viewModes"

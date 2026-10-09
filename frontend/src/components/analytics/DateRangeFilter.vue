@@ -12,7 +12,7 @@
       <button class="btn" @click="quick(365)" :disabled="loading">近一年</button>
       <button class="btn" @click="quickAll()" :disabled="loading">全部</button>
       <button class="btn" @click="$emit('refresh')" :disabled="loading">刷新</button>
-      <button class="btn btn-export" :disabled="loading" @click="$emit('export')">导出CSV</button>
+      <button class="btn btn-export" :disabled="loading" @click="$emit('export')">导出记录</button>
     </div>
   </div>
 </template>

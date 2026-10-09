@@ -437,7 +437,7 @@
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
             <div class="fp-rag-notice-body">
               <template v-if="ragStatus && !ragStatus.enabled">
-                长期记忆（RAG）未启用，AI 建议仅参考近期对话。可在「设置 → 长期记忆」中开启。
+                联系人记忆未启用，AI 建议仅参考近期对话。可在「设置 → 联系人记忆」中开启。
               </template>
               <template v-else-if="ragStatus && (ragStatus.status === 'queued' || ragStatus.status === 'building')">
                 正在为「{{ ragStatus.display_name }}」构建记忆索引，完成后建议将自动携带长期记忆。
@@ -1001,7 +1001,7 @@ const narratorVerificationText = computed(() => {
   }
   if (info.verified === true) {
     const pid = Number(info.pid || 0)
-    return pid > 0 ? `讲述人验证：已启动（PID ${pid}）` : '讲述人验证：已启动'
+    return '屏幕识别：已启动'
   }
   if (info.verified === false || info.status || info.error) {
     const detail = String(info.error || info.status || '未确认启动').trim()

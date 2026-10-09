@@ -36,7 +36,7 @@
     <div class="page-empty-glow page-empty-glow-right"></div>
 
     <div class="page-empty-hero">
-      <div class="page-empty-badge">History Ready</div>
+      <div class="page-empty-badge">历史分析</div>
 
       <div class="page-empty-illustration" aria-hidden="true">
         <div class="empty-orb empty-orb-main"><FolderArchive :size="36" style="color: var(--ct-color-primary);" /></div>
@@ -100,8 +100,14 @@
   <div v-show="currentTab === 'affinity' && selectedConversationId" class="tab-content fade-in">
     <div v-if="!analysisResult && !isGlobalAnalyzing" class="empty-state">
       <div class="empty-icon"><BarChart3 :size="56" :stroke-width="1.5" style="color: var(--ct-color-primary);" /></div>
-      <p>请点击"开始全面分析"探索你们的亲密关系维度。</p>
-      <p class="empty-hint" style="display: inline-flex; align-items: center; gap: 6px;"><Lightbulb :size="14" style="color: var(--ct-color-info); flex-shrink: 0;" /> 首次分析需要1-2分钟进行数据特征提取和模型推理，请耐心等待</p>
+      <template v-if="analysisStaleNotice">
+        <p>该联系人的分析结果已因版本更新过期，需要重新分析。</p>
+        <p class="empty-hint" style="display: inline-flex; align-items: center; gap: 6px;"><Lightbulb :size="14" style="color: var(--ct-color-info); flex-shrink: 0;" /> 重新分析后历史趋势将恢复展示；分析口径升级期间分数出现变化属预期</p>
+      </template>
+      <template v-else>
+        <p>请点击"开始全面分析"探索你们的亲密关系维度。</p>
+        <p class="empty-hint" style="display: inline-flex; align-items: center; gap: 6px;"><Lightbulb :size="14" style="color: var(--ct-color-info); flex-shrink: 0;" /> 首次分析需要1-2分钟进行数据特征提取和模型推理，请耐心等待</p>
+      </template>
     </div>
 
     <!-- Analyzing State -->
@@ -708,6 +714,9 @@ watch(selectedConversationId, (id) => {
         const stats = ref<{ totalMessages: number; avgSentiment: number; activeDays: number; sessionCount: number } | null>(null)
         
         const analysisResult = ref<AffinityAnalysisResult | null>(null)
+        // 曾分析过但当前结果不可用（缓存版本过期）——空态给"需重新分析"解释
+        // 而非伪装成从未分析
+        const analysisStaleNotice = ref(false)
         const displayScore = ref(0)
         const showKeywordsDialog = ref(false)
 const showPortraitDialog = ref(false)
@@ -1156,6 +1165,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
         async function tryLoadAffinityScores() {
             if (!selectedConversationId.value) return
             const epoch = viewEpoch.value
+            analysisStaleNotice.value = false
             try {
                 const scores = await getAffinityScores(selectedConversationId.value)
                 if (epoch !== viewEpoch.value) return // 已切换联系人（F1）
@@ -1163,6 +1173,15 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
                     analysisResult.value = scores
                 } else {
                     analysisResult.value = null
+                    // 有历史趋势记录却无当前结果 = 结果因版本更新过期（后端
+                    // cache_version 门槛拦截），给用户解释而非"从未分析"空态
+                    try {
+                        const raw: any = await api.get_affinity_scores(selectedConversationId.value)
+                        const hist = raw?.ok ? (raw.history || {}) : {}
+                        analysisStaleNotice.value = Boolean(
+                            !raw?.result && (hist.last_analysis_at || (hist.score_trend || []).length)
+                        )
+                    } catch { /* 探测失败按未分析处理 */ }
                 }
             } catch (e) {
                 analysisResult.value = null

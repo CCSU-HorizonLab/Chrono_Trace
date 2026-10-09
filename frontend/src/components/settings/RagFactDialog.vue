@@ -28,10 +28,10 @@
               <div class="rfd-sub">
                 <template v-if="loading">正在同步联系人结构化记忆与对话溯源…</template>
                 <template v-else-if="isLogMode">
-                  检索 {{ logMeta.candidatesCount }} 条候选记忆 · 实际采用 <strong>{{ logMeta.injectedCount }} 条</strong> · 耗时 {{ logMeta.elapsedMs }}ms
+                  检索 {{ logMeta.candidatesCount }} 条候选记忆 · 实际采用 <strong>{{ logMeta.injectedCount }} 条</strong>
                 </template>
                 <template v-else>
-                  共 {{ factCount }} 条记忆（<strong>{{ enabledFactCount }} 条已启用</strong> · {{ Math.max(0, factCount - enabledFactCount) }} 条已停用）<template v-if="effectiveConversationId"> · 会话 ID {{ effectiveConversationId }}</template>
+                  共 {{ factCount }} 条记忆（<strong>{{ enabledFactCount }} 条已启用</strong> · {{ Math.max(0, factCount - enabledFactCount) }} 条已停用）
                 </template>
               </div>
             </div>

@@ -19,10 +19,10 @@
       </div>
       
       <div class="header-actions-group">
-        <CtButton variant="ghost" @click="showContextForm = true" :disabled="isGlobalAnalyzing || isDownloadingModels">关系信息</CtButton>
-        <CtButton variant="ghost" @click="showKeywordsDialog = true" :disabled="isGlobalAnalyzing || isDownloadingModels">配置喜好</CtButton>
-        <CtButton variant="primary" @click="handleStartGlobalAnalysis" :loading="(isGlobalAnalyzing && !isStopping) || isDownloadingModels" :disabled="isDownloadingModels" class="btn-full-analysis">
-          {{ isDownloadingModels ? "下载模型中..." : (isGlobalAnalyzing ? "分析中..." : (hasCachedAffinityAnalysis ? "重新全面分析" : "开始全面分析")) }}
+        <CtButton variant="ghost" @click="showContextForm = true" :disabled="isGlobalAnalyzing">关系信息</CtButton>
+        <CtButton variant="ghost" @click="showKeywordsDialog = true" :disabled="isGlobalAnalyzing">配置喜好</CtButton>
+        <CtButton variant="primary" @click="handleStartGlobalAnalysis" :loading="isGlobalAnalyzing && !isStopping" class="btn-full-analysis">
+          {{ isGlobalAnalyzing ? "分析中..." : (hasCachedAffinityAnalysis ? "重新全面分析" : "开始全面分析") }}
         </CtButton>
         <CtButton v-if="isGlobalAnalyzing" variant="danger" @click="handleStopAnalysis" :loading="isStopping" class="btn-stop-analysis" style="margin-left: 8px;">
           停止
@@ -71,13 +71,12 @@
   </div>
 
   <!-- Global Progress -->
-  <div v-if="isGlobalAnalyzing || isDownloadingModels" class="extraction-progress">
+  <div v-if="isGlobalAnalyzing" class="extraction-progress">
     <div class="progress-bar">
       <div class="progress-fill" :style="{ width: `${globalProgressPercent}%` }"></div>
     </div>
     <div class="progress-text">
-      <span v-if="isDownloadingModels" class="cpu-badge">模型下载</span>
-      <span v-else-if="gpuMode === 'gpu'" class="gpu-badge">GPU 加速</span>
+      <span v-if="gpuMode === 'gpu'" class="gpu-badge">GPU 加速</span>
       <span v-else class="cpu-badge">CPU 模式</span>
       {{ globalProgressPercent.toFixed(1) }}% - {{ globalProgressStep }}
     </div>
@@ -99,21 +98,21 @@
 
   <!-- TAB 1: Affinity -->
   <div v-show="currentTab === 'affinity' && selectedConversationId" class="tab-content fade-in">
-    <div v-if="!analysisResult && !isGlobalAnalyzing && !isDownloadingModels" class="empty-state">
+    <div v-if="!analysisResult && !isGlobalAnalyzing" class="empty-state">
       <div class="empty-icon"><BarChart3 :size="56" :stroke-width="1.5" style="color: var(--ct-color-primary);" /></div>
       <p>请点击"开始全面分析"探索你们的亲密关系维度。</p>
       <p class="empty-hint" style="display: inline-flex; align-items: center; gap: 6px;"><Lightbulb :size="14" style="color: var(--ct-color-info); flex-shrink: 0;" /> 首次分析需要1-2分钟进行数据特征提取和模型推理，请耐心等待</p>
     </div>
 
     <!-- Analyzing State -->
-    <div v-if="isGlobalAnalyzing || isDownloadingModels" class="empty-state">
+    <div v-if="isGlobalAnalyzing" class="empty-state">
       <div class="empty-icon spinning"><Loader2 :size="56" class="spin-icon" style="color: var(--ct-color-primary);" /></div>
-      <p>{{ isDownloadingModels ? '正在下载分析模型，请耐心等待...' : '正在分析中，请耐心等待...' }}</p>
-      <p class="empty-hint" style="display: inline-flex; align-items: center; gap: 6px;"><Lightbulb :size="14" style="color: var(--ct-color-info); flex-shrink: 0;" /> {{ isDownloadingModels ? '模型下载完成后会自动继续分析流程' : '我们正在处理特征提取和模型推理' }}</p>
+      <p>正在分析中，请耐心等待...</p>
+      <p class="empty-hint" style="display: inline-flex; align-items: center; gap: 6px;"><Lightbulb :size="14" style="color: var(--ct-color-info); flex-shrink: 0;" /> 我们正在处理特征提取和模型推理</p>
     </div>
 
     <!-- Affinity Dashboard Two-Col Layout -->
-    <div v-if="analysisResult && !isGlobalAnalyzing && !isDownloadingModels" class="ct-grid-1-1 affinity-dashboard">
+    <div v-if="analysisResult && !isGlobalAnalyzing" class="ct-grid-1-1 affinity-dashboard">
       <!-- Left Column: Overview & Cards -->
       <div class="col-main">
         <div class="summary-row">
@@ -228,20 +227,20 @@
 
   <!-- TAB 2: Features -->
   <div v-show="currentTab === 'features' && selectedConversationId" class="tab-content fade-in">
-    <div v-if="!hasFeatures && !isGlobalAnalyzing && !isDownloadingModels" class="empty-state">
+    <div v-if="!hasFeatures && !isGlobalAnalyzing" class="empty-state">
       <div class="empty-icon"><TrendingUp :size="56" :stroke-width="1.5" style="color: var(--ct-color-primary);" /></div>
       <p>点击"开始全面分析"获取深度互动特征分析。</p>
       <p class="empty-hint" style="display: inline-flex; align-items: center; gap: 6px;"><Lightbulb :size="14" style="color: var(--ct-color-info); flex-shrink: 0;" /> 互动特征包含：回响响应分布、主动性分析、话语权比例等客观指标</p>
     </div>
 
     <!-- Analyzing State -->
-    <div v-if="isGlobalAnalyzing || isDownloadingModels" class="empty-state">
+    <div v-if="isGlobalAnalyzing" class="empty-state">
       <div class="empty-icon spinning"><Loader2 :size="56" class="spin-icon" style="color: var(--ct-color-primary);" /></div>
-      <p>{{ isDownloadingModels ? '正在下载分析模型，请耐心等待...' : '正在分析中，请耐心等待...' }}</p>
-      <p class="empty-hint" style="display: inline-flex; align-items: center; gap: 6px;"><Lightbulb :size="14" style="color: var(--ct-color-info); flex-shrink: 0;" /> {{ isDownloadingModels ? '模型下载完成后会自动继续分析流程' : '我们正在处理特征提取和模型推理' }}</p>
+      <p>正在分析中，请耐心等待...</p>
+      <p class="empty-hint" style="display: inline-flex; align-items: center; gap: 6px;"><Lightbulb :size="14" style="color: var(--ct-color-info); flex-shrink: 0;" /> 我们正在处理特征提取和模型推理</p>
     </div>
 
-    <div v-if="hasFeatures && !isGlobalAnalyzing && !isDownloadingModels" class="features-layout">
+    <div v-if="hasFeatures && !isGlobalAnalyzing" class="features-layout">
       <!-- Row 1: 4 small stat cards -->
       <div class="features-row-1">
         <CtCard class="feature-stat-card">
@@ -718,7 +717,6 @@ const showPortraitDialog = ref(false)
         const isStopping = ref(false)
         const activeTimer = ref<any>(null)
         const viewEpoch = ref(0)                 // 视图代数：切换联系人时递增，丢弃过期异步结果（F1）
-        const modelDownloadTimer = ref<any>(null) // 模型下载轮询句柄（F2：卸载时清理）
 
         // ===== 进行中分析的跨页面恢复（切走再回来接续进度而非重新分析） =====
         const ANALYSIS_RESUME_KEY = 'chrono_analytics_active_analysis'
@@ -739,10 +737,6 @@ const showPortraitDialog = ref(false)
         }
         const globalProgressPercent = ref(0)
         const globalProgressStep = ref('')
-        const isDownloadingModels = ref(false)
-        const modelDownloadProgress = ref(0)
-        const modelDownloadStep = ref('')
-        const modelDownloadTaskId = ref<string | null>(null)
         const analysisDeviceMode = ref<AnalysisDeviceMode>('auto')
         const gpuMode = ref<'gpu' | 'cpu'>('cpu')
 
@@ -964,9 +958,14 @@ const showPortraitDialog = ref(false)
             return hasResponseTimes || hasInitiative || hasWordCounts || hasActivity
         }
 
+        // 设备向导是否已答过（区分「从未问过」与「用户在设置里明确选了自动」——
+        // 后者不应被向导反复打扰或覆盖）
+        const deviceWizardShown = ref(false)
+
         async function loadAnalysisDeviceMode() {
             try {
                 const settings = await api.get_settings()
+                deviceWizardShown.value = Boolean(settings?.analysis_device_wizard_shown)
                 const nextMode = settings?.analysis_device_mode
                 applyAnalysisDeviceMode(nextMode === 'gpu' || nextMode === 'cpu' || nextMode === 'auto' ? nextMode : 'auto')
             } catch (e) {
@@ -1312,7 +1311,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
                 return
             }
 
-            if (!hasPersistedAnalysisDeviceMode(analysisDeviceMode.value)) {
+            if (!hasPersistedAnalysisDeviceMode(analysisDeviceMode.value) && !deviceWizardShown.value) {
                 // 一次性设备选择向导：仅在「确有 GPU 加速可决策」时弹窗；
                 // 无卡/通道不可用时静默走 auto 语义（后端自动回退 CPU）——
                 // 不弹无选择余地的告知框，也不把 cpu 落库覆盖用户的 auto 选择
@@ -1334,8 +1333,12 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
                                 '提示：此选项可随时在「设置 → 分析计算设备」卡片修改。'
                         })
                         const nextMode: AnalysisDeviceMode = useGpu ? 'gpu' : 'cpu'
-                        await api.set_settings({ analysis_device_mode: nextMode })
+                        // 答「否」同样落 cpu：用户刚明确表达不用 GPU，若保持
+                        // auto 后端仍会自动启用 GPU，违背其意愿；向导一次性，
+                        // 之后改选走设置卡片
+                        await api.set_settings({ analysis_device_mode: nextMode, analysis_device_wizard_shown: true })
                         applyAnalysisDeviceMode(nextMode)
+                        deviceWizardShown.value = true
                     }
                     // 无 GPU / 通道不可用：保持 auto（本次分析后端自动用 CPU），
                     // 设备状态在设置页「分析计算设备」卡片随时可见
@@ -1780,7 +1783,6 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
             window.removeEventListener('resize', handleResize)
             window.removeEventListener('chrono:wechat-account-changed', handleAccountChanged)
             if (activeTimer.value) { clearInterval(activeTimer.value); activeTimer.value = null } // F2：卸载时停止分析轮询
-            if (modelDownloadTimer.value) { clearInterval(modelDownloadTimer.value); modelDownloadTimer.value = null } // F2
             responseTimeChartInstance?.dispose(); activityCalendarChartInstance?.dispose(); wordCountChartInstance?.dispose()
         })
 
@@ -1793,7 +1795,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
         return {
             currentTab, conversations, selectedConversationId, dates, loading, loadingSessions, error, analysis, subject, sessions,
             personaProfile, loadingPersonaProfile, personaProfileMeta,
-            analysisResult, displayScore, showKeywordsDialog, showContextForm, showPortraitDialog, handlePortraitGenerated, isGlobalAnalyzing, isStopping, activeTimer, handleStopAnalysis, globalProgressPercent, globalProgressStep, isDownloadingModels, modelDownloadProgress, modelDownloadStep, modelDownloadTaskId, gpuMode,
+            analysisResult, displayScore, showKeywordsDialog, showContextForm, showPortraitDialog, handlePortraitGenerated, isGlobalAnalyzing, isStopping, activeTimer, handleStopAnalysis, globalProgressPercent, globalProgressStep, gpuMode,
             hasConversations, hasFeatures, hasCachedAffinityAnalysis, featureStats, responseTimeStats, initiativeStats, wordCountsStats, displayWordRatioLabel, activityCalendar,
             responseTimeChart, activityCalendarChart, wordCountChart, stats, currentContactName, headerAvatarSrc, hasPreferenceKeywords, allDimensions, emotionalResonanceDisplaySubScores,
             currentRangeLabel, hasContentAnalysis, circumference, strokeDashoffset, formatNumber, formatTime, getResponseTimeLabel, getMergedResponseTimeLabel, getResponseTimePercent, onConversationChange, onDatesChange, handleExport, handleStartGlobalAnalysis, handleContextSaved, handleKeywordsUpdated, llmEvidenceNotes,

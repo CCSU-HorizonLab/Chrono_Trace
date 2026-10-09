@@ -840,6 +840,9 @@ async function onSave() {
       // 修复：这两键此前缺失——开关能操作、界面显示"已保存"但从不落库，重启即丢
       close_button_behavior: form.close_button_behavior,
       llm_fast_suggestion_mode: form.llm_fast_suggestion_mode,
+      // 到过设置页即视为设备模式已知情：分析页的一次性向导不再打扰
+      // （含明确选择「自动」的用户——向导不应覆盖其选择）
+      analysis_device_wizard_shown: true,
       analysis_device_mode: form.analysis_device_mode,
       model_root_dir: form.model_root_dir.trim() || defaultModelRootDir.value.trim(),
       rag_enabled: form.rag_enabled,

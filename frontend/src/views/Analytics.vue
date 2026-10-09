@@ -1257,87 +1257,23 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
                 .join('\n')
         }
 
-        async function waitForModelDownload(taskId: string): Promise<boolean> {
-            modelDownloadTaskId.value = taskId
-            return new Promise((resolve, reject) => {
-                let timer: any = null
-                timer = setInterval(async () => {
-                    modelDownloadTimer.value = timer // 记录句柄供组件卸载时清理（F2）
-                    try {
-                        const prog = await api.get_model_download_progress(taskId)
-                        if (!prog.ok) {
-                            clearInterval(timer)
-                            reject(new Error(prog.error_detail || prog.error || '模型下载失败'))
-                            return
-                        }
-                        modelDownloadProgress.value = Number(prog.overall_progress || 0)
-                        modelDownloadStep.value = prog.current_step || '正在下载模型...'
-                        globalProgressPercent.value = modelDownloadProgress.value
-                        globalProgressStep.value = `[模型下载] ${modelDownloadStep.value}`
-
-                        if (prog.status === 'completed') {
-                            clearInterval(timer)
-                            resolve(true)
-                        } else if (prog.status === 'failed') {
-                            clearInterval(timer)
-                            reject(new Error(prog.error_detail || prog.error || '模型下载失败'))
-                        }
-                    } catch (error: any) {
-                        clearInterval(timer)
-                        reject(error)
-                    }
-                }, 1000)
-            })
-        }
-
         async function ensureAnalysisModelsReady(modelStatus: any): Promise<boolean> {
             if (modelStatus?.ok && modelStatus?.analysis_available) return true
 
+            // 打包版模型内置、此处恒短路放行；仅开发模式缺 ONNX 产物时走到这里。
+            // 后端 ONNX 单后端把缺失项全部标 can_auto_download=False（运行时无
+            // 导出能力，下载源模型无意义），因此不设自动下载确认弹窗——直接
+            // 给出导出脚本指引
             const detailLines = buildModelStatusMessage(modelStatus)
-            const details = Array.isArray(modelStatus?.missing_details) ? modelStatus.missing_details : []
-            const canAutoDownload = details.length > 0 && details.every((d: any) => d.can_auto_download !== false)
-
-            if (!canAutoDownload) {
-                await showDialog({
-                    title: '缺少分析模型',
-                    message:
-                        `以下模型不可用且无法自动下载:\n${detailLines}\n\n` +
-                        '请先检查 ModelScope 依赖和本地模型文件。'
-                })
-                return false
-            }
-
-            const doDownload = await showConfirm({
+            await showDialog({
                 title: '缺少分析模型',
                 message:
                     `检测到以下模型不可用:\n${detailLines}\n\n` +
-                    '是否从 ModelScope 自动下载缺失的模型？\n' +
-                    '（下载大小约 400MB，需要网络连接）'
+                    '（推理为 ONNX 单后端，安装包内置模型开箱即用；开发环境请运行 ' +
+                    'python backend/scripts/ensure_models_for_export.py --with-export ' +
+                    '下载源模型并生成 ONNX 产物）'
             })
-            if (!doDownload) {
-                return false
-            }
-
-            const downloadRes = await api.download_analysis_models()
-            if (!downloadRes.ok) {
-                throw new Error(downloadRes.error_detail || downloadRes.error || '无法启动模型下载')
-            }
-            if (!downloadRes.task_id) {
-                return true
-            }
-
-            isDownloadingModels.value = true
-            modelDownloadProgress.value = 0
-            modelDownloadStep.value = '正在准备下载模型...'
-            globalProgressPercent.value = 0
-            globalProgressStep.value = '[模型下载] 正在准备下载模型...'
-
-            try {
-                await waitForModelDownload(downloadRes.task_id)
-                return true
-            } finally {
-                isDownloadingModels.value = false
-            }
+            return false
         }
 
         const handleStartGlobalAnalysis = async () => {
@@ -1388,47 +1324,28 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
                         title: 'GPU 加速可用',
                         message:
                             `检测到 GPU: ${gpuStatus.gpu_name}${memInfo}\n` +
-                            `CUDA ${gpuStatus.cuda_version} | PyTorch ${gpuStatus.torch_version}\n\n` +
+                            `加速通道: ${gpuStatus.accelerator_label || gpuStatus.cuda_version} | ${gpuStatus.torch_version}\n\n` +
                             '启用 GPU 加速后，分析速度预计可提升 5-10 倍。\n是否启用 GPU 加速？\n\n' +
-                            '提示：此选项可随时在「通用设置」页面修改。'
+                            '提示：此选项可随时在「设置 → 分析计算设备」卡片修改。'
                     })
                     const nextMode: AnalysisDeviceMode = useGpu ? 'gpu' : 'cpu'
                     await api.set_settings({ analysis_device_mode: nextMode })
                     applyAnalysisDeviceMode(nextMode)
                 } else if (gpuStatus.ok && gpuStatus.has_nvidia_gpu) {
-                    const doInstall = await showConfirm({
-                        title: '检测到 GPU 硬件',
+                    await showDialog({
+                        title: 'GPU 加速通道不可用',
                         message:
-                            '检测到您的计算机配备了 NVIDIA GPU，但当前应用还没有可用的 CUDA 运行时。\n\n' +
-                            '是否现在进行【一键配置】？这将下载独立的 GPU 运行时并在后台完成配置，通常需要几分钟。'
+                            '检测到 NVIDIA 显卡，但 GPU 加速通道未能就绪（可能是显卡驱动过旧或系统组件异常）。\n' +
+                            '本次将使用 CPU 模式进行分析；更新显卡驱动后可在「设置 → 分析计算设备」重新选择。'
                     })
-                    if (doInstall) {
-                        try {
-                            const installRes = await api.start_gpu_install()
-                            if (installRes.ok) {
-                                await showDialog({
-                                    title: '开始配置',
-                                    message: 'GPU 运行时配置已在后台启动，您可以随时前往「通用设置」页面查看实时安装进度。\n本次分析将暂时使用 CPU 模式进行，安装完成并重启应用后即可使用 GPU 加速。'
-                                })
-                            } else {
-                                await showDialog({ title: '安装启动失败', message: installRes.error || '未知错误' })
-                            }
-                        } catch(e) {}
-                    } else {
-                        await showDialog({
-                            title: 'CPU 模式',
-                            message: '将使用 CPU 模式进行分析。'
-                        })
-                    }
                     await api.set_settings({ analysis_device_mode: 'cpu' })
                     applyAnalysisDeviceMode('cpu')
                 } else {
                     await showDialog({
                         title: 'CPU 模式',
                         message:
-                            'GPU 加速不可用，将使用 CPU 模式进行分析。\n' +
-                            '如需启用 GPU，请安装支持 CUDA 的 PyTorch 版本。\n\n' +
-                            '提示：此选项可随时在「通用设置」页面修改。'
+                            'GPU 加速不可用，将使用 CPU 模式进行分析。\n\n' +
+                            '提示：此选项可随时在「设置 → 分析计算设备」卡片修改。'
                     })
                     await api.set_settings({ analysis_device_mode: 'cpu' })
                     applyAnalysisDeviceMode('cpu')

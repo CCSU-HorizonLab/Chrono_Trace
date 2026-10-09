@@ -197,8 +197,7 @@ Beta 1.1 集中落地的记忆子系统，按联系人维护可追溯的长期�
 │ Python Services             │
 │ ├─ analysis/   历史分析      │
 │ ├─ realtime/   实时监听+RAG  │
-│ ├─ wechat/     数据导入      │
-│ └─ gpu/        GPU runtime  │
+│ └─ wechat/     数据导入      │
 └──────────┬──────────────────┘
            │
 ┌──────────▼──────────────────┐
@@ -218,7 +217,6 @@ backend/
       analysis/      # 历史分析、好感度分析
       realtime/      # 实时监听、情绪分析、AI 建议、联系人记忆（rag_*）
       wechat/        # 微信数据库扫描、解密、导入（含 V3/V4 适配层）
-      gpu/           # CPU 安装包的 GPU runtime 下载
     webview/         # 前后端桥接
   scripts/           # 评测、回放、维护脚本
   tests/             # 后端测试
@@ -409,14 +407,6 @@ packaging\build_release.ps1
 
 仓库会自动复用或初始化 `.venv-packaging` 作为打包专用环境，减少系统 Python 杂项依赖对 PyInstaller 的影响。
 
-可选打包变体：
-
-```powershell
-.\build_release.ps1 -Variant cpu
-.\build_release.ps1 -Variant gpu
-.\build_release.ps1 -Variant both
-```
-
 生产环境测试回归推荐使用快速模式：
 
 ```powershell
@@ -427,14 +417,12 @@ packaging\build_release.ps1
 
 ```powershell
 .\build_release.ps1 -Fast -IncludeInstaller
-.\build_release.ps1 -Fast -Variant both -IncludeInstaller
 ```
 
 打包产物位置：
 
 ```text
 release\pyinstaller\ChronoTrace\
-release\pyinstaller-gpu\ChronoTrace\
 release\installer\
 ```
 
@@ -442,14 +430,11 @@ release\installer\
 
 ```text
 release\installer\ChronoTraceSetup-版本号.exe
-release\installer\ChronoTraceSetup-版本号-GPU.exe
 ```
 
 说明：
 
-- `CPU` 安装包默认内置 CPU 版 PyTorch
-- `GPU` 安装包在构建时直接带入 CUDA 版 PyTorch
-- `CPU` 包内如果检测到 NVIDIA GPU，可额外下载独立 GPU runtime 到 `%LOCALAPPDATA%\ChronoTrace\runtime\gpu`，重启应用后生效
+- 单一安装包：推理栈为 ONNX Runtime（DirectML），免 CUDA 免 PyTorch——有 N/AMD 显卡自动启用 GPU 加速，无显卡回退 CPU，无需任何运行时下载或配置
 
 ### Linux 打包与使用
 

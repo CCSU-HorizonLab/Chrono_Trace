@@ -657,9 +657,6 @@ const gpuInfo = reactive<{
   cuda_version: string | null
   gpu_memory_total_mb: number
   gpu_memory_free_mb: number
-  gpu_overlay_installed: boolean
-  gpu_overlay_torch_version: string | null
-  gpu_overlay_cuda_version: string | null
   restart_required: boolean
 }>({
   cuda_available: false,
@@ -672,61 +669,9 @@ const gpuInfo = reactive<{
   cuda_version: null,
   gpu_memory_total_mb: 0,
   gpu_memory_free_mb: 0,
-  gpu_overlay_installed: false,
-  gpu_overlay_torch_version: null,
-  gpu_overlay_cuda_version: null,
   restart_required: false,
 })
 
-const installStatus = ref('idle')
-const installProgress = ref(0)
-const installMessage = ref('')
-const installError = ref('')
-let installTimer: number | null = null
-
-async function startGpuInstall() {
-  try {
-    installStatus.value = 'starting...'
-    installProgress.value = 0
-    installMessage.value = '正在请求安装...'
-    installError.value = ''
-    
-    await bridgeReady()
-    const res = await api.start_gpu_install()
-    if (!res.ok) {
-      installError.value = res.error || '请求失败'
-      installStatus.value = 'idle'
-      return
-    }
-    
-    installTimer = window.setInterval(pollGpuInstall, 1000)
-  } catch (e: any) {
-    installError.value = e.message || '系统异常'
-    installStatus.value = 'idle'
-  }
-}
-
-async function pollGpuInstall() {
-  try {
-    const res = await api.get_gpu_install_progress()
-    if (res.ok) {
-      installStatus.value = res.status
-      installProgress.value = res.progress_percent || 0
-      installMessage.value = res.message || ''
-      if (res.status === 'completed' || res.status === 'failed') {
-        if (installTimer) clearInterval(installTimer)
-        if (res.status === 'completed') {
-          showDialog('GPU 运行时安装成功。为保证生效，需要重启应用程序。')
-          loadGpuInfo()
-        } else {
-          installError.value = res.error || '安装失败未知原因'
-        }
-      }
-    }
-  } catch (e) {
-    console.error('Polling error', e)
-  }
-}
 
 const gpuInfoLoading = ref(false)
 
@@ -746,9 +691,6 @@ async function loadGpuInfo() {
       gpuInfo.cuda_version = status.cuda_version ?? null
       gpuInfo.gpu_memory_total_mb = status.gpu_memory_total_mb ?? 0
       gpuInfo.gpu_memory_free_mb = status.gpu_memory_free_mb ?? 0
-      gpuInfo.gpu_overlay_installed = Boolean(status.gpu_overlay_installed)
-      gpuInfo.gpu_overlay_torch_version = status.gpu_overlay_torch_version ?? null
-      gpuInfo.gpu_overlay_cuda_version = status.gpu_overlay_cuda_version ?? null
       gpuInfo.restart_required = Boolean(status.restart_required)
     }
   } catch (e) {
@@ -1362,7 +1304,6 @@ onUnmounted(() => {
   void flushPendingSave()
   document.removeEventListener('click', handleDropdownClickOutside)
   window.removeEventListener('chrono:wechat-account-changed', handleGlobalAccountChanged)
-  if (installTimer) { clearInterval(installTimer); installTimer = null } // F7：卸载时停止 GPU 安装轮询
 })
 
 const modelIdPlaceholder = computed(() => {

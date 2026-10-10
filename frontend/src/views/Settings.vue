@@ -124,7 +124,7 @@
             <CtField 
               v-model="form.wechat_db_key" 
               type="password"
-              placeholder="输入64位hex密钥 (可保存以便下次使用)" 
+              placeholder="输入 64 位十六进制密钥（可保存以便下次使用）" 
             />
           </label>
 
@@ -384,7 +384,7 @@
               </div>
               <div class="gpu-status-row">
                 <span class="gpu-label">加速通道</span>
-                <span class="gpu-value">{{ gpuInfo.accelerator_label || (gpuInfo.directml_available ? 'DirectML (Windows 原生 GPU)' : gpuInfo.cuda_available ? 'CUDA' : 'CPUExecutionProvider') }}</span>
+                <span class="gpu-value">{{ gpuInfo.accelerator_label || (gpuInfo.directml_available ? 'DirectML (Windows 原生 GPU)' : gpuInfo.cuda_available ? 'CUDA' : 'CPU（多核推理）') }}</span>
               </div>
               <div v-if="gpuInfo.gpu_name || gpuInfo.directml_available" class="gpu-status-row">
                 <span class="gpu-label">显卡设备</span>
@@ -657,9 +657,6 @@ const gpuInfo = reactive<{
   cuda_version: string | null
   gpu_memory_total_mb: number
   gpu_memory_free_mb: number
-  gpu_overlay_installed: boolean
-  gpu_overlay_torch_version: string | null
-  gpu_overlay_cuda_version: string | null
   restart_required: boolean
 }>({
   cuda_available: false,
@@ -672,61 +669,9 @@ const gpuInfo = reactive<{
   cuda_version: null,
   gpu_memory_total_mb: 0,
   gpu_memory_free_mb: 0,
-  gpu_overlay_installed: false,
-  gpu_overlay_torch_version: null,
-  gpu_overlay_cuda_version: null,
   restart_required: false,
 })
 
-const installStatus = ref('idle')
-const installProgress = ref(0)
-const installMessage = ref('')
-const installError = ref('')
-let installTimer: number | null = null
-
-async function startGpuInstall() {
-  try {
-    installStatus.value = 'starting...'
-    installProgress.value = 0
-    installMessage.value = '正在请求安装...'
-    installError.value = ''
-    
-    await bridgeReady()
-    const res = await api.start_gpu_install()
-    if (!res.ok) {
-      installError.value = res.error || '请求失败'
-      installStatus.value = 'idle'
-      return
-    }
-    
-    installTimer = window.setInterval(pollGpuInstall, 1000)
-  } catch (e: any) {
-    installError.value = e.message || '系统异常'
-    installStatus.value = 'idle'
-  }
-}
-
-async function pollGpuInstall() {
-  try {
-    const res = await api.get_gpu_install_progress()
-    if (res.ok) {
-      installStatus.value = res.status
-      installProgress.value = res.progress_percent || 0
-      installMessage.value = res.message || ''
-      if (res.status === 'completed' || res.status === 'failed') {
-        if (installTimer) clearInterval(installTimer)
-        if (res.status === 'completed') {
-          showDialog('GPU 运行时安装成功。为保证生效，需要重启应用程序。')
-          loadGpuInfo()
-        } else {
-          installError.value = res.error || '安装失败未知原因'
-        }
-      }
-    }
-  } catch (e) {
-    console.error('Polling error', e)
-  }
-}
 
 const gpuInfoLoading = ref(false)
 
@@ -746,9 +691,6 @@ async function loadGpuInfo() {
       gpuInfo.cuda_version = status.cuda_version ?? null
       gpuInfo.gpu_memory_total_mb = status.gpu_memory_total_mb ?? 0
       gpuInfo.gpu_memory_free_mb = status.gpu_memory_free_mb ?? 0
-      gpuInfo.gpu_overlay_installed = Boolean(status.gpu_overlay_installed)
-      gpuInfo.gpu_overlay_torch_version = status.gpu_overlay_torch_version ?? null
-      gpuInfo.gpu_overlay_cuda_version = status.gpu_overlay_cuda_version ?? null
       gpuInfo.restart_required = Boolean(status.restart_required)
     }
   } catch (e) {
@@ -895,6 +837,12 @@ async function onSave() {
       wechat_use_custom_path: form.wechat_use_custom_path,
       wechat_accounts: wechatAccounts.value,
       wechat_active_account_wxid: activeAccountWxid.value,
+      // 修复：这两键此前缺失——开关能操作、界面显示"已保存"但从不落库，重启即丢
+      close_button_behavior: form.close_button_behavior,
+      llm_fast_suggestion_mode: form.llm_fast_suggestion_mode,
+      // 到过设置页即视为设备模式已知情：分析页的一次性向导不再打扰
+      // （含明确选择「自动」的用户——向导不应覆盖其选择）
+      analysis_device_wizard_shown: true,
       analysis_device_mode: form.analysis_device_mode,
       model_root_dir: form.model_root_dir.trim() || defaultModelRootDir.value.trim(),
       rag_enabled: form.rag_enabled,
@@ -1362,7 +1310,6 @@ onUnmounted(() => {
   void flushPendingSave()
   document.removeEventListener('click', handleDropdownClickOutside)
   window.removeEventListener('chrono:wechat-account-changed', handleGlobalAccountChanged)
-  if (installTimer) { clearInterval(installTimer); installTimer = null } // F7：卸载时停止 GPU 安装轮询
 })
 
 const modelIdPlaceholder = computed(() => {

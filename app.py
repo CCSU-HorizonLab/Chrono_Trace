@@ -1,8 +1,4 @@
 import os
-os.environ["TORCH_COMPILE_DISABLE"] = "1"
-from backend.app.runtime_overrides import activate_gpu_overlay_path
-
-activate_gpu_overlay_path()
 
 import webview
 import logging
@@ -32,6 +28,12 @@ def main():
     attach_close_guard(window, bridge)
 
     webview.start(func=on_started)
+
+    # Qt 后端退出清理：先析构 WebEnginePage 再放 profile，消除
+    # "Release of profile requested but WebEnginePage still not deleted" 告警
+    from backend.app.webview.qt_teardown import shutdown_qt_webengine_cleanly
+
+    shutdown_qt_webengine_cleanly()
 
 
 if __name__ == '__main__':

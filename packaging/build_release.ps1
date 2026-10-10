@@ -43,7 +43,6 @@ function Resolve-ScriptArguments {
         SkipInstallerExplicit = $false
         SkipFrontendInstall = $false
         SkipFrontendInstallExplicit = $false
-        Variant = "cpu"
         Version = ""
     }
 
@@ -58,12 +57,6 @@ function Resolve-ScriptArguments {
             "-RefreshPackagingEnv" { $state.RefreshPackagingEnv = $true; continue }
             "-SkipInstaller" { $state.SkipInstaller = $true; $state.SkipInstallerExplicit = $true; continue }
             "-SkipFrontendInstall" { $state.SkipFrontendInstall = $true; $state.SkipFrontendInstallExplicit = $true; continue }
-            "-Variant" {
-                if ($i + 1 -ge $tokens.Count) { throw "Missing value for -Variant" }
-                $i++
-                $state.Variant = [string]$tokens[$i]
-                continue
-            }
             "-Version" {
                 if ($i + 1 -ge $tokens.Count) { throw "Missing value for -Version" }
                 $i++
@@ -78,10 +71,6 @@ function Resolve-ScriptArguments {
                 throw "Unrecognized argument: $token"
             }
         }
-    }
-
-    if ($state.Variant -notin @("cpu", "gpu", "both")) {
-        throw "Invalid -Variant value: $($state.Variant)"
     }
 
     return $state
@@ -134,41 +123,18 @@ function Get-ProjectVersion {
     return "0.1.0"
 }
 
-function Get-VariantList {
-    param([string]$RequestedVariant)
-
-    if ($RequestedVariant -eq "both") {
-        return @("cpu", "gpu")
-    }
-    return @($RequestedVariant)
-}
-
-function Get-VariantSettings {
-    param([string]$TargetVariant)
-
-    if ($TargetVariant -eq "gpu") {
-        return [ordered]@{
-            Variant = "gpu"
-            VariantLabel = "GPU"
-            PackagingVenvDir = Join-Path $ProjectRoot ".venv-packaging-gpu"
-            PackagingPython = Join-Path $ProjectRoot ".venv-packaging-gpu\Scripts\python.exe"
-            BuildRoot = Join-Path $ReleaseRoot "build-gpu"
-            DistRoot = Join-Path $ReleaseRoot "pyinstaller-gpu"
-            AppDistDir = Join-Path $ReleaseRoot "pyinstaller-gpu\ChronoTrace"
-            InstallerSuffix = "-GPU"
-        }
-    }
-
-    return [ordered]@{
-        Variant = "cpu"
-        VariantLabel = "CPU"
-        PackagingVenvDir = Join-Path $ProjectRoot ".venv-packaging"
-        PackagingPython = Join-Path $ProjectRoot ".venv-packaging\Scripts\python.exe"
-        BuildRoot = Join-Path $ReleaseRoot "build"
-        DistRoot = Join-Path $ReleaseRoot "pyinstaller"
-        AppDistDir = Join-Path $ReleaseRoot "pyinstaller\ChronoTrace"
-        InstallerSuffix = ""
-    }
+# 单变体：ONNX/DirectML 免 CUDA 免 torch，一个包通吃 CPU/GPU——
+# torch 时代的 cpu/gpu 双变体已移除（GPU 变体的差异化步骤本就因 requirements
+# 无 torch pin 而永不执行，产物与 CPU 变体完全相同）
+$PackagingSettings = [ordered]@{
+    Variant = "windows"
+    VariantLabel = "Windows"
+    PackagingVenvDir = Join-Path $ProjectRoot ".venv-packaging"
+    PackagingPython = Join-Path $ProjectRoot ".venv-packaging\Scripts\python.exe"
+    BuildRoot = Join-Path $ReleaseRoot "build"
+    DistRoot = Join-Path $ReleaseRoot "pyinstaller"
+    AppDistDir = Join-Path $ReleaseRoot "pyinstaller\ChronoTrace"
+    InstallerSuffix = ""
 }
 
 function Write-BuildInfo {
@@ -192,7 +158,7 @@ if (-not (Test-Path -LiteralPath $PackagingEnvScript)) {
 }
 
 $resolvedArgs = Resolve-ScriptArguments
-$variantList = Get-VariantList -RequestedVariant $resolvedArgs.Variant
+
 
 $effectiveSkipFrontendInstall = [bool]$resolvedArgs.SkipFrontendInstall
 $effectiveSkipInstaller = [bool]$resolvedArgs.SkipInstaller
@@ -213,28 +179,22 @@ if ($resolvedArgs.Fast) {
 }
 
 Write-Host "==> Build mode: $buildMode" -ForegroundColor Cyan
-Write-Host "Variants: $($variantList -join ', ')"
 Write-Host "PyInstaller clean: $cleanBuild"
 Write-Host "Generate installer: $(-not $effectiveSkipInstaller)"
 Write-Host "Skip frontend install: $effectiveSkipFrontendInstall"
 Write-Host ""
 
-foreach ($targetVariant in $variantList) {
-    if ($resolvedArgs.RefreshPackagingEnv) {
-        & $PackagingEnvScript -Variant $targetVariant -ForceReinstall
-    } else {
-        & $PackagingEnvScript -Variant $targetVariant
-    }
-    Assert-LastExitCode "Packaging environment setup ($targetVariant)"
+if ($resolvedArgs.RefreshPackagingEnv) {
+    & $PackagingEnvScript -ForceReinstall
+} else {
+    & $PackagingEnvScript
 }
+Assert-LastExitCode "Packaging environment setup"
 
 if ($resolvedArgs.BootstrapPackagingEnv) {
     Write-Host ""
     Write-Host "Packaging environment is ready." -ForegroundColor Green
-    foreach ($targetVariant in $variantList) {
-        $settings = Get-VariantSettings -TargetVariant $targetVariant
-        Write-Host "Variant $targetVariant -> $($settings.PackagingPython)"
-    }
+    Write-Host "Packaging Python: $($PackagingSettings.PackagingPython)"
     return
 }
 
@@ -288,76 +248,75 @@ Ensure-OnnxModels
 
 $results = @()
 
-foreach ($targetVariant in $variantList) {
-    $settings = Get-VariantSettings -TargetVariant $targetVariant
-    Write-Host ""
-    Write-Host "==> Packaging variant: $($settings.VariantLabel)" -ForegroundColor Cyan
-    Write-Host "Packaging Python: $($settings.PackagingPython)"
-    Write-Host "Packaging venv: $($settings.PackagingVenvDir)"
+$targetVariant = $PackagingSettings.Variant
+$settings = $PackagingSettings
+Write-Host ""
+Write-Host "==> Packaging variant: $($settings.VariantLabel)" -ForegroundColor Cyan
+Write-Host "Packaging Python: $($settings.PackagingPython)"
+Write-Host "Packaging venv: $($settings.PackagingVenvDir)"
 
-    if (-not (Test-Path -LiteralPath $settings.PackagingPython)) {
-        throw "Packaging Python not found: $($settings.PackagingPython)"
+if (-not (Test-Path -LiteralPath $settings.PackagingPython)) {
+    throw "Packaging Python not found: $($settings.PackagingPython)"
+}
+
+Write-BuildInfo -TargetVariant $targetVariant -BuildMode $buildMode
+
+New-Item -ItemType Directory -Path $ReleaseRoot -Force | Out-Null
+if ($cleanBuild) {
+    if (Test-Path -LiteralPath $settings.BuildRoot) {
+        Remove-Item -LiteralPath $settings.BuildRoot -Recurse -Force
+    }
+    if (Test-Path -LiteralPath $settings.DistRoot) {
+        Remove-Item -LiteralPath $settings.DistRoot -Recurse -Force
+    }
+}
+New-Item -ItemType Directory -Path $settings.BuildRoot -Force | Out-Null
+New-Item -ItemType Directory -Path $settings.DistRoot -Force | Out-Null
+
+Write-Host "==> PyInstaller build ($targetVariant)" -ForegroundColor Cyan
+$pyInstallerArgs = @(
+    "-m",
+    "PyInstaller",
+    "--noconfirm",
+    "--workpath",
+    $settings.BuildRoot,
+    "--distpath",
+    $settings.DistRoot
+)
+if ($cleanBuild) {
+    $pyInstallerArgs += "--clean"
+}
+$pyInstallerArgs += $SpecPath
+& $settings.PackagingPython @pyInstallerArgs
+Assert-LastExitCode "PyInstaller build ($targetVariant)"
+
+if (-not (Test-Path -LiteralPath $settings.AppDistDir)) {
+    throw "PyInstaller output not found: $($settings.AppDistDir)"
+}
+
+if (-not $effectiveSkipInstaller) {
+    Write-Host "==> Inno Setup build ($targetVariant)" -ForegroundColor Cyan
+    $iscc = Resolve-IsccPath
+    if (-not $iscc) {
+        throw "ISCC.exe not found. Install Inno Setup 6 first."
     }
 
-    Write-BuildInfo -TargetVariant $targetVariant -BuildMode $buildMode
-
-    New-Item -ItemType Directory -Path $ReleaseRoot -Force | Out-Null
-    if ($cleanBuild) {
-        if (Test-Path -LiteralPath $settings.BuildRoot) {
-            Remove-Item -LiteralPath $settings.BuildRoot -Recurse -Force
-        }
-        if (Test-Path -LiteralPath $settings.DistRoot) {
-            Remove-Item -LiteralPath $settings.DistRoot -Recurse -Force
-        }
-    }
-    New-Item -ItemType Directory -Path $settings.BuildRoot -Force | Out-Null
-    New-Item -ItemType Directory -Path $settings.DistRoot -Force | Out-Null
-
-    Write-Host "==> PyInstaller build ($targetVariant)" -ForegroundColor Cyan
-    $pyInstallerArgs = @(
-        "-m",
-        "PyInstaller",
-        "--noconfirm",
-        "--workpath",
-        $settings.BuildRoot,
-        "--distpath",
-        $settings.DistRoot
+    # File-name version must not contain spaces (display version unchanged)
+    $setupVersion = ($packageVersion -replace '[ /]', '-')
+    $installerArgs = @(
+        "/DBuildRoot=$($settings.AppDistDir)",
+        "/DProjectVersion=$packageVersion",
+        "/DSetupVersion=$setupVersion",
+        "/DInstallerSuffix=$($settings.InstallerSuffix)",
+        $InstallerScript
     )
-    if ($cleanBuild) {
-        $pyInstallerArgs += "--clean"
-    }
-    $pyInstallerArgs += $SpecPath
-    & $settings.PackagingPython @pyInstallerArgs
-    Assert-LastExitCode "PyInstaller build ($targetVariant)"
+    & $iscc @installerArgs
+    Assert-LastExitCode "Inno Setup build ($targetVariant)"
+}
 
-    if (-not (Test-Path -LiteralPath $settings.AppDistDir)) {
-        throw "PyInstaller output not found: $($settings.AppDistDir)"
-    }
-
-    if (-not $effectiveSkipInstaller) {
-        Write-Host "==> Inno Setup build ($targetVariant)" -ForegroundColor Cyan
-        $iscc = Resolve-IsccPath
-        if (-not $iscc) {
-            throw "ISCC.exe not found. Install Inno Setup 6 first."
-        }
-
-        # File-name version must not contain spaces (display version unchanged)
-        $setupVersion = ($packageVersion -replace '[ /]', '-')
-        $installerArgs = @(
-            "/DBuildRoot=$($settings.AppDistDir)",
-            "/DProjectVersion=$packageVersion",
-            "/DSetupVersion=$setupVersion",
-            "/DInstallerSuffix=$($settings.InstallerSuffix)",
-            $InstallerScript
-        )
-        & $iscc @installerArgs
-        Assert-LastExitCode "Inno Setup build ($targetVariant)"
-    }
-
-    $results += [pscustomobject]@{
-        Variant = $targetVariant
-        AppDistDir = $settings.AppDistDir
-    }
+$results += [pscustomobject]@{
+    Variant = $targetVariant
+    AppDistDir = $settings.AppDistDir
 }
 
 Write-Host ""

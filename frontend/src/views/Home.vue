@@ -299,7 +299,7 @@ import {
 import { bridgeReady, api } from '@/api/bridge'
 import { showConfirm, showDialog } from '@/utils/dialog'
 import CtAccountSelector from '@/components/base/CtAccountSelector.vue'
-import { clearWechatAccountProfileCache, enrichWechatAccountsWithProfiles } from '@/utils/wechatAccounts'
+import { clearWechatAccountProfileCache, enrichWechatAccountsWithProfiles, getWechatAccountDisplayName } from '@/utils/wechatAccounts'
 
 type ImportProgress = {
   status: string; percent: number
@@ -330,9 +330,7 @@ type WechatAccount = {
 }
 
 const wechatForm = reactive({
-  dbKey: '',
-  importContacts: true,
-  importMessages: true
+  dbKey: ''
 })
 
 const wechatErr = ref('')
@@ -1025,9 +1023,8 @@ async function startImport(autoFromCapture = false, forceFull = false) {
   try {
     await bridgeReady()
     importProgress.value = { status: '正在启动导入任务...', percent: 0, phase: 'resolving_paths' }
+    // import_contacts/import_messages 后端默认恒 True 且无界面开关，不再传（隐藏参数清理）
     const res = await api.import_wechat_data(wechatForm.dbKey, {
-      import_contacts: wechatForm.importContacts,
-      import_messages: wechatForm.importMessages,
       force_full: forceFull
     }, selectedWxid.value)
 
@@ -1131,7 +1128,8 @@ async function scanAndSetCustomPath(wechatDir: string) {
     pathInfo.value = newPathInfo
     customWechatDir.value = resolvedWechatDir
     await savePathsToSettings(newPathInfo, true)
-    wechatOk.value = `扫描成功，找到 ${scanResult.accounts.length} 个账号，当前使用 ${nextWxid}。`
+    const nextDisplayName = getWechatAccountDisplayName(resolvedAccount) || nextWxid
+    wechatOk.value = `扫描成功，找到 ${scanResult.accounts.length} 个账号，当前使用 ${nextDisplayName}。`
     addLog(wechatOk.value)
   } catch (error: any) {
     wechatErr.value = `扫描失败：${error?.message || '未知错误'}`

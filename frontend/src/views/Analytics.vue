@@ -19,10 +19,10 @@
       </div>
       
       <div class="header-actions-group">
-        <CtButton variant="ghost" @click="showContextForm = true" :disabled="isGlobalAnalyzing || isDownloadingModels">关系信息</CtButton>
-        <CtButton variant="ghost" @click="showKeywordsDialog = true" :disabled="isGlobalAnalyzing || isDownloadingModels">配置喜好</CtButton>
-        <CtButton variant="primary" @click="handleStartGlobalAnalysis" :loading="(isGlobalAnalyzing && !isStopping) || isDownloadingModels" :disabled="isDownloadingModels" class="btn-full-analysis">
-          {{ isDownloadingModels ? "下载模型中..." : (isGlobalAnalyzing ? "分析中..." : (hasCachedAffinityAnalysis ? "重新全面分析" : "开始全面分析")) }}
+        <CtButton variant="ghost" @click="showContextForm = true" :disabled="isGlobalAnalyzing">关系信息</CtButton>
+        <CtButton variant="ghost" @click="showKeywordsDialog = true" :disabled="isGlobalAnalyzing">配置喜好</CtButton>
+        <CtButton variant="primary" @click="handleStartGlobalAnalysis" :loading="isGlobalAnalyzing && !isStopping" class="btn-full-analysis">
+          {{ isGlobalAnalyzing ? "分析中..." : (hasCachedAffinityAnalysis ? "重新全面分析" : "开始全面分析") }}
         </CtButton>
         <CtButton v-if="isGlobalAnalyzing" variant="danger" @click="handleStopAnalysis" :loading="isStopping" class="btn-stop-analysis" style="margin-left: 8px;">
           停止
@@ -36,7 +36,7 @@
     <div class="page-empty-glow page-empty-glow-right"></div>
 
     <div class="page-empty-hero">
-      <div class="page-empty-badge">History Ready</div>
+      <div class="page-empty-badge">历史分析</div>
 
       <div class="page-empty-illustration" aria-hidden="true">
         <div class="empty-orb empty-orb-main"><FolderArchive :size="36" style="color: var(--ct-color-primary);" /></div>
@@ -71,13 +71,12 @@
   </div>
 
   <!-- Global Progress -->
-  <div v-if="isGlobalAnalyzing || isDownloadingModels" class="extraction-progress">
+  <div v-if="isGlobalAnalyzing" class="extraction-progress">
     <div class="progress-bar">
       <div class="progress-fill" :style="{ width: `${globalProgressPercent}%` }"></div>
     </div>
     <div class="progress-text">
-      <span v-if="isDownloadingModels" class="cpu-badge">模型下载</span>
-      <span v-else-if="gpuMode === 'gpu'" class="gpu-badge">GPU 加速</span>
+      <span v-if="gpuMode === 'gpu'" class="gpu-badge">GPU 加速</span>
       <span v-else class="cpu-badge">CPU 模式</span>
       {{ globalProgressPercent.toFixed(1) }}% - {{ globalProgressStep }}
     </div>
@@ -99,21 +98,27 @@
 
   <!-- TAB 1: Affinity -->
   <div v-show="currentTab === 'affinity' && selectedConversationId" class="tab-content fade-in">
-    <div v-if="!analysisResult && !isGlobalAnalyzing && !isDownloadingModels" class="empty-state">
+    <div v-if="!analysisResult && !isGlobalAnalyzing" class="empty-state">
       <div class="empty-icon"><BarChart3 :size="56" :stroke-width="1.5" style="color: var(--ct-color-primary);" /></div>
-      <p>请点击"开始全面分析"探索你们的亲密关系维度。</p>
-      <p class="empty-hint" style="display: inline-flex; align-items: center; gap: 6px;"><Lightbulb :size="14" style="color: var(--ct-color-info); flex-shrink: 0;" /> 首次分析需要1-2分钟进行数据特征提取和模型推理，请耐心等待</p>
+      <template v-if="analysisStaleNotice">
+        <p>该联系人的分析结果已因版本更新过期，需要重新分析。</p>
+        <p class="empty-hint" style="display: inline-flex; align-items: center; gap: 6px;"><Lightbulb :size="14" style="color: var(--ct-color-info); flex-shrink: 0;" /> 重新分析后历史趋势将恢复展示；分析口径升级期间分数出现变化属预期</p>
+      </template>
+      <template v-else>
+        <p>请点击"开始全面分析"探索你们的亲密关系维度。</p>
+        <p class="empty-hint" style="display: inline-flex; align-items: center; gap: 6px;"><Lightbulb :size="14" style="color: var(--ct-color-info); flex-shrink: 0;" /> 首次分析需要1-2分钟进行数据特征提取和模型推理，请耐心等待</p>
+      </template>
     </div>
 
     <!-- Analyzing State -->
-    <div v-if="isGlobalAnalyzing || isDownloadingModels" class="empty-state">
+    <div v-if="isGlobalAnalyzing" class="empty-state">
       <div class="empty-icon spinning"><Loader2 :size="56" class="spin-icon" style="color: var(--ct-color-primary);" /></div>
-      <p>{{ isDownloadingModels ? '正在下载分析模型，请耐心等待...' : '正在分析中，请耐心等待...' }}</p>
-      <p class="empty-hint" style="display: inline-flex; align-items: center; gap: 6px;"><Lightbulb :size="14" style="color: var(--ct-color-info); flex-shrink: 0;" /> {{ isDownloadingModels ? '模型下载完成后会自动继续分析流程' : '我们正在处理特征提取和模型推理' }}</p>
+      <p>正在分析中，请耐心等待...</p>
+      <p class="empty-hint" style="display: inline-flex; align-items: center; gap: 6px;"><Lightbulb :size="14" style="color: var(--ct-color-info); flex-shrink: 0;" /> 我们正在处理特征提取和模型推理</p>
     </div>
 
     <!-- Affinity Dashboard Two-Col Layout -->
-    <div v-if="analysisResult && !isGlobalAnalyzing && !isDownloadingModels" class="ct-grid-1-1 affinity-dashboard">
+    <div v-if="analysisResult && !isGlobalAnalyzing" class="ct-grid-1-1 affinity-dashboard">
       <!-- Left Column: Overview & Cards -->
       <div class="col-main">
         <div class="summary-row">
@@ -228,20 +233,20 @@
 
   <!-- TAB 2: Features -->
   <div v-show="currentTab === 'features' && selectedConversationId" class="tab-content fade-in">
-    <div v-if="!hasFeatures && !isGlobalAnalyzing && !isDownloadingModels" class="empty-state">
+    <div v-if="!hasFeatures && !isGlobalAnalyzing" class="empty-state">
       <div class="empty-icon"><TrendingUp :size="56" :stroke-width="1.5" style="color: var(--ct-color-primary);" /></div>
       <p>点击"开始全面分析"获取深度互动特征分析。</p>
       <p class="empty-hint" style="display: inline-flex; align-items: center; gap: 6px;"><Lightbulb :size="14" style="color: var(--ct-color-info); flex-shrink: 0;" /> 互动特征包含：回响响应分布、主动性分析、话语权比例等客观指标</p>
     </div>
 
     <!-- Analyzing State -->
-    <div v-if="isGlobalAnalyzing || isDownloadingModels" class="empty-state">
+    <div v-if="isGlobalAnalyzing" class="empty-state">
       <div class="empty-icon spinning"><Loader2 :size="56" class="spin-icon" style="color: var(--ct-color-primary);" /></div>
-      <p>{{ isDownloadingModels ? '正在下载分析模型，请耐心等待...' : '正在分析中，请耐心等待...' }}</p>
-      <p class="empty-hint" style="display: inline-flex; align-items: center; gap: 6px;"><Lightbulb :size="14" style="color: var(--ct-color-info); flex-shrink: 0;" /> {{ isDownloadingModels ? '模型下载完成后会自动继续分析流程' : '我们正在处理特征提取和模型推理' }}</p>
+      <p>正在分析中，请耐心等待...</p>
+      <p class="empty-hint" style="display: inline-flex; align-items: center; gap: 6px;"><Lightbulb :size="14" style="color: var(--ct-color-info); flex-shrink: 0;" /> 我们正在处理特征提取和模型推理</p>
     </div>
 
-    <div v-if="hasFeatures && !isGlobalAnalyzing && !isDownloadingModels" class="features-layout">
+    <div v-if="hasFeatures && !isGlobalAnalyzing" class="features-layout">
       <!-- Row 1: 4 small stat cards -->
       <div class="features-row-1">
         <CtCard class="feature-stat-card">
@@ -709,6 +714,9 @@ watch(selectedConversationId, (id) => {
         const stats = ref<{ totalMessages: number; avgSentiment: number; activeDays: number; sessionCount: number } | null>(null)
         
         const analysisResult = ref<AffinityAnalysisResult | null>(null)
+        // 曾分析过但当前结果不可用（缓存版本过期）——空态给"需重新分析"解释
+        // 而非伪装成从未分析
+        const analysisStaleNotice = ref(false)
         const displayScore = ref(0)
         const showKeywordsDialog = ref(false)
 const showPortraitDialog = ref(false)
@@ -718,7 +726,6 @@ const showPortraitDialog = ref(false)
         const isStopping = ref(false)
         const activeTimer = ref<any>(null)
         const viewEpoch = ref(0)                 // 视图代数：切换联系人时递增，丢弃过期异步结果（F1）
-        const modelDownloadTimer = ref<any>(null) // 模型下载轮询句柄（F2：卸载时清理）
 
         // ===== 进行中分析的跨页面恢复（切走再回来接续进度而非重新分析） =====
         const ANALYSIS_RESUME_KEY = 'chrono_analytics_active_analysis'
@@ -739,10 +746,6 @@ const showPortraitDialog = ref(false)
         }
         const globalProgressPercent = ref(0)
         const globalProgressStep = ref('')
-        const isDownloadingModels = ref(false)
-        const modelDownloadProgress = ref(0)
-        const modelDownloadStep = ref('')
-        const modelDownloadTaskId = ref<string | null>(null)
         const analysisDeviceMode = ref<AnalysisDeviceMode>('auto')
         const gpuMode = ref<'gpu' | 'cpu'>('cpu')
 
@@ -964,9 +967,14 @@ const showPortraitDialog = ref(false)
             return hasResponseTimes || hasInitiative || hasWordCounts || hasActivity
         }
 
+        // 设备向导是否已答过（区分「从未问过」与「用户在设置里明确选了自动」——
+        // 后者不应被向导反复打扰或覆盖）
+        const deviceWizardShown = ref(false)
+
         async function loadAnalysisDeviceMode() {
             try {
                 const settings = await api.get_settings()
+                deviceWizardShown.value = Boolean(settings?.analysis_device_wizard_shown)
                 const nextMode = settings?.analysis_device_mode
                 applyAnalysisDeviceMode(nextMode === 'gpu' || nextMode === 'cpu' || nextMode === 'auto' ? nextMode : 'auto')
             } catch (e) {
@@ -1157,6 +1165,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
         async function tryLoadAffinityScores() {
             if (!selectedConversationId.value) return
             const epoch = viewEpoch.value
+            analysisStaleNotice.value = false
             try {
                 const scores = await getAffinityScores(selectedConversationId.value)
                 if (epoch !== viewEpoch.value) return // 已切换联系人（F1）
@@ -1164,6 +1173,15 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
                     analysisResult.value = scores
                 } else {
                     analysisResult.value = null
+                    // 有历史趋势记录却无当前结果 = 结果因版本更新过期（后端
+                    // cache_version 门槛拦截），给用户解释而非"从未分析"空态
+                    try {
+                        const raw: any = await api.get_affinity_scores(selectedConversationId.value)
+                        const hist = raw?.ok ? (raw.history || {}) : {}
+                        analysisStaleNotice.value = Boolean(
+                            !raw?.result && (hist.last_analysis_at || (hist.score_trend || []).length)
+                        )
+                    } catch { /* 探测失败按未分析处理 */ }
                 }
             } catch (e) {
                 analysisResult.value = null
@@ -1257,87 +1275,23 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
                 .join('\n')
         }
 
-        async function waitForModelDownload(taskId: string): Promise<boolean> {
-            modelDownloadTaskId.value = taskId
-            return new Promise((resolve, reject) => {
-                let timer: any = null
-                timer = setInterval(async () => {
-                    modelDownloadTimer.value = timer // 记录句柄供组件卸载时清理（F2）
-                    try {
-                        const prog = await api.get_model_download_progress(taskId)
-                        if (!prog.ok) {
-                            clearInterval(timer)
-                            reject(new Error(prog.error_detail || prog.error || '模型下载失败'))
-                            return
-                        }
-                        modelDownloadProgress.value = Number(prog.overall_progress || 0)
-                        modelDownloadStep.value = prog.current_step || '正在下载模型...'
-                        globalProgressPercent.value = modelDownloadProgress.value
-                        globalProgressStep.value = `[模型下载] ${modelDownloadStep.value}`
-
-                        if (prog.status === 'completed') {
-                            clearInterval(timer)
-                            resolve(true)
-                        } else if (prog.status === 'failed') {
-                            clearInterval(timer)
-                            reject(new Error(prog.error_detail || prog.error || '模型下载失败'))
-                        }
-                    } catch (error: any) {
-                        clearInterval(timer)
-                        reject(error)
-                    }
-                }, 1000)
-            })
-        }
-
         async function ensureAnalysisModelsReady(modelStatus: any): Promise<boolean> {
             if (modelStatus?.ok && modelStatus?.analysis_available) return true
 
+            // 打包版模型内置、此处恒短路放行；仅开发模式缺 ONNX 产物时走到这里。
+            // 后端 ONNX 单后端把缺失项全部标 can_auto_download=False（运行时无
+            // 导出能力，下载源模型无意义），因此不设自动下载确认弹窗——直接
+            // 给出导出脚本指引
             const detailLines = buildModelStatusMessage(modelStatus)
-            const details = Array.isArray(modelStatus?.missing_details) ? modelStatus.missing_details : []
-            const canAutoDownload = details.length > 0 && details.every((d: any) => d.can_auto_download !== false)
-
-            if (!canAutoDownload) {
-                await showDialog({
-                    title: '缺少分析模型',
-                    message:
-                        `以下模型不可用且无法自动下载:\n${detailLines}\n\n` +
-                        '请先检查 ModelScope 依赖和本地模型文件。'
-                })
-                return false
-            }
-
-            const doDownload = await showConfirm({
+            await showDialog({
                 title: '缺少分析模型',
                 message:
                     `检测到以下模型不可用:\n${detailLines}\n\n` +
-                    '是否从 ModelScope 自动下载缺失的模型？\n' +
-                    '（下载大小约 400MB，需要网络连接）'
+                    '（推理为 ONNX 单后端，安装包内置模型开箱即用；开发环境请运行 ' +
+                    'python backend/scripts/ensure_models_for_export.py --with-export ' +
+                    '下载源模型并生成 ONNX 产物）'
             })
-            if (!doDownload) {
-                return false
-            }
-
-            const downloadRes = await api.download_analysis_models()
-            if (!downloadRes.ok) {
-                throw new Error(downloadRes.error_detail || downloadRes.error || '无法启动模型下载')
-            }
-            if (!downloadRes.task_id) {
-                return true
-            }
-
-            isDownloadingModels.value = true
-            modelDownloadProgress.value = 0
-            modelDownloadStep.value = '正在准备下载模型...'
-            globalProgressPercent.value = 0
-            globalProgressStep.value = '[模型下载] 正在准备下载模型...'
-
-            try {
-                await waitForModelDownload(downloadRes.task_id)
-                return true
-            } finally {
-                isDownloadingModels.value = false
-            }
+            return false
         }
 
         const handleStartGlobalAnalysis = async () => {
@@ -1376,66 +1330,39 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
                 return
             }
 
-            if (!hasPersistedAnalysisDeviceMode(analysisDeviceMode.value)) {
-                applyAnalysisDeviceMode('cpu')
+            if (!hasPersistedAnalysisDeviceMode(analysisDeviceMode.value) && !deviceWizardShown.value) {
+                // 一次性设备选择向导：仅在「确有 GPU 加速可决策」时弹窗；
+                // 无卡/通道不可用时静默走 auto 语义（后端自动回退 CPU）——
+                // 不弹无选择余地的告知框，也不把 cpu 落库覆盖用户的 auto 选择
                 try {
-                const gpuStatus = await api.check_gpu_status()
-                if (gpuStatus.ok && gpuStatus.cuda_available) {
-                    const memInfo = gpuStatus.gpu_memory_total_mb
-                        ? ` (${(gpuStatus.gpu_memory_total_mb / 1024).toFixed(1)}GB)`
-                        : ''
-                    const useGpu = await showConfirm({
-                        title: 'GPU 加速可用',
-                        message:
-                            `检测到 GPU: ${gpuStatus.gpu_name}${memInfo}\n` +
-                            `CUDA ${gpuStatus.cuda_version} | PyTorch ${gpuStatus.torch_version}\n\n` +
-                            '启用 GPU 加速后，分析速度预计可提升 5-10 倍。\n是否启用 GPU 加速？\n\n' +
-                            '提示：此选项可随时在「通用设置」页面修改。'
-                    })
-                    const nextMode: AnalysisDeviceMode = useGpu ? 'gpu' : 'cpu'
-                    await api.set_settings({ analysis_device_mode: nextMode })
-                    applyAnalysisDeviceMode(nextMode)
-                } else if (gpuStatus.ok && gpuStatus.has_nvidia_gpu) {
-                    const doInstall = await showConfirm({
-                        title: '检测到 GPU 硬件',
-                        message:
-                            '检测到您的计算机配备了 NVIDIA GPU，但当前应用还没有可用的 CUDA 运行时。\n\n' +
-                            '是否现在进行【一键配置】？这将下载独立的 GPU 运行时并在后台完成配置，通常需要几分钟。'
-                    })
-                    if (doInstall) {
-                        try {
-                            const installRes = await api.start_gpu_install()
-                            if (installRes.ok) {
-                                await showDialog({
-                                    title: '开始配置',
-                                    message: 'GPU 运行时配置已在后台启动，您可以随时前往「通用设置」页面查看实时安装进度。\n本次分析将暂时使用 CPU 模式进行，安装完成并重启应用后即可使用 GPU 加速。'
-                                })
-                            } else {
-                                await showDialog({ title: '安装启动失败', message: installRes.error || '未知错误' })
-                            }
-                        } catch(e) {}
-                    } else {
-                        await showDialog({
-                            title: 'CPU 模式',
-                            message: '将使用 CPU 模式进行分析。'
+                    const gpuStatus = await api.check_gpu_status()
+                    if (gpuStatus.ok && gpuStatus.cuda_available) {
+                        // DirectML 支持任意 DX12 GPU（N/A 卡、核显均可）；
+                        // gpu_name 来自 nvidia-smi，A 卡/核显为空时以通道名兜底
+                        const gpuNameText = gpuStatus.gpu_name || 'GPU'
+                        const memInfo = gpuStatus.gpu_memory_total_mb
+                            ? ` (${(gpuStatus.gpu_memory_total_mb / 1024).toFixed(1)}GB)`
+                            : ''
+                        const useGpu = await showConfirm({
+                            title: 'GPU 加速可用',
+                            message:
+                                `检测到 GPU 加速可用: ${gpuNameText}${memInfo}\n` +
+                                `加速通道: ${gpuStatus.accelerator_label || gpuStatus.cuda_version} | ${gpuStatus.torch_version}\n\n` +
+                                '启用 GPU 加速后，分析速度预计可提升 5-10 倍。\n是否启用 GPU 加速？\n\n' +
+                                '提示：此选项可随时在「设置 → 分析计算设备」卡片修改。'
                         })
+                        const nextMode: AnalysisDeviceMode = useGpu ? 'gpu' : 'cpu'
+                        // 答「否」同样落 cpu：用户刚明确表达不用 GPU，若保持
+                        // auto 后端仍会自动启用 GPU，违背其意愿；向导一次性，
+                        // 之后改选走设置卡片
+                        await api.set_settings({ analysis_device_mode: nextMode, analysis_device_wizard_shown: true })
+                        applyAnalysisDeviceMode(nextMode)
+                        deviceWizardShown.value = true
                     }
-                    await api.set_settings({ analysis_device_mode: 'cpu' })
-                    applyAnalysisDeviceMode('cpu')
-                } else {
-                    await showDialog({
-                        title: 'CPU 模式',
-                        message:
-                            'GPU 加速不可用，将使用 CPU 模式进行分析。\n' +
-                            '如需启用 GPU，请安装支持 CUDA 的 PyTorch 版本。\n\n' +
-                            '提示：此选项可随时在「通用设置」页面修改。'
-                    })
-                    await api.set_settings({ analysis_device_mode: 'cpu' })
-                    applyAnalysisDeviceMode('cpu')
-                }
+                    // 无 GPU / 通道不可用：保持 auto（本次分析后端自动用 CPU），
+                    // 设备状态在设置页「分析计算设备」卡片随时可见
                 } catch (e) {
-                    await api.set_settings({ analysis_device_mode: 'cpu' })
-                    applyAnalysisDeviceMode('cpu')
+                    // 状态探测失败不阻塞分析，按 auto 继续
                 }
             }
             await startGlobalAnalysis()
@@ -1875,7 +1802,6 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
             window.removeEventListener('resize', handleResize)
             window.removeEventListener('chrono:wechat-account-changed', handleAccountChanged)
             if (activeTimer.value) { clearInterval(activeTimer.value); activeTimer.value = null } // F2：卸载时停止分析轮询
-            if (modelDownloadTimer.value) { clearInterval(modelDownloadTimer.value); modelDownloadTimer.value = null } // F2
             responseTimeChartInstance?.dispose(); activityCalendarChartInstance?.dispose(); wordCountChartInstance?.dispose()
         })
 
@@ -1888,7 +1814,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
         return {
             currentTab, conversations, selectedConversationId, dates, loading, loadingSessions, error, analysis, subject, sessions,
             personaProfile, loadingPersonaProfile, personaProfileMeta,
-            analysisResult, displayScore, showKeywordsDialog, showContextForm, showPortraitDialog, handlePortraitGenerated, isGlobalAnalyzing, isStopping, activeTimer, handleStopAnalysis, globalProgressPercent, globalProgressStep, isDownloadingModels, modelDownloadProgress, modelDownloadStep, modelDownloadTaskId, gpuMode,
+            analysisResult, displayScore, showKeywordsDialog, showContextForm, showPortraitDialog, handlePortraitGenerated, isGlobalAnalyzing, isStopping, activeTimer, handleStopAnalysis, globalProgressPercent, globalProgressStep, gpuMode,
             hasConversations, hasFeatures, hasCachedAffinityAnalysis, featureStats, responseTimeStats, initiativeStats, wordCountsStats, displayWordRatioLabel, activityCalendar,
             responseTimeChart, activityCalendarChart, wordCountChart, stats, currentContactName, headerAvatarSrc, hasPreferenceKeywords, allDimensions, emotionalResonanceDisplaySubScores,
             currentRangeLabel, hasContentAnalysis, circumference, strokeDashoffset, formatNumber, formatTime, getResponseTimeLabel, getMergedResponseTimeLabel, getResponseTimePercent, onConversationChange, onDatesChange, handleExport, handleStartGlobalAnalysis, handleContextSaved, handleKeywordsUpdated, llmEvidenceNotes,

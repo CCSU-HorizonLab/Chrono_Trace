@@ -35,7 +35,7 @@
               <li><strong>无需强制前台</strong>：窗口允许被其他应用遮挡（但请勿彻底最小化至任务栏）。</li>
               <li>目标对象的昵称必须与微信中显示完全一致（如有备注名，必须输入备注名）。</li>
               <li>当前系统全局仅支持对单一对象进行并行监听。</li>
-              <li>兼容最新微信版本（包含 3.9.x 稳定版及 4.0.x 全新架构）。</li>
+              <li>需使用微信 4.x 版本（3.9 及更早版本的数据目录不受支持，应用会引导升级）。</li>
               <li>请监听时不要切换聊天对象，否则会影响监听效果。</li>
             </ul>
           </details>
@@ -213,7 +213,7 @@
             <div class="sug-config-group">
               <label class="sug-label">发展走向</label>
               <div class="sug-seg intent">
-                <button :class="{ active: intent === 'intimate' }" @click="setIntent('intimate')"><span class="sug-intent-icon"><Flame :size="14" /></span>亲密</button>
+                <button :class="{ active: intent === 'intimate' }" @click="setIntent('intimate')"><span class="sug-intent-icon"><Flame :size="14" /></span>亲近</button>
                 <button :class="{ active: intent === 'maintain' }" @click="setIntent('maintain')"><span class="sug-intent-icon"><Scale :size="14" /></span>维持</button>
                 <button :class="{ active: intent === 'distance' }" @click="setIntent('distance')"><span class="sug-intent-icon"><Snowflake :size="14" /></span>疏远</button>
               </div>
@@ -402,7 +402,6 @@ import {
 } from 'lucide-vue-next'
 import { bridgeReady, api } from '@/api/bridge'
 import { loadSharedContact, saveSharedContact } from '@/utils/sharedContact'
-import IntentModeSelector from '@/components/base/IntentModeSelector.vue'
 import CtButton from '@/components/base/CtButton.vue'
 import CtAvatar from '@/components/base/CtAvatar.vue'
 import FiltersBar from '@/components/analytics/FiltersBar.vue'

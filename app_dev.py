@@ -114,6 +114,12 @@ def main():
 
     webview.start(func=on_started, debug=True)
 
+    # Qt 后端退出清理：先析构 WebEnginePage 再放 profile，消除
+    # "Release of profile requested but WebEnginePage still not deleted" 告警
+    from backend.app.webview.qt_teardown import shutdown_qt_webengine_cleanly
+
+    shutdown_qt_webengine_cleanly()
+
     # 关闭窗口后也清理一次（双保险）
     cleanup_proc_tree(npm_proc)
 

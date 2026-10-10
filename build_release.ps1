@@ -21,7 +21,6 @@ function Resolve-ScriptArguments {
         RefreshPackagingEnv = $false
         SkipInstaller = $false
         SkipFrontendInstall = $false
-        Variant = "cpu"
         Version = ""
     }
 
@@ -36,12 +35,6 @@ function Resolve-ScriptArguments {
             "-RefreshPackagingEnv" { $state.RefreshPackagingEnv = $true; continue }
             "-SkipInstaller" { $state.SkipInstaller = $true; continue }
             "-SkipFrontendInstall" { $state.SkipFrontendInstall = $true; continue }
-            "-Variant" {
-                if ($i + 1 -ge $tokens.Count) { throw "Missing value for -Variant" }
-                $i++
-                $state.Variant = [string]$tokens[$i]
-                continue
-            }
             "-Version" {
                 if ($i + 1 -ge $tokens.Count) { throw "Missing value for -Version" }
                 $i++
@@ -58,10 +51,6 @@ function Resolve-ScriptArguments {
         }
     }
 
-    if ($state.Variant -notin @("cpu", "gpu", "both")) {
-        throw "Invalid -Variant value: $($state.Variant)"
-    }
-
     return $state
 }
 
@@ -74,7 +63,6 @@ if ($resolvedArgs.BootstrapPackagingEnv) { $invokeArgs += "-BootstrapPackagingEn
 if ($resolvedArgs.RefreshPackagingEnv) { $invokeArgs += "-RefreshPackagingEnv" }
 if ($resolvedArgs.SkipInstaller) { $invokeArgs += "-SkipInstaller" }
 if ($resolvedArgs.SkipFrontendInstall) { $invokeArgs += "-SkipFrontendInstall" }
-if ($resolvedArgs.Variant) { $invokeArgs += @("-Variant", [string]$resolvedArgs.Variant) }
 if ($resolvedArgs.Version) { $invokeArgs += @("-Version", [string]$resolvedArgs.Version) }
 
 Write-Host "==> Chrono Trace one-click packaging" -ForegroundColor Cyan

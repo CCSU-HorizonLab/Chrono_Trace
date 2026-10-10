@@ -1,18 +1,17 @@
 param(
-    [switch]$ForceReinstall,
-    [string]$Variant = "cpu"
+    [switch]$ForceReinstall
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$VenvName = if ($Variant -eq "gpu") { ".venv-packaging-gpu" } else { ".venv-packaging" }
-$VenvDir = Join-Path $ProjectRoot $VenvName
+# 单一打包环境：ONNX/DirectML 免 CUDA 免 torch，一个 venv 通吃（torch 时代
+# 的 cpu/gpu 双 venv 已随 GPU 变体移除）
+$VenvDir = Join-Path $ProjectRoot ".venv-packaging"
 $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
 $RequirementsPath = Join-Path $PSScriptRoot "requirements-packaging.txt"
 $HashPath = Join-Path $VenvDir ".requirements-packaging.sha256"
-$GpuTorchIndexUrl = "https://download.pytorch.org/whl/cu121"
 
 function Require-Command {
     param([string]$Name)
@@ -32,34 +31,16 @@ function Assert-LastExitCode {
     }
 }
 
-function Get-TorchVersion {
-    param([string]$RequirementsFile)
-
-    # torch is no longer part of the runtime stack (ONNX backend, DirectML for
-    # GPU). A pinned torch line is optional and only consumed by the legacy
-    # GPU-variant CUDA swap below.
-    $torchLine = Get-Content -LiteralPath $RequirementsFile | Where-Object { $_ -match '^torch==' } | Select-Object -First 1
-    if (-not $torchLine) {
-        return ""
-    }
-    return ($torchLine -replace '^torch==', '').Trim()
-}
-
 if (-not (Test-Path -LiteralPath $RequirementsPath)) {
     throw "Packaging requirements not found: $RequirementsPath"
 }
-if ($Variant -notin @("cpu", "gpu")) {
-    throw "Invalid -Variant value: $Variant"
-}
-
 $systemPython = (Require-Command "python").Source
 $requirementsHash = (Get-FileHash -LiteralPath $RequirementsPath -Algorithm SHA256).Hash
-$torchVersion = Get-TorchVersion -RequirementsFile $RequirementsPath
-$variantHashSeed = "$requirementsHash|$Variant|$torchVersion|$GpuTorchIndexUrl"
+$requirementsFingerprint = $requirementsHash
 $venvExists = Test-Path -LiteralPath $VenvPython
 
 if (-not $venvExists) {
-    Write-Host "==> Create packaging venv ($Variant)" -ForegroundColor Cyan
+    Write-Host "==> Create packaging venv" -ForegroundColor Cyan
     & $systemPython -m venv $VenvDir
     Assert-LastExitCode "Create packaging venv"
 }
@@ -69,7 +50,7 @@ if (Test-Path -LiteralPath $HashPath) {
     $storedHash = [string](Get-Content -LiteralPath $HashPath -Raw).Trim()
 }
 
-$needsInstall = $ForceReinstall -or (-not $venvExists) -or ($storedHash -ne $variantHashSeed)
+$needsInstall = $ForceReinstall -or (-not $venvExists) -or ($storedHash -ne $requirementsFingerprint)
 if (-not $needsInstall) {
     try {
         & $VenvPython -m PyInstaller --version | Out-Null
@@ -84,7 +65,7 @@ if (-not $needsInstall) {
 }
 
 if ($needsInstall) {
-    Write-Host "==> Sync packaging dependencies ($Variant)" -ForegroundColor Cyan
+    Write-Host "==> Sync packaging dependencies" -ForegroundColor Cyan
     # requirements-packaging.txt references the vendored wheel with a path
     # relative to the repository root, and pip resolves it against the current
     # working directory. Run pip from the repository root no matter where this
@@ -93,23 +74,14 @@ if ($needsInstall) {
     try {
         & $VenvPython -m pip install -r $RequirementsPath
         Assert-LastExitCode "Packaging dependency install"
-
-        if ($Variant -eq "gpu" -and $torchVersion) {
-            # Legacy path: torch-based GPU variant. The ONNX/DirectML build no
-            # longer ships torch, so this only runs when a pin is present.
-            Write-Host "==> Replace CPU torch with CUDA torch ($torchVersion)" -ForegroundColor Cyan
-            & $VenvPython -m pip install --upgrade --force-reinstall --no-cache-dir --index-url $GpuTorchIndexUrl "torch==$torchVersion"
-            Assert-LastExitCode "GPU torch install"
-        }
     }
     finally {
         Pop-Location
     }
 
-    Set-Content -LiteralPath $HashPath -Value $variantHashSeed -NoNewline
+    Set-Content -LiteralPath $HashPath -Value $requirementsFingerprint -NoNewline
 }
 
 Write-Host "==> Packaging environment ready" -ForegroundColor Green
-Write-Host "Variant: $Variant"
 Write-Host "Venv: $VenvDir"
 Write-Host "Python: $VenvPython"

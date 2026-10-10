@@ -35,21 +35,17 @@ packaging\build_release.ps1
 3. PyInstaller 全量 clean 构建
 4. Inno Setup 安装包输出
 
-默认变体为 `cpu`。
+单一安装包（ONNX + DirectML 免 CUDA 免 torch，一个包通吃 CPU/GPU；torch 时代的 cpu/gpu 双变体已移除）。
 
 ## 打包环境
 
-打包脚本会按变体复用仓库根目录下的专用 venv，避免系统 Python 的杂项依赖污染 PyInstaller 分析结果。
-
-- `cpu` 变体使用 `.venv-packaging`
-- `gpu` 变体使用 `.venv-packaging-gpu`
+打包脚本复用仓库根目录下的专用 venv `.venv-packaging`，避免系统 Python 的杂项依赖污染 PyInstaller 分析结果。
 
 只初始化或刷新打包环境：
 
 ```powershell
 .\build_release.ps1 -BootstrapPackagingEnv
 .\build_release.ps1 -BootstrapPackagingEnv -RefreshPackagingEnv
-.\build_release.ps1 -BootstrapPackagingEnv -Variant gpu
 ```
 
 ## 常用参数
@@ -72,14 +68,6 @@ packaging\build_release.ps1
 .\build_release.ps1 -Version 0.1.1
 ```
 
-选择构建变体：
-
-```powershell
-.\build_release.ps1 -Variant cpu
-.\build_release.ps1 -Variant gpu
-.\build_release.ps1 -Variant both
-```
-
 生产环境测试用快速打包：
 
 ```powershell
@@ -98,7 +86,6 @@ packaging\build_release.ps1
 
 ```powershell
 .\build_release.ps1 -Fast -IncludeInstaller
-.\build_release.ps1 -Fast -Variant both -IncludeInstaller
 ```
 
 ## 产物位置
@@ -107,7 +94,6 @@ PyInstaller 目录版输出到：
 
 ```text
 release\pyinstaller\ChronoTrace\
-release\pyinstaller-gpu\ChronoTrace\
 ```
 
 安装包输出到：
@@ -120,7 +106,6 @@ release\installer\
 
 ```text
 release\installer\ChronoTraceSetup-版本号.exe
-release\installer\ChronoTraceSetup-版本号-GPU.exe
 ```
 
 不要直接分发：
@@ -154,23 +139,15 @@ release\build\
 
 ## 推荐用法
 
-- CPU 正式发布：`.\build_release.ps1`
-- GPU 正式发布：`.\build_release.ps1 -Variant gpu`
-- 同时生成两个版本：`.\build_release.ps1 -Variant both`
+- 正式发布：`.\build_release.ps1`
 - 生产环境测试回归：`.\build_release.ps1 -Fast`
-- 快速模式需要两个安装包：`.\build_release.ps1 -Fast -Variant both -IncludeInstaller`
+- 快速模式补安装包：`.\build_release.ps1 -Fast -IncludeInstaller`
 
-## GPU 运行时说明
+## GPU 加速说明
 
-CPU 安装包默认内置 CPU 版 PyTorch。
-
-如果目标机器具备 NVIDIA GPU，应用内的“一键配置 GPU 运行时”会：
-
-1. 下载独立的嵌入式 Python 运行时到 `%LOCALAPPDATA%\Chrono Trace\runtime\gpu`
-2. 下载并安装支持 CUDA 的 PyTorch 到外部 overlay 目录
-3. 重启应用后优先使用这个 overlay 运行时
-
-这样不会直接修改安装目录中的 PyInstaller 主环境，更适合生产测试分发。
+运行时依赖为 `onnxruntime-directml`：免 CUDA、免 torch，有 N/AMD 卡自动走
+DirectML，无卡回退 CPU——单一安装包通吃，无「GPU 运行时下载/一键配置」
+流程（torch 时代的外部 overlay 机制已随 ONNX 单后端移除）。
 
 ## 可选：自动补装 WebView2
 

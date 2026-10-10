@@ -10,7 +10,7 @@
 [![Vue](https://img.shields.io/badge/Vue-3.x-green.svg)](https://vuejs.org/)
 [![Vite](https://img.shields.io/badge/Vite-5.x-646CFF.svg)](https://vitejs.dev/)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%2010%2F11%20%7C%20Linux-0078D6.svg)](#环境要求)
-[![Status](https://img.shields.io/badge/Status-Beta%201.4-brightgreen.svg)](./docs/release-notes-v1.4.0-beta.1.md)
+[![Status](https://img.shields.io/badge/Status-v1.4.0-brightgreen.svg)](./docs/release-notes-v1.4.0.md)
 [![License](https://img.shields.io/badge/License-PolyForm%20Noncommercial%201.0.0-blue.svg)](./LICENSE)
 
 > 镌刻对话年轮，丈量心动间距

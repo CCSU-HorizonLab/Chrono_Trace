@@ -47,7 +47,7 @@
 - `llm_engine.py` 3042→1701 行,拆出 API 客户端层与响应解析;
 - 8 份编码安全打印拷贝收敛为 `safe_print.py` 单实现;死方法/死导入/死测试批次清理。
 
-## 打包瘦身(Linux 包体积以最终构建为准)
+## 打包瘦身(Linux 便携包 521M)
 
 - 嵌入模型 text2vec→bge:模型段 195M→91M(**-104M**);精度按实测择优——嵌入打 fp32(CPU 实测比 fp16 快 32%,输出 cosine=1.0),分类器维持 fp16(实测反快 14%),包内每个模型仍只有一个文件;
 - Qt 模块裁剪(Quick3D/PositioningQuick/EglFS 等,ldd 核实 WebEngine 不依赖):-18M;

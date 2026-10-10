@@ -248,77 +248,75 @@ Ensure-OnnxModels
 
 $results = @()
 
-{
-    $targetVariant = $PackagingSettings.Variant
-    $settings = $PackagingSettings
-    Write-Host ""
-    Write-Host "==> Packaging variant: $($settings.VariantLabel)" -ForegroundColor Cyan
-    Write-Host "Packaging Python: $($settings.PackagingPython)"
-    Write-Host "Packaging venv: $($settings.PackagingVenvDir)"
+$targetVariant = $PackagingSettings.Variant
+$settings = $PackagingSettings
+Write-Host ""
+Write-Host "==> Packaging variant: $($settings.VariantLabel)" -ForegroundColor Cyan
+Write-Host "Packaging Python: $($settings.PackagingPython)"
+Write-Host "Packaging venv: $($settings.PackagingVenvDir)"
 
-    if (-not (Test-Path -LiteralPath $settings.PackagingPython)) {
-        throw "Packaging Python not found: $($settings.PackagingPython)"
+if (-not (Test-Path -LiteralPath $settings.PackagingPython)) {
+    throw "Packaging Python not found: $($settings.PackagingPython)"
+}
+
+Write-BuildInfo -TargetVariant $targetVariant -BuildMode $buildMode
+
+New-Item -ItemType Directory -Path $ReleaseRoot -Force | Out-Null
+if ($cleanBuild) {
+    if (Test-Path -LiteralPath $settings.BuildRoot) {
+        Remove-Item -LiteralPath $settings.BuildRoot -Recurse -Force
+    }
+    if (Test-Path -LiteralPath $settings.DistRoot) {
+        Remove-Item -LiteralPath $settings.DistRoot -Recurse -Force
+    }
+}
+New-Item -ItemType Directory -Path $settings.BuildRoot -Force | Out-Null
+New-Item -ItemType Directory -Path $settings.DistRoot -Force | Out-Null
+
+Write-Host "==> PyInstaller build ($targetVariant)" -ForegroundColor Cyan
+$pyInstallerArgs = @(
+    "-m",
+    "PyInstaller",
+    "--noconfirm",
+    "--workpath",
+    $settings.BuildRoot,
+    "--distpath",
+    $settings.DistRoot
+)
+if ($cleanBuild) {
+    $pyInstallerArgs += "--clean"
+}
+$pyInstallerArgs += $SpecPath
+& $settings.PackagingPython @pyInstallerArgs
+Assert-LastExitCode "PyInstaller build ($targetVariant)"
+
+if (-not (Test-Path -LiteralPath $settings.AppDistDir)) {
+    throw "PyInstaller output not found: $($settings.AppDistDir)"
+}
+
+if (-not $effectiveSkipInstaller) {
+    Write-Host "==> Inno Setup build ($targetVariant)" -ForegroundColor Cyan
+    $iscc = Resolve-IsccPath
+    if (-not $iscc) {
+        throw "ISCC.exe not found. Install Inno Setup 6 first."
     }
 
-    Write-BuildInfo -TargetVariant $targetVariant -BuildMode $buildMode
-
-    New-Item -ItemType Directory -Path $ReleaseRoot -Force | Out-Null
-    if ($cleanBuild) {
-        if (Test-Path -LiteralPath $settings.BuildRoot) {
-            Remove-Item -LiteralPath $settings.BuildRoot -Recurse -Force
-        }
-        if (Test-Path -LiteralPath $settings.DistRoot) {
-            Remove-Item -LiteralPath $settings.DistRoot -Recurse -Force
-        }
-    }
-    New-Item -ItemType Directory -Path $settings.BuildRoot -Force | Out-Null
-    New-Item -ItemType Directory -Path $settings.DistRoot -Force | Out-Null
-
-    Write-Host "==> PyInstaller build ($targetVariant)" -ForegroundColor Cyan
-    $pyInstallerArgs = @(
-        "-m",
-        "PyInstaller",
-        "--noconfirm",
-        "--workpath",
-        $settings.BuildRoot,
-        "--distpath",
-        $settings.DistRoot
+    # File-name version must not contain spaces (display version unchanged)
+    $setupVersion = ($packageVersion -replace '[ /]', '-')
+    $installerArgs = @(
+        "/DBuildRoot=$($settings.AppDistDir)",
+        "/DProjectVersion=$packageVersion",
+        "/DSetupVersion=$setupVersion",
+        "/DInstallerSuffix=$($settings.InstallerSuffix)",
+        $InstallerScript
     )
-    if ($cleanBuild) {
-        $pyInstallerArgs += "--clean"
-    }
-    $pyInstallerArgs += $SpecPath
-    & $settings.PackagingPython @pyInstallerArgs
-    Assert-LastExitCode "PyInstaller build ($targetVariant)"
+    & $iscc @installerArgs
+    Assert-LastExitCode "Inno Setup build ($targetVariant)"
+}
 
-    if (-not (Test-Path -LiteralPath $settings.AppDistDir)) {
-        throw "PyInstaller output not found: $($settings.AppDistDir)"
-    }
-
-    if (-not $effectiveSkipInstaller) {
-        Write-Host "==> Inno Setup build ($targetVariant)" -ForegroundColor Cyan
-        $iscc = Resolve-IsccPath
-        if (-not $iscc) {
-            throw "ISCC.exe not found. Install Inno Setup 6 first."
-        }
-
-        # File-name version must not contain spaces (display version unchanged)
-        $setupVersion = ($packageVersion -replace '[ /]', '-')
-        $installerArgs = @(
-            "/DBuildRoot=$($settings.AppDistDir)",
-            "/DProjectVersion=$packageVersion",
-            "/DSetupVersion=$setupVersion",
-            "/DInstallerSuffix=$($settings.InstallerSuffix)",
-            $InstallerScript
-        )
-        & $iscc @installerArgs
-        Assert-LastExitCode "Inno Setup build ($targetVariant)"
-    }
-
-    $results += [pscustomobject]@{
-        Variant = $targetVariant
-        AppDistDir = $settings.AppDistDir
-    }
+$results += [pscustomobject]@{
+    Variant = $targetVariant
+    AppDistDir = $settings.AppDistDir
 }
 
 Write-Host ""

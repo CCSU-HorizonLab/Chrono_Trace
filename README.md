@@ -4,7 +4,7 @@
   <img src="docs/images/logo.png" width="96" alt="Chrono Trace Logo" />
 </div>
 
-> 面向微信 PC 4.x 聊天记录的本地分析与实时辅助桌面工具。
+> 面向微信 PC 4.x 聊天记录的本地分析与实时辅助桌面工具——数据不出本机。
 
 > **English note**: Chrono Trace is a local-first desktop tool for analyzing WeChat (微信) PC 4.x chat data — sentiment & affinity analysis, chat export, real-time LLM reply suggestions, and per-contact long-term memory (RAG). The UI and docs are Chinese-only, as the tool targets WeChat's Chinese ecosystem.
 
@@ -19,13 +19,26 @@
 
 ---
 
+## 目录
+
+- [项目简介](#项目简介)
+- [下载安装](#下载安装)
+- [界面预览](#界面预览)
+- [核心能力](#核心能力)
+- [技术架构](#技术架构)
+- [环境要求](#环境要求)
+- [快速开始](#快速开始)
+- [当前边界](#当前边界)
+- [开发](#开发)
+- [常见问题](#常见问题)
+- [隐私与安全](#隐私与安全)
+- [致谢](#致谢)
+- [免责声明](#免责声明)
+
 ## 许可与合规声明
 
-本仓库当前以源码可见、非商业授权方式发布，适用 [PolyForm Noncommercial License 1.0.0](./LICENSE)。你可以在非商业场景下查看、学习、修改和分发本项目；任何商业使用、商业集成、商业分发或面向客户的部署，都需要获得项目维护者的单独书面授权。
-
-Chrono Trace 不是腾讯或微信的官方项目，也未获得腾讯或微信的授权、认可或背书。本项目涉及的微信聊天数据导入、解析、监听与分析能力，仅应在你拥有合法访问权、处理权和必要授权的数据范围内使用。使用者需要自行确认其行为符合适用法律法规、平台规则、隐私保护要求和第三方协议。
-
-本项目不鼓励、不授权也不支持任何侵犯他人隐私、绕过访问控制、规避第三方平台限制、未获授权抓取或商业化滥用聊天数据的行为。情绪、关系和沟通建议等分析结果仅供个人研究与辅助参考，不构成心理、医疗、法律或其他专业建议。
+- 本项目以 [PolyForm Noncommercial 1.0.0](./LICENSE) 源码可见、非商业授权发布：非商业场景可自由查看、学习、修改与分发，商业使用需项目维护者单独书面授权。
+- 本工具不是腾讯或微信的官方项目，仅应在你拥有合法访问权、处理权和必要授权的数据范围内使用；完整声明见文末[免责声明](#免责声明)。
 
 ## 项目简介
 
@@ -47,6 +60,17 @@ Chrono Trace 是一个基于 `PyWebView + Vue 3 + Python` 的 Windows / Linux �
 
 开发模式下数据写入仓库内 `backend\data\`。
 
+## 下载安装
+
+安装包内置全部本地推理模型，开箱即用、无需联网下载：
+
+| 平台 | 产物 | 说明 |
+| --- | --- | --- |
+| Windows 10 / 11 | `ChronoTraceSetup-<版本号>.exe` | 安装版；DirectML 单变体，有独立显卡自动启用 GPU 加速，无卡回退 CPU，免 CUDA |
+| Linux | `chrono-trace-<版本号>-linux.tar.gz` | 便携包，解压即用；glibc ≥ 2.34，密钥捕获另需系统安装 gdb |
+
+前往 [Releases](../../releases) 页面下载最新版本。
+
 ## 界面预览
 
 ### 首页
@@ -57,7 +81,7 @@ Chrono Trace 是一个基于 `PyWebView + Vue 3 + Python` 的 Windows / Linux �
 
 ### 历史分析工作台（历史数据页）
 
-**关系评估** —— 好感度总分、分维度雷达图与分维度明细（情绪趋势、互动分析等页签同屏切换）
+**关系评估** —— 好感度总分、分维度雷达图与分维度明细（关系洞察、互动特征、内容与时间线、用户画像回顾页签同屏切换）
 
 ![关系评估](docs/images/screenshots/analytics-affinity.png)
 
@@ -218,7 +242,7 @@ backend/
     services/
       analysis/      # 历史分析、好感度分析
       realtime/      # 实时监听、情绪分析、AI 建议、联系人记忆（rag_*）
-      wechat/        # 微信数据库扫描、解密、导入（含 V3/V4 适配层）
+      wechat/        # 微信数据库扫描、解密、导入（V4 适配层）
     webview/         # 前后端桥接
   scripts/           # 评测、回放、维护脚本
   tests/             # 后端测试

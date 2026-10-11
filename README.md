@@ -4,7 +4,9 @@
   <img src="docs/images/logo.png" width="96" alt="Chrono Trace Logo" />
 </div>
 
-> 面向微信聊天记录的本地分析与实时辅助桌面工具。
+> 面向微信 PC 4.x 聊天记录的本地分析与实时辅助桌面工具。
+
+> **English note**: Chrono Trace is a local-first desktop tool for analyzing WeChat (微信) PC 4.x chat data — sentiment & affinity analysis, chat export, real-time LLM reply suggestions, and per-contact long-term memory (RAG). The UI and docs are Chinese-only, as the tool targets WeChat's Chinese ecosystem.
 
 [![Python](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
 [![Vue](https://img.shields.io/badge/Vue-3.x-green.svg)](https://vuejs.org/)
@@ -245,7 +247,7 @@ requirements.txt
 | Node.js | 18+（Vite 5 要求）                         |
 | 微信     | Windows PC 4.x / Linux 微信 4.x（原生版）   |
 
-安装包已内置 fp16 模型，开箱即用；开发环境（或模型缺失时）首次使用分析/实时建议会从 ModelScope 自动下载本地情感模型，需要网络。
+安装包已内置本地推理模型（嵌入 fp32 / 情感分类 fp16），开箱即用；开发环境（或模型缺失时）首次使用分析/实时建议会从 ModelScope 自动下载本地模型，需要网络。
 
 ## 快速开始
 
@@ -383,9 +385,9 @@ pytest backend/tests/
 
 项目当前已经接入 Windows 安装包与 Linux 便携包两条打包链路。
 
-> **首次打包会自动下载模型**：构建脚本检测到 ONNX 产物缺失时，自动从 ModelScope 拉取源模型（约 1.2GB，一次性）并导出 fp16 产物打进安装包。产物缓存后后续构建秒级跳过；手动执行 `python backend/scripts/ensure_models_for_export.py --with-export`。
+> **首次打包会自动下载模型**：构建脚本检测到 ONNX 产物缺失时，自动从 ModelScope 拉取源模型（约 500MB，一次性）并导出混合精度产物（嵌入 fp32 / 分类器 fp16）打进安装包。产物缓存后后续构建秒级跳过；手动执行 `python backend/scripts/ensure_models_for_export.py --with-export`。
 >
-> **安装包体积**：当前安装包内置 fp16 模型（约 400MB），新装机开箱即用、无需联网下载；旧 torch 版安装包虽小（~190MB）但首次运行需另下 1.17GB 模型——用户总获取量从 ~1.36GB 降到 ~400MB。若偏好小安装包，备选的「模型上传 ModelScope + 首次运行只下载 onnx」方案记录在 `packaging/README.md`。
+> **安装包体积**：当前安装包内置本地模型（Linux 便携包 521M），新装机开箱即用、无需联网下载；旧 torch 版安装包虽小（~190MB）但首次运行需另下 1.17GB 模型——用户总获取量从 ~1.36GB 降到 ~0.5GB。若偏好小安装包，备选的「模型上传 ModelScope + 首次运行只下载 onnx」方案记录在 `packaging/README.md`。
 
 Windows 一键打包：
 
@@ -466,7 +468,7 @@ cd ChronoTrace
 
 - 系统 glibc ≥ 2.34（Debian 12 / Ubuntu 22.04 及更新版本）；包内已自带 Python 与全部依赖（含 Qt）
 - 密钥捕获需要系统安装 gdb（`sudo apt install gdb`）与 ptrace 权限，详见「获取微信数据库密钥」
-- 安装包已内置 fp16 模型；开发环境首次使用分析/实时建议时会从 ModelScope 自动下载，需要网络
+- 安装包已内置本地推理模型；开发环境首次使用分析/实时建议时会从 ModelScope 自动下载，需要网络
 - 应用数据写入 `~/.local/share/ChronoTrace/`（与打包产物名一致，无空格）；旧版本带空格目录首次启动时自动迁移
 
 ### 调试建议
@@ -523,4 +525,4 @@ cd ChronoTrace
 
 ---
 
-最后更新：2026-10-07
+最后更新：2026-10-11

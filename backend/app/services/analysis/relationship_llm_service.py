@@ -1,8 +1,10 @@
-"""LLM 关系评估维度：采样交互对 → 脱敏 → 大模型关系判断。
+"""LLM 关系评估维度：窗口采样交互对 → 注入统计概要 → 脱敏 → 大模型关系判断。
 
 作为独立维度参与好感度加权（缺席时权重归一自动剔除）：
-- 采样代表性交互对（极性 9 桶分层 + 近期优先），渲染为带月份/时差的
-  双方对话样本；
+- 四窗分层采样（起源 / 高冲突 / 近期 / 破冰，替换旧极性九桶），
+  渲染为带月份/时差的双方对话样本；
+- EngagementMetrics 统计概要注入提示词，约束推导纪律（子分与统计一致、
+  证据必须引用原文、risk_evidence 找不到证据必须 found=false）；
 - RelationshipContext（关系类型/时长/沟通风格）注入提示词；
 - 远程模型必经 PrivacyRedactor（脱敏器不可用=整维缺席，绝不发原文，
   对齐 rag/fact_llm 的红线模式）；本地 loopback 模型免脱敏；
@@ -19,6 +21,7 @@ from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 
 from ...db.connection import get_db
+from .engagement_metrics import EngagementMetrics
 
 logger = logging.getLogger(__name__)
 
@@ -32,20 +35,45 @@ TIMEOUT_SECONDS = 90
 # 耗尽导致 JSON 未闭合即截断（finish_reason=length）——真答案在最后
 MAX_TOKENS = 3072
 
-SYSTEM_PROMPT = """你是一位关系分析专家。基于给出的两人聊天交互对样本（[对方] 与 [我]），
+# 四窗采样配额（批 3：极性九桶退役——中性对占绝对多数，九桶配额大多
+# 浪费；窗口覆盖关系演变/冲突段/恢复段，信息密度更高）
+WINDOW_ORIGIN_QUOTA = 12        # 起源窗：最早对话
+WINDOW_CONFLICT_QUOTA = 12      # 高冲突窗：负向密度最高的 7 天桶
+WINDOW_RECENT_QUOTA = 12        # 近期窗：最近 30 天
+WINDOW_ICEBREAK_QUOTA = 6       # 破冰窗：>24h 沉默后恢复的首轮交流
+WINDOW_RECENT_DAYS = 30
+CONFLICT_BUCKET_SECONDS = 7 * 86400
+ICEBREAK_SESSION_GAP_SECONDS = 24 * 3600
+MIN_PER_WINDOW = 2              # 预算裁剪时每窗保底
+
+# 风险对话证据键（与风险预警模块的信号 key 一一对应）
+RISK_EVIDENCE_KEYS = ("hot_cold", "one_sided", "reality_denial", "warm_then_cold")
+
+SYSTEM_PROMPT = """你是一位关系分析专家。基于给出的【统计概要】与两人聊天交互对样本（[对方] 与 [我]），
 评估这两人的关系质量。注意：衡量的不是单方情绪，而是双方关系的亲密与
 健康程度。
 
 严格按以下 JSON 输出，不要输出任何其他文字：
 {"score": 0-100 的整数（关系质量总分，50 为中性）,
  "sub_scores": {"communication_quality": 0-100（沟通质量：互相理解与回应质量）,
-                "relationship_warmth": 0-100（关系温度：亲近与信任程度）,
-                "risk_signals": 0-100（风险信号：注意高分=风险多，如冷淡/敷衍/冲突）},
+                "relationship_warmth": 0-100（关系温度：亲近与信任程度）},
+ "risk_evidence": {"hot_cold": {"found": true/false, "quotes": ["原文短句（≤30字）"]},
+                   "one_sided": {"found": true/false, "quotes": [...]},
+                   "reality_denial": {"found": true/false, "quotes": [...]},
+                   "warm_then_cold": {"found": true/false, "quotes": [...]}},
  "evidence": [{"quote": "支撑判断的原文短句（≤30字）", "month": "出现月份"}]（最多5条）,
  "insight": "一段不超过120字的关系洞察，指出最关键的关系特征"}
 
-要求：evidence 只能引用样本原文，禁止编造；风险信号方向注意与另两个
-子分相反（高=差）。"""
+risk_evidence 四类的含义：hot_cold=忽冷忽热（时而热情时而冷淡）；
+one_sided=单向投入（一方持续付出另一方敷衍）；reality_denial=现实否认
+（否定对方感受或记忆，如"你记错了""你太敏感"）；warm_then_cold=先热后冷
+（早期热情、近期明显降温）。
+
+推导纪律：
+1. sub_scores 必须与【统计概要】一致——概要中敷衍回复率、长时未回应、
+   连发未回等反向指标明显偏高时，communication_quality 不应给高分；
+2. evidence 与 risk_evidence.quotes 只能引用样本原文，禁止编造；
+3. risk_evidence 每类找不到对应对话证据时必须 found=false，禁止臆测。"""
 
 
 class RelationshipLLMAbsent(RuntimeError):
@@ -84,9 +112,11 @@ class RelationshipLLMService:
         conversation_id: int,
         account_wxid: str = "",
         context: Optional[Dict[str, str]] = None,
+        metrics: Optional[EngagementMetrics] = None,
     ) -> Dict[str, Any]:
-        """评估并返回 {score, sub_scores, evidence, insight, meta}。
+        """评估并返回 {score, sub_scores, risk_evidence, evidence, insight, meta}。
 
+        metrics 为编排器单次计算的会话投入特征，注入提示词约束推导纪律。
         任何失败抛 RelationshipLLMAbsent（调用方置缺席，不阻断其余维度）。
         """
         started = time.monotonic()
@@ -103,7 +133,7 @@ class RelationshipLLMService:
                 pair_texts, account_wxid=account_wxid, conversation_id=conversation_id
             )
 
-        messages = self._render_prompt(pair_texts, context or {})
+        messages = self._render_prompt(pair_texts, context or {}, metrics)
         body = self._call_chat(messages)
         content = self._extract_content(body)
         finish_reason = ""
@@ -138,52 +168,197 @@ class RelationshipLLMService:
         }
         return result
 
-    # ---------- 采样 ----------
+    # ---------- 采样（四窗分层） ----------
+
+    # 交互对行模板（from 侧附带单元 id 作去重键）
+    _PAIR_SELECT = """
+        SELECT ip.from_polarity, ip.to_polarity, ip.time_gap,
+               fs.message_ids AS from_ids, fs.sender AS from_sender,
+               fs.first_message_timestamp AS from_ts, fs.id AS from_unit_id,
+               ts.message_ids AS to_ids, ts.sender AS to_sender
+        FROM interaction_pairs ip
+        JOIN speech_units fs ON fs.id = ip.from_speech_unit_id
+        JOIN speech_units ts ON ts.id = ip.to_speech_unit_id
+        WHERE ip.conversation_id = ?
+    """
 
     def _sample_interaction_pairs(self, conversation_id: int) -> List[Dict[str, Any]]:
-        """极性 9 桶分层 + 近期优先，采样交互对文本。
+        """四窗分层采样：起源 / 高冲突 / 近期 / 破冰。
 
         speech_units 不存内容（只有 message_ids/sender/时间戳），单元
-        文本经 message_ids 回查 messages 拼接。
+        文本经 message_ids 回查 messages 拼接。窗内极性均衡（轮转取数），
+        窗口间共享 8000 字符预算（超出从最大窗裁最旧，每窗保底 2 对）。
         """
-        # SQL 侧按桶 LIMIT（ROW_NUMBER 分层 + 每桶配额）：此前全量拉取
-        # 再 Python 采样，数万交互对的会话每次分析都白读 99% 数据
-        bucket_count = get_db().execute(
-            """
-            SELECT COUNT(DISTINCT from_polarity || ':' || to_polarity)
-            FROM interaction_pairs WHERE conversation_id = ?
-            """,
-            (conversation_id,),
-        ).fetchone()[0]
-        if not bucket_count:
-            return []
-        quota = max(2, MAX_PAIRS // int(bucket_count))
-        rows = get_db().execute(
-            """
-            SELECT * FROM (
-                SELECT ip.from_polarity, ip.to_polarity, ip.time_gap,
-                       fs.message_ids AS from_ids, fs.sender AS from_sender,
-                       fs.first_message_timestamp AS from_ts,
-                       ts.message_ids AS to_ids, ts.sender AS to_sender,
-                       ROW_NUMBER() OVER (
-                           PARTITION BY ip.from_polarity, ip.to_polarity
-                           ORDER BY fs.first_message_timestamp DESC
-                       ) AS bucket_rank
-                FROM interaction_pairs ip
-                JOIN speech_units fs ON fs.id = ip.from_speech_unit_id
-                JOIN speech_units ts ON ts.id = ip.to_speech_unit_id
-                WHERE ip.conversation_id = ?
-            ) ranked
-            WHERE bucket_rank <= ?
-            ORDER BY from_ts DESC
-            LIMIT ?
-            """,
-            (conversation_id, quota, MAX_PAIRS),
-        ).fetchall()
-        if not rows:
+        origin_rows = self._balance_polarity(
+            self._fetch_pairs(conversation_id, " ORDER BY from_ts ASC LIMIT ?",
+                              (WINDOW_ORIGIN_QUOTA * 2,)),
+            WINDOW_ORIGIN_QUOTA,
+        )
+        conflict_rows = self._fetch_conflict_window(conversation_id)
+        recent_rows = self._fetch_recent_window(conversation_id)
+        icebreak_rows = self._fetch_icebreak_window(conversation_id)
+
+        # 跨窗去重（同一 from 单元只出现在一个窗）
+        seen: set = set()
+        windows: List[List[Any]] = []
+        for rows in (origin_rows, conflict_rows, recent_rows, icebreak_rows):
+            unique = []
+            for row in rows:
+                key = int(row["from_unit_id"] or 0)
+                if key and key in seen:
+                    continue
+                seen.add(key)
+                unique.append(row)
+            if unique:
+                windows.append(unique)
+
+        # 总量上限 40：从最大窗裁最旧
+        while sum(len(w) for w in windows) > MAX_PAIRS:
+            biggest = max(windows, key=len)
+            if len(biggest) <= MIN_PER_WINDOW:
+                break
+            biggest.pop(0)
+
+        pairs_by_window = [self._rows_to_pairs(rows) for rows in windows]
+
+        # 字符预算：从占用最多的窗裁最旧一对（每窗保底）
+        def _chars(pair: Dict[str, Any]) -> int:
+            return len(pair["from_text"]) + len(pair["to_text"])
+
+        total = sum(_chars(p) for w in pairs_by_window for p in w)
+        while total > MAX_TOTAL_INPUT_CHARS:
+            trimmable = [w for w in pairs_by_window if len(w) > MIN_PER_WINDOW]
+            if not trimmable:
+                break
+            biggest = max(trimmable, key=lambda w: sum(_chars(p) for p in w))
+            total -= _chars(biggest.pop(0))
+
+        pairs = [p for w in pairs_by_window for p in w]
+        # 时间正序渲染（旧→新，便于读演变）
+        pairs.sort(key=lambda p: p["_ts"])
+        for p in pairs:
+            del p["_ts"]
+        return pairs
+
+    def _fetch_pairs(
+        self, conversation_id: int, tail: str, params: tuple
+    ) -> List[Any]:
+        """按模板取交互对行；表缺失等异常按空窗降级。"""
+        try:
+            return get_db().execute(
+                self._PAIR_SELECT + tail,
+                (conversation_id, *params),
+            ).fetchall()
+        except Exception as exc:
+            logger.debug("[关系评估] 窗口取数跳过: %s", exc)
             return []
 
-        # 批量取全部涉及消息的文本（优先预处理净文本，回退原文）。
+    def _fetch_recent_window(self, conversation_id: int) -> List[Any]:
+        """近期窗：最近 30 天；窗口内无样本时回退最新一批（保持近期语义）。"""
+        threshold = int(time.time()) - WINDOW_RECENT_DAYS * 86400
+        rows = [
+            r for r in self._fetch_pairs(
+                conversation_id,
+                " AND from_ts >= ? ORDER BY from_ts DESC LIMIT ?",
+                (threshold, WINDOW_RECENT_QUOTA * 2),
+            )
+        ]
+        if not rows:
+            rows = self._fetch_pairs(
+                conversation_id,
+                " ORDER BY from_ts DESC LIMIT ?",
+                (WINDOW_RECENT_QUOTA * 2,),
+            )
+        return self._balance_polarity(rows, WINDOW_RECENT_QUOTA)
+
+    def _fetch_conflict_window(self, conversation_id: int) -> List[Any]:
+        """高冲突窗：负向（from_polarity=-1）密度最高的 7 天桶内的对。"""
+        try:
+            bucket = get_db().execute(
+                """
+                SELECT from_ts / ? AS wk, COUNT(*) AS c
+                FROM (
+                    SELECT fs.first_message_timestamp AS from_ts
+                    FROM interaction_pairs ip
+                    JOIN speech_units fs ON fs.id = ip.from_speech_unit_id
+                    WHERE ip.conversation_id = ? AND ip.from_polarity = -1
+                )
+                GROUP BY wk ORDER BY c DESC, wk DESC LIMIT 1
+                """,
+                (CONFLICT_BUCKET_SECONDS, conversation_id),
+            ).fetchone()
+        except Exception as exc:
+            logger.debug("[关系评估] 冲突窗定位跳过: %s", exc)
+            return []
+        if not bucket:
+            return []
+        start = int(bucket["wk"]) * CONFLICT_BUCKET_SECONDS
+        return self._fetch_pairs(
+            conversation_id,
+            " AND from_ts >= ? AND from_ts < ? ORDER BY from_ts ASC LIMIT ?",
+            (start, start + CONFLICT_BUCKET_SECONDS, WINDOW_CONFLICT_QUOTA),
+        )
+
+    def _fetch_icebreak_window(self, conversation_id: int) -> List[Any]:
+        """破冰窗：与上一会话间隔 >24h 的会话的首个交互对（恢复轮）。"""
+        try:
+            sessions = get_db().execute(
+                """
+                SELECT s.start_time AS start_time,
+                       (SELECT MAX(s2.end_time) FROM sessions s2
+                        WHERE s2.conversation_id = s.conversation_id
+                          AND s2.end_time < s.start_time) AS prev_end
+                FROM sessions s
+                WHERE s.conversation_id = ?
+                ORDER BY s.start_time DESC
+                """,
+                (conversation_id,),
+            ).fetchall()
+        except Exception as exc:
+            logger.debug("[关系评估] 破冰窗取会话跳过: %s", exc)
+            return []
+
+        gaps = [
+            int(r["start_time"]) for r in sessions
+            if r["prev_end"] is not None
+            and int(r["start_time"]) - int(r["prev_end"]) > ICEBREAK_SESSION_GAP_SECONDS
+        ][:WINDOW_ICEBREAK_QUOTA]
+
+        rows = []
+        for start_time in gaps:
+            first = self._fetch_pairs(
+                conversation_id,
+                " AND from_ts >= ? ORDER BY from_ts ASC LIMIT 1",
+                (start_time,),
+            )
+            if first:
+                rows.append(first[0])
+        return rows
+
+    @staticmethod
+    def _balance_polarity(rows: List[Any], quota: int) -> List[Any]:
+        """窗内极性均衡：按 from_polarity 分组轮转取数（保持各组内次序）。"""
+        groups: Dict[int, List[Any]] = {}
+        for row in rows:
+            groups.setdefault(int(row["from_polarity"] or 0), []).append(row)
+        order = sorted(groups, key=lambda k: -len(groups[k]))
+        picked: List[Any] = []
+        index = {k: 0 for k in groups}
+        while len(picked) < quota:
+            advanced = False
+            for k in order:
+                if index[k] < len(groups[k]):
+                    picked.append(groups[k][index[k]])
+                    index[k] += 1
+                    advanced = True
+                    if len(picked) >= quota:
+                        break
+            if not advanced:
+                break
+        return picked
+
+    def _rows_to_pairs(self, rows: List[Any]) -> List[Dict[str, Any]]:
+        """交互对行 → 渲染对（文本经 message_ids 回查，详见 _sample 注释）。"""
         # message_ids 实际存在两种形态：纯逗号分隔（schema 注释口径）与
         # Python list 的 repr（'[123, 124]'，部分写入路径产出）——统一剥
         # 方括号解析（此前取数循环漏剥，全库 list-repr 形态下采样恒为空）
@@ -222,16 +397,14 @@ class RelationshipLLMService:
                         parts.append(text)
             return " ".join(parts)[:PER_UNIT_CHAR_LIMIT]
 
-        # SQL 已按桶配额采样（≤40 对）；时间正序渲染（旧→新，便于读演变）
-        sampled = sorted(rows, key=lambda r: int(r["from_ts"] or 0))
-
         pairs: List[Dict[str, Any]] = []
-        for row in sampled:
+        for row in rows:
             from_text = _unit_text(row["from_ids"])
             to_text = _unit_text(row["to_ids"])
             if not from_text and not to_text:
                 continue
             pairs.append({
+                "_ts": int(row["from_ts"] or 0),
                 "month": datetime.fromtimestamp(
                     int(row["from_ts"] or 0)
                 ).strftime("%Y-%m"),
@@ -240,12 +413,6 @@ class RelationshipLLMService:
                 "from_text": from_text,
                 "to_text": to_text,
             })
-
-        # 总字符预算：超限时从最旧丢弃
-        while pairs and sum(
-            len(p["from_text"]) + len(p["to_text"]) for p in pairs
-        ) > MAX_TOTAL_INPUT_CHARS:
-            pairs.pop(0)
         return pairs
 
     # ---------- 渲染 ----------
@@ -296,7 +463,10 @@ class RelationshipLLMService:
         return redacted
 
     def _render_prompt(
-        self, pairs: List[Dict[str, Any]], context: Dict[str, str]
+        self,
+        pairs: List[Dict[str, Any]],
+        context: Dict[str, str],
+        metrics: Optional[EngagementMetrics] = None,
     ) -> List[dict]:
         lines: List[str] = []
         if context:
@@ -309,6 +479,10 @@ class RelationshipLLMService:
                 ctx_parts.append(f"沟通风格：{context['communication_style']}")
             if ctx_parts:
                 lines.append("【关系背景】" + "；".join(ctx_parts))
+        if metrics is not None:
+            summary = self._render_metrics_summary(metrics)
+            if summary:
+                lines.append("【统计概要】" + summary)
         lines.append("【交互对样本】（时间从早到晚；格式：月份 | 回应间隔秒 | 发言）")
         for p in pairs:
             from_label = "我" if p["from_is_sender"] else "对方"
@@ -322,6 +496,45 @@ class RelationshipLLMService:
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": user_content[:MAX_TOTAL_INPUT_CHARS + 2000]},
         ]
+
+    @staticmethod
+    def _render_metrics_summary(metrics: EngagementMetrics) -> str:
+        """统计概要单行化（跳过空值字段；用于约束 LLM 推导纪律）。"""
+        parts = [f"文本消息 {metrics.text_message_count} 条（我 {metrics.self_text_count} / 对方 {metrics.other_text_count}）"]
+        if metrics.long_unanswered_other or metrics.long_unanswered_self:
+            parts.append(
+                f"长时未回应：对方 {metrics.long_unanswered_other} 次、我方 {metrics.long_unanswered_self} 次"
+            )
+        if metrics.burst_unanswered_other or metrics.burst_unanswered_self:
+            parts.append(
+                f"连发未回：对方 {metrics.burst_unanswered_other} 次、我方 {metrics.burst_unanswered_self} 次"
+            )
+        if metrics.perfunctory_rate_other or metrics.perfunctory_rate_self:
+            parts.append(
+                f"敷衍回复率：对方 {metrics.perfunctory_rate_other:.0%}、我方 {metrics.perfunctory_rate_self:.0%}"
+            )
+        if metrics.icebreak_total:
+            parts.append(
+                f"主动破冰：对方 {metrics.icebreak_other} / 我方 {metrics.icebreak_self}（共 {metrics.icebreak_total} 次）"
+            )
+        greeting_total = (
+            metrics.morning_greeting_self + metrics.morning_greeting_other
+            + metrics.night_greeting_self + metrics.night_greeting_other
+        )
+        if greeting_total:
+            other_greetings = metrics.morning_greeting_other + metrics.night_greeting_other
+            parts.append(f"早晚安发起：对方 {other_greetings} / 我方 {greeting_total - other_greetings}")
+        if metrics.community_ratio_other is not None:
+            parts.append(f"共同体表达（对方「我们」类占比）：{metrics.community_ratio_other:.0%}")
+        if metrics.revoke_other or metrics.revoke_self:
+            parts.append(f"撤回消息：对方 {metrics.revoke_other} 条、我方 {metrics.revoke_self} 条")
+        if metrics.daily_cv_active is not None:
+            parts.append(f"日消息量波动系数：{metrics.daily_cv_active}")
+        if metrics.positive_other or metrics.negative_other:
+            parts.append(
+                f"带极性消息（对方）：正 {metrics.positive_other} / 负 {metrics.negative_other}"
+            )
+        return "；".join(parts)
 
     # ---------- 调用与解析 ----------
 
@@ -403,11 +616,34 @@ class RelationshipLLMService:
             "sub_scores": {
                 "communication_quality": _clamp(sub_raw.get("communication_quality")),
                 "relationship_warmth": _clamp(sub_raw.get("relationship_warmth")),
-                "risk_signals": _clamp(sub_raw.get("risk_signals")),
             },
+            "risk_evidence": self._normalize_risk_evidence(parsed.get("risk_evidence")),
             "evidence": evidence,
             "insight": str(parsed.get("insight") or "")[:300],
         }
+
+    @staticmethod
+    def _normalize_risk_evidence(raw: Any) -> Dict[str, Dict[str, Any]]:
+        """风险对话证据归一：{key: {found, quotes[]}}，四键齐全。"""
+        normalized: Dict[str, Dict[str, Any]] = {}
+        source = raw if isinstance(raw, dict) else {}
+        for key in RISK_EVIDENCE_KEYS:
+            item = source.get(key)
+            found = False
+            quotes: List[str] = []
+            if isinstance(item, dict):
+                found = bool(item.get("found"))
+                for quote in (item.get("quotes") or [])[:3]:
+                    if quote:
+                        quotes.append(str(quote)[:60])
+            elif isinstance(item, list):
+                # 宽容形态：直接给引文列表（视为 found 且带证据）
+                for quote in item[:3]:
+                    if quote:
+                        quotes.append(str(quote)[:60])
+                found = bool(quotes)
+            normalized[key] = {"found": found, "quotes": quotes}
+        return normalized
 
 
 def build_relationship_llm_service() -> Optional[RelationshipLLMService]:

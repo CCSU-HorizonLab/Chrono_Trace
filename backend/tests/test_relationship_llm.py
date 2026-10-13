@@ -4,13 +4,14 @@ import json
 import os
 import sqlite3
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import app.services.analysis.relationship_llm_service as rlmod
+from app.services.analysis.engagement_metrics import EngagementMetrics
 from app.services.analysis.relationship_llm_service import (
     RelationshipLLMAbsent,
     RelationshipLLMService,
@@ -70,8 +71,34 @@ def db():
     conn.execute("CREATE TABLE interaction_pairs (id INTEGER PRIMARY KEY, conversation_id INT, from_speech_unit_id INT, to_speech_unit_id INT, time_gap INT, from_polarity INT, to_polarity INT)")
     conn.execute("CREATE TABLE messages (id INTEGER PRIMARY KEY, conversation_id INT, is_sender INT, content TEXT, timestamp INT)")
     conn.execute("CREATE TABLE message_preprocessed (message_id INTEGER PRIMARY KEY, cleaned_content TEXT)")
+    conn.execute("CREATE TABLE sessions (id INTEGER PRIMARY KEY, conversation_id INT, start_time INT, end_time INT, initiator TEXT)")
     yield conn
     conn.close()
+
+
+def seed_pair(db, pid, ts, polarity=1, text="样本"):
+    """按指定时间/极性/文本种一对交互（from=对方，to=我）。"""
+    mid_f, mid_t = 10_000 + 2 * pid, 10_001 + 2 * pid
+    db.execute(
+        "INSERT INTO messages (id, conversation_id, is_sender, content, timestamp) VALUES (?, 1, 0, ?, ?)",
+        (mid_f, f"{text}{pid}", ts),
+    )
+    db.execute(
+        "INSERT INTO messages (id, conversation_id, is_sender, content, timestamp) VALUES (?, 1, 1, ?, ?)",
+        (mid_t, f"回复{pid}", ts + 30),
+    )
+    db.execute(
+        "INSERT INTO speech_units (id, conversation_id, message_ids, sender, first_message_timestamp, last_message_timestamp, message_count) VALUES (?, 1, ?, 'other', ?, ?, 1)",
+        (2 * pid + 1, str(mid_f), ts, ts),
+    )
+    db.execute(
+        "INSERT INTO speech_units (id, conversation_id, message_ids, sender, first_message_timestamp, last_message_timestamp, message_count) VALUES (?, 1, ?, 'user', ?, ?, 1)",
+        (2 * pid + 2, str(mid_t), ts + 30, ts + 30),
+    )
+    db.execute(
+        "INSERT INTO interaction_pairs (id, conversation_id, from_speech_unit_id, to_speech_unit_id, time_gap, from_polarity, to_polarity) VALUES (?, 1, ?, ?, 30, ?, ?)",
+        (pid, 2 * pid + 1, 2 * pid + 2, polarity, polarity),
+    )
 
 
 def seed_pairs(db, n=20, base_ts=None):
@@ -183,42 +210,99 @@ def test_local_model_skips_redaction(db):
     assert redactor.calls == []
 
 
-def test_sampling_stratifies_by_polarity_and_prefers_recent(db):
-    # 40 对 + 12 对近期，验证分层与近期优先
-    base_old = int(datetime(2026, 1, 1).timestamp())
-    seed_pairs(db, n=40, base_ts=base_old)
-    for i in range(12):
-        ts = base_old + 86400 * 400 + 3600 * i
-        fid, tid = 1000 + 2 * i, 1001 + 2 * i
-        mid_f, mid_t = 5000 + 2 * i, 5001 + 2 * i
-        db.execute(
-            "INSERT INTO messages (id, conversation_id, is_sender, content, timestamp) VALUES (?, 1, 0, ?, ?)",
-            (mid_f, f"近期样本{i}", ts),
-        )
-        db.execute(
-            "INSERT INTO messages (id, conversation_id, is_sender, content, timestamp) VALUES (?, 1, 1, ?, ?)",
-            (mid_t, f"近期回复{i}", ts + 30),
-        )
-        db.execute(
-            "INSERT INTO speech_units (id, conversation_id, message_ids, sender, first_message_timestamp, last_message_timestamp, message_count) VALUES (?, 1, ?, 'other', ?, ?, 1)",
-            (fid, str(mid_f), ts, ts),
-        )
-        db.execute(
-            "INSERT INTO speech_units (id, conversation_id, message_ids, sender, first_message_timestamp, last_message_timestamp, message_count) VALUES (?, 1, ?, 'user', ?, ?, 1)",
-            (tid, str(mid_t), ts + 30, ts + 30),
-        )
-        db.execute(
-            "INSERT INTO interaction_pairs (id, conversation_id, from_speech_unit_id, to_speech_unit_id, time_gap, from_polarity, to_polarity) VALUES (?, 1, ?, ?, 30, 1, 1)",
-            (500 + i, fid, tid),
-        )
+def test_sampling_windows_cover_origin_conflict_recent_and_icebreak(db):
+    """四窗分层：起源（极性均衡）/ 高冲突 / 近期 / 破冰各窗均有代表。"""
+    # 起源：2026-01 前三周，正负交替、负向分散（单周负向 ≤4）
+    base = datetime(2026, 1, 5, 10, 0)
+    for i in range(16):
+        polarity = 1 if i % 2 == 0 else -1
+        text = "正向" if polarity == 1 else "负向"
+        seed_pair(db, i + 1, int((base + timedelta(hours=30 * i)).timestamp()),
+                  polarity=polarity, text=text)
+    # 高冲突：2026-05-10 起一周内 10 条负向（密度最高周桶）
+    conflict_base = datetime(2026, 5, 10, 10, 0)
+    for i in range(10):
+        seed_pair(db, 100 + i, int((conflict_base + timedelta(hours=4 * i)).timestamp()),
+                  polarity=-1, text="高冲突")
+    # 近期：5 天前 5 条正向
+    recent_base = datetime.now() - timedelta(days=5)
+    for i in range(5):
+        seed_pair(db, 200 + i, int((recent_base + timedelta(hours=i)).timestamp()),
+                  polarity=1, text="近期样本")
+    # 破冰：1/20 与 1/25 两会话间隔 5 天 > 24h，恢复轮在 1/25
+    db.execute(
+        "INSERT INTO sessions (id, conversation_id, start_time, end_time, initiator) VALUES (1, 1, ?, ?, 'other')",
+        (int(datetime(2026, 1, 20, 20, 0).timestamp()), int(datetime(2026, 1, 20, 21, 0).timestamp())),
+    )
+    db.execute(
+        "INSERT INTO sessions (id, conversation_id, start_time, end_time, initiator) VALUES (2, 1, ?, ?, 'other')",
+        (int(datetime(2026, 1, 25, 20, 0).timestamp()), int(datetime(2026, 1, 25, 21, 0).timestamp())),
+    )
+    seed_pair(db, 300, int(datetime(2026, 1, 25, 20, 5).timestamp()),
+              polarity=1, text="破冰恢复")
     db.commit()
+
     svc = RelationshipLLMService(_model(), http=_FakeHTTP(_ok_content()), is_remote=lambda m: False)
     pairs = svc._sample_interaction_pairs(1)
-    assert len(pairs) <= 40
+
+    assert len(pairs) <= rlmod.MAX_PAIRS
     months = {p["month"] for p in pairs}
-    # 分层：旧桶（2026 年初）保有样本，新桶（近期）也在
-    assert any(m.startswith("2026-0") for m in months)
-    assert "2027-02" in months
+    joined = " ".join(p["from_text"] for p in pairs)
+    assert "2026-01" in months          # 起源窗在场
+    assert "高冲突" in joined            # 高冲突窗（负向密度最高周）
+    assert "近期样本" in joined          # 近期窗
+    assert "破冰恢复" in joined          # 破冰窗
+    # 起源窗内极性均衡：正负样本都在
+    jan_texts = " ".join(p["from_text"] for p in pairs if p["month"] == "2026-01")
+    assert "正向" in jan_texts and "负向" in jan_texts
+
+
+def test_prompt_includes_metrics_summary_when_provided(db):
+    seed_pairs(db)
+    http = _FakeHTTP(_ok_content())
+    svc = RelationshipLLMService(_model(), http=http, is_remote=lambda m: False)
+    metrics = EngagementMetrics(
+        text_message_count=520, self_text_count=200, other_text_count=320,
+        long_unanswered_other=9, perfunctory_rate_other=0.22,
+    )
+    svc.evaluate(1, metrics=metrics)
+    with_summary = http.calls[0]["payload"]["messages"][1]["content"]
+    assert "【统计概要】" in with_summary
+    assert "长时未回应：对方 9 次" in with_summary
+    assert "敷衍回复率：对方 22%" in with_summary
+
+    svc.evaluate(1)
+    without_summary = http.calls[1]["payload"]["messages"][1]["content"]
+    assert "【统计概要】" not in without_summary
+
+
+def test_risk_evidence_normalized_with_all_four_keys(db):
+    seed_pairs(db)
+    content = json.dumps({
+        "score": 60,
+        "sub_scores": {"communication_quality": 60, "relationship_warmth": 55},
+        "risk_evidence": {
+            "hot_cold": {"found": True, "quotes": ["前几天还那么热情"]},
+            "one_sided": {"found": False, "quotes": []},
+            "reality_denial": ["你记错了，我从来没说过"],
+        },
+        "evidence": [],
+        "insight": "x",
+    }, ensure_ascii=False)
+    svc = RelationshipLLMService(_model(), http=_FakeHTTP(content), is_remote=lambda m: False)
+    result = svc.evaluate(1)
+
+    evidence = result["risk_evidence"]
+    assert set(evidence) == set(rlmod.RISK_EVIDENCE_KEYS)
+    assert evidence["hot_cold"]["found"] is True
+    assert evidence["hot_cold"]["quotes"]
+    assert evidence["one_sided"]["found"] is False
+    # 宽容形态：直接给引文列表视为 found 且带证据
+    assert evidence["reality_denial"]["found"] is True
+    assert evidence["reality_denial"]["quotes"]
+    # 缺席键补 false；risk_signals 子分已随口径升级移除
+    assert evidence["warm_then_cold"]["found"] is False
+    assert "risk_signals" not in result["sub_scores"]
 
 
 def test_prompt_includes_relationship_context_labels(db):

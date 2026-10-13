@@ -3,18 +3,23 @@
 检索两路 RRF 融合：
 - 关键词通道：jieba 分词后在 messages.content 上 LIKE 匹配
 - 向量通道：问题嵌入与 sentiment_cache.embedding_vector 暴力余弦
-  （复用联系人记忆索引落库的嵌入缓存，未建索引时该通道静默缺席）
+  （复用联系人记忆索引落库的嵌入缓存，未建索引时该通道静默缺席；
+  向量按联系人 LRU 缓存 + 指纹校验，不每次全表反序列化）
 
 远程模型发送前问题与聊天记录逐条过 PrivacyRedactor（失败即阻断，
 绝不降级发原文——问题里常直接含手机号/真实姓名，同样不能外发）；
 回答要求带 [n] 引用编号，citations 按 [n] 过滤为实际引用子集，
 引用原文（仅本地展示，不外发）随结果返回。
+
+LLM 调用为交互式：短超时少重试，且支持取消（request_cancel 置位，
+bridge 线程轮询后立即返回，在途请求在工作线程退出）。
 """
 from __future__ import annotations
 
 import logging
 import pickle
 import re
+import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -22,6 +27,11 @@ from ...db.connection import get_db
 from ..realtime.llm_http import post_json_with_retries
 
 logger = logging.getLogger(__name__)
+
+try:
+    import numpy as _np
+except Exception:  # onnxruntime 环境必有 numpy；缺库退化为纯 Python 点积
+    _np = None
 
 # 检索规模：两路各取候选池，融合后截断
 KEYWORD_POOL = 40
@@ -31,7 +41,40 @@ RRF_K = 60
 # 上下文预算：检索消息总字符上限（超限从相关度最低的开始丢弃）
 MAX_CONTEXT_CHARS = 6000
 MAX_MESSAGE_CHARS = 200
-LLM_TIMEOUT = 120
+# 交互式问答：短超时 + 少重试（默认 3 次重试最坏可挂 8 分钟，见取消机制）
+LLM_TIMEOUT = 60
+LLM_MAX_RETRIES = 1
+
+# ---------------------------------------------------------------------------
+# 联系人级向量缓存：sentiment_cache 全表拉取 + 逐条 pickle 反序列化每次
+# 提问重复做，正是 rag/retriever.py 头注释批评的反模式。LRU + 指纹校验：
+# 指纹 = (向量行数, 最大 message_id)，新增/改写向量行即触发重建，免去
+# 在 sentiment_service 写入路径挂失效钩子。
+# ---------------------------------------------------------------------------
+_VECTOR_CACHE: Dict[int, Dict[str, Any]] = {}
+_VECTOR_CACHE_LOCK = threading.Lock()
+_VECTOR_CACHE_MAX = 4
+
+# ---------------------------------------------------------------------------
+# 取消信号：bridge 的 cancel_history_qa 置位；ask 轮询消费（在途 HTTP 由
+# 工作线程内的 should_abort 在尝试边界退出，bridge 线程立即返回）。
+# ---------------------------------------------------------------------------
+_CANCEL_LOCK = threading.Lock()
+_CANCEL_REQUESTED: set = set()
+
+
+def request_cancel(conversation_id: int) -> None:
+    """标记取消某联系人的进行中提问（下一次轮询点生效）。"""
+    with _CANCEL_LOCK:
+        _CANCEL_REQUESTED.add(int(conversation_id))
+
+
+def _take_cancel(conversation_id: int) -> bool:
+    with _CANCEL_LOCK:
+        if int(conversation_id) in _CANCEL_REQUESTED:
+            _CANCEL_REQUESTED.discard(int(conversation_id))
+            return True
+        return False
 
 SYSTEM_PROMPT = """你是聊天记录问答助手。只依据【聊天记录】回答【问题】，不允许编造记录里没有的内容。
 
@@ -98,6 +141,7 @@ class HistoryQAService:
         question = str(question or "").strip()
         if not question:
             raise HistoryQAError("请输入问题")
+        _take_cancel(conversation_id)  # 清掉上一轮遗留的取消标记
 
         account_wxid, display_name = self._load_conversation(conversation_id)
         records = self._retrieve(conversation_id, question)
@@ -108,7 +152,7 @@ class HistoryQAService:
             question, records, account_wxid, conversation_id
         )
 
-        answer = self._call_llm(redacted_question, redacted)
+        answer = self._call_llm(conversation_id, redacted_question, redacted)
         citations = [
             {
                 "index": idx,  # 原始 1 基编号，与回答 [n] 对应；过滤后不变
@@ -200,8 +244,87 @@ class HistoryQAService:
         vector = _load_question_vector(question)
         if not vector:
             return []
+        entry = self._load_vector_cache(conversation_id)
+        dim = len(vector)
+        bucket = entry["by_dim"].get(dim)
+        if not bucket:
+            return []  # 该宽度无缓存向量（旧模型宽度不同，不参与比较）
+        vectors, metas = bucket["vectors"], bucket["metas"]
+        if _np is not None and vectors:
+            scores = (
+                _np.asarray(vectors, dtype=_np.float32)
+                @ _np.asarray(vector, dtype=_np.float32)
+            )
+            order = sorted(range(len(metas)), key=lambda i: float(scores[i]), reverse=True)
+        else:
+            order = sorted(
+                range(len(metas)),
+                key=lambda i: sum(a * b for a, b in zip(vector, vectors[i])),
+                reverse=True,
+            )
+        return [metas[i] for i in order[:VECTOR_POOL]]
+
+    def _load_vector_cache(self, conversation_id: int) -> Dict[str, Any]:
+        """联系人级向量缓存（指纹未变直接复用，免去每次全表 pickle 反序列化）。"""
+        conversation_id = int(conversation_id)
+        fingerprint = self._vector_fingerprint(conversation_id)
+        if fingerprint is not None:
+            with _VECTOR_CACHE_LOCK:
+                entry = _VECTOR_CACHE.get(conversation_id)
+                if entry is not None and entry["fingerprint"] == fingerprint:
+                    # LRU 触碰：挪到插入序末尾
+                    _VECTOR_CACHE.pop(conversation_id, None)
+                    _VECTOR_CACHE[conversation_id] = entry
+                    return entry
+
+        rows = self._fetch_vector_rows(conversation_id)
+        by_dim: Dict[int, Dict[str, Any]] = {}
+        for row in rows:
+            try:
+                cached = pickle.loads(row[4])
+            except Exception:
+                continue
+            if not isinstance(cached, list) or not cached:
+                continue
+            bucket = by_dim.setdefault(len(cached), {"vectors": [], "metas": []})
+            bucket["vectors"].append(cached)
+            bucket["metas"].append(self._row_to_record(row))
+
+        entry = {"fingerprint": fingerprint, "by_dim": by_dim}
+        if fingerprint is not None:
+            # 指纹查询失败（瞬时 DB 异常）时不缓存，避免空结果毒化缓存
+            with _VECTOR_CACHE_LOCK:
+                _VECTOR_CACHE[conversation_id] = entry
+                while len(_VECTOR_CACHE) > _VECTOR_CACHE_MAX:
+                    _VECTOR_CACHE.pop(next(iter(_VECTOR_CACHE)))
+        return entry
+
+    @staticmethod
+    def _vector_fingerprint(conversation_id: int) -> Optional[Tuple[int, int]]:
+        """轻量指纹：向量行数 + 最大 message_id（新增/改写必变，代价一次聚合查询）。
+
+        查询失败返回 None（调用方退化为不缓存的直查路径）。
+        """
         try:
-            rows = get_db().execute(
+            row = get_db().execute(
+                """
+                SELECT COUNT(*), COALESCE(MAX(s.message_id), 0)
+                FROM sentiment_cache s
+                JOIN messages m ON m.id = s.message_id
+                WHERE m.conversation_id = ? AND m.message_type = 1
+                  AND length(m.content) > 0 AND s.embedding_vector IS NOT NULL
+                """,
+                (conversation_id,),
+            ).fetchone()
+            return (int(row[0] or 0), int(row[1] or 0))
+        except Exception as exc:
+            logger.warning("[问问微信] 向量指纹查询失败: %s", exc)
+            return None
+
+    @staticmethod
+    def _fetch_vector_rows(conversation_id: int) -> List[Tuple]:
+        try:
+            return get_db().execute(
                 """
                 SELECT m.id, m.timestamp, m.is_sender, m.content, s.embedding_vector
                 FROM sentiment_cache s
@@ -214,21 +337,6 @@ class HistoryQAService:
         except Exception as exc:
             logger.warning("[问问微信] 向量检索失败: %s", exc)
             return []
-
-        dim = len(vector)
-        scored: List[Tuple[float, Dict[str, Any]]] = []
-        for row in rows:
-            try:
-                cached = pickle.loads(row[4])
-            except Exception:
-                continue
-            if not isinstance(cached, list) or len(cached) != dim:
-                continue  # 旧模型宽度不同，跳过不参与比较
-            # 缓存向量与问题向量均已 L2 归一，点积即余弦
-            cos = sum(a * b for a, b in zip(vector, cached))
-            scored.append((cos, self._row_to_record(row)))
-        scored.sort(key=lambda pair: pair[0], reverse=True)
-        return [rec for _, rec in scored[:VECTOR_POOL]]
 
     @staticmethod
     def _row_to_record(row: Tuple) -> Dict[str, Any]:
@@ -285,7 +393,9 @@ class HistoryQAService:
         ]
         return redacted_question, redacted
 
-    def _call_llm(self, question: str, records: List[Dict[str, Any]]) -> str:
+    def _call_llm(
+        self, conversation_id: int, question: str, records: List[Dict[str, Any]]
+    ) -> str:
         from ..realtime.rag.fact_llm import get_active_model_config
 
         model_config = get_active_model_config()
@@ -316,20 +426,42 @@ class HistoryQAService:
             "max_tokens": 2048,
             "stream": False,
         }
-        try:
-            body = post_json_with_retries(
-                url=f"{base_url}/chat/completions",
-                payload=payload,
-                headers=headers,
-                timeout=LLM_TIMEOUT,
-                log=logger.debug,
-                log_prefix="[问问微信]",
-            )
-        except Exception as exc:
+
+        # HTTP 跑在工作线程（在途 socket 无法强断，取消时主线程立即返回，
+        # 工作线程经 should_abort 在尝试边界自行退出）
+        abort = threading.Event()
+        holder: Dict[str, Any] = {}
+
+        def _worker() -> None:
+            try:
+                holder["body"] = post_json_with_retries(
+                    url=f"{base_url}/chat/completions",
+                    payload=payload,
+                    headers=headers,
+                    timeout=LLM_TIMEOUT,
+                    max_retries=LLM_MAX_RETRIES,
+                    should_abort=abort.is_set,
+                    log=logger.debug,
+                    log_prefix="[问问微信]",
+                )
+            except BaseException as exc:  # noqa: BLE001 —— 结果经 holder 传递
+                holder["error"] = exc
+
+        worker = threading.Thread(target=_worker, daemon=True, name="history-qa-llm")
+        worker.start()
+        while worker.is_alive():
+            if _take_cancel(conversation_id):
+                abort.set()
+                raise HistoryQAError("本次提问已取消")
+            worker.join(timeout=0.2)
+        if abort.is_set():
+            raise HistoryQAError("本次提问已取消")
+        if "error" in holder:
+            exc = holder["error"]
             logger.error("[问问微信] LLM 调用失败: %s", exc)
             raise HistoryQAError(f"模型调用失败：{exc}") from exc
 
-        content = self._extract_content(body)
+        content = self._extract_content(holder.get("body") or {})
         if not content:
             raise HistoryQAError("模型返回了空回答，请重试或换个问法")
         return content

@@ -1,10 +1,12 @@
-"""问问微信（历史问答）测试：混合检索/RRF 融合/脱敏阻断/引用回填。"""
+"""问问微信（历史问答）测试：混合检索/RRF 融合/脱敏阻断/引用回填/向量缓存/取消。"""
 
 import json
 import os
 import pickle
 import sqlite3
 import sys
+import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -38,6 +40,16 @@ class _FakeRedactor:
             raise RuntimeError("redactor broken")
         self.texts.append(text)
         return SimpleNamespace(redacted_text=text.replace("13800001111", "[手机号]"))
+
+
+@pytest.fixture(autouse=True)
+def _clear_module_state():
+    """模块级向量缓存与取消标记按测试隔离。"""
+    hqmod._VECTOR_CACHE.clear()
+    hqmod._CANCEL_REQUESTED.clear()
+    yield
+    hqmod._VECTOR_CACHE.clear()
+    hqmod._CANCEL_REQUESTED.clear()
 
 
 @pytest.fixture
@@ -162,6 +174,41 @@ def test_vector_channel_ranks_by_cosine_and_skips_dim_mismatch(monkeypatch, db):
     assert ids == [1]  # 只有维度匹配且相关的消息入选
 
 
+def test_vector_cache_reuses_deserialization_and_rebuilds_on_change(monkeypatch, db):
+    seed(db, 1, "我喜欢吃火锅", 1700000100)
+    db.execute(
+        "INSERT INTO sentiment_cache VALUES (1, 1, 0.5, ?, 1)",
+        (pickle.dumps([1.0, 0.0]),),
+    )
+    svc = HistoryQAService()
+    entry1 = svc._load_vector_cache(1)
+    assert entry1["by_dim"][2]["metas"][0]["message_id"] == 1
+
+    calls = {"n": 0}
+    real_loads = pickle.loads
+
+    def counting(buf):
+        calls["n"] += 1
+        return real_loads(buf)
+
+    monkeypatch.setattr(hqmod.pickle, "loads", counting)
+
+    # 指纹未变：直接复用缓存，不再反序列化任何向量
+    entry2 = svc._load_vector_cache(1)
+    assert calls["n"] == 0
+    assert entry2["by_dim"][2]["vectors"] == entry1["by_dim"][2]["vectors"]
+
+    # 新增向量行 → 指纹变化 → 重建
+    seed(db, 2, "看电影去不去", 1700000200)
+    db.execute(
+        "INSERT INTO sentiment_cache VALUES (2, 0, 0.0, ?, 1)",
+        (pickle.dumps([0.0, 1.0]),),
+    )
+    entry3 = svc._load_vector_cache(1)
+    assert calls["n"] >= 1
+    assert len(entry3["by_dim"][2]["metas"]) == 2
+
+
 def test_context_sorted_by_time_and_char_budget(monkeypatch, db):
     # 两条命中，时间倒序入库；上下文应按时间升序呈现
     seed(db, 10, "后来的消息", 1700000900)
@@ -257,3 +304,26 @@ def test_remote_model_redaction_failure_blocks(monkeypatch, db):
     with pytest.raises(HistoryQAError) as exc:
         HistoryQAService().ask(1, "样本")
     assert "阻断" in str(exc.value)
+
+
+# ===== 取消 =====
+
+
+def test_cancel_aborts_pending_ask(monkeypatch, db):
+    """在途请求可取消：bridge 线程立即抛「已取消」，工作线程经 should_abort 退出。"""
+    seed(db, 1, "样本消息", 1700000100)
+
+    def slow_post(*, should_abort=None, **kw):
+        hqmod.request_cancel(1)  # 模拟用户在请求在途时点「取消」
+        deadline = time.time() + 5
+        while not (should_abort and should_abort()) and time.time() < deadline:
+            time.sleep(0.02)
+        return {"choices": [{"message": {"content": "迟到的回答 [1]"}}]}
+
+    monkeypatch.setattr(hqmod, "post_json_with_retries", slow_post)
+    monkeypatch.setattr(hqmod, "_load_question_vector", lambda q: None)
+    use_local_model(monkeypatch)
+
+    with pytest.raises(HistoryQAError) as exc:
+        HistoryQAService().ask(1, "样本")
+    assert "取消" in str(exc.value)

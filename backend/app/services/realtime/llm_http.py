@@ -13,6 +13,10 @@ DEFAULT_MAX_RETRIES = 3
 DEFAULT_BASE_RETRY_DELAY = 1.5
 
 
+class LLMRequestAborted(RuntimeError):
+    """调用方请求中止（外部取消信号，不视为网络失败）。"""
+
+
 def _iter_exception_chain(err: BaseException):
     seen: set[int] = set()
     current: BaseException | None = err
@@ -160,7 +164,16 @@ def post_json_with_retries(
     max_retries: int = DEFAULT_MAX_RETRIES,
     retryable_http_status: Optional[set[int]] = None,
     base_retry_delay: float = DEFAULT_BASE_RETRY_DELAY,
+    should_abort: Optional[Callable[[], bool]] = None,
 ) -> dict[str, Any]:
+    """POST JSON，可重试网络/限流错误。
+
+    should_abort 在每次尝试前与重试等待前轮询，返回 True 即抛
+    LLMRequestAborted（交互式调用方用于外部取消）。
+    """
+    def _aborted() -> bool:
+        return should_abort is not None and should_abort()
+
     merged_headers = {
         "Content-Type": "application/json",
         "Accept": "application/json",
@@ -176,6 +189,8 @@ def post_json_with_retries(
     log(f"{log_prefix} POST {url}")
 
     for attempt in range(max_retries + 1):
+        if _aborted():
+            raise LLMRequestAborted(f"{log_prefix} 请求已被调用方取消")
         started_at = time.time()
         try:
             data = json.dumps(payload).encode("utf-8")
@@ -189,6 +204,8 @@ def post_json_with_retries(
         except urllib.error.HTTPError as err:
             status = getattr(err, "code", None)
             if status in retryable_http_status and attempt < max_retries:
+                if _aborted():
+                    raise LLMRequestAborted(f"{log_prefix} 请求已被调用方取消") from err
                 delay = compute_retry_delay(
                     attempt,
                     err.headers.get("Retry-After"),
@@ -202,8 +219,12 @@ def post_json_with_retries(
             if detail:
                 raise RuntimeError(f"LLM HTTP {status} error: {detail}") from err
             raise RuntimeError(f"LLM HTTP {status} error: {err}") from err
+        except LLMRequestAborted:
+            raise
         except Exception as err:
             if is_retryable_network_error(err) and attempt < max_retries:
+                if _aborted():
+                    raise LLMRequestAborted(f"{log_prefix} 请求已被调用方取消") from err
                 delay = compute_retry_delay(attempt, base_retry_delay=base_retry_delay)
                 log(
                     f"{log_prefix} Retry on network error after {delay:.1f}s "

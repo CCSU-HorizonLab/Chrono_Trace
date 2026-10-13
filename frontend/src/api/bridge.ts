@@ -142,6 +142,9 @@ type PyWebViewApi = {
   get_affinity_progress: (task_id: string) => Promise<any>
   // 问问微信（历史问答 + 引用溯源）
   ask_history: (conversation_id: number, question: string) => Promise<any>
+  // 群聊统计与日报
+  get_group_stats: (conversation_id: number, start?: number, end?: number) => Promise<any>
+  generate_group_summary: (conversation_id: number, days?: number) => Promise<any>
   // 会话线程归档与继承
   get_latest_thread: (display_name: string, account_wxid?: string) => Promise<any>
   load_thread_context: (thread_id: number) => Promise<any>

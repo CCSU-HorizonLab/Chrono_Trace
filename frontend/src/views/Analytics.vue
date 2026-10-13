@@ -98,8 +98,66 @@
     </div>
   </div>
 
-  <!-- TAB 1: Affinity -->
+  <!-- TAB 1: Affinity（群聊切换为群聊工作台——四维好感度对群聊意义有限） -->
   <div v-show="currentTab === 'affinity' && selectedConversationId" class="tab-content fade-in">
+    <div v-if="isGroupConversation" class="group-workbench">
+      <CtCard class="group-stats-card" title="群聊发言统计">
+        <div v-if="groupStatsLoading" class="group-empty">统计加载中...</div>
+        <template v-else-if="groupStats && groupStats.members && groupStats.members.length">
+          <div class="group-overview">
+            <span>文本消息 <strong>{{ groupStats.total_messages }}</strong> 条</span>
+            <span>发言成员 <strong>{{ groupStats.members.length }}</strong> 人</span>
+            <span v-if="groupStats.my_rank">我的发言排名 <strong>第 {{ groupStats.my_rank }}</strong></span>
+            <span v-else>我未在统计范围内发言</span>
+          </div>
+          <div class="group-member-table">
+            <div class="group-member-row group-member-head">
+              <span class="gm-name">成员</span>
+              <span class="gm-count">消息数</span>
+              <span class="gm-share">占比</span>
+              <span class="gm-chars">字数</span>
+            </div>
+            <div v-for="m in groupStats.members.slice(0, 20)" :key="m.name" class="group-member-row" :class="{ me: m.name === '我' }">
+              <span class="gm-name">{{ m.name }}</span>
+              <span class="gm-count">{{ m.message_count }}</span>
+              <span class="gm-share">
+                <span class="gm-share-bar"><i :style="{ width: (m.share * 100).toFixed(1) + '%' }"></i></span>
+                <em>{{ (m.share * 100).toFixed(1) }}%</em>
+              </span>
+              <span class="gm-chars">{{ m.char_count }}</span>
+            </div>
+          </div>
+          <div v-if="groupStats.top_words && groupStats.top_words.length" class="group-top-words">
+            <span class="gtw-title">高频词</span>
+            <span v-for="w in groupStats.top_words.slice(0, 15)" :key="w.word" class="gtw-chip">{{ w.word }} ×{{ w.count }}</span>
+          </div>
+          <p class="group-note">成员名为导入时解析的显示短名；群聊暂不提供成员关系分析。</p>
+        </template>
+        <p v-else class="group-empty">暂无群聊消息或统计失败。</p>
+      </CtCard>
+
+      <CtCard class="group-summary-card" title="群聊日报">
+        <div class="group-summary-controls">
+          <select v-model.number="groupSummaryDays" class="group-days-select" :disabled="groupSummaryLoading">
+            <option :value="1">近 1 天</option>
+            <option :value="7">近 7 天</option>
+            <option :value="30">近 30 天</option>
+          </select>
+          <CtButton variant="primary" :loading="groupSummaryLoading" :disabled="groupSummaryLoading" @click="handleGenerateGroupSummary">
+            {{ groupSummaryLoading ? '生成中...' : '生成日报' }}
+          </CtButton>
+        </div>
+        <div v-if="groupSummary" class="group-summary-body">
+          <p v-if="groupSummary.degraded" class="group-summary-degraded">{{ groupSummary.degraded_reason }}</p>
+          <p v-else class="group-summary-text">{{ groupSummary.summary }}</p>
+        </div>
+        <p v-else class="group-summary-hint">
+          由 LLM 汇总近期主要话题、群氛围与值得注意的互动；未配置模型时仅提供左侧统计。
+        </p>
+      </CtCard>
+    </div>
+
+    <template v-else>
     <div v-if="!analysisResult && !isGlobalAnalyzing" class="empty-state">
       <div class="empty-icon"><BarChart3 :size="56" :stroke-width="1.5" style="color: var(--ct-color-primary);" /></div>
       <template v-if="analysisStaleNotice">
@@ -227,6 +285,7 @@
         </CtCard>
       </div>
     </div>
+    </template>
   </div>
 
   <!-- TAB 2: Features -->
@@ -660,7 +719,7 @@ import {
   Lightbulb
 } from 'lucide-vue-next'
 
-type Conversation = { id: number; name: string; username: string; message_count: number; last_message_time: string; avatar?: string }
+type Conversation = { id: number; name: string; username: string; message_count: number; last_message_time: string; avatar?: string; conversation_type?: 'private' | 'group' }
 type Session = { id: number; start_time: number; end_time: number; duration: number; message_count: number; initiator: string; messages: any[] }
 type TimeseriesPoint = {
     ts: string
@@ -848,6 +907,57 @@ const showPortraitDialog = ref(false)
         const currentContactName = computed(() => {
             return currentConversation.value?.name || '选择联系人'
         })
+        const isGroupConversation = computed(() => {
+            return currentConversation.value?.conversation_type === 'group'
+        })
+
+        // ===== 群聊工作台（发言统计 + 日报）=====
+        type GroupMemberStat = { name: string; message_count: number; char_count: number; share: number }
+        type GroupStats = { total_messages: number; members: GroupMemberStat[]; my_rank: number | null; top_words: Array<{ word: string; count: number }> }
+        const groupStats = ref<GroupStats | null>(null)
+        const groupStatsLoading = ref(false)
+        const groupSummary = ref<{ summary: string; degraded: boolean; degraded_reason?: string } | null>(null)
+        const groupSummaryLoading = ref(false)
+        const groupSummaryDays = ref(7)
+
+        async function loadGroupStats() {
+            if (!isGroupConversation.value || !selectedConversationId.value) {
+                groupStats.value = null
+                return
+            }
+            const conversationId = selectedConversationId.value
+            groupStatsLoading.value = true
+            try {
+                await bridgeReady()
+                const res = await api.get_group_stats(conversationId)
+                if (conversationId !== selectedConversationId.value) return // 已切换联系人（F1）
+                groupStats.value = res?.ok ? res : null
+            } catch (e) {
+                groupStats.value = null
+            } finally {
+                groupStatsLoading.value = false
+            }
+        }
+
+        async function handleGenerateGroupSummary() {
+            if (!selectedConversationId.value || groupSummaryLoading.value) return
+            groupSummaryLoading.value = true
+            const conversationId = selectedConversationId.value
+            try {
+                await bridgeReady()
+                const res = await api.generate_group_summary(conversationId, groupSummaryDays.value)
+                if (conversationId !== selectedConversationId.value) return // 已切换联系人（F1）
+                if (res?.ok) {
+                    groupSummary.value = res
+                } else {
+                    showDialog(res?.error || '日报生成失败，请重试')
+                }
+            } catch (e: any) {
+                showDialog(e?.message || '日报生成异常')
+            } finally {
+                groupSummaryLoading.value = false
+            }
+        }
         const headerAvatarSrc = computed(() => {
             const currentId = selectedConversationId.value
             const subjectId = subject.value?.id
@@ -1155,6 +1265,8 @@ const showPortraitDialog = ref(false)
             hasFeatures.value = false
             analysisResult.value = null
             qaHistory.value = [] // 问答记录按联系人隔离（F1 同源）
+            groupSummary.value = null
+            loadGroupStats()
             loadPersonaProfile(id)
             loadSessions()
             tryLoadExistingFeatures()
@@ -1918,6 +2030,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
             responseTimeChart, activityCalendarChart, wordCountChart, stats, currentContactName, headerAvatarSrc, hasPreferenceKeywords, allDimensions,
             currentRangeLabel, hasContentAnalysis, circumference, strokeDashoffset, formatNumber, formatTime, getResponseTimeLabel, getMergedResponseTimeLabel, getResponseTimePercent, onConversationChange, onDatesChange, handleExport, handleStartGlobalAnalysis, handleContextSaved, handleKeywordsUpdated, llmEvidenceNotes,
             qaHistory, qaInput, qaLoading, handleAskHistory, formatQaTime,
+            isGroupConversation, groupStats, groupStatsLoading, groupSummary, groupSummaryLoading, groupSummaryDays, handleGenerateGroupSummary,
             exportDialogVisible, exportFormat, exporting, exportResult, confirmExport, openExportFolder,
             activeAccountWxid,
             getScoreColor, scrollToDetails, handlePreferenceDisabledClick, onWordSelect, loadAnalysis, loadSessions, handleActivityYearChange
@@ -3531,5 +3644,174 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   color: var(--ct-text-secondary);
   font-style: italic;
   word-break: break-word;
+}
+
+/* --- 群聊工作台 --- */
+.group-workbench {
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: var(--ct-space-md);
+  align-items: start;
+}
+
+.group-stats-card,
+.group-summary-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.group-overview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ct-space-lg);
+  font-size: 12px;
+  color: var(--ct-text-secondary);
+}
+
+.group-overview strong {
+  color: var(--ct-text-primary);
+  font-family: var(--ct-font-mono);
+}
+
+.group-member-table {
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+}
+
+.group-member-row {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) 70px minmax(0, 2fr) 70px;
+  gap: 8px;
+  align-items: center;
+  padding: 5px 6px;
+  border-bottom: 1px solid var(--ct-border-color);
+  color: var(--ct-text-secondary);
+}
+
+.group-member-row:last-child {
+  border-bottom: none;
+}
+
+.group-member-head {
+  color: var(--ct-text-tertiary);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.group-member-row.me .gm-name {
+  color: var(--ct-color-primary);
+  font-weight: 600;
+}
+
+.gm-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gm-count,
+.gm-chars {
+  text-align: right;
+  font-family: var(--ct-font-mono);
+}
+
+.gm-share {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gm-share-bar {
+  flex: 1;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--ct-bg-tertiary);
+  overflow: hidden;
+}
+
+.gm-share-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--ct-color-primary);
+}
+
+.gm-share em {
+  font-style: normal;
+  font-size: 11px;
+  font-family: var(--ct-font-mono);
+  color: var(--ct-text-tertiary);
+  min-width: 44px;
+  text-align: right;
+}
+
+.group-top-words {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.gtw-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ct-text-tertiary);
+}
+
+.gtw-chip {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: var(--ct-radius-full);
+  background: var(--ct-bg-tertiary);
+  color: var(--ct-text-secondary);
+}
+
+.group-note,
+.group-empty,
+.group-summary-hint {
+  margin: 0;
+  font-size: 11px;
+  color: var(--ct-text-tertiary);
+}
+
+.group-summary-controls {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.group-days-select {
+  padding: 7px 10px;
+  font-size: 12px;
+  border: 1px solid var(--ct-border-color);
+  border-radius: var(--ct-radius-md);
+  background: var(--ct-bg-elevated);
+  color: var(--ct-text-primary);
+  outline: none;
+}
+
+.group-summary-body {
+  padding: var(--ct-space-md);
+  background: var(--ct-bg-tertiary);
+  border-radius: var(--ct-radius-md);
+}
+
+.group-summary-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.8;
+  color: var(--ct-text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.group-summary-degraded {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--ct-color-warning);
 }
 </style>

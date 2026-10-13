@@ -140,6 +140,8 @@ type PyWebViewApi = {
   download_analysis_models: () => Promise<any>
   get_model_download_progress: (task_id: string) => Promise<any>
   get_affinity_progress: (task_id: string) => Promise<any>
+  // 问问微信（历史问答 + 引用溯源）
+  ask_history: (conversation_id: number, question: string) => Promise<any>
   // 会话线程归档与继承
   get_latest_thread: (display_name: string, account_wxid?: string) => Promise<any>
   load_thread_context: (thread_id: number) => Promise<any>

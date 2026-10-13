@@ -451,3 +451,16 @@ class AnalysisReadApiMixin:
             logger.error(f"[Bridge] 群日报生成失败: {e}")
             return {"ok": False, "error": f"群日报生成失败：{e}"}
 
+    def cancel_group_summary(self, conversation_id: int) -> dict:
+        """取消该群进行中的日报生成（下一次轮询点生效）。"""
+        try:
+            from ...services.realtime.llm_http import request_llm_cancel
+
+            from ...services.analysis.group_summary_service import GS_CANCEL_SCOPE
+
+            request_llm_cancel(GS_CANCEL_SCOPE, int(conversation_id))
+            return {"ok": True}
+        except Exception as e:
+            logger.error(f"[Bridge] 取消群日报失败: {e}")
+            return {"ok": False, "error": str(e)}
+

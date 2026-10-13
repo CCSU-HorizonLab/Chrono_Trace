@@ -10,12 +10,18 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 import time
 from collections import Counter, defaultdict
 from typing import Any, Dict, List, Optional, Tuple
 
 from ...db.connection import get_db
-from ..realtime.llm_http import post_json_with_retries
+from ..realtime.llm_http import (
+    LLMRequestAborted,
+    post_json_with_retries,
+    run_cancelable,
+    take_llm_cancel,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +33,10 @@ TOP_WORDS_MIN_LEN = 2
 PER_DAY_MESSAGES = 60
 PER_MESSAGE_CHARS = 120
 MAX_SUMMARY_CHARS = 7000
-LLM_TIMEOUT = 120
+# 交互式日报：短超时 + 少重试 + 可取消（与问问微信同等待遇）
+LLM_TIMEOUT = 60
+LLM_MAX_RETRIES = 1
+GS_CANCEL_SCOPE = "group_summary"
 
 # 高频词停用：语气词/称呼/单字无信息量
 STOP_WORDS = {
@@ -61,9 +70,21 @@ class GroupSummaryService:
         end: Optional[int] = None,
     ) -> Dict[str, Any]:
         self._require_group(conversation_id)
-        where, params = self._range_where(conversation_id, start, end)
+        rows = self._fetch_range_rows(conversation_id, start, end)
+        return self._stats_from_rows(conversation_id, rows)
 
-        rows = get_db().execute(
+    @staticmethod
+    def _fetch_range_rows(
+        conversation_id: int,
+        start: Optional[int] = None,
+        end: Optional[int] = None,
+    ) -> List[Tuple]:
+        """一次扫描取范围内全部消息（含非文本，统计需要）；时间升序。
+
+        统计与日报分段共用本方法产物，避免同范围全表扫两遍。
+        """
+        where, params = GroupSummaryService._range_where(conversation_id, start, end)
+        return get_db().execute(
             f"""
             SELECT CASE WHEN is_sender = 1 THEN '我' ELSE COALESCE(NULLIF(sender, ''), '未知成员') END AS name,
                    is_sender,
@@ -71,10 +92,13 @@ class GroupSummaryService:
                    content,
                    timestamp
             FROM messages {where}
+            ORDER BY timestamp ASC
             """,
             params,
         ).fetchall()
 
+    @staticmethod
+    def _stats_from_rows(conversation_id: int, rows: List[Tuple]) -> Dict[str, Any]:
         total_messages = len(rows)
         if not total_messages:
             return {
@@ -121,7 +145,7 @@ class GroupSummaryService:
             "members": members,
             "my_rank": my_rank,
             "active_hours": {str(h): c for h, c in sorted(hour_counter.items())},
-            "top_words": self._top_words(texts),
+            "top_words": GroupSummaryService._top_words(texts),
         }
 
     @staticmethod
@@ -151,26 +175,32 @@ class GroupSummaryService:
             logger.debug("[群统计] 分词跳过（jieba 不可用）: %s", exc)
         return [{"word": word, "count": count} for word, count in counter.most_common(TOP_WORDS_LIMIT)]
 
-    def _require_group(self, conversation_id: int) -> None:
+    def _require_group(self, conversation_id: int) -> str:
+        """校验群聊并返回 account_wxid（脱敏占位符键需要）。"""
         row = get_db().execute(
-            "SELECT conversation_type FROM conversations WHERE id = ?",
+            "SELECT conversation_type, account_wxid FROM conversations WHERE id = ?",
             (conversation_id,),
         ).fetchone()
         if row is None:
             raise GroupSummaryError("会话不存在")
         if str(row[0] or "private") != "group":
             raise GroupSummaryError("该会话不是群聊")
+        return str(row[1] or "")
 
     # ---- 日报 ----
 
     def generate_group_summary(self, conversation_id: int, days: int = 7) -> Dict[str, Any]:
-        """近 N 天群日报：按日分段截断组 prompt，LLM 总结；无模型降级为仅统计。"""
-        self._require_group(conversation_id)
+        """近 N 天群日报：按日分段截断组 prompt，LLM 总结；无模型降级为仅统计。
+
+        统计与分段共用一次范围扫描（大群避免全表扫两遍）。
+        """
+        account_wxid = self._require_group(conversation_id)
+        take_llm_cancel(GS_CANCEL_SCOPE, conversation_id)  # 清掉上一轮遗留取消
         days = max(1, min(int(days or 7), 30))
         now = int(time.time())
-        stats = self.get_group_stats(conversation_id, start=now - days * 86400, end=now)
-
-        segments = self._day_segments(conversation_id, now - days * 86400, now)
+        rows = self._fetch_range_rows(conversation_id, now - days * 86400, now)
+        stats = self._stats_from_rows(conversation_id, rows)
+        segments = self._segments_from_rows(rows)
         if not segments:
             return {
                 "ok": True,
@@ -203,37 +233,37 @@ class GroupSummaryService:
                 "stats": stats,
             }
         if self._is_remote(model_config):
-            lines = self._redact_lines(lines, conversation_id)
-        answer = self._call_llm(model_config, days, lines)
+            lines = self._redact_lines(lines, conversation_id, account_wxid)
+        answer = self._call_llm(model_config, days, lines, conversation_id)
 
         return {"ok": True, "summary": answer, "days": days, "degraded": False, "stats": stats}
 
-    def _day_segments(
-        self, conversation_id: int, start: int, end: int
-    ) -> Dict[str, List[Tuple[str, str, int]]]:
-        """按本地日聚合文本消息：{日期: [(发言人, 文本, 时间戳)]}，每日截断。"""
-        rows = get_db().execute(
-            """
-            SELECT CASE WHEN is_sender = 1 THEN '我' ELSE COALESCE(NULLIF(sender, ''), '未知成员') END AS name,
-                   content, timestamp
-            FROM messages
-            WHERE conversation_id = ? AND message_type = 1 AND length(content) > 0
-              AND timestamp >= ? AND timestamp <= ?
-            ORDER BY timestamp ASC
-            """,
-            (conversation_id, start, end),
-        ).fetchall()
+    @staticmethod
+    def _segments_from_rows(rows: List[Tuple]) -> Dict[str, List[Tuple[str, str, int]]]:
+        """文本消息按本地日聚合：{日期: [(发言人, 文本, 时间戳)]}，每日截断。"""
         segments: Dict[str, List[Tuple[str, str, int]]] = defaultdict(list)
-        for name, content, ts in rows:
+        for name, _is_sender, mtype, content, ts in rows:
+            text = str(content or "").strip() if mtype == 1 else ""
+            if not text:
+                continue
             day = time.strftime("%Y-%m-%d", time.localtime(ts))
             if len(segments[day]) >= PER_DAY_MESSAGES:
                 continue
-            segments[day].append((name, str(content)[:PER_MESSAGE_CHARS], int(ts)))
+            segments[day].append((name, text[:PER_MESSAGE_CHARS], int(ts)))
         return segments
 
     @staticmethod
     def _render_segments(segments: Dict[str, List[Tuple[str, str, int]]]) -> List[str]:
-        """渲染 prompt 行；总字符超预算时从最早的日期开始丢弃。"""
+        """渲染 prompt 行；总字符超预算时从最早的日期开始丢，只剩一天时
+        日内从最早的消息行开始丢（保底 1 行——单行远低于预算）。"""
+
+        def _total(rendered: List[Tuple[str, List[str]]]) -> int:
+            parts: List[str] = []
+            for day, lines in rendered:
+                parts.append(f"—— {day} ——")
+                parts.extend(lines)
+            return len("\n".join(parts))
+
         rendered: List[Tuple[str, List[str]]] = []
         for day in sorted(segments):
             lines = [
@@ -242,11 +272,15 @@ class GroupSummaryService:
             ]
             rendered.append((day, lines))
 
-        total = sum(len("\n".join(lines)) for _, lines in rendered)
-        # 预算超限从最早一天开始丢，但至少保留最近一天（允许小幅超支）
+        total = _total(rendered)
+        # 预算超限从最早一天开始丢，但至少保留最近一天
         while len(rendered) > 1 and total > MAX_SUMMARY_CHARS:
-            _, dropped = rendered.pop(0)
-            total -= len("\n".join(dropped))
+            rendered.pop(0)
+            total = _total(rendered)
+        # 单日仍超预算：日内从最早的消息行开始丢（行数保底 1）
+        while len(rendered) == 1 and total > MAX_SUMMARY_CHARS and len(rendered[0][1]) > 1:
+            rendered[0][1].pop(0)
+            total = _total(rendered)
         if not rendered:
             return []
 
@@ -269,8 +303,14 @@ class GroupSummaryService:
         return is_remote_llm_model(model_config)
 
     @staticmethod
-    def _redact_lines(lines: List[str], conversation_id: int) -> List[str]:
-        """远程模型逐行脱敏；失败即阻断（与问答链路同红线）。"""
+    def _redact_lines(
+        lines: List[str], conversation_id: int, account_wxid: str
+    ) -> List[str]:
+        """远程模型逐行脱敏；失败即阻断（与问答链路同红线）。
+
+        account_wxid 必传：占位符持久表以 (account_wxid, conversation_id,
+        实体) 为键做跨调用一致替换，缺省空串会生成另一套占位符。
+        """
         from ..realtime.privacy_redactor import PrivacyRedactor
 
         redactor = PrivacyRedactor(get_db())
@@ -279,6 +319,7 @@ class GroupSummaryService:
             try:
                 result = redactor.redact(
                     line,
+                    account_wxid=account_wxid,
                     conversation_id=conversation_id,
                     source_table="group_summary",
                 )
@@ -288,8 +329,9 @@ class GroupSummaryService:
         return redacted
 
     @staticmethod
-    def _call_llm(model_config: Dict[str, Any], days: int, lines: List[str]) -> str:
-
+    def _call_llm(
+        model_config: Dict[str, Any], days: int, lines: List[str], conversation_id: int
+    ) -> str:
         base_url = str(model_config.get("api_base_url") or "").rstrip("/")
         if not base_url:
             raise GroupSummaryError("LLM 模型缺少 API 地址配置")
@@ -310,15 +352,26 @@ class GroupSummaryService:
             "max_tokens": 1024,
             "stream": False,
         }
+        # 与问问微信同款：守护工作线程跑 HTTP，取消时 bridge 线程立即返回
+        abort = threading.Event()
         try:
-            body = post_json_with_retries(
-                url=f"{base_url}/chat/completions",
-                payload=payload,
-                headers=headers,
-                timeout=LLM_TIMEOUT,
-                log=logger.debug,
-                log_prefix="[群日报]",
+            body = run_cancelable(
+                lambda: post_json_with_retries(
+                    url=f"{base_url}/chat/completions",
+                    payload=payload,
+                    headers=headers,
+                    timeout=LLM_TIMEOUT,
+                    max_retries=LLM_MAX_RETRIES,
+                    should_abort=abort.is_set,
+                    log=logger.debug,
+                    log_prefix="[群日报]",
+                ),
+                cancelled=lambda: take_llm_cancel(GS_CANCEL_SCOPE, conversation_id),
+                on_cancel=abort.set,
+                cancel_message="本次日报生成已取消",
             )
+        except LLMRequestAborted as exc:
+            raise GroupSummaryError(str(exc)) from exc
         except Exception as exc:
             logger.error("[群日报] LLM 调用失败: %s", exc)
             raise GroupSummaryError(f"模型调用失败：{exc}") from exc

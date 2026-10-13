@@ -218,11 +218,12 @@ class EngagementMetricsService:
                 """,
                 (conversation_id,),
             )
-            return [
-                (int(row[0] or 0), _decode(row[1]).strip(), int(row[2] or 0))
-                for row in cursor.fetchall()
-                if _decode(row[1]).strip()
-            ]
+            decoded: List[Tuple[int, str, int]] = []
+            for row in cursor.fetchall():
+                text = _decode(row[1]).strip()
+                if text:
+                    decoded.append((int(row[0] or 0), text, int(row[2] or 0)))
+            return decoded
         except Exception as e:
             logger.error(f"加载文本消息失败: {e}")
             return []

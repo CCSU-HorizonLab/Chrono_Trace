@@ -93,6 +93,8 @@
         @click="currentTab = 'content'">内容与时间线</button>
       <button class="menu-item" :class="{ active: currentTab === 'persona' }"
         @click="currentTab = 'persona'">用户画像回廊</button>
+      <button class="menu-item" :class="{ active: currentTab === 'qa' }"
+        @click="currentTab = 'qa'">问问微信</button>
     </div>
   </div>
 
@@ -511,6 +513,60 @@
     </div>
   </div>
 
+  <!-- TAB 5: History QA (问问微信) -->
+  <div v-show="currentTab === 'qa' && selectedConversationId" class="tab-content fade-in">
+    <div class="qa-shell">
+      <div class="qa-header">
+        <h3 class="qa-title">问问微信</h3>
+        <p class="qa-subtitle">向 {{ currentContactName }} 的聊天记录提问，回答附带引用溯源（仅检索当前联系人）</p>
+      </div>
+
+      <div class="qa-input-row">
+        <input
+          v-model="qaInput"
+          class="qa-input"
+          type="text"
+          placeholder="例如：我们聊过哪些共同爱好？TA 对加班是什么态度？"
+          maxlength="200"
+          :disabled="qaLoading"
+          @keyup.enter="handleAskHistory"
+        />
+        <CtButton variant="primary" :loading="qaLoading" :disabled="qaLoading || !qaInput.trim()" @click="handleAskHistory">
+          {{ qaLoading ? '查找中...' : '提问' }}
+        </CtButton>
+      </div>
+
+      <div v-if="qaLoading" class="qa-loading-hint">
+        正在检索聊天记录并生成回答，远程模型可能需要十几秒...
+      </div>
+
+      <div v-if="!qaHistory.length && !qaLoading" class="qa-empty">
+        还没有提问记录。试试问一个你们聊过的话题。
+      </div>
+
+      <div v-if="qaHistory.length" class="qa-list">
+        <div v-for="(item, idx) in qaHistory" :key="idx" class="qa-item">
+          <div class="qa-question">
+            <span class="qa-q-mark">问</span>
+            <span class="qa-q-text">{{ item.question }}</span>
+          </div>
+          <div class="qa-answer">
+            <span class="qa-a-mark">答</span>
+            <span class="qa-a-text">{{ item.answer }}</span>
+          </div>
+          <div v-if="item.citations && item.citations.length" class="qa-citations">
+            <div class="qa-citations-title">引用溯源（{{ item.citations.length }} 条）</div>
+            <div v-for="(cite, cIdx) in item.citations" :key="cIdx" class="qa-citation-row">
+              <span class="qa-citation-idx">[{{ cIdx + 1 }}]</span>
+              <span class="qa-citation-meta">{{ formatQaTime(cite.timestamp) }} · {{ cite.is_sender ? '我' : currentContactName }}</span>
+              <span class="qa-citation-text">"{{ cite.text }}"</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Dialogs -->
   <PreferenceKeywordsDialog v-if="selectedConversationId" v-model="showKeywordsDialog"
     :conversation-id="selectedConversationId" @updated="handleKeywordsUpdated" />
@@ -809,6 +865,64 @@ const showPortraitDialog = ref(false)
         })
         const hasCachedAffinityAnalysis = computed(() => Boolean(analysisResult.value))
 
+        // ===== 问问微信（历史问答 + 引用溯源）=====
+        type QaCitation = { message_id: number; timestamp: number; is_sender: number; text: string }
+        type QaEntry = { question: string; answer: string; citations: QaCitation[] }
+        const qaHistory = ref<QaEntry[]>([])
+        const qaInput = ref('')
+        const qaLoading = ref(false)
+
+        function formatQaTime(ts: number): string {
+            if (!ts) return '--'
+            return new Date(ts * 1000).toLocaleString('zh-CN', {
+                year: 'numeric', month: '2-digit', day: '2-digit',
+                hour: '2-digit', minute: '2-digit',
+            })
+        }
+
+        // 模型门槛：未启用任何 LLM 时直接提示（仿 Suggestions 的 ensureActiveLlm）
+        async function ensureQaLlmReady(): Promise<boolean> {
+            try {
+                const llmRes = await api.get_llm_models()
+                const hasActive = Boolean(llmRes?.ok && llmRes.models?.some((m: any) => m.is_active))
+                if (!hasActive) {
+                    showDialog('问问微信需要 LLM 模型。请先在「设置 → 模型服务」中配置并启用一个模型。')
+                    return false
+                }
+                return true
+            } catch (e) {
+                showDialog('模型状态查询失败，请稍后重试。')
+                return false
+            }
+        }
+
+        async function handleAskHistory() {
+            const question = qaInput.value.trim()
+            if (!question || qaLoading.value || !selectedConversationId.value) return
+            if (!(await ensureQaLlmReady())) return
+            qaLoading.value = true
+            const conversationId = selectedConversationId.value
+            try {
+                await bridgeReady()
+                const res = await api.ask_history(conversationId, question)
+                if (conversationId !== selectedConversationId.value) return // 已切换联系人，丢弃过期回答
+                if (res?.ok) {
+                    qaHistory.value.unshift({
+                        question: String(res.question || question),
+                        answer: String(res.answer || ''),
+                        citations: Array.isArray(res.citations) ? res.citations : [],
+                    })
+                    qaInput.value = ''
+                } else {
+                    showDialog(res?.error || '问答失败，请重试')
+                }
+            } catch (e: any) {
+                showDialog(e?.message || '问答异常')
+            } finally {
+                qaLoading.value = false
+            }
+        }
+
         const allDimensions = computed(() => {
             if (!analysisResult.value) return {}
             return {
@@ -998,6 +1112,7 @@ const showPortraitDialog = ref(false)
             selectedConversationId.value = null
             conversations.value = []
             analysisResult.value = null
+            qaHistory.value = []
             hasFeatures.value = false
             analysis.timeseries = []
             analysis.wordcloud = []
@@ -1039,6 +1154,7 @@ const showPortraitDialog = ref(false)
             setDefaultDates(30, getConversationAnchorDate(id))
             hasFeatures.value = false
             analysisResult.value = null
+            qaHistory.value = [] // 问答记录按联系人隔离（F1 同源）
             loadPersonaProfile(id)
             loadSessions()
             tryLoadExistingFeatures()
@@ -1801,6 +1917,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
             hasConversations, hasFeatures, hasCachedAffinityAnalysis, featureStats, responseTimeStats, initiativeStats, wordCountsStats, displayWordRatioLabel, activityCalendar,
             responseTimeChart, activityCalendarChart, wordCountChart, stats, currentContactName, headerAvatarSrc, hasPreferenceKeywords, allDimensions,
             currentRangeLabel, hasContentAnalysis, circumference, strokeDashoffset, formatNumber, formatTime, getResponseTimeLabel, getMergedResponseTimeLabel, getResponseTimePercent, onConversationChange, onDatesChange, handleExport, handleStartGlobalAnalysis, handleContextSaved, handleKeywordsUpdated, llmEvidenceNotes,
+            qaHistory, qaInput, qaLoading, handleAskHistory, formatQaTime,
             exportDialogVisible, exportFormat, exporting, exportResult, confirmExport, openExportFolder,
             activeAccountWxid,
             getScoreColor, scrollToDetails, handlePreferenceDisabledClick, onWordSelect, loadAnalysis, loadSessions, handleActivityYearChange
@@ -3244,4 +3361,175 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
 .pd-btn-primary:hover { background: #5a4bd1; }
 .pd-btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
 .sr-only { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+
+/* --- 问问微信（历史问答） --- */
+.qa-shell {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ct-space-md);
+  padding: var(--ct-space-lg);
+  background: var(--ct-bg-secondary);
+  border: 1px solid var(--ct-border-subtle);
+  border-radius: var(--ct-radius-2xl);
+  overflow-y: auto;
+}
+
+.qa-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.qa-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--ct-text-primary);
+}
+
+.qa-subtitle {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ct-text-tertiary);
+}
+
+.qa-input-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.qa-input {
+  flex: 1;
+  padding: 10px 14px;
+  font-size: 13px;
+  border: 1px solid var(--ct-border-color);
+  border-radius: var(--ct-radius-md);
+  background: var(--ct-bg-elevated);
+  color: var(--ct-text-primary);
+  outline: none;
+}
+
+.qa-input:focus {
+  border-color: var(--ct-color-primary);
+}
+
+.qa-input:disabled {
+  opacity: 0.6;
+}
+
+.qa-loading-hint {
+  font-size: 12px;
+  color: var(--ct-text-tertiary);
+}
+
+.qa-empty {
+  padding: var(--ct-space-2xl);
+  text-align: center;
+  font-size: 13px;
+  color: var(--ct-text-tertiary);
+  background: var(--ct-bg-tertiary);
+  border-radius: var(--ct-radius-md);
+}
+
+.qa-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ct-space-md);
+}
+
+.qa-item {
+  padding: var(--ct-space-md);
+  background: var(--ct-bg-elevated);
+  border: 1px solid var(--ct-border-color);
+  border-radius: var(--ct-radius-md);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.qa-question,
+.qa-answer {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.qa-q-mark,
+.qa-a-mark {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--ct-radius-full);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.qa-q-mark {
+  background: var(--ct-color-primary-subtle, rgba(91, 107, 224, 0.12));
+  color: var(--ct-color-primary);
+}
+
+.qa-a-mark {
+  background: var(--ct-color-success-light);
+  color: var(--ct-color-success);
+}
+
+.qa-q-text {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ct-text-primary);
+  line-height: 1.6;
+}
+
+.qa-a-text {
+  font-size: 13px;
+  color: var(--ct-text-secondary);
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.qa-citations {
+  padding-top: 8px;
+  border-top: 1px dashed var(--ct-border-color);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.qa-citations-title {
+  font-size: 11px;
+  color: var(--ct-text-tertiary);
+  font-weight: 600;
+}
+
+.qa-citation-row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.qa-citation-idx {
+  flex-shrink: 0;
+  font-family: var(--ct-font-mono);
+  color: var(--ct-color-primary);
+}
+
+.qa-citation-meta {
+  flex-shrink: 0;
+  color: var(--ct-text-tertiary);
+}
+
+.qa-citation-text {
+  color: var(--ct-text-secondary);
+  font-style: italic;
+  word-break: break-word;
+}
 </style>

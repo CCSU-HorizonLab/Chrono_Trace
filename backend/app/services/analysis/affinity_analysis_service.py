@@ -467,6 +467,7 @@ class AffinityAnalysisService:
         self.investment_service.timeliness_threshold = (
             config.reply_timeliness_threshold_seconds
         )
+        self.investment_service.long_text_threshold = config.long_text_threshold
         self.preference_service.set_preference_keywords(config.preference_keywords)
         metrics = self.engagement_service.compute(conversation_id)
 

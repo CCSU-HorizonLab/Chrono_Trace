@@ -192,3 +192,30 @@ def test_interpretation_notes_long_unanswered_and_burst(service):
     assert "长时未回应偏多" in text
     assert "连发常未获回应" in text
     assert "不对称" in text
+
+
+def test_long_text_threshold_config_reaches_reply_symmetry(db, service, monkeypatch):
+    """配置的 long_text_threshold 真实传到回应对称性计算，而非固定 100。"""
+    captured = {}
+    original = service._calculate_reply_symmetry
+
+    def spy(conversation_id, long_text_threshold=100):
+        captured["threshold"] = long_text_threshold
+        return original(conversation_id, long_text_threshold)
+
+    monkeypatch.setattr(service, "_calculate_reply_symmetry", spy)
+    service.long_text_threshold = 55
+
+    stats = make_stats()
+    metrics = EngagementMetrics(
+        text_message_count=2,
+        other_text_count=1,
+        self_text_count=1,
+        long_unanswered_other=0,
+        burst_unanswered_other=0,
+        burst_unanswered_self=0,
+    )
+
+    service.calculate_scores(1, stats, metrics)
+
+    assert captured["threshold"] == 55

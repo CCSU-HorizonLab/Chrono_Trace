@@ -24,7 +24,13 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from ...db.connection import get_db
-from ..realtime.llm_http import post_json_with_retries
+from ..realtime.llm_http import (
+    LLMRequestAborted,
+    post_json_with_retries,
+    request_llm_cancel,
+    run_cancelable,
+    take_llm_cancel,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,37 +50,36 @@ MAX_MESSAGE_CHARS = 200
 # 交互式问答：短超时 + 少重试（默认 3 次重试最坏可挂 8 分钟，见取消机制）
 LLM_TIMEOUT = 60
 LLM_MAX_RETRIES = 1
+# 交互式调用取消的 scope（llm_http 共享注册表）
+QA_CANCEL_SCOPE = "history_qa"
+
+
+def request_cancel(conversation_id: int) -> None:
+    """标记取消某联系人的进行中提问（bridge 取消入口）。"""
+    request_llm_cancel(QA_CANCEL_SCOPE, conversation_id)
+
+
+def _escape_like(keyword: str) -> str:
+    """LIKE 通配符转义（% _ \，配合 ESCAPE '\'）——用户问句里的百分号/
+    下划线不应被当作通配符放大召回。"""
+    return (
+        str(keyword)
+        .replace("\\", "\\\\")
+        .replace("%", "\\%")
+        .replace("_", "\\_")
+    )
+
 
 # ---------------------------------------------------------------------------
 # 联系人级向量缓存：sentiment_cache 全表拉取 + 逐条 pickle 反序列化每次
 # 提问重复做，正是 rag/retriever.py 头注释批评的反模式。LRU + 指纹校验：
 # 指纹 = (向量行数, 最大 message_id)，新增/改写向量行即触发重建，免去
-# 在 sentiment_service 写入路径挂失效钩子。
+# 在 sentiment_service 写入路径挂失效钩子。指纹或行抓取失败均不缓存
+# （瞬时 DB 异常不得把空结果毒化进缓存）。
 # ---------------------------------------------------------------------------
 _VECTOR_CACHE: Dict[int, Dict[str, Any]] = {}
 _VECTOR_CACHE_LOCK = threading.Lock()
 _VECTOR_CACHE_MAX = 4
-
-# ---------------------------------------------------------------------------
-# 取消信号：bridge 的 cancel_history_qa 置位；ask 轮询消费（在途 HTTP 由
-# 工作线程内的 should_abort 在尝试边界退出，bridge 线程立即返回）。
-# ---------------------------------------------------------------------------
-_CANCEL_LOCK = threading.Lock()
-_CANCEL_REQUESTED: set = set()
-
-
-def request_cancel(conversation_id: int) -> None:
-    """标记取消某联系人的进行中提问（下一次轮询点生效）。"""
-    with _CANCEL_LOCK:
-        _CANCEL_REQUESTED.add(int(conversation_id))
-
-
-def _take_cancel(conversation_id: int) -> bool:
-    with _CANCEL_LOCK:
-        if int(conversation_id) in _CANCEL_REQUESTED:
-            _CANCEL_REQUESTED.discard(int(conversation_id))
-            return True
-        return False
 
 SYSTEM_PROMPT = """你是聊天记录问答助手。只依据【聊天记录】回答【问题】，不允许编造记录里没有的内容。
 
@@ -141,7 +146,7 @@ class HistoryQAService:
         question = str(question or "").strip()
         if not question:
             raise HistoryQAError("请输入问题")
-        _take_cancel(conversation_id)  # 清掉上一轮遗留的取消标记
+        take_llm_cancel(QA_CANCEL_SCOPE, conversation_id)  # 清掉上一轮遗留的取消标记
 
         account_wxid, display_name = self._load_conversation(conversation_id)
         records = self._retrieve(conversation_id, question)
@@ -220,9 +225,9 @@ class HistoryQAService:
         keywords = _extract_keywords(question)
         if not keywords:
             return []
-        conditions = " OR ".join(["content LIKE ?"] * len(keywords))
+        conditions = " OR ".join(["content LIKE ? ESCAPE '\\'"] * len(keywords))
         params: List[Any] = [conversation_id]
-        params.extend(f"%{kw}%" for kw in keywords)
+        params.extend(f"%{_escape_like(kw)}%" for kw in keywords)
         try:
             rows = get_db().execute(
                 f"""
@@ -278,6 +283,10 @@ class HistoryQAService:
                     return entry
 
         rows = self._fetch_vector_rows(conversation_id)
+        if rows is None:
+            # 行抓取失败（瞬时 DB 异常）：本次按无向量降级为纯关键词，
+            # 不缓存空结果——否则该联系人向量通道会被毒化到指纹变化为止
+            return {"fingerprint": None, "by_dim": {}}
         by_dim: Dict[int, Dict[str, Any]] = {}
         for row in rows:
             try:
@@ -322,7 +331,8 @@ class HistoryQAService:
             return None
 
     @staticmethod
-    def _fetch_vector_rows(conversation_id: int) -> List[Tuple]:
+    def _fetch_vector_rows(conversation_id: int) -> Optional[List[Tuple]]:
+        """全量向量行；查询失败返回 None（调用方不缓存空结果）。"""
         try:
             return get_db().execute(
                 """
@@ -336,7 +346,7 @@ class HistoryQAService:
             ).fetchall()
         except Exception as exc:
             logger.warning("[问问微信] 向量检索失败: %s", exc)
-            return []
+            return None
 
     @staticmethod
     def _row_to_record(row: Tuple) -> Dict[str, Any]:
@@ -427,14 +437,12 @@ class HistoryQAService:
             "stream": False,
         }
 
-        # HTTP 跑在工作线程（在途 socket 无法强断，取消时主线程立即返回，
-        # 工作线程经 should_abort 在尝试边界自行退出）
+        # HTTP 跑守护工作线程（在途 socket 无法强断，取消时 bridge 线程
+        # 立即返回，工作线程经 should_abort 在尝试边界自行退出）
         abort = threading.Event()
-        holder: Dict[str, Any] = {}
-
-        def _worker() -> None:
-            try:
-                holder["body"] = post_json_with_retries(
+        try:
+            body = run_cancelable(
+                lambda: post_json_with_retries(
                     url=f"{base_url}/chat/completions",
                     payload=payload,
                     headers=headers,
@@ -443,25 +451,18 @@ class HistoryQAService:
                     should_abort=abort.is_set,
                     log=logger.debug,
                     log_prefix="[问问微信]",
-                )
-            except BaseException as exc:  # noqa: BLE001 —— 结果经 holder 传递
-                holder["error"] = exc
-
-        worker = threading.Thread(target=_worker, daemon=True, name="history-qa-llm")
-        worker.start()
-        while worker.is_alive():
-            if _take_cancel(conversation_id):
-                abort.set()
-                raise HistoryQAError("本次提问已取消")
-            worker.join(timeout=0.2)
-        if abort.is_set():
-            raise HistoryQAError("本次提问已取消")
-        if "error" in holder:
-            exc = holder["error"]
+                ),
+                cancelled=lambda: take_llm_cancel(QA_CANCEL_SCOPE, conversation_id),
+                on_cancel=abort.set,
+                cancel_message="本次提问已取消",
+            )
+        except LLMRequestAborted as exc:
+            raise HistoryQAError(str(exc)) from exc
+        except Exception as exc:
             logger.error("[问问微信] LLM 调用失败: %s", exc)
             raise HistoryQAError(f"模型调用失败：{exc}") from exc
 
-        content = self._extract_content(holder.get("body") or {})
+        content = self._extract_content(body or {})
         if not content:
             raise HistoryQAError("模型返回了空回答，请重试或换个问法")
         return content

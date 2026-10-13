@@ -44,12 +44,14 @@ class _FakeRedactor:
 
 @pytest.fixture(autouse=True)
 def _clear_module_state():
-    """模块级向量缓存与取消标记按测试隔离。"""
+    """模块级向量缓存与共享取消注册表按测试隔离。"""
+    import app.services.realtime.llm_http as llmhttp
+
     hqmod._VECTOR_CACHE.clear()
-    hqmod._CANCEL_REQUESTED.clear()
+    llmhttp._CANCELLED.clear()
     yield
     hqmod._VECTOR_CACHE.clear()
-    hqmod._CANCEL_REQUESTED.clear()
+    llmhttp._CANCELLED.clear()
 
 
 @pytest.fixture
@@ -207,6 +209,50 @@ def test_vector_cache_reuses_deserialization_and_rebuilds_on_change(monkeypatch,
     entry3 = svc._load_vector_cache(1)
     assert calls["n"] >= 1
     assert len(entry3["by_dim"][2]["metas"]) == 2
+
+
+def test_vector_cache_not_poisoned_by_transient_fetch_failure(monkeypatch, db):
+    """行抓取瞬时失败：本次降级为无向量，且不把空结果写进缓存。"""
+    seed(db, 1, "我喜欢吃火锅", 1700000100)
+    db.execute(
+        "INSERT INTO sentiment_cache VALUES (1, 1, 0.5, ?, 1)",
+        (pickle.dumps([1.0, 0.0]),),
+    )
+    svc = HistoryQAService()
+    real_get_db = hqmod.get_db
+
+    class FlakyConn:
+        """指纹查询（COUNT）放行，向量行抓取抛错。"""
+
+        def __init__(self, inner):
+            self._inner = inner
+
+        def execute(self, sql, *args):
+            if "COUNT" not in sql and "embedding_vector IS NOT NULL" in sql:
+                raise sqlite3.OperationalError("database is locked")
+            return self._inner.execute(sql, *args)
+
+    with monkeypatch.context() as m:
+        m.setattr(hqmod, "get_db", lambda: FlakyConn(real_get_db()))
+        entry = svc._load_vector_cache(1)
+        assert entry["by_dim"] == {}
+        assert 1 not in hqmod._VECTOR_CACHE  # 空结果未落缓存
+
+    # 异常恢复后同一指纹正常重建，向量通道不受毒化影响
+    entry2 = svc._load_vector_cache(1)
+    assert entry2["by_dim"][2]["metas"][0]["message_id"] == 1
+
+
+def test_keyword_channel_escapes_like_wildcards(monkeypatch, db):
+    """问句分词含 % / _：按字面匹配，不当通配符放大召回。"""
+    monkeypatch.setattr(hqmod, "_extract_keywords", lambda q: ["100_x", "50%"])
+    seed(db, 1, "看下 100_x 的进度", 1700000100)
+    seed(db, 2, "看下 100Ax 的进度", 1700000200)  # _ 当通配符会误中
+    seed(db, 3, "打了 50 折 优惠", 1700000300)     # % 前缀 50 会误中
+
+    rows = HistoryQAService()._keyword_channel(1, "ignored")
+
+    assert [r["message_id"] for r in rows] == [1]
 
 
 def test_context_sorted_by_time_and_char_budget(monkeypatch, db):

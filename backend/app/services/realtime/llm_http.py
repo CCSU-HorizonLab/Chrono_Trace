@@ -1,6 +1,7 @@
 import json
 import socket
 import ssl
+import threading
 import time
 import random
 import urllib.error
@@ -15,6 +16,62 @@ DEFAULT_BASE_RETRY_DELAY = 1.5
 
 class LLMRequestAborted(RuntimeError):
     """调用方请求中止（外部取消信号，不视为网络失败）。"""
+
+
+# ---------------------------------------------------------------------------
+# 交互式 LLM 调用取消注册表：bridge 层置位（scope, key），HTTP 跑守护工作
+# 线程，主线程轮询命中即抛 LLMRequestAborted 立即返回——在途 socket 无法
+# 强断，由 should_abort 在尝试边界退出（history_qa / group_summary 共用）。
+# ---------------------------------------------------------------------------
+_CANCEL_LOCK = threading.Lock()
+_CANCELLED: set = set()
+
+
+def request_llm_cancel(scope: str, key: int) -> None:
+    """标记取消某个进行中的交互式调用（下一次轮询点生效）。"""
+    with _CANCEL_LOCK:
+        _CANCELLED.add((str(scope), int(key)))
+
+
+def take_llm_cancel(scope: str, key: int) -> bool:
+    """消费取消标记（存在即清除并返回 True）。"""
+    with _CANCEL_LOCK:
+        token = (str(scope), int(key))
+        if token in _CANCELLED:
+            _CANCELLED.discard(token)
+            return True
+        return False
+
+
+def run_cancelable(
+    fn: Callable[[], Any],
+    *,
+    cancelled: Callable[[], bool],
+    on_cancel: Optional[Callable[[], None]] = None,
+    poll_interval: float = 0.2,
+    cancel_message: str = "本次请求已取消",
+) -> Any:
+    """fn 跑守护工作线程（阻塞 HTTP），主线程轮询 cancelled()，命中即
+    on_cancel() 后抛 LLMRequestAborted；fn 的异常原样重抛。"""
+    holder: dict[str, Any] = {}
+
+    def _worker() -> None:
+        try:
+            holder["value"] = fn()
+        except BaseException as exc:  # noqa: BLE001 —— 结果经 holder 传递
+            holder["error"] = exc
+
+    worker = threading.Thread(target=_worker, daemon=True)
+    worker.start()
+    while worker.is_alive():
+        if cancelled():
+            if on_cancel:
+                on_cancel()
+            raise LLMRequestAborted(cancel_message)
+        worker.join(timeout=poll_interval)
+    if "error" in holder:
+        raise holder["error"]
+    return holder.get("value")
 
 
 def _iter_exception_chain(err: BaseException):

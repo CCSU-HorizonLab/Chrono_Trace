@@ -21,6 +21,9 @@
       <div class="header-actions-group">
         <CtButton variant="ghost" @click="showContextForm = true" :disabled="isGlobalAnalyzing">关系信息</CtButton>
         <CtButton variant="ghost" @click="showKeywordsDialog = true" :disabled="isGlobalAnalyzing">配置喜好</CtButton>
+        <CtButton v-if="!isGroupConversation && analysisResult" variant="ghost" :loading="reportExporting" @click="handleExportReport">
+          导出体检报告
+        </CtButton>
         <CtButton variant="primary" @click="handleStartGlobalAnalysis" :loading="isGlobalAnalyzing && !isStopping" class="btn-full-analysis">
           {{ isGlobalAnalyzing ? "分析中..." : (hasCachedAffinityAnalysis ? "重新全面分析" : "开始全面分析") }}
         </CtButton>
@@ -1373,6 +1376,30 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
                 .catch(() => {})
         }
 
+        // ===== 关系体检报告导出（单文件 HTML，写入 chrono_trace_export）=====
+        const reportExporting = ref(false)
+
+        async function handleExportReport() {
+            if (!selectedConversationId.value || reportExporting.value) return
+            reportExporting.value = true
+            try {
+                await bridgeReady()
+                const res = await api.export_affinity_report(selectedConversationId.value)
+                if (res?.ok) {
+                    showDialog(`体检报告已导出：${res.file_name}`)
+                    // 打开所在文件夹（同聊天记录导出约定）
+                    api.open_external_url(String(res.file_path).replace(/[/\\][^/\\]+$/, ''))
+                        .catch(() => {})
+                } else {
+                    showDialog(res?.error || '报告导出失败')
+                }
+            } catch (e: any) {
+                showDialog(e?.message || '报告导出异常')
+            } finally {
+                reportExporting.value = false
+            }
+        }
+
         async function tryLoadAffinityScores() {
             if (!selectedConversationId.value) return
             const epoch = viewEpoch.value
@@ -2031,6 +2058,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
             currentRangeLabel, hasContentAnalysis, circumference, strokeDashoffset, formatNumber, formatTime, getResponseTimeLabel, getMergedResponseTimeLabel, getResponseTimePercent, onConversationChange, onDatesChange, handleExport, handleStartGlobalAnalysis, handleContextSaved, handleKeywordsUpdated, llmEvidenceNotes,
             qaHistory, qaInput, qaLoading, handleAskHistory, formatQaTime,
             isGroupConversation, groupStats, groupStatsLoading, groupSummary, groupSummaryLoading, groupSummaryDays, handleGenerateGroupSummary,
+            reportExporting, handleExportReport,
             exportDialogVisible, exportFormat, exporting, exportResult, confirmExport, openExportFolder,
             activeAccountWxid,
             getScoreColor, scrollToDetails, handlePreferenceDisabledClick, onWordSelect, loadAnalysis, loadSessions, handleActivityYearChange

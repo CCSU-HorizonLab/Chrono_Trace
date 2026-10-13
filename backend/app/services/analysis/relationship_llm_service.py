@@ -19,7 +19,7 @@ import logging
 import re
 import time
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ...db.connection import get_db
 from .engagement_metrics import EngagementMetrics
@@ -193,7 +193,8 @@ class RelationshipLLMService:
 
         speech_units 不存内容（只有 message_ids/sender/时间戳），单元
         文本经 message_ids 回查 messages 拼接。窗内极性均衡（轮转取数），
-        窗口间共享 8000 字符预算（超出从最大窗裁最旧，每窗保底 2 对）。
+        窗口间共享 8000 字符预算（超出从最大窗裁边，端点方向按窗语义：
+        起源窗保最老端、其余窗保最新端；每窗保底 2 对）。
         """
         origin_rows = self._balance_polarity(
             self._fetch_pairs(conversation_id, " ORDER BY from_ts ASC LIMIT ?",
@@ -206,8 +207,13 @@ class RelationshipLLMService:
 
         # 跨窗去重（同一 from 单元只出现在一个窗）
         seen: set = set()
-        windows: List[List[Any]] = []
-        for rows in (origin_rows, conflict_rows, recent_rows, icebreak_rows):
+        windows: List[Tuple[str, List[Any]]] = []
+        for name, rows in (
+            ("origin", origin_rows),
+            ("conflict", conflict_rows),
+            ("recent", recent_rows),
+            ("icebreak", icebreak_rows),
+        ):
             unique = []
             for row in rows:
                 key = int(row["from_unit_id"] or 0)
@@ -217,37 +223,54 @@ class RelationshipLLMService:
                 unique.append(row)
             if unique:
                 # 各窗取数方向不一（origin/conflict 升序、recent/icebreak 降序），
-                # 统一升序后 pop(0) 裁剪才恒为「丢最旧」
+                # 统一升序后裁剪端点才有确定语义
                 unique.sort(key=lambda r: int(r["from_ts"] or 0))
-                windows.append(unique)
+                windows.append((name, unique))
 
-        # 总量上限 40：从最大窗裁最旧
-        while sum(len(w) for w in windows) > MAX_PAIRS:
-            biggest = max(windows, key=len)
-            if len(biggest) <= MIN_PER_WINDOW:
+        # 裁剪选窗：占用最大者优先，平局时起源窗最后动（关系起点基线最稀缺）
+        def _biggest(
+            cands: List[Tuple[str, List[Any]]], metric: Callable[[List[Any]], int]
+        ) -> Tuple[str, List[Any]]:
+            return max(cands, key=lambda w: (metric(w[1]), w[0] != "origin"))
+
+        # 总量上限 40
+        while sum(len(rows) for _, rows in windows) > MAX_PAIRS:
+            biggest = _biggest(windows, len)
+            if len(biggest[1]) <= MIN_PER_WINDOW:
                 break
-            biggest.pop(0)
+            self._drop_window_edge(biggest)
 
-        pairs_by_window = [self._rows_to_pairs(rows) for rows in windows]
+        pairs_by_window = [(name, self._rows_to_pairs(rows)) for name, rows in windows]
 
-        # 字符预算：从占用最多的窗裁最旧一对（每窗保底）
+        # 字符预算（每窗保底）
         def _chars(pair: Dict[str, Any]) -> int:
             return len(pair["from_text"]) + len(pair["to_text"])
 
-        total = sum(_chars(p) for w in pairs_by_window for p in w)
+        total = sum(_chars(p) for _, w in pairs_by_window for p in w)
         while total > MAX_TOTAL_INPUT_CHARS:
-            trimmable = [w for w in pairs_by_window if len(w) > MIN_PER_WINDOW]
+            trimmable = [w for w in pairs_by_window if len(w[1]) > MIN_PER_WINDOW]
             if not trimmable:
                 break
-            biggest = max(trimmable, key=lambda w: sum(_chars(p) for p in w))
-            total -= _chars(biggest.pop(0))
+            biggest = _biggest(
+                trimmable, lambda rows: sum(_chars(p) for p in rows)
+            )
+            total -= _chars(self._drop_window_edge(biggest))
 
-        pairs = [p for w in pairs_by_window for p in w]
+        pairs = [p for _, w in pairs_by_window for p in w]
         # 时间正序渲染（旧→新，便于读演变）
         pairs.sort(key=lambda p: p["_ts"])
         for p in pairs:
             del p["_ts"]
         return pairs
+
+    @staticmethod
+    def _drop_window_edge(window: Tuple[str, List[Any]]) -> Any:
+        """按窗语义裁掉一端并返回被裁样本：起源窗保最老端（关系起点
+        基线）裁新端，其余窗保最新端裁最旧。"""
+        name, items = window
+        if name == "origin":
+            return items.pop()
+        return items.pop(0)
 
     def _fetch_pairs(
         self, conversation_id: int, tail: str, params: tuple

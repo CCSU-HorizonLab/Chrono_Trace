@@ -146,6 +146,7 @@ type PyWebViewApi = {
   // 群聊统计与日报
   get_group_stats: (conversation_id: number, start?: number, end?: number) => Promise<any>
   generate_group_summary: (conversation_id: number, days?: number) => Promise<any>
+  cancel_group_summary: (conversation_id: number) => Promise<any>
   // 关系体检报告导出
   export_affinity_report: (conversation_id: number) => Promise<any>
   // 会话线程归档与继承

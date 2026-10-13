@@ -30,24 +30,20 @@ class _FakeHTTP:
         return {"choices": [{"message": {"content": self.content}}]}
 
 
-class _FakeRedactor:
-    def redact(self, text, **kw):
-        return SimpleNamespace(redacted_text=text.replace("13800001111", "[手机号]"))
-
-
 @pytest.fixture
 def db(monkeypatch):
     conn = sqlite3.connect(":memory:")
     conn.execute(
         "CREATE TABLE conversations (id INTEGER PRIMARY KEY, conversation_type TEXT,"
-        " display_name TEXT)"
+        " display_name TEXT, account_wxid TEXT)"
     )
     conn.execute(
         "CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, conversation_id INT,"
         " message_type INT, is_sender INT, sender TEXT, content TEXT, timestamp INT)"
     )
     conn.execute(
-        "INSERT INTO conversations VALUES (1, 'group', '爬山群'), (2, 'private', '阿明')"
+        "INSERT INTO conversations VALUES (1, 'group', '爬山群', 'wxid_me'),"
+        " (2, 'private', '阿明', 'wxid_me')"
     )
     monkeypatch.setattr(gsmod, "get_db", lambda: conn)
     yield conn
@@ -169,7 +165,15 @@ def test_summary_remote_model_redacts(monkeypatch, db):
         lambda: {"api_base_url": "https://api.deepseek.com/v1", "model_id": "d", "api_key": ""},
     )
     monkeypatch.setattr(ragcfg, "is_remote_llm_model", lambda cfg: True)
-    monkeypatch.setattr(prmod, "PrivacyRedactor", lambda conn: _FakeRedactor())
+
+    captured = {}
+
+    class _CapturingRedactor:
+        def redact(self, text, **kw):
+            captured.update(kw)
+            return SimpleNamespace(redacted_text=text.replace("13800001111", "[手机号]"))
+
+    monkeypatch.setattr(prmod, "PrivacyRedactor", lambda conn: _CapturingRedactor())
     seed(db, "阿强", "我电话 13800001111", NOW)
 
     http = _FakeHTTP()
@@ -180,6 +184,50 @@ def test_summary_remote_model_redacts(monkeypatch, db):
     assert result["degraded"] is False
     sent = json.dumps(http.calls[0]["payload"], ensure_ascii=False)
     assert "13800001111" not in sent and "[手机号]" in sent
+    # 占位符键需要账号维度：account_wxid 必须随脱敏调用传递
+    assert captured.get("account_wxid") == "wxid_me"
+    assert captured.get("conversation_id") == 1
+
+
+def test_render_single_day_overflow_trims_within_day():
+    """单日超预算：日内从最早消息裁起，保底 1 行，总长收回预算内。"""
+    ts = NOW
+    segments = {
+        time.strftime("%Y-%m-%d", time.localtime(ts)): [
+            ("阿强", "满" * gsmod.PER_MESSAGE_CHARS, ts + i) for i in range(gsmod.PER_DAY_MESSAGES)
+        ]
+    }
+    lines = GroupSummaryService._render_segments(segments)
+    assert len(lines) >= 2  # 日期头 + 至少 1 条消息
+    assert len("\n".join(lines)) <= gsmod.MAX_SUMMARY_CHARS
+    # 裁的是最早的行：保底保留的是最后一条
+    assert lines[-1].endswith("满" * gsmod.PER_MESSAGE_CHARS)
+
+
+def test_summary_cancel_aborts_pending_llm(monkeypatch, db):
+    """在途日报可取消：bridge 线程立即抛「已取消」。"""
+    import app.services.realtime.llm_http as llmhttp
+    import app.services.realtime.rag.fact_llm as factllm
+
+    monkeypatch.setattr(
+        factllm,
+        "get_active_model_config",
+        lambda: {"api_base_url": "http://127.0.0.1:11434/v1", "model_id": "qwen", "api_key": ""},
+    )
+    seed(db, "阿强", "样本消息", NOW)
+
+    def slow_post(*, should_abort=None, **kw):
+        llmhttp.request_llm_cancel(gsmod.GS_CANCEL_SCOPE, 1)
+        deadline = time.time() + 5
+        while not (should_abort and should_abort()) and time.time() < deadline:
+            time.sleep(0.02)
+        return {"choices": [{"message": {"content": "迟到"}}]}
+
+    monkeypatch.setattr(gsmod, "post_json_with_retries", slow_post)
+
+    with pytest.raises(GroupSummaryError) as exc:
+        GroupSummaryService().generate_group_summary(1, days=1)
+    assert "取消" in str(exc.value)
 
 
 def test_summary_range_follows_days_param(monkeypatch, db):

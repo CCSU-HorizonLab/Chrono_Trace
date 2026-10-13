@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
@@ -157,6 +158,11 @@ class RelationshipLLMService:
                 f"LLM 输出未包含可解析的 JSON 评估"
                 f"（finish={finish_reason or 'unknown'}, len={len(content)}）"
             ) from None
+
+        # 推导纪律的事后校验：引文必须真的出现在采样原文里
+        result["risk_evidence"] = self._verify_risk_evidence(
+            result["risk_evidence"], pair_texts
+        )
 
         result["meta"] = {
             "model_name": str(self.model_config.get("name") or self.model_config.get("model_id") or ""),
@@ -644,6 +650,40 @@ class RelationshipLLMService:
                 found = bool(quotes)
             normalized[key] = {"found": found, "quotes": quotes}
         return normalized
+
+    @staticmethod
+    def _verify_risk_evidence(
+        risk_evidence: Dict[str, Dict[str, Any]],
+        pair_texts: List[Dict[str, Any]],
+    ) -> Dict[str, Dict[str, Any]]:
+        """引文与采样原文比对（模型实际看到的文本）：对不上即丢弃，全部
+        失效则降为 found=False——编造引文不得进风险信号卡与体检报告。"""
+
+        def _squash(text: Any) -> str:
+            return re.sub(r"\s+", "", str(text or ""))
+
+        corpus = _squash(
+            "".join(
+                f"{t.get('from_text', '')}{t.get('to_text', '')}" for t in pair_texts
+            )
+        )
+        dropped = 0
+        for item in risk_evidence.values():
+            kept = []
+            for quote in (item.get("quotes") or []):
+                squashed = _squash(quote)
+                if squashed and squashed in corpus:
+                    kept.append(quote)
+                else:
+                    dropped += 1
+            item["quotes"] = kept
+            if not kept:
+                item["found"] = False
+        if dropped:
+            logger.info(
+                "[关系评估] 风险引文校验丢弃 %d 条与采样原文不符的引文", dropped
+            )
+        return risk_evidence
 
 
 def build_relationship_llm_service() -> Optional[RelationshipLLMService]:

@@ -282,9 +282,10 @@ def test_risk_evidence_normalized_with_all_four_keys(db):
         "score": 60,
         "sub_scores": {"communication_quality": 60, "relationship_warmth": 55},
         "risk_evidence": {
-            "hot_cold": {"found": True, "quotes": ["前几天还那么热情"]},
+            # 一条真引文（采样语料含「最近怎么样」）+ 一条编造：编造被校验丢弃
+            "hot_cold": {"found": True, "quotes": ["最近怎么样", "我编造的引文"]},
             "one_sided": {"found": False, "quotes": []},
-            "reality_denial": ["你记错了，我从来没说过"],
+            "reality_denial": ["挺好的"],
         },
         "evidence": [],
         "insight": "x",
@@ -294,15 +295,40 @@ def test_risk_evidence_normalized_with_all_four_keys(db):
 
     evidence = result["risk_evidence"]
     assert set(evidence) == set(rlmod.RISK_EVIDENCE_KEYS)
+    # 真引文保留、编造引文丢弃，found 不受影响
     assert evidence["hot_cold"]["found"] is True
-    assert evidence["hot_cold"]["quotes"]
+    assert evidence["hot_cold"]["quotes"] == ["最近怎么样"]
     assert evidence["one_sided"]["found"] is False
-    # 宽容形态：直接给引文列表视为 found 且带证据
+    # 宽容形态：直接给引文列表视为 found 且带证据（语料含「挺好的」）
     assert evidence["reality_denial"]["found"] is True
-    assert evidence["reality_denial"]["quotes"]
+    assert evidence["reality_denial"]["quotes"] == ["挺好的"]
     # 缺席键补 false；risk_signals 子分已随口径升级移除
     assert evidence["warm_then_cold"]["found"] is False
     assert "risk_signals" not in result["sub_scores"]
+
+
+def test_risk_evidence_fabricated_quotes_dropped_and_downgraded(db):
+    """引文全部与采样原文对不上（或给不出引文）：不得作为对话证据。"""
+    seed_pairs(db)
+    content = json.dumps({
+        "score": 60,
+        "sub_scores": {"communication_quality": 60, "relationship_warmth": 55},
+        "risk_evidence": {
+            "hot_cold": {"found": True, "quotes": ["完全编造的引文"]},
+            "reality_denial": {"found": True, "quotes": []},
+        },
+        "evidence": [],
+        "insight": "x",
+    }, ensure_ascii=False)
+    svc = RelationshipLLMService(_model(), http=_FakeHTTP(content), is_remote=lambda m: False)
+    result = svc.evaluate(1)
+
+    evidence = result["risk_evidence"]
+    # 编造引文丢弃且 found 降级——双证据判定的「对话证据」一方不成立
+    assert evidence["hot_cold"]["found"] is False
+    assert evidence["hot_cold"]["quotes"] == []
+    # found=True 但给不出任何引文：同样不算对话证据
+    assert evidence["reality_denial"]["found"] is False
 
 
 def test_prompt_includes_relationship_context_labels(db):

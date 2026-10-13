@@ -216,6 +216,9 @@ class RelationshipLLMService:
                 seen.add(key)
                 unique.append(row)
             if unique:
+                # 各窗取数方向不一（origin/conflict 升序、recent/icebreak 降序），
+                # 统一升序后 pop(0) 裁剪才恒为「丢最旧」
+                unique.sort(key=lambda r: int(r["from_ts"] or 0))
                 windows.append(unique)
 
         # 总量上限 40：从最大窗裁最旧

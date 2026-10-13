@@ -397,3 +397,72 @@ def test_input_char_budget_drops_oldest_pairs(db):
     total = sum(len(p["from_text"]) + len(p["to_text"]) for p in pairs)
     assert total <= rlmod.MAX_TOTAL_INPUT_CHARS
     assert len(pairs) >= rlmod.MIN_PAIRS
+
+
+def test_budget_trim_in_recent_window_keeps_newest(db):
+    """近期窗预算裁剪丢最旧：降序取数的窗不得因 pop(0) 丢掉最新样本。
+
+    四窗全满（12+12+12+6=42 对）先触发 MAX_PAIRS=40，再触发 8000 字符
+    预算；所有文本饱和到单元截断上限（120×2/对），近期窗 12 对满额为
+    严格最大占用窗，预算裁剪首轮必动近期窗——修复前其降序排列会让
+    pop(0) 丢掉最新样本。
+    """
+    now = int(datetime.now().timestamp())
+    day = 86400
+
+    def seed_pair_full(pid, ts, polarity=0):
+        db.execute(
+            "INSERT INTO messages (id, conversation_id, is_sender, content, timestamp) VALUES (?, 1, 0, ?, ?)",
+            (4 * pid + 1, f"编号{pid}：{'x' * 300}", ts),
+        )
+        db.execute(
+            "INSERT INTO messages (id, conversation_id, is_sender, content, timestamp) VALUES (?, 1, 1, ?, ?)",
+            (4 * pid + 2, f"编号{pid}回：{'y' * 300}", ts + 30),
+        )
+        db.execute(
+            "INSERT INTO speech_units (id, conversation_id, message_ids, sender, first_message_timestamp, last_message_timestamp, message_count) VALUES (?, 1, ?, 'other', ?, ?, 1)",
+            (2 * pid + 1, str(4 * pid + 1), ts, ts),
+        )
+        db.execute(
+            "INSERT INTO speech_units (id, conversation_id, message_ids, sender, first_message_timestamp, last_message_timestamp, message_count) VALUES (?, 1, ?, 'user', ?, ?, 1)",
+            (2 * pid + 2, str(4 * pid + 2), ts + 30, ts + 30),
+        )
+        db.execute(
+            "INSERT INTO interaction_pairs (id, conversation_id, from_speech_unit_id, to_speech_unit_id, time_gap, from_polarity, to_polarity) VALUES (?, 1, ?, ?, 30, ?, 0)",
+            (pid + 1, 2 * pid + 1, 2 * pid + 2, polarity),
+        )
+
+    # 起源窗（最老 24 取数内的前 12）：i0-11 + 12 个垫底对（均衡后丢弃）
+    for i in range(12):
+        seed_pair_full(i, now - 60 * day + i * 60)
+    for i in range(54, 66):
+        seed_pair_full(i, now - 59 * day + (i - 54) * 60)
+    # 高冲突窗：i12-23 全负向、同一时刻（7 天桶不跨界）
+    for i in range(12, 24):
+        seed_pair_full(i, now - 20 * day, polarity=-1)
+    # 近期窗候选：i24-47（近 5 天内，降序取最新 12 = i36-47）
+    for i in range(24, 48):
+        seed_pair_full(i, now - 5 * day + (i - 24) * 3600)
+    # 破冰窗：i48-53 为 6 个 >24h 间隔会话的首对（降序产出）
+    for k in range(6):
+        seed_pair_full(48 + k, now - (45 - 3 * k) * day)
+    db.execute(
+        "INSERT INTO sessions (conversation_id, start_time, end_time, initiator) VALUES (1, ?, ?, 'other')",
+        (now - 47 * day, now - 47 * day + 3600),
+    )
+    for k in range(6):
+        start = now - (45 - 3 * k) * day
+        db.execute(
+            "INSERT INTO sessions (conversation_id, start_time, end_time, initiator) VALUES (1, ?, ?, 'user')",
+            (start, start + 3600),
+        )
+    db.commit()
+
+    svc = RelationshipLLMService(_model(), http=_FakeHTTP(_ok_content()), is_remote=lambda m: False)
+    pairs = svc._sample_interaction_pairs(1)
+    texts = "\n".join(p["from_text"] for p in pairs)
+    total = sum(len(p["from_text"]) + len(p["to_text"]) for p in pairs)
+
+    assert total <= rlmod.MAX_TOTAL_INPUT_CHARS
+    assert "编号47：" in texts  # 近期窗最新样本必须保留
+    assert "编号36：" not in texts  # 近期窗最旧样本被裁

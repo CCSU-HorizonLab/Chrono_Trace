@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Sequence
 
 from ...db.connection import get_db
+from .engagement_metrics import EngagementMetrics
 from .keyword_libraries import KeywordLibraries, get_shared_keyword_libraries
 from .negative_direction_service import NegativeDirectionService
 from .preprocessing_orchestrator import PreprocessingOrchestrator
@@ -36,11 +37,21 @@ def _chunked(ids: List[Any]) -> List[List[Any]]:
 class EmotionalResonanceService:
     """Calculate the emotional resonance dimension and its sub-scores."""
 
-    CORE_BIDIRECTIONAL_WEIGHT = 0.50
-    CORE_POLARITY_WEIGHT = 0.30
-    CORE_INTENSITY_WEIGHT = 0.20
+    # 基础子项权重（重组后：正向回应/极性一致/强度匹配/正负平衡/敷衍回复）
+    CORE_BIDIRECTIONAL_WEIGHT = 0.35
+    CORE_POLARITY_WEIGHT = 0.20
+    CORE_INTENSITY_WEIGHT = 0.10
+    VALENCE_BALANCE_WEIGHT = 0.20
+    PERFUNCTORY_REPLY_WEIGHT = 0.15
     EMPATHY_BONUS_RATIO = 0.10
     NEGATIVE_RESOLUTION_BONUS_RATIO = 0.10
+    # 信任宣泄加分（对方向我倾诉对他人的负面，自态度倾向迁入）
+    TRUST_VENTING_BONUS_MAX = 8.0
+    TRUST_VENTING_STEP = 2.0
+    # 正负平衡满档锚：正负消息比 5:1（正占比 5/6）为满分
+    VALENCE_FULL_RATIO = 5.0 / 6.0
+    # 敷衍回复归零锚：对方敷衍回复率达 30% 该子项归零
+    PERFUNCTORY_ZERO_RATE = 0.30
     POSITIVE_RESPONSE_TIME_WINDOW = 3600
     SOFT_POSITIVE_INTENSITY_THRESHOLD = 0.20
     BIDIRECTIONAL_POSITIVE_PRIOR = 0.50
@@ -402,17 +413,26 @@ class EmotionalResonanceService:
 
         return round(rate, 2)
 
-    def calculate_overall_resonance(self, conversation_id: int) -> Dict[str, Any]:
-        """Calculate overall emotional resonance score."""
+    def calculate_overall_resonance(
+        self, conversation_id: int, metrics: EngagementMetrics
+    ) -> Dict[str, Any]:
+        """Calculate overall emotional resonance score.
+
+        metrics 为会话投入特征（engagement_metrics 产物，编排器单次计算后
+        传入；正负平衡与敷衍回复子项消费其中计数）。
+        """
         debug_log(f"\n{'*' * 40}")
-        debug_log(f"[情感共振率] 开始计算，会话 ID {conversation_id}")
-        debug_log("*[说明] 情感共振率现采用“3个基础子维度 + 2个加分项”模型*")
+        debug_log(f"[情感共鸣] 开始计算，会话 ID {conversation_id}")
+        debug_log("*[说明] 情感共鸣采用「5个基础子维度 + 3个加分项」模型*")
 
         bidirectional_rate = self.calculate_bidirectional_positive_response(conversation_id)
         polarity_score = self.calculate_polarity_consistency(conversation_id)
         intensity_score = self.calculate_intensity_matching(conversation_id)
+        valence_score = self._calculate_valence_balance(metrics)
+        perfunctory_score = self._calculate_perfunctory_reply(metrics)
         empathy_rate = self.calculate_empathy_recognition(conversation_id)
         resolution_rate = self.calculate_negative_resolution(conversation_id)
+        trust_venting_bonus = self._calculate_trust_venting(conversation_id)
         all_pairs = self._get_interaction_pairs(conversation_id)
         positive_pairs = [
             pair for pair in all_pairs if pair["from_polarity"] == 1 and self._is_within_positive_response_window(pair)
@@ -427,12 +447,14 @@ class EmotionalResonanceService:
             bidirectional_rate * self.CORE_BIDIRECTIONAL_WEIGHT
             + polarity_score * self.CORE_POLARITY_WEIGHT
             + intensity_score * self.CORE_INTENSITY_WEIGHT
+            + valence_score * self.VALENCE_BALANCE_WEIGHT
+            + perfunctory_score * self.PERFUNCTORY_REPLY_WEIGHT
         )
         empathy_bonus = empathy_rate * self.EMPATHY_BONUS_RATIO
         resolution_bonus = resolution_rate * self.NEGATIVE_RESOLUTION_BONUS_RATIO
         raw_overall_score = max(
             0.0,
-            min(100.0, base_score + empathy_bonus + resolution_bonus),
+            min(100.0, base_score + empathy_bonus + resolution_bonus + trust_venting_bonus),
         )
         overall_score = round(
             self._apply_confidence_shrinkage(
@@ -445,14 +467,16 @@ class EmotionalResonanceService:
         base_score = round(base_score, 2)
         empathy_bonus = round(empathy_bonus, 2)
         resolution_bonus = round(resolution_bonus, 2)
-        debug_log("\n[情感共振率调试] --- 6. 综合得分（基础分 + 加分项） ---")
+        debug_log("\n[情感共鸣调试] --- 6. 综合得分（基础分 + 加分项） ---")
         debug_log(
-            f"基础分 {base_score:.2f} = 双向积极互动 {bidirectional_rate:.2f} * 50% + "
-            f"情绪一致性 {polarity_score:.2f} * 30% + 情绪强度匹配 {intensity_score:.2f} * 20%"
+            f"基础分 {base_score:.2f} = 双向积极互动 {bidirectional_rate:.2f} * 35% + "
+            f"情绪一致性 {polarity_score:.2f} * 20% + 情绪强度匹配 {intensity_score:.2f} * 10% + "
+            f"正负平衡 {valence_score:.2f} * 20% + 敷衍回复 {perfunctory_score:.2f} * 15%"
         )
         debug_log(
             f"加分项：共情识别 +{empathy_bonus:.2f}（最高 +10），"
-            f"负面情绪化解 +{resolution_bonus:.2f}（最高 +10）"
+            f"负面情绪化解 +{resolution_bonus:.2f}（最高 +10），"
+            f"信任宣泄 +{trust_venting_bonus:.2f}（最高 +8）"
         )
         debug_log(
             f"关系深度置信度: {confidence_meta['relationship_depth_confidence']:.2f}, "
@@ -467,6 +491,8 @@ class EmotionalResonanceService:
                 "bidirectional_positive_response": bidirectional_rate,
                 "polarity_consistency": polarity_score,
                 "intensity_matching": intensity_score,
+                "valence_balance": valence_score,
+                "perfunctory_reply": perfunctory_score,
                 "empathy_recognition": empathy_rate,
                 "negative_resolution": resolution_rate,
             },
@@ -474,10 +500,52 @@ class EmotionalResonanceService:
                 "base_resonance_score": base_score,
                 "empathy_recognition_bonus": empathy_bonus,
                 "negative_resolution_bonus": resolution_bonus,
+                "trust_venting_bonus": round(trust_venting_bonus, 2),
             },
             "confidence_meta": confidence_meta,
             "interpretation": self.generate_interpretation(overall_score),
         }
+
+    def _calculate_valence_balance(self, metrics: EngagementMetrics) -> float:
+        """正负平衡：双方正负消息比，5:1（正占比 5/6）为满分锚。
+
+        无任何带极性的消息时记中性 50。
+        """
+        positive = metrics.positive_self + metrics.positive_other
+        negative = metrics.negative_self + metrics.negative_other
+        total = positive + negative
+        if total <= 0:
+            return 50.0
+        ratio = positive / total
+        score = min(1.0, ratio / self.VALENCE_FULL_RATIO) * 100.0
+        return round(max(0.0, min(100.0, score)), 2)
+
+    def _calculate_perfunctory_reply(self, metrics: EngagementMetrics) -> float:
+        """敷衍回复：对方敷衍回复率越低越高，30% 归零。"""
+        score = 100.0 - min(
+            100.0, metrics.perfunctory_rate_other / self.PERFUNCTORY_ZERO_RATE * 100.0
+        )
+        return round(max(0.0, min(100.0, score)), 2)
+
+    def _calculate_trust_venting(self, conversation_id: int) -> float:
+        """信任宣泄加分：对方向我倾诉对他人的负面情绪，视为信任信号。
+
+        自态度倾向迁入：负向交互对 from 内容方向判定为 to_others 的
+        计数，每次 +2、封顶 +8。
+        """
+        try:
+            pairs = self._get_interaction_pairs(conversation_id)
+        except Exception as exc:
+            debug_log(f"[情感共鸣] 信任宣泄统计跳过: {exc}")
+            return 0.0
+        to_others_count = 0
+        for pair in pairs:
+            if pair.get("from_polarity") != -1:
+                continue
+            content = pair.get("from_content", "")
+            if content and self.direction_service.classify(content).direction == "to_others":
+                to_others_count += 1
+        return min(self.TRUST_VENTING_BONUS_MAX, to_others_count * self.TRUST_VENTING_STEP)
 
     def generate_interpretation(self, score: float) -> str:
         """Generate a short textual interpretation."""

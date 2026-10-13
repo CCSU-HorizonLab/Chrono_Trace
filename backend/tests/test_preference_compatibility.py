@@ -202,9 +202,9 @@ class TestAffinityConfigService:
         config = service.get_config(1)
         
         assert isinstance(config, AffinityConfig)
-        assert config.weight_emotional_resonance == 0.40
-        assert config.weight_chat_positivity == 0.35
-        assert config.weight_attitude_tendency == 0.25
+        assert config.weight_interaction_investment == 0.40
+        assert config.weight_emotional_resonance == 0.35
+        assert config.weight_closeness_signals == 0.15
         assert config.preference_bonus_factor == 0.10
 
     def test_validate_config_valid(self, service):
@@ -226,11 +226,10 @@ class TestAffinityConfigService:
         assert "0-1 之间" in str(excinfo.value)
 
         config = AffinityConfig(
+            weight_interaction_investment=0.0,
             weight_emotional_resonance=0.0,
-            weight_chat_positivity=0.0,
-            weight_attitude_tendency=0.0,
+            weight_closeness_signals=0.0,
             weight_preference_compatibility=0.0,
-            weight_intimacy_signals=0.0,
             weight_llm_relationship=0.0,
         )
         with pytest.raises(ValueError) as excinfo:

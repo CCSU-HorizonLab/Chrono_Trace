@@ -1,13 +1,13 @@
-"""好感度六维权重归一引擎。
+"""好感度四维 + LLM 权重归一引擎。
 
 点数制：每维一个 declared 权重（不要求和为 1），启用判定决定该维是否
 在场；总分阶段把在场维度的 declared 归一为有效权重（和恰为 1）。
 缺席维度（未配关键词的偏好维、未配模型/调用失败的 LLM 维）自动从
-分母剔除，其余维度权重自动放大——无需二档硬编码（旧口径"配关键词时
-35/35/20/10"从未实现即源于此结构缺陷）。
+分母剔除，其余维度权重自动放大。
 
-默认权重 0.40/0.35/0.25 保持三老维 8:7:5 比例与历史口径严格一致；
-亲密度信号与 LLM 关系评估作为新维给次低/最低档，老用户总分扰动可控。
+默认权重 0.40/0.35/0.15 保持互动投入与情感共鸣 8:7 比例延续旧
+「聊天积极度/情感共振率」的相对关系；亲近信号、喜好兼容度与 LLM
+关系评估为次级维度。
 """
 
 from __future__ import annotations
@@ -19,43 +19,39 @@ from .affinity_config import AffinityConfig
 
 logger = logging.getLogger(__name__)
 
-# 六维 key 序（与 AffinityAnalysisResult 的维度字段一一对应）
+# 维度 key 序（与 AffinityAnalysisResult 的维度字段一一对应）
 DIMENSION_ORDER = (
+    "interaction_investment",
     "emotional_resonance",
-    "chat_positivity",
-    "attitude_tendency",
+    "closeness_signals",
     "preference_compatibility",
-    "intimacy_signals",
     "llm_relationship",
 )
 
 # 各维字段名（AffinityAnalysisResult / DimensionScore 装载处）
 DIMENSION_FIELDS = {
+    "interaction_investment": "interaction_investment",
     "emotional_resonance": "emotional_resonance",
-    "chat_positivity": "chat_positivity",
-    "attitude_tendency": "attitude_tendency",
+    "closeness_signals": "closeness_signals",
     "preference_compatibility": "preference_compatibility",
-    "intimacy_signals": "intimacy_signals",
     "llm_relationship": "llm_relationship",
 }
 
 # 默认 declared 权重（点数制）
 DEFAULT_WEIGHTS: Dict[str, float] = {
-    "emotional_resonance": 0.40,
-    "chat_positivity": 0.35,
-    "attitude_tendency": 0.25,
+    "interaction_investment": 0.40,
+    "emotional_resonance": 0.35,
+    "closeness_signals": 0.15,
     "preference_compatibility": 0.10,
-    "intimacy_signals": 0.12,
     "llm_relationship": 0.08,
 }
 
 # AffinityConfig 上的权重字段名 → 维度 key
 _CONFIG_WEIGHT_FIELDS = {
+    "weight_interaction_investment": "interaction_investment",
     "weight_emotional_resonance": "emotional_resonance",
-    "weight_chat_positivity": "chat_positivity",
-    "weight_attitude_tendency": "attitude_tendency",
+    "weight_closeness_signals": "closeness_signals",
     "weight_preference_compatibility": "preference_compatibility",
-    "weight_intimacy_signals": "intimacy_signals",
     "weight_llm_relationship": "llm_relationship",
 }
 
@@ -63,7 +59,7 @@ _CONFIG_WEIGHT_FIELDS = {
 def resolve_dimension_plan(
     config: AffinityConfig, llm_available: bool
 ) -> Dict[str, Dict[str, Any]]:
-    """解析六维权重计划：config 覆盖默认值，附启用判定。
+    """解析各维权重计划：config 覆盖默认值，附启用判定。
 
     Args:
         config: 会话配置（权重字段为点数制，非法值回退默认）
@@ -100,7 +96,7 @@ def apply_weight_normalization(result: Any) -> Dict[str, float]:
     """对 result 上在场的 DimensionScore 归一权重并覆写 weighted_score。
 
     在场 = 字段存在且非 None 且 declared > 0。LLM 维缺席（None 或
-    declared=0）自动从分母剔除。Σ=0 时回退三老维默认（防止极端配置
+    declared=0）自动从分母剔除。Σ=0 时回退三本地维默认（防止极端配置
     让总分失去意义）。
 
     Returns:
@@ -117,11 +113,11 @@ def apply_weight_normalization(result: Any) -> Dict[str, float]:
         entries[dim_key] = score
 
     if not entries:
-        logger.warning("[权重引擎] 无任何在场维度，回退三老维默认权重")
+        logger.warning("[权重引擎] 无任何在场维度，回退本地三维默认权重")
         fallback = {
+            "interaction_investment": DEFAULT_WEIGHTS["interaction_investment"],
             "emotional_resonance": DEFAULT_WEIGHTS["emotional_resonance"],
-            "chat_positivity": DEFAULT_WEIGHTS["chat_positivity"],
-            "attitude_tendency": DEFAULT_WEIGHTS["attitude_tendency"],
+            "closeness_signals": DEFAULT_WEIGHTS["closeness_signals"],
         }
         total = sum(fallback.values())
         for dim_key, declared in fallback.items():

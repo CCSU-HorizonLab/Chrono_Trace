@@ -14,13 +14,12 @@ logger = logging.getLogger(__name__)
 class AffinityConfig:
     """Affinity analysis configuration."""
 
-    # 六维 declared 权重（点数制，不要求和为 1；评分引擎按在场维度归一，
+    # 各维 declared 权重（点数制，不要求和为 1；评分引擎按在场维度归一，
     # 见 affinity_weights.resolve_dimension_plan）
-    weight_emotional_resonance: float = 0.40
-    weight_chat_positivity: float = 0.35
-    weight_attitude_tendency: float = 0.25
+    weight_interaction_investment: float = 0.40
+    weight_emotional_resonance: float = 0.35
+    weight_closeness_signals: float = 0.15
     weight_preference_compatibility: float = 0.10
-    weight_intimacy_signals: float = 0.12
     weight_llm_relationship: float = 0.08
     llm_relationship_enabled: bool = True
     preference_bonus_factor: float = 0.10
@@ -38,11 +37,10 @@ class AffinityConfig:
 
     #: 参与评分与配置指纹的全部权重字段（新增权重必须同步登记）
     WEIGHT_FIELDS = (
+        "weight_interaction_investment",
         "weight_emotional_resonance",
-        "weight_chat_positivity",
-        "weight_attitude_tendency",
+        "weight_closeness_signals",
         "weight_preference_compatibility",
-        "weight_intimacy_signals",
         "weight_llm_relationship",
     )
 
@@ -68,7 +66,13 @@ class AffinityConfigService:
             if row:
                 config_dict = json.loads(row[0])
 
-                config = AffinityConfig(**config_dict)
+                # 维度重组后字段换名：过滤掉旧权重等已废弃键，避免
+                # **构造抛 TypeError 整体回退默认（会连带丢掉用户配置
+                # 的喜好关键词）；仍有效的字段（关键词/阈值等）继续生效
+                known_fields = AffinityConfig.__dataclass_fields__
+                config = AffinityConfig(**{
+                    k: v for k, v in config_dict.items() if k in known_fields
+                })
                 config.conversation_id = conversation_id
                 return config
 

@@ -7,6 +7,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from app.services.analysis.emotional_resonance_service import EmotionalResonanceService
+from app.services.analysis.engagement_metrics import EngagementMetrics
 
 
 @pytest.fixture
@@ -477,12 +478,15 @@ def test_overall_resonance_uses_core_base_score_plus_bonus_items(service, monkey
         },
     )
 
-    result = service.calculate_overall_resonance(1)
+    result = service.calculate_overall_resonance(1, EngagementMetrics())
 
     assert result["overall_score"] == 80.0
     assert result["bonus_scores"]["base_resonance_score"] == 73.0
     assert result["bonus_scores"]["empathy_recognition_bonus"] == 4.0
     assert result["bonus_scores"]["negative_resolution_bonus"] == 3.0
+    # 中性投入特征（无极性 → 正负平衡 50、零敷衍率 → 敷衍回复 100）
+    assert result["sub_scores"]["valence_balance"] == 50.0
+    assert result["sub_scores"]["perfunctory_reply"] == 100.0
 
 
 def test_overall_resonance_bonus_items_do_not_overwhelm_strong_base(service, monkeypatch):
@@ -504,10 +508,10 @@ def test_overall_resonance_bonus_items_do_not_overwhelm_strong_base(service, mon
         },
     )
 
-    result = service.calculate_overall_resonance(1)
+    result = service.calculate_overall_resonance(1, EngagementMetrics())
 
-    assert result["bonus_scores"]["base_resonance_score"] == 86.5
-    assert result["overall_score"] == 87.5
+    assert result["bonus_scores"]["base_resonance_score"] == 81.5
+    assert result["overall_score"] == 82.5
 
 
 def test_overall_resonance_bonus_items_cap_total_score_at_one_hundred(service, monkeypatch):
@@ -529,7 +533,7 @@ def test_overall_resonance_bonus_items_cap_total_score_at_one_hundred(service, m
         },
     )
 
-    result = service.calculate_overall_resonance(1)
+    result = service.calculate_overall_resonance(1, EngagementMetrics())
 
     assert result["bonus_scores"]["empathy_recognition_bonus"] == 10.0
     assert result["bonus_scores"]["negative_resolution_bonus"] == 10.0
@@ -555,9 +559,55 @@ def test_overall_resonance_without_empathy_or_resolution_opportunities_only_uses
         },
     )
 
-    result = service.calculate_overall_resonance(1)
+    result = service.calculate_overall_resonance(1, EngagementMetrics())
 
-    assert result["bonus_scores"]["base_resonance_score"] == 63.0
+    assert result["bonus_scores"]["base_resonance_score"] == 66.5
     assert result["bonus_scores"]["empathy_recognition_bonus"] == 5.0
     assert result["bonus_scores"]["negative_resolution_bonus"] == 0.0
-    assert result["overall_score"] == 68.0
+    assert result["overall_score"] == 71.5
+
+
+def test_valence_balance_anchors_five_to_one_positive_ratio(service):
+    metrics = EngagementMetrics(
+        positive_other=50, negative_other=10, positive_self=50, negative_self=10
+    )
+    # 正占比 100/120 = 0.833 >= 5/6 → 满分
+    assert service._calculate_valence_balance(metrics) == 100.0
+
+    metrics_neutral = EngagementMetrics()
+    assert service._calculate_valence_balance(metrics_neutral) == 50.0
+
+    metrics_negative = EngagementMetrics(negative_other=100)
+    assert service._calculate_valence_balance(metrics_negative) == 0.0
+
+
+def test_perfunctory_reply_zeroes_at_thirty_percent(service):
+    metrics = EngagementMetrics(perfunctory_rate_other=0.30)
+    assert service._calculate_perfunctory_reply(metrics) == 0.0
+
+    metrics_clean = EngagementMetrics(perfunctory_rate_other=0.0)
+    assert service._calculate_perfunctory_reply(metrics_clean) == 100.0
+
+
+def test_trust_venting_bonus_counts_to_others_negative_pairs(service, monkeypatch):
+    monkeypatch.setattr(
+        service,
+        "_get_interaction_pairs",
+        lambda conversation_id: [
+            {"from_polarity": -1, "from_content": "老板今天又骂人"},
+            {"from_polarity": -1, "from_content": "同事甩锅给我"},
+            {"from_polarity": -1, "from_content": "室友太吵了"},
+            {"from_polarity": -1, "from_content": "你也太坏了"},
+            {"from_polarity": -1, "from_content": "快递又丢了"},
+        ],
+    )
+    monkeypatch.setattr(
+        service.direction_service,
+        "classify",
+        lambda content: type(
+            "Result", (), {"direction": "to_others", "confidence": 1.0}
+        )(),
+    )
+
+    # 5 对全为 to_others 宣泄 → 5×2=10，封顶 8
+    assert service._calculate_trust_venting(1) == 8.0

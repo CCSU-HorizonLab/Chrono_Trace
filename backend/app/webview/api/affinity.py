@@ -23,7 +23,9 @@ class AffinityApiMixin:
             "backend.app.services.analysis.affinity_analysis_service",
             "backend.app.services.analysis.affinity_config",
             "backend.app.services.analysis.affinity_weights",
-            "backend.app.services.analysis.intimacy_signals_service",
+            "backend.app.services.analysis.engagement_metrics",
+            "backend.app.services.analysis.interaction_investment_service",
+            "backend.app.services.analysis.closeness_signals_service",
             "backend.app.services.analysis.relationship_llm_service",
             "backend.app.services.analysis.affinity_history",
         ]

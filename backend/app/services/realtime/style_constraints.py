@@ -52,15 +52,18 @@ def _resolve_emotional_style(affinity_result: Any) -> str:
     resonance_score = _safe_float(
         _safe_get(affinity_result, "emotional_resonance", "score")
     )
-    attitude_score = _safe_float(
-        _safe_get(affinity_result, "attitude_tendency", "score")
-    )
+    # 态度倾向已解体（口径 5）：亲近信号为其后继维度之一；旧口径
+    # 缓存键作回退，避免升级后重分析前的空窗
+    closeness_raw = _safe_get(affinity_result, "closeness_signals")
+    if closeness_raw is None:
+        closeness_raw = _safe_get(affinity_result, "attitude_tendency") or {}
+    closeness_score = _safe_float(_safe_get(closeness_raw, "score"))
 
     style_score = 0.0
-    if attitude_score > 0 and resonance_score > 0:
-        style_score = (attitude_score * 0.65) + (resonance_score * 0.35)
-    elif attitude_score > 0:
-        style_score = attitude_score
+    if closeness_score > 0 and resonance_score > 0:
+        style_score = (closeness_score * 0.65) + (resonance_score * 0.35)
+    elif closeness_score > 0:
+        style_score = closeness_score
     else:
         style_score = resonance_score
 

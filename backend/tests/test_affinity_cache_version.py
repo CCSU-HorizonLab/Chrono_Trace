@@ -78,7 +78,7 @@ def test_saved_affinity_cache_round_trips_with_version(monkeypatch):
         overall_score=66.6,
         overall_interpretation="ok",
         emotional_resonance=DimensionScore(
-            name="情感共振率",
+            name="情感共鸣",
             score=20.0,
             weight=0.4,
             weighted_score=8.0,
@@ -86,6 +86,7 @@ def test_saved_affinity_cache_round_trips_with_version(monkeypatch):
             sub_scores={"bidirectional_positive": 16.67},
             bonus_scores={"base_resonance_score": 16.67},
         ),
+        risk_assessment={"highest_level": "留意", "signals": {}, "llm_evidence_available": False},
         conversation_id=1,
         analysis_timestamp=123,
         analysis_duration_ms=456,
@@ -102,3 +103,5 @@ def test_saved_affinity_cache_round_trips_with_version(monkeypatch):
     assert loaded.emotional_resonance is not None
     assert loaded.emotional_resonance.sub_scores["bidirectional_positive"] == 16.67
     assert loaded.emotional_resonance.bonus_scores["base_resonance_score"] == 16.67
+    # 风险预警随同一 JSON 落库缓存
+    assert loaded.risk_assessment == {"highest_level": "留意", "signals": {}, "llm_evidence_available": False}

@@ -466,3 +466,19 @@ def test_budget_trim_in_recent_window_keeps_newest(db):
     assert total <= rlmod.MAX_TOTAL_INPUT_CHARS
     assert "编号47：" in texts  # 近期窗最新样本必须保留
     assert "编号36：" not in texts  # 近期窗最旧样本被裁
+    assert "编号0：" in texts  # 起源窗最老样本（关系起点基线）必须保留
+    assert "编号11：" not in texts  # 起源窗从新端裁
+    assert "编号53：" in texts  # 破冰窗最新一次恢复轮保留
+
+
+def test_drop_window_edge_per_window_semantics():
+    """裁剪端点按窗语义：起源窗保最老端，其余窗保最新端。"""
+    origin = ("origin", ["最老", "中间", "最新"])
+    recent = ("recent", ["最老", "中间", "最新"])
+    conflict = ("conflict", ["最老", "中间", "最新"])
+    icebreak = ("icebreak", ["最老", "中间", "最新"])
+
+    assert RelationshipLLMService._drop_window_edge(origin) == "最新"
+    assert RelationshipLLMService._drop_window_edge(recent) == "最老"
+    assert RelationshipLLMService._drop_window_edge(conflict) == "最老"
+    assert RelationshipLLMService._drop_window_edge(icebreak) == "最老"

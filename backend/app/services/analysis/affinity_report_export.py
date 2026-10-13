@@ -280,7 +280,7 @@ def render_affinity_report(
   <h2>联系人画像摘要</h2>
   <div class="card">{profile_section}</div>
 
-  <p class="note">本报告由 Chrono Trace 在本地生成；好感度衡量关系质量，风险预警独立判定，二者互不抵扣。</p>
+  <p class="note">本报告由 Chrono Trace 在本地生成；好感度衡量关系质量，风险预警独立判定，二者互不抵扣。报告内含聊天原文摘录（风险证据等），外发分享前请知悉。</p>
 </div>
 </body>
 </html>

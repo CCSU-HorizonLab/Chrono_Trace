@@ -10,7 +10,9 @@ from .preprocessing import (
 from .sentiment_service import SentimentService
 from .keyword_libraries import KeywordLibraries
 from .preprocessing_orchestrator import PreprocessingOrchestrator, PreprocessedStatistics
-from .chat_positivity_service import ChatPositivityService, ChatPositivityResult
+from .engagement_metrics import EngagementMetrics, EngagementMetricsService
+from .interaction_investment_service import InteractionInvestmentService, InteractionInvestmentResult
+from .closeness_signals_service import ClosenessSignalsService
 from .preference_compatibility_service import PreferenceCompatibilityService, PreferenceCompatibilityResult
 from .affinity_config import AffinityConfig, AffinityConfigService
 from .affinity_analysis_service import AffinityAnalysisService, AffinityAnalysisResult, DimensionScore
@@ -26,8 +28,11 @@ __all__ = [
     'KeywordLibraries',
     'PreprocessingOrchestrator',
     'PreprocessedStatistics',
-    'ChatPositivityService',
-    'ChatPositivityResult',
+    'EngagementMetrics',
+    'EngagementMetricsService',
+    'InteractionInvestmentService',
+    'InteractionInvestmentResult',
+    'ClosenessSignalsService',
     'PreferenceCompatibilityService',
     'PreferenceCompatibilityResult',
     'AffinityConfig',

@@ -39,12 +39,13 @@ def record_score_history(
                 "sub_scores": dict(dim.sub_scores or {}),
             }
 
+        # 表列名为口径 4 遗留，按后继语义映射写入：
+        # chat_positivity_score ← 互动投入、attitude_tendency_score ← 亲近信号
         sub_scores = {
+            "interaction_investment": _dim_payload("interaction_investment"),
             "emotional_resonance": _dim_payload("emotional_resonance"),
-            "chat_positivity": _dim_payload("chat_positivity"),
-            "attitude_tendency": _dim_payload("attitude_tendency"),
+            "closeness_signals": _dim_payload("closeness_signals"),
             "preference_compatibility": _dim_payload("preference_compatibility"),
-            "intimacy_signals": _dim_payload("intimacy_signals"),
             "llm_relationship": _dim_payload("llm_relationship"),
         }
         get_db().execute(
@@ -62,8 +63,8 @@ def record_score_history(
                 int(getattr(result, "analysis_caliber", 0) or 0),
                 float(result.overall_score or 0.0),
                 _dim_score("emotional_resonance"),
-                _dim_score("chat_positivity"),
-                _dim_score("attitude_tendency"),
+                _dim_score("interaction_investment"),
+                _dim_score("closeness_signals"),
                 _dim_score("preference_compatibility"),
                 json.dumps(sub_scores, ensure_ascii=False),
                 int(getattr(stats, "total_message_count", 0) or 0),

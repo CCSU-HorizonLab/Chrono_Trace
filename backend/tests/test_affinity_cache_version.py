@@ -64,6 +64,12 @@ def test_outdated_affinity_cache_is_ignored(monkeypatch):
     assert result is None
 
 
+def test_version_constants_pinned_to_current_caliber():
+    """口径 5 = 六维重组为四维 + LLM；缓存 13 = 结果 JSON 字段换名。"""
+    assert AffinityAnalysisService.CACHE_SCHEMA_VERSION == 13
+    assert AffinityAnalysisService.CALIBER_VERSION == 5
+
+
 def test_saved_affinity_cache_round_trips_with_version(monkeypatch):
     db = create_settings_db()
     service = create_service(monkeypatch, db)

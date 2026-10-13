@@ -43,66 +43,70 @@ class TestAffinityAnalysisService:
         with patch('app.services.analysis.affinity_analysis_service.get_db', return_value=mock_db), \
              patch('app.services.analysis.affinity_analysis_service.PreprocessingOrchestrator') as MockPreprocessing, \
              patch('app.services.analysis.affinity_analysis_service.AffinityConfigService') as MockConfig, \
-             patch('app.services.analysis.affinity_analysis_service.ChatPositivityService') as MockPositivity, \
              patch('app.services.analysis.affinity_analysis_service.PreferenceCompatibilityService') as MockPreference, \
              patch('app.services.analysis.affinity_analysis_service.EmotionalResonanceService') as MockResonance, \
-             patch('app.services.analysis.affinity_analysis_service.AttitudeTendencyService') as MockAttitude, \
+             patch('app.services.analysis.affinity_analysis_service.InteractionInvestmentService') as MockInvestment, \
+             patch('app.services.analysis.affinity_analysis_service.ClosenessSignalsService') as MockCloseness, \
+             patch('app.services.analysis.affinity_analysis_service.EngagementMetricsService') as MockEngagement, \
              patch('app.services.analysis.relationship_llm_service.build_relationship_llm_service', return_value=None):
-            
+
             # 配置 mock
             MockPreprocessing.return_value.orchestrate_preprocessing.return_value = mock_stats
             MockPreprocessing.return_value.get_preprocessed_statistics.return_value = mock_stats
-            
+
             from app.services.analysis.affinity_config import AffinityConfig
             MockConfig.return_value.get_config.return_value = AffinityConfig()
-            MockConfig.return_value.get_dimension_weights.return_value = {
-                'emotional_resonance': 0.40,
-                'chat_positivity': 0.35,
-                'attitude_tendency': 0.25,
-                'preference_compatibility': 0.00
-            }
-            
+
             MockResonance.return_value.calculate_overall_resonance.return_value = {
                 'overall_score': 80.0,
-                'interpretation': '共振良好',
+                'interpretation': '共鸣良好',
                 'sub_scores': {
                     'bidirectional_positive_response': 80.0,
                     'polarity_consistency': 80.0,
                     'intensity_matching': 80.0,
+                    'valence_balance': 80.0,
+                    'perfunctory_reply': 80.0,
                     'empathy_recognition': 80.0,
                     'negative_resolution': 80.0
                 },
                 'bonus_scores': {
                     'base_resonance_score': 80.0,
                     'empathy_recognition_bonus': 8.0,
-                    'negative_resolution_bonus': 8.0
+                    'negative_resolution_bonus': 8.0,
+                    'trust_venting_bonus': 4.0
                 }
             }
-            
-            MockAttitude.return_value.calculate_overall_attitude.return_value = {
+
+            MockCloseness.return_value.calculate_overall_closeness.return_value = {
                 'overall_score': 70.0,
-                'interpretation': '态度良好',
+                'interpretation': '亲近信号中等：称谓保持稳定',
                 'sub_scores': {
-                    'positive_emotion_frequency': 70.0,
-                    'negative_emotion_frequency': 10.0
+                    'address_term_evolution': 50.0,
+                    'late_night_engagement': 60.0,
+                    'active_coverage': 70.0,
+                    'greeting_initiation': 50.0,
+                    'icebreaking': 50.0,
+                    'community_expression': 50.0,
                 },
-                'bonus_scores': {
-                    'multimedia_usage': 5.0
-                }
+                'bonus_scores': {'total_bonus': 5.0},
+                'confidence_meta': {},
             }
-            
-            from app.services.analysis.chat_positivity_service import ChatPositivityResult
-            positivity_result = ChatPositivityResult()
-            positivity_result.overall_score = 75.0
-            positivity_result.interpretation = "积极度较高"
-            MockPositivity.return_value.calculate_scores.return_value = positivity_result
-            
+
+            from app.services.analysis.interaction_investment_service import InteractionInvestmentResult
+            investment_result = InteractionInvestmentResult()
+            investment_result.overall_score = 75.0
+            investment_result.interpretation = "投入较高"
+            investment_result.confidence_meta = {}
+            MockInvestment.return_value.calculate_scores.return_value = investment_result
+
             from app.services.analysis.preference_compatibility_service import PreferenceCompatibilityResult
             preference_result = PreferenceCompatibilityResult()
             preference_result.overall_score = 60.0
             preference_result.interpretation = "兴趣较契合"
             MockPreference.return_value.calculate_scores.return_value = preference_result
-            
+
+            MockEngagement.return_value.compute.return_value = MagicMock()
+
             from app.services.analysis.affinity_analysis_service import AffinityAnalysisService
             yield AffinityAnalysisService()
 
@@ -140,11 +144,11 @@ class TestAffinityAnalysisService:
     def test_analyze_calculates_dimensions(self, service):
         """测试计算各维度"""
         result = service.analyze(1)
-        
-        # 聊天积极度应该有值
-        assert result.chat_positivity is not None
-        assert result.chat_positivity.score == 75.0
-        
+
+        # 互动投入应该有值
+        assert result.interaction_investment is not None
+        assert result.interaction_investment.score == 75.0
+
         # 喜好兼容度应该有值
         assert result.preference_compatibility is not None
         assert result.preference_compatibility.score == 60.0
@@ -154,6 +158,11 @@ class TestAffinityAnalysisService:
         assert result.emotional_resonance is not None
         assert result.emotional_resonance.bonus_scores["base_resonance_score"] == 80.0
         assert result.emotional_resonance.bonus_scores["empathy_recognition_bonus"] == 8.0
+        assert result.closeness_signals is not None
+        assert result.closeness_signals.score == 70.0
+        # LLM 维缺席且给出可读原因
+        assert result.llm_relationship is None
+        assert result.llm_relationship_absent_reason
 
     def test_preference_participates_in_weighted_total(self, service):
         """点数制归一后：在场维度权重和为 1，各维 weighted=score×weight。
@@ -164,14 +173,13 @@ class TestAffinityAnalysisService:
         result = service.analyze(1)
 
         dims = [
+            result.interaction_investment,
             result.emotional_resonance,
-            result.chat_positivity,
-            result.attitude_tendency,
+            result.closeness_signals,
             result.preference_compatibility,
-            result.intimacy_signals,
         ]
         present = [d for d in dims if d is not None and d.weight > 0]
-        assert present, "至少三老维应在场"
+        assert present, "至少三本地维应在场"
         assert sum(d.weight for d in present) == pytest.approx(1.0, abs=1e-9)
         for d in present:
             assert d.weighted_score == pytest.approx(d.score * d.weight, abs=1e-9)

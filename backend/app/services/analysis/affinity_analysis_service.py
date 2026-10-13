@@ -1,10 +1,11 @@
 """好感度分析编排服务：汇总各维度评分结果。
 
-六维点数制权重 + 归一引擎（affinity_weights）：
-- 情感共振率 / 聊天积极度 / 态度倾向 / 喜好兼容度（配关键词时启用）
-  / 亲密度信号 / LLM 关系评估（配模型且开关开时启用）
+四维 + LLM 点数制权重 + 归一引擎（affinity_weights）：
+- 互动投入 / 情感共鸣 / 亲近信号 / 喜好兼容度（配关键词时启用）
+  / LLM 关系评估（配模型且开关开时启用）
 - 各维 declared 权重不要求和为 1；总分阶段按在场集合归一（缺席维度
   自动从分母剔除），再经置信度收缩得到总分。
+- 风险预警（risk_assessment）为独立模块结果，不参与总分。
 """
 
 import time
@@ -14,14 +15,15 @@ import threading
 import math
 import hashlib
 from dataclasses import dataclass, asdict, field
-from typing import Optional, Dict, Any
+from typing import Any, Dict, Optional
 
 from ...db.connection import get_db
 from .preprocessing_orchestrator import PreprocessingOrchestrator, PreprocessedStatistics
-from .chat_positivity_service import ChatPositivityService
+from .interaction_investment_service import InteractionInvestmentService
+from .closeness_signals_service import ClosenessSignalsService
+from .engagement_metrics import EngagementMetrics, EngagementMetricsService
 from .preference_compatibility_service import PreferenceCompatibilityService
 from .emotional_resonance_service import EmotionalResonanceService
-from .attitude_tendency_service import AttitudeTendencyService
 from .affinity_config import AffinityConfigService, AffinityConfig
 from .affinity_debug_logger import affinity_debug_log
 
@@ -55,14 +57,16 @@ class AffinityAnalysisResult:
     overall_score: float = 0.0
     overall_interpretation: str = ""
     
-    # 4个维度评分
+    # 4个本地维度 + LLM 维
+    interaction_investment: Optional[DimensionScore] = None
     emotional_resonance: Optional[DimensionScore] = None
-    chat_positivity: Optional[DimensionScore] = None
-    attitude_tendency: Optional[DimensionScore] = None
+    closeness_signals: Optional[DimensionScore] = None
     preference_compatibility: Optional[DimensionScore] = None
-    intimacy_signals: Optional[DimensionScore] = None
     llm_relationship: Optional[DimensionScore] = None
     llm_relationship_absent_reason: Optional[str] = None
+
+    # 风险预警（独立模块，不参与总分；批 4 填充）
+    risk_assessment: Optional[Dict[str, Any]] = None
     
     # 元数据
     conversation_id: int = 0
@@ -83,9 +87,10 @@ class AffinityAnalysisResult:
 class AffinityAnalysisService:
     """好感度分析编排器"""
 
-    CACHE_SCHEMA_VERSION = 12
+    CACHE_SCHEMA_VERSION = 13
     # 口径版本：评分口径结构性变化时 +1（落历史行与缓存，跨口径趋势不可比）
-    CALIBER_VERSION = 4
+    # 5 = 六维重组为四维 + LLM（互动投入/情感共鸣/亲近信号/喜好兼容度）
+    CALIBER_VERSION = 5
     NEUTRAL_OVERALL_BASELINE = 35.0
     OVERALL_SESSION_CONFIDENCE_TARGET = 30
     OVERALL_ACTIVE_DAY_CONFIDENCE_TARGET = 30
@@ -102,12 +107,11 @@ class AffinityAnalysisService:
         # 初始化所有服务
         self.preprocessing = PreprocessingOrchestrator()
         self.config_service = AffinityConfigService()
+        self.engagement_service = EngagementMetricsService()
         self.resonance_service = EmotionalResonanceService()
-        self.positivity_service = ChatPositivityService()
-        self.attitude_service = AttitudeTendencyService()
+        self.investment_service = InteractionInvestmentService()
+        self.closeness_service = ClosenessSignalsService()
         self.preference_service = PreferenceCompatibilityService()
-        from .intimacy_signals_service import IntimacySignalsService
-        self.intimacy_service = IntimacySignalsService()
 
         # 任务状态存储
         self._task_status: Dict[str, AffinityAnalysisResult] = {}
@@ -291,14 +295,17 @@ class AffinityAnalysisService:
         # 添加调试日志
         logger.info("=== 好感度分析结果 ===")
         logger.info(f"总分: {result.overall_score:.1f}")
-        if result.emotional_resonance:
-            logger.info(f"情感共振率: score={result.emotional_resonance.score:.1f}, weight={result.emotional_resonance.weight}, weighted={result.emotional_resonance.weighted_score:.1f}")
-        if result.chat_positivity:
-            logger.info(f"聊天积极度: score={result.chat_positivity.score:.1f}, weight={result.chat_positivity.weight}, weighted={result.chat_positivity.weighted_score:.1f}")
-        if result.attitude_tendency:
-            logger.info(f"态度倾向: score={result.attitude_tendency.score:.1f}, weight={result.attitude_tendency.weight}, weighted={result.attitude_tendency.weighted_score:.1f}")
-        if result.preference_compatibility:
-            logger.info(f"喜好兼容度: score={result.preference_compatibility.score:.1f}, weight={result.preference_compatibility.weight}, weighted={result.preference_compatibility.weighted_score:.1f}")
+        for dim in (
+            result.interaction_investment,
+            result.emotional_resonance,
+            result.closeness_signals,
+            result.preference_compatibility,
+        ):
+            if dim:
+                logger.info(
+                    f"{dim.name}: score={dim.score:.1f}, weight={dim.weight}, "
+                    f"weighted={dim.weighted_score:.1f}"
+                )
         
         return result
     
@@ -393,7 +400,7 @@ class AffinityAnalysisService:
     ):
         """计算所有维度评分"""
 
-        # 解析六维权重计划（config 覆盖默认；缺席维度 declared 置 0）。
+        # 解析五维权重计划（config 覆盖默认；缺席维度 declared 置 0）。
         # LLM 维可用性 = 激活模型存在（构造不发起网络调用；真正的调用
         # 失败在维度计算期按缺席处理，归一时自动剔除）
         from .affinity_weights import resolve_dimension_plan
@@ -416,17 +423,17 @@ class AffinityAnalysisService:
             key: (entry["declared"] if entry["enabled"] else 0.0)
             for key, entry in plan.items()
         }
-        
-        # ===== 六维并行计算 =====
-        # 六个维度全部只读（无共享可写状态、get_db 线程本地、WAL 多读者
-        # 并发安全），此前严格串行——LLM 维 90s 网络等待白白阻塞五个本地
+
+        # ===== 维度并行计算 =====
+        # 各维度全部只读（无共享可写状态、get_db 线程本地、WAL 多读者
+        # 并发安全），此前严格串行——LLM 维 90s 网络等待白白阻塞其余本地
         # 维度。改为线程池并行，维度阶段耗时 → max(单维)。
         # 进度展示取舍：并行期间不逐维跳进度（多线程写 result 会竞态），
         # 汇总装配阶段再顺序推进锚点。
         self._check_cancelled(cancel_event)
         result.progress_percent = 45
-        result.current_step = "并行计算六维评分（共振/积极度/态度/喜好/亲密度/AI评估）..."
-        logger.info("[好感度分析] 六维并行计算开始...")
+        result.current_step = "并行计算维度评分（投入/共鸣/亲近/喜好/AI评估）..."
+        logger.info("[好感度分析] 维度并行计算开始...")
 
         # LLM 维前置准备（主线程完成后即提交，网络等待与其他维度重叠）
         llm_context: Dict[str, str] = {}
@@ -454,9 +461,13 @@ class AffinityAnalysisService:
             except Exception as acc_e:
                 logger.debug("[关系评估] 账号读取跳过: %s", acc_e)
 
-        # 积极度阈值属实例可变状态，提交前在主线程设置
-        self.positivity_service.timeliness_threshold = config.reply_timeliness_threshold_seconds
+        # 实例可变状态在主线程提交前设置；投入特征一遍扫描产出，
+        # 三个维度服务（投入/共鸣/亲近）共享同一份 metrics
+        self.investment_service.timeliness_threshold = (
+            config.reply_timeliness_threshold_seconds
+        )
         self.preference_service.set_preference_keywords(config.preference_keywords)
+        metrics = self.engagement_service.compute(conversation_id)
 
         from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait as futures_wait
 
@@ -468,22 +479,24 @@ class AffinityAnalysisService:
         pool = ThreadPoolExecutor(max_workers=4)
         try:
             fut_resonance = pool.submit(
-                self.resonance_service.calculate_overall_resonance, conversation_id
+                self.resonance_service.calculate_overall_resonance,
+                conversation_id,
+                metrics,
             )
-            fut_positivity = pool.submit(
-                self.positivity_service.calculate_scores, conversation_id, stats
+            fut_investment = pool.submit(
+                self.investment_service.calculate_scores,
+                conversation_id,
+                stats,
+                metrics,
             )
-            fut_attitude = pool.submit(
-                self.attitude_service.calculate_overall_attitude, conversation_id
+            fut_closeness = pool.submit(
+                self.closeness_service.calculate_overall_closeness,
+                conversation_id,
+                stats,
+                metrics,
             )
             fut_preference = pool.submit(
                 self.preference_service.calculate_scores, conversation_id, stats
-            )
-            fut_intimacy = pool.submit(
-                self.intimacy_service.calculate_overall_intimacy,
-                conversation_id,
-                stats,
-                int(getattr(config, "long_text_threshold", 100)),
             )
             fut_llm = None
             if llm_service is not None and weights.get('llm_relationship', 0.0) > 0:
@@ -496,8 +509,8 @@ class AffinityAnalysisService:
 
             pending = {
                 f for f in (
-                    fut_resonance, fut_positivity, fut_attitude,
-                    fut_preference, fut_intimacy, fut_llm,
+                    fut_resonance, fut_investment, fut_closeness,
+                    fut_preference, fut_llm,
                 ) if f is not None
             }
             while pending:
@@ -516,10 +529,9 @@ class AffinityAnalysisService:
             # LLM 维例外：缺席（样本不足/脱敏不可用/超时等）是正常分支，
             # 在此捕获转 None，装配阶段按缺席处理——否则会杀死整个分析
             resonance_result = fut_resonance.result()
-            positivity_result = fut_positivity.result()
-            attitude_result = fut_attitude.result()
+            investment_result = fut_investment.result()
+            closeness_result = fut_closeness.result()
             preference_result = fut_preference.result()
-            intimacy_result = fut_intimacy.result()
             llm_result = None
             llm_absent_error: Optional[BaseException] = None
             if fut_llm is not None:
@@ -534,8 +546,34 @@ class AffinityAnalysisService:
             pool.shutdown(wait=False, cancel_futures=True)
 
         # ===== 顺序装配（纯内存操作，毫秒级） =====
+        result.interaction_investment = DimensionScore(
+            name="互动投入",
+            score=investment_result.overall_score,
+            weight=weights['interaction_investment'],
+            weighted_score=investment_result.overall_score * weights['interaction_investment'],
+            interpretation=investment_result.interpretation,
+            sub_scores={
+                "daily_message": investment_result.daily_message_score,
+                "reply_timeliness": investment_result.reply_timeliness_score,
+                "topic_continuity": investment_result.topic_continuity_score,
+                "active_initiation": investment_result.active_initiation_score,
+                "reply_symmetry": investment_result.reply_symmetry_score,
+                "long_unanswered": investment_result.long_unanswered_score,
+                "burst_unanswered": investment_result.burst_unanswered_score,
+            },
+            bonus_scores={
+                "long_text_bonus": investment_result.long_text_bonus
+            },
+            confidence_meta=investment_result.confidence_meta or {},
+        )
+        logger.info(
+            "互动投入计算完成: %.1f分 (权重: %.1f%%)",
+            investment_result.overall_score,
+            weights['interaction_investment'] * 100,
+        )
+
         result.emotional_resonance = DimensionScore(
-            name="情感共振率",
+            name="情感共鸣",
             score=resonance_result['overall_score'],
             weight=weights['emotional_resonance'],
             weighted_score=resonance_result['overall_score'] * weights['emotional_resonance'],
@@ -544,45 +582,35 @@ class AffinityAnalysisService:
                 "bidirectional_positive": resonance_result['sub_scores']['bidirectional_positive_response'],
                 "polarity_consistency": resonance_result['sub_scores']['polarity_consistency'],
                 "intensity_matching": resonance_result['sub_scores']['intensity_matching'],
+                "valence_balance": resonance_result['sub_scores']['valence_balance'],
+                "perfunctory_reply": resonance_result['sub_scores']['perfunctory_reply'],
                 "empathy_recognition": resonance_result['sub_scores']['empathy_recognition'],
                 "negative_resolution": resonance_result['sub_scores']['negative_resolution'],
             },
             bonus_scores=resonance_result.get('bonus_scores', {}),
             confidence_meta=resonance_result.get('confidence_meta', {}),
         )
-        logger.info(f"情感共振率计算完成: {resonance_result['overall_score']:.1f}分 (权重: {weights['emotional_resonance']*100}%)")
-
-        result.chat_positivity = DimensionScore(
-            name="聊天积极度",
-            score=positivity_result.overall_score,
-            weight=weights['chat_positivity'],
-            weighted_score=positivity_result.overall_score * weights['chat_positivity'],
-            interpretation=positivity_result.interpretation,
-            sub_scores={
-                "daily_message": positivity_result.daily_message_score,
-                "reply_timeliness": positivity_result.reply_timeliness_score,
-                "topic_continuity": positivity_result.topic_continuity_score,
-                "active_initiation": positivity_result.active_initiation_score,
-            },
-            bonus_scores={
-                "long_text_bonus": positivity_result.long_text_bonus
-            }
+        logger.info(
+            "情感共鸣计算完成: %.1f分 (权重: %.1f%%)",
+            resonance_result['overall_score'],
+            weights['emotional_resonance'] * 100,
         )
-        logger.info(f"聊天积极度计算完成: {positivity_result.overall_score:.1f}分 (权重: {weights['chat_positivity']*100}%)")
 
-        result.attitude_tendency = DimensionScore(
-            name="态度倾向",
-            score=attitude_result['overall_score'],
-            weight=weights['attitude_tendency'],
-            weighted_score=attitude_result['overall_score'] * weights['attitude_tendency'],
-            interpretation=attitude_result['interpretation'],
-            sub_scores={
-                "positive_emotion_frequency": attitude_result['sub_scores']['positive_emotion_frequency'],
-                "negative_emotion_frequency": attitude_result['sub_scores']['negative_emotion_frequency'],
-            },
-            bonus_scores=attitude_result.get('bonus_scores', {})
+        result.closeness_signals = DimensionScore(
+            name="亲近信号",
+            score=closeness_result['overall_score'],
+            weight=weights['closeness_signals'],
+            weighted_score=closeness_result['overall_score'] * weights['closeness_signals'],
+            interpretation=closeness_result['interpretation'],
+            sub_scores=closeness_result['sub_scores'],
+            bonus_scores=closeness_result.get('bonus_scores', {}),
+            confidence_meta=closeness_result.get('confidence_meta', {}),
         )
-        logger.info(f"态度倾向计算完成: {attitude_result['overall_score']:.1f}分 (权重: {weights['attitude_tendency']*100}%)")
+        logger.info(
+            "亲近信号计算完成: %.1f分 (权重: %.1f%%)",
+            closeness_result['overall_score'],
+            weights['closeness_signals'] * 100,
+        )
 
         raw_bonus = (
             preference_result.overall_score
@@ -606,21 +634,6 @@ class AffinityAnalysisService:
             "喜好兼容度计算完成: %.1f分 (raw_bonus=%.2f)",
             preference_result.overall_score,
             raw_bonus,
-        )
-
-        result.intimacy_signals = DimensionScore(
-            name="亲密度信号",
-            score=intimacy_result['overall_score'],
-            weight=weights['intimacy_signals'],
-            weighted_score=intimacy_result['overall_score'] * weights['intimacy_signals'],
-            interpretation=intimacy_result['interpretation'],
-            sub_scores=intimacy_result['sub_scores'],
-            confidence_meta=intimacy_result.get('confidence_meta', {}),
-        )
-        logger.info(
-            "亲密度信号计算完成: %.1f分 (权重: %.1f%%)",
-            intimacy_result['overall_score'],
-            weights['intimacy_signals'] * 100,
         )
 
         # LLM 关系评估装配（缺席不阻断：权重归一自动剔除该维）
@@ -675,11 +688,10 @@ class AffinityAnalysisService:
 
         base_score = 0.0
         for dim_key in (
+            "interaction_investment",
             "emotional_resonance",
-            "chat_positivity",
-            "attitude_tendency",
+            "closeness_signals",
             "preference_compatibility",
-            "intimacy_signals",
             "llm_relationship",
         ):
             dim = getattr(result, dim_key, None)
@@ -768,9 +780,9 @@ class AffinityAnalysisService:
         affinity_debug_log(f"{'='*80}")
         
         dimensions = [
+            result.interaction_investment,
             result.emotional_resonance,
-            result.chat_positivity,
-            result.attitude_tendency,
+            result.closeness_signals,
             result.preference_compatibility,
         ]
         
@@ -855,11 +867,10 @@ class AffinityAnalysisService:
             "similarity_threshold": config.similarity_threshold,
             "sliding_window_size": config.sliding_window_size,
             "long_text_threshold": config.long_text_threshold,
+            "weight_interaction_investment": config.weight_interaction_investment,
             "weight_emotional_resonance": config.weight_emotional_resonance,
-            "weight_chat_positivity": config.weight_chat_positivity,
-            "weight_attitude_tendency": config.weight_attitude_tendency,
+            "weight_closeness_signals": config.weight_closeness_signals,
             "weight_preference_compatibility": config.weight_preference_compatibility,
-            "weight_intimacy_signals": config.weight_intimacy_signals,
             "weight_llm_relationship": config.weight_llm_relationship,
             "llm_relationship_enabled": bool(config.llm_relationship_enabled),
         }, sort_keys=True, ensure_ascii=False)
@@ -880,13 +891,13 @@ class AffinityAnalysisService:
             result_dict = {
                 "overall_score": result.overall_score,
                 "overall_interpretation": result.overall_interpretation,
+                "interaction_investment": asdict(result.interaction_investment) if result.interaction_investment else None,
                 "emotional_resonance": asdict(result.emotional_resonance) if result.emotional_resonance else None,
-                "chat_positivity": asdict(result.chat_positivity) if result.chat_positivity else None,
-                "attitude_tendency": asdict(result.attitude_tendency) if result.attitude_tendency else None,
+                "closeness_signals": asdict(result.closeness_signals) if result.closeness_signals else None,
                 "preference_compatibility": asdict(result.preference_compatibility) if result.preference_compatibility else None,
-                "intimacy_signals": asdict(result.intimacy_signals) if result.intimacy_signals else None,
                 "llm_relationship": asdict(result.llm_relationship) if result.llm_relationship else None,
                 "llm_relationship_absent_reason": result.llm_relationship_absent_reason,
+                "risk_assessment": result.risk_assessment,
                 "conversation_id": result.conversation_id,
                 "analysis_timestamp": result.analysis_timestamp,
                 "analysis_duration_ms": result.analysis_duration_ms,
@@ -982,9 +993,9 @@ class AffinityAnalysisService:
             result.analysis_caliber = result_dict.get("analysis_caliber", 0)
             
             # 重建维度分数
-            for dim_name in ["emotional_resonance", "chat_positivity",
-                           "attitude_tendency", "preference_compatibility",
-                           "intimacy_signals", "llm_relationship"]:
+            for dim_name in ["interaction_investment", "emotional_resonance",
+                           "closeness_signals", "preference_compatibility",
+                           "llm_relationship"]:
                 dim_dict = result_dict.get(dim_name)
                 if dim_dict:
                     dim = DimensionScore(**dim_dict)
@@ -992,6 +1003,7 @@ class AffinityAnalysisService:
             result.llm_relationship_absent_reason = result_dict.get(
                 "llm_relationship_absent_reason"
             )
+            result.risk_assessment = result_dict.get("risk_assessment")
             
             return result
             

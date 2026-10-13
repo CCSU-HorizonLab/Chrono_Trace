@@ -29,13 +29,12 @@ class _Dim:
 @dataclass
 class _Result:
     overall_score: float = 60.0
-    analysis_caliber: int = 4
+    analysis_caliber: int = 5
     analysis_duration_ms: int = 1200
-    emotional_resonance: _Dim = field(default_factory=lambda: _Dim(70, 0.4, 28))
-    chat_positivity: _Dim = field(default_factory=lambda: _Dim(50, 0.35, 17.5))
-    attitude_tendency: _Dim = field(default_factory=lambda: _Dim(40, 0.25, 10))
+    interaction_investment: _Dim = field(default_factory=lambda: _Dim(50, 0.4, 20))
+    emotional_resonance: _Dim = field(default_factory=lambda: _Dim(70, 0.35, 24.5))
+    closeness_signals: _Dim = field(default_factory=lambda: _Dim(40, 0.15, 6))
     preference_compatibility: _Dim = None  # type: ignore[assignment]
-    intimacy_signals: _Dim = field(default_factory=lambda: _Dim(60, 0.12, 7.2))
     llm_relationship: _Dim = None  # type: ignore[assignment]
 
 
@@ -80,16 +79,20 @@ def test_record_inserts_row_with_caliber_and_full_subscores_json(db):
     record_score_history(1, _Result(overall_score=66.5), stats=_Stats(),
                          config_snapshot={"config_fingerprint": "abc"})
     row = db.execute("SELECT * FROM affinity_scores").fetchone()
-    assert row["analysis_version"] == 4
+    assert row["analysis_version"] == 5
     assert row["overall_score"] == 66.5
     assert row["message_count"] == 500
     import json
     sub = json.loads(row["sub_scores_json"])
     assert set(sub) == {
-        "emotional_resonance", "chat_positivity", "attitude_tendency",
-        "preference_compatibility", "intimacy_signals", "llm_relationship",
+        "interaction_investment", "emotional_resonance", "closeness_signals",
+        "preference_compatibility", "llm_relationship",
     }
-    assert sub["intimacy_signals"]["score"] == 60
+    assert sub["closeness_signals"]["score"] == 40
+    # 遗留列按后继语义映射：chat_positivity ← 互动投入、attitude ← 亲近信号
+    assert row["chat_positivity_score"] == 50
+    assert row["attitude_tendency_score"] == 40
+    assert row["emotional_resonance_score"] == 70
 
 
 def test_trend_computed_from_last_two_rows(db):
@@ -103,8 +106,8 @@ def test_trend_computed_from_last_two_rows(db):
 
 
 def test_trend_incomparable_across_caliber_versions(db):
-    record_score_history(1, _Result(overall_score=50.0, analysis_caliber=3))
-    record_score_history(1, _Result(overall_score=58.0, analysis_caliber=4))
+    record_score_history(1, _Result(overall_score=50.0, analysis_caliber=4))
+    record_score_history(1, _Result(overall_score=58.0, analysis_caliber=5))
     trend = compute_trend(1)
     assert trend["comparable"] is False
     assert trend["score_trend"] is None  # 前端据此不显示趋势徽章

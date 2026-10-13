@@ -508,11 +508,13 @@ class SelfProfiler:
                 (conversation_id,)
             ).fetchone()
             if row:
+                # 列名为口径 4 遗留：chat_positivity_score 现承载互动投入、
+                # attitude_tendency_score 现承载亲近信号（后继语义映射）
                 features['affinity'] = {
                     'overall': round(row['overall_score'], 1),
                     'emotional_resonance': round(row['emotional_resonance_score'], 1),
-                    'chat_positivity': round(row['chat_positivity_score'], 1),
-                    'attitude_tendency': round(row['attitude_tendency_score'], 1),
+                    'interaction_investment': round(row['chat_positivity_score'], 1),
+                    'closeness_signals': round(row['attitude_tendency_score'], 1),
                     'preference_compatibility': round(row['preference_compatibility_score'], 1),
                 }
         except Exception as e:
@@ -706,9 +708,9 @@ class SelfProfiler:
             parts.append("")
             parts.append("【好感度评分】")
             parts.append(f"- 总体: {aff['overall']}/100")
-            parts.append(f"- 情感共振: {aff['emotional_resonance']}, "
-                         f"聊天积极度: {aff['chat_positivity']}, "
-                         f"态度倾向: {aff['attitude_tendency']}")
+            parts.append(f"- 情感共鸣: {aff['emotional_resonance']}, "
+                         f"互动投入: {aff['interaction_investment']}, "
+                         f"亲近信号: {aff['closeness_signals']}")
 
         # 对话样本
         if sample:

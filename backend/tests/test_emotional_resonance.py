@@ -12,6 +12,7 @@ backend_root = Path(__file__).parent.parent
 sys.path.insert(0, str(backend_root))
 
 from app.services.analysis.emotional_resonance_service import EmotionalResonanceService
+from app.services.analysis.engagement_metrics import EngagementMetrics
 from app.db.connection import get_db
 
 
@@ -206,7 +207,9 @@ class TestEmotionalResonanceRealData:
         print(f"[执行] 计算会话 {real_conversation_id} 的综合情感共振率...")
         
         try:
-            result = service.calculate_overall_resonance(real_conversation_id)
+            result = service.calculate_overall_resonance(
+                real_conversation_id, EngagementMetrics()
+            )
             
             print("\n[结果] 情感共振率分析结果:")
             print("-" * 60)

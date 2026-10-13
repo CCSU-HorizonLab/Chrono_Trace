@@ -242,3 +242,71 @@ def test_sampler_extends_backward_to_fill_target(isolated_db, profiler_cls):
     ).fetchone()[0]
     isolated_db.commit()
     assert profiler._sample_conversation_turns(isolated_db, empty_conv_id, 7 * 86400, 400) == []
+
+
+@pytest.mark.parametrize("profiler_cls", [ContactProfiler, SelfProfiler])
+def test_profiler_affinity_reads_only_current_caliber(isolated_db, profiler_cls):
+    """画像只读当前口径的好感度行：旧口径行的列语义不同，混标会污染画像。"""
+    from app.services.analysis.affinity_analysis_service import AffinityAnalysisService
+
+    isolated_db.execute(
+        """
+        INSERT INTO conversations
+        (account_wxid, username, display_name, remark, nickname, platform, created_at, updated_at, message_count, is_deleted)
+        VALUES (?, ?, ?, ?, ?, 'wechat', 1, 1, 1, 0)
+        """,
+        ("wxid_me", "wxid_friend", "老朋友", "", ""),
+    )
+    conv_id = isolated_db.execute("SELECT id FROM conversations").fetchone()[0]
+
+    def _add_score(version, overall, created_at):
+        isolated_db.execute(
+            """
+            INSERT INTO affinity_scores
+            (conversation_id, analysis_version, overall_score, emotional_resonance_score,
+             chat_positivity_score, attitude_tendency_score, preference_compatibility_score,
+             message_count, interaction_pair_count, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1, ?)
+            """,
+            (conv_id, version, overall, 50.0, 50.0, 50.0, 50.0, created_at),
+        )
+
+    # 旧口径行 created_at 更新：若不过滤口径会被错误采信
+    _add_score(AffinityAnalysisService.CALIBER_VERSION - 1, 11.1, 3000)
+    _add_score(AffinityAnalysisService.CALIBER_VERSION, 88.8, 2000)
+    isolated_db.commit()
+
+    features = profiler_cls()._collect_features(isolated_db, conv_id)
+
+    assert features["affinity"]["overall"] == 88.8
+
+
+@pytest.mark.parametrize("profiler_cls", [ContactProfiler, SelfProfiler])
+def test_profiler_affinity_absent_when_only_legacy_caliber(isolated_db, profiler_cls):
+    """只有旧口径行时画像不输出好感度，而不是拿旧语义冒充。"""
+    from app.services.analysis.affinity_analysis_service import AffinityAnalysisService
+
+    isolated_db.execute(
+        """
+        INSERT INTO conversations
+        (account_wxid, username, display_name, remark, nickname, platform, created_at, updated_at, message_count, is_deleted)
+        VALUES (?, ?, ?, ?, ?, 'wechat', 1, 1, 1, 0)
+        """,
+        ("wxid_me", "wxid_friend", "老朋友", "", ""),
+    )
+    conv_id = isolated_db.execute("SELECT id FROM conversations").fetchone()[0]
+    isolated_db.execute(
+        """
+        INSERT INTO affinity_scores
+        (conversation_id, analysis_version, overall_score, emotional_resonance_score,
+         chat_positivity_score, attitude_tendency_score, preference_compatibility_score,
+         message_count, interaction_pair_count, created_at)
+        VALUES (?, ?, 66.6, 60.0, 60.0, 60.0, 60.0, 1, 1, 1000)
+        """,
+        (conv_id, AffinityAnalysisService.CALIBER_VERSION - 1,),
+    )
+    isolated_db.commit()
+
+    features = profiler_cls()._collect_features(isolated_db, conv_id)
+
+    assert "affinity" not in features

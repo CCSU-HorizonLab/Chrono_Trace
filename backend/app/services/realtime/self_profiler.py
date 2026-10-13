@@ -497,15 +497,18 @@ class SelfProfiler:
         except Exception as e:
             _print(f"[SelfProfiler] 跳过用户消息长度统计: {e}")
 
-        # 好感度评分
+        # 好感度评分（仅当前口径：旧口径行的列语义不同，混标会污染画像）
         try:
+            from ..analysis.affinity_analysis_service import AffinityAnalysisService
+
             row = conn.execute(
                 'SELECT overall_score, emotional_resonance_score, '
                 'chat_positivity_score, attitude_tendency_score, '
                 'preference_compatibility_score '
                 'FROM affinity_scores WHERE conversation_id = ? '
+                'AND analysis_version = ? '
                 'ORDER BY created_at DESC LIMIT 1',
-                (conversation_id,)
+                (conversation_id, AffinityAnalysisService.CALIBER_VERSION)
             ).fetchone()
             if row:
                 # 列名为口径 4 遗留：chat_positivity_score 现承载互动投入、

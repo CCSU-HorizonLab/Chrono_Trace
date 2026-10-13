@@ -83,6 +83,8 @@ def test_render_contains_all_sections():
     assert "v5" in html and "v4" in html
     # 画像标签
     assert "幽默" in html
+    # 页脚知情提示：报告含聊天原文摘录
+    assert "原文摘录" in html
     # 单文件：内联样式、无脚本依赖
     assert "<style>" in html and "<script" not in html
 

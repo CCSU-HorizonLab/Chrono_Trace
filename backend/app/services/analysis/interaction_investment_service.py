@@ -97,14 +97,16 @@ class InteractionInvestmentService:
     ACTIVE_DAY_CONFIDENCE_TARGET = 25
     CONFIDENCE_SHRINKAGE_POWER = 1.5
 
-    def __init__(self, timeliness_threshold_seconds: int = 300):
+    def __init__(self, timeliness_threshold_seconds: int = 300, long_text_threshold: int = 100):
         """
         初始化互动投入服务
 
         Args:
             timeliness_threshold_seconds: 回复及时阈值 (秒)，默认 5 分钟
+            long_text_threshold: 长消息判定字数阈值，默认 100（与 affinity_config 默认一致）
         """
         self.timeliness_threshold = timeliness_threshold_seconds
+        self.long_text_threshold = long_text_threshold
         self._pair_service = None
         self._sentiment_service = None
 
@@ -156,7 +158,7 @@ class InteractionInvestmentService:
 
         # 5. 回应对称性 (10%，自亲密度信号迁入)
         result.reply_symmetry_score, symmetry_meta = self._calculate_reply_symmetry(
-            conversation_id, getattr(stats, "long_text_threshold", 100)
+            conversation_id, self.long_text_threshold
         )
         result.char_balance = symmetry_meta.get("char_balance", 0.5)
 

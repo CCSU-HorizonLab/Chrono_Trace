@@ -80,12 +80,15 @@ def _load_question_vector(question: str) -> Optional[List[float]]:
 
 
 def _filter_citations(answer: str, citations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """只保留回答 [n] 实际引用的条目；回答未带有效编号时退回全集。"""
+    """只保留回答 [n] 实际引用的条目，条目自带原始编号（index 字段，前端按它渲染）。
+
+    回答未带有效编号时退回全集。
+    """
     cited = {int(n) for n in CITATION_MARK.findall(answer)}
     cited = {n for n in cited if 1 <= n <= len(citations)}
     if not cited:
         return citations
-    return [c for i, c in enumerate(citations, start=1) if i in cited]
+    return [c for c in citations if c["index"] in cited]
 
 
 class HistoryQAService:
@@ -108,12 +111,13 @@ class HistoryQAService:
         answer = self._call_llm(redacted_question, redacted)
         citations = [
             {
+                "index": idx,  # 原始 1 基编号，与回答 [n] 对应；过滤后不变
                 "message_id": rec["message_id"],
                 "timestamp": rec["timestamp"],
                 "is_sender": rec["is_sender"],
                 "text": rec["text"],
             }
-            for rec in records
+            for idx, rec in enumerate(records, start=1)
         ]
         return {
             "answer": answer,

@@ -26,6 +26,7 @@ from .preference_compatibility_service import PreferenceCompatibilityService
 from .emotional_resonance_service import EmotionalResonanceService
 from .affinity_config import AffinityConfigService, AffinityConfig
 from .affinity_debug_logger import affinity_debug_log
+from .risk_signal_service import RiskSignalService
 
 # 配置日志
 logger = logging.getLogger(__name__)
@@ -675,6 +676,16 @@ class AffinityAnalysisService:
                 result.llm_relationship_absent_reason = "已在关系配置中关闭 AI 评估"
             else:
                 result.llm_relationship_absent_reason = "AI 评估权重为 0，未参与本次评分"
+
+        # 风险预警（独立模块）：LLM 证据缺席时各信号封顶「留意」
+        try:
+            result.risk_assessment = RiskSignalService().assess(
+                conversation_id, metrics, stats=stats, llm_result=llm_result
+            )
+        except Exception as risk_e:
+            logger.warning("[风险预警] 判定跳过: %s", risk_e)
+            result.risk_assessment = None
+
         result.progress_percent = 79
     
     def _calculate_overall_score(

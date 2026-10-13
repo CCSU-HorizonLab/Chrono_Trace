@@ -596,6 +596,7 @@
         <CtButton variant="primary" :loading="qaLoading" :disabled="qaLoading || !qaInput.trim()" @click="handleAskHistory">
           {{ qaLoading ? '查找中...' : '提问' }}
         </CtButton>
+        <CtButton v-if="qaLoading" variant="ghost" @click="handleCancelQa">取消</CtButton>
       </div>
 
       <div v-if="qaLoading" class="qa-loading-hint">
@@ -1027,12 +1028,23 @@ const showPortraitDialog = ref(false)
                     })
                     qaInput.value = ''
                 } else {
-                    showDialog(res?.error || '问答失败，请重试')
+                    const msg = String(res?.error || '问答失败，请重试')
+                    if (!msg.includes('已取消')) showDialog(msg) // 主动取消不弹错误
                 }
             } catch (e: any) {
                 showDialog(e?.message || '问答异常')
             } finally {
                 qaLoading.value = false
+            }
+        }
+
+        async function handleCancelQa() {
+            if (!qaLoading.value || !selectedConversationId.value) return
+            try {
+                await bridgeReady()
+                await api.cancel_history_qa(selectedConversationId.value)
+            } catch {
+                // 取消失败不打断（后端请求会自行超时返回）
             }
         }
 
@@ -1263,6 +1275,10 @@ const showPortraitDialog = ref(false)
 
         async function onConversationChange(id: number) {
             viewEpoch.value++ // 使进行中的加载与分析轮询结果全部过期（F1）
+            if (qaLoading.value && selectedConversationId.value) {
+                // 在途问答不再需要：取消后端请求（回答本就会被丢弃）
+                api.cancel_history_qa(selectedConversationId.value).catch(() => {})
+            }
             selectedConversationId.value = id
             setDefaultDates(30, getConversationAnchorDate(id))
             hasFeatures.value = false

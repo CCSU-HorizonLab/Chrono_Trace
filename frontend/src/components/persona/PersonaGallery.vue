@@ -91,8 +91,8 @@ type SessionPoint = {
 
 type AffinityResult = {
   overall_score?: number
+  interaction_investment?: { score: number }
   emotional_resonance?: { score: number }
-  chat_positivity?: { score: number }
 }
 
 type FeatureStats = {
@@ -202,7 +202,7 @@ const emotionBands = computed(() => {
   const positiveAvg = average(points.map((point) => Number(point.positive || 0)))
   const neutralAvg = average(points.map((point) => Number(point.neutral || 0)))
   const negativeAvg = average(points.map((point) => Number(point.negative || 0)))
-  const positivity = normalizeScore(props.analysisResult?.chat_positivity?.score)
+  const positivity = normalizeScore(props.analysisResult?.interaction_investment?.score)
   const resonance = normalizeScore(props.analysisResult?.emotional_resonance?.score)
   const initiative = clamp01(props.featureStats.initiativeRate || 0)
 
@@ -211,7 +211,7 @@ const emotionBands = computed(() => {
       label: '温度感',
       value: positiveAvg || positivity,
       color: '#fb923c',
-      description: positiveAvg ? '对话里的正向情绪更常作为底色出现。' : '基于聊天积极度推断，这段关系更偏暖色调。'
+      description: positiveAvg ? '对话里的正向情绪更常作为底色出现。' : '基于互动投入推断，这段关系更偏暖色调。'
     },
     {
       label: '稳定感',

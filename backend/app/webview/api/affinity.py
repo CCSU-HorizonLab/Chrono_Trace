@@ -497,3 +497,18 @@ class AffinityApiMixin:
                 "error": str(e)
             }
 
+    def export_affinity_report(self, conversation_id: int) -> dict[str, Any]:
+        """导出关系体检报告（单文件 HTML，写入 chrono_trace_export 目录）"""
+        try:
+            from ...services.analysis.affinity_report_export import (
+                AffinityReportExportError,
+                export_affinity_report,
+            )
+
+            return export_affinity_report(int(conversation_id))
+        except AffinityReportExportError as e:
+            return {"ok": False, "error": str(e)}
+        except Exception as e:
+            logger.error(f"[Bridge] 体检报告导出失败: {e}")
+            return {"ok": False, "error": f"报告导出失败：{e}"}
+

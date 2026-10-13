@@ -103,6 +103,7 @@ def test_keyword_retrieval_and_citation_round_trip(monkeypatch, db):
     # 默认桩回答只引用 [1]：citations 过滤为实际引用子集（消息 2 命中但未被引用）
     ids = [c["message_id"] for c in result["citations"]]
     assert ids == [1] and 3 not in ids
+    assert result["citations"][0]["index"] == 1
     # 引用带时间与发送方原文（本地展示用原文）
     by_id = {c["message_id"]: c for c in result["citations"]}
     assert by_id[1]["is_sender"] == 0 and "防晒" in by_id[1]["text"]
@@ -115,13 +116,14 @@ def test_citations_follow_answer_markers(monkeypatch, db):
     seed(db, 1, "第一条爬山消息", 1700000100)
     seed(db, 2, "第二条爬山消息", 1700000200)
 
-    # 回答引用 [2]：citations 只含第二条（时间升序编号，2 = 消息 2）
+    # 回答引用 [2]：citations 只含第二条，且保留原始编号 2（前端按 index 渲染 [n]）
     result, _ = ask(monkeypatch, db, "爬山", http=_FakeHTTP(content="答案见 [2]"))
     assert [c["message_id"] for c in result["citations"]] == [2]
+    assert result["citations"][0]["index"] == 2
 
-    # 回答未带有效编号：退回全集（保留上下文浏览价值）
+    # 回答未带有效编号：退回全集（保留上下文浏览价值），编号原样
     result, _ = ask(monkeypatch, db, "爬山", http=_FakeHTTP(content="没有编号的回答"))
-    assert len(result["citations"]) == 2
+    assert [c["index"] for c in result["citations"]] == [1, 2]
 
 
 def test_no_matching_records_raises(monkeypatch, db):

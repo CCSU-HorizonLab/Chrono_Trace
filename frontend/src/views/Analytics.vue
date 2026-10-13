@@ -619,7 +619,7 @@
           <div v-if="item.citations && item.citations.length" class="qa-citations">
             <div class="qa-citations-title">引用溯源（{{ item.citations.length }} 条）</div>
             <div v-for="(cite, cIdx) in item.citations" :key="cIdx" class="qa-citation-row">
-              <span class="qa-citation-idx">[{{ cIdx + 1 }}]</span>
+              <span class="qa-citation-idx">[{{ cite.index }}]</span>
               <span class="qa-citation-meta">{{ formatQaTime(cite.timestamp) }} · {{ cite.is_sender ? '我' : currentContactName }}</span>
               <span class="qa-citation-text">"{{ cite.text }}"</span>
             </div>
@@ -979,7 +979,7 @@ const showPortraitDialog = ref(false)
         const hasCachedAffinityAnalysis = computed(() => Boolean(analysisResult.value))
 
         // ===== 问问微信（历史问答 + 引用溯源）=====
-        type QaCitation = { message_id: number; timestamp: number; is_sender: number; text: string }
+        type QaCitation = { index: number; message_id: number; timestamp: number; is_sender: number; text: string }
         type QaEntry = { question: string; answer: string; citations: QaCitation[] }
         const qaHistory = ref<QaEntry[]>([])
         const qaInput = ref('')

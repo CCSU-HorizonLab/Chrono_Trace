@@ -100,14 +100,28 @@ def test_keyword_retrieval_and_citation_round_trip(monkeypatch, db):
     result, http = ask(monkeypatch, db, "我们聊过爬山吗")
 
     assert "爬山" in result["answer"]
+    # 默认桩回答只引用 [1]：citations 过滤为实际引用子集（消息 2 命中但未被引用）
     ids = [c["message_id"] for c in result["citations"]]
-    assert 1 in ids and 2 in ids and 3 not in ids
+    assert ids == [1] and 3 not in ids
     # 引用带时间与发送方原文（本地展示用原文）
     by_id = {c["message_id"]: c for c in result["citations"]}
     assert by_id[1]["is_sender"] == 0 and "防晒" in by_id[1]["text"]
     # prompt 中包含脱敏前定位文本与编号
     sent = json.dumps(http.calls[0]["payload"], ensure_ascii=False)
     assert "[1]" in sent and "爬山" in sent
+
+
+def test_citations_follow_answer_markers(monkeypatch, db):
+    seed(db, 1, "第一条爬山消息", 1700000100)
+    seed(db, 2, "第二条爬山消息", 1700000200)
+
+    # 回答引用 [2]：citations 只含第二条（时间升序编号，2 = 消息 2）
+    result, _ = ask(monkeypatch, db, "爬山", http=_FakeHTTP(content="答案见 [2]"))
+    assert [c["message_id"] for c in result["citations"]] == [2]
+
+    # 回答未带有效编号：退回全集（保留上下文浏览价值）
+    result, _ = ask(monkeypatch, db, "爬山", http=_FakeHTTP(content="没有编号的回答"))
+    assert len(result["citations"]) == 2
 
 
 def test_no_matching_records_raises(monkeypatch, db):
@@ -193,6 +207,35 @@ def test_remote_model_redacts_before_send(monkeypatch, db):
     assert "13800001111" not in sent and "[手机号]" in sent
     # 引用回填仍是本地原文（展示不外发）
     assert "13800001111" in result["citations"][0]["text"]
+
+
+def test_remote_model_redacts_question_text(monkeypatch, db):
+    """问题原文含手机号：payload 中的问题同样必须脱敏（P1 红线）。"""
+    import app.services.realtime.rag.config as ragcfg
+    import app.services.realtime.rag.fact_llm as factllm
+    import app.services.realtime.privacy_redactor as prmod
+
+    monkeypatch.setattr(
+        factllm,
+        "get_active_model_config",
+        lambda: {"api_base_url": "https://api.deepseek.com/v1", "model_id": "d", "api_key": "k"},
+    )
+    redactor = _FakeRedactor()
+    monkeypatch.setattr(prmod, "PrivacyRedactor", lambda conn: redactor)
+    seed(db, 1, "打给我 13800001111 随时", 1700000100)
+
+    http = _FakeHTTP(content="这是 TA 的号码 [1]")
+    monkeypatch.setattr(hqmod, "post_json_with_retries", http)
+    monkeypatch.setattr(hqmod, "_load_question_vector", lambda q: None)
+
+    result = HistoryQAService().ask(1, "13800001111 是谁的号码")
+
+    sent = json.dumps(http.calls[0]["payload"], ensure_ascii=False)
+    # 问题与记录都不得出现原文号码
+    assert "13800001111" not in sent
+    assert sent.count("[手机号]") >= 2  # 问题 + 记录各一处
+    # 返回给前端的问题保持本地原文（仅展示，不外发）
+    assert "13800001111" in result["question"]
 
 
 def test_remote_model_redaction_failure_blocks(monkeypatch, db):

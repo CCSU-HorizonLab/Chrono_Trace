@@ -3,10 +3,12 @@
 检索两路 RRF 融合：
 - 关键词通道：jieba 分词后在 messages.content 上 LIKE 匹配
 - 向量通道：问题嵌入与 sentiment_cache.embedding_vector 暴力余弦
-  （复用分析期落库的嵌入缓存，无则该通道缺席）
+  （复用联系人记忆索引落库的嵌入缓存，未建索引时该通道静默缺席）
 
-远程模型发送前逐条过 PrivacyRedactor（失败即阻断，绝不降级发原文）；
-回答要求带 [n] 引用编号，引用原文（仅本地展示，不外发）随结果返回。
+远程模型发送前问题与聊天记录逐条过 PrivacyRedactor（失败即阻断，
+绝不降级发原文——问题里常直接含手机号/真实姓名，同样不能外发）；
+回答要求带 [n] 引用编号，citations 按 [n] 过滤为实际引用子集，
+引用原文（仅本地展示，不外发）随结果返回。
 """
 from __future__ import annotations
 
@@ -38,6 +40,9 @@ SYSTEM_PROMPT = """你是聊天记录问答助手。只依据【聊天记录】�
 - 记录不足以回答时，直接说明「聊天记录中没有足够信息」，不要猜测
 - 引用原文时保持原样，不要改写称谓
 - 回答用中文，简洁直接，先给结论再给依据"""
+
+# 回答中的引用编号（[n]，n 对应聊天记录列表的 1 基序号）
+CITATION_MARK = re.compile(r"\[(\d+)\]")
 
 
 class HistoryQAError(Exception):
@@ -74,6 +79,15 @@ def _load_question_vector(question: str) -> Optional[List[float]]:
         return None
 
 
+def _filter_citations(answer: str, citations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """只保留回答 [n] 实际引用的条目；回答未带有效编号时退回全集。"""
+    cited = {int(n) for n in CITATION_MARK.findall(answer)}
+    cited = {n for n in cited if 1 <= n <= len(citations)}
+    if not cited:
+        return citations
+    return [c for i, c in enumerate(citations, start=1) if i in cited]
+
+
 class HistoryQAService:
     """联系人历史问答：检索 → 脱敏 → LLM → 引用回填。"""
 
@@ -85,24 +99,27 @@ class HistoryQAService:
         account_wxid, display_name = self._load_conversation(conversation_id)
         records = self._retrieve(conversation_id, question)
         if not records:
-            raise HistoryQAError("没有找到与问题相关的聊天记录，试试换个说法或先完成全面分析")
+            raise HistoryQAError("没有找到与问题相关的聊天记录，试试换个说法或用更具体的关键词")
 
-        redacted = self._redact_records(records, account_wxid, conversation_id)
+        redacted_question, redacted = self._redact_for_remote(
+            question, records, account_wxid, conversation_id
+        )
 
-        answer = self._call_llm(question, redacted)
+        answer = self._call_llm(redacted_question, redacted)
+        citations = [
+            {
+                "message_id": rec["message_id"],
+                "timestamp": rec["timestamp"],
+                "is_sender": rec["is_sender"],
+                "text": rec["text"],
+            }
+            for rec in records
+        ]
         return {
             "answer": answer,
             "question": question,
             "contact_name": display_name,
-            "citations": [
-                {
-                    "message_id": rec["message_id"],
-                    "timestamp": rec["timestamp"],
-                    "is_sender": rec["is_sender"],
-                    "text": rec["text"],
-                }
-                for rec in records
-            ],
+            "citations": _filter_citations(answer, citations),
         }
 
     # ---- 检索 ----
@@ -220,11 +237,16 @@ class HistoryQAService:
 
     # ---- 脱敏与 LLM ----
 
-    def _redact_records(
-        self, records: List[Dict[str, Any]], account_wxid: str, conversation_id: int
-    ) -> List[Dict[str, Any]]:
-        """远程模型逐条脱敏；任何一条失败即整体阻断（红线：不降级发原文）。
+    def _redact_for_remote(
+        self,
+        question: str,
+        records: List[Dict[str, Any]],
+        account_wxid: str,
+        conversation_id: int,
+    ) -> Tuple[str, List[Dict[str, Any]]]:
+        """远程模型：问题与记录逐条脱敏；任何一条失败即整体阻断（红线：不降级发原文）。
 
+        问题同样过脱敏——用户常把手机号/真实姓名直接写进问题。
         本地模型原样返回。
         """
         from ..realtime.rag.config import is_remote_llm_model
@@ -234,25 +256,30 @@ class HistoryQAService:
         if not model_config:
             raise HistoryQAError("未配置 LLM 模型，请先在设置中启用")
         if not is_remote_llm_model(model_config):
-            return records
+            return question, records
 
         from ..realtime.privacy_redactor import PrivacyRedactor
 
         redactor = PrivacyRedactor(get_db())
-        redacted: List[Dict[str, Any]] = []
-        for rec in records:
+
+        def _redact(text: str, source_id: str) -> str:
             try:
                 result = redactor.redact(
-                    rec["text"],
+                    text,
                     account_wxid=account_wxid,
                     conversation_id=conversation_id,
                     source_table="history_qa",
-                    source_id=str(rec["message_id"]),
+                    source_id=source_id,
                 )
             except Exception as exc:
                 raise HistoryQAError(f"脱敏失败，本次提问已阻断：{exc}") from exc
-            redacted.append({**rec, "text": result.redacted_text})
-        return redacted
+            return result.redacted_text
+
+        redacted_question = _redact(question, "question")
+        redacted = [
+            {**rec, "text": _redact(rec["text"], str(rec["message_id"]))} for rec in records
+        ]
+        return redacted_question, redacted
 
     def _call_llm(self, question: str, records: List[Dict[str, Any]]) -> str:
         from ..realtime.rag.fact_llm import get_active_model_config

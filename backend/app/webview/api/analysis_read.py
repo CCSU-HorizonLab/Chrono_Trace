@@ -413,3 +413,41 @@ class AnalysisReadApiMixin:
                 "error": str(e)
             }
 
+    def get_group_stats(self, conversation_id: int, start: int = None, end: int = None) -> dict:
+        """群聊发言统计（纯本地：按成员消息数/字数/占比/我的排名/时段/高频词）"""
+        try:
+            from ...services.analysis.group_summary_service import (
+                GroupSummaryError,
+                GroupSummaryService,
+            )
+
+            stats = GroupSummaryService().get_group_stats(
+                int(conversation_id),
+                start=int(start) if start else None,
+                end=int(end) if end else None,
+            )
+            return {"ok": True, **stats}
+        except GroupSummaryError as e:
+            return {"ok": False, "error": str(e)}
+        except Exception as e:
+            logger.error(f"[Bridge] 群聊统计失败: {e}")
+            return {"ok": False, "error": f"群聊统计失败：{e}"}
+
+    def generate_group_summary(self, conversation_id: int, days: int = 7) -> dict:
+        """生成群聊日报（近 N 天分段 + LLM 总结；无模型时降级为仅统计）"""
+        try:
+            from ...services.analysis.group_summary_service import (
+                GroupSummaryError,
+                GroupSummaryService,
+            )
+
+            result = GroupSummaryService().generate_group_summary(
+                int(conversation_id), int(days or 7)
+            )
+            return result
+        except GroupSummaryError as e:
+            return {"ok": False, "error": str(e)}
+        except Exception as e:
+            logger.error(f"[Bridge] 群日报生成失败: {e}")
+            return {"ok": False, "error": f"群日报生成失败：{e}"}
+

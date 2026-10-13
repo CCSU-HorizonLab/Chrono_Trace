@@ -505,6 +505,7 @@ class AffinityAnalysisService:
                     conversation_id,
                     account_wxid=llm_account_wxid,
                     context=llm_context,
+                    metrics=metrics,
                 )
 
             pending = {

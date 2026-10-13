@@ -173,22 +173,20 @@ const form = reactive({
   communication_style: 'normal',
 })
 
-// 六维权重（0-100 点数制；保存为 0-1 的小数权重）
+// 四维 + LLM 权重（0-100 点数制；保存为 0-1 的小数权重）
 const weightDims = [
-  { field: 'weight_emotional_resonance', label: '情感共振率', default: 40 },
-  { field: 'weight_chat_positivity', label: '聊天积极度', default: 35 },
-  { field: 'weight_attitude_tendency', label: '态度倾向', default: 25 },
+  { field: 'weight_interaction_investment', label: '互动投入', default: 40 },
+  { field: 'weight_emotional_resonance', label: '情感共鸣', default: 35 },
+  { field: 'weight_closeness_signals', label: '亲近信号', default: 15 },
   { field: 'weight_preference_compatibility', label: '喜好兼容度', default: 10 },
-  { field: 'weight_intimacy_signals', label: '亲密度信号', default: 12 },
   { field: 'weight_llm_relationship', label: 'AI 关系评估', default: 8 },
 ] as const
 
 const weightForm = reactive({
-  weight_emotional_resonance: 40,
-  weight_chat_positivity: 35,
-  weight_attitude_tendency: 25,
+  weight_interaction_investment: 40,
+  weight_emotional_resonance: 35,
+  weight_closeness_signals: 15,
   weight_preference_compatibility: 10,
-  weight_intimacy_signals: 12,
   weight_llm_relationship: 8,
   llm_relationship_enabled: true,
 })
@@ -311,11 +309,10 @@ const handleSave = async () => {
     })
     // 权重并联保存（点数 → 0-1 小数；触发缓存失效自动重算）
     await updateAffinityConfig(props.conversationId, {
+      weight_interaction_investment: Math.max(0, Number(weightForm.weight_interaction_investment) || 0) / 100,
       weight_emotional_resonance: Math.max(0, Number(weightForm.weight_emotional_resonance) || 0) / 100,
-      weight_chat_positivity: Math.max(0, Number(weightForm.weight_chat_positivity) || 0) / 100,
-      weight_attitude_tendency: Math.max(0, Number(weightForm.weight_attitude_tendency) || 0) / 100,
+      weight_closeness_signals: Math.max(0, Number(weightForm.weight_closeness_signals) || 0) / 100,
       weight_preference_compatibility: Math.max(0, Number(weightForm.weight_preference_compatibility) || 0) / 100,
-      weight_intimacy_signals: Math.max(0, Number(weightForm.weight_intimacy_signals) || 0) / 100,
       weight_llm_relationship: Math.max(0, Number(weightForm.weight_llm_relationship) || 0) / 100,
       llm_relationship_enabled: weightForm.llm_relationship_enabled,
     })

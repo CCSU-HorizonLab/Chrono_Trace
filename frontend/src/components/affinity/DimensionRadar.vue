@@ -9,11 +9,10 @@ import type { EChartsOption } from 'echarts'
 
 const props = defineProps<{
   dimensionScores: {
+    interaction_investment?: { score: number; weight: number }
     emotional_resonance?: { score: number; weight: number }
-    chat_positivity?: { score: number; weight: number }
-    attitude_tendency?: { score: number; weight: number }
+    closeness_signals?: { score: number; weight: number }
     preference_compatibility?: { score: number; weight: number }
-    intimacy_signals?: { score: number; weight: number }
     llm_relationship?: { score: number; weight: number }
   }
 }>()
@@ -30,18 +29,25 @@ const getOption = (): EChartsOption => {
   // 定义所有维度的配置
   const allDimensions = [
     {
+      key: 'interaction_investment',
+      name: '互动\n投入',
+      fullName: '互动投入',
+      score: props.dimensionScores.interaction_investment?.score || 0,
+      weight: props.dimensionScores.interaction_investment?.weight || 0
+    },
+    {
       key: 'emotional_resonance',
-      name: '情感\n共振率',
-      fullName: '情感共振率',
+      name: '情感\n共鸣',
+      fullName: '情感共鸣',
       score: props.dimensionScores.emotional_resonance?.score || 0,
       weight: props.dimensionScores.emotional_resonance?.weight || 0
     },
     {
-      key: 'chat_positivity',
-      name: '聊天\n积极度',
-      fullName: '聊天积极度',
-      score: props.dimensionScores.chat_positivity?.score || 0,
-      weight: props.dimensionScores.chat_positivity?.weight || 0
+      key: 'closeness_signals',
+      name: '亲近\n信号',
+      fullName: '亲近信号',
+      score: props.dimensionScores.closeness_signals?.score || 0,
+      weight: props.dimensionScores.closeness_signals?.weight || 0
     },
     {
       key: 'preference_compatibility',
@@ -49,20 +55,6 @@ const getOption = (): EChartsOption => {
       fullName: '喜好兼容度',
       score: props.dimensionScores.preference_compatibility?.score || 0,
       weight: props.dimensionScores.preference_compatibility?.weight || 0
-    },
-    {
-      key: 'attitude_tendency',
-      name: '态度\n倾向',
-      fullName: '态度倾向',
-      score: props.dimensionScores.attitude_tendency?.score || 0,
-      weight: props.dimensionScores.attitude_tendency?.weight || 0
-    },
-    {
-      key: 'intimacy_signals',
-      name: '亲密度\n信号',
-      fullName: '亲密度信号',
-      score: props.dimensionScores.intimacy_signals?.score || 0,
-      weight: props.dimensionScores.intimacy_signals?.weight || 0
     },
     {
       key: 'llm_relationship',

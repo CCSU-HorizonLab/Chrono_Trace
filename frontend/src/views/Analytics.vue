@@ -164,21 +164,21 @@
         </div>
 
         <div class="dimension-cards-grid">
-          <AffinityScoreCard v-if="analysisResult.emotional_resonance" title="情感共振率"
-            :score="analysisResult.emotional_resonance.score" 
+          <AffinityScoreCard v-if="analysisResult.interaction_investment" title="互动投入"
+            :score="analysisResult.interaction_investment.score"
+            :max-score="100"
+            :weight="analysisResult.interaction_investment.weight"
+            :interpretation="analysisResult.interaction_investment.interpretation" />
+          <AffinityScoreCard v-if="analysisResult.emotional_resonance" title="情感共鸣"
+            :score="analysisResult.emotional_resonance.score"
             :max-score="100"
             :weight="analysisResult.emotional_resonance.weight"
             :interpretation="analysisResult.emotional_resonance.interpretation" />
-          <AffinityScoreCard v-if="analysisResult.chat_positivity" title="聊天积极度"
-            :score="analysisResult.chat_positivity.score" 
+          <AffinityScoreCard v-if="analysisResult.closeness_signals" title="亲近信号"
+            :score="analysisResult.closeness_signals.score"
             :max-score="100"
-            :weight="analysisResult.chat_positivity.weight"
-            :interpretation="analysisResult.chat_positivity.interpretation" />
-          <AffinityScoreCard v-if="analysisResult.attitude_tendency" title="态度倾向"
-            :score="analysisResult.attitude_tendency.score" 
-            :max-score="100"
-            :weight="analysisResult.attitude_tendency.weight"
-            :interpretation="analysisResult.attitude_tendency.interpretation" />
+            :weight="analysisResult.closeness_signals.weight"
+            :interpretation="analysisResult.closeness_signals.interpretation" />
           <AffinityScoreCard v-if="analysisResult.preference_compatibility" title="喜好兼容度"
             :score="analysisResult.preference_compatibility.score"
             :max-score="100"
@@ -186,11 +186,6 @@
             :interpretation="analysisResult.preference_compatibility.interpretation"
             :is-bonus="!(analysisResult.preference_compatibility.weight > 0)"
             :bonus-value="analysisResult.preference_compatibility.bonus_scores?.preference_bonus" />
-          <AffinityScoreCard v-if="analysisResult.intimacy_signals" title="亲密度信号"
-            :score="analysisResult.intimacy_signals.score"
-            :max-score="100"
-            :weight="analysisResult.intimacy_signals.weight"
-            :interpretation="analysisResult.intimacy_signals.interpretation" />
           <AffinityScoreCard v-if="analysisResult.llm_relationship" title="AI 关系评估"
             :score="analysisResult.llm_relationship.score"
             :max-score="100"
@@ -207,18 +202,16 @@
           </div>
 
           <div class="breakdowns-container">
-            <SubScoreBreakdown v-if="analysisResult.emotional_resonance" title="情感共振率"
-              :sub-scores="emotionalResonanceDisplaySubScores"
+            <SubScoreBreakdown v-if="analysisResult.interaction_investment" title="互动投入"
+              :sub-scores="analysisResult.interaction_investment.sub_scores" />
+            <SubScoreBreakdown v-if="analysisResult.emotional_resonance" title="情感共鸣"
+              :sub-scores="analysisResult.emotional_resonance.sub_scores"
               :confidence-meta="analysisResult.emotional_resonance.confidence_meta" />
-            <SubScoreBreakdown v-if="analysisResult.chat_positivity" title="聊天积极度"
-              :sub-scores="analysisResult.chat_positivity.sub_scores" />
-            <SubScoreBreakdown v-if="analysisResult.attitude_tendency" title="态度倾向"
-              :sub-scores="analysisResult.attitude_tendency.sub_scores" />
+            <SubScoreBreakdown v-if="analysisResult.closeness_signals" title="亲近信号"
+              :sub-scores="analysisResult.closeness_signals.sub_scores"
+              :confidence-meta="analysisResult.closeness_signals.confidence_meta" />
             <SubScoreBreakdown v-if="analysisResult.preference_compatibility" title="喜好兼容度"
               :sub-scores="analysisResult.preference_compatibility.sub_scores" />
-            <SubScoreBreakdown v-if="analysisResult.intimacy_signals" title="亲密度信号"
-              :sub-scores="analysisResult.intimacy_signals.sub_scores"
-              :confidence-meta="analysisResult.intimacy_signals.confidence_meta" />
             <SubScoreBreakdown v-if="analysisResult.llm_relationship" title="AI 关系评估"
               :sub-scores="analysisResult.llm_relationship.sub_scores"
               :notes="llmEvidenceNotes" />
@@ -226,6 +219,9 @@
               AI 关系评估未参与本次评分：{{ analysisResult.llm_relationship_absent_reason }}
             </p>
           </div>
+
+          <!-- 风险预警：独立于好感总分，双证据判定，不进雷达/总分 -->
+          <RiskSignalCard :assessment="analysisResult.risk_assessment" />
         </CtCard>
       </div>
     </div>
@@ -585,6 +581,7 @@ import WordCloud from '@/components/charts/WordCloud.vue'
 import ConversationTimeline from '@/components/timeline/ConversationTimeline.vue'
 
 import AffinityScoreCard from '@/components/affinity/AffinityScoreCard.vue'
+import RiskSignalCard from '@/components/affinity/RiskSignalCard.vue'
 import PortraitGenerateDialog from '@/components/persona/PortraitGenerateDialog.vue'
 import { loadSharedContact, saveSharedContact, CONTACT_CHANGED_EVENT } from '@/utils/sharedContact'
 import DimensionRadar from '@/components/affinity/DimensionRadar.vue'
@@ -669,7 +666,7 @@ type ActivityCalendarData = {
 export default {
     components: {
         FiltersBar, DateRangeFilter, SubjectCard, EmotionLineChart, WordCloud, ConversationTimeline,
-        AffinityScoreCard, DimensionRadar, SubScoreBreakdown,         PreferenceKeywordsDialog, RelationshipContextForm, CtCard, CtButton, PersonaGallery, CtAvatar,
+        AffinityScoreCard, DimensionRadar, SubScoreBreakdown, RiskSignalCard,         PreferenceKeywordsDialog, RelationshipContextForm, CtCard, CtButton, PersonaGallery, CtAvatar,
         FolderArchive, MessageSquare, Sparkles, BarChart3, TrendingUp, Loader2, Lightbulb, PortraitGenerateDialog
     },
     setup() {
@@ -815,11 +812,10 @@ const showPortraitDialog = ref(false)
         const allDimensions = computed(() => {
             if (!analysisResult.value) return {}
             return {
+                interaction_investment: analysisResult.value.interaction_investment || undefined,
                 emotional_resonance: analysisResult.value.emotional_resonance || undefined,
-                chat_positivity: analysisResult.value.chat_positivity || undefined,
-                attitude_tendency: analysisResult.value.attitude_tendency || undefined,
+                closeness_signals: analysisResult.value.closeness_signals || undefined,
                 preference_compatibility: analysisResult.value.preference_compatibility || undefined,
-                intimacy_signals: analysisResult.value.intimacy_signals || undefined,
                 llm_relationship: analysisResult.value.llm_relationship || undefined
             }
         })
@@ -831,19 +827,6 @@ const showPortraitDialog = ref(false)
             return Array.isArray(evidence) && evidence.length
                 ? evidence.map((e: any) => ({ quote: String(e.quote || ''), month: String(e.month || '') }))
                 : undefined
-        })
-
-        const emotionalResonanceDisplaySubScores = computed(() => {
-            const subScores = analysisResult.value?.emotional_resonance?.sub_scores
-            if (!subScores) return {}
-
-            const {
-                empathy_recognition,
-                negative_resolution,
-                ...baseSubScores
-            } = subScores
-
-            return baseSubScores
         })
 
         const radius = 50
@@ -1816,7 +1799,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
             personaProfile, loadingPersonaProfile, personaProfileMeta,
             analysisResult, displayScore, showKeywordsDialog, showContextForm, showPortraitDialog, handlePortraitGenerated, isGlobalAnalyzing, isStopping, activeTimer, handleStopAnalysis, globalProgressPercent, globalProgressStep, gpuMode,
             hasConversations, hasFeatures, hasCachedAffinityAnalysis, featureStats, responseTimeStats, initiativeStats, wordCountsStats, displayWordRatioLabel, activityCalendar,
-            responseTimeChart, activityCalendarChart, wordCountChart, stats, currentContactName, headerAvatarSrc, hasPreferenceKeywords, allDimensions, emotionalResonanceDisplaySubScores,
+            responseTimeChart, activityCalendarChart, wordCountChart, stats, currentContactName, headerAvatarSrc, hasPreferenceKeywords, allDimensions,
             currentRangeLabel, hasContentAnalysis, circumference, strokeDashoffset, formatNumber, formatTime, getResponseTimeLabel, getMergedResponseTimeLabel, getResponseTimePercent, onConversationChange, onDatesChange, handleExport, handleStartGlobalAnalysis, handleContextSaved, handleKeywordsUpdated, llmEvidenceNotes,
             exportDialogVisible, exportFormat, exporting, exportResult, confirmExport, openExportFolder,
             activeAccountWxid,

@@ -27,7 +27,7 @@
                 <div class="score-bar-bg">
                   <div
                     class="score-bar-fill"
-                    :class="getBarColorClass(score, key as string)"
+                    :class="getBarColorClass(score)"
                     :style="{ width: Math.min(100, Math.max(0, score)) + '%' }"
                   ></div>
                 </div>
@@ -35,8 +35,8 @@
               </div>
             </td>
             <td>
-              <span class="badge" :class="getBadgeClass(score, key as string)">
-                {{ getRating(score, key as string) }}
+              <span class="badge" :class="getBadgeClass(score)">
+                {{ getRating(score) }}
               </span>
             </td>
           </tr>
@@ -67,109 +67,56 @@ const props = defineProps<{
 const LOW_CONFIDENCE_THRESHOLD = 0.55
 
 const LABELS: Record<string, string> = {
-  bidirectional_positive: '双向积极互动',
-  polarity_consistency: '情绪一致性',
-  intensity_matching: '情绪强度匹配',
-  empathy_recognition: '共情识别',
-  negative_resolution: '负面情绪化解',
+  // 互动投入
   daily_message: '日均消息量',
   reply_timeliness: '回复及时性',
   topic_continuity: '话题延续性',
   active_initiation: '主动发起',
-  positive_emotion_frequency: '正面情绪频率',
-  negative_emotion_frequency: '负面情绪频率',
-  positive_word_frequency: '正面词频率',
-  negative_word_frequency: '负面词频率',
-  effective_negative_frequency: '有效负面频率',
-  trust_sharing_bonus: '信任倾诉加分',
-  multimedia_usage: '多媒体互动',
-  nickname_frequency: '专属称呼',
-  holiday_greeting: '节日祝福',
+  reply_symmetry: '回应对称性',
+  long_unanswered: '长时未回应',
+  burst_unanswered: '连发未回',
+  // 情感共鸣
+  bidirectional_positive: '双向积极互动',
+  polarity_consistency: '情绪一致性',
+  intensity_matching: '情绪强度匹配',
+  valence_balance: '正负平衡',
+  perfunctory_reply: '敷衍回复',
+  empathy_recognition: '共情识别',
+  negative_resolution: '负面情绪化解',
+  // 亲近信号
+  address_term_evolution: '称谓演变',
+  late_night_engagement: '深夜时段互动',
+  active_coverage: '活跃覆盖',
+  greeting_initiation: '早晚安发起',
+  icebreaking: '主动破冰',
+  community_expression: '共同体表达',
+  // 喜好兼容度
   topic_mention: '共同话题提及',
   preference_bonus: '喜好加分',
-  address_term_evolution: '称谓演变',
-  time_investment: '时段与投入',
-  reply_asymmetry: '回复对称性',
+  // LLM 关系评估
   communication_quality: '沟通质量',
   relationship_warmth: '关系温度',
-  risk_signals: '风险信号',
 }
 
-const BONUS_KEYS = new Set([
-  'empathy_recognition',
-  'negative_resolution',
-])
-
-const INVERSE_KEYS = new Set([
-  'negative_emotion_frequency',
-  'negative_word_frequency',
-  'risk_signals',
-])
-
-const getLabel = (key: string): string => {
-  const label = LABELS[key] || key
-  return BONUS_KEYS.has(key) ? `${label}（加分项）` : label
-}
+const getLabel = (key: string): string => LABELS[key] || key
 
 const formatScore = (score: number): string => score.toFixed(1)
 
-const getRating = (score: number, key?: string): string => {
-  if (key && BONUS_KEYS.has(key)) {
-    if (score >= 80) return '高加分'
-    if (score >= 60) return '中加分'
-    if (score >= 40) return '低加分'
-    return '待提升'
-  }
-
-  if (key && INVERSE_KEYS.has(key)) {
-    if (score <= 5) return '优'
-    if (score <= 15) return '良'
-    if (score <= 30) return '中'
-    return '差'
-  }
-
+const getRating = (score: number): string => {
   if (score >= 80) return '优'
   if (score >= 60) return '良'
   if (score >= 40) return '中'
   return '差'
 }
 
-const getBadgeClass = (score: number, key?: string): string => {
-  if (key && BONUS_KEYS.has(key)) {
-    if (score >= 80) return 'badge-success'
-    if (score >= 60) return 'badge-info'
-    if (score >= 40) return 'badge-warning'
-    return 'badge-danger'
-  }
-
-  if (key && INVERSE_KEYS.has(key)) {
-    if (score <= 5) return 'badge-success'
-    if (score <= 15) return 'badge-info'
-    if (score <= 30) return 'badge-warning'
-    return 'badge-danger'
-  }
-
+const getBadgeClass = (score: number): string => {
   if (score >= 80) return 'badge-success'
   if (score >= 60) return 'badge-info'
   if (score >= 40) return 'badge-warning'
   return 'badge-danger'
 }
 
-const getBarColorClass = (score: number, key?: string): string => {
-  if (key && BONUS_KEYS.has(key)) {
-    if (score >= 80) return 'bar-success'
-    if (score >= 60) return 'bar-info'
-    if (score >= 40) return 'bar-warning'
-    return 'bar-danger'
-  }
-
-  if (key && INVERSE_KEYS.has(key)) {
-    if (score <= 5) return 'bar-success'
-    if (score <= 15) return 'bar-info'
-    if (score <= 30) return 'bar-warning'
-    return 'bar-danger'
-  }
-
+const getBarColorClass = (score: number): string => {
   if (score >= 80) return 'bar-success'
   if (score >= 60) return 'bar-info'
   if (score >= 40) return 'bar-warning'

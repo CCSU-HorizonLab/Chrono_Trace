@@ -102,16 +102,17 @@ const currentWeights = computed(() => {
   const hasKeywords = keywords.value.length > 0
   if (hasKeywords) {
     return [
-      { name: '情感共振率', weight: '35%', color: '#3b82f6' },
-      { name: '聊天积极度', weight: '35%', color: '#3b82f6' },
-      { name: '态度倾向', weight: '20%', color: '#10b981' },
+      { name: '互动投入', weight: '40%', color: '#3b82f6' },
+      { name: '情感共鸣', weight: '35%', color: '#3b82f6' },
+      { name: '亲近信号', weight: '15%', color: '#10b981' },
       { name: '喜好维度', weight: '10%', color: '#10b981' },
     ]
   } else {
+    // 喜好缺席时按在场三维归一（40/35/15 → 44/39/17）
     return [
-      { name: '情感共振率', weight: '40%', color: '#3b82f6' },
-      { name: '聊天积极度', weight: '35%', color: '#3b82f6' },
-      { name: '态度倾向', weight: '25%', color: '#10b981' },
+      { name: '互动投入', weight: '44%', color: '#3b82f6' },
+      { name: '情感共鸣', weight: '39%', color: '#3b82f6' },
+      { name: '亲近信号', weight: '17%', color: '#10b981' },
       { name: '喜好维度', weight: '0%', color: '#9ca3af' },
     ]
   }

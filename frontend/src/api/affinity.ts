@@ -66,21 +66,42 @@ export interface DimensionScore {
     confidence_meta?: ResonanceConfidenceMeta
 }
 
+/** 风险预警信号（独立于好感度总分） */
+export interface RiskSignal {
+    label: string
+    /** 预警 / 留意 / 未见异常 */
+    level: '预警' | '留意' | '未见异常'
+    /** 统计依据（阈值命中描述） */
+    stat_basis: string
+    /** LLM 对话证据引用（原文短句） */
+    evidence: string[]
+    note: string
+}
+
+export interface RiskAssessment {
+    signals: Record<string, RiskSignal>
+    highest_level: '预警' | '留意' | '未见异常'
+    /** LLM 证据是否可用（缺席时各信号封顶「留意」） */
+    llm_evidence_available: boolean
+}
+
 export interface AffinityAnalysisResult {
     overall_score: number
     overall_interpretation: string
+    /** 互动投入（频率/及时性/话题/发起/对称性/长时未回应/连发未回） */
+    interaction_investment: DimensionScore | null
     emotional_resonance: DimensionScore | null
-    chat_positivity: DimensionScore | null
-    attitude_tendency: DimensionScore | null
-    /** 分析新鲜度（读取时由 bridge 附加，非落库字段） */
-    analysis_stale?: boolean
-    pending_message_count?: number | null
+    /** 亲近信号（称谓演变/深夜时段/活跃覆盖/早晚安/破冰/共同体表达） */
+    closeness_signals: DimensionScore | null
     preference_compatibility: DimensionScore | null
-    /** 亲密度信号（称谓演变/时段投入/回复对称性） */
-    intimacy_signals?: DimensionScore | null
     /** LLM 关系评估（未配置/调用失败时缺席） */
     llm_relationship?: DimensionScore | null
     llm_relationship_absent_reason?: string | null
+    /** 风险预警（独立模块，不参与总分） */
+    risk_assessment?: RiskAssessment | null
+    /** 分析新鲜度（读取时由 bridge 附加，非落库字段） */
+    analysis_stale?: boolean
+    pending_message_count?: number | null
     /** 评分口径版本（跨口径趋势不可比） */
     analysis_caliber?: number
     /** 与上次分析的分差（同口径才有值，读取时由 bridge 附加） */
@@ -99,11 +120,10 @@ export interface AffinityAnalysisResult {
 }
 
 export interface AffinityConfig {
+    weight_interaction_investment: number
     weight_emotional_resonance: number
-    weight_chat_positivity: number
-    weight_attitude_tendency: number
+    weight_closeness_signals: number
     weight_preference_compatibility?: number
-    weight_intimacy_signals?: number
     weight_llm_relationship?: number
     llm_relationship_enabled?: boolean
     preference_bonus_factor?: number

@@ -3,7 +3,6 @@ import os
 import webview
 import logging
 from backend.app.webview.bridge import Bridge
-from backend.app.webview.close_guard import attach_close_guard
 from backend.app.config import get_dist_index_path, PROD_WINDOW_TITLE
 from backend.app.logging_config import setup_logging, get_logger
 
@@ -21,22 +20,10 @@ def main():
         raise RuntimeError('未找到前端构建产物，请先执行 npm run build 生成 frontend/webdist/index.html')
     window = webview.create_window(PROD_WINDOW_TITLE, url=dist_index, js_api=bridge, frameless=False)
 
-    def on_started():
-        """窗口启动后，将窗口引用注入 Bridge（供 Win32 悬浮窗服务使用）"""
-        bridge.set_webview_window(window)
+    # 启动/关闭守卫/退出清理统一走 gui_backend（Linux 强制 Qt 后端）
+    from backend.app.webview.gui_backend import run_main_window
 
-    attach_close_guard(window, bridge)
-
-    # Linux 强制 Qt 后端（自动探测会抓 GTK：WebKitGTK localStorage 为 null，切页白屏）
-    from backend.app.webview.gui_backend import start_webview
-
-    start_webview(func=on_started)
-
-    # Qt 后端退出清理：先析构 WebEnginePage 再放 profile，消除
-    # "Release of profile requested but WebEnginePage still not deleted" 告警
-    from backend.app.webview.qt_teardown import shutdown_qt_webengine_cleanly
-
-    shutdown_qt_webengine_cleanly()
+    run_main_window(window, bridge)
 
 
 if __name__ == '__main__':

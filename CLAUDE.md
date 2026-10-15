@@ -13,7 +13,7 @@ Chrono Trace（时痕）：基于 PyWebView + Vue 3 + Python 的**双平台**（
 ## 平台约束（重要）
 
 - **单分支双平台**：Windows 全功能；Linux 支持导入/分析/RAG/实时监听/悬浮窗（X11 跟随、Wayland 固定档位）。
-- Win32 相关导入全部是**函数内延迟导入**；Linux 专属代码走独立模块（`keys/gdb_linux.py`、`db_snapshot.py`、`floating_tracker.py`、`providers/db_watch.py`）。**平台分派收敛点**：密钥提取用 `wechat/keys/__init__.create_key_provider()`，监听后端用 `providers/factory.py`，悬浮窗定位用 `floating_tracker.create_tracker()`——不要在业务代码里再写 `sys.platform` 分支。
+- Win32 相关导入全部是**函数内延迟导入**；Linux 专属代码走独立模块（`keys/gdb_linux.py`、`db_snapshot.py`、`floating_tracker.py`、`providers/db_watch.py`）。**平台分派收敛点**：密钥提取用 `wechat/keys/__init__.create_key_provider()`，监听后端用 `providers/factory.py`，悬浮窗定位用 `floating_tracker.create_tracker()`，Webview 后端用 `webview/gui_backend.py`——不要在业务代码里再写 `sys.platform` 分支。
 - Linux 依赖见 `requirements-linux.txt`（去 pywin32/pywinauto/wx_key wheel）；pywebview 用 Qt 后端（需 qtpy 垫片）。
 
 ### 平台组件接缝模式（新增平台能力照此办理）
@@ -23,6 +23,7 @@ Chrono Trace（时痕）：基于 PyWebView + Vue 3 + Python 的**双平台**（
 | 密钥提取 | `keys/chain_win.py`（只读扫描 `scan_win.py` 优先 → wx_key hook `wx_key_win.py` 回退） | `keys/gdb_linux.py`（GDB 断点，免重启） | `keys/__init__.py` 工厂 |
 | 实时监听 | `providers/native_uia.py`（UIA，需微信窗口可见） | `providers/db_watch.py`（加密库 mtime+WAL 增量解密） | `providers/factory.py` |
 | 悬浮窗定位 | `floating_window_service.py` 内 win32 分支 | `floating_tracker.py`（X11 EWMH） | `floating_tracker.create_tracker()` |
+| Webview 后端 | WebView2（pywebview 默认） | Qt（`gui_backend.py` 显式强制——WebKitGTK 下 storage 为 null 会切页白屏） | `webview/gui_backend.py` |
 | 打包 | `build_release.ps1`（PyInstaller+Inno） | `build_release_linux.sh`（PyInstaller onedir+tar.gz） | 各自脚本，互不触碰 |
 
 ## 密钥提取子系统（wechat/keys/）

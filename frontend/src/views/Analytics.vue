@@ -712,6 +712,7 @@ import CtCard from '@/components/base/CtCard.vue'
 import CtButton from '@/components/base/CtButton.vue'
 import PersonaGallery from '@/components/persona/PersonaGallery.vue'
 import { showDialog, showConfirm } from '@/utils/dialog'
+import { safeGetItem, safeRemoveItem, safeSetItem } from '@/utils/safeStorage'
 import { toLocalDateKey } from '@/utils/datetime'
 import CtAvatar from '@/components/base/CtAvatar.vue'
 import {
@@ -848,14 +849,14 @@ const showPortraitDialog = ref(false)
         const ANALYSIS_RESUME_KEY = 'chrono_analytics_active_analysis'
         type AnalysisResumeState = { conversationId: number; phase: 'extract' | 'affinity'; taskId: string }
         function saveAnalysisResume(state: AnalysisResumeState) {
-            try { sessionStorage.setItem(ANALYSIS_RESUME_KEY, JSON.stringify(state)) } catch { /* 忽略存储异常 */ }
+            safeSetItem(ANALYSIS_RESUME_KEY, JSON.stringify(state), sessionStorage)
         }
         function clearAnalysisResume() {
-            try { sessionStorage.removeItem(ANALYSIS_RESUME_KEY) } catch { /* 忽略 */ }
+            safeRemoveItem(ANALYSIS_RESUME_KEY, sessionStorage)
         }
         function loadAnalysisResume(): AnalysisResumeState | null {
             try {
-                const raw = sessionStorage.getItem(ANALYSIS_RESUME_KEY)
+                const raw = safeGetItem(ANALYSIS_RESUME_KEY, sessionStorage)
                 const parsed = raw ? JSON.parse(raw) : null
                 if (parsed && parsed.conversationId && parsed.taskId && parsed.phase) return parsed
                 return null

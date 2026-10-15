@@ -402,6 +402,7 @@ import {
 } from 'lucide-vue-next'
 import { bridgeReady, api } from '@/api/bridge'
 import { loadSharedContact, saveSharedContact } from '@/utils/sharedContact'
+import { safeRemoveItem, safeSetItem } from '@/utils/safeStorage'
 import CtButton from '@/components/base/CtButton.vue'
 import CtAvatar from '@/components/base/CtAvatar.vue'
 import FiltersBar from '@/components/analytics/FiltersBar.vue'
@@ -657,18 +658,18 @@ async function startMonitoring() {
       return
     }
 
-    window.sessionStorage.setItem('realtime_start_request', JSON.stringify({
+    safeSetItem('realtime_start_request', JSON.stringify({
       talkerName,
       account_wxid: activeAccountWxid.value || undefined,
       createdAt: Date.now(),
-    }))
+    }), window.sessionStorage)
 
     try {
       await api.enter_floating_mode()
       router.push('/floating')
       return
     } catch (e) {
-      window.sessionStorage.removeItem('realtime_start_request')
+      safeRemoveItem('realtime_start_request', window.sessionStorage)
       realtimeState.status = 'idle'
       console.warn('进入悬浮模式失败', e)
       realtimeError.value = '进入悬浮模式失败'

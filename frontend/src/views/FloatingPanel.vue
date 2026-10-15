@@ -659,6 +659,7 @@ import * as echarts from 'echarts'
 import CtAvatar from '@/components/base/CtAvatar.vue'
 import RagFactDialog from '@/components/settings/RagFactDialog.vue'
 import { showConfirm, showDialog } from '@/utils/dialog'
+import { safeGetItem, safeRemoveItem, safeSetItem } from '@/utils/safeStorage'
 
 const router = useRouter()
 
@@ -1249,8 +1250,8 @@ function isPlaceholderSuggestion(s: any): boolean {
 }
 
 function readPendingStartRequest() {
+  const raw = safeGetItem(START_REQUEST_KEY, window.sessionStorage)
   try {
-    const raw = window.sessionStorage.getItem(START_REQUEST_KEY)
     return raw ? JSON.parse(raw) : null
   } catch {
     return null
@@ -1258,7 +1259,7 @@ function readPendingStartRequest() {
 }
 
 function clearPendingStartRequest() {
-  window.sessionStorage.removeItem(START_REQUEST_KEY)
+  safeRemoveItem(START_REQUEST_KEY, window.sessionStorage)
 }
 
 function formatResumeTime(timestamp?: number) {
@@ -1281,7 +1282,7 @@ function loadChartVisibility(displayName?: string) {
     ? `ct_chart_visibility:${(activeAccountWxid.value || 'default').trim() || 'default'}:${displayName.trim()}`
     : chartVisibilityStorageKey.value
   try {
-    const raw = window.localStorage.getItem(key)
+    const raw = safeGetItem(key)
     const parsed = raw ? JSON.parse(raw) : null
     const nextState = { ...DEFAULT_CHART_VISIBILITY, ...(parsed || {}) }
     for (const item of chartConfigItems) {
@@ -1295,11 +1296,7 @@ function loadChartVisibility(displayName?: string) {
 }
 
 function persistChartVisibility() {
-  try {
-    window.localStorage.setItem(chartVisibilityStorageKey.value, JSON.stringify(chartVisibility))
-  } catch (error) {
-    console.error('保存图表设置失败:', error)
-  }
+  safeSetItem(chartVisibilityStorageKey.value, JSON.stringify(chartVisibility))
 }
 
 function toggleChartVisibility(key: ChartVisibilityKey) {

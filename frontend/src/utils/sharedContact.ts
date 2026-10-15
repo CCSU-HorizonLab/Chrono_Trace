@@ -5,6 +5,8 @@
  * （chrono:wechat-account-changed）同模式——不引入 Pinia，保持轻量。
  */
 
+import { safeGetItem, safeRemoveItem, safeSetItem } from './safeStorage'
+
 export interface SharedContact {
   conversationId: number
   displayName: string
@@ -15,20 +17,18 @@ const STORAGE_KEY = 'chrono_selected_contact'
 export const CONTACT_CHANGED_EVENT = 'chrono:contact-changed'
 
 export function saveSharedContact(contact: SharedContact | null): void {
-  try {
-    if (contact) {
-      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(contact))
-    } else {
-      sessionStorage.removeItem(STORAGE_KEY)
-    }
-    window.dispatchEvent(new CustomEvent(CONTACT_CHANGED_EVENT, { detail: contact }))
-  } catch { /* 忽略存储异常 */ }
+  if (contact) {
+    safeSetItem(STORAGE_KEY, JSON.stringify(contact), sessionStorage)
+  } else {
+    safeRemoveItem(STORAGE_KEY, sessionStorage)
+  }
+  window.dispatchEvent(new CustomEvent(CONTACT_CHANGED_EVENT, { detail: contact }))
 }
 
 export function loadSharedContact(): SharedContact | null {
+  const raw = safeGetItem(STORAGE_KEY, sessionStorage)
+  if (!raw) return null
   try {
-    const raw = sessionStorage.getItem(STORAGE_KEY)
-    if (!raw) return null
     const parsed = JSON.parse(raw)
     if (parsed?.conversationId && parsed?.displayName) return parsed
     return null

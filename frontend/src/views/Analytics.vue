@@ -181,114 +181,113 @@
       <p class="empty-hint" style="display: inline-flex; align-items: center; gap: 6px;"><Lightbulb :size="14" style="color: var(--ct-color-info); flex-shrink: 0;" /> 我们正在处理特征提取和模型推理</p>
     </div>
 
-    <!-- Affinity Dashboard Two-Col Layout -->
-    <div v-if="analysisResult && !isGlobalAnalyzing" class="ct-grid-1-1 affinity-dashboard">
-      <!-- Left Column: Overview & Cards -->
-      <div class="col-main">
-        <div class="summary-row">
-          <CtCard class="score-overview-card">
-            <div class="score-section">
-              <div class="score-header">
-                <span class="score-title">总体好感度</span>
-                <div class="trend-badge" v-if="analysisResult.score_trend != null"
-                  :title="analysisResult.analysis_caliber ? '与上次分析的分数差（同评分口径）' : '与上次分析的分数差'">
-                  较上次 <span :class="analysisResult.score_trend >= 0 ? 'up' : 'down'">{{ analysisResult.score_trend > 0 ? '↑' : '↓' }}{{ Math.abs(analysisResult.score_trend).toFixed(1) }} 分</span>
-                </div>
-                <span
-                  v-if="analysisResult.analysis_stale"
-                  class="stale-badge"
-                  :title="analysisResult.pending_message_count ? `有 ${analysisResult.pending_message_count} 条新消息未纳入当前分数` : '消息集已变化，建议重新分析'"
-                >{{ analysisResult.pending_message_count ? `${analysisResult.pending_message_count} 条新消息待分析` : '结果待更新' }}</span>
-              </div>
-              
-              <div class="score-visual">
-                <div class="ct-score-ring large">
-                  <svg viewBox="0 0 120 120" class="circular-chart">
-                    <circle class="circle-bg" cx="60" cy="60" r="50" fill="none" stroke="var(--ct-bg-tertiary)" stroke-width="10" />
-                    <circle class="circle-fill" cx="60" cy="60" r="50" fill="none" 
-                      stroke="var(--ct-color-primary)" stroke-width="10" stroke-linecap="round"
-                      :stroke-dasharray="314.159" :stroke-dashoffset="314.159 * (1 - displayScore / 100)"
-                      transform="rotate(-90 60 60)" />
-                  </svg>
-                  <div class="ct-score-text">
-                    <span class="ct-score-num">{{ Math.round(displayScore) }}</span>
-                    <span class="ct-score-unit">%</span>
-                  </div>
-                </div>
-                
-                <div class="qualitative-analysis">
-                  <h3>定性分析</h3>
-                  <div class="analysis-bubble">
-                    <p>{{ analysisResult.overall_interpretation }}</p>
-                  </div>
-                </div>
-              </div>
+    <!-- Affinity Verdict Band + Detail Columns -->
+    <template v-if="analysisResult && !isGlobalAnalyzing">
+      <!-- 结论带：总分（多少）→ 雷达（形状）→ 解读（含义），从左到右一眼读完 -->
+      <CtCard class="verdict-band">
+        <div class="score-header">
+          <span class="score-title">总体好感度</span>
+          <div class="trend-badge" v-if="analysisResult.score_trend != null"
+            :title="analysisResult.analysis_caliber ? '与上次分析的分数差（同评分口径）' : '与上次分析的分数差'">
+            较上次 <span :class="analysisResult.score_trend >= 0 ? 'up' : 'down'">{{ analysisResult.score_trend > 0 ? '↑' : '↓' }}{{ Math.abs(analysisResult.score_trend).toFixed(1) }} 分</span>
+          </div>
+          <span
+            v-if="analysisResult.analysis_stale"
+            class="stale-badge"
+            :title="analysisResult.pending_message_count ? `有 ${analysisResult.pending_message_count} 条新消息未纳入当前分数` : '消息集已变化，建议重新分析'"
+          >{{ analysisResult.pending_message_count ? `${analysisResult.pending_message_count} 条新消息待分析` : '结果待更新' }}</span>
+        </div>
+
+        <div class="score-visual">
+          <div class="ct-score-ring large">
+            <svg viewBox="0 0 120 120" class="circular-chart">
+              <circle class="circle-bg" cx="60" cy="60" r="50" fill="none" stroke="var(--ct-bg-tertiary)" stroke-width="10" />
+              <circle class="circle-fill" cx="60" cy="60" r="50" fill="none"
+                stroke="var(--ct-color-primary)" stroke-width="10" stroke-linecap="round"
+                :stroke-dasharray="314.159" :stroke-dashoffset="314.159 * (1 - displayScore / 100)"
+                transform="rotate(-90 60 60)" />
+            </svg>
+            <div class="ct-score-text">
+              <span class="ct-score-num">{{ Math.round(displayScore) }}</span>
+              <span class="ct-score-unit">%</span>
             </div>
-          </CtCard>
-        </div>
+          </div>
 
-        <div class="dimension-cards-grid">
-          <AffinityScoreCard v-if="analysisResult.interaction_investment" title="互动投入"
-            :score="analysisResult.interaction_investment.score"
-            :max-score="100"
-            :weight="analysisResult.interaction_investment.weight"
-            :interpretation="analysisResult.interaction_investment.interpretation" />
-          <AffinityScoreCard v-if="analysisResult.emotional_resonance" title="情感共鸣"
-            :score="analysisResult.emotional_resonance.score"
-            :max-score="100"
-            :weight="analysisResult.emotional_resonance.weight"
-            :interpretation="analysisResult.emotional_resonance.interpretation" />
-          <AffinityScoreCard v-if="analysisResult.closeness_signals" title="亲近信号"
-            :score="analysisResult.closeness_signals.score"
-            :max-score="100"
-            :weight="analysisResult.closeness_signals.weight"
-            :interpretation="analysisResult.closeness_signals.interpretation" />
-          <AffinityScoreCard v-if="analysisResult.preference_compatibility" title="喜好兼容度"
-            :score="analysisResult.preference_compatibility.score"
-            :max-score="100"
-            :weight="analysisResult.preference_compatibility.weight"
-            :interpretation="analysisResult.preference_compatibility.interpretation"
-            :is-bonus="!(analysisResult.preference_compatibility.weight > 0)"
-            :bonus-value="analysisResult.preference_compatibility.bonus_scores?.preference_bonus" />
-          <AffinityScoreCard v-if="analysisResult.llm_relationship" title="AI 关系评估"
-            :score="analysisResult.llm_relationship.score"
-            :max-score="100"
-            :weight="analysisResult.llm_relationship.weight"
-            :interpretation="analysisResult.llm_relationship.interpretation" />
-        </div>
-      </div>
-
-      <!-- Right Column: Radar & Breakdown -->
-      <div class="col-side">
-        <CtCard title="关系维度雷达图" class="radar-card">
-          <div class="radar-wrapper">
+          <div class="verdict-radar">
             <DimensionRadar :dimension-scores="allDimensions" />
           </div>
 
-          <div class="breakdowns-container">
-            <SubScoreBreakdown v-if="analysisResult.interaction_investment" title="互动投入"
-              :sub-scores="analysisResult.interaction_investment.sub_scores" />
-            <SubScoreBreakdown v-if="analysisResult.emotional_resonance" title="情感共鸣"
-              :sub-scores="analysisResult.emotional_resonance.sub_scores"
-              :confidence-meta="analysisResult.emotional_resonance.confidence_meta" />
-            <SubScoreBreakdown v-if="analysisResult.closeness_signals" title="亲近信号"
-              :sub-scores="analysisResult.closeness_signals.sub_scores"
-              :confidence-meta="analysisResult.closeness_signals.confidence_meta" />
-            <SubScoreBreakdown v-if="analysisResult.preference_compatibility" title="喜好兼容度"
-              :sub-scores="analysisResult.preference_compatibility.sub_scores" />
-            <SubScoreBreakdown v-if="analysisResult.llm_relationship" title="AI 关系评估"
-              :sub-scores="analysisResult.llm_relationship.sub_scores"
-              :notes="llmEvidenceNotes" />
-            <p v-else-if="analysisResult.llm_relationship_absent_reason" class="llm-absent-note">
-              AI 关系评估未参与本次评分：{{ analysisResult.llm_relationship_absent_reason }}
-            </p>
+          <div class="qualitative-analysis">
+            <h3>定性分析</h3>
+            <div class="analysis-bubble">
+              <p>{{ analysisResult.overall_interpretation }}</p>
+            </div>
           </div>
+        </div>
+      </CtCard>
 
-          <!-- 风险预警：独立于好感总分，双证据判定，不进雷达/总分 -->
-          <RiskSignalCard :assessment="analysisResult.risk_assessment" />
-        </CtCard>
+      <div class="ct-grid-1-1 affinity-dashboard">
+        <!-- Left Column: Dimension Cards -->
+        <div class="col-main">
+          <div class="dimension-cards-grid">
+            <AffinityScoreCard v-if="analysisResult.interaction_investment" title="互动投入"
+              :score="analysisResult.interaction_investment.score"
+              :max-score="100"
+              :weight="analysisResult.interaction_investment.weight"
+              :interpretation="analysisResult.interaction_investment.interpretation" />
+            <AffinityScoreCard v-if="analysisResult.emotional_resonance" title="情感共鸣"
+              :score="analysisResult.emotional_resonance.score"
+              :max-score="100"
+              :weight="analysisResult.emotional_resonance.weight"
+              :interpretation="analysisResult.emotional_resonance.interpretation" />
+            <AffinityScoreCard v-if="analysisResult.closeness_signals" title="亲近信号"
+              :score="analysisResult.closeness_signals.score"
+              :max-score="100"
+              :weight="analysisResult.closeness_signals.weight"
+              :interpretation="analysisResult.closeness_signals.interpretation" />
+            <AffinityScoreCard v-if="analysisResult.preference_compatibility" title="喜好兼容度"
+              :score="analysisResult.preference_compatibility.score"
+              :max-score="100"
+              :weight="analysisResult.preference_compatibility.weight"
+              :interpretation="analysisResult.preference_compatibility.interpretation"
+              :is-bonus="!(analysisResult.preference_compatibility.weight > 0)"
+              :bonus-value="analysisResult.preference_compatibility.bonus_scores?.preference_bonus" />
+            <AffinityScoreCard v-if="analysisResult.llm_relationship" title="AI 关系评估"
+              :score="analysisResult.llm_relationship.score"
+              :max-score="100"
+              :weight="analysisResult.llm_relationship.weight"
+              :interpretation="analysisResult.llm_relationship.interpretation" />
+          </div>
+        </div>
+
+        <!-- Right Column: Sub-score Breakdowns & Risk -->
+        <div class="col-side">
+          <CtCard title="维度拆解" class="breakdown-card">
+            <div class="breakdowns-container">
+              <SubScoreBreakdown v-if="analysisResult.interaction_investment" title="互动投入"
+                :sub-scores="analysisResult.interaction_investment.sub_scores" />
+              <SubScoreBreakdown v-if="analysisResult.emotional_resonance" title="情感共鸣"
+                :sub-scores="analysisResult.emotional_resonance.sub_scores"
+                :confidence-meta="analysisResult.emotional_resonance.confidence_meta" />
+              <SubScoreBreakdown v-if="analysisResult.closeness_signals" title="亲近信号"
+                :sub-scores="analysisResult.closeness_signals.sub_scores"
+                :confidence-meta="analysisResult.closeness_signals.confidence_meta" />
+              <SubScoreBreakdown v-if="analysisResult.preference_compatibility" title="喜好兼容度"
+                :sub-scores="analysisResult.preference_compatibility.sub_scores" />
+              <SubScoreBreakdown v-if="analysisResult.llm_relationship" title="AI 关系评估"
+                :sub-scores="analysisResult.llm_relationship.sub_scores"
+                :notes="llmEvidenceNotes" />
+              <p v-else-if="analysisResult.llm_relationship_absent_reason" class="llm-absent-note">
+                AI 关系评估未参与本次评分：{{ analysisResult.llm_relationship_absent_reason }}
+              </p>
+            </div>
+
+            <!-- 风险预警：独立于好感总分，双证据判定，不进雷达/总分 -->
+            <RiskSignalCard :assessment="analysisResult.risk_assessment" />
+          </CtCard>
+        </div>
       </div>
-    </div>
+    </template>
     </template>
   </div>
 
@@ -2521,24 +2520,9 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   flex-direction: column;
 }
 
-.summary-row {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-}
-
-.score-overview-card {
-  height: 100%;
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-}
-
-.score-section {
-  display: flex;
-  flex-direction: column;
-  gap: var(--ct-space-md);
+/* 结论带：高度由内容决定，不再镜像右列被拉伸（原先空白的根源） */
+.verdict-band {
+  margin-bottom: var(--ct-space-md);
 }
 
 .score-header {
@@ -2575,20 +2559,22 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   cursor: help;
 }
 
+/* 三段结论：总分（数量）→ 雷达（形状）→ 解读（含义），左到右 */
 .score-visual {
-  display: flex;
-  align-items: center;
+  display: grid;
+  grid-template-columns: auto minmax(240px, 300px) 1fr;
   gap: var(--ct-space-2xl);
+  align-items: center;
 }
 
 .ct-score-ring.large {
-  width: 140px;
-  height: 140px;
+  width: 150px;
+  height: 150px;
   flex-shrink: 0;
 }
 
 .ct-score-ring.large .ct-score-num {
-  font-size: 44px;
+  font-size: 48px;
   background: linear-gradient(135deg, var(--ct-color-primary), #a855f7);
   -webkit-background-clip: text;
   background-clip: text;
@@ -2602,7 +2588,6 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
 }
 
 .qualitative-analysis {
-  flex: 1;
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -2624,7 +2609,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   color: var(--ct-text-secondary);
   border-left: 4px solid var(--ct-color-primary);
   overflow-y: auto;
-  max-height: 160px;
+  max-height: 180px;
 }
 
 /* Dimension Cards Grid */
@@ -2641,26 +2626,23 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   flex-direction: column;
 }
 
+/* 结论带内的雷达 */
+.verdict-radar {
+  height: 230px;
+}
+
 /* Side Column */
-.radar-card {
+.breakdown-card {
   flex: 1;
   display: flex;
   flex-direction: column;
 }
 
-.radar-card :deep(.ct-card-bd) {
+.breakdown-card :deep(.ct-card-bd) {
   flex: 1;
   display: flex;
   flex-direction: column;
   gap: var(--ct-space-md);
-}
-
-.radar-wrapper {
-  flex: 1;
-  min-height: 180px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
 }
 
 .breakdowns-container {
@@ -2682,8 +2664,12 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   }
 
   .score-visual {
-    flex-direction: column;
-    gap: var(--ct-space-lg);
+    grid-template-columns: 1fr;
+    justify-items: center;
+  }
+
+  .verdict-radar {
+    width: 100%;
   }
 
   .dimension-cards-grid {
@@ -2703,11 +2689,6 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: translateY(0); }
-}
-
-/* Component Overrides for Analytics Context */
-.score-overview-card :deep(.card-body) {
-  padding: var(--ct-space-xl);
 }
 
 /* --- Interactive Features Layout --- */

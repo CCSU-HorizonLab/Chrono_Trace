@@ -89,7 +89,7 @@ def export_one(model_dir: Path, out_dir: Path, model_type: str) -> None:
     # int8（含 per-channel）实测崩坏（cosine 0.37-0.70）不可用。
     # 精度择优（CPU 实测）：嵌入 fp32 快 32%——发行产物即上面导出的
     # fp32，跳过 fp16 转换；分类器 fp16 反快 14%——仍转换
-    if mtype == "embedding":
+    if model_type == "embedding":
         print("[量化] 嵌入产物为 fp32（CPU 实测更快），跳过 fp16 转换")
     else:
         import onnx

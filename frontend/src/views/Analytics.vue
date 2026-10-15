@@ -102,7 +102,7 @@
   </div>
 
   <!-- TAB 1: Affinity（群聊切换为群聊工作台——四维好感度对群聊意义有限） -->
-  <div v-show="currentTab === 'affinity' && selectedConversationId" class="tab-content fade-in">
+  <div v-show="currentTab === 'affinity' && selectedConversationId" class="tab-content fade-in affinity-tab">
     <div v-if="isGroupConversation" class="group-workbench">
       <CtCard class="group-stats-card" title="群聊发言统计">
         <div v-if="groupStatsLoading" class="group-empty">统计加载中...</div>
@@ -226,8 +226,8 @@
         </div>
       </CtCard>
 
+      <!-- 第二部分：左=四个统计维度卡并列（AI 关系评估通栏收底），右=风险预警 -->
       <div class="ct-grid-1-1 affinity-dashboard">
-        <!-- Left Column: Dimension Cards -->
         <div class="col-main">
           <div class="dimension-cards-grid">
             <AffinityScoreCard v-if="analysisResult.interaction_investment" title="互动投入"
@@ -252,7 +252,7 @@
               :interpretation="analysisResult.preference_compatibility.interpretation"
               :is-bonus="!(analysisResult.preference_compatibility.weight > 0)"
               :bonus-value="analysisResult.preference_compatibility.bonus_scores?.preference_bonus" />
-            <AffinityScoreCard v-if="analysisResult.llm_relationship" title="AI 关系评估"
+            <AffinityScoreCard v-if="analysisResult.llm_relationship" class="span-full" title="AI 关系评估"
               :score="analysisResult.llm_relationship.score"
               :max-score="100"
               :weight="analysisResult.llm_relationship.weight"
@@ -260,33 +260,36 @@
           </div>
         </div>
 
-        <!-- Right Column: Sub-score Breakdowns & Risk -->
+        <!-- 右列：风险预警——独立于好感总分，双证据判定，不进雷达/总分 -->
         <div class="col-side">
-          <CtCard title="维度拆解" class="breakdown-card">
-            <div class="breakdowns-container">
-              <SubScoreBreakdown v-if="analysisResult.interaction_investment" title="互动投入"
-                :sub-scores="analysisResult.interaction_investment.sub_scores" />
-              <SubScoreBreakdown v-if="analysisResult.emotional_resonance" title="情感共鸣"
-                :sub-scores="analysisResult.emotional_resonance.sub_scores"
-                :confidence-meta="analysisResult.emotional_resonance.confidence_meta" />
-              <SubScoreBreakdown v-if="analysisResult.closeness_signals" title="亲近信号"
-                :sub-scores="analysisResult.closeness_signals.sub_scores"
-                :confidence-meta="analysisResult.closeness_signals.confidence_meta" />
-              <SubScoreBreakdown v-if="analysisResult.preference_compatibility" title="喜好兼容度"
-                :sub-scores="analysisResult.preference_compatibility.sub_scores" />
-              <SubScoreBreakdown v-if="analysisResult.llm_relationship" title="AI 关系评估"
-                :sub-scores="analysisResult.llm_relationship.sub_scores"
-                :notes="llmEvidenceNotes" />
-              <p v-else-if="analysisResult.llm_relationship_absent_reason" class="llm-absent-note">
-                AI 关系评估未参与本次评分：{{ analysisResult.llm_relationship_absent_reason }}
-              </p>
-            </div>
-
-            <!-- 风险预警：独立于好感总分，双证据判定，不进雷达/总分 -->
-            <RiskSignalCard :assessment="analysisResult.risk_assessment" />
-          </CtCard>
+          <RiskSignalCard :assessment="analysisResult.risk_assessment" />
+          <p v-if="!analysisResult.risk_assessment" class="risk-empty-hint">
+            旧分析结果不含风险预警，重新运行关系洞察分析后在此生成
+          </p>
         </div>
       </div>
+
+      <!-- 维度拆解：页尾通栏，子维度得分明细 -->
+      <CtCard title="维度拆解" class="breakdown-card">
+        <div class="breakdowns-container">
+          <SubScoreBreakdown v-if="analysisResult.interaction_investment" title="互动投入"
+            :sub-scores="analysisResult.interaction_investment.sub_scores" />
+          <SubScoreBreakdown v-if="analysisResult.emotional_resonance" title="情感共鸣"
+            :sub-scores="analysisResult.emotional_resonance.sub_scores"
+            :confidence-meta="analysisResult.emotional_resonance.confidence_meta" />
+          <SubScoreBreakdown v-if="analysisResult.closeness_signals" title="亲近信号"
+            :sub-scores="analysisResult.closeness_signals.sub_scores"
+            :confidence-meta="analysisResult.closeness_signals.confidence_meta" />
+          <SubScoreBreakdown v-if="analysisResult.preference_compatibility" title="喜好兼容度"
+            :sub-scores="analysisResult.preference_compatibility.sub_scores" />
+          <SubScoreBreakdown v-if="analysisResult.llm_relationship" title="AI 关系评估"
+            :sub-scores="analysisResult.llm_relationship.sub_scores"
+            :notes="llmEvidenceNotes" />
+          <p v-else-if="analysisResult.llm_relationship_absent_reason" class="llm-absent-note">
+            AI 关系评估未参与本次评分：{{ analysisResult.llm_relationship_absent_reason }}
+          </p>
+        </div>
+      </CtCard>
     </template>
     </template>
   </div>
@@ -2517,6 +2520,26 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   align-items: stretch;
 }
 
+/* 关系洞察页改为纵向文档流（结论带 → 维度卡|风险 → 维度拆解通栏），整页可滚动 */
+.tab-content.affinity-tab {
+  overflow-y: auto;
+}
+
+.tab-content.affinity-tab .affinity-dashboard {
+  flex: 0 0 auto;
+}
+
+/* 风险预警缺位（旧缓存）时的占位提示 */
+.risk-empty-hint {
+  margin-top: var(--ct-space-md);
+  padding: var(--ct-space-lg);
+  border: 1px dashed var(--ct-border-color);
+  border-radius: var(--ct-radius-md);
+  font-size: 12px;
+  color: var(--ct-text-tertiary);
+  text-align: center;
+}
+
 .col-main, .col-side {
   display: flex;
   flex-direction: column;
@@ -2623,6 +2646,11 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   flex: 1;
 }
 
+/* AI 关系评估：解读段较长，通栏收底 */
+.dimension-cards-grid .span-full {
+  grid-column: 1 / -1;
+}
+
 .dimension-cards-grid > * {
   display: flex;
   flex-direction: column;
@@ -2633,23 +2661,14 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   height: 230px;
 }
 
-/* Side Column */
+/* 维度拆解：页尾通栏卡 */
 .breakdown-card {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-}
-
-.breakdown-card :deep(.ct-card-bd) {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: var(--ct-space-md);
+  margin-top: var(--ct-space-md);
 }
 
 .breakdowns-container {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: var(--ct-space-lg);
 }
 

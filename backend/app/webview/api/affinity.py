@@ -13,6 +13,47 @@ logger = logging.getLogger(__name__)
 
 import importlib, uuid
 
+
+def _auto_enqueue_rag_index(conversation_id: int) -> None:
+    """好感度分析完成后，为该联系人自动排队构建 RAG 记忆索引。
+
+    跳过条件（任一命中即不排队）：
+    - RAG 主开关关闭（队列 worker 也会丢弃，提前省一趟）
+    - 联系人记忆被显式停用（清空记忆的语义不被分析动作复活）
+    - 已在构建/排队中，或已有 ready/stale 索引（增量刷新由监听
+      prewarm/建议 ensure 负责，此处只补「从未建过」的空档）
+    """
+    try:
+        from ...db.connection import get_db
+        from ...services.realtime.rag.config import load_rag_settings
+        from ...services.realtime.rag.indexer import RagIndexQueue, get_active_and_queued
+        from ...services.realtime.rag.store import RagStore
+
+        if not load_rag_settings().get("rag_enabled"):
+            return
+        row = get_db().execute(
+            "SELECT account_wxid FROM conversations WHERE id = ?",
+            (int(conversation_id),),
+        ).fetchone()
+        if not row:
+            return
+        account = str(row["account_wxid"] or "").strip()
+        if not account:
+            return
+        key = (account, int(conversation_id))
+        if key in get_active_and_queued():
+            return
+        status = RagStore(get_db()).get_status(account, int(conversation_id)) or {}
+        if not status.get("enabled", 1):
+            return
+        if str(status.get("status") or "") in {"ready", "stale"}:
+            return
+        RagIndexQueue.enqueue(account, int(conversation_id))
+        logger.info("[Bridge] 分析完成，已排队构建 RAG 记忆索引: conv=%s", conversation_id)
+    except Exception as exc:
+        logger.debug("[Bridge] 分析后 RAG 自动排队跳过: %s", exc)
+
+
 class AffinityApiMixin:
     """好感度分析（四维评分/关系上下文/偏好关键词）"""
 
@@ -367,6 +408,11 @@ class AffinityApiMixin:
                         cancel_event=self._analysis_cancel_event,
                         task_id=task_id,
                     )
+                    # 分析完成自动补建 RAG 记忆索引：纯历史分析用户不开
+                    # 监听时记忆管理会一直停在 pending（建索引入口只有监听
+                    # prewarm/建议 ensure/手动构建三个）。失败只记日志，
+                    # 不影响分析结果本身
+                    _auto_enqueue_rag_index(int(conversation_id))
                 except Exception as e:
                     logger.error(f"[Bridge] 异步好感度分析失败: {e}")
                     import traceback

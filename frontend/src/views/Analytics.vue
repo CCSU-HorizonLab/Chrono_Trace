@@ -638,6 +638,7 @@
     :display-name="currentContactName"
     :account-wxid="activeAccountWxid || undefined"
     :show-self-panel="true"
+    :cancel-key="selectedConversationId || 0"
     @close="showPortraitDialog = false"
     @generated="handlePortraitGenerated"
   />

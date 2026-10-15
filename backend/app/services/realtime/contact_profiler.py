@@ -12,7 +12,7 @@ import json
 import logging
 import math
 import time
-from typing import Optional
+from typing import Callable, Optional
 from .llm_http import apply_interactive_fast_mode, post_json_with_retries
 from .profile_llm_retry import call_profile_llm_with_budget_retry
 from ..wechat.account_settings import get_active_wechat_account_wxid, load_settings_from_file
@@ -186,6 +186,7 @@ class ContactProfiler:
         budget_level: str = 'medium',
         custom_budget: int = 0,
         account_wxid: str = "",
+        should_abort: Optional[Callable[[], bool]] = None,
     ) -> dict:
         """
         生成联系人画像（调 LLM）
@@ -239,7 +240,7 @@ class ContactProfiler:
             _print(f"[ContactProfiler] Prompt 长度: {len(user_prompt)} 字符")
 
             # 5. 调用 LLM，传入预算以动态决定输出额度
-            profile_data = self._call_llm(user_prompt)
+            profile_data = self._call_llm(user_prompt, should_abort=should_abort)
 
             _print("[ContactProfiler] ✅ 画像生成成功!")
             _print(f"[ContactProfiler] 标签: {profile_data.get('personality_tags', [])}")
@@ -686,7 +687,10 @@ class ContactProfiler:
 
         return "\n".join(parts)
 
-    def _call_llm(self, user_prompt: str, _legacy_sample_budget: int | None = None) -> dict:
+    def _call_llm(
+        self, user_prompt: str, _legacy_sample_budget: int | None = None,
+        should_abort: Optional[Callable[[], bool]] = None,
+    ) -> dict:
         """调用 LLM 生成画像"""
 
         # 获取激活的模型配置
@@ -752,6 +756,12 @@ class ContactProfiler:
         if api_key:
             headers['Authorization'] = f'Bearer {api_key}'
 
+        post = post_json_with_retries
+        if should_abort is not None:
+            # 弹窗关闭取消：should_abort 传入 HTTP 层，在尝试边界中止
+            def post(**kw):
+                return post_json_with_retries(should_abort=should_abort, **kw)
+
         parsed = call_profile_llm_with_budget_retry(
             url=url,
             payload=payload,
@@ -760,7 +770,7 @@ class ContactProfiler:
             initial_budget=dynamic_max_tokens,
             parse_json=self._parse_profile_json,
             extract_json_candidate=self._extract_json_candidate,
-            post_json=post_json_with_retries,
+            post_json=post,
             log=_print,
             log_prefix='[ContactProfiler]',
         )

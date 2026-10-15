@@ -373,3 +373,96 @@ def test_cancel_aborts_pending_ask(monkeypatch, db):
     with pytest.raises(HistoryQAError) as exc:
         HistoryQAService().ask(1, "样本")
     assert "取消" in str(exc.value)
+
+
+# ===== RAG 长期记忆槽 =====
+
+
+def _fake_rag(monkeypatch, items):
+    """替换 RAG 检索器：返回给定记忆条目；返回 calls 供断言。"""
+    import app.services.realtime.rag.config as ragcfg
+    import app.services.realtime.rag.retriever as retriever_mod
+
+    monkeypatch.setattr(ragcfg, "load_rag_settings", lambda: {"rag_enabled": True})
+    calls = {}
+
+    class _Retriever:
+        def __init__(self):
+            pass
+
+        def retrieve(self, **kw):
+            calls.update(kw)
+            return {"items": [{"content": c} for c in items], "strategy": "facts"}
+
+    monkeypatch.setattr(retriever_mod, "RagRetriever", _Retriever)
+    return calls
+
+
+def test_rag_memories_injected_into_prompt(monkeypatch, db):
+    seed(db, 1, "周末去爬山吧，带上防晒", 1700000100)
+    calls = _fake_rag(monkeypatch, ["对方每周三固定打羽毛球", "对方对猫过敏"])
+
+    result, http = ask(monkeypatch, db, "我们聊过爬山吗")
+
+    sent = json.dumps(http.calls[0]["payload"], ensure_ascii=False)
+    assert "【长期记忆】" in sent
+    assert "- 对方每周三固定打羽毛球" in sent and "对猫过敏" in sent
+    # 检索键：当前会话 + 原始问题
+    assert calls["conversation_id"] == 1 and calls["account_wxid"] == "wxid_me"
+    assert calls["query"] == "我们聊过爬山吗"
+    # 消息引用编号不受记忆条目影响
+    assert result["citations"] and result["citations"][0]["index"] == 1
+
+
+def test_rag_memories_absent_when_retrieval_empty(monkeypatch, db):
+    seed(db, 1, "周末去爬山吧", 1700000100)
+    _fake_rag(monkeypatch, [])
+
+    result, http = ask(monkeypatch, db, "我们聊过爬山吗")
+
+    sent = json.dumps(http.calls[0]["payload"], ensure_ascii=False)
+    assert "【长期记忆】（从历史聊天提炼" not in sent  # 系统提示词规则行除外
+
+
+def test_rag_memories_skipped_when_disabled(monkeypatch, db):
+    seed(db, 1, "周末去爬山吧", 1700000100)
+    import app.services.realtime.rag.config as ragcfg
+    import app.services.realtime.rag.retriever as retriever_mod
+
+    monkeypatch.setattr(ragcfg, "load_rag_settings", lambda: {"rag_enabled": False})
+
+    class _Boom:
+        def __init__(self):
+            raise AssertionError("RAG 关闭时不应构造检索器")
+
+    monkeypatch.setattr(retriever_mod, "RagRetriever", _Boom)
+
+    result, http = ask(monkeypatch, db, "我们聊过爬山吗")
+    assert "【长期记忆】（从历史聊天提炼" not in json.dumps(http.calls[0]["payload"], ensure_ascii=False)
+
+
+def test_rag_memories_redacted_for_remote(monkeypatch, db):
+    """远程模型：记忆条目同样过脱敏（失败即阻断红线）。"""
+    import app.services.realtime.privacy_redactor as prmod
+    import app.services.realtime.rag.config as ragcfg
+    import app.services.realtime.rag.fact_llm as factllm
+
+    seed(db, 1, "周末去爬山吧，我电话 13800001111", 1700000100)
+    _fake_rag(monkeypatch, ["对方手机号 13800001111"])
+    monkeypatch.setattr(
+        factllm,
+        "get_active_model_config",
+        lambda: {"api_base_url": "https://api.deepseek.com/v1", "model_id": "d", "api_key": ""},
+    )
+    monkeypatch.setattr(ragcfg, "is_remote_llm_model", lambda cfg: True)
+    monkeypatch.setattr(prmod, "PrivacyRedactor", lambda conn: _FakeRedactor())
+
+    http = _FakeHTTP()
+    monkeypatch.setattr(hqmod, "post_json_with_retries", http)
+    monkeypatch.setattr(hqmod, "_load_question_vector", lambda q: None)
+
+    HistoryQAService().ask(1, "我们聊过爬山吗")
+
+    sent = json.dumps(http.calls[0]["payload"], ensure_ascii=False)
+    assert "【长期记忆】" in sent
+    assert "13800001111" not in sent and "[手机号]" in sent

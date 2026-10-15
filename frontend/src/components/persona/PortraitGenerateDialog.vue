@@ -12,9 +12,9 @@
           </div>
           <div class="pd-title-area">
             <h3 class="pd-title">{{ generating ? '正在生成画像' : '生成画像' }}</h3>
-            <p class="pd-subtitle">{{ generating ? 'LLM 分析历史聊天中，完成后自动更新（期间请勿开始监听）' : `围绕「${displayName}」历史聊天，按需生成画像` }}</p>
+            <p class="pd-subtitle">{{ generating ? 'LLM 分析历史聊天中，可随时关闭终止；完成后自动更新（期间请勿开始监听）' : `围绕「${displayName}」历史聊天，按需生成画像` }}</p>
           </div>
-          <button v-if="!generating" class="pd-close" @click="$emit('close')" aria-label="关闭">
+          <button class="pd-close" @click="handleClose" aria-label="关闭">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
           </button>
         </div>
@@ -67,7 +67,14 @@
 
         <div class="pd-footer">
           <p v-if="genError" class="pd-error">{{ genError }}</p>
-          <button class="pd-btn pd-btn-ghost" :disabled="generating" @click="$emit('close')">取消</button>
+          <button
+            class="pd-btn"
+            :class="generating ? 'pd-btn-stop' : 'pd-btn-ghost'"
+            @click="handleClose"
+            :title="generating ? '关闭弹窗并终止本次画像生成' : undefined"
+          >
+            {{ generating ? '终止并关闭' : '取消' }}
+          </button>
           <button
             class="pd-btn pd-btn-primary"
             @click="handleGenerate"
@@ -98,10 +105,13 @@ const props = withDefaults(defineProps<{
   defaultContact?: boolean
   /** 初始时是否预选自我克隆 */
   defaultSelf?: boolean
+  /** 取消键（conversation_id）：生成中关闭弹窗时终止后端画像生成 */
+  cancelKey?: number
 }>(), {
   showSelfPanel: true,
   defaultContact: true,
   defaultSelf: false,
+  cancelKey: 0,
 })
 
 const emit = defineEmits<{
@@ -115,6 +125,7 @@ const contactBudget = ref(localStorage.getItem('chrono:portraitContactBudget') |
 const selfBudget = ref('medium')
 const generating = ref(false)
 const genError = ref('')
+const cancelRequested = ref(false)
 
 const contactBudgetOptions = [
   { value: 'low', label: '最近 7 天', tip: '简略' },
@@ -126,10 +137,30 @@ const selfBudgetOptions = [
   { value: 'high', label: '最近 90 天', tip: '精细' },
 ]
 
+/** 关闭弹窗：生成中先终止后端画像生成（在途调用随后以 cancelled 返回，
+ *  静默收尾不再弹错误），弹窗立即关闭不等 HTTP */
+async function handleClose() {
+  if (!generating.value) {
+    emit('close')
+    return
+  }
+  cancelRequested.value = true
+  try {
+    await bridgeReady()
+    if (props.cancelKey) {
+      await api.cancel_profile_generation(props.cancelKey)
+    }
+  } catch {
+    // 取消请求失败不阻断关闭：在途生成最多跑完当前尝试
+  }
+  emit('close')
+}
+
 async function handleGenerate() {
   if (generating.value) return
   generating.value = true
   genError.value = ''
+  cancelRequested.value = false
   let hasError = false
   let errorMsg = ''
   let generatedKind: 'contact' | 'self' | 'both' = 'contact'
@@ -141,18 +172,28 @@ async function handleGenerate() {
       // 记住档位：Analytics 快捷「更新画像」与弹窗下次默认保持一致
       localStorage.setItem('chrono:portraitContactBudget', contactBudget.value)
       const res = await api.generate_contact_profile(
-        props.displayName, contactBudget.value, undefined, props.accountWxid || undefined
+        props.displayName, contactBudget.value, undefined, props.accountWxid || undefined,
+        props.cancelKey || undefined
       )
+      if (cancelRequested.value || res?.cancelled) {
+        return
+      }
       if (!res || !res.ok) {
         hasError = true
         errorMsg = res?.error || '联系人画像生成失败'
       }
     }
 
+    if (cancelRequested.value) return
+
     if (props.showSelfPanel && generateSelf.value && !hasError) {
       const res = await api.generate_self_profile(
-        props.displayName, selfBudget.value, undefined, props.accountWxid || undefined
+        props.displayName, selfBudget.value, undefined, props.accountWxid || undefined,
+        props.cancelKey || undefined
       )
+      if (cancelRequested.value || res?.cancelled) {
+        return
+      }
       if (!res || !res.ok) {
         hasError = true
         errorMsg = res?.error || '自我克隆画像提取失败'
@@ -161,14 +202,18 @@ async function handleGenerate() {
       else generatedKind = 'self'
     }
   } catch (e: any) {
+    if (cancelRequested.value) return
     hasError = true
     errorMsg = e?.message || '生成异常'
+  } finally {
+    generating.value = false
   }
 
-  generating.value = false
   if (hasError) {
     // 失败留在弹窗内联展示：秒关弹窗会让用户以为没触发（此前正是此问题）
     genError.value = errorMsg
+  } else if (cancelRequested.value) {
+    emit('close')
   } else {
     emit('close')
     emit('generated', generatedKind)
@@ -263,6 +308,9 @@ async function handleGenerate() {
 }
 .pd-btn-ghost { background: transparent; color: var(--ct-text-secondary); border-color: var(--ct-border-color); }
 .pd-btn-ghost:hover { background: var(--ct-bg-tertiary); }
+/* 生成中的关闭按钮 = 终止操作：用危险色提示后果 */
+.pd-btn-stop { background: transparent; color: var(--ct-color-danger, #ef4444); border-color: rgba(239,68,68,0.4); }
+.pd-btn-stop:hover { background: rgba(239,68,68,0.08); }
 .pd-btn-primary { background: #6c5ce7; color: #fff; }
 .pd-btn-primary:hover { background: #5a4bd1; }
 .pd-btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }

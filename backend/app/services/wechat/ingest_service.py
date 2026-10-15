@@ -1150,7 +1150,8 @@ class WeChatIngestService:
                 return {
                     "total_conversations": 0,
                     "processed": 0,
-                    "failed": 0
+                    "failed": 0,
+                    "skipped": 0
                 }
 
             # logger.debug(f"[特征提取] 找到 {len(conversations)} 个会话")

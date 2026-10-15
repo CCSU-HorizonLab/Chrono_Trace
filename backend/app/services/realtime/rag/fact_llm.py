@@ -19,7 +19,7 @@ import json
 import logging
 from typing import Any, Callable
 
-from ..llm_http import post_json_with_retries
+from ..llm_http import apply_deep_call_effort, post_json_with_retries
 from .config import is_remote_llm_model
 
 logger = logging.getLogger(__name__)
@@ -368,6 +368,9 @@ class LLMFactExtractorAdapter:
             "max_tokens": max(1024, int(max_tokens)),
             "stream": False,
         }
+        # 深度调用思考量定档：思考模型附 reasoning_effort:"medium"，
+        # 模型级 extra_body 显式配置优先（详见 llm_http）
+        apply_deep_call_effort(payload, model)
         return post_json_with_retries(
             url=url,
             payload=payload,

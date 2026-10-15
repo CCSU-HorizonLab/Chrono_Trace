@@ -10,6 +10,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from app.services.realtime.llm_http import (
+    apply_deep_call_effort,
     apply_interactive_fast_mode,
     interactive_fast_mode_enabled,
     is_legacy_qwen3,
@@ -95,6 +96,67 @@ def test_fast_mode_invalid_extra_body_ignored():
 def test_fast_mode_non_dict_extra_body_ignored():
     payload = apply_interactive_fast_mode({}, _config(extra_body='["a", 1]'))
     assert payload == {"reasoning_effort": "low"}
+
+
+# ===== 深度调用定档：RAG 事实抽取 / 关系评估 =====
+
+
+def test_deep_call_effort_medium_not_gated_by_fast_mode(monkeypatch):
+    """深度链路固定 medium：快速模式开关关闭也不回落网关默认档。"""
+    import app.services.wechat.account_settings as account_settings
+
+    monkeypatch.setattr(
+        account_settings,
+        "load_settings_from_file",
+        lambda: {"llm_fast_suggestion_mode": False},
+    )
+    payload = apply_deep_call_effort({}, _config())
+    assert payload["reasoning_effort"] == "medium"
+
+
+def test_deep_call_effort_skips_non_reasoning_and_respects_extra_body():
+    assert "reasoning_effort" not in apply_deep_call_effort({}, _config(model_id="deepseek-chat"))
+    payload = apply_deep_call_effort(
+        {}, _config(extra_body='{"reasoning_effort": "high"}')
+    )
+    assert payload["reasoning_effort"] == "high"
+
+
+def test_relationship_llm_payload_carries_medium():
+    from app.services.analysis.relationship_llm_service import RelationshipLLMService
+
+    calls = []
+
+    def fake_http(**kw):
+        calls.append(kw["payload"])
+        return {"choices": [{"message": {"content": "{}"}}]}
+
+    svc = RelationshipLLMService(
+        {"api_base_url": "http://127.0.0.1:11434/v1", "model_id": "qwen3.5-9b", "api_key": ""},
+        http=fake_http,
+    )
+    svc._call_chat([{"role": "user", "content": "评估"}])
+
+    assert calls[0]["reasoning_effort"] == "medium"
+
+
+def test_rag_fact_llm_payload_carries_medium(monkeypatch):
+    import app.services.realtime.rag.fact_llm as factllm
+
+    calls = []
+
+    def fake_post(**kw):
+        calls.append(kw["payload"])
+        return {"choices": [{"message": {"content": "{}"}}]}
+
+    monkeypatch.setattr(factllm, "post_json_with_retries", fake_post)
+
+    adapter = factllm.LLMFactExtractorAdapter(
+        {"api_base_url": "http://127.0.0.1:11434/v1", "model_id": "qwen3.5-9b", "api_key": ""}
+    )
+    adapter._call_chat([{"role": "user", "content": "抽取"}], max_tokens=6144)
+
+    assert calls[0]["reasoning_effort"] == "medium"
 
 
 # ===== 接线：群日报 =====

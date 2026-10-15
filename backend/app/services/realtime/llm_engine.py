@@ -481,6 +481,7 @@ class LLMSuggestionEngine(SuggestionParsingMixin, LlmClientMixin, SuggestionEngi
                     is_active INTEGER DEFAULT 0,
                     max_tokens INTEGER DEFAULT 512,
                     temperature REAL DEFAULT 0.7,
+                    extra_body TEXT,
                     created_at INTEGER NOT NULL,
                     updated_at INTEGER NOT NULL
                 )

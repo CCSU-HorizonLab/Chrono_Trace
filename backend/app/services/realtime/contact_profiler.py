@@ -13,7 +13,7 @@ import logging
 import math
 import time
 from typing import Optional
-from .llm_http import post_json_with_retries
+from .llm_http import apply_interactive_fast_mode, post_json_with_retries
 from .profile_llm_retry import call_profile_llm_with_budget_retry
 from ..wechat.account_settings import get_active_wechat_account_wxid, load_settings_from_file
 from ..wechat.contact_filters import is_excluded_contact_username
@@ -701,6 +701,7 @@ class ContactProfiler:
                     model_id TEXT NOT NULL, api_base_url TEXT NOT NULL,
                     api_key TEXT, is_active INTEGER DEFAULT 0,
                     max_tokens INTEGER DEFAULT 512, temperature REAL DEFAULT 0.7,
+                    extra_body TEXT,
                     created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
                 )
             ''')
@@ -742,6 +743,9 @@ class ContactProfiler:
             'temperature': 0.5,  # 画像生成用较低温度
             'response_format': {'type': 'json_object'},
         }
+        # 交互调用快速模式：思考模型附 reasoning_effort:"low"（压低思考
+        # 量，避免命中「思考耗尽输出预算」），模型级 extra_body 优先
+        apply_interactive_fast_mode(payload, model_config)
 
         headers = {}
         api_key = model_config.get('api_key', '')

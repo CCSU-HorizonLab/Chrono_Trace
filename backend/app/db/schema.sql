@@ -688,6 +688,7 @@ CREATE TABLE IF NOT EXISTS llm_models (
     is_active INTEGER DEFAULT 0,                 -- 是否为当前激活模型（只允许一个为 1）
     max_tokens INTEGER DEFAULT 512,              -- 最大生成 token 数
     temperature REAL DEFAULT 0.7,                -- 温度参数
+    extra_body TEXT,                             -- 附加请求参数 JSON（合入 payload，如 strata reasoning_budget_tokens）
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
 );

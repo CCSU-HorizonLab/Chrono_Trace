@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from ...db.connection import get_db
 from ..realtime.llm_http import (
     LLMRequestAborted,
+    apply_interactive_fast_mode,
     post_json_with_retries,
     run_cancelable,
     take_llm_cancel,
@@ -352,6 +353,9 @@ class GroupSummaryService:
             "max_tokens": 1024,
             "stream": False,
         }
+        # 交互调用快速模式：思考模型附 reasoning_effort:"low"，模型级
+        # extra_body 显式配置优先（详见 llm_http）
+        apply_interactive_fast_mode(payload, model_config)
         # 与问问微信同款：守护工作线程跑 HTTP，取消时 bridge 线程立即返回
         abort = threading.Event()
         try:

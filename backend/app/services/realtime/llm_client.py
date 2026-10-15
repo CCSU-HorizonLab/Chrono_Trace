@@ -16,7 +16,11 @@ from typing import Any, Callable, Optional
 from .llm_http import (
     DEFAULT_MAX_RETRIES as MAX_API_RETRIES,
     DEFAULT_RETRYABLE_HTTP_STATUS as RETRYABLE_HTTP_STATUS,
+    apply_interactive_fast_mode,
     compute_retry_delay,
+    interactive_fast_mode_enabled,
+    is_legacy_qwen3,
+    is_reasoning_model,
     is_timeout_error,
 )
 
@@ -112,11 +116,7 @@ class LlmClientMixin:
     """API 客户端：网络调用/重试/流式读取/token 预算/模型发现。"""
 
     def _is_reasoning_model(self, model_id: str) -> bool:
-        normalized = (model_id or "").lower()
-        return any(tag in normalized for tag in (
-            "reasoner", "deepseek-r1", "-r1", "qwen3", "qwq",
-            "o1", "o3", "thinking",
-        ))
+        return is_reasoning_model(model_id)
 
     def _fetch_available_models(self, base_url: str, api_key: str = "") -> list[str] | None:
         """查询厂商 /models 端点获取可用模型列表，带缓存"""
@@ -292,6 +292,9 @@ class LlmClientMixin:
             payload["stream"] = True
         if use_json_mode and self._supports_json_mode(model_config, base_url):
             payload["response_format"] = {"type": "json_object"}
+        # 本 Mixin 只服务实时建议链路（分析/格式化/修复/建议/联想词，均属
+        # 交互调用）：快速模式统一在此合入思考量参数
+        apply_interactive_fast_mode(payload, model_config)
 
         headers = {
             "Content-Type": "application/json",
@@ -460,20 +463,18 @@ class LlmClientMixin:
         return ""
 
     def _fast_suggestion_mode_enabled(self) -> bool:
-        """实时建议快速模式：思考模型前置 /no_think（实测 Qwen3.5 30-60s→1.5s）。
+        """交互调用快速模式（实时建议链路各阶段共用，详见 llm_http）。
 
-        深度类调用（RAG 事实抽取/分析）不走此开关，保留思考能力。
+        深度类调用（RAG 事实抽取/关系分析）不走此开关，保留思考能力。
         """
-        try:
-            from ..wechat.account_settings import load_settings_from_file
-            return bool(load_settings_from_file().get("llm_fast_suggestion_mode", True))
-        except Exception:
-            return True
+        return interactive_fast_mode_enabled()
 
     def _suggestion_system_prompt(self, model_config: dict) -> str:
-        if self._fast_suggestion_mode_enabled() and self._is_reasoning_model(
-            str(model_config.get("model_id") or "")
-        ):
+        """快速模式下压低思考量：通用走请求参数 reasoning_effort:"low"
+        （_call_api_with_messages 统一合入）；/no_think 前置仅对旧 Qwen3
+        （3.0 系）保留——3.5 起改用 reasoning_effort，软开关已移除。"""
+        model_id = str(model_config.get("model_id") or "")
+        if self._fast_suggestion_mode_enabled() and is_legacy_qwen3(model_id):
             return "/no_think\n" + SYSTEM_PROMPT
         return SYSTEM_PROMPT
 

@@ -4,6 +4,7 @@ Bridge 继承此 Mixin，方法名不变、前端 API 面与测试零破坏。
 """
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -32,6 +33,7 @@ class LlmModelsApiMixin:
                     is_active INTEGER DEFAULT 0,
                     max_tokens INTEGER DEFAULT 512,
                     temperature REAL DEFAULT 0.7,
+                    extra_body TEXT,
                     created_at INTEGER NOT NULL,
                     updated_at INTEGER NOT NULL
                 )
@@ -39,7 +41,7 @@ class LlmModelsApiMixin:
 
             cursor = conn.execute(
                 'SELECT id, name, provider, model_id, api_base_url, '
-                'api_key, is_active, max_tokens, temperature, '
+                'api_key, is_active, max_tokens, temperature, extra_body, '
                 'created_at, updated_at FROM llm_models ORDER BY is_active DESC, updated_at DESC'
             )
 
@@ -75,7 +77,10 @@ class LlmModelsApiMixin:
                 "api_key": str (可选),
                 "is_active": bool,
                 "max_tokens": int (legacy/internal, optional),
-                "temperature": float
+                "temperature": float,
+                "extra_body": str (可选，附加请求参数 JSON 对象，
+                    合入各交互调用 payload——如 strata 网关私有的
+                    reasoning_budget_tokens 或显式 reasoning_effort)
             }
         """
         try:
@@ -84,6 +89,15 @@ class LlmModelsApiMixin:
 
             conn = get_db()
             now = int(_time.time())
+
+            extra_body = str(model.get('extra_body') or '').strip()
+            if extra_body:
+                try:
+                    parsed_extra = json.loads(extra_body)
+                except Exception:
+                    return {"ok": False, "error": "附加参数不是合法 JSON"}
+                if not isinstance(parsed_extra, dict):
+                    return {"ok": False, "error": "附加参数必须是 JSON 对象，如 {\"reasoning_effort\": \"low\"}"}
 
             model_id = model.get('id')
             legacy_max_tokens = model.get('max_tokens')
@@ -109,21 +123,21 @@ class LlmModelsApiMixin:
                     )
                 else:
                     conn.execute(
-                        '''UPDATE llm_models SET name = ?, provider = ?, model_id = ?, 
-                           api_base_url = ?, api_key = ?, is_active = ?, max_tokens = ?, 
-                           temperature = ?, updated_at = ? WHERE id = ?''',
+                        '''UPDATE llm_models SET name = ?, provider = ?, model_id = ?,
+                           api_base_url = ?, api_key = ?, is_active = ?, max_tokens = ?,
+                           temperature = ?, extra_body = ?, updated_at = ? WHERE id = ?''',
                         (model.get('name', ''), model.get('provider', ''), model.get('model_id', ''),
                          model.get('api_base_url', ''), model.get('api_key', ''), 1 if model.get('is_active') else 0,
-                         legacy_max_tokens, model.get('temperature', 0.7), _time.time(), model['id'])
+                         legacy_max_tokens, model.get('temperature', 0.7), extra_body, _time.time(), model['id'])
                     )
             else:
                 conn.execute(
-                    '''INSERT INTO llm_models (name, provider, model_id, api_base_url, 
-                       api_key, is_active, max_tokens, temperature, created_at, updated_at) 
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                    '''INSERT INTO llm_models (name, provider, model_id, api_base_url,
+                       api_key, is_active, max_tokens, temperature, extra_body, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
                     (model.get('name', ''), model.get('provider', ''), model.get('model_id', ''),
                      model.get('api_base_url', ''), model.get('api_key', ''), 1 if model.get('is_active') else 0,
-                     legacy_max_tokens, model.get('temperature', 0.7), _time.time(), _time.time())
+                     legacy_max_tokens, model.get('temperature', 0.7), extra_body, _time.time(), _time.time())
                 )
 
             conn.commit()

@@ -26,6 +26,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from ...db.connection import get_db
 from ..realtime.llm_http import (
     LLMRequestAborted,
+    apply_interactive_fast_mode,
     post_json_with_retries,
     request_llm_cancel,
     run_cancelable,
@@ -436,6 +437,9 @@ class HistoryQAService:
             "max_tokens": 2048,
             "stream": False,
         }
+        # 交互调用快速模式：思考模型附 reasoning_effort:"low"，模型级
+        # extra_body 显式配置优先（详见 llm_http）
+        apply_interactive_fast_mode(payload, model_config)
 
         # HTTP 跑守护工作线程（在途 socket 无法强断，取消时 bridge 线程
         # 立即返回，工作线程经 should_abort 在尝试边界自行退出）

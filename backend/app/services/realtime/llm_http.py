@@ -1,4 +1,5 @@
 import json
+import re
 import socket
 import ssl
 import threading
@@ -41,6 +42,64 @@ def take_llm_cancel(scope: str, key: int) -> bool:
             _CANCELLED.discard(token)
             return True
         return False
+
+
+# ---------------------------------------------------------------------------
+# 交互调用快速模式：实时建议/问问微信/群日报/画像四条交互链路共用。
+# 思考模型默认附 reasoning_effort:"low"（OpenAI 兼容面通用，vLLM 亦支持），
+# 模型级 extra_body（用户显式 JSON，如 strata 网关私有 reasoning_budget_tokens）
+# 先合入且优先；深度调用（RAG 事实抽取/关系分析）不经此节，保留思考。
+# ---------------------------------------------------------------------------
+REASONING_MODEL_TAGS = (
+    "reasoner", "deepseek-r1", "-r1", "qwen3", "qwq", "o1", "o3", "thinking",
+)
+
+
+def is_reasoning_model(model_id: str) -> bool:
+    """按模型标识粗判思考模型（下发 reasoning_effort / 兜底 token 预算用）。"""
+    normalized = (model_id or "").lower()
+    return any(tag in normalized for tag in REASONING_MODEL_TAGS)
+
+
+def is_legacy_qwen3(model_id: str) -> bool:
+    """旧 Qwen3（3.0 系，不含 3.5/3.6）：prompt 前置 /no_think 软开关有效。"""
+    m = re.search(r"qwen3(\.\d)?", (model_id or "").lower())
+    return bool(m) and m.group(1) is None
+
+
+def interactive_fast_mode_enabled() -> bool:
+    """交互调用快速模式开关（设置键沿用 llm_fast_suggestion_mode，默认开）。"""
+    try:
+        from ..wechat.account_settings import load_settings_from_file
+        return bool(load_settings_from_file().get("llm_fast_suggestion_mode", True))
+    except Exception:
+        return True
+
+
+def _parse_extra_body(raw: Any) -> dict:
+    """解析模型级 extra_body JSON；空/非法/非对象一律视为无附加参数。"""
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def apply_interactive_fast_mode(payload: dict, model_config: dict) -> dict:
+    """就地合并快速模式参数：extra_body 显式配置优先，其次默认
+    reasoning_effort:"low"（仅思考模型、开关开启且未显式指定时）。"""
+    config = model_config or {}
+    for key, value in _parse_extra_body(config.get("extra_body")).items():
+        payload.setdefault(key, value)
+    if (
+        interactive_fast_mode_enabled()
+        and "reasoning_effort" not in payload
+        and is_reasoning_model(str(config.get("model_id") or ""))
+    ):
+        payload["reasoning_effort"] = "low"
+    return payload
 
 
 def run_cancelable(

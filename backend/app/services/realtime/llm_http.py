@@ -45,10 +45,10 @@ def take_llm_cancel(scope: str, key: int) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# 交互调用快速模式：实时建议/问问微信/群日报/画像四条交互链路共用。
-# 思考模型默认附 reasoning_effort:"low"（OpenAI 兼容面通用，vLLM 亦支持），
-# 模型级 extra_body（用户显式 JSON，如 strata 网关私有 reasoning_budget_tokens）
-# 先合入且优先；深度调用（RAG 事实抽取/关系分析）不经此节，保留思考。
+# 思考量定档：交互链路（实时建议/问问微信/群日报/画像）快速模式默认
+# reasoning_effort:"low"（OpenAI 兼容面通用，vLLM 亦支持）；深度链路
+# （RAG 事实抽取/关系评估）固定 "medium"。模型级 extra_body（用户显式
+# JSON，如 strata 网关私有 reasoning_budget_tokens）先合入且优先。
 # ---------------------------------------------------------------------------
 REASONING_MODEL_TAGS = (
     "reasoner", "deepseek-r1", "-r1", "qwen3", "qwq", "o1", "o3", "thinking",
@@ -88,17 +88,36 @@ def _parse_extra_body(raw: Any) -> dict:
 
 
 def apply_interactive_fast_mode(payload: dict, model_config: dict) -> dict:
-    """就地合并快速模式参数：extra_body 显式配置优先，其次默认
-    reasoning_effort:"low"（仅思考模型、开关开启且未显式指定时）。"""
+    """交互链路（实时建议/问问微信/群日报/画像）快速模式：开关开启且
+    思考模型未显式指定时附 reasoning_effort:"low"；模型级 extra_body
+    显式配置优先。"""
+    return _apply_reasoning_effort(
+        payload, model_config, "low", interactive_fast_mode_enabled()
+    )
+
+
+def apply_deep_call_effort(payload: dict, model_config: dict) -> dict:
+    """深度链路（RAG 事实抽取/关系评估）思考量定档：思考模型附
+    reasoning_effort:"medium"——不随快速模式开关（深度调用保留思考，
+    但也不吃网关默认档——实测默认档思考量随 prompt 放大，长 prompt 易
+    在思维链里耗尽输出预算）；模型级 extra_body 显式配置优先。"""
+    return _apply_reasoning_effort(payload, model_config, "medium", True)
+
+
+def _apply_reasoning_effort(
+    payload: dict, model_config: dict, effort: str, enabled: bool
+) -> dict:
+    """就地合并思考量参数：extra_body 显式配置先合入（setdefault 保用户
+    值），再按需补默认 reasoning_effort（调用方已显式指定则不动）。"""
     config = model_config or {}
     for key, value in _parse_extra_body(config.get("extra_body")).items():
         payload.setdefault(key, value)
     if (
-        interactive_fast_mode_enabled()
+        enabled
         and "reasoning_effort" not in payload
         and is_reasoning_model(str(config.get("model_id") or ""))
     ):
-        payload["reasoning_effort"] = "low"
+        payload["reasoning_effort"] = effort
     return payload
 
 

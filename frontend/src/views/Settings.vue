@@ -55,9 +55,9 @@
             <div class="maintenance-copy">
               <div class="maintenance-title lab-with-help">
                 <span>交互调用快速模式</span>
-                <CtHelpTip content="开启后，实时建议、问问微信、群日报、联系人/自我画像等交互调用会向思考型模型附带 reasoning_effort=low（旧 Qwen3 模型改为前置 /no_think），压低思考量、缩短等待；RAG 事实抽取与关系分析等深度调用不受影响，保留完整思考。" />
+                <CtHelpTip content="开启后，实时建议、问问微信、群日报、联系人/自我画像等交互调用会向思考型模型附带 reasoning_effort=low（旧 Qwen3 模型改为前置 /no_think），压低思考量、缩短等待；RAG 事实抽取与关系分析等深度调用不受此开关影响，固定按 reasoning_effort=medium 定档。" />
               </div>
-              <div class="maintenance-desc">思考模型交互调用附 reasoning_effort=low（旧 Qwen3 前置 /no_think）；深度分析不受影响。</div>
+              <div class="maintenance-desc">交互调用思考模型附 reasoning_effort=low（旧 Qwen3 前置 /no_think）；深度调用固定 medium 定档。</div>
             </div>
             <label class="ct-switch maint-switch">
               <input type="checkbox" v-model="form.llm_fast_suggestion_mode" />

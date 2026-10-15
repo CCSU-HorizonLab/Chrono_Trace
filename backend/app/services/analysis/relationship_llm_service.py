@@ -22,6 +22,7 @@ from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ...db.connection import get_db
+from ..realtime.llm_http import apply_deep_call_effort
 from .engagement_metrics import EngagementMetrics
 
 logger = logging.getLogger(__name__)
@@ -586,6 +587,9 @@ class RelationshipLLMService:
             "max_tokens": MAX_TOKENS,
             "stream": False,
         }
+        # 深度调用思考量定档：思考模型附 reasoning_effort:"medium"，
+        # 模型级 extra_body 显式配置优先（详见 llm_http）
+        apply_deep_call_effort(payload, model)
         try:
             return self._http(
                 url=f"{base_url}/chat/completions",

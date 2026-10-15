@@ -27,7 +27,10 @@ def main():
 
     attach_close_guard(window, bridge)
 
-    webview.start(func=on_started)
+    # Linux 强制 Qt 后端（自动探测会抓 GTK：WebKitGTK localStorage 为 null，切页白屏）
+    from backend.app.webview.gui_backend import start_webview
+
+    start_webview(func=on_started)
 
     # Qt 后端退出清理：先析构 WebEnginePage 再放 profile，消除
     # "Release of profile requested but WebEnginePage still not deleted" 告警

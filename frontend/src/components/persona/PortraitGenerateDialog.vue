@@ -121,7 +121,16 @@ const emit = defineEmits<{
 
 const generateContact = ref(props.defaultContact)
 const generateSelf = ref(props.defaultSelf)
-const contactBudget = ref(localStorage.getItem('chrono:portraitContactBudget') || 'medium')
+/** 读取记忆的回看档位：个别内嵌 WebView（如 WebKitGTK）localStorage 为 null，降级默认档 */
+function loadContactBudget(): string {
+  try {
+    return localStorage.getItem('chrono:portraitContactBudget') || 'medium'
+  } catch {
+    return 'medium'
+  }
+}
+
+const contactBudget = ref(loadContactBudget())
 const selfBudget = ref('medium')
 const generating = ref(false)
 const genError = ref('')
@@ -170,7 +179,11 @@ async function handleGenerate() {
 
     if (generateContact.value) {
       // 记住档位：Analytics 快捷「更新画像」与弹窗下次默认保持一致
-      localStorage.setItem('chrono:portraitContactBudget', contactBudget.value)
+      try {
+        localStorage.setItem('chrono:portraitContactBudget', contactBudget.value)
+      } catch {
+        // localStorage 不可用（如 WebKitGTK）时静默跳过，不影响生成
+      }
       const res = await api.generate_contact_profile(
         props.displayName, contactBudget.value, undefined, props.accountWxid || undefined,
         props.cancelKey || undefined

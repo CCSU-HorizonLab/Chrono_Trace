@@ -17,6 +17,7 @@ __pycache__/
 .venv-packaging/
 .venv-packaging-gpu/
 .venv-packaging-linux/
+.venv-model-export/
 *.so
 *.egg
 *.egg-info/

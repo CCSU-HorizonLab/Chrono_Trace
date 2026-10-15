@@ -296,6 +296,18 @@ class DatabaseConnection:
             conn.commit()
 
     @classmethod
+    def _migrate_llm_models_extra_body(cls, conn: sqlite3.Connection) -> None:
+        """llm_models 补 extra_body 列（模型级附加请求参数 JSON，纯增量 ALTER）。
+
+        老库缺列时在此补齐；建表列清单由 schema.sql 负责。
+        """
+        existing = cls._table_columns(conn, "llm_models")
+        if not existing or "extra_body" in existing:
+            return
+        conn.execute("ALTER TABLE llm_models ADD COLUMN extra_body TEXT")
+        conn.commit()
+
+    @classmethod
     def _migrate_strip_chatroom_prefixes(cls, conn: sqlite3.Connection) -> None:
         """一次性清理存量群消息的 'wxid_xxx:\\n' 发送者前缀。
 
@@ -403,6 +415,7 @@ class DatabaseConnection:
         cls._migrate_wechat_account_isolation(conn)
         cls._migrate_conversations_analysis_columns(conn)
         cls._migrate_realtime_suggestions_columns(conn)
+        cls._migrate_llm_models_extra_body(conn)
         cls._migrate_strip_chatroom_prefixes(conn)
 
         conn.execute(

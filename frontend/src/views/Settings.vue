@@ -50,14 +50,14 @@
             <div class="path-hint">修改后会自动迁移已下载模型；若新目录下已存在同名模型目录，将阻止迁移以避免覆盖。</div>
           </div>
 
-          <!-- 实时建议快速模式 -->
+          <!-- 交互调用快速模式 -->
           <div class="maintenance-card">
             <div class="maintenance-copy">
               <div class="maintenance-title lab-with-help">
-                <span>实时建议快速模式</span>
-                <CtHelpTip content="开启后，在向思考型大模型请求实时回复建议时自动前置 /no_think 指令，将建议响应耗时从 30–60 秒缩短至约 2 秒；深度画像与关系分析不受影响。" />
+                <span>交互调用快速模式</span>
+                <CtHelpTip content="开启后，实时建议、问问微信、群日报、联系人/自我画像等交互调用会向思考型模型附带 reasoning_effort=low（旧 Qwen3 模型改为前置 /no_think），压低思考量、缩短等待；RAG 事实抽取与关系分析等深度调用不受影响，保留完整思考。" />
               </div>
-              <div class="maintenance-desc">思考模型前置 /no_think（建议生成 30-60s → 约 2s；深度分析不受影响）。</div>
+              <div class="maintenance-desc">思考模型交互调用附 reasoning_effort=low（旧 Qwen3 前置 /no_think）；深度分析不受影响。</div>
             </div>
             <label class="ct-switch maint-switch">
               <input type="checkbox" v-model="form.llm_fast_suggestion_mode" />
@@ -465,6 +465,18 @@
               <div class="lab">温度</div>
               <input v-model.number="editingModel.temperature" class="ct-field" type="number" min="0" max="2" step="0.1" />
             </label>
+            <label class="row">
+              <div class="lab">附加参数</div>
+              <textarea
+                v-model="editingModel.extra_body"
+                class="ct-field"
+                rows="2"
+                :placeholder='`可选，JSON 对象，随请求发送，如 {"reasoning_budget_tokens": 4096}`'
+              ></textarea>
+            </label>
+            <div class="path-hint" style="margin: -6px 0 6px;">
+              私有网关/部署特有参数写在这里（合入请求体，优先于快速模式默认值）；标准参数（temperature/max_tokens 等）请用上方字段。
+            </div>
           </div>
           <div class="form-actions">
             <button class="ct-btn" @click="showModelForm = false">取消</button>
@@ -1246,6 +1258,7 @@ const editingModel = reactive({
   api_key: '',
   is_active: false,
   temperature: 0.7,
+  extra_body: '',
 })
 
 const fetchingModels = ref(false)
@@ -1379,6 +1392,7 @@ function editModel(m: any) {
   editingModel.api_key = '' // 编辑时不回显密钥
   editingModel.is_active = !!m.is_active
   editingModel.temperature = m.temperature ?? 0.7
+  editingModel.extra_body = m.extra_body || ''
   showModelForm.value = true
 }
 
@@ -1391,11 +1405,24 @@ function resetEditingModel() {
   editingModel.api_base_url = ''
   editingModel.api_key = ''
   editingModel.temperature = 0.7
+  editingModel.extra_body = ''
 }
 
 async function saveModel() {
   try {
     await bridgeReady()
+    const trimmedExtra = editingModel.extra_body.trim()
+    if (trimmedExtra) {
+      try {
+        const parsed = JSON.parse(trimmedExtra)
+        if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+          throw new Error('必须是 JSON 对象')
+        }
+      } catch {
+        showDialog('附加参数不是合法的 JSON 对象，如 {"reasoning_effort": "low"}')
+        return
+      }
+    }
     const { ...payload } = editingModel
     const r = await api.save_llm_model(payload)
     if (r.ok) {
@@ -1483,6 +1510,7 @@ onMounted(() => {
   .row { grid-template-columns: 1fr; gap: 8px; }
 }
 .lab { color: var(--ct-text-secondary); font-weight: 500; }
+.row textarea.ct-field { resize: vertical; min-height: 54px; font-family: var(--ct-font-mono, monospace); }
 
 /* RAG 开关矩阵与悬浮提醒 Tooltip */
 .rag-switches-grid {

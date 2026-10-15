@@ -86,6 +86,7 @@ SYSTEM_PROMPT = """你是聊天记录问答助手。只依据【聊天记录】�
 
 规则：
 - 回答末尾用 [n] 标注依据的记录编号（如 [2][5]），只引用真正用到的条目
+- 【长期记忆】是从历史聊天提炼的背景参考，不是原文记录，禁止用 [n] 引用；与聊天记录冲突时以聊天记录为准
 - 记录不足以回答时，直接说明「聊天记录中没有足够信息」，不要猜测
 - 引用原文时保持原样，不要改写称谓
 - 回答用中文，简洁直接，先给结论再给依据"""
@@ -157,8 +158,15 @@ class HistoryQAService:
         redacted_question, redacted = self._redact_for_remote(
             question, records, account_wxid, conversation_id
         )
+        # RAG 长期记忆槽：检索该联系人事实/主题段作背景参考（无索引/
+        # 关闭/检索异常一律返回空，不阻断问答主链路）
+        memories = self._retrieve_rag_memories(account_wxid, conversation_id, question)
+        if memories:
+            memories = self._redact_memories_for_remote(
+                memories, account_wxid, conversation_id
+            )
 
-        answer = self._call_llm(conversation_id, redacted_question, redacted)
+        answer = self._call_llm(conversation_id, redacted_question, redacted, memories)
         citations = [
             {
                 "index": idx,  # 原始 1 基编号，与回答 [n] 对应；过滤后不变
@@ -404,8 +412,74 @@ class HistoryQAService:
         ]
         return redacted_question, redacted
 
+    # ---- RAG 长期记忆槽 ----
+
+    RAG_MEMORY_LIMIT = 5
+
+    def _retrieve_rag_memories(
+        self, account_wxid: str, conversation_id: int, question: str
+    ) -> List[str]:
+        """检索该联系人 RAG 长期记忆（复用实时建议同款检索器+门控）。
+
+        任何缺位（未建索引/关闭/超时降级/异常）都返回空列表，问答
+        主链路只靠消息检索照常工作。
+        """
+        try:
+            from ..realtime.rag.config import load_rag_settings
+            from ..realtime.rag.retriever import RagRetriever
+
+            if not load_rag_settings().get("rag_enabled"):
+                return []
+            result = RagRetriever().retrieve(
+                account_wxid=account_wxid,
+                conversation_id=int(conversation_id),
+                query=str(question or ""),
+                limit=self.RAG_MEMORY_LIMIT,
+            )
+            items = result.get("items") or []
+            return [
+                str(it.get("content") or "").strip()
+                for it in items
+                if str(it.get("content") or "").strip()
+            ]
+        except Exception:
+            return []
+
+    def _redact_memories_for_remote(
+        self, memories: List[str], account_wxid: str, conversation_id: int
+    ) -> List[str]:
+        """远程模型时长期记忆同样过脱敏（红线同消息记录：失败即阻断）。"""
+        from ..realtime.rag.config import is_remote_llm_model
+        from ..realtime.rag.fact_llm import get_active_model_config
+
+        model_config = get_active_model_config()
+        if not model_config or not is_remote_llm_model(model_config):
+            return memories
+
+        from ..realtime.privacy_redactor import PrivacyRedactor
+
+        redactor = PrivacyRedactor(get_db())
+        redacted: List[str] = []
+        for idx, text in enumerate(memories, 1):
+            try:
+                result = redactor.redact(
+                    text,
+                    account_wxid=account_wxid,
+                    conversation_id=conversation_id,
+                    source_table="history_qa",
+                    source_id=f"rag_memory_{idx}",
+                )
+            except Exception as exc:
+                raise HistoryQAError(f"脱敏失败，本次提问已阻断：{exc}") from exc
+            redacted.append(result.redacted_text)
+        return redacted
+
     def _call_llm(
-        self, conversation_id: int, question: str, records: List[Dict[str, Any]]
+        self,
+        conversation_id: int,
+        question: str,
+        records: List[Dict[str, Any]],
+        memories: Optional[List[str]] = None,
     ) -> str:
         from ..realtime.rag.fact_llm import get_active_model_config
 
@@ -418,7 +492,16 @@ class HistoryQAService:
             when = time.strftime("%Y-%m-%d %H:%M", time.localtime(rec["timestamp"]))
             who = "我" if rec["is_sender"] == 1 else "对方"
             lines.append(f"[{idx}] {when} {who}: {rec['text']}")
-        user_prompt = f"【问题】{question}\n\n【聊天记录】\n" + "\n".join(lines)
+        memory_block = ""
+        if memories:
+            memory_lines = "\n".join(f"- {m}" for m in memories)
+            memory_block = (
+                "\n\n【长期记忆】（从历史聊天提炼的背景参考，非原文记录）\n"
+                + memory_lines
+            )
+        user_prompt = (
+            f"【问题】{question}" + memory_block + "\n\n【聊天记录】\n" + "\n".join(lines)
+        )
 
         base_url = str(model_config.get("api_base_url") or "").rstrip("/")
         if not base_url:

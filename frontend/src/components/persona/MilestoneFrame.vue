@@ -1,20 +1,37 @@
 <template>
-  <article class="milestone-frame" :style="{ '--frame-accent': accent }">
+  <article
+    class="milestone-frame"
+    :class="{ clickable }"
+    :style="{ '--frame-accent': accent }"
+    :role="clickable ? 'button' : undefined"
+    :tabindex="clickable ? 0 : undefined"
+    @click="clickable && emit('open')"
+    @keyup.enter="clickable && emit('open')"
+  >
     <div class="milestone-date">{{ dateLabel }}</div>
     <h4>{{ title }}</h4>
     <p>{{ body }}</p>
+    <span v-if="clickable" class="milestone-hint">
+      <MessageCircle :size="13" style="flex-shrink: 0;" /> 点击回顾当时的对话
+    </span>
   </article>
 </template>
 
 <script setup lang="ts">
+import { MessageCircle } from 'lucide-vue-next'
+
 withDefaults(defineProps<{
   title: string
   dateLabel: string
   body: string
   accent?: string
+  clickable?: boolean
 }>(), {
-  accent: '#fb7185'
+  accent: '#fb7185',
+  clickable: false
 })
+
+const emit = defineEmits<{ open: [] }>()
 </script>
 
 <style scoped>
@@ -31,13 +48,16 @@ withDefaults(defineProps<{
   box-shadow: 0 18px 36px rgba(146, 64, 14, 0.12);
 }
 
-.milestone-frame::before {
-  content: '';
-  position: absolute;
-  inset: 10px;
-  border: 1px solid color-mix(in srgb, var(--frame-accent) 30%, white 40%);
-  border-radius: 16px;
-  pointer-events: none;
+.milestone-frame.clickable {
+  cursor: pointer;
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+.milestone-frame.clickable:hover,
+.milestone-frame.clickable:focus-visible {
+  transform: translateY(-3px);
+  box-shadow: 0 22px 44px rgba(146, 64, 14, 0.2);
+  outline: none;
 }
 
 .milestone-date {
@@ -65,5 +85,20 @@ withDefaults(defineProps<{
   font-size: 13px;
   line-height: 1.7;
   color: #9a3412;
+}
+
+.milestone-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 12px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--frame-accent) 62%, #9a3412 38%);
+  opacity: 0.85;
+}
+
+.milestone-frame.clickable:hover .milestone-hint {
+  opacity: 1;
 }
 </style>

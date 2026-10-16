@@ -174,6 +174,34 @@ def test_invalid_json_raises_absent(db):
         svc.evaluate(1)
 
 
+def test_parse_failure_retries_once_and_recovers(db):
+    """解析失败自动重试一次：小模型偶发不吐 JSON，同输入重跑即恢复。"""
+    seed_pairs(db)
+
+    class _FlakyHTTP(_FakeHTTP):
+        def __call__(self, **kw):
+            if len(self.calls) == 0:
+                super().__call__(**kw)
+                self.content = _ok_content()  # 第二次起返回合法 JSON
+            return super().__call__(**kw)
+
+    http = _FlakyHTTP("这次我先啰嗦几句不输出 JSON")
+    svc = RelationshipLLMService(_model(), http=http, is_remote=lambda m: False)
+    result = svc.evaluate(1)
+    assert result["score"] > 0
+    assert len(http.calls) == 2
+
+
+def test_parse_failure_after_retry_raises_absent(db):
+    """重试仍不吐 JSON 才判缺席，错误信息注明已重试。"""
+    seed_pairs(db)
+    http = _FakeHTTP("抱歉我无法输出")
+    svc = RelationshipLLMService(_model(), http=http, is_remote=lambda m: False)
+    with pytest.raises(RelationshipLLMAbsent, match="已重试"):
+        svc.evaluate(1)
+    assert len(http.calls) == 2
+
+
 def test_remote_without_redactor_raises_absent(db):
     seed_pairs(db)
     svc = RelationshipLLMService(_model(), http=_FakeHTTP(_ok_content()), is_remote=lambda m: True, redactor_factory=None)

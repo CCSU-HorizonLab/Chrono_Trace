@@ -78,7 +78,7 @@ class RagEmbeddingService:
 
     def is_warm(self) -> bool:
         """公共 API：嵌入模型是否已加载（此前调用方探测私有 _embedding_model）。"""
-        return bool(getattr(self._get_shared_service(), "_embedding_model", None))
+        return bool(getattr(self.sentiment_service, "_embedding_model", None))
 
 
 _prewarm_lock = threading.Lock()

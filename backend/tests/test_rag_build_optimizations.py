@@ -233,3 +233,51 @@ def test_status_badge_counts_only_live_activity(monkeypatch):
     result = _Bridge().get_rag_status("acc")
     assert result["building_count"] == 3
     conn.close()
+
+
+def test_indexed_contact_stays_visible_beyond_recency_limit(monkeypatch):
+    """可见性：已建索引的低频联系人不被 LIMIT 挤出列表（2234 联系人实测）。"""
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        "CREATE TABLE conversations (id INTEGER PRIMARY KEY, account_wxid TEXT, "
+        "display_name TEXT, username TEXT, is_deleted INTEGER DEFAULT 0, updated_at INTEGER)"
+    )
+    conn.execute(
+        "CREATE TABLE rag_index_status (account_wxid TEXT, conversation_id INT, status TEXT, "
+        "document_count INT DEFAULT 0, vector_count INT DEFAULT 0, last_indexed_at INT, "
+        "last_error TEXT, storage_bytes INT DEFAULT 0, enabled INT DEFAULT 1, "
+        "fact_read_mode TEXT)"
+    )
+    # 老联系人已建好索引但会话很久没动（updated_at 最小）；
+    # 20 个更新但从未建索引的联系人排在纯时间序前面
+    conn.execute("INSERT INTO conversations VALUES (1, 'acc', '赵六', 'wxid_zl', 0, 100)")
+    conn.execute(
+        "INSERT INTO rag_index_status (account_wxid, conversation_id, status, last_indexed_at) "
+        "VALUES ('acc', 1, 'ready', 999)"
+    )
+    conn.executemany(
+        "INSERT INTO conversations VALUES (?, 'acc', ?, ?, 0, ?)",
+        [(i, f"新联系人{i}", f"wxid_{i}", 200 + i) for i in range(10, 30)],
+    )
+
+    monkeypatch.setattr("app.db.connection.get_db", lambda: conn)
+    monkeypatch.setattr(
+        "app.services.realtime.rag.indexer.get_active_and_queued", lambda: {}
+    )
+
+    from app.webview.api.rag_admin import RagAdminApiMixin
+
+    class _Bridge(RagAdminApiMixin):
+        settings = {"rag_enabled": True}
+
+        def _resolve_account_wxid(self, account_wxid: str = "") -> str:
+            return account_wxid or "acc"
+
+    # limit=5：纯 updated_at 排序会把 conv 1 挤出 → 列表徽标与实际状态对不上
+    result = _Bridge().get_rag_status("acc", 5)
+    ids = [item["conversation_id"] for item in result["items"]]
+    assert 1 in ids
+    ready_in_items = [i for i in ids if result["items"][ids.index(i)]["status"] == "ready"]
+    assert result["ready_count"] == len(ready_in_items)  # 徽标与列表口径一致
+    conn.close()

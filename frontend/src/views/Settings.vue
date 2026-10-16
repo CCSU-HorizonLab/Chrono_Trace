@@ -226,17 +226,19 @@
 
 
           <div class="rag-status-summary">
-            <div><strong>{{ ragStatus.totalFacts }}</strong><span>条记忆</span></div>
-            <div><strong>{{ formatBytes(ragStatus.totalStorageBytes) }}</strong><span>占用</span></div>
-            <div v-if="ragStatus.readyCount > 0 || ragStatus.buildingCount > 0" class="rag-count-badges">
-              <span class="rag-badge rag-badge-ready">已就绪 {{ ragStatus.readyCount }}</span>
-              <span v-if="ragStatus.buildingCount > 0" class="rag-badge rag-badge-building" title="记忆索引正在构建或排队，完成后自动转为已就绪">
-                <span class="rag-building-dot"></span>构建中 {{ ragStatus.buildingCount }}
-              </span>
+            <div class="rag-stat"><strong>{{ ragStatus.totalFacts }}</strong><span>条记忆</span></div>
+            <div class="rag-stat"><strong>{{ formatBytes(ragStatus.totalStorageBytes) }}</strong><span>占用</span></div>
+            <div class="rag-stat"><strong>{{ ragStatus.readyCount }}</strong><span>已就绪</span></div>
+            <div class="rag-summary-actions">
+              <span
+                v-if="ragStatus.buildingCount > 0"
+                class="rag-badge rag-badge-building"
+                title="记忆索引正在构建或排队，完成后自动转为已就绪"
+              ><span class="rag-building-dot"></span>构建中 {{ ragStatus.buildingCount }}</span>
+              <CtButton variant="ghost" :disabled="ragStatus.loading" @click.stop.prevent="refreshRagStatus">
+                {{ ragStatus.loading ? '刷新中...' : '刷新状态' }}
+              </CtButton>
             </div>
-            <CtButton variant="ghost" :disabled="ragStatus.loading" @click.stop.prevent="refreshRagStatus">
-              {{ ragStatus.loading ? '刷新中...' : '刷新状态' }}
-            </CtButton>
           </div>
 
           <RagContactManager
@@ -1667,7 +1669,7 @@ onMounted(() => {
 
 .rag-status-summary {
   display: grid;
-  grid-template-columns: 1fr 1fr auto;
+  grid-template-columns: 1fr 1fr 1fr auto;
   gap: 12px;
   align-items: center;
   padding: 14px;
@@ -1675,22 +1677,24 @@ onMounted(() => {
   border-radius: 12px;
   background: var(--ct-bg-secondary);
 }
-.rag-status-summary div {
+.rag-status-summary .rag-stat {
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
-.rag-status-summary strong {
+.rag-status-summary .rag-stat strong {
   color: var(--ct-text-primary);
   font-size: 16px;
 }
-.rag-status-summary span {
+.rag-status-summary .rag-stat span {
   color: var(--ct-text-tertiary);
   font-size: 12px;
 }
-.rag-count-badges {
-  display: inline-flex;
+.rag-summary-actions {
+  display: flex;
   align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 8px;
 }
 .rag-badge {
@@ -1701,10 +1705,6 @@ onMounted(() => {
   border-radius: 999px;
   font-size: 11.5px;
   font-weight: 600;
-}
-.rag-badge-ready {
-  background: rgba(16, 185, 129, 0.12);
-  color: #059669;
 }
 .rag-badge-building {
   background: rgba(245, 158, 11, 0.14);

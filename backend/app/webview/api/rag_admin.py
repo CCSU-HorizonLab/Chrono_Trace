@@ -597,6 +597,10 @@ class RagAdminApiMixin:
             ct_nickname_expr = "NULLIF(TRIM(ct.nickname), '')" if "nickname" in ct_cols else "NULL"
 
             if has_contacts_table:
+                # 已建过索引（last_indexed_at 非空）的联系人优先可见：LIMIT
+                # 截断下纯按会话 updated_at 排序会把建好记忆的低频联系人挤出
+                # 列表（实测 2234 联系人时自动构建完成的会话在管理列表消失，
+                # 徽标「已就绪 2」与列表口径对不上）
                 query = f"""
                 SELECT
                     c.id AS conversation_id,
@@ -627,7 +631,7 @@ class RagAdminApiMixin:
                 LEFT JOIN rag_index_status s
                   ON s.account_wxid = c.account_wxid AND s.conversation_id = c.id
                 WHERE c.account_wxid = ? AND c.is_deleted = 0
-                ORDER BY c.updated_at DESC
+                ORDER BY (s.last_indexed_at IS NOT NULL) DESC, c.updated_at DESC
                 LIMIT ?
                 """
             else:
@@ -650,7 +654,7 @@ class RagAdminApiMixin:
                 LEFT JOIN rag_index_status s
                   ON s.account_wxid = c.account_wxid AND s.conversation_id = c.id
                 WHERE c.account_wxid = ? AND c.is_deleted = 0
-                ORDER BY c.updated_at DESC
+                ORDER BY (s.last_indexed_at IS NOT NULL) DESC, c.updated_at DESC
                 LIMIT ?
                 """
 

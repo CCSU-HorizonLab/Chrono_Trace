@@ -30,9 +30,21 @@ def _reset_queue():
     RagIndexQueue._worker = None
 
 
+def _suppress_background_worker(monkeypatch):
+    """让 enqueue 不启动真后台线程。
+
+    测试手动同步跑 _run；真线程会与手动循环抢任务（补丁 time.sleep 后
+    0.8s 起跑保护失效），按序断言偶发丢首任务。伪装 worker 存活即可。
+    """
+    import threading
+
+    monkeypatch.setattr(RagIndexQueue, "_worker", threading.main_thread())
+
+
 def test_queue_fifo_order(monkeypatch):
     """入队顺序 = 执行顺序（此前 set.pop 乱序）。"""
     _reset_queue()
+    _suppress_background_worker(monkeypatch)
     processed: list[tuple] = []
     monkeypatch.setattr(rag_indexer, "load_rag_settings", lambda *a, **k: {"rag_enabled": True})
     monkeypatch.setattr(
@@ -57,6 +69,7 @@ def test_queue_fifo_order(monkeypatch):
 def test_queue_keeps_tasks_when_disabled(monkeypatch):
     """rag_enabled=false：任务保留在队列等开关恢复（此前 pop 后直接丢弃）。"""
     _reset_queue()
+    _suppress_background_worker(monkeypatch)
     monkeypatch.setattr(rag_indexer, "load_rag_settings", lambda *a, **k: {"rag_enabled": False})
     assert RagIndexQueue._pop_job() is None
     RagIndexQueue.enqueue("wxid_a", 9)

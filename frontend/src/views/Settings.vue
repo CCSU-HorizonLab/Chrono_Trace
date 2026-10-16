@@ -228,6 +228,12 @@
           <div class="rag-status-summary">
             <div><strong>{{ ragStatus.totalFacts }}</strong><span>条记忆</span></div>
             <div><strong>{{ formatBytes(ragStatus.totalStorageBytes) }}</strong><span>占用</span></div>
+            <div v-if="ragStatus.readyCount > 0 || ragStatus.buildingCount > 0" class="rag-count-badges">
+              <span class="rag-badge rag-badge-ready">已就绪 {{ ragStatus.readyCount }}</span>
+              <span v-if="ragStatus.buildingCount > 0" class="rag-badge rag-badge-building" title="记忆索引正在构建或排队，完成后自动转为已就绪">
+                <span class="rag-building-dot"></span>构建中 {{ ragStatus.buildingCount }}
+              </span>
+            </div>
             <CtButton variant="ghost" :disabled="ragStatus.loading" @click.stop.prevent="refreshRagStatus">
               {{ ragStatus.loading ? '刷新中...' : '刷新状态' }}
             </CtButton>
@@ -581,7 +587,24 @@ const ragStatus = reactive({
   totalFacts: 0,
   totalDocuments: 0,
   totalStorageBytes: 0,
+  readyCount: 0,
+  buildingCount: 0,
 })
+
+// 构建中自动轮询：有联系人处于构建/排队状态时每 30s 刷新一次，
+// 完成后徽标自动转绿（大群聊构建可达数十分钟，手动刷新易被误读为卡死）
+let ragBuildTimer: number | null = null
+
+function syncRagBuildPolling() {
+  if (ragStatus.buildingCount > 0) {
+    if (ragBuildTimer === null) {
+      ragBuildTimer = window.setInterval(() => { void refreshRagStatus() }, 30000)
+    }
+  } else if (ragBuildTimer !== null) {
+    clearInterval(ragBuildTimer)
+    ragBuildTimer = null
+  }
+}
 
 const ragModel = reactive({
   loading: false,
@@ -925,11 +948,14 @@ async function refreshRagStatus() {
       ragStatus.totalFacts = Number(result.total_facts || 0)
       ragStatus.totalDocuments = Number(result.total_documents || 0)
       ragStatus.totalStorageBytes = Number(result.total_storage_bytes || 0)
+      ragStatus.readyCount = Number(result.ready_count || 0)
+      ragStatus.buildingCount = Number(result.building_count || 0)
     }
   } catch (e) {
     console.error('刷新记忆状态失败:', e)
   } finally {
     ragStatus.loading = false
+    syncRagBuildPolling()
   }
 }
 
@@ -1323,6 +1349,10 @@ onUnmounted(() => {
   void flushPendingSave()
   document.removeEventListener('click', handleDropdownClickOutside)
   window.removeEventListener('chrono:wechat-account-changed', handleGlobalAccountChanged)
+  if (ragBuildTimer !== null) {
+    clearInterval(ragBuildTimer)
+    ragBuildTimer = null
+  }
 })
 
 const modelIdPlaceholder = computed(() => {
@@ -1657,6 +1687,39 @@ onMounted(() => {
 .rag-status-summary span {
   color: var(--ct-text-tertiary);
   font-size: 12px;
+}
+.rag-count-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.rag-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.rag-badge-ready {
+  background: rgba(16, 185, 129, 0.12);
+  color: #059669;
+}
+.rag-badge-building {
+  background: rgba(245, 158, 11, 0.14);
+  color: #b45309;
+}
+.rag-building-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #f59e0b;
+  animation: rag-building-pulse 1.4s ease-in-out infinite;
+}
+@keyframes rag-building-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(0.75); }
 }
 .rag-contact-list {
   display: flex;

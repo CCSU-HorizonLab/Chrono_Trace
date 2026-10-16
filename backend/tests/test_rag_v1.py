@@ -1746,8 +1746,8 @@ def test_retriever_uses_shared_warm_embedding_service_for_vector_search(monkeypa
         def has_local_embedding_model(self):
             return True
 
-        def analyze_batch(self, texts, include_embeddings=False):
-            return [{"embedding": [1.0] + [0.0] * (_active_embedding_dim() - 1)} for _ in texts]
+        def embed_texts_batch(self, texts):
+            return [[1.0] + [0.0] * (_active_embedding_dim() - 1) for _ in texts]
 
     monkeypatch.setattr(RagEmbeddingService, "_shared_sentiment_service", WarmSentiment())
 

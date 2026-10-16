@@ -677,6 +677,11 @@ class RagAdminApiMixin:
 
             from ...services.realtime.rag.indexer import get_active_and_queued
             live_states = get_active_and_queued()
+            # 徽标口径只认真实活动（构建中+内存队列排队）：DB 里的 pending
+            # 多为历史 mark_dirty 残留（重启后队列已丢，无人构建它们），
+            # 计入会把 638 行永久算成「构建中」误导用户
+            live_building = sum(1 for v in live_states.values() if v == "building")
+            live_queued = sum(1 for v in live_states.values() if v == "queued")
             items = []
             for row in rows:
                 item = dict(row)
@@ -691,9 +696,33 @@ class RagAdminApiMixin:
                     # 后台真值优先：构建中/排队中（DB status 在此期间不更新）
                     item["status"] = live
                 items.append(item)
+
+            # 状态计数：只数 rag_index_status 实际有行的（items 里 LEFT JOIN
+            # 把无行联系人 COALESCE 成 pending，直接数会把全量联系人都算进
+            # 排队中）。
+            status_counts: dict[str, int] = {}
+            try:
+                for s_row in conn.execute(
+                    "SELECT status, COUNT(*) AS n FROM rag_index_status "
+                    "WHERE account_wxid = ? GROUP BY status",
+                    (resolved_account,),
+                ).fetchall():
+                    status_counts[str(s_row["status"] or "pending")] = int(s_row["n"] or 0)
+            except Exception:
+                pass
+            for item in items:
+                live_status = live_states.get(
+                    (resolved_account, int(item.get("conversation_id") or 0))
+                )
+                if live_status:
+                    status_counts[live_status] = status_counts.get(live_status, 0) + 1
+
             return {
                 "ok": True,
                 "has_live": bool(live_states),
+                "status_counts": status_counts,
+                "ready_count": status_counts.get("ready", 0),
+                "building_count": live_building + live_queued,
                 "settings": {
                     key: self.settings.get(key)
                     for key in (

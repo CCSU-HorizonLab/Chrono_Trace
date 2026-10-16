@@ -12,7 +12,7 @@
             <h1 class="profile-name">{{ currentContactName }}</h1>
             <div class="contact-selector-wrap">
               <FiltersBar :conversations="conversations" :selected-conversation-id="selectedConversationId" :loading="loading"
-                @update:conversation-id="onConversationChange" />
+                @update:conversation-id="onUserConversationChange" />
             </div>
           </div>
         </div>
@@ -566,6 +566,7 @@
       <PersonaGallery
         :loading="loadingPersonaProfile"
         :contact-name="currentContactName"
+        :conversation-id="selectedConversationId"
         :profile="personaProfile"
         :profile-meta="personaProfileMeta"
         :analysis="analysis"
@@ -801,15 +802,6 @@ export default {
         const conversations = ref<Conversation[]>([])
         const selectedConversationId = ref<number | null>(null)
 
-// 联系人选中变化：写入跨页共享状态 + 通知
-watch(selectedConversationId, (id) => {
-  if (id) {
-    const c = conversations.value.find((x: any) => x.id === id)
-    if (c) {
-      saveSharedContact({ conversationId: id, displayName: c.name || c.username || '', avatar: c.avatar })
-    }
-  }
-})
         const dates = reactive({ from: '', to: '' })
         const loading = ref(false)
         const loadingSessions = ref(false)
@@ -1231,7 +1223,7 @@ const showPortraitDialog = ref(false)
             }
         }
 
-        async function loadConversations() {
+        async function loadConversations(preferredId?: number | null) {
             try {
                 await bridgeReady()
                 const res = await api.get_conversation_list(activeAccountWxid.value || undefined)
@@ -1241,7 +1233,12 @@ const showPortraitDialog = ref(false)
                         selectedConversationId.value = null
                     }
                     if (conversations.value.length > 0 && !selectedConversationId.value) {
-                        onConversationChange(conversations.value[0].id)
+                        // 程序性默认选中：优先跨页共享（如从实时助手切回），
+                        // 其次列表第一个；不回写共享槽（见 onUserConversationChange）
+                        const preferred = preferredId && conversations.value.some((item) => item.id === preferredId)
+                            ? preferredId
+                            : conversations.value[0].id
+                        onConversationChange(preferred)
                     } else if (conversations.value.length === 0) {
                         selectedConversationId.value = null
                     }
@@ -1312,6 +1309,15 @@ const showPortraitDialog = ref(false)
             if (shouldLoadContentAnalysis.value) {
                 loadAnalysis()
             }
+        }
+
+        // 用户显式选择（FiltersBar）：写入跨页共享状态，实时助手页切回时跟随
+        async function onUserConversationChange(id: number) {
+            const c = conversations.value.find((x: any) => x.id === id)
+            if (c) {
+                saveSharedContact({ conversationId: id, displayName: c.name || c.username || '', avatar: c.avatar })
+            }
+            await onConversationChange(id)
         }
 
         function resetPersonaProfile() {
@@ -2057,15 +2063,10 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
             if (!dates.from || !dates.to) setDefaultDates(30)
             await loadAnalysisDeviceMode()
             await refreshAccountContext()
-            await loadConversations()
-            // 恢复跨页共享的联系人选中
-    const sharedContact = loadSharedContact()
-    if (sharedContact && !selectedConversationId.value) {
-      if (conversations.value.some((c: any) => c.id === sharedContact.conversationId)) {
-        selectedConversationId.value = sharedContact.conversationId
-      }
-    }
-    const savedResume = loadAnalysisResume()
+            // 跨页共享的联系人选中作为默认偏好传入：loadConversations 选中它但不回写共享槽
+            const sharedContact = loadSharedContact()
+            await loadConversations(sharedContact?.conversationId ?? null)
+            const savedResume = loadAnalysisResume()
             if (savedResume) void resumeAnalysisFromSaved(savedResume)
             window.addEventListener('resize', handleResize)
             window.addEventListener('chrono:wechat-account-changed', handleAccountChanged)
@@ -2090,7 +2091,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
             analysisResult, displayScore, showKeywordsDialog, showContextForm, showPortraitDialog, handlePortraitGenerated, isGlobalAnalyzing, isStopping, activeTimer, handleStopAnalysis, globalProgressPercent, globalProgressStep, gpuMode,
             hasConversations, hasFeatures, hasCachedAffinityAnalysis, featureStats, responseTimeStats, initiativeStats, wordCountsStats, displayWordRatioLabel, activityCalendar,
             responseTimeChart, activityCalendarChart, wordCountChart, stats, currentContactName, headerAvatarSrc, hasPreferenceKeywords, allDimensions,
-            currentRangeLabel, hasContentAnalysis, circumference, strokeDashoffset, formatNumber, formatTime, getResponseTimeLabel, getMergedResponseTimeLabel, getResponseTimePercent, onConversationChange, onDatesChange, handleExport, handleStartGlobalAnalysis, handleContextSaved, handleKeywordsUpdated, llmEvidenceNotes,
+            currentRangeLabel, hasContentAnalysis, analysisStaleNotice, circumference, strokeDashoffset, formatNumber, formatTime, getResponseTimeLabel, getMergedResponseTimeLabel, getResponseTimePercent, onConversationChange, onUserConversationChange, onDatesChange, handleExport, handleStartGlobalAnalysis, handleContextSaved, handleKeywordsUpdated, llmEvidenceNotes,
             qaHistory, qaInput, qaLoading, handleAskHistory, formatQaTime,
             isGroupConversation, groupStats, groupStatsLoading, groupSummary, groupSummaryLoading, groupSummaryDays, handleGenerateGroupSummary,
             reportExporting, handleExportReport,

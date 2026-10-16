@@ -499,15 +499,8 @@ const contacts = ref<any[]>([])
 const contactsLoading = ref(false)
 const selectedConversationId = ref<number | null>(null)
 
-// 联系人选中变化：写入跨页共享状态
-watch(selectedConversationId, (id) => {
-  if (id) {
-    const c = contacts.value.find((x: any) => x.id === id)
-    if (c) {
-      saveSharedContact({ conversationId: id, displayName: c.name || c.username || '', avatar: c.avatar })
-    }
-  }
-})
+// 跨页共享仅在用户显式选择时写入（loadContacts 的程序性恢复不回写，
+// 避免切页时把共享槽污染成列表默认值）
 const activeContact = computed(() => {
   if (selectedConversationId.value) {
     return contacts.value.find((contact: any) => contact.id === selectedConversationId.value) || null
@@ -586,6 +579,8 @@ function onConversationChange(id: number) {
   selectedConversationId.value = id
   const c = contacts.value.find((c: any) => c.id === id)
   if (c) {
+    // 用户显式选择：写入跨页共享状态（联系人洞察页切回时跟随）
+    saveSharedContact({ conversationId: id, displayName: c.name || c.username || '', avatar: c.avatar })
     realtimeState.talkerName = c.name
     // 选择联系人后自动检查并加载画像
     checkPortraitProfiles(c.name)

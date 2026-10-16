@@ -193,15 +193,28 @@ class RiskSignalService:
         if early_mean < WARM_THEN_COLD_MIN_EARLY_DAILY:
             return False, f"早期日均 {early_mean:.1f} 条，基线过低不构成降温"
         met = recent_mean < early_mean * WARM_THEN_COLD_DECLINE_RATIO
+        if recent_mean < early_mean:
+            change = f"降幅 {1 - recent_mean / early_mean:.0%}"
+        else:
+            change = f"升幅 {recent_mean / early_mean - 1:.0%}"
         return met, (
             f"早期日均 {early_mean:.1f} 条 → 近期 {recent_mean:.1f} 条"
-            f"（降幅 {1 - recent_mean / early_mean:.0%}）"
+            f"（{change}）"
         )
 
     # ---------- 说明文本 ----------
 
     @staticmethod
     def _note(key: str, stat_met: bool, found: bool) -> str:
+        # 未见异常用中性文案：告急话术配绿色级会自相矛盾
+        # （如近期日均高于早期却写「明显降温」）
+        if not stat_met and not found:
+            return {
+                "hot_cold": "日消息量波动在正常范围，热度供给稳定",
+                "one_sided": "双方投入较为均衡，无明显单向付出",
+                "reality_denial": "未发现否认感受或记忆的话术",
+                "warm_then_cold": "前后热度变化在正常范围，未见明显退潮",
+            }[key]
         text = {
             "hot_cold": "热度忽高忽低，情绪供给不稳定，容易让人持续期待又落空",
             "one_sided": "互动投入明显偏向一方：一方持续找话题，另一方较少回应",

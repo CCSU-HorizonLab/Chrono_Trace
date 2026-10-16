@@ -15,6 +15,30 @@ for _path in (str(_BACKEND_ROOT), str(_REPO_ROOT)):
         sys.path.insert(0, _path)
 
 
+def _disable_orphan_recovery_for_tests() -> None:
+    """测试进程禁用孤儿构建状态回收。
+
+    回收会写 rag_index_status 并重新入队；测试进程的 get_db 未统一隔离
+    （多个用例直接跑 RagIndexQueue._run），误触真实库会把开发库中
+    构建中的联系人复位成 pending。需要测回收的用例自行 monkeypatch
+    _orphans_recovered=False 并隔离 get_db。
+    """
+    try:
+        import threading
+
+        from app.services.realtime.rag.indexer import RagIndexQueue
+
+        RagIndexQueue._orphans_recovered = True
+        # 伪装 worker 存活：Bridge() 构造会 ensure_started 拉起真线程，
+        # 测试进程会误处理队列任务（fifo 乱序根因同 _suppress_background_worker）
+        RagIndexQueue._worker = threading.main_thread()
+    except Exception:
+        pass
+
+
+_disable_orphan_recovery_for_tests()
+
+
 @pytest.fixture(autouse=True)
 def _reset_rag_caches():
     """RAG 进程级缓存测试隔离：每个用例后清向量缓存与设置文件缓存。

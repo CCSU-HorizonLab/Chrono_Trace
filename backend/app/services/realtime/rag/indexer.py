@@ -60,6 +60,8 @@ class RagIndexer:
     SELF_STYLE_LIMIT = 24
     EMBED_BATCH_SIZE = 64
     WRITE_COMMIT_INTERVAL = 64
+    # 语义抽取预批嵌入：每块段数（块内候选句合批推理，块间释放向量控内存）
+    SEMANTIC_CHUNK_SEGMENTS = 128
     SHARED_MEMORY_KINDS = {
         "plan_or_appointment",
         "hobby_or_game",
@@ -730,6 +732,40 @@ class RagIndexer:
             len(sessions),
         )
 
+        # 预批嵌入：候选句跨段合批推理（此前逐段各调一次小批量，大群聊
+        # 1587 段=1587 次推理调用，是构建耗时主体）。按段分块推进控峰值
+        # 内存；块内嵌入失败整块退 marker 兜底，与原逐段失败口径一致。
+        segment_facts: list[list[Any]] = []
+        chunk_size = self.SEMANTIC_CHUNK_SEGMENTS
+        for chunk_start in range(0, len(segments), chunk_size):
+            chunk = segments[chunk_start:chunk_start + chunk_size]
+            chunk_candidates = [
+                self.semantic_fact_extractor.collect_candidates(seg) for seg in chunk
+            ]
+            flat_texts: list[str] = []
+            for cands in chunk_candidates:
+                for item in cands:
+                    flat_texts.append(item["content"])
+                    flat_texts.append(item["window_text"])
+            chunk_fact_lists: list[list[Any]] = []
+            try:
+                vectors = self.embedding_service.embed_texts(flat_texts) if flat_texts else []
+                cursor = 0
+                for seg, cands in zip(chunk, chunk_candidates):
+                    span = 2 * len(cands)
+                    singles = vectors[cursor:cursor + span:2]
+                    windows = vectors[cursor + 1:cursor + span:2]
+                    cursor += span
+                    chunk_fact_lists.append(
+                        self.semantic_fact_extractor.score_candidates(seg, cands, singles, windows)
+                    )
+            except Exception:
+                chunk_fact_lists = [
+                    self.semantic_fact_extractor.marker_fallback(seg) if cands else []
+                    for seg, cands in zip(chunk, chunk_candidates)
+                ]
+            segment_facts.extend(chunk_fact_lists)
+
         semantic_fact_count = 0
         for index, segment in enumerate(segments, 1):
             topic_content = self.segmenter.render_segment(segment)
@@ -763,7 +799,7 @@ class RagIndexer:
                     metadata=self._metadata(segment, source_kind="historical", summary_method="rules"),
                 )
             )
-            semantic_facts = self.semantic_fact_extractor.extract(segment)
+            semantic_facts = segment_facts[index - 1]
             self._extract_structured_shadow_facts(
                 account_wxid=account_wxid,
                 conversation_id=conversation_id,
@@ -775,15 +811,22 @@ class RagIndexer:
                 msg for msg in segment.messages[-3:]
                 if str(msg.get("content") or "").strip()
             ]
-            # 段级提交：LLM 抽取每段耗时数秒到数十秒，跨段挂着的未提交
-            # 写会长期占住 WAL 写锁，与并发的其他连接（手动重建/检索日
-            # 志写入）互相 busy 超时。每段落盘，写事务窗口缩到毫秒级。
-            self.store.conn.commit()
+            # 段级提交：LLM 抽取开启时段耗时数秒到数十秒，跨段挂着的未
+            # 提交写会长期占住 WAL 写锁，与并发的其他连接（手动重建/检索
+            # 日志写入）互相 busy 超时——此时仍每段落盘。纯本地路径段耗
+            # 毫秒级，按 WRITE_COMMIT_INTERVAL 攒批提交（每段一次 fsync
+            # 在外置盘上是大群聊构建的显著开销）。
+            if (
+                self.structured_fact_extractor is not None
+                or index % self.WRITE_COMMIT_INTERVAL == 0
+            ):
+                self.store.conn.commit()
             semantic_fact_count += len(
                 [fact for fact in semantic_facts if fact.memory_kind != "marker_fallback"]
             )
             for fact_index, fact in enumerate(semantic_facts, 1):
                 fact_row_active = True  # 影子层关闭时无从判定退役状态，维持文档生成
+                fact_id: int | None = None  # 影子层关闭时无落库，文档不挂事实引用
                 if load_rag_settings().get("rag_fact_shadow_enabled", True):
                     from .semantic_memory import calibrate_fact_confidence
 
@@ -1862,6 +1905,7 @@ class RagIndexQueue:
     _fact_order: "deque[tuple[str, int]]" = deque()
     _worker: threading.Thread | None = None
     _logs_pruned_at: float = 0.0
+    _orphans_recovered: bool = False
 
     @classmethod
     def mark_dirty(cls, account_wxid: str, conversation_id: int | None) -> None:
@@ -1951,7 +1995,60 @@ class RagIndexQueue:
             logger.debug("[RAG] logs prune failed: %s", exc)
 
     @classmethod
+    def ensure_started(cls) -> None:
+        """应用启动即拉起 worker：先做孤儿状态回收，再待命处理队列。
+
+        worker 平时只在首个任务入队时才创建；若重启后无人入队，上次进程
+        遗留的孤儿 indexing 状态将无人回收。RAG 关闭时不动后台机制。
+        """
+        if not load_rag_settings().get("rag_enabled"):
+            return
+        with cls._lock:
+            if cls._worker is None or not cls._worker.is_alive():
+                cls._worker = threading.Thread(target=cls._run, daemon=True)
+                cls._worker.start()
+
+    @classmethod
+    def _recover_orphaned_indexing(cls) -> None:
+        """进程重启后回收孤儿 indexing 状态。
+
+        构建是进程内后台线程，进程退出（重启/崩溃/关机）会让进行中的
+        重建永久卡在 status='indexing'——状态页永远显示构建中，且不再
+        被任何入口重新入队。worker 首次启动时（本进程此时不可能有进行
+        中的构建）把这类行复位为 pending 并重新入队。
+        """
+        with cls._lock:
+            if cls._orphans_recovered:
+                return
+            cls._orphans_recovered = True
+        try:
+            conn = get_db()
+            rows = conn.execute(
+                "SELECT account_wxid, conversation_id FROM rag_index_status WHERE status = 'indexing'"
+            ).fetchall()
+            recovered = []
+            for row in rows:
+                key = (str(row["account_wxid"]), int(row["conversation_id"]))
+                with _ACTIVE_LOCK:
+                    if key in _ACTIVE:
+                        continue  # 本进程确有构建在跑（理论不可达，防御）
+                conn.execute(
+                    "UPDATE rag_index_status SET status = 'pending' "
+                    "WHERE account_wxid = ? AND conversation_id = ?",
+                    key,
+                )
+                recovered.append(key)
+            if recovered:
+                conn.commit()
+                logger.info("[RAG] 回收孤儿构建状态 %s 个，重新入队", len(recovered))
+            for key in recovered:
+                cls.enqueue(*key)
+        except Exception as exc:
+            logger.warning("[RAG] 孤儿状态回收失败: %s", exc)
+
+    @classmethod
     def _run(cls) -> None:
+        cls._recover_orphaned_indexing()
         time.sleep(0.8)
         while True:
             job = cls._pop_job()

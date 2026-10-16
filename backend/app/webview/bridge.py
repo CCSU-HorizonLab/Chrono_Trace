@@ -85,6 +85,14 @@ class Bridge(
         self._wechat_import_lock = threading.Lock()
         self._webview_window = None  # 由 app_dev.py 注入
         self._analysis_cancel_event = None  # 用于取消好感度分析
+
+        # RAG 队列启动即拉起：回收上次进程遗留的孤儿 indexing 状态
+        try:
+            from ..services.realtime.rag.indexer import RagIndexQueue
+
+            RagIndexQueue.ensure_started()
+        except Exception as exc:
+            logger.warning("[RAG] 启动拉起队列失败: %s", exc)
         self._affinity_service = None  # 好感度分析服务实例（analyze_affinity 中懒创建）
         self._close_actions: dict[str, Any] = {}  # 关闭守卫动作（close_guard 装配）
 

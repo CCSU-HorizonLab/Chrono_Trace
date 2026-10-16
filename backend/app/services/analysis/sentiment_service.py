@@ -272,6 +272,27 @@ class SentimentService:
 
         return results
 
+    def embed_texts_batch(self, texts: List[str]) -> List[List[float]]:
+        """仅产向量（跳过情感推理），调用方只消费 embedding 时使用。
+
+        RAG 索引构建曾走 analyze_batch(include_embeddings=True)——语义抽取
+        每段候选句白跑一遍情感分类模型，产出从未被读取。向量口径与
+        analyze_batch 完全一致（同一 _get_embeddings_batch，含 L1/L2 缓存）。
+        """
+        if not texts:
+            return []
+        safe_texts: List[str] = []
+        for text in texts:
+            if isinstance(text, bytes):
+                try:
+                    text = text.decode("utf-8", errors="replace")
+                except Exception:
+                    text = ""
+            elif not isinstance(text, str):
+                text = str(text) if text is not None else ""
+            safe_texts.append(text)
+        return self._get_embeddings_batch(safe_texts)
+
     def _get_embedding(self, text: str) -> List[float]:
         """Encode one text using the local model's native vector dimension.
 

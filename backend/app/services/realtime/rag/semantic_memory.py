@@ -130,28 +130,64 @@ class SemanticFactExtractor:
         self._prototype_vectors: dict[str, list[float]] | None = None
 
     def extract(self, segment: RagSegment) -> list[SemanticFact]:
-        candidates = self._candidate_windows(segment)
+        """单段自包含抽取（小批量推理）。索引构建用 collect+score 预批路径。"""
+        candidates = self.collect_candidates(segment)
         if not candidates:
             return []
         try:
-            return self._extract_with_embeddings(segment, candidates)
+            vectors = self.embedding_service.embed_texts(
+                [item["content"] for item in candidates]
+                + [item["window_text"] for item in candidates]
+            )
+            single_vectors = vectors[: len(candidates)]
+            window_vectors = vectors[len(candidates) :]
+            return self.score_candidates(segment, candidates, single_vectors, window_vectors)
         except RagEmbeddingUnavailable:
             return self._fallback_marker_facts(segment)
         except Exception:
             return self._fallback_marker_facts(segment)
+
+    def collect_candidates(self, segment: RagSegment) -> list[dict[str, Any]]:
+        """阶段一：纯 CPU 收集候选句（无推理），供跨段合批嵌入。"""
+        return self._candidate_windows(segment)
+
+    def marker_fallback(self, segment: RagSegment) -> list[SemanticFact]:
+        """嵌入不可用时的兜底标记事实（预批路径块级失败时逐段调用）。"""
+        return self._fallback_marker_facts(segment)
+
+    def score_candidates(
+        self,
+        segment: RagSegment,
+        candidates: list[dict[str, Any]],
+        single_vectors: list[list[float]],
+        window_vectors: list[list[float]],
+    ) -> list[SemanticFact]:
+        """阶段二：用预批向量给候选打分产事实（与原逐段路径同口径）。"""
+        if not candidates:
+            return []
+        return self._score_with_vectors(segment, candidates, single_vectors, window_vectors)
 
     def _extract_with_embeddings(
         self,
         segment: RagSegment,
         candidates: list[dict[str, Any]],
     ) -> list[SemanticFact]:
-        prototype_vectors = self._load_prototype_vectors()
         vectors = self.embedding_service.embed_texts(
             [item["content"] for item in candidates]
             + [item["window_text"] for item in candidates]
         )
         single_vectors = vectors[: len(candidates)]
         window_vectors = vectors[len(candidates) :]
+        return self._score_with_vectors(segment, candidates, single_vectors, window_vectors)
+
+    def _score_with_vectors(
+        self,
+        segment: RagSegment,
+        candidates: list[dict[str, Any]],
+        single_vectors: list[list[float]],
+        window_vectors: list[list[float]],
+    ) -> list[SemanticFact]:
+        prototype_vectors = self._load_prototype_vectors()
 
         facts: list[SemanticFact] = []
         for item, single_vector, window_vector in zip(candidates, single_vectors, window_vectors):

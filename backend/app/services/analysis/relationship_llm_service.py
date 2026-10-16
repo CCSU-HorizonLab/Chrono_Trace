@@ -136,28 +136,43 @@ class RelationshipLLMService:
             )
 
         messages = self._render_prompt(pair_texts, context or {}, metrics)
-        body = self._call_chat(messages)
-        content = self._extract_content(body)
+        # 解析失败自动重试一次：本地模型面对复杂 schema 偶发不吐 JSON
+        # ——同输入重跑即恢复（实测 conv 重放一次即成功），网络层失败
+        # 已由 llm_http 自行重试，这里只兜解析形态
+        result: Optional[Dict[str, Any]] = None
+        content = ""
         finish_reason = ""
-        try:
-            finish_reason = str(body["choices"][0].get("finish_reason") or "")
-        except (KeyError, IndexError, TypeError):
-            pass
-        if finish_reason == "length":
+        for attempt in (1, 2):
+            body = self._call_chat(messages)
+            content = self._extract_content(body)
+            finish_reason = ""
+            try:
+                finish_reason = str(body["choices"][0].get("finish_reason") or "")
+            except (KeyError, IndexError, TypeError):
+                pass
+            if finish_reason == "length":
+                raise RelationshipLLMAbsent(
+                    f"LLM 输出被 max_tokens={MAX_TOKENS} 截断（思考模型推理段过长）"
+                )
+            try:
+                result = self._parse_response(content)
+                break
+            except RelationshipLLMAbsent:
+                # WARNING 级留现场：打包版文件日志为 INFO，DEBUG 不落盘，
+                # 偶发失败曾无从诊断（content/reasoning 长度可判 think 分离形态）
+                reasoning_len = 0
+                try:
+                    reasoning_len = len(body["choices"][0]["message"].get("reasoning_content") or "")
+                except (KeyError, IndexError, TypeError):
+                    pass
+                logger.warning(
+                    "[关系评估] 解析失败(第%d次) content(len=%d, reasoning=%d, finish=%s) 前200字: %s",
+                    attempt, len(content), reasoning_len, finish_reason or "unknown", content[:200],
+                )
+        if result is None:
             raise RelationshipLLMAbsent(
-                f"LLM 输出被 max_tokens={MAX_TOKENS} 截断（思考模型推理段过长）"
-            )
-        try:
-            result = self._parse_response(content)
-        except RelationshipLLMAbsent:
-            # 带上下文的缺席原因：下次定位不用再盲猜输出形态
-            logger.debug(
-                "[关系评估] 解析失败 content(len=%d, finish=%s) 前300字: %s",
-                len(content), finish_reason, content[:300],
-            )
-            raise RelationshipLLMAbsent(
-                f"LLM 输出未包含可解析的 JSON 评估"
-                f"（finish={finish_reason or 'unknown'}, len={len(content)}）"
+                f"LLM 输出未包含可解析的 JSON 评估（已重试，"
+                f"finish={finish_reason or 'unknown'}, len={len(content)}）"
             ) from None
 
         # 推导纪律的事后校验：引文必须真的出现在采样原文里

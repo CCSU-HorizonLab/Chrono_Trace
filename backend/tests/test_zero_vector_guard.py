@@ -42,6 +42,18 @@ def test_embedding_service_rejects_zero_vectors():
     assert _service([0.1, 0.2, 0.3]).embed_texts(["任意文本"]) == [[0.1, 0.2, 0.3]]
 
 
+def test_is_warm_probes_loaded_model():
+    """is_warm 公共 API:探测底层模型加载状态(曾调用不存在的内部方法必崩)。"""
+    cold = RagEmbeddingService(
+        sentiment_service=SimpleNamespace(_embedding_model=None)
+    )
+    assert cold.is_warm() is False
+    warm = RagEmbeddingService(
+        sentiment_service=SimpleNamespace(_embedding_model=object())
+    )
+    assert warm.is_warm() is True
+
+
 class _FakeEmbedding:
     def __init__(self):
         self.calls = 0

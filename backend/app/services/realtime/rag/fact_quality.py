@@ -9,11 +9,14 @@ predicted memory kind.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from pathlib import Path
 from typing import Any
 
 from .relevance_gate import RagRelevanceGate
+
+logger = logging.getLogger(__name__)
 
 # 敏感查询阻断清单（rag_relevance_gate）＋ 事实入库前的补充强敏词；
 # 前者服务于"查询端阻断"，密码/密钥/宽泛住址只影响入库质量层。
@@ -22,22 +25,25 @@ SENSITIVE_TERMS = tuple(dict.fromkeys(
 ))
 
 
-def _load_quality_patterns() -> dict[str, tuple[str, ...]]:
+def _load_quality_patterns(path: Path | None = None) -> dict[str, tuple[str, ...]]:
     """Load quality-gate word lists from the external patterns config.
 
     P2-1 纪律：词表是数据不是代码——代指残句特征、微信系统消息特征
     等语言词表外置于 fact_quality_patterns.json，扩充改配置不动代码。
-    配置缺失时安全降级为空表（不拦截），绝不让质量门崩溃。
+    配置缺失时安全降级为空表（不拦截），绝不让质量门崩溃——但降级
+    必须留痕：词表随包缺失曾在打包端静默放行全部基础拦截项（打包
+    spec 已补 datas，此告警兜底防同类回归）。
     """
-    path = Path(__file__).with_name("fact_quality_patterns.json")
+    target = path or Path(__file__).with_name("fact_quality_patterns.json")
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = json.loads(target.read_text(encoding="utf-8"))
         return {
             key: tuple(str(term) for term in terms if str(term).strip())
             for key, terms in payload.items()
             if isinstance(terms, list) and not key.startswith("_")
         }
     except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        logger.warning("[RAG] 质量门词表缺失或损坏，基础拦截项全部放行: %s", target)
         return {}
 
 
@@ -54,21 +60,27 @@ TRANSACTION_DETAIL_TERMS = _QUALITY_PATTERNS.get("transaction_detail_terms", ())
 WEAK_ATTITUDE_TERMS = _QUALITY_PATTERNS.get("weak_attitude_terms", ())
 
 
-def _load_kind_signals() -> dict[str, tuple[str, ...]]:
+def _load_kind_signals(path: Path | None = None) -> dict[str, tuple[str, ...]]:
     """Load kind signal words from the external fact_kind_hints config.
 
     词表外置是 v4 P2-1 的既定决策（通用检索/质量代码不内嵌具体业务语料）；
-    扩充信号词改 json，不动代码。
+    扩充信号词改 json，不动代码。缺失时同样安全降级为空表，但后果比
+    patterns 严重得多：kind 信号词缺失 → 所有影子事实被判 unknown_kind
+    拦截 → 0 条入库（打包 spec 曾漏带此文件，静默零事实）。
     """
-    path = Path(__file__).with_name("fact_kind_hints.json")
+    target = path or Path(__file__).with_name("fact_kind_hints.json")
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = json.loads(target.read_text(encoding="utf-8"))
         return {
             str(kind): tuple(str(term) for term in terms if str(term).strip())
             for kind, terms in payload.items()
             if isinstance(terms, list)
         }
     except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        logger.warning(
+            "[RAG] kind 信号词表缺失或损坏：影子事实将全部被 unknown_kind 拦截，0 条入库: %s",
+            target,
+        )
         return {}
 
 

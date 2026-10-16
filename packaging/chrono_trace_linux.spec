@@ -32,6 +32,11 @@ datas = [
     (str(PROJECT_ROOT / "backend" / "app" / "db" / "schema.sql"), "backend/app/db"),
     (str(PROJECT_ROOT / "backend" / "app" / "db" / "migrations"), "backend/app/db/migrations"),
     (str(FRONTEND_DIST_DIR), "frontend/webdist"),
+    # RAG 词表（fact_kind_hints / fact_quality_patterns）：fact_quality.py 以
+    # Path(__file__) 相邻定位。冻结态模块全名为 backend.app.*，__file__ 实际
+    # 在 _internal/backend/app/... 下（首版误放 app/ 前缀，WARNING 现场证实
+    # 加载不到）——目标目录须与 schema.sql 同款带 backend/ 前缀。
+    (str(PROJECT_ROOT / "backend" / "app" / "services" / "realtime" / "rag" / "*.json"), "backend/app/services/realtime/rag"),
 ]
 if BUILD_INFO_FILE.exists():
     datas.append((str(BUILD_INFO_FILE), "packaging/generated"))

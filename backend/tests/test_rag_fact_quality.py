@@ -153,3 +153,28 @@ def test_weak_preference_fragments_rejected():
     assert fact_quality_reason(
         "preference_like", "对方提到：没那么想要那款机械键盘了，先不买"
     ) is None
+
+
+def test_missing_wordlist_file_degrades_empty_and_logs(tmp_path, caplog, monkeypatch):
+    """打包回归：词表文件缺失时降级空表且必须告警留痕。
+
+    打包 spec 曾漏带两份词表 json，缺失时静默降级 {}——kind 信号词
+    全空导致影子事实全部被 unknown_kind 拦截，打包端 0 条事实入库
+    且无任何报错（开发端文件在源码目录旁故不可复现）。
+    """
+    import logging
+
+    from app.services.realtime.rag import fact_quality
+
+    missing = tmp_path / "not_shipped.json"
+    with caplog.at_level(logging.WARNING, logger=fact_quality.__name__):
+        assert fact_quality._load_kind_signals(path=missing) == {}
+        assert fact_quality._load_quality_patterns(path=missing) == {}
+    assert "kind 信号词表缺失" in caplog.text
+    assert "质量门词表缺失" in caplog.text
+
+    # 空信号词的直接后果即生产故障形态：任何 kind 一律 unknown_kind
+    monkeypatch.setattr(fact_quality, "_KIND_SIGNALS", {})
+    assert fact_quality.fact_quality_reason(
+        "recurring_habit", "我提到：我每次压力大的时候都会去江边散步"
+    ) == "unknown_kind"

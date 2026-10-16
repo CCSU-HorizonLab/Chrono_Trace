@@ -53,14 +53,10 @@ done
 
 log() { printf '\033[1;36m[build_linux]\033[0m %s\n' "$*"; }
 
-# ---------- 版本号解析：参数 > packaging/VERSION > frontend/package.json > 0.1.0 ----------
+# ---------- 版本号解析：参数 > frontend/package.json（唯一版本源）> 0.1.0 ----------
 resolve_version() {
   if [[ -n "$VERSION" ]]; then
     echo "$VERSION"
-    return
-  fi
-  if [[ -f packaging/VERSION ]]; then
-    tr -d '\r\n' < packaging/VERSION
     return
   fi
   if command -v node >/dev/null 2>&1; then

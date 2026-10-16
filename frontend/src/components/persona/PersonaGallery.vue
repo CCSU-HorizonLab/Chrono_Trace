@@ -38,18 +38,65 @@
             :date-label="milestone.dateLabel"
             :body="milestone.body"
             :accent="milestone.accent"
+            :clickable="Boolean(milestone.anchor && conversationId)"
+            @open="openRecall(milestone)"
           />
         </div>
         <div v-else class="persona-empty-mini">当前还不足以拼出关键互动瞬间</div>
       </CtCard>
     </template>
+
+    <!-- 记忆相框回顾弹窗：展示锚点时刻的原始对话 -->
+    <div v-if="recall.visible" class="recall-overlay" @click.self="closeRecall">
+      <div class="recall-panel">
+        <div class="recall-head">
+          <div class="recall-head-text">
+            <h3>{{ recall.title }}</h3>
+            <span class="recall-date-pill">{{ recall.dateLabel }}</span>
+          </div>
+          <button class="recall-close" aria-label="关闭" @click="closeRecall">✕</button>
+        </div>
+
+        <div class="recall-body">
+          <div v-if="recall.loading" class="recall-status">
+            <Clock :size="22" class="persona-loading-spin" />
+            <p>正在取回当时的对话...</p>
+          </div>
+          <div v-else-if="recall.error" class="recall-status">
+            <p>{{ recall.error }}</p>
+          </div>
+          <template v-else>
+            <div
+              v-for="msg in recall.messages"
+              :key="msg.id"
+              class="recall-msg"
+              :class="{ 'is-me': msg.is_me }"
+            >
+              <div class="recall-bubble">
+                <div class="recall-meta">
+                  <span class="recall-sender">{{ msg.sender_name }}</span>
+                  <span class="recall-time">{{ formatClock(msg.create_time) }}</span>
+                </div>
+                <div class="recall-content">{{ msg.content?.trim() || '（图片/语音等非文字内容）' }}</div>
+              </div>
+            </div>
+          </template>
+        </div>
+
+        <div v-if="!recall.loading && !recall.error && recall.messages.length" class="recall-foot">
+          <template v-if="recall.truncated">已显示前 {{ recall.messages.length }} 条，共 {{ recall.total }} 条</template>
+          <template v-else>共 {{ recall.total }} 条消息</template>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import type { PropType } from 'vue'
 import { Images, Clock } from 'lucide-vue-next'
+import { api } from '@/api/bridge'
 import CtCard from '@/components/base/CtCard.vue'
 import PersonaTagsCard from './PersonaTagsCard.vue'
 import TopicUniverse from './TopicUniverse.vue'
@@ -107,6 +154,15 @@ type MilestoneItem = {
   dateLabel: string
   body: string
   accent: string
+  anchor?: { startMs: number; endMs?: number }
+}
+
+type RecallMessage = {
+  id: number
+  sender_name: string
+  content: string
+  create_time: number
+  is_me: boolean
 }
 
 const props = defineProps({
@@ -117,6 +173,10 @@ const props = defineProps({
   contactName: {
     type: String,
     required: true
+  },
+  conversationId: {
+    type: Number,
+    default: null
   },
   profile: {
     type: Object as PropType<PersonaProfile | null>,
@@ -255,7 +315,8 @@ const milestones = computed<MilestoneItem[]>(() => {
       title: '最早留痕',
       dateLabel: formatMsDate(props.activityCalendarSummary.global_first_session_start_time),
       body: '这是全纪录中能追溯到的最早一次完整互动切片。',
-      accent: '#0ea5e9'
+      accent: '#0ea5e9',
+      anchor: { startMs: props.activityCalendarSummary.global_first_session_start_time }
     })
 
     const peakSession = props.activityCalendarSummary.global_peak_session
@@ -264,7 +325,8 @@ const milestones = computed<MilestoneItem[]>(() => {
         title: '高密度互动',
         dateLabel: formatMsDate(peakSession.start_time),
         body: `单场互动达到 ${peakSession.message_count} 条消息，是全部历史样本里互动最密集的一次。`,
-        accent: '#8b5cf6'
+        accent: '#8b5cf6',
+        anchor: { startMs: peakSession.start_time }
       })
     }
   } else if (sessions.length) {
@@ -275,7 +337,8 @@ const milestones = computed<MilestoneItem[]>(() => {
       title: '最早留痕',
       dateLabel: formatMsDate(firstSession.start_time),
       body: '这是当前采样样本中能追溯到的最早一次完整互动切片。',
-      accent: '#0ea5e9'
+      accent: '#0ea5e9',
+      anchor: { startMs: firstSession.start_time }
     })
 
     if (peakSession.message_count > 0) {
@@ -283,7 +346,8 @@ const milestones = computed<MilestoneItem[]>(() => {
         title: '高密度互动',
         dateLabel: formatMsDate(peakSession.start_time),
         body: `这场会话记录了 ${peakSession.message_count} 条消息，是当前最近样本里最饱满的一次交谈。`,
-        accent: '#8b5cf6'
+        accent: '#8b5cf6',
+        anchor: { startMs: peakSession.start_time }
       })
     }
   }
@@ -296,7 +360,8 @@ const milestones = computed<MilestoneItem[]>(() => {
       title: '情绪高光',
       dateLabel: formatDayLabel(highest.ts),
       body: `这一天的情绪评分达到 ${highest.score.toFixed(2)}，是当前样本中的高光时刻。`,
-      accent: '#10b981'
+      accent: '#10b981',
+      anchor: dayAnchor(highest.ts)
     })
 
     if (lowest.ts !== highest.ts) {
@@ -304,13 +369,79 @@ const milestones = computed<MilestoneItem[]>(() => {
         title: '情绪转折',
         dateLabel: formatDayLabel(lowest.ts),
         body: `这一天的情绪评分降到 ${lowest.score.toFixed(2)}，可能是关系中的敏感节点。`,
-        accent: '#fb7185'
+        accent: '#fb7185',
+        anchor: dayAnchor(lowest.ts)
       })
     }
   }
 
   return items.slice(0, 4)
 })
+
+// —— 记忆相框回顾：点击相框取回锚点时刻的原始对话 ——
+
+const recall = ref<{
+  visible: boolean
+  loading: boolean
+  title: string
+  dateLabel: string
+  error: string
+  messages: RecallMessage[]
+  total: number
+  truncated: boolean
+}>({ visible: false, loading: false, title: '', dateLabel: '', error: '', messages: [], total: 0, truncated: false })
+
+async function openRecall(milestone: MilestoneItem) {
+  if (!milestone.anchor || !props.conversationId) return
+  recall.value = {
+    visible: true,
+    loading: true,
+    title: milestone.title,
+    dateLabel: milestone.dateLabel,
+    error: '',
+    messages: [],
+    total: 0,
+    truncated: false
+  }
+  try {
+    const res = await api.get_milestone_messages(
+      props.conversationId,
+      milestone.anchor.startMs,
+      milestone.anchor.endMs ?? 0
+    )
+    if (!res?.ok) {
+      recall.value.error = res?.error || '未能取回当时的消息'
+      return
+    }
+    recall.value.messages = res.messages || []
+    recall.value.total = res.total || 0
+    recall.value.truncated = Boolean(res.truncated)
+    if (!recall.value.messages.length) {
+      recall.value.error = '该时间点附近没有留存的文字消息（可能是纯图片/语音片段）。'
+    }
+  } catch (e: any) {
+    recall.value.error = e?.message || '读取失败，请稍后再试'
+  } finally {
+    recall.value.loading = false
+  }
+}
+
+function closeRecall() {
+  recall.value.visible = false
+}
+
+function formatClock(seconds: number): string {
+  return new Date(seconds * 1000).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+}
+
+// 'YYYY-MM-DD'（后端按 localtime 聚合）→ 当地时区整日毫秒窗口
+function dayAnchor(ts: string): { startMs: number; endMs: number } | undefined {
+  const parts = String(ts).split('-').map(Number)
+  if (parts.length < 3 || parts.some((n) => !Number.isFinite(n))) return undefined
+  const start = new Date(parts[0], parts[1] - 1, parts[2]).getTime()
+  if (!Number.isFinite(start)) return undefined
+  return { startMs: start, endMs: start + 86400000 }
+}
 
 function average(values: number[]) {
   const valid = values.filter((value) => Number.isFinite(value) && value > 0)
@@ -422,6 +553,155 @@ function formatDayLabel(value: string) {
 @keyframes persona-spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
+}
+
+/* —— 记忆相框回顾弹窗 —— */
+.recall-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(69, 26, 3, 0.42);
+  backdrop-filter: blur(3px);
+}
+
+.recall-panel {
+  display: flex;
+  flex-direction: column;
+  width: min(640px, 100%);
+  max-height: min(78vh, 720px);
+  border-radius: 24px;
+  overflow: hidden;
+  background: linear-gradient(165deg, #fffcf5, #fff6ea);
+  border: 1px solid rgba(251, 191, 36, 0.28);
+  box-shadow: 0 28px 64px rgba(120, 53, 15, 0.28);
+}
+
+.recall-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 20px 14px;
+  border-bottom: 1px solid rgba(251, 191, 36, 0.18);
+}
+
+.recall-head-text h3 {
+  margin: 0 0 6px;
+  font-size: 17px;
+  color: #7c2d12;
+}
+
+.recall-date-pill {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: rgba(249, 115, 22, 0.1);
+  color: #9a3412;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.recall-close {
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(156, 63, 18, 0.08);
+  color: #9a3412;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.recall-close:hover {
+  background: rgba(156, 63, 18, 0.16);
+}
+
+.recall-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.recall-status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 160px;
+  color: #9a3412;
+}
+
+.recall-status p {
+  margin: 0;
+  font-size: 13.5px;
+}
+
+.recall-msg {
+  display: flex;
+}
+
+.recall-msg.is-me {
+  justify-content: flex-end;
+}
+
+.recall-bubble {
+  max-width: 78%;
+  padding: 8px 12px;
+  border-radius: 16px;
+  border-bottom-left-radius: 6px;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(251, 191, 36, 0.2);
+}
+
+.recall-msg.is-me .recall-bubble {
+  border-bottom-left-radius: 16px;
+  border-bottom-right-radius: 6px;
+  background: rgba(249, 115, 22, 0.1);
+  border-color: rgba(249, 115, 22, 0.22);
+}
+
+.recall-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 3px;
+}
+
+.recall-sender {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #b45309;
+}
+
+.recall-time {
+  font-size: 10.5px;
+  color: rgba(154, 52, 18, 0.55);
+}
+
+.recall-content {
+  font-size: 13.5px;
+  line-height: 1.65;
+  color: #431407;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.recall-foot {
+  padding: 10px 20px 14px;
+  border-top: 1px solid rgba(251, 191, 36, 0.18);
+  font-size: 11.5px;
+  color: rgba(154, 52, 18, 0.7);
+  text-align: center;
 }
 
 @media (max-width: 1100px) {

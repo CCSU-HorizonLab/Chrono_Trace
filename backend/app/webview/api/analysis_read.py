@@ -134,6 +134,71 @@ class AnalysisReadApiMixin:
                 "error": str(e)
             }
 
+    def get_milestone_messages(self, conversation_id: int, start_ms: int, end_ms: int = 0, limit: int = 200) -> dict:
+        """记忆相框回顾：按锚点时间取当时的消息原文。
+
+        end_ms > start_ms 时取 [start_ms, end_ms) 窗口（如情绪高光所在的某一天）；
+        否则按 start_ms 容差 ±120s 匹配 sessions 表的会话，取该会话完整时间范围
+        （最早留痕/高密度互动的锚点即会话 start_time，由日历摘要换算而来）。
+        入参毫秒（前端约定），库内 messages.timestamp / sessions.start_time 均为秒。
+        """
+        try:
+            from ...db.connection import get_db
+            db = get_db()
+
+            start_s = int(start_ms) // 1000
+            if end_ms and int(end_ms) > int(start_ms):
+                start_bound = start_s
+                end_bound = int(end_ms) // 1000
+            else:
+                session = db.execute(
+                    "SELECT start_time, end_time FROM sessions "
+                    "WHERE conversation_id = ? AND start_time BETWEEN ? AND ?",
+                    (conversation_id, start_s - 120, start_s + 120),
+                ).fetchone()
+                if not session:
+                    return {"ok": False, "error": "未找到锚点对应的会话记录"}
+                start_bound = session["start_time"]
+                end_bound = session["end_time"]
+
+            total = db.execute(
+                "SELECT COUNT(*) AS n FROM messages "
+                "WHERE conversation_id = ? AND timestamp >= ? AND timestamp < ?",
+                (conversation_id, start_bound, end_bound),
+            ).fetchone()["n"]
+
+            capped = max(1, min(int(limit), 500))
+            cursor = db.execute("""
+                SELECT id, sender, is_sender, content, timestamp
+                FROM messages
+                WHERE conversation_id = ? AND timestamp >= ? AND timestamp < ?
+                ORDER BY timestamp ASC
+                LIMIT ?
+            """, (conversation_id, start_bound, end_bound, capped))
+            messages = []
+            for row in cursor.fetchall():
+                is_me = row["is_sender"] == 1
+                sender_name = row["sender"] or ("我" if is_me else "对方")
+                messages.append({
+                    "id": row["id"],
+                    "sender_name": sender_name,
+                    "content": row["content"],
+                    "create_time": row["timestamp"],
+                    "is_me": is_me,
+                })
+
+            return {
+                "ok": True,
+                "messages": messages,
+                "total": total,
+                "truncated": total > len(messages),
+                "start_time": start_bound,
+                "end_time": end_bound,
+            }
+        except Exception as e:
+            logger.error(f"[Bridge] 获取记忆相框消息失败: {e}")
+            return {"ok": False, "error": str(e)}
+
     def get_response_times(self, conversation_id: int) -> dict:
         """
         获取响应时间统计

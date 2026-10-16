@@ -123,6 +123,7 @@ type PyWebViewApi = {
   get_extraction_progress: (task_id: string) => Promise<any>
   get_sessions: (conversation_id: number, limit?: number, offset?: number) => Promise<any>
   get_session_messages: (session_id: number) => Promise<any>
+  get_milestone_messages: (conversation_id: number, start_ms: number, end_ms?: number, limit?: number) => Promise<any>
   get_response_times: (conversation_id: number) => Promise<any>
   get_initiative_stats: (conversation_id: number) => Promise<any>
   get_word_counts: (conversation_id: number, by_session?: boolean) => Promise<any>

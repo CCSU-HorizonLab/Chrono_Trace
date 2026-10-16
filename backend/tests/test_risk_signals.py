@@ -133,3 +133,24 @@ def test_warm_then_cold_compares_first_and_last_third():
     # 活跃日不足
     met, _ = svc._check_warm_then_cold(EngagementMetrics(daily_counts={"a": 5}))
     assert met is False
+
+
+def test_warm_then_cold_rising_recent_uses_rise_wording_and_neutral_note():
+    """近期日均高于早期：写「升幅」不写「降幅 -x%」，且未见异常级配中性说明。"""
+    svc = RiskSignalService()
+    # 9 个活跃日：前段日均 13 → 近段日均 14.8（升幅 14%，与触发无关）
+    daily = {}
+    for d in range(9):
+        daily[f"2026-0{d + 1}"] = 13 if d < 3 else (14.8 if d >= 6 else 8)
+    metrics = EngagementMetrics(daily_counts=daily)
+    met, basis = svc._check_warm_then_cold(metrics)
+    assert met is False
+    assert "升幅 14%" in basis
+    assert "降幅" not in basis
+    signal = RiskSignalService().assess(1, metrics, stats=make_stats(), llm_result=evidence())[
+        "signals"
+    ]["warm_then_cold"]
+    assert signal["level"] == LEVEL_NORMAL
+    assert "正在退潮" not in signal["note"]  # 绿色级不再挂「可能正在退潮」告急话术
+    assert "明显降温" not in signal["note"]
+    assert "正常范围" in signal["note"]

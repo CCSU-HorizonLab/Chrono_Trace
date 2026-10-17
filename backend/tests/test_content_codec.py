@@ -174,3 +174,76 @@ class TestMessageBlobMigration:
         finally:
             DatabaseConnection.close()
             DatabaseConnection._db_path = None
+
+    def test_fffd_soup_text_rows_normalized(self, tmp_path):
+        """10月6日-17日 ingest 的 errors='replace' 产物：U+FFFD 汤 TEXT 也归一。"""
+        conn = self._fresh_db(tmp_path)
+        try:
+            soup = "��(��/x��" + "x" * 30
+            mid = self._insert_message(conn, soup, 1)
+            conn.execute(
+                "INSERT INTO sentiment_cache (message_id, polarity, intensity, created_at)"
+                " VALUES (?, 1, 0.5, 1)",
+                (mid,),
+            )
+            conn.execute(
+                "INSERT INTO message_preprocessed"
+                " (message_id, conversation_id, cleaned_content, created_at)"
+                " VALUES (?, ?, ?, 1)",
+                (mid, 1, soup),
+            )
+            # 正常文本含零星单个 U+FFFD（个别坏表情）：不动
+            keep_id = self._insert_message(conn, "正常消息�偶尔一个", 1)
+
+            DatabaseConnection._migrate_message_blob_content(conn)
+
+            rows = {
+                row[0]: row[1]
+                for row in conn.execute("SELECT id, content FROM messages")
+            }
+            assert rows[mid] == "[压缩消息]"
+            assert rows[keep_id] == "正常消息�偶尔一个"
+            assert conn.execute(
+                "SELECT COUNT(*) FROM sentiment_cache WHERE message_id = ?", (mid,)
+            ).fetchone()[0] == 0
+            assert conn.execute(
+                "SELECT COUNT(*) FROM message_preprocessed WHERE message_id = ?", (mid,)
+            ).fetchone()[0] == 0
+        finally:
+            DatabaseConnection.close()
+            DatabaseConnection._db_path = None
+
+    def test_migration_marks_derived_layers_dirty(self, tmp_path, monkeypatch):
+        """归一后派生层失效：分析打脏 + RAG 队列标脏（口径同群前缀迁移）。"""
+        import app.services.analysis.analysis_state as analysis_state
+        import app.services.realtime.rag.indexer as indexer_mod
+
+        conn = self._fresh_db(tmp_path)
+        try:
+            conn.execute(
+                "INSERT INTO conversations (username, display_name, account_wxid,"
+                " created_at, updated_at) VALUES ('wxid_a', '阿明', 'wxid_me', 1, 1)"
+            )
+            self._insert_message(conn, ZSTD_BLOB, 1)
+
+            stale_calls = []
+            dirty_calls = []
+
+            def fake_stale(conv_ids):
+                stale_calls.append(list(conv_ids))
+
+            class _FakeQueue:
+                @staticmethod
+                def mark_dirty(account_wxid, conversation_id):
+                    dirty_calls.append((account_wxid, conversation_id))
+
+            monkeypatch.setattr(analysis_state, "mark_conversations_stale", fake_stale)
+            monkeypatch.setattr(indexer_mod, "RagIndexQueue", _FakeQueue)
+
+            DatabaseConnection._migrate_message_blob_content(conn)
+
+            assert stale_calls == [[1]]
+            assert dirty_calls == [("wxid_me", 1)]
+        finally:
+            DatabaseConnection.close()
+            DatabaseConnection._db_path = None

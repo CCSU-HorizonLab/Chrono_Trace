@@ -412,10 +412,8 @@ class RagRetriever:
             # 但从读侧彻底排除，避免出现“参考命中 N 条空记录”。
             if not content:
                 continue
-            try:
-                evidence_ids = json.loads(fact.get("evidence_message_ids_json") or "[]")
-            except (TypeError, ValueError, json.JSONDecodeError):
-                evidence_ids = []
+            # 预取阶段已解析过（evidence_ids_by_fact），不再二次 json.loads
+            evidence_ids = evidence_ids_by_fact.get(int(fact["id"]), [])
             # Legacy fact text can be lossy-decoded while its original local
             # message BLOB remains intact.  Use evidence text only as a
             # ranking hint; the canonical fact content and evidence IDs stay

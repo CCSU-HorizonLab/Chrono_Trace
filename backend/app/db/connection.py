@@ -407,14 +407,20 @@ class DatabaseConnection:
 
     @classmethod
     def _migrate_message_blob_content(cls, conn: sqlite3.Connection) -> None:
-        """一次性归一 BLOB 消息内容与未掩码的 local_type 高位 flag。
+        """一次性归一乱码消息内容与未掩码的 local_type 高位 flag。
 
-        旧导入链路把 V4 库 zstd 压缩 BLOB 原样写入 content，读侧
-        str(bytes) 产出 b'(\\xb5...' 式 repr 乱码混入 RAG 分段、长期
-        记忆上下文与问答引用（实测 type=1 即有 7707 行）；local_type
-        未掩码遗留 25769803825 式巨型值。压缩内容不解压（无 zstd 依赖，
-        0.67% 占比的转发长文收益不值当），按掩码类型给占位符；对应行
-        的 sentiment_cache 是乱码文本的嵌入，一并清除防向量检索被打脏。
+        两类脏内容：
+        - BLOB（typeof='blob'）：zstd 压缩二进制原样入库，读侧 str(bytes)
+          产出 b'(\\xb5...' 式 repr 乱码（实测 type=1 即有 7707 行）
+        - U+FFFD 汤 TEXT：2026-10-06 起 ingest 曾以 errors='replace' 把
+          zstd BLOB 强解成换坏字符文本落库（typeof='text'，blob 过滤捞
+          不到）；SQL 侧 LIKE char(65533) 预筛候选，decode 幂等性复检
+
+        压缩内容不解压（无 zstd 依赖，0.67% 占比的转发长文收益不值当），
+        按掩码类型给占位符。归一行的派生层一并清理：sentiment_cache
+        （乱码嵌入污染向量检索）、message_preprocessed（乱码净文本），
+        并对涉及的会话把分析结果打脏、RAG 队列标脏（文档/事实基于旧
+        文本重建）——不标脏则记忆与建议继续引用乱码直到手动重建。
         settings 表键做一次性标记，避免每次启动全表扫描。
         """
         try:
@@ -425,19 +431,60 @@ class DatabaseConnection:
                 return
             from ..services.wechat.content_codec import decode_message_content
 
-            rows = conn.execute(
+            candidates = conn.execute(
                 "SELECT id, message_type, content FROM messages WHERE typeof(content) = 'blob'"
             ).fetchall()
-            for row in rows:
-                conn.execute(
-                    "UPDATE messages SET content = ? WHERE id = ?",
-                    (decode_message_content(row[2], row[1]), row[0]),
-                )
-            if rows:
+            # U+FFFD 汤 TEXT 预筛：decode 对正常文本幂等，返回值有变化才需归一
+            candidates += conn.execute(
+                "SELECT id, message_type, content FROM messages "
+                "WHERE typeof(content) = 'text' "
+                "AND content LIKE '%' || char(65533) || '%'"
+            ).fetchall()
+            updates = []
+            for row in candidates:
+                normalized = decode_message_content(row[2], row[1])
+                if normalized != row[2]:
+                    updates.append((normalized, row[0]))
+
+            if updates:
                 conn.executemany(
-                    "DELETE FROM sentiment_cache WHERE message_id = ?",
-                    [(row[0],) for row in rows],
+                    "UPDATE messages SET content = ? WHERE id = ?", updates
                 )
+                id_rows = [(row[1],) for row in updates]
+                conn.executemany(
+                    "DELETE FROM sentiment_cache WHERE message_id = ?", id_rows
+                )
+                conn.executemany(
+                    "DELETE FROM message_preprocessed WHERE message_id = ?", id_rows
+                )
+                # 派生层标脏（口径同群前缀清理迁移）
+                touched_conversations = [
+                    int(row[0])
+                    for row in conn.execute(
+                        "SELECT DISTINCT conversation_id FROM messages WHERE id IN (%s)"
+                        % ",".join(str(row[1]) for row in updates)
+                    ).fetchall()
+                ]
+                if touched_conversations:
+                    try:
+                        from ..services.analysis.analysis_state import (
+                            mark_conversations_stale,
+                        )
+
+                        mark_conversations_stale(touched_conversations)
+                    except Exception as stale_e:
+                        logger.debug("[迁移] 乱码归一后分析打脏跳过: %s", stale_e)
+                    try:
+                        from ..services.realtime.rag.indexer import RagIndexQueue
+
+                        for account_row in conn.execute(
+                            "SELECT account_wxid, id FROM conversations "
+                            "WHERE id IN (%s)"
+                            % ",".join(str(c) for c in touched_conversations)
+                        ).fetchall():
+                            RagIndexQueue.mark_dirty(str(account_row[0]), int(account_row[1]))
+                    except Exception as rag_e:
+                        logger.debug("[迁移] 乱码归一后 RAG 标脏跳过: %s", rag_e)
             masked = conn.execute(
                 "UPDATE messages SET message_type = message_type % 4294967296 "
                 "WHERE message_type > 4294967295"
@@ -447,9 +494,14 @@ class DatabaseConnection:
                 "VALUES ('migration_message_blob_normalized', '1', strftime('%s', 'now'))"
             )
             conn.commit()
-            if rows or masked:
+            if updates or masked:
                 logger.info(
-                    "[迁移] BLOB 内容归一 %d 行、类型掩码 %d 行", len(rows), masked
+                    "[迁移] 乱码内容归一 %d 行（BLOB %d / FFFD 汤 %d）、类型掩码 %d 行",
+                    len(updates),
+                    sum(1 for row in candidates if isinstance(row[2], (bytes, bytearray))),
+                    len(updates)
+                    - sum(1 for row in candidates if isinstance(row[2], (bytes, bytearray))),
+                    masked,
                 )
         except Exception as exc:
             logger.warning("[迁移] BLOB 内容归一失败（下次启动重试）: %s", exc)

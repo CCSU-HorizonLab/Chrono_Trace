@@ -89,16 +89,23 @@ const detectClamp = async () => {
 }
 
 // 卡片可能在未布局时测过一次（tab 隐藏/字体未就绪），尺寸变化后重测；
-// 展开态不重测，避免展开后被误收回
+// 展开态不重测，避免展开后被误收回。observer 跟随 interpretation 节点
+// 出现/消失建立与拆除——卡片可能以空 interpretation 挂载（旧缓存无
+// 解读），此时节点尚不存在，挂载时建 observer 会永远建不出来
 let resizeObserver: ResizeObserver | null = null
-onMounted(() => {
-  void detectClamp()
-  if (typeof ResizeObserver !== 'undefined' && interpEl.value) {
+watch(interpEl, (el) => {
+  resizeObserver?.disconnect()
+  resizeObserver = null
+  if (el && typeof ResizeObserver !== 'undefined') {
     resizeObserver = new ResizeObserver(() => {
       if (!interpExpanded.value) void detectClamp()
     })
-    resizeObserver.observe(interpEl.value)
+    resizeObserver.observe(el)
   }
+}, { immediate: true })
+onMounted(() => {
+  // 挂载即测量（interpretation 无变化时 watch 不会再触发）
+  void detectClamp()
 })
 onBeforeUnmount(() => {
   resizeObserver?.disconnect()

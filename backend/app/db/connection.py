@@ -421,13 +421,17 @@ class DatabaseConnection:
         （乱码嵌入污染向量检索）、message_preprocessed（乱码净文本），
         并对涉及的会话把分析结果打脏、RAG 队列标脏（文档/事实基于旧
         文本重建）——不标脏则记忆与建议继续引用乱码直到手动重建。
-        settings 表键做一次性标记，避免每次启动全表扫描。
+        settings 表键记迁移版本（'1'=仅 BLOB 归一、'2'=扩入 FFFD 汤文本），
+        不到最新版本的库下次启动补扫，避免每次启动全表扫描。
         """
         try:
+            # 旗标为版本值而非布尔：'1' = 仅 BLOB 归一的旧版已跑，'2' = 已扩入
+            # U+FFFD 汤文本归一。已跑过 v1 的库（真实数据曾出现 132 万消息里
+            # 20.8 万条汤文本）必须再扫一次补齐，只有 '2' 才跳过
             flag = conn.execute(
                 "SELECT value FROM settings WHERE key = 'migration_message_blob_normalized'"
             ).fetchone()
-            if flag:
+            if flag and str(flag[0]) == "2":
                 return
             from ..services.wechat.content_codec import decode_message_content
 
@@ -494,7 +498,7 @@ class DatabaseConnection:
             ).rowcount
             conn.execute(
                 "INSERT OR REPLACE INTO settings (key, value, updated_at) "
-                "VALUES ('migration_message_blob_normalized', '1', strftime('%s', 'now'))"
+                "VALUES ('migration_message_blob_normalized', '2', strftime('%s', 'now'))"
             )
             conn.commit()
             if updates or masked:

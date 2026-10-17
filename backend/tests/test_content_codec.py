@@ -128,11 +128,11 @@ class TestMessageBlobMigration:
             assert id_text_kept in cached
             assert id_zstd_text not in cached
 
-            # 标记落库
+            # 标记落库（版本值 '2'）
             flag = conn.execute(
                 "SELECT value FROM settings WHERE key = 'migration_message_blob_normalized'"
             ).fetchone()
-            assert flag is not None and flag[0] == "1"
+            assert flag is not None and flag[0] == "2"
         finally:
             DatabaseConnection.close()
             DatabaseConnection._db_path = None
@@ -149,6 +149,34 @@ class TestMessageBlobMigration:
                 "SELECT typeof(content) FROM messages LIMIT 1"
             ).fetchone()[0]
             assert kind == "blob"
+        finally:
+            DatabaseConnection.close()
+            DatabaseConnection._db_path = None
+
+    def test_v1_flagged_db_still_gets_fffd_sweep(self, tmp_path):
+        """回归：跑过 v1（仅 BLOB）的库旗标为 '1'，FFFD 汤仍须补扫。
+
+        真实开发库曾出现 132 万消息里 20.8 万条 errors='replace' 汤文本
+        因旗标提前置位而永远轮不到 v2 扫描。
+        """
+        conn = self._fresh_db(tmp_path)
+        try:
+            soup = "��(2/�" + "x" * 30  # 前 64 字符 ≥2 个 U+FFFD
+            self._insert_message(conn, soup, 1)
+            conn.execute(
+                "INSERT OR REPLACE INTO settings (key, value, updated_at) "
+                "VALUES ('migration_message_blob_normalized', '1', strftime('%s', 'now'))"
+            )
+            conn.commit()
+
+            DatabaseConnection._migrate_message_blob_content(conn)
+
+            content = conn.execute("SELECT content FROM messages LIMIT 1").fetchone()[0]
+            assert content == "[压缩消息]"
+            flag = conn.execute(
+                "SELECT value FROM settings WHERE key = 'migration_message_blob_normalized'"
+            ).fetchone()
+            assert flag[0] == "2"
         finally:
             DatabaseConnection.close()
             DatabaseConnection._db_path = None

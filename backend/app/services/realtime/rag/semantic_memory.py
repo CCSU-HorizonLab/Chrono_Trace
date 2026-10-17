@@ -406,13 +406,16 @@ class SemanticFactExtractor:
         return best_kind, best_score
 
     def _mean_vector(self, vectors: list[list[float]]) -> list[float]:
-        if not vectors:
+        # 先剔除空向量：混入求和会在取下标时 IndexError，全空时 min() 抛
+        # ValueError——簇内个别嵌入缺失不应炸掉整次聚类
+        usable = [vector for vector in vectors if vector]
+        if not usable:
             return []
-        size = min(len(vector) for vector in vectors if vector)
+        size = min(len(vector) for vector in usable)
         if size <= 0:
             return []
         return [
-            sum(float(vector[index]) for vector in vectors) / len(vectors)
+            sum(float(vector[index]) for vector in usable) / len(usable)
             for index in range(size)
         ]
 

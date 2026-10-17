@@ -11,8 +11,12 @@ backend_root = Path(__file__).parent.parent
 sys.path.insert(0, str(backend_root))
 
 from app.services.realtime.sentiment_rules import (
+    EMOJI_SENTIMENT,
     ENGAGED_SHORT_REPLIES,
+    INTERNET_SLANG,
     PERFUNCTORY_WORDS,
+    get_emoji_sentiment,
+    get_slang_info,
     is_perfunctory,
 )
 
@@ -45,3 +49,46 @@ class TestIsPerfunctory:
 
     def test_longer_substantive_reply_not_perfunctory(self):
         assert not is_perfunctory("我明天下午三点到，你直接来地铁站找我")
+
+
+class TestEmojiLexicon:
+    def test_coverage_expanded(self):
+        """常用中文聊天表情需覆盖到百级（曾只有 45 个）"""
+        assert len(EMOJI_SENTIMENT) >= 110
+
+    def test_intensity_sign_matches_sentiment(self):
+        """极性与强度符号必须自洽：负面强度为负、正面为正"""
+        for info in EMOJI_SENTIMENT.values():
+            if info["sentiment"] == "positive":
+                assert info["intensity"] > 0
+            elif info["sentiment"] == "negative":
+                assert info["intensity"] < 0
+            else:
+                assert -0.3 <= info["intensity"] <= 0.0
+
+    def test_new_entries_lookup(self):
+        assert get_emoji_sentiment("🫶")["sentiment"] == "positive"
+        assert get_emoji_sentiment("🤡")["sentiment"] == "negative"
+        # 歧义大表（笑死/绝望并存）挂中性，不赌方向
+        assert get_emoji_sentiment("💀")["sentiment"] == "neutral"
+
+
+class TestSlangLexicon:
+    def test_relationship_domain_words_present(self):
+        """关系语域词直接服务本应用的分析目标"""
+        assert get_slang_info("双向奔赴")["sentiment"] == "positive"
+        assert get_slang_info("下头")["sentiment"] == "negative"
+
+    def test_lookup_is_case_insensitive(self):
+        assert get_slang_info("PUA")["sentiment"] == "negative"
+
+    def test_stale_words_removed(self):
+        """过气词不再入表（曾混入「奥利给」）"""
+        assert get_slang_info("奥利给") is None
+
+    def test_intensity_sign_matches_sentiment(self):
+        for info in INTERNET_SLANG.values():
+            if info["sentiment"] == "positive":
+                assert info["intensity"] > 0
+            elif info["sentiment"] == "negative":
+                assert info["intensity"] < 0

@@ -721,11 +721,24 @@ class RagAdminApiMixin:
                 if live_status:
                     status_counts[live_status] = status_counts.get(live_status, 0) + 1
 
+            # 徽标口径与列表一致：按 items（enabled 且 ready）计数。
+            # 此前直接取 status_counts['ready']（rag_index_status 全表
+            # GROUP BY），把列表里根本不显示的系统联系人索引（微信团队
+            # /微信支付等）与已删会话残留行也计入，刷新状态区徽标与
+            # 列表头部「已就绪」数字对不上。status_counts 保留原值仅作
+            # 诊断口径。items 的 status 已叠加 live 真值，重建中的
+            # 联系人此处正确不计入 ready。
+            ready_count = sum(
+                1
+                for item in items
+                if item.get("enabled") and item.get("status") == "ready"
+            )
+
             return {
                 "ok": True,
                 "has_live": bool(live_states),
                 "status_counts": status_counts,
-                "ready_count": status_counts.get("ready", 0),
+                "ready_count": ready_count,
                 "building_count": live_building + live_queued,
                 "settings": {
                     key: self.settings.get(key)

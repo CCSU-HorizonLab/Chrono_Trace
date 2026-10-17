@@ -14,6 +14,7 @@ from .db_decryptor_v2 import WeChatDBDecryptor  # V1 已退役，V2 尾部同名
 from .db.v4.contact import ContactDBV4
 from .db.v4.message import MessageDBV4
 from .contact_filters import EXCLUDED_CONTACT_USERNAMES, is_excluded_contact_username
+from .content_codec import decode_message_content
 from ...db.connection import get_db
 from ..analysis.preprocessing import PreprocessingService
 
@@ -900,8 +901,10 @@ class WeChatIngestService:
             )
             content = msg['content']
             if isinstance(content, bytes):
-                # 微信库部分行 content 为 BLOB，正则（str 模式）遇 bytes 必炸
-                content = content.decode('utf-8', errors='replace')
+                # 微信库部分行 content 为 BLOB，正则（str 模式）遇 bytes 必炸；
+                # 解码统一走 content_codec——此前 errors='replace' 把 zstd 二进制
+                # 解成 U+FFFD 汤 TEXT 落库，是启动迁移要擦的第二类脏数据
+                content = decode_message_content(content, msg.get('message_type'))
             sender_label = msg.get('sender', '')
             if is_chatroom_username(talker):
                 # 群消息存储前剥离 'wxid_xxx:\n' 前缀：不剥离会污染词频/

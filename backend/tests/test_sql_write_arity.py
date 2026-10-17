@@ -33,32 +33,42 @@ def _get_literal_string(node: ast.AST | None) -> str | None:
     return None
 
 
+def _scan_quoted(text: str, start: int) -> int:
+    """SQL 字面量/标识符引号段：返回结束引号位置（不含）。
+
+    统一按 SQLite 词法：单引号串 '' 转义、双引号标识符 "" 转义，
+    均不吃反斜杠——此前各 helper 自带「串内反斜杠转义」的 Python 式
+    规则，遇到 LIKE ... ESCAPE '\\' 就把串判成未闭合，引号状态外溢
+    污染后续解析（漏数 ?、错切 VALUES 列）。
+    """
+    quote = text[start]
+    index = start + 1
+    while index < len(text):
+        if text[index] == quote:
+            if text[index + 1 : index + 2] == quote:
+                index += 2  # '' / "" 转义
+                continue
+            return index
+        index += 1
+    return len(text)  # 未闭合：保守吞到结尾
+
+
 def _find_matching_paren(text: str, start: int) -> int:
     depth = 0
-    in_quote: str | None = None
-    escaped = False
+    index = start
 
-    for index in range(start, len(text)):
+    while index < len(text):
         char = text[index]
-        if in_quote is not None:
-            if escaped:
-                escaped = False
-            elif char == "\\":
-                escaped = True
-            elif char == in_quote:
-                in_quote = None
-            continue
-
         if char in {"'", '"'}:
-            in_quote = char
+            index = _scan_quoted(text, index) + 1
             continue
         if char == "(":
             depth += 1
-            continue
-        if char == ")":
+        elif char == ")":
             depth -= 1
             if depth == 0:
                 return index
+        index += 1
 
     return -1
 
@@ -67,40 +77,28 @@ def _split_top_level_csv(text: str) -> list[str]:
     parts: list[str] = []
     current: list[str] = []
     depth = 0
-    in_quote: str | None = None
-    escaped = False
+    index = 0
 
-    for char in text:
-        if in_quote is not None:
-            current.append(char)
-            if escaped:
-                escaped = False
-            elif char == "\\":
-                escaped = True
-            elif char == in_quote:
-                in_quote = None
-            continue
-
+    while index < len(text):
+        char = text[index]
         if char in {"'", '"'}:
-            in_quote = char
-            current.append(char)
+            end = _scan_quoted(text, index)
+            current.append(text[index : end + 1])
+            index = end + 1
             continue
         if char == "(":
             depth += 1
-            current.append(char)
-            continue
-        if char == ")":
+        elif char == ")":
             depth -= 1
-            current.append(char)
-            continue
-        if char == "," and depth == 0:
+        elif char == "," and depth == 0:
             value = "".join(current).strip()
             if value:
                 parts.append(value)
             current = []
+            index += 1
             continue
-
         current.append(char)
+        index += 1
 
     tail = "".join(current).strip()
     if tail:

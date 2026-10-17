@@ -297,39 +297,46 @@ class HistoryQAService:
         return kept
 
     def _keyword_channel(self, conversation_id: int, question: str) -> List[Dict[str, Any]]:
-        """逐关键词各自取最近 N 条命中后合并去重。
+        """逐关键词各自取最近 N 条命中后合并去重（单语句 UNION ALL）。
 
         单条 OR 查询全局 LIMIT 的老做法下，高频词（「我们」「聊天」）
         会把 newest 候选池刷满，冷门关键词更早但更相关的消息永远
-        进不了池——这正是「问问微信答非所问」的主要来源。
+        进不了池——这正是「问问微信答非所问」的主要来源。逐词取数
+        合成一条 UNION ALL 语句执行：语义与逐词循环查询完全一致，
+        但只占一次 DB 往返，不再串行跑最多 8 次查询。
         """
         keywords = _extract_keywords(question)
         if not keywords:
             return []
+        # SQLite 复合语句不接受括号臂，每词的 LIMIT 须内嵌为 FROM 子查询
+        branches = " UNION ALL ".join(
+            "SELECT * FROM (SELECT id, timestamp, is_sender, content, ? AS term_rank "
+            "FROM messages "
+            "WHERE conversation_id = ? AND message_type = 1 "
+            "AND length(content) > 0 AND content LIKE ? ESCAPE '\\' "
+            "ORDER BY timestamp DESC LIMIT %d)" % KEYWORD_PER_TERM_LIMIT
+            for _ in keywords
+        )
+        params: List[Any] = []
+        for rank, kw in enumerate(keywords):
+            params.extend([rank, conversation_id, f"%{_escape_like(kw)}%"])
+        try:
+            rows = get_db().execute(
+                f"SELECT id, timestamp, is_sender, content FROM ({branches}) "
+                "ORDER BY term_rank, timestamp DESC",
+                params,
+            ).fetchall()
+        except Exception as exc:
+            logger.warning("[问问微信] 关键词检索失败: %s", exc)
+            return []
         merged: List[Dict[str, Any]] = []
         seen: set = set()
-        for kw in keywords:
-            try:
-                rows = get_db().execute(
-                    """
-                    SELECT id, timestamp, is_sender, content
-                    FROM messages
-                    WHERE conversation_id = ? AND message_type = 1
-                      AND length(content) > 0 AND content LIKE ? ESCAPE '\\'
-                    ORDER BY timestamp DESC
-                    LIMIT ?
-                    """,
-                    (conversation_id, f"%{_escape_like(kw)}%", KEYWORD_PER_TERM_LIMIT),
-                ).fetchall()
-            except Exception as exc:
-                logger.warning("[问问微信] 关键词检索失败（%s）: %s", kw, exc)
+        for row in rows:
+            rec = self._row_to_record(row)
+            if rec["message_id"] in seen:
                 continue
-            for row in rows:
-                rec = self._row_to_record(row)
-                if rec["message_id"] in seen:
-                    continue
-                seen.add(rec["message_id"])
-                merged.append(rec)
+            seen.add(rec["message_id"])
+            merged.append(rec)
         return merged
 
     def _vector_channel(self, conversation_id: int, question: str) -> List[Dict[str, Any]]:
@@ -446,6 +453,45 @@ class HistoryQAService:
 
     # ---- 脱敏与 LLM ----
 
+    def _redact_batch_for_remote(
+        self,
+        pairs: List[Tuple[str, str]],
+        account_wxid: str,
+        conversation_id: int,
+    ) -> List[str]:
+        """批量脱敏核心：pairs 为 (文本, source_id)。
+
+        本地模型原样返回；远程模型逐条过 PrivacyRedactor，任何一条
+        失败即整体阻断（红线：不降级发原文）。问题/记录/历史问答/长期
+        记忆四个入口共用本方法，阻断规则单点维护。
+        """
+        from ..realtime.rag.config import is_remote_llm_model
+        from ..realtime.rag.fact_llm import get_active_model_config
+
+        model_config = get_active_model_config()
+        if not model_config:
+            raise HistoryQAError("未配置 LLM 模型，请先在设置中启用")
+        if not is_remote_llm_model(model_config):
+            return [text for text, _ in pairs]
+
+        from ..realtime.privacy_redactor import PrivacyRedactor
+
+        redactor = PrivacyRedactor(get_db())
+        redacted: List[str] = []
+        for text, source_id in pairs:
+            try:
+                result = redactor.redact(
+                    text,
+                    account_wxid=account_wxid,
+                    conversation_id=conversation_id,
+                    source_table="history_qa",
+                    source_id=source_id,
+                )
+            except Exception as exc:
+                raise HistoryQAError(f"脱敏失败，本次提问已阻断：{exc}") from exc
+            redacted.append(result.redacted_text)
+        return redacted
+
     def _redact_for_remote(
         self,
         question: str,
@@ -458,37 +504,16 @@ class HistoryQAService:
         问题同样过脱敏——用户常把手机号/真实姓名直接写进问题。
         本地模型原样返回。
         """
-        from ..realtime.rag.config import is_remote_llm_model
-        from ..realtime.rag.fact_llm import get_active_model_config
-
-        model_config = get_active_model_config()
-        if not model_config:
-            raise HistoryQAError("未配置 LLM 模型，请先在设置中启用")
-        if not is_remote_llm_model(model_config):
-            return question, records
-
-        from ..realtime.privacy_redactor import PrivacyRedactor
-
-        redactor = PrivacyRedactor(get_db())
-
-        def _redact(text: str, source_id: str) -> str:
-            try:
-                result = redactor.redact(
-                    text,
-                    account_wxid=account_wxid,
-                    conversation_id=conversation_id,
-                    source_table="history_qa",
-                    source_id=source_id,
-                )
-            except Exception as exc:
-                raise HistoryQAError(f"脱敏失败，本次提问已阻断：{exc}") from exc
-            return result.redacted_text
-
-        redacted_question = _redact(question, "question")
+        texts = self._redact_batch_for_remote(
+            [(question, "question")]
+            + [(rec["text"], str(rec["message_id"])) for rec in records],
+            account_wxid,
+            conversation_id,
+        )
         redacted = [
-            {**rec, "text": _redact(rec["text"], str(rec["message_id"]))} for rec in records
+            {**rec, "text": text} for rec, text in zip(records, texts[1:])
         ]
-        return redacted_question, redacted
+        return texts[0], redacted
 
     # ---- RAG 长期记忆槽 ----
 
@@ -529,30 +554,14 @@ class HistoryQAService:
         self, memories: List[str], account_wxid: str, conversation_id: int
     ) -> List[str]:
         """远程模型时长期记忆同样过脱敏（红线同消息记录：失败即阻断）。"""
-        from ..realtime.rag.config import is_remote_llm_model
-        from ..realtime.rag.fact_llm import get_active_model_config
-
-        model_config = get_active_model_config()
-        if not model_config or not is_remote_llm_model(model_config):
-            return memories
-
-        from ..realtime.privacy_redactor import PrivacyRedactor
-
-        redactor = PrivacyRedactor(get_db())
-        redacted: List[str] = []
-        for idx, text in enumerate(memories, 1):
-            try:
-                result = redactor.redact(
-                    text,
-                    account_wxid=account_wxid,
-                    conversation_id=conversation_id,
-                    source_table="history_qa",
-                    source_id=f"rag_memory_{idx}",
-                )
-            except Exception as exc:
-                raise HistoryQAError(f"脱敏失败，本次提问已阻断：{exc}") from exc
-            redacted.append(result.redacted_text)
-        return redacted
+        return self._redact_batch_for_remote(
+            [
+                (text, f"rag_memory_{idx}")
+                for idx, text in enumerate(memories, 1)
+            ],
+            account_wxid,
+            conversation_id,
+        )
 
     def _redact_history_for_remote(
         self,
@@ -564,33 +573,13 @@ class HistoryQAService:
 
         历史来自前端回传，虽然产出时已脱敏过，仍按不可信输入处理。
         """
-        from ..realtime.rag.config import is_remote_llm_model
-        from ..realtime.rag.fact_llm import get_active_model_config
-
-        model_config = get_active_model_config()
-        if not model_config or not is_remote_llm_model(model_config):
-            return turns
-
-        from ..realtime.privacy_redactor import PrivacyRedactor
-
-        redactor = PrivacyRedactor(get_db())
-        redacted: List[Dict[str, str]] = []
-        for idx, turn in enumerate(turns, 1):
-            out: Dict[str, str] = {}
-            for field in ("question", "answer"):
-                try:
-                    result = redactor.redact(
-                        turn[field],
-                        account_wxid=account_wxid,
-                        conversation_id=conversation_id,
-                        source_table="history_qa",
-                        source_id=f"qa_history_{idx}_{field}",
-                    )
-                except Exception as exc:
-                    raise HistoryQAError(f"脱敏失败，本次提问已阻断：{exc}") from exc
-                out[field] = result.redacted_text
-            redacted.append(out)
-        return redacted
+        pairs = [
+            (turn[field], f"qa_history_{idx}_{field}")
+            for idx, turn in enumerate(turns, 1)
+            for field in ("question", "answer")
+        ]
+        texts = iter(self._redact_batch_for_remote(pairs, account_wxid, conversation_id))
+        return [{"question": next(texts), "answer": next(texts)} for _ in turns]
 
     def _call_llm(
         self,

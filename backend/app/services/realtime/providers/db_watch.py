@@ -77,18 +77,9 @@ LOCAL_TYPE_TO_MESSAGE_TYPE = {
     10002: "system",
 }
 
-NON_TEXT_PLACEHOLDER = {
-    "image": "[图片]",
-    "voice": "[语音]",
-    "video": "[视频]",
-    "emoji": "[表情]",
-    "location": "[位置]",
-    "appmsg": "[链接/小程序]",
-    "voip": "[通话]",
-    "card": "[名片]",
-    "video_channel": "[视频号]",
-    "file": "[文件]",
-}
+# 占位符词表单一来源：wechat/content_codec（导入/迁移/RAG 读侧同表），
+# 此处手工维护的第二份词表已漂移（file/默认值不一致），不再重复声明
+from ...wechat.content_codec import TYPE_NAME_PLACEHOLDER as NON_TEXT_PLACEHOLDER
 
 # zstd 压缩 magic（compress_content 里的转发/小程序/图片等全部是压缩二进制，
 # 不能 UTF-8 强解——此前产生乱码直接进显示与 buffer）

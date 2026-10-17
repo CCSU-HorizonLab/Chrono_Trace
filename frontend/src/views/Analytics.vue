@@ -617,7 +617,7 @@
       </div>
 
       <div v-if="qaHistory.length" class="qa-list">
-        <div v-for="(item, idx) in qaHistory" :key="idx" class="qa-item">
+        <div v-for="item in qaHistory" :key="item.id" class="qa-item">
           <div class="qa-question">
             <span class="qa-q-mark">问</span>
             <span class="qa-q-text">{{ item.question }}</span>
@@ -627,10 +627,10 @@
             <span class="qa-a-text">{{ item.answer }}</span>
             <button
               class="text-action-btn qa-copy-btn"
-              :class="{ copied: copiedQaKey === `a-${idx}` }"
-              @click="handleCopyQa(item.answer, `a-${idx}`)"
+              :class="{ copied: copiedQaKey === `a-${item.id}` }"
+              @click="handleCopyQa(item.answer, `a-${item.id}`)"
             >
-              {{ copiedQaKey === `a-${idx}` ? '已复制' : '复制' }}
+              {{ copiedQaKey === `a-${item.id}` ? '已复制' : '复制' }}
             </button>
           </div>
           <div v-if="item.citations && item.citations.length" class="qa-citations">
@@ -1002,7 +1002,7 @@ const showPortraitDialog = ref(false)
 
         // ===== 问问微信（历史问答 + 引用溯源）=====
         type QaCitation = { index: number; message_id: number; timestamp: number; is_sender: number; text: string }
-        type QaEntry = { question: string; answer: string; citations: QaCitation[] }
+        type QaEntry = { id: number; question: string; answer: string; citations: QaCitation[] }
         const qaHistory = ref<QaEntry[]>([])
         const qaInput = ref('')
         const qaLoading = ref(false)
@@ -1072,6 +1072,7 @@ const showPortraitDialog = ref(false)
                 if (conversationId !== selectedConversationId.value) return // 已切换联系人，丢弃过期回答
                 if (res?.ok) {
                     qaHistory.value.unshift({
+                        id: Date.now(), // 稳定键：unshift 会移动列表索引，复制反馈不能跟着索引走
                         question: String(res.question || question),
                         answer: String(res.answer || ''),
                         citations: Array.isArray(res.citations) ? res.citations : [],

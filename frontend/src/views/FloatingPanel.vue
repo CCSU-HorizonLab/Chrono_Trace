@@ -182,12 +182,13 @@
                 </details>
                 <div v-for="(sp, i) in s.speeches" :key="i" class="fp-speech-item">
                   <span class="fp-speech-text">{{ sp }}</span>
+                  <!-- 复制反馈键含 id 兜底：手动建议无 s.id，裸用会撞 "undefined-0" -->
                   <button
                     class="fp-btn-copy"
-                    :class="{ copied: copiedSpeechKey === `${s.id}-${i}` }"
+                    :class="{ copied: copiedSpeechKey === `${s.id || s._tempId}-${i}` }"
                     @click="handleCopySpeech(sp, s, i)"
                   >
-                    {{ copiedSpeechKey === `${s.id}-${i}` ? '已复制' : '复制' }}
+                    {{ copiedSpeechKey === `${s.id || s._tempId}-${i}` ? '已复制' : '复制' }}
                   </button>
                 </div>
                 <div v-if="getRagBadge(s.rag_context)" class="fp-rag-row">
@@ -2424,7 +2425,7 @@ let speechCopyTimer: ReturnType<typeof setTimeout> | null = null
 
 function handleCopySpeech(text: string, s: any, index: number) {
   if (!copyText(text)) return
-  copiedSpeechKey.value = `${s.id}-${index}`
+  copiedSpeechKey.value = `${s.id || s._tempId}-${index}`
   if (speechCopyTimer) clearTimeout(speechCopyTimer)
   speechCopyTimer = setTimeout(() => { copiedSpeechKey.value = '' }, 2000)
 }

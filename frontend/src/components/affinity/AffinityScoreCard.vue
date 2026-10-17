@@ -41,7 +41,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { copyText } from '@/utils/clipboard'
 
 const props = defineProps<{
@@ -84,13 +84,29 @@ let copyTimer: ReturnType<typeof setTimeout> | null = null
 const detectClamp = async () => {
   await nextTick()
   const el = interpEl.value
-  interpClamped.value = !!el && el.scrollHeight > el.clientHeight + 2
+  if (!el || el.clientHeight === 0) return // 尚未布局（tab 隐藏等），保留旧判定
+  interpClamped.value = el.scrollHeight > el.clientHeight + 2
 }
 
-onMounted(detectClamp)
+// 卡片可能在未布局时测过一次（tab 隐藏/字体未就绪），尺寸变化后重测；
+// 展开态不重测，避免展开后被误收回
+let resizeObserver: ResizeObserver | null = null
+onMounted(() => {
+  void detectClamp()
+  if (typeof ResizeObserver !== 'undefined' && interpEl.value) {
+    resizeObserver = new ResizeObserver(() => {
+      if (!interpExpanded.value) void detectClamp()
+    })
+    resizeObserver.observe(interpEl.value)
+  }
+})
+onBeforeUnmount(() => {
+  resizeObserver?.disconnect()
+  if (copyTimer) clearTimeout(copyTimer)
+})
 watch(() => props.interpretation, () => {
   interpExpanded.value = false
-  detectClamp()
+  void detectClamp()
 })
 
 const handleCopy = () => {

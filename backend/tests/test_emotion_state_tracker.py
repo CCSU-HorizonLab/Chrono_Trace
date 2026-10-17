@@ -533,13 +533,13 @@ class TestTopicCooling:
         t1 = base + 520
         tracker.update(
             make_sentiment(0),
-            make_message("我都不学高数了", timestamp=int(t1)),
+            make_message("我作业都还没动", timestamp=int(t1)),
             current_time=t1,
         )
         t2 = base + 550
         triggers = tracker.update(
             make_sentiment(0),
-            make_message("学完了", timestamp=int(t2)),
+            make_message("写完了", timestamp=int(t2)),
             current_time=t2,
         )
 

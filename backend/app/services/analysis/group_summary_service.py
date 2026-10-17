@@ -16,6 +16,7 @@ from collections import Counter, defaultdict
 from typing import Any, Dict, List, Optional, Tuple
 
 from ...db.connection import get_db
+from .stopwords import CHAT_STOP_WORDS
 from ..realtime.llm_http import (
     LLMRequestAborted,
     apply_interactive_fast_mode,
@@ -39,12 +40,8 @@ LLM_TIMEOUT = 60
 LLM_MAX_RETRIES = 1
 GS_CANCEL_SCOPE = "group_summary"
 
-# 高频词停用：语气词/称呼/单字无信息量
-STOP_WORDS = {
-    "这个", "那个", "就是", "然后", "什么", "没有", "可以", "觉得", "现在",
-    "一个", "还有", "已经", "不是", "怎么", "这样", "这样", "哈哈", "哈哈哈",
-    "回复", "消息", "图片", "视频", "语音", "表情",
-}
+# 高频词停用：单一来源见 stopwords.py（与词云共用，防两套口径漂移）
+STOP_WORDS = CHAT_STOP_WORDS
 
 SUMMARY_SYSTEM_PROMPT = """你是群聊观察助手。根据【群聊记录】生成一份群日报，用中文分点输出，每点一行，总长不超过 300 字：
 

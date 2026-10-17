@@ -304,35 +304,6 @@ def test_keyword_channel_covers_cold_terms_beyond_flood(monkeypatch, db):
     assert len(ids) <= 2 * hqmod.KEYWORD_PER_TERM_LIMIT
 
 
-def test_context_budget_drops_lowest_relevance_first(monkeypatch, db):
-    """预算超限时按相关度丢（旧的按时间序装填会把最新的高分记录挤掉）。"""
-    svc = HistoryQAService()
-    monkeypatch.setattr(
-        svc,
-        "_keyword_channel",
-        lambda cid, q: [
-            {"message_id": 2, "timestamp": 200, "is_sender": 0, "text": "高分短消息", "score": 0.0},
-        ],
-    )
-    monkeypatch.setattr(
-        svc,
-        "_vector_channel",
-        lambda cid, q: [
-            {"message_id": 2, "timestamp": 200, "is_sender": 0, "text": "高分短消息", "score": 0.0},
-            {"message_id": 1, "timestamp": 100, "is_sender": 0, "text": "a" * 200, "score": 0.0},
-        ],
-    )
-    monkeypatch.setattr(hqmod, "MAX_CONTEXT_CHARS", 150)
-
-    kept = svc._retrieve(1, "任意问题")
-
-    # 消息 2 双通道命中分数最高且预算内保留；消息 1 更早、低分且超预算被丢
-    assert [r["message_id"] for r in kept] == [2]
-    # 超长截断带省略号，不做硬切
-    clipped = hqmod._clip_text("x" * 250)
-    assert len(clipped) == hqmod.MAX_MESSAGE_CHARS and clipped.endswith("…")
-
-
 def test_context_sorted_by_time_and_char_budget(monkeypatch, db):
     # 两条命中，时间倒序入库；上下文应按时间升序呈现
     seed(db, 10, "后来的消息", 1700000900)

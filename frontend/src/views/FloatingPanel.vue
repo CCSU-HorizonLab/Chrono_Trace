@@ -182,7 +182,13 @@
                 </details>
                 <div v-for="(sp, i) in s.speeches" :key="i" class="fp-speech-item">
                   <span class="fp-speech-text">{{ sp }}</span>
-                  <button class="fp-btn-copy" @click="copyText(sp)">复制</button>
+                  <button
+                    class="fp-btn-copy"
+                    :class="{ copied: copiedSpeechKey === `${s.id}-${i}` }"
+                    @click="handleCopySpeech(sp, s, i)"
+                  >
+                    {{ copiedSpeechKey === `${s.id}-${i}` ? '已复制' : '复制' }}
+                  </button>
                 </div>
                 <div v-if="getRagBadge(s.rag_context)" class="fp-rag-row">
                   <span
@@ -660,6 +666,7 @@ import CtAvatar from '@/components/base/CtAvatar.vue'
 import RagFactDialog from '@/components/settings/RagFactDialog.vue'
 import { showConfirm, showDialog } from '@/utils/dialog'
 import { safeGetItem, safeRemoveItem, safeSetItem } from '@/utils/safeStorage'
+import { copyText } from '@/utils/clipboard'
 
 const router = useRouter()
 
@@ -2412,25 +2419,14 @@ function isSuggestionExpanded(s: any): boolean {
   return expandedIds.value.has(String(s.id || 'manual'))
 }
 
-function copyText(text: string) {
-  // navigator.clipboard API 在 QtWebEngine 嵌入式浏览器中不可靠（需要安全上下文
-  // 且实现可能闪退渲染进程）——改用 document.execCommand('copy') 传统方案，
-  // 在嵌入式 WebView 中广泛兼容
-  try {
-    const textarea = document.createElement('textarea')
-    textarea.value = text
-    textarea.style.cssText = 'position:fixed;left:-9999px;top:-9999px;opacity:0;'
-    document.body.appendChild(textarea)
-    textarea.focus()
-    textarea.select()
-    const ok = document.execCommand('copy')
-    document.body.removeChild(textarea)
-    if (!ok) {
-      console.warn('[FloatingPanel] 复制失败（execCommand 返回 false）')
-    }
-  } catch (e) {
-    console.error('[FloatingPanel] 复制异常:', e)
-  }
+const copiedSpeechKey = ref('')
+let speechCopyTimer: ReturnType<typeof setTimeout> | null = null
+
+function handleCopySpeech(text: string, s: any, index: number) {
+  if (!copyText(text)) return
+  copiedSpeechKey.value = `${s.id}-${index}`
+  if (speechCopyTimer) clearTimeout(speechCopyTimer)
+  speechCopyTimer = setTimeout(() => { copiedSpeechKey.value = '' }, 2000)
 }
 
 function getRagBadge(ragContext: RagContextSummary | undefined | null): RagContextSummary | null {
@@ -3229,6 +3225,7 @@ async function loadLastThread() {
 .fp-speech-text { font-size: 13px; line-height: 1.6; color: var(--ct-text-primary); flex: 1; user-select: text; -webkit-user-select: text; }
 .fp-btn-copy { font-size: 11px; font-weight: 500; color: var(--ct-text-secondary); background: var(--ct-bg-secondary); border: 1px solid var(--ct-border-color); padding: 4px 10px; border-radius: var(--ct-radius-sm); cursor: pointer; transition: all 0.2s; flex-shrink: 0; }
 .fp-btn-copy:hover { color: var(--ct-color-primary); border-color: var(--ct-color-primary); background: white; box-shadow: var(--ct-shadow-sm); }
+.fp-btn-copy.copied { color: var(--ct-color-success); border-color: var(--ct-color-success); }
 .fp-rag-row { display: flex; justify-content: flex-end; margin-top: 8px; min-height: 18px; }
 .fp-rag-badge { display: inline-flex; align-items: center; max-width: 100%; min-height: 18px; padding: 2px 7px; border-radius: var(--ct-radius-sm); border: 1px solid var(--ct-border-color); background: var(--ct-bg-tertiary); color: var(--ct-text-tertiary); font-size: 10.5px; line-height: 1.2; font-weight: 600; white-space: nowrap; }
 .fp-rag-badge.referenced { color: var(--ct-color-primary); border-color: rgba(124, 77, 255, 0.28); background: rgba(124, 77, 255, 0.08); }

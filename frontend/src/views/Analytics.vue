@@ -218,7 +218,12 @@
           </div>
 
           <div class="qualitative-analysis">
-            <h3>定性分析</h3>
+            <div class="qualitative-head">
+              <h3>定性分析</h3>
+              <button class="text-action-btn" :class="{ copied: overallCopied }" @click="handleCopyOverall">
+                {{ overallCopied ? '已复制' : '复制' }}
+              </button>
+            </div>
             <div class="analysis-bubble">
               <p>{{ analysisResult.overall_interpretation }}</p>
             </div>
@@ -620,6 +625,13 @@
           <div class="qa-answer">
             <span class="qa-a-mark">答</span>
             <span class="qa-a-text">{{ item.answer }}</span>
+            <button
+              class="text-action-btn qa-copy-btn"
+              :class="{ copied: copiedQaKey === `a-${idx}` }"
+              @click="handleCopyQa(item.answer, `a-${idx}`)"
+            >
+              {{ copiedQaKey === `a-${idx}` ? '已复制' : '复制' }}
+            </button>
           </div>
           <div v-if="item.citations && item.citations.length" class="qa-citations">
             <div class="qa-citations-title">引用溯源（{{ item.citations.length }} 条）</div>
@@ -708,6 +720,7 @@ import AffinityScoreCard from '@/components/affinity/AffinityScoreCard.vue'
 import RiskSignalCard from '@/components/affinity/RiskSignalCard.vue'
 import PortraitGenerateDialog from '@/components/persona/PortraitGenerateDialog.vue'
 import { loadSharedContact, saveSharedContact, CONTACT_CHANGED_EVENT } from '@/utils/sharedContact'
+import { copyText } from '@/utils/clipboard'
 import DimensionRadar from '@/components/affinity/DimensionRadar.vue'
 import SubScoreBreakdown from '@/components/affinity/SubScoreBreakdown.vue'
 import PreferenceKeywordsDialog from '@/components/affinity/PreferenceKeywordsDialog.vue'
@@ -1000,6 +1013,30 @@ const showPortraitDialog = ref(false)
                 year: 'numeric', month: '2-digit', day: '2-digit',
                 hour: '2-digit', minute: '2-digit',
             })
+        }
+
+        // ===== 文本复制（答案/定性分析等，带瞬时反馈）=====
+        const copiedQaKey = ref('')
+        const overallCopied = ref(false)
+        let copyFeedbackTimer: ReturnType<typeof setTimeout> | null = null
+
+        function flashCopied(key: 'overall' | string) {
+            copiedQaKey.value = key
+            overallCopied.value = key === 'overall'
+            if (copyFeedbackTimer) clearTimeout(copyFeedbackTimer)
+            copyFeedbackTimer = setTimeout(() => {
+                copiedQaKey.value = ''
+                overallCopied.value = false
+            }, 2000)
+        }
+
+        function handleCopyQa(text: string, key: string) {
+            if (copyText(text)) flashCopied(key)
+        }
+
+        function handleCopyOverall() {
+            const text = analysisResult.value?.overall_interpretation || ''
+            if (copyText(text)) flashCopied('overall')
         }
 
         // 模型门槛：未启用任何 LLM 时直接提示（仿 Suggestions 的 ensureActiveLlm）
@@ -2092,7 +2129,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
             hasConversations, hasFeatures, hasCachedAffinityAnalysis, featureStats, responseTimeStats, initiativeStats, wordCountsStats, displayWordRatioLabel, activityCalendar,
             responseTimeChart, activityCalendarChart, wordCountChart, stats, currentContactName, headerAvatarSrc, hasPreferenceKeywords, allDimensions,
             currentRangeLabel, hasContentAnalysis, analysisStaleNotice, circumference, strokeDashoffset, formatNumber, formatTime, getResponseTimeLabel, getMergedResponseTimeLabel, getResponseTimePercent, onConversationChange, onUserConversationChange, onDatesChange, handleExport, handleStartGlobalAnalysis, handleContextSaved, handleKeywordsUpdated, llmEvidenceNotes,
-            qaHistory, qaInput, qaLoading, handleAskHistory, formatQaTime,
+            qaHistory, qaInput, qaLoading, handleAskHistory, formatQaTime, copiedQaKey, overallCopied, handleCopyQa, handleCopyOverall,
             isGroupConversation, groupStats, groupStatsLoading, groupSummary, groupSummaryLoading, groupSummaryDays, handleGenerateGroupSummary,
             reportExporting, handleExportReport,
             exportDialogVisible, exportFormat, exporting, exportResult, confirmExport, openExportFolder,
@@ -2625,6 +2662,36 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   color: var(--ct-text-primary);
 }
 
+.qualitative-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ct-space-sm);
+}
+
+/* 通用小文本操作按钮（复制等） */
+.text-action-btn {
+  flex-shrink: 0;
+  font-size: var(--ct-text-xs);
+  color: var(--ct-text-tertiary);
+  background: var(--ct-bg-secondary);
+  border: 1px solid var(--ct-border-subtle);
+  border-radius: var(--ct-radius-full);
+  padding: 2px 10px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.text-action-btn:hover {
+  color: var(--ct-color-primary);
+  border-color: var(--ct-color-primary);
+}
+
+.text-action-btn.copied {
+  color: var(--ct-color-success);
+  border-color: var(--ct-color-success);
+}
+
 .analysis-bubble {
   padding: var(--ct-space-md) var(--ct-space-xl);
   background: var(--ct-bg-tertiary);
@@ -2634,8 +2701,8 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   font-size: var(--ct-text-base);
   color: var(--ct-text-secondary);
   border-left: 4px solid var(--ct-color-primary);
-  overflow-y: auto;
-  max-height: 180px;
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 /* Dimension Cards Grid */
@@ -2714,7 +2781,11 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
 }
 
 /* --- Interactive Features Layout --- */
+/* tab-content 本身 overflow:hidden，内容超高的 tab 由布局层自滚（同 affinity-tab 口径），
+   否则 4 行统计卡之后的内容被静默裁掉 */
 .features-layout {
+  flex: 1;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: var(--ct-space-xl);
@@ -2722,6 +2793,8 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
 }
 
 .persona-tab-shell {
+  flex: 1;
+  overflow-y: auto;
   margin-top: var(--ct-space-md);
   padding-bottom: var(--ct-space-xl);
 }
@@ -3659,6 +3732,8 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   font-weight: 600;
   color: var(--ct-text-primary);
   line-height: 1.6;
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .qa-a-text {
@@ -3667,6 +3742,13 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   line-height: 1.7;
   white-space: pre-wrap;
   word-break: break-word;
+  user-select: text;
+  -webkit-user-select: text;
+  flex: 1;
+}
+
+.qa-copy-btn {
+  align-self: flex-start;
 }
 
 .qa-citations {
@@ -3706,6 +3788,8 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   color: var(--ct-text-secondary);
   font-style: italic;
   word-break: break-word;
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 /* --- 群聊工作台 --- */

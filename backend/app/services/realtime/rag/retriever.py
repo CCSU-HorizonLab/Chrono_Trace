@@ -289,15 +289,18 @@ class RagRetriever:
         deadline: float | None,
     ) -> dict[str, Any]:
         tokens = set(self._tokens(query))
-        # Facts may have short Chinese paraphrases whose meaningful atom is
-        # not preserved as a 2–4 character n-gram ("玩过" vs. "天天玩").
-        # Keep this fallback local to fact ranking; document retrieval keeps
-        # its stricter overlap rule so unrelated legacy text is not invented
-        # as a memory candidate.
-        tokens.update(
-            char for char in re.sub(r"\s+", "", str(query or ""))
+        # 单字回退改走独立的「字符命中」信号：此前把查询单字直接混进
+        # tokens——内容侧 token 全是 >=2 字片段，单字永不参与命中，只
+        # 稀释 keyword_score 分母（min(len(tokens), ...) 被撑大）。
+        # 现在与内容侧同样按字符集合比对，命中给有界部分分（上限 0.3），
+        # 能被召回但排在任何 token 级命中之后；防误召回阈值见
+        # _char_fallback_ok。
+        compact_query = re.sub(r"\s+", "", str(query or ""))
+        query_chars = {
+            char
+            for char in compact_query
             if "\u4e00" <= char <= "\u9fff" or char.isalnum()
-        )
+        }
         preferred_kinds = self._preferred_fact_kinds(query)
         settings = load_rag_settings()
         model = str(settings.get("rag_embedding_model") or "")
@@ -327,14 +330,19 @@ class RagRetriever:
         # 曾导致证据增强对它们永远为空
         all_evidence_ids: list[int] = []
         evidence_ids_by_fact: dict[int, list[int]] = {}
-        for fact in self.store.list_facts(account_wxid, conversation_id):
+        facts = self.store.list_facts(account_wxid, conversation_id)
+        for fact in facts:
             fact_id = int(fact["id"])
             try:
                 ids = json.loads(fact.get("evidence_message_ids_json") or "[]")
             except (TypeError, ValueError, json.JSONDecodeError):
                 ids = []
             evidence_ids_by_fact[fact_id] = ids
-            all_evidence_ids.extend(int(i) for i in ids if str(i).isdigit())
+            for evidence_id in ids:
+                try:
+                    all_evidence_ids.append(int(evidence_id))
+                except (TypeError, ValueError):
+                    continue  # 脏数据 ID：跳过，不炸整次检索
         evidence_text_map: dict[int, str] = {}
         if all_evidence_ids:
             try:
@@ -359,7 +367,14 @@ class RagRetriever:
         # 按事实分配证据文本
         evidence_texts_by_fact: dict[int, str] = {}
         for fact_id, ids in evidence_ids_by_fact.items():
-            parts = [evidence_text_map[int(i)] for i in ids if int(i) in evidence_text_map]
+            parts = []
+            for evidence_id in ids:
+                try:
+                    key = int(evidence_id)
+                except (TypeError, ValueError):
+                    continue
+                if key in evidence_text_map:
+                    parts.append(evidence_text_map[key])
             evidence_texts_by_fact[fact_id] = " ".join(parts)
         query_vector: list[float] = []
         vector_available = False
@@ -387,7 +402,7 @@ class RagRetriever:
                 timed_out=True,
             )
         items: list[dict[str, Any]] = []
-        for fact in self.store.list_facts(account_wxid, conversation_id):
+        for fact in facts:
             if self._timed_out(started, timeout_ms, deadline):
                 return self._empty(started, self.store.get_status(account_wxid, conversation_id) or {}, degraded=True, reason="timeout", timed_out=True)
             if str(fact.get("sensitivity") or "normal") == "sensitive":
@@ -413,8 +428,15 @@ class RagRetriever:
             # inflating the denominator; use the stronger of the two hints.
             fact_tokens = content_tokens | evidence_tokens
             overlap = max(len(tokens & content_tokens), len(tokens & evidence_tokens))
+            compact_content = re.sub(r"\s+", "", f"{content} {evidence_text}")
+            content_chars = {
+                char
+                for char in compact_content
+                if "\u4e00" <= char <= "\u9fff" or char.isalnum()
+            }
+            char_hits = query_chars & content_chars
             vector_score = self._cosine(query_vector, vector_by_id.get(int(fact["id"]), [])) if vector_available else 0.0
-            if not overlap and not vector_score:
+            if not overlap and not vector_score and not self._char_fallback_ok(char_hits, query_chars):
                 continue
             meaningful_query_tokens = tokens - self.GENERIC_FACT_QUERY_STOPWORDS
             meaningful_content_tokens = content_tokens - self.GENERIC_FACT_QUERY_STOPWORDS
@@ -432,6 +454,13 @@ class RagRetriever:
             if meaningful_overlap:
                 keyword_score += 0.25 * meaningful_overlap / max(
                     1, min(len(meaningful_query_tokens), len(meaningful_fact_tokens))
+                )
+            if not overlap and self._char_fallback_ok(char_hits, query_chars):
+                # 单字级部分分：长查询里撞一两个常用字（我/的/了）不足以
+                # 证明相关，短查询里一个实字命中即是强信号
+                keyword_score = max(
+                    keyword_score,
+                    0.3 * len(char_hits) / max(1, len(query_chars)),
                 )
             kind_bonus = 0.1 if preferred_kinds and str(fact.get("kind") or "") in preferred_kinds else 0.0
             semantic_score = (
@@ -485,6 +514,14 @@ class RagRetriever:
             "elapsed_ms": int((time.perf_counter() - started) * 1000),
             "by_type": {"fact_memory": len(items)} if items else {},
         }
+
+    @classmethod
+    def _char_fallback_ok(cls, char_hits: set[str], query_chars: set[str] | None = None) -> bool:
+        """单字回退是否足以召回：命中 >=2 字即算；短查询（<=3 个不同字）
+        单字命中也算强信号。查询字集合未传时按 >=2 判。"""
+        if len(char_hits) >= 2:
+            return True
+        return bool(char_hits) and query_chars is not None and len(query_chars) <= 3
 
     def _preferred_fact_kinds(self, query: str) -> set[str]:
         """Resolve kind hints from configuration, keeping domain vocabulary out of code."""

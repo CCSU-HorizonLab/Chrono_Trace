@@ -520,7 +520,9 @@ class HistoryQAService:
                 for it in items
                 if str(it.get("content") or "").strip()
             ]
-        except Exception:
+        except Exception as exc:
+            # 静默吞掉曾让「记忆槽为何一直缺席」无从排查——留 WARNING 现场
+            logger.warning("[问问微信] RAG 记忆槽检索失败（按无记忆继续）: %s", exc)
             return []
 
     def _redact_memories_for_remote(

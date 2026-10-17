@@ -235,6 +235,63 @@ def test_status_badge_counts_only_live_activity(monkeypatch):
     conn.close()
 
 
+def test_ready_count_matches_list_visibility(monkeypatch):
+    """徽标口径回归：ready_count 与列表可见项同口径。
+
+    此前 ready_count 直接数 rag_index_status 全表行，系统联系人
+    （微信团队等）与已删会话残留行也被计入，而列表徽标前端按
+    items（enabled 且 ready）自算——刷新状态区 57 vs 列表 33。
+    """
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        "CREATE TABLE conversations (id INTEGER PRIMARY KEY, account_wxid TEXT, "
+        "display_name TEXT, username TEXT, is_deleted INTEGER DEFAULT 0, updated_at INTEGER)"
+    )
+    conn.execute(
+        "CREATE TABLE rag_index_status (account_wxid TEXT, conversation_id INT, status TEXT, "
+        "document_count INT DEFAULT 0, vector_count INT DEFAULT 0, last_indexed_at INT, "
+        "last_error TEXT, storage_bytes INT DEFAULT 0, enabled INT DEFAULT 1, "
+        "fact_read_mode TEXT)"
+    )
+    conn.execute("INSERT INTO conversations VALUES (1, 'acc', '张三', 'wxid_z', 0, 1)")
+    conn.execute("INSERT INTO conversations VALUES (2, 'acc', '微信团队', 'weixin', 0, 1)")
+    conn.execute("INSERT INTO conversations VALUES (4, 'acc', '李四', 'wxid_l', 0, 1)")
+    # 4 行 ready：正常联系人 / 系统联系人 / 停用联系人 / 孤儿行（会话已删）
+    conn.executemany(
+        "INSERT INTO rag_index_status (account_wxid, conversation_id, status, enabled) "
+        "VALUES ('acc', ?, 'ready', ?)",
+        [(1, 1), (2, 1), (4, 0), (999, 1)],
+    )
+
+    monkeypatch.setattr("app.db.connection.get_db", lambda: conn)
+    monkeypatch.setattr(
+        "app.services.realtime.rag.indexer.get_active_and_queued", lambda: {}
+    )
+
+    from app.webview.api.rag_admin import RagAdminApiMixin
+
+    class _Bridge(RagAdminApiMixin):
+        settings = {"rag_enabled": True}
+
+        def _resolve_account_wxid(self, account_wxid: str = "") -> str:
+            return account_wxid or "acc"
+
+    result = _Bridge().get_rag_status("acc")
+    assert len(result["items"]) == 2          # 系统联系人被过滤，孤儿行无会话不入列表
+    assert result["ready_count"] == 1         # 只数列表里可见且启用的
+    assert result["status_counts"]["ready"] == 4  # 诊断口径保留全表值
+
+    # 张三正在重建（live 真值覆盖 status）→ 徽标即时回落
+    monkeypatch.setattr(
+        "app.services.realtime.rag.indexer.get_active_and_queued",
+        lambda: {("acc", 1): "building"},
+    )
+    result = _Bridge().get_rag_status("acc")
+    assert result["ready_count"] == 0
+    conn.close()
+
+
 def test_indexed_contact_stays_visible_beyond_recency_limit(monkeypatch):
     """可见性：已建索引的低频联系人不被 LIMIT 挤出列表（2234 联系人实测）。"""
     conn = sqlite3.connect(":memory:")

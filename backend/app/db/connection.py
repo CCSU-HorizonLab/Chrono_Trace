@@ -368,8 +368,11 @@ class DatabaseConnection:
                     cleaned_updates,
                 )
             if touched_conversations:
-                # 派生层自愈：分析结果打脏（重分析秒级）、RAG 队列标脏
-                # （文档/事实基于旧文本重建）。speech_units 不存内容，无需清洗
+                # 派生层自愈：分析结果打脏（重分析秒级）；RAG 冷标脏
+                # （口径同导入口径，见 ingest_service 导入后冷构建）——
+                # 迁移波及面大，热入队会让后台无预期地逐个全量重建；
+                # 冷标记由分析完成/首次使用（ensure_contact_index）按需建。
+                # speech_units 不存内容，无需清洗
                 try:
                     from ..services.analysis.analysis_state import mark_conversations_stale
 
@@ -377,15 +380,17 @@ class DatabaseConnection:
                 except Exception as stale_e:
                     logger.debug("[迁移] 群清洗后分析打脏跳过: %s", stale_e)
                 try:
-                    from ..services.realtime.rag.indexer import RagIndexQueue
+                    from ..services.realtime.rag.store import RagStore
 
+                    rag_store = RagStore(conn)
                     for acc_wxid, conv_id in conn.execute(
                         "SELECT DISTINCT account_wxid, id FROM conversations "
                         "WHERE id IN (%s)" % ",".join(
                             str(c) for c in sorted(touched_conversations)
                         )
                     ).fetchall():
-                        RagIndexQueue.mark_dirty(str(acc_wxid), int(conv_id))
+                        rag_store.mark_dirty(str(acc_wxid), int(conv_id))
+                    rag_store.conn.commit()
                 except Exception as rag_e:
                     logger.debug("[迁移] 群清洗后 RAG 标脏跳过: %s", rag_e)
             if updates or cleaned_updates:
@@ -482,14 +487,20 @@ class DatabaseConnection:
                     except Exception as stale_e:
                         logger.debug("[迁移] 乱码归一后分析打脏跳过: %s", stale_e)
                     try:
-                        from ..services.realtime.rag.indexer import RagIndexQueue
+                        from ..services.realtime.rag.store import RagStore
 
+                        # 冷标脏（只写 dirty_since 不入队）：迁移曾用
+                        # RagIndexQueue.mark_dirty 热入队，1894 个会话在
+                        # 后台无预期逐个重建；导入链路的口径是冷标记 +
+                        # 分析/首次使用按需构建，迁移与它对齐
+                        rag_store = RagStore(conn)
                         for account_row in conn.execute(
                             "SELECT account_wxid, id FROM conversations "
                             "WHERE id IN (%s)"
                             % ",".join(str(c) for c in touched_conversations)
                         ).fetchall():
-                            RagIndexQueue.mark_dirty(str(account_row[0]), int(account_row[1]))
+                            rag_store.mark_dirty(str(account_row[0]), int(account_row[1]))
+                        rag_store.conn.commit()
                     except Exception as rag_e:
                         logger.debug("[迁移] 乱码归一后 RAG 标脏跳过: %s", rag_e)
             masked = conn.execute(

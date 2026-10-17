@@ -242,9 +242,10 @@ class TestMessageBlobMigration:
             DatabaseConnection._db_path = None
 
     def test_migration_marks_derived_layers_dirty(self, tmp_path, monkeypatch):
-        """归一后派生层失效：分析打脏 + RAG 队列标脏（口径同群前缀迁移）。"""
+        """归一后派生层失效：分析打脏 + RAG 冷标脏（只写库不入队，
+        与导入口径一致——迁移热入队曾让 1894 个会话后台无预期逐个重建）。"""
         import app.services.analysis.analysis_state as analysis_state
-        import app.services.realtime.rag.indexer as indexer_mod
+        import app.services.realtime.rag.store as rag_store_mod
 
         conn = self._fresh_db(tmp_path)
         try:
@@ -260,13 +261,15 @@ class TestMessageBlobMigration:
             def fake_stale(conv_ids):
                 stale_calls.append(list(conv_ids))
 
-            class _FakeQueue:
-                @staticmethod
-                def mark_dirty(account_wxid, conversation_id):
+            class _FakeStore:
+                def __init__(self, _conn=None):
+                    self.conn = _conn
+
+                def mark_dirty(self, account_wxid, conversation_id):
                     dirty_calls.append((account_wxid, conversation_id))
 
             monkeypatch.setattr(analysis_state, "mark_conversations_stale", fake_stale)
-            monkeypatch.setattr(indexer_mod, "RagIndexQueue", _FakeQueue)
+            monkeypatch.setattr(rag_store_mod, "RagStore", _FakeStore)
 
             DatabaseConnection._migrate_message_blob_content(conn)
 

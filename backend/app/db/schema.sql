@@ -494,9 +494,10 @@ CREATE TABLE IF NOT EXISTS keyword_libraries (
 CREATE INDEX IF NOT EXISTS idx_keyword_libraries_category ON keyword_libraries(category);
 
 -- 填充默认关键词 (is_custom=0, 不可删除)
--- 使用 INSERT OR IGNORE 避免重复插入
+-- 使用 INSERT OR IGNORE 避免重复插入；建库脚本每次启动都会执行，
+-- 扩充种子对已有库在下一次启动时自动补齐（用户删除过的默认词会复活，既有行为）
 INSERT OR IGNORE INTO keyword_libraries (category, keyword, is_custom, created_at) VALUES
--- Positive (正面词) - 10个
+-- Positive (正面词) - 25个
 ('positive', '哈哈', 0, strftime('%s', 'now')),
 ('positive', '谢谢', 0, strftime('%s', 'now')),
 ('positive', '开心', 0, strftime('%s', 'now')),
@@ -507,8 +508,23 @@ INSERT OR IGNORE INTO keyword_libraries (category, keyword, is_custom, created_a
 ('positive', '爱', 0, strftime('%s', 'now')),
 ('positive', '幸福', 0, strftime('%s', 'now')),
 ('positive', '满足', 0, strftime('%s', 'now')),
+('positive', '感动', 0, strftime('%s', 'now')),
+('positive', '温暖', 0, strftime('%s', 'now')),
+('positive', '治愈', 0, strftime('%s', 'now')),
+('positive', '惊喜', 0, strftime('%s', 'now')),
+('positive', '期待', 0, strftime('%s', 'now')),
+('positive', '有趣', 0, strftime('%s', 'now')),
+('positive', '好玩', 0, strftime('%s', 'now')),
+('positive', '有意思', 0, strftime('%s', 'now')),
+('positive', '不错', 0, strftime('%s', 'now')),
+('positive', '太好了', 0, strftime('%s', 'now')),
+('positive', '舒服', 0, strftime('%s', 'now')),
+('positive', '放松', 0, strftime('%s', 'now')),
+('positive', '可爱', 0, strftime('%s', 'now')),
+('positive', '心动', 0, strftime('%s', 'now')),
+('positive', '幸运', 0, strftime('%s', 'now')),
 
--- Negative (负面词) - 10个
+-- Negative (负面词) - 25个
 ('negative', '讨厌', 0, strftime('%s', 'now')),
 ('negative', '烦', 0, strftime('%s', 'now')),
 ('negative', '生气', 0, strftime('%s', 'now')),
@@ -519,8 +535,23 @@ INSERT OR IGNORE INTO keyword_libraries (category, keyword, is_custom, created_a
 ('negative', '厌恶', 0, strftime('%s', 'now')),
 ('negative', '恨', 0, strftime('%s', 'now')),
 ('negative', '郁闷', 0, strftime('%s', 'now')),
+('negative', '委屈', 0, strftime('%s', 'now')),
+('negative', '孤独', 0, strftime('%s', 'now')),
+('negative', '焦虑', 0, strftime('%s', 'now')),
+('negative', '压力', 0, strftime('%s', 'now')),
+('negative', '崩溃', 0, strftime('%s', 'now')),
+('negative', '无语', 0, strftime('%s', 'now')),
+('negative', '心烦', 0, strftime('%s', 'now')),
+('negative', '难受', 0, strftime('%s', 'now')),
+('negative', '害怕', 0, strftime('%s', 'now')),
+('negative', '不安', 0, strftime('%s', 'now')),
+('negative', '冷淡', 0, strftime('%s', 'now')),
+('negative', '累', 0, strftime('%s', 'now')),
+('negative', '烦躁', 0, strftime('%s', 'now')),
+('negative', '失落', 0, strftime('%s', 'now')),
+('negative', '空虚', 0, strftime('%s', 'now')),
 
--- Empathy (共情词) - 10个
+-- Empathy (共情词) - 25个
 ('empathy', '理解', 0, strftime('%s', 'now')),
 ('empathy', '心疼', 0, strftime('%s', 'now')),
 ('empathy', '懂你', 0, strftime('%s', 'now')),
@@ -531,8 +562,23 @@ INSERT OR IGNORE INTO keyword_libraries (category, keyword, is_custom, created_a
 ('empathy', '同情', 0, strftime('%s', 'now')),
 ('empathy', '担心', 0, strftime('%s', 'now')),
 ('empathy', '安慰', 0, strftime('%s', 'now')),
+('empathy', '抱抱', 0, strftime('%s', 'now')),
+('empathy', '别难过', 0, strftime('%s', 'now')),
+('empathy', '别哭', 0, strftime('%s', 'now')),
+('empathy', '挺你', 0, strftime('%s', 'now')),
+('empathy', '换我我也', 0, strftime('%s', 'now')),
+('empathy', '太难了', 0, strftime('%s', 'now')),
+('empathy', '别自责', 0, strftime('%s', 'now')),
+('empathy', '你已经很好了', 0, strftime('%s', 'now')),
+('empathy', '你还好吗', 0, strftime('%s', 'now')),
+('empathy', '我懂', 0, strftime('%s', 'now')),
+('empathy', '能理解', 0, strftime('%s', 'now')),
+('empathy', '感同身受', 0, strftime('%s', 'now')),
+('empathy', '辛苦了', 0, strftime('%s', 'now')),
+('empathy', '心疼你', 0, strftime('%s', 'now')),
+('empathy', '有同感', 0, strftime('%s', 'now')),
 
--- Soothing (安抚词) - 10个
+-- Soothing (安抚词) - 25个
 ('soothing', '没事', 0, strftime('%s', 'now')),
 ('soothing', '别担心', 0, strftime('%s', 'now')),
 ('soothing', '会好的', 0, strftime('%s', 'now')),
@@ -543,8 +589,23 @@ INSERT OR IGNORE INTO keyword_libraries (category, keyword, is_custom, created_a
 ('soothing', '放心', 0, strftime('%s', 'now')),
 ('soothing', '有我在', 0, strftime('%s', 'now')),
 ('soothing', '慢慢来', 0, strftime('%s', 'now')),
+('soothing', '别急', 0, strftime('%s', 'now')),
+('soothing', '别想太多', 0, strftime('%s', 'now')),
+('soothing', '放轻松', 0, strftime('%s', 'now')),
+('soothing', '会过去的', 0, strftime('%s', 'now')),
+('soothing', '没事的', 0, strftime('%s', 'now')),
+('soothing', '睡一觉', 0, strftime('%s', 'now')),
+('soothing', '交给我', 0, strftime('%s', 'now')),
+('soothing', '别怕', 0, strftime('%s', 'now')),
+('soothing', '稳住', 0, strftime('%s', 'now')),
+('soothing', '心态放平', 0, strftime('%s', 'now')),
+('soothing', '一切都会好', 0, strftime('%s', 'now')),
+('soothing', '会没事的', 0, strftime('%s', 'now')),
+('soothing', '想开点', 0, strftime('%s', 'now')),
+('soothing', '没大事', 0, strftime('%s', 'now')),
+('soothing', '深呼吸', 0, strftime('%s', 'now')),
 
--- Privacy (隐私词) - 10个
+-- Privacy (隐私词) - 25个
 ('privacy', '秘密', 0, strftime('%s', 'now')),
 ('privacy', '私密', 0, strftime('%s', 'now')),
 ('privacy', '隐私', 0, strftime('%s', 'now')),
@@ -555,8 +616,23 @@ INSERT OR IGNORE INTO keyword_libraries (category, keyword, is_custom, created_a
 ('privacy', '只有你知道', 0, strftime('%s', 'now')),
 ('privacy', '不告诉别人', 0, strftime('%s', 'now')),
 ('privacy', '偷偷说', 0, strftime('%s', 'now')),
+('privacy', '家里', 0, strftime('%s', 'now')),
+('privacy', '爸妈', 0, strftime('%s', 'now')),
+('privacy', '前任', 0, strftime('%s', 'now')),
+('privacy', '分手', 0, strftime('%s', 'now')),
+('privacy', '吵架', 0, strftime('%s', 'now')),
+('privacy', '冷战', 0, strftime('%s', 'now')),
+('privacy', '工资', 0, strftime('%s', 'now')),
+('privacy', '存款', 0, strftime('%s', 'now')),
+('privacy', '房租', 0, strftime('%s', 'now')),
+('privacy', '借钱', 0, strftime('%s', 'now')),
+('privacy', '心事', 0, strftime('%s', 'now')),
+('privacy', '体检', 0, strftime('%s', 'now')),
+('privacy', '从没说过', 0, strftime('%s', 'now')),
+('privacy', '第一次说', 0, strftime('%s', 'now')),
+('privacy', '跟你说', 0, strftime('%s', 'now')),
 
--- Holiday (节日词) - 16个
+-- Holiday (节日词) - 30个
 ('holiday', '新年快乐', 0, strftime('%s', 'now')),
 ('holiday', '春节快乐', 0, strftime('%s', 'now')),
 ('holiday', '圣诞快乐', 0, strftime('%s', 'now')),
@@ -573,8 +649,22 @@ INSERT OR IGNORE INTO keyword_libraries (category, keyword, is_custom, created_a
 ('holiday', '腊八快乐', 0, strftime('%s', 'now')),
 ('holiday', '七夕快乐', 0, strftime('%s', 'now')),
 ('holiday', '除夕快乐', 0, strftime('%s', 'now')),
+('holiday', '平安夜', 0, strftime('%s', 'now')),
+('holiday', '跨年', 0, strftime('%s', 'now')),
+('holiday', '跨年快乐', 0, strftime('%s', 'now')),
+('holiday', '纪念日', 0, strftime('%s', 'now')),
+('holiday', '母亲节', 0, strftime('%s', 'now')),
+('holiday', '父亲节', 0, strftime('%s', 'now')),
+('holiday', '教师节', 0, strftime('%s', 'now')),
+('holiday', '儿童节', 0, strftime('%s', 'now')),
+('holiday', '妇女节', 0, strftime('%s', 'now')),
+('holiday', '劳动节', 0, strftime('%s', 'now')),
+('holiday', '十一快乐', 0, strftime('%s', 'now')),
+('holiday', '冬至快乐', 0, strftime('%s', 'now')),
+('holiday', '重阳快乐', 0, strftime('%s', 'now')),
+('holiday', '小年快乐', 0, strftime('%s', 'now')),
 
--- Nickname (专属称呼) - 10个
+-- Nickname (专属称呼) - 25个
 ('nickname', '宝宝', 0, strftime('%s', 'now')),
 ('nickname', '宝贝', 0, strftime('%s', 'now')),
 ('nickname', '亲爱的', 0, strftime('%s', 'now')),
@@ -584,6 +674,21 @@ INSERT OR IGNORE INTO keyword_libraries (category, keyword, is_custom, created_a
 ('nickname', '闺蜜', 0, strftime('%s', 'now')),
 ('nickname', '兄弟', 0, strftime('%s', 'now')),
 ('nickname', '宝贝儿', 0, strftime('%s', 'now')),
+('nickname', '宝', 0, strftime('%s', 'now')),
+('nickname', '猪猪', 0, strftime('%s', 'now')),
+('nickname', '笨蛋', 0, strftime('%s', 'now')),
+('nickname', '傻瓜', 0, strftime('%s', 'now')),
+('nickname', '小可爱', 0, strftime('%s', 'now')),
+('nickname', '大宝贝', 0, strftime('%s', 'now')),
+('nickname', '甜心', 0, strftime('%s', 'now')),
+('nickname', '心肝', 0, strftime('%s', 'now')),
+('nickname', '宝儿', 0, strftime('%s', 'now')),
+('nickname', '达令', 0, strftime('%s', 'now')),
+('nickname', '哥哥', 0, strftime('%s', 'now')),
+('nickname', '姐姐', 0, strftime('%s', 'now')),
+('nickname', '妹妹', 0, strftime('%s', 'now')),
+('nickname', '弟弟', 0, strftime('%s', 'now')),
+('nickname', '老铁', 0, strftime('%s', 'now')),
 ('nickname', '亲爱的宝贝', 0, strftime('%s', 'now'));
 
 

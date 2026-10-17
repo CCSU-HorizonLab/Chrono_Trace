@@ -10,7 +10,7 @@
 # ========== 表情符号映射 ==========
 
 EMOJI_SENTIMENT = {
-    # 正面表情
+    # ---- 正面：喜爱与亲昵 ----
     '😊': {'sentiment': 'positive', 'intensity': 0.8},
     '😄': {'sentiment': 'positive', 'intensity': 0.9},
     '😁': {'sentiment': 'positive', 'intensity': 0.85},
@@ -21,22 +21,88 @@ EMOJI_SENTIMENT = {
     '😍': {'sentiment': 'positive', 'intensity': 0.95},
     '🥰': {'sentiment': 'positive', 'intensity': 0.95},
     '😘': {'sentiment': 'positive', 'intensity': 0.9},
+    '☺️': {'sentiment': 'positive', 'intensity': 0.75},
+    '😋': {'sentiment': 'positive', 'intensity': 0.6},
+    '🤭': {'sentiment': 'positive', 'intensity': 0.6},
+    '😜': {'sentiment': 'positive', 'intensity': 0.6},
+    '🤪': {'sentiment': 'positive', 'intensity': 0.4},
+    '😎': {'sentiment': 'positive', 'intensity': 0.55},
+    '🤩': {'sentiment': 'positive', 'intensity': 0.85},
+    '🥳': {'sentiment': 'positive', 'intensity': 0.9},
+    '😌': {'sentiment': 'positive', 'intensity': 0.6},
+    '😻': {'sentiment': 'positive', 'intensity': 0.9},
+    '😽': {'sentiment': 'positive', 'intensity': 0.85},
+    '🫶': {'sentiment': 'positive', 'intensity': 0.9},
+    '💋': {'sentiment': 'positive', 'intensity': 0.8},
+    '🥺': {'sentiment': 'positive', 'intensity': 0.4},   # 撒娇卖萌，弱正面
+    '🙈': {'sentiment': 'positive', 'intensity': 0.4},   # 害羞捂脸，弱正面
+    '🥲': {'sentiment': 'positive', 'intensity': 0.35},  # 感动带泪，弱正面
+
+    # ---- 正面：夸赞与支持 ----
     '👍': {'sentiment': 'positive', 'intensity': 0.75},
     '👏': {'sentiment': 'positive', 'intensity': 0.8},
     '💪': {'sentiment': 'positive', 'intensity': 0.85},
+    '👊': {'sentiment': 'positive', 'intensity': 0.6},
+    '🤝': {'sentiment': 'positive', 'intensity': 0.65},
+    '👌': {'sentiment': 'positive', 'intensity': 0.6},
+    '🤙': {'sentiment': 'positive', 'intensity': 0.55},
+    '🫡': {'sentiment': 'positive', 'intensity': 0.6},
+    '✌': {'sentiment': 'positive', 'intensity': 0.5},
+    '✌️': {'sentiment': 'positive', 'intensity': 0.5},
+    '🤞': {'sentiment': 'positive', 'intensity': 0.5},
+    '🙏': {'sentiment': 'positive', 'intensity': 0.35},  # 求助/感谢兼有，弱正面
+    '💯': {'sentiment': 'positive', 'intensity': 0.8},
+    '🔥': {'sentiment': 'positive', 'intensity': 0.7},
+
+    # ---- 正面：爱心与庆祝 ----
     '❤️': {'sentiment': 'positive', 'intensity': 0.95},
+    '❤': {'sentiment': 'positive', 'intensity': 0.95},  # 无变体选择符的同码位
     '💕': {'sentiment': 'positive', 'intensity': 0.9},
-    '🎉': {'sentiment': 'positive', 'intensity': 0.9},
+    '💖': {'sentiment': 'positive', 'intensity': 0.92},
+    '💗': {'sentiment': 'positive', 'intensity': 0.88},
+    '💓': {'sentiment': 'positive', 'intensity': 0.88},
+    '💘': {'sentiment': 'positive', 'intensity': 0.9},
+    '💝': {'sentiment': 'positive', 'intensity': 0.9},
+    '💞': {'sentiment': 'positive', 'intensity': 0.88},
+    '💙': {'sentiment': 'positive', 'intensity': 0.85},
+    '💚': {'sentiment': 'positive', 'intensity': 0.85},
+    '💛': {'sentiment': 'positive', 'intensity': 0.85},
+    '🧡': {'sentiment': 'positive', 'intensity': 0.85},
+    '💜': {'sentiment': 'positive', 'intensity': 0.85},
+    '🖤': {'sentiment': 'positive', 'intensity': 0.5},   # 暗黑爱心在亲密语境常用
+    '❣️': {'sentiment': 'positive', 'intensity': 0.85},
     '✨': {'sentiment': 'positive', 'intensity': 0.75},
     '🌟': {'sentiment': 'positive', 'intensity': 0.8},
-    
-    # 负面表情
+    '🎉': {'sentiment': 'positive', 'intensity': 0.9},
+    '🎊': {'sentiment': 'positive', 'intensity': 0.85},
+    '🎁': {'sentiment': 'positive', 'intensity': 0.75},
+    '🌹': {'sentiment': 'positive', 'intensity': 0.6},
+    '🌸': {'sentiment': 'positive', 'intensity': 0.55},
+
+    # ---- 笑 ----
+    '😂': {'sentiment': 'positive', 'intensity': 0.85},
+    '🤣': {'sentiment': 'positive', 'intensity': 0.9},
+    '😆': {'sentiment': 'positive', 'intensity': 0.85},
+    '😅': {'sentiment': 'neutral', 'intensity': 0.0},
+
+    # ---- 负面：悲伤 ----
     '😢': {'sentiment': 'negative', 'intensity': -0.9},
     '😭': {'sentiment': 'negative', 'intensity': -0.95},
     '😞': {'sentiment': 'negative', 'intensity': -0.8},
     '😔': {'sentiment': 'negative', 'intensity': -0.75},
     '😟': {'sentiment': 'negative', 'intensity': -0.7},
     '😕': {'sentiment': 'negative', 'intensity': -0.65},
+    '😰': {'sentiment': 'negative', 'intensity': -0.75},
+    '😨': {'sentiment': 'negative', 'intensity': -0.8},
+    '😱': {'sentiment': 'negative', 'intensity': -0.9},
+    '😥': {'sentiment': 'negative', 'intensity': -0.65},
+    '🫥': {'sentiment': 'negative', 'intensity': -0.5},
+    '😶': {'sentiment': 'negative', 'intensity': -0.35},
+    '🫠': {'sentiment': 'negative', 'intensity': -0.45},
+    '💔': {'sentiment': 'negative', 'intensity': -0.9},
+    '🥀': {'sentiment': 'negative', 'intensity': -0.7},
+
+    # ---- 负面：愤怒与厌恶 ----
     '😡': {'sentiment': 'negative', 'intensity': -1.0},
     '😠': {'sentiment': 'negative', 'intensity': -0.95},
     '😤': {'sentiment': 'negative', 'intensity': -0.85},
@@ -46,18 +112,38 @@ EMOJI_SENTIMENT = {
     '😫': {'sentiment': 'negative', 'intensity': -0.9},
     '😖': {'sentiment': 'negative', 'intensity': -0.8},
     '👎': {'sentiment': 'negative', 'intensity': -0.75},
-    '💔': {'sentiment': 'negative', 'intensity': -0.9},
-    
-    # 中性表情
-    '😅': {'sentiment': 'neutral', 'intensity': 0.0},
-    '😂': {'sentiment': 'positive', 'intensity': 0.85},  # 笑哭,偏正面
-    '🤣': {'sentiment': 'positive', 'intensity': 0.9},
-    '😆': {'sentiment': 'positive', 'intensity': 0.85},
+    '🤬': {'sentiment': 'negative', 'intensity': -1.0},
+    '🤢': {'sentiment': 'negative', 'intensity': -0.85},
+    '🤮': {'sentiment': 'negative', 'intensity': -0.9},
+    '🤧': {'sentiment': 'negative', 'intensity': -0.5},
+    '👿': {'sentiment': 'negative', 'intensity': -0.8},
+    '🤡': {'sentiment': 'negative', 'intensity': -0.5},  # 小丑嘲讽/自嘲
+    '☠️': {'sentiment': 'negative', 'intensity': -0.7},
+    '💢': {'sentiment': 'negative', 'intensity': -0.6},
+    '🤦': {'sentiment': 'negative', 'intensity': -0.6},
+    '🤷': {'sentiment': 'negative', 'intensity': -0.25},  # 无奈摊手
+
+    # ---- 负面：疲惫与尴尬 ----
+    '🥱': {'sentiment': 'negative', 'intensity': -0.4},
+    '😵': {'sentiment': 'negative', 'intensity': -0.6},
+    '🤯': {'sentiment': 'negative', 'intensity': -0.55},
+    '😬': {'sentiment': 'negative', 'intensity': -0.5},
+    '😳': {'sentiment': 'negative', 'intensity': -0.15},
+    '🥵': {'sentiment': 'negative', 'intensity': -0.5},
+    '🥶': {'sentiment': 'negative', 'intensity': -0.5},
+    '🤨': {'sentiment': 'negative', 'intensity': -0.2},
+    '🧐': {'sentiment': 'negative', 'intensity': -0.15},
+
+    # ---- 中性/歧义 ----
     '😏': {'sentiment': 'neutral', 'intensity': 0.0},
     '🤔': {'sentiment': 'neutral', 'intensity': 0.0},
     '😐': {'sentiment': 'neutral', 'intensity': 0.0},
     '😑': {'sentiment': 'neutral', 'intensity': -0.2},
     '🙃': {'sentiment': 'neutral', 'intensity': 0.0},
+    '😴': {'sentiment': 'neutral', 'intensity': 0.0},
+    '💤': {'sentiment': 'neutral', 'intensity': 0.0},
+    '😈': {'sentiment': 'neutral', 'intensity': 0.0},  # 调皮而非恶意
+    '💀': {'sentiment': 'neutral', 'intensity': 0.0},  # 歧义大：网络语境常表「笑死」
 }
 
 # ========== 网络用语词典 ==========
@@ -75,8 +161,7 @@ INTERNET_SLANG = {
     '棒': {'text': '好', 'sentiment': 'positive', 'intensity': 0.8},
     '优秀': {'text': '好', 'sentiment': 'positive', 'intensity': 0.85},
     '可以': {'text': '不错', 'sentiment': 'positive', 'intensity': 0.7},
-    '奥利给': {'text': '加油', 'sentiment': 'positive', 'intensity': 0.8},
-    
+
     # 负面网络用语
     'emo': {'text': '情绪低落', 'sentiment': 'negative', 'intensity': -0.85},
     'emo了': {'text': '情绪低落了', 'sentiment': 'negative', 'intensity': -0.9},
@@ -89,8 +174,69 @@ INTERNET_SLANG = {
     '崩溃': {'text': '崩溃', 'sentiment': 'negative', 'intensity': -0.95},
     '裂开': {'text': '崩溃', 'sentiment': 'negative', 'intensity': -0.85},
     '破防': {'text': '受伤', 'sentiment': 'negative', 'intensity': -0.8},
+    '破大防': {'text': '很受伤', 'sentiment': 'negative', 'intensity': -0.85},
     '麻了': {'text': '麻木', 'sentiment': 'negative', 'intensity': -0.75},
-    
+
+    # 关系语境（本应用核心域）
+    '心动': {'text': '动了心', 'sentiment': 'positive', 'intensity': 0.8},
+    '暧昧': {'text': '关系暧昧', 'sentiment': 'positive', 'intensity': 0.2},
+    '官宣': {'text': '公开恋情', 'sentiment': 'positive', 'intensity': 0.85},
+    '双向奔赴': {'text': '互相喜欢', 'sentiment': 'positive', 'intensity': 0.9},
+    '处对象': {'text': '谈恋爱', 'sentiment': 'positive', 'intensity': 0.5},
+    '上头': {'text': '着迷', 'sentiment': 'positive', 'intensity': 0.7},
+    '下头': {'text': '瞬间无感', 'sentiment': 'negative', 'intensity': -0.7},
+    '海王': {'text': '广撒网者', 'sentiment': 'negative', 'intensity': -0.7},
+    '舔狗': {'text': '无底线讨好', 'sentiment': 'negative', 'intensity': -0.6},
+    '画饼': {'text': '空头承诺', 'sentiment': 'negative', 'intensity': -0.6},
+    'pua': {'text': '精神操控', 'sentiment': 'negative', 'intensity': -0.85},
+    '渣男': {'text': '感情不专一', 'sentiment': 'negative', 'intensity': -0.8},
+    '渣女': {'text': '感情不专一', 'sentiment': 'negative', 'intensity': -0.8},
+    '已读不回': {'text': '看了不回', 'sentiment': 'negative', 'intensity': -0.5},
+    '已读乱回': {'text': '敷衍乱回', 'sentiment': 'negative', 'intensity': -0.4},
+    '鸽了': {'text': '爽约', 'sentiment': 'negative', 'intensity': -0.45},
+    '放鸽子': {'text': '爽约', 'sentiment': 'negative', 'intensity': -0.5},
+    '咕咕': {'text': '拖约定', 'sentiment': 'negative', 'intensity': -0.25},
+
+    # 情绪与评价（近年仍在用，过气词勿再回填）
+    '绝了': {'text': '太厉害', 'sentiment': 'positive', 'intensity': 0.6},
+    '拿捏': {'text': '稳稳掌握', 'sentiment': 'positive', 'intensity': 0.7},
+    '嘴替': {'text': '说出心声', 'sentiment': 'positive', 'intensity': 0.75},
+    '听劝': {'text': '肯接受意见', 'sentiment': 'positive', 'intensity': 0.4},
+    '整活': {'text': '玩出新花样', 'sentiment': 'positive', 'intensity': 0.5},
+    '显眼包': {'text': '活跃搞笑的人', 'sentiment': 'positive', 'intensity': 0.4},
+    '乐子': {'text': '有趣的事', 'sentiment': 'positive', 'intensity': 0.3},
+    '吃瓜': {'text': '围观八卦', 'sentiment': 'neutral', 'intensity': 0.0},
+    '抽象': {'text': '难以理解的好笑', 'sentiment': 'neutral', 'intensity': 0.0},
+    '那咋了': {'text': '无所谓的松弛', 'sentiment': 'neutral', 'intensity': 0.0},
+    '塌房': {'text': '人设崩塌', 'sentiment': 'negative', 'intensity': -0.6},
+    '翻车': {'text': '搞砸了', 'sentiment': 'negative', 'intensity': -0.5},
+    '汗流浃背': {'text': '尴尬紧张', 'sentiment': 'negative', 'intensity': -0.3},
+    '蚌埠住了': {'text': '绷不住（多为笑）', 'sentiment': 'positive', 'intensity': 0.4},
+    'xswl': {'text': '笑死我了', 'sentiment': 'positive', 'intensity': 0.6},
+    'awsl': {'text': '啊我死了（可爱到）', 'sentiment': 'positive', 'intensity': 0.7},
+    '磕到了': {'text': '为甜到的东西满足', 'sentiment': 'positive', 'intensity': 0.7},
+    '尊嘟假嘟': {'text': '真的假的', 'sentiment': 'positive', 'intensity': 0.3},
+    '包的': {'text': '肯定的', 'sentiment': 'positive', 'intensity': 0.7},
+    '寄': {'text': '完蛋了', 'sentiment': 'negative', 'intensity': -0.6},
+    '急了': {'text': '他被戳破了', 'sentiment': 'negative', 'intensity': -0.3},
+    '乐': {'text': '嘲讽性地笑', 'sentiment': 'negative', 'intensity': -0.2},
+    '典': {'text': '太典型了（讥）', 'sentiment': 'negative', 'intensity': -0.25},
+    'yygq': {'text': '阴阳怪气', 'sentiment': 'negative', 'intensity': -0.4},
+    '拴q': {'text': '无奈的谢谢', 'sentiment': 'negative', 'intensity': -0.3},
+
+    # 生活状态
+    '摆烂': {'text': '放弃努力', 'sentiment': 'negative', 'intensity': -0.6},
+    '躺平': {'text': '不再内卷', 'sentiment': 'negative', 'intensity': -0.4},
+    '内卷': {'text': '过度竞争', 'sentiment': 'negative', 'intensity': -0.5},
+    '内耗': {'text': '自我消耗', 'sentiment': 'negative', 'intensity': -0.6},
+    '精神内耗': {'text': '心理自我消耗', 'sentiment': 'negative', 'intensity': -0.7},
+    '摸鱼': {'text': '偷闲', 'sentiment': 'neutral', 'intensity': 0.0},
+    '干饭': {'text': '吃饭', 'sentiment': 'positive', 'intensity': 0.4},
+    '上岸': {'text': '考编/考研成功', 'sentiment': 'positive', 'intensity': 0.8},
+    '社死': {'text': '社会性死亡', 'sentiment': 'negative', 'intensity': -0.65},
+    '尬聊': {'text': '尴尬地聊天', 'sentiment': 'negative', 'intensity': -0.5},
+    '搭子': {'text': '固定同伴', 'sentiment': 'positive', 'intensity': 0.3},
+
     # 中性/特殊
     '哈哈': {'text': '笑', 'sentiment': 'positive', 'intensity': 0.7},
     '哈哈哈': {'text': '大笑', 'sentiment': 'positive', 'intensity': 0.8},

@@ -80,21 +80,7 @@ LOCAL_TYPE_TO_MESSAGE_TYPE = {
 # 占位符词表单一来源：wechat/content_codec（导入/迁移/RAG 读侧同表），
 # 此处手工维护的第二份词表已漂移（file/默认值不一致），不再重复声明
 from ...wechat.content_codec import TYPE_NAME_PLACEHOLDER as NON_TEXT_PLACEHOLDER
-
-# zstd 压缩 magic（compress_content 里的转发/小程序/图片等全部是压缩二进制，
-# 不能 UTF-8 强解——此前产生乱码直接进显示与 buffer）
-_ZSTD_MAGIC = b"\x28\xb5\x2f\xfd"
-
-
-def _looks_binary(raw: bytes | str) -> bool:
-    """内容疑似压缩二进制（zstd magic 或高比例不可打印字符）。"""
-    if isinstance(raw, bytes):
-        return raw[:4] == _ZSTD_MAGIC
-    if isinstance(raw, str) and len(raw) > 8:
-        sample = raw[:64]
-        non_printable = sum(1 for ch in sample if not (ch.isprintable() or ch in "\n\r\t"))
-        return non_printable / len(sample) > 0.3
-    return False
+from ...wechat.content_codec import decode_message_content
 
 
 class DbWatchRealtimeProvider(RealtimeProvider):
@@ -401,16 +387,14 @@ class DbWatchRealtimeProvider(RealtimeProvider):
         local_type = int(row.get("local_type") or 1) & 0xFFFFFFFF  # 去 flag 高位
         message_type = LOCAL_TYPE_TO_MESSAGE_TYPE.get(local_type, "text")
         raw_content = row.get("message_content") or ""
-        raw_binary = raw_content if isinstance(raw_content, bytes) else raw_content.encode("utf-8", errors="replace")
         if isinstance(raw_content, bytes):
             raw_content = raw_content.decode("utf-8", errors="replace")
         if message_type == "text":
-            # 压缩二进制守卫：type 误标或 compress_content 泄入文本通道时
-            # 不把乱码当文本（此前转发/小程序全部按乱码显示）
-            if _looks_binary(raw_binary):
-                content = "[链接/小程序]"
-            else:
-                content = str(raw_content)
+            # 文本通道统一走 content_codec 归一（单一来源）：zstd/非 zstd
+            # 二进制/FFFD 汤一律按类型占位符化，与导入、迁移、RAG 读侧
+            # 同一判定。此前本地守卫只查 zstd magic——protobuf 类二进制
+            # 经 errors='replace' 强解后的乱码汤会直进悬浮窗与建议管线
+            content = decode_message_content(row.get("message_content"), local_type)
         elif message_type == "system":
             content = re.sub(r"<[^>]+>", "", str(raw_content))[:80] or "[系统消息]"
         else:

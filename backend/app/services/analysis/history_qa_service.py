@@ -47,8 +47,6 @@ KEYWORD_PER_TERM_LIMIT = 12
 VECTOR_POOL = 40
 TOP_K = 12
 RRF_K = 60
-# 上下文预算：检索消息总字符上限（超限从相关度最低的开始丢弃）
-MAX_CONTEXT_CHARS = 6000
 MAX_MESSAGE_CHARS = 200
 # 多轮问答：携带的近期问答轮数与单段截断
 HISTORY_TURNS = 3
@@ -282,19 +280,14 @@ class HistoryQAService:
                 item["score"] += 1.0 / (RRF_K + rank + 1)
 
         ranked = sorted(fused.values(), key=lambda r: r["score"], reverse=True)[:TOP_K]
-        # 字符预算：按相关度降序装填，超限丢弃的必是分数更低的；
-        # 再按时间升序组上下文（符合对话直觉）
-        kept: List[Dict[str, Any]] = []
-        total = 0
+        # 无需字符预算裁剪：硬上界 = TOP_K × MAX_MESSAGE_CHARS（12×200=2400），
+        # 常量大幅上调时再引入预算逻辑（曾有按相关度丢弃的装填分支，
+        # 现配常量下永不可达，属误导性复杂度，已删）
         for rec in ranked:
-            text = _clip_text(rec["text"])
-            if total + len(text) > MAX_CONTEXT_CHARS and kept:
-                break
-            rec["text"] = text
-            kept.append(rec)
-            total += len(text)
-        kept.sort(key=lambda r: r["timestamp"])
-        return kept
+            rec["text"] = _clip_text(rec["text"])
+        # 按时间升序组上下文（符合对话直觉）
+        ranked.sort(key=lambda r: r["timestamp"])
+        return ranked
 
     def _keyword_channel(self, conversation_id: int, question: str) -> List[Dict[str, Any]]:
         """逐关键词各自取最近 N 条命中后合并去重（单语句 UNION ALL）。

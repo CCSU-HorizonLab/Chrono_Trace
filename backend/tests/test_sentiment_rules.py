@@ -25,7 +25,7 @@ class TestIsPerfunctory:
     def test_engaged_short_replies_not_perfunctory(self):
         """笑声/感谢/情感表达/状态告知/应答性同意等高投入短回复不算敷衍"""
         for text in ("哈哈", "嘿嘿", "谢谢", "爱你", "抱抱", "来了", "在呢",
-                     "好嘞", "666", "牛", "棒", "可以", "嗯嗯", "哦哦"):
+                     "好嘞", "666", "牛", "棒", "可以", "好的", "嗯嗯", "哦哦"):
             assert not is_perfunctory(text), text
 
     def test_dismissive_replies_are_perfunctory(self):

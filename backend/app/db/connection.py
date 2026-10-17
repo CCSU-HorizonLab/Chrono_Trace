@@ -441,10 +441,13 @@ class DatabaseConnection:
                 "AND content LIKE '%' || char(65533) || '%'"
             ).fetchall()
             updates = []
+            blob_updates = 0
             for row in candidates:
                 normalized = decode_message_content(row[2], row[1])
                 if normalized != row[2]:
                     updates.append((normalized, row[0]))
+                    if isinstance(row[2], (bytes, bytearray)):
+                        blob_updates += 1
 
             if updates:
                 conn.executemany(
@@ -498,9 +501,8 @@ class DatabaseConnection:
                 logger.info(
                     "[迁移] 乱码内容归一 %d 行（BLOB %d / FFFD 汤 %d）、类型掩码 %d 行",
                     len(updates),
-                    sum(1 for row in candidates if isinstance(row[2], (bytes, bytearray))),
-                    len(updates)
-                    - sum(1 for row in candidates if isinstance(row[2], (bytes, bytearray))),
+                    blob_updates,
+                    len(updates) - blob_updates,
                     masked,
                 )
         except Exception as exc:

@@ -194,6 +194,26 @@ def test_local_type_mapping_and_placeholders(provider_env):
     assert by_type[1].content.startswith("msg-")
 
 
+def test_text_channel_binary_content_placeholderized(provider_env):
+    """文本通道统一走 content_codec 归一（回归：此前只查 zstd magic，
+    protobuf 类二进制 errors='replace' 强解后的 FFFD 汤直进显示管线）"""
+    provider, _ = provider_env
+    base = {"local_type": 1, "real_sender_id": 2, "create_time": 1700000000,
+            "local_id": 1, "server_id": 1}
+
+    zstd_msg = provider._to_message(0, {**base, "message_content": b"\x28\xb5\x2f\xfd" + b"\x00" * 20}, 0)
+    assert zstd_msg.content == "[压缩消息]"
+
+    binary_msg = provider._to_message(0, {**base, "message_content": bytes(range(0x80, 0x90)) * 8}, 0)
+    assert binary_msg.content == "[压缩消息]"  # 非 zstd 二进制同走占位符
+
+    soup_msg = provider._to_message(0, {**base, "message_content": "��(2/�" + "x" * 30}, 0)
+    assert soup_msg.content == "[压缩消息]"  # 强解汤文本拦截
+
+    text_msg = provider._to_message(0, {**base, "message_content": "正常消息"}, 0)
+    assert text_msg.content == "正常消息"
+
+
 def test_new_message_visible_after_source_update(provider_env):
     provider, env = provider_env
     assert provider.open_chat(ZHANG) is True

@@ -1063,7 +1063,12 @@ const showPortraitDialog = ref(false)
             const conversationId = selectedConversationId.value
             try {
                 await bridgeReady()
-                const res = await api.ask_history(conversationId, question)
+                // 多轮：带上最近几轮问答（qaHistory 新的在前，取 3 轮转时间升序）
+                const history = qaHistory.value
+                    .slice(0, 3)
+                    .reverse()
+                    .map(e => ({ question: e.question, answer: e.answer }))
+                const res = await api.ask_history(conversationId, question, history)
                 if (conversationId !== selectedConversationId.value) return // 已切换联系人，丢弃过期回答
                 if (res?.ok) {
                     qaHistory.value.unshift({

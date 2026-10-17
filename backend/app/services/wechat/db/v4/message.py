@@ -7,6 +7,7 @@ import logging
 from typing import List, Optional, Tuple, Dict, Set
 from ..base import WeChatDBBase
 from ...contact_filters import is_excluded_contact_username
+from ...content_codec import decode_message_content
 
 
 
@@ -363,46 +364,28 @@ class MessageDBV4(WeChatDBBase):
 
 
 
-            # 提取内容
-            content = row['message_content'] or ''
-            
-            # 如果是压缩内容(protobuf),需要解析
-            if not content and row['compress_content']:
-                content = self._parse_compress_content(row['compress_content'])
-            
+            # 提取内容：BLOB/zstd 压缩与乱码统一走 content_codec 归一（占位符），
+            # 不再 str(bytes) 产出 b'(\xb5...' 式 repr 乱码入库
+            message_type = int(row['local_type'] or 1) & 0xFFFFFFFF  # 去 flag 高位
+            content = decode_message_content(
+                row['message_content'] or row['compress_content'], message_type
+            )
+
             message = {
                 'local_id': row['local_id'],
                 'talker': username,
                 'sender': sender_username,
                 'is_sender': 1 if is_sender else 0,
-                'message_type': int(row['local_type'] or 1) & 0xFFFFFFFF,  # 去 flag 高位
+                'message_type': message_type,
                 'content': content,
                 'timestamp': row['create_time'],
                 'media_path': None
             }
-            
+
             messages.append(message)
-        
+
         return messages
 
-    
-    def _parse_compress_content(self, buffer: bytes) -> str:
-        """
-        解析压缩内容(protobuf格式)
-        
-        Args:
-            buffer: protobuf 二进制数据
-            
-        Returns:
-            str: 解析后的文本内容
-        """
-        # TODO: 实现 protobuf 解析
-        # 目前简化处理,返回占位符
-        try:
-            return buffer.decode('utf-8', errors='ignore')
-        except:
-            return '[媒体消息]'
-    
     def get_all_conversation_usernames(self, include_chatroom: bool = False) -> List[str]:
         """
         获取所有对话的username列表（include_chatroom=True 放行群聊，导入链路用）

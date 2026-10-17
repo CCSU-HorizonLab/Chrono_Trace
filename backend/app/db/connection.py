@@ -406,6 +406,55 @@ class DatabaseConnection:
             logger.warning("[迁移] 群消息前缀清理失败（下次启动重试）: %s", exc)
 
     @classmethod
+    def _migrate_message_blob_content(cls, conn: sqlite3.Connection) -> None:
+        """一次性归一 BLOB 消息内容与未掩码的 local_type 高位 flag。
+
+        旧导入链路把 V4 库 zstd 压缩 BLOB 原样写入 content，读侧
+        str(bytes) 产出 b'(\\xb5...' 式 repr 乱码混入 RAG 分段、长期
+        记忆上下文与问答引用（实测 type=1 即有 7707 行）；local_type
+        未掩码遗留 25769803825 式巨型值。压缩内容不解压（无 zstd 依赖，
+        0.67% 占比的转发长文收益不值当），按掩码类型给占位符；对应行
+        的 sentiment_cache 是乱码文本的嵌入，一并清除防向量检索被打脏。
+        settings 表键做一次性标记，避免每次启动全表扫描。
+        """
+        try:
+            flag = conn.execute(
+                "SELECT value FROM settings WHERE key = 'migration_message_blob_normalized'"
+            ).fetchone()
+            if flag:
+                return
+            from ..services.wechat.content_codec import decode_message_content
+
+            rows = conn.execute(
+                "SELECT id, message_type, content FROM messages WHERE typeof(content) = 'blob'"
+            ).fetchall()
+            for row in rows:
+                conn.execute(
+                    "UPDATE messages SET content = ? WHERE id = ?",
+                    (decode_message_content(row[2], row[1]), row[0]),
+                )
+            if rows:
+                conn.executemany(
+                    "DELETE FROM sentiment_cache WHERE message_id = ?",
+                    [(row[0],) for row in rows],
+                )
+            masked = conn.execute(
+                "UPDATE messages SET message_type = message_type % 4294967296 "
+                "WHERE message_type > 4294967295"
+            ).rowcount
+            conn.execute(
+                "INSERT OR REPLACE INTO settings (key, value, updated_at) "
+                "VALUES ('migration_message_blob_normalized', '1', strftime('%s', 'now'))"
+            )
+            conn.commit()
+            if rows or masked:
+                logger.info(
+                    "[迁移] BLOB 内容归一 %d 行、类型掩码 %d 行", len(rows), masked
+                )
+        except Exception as exc:
+            logger.warning("[迁移] BLOB 内容归一失败（下次启动重试）: %s", exc)
+
+    @classmethod
     def _run_compat_migrations(cls):
         """Apply lightweight compatibility migrations for existing databases."""
         conn = cls._get_instance()
@@ -417,6 +466,7 @@ class DatabaseConnection:
         cls._migrate_realtime_suggestions_columns(conn)
         cls._migrate_llm_models_extra_body(conn)
         cls._migrate_strip_chatroom_prefixes(conn)
+        cls._migrate_message_blob_content(conn)
 
         conn.execute(
             """

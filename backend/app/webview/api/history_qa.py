@@ -14,8 +14,16 @@ logger = logging.getLogger(__name__)
 class HistoryQaApiMixin:
     """问问微信：当前联系人历史自然语言问答"""
 
-    def ask_history(self, conversation_id: int, question: str) -> dict[str, Any]:
+    def ask_history(
+        self,
+        conversation_id: int,
+        question: str,
+        history: list | None = None,
+    ) -> dict[str, Any]:
         """对当前联系人的聊天记录提问，返回带引用溯源的回答
+
+        history：近期问答 [{question, answer}]（时间升序），用于多轮指代；
+        service 侧清洗与截断，异常输入按无历史处理。
 
         Returns:
             {"ok": True, "answer": "...", "citations": [{index, message_id, timestamp, is_sender, text}]}
@@ -27,7 +35,9 @@ class HistoryQaApiMixin:
                 HistoryQAService,
             )
 
-            result = HistoryQAService().ask(int(conversation_id), str(question or ""))
+            result = HistoryQAService().ask(
+                int(conversation_id), str(question or ""), history or []
+            )
             return {"ok": True, **result}
         except HistoryQAError as e:
             return {"ok": False, "error": str(e)}

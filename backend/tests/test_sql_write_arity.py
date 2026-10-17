@@ -158,22 +158,29 @@ def _analyze_insert_statement(sql: str) -> tuple[int, list[int]] | None:
 def _count_qmark_placeholders(sql: str) -> int:
     count = 0
     in_quote: str | None = None
-    escaped = False
-
-    for char in sql:
+    index = 0
+    while index < len(sql):
+        char = sql[index]
         if in_quote is not None:
-            if escaped:
-                escaped = False
-            elif char == "\\":
-                escaped = True
-            elif char == in_quote:
+            if in_quote == '"' and char == "\\":
+                index += 2  # 双引号串内反斜杠转义（Python 风格）
+                continue
+            if char == in_quote:
+                # 单引号串按 SQL 规则 lex：'' 转义、反斜杠是普通字符
+                # （LIKE ... ESCAPE '\' 这类子句此前被误判为未闭合串，
+                # 其后的 ? 全部漏数）
+                if in_quote == "'" and sql[index + 1 : index + 2] == "'":
+                    index += 2
+                    continue
                 in_quote = None
+            index += 1
             continue
 
         if char in {"'", '"'}:
             in_quote = char
         elif char == "?":
             count += 1
+        index += 1
 
     return count
 

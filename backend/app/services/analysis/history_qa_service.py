@@ -41,13 +41,18 @@ except Exception:  # onnxruntime 环境必有 numpy；缺库退化为纯 Python 
     _np = None
 
 # 检索规模：两路各取候选池，融合后截断
-KEYWORD_POOL = 40
+# 关键词通道按「每个关键词各自 top-N」取数：此前单条 OR 查询 LIMIT 全局
+# 40，高频词把候选池刷满 newest，冷门关键词的更早消息永远进不了池
+KEYWORD_PER_TERM_LIMIT = 12
 VECTOR_POOL = 40
 TOP_K = 12
 RRF_K = 60
 # 上下文预算：检索消息总字符上限（超限从相关度最低的开始丢弃）
 MAX_CONTEXT_CHARS = 6000
 MAX_MESSAGE_CHARS = 200
+# 多轮问答：携带的近期问答轮数与单段截断
+HISTORY_TURNS = 3
+HISTORY_TURN_CHARS = 400
 # 交互式问答：短超时 + 少重试（默认 3 次重试最坏可挂 8 分钟，见取消机制）
 LLM_TIMEOUT = 60
 LLM_MAX_RETRIES = 1
@@ -130,46 +135,81 @@ def _load_question_vector(question: str) -> Optional[List[float]]:
 
 
 def _filter_citations(answer: str, citations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """只保留回答 [n] 实际引用的条目，条目自带原始编号（index 字段，前端按它渲染）。
+    """只保留回答 [n] 实际引用的条目；条目 index 由调用方随后重排为连续序号。
 
-    回答未带有效编号时退回全集。
+    回答未带有效编号时返回空——模型没引用就不能把全量上下文冒充
+    「引用溯源」展示。
     """
     cited = {int(n) for n in CITATION_MARK.findall(answer)}
     cited = {n for n in cited if 1 <= n <= len(citations)}
     if not cited:
-        return citations
+        return []
     return [c for c in citations if c["index"] in cited]
+
+
+def _strip_citation_marks(answer: str) -> str:
+    """去掉回答里的 [n] 引用编号（引用条目单独展示），清理残留空白。"""
+    stripped = CITATION_MARK.sub("", str(answer or ""))
+    stripped = re.sub(r"[ \t]{2,}", " ", stripped)
+    stripped = re.sub(r"\s+([，。；、！？：）])", r"\1", stripped)
+    return stripped.strip()
+
+
+def _clip_text(text: str) -> str:
+    """超长消息截断加省略号，不做硬切。"""
+    text = str(text or "").strip()
+    if len(text) <= MAX_MESSAGE_CHARS:
+        return text
+    return text[: MAX_MESSAGE_CHARS - 1] + "…"
 
 
 class HistoryQAService:
     """联系人历史问答：检索 → 脱敏 → LLM → 引用回填。"""
 
-    def ask(self, conversation_id: int, question: str) -> Dict[str, Any]:
+    def ask(
+        self,
+        conversation_id: int,
+        question: str,
+        history: Optional[List[Dict[str, str]]] = None,
+    ) -> Dict[str, Any]:
+        """多轮问答：history 为近期问答（时间升序，{question, answer}），
+        用于理解「上次说的那件事」类指代并注入检索。"""
         question = str(question or "").strip()
         if not question:
             raise HistoryQAError("请输入问题")
         take_llm_cancel(QA_CANCEL_SCOPE, conversation_id)  # 清掉上一轮遗留的取消标记
 
+        turns = self._normalize_history(history)
+        # 检索问句并入上一问：指代消解不了的「那次/他说的那件事」靠
+        # 上一问的实词补召回（仅取最近一问，避免旧问题稀释相关性）
+        retrieval_query = f"{turns[-1]['question']} {question}" if turns else question
+
         account_wxid, display_name = self._load_conversation(conversation_id)
-        records = self._retrieve(conversation_id, question)
+        records = self._retrieve(conversation_id, retrieval_query)
         if not records:
             raise HistoryQAError("没有找到与问题相关的聊天记录，试试换个说法或用更具体的关键词")
 
         redacted_question, redacted = self._redact_for_remote(
             question, records, account_wxid, conversation_id
         )
+        redacted_turns = self._redact_history_for_remote(
+            turns, account_wxid, conversation_id
+        )
         # RAG 长期记忆槽：检索该联系人事实/主题段作背景参考（无索引/
         # 关闭/检索异常一律返回空，不阻断问答主链路）
-        memories = self._retrieve_rag_memories(account_wxid, conversation_id, question)
+        memories = self._retrieve_rag_memories(account_wxid, conversation_id, retrieval_query)
         if memories:
             memories = self._redact_memories_for_remote(
                 memories, account_wxid, conversation_id
             )
 
-        answer = self._call_llm(conversation_id, redacted_question, redacted, memories)
+        answer = self._call_llm(
+            conversation_id, redacted_question, redacted,
+            memories=memories, history=redacted_turns,
+        )
         citations = [
             {
-                "index": idx,  # 原始 1 基编号，与回答 [n] 对应；过滤后不变
+                "index": idx,  # 1 基编号，与回答 [n] 对应
                 "message_id": rec["message_id"],
                 "timestamp": rec["timestamp"],
                 "is_sender": rec["is_sender"],
@@ -177,12 +217,37 @@ class HistoryQAService:
             }
             for idx, rec in enumerate(records, start=1)
         ]
+        citations = _filter_citations(answer, citations)
+        # 回答正文去 [n] 编号（引用条目单独展示），引用重排为连续序号
+        answer = _strip_citation_marks(answer)
+        for idx, cite in enumerate(citations, start=1):
+            cite["index"] = idx
         return {
             "answer": answer,
             "question": question,
             "contact_name": display_name,
-            "citations": _filter_citations(answer, citations),
+            "citations": citations,
         }
+
+    @staticmethod
+    def _normalize_history(history: Any) -> List[Dict[str, str]]:
+        """清洗前端传来的问答历史：只留成对的非空轮次，截最近几轮。"""
+        if not isinstance(history, (list, tuple)):
+            return []
+        turns: List[Dict[str, str]] = []
+        for item in history[-HISTORY_TURNS:]:
+            if not isinstance(item, dict):
+                continue
+            q = str(item.get("question") or "").strip()
+            a = str(item.get("answer") or "").strip()
+            if q and a:
+                turns.append(
+                    {
+                        "question": q[:HISTORY_TURN_CHARS],
+                        "answer": a[:HISTORY_TURN_CHARS],
+                    }
+                )
+        return turns
 
     # ---- 检索 ----
 
@@ -217,42 +282,55 @@ class HistoryQAService:
                 item["score"] += 1.0 / (RRF_K + rank + 1)
 
         ranked = sorted(fused.values(), key=lambda r: r["score"], reverse=True)[:TOP_K]
-        # 上下文按时间升序排列（符合对话直觉），并裁剪总字符预算
-        ranked.sort(key=lambda r: r["timestamp"])
+        # 字符预算：按相关度降序装填，超限丢弃的必是分数更低的；
+        # 再按时间升序组上下文（符合对话直觉）
         kept: List[Dict[str, Any]] = []
         total = 0
         for rec in ranked:
-            text = rec["text"][:MAX_MESSAGE_CHARS]
+            text = _clip_text(rec["text"])
             if total + len(text) > MAX_CONTEXT_CHARS and kept:
                 break
             rec["text"] = text
             kept.append(rec)
             total += len(text)
+        kept.sort(key=lambda r: r["timestamp"])
         return kept
 
     def _keyword_channel(self, conversation_id: int, question: str) -> List[Dict[str, Any]]:
+        """逐关键词各自取最近 N 条命中后合并去重。
+
+        单条 OR 查询全局 LIMIT 的老做法下，高频词（「我们」「聊天」）
+        会把 newest 候选池刷满，冷门关键词更早但更相关的消息永远
+        进不了池——这正是「问问微信答非所问」的主要来源。
+        """
         keywords = _extract_keywords(question)
         if not keywords:
             return []
-        conditions = " OR ".join(["content LIKE ? ESCAPE '\\'"] * len(keywords))
-        params: List[Any] = [conversation_id]
-        params.extend(f"%{_escape_like(kw)}%" for kw in keywords)
-        try:
-            rows = get_db().execute(
-                f"""
-                SELECT id, timestamp, is_sender, content
-                FROM messages
-                WHERE conversation_id = ? AND message_type = 1
-                  AND length(content) > 0 AND ({conditions})
-                ORDER BY timestamp DESC
-                LIMIT ?
-                """,
-                (*params, KEYWORD_POOL),
-            ).fetchall()
-        except Exception as exc:
-            logger.warning("[问问微信] 关键词检索失败: %s", exc)
-            return []
-        return [self._row_to_record(r) for r in rows]
+        merged: List[Dict[str, Any]] = []
+        seen: set = set()
+        for kw in keywords:
+            try:
+                rows = get_db().execute(
+                    """
+                    SELECT id, timestamp, is_sender, content
+                    FROM messages
+                    WHERE conversation_id = ? AND message_type = 1
+                      AND length(content) > 0 AND content LIKE ? ESCAPE '\\'
+                    ORDER BY timestamp DESC
+                    LIMIT ?
+                    """,
+                    (conversation_id, f"%{_escape_like(kw)}%", KEYWORD_PER_TERM_LIMIT),
+                ).fetchall()
+            except Exception as exc:
+                logger.warning("[问问微信] 关键词检索失败（%s）: %s", kw, exc)
+                continue
+            for row in rows:
+                rec = self._row_to_record(row)
+                if rec["message_id"] in seen:
+                    continue
+                seen.add(rec["message_id"])
+                merged.append(rec)
+        return merged
 
     def _vector_channel(self, conversation_id: int, question: str) -> List[Dict[str, Any]]:
         vector = _load_question_vector(question)
@@ -474,12 +552,51 @@ class HistoryQAService:
             redacted.append(result.redacted_text)
         return redacted
 
+    def _redact_history_for_remote(
+        self,
+        turns: List[Dict[str, str]],
+        account_wxid: str,
+        conversation_id: int,
+    ) -> List[Dict[str, str]]:
+        """远程模型时历史问答同样过脱敏（红线同消息记录：失败即阻断）。
+
+        历史来自前端回传，虽然产出时已脱敏过，仍按不可信输入处理。
+        """
+        from ..realtime.rag.config import is_remote_llm_model
+        from ..realtime.rag.fact_llm import get_active_model_config
+
+        model_config = get_active_model_config()
+        if not model_config or not is_remote_llm_model(model_config):
+            return turns
+
+        from ..realtime.privacy_redactor import PrivacyRedactor
+
+        redactor = PrivacyRedactor(get_db())
+        redacted: List[Dict[str, str]] = []
+        for idx, turn in enumerate(turns, 1):
+            out: Dict[str, str] = {}
+            for field in ("question", "answer"):
+                try:
+                    result = redactor.redact(
+                        turn[field],
+                        account_wxid=account_wxid,
+                        conversation_id=conversation_id,
+                        source_table="history_qa",
+                        source_id=f"qa_history_{idx}_{field}",
+                    )
+                except Exception as exc:
+                    raise HistoryQAError(f"脱敏失败，本次提问已阻断：{exc}") from exc
+                out[field] = result.redacted_text
+            redacted.append(out)
+        return redacted
+
     def _call_llm(
         self,
         conversation_id: int,
         question: str,
         records: List[Dict[str, Any]],
         memories: Optional[List[str]] = None,
+        history: Optional[List[Dict[str, str]]] = None,
     ) -> str:
         from ..realtime.rag.fact_llm import get_active_model_config
 
@@ -492,6 +609,15 @@ class HistoryQAService:
             when = time.strftime("%Y-%m-%d %H:%M", time.localtime(rec["timestamp"]))
             who = "我" if rec["is_sender"] == 1 else "对方"
             lines.append(f"[{idx}] {when} {who}: {rec['text']}")
+        history_block = ""
+        if history:
+            qa_lines = "\n".join(
+                f"问：{t['question']}\n答：{t['answer']}" for t in history
+            )
+            history_block = (
+                "\n\n【历史问答】（此前的问答，帮助理解指代；不是聊天记录，"
+                "禁止用 [n] 引用）\n" + qa_lines
+            )
         memory_block = ""
         if memories:
             memory_lines = "\n".join(f"- {m}" for m in memories)
@@ -500,7 +626,8 @@ class HistoryQAService:
                 + memory_lines
             )
         user_prompt = (
-            f"【问题】{question}" + memory_block + "\n\n【聊天记录】\n" + "\n".join(lines)
+            f"【问题】{question}" + history_block + memory_block
+            + "\n\n【聊天记录】\n" + "\n".join(lines)
         )
 
         base_url = str(model_config.get("api_base_url") or "").rstrip("/")
@@ -551,14 +678,25 @@ class HistoryQAService:
 
         content = self._extract_content(body or {})
         if not content:
-            raise HistoryQAError("模型返回了空回答，请重试或换个问法")
+            raise HistoryQAError(
+                "模型返回了空回答，请重试；若用的是纯思考模式模型，请在模型设置中关闭"
+            )
         return content
 
     @staticmethod
     def _extract_content(body: Dict[str, Any]) -> str:
         message_obj = (body.get("choices") or [{}])[0].get("message", {})
-        content = str(message_obj.get("content") or "")
-        if not content:
-            # 思考模型可能把正文写进 reasoning_content
-            content = str(message_obj.get("reasoning_content") or "")
-        return content.strip()
+        content = str(message_obj.get("content") or "").strip()
+        if content:
+            return content
+        # 思考模型正文为空常因 max_tokens 耗尽在思考段：不把 reasoning_content
+        # 当回答吐给用户（那是思维链不是答案），留现场便于排查
+        reasoning = str(message_obj.get("reasoning_content") or "")
+        if reasoning:
+            choices = body.get("choices") or [{}]
+            logger.warning(
+                "[问问微信] 回答为空但 reasoning_content 非空（长度 %d，finish=%s）",
+                len(reasoning),
+                (choices[0] or {}).get("finish_reason"),
+            )
+        return ""

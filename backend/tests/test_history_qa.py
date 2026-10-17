@@ -130,14 +130,48 @@ def test_citations_follow_answer_markers(monkeypatch, db):
     seed(db, 1, "第一条爬山消息", 1700000100)
     seed(db, 2, "第二条爬山消息", 1700000200)
 
-    # 回答引用 [2]：citations 只含第二条，且保留原始编号 2（前端按 index 渲染 [n]）
+    # 回答引用 [2]：citations 只含第二条；回答去 [n] 编号后引用重排为连续序号
     result, _ = ask(monkeypatch, db, "爬山", http=_FakeHTTP(content="答案见 [2]"))
     assert [c["message_id"] for c in result["citations"]] == [2]
-    assert result["citations"][0]["index"] == 2
+    assert result["citations"][0]["index"] == 1
+    assert "[" not in result["answer"] and "答案见" in result["answer"]
 
-    # 回答未带有效编号：退回全集（保留上下文浏览价值），编号原样
+    # 回答未带有效编号：不把全量上下文冒充引用溯源
     result, _ = ask(monkeypatch, db, "爬山", http=_FakeHTTP(content="没有编号的回答"))
-    assert [c["index"] for c in result["citations"]] == [1, 2]
+    assert result["citations"] == []
+
+
+def test_answer_citation_marks_stripped_cleanly(monkeypatch, db):
+    seed(db, 1, "周末去爬山吧", 1700000100)
+    result, _ = ask(
+        monkeypatch, db, "爬山", http=_FakeHTTP(content="结论是这样 [1][2] ，细节如下 [9]。")
+    )
+    # 编号剔除后标点前的空格收掉，不残留连续空格
+    assert result["answer"] == "结论是这样，细节如下。"
+
+
+def test_reasoning_content_not_leaked_as_answer(monkeypatch, db):
+    """思考模型正文为空：不把思维链当回答，明确报错并留现场。"""
+    seed(db, 1, "样本消息", 1700000100)
+
+    class _ThinkingHTTP(_FakeHTTP):
+        def __call__(self, **kw):
+            super().__call__(**kw)
+            return {
+                "choices": [
+                    {
+                        "message": {"content": "", "reasoning_content": "思维链……"},
+                        "finish_reason": "length",
+                    }
+                ]
+            }
+
+    monkeypatch.setattr(hqmod, "post_json_with_retries", _ThinkingHTTP())
+    monkeypatch.setattr(hqmod, "_load_question_vector", lambda q: None)
+    use_local_model(monkeypatch)
+    with pytest.raises(HistoryQAError) as exc:
+        HistoryQAService().ask(1, "样本")
+    assert "空回答" in str(exc.value)
 
 
 def test_no_matching_records_raises(monkeypatch, db):
@@ -255,6 +289,50 @@ def test_keyword_channel_escapes_like_wildcards(monkeypatch, db):
     assert [r["message_id"] for r in rows] == [1]
 
 
+def test_keyword_channel_covers_cold_terms_beyond_flood(monkeypatch, db):
+    """逐关键词取数：高频词刷不满候选池，冷门词的更早消息也能进池。"""
+    monkeypatch.setattr(hqmod, "_extract_keywords", lambda q: ["我们", "跳伞"])
+    # 15 条最新的高频词消息（超过单关键词上限）
+    for i in range(15):
+        seed(db, 100 + i, f"我们随便聊聊 {i}", 1700000000 + i)
+    seed(db, 50, "去年说好去跳伞的", 1600000000)  # 冷门词、时间最早
+
+    rows = HistoryQAService()._keyword_channel(1, "ignored")
+
+    ids = [r["message_id"] for r in rows]
+    assert 50 in ids  # 冷门词的早期命中不被高频词挤出
+    assert len(ids) <= 2 * hqmod.KEYWORD_PER_TERM_LIMIT
+
+
+def test_context_budget_drops_lowest_relevance_first(monkeypatch, db):
+    """预算超限时按相关度丢（旧的按时间序装填会把最新的高分记录挤掉）。"""
+    svc = HistoryQAService()
+    monkeypatch.setattr(
+        svc,
+        "_keyword_channel",
+        lambda cid, q: [
+            {"message_id": 2, "timestamp": 200, "is_sender": 0, "text": "高分短消息", "score": 0.0},
+        ],
+    )
+    monkeypatch.setattr(
+        svc,
+        "_vector_channel",
+        lambda cid, q: [
+            {"message_id": 2, "timestamp": 200, "is_sender": 0, "text": "高分短消息", "score": 0.0},
+            {"message_id": 1, "timestamp": 100, "is_sender": 0, "text": "a" * 200, "score": 0.0},
+        ],
+    )
+    monkeypatch.setattr(hqmod, "MAX_CONTEXT_CHARS", 150)
+
+    kept = svc._retrieve(1, "任意问题")
+
+    # 消息 2 双通道命中分数最高且预算内保留；消息 1 更早、低分且超预算被丢
+    assert [r["message_id"] for r in kept] == [2]
+    # 超长截断带省略号，不做硬切
+    clipped = hqmod._clip_text("x" * 250)
+    assert len(clipped) == hqmod.MAX_MESSAGE_CHARS and clipped.endswith("…")
+
+
 def test_context_sorted_by_time_and_char_budget(monkeypatch, db):
     # 两条命中，时间倒序入库；上下文应按时间升序呈现
     seed(db, 10, "后来的消息", 1700000900)
@@ -262,6 +340,87 @@ def test_context_sorted_by_time_and_char_budget(monkeypatch, db):
     result, _ = ask(monkeypatch, db, "消息")
     ts = [c["timestamp"] for c in result["citations"]]
     assert ts == sorted(ts)
+
+
+# ===== 多轮问答 =====
+
+
+def test_history_block_and_merged_retrieval(monkeypatch, db):
+    """上一问的实词并入检索：「那次花了多少钱」靠上文的「火锅」命中记录。"""
+    seed(db, 1, "周末吃火锅，两个人 350 块", 1700000100)
+
+    # 无历史时当前问句无命中关键词
+    with pytest.raises(HistoryQAError):
+        ask(monkeypatch, db, "那次花了多少钱")
+
+    http = _FakeHTTP()
+    monkeypatch.setattr(hqmod, "post_json_with_retries", http)
+    monkeypatch.setattr(hqmod, "_load_question_vector", lambda q: None)
+    use_local_model(monkeypatch)
+
+    result = HistoryQAService().ask(
+        1,
+        "那次花了多少钱",
+        history=[{"question": "我们去哪吃的火锅", "answer": "你们去吃了火锅"}],
+    )
+
+    sent = json.dumps(http.calls[0]["payload"], ensure_ascii=False)
+    assert "【历史问答】" in sent and "我们去哪吃的火锅" in sent
+    # 检索靠上一问的「火锅」命中，引用回填成功
+    assert [c["message_id"] for c in result["citations"]] == [1]
+
+
+def test_history_redacted_for_remote(monkeypatch, db):
+    """远程模型：历史问答同样过脱敏（前端回传按不可信输入处理）。"""
+    import app.services.realtime.rag.config as ragcfg
+    import app.services.realtime.rag.fact_llm as factllm
+    import app.services.realtime.privacy_redactor as prmod
+
+    seed(db, 1, "电话在名片上", 1700000100)
+    monkeypatch.setattr(
+        factllm,
+        "get_active_model_config",
+        lambda: {"api_base_url": "https://api.deepseek.com/v1", "model_id": "d", "api_key": ""},
+    )
+    monkeypatch.setattr(ragcfg, "is_remote_llm_model", lambda cfg: True)
+    monkeypatch.setattr(prmod, "PrivacyRedactor", lambda conn: _FakeRedactor())
+
+    http = _FakeHTTP()
+    monkeypatch.setattr(hqmod, "post_json_with_retries", http)
+    monkeypatch.setattr(hqmod, "_load_question_vector", lambda q: None)
+
+    HistoryQAService().ask(
+        1,
+        "接着说",
+        history=[{"question": "电话 13800001111 是谁的", "answer": "是 TA 的 [手机号]"}],
+    )
+
+    sent = json.dumps(http.calls[0]["payload"], ensure_ascii=False)
+    assert "13800001111" not in sent
+    assert "13800001111 是谁的" not in sent
+
+
+def test_history_normalized_and_capped(monkeypatch, db):
+    """历史清洗：只留成对轮次、截最近几轮、异常输入按无历史。"""
+    turns = HistoryQAService()._normalize_history(
+        [
+            {"question": "q1", "answer": "a1"},
+            {"question": "只有问题", "answer": ""},
+            "垃圾项",
+            {"question": "q4", "answer": "a4"},
+            {"question": "q5", "answer": "a5"},
+        ]
+    )
+    assert turns == [
+        {"question": "q4", "answer": "a4"},
+        {"question": "q5", "answer": "a5"},
+    ]
+    assert HistoryQAService()._normalize_history(None) == []
+    assert HistoryQAService()._normalize_history("不是列表") == []
+    long_q = "问" * 999
+    assert HistoryQAService()._normalize_history(
+        [{"question": long_q, "answer": "a"}]
+    )[0]["question"] == long_q[: hqmod.HISTORY_TURN_CHARS]
 
 
 # ===== 模型门槛与脱敏 =====

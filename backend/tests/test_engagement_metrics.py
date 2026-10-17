@@ -173,11 +173,11 @@ def test_perfunctory_counts_and_rate(db):
     add(db, 1, 0, "嗯", ts(hour=10))
     add(db, 1, 0, "好的明天见", ts(hour=10, minute=1))  # >2 字且不在词表
     add(db, 1, 0, "哦", ts(hour=10, minute=2))
-    add(db, 1, 0, "可以", ts(hour=10, minute=3))
+    add(db, 1, 0, "可以", ts(hour=10, minute=3))  # 应答性同意，白名单放行
     add(db, 1, 1, "那明天上午碰头", ts(hour=10, minute=4))
     metrics = compute(1)
-    assert metrics.perfunctory_other == 3  # 嗯/哦/可以（词表 + ≤2 字）
-    assert metrics.perfunctory_rate_other == pytest.approx(3 / 4, abs=1e-3)
+    assert metrics.perfunctory_other == 2  # 嗯/哦
+    assert metrics.perfunctory_rate_other == pytest.approx(2 / 4, abs=1e-3)
     assert metrics.perfunctory_self == 0
 
 

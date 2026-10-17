@@ -23,19 +23,19 @@ from app.services.realtime.sentiment_rules import (
 
 class TestIsPerfunctory:
     def test_engaged_short_replies_not_perfunctory(self):
-        """笑声/感谢/情感表达/状态告知等高投入短回复不算敷衍"""
+        """笑声/感谢/情感表达/状态告知/应答性同意等高投入短回复不算敷衍"""
         for text in ("哈哈", "嘿嘿", "谢谢", "爱你", "抱抱", "来了", "在呢",
-                     "好嘞", "666", "牛", "棒"):
+                     "好嘞", "666", "牛", "棒", "可以", "嗯嗯", "哦哦"):
             assert not is_perfunctory(text), text
 
     def test_dismissive_replies_are_perfunctory(self):
         """嗯/哦/好吧类冷应答与放任句式仍判敷衍"""
-        for text in ("嗯", "哦", "好吧", "随便", "嗯嗯", "行行"):
+        for text in ("嗯", "哦", "好吧", "随便", "行行"):
             assert is_perfunctory(text), text
 
     def test_three_char_reduplication_now_caught(self):
-        """3 字叠字应付躲过旧长度兜底，须靠显式词表命中"""
-        for text in ("嗯嗯嗯", "哦哦哦", "好好好", "行行行", "无所谓", "不知道"):
+        """三连应付（不耐烦顺从）躲过旧长度兜底，须靠显式词表命中"""
+        for text in ("好好好", "行行行", "是是是", "无所谓", "不知道"):
             assert is_perfunctory(text), text
 
     def test_empty_text_not_perfunctory(self):

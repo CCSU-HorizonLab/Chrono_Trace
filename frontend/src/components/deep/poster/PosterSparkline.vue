@@ -32,13 +32,15 @@ const props = defineProps<{
   height?: number
   /** 画零基准虚线（双极性序列如情感 -1~1 建议开） */
   zeroLine?: boolean
+  /** 单值线颜色覆盖（默认沿用 BIG5_COLOR_ME；暖色模板传主题橘） */
+  color?: string
 }>()
 
 const width = computed(() => props.width || 640)
 const height = computed(() => props.height || 120)
 const midY = computed(() => height.value / 2)
 
-const ME = BIG5_COLOR_ME
+const ME = props.color || BIG5_COLOR_ME
 const OTHER = BIG5_COLOR_OTHER
 
 function scaleX(index: number, count: number) {

@@ -1,51 +1,48 @@
 <template>
-  <!-- 自我画像版：只关于我（me 切片投影），零对方元素，天然脱敏可公开 -->
+  <!-- 自我画像版：只关于我（me 切片投影），零对方元素，天然脱敏可公开。
+       暖色叙事分镜：开场→你的大数字→数字格→语气曲线→你的词→语言风格→称号→落款 -->
   <div class="poster poster-self">
+    <!-- 开场幕（无卡）：暖光底上直接摆「我」 -->
     <div class="brand-row">
       <span class="brand-mark">时痕</span>
-      <span class="brand-sub">时光深度 · 我的年度语言画像</span>
+      <span class="brand-sub">暖光故事 · 只关于你</span>
     </div>
 
     <div class="hero">
-      <div class="hero-line">这一年，你发出了</div>
-      <div class="hero-num">{{ formatCount(stats.self_count) }}</div>
-      <div class="hero-line">条消息</div>
+      <div class="hero-avatar"><span class="hero-fallback">我</span></div>
+      <div class="hero-line">跨度 {{ formatCount(stats.span_days) }} 天里，你一直在说话</div>
     </div>
 
-    <div class="stat-row">
-      <div class="stat">
-        <div class="stat-num">{{ formatCount(myBrightDays) }}</div>
-        <div class="stat-label">个明亮时段</div>
-      </div>
-      <div class="stat">
-        <div class="stat-num">{{ myTopWord }}</div>
-        <div class="stat-label">你最常说的词</div>
-      </div>
-      <div class="stat">
-        <div class="stat-num">{{ formatCount(stats.active_days) }}</div>
-        <div class="stat-label">天在记录生活</div>
-      </div>
-    </div>
+    <StorySection index="01" title="你写下的" :palette="palette">
+      <StoryBigNumber
+        :value="formatCount(stats.self_count)"
+        unit="条消息"
+        :caption="`其中 ${formatCount(stats.active_days)} 天都有你的声音`"
+        :palette="palette"
+      />
+    </StorySection>
 
-    <div class="section">
-      <div class="section-title">你的语气起伏</div>
-      <PosterSparkline :points="points" pick="userScore" :width="640" :height="130" />
-    </div>
+    <StorySection index="02" title="你的日常痕迹" :palette="palette" class="gap">
+      <StoryStatGrid :items="dailyCells" :palette="palette" />
+    </StorySection>
 
-    <div class="section">
-      <div class="section-title">你的词</div>
+    <StorySection v-if="points.length" index="03" title="你的语气曲线" :palette="palette" class="gap">
+      <PosterSparkline :points="points" pick="userScore" :width="624" :height="130" zero-line color="#d97706" />
+      <div class="curve-note">向上是更明亮的语气，虚线是平静的分界</div>
+    </StorySection>
+
+    <StorySection v-if="myWords.length" index="04" title="你的词" :palette="palette" class="gap">
       <div class="words-cloud">
         <span
           v-for="(word, index) in myWords"
           :key="word.word"
           class="word"
-          :style="{ fontSize: wordSize(index), color: index === 0 ? '#7c4dff' : undefined }"
+          :style="{ fontSize: wordSize(index) }"
         >{{ word.word }}</span>
       </div>
-    </div>
+    </StorySection>
 
-    <div v-if="myBig5" class="section">
-      <div class="section-title">你的语言风格画像</div>
+    <StorySection v-if="myBig5" index="05" title="你的语言风格" :palette="palette" class="gap">
       <div class="big5-row">
         <BigFiveRadar :me="myBig5" :size="220" />
         <div class="big5-bars">
@@ -59,6 +56,13 @@
         </div>
       </div>
       <div class="big5-note">语言风格印象，非心理测评</div>
+    </StorySection>
+
+    <!-- 称号幕（无序号）：暖橘大字居中，亮边框收束 -->
+    <div class="badge-card">
+      <div class="badge-eyebrow">你的称号</div>
+      <div class="badge-title">{{ badge.title }}</div>
+      <div class="badge-caption">{{ badge.caption }}</div>
     </div>
 
     <div class="footer">
@@ -72,23 +76,43 @@
 import { computed } from 'vue'
 import BigFiveRadar from '@/components/deep/BigFiveRadar.vue'
 import PosterSparkline from '@/components/deep/poster/PosterSparkline.vue'
+import StorySection from '@/components/deep/poster/sections/StorySection.vue'
+import StoryBigNumber from '@/components/deep/poster/sections/StoryBigNumber.vue'
+import StoryStatGrid from '@/components/deep/poster/sections/StoryStatGrid.vue'
+import type { StoryPalette, StoryStatItem } from '@/components/deep/poster/sections/palette'
+import { badgeInputFromSelf, pickPosterBadge } from '@/components/deep/poster/badges'
 import type { SelfPosterPayload } from '@/components/deep/poster/registry'
 
 const props = defineProps<{ payload: SelfPosterPayload }>()
+
+// 暖米调色板：纯色 token（海报节点零 CSS 变量依赖）
+const palette: StoryPalette = {
+  bg: '#fffdf8',
+  text: '#3d2e1e',
+  muted: '#79664c',
+  accent: '#d97706',
+  sub: '#9a3412',
+  line: '#e5d5bd',
+}
 
 const stats = computed(() => props.payload.stats)
 const points = computed(() => props.payload.my_curve)
 const myWords = computed(() => props.payload.my_words.slice(0, 12))
 const myBig5 = computed(() => props.payload.my_big5)
+const badge = computed(() => pickPosterBadge(badgeInputFromSelf(props.payload), 'self'))
+const yearText = computed(() => String(new Date(props.payload.generated_at * 1000).getFullYear()))
 
-function formatCount(value: number): string {
-  return value >= 10000 ? `${(value / 10000).toFixed(1)} 万` : value.toLocaleString('zh-CN')
-}
-
-const myBrightDays = computed(() => {
-  const scored = points.value.filter((p) => typeof p.userScore === 'number')
-  if (!scored.length) return 0
-  return scored.filter((p) => (p.userScore || 0) > 0).length
+// 日常数字格：深夜/平均回复来自 my_story 单侧切片，缺席各自跳格
+const dailyCells = computed<StoryStatItem[]>(() => {
+  const cells: StoryStatItem[] = [
+    { num: formatCount(stats.value.active_days), label: '天在记录生活' },
+    { num: myTopWord.value, label: '你最常说的词' },
+  ]
+  const late = props.payload.my_story.late_night_self
+  if (late != null) cells.push({ num: formatCount(late), label: '你的深夜（0-5 点）消息' })
+  const reply = props.payload.my_story.reply_self_avg_seconds
+  if (reply != null) cells.push({ num: formatDuration(reply), label: '你的平均回复时间' })
+  return cells
 })
 
 const myTopWord = computed(() => myWords.value[0]?.word || '—')
@@ -105,23 +129,35 @@ const dimRows = computed(() => {
   }))
 })
 
+function formatCount(value: number): string {
+  return value >= 10000 ? `${(value / 10000).toFixed(1)} 万` : value.toLocaleString('zh-CN')
+}
+
+function formatDuration(seconds: number): string {
+  if (seconds < 60) return `${Math.round(seconds)} 秒`
+  if (seconds < 3600) return `${Math.round(seconds / 60)} 分钟`
+  return `${(seconds / 3600).toFixed(1)} 小时`
+}
+
 function wordSize(index: number): string {
   const scale = [32, 26, 22, 20, 18, 16, 15, 14, 13, 12, 12, 12]
   return `${scale[index] || 12}px`
 }
-
-const yearText = computed(() => String(new Date(props.payload.generated_at * 1000).getFullYear()))
 </script>
 
 <style scoped>
-/* html2canvas 约束：纯色 + 简单 linear-gradient；不用 box-shadow/backdrop-filter/radial */
+/* html2canvas 约束：纯色 + 简单 linear-gradient + 1px 亮边框；不用 shadow/transform/动画 */
 .poster {
   width: 720px;
-  background: linear-gradient(180deg, #ffffff 0%, #fff8ef 100%);
+  background: linear-gradient(180deg, #fdf8f2 0%, #f7ecdd 55%, #f3e2c8 100%);
   padding: 44px 48px 36px;
-  color: #0f172a;
+  color: #3d2e1e;
   font-family: 'PingFang SC', 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif;
   box-sizing: border-box;
+}
+
+.gap {
+  margin-top: 22px;
 }
 
 .brand-row {
@@ -134,8 +170,8 @@ const yearText = computed(() => String(new Date(props.payload.generated_at * 100
   width: 34px;
   height: 34px;
   border-radius: 10px;
-  background: #7c4dff;
-  color: #ffffff;
+  background: #d97706;
+  color: #fdf8f2;
   font-size: 15px;
   font-weight: 700;
   display: flex;
@@ -144,63 +180,46 @@ const yearText = computed(() => String(new Date(props.payload.generated_at * 100
 }
 
 .brand-sub {
-  color: #475569;
+  color: #79664c;
   font-size: 14px;
+  letter-spacing: 1px;
 }
 
 .hero {
-  margin-top: 40px;
-  text-align: center;
-}
-
-.hero-line {
-  font-size: 20px;
-  color: #475569;
-}
-
-.hero-num {
-  font-size: 84px;
-  font-weight: 800;
-  line-height: 1.15;
-  color: #d97706;
-  letter-spacing: -2px;
-}
-
-.stat-row {
   margin-top: 36px;
   display: flex;
+  flex-direction: column;
+  align-items: center;
   gap: 16px;
 }
 
-.stat {
-  flex: 1;
-  background: #ffffff;
-  border: 1px solid #f0e4d4;
-  border-radius: 16px;
-  padding: 20px 12px;
-  text-align: center;
+.hero-avatar {
+  width: 88px;
+  height: 88px;
+  border-radius: 50%;
+  border: 2px solid #d97706;
+  background: #fbf3e6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.stat-num {
-  font-size: 26px;
-  font-weight: 800;
-  color: #0f172a;
-}
-
-.stat-label {
-  margin-top: 4px;
-  font-size: 13px;
-  color: #64748b;
-}
-
-.section {
-  margin-top: 36px;
-}
-
-.section-title {
-  font-size: 16px;
+.hero-fallback {
+  font-size: 32px;
   font-weight: 700;
-  margin-bottom: 14px;
+  color: #3d2e1e;
+}
+
+.hero-line {
+  font-size: 16px;
+  color: #79664c;
+  letter-spacing: 1px;
+}
+
+.curve-note {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #79664c;
 }
 
 .words-cloud {
@@ -212,8 +231,12 @@ const yearText = computed(() => String(new Date(props.payload.generated_at * 100
 }
 
 .word {
-  color: #334155;
+  color: #3d2e1e;
   font-weight: 600;
+}
+
+.word:first-child {
+  color: #d97706;
 }
 
 .big5-row {
@@ -238,7 +261,7 @@ const yearText = computed(() => String(new Date(props.payload.generated_at * 100
 .bar-label {
   width: 3.5em;
   font-size: 13px;
-  color: #475569;
+  color: #79664c;
   flex-shrink: 0;
 }
 
@@ -246,7 +269,7 @@ const yearText = computed(() => String(new Date(props.payload.generated_at * 100
   flex: 1;
   height: 8px;
   border-radius: 999px;
-  background: #f1e7db;
+  background: #f1e3ce;
 }
 
 .bar-fill {
@@ -260,22 +283,53 @@ const yearText = computed(() => String(new Date(props.payload.generated_at * 100
   text-align: right;
   font-size: 13px;
   font-weight: 700;
-  color: #0f172a;
+  color: #3d2e1e;
 }
 
 .big5-note {
   margin-top: 10px;
   font-size: 12px;
-  color: #94a3b8;
+  color: #8d7a58;
+}
+
+.badge-card {
+  margin-top: 26px;
+  border: 1px solid rgba(217, 119, 6, 0.4);
+  background: rgba(217, 119, 6, 0.05);
+  border-radius: 18px;
+  padding: 30px 28px;
+  text-align: center;
+}
+
+.badge-eyebrow {
+  font-size: 13px;
+  color: #79664c;
+  letter-spacing: 3px;
+}
+
+.badge-title {
+  margin-top: 10px;
+  font-size: 44px;
+  font-weight: 800;
+  letter-spacing: 6px;
+  color: #d97706;
+  font-family: 'Smiley Sans', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+}
+
+.badge-caption {
+  margin-top: 10px;
+  font-size: 15px;
+  line-height: 1.6;
+  color: #3d2e1e;
 }
 
 .footer {
-  margin-top: 44px;
+  margin-top: 40px;
   padding-top: 18px;
-  border-top: 1px solid #f0e4d4;
+  border-top: 1px solid #e5d5bd;
   display: flex;
   justify-content: space-between;
-  color: #94a3b8;
+  color: #8d7a58;
   font-size: 13px;
 }
 </style>

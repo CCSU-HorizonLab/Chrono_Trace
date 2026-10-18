@@ -20,6 +20,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { BIG5_COLOR_ME, BIG5_COLOR_OTHER } from '@/components/deep/big5Shared'
 
 type Point = { score?: number | null; userScore?: number | null; otherScore?: number | null }
 
@@ -37,8 +38,8 @@ const width = computed(() => props.width || 640)
 const height = computed(() => props.height || 120)
 const midY = computed(() => height.value / 2)
 
-const ME = '#7c4dff'
-const OTHER = '#d97706'
+const ME = BIG5_COLOR_ME
+const OTHER = BIG5_COLOR_OTHER
 
 function scaleX(index: number, count: number) {
   if (count <= 1) return width.value / 2

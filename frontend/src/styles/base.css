@@ -288,7 +288,7 @@ body {
 .ct-tabs-capsule .menu-item.active {
   background: var(--ct-color-primary);
   color: #fff;
-  box-shadow: 0 4px 12px rgba(91, 107, 224, 0.3);
+  box-shadow: 0 4px 12px rgba(124, 77, 255, 0.3);
 }
 
 .ct-tabs-capsule .menu-item:hover:not(.active) {

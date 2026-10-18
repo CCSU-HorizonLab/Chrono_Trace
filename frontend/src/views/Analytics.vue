@@ -3756,8 +3756,8 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
 .pd-btn { padding: 8px 20px; border-radius: 10px; font-size: 13px; font-weight: 600; cursor: pointer; border: 1px solid transparent; }
 .pd-btn-ghost { background: transparent; color: var(--ct-text-secondary); border-color: var(--ct-border-color); }
 .pd-btn-ghost:hover { background: var(--ct-bg-tertiary); }
-.pd-btn-primary { background: #6c5ce7; color: #fff; }
-.pd-btn-primary:hover { background: #5a4bd1; }
+.pd-btn-primary { background: var(--ct-color-primary); color: #fff; }
+.pd-btn-primary:hover { background: var(--ct-color-primary-hover); }
 .pd-btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
 .sr-only { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 
@@ -3841,7 +3841,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
 }
 
 .qa-bubble-user {
-  background: var(--ct-color-primary-subtle, rgba(91, 107, 224, 0.12));
+  background: var(--ct-color-primary-subtle);
   border-bottom-right-radius: 4px;
 }
 

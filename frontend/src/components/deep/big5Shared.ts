@@ -1,5 +1,6 @@
-// 大五维度顺序与双方实体色——演变面板与静态 BigFivePanel 共用口径，防漂移
-// （静态面板内联同值，改动时两处同步）
+// 我/TA 实体序列色——全前端单一色源：大五演变/静态大五、情绪曲线、海报 sparkline、
+// 时光深度工具条图例都从这里取（BigFivePanel/BigFiveRadar 的 CSS 内联同值，
+// 改动时两处同步）。我=紫（=主题 primary）/ TA=琥珀。
 export const BIG5_DIM_ORDER = [
   'openness',
   'extraversion',

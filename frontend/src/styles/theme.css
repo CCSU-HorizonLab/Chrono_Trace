@@ -18,6 +18,7 @@
   --ct-color-primary-hover: #651fff;
   --ct-color-primary-light: #f0e6ff;
   --ct-color-primary-muted: rgba(124, 77, 255, 0.1);
+  --ct-color-primary-subtle: rgba(124, 77, 255, 0.12);
 
   /* Accent Colors - Warm Orange */
   --ct-color-accent: #f5a623;

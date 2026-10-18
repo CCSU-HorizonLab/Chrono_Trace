@@ -35,11 +35,11 @@ defineProps<{
 .persona-core-card {
   overflow: hidden;
   background:
-    radial-gradient(circle at top right, rgba(168, 85, 247, 0.12), transparent 45%),
-    radial-gradient(circle at bottom left, rgba(99, 102, 241, 0.1), transparent 45%),
+    radial-gradient(circle at top right, rgba(124, 77, 255, 0.12), transparent 45%),
+    radial-gradient(circle at bottom left, rgba(124, 77, 255, 0.08), transparent 45%),
     var(--ct-bg-secondary);
-  border: 1px solid rgba(139, 92, 246, 0.15); /* primary-subtle */
-  box-shadow: 0 8px 32px rgba(139, 92, 246, 0.06);
+  border: 1px solid rgba(124, 77, 255, 0.15); /* primary-subtle */
+  box-shadow: 0 8px 32px rgba(124, 77, 255, 0.06);
 }
 
 .persona-core-shell {
@@ -92,8 +92,8 @@ defineProps<{
   min-height: 38px;
   padding: 0 16px;
   border-radius: 999px;
-  background: rgba(139, 92, 246, 0.08); /* light primary tint */
-  border: 1px solid rgba(139, 92, 246, 0.12);
+  background: rgba(124, 77, 255, 0.08); /* light primary tint */
+  border: 1px solid rgba(124, 77, 255, 0.12);
   color: var(--ct-color-primary);
   font-size: 13px;
   font-weight: 600;

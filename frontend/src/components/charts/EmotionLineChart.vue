@@ -210,9 +210,11 @@ type TimeseriesPoint = {
 
 // 三线配色经 CVD 校验（dataviz 六检全过，白底）：双方=青绿 / 我=紫 / TA=深琥珀
 // （旧「双方」蓝 #5b8def 与紫正常视觉 ΔE 14.7 <15 硬不过，三线同显时换青绿；
-// 好感度菱形=深蓝，形状+色相双重区分）
-const ME_COLOR = '#7c4dff'
-const OTHER_COLOR = '#d97706'
+// 好感度菱形=深蓝，形状+色相双重区分）。我/TA 实体色自 big5Shared 单一来源取
+import { BIG5_COLOR_ME, BIG5_COLOR_OTHER } from '@/components/deep/big5Shared'
+
+const ME_COLOR = BIG5_COLOR_ME
+const OTHER_COLOR = BIG5_COLOR_OTHER
 const AFFINITY_COLOR = '#2563eb'
 const COMBINED_COLOR = '#0d9488'
 

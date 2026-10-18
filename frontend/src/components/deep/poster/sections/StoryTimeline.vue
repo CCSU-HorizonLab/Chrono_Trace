@@ -40,7 +40,7 @@ function titleOf(item: PosterMilestone): string {
   }
   if (item.kind === 'count_mark') {
     const mark = item.mark ?? 0
-    return mark >= 10000 ? `第一万句话来的时候，是第 ${(mark / 10000).toFixed(mark % 10000 ? 1 : 0)} 万条` : `说到第 ${mark.toLocaleString('zh-CN')} 条`
+    return mark >= 10000 ? `说到第 ${(mark / 10000).toFixed(mark % 10000 ? 1 : 0)} 万条` : `说到第 ${mark.toLocaleString('zh-CN')} 条`
   }
   return '最长的沉默'
 }

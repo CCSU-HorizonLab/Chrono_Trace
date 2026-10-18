@@ -20,6 +20,7 @@
         :turning-points="payload.turning_points || []"
         :granularity="granularity"
       />
+      <BigFivePanel :conversation-id="conversationId" />
     </template>
   </div>
 </template>
@@ -31,6 +32,7 @@ import SentimentCoverageBar from '@/components/deep/SentimentCoverageBar.vue'
 import DeepEmotionPanel from '@/components/deep/DeepEmotionPanel.vue'
 import WordEvolutionPanel from '@/components/deep/WordEvolutionPanel.vue'
 import MilestoneTimeline from '@/components/deep/MilestoneTimeline.vue'
+import BigFivePanel from '@/components/deep/BigFivePanel.vue'
 
 const props = defineProps<{
   conversationId: number

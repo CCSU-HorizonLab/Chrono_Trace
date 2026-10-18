@@ -155,3 +155,43 @@ class DeepAnalysisApiMixin:
             return {"ok": False, "error": "没有进行中的补算任务"}
         cancel_event.set()
         return {"ok": True}
+
+    # ------------------------------------------------------------------
+    # 大五人格印象（双层：本地统计基础层 + LLM 增强层）
+    # ------------------------------------------------------------------
+
+    def get_big5_impressions(self, conversation_id: int, account_wxid: str = "") -> dict:
+        """读取双方大五画像（未过期缓存优先，无模型也总有基础层）。"""
+        try:
+            if not conversation_id:
+                return {"ok": False, "error": "缺少参数: conversation_id"}
+            from ...services.analysis.personality_impression_service import (
+                PersonalityImpressionService,
+            )
+
+            service = getattr(self, "_big5_service", None)
+            if service is None:
+                service = PersonalityImpressionService()
+                self._big5_service = service
+            return service.get_impressions(int(conversation_id), account_wxid or "")
+        except Exception as e:
+            logger.error(f"[Bridge] 获取大五画像失败: {e}")
+            return {"ok": False, "error": str(e)}
+
+    def enhance_big5_impressions(self, conversation_id: int, account_wxid: str = "") -> dict:
+        """LLM 增强大五画像（±15 有界校正附证据；远程模型过脱敏红线，失败即阻断）。"""
+        try:
+            if not conversation_id:
+                return {"ok": False, "error": "缺少参数: conversation_id"}
+            from ...services.analysis.personality_impression_service import (
+                PersonalityImpressionService,
+            )
+
+            service = getattr(self, "_big5_service", None)
+            if service is None:
+                service = PersonalityImpressionService()
+                self._big5_service = service
+            return service.enhance(int(conversation_id), account_wxid or "")
+        except Exception as e:
+            logger.error(f"[Bridge] 增强大五画像失败: {e}")
+            return {"ok": False, "error": str(e)}

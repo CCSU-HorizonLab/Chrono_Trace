@@ -140,6 +140,13 @@ class AffinityAnalysisService:
                 return task_id
         return None
 
+    def has_running_task(self) -> bool:
+        """任一会话的分析是否仍在进行（情感补算与之互斥的全局守卫）。"""
+        return any(
+            result.status not in {"completed", "failed", "cancelled"}
+            for result in self._task_status.values()
+        )
+
     def analyze(
         self,
         conversation_id: int,

@@ -289,6 +289,22 @@ class PreprocessingOrchestrator:
                 f"累计耗时 {_step_elapsed(sentiment_start)}"
             )
 
+    def run_sentiment_backfill(
+        self,
+        conversation_id: int,
+        cancel_event: Optional[threading.Event] = None,
+        progress_cb=None,
+    ) -> None:
+        """时光深度情感补算：只跑全面分析预处理里的情感子集。
+
+        _ensure_sentiment_analysis 内部按 sentiment_cache 现有行跳过已缓存
+        消息（batch_get_sentiment_from_cache），只推理缺口；产物永久写入
+        sentiment_cache，后续全面分析阶段 1 直接复用，不重复计算。
+        用户取消时抛 Exception("分析已被用户取消")，由调用方转译状态。
+        """
+        messages = self._load_messages(conversation_id)
+        self._ensure_sentiment_analysis(conversation_id, messages, cancel_event, progress_cb)
+
     def _save_preprocessing_results(
         self,
         conversation_id: int,

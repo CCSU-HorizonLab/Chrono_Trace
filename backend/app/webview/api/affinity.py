@@ -350,6 +350,15 @@ class AffinityApiMixin:
                         "message": "已有进行中的好感度分析，已复用",
                     }
 
+            # 互斥守卫：情感补算与全面分析共用 ONNX 推理会话，并发会争抢
+            # 模型资源；补算进行中时拒绝启动分析（补算通常分钟级即完成）
+            backfill_service = getattr(self, "_sentiment_backfill_service", None)
+            if backfill_service is not None and backfill_service.has_running_task():
+                return {
+                    "ok": False,
+                    "error": "时光深度情感补算进行中，请等待其完成后再开始全面分析",
+                }
+
             AffinityAnalysisService = self._get_fresh_affinity_service_class()
             service = AffinityAnalysisService()            # 保存服务实例引用，供 get_affinity_progress 查询进度
             self._affinity_service = service

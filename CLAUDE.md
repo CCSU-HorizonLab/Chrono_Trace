@@ -80,7 +80,7 @@ SQLite（线程本地连接 backend/app/db/connection.py）
 ### 关键机制
 
 - **Bridge 是唯一前后端边界**：新增前端可调用的 API 必须同时改后端（按 API 域加到 `backend/app/webview/api/*.py` 对应 mixin；导入/监听桥接/建议流等核心域仍在 `bridge.py`）和 `frontend/src/api/bridge.ts`（加 `PyWebViewApi` 类型声明），二者需保持同步。
-- **数据库**：`backend/app/db/schema.sql` 是唯一建表源，`connection.py` 只执行建表——**不维护历史库兼容迁移**，结构变更以版本常量记录（如画像 `PROFILE_SNAPSHOT_SCHEMA`），旧库不做升级（缺列报错，删除重导即可）。开发模式数据写入 `backend/data/chrono_trace.db`（打包后 Windows 为 `%LOCALAPPDATA%\ChronoTrace\`，Linux 为 `$XDG_DATA_HOME/ChronoTrace/`，显示名 `APP_NAME` 仍带空格）。
+- **数据库**：`backend/app/db/schema.sql` 是唯一建表源，`connection.py` 只执行建表——**不维护历史库兼容迁移**，结构变更以版本常量记录（如画像 `PROFILE_SNAPSHOT_SCHEMA`），旧库不做升级（缺列报错，删除重导即可）。唯一例外是画像三表（contact_profiles/self_profiles/big5_impressions）：DDL 内联在各服务 `_ensure_table` 懒建（口径见 `docs/analysis/profile-window.md`）。开发模式数据写入 `backend/data/chrono_trace.db`（打包后 Windows 为 `%LOCALAPPDATA%\ChronoTrace\`，Linux 为 `$XDG_DATA_HOME/ChronoTrace/`，显示名 `APP_NAME` 仍带空格）。
 - **导入 `backend/app/config.py` 有副作用**：模块加载即创建 `backend/data/{logs,models,temp}` 目录并写入 settings 路径。
 - **测试导入约定**：部分测试文件以 `backend/` 为导入根（`sys.path.insert` 后 `from app...`），部分以仓库根（`from backend.app...`，需在仓库根运行 pytest）——新测试优先用前者。
 

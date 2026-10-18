@@ -154,6 +154,7 @@ const realtimeState = reactive({
 const monitorTalkerName = ref('')
 const realtimeError = ref('')
 let statusTimer: any = null
+let resetTimer: any = null
 
 // ========== AI 建议配置（按联系人存储） ==========
 const triggerMode = ref<any>('semi_auto')
@@ -312,7 +313,10 @@ async function stopMonitoring() {
       realtimeState.status = 'stopped'
       realtimeState.isMonitoring = false
 
-      setTimeout(() => {
+      // 复位定时器可跟踪：卸载/切账号时清掉，防止过期复位覆盖新会话状态
+      if (resetTimer) clearTimeout(resetTimer)
+      resetTimer = setTimeout(() => {
+        resetTimer = null
         if (realtimeState.status === 'stopped') {
           realtimeState.status = 'idle'
           realtimeState.messageCount = 0
@@ -399,7 +403,15 @@ function stopStatusPolling() {
 // 组件挂载时恢复监听状态（悬浮窗退出返回本页时保持一致）
 onMounted(async () => {
   loadSuggestionConfig()
+  // 切账号：监听对象/建议配置都是账号内数据，按后端真实状态重取（旧账号
+  // 的展示残留一并清掉——建议配置随 props.conversationId 变化另行加载）
+  window.addEventListener('chrono:wechat-account-changed', handleAccountChanged)
 
+  await restoreFromBackend()
+})
+
+// 从后端真实监听状态恢复本卡展示（挂载与切账号共用）
+async function restoreFromBackend() {
   try {
     await bridgeReady()
     const status = await api.get_realtime_status()
@@ -415,10 +427,24 @@ onMounted(async () => {
   } catch (e) {
     console.error('恢复监听状态失败:', e)
   }
-})
+}
+
+async function handleAccountChanged() {
+  stopStatusPolling()
+  if (resetTimer) { clearTimeout(resetTimer); resetTimer = null }
+  realtimeState.isMonitoring = false
+  realtimeState.status = 'idle'
+  realtimeState.batchId = ''
+  realtimeState.messageCount = 0
+  realtimeError.value = ''
+  monitorTalkerName.value = ''
+  await restoreFromBackend()
+}
 
 onBeforeUnmount(() => {
   stopStatusPolling()
+  if (resetTimer) { clearTimeout(resetTimer); resetTimer = null }
+  window.removeEventListener('chrono:wechat-account-changed', handleAccountChanged)
 })
 </script>
 

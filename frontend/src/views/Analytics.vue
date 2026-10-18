@@ -99,7 +99,8 @@
       <!-- 时光与画像：单聊专属（群聊无双方情感/关系演变与 1:1 画像语义） -->
       <button v-if="!isGroupConversation" class="menu-item" :class="{ active: currentTab === 'deep' }"
         @click="currentTab = 'deep'">时光与画像</button>
-      <button class="menu-item" :class="{ active: currentTab === 'realtime' }"
+      <!-- 实时助手同单聊限定：监听对象/建议配置都是 1:1 语义 -->
+      <button v-if="!isGroupConversation" class="menu-item" :class="{ active: currentTab === 'realtime' }"
         @click="currentTab = 'realtime'">实时助手</button>
     </div>
   </div>
@@ -676,7 +677,7 @@
   </div>
 
   <!-- TAB 6: 实时助手（监听控制 + 按联系人的建议配置；选人由页头 FiltersBar 贯通） -->
-  <div v-show="currentTab === 'realtime' && selectedConversationId" class="tab-content fade-in realtime-tab">
+  <div v-show="currentTab === 'realtime' && selectedConversationId && !isGroupConversation" class="tab-content fade-in realtime-tab">
     <MonitorControlCard
       :conversation-id="selectedConversationId"
       :contact-name="currentContactName"
@@ -1418,7 +1419,8 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
 
             const conversation = conversations.value.find((item) => item.id === conversationId)
             const displayName = conversation?.name
-            if (!displayName) {
+            // 画像档案随时光与画像页签单聊限定：群聊不取画像（展示层与数据层同口径）
+            if (!displayName || conversation?.conversation_type === 'group') {
                 resetPersonaProfile()
                 return
             }
@@ -2085,9 +2087,11 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
             }
         })
 
-        // 切到群聊时时光与画像页签隐藏：若正处于该页签则回退关系洞察（群聊工作台）
+        // 切到群聊时时光与画像/实时助手页签隐藏：若正处于该页签则回退关系洞察（群聊工作台）
         watch(isGroupConversation, (isGroup) => {
-            if (isGroup && currentTab.value === 'deep') currentTab.value = 'affinity'
+            if (isGroup && (currentTab.value === 'deep' || currentTab.value === 'realtime')) {
+                currentTab.value = 'affinity'
+            }
         })
 
         watch(() => analysisResult.value, (newVal) => {

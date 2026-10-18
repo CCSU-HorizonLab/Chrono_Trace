@@ -115,27 +115,17 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, UiaRec
             # 实时情感分析服务
             self.sentiment_service = RealtimeSentimentService()
             # 情绪状态追踪器（每次 start_monitoring 时重建）
-            # AI 建议配置: 从 global settings.json 中读取
             try:
                 settings = load_settings_from_file()
                 self._listener_backend = normalize_listener_backend(
                     settings.get('listener_backend', 'native_uia')
                 )
-                self._suggestion_config = {
-                    'trigger_mode': settings.get('trigger_mode', 'semi_auto'),
-                    'intent': settings.get('intent', 'maintain'),
-                    'auto_rate_limit': int(settings.get('auto_rate_limit', 10)),
-                    'engine_type': 'llm',           # llm
-                }
             except Exception as e:
                 self._listener_backend = 'native_uia'
                 _print(f"[RealtimeMonitorService] 获取全局设置失败: {e}")
-                self._suggestion_config = {
-                    'trigger_mode': 'semi_auto',    # full_auto / semi_auto / manual
-                    'intent': 'maintain',           # intimate / maintain / distance
-                    'auto_rate_limit': 10,          # 全自动模式更新频率上限（秒）
-                    'engine_type': 'llm',           # llm
-                }
+            # 建议配置按联系人在 start_monitoring 时读取；这里只落内置默认
+            # （旧全局键 trigger_mode/intent 已废弃，不再读取）
+            self._suggestion_config = dict(SUGGESTION_CONFIG_DEFAULTS)
             self._last_auto_suggestion_time = 0
             self._listen_start_suggestion_at = 0
             try:
@@ -1656,6 +1646,7 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, UiaRec
             self.current_batch_id = None
             self.current_talker = None
             self.current_display_name = None
+            self._current_conversation_id = 0  # 会话号随监听会话一起清（停止后状态不再回报旧会话）
             self.seen_hashes.clear()
             self.seen_message_keys.clear()
             self._last_known_ts = 0

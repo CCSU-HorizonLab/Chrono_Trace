@@ -13,7 +13,10 @@ sys.path.insert(0, str(backend_dir))
 
 from app.db.connection import DatabaseConnection
 from app.services.analysis.profile_evolution_service import ProfileEvolutionService
-from app.services.realtime.contact_profiler import ContactProfiler
+from app.services.realtime.contact_profiler import (
+    PROFILE_CUSTOM_MAX_SPAN,
+    ContactProfiler,
+)
 from app.services.realtime.self_profiler import SelfProfiler
 
 
@@ -238,3 +241,35 @@ def test_window_too_short(isolated_db):
     result = ProfileEvolutionService().generate(1, 1000, 1001, "wxid_me")
     assert result["ok"] is False
     assert "太短" in result["error"]
+
+
+def test_span_exceeds_custom_limit(isolated_db, llm_calls):
+    """全窗跨度超过 730 天上限直接拒绝：对半后单半窗虽各自达标，
+    但「任意窗 ≤730 天」的口径不能被演变全窗绕过。"""
+    conn = isolated_db
+    conv_id = seed_conversation(conn)
+
+    result = ProfileEvolutionService().generate(
+        conv_id, 1000, 1000 + PROFILE_CUSTOM_MAX_SPAN + 86400, "wxid_me"
+    )
+
+    assert result["ok"] is False
+    assert "跨度不能超过" in result["error"]
+    assert llm_calls == []
+
+
+def test_unresolvable_account_rejected(isolated_db, llm_calls, monkeypatch):
+    """账号解析为空（无活跃账号）：拒绝而不是去掉账号过滤兜底——那会跨账号取会话。"""
+    import app.services.realtime.contact_profiler as contact_profiler_mod
+
+    monkeypatch.setattr(
+        contact_profiler_mod, "get_active_wechat_account_wxid", lambda _s: ""
+    )
+    conn = isolated_db
+    conv_id = seed_conversation(conn)
+
+    result = ProfileEvolutionService().generate(conv_id, 1000, 2001, "")
+
+    assert result["ok"] is False
+    assert "无法确定当前微信账号" in result["error"]
+    assert llm_calls == []

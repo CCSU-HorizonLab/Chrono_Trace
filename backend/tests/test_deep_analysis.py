@@ -202,6 +202,45 @@ class TestMilestones:
         assert len(silence) == 1
         assert silence[0]["days"] == pytest.approx(3.0)
 
+    def test_non_text_excluded_from_marks_and_silence(self, db):
+        """里程碑与其他深度面板同口径只数文本消息：图片/系统消息不算
+        「第 N 条」关口，也不打断真实的人际沉默。"""
+        msg(db, ts(2026, 3, 1), content="第一条文本")
+        msg(db, ts(2026, 3, 3), content="[图片]", message_type=3)      # 沉默期中间，不计数
+        msg(db, ts(2026, 3, 6), content="第二条文本")
+        msg(db, ts(2026, 3, 7), content="第三条文本")
+
+        result = DeepAnalysisService().get_deep_analysis(
+            1, ts(2026, 2, 25), ts(2026, 3, 10), bucket="week", marks=(3,)
+        )
+        milestones = result["milestones"]
+        # 第 3 条文本消息是 03-07（无过滤时会把图片算进去落到 03-06）
+        mark = next(e for e in milestones if e["kind"] == "count_mark")
+        assert mark["ts"] == ts(2026, 3, 7)
+        # 沉默期跨过中间的图片：03-01 → 03-06 共 5 天（无过滤时被图片打成 3 天）
+        silence = next(e for e in milestones if e["kind"] == "longest_silence")
+        assert silence["days"] == pytest.approx(5.0)
+        # 全局首条也只认文本
+        first = next(e for e in milestones if e["kind"] == "first_message")
+        assert first["ts"] == ts(2026, 3, 1)
+
+
+class TestHalfTextSampling:
+    def test_sampling_returns_exactly_limit_rows(self, db):
+        """Bresenham 等距抽样取恰 limit 行：1001/500 不再因步长取模欠采到 333 行。"""
+        base = ts(2026, 3, 1)
+        for i in range(1001):
+            msg(db, base + i * 60, content=f"m{i}", with_sentiment=False)
+
+        rows, total = DeepAnalysisService._load_half_texts(
+            1, base, base + 1001 * 60, False, limit=500
+        )
+
+        assert total == 1001
+        assert len(rows) == 500
+        # 等距且保尾：末条消息必入选（关系后期的语言在场）
+        assert rows[-1][1] == "m1000"
+
 
 class TestWordcloudEvolution:
     def test_cleaned_caliber_when_fully_preprocessed(self, db):

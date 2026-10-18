@@ -9,10 +9,12 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-# ONNX 重任务注册锁：start_sentiment_backfill 与 analyze_affinity 的
-# 「互斥检查 + 任务注册」临界区共用，消除检查-后-注册（TOCTOU）竞态。
+# 任务注册锁：本 mixin 内所有「互斥检查 + 任务注册」临界区共用，消除
+# 检查-后-注册（TOCTOU）竞态——start_sentiment_backfill 与 analyze_affinity
+# 的互斥、大五增强与画像演变的同会话单飞。
 # 放本模块——affinity.py 的服务类每次 analyze_affinity 都被热 reload，
 # 锁放那边会随模块重建而失效；本模块不参与 reload，进程内唯一。
+# 临界区只包检查+注册（微秒级），重活（LLM/ONNX）在锁外跑，无嵌套死锁。
 _ONNX_TASK_LOCK = threading.Lock()
 
 
@@ -230,15 +232,17 @@ class DeepAnalysisApiMixin:
                 self._big5_service = service
 
             key = (int(conversation_id), account_wxid or "")
-            running = getattr(self, "_big5_enhance_events", None)
-            if running is None:
-                running = {}
-                self._big5_enhance_events = running
-            if key in running:
-                return {"ok": False, "reason": "already_running",
-                        "message": "AI 校正进行中，请稍候或先取消"}
-            cancel_event = threading.Event()
-            running[key] = cancel_event
+            # 「已在运行检查 + 注册」临界区持锁（并发双击防双注册互相覆盖取消事件）
+            with _ONNX_TASK_LOCK:
+                running = getattr(self, "_big5_enhance_events", None)
+                if running is None:
+                    running = {}
+                    self._big5_enhance_events = running
+                if key in running:
+                    return {"ok": False, "reason": "already_running",
+                            "message": "AI 校正进行中，请稍候或先取消"}
+                cancel_event = threading.Event()
+                running[key] = cancel_event
             try:
                 return service.enhance(int(conversation_id), account_wxid or "", cancel_event=cancel_event)
             finally:
@@ -287,15 +291,17 @@ class DeepAnalysisApiMixin:
             )
 
             key = (int(conversation_id), account_wxid or "")
-            running = getattr(self, "_profile_evolution_events", None)
-            if running is None:
-                running = {}
-                self._profile_evolution_events = running
-            if key in running:
-                return {"ok": False, "reason": "already_running",
-                        "message": "画像演变生成中，请稍候或先取消"}
-            cancel_event = threading.Event()
-            running[key] = cancel_event
+            # 「已在运行检查 + 注册」临界区持锁（并发双击防双注册互相覆盖取消事件）
+            with _ONNX_TASK_LOCK:
+                running = getattr(self, "_profile_evolution_events", None)
+                if running is None:
+                    running = {}
+                    self._profile_evolution_events = running
+                if key in running:
+                    return {"ok": False, "reason": "already_running",
+                            "message": "画像演变生成中，请稍候或先取消"}
+                cancel_event = threading.Event()
+                running[key] = cancel_event
             try:
                 return ProfileEvolutionService().generate(
                     int(conversation_id), from_ts, to_ts,

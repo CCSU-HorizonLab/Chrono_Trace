@@ -35,6 +35,10 @@ DEEP_WORDCLOUD_HALF_LIMIT = 15000
 # 判断「整个窗已有足够清洗缓存」可用清洗口径的覆盖率线
 DEEP_PREPROCESSED_COVERAGE = 0.9
 
+# 里程碑/沉默期与其他深度面板同口径：只数真实文本消息——图片/撤回/
+# 系统消息不算「第 N 条」关口，也不该打断人际沉默期
+_MILESTONE_TEXT_SQL = "message_type = 1 AND content IS NOT NULL AND TRIM(content) != ''"
+
 # 拐点参与门槛：样本过少/覆盖不足的桶不参与涨跌幅判定
 DEEP_MIN_TURNING_BUCKET_MSGS = 30
 DEEP_MIN_TURNING_COVERAGE = 0.8
@@ -274,9 +278,8 @@ class DeepAnalysisService:
     ) -> Tuple[List[Tuple[int, str]], int]:
         """取半窗 (is_sender, 文本) 有序对与真实总数。清洗口径回表 message_preprocessed。
 
-        limit>0 且超出时在 SQL 侧等距抽样（ROW_NUMBER 取模）：大会话几十万行
-        不再整体搬过进程边界，Python 只接收 ≤limit 行；truncated 由调用方按
-        总数判定。
+        limit>0 且超出时在 SQL 侧等距抽样：大会话几十万行不再整体搬过
+        进程边界，Python 只接收 ≤limit 行；truncated 由调用方按总数判定。
         """
         if use_cleaned:
             base_sql = """
@@ -308,15 +311,18 @@ class DeepAnalysisService:
             return [], 0
 
         if limit and total > limit:
-            step = -(-total // limit)  # ceil：抽样后行数 ≤ limit
+            # Bresenham 取模等距取「恰 limit 行」：rn*limit 对 total 取模
+            # 落在 [0, limit) 的行恰为 limit 条且均匀分布。步长取模
+            # （ceil(total/limit) 后 rn%%step）在 total/limit 略超整数时会
+            # 明显欠采——1001/500 步长 3 只取到 333 行，浪费一半采样预算
             rows = get_db().execute(f"""
                 SELECT is_sender, text FROM (
                     SELECT {select_cols},
                            ROW_NUMBER() OVER (ORDER BY m.timestamp ASC, m.id ASC) AS rn
                     {base_sql}
-                ) WHERE rn % ? = 0
+                ) WHERE (rn * ?) % ? < ?
                 ORDER BY rn ASC
-            """, params + (step,)).fetchall()
+            """, params + (limit, total, limit)).fetchall()
             return [(int(row[0]), row[1]) for row in rows], total
 
         rows = get_db().execute(
@@ -340,27 +346,29 @@ class DeepAnalysisService:
         events: List[Dict[str, Any]] = []
 
         row = get_db().execute(
-            "SELECT MIN(timestamp) FROM messages WHERE conversation_id = ?",
+            f"SELECT MIN(timestamp) FROM messages "
+            f"WHERE conversation_id = ? AND {_MILESTONE_TEXT_SQL}",
             (conversation_id,),
         ).fetchone()
         global_first = row[0] if row else None
         if global_first is not None:
             events.append({"kind": "first_message", "scope": "global", "ts": int(global_first)})
             if not (from_ts <= global_first <= to_ts):
-                window_row = get_db().execute("""
+                window_row = get_db().execute(f"""
                     SELECT MIN(timestamp) FROM messages
                     WHERE conversation_id = ? AND timestamp BETWEEN ? AND ?
+                      AND {_MILESTONE_TEXT_SQL}
                 """, (conversation_id, from_ts, to_ts)).fetchone()
                 if window_row and window_row[0] is not None:
                     events.append({
                         "kind": "first_message", "scope": "window", "ts": int(window_row[0]),
                     })
 
-        # 消息量关口：全会话第 N 条消息落在窗内才报告
+        # 消息量关口：全会话第 N 条文本消息落在窗内才报告
         for mark in marks:
-            mark_row = get_db().execute("""
+            mark_row = get_db().execute(f"""
                 SELECT timestamp FROM messages
-                WHERE conversation_id = ?
+                WHERE conversation_id = ? AND {_MILESTONE_TEXT_SQL}
                 ORDER BY timestamp ASC, id ASC
                 LIMIT 1 OFFSET ?
             """, (conversation_id, mark - 1)).fetchone()
@@ -386,14 +394,16 @@ class DeepAnalysisService:
 
         LAG 窗口函数在库内求相邻间隔，只回最大一行——不把全窗时间戳
         搬进 Python（大会话数十万行的内存与反序列化热点）。并列最大取
-        最早一对（curr 升序决胜），与逐对扫描语义一致。
+        最早一对（curr 升序决胜），与逐对扫描语义一致。只数文本消息：
+        系统消息（撤回提示等）不该打断真实的人际沉默。
         """
-        row = get_db().execute("""
+        row = get_db().execute(f"""
             SELECT prev, curr FROM (
                 SELECT timestamp AS curr,
                        LAG(timestamp) OVER (ORDER BY timestamp ASC) AS prev
                 FROM messages
                 WHERE conversation_id = ? AND timestamp BETWEEN ? AND ?
+                  AND {_MILESTONE_TEXT_SQL}
             ) WHERE prev IS NOT NULL
             ORDER BY curr - prev DESC, curr ASC
             LIMIT 1

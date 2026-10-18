@@ -33,6 +33,11 @@ UNIQUE(account_wxid, display_name, window_kind, window_from, window_to)
   行的 `budget_level` 再按原档位续期（读不到默认 medium）。
 - **relationship_policy._load_profile_cache 必须带 `window_kind='rolling'` 过滤**——
   custom 快照不得污染实时建议链路（测试锁死）。
+- **结构版本随行落库并在所有读取处过滤**（`schema_version` 列，同 big5 的
+  prompt_version 机制）：画像 System Prompt 或统计口径变化时
+  `PROFILE_SNAPSHOT_SCHEMA` +1，旧口径快照自然失明（get_profile /
+  list_snapshots / 演变 `_load_snapshot` / relationship_policy 全部带过滤），
+  不再以「历史快照」徽标混入新口径结果；缺列旧表由 `_ensure_table` DROP 重建。
 
 ## 特征同窗化的诚实边界
 
@@ -54,15 +59,18 @@ prompt【基础信息】块带样本时间范围行（rolling 注明顺延，cus
 `[from_ts, mid_ts - 1]`、后半窗 `[mid_ts, to_ts]` 闭区间——同窗同分。
 
 - 每半窗每 kind 先查 custom 快照精确键，命中即跳过 LLM（增量续跑）；`force=True`
-  全部重算；bridge 层同会话单飞（`_profile_evolution_events`）+ 可取消（取消在每次
-  generate_profile 前生效，已完成半窗已落缓存）。
+  全部重算；bridge 层同会话单飞（`_profile_evolution_events`，注册持
+  `_ONNX_TASK_LOCK`）+ 可取消（取消在每次 generate_profile 前生效，已完成
+  半窗已落缓存）。
+- 全窗跨度与单次 custom 生成同上限 `PROFILE_CUSTOM_MAX_SPAN`（730 天）；账号
+  解析为空（无活跃账号）直接拒绝，不去掉账号过滤兜底。
 - include_self 默认关（单次桥接最长 4 次 LLM 调用）。
 
 ## 版本常量
 
 | 常量 | 位置 | 当前值 | 何时 +1 |
 |---|---|---|---|
-| `PROFILE_SNAPSHOT_SCHEMA` | contact_profiler.py / self_profiler.py | 1 | 表结构（窗口键/快照语义）变化——旧结构 DROP 重建，不迁移 |
+| `PROFILE_SNAPSHOT_SCHEMA` | contact_profiler.py / self_profiler.py | 1 | 表结构或画像口径变化——随行落库 `schema_version` 列，读取处过滤；旧结构 DROP 重建，不迁移 |
 | `PROFILE_SNAPSHOT_KEEP` | 同上 | 8 | rolling 分组保留条数调整 |
 | `PROFILE_SNAPSHOT_KEEP_CUSTOM` | 同上 | 24 | custom 分组保留条数调整（对齐 list_snapshots 上限，裁剪不得逐出回廊可展示的快照） |
 | `PROFILE_CUSTOM_MAX_SPAN` | 同上 | 730 天 | custom 窗最大跨度调整 |

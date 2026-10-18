@@ -385,6 +385,9 @@ def _load_profile_cache(
 ) -> dict[str, Any] | None:
     if not display_name:
         return None
+    # 画像快照带结构版本：旧口径行失明（与 get_profile 同口径）
+    from ..contact_profiler import PROFILE_SNAPSHOT_SCHEMA
+
     try:
         if conn is None:
             from ....db.connection import get_db
@@ -394,9 +397,10 @@ def _load_profile_cache(
             """
             SELECT profile_json, features_snapshot FROM contact_profiles
             WHERE account_wxid = ? AND display_name = ? AND window_kind = 'rolling'
+              AND schema_version = ?
             ORDER BY created_at DESC, id DESC LIMIT 1
             """,
-            (account_wxid, display_name),
+            (account_wxid, display_name, PROFILE_SNAPSHOT_SCHEMA),
         ).fetchone()
     except Exception:
         return None

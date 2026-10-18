@@ -61,9 +61,12 @@ MAX_SAMPLE_CHARS = 80000
 # 缓存有效期（秒）
 PROFILE_TTL = 7 * 86400  # 7 天
 
-# 快照结构版本（窗口键多快照）：表结构再变时 +1，口径记录见
+# 快照结构版本（窗口键多快照）：表结构/画像口径再变时 +1，口径记录见
 # docs/analysis/profile-window.md。旧结构不做迁移——画像是可再生缓存，
-# _ensure_table 探查到旧结构直接 DROP 重建。
+# _ensure_table 探查到旧结构直接 DROP 重建。版本随行落库并在所有读取
+# 处过滤（同 big5 的 prompt_version 机制）：升版后旧口径快照自然失明，
+# 不再以「历史快照」徽标混入新口径结果。
+# 与 contact_profiler.PROFILE_SNAPSHOT_SCHEMA 同值同升（两张表同构）。
 PROFILE_SNAPSHOT_SCHEMA = 1
 
 # 每个分组保留的快照条数上限。rolling 每次续期产生新窗口键快照自然累积，
@@ -152,8 +155,9 @@ class SelfProfiler:
                 'window_kind, window_from, window_to, budget_level '
                 'FROM self_profiles '
                 'WHERE account_wxid = ? AND display_name = ? AND window_kind = \'rolling\' '
+                'AND schema_version = ? '
                 'ORDER BY created_at DESC, id DESC LIMIT 1',
-                (resolved_account_wxid, display_name)
+                (resolved_account_wxid, display_name, PROFILE_SNAPSHOT_SCHEMA)
             )
             row = cursor.fetchone()
             if not row:
@@ -193,8 +197,8 @@ class SelfProfiler:
             sql = ('SELECT id, window_kind, window_from, window_to, budget_level, '
                    'profile_json, message_sample_count, created_at, expires_at '
                    'FROM self_profiles '
-                   'WHERE account_wxid = ? AND display_name = ?')
-            params: list = [resolved_account_wxid, display_name]
+                   'WHERE account_wxid = ? AND display_name = ? AND schema_version = ?')
+            params: list = [resolved_account_wxid, display_name, PROFILE_SNAPSHOT_SCHEMA]
             if window_kind:
                 sql += ' AND window_kind = ?'
                 params.append(window_kind)
@@ -205,6 +209,8 @@ class SelfProfiler:
                     profile = json.loads(row['profile_json'])
                 except Exception:
                     profile = None
+                if not isinstance(profile, dict) or not profile:
+                    continue  # 损坏/空残行不进列表——回廊不该展示空画像卡
                 snapshots.append({
                     'id': row['id'],
                     'window_kind': row['window_kind'],
@@ -1158,9 +1164,9 @@ class SelfProfiler:
             conn.execute(
                 'INSERT OR REPLACE INTO self_profiles '
                 '(account_wxid, display_name, conversation_id, window_kind, window_from, '
-                'window_to, budget_level, profile_json, features_snapshot, '
+                'window_to, budget_level, schema_version, profile_json, features_snapshot, '
                 'message_sample_count, token_usage, created_at, expires_at) '
-                'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
                 (
                     account_wxid,
                     display_name,
@@ -1169,6 +1175,7 @@ class SelfProfiler:
                     int(window_from),
                     int(window_to),
                     budget_level,
+                    PROFILE_SNAPSHOT_SCHEMA,
                     json.dumps(profile, ensure_ascii=False),
                     json.dumps(features, ensure_ascii=False),
                     sample_count,
@@ -1197,18 +1204,18 @@ class SelfProfiler:
             _print(f"[SelfProfiler] ⚠️ 缓存保存失败: {e}")
 
     def _ensure_table(self, conn):
-        """确保缓存表存在（快照结构 v1：窗口键多快照共存；旧结构 DROP 重建不迁移）"""
+        """确保缓存表存在（快照结构：窗口键多快照 + 结构版本列；旧结构 DROP 重建不迁移）"""
         exists = conn.execute(
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'self_profiles'"
         ).fetchone()
         if exists:
             cols = {row[1] for row in conn.execute('PRAGMA table_info(self_profiles)')}
-            if 'window_kind' in cols:
-                return  # 已是快照结构，零 DDL
-            _print("[SelfProfiler] 旧结构画像表（单行覆盖），DROP 重建为快照结构，不迁移")
+            if 'window_kind' in cols and 'schema_version' in cols:
+                return  # 已是当前快照结构，零 DDL
+            _print("[SelfProfiler] 旧结构画像表，DROP 重建为快照结构，不迁移")
             conn.execute('DROP TABLE self_profiles')
             conn.commit()
-        conn.execute('''
+        conn.execute(f'''
             CREATE TABLE IF NOT EXISTS self_profiles (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 account_wxid TEXT NOT NULL,
@@ -1218,6 +1225,7 @@ class SelfProfiler:
                 window_from INTEGER NOT NULL DEFAULT 0,
                 window_to INTEGER NOT NULL DEFAULT 0,
                 budget_level TEXT NOT NULL DEFAULT 'medium',
+                schema_version INTEGER NOT NULL DEFAULT {PROFILE_SNAPSHOT_SCHEMA},
                 profile_json TEXT NOT NULL,
                 features_snapshot TEXT,
                 message_sample_count INTEGER,

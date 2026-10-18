@@ -18,6 +18,9 @@ import time
 from typing import Any, Callable, Optional
 
 from ...db.connection import get_db
+# 仅引常量（profiler 无 analysis 模块级依赖，无环）；profiler 实例仍在
+# generate() 内延迟导入，保持 analysis←realtime 单向
+from ..realtime.contact_profiler import PROFILE_CUSTOM_MAX_SPAN, PROFILE_SNAPSHOT_SCHEMA
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +47,14 @@ class ProfileEvolutionService:
         from ..realtime.contact_profiler import ContactProfiler
         from ..realtime.self_profiler import SelfProfiler
 
+        # 与单次 custom 生成同一跨度上限：全窗对半后每半窗都过 730 天防呆，
+        # 等价于全窗 ≤ 730 天——不校验会让深读页任意日期范围绕出口径
+        if to_ts - from_ts > PROFILE_CUSTOM_MAX_SPAN:
+            return {
+                "ok": False,
+                "error": f"时间窗无效：跨度不能超过 {PROFILE_CUSTOM_MAX_SPAN // 86400} 天",
+            }
+
         kinds: list[tuple[str, Any, str]] = [("contact", ContactProfiler(), "contact_profiles")]
         if include_self:
             kinds.append(("self", SelfProfiler(), "self_profiles"))
@@ -51,6 +62,9 @@ class ProfileEvolutionService:
         # 账号与生成侧同源解析（profiler 内部 _save_cache 按解析后账号落库，
         # 快照查询键必须一致，否则生产链路 account_wxid="" 永远查不中缓存）
         account_wxid = kinds[0][1]._resolve_account_wxid(account_wxid)
+        if not account_wxid:
+            # 解析不到活跃账号时不允许去掉账号过滤兜底——那会跨账号取会话
+            return {"ok": False, "error": "无法确定当前微信账号，请先导入微信数据"}
 
         row = self._load_conversation(conversation_id, account_wxid)
         if row is None:
@@ -158,8 +172,8 @@ class ProfileEvolutionService:
             row = get_db().execute(
                 f"SELECT profile_json, created_at FROM {table} "
                 "WHERE account_wxid = ? AND display_name = ? AND window_kind = 'custom' "
-                "AND window_from = ? AND window_to = ?",
-                (account_wxid, display_name, half_from, half_to),
+                "AND window_from = ? AND window_to = ? AND schema_version = ?",
+                (account_wxid, display_name, half_from, half_to, PROFILE_SNAPSHOT_SCHEMA),
             ).fetchone()
         except Exception:
             return None

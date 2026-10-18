@@ -222,6 +222,45 @@ def test_trim_custom_keeps_archive_limit(isolated_db, profiler_cls, table):
     assert 1000 not in kept                                     # 最旧的被裁掉
 
 
+@pytest.mark.parametrize("profiler_cls,table", PROFILER_TABLES)
+def test_schema_version_blinds_old_rows(isolated_db, profiler_cls, table):
+    """结构版本随行落库、读取处过滤：旧口径行（schema_version=0）失明——
+    即便 created_at 更新也不得混入新口径结果（同 big5 的 prompt_version 机制）。"""
+    conn = isolated_db
+    profiler = profiler_cls()
+    save_snapshot(profiler, conn, {"v": "当前"})
+    # 旧行改成版本 0 且 created_at 最大：缺版本过滤时会赢得「最新」读取
+    conn.execute(
+        f"UPDATE {table} SET schema_version = 0, created_at = 9999 WHERE profile_json LIKE '%当前%'"
+    )
+    save_snapshot(profiler, conn, {"v": "最新"}, window_from=30, window_to=40)
+    conn.commit()
+
+    cached = profiler.get_profile("老朋友", "wxid_me")
+    assert cached["profile"] == {"v": "最新"}
+    assert [s["profile"] for s in profiler.list_snapshots("老朋友", account_wxid="wxid_me")] == [
+        {"v": "最新"}
+    ]
+
+
+@pytest.mark.parametrize("profiler_cls", [ContactProfiler, SelfProfiler])
+def test_list_snapshots_skips_corrupt_rows(isolated_db, profiler_cls):
+    """损坏/空 profile_json 残行不进列表——回廊不该展示空画像卡。"""
+    conn = isolated_db
+    profiler = profiler_cls()
+    save_snapshot(profiler, conn, {"ok": 1})
+    save_snapshot(
+        profiler, conn, {"bad": 1}, window_kind="custom", window_from=1, window_to=2
+    )
+    conn.execute("UPDATE contact_profiles SET profile_json = '' WHERE window_from = 1"
+                 if profiler_cls is ContactProfiler else
+                 "UPDATE self_profiles SET profile_json = '' WHERE window_from = 1")
+    conn.commit()
+
+    snapshots = profiler.list_snapshots("老朋友", account_wxid="wxid_me")
+    assert [s["profile"] for s in snapshots] == [{"ok": 1}]
+
+
 # ==================== custom 时间窗 ====================
 
 @pytest.mark.parametrize("profiler_cls", [ContactProfiler, SelfProfiler])

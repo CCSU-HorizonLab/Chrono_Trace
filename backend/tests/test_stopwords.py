@@ -29,10 +29,36 @@ def test_curated_boundaries():
 
 def test_generic_filler_nouns_in_daily_topics_out():
     """泛聊天高频实词（语义空转）收；日程话题词是生活方式信号不收"""
-    for word in ("东西", "时候", "出来", "真的", "问题"):
+    for word in ("东西", "时候", "出来", "真的", "问题", "不能", "处理"):
         assert word in CHAT_STOP_WORDS, word
     for word in ("吃饭", "上班", "睡觉"):
         assert word not in CHAT_STOP_WORDS, word
+
+
+def test_content_pos_tags_boundaries():
+    """词性白名单只含实词词性：代词/时间词/副词/数量/虚词整类出局"""
+    from app.services.analysis.stopwords import CONTENT_POS_TAGS
+
+    for tag in ("n", "nr", "ns", "vn", "v", "a", "eng"):
+        assert tag in CONTENT_POS_TAGS, tag
+    for tag in ("r", "t", "d", "m", "q", "c", "p", "u", "x"):
+        assert tag not in CONTENT_POS_TAGS, tag
+
+
+def test_pos_whitelist_kills_deixis_in_pipeline():
+    """端到端：代词/时间指示/副词经词性白名单出局，泛用动词经停用词出局，
+    内容词（火锅/电影/游戏）保留——挡的是整类噪声不是实词"""
+    from app.services.analysis.wordcloud_generator import WordCloudGenerator
+
+    texts = [
+        "我们上午去吃了火锅，下午看了电影",
+        "他们这儿不能处理事情，那儿也一样",
+        "周末一起去游戏厅玩游戏",
+    ]
+    words = {item["word"] for item in WordCloudGenerator().generate(texts, top_n=30)}
+    for noise in ("我们", "他们", "这儿", "那儿", "上午", "下午", "周末", "不能", "处理", "事情", "真的"):
+        assert noise not in words, noise
+    assert words & {"火锅", "电影", "游戏"}, words
 
 
 def test_words_are_short_tokens_only():

@@ -16,7 +16,7 @@ from collections import Counter, defaultdict
 from typing import Any, Dict, List, Optional, Tuple
 
 from ...db.connection import get_db
-from .stopwords import CHAT_STOP_WORDS
+from .stopwords import CHAT_STOP_WORDS, CONTENT_POS_TAGS
 from ..realtime.llm_http import (
     LLMRequestAborted,
     apply_interactive_fast_mode,
@@ -162,12 +162,18 @@ class GroupSummaryService:
     def _top_words(texts: List[str]) -> List[Dict[str, int]]:
         counter: Counter = Counter()
         try:
-            import jieba
+            import jieba.posseg as pseg
 
             for text in texts:
-                for word in jieba.cut(text):
-                    word = word.strip()
-                    if len(word) >= TOP_WORDS_MIN_LEN and word not in STOP_WORDS and not re.match(r"^[\W_]+$", word):
+                for pair in pseg.cut(text):
+                    word = pair.word.strip()
+                    # 词性白名单先挡实词外整类（与词云同口径），再走停用词表
+                    if (
+                        pair.flag in CONTENT_POS_TAGS
+                        and len(word) >= TOP_WORDS_MIN_LEN
+                        and word not in STOP_WORDS
+                        and not re.match(r"^[\W_]+$", word)
+                    ):
                         counter[word] += 1
         except Exception as exc:
             logger.debug("[群统计] 分词跳过（jieba 不可用）: %s", exc)

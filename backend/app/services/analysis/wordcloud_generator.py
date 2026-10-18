@@ -1,5 +1,5 @@
-"""中文词云生成器（基于jieba分词）"""
-from .stopwords import CHAT_STOP_WORDS
+"""中文词云生成器（jieba.posseg 分词 + 词性白名单）"""
+from .stopwords import CHAT_STOP_WORDS, CONTENT_POS_TAGS
 from typing import List, Dict, Any
 from collections import Counter
 import logging
@@ -28,7 +28,7 @@ class WordCloudGenerator:
             [{"word": "开心", "weight": 25}, ...]
         """
         try:
-            import jieba
+            import jieba.posseg as pseg
         except ImportError:
             logger.error("[ERROR] jieba未安装，请执行: pip install jieba")
             return []
@@ -64,13 +64,16 @@ class WordCloudGenerator:
         
         all_text = ' '.join(text_list)
         
-        # 2. jieba分词
-        words = jieba.cut(all_text)
-        
+        # 2. jieba 词性分词：白名单只留实词（代词/时间词/副词整类出局）
+        words = pseg.cut(all_text)
+
         # 3. 过滤
         filtered_words = []
-        for w in words:
-            w = w.strip()
+        for pair in words:
+            w = pair.word.strip()
+            # 词性白名单（stopwords.CONTENT_POS_TAGS 单一来源）
+            if pair.flag not in CONTENT_POS_TAGS:
+                continue
             # 至少2个字符
             if len(w) < 2:
                 continue

@@ -72,15 +72,15 @@
         />
 
         <rect
-          v-for="(bar, index) in bars"
-          :key="`bar-${index}`"
+          v-for="bar in bars"
+          :key="`bar-${bar.key}`"
           :x="bar.x"
           :y="bar.y"
           :width="bar.width"
           :height="bar.height"
           class="message-bar"
-          :class="{ active: index === activeIndex }"
-          @mouseenter="activeIndex = index"
+          :class="[`bar-${bar.side}`, { active: bar.index === activeIndex }]"
+          @mouseenter="activeIndex = bar.index"
         />
 
         <!-- 消极时段：曲线低于 0 的部分与基线围成的浅红区 -->
@@ -131,6 +131,9 @@
           />
         </g>
 
+        <!-- 好感度趋势虚线：连落点示意方向（非每日快照），单点不画 -->
+        <polyline v-if="affinityLine" :points="affinityLine" class="affinity-line" />
+
         <!-- 好感度历史落点（菱形；0-100 映射到 -1..1 量纲） -->
         <g v-for="mark in affinityMarks" :key="`aff-${mark.ts}`">
           <rect
@@ -173,7 +176,10 @@
         <div v-else class="tooltip-warn">该{{ unitLabel }}缺情感数据（未补算）</div>
         <div v-if="activePoint.userScore !== null && activePoint.userScore !== undefined">我的情绪 {{ activePoint.userScore > 0 ? '+' : '' }}{{ activePoint.userScore }}</div>
         <div v-if="activePoint.otherScore !== null && activePoint.otherScore !== undefined">TA 的情绪 {{ activePoint.otherScore > 0 ? '+' : '' }}{{ activePoint.otherScore }}</div>
-        <div>消息数 {{ activePoint.msgCount || 0 }}</div>
+        <div v-if="activePoint.userMsgCount !== undefined && activePoint.otherMsgCount !== undefined">
+          我 {{ activePoint.userMsgCount || 0 }} · TA {{ activePoint.otherMsgCount || 0 }} 条（合计 {{ activePoint.msgCount || 0 }}）
+        </div>
+        <div v-else>消息数 {{ activePoint.msgCount || 0 }}</div>
         <div>正向 {{ activePoint.positive || 0 }} / 中性 {{ activePoint.neutral || 0 }} / 负向 {{ activePoint.negative || 0 }}</div>
         <div v-if="activeCoverage !== null && activeCoverage < 1" class="tooltip-warn">
           情感数据覆盖 {{ Math.round(activeCoverage * 100) }}%，该{{ unitLabel }}分数仅供参考
@@ -196,6 +202,8 @@ type TimeseriesPoint = {
   msgCount?: number
   userScore?: number | null
   otherScore?: number | null
+  userMsgCount?: number
+  otherMsgCount?: number
   coverage?: number | null
   lowConfidence?: boolean
 }
@@ -330,21 +338,44 @@ const hoverMarks = computed(() => {
   return marks
 })
 
-// 消息量柱：底部浅蓝细柱，量级与消息数成正比（最多 52px 高）
-const bars = computed(() => {
-  const maxCount = Math.max(...props.timeseries.map((item) => item.msgCount || 0), 1)
+// 消息量柱：有分侧全量计数时升级为双柱（我紫/TA 琥珀，实体色与三线一致，
+// 低饱和作背景量不与前景曲线打架）；无分侧数据（Analytics 摘要/海报兜底）
+// 回退原合计单柱
+const hasSideCounts = computed(() =>
+  props.timeseries.some((item) => typeof item.userMsgCount === 'number' && typeof item.otherMsgCount === 'number'),
+)
+
+interface MessageBar {
+  key: string
+  x: number
+  y: number
+  width: number
+  height: number
+  side: 'me' | 'other' | 'total'
+  index: number
+}
+
+const bars = computed<MessageBar[]>(() => {
+  const dual = hasSideCounts.value
+  const countOf = (item: TimeseriesPoint) =>
+    dual ? (item.userMsgCount || 0) + (item.otherMsgCount || 0) : (item.msgCount || 0)
+  const maxCount = Math.max(...props.timeseries.map(countOf), 1)
   const baseline = height - padding.bottom
   const maxBarHeight = 52
-  return props.timeseries.map((item, index) => {
+  const out: MessageBar[] = []
+  props.timeseries.forEach((item, index) => {
     const centerX = scaleX(index, props.timeseries.length)
-    const barHeight = ((item.msgCount || 0) / maxCount) * maxBarHeight
-    return {
-      x: centerX - 8,
-      y: baseline - barHeight,
-      width: 16,
-      height: barHeight,
+    if (dual) {
+      const userH = ((item.userMsgCount || 0) / maxCount) * maxBarHeight
+      const otherH = ((item.otherMsgCount || 0) / maxCount) * maxBarHeight
+      out.push({ key: `me-${index}`, x: centerX - 8, y: baseline - userH, width: 7, height: userH, side: 'me', index })
+      out.push({ key: `other-${index}`, x: centerX + 1, y: baseline - otherH, width: 7, height: otherH, side: 'other', index })
+    } else {
+      const barHeight = (countOf(item) / maxCount) * maxBarHeight
+      out.push({ key: `total-${index}`, x: centerX - 8, y: baseline - barHeight, width: 16, height: barHeight, side: 'total', index })
     }
   })
+  return out
 })
 
 // x 轴刻度直接基于 timeseries 索引（不随曲线空值断线漂移）
@@ -374,8 +405,14 @@ const legendItems = computed(() => {
       { label: 'TA', color: OTHER_COLOR },
     )
   }
+  if (hasSideCounts.value) {
+    items.push(
+      { label: '我的消息量', color: 'rgba(124, 77, 255, 0.4)' },
+      { label: 'TA 的消息量', color: 'rgba(217, 119, 6, 0.4)' },
+    )
+  }
   if (props.affinityPoints?.length) {
-    items.push({ label: '好感度落点', color: AFFINITY_COLOR })
+    items.push({ label: '好感度趋势（分析落点）', color: AFFINITY_COLOR })
   }
   return items
 })
@@ -430,6 +467,13 @@ const affinityMarks = computed(() => {
     })
   })
   return marks
+})
+
+// 好感度趋势虚线：落点 ≥2 才连（虚线+菱形双重标记「非连续序列」）
+const affinityLine = computed(() => {
+  const marks = affinityMarks.value
+  if (marks.length < 2) return ''
+  return marks.map((m) => `${m.x},${m.y}`).join(' ')
 })
 
 const lowConfidenceBands = computed(() => {
@@ -596,13 +640,43 @@ svg {
 }
 
 .message-bar {
-  fill: rgba(91, 141, 239, 0.12);
-  rx: 8px;
   transition: fill 0.18s ease;
 }
 
-.message-bar.active {
+.message-bar.bar-total {
+  fill: rgba(91, 141, 239, 0.12);
+  rx: 8px;
+}
+
+.message-bar.bar-total.active {
   fill: rgba(91, 141, 239, 0.2);
+}
+
+.message-bar.bar-me {
+  fill: rgba(124, 77, 255, 0.16);
+  rx: 3px;
+}
+
+.message-bar.bar-me.active {
+  fill: rgba(124, 77, 255, 0.26);
+}
+
+.message-bar.bar-other {
+  fill: rgba(217, 119, 6, 0.14);
+  rx: 3px;
+}
+
+.message-bar.bar-other.active {
+  fill: rgba(217, 119, 6, 0.24);
+}
+
+.affinity-line {
+  fill: none;
+  stroke: #2563eb;
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+  opacity: 0.75;
+  pointer-events: none;
 }
 
 .negative-shade {

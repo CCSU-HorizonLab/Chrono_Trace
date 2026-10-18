@@ -26,7 +26,8 @@ logger = logging.getLogger(__name__)
 # 桶口径/序列结构版本：分桶表达式或点位结构变化时 +1（payload 携带，
 # 序列实时计算无缓存，版本主要用于前端兼容判断与文档口径记录）
 # v2：词云演变 halves→segments（2~6 段可配，默认 4）
-DEEP_ANALYSIS_VERSION = 2
+# v3：桶点补分侧全量计数 userMsgCount/otherMsgCount（互动量双柱数据源）
+DEEP_ANALYSIS_VERSION = 3
 
 DEEP_BUCKET_GRANULARITIES = ("day", "week", "month", "year")
 
@@ -137,20 +138,32 @@ class DeepAnalysisService:
 
     def _bucketed_message_counts(
         self, conversation_id: int, from_ts: int, to_ts: int, bucket: str
-    ) -> Dict[str, int]:
-        """按桶统计全量文本消息数（覆盖率的分母，与情感聚合的消息过滤同口径）"""
+    ) -> Dict[str, Dict[str, int]]:
+        """按桶统计全量文本消息数（覆盖率的分母，与情感聚合的消息过滤同口径）。
+
+        计数按发送侧拆分（is_sender=1 我 / 0 对方），total 为桶内合计——
+        互动量走势的分侧数据源，不依赖情感缓存。
+        """
         expr = sentiment_bucket_expr(bucket)
         rows = get_db().execute(f"""
-            SELECT {expr} AS b, COUNT(*) AS cnt
+            SELECT {expr} AS b, m.is_sender AS side, COUNT(*) AS cnt
             FROM messages m
             WHERE m.conversation_id = ?
                 AND m.message_type = 1
                 AND m.timestamp BETWEEN ? AND ?
                 AND m.content IS NOT NULL
                 AND TRIM(m.content) != ''
-            GROUP BY b ORDER BY b ASC
+            GROUP BY b, side ORDER BY b ASC
         """, (conversation_id, from_ts, to_ts)).fetchall()
-        return {str(row[0]): int(row[1]) for row in rows}
+        counts: Dict[str, Dict[str, int]] = {}
+        for row in rows:
+            entry = counts.setdefault(str(row[0]), {"total": 0, "user": 0, "other": 0})
+            entry["total"] += int(row[2])
+            if int(row[1]) == 1:
+                entry["user"] += int(row[2])
+            else:
+                entry["other"] += int(row[2])
+        return counts
 
     def _merged_bucket_series(
         self, conversation_id: int, from_ts: int, to_ts: int, bucket: str
@@ -172,7 +185,8 @@ class DeepAnalysisService:
         sent_by_ts = {point["ts"]: point for point in summary["timeseries"]}
 
         merged: List[Dict[str, Any]] = []
-        for label, total in counts.items():
+        for label, entry in counts.items():
+            total = entry["total"]
             point = sent_by_ts.get(label)
             cached = int(point["msgCount"]) if point else 0
             coverage = round(cached / total, 3) if total else None
@@ -186,6 +200,9 @@ class DeepAnalysisService:
                 "negative": int(point["negative"]) if point else 0,
                 "msgCount": total,
                 "cachedCount": cached,
+                # 分侧全量计数（互动量双柱数据源，不依赖情感缓存）
+                "userMsgCount": entry["user"],
+                "otherMsgCount": entry["other"],
                 # 每侧已缓存计数（滚动平滑权重）；无缓存桶补 0
                 "userCount": int((point or {}).get("userCount") or 0),
                 "otherCount": int((point or {}).get("otherCount") or 0),
@@ -485,7 +502,7 @@ class DeepAnalysisService:
         """, (conversation_id, caliber, from_ts, to_ts)).fetchall()
         return {
             "caliber_version": caliber,
-            "note": "好感度为全面分析完成时的落点，非每日快照",
+            "note": "好感度为全面分析完成时的落点，非每日快照；虚线只连落点示意方向",
             "points": [
                 {"ts": int(row[1]), "score": round(float(row[0]), 1)} for row in rows
             ],

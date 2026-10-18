@@ -126,6 +126,25 @@ class TestBucketSeries:
         assert second["userCount"] == 0  # 未缓存消息不计入每侧计数
         assert second["otherCount"] == 1
 
+    def test_side_message_counts_full_volume(self, db):
+        """userMsgCount/otherMsgCount 为分侧全量计数（不依赖情感缓存），
+        两侧之和等于合计 msgCount——互动量双柱数据源；缺覆盖桶分侧同样全量。"""
+        base = ts(2026, 3, 10)
+        msg(db, base + 1, is_sender=1)
+        msg(db, base + 2, is_sender=1, with_sentiment=False)  # 未缓存仍计入全量
+        msg(db, base + 3, is_sender=0)
+        msg(db, ts(2026, 3, 11), is_sender=0, with_sentiment=False)  # 次日缺覆盖桶
+
+        result = DeepAnalysisService().get_deep_analysis(
+            1, ts(2026, 3, 9), ts(2026, 3, 12), bucket="day"
+        )
+        first, second = result["buckets"]
+        assert (first["userMsgCount"], first["otherMsgCount"]) == (2, 1)
+        assert first["msgCount"] == first["userMsgCount"] + first["otherMsgCount"]
+        assert (second["userMsgCount"], second["otherMsgCount"]) == (0, 1)
+        assert second["msgCount"] == second["userMsgCount"] + second["otherMsgCount"]
+        assert result["version"] == 3
+
     def test_uncovered_bucket_keeps_full_count(self, db):
         """缺情感数据的桶：coverage=0、score=None、lowConfidence，msgCount 仍全量。"""
         msg(db, ts(2026, 3, 1))

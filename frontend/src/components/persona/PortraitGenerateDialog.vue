@@ -48,9 +48,9 @@
                 <input v-model="generateSelf" type="checkbox" class="sr-only" />
                 <span class="pd-toggle-thumb"></span>
               </span>
-              <span class="pd-card-label">自我克隆</span>
+              <span class="pd-card-label">我的画像</span>
             </label>
-            <p class="pd-card-hint">提取你的打字风格与常用表达</p>
+            <p class="pd-card-hint">提取你在和 TA 聊天中的说话风格，让 AI 建议像你本人</p>
             <div class="pd-options" :class="{ disabled: !generateSelf }">
               <span class="pd-options-label">扫描深度</span>
               <div class="pd-chips">
@@ -63,6 +63,17 @@
               <div class="pd-est">按时间分桶采样，不做 token 截断；内容不足时自动向更早聊天顺延。</div>
             </div>
           </div>
+        </div>
+
+        <div class="pd-window">
+          <span class="pd-window-label">自定义时间窗</span>
+          <div class="pd-window-inputs">
+            <input v-model="customFrom" type="date" :disabled="generating" />
+            <span class="pd-window-sep">至</span>
+            <input v-model="customTo" type="date" :disabled="generating" />
+            <button v-if="customFrom || customTo" class="pd-window-clear" @click="customFrom = ''; customTo = ''">清除</button>
+          </div>
+          <p class="pd-window-note">留空按上方档位回看最近聊天；填写起止日期则只分析该区间，存为可回看的历史快照</p>
         </div>
 
         <div class="pd-footer">
@@ -104,14 +115,14 @@ const props = withDefaults(defineProps<{
   showSelfPanel?: boolean
   /** 初始时是否预选联系人画像 */
   defaultContact?: boolean
-  /** 初始时是否预选自我克隆 */
+  /** 初始时是否预选我的画像（建议质量依赖自我画像注入，默认勾选） */
   defaultSelf?: boolean
   /** 取消键（conversation_id）：生成中关闭弹窗时终止后端画像生成 */
   cancelKey?: number
 }>(), {
   showSelfPanel: true,
   defaultContact: true,
-  defaultSelf: false,
+  defaultSelf: true,
   cancelKey: 0,
 })
 
@@ -128,6 +139,19 @@ const selfBudget = ref('medium')
 const generating = ref(false)
 const genError = ref('')
 const cancelRequested = ref(false)
+// 可选自定义时间窗（YYYY-MM-DD）；留空为档位滚动窗模式
+const customFrom = ref('')
+const customTo = ref('')
+
+/** 解析自定义窗：返回 {fromTs, toTs}（闭区间秒级）；空返回 null；非法返回错误串 */
+function resolveCustomWindow(): { fromTs: number; toTs: number } | string | null {
+  if (!customFrom.value && !customTo.value) return null
+  if (!customFrom.value || !customTo.value) return '自定义时间窗需同时填写起止日期'
+  const fromTs = Math.floor(new Date(customFrom.value + 'T00:00:00').getTime() / 1000)
+  const toTs = Math.floor(new Date(customTo.value + 'T23:59:59').getTime() / 1000)
+  if (!fromTs || !toTs || fromTs >= toTs) return '自定义时间窗无效：起点需早于终点'
+  return { fromTs, toTs }
+}
 
 const contactBudgetOptions = [
   { value: 'low', label: '最近 7 天', tip: '简略' },
@@ -160,6 +184,11 @@ async function handleClose() {
 
 async function handleGenerate() {
   if (generating.value) return
+  const customWindow = resolveCustomWindow()
+  if (typeof customWindow === 'string') {
+    genError.value = customWindow
+    return
+  }
   generating.value = true
   genError.value = ''
   cancelRequested.value = false
@@ -175,7 +204,8 @@ async function handleGenerate() {
       safeSetItem('chrono:portraitContactBudget', contactBudget.value)
       const res = await api.generate_contact_profile(
         props.displayName, contactBudget.value, undefined, props.accountWxid || undefined,
-        props.cancelKey || undefined
+        props.cancelKey || undefined,
+        customWindow?.fromTs, customWindow?.toTs
       )
       if (cancelRequested.value || res?.cancelled) {
         return
@@ -191,14 +221,15 @@ async function handleGenerate() {
     if (props.showSelfPanel && generateSelf.value && !hasError) {
       const res = await api.generate_self_profile(
         props.displayName, selfBudget.value, undefined, props.accountWxid || undefined,
-        props.cancelKey || undefined
+        props.cancelKey || undefined,
+        customWindow?.fromTs, customWindow?.toTs
       )
       if (cancelRequested.value || res?.cancelled) {
         return
       }
       if (!res || !res.ok) {
         hasError = true
-        errorMsg = res?.error || '自我克隆画像提取失败'
+        errorMsg = res?.error || '我的画像生成失败'
       }
       if (generateContact.value) generatedKind = 'both'
       else generatedKind = 'self'
@@ -285,6 +316,24 @@ async function handleGenerate() {
 .pd-chip-text { font-size: 12px; font-weight: 600; }
 .pd-chip-tip { font-size: 10px; color: var(--ct-text-tertiary); }
 .pd-est { margin-top: 8px; font-size: 10px; color: var(--ct-text-tertiary); line-height: 1.5; }
+/* 自定义时间窗（可选）：留空走档位滚动窗，填写则按区间生成 custom 快照 */
+.pd-window {
+  padding: 0 20px 14px;
+}
+.pd-window-label { font-size: 11px; font-weight: 600; color: var(--ct-text-secondary); display: block; margin-bottom: 6px; }
+.pd-window-inputs { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pd-window-inputs input[type="date"] {
+  padding: 5px 10px; border-radius: 8px; font-size: 12px;
+  border: 1px solid var(--ct-border-color); background: var(--ct-bg-secondary);
+  color: var(--ct-text-primary);
+}
+.pd-window-sep { font-size: 12px; color: var(--ct-text-tertiary); }
+.pd-window-clear {
+  background: none; border: none; cursor: pointer; padding: 2px 6px;
+  font-size: 11px; color: var(--ct-text-secondary); border-radius: 6px;
+}
+.pd-window-clear:hover { color: var(--ct-color-danger, #ef4444); }
+.pd-window-note { margin: 6px 0 0; font-size: 10px; color: var(--ct-text-tertiary); line-height: 1.5; }
 .pd-footer {
   display: flex; justify-content: flex-end; gap: 10px; align-items: center;
   padding: 14px 20px; border-top: 1px solid var(--ct-border-color);

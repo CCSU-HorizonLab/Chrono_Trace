@@ -12,13 +12,41 @@
     </div>
 
     <template v-else>
-      <PersonaTagsCard
-        :title="heroTitle"
-        :summary="heroSummary"
-        :note="heroNote"
-        :tags="heroTags"
-        :meta-items="heroMeta"
-      />
+      <div class="hero-with-snapshots">
+        <PersonaTagsCard
+          :title="heroTitle"
+          :summary="heroSummary"
+          :note="heroNote"
+          :tags="heroTags"
+          :meta-items="heroMeta"
+        />
+
+        <div class="snapshot-row">
+          <button class="snapshot-toggle" :disabled="snapshotsLoading" @click="toggleSnapshots">
+            {{ snapshotsOpen ? '收起快照' : `历史快照${snapshots.length ? `（${snapshots.length} 份）` : ''}` }}
+          </button>
+          <span v-if="viewingSnapshot" class="snapshot-viewing">
+            正在回看{{ snapshotLabel(viewingSnapshot) }}的画像
+            <button class="snapshot-back" @click="viewingSnapshot = null">回到当前</button>
+          </span>
+        </div>
+
+        <div v-if="snapshotsOpen" class="snapshot-list">
+          <div v-if="snapshotsLoading" class="snapshot-empty">正在读取快照列表…</div>
+          <div v-else-if="!snapshots.length" class="snapshot-empty">还没有历史快照（每次不同时间窗的生成都会各自存档）</div>
+          <button
+            v-for="snap in snapshots"
+            :key="snap.id"
+            class="snapshot-item"
+            :class="{ active: viewingSnapshot?.id === snap.id }"
+            @click="viewingSnapshot = snap"
+          >
+            <span class="snapshot-window">{{ snapshotLabel(snap) }}</span>
+            <span class="snapshot-kind">{{ snap.window_kind === 'custom' ? '指定窗' : '滚动窗' }}</span>
+            <span class="snapshot-date">生成于 {{ formatUnixDate(snap.created_at) }}</span>
+          </button>
+        </div>
+      </div>
 
       <div class="persona-grid">
         <TopicUniverse :topics="topicBubbles" />
@@ -93,7 +121,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import type { PropType } from 'vue'
 import { Images, Clock } from 'lucide-vue-next'
 import { api } from '@/api/bridge'
@@ -116,6 +144,26 @@ type PersonaMeta = {
   expiresAt: number | null
   expired: boolean
   estimatedTokens: number
+}
+
+type ProfileWindow = {
+  kind: string
+  from: number
+  to: number
+  days: number
+  label: string
+}
+
+type ProfileSnapshot = {
+  id: number
+  window_kind: string
+  window_from: number
+  window_to: number
+  budget_level?: string
+  created_at: number
+  expires_at?: number
+  profile: PersonaProfile | null
+  window?: ProfileWindow | null
 }
 
 type TimeseriesPoint = {
@@ -209,6 +257,16 @@ const props = defineProps({
   currentRangeLabel: {
     type: String,
     default: ''
+  },
+  /** 当前画像的窗口标注（get_contact_profile 的 window 字段） */
+  windowInfo: {
+    type: Object as PropType<ProfileWindow | null>,
+    default: null
+  },
+  /** 查询历史快照用的账号（缺省走后端活跃账号） */
+  accountWxid: {
+    type: String,
+    default: ''
   }
 })
 
@@ -216,7 +274,50 @@ const palette = ['#f97316', '#fb7185', '#f59e0b', '#14b8a6', '#0ea5e9', '#8b5cf6
 
 const hasProfile = computed(() => Boolean(props.profile))
 
-const heroTags = computed(() => props.profile?.personality_tags?.slice(0, 6) || [])
+// —— 历史快照回看：viewingSnapshot 非空时，画像区展示该快照内容 ——
+const viewingSnapshot = ref<ProfileSnapshot | null>(null)
+const snapshotsOpen = ref(false)
+const snapshotsLoading = ref(false)
+const snapshots = ref<ProfileSnapshot[]>([])
+
+const activeProfile = computed<PersonaProfile | null>(
+  () => viewingSnapshot.value?.profile ?? props.profile
+)
+const activeCreatedAt = computed<number | null>(
+  () => viewingSnapshot.value?.created_at ?? props.profileMeta.createdAt
+)
+const activeWindowLabel = computed<string>(
+  () => snapshotLabel(viewingSnapshot.value) || props.windowInfo?.label || ''
+)
+
+async function toggleSnapshots() {
+  snapshotsOpen.value = !snapshotsOpen.value
+  if (snapshotsOpen.value && !snapshots.value.length) {
+    snapshotsLoading.value = true
+    try {
+      const res = await api.list_profile_snapshots(
+        props.contactName, props.accountWxid || undefined, 'contact'
+      )
+      snapshots.value = res?.ok ? (res.snapshots || []) : []
+    } catch {
+      snapshots.value = []
+    } finally {
+      snapshotsLoading.value = false
+    }
+  }
+}
+
+/** 快照的窗口描述：优先后端格式化 label，缺省用起止日期拼 */
+function snapshotLabel(snap: ProfileSnapshot | null): string {
+  if (!snap) return ''
+  if (snap.window?.label) return snap.window.label
+  if (snap.window_from && snap.window_to) {
+    return `${formatUnixDate(snap.window_from)} ~ ${formatUnixDate(snap.window_to)}`
+  }
+  return '滚动窗'
+}
+
+const heroTags = computed(() => activeProfile.value?.personality_tags?.slice(0, 6) || [])
 
 const heroTitle = computed(() => {
   if (heroTags.value.length > 0) return heroTags.value.join(' · ')
@@ -224,22 +325,26 @@ const heroTitle = computed(() => {
 })
 
 const heroSummary = computed(() => {
-  return props.profile?.chat_style || props.profile?.relationship_note || '画像已生成，但暂时没有更多摘要信息。'
+  return activeProfile.value?.chat_style || activeProfile.value?.relationship_note || '画像已生成，但暂时没有更多摘要信息。'
 })
 
-const heroNote = computed(() => props.profile?.communication_tips || '')
+const heroNote = computed(() => activeProfile.value?.communication_tips || '')
 
 const heroMeta = computed(() => {
   const items: string[] = []
-  if (props.profile?.relationship_note) items.push(props.profile.relationship_note)
+  if (activeProfile.value?.relationship_note) items.push(activeProfile.value.relationship_note)
   if (props.analysisResult?.overall_score !== undefined) items.push(`关系评分 ${Math.round(props.analysisResult.overall_score)}%`)
   if (props.currentRangeLabel) items.push(props.currentRangeLabel)
-  if (props.profileMeta.createdAt) items.push(`画像生成于 ${formatUnixDate(props.profileMeta.createdAt)}`)
+  if (activeWindowLabel.value && activeCreatedAt.value) {
+    items.push(`基于${activeWindowLabel.value} · 生成于 ${formatUnixDate(activeCreatedAt.value)}`)
+  } else if (activeCreatedAt.value) {
+    items.push(`画像生成于 ${formatUnixDate(activeCreatedAt.value)}`)
+  }
   return items
 })
 
 const topicBubbles = computed(() => {
-  const interests = props.profile?.interests || []
+  const interests = activeProfile.value?.interests || []
   if (interests.length) {
     return interests.slice(0, 6).map((label, index) => ({
       label,
@@ -380,6 +485,13 @@ const milestones = computed<MilestoneItem[]>(() => {
 
 // —— 记忆相框回顾：点击相框取回锚点时刻的原始对话 ——
 
+// 切换联系人：回看状态与快照列表失效
+watch(() => props.contactName, () => {
+  viewingSnapshot.value = null
+  snapshots.value = []
+  snapshotsOpen.value = false
+})
+
 const recall = ref<{
   visible: boolean
   loading: boolean
@@ -495,6 +607,86 @@ function formatDayLabel(value: string) {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 20px;
 }
+
+/* —— 历史快照回看 —— */
+.snapshot-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: -8px;
+}
+
+.snapshot-toggle {
+  padding: 5px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--ct-border-color);
+  background: var(--ct-bg-secondary);
+  color: var(--ct-text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.snapshot-toggle:hover { border-color: var(--ct-color-primary); color: var(--ct-color-primary); }
+.snapshot-toggle:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.snapshot-viewing {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--ct-text-secondary);
+}
+
+.snapshot-back {
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(249, 115, 22, 0.4);
+  background: rgba(249, 115, 22, 0.08);
+  color: #c2410c;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.snapshot-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 16px;
+  border: 1px dashed rgba(148, 163, 184, 0.35);
+  background: rgba(248, 250, 252, 0.75);
+}
+
+.snapshot-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--ct-border-color);
+  background: rgba(255, 255, 255, 0.9);
+  cursor: pointer;
+  text-align: left;
+  font-size: 12px;
+  color: var(--ct-text-primary);
+  transition: all 0.15s ease;
+}
+
+.snapshot-item:hover { border-color: rgba(249, 115, 22, 0.45); }
+.snapshot-item.active { border-color: rgba(249, 115, 22, 0.6); background: rgba(249, 115, 22, 0.08); }
+
+.snapshot-window { font-weight: 600; }
+.snapshot-kind {
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  border: 1px solid var(--ct-border-color);
+  color: var(--ct-text-tertiary);
+}
+.snapshot-date { margin-left: auto; color: var(--ct-text-tertiary); font-size: 11px; }
+.snapshot-empty { font-size: 12px; color: var(--ct-text-tertiary); text-align: center; padding: 6px 0; }
 
 .persona-panel {
   min-height: 320px;

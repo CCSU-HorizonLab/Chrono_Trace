@@ -577,6 +577,8 @@
         :conversation-id="selectedConversationId"
         :profile="personaProfile"
         :profile-meta="personaProfileMeta"
+        :window-info="personaProfileMeta.window"
+        :account-wxid="activeAccountWxid || ''"
         :analysis="analysis"
         :analysis-result="analysisResult"
         :feature-stats="featureStats"
@@ -864,7 +866,9 @@ export default {
             createdAt: null as number | null,
             expiresAt: null as number | null,
             expired: false,
-            estimatedTokens: 0
+            estimatedTokens: 0,
+            // 当前画像的窗口标注（rolling→「最近 N 天」/ custom→「起 ~ 止」）
+            window: null as { kind: string; from: number; to: number; days: number; label: string } | null
         })
         const responseTimeChart = ref<HTMLDivElement | null>(null)
         const activityCalendarChart = ref<HTMLDivElement | null>(null)
@@ -1405,6 +1409,7 @@ const showPortraitDialog = ref(false)
             personaProfileMeta.expiresAt = null
             personaProfileMeta.expired = false
             personaProfileMeta.estimatedTokens = 0
+            personaProfileMeta.window = null
         }
 
         function handlePortraitGenerated() {
@@ -1436,6 +1441,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
                     personaProfileMeta.expiresAt = res.expires_at || null
                     personaProfileMeta.expired = Boolean(res.expired)
                     personaProfileMeta.estimatedTokens = Number(res.estimated_tokens || 0)
+                    personaProfileMeta.window = res.window || null
                 } else {
                     resetPersonaProfile()
                     personaProfileMeta.estimatedTokens = Number(res?.estimated_tokens || 0)

@@ -47,6 +47,15 @@ def has_onnx_models() -> bool:
     return _onnx_path("embedding", fp32=True).exists() and _onnx_path("classifier").exists()
 
 
+def has_embedding_model() -> bool:
+    """嵌入模型是否就位（只查嵌入 fp32 产物）。
+
+    问答向量通道与 RAG 嵌入只依赖嵌入产物——分类器缺失时它们不应连带
+    熄火，故与 has_onnx_models（双模型齐备，供情感分类链路）分工。
+    """
+    return _onnx_path("embedding", fp32=True).exists()
+
+
 def _onnx_path(kind: str, fp32: bool = False) -> Path:
     name = "model.onnx" if fp32 else "model.fp16.onnx"
     # 嵌入模型目录跟随变体（bge/text2vec 切换）；此前用硬编码常量

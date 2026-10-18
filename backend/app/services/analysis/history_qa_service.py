@@ -120,9 +120,9 @@ def _extract_keywords(question: str) -> List[str]:
 def _load_question_vector(question: str) -> Optional[List[float]]:
     """问题嵌入（与分析同源 ONNX 引擎；模型不可用时返回 None 走纯关键词）。"""
     try:
-        from .onnx_inference import get_shared_engine, has_onnx_models
+        from .onnx_inference import get_shared_engine, has_embedding_model
 
-        if not has_onnx_models():
+        if not has_embedding_model():
             return None
         engine = get_shared_engine("embedding")
         vector = engine.encode([str(question)])

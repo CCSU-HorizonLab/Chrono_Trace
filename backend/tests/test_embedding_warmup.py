@@ -118,7 +118,7 @@ def test_load_failure_latch_retries_when_models_appear(monkeypatch):
         service._embedding_load_failed = True
 
         # 模型仍未就位:保持失败态,不尝试加载
-        monkeypatch.setattr("app.services.analysis.onnx_inference.has_onnx_models", lambda: False)
+        monkeypatch.setattr("app.services.analysis.onnx_inference.has_embedding_model", lambda: False)
         service._load_embedding_model()
         assert service._embedding_load_failed is True
         assert service._embedding_model is None
@@ -128,7 +128,7 @@ def test_load_failure_latch_retries_when_models_appear(monkeypatch):
             device_tag = "cpu"
             providers = ["CPUExecutionProvider"]
 
-        monkeypatch.setattr("app.services.analysis.onnx_inference.has_onnx_models", lambda: True)
+        monkeypatch.setattr("app.services.analysis.onnx_inference.has_embedding_model", lambda: True)
         monkeypatch.setattr(
             "app.services.analysis.onnx_inference.get_shared_engine",
             lambda name, device_mode=None: _FakeEngine(),

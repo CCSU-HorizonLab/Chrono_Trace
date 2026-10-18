@@ -596,3 +596,21 @@ def test_rag_memories_redacted_for_remote(monkeypatch, db):
     sent = json.dumps(http.calls[0]["payload"], ensure_ascii=False)
     assert "【长期记忆】" in sent
     assert "13800001111" not in sent and "[手机号]" in sent
+
+
+def test_question_vector_gate_ignores_classifier(monkeypatch):
+    """嵌入门槛只查嵌入模型：分类器缺失时问题嵌入仍可用（向量通道不熄火）。"""
+    import app.services.analysis.onnx_inference as oi
+
+    monkeypatch.setattr(oi, "has_embedding_model", lambda: True)
+    monkeypatch.setattr(oi, "has_onnx_models", lambda: False)
+
+    class _StubEngine:
+        def encode(self, texts, **kw):
+            return [[0.1, 0.2, 0.3]]
+
+    monkeypatch.setattr(oi, "get_shared_engine", lambda kind, **kw: _StubEngine())
+    assert hqmod._load_question_vector("你们聊过什么") == [0.1, 0.2, 0.3]
+
+    monkeypatch.setattr(oi, "has_embedding_model", lambda: False)
+    assert hqmod._load_question_vector("你们聊过什么") is None

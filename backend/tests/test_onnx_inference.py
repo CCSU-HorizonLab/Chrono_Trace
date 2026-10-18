@@ -85,6 +85,27 @@ class TestClassifierEngine:
         assert preds == [0, 1, 2], "三类极性顺序 0=负 1=正 2=中"
 
 
+class TestModelGateSplit:
+    def test_embedding_gate_independent_of_classifier(self, monkeypatch, tmp_path):
+        """嵌入就绪检查只查嵌入产物：分类器缺失不得连带熄火（问答向量通道依赖）。"""
+        (tmp_path / "embedding.onnx").write_bytes(b"x")
+
+        def fake_path(kind, fp32=False):
+            # 嵌入文件已就位、分类器文件不存在
+            return tmp_path / ("embedding.onnx" if kind == "embedding" else "classifier.onnx")
+
+        monkeypatch.setattr(onnx_inference, "_onnx_path", fake_path)
+        assert onnx_inference.has_embedding_model() is True
+        assert onnx_inference.has_onnx_models() is False
+
+    def test_embedding_gate_false_when_model_missing(self, monkeypatch, tmp_path):
+        def fake_path(kind, fp32=False):
+            return tmp_path / f"{kind}.onnx"
+
+        monkeypatch.setattr(onnx_inference, "_onnx_path", fake_path)
+        assert onnx_inference.has_embedding_model() is False
+
+
 class TestSentimentServiceOnnx:
 
     def test_load_and_batch(self, monkeypatch):

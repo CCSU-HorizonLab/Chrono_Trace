@@ -63,13 +63,13 @@ class SentimentService:
             logger.error(f"[情感服务] 实时情感分析服务预加载失败: {exc}")
 
     def has_local_embedding_model(self) -> bool:
-        """Return whether the embedding model is available locally (ONNX fp16)."""
+        """Return whether the embedding model is available locally (ONNX fp32)."""
         if self._embedding_model is not None:
             return True
         try:
-            from .onnx_inference import has_onnx_models
+            from .onnx_inference import has_embedding_model
 
-            return has_onnx_models()
+            return has_embedding_model()
         except Exception:
             return False
 
@@ -129,9 +129,9 @@ class SentimentService:
             # 失败可能只是暂时的(onnxruntime 后装、模型后导出):文件就位时
             # 允许重试,避免整个进程生命周期被一次瞬时失败锁死。
             try:
-                from .onnx_inference import has_onnx_models
+                from .onnx_inference import has_embedding_model
 
-                if not has_onnx_models():
+                if not has_embedding_model():
                     return
             except Exception:
                 return
@@ -142,11 +142,11 @@ class SentimentService:
             if self._embedding_model is not None:
                 return
             try:
-                from .onnx_inference import get_shared_engine, has_onnx_models
+                from .onnx_inference import get_shared_engine, has_embedding_model
 
-                if not has_onnx_models():
+                if not has_embedding_model():
                     raise FileNotFoundError(
-                        "缺少 ONNX fp16 嵌入模型（models/<name>/onnx/model.fp16.onnx；"
+                        "缺少 ONNX fp32 嵌入模型（models/<name>/onnx/model.onnx；"
                         "开发机先跑 backend/scripts/export_models_onnx.py，打包版应内置）"
                     )
                 engine = get_shared_engine("embedding", device_mode=self._device_mode)

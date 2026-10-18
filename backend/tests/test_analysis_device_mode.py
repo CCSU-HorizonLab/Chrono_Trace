@@ -58,7 +58,7 @@ class TestAnalysisDeviceMode:
         service._embedding_model = None
         service._embedding_load_failed = False
 
-        with patch("app.services.analysis.onnx_inference.has_onnx_models", return_value=False):
+        with patch("app.services.analysis.onnx_inference.has_embedding_model", return_value=False):
             service._load_embedding_model()
 
         assert service._embedding_load_failed is True

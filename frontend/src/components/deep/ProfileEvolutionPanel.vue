@@ -119,6 +119,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { api } from '@/api/bridge'
+import { getCachedEvolution, runEvolution } from './profileEvolutionCache'
 import { toLocalDateKey } from '@/utils/datetime'
 
 type KindBlock = { profile: any; created_at: number; cached: boolean; error?: string } | null
@@ -151,6 +152,7 @@ function setSegments(n: number) {
   result.value = null
   hint.value = ''
   error.value = ''
+  restoreFromCache()
 }
 
 function fmtDate(tsSeconds: number): string {
@@ -185,18 +187,23 @@ function tagRows(index: number): Array<{ name: string; cls: string; title: strin
 }
 
 async function generate(force: boolean) {
-  // 会话一致性守卫：慢响应后到时不能覆盖切走后的面板（画像张冠李戴）
+  // 会话一致性守卫：慢响应后到时不能覆盖切走后的面板（画像张冠李戴）。
+  // 日期一并入守卫——生成期间改时间窗，旧窗数据不能落回新日期下
   const requestConv = props.conversationId
   const requestEpoch = props.viewEpoch
+  const requestFrom = props.dates.from
+  const requestTo = props.dates.to
   state.value = 'generating'
   error.value = ''
   hint.value = ''
   try {
-    const res = await api.generate_profile_evolution(
-      props.conversationId, props.dates.from, props.dates.to,
-      includeSelf.value, force, undefined, segmentCount.value,
+    const res = await runEvolution(
+      requestConv, requestFrom, requestTo, includeSelf.value, force, segmentCount.value,
     )
-    if (requestConv !== props.conversationId || requestEpoch !== props.viewEpoch) return
+    if (
+      requestConv !== props.conversationId || requestEpoch !== props.viewEpoch
+      || requestFrom !== props.dates.from || requestTo !== props.dates.to
+    ) return
     if (res?.cancelled) {
       state.value = result.value ? 'done' : 'idle'
       hint.value = '已取消；已完成的分段已存为快照，重试会续跑'
@@ -219,7 +226,10 @@ async function generate(force: boolean) {
     ).length
     if (cachedCount) hint.value = `${cachedCount} 个分段命中历史快照，未重复调用 AI`
   } catch (e: any) {
-    if (requestConv !== props.conversationId || requestEpoch !== props.viewEpoch) return
+    if (
+      requestConv !== props.conversationId || requestEpoch !== props.viewEpoch
+      || requestFrom !== props.dates.from || requestTo !== props.dates.to
+    ) return
     state.value = 'error'
     error.value = e?.message || '请求失败'
   }
@@ -241,8 +251,26 @@ watch(
     result.value = null
     error.value = ''
     hint.value = ''
+    restoreFromCache()
   },
 )
+
+// 重挂恢复：在途调用接管等待（完成后照常渲染），已完成则直接显示
+// ——路由切走再切回不再丢结果/丢进度
+function restoreFromCache() {
+  const entry = getCachedEvolution(
+    props.conversationId, props.dates.from, props.dates.to,
+    segmentCount.value, includeSelf.value,
+  )
+  if (entry?.promise) {
+    void generate(false)
+  } else if (entry?.res) {
+    result.value = entry.res
+    state.value = 'done'
+  }
+}
+
+restoreFromCache()
 </script>
 
 <style scoped>

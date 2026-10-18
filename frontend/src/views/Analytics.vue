@@ -559,12 +559,57 @@
     </div>
   </div>
 
-  <!-- TAB 4: History QA (问问微信) -->
+  <!-- TAB 4: History QA (问问微信·聊天框：正序气泡流 + 底部输入 + 滚底) -->
   <div v-show="currentTab === 'qa' && selectedConversationId" class="tab-content fade-in">
     <div class="qa-shell">
       <div class="qa-header">
         <h3 class="qa-title">问问微信</h3>
         <p class="qa-subtitle">向 {{ currentContactName }} 的聊天记录提问，回答附带引用溯源（仅检索当前联系人）</p>
+      </div>
+
+      <!-- 聊天流：时间正序，问答成对出现，新内容自动滚到底 -->
+      <div ref="qaChatBox" class="qa-chat">
+        <div v-if="!qaHistory.length && !qaLoading" class="qa-empty">
+          还没有提问记录。试试问一个你们聊过的话题。
+        </div>
+
+        <div v-for="item in qaHistory" :key="item.id" class="qa-msg">
+          <div class="qa-row qa-row-user">
+            <div class="qa-bubble qa-bubble-user">
+              <span class="qa-bubble-text">{{ item.question }}</span>
+            </div>
+          </div>
+          <div class="qa-row qa-row-ai">
+            <span class="qa-a-mark">AI</span>
+            <div class="qa-bubble qa-bubble-ai">
+              <span class="qa-bubble-text">{{ item.answer }}</span>
+              <button
+                class="text-action-btn qa-copy-btn"
+                :class="{ copied: copiedQaKey === `a-${item.id}` }"
+                @click="handleCopyQa(item.answer, `a-${item.id}`)"
+              >
+                {{ copiedQaKey === `a-${item.id}` ? '已复制' : '复制' }}
+              </button>
+              <details v-if="item.citations && item.citations.length" class="qa-citations-fold">
+                <summary class="qa-citations-title">引用溯源（{{ item.citations.length }} 条）</summary>
+                <div v-for="(cite, cIdx) in item.citations" :key="cIdx" class="qa-citation-row">
+                  <span class="qa-citation-idx">[{{ cite.index }}]</span>
+                  <span class="qa-citation-meta">{{ formatQaTime(cite.timestamp) }} · {{ cite.is_sender ? '我' : currentContactName }}</span>
+                  <span class="qa-citation-text">"{{ cite.text }}"</span>
+                </div>
+              </details>
+            </div>
+          </div>
+        </div>
+
+        <!-- 加载占位：打字点 + 进度文案（远程模型可能十几秒） -->
+        <div v-if="qaLoading" class="qa-row qa-row-ai">
+          <span class="qa-a-mark">AI</span>
+          <div class="qa-bubble qa-bubble-ai qa-typing">
+            <span class="qa-typing-dots"><i></i><i></i><i></i></span>
+            <span class="qa-typing-hint">正在检索聊天记录并生成回答，远程模型可能需要十几秒...</span>
+          </div>
+        </div>
       </div>
 
       <div class="qa-input-row">
@@ -581,42 +626,6 @@
           {{ qaLoading ? '查找中...' : '提问' }}
         </CtButton>
         <CtButton v-if="qaLoading" variant="ghost" @click="handleCancelQa">取消</CtButton>
-      </div>
-
-      <div v-if="qaLoading" class="qa-loading-hint">
-        正在检索聊天记录并生成回答，远程模型可能需要十几秒...
-      </div>
-
-      <div v-if="!qaHistory.length && !qaLoading" class="qa-empty">
-        还没有提问记录。试试问一个你们聊过的话题。
-      </div>
-
-      <div v-if="qaHistory.length" class="qa-list">
-        <div v-for="item in qaHistory" :key="item.id" class="qa-item">
-          <div class="qa-question">
-            <span class="qa-q-mark">问</span>
-            <span class="qa-q-text">{{ item.question }}</span>
-          </div>
-          <div class="qa-answer">
-            <span class="qa-a-mark">答</span>
-            <span class="qa-a-text">{{ item.answer }}</span>
-            <button
-              class="text-action-btn qa-copy-btn"
-              :class="{ copied: copiedQaKey === `a-${item.id}` }"
-              @click="handleCopyQa(item.answer, `a-${item.id}`)"
-            >
-              {{ copiedQaKey === `a-${item.id}` ? '已复制' : '复制' }}
-            </button>
-          </div>
-          <div v-if="item.citations && item.citations.length" class="qa-citations">
-            <div class="qa-citations-title">引用溯源（{{ item.citations.length }} 条）</div>
-            <div v-for="(cite, cIdx) in item.citations" :key="cIdx" class="qa-citation-row">
-              <span class="qa-citation-idx">[{{ cite.index }}]</span>
-              <span class="qa-citation-meta">{{ formatQaTime(cite.timestamp) }} · {{ cite.is_sender ? '我' : currentContactName }}</span>
-              <span class="qa-citation-text">"{{ cite.text }}"</span>
-            </div>
-          </div>
-        </div>
       </div>
     </div>
   </div>
@@ -1047,12 +1056,23 @@ const showPortraitDialog = ref(false)
         })
         const hasCachedAffinityAnalysis = computed(() => Boolean(analysisResult.value))
 
-        // ===== 问问微信（历史问答 + 引用溯源）=====
+        // ===== 问问微信（历史问答 + 引用溯源·聊天框）=====
         type QaCitation = { index: number; message_id: number; timestamp: number; is_sender: number; text: string }
         type QaEntry = { id: number; question: string; answer: string; citations: QaCitation[] }
+        // 时间正序（聊天流展示：新问答 push 到尾部，容器自动滚底）
         const qaHistory = ref<QaEntry[]>([])
         const qaInput = ref('')
         const qaLoading = ref(false)
+        const qaChatBox = ref<HTMLElement | null>(null)
+
+        function scrollQaToBottom() {
+            nextTick(() => {
+                const el = qaChatBox.value
+                if (el) el.scrollTop = el.scrollHeight
+            })
+        }
+        watch(() => qaHistory.value.length, scrollQaToBottom)
+        watch(qaLoading, scrollQaToBottom)
 
         function formatQaTime(ts: number): string {
             if (!ts) return '--'
@@ -1110,16 +1130,15 @@ const showPortraitDialog = ref(false)
             const conversationId = selectedConversationId.value
             try {
                 await bridgeReady()
-                // 多轮：带上最近几轮问答（qaHistory 新的在前，取 3 轮转时间升序）
+                // 多轮：带上最近 3 轮问答（qaHistory 本就时间正序，直接取尾部）
                 const history = qaHistory.value
-                    .slice(0, 3)
-                    .reverse()
+                    .slice(-3)
                     .map(e => ({ question: e.question, answer: e.answer }))
                 const res = await api.ask_history(conversationId, question, history)
                 if (conversationId !== selectedConversationId.value) return // 已切换联系人，丢弃过期回答
                 if (res?.ok) {
-                    qaHistory.value.unshift({
-                        id: Date.now(), // 稳定键：unshift 会移动列表索引，复制反馈不能跟着索引走
+                    qaHistory.value.push({
+                        id: Date.now(), // 稳定键：复制反馈不能跟着列表索引走
                         question: String(res.question || question),
                         answer: String(res.answer || ''),
                         citations: Array.isArray(res.citations) ? res.citations : [],
@@ -2181,7 +2200,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
             hasConversations, hasFeatures, hasCachedAffinityAnalysis, featureStats, responseTimeStats, initiativeStats, wordCountsStats, displayWordRatioLabel, activityCalendar,
             responseTimeChart, activityCalendarChart, wordCountChart, stats, currentContactName, headerAvatarSrc, hasPreferenceKeywords, allDimensions,
             currentRangeLabel, hasContentAnalysis, analysisStaleNotice, circumference, strokeDashoffset, formatNumber, formatTime, getResponseTimeLabel, getMergedResponseTimeLabel, getResponseTimePercent, onConversationChange, onDatesChange, handleExport, handleStartGlobalAnalysis, handleContextSaved, handleKeywordsUpdated, llmEvidenceNotes,
-            qaHistory, qaInput, qaLoading, handleAskHistory, formatQaTime, copiedQaKey, overallCopied, handleCopyQa, handleCopyOverall,
+            qaHistory, qaInput, qaLoading, qaChatBox, handleAskHistory, handleCancelQa, formatQaTime, copiedQaKey, overallCopied, handleCopyQa, handleCopyOverall,
             isGroupConversation, groupStats, groupStatsLoading, groupSummary, groupSummaryLoading, groupSummaryDays, handleGenerateGroupSummary,
             reportExporting, handleExportReport,
             exportDialogVisible, exportFormat, exporting, exportResult, confirmExport, openExportFolder,
@@ -3662,7 +3681,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
 .pd-btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
 .sr-only { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 
-/* --- 问问微信（历史问答） --- */
+/* --- 问问微信（历史问答·聊天框） --- */
 .qa-shell {
   flex: 1;
   display: flex;
@@ -3672,7 +3691,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   background: var(--ct-bg-secondary);
   border: 1px solid var(--ct-border-subtle);
   border-radius: var(--ct-radius-2xl);
-  overflow-y: auto;
+  min-height: 0; /* 聊天流在 flex 列内收缩，出滚动条而不是撑破页 */
 }
 
 .qa-header {
@@ -3692,6 +3711,88 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   margin: 0;
   font-size: 12px;
   color: var(--ct-text-tertiary);
+}
+
+/* 聊天流：自带滚动，新消息滚底 */
+.qa-chat {
+  flex: 1;
+  min-height: 280px;
+  max-height: 56vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ct-space-md);
+  padding-right: 4px;
+}
+
+.qa-empty {
+  margin: auto; /* 空态在聊天流内垂直居中 */
+  padding: var(--ct-space-2xl);
+  text-align: center;
+  font-size: 13px;
+  color: var(--ct-text-tertiary);
+  background: var(--ct-bg-tertiary);
+  border-radius: var(--ct-radius-md);
+}
+
+.qa-msg {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.qa-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.qa-row-user {
+  justify-content: flex-end;
+}
+
+.qa-bubble {
+  max-width: 82%;
+  padding: 10px 14px;
+  border-radius: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.qa-bubble-user {
+  background: var(--ct-color-primary-subtle, rgba(91, 107, 224, 0.12));
+  border-bottom-right-radius: 4px;
+}
+
+.qa-bubble-ai {
+  background: var(--ct-bg-elevated);
+  border: 1px solid var(--ct-border-color);
+  border-bottom-left-radius: 4px;
+}
+
+.qa-bubble-text {
+  font-size: 13px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+  -webkit-user-select: text;
+  color: var(--ct-text-primary);
+}
+
+.qa-a-mark {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--ct-radius-full);
+  font-size: 10px;
+  font-weight: 600;
+  background: var(--ct-color-success-light);
+  color: var(--ct-color-success);
 }
 
 .qa-input-row {
@@ -3719,102 +3820,21 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   opacity: 0.6;
 }
 
-.qa-loading-hint {
-  font-size: 12px;
-  color: var(--ct-text-tertiary);
-}
-
-.qa-empty {
-  padding: var(--ct-space-2xl);
-  text-align: center;
-  font-size: 13px;
-  color: var(--ct-text-tertiary);
-  background: var(--ct-bg-tertiary);
-  border-radius: var(--ct-radius-md);
-}
-
-.qa-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--ct-space-md);
-}
-
-.qa-item {
-  padding: var(--ct-space-md);
-  background: var(--ct-bg-elevated);
-  border: 1px solid var(--ct-border-color);
-  border-radius: var(--ct-radius-md);
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.qa-question,
-.qa-answer {
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
-}
-
-.qa-q-mark,
-.qa-a-mark {
-  flex-shrink: 0;
-  width: 20px;
-  height: 20px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--ct-radius-full);
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.qa-q-mark {
-  background: var(--ct-color-primary-subtle, rgba(91, 107, 224, 0.12));
-  color: var(--ct-color-primary);
-}
-
-.qa-a-mark {
-  background: var(--ct-color-success-light);
-  color: var(--ct-color-success);
-}
-
-.qa-q-text {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--ct-text-primary);
-  line-height: 1.6;
-  user-select: text;
-  -webkit-user-select: text;
-}
-
-.qa-a-text {
-  font-size: 13px;
-  color: var(--ct-text-secondary);
-  line-height: 1.7;
-  white-space: pre-wrap;
-  word-break: break-word;
-  user-select: text;
-  -webkit-user-select: text;
-  flex: 1;
-}
-
 .qa-copy-btn {
   align-self: flex-start;
 }
 
-.qa-citations {
-  padding-top: 8px;
+.qa-citations-fold {
   border-top: 1px dashed var(--ct-border-color);
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+  padding-top: 8px;
 }
 
 .qa-citations-title {
   font-size: 11px;
   color: var(--ct-text-tertiary);
   font-weight: 600;
+  cursor: pointer;
+  user-select: none;
 }
 
 .qa-citation-row {
@@ -3823,6 +3843,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   align-items: baseline;
   font-size: 11px;
   line-height: 1.6;
+  padding-top: 4px;
 }
 
 .qa-citation-idx {
@@ -3842,6 +3863,44 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   word-break: break-word;
   user-select: text;
   -webkit-user-select: text;
+}
+
+/* 加载占位：打字点 + 进度文案 */
+.qa-typing {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+}
+
+.qa-typing-dots {
+  display: inline-flex;
+  gap: 3px;
+  flex-shrink: 0;
+}
+
+.qa-typing-dots i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--ct-text-tertiary);
+  animation: qa-typing-blink 1.2s infinite ease-in-out;
+}
+
+.qa-typing-dots i:nth-child(2) { animation-delay: 0.2s; }
+.qa-typing-dots i:nth-child(3) { animation-delay: 0.4s; }
+
+.qa-typing-hint {
+  font-size: 12px;
+  color: var(--ct-text-tertiary);
+}
+
+@keyframes qa-typing-blink {
+  0%, 60%, 100% { opacity: 0.25; }
+  30% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .qa-typing-dots i { animation: none; opacity: 0.6; }
 }
 
 /* --- 群聊工作台 --- */

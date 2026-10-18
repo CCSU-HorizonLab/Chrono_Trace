@@ -27,6 +27,14 @@ def test_curated_boundaries():
         assert word not in CHAT_STOP_WORDS, word
 
 
+def test_generic_filler_nouns_in_daily_topics_out():
+    """泛聊天高频实词（语义空转）收；日程话题词是生活方式信号不收"""
+    for word in ("东西", "时候", "出来", "真的", "问题"):
+        assert word in CHAT_STOP_WORDS, word
+    for word in ("吃饭", "上班", "睡觉"):
+        assert word not in CHAT_STOP_WORDS, word
+
+
 def test_words_are_short_tokens_only():
     """聊天停用词都是短 token（中文 ≤4 字，ASCII 占位 ≤5），长词混入多半是误收"""
     for word in CHAT_STOP_WORDS:

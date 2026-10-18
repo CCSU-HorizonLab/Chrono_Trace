@@ -21,7 +21,7 @@ from typing import Any, Callable, Optional
 from ...db.connection import get_db
 # 仅引常量（profiler 无 analysis 模块级依赖，无环）；profiler 实例仍在
 # generate() 内延迟导入，保持 analysis←realtime 单向
-from ..realtime.contact_profiler import PROFILE_CUSTOM_MAX_SPAN, PROFILE_SNAPSHOT_SCHEMA
+from ..realtime.contact_profiler import PROFILE_SNAPSHOT_SCHEMA
 from .deep_analysis_service import split_window_evenly
 
 logger = logging.getLogger(__name__)
@@ -50,14 +50,6 @@ class ProfileEvolutionService:
 
         from ..realtime.contact_profiler import ContactProfiler
         from ..realtime.self_profiler import SelfProfiler
-
-        # 与单次 custom 生成同一跨度上限：全窗对半后每半窗都过 730 天防呆，
-        # 等价于全窗 ≤ 730 天——不校验会让深读页任意日期范围绕出口径
-        if to_ts - from_ts > PROFILE_CUSTOM_MAX_SPAN:
-            return {
-                "ok": False,
-                "error": f"时间窗无效：跨度不能超过 {PROFILE_CUSTOM_MAX_SPAN // 86400} 天",
-            }
 
         kinds: list[tuple[str, Any, str]] = [("contact", ContactProfiler(), "contact_profiles")]
         if include_self:

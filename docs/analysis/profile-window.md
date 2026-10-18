@@ -12,7 +12,8 @@
   顺延；每次续期产生新窗口键 → 快照自然累积。
 - **custom 指定窗**：`generate_profile(..., from_ts, to_ts)` 闭区间硬边界，**不顺延**
   （顺延会篡改用户指定窗口的语义）；防呆：非正/起点≥终点/终点晚于 now+1 天/
-  跨度>730 天/窗内无文本消息均直接拒绝。
+  窗内无文本消息均直接拒绝。**跨度不设上限**——按调用方切分的时窗如实生成
+  （采样量按档位固定，窗口越长画像粒度越粗，由 UI 展示窗口标注，不做硬拦）。
 
 ## 数据模型（快照结构 v1）
 
@@ -62,7 +63,7 @@ prompt【基础信息】块带样本时间范围行（rolling 注明顺延，cus
   全部重算；bridge 层同会话单飞（`_profile_evolution_events`，注册持
   `_ONNX_TASK_LOCK`）+ 可取消（取消在每次 generate_profile 前生效，已完成
   半窗已落缓存）。
-- 全窗跨度与单次 custom 生成同上限 `PROFILE_CUSTOM_MAX_SPAN`（730 天）；账号
+- 全窗跨度不设上限（与单次 custom 生成同口径，按切分时窗如实对半）；账号
   解析为空（无活跃账号）直接拒绝，不去掉账号过滤兜底。
 - include_self 默认关（单次桥接最长 4 次 LLM 调用）。
 
@@ -73,7 +74,6 @@ prompt【基础信息】块带样本时间范围行（rolling 注明顺延，cus
 | `PROFILE_SNAPSHOT_SCHEMA` | contact_profiler.py / self_profiler.py | 1 | 表结构或画像口径变化——随行落库 `schema_version` 列，读取处过滤；旧结构 DROP 重建，不迁移 |
 | `PROFILE_SNAPSHOT_KEEP` | 同上 | 8 | rolling 分组保留条数调整 |
 | `PROFILE_SNAPSHOT_KEEP_CUSTOM` | 同上 | 24 | custom 分组保留条数调整（对齐 list_snapshots 上限，裁剪不得逐出回廊可展示的快照） |
-| `PROFILE_CUSTOM_MAX_SPAN` | 同上 | 730 天 | custom 窗最大跨度调整 |
 
 ## 脱敏责任边界（现状口径）
 

@@ -18,7 +18,6 @@ sys.path.insert(0, str(backend_dir))
 
 from app.db.connection import DatabaseConnection
 from app.services.realtime.contact_profiler import (
-    PROFILE_CUSTOM_MAX_SPAN,
     PROFILE_SNAPSHOT_KEEP,
     PROFILE_SNAPSHOT_KEEP_CUSTOM,
     PROFILE_TTL,
@@ -315,10 +314,10 @@ def test_custom_window_empty_returns_error(isolated_db, monkeypatch):
     (2000, 1000, "起点晚于终点"),
     (0, 1000, "起点非正"),
     (1000, int(time.time()) + 10 * 86400, "终点太靠未来"),
-    (1000, 1000 + PROFILE_CUSTOM_MAX_SPAN + 86400, "跨度超过 730 天"),
 ])
 def test_custom_window_guards(from_ts, to_ts, desc):
-    """custom 窗防呆四例：均直接拒绝，不触库不调 LLM。"""
+    """custom 窗防呆三例：均直接拒绝，不触库不调 LLM。（不设跨度上限——
+    按调用方切分的时窗如实生成，采样量按档位固定，窗口长只影响粒度。）"""
     result = ContactProfiler().generate_profile(
         "老朋友", from_ts=from_ts, to_ts=to_ts
     )

@@ -75,9 +75,6 @@ PROFILE_SNAPSHOT_SCHEMA = 1
 PROFILE_SNAPSHOT_KEEP = 8
 PROFILE_SNAPSHOT_KEEP_CUSTOM = 24
 
-# 指定历史窗（custom）单次生成的最大跨度
-PROFILE_CUSTOM_MAX_SPAN = 730 * 86400
-
 # 画像生成用 System Prompt
 PROFILE_SYSTEM_PROMPT = """你是一个社交关系分析师。根据提供的聊天数据和统计特征，总结"对方"的信息画像。
 
@@ -287,8 +284,8 @@ class ContactProfiler:
                 return {'ok': False, 'error': '时间窗无效：起止需为正数且起点早于终点'}
             if to_ts > int(time.time()) + 86400:
                 return {'ok': False, 'error': '时间窗无效：终点不能晚于当前时间'}
-            if to_ts - from_ts > PROFILE_CUSTOM_MAX_SPAN:
-                return {'ok': False, 'error': f'时间窗无效：跨度不能超过 {PROFILE_CUSTOM_MAX_SPAN // 86400} 天'}
+            # 不设跨度上限：按调用方切分的时窗如实生成（采样量按档位固定，
+            # 窗口越长画像粒度越粗，由 UI 展示窗口标注，不做硬拦）
 
         now = int(time.time())
 

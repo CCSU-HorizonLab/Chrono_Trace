@@ -13,10 +13,7 @@ sys.path.insert(0, str(backend_dir))
 
 from app.db.connection import DatabaseConnection
 from app.services.analysis.profile_evolution_service import ProfileEvolutionService
-from app.services.realtime.contact_profiler import (
-    PROFILE_CUSTOM_MAX_SPAN,
-    ContactProfiler,
-)
+from app.services.realtime.contact_profiler import ContactProfiler
 from app.services.realtime.self_profiler import SelfProfiler
 
 
@@ -242,19 +239,18 @@ def test_window_too_short(isolated_db):
     assert "太短" in result["error"]
 
 
-def test_span_exceeds_custom_limit(isolated_db, llm_calls):
-    """全窗跨度超过 730 天上限直接拒绝：对半后单半窗虽各自达标，
-    但「任意窗 ≤730 天」的口径不能被演变全窗绕过。"""
+def test_long_span_window_accepted(isolated_db, llm_calls):
+    """不设跨度上限：按调用方切分的时窗如实对半生成（如「全部」档 26 年窗），
+    两半窗各调一次 LLM，窗口长度只影响画像粒度不做硬拦。"""
     conn = isolated_db
     conv_id = seed_conversation(conn)
+    span = 26 * 365 * 86400
 
-    result = ProfileEvolutionService().generate(
-        conv_id, 1000, 1000 + PROFILE_CUSTOM_MAX_SPAN + 86400, "wxid_me"
-    )
+    result = ProfileEvolutionService().generate(conv_id, 1000, 1000 + span, "wxid_me")
 
-    assert result["ok"] is False
-    assert "跨度不能超过" in result["error"]
-    assert llm_calls == []
+    assert result["ok"] is True
+    assert len(result["halves"]) == 2
+    assert len(llm_calls) == 2
 
 
 def test_unresolvable_account_rejected(isolated_db, llm_calls, monkeypatch):

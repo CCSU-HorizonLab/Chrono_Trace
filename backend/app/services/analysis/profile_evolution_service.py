@@ -1,14 +1,15 @@
-"""时光深度·画像演变：前后半窗双画像对比。
+"""时光深度·画像演变：时间窗均分多段画像对比。
 
-切窗与词云演变共用 ``split_window_evenly``（词云可配 2~6 段，画像演变
-固定对半——每段是独立 LLM 快照，成本随段数线性涨）：前半窗
-``[from_ts, mid_ts - 1]``、后半窗 ``[mid_ts, to_ts]`` 闭区间，同窗同分，
-画像演变与词云演变可直接对照。
+切窗与词云演变共用 ``split_window_evenly``（段数 2~6 默认 2——每段是
+独立 LLM 快照，成本随段数线性涨，故独立于词云分段自选）：前三段
+``[b_i, b_{i+1}-1]``、末段含终点闭区间，同窗同分，画像演变与词云
+演变可直接对照。
 
-半窗画像落为 custom 快照（唯一键 (账号, 显示名, 'custom', f, t)），二次
-调用精确键命中即跳过 LLM——增量续跑只补缺的半窗；``force=True`` 无视
-缓存全部重算。取消事件在每次 generate_profile 调用前检查，HTTP 层经
-should_abort 在尝试边界退出，已完成半窗随结果带回（已落缓存，重试免费）。
+分段画像落为 custom 快照（唯一键 (账号, 显示名, 'custom', f, t)），二次
+调用精确键命中即跳过 LLM——增量续跑只补缺的段（换段数切回旧档免费）；
+``force=True`` 无视缓存全部重算。取消事件在每次 generate_profile 调用前
+检查，HTTP 层经 should_abort 在尝试边界退出，已完成段随结果带回
+（已落缓存，重试免费）。
 """
 from __future__ import annotations
 
@@ -26,9 +27,14 @@ from .deep_analysis_service import split_window_evenly
 
 logger = logging.getLogger(__name__)
 
+# 分段数界限（前端选择器同域；每段一次 LLM 快照，成本随段数线性涨）
+PROFILE_EVOLUTION_SEGMENTS_MIN = 2
+PROFILE_EVOLUTION_SEGMENTS_MAX = 6
+PROFILE_EVOLUTION_SEGMENTS_DEFAULT = 2
+
 
 class ProfileEvolutionService:
-    """前后半窗画像对比（快照缓存命中增量续跑；可取消）"""
+    """分段画像对比（快照缓存命中增量续跑；可取消）"""
 
     def generate(
         self,
@@ -39,14 +45,29 @@ class ProfileEvolutionService:
         include_self: bool = False,
         force: bool = False,
         cancel_event: Optional[threading.Event] = None,
+        segments: int = PROFILE_EVOLUTION_SEGMENTS_DEFAULT,
     ) -> dict[str, Any]:
         conversation_id = int(conversation_id or 0)
         from_ts, to_ts = int(from_ts), int(to_ts)
-        # 与词云演变共用切窗公式（N=2）；mid_ts 兼作防呆判定与 payload 字段
-        halves_span = split_window_evenly(from_ts, to_ts, 2)
-        mid_ts = halves_span[1][0]
-        if mid_ts - 1 < from_ts:
-            return {"ok": False, "error": "时间窗太短，无法对半分段（至少需两天跨度）"}
+        try:
+            segments = int(segments)
+        except (TypeError, ValueError):
+            segments = 0
+        if not (PROFILE_EVOLUTION_SEGMENTS_MIN <= segments <= PROFILE_EVOLUTION_SEGMENTS_MAX):
+            return {
+                "ok": False,
+                "error": (
+                    f"分段数需在 {PROFILE_EVOLUTION_SEGMENTS_MIN}"
+                    f"~{PROFILE_EVOLUTION_SEGMENTS_MAX} 之间"
+                ),
+            }
+        # 与词云演变共用切窗公式；任一空段（窗口秒数不足段数）直接拒绝
+        spans = split_window_evenly(from_ts, to_ts, segments)
+        if any(seg_to < seg_from for seg_from, seg_to in spans):
+            return {
+                "ok": False,
+                "error": f"时间窗太短，无法均分为 {segments} 段（至少需 {segments} 天跨度）",
+            }
 
         from ..realtime.contact_profiler import ContactProfiler
         from ..realtime.self_profiler import SelfProfiler
@@ -70,31 +91,30 @@ class ProfileEvolutionService:
         def _aborted() -> bool:
             return cancel_event is not None and cancel_event.is_set()
 
-        halves: list[dict[str, Any]] = []
-        for index, (half_from, half_to) in enumerate(halves_span):
+        segment_results: list[dict[str, Any]] = []
+        for index, (seg_from, seg_to) in enumerate(spans):
             if _aborted():
-                return self._cancelled(halves, from_ts, to_ts, mid_ts, display_name)
-            half: dict[str, Any] = {
-                "from_ts": half_from,
-                "to_ts": half_to,
-                "label": "前半段" if index == 0 else "后半段",
+                return self._cancelled(segment_results, from_ts, to_ts, display_name)
+            segment: dict[str, Any] = {
+                "from_ts": seg_from,
+                "to_ts": seg_to,
+                "label": f"第 {index + 1} 段",
             }
             for kind, profiler, table in kinds:
                 if _aborted():
-                    return self._cancelled(halves, from_ts, to_ts, mid_ts, display_name)
-                half[kind] = self._half_profile(
+                    return self._cancelled(segment_results, from_ts, to_ts, display_name)
+                segment[kind] = self._segment_profile(
                     profiler, table, display_name, account_wxid,
-                    half_from, half_to, force, _aborted,
+                    seg_from, seg_to, force, _aborted,
                 )
-            halves.append(half)
+            segment_results.append(segment)
 
         return {
             "ok": True,
             "from_ts": from_ts,
             "to_ts": to_ts,
-            "mid_ts": mid_ts,
             "display_name": display_name,
-            "halves": halves,
+            "segments": segment_results,
             "generated_at": int(time.time()),
         }
 
@@ -111,28 +131,28 @@ class ProfileEvolutionService:
             logger.warning("[ProfileEvolution] 会话查询失败: %s", exc)
             return None
 
-    def _half_profile(
+    def _segment_profile(
         self,
         profiler: Any,
         table: str,
         display_name: str,
         account_wxid: str,
-        half_from: int,
-        half_to: int,
+        seg_from: int,
+        seg_to: int,
         force: bool,
         aborted: Callable[[], bool],
     ) -> Optional[dict[str, Any]]:
-        """单半窗画像：先查 custom 快照精确键，未命中再生成（失败不中断整体）。"""
+        """单段画像：先查 custom 快照精确键，未命中再生成（失败不中断整体）。"""
         if not force:
-            cached = self._load_snapshot(table, display_name, account_wxid, half_from, half_to)
+            cached = self._load_snapshot(table, display_name, account_wxid, seg_from, seg_to)
             if cached is not None:
                 return cached
         result = profiler.generate_profile(
             display_name,
             account_wxid=account_wxid,
             should_abort=aborted,
-            from_ts=half_from,
-            to_ts=half_to,
+            from_ts=seg_from,
+            to_ts=seg_to,
         )
         if aborted():
             return None
@@ -154,7 +174,7 @@ class ProfileEvolutionService:
     @staticmethod
     def _load_snapshot(
         table: str, display_name: str, account_wxid: str,
-        half_from: int, half_to: int,
+        seg_from: int, seg_to: int,
     ) -> Optional[dict[str, Any]]:
         """按 custom 快照精确键查缓存（含 profile 全文）。
 
@@ -167,7 +187,7 @@ class ProfileEvolutionService:
                 f"SELECT profile_json, created_at FROM {table} "
                 "WHERE account_wxid = ? AND display_name = ? AND window_kind = 'custom' "
                 "AND window_from = ? AND window_to = ? AND schema_version = ?",
-                (account_wxid, display_name, half_from, half_to, PROFILE_SNAPSHOT_SCHEMA),
+                (account_wxid, display_name, seg_from, seg_to, PROFILE_SNAPSHOT_SCHEMA),
             ).fetchone()
         except Exception:
             return None
@@ -187,15 +207,14 @@ class ProfileEvolutionService:
 
     @staticmethod
     def _cancelled(
-        halves: list[dict[str, Any]], from_ts: int, to_ts: int,
-        mid_ts: int, display_name: str,
+        segment_results: list[dict[str, Any]], from_ts: int, to_ts: int,
+        display_name: str,
     ) -> dict[str, Any]:
         return {
             "ok": False,
             "cancelled": True,
             "from_ts": from_ts,
             "to_ts": to_ts,
-            "mid_ts": mid_ts,
             "display_name": display_name,
-            "halves": halves,
+            "segments": segment_results,
         }

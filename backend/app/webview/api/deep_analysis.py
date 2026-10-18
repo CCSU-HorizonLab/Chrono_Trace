@@ -319,11 +319,12 @@ class DeepAnalysisApiMixin:
         include_self: bool = False,
         force: bool = False,
         account_wxid: str = "",
+        segments: int = 2,
     ) -> dict:
-        """生成画像演变：时间窗对半分前后两段，分别取/生成 custom 快照画像。
+        """生成画像演变：时间窗均分 segments 段（2~6 默认 2），分别取/生成 custom 快照画像。
 
-        同会话单飞（一次最长 4 次 LLM 调用，重复点击直接拒）；快照缓存
-        精确键命中即跳过 LLM 增量续跑；``force=True`` 全部重算。
+        同会话单飞（一次最多 segments×(1+含我) 次 LLM 调用，重复点击直接拒）；
+        快照缓存精确键命中即跳过 LLM 增量续跑；``force=True`` 全部重算。
         """
         try:
             if not conversation_id:
@@ -356,6 +357,7 @@ class DeepAnalysisApiMixin:
                     include_self=bool(include_self),
                     force=bool(force),
                     cancel_event=cancel_event,
+                    segments=int(segments),
                 )
             finally:
                 running.pop(key, None)

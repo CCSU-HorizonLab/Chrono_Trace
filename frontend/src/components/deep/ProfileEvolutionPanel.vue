@@ -3,9 +3,21 @@
     <div class="panel-header">
       <div>
         <div class="panel-title">画像演变</div>
-        <div class="panel-sub">把时间窗对半分成前后两段，分别生成 TA 的画像并对比印象的变化</div>
+        <div class="panel-sub">
+          把时间窗均分为 {{ segmentCount }} 段，分别生成 TA 的画像并对比印象的变化
+        </div>
       </div>
       <div class="header-right">
+        <div class="seg-group" role="group" aria-label="画像分段数">
+          <button
+            v-for="n in segmentOptions"
+            :key="n"
+            class="btn seg-btn"
+            :class="{ active: segmentCount === n }"
+            :disabled="state === 'generating'"
+            @click="setSegments(n)"
+          >{{ n }} 段</button>
+        </div>
         <label v-if="state !== 'generating'" class="self-toggle">
           <input v-model="includeSelf" type="checkbox" :disabled="state === 'generating'" />
           包含我的画像
@@ -25,71 +37,71 @@
     <div v-if="hint" class="hint">{{ hint }}</div>
 
     <div v-if="state === 'generating'" class="state-text">
-      正在为前后半窗分别生成画像，最多 {{ includeSelf ? 4 : 2 }} 次 AI 调用；
-      已完成的半窗会存为快照，中断后重试免费续跑…
+      正在为 {{ segmentCount }} 个分段分别生成画像，最多 {{ segmentCount * (includeSelf ? 2 : 1) }} 次 AI 调用；
+      已完成的分段会存为快照，中断后重试免费续跑…
     </div>
     <div v-else-if="state === 'error'" class="state-text error-text">{{ error }}</div>
 
     <template v-if="result && state !== 'generating' && state !== 'error'">
-      <div class="halves-grid">
-        <div v-for="(half, index) in result.halves || []" :key="index" class="half-col">
-          <div class="half-head">
-            <span class="half-tag">{{ half.label }}</span>
-            <span class="half-range">{{ fmtDate(half.from_ts) }} ~ {{ fmtDate(half.to_ts) }}</span>
+      <div class="segments-grid">
+        <div v-for="(seg, index) in segmentList" :key="index" class="segment-col">
+          <div class="segment-head">
+            <span class="segment-tag">{{ seg.label }}</span>
+            <span class="segment-range">{{ fmtDate(seg.from_ts) }} ~ {{ fmtDate(seg.to_ts) }}</span>
           </div>
 
-          <template v-if="half.contact">
+          <template v-if="seg.contact">
             <div class="kind-title">TA 的画像
-              <span v-if="half.contact.cached" class="badge cached" title="命中历史快照，未重复调用 AI">历史快照</span>
+              <span v-if="seg.contact.cached" class="badge cached" title="命中历史快照，未重复调用 AI">历史快照</span>
             </div>
-            <div v-if="half.contact.error" class="kind-error">{{ half.contact.error }}</div>
-            <template v-else-if="half.contact.profile">
-              <div v-if="tagRows(half).length" class="tag-list">
+            <div v-if="seg.contact.error" class="kind-error">{{ seg.contact.error }}</div>
+            <template v-else-if="seg.contact.profile">
+              <div v-if="tagRows(index).length" class="tag-list">
                 <span
-                  v-for="tag in tagRows(half)"
+                  v-for="tag in tagRows(index)"
                   :key="tag.name"
                   class="tag"
                   :class="tag.cls"
                   :title="tag.title"
                 >{{ tag.name }}</span>
               </div>
-              <div v-if="textOf(half.contact.profile, 'chat_style')" class="field">
+              <div v-if="textOf(seg.contact.profile, 'chat_style')" class="field">
                 <span class="field-label">聊天风格</span>
-                <span>{{ textOf(half.contact.profile, 'chat_style') }}</span>
+                <span>{{ textOf(seg.contact.profile, 'chat_style') }}</span>
               </div>
-              <div v-if="listOf(half.contact.profile, 'interests').length" class="field">
+              <div v-if="listOf(seg.contact.profile, 'interests').length" class="field">
                 <span class="field-label">兴趣</span>
-                <span>{{ listOf(half.contact.profile, 'interests').join('、') }}</span>
+                <span>{{ listOf(seg.contact.profile, 'interests').join('、') }}</span>
               </div>
-              <div v-if="textOf(half.contact.profile, 'relationship_note')" class="field">
+              <div v-if="textOf(seg.contact.profile, 'relationship_note')" class="field">
                 <span class="field-label">关系备注</span>
-                <span>{{ textOf(half.contact.profile, 'relationship_note') }}</span>
+                <span>{{ textOf(seg.contact.profile, 'relationship_note') }}</span>
               </div>
             </template>
-            <div v-else class="half-empty">这段没有可用的画像</div>
+            <div v-else class="segment-empty">这段没有可用的画像</div>
           </template>
 
-          <template v-if="half.self">
+          <template v-if="seg.self">
             <div class="kind-title">我的画像
-              <span v-if="half.self.cached" class="badge cached" title="命中历史快照，未重复调用 AI">历史快照</span>
+              <span v-if="seg.self.cached" class="badge cached" title="命中历史快照，未重复调用 AI">历史快照</span>
             </div>
-            <div v-if="half.self.error" class="kind-error">{{ half.self.error }}</div>
-            <template v-else-if="half.self.profile">
-              <div v-if="textOf(half.self.profile, 'typing_style')" class="field">
+            <div v-if="seg.self.error" class="kind-error">{{ seg.self.error }}</div>
+            <template v-else-if="seg.self.profile">
+              <div v-if="textOf(seg.self.profile, 'typing_style')" class="field">
                 <span class="field-label">打字风格</span>
-                <span>{{ textOf(half.self.profile, 'typing_style') }}</span>
+                <span>{{ textOf(seg.self.profile, 'typing_style') }}</span>
               </div>
-              <div v-if="listOf(half.self.profile, 'frequent_catchphrases').length" class="field">
+              <div v-if="listOf(seg.self.profile, 'frequent_catchphrases').length" class="field">
                 <span class="field-label">口头禅</span>
-                <span>{{ listOf(half.self.profile, 'frequent_catchphrases').join('、') }}</span>
+                <span>{{ listOf(seg.self.profile, 'frequent_catchphrases').join('、') }}</span>
               </div>
-              <div v-if="listOf(half.self.profile, 'sentence_patterns').length" class="field">
+              <div v-if="listOf(seg.self.profile, 'sentence_patterns').length" class="field">
                 <span class="field-label">句式</span>
-                <span>{{ listOf(half.self.profile, 'sentence_patterns').join('；') }}</span>
+                <span>{{ listOf(seg.self.profile, 'sentence_patterns').join('；') }}</span>
               </div>
-              <div v-if="textOf(half.self.profile, 'attitude_and_role')" class="field">
+              <div v-if="textOf(seg.self.profile, 'attitude_and_role')" class="field">
                 <span class="field-label">态度角色</span>
-                <span>{{ textOf(half.self.profile, 'attitude_and_role') }}</span>
+                <span>{{ textOf(seg.self.profile, 'attitude_and_role') }}</span>
               </div>
             </template>
           </template>
@@ -97,9 +109,8 @@
       </div>
 
       <div class="tag-legend">
-        <span class="legend-item"><span class="tag only-pre" />仅前段</span>
-        <span class="legend-item"><span class="tag only-post" />仅后段</span>
-        <span class="legend-item"><span class="tag both" />两段都有</span>
+        <span class="legend-item"><span class="tag unique" />该段独有</span>
+        <span class="legend-item"><span class="tag shared" />各段都有</span>
       </div>
     </template>
   </div>
@@ -111,7 +122,7 @@ import { api } from '@/api/bridge'
 import { toLocalDateKey } from '@/utils/datetime'
 
 type KindBlock = { profile: any; created_at: number; cached: boolean; error?: string } | null
-type Half = { from_ts: number; to_ts: number; label: string; contact?: KindBlock; self?: KindBlock }
+type Segment = { from_ts: number; to_ts: number; label: string; contact?: KindBlock; self?: KindBlock }
 
 const props = defineProps<{
   conversationId: number
@@ -122,10 +133,25 @@ const props = defineProps<{
 }>()
 
 const state = ref<'idle' | 'generating' | 'done' | 'error'>('idle')
-const result = ref<{ halves?: Half[] } | null>(null)
+const result = ref<{ segments?: Segment[] } | null>(null)
 const error = ref('')
 const hint = ref('')
 const includeSelf = ref(false)
+// 画像分段独立于词云分段（每段一次 LLM 快照，成本自控），默认 2 段
+const segmentCount = ref(2)
+const segmentOptions = [2, 3, 4, 5, 6]
+
+const segmentList = computed(() => result.value?.segments || [])
+
+function setSegments(n: number) {
+  if (segmentCount.value === n || state.value === 'generating') return
+  segmentCount.value = n
+  // 快照按 (from,to) 精确命中，切档重开生成即回免费档；旧结果清掉防错配
+  state.value = 'idle'
+  result.value = null
+  hint.value = ''
+  error.value = ''
+}
 
 function fmtDate(tsSeconds: number): string {
   return toLocalDateKey(new Date(tsSeconds * 1000))
@@ -141,19 +167,20 @@ function listOf(profile: any, key: string): string[] {
   return Array.isArray(value) ? value.filter((item) => typeof item === 'string' && item.trim()) : []
 }
 
-const preTags = computed(() => listOf(result.value?.halves?.[0]?.contact?.profile, 'personality_tags'))
-const postTags = computed(() => listOf(result.value?.halves?.[1]?.contact?.profile, 'personality_tags'))
-
-function tagRows(half: Half): Array<{ name: string; cls: string; title: string }> {
-  // 标签按所在半窗着色：另一段没有 → 差异色；两段都有 → 中性色
-  const isPre = half.label === '前半段'
-  const own = new Set(isPre ? preTags.value : postTags.value)
-  const other = new Set(isPre ? postTags.value : preTags.value)
-  return [...own].map((name) => {
-    if (!other.has(name)) {
-      return { name, cls: isPre ? 'only-pre' : 'only-post', title: isPre ? '仅前段出现' : '仅后段出现' }
+function tagRows(index: number): Array<{ name: string; cls: string; title: string }> {
+  // 标签按跨段在场着色：仅本段出现 → 琥珀差异色；多段都有 → 中性色
+  const own = new Set(listOf(segmentList.value[index]?.contact?.profile, 'personality_tags'))
+  const elsewhere = new Set<string>()
+  segmentList.value.forEach((seg, i) => {
+    if (i !== index) {
+      listOf(seg.contact?.profile, 'personality_tags').forEach((name) => elsewhere.add(name))
     }
-    return { name, cls: 'both', title: '前后两段都有' }
+  })
+  return [...own].map((name) => {
+    if (!elsewhere.has(name)) {
+      return { name, cls: 'unique', title: '仅该段出现' }
+    }
+    return { name, cls: 'shared', title: '多段都有' }
   })
 }
 
@@ -167,12 +194,12 @@ async function generate(force: boolean) {
   try {
     const res = await api.generate_profile_evolution(
       props.conversationId, props.dates.from, props.dates.to,
-      includeSelf.value, force,
+      includeSelf.value, force, undefined, segmentCount.value,
     )
     if (requestConv !== props.conversationId || requestEpoch !== props.viewEpoch) return
     if (res?.cancelled) {
       state.value = result.value ? 'done' : 'idle'
-      hint.value = '已取消；已完成的半窗已存为快照，重试会续跑'
+      hint.value = '已取消；已完成的分段已存为快照，重试会续跑'
       return
     }
     if (!res?.ok) {
@@ -187,10 +214,10 @@ async function generate(force: boolean) {
     }
     result.value = res
     state.value = 'done'
-    const cachedCount = (res.halves || []).filter(
-      (half: Half) => half.contact?.cached || half.self?.cached,
+    const cachedCount = (res.segments || []).filter(
+      (seg: Segment) => seg.contact?.cached || seg.self?.cached,
     ).length
-    if (cachedCount) hint.value = `${cachedCount} 个半窗命中历史快照，未重复调用 AI`
+    if (cachedCount) hint.value = `${cachedCount} 个分段命中历史快照，未重复调用 AI`
   } catch (e: any) {
     if (requestConv !== props.conversationId || requestEpoch !== props.viewEpoch) return
     state.value = 'error'
@@ -256,6 +283,17 @@ watch(
   flex-shrink: 0;
 }
 
+.seg-group {
+  display: flex;
+  gap: var(--ct-space-xs);
+}
+
+.seg-btn.active {
+  background: var(--ct-color-primary-light);
+  color: var(--ct-color-primary);
+  border-color: var(--ct-color-primary);
+}
+
 .self-toggle {
   display: inline-flex;
   align-items: center;
@@ -299,13 +337,13 @@ watch(
   color: var(--ct-color-error, #dc2626);
 }
 
-.halves-grid {
+.segments-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   gap: var(--ct-space-md);
 }
 
-.half-col {
+.segment-col {
   background: var(--ct-bg-secondary);
   border: 1px solid var(--ct-border-color);
   border-radius: var(--ct-radius-md);
@@ -313,7 +351,7 @@ watch(
   min-width: 0;
 }
 
-.half-head {
+.segment-head {
   display: flex;
   align-items: center;
   gap: var(--ct-space-sm);
@@ -321,13 +359,13 @@ watch(
   flex-wrap: wrap;
 }
 
-.half-tag {
+.segment-tag {
   color: var(--ct-text-primary);
   font-weight: var(--ct-font-bold);
   font-size: var(--ct-text-sm);
 }
 
-.half-range {
+.segment-range {
   color: var(--ct-text-tertiary);
   font-size: var(--ct-text-xs);
 }
@@ -372,14 +410,14 @@ watch(
   color: var(--ct-text-secondary);
 }
 
-.tag.only-pre {
+.tag.unique {
   border-color: #d97706;
   color: #d97706;
 }
 
-.tag.only-post {
-  border-color: var(--ct-color-primary);
-  color: var(--ct-color-primary);
+.tag.shared {
+  border-color: var(--ct-border-color);
+  color: var(--ct-text-secondary);
 }
 
 .field {
@@ -396,7 +434,7 @@ watch(
   color: var(--ct-text-tertiary);
 }
 
-.half-empty {
+.segment-empty {
   color: var(--ct-text-tertiary);
   font-size: var(--ct-text-xs);
   padding: var(--ct-space-sm) 0;

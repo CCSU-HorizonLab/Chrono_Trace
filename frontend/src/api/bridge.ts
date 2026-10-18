@@ -63,8 +63,8 @@ type PyWebViewApi = {
   get_big5_impressions: (conversation_id: number, account_wxid?: string, fromTs?: number, toTs?: number) => Promise<any>
   enhance_big5_impressions: (conversation_id: number, account_wxid?: string, fromTs?: number, toTs?: number) => Promise<any>
   cancel_big5_impressions: (conversation_id: number, account_wxid?: string, fromTs?: number, toTs?: number) => Promise<any>
-  // 画像演变（前后半窗双画像对比；include_self 附带我的画像；force 无视缓存重算）
-  generate_profile_evolution: (conversation_id: number, from: string, to: string, include_self?: boolean, force?: boolean, account_wxid?: string) => Promise<any>
+  // 画像演变（时间窗均分 2~6 段对比；include_self 附带我的画像；force 无视缓存重算）
+  generate_profile_evolution: (conversation_id: number, from: string, to: string, include_self?: boolean, force?: boolean, account_wxid?: string, segments?: number) => Promise<any>
   cancel_profile_evolution: (conversation_id: number, account_wxid?: string) => Promise<any>
   // 时光深度：分享海报（前端 html2canvas 合成，PNG 落盘导出目录）
   get_poster_payload: (conversation_id: number, from: string, to: string, account_wxid?: string) => Promise<any>

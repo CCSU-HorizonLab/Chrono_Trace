@@ -3,37 +3,49 @@
     <div class="panel-header">
       <div>
         <div class="panel-title">词云演变</div>
-        <div class="panel-sub">把时间窗对半分成前后两段，对比你们聊得最多的词有什么不同</div>
+        <div class="panel-sub">把时间窗均分为 {{ segments }} 段，对比你们聊得最多的词有什么不同</div>
       </div>
-      <div class="perspective-group" role="group" aria-label="词云视角">
-        <button
-          v-for="option in perspectiveOptions"
-          :key="option.value"
-          class="btn perspective-btn"
-          :class="{ active: perspective === option.value }"
-          @click="perspective = option.value"
-        >{{ option.label }}</button>
+      <div class="control-group">
+        <div class="perspective-group" role="group" aria-label="词云分段数">
+          <button
+            v-for="n in segmentOptions"
+            :key="n"
+            class="btn seg-btn"
+            :class="{ active: segments === n }"
+            @click="emit('update:segments', n)"
+          >{{ n }} 段</button>
+        </div>
+        <div class="perspective-group" role="group" aria-label="词云视角">
+          <button
+            v-for="option in perspectiveOptions"
+            :key="option.value"
+            class="btn perspective-btn"
+            :class="{ active: perspective === option.value }"
+            @click="perspective = option.value"
+          >{{ option.label }}</button>
+        </div>
       </div>
     </div>
 
-    <div v-if="!halves.length" class="empty">所选区间暂无文本消息</div>
+    <div v-if="evolution?.error" class="empty">{{ evolution.error }}</div>
+    <div v-else-if="!segmentList.length" class="empty">所选区间暂无文本消息</div>
     <template v-else>
       <div class="caliber-row">
         <span class="badge" :class="`badge-${evolution.caliber}`">{{ caliberLabel }}</span>
         <span class="caliber-note">{{ caliberNote }}</span>
       </div>
 
-      <div class="halves-grid">
-        <div v-for="(half, index) in halves" :key="index" class="half-col">
-          <div class="half-head">
-            <span class="half-tag">{{ index === 0 ? '前半段' : '后半段' }}</span>
-            <span class="half-range">{{ fmtDate(half.from_ts) }} ~ {{ fmtDate(half.to_ts) }}</span>
-            <span v-if="half.truncated" class="half-truncated" title="消息过多，已等距抽样前 1.5 万条">已抽样</span>
+      <div class="segments-grid" :style="{ gridTemplateColumns: `repeat(${segmentList.length}, 1fr)` }">
+        <div v-for="(seg, index) in segmentList" :key="index" class="segment-col">
+          <div class="seg-head">
+            <span class="seg-tag">第 {{ index + 1 }} 段</span>
+            <span class="seg-range">{{ fmtDate(seg.from_ts) }} ~ {{ fmtDate(seg.to_ts) }}</span>
+            <span v-if="seg.truncated" class="seg-truncated" title="消息过多，已等距抽样前 1.5 万条">已抽样</span>
           </div>
-          <div v-if="currentWords(half).length" class="half-cloud">
-            <WordCloud :words="currentWords(half)" :limit="40" />
+          <div v-if="currentWords(seg).length" class="seg-cloud">
+            <WordCloud :words="currentWords(seg)" :limit="40" />
           </div>
-          <div v-else class="half-empty">这段没有足够的文本</div>
+          <div v-else class="seg-empty">这段没有足够的文本</div>
         </div>
       </div>
     </template>
@@ -47,7 +59,7 @@ import { toLocalDateKey } from '@/utils/datetime'
 
 type WordItem = { word: string; weight: number }
 
-type Half = {
+type Segment = {
   from_ts: number
   to_ts: number
   truncated: boolean
@@ -60,9 +72,17 @@ const props = defineProps<{
   evolution: {
     caliber: 'cleaned' | 'raw' | 'none'
     coverage_ratio: number
-    halves: Half[]
+    segments: Segment[]
+    error?: string
   }
+  /** 分段数（2~6）；选择器经 update:segments 冒泡，父级重拉数据 */
+  segments: number
 }>()
+
+const emit = defineEmits<{ (e: 'update:segments', value: number): void }>()
+
+// 与后端 DEEP_WORDCLOUD_SEGMENTS_MIN/MAX 对齐
+const segmentOptions = [2, 3, 4, 5, 6]
 
 const perspective = ref<'all' | 'me' | 'other'>('all')
 const perspectiveOptions = [
@@ -71,17 +91,17 @@ const perspectiveOptions = [
   { value: 'other' as const, label: 'TA' },
 ]
 
-const halves = computed(() => props.evolution?.halves || [])
+const segmentList = computed(() => props.evolution?.segments || [])
 
-function currentWords(half: Half): WordItem[] {
-  return half?.words?.[perspective.value] || []
+function currentWords(seg: Segment): WordItem[] {
+  return seg?.words?.[perspective.value] || []
 }
 
 const caliberLabel = computed(
   () => ({ cleaned: '清洗口径', raw: '原始文本口径', none: '无数据' } as Record<string, string>)[props.evolution?.caliber] || '未知口径',
 )
 
-// 口径由清洗覆盖率整窗二选一，绝不前后混用（见 docs/analysis/time-depth.md）
+// 口径由清洗覆盖率整窗二选一，绝不各段混用（见 docs/analysis/time-depth.md）
 const caliberNote = computed(() => {
   if (props.evolution?.caliber === 'cleaned') {
     return '已用分析清洗后的文本（去表情/XML/系统消息），词更干净'
@@ -89,7 +109,7 @@ const caliberNote = computed(() => {
   if (props.evolution?.caliber === 'raw') {
     return '该会话尚未全面分析（清洗文本覆盖率 '
       + Math.round((props.evolution?.coverage_ratio || 0) * 100)
-      + '%），前后两段统一用原始消息文本，保证口径一致'
+      + '%），各段统一用原始消息文本，保证口径一致'
   }
   return ''
 })
@@ -130,6 +150,13 @@ function fmtDate(tsSeconds: number): string {
   font-size: var(--ct-text-xs);
 }
 
+.control-group {
+  display: flex;
+  gap: var(--ct-space-sm);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
 .perspective-group {
   display: flex;
   gap: var(--ct-space-xs);
@@ -147,6 +174,7 @@ function fmtDate(tsSeconds: number): string {
   transition: all 0.2s ease;
 }
 
+.seg-btn.active,
 .perspective-btn.active {
   background: var(--ct-color-primary-light);
   color: var(--ct-color-primary);
@@ -179,19 +207,18 @@ function fmtDate(tsSeconds: number): string {
   font-size: var(--ct-text-xs);
 }
 
-.halves-grid {
+.segments-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
   gap: var(--ct-space-md);
 }
 
 @media (max-width: 900px) {
-  .halves-grid {
-    grid-template-columns: 1fr;
+  .segments-grid {
+    grid-template-columns: 1fr !important;
   }
 }
 
-.half-col {
+.segment-col {
   background: var(--ct-bg-secondary);
   border: 1px solid var(--ct-border-color);
   border-radius: var(--ct-radius-md);
@@ -199,7 +226,7 @@ function fmtDate(tsSeconds: number): string {
   min-width: 0;
 }
 
-.half-head {
+.seg-head {
   display: flex;
   align-items: center;
   gap: var(--ct-space-sm);
@@ -207,18 +234,18 @@ function fmtDate(tsSeconds: number): string {
   flex-wrap: wrap;
 }
 
-.half-tag {
+.seg-tag {
   color: var(--ct-text-primary);
   font-weight: var(--ct-font-bold);
   font-size: var(--ct-text-sm);
 }
 
-.half-range {
+.seg-range {
   color: var(--ct-text-secondary);
   font-size: var(--ct-text-xs);
 }
 
-.half-truncated {
+.seg-truncated {
   padding: 1px 8px;
   border-radius: 999px;
   background: var(--ct-bg-tertiary);
@@ -226,7 +253,7 @@ function fmtDate(tsSeconds: number): string {
   font-size: var(--ct-text-xs);
 }
 
-.half-empty {
+.seg-empty {
   color: var(--ct-text-tertiary);
   font-size: var(--ct-text-xs);
   padding: var(--ct-space-lg) 0;

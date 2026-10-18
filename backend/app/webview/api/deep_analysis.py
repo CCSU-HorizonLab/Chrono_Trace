@@ -27,6 +27,7 @@ class DeepAnalysisApiMixin:
         from_date: str,
         to_date: str,
         bucket: str = "week",
+        word_segments: int = 4,
     ) -> dict:
         """获取时光深度聚合数据（分桶情绪序列+覆盖率、拐点、词云演变、里程碑、好感度落点）。
 
@@ -35,6 +36,7 @@ class DeepAnalysisApiMixin:
             from_date: 开始日期 "2025-01-01"
             to_date: 结束日期 "2025-12-31"
             bucket: 分桶粒度 day/week/month/year（默认 week）
+            word_segments: 词云演变分段数 2~6（默认 4）
 
         Returns:
             {ok, version, bucket, buckets, turning_points, wordcloud_evolution,
@@ -56,7 +58,8 @@ class DeepAnalysisApiMixin:
 
             service = DeepAnalysisService()
             return service.get_deep_analysis(
-                int(conversation_id), from_ts, to_ts, bucket=bucket
+                int(conversation_id), from_ts, to_ts, bucket=bucket,
+                word_segments=int(word_segments),
             )
         except ValueError as e:
             return {"ok": False, "error": f"参数格式错误: {e}"}

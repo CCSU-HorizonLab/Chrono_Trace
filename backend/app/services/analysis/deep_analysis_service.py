@@ -6,9 +6,9 @@
   双查询合并补出 coverage：未覆盖桶 score=None 且 lowConfidence=True，
   msgCount 仍按全量文本消息计，前端可如实画出「有聊天但缺情感」的时段。
 - 词云演变不走 preprocess_conversation（其 ANALYSIS_MESSAGE_LIMIT=50000 按
-  时间升序截断，大会话后半窗会被整体截空），改按半窗直查并独立上限+等距抽样。
+  时间升序截断，大会话后半段会被整体截空），改按分段直查并独立上限+等距抽样。
   整个模块按 message_preprocessed 覆盖率二选一口径（≥90% 用清洗缓存文本，
-  否则统一用原始 content），绝不前后半窗混用。
+  否则统一用原始 content），绝不各段混用。
 - 好感度历史点只取当前口径（CALIBER_VERSION）行：历史只在全面分析完成时
   落点，是稀疏的「分析落点」而非每日快照，前端叠加时须注明。
 """
@@ -25,12 +25,18 @@ logger = logging.getLogger(__name__)
 
 # 桶口径/序列结构版本：分桶表达式或点位结构变化时 +1（payload 携带，
 # 序列实时计算无缓存，版本主要用于前端兼容判断与文档口径记录）
-DEEP_ANALYSIS_VERSION = 1
+# v2：词云演变 halves→segments（2~6 段可配，默认 4）
+DEEP_ANALYSIS_VERSION = 2
 
 DEEP_BUCKET_GRANULARITIES = ("day", "week", "month", "year")
 
-# 词云演变每半窗消息上限（超出等距抽样并标记 truncated）
-DEEP_WORDCLOUD_HALF_LIMIT = 15000
+# 词云演变分段数：可选范围与默认值
+DEEP_WORDCLOUD_SEGMENTS_MIN = 2
+DEEP_WORDCLOUD_SEGMENTS_MAX = 6
+DEEP_WORDCLOUD_SEGMENTS_DEFAULT = 4
+
+# 词云演变每段消息上限（超出等距抽样并标记 truncated）
+DEEP_WORDCLOUD_SEGMENT_LIMIT = 15000
 
 # 判断「整个窗已有足够清洗缓存」可用清洗口径的覆盖率线
 DEEP_PREPROCESSED_COVERAGE = 0.9
@@ -58,6 +64,25 @@ POSTER_AVATAR_MAX_BYTES = 2 * 1024 * 1024  # 头像转 base64 上限
 POSTER_WORDCLOUD_SAMPLE = 2000   # top 词计算的消息抽样上限
 
 
+def split_window_evenly(from_ts: int, to_ts: int, segments: int) -> List[Tuple[int, int]]:
+    """把闭区间 [from_ts, to_ts] 均分为 segments 段，返回各段 (start, end) 闭区间。
+
+    边界 b_i = ((segments - i) * from_ts + i * to_ts) // segments，
+    段 i = [b_i, b_{i+1} - 1]（末段 [b_{n-1}, to_ts]，含终点）——segments=2
+    时第二段起点即 (from_ts + to_ts) // 2，与历史 halves 公式逐点一致。
+    词云演变（N 段可配）与画像演变（固定对半）共用本函数，保证「同窗同分」
+    口径同源。窗口过短时可能产出空段（end < start），由调用方守卫。
+    """
+    bounds = [
+        ((segments - i) * from_ts + i * to_ts) // segments
+        for i in range(segments + 1)
+    ]
+    return [
+        (bounds[i], bounds[i + 1] - 1 if i + 1 < segments else to_ts)
+        for i in range(segments)
+    ]
+
+
 class DeepAnalysisService:
     """时光深度聚合服务（无状态，实时计算不落缓存）"""
 
@@ -75,15 +100,21 @@ class DeepAnalysisService:
         from_ts: int,
         to_ts: int,
         bucket: str = "week",
+        word_segments: int = DEEP_WORDCLOUD_SEGMENTS_DEFAULT,
         marks: Tuple[int, ...] = DEEP_DEFAULT_MARKS,
     ) -> Dict[str, Any]:
         """组装时光深度 payload：分桶情绪序列 + 拐点 + 词云演变 + 里程碑 + 好感度落点"""
         if bucket not in DEEP_BUCKET_GRANULARITIES:
             return {"ok": False, "error": f"未知分桶粒度: {bucket}"}
+        if not (DEEP_WORDCLOUD_SEGMENTS_MIN <= word_segments <= DEEP_WORDCLOUD_SEGMENTS_MAX):
+            return {
+                "ok": False,
+                "error": f"词云分段数须在 {DEEP_WORDCLOUD_SEGMENTS_MIN}~{DEEP_WORDCLOUD_SEGMENTS_MAX} 之间: {word_segments}",
+            }
 
         merged = self._merged_bucket_series(conversation_id, from_ts, to_ts, bucket)
         turning = self._sentiment_turning_points(merged)
-        wordcloud = self._wordcloud_evolution(conversation_id, from_ts, to_ts)
+        wordcloud = self._wordcloud_evolution(conversation_id, from_ts, to_ts, word_segments)
         milestones = self._build_milestones(conversation_id, from_ts, to_ts, marks)
         affinity = self._affinity_history_points(conversation_id, from_ts, to_ts)
 
@@ -189,17 +220,32 @@ class DeepAnalysisService:
         return [item for item in (best["drop"], best["rise"]) if item]
 
     # ------------------------------------------------------------------
-    # 词云演变（前后半窗 × 双方/我/TA）
+    # 词云演变（均分 N 段 × 双方/我/TA）
     # ------------------------------------------------------------------
 
-    def _wordcloud_evolution(self, conversation_id: int, from_ts: int, to_ts: int) -> Dict[str, Any]:
-        """前后半窗词云对比。整个模块按清洗覆盖率二选一口径，绝不混合。"""
+    def _wordcloud_evolution(
+        self,
+        conversation_id: int,
+        from_ts: int,
+        to_ts: int,
+        segments: int = DEEP_WORDCLOUD_SEGMENTS_DEFAULT,
+    ) -> Dict[str, Any]:
+        """词云分段演变。整个窗口按清洗覆盖率二选一口径，绝不各段混用。"""
         total = self._count_text_messages(conversation_id, from_ts, to_ts)
         if not total:
             return {
                 "caliber": "none",
                 "coverage_ratio": 0.0,
-                "halves": [],
+                "segments": [],
+            }
+
+        window_parts = split_window_evenly(from_ts, to_ts, segments)
+        if any(seg_to < seg_from for seg_from, seg_to in window_parts):
+            return {
+                "caliber": "none",
+                "coverage_ratio": 0.0,
+                "segments": [],
+                "error": f"时间窗太短，无法均分为 {segments} 段",
             }
 
         preprocessed_count = self._count_preprocessed_messages(conversation_id, from_ts, to_ts)
@@ -210,23 +256,22 @@ class DeepAnalysisService:
         if self._wordcloud_gen is None:
             self._wordcloud_gen = WordCloudGenerator()
 
-        mid_ts = (from_ts + to_ts) // 2
-        halves = []
-        for half_from, half_to in ((from_ts, mid_ts - 1), (mid_ts, to_ts)):
-            rows, sampled_total = self._load_half_texts(
-                conversation_id, half_from, half_to, use_cleaned,
-                limit=DEEP_WORDCLOUD_HALF_LIMIT,
+        results = []
+        for seg_from, seg_to in window_parts:
+            rows, sampled_total = self._load_segment_texts(
+                conversation_id, seg_from, seg_to, use_cleaned,
+                limit=DEEP_WORDCLOUD_SEGMENT_LIMIT,
             )
-            truncated = sampled_total > DEEP_WORDCLOUD_HALF_LIMIT
+            truncated = sampled_total > DEEP_WORDCLOUD_SEGMENT_LIMIT
 
             texts = {"all": [], "me": [], "other": []}
             for is_sender, content in rows:
                 texts["all"].append(content)
                 texts["me" if is_sender == 1 else "other"].append(content)
 
-            halves.append({
-                "from_ts": half_from,
-                "to_ts": half_to,
+            results.append({
+                "from_ts": seg_from,
+                "to_ts": seg_to,
                 "truncated": truncated,
                 "sampled": len(rows),
                 "total": sampled_total,
@@ -239,7 +284,7 @@ class DeepAnalysisService:
         return {
             "caliber": caliber,
             "coverage_ratio": round(coverage_ratio, 3),
-            "halves": halves,
+            "segments": results,
         }
 
     @staticmethod
@@ -272,11 +317,11 @@ class DeepAnalysisService:
         return int(row[0] or 0)
 
     @staticmethod
-    def _load_half_texts(
+    def _load_segment_texts(
         conversation_id: int, from_ts: int, to_ts: int, use_cleaned: bool,
         limit: int = 0,
     ) -> Tuple[List[Tuple[int, str]], int]:
-        """取半窗 (is_sender, 文本) 有序对与真实总数。清洗口径回表 message_preprocessed。
+        """取一段 (is_sender, 文本) 有序对与真实总数。清洗口径回表 message_preprocessed。
 
         limit>0 且超出时在 SQL 侧等距抽样：大会话几十万行不再整体搬过
         进程边界，Python 只接收 ≤limit 行；truncated 由调用方按总数判定。

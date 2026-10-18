@@ -69,7 +69,9 @@ def llm_calls(monkeypatch):
 
 
 def test_halves_boundary_matches_wordcloud_formula(isolated_db, llm_calls):
-    """对半公式与词云严格同式：mid=(f+t)//2，前 [f, mid-1] 后 [mid, t] 闭区间。"""
+    """对半公式与词云共用切窗工具：mid=(f+t)//2，前 [f, mid-1] 后 [mid, t] 闭区间。"""
+    from app.services.analysis.deep_analysis_service import split_window_evenly
+
     conn = isolated_db
     conv_id = seed_conversation(conn)
 
@@ -77,10 +79,7 @@ def test_halves_boundary_matches_wordcloud_formula(isolated_db, llm_calls):
 
     assert result["ok"] is True
     assert result["mid_ts"] == 1500
-    assert result["halves"][0]["from_ts"] == 1000
-    assert result["halves"][0]["to_ts"] == 1499
-    assert result["halves"][1]["from_ts"] == 1500
-    assert result["halves"][1]["to_ts"] == 2001
+    assert [(h["from_ts"], h["to_ts"]) for h in result["halves"]] == split_window_evenly(1000, 2001, 2)
     assert [h["label"] for h in result["halves"]] == ["前半段", "后半段"]
     # 两个半窗各调一次联系人画像（默认不含我的画像）
     assert [("contact", 1000, 1499), ("contact", 1500, 2001)] == [

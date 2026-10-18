@@ -1,6 +1,7 @@
 """时光深度·画像演变：前后半窗双画像对比。
 
-口径与词云演变严格同式——``mid_ts = (from_ts + to_ts) // 2``，前半窗
+切窗与词云演变共用 ``split_window_evenly``（词云可配 2~6 段，画像演变
+固定对半——每段是独立 LLM 快照，成本随段数线性涨）：前半窗
 ``[from_ts, mid_ts - 1]``、后半窗 ``[mid_ts, to_ts]`` 闭区间，同窗同分，
 画像演变与词云演变可直接对照。
 
@@ -21,6 +22,7 @@ from ...db.connection import get_db
 # 仅引常量（profiler 无 analysis 模块级依赖，无环）；profiler 实例仍在
 # generate() 内延迟导入，保持 analysis←realtime 单向
 from ..realtime.contact_profiler import PROFILE_CUSTOM_MAX_SPAN, PROFILE_SNAPSHOT_SCHEMA
+from .deep_analysis_service import split_window_evenly
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +42,9 @@ class ProfileEvolutionService:
     ) -> dict[str, Any]:
         conversation_id = int(conversation_id or 0)
         from_ts, to_ts = int(from_ts), int(to_ts)
-        mid_ts = (from_ts + to_ts) // 2
+        # 与词云演变共用切窗公式（N=2）；mid_ts 兼作防呆判定与 payload 字段
+        halves_span = split_window_evenly(from_ts, to_ts, 2)
+        mid_ts = halves_span[1][0]
         if mid_ts - 1 < from_ts:
             return {"ok": False, "error": "时间窗太短，无法对半分段（至少需两天跨度）"}
 
@@ -75,9 +79,7 @@ class ProfileEvolutionService:
             return cancel_event is not None and cancel_event.is_set()
 
         halves: list[dict[str, Any]] = []
-        for index, (half_from, half_to) in enumerate(
-            ((from_ts, mid_ts - 1), (mid_ts, to_ts))
-        ):
+        for index, (half_from, half_to) in enumerate(halves_span):
             if _aborted():
                 return self._cancelled(halves, from_ts, to_ts, mid_ts, display_name)
             half: dict[str, Any] = {

@@ -14,7 +14,11 @@
         :granularity="granularity"
         :affinity="payload.affinity_history || null"
       />
-      <WordEvolutionPanel :evolution="payload.wordcloud_evolution || { caliber: 'none', coverage_ratio: 0, halves: [] }" />
+      <WordEvolutionPanel
+        :evolution="payload.wordcloud_evolution || { caliber: 'none', coverage_ratio: 0, segments: [] }"
+        :segments="wordSegments"
+        @update:segments="wordSegments = $event"
+      />
       <ProfileEvolutionPanel
         :conversation-id="conversationId"
         :dates="dates"
@@ -56,6 +60,8 @@ const props = defineProps<{
 const payload = ref<any>(null)
 const loading = ref(false)
 const error = ref('')
+// 词云演变分段数（2~6，默认 4）；面板内选择器改它触发整 payload 重拉
+const wordSegments = ref(4)
 
 async function load() {
   const epoch = props.viewEpoch
@@ -63,7 +69,7 @@ async function load() {
   error.value = ''
   try {
     const result = await api.get_deep_analysis(
-      props.conversationId, props.dates.from, props.dates.to, props.granularity,
+      props.conversationId, props.dates.from, props.dates.to, props.granularity, wordSegments.value,
     )
     if (epoch !== props.viewEpoch) return // 已切走，丢弃过期响应
     if (!result?.ok) {
@@ -82,7 +88,7 @@ async function load() {
 }
 
 watch(
-  () => [props.conversationId, props.dates.from, props.dates.to, props.granularity, props.viewEpoch],
+  () => [props.conversationId, props.dates.from, props.dates.to, props.granularity, props.viewEpoch, wordSegments.value],
   () => { payload.value = null; load() },
   { immediate: true },
 )

@@ -14,7 +14,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import app.services.analysis.analysis_service as analysismod
 import app.services.analysis.deep_analysis_service as deepmod
-from app.services.analysis.deep_analysis_service import DeepAnalysisService
+from app.services.analysis.deep_analysis_service import (
+    DEEP_WORDCLOUD_SEGMENTS_DEFAULT,
+    DeepAnalysisService,
+    split_window_evenly,
+)
 
 
 def ts(year, month, day, hour=12):
@@ -225,14 +229,33 @@ class TestMilestones:
         assert first["ts"] == ts(2026, 3, 1)
 
 
-class TestHalfTextSampling:
+class TestWindowSplit:
+    def test_two_segments_match_legacy_halves_formula(self):
+        """N=2 与历史 mid_ts=(from+to)//2 前后切分逐点一致。"""
+        assert split_window_evenly(1000, 2001, 2) == [(1000, 1499), (1500, 2001)]
+        assert split_window_evenly(1000, 2000, 2) == [(1000, 1499), (1500, 2000)]
+
+    def test_four_segments_even(self):
+        t0, day = 1000, 86400
+        # 前三段 [b_i, b_{i+1}-1]，末段含终点 to_ts
+        expected = [(t0 + i * day, t0 + (i + 1) * day - 1) for i in range(3)]
+        expected.append((t0 + 3 * day, t0 + 4 * day))
+        assert split_window_evenly(t0, t0 + 4 * day, 4) == expected
+
+    def test_short_window_yields_empty_segment(self):
+        """窗口秒数小于段数时产出空段（end < start），由调用方守卫。"""
+        parts = split_window_evenly(1000, 1002, 4)
+        assert any(end < start for start, end in parts)
+
+
+class TestSegmentTextSampling:
     def test_sampling_returns_exactly_limit_rows(self, db):
         """Bresenham 等距抽样取恰 limit 行：1001/500 不再因步长取模欠采到 333 行。"""
         base = ts(2026, 3, 1)
         for i in range(1001):
             msg(db, base + i * 60, content=f"m{i}", with_sentiment=False)
 
-        rows, total = DeepAnalysisService._load_half_texts(
+        rows, total = DeepAnalysisService._load_segment_texts(
             1, base, base + 1001 * 60, False, limit=500
         )
 
@@ -243,9 +266,30 @@ class TestHalfTextSampling:
 
 
 class TestWordcloudEvolution:
+    @staticmethod
+    def _only_segment_with_words(evo):
+        segs = [s for s in evo["segments"] if s["words"]["all"]]
+        assert len(segs) == 1
+        return segs[0]
+
+    def test_default_is_four_segments(self, db):
+        """默认 4 段，段边界与切窗工具一致。"""
+        base = ts(2026, 3, 1)
+        for i in range(4):
+            msg(db, base + i * 60, content="火锅火锅火锅", with_sentiment=False)
+
+        result = DeepAnalysisService().get_deep_analysis(
+            1, ts(2026, 3, 1), ts(2026, 3, 5), bucket="week"
+        )
+        segs = result["wordcloud_evolution"]["segments"]
+        assert len(segs) == DEEP_WORDCLOUD_SEGMENTS_DEFAULT == 4
+        assert [(s["from_ts"], s["to_ts"]) for s in segs] == split_window_evenly(
+            ts(2026, 3, 1), ts(2026, 3, 5), 4
+        )
+
     def test_cleaned_caliber_when_fully_preprocessed(self, db):
         """覆盖率 ≥90%：用清洗缓存文本，原始噪声词不出现。"""
-        base = ts(2026, 3, 3, 8)  # 上午：窗口(03-03~03-05)中点之前，归前半窗
+        base = ts(2026, 3, 3, 8)  # 上午：落默认 4 段中的第 2 段
         for i in range(4):
             mid = msg(db, base + i * 60, is_sender=i % 2, content="火锅火锅火锅", with_sentiment=False)
             preprocessed(db, mid, "旅行计划讨论")
@@ -255,12 +299,12 @@ class TestWordcloudEvolution:
         )
         evo = result["wordcloud_evolution"]
         assert evo["caliber"] == "cleaned"
-        words = {w["word"] for w in evo["halves"][0]["words"]["all"]}
+        words = {w["word"] for w in self._only_segment_with_words(evo)["words"]["all"]}
         assert "旅行" in words
         assert "火锅" not in words
 
     def test_raw_caliber_when_coverage_low(self, db):
-        """覆盖率 <90%：统一回退原始 content，不与前半窗缓存混口径。"""
+        """覆盖率 <90%：统一回退原始 content，不与其他段缓存混口径。"""
         base = ts(2026, 3, 3, 8)
         for i in range(4):
             mid = msg(db, base + i * 60, content="火锅火锅火锅", with_sentiment=False)
@@ -272,35 +316,67 @@ class TestWordcloudEvolution:
         )
         evo = result["wordcloud_evolution"]
         assert evo["caliber"] == "raw"
-        words = {w["word"] for w in evo["halves"][0]["words"]["all"]}
+        words = {w["word"] for w in self._only_segment_with_words(evo)["words"]["all"]}
         assert "火锅" in words
 
-    def test_party_split_and_halves(self, db):
-        """me/other 分视角；前后半窗按窗口中点切分。"""
-        base = ts(2026, 3, 3)
-        # 前半窗：我谈旅行，对方谈加班
+    def test_party_split_across_segments(self, db):
+        """me/other 分视角；默认 4 段各段词集互不串段。"""
+        base = ts(2026, 3, 3)  # 正午：默认 4 段的边界在每日正午，03-03 属第 3 段
+        # 第 3 段（03-03 12:00 起）：我谈旅行，对方谈加班
         for i in range(3):
             msg(db, base + i * 60, is_sender=1, content="旅行旅行旅行", with_sentiment=False)
             msg(db, base + i * 60 + 30, is_sender=0, content="加班加班加班", with_sentiment=False)
-        # 后半窗（3 月 4 日下午之后）
+        # 第 4 段（03-04 12:00 起）
         late = ts(2026, 3, 4, 18)
         for i in range(3):
             msg(db, late + i * 60, is_sender=1, content="健身健身健身", with_sentiment=False)
             msg(db, late + i * 60 + 30, is_sender=0, content="考试考试考试", with_sentiment=False)
 
         result = DeepAnalysisService().get_deep_analysis(
-            1, ts(2026, 3, 3), ts(2026, 3, 5), bucket="week"
+            1, ts(2026, 3, 1), ts(2026, 3, 5), bucket="week"
         )
-        halves = result["wordcloud_evolution"]["halves"]
-        assert len(halves) == 2
-        first_all = {w["word"] for w in halves[0]["words"]["all"]}
-        assert {"旅行", "加班"} <= first_all
-        me_words = {w["word"] for w in halves[0]["words"]["me"]}
-        assert me_words == {"旅行"}
-        other_words = {w["word"] for w in halves[0]["words"]["other"]}
-        assert other_words == {"加班"}
-        second_all = {w["word"] for w in halves[1]["words"]["all"]}
-        assert {"健身", "考试"} <= second_all
+        segs = result["wordcloud_evolution"]["segments"]
+        assert len(segs) == 4
+        third, fourth = segs[2], segs[3]
+        third_all = {w["word"] for w in third["words"]["all"]}
+        assert {"旅行", "加班"} <= third_all
+        assert {w["word"] for w in third["words"]["me"]} == {"旅行"}
+        assert {w["word"] for w in third["words"]["other"]} == {"加班"}
+        assert {"健身", "考试"} <= {w["word"] for w in fourth["words"]["all"]}
+
+    def test_two_segments_reproduce_halves_boundary(self, db):
+        """segments=2 复现历史前后半窗边界：中点无缝相接，前后词集按半窗落段。"""
+        base = ts(2026, 3, 3)
+        for i in range(3):
+            msg(db, base + i * 60, is_sender=1, content="旅行旅行旅行", with_sentiment=False)
+            msg(db, base + i * 60 + 30, is_sender=0, content="加班加班加班", with_sentiment=False)
+        late = ts(2026, 3, 4, 18)  # 窗口正中点之后，归后半窗
+        for i in range(3):
+            msg(db, late + i * 60, is_sender=1, content="健身健身健身", with_sentiment=False)
+
+        result = DeepAnalysisService().get_deep_analysis(
+            1, ts(2026, 3, 3), ts(2026, 3, 5), bucket="week", word_segments=2
+        )
+        segs = result["wordcloud_evolution"]["segments"]
+        assert len(segs) == 2
+        assert segs[0]["to_ts"] + 1 == segs[1]["from_ts"]
+        assert {w["word"] for w in segs[0]["words"]["me"]} == {"旅行"}
+        assert {w["word"] for w in segs[1]["words"]["me"]} == {"健身"}
+
+    def test_segments_out_of_range_rejected(self, db):
+        result = DeepAnalysisService().get_deep_analysis(
+            1, ts(2026, 3, 1), ts(2026, 3, 5), bucket="week", word_segments=7
+        )
+        assert result["ok"] is False
+        assert "分段" in result["error"]
+
+    def test_short_window_returns_error_not_crash(self, db):
+        """窗口切不出 4 段：返回空段+error，不抛异常。"""
+        msg(db, 1000, content="火锅火锅火锅", with_sentiment=False)
+
+        evo = DeepAnalysisService()._wordcloud_evolution(1, 1000, 1002, 4)
+        assert evo["segments"] == []
+        assert evo["error"]
 
     def test_empty_window(self, db):
         result = DeepAnalysisService().get_deep_analysis(
@@ -308,7 +384,7 @@ class TestWordcloudEvolution:
         )
         assert result["ok"] is True
         assert result["buckets"] == []
-        assert result["wordcloud_evolution"]["halves"] == []
+        assert result["wordcloud_evolution"]["segments"] == []
         assert result["milestones"] == []
 
 

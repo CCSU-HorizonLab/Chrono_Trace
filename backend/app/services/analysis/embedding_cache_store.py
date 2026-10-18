@@ -27,6 +27,16 @@ logger = logging.getLogger(__name__)
 
 _BATCH_IN_SIZE = 500  # SQLite IN 参数上限防御（与 sentiment_cache 批查同款）
 
+# 行数上限（淘汰阈值）：text→vector 是纯函数，缓存失守代价只是重嵌
+# （实测 2.4ms/条）——按平均 2KB/行 ≈ 600MB 封顶，超出删最老。库曾是
+# 无界增长（实测 62.8 万行 / 1.2GB，比安装包还大），id 自增即插入序，
+# 保留最新 N 行 = 删 id 小于「第 N+1 新」的所有行。
+EMBEDDING_CACHE_MAX_ROWS = 300_000
+
+# 淘汰节流：批量写入后至多每 5 分钟检查一次超限（COUNT + 至多一次 DELETE）
+_PRUNE_INTERVAL_SECONDS = 300
+_last_prune_at = 0.0
+
 
 def _cache_enabled_from_settings() -> bool:
     """读 settings.json feature_extraction.embedding_persistent_cache（默认开）。"""
@@ -45,6 +55,21 @@ def _cache_enabled_from_settings() -> bool:
         return bool(value)
     except Exception:
         return True
+
+
+def _maybe_prune() -> None:
+    """写入后的节流淘汰检查（至多每 _PRUNE_INTERVAL_SECONDS 一次）。"""
+    global _last_prune_at
+    now = time.time()
+    if now - _last_prune_at < _PRUNE_INTERVAL_SECONDS:
+        return
+    _last_prune_at = now
+    try:
+        deleted = EmbeddingCacheStore.prune()
+        if deleted:
+            logger.info("[嵌入缓存] 超限淘汰 %s 行（保留最新 %s 行）", deleted, EMBEDDING_CACHE_MAX_ROWS)
+    except Exception as exc:
+        logger.debug("[嵌入缓存] 淘汰跳过: %s", exc)
 
 
 def content_sha1(text: str) -> str:
@@ -152,6 +177,7 @@ class EmbeddingCacheStore:
                 rows,
             )
             conn.commit()
+            _maybe_prune()
             return len(rows)
         except Exception as exc:
             logger.warning("[嵌入缓存] 写入失败（不影响分析流程）: %s", exc)
@@ -167,6 +193,31 @@ class EmbeddingCacheStore:
             cursor = conn.execute("DELETE FROM embedding_cache")
         conn.commit()
         return cursor.rowcount or 0
+
+    @staticmethod
+    def prune(max_rows: Optional[int] = None) -> int:
+        """超限淘汰：保留最新 max_rows 行（id 自增 = 插入序），返回删除行数。
+
+        子查询取「第 limit 新」的 id（OFFSET limit-1，只走 rowid 索引），
+        外层 DELETE 按主键范围删——62 万行上也是毫秒级，不是 NOT IN 全表
+        反连接。行数不足时子查询为空，id < NULL 恒不中，自然 0 行。
+        """
+        limit = int(max_rows if max_rows is not None else EMBEDDING_CACHE_MAX_ROWS)
+        if limit <= 0:
+            return 0
+        conn = get_db()
+        cursor = conn.execute(
+            """
+            DELETE FROM embedding_cache WHERE id < (
+                SELECT id FROM embedding_cache ORDER BY id DESC LIMIT 1 OFFSET ?
+            )
+            """,
+            (max(limit - 1, 0),),
+        )
+        deleted = cursor.rowcount or 0
+        if deleted:
+            conn.commit()
+        return deleted
 
     @staticmethod
     def stats() -> dict:

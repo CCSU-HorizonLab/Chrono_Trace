@@ -50,6 +50,18 @@
             <div class="path-hint">修改后会自动迁移已下载模型；若新目录下已存在同名模型目录，将阻止迁移以避免覆盖。</div>
           </div>
 
+          <div class="row">
+            <div class="lab">嵌入向量缓存</div>
+            <div class="emb-cache-row">
+              <span v-if="embCache.rows > 0" class="emb-cache-stat">{{ formatBytes(embCache.bytes) }} · {{ embCache.rows.toLocaleString() }} 条</span>
+              <span v-else class="emb-cache-stat">暂无缓存</span>
+              <CtButton variant="ghost" :disabled="embCacheClearing || embCache.rows === 0" @click.stop.prevent="clearEmbeddingCache">
+                {{ embCacheClearing ? '清理中...' : '清理' }}
+              </CtButton>
+            </div>
+            <div class="path-hint">同一文本的嵌入向量纯函数缓存（加速重复分析），超上限自动淘汰最老条目；清理无损，重分析时自动重建。</div>
+          </div>
+
           <!-- 交互调用快速模式 -->
           <div class="maintenance-card">
             <div class="maintenance-copy">
@@ -774,6 +786,7 @@ async function onLoad() {
     await loadWechatAccounts(activeAccountWxid.value)
     await refreshRagStatus()
     await refreshRagModelStatus()
+    await loadEmbCache()
   } catch (e) {
     console.error('加载设置失败:', e)
   } finally {
@@ -961,6 +974,45 @@ async function refreshRagStatus() {
   }
 }
 
+// ========== 嵌入向量缓存（L2 纯函数缓存，全局不分会话） ==========
+const embCache = reactive({ rows: 0, bytes: 0, maxRows: 0 })
+const embCacheClearing = ref(false)
+
+async function loadEmbCache() {
+  try {
+    await bridgeReady()
+    const result = await api.get_embedding_cache_stats()
+    if (result?.ok) {
+      embCache.rows = Number(result.rows || 0)
+      embCache.bytes = Number(result.bytes || 0)
+      embCache.maxRows = Number(result.max_rows || 0)
+    }
+  } catch (e) {
+    console.error('读取嵌入缓存状态失败:', e)
+  }
+}
+
+async function clearEmbeddingCache() {
+  if (embCacheClearing.value) return
+  const confirmed = await showConfirm(`清理嵌入向量缓存（${formatBytes(embCache.bytes)}）？重分析时会自动重建，仅首次变慢。`)
+  if (!confirmed) return
+  embCacheClearing.value = true
+  try {
+    await bridgeReady()
+    const result = await api.clear_embedding_cache()
+    if (result?.ok) {
+      showDialog(`已清理 ${Number(result.deleted || 0).toLocaleString()} 条嵌入缓存`)
+      await loadEmbCache()
+    } else {
+      showDialog(result?.error || '清理失败')
+    }
+  } catch (e) {
+    console.error('清理嵌入缓存失败:', e)
+  } finally {
+    embCacheClearing.value = false
+  }
+}
+
 async function refreshRagModelStatus() {
   ragModel.loading = true
   try {
@@ -1054,7 +1106,8 @@ function formatBytes(value: number) {
   if (!value) return '0 B'
   if (value < 1024) return `${value} B`
   if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`
-  return `${(value / 1024 / 1024).toFixed(1)} MB`
+  if (value < 1024 * 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MB`
+  return `${(value / 1024 / 1024 / 1024).toFixed(2)} GB`
 }
 
 function formatTime(ts: number) {
@@ -2073,6 +2126,17 @@ onMounted(() => {
   font-size: 12px;
   color: var(--ct-text-tertiary);
   line-height: 1.5;
+}
+.emb-cache-row {
+  grid-column: 2;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.emb-cache-stat {
+  font-size: 13px;
+  color: var(--ct-text-secondary);
+  font-variant-numeric: tabular-nums;
 }
 @media (max-width: 768px) {
   .path-input { flex-wrap: wrap; }

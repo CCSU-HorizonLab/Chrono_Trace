@@ -88,6 +88,8 @@ type PyWebViewApi = {
   set_rag_conversation_enabled: (conversation_id: number, enabled: boolean, account_wxid?: string) => Promise<any>
   set_rag_fact_read_mode: (conversation_id: number, mode: 'inherit' | 'facts' | 'documents', account_wxid?: string) => Promise<any>
   update_model_root_dir: (new_dir: string) => Promise<any>
+  get_embedding_cache_stats: () => Promise<{ ok: boolean; rows: number; bytes: number; max_rows: number; by_model: Array<{ model: string; device: string; rows: number }> }>
+  clear_embedding_cache: () => Promise<{ ok: boolean; deleted?: number; error?: string }>
   // 好感度分析与配置（与 backend Bridge 方法一一对应，F8）
   get_relationship_context: (conversation_id: number) => Promise<any>
   save_relationship_context: (conversation_id: number, context: Record<string, any>) => Promise<any>

@@ -118,6 +118,30 @@ class ModelMgmtApiMixin:
                 "skipped_models": [],
             }
 
+    def get_embedding_cache_stats(self) -> dict[str, Any]:
+        """嵌入 L2 缓存容量报告（text→vector 纯函数缓存，全局不分会话）。"""
+        from ...services.analysis.embedding_cache_store import EMBEDDING_CACHE_MAX_ROWS, EmbeddingCacheStore
+
+        stats = EmbeddingCacheStore.stats()
+        return {
+            "ok": True,
+            "rows": stats["rows"],
+            "bytes": stats["bytes"],
+            "max_rows": EMBEDDING_CACHE_MAX_ROWS,
+            "by_model": stats["by_model"],
+        }
+
+    def clear_embedding_cache(self) -> dict[str, Any]:
+        """清空嵌入缓存（重分析时自动重嵌，2.4ms/条，无损操作）。"""
+        from ...services.analysis.embedding_cache_store import EmbeddingCacheStore
+
+        try:
+            deleted = EmbeddingCacheStore.purge()
+            return {"ok": True, "deleted": deleted}
+        except Exception as e:
+            logger.error(f"[Bridge] 清理嵌入缓存失败: {type(e).__name__}: {e}", exc_info=True)
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
     def check_analysis_model_status(self) -> dict[str, Any]:
         """Check whether analysis models are available locally with detailed diagnosis.
 

@@ -180,6 +180,63 @@ class TestBaseLayer:
         assert payload["subjects"]["me"] is None
         assert payload["subjects"]["other"] is None
 
+    def test_positive_response_rate_boundaries(self, db):
+        """正向回应率（归并实现）：30 分钟窗含边界、正向占比口径、无回应 None。"""
+        base = 1_700_000_000
+        # 对方消息作为回应锚点
+        db.execute(
+            "INSERT INTO messages (conversation_id, is_sender, message_type, content, timestamp)"
+            " VALUES (1, 0, 1, '锚点', ?)", (base,)
+        )
+        # 我方三条文本：恰 1800s（边界内，计）、1801s（窗外，不计）、同秒（计）
+        cases = [(base + 1800, 1), (base + 1801, -1), (base, 1)]
+        mine_ids = []
+        for offset, _pol in cases:
+            cur = db.execute(
+                "INSERT INTO messages (conversation_id, is_sender, message_type, content, timestamp)"
+                " VALUES (1, 1, 1, '回应', ?)", (offset,)
+            )
+            mine_ids.append((cur.lastrowid, offset, _pol))
+        # 一条无情感缓存的回应消息：不进分母（JOIN sentiment_cache 口径）
+        cur = db.execute(
+            "INSERT INTO messages (conversation_id, is_sender, message_type, content, timestamp)"
+            " VALUES (1, 1, 1, '无缓存', ?)", (base + 60,)
+        )
+        assert cur.lastrowid is not None
+        for mid, _offset, pol in mine_ids:
+            db.execute(
+                "INSERT INTO sentiment_cache (message_id, polarity, intensity, created_at)"
+                " VALUES (?, ?, 0.3, 1)", (mid, pol)
+            )
+        db.commit()
+
+        rate = PersonalityImpressionService._positive_response_rate(1, 1)
+        # 计入回应：1800s 正向 + 同秒正向（1801s 窗外、无缓存消息不进 JOIN）
+        assert rate == pytest.approx(1.0)
+
+        # 把边界内一条改成负面：正向占比 1/2
+        db.execute(
+            "UPDATE sentiment_cache SET polarity = -1 WHERE message_id = ?",
+            (mine_ids[0][0],)
+        )
+        db.commit()
+        rate = PersonalityImpressionService._positive_response_rate(1, 1)
+        assert rate == pytest.approx(0.5)
+
+    def test_positive_response_rate_none_without_sentiment(self, db):
+        """我方消息无情感缓存：缺缓存返回 None（不造数）。"""
+        base = 1_700_000_000
+        db.execute(
+            "INSERT INTO messages (conversation_id, is_sender, message_type, content, timestamp)"
+            " VALUES (1, 0, 1, '锚点', ?)", (base,)
+        )
+        db.execute(
+            "INSERT INTO messages (conversation_id, is_sender, message_type, content, timestamp)"
+            " VALUES (1, 1, 1, '回应', ?)", (base + 60,)
+        )
+        db.commit()
+        assert PersonalityImpressionService._positive_response_rate(1, 1) is None
+
 
 def llm_content(adjustment=5, quote="消息内容1"):
     return json.dumps({

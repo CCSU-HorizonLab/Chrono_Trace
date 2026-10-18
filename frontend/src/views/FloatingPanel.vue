@@ -1482,7 +1482,9 @@ async function startPendingMonitoring(talkerName: string, requestedAccountWxid =
       return false
     }
 
-    await applyMonitoringStatus({
+    // 启动成功后取真实状态（含 conversation_id：建议配置按联系人读写的键），
+    // 拉取失败时用手搓兜底对象（conversationId 退 0 仅影响配置键，不影响监听）
+    let initialStatus: any = {
       ok: true,
       is_monitoring: true,
       account_wxid: activeAccountWxid.value,
@@ -1490,7 +1492,15 @@ async function startPendingMonitoring(talkerName: string, requestedAccountWxid =
       batch_id: result.batch_id,
       message_count: 0,
       chat_error: '',
-    })
+    }
+    try {
+      const st = await api.get_realtime_status()
+      if (st?.ok && st.is_monitoring) initialStatus = st
+    } catch (_e) {
+      console.warn('[FloatingPanel] 启动后拉取监听状态失败，使用兜底状态')
+    }
+
+    await applyMonitoringStatus(initialStatus)
     return true
   } finally {
     if (progressTimer !== null) {

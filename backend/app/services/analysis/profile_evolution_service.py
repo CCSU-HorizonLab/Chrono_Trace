@@ -41,17 +41,21 @@ class ProfileEvolutionService:
         if mid_ts - 1 < from_ts:
             return {"ok": False, "error": "时间窗太短，无法对半分段（至少需两天跨度）"}
 
-        row = self._load_conversation(conversation_id, account_wxid)
-        if row is None:
-            return {"ok": False, "error": "未找到会话，请先导入微信数据"}
-        display_name = str(row["display_name"] or "")
-
         from ..realtime.contact_profiler import ContactProfiler
         from ..realtime.self_profiler import SelfProfiler
 
         kinds: list[tuple[str, Any, str]] = [("contact", ContactProfiler(), "contact_profiles")]
         if include_self:
             kinds.append(("self", SelfProfiler(), "self_profiles"))
+
+        # 账号与生成侧同源解析（profiler 内部 _save_cache 按解析后账号落库，
+        # 快照查询键必须一致，否则生产链路 account_wxid="" 永远查不中缓存）
+        account_wxid = kinds[0][1]._resolve_account_wxid(account_wxid)
+
+        row = self._load_conversation(conversation_id, account_wxid)
+        if row is None:
+            return {"ok": False, "error": "未找到会话，请先导入微信数据"}
+        display_name = str(row["display_name"] or "")
 
         def _aborted() -> bool:
             return cancel_event is not None and cancel_event.is_set()
@@ -144,7 +148,12 @@ class ProfileEvolutionService:
         table: str, display_name: str, account_wxid: str,
         half_from: int, half_to: int,
     ) -> Optional[dict[str, Any]]:
-        """按 custom 快照精确键查缓存（含 profile 全文）。"""
+        """按 custom 快照精确键查缓存（含 profile 全文）。
+
+        行存在但 profile_json 损坏/为空（写库中断的残行）视作未命中——
+        走生成路径并以 INSERT OR REPLACE 覆盖坏行，不让空画像带
+        「历史快照」徽标卡死缓存。
+        """
         try:
             row = get_db().execute(
                 f"SELECT profile_json, created_at FROM {table} "
@@ -160,6 +169,8 @@ class ProfileEvolutionService:
             profile = json.loads(row["profile_json"] or "null")
         except (TypeError, ValueError, json.JSONDecodeError):
             profile = None
+        if not isinstance(profile, dict) or not profile:
+            return None
         return {
             "profile": profile,
             "created_at": int(row["created_at"] or 0),

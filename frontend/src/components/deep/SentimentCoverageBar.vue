@@ -126,7 +126,13 @@ function startPolling() {
     if (!taskId.value) return
     try {
       const progress = await api.get_sentiment_backfill_progress(taskId.value)
-      if (!progress || progress.status === 'not_found') return
+      // not_found 是终态（任务记录被清理/进程重启）：停轮询并按失败呈现，
+      // 否则 1.5s 轮询永不停止，UI 卡在进行态且取消必报错
+      if (!progress || progress.status === 'not_found') {
+        stopPolling()
+        task.value = { status: 'failed', error: '任务记录已失效（可能已被清理或应用重启），请重新发起' }
+        return
+      }
       task.value = progress
       if (progress.status === 'completed') {
         stopPolling()

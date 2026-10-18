@@ -209,12 +209,11 @@ class DeepAnalysisService:
         mid_ts = (from_ts + to_ts) // 2
         halves = []
         for half_from, half_to in ((from_ts, mid_ts - 1), (mid_ts, to_ts)):
-            rows = self._load_half_texts(conversation_id, half_from, half_to, use_cleaned)
-            sampled_total = len(rows)
+            rows, sampled_total = self._load_half_texts(
+                conversation_id, half_from, half_to, use_cleaned,
+                limit=DEEP_WORDCLOUD_HALF_LIMIT,
+            )
             truncated = sampled_total > DEEP_WORDCLOUD_HALF_LIMIT
-            if truncated:
-                step = (sampled_total - 1) / (DEEP_WORDCLOUD_HALF_LIMIT - 1)
-                rows = [rows[round(i * step)] for i in range(DEEP_WORDCLOUD_HALF_LIMIT)]
 
             texts = {"all": [], "me": [], "other": []}
             for is_sender, content in rows:
@@ -270,12 +269,17 @@ class DeepAnalysisService:
 
     @staticmethod
     def _load_half_texts(
-        conversation_id: int, from_ts: int, to_ts: int, use_cleaned: bool
-    ) -> List[Tuple[int, str]]:
-        """取半窗 (is_sender, 文本) 有序对。清洗口径回表 message_preprocessed。"""
+        conversation_id: int, from_ts: int, to_ts: int, use_cleaned: bool,
+        limit: int = 0,
+    ) -> Tuple[List[Tuple[int, str]], int]:
+        """取半窗 (is_sender, 文本) 有序对与真实总数。清洗口径回表 message_preprocessed。
+
+        limit>0 且超出时在 SQL 侧等距抽样（ROW_NUMBER 取模）：大会话几十万行
+        不再整体搬过进程边界，Python 只接收 ≤limit 行；truncated 由调用方按
+        总数判定。
+        """
         if use_cleaned:
-            rows = get_db().execute("""
-                SELECT m.is_sender, mp.cleaned_content AS text
+            base_sql = """
                 FROM messages m
                 INNER JOIN message_preprocessed mp ON mp.message_id = m.id
                 WHERE m.conversation_id = ?
@@ -283,20 +287,43 @@ class DeepAnalysisService:
                     AND m.timestamp BETWEEN ? AND ?
                     AND mp.cleaned_content IS NOT NULL
                     AND TRIM(mp.cleaned_content) != ''
-                ORDER BY m.timestamp ASC, m.id ASC
-            """, (conversation_id, from_ts, to_ts)).fetchall()
+            """
+            select_cols = "m.is_sender, mp.cleaned_content AS text"
         else:
-            rows = get_db().execute("""
-                SELECT m.is_sender, m.content AS text
+            base_sql = """
                 FROM messages m
                 WHERE m.conversation_id = ?
                     AND m.message_type = 1
                     AND m.timestamp BETWEEN ? AND ?
                     AND m.content IS NOT NULL
                     AND TRIM(m.content) != ''
-                ORDER BY m.timestamp ASC, m.id ASC
-            """, (conversation_id, from_ts, to_ts)).fetchall()
-        return [(int(row[0]), row[1]) for row in rows]
+            """
+            select_cols = "m.is_sender, m.content AS text"
+        params: Tuple[Any, ...] = (conversation_id, from_ts, to_ts)
+
+        total = int(get_db().execute(
+            f"SELECT COUNT(*) {base_sql}", params
+        ).fetchone()[0] or 0)
+        if not total:
+            return [], 0
+
+        if limit and total > limit:
+            step = -(-total // limit)  # ceil：抽样后行数 ≤ limit
+            rows = get_db().execute(f"""
+                SELECT is_sender, text FROM (
+                    SELECT {select_cols},
+                           ROW_NUMBER() OVER (ORDER BY m.timestamp ASC, m.id ASC) AS rn
+                    {base_sql}
+                ) WHERE rn % ? = 0
+                ORDER BY rn ASC
+            """, params + (step,)).fetchall()
+            return [(int(row[0]), row[1]) for row in rows], total
+
+        rows = get_db().execute(
+            f"SELECT {select_cols} {base_sql} ORDER BY m.timestamp ASC, m.id ASC",
+            params,
+        ).fetchall()
+        return [(int(row[0]), row[1]) for row in rows], total
 
     # ------------------------------------------------------------------
     # 里程碑（纯统计）
@@ -355,23 +382,28 @@ class DeepAnalysisService:
 
     @staticmethod
     def _longest_silence(conversation_id: int, from_ts: int, to_ts: int):
-        """窗内相邻消息最大间隔；不足 1 天不构成「沉默期」。返回 (起, 止, 天数)。"""
-        rows = get_db().execute("""
-            SELECT timestamp FROM messages
-            WHERE conversation_id = ? AND timestamp BETWEEN ? AND ?
-            ORDER BY timestamp ASC
-        """, (conversation_id, from_ts, to_ts)).fetchall()
-        timestamps = [int(row[0]) for row in rows]
-        best_gap = 0
-        best = None
-        for prev, curr in zip(timestamps, timestamps[1:]):
-            gap = curr - prev
-            if gap > best_gap:
-                best_gap = gap
-                best = (prev, curr)
-        if best is None or best_gap < 86400:
+        """窗内相邻消息最大间隔；不足 1 天不构成「沉默期」。返回 (起, 止, 天数)。
+
+        LAG 窗口函数在库内求相邻间隔，只回最大一行——不把全窗时间戳
+        搬进 Python（大会话数十万行的内存与反序列化热点）。并列最大取
+        最早一对（curr 升序决胜），与逐对扫描语义一致。
+        """
+        row = get_db().execute("""
+            SELECT prev, curr FROM (
+                SELECT timestamp AS curr,
+                       LAG(timestamp) OVER (ORDER BY timestamp ASC) AS prev
+                FROM messages
+                WHERE conversation_id = ? AND timestamp BETWEEN ? AND ?
+            ) WHERE prev IS NOT NULL
+            ORDER BY curr - prev DESC, curr ASC
+            LIMIT 1
+        """, (conversation_id, from_ts, to_ts)).fetchone()
+        if row is None:
             return None
-        return (best[0], best[1], round(best_gap / 86400, 1))
+        best_gap = int(row[1]) - int(row[0])
+        if best_gap < 86400:
+            return None
+        return (int(row[0]), int(row[1]), round(best_gap / 86400, 1))
 
     # ------------------------------------------------------------------
     # 好感度历史落点

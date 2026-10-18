@@ -112,6 +112,64 @@ def test_snapshot_cache_hit_skips_llm(isolated_db, llm_calls):
         assert half["contact"]["cached"] is False
 
 
+def test_empty_account_resolves_like_save_path(isolated_db, llm_calls, monkeypatch):
+    """生产链路 account_wxid=""：查询键与生成侧落库账号同源解析（活跃账号），
+    否则快照永远查不中、演变每次全价调 LLM。"""
+    import app.services.realtime.contact_profiler as contact_profiler_mod
+
+    monkeypatch.setattr(
+        contact_profiler_mod, "get_active_wechat_account_wxid", lambda _s: "wxid_me"
+    )
+    conn = isolated_db
+    conv_id = seed_conversation(conn, account="wxid_me")
+    profiler = ContactProfiler()
+    profiler._ensure_table(conn)
+    for half_from, half_to in ((1000, 1499), (1500, 2001)):
+        # 生成侧（真实 profiler）按解析后账号 wxid_me 落 custom 快照
+        profiler._save_cache(
+            conn, "老朋友", conv_id, {"personality_tags": ["存档"]}, 3, {}, "wxid_me",
+            window_kind="custom", window_from=half_from, window_to=half_to,
+        )
+
+    result = ProfileEvolutionService().generate(conv_id, 1000, 2001, "")
+
+    assert result["ok"] is True
+    assert llm_calls == []  # 解析对齐 → 两个半窗都命中
+    for half in result["halves"]:
+        assert half["contact"]["cached"] is True
+
+
+def test_corrupt_snapshot_row_treated_as_miss(isolated_db, llm_calls):
+    """profile_json 损坏/为空的残行视作未命中：走生成并覆盖坏行，
+    不让空画像带「历史快照」徽标卡死缓存。"""
+    conn = isolated_db
+    conv_id = seed_conversation(conn)
+    profiler = ContactProfiler()
+    profiler._ensure_table(conn)
+    profiler._save_cache(
+        conn, "老朋友", conv_id, {"personality_tags": ["完好"]}, 3, {}, "wxid_me",
+        window_kind="custom", window_from=1000, window_to=1499,
+    )
+    conn.execute(
+        "INSERT INTO contact_profiles (account_wxid, display_name, conversation_id, "
+        "window_kind, window_from, window_to, budget_level, profile_json, "
+        "features_snapshot, message_sample_count, token_usage, created_at, expires_at) "
+        "VALUES ('wxid_me', '老朋友', ?, 'custom', 1500, 2001, 'medium', '', "
+        "NULL, 0, 0, 100, 200)",
+        (conv_id,),
+    )
+    conn.commit()
+
+    result = ProfileEvolutionService().generate(conv_id, 1000, 2001, "wxid_me")
+
+    assert result["ok"] is True
+    # 只有坏行半窗重算，完好半窗命中缓存
+    assert [c[1:] for c in llm_calls] == [(1500, 2001)]
+    assert result["halves"][0]["contact"]["cached"] is True
+    assert result["halves"][1]["contact"]["cached"] is False
+    assert result["halves"][1]["contact"]["profile"] == {"personality_tags": ["温和"]}
+
+
 def test_partial_cache_only_generates_missing_half(isolated_db, llm_calls):
     """只有前半窗有快照：仅补后半窗（增量续跑语义）。"""
     conn = isolated_db

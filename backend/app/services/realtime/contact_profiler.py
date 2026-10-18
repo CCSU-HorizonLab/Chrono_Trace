@@ -66,9 +66,12 @@ PROFILE_TTL = 7 * 86400  # 7 天
 # _ensure_table 探查到旧结构直接 DROP 重建。
 PROFILE_SNAPSHOT_SCHEMA = 1
 
-# 每个 (account_wxid, display_name, window_kind) 分组保留的快照条数上限
-# （rolling 每次续期产生新窗口键快照，自然累积，靠此上限防膨胀）
+# 每个分组保留的快照条数上限。rolling 每次续期产生新窗口键快照自然累积，
+# 靠此上限防膨胀；custom 是存档品（画像演变半窗 + 手动指定窗共用分组），
+# 上限对齐 list_snapshots 的 24 条——回廊能展示的快照不会被裁剪逐出，
+# 画像演变的「快照命中增量续跑」承诺才不随窗口数量累积失效。
 PROFILE_SNAPSHOT_KEEP = 8
+PROFILE_SNAPSHOT_KEEP_CUSTOM = 24
 
 # 指定历史窗（custom）单次生成的最大跨度
 PROFILE_CUSTOM_MAX_SPAN = 730 * 86400
@@ -1027,8 +1030,9 @@ class ContactProfiler:
                     expires_at,
                 )
             )
-            # 每个窗口分组只保留最近 N 条（rolling 每次续期产生新窗口键，
-            # 自然累积靠此上限防膨胀）
+            # 分组只保留最近 N 条：rolling 用 KEEP 防续期累积，custom 用
+            # KEEP_CUSTOM（存档语义，见常量注释）
+            keep = PROFILE_SNAPSHOT_KEEP_CUSTOM if window_kind == 'custom' else PROFILE_SNAPSHOT_KEEP
             conn.execute(
                 'DELETE FROM contact_profiles '
                 'WHERE account_wxid = ? AND display_name = ? AND window_kind = ? '
@@ -1038,10 +1042,10 @@ class ContactProfiler:
                 '  ORDER BY created_at DESC, id DESC LIMIT ?'
                 ')',
                 (account_wxid, display_name, window_kind,
-                 account_wxid, display_name, window_kind, PROFILE_SNAPSHOT_KEEP),
+                 account_wxid, display_name, window_kind, keep),
             )
             conn.commit()
-            _print(f"[ContactProfiler] 画像快照已缓存（{window_kind} 窗口分组保留最近 {PROFILE_SNAPSHOT_KEEP} 条）")
+            _print(f"[ContactProfiler] 画像快照已缓存（{window_kind} 窗口分组保留最近 {keep} 条）")
         except Exception as e:
             _print(f"[ContactProfiler] ⚠️ 缓存保存失败: {e}")
 

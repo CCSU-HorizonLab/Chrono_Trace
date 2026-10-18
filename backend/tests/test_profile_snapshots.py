@@ -20,6 +20,7 @@ from app.db.connection import DatabaseConnection
 from app.services.realtime.contact_profiler import (
     PROFILE_CUSTOM_MAX_SPAN,
     PROFILE_SNAPSHOT_KEEP,
+    PROFILE_SNAPSHOT_KEEP_CUSTOM,
     PROFILE_TTL,
     ContactProfiler,
 )
@@ -193,6 +194,32 @@ def test_trim_keeps_recent_snapshots(isolated_db, profiler_cls, table):
     kept = {r["window_from"] for r in rows}
     assert PROFILE_SNAPSHOT_KEEP - 1 in kept  # 保留最新
     assert 0 not in kept  # 最旧的被裁掉
+
+
+@pytest.mark.parametrize("profiler_cls,table", PROFILER_TABLES)
+def test_trim_custom_keeps_archive_limit(isolated_db, profiler_cls, table):
+    """custom 分组（画像演变半窗 + 手动指定窗共用）按存档上限 24 裁剪——
+    回廊能展示的快照（list_snapshots 24 条）不会被逐出，演变续跑免费不失效。"""
+    conn = isolated_db
+    profiler = profiler_cls()
+    for i in range(PROFILE_SNAPSHOT_KEEP_CUSTOM + 3):
+        save_snapshot(
+            profiler, conn, {"i": i}, window_kind="custom",
+            window_from=1000 + i * 10, window_to=2000 + i * 10,
+        )
+        conn.execute(
+            f"UPDATE {table} SET created_at = ? WHERE window_from = ?",
+            (1000 + i, 1000 + i * 10),
+        )
+        conn.commit()
+
+    rows = conn.execute(
+        f"SELECT window_from FROM {table} WHERE window_kind = 'custom' ORDER BY created_at DESC"
+    ).fetchall()
+    assert len(rows) == PROFILE_SNAPSHOT_KEEP_CUSTOM
+    kept = {r["window_from"] for r in rows}
+    assert 1000 + PROFILE_SNAPSHOT_KEEP_CUSTOM * 10 in kept   # 保留最新
+    assert 1000 not in kept                                     # 最旧的被裁掉
 
 
 # ==================== custom 时间窗 ====================

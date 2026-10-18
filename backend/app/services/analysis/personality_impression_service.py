@@ -437,26 +437,45 @@ class PersonalityImpressionService:
 
         近似口径：本方消息且此前 30 分钟内出现过对方消息即视为回应；
         依赖 sentiment_cache，缺缓存返回 None。
+
+        两侧时间线各拉一次（对方侧只要时间戳），升序归并一次线性判定：
+        存在对方消息落在 [m.ts-1800, m.ts] ⟺ 最近一条不晚于 m.ts 的对方
+        消息距今 ≤1800。此前逐行相关 EXISTS 在大会话上接近 O(n²)，是
+        本地基础层的主要耗时热点。
         """
-        row = get_db().execute(
-            """
-            SELECT SUM(CASE WHEN sc.polarity = 1 THEN 1 ELSE 0 END), COUNT(*)
-            FROM messages m
-            JOIN sentiment_cache sc ON sc.message_id = m.id
-            WHERE m.conversation_id = ? AND m.is_sender = ? AND m.message_type = 1
-                AND EXISTS (
-                    SELECT 1 FROM messages p
-                    WHERE p.conversation_id = m.conversation_id
-                        AND p.is_sender != m.is_sender
-                        AND p.timestamp <= m.timestamp
-                        AND m.timestamp - p.timestamp <= 1800
-                )
-            """,
+        db = get_db()
+        mine = db.execute(
+            "SELECT m.timestamp, sc.polarity FROM messages m "
+            "JOIN sentiment_cache sc ON sc.message_id = m.id "
+            "WHERE m.conversation_id = ? AND m.is_sender = ? AND m.message_type = 1 "
+            "ORDER BY m.timestamp",
             (conversation_id, side_flag),
-        ).fetchone()
-        if not row or not row[1]:
+        ).fetchall()
+        if not mine:
             return None
-        return round(int(row[0] or 0) / int(row[1]), 4)
+        peer_ts = [
+            int(r[0]) for r in db.execute(
+                "SELECT timestamp FROM messages "
+                "WHERE conversation_id = ? AND is_sender != ? ORDER BY timestamp",
+                (conversation_id, side_flag),
+            ).fetchall()
+        ]
+        responded = 0
+        positive = 0
+        cursor = 0     # 对方时间线游标（升序单调推进）
+        last_peer = None
+        for row in mine:
+            ts = int(row[0])
+            while cursor < len(peer_ts) and peer_ts[cursor] <= ts:
+                last_peer = peer_ts[cursor]
+                cursor += 1
+            if last_peer is not None and ts - last_peer <= 1800:
+                responded += 1
+                if int(row[1] or 0) == 1:
+                    positive += 1
+        if not responded:
+            return None
+        return round(positive / responded, 4)
 
     @staticmethod
     def _sentiment_indicators(

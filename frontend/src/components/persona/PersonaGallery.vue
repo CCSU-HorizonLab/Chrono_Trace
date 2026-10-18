@@ -292,7 +292,8 @@ const activeWindowLabel = computed<string>(
 
 async function toggleSnapshots() {
   snapshotsOpen.value = !snapshotsOpen.value
-  if (snapshotsOpen.value && !snapshots.value.length) {
+  // 每次展开都重拉：面板打开期间新生成的快照（画像演变/生成对话框落档）也要出现
+  if (snapshotsOpen.value) {
     snapshotsLoading.value = true
     try {
       const res = await api.list_profile_snapshots(

@@ -25,7 +25,8 @@ UNIQUE(account_wxid, display_name, window_kind, window_from, window_to)
 
 - 同窗重试 `INSERT OR REPLACE` 覆盖不堆积；不同窗各自存档。
 - **TTL 只作用 rolling**（`expires_at = created_at + 7 天`）；custom 快照是存档品，
-  免 TTL（占位一年），仅由 `PROFILE_SNAPSHOT_KEEP = 8` 按窗口分组裁剪。
+  免 TTL（占位一年），仅由数量上限按窗口分组裁剪：rolling `PROFILE_SNAPSHOT_KEEP = 8`、
+  custom `PROFILE_SNAPSHOT_KEEP_CUSTOM = 24`（对齐 `list_snapshots` 的 24 条回看上限）。
 - **读取语义**：`get_profile` 只取 `window_kind='rolling' ORDER BY created_at DESC,
   id DESC LIMIT 1`（消费方零改动）；custom 历史快照走 `list_snapshots`（24 条上限）。
 - **续期保档位**：`generation_context.renew_profiles_in_background` 先读当前 rolling
@@ -62,7 +63,8 @@ prompt【基础信息】块带样本时间范围行（rolling 注明顺延，cus
 | 常量 | 位置 | 当前值 | 何时 +1 |
 |---|---|---|---|
 | `PROFILE_SNAPSHOT_SCHEMA` | contact_profiler.py / self_profiler.py | 1 | 表结构（窗口键/快照语义）变化——旧结构 DROP 重建，不迁移 |
-| `PROFILE_SNAPSHOT_KEEP` | 同上 | 8 | 每窗口分组保留条数调整 |
+| `PROFILE_SNAPSHOT_KEEP` | 同上 | 8 | rolling 分组保留条数调整 |
+| `PROFILE_SNAPSHOT_KEEP_CUSTOM` | 同上 | 24 | custom 分组保留条数调整（对齐 list_snapshots 上限，裁剪不得逐出回廊可展示的快照） |
 | `PROFILE_CUSTOM_MAX_SPAN` | 同上 | 730 天 | custom 窗最大跨度调整 |
 
 ## 脱敏责任边界（现状口径）

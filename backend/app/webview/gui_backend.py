@@ -53,3 +53,25 @@ def run_main_window(window, bridge, **start_kwargs) -> None:
     attach_close_guard(window, bridge)
     start_webview(func=on_started, **start_kwargs)
     shutdown_qt_webengine_cleanly()
+
+
+def hard_exit_after_webview(exit_code: int = 0) -> None:
+    """Qt 后端退出兜底：窗口已关、数据已守卫保存、页面已先行析构后硬退出。
+
+    QtWebEngine 在解释器收尾阶段的 profile/子进程原生析构仍偶发段错误
+    （退出码 139）。事件循环退出后不再有任何需要"优雅"完成的清理——
+    冲刷日志与标准流后直接 os._exit，让退出码干净。仅 Linux 生效；
+    Windows(WebView2) 原样返回走正常解释器收尾。调用方须先完成各自的
+    子进程清理（dev 的 npm dev server），os._exit 不跑 atexit。
+    """
+    import os
+
+    if not sys.platform.startswith("linux"):
+        return
+    try:
+        sys.stdout.flush()
+        sys.stderr.flush()
+        logging.shutdown()
+    except Exception:
+        pass
+    os._exit(exit_code)

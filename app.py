@@ -21,9 +21,10 @@ def main():
     window = webview.create_window(PROD_WINDOW_TITLE, url=dist_index, js_api=bridge, frameless=False)
 
     # 启动/关闭守卫/退出清理统一走 gui_backend（Linux 强制 Qt 后端）
-    from backend.app.webview.gui_backend import run_main_window
+    from backend.app.webview.gui_backend import run_main_window, hard_exit_after_webview
 
     run_main_window(window, bridge)
+    hard_exit_after_webview()
 
 
 if __name__ == '__main__':

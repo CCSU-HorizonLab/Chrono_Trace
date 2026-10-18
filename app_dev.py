@@ -104,12 +104,13 @@ def main():
     window = webview.create_window(DEV_WINDOW_TITLE, url=dev_url, js_api=bridge, frameless=False,width=950,height=800)
 
     # 启动/关闭守卫/退出清理统一走 gui_backend（Linux 强制 Qt 后端）
-    from backend.app.webview.gui_backend import run_main_window
+    from backend.app.webview.gui_backend import run_main_window, hard_exit_after_webview
 
     run_main_window(window, bridge, debug=True)
 
-    # 关闭窗口后也清理一次（双保险）
+    # 关闭窗口后也清理一次（双保险）；随后硬退出兜底（QtWebEngine 收尾段错误）
     cleanup_proc_tree(npm_proc)
+    hard_exit_after_webview()
 
 
 if __name__ == '__main__':

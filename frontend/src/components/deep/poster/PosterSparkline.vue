@@ -29,6 +29,8 @@ const props = defineProps<{
   pick?: 'score' | 'userScore' | 'otherScore' | 'both'
   width?: number
   height?: number
+  /** 画零基准虚线（双极性序列如情感 -1~1 建议开） */
+  zeroLine?: boolean
 }>()
 
 const width = computed(() => props.width || 640)

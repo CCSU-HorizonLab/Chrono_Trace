@@ -26,14 +26,21 @@ def shutdown_qt_webengine_cleanly() -> None:
         app = QApplication.instance()
         if app is None:
             return
-        pages = []
+        # pywebview Qt 后端里 QWebEngineView 是 QMainWindow 的 centralWidget
+        # （BrowserView.setCentralWidget），不是顶层控件——只扫 topLevelWidgets
+        # 永远匹配不到，清理空转（曾致退出段错误）
+        views: list[QWebEngineView] = []
         for widget in app.topLevelWidgets():
             if isinstance(widget, QWebEngineView):
-                page = widget.page()
-                if page is not None:
-                    pages.append(page)
-                    page.deleteLater()
-                widget.deleteLater()
+                views.append(widget)
+            views.extend(widget.findChildren(QWebEngineView))
+        pages = []
+        for view in views:
+            page = view.page()
+            if page is not None:
+                pages.append(page)
+                page.deleteLater()
+            view.deleteLater()
         if not pages:
             return
         # 事件循环已退出，deleteLater 不会自然派发——手动冲刷延迟删除队列，

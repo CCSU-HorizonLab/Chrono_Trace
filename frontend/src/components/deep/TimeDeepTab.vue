@@ -14,7 +14,12 @@
         :granularity="granularity"
         :affinity="payload.affinity_history || null"
       />
-      <!-- 批 4：词云演变 / 关系阶段叙事 挂载点（复用同一次 payload，不重复请求） -->
+      <WordEvolutionPanel :evolution="payload.wordcloud_evolution || { caliber: 'none', coverage_ratio: 0, halves: [] }" />
+      <MilestoneTimeline
+        :milestones="payload.milestones || []"
+        :turning-points="payload.turning_points || []"
+        :granularity="granularity"
+      />
     </template>
   </div>
 </template>
@@ -24,6 +29,8 @@ import { ref, watch } from 'vue'
 import { api } from '@/api/bridge'
 import SentimentCoverageBar from '@/components/deep/SentimentCoverageBar.vue'
 import DeepEmotionPanel from '@/components/deep/DeepEmotionPanel.vue'
+import WordEvolutionPanel from '@/components/deep/WordEvolutionPanel.vue'
+import MilestoneTimeline from '@/components/deep/MilestoneTimeline.vue'
 
 const props = defineProps<{
   conversationId: number

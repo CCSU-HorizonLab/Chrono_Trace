@@ -32,6 +32,47 @@ export type PosterCurvePoint = {
 
 export type PosterBig5Scores = Record<string, { score: number | null; label?: string }> | null
 
+/** 里程碑事件（story.milestones 元素）：口径同时光深度页签，纯统计无身份 */
+export type PosterMilestone = {
+  kind: 'first_message' | 'count_mark' | 'longest_silence'
+  ts: number
+  scope?: 'global' | 'window' // first_message 专有
+  mark?: number // count_mark 专有：第 N 条关口
+  days?: number // longest_silence 专有：沉默天数
+  from_ts?: number
+  to_ts?: number
+}
+
+/** 默契统计（story.chemistry）：逐字段独立降级 null，模板 v-if 跳分镜 */
+export type PosterChemistry = {
+  late_night: { count: number; self_count: number; other_count: number } | null
+  peak_day: { date: string; count: number; self_count: number; other_count: number } | null
+  reply_stats: {
+    count: number
+    avg: number
+    median: number | null
+    self_avg: number | null
+    other_avg: number | null
+  } | null
+  initiator: {
+    user_sessions: number
+    other_sessions: number
+    user_ratio: number | null
+  } | null
+}
+
+/** 故事化分镜数据：纯聚合统计（无姓名/头像/原文），核心分镜零依赖分析产物 */
+export type PosterStory = {
+  milestones: PosterMilestone[]
+  chemistry: PosterChemistry
+}
+
+/** 自我版故事切片：仅我的单侧指标——联合事件（主动比/双方中位回复）不进 my 切片 */
+export type MyPosterStory = {
+  late_night_self: number | null
+  reply_self_avg_seconds: number | null
+}
+
 /** 完整 payload（定向版专属；敏感字段集中在 contact 与 quotes） */
 export type IntimatePosterPayload = {
   ok: boolean
@@ -45,6 +86,7 @@ export type IntimatePosterPayload = {
   top_words: { all: PosterWord[]; me: PosterWord[]; other: PosterWord[] }
   quotes: { items: Array<{ text: string; is_sender: boolean; ts: number }>; sensitive: true }
   big5: { me: { source: string; scores: PosterBig5Scores } | null; other: { source: string; scores: PosterBig5Scores } | null }
+  story?: PosterStory
   generated_at: number
 }
 
@@ -55,6 +97,8 @@ export type PublicPosterPayload = {
   emotion_curve: { bucket: string; points: PosterCurvePoint[] }
   top_words: { all: PosterWord[]; me: PosterWord[]; other: PosterWord[] }
   big5: { me: { scores: PosterBig5Scores } | null; other: { scores: PosterBig5Scores } | null }
+  /** story 全字段为无身份聚合（现状 top_words 双侧与双方大五已在公开域） */
+  story?: PosterStory
   generated_at: number
 }
 
@@ -68,6 +112,7 @@ export type SelfPosterPayload = {
   my_curve: SelfCurvePoint[]
   my_words: PosterWord[]
   my_big5: PosterBig5Scores
+  my_story: MyPosterStory
   generated_at: number
 }
 
@@ -82,6 +127,9 @@ export function sanitizeForPublic(payload: IntimatePosterPayload): PublicPosterP
       me: payload.big5?.me ? { scores: payload.big5.me.scores } : null,
       other: payload.big5?.other ? { scores: payload.big5.other.scores } : null,
     },
+    // story 整体进公开版：milestones/深夜/峰值日/回复速度/主动比均为
+    // 无身份聚合统计，与已在公开域的 top_words 双侧同敏感级
+    story: payload.story,
     generated_at: payload.generated_at,
   }
 }
@@ -100,6 +148,12 @@ export function sanitizeForSelf(payload: IntimatePosterPayload): SelfPosterPaylo
     my_curve: payload.emotion_curve.points.map((p) => ({ ts: p.ts, userScore: p.userScore ?? null })),
     my_words: payload.top_words.me,
     my_big5: payload.big5?.me?.scores || null,
+    // 单侧派生切片：深夜句数取 self_count、回复速度取 self_avg——联合
+    // 口径（主动比/双方中位）不进自我版红线
+    my_story: {
+      late_night_self: payload.story?.chemistry.late_night?.self_count ?? null,
+      reply_self_avg_seconds: payload.story?.chemistry.reply_stats?.self_avg ?? null,
+    },
     generated_at: payload.generated_at,
   }
 }
@@ -120,7 +174,7 @@ export const POSTER_TEMPLATES: PosterTemplate[] = [
   {
     id: 'public-minimal',
     label: '公开分享',
-    description: '只含聚合数字与氛围，无姓名头像与原文，适合朋友圈',
+    description: '聚合数字串成的故事长图，无姓名头像与原文，适合朋友圈',
     audience: 'public',
     sensitive: false,
     component: PosterPublicMinimal,
@@ -128,7 +182,7 @@ export const POSTER_TEMPLATES: PosterTemplate[] = [
   {
     id: 'self-portrait',
     label: '自我画像',
-    description: '只关于你的年度语言画像，想了解自己也能分享',
+    description: '只关于你的故事：你的数字、你的词、你的语气曲线',
     audience: 'self',
     sensitive: false,
     component: PosterSelfPortrait,
@@ -136,7 +190,7 @@ export const POSTER_TEMPLATES: PosterTemplate[] = [
   {
     id: 'intimate-duo',
     label: '定向发送',
-    description: '含双方姓名、头像与聊天摘录，仅适合发给对方',
+    description: '星夜叙事长图：双方姓名、头像与聊天摘录，仅适合发给对方',
     audience: 'intimate',
     sensitive: true,
     component: PosterIntimateDuo,

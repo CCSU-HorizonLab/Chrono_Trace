@@ -6,6 +6,10 @@
   （复用联系人记忆索引落库的嵌入缓存，未建索引时该通道静默缺席；
   向量按联系人 LRU 缓存 + 指纹校验，不每次全表反序列化）
 
+中文单语口径：嵌入模型（bge-small-zh）与 jieba 分词均为中文语料训练，
+英文问题经分词退化后的片段只构成字面召回、不构成语义对齐保证——
+微信记录以中文为绝对主体，跨语检索刻意不做。
+
 远程模型发送前问题与聊天记录逐条过 PrivacyRedactor（失败即阻断，
 绝不降级发原文——问题里常直接含手机号/真实姓名，同样不能外发）；
 回答要求带 [n] 引用编号，citations 按 [n] 过滤为实际引用子集，
@@ -45,9 +49,9 @@ except Exception:  # onnxruntime 环境必有 numpy；缺库退化为纯 Python 
 # 40，高频词把候选池刷满 newest，冷门关键词的更早消息永远进不了池
 KEYWORD_PER_TERM_LIMIT = 12
 VECTOR_POOL = 40
-TOP_K = 12
+TOP_K = 16
 RRF_K = 60
-MAX_MESSAGE_CHARS = 200
+MAX_MESSAGE_CHARS = 250
 # 多轮问答：携带的近期问答轮数与单段截断
 HISTORY_TURNS = 3
 HISTORY_TURN_CHARS = 400
@@ -280,7 +284,7 @@ class HistoryQAService:
                 item["score"] += 1.0 / (RRF_K + rank + 1)
 
         ranked = sorted(fused.values(), key=lambda r: r["score"], reverse=True)[:TOP_K]
-        # 无需字符预算裁剪：硬上界 = TOP_K × MAX_MESSAGE_CHARS（12×200=2400），
+        # 无需字符预算裁剪：硬上界 = TOP_K × MAX_MESSAGE_CHARS（16×250=4000），
         # 常量大幅上调时再引入预算逻辑（曾有按相关度丢弃的装填分支，
         # 现配常量下永不可达，属误导性复杂度，已删）
         for rec in ranked:
@@ -513,6 +517,9 @@ class HistoryQAService:
     # ---- RAG 长期记忆槽 ----
 
     RAG_MEMORY_LIMIT = 5
+    # 放宽到 2s：大索引冷启动首次暖机常超检索器默认 800ms，超时静默
+    # 等于记忆槽长期缺席。最坏多等 1.2s，换语义召回完整走完
+    RAG_MEMORY_TIMEOUT_MS = 2000
 
     def _retrieve_rag_memories(
         self, account_wxid: str, conversation_id: int, question: str
@@ -533,6 +540,7 @@ class HistoryQAService:
                 conversation_id=int(conversation_id),
                 query=str(question or ""),
                 limit=self.RAG_MEMORY_LIMIT,
+                timeout_ms=self.RAG_MEMORY_TIMEOUT_MS,
             )
             items = result.get("items") or []
             return [

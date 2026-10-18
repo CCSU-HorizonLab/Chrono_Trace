@@ -227,9 +227,9 @@ class SentimentService:
     ) -> List[Dict[str, Any]]:
         """Analyze a batch of texts.
 
-        include_embeddings 默认 False：预处理阶段的调用方只消费极性/强度
-        （相似度走 pairs 自己的 L2 嵌入缓存），此前每条消息白嵌一遍并把
-        768 维向量 pickle 进库（13 万条会话 ≈400MB 胀库 + 双倍计算）。
+        include_embeddings 由调用方决定：预处理编排器在嵌入模型可用时传
+        True（问答向量通道以本表 embedding_vector 为唯一数据源）；缺模型
+        时 False 落 NULL。相似度特征走 pairs 自己的 L2 嵌入缓存，不经本表。
         """
         if not texts:
             return []

@@ -55,13 +55,19 @@ def seed_messages(db, n=10, conversation_id=1, start_ts=1_700_000_000):
 class FakeSentimentService:
     """记录被分析消息、按批写缓存；可选在指定批次后置取消事件。"""
 
-    def __init__(self, db, cancel_event=None, cancel_after_batches=None):
+    def __init__(self, db, cancel_event=None, cancel_after_batches=None,
+                 embedding_model_available=False):
         self.db = db
         self.cancel_event = cancel_event
         self.cancel_after_batches = cancel_after_batches
+        self.embedding_model_available = embedding_model_available
         self.analyzed_texts: list[str] = []
         self.cached_ids: list[int] = []
+        self.include_embeddings_seen: list[bool] = []
         self._batches_done = 0
+
+    def has_local_embedding_model(self):
+        return self.embedding_model_available
 
     def batch_get_sentiment_from_cache(self, message_ids):
         rows = self.db.execute(
@@ -71,8 +77,9 @@ class FakeSentimentService:
         ).fetchall()
         return {row["message_id"]: {"polarity": 1, "intensity": 0.1} for row in rows}
 
-    def analyze_batch(self, texts):
+    def analyze_batch(self, texts, include_embeddings=False):
         self.analyzed_texts.extend(texts)
+        self.include_embeddings_seen.append(bool(include_embeddings))
         return [{"polarity": 1, "intensity": 0.4, "embedding": None} for _ in texts]
 
     def batch_cache_sentiments(self, cache_data):
@@ -151,6 +158,23 @@ class TestRunBackfill:
         assert result["status"] == "completed"
         assert result["progress_percent"] == 100
         assert len(fake.analyzed_texts) == 5  # 已缓存的 ids[0] 不进推理
+
+
+class TestEmbeddingWriteGate:
+    def test_preprocessing_passes_include_embeddings_by_availability(self, db):
+        """嵌入写入随可用性门：模型在→include_embeddings=True，缺→False。"""
+        seed_messages(db, n=3)
+
+        orchestrator = PreprocessingOrchestrator()
+        fake = FakeSentimentService(db, embedding_model_available=True)
+        orchestrator.sentiment_service = fake
+        orchestrator.run_sentiment_backfill(1)
+        assert fake.include_embeddings_seen == [True]
+
+        fake2 = FakeSentimentService(db, embedding_model_available=False)
+        orchestrator.sentiment_service = fake2
+        orchestrator.run_sentiment_backfill(1)  # 全缓存命中，不进批次
+        assert fake2.include_embeddings_seen == []
         coverage = SentimentBackfillService.get_coverage(1)
         assert coverage["need_backfill"] is False
 

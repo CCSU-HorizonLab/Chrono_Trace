@@ -250,16 +250,22 @@ class PreprocessingOrchestrator:
         batch_size = 500
         total_batches = (total_to_analyze + batch_size - 1) // batch_size
         sentiment_start = time.time()
+        # 恢复逐条嵌入写入：问答向量通道以 sentiment_cache.embedding_vector
+        # 为唯一数据源。可用性门保护——缺嵌入模型时 include_embeddings=False
+        # 落 NULL（不写零向量），情感极性照常产出
+        include_embeddings = self.sentiment_service.has_local_embedding_model()
 
         for start in range(0, total_to_analyze, batch_size):
             if cancel_event and cancel_event.is_set():
                 logger.info(f"[预处理] 情感分析被用户取消 (已处理 {start}/{total_to_analyze})")
                 raise Exception("分析已被用户取消")
-                
+
             batch_index = start // batch_size + 1
             batch_msgs = messages_to_analyze[start:start + batch_size]
             texts = [msg["content"] or "" for msg in batch_msgs]
-            batch_results = self.sentiment_service.analyze_batch(texts)
+            batch_results = self.sentiment_service.analyze_batch(
+                texts, include_embeddings=include_embeddings
+            )
 
             cache_data = []
             for msg, result in zip(batch_msgs, batch_results):

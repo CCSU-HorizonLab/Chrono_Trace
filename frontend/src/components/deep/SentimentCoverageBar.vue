@@ -233,6 +233,10 @@ onUnmounted(stopPolling)
   overflow: hidden;
 }
 
+.btn.retry {
+  padding: 2px 10px;
+}
+
 .progress-fill {
   height: 100%;
   border-radius: 999px;
@@ -240,34 +244,8 @@ onUnmounted(stopPolling)
   transition: width 0.4s ease;
 }
 
-.btn {
-  padding: 7px 16px;
-  border-radius: 999px;
-  border: 1px solid var(--ct-border-color);
-  background: var(--ct-bg-surface);
-  color: var(--ct-text-secondary);
-  font-size: var(--ct-text-sm);
-  cursor: pointer;
-  white-space: nowrap;
-  transition: all 0.2s ease;
-}
 
-.btn.primary {
-  background: var(--ct-color-primary);
-  border-color: var(--ct-color-primary);
-  color: #ffffff;
-}
 
-.btn.primary:hover:not(:disabled) {
-  opacity: 0.9;
-}
 
-.btn.cancel {
-  color: var(--ct-text-secondary);
-}
 
-.btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
 </style>

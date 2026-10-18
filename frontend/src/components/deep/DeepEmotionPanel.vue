@@ -1,33 +1,39 @@
 <template>
-  <div class="deep-emotion card">
-    <div class="panel-header">
+  <div class="panel deep-emotion">
+    <div class="panel-head">
       <div>
         <div class="panel-title">情绪演变</div>
         <div class="panel-sub">按{{ granularityLabel }}聚合情感分（-1 压抑 ~ +1 轻松），滚动窗口看走势，可切双方/我/TA 或三线同显</div>
       </div>
-      <div class="control-group">
-        <div class="perspective-group" role="group" aria-label="视角">
-          <button
-            v-for="option in perspectiveOptions"
-            :key="option.value"
-            class="btn perspective-btn"
-            :class="{ active: perspective === option.value }"
-            @click="perspective = option.value"
-          >{{ option.label }}</button>
+      <div class="panel-actions">
+        <div class="action-group" role="group" aria-label="视角">
+          <span class="group-label">视角</span>
+          <div class="group-btns">
+            <button
+              v-for="option in perspectiveOptions"
+              :key="option.value"
+              class="btn"
+              :class="{ active: perspective === option.value }"
+              @click="perspective = option.value"
+            >{{ option.label }}</button>
+          </div>
         </div>
-        <div class="perspective-group" role="group" aria-label="滚动窗口">
-          <button
-            v-for="option in rollingOptions"
-            :key="option.value"
-            class="btn perspective-btn"
-            :class="{ active: rollingWindow === option.value }"
-            @click="rollingWindow = option.value"
-          >{{ option.label }}</button>
+        <div class="action-group" role="group" aria-label="滚动窗口">
+          <span class="group-label">窗口</span>
+          <div class="group-btns">
+            <button
+              v-for="option in rollingOptions"
+              :key="option.value"
+              class="btn"
+              :class="{ active: rollingWindow === option.value }"
+              @click="rollingWindow = option.value"
+            >{{ option.label }}</button>
+          </div>
         </div>
       </div>
     </div>
 
-    <div v-if="!buckets.length" class="empty">所选区间暂无消息</div>
+    <div v-if="!buckets.length" class="empty-state">所选区间暂无消息</div>
     <template v-else>
       <EmotionLineChart
         :timeseries="smoothedBuckets"
@@ -169,64 +175,29 @@ const notes = computed(() => {
 </script>
 
 <style scoped>
-.card {
-  background: var(--ct-bg-elevated);
-  border: 1px solid var(--ct-border-color);
-  border-radius: var(--ct-radius-lg);
-  box-shadow: var(--ct-shadow-md);
-  padding: var(--ct-space-lg);
-  margin-bottom: var(--ct-space-lg);
-}
 
-.panel-header {
+
+
+
+
+
+
+
+.action-group {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--ct-space-md);
-  margin-bottom: var(--ct-space-md);
-  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
-.panel-title {
-  font-size: var(--ct-text-base);
-  font-weight: var(--ct-font-bold);
-  color: var(--ct-text-primary);
-}
-
-.panel-sub {
-  margin-top: 2px;
-  color: var(--ct-text-secondary);
+.group-label {
+  color: var(--ct-text-tertiary);
   font-size: var(--ct-text-xs);
 }
 
-.control-group {
-  display: flex;
-  gap: var(--ct-space-sm);
-  flex-shrink: 0;
-  flex-wrap: wrap;
-}
-
-.perspective-group {
+.group-btns {
   display: flex;
   gap: var(--ct-space-xs);
-  flex-shrink: 0;
-}
-
-.btn {
-  padding: 5px 12px;
-  border: 1px solid var(--ct-border-color);
-  background: var(--ct-bg-surface);
-  color: var(--ct-text-secondary);
-  border-radius: 999px;
-  cursor: pointer;
-  font-size: var(--ct-text-xs);
-  transition: all 0.2s ease;
-}
-
-.perspective-btn.active {
-  background: var(--ct-color-primary-light);
-  color: var(--ct-color-primary);
-  border-color: var(--ct-color-primary);
 }
 
 .chart-notes {
@@ -246,9 +217,4 @@ const notes = computed(() => {
   margin-right: 4px;
 }
 
-.empty {
-  color: var(--ct-text-tertiary);
-  padding: var(--ct-space-xl) 0;
-  text-align: center;
-}
 </style>

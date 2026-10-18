@@ -637,7 +637,7 @@
   <!-- 从不打开则零开销；激活后保持挂载（v-show 切换不重复请求）。加 -->
   <!-- !isGroupConversation：切群聊立即卸载——v-show 只隐藏不卸载，挂着的 -->
   <!-- watch 会对群聊 id 发起重载荷并把"对方=全群"的画像写进 big5 缓存 -->
-  <div v-show="currentTab === 'deep' && selectedConversationId" class="tab-content fade-in">
+  <div v-show="currentTab === 'deep' && selectedConversationId" class="tab-content fade-in deep-tab">
     <template v-if="deepActivated && !isGroupConversation">
       <DateRangeFilter
         :dates="dates"
@@ -2691,6 +2691,12 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
 
 /* 关系洞察页改为纵向文档流（结论带 → 维度卡|风险 → 维度拆解通栏），整页可滚动 */
 .tab-content.affinity-tab {
+  overflow-y: auto;
+}
+
+/* 时光深度五面板纵向长滚（生成画像后超 2800px），同 affinity 模式整页滚；
+   该容器也是页签内锚点导航的滚动祖先 */
+.tab-content.deep-tab {
   overflow-y: auto;
 }
 

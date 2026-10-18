@@ -1,7 +1,7 @@
 <template>
-  <div class="milestone-timeline card">
-    <div class="panel-header">
-      <div class="panel-title">这段关系走过的时间线</div>
+  <div class="panel milestone-timeline">
+    <div class="panel-head">
+      <div class="panel-title">里程碑</div>
       <div class="panel-sub">首条消息、消息量关口、最长沉默期与情绪拐点，按时间排开</div>
     </div>
 
@@ -135,30 +135,9 @@ const items = computed<TimelineItem[]>(() => {
 </script>
 
 <style scoped>
-.card {
-  background: var(--ct-bg-elevated);
-  border: 1px solid var(--ct-border-color);
-  border-radius: var(--ct-radius-lg);
-  box-shadow: var(--ct-shadow-md);
-  padding: var(--ct-space-lg);
-  margin-bottom: var(--ct-space-lg);
-}
 
-.panel-header {
-  margin-bottom: var(--ct-space-md);
-}
 
-.panel-title {
-  font-size: var(--ct-text-base);
-  font-weight: var(--ct-font-bold);
-  color: var(--ct-text-primary);
-}
 
-.panel-sub {
-  margin-top: 2px;
-  color: var(--ct-text-secondary);
-  font-size: var(--ct-text-xs);
-}
 
 .timeline {
   list-style: none;

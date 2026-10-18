@@ -8,12 +8,12 @@
 
 > **English note**: Chrono Trace is a local-first desktop tool for analyzing WeChat (微信) PC 4.x chat data — sentiment & affinity analysis, chat export, real-time LLM reply suggestions, and per-contact long-term memory (RAG). The UI and docs are Chinese-only, as the tool targets WeChat's Chinese ecosystem.
 
-[![Python](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
-[![Vue](https://img.shields.io/badge/Vue-3.x-green.svg)](https://vuejs.org/)
-[![Vite](https://img.shields.io/badge/Vite-5.x-646CFF.svg)](https://vitejs.dev/)
-[![Platform](https://img.shields.io/badge/Platform-Windows%20%2010%2F11%20%7C%20Linux-0078D6.svg)](#环境要求)
-[![Status](https://img.shields.io/badge/Status-v1.4.0-brightgreen.svg)](./docs/release-notes-v1.4.0.md)
-[![License](https://img.shields.io/badge/License-PolyForm%20Noncommercial%201.0.0-blue.svg)](./LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.12-blue.svg?style=flat-square)](https://www.python.org/)
+[![Vue](https://img.shields.io/badge/Vue-3.x-green.svg?style=flat-square)](https://vuejs.org/)
+[![Vite](https://img.shields.io/badge/Vite-5.x-646CFF.svg?style=flat-square)](https://vitejs.dev/)
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%2010%2F11%20%7C%20Linux-0078D6.svg?style=flat-square)](#环境要求)
+[![Status](https://img.shields.io/badge/Status-v1.4.0-brightgreen.svg?style=flat-square)](./docs/release-notes-v1.4.0.md)
+[![License](https://img.shields.io/badge/License-PolyForm%20Noncommercial%201.0.0-blue.svg?style=flat-square)](./LICENSE)
 
 > 镌刻对话年轮，丈量心动间距
 
@@ -46,12 +46,14 @@
 
 你的微信里，藏着最复杂的人际关系。微信自带的搜索能帮你找到某句话，但无法帮你回答这些“灵魂拷问”：
 
-*   **“TA 最近是不是对我忽冷忽热？”** 
-    内置基于大模型的**关系评估与风险预警系统**，从互动投入、情感共鸣等维度量化打分，帮你读懂对方的真实态度。
-*   **“遇到难回的消息，怎么接话才能高情商？”**
-    提供**悬浮辅助窗与实时监听**，结合你们的**长期记忆（RAG）**提取偏好与雷点，边聊边在屏幕边缘为你生成专属回复建议，告别切屏复制粘贴。
-*   **“群消息 999+，爬楼太累又怕错过重点？”**
-    一键生成**群聊工作台与智能日报**，谁在活跃、高频词是什么、今日重点有哪些，一目了然。
+*   ***“TA 最近是不是对我忽冷忽热？”***  
+    内置基于大模型的关系评估与风险预警系统，从互动投入、情感共鸣等维度量化打分，帮你读懂对方的真实态度。
+
+*   ***“遇到难回的消息，怎么接话才能高情商？”***  
+    提供悬浮辅助窗与实时监听，结合你们的长期记忆（RAG）提取偏好与雷点，边聊边在屏幕边缘为你生成专属回复建议，告别切屏复制粘贴。
+
+*   ***“群消息 999+，爬楼太累又怕错过重点？”***  
+    一键生成群聊工作台与智能日报，谁在活跃、高频词是什么、今日重点有哪些，一目了然。
 
 **🔒 核心承诺：100% 本地化运行**
 所有数据解析、脱敏与推理由本机完成（配合本地大模型或你配置的 API），聊天记录绝不上传云端，彻底杜绝隐私泄露与封号风险。

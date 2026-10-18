@@ -24,19 +24,34 @@ logger = logging.getLogger(__name__)
 
 
 class SentimentBackfillService:
-    """情感补算：覆盖率查询 + 任务注册/进度/取消 + 执行。"""
+    """情感补算：覆盖率查询 + 任务注册/进度/取消 + 执行。
 
-    def __init__(self, orchestrator=None):
+    两类任务共用本服务与 _tasks 字典：sentiment（情感缓存缺口，走编排器）
+    与 embedding（问答向量缺口，直嵌补 NULL 行）。共用字典使「全局单飞」
+    与「与全面分析互斥」对两类任务同时成立，无需另起注册表。
+    """
+
+    def __init__(self, orchestrator=None, sentiment_service=None):
         # 构造器注入（测试传桩）；生产路径走真实编排器
         if orchestrator is None:
             from .preprocessing_orchestrator import PreprocessingOrchestrator
 
             orchestrator = PreprocessingOrchestrator()
         self._orchestrator = orchestrator
+        # 情感服务懒构造：纯 sentiment 任务用不到嵌入，构造即建会拖起
+        # SentimentService 单例的实时情感预加载
+        self._sentiment_service = sentiment_service
 
         self._lock = threading.Lock()
-        # task_id -> {conversation_id, status, progress_percent, current_step, error}
+        # task_id -> {conversation_id, kind, status, progress_percent, current_step, error}
         self._tasks: Dict[str, Dict[str, Any]] = {}
+
+    def _embedding_service(self):
+        if self._sentiment_service is None:
+            from .sentiment_service import SentimentService
+
+            self._sentiment_service = SentimentService()
+        return self._sentiment_service
 
     # ------------------------------------------------------------------
     # 覆盖率
@@ -66,13 +81,40 @@ class SentimentBackfillService:
             "need_backfill": missing > 0,
         }
 
+    @staticmethod
+    def get_embedding_coverage(conversation_id: int) -> Dict[str, Any]:
+        """统计会话文本消息的向量覆盖情况（问答语义索引懒补的缺口依据）。"""
+        row = get_db().execute("""
+            SELECT COUNT(*),
+                   SUM(CASE WHEN sc.embedding_vector IS NOT NULL THEN 1 ELSE 0 END)
+            FROM messages m
+            LEFT JOIN sentiment_cache sc ON sc.message_id = m.id
+            WHERE m.conversation_id = ?
+                AND m.message_type = 1
+                AND m.content IS NOT NULL
+                AND TRIM(m.content) != ''
+        """, (conversation_id,)).fetchone()
+        total = int(row[0] or 0)
+        embedded = int(row[1] or 0)
+        missing = total - embedded
+        return {
+            "total": total,
+            "embedded": embedded,
+            "missing": missing,
+            "ratio": round(embedded / total, 3) if total else 1.0,
+            "need_backfill": missing > 0,
+        }
+
     # ------------------------------------------------------------------
     # 任务三件套（口径对齐 AffinityAnalysisService.register_task/find_running_task）
     # ------------------------------------------------------------------
 
-    def register_task(self, task_id: str, conversation_id: int) -> Dict[str, Any]:
+    def register_task(
+        self, task_id: str, conversation_id: int, kind: str = "sentiment"
+    ) -> Dict[str, Any]:
         task = {
             "conversation_id": int(conversation_id),
+            "kind": str(kind or "sentiment"),
             "status": "running",
             "progress_percent": 0,
             "current_step": "准备补算",
@@ -148,6 +190,141 @@ class SentimentBackfillService:
         )
         logger.info(f"[情感补算] 会话 {conversation_id} 完成")
         return self.get_progress(task_id)
+
+    def run_embedding_backfill(
+        self,
+        conversation_id: int,
+        cancel_event: threading.Event,
+        task_id: str,
+    ) -> Dict[str, Any]:
+        """嵌入懒补：补齐 sentiment_cache 向量缺口（问答向量通道数据源）。
+
+        阶段 B 先行（无 sentiment 行的消息走完整 analyze_batch——真极性
+        +向量，不用假极性污染情感统计）；阶段 A 补存量行的 NULL 向量
+        （embed_texts_batch 直嵌 + UPDATE）。取消保留已写批次，续跑自动
+        跳过；终态收尾不查库（后台线程与 sqlite 连接线程绑定冲突）。
+        """
+        try:
+            self._update(task_id, progress_percent=2, current_step="读取向量缺口")
+            filled = self._embedding_backfill_pass(conversation_id, cancel_event, task_id)
+        except Exception as e:
+            if cancel_event.is_set() or "已被用户取消" in str(e):
+                self._update(task_id, status="cancelled", current_step="已取消", finished_at=time.time())
+                logger.info(f"[语义索引补算] 会话 {conversation_id} 被用户取消")
+            else:
+                self._update(
+                    task_id, status="failed", error=str(e), current_step="失败", finished_at=time.time()
+                )
+                logger.error(f"[语义索引补算] 会话 {conversation_id} 失败: {e}")
+            return self.get_progress(task_id)
+
+        self._update(
+            task_id,
+            status="completed",
+            progress_percent=100,
+            current_step="完成",
+            finished_at=time.time(),
+        )
+        logger.info(f"[语义索引补算] 会话 {conversation_id} 完成（补 {filled} 条向量）")
+        return self.get_progress(task_id)
+
+    _EMBED_BATCH_SIZE = 500
+
+    def _embedding_backfill_pass(
+        self,
+        conversation_id: int,
+        cancel_event: threading.Event,
+        task_id: str,
+    ) -> int:
+        """两阶段补齐；返回成功写入的向量条数（含阶段 B 新建行）。"""
+        service = self._embedding_service()
+        text_filter = """
+            m.conversation_id = ?
+            AND m.message_type = 1
+            AND m.content IS NOT NULL
+            AND TRIM(m.content) != ''
+        """
+        coverage = self.get_embedding_coverage(conversation_id)
+        total_missing = coverage["missing"]
+        filled = 0
+        done = 0
+
+        def _report(step: str) -> None:
+            percent = int(5 + min(done / total_missing, 1.0) * 90) if total_missing else 95
+            self._update(task_id, progress_percent=percent, current_step=step)
+
+        # 阶段 B：无 sentiment_cache 行的消息——完整情感+向量分析
+        while True:
+            if cancel_event.is_set():
+                raise Exception("分析已被用户取消")
+            rows = get_db().execute(
+                f"""
+                SELECT m.id, m.content
+                FROM messages m
+                LEFT JOIN sentiment_cache sc ON sc.message_id = m.id
+                WHERE {text_filter} AND sc.message_id IS NULL
+                ORDER BY m.id
+                LIMIT ?
+                """,
+                (conversation_id, self._EMBED_BATCH_SIZE),
+            ).fetchall()
+            if not rows:
+                break
+            results = service.analyze_batch(
+                [row["content"] for row in rows], include_embeddings=True
+            )
+            service.batch_cache_sentiments([
+                {
+                    "message_id": row["id"],
+                    "polarity": result["polarity"],
+                    "intensity": result["intensity"],
+                    "embedding": result.get("embedding"),
+                }
+                for row, result in zip(rows, results)
+            ])
+            filled += len(rows)
+            done += len(rows)
+            _report("语义索引推理（新消息）")
+
+        # 阶段 A：行在但向量为 NULL 的存量消息——只补嵌入
+        from .sentiment_service import pack_embedding
+
+        while True:
+            if cancel_event.is_set():
+                raise Exception("分析已被用户取消")
+            rows = get_db().execute(
+                f"""
+                SELECT m.id, m.content
+                FROM messages m
+                JOIN sentiment_cache sc ON sc.message_id = m.id
+                WHERE {text_filter} AND sc.embedding_vector IS NULL
+                ORDER BY m.id
+                LIMIT ?
+                """,
+                (conversation_id, self._EMBED_BATCH_SIZE),
+            ).fetchall()
+            if not rows:
+                break
+            vectors = service.embed_texts_batch([row["content"] for row in rows])
+            updates = [
+                (blob, row["id"])
+                for row, vector in zip(rows, vectors)
+                if (blob := pack_embedding(vector)) is not None
+            ]
+            if updates:
+                get_db().executemany(
+                    "UPDATE sentiment_cache SET embedding_vector = ? WHERE message_id = ?",
+                    updates,
+                )
+                get_db().commit()
+            filled += len(updates)
+            done += len(rows)
+            _report("语义索引推理（存量补嵌）")
+            if not updates:
+                # 零向量等退化输出写不进（pack 落 None）——整批无进展即收工，
+                # 残留行等下次覆盖查询再试，避免同批反复捞回死循环
+                break
+        return filled
 
     # ------------------------------------------------------------------
     # 过期任务清理（防字典无界增长；终态任务保留近期一段供前端收尾查询）

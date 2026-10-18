@@ -18,11 +18,14 @@ from app.services.analysis.preprocessing_orchestrator import PreprocessingOrches
 from app.services.analysis.sentiment_backfill_service import SentimentBackfillService
 from app.webview.api.affinity import AffinityApiMixin
 from app.webview.api.deep_analysis import DeepAnalysisApiMixin
+from app.webview.api.history_qa import HistoryQaApiMixin
 
 
 @pytest.fixture
 def db(monkeypatch):
-    conn = sqlite3.connect(":memory:")
+    # check_same_thread=False：语义索引懒补在后台线程跑，服务层 get_db 被
+    # patch 到本连接——主线程创建、后台线程顺序使用
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute(
         "CREATE TABLE messages (id INTEGER PRIMARY KEY, conversation_id INT, "
@@ -30,7 +33,7 @@ def db(monkeypatch):
     )
     conn.execute(
         "CREATE TABLE sentiment_cache (message_id INTEGER UNIQUE, polarity INT, "
-        "intensity REAL, created_at INT)"
+        "intensity REAL, embedding_vector BLOB, created_at INT)"
     )
     monkeypatch.setattr(bfmod, "get_db", lambda: conn)
     monkeypatch.setattr(orchmod, "get_db", lambda: conn)
@@ -62,6 +65,7 @@ class FakeSentimentService:
         self.cancel_after_batches = cancel_after_batches
         self.embedding_model_available = embedding_model_available
         self.analyzed_texts: list[str] = []
+        self.embedded_texts: list[str] = []
         self.cached_ids: list[int] = []
         self.include_embeddings_seen: list[bool] = []
         self._batches_done = 0
@@ -80,14 +84,23 @@ class FakeSentimentService:
     def analyze_batch(self, texts, include_embeddings=False):
         self.analyzed_texts.extend(texts)
         self.include_embeddings_seen.append(bool(include_embeddings))
-        return [{"polarity": 1, "intensity": 0.4, "embedding": None} for _ in texts]
+        embedding = [0.7, 0.8, 0.9] if include_embeddings else None
+        return [{"polarity": 1, "intensity": 0.4, "embedding": embedding} for _ in texts]
+
+    def embed_texts_batch(self, texts):
+        self.embedded_texts.extend(texts)
+        return [[0.25, 0.5, 0.75] for _ in texts]
 
     def batch_cache_sentiments(self, cache_data):
+        from app.services.analysis.sentiment_service import pack_embedding
+
         for item in cache_data:
             self.db.execute(
-                "INSERT OR REPLACE INTO sentiment_cache (message_id, polarity, intensity, created_at)"
-                " VALUES (?, ?, ?, 1)",
-                (item["message_id"], item["polarity"], item["intensity"]),
+                "INSERT OR REPLACE INTO sentiment_cache"
+                " (message_id, polarity, intensity, embedding_vector, created_at)"
+                " VALUES (?, ?, ?, ?, 1)",
+                (item["message_id"], item["polarity"], item["intensity"],
+                 pack_embedding(item.get("embedding"))),
             )
         self.db.commit()
         self.cached_ids.extend(item["message_id"] for item in cache_data)
@@ -362,3 +375,197 @@ class TestBridgeGuards:
         while time.time() < deadline and bridge._sentiment_backfill_cancel_events:
             time.sleep(0.02)
         assert not bridge._sentiment_backfill_cancel_events
+
+
+class TestEmbeddingBackfill:
+    def _service(self, db, **kw):
+        fake = FakeSentimentService(db, **kw)
+        return SentimentBackfillService(orchestrator=object(), sentiment_service=fake), fake
+
+    def test_embedding_coverage_counts(self, db):
+        ids = seed_messages(db, n=4)
+        db.execute(
+            "INSERT INTO sentiment_cache (message_id, polarity, intensity, embedding_vector, created_at)"
+            " VALUES (?, 1, 0.2, x'0102', 1)", (ids[0],),
+        )
+        db.execute(
+            "INSERT INTO sentiment_cache (message_id, polarity, intensity, created_at) VALUES (?, 0, 0.0, 1)",
+            (ids[1],),
+        )
+        db.commit()
+
+        coverage = SentimentBackfillService.get_embedding_coverage(1)
+        assert coverage["total"] == 4
+        assert coverage["embedded"] == 1
+        assert coverage["missing"] == 3
+        assert coverage["need_backfill"] is True
+
+    def test_two_phases_fill_gaps(self, db):
+        """阶段 B 给无行消息建行（真极性+向量），阶段 A 补存量 NULL 行。"""
+        ids = seed_messages(db, n=3)
+        db.execute(
+            "INSERT INTO sentiment_cache (message_id, polarity, intensity, created_at) VALUES (?, 0, 0.0, 1)",
+            (ids[0],),
+        )
+        db.commit()
+
+        service, fake = self._service(db)
+        service.register_task("t_emb", 1, kind="embedding")
+        result = service.run_embedding_backfill(1, threading.Event(), "t_emb")
+
+        assert result["status"] == "completed"
+        assert fake.analyzed_texts == ["消息内容1", "消息内容2"]  # 只有无行消息走完整分析
+        assert fake.embedded_texts == ["消息内容0"]  # 只有 NULL 行直嵌补向量
+        coverage = SentimentBackfillService.get_embedding_coverage(1)
+        assert coverage["embedded"] == 3 and coverage["missing"] == 0
+
+    def test_cancel_prevents_any_write(self, db):
+        seed_messages(db, n=3)
+        service, _ = self._service(db)
+
+        cancel = threading.Event()
+        cancel.set()
+        service.register_task("t_cancel", 1, kind="embedding")
+        result = service.run_embedding_backfill(1, cancel, "t_cancel")
+
+        assert result["status"] == "cancelled"
+        assert SentimentBackfillService.get_embedding_coverage(1)["embedded"] == 0
+
+    def test_midway_cancel_keeps_written_batches(self, db):
+        seed_messages(db, n=700)  # 500/批 → 2 批，首批写完后取消
+        cancel = threading.Event()
+        service_fake = FakeSentimentService(db, cancel_event=cancel, cancel_after_batches=1)
+        service = SentimentBackfillService(orchestrator=object(), sentiment_service=service_fake)
+        service.register_task("t_mid", 1, kind="embedding")
+        result = service.run_embedding_backfill(1, cancel, "t_mid")
+
+        assert result["status"] == "cancelled"
+        coverage = SentimentBackfillService.get_embedding_coverage(1)
+        assert coverage["embedded"] == 500  # 已写批次保留，续跑自动跳过
+
+    def test_zero_vector_stall_guard(self, db):
+        """退化零向量写不进（pack 落 None）不得死循环，任务照常收尾。"""
+        ids = seed_messages(db, n=2)
+        for mid in ids:
+            db.execute(
+                "INSERT INTO sentiment_cache (message_id, polarity, intensity, created_at) VALUES (?, 0, 0.0, 1)",
+                (mid,),
+            )
+        db.commit()
+
+        class _ZeroEmbed:
+            def __init__(self, db):
+                self.db = db
+                self.embedded_texts = []
+
+            def embed_texts_batch(self, texts):
+                self.embedded_texts.extend(texts)
+                return [[0.0, 0.0, 0.0] for _ in texts]
+
+        zero = _ZeroEmbed(db)
+        service = SentimentBackfillService(orchestrator=object(), sentiment_service=zero)
+        service.register_task("t_zero", 1, kind="embedding")
+        result = service.run_embedding_backfill(1, threading.Event(), "t_zero")
+
+        assert result["status"] == "completed"
+        assert SentimentBackfillService.get_embedding_coverage(1)["embedded"] == 0
+        assert len(zero.embedded_texts) == 2  # 只捞了一轮，没有死循环
+
+
+class _QaBridge(HistoryQaApiMixin, DeepAnalysisApiMixin, AffinityApiMixin):
+    """问答+补算+好感度三 mixin 组合（生产 Bridge 同构）。"""
+
+    def __init__(self, affinity=None, affinity_list=None, backfill=None):
+        if affinity is not None:
+            self._affinity_service = affinity
+        if affinity_list is not None:
+            self._affinity_services = affinity_list
+        if backfill is not None:
+            self._sentiment_backfill_service = backfill
+
+
+class TestQaEmbeddingTrigger:
+    def _model_on(self, monkeypatch):
+        import app.services.analysis.onnx_inference as oi
+
+        monkeypatch.setattr(oi, "has_embedding_model", lambda: True)
+
+    def test_reuses_running_task_same_conversation(self):
+        backfill = SentimentBackfillService(orchestrator=object(), sentiment_service=object())
+        backfill.register_task("running", 3)
+        assert _QaBridge(backfill=backfill)._maybe_start_embedding_backfill(3) is True
+
+    def test_refused_when_other_conversation_running(self, db):
+        seed_messages(db, n=60)
+        backfill = SentimentBackfillService(orchestrator=object(), sentiment_service=object())
+        backfill.register_task("other", 7)
+        assert _QaBridge(backfill=backfill)._maybe_start_embedding_backfill(1) is False
+
+    def test_refused_when_affinity_running(self):
+        bridge = _QaBridge(affinity=_FakeAffinity(running=True))
+        assert bridge._maybe_start_embedding_backfill(1) is False
+
+    def test_refused_when_embedding_model_missing(self, db, monkeypatch):
+        seed_messages(db, n=60)
+        import app.services.analysis.onnx_inference as oi
+
+        monkeypatch.setattr(oi, "has_embedding_model", lambda: False)
+        assert _QaBridge()._maybe_start_embedding_backfill(1) is False
+
+    def test_skipped_when_coverage_sufficient(self, db, monkeypatch):
+        """缺口低于阈值（<50 条）不起任务。"""
+        ids = seed_messages(db, n=10)
+        from app.services.analysis.sentiment_service import pack_embedding
+
+        for mid in ids:
+            db.execute(
+                "INSERT INTO sentiment_cache (message_id, polarity, intensity, embedding_vector, created_at)"
+                " VALUES (?, 1, 0.2, ?, 1)", (mid, pack_embedding([0.1, 0.2, 0.3])),
+            )
+        db.commit()
+        self._model_on(monkeypatch)
+
+        bridge = _QaBridge()
+        assert bridge._maybe_start_embedding_backfill(1) is False
+
+    def test_full_trigger_runs_to_completion(self, db, monkeypatch):
+        """缺口达标 → 起后台任务 → 完成后向量全覆盖。"""
+        seed_messages(db, n=60)
+        self._model_on(monkeypatch)
+
+        fake = FakeSentimentService(db)
+        backfill = SentimentBackfillService(orchestrator=object(), sentiment_service=fake)
+        bridge = _QaBridge(backfill=backfill)
+
+        assert bridge._maybe_start_embedding_backfill(1) is True
+        deadline = time.time() + 5
+        while backfill.find_running_task(1) and time.time() < deadline:
+            time.sleep(0.02)
+        coverage = SentimentBackfillService.get_embedding_coverage(1)
+        assert coverage["embedded"] == 60 and coverage["missing"] == 0
+
+    def test_ask_history_reports_semantic_indexing(self, db, monkeypatch):
+        """问答成功返回 semantic_indexing 标志（前端轻提示依据）。"""
+        seed_messages(db, n=60)
+        self._model_on(monkeypatch)
+
+        import app.services.analysis.history_qa_service as hqmod
+
+        class _FakeQA:
+            def ask(self, conv, question, history):
+                return {"answer": "好的", "citations": []}
+
+        monkeypatch.setattr(hqmod, "HistoryQAService", _FakeQA)
+
+        fake = FakeSentimentService(db)
+        backfill = SentimentBackfillService(orchestrator=object(), sentiment_service=fake)
+        bridge = _QaBridge(backfill=backfill)
+
+        result = bridge.ask_history(1, "我们聊过什么")
+        assert result["ok"] is True
+        assert result["semantic_indexing"] is True
+
+        # 等后台线程收尾再离开 fixture（连接关闭与后台查询并发会段错误）
+        deadline = time.time() + 5
+        while backfill.find_running_task(1) and time.time() < deadline:
+            time.sleep(0.02)

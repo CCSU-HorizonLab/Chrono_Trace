@@ -567,6 +567,8 @@
       <div class="qa-header">
         <h3 class="qa-title">问问微信</h3>
         <p class="qa-subtitle">向 {{ currentContactName }} 的聊天记录提问，回答附带引用溯源（仅检索当前联系人）</p>
+        <!-- 语义索引懒补在途：本轮回答仍以关键词检索为主，补完自动生效 -->
+        <p v-if="qaIndexingHint" class="qa-indexing-hint">正在为该会话补充语义索引，完成后回答会更准</p>
       </div>
 
       <!-- 聊天流：时间正序，问答成对出现，新内容自动滚到底 -->
@@ -1112,6 +1114,8 @@ const showPortraitDialog = ref(false)
         const qaHistory = ref<QaEntry[]>([])
         const qaInput = ref('')
         const qaLoading = ref(false)
+        // 语义索引懒补在途提示（切联系人/重置账号时清位；不轮询，下次提问自然生效）
+        const qaIndexingHint = ref(false)
         const qaChatBox = ref<HTMLElement | null>(null)
 
         function scrollQaToBottom() {
@@ -1193,6 +1197,8 @@ const showPortraitDialog = ref(false)
                         citations: Array.isArray(res.citations) ? res.citations : [],
                     })
                     qaInput.value = ''
+                    // 后台语义索引懒补在途（不轮询：下次提问自然用上新索引）
+                    qaIndexingHint.value = res.semantic_indexing === true
                 } else {
                     const msg = String(res?.error || '问答失败，请重试')
                     if (!msg.includes('已取消')) showDialog(msg) // 主动取消不弹错误
@@ -1405,6 +1411,7 @@ const showPortraitDialog = ref(false)
             conversations.value = []
             analysisResult.value = null
             qaHistory.value = []
+            qaIndexingHint.value = false
             hasFeatures.value = false
             analysis.timeseries = []
             analysis.wordcloud = []
@@ -1453,6 +1460,7 @@ const showPortraitDialog = ref(false)
             setDefaultDates(30, getConversationAnchorDate(id))
             hasFeatures.value = false
             analysisResult.value = null
+            qaIndexingHint.value = false
             qaHistory.value = [] // 问答记录按联系人隔离（F1 同源）
             groupSummary.value = null
             loadGroupStats()
@@ -3795,6 +3803,13 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   margin: 0;
   font-size: 12px;
   color: var(--ct-text-tertiary);
+}
+
+/* 语义索引懒补在途的轻提示（一次性标志，不轮询进度） */
+.qa-indexing-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--ct-color-primary, #7c4dff);
 }
 
 /* 聊天流：自带滚动，新消息滚底 */

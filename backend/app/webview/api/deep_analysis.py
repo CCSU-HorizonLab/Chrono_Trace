@@ -95,17 +95,19 @@ class DeepAnalysisApiMixin:
             service = getattr(self, "_sentiment_backfill_service", None)
             with _ONNX_TASK_LOCK:
                 if service is not None:
-                    # 复用守卫：本会话已有补算任务时不重复启动（防取消事件被替换）
+                    # 复用守卫：本会话已有补算任务时不重复启动（防取消事件被替换；
+                    # 含问答触发的语义索引任务——它同样在写情感+向量缓存）
                     running = service.find_running_task(conversation_id)
                     if running:
                         return {
                             "ok": True, "task_id": running, "status": "started",
-                            "message": "已有进行中的情感补算，已复用",
+                            "message": "已有进行中的补算任务，已复用",
                         }
-                    # 互斥守卫 0：任一会话的补算运行中（全局单飞）——并发补算
-                    # 既争抢 ONNX 会话，也互相覆盖取消事件使先发任务停不掉
+                    # 互斥守卫 0：任一会话的补算运行中（全局单飞，含问答触发的
+                    # 语义索引懒补——两类任务共用本服务实例与任务字典）——并发
+                    # 补算既争抢 ONNX 会话，也互相覆盖取消事件使先发任务停不掉
                     if service.has_running_task():
-                        return {"ok": False, "error": "另一会话的情感补算进行中，请等待其完成"}
+                        return {"ok": False, "error": "另一会话的补算进行中（情感/语义索引），请等待其完成"}
 
                 # 互斥守卫 1：全面分析进行中（它会自己补齐情感缓存）——必须
                 # 检查全部历史服务实例：analyze_affinity 每次重建实例，旧实例

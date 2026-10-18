@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 # 序列实时计算无缓存，版本主要用于前端兼容判断与文档口径记录）
 # v2：词云演变 halves→segments（2~6 段可配，默认 4）
 # v3：桶点补分侧全量计数 userMsgCount/otherMsgCount（互动量双柱数据源）
+# 海报 story（milestones/chemistry）为纯加性字段，不触碰序列口径——不 +1
 DEEP_ANALYSIS_VERSION = 3
 
 DEEP_BUCKET_GRANULARITIES = ("day", "week", "month", "year")
@@ -559,8 +560,14 @@ class DeepAnalysisService:
         quotes = self._poster_quotes(conversation_id, from_ts, to_ts)
         big5 = self._poster_big5(conversation_id, account_wxid)
 
-        # 不含 milestones：三个海报模板均不渲染里程碑（时间线在深度页签
-        # 消费），下发只会诱发模板作者误用、白付 SQL 与序列化成本
+        # 故事化分镜数据：里程碑复用深度页签口径；默契统计独立直查、逐字段
+        # 降级 None（前端 v-if 跳分镜）。核心分镜零依赖分析产物——未跑分析
+        # 的库也能出开场大数字/时间线/深夜/峰值日
+        story = {
+            "milestones": self._build_milestones(conversation_id, from_ts, to_ts),
+            "chemistry": self._poster_chemistry(conversation_id, from_ts, to_ts),
+        }
+
         return {
             "ok": True,
             "version": DEEP_ANALYSIS_VERSION,
@@ -577,6 +584,7 @@ class DeepAnalysisService:
             "top_words": top_words,
             "quotes": {"items": quotes, "sensitive": True},
             "big5": big5,
+            "story": story,
             "generated_at": int(datetime.now().timestamp()),
         }
 
@@ -652,6 +660,134 @@ class DeepAnalysisService:
             "other_count": total - self_count,
             "active_days": active_days,
             "span_days": span_days,
+        }
+
+    @staticmethod
+    def _poster_chemistry(conversation_id: int, from_ts: int, to_ts: int) -> Dict[str, Any]:
+        """默契统计（故事分镜数据源）：深夜档/峰值日/回复速度/主动发起。
+
+        每字段独立降级 None——reply_stats 与 initiator 依赖预处理产物，
+        未分析的库常态缺席，前端 v-if 跳过对应分镜；消息口径与
+        _poster_stats 同源（message_type=1 且非空文本、窗内、本地时区）。
+        """
+        chemistry: Dict[str, Any] = {}
+
+        # 深夜档（本地 0~5 点）
+        row = get_db().execute(
+            f"""
+            SELECT COUNT(*), SUM(CASE WHEN is_sender = 1 THEN 1 ELSE 0 END)
+            FROM messages
+            WHERE conversation_id = ? AND timestamp BETWEEN ? AND ?
+                AND {_MILESTONE_TEXT_SQL}
+                AND CAST(strftime('%H', timestamp, 'unixepoch', 'localtime') AS INTEGER)
+                    BETWEEN 0 AND 5
+            """,
+            (conversation_id, from_ts, to_ts),
+        ).fetchone()
+        late_count = int(row[0] or 0)
+        late_self = int(row[1] or 0)
+        chemistry["late_night"] = (
+            {"count": late_count, "self_count": late_self,
+             "other_count": late_count - late_self}
+            if late_count else None
+        )
+
+        # 峰值日：窗内消息最多的一天（并列取更早）
+        row = get_db().execute(
+            f"""
+            SELECT DATE(timestamp, 'unixepoch', 'localtime'), COUNT(*),
+                   SUM(CASE WHEN is_sender = 1 THEN 1 ELSE 0 END)
+            FROM messages
+            WHERE conversation_id = ? AND timestamp BETWEEN ? AND ?
+                AND {_MILESTONE_TEXT_SQL}
+            GROUP BY DATE(timestamp, 'unixepoch', 'localtime')
+            ORDER BY COUNT(*) DESC, DATE(timestamp, 'unixepoch', 'localtime') ASC
+            LIMIT 1
+            """,
+            (conversation_id, from_ts, to_ts),
+        ).fetchone()
+        chemistry["peak_day"] = (
+            {"date": str(row[0]), "count": int(row[1] or 0),
+             "self_count": int(row[2] or 0),
+             "other_count": int(row[1] or 0) - int(row[2] or 0)}
+            if row else None
+        )
+
+        # 回复速度 / 主动发起：依赖预处理产物，缺席为 None 是常态
+        chemistry["reply_stats"] = DeepAnalysisService._poster_reply_stats(
+            conversation_id, from_ts, to_ts
+        )
+        rows = get_db().execute(
+            """
+            SELECT initiator, COUNT(*)
+            FROM sessions
+            WHERE conversation_id = ? AND start_time BETWEEN ? AND ?
+            GROUP BY initiator
+            """,
+            (conversation_id, from_ts, to_ts),
+        ).fetchall()
+        if rows:
+            counts = {str(r[0]): int(r[1] or 0) for r in rows}
+            user_sessions = counts.get("user", 0)
+            total_sessions = sum(counts.values())
+            chemistry["initiator"] = {
+                "user_sessions": user_sessions,
+                "other_sessions": total_sessions - user_sessions,
+                "user_ratio": (
+                    user_sessions / total_sessions if total_sessions else None
+                ),
+            }
+        else:
+            chemistry["initiator"] = None
+        return chemistry
+
+    @staticmethod
+    def _poster_reply_stats(
+        conversation_id: int, from_ts: int, to_ts: int
+    ) -> Optional[Dict[str, Any]]:
+        """回复速度（response_times 预处理产物）：回消息落窗、分侧按回消息
+        归属，剔除异常值与 NULL。中位数 SQLite 无 MEDIAN，按序取中位段
+        （偶数取两值均值）。无数据返回 None。"""
+        row = get_db().execute(
+            """
+            SELECT COUNT(*), AVG(rt.response_time_seconds),
+                   AVG(CASE WHEN m.is_sender = 1 THEN rt.response_time_seconds END),
+                   AVG(CASE WHEN m.is_sender = 0 THEN rt.response_time_seconds END)
+            FROM response_times rt
+            JOIN messages m ON m.id = rt.reply_message_id
+            WHERE rt.conversation_id = ? AND m.timestamp BETWEEN ? AND ?
+                AND rt.is_abnormal = 0 AND rt.response_time_seconds IS NOT NULL
+            """,
+            (conversation_id, from_ts, to_ts),
+        ).fetchone()
+        count = int(row[0] or 0)
+        if not count:
+            return None
+        mid_rows = get_db().execute(
+            """
+            SELECT rt.response_time_seconds
+            FROM response_times rt
+            JOIN messages m ON m.id = rt.reply_message_id
+            WHERE rt.conversation_id = ? AND m.timestamp BETWEEN ? AND ?
+                AND rt.is_abnormal = 0 AND rt.response_time_seconds IS NOT NULL
+            ORDER BY rt.response_time_seconds
+            LIMIT 2 OFFSET ?
+            """,
+            (conversation_id, from_ts, to_ts, (count - 1) // 2),
+        ).fetchall()
+        mid_values = [float(r[0]) for r in mid_rows if r[0] is not None]
+        if len(mid_values) == 2 and count % 2 == 0:
+            median = sum(mid_values) / 2
+        elif mid_values:
+            median = mid_values[0]
+        else:
+            median = None
+        return {
+            "count": count,
+            "avg": round(float(row[1] or 0.0), 1),
+            "median": round(median, 1) if median is not None else None,
+            "self_avg": round(float(row[2]), 1) if row[2] is not None else None,
+            "other_avg": round(float(row[3]), 1) if row[3] is not None else None,
         }
 
     def _poster_top_words(

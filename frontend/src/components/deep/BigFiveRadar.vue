@@ -1,6 +1,6 @@
 <template>
   <div class="radar-wrap">
-    <svg :viewBox="`0 0 ${size} ${size}`" class="radar-svg">
+    <svg :viewBox="`0 0 ${size} ${size}`" class="radar-svg" :class="{ compact }">
       <!-- 网格：3 层五边形 -->
       <polygon
         v-for="layer in gridLayers"
@@ -52,12 +52,15 @@ const props = defineProps<{
   me?: Scores | null
   other?: Scores | null
   size?: number
+  /** 紧凑档（演变分段小多图用）：留白与轴标签字号缩小，BigFivePanel/海报不受影响 */
+  compact?: boolean
 }>()
 
 // 维度顺序固定（雷达轴序即类别序，不随数据重排）
 const size = computed(() => props.size || 260)
 const center = computed(() => size.value / 2)
-const radius = computed(() => size.value / 2 - 34)
+const padding = computed(() => (props.compact ? 24 : 34))
+const radius = computed(() => size.value / 2 - padding.value)
 
 const DIM_ORDER = ['openness', 'extraversion', 'agreeableness', 'conscientiousness', 'neuroticism']
 const DIM_TEXT = ['开放', '外向', '宜人', '尽责', '神经质']
@@ -104,15 +107,16 @@ function scoresPoints(scores?: Scores | null): string | null {
 const mePoints = computed(() => scoresPoints(props.me))
 const otherPoints = computed(() => scoresPoints(props.other))
 
-const axisLabels = computed(() =>
-  DIM_TEXT.map((text, index) => {
+const axisLabels = computed(() => {
+  const offset = props.compact ? 13 : 18
+  return DIM_TEXT.map((text, index) => {
     const angle = -Math.PI / 2 + (index * 2 * Math.PI) / 5
-    const x = center.value + (radius.value + 18) * Math.cos(angle)
-    const y = center.value + (radius.value + 18) * Math.sin(angle) + 4
+    const x = center.value + (radius.value + offset) * Math.cos(angle)
+    const y = center.value + (radius.value + offset) * Math.sin(angle) + 4
     const anchor = Math.abs(Math.cos(angle)) < 0.3 ? 'middle' : Math.cos(angle) > 0 ? 'start' : 'end'
     return { text, x, y, anchor }
-  }),
-)
+  })
+})
 </script>
 
 <style scoped>
@@ -125,6 +129,10 @@ const axisLabels = computed(() =>
   width: 100%;
   max-width: 280px;
   height: auto;
+}
+
+.radar-svg.compact {
+  max-width: 230px;
 }
 
 .grid-poly {
@@ -157,5 +165,9 @@ const axisLabels = computed(() =>
 .axis-label {
   fill: var(--ct-text-secondary);
   font-size: 11px;
+}
+
+.radar-svg.compact .axis-label {
+  font-size: 9px;
 }
 </style>

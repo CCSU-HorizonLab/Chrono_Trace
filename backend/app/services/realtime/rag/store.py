@@ -24,6 +24,38 @@ def _now() -> int:
     return int(time.time())
 
 
+def pack_rag_vector(vector) -> bytes:
+    """向量 → float16 ndarray pickle（512 维 4624B→2336B，缩一半）。
+
+    rag 向量只做余弦排序（无阈值边界翻转问题），f16 精度足够——与
+    L2 embedding_cache 的 float32 刻意保守不同（那边要 bit 级一致）。
+    纯 Python 环境（无 numpy）退回 list pickle，即旧格式。
+    """
+    values = [float(item) for item in vector]
+    try:
+        import numpy as np
+    except Exception:
+        return pickle.dumps(values)
+    return pickle.dumps(np.asarray(values, dtype=np.float16))
+
+
+def unpack_rag_vector(blob) -> list:
+    """读侧双 dtype 兼容：float16 ndarray（新行）→ float32 list；
+    旧 float64 list（存量行）原样返回。消费方（retriever 余弦、
+    backfill 零向量判定）全部按 list 迭代，不做迁移。
+    """
+    value = pickle.loads(blob)
+    try:
+        import numpy as np
+    except Exception:
+        return value if isinstance(value, list) else []
+    if isinstance(value, np.ndarray):
+        return value.astype(np.float32).tolist()
+    if isinstance(value, list):
+        return value
+    return []
+
+
 class RagStore:
     """Small SQLite-backed store for RAG documents, vectors, status and logs."""
 
@@ -783,7 +815,7 @@ class RagStore:
                 embedding_model,
                 int(embedding_dim),
                 embedding_provider,
-                pickle.dumps(safe_vector),
+                pack_rag_vector(safe_vector),
                 _now(),
             ),
         )
@@ -817,7 +849,7 @@ class RagStore:
             """,
             (
                 int(fact_id), account_wxid, int(conversation_id), embedding_model,
-                int(embedding_dim), embedding_provider, pickle.dumps(safe_vector), _now(),
+                int(embedding_dim), embedding_provider, pack_rag_vector(safe_vector), _now(),
             ),
         )
 
@@ -845,7 +877,7 @@ class RagStore:
         for row in rows:
             item = dict(row)
             try:
-                item["vector"] = pickle.loads(item.pop("vector_blob"))
+                item["vector"] = unpack_rag_vector(item.pop("vector_blob"))
             except Exception:
                 item["vector"] = []
             items.append(item)
@@ -977,7 +1009,7 @@ class RagStore:
         for row in rows:
             item = dict(row)
             try:
-                item["vector"] = pickle.loads(item.pop("vector_blob"))
+                item["vector"] = unpack_rag_vector(item.pop("vector_blob"))
             except Exception:
                 item["vector"] = []
             items.append(item)

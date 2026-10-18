@@ -95,15 +95,19 @@ class WordCloudGenerator:
             
             filtered_words.append(w)
         
-        # 4. 统计词频
+        # 4. 统计词频 + 底噪裁剪：语料充足时频次 <3 的尾巴词不入榜
+        #    （min-max 归一会把它们压成 weight=1，零区分度还挤占 top 位）；
+        #    小语料（<300 词）不裁——短对话本来低频
+        min_count = 3 if len(filtered_words) >= 300 else 1
         word_freq = Counter(filtered_words)
-        
+        candidates = [(w, c) for w, c in word_freq.most_common() if c >= min_count]
+
         # 5. 取Top N
-        top_words = word_freq.most_common(top_n)
-        
+        top_words = candidates[:top_n]
+
         if not top_words:
             return []
-        
+
         # 6. 归一化权重到 1-100
         max_freq = top_words[0][1]
         min_freq = top_words[-1][1]

@@ -70,3 +70,27 @@ def test_words_are_short_tokens_only():
 
 def test_module_docstring_records_purpose():
     assert "单一来源" in stopwords_mod.__doc__
+
+
+def test_generic_oral_verbs_out_content_words_in():
+    """泛用口语动词/套话收（真实语料 top 验证零区分度）；具体事务内容词不收"""
+    for word in ("不行", "不了", "估计", "需要", "算了", "基本上", "确定", "联系",
+                 "准备", "安排", "地方", "时间", "电话", "情况"):
+        assert word in CHAT_STOP_WORDS, word
+    for word in ("学校", "合同", "物业", "服务器", "公司", "价格"):
+        assert word not in CHAT_STOP_WORDS, word
+
+
+def test_wordcloud_floor_noise_trimming():
+    """底噪裁剪：语料充足时频次 <3 的尾巴词不入榜；小语料不裁。"""
+    from app.services.analysis.wordcloud_generator import WordCloudGenerator
+
+    gen = WordCloudGenerator()
+    # 大语料：'尾巴词' 只出现 1 次应出局（总词量 ≥300 触发裁剪）
+    big_texts = ["学校 服务器 物业 合同"] * 120 + ["尾巴词"]
+    words = [w["word"] for w in gen.generate(big_texts, top_n=50)]
+    assert "尾巴词" not in words
+    assert "学校" in words
+    # 小语料：低频词保留（<300 词不裁）
+    small = gen.generate(["学校 学校 好吃 好吃 好玩"], top_n=10)
+    assert [w["word"] for w in small] == ["学校", "好吃", "好玩"]

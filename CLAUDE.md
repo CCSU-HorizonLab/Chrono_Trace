@@ -97,4 +97,4 @@ SQLite（线程本地连接 backend/app/db/connection.py）
 
 ## 前端结构
 
-`frontend/src/views/`：Home / Analytics（对象工作台，页头 FiltersBar 选人一次贯通全页）/ Settings / FloatingPanel（悬浮窗独立页面）。`api/bridge.ts` 封装全部 Bridge 调用，图表用 ECharts，路由 vue-router。无独立状态管理库。Analytics 六个页签：关系洞察 / 互动特征 / 内容时间线 / 智能问答 / 时光与画像（单聊专属，组件在 `frontend/src/components/deep/`，含分享海报模板注册表 `poster/registry.ts`——公开/自我版经 `sanitizeForPublic`/`sanitizeForSelf` 投影消费，类型上拿不到敏感字段）/ 实时助手（`components/realtime/MonitorControlCard.vue`，建议配置按联系人存储）。
+`frontend/src/views/`：Home / Analytics（对象工作台，页头 FiltersBar 选人一次贯通全页）/ Settings / FloatingPanel（悬浮窗独立页面）。`api/bridge.ts` 封装全部 Bridge 调用，图表用 ECharts，路由 vue-router。无独立状态管理库。Analytics 七个页签：关系洞察 / 互动特征 / 内容时间线 / 智能问答 / 时光深度（单聊专属：情绪滑动平均曲线/词云分段演变/画像演变/里程碑，组件在 `frontend/src/components/deep/`）/ TA 画像（单聊专属：画像档案/大五印象/分享海报，海报模板注册表 `poster/registry.ts`——公开/自我版经 `sanitizeForPublic`/`sanitizeForSelf` 投影消费，类型上拿不到敏感字段）/ 实时助手（`components/realtime/MonitorControlCard.vue`，建议配置按联系人存储）。

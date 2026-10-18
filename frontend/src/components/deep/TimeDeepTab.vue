@@ -30,8 +30,6 @@
         :turning-points="payload.turning_points || []"
         :granularity="granularity"
       />
-      <BigFivePanel :conversation-id="conversationId" />
-      <PosterStudio :conversation-id="conversationId" :dates="dates" :contact-name="contactName" />
     </template>
   </div>
 </template>
@@ -44,8 +42,6 @@ import DeepEmotionPanel from '@/components/deep/DeepEmotionPanel.vue'
 import WordEvolutionPanel from '@/components/deep/WordEvolutionPanel.vue'
 import ProfileEvolutionPanel from '@/components/deep/ProfileEvolutionPanel.vue'
 import MilestoneTimeline from '@/components/deep/MilestoneTimeline.vue'
-import BigFivePanel from '@/components/deep/BigFivePanel.vue'
-import PosterStudio from '@/components/deep/PosterStudio.vue'
 
 const props = defineProps<{
   conversationId: number

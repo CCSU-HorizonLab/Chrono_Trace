@@ -96,9 +96,11 @@
         @click="currentTab = 'content'">内容时间线</button>
       <button class="menu-item" :class="{ active: currentTab === 'qa' }"
         @click="currentTab = 'qa'">智能问答</button>
-      <!-- 时光与画像：单聊专属（群聊无双方情感/关系演变与 1:1 画像语义） -->
+      <!-- 时光深度 / TA 画像：均单聊专属（情绪演变与画像都是 1:1 语义） -->
       <button v-if="!isGroupConversation" class="menu-item" :class="{ active: currentTab === 'deep' }"
-        @click="currentTab = 'deep'">时光与画像</button>
+        @click="currentTab = 'deep'">时光深度</button>
+      <button v-if="!isGroupConversation" class="menu-item" :class="{ active: currentTab === 'persona' }"
+        @click="currentTab = 'persona'">TA 画像</button>
       <!-- 实时助手同单聊限定：监听对象/建议配置都是 1:1 语义 -->
       <button v-if="!isGroupConversation" class="menu-item" :class="{ active: currentTab === 'realtime' }"
         @click="currentTab = 'realtime'">实时助手</button>
@@ -630,7 +632,7 @@
     </div>
   </div>
 
-  <!-- TAB 6: 时光深度（时间窗长期演变：双方情绪曲线/词云演变/关系阶段叙事，单聊专属） -->
+  <!-- TAB: 时光深度（时间窗长期演变：情绪曲线/词云演变/画像演变/里程碑，单聊专属） -->
   <!-- v-if 懒激活：首次进入页签才挂载重计算面板（词云 jieba×2、全量扫描×2）， -->
   <!-- 从不打开则零开销；激活后保持挂载（v-show 切换不重复请求）。加 -->
   <!-- !isGroupConversation：切群聊立即卸载——v-show 只隐藏不卸载，挂着的 -->
@@ -654,33 +656,50 @@
         :view-epoch="viewEpoch"
         :contact-name="currentContactName"
       />
-      <!-- 画像档案（原「用户画像回廊」tab 并入；随深度面板单聊限定+懒激活） -->
-      <div class="persona-tab-shell">
-        <div style="display: flex; justify-content: flex-end; align-items: center; gap: 10px; margin-bottom: 12px;">
-          <button
-            class="ct-btn primary"
-            @click="showPortraitDialog = true"
-            :disabled="loadingPersonaProfile"
-            style="font-size: 13px; padding: 6px 16px;"
-          >
-            {{ personaProfile ? '更新画像' : '生成画像' }}
-          </button>
+    </template>
+  </div>
+
+  <!-- TAB: TA 画像（画像档案/大五印象/分享海报，单聊专属；画像演变留在时光深度） -->
+  <!-- 懒激活同上：PosterStudio/大五首次进入才挂载取数；日期筛选共用页级 dates -->
+  <div v-show="currentTab === 'persona' && selectedConversationId" class="tab-content fade-in">
+    <template v-if="personaActivated && !isGroupConversation">
+      <DateRangeFilter
+        :dates="dates"
+        :loading="false"
+        @update:dates="onDatesChange"
+        @refresh="deepRefreshKey++"
+      />
+      <div :key="`persona-${selectedConversationId}-${deepRefreshKey}`" class="persona-flow">
+        <!-- 画像档案（生成入口 + 展示） -->
+        <div class="persona-tab-shell">
+          <div style="display: flex; justify-content: flex-end; align-items: center; gap: 10px; margin-bottom: 12px;">
+            <button
+              class="ct-btn primary"
+              @click="showPortraitDialog = true"
+              :disabled="loadingPersonaProfile"
+              style="font-size: 13px; padding: 6px 16px;"
+            >
+              {{ personaProfile ? '更新画像' : '生成画像' }}
+            </button>
+          </div>
+          <PersonaGallery
+            :loading="loadingPersonaProfile"
+            :contact-name="currentContactName"
+            :conversation-id="selectedConversationId"
+            :profile="personaProfile"
+            :profile-meta="personaProfileMeta"
+            :window-info="personaProfileMeta.window"
+            :account-wxid="activeAccountWxid || ''"
+            :analysis="analysis"
+            :analysis-result="analysisResult"
+            :feature-stats="featureStats"
+            :sessions="sessions"
+            :activity-calendar-summary="activityCalendar.summary"
+            :current-range-label="currentRangeLabel"
+          />
         </div>
-        <PersonaGallery
-          :loading="loadingPersonaProfile"
-          :contact-name="currentContactName"
-          :conversation-id="selectedConversationId"
-          :profile="personaProfile"
-          :profile-meta="personaProfileMeta"
-          :window-info="personaProfileMeta.window"
-          :account-wxid="activeAccountWxid || ''"
-          :analysis="analysis"
-          :analysis-result="analysisResult"
-          :feature-stats="featureStats"
-          :sessions="sessions"
-          :activity-calendar-summary="activityCalendar.summary"
-          :current-range-label="currentRangeLabel"
-        />
+        <BigFivePanel :conversation-id="selectedConversationId" />
+        <PosterStudio :conversation-id="selectedConversationId" :dates="dates" :contact-name="currentContactName" />
       </div>
     </template>
   </div>
@@ -781,6 +800,8 @@ import { safeGetItem, safeRemoveItem, safeSetItem } from '@/utils/safeStorage'
 import { toLocalDateKey } from '@/utils/datetime'
 import CtAvatar from '@/components/base/CtAvatar.vue'
 import TimeDeepTab from '@/components/deep/TimeDeepTab.vue'
+import BigFivePanel from '@/components/deep/BigFivePanel.vue'
+import PosterStudio from '@/components/deep/PosterStudio.vue'
 import {
   FolderArchive,
   MessageSquare,
@@ -855,6 +876,7 @@ export default {
         FiltersBar, DateRangeFilter, SubjectCard, EmotionLineChart, WordCloud, ConversationTimeline,
         AffinityScoreCard, DimensionRadar, SubScoreBreakdown, RiskSignalCard,         PreferenceKeywordsDialog, RelationshipContextForm, CtCard, CtButton, PersonaGallery, CtAvatar,
         FolderArchive, MessageSquare, Sparkles, BarChart3, TrendingUp, Loader2, Lightbulb, PortraitGenerateDialog, TimeDeepTab,
+        BigFivePanel, PosterStudio,
         MonitorControlCard
     },
     setup() {
@@ -864,6 +886,8 @@ export default {
         const deepRefreshKey = ref(0)
         // 时光深度懒激活：首次进入该页签才置 true，面板随 v-if 挂载
         const deepActivated = ref(false)
+        // TA 画像懒激活：首次进入才挂载 PersonaGallery/大五/海报（免无谓取数）
+        const personaActivated = ref(false)
         const activeAccountWxid = ref('')
 
         // Core State
@@ -960,7 +984,7 @@ const showPortraitDialog = ref(false)
             return `${dates.from} 至 ${dates.to}`
         })
         const shouldLoadContentAnalysis = computed(() => {
-            return currentTab.value === 'content' || currentTab.value === 'deep'
+            return currentTab.value === 'content' || currentTab.value === 'deep' || currentTab.value === 'persona'
         })
         const hasContentAnalysis = computed(() => {
             return Boolean(subject.value?.stats && (
@@ -1439,7 +1463,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
 
             const conversation = conversations.value.find((item) => item.id === conversationId)
             const displayName = conversation?.name
-            // 画像档案随时光与画像页签单聊限定：群聊不取画像（展示层与数据层同口径）
+            // 画像档案随 TA 画像页签单聊限定：群聊不取画像（展示层与数据层同口径）
             if (!displayName || conversation?.conversation_type === 'group') {
                 resetPersonaProfile()
                 return
@@ -2099,17 +2123,20 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
                     if (activityCalendar.value.entries.length) renderActivityCalendar()
                 }
             }
-            if ((newVal === 'content' || newVal === 'deep') && selectedConversationId.value) {
+            if ((newVal === 'content' || newVal === 'deep' || newVal === 'persona') && selectedConversationId.value) {
                 loadAnalysis()
             }
             if (newVal === 'deep') {
                 deepActivated.value = true
             }
+            if (newVal === 'persona') {
+                personaActivated.value = true
+            }
         })
 
-        // 切到群聊时时光与画像/实时助手页签隐藏：若正处于该页签则回退关系洞察（群聊工作台）
+        // 切到群聊时时光深度/TA 画像/实时助手页签隐藏：若正处于该页签则回退关系洞察（群聊工作台）
         watch(isGroupConversation, (isGroup) => {
-            if (isGroup && (currentTab.value === 'deep' || currentTab.value === 'realtime')) {
+            if (isGroup && (currentTab.value === 'deep' || currentTab.value === 'persona' || currentTab.value === 'realtime')) {
                 currentTab.value = 'affinity'
             }
         })
@@ -2195,7 +2222,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
         }
 
         return {
-            currentTab, conversations, selectedConversationId, dates, loading, loadingSessions, error, analysis, subject, sessions, deepGranularity, deepRefreshKey, deepActivated, viewEpoch, handleCancelGroupSummary,
+            currentTab, conversations, selectedConversationId, dates, loading, loadingSessions, error, analysis, subject, sessions, deepGranularity, deepRefreshKey, deepActivated, personaActivated, viewEpoch, handleCancelGroupSummary,
             personaProfile, loadingPersonaProfile, personaProfileMeta,
             analysisResult, displayScore, showKeywordsDialog, showContextForm, showPortraitDialog, handlePortraitGenerated, isGlobalAnalyzing, isStopping, activeTimer, handleStopAnalysis, globalProgressPercent, globalProgressStep, gpuMode,
             hasConversations, hasFeatures, hasCachedAffinityAnalysis, featureStats, responseTimeStats, initiativeStats, wordCountsStats, displayWordRatioLabel, activityCalendar,
@@ -2862,6 +2889,11 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   flex-direction: column;
   gap: var(--ct-space-xl);
   margin-top: var(--ct-space-md);
+}
+
+.persona-flow {
+  display: flex;
+  flex-direction: column;
 }
 
 .persona-tab-shell {

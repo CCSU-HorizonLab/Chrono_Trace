@@ -172,12 +172,7 @@ class RagIndexer:
             and status.get("status") == "ready"
             and int(status.get("document_count") or 0) > 0
         ):
-            if settings.get("rag_fact_read_enabled") and self._fact_vectors_missing(
-                account_wxid,
-                conversation_id,
-                settings,
-            ):
-                RagIndexQueue.enqueue_fact_backfill(account_wxid, conversation_id)
+            self._maybe_enqueue_fact_backfill(account_wxid, conversation_id, settings)
             return status
         if (
             status
@@ -218,6 +213,28 @@ class RagIndexer:
         self.store.conn.commit()
         RagIndexQueue.enqueue(account_wxid, conversation_id)
         return self.store.get_status(account_wxid, conversation_id) or {}
+
+    def _maybe_enqueue_fact_backfill(
+        self,
+        account_wxid: str,
+        conversation_id: int,
+        settings: dict[str, Any],
+    ) -> None:
+        """事实向量欠账自愈（best-effort 投队列，异常不波及调用方）。
+
+        事实抽取与向量写入是两条异步链：抽取出的事实可能在 ONNX 故障
+        窗口或旧版本时期落下而无向量（事实检索静默退化为文档通道）。
+        挂点三处：ensure 的 ready 分支、rebuild 增量跳过路径、rebuild
+        完成路径——联系人B类静默联系人（无监听无建议，ensure 从未被调）
+        只能靠后两处在手动重建时自愈。
+        """
+        if not settings.get("rag_fact_read_enabled"):
+            return
+        try:
+            if self._fact_vectors_missing(account_wxid, conversation_id, settings):
+                RagIndexQueue.enqueue_fact_backfill(account_wxid, conversation_id)
+        except Exception as exc:
+            logger.debug("[RAG Index] fact backfill enqueue failed: %s", exc)
 
     def _fact_vectors_missing(
         self,
@@ -434,6 +451,9 @@ class RagIndexer:
                         index_version=self.INDEX_VERSION,
                     )
                     self.store.conn.commit()
+                    # 事实向量欠账同样在这条静默路径上自愈（此前只查 llm_behind，
+                    # 事实 0 向量的会话增量跳过后依旧 0 向量）
+                    self._maybe_enqueue_fact_backfill(account_wxid, conversation_id, settings)
                     if llm_behind:
                         self._refresh_policy_shadows(account_wxid, conversation_id, conversation)
                     logger.debug("[RAG Index] incremental skip: no new messages after cursor id=%s", last_message_id)
@@ -600,6 +620,9 @@ class RagIndexer:
                 )
             except Exception as pref_exc:
                 logger.debug("[RAG Index] contact preference refresh failed: %s", pref_exc)
+            # 完成路径的事实欠账自愈：手动重建（force）是静默联系人唯一的
+            # 触发入口——文档向量重建完不代表事实向量在位，这里补投回填
+            self._maybe_enqueue_fact_backfill(account_wxid, conversation_id, settings)
             logger.debug(
                 "[RAG Index] version=%s docs=%s vectors=%s cleaned_old=%s",
                 self.INDEX_VERSION,

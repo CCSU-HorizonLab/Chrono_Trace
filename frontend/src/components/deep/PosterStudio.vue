@@ -1,13 +1,13 @@
 <template>
-  <div class="poster-studio card">
-    <div class="panel-header">
+  <div class="poster-studio panel">
+    <div class="panel-head">
       <div>
         <div class="panel-title">分享海报</div>
         <div class="panel-sub">把这段时光做成一张竖版长图；不同模板适合不同的分享对象</div>
       </div>
     </div>
 
-    <div v-if="loading" class="empty">正在准备海报素材…</div>
+    <div v-if="loading" class="empty-state">正在准备海报素材…</div>
     <div v-else-if="error" class="state-row">
       <span class="error-text">{{ error }}</span>
       <button class="btn" @click="load">重试</button>
@@ -157,30 +157,8 @@ watch(
 </script>
 
 <style scoped>
-.card {
-  background: var(--ct-bg-elevated);
-  border: 1px solid var(--ct-border-color);
-  border-radius: var(--ct-radius-lg);
-  box-shadow: var(--ct-shadow-md);
-  padding: var(--ct-space-lg);
-  margin-bottom: var(--ct-space-lg);
-}
-
-.panel-header {
-  margin-bottom: var(--ct-space-md);
-}
-
-.panel-title {
-  font-size: var(--ct-text-base);
-  font-weight: var(--ct-font-bold);
-  color: var(--ct-text-primary);
-}
-
-.panel-sub {
-  margin-top: 2px;
-  color: var(--ct-text-secondary);
-  font-size: var(--ct-text-xs);
-}
+/* 卡容器/头/按钮/空态走全局 panels.css（海报模板节点不引 panels 类——
+   html2canvas 对 CSS 变量支持不稳，仅外壳接共享样式） */
 
 .template-row {
   display: flex;
@@ -253,28 +231,6 @@ watch(
   flex-wrap: wrap;
 }
 
-.btn {
-  padding: 7px 16px;
-  border: 1px solid var(--ct-border-color);
-  background: var(--ct-bg-surface);
-  color: var(--ct-text-secondary);
-  border-radius: 999px;
-  cursor: pointer;
-  font-size: var(--ct-text-sm);
-  transition: all 0.2s ease;
-}
-
-.btn.primary {
-  background: var(--ct-color-primary);
-  border-color: var(--ct-color-primary);
-  color: #ffffff;
-}
-
-.btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
 .export-result {
   color: var(--ct-text-secondary);
   font-size: var(--ct-text-xs);
@@ -290,11 +246,5 @@ watch(
   display: flex;
   align-items: center;
   gap: var(--ct-space-md);
-}
-
-.empty {
-  color: var(--ct-text-tertiary);
-  padding: var(--ct-space-xl) 0;
-  text-align: center;
 }
 </style>

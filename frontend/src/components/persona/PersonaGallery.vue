@@ -1,5 +1,16 @@
 <template>
   <div class="persona-gallery">
+    <!-- 画廊头部：生成入口从外层裸按钮行移入（空态/有档两种状态都能直达） -->
+    <div class="gallery-head">
+      <div>
+        <div class="gallery-title">画像档案</div>
+        <div class="gallery-sub">AI 从聊天记录提炼的长期印象{{ hasProfile ? '，支持历史快照回看' : '' }}</div>
+      </div>
+      <button class="btn primary gallery-generate" :disabled="loading" @click="emit('generate')">
+        {{ hasProfile ? '更新画像' : '生成画像' }}
+      </button>
+    </div>
+
     <div v-if="loading" class="persona-gallery-empty">
       <div class="persona-gallery-icon"><Clock :size="40" class="persona-loading-spin" /></div>
       <p>正在读取这位联系人的画像档案...</p>
@@ -8,7 +19,7 @@
     <div v-else-if="!hasProfile" class="persona-gallery-empty">
       <div class="persona-gallery-icon"><Images :size="40" :stroke-width="1.5" /></div>
       <p>这位联系人还没有可展示的 AI 画像。</p>
-      <span>先在 AI 建议页生成联系人画像，回廊就会自动点亮。</span>
+      <span>点右上「生成画像」，按当前时间窗从聊天记录里提炼第一份画像。</span>
     </div>
 
     <template v-else>
@@ -269,6 +280,10 @@ const props = defineProps({
     default: ''
   }
 })
+
+const emit = defineEmits<{
+  (e: 'generate'): void
+}>()
 
 const palette = ['#f97316', '#fb7185', '#f59e0b', '#14b8a6', '#0ea5e9', '#8b5cf6']
 
@@ -601,6 +616,26 @@ function formatDayLabel(value: string) {
   display: flex;
   flex-direction: column;
   gap: 20px;
+}
+
+.gallery-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--ct-space-md);
+  flex-wrap: wrap;
+}
+
+.gallery-title {
+  font-size: var(--ct-text-base);
+  font-weight: var(--ct-font-bold);
+  color: var(--ct-text-primary);
+}
+
+.gallery-sub {
+  margin-top: 2px;
+  color: var(--ct-text-secondary);
+  font-size: var(--ct-text-xs);
 }
 
 .persona-grid {

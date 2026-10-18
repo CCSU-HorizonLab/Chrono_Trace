@@ -22,7 +22,7 @@
       <button class="btn" @click="quick(365)" :disabled="loading">近一年</button>
       <button class="btn" @click="quickAll()" :disabled="loading">全部</button>
       <button class="btn" @click="$emit('refresh')" :disabled="loading">刷新</button>
-      <button class="btn btn-export" :disabled="loading" @click="$emit('export')">导出记录</button>
+      <button v-if="showExport !== false" class="btn btn-export" :disabled="loading" @click="$emit('export')">导出记录</button>
     </div>
   </div>
 </template>
@@ -34,6 +34,8 @@ const props = defineProps<{
   /** 时光深度页专用：显示 周/月/年 分桶粒度切换（默认不渲染，不影响既有调用） */
   showGranularity?: boolean
   granularity?: string
+  /** 导出聊天记录入口：仅内容时间线页需要；deep/persona 页传 false 隐藏死按钮 */
+  showExport?: boolean
 }>()
 
 const emit = defineEmits<{

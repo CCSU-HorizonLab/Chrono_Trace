@@ -643,6 +643,7 @@
         :dates="dates"
         :loading="false"
         show-granularity
+        :show-export="false"
         :granularity="deepGranularity"
         @update:dates="onDatesChange"
         @update:granularity="deepGranularity = $event"
@@ -661,27 +662,18 @@
 
   <!-- TAB: TA 画像（画像档案/大五印象/分享海报，单聊专属；画像演变留在时光深度） -->
   <!-- 懒激活同上：PosterStudio/大五首次进入才挂载取数；日期筛选共用页级 dates -->
-  <div v-show="currentTab === 'persona' && selectedConversationId" class="tab-content fade-in">
+  <div v-show="currentTab === 'persona' && selectedConversationId" class="tab-content fade-in persona-tab">
     <template v-if="personaActivated && !isGroupConversation">
       <DateRangeFilter
         :dates="dates"
         :loading="false"
+        :show-export="false"
         @update:dates="onDatesChange"
         @refresh="deepRefreshKey++"
       />
       <div :key="`persona-${selectedConversationId}-${deepRefreshKey}`" class="persona-flow">
-        <!-- 画像档案（生成入口 + 展示） -->
+        <!-- 画像档案（生成入口在画廊头部） -->
         <div class="persona-tab-shell">
-          <div style="display: flex; justify-content: flex-end; align-items: center; gap: 10px; margin-bottom: 12px;">
-            <button
-              class="ct-btn primary"
-              @click="showPortraitDialog = true"
-              :disabled="loadingPersonaProfile"
-              style="font-size: 13px; padding: 6px 16px;"
-            >
-              {{ personaProfile ? '更新画像' : '生成画像' }}
-            </button>
-          </div>
           <PersonaGallery
             :loading="loadingPersonaProfile"
             :contact-name="currentContactName"
@@ -696,6 +688,7 @@
             :sessions="sessions"
             :activity-calendar-summary="activityCalendar.summary"
             :current-range-label="currentRangeLabel"
+            @generate="showPortraitDialog = true"
           />
           <!-- 我的画像：更新画像默认含自我画像，这里让生成结果可见 -->
           <ProfileBriefCard
@@ -2700,6 +2693,11 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   overflow-y: auto;
 }
 
+/* TA 画像页整页滚：此前 shell 内部自滚，下方大五/海报被 flex 挤压成矮条 */
+.tab-content.persona-tab {
+  overflow-y: auto;
+}
+
 .tab-content.affinity-tab .affinity-dashboard {
   flex: 0 0 auto;
 }
@@ -2932,11 +2930,11 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
 .persona-flow {
   display: flex;
   flex-direction: column;
+  gap: var(--ct-space-lg);
 }
 
+/* 滚动已上提到 .tab-content.persona-tab，shell 只做排布不再自滚 */
 .persona-tab-shell {
-  flex: 1;
-  overflow-y: auto;
   margin-top: var(--ct-space-md);
   padding-bottom: var(--ct-space-xl);
 }

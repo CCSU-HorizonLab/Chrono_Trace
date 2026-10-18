@@ -1,12 +1,12 @@
 <template>
-  <div class="big-five card">
-    <div class="panel-header">
+  <div class="panel big-five">
+    <div class="panel-head">
       <div>
         <div class="panel-title">大五人格印象</div>
         <div class="panel-sub">{{ sourceNote }}</div>
       </div>
-      <div class="header-right">
-        <span class="badge" :class="sourceBadgeClass">{{ sourceBadgeText }}</span>
+      <div class="panel-actions">
+        <span class="panel-badge" :class="sourceBadgeClass">{{ sourceBadgeText }}</span>
         <button v-if="!enhancing" class="btn enhance-btn" :disabled="loading" @click="enhance">
           AI 校正
         </button>
@@ -14,12 +14,12 @@
       </div>
     </div>
 
-    <div v-if="loading" class="empty">正在统计语言风格…</div>
+    <div v-if="loading" class="empty-state">正在统计语言风格…</div>
     <div v-else-if="error" class="state-row">
       <span class="error-text">{{ error }}</span>
       <button class="btn" @click="load">重试</button>
     </div>
-    <div v-else-if="!me && !other" class="empty">消息量还不足以形成稳定的风格印象（需约 30 条以上文本）</div>
+    <div v-else-if="!me && !other" class="empty-state">消息量还不足以形成稳定的风格印象（需约 30 条以上文本）</div>
 
     <div v-if="enhanceHint" class="enhance-hint">{{ enhanceHint }}</div>
 
@@ -27,9 +27,9 @@
       <div class="big5-body">
         <div class="radar-col">
           <BigFiveRadar :me="meScores" :other="otherScores" />
-          <div class="radar-legend">
-            <span class="legend-item"><span class="swatch me" />我</span>
-            <span class="legend-item"><span class="swatch other" />TA</span>
+          <div class="legend-row radar-legend">
+            <span><span class="swatch me" />我</span>
+            <span><span class="swatch other" />TA</span>
           </div>
         </div>
 
@@ -115,7 +115,7 @@ const isEnhanced = computed(() =>
   Boolean(me.value?.source === 'llm_enhanced' || other.value?.source === 'llm_enhanced'),
 )
 const sourceBadgeText = computed(() => (isEnhanced.value ? 'AI 增强' : '本地统计'))
-const sourceBadgeClass = computed(() => (isEnhanced.value ? 'badge-enhanced' : ''))
+const sourceBadgeClass = computed(() => (isEnhanced.value ? 'enhanced' : ''))
 const sourceNote = computed(() =>
   isEnhanced.value
     ? '本地统计 + AI 有界校正（±15 以内），附原文证据'
@@ -221,75 +221,10 @@ watch(() => props.conversationId, () => {
 </script>
 
 <style scoped>
-.card {
-  background: var(--ct-bg-elevated);
-  border: 1px solid var(--ct-border-color);
-  border-radius: var(--ct-radius-lg);
-  box-shadow: var(--ct-shadow-md);
-  padding: var(--ct-space-lg);
-  margin-bottom: var(--ct-space-lg);
-}
-
-.panel-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--ct-space-md);
-  margin-bottom: var(--ct-space-md);
-  flex-wrap: wrap;
-}
-
-.panel-title {
-  font-size: var(--ct-text-base);
-  font-weight: var(--ct-font-bold);
-  color: var(--ct-text-primary);
-}
-
-.panel-sub {
-  margin-top: 2px;
-  color: var(--ct-text-secondary);
-  font-size: var(--ct-text-xs);
-}
-
-.header-right {
-  display: flex;
-  align-items: center;
-  gap: var(--ct-space-sm);
-  flex-shrink: 0;
-}
-
-.badge {
-  padding: 2px 10px;
-  border-radius: 999px;
-  font-size: var(--ct-text-xs);
-  border: 1px solid var(--ct-border-color);
-  color: var(--ct-text-secondary);
-}
-
-.badge-enhanced {
-  border-color: var(--ct-color-primary);
-  color: var(--ct-color-primary);
-}
-
-.btn {
-  padding: 5px 12px;
-  border: 1px solid var(--ct-border-color);
-  background: var(--ct-bg-surface);
-  color: var(--ct-text-secondary);
-  border-radius: 999px;
-  cursor: pointer;
-  font-size: var(--ct-text-xs);
-  transition: all 0.2s ease;
-}
-
+/* 卡容器/头/徽标/按钮/空态走全局 panels.css，这里只留私有变体 */
 .enhance-btn {
   border-color: var(--ct-color-primary);
   color: var(--ct-color-primary);
-}
-
-.btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
 }
 
 .big5-body {
@@ -304,24 +239,8 @@ watch(() => props.conversationId, () => {
 }
 
 .radar-legend {
-  display: flex;
-  justify-content: center;
-  gap: var(--ct-space-lg);
   margin-top: var(--ct-space-xs);
-  font-size: var(--ct-text-xs);
-  color: var(--ct-text-secondary);
-}
-
-.legend-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-}
-
-.swatch {
-  width: 10px;
-  height: 10px;
-  border-radius: 3px;
+  justify-content: center;
 }
 
 .swatch.me { background: #7c4dff; }
@@ -461,12 +380,6 @@ watch(() => props.conversationId, () => {
 .error-text {
   color: var(--ct-color-error, #dc2626);
   font-size: var(--ct-text-sm);
-}
-
-.empty {
-  color: var(--ct-text-tertiary);
-  padding: var(--ct-space-xl) 0;
-  text-align: center;
 }
 
 .enhance-hint {

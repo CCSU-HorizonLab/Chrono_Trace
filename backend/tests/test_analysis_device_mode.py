@@ -129,6 +129,7 @@ class TestAnalysisDeviceMode:
             batch_get_sentiment_from_cache=MagicMock(return_value={1: {"polarity": 1}}),
             analyze_batch=MagicMock(return_value=[{"polarity": 0, "intensity": 0.0, "embedding": [0.0] * 384}]),
             batch_cache_sentiments=MagicMock(),
+            has_local_embedding_model=MagicMock(return_value=True),
         )
 
         messages = [
@@ -139,7 +140,9 @@ class TestAnalysisDeviceMode:
         orchestrator._ensure_sentiment_analysis(123, messages)
 
         orchestrator.sentiment_service.batch_get_sentiment_from_cache.assert_called_once_with([1, 2])
-        orchestrator.sentiment_service.analyze_batch.assert_called_once_with(["miss"])
+        orchestrator.sentiment_service.analyze_batch.assert_called_once_with(
+            ["miss"], include_embeddings=True
+        )
         orchestrator.sentiment_service.batch_cache_sentiments.assert_called_once()
 
     def test_preprocessing_orchestrator_uses_session_initiator_stats(self):

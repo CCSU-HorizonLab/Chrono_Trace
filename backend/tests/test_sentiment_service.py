@@ -368,7 +368,10 @@ class TestSentimentService:
         assert cached is not None, "缓存读取失败"
         assert cached["polarity"] == result["polarity"]
         assert cached["intensity"] == result["intensity"]
-        assert cached["embedding"] == result["embedding"]
+        # float16 紧凑存储引入 ~1e-3 量化差：同数量级即可
+        assert len(cached["embedding"]) == len(result["embedding"])
+        for a, b in zip(cached["embedding"], result["embedding"]):
+            assert abs(a - b) < 2e-3
 
     def test_batch_cache_sentiments(self, service):
         """测试批量写入缓存"""
@@ -403,6 +406,53 @@ class TestSentimentService:
         assert cached2 is not None
         assert cached2["polarity"] == -1
         assert cached2["intensity"] == -0.6
+
+    def test_pack_embedding_compact_and_zero_guard(self):
+        """pack_embedding：float16 ndarray pickle（体积约半）；全零/None 落 None。"""
+        import pickle
+
+        import numpy as np
+
+        from app.services.analysis.sentiment_service import pack_embedding
+
+        vec = [round((i % 97) * 0.01, 3) for i in range(512)]  # 真实宽度，pickle 头占比才不失真
+        blob = pack_embedding(vec)
+        restored = pickle.loads(blob)
+        assert isinstance(restored, np.ndarray)
+        assert restored.dtype == np.float16 and len(restored) == 512
+        f32_blob = pickle.dumps(np.asarray(vec, dtype=np.float32))
+        assert len(blob) < len(f32_blob) * 0.75, "紧凑存储应约减半"
+        assert pack_embedding(None) is None
+        assert pack_embedding([0.0] * 8) is None, "零向量毒库防护"
+
+    def test_batch_cache_writes_float16_and_zero_null(self, service):
+        """批量写入：紧凑 BLOB 落库、零向量落 NULL（读回 None）。"""
+        import pickle
+
+        import numpy as np
+
+        import app.services.analysis.sentiment_service as sm
+
+        results = [
+            {"message_id": 10001, "polarity": 1, "intensity": 0.8,
+             "embedding": [0.25, -0.5, 0.75]},
+            {"message_id": 10002, "polarity": 0, "intensity": 0.0,
+             "embedding": [0.0, 0.0, 0.0]},
+        ]
+        service.batch_cache_sentiments(results)
+
+        conn = sm.get_db()
+        blob = conn.execute(
+            "SELECT embedding_vector FROM sentiment_cache WHERE message_id = 10001"
+        ).fetchone()[0]
+        restored = pickle.loads(blob)
+        assert isinstance(restored, np.ndarray) and restored.dtype == np.float16
+
+        zero = conn.execute(
+            "SELECT embedding_vector FROM sentiment_cache WHERE message_id = 10002"
+        ).fetchone()[0]
+        assert zero is None, "零向量不得写实"
+        assert service.get_sentiment_from_cache(10002) is None
 
     # ========== 边界情况测试 ==========
 

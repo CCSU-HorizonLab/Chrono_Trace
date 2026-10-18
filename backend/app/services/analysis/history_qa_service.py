@@ -380,6 +380,8 @@ class HistoryQAService:
                 cached = pickle.loads(row[4])
             except Exception:
                 continue
+            if _np is not None and isinstance(cached, _np.ndarray):
+                cached = cached.astype(_np.float32).tolist()  # float16 紧凑行
             if not isinstance(cached, list) or not cached:
                 continue
             bucket = by_dim.setdefault(len(cached), {"vectors": [], "metas": []})

@@ -210,6 +210,34 @@ def test_vector_channel_ranks_by_cosine_and_skips_dim_mismatch(monkeypatch, db):
     assert ids == [1]  # 只有维度匹配且相关的消息入选
 
 
+def test_vector_channel_reads_float16_and_legacy_rows(monkeypatch, db):
+    """float16 紧凑行与旧 float32 list 行同桶参与排序（读出口双 dtype 兼容）。"""
+    import numpy as np
+
+    seed(db, 1, "我喜欢吃火锅", 1700000100)
+    seed(db, 2, "看电影去不去", 1700000200)
+    db.execute(
+        "INSERT INTO sentiment_cache VALUES (1, 1, 0.5, ?, 1)",
+        (pickle.dumps(np.asarray([1.0, 0.0, 0.0], dtype=np.float16)),),
+    )
+    db.execute(
+        "INSERT INTO sentiment_cache VALUES (2, 0, 0.0, ?, 1)",
+        (pickle.dumps([0.9, 0.1, 0.0]),),  # 旧 float32 list 行
+    )
+    monkeypatch.setattr(hqmod, "_load_question_vector", lambda q: [1.0, 0.0, 0.0])
+
+    entry = HistoryQAService()._load_vector_cache(1)
+    assert len(entry["by_dim"][3]["metas"]) == 2  # 同宽双双入桶
+
+    http = _FakeHTTP()
+    monkeypatch.setattr(hqmod, "post_json_with_retries", http)
+    use_local_model(monkeypatch)
+    result = HistoryQAService().ask(1, "吃的偏好")
+
+    ids = [c["message_id"] for c in result["citations"]]
+    assert ids == [1]  # 新旧格式同场竞技，余弦最相关者胜出
+
+
 def test_vector_cache_reuses_deserialization_and_rebuilds_on_change(monkeypatch, db):
     seed(db, 1, "我喜欢吃火锅", 1700000100)
     db.execute(

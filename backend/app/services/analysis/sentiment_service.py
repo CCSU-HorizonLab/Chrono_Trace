@@ -23,6 +23,29 @@ from .feature_extraction_config import (
     normalize_analysis_device_mode,
 )
 
+try:  # onnxruntime 环境必有 numpy；缺库退化为准旧格式的 list pickle
+    import numpy as _np
+except Exception:  # pragma: no cover
+    _np = None
+
+
+def pack_embedding(embedding) -> Optional[bytes]:
+    """向量 → float16 ndarray pickle（512 维 2KB→1KB）；全零向量落 None。
+
+    sentiment_cache.embedding_vector 是问答向量通道的唯一数据源，按条数
+    线性胀库（5 万条 float32≈100MB），float16 无损减半。全零落 None：
+    模型加载失败期的零向量兜底写实了会毒化余弦排序。读出口（问答
+    _load_vector_cache / 本服务单行读）双 dtype 兼容，旧行无迁移。
+    """
+    if embedding is None:
+        return None
+    values = [float(v) for v in embedding]
+    if not any(values):
+        return None
+    if _np is None:
+        return pickle.dumps(values)
+    return pickle.dumps(_np.asarray(values, dtype=_np.float16))
+
 
 
 
@@ -423,7 +446,7 @@ class SentimentService:
     ):
         """Cache one sentiment result."""
         try:
-            embedding_bytes = pickle.dumps(embedding)
+            embedding_bytes = pack_embedding(embedding)
             db = get_db()
             db.execute(
                 """
@@ -467,6 +490,8 @@ class SentimentService:
                 embedding = pickle.loads(embedding_data)
             except Exception:
                 return None
+            if _np is not None and isinstance(embedding, _np.ndarray):
+                embedding = embedding.astype(_np.float32).tolist()  # float16 紧凑行
             if not isinstance(embedding, list) or not embedding:
                 return None
             if expected_dim is not None and len(embedding) != expected_dim:
@@ -533,7 +558,7 @@ class SentimentService:
                         result["message_id"],
                         result["polarity"],
                         result["intensity"],
-                        pickle.dumps(embedding) if embedding is not None else None,
+                        pack_embedding(embedding),
                         now,
                     )
                 )

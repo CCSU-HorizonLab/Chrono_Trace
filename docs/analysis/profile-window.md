@@ -56,16 +56,20 @@ prompt【基础信息】块带样本时间范围行（rolling 注明顺延，cus
 
 ## 画像演变（ProfileEvolutionService）
 
-对半公式与词云演变**逐字一致**：`mid_ts = (from_ts + to_ts) // 2`，前半窗
-`[from_ts, mid_ts - 1]`、后半窗 `[mid_ts, to_ts]` 闭区间——同窗同分。
+切窗与词云演变共用 `split_window_evenly`，**段数独立自选 2~6 默认 2**
+（每段是独立 LLM 快照，成本随段数线性涨，故不跟随词云 N 段）：前三段
+`[b_i, b_{i+1}-1]`、末段含终点闭区间；payload 键 `segments`（v2 曾为
+`halves`+`mid_ts`，破坏性改名与唯一消费方同 commit 收口），标签「第 N 段」。
 
-- 每半窗每 kind 先查 custom 快照精确键，命中即跳过 LLM（增量续跑）；`force=True`
-  全部重算；bridge 层同会话单飞（`_profile_evolution_events`，注册持
-  `_ONNX_TASK_LOCK`）+ 可取消（取消在每次 generate_profile 前生效，已完成
-  半窗已落缓存）。
-- 全窗跨度不设上限（与单次 custom 生成同口径，按切分时窗如实对半）；账号
+- 每段每 kind 先查 custom 快照精确键，命中即跳过 LLM（增量续跑）；换段数
+  切回旧档因精确键命中而免费；`force=True` 全部重算；bridge 层同会话单飞
+  （`_profile_evolution_events`，注册持 `_ONNX_TASK_LOCK`）+ 可取消（取消在
+  每次 generate_profile 前生效，已完成段已落缓存）。
+- 全窗跨度不设上限（与单次 custom 生成同口径，按切分时窗如实分段）；账号
   解析为空（无活跃账号）直接拒绝，不去掉账号过滤兜底。
-- include_self 默认关（单次桥接最长 4 次 LLM 调用）。
+- include_self 默认关（单次桥接最长 segments×(1+含我) 次 LLM 调用）。
+- 标签对比泛化：该段独有（琥珀）/多段共有（中性）——不再按「前/后半段」
+  二分着色。
 
 ## 版本常量
 
@@ -74,6 +78,7 @@ prompt【基础信息】块带样本时间范围行（rolling 注明顺延，cus
 | `PROFILE_SNAPSHOT_SCHEMA` | contact_profiler.py / self_profiler.py | 1 | 表结构或画像口径变化——随行落库 `schema_version` 列，读取处过滤；旧结构 DROP 重建，不迁移 |
 | `PROFILE_SNAPSHOT_KEEP` | 同上 | 8 | rolling 分组保留条数调整 |
 | `PROFILE_SNAPSHOT_KEEP_CUSTOM` | 同上 | 24 | custom 分组保留条数调整（对齐 list_snapshots 上限，裁剪不得逐出回廊可展示的快照） |
+| `big5_impressions` 表结构 | personality_impression_service.py | v2（window 档位） | window 档位列或唯一键变化——`_ensure_table` PRAGMA 探查缺列即 DROP 重建不迁移（口径见 `docs/analysis/time-depth.md` 大五节） |
 
 ## 脱敏责任边界（现状口径）
 
@@ -88,5 +93,6 @@ prompt【基础信息】块带样本时间范围行（rolling 注明顺延，cus
   `webview/api/profile.py`（窗口透传 / window 标注 / `list_profile_snapshots`）、
   `webview/api/deep_analysis.py`（`generate_profile_evolution` / `cancel_profile_evolution`）
 - 前端：`components/persona/{PortraitGenerateDialog, PersonaGallery}.vue`（自定义时间窗
-  入口、历史快照回看）、`components/deep/ProfileEvolutionPanel.vue`
+  入口、历史快照回看）、`components/deep/ProfileEvolutionPanel.vue`（独立 2~6
+  分段选择器，切档重置由快照精确键兜底）
 - 测试：`tests/test_profile_snapshots.py`（9 组）、`tests/test_profile_evolution.py`

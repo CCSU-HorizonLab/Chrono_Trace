@@ -5,23 +5,26 @@
 
 ## 功能概览
 
-Analytics 第六个页签「时光深度」，**单聊专属**（群聊无双方情感演变语义，
-切群聊自动回退关系洞察）。在选定时间窗内提供四块：
+Analytics 页签「时光深度」，**单聊专属**（群聊无双方情感演变语义，
+切群聊自动回退关系洞察）。在选定时间窗内提供：
 
 1. **双方情绪曲线**：分桶（周/月/年）聚合 sentiment_cache，双方/我/TA 视角或
    三线同显，滚动窗口加权平滑（默认近 3 桶），消极时段浅红着色、好感度历史
-   落点（菱形）叠加。
+   落点（菱形+虚线）叠加；底部分侧互动柱（我紫/TA 琥珀的全量计数，不依赖
+   情感缓存）。
 2. **词云演变**：时间窗均分为 2~6 段（默认 4）对比，双方/我/TA 三视角。
-3. **关系阶段叙事**：首条消息、消息量关口、最长沉默期、情绪拐点的时间线。
-4. **画像演变**：前后半窗双画像对比（固定对半，不随词云 N 段），见
+3. **大五人格演变**：与词云共用分段，逐段双侧大五折线（small multiples）；
+   本地统计层按段免费演变，每段可选 AI 增强（±15 有界校正）。
+4. **关系阶段叙事**：首条消息、消息量关口、最长沉默期、情绪拐点的时间线。
+5. **画像演变**：时间窗均分 2~6 段（默认 2，独立分段选择器）逐段画像对比，见
    `docs/analysis/profile-window.md`。
-5. **大五人格印象 + 分享海报**：已随拆页移至「TA 画像」页签，见下两节。
+6. **大五人格印象（全会话档）+ 分享海报**：已随拆页移至「TA 画像」页签，见下两节。
 
 ## 版本常量与 bump 规则
 
 | 常量 | 位置 | 当前值 | 何时 +1 |
 |---|---|---|---|
-| `DEEP_ANALYSIS_VERSION` | `deep_analysis_service.py` | 2 | 桶口径（分桶表达式）或序列点位结构变化。序列实时计算无缓存，版本主要约束前端兼容判断与文档口径记录。v2：词云演变 `halves`→`segments`（2~6 段可配，默认 4） |
+| `DEEP_ANALYSIS_VERSION` | `deep_analysis_service.py` | 3 | 桶口径（分桶表达式）或序列点位结构变化。序列实时计算无缓存，版本主要约束前端兼容判断与文档口径记录。v2：词云演变 `halves`→`segments`（2~6 段可配，默认 4）；v3：桶点补 `userMsgCount`/`otherMsgCount` 分侧全量计数、payload 增 `big5_evolution` |
 | `BIG5_PROMPT_VERSION` | `personality_impression_service.py` | 1 | 大五 prompt 或指标权重结构性变化。旧行自动失效重算（`big5_impressions` 表按版本查询，对齐 `CALIBER_VERSION` 惯例） |
 
 ## 关键口径
@@ -38,6 +41,12 @@ Analytics 第六个页签「时光深度」，**单聊专属**（群聊无双方
   加列，与全面分析共用但加键不破坏）——前端情绪曲线滚动窗口加权平滑的权重
   真分母：`近 K 桶滑动均值 = Σ(score×对应侧计数)/Σ计数`，消息多的桶话语权大；
   平滑纯前端派生（默认近 3 桶），计数与低置信底纹保持原桶原值。
+- **分侧全量计数**（v3）：`_bucketed_message_counts` GROUP BY 加 is_sender，
+  桶点出 `userMsgCount`/`otherMsgCount`（不依赖 sentiment_cache，两侧之和恒等
+  `msgCount`）——前端分侧互动柱的数据源；缺覆盖桶分侧同样全量。
+- **滑动平均权重保持 cachedCount/userCount/otherCount 不改**：平滑对象是
+  分数，权重应等于分数背后的样本量（已缓存消息数）；换全量计数会让低覆盖桶
+  权重虚高。全量互动量的展示由分侧双色柱承担，两套数字分工不混用。
 - 拐点门槛：参与涨跌幅判定的桶需 `msgCount ≥ 30` 且 `coverage ≥ 0.8`。
 
 ### 词云演变（双口径陷阱）
@@ -47,8 +56,8 @@ Analytics 第六个页签「时光深度」，**单聊专属**（群聊无双方
 分段由 `split_window_evenly(from, to, segments)` 均分（2~6 段，默认 4；
 边界 `b_i = ((n-i)*from + i*to) // n`，N=2 与历史对半公式逐点一致）；
 每段上限 15000 条，超出等距抽样并标记 `truncated`；窗口切不出 N 段时返回
-空段 + `error`。**画像演变固定对半两段**，与词云共用切窗函数保证同窗同分
-（不跟随 N 段——每段是独立 LLM 快照，成本随段数线性涨）。
+空段 + `error`。画像演变共用切窗函数（同窗同分）但**段数独立自选**（2~6
+默认 2，不跟随词云 N 段——每段是独立 LLM 快照，成本随段数线性涨）。
 
 ### 情感补算（sentiment_cache 缺口）
 
@@ -68,6 +77,36 @@ Analytics 第六个页签「时光深度」，**单聊专属**（群聊无双方
 
 **基础层**（`big5_proxies.py`，纯统计，无 LLM 永远可用）× **增强层**
 （LLM 有界校正）。这是「语言风格印象」而非心理测评，UI 必须带免责脚注。
+
+### 时间窗档位（big5_impressions 表 v2）
+
+- 唯一键加 `window_kind`（'full'=全会话，存 0/0 保确定性）+
+  `window_from`/`window_to`（custom 档秒级闭区间）；full 与 custom 互不污染。
+- 旧表（PRAGMA 探查缺 `window_kind` 列）DROP 重建不迁移：本地层重算免费，
+  增强层需重新点按钮（KISS，沿画像三表先例）。
+- 窗口化全链：`get_impressions`/`_local_base`/`enhance`/`_fetch_conversation_rows`/
+  `_collect_raw_indicators`（含情感/正向回应/分享密度三查询）/
+  `_sample_conversation` 全部穿窗；`EngagementMetricsService.compute` 加可选
+  from_ts/to_ts（默认 None 时 SQL 与历史逐字节一致——好感度六维链路的
+  回归守卫，`tests/test_engagement_metrics.py` 锁死）。
+- **bridge 逐段增强取数用秒级 from_ts/to_ts，须与段边界完全一致**：缓存键含
+  窗维，日期粒度换算会造出不同键，增强结果重载即丢。单飞/取消键同样含窗维
+  （同会话不同窗可并行）。
+
+### 大五演变（时光深度面板）
+
+- deep payload 键 `big5_evolution = {segments, min_messages, series:
+  [{from_ts, to_ts, me, other, error?}]}`；**与大五共用 `word_segments` 分段**
+  （统一分段选择器，2~6 默认 4）；每段每侧不足 `BIG5_MIN_MESSAGES`(30) →
+  None 标样本不足，短窗空段标 error 降级不炸 payload。
+- 首开逐段现算 local 并落 custom 缓存（30 天 TTL 缓解二次延迟）。
+- 交互：每段「AI 增强本段」+ 头部「全部增强」（顺序逐段、已增强跳过），
+  结果覆写回 series[i]；already_running 显 hint。
+- 与 TA 画像页静态 `BigFivePanel`（全会话 full 档）**分工不共用组件**：
+  `big5Shared.ts` 只共享 DIM_ORDER 与双方色值（我 #7c4dff / TA #d97706）。
+- 选型：**5 维 small multiples 折线**（x=段序、y 0-100 中线 50、None 断线）——
+  用户问「变化」，斜率是折线原生编码；分段雷达跨 4~6 张认知成本高且双序列
+  叠加糊，弃。
 
 ### 指标权重表（锚点插值 + 点数制，缺席指标重归一）
 
@@ -125,11 +164,13 @@ Analytics 第六个页签「时光深度」，**单聊专属**（群聊无双方
 
 ## 相关文件
 
-- 后端：`services/analysis/{deep_analysis_service, sentiment_backfill_service,
-  personality_impression_service, big5_proxies, task_registry}.py`、
-  `webview/api/deep_analysis.py`（mixin，11 个方法）
-- 前端：`components/deep/`（TimeDeepTab 及各面板、PosterStudio、
-  `poster/registry.ts` 与三模板）、`charts/EmotionLineChart.vue`（扩展
-  perspective/negativeShade/affinityPoints 可选 props，默认行为不变）
-- 测试：`tests/test_deep_analysis.py`、`test_sentiment_backfill.py`、
-  `test_big5_impression.py`、`test_share_poster_export.py`
+- 后端：`services/analysis/{deep_analysis_service, engagement_metrics,
+  sentiment_backfill_service, personality_impression_service, big5_proxies,
+  task_registry}.py`、`webview/api/deep_analysis.py`（mixin，13 个方法）
+- 前端：`components/deep/`（TimeDeepTab 及各面板、Big5EvolutionPanel +
+  big5Shared、PosterStudio、`poster/registry.ts` 与三模板）、
+  `charts/EmotionLineChart.vue`（扩展 perspective/negativeShade/affinityPoints
+  与 userMsgCount/otherMsgCount 可选 props，无分侧数回退单柱）
+- 测试：`tests/test_deep_analysis.py`、`test_engagement_metrics.py`、
+  `test_sentiment_backfill.py`、`test_big5_impression.py`、
+  `test_share_poster_export.py`

@@ -132,7 +132,9 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { api } from '@/api/bridge'
-import { getCachedEvolution, runEvolution } from './profileEvolutionCache'
+import {
+  getCachedEvolution, getLastEvolutionSettings, rememberEvolutionSettings, runEvolution,
+} from './profileEvolutionCache'
 import { toCompactRange } from '@/utils/datetime'
 
 type KindBlock = { profile: any; created_at: number; cached: boolean; error?: string } | null
@@ -150,9 +152,11 @@ const state = ref<'idle' | 'generating' | 'done' | 'error'>('idle')
 const result = ref<{ segments?: Segment[] } | null>(null)
 const error = ref('')
 const hint = ref('')
-const includeSelf = ref(false)
-// 画像分段独立于词云分段（每段一次 LLM 快照，成本自控），默认 2 段
-const segmentCount = ref(2)
+// 画像分段独立于词云分段（每段一次 LLM 快照，成本自控），默认 2 段；
+// 重挂先回到该会话上次生成的档位（否则缓存里的结果按原键查不到）
+const initialSettings = getLastEvolutionSettings(props.conversationId)
+const includeSelf = ref(initialSettings?.self ?? false)
+const segmentCount = ref(initialSettings?.segments ?? 2)
 const segmentOptions = [2, 3, 4, 5, 6]
 
 const segmentList = computed(() => result.value?.segments || [])
@@ -202,6 +206,8 @@ async function generate(force: boolean) {
   const requestEpoch = props.viewEpoch
   const requestFrom = props.dates.from
   const requestTo = props.dates.to
+  // 记住本次发起的档位：切页回来/切回本会话按原档直接恢复显示
+  rememberEvolutionSettings(requestConv, segmentCount.value, includeSelf.value)
   state.value = 'generating'
   error.value = ''
   hint.value = ''
@@ -256,6 +262,10 @@ async function cancel() {
 watch(
   () => [props.conversationId, props.dates.from, props.dates.to, props.viewEpoch],
   () => {
+    // 切会话：档位跟着切到该会话上次的生成档，缓存按原键命中直接显示
+    const last = getLastEvolutionSettings(props.conversationId)
+    segmentCount.value = last?.segments ?? 2
+    includeSelf.value = last?.self ?? false
     state.value = 'idle'
     result.value = null
     error.value = ''

@@ -43,3 +43,16 @@ export function runEvolution(
   if (cache.size > CACHE_LIMIT) cache.delete(cache.keys().next().value as string)
   return p
 }
+
+// 每会话「上次发起生成」的分段数与含我标记：结果缓存键含这两维，重挂后若
+// 档位回默认 2 段，4 段的结果就在缓存里也查不到。重挂/切会话先回到上次
+// 档位，restoreFromCache 才能按原键命中直接显示，不必重新生成。
+const lastSettings = new Map<number, { segments: number; self: boolean }>()
+
+export function getLastEvolutionSettings(conv: number): { segments: number; self: boolean } | undefined {
+  return lastSettings.get(conv)
+}
+
+export function rememberEvolutionSettings(conv: number, segments: number, self: boolean): void {
+  lastSettings.set(conv, { segments, self })
+}

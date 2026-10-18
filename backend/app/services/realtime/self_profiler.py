@@ -67,7 +67,8 @@ PROFILE_TTL = 7 * 86400  # 7 天
 # 处过滤（同 big5 的 prompt_version 机制）：升版后旧口径快照自然失明，
 # 不再以「历史快照」徽标混入新口径结果。
 # 与 contact_profiler.PROFILE_SNAPSHOT_SCHEMA 同值同升（两张表同构）。
-PROFILE_SNAPSHOT_SCHEMA = 1
+# v2：prompt 新增【长期背景】全时段基线块（profile_baseline），与 contact 同批。
+PROFILE_SNAPSHOT_SCHEMA = 2
 
 # 每个分组保留的快照条数上限。rolling 每次续期产生新窗口键快照自然累积，
 # 靠此上限防膨胀；custom 是存档品（画像演变半窗 + 手动指定窗共用分组），
@@ -345,6 +346,10 @@ class SelfProfiler:
             features = self._collect_features(conn, conversation_id, feature_from, feature_to)
             _print(f"[SelfProfiler] 特征数据收集完成: {list(features.keys())}")
 
+            # 全时段基线：rolling 长关系只覆盖尾部的失真，在 prompt 层补全局坐标
+            from .profile_baseline import collect_full_period_baseline
+            baseline = collect_full_period_baseline(conn, conversation_id, feature_from, feature_to)
+
             # 3. 采样对话轮次
             sample = self._sample_conversation_turns(
                 conn, conversation_id, window_seconds,
@@ -372,7 +377,7 @@ class SelfProfiler:
                     f"{self._fmt_date(sample_from)} 至 {self._fmt_date(sample_to)}"
                     f"（最近滚动窗采样，内容不足时已向更早顺延）"
                 )
-            user_prompt = self._build_profile_prompt(display_name, conv, features, sample, window_desc)
+            user_prompt = self._build_profile_prompt(display_name, conv, features, sample, window_desc, baseline)
             _print(f"[SelfProfiler] Prompt 长度: {len(user_prompt)} 字符")
 
             # 5. 调用 LLM，传入预算以动态决定输出额度
@@ -848,6 +853,7 @@ class SelfProfiler:
         features: dict,
         sample: list[dict],
         window_desc: str = '',
+        baseline: dict | None = None,
     ) -> str:
         """组装画像生成的 user prompt"""
         parts = []
@@ -863,6 +869,14 @@ class SelfProfiler:
         parts.append(f"- 时间跨度: {first_date} ~ {last_date}")
         if window_desc:
             parts.append(f"- 样本时间范围: {window_desc}")
+
+        # 长期背景（全时段基线，先全局后窗口的阅读顺序）
+        if baseline:
+            from .profile_baseline import render_baseline_block
+            block = render_baseline_block(baseline)
+            if block:
+                parts.append("")
+                parts.append(block)
 
         # 互动特征
         feat_lines = []

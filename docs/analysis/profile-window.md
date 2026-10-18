@@ -10,6 +10,12 @@
 
 - **rolling 滚动窗**：档位锚定 now（low/medium/high = 7/30/90 天），内容不足向更早
   顺延；每次续期产生新窗口键 → 快照自然累积。
+- **长期背景块（v2 起）**：rolling 对长关系只覆盖尾部（窗内采样目标填满即
+  不再回看更早——2.5 年 5233 条的会话，90 天窗只罩住 8%），画像会丢掉绝大
+  部分历史。`profile_baseline.collect_full_period_baseline`（纯 SQL 零 LLM
+  成本）给两 profiler 注入【长期背景】块：全时段跨度/分年消息量/活跃天数/
+  深夜比 + **本次窗口覆盖比**。LLM 同时看到「窗口内的他」与「全时段的他」，
+  同 affinity 的 caliber='full_period' 先例（结论以窗口为主，长期数字对照演变）。
 - **custom 指定窗**：`generate_profile(..., from_ts, to_ts)` 闭区间硬边界，**不顺延**
   （顺延会篡改用户指定窗口的语义）；防呆：非正/起点≥终点/终点晚于 now+1 天/
   窗内无文本消息均直接拒绝。**跨度不设上限**——按调用方切分的时窗如实生成
@@ -51,6 +57,7 @@ UNIQUE(account_wxid, display_name, window_kind, window_from, window_to)
 | word_counts | `messages` GROUP BY is_sender | 窗口内推导，ratio=对方/我（我方零字为 None） |
 | user_msg_style（仅 self） | `messages` | timestamp 过滤 |
 | affinity | `affinity_scores` | **无法窗口化**：保留注入但 `caliber: 'full_period'` 标注，prompt 标注「全时段评分，仅供背景参考」 |
+| full_period_baseline | `messages` 全时段 | 不窗口化（这就是它的意义）：【长期背景】块注入，见功能概览 |
 
 prompt【基础信息】块带样本时间范围行（rolling 注明顺延，custom 注明指定窗）。
 
@@ -75,7 +82,7 @@ prompt【基础信息】块带样本时间范围行（rolling 注明顺延，cus
 
 | 常量 | 位置 | 当前值 | 何时 +1 |
 |---|---|---|---|
-| `PROFILE_SNAPSHOT_SCHEMA` | contact_profiler.py / self_profiler.py | 1 | 表结构或画像口径变化——随行落库 `schema_version` 列，读取处过滤；旧结构 DROP 重建，不迁移 |
+| `PROFILE_SNAPSHOT_SCHEMA` | contact_profiler.py / self_profiler.py | 2 | 表结构或画像口径变化——随行落库 `schema_version` 列，读取处过滤；旧结构 DROP 重建，不迁移。v2 = prompt 新增【长期背景】全时段基线块 |
 | `PROFILE_SNAPSHOT_KEEP` | 同上 | 8 | rolling 分组保留条数调整 |
 | `PROFILE_SNAPSHOT_KEEP_CUSTOM` | 同上 | 24 | custom 分组保留条数调整（对齐 list_snapshots 上限，裁剪不得逐出回廊可展示的快照） |
 | `big5_impressions` 表结构 | personality_impression_service.py | v2（window 档位） | window 档位列或唯一键变化——`_ensure_table` PRAGMA 探查缺列即 DROP 重建不迁移（口径见 `docs/analysis/time-depth.md` 大五节） |

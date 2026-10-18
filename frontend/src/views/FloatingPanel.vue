@@ -851,7 +851,9 @@ const realtimeState = reactive({
   batchId: '',
   messageCount: 0,
   status: 'idle' as string,
-  messages: [] as any[]
+  messages: [] as any[],
+  // 当前监听会话号：建议配置按联系人存储的读写维度
+  conversationId: 0
 })
 
 const chatError = ref('')
@@ -1360,6 +1362,7 @@ async function applyMonitoringStatus(status: any) {
   realtimeState.talkerName = status.talker_display_name || ''
   realtimeState.batchId = status.batch_id || ''
   realtimeState.messageCount = status.message_count || 0
+  realtimeState.conversationId = Number(status.conversation_id || 0)
   chatError.value = status.chat_error || ''
   applyUiaRecoveryTelemetry(status, { preserveOnMissing: true })
 
@@ -1555,6 +1558,7 @@ onMounted(async () => {
     realtimeState.talkerName = status.talker_display_name || ''
     realtimeState.batchId = status.batch_id || ''
     realtimeState.messageCount = status.message_count || 0
+    realtimeState.conversationId = Number(status.conversation_id || 0)
     applyUiaRecoveryTelemetry(status)
     // 检查 chat_error
     if (status.chat_error) {
@@ -1628,8 +1632,8 @@ async function exitFloating() {
   } catch (e) {
     console.error('退出悬浮模式失败:', e)
   }
-  // 跳转回建议页
-  router.push('/suggestions')
+  // 跳转回对象工作台（实时助手 tab 所在页）
+  router.push('/analytics')
 }
 
 async function startFloatingDrag(event: MouseEvent) {
@@ -1661,7 +1665,7 @@ async function startFloatingDrag(event: MouseEvent) {
   window.addEventListener('mouseup', stop, { once: true })
 }
 
-/** 仅退回建议页（不停止监听，用于状态恢复失败时） */
+/** 仅退回对象工作台（不停止监听，用于状态恢复失败时） */
 async function goBackToSuggestions() {
   stopPolling()
   try {
@@ -1670,7 +1674,7 @@ async function goBackToSuggestions() {
   } catch (e) {
     console.error('退出悬浮模式失败:', e)
   }
-  router.push('/suggestions')
+  router.push('/analytics')
 }
 
 // ========== ECharts 图表 ==========
@@ -2196,10 +2200,10 @@ function updateEmotionHistory() {
   syncCharts()
 }
 
-// ========== 建议配置 ==========
+// ========== 建议配置（按联系人存储：以当前监听会话号为读写维度） ==========
 async function loadSuggestionConfig() {
   try {
-    const r = await api.get_suggestion_config()
+    const r = await api.get_suggestion_config(realtimeState.conversationId || undefined)
     if (r.ok && r.config) {
       triggerMode.value = r.config.trigger_mode || 'semi_auto'
       intent.value = r.config.intent || 'maintain'
@@ -2209,13 +2213,13 @@ async function loadSuggestionConfig() {
 
 async function setTriggerMode(mode: string) {
   triggerMode.value = mode as any
-  try { await api.set_suggestion_config({ trigger_mode: mode }) }
+  try { await api.set_suggestion_config({ trigger_mode: mode }, realtimeState.conversationId || undefined) }
   catch (e) { console.error('设置触发模式失败:', e) }
 }
 
 async function setIntent(newIntent: string) {
   intent.value = newIntent as any
-  try { await api.set_suggestion_config({ intent: newIntent }) }
+  try { await api.set_suggestion_config({ intent: newIntent }, realtimeState.conversationId || undefined) }
   catch (e) { console.error('设置走向失败:', e) }
   // 走向切换可能触发新一轮建议生成——延时滚动让新内容可见
   setTimeout(scrollToBottom, 500)

@@ -1858,6 +1858,7 @@ class Bridge(
                 "is_monitoring": status['is_monitoring'],
                 "talker_display_name": status.get('talker_display_name'),
                 "account_wxid": status.get('account_wxid'),
+                "conversation_id": int(status.get('conversation_id') or 0),
                 "batch_id": status.get('batch_id'),
                 "message_count": status.get('message_count', 0),
                 "model_ready": status.get('model_ready', False),
@@ -2191,23 +2192,17 @@ class Bridge(
                 "metrics": {},
             }
 
-    def get_suggestion_config(self) -> dict[str, Any]:
-        """获取 AI 建议配置（从系统设置读取）"""
+    def get_suggestion_config(self, conversation_id: int = 0) -> dict[str, Any]:
+        """获取建议配置（按联系人存储，settings 键 suggestion_config:{id}；无联系人/无键回落内置默认）"""
         try:
+            from ..services.realtime.monitor_service import load_suggestion_config_for_contact
             from ..services.realtime.providers.factory import resolve_effective_listener_backend
 
-            return {
-                "ok": True, 
-                "config": {
-                    "trigger_mode": self.settings.get("trigger_mode", "semi_auto"),
-                    "intent": self.settings.get("intent", "maintain"),
-                    "auto_rate_limit": int(self.settings.get("auto_rate_limit", 10)),
-                    "engine_type": "llm",
-                    "listener_backend": resolve_effective_listener_backend(
-                        self.settings.get("listener_backend")
-                    ),
-                }
-            }
+            config = load_suggestion_config_for_contact(int(conversation_id or 0))
+            config["listener_backend"] = resolve_effective_listener_backend(
+                self.settings.get("listener_backend")
+            )
+            return {"ok": True, "config": config}
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
@@ -2269,30 +2264,36 @@ class Bridge(
             logger.error(f"[Bridge] 获取动态联想词失败: {e}")
             return {"ok": False, "error": str(e), "prompts": []}
 
-    def set_suggestion_config(self, config: dict[str, Any]) -> dict[str, Any]:
-        """更新并持久化 AI 建议配置"""
+    def set_suggestion_config(self, config: dict[str, Any], conversation_id: int = 0) -> dict[str, Any]:
+        """更新并持久化建议配置（按联系人存储；listener_backend 仍为全局能力项）"""
         try:
+            from ..services.realtime.monitor_service import suggestion_config_settings_key
             from ..services.realtime.providers.factory import normalize_listener_backend
 
-            # 1. 更新通用设置文件
+            conv_id = int(conversation_id or 0)
             with self._settings_lock:
-                for key in ('trigger_mode', 'intent', 'auto_rate_limit', 'listener_backend'):
-                    if key in config:
-                        if key == 'listener_backend':
-                            self.settings[key] = normalize_listener_backend(config[key])
-                        else:
-                            self.settings[key] = config[key]
+                # 按联系人键合并写入（只收白名单字段）
+                key = suggestion_config_settings_key(conv_id)
+                stored = dict(self.settings.get(key) or {})
+                for field in ('trigger_mode', 'intent', 'auto_rate_limit'):
+                    if field in config:
+                        stored[field] = config[field]
+                if stored:
+                    self.settings[key] = stored
+                if 'listener_backend' in config:
+                    self.settings['listener_backend'] = normalize_listener_backend(config['listener_backend'])
                 self._save_settings()
 
-            # 2. 同时热更新给运行中的 RealtimeMonitorService
+            # 热更新：仅当运行中的监听正是该联系人时（别的联系人的配置不打扰在跑的会话）
             try:
                 from ..services.realtime.monitor_service import RealtimeMonitorService
                 monitor = RealtimeMonitorService()
-                monitor.set_suggestion_config(config)
+                if conv_id and int(getattr(monitor, '_current_conversation_id', 0) or 0) == conv_id:
+                    monitor.set_suggestion_config(config)
             except Exception as inner_e:
                 logger.debug(f"[Bridge] 热更新 MonitorService 失败（可能未运行）: {inner_e}")
 
-            return {"ok": True, "config": self.get_suggestion_config().get("config", {})}
+            return {"ok": True, "config": self.get_suggestion_config(conv_id).get("config", {})}
         except Exception as e:
             logger.error(f"[Bridge] 设置建议配置失败: {e}")
             return {"ok": False, "error": str(e)}

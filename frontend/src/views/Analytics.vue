@@ -1,24 +1,24 @@
 <template>
 <section class="analytics-page ct-page">
-  <!-- Brand Header -->
+  <!-- Brand Header：对象工作台页头，选人器常驻（未选中也可先选人） -->
   <header class="analytics-header">
-    <div v-if="selectedConversationId" class="user-profile-header fade-in">
+    <div v-if="hasConversations" class="user-profile-header fade-in">
       <div class="profile-main">
         <div class="profile-avatar-wrap">
-          <CtAvatar class="profile-avatar" :src="headerAvatarSrc" :name="currentContactName" :size="48" />
+          <CtAvatar class="profile-avatar" :src="headerAvatarSrc" :name="currentContactName || '？'" :size="48" />
         </div>
         <div class="profile-info">
           <div class="name-row">
-            <h1 class="profile-name">{{ currentContactName }}</h1>
+            <h1 class="profile-name">{{ currentContactName || '选择一位联系人' }}</h1>
             <div class="contact-selector-wrap">
               <FiltersBar :conversations="conversations" :selected-conversation-id="selectedConversationId" :loading="loading"
-                @update:conversation-id="onUserConversationChange" />
+                @update:conversation-id="onConversationChange" />
             </div>
           </div>
         </div>
       </div>
-      
-      <div class="header-actions-group">
+
+      <div v-if="selectedConversationId" class="header-actions-group">
         <CtButton variant="ghost" @click="showContextForm = true" :disabled="isGlobalAnalyzing">关系信息</CtButton>
         <CtButton variant="ghost" @click="showKeywordsDialog = true" :disabled="isGlobalAnalyzing">配置喜好</CtButton>
         <CtButton v-if="!isGroupConversation && analysisResult" variant="ghost" :loading="reportExporting" @click="handleExportReport">
@@ -62,7 +62,7 @@
       <div class="page-empty-card">
         <span class="page-empty-card-label">导入后可查看</span>
         <strong>关系分析、互动特征、时间线</strong>
-        <p>包括联系人切换、趋势图、词云和画像回廊等内容。</p>
+        <p>包括联系人切换、趋势图、词云和画像档案等内容。</p>
       </div>
 
       <div class="page-empty-card page-empty-card-accent">
@@ -93,12 +93,14 @@
       <button class="menu-item" :class="{ active: currentTab === 'features' }"
         @click="currentTab = 'features'">互动特征</button>
       <button class="menu-item" :class="{ active: currentTab === 'content' }"
-        @click="currentTab = 'content'">内容与时间线</button>
+        @click="currentTab = 'content'">内容时间线</button>
       <button class="menu-item" :class="{ active: currentTab === 'qa' }"
-        @click="currentTab = 'qa'">问问微信</button>
+        @click="currentTab = 'qa'">智能问答</button>
       <!-- 时光与画像：单聊专属（群聊无双方情感/关系演变与 1:1 画像语义） -->
       <button v-if="!isGroupConversation" class="menu-item" :class="{ active: currentTab === 'deep' }"
         @click="currentTab = 'deep'">时光与画像</button>
+      <button class="menu-item" :class="{ active: currentTab === 'realtime' }"
+        @click="currentTab = 'realtime'">实时助手</button>
     </div>
   </div>
 
@@ -673,6 +675,15 @@
     </template>
   </div>
 
+  <!-- TAB 6: 实时助手（监听控制 + 按联系人的建议配置；选人由页头 FiltersBar 贯通） -->
+  <div v-show="currentTab === 'realtime' && selectedConversationId" class="tab-content fade-in realtime-tab">
+    <MonitorControlCard
+      :conversation-id="selectedConversationId"
+      :contact-name="currentContactName"
+      :account-wxid="activeAccountWxid || ''"
+    />
+  </div>
+
   <!-- Dialogs -->
   <PreferenceKeywordsDialog v-if="selectedConversationId" v-model="showKeywordsDialog"
     :conversation-id="selectedConversationId" @updated="handleKeywordsUpdated" />
@@ -738,6 +749,7 @@ import { analyzeAffinity, getAffinityScores, getAffinityProgress, getRelationshi
 
 import FiltersBar from '@/components/analytics/FiltersBar.vue'
 import DateRangeFilter from '@/components/analytics/DateRangeFilter.vue'
+import MonitorControlCard from '@/components/realtime/MonitorControlCard.vue'
 import SubjectCard from '@/components/analytics/SubjectCard.vue'
 import EmotionLineChart from '@/components/charts/EmotionLineChart.vue'
 import WordCloud from '@/components/charts/WordCloud.vue'
@@ -746,7 +758,6 @@ import ConversationTimeline from '@/components/timeline/ConversationTimeline.vue
 import AffinityScoreCard from '@/components/affinity/AffinityScoreCard.vue'
 import RiskSignalCard from '@/components/affinity/RiskSignalCard.vue'
 import PortraitGenerateDialog from '@/components/persona/PortraitGenerateDialog.vue'
-import { loadSharedContact, saveSharedContact, CONTACT_CHANGED_EVENT } from '@/utils/sharedContact'
 import { copyText } from '@/utils/clipboard'
 import DimensionRadar from '@/components/affinity/DimensionRadar.vue'
 import SubScoreBreakdown from '@/components/affinity/SubScoreBreakdown.vue'
@@ -1301,7 +1312,7 @@ const showPortraitDialog = ref(false)
             }
         }
 
-        async function loadConversations(preferredId?: number | null) {
+        async function loadConversations() {
             try {
                 await bridgeReady()
                 const res = await api.get_conversation_list(activeAccountWxid.value || undefined)
@@ -1311,12 +1322,8 @@ const showPortraitDialog = ref(false)
                         selectedConversationId.value = null
                     }
                     if (conversations.value.length > 0 && !selectedConversationId.value) {
-                        // 程序性默认选中：优先跨页共享（如从实时助手切回），
-                        // 其次列表第一个；不回写共享槽（见 onUserConversationChange）
-                        const preferred = preferredId && conversations.value.some((item) => item.id === preferredId)
-                            ? preferredId
-                            : conversations.value[0].id
-                        onConversationChange(preferred)
+                        // 程序性默认选中列表第一个（用户未显式选择时）
+                        onConversationChange(conversations.value[0].id)
                     } else if (conversations.value.length === 0) {
                         selectedConversationId.value = null
                     }
@@ -1387,15 +1394,6 @@ const showPortraitDialog = ref(false)
             if (shouldLoadContentAnalysis.value) {
                 loadAnalysis()
             }
-        }
-
-        // 用户显式选择（FiltersBar）：写入跨页共享状态，实时助手页切回时跟随
-        async function onUserConversationChange(id: number) {
-            const c = conversations.value.find((x: any) => x.id === id)
-            if (c) {
-                saveSharedContact({ conversationId: id, displayName: c.name || c.username || '', avatar: c.avatar })
-            }
-            await onConversationChange(id)
         }
 
         function resetPersonaProfile() {
@@ -2152,9 +2150,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
             if (!dates.from || !dates.to) setDefaultDates(30)
             await loadAnalysisDeviceMode()
             await refreshAccountContext()
-            // 跨页共享的联系人选中作为默认偏好传入：loadConversations 选中它但不回写共享槽
-            const sharedContact = loadSharedContact()
-            await loadConversations(sharedContact?.conversationId ?? null)
+            await loadConversations()
             const savedResume = loadAnalysisResume()
             if (savedResume) void resumeAnalysisFromSaved(savedResume)
             window.addEventListener('resize', handleResize)
@@ -2180,7 +2176,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
             analysisResult, displayScore, showKeywordsDialog, showContextForm, showPortraitDialog, handlePortraitGenerated, isGlobalAnalyzing, isStopping, activeTimer, handleStopAnalysis, globalProgressPercent, globalProgressStep, gpuMode,
             hasConversations, hasFeatures, hasCachedAffinityAnalysis, featureStats, responseTimeStats, initiativeStats, wordCountsStats, displayWordRatioLabel, activityCalendar,
             responseTimeChart, activityCalendarChart, wordCountChart, stats, currentContactName, headerAvatarSrc, hasPreferenceKeywords, allDimensions,
-            currentRangeLabel, hasContentAnalysis, analysisStaleNotice, circumference, strokeDashoffset, formatNumber, formatTime, getResponseTimeLabel, getMergedResponseTimeLabel, getResponseTimePercent, onConversationChange, onUserConversationChange, onDatesChange, handleExport, handleStartGlobalAnalysis, handleContextSaved, handleKeywordsUpdated, llmEvidenceNotes,
+            currentRangeLabel, hasContentAnalysis, analysisStaleNotice, circumference, strokeDashoffset, formatNumber, formatTime, getResponseTimeLabel, getMergedResponseTimeLabel, getResponseTimePercent, onConversationChange, onDatesChange, handleExport, handleStartGlobalAnalysis, handleContextSaved, handleKeywordsUpdated, llmEvidenceNotes,
             qaHistory, qaInput, qaLoading, handleAskHistory, formatQaTime, copiedQaKey, overallCopied, handleCopyQa, handleCopyOverall,
             isGroupConversation, groupStats, groupStatsLoading, groupSummary, groupSummaryLoading, groupSummaryDays, handleGenerateGroupSummary,
             reportExporting, handleExportReport,

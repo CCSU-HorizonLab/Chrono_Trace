@@ -37,7 +37,6 @@ const router = createRouter({
   routes: [
     { path: '/', component: lazy(() => import('@/views/Home.vue')) },
     { path: '/analytics', component: lazy(() => import('@/views/Analytics.vue')) },
-    { path: '/suggestions', component: lazy(() => import('@/views/Suggestions.vue')) },
     { path: '/settings', component: lazy(() => import('@/views/Settings.vue')) },
     { path: '/floating', component: lazy(() => import('@/views/FloatingPanel.vue')) }
   ]

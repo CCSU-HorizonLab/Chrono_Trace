@@ -27,6 +27,36 @@ from .backfill_store import BackfillStoreMixin
 from .suggestion_pipeline import SuggestionPipelineMixin
 
 
+# 建议配置内置默认（按联系人存储的缺省回落值；旧全局键已废弃不读）
+SUGGESTION_CONFIG_DEFAULTS = {
+    'trigger_mode': 'semi_auto',    # full_auto / semi_auto / manual
+    'intent': 'maintain',           # intimate / maintain / distance
+    'auto_rate_limit': 10,          # 全自动模式更新频率上限（秒）
+    'engine_type': 'llm',
+}
+
+
+def suggestion_config_settings_key(conversation_id: int) -> str:
+    """按联系人的建议配置 settings 键"""
+    return f"suggestion_config:{int(conversation_id or 0)}"
+
+
+def load_suggestion_config_for_contact(conversation_id: int) -> dict:
+    """按联系人读取建议配置（settings 键 suggestion_config:{id}，无键/无联系人回落内置默认）"""
+    config = dict(SUGGESTION_CONFIG_DEFAULTS)
+    if not conversation_id:
+        return config
+    try:
+        stored = load_settings_from_file().get(suggestion_config_settings_key(conversation_id)) or {}
+        for key in SUGGESTION_CONFIG_DEFAULTS:
+            if key in stored:
+                config[key] = stored[key]
+        config['auto_rate_limit'] = int(config.get('auto_rate_limit') or 10)
+    except Exception as e:
+        _print(f"[RealtimeMonitorService] 读取按联系人建议配置失败（回落默认）: {e}")
+    return config
+
+
 class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, UiaRecoveryMixin, BackfillMatcherMixin):
     """
     实时监听服务
@@ -52,6 +82,7 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, UiaRec
             self.current_talker = None          # 当前监听对象username
             self.current_display_name = None    # 当前监听对象显示名
             self.current_account_wxid = ""
+            self._current_conversation_id = 0   # 当前监听会话号（按联系人建议配置的键）
             self.is_monitoring = False          # 监听状态
             self._session_generation = 0        # 会话代数：start_monitoring/run_backfill 接管单例时递增（R2）
             self._chat_ready = False            # 聊天切换是否完成
@@ -125,7 +156,26 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, UiaRec
             return get_active_wechat_account_wxid(load_settings_from_file())
         except Exception:
             return ""
-    
+
+    def _resolve_current_conversation_id(self) -> int:
+        """解析当前监听对象对应的会话号（建议配置按联系人存储的键）"""
+        display_name = str(self.current_display_name or '').strip()
+        if not display_name:
+            return 0
+        try:
+            from ...db.connection import get_db
+
+            row = get_db().execute(
+                "SELECT id FROM conversations WHERE account_wxid = ? "
+                "AND (display_name = ? OR username = ?) AND is_deleted = 0 "
+                "ORDER BY message_count DESC LIMIT 1",
+                (self._resolve_account_wxid(), display_name, display_name),
+            ).fetchone()
+            return int(row['id']) if row and row['id'] else 0
+        except Exception as e:
+            _print(f"[RealtimeMonitorService] 解析监听会话号失败: {e}")
+            return 0
+
     def start_monitoring(
         self, 
         talker_username: str,
@@ -190,6 +240,14 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, UiaRec
             self.current_talker = resolved_talker_username
             self.current_display_name = talker_display_name
             self.current_account_wxid = resolved_account_wxid
+            # 建议配置按联系人装载（无会话号/无键回落内置默认）
+            self._current_conversation_id = self._resolve_current_conversation_id()
+            self._suggestion_config = load_suggestion_config_for_contact(self._current_conversation_id)
+            _print(
+                f"[RealtimeMonitorService] 按联系人建议配置已装载: conversation={self._current_conversation_id}"
+                f" trigger_mode={self._suggestion_config.get('trigger_mode')}"
+                f" intent={self._suggestion_config.get('intent')}"
+            )
             self._resume_mode = resume_mode or 'skip'
             self.seen_hashes.clear()
             self.seen_message_keys.clear()
@@ -1669,6 +1727,7 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, UiaRec
                 'talker_username': self.current_talker,
                 'talker_display_name': self.current_display_name,
                 'account_wxid': self.current_account_wxid,
+                'conversation_id': self._current_conversation_id,
                 'batch_id': self.current_batch_id,
                 'message_count': message_count,
                 'model_ready': self.sentiment_service.is_ready(),

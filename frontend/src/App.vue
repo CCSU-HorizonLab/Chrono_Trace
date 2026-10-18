@@ -11,11 +11,10 @@
         </div>
       </div>
 
-      <!-- 居中导航菜单 -->
+      <!-- 居中导航菜单：对象工作台口径——首页 / TA 档案 / 设置 -->
       <nav class="ct-menu">
         <router-link to="/" class="menu-item">首页</router-link>
-        <router-link to="/analytics" class="menu-item">联系人洞察</router-link>
-        <router-link to="/suggestions" class="menu-item">实时助手</router-link>
+        <router-link to="/analytics" class="menu-item">TA 档案</router-link>
         <router-link to="/settings" class="menu-item">设置</router-link>
       </nav>
 

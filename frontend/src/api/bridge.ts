@@ -118,12 +118,12 @@ type PyWebViewApi = {
     max_scroll_rounds?: number,
     account_wxid?: string,
   ) => Promise<any>
-  // AI 建议
+  // AI 建议（建议配置按联系人存储：conversation_id 维度，缺省回落内置默认）
   get_pending_suggestions: (batch_id: string, account_wxid?: string) => Promise<any>
   get_realtime_recent_messages: (batch_id: string, limit?: number, account_wxid?: string) => Promise<any>
   dismiss_suggestion: (suggestion_id: number) => Promise<any>
-  get_suggestion_config: () => Promise<any>
-  set_suggestion_config: (config: any) => Promise<any>
+  get_suggestion_config: (conversation_id?: number) => Promise<any>
+  set_suggestion_config: (config: any, conversation_id?: number) => Promise<any>
   get_dynamic_quick_prompts: (batch_id: string) => Promise<any>
   // LLM 模型管理
   get_llm_models: () => Promise<any>

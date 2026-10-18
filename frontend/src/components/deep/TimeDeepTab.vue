@@ -21,6 +21,7 @@
         :granularity="granularity"
       />
       <BigFivePanel :conversation-id="conversationId" />
+      <PosterStudio :conversation-id="conversationId" :dates="dates" :contact-name="contactName" />
     </template>
   </div>
 </template>
@@ -33,6 +34,7 @@ import DeepEmotionPanel from '@/components/deep/DeepEmotionPanel.vue'
 import WordEvolutionPanel from '@/components/deep/WordEvolutionPanel.vue'
 import MilestoneTimeline from '@/components/deep/MilestoneTimeline.vue'
 import BigFivePanel from '@/components/deep/BigFivePanel.vue'
+import PosterStudio from '@/components/deep/PosterStudio.vue'
 
 const props = defineProps<{
   conversationId: number
@@ -40,6 +42,8 @@ const props = defineProps<{
   granularity: string
   /** 父页视图纪元：切换会话/账号时 +1，用于丢弃过期响应 */
   viewEpoch: number
+  /** 联系人名（海报文件名用） */
+  contactName?: string
 }>()
 
 const payload = ref<any>(null)

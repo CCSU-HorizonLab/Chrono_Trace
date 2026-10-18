@@ -45,6 +45,14 @@ DEEP_LOW_COVERAGE_THRESHOLD = 0.6
 # 默认消息量关口（可被调用方注入覆盖，便于测试）
 DEEP_DEFAULT_MARKS = (1000, 5000, 10000, 50000, 100000)
 
+# 海报 payload 常量
+POSTER_TOP_WORDS = 12            # 每侧词条数
+POSTER_QUOTE_COUNT = 3           # 金句条数（仅定向版消费）
+POSTER_QUOTE_MIN_CHARS = 10      # 金句长度下限
+POSTER_QUOTE_MAX_CHARS = 50      # 金句长度上限
+POSTER_AVATAR_MAX_BYTES = 2 * 1024 * 1024  # 头像转 base64 上限
+POSTER_WORDCLOUD_SAMPLE = 2000   # top 词计算的消息抽样上限
+
 
 class DeepAnalysisService:
     """时光深度聚合服务（无状态，实时计算不落缓存）"""
@@ -392,3 +400,211 @@ class DeepAnalysisService:
                 {"ts": int(row[1]), "score": round(float(row[0]), 1)} for row in rows
             ],
         }
+
+    # ------------------------------------------------------------------
+    # 分享海报 payload（前端 html2canvas 合成用）
+    # ------------------------------------------------------------------
+
+    def build_poster_payload(
+        self, conversation_id: int, from_ts: int, to_ts: int, account_wxid: str = ""
+    ) -> Dict[str, Any]:
+        """组装海报数据。敏感字段（display_name/avatar/quotes）集中标注
+        sensitive: True，前端公开/自我模板经投影函数消费，拿不到敏感字段。"""
+        contact = self._poster_contact(conversation_id)
+        stats = self._poster_stats(conversation_id, from_ts, to_ts)
+        curve = self._merged_bucket_series(conversation_id, from_ts, to_ts, "week")
+        top_words = self._poster_top_words(conversation_id, from_ts, to_ts)
+        milestones = self._build_milestones(conversation_id, from_ts, to_ts)[:5]
+        quotes = self._poster_quotes(conversation_id, from_ts, to_ts)
+        big5 = self._poster_big5(conversation_id, account_wxid)
+
+        return {
+            "ok": True,
+            "version": DEEP_ANALYSIS_VERSION,
+            "conversation_id": int(conversation_id),
+            "from_ts": int(from_ts),
+            "to_ts": int(to_ts),
+            "contact": {
+                "display_name": contact["display_name"],
+                "avatar": self._avatar_data_url(contact["avatar_path"]),
+                "sensitive": True,
+            },
+            "stats": stats,
+            "emotion_curve": {"bucket": "week", "points": curve},
+            "top_words": top_words,
+            "milestones": milestones,
+            "quotes": {"items": quotes, "sensitive": True},
+            "big5": big5,
+            "generated_at": int(datetime.now().timestamp()),
+        }
+
+    @staticmethod
+    def _poster_contact(conversation_id: int) -> Dict[str, Any]:
+        """联系人显示名与头像路径（备注名 > 昵称 > username）。"""
+        row = get_db().execute(
+            """
+            SELECT
+                COALESCE(NULLIF(TRIM(c.display_name), ''), NULLIF(TRIM(ct.nickname), ''),
+                         NULLIF(TRIM(ct.display_name), ''), '联系人'),
+                COALESCE(NULLIF(TRIM(c.avatar_path), ''), NULLIF(TRIM(ct.avatar_path), ''))
+            FROM conversations c
+            LEFT JOIN contacts ct
+                ON c.account_wxid = ct.account_wxid
+               AND c.username = ct.username
+            WHERE c.id = ?
+            """,
+            (conversation_id,),
+        ).fetchone()
+        if not row:
+            return {"display_name": "联系人", "avatar_path": None}
+        return {"display_name": str(row[0] or "联系人"), "avatar_path": (row[1] or None) and str(row[1])}
+
+    @staticmethod
+    def _avatar_data_url(path: Optional[str]) -> Optional[str]:
+        """头像文件 → base64 data URL（html2canvas 要求，file:// 会污染画布）。
+        超过 2MB 或读取失败返回 None（前端首字母占位）。"""
+        if not path:
+            return None
+        try:
+            from pathlib import Path
+
+            file = Path(path)
+            if not file.is_file() or file.stat().st_size > POSTER_AVATAR_MAX_BYTES:
+                return None
+            data = file.read_bytes()
+            if data[:8] == b"\x89PNG\r\n\x1a\n":
+                mime = "image/png"
+            elif data[:3] == b"\xff\xd8\xff":
+                mime = "image/jpeg"
+            else:
+                return None
+            import base64
+
+            return f"data:{mime};base64," + base64.b64encode(data).decode("ascii")
+        except Exception as exc:
+            logger.warning("[海报] 头像读取失败，使用占位: %s", exc)
+            return None
+
+    @staticmethod
+    def _poster_stats(conversation_id: int, from_ts: int, to_ts: int) -> Dict[str, Any]:
+        """窗内统计：双方消息数、活跃天数、跨度天数。"""
+        row = get_db().execute(
+            """
+            SELECT COUNT(*),
+                   SUM(CASE WHEN is_sender = 1 THEN 1 ELSE 0 END),
+                   COUNT(DISTINCT DATE(timestamp, 'unixepoch', 'localtime'))
+            FROM messages
+            WHERE conversation_id = ? AND message_type = 1
+                AND timestamp BETWEEN ? AND ?
+                AND content IS NOT NULL AND TRIM(content) != ''
+            """,
+            (conversation_id, from_ts, to_ts),
+        ).fetchone()
+        total = int(row[0] or 0)
+        self_count = int(row[1] or 0)
+        active_days = int(row[2] or 0)
+        span_days = max((to_ts - from_ts) // 86400, 1)
+        return {
+            "total": total,
+            "self_count": self_count,
+            "other_count": total - self_count,
+            "active_days": active_days,
+            "span_days": span_days,
+        }
+
+    def _poster_top_words(
+        self, conversation_id: int, from_ts: int, to_ts: int
+    ) -> Dict[str, Any]:
+        """海报 top 词：双方/我/TA 各前 12（抽样 2000 条约束分词代价）。"""
+        rows = get_db().execute(
+            "SELECT is_sender, content FROM messages "
+            "WHERE conversation_id = ? AND message_type = 1 "
+            "AND timestamp BETWEEN ? AND ? AND content IS NOT NULL AND TRIM(content) != '' "
+            "ORDER BY timestamp DESC LIMIT ?",
+            (conversation_id, from_ts, to_ts, POSTER_WORDCLOUD_SAMPLE),
+        ).fetchall()
+        texts = {"all": [], "me": [], "other": []}
+
+        def _decode(content) -> str:
+            if isinstance(content, bytes):
+                return content.decode("utf-8", errors="replace")
+            return str(content or "")
+
+        for is_sender, content in rows:
+            text = _decode(content)
+            texts["all"].append(text)
+            texts["me" if int(is_sender or 0) == 1 else "other"].append(text)
+
+        if self._wordcloud_gen is None:
+            self._wordcloud_gen = WordCloudGenerator()
+        return {
+            key: self._wordcloud_gen.generate(values, top_n=POSTER_TOP_WORDS)
+            for key, values in texts.items()
+        }
+
+    @staticmethod
+    def _poster_quotes(conversation_id: int, from_ts: int, to_ts: int) -> List[Dict[str, Any]]:
+        """金句（仅定向版消费）：正向情感、10~50 字、时间分散取 3 条。"""
+        rows = get_db().execute(
+            """
+            SELECT m.content, m.is_sender, m.timestamp
+            FROM messages m
+            JOIN sentiment_cache sc ON sc.message_id = m.id
+            WHERE m.conversation_id = ? AND m.message_type = 1
+                AND m.timestamp BETWEEN ? AND ?
+                AND sc.polarity = 1
+                AND LENGTH(m.content) BETWEEN ? AND ?
+            ORDER BY m.timestamp ASC
+            """,
+            (conversation_id, from_ts, to_ts,
+             POSTER_QUOTE_MIN_CHARS, POSTER_QUOTE_MAX_CHARS),
+        ).fetchall()
+        if not rows:
+            return []
+        picked: List[Any] = []
+        step = max(len(rows) // POSTER_QUOTE_COUNT, 1)
+        for index in range(0, len(rows), step):
+            picked.append(rows[index])
+            if len(picked) >= POSTER_QUOTE_COUNT:
+                break
+
+        def _decode(content) -> str:
+            if isinstance(content, bytes):
+                return content.decode("utf-8", errors="replace")
+            return str(content or "")
+
+        return [
+            {
+                "text": _decode(row[0]).strip(),
+                "is_sender": int(row[1] or 0) == 1,
+                "ts": int(row[2] or 0),
+            }
+            for row in picked
+        ]
+
+    @staticmethod
+    def _poster_big5(conversation_id: int, account_wxid: str) -> Dict[str, Any]:
+        """读大五缓存（未生成返回 None 字段，不阻塞海报）。"""
+        from .personality_impression_service import PersonalityImpressionService
+
+        now = int(datetime.now().timestamp())
+        service = PersonalityImpressionService()
+        result: Dict[str, Any] = {}
+        for subject in ("me", "other"):
+            cached = None
+            try:
+                cached = service._load_cached(conversation_id, account_wxid, subject, now)
+            except Exception as exc:
+                logger.debug("[海报] 大五缓存读取失败: %s", exc)
+            if cached:
+                # 只带分数与标签，不带证据原文（公开版投影再兜一层）
+                result[subject] = {
+                    "source": cached.get("source"),
+                    "scores": {
+                        dim: {"score": item.get("score"), "label": item.get("label")}
+                        for dim, item in (cached.get("scores") or {}).items()
+                    },
+                }
+            else:
+                result[subject] = None
+        return result

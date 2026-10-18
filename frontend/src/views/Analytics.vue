@@ -666,6 +666,7 @@
       :dates="dates"
       :granularity="deepGranularity"
       :view-epoch="viewEpoch"
+      :contact-name="currentContactName"
     />
   </div>
 
@@ -1483,7 +1484,8 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
 
         function openExportFolder() {
             if (!exportResult.value) return
-            api.open_external_url(exportResult.value.path.replace(/[/\\][^/\\]+$/, ''))
+            // open_external_url 只放行 http/https（目录会被静默拒绝），走专用目录打开
+            api.open_export_folder()
                 .catch(() => {})
         }
 
@@ -1498,8 +1500,8 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
                 const res = await api.export_affinity_report(selectedConversationId.value)
                 if (res?.ok) {
                     showDialog(`体检报告已导出：${res.file_name}`)
-                    // 打开所在文件夹（同聊天记录导出约定）
-                    api.open_external_url(String(res.file_path).replace(/[/\\][^/\\]+$/, ''))
+                    // 打开导出目录（同聊天记录导出约定）
+                    api.open_export_folder()
                         .catch(() => {})
                 } else {
                     showDialog(res?.error || '报告导出失败')

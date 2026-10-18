@@ -195,3 +195,82 @@ class DeepAnalysisApiMixin:
         except Exception as e:
             logger.error(f"[Bridge] 增强大五画像失败: {e}")
             return {"ok": False, "error": str(e)}
+
+    # ------------------------------------------------------------------
+    # 分享海报（前端 html2canvas 合成 → save_share_image 落盘）
+    # ------------------------------------------------------------------
+
+    def get_poster_payload(
+        self, conversation_id: int, from_date: str, to_date: str, account_wxid: str = ""
+    ) -> dict:
+        """组装海报数据（统计/迷你曲线/top词/里程碑/金句/大五/头像 base64）。"""
+        try:
+            if not conversation_id:
+                return {"ok": False, "error": "缺少参数: conversation_id"}
+            from ...services.analysis.deep_analysis_service import DeepAnalysisService
+
+            from_ts = int(datetime.strptime(from_date, "%Y-%m-%d").timestamp())
+            to_ts = int(
+                datetime.strptime(to_date + " 23:59:59", "%Y-%m-%d %H:%M:%S").timestamp()
+            )
+            service = DeepAnalysisService()
+            return service.build_poster_payload(
+                int(conversation_id), from_ts, to_ts, account_wxid or ""
+            )
+        except ValueError as e:
+            return {"ok": False, "error": f"参数格式错误: {e}"}
+        except Exception as e:
+            logger.error(f"[Bridge] 获取海报数据失败: {e}")
+            return {"ok": False, "error": str(e)}
+
+    def save_share_image(self, image_data: str, file_name: str = "") -> dict:
+        """保存 html2canvas 合成的 PNG 到导出目录（chrono_trace_export）。
+
+        校验：PNG magic、≤20MB、文件名白名单化（剥离路径穿越）。
+        """
+        import base64
+        import tempfile
+        from pathlib import Path
+
+        try:
+            data = str(image_data or "")
+            if "," in data:
+                data = data.split(",", 1)[1]
+            try:
+                blob = base64.b64decode(data, validate=False)
+            except Exception:
+                return {"ok": False, "error": "图像数据不是有效的 base64"}
+            if not blob.startswith(b"\x89PNG"):
+                return {"ok": False, "error": "仅支持 PNG 图像"}
+            if len(blob) > 20 * 1024 * 1024:
+                return {"ok": False, "error": "图像超过 20MB 上限"}
+            # 白名单化文件名：仅保留常见安全字符，杜绝路径穿越
+            safe_name = "".join(
+                c for c in str(file_name or "分享海报") if c.isalnum() or c in "（）()-_ ."
+            ).strip() or "分享海报"
+            if not safe_name.lower().endswith(".png"):
+                safe_name += ".png"
+            out_dir = Path(tempfile.gettempdir()) / "chrono_trace_export"
+            out_dir.mkdir(exist_ok=True)
+            file_path = out_dir / safe_name
+            file_path.write_bytes(blob)
+            logger.info(f"[Bridge] 分享图已保存: {file_path}")
+            return {"ok": True, "file_path": str(file_path), "file_name": file_path.name}
+        except Exception as e:
+            logger.error(f"[Bridge] 保存分享图失败: {e}")
+            return {"ok": False, "error": str(e)}
+
+    def open_export_folder(self) -> dict:
+        """在系统文件管理器中打开导出目录（chrono_trace_export）。"""
+        import tempfile
+        import webbrowser
+        from pathlib import Path
+
+        try:
+            folder = Path(tempfile.gettempdir()) / "chrono_trace_export"
+            folder.mkdir(exist_ok=True)
+            webbrowser.open(folder.as_uri())
+            return {"ok": True, "path": str(folder)}
+        except Exception as e:
+            logger.error(f"[Bridge] 打开导出目录失败: {e}")
+            return {"ok": False, "error": str(e)}

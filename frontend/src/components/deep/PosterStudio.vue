@@ -127,6 +127,13 @@ async function exportPng() {
   exportError.value = ''
   exportResultText.value = ''
   try {
+    // 等捆绑字体就绪再截图——只堵「首次切模板立即导出」烘焙出回退字体的
+    // 竞态；老引擎无 document.fonts 时跳过（@font-face 的 block 期已兜底）
+    try {
+      await document.fonts?.ready
+    } catch {
+      /* 老引擎跳过 */
+    }
     const canvas = await html2canvas(node, {
       backgroundColor: '#ffffff',
       scale: 2, // 2 倍分辨率，720px 模板导出 1440px 宽

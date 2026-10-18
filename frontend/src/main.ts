@@ -4,6 +4,7 @@ import router from './router'
 import './styles/theme.css'
 import './styles/base.css'
 import './styles/panels.css'
+import './styles/fonts.css'
 
 const app = createApp(App)
 app.use(router)

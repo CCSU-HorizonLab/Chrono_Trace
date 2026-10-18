@@ -1,0 +1,11 @@
+/* 捆绑显示字体：得意黑（Smiley Sans）Oblique v2.0.1，OFL-1.1（见
+   assets/fonts/OFL.txt）。海报大数字/幕题/称号的显示层字体。
+   font-display: block——海报导出瞬间绝不能烘焙回退字体，宁可短暂阻塞
+   渲染；GB2312 外字符靠各模板字体栈回退（PingFang/雅黑）。 */
+@font-face {
+  font-family: 'Smiley Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url('../assets/fonts/SmileySans-Oblique.woff2') format('woff2');
+}

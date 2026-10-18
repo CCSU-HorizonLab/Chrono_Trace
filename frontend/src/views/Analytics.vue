@@ -697,6 +697,15 @@
             :activity-calendar-summary="activityCalendar.summary"
             :current-range-label="currentRangeLabel"
           />
+          <!-- 我的画像：更新画像默认含自我画像，这里让生成结果可见 -->
+          <ProfileBriefCard
+            kind="self"
+            class="persona-self-card"
+            :contact-name="realContactName"
+            :account-wxid="activeAccountWxid || ''"
+            :refresh-key="profileRefreshKey"
+            @generate="showPortraitDialog = true"
+          />
         </div>
         <BigFivePanel :conversation-id="selectedConversationId" />
         <PosterStudio :conversation-id="selectedConversationId" :dates="dates" :contact-name="currentContactName" />
@@ -704,13 +713,30 @@
     </template>
   </div>
 
-  <!-- TAB 6: 实时助手（监听控制 + 按联系人的建议配置；选人由页头 FiltersBar 贯通） -->
+  <!-- TAB 6: 实时助手（监听控制 + 双方画像 + 按联系人的建议配置；选人由页头 FiltersBar 贯通） -->
   <div v-show="currentTab === 'realtime' && selectedConversationId && !isGroupConversation" class="tab-content fade-in realtime-tab">
     <MonitorControlCard
       :conversation-id="selectedConversationId"
       :contact-name="currentContactName"
       :account-wxid="activeAccountWxid || ''"
     />
+    <!-- 双方画像速览（重构前 Suggestions 页双卡的回归） -->
+    <div class="realtime-profiles">
+      <ProfileBriefCard
+        kind="contact"
+        :contact-name="realContactName"
+        :account-wxid="activeAccountWxid || ''"
+        :refresh-key="profileRefreshKey"
+        @generate="showPortraitDialog = true"
+      />
+      <ProfileBriefCard
+        kind="self"
+        :contact-name="realContactName"
+        :account-wxid="activeAccountWxid || ''"
+        :refresh-key="profileRefreshKey"
+        @generate="showPortraitDialog = true"
+      />
+    </div>
   </div>
 
   <!-- Dialogs -->
@@ -795,6 +821,7 @@ import RelationshipContextForm from '@/components/affinity/RelationshipContextFo
 import CtCard from '@/components/base/CtCard.vue'
 import CtButton from '@/components/base/CtButton.vue'
 import PersonaGallery from '@/components/persona/PersonaGallery.vue'
+import ProfileBriefCard from '@/components/persona/ProfileBriefCard.vue'
 import { showDialog, showConfirm } from '@/utils/dialog'
 import { safeGetItem, safeRemoveItem, safeSetItem } from '@/utils/safeStorage'
 import { toLocalDateKey } from '@/utils/datetime'
@@ -876,7 +903,7 @@ export default {
         FiltersBar, DateRangeFilter, SubjectCard, EmotionLineChart, WordCloud, ConversationTimeline,
         AffinityScoreCard, DimensionRadar, SubScoreBreakdown, RiskSignalCard,         PreferenceKeywordsDialog, RelationshipContextForm, CtCard, CtButton, PersonaGallery, CtAvatar,
         FolderArchive, MessageSquare, Sparkles, BarChart3, TrendingUp, Loader2, Lightbulb, PortraitGenerateDialog, TimeDeepTab,
-        BigFivePanel, PosterStudio,
+        BigFivePanel, PosterStudio, ProfileBriefCard,
         MonitorControlCard
     },
     setup() {
@@ -902,6 +929,8 @@ export default {
         const subject = ref<Subject | undefined>(undefined)
         const sessions = ref<Session[]>([])
         const personaProfile = ref<ContactProfile | null>(null)
+        // 画像简卡（实时助手双卡 + TA 画像页我的画像卡）的刷新键：生成完成后 +1
+        const profileRefreshKey = ref(0)
         const loadingPersonaProfile = ref(false)
         const personaProfileMeta = reactive({
             createdAt: null as number | null,
@@ -1002,6 +1031,8 @@ const showPortraitDialog = ref(false)
         const currentContactName = computed(() => {
             return currentConversation.value?.name || '选择联系人'
         })
+        // 画像简卡取数用真实名（未选人为空串触发组件空态守卫，不发占位名「选择联系人」去后端）
+        const realContactName = computed(() => currentConversation.value?.name || '')
         const isGroupConversation = computed(() => {
             return currentConversation.value?.conversation_type === 'group'
         })
@@ -1451,7 +1482,8 @@ const showPortraitDialog = ref(false)
         }
 
         function handlePortraitGenerated() {
-  // 画像生成完成后刷新画像数据
+  // 画像生成完成后刷新画像数据（画廊走 loadPersonaProfile，简卡走 refreshKey）
+  profileRefreshKey.value++
   if (typeof loadPersonaProfile === 'function') loadPersonaProfile()
 }
 
@@ -2223,7 +2255,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
 
         return {
             currentTab, conversations, selectedConversationId, dates, loading, loadingSessions, error, analysis, subject, sessions, deepGranularity, deepRefreshKey, deepActivated, personaActivated, viewEpoch, handleCancelGroupSummary,
-            personaProfile, loadingPersonaProfile, personaProfileMeta,
+            personaProfile, loadingPersonaProfile, personaProfileMeta, profileRefreshKey, realContactName,
             analysisResult, displayScore, showKeywordsDialog, showContextForm, showPortraitDialog, handlePortraitGenerated, isGlobalAnalyzing, isStopping, activeTimer, handleStopAnalysis, globalProgressPercent, globalProgressStep, gpuMode,
             hasConversations, hasFeatures, hasCachedAffinityAnalysis, featureStats, responseTimeStats, initiativeStats, wordCountsStats, displayWordRatioLabel, activityCalendar,
             responseTimeChart, activityCalendarChart, wordCountChart, stats, currentContactName, headerAvatarSrc, hasPreferenceKeywords, allDimensions,
@@ -2901,6 +2933,21 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   overflow-y: auto;
   margin-top: var(--ct-space-md);
   padding-bottom: var(--ct-space-xl);
+}
+
+.persona-self-card {
+  margin-top: var(--ct-space-lg);
+}
+
+/* 实时助手页双方画像速览（监听控制卡下方） */
+.realtime-profiles {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--ct-space-lg);
+  margin-top: var(--ct-space-lg);
+}
+@media (max-width: 1024px) {
+  .realtime-profiles { grid-template-columns: 1fr; }
 }
 
 .features-row-1 {

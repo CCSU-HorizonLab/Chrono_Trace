@@ -16,6 +16,25 @@ logger = logging.getLogger(__name__)
 PROFILE_CANCEL_SCOPE = "profile_generation"
 
 
+def _format_profile_window(cached: dict) -> dict[str, Any]:
+    """把 get_profile 返回的窗口元信息格式化为前端可直接展示的 window 对象。
+
+    rolling → 「最近 N 天」（N 为档位名义窗天数）；custom → 「起 ~ 止」日期区间。
+    """
+    from datetime import datetime
+
+    kind = str(cached.get('window_kind') or 'rolling')
+    window_from = int(cached.get('window_from') or 0)
+    window_to = int(cached.get('window_to') or 0)
+    days = max(0, (window_to - window_from) // 86400) if window_from and window_to else 0
+    if kind == 'custom' and window_from and window_to:
+        fmt = lambda ts: datetime.fromtimestamp(int(ts)).strftime('%Y-%m-%d')  # noqa: E731
+        label = f"{fmt(window_from)} ~ {fmt(window_to)}"
+    else:
+        label = f"最近 {days} 天" if days > 0 else "最近滚动窗"
+    return {'kind': kind, 'from': window_from, 'to': window_to, 'days': days, 'label': label}
+
+
 class ProfileApiMixin:
     """联系人/自我画像"""
 
@@ -48,6 +67,7 @@ class ProfileApiMixin:
                     'profile': cached['profile'],
                     'created_at': cached['created_at'],
                     'expires_at': cached['expires_at'],
+                    'window': _format_profile_window(cached),
                     'estimated_tokens': estimate.get('estimated_total_tokens', 0),
                 }
             else:
@@ -56,6 +76,7 @@ class ProfileApiMixin:
                     'has_profile': False,
                     'expired': False,
                     'profile': None,
+                    'window': None,
                     'estimated_tokens': estimate.get('estimated_total_tokens', 0),
                 }
         except Exception as e:
@@ -71,6 +92,8 @@ class ProfileApiMixin:
         custom_budget: int = 0,
         account_wxid: str = "",
         cancel_key: int = 0,
+        from_ts: int = 0,
+        to_ts: int = 0,
     ) -> dict[str, Any]:
         """
         生成联系人画像（调 LLM）
@@ -81,6 +104,9 @@ class ProfileApiMixin:
             custom_budget: 自定义 token 预算
             cancel_key: 取消键（传 conversation_id；弹窗关闭时经
                 cancel_profile_generation 终止本次生成）
+            from_ts/to_ts: 可选历史时间窗（秒级时间戳，闭区间）；缺省为
+                滚动窗模式。指定窗口时存为 custom 快照，budget_level 只
+                决定采样目标量
 
         Returns:
             {"ok": True, "profile": {...}} 或 {"ok": False, "error": "..."} 或
@@ -95,6 +121,8 @@ class ProfileApiMixin:
                     custom_budget,
                     self._resolve_account_wxid(account_wxid),
                     should_abort=abort,
+                    from_ts=from_ts,
+                    to_ts=to_ts,
                 ),
                 cancel_key,
                 log_prefix="[Bridge] 生成联系人画像",
@@ -123,6 +151,7 @@ class ProfileApiMixin:
                     'profile': cached['profile'],
                     'created_at': cached['created_at'],
                     'expires_at': cached['expires_at'],
+                    'window': _format_profile_window(cached),
                     'estimated_tokens': estimate.get('estimated_total_tokens', 0),
                 }
             else:
@@ -131,6 +160,7 @@ class ProfileApiMixin:
                     'has_profile': False,
                     'expired': False,
                     'profile': None,
+                    'window': None,
                     'estimated_tokens': estimate.get('estimated_total_tokens', 0),
                 }
         except Exception as e:
@@ -146,8 +176,11 @@ class ProfileApiMixin:
         custom_budget: int = 0,
         account_wxid: str = "",
         cancel_key: int = 0,
+        from_ts: int = 0,
+        to_ts: int = 0,
     ) -> dict[str, Any]:
-        """生成用户本体的聊天克隆画像（取消机制同联系人画像）"""
+        """生成用户本体的聊天克隆画像（取消机制同联系人画像；from_ts/to_ts
+        指定历史时间窗时存为 custom 快照，语义同联系人画像）"""
         try:
             from ...services.realtime.self_profiler import SelfProfiler
             return self._run_profile_cancelable(
@@ -157,12 +190,46 @@ class ProfileApiMixin:
                     custom_budget,
                     self._resolve_account_wxid(account_wxid),
                     should_abort=abort,
+                    from_ts=from_ts,
+                    to_ts=to_ts,
                 ),
                 cancel_key,
                 log_prefix="[Bridge] 生成本体画像",
             )
         except Exception as e:
             logger.error(f"[Bridge] 生成本体画像失败: {e}")
+            import traceback
+            traceback.print_exc()
+            return {'ok': False, 'error': str(e)}
+
+    def list_profile_snapshots(
+        self,
+        display_name: str,
+        account_wxid: str = "",
+        profile_kind: str = "contact",
+        window_kind: str = "",
+    ) -> dict[str, Any]:
+        """历史画像快照列表（created_at 降序，最多 24 条），供画像档案回看。
+
+        Args:
+            profile_kind: 'contact' 联系人画像 / 'self' 本体画像
+            window_kind: 可选过滤 'rolling' / 'custom'，空为全部
+        """
+        try:
+            if profile_kind == 'self':
+                from ...services.realtime.self_profiler import SelfProfiler as profiler_cls
+            else:
+                from ...services.realtime.contact_profiler import ContactProfiler as profiler_cls
+            snapshots = profiler_cls().list_snapshots(
+                display_name,
+                account_wxid=self._resolve_account_wxid(account_wxid),
+                window_kind=window_kind,
+            )
+            for snap in snapshots:
+                snap['window'] = _format_profile_window(snap)
+            return {'ok': True, 'snapshots': snapshots}
+        except Exception as e:
+            logger.error(f"[Bridge] 查询画像快照列表失败: {e}")
             import traceback
             traceback.print_exc()
             return {'ok': False, 'error': str(e)}

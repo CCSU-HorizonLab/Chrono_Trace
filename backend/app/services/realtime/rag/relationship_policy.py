@@ -393,8 +393,8 @@ def _load_profile_cache(
         row = conn.execute(
             """
             SELECT profile_json, features_snapshot FROM contact_profiles
-            WHERE account_wxid = ? AND display_name = ?
-            ORDER BY id DESC LIMIT 1
+            WHERE account_wxid = ? AND display_name = ? AND window_kind = 'rolling'
+            ORDER BY created_at DESC, id DESC LIMIT 1
             """,
             (account_wxid, display_name),
         ).fetchone()

@@ -24,8 +24,18 @@ logger = logging.getLogger(__name__)
 _profile_renewal_inflight: set = set()
 
 
+def _read_rolling_budget_level(profiler: Any, display_name: str, account_wxid: str) -> str:
+    """读当前 rolling 快照的生成档位（读不到/脏值回落 medium）——续期沿用用户原档位。"""
+    try:
+        cached = profiler.get_profile(display_name, account_wxid=account_wxid)
+        level = str(cached.get("budget_level") or "").strip()
+        return level or "medium"
+    except Exception:
+        return "medium"
+
+
 def renew_profiles_in_background(display_name: str, account_wxid: str = "") -> None:
-    """后台续期联系人/本体画像（防重入；失败保留旧缓存）。
+    """后台续期联系人/本体画像（防重入；失败保留旧缓存；沿用各自原生成档位）。
 
     由 assemble_generation_context 的调用方经 ``renew_stale_profiles``
     参数注入：上下文装配发现画像过期时触发，不阻塞生成链路。
@@ -40,8 +50,16 @@ def renew_profiles_in_background(display_name: str, account_wxid: str = "") -> N
             from .contact_profiler import ContactProfiler
             from .self_profiler import SelfProfiler
 
-            ContactProfiler().generate_profile(display_name, account_wxid=account_wxid)
-            SelfProfiler().generate_profile(display_name, account_wxid=account_wxid)
+            contact = ContactProfiler()
+            budget = _read_rolling_budget_level(contact, display_name, account_wxid)
+            contact.generate_profile(
+                display_name, account_wxid=account_wxid, budget_level=budget
+            )
+            self_profiler = SelfProfiler()
+            budget = _read_rolling_budget_level(self_profiler, display_name, account_wxid)
+            self_profiler.generate_profile(
+                display_name, account_wxid=account_wxid, budget_level=budget
+            )
         except Exception as renew_e:
             logger.warning(f"画像后台续期失败（保留旧缓存）: {renew_e}")
         finally:

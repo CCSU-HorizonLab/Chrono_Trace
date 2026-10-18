@@ -61,6 +61,18 @@ MAX_SAMPLE_CHARS = 80000
 # 缓存有效期（秒）
 PROFILE_TTL = 7 * 86400  # 7 天
 
+# 快照结构版本（窗口键多快照）：表结构再变时 +1，口径记录见
+# docs/analysis/profile-window.md。旧结构不做迁移——画像是可再生缓存，
+# _ensure_table 探查到旧结构直接 DROP 重建。
+PROFILE_SNAPSHOT_SCHEMA = 1
+
+# 每个 (account_wxid, display_name, window_kind) 分组保留的快照条数上限
+# （rolling 每次续期产生新窗口键快照，自然累积，靠此上限防膨胀）
+PROFILE_SNAPSHOT_KEEP = 8
+
+# 指定历史窗（custom）单次生成的最大跨度
+PROFILE_CUSTOM_MAX_SPAN = 730 * 86400
+
 # 画像生成用 System Prompt
 PROFILE_SYSTEM_PROMPT = """你是一个社交关系分析师。根据提供的聊天数据和统计特征，总结"对方"的信息画像。
 
@@ -97,7 +109,7 @@ class ContactProfiler:
 
     def get_profile(self, display_name: str, account_wxid: str = "") -> Optional[dict]:
         """
-        获取缓存的联系人画像
+        获取当前滚动窗画像（rolling 最新一条；custom 历史快照走 list_snapshots）
 
         Returns:
             {
@@ -105,6 +117,10 @@ class ContactProfiler:
                 'created_at': int,
                 'expires_at': int,
                 'expired': bool,
+                'window_kind': str,
+                'window_from': int,
+                'window_to': int,
+                'budget_level': str,
             } 或 None（无缓存）
         """
         try:
@@ -116,8 +132,11 @@ class ContactProfiler:
             resolved_account_wxid = self._resolve_account_wxid(account_wxid)
 
             cursor = conn.execute(
-                'SELECT profile_json, created_at, expires_at '
-                'FROM contact_profiles WHERE account_wxid = ? AND display_name = ?',
+                'SELECT profile_json, created_at, expires_at, '
+                'window_kind, window_from, window_to, budget_level '
+                'FROM contact_profiles '
+                'WHERE account_wxid = ? AND display_name = ? AND window_kind = \'rolling\' '
+                'ORDER BY created_at DESC, id DESC LIMIT 1',
                 (resolved_account_wxid, display_name)
             )
             row = cursor.fetchone()
@@ -130,10 +149,53 @@ class ContactProfiler:
                 'created_at': row['created_at'],
                 'expires_at': row['expires_at'],
                 'expired': now > row['expires_at'],
+                'window_kind': row['window_kind'],
+                'window_from': row['window_from'],
+                'window_to': row['window_to'],
+                'budget_level': row['budget_level'],
             }
         except Exception as e:
             _print(f"[ContactProfiler] 查询缓存失败: {e}")
             return None
+
+    def list_snapshots(self, display_name: str, account_wxid: str = "", window_kind: str = "") -> list:
+        """历史快照列表（created_at 降序，最多 24 条），供前端回看"""
+        try:
+            from ...db.connection import get_db
+            conn = get_db()
+            self._ensure_table(conn)
+            resolved_account_wxid = self._resolve_account_wxid(account_wxid)
+
+            sql = ('SELECT id, window_kind, window_from, window_to, budget_level, '
+                   'profile_json, message_sample_count, created_at, expires_at '
+                   'FROM contact_profiles '
+                   'WHERE account_wxid = ? AND display_name = ?')
+            params: list = [resolved_account_wxid, display_name]
+            if window_kind:
+                sql += ' AND window_kind = ?'
+                params.append(window_kind)
+            sql += ' ORDER BY created_at DESC, id DESC LIMIT 24'
+            snapshots = []
+            for row in conn.execute(sql, params).fetchall():
+                try:
+                    profile = json.loads(row['profile_json'])
+                except Exception:
+                    profile = None
+                snapshots.append({
+                    'id': row['id'],
+                    'window_kind': row['window_kind'],
+                    'window_from': row['window_from'],
+                    'window_to': row['window_to'],
+                    'budget_level': row['budget_level'],
+                    'message_sample_count': row['message_sample_count'],
+                    'created_at': row['created_at'],
+                    'expires_at': row['expires_at'],
+                    'profile': profile,
+                })
+            return snapshots
+        except Exception as e:
+            _print(f"[ContactProfiler] 查询快照列表失败: {e}")
+            return []
 
     def estimate_tokens(self, display_name: str, budget_level: str = 'medium', custom_budget: int = 0, account_wxid: str = "") -> dict:
         """
@@ -187,23 +249,47 @@ class ContactProfiler:
         custom_budget: int = 0,
         account_wxid: str = "",
         should_abort: Optional[Callable[[], bool]] = None,
+        from_ts: int = 0,
+        to_ts: int = 0,
     ) -> dict:
         """
         生成联系人画像（调 LLM）
 
         Args:
             display_name: 联系人显示名
-            budget_level: token 预算档位 (low/medium/high/custom)
-            custom_budget: 自定义 token 预算（budget_level='custom' 时生效）
+            budget_level: 采样档位 (low/medium/high/custom)
+            custom_budget: 自定义预算（budget_level='custom' 时生效）
+            from_ts/to_ts: 指定历史时间窗（秒级时间戳，闭区间）；缺省 0
+                为滚动窗模式（now 锚定档位窗，不足向更早顺延）。指定窗口
+                时 budget_level 只决定采样目标量，不再决定回看跨度。
 
         Returns:
             {'ok': True, 'profile': {...}} 或 {'ok': False, 'error': '...'}
         """
         window_seconds = PROFILE_TIME_WINDOWS.get(budget_level, PROFILE_TIME_WINDOWS['medium'])
 
+        # 指定历史窗（custom）：硬边界，不足不顺延——顺延会篡改用户指定窗口的语义
+        custom_window = bool(from_ts or to_ts)
+        if custom_window:
+            try:
+                from_ts, to_ts = int(from_ts), int(to_ts)
+            except (TypeError, ValueError):
+                return {'ok': False, 'error': '时间窗参数无效：需要秒级整数时间戳'}
+            if from_ts <= 0 or to_ts <= 0 or from_ts >= to_ts:
+                return {'ok': False, 'error': '时间窗无效：起止需为正数且起点早于终点'}
+            if to_ts > int(time.time()) + 86400:
+                return {'ok': False, 'error': '时间窗无效：终点不能晚于当前时间'}
+            if to_ts - from_ts > PROFILE_CUSTOM_MAX_SPAN:
+                return {'ok': False, 'error': f'时间窗无效：跨度不能超过 {PROFILE_CUSTOM_MAX_SPAN // 86400} 天'}
+
+        now = int(time.time())
+
         _print(f"\n{'='*60}")
         _print(f"[ContactProfiler] 开始生成画像: {display_name}")
-        _print(f"[ContactProfiler] 回看范围: 最近 {window_seconds // 86400} 天 ({budget_level})；内容不足时自动向更早聊天顺延，不做时间硬截断")
+        if custom_window:
+            _print(f"[ContactProfiler] 指定历史窗口: {from_ts} ~ {to_ts}（闭区间，不顺延）")
+        else:
+            _print(f"[ContactProfiler] 回看范围: 最近 {window_seconds // 86400} 天 ({budget_level})；内容不足时自动向更早聊天顺延，不做时间硬截断")
         _print(f"{'='*60}")
 
         try:
@@ -224,19 +310,42 @@ class ContactProfiler:
             conversation_id = conv['id']
             _print(f"[ContactProfiler] 找到会话: id={conversation_id}, 消息数={conv['message_count']}")
 
-            # 2. 收集特征数据
-            features = self._collect_features(conn, conversation_id)
+            # 2. 特征与采样共用同一窗口口径（rolling 用名义窗，采样可顺延）
+            if custom_window:
+                feature_from, feature_to = from_ts, to_ts
+            else:
+                feature_from, feature_to = now - window_seconds, now
+            features = self._collect_features(conn, conversation_id, feature_from, feature_to)
             _print(f"[ContactProfiler] 特征数据收集完成: {list(features.keys())}")
 
             # 3. 采样对话轮次
             sample = self._sample_conversation_turns(
                 conn, conversation_id, window_seconds,
                 PROFILE_TARGET_CHARS.get(budget_level, PROFILE_TARGET_CHARS['high']),
+                from_ts=from_ts if custom_window else 0,
+                to_ts=to_ts if custom_window else 0,
             )
             _print(f"[ContactProfiler] 采样完成: {len(sample)} 条消息, 约 {self._count_tokens(sample)} tokens")
 
-            # 4. 构造 prompt
-            user_prompt = self._build_profile_prompt(display_name, conv, features, sample)
+            if not sample:
+                if custom_window:
+                    return {'ok': False, 'error': '该时间窗内没有可用的文本消息，请调整窗口范围'}
+                return {'ok': False, 'error': '没有可用的文本消息，无法生成画像'}
+
+            # 4. 构造 prompt（窗口口径按样本实际范围披露，LLM 才知道这是窗口分析）
+            sample_from = min(m['timestamp'] for m in sample)
+            sample_to = max(m['timestamp'] for m in sample)
+            if custom_window:
+                window_desc = (
+                    f"{self._fmt_date(sample_from)} 至 {self._fmt_date(sample_to)}"
+                    f"（约 {(sample_to - sample_from) // 86400 + 1} 天，指定历史窗口）"
+                )
+            else:
+                window_desc = (
+                    f"{self._fmt_date(sample_from)} 至 {self._fmt_date(sample_to)}"
+                    f"（最近滚动窗采样，内容不足时已向更早顺延）"
+                )
+            user_prompt = self._build_profile_prompt(display_name, conv, features, sample, window_desc)
             _print(f"[ContactProfiler] Prompt 长度: {len(user_prompt)} 字符")
 
             # 5. 调用 LLM，传入预算以动态决定输出额度
@@ -245,9 +354,15 @@ class ContactProfiler:
             _print("[ContactProfiler] ✅ 画像生成成功!")
             _print(f"[ContactProfiler] 标签: {profile_data.get('personality_tags', [])}")
 
-            # 6. 缓存
-            self._save_cache(conn, display_name, conversation_id, profile_data,
-                             len(sample), features, resolved_account_wxid)
+            # 6. 缓存为快照（rolling 记名义窗，custom 记精确窗）
+            self._save_cache(
+                conn, display_name, conversation_id, profile_data,
+                len(sample), features, resolved_account_wxid,
+                window_kind='custom' if custom_window else 'rolling',
+                window_from=from_ts if custom_window else feature_from,
+                window_to=to_ts if custom_window else feature_to,
+                budget_level=budget_level,
+            )
 
             return {'ok': True, 'profile': profile_data}
 
@@ -256,6 +371,12 @@ class ContactProfiler:
             _print(f"[ContactProfiler] ❌ 生成画像失败: {e}")
             traceback.print_exc()
             return {'ok': False, 'error': str(e)}
+
+    @staticmethod
+    def _fmt_date(ts: int) -> str:
+        """时间戳转 YYYY-MM-DD（本地时区）"""
+        from datetime import datetime
+        return datetime.fromtimestamp(int(ts)).strftime('%Y-%m-%d')
 
     # ==================== 内部方法 ====================
 
@@ -402,40 +523,59 @@ class ContactProfiler:
         _print(f"[ContactProfiler] 数据库中的会话列表 (top10): {all_convs}")
         return None
 
-    def _collect_features(self, conn, conversation_id: int) -> dict:
+    def _collect_features(self, conn, conversation_id: int, from_ts: int = 0, to_ts: int = 0) -> dict:
         """
-        模块化收集已有特征数据，逐项 try/except
+        收集特征数据，逐项 try/except。
+
+        from_ts/to_ts 成对非 0 时统计范围限定在闭区间 [from_ts, to_ts]，
+        与采样同一窗口口径；缺省 0 为全时段。
         """
         features = {}
+        windowed = bool(from_ts and to_ts)
 
-        # 主动性统计
+        # 主动性统计：按 sessions 会话开始时间统计（initiative_stats 是
+        # 全时段单行聚合，无法窗口化，不再回退使用）
         try:
-            row = conn.execute(
-                'SELECT total_sessions, user_initiated_sessions, '
-                'other_initiated_sessions, initiative_rate '
-                'FROM initiative_stats WHERE conversation_id = ?',
-                (conversation_id,)
-            ).fetchone()
-            if row:
-                rate = row['initiative_rate']
+            sql = (
+                'SELECT COUNT(*) AS total_sessions, '
+                'SUM(initiator = \'user\') AS user_initiated, '
+                'SUM(initiator = \'other\') AS other_initiated '
+                'FROM sessions WHERE conversation_id = ?'
+            )
+            params: list = [conversation_id]
+            if windowed:
+                sql += ' AND start_time >= ? AND start_time <= ?'
+                params.extend([from_ts, to_ts])
+            row = conn.execute(sql, params).fetchone()
+            total = row[0] or 0
+            user_initiated = row[1] or 0
+            other_initiated = row[2] or 0
+            if total > 0:
+                rate = other_initiated / total
                 features['initiative'] = {
-                    'total_sessions': row['total_sessions'],
-                    'other_initiated': row['other_initiated_sessions'],
-                    'user_initiated': row['user_initiated_sessions'],
+                    'total_sessions': total,
+                    'other_initiated': other_initiated,
+                    'user_initiated': user_initiated,
                     'initiative_rate': rate,
-                    'desc': f"对方主动发起{rate:.0%}的会话" if rate else None,
+                    'desc': f"对方主动发起{rate:.0%}的会话",
                 }
         except Exception as e:
             _print(f"[ContactProfiler] 跳过主动性统计: {e}")
 
-        # 响应时间
+        # 响应时间：按发送消息时间窗过滤（JOIN messages 取 timestamp）
         try:
-            row = conn.execute(
-                'SELECT COUNT(*) as cnt, AVG(response_time_seconds) as avg_rt, '
-                'MIN(response_time_seconds) as min_rt, MAX(response_time_seconds) as max_rt '
-                'FROM response_times WHERE conversation_id = ? AND is_abnormal = 0',
-                (conversation_id,)
-            ).fetchone()
+            sql = (
+                'SELECT COUNT(*) AS cnt, AVG(rt.response_time_seconds) AS avg_rt, '
+                'MIN(rt.response_time_seconds) AS min_rt, MAX(rt.response_time_seconds) AS max_rt '
+                'FROM response_times rt '
+                'JOIN messages m ON m.id = rt.sent_message_id '
+                'WHERE rt.conversation_id = ? AND rt.is_abnormal = 0'
+            )
+            params: list = [conversation_id]
+            if windowed:
+                sql += ' AND m.timestamp >= ? AND m.timestamp <= ?'
+                params.extend([from_ts, to_ts])
+            row = conn.execute(sql, params).fetchone()
             if row and row['cnt'] > 0:
                 features['response_time'] = {
                     'count': row['cnt'],
@@ -446,23 +586,37 @@ class ContactProfiler:
         except Exception as e:
             _print(f"[ContactProfiler] 跳过响应时间: {e}")
 
-        # 字数统计
+        # 字数统计：直接从 messages 按窗口统计（word_counts 聚合行无法窗口化）
         try:
-            row = conn.execute(
-                'SELECT user_char_count, other_char_count, char_ratio '
-                'FROM word_counts WHERE conversation_id = ? AND session_id IS NULL',
-                (conversation_id,)
-            ).fetchone()
-            if row:
+            sql = (
+                'SELECT is_sender, SUM(LENGTH(content)) AS chars '
+                'FROM messages '
+                'WHERE conversation_id = ? AND message_type = 1 '
+                'AND content IS NOT NULL AND content != \'\''
+            )
+            params: list = [conversation_id]
+            if windowed:
+                sql += ' AND timestamp >= ? AND timestamp <= ?'
+                params.extend([from_ts, to_ts])
+            rows = conn.execute(sql + ' GROUP BY is_sender', params).fetchall()
+            user_chars = 0
+            other_chars = 0
+            for r in rows:
+                if r['is_sender']:
+                    user_chars += r['chars'] or 0
+                else:
+                    other_chars += r['chars'] or 0
+            if user_chars or other_chars:
                 features['word_counts'] = {
-                    'user_chars': row['user_char_count'],
-                    'other_chars': row['other_char_count'],
-                    'ratio': round(row['char_ratio'], 2),
+                    'user_chars': user_chars,
+                    'other_chars': other_chars,
+                    # 比值（对方/我）；我方窗口内零字时无定义
+                    'ratio': round(other_chars / user_chars, 2) if user_chars else None,
                 }
         except Exception as e:
             _print(f"[ContactProfiler] 跳过字数统计: {e}")
 
-        # 好感度评分（仅当前口径：旧口径行的列语义不同，混标会污染画像）
+        # 好感度评分：全时段分析产物，无法窗口化——保留注入但如实标注口径
         try:
             from ..analysis.affinity_analysis_service import AffinityAnalysisService
 
@@ -484,6 +638,7 @@ class ContactProfiler:
                     'interaction_investment': round(row['chat_positivity_score'], 1),
                     'closeness_signals': round(row['attitude_tendency_score'], 1),
                     'preference_compatibility': round(row['preference_compatibility_score'], 1),
+                    'caliber': 'full_period',
                 }
         except Exception as e:
             _print(f"[ContactProfiler] 跳过好感度评分: {e}")
@@ -491,14 +646,36 @@ class ContactProfiler:
         return features
 
     def _sample_conversation_turns(
-        self, conn, conversation_id: int, time_window_seconds: int, target_chars: int
+        self, conn, conversation_id: int, time_window_seconds: int, target_chars: int,
+        from_ts: int = 0, to_ts: int = 0,
     ) -> list[dict]:
         """
         按时间分桶采样回看跨度内的完整对话。
 
-        跨度内消息全量保留，不做 token 预算截断；内容不足 target_chars
-        时向后逐段顺延补充，直到填满目标量或历史取尽——不按时间硬截断。
+        指定历史窗（from_ts/to_ts 闭区间）：硬边界单次采样，不做分桶、
+        不向更早顺延——顺延会篡改用户指定窗口的语义；仅保留
+        MAX_SAMPLE_CHARS 收敛兜底。
+
+        滚动窗（缺省）：跨度内消息全量保留；内容不足 target_chars 时向
+        更早逐段顺延补充，直到填满目标量或历史取尽——不按时间硬截断。
         """
+        if from_ts and to_ts:
+            samples = [dict(row) for row in conn.execute(
+                'SELECT content, is_sender, timestamp '
+                'FROM messages '
+                'WHERE conversation_id = ? AND message_type = 1 '
+                'AND timestamp >= ? AND timestamp <= ? '
+                'AND content IS NOT NULL AND content != \'\' '
+                'ORDER BY timestamp ASC',
+                (conversation_id, int(from_ts), int(to_ts)),
+            ).fetchall()]
+            total_chars = sum(len(m.get('content') or '') for m in samples)
+            if total_chars > MAX_SAMPLE_CHARS:
+                while len(samples) > 1 and total_chars > MAX_SAMPLE_CHARS:
+                    total_chars -= len(samples.pop(0).get('content') or '')
+                _print(f"[ContactProfiler] ⚠️ 指定窗口聊天量超出采样字符上限，已从最旧消息收敛至 {total_chars} 字符")
+            return samples
+
         now = int(time.time())
         window = max(1, int(time_window_seconds))
         buckets = [b for b in PROFILE_SAMPLE_BUCKETS if b[0] <= window]
@@ -621,7 +798,8 @@ class ContactProfiler:
         display_name: str,
         conv: dict,
         features: dict,
-        sample: list[dict]
+        sample: list[dict],
+        window_desc: str = '',
     ) -> str:
         """组装画像生成的 user prompt"""
         parts = []
@@ -635,6 +813,8 @@ class ContactProfiler:
         parts.append(f"- 联系人名称: {display_name}")
         parts.append(f"- 消息总数: {conv.get('message_count', 0)}")
         parts.append(f"- 时间跨度: {first_date} ~ {last_date}")
+        if window_desc:
+            parts.append(f"- 样本时间范围: {window_desc}")
 
         # 互动特征
         feat_lines = []
@@ -653,9 +833,9 @@ class ContactProfiler:
 
         wc = features.get('word_counts')
         if wc:
+            ratio_text = f", 比值(对方/我)={wc['ratio']}" if wc.get('ratio') is not None else ""
             feat_lines.append(
-                f"- 字数: 我={wc['user_chars']}字, 对方={wc['other_chars']}字, "
-                f"比值(对方/我)={wc['ratio']}"
+                f"- 字数: 我={wc['user_chars']}字, 对方={wc['other_chars']}字{ratio_text}"
             )
 
         if feat_lines:
@@ -663,11 +843,11 @@ class ContactProfiler:
             parts.append("【互动特征】")
             parts.extend(feat_lines)
 
-        # 好感度
+        # 好感度（全时段分析产物，仅供背景参考）
         aff = features.get('affinity')
         if aff:
             parts.append("")
-            parts.append("【好感度评分】")
+            parts.append("【好感度评分】（全时段评分，仅供背景参考）")
             parts.append(f"- 总体: {aff['overall']}/100")
             parts.append(f"- 情感共鸣: {aff['emotional_resonance']}, "
                          f"互动投入: {aff['interaction_investment']}, "
@@ -814,49 +994,85 @@ class ContactProfiler:
 
     def _save_cache(
         self, conn, display_name: str, conversation_id: int,
-        profile: dict, sample_count: int, features: dict, account_wxid: str
+        profile: dict, sample_count: int, features: dict, account_wxid: str,
+        window_kind: str = 'rolling', window_from: int = 0, window_to: int = 0,
+        budget_level: str = 'medium',
     ):
-        """保存画像到缓存表"""
+        """保存画像快照（窗口键多快照共存），写后按窗口分组裁剪上限"""
         try:
             self._ensure_table(conn)
 
             now = int(time.time())
+            # 历史窗快照是存档品：不参与 7 天 TTL，仅由数量上限裁剪
+            expires_at = now + (365 * 86400 if window_kind == 'custom' else PROFILE_TTL)
             conn.execute(
                 'INSERT OR REPLACE INTO contact_profiles '
-                '(account_wxid, display_name, conversation_id, profile_json, features_snapshot, '
+                '(account_wxid, display_name, conversation_id, window_kind, window_from, '
+                'window_to, budget_level, profile_json, features_snapshot, '
                 'message_sample_count, token_usage, created_at, expires_at) '
-                'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
                 (
                     account_wxid,
                     display_name,
                     conversation_id,
+                    window_kind,
+                    int(window_from),
+                    int(window_to),
+                    budget_level,
                     json.dumps(profile, ensure_ascii=False),
                     json.dumps(features, ensure_ascii=False),
                     sample_count,
                     0,  # 实际 token 消耗可从 LLM 响应中提取
                     now,
-                    now + PROFILE_TTL,
+                    expires_at,
                 )
             )
+            # 每个窗口分组只保留最近 N 条（rolling 每次续期产生新窗口键，
+            # 自然累积靠此上限防膨胀）
+            conn.execute(
+                'DELETE FROM contact_profiles '
+                'WHERE account_wxid = ? AND display_name = ? AND window_kind = ? '
+                'AND id NOT IN ('
+                '  SELECT id FROM contact_profiles '
+                '  WHERE account_wxid = ? AND display_name = ? AND window_kind = ? '
+                '  ORDER BY created_at DESC, id DESC LIMIT ?'
+                ')',
+                (account_wxid, display_name, window_kind,
+                 account_wxid, display_name, window_kind, PROFILE_SNAPSHOT_KEEP),
+            )
             conn.commit()
-            _print(f"[ContactProfiler] 画像已缓存，有效至 {time.strftime('%Y-%m-%d', time.localtime(now + PROFILE_TTL))}")
+            _print(f"[ContactProfiler] 画像快照已缓存（{window_kind} 窗口分组保留最近 {PROFILE_SNAPSHOT_KEEP} 条）")
         except Exception as e:
             _print(f"[ContactProfiler] ⚠️ 缓存保存失败: {e}")
 
     def _ensure_table(self, conn):
-        """确保缓存表存在"""
+        """确保缓存表存在（快照结构 v1：窗口键多快照共存；旧结构 DROP 重建不迁移）"""
+        exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'contact_profiles'"
+        ).fetchone()
+        if exists:
+            cols = {row[1] for row in conn.execute('PRAGMA table_info(contact_profiles)')}
+            if 'window_kind' in cols:
+                return  # 已是快照结构，零 DDL
+            _print("[ContactProfiler] 旧结构画像表（单行覆盖），DROP 重建为快照结构，不迁移")
+            conn.execute('DROP TABLE contact_profiles')
+            conn.commit()
         conn.execute('''
             CREATE TABLE IF NOT EXISTS contact_profiles (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 account_wxid TEXT NOT NULL,
                 display_name TEXT NOT NULL,
                 conversation_id INTEGER,
+                window_kind TEXT NOT NULL DEFAULT 'rolling',
+                window_from INTEGER NOT NULL DEFAULT 0,
+                window_to INTEGER NOT NULL DEFAULT 0,
+                budget_level TEXT NOT NULL DEFAULT 'medium',
                 profile_json TEXT NOT NULL,
                 features_snapshot TEXT,
                 message_sample_count INTEGER,
                 token_usage INTEGER,
                 created_at INTEGER NOT NULL,
                 expires_at INTEGER NOT NULL,
-                UNIQUE(account_wxid, display_name)
+                UNIQUE(account_wxid, display_name, window_kind, window_from, window_to)
             )
         ''')

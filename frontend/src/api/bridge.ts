@@ -127,12 +127,13 @@ type PyWebViewApi = {
   save_llm_model: (model: Record<string, any>) => Promise<any>
   delete_llm_model: (model_id: number) => Promise<any>
   fetch_provider_models: (base_url: string, api_key?: string) => Promise<any>
-  // 联系人画像与本体画像
+  // 联系人画像与本体画像（from_ts/to_ts 可选历史时间窗，秒级闭区间；window 为快照窗口标注）
   get_contact_profile: (display_name: string, account_wxid?: string) => Promise<any>
-  generate_contact_profile: (display_name: string, budget_level?: string, custom_budget?: number, account_wxid?: string, cancel_key?: number) => Promise<any>
+  generate_contact_profile: (display_name: string, budget_level?: string, custom_budget?: number, account_wxid?: string, cancel_key?: number, from_ts?: number, to_ts?: number) => Promise<any>
   get_self_profile: (display_name: string, account_wxid?: string) => Promise<any>
-  generate_self_profile: (display_name: string, budget_level?: string, custom_budget?: number, account_wxid?: string, cancel_key?: number) => Promise<any>
+  generate_self_profile: (display_name: string, budget_level?: string, custom_budget?: number, account_wxid?: string, cancel_key?: number, from_ts?: number, to_ts?: number) => Promise<any>
   cancel_profile_generation: (cancel_key: number) => Promise<any>
+  list_profile_snapshots: (display_name: string, account_wxid?: string, profile_kind?: 'contact' | 'self', window_kind?: 'rolling' | 'custom') => Promise<any>
   // 特征提取
   extract_features: (conversation_id: number, config?: FeatureExtractionConfig) => Promise<any>
   get_extraction_progress: (task_id: string) => Promise<any>

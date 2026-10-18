@@ -151,13 +151,37 @@ Analytics 页签「时光深度」，**单聊专属**（群聊无双方情感演
   时间分布（从头截断会让语料偏向早期消息，校正作用于过时画像）；
 - **单飞 + 可取消**：bridge 层同会话增强单飞（LLM 请求最长 90s），
   `cancel_big5_impressions` 置取消事件，`should_abort` 走请求尝试边界；
-- **海报 payload 不含 milestones**：三模板均不渲染，下发只诱发误用。
+- **海报 payload 含 story 纯加性字段**：`{milestones, chemistry}`（chemistry =
+  late_night/peak_day/reply_stats/initiator，逐字段独立降级 None）；
+  核心分镜（开场/里程碑/深夜/峰值日）零依赖分析产物，未分析库也能出故事。
 
 ## 分享海报
 
 前端 `html2canvas`（唯一为此新增的前端依赖）合成竖版 720px 长图，
 `save_share_image` 落盘 `chrono_trace_export`（PNG magic 校验、≤20MB、
 文件名白名单化）。
+
+三模板统一为**故事分镜叙事**（Spotify Wrapped 式：开场 → 编号幕（大数字/
+时间线/默契数字格/曲线/词云/雷达）→ 称号幕（无序号）→ 落款），公共幕骨架
+在 `poster/sections/`（StorySection/StoryBigNumber/StoryTimeline/StoryStatGrid，
+palette 纯色 token 经 props 传入），受众差异内容（双人头像/金句卡/单侧词云）
+留各模板。称号规则是前端纯函数 `poster/badges.ts`（8 规则按序首中 + 兜底，
+文案随受众变——后端下发等于把展示细节塞 payload）。
+
+### 三模板基调
+
+| 模板 | 基调 | 分镜 |
+|---|---|---|
+| 定向版（PosterIntimateDuo） | 暗色星夜（#0b1026→#221540，金 #e8c47a） | 双人头像开场 → 大数字 → 时光机 → 默契格 → 金句（衬线）→ 双人词云 → 雷达 → 称号 |
+| 自我版（PosterSelfPortrait） | 暖米（#fdf8f2→#f3e2c8，橘 #d97706） | 「我」头像开场 → 你的大数字 → 日常痕迹格 → 语气曲线（橘线）→ 你的词 → 语言风格（雷达+条形）→ 称号 |
+| 公开版（PosterPublicMinimal） | 浅靛（#ffffff→#eef1f7，靛 #4f5d9e，中性措辞） | 开场句 → 大数字 → 时间线 → 默契格（「有人先开口」不指认）→ 曲线 → 词云 → 雷达 → 称号 |
+
+### story 口径（与 _poster_stats 同源）
+
+`message_type=1 AND TRIM(content)!=''`、窗内、本地时区；深夜 = `CAST(strftime
+('%H',...,'localtime') AS INTEGER) BETWEEN 0 AND 5`（字符串 BETWEEN 会把
+'23' 错配进 0-5 档）；回复中位数无 MEDIAN 用 `LIMIT 2 OFFSET (n-1)/2` 取均值；
+reply_stats 三重剔除（is_abnormal=1 / response_time_seconds NULL / 回消息窗外）。
 
 ### 脱敏责任边界（模板层硬约束）
 
@@ -167,9 +191,18 @@ Analytics 页签「时光深度」，**单聊专属**（群聊无双方情感演
 
 | 模板 | 受众 | 可用字段 | 不可见字段 |
 |---|---|---|---|
-| 公开分享（PosterPublicMinimal） | 朋友圈等公开场景 | 聚合数字、合并情绪曲线、双方大五分数、top 词 | 对方姓名/头像/金句原文 |
-| 自我画像（PosterSelfPortrait） | 想了解自己的人 | 我的消息数、我的曲线/词/大五 | 对方一切数据、金句 |
-| 定向发送（PosterIntimateDuo） | 仅对方本人 | 全量（姓名、头像、双方曲线、金句卡） | —（导出前强制确认弹窗） |
+| 公开分享（PosterPublicMinimal） | 朋友圈等公开场景 | 聚合数字、合并情绪曲线、双方大五分数、top 词、story 聚合（无身份统计） | 对方姓名/头像/金句原文 |
+| 自我画像（PosterSelfPortrait） | 想了解自己的人 | 我的消息数、我的曲线/词/大五、my_story 单侧切片（late_night_self/reply_self_avg） | 对方一切数据、金句、story 联合口径 |
+| 定向发送（PosterIntimateDuo） | 仅对方本人 | 全量（姓名、头像、双方曲线、金句卡、story 全量） | —（导出前强制确认弹窗） |
+
+### 字体
+
+显示字体捆绑 **Smiley Sans（得意黑）Oblique v2.0.1**（OFL-1.1，
+`assets/fonts/SmileySans-Oblique.woff2` + `OFL.txt`；OFL 的 Reserved Font
+Name 条款=改名再改字体，原样分发只需附带许可），`styles/fonts.css` 声明
+`font-display: block`。大数字/幕题/称号用 `'Smiley Sans', 'PingFang SC',
+'Microsoft YaHei', sans-serif` 栈；金句用系统衬线 `Georgia, 'Songti SC',
+'Noto Serif CJK SC', serif`。GB2312 外字符靠回退栈吸收。
 
 ### html2canvas 约束（模板 CSS 纪律）
 
@@ -177,6 +210,9 @@ Analytics 页签「时光深度」，**单聊专属**（群聊无双方情感演
   `build_poster_payload` 转 base64，失败返回 null 前端首字母占位；
 - 只用纯色 + 简单 linear-gradient；**不用** radial/conic-gradient、
   box-shadow、backdrop-filter（渲染不可靠）；
+- 「光感」用 1px 亮色 border 模拟，不用 shadow；rgba() 颜色值可用；
+- 导出前 `await document.fonts?.ready`（try/catch 老引擎跳过）——堵住
+  「首次切模板即导出烘焙回退字体」的竞态，与 font-display:block 双保险；
 - 导出节点不得处于 CSS 动画/transform 中；
 - Windows（WebView2）为主验证平台，Linux（Qt WebKit）异常降级提示不阻塞。
 
@@ -186,7 +222,8 @@ Analytics 页签「时光深度」，**单聊专属**（群聊无双方情感演
   sentiment_backfill_service, personality_impression_service, big5_proxies,
   task_registry}.py`、`webview/api/deep_analysis.py`（mixin，13 个方法）
 - 前端：`components/deep/`（TimeDeepTab 及各面板、Big5EvolutionPanel +
-  big5Shared、PosterStudio、`poster/registry.ts` 与三模板）、
+  big5Shared、PosterStudio、`poster/registry.ts`、`poster/badges.ts`、
+  `poster/sections/`（分镜骨架）、三模板、`styles/fonts.css`）、
   `charts/EmotionLineChart.vue`（扩展 perspective/negativeShade/affinityPoints
   与 userMsgCount/otherMsgCount 可选 props，无分侧数回退单柱）
 - 测试：`tests/test_deep_analysis.py`、`test_engagement_metrics.py`、

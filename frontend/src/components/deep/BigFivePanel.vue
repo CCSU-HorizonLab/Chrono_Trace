@@ -7,9 +7,10 @@
       </div>
       <div class="header-right">
         <span class="badge" :class="sourceBadgeClass">{{ sourceBadgeText }}</span>
-        <button class="btn enhance-btn" :disabled="enhancing || loading" @click="enhance">
-          {{ enhancing ? 'AI 校正中…' : 'AI 校正' }}
+        <button v-if="!enhancing" class="btn enhance-btn" :disabled="loading" @click="enhance">
+          AI 校正
         </button>
+        <button v-else class="btn" @click="cancelEnhance">取消</button>
       </div>
     </div>
 
@@ -162,16 +163,21 @@ const activeSubjects = computed(() => {
 })
 
 async function load() {
+  // 会话一致性守卫：大五计算含全量扫描+jieba，慢响应后到时不能覆盖
+  // 新会话的面板（否则画像张冠李戴）
+  const requestConv = props.conversationId
   loading.value = true
   error.value = ''
   try {
     const result = await api.get_big5_impressions(props.conversationId)
+    if (requestConv !== props.conversationId) return
     if (!result?.ok) {
       error.value = result?.error || '加载失败'
       return
     }
     payload.value = result
   } catch (e: any) {
+    if (requestConv !== props.conversationId) return
     error.value = e?.message || '请求失败'
   } finally {
     loading.value = false
@@ -179,19 +185,31 @@ async function load() {
 }
 
 async function enhance() {
+  const requestConv = props.conversationId
   enhancing.value = true
   enhanceHint.value = ''
   try {
     const result = await api.enhance_big5_impressions(props.conversationId)
+    if (requestConv !== props.conversationId) return
     if (!result?.ok) {
       enhanceHint.value = result?.message || result?.error || 'AI 校正不可用'
       return
     }
     payload.value = result
   } catch (e: any) {
+    if (requestConv !== props.conversationId) return
     enhanceHint.value = e?.message || '请求失败'
   } finally {
-    enhancing.value = false
+    if (requestConv === props.conversationId) enhancing.value = false
+  }
+}
+
+async function cancelEnhance() {
+  try {
+    await api.cancel_big5_impressions(props.conversationId)
+    enhanceHint.value = '正在取消…'
+  } catch {
+    // 取消请求失败：增强请求本身会照常返回，enhancing 随之复位
   }
 }
 

@@ -57,6 +57,15 @@ def _auto_enqueue_rag_index(conversation_id: int) -> None:
 class AffinityApiMixin:
     """好感度分析（四维评分/关系上下文/偏好关键词）"""
 
+    def _all_affinity_services(self):
+        """曾经创建的全部好感度服务实例（含当前）。互斥守卫用：analyze_affinity
+        每次重建实例，旧实例上运行中的任务只存在于旧实例。"""
+        services = list(getattr(self, "_affinity_services", None) or [])
+        current = getattr(self, "_affinity_service", None)
+        if current is not None and not any(s is current for s in services):
+            services.append(current)
+        return services
+
     def _get_fresh_affinity_service_class(self):
         """Reload affinity analysis modules so updated scoring code takes effect immediately."""
         module_names = [
@@ -336,77 +345,93 @@ class AffinityApiMixin:
         try:
             import time as _time
 
-            # 复用守卫：旧服务实例上仍有本会话的运行中任务时不重复启动。
-            # 此处必须查旧实例（本方法每次 reload 出新类，新实例看不到旧任务）；
-            # 重复启动会替换取消事件，导致运行中的任务再也停不掉
-            prev_service = getattr(self, "_affinity_service", None)
-            if prev_service is not None:
-                running = prev_service.find_running_task(conversation_id)
-                if running:
+            from .deep_analysis import _ONNX_TASK_LOCK
+
+            # 「互斥检查 + 任务注册」临界区（与 start_sentiment_backfill 同锁）：
+            # 不加锁时对向检查-后-注册存在 TOCTOU 窗口，两侧可同时通过对方
+            # 检查再各自注册，ONNX 推理并发争抢——正是互斥要防的场景。
+            # 锁内含模块 reload 与短路判定的几次 DB 读（均亚秒级）。
+            with _ONNX_TASK_LOCK:
+                # 复用守卫：旧服务实例上仍有本会话的运行中任务时不重复启动。
+                # 此处必须查旧实例（本方法每次 reload 出新类，新实例看不到旧任务）；
+                # 重复启动会替换取消事件，导致运行中的任务再也停不掉
+                prev_service = getattr(self, "_affinity_service", None)
+                if prev_service is not None:
+                    running = prev_service.find_running_task(conversation_id)
+                    if running:
+                        return {
+                            "ok": True,
+                            "task_id": running,
+                            "status": "started",
+                            "message": "已有进行中的好感度分析，已复用",
+                        }
+
+                # 互斥守卫：情感补算与全面分析共用 ONNX 推理会话，并发会争抢
+                # 模型资源；补算进行中时拒绝启动分析（补算通常分钟级即完成）
+                backfill_service = getattr(self, "_sentiment_backfill_service", None)
+                if backfill_service is not None and backfill_service.has_running_task():
                     return {
-                        "ok": True,
-                        "task_id": running,
-                        "status": "started",
-                        "message": "已有进行中的好感度分析，已复用",
+                        "ok": False,
+                        "error": "时光深度情感补算进行中，请等待其完成后再开始全面分析",
                     }
 
-            # 互斥守卫：情感补算与全面分析共用 ONNX 推理会话，并发会争抢
-            # 模型资源；补算进行中时拒绝启动分析（补算通常分钟级即完成）
-            backfill_service = getattr(self, "_sentiment_backfill_service", None)
-            if backfill_service is not None and backfill_service.has_running_task():
-                return {
-                    "ok": False,
-                    "error": "时光深度情感补算进行中，请等待其完成后再开始全面分析",
-                }
+                AffinityAnalysisService = self._get_fresh_affinity_service_class()
+                service = AffinityAnalysisService()            # 保存服务实例引用，供 get_affinity_progress 查询进度
+                self._affinity_service = service
+                # 本方法每次 reload 出新类、新实例——旧实例上仍运行的任务对
+                # 新实例不可见。登记前先剔除已无运行任务的旧实例：列表只保
+                # 留活任务持有者，防长会话中每次分析（含缓存短路命中）都
+                # 累积一个携带完整结果载荷的实例（慢内存泄漏）
+                self._affinity_services = [
+                    s for s in getattr(self, "_affinity_services", None) or []
+                    if s.has_running_task()
+                ]
+                self._affinity_services.append(service)
+                self._analysis_cancel_event = threading.Event()
 
-            AffinityAnalysisService = self._get_fresh_affinity_service_class()
-            service = AffinityAnalysisService()            # 保存服务实例引用，供 get_affinity_progress 查询进度
-            self._affinity_service = service
-            self._analysis_cancel_event = threading.Event()
-
-            # 短路判定：无新消息且配置指纹未变 → 直接返回缓存（亚秒级），
-            # 跳过全链路重算。用户点「重新分析」且数据没变时不再白跑
-            # 五分钟。有新消息（stale）或首次分析时照常全量。
-            # config_overrides 例外：缓存指纹不含临时覆盖项，带覆盖调用
-            # 必须走全量，否则会返回"无覆盖口径"的旧缓存
-            effective_force_reanalyze = False
-            if config_overrides:
-                effective_force_reanalyze = True
-                logger.info("[Bridge] 好感度短路判定：携带 config_overrides，走全量")
-            else:
-                try:
-                    from ...services.analysis.analysis_state import get_analysis_freshness
-
-                    freshness = get_analysis_freshness(int(conversation_id))
-                    if freshness.get("stale") or freshness.get("pending_message_count"):
-                        effective_force_reanalyze = True
-                        logger.info(
-                            "[Bridge] 好感度短路判定：有 %s 条新消息，走全量",
-                            freshness.get("pending_message_count"),
-                        )
-                    else:
-                        # 消息未变，再查配置指纹（改权重/阈值后仍需重算）——
-                        # 直接用 _load_cached_scores：它内部已含指纹校验，
-                        # 返回 None 即缓存不可用（版本/指纹不匹配）
-                        fingerprint_ok = False
-                        try:
-                            cached_result = service.get_scores(conversation_id)
-                            fingerprint_ok = cached_result is not None
-                        except Exception as fp_e:
-                            logger.debug("[Bridge] 缓存指纹探测失败，按全量处理: %s", fp_e)
-                        if not fingerprint_ok:
-                            effective_force_reanalyze = True
-                            logger.info("[Bridge] 好感度短路判定：配置已变更，走全量")
-                        else:
-                            logger.info("[Bridge] 好感度短路判定：数据与配置均未变，使用缓存")
-                except Exception as short_circuit_e:
-                    logger.debug("[Bridge] 好感度短路判定失败，按全量处理: %s", short_circuit_e)
+                # 短路判定：无新消息且配置指纹未变 → 直接返回缓存（亚秒级），
+                # 跳过全链路重算。用户点「重新分析」且数据没变时不再白跑
+                # 五分钟。有新消息（stale）或首次分析时照常全量。
+                # config_overrides 例外：缓存指纹不含临时覆盖项，带覆盖调用
+                # 必须走全量，否则会返回"无覆盖口径"的旧缓存
+                effective_force_reanalyze = False
+                if config_overrides:
                     effective_force_reanalyze = True
+                    logger.info("[Bridge] 好感度短路判定：携带 config_overrides，走全量")
+                else:
+                    try:
+                        from ...services.analysis.analysis_state import get_analysis_freshness
 
-            # 显式生成 task_id（带 uuid 后缀防撞号）并传给 analyze()，
-            # 保证返回给前端的 task_id 与服务内注册的完全一致，无需 sleep+扫描猜测
-            task_id = f"affinity_{conversation_id}_{int(_time.time())}_{uuid.uuid4().hex[:6]}"
-            service.register_task(task_id, conversation_id)
+                        freshness = get_analysis_freshness(int(conversation_id))
+                        if freshness.get("stale") or freshness.get("pending_message_count"):
+                            effective_force_reanalyze = True
+                            logger.info(
+                                "[Bridge] 好感度短路判定：有 %s 条新消息，走全量",
+                                freshness.get("pending_message_count"),
+                            )
+                        else:
+                            # 消息未变，再查配置指纹（改权重/阈值后仍需重算）——
+                            # 直接用 _load_cached_scores：它内部已含指纹校验，
+                            # 返回 None 即缓存不可用（版本/指纹不匹配）
+                            fingerprint_ok = False
+                            try:
+                                cached_result = service.get_scores(conversation_id)
+                                fingerprint_ok = cached_result is not None
+                            except Exception as fp_e:
+                                logger.debug("[Bridge] 缓存指纹探测失败，按全量处理: %s", fp_e)
+                            if not fingerprint_ok:
+                                effective_force_reanalyze = True
+                                logger.info("[Bridge] 好感度短路判定：配置已变更，走全量")
+                            else:
+                                logger.info("[Bridge] 好感度短路判定：数据与配置均未变，使用缓存")
+                    except Exception as short_circuit_e:
+                        logger.debug("[Bridge] 好感度短路判定失败，按全量处理: %s", short_circuit_e)
+                        effective_force_reanalyze = True
+
+                # 显式生成 task_id（带 uuid 后缀防撞号）并传给 analyze()，
+                # 保证返回给前端的 task_id 与服务内注册的完全一致，无需 sleep+扫描猜测
+                task_id = f"affinity_{conversation_id}_{int(_time.time())}_{uuid.uuid4().hex[:6]}"
+                service.register_task(task_id, conversation_id)
 
             def _run_analysis():
                 try:

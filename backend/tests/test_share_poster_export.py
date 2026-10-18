@@ -28,8 +28,10 @@ def db(monkeypatch):
         " analysis_message_count INT DEFAULT 0)"
     )
     conn.execute(
+        # 列名与 schema.sql 真形一致（nickname/remark，无 display_name）——
+        # 曾因自建列掩蔽生产 SQL 的 no such column 错误
         "CREATE TABLE contacts (id INTEGER PRIMARY KEY, account_wxid TEXT DEFAULT '',"
-        " username TEXT, display_name TEXT, nickname TEXT, avatar_path TEXT)"
+        " username TEXT, nickname TEXT, remark TEXT, avatar_path TEXT)"
     )
     conn.execute(
         "CREATE TABLE messages (id INTEGER PRIMARY KEY, conversation_id INT, "
@@ -139,6 +141,20 @@ class TestPosterPayload:
         seed(db)
         payload = DeepAnalysisService().build_poster_payload(1, 1_699_000_000, 1_701_000_000)
         assert payload["contact"]["avatar"] is None
+
+    def test_contact_name_prefers_remark(self, db):
+        """名称链：contacts.remark > nickname > conversations.display_name。"""
+        db.execute(
+            "INSERT INTO conversations (id, account_wxid, username, display_name)"
+            " VALUES (1, 'acc', 'wxid_a', '原始名')"
+        )
+        db.execute(
+            "INSERT INTO contacts (account_wxid, username, remark, nickname)"
+            " VALUES ('acc', 'wxid_a', '备注名', '昵称')"
+        )
+        seed(db)
+        payload = DeepAnalysisService().build_poster_payload(1, 1_699_000_000, 1_701_000_000)
+        assert payload["contact"]["display_name"] == "备注名"
 
     def test_big5_missing_not_blocking(self, db):
         """大五未生成 → big5.me/other 为 None，海报其余字段完整。"""

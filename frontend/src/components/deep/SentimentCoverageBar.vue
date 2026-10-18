@@ -156,7 +156,7 @@ function stopPolling() {
 async function cancel() {
   cancelling.value = true
   try {
-    await api.cancel_sentiment_backfill()
+    await api.cancel_sentiment_backfill(taskId.value || undefined)
   } catch {
     // 取消请求失败时靠轮询发现终态
   } finally {

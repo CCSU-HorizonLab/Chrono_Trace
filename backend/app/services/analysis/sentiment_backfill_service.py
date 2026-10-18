@@ -16,12 +16,11 @@ from typing import Any, Dict, Optional
 
 from ...db.connection import get_db
 
+from .task_registry import TERMINAL_STATUSES, is_running
+
 import logging
 
 logger = logging.getLogger(__name__)
-
-# 终态集合：到达后任务不再占用「运行中」名额
-_TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
 
 
 class SentimentBackfillService:
@@ -87,14 +86,14 @@ class SentimentBackfillService:
         """该会话仍在运行的补算任务 ID（重复启动时复用）。"""
         with self._lock:
             for task_id, task in self._tasks.items():
-                if task["conversation_id"] == int(conversation_id) and task["status"] not in _TERMINAL_STATUSES:
+                if task["conversation_id"] == int(conversation_id) and is_running(task["status"]):
                     return task_id
         return None
 
     def has_running_task(self) -> bool:
         """任一会话的补算是否仍在运行（与全面分析互斥的全局守卫）。"""
         with self._lock:
-            return any(task["status"] not in _TERMINAL_STATUSES for task in self._tasks.values())
+            return any(is_running(task["status"]) for task in self._tasks.values())
 
     def get_progress(self, task_id: str) -> Optional[Dict[str, Any]]:
         with self._lock:
@@ -118,11 +117,8 @@ class SentimentBackfillService:
         task_id: str,
     ) -> Dict[str, Any]:
         """跑补算并维护任务状态。取消时已写入批次的缓存保留（续跑自动跳过）。"""
-        progress_records = []
-
         def _on_progress(fraction: float) -> None:
             percent = int(5 + min(fraction, 1.0) * 90)
-            progress_records.append(percent)
             self._update(task_id, progress_percent=percent, current_step="逐条情感推理")
 
         try:
@@ -162,7 +158,7 @@ class SentimentBackfillService:
         with self._lock:
             stale = [
                 task_id for task_id, task in self._tasks.items()
-                if task["status"] in _TERMINAL_STATUSES
+                if task["status"] in TERMINAL_STATUSES
                 and task.get("finished_at", 0) and task["finished_at"] < cutoff
             ]
             for task_id in stale:

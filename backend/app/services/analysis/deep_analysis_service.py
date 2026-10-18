@@ -414,10 +414,11 @@ class DeepAnalysisService:
         stats = self._poster_stats(conversation_id, from_ts, to_ts)
         curve = self._merged_bucket_series(conversation_id, from_ts, to_ts, "week")
         top_words = self._poster_top_words(conversation_id, from_ts, to_ts)
-        milestones = self._build_milestones(conversation_id, from_ts, to_ts)[:5]
         quotes = self._poster_quotes(conversation_id, from_ts, to_ts)
         big5 = self._poster_big5(conversation_id, account_wxid)
 
+        # 不含 milestones：三个海报模板均不渲染里程碑（时间线在深度页签
+        # 消费），下发只会诱发模板作者误用、白付 SQL 与序列化成本
         return {
             "ok": True,
             "version": DEEP_ANALYSIS_VERSION,
@@ -432,7 +433,6 @@ class DeepAnalysisService:
             "stats": stats,
             "emotion_curve": {"bucket": "week", "points": curve},
             "top_words": top_words,
-            "milestones": milestones,
             "quotes": {"items": quotes, "sensitive": True},
             "big5": big5,
             "generated_at": int(datetime.now().timestamp()),
@@ -440,12 +440,12 @@ class DeepAnalysisService:
 
     @staticmethod
     def _poster_contact(conversation_id: int) -> Dict[str, Any]:
-        """联系人显示名与头像路径（备注名 > 昵称 > username）。"""
+        """联系人显示名与头像路径（备注名 > 昵称 > 会话显示名；contacts 无 display_name 列）。"""
         row = get_db().execute(
             """
             SELECT
-                COALESCE(NULLIF(TRIM(c.display_name), ''), NULLIF(TRIM(ct.nickname), ''),
-                         NULLIF(TRIM(ct.display_name), ''), '联系人'),
+                COALESCE(NULLIF(TRIM(ct.remark), ''), NULLIF(TRIM(ct.nickname), ''),
+                         NULLIF(TRIM(c.display_name), ''), '联系人'),
                 COALESCE(NULLIF(TRIM(c.avatar_path), ''), NULLIF(TRIM(ct.avatar_path), ''))
             FROM conversations c
             LEFT JOIN contacts ct

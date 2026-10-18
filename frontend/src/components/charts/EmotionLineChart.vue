@@ -118,16 +118,16 @@
         >
           <circle :cx="point.x" :cy="point.y" :r="point.index === activeIndex ? 6 : 4" class="point-dot" :class="{ active: point.index === activeIndex }" />
         </g>
-        <!-- 双线模式：仅悬停列上显示各线标记 -->
+        <!-- 双线模式：仅悬停列上显示有数据各线的标记 -->
         <g v-if="renderedLines.length > 1 && activePoint">
           <circle
-            v-for="line in renderedLines"
-            :key="`hp-${line.key}`"
-            :cx="activePoint.x"
-            :cy="scaleY(pickValue(line, activeIndex))"
+            v-for="mark in hoverMarks"
+            :key="`hp-${mark.key}`"
+            :cx="mark.x"
+            :cy="mark.y"
             r="5"
             class="point-dot"
-            :style="{ stroke: line.color }"
+            :style="{ stroke: mark.color }"
           />
         </g>
 
@@ -305,11 +305,25 @@ const renderedLines = computed<RenderedLine[]>(() => {
   })
 })
 
-function pickValue(line: RenderedLine, index: number): number {
+function pickValue(line: RenderedLine, index: number): number | null {
   const item = props.timeseries[index]
   const value = item ? line.pick(item) : null
-  return value ?? 0
+  // null 语义是「该侧此桶无数据」，保持 null——回落 0 会把悬停标记画在
+  // 中性 0 分处，误读为情绪回落（与 lowConfidenceBands 的缺失语义冲突）
+  return value ?? null
 }
+
+// 双线模式悬停标记：只画有数据的一侧（无数据侧画 0 分点会误读为情绪回落）
+const hoverMarks = computed(() => {
+  if (renderedLines.value.length <= 1 || !activePoint.value) return []
+  const marks: Array<{ key: string; color: string; x: number; y: number }> = []
+  for (const line of renderedLines.value) {
+    const value = pickValue(line, activeIndex.value)
+    if (value === null) continue
+    marks.push({ key: line.key, color: line.color, x: activePoint.value.x, y: scaleY(value) })
+  }
+  return marks
+})
 
 // 消息量柱：底部浅蓝细柱，量级与消息数成正比（最多 52px 高）
 const bars = computed(() => {

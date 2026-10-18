@@ -16,6 +16,7 @@ import app.services.analysis.preprocessing_orchestrator as orchmod
 import app.services.analysis.sentiment_backfill_service as bfmod
 from app.services.analysis.preprocessing_orchestrator import PreprocessingOrchestrator
 from app.services.analysis.sentiment_backfill_service import SentimentBackfillService
+from app.webview.api.affinity import AffinityApiMixin
 from app.webview.api.deep_analysis import DeepAnalysisApiMixin
 
 
@@ -206,10 +207,14 @@ class _FakeAffinity:
         return self._running
 
 
-class _Bridge(DeepAnalysisApiMixin):
-    def __init__(self, affinity=None, backfill=None):
+class _Bridge(DeepAnalysisApiMixin, AffinityApiMixin):
+    """组合两 mixin（生产 Bridge 同构）：互斥守卫依赖 affinity 侧的
+    _all_affinity_services 收集全部历史服务实例。"""
+    def __init__(self, affinity=None, affinity_list=None, backfill=None):
         if affinity is not None:
             self._affinity_service = affinity
+        if affinity_list is not None:
+            self._affinity_services = affinity_list
         if backfill is not None:
             self._sentiment_backfill_service = backfill
 
@@ -220,6 +225,25 @@ class TestBridgeGuards:
         result = bridge.start_sentiment_backfill(1)
         assert result["ok"] is False
         assert "全面分析" in result["error"]
+
+    def test_start_refused_when_old_affinity_instance_running(self):
+        """最新 affinity 实例空闲、旧实例仍运行 → 照样拒绝（防 ONNX 争抢）。"""
+        bridge = _Bridge(
+            affinity=_FakeAffinity(running=False),
+            affinity_list=[_FakeAffinity(running=True), _FakeAffinity(running=False)],
+        )
+        result = bridge.start_sentiment_backfill(1)
+        assert result["ok"] is False
+        assert "全面分析" in result["error"]
+
+    def test_start_refused_when_other_conversation_backfill_running(self):
+        """不同会话的补算并发 → 拒绝（全局单飞，防覆盖取消事件）。"""
+        backfill = SentimentBackfillService(orchestrator=object())
+        backfill.register_task("running_other", 7)
+        bridge = _Bridge(backfill=backfill)
+        result = bridge.start_sentiment_backfill(8)
+        assert result["ok"] is False
+        assert "另一会话" in result["error"]
 
     def test_start_reuses_running_backfill(self):
         backfill = SentimentBackfillService(orchestrator=object())
@@ -280,3 +304,37 @@ class TestBridgeGuards:
     def test_cancel_without_task(self):
         bridge = _Bridge()
         assert bridge.cancel_sentiment_backfill()["ok"] is False
+
+    def test_per_task_cancel_and_event_cleanup(self, db):
+        """按 task_id 精确取消；取消事件表在任务终态后清理。"""
+        seed_messages(db, n=5)
+
+        class _BlockingOrchestrator:
+            def run_sentiment_backfill(self, conversation_id, cancel_event=None, progress_cb=None):
+                cancel_event.wait()  # 模拟长推理，直到被取消
+                raise RuntimeError("分析已被用户取消")
+
+        backfill = SentimentBackfillService(orchestrator=_BlockingOrchestrator())
+        bridge = _Bridge(backfill=backfill)
+        result = bridge.start_sentiment_backfill(1)
+        assert result["status"] == "started"
+        task_id = result["task_id"]
+
+        deadline = time.time() + 5
+        while time.time() < deadline and not bridge._sentiment_backfill_cancel_events:
+            time.sleep(0.02)
+
+        assert bridge.cancel_sentiment_backfill(task_id)["ok"] is True
+        assert bridge.cancel_sentiment_backfill("nope")["ok"] is False
+
+        status = None
+        while time.time() < deadline:
+            status = bridge.get_sentiment_backfill_progress(task_id)["status"]
+            if status in {"cancelled", "completed", "failed"}:
+                break
+            time.sleep(0.02)
+        assert status == "cancelled"
+
+        while time.time() < deadline and bridge._sentiment_backfill_cancel_events:
+            time.sleep(0.02)
+        assert not bridge._sentiment_backfill_cancel_events

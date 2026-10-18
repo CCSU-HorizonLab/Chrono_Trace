@@ -30,14 +30,6 @@ export type PosterCurvePoint = {
   msgCount?: number
 }
 
-export type PosterMilestone = {
-  kind: string
-  ts: number
-  scope?: string
-  mark?: number
-  days?: number
-}
-
 export type PosterBig5Scores = Record<string, { score: number | null; label?: string }> | null
 
 /** 完整 payload（定向版专属；敏感字段集中在 contact 与 quotes） */
@@ -51,7 +43,6 @@ export type IntimatePosterPayload = {
   stats: PosterStats
   emotion_curve: { bucket: string; points: PosterCurvePoint[] }
   top_words: { all: PosterWord[]; me: PosterWord[]; other: PosterWord[] }
-  milestones: PosterMilestone[]
   quotes: { items: Array<{ text: string; is_sender: boolean; ts: number }>; sensitive: true }
   big5: { me: { source: string; scores: PosterBig5Scores } | null; other: { source: string; scores: PosterBig5Scores } | null }
   generated_at: number
@@ -63,19 +54,20 @@ export type PublicPosterPayload = {
   stats: PosterStats
   emotion_curve: { bucket: string; points: PosterCurvePoint[] }
   top_words: { all: PosterWord[]; me: PosterWord[]; other: PosterWord[] }
-  milestones: PosterMilestone[]
   big5: { me: { scores: PosterBig5Scores } | null; other: { scores: PosterBig5Scores } | null }
   generated_at: number
 }
+
+/** 自我版曲线点：仅我的分数——类型上不存在 otherScore/合并 score，模板无法引用对方序列 */
+export type SelfCurvePoint = { ts: string; userScore: number | null }
 
 /** 自我版 payload：只含 me 切片，零对方元素 */
 export type SelfPosterPayload = {
   version: number
   stats: { self_count: number; active_days: number; span_days: number }
-  my_curve: PosterCurvePoint[]
+  my_curve: SelfCurvePoint[]
   my_words: PosterWord[]
   my_big5: PosterBig5Scores
-  milestones: PosterMilestone[]
   generated_at: number
 }
 
@@ -86,7 +78,6 @@ export function sanitizeForPublic(payload: IntimatePosterPayload): PublicPosterP
     stats: payload.stats,
     emotion_curve: payload.emotion_curve,
     top_words: payload.top_words,
-    milestones: payload.milestones,
     big5: {
       me: payload.big5?.me ? { scores: payload.big5.me.scores } : null,
       other: payload.big5?.other ? { scores: payload.big5.other.scores } : null,
@@ -95,7 +86,7 @@ export function sanitizeForPublic(payload: IntimatePosterPayload): PublicPosterP
   }
 }
 
-/** 唯一的自我版构造入口：me 切片投影（userScore 序列、me 词、big5.me、里程碑） */
+/** 唯一的自我版构造入口：me 切片投影（我的曲线点、me 词、big5.me） */
 export function sanitizeForSelf(payload: IntimatePosterPayload): SelfPosterPayload {
   return {
     version: payload.version,
@@ -104,10 +95,11 @@ export function sanitizeForSelf(payload: IntimatePosterPayload): SelfPosterPaylo
       active_days: payload.stats.active_days,
       span_days: payload.stats.span_days,
     },
-    my_curve: payload.emotion_curve.points,
+    // 逐点投影只留 userScore——直接传整个 point 会把 otherScore 与合并
+    // score 带进自我版类型，违背"类型上拿不到对方数据"的红线
+    my_curve: payload.emotion_curve.points.map((p) => ({ ts: p.ts, userScore: p.userScore ?? null })),
     my_words: payload.top_words.me,
     my_big5: payload.big5?.me?.scores || null,
-    milestones: payload.milestones,
     generated_at: payload.generated_at,
   }
 }

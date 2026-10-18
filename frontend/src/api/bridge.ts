@@ -57,10 +57,11 @@ type PyWebViewApi = {
   get_sentiment_coverage: (conversation_id: number) => Promise<any>
   start_sentiment_backfill: (conversation_id: number) => Promise<any>
   get_sentiment_backfill_progress: (task_id: string) => Promise<any>
-  cancel_sentiment_backfill: () => Promise<any>
+  cancel_sentiment_backfill: (task_id?: string) => Promise<any>
   // 时光深度：大五人格印象（本地基础层永远可用；LLM 增强层 ±15 有界校正）
   get_big5_impressions: (conversation_id: number, account_wxid?: string) => Promise<any>
   enhance_big5_impressions: (conversation_id: number, account_wxid?: string) => Promise<any>
+  cancel_big5_impressions: (conversation_id: number, account_wxid?: string) => Promise<any>
   // 时光深度：分享海报（前端 html2canvas 合成，PNG 落盘导出目录）
   get_poster_payload: (conversation_id: number, from: string, to: string, account_wxid?: string) => Promise<any>
   save_share_image: (image_data: string, file_name?: string) => Promise<any>

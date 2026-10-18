@@ -77,13 +77,16 @@ const unitLabel = computed(
 // 秒级时间戳 → 当前粒度的桶标签（与后端 sentiment_bucket_expr 同口径：周=周一日期，月=YYYY-MM，年=YYYY）
 function bucketLabelForTs(tsSeconds: number): string {
   const d = new Date(tsSeconds * 1000)
+  if (props.granularity === 'day') {
+    return toLocalDateKey(d)
+  }
   if (props.granularity === 'month') {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
   }
   if (props.granularity === 'year') {
     return String(d.getFullYear())
   }
-  // 周（默认）与天：落到所在周的周一
+  // 周（默认）：落到所在周的周一
   const monday = new Date(d)
   monday.setDate(d.getDate() - ((d.getDay() + 6) % 7))
   return toLocalDateKey(monday)

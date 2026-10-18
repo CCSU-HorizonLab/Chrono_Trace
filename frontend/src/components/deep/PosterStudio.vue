@@ -86,6 +86,8 @@ const activePayload = computed(() => {
 })
 
 async function load() {
+  // 会话一致性守卫：海报 payload 是重查询，慢响应后到时不能覆盖新会话数据
+  const requestKey = `${props.conversationId}|${props.dates.from}|${props.dates.to}`
   loading.value = true
   error.value = ''
   exportResultText.value = ''
@@ -94,6 +96,7 @@ async function load() {
     const result = await api.get_poster_payload(
       props.conversationId, props.dates.from, props.dates.to,
     )
+    if (requestKey !== `${props.conversationId}|${props.dates.from}|${props.dates.to}`) return
     if (!result?.ok) {
       error.value = result?.error || '加载失败'
       payload.value = null
@@ -101,6 +104,7 @@ async function load() {
     }
     payload.value = result
   } catch (e: any) {
+    if (requestKey !== `${props.conversationId}|${props.dates.from}|${props.dates.to}`) return
     error.value = e?.message || '请求失败'
   } finally {
     loading.value = false

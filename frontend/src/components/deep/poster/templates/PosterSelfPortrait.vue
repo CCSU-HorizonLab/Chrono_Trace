@@ -97,13 +97,12 @@ const DIM_ORDER = ['openness', 'extraversion', 'agreeableness', 'conscientiousne
 
 const dimRows = computed(() => {
   const scores = myBig5.value || {}
-  return DIM_ORDER
-    .map((key) => ({
-      key,
-      label: scores[key]?.label || key,
-      score: typeof scores[key]?.score === 'number' ? scores[key]!.score as number : 0,
-    }))
-    .filter((row) => row.score > 0 || row.label)
+  // 五维恒展示（雷达全维口径一致），缺席维度以 0 分占位
+  return DIM_ORDER.map((key) => ({
+    key,
+    label: scores[key]?.label || key,
+    score: typeof scores[key]?.score === 'number' ? scores[key]!.score as number : 0,
+  }))
 })
 
 function wordSize(index: number): string {

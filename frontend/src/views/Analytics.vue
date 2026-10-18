@@ -650,24 +650,30 @@
   </div>
 
   <!-- TAB 6: 时光深度（时间窗长期演变：双方情绪曲线/词云演变/关系阶段叙事，单聊专属） -->
+  <!-- v-if 懒激活：首次进入页签才挂载重计算面板（词云 jieba×2、全量扫描×2）， -->
+  <!-- 从不打开则零开销；激活后保持挂载（v-show 切换不重复请求）。加 -->
+  <!-- !isGroupConversation：切群聊立即卸载——v-show 只隐藏不卸载，挂着的 -->
+  <!-- watch 会对群聊 id 发起重载荷并把"对方=全群"的画像写进 big5 缓存 -->
   <div v-show="currentTab === 'deep' && selectedConversationId" class="tab-content fade-in">
-    <DateRangeFilter
-      :dates="dates"
-      :loading="false"
-      show-granularity
-      :granularity="deepGranularity"
-      @update:dates="onDatesChange"
-      @update:granularity="deepGranularity = $event"
-      @refresh="deepRefreshKey++"
-    />
-    <TimeDeepTab
-      :key="`${selectedConversationId}-${deepRefreshKey}`"
-      :conversation-id="selectedConversationId"
-      :dates="dates"
-      :granularity="deepGranularity"
-      :view-epoch="viewEpoch"
-      :contact-name="currentContactName"
-    />
+    <template v-if="deepActivated && !isGroupConversation">
+      <DateRangeFilter
+        :dates="dates"
+        :loading="false"
+        show-granularity
+        :granularity="deepGranularity"
+        @update:dates="onDatesChange"
+        @update:granularity="deepGranularity = $event"
+        @refresh="deepRefreshKey++"
+      />
+      <TimeDeepTab
+        :key="`${selectedConversationId}-${deepRefreshKey}`"
+        :conversation-id="selectedConversationId"
+        :dates="dates"
+        :granularity="deepGranularity"
+        :view-epoch="viewEpoch"
+        :contact-name="currentContactName"
+      />
+    </template>
   </div>
 
   <!-- Dialogs -->
@@ -837,6 +843,8 @@ export default {
         // 时光深度：分桶粒度（周/月/年）与手动刷新纪元（+1 强制 TimeDeepTab 重挂载重取）
         const deepGranularity = ref('week')
         const deepRefreshKey = ref(0)
+        // 时光深度懒激活：首次进入该页签才置 true，面板随 v-if 挂载
+        const deepActivated = ref(false)
         const activeAccountWxid = ref('')
 
         // Core State
@@ -2072,6 +2080,9 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
             }
             if ((newVal === 'content' || newVal === 'persona') && selectedConversationId.value) {
                 loadAnalysis()
+            }
+            if (newVal === 'deep') {
+                deepActivated.value = true
             }
         })
 

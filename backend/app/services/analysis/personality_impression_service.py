@@ -88,7 +88,17 @@ class PersonalityImpressionService:
             self._is_remote = is_remote_llm_model
         else:
             self._is_remote = is_remote
-        self._redactor_factory = redactor_factory
+        if redactor_factory is None:
+            # 生产默认装配（对齐 relationship_llm_service.build_relationship_llm_service）：
+            # 远程模型脱敏是红线，服务自身必须可用，不依赖调用方注入
+            def _default_redactor_factory():
+                from ..realtime.privacy_redactor import PrivacyRedactor
+
+                return PrivacyRedactor(get_db())
+
+            self._redactor_factory = _default_redactor_factory
+        else:
+            self._redactor_factory = redactor_factory
         if model_config_provider is None:
             from ..realtime.rag.fact_llm import get_active_model_config
 
@@ -107,6 +117,7 @@ class PersonalityImpressionService:
         now = int(time.time())
         result: Dict[str, Any] = {}
         metrics = None  # 会话投入特征只算一遍，双侧共用
+        rows = None     # 全量消息行只拉一次，双侧共用
         for subject in SUBJECTS:
             row = self._load_cached(conversation_id, account_wxid, subject, now)
             if row and not force_refresh:
@@ -114,7 +125,9 @@ class PersonalityImpressionService:
                 continue
             if metrics is None:
                 metrics = EngagementMetricsService().compute(conversation_id)
-            computed = self._compute_local(conversation_id, subject, metrics)
+            if rows is None:
+                rows = self._fetch_conversation_rows(conversation_id)
+            computed = self._compute_local(conversation_id, subject, metrics, rows)
             if computed is None:
                 result[subject] = None
                 continue
@@ -131,17 +144,56 @@ class PersonalityImpressionService:
             "disclaimer": "语言风格印象，非心理测评；大五为连续维度（0-100），不构成人格结论",
         }
 
-    def enhance(
+    def _local_base(
         self, conversation_id: int, account_wxid: str = ""
     ) -> Dict[str, Any]:
-        """LLM 增强层：双方基础分 + 采样对话 → 有界校正 → 落 llm_enhanced 行。"""
+        """只取 local 统计层（缓存 miss 则现算并落 local 行），绝不读 llm_enhanced。"""
+        now = int(time.time())
+        result: Dict[str, Any] = {}
+        metrics = None
+        rows = None
+        for subject in SUBJECTS:
+            row = self._load_cached(
+                conversation_id, account_wxid, subject, now, only_source="local"
+            )
+            if row:
+                result[subject] = row
+                continue
+            if metrics is None:
+                metrics = EngagementMetricsService().compute(conversation_id)
+            if rows is None:
+                rows = self._fetch_conversation_rows(conversation_id)
+            computed = self._compute_local(conversation_id, subject, metrics, rows)
+            if computed is None:
+                result[subject] = None
+                continue
+            self._save_cache(conversation_id, account_wxid, subject, computed, "local", None)
+            result[subject] = computed
+        return result
+
+    def enhance(
+        self,
+        conversation_id: int,
+        account_wxid: str = "",
+        cancel_event=None,
+    ) -> Dict[str, Any]:
+        """LLM 增强层：双方基础分 + 采样对话 → 有界校正 → 落 llm_enhanced 行。
+
+        基础分**永远取 local 统计层**（不从 llm_enhanced 缓存复合）——否则
+        重复点击会以增强分为基点，±15 逐次叠加漂移，破坏有界校正不变量。
+        cancel_event 置位即中止（调用方可取消，LLM 请求最长 90s 不能让面板卡死）。
+        """
         model_config = self._model_config_provider()
         if not model_config:
             return {"ok": False, "reason": "no_model", "message": "未配置 LLM 模型，基础层仍然可用"}
 
-        # 基础层必须先在（现算不缓存本地行也无妨——get_impressions 已落 local）
-        base_payload = self.get_impressions(conversation_id, account_wxid)
-        subjects = base_payload.get("subjects") or {}
+        def _cancelled() -> bool:
+            return cancel_event is not None and cancel_event.is_set()
+
+        if _cancelled():
+            return {"ok": False, "reason": "cancelled", "message": "已取消"}
+
+        subjects = self._local_base(conversation_id, account_wxid)
         if not any(subjects.get(s) for s in SUBJECTS):
             return {"ok": False, "reason": "insufficient_data", "message": "会话消息过少，无法生成画像"}
 
@@ -163,7 +215,7 @@ class PersonalityImpressionService:
                         "message": "脱敏器不可用，按红线阻断本次增强"}
 
         # 脱敏红线：逐条脱敏，单条失败丢弃该条；全部失败则阻断
-        redacted_texts: List[str] = []
+        redacted_sample: List[tuple] = []
         for is_sender, text in sample:
             if remote:
                 try:
@@ -171,17 +223,19 @@ class PersonalityImpressionService:
                         text, account_wxid=account_wxid, conversation_id=conversation_id,
                         source_table="big5_impression", source_id="sample",
                     )
-                    redacted_texts.append(outcome.redacted_text)
+                    redacted_sample.append((is_sender, outcome.redacted_text))
                 except Exception as exc:
                     logger.debug("[大五增强] 单条脱敏失败丢弃: %s", exc)
                     continue
             else:
-                redacted_texts.append(text)
-        if not redacted_texts:
+                redacted_sample.append((is_sender, text))
+        if not redacted_sample:
             return {"ok": False, "reason": "redaction_failed",
                     "message": "脱敏后无可用样本，已阻断（未发送原文）"}
+        if _cancelled():
+            return {"ok": False, "reason": "cancelled", "message": "已取消"}
 
-        messages = self._render_prompt(subjects, redacted_texts)
+        messages = self._render_prompt(subjects, redacted_sample)
         base_url = str(model_config.get("api_base_url") or model_config.get("base_url") or "").rstrip("/")
         headers = {}
         api_key = str(model_config.get("api_key") or "").strip()
@@ -200,10 +254,13 @@ class PersonalityImpressionService:
                 headers=headers,
                 timeout=BIG5_TIMEOUT_SECONDS,
                 max_retries=1,
+                should_abort=cancel_event.is_set if cancel_event is not None else None,
                 log=logger.debug,
                 log_prefix="[大五增强]",
             )
         except Exception as exc:
+            if _cancelled():
+                return {"ok": False, "reason": "cancelled", "message": "已取消"}
             logger.error("[大五增强] LLM 调用失败: %s", exc)
             return {"ok": False, "reason": "llm_failed", "message": f"模型调用失败: {exc}"}
 
@@ -212,7 +269,9 @@ class PersonalityImpressionService:
         if adjustments is None:
             return {"ok": False, "reason": "parse_failed", "message": "模型输出无法解析"}
 
-        corpus = "\n".join(redacted_texts)
+        # 语料按 prompt 渲染形态拼接（含 [我]/[TA] 前缀）：是裸文本的超集，
+        # evidence 无论带不带前缀都能命中子串校验
+        corpus = "\n".join(self._sample_line(s, t) for s, t in redacted_sample)
         for subject in SUBJECTS:
             base = subjects.get(subject)
             if not base:
@@ -233,10 +292,10 @@ class PersonalityImpressionService:
     # ------------------------------------------------------------------
 
     def _compute_local(
-        self, conversation_id: int, subject: str, metrics=None
+        self, conversation_id: int, subject: str, metrics=None, rows=None
     ) -> Optional[Dict[str, Any]]:
         """单侧基础层：子指标采集 + big5_proxies 合成。样本过薄返回 None。"""
-        raw = self._collect_raw_indicators(conversation_id, subject, metrics)
+        raw = self._collect_raw_indicators(conversation_id, subject, metrics, rows)
         if raw is None:
             return None
         scores = compute_big5_base(raw)
@@ -246,16 +305,22 @@ class PersonalityImpressionService:
             "indicators": raw,
         }
 
-    def _collect_raw_indicators(
-        self, conversation_id: int, subject: str, metrics=None
-    ) -> Optional[Dict[str, Optional[float]]]:
-        """采集单侧原始子指标（me → is_sender=1 / other → is_sender=0）。"""
-        side_flag = 1 if subject == "me" else 0
-        rows = get_db().execute(
+    @staticmethod
+    def _fetch_conversation_rows(conversation_id: int):
+        """全量文本消息行（双侧）。大会话十万级，双侧采集共用一次查询。"""
+        return get_db().execute(
             "SELECT is_sender, content, timestamp FROM messages "
             "WHERE conversation_id = ? AND message_type = 1 ORDER BY timestamp ASC, id ASC",
             (conversation_id,),
         ).fetchall()
+
+    def _collect_raw_indicators(
+        self, conversation_id: int, subject: str, metrics=None, rows=None
+    ) -> Optional[Dict[str, Optional[float]]]:
+        """采集单侧原始子指标（me → is_sender=1 / other → is_sender=0）。"""
+        side_flag = 1 if subject == "me" else 0
+        if rows is None:
+            rows = self._fetch_conversation_rows(conversation_id)
 
         def _text(content: Any) -> str:
             if content is None:
@@ -482,21 +547,30 @@ class PersonalityImpressionService:
             for r in rows
         ]
         if len(decoded) <= BIG5_SAMPLE_TURN_LIMIT:
-            return [(s, t) for s, t, _ in decoded]
-        step = (len(decoded) - 1) / (BIG5_SAMPLE_TURN_LIMIT - 1)
-        sampled = [decoded[round(i * step)] for i in range(BIG5_SAMPLE_TURN_LIMIT)]
-        # 字符预算：从头按目标长度截取（保留抽样分布）
-        result: List[Tuple[int, str]] = []
-        used = 0
-        for is_sender, text, _ in sampled:
-            if used + len(text) > BIG5_SAMPLE_TARGET_CHARS and result:
-                break
-            result.append((is_sender, text))
-            used += len(text)
-        return result
+            sampled = decoded
+        else:
+            step = (len(decoded) - 1) / (BIG5_SAMPLE_TURN_LIMIT - 1)
+            sampled = [decoded[round(i * step)] for i in range(BIG5_SAMPLE_TURN_LIMIT)]
+        pairs = [(s, t) for s, t, _ in sampled]
+        # 字符预算：超预算时对抽样序列再等距稀释（保持时间分布——
+        # 关系后期的语言风格才是当前人格，从头截断会让语料系统性偏向早期）
+        total_chars = sum(len(t) for _, t in pairs)
+        if total_chars <= BIG5_SAMPLE_TARGET_CHARS:
+            return pairs
+        keep_ratio = BIG5_SAMPLE_TARGET_CHARS / total_chars
+        keep = max(2, int(len(pairs) * keep_ratio))
+        if keep >= len(pairs):
+            return pairs
+        dilute_step = (len(pairs) - 1) / (keep - 1)
+        return [pairs[round(i * dilute_step)] for i in range(keep)]
+
+    @staticmethod
+    def _sample_line(is_sender: bool, text: str) -> str:
+        """采样行渲染：保留发送方（丢失 is_sender 会让 LLM 无法区分双方语言风格）。"""
+        return f"[{'我' if is_sender else 'TA'}] {text}"
 
     def _render_prompt(
-        self, subjects: Dict[str, Any], sample_texts: List[str]
+        self, subjects: Dict[str, Any], sample: List[tuple]
     ) -> List[dict]:
         lines: List[str] = ["【大五基础分数（纯统计，0-100）】"]
         for subject, label in (("me", "我"), ("other", "TA")):
@@ -510,9 +584,9 @@ class PersonalityImpressionService:
                     continue
                 lines.append(f"- {item.get('label', dim)}: {item['score']}")
         lines.append("")
-        lines.append(f"【聊天记录样本（{len(sample_texts)} 条，已按需脱敏）】")
-        for text in sample_texts:
-            lines.append(text)
+        lines.append(f"【聊天记录样本（{len(sample)} 条，已按需脱敏）】")
+        for is_sender, text in sample:
+            lines.append(self._sample_line(is_sender, text))
         return [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": "\n".join(lines)},
@@ -598,8 +672,15 @@ class PersonalityImpressionService:
     # 表缓存（_ensure_table 轻迁移，沿 contact_profiles 先例）
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _ensure_table(conn) -> None:
+    @classmethod
+    def _ensure_table(cls, conn) -> None:
+        # 先轻探查再 DDL：sqlite_master 查询微秒级且无 commit，高频读写
+        # 路径不再重复建表提交（连接不支持弱引用，无法按连接缓存跳过）
+        row = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'big5_impressions'"
+        ).fetchone()
+        if row:
+            return
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS big5_impressions (
@@ -659,15 +740,21 @@ class PersonalityImpressionService:
         conn.commit()
 
     def _load_cached(
-        self, conversation_id: int, account_wxid: str, subject: str, now: int
+        self,
+        conversation_id: int,
+        account_wxid: str,
+        subject: str,
+        now: int,
+        only_source: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        """读未过期缓存：llm_enhanced 优先于 local。"""
+        """读未过期缓存：llm_enhanced 优先于 local；only_source 可限定单一来源。"""
         conn = get_db()
         try:
             self._ensure_table(conn)
         except Exception:
             return None
-        for source in ("llm_enhanced", "local"):
+        sources = (only_source,) if only_source else ("llm_enhanced", "local")
+        for source in sources:
             row = conn.execute(
                 "SELECT scores_json, evidence_json, indicators_json, model_name, created_at "
                 "FROM big5_impressions WHERE conversation_id = ? AND account_wxid = ? "

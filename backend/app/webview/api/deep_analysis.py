@@ -9,6 +9,12 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
+# ONNX 重任务注册锁：start_sentiment_backfill 与 analyze_affinity 的
+# 「互斥检查 + 任务注册」临界区共用，消除检查-后-注册（TOCTOU）竞态。
+# 放本模块——affinity.py 的服务类每次 analyze_affinity 都被热 reload，
+# 锁放那边会随模块重建而失效；本模块不参与 reload，进程内唯一。
+_ONNX_TASK_LOCK = threading.Lock()
+
 
 class DeepAnalysisApiMixin:
     """时光深度：Analytics 第六 tab 的后端入口"""
@@ -73,50 +79,65 @@ class DeepAnalysisApiMixin:
     def start_sentiment_backfill(self, conversation_id: int) -> dict:
         """启动情感补算后台任务（立即返回 task_id 供轮询）。
 
-        互斥：与全面分析共用 ONNX 推理会话，任一侧运行中即拒绝启动。
-        缺口为 0 时直接返回 complete，不建任务。
+        互斥：与全面分析共用 ONNX 推理会话，任一侧运行中即拒绝启动；
+        补算自身也全局单飞（不同会话并发会争抢推理资源并互相覆盖取消事件）。
+        缺口为 0 时直接返回 complete，不建任务。「守卫检查 + 任务注册」整体
+        持 _ONNX_TASK_LOCK（与 analyze_affinity 同锁），杜绝并发双注册。
         """
         try:
             conversation_id = int(conversation_id)
 
-            # 复用守卫：本会话已有补算任务时不重复启动（防取消事件被替换）
             service = getattr(self, "_sentiment_backfill_service", None)
-            if service is not None:
-                running = service.find_running_task(conversation_id)
-                if running:
-                    return {
-                        "ok": True, "task_id": running, "status": "started",
-                        "message": "已有进行中的情感补算，已复用",
-                    }
+            with _ONNX_TASK_LOCK:
+                if service is not None:
+                    # 复用守卫：本会话已有补算任务时不重复启动（防取消事件被替换）
+                    running = service.find_running_task(conversation_id)
+                    if running:
+                        return {
+                            "ok": True, "task_id": running, "status": "started",
+                            "message": "已有进行中的情感补算，已复用",
+                        }
+                    # 互斥守卫 0：任一会话的补算运行中（全局单飞）——并发补算
+                    # 既争抢 ONNX 会话，也互相覆盖取消事件使先发任务停不掉
+                    if service.has_running_task():
+                        return {"ok": False, "error": "另一会话的情感补算进行中，请等待其完成"}
 
-            # 互斥守卫 1：全面分析进行中（它会自己补齐情感缓存）
-            affinity_service = getattr(self, "_affinity_service", None)
-            if affinity_service is not None and affinity_service.has_running_task():
-                return {"ok": False, "error": "全面分析进行中，请等待其完成后再补算情感"}
+                # 互斥守卫 1：全面分析进行中（它会自己补齐情感缓存）——必须
+                # 检查全部历史服务实例：analyze_affinity 每次重建实例，旧实例
+                # 上运行中的任务对最新实例不可见
+                for affinity_service in self._all_affinity_services():
+                    if affinity_service.has_running_task():
+                        return {"ok": False, "error": "全面分析进行中，请等待其完成后再补算情感"}
 
-            from ...services.analysis.sentiment_backfill_service import SentimentBackfillService
+                if service is None:
+                    from ...services.analysis.sentiment_backfill_service import SentimentBackfillService
 
-            if service is None:
-                service = SentimentBackfillService()
-                self._sentiment_backfill_service = service
+                    service = SentimentBackfillService()
+                    self._sentiment_backfill_service = service
 
-            coverage = service.get_coverage(conversation_id)
-            if not coverage["need_backfill"]:
-                return {"ok": True, "status": "complete", "coverage": coverage}
+                service.prune_finished()  # 顺带清理过期终态任务，防字典无界增长
 
-            task_id = f"sentibf_{conversation_id}_{int(time.time())}_{uuid.uuid4().hex[:6]}"
-            service.register_task(task_id, conversation_id)
-            self._sentiment_backfill_cancel_event = threading.Event()
+                coverage = service.get_coverage(conversation_id)
+                if not coverage["need_backfill"]:
+                    return {"ok": True, "status": "complete", "coverage": coverage}
+
+                task_id = f"sentibf_{conversation_id}_{int(time.time())}_{uuid.uuid4().hex[:6]}"
+                service.register_task(task_id, conversation_id)
+                # 每任务独立取消事件：单实例属性会被后发任务覆盖，先发任务将无法取消
+                cancel_event = threading.Event()
+                if not hasattr(self, "_sentiment_backfill_cancel_events"):
+                    self._sentiment_backfill_cancel_events = {}
+                self._sentiment_backfill_cancel_events[task_id] = cancel_event
 
             def _run():
                 try:
-                    service.run_backfill(
-                        conversation_id, self._sentiment_backfill_cancel_event, task_id
-                    )
+                    service.run_backfill(conversation_id, cancel_event, task_id)
                 except Exception as e:
                     logger.error(f"[Bridge] 异步情感补算失败: {e}")
                     import traceback
                     traceback.print_exc()
+                finally:
+                    self._sentiment_backfill_cancel_events.pop(task_id, None)
 
             threading.Thread(target=_run, daemon=True).start()
             return {"ok": True, "task_id": task_id, "status": "started", "coverage": coverage}
@@ -148,12 +169,24 @@ class DeepAnalysisApiMixin:
             response["error"] = progress.get("error") or "未知错误"
         return response
 
-    def cancel_sentiment_backfill(self) -> dict:
-        """取消正在进行的情感补算（已写入批次的缓存保留，续跑自动跳过）。"""
-        cancel_event = getattr(self, "_sentiment_backfill_cancel_event", None)
-        if cancel_event is None:
+    def cancel_sentiment_backfill(self, task_id: str = "") -> dict:
+        """取消情感补算任务（已写入批次的缓存保留，续跑自动跳过）。
+
+        按任务 id 精确取消；不带 id 时回退取消最近启动的运行中任务
+        （取消事件按任务独立存储，不再有被覆盖的单实例属性）。
+        """
+        events = getattr(self, "_sentiment_backfill_cancel_events", None) or {}
+        task_id = str(task_id or "")
+        if task_id:
+            event = events.get(task_id)
+            if event is None:
+                return {"ok": False, "error": "指定任务不在运行中"}
+            event.set()
+            return {"ok": True}
+        if not events:
             return {"ok": False, "error": "没有进行中的补算任务"}
-        cancel_event.set()
+        # dict 保插入序：末位即最新启动且仍在运行的任务
+        events[next(reversed(events))].set()
         return {"ok": True}
 
     # ------------------------------------------------------------------
@@ -179,7 +212,11 @@ class DeepAnalysisApiMixin:
             return {"ok": False, "error": str(e)}
 
     def enhance_big5_impressions(self, conversation_id: int, account_wxid: str = "") -> dict:
-        """LLM 增强大五画像（±15 有界校正附证据；远程模型过脱敏红线，失败即阻断）。"""
+        """LLM 增强大五画像（±15 有界校正附证据；远程模型过脱敏红线，失败即阻断）。
+
+        同会话单飞（请求最长 90s，重复点击直接拒）；带取消事件——
+        cancel_big5_impressions 可中断进行中的增强。
+        """
         try:
             if not conversation_id:
                 return {"ok": False, "error": "缺少参数: conversation_id"}
@@ -191,10 +228,33 @@ class DeepAnalysisApiMixin:
             if service is None:
                 service = PersonalityImpressionService()
                 self._big5_service = service
-            return service.enhance(int(conversation_id), account_wxid or "")
+
+            key = (int(conversation_id), account_wxid or "")
+            running = getattr(self, "_big5_enhance_events", None)
+            if running is None:
+                running = {}
+                self._big5_enhance_events = running
+            if key in running:
+                return {"ok": False, "reason": "already_running",
+                        "message": "AI 校正进行中，请稍候或先取消"}
+            cancel_event = threading.Event()
+            running[key] = cancel_event
+            try:
+                return service.enhance(int(conversation_id), account_wxid or "", cancel_event=cancel_event)
+            finally:
+                running.pop(key, None)
         except Exception as e:
             logger.error(f"[Bridge] 增强大五画像失败: {e}")
             return {"ok": False, "error": str(e)}
+
+    def cancel_big5_impressions(self, conversation_id: int, account_wxid: str = "") -> dict:
+        """取消进行中的大五 AI 校正（LLM 请求最长 90s，不能让用户只能干等）。"""
+        running = getattr(self, "_big5_enhance_events", None) or {}
+        event = running.get((int(conversation_id or 0), account_wxid or ""))
+        if event is None:
+            return {"ok": False, "error": "没有进行中的 AI 校正"}
+        event.set()
+        return {"ok": True}
 
     # ------------------------------------------------------------------
     # 分享海报（前端 html2canvas 合成 → save_share_image 落盘）
@@ -207,6 +267,8 @@ class DeepAnalysisApiMixin:
         try:
             if not conversation_id:
                 return {"ok": False, "error": "缺少参数: conversation_id"}
+            if not from_date or not to_date:
+                return {"ok": False, "error": "缺少日期参数，请先选择时间范围"}
             from ...services.analysis.deep_analysis_service import DeepAnalysisService
 
             from_ts = int(datetime.strptime(from_date, "%Y-%m-%d").timestamp())

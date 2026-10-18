@@ -43,8 +43,15 @@ Analytics 第六个页签「时光深度」，**单聊专属**（群聊无双方
 
 未跑过全面分析的会话在时光深度页先补算逐条情感（ONNX 本地推理，500 条/批），
 结果永久缓存、全面分析直接复用。与全面分析**双向互斥**（共用 ONNX 会话）：
-`start_sentiment_backfill` 见 affinity 活任务即拒；`analyze_affinity` 反向检查。
-取消保留已写批次，续跑自动跳过。
+`start_sentiment_backfill` 见 affinity 活任务即拒（须查全部历史服务实例——
+`analyze_affinity` 每次 reload 重建实例，旧实例任务对最新实例不可见）；
+`analyze_affinity` 反向检查。补算自身**全局单飞**（不同会话并发会争抢推理
+资源）；取消事件**按任务独立存储**，按 task_id 精确取消。取消保留已写批次，
+续跑自动跳过。两侧的「互斥检查 + 任务注册」临界区共用
+`webview/api/deep_analysis._ONNX_TASK_LOCK`（放不参与热 reload 的模块），
+消除检查-后-注册（TOCTOU）竞态；**终态集合单源于
+`services/analysis/task_registry.py`**（running/completed/failed/cancelled），
+两侧口径不可各自漂移。
 
 ## 大五人格印象（双层架构）
 
@@ -66,10 +73,17 @@ Analytics 第六个页签「时光深度」，**单聊专属**（群聊无双方
 ### 增强层纪律
 
 - **双重钳制**：`final = clamp(clamp(base + adjustment, base ± 15), 0, 100)`；
+- **基点永远取 local 层**（`_local_base`），绝不从 llm_enhanced 缓存复合——
+  否则重复点击 ±15 逐次叠加漂移；
 - **证据子串校验**：`evidence_quote` 必须是（脱敏后）采样语料的子串，
   否则证据置空（分数保留）；
 - **脱敏红线**：远程模型必经 `PrivacyRedactor`，脱敏器构造失败 = 整次增强
-  阻断（不落任何 `llm_enhanced` 行）；本地 loopback 模型免脱敏。
+  阻断（不落任何 `llm_enhanced` 行）；本地 loopback 模型免脱敏；
+- **采样等距稀释**：抽样超 12000 字符预算时对抽样序列再等距抽稀，保持
+  时间分布（从头截断会让语料偏向早期消息，校正作用于过时画像）；
+- **单飞 + 可取消**：bridge 层同会话增强单飞（LLM 请求最长 90s），
+  `cancel_big5_impressions` 置取消事件，`should_abort` 走请求尝试边界；
+- **海报 payload 不含 milestones**：三模板均不渲染，下发只诱发误用。
 
 ## 分享海报
 
@@ -101,8 +115,8 @@ Analytics 第六个页签「时光深度」，**单聊专属**（群聊无双方
 ## 相关文件
 
 - 后端：`services/analysis/{deep_analysis_service, sentiment_backfill_service,
-  personality_impression_service, big5_proxies}.py`、
-  `webview/api/deep_analysis.py`（mixin，10 个方法）
+  personality_impression_service, big5_proxies, task_registry}.py`、
+  `webview/api/deep_analysis.py`（mixin，11 个方法）
 - 前端：`components/deep/`（TimeDeepTab 及各面板、PosterStudio、
   `poster/registry.ts` 与三模板）、`charts/EmotionLineChart.vue`（扩展
   perspective/negativeShade/affinityPoints 可选 props，默认行为不变）

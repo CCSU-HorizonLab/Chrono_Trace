@@ -6,6 +6,8 @@ import json
 import os
 import sqlite3
 import sys
+import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -266,7 +268,7 @@ class TestEnhanceLayer:
         assert len(redactor.calls) > 0
 
     def test_cache_prefers_enhanced_and_version_invalidates(self, db):
-        """llm_enhanced 未过期优先；prompt_version 旧行查不到 → 现算。"""
+        """llm_enhanced 未过期优先；prompt_version 旧行查不到 → 视为无缓存。"""
         seed(db)
         http = _FakeHTTP(llm_content())
         service = make_service(db, http=http, remote=False, model={"api_base_url": "http://x", "model_id": "m"})
@@ -276,21 +278,24 @@ class TestEnhanceLayer:
         assert again["source"] == "llm_enhanced"
         assert len(http.calls) == 1  # 缓存命中，get_impressions 未发新请求
 
-        # 写入旧版本行：version=0 应被无视
+        # 增强行未过期：_load_cached 优先返回 llm_enhanced
+        cached = service._load_cached(1, "", "me", now=int(time.time()))
+        assert cached is not None and cached["source"] == "llm_enhanced"
+
+        # 版本过滤：清掉当前版本行、只剩 version=0 的旧增强行 →
+        # _load_cached 绝不能把旧版本行当当前口径缓存返回
+        db.execute(
+            "DELETE FROM big5_impressions WHERE prompt_version = ?",
+            (bimod.BIG5_PROMPT_VERSION,),
+        )
         db.execute(
             "INSERT OR REPLACE INTO big5_impressions (conversation_id, account_wxid, subject,"
             " source, prompt_version, scores_json, indicators_json, created_at, expires_at)"
             " VALUES (1, '', 'me', 'llm_enhanced', 0, '{}', NULL, 1, 9999999999)"
         )
         db.commit()
-        cached = service._load_cached(1, "", "me", now=1_700_200_000)
-        assert cached["scores"] != {} or cached is not None
-        # 版本过滤：旧 version 行不该作为当前口径缓存
-        rows = db.execute(
-            "SELECT COUNT(*) FROM big5_impressions WHERE prompt_version = ?",
-            (bimod.BIG5_PROMPT_VERSION,),
-        ).fetchone()
-        assert rows[0] >= 2  # me/other 各一行 llm_enhanced
+        stale = service._load_cached(1, "", "me", now=int(time.time()))
+        assert stale is None or stale["source"] != "llm_enhanced"
 
     def test_parse_failure_returns_reason(self, db):
         seed(db)
@@ -299,3 +304,99 @@ class TestEnhanceLayer:
         result = service.enhance(1)
         assert result["ok"] is False
         assert result["reason"] == "parse_failed"
+
+    def test_repeated_enhance_no_drift(self, db):
+        """重复增强不复合漂移：基点永远取 local 层，第二次结果与第一次一致。"""
+        seed(db)
+        http = _FakeHTTP(llm_content(adjustment=15, quote="消息内容1"))
+        service = make_service(db, http=http, remote=False, model={"api_base_url": "http://x", "model_id": "m"})
+        first = service.enhance(1)
+        second = service.enhance(1)
+        assert len(http.calls) == 2  # 第二次真发了请求，不是缓存早退
+        for subject in ("me", "other"):
+            for dim in DIMENSIONS:
+                assert (second["subjects"][subject]["scores"][dim]["score"]
+                        == first["subjects"][subject]["scores"][dim]["score"])
+
+    def test_prompt_preserves_sender_prefix(self, db):
+        """采样行带 [我]/[TA] 前缀——丢失发送方会让 LLM 无法区分双方语言风格。"""
+        seed(db)
+        http = _FakeHTTP(llm_content())
+        service = make_service(db, http=http, remote=False, model={"api_base_url": "http://x", "model_id": "m"})
+        service.enhance(1)
+        user_content = http.calls[0]["payload"]["messages"][1]["content"]
+        assert "[我] 消息内容" in user_content
+        assert "[TA] 消息内容" in user_content
+
+    def test_sample_dilution_keeps_late_messages(self, db):
+        """抽样超字符预算时等距稀释——从头截断会让语料系统性偏向早期消息。"""
+        for i in range(500):
+            db.execute(
+                "INSERT INTO messages (conversation_id, is_sender, message_type, content, timestamp)"
+                " VALUES (1, ?, 1, ?, ?)",
+                (i % 2, f"消息{i}" + "字" * 100, 1_700_000_000 + i * 3600),
+            )
+        db.commit()
+        sample = PersonalityImpressionService._sample_conversation(1)
+        assert 2 <= len(sample) <= 400
+        assert sum(len(t) for _, t in sample) <= int(bimod.BIG5_SAMPLE_TARGET_CHARS * 1.1)
+        # 时间分布保持：末条抽样必须是最后一条消息（关系后期语言在场）
+        assert sample[-1][1].startswith("消息499")
+
+    def test_cancel_event_blocks_before_request(self, db):
+        """取消事件预先置位：不发请求直接返回 cancelled。"""
+        seed(db)
+        http = _FakeHTTP(llm_content())
+        service = make_service(db, http=http, remote=False, model={"api_base_url": "http://x", "model_id": "m"})
+        cancel = threading.Event()
+        cancel.set()
+        result = service.enhance(1, cancel_event=cancel)
+        assert result["ok"] is False
+        assert result["reason"] == "cancelled"
+        assert http.calls == []
+
+
+class _BlockingEnhanceService:
+    """enhance 阻塞到放行——模拟慢 LLM 请求（90s 超时窗口）。"""
+
+    def __init__(self):
+        self.started = threading.Event()
+        self.release = threading.Event()
+        self.cancel_events = []
+
+    def enhance(self, conversation_id, account_wxid="", cancel_event=None):
+        self.cancel_events.append(cancel_event)
+        self.started.set()
+        self.release.wait(5)
+        return {"ok": True}
+
+
+class TestEnhanceBridge:
+    def test_single_flight_and_cancel(self):
+        """同会话增强单飞：进行中重复点击拒绝；cancel_big5_impressions 置位取消事件。"""
+        from app.webview.api.deep_analysis import DeepAnalysisApiMixin
+
+        bridge = DeepAnalysisApiMixin()
+        slow = _BlockingEnhanceService()
+        bridge._big5_service = slow
+
+        results = []
+        t1 = threading.Thread(target=lambda: results.append(bridge.enhance_big5_impressions(1)))
+        t1.start()
+        assert slow.started.wait(5)
+
+        # 单飞：第一个请求未返回期间，重复点击直接拒绝（不排队阻塞）
+        second = bridge.enhance_big5_impressions(1)
+        assert second["ok"] is False
+        assert second["reason"] == "already_running"
+
+        # 取消：置位进行中请求的取消事件
+        assert bridge.cancel_big5_impressions(1)["ok"] is True
+        assert slow.cancel_events[0].is_set()
+        assert bridge.cancel_big5_impressions(2)["ok"] is False  # 无该会话任务
+
+        slow.release.set()
+        t1.join(5)
+        assert results and results[0]["ok"] is True
+        # 完成后事件表清空，可再次发起
+        assert not bridge._big5_enhance_events

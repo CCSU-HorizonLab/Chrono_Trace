@@ -18,6 +18,7 @@ from dataclasses import dataclass, asdict, field
 from typing import Any, Dict, Optional
 
 from ...db.connection import get_db
+from .task_registry import is_running
 from .preprocessing_orchestrator import PreprocessingOrchestrator, PreprocessedStatistics
 from .interaction_investment_service import InteractionInvestmentService
 from .closeness_signals_service import ClosenessSignalsService
@@ -136,16 +137,13 @@ class AffinityAnalysisService:
         for task_id, result in self._task_status.items():
             if result.conversation_id != conversation_id:
                 continue
-            if result.status not in {"completed", "failed", "cancelled"}:
+            if is_running(result.status):
                 return task_id
         return None
 
     def has_running_task(self) -> bool:
         """任一会话的分析是否仍在进行（情感补算与之互斥的全局守卫）。"""
-        return any(
-            result.status not in {"completed", "failed", "cancelled"}
-            for result in self._task_status.values()
-        )
+        return any(is_running(result.status) for result in self._task_status.values())
 
     def analyze(
         self,

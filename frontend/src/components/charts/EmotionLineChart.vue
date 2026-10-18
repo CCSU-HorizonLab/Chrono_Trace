@@ -28,8 +28,8 @@
       >
         <defs>
           <linearGradient id="emotion-area-gradient" x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stop-color="#5b8def" stop-opacity="0.28" />
-            <stop offset="100%" stop-color="#5b8def" stop-opacity="0.04" />
+            <stop offset="0%" stop-color="#0d9488" stop-opacity="0.28" />
+            <stop offset="100%" stop-color="#0d9488" stop-opacity="0.04" />
           </linearGradient>
         </defs>
 
@@ -118,7 +118,7 @@
         >
           <circle :cx="point.x" :cy="point.y" :r="point.index === activeIndex ? 6 : 4" class="point-dot" :class="{ active: point.index === activeIndex }" />
         </g>
-        <!-- 双线模式：仅悬停列上显示有数据各线的标记 -->
+        <!-- 多线模式：仅悬停列上显示有数据各线的标记 -->
         <g v-if="renderedLines.length > 1 && activePoint">
           <circle
             v-for="mark in hoverMarks"
@@ -200,16 +200,18 @@ type TimeseriesPoint = {
   lowConfidence?: boolean
 }
 
-// 双方曲线配色经 CVD 校验（dataviz 六检全过，白底）：我=紫 / TA=深琥珀 / 好感度=深蓝
+// 三线配色经 CVD 校验（dataviz 六检全过，白底）：双方=青绿 / 我=紫 / TA=深琥珀
+// （旧「双方」蓝 #5b8def 与紫正常视觉 ΔE 14.7 <15 硬不过，三线同显时换青绿；
+// 好感度菱形=深蓝，形状+色相双重区分）
 const ME_COLOR = '#7c4dff'
 const OTHER_COLOR = '#d97706'
 const AFFINITY_COLOR = '#2563eb'
-const COMBINED_COLOR = '#5b8def'
+const COMBINED_COLOR = '#0d9488'
 
 const props = defineProps<{
   timeseries: TimeseriesPoint[]
-  /** combined=合并单线（默认，现状）；me/other=单侧；both=双方双线 */
-  perspective?: 'combined' | 'both' | 'me' | 'other'
+  /** combined=双方合并单线（默认）；me/other=单侧；all=双方+我+TA 三线同显 */
+  perspective?: 'combined' | 'all' | 'me' | 'other'
   /** 消极时段：曲线低于 0 的区段着浅红 */
   negativeShade?: boolean
   /** 好感度历史落点；ts 为桶标签（与 timeseries.ts 同口径），score 0-100 */
@@ -262,9 +264,12 @@ const renderedLines = computed<RenderedLine[]>(() => {
     defs.push({ key: 'me', color: ME_COLOR, pick: (p) => p.userScore })
   } else if (props.perspective === 'other') {
     defs.push({ key: 'other', color: OTHER_COLOR, pick: (p) => p.otherScore })
-  } else if (props.perspective === 'both') {
-    defs.push({ key: 'me', color: ME_COLOR, pick: (p) => p.userScore })
-    defs.push({ key: 'other', color: OTHER_COLOR, pick: (p) => p.otherScore })
+  } else if (props.perspective === 'all') {
+    defs.push(
+      { key: 'combined', color: COMBINED_COLOR, pick: (p) => p.score },
+      { key: 'me', color: ME_COLOR, pick: (p) => p.userScore },
+      { key: 'other', color: OTHER_COLOR, pick: (p) => p.otherScore },
+    )
   } else {
     defs.push({ key: 'combined', color: COMBINED_COLOR, pick: (p) => p.score })
   }
@@ -362,8 +367,12 @@ const xTicks = computed(() => {
 
 const legendItems = computed(() => {
   const items: Array<{ label: string; color: string }> = []
-  if (props.perspective === 'both') {
-    items.push({ label: '我', color: ME_COLOR }, { label: 'TA', color: OTHER_COLOR })
+  if (props.perspective === 'all') {
+    items.push(
+      { label: '双方', color: COMBINED_COLOR },
+      { label: '我', color: ME_COLOR },
+      { label: 'TA', color: OTHER_COLOR },
+    )
   }
   if (props.affinityPoints?.length) {
     items.push({ label: '好感度落点', color: AFFINITY_COLOR })
@@ -603,13 +612,13 @@ svg {
 
 .point-dot {
   fill: #ffffff;
-  stroke: #5b8def;
+  stroke: #0d9488;
   stroke-width: 2;
   transition: r 0.18s ease, fill 0.18s ease;
 }
 
 .point-dot.active {
-  fill: #5b8def;
+  fill: #0d9488;
 }
 
 .affinity-mark {

@@ -31,6 +31,10 @@ Analytics 第六个页签「时光深度」，**单聊专属**（群聊无双方
 - 覆盖率合并：`_bucketed_message_counts`（全量文本桶计数）×
   `_bucketed_sentiment`（情感聚合）双查询合并，未覆盖桶 `score=None`、
   `lowConfidence=True`、`msgCount` 仍全量——INNER JOIN 会丢桶，不能用。
+- 桶点含每侧已缓存计数 `userCount`/`otherCount`（`_build_sentiment_timeseries`
+  加列，与全面分析共用但加键不破坏）——前端情绪曲线滚动窗口加权平滑的权重
+  真分母：`近 K 桶滑动均值 = Σ(score×对应侧计数)/Σ计数`，消息多的桶话语权大；
+  平滑纯前端派生（默认近 3 桶），计数与低置信底纹保持原桶原值。
 - 拐点门槛：参与涨跌幅判定的桶需 `msgCount ≥ 30` 且 `coverage ≥ 0.8`。
 
 ### 词云演变（双口径陷阱）

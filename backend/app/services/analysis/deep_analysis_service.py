@@ -158,7 +158,7 @@ class DeepAnalysisService:
         """合并全量桶计数与情感聚合桶，产出带 coverage 的序列点。
 
         点位键沿用既有 timeseries 的驼峰命名（ts/score/userScore/otherScore/
-        msgCount...），EmotionLineChart 可直接消费。
+        msgCount/userCount/otherCount...），EmotionLineChart 可直接消费。
         """
         counts = self._bucketed_message_counts(conversation_id, from_ts, to_ts, bucket)
         if not counts:
@@ -186,6 +186,9 @@ class DeepAnalysisService:
                 "negative": int(point["negative"]) if point else 0,
                 "msgCount": total,
                 "cachedCount": cached,
+                # 每侧已缓存计数（滚动平滑权重）；无缓存桶补 0
+                "userCount": int((point or {}).get("userCount") or 0),
+                "otherCount": int((point or {}).get("otherCount") or 0),
                 "coverage": coverage,
                 "lowConfidence": (coverage is None or coverage < DEEP_LOW_COVERAGE_THRESHOLD),
             })

@@ -104,12 +104,14 @@ class TestBucketSeries:
         assert [item["ts"] for item in yearly["buckets"]] == ["2025", "2026"]
 
     def test_dual_party_avg_split(self, db):
-        """userScore/otherScore 按 is_sender 各自均值；单侧无消息为 null。"""
+        """userScore/otherScore 按 is_sender 各自均值；单侧无消息为 null；
+        userCount/otherCount 为每侧已缓存计数（滚动平滑的加权权重）。"""
         base = ts(2026, 3, 10)
         msg(db, base + 1, is_sender=1, intensity=0.5)
         msg(db, base + 2, is_sender=1, intensity=0.1)
         msg(db, base + 3, is_sender=0, intensity=-0.3)
         msg(db, ts(2026, 3, 11), is_sender=0, intensity=-0.2)  # 次日（桶内只有对方）
+        msg(db, ts(2026, 3, 11), is_sender=1, with_sentiment=False)  # 未缓存：不进分子分母
 
         result = DeepAnalysisService().get_deep_analysis(
             1, ts(2026, 3, 9), ts(2026, 3, 12), bucket="day"
@@ -117,8 +119,12 @@ class TestBucketSeries:
         first, second = result["buckets"]
         assert first["userScore"] == pytest.approx(0.3)
         assert first["otherScore"] == pytest.approx(-0.3)
+        assert first["userCount"] == 2
+        assert first["otherCount"] == 1
         assert second["userScore"] is None
         assert second["otherScore"] == pytest.approx(-0.2)
+        assert second["userCount"] == 0  # 未缓存消息不计入每侧计数
+        assert second["otherCount"] == 1
 
     def test_uncovered_bucket_keeps_full_count(self, db):
         """缺情感数据的桶：coverage=0、score=None、lowConfidence，msgCount 仍全量。"""

@@ -290,7 +290,9 @@ class AnalysisService:
                 SUM(CASE WHEN sc.polarity = -1 THEN 1 ELSE 0 END) AS negative_count,
                 COUNT(*) AS msg_count,
                 AVG(CASE WHEN m.is_sender = 1 THEN sc.intensity END) AS user_score,
-                AVG(CASE WHEN m.is_sender = 0 THEN sc.intensity END) AS other_score
+                AVG(CASE WHEN m.is_sender = 0 THEN sc.intensity END) AS other_score,
+                SUM(CASE WHEN m.is_sender = 1 THEN 1 ELSE 0 END) AS user_count,
+                SUM(CASE WHEN m.is_sender = 0 THEN 1 ELSE 0 END) AS other_count
             FROM messages m
             INNER JOIN sentiment_cache sc ON sc.message_id = m.id
             WHERE m.conversation_id = ?
@@ -326,6 +328,8 @@ class AnalysisService:
             msg_count = int(row[5] or 0)
             user_score = None if row[6] is None else round(float(row[6]), 3)
             other_score = None if row[7] is None else round(float(row[7]), 3)
+            user_count = int(row[8] or 0)
+            other_count = int(row[9] or 0)
 
             timeseries.append({
                 "ts": day,
@@ -335,7 +339,10 @@ class AnalysisService:
                 "negative": negative_count,
                 "msgCount": msg_count,
                 "userScore": user_score,
-                "otherScore": other_score
+                "otherScore": other_score,
+                # 每侧已缓存消息数——时光深度滚动窗口加权平滑的权重真分母
+                "userCount": user_count,
+                "otherCount": other_count
             })
 
             total_weighted_score += avg_score * msg_count

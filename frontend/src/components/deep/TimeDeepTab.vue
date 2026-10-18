@@ -15,6 +15,12 @@
         :affinity="payload.affinity_history || null"
       />
       <WordEvolutionPanel :evolution="payload.wordcloud_evolution || { caliber: 'none', coverage_ratio: 0, halves: [] }" />
+      <ProfileEvolutionPanel
+        :conversation-id="conversationId"
+        :dates="dates"
+        :view-epoch="viewEpoch"
+        :contact-name="contactName"
+      />
       <MilestoneTimeline
         :milestones="payload.milestones || []"
         :turning-points="payload.turning_points || []"
@@ -32,6 +38,7 @@ import { api } from '@/api/bridge'
 import SentimentCoverageBar from '@/components/deep/SentimentCoverageBar.vue'
 import DeepEmotionPanel from '@/components/deep/DeepEmotionPanel.vue'
 import WordEvolutionPanel from '@/components/deep/WordEvolutionPanel.vue'
+import ProfileEvolutionPanel from '@/components/deep/ProfileEvolutionPanel.vue'
 import MilestoneTimeline from '@/components/deep/MilestoneTimeline.vue'
 import BigFivePanel from '@/components/deep/BigFivePanel.vue'
 import PosterStudio from '@/components/deep/PosterStudio.vue'

@@ -257,6 +257,71 @@ class DeepAnalysisApiMixin:
         return {"ok": True}
 
     # ------------------------------------------------------------------
+    # 画像演变（前后半窗双画像对比，单飞可取消）
+    # ------------------------------------------------------------------
+
+    def generate_profile_evolution(
+        self,
+        conversation_id: int,
+        from_date: str,
+        to_date: str,
+        include_self: bool = False,
+        force: bool = False,
+        account_wxid: str = "",
+    ) -> dict:
+        """生成画像演变：时间窗对半分前后两段，分别取/生成 custom 快照画像。
+
+        同会话单飞（一次最长 4 次 LLM 调用，重复点击直接拒）；快照缓存
+        精确键命中即跳过 LLM 增量续跑；``force=True`` 全部重算。
+        """
+        try:
+            if not conversation_id:
+                return {"ok": False, "error": "缺少参数: conversation_id"}
+            if not from_date or not to_date:
+                return {"ok": False, "error": "缺少日期参数，请先选择时间范围"}
+            from ...services.analysis.profile_evolution_service import ProfileEvolutionService
+
+            from_ts = int(datetime.strptime(from_date, "%Y-%m-%d").timestamp())
+            to_ts = int(
+                datetime.strptime(to_date + " 23:59:59", "%Y-%m-%d %H:%M:%S").timestamp()
+            )
+
+            key = (int(conversation_id), account_wxid or "")
+            running = getattr(self, "_profile_evolution_events", None)
+            if running is None:
+                running = {}
+                self._profile_evolution_events = running
+            if key in running:
+                return {"ok": False, "reason": "already_running",
+                        "message": "画像演变生成中，请稍候或先取消"}
+            cancel_event = threading.Event()
+            running[key] = cancel_event
+            try:
+                return ProfileEvolutionService().generate(
+                    int(conversation_id), from_ts, to_ts,
+                    account_wxid=account_wxid or "",
+                    include_self=bool(include_self),
+                    force=bool(force),
+                    cancel_event=cancel_event,
+                )
+            finally:
+                running.pop(key, None)
+        except ValueError as e:
+            return {"ok": False, "error": f"参数格式错误: {e}"}
+        except Exception as e:
+            logger.error(f"[Bridge] 生成画像演变失败: {e}")
+            return {"ok": False, "error": str(e)}
+
+    def cancel_profile_evolution(self, conversation_id: int, account_wxid: str = "") -> dict:
+        """取消进行中的画像演变（单次最长 4 次 LLM 调用，不能让用户只能干等）。"""
+        running = getattr(self, "_profile_evolution_events", None) or {}
+        event = running.get((int(conversation_id or 0), account_wxid or ""))
+        if event is None:
+            return {"ok": False, "error": "没有进行中的画像演变"}
+        event.set()
+        return {"ok": True}
+
+    # ------------------------------------------------------------------
     # 分享海报（前端 html2canvas 合成 → save_share_image 落盘）
     # ------------------------------------------------------------------
 

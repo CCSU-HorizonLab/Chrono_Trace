@@ -30,7 +30,6 @@ def safe_copy_metadata(package_name: str):
 
 datas = [
     (str(PROJECT_ROOT / "backend" / "app" / "db" / "schema.sql"), "backend/app/db"),
-    (str(PROJECT_ROOT / "backend" / "app" / "db" / "migrations"), "backend/app/db/migrations"),
     (str(FRONTEND_DIST_DIR), "frontend/webdist"),
     # RAG 词表（fact_kind_hints / fact_quality_patterns）：fact_quality.py 以
     # Path(__file__) 相邻定位。冻结态模块全名为 backend.app.*，__file__ 实际

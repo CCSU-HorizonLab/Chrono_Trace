@@ -80,7 +80,7 @@ SQLite（线程本地连接 backend/app/db/connection.py）
 ### 关键机制
 
 - **Bridge 是唯一前后端边界**：新增前端可调用的 API 必须同时改后端（按 API 域加到 `backend/app/webview/api/*.py` 对应 mixin；导入/监听桥接/建议流等核心域仍在 `bridge.py`）和 `frontend/src/api/bridge.ts`（加 `PyWebViewApi` 类型声明），二者需保持同步。
-- **数据库**：全新库由 `backend/app/db/schema.sql` 初始化；已有库通过 `db/migrations/*.sql` 和 `connection.py` 内的 Python 兼容迁移（如账号隔离 `account_wxid` 列）升级。开发模式数据写入 `backend/data/chrono_trace.db`（打包后 Windows 为 `%LOCALAPPDATA%\ChronoTrace\`，Linux 为 `$XDG_DATA_HOME/ChronoTrace/`；旧版带空格目录由 `config._resolve_user_data_dir` 启动时自动整目录迁移，显示名 `APP_NAME` 仍带空格）。
+- **数据库**：`backend/app/db/schema.sql` 是唯一建表源，`connection.py` 只执行建表——**不维护历史库兼容迁移**，结构变更以版本常量记录（如画像 `PROFILE_SNAPSHOT_SCHEMA`），旧库不做升级（缺列报错，删除重导即可）。开发模式数据写入 `backend/data/chrono_trace.db`（打包后 Windows 为 `%LOCALAPPDATA%\ChronoTrace\`，Linux 为 `$XDG_DATA_HOME/ChronoTrace/`，显示名 `APP_NAME` 仍带空格）。
 - **导入 `backend/app/config.py` 有副作用**：模块加载即创建 `backend/data/{logs,models,temp}` 目录并写入 settings 路径。
 - **测试导入约定**：部分测试文件以 `backend/` 为导入根（`sys.path.insert` 后 `from app...`），部分以仓库根（`from backend.app...`，需在仓库根运行 pytest）——新测试优先用前者。
 
@@ -97,4 +97,4 @@ SQLite（线程本地连接 backend/app/db/connection.py）
 
 ## 前端结构
 
-`frontend/src/views/`：Home / Analytics / Suggestions / Settings / FloatingPanel（悬浮窗独立页面）。`api/bridge.ts` 封装全部 Bridge 调用，图表用 ECharts，路由 vue-router。无独立状态管理库。Analytics 第六个页签「时光深度」（单聊专属）的组件在 `frontend/src/components/deep/`，含分享海报模板注册表 `poster/registry.ts`（公开/自我版经 `sanitizeForPublic`/`sanitizeForSelf` 投影消费，类型上拿不到敏感字段）。
+`frontend/src/views/`：Home / Analytics（对象工作台，页头 FiltersBar 选人一次贯通全页）/ Settings / FloatingPanel（悬浮窗独立页面）。`api/bridge.ts` 封装全部 Bridge 调用，图表用 ECharts，路由 vue-router。无独立状态管理库。Analytics 六个页签：关系洞察 / 互动特征 / 内容时间线 / 智能问答 / 时光与画像（单聊专属，组件在 `frontend/src/components/deep/`，含分享海报模板注册表 `poster/registry.ts`——公开/自我版经 `sanitizeForPublic`/`sanitizeForSelf` 投影消费，类型上拿不到敏感字段）/ 实时助手（`components/realtime/MonitorControlCard.vue`，建议配置按联系人存储）。

@@ -14,6 +14,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import app.services.analysis.analysis_service as analysismod
 import app.services.analysis.deep_analysis_service as deepmod
+import app.services.analysis.engagement_metrics as emmod
+import app.services.analysis.personality_impression_service as bimod
 from app.services.analysis.deep_analysis_service import (
     DEEP_WORDCLOUD_SEGMENTS_DEFAULT,
     DeepAnalysisService,
@@ -48,6 +50,10 @@ def db(monkeypatch):
     )
     monkeypatch.setattr(deepmod, "get_db", lambda: conn)
     monkeypatch.setattr(analysismod, "get_db", lambda: conn)
+    # big5_evolution 经 PersonalityImpressionService/EngagementMetricsService 取数，
+    # 两模块的顶层 get_db 绑定同样要替换（否则测试会摸到真实开发库）
+    monkeypatch.setattr(bimod, "get_db", lambda: conn)
+    monkeypatch.setattr(emmod, "get_db", lambda: conn)
     yield conn
     conn.close()
 
@@ -434,3 +440,84 @@ class TestAffinityHistory:
         points = result["affinity_history"]["points"]
         assert [p["score"] for p in points] == [72.0, 80.0]
         assert result["affinity_history"]["caliber_version"] == caliber
+
+
+class TestBig5Evolution:
+    """deep payload 的 big5_evolution：段随 word_segments、薄段 None、短窗降级、首开落缓存。"""
+
+    @staticmethod
+    def _seed_dense(db, start, n_each=40, step=60, content="消息内容"):
+        """双方交替 n_each 条文本，从 start 起每 step 秒一条。"""
+        for i in range(n_each):
+            for side in (1, 0):
+                db.execute(
+                    "INSERT INTO messages (conversation_id, is_sender, message_type, content, timestamp)"
+                    " VALUES (1, ?, 1, ?, ?)",
+                    (side, f"{content}{i}", start + (i * 2 + side) * step),
+                )
+
+    def test_segments_follow_word_segments(self, db):
+        """段数与边界随 word_segments（与词云共用分段）；双侧均有画像。"""
+        window_from, window_to = ts(2026, 3, 1), ts(2026, 3, 5)
+        self._seed_dense(db, ts(2026, 3, 2, 11))  # 前半窗足量
+        self._seed_dense(db, ts(2026, 3, 4, 11))  # 后半窗足量
+
+        result = DeepAnalysisService().get_deep_analysis(
+            1, window_from, window_to, bucket="week", word_segments=2
+        )
+        evo = result["big5_evolution"]
+        assert evo["segments"] == 2
+        assert evo["min_messages"] == 30
+        assert [(s["from_ts"], s["to_ts"]) for s in evo["series"]] == split_window_evenly(
+            window_from, window_to, 2
+        )
+        for seg in evo["series"]:
+            assert seg["me"] is not None and seg["other"] is not None
+            assert "error" not in seg
+
+    def test_thin_segment_subjects_none(self, db):
+        """后半窗每侧不足 30 条：该段 me/other 双 None，前段不受影响。"""
+        self._seed_dense(db, ts(2026, 3, 2, 11))
+        for i in range(10):  # 后半窗薄样本
+            db.execute(
+                "INSERT INTO messages (conversation_id, is_sender, message_type, content, timestamp)"
+                " VALUES (1, ?, 1, '薄样本', ?)",
+                (i % 2, ts(2026, 3, 4, 13) + i * 60),
+            )
+
+        result = DeepAnalysisService().get_deep_analysis(
+            1, ts(2026, 3, 1), ts(2026, 3, 5), bucket="week", word_segments=2
+        )
+        first, second = result["big5_evolution"]["series"]
+        assert first["me"] is not None and first["other"] is not None
+        assert second["me"] is None and second["other"] is None
+        assert "error" not in second  # 薄样本是 None 而非错误
+
+    def test_short_window_degrades_not_crash(self, db):
+        """窗口秒数小于段数：空段标 error 降级，payload 不炸。"""
+        evo = DeepAnalysisService()._big5_evolution(1, 1000, 1002, 4)
+        assert len(evo["series"]) == 4
+        assert all(s["me"] is None and s["other"] is None for s in evo["series"])
+        assert any("error" in s for s in evo["series"])
+
+    def test_first_call_persists_custom_window_cache(self, db):
+        """首开逐段算 local 并落 custom 窗缓存；清空消息后二次调用原样命中。"""
+        self._seed_dense(db, ts(2026, 3, 2, 11))
+        self._seed_dense(db, ts(2026, 3, 4, 11))
+        service = DeepAnalysisService()
+        first = service.get_deep_analysis(
+            1, ts(2026, 3, 1), ts(2026, 3, 5), bucket="week", word_segments=2
+        )
+
+        rows = db.execute(
+            "SELECT COUNT(*) FROM big5_impressions WHERE window_kind = 'custom' AND source = 'local'"
+        ).fetchone()
+        assert rows[0] == 4  # 2 段 × 双侧
+
+        db.execute("DELETE FROM messages")
+        second = service.get_deep_analysis(
+            1, ts(2026, 3, 1), ts(2026, 3, 5), bucket="week", word_segments=2
+        )
+        for a, b in zip(first["big5_evolution"]["series"], second["big5_evolution"]["series"]):
+            assert a["me"]["scores"] == b["me"]["scores"]
+            assert a["other"]["scores"] == b["other"]["scores"]

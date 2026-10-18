@@ -59,9 +59,10 @@ type PyWebViewApi = {
   get_sentiment_backfill_progress: (task_id: string) => Promise<any>
   cancel_sentiment_backfill: (task_id?: string) => Promise<any>
   // 时光深度：大五人格印象（本地基础层永远可用；LLM 增强层 ±15 有界校正）
-  get_big5_impressions: (conversation_id: number, account_wxid?: string) => Promise<any>
-  enhance_big5_impressions: (conversation_id: number, account_wxid?: string) => Promise<any>
-  cancel_big5_impressions: (conversation_id: number, account_wxid?: string) => Promise<any>
+  // 可选 fromTs/toTs（秒级闭区间）为时间窗——大五演变面板按段取数，须与段边界一致；缺省全会话
+  get_big5_impressions: (conversation_id: number, account_wxid?: string, fromTs?: number, toTs?: number) => Promise<any>
+  enhance_big5_impressions: (conversation_id: number, account_wxid?: string, fromTs?: number, toTs?: number) => Promise<any>
+  cancel_big5_impressions: (conversation_id: number, account_wxid?: string, fromTs?: number, toTs?: number) => Promise<any>
   // 画像演变（前后半窗双画像对比；include_self 附带我的画像；force 无视缓存重算）
   generate_profile_evolution: (conversation_id: number, from: string, to: string, include_self?: boolean, force?: boolean, account_wxid?: string) => Promise<any>
   cancel_profile_evolution: (conversation_id: number, account_wxid?: string) => Promise<any>

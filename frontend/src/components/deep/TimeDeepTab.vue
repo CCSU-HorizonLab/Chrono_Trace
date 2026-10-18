@@ -19,6 +19,11 @@
         :segments="wordSegments"
         @update:segments="wordSegments = $event"
       />
+      <Big5EvolutionPanel
+        :conversation-id="conversationId"
+        :evolution="payload.big5_evolution"
+        :view-epoch="viewEpoch"
+      />
       <ProfileEvolutionPanel
         :conversation-id="conversationId"
         :dates="dates"
@@ -40,6 +45,7 @@ import { api } from '@/api/bridge'
 import SentimentCoverageBar from '@/components/deep/SentimentCoverageBar.vue'
 import DeepEmotionPanel from '@/components/deep/DeepEmotionPanel.vue'
 import WordEvolutionPanel from '@/components/deep/WordEvolutionPanel.vue'
+import Big5EvolutionPanel from '@/components/deep/Big5EvolutionPanel.vue'
 import ProfileEvolutionPanel from '@/components/deep/ProfileEvolutionPanel.vue'
 import MilestoneTimeline from '@/components/deep/MilestoneTimeline.vue'
 

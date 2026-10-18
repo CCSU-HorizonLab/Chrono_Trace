@@ -14,7 +14,12 @@ evidence 必须是（脱敏后）采样语料的子串否则丢弃该证据（�
 
 缓存：big5_impressions 表（_ensure_table 轻迁移，不动 schema.sql，
 沿 contact_profiles 先例）。UNIQUE(conversation_id, account_wxid, subject,
-prompt_version, source)；BIG5_PROMPT_VERSION 变更即旧行失效重算。
+prompt_version, source, window_kind, window_from, window_to)；BIG5_PROMPT_VERSION
+变更即旧行失效重算。
+
+时间窗档位（表 v2）：(None, None) = 全会话 full 档（TA 画像页静态大五）；
+指定 [from_ts, to_ts] = custom 档（时光深度大五演变按段）。旧结构（无
+window 列）DROP 重建——本地层重算免费，增强层需重新点按钮。
 """
 
 import json
@@ -41,6 +46,18 @@ BIG5_RESPONSE_MAX_TOKENS = 2048
 BIG5_TIMEOUT_SECONDS = 90
 
 SUBJECTS = ("me", "other")
+
+# 时间窗归一：custom 档缺省界用极值兜底（调用方总是成对传）
+_WINDOW_FULL = ("full", 0, 0)
+_WINDOW_MAX_TS = 9999999999
+
+
+def _normalize_window(
+    from_ts: Optional[int], to_ts: Optional[int]
+) -> Tuple[str, int, int]:
+    if from_ts is None and to_ts is None:
+        return _WINDOW_FULL
+    return ("custom", int(from_ts or 0), int(to_ts or _WINDOW_MAX_TS))
 
 # 表情/感叹/叠词密度（外向性代理）：微信原生表情占位、常见 emoji 段、感叹号、中文叠词
 _EMOJI_EXCLAIM_PATTERN = re.compile(
@@ -111,32 +128,43 @@ class PersonalityImpressionService:
     # ------------------------------------------------------------------
 
     def get_impressions(
-        self, conversation_id: int, account_wxid: str = "", force_refresh: bool = False
+        self,
+        conversation_id: int,
+        account_wxid: str = "",
+        force_refresh: bool = False,
+        from_ts: Optional[int] = None,
+        to_ts: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """双方大五印象。优先返回未过期的 llm_enhanced，其次 local；都缺则现算 local。"""
+        """双方大五印象。优先返回未过期的 llm_enhanced，其次 local；都缺则现算 local。
+
+        可选时间窗 [from_ts, to_ts] 闭区间（None=全会话 full 档）——
+        大五演变按段调用；缓存键含窗口档位互不污染。
+        """
         now = int(time.time())
+        window = _normalize_window(from_ts, to_ts)
         result: Dict[str, Any] = {}
         metrics = None  # 会话投入特征只算一遍，双侧共用
         rows = None     # 全量消息行只拉一次，双侧共用
         for subject in SUBJECTS:
-            row = self._load_cached(conversation_id, account_wxid, subject, now)
+            row = self._load_cached(conversation_id, account_wxid, subject, now, window=window)
             if row and not force_refresh:
                 result[subject] = row
                 continue
             if metrics is None:
-                metrics = EngagementMetricsService().compute(conversation_id)
+                metrics = EngagementMetricsService().compute(conversation_id, from_ts, to_ts)
             if rows is None:
-                rows = self._fetch_conversation_rows(conversation_id)
-            computed = self._compute_local(conversation_id, subject, metrics, rows)
+                rows = self._fetch_conversation_rows(conversation_id, from_ts, to_ts)
+            computed = self._compute_local(conversation_id, subject, metrics, rows, from_ts, to_ts)
             if computed is None:
                 result[subject] = None
                 continue
-            self._save_cache(conversation_id, account_wxid, subject, computed, "local", None)
+            self._save_cache(conversation_id, account_wxid, subject, computed, "local", None, window=window)
             result[subject] = computed
 
         return {
             "ok": True,
             "prompt_version": BIG5_PROMPT_VERSION,
+            "window": {"kind": window[0], "from": window[1], "to": window[2]},
             "source": "llm_enhanced" if any(
                 item and item.get("source") == "llm_enhanced" for item in result.values()
             ) else "local",
@@ -145,29 +173,34 @@ class PersonalityImpressionService:
         }
 
     def _local_base(
-        self, conversation_id: int, account_wxid: str = ""
+        self,
+        conversation_id: int,
+        account_wxid: str = "",
+        from_ts: Optional[int] = None,
+        to_ts: Optional[int] = None,
     ) -> Dict[str, Any]:
         """只取 local 统计层（缓存 miss 则现算并落 local 行），绝不读 llm_enhanced。"""
         now = int(time.time())
+        window = _normalize_window(from_ts, to_ts)
         result: Dict[str, Any] = {}
         metrics = None
         rows = None
         for subject in SUBJECTS:
             row = self._load_cached(
-                conversation_id, account_wxid, subject, now, only_source="local"
+                conversation_id, account_wxid, subject, now, only_source="local", window=window
             )
             if row:
                 result[subject] = row
                 continue
             if metrics is None:
-                metrics = EngagementMetricsService().compute(conversation_id)
+                metrics = EngagementMetricsService().compute(conversation_id, from_ts, to_ts)
             if rows is None:
-                rows = self._fetch_conversation_rows(conversation_id)
-            computed = self._compute_local(conversation_id, subject, metrics, rows)
+                rows = self._fetch_conversation_rows(conversation_id, from_ts, to_ts)
+            computed = self._compute_local(conversation_id, subject, metrics, rows, from_ts, to_ts)
             if computed is None:
                 result[subject] = None
                 continue
-            self._save_cache(conversation_id, account_wxid, subject, computed, "local", None)
+            self._save_cache(conversation_id, account_wxid, subject, computed, "local", None, window=window)
             result[subject] = computed
         return result
 
@@ -176,12 +209,15 @@ class PersonalityImpressionService:
         conversation_id: int,
         account_wxid: str = "",
         cancel_event=None,
+        from_ts: Optional[int] = None,
+        to_ts: Optional[int] = None,
     ) -> Dict[str, Any]:
         """LLM 增强层：双方基础分 + 采样对话 → 有界校正 → 落 llm_enhanced 行。
 
         基础分**永远取 local 统计层**（不从 llm_enhanced 缓存复合）——否则
         重复点击会以增强分为基点，±15 逐次叠加漂移，破坏有界校正不变量。
         cancel_event 置位即中止（调用方可取消，LLM 请求最长 90s 不能让面板卡死）。
+        可选时间窗：演变面板按段增强时传（基础分与采样语料同窗）。
         """
         model_config = self._model_config_provider()
         if not model_config:
@@ -193,11 +229,11 @@ class PersonalityImpressionService:
         if _cancelled():
             return {"ok": False, "reason": "cancelled", "message": "已取消"}
 
-        subjects = self._local_base(conversation_id, account_wxid)
+        subjects = self._local_base(conversation_id, account_wxid, from_ts, to_ts)
         if not any(subjects.get(s) for s in SUBJECTS):
             return {"ok": False, "reason": "insufficient_data", "message": "会话消息过少，无法生成画像"}
 
-        sample = self._sample_conversation(conversation_id)
+        sample = self._sample_conversation(conversation_id, from_ts, to_ts)
         if not sample:
             return {"ok": False, "reason": "insufficient_data", "message": "无可用文本样本"}
 
@@ -272,6 +308,7 @@ class PersonalityImpressionService:
         # 语料按 prompt 渲染形态拼接（含 [我]/[TA] 前缀）：是裸文本的超集，
         # evidence 无论带不带前缀都能命中子串校验
         corpus = "\n".join(self._sample_line(s, t) for s, t in redacted_sample)
+        window = _normalize_window(from_ts, to_ts)
         for subject in SUBJECTS:
             base = subjects.get(subject)
             if not base:
@@ -280,9 +317,12 @@ class PersonalityImpressionService:
             self._save_cache(
                 conversation_id, account_wxid, subject, enhanced, "llm_enhanced",
                 model_name=str(model_config.get("model_name") or ""),
+                window=window,
             )
 
-        payload = self.get_impressions(conversation_id, account_wxid, force_refresh=False)
+        payload = self.get_impressions(
+            conversation_id, account_wxid, force_refresh=False, from_ts=from_ts, to_ts=to_ts
+        )
         # 增强行刚落库，读回应为 llm_enhanced
         payload["enhanced"] = True
         return payload
@@ -292,10 +332,14 @@ class PersonalityImpressionService:
     # ------------------------------------------------------------------
 
     def _compute_local(
-        self, conversation_id: int, subject: str, metrics=None, rows=None
+        self, conversation_id: int, subject: str, metrics=None, rows=None,
+        from_ts: Optional[int] = None, to_ts: Optional[int] = None,
     ) -> Optional[Dict[str, Any]]:
-        """单侧基础层：子指标采集 + big5_proxies 合成。样本过薄返回 None。"""
-        raw = self._collect_raw_indicators(conversation_id, subject, metrics, rows)
+        """单侧基础层：子指标采集 + big5_proxies 合成。样本过薄返回 None。
+
+        可选时间窗下传内层情感/回应/分享密度查询（rows 已窗化时不重复过滤）。
+        """
+        raw = self._collect_raw_indicators(conversation_id, subject, metrics, rows, from_ts, to_ts)
         if raw is None:
             return None
         scores = compute_big5_base(raw)
@@ -306,21 +350,37 @@ class PersonalityImpressionService:
         }
 
     @staticmethod
-    def _fetch_conversation_rows(conversation_id: int):
+    def _fetch_conversation_rows(
+        conversation_id: int,
+        from_ts: Optional[int] = None,
+        to_ts: Optional[int] = None,
+    ):
         """全量文本消息行（双侧）。大会话十万级，双侧采集共用一次查询。"""
+        window_sql = ""
+        window_args: list = []
+        if from_ts is not None or to_ts is not None:
+            window_sql = " AND timestamp BETWEEN ? AND ?"
+            window_args = [int(from_ts or 0), int(to_ts or _WINDOW_MAX_TS)]
         return get_db().execute(
             "SELECT is_sender, content, timestamp FROM messages "
-            "WHERE conversation_id = ? AND message_type = 1 ORDER BY timestamp ASC, id ASC",
-            (conversation_id,),
+            f"WHERE conversation_id = ? AND message_type = 1{window_sql} "
+            "ORDER BY timestamp ASC, id ASC",
+            (conversation_id, *window_args),
         ).fetchall()
 
     def _collect_raw_indicators(
-        self, conversation_id: int, subject: str, metrics=None, rows=None
+        self,
+        conversation_id: int,
+        subject: str,
+        metrics=None,
+        rows=None,
+        from_ts: Optional[int] = None,
+        to_ts: Optional[int] = None,
     ) -> Optional[Dict[str, Optional[float]]]:
         """采集单侧原始子指标（me → is_sender=1 / other → is_sender=0）。"""
         side_flag = 1 if subject == "me" else 0
         if rows is None:
-            rows = self._fetch_conversation_rows(conversation_id)
+            rows = self._fetch_conversation_rows(conversation_id, from_ts, to_ts)
 
         def _text(content: Any) -> str:
             if content is None:
@@ -359,9 +419,11 @@ class PersonalityImpressionService:
 
         # 情感子指标（缺 sentiment_cache → None，维度重归一）
         intensity_variance, negative_ratio, pos_neg_ratio = self._sentiment_indicators(
-            conversation_id, side_flag
+            conversation_id, side_flag, from_ts, to_ts
         )
-        positive_response_rate = self._positive_response_rate(conversation_id, side_flag)
+        positive_response_rate = self._positive_response_rate(
+            conversation_id, side_flag, from_ts, to_ts
+        )
 
         # 词法子指标：表情/感叹/叠词密度、TTR、话题熵（抽样约束分词代价）
         emoji_hits = sum(1 for text in own_texts if _EMOJI_EXCLAIM_PATTERN.search(text))
@@ -371,15 +433,21 @@ class PersonalityImpressionService:
         empathy_density = self._empathy_density(own_texts)
 
         # 分享密度：图片/视频/链接 ÷ 文本
+        share_window_sql = ""
+        share_args: list = [conversation_id, side_flag]
+        if from_ts is not None or to_ts is not None:
+            share_window_sql = " AND timestamp BETWEEN ? AND ?"
+            share_args += [int(from_ts or 0), int(to_ts or _WINDOW_MAX_TS)]
         share_row = get_db().execute(
             "SELECT COUNT(*) FROM messages WHERE conversation_id = ? AND is_sender = ? "
-            "AND (message_type IN (3, 43) OR (message_type = 1 AND content LIKE '%http%'))",
-            (conversation_id, side_flag),
+            "AND (message_type IN (3, 43) OR (message_type = 1 AND content LIKE '%http%'))"
+            f"{share_window_sql}",
+            share_args,
         ).fetchone()
         share_count = int(share_row[0] or 0)
 
         if metrics is None:
-            metrics = EngagementMetricsService().compute(conversation_id)
+            metrics = EngagementMetricsService().compute(conversation_id, from_ts, to_ts)
         if subject == "me":
             icebreak_ratio = (
                 metrics.icebreak_self / metrics.icebreak_total
@@ -431,7 +499,10 @@ class PersonalityImpressionService:
 
     @staticmethod
     def _positive_response_rate(
-        conversation_id: int, side_flag: int
+        conversation_id: int,
+        side_flag: int,
+        from_ts: Optional[int] = None,
+        to_ts: Optional[int] = None,
     ) -> Optional[float]:
         """正向回应率：本方「30 分钟内回应对方」的消息中正向消息占比。
 
@@ -444,20 +515,27 @@ class PersonalityImpressionService:
         本地基础层的主要耗时热点。
         """
         db = get_db()
+        window_sql = ""
+        window_args: list = []
+        if from_ts is not None or to_ts is not None:
+            window_sql = " AND m.timestamp BETWEEN ? AND ?"
+            window_args = [int(from_ts or 0), int(to_ts or _WINDOW_MAX_TS)]
         mine = db.execute(
             "SELECT m.timestamp, sc.polarity FROM messages m "
             "JOIN sentiment_cache sc ON sc.message_id = m.id "
             "WHERE m.conversation_id = ? AND m.is_sender = ? AND m.message_type = 1 "
-            "ORDER BY m.timestamp",
-            (conversation_id, side_flag),
+            f"{window_sql} ORDER BY m.timestamp",
+            (conversation_id, side_flag, *window_args),
         ).fetchall()
         if not mine:
             return None
+        peer_window_sql = window_sql.replace("m.timestamp", "timestamp")
         peer_ts = [
             int(r[0]) for r in db.execute(
                 "SELECT timestamp FROM messages "
-                "WHERE conversation_id = ? AND is_sender != ? ORDER BY timestamp",
-                (conversation_id, side_flag),
+                "WHERE conversation_id = ? AND is_sender != ?"
+                f"{peer_window_sql} ORDER BY timestamp",
+                (conversation_id, side_flag, *window_args),
             ).fetchall()
         ]
         responded = 0
@@ -479,14 +557,22 @@ class PersonalityImpressionService:
 
     @staticmethod
     def _sentiment_indicators(
-        conversation_id: int, side_flag: int
+        conversation_id: int,
+        side_flag: int,
+        from_ts: Optional[int] = None,
+        to_ts: Optional[int] = None,
     ) -> Tuple[Optional[float], Optional[float], Optional[float]]:
         """本方情感子指标：intensity 方差 / 负面占比 / 正负比（缺缓存全 None）。"""
+        window_sql = ""
+        window_args: list = []
+        if from_ts is not None or to_ts is not None:
+            window_sql = " AND m.timestamp BETWEEN ? AND ?"
+            window_args = [int(from_ts or 0), int(to_ts or _WINDOW_MAX_TS)]
         rows = get_db().execute(
             "SELECT sc.polarity, sc.intensity FROM sentiment_cache sc "
             "JOIN messages m ON sc.message_id = m.id "
-            "WHERE m.conversation_id = ? AND m.is_sender = ?",
-            (conversation_id, side_flag),
+            f"WHERE m.conversation_id = ? AND m.is_sender = ?{window_sql}",
+            (conversation_id, side_flag, *window_args),
         ).fetchall()
         if not rows:
             return None, None, None
@@ -550,14 +636,23 @@ class PersonalityImpressionService:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _sample_conversation(conversation_id: int) -> List[Tuple[int, str]]:
+    def _sample_conversation(
+        conversation_id: int,
+        from_ts: Optional[int] = None,
+        to_ts: Optional[int] = None,
+    ) -> List[Tuple[int, str]]:
         """时间均匀分桶抽样双方消息，目标 ~12000 字符（带 [我]/[TA] 标记由渲染层加）。"""
+        window_sql = ""
+        window_args: list = []
+        if from_ts is not None or to_ts is not None:
+            window_sql = " AND timestamp BETWEEN ? AND ?"
+            window_args = [int(from_ts or 0), int(to_ts or _WINDOW_MAX_TS)]
         rows = get_db().execute(
             "SELECT is_sender, content, timestamp FROM messages "
             "WHERE conversation_id = ? AND message_type = 1 "
             "AND content IS NOT NULL AND TRIM(content) != '' "
-            "ORDER BY timestamp ASC, id ASC",
-            (conversation_id,),
+            f"{window_sql} ORDER BY timestamp ASC, id ASC",
+            (conversation_id, *window_args),
         ).fetchall()
         if not rows:
             return []
@@ -699,7 +794,14 @@ class PersonalityImpressionService:
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'big5_impressions'"
         ).fetchone()
         if row:
-            return
+            # 表 v1（无 window 档位列）DROP 重建不迁移：本地层重算免费，
+            # 增强层需重新点按钮（KISS，沿画像三表先例）
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(big5_impressions)")}
+            if "window_kind" not in cols:
+                conn.execute("DROP TABLE big5_impressions")
+                conn.commit()
+            else:
+                return
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS big5_impressions (
@@ -709,6 +811,9 @@ class PersonalityImpressionService:
                 subject TEXT NOT NULL,
                 source TEXT NOT NULL,
                 prompt_version INTEGER NOT NULL,
+                window_kind TEXT NOT NULL DEFAULT 'full',
+                window_from INTEGER NOT NULL DEFAULT 0,
+                window_to INTEGER NOT NULL DEFAULT 0,
                 scores_json TEXT NOT NULL,
                 base_scores_json TEXT,
                 evidence_json TEXT,
@@ -716,7 +821,8 @@ class PersonalityImpressionService:
                 model_name TEXT,
                 created_at INTEGER NOT NULL,
                 expires_at INTEGER NOT NULL,
-                UNIQUE(conversation_id, account_wxid, subject, prompt_version, source)
+                UNIQUE(conversation_id, account_wxid, subject, prompt_version, source,
+                       window_kind, window_from, window_to)
             )
             """
         )
@@ -730,6 +836,7 @@ class PersonalityImpressionService:
         payload: Dict[str, Any],
         source: str,
         model_name: Optional[str],
+        window: Tuple[str, int, int] = _WINDOW_FULL,
     ) -> None:
         now = int(time.time())
         conn = get_db()
@@ -739,12 +846,14 @@ class PersonalityImpressionService:
             """
             INSERT OR REPLACE INTO big5_impressions
             (conversation_id, account_wxid, subject, source, prompt_version,
+             window_kind, window_from, window_to,
              scores_json, base_scores_json, evidence_json, indicators_json,
              model_name, created_at, expires_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 int(conversation_id), account_wxid, subject, source, BIG5_PROMPT_VERSION,
+                window[0], window[1], window[2],
                 json.dumps(scores, ensure_ascii=False),
                 json.dumps(
                     {d: (scores.get(d) or {}).get("base_score") for d in DIMENSIONS},
@@ -765,6 +874,7 @@ class PersonalityImpressionService:
         subject: str,
         now: int,
         only_source: Optional[str] = None,
+        window: Tuple[str, int, int] = _WINDOW_FULL,
     ) -> Optional[Dict[str, Any]]:
         """读未过期缓存：llm_enhanced 优先于 local；only_source 可限定单一来源。"""
         conn = get_db()
@@ -777,8 +887,12 @@ class PersonalityImpressionService:
             row = conn.execute(
                 "SELECT scores_json, evidence_json, indicators_json, model_name, created_at "
                 "FROM big5_impressions WHERE conversation_id = ? AND account_wxid = ? "
-                "AND subject = ? AND source = ? AND prompt_version = ? AND expires_at > ?",
-                (conversation_id, account_wxid, subject, source, BIG5_PROMPT_VERSION, now),
+                "AND subject = ? AND source = ? AND prompt_version = ? AND expires_at > ? "
+                "AND window_kind = ? AND window_from = ? AND window_to = ?",
+                (
+                    conversation_id, account_wxid, subject, source, BIG5_PROMPT_VERSION, now,
+                    window[0], window[1], window[2],
+                ),
             ).fetchone()
             if not row:
                 continue

@@ -189,12 +189,19 @@ class EngagementMetrics:
 class EngagementMetricsService:
     """会话投入特征计算（每次分析现算，天然增量安全）。"""
 
-    def compute(self, conversation_id: int) -> EngagementMetrics:
+    def compute(
+        self,
+        conversation_id: int,
+        from_ts: Optional[int] = None,
+        to_ts: Optional[int] = None,
+    ) -> EngagementMetrics:
+        """计算会话投入特征。可选时间窗 [from_ts, to_ts] 闭区间（None=全会话）——
+        大五演变按段计算用；默认不传窗时 SQL 与历史逐字节一致（好感度链路回归守卫）。"""
         metrics = EngagementMetrics()
-        rows = self._load_text_messages(conversation_id)
+        rows = self._load_text_messages(conversation_id, from_ts, to_ts)
         self._scan_messages(rows, metrics)
-        self._count_revokes(conversation_id, metrics)
-        self._count_polarity(conversation_id, metrics)
+        self._count_revokes(conversation_id, metrics, from_ts, to_ts)
+        self._count_polarity(conversation_id, metrics, from_ts, to_ts)
         metrics.daily_cv_active = self._active_day_cv(metrics.daily_counts)
         logger.info(
             f"会话投入特征计算完成: {metrics.text_message_count} 条文本 "
@@ -206,17 +213,31 @@ class EngagementMetricsService:
     # 数据加载
     # ========================================
 
-    def _load_text_messages(self, conversation_id: int) -> List[Tuple[int, str, int]]:
+    @staticmethod
+    def _window_clause(from_ts: Optional[int], to_ts: Optional[int]) -> Tuple[str, list]:
+        """时间窗 SQL 片段与参数；None=不加过滤（保持历史 SQL 形态）。"""
+        if from_ts is None and to_ts is None:
+            return "", []
+        clause = " AND timestamp BETWEEN ? AND ?"
+        return clause, [int(from_ts or 0), int(to_ts or 9999999999)]
+
+    def _load_text_messages(
+        self,
+        conversation_id: int,
+        from_ts: Optional[int] = None,
+        to_ts: Optional[int] = None,
+    ) -> List[Tuple[int, str, int]]:
         """拉取会话全部文本消息（is_sender, content, timestamp），按时间升序。"""
         try:
+            window_sql, window_args = self._window_clause(from_ts, to_ts)
             cursor = get_db().execute(
-                """
+                f"""
                 SELECT is_sender, content, timestamp
                 FROM messages
-                WHERE conversation_id = ? AND message_type = 1
+                WHERE conversation_id = ? AND message_type = 1{window_sql}
                 ORDER BY timestamp ASC
                 """,
-                (conversation_id,),
+                (conversation_id, *window_args),
             )
             decoded: List[Tuple[int, str, int]] = []
             for row in cursor.fetchall():
@@ -228,15 +249,22 @@ class EngagementMetricsService:
             logger.error(f"加载文本消息失败: {e}")
             return []
 
-    def _count_revokes(self, conversation_id: int, metrics: EngagementMetrics) -> None:
+    def _count_revokes(
+        self,
+        conversation_id: int,
+        metrics: EngagementMetrics,
+        from_ts: Optional[int] = None,
+        to_ts: Optional[int] = None,
+    ) -> None:
         """撤回系统消息计数（type=10000，「你撤回」为本方，带昵称为对方）。"""
         try:
+            window_sql, window_args = self._window_clause(from_ts, to_ts)
             cursor = get_db().execute(
-                """
+                f"""
                 SELECT content FROM messages
-                WHERE conversation_id = ? AND message_type = 10000
+                WHERE conversation_id = ? AND message_type = 10000{window_sql}
                 """,
-                (conversation_id,),
+                (conversation_id, *window_args),
             )
             for (content,) in cursor.fetchall():
                 text = _decode(content)
@@ -250,18 +278,25 @@ class EngagementMetricsService:
         except Exception as e:
             logger.warning(f"撤回计数失败: {e}")
 
-    def _count_polarity(self, conversation_id: int, metrics: EngagementMetrics) -> None:
+    def _count_polarity(
+        self,
+        conversation_id: int,
+        metrics: EngagementMetrics,
+        from_ts: Optional[int] = None,
+        to_ts: Optional[int] = None,
+    ) -> None:
         """按方向统计正/负极性消息数（直读 sentiment_cache）。"""
         try:
+            window_sql, window_args = self._window_clause(from_ts, to_ts)
             cursor = get_db().execute(
-                """
+                f"""
                 SELECT m.is_sender, sc.polarity, COUNT(*)
                 FROM sentiment_cache sc
                 JOIN messages m ON sc.message_id = m.id
-                WHERE m.conversation_id = ?
+                WHERE m.conversation_id = ?{window_sql.replace('timestamp', 'm.timestamp')}
                 GROUP BY m.is_sender, sc.polarity
                 """,
-                (conversation_id,),
+                (conversation_id, *window_args),
             )
             for is_sender, polarity, count in cursor.fetchall():
                 if polarity == 1:

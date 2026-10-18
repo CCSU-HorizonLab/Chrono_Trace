@@ -118,6 +118,7 @@ class DeepAnalysisService:
         wordcloud = self._wordcloud_evolution(conversation_id, from_ts, to_ts, word_segments)
         milestones = self._build_milestones(conversation_id, from_ts, to_ts, marks)
         affinity = self._affinity_history_points(conversation_id, from_ts, to_ts)
+        big5 = self._big5_evolution(conversation_id, from_ts, to_ts, word_segments)
 
         return {
             "ok": True,
@@ -130,6 +131,7 @@ class DeepAnalysisService:
             "wordcloud_evolution": wordcloud,
             "milestones": milestones,
             "affinity_history": affinity,
+            "big5_evolution": big5,
         }
 
     # ------------------------------------------------------------------
@@ -506,6 +508,39 @@ class DeepAnalysisService:
             "points": [
                 {"ts": int(row[1]), "score": round(float(row[0]), 1)} for row in rows
             ],
+        }
+
+    def _big5_evolution(
+        self, conversation_id: int, from_ts: int, to_ts: int, segments: int
+    ) -> Dict[str, Any]:
+        """双方大五随分段演变（本地统计层，custom 窗缓存；AI 增强走 enhance 端点）。
+
+        与词云演变共用分段数（word_segments）；每段独立 get_impressions，
+        样本过薄（<30 条/侧）该侧为 None；单段失败降级不炸整个 payload。
+        """
+        from .personality_impression_service import BIG5_MIN_MESSAGES, PersonalityImpressionService
+
+        service = PersonalityImpressionService()
+        series: List[Dict[str, Any]] = []
+        for seg_from, seg_to in split_window_evenly(from_ts, to_ts, segments):
+            entry: Dict[str, Any] = {"from_ts": seg_from, "to_ts": seg_to, "me": None, "other": None}
+            if seg_to < seg_from:
+                entry["error"] = "时间窗太短，无法均分该段"
+                series.append(entry)
+                continue
+            try:
+                result = service.get_impressions(conversation_id, from_ts=seg_from, to_ts=seg_to)
+                subjects = (result or {}).get("subjects") or {}
+                entry["me"] = subjects.get("me")
+                entry["other"] = subjects.get("other")
+            except Exception as exc:
+                logger.warning("[Big5演变] 段计算失败降级: %s", exc)
+                entry["error"] = "本段计算失败"
+            series.append(entry)
+        return {
+            "segments": segments,
+            "min_messages": BIG5_MIN_MESSAGES,
+            "series": series,
         }
 
     # ------------------------------------------------------------------

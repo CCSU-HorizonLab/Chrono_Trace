@@ -198,8 +198,16 @@ class DeepAnalysisApiMixin:
     # 大五人格印象（双层：本地统计基础层 + LLM 增强层）
     # ------------------------------------------------------------------
 
-    def get_big5_impressions(self, conversation_id: int, account_wxid: str = "") -> dict:
-        """读取双方大五画像（未过期缓存优先，无模型也总有基础层）。"""
+    def get_big5_impressions(
+        self, conversation_id: int, account_wxid: str = "",
+        from_ts: int = 0, to_ts: int = 0,
+    ) -> dict:
+        """读取双方大五画像（未过期缓存优先，无模型也总有基础层）。
+
+        可选 from_ts/to_ts（秒级闭区间）为指定时间窗——大五演变面板按段
+        取数/逐段增强用，须与 _big5_evolution 的段边界一致（缓存键含窗维）；
+        缺省为全会话（TA 画像页静态大五）。
+        """
         try:
             if not conversation_id:
                 return {"ok": False, "error": "缺少参数: conversation_id"}
@@ -211,16 +219,34 @@ class DeepAnalysisApiMixin:
             if service is None:
                 service = PersonalityImpressionService()
                 self._big5_service = service
-            return service.get_impressions(int(conversation_id), account_wxid or "")
+            win_from, win_to = self._optional_window_ts(from_ts, to_ts)
+            return service.get_impressions(
+                int(conversation_id), account_wxid or "", from_ts=win_from, to_ts=win_to
+            )
+        except ValueError as e:
+            return {"ok": False, "error": f"参数格式错误: {e}"}
         except Exception as e:
             logger.error(f"[Bridge] 获取大五画像失败: {e}")
             return {"ok": False, "error": str(e)}
 
-    def enhance_big5_impressions(self, conversation_id: int, account_wxid: str = "") -> dict:
+    @staticmethod
+    def _optional_window_ts(from_ts, to_ts):
+        """可选秒级窗归一：双缺省 (None, None)=全会话；只给一半视为参数错误。"""
+        if not from_ts and not to_ts:
+            return None, None
+        if not from_ts or not to_ts:
+            raise ValueError("时间窗需同时提供起止时间戳")
+        return int(from_ts), int(to_ts)
+
+    def enhance_big5_impressions(
+        self, conversation_id: int, account_wxid: str = "",
+        from_ts: int = 0, to_ts: int = 0,
+    ) -> dict:
         """LLM 增强大五画像（±15 有界校正附证据；远程模型过脱敏红线，失败即阻断）。
 
-        同会话单飞（请求最长 90s，重复点击直接拒）；带取消事件——
-        cancel_big5_impressions 可中断进行中的增强。
+        同会话同窗单飞（请求最长 90s，重复点击直接拒）；带取消事件——
+        cancel_big5_impressions 可中断进行中的增强（需传同一时间窗）。
+        可选 from_ts/to_ts 为指定时间窗（大五演变逐段增强）。
         """
         try:
             if not conversation_id:
@@ -234,7 +260,8 @@ class DeepAnalysisApiMixin:
                 service = PersonalityImpressionService()
                 self._big5_service = service
 
-            key = (int(conversation_id), account_wxid or "")
+            win_from, win_to = self._optional_window_ts(from_ts, to_ts)
+            key = (int(conversation_id), account_wxid or "", win_from or 0, win_to or 0)
             # 「已在运行检查 + 注册」临界区持锁（并发双击防双注册互相覆盖取消事件）
             with _ONNX_TASK_LOCK:
                 running = getattr(self, "_big5_enhance_events", None)
@@ -247,17 +274,34 @@ class DeepAnalysisApiMixin:
                 cancel_event = threading.Event()
                 running[key] = cancel_event
             try:
-                return service.enhance(int(conversation_id), account_wxid or "", cancel_event=cancel_event)
+                return service.enhance(
+                    int(conversation_id), account_wxid or "", cancel_event=cancel_event,
+                    from_ts=win_from, to_ts=win_to,
+                )
             finally:
                 running.pop(key, None)
+        except ValueError as e:
+            return {"ok": False, "error": f"参数格式错误: {e}"}
         except Exception as e:
             logger.error(f"[Bridge] 增强大五画像失败: {e}")
             return {"ok": False, "error": str(e)}
 
-    def cancel_big5_impressions(self, conversation_id: int, account_wxid: str = "") -> dict:
-        """取消进行中的大五 AI 校正（LLM 请求最长 90s，不能让用户只能干等）。"""
+    def cancel_big5_impressions(
+        self, conversation_id: int, account_wxid: str = "",
+        from_ts: int = 0, to_ts: int = 0,
+    ) -> dict:
+        """取消进行中的大五 AI 校正（LLM 请求最长 90s，不能让用户只能干等）。
+
+        时间窗需与启动增强时一致（单飞键含窗维）。
+        """
+        try:
+            win_from, win_to = self._optional_window_ts(from_ts, to_ts)
+        except ValueError:
+            win_from, win_to = None, None
         running = getattr(self, "_big5_enhance_events", None) or {}
-        event = running.get((int(conversation_id or 0), account_wxid or ""))
+        event = running.get(
+            (int(conversation_id or 0), account_wxid or "", win_from or 0, win_to or 0)
+        )
         if event is None:
             return {"ok": False, "error": "没有进行中的 AI 校正"}
         event.set()

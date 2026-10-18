@@ -243,3 +243,73 @@ def test_empty_conversation_returns_zeroed_metrics(db):
     assert metrics.daily_cv_active is None
     dumped = metrics.to_dict()
     assert dumped["burst_unanswered"] == {"self": 0, "other": 0}
+
+
+# ===== 时间窗（大五演变按段取数；缺省 None 行为不变） =====
+
+
+def test_window_closed_interval_counts_and_span(db):
+    """闭区间过滤：恰在起止点上的消息计入，窗外 1 秒/前一日不计；单活跃日 cv=None。"""
+    base = ts(day=2)
+    for i in range(5):
+        add(db, 1, i % 2, f"文本{i}", base + i * 60)
+    add(db, 1, 1, "窗前", base - 1)
+    add(db, 1, 0, "前一日", ts(day=1))
+
+    metrics = EngagementMetricsService().compute(1, base, base + 4 * 60)
+    assert metrics.text_message_count == 5
+    assert (metrics.self_text_count, metrics.other_text_count) == (2, 3)
+    assert metrics.first_ts == base
+    assert metrics.last_ts == base + 4 * 60
+    assert list(metrics.daily_counts) == ["2026-06-02"]
+    assert metrics.daily_cv_active is None  # 活跃日不足 2 天
+
+
+def test_no_window_returns_full_history(db):
+    """默认不传窗：全量行为不变（好感度六维链路的回归守卫）。"""
+    for day in (1, 2, 3):
+        for i in range(5):
+            add(db, 1, i % 2, f"文本{day}-{i}", ts(day=day) + i * 60)
+
+    metrics = compute(1)
+    assert metrics.text_message_count == 15
+    assert (metrics.self_text_count, metrics.other_text_count) == (6, 9)
+    assert metrics.first_ts == ts(day=1)
+    assert metrics.last_ts == ts(day=3) + 4 * 60
+    assert set(metrics.daily_counts) == {"2026-06-01", "2026-06-02", "2026-06-03"}
+    assert metrics.daily_cv_active is not None
+
+
+def test_revoke_and_polarity_windowed(db):
+    """撤回（系统消息扫描）与极性（sentiment_cache JOIN）同样按窗过滤。"""
+    base = ts(day=2)
+    # 窗内：我撤回 2、对方撤回 1
+    for i in range(2):
+        add(db, 1, 1, "你撤回了一条消息", base + i * 60, message_type=10000)
+    add(db, 1, 0, "对方昵称撤回了一条消息", base + 120, message_type=10000)
+    # 窗内极性：我正向 2、对方负面 1
+    in_ids = [add(db, 1, 1, "开心", base + 200 + i * 60) for i in range(2)]
+    in_ids.append(add(db, 1, 0, "烦死了", base + 300))
+    db.executemany(
+        "INSERT INTO sentiment_cache (message_id, polarity, intensity) VALUES (?, ?, 0.5)",
+        [(in_ids[0], 1), (in_ids[1], 1), (in_ids[2], -1)],
+    )
+    # 窗外（前一日）：各一票，不应计入
+    add(db, 1, 1, "你撤回了一条消息", ts(day=1), message_type=10000)
+    add(db, 1, 0, "对方昵称撤回了一条消息", ts(day=1) + 60, message_type=10000)
+    out_ids = [add(db, 1, 1, "窗前开心", ts(day=1) + 120),
+               add(db, 1, 0, "窗前烦死了", ts(day=1) + 180)]
+    db.executemany(
+        "INSERT INTO sentiment_cache (message_id, polarity, intensity) VALUES (?, ?, 0.5)",
+        [(out_ids[0], 1), (out_ids[1], -1)],
+    )
+    db.commit()
+
+    metrics = EngagementMetricsService().compute(1, base, ts(day=2, hour=23))
+    assert (metrics.revoke_self, metrics.revoke_other) == (2, 1)
+    assert (metrics.positive_self, metrics.negative_self) == (2, 0)
+    assert (metrics.positive_other, metrics.negative_other) == (0, 1)
+
+    full = compute(1)
+    assert (full.revoke_self, full.revoke_other) == (3, 2)
+    assert (full.positive_self, full.negative_other) == (3, 2)

@@ -421,7 +421,7 @@ class _BlockingEnhanceService:
         self.release = threading.Event()
         self.cancel_events = []
 
-    def enhance(self, conversation_id, account_wxid="", cancel_event=None):
+    def enhance(self, conversation_id, account_wxid="", cancel_event=None, from_ts=None, to_ts=None):
         self.cancel_events.append(cancel_event)
         self.started.set()
         self.release.wait(5)
@@ -457,3 +457,132 @@ class TestEnhanceBridge:
         assert results and results[0]["ok"] is True
         # 完成后事件表清空，可再次发起
         assert not bridge._big5_enhance_events
+
+    def test_single_flight_keyed_by_window(self):
+        """单飞键含窗维：同会话不同窗可并行，同窗才互斥；按窗取消只命中对应窗。"""
+        from app.webview.api.deep_analysis import DeepAnalysisApiMixin
+
+        bridge = DeepAnalysisApiMixin()
+        slow = _BlockingEnhanceService()
+        bridge._big5_service = slow
+
+        t1 = threading.Thread(target=lambda: bridge.enhance_big5_impressions(1, "", 100, 200))
+        t1.start()
+        assert slow.started.wait(5)
+
+        t2 = threading.Thread(target=lambda: bridge.enhance_big5_impressions(1, "", 300, 400))
+        t2.start()
+        deadline = time.time() + 5
+        while len(slow.cancel_events) < 2 and time.time() < deadline:
+            time.sleep(0.01)
+        assert len(slow.cancel_events) == 2  # 不同窗并行启动，不被单飞挡住
+
+        dup = bridge.enhance_big5_impressions(1, "", 100, 200)
+        assert dup["ok"] is False and dup["reason"] == "already_running"
+
+        assert bridge.cancel_big5_impressions(1, "", 300, 400)["ok"] is True
+        assert slow.cancel_events[1].is_set()
+        assert not slow.cancel_events[0].is_set()
+
+        slow.release.set()
+        t1.join(5)
+        t2.join(5)
+        assert not bridge._big5_enhance_events
+
+
+class TestWindowedImpressions:
+    """时间窗档位（表 v2）：full/custom 缓存隔离、采集穿窗、旧表 DROP 重建。"""
+
+    def test_full_and_custom_cache_isolated(self, db):
+        """full 与 custom 窗各自落行互不污染；二次调用缓存命中不重算。"""
+        seed(db)
+        service = make_service(db)
+        w_from, w_to = 1_700_000_000, 1_700_000_000 + 3600 * 200
+        full = service.get_impressions(1)
+        custom = service.get_impressions(1, from_ts=w_from, to_ts=w_to)
+
+        rows = dict(db.execute(
+            "SELECT window_kind, COUNT(*) FROM big5_impressions WHERE source = 'local'"
+            " GROUP BY window_kind"
+        ).fetchall())
+        assert rows == {"full": 2, "custom": 2}
+        assert full["window"] == {"kind": "full", "from": 0, "to": 0}
+        assert custom["window"] == {"kind": "custom", "from": w_from, "to": w_to}
+
+        # 清空消息后二次调用仍原样返回（缓存命中，不重算）
+        db.execute("DELETE FROM messages")
+        again_full = service.get_impressions(1)
+        again_custom = service.get_impressions(1, from_ts=w_from, to_ts=w_to)
+        for subject in ("me", "other"):
+            assert again_full["subjects"][subject]["scores"] == full["subjects"][subject]["scores"]
+            assert again_custom["subjects"][subject]["scores"] == custom["subjects"][subject]["scores"]
+
+    def test_windowed_revoke_not_counted(self, db):
+        """custom 窗的撤回子指标只算窗内（内层系统消息查询穿窗）。"""
+        seed(db)
+        # 窗外（30 天前）对方撤回 8 次：只应进 full 的 revoke_rate
+        for i in range(8):
+            db.execute(
+                "INSERT INTO messages (conversation_id, is_sender, message_type, content, timestamp)"
+                " VALUES (1, 0, 10000, '对方昵称撤回了一条消息', ?)",
+                (1_700_000_000 - 86400 * 30 + i,),
+            )
+        db.commit()
+        service = make_service(db)
+        w_from, w_to = 1_700_000_000, 1_700_000_000 + 3600 * 200
+        full = service.get_impressions(1)
+        windowed = service.get_impressions(1, from_ts=w_from, to_ts=w_to)
+        assert full["subjects"]["other"]["indicators"]["revoke_rate"] > 0
+        assert windowed["subjects"]["other"]["indicators"]["revoke_rate"] == 0
+
+    def test_enhance_samples_window_only(self, db):
+        """按窗增强：采样语料只含窗内文本（窗外话题词绝不进 prompt）。"""
+        early = 1_700_000_000
+        later = early + 86400 * 30
+        for i in range(40):
+            for side in (1, 0):
+                db.execute(
+                    "INSERT INTO messages (conversation_id, is_sender, message_type, content, timestamp)"
+                    " VALUES (1, ?, 1, ?, ?)",
+                    (side, f"早期暗号{i}", early + i * 600 + side * 300),
+                )
+                db.execute(
+                    "INSERT INTO messages (conversation_id, is_sender, message_type, content, timestamp)"
+                    " VALUES (1, ?, 1, ?, ?)",
+                    (side, f"后期暗号{i}", later + i * 600 + side * 300),
+                )
+        db.commit()
+        http = _FakeHTTP(llm_content(quote="后期暗号1"))
+        service = make_service(
+            db, http=http, remote=False, model={"api_base_url": "http://x", "model_id": "m"}
+        )
+        result = service.enhance(1, from_ts=later, to_ts=later + 86400)
+        assert result["ok"] is True
+        user_content = http.calls[0]["payload"]["messages"][1]["content"]
+        assert "后期暗号" in user_content
+        assert "早期暗号" not in user_content
+
+    def test_old_schema_dropped_and_rebuilt(self, db):
+        """v1 表（无 window 档位列）DROP 重建：旧行不复活，可继续写入查询。"""
+        db.execute(
+            "CREATE TABLE big5_impressions (id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            " conversation_id INTEGER, account_wxid TEXT, subject TEXT, source TEXT,"
+            " prompt_version INTEGER, scores_json TEXT, base_scores_json TEXT,"
+            " evidence_json TEXT, indicators_json TEXT, model_name TEXT,"
+            " created_at INTEGER, expires_at INTEGER)"
+        )
+        db.execute(
+            "INSERT INTO big5_impressions (conversation_id, subject, source, prompt_version,"
+            " scores_json, created_at, expires_at) VALUES (1, 'me', 'local', 1, '{}', 1, 9999999999)"
+        )
+        db.commit()
+        seed(db)
+        service = make_service(db)
+        payload = service.get_impressions(1)
+        assert payload["ok"] is True
+
+        cols = {r[1] for r in db.execute("PRAGMA table_info(big5_impressions)")}
+        assert {"window_kind", "window_from", "window_to"} <= cols
+        # 重建后只剩本次新算的 local 行（旧 v1 行随 DROP 消失）
+        count = db.execute("SELECT COUNT(*) FROM big5_impressions").fetchone()
+        assert count[0] == 2

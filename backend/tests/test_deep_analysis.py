@@ -1,0 +1,296 @@
+"""时光深度聚合（分桶情绪序列/覆盖率/拐点/词云演变/里程碑）测试。
+
+真形表内存库范式：deep 服务与被复用的 analysis_service 各自的 get_db
+绑定都要替换（两模块都是 `from ...connection import get_db` 顶层绑定）。
+"""
+import os
+import sqlite3
+import sys
+from datetime import datetime
+
+import pytest
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+import app.services.analysis.analysis_service as analysismod
+import app.services.analysis.deep_analysis_service as deepmod
+from app.services.analysis.deep_analysis_service import DeepAnalysisService
+
+
+def ts(year, month, day, hour=12):
+    """本地时间戳（与 SQL 里的 'localtime' 修饰一致；取正午避开日界漂移）"""
+    return int(datetime(year, month, day, hour).timestamp())
+
+
+@pytest.fixture
+def db(monkeypatch):
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        "CREATE TABLE messages (id INTEGER PRIMARY KEY, conversation_id INT, "
+        "is_sender INT, message_type INT DEFAULT 1, content TEXT, timestamp INT)"
+    )
+    conn.execute(
+        "CREATE TABLE sentiment_cache (message_id INTEGER UNIQUE, polarity INT, "
+        "intensity REAL, created_at INT)"
+    )
+    conn.execute(
+        "CREATE TABLE message_preprocessed (message_id INTEGER PRIMARY KEY, "
+        "conversation_id INT, cleaned_content TEXT, is_valid INT DEFAULT 1, created_at INT)"
+    )
+    conn.execute(
+        "CREATE TABLE affinity_scores (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "conversation_id INT, analysis_version INT, overall_score REAL, created_at INT)"
+    )
+    monkeypatch.setattr(deepmod, "get_db", lambda: conn)
+    monkeypatch.setattr(analysismod, "get_db", lambda: conn)
+    yield conn
+    conn.close()
+
+
+_mid = iter(range(1, 100000))
+
+
+def msg(db, t, is_sender=0, content="今晚吃什么", with_sentiment=True, polarity=1, intensity=0.3, message_type=1):
+    mid = next(_mid)
+    db.execute(
+        "INSERT INTO messages (id, conversation_id, is_sender, message_type, content, timestamp)"
+        " VALUES (?, 1, ?, ?, ?, ?)",
+        (mid, is_sender, message_type, content, int(t)),
+    )
+    if with_sentiment:
+        db.execute(
+            "INSERT INTO sentiment_cache (message_id, polarity, intensity, created_at)"
+            " VALUES (?, ?, ?, 1)",
+            (mid, polarity, intensity),
+        )
+    return mid
+
+
+def preprocessed(db, mid, cleaned):
+    db.execute(
+        "INSERT INTO message_preprocessed (message_id, conversation_id, cleaned_content, is_valid, created_at)"
+        " VALUES (?, 1, ?, 1, 1)",
+        (mid, cleaned),
+    )
+
+
+class TestBucketSeries:
+    def test_week_bucket_spans_year_boundary(self, db):
+        """ISO 周（周一首日）：2025-12-29(一)~2026-01-04(日) 归同一桶。"""
+        for day in ((2025, 12, 29), (2025, 12, 31), (2026, 1, 1), (2026, 1, 4)):
+            msg(db, ts(*day))
+        msg(db, ts(2026, 1, 5))  # 下周一，新桶
+
+        result = DeepAnalysisService().get_deep_analysis(
+            1, ts(2025, 12, 20), ts(2026, 1, 10), bucket="week"
+        )
+        labels = [item["ts"] for item in result["buckets"]]
+        assert labels == ["2025-12-29", "2026-01-05"]
+        assert result["buckets"][0]["msgCount"] == 4
+
+    def test_month_and_year_bucket_labels(self, db):
+        msg(db, ts(2025, 11, 3))
+        msg(db, ts(2025, 12, 5))
+        msg(db, ts(2026, 1, 7))
+        service = DeepAnalysisService()
+        monthly = service.get_deep_analysis(1, ts(2025, 1, 1), ts(2026, 6, 1), bucket="month")
+        yearly = service.get_deep_analysis(1, ts(2025, 1, 1), ts(2026, 6, 1), bucket="year")
+        assert [item["ts"] for item in monthly["buckets"]] == ["2025-11", "2025-12", "2026-01"]
+        assert [item["ts"] for item in yearly["buckets"]] == ["2025", "2026"]
+
+    def test_dual_party_avg_split(self, db):
+        """userScore/otherScore 按 is_sender 各自均值；单侧无消息为 null。"""
+        base = ts(2026, 3, 10)
+        msg(db, base + 1, is_sender=1, intensity=0.5)
+        msg(db, base + 2, is_sender=1, intensity=0.1)
+        msg(db, base + 3, is_sender=0, intensity=-0.3)
+        msg(db, ts(2026, 3, 11), is_sender=0, intensity=-0.2)  # 次日（桶内只有对方）
+
+        result = DeepAnalysisService().get_deep_analysis(
+            1, ts(2026, 3, 9), ts(2026, 3, 12), bucket="day"
+        )
+        first, second = result["buckets"]
+        assert first["userScore"] == pytest.approx(0.3)
+        assert first["otherScore"] == pytest.approx(-0.3)
+        assert second["userScore"] is None
+        assert second["otherScore"] == pytest.approx(-0.2)
+
+    def test_uncovered_bucket_keeps_full_count(self, db):
+        """缺情感数据的桶：coverage=0、score=None、lowConfidence，msgCount 仍全量。"""
+        msg(db, ts(2026, 3, 1))
+        msg(db, ts(2026, 3, 2), with_sentiment=False)
+        msg(db, ts(2026, 3, 2), with_sentiment=False)
+        msg(db, ts(2026, 3, 3))
+
+        result = DeepAnalysisService().get_deep_analysis(
+            1, ts(2026, 2, 25), ts(2026, 3, 8), bucket="day"
+        )
+        middle = result["buckets"][1]
+        assert middle["ts"] == "2026-03-02"
+        assert middle["msgCount"] == 2
+        assert middle["cachedCount"] == 0
+        assert middle["coverage"] == 0.0
+        assert middle["score"] is None
+        assert middle["lowConfidence"] is True
+        # 全覆盖桶不标低置信
+        assert result["buckets"][0]["lowConfidence"] is False
+
+    def test_invalid_bucket_rejected(self, db):
+        result = DeepAnalysisService().get_deep_analysis(1, 0, 100, bucket="quarter")
+        assert result["ok"] is False
+
+
+class TestTurningPoints:
+    def test_max_drop_and_rise_with_threshold(self, db):
+        """相邻桶最大涨/跌幅；样本不足（<30 条）的桶不参与。"""
+        weeks = [
+            (ts(2026, 2, 2), 35, 0.2),    # 第 1 周：涨势起点
+            (ts(2026, 2, 9), 35, 0.5),    # +0.3 rise
+            (ts(2026, 2, 16), 35, 0.4),
+            (ts(2026, 2, 23), 35, -0.2),  # -0.6 drop
+            (ts(2026, 3, 2), 5, 1.0),     # 小样本桶，不参与
+        ]
+        for week_ts, count, intensity in weeks:
+            for i in range(count):
+                msg(db, week_ts + i * 60, intensity=intensity)
+
+        result = DeepAnalysisService().get_deep_analysis(
+            1, ts(2026, 1, 30), ts(2026, 3, 10), bucket="week"
+        )
+        turning = result["turning_points"]
+        by_direction = {item["direction"]: item for item in turning}
+        assert by_direction["rise"]["delta"] == pytest.approx(0.3)
+        assert by_direction["drop"]["delta"] == pytest.approx(-0.6)
+        # 小样本桶不进入任何拐点
+        assert all(item["to_ts"] != "2026-03-02" for item in turning)
+
+
+class TestMilestones:
+    def test_first_message_global_and_window_scope(self, db):
+        msg(db, ts(2024, 5, 1))
+        msg(db, ts(2026, 3, 5))
+
+        result = DeepAnalysisService().get_deep_analysis(
+            1, ts(2026, 1, 1), ts(2026, 3, 31), bucket="month"
+        )
+        firsts = [e for e in result["milestones"] if e["kind"] == "first_message"]
+        scopes = {e["scope"] for e in firsts}
+        assert scopes == {"global", "window"}
+
+    def test_count_marks_injected(self, db):
+        for i in range(6):
+            msg(db, ts(2026, 3, 1) + i * 3600)
+
+        result = DeepAnalysisService().get_deep_analysis(
+            1, ts(2026, 1, 1), ts(2026, 3, 31), bucket="month", marks=(3, 5, 50)
+        )
+        marks = {e["mark"]: e for e in result["milestones"] if e["kind"] == "count_mark"}
+        assert set(marks) == {3, 5}  # 50 未达到，不出现
+        # 第 3 条消息的时间戳（按时间升序）
+        assert marks[3]["ts"] == ts(2026, 3, 1) + 2 * 3600
+
+    def test_longest_silence_days(self, db):
+        msg(db, ts(2026, 3, 1))
+        msg(db, ts(2026, 3, 4))   # 3 天间隔
+        msg(db, ts(2026, 3, 4, 13))
+
+        result = DeepAnalysisService().get_deep_analysis(
+            1, ts(2026, 2, 25), ts(2026, 3, 10), bucket="week"
+        )
+        silence = [e for e in result["milestones"] if e["kind"] == "longest_silence"]
+        assert len(silence) == 1
+        assert silence[0]["days"] == pytest.approx(3.0)
+
+
+class TestWordcloudEvolution:
+    def test_cleaned_caliber_when_fully_preprocessed(self, db):
+        """覆盖率 ≥90%：用清洗缓存文本，原始噪声词不出现。"""
+        base = ts(2026, 3, 3, 8)  # 上午：窗口(03-03~03-05)中点之前，归前半窗
+        for i in range(4):
+            mid = msg(db, base + i * 60, is_sender=i % 2, content="火锅火锅火锅", with_sentiment=False)
+            preprocessed(db, mid, "旅行计划讨论")
+
+        result = DeepAnalysisService().get_deep_analysis(
+            1, ts(2026, 3, 1), ts(2026, 3, 5), bucket="week"
+        )
+        evo = result["wordcloud_evolution"]
+        assert evo["caliber"] == "cleaned"
+        words = {w["word"] for w in evo["halves"][0]["words"]["all"]}
+        assert "旅行" in words
+        assert "火锅" not in words
+
+    def test_raw_caliber_when_coverage_low(self, db):
+        """覆盖率 <90%：统一回退原始 content，不与前半窗缓存混口径。"""
+        base = ts(2026, 3, 3, 8)
+        for i in range(4):
+            mid = msg(db, base + i * 60, content="火锅火锅火锅", with_sentiment=False)
+            if i == 0:
+                preprocessed(db, mid, "旅行计划讨论")  # 只有 1/4 有缓存
+
+        result = DeepAnalysisService().get_deep_analysis(
+            1, ts(2026, 3, 1), ts(2026, 3, 5), bucket="week"
+        )
+        evo = result["wordcloud_evolution"]
+        assert evo["caliber"] == "raw"
+        words = {w["word"] for w in evo["halves"][0]["words"]["all"]}
+        assert "火锅" in words
+
+    def test_party_split_and_halves(self, db):
+        """me/other 分视角；前后半窗按窗口中点切分。"""
+        base = ts(2026, 3, 3)
+        # 前半窗：我谈旅行，对方谈加班
+        for i in range(3):
+            msg(db, base + i * 60, is_sender=1, content="旅行旅行旅行", with_sentiment=False)
+            msg(db, base + i * 60 + 30, is_sender=0, content="加班加班加班", with_sentiment=False)
+        # 后半窗（3 月 4 日下午之后）
+        late = ts(2026, 3, 4, 18)
+        for i in range(3):
+            msg(db, late + i * 60, is_sender=1, content="健身健身健身", with_sentiment=False)
+            msg(db, late + i * 60 + 30, is_sender=0, content="考试考试考试", with_sentiment=False)
+
+        result = DeepAnalysisService().get_deep_analysis(
+            1, ts(2026, 3, 3), ts(2026, 3, 5), bucket="week"
+        )
+        halves = result["wordcloud_evolution"]["halves"]
+        assert len(halves) == 2
+        first_all = {w["word"] for w in halves[0]["words"]["all"]}
+        assert {"旅行", "加班"} <= first_all
+        me_words = {w["word"] for w in halves[0]["words"]["me"]}
+        assert me_words == {"旅行"}
+        other_words = {w["word"] for w in halves[0]["words"]["other"]}
+        assert other_words == {"加班"}
+        second_all = {w["word"] for w in halves[1]["words"]["all"]}
+        assert {"健身", "考试"} <= second_all
+
+    def test_empty_window(self, db):
+        result = DeepAnalysisService().get_deep_analysis(
+            1, ts(2026, 1, 1), ts(2026, 1, 31), bucket="week"
+        )
+        assert result["ok"] is True
+        assert result["buckets"] == []
+        assert result["wordcloud_evolution"]["halves"] == []
+        assert result["milestones"] == []
+
+
+class TestAffinityHistory:
+    def test_only_current_caliber_rows(self, db):
+        from app.services.analysis.affinity_analysis_service import AffinityAnalysisService
+
+        caliber = AffinityAnalysisService.CALIBER_VERSION
+        db.executemany(
+            "INSERT INTO affinity_scores (conversation_id, analysis_version, overall_score, created_at)"
+            " VALUES (1, ?, ?, ?)",
+            [
+                (caliber - 1, 88.0, ts(2026, 3, 1)),  # 旧口径，过滤
+                (caliber, 72.0, ts(2026, 3, 2)),
+                (caliber, 80.0, ts(2026, 3, 3)),
+            ],
+        )
+
+        result = DeepAnalysisService().get_deep_analysis(
+            1, ts(2026, 3, 1), ts(2026, 3, 31), bucket="week"
+        )
+        points = result["affinity_history"]["points"]
+        assert [p["score"] for p in points] == [72.0, 80.0]
+        assert result["affinity_history"]["caliber_version"] == caliber

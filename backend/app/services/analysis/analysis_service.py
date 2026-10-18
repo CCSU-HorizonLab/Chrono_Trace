@@ -9,6 +9,29 @@ import logging
 
 
 logger = logging.getLogger(__name__)
+
+
+def sentiment_bucket_expr(bucket: str) -> str:
+    """时间分桶 SQL 表达式（产出可字典序比较的桶标签）。
+
+    - day  : YYYY-MM-DD（历史口径，保持不变）
+    - week : 周一首日。必须用 '-6 days' + 'weekday 1' 组合把任意日期回退到
+      本周一——直接 'weekday 1' 是「前进到下一个周一」语义，周首会漂移
+    - month: YYYY-MM
+    - year : YYYY
+    """
+    base = "m.timestamp, 'unixepoch', 'localtime'"
+    if bucket == "day":
+        return f"DATE({base})"
+    if bucket == "week":
+        return f"DATE({base}, '-6 days', 'weekday 1')"
+    if bucket == "month":
+        return f"strftime('%Y-%m', {base})"
+    if bucket == "year":
+        return f"strftime('%Y', {base})"
+    raise ValueError(f"未知分桶粒度: {bucket}")
+
+
 class AnalysisService:
     """历史数据分析服务（统一分析入口）"""
 
@@ -254,12 +277,13 @@ class AnalysisService:
         self,
         conversation_id: int,
         from_ts: int,
-        to_ts: int
+        to_ts: int,
+        bucket: str = "day"
     ) -> Dict[str, Any]:
-        """按天聚合情感趋势数据"""
-        cursor = get_db().execute("""
+        """按时间桶聚合情感趋势数据（默认按天，兼容旧口径）"""
+        cursor = get_db().execute(f"""
             SELECT
-                DATE(m.timestamp, 'unixepoch', 'localtime') AS day,
+                {sentiment_bucket_expr(bucket)} AS day,
                 AVG(sc.intensity) AS avg_score,
                 SUM(CASE WHEN sc.polarity = 1 THEN 1 ELSE 0 END) AS positive_count,
                 SUM(CASE WHEN sc.polarity = 0 THEN 1 ELSE 0 END) AS neutral_count,

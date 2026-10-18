@@ -53,12 +53,14 @@ from .api.gpu import GpuApiMixin
 from .api.model_mgmt import ModelMgmtApiMixin
 from .api.profile import ProfileApiMixin
 from .api.history_qa import HistoryQaApiMixin
+from .api.deep_analysis import DeepAnalysisApiMixin
 
 
 class Bridge(
     AffinityApiMixin, RagAdminApiMixin, KeyCaptureApiMixin,
     LlmModelsApiMixin, AnalysisReadApiMixin, WindowApiMixin,
     GpuApiMixin, ModelMgmtApiMixin, ProfileApiMixin, HistoryQaApiMixin,
+    DeepAnalysisApiMixin,
 ):
     """PyWebView JS API Bridge: 暴露给前端调用的方法。"""
 

@@ -12,6 +12,12 @@
           <span class="meta-label">样本消息</span>
           <span class="meta-value">{{ totalMessages }}</span>
         </div>
+        <div v-if="legendItems.length > 1" class="legend">
+          <span v-for="item in legendItems" :key="item.label" class="legend-item">
+            <span class="legend-swatch" :style="{ background: item.color }" />
+            {{ item.label }}
+          </span>
+        </div>
       </div>
 
       <svg
@@ -54,6 +60,17 @@
           {{ tick.label }}
         </text>
 
+        <!-- 低置信桶底纹：该桶缺情感数据，分数仅供参考 -->
+        <rect
+          v-for="(band, index) in lowConfidenceBands"
+          :key="`lc-${index}`"
+          :x="band.x"
+          :y="padding.top"
+          :width="band.width"
+          :height="height - padding.top - padding.bottom"
+          class="low-confidence-band"
+        />
+
         <rect
           v-for="(bar, index) in bars"
           :key="`bar-${index}`"
@@ -66,15 +83,67 @@
           @mouseenter="activeIndex = index"
         />
 
-        <polyline :points="areaPoints" fill="url(#emotion-area-gradient)" stroke="none" />
-        <polyline :points="linePoints" fill="none" stroke="#5b8def" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+        <!-- 消极时段：曲线低于 0 的部分与基线围成的浅红区 -->
+        <polygon
+          v-for="(poly, index) in negativePolygons"
+          :key="`neg-${index}`"
+          :points="poly"
+          class="negative-shade"
+        />
 
+        <template v-for="line in renderedLines" :key="line.key">
+          <polyline
+            v-if="line.areaPoints"
+            :points="line.areaPoints"
+            fill="url(#emotion-area-gradient)"
+            stroke="none"
+          />
+          <polyline
+            v-for="(seg, segIndex) in line.segments"
+            :key="`seg-${segIndex}`"
+            :points="seg"
+            fill="none"
+            :stroke="line.color"
+            stroke-width="3"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </template>
+
+        <!-- 单线模式的悬停点 -->
         <g
-          v-for="(point, index) in chartPoints"
+          v-for="point in chartPoints"
           :key="point.ts"
-          @mouseenter="activeIndex = index"
+          @mouseenter="activeIndex = point.index"
         >
-          <circle :cx="point.x" :cy="point.y" :r="index === activeIndex ? 6 : 4" class="point-dot" :class="{ active: index === activeIndex }" />
+          <circle :cx="point.x" :cy="point.y" :r="point.index === activeIndex ? 6 : 4" class="point-dot" :class="{ active: point.index === activeIndex }" />
+        </g>
+        <!-- 双线模式：仅悬停列上显示各线标记 -->
+        <g v-if="renderedLines.length > 1 && activePoint">
+          <circle
+            v-for="line in renderedLines"
+            :key="`hp-${line.key}`"
+            :cx="activePoint.x"
+            :cy="scaleY(pickValue(line, activeIndex))"
+            r="5"
+            class="point-dot"
+            :style="{ stroke: line.color }"
+          />
+        </g>
+
+        <!-- 好感度历史落点（菱形；0-100 映射到 -1..1 量纲） -->
+        <g v-for="mark in affinityMarks" :key="`aff-${mark.ts}`">
+          <rect
+            :x="mark.x - 5"
+            :y="mark.y - 5"
+            :width="10"
+            :height="10"
+            class="affinity-mark"
+            transform-origin="center"
+            :transform="`rotate(45 ${mark.x} ${mark.y})`"
+          >
+            <title>好感度 {{ mark.score }}（全面分析落点，非每日快照）</title>
+          </rect>
         </g>
 
         <line
@@ -100,9 +169,16 @@
 
       <div v-if="activePoint" class="tooltip" :style="tooltipStyle">
         <div class="tooltip-date">{{ activePoint.ts }}</div>
-        <div>当天氛围 {{ getToneLabel(activePoint.score) }}</div>
+        <div v-if="typeof activePoint.score === 'number'">{{ unitLabel }}氛围 {{ getToneLabel(activePoint.score) }}</div>
+        <div v-else class="tooltip-warn">该{{ unitLabel }}缺情感数据（未补算）</div>
+        <div v-if="activePoint.userScore !== null && activePoint.userScore !== undefined">我的情绪 {{ activePoint.userScore > 0 ? '+' : '' }}{{ activePoint.userScore }}</div>
+        <div v-if="activePoint.otherScore !== null && activePoint.otherScore !== undefined">TA 的情绪 {{ activePoint.otherScore > 0 ? '+' : '' }}{{ activePoint.otherScore }}</div>
         <div>消息数 {{ activePoint.msgCount || 0 }}</div>
         <div>正向 {{ activePoint.positive || 0 }} / 中性 {{ activePoint.neutral || 0 }} / 负向 {{ activePoint.negative || 0 }}</div>
+        <div v-if="activeCoverage !== null && activeCoverage < 1" class="tooltip-warn">
+          情感数据覆盖 {{ Math.round(activeCoverage * 100) }}%，该{{ unitLabel }}分数仅供参考
+        </div>
+        <div v-if="activeAffinity !== null">好感度 {{ activeAffinity }}（分析落点）</div>
       </div>
     </div>
   </div>
@@ -120,10 +196,29 @@ type TimeseriesPoint = {
   msgCount?: number
   userScore?: number | null
   otherScore?: number | null
+  coverage?: number | null
+  lowConfidence?: boolean
 }
 
-const props = defineProps<{ timeseries: TimeseriesPoint[] }>()
+// 双方曲线配色经 CVD 校验（dataviz 六检全过，白底）：我=紫 / TA=深琥珀 / 好感度=深蓝
+const ME_COLOR = '#7c4dff'
+const OTHER_COLOR = '#d97706'
+const AFFINITY_COLOR = '#2563eb'
+const COMBINED_COLOR = '#5b8def'
 
+const props = defineProps<{
+  timeseries: TimeseriesPoint[]
+  /** combined=合并单线（默认，现状）；me/other=单侧；both=双方双线 */
+  perspective?: 'combined' | 'both' | 'me' | 'other'
+  /** 消极时段：曲线低于 0 的区段着浅红 */
+  negativeShade?: boolean
+  /** 好感度历史落点；ts 为桶标签（与 timeseries.ts 同口径），score 0-100 */
+  affinityPoints?: Array<{ ts: string; score: number }>
+  /** 桶粒度名（天/周/月/年），用于 tooltip 文案；默认「当天」 */
+  unitLabel?: string
+}>()
+
+const unitLabel = computed(() => props.unitLabel || '当天')
 const width = 800
 const height = 300
 const padding = { top: 20, right: 24, bottom: 34, left: 44 }
@@ -144,33 +239,79 @@ const yTicks = computed(() => {
 })
 
 const totalMessages = computed(() => props.timeseries.reduce((sum, item) => sum + (item.msgCount || 0), 0))
+// 缺覆盖桶 score 为 null：均值只统计有分数的桶
 const averageScore = computed(() => {
-  if (!props.timeseries.length) return 0
-  return props.timeseries.reduce((sum, item) => sum + item.score, 0) / props.timeseries.length
+  const scored = props.timeseries.filter((item) => typeof item.score === 'number')
+  if (!scored.length) return 0
+  return scored.reduce((sum, item) => sum + (item.score || 0), 0) / scored.length
 })
 const overallTone = computed(() => getToneSummary(averageScore.value))
 
-const chartPoints = computed(() => {
-  if (!props.timeseries.length) return []
-  return props.timeseries.map((item, index) => ({
-    ...item,
-    x: scaleX(index, props.timeseries.length),
-    y: scaleY(item.score),
-  }))
+interface RenderedLine {
+  key: string
+  color: string
+  pick: (point: TimeseriesPoint) => number | null | undefined
+  segments: string[]
+  points: Array<{ x: number; y: number; value: number; index: number }>
+  areaPoints: string
+}
+
+const renderedLines = computed<RenderedLine[]>(() => {
+  const defs: Array<{ key: string; color: string; pick: (p: TimeseriesPoint) => number | null | undefined }> = []
+  if (props.perspective === 'me') {
+    defs.push({ key: 'me', color: ME_COLOR, pick: (p) => p.userScore })
+  } else if (props.perspective === 'other') {
+    defs.push({ key: 'other', color: OTHER_COLOR, pick: (p) => p.otherScore })
+  } else if (props.perspective === 'both') {
+    defs.push({ key: 'me', color: ME_COLOR, pick: (p) => p.userScore })
+    defs.push({ key: 'other', color: OTHER_COLOR, pick: (p) => p.otherScore })
+  } else {
+    defs.push({ key: 'combined', color: COMBINED_COLOR, pick: (p) => p.score })
+  }
+
+  return defs.map((def) => {
+    const points: Array<{ x: number; y: number; value: number; index: number }> = []
+    props.timeseries.forEach((item, index) => {
+      const value = def.pick(item)
+      if (value === null || value === undefined || Number.isNaN(value)) return
+      points.push({ x: scaleX(index, props.timeseries.length), y: scaleY(value), value, index })
+    })
+
+    // 缺值（单侧无消息/缺覆盖）处断线：仅相邻索引的点连成一段
+    const segments: string[] = []
+    let current: Array<{ x: number; y: number }> = []
+    for (let i = 0; i < points.length; i++) {
+      current.push(points[i])
+      const next = points[i + 1]
+      if (!next || next.index !== points[i].index + 1) {
+        if (current.length > 1) segments.push(current.map((p) => `${p.x},${p.y}`).join(' '))
+        current = []
+      }
+    }
+    if (current.length > 1) segments.push(current.map((p) => `${p.x},${p.y}`).join(' '))
+
+    // 面积只在单线模式画（双线叠面积会糊）
+    let areaPoints = ''
+    if (defs.length === 1 && points.length) {
+      const baseline = height - padding.bottom
+      areaPoints = [
+        `${points[0].x},${baseline}`,
+        ...points.map((p) => `${p.x},${p.y}`),
+        `${points[points.length - 1].x},${baseline}`,
+      ].join(' ')
+    }
+
+    return { ...def, segments, points, areaPoints }
+  })
 })
 
-const linePoints = computed(() => chartPoints.value.map((point) => `${point.x},${point.y}`).join(' '))
-const areaPoints = computed(() => {
-  if (!chartPoints.value.length) return ''
-  const first = chartPoints.value[0]
-  const last = chartPoints.value[chartPoints.value.length - 1]
-  return [
-    `${first.x},${height - padding.bottom}`,
-    ...chartPoints.value.map((point) => `${point.x},${point.y}`),
-    `${last.x},${height - padding.bottom}`,
-  ].join(' ')
-})
+function pickValue(line: RenderedLine, index: number): number {
+  const item = props.timeseries[index]
+  const value = item ? line.pick(item) : null
+  return value ?? 0
+}
 
+// 消息量柱：底部浅蓝细柱，量级与消息数成正比（最多 52px 高）
 const bars = computed(() => {
   const maxCount = Math.max(...props.timeseries.map((item) => item.msgCount || 0), 1)
   const baseline = height - padding.bottom
@@ -187,24 +328,109 @@ const bars = computed(() => {
   })
 })
 
+// x 轴刻度直接基于 timeseries 索引（不随曲线空值断线漂移）
 const xTicks = computed(() => {
-  const data = chartPoints.value
-  if (!data.length) return []
-  if (data.length <= 6) {
-    return data.map((point) => ({ x: point.x, label: formatDateLabel(point.ts) }))
+  const count = props.timeseries.length
+  if (!count) return []
+  if (count <= 6) {
+    return props.timeseries.map((item, index) => ({
+      x: scaleX(index, count),
+      label: formatDateLabel(item.ts),
+    }))
   }
-
-  const lastIndex = data.length - 1
+  const lastIndex = count - 1
   const indexes = new Set([0, Math.floor(lastIndex / 3), Math.floor((lastIndex * 2) / 3), lastIndex])
   return [...indexes].sort((a, b) => a - b).map((index) => ({
-    x: data[index].x,
-    label: formatDateLabel(data[index].ts),
+    x: scaleX(index, count),
+    label: formatDateLabel(props.timeseries[index].ts),
   }))
 })
 
+const legendItems = computed(() => {
+  const items: Array<{ label: string; color: string }> = []
+  if (props.perspective === 'both') {
+    items.push({ label: '我', color: ME_COLOR }, { label: 'TA', color: OTHER_COLOR })
+  }
+  if (props.affinityPoints?.length) {
+    items.push({ label: '好感度落点', color: AFFINITY_COLOR })
+  }
+  return items
+})
+
+const chartPoints = computed(() => {
+  if (renderedLines.value.length !== 1) return []
+  const line = renderedLines.value[0]
+  return line.points.map((point) => ({
+    x: point.x,
+    y: point.y,
+    value: point.value,
+    ts: props.timeseries[point.index]?.ts ?? String(point.index),
+    index: point.index,
+  }))
+})
+
+const negativePolygons = computed(() => {
+  if (!props.negativeShade) return []
+  const polygons: string[] = []
+  const baseline = zeroY
+  for (const line of renderedLines.value) {
+    let run: Array<{ x: number; y: number }> = []
+    const flush = () => {
+      if (run.length > 1) {
+        polygons.push(
+          [`${run[0].x},${baseline}`, ...run.map((p) => `${p.x},${p.y}`), `${run[run.length - 1].x},${baseline}`].join(' '),
+        )
+      }
+      run = []
+    }
+    for (const point of line.points) {
+      if (point.value < 0) run.push(point)
+      else flush()
+    }
+    flush()
+  }
+  return polygons
+})
+
+const affinityMarks = computed(() => {
+  if (!props.affinityPoints?.length) return []
+  const byTs = new Map(props.affinityPoints.map((p) => [p.ts, p.score]))
+  const marks: Array<{ ts: string; x: number; y: number; score: number }> = []
+  props.timeseries.forEach((item, index) => {
+    const score = byTs.get(item.ts)
+    if (score === undefined) return
+    marks.push({
+      ts: item.ts,
+      x: scaleX(index, props.timeseries.length),
+      y: scaleY(score / 50 - 1), // 0-100 → -1..1
+      score,
+    })
+  })
+  return marks
+})
+
+const lowConfidenceBands = computed(() => {
+  const innerWidth = width - padding.left - padding.right
+  const bandWidth = innerWidth / Math.max(props.timeseries.length, 1)
+  return props.timeseries
+    .map((item, index) => ({ item, index }))
+    .filter(({ item }) => item.lowConfidence)
+    .map(({ index }) => ({
+      x: padding.left + index * bandWidth,
+      width: bandWidth,
+    }))
+})
+
 const activePoint = computed(() => {
-  if (activeIndex.value < 0 || activeIndex.value >= chartPoints.value.length) return null
-  return chartPoints.value[activeIndex.value]
+  if (activeIndex.value < 0 || activeIndex.value >= props.timeseries.length) return null
+  const item = props.timeseries[activeIndex.value]
+  return { ...item, x: scaleX(activeIndex.value, props.timeseries.length), y: scaleY(typeof item.score === 'number' ? item.score : 0) }
+})
+
+const activeCoverage = computed(() => activePoint.value?.coverage ?? null)
+const activeAffinity = computed(() => {
+  if (!activePoint.value || !props.affinityPoints?.length) return null
+  return props.affinityPoints.find((p) => p.ts === activePoint.value?.ts)?.score ?? null
 })
 
 const tooltipStyle = computed(() => {
@@ -230,8 +456,11 @@ function scaleY(score: number) {
 }
 
 function formatDateLabel(ts: string) {
-  const [, month = '', day = ''] = ts.split('-')
-  return `${month}/${day}`
+  if (ts.length === 10) {
+    const [, month = '', day = ''] = ts.split('-')
+    return `${month}/${day}`
+  }
+  return ts // 周桶为周一日期；月/年桶本就是短标签
 }
 
 function getToneLabel(score: number) {
@@ -292,6 +521,27 @@ function getToneSummary(score: number) {
   color: var(--ct-text-tertiary);
 }
 
+.legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+  font-size: var(--ct-text-xs);
+  color: var(--ct-text-secondary);
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.legend-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+
 svg {
   width: 100%;
   height: 280px;
@@ -318,6 +568,10 @@ svg {
   text-anchor: end;
 }
 
+.low-confidence-band {
+  fill: rgba(148, 163, 184, 0.12);
+}
+
 .message-bar {
   fill: rgba(91, 141, 239, 0.12);
   rx: 8px;
@@ -326,6 +580,11 @@ svg {
 
 .message-bar.active {
   fill: rgba(91, 141, 239, 0.2);
+}
+
+.negative-shade {
+  fill: rgba(239, 68, 68, 0.08);
+  pointer-events: none;
 }
 
 .point-dot {
@@ -337,6 +596,13 @@ svg {
 
 .point-dot.active {
   fill: #5b8def;
+}
+
+.affinity-mark {
+  fill: #ffffff;
+  stroke: #2563eb;
+  stroke-width: 2;
+  pointer-events: all;
 }
 
 .cursor-line {
@@ -362,6 +628,10 @@ svg {
   color: #ffffff;
   font-weight: 700;
   margin-bottom: 4px;
+}
+
+.tooltip-warn {
+  color: #fbbf24;
 }
 
 .empty {

@@ -98,6 +98,9 @@
         @click="currentTab = 'persona'">用户画像回廊</button>
       <button class="menu-item" :class="{ active: currentTab === 'qa' }"
         @click="currentTab = 'qa'">问问微信</button>
+      <!-- 时光深度：单聊专属（群聊无双方情感/关系演变语义） -->
+      <button v-if="!isGroupConversation" class="menu-item" :class="{ active: currentTab === 'deep' }"
+        @click="currentTab = 'deep'">时光深度</button>
     </div>
   </div>
 
@@ -646,6 +649,26 @@
     </div>
   </div>
 
+  <!-- TAB 6: 时光深度（时间窗长期演变：双方情绪曲线/词云演变/关系阶段叙事，单聊专属） -->
+  <div v-show="currentTab === 'deep' && selectedConversationId" class="tab-content fade-in">
+    <DateRangeFilter
+      :dates="dates"
+      :loading="false"
+      show-granularity
+      :granularity="deepGranularity"
+      @update:dates="onDatesChange"
+      @update:granularity="deepGranularity = $event"
+      @refresh="deepRefreshKey++"
+    />
+    <TimeDeepTab
+      :key="`${selectedConversationId}-${deepRefreshKey}`"
+      :conversation-id="selectedConversationId"
+      :dates="dates"
+      :granularity="deepGranularity"
+      :view-epoch="viewEpoch"
+    />
+  </div>
+
   <!-- Dialogs -->
   <PreferenceKeywordsDialog v-if="selectedConversationId" v-model="showKeywordsDialog"
     :conversation-id="selectedConversationId" @updated="handleKeywordsUpdated" />
@@ -732,6 +755,7 @@ import { showDialog, showConfirm } from '@/utils/dialog'
 import { safeGetItem, safeRemoveItem, safeSetItem } from '@/utils/safeStorage'
 import { toLocalDateKey } from '@/utils/datetime'
 import CtAvatar from '@/components/base/CtAvatar.vue'
+import TimeDeepTab from '@/components/deep/TimeDeepTab.vue'
 import {
   FolderArchive,
   MessageSquare,
@@ -805,10 +829,13 @@ export default {
     components: {
         FiltersBar, DateRangeFilter, SubjectCard, EmotionLineChart, WordCloud, ConversationTimeline,
         AffinityScoreCard, DimensionRadar, SubScoreBreakdown, RiskSignalCard,         PreferenceKeywordsDialog, RelationshipContextForm, CtCard, CtButton, PersonaGallery, CtAvatar,
-        FolderArchive, MessageSquare, Sparkles, BarChart3, TrendingUp, Loader2, Lightbulb, PortraitGenerateDialog
+        FolderArchive, MessageSquare, Sparkles, BarChart3, TrendingUp, Loader2, Lightbulb, PortraitGenerateDialog, TimeDeepTab
     },
     setup() {
         const currentTab = ref('affinity')
+        // 时光深度：分桶粒度（周/月/年）与手动刷新纪元（+1 强制 TimeDeepTab 重挂载重取）
+        const deepGranularity = ref('week')
+        const deepRefreshKey = ref(0)
         const activeAccountWxid = ref('')
 
         // Core State
@@ -2044,6 +2071,11 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
             if ((newVal === 'content' || newVal === 'persona') && selectedConversationId.value) {
                 loadAnalysis()
             }
+        })
+
+        // 切到群聊时时光深度页签隐藏：若正处于该页签则回退关系洞察（群聊工作台）
+        watch(isGroupConversation, (isGroup) => {
+            if (isGroup && currentTab.value === 'deep') currentTab.value = 'affinity'
         })
 
         watch(() => analysisResult.value, (newVal) => {

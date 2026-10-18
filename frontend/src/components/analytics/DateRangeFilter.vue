@@ -5,6 +5,16 @@
       <span class="separator">—</span>
       <input type="date" :value="dates.to" @change="onTo($event)" :disabled="loading" />
     </div>
+    <div v-if="showGranularity" class="granularity-group" role="group" aria-label="分桶粒度">
+      <button
+        v-for="option in granularityOptions"
+        :key="option.value"
+        class="btn granularity-btn"
+        :class="{ active: granularity === option.value }"
+        :disabled="loading"
+        @click="$emit('update:granularity', option.value)"
+      >{{ option.label }}</button>
+    </div>
     <div class="quick-links">
       <button class="btn" @click="quick(7)" :disabled="loading">近7天</button>
       <button class="btn" @click="quick(30)" :disabled="loading">近30天</button>
@@ -18,16 +28,26 @@
 </template>
 
 <script setup lang="ts">
-const props = defineProps<{ 
+const props = defineProps<{
   dates: { from: string; to: string }
-  loading?: boolean 
+  loading?: boolean
+  /** 时光深度页专用：显示 周/月/年 分桶粒度切换（默认不渲染，不影响既有调用） */
+  showGranularity?: boolean
+  granularity?: string
 }>()
 
-const emit = defineEmits<{ 
+const emit = defineEmits<{
   (e: 'update:dates', v: { from: string; to: string }): void
+  (e: 'update:granularity', v: string): void
   (e: 'refresh'): void
-  (e: 'export'): void 
+  (e: 'export'): void
 }>()
+
+const granularityOptions = [
+  { value: 'week', label: '按周' },
+  { value: 'month', label: '按月' },
+  { value: 'year', label: '按年' },
+]
 
 import { toLocalDateKey } from '@/utils/datetime'
 
@@ -81,6 +101,19 @@ function onTo(e: Event) { emit('update:dates', { from: props.dates.from, to: (e.
 .separator {
   color: var(--ct-text-secondary);
   margin: 0 4px;
+}
+
+.granularity-group {
+  display: flex;
+  gap: var(--ct-space-xs);
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.granularity-btn.active {
+  background: var(--ct-color-primary-light);
+  color: var(--ct-color-primary);
+  border-color: var(--ct-color-primary);
 }
 
 .quick-links {

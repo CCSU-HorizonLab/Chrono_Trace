@@ -53,6 +53,34 @@ SHELL_ONLY_CLASS_NAMES = {
 }
 
 
+def poke_wechat_accessibility_bridge(hwnd: int) -> bool:
+    """以 MSAA 客户端身份向微信窗口发 WM_GETOBJECT，激活 Qt 辅助功能桥。
+
+    微信 4.x 是 Qt 程序，Qt 的 accessibility 管理器**惰性激活**——没有
+    辅助客户端连接过时，UIA 树只暴露 shell pane（Qt51514QWindowIcon /
+    MMUIRenderSubWindowHW），内层消息控件全部枚举不到。「开讲述人」偏方
+    的本质是讲述人作为辅助客户端发 WM_GETOBJECT 让 Qt 加载桥；本函数用
+    oleacc.AccessibleObjectFromWindow 发出同一请求，无需讲述人、无需
+    重启微信。失败只说明窗口暂无响应，不影响后续流程。
+    """
+    try:
+        import ctypes
+        from ctypes import POINTER
+        from comtypes import GUID, IUnknown
+
+        iid_iaccessible = GUID("{618736e0-3c3d-11cf-810c-00aa00389b71}")
+        obj = POINTER(IUnknown)()
+        hr = ctypes.windll.oleacc.AccessibleObjectFromWindow(
+            ctypes.c_void_p(int(hwnd)), -4,  # OBJID_CLIENT
+            ctypes.byref(iid_iaccessible),
+            ctypes.byref(obj),
+        )
+        return int(hr) == 0
+    except Exception as exc:
+        logger.debug("WM_GETOBJECT poke failed: %s", exc)
+        return False
+
+
 def _classify_bubble_midpoint(active_mid: float, width: int) -> str:
     """Classify a bubble by its detected active midpoint inside a row screenshot."""
     if width <= 0:
@@ -223,8 +251,13 @@ class NativeUIARealtimeProvider(RealtimeProvider):
                 continue
         return result
 
-    def _ensure_accessible_tree(self, attempts: int = 3, delay: float = 0.2) -> None:
-        """Fail fast when UIA only exposes the outer Qt shell panes."""
+    def _ensure_accessible_tree(self, attempts: int = 4, delay: float = 0.8) -> None:
+        """Fail fast when UIA only exposes the outer Qt shell panes.
+
+        检测到 shell-only 时先以 MSAA 客户端身份 poke Qt 辅助桥（详见
+        poke_wechat_accessibility_bridge），绝大多数情况桥即激活、无需
+        人工开讲述人或重启微信；重试窗口放大到秒级以等桥构建完成。
+        """
         if self._main_window is None:
             raise UINotAccessibleError("ui_not_accessible: WeChat main window not initialized")
 
@@ -256,11 +289,17 @@ class NativeUIARealtimeProvider(RealtimeProvider):
             if meaningful_visible_descendants:
                 return
 
+            # shell-only：先自动激活 Qt 辅助桥再等下一轮（讲述人偏方的
+            # 无人工版），只有 poke 后仍展开不了才走重启指引
+            if poke_wechat_accessibility_bridge(self._hwnd):
+                logger.info("[UIA] shell-only 树，已发 WM_GETOBJECT 激活 Qt 辅助桥")
+
             if attempt + 1 < max(1, int(attempts or 1)) and delay > 0:
                 time.sleep(delay)
 
         raise UINotAccessibleError(
-            "ui_not_accessible: WeChat UIA tree unavailable; only shell panes are visible. "
+            "ui_not_accessible: WeChat UIA tree unavailable; only shell panes are visible "
+            "(auto WM_GETOBJECT bridge activation failed). "
             f"visible_descendants={last_visible_descendants[:6]}. "
             "Try reopening WeChat; if it still fails, enable Narrator once before login and then relaunch WeChat."
         )

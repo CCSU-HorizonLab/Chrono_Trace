@@ -56,16 +56,20 @@ def main():
     root = get_model_root_dir()
     # 嵌入源模型跟随激活变体（spec 双平台均内置 bge；text2vec 仅按需）
     _emb = get_embedding_variant_info()
+    # 跳过判据按各模型发行产物文件名（嵌入定死 fp32=model.onnx，分类器
+    # fp16=model.fp16.onnx），与 build_release*/spec 收集口径一致——此前
+    # 一律查 fp16 文件名，text2vec 时代旧产物会让脚本误判「已存在跳过」，
+    # bge 永远不被导出
     jobs = [
-        (_emb["repo_id"], root / _emb["dirname"]),
-        (SENTIMENT_MODEL_REPO_ID, root / SENTIMENT_MODEL_DIRNAME),
+        (_emb["repo_id"], root / _emb["dirname"], "model.onnx"),
+        (SENTIMENT_MODEL_REPO_ID, root / SENTIMENT_MODEL_DIRNAME, "model.fp16.onnx"),
     ]
 
-    if all((d / "onnx" / "model.fp16.onnx").exists() for _, d in jobs):
-        print("[模型] fp16 产物已存在，跳过下载与导出")
+    if all((d / "onnx" / product).exists() for _, d, product in jobs):
+        print("[模型] 发行产物已存在，跳过下载与导出")
         return
 
-    for repo_id, model_dir in jobs:
+    for repo_id, model_dir, _product in jobs:
         if not ensure_source_model(repo_id, model_dir):
             raise SystemExit(f"模型获取失败: {repo_id}")
 

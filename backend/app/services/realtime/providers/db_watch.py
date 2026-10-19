@@ -196,13 +196,14 @@ class DbWatchRealtimeProvider(RealtimeProvider):
         if not self._table:
             return []
 
-        # 周期性 WAL 重放兜底（撕裂帧被跳过后 stat 不再变化，靠重放自愈）：
-        # 非脏分片在 refresh 内 stat 短路，只有活跃分片付一次快路径开销
+        # 周期性 WAL 重放兜底（撕裂帧被跳过后 stat 不再变化，靠重放自愈）。
+        # 同样只刷目标分片：非目标分片（fts/media）监听期间无人查询，
+        # 新鲜度/脏状态挂到 open_chat 定位前的全分片刷统一追上
         if time.monotonic() - self._last_reconcile >= 10.0:
             self._last_reconcile = time.monotonic()
-            for watcher in self._watchers:
+            for idx in self._table_shards:
                 try:
-                    watcher.refresh(reconcile=True)
+                    self._watchers[idx].refresh(reconcile=True)
                 except Exception as exc:
                     logger.debug("[db_watch] reconcile 刷新失败: %s", exc)
 

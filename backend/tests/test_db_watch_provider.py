@@ -294,8 +294,9 @@ def _extra_insert(local_id: int) -> str:
 
 
 def test_list_visible_messages_refreshes_only_target_shards(provider_env, monkeypatch):
-    """每轮只同步刷目标表所在分片（fts/media 等不挡查询）；其余分片
-    的新鲜度由 10s reconcile 周期兜底刷新。"""
+    """每轮（含 reconcile 周期）只刷目标表所在分片：fts/media 等非目标
+    分片监听期间无人查询，不挡查询与消息上屏；其新鲜度由 open_chat
+    定位前的全分片刷统一追上。"""
     provider, _ = provider_env
     assert provider.open_chat(ZHANG) is True  # 目标表在分片 0
 
@@ -307,8 +308,8 @@ def test_list_visible_messages_refreshes_only_target_shards(provider_env, monkey
     provider.list_visible_messages()
     assert calls == [0], "非目标分片不应在每轮被同步刷新"
 
-    # reconcile 周期到达时全部分片都刷（含非目标分片），兜底新鲜度
+    # reconcile 周期到达时也只重放目标分片（无变化则被短路缓存接住）
     calls.clear()
     provider._last_reconcile = 0.0
     provider.list_visible_messages()
-    assert 1 in calls, "reconcile 周期应覆盖非目标分片"
+    assert calls == [0], "reconcile 周期同样只刷目标分片"

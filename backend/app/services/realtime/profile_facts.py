@@ -7,15 +7,23 @@
 
 口径：
 - 只取 status='active' AND enabled=1——superseded（演变链旧环）/
-  uncertain（质量隔离）/ 用户禁用的事实天然排除，list_facts 同款；
-- 按置信度优先、更新时间次之排序，截断条数防 prompt 膨胀；
-- rag_facts 表缺失（旧库/测试库）静默降级为空，画像链路不受 RAG
-  开关影响——事实已落库即注入，无嵌入/检索成本。
+  uncertain（质量隔离）/ 用户禁用的事实天然排除；
+- sensitivity='sensitive' 排除：事实进的是远程 LLM prompt，对齐检索
+  通道的隐私红线（retriever 同款排除，本地管理页不受影响）；
+- rag_enabled 关闭即不注入：用户关掉记忆子系统的预期是记忆内容
+  不再参与任何远程交互（affinity/history_qa 同款门控）；
+- 按置信度优先、更新时间次之排序，截断条数防 prompt 膨胀；空白
+  content 在 SQL 层排除（不占 LIMIT 槽位），多行内容压平为单行
+  （防破坏列表结构被 LLM 误读为指令）；
+- rag_facts 表缺失（旧库/测试库）降级为空并留 debug 日志。
 """
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 # 注入条数上限：事实 content 多为单句，24 条约 1~2K token，画像 prompt
 # 可承受；超出按 confidence 截断（低置信事实的信息密度边际递减）
@@ -28,7 +36,15 @@ def collect_profile_facts(
     conversation_id: int,
     limit: int = PROFILE_FACT_INJECT_LIMIT,
 ) -> list[dict[str, Any]]:
-    """取活跃事实（链顶端），confidence DESC, updated_at DESC。"""
+    """取活跃事实（链顶端、非敏感），confidence DESC, updated_at DESC。"""
+    from .rag.config import load_rag_settings
+
+    try:
+        if not load_rag_settings().get("rag_enabled"):
+            return []
+    except Exception as exc:
+        logger.debug("[画像事实] RAG 开关读取失败，保守跳过注入: %s", exc)
+        return []
     try:
         rows = conn.execute(
             """
@@ -36,22 +52,27 @@ def collect_profile_facts(
             FROM rag_facts
             WHERE account_wxid = ? AND conversation_id = ?
               AND status = 'active' AND enabled = 1
+              AND COALESCE(sensitivity, 'normal') != 'sensitive'
+              AND TRIM(COALESCE(content, '')) != ''
             ORDER BY confidence DESC, updated_at DESC
             LIMIT ?
             """,
             (account_wxid, int(conversation_id), max(1, int(limit))),
         ).fetchall()
-    except Exception:
+    except Exception as exc:
+        logger.debug("[画像事实] 取数降级为空: %s", exc)
         return []
     facts = []
     for row in rows:
-        content = str(row["content"] or "").strip()
+        # 空白压平为单行：多行事实会破坏【长期记忆事实】的列表结构，
+        # 后续行裸露在 prompt 里容易被 LLM 当指令读
+        content = " ".join(str(row["content"] or "").split())
         if not content:
             continue
         facts.append(
             {
                 "content": content,
-                "as_of": int(row["as_of"] or 0) if row["as_of"] else 0,
+                "as_of": int(row["as_of"] or 0),
                 "confidence": float(row["confidence"] or 0.0),
             }
         )

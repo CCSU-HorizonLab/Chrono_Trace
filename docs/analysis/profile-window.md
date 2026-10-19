@@ -19,7 +19,9 @@
 - **长期记忆事实块（v3 起）**：数字层之外的语义补全——`profile_facts
   .collect_profile_facts` 把 RAG 事实层（全时段、supersede 演变链顶端，
   confidence 优先取 top 24）注入【长期记忆事实】块。事实是增量抽取早就
-  落库的，注入零新增 LLM 调用；`rag_facts` 表缺失（未跑过 RAG 的库）
+  落库的，注入零新增 LLM 调用。两条门控：`sensitivity='sensitive'` 排除
+  （对齐检索通道的隐私红线）、`rag_enabled` 关闭即不注入（关记忆的语义
+  是记忆内容不参与任何远程交互）；`rag_facts` 表缺失（未跑过 RAG 的库）
   静默降级不注入。与长期背景块分工：背景给**数字**（量的分布），事实给
   **语义**（沉淀的具体记忆），窗口样本给**细节**（近端语气）。
 - **custom 指定窗**：`generate_profile(..., from_ts, to_ts)` 闭区间硬边界，**不顺延**

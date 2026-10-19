@@ -44,15 +44,24 @@ def isolated_db(tmp_path):
 NOW = 1_780_000_000
 
 
-def seed_fact(conn, content, confidence=0.8, status="active", enabled=1, as_of=NOW, updated_at=NOW):
+@pytest.fixture(autouse=True)
+def _rag_enabled_on(monkeypatch):
+    """钉死 RAG 开关：load_rag_settings 读真实 settings.json，测试不得依赖环境。"""
+    monkeypatch.setattr(
+        "app.services.realtime.rag.config.load_rag_settings",
+        lambda: {"rag_enabled": True},
+    )
+
+
+def seed_fact(conn, content, confidence=0.8, status="active", enabled=1, as_of=NOW, updated_at=NOW, sensitivity="normal"):
     conn.execute(
         """
         INSERT INTO rag_facts
         (account_wxid, conversation_id, subject, kind, content, status, as_of,
-         confidence, enabled, created_at, updated_at)
-        VALUES ('wxid_me', 1, 'friend', 'hobby', ?, ?, ?, ?, ?, ?, ?)
+         confidence, sensitivity, enabled, created_at, updated_at)
+        VALUES ('wxid_me', 1, 'friend', 'hobby', ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (content, status, as_of, confidence, enabled, updated_at, updated_at),
+        (content, status, as_of, confidence, sensitivity, enabled, updated_at, updated_at),
     )
 
 
@@ -84,17 +93,21 @@ def add_message(conn, conv_id, is_sender, content, ts):
 
 class TestCollectFacts:
     def test_chain_top_only_and_confidence_order(self, isolated_db):
-        """superseded/uncertain/禁用不取；置信优先；条数截断。"""
+        """superseded/uncertain/禁用/敏感不取；置信优先；条数截断。"""
         RagStore(isolated_db)  # 建 rag_facts 表（RAG 侧自建，schema.sql 无）
         seed_fact(isolated_db, "高置信事实", confidence=0.95)
         seed_fact(isolated_db, "次置信事实", confidence=0.70)
         seed_fact(isolated_db, "被演变链取代", confidence=0.99, status="superseded")
         seed_fact(isolated_db, "质量隔离", confidence=0.99, status="uncertain")
         seed_fact(isolated_db, "用户禁用", confidence=0.99, enabled=0)
+        seed_fact(isolated_db, "健康隐私", confidence=0.99, sensitivity="sensitive")
+        seed_fact(isolated_db, "老库NULL敏感位", confidence=0.98, sensitivity=None)
         isolated_db.commit()
 
-        facts = collect_profile_facts(isolated_db, "wxid_me", 1)
-        assert [f["content"] for f in facts] == ["高置信事实", "次置信事实"]
+        contents = [f["content"] for f in collect_profile_facts(isolated_db, "wxid_me", 1)]
+        # sensitive 排除（对齐检索通道红线）；NULL 敏感位按 normal 保留
+        assert "健康隐私" not in contents
+        assert contents == ["老库NULL敏感位", "高置信事实", "次置信事实"]
 
     def test_limit_truncates(self, isolated_db):
         RagStore(isolated_db)
@@ -109,10 +122,33 @@ class TestCollectFacts:
         assert "事实0" not in contents and "事实4" not in contents
         assert "事实28" in contents
 
-    def test_blank_content_skipped(self, isolated_db):
+    def test_blank_content_excluded_in_sql(self, isolated_db):
+        """空白 content 在 SQL 层排除——不占 LIMIT 槽位挤出真事实。"""
         RagStore(isolated_db)
         seed_fact(isolated_db, "   ")
+        seed_fact(isolated_db, "真事实", confidence=0.6)
         isolated_db.commit()
+        assert collect_profile_facts(isolated_db, "wxid_me", 1, limit=1) == [
+            {"content": "真事实", "as_of": NOW, "confidence": 0.6}
+        ]
+
+    def test_multiline_content_flattened(self, isolated_db):
+        """多行事实压平单行，防破坏列表结构被 LLM 误读为指令。"""
+        RagStore(isolated_db)
+        seed_fact(isolated_db, "第一行\n第二行  带连续空格")
+        isolated_db.commit()
+        facts = collect_profile_facts(isolated_db, "wxid_me", 1)
+        assert facts[0]["content"] == "第一行 第二行 带连续空格"
+
+    def test_rag_disabled_skips_injection(self, isolated_db, monkeypatch):
+        """rag_enabled 关闭即不注入（用户关记忆的预期：不参与任何远程交互）。"""
+        RagStore(isolated_db)
+        seed_fact(isolated_db, "事实")
+        isolated_db.commit()
+        monkeypatch.setattr(
+            "app.services.realtime.rag.config.load_rag_settings",
+            lambda: {"rag_enabled": False},
+        )
         assert collect_profile_facts(isolated_db, "wxid_me", 1) == []
 
     def test_missing_table_degrades_to_empty(self, isolated_db):

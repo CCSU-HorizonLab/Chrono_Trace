@@ -97,6 +97,9 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, Backfi
             self._provider_name = ''
             self._listener_profile = ''
             self._wechat_version = ''
+            # 消息保存成功回调（webview 推送通道注入，见 gui_backend.attach_realtime_push）：
+            # fn(batch_id, account_wxid, message_data)——仅入队不阻塞，异常不影响落库链路
+            self.on_message_saved = None
             # 实时情感分析服务
             self.sentiment_service = RealtimeSentimentService()
             # 情绪状态追踪器（每次 start_monitoring 时重建）
@@ -1012,6 +1015,16 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, Backfi
                 # 记录哈希
                 if message_hash:
                     self.seen_hashes.add(message_hash)
+
+                # 推送通道回调（evaluate_js，消息落库即上屏；情感分析等重活
+                # 都在其后）——只入队不阻塞，异常不影响本条消息处理
+                if self.on_message_saved:
+                    try:
+                        self.on_message_saved(
+                            batch_id, self.current_account_wxid, message_data
+                        )
+                    except Exception as push_e:
+                        _print(f"⚠️ 实时推送失败: {push_e}")
                 
                 # 自动进行实时情感分析(排除系统消息)
                 sentiment_result = None

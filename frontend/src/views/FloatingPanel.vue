@@ -1359,6 +1359,7 @@ async function startPendingMonitoring(talkerName: string, requestedAccountWxid =
 
 // ========== 生命周期 ==========
 onMounted(async () => {
+  window.addEventListener('chrono:realtime-push', handleRealtimePush)
   try {
     await bridgeReady()
     const accountResult = await api.get_wechat_accounts()
@@ -1450,6 +1451,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   stopPolling()
+  window.removeEventListener('chrono:realtime-push', handleRealtimePush)
   window.removeEventListener('resize', handleInspectorResize)
   window.removeEventListener('resize', resizeVisibleCharts)
   disposeAllCharts()
@@ -1961,15 +1963,7 @@ function startPolling() {
       api.get_realtime_recent_messages(realtimeState.batchId, 12, activeAccountWxid.value || undefined)
         .then((mr: any) => {
           if (!mr?.ok || !Array.isArray(mr.messages)) return
-          for (const m of mr.messages) {
-            if (!m?.id || echoedMessageIds.has(m.id)) continue
-            echoedMessageIds.add(m.id)
-            liveEchoMessages.value.push({
-              _type: 'live_msg', id: m.id, sender_attr: m.sender_attr,
-              content: m.content, ts: m.timestamp,
-            })
-            setTimeout(scrollToBottom, 50)
-          }
+          mergeEchoMessages(mr.messages)
         })
         .catch(() => {})
       const r = await api.get_pending_suggestions(realtimeState.batchId, activeAccountWxid.value || undefined)
@@ -2013,6 +2007,31 @@ function stopPolling() {
   if (statusTimer) { clearInterval(statusTimer); statusTimer = null }
   if (messagesTimer) { clearInterval(messagesTimer); messagesTimer = null }
   if (suggestionsTimer) { clearInterval(suggestionsTimer); suggestionsTimer = null }
+}
+
+// ========== 实时消息推送（后端 evaluate_js 即时上屏，轮询作对账兜底） ==========
+
+// 回显合并（推送与 3s 轮询共用；按数字 id 幂等去重，两者并存不重复）
+function mergeEchoMessages(items: any[]) {
+  for (const m of items) {
+    if (!m?.id || echoedMessageIds.has(m.id)) continue
+    echoedMessageIds.add(m.id)
+    liveEchoMessages.value.push({
+      _type: 'live_msg', id: m.id, sender_attr: m.sender_attr,
+      content: m.content, ts: m.timestamp,
+    })
+    setTimeout(scrollToBottom, 50)
+  }
+}
+
+// payload: [{batch_id, account_wxid, messages}]（与 get_realtime_recent_messages 项同形状）
+function handleRealtimePush(e: Event) {
+  const payload = (e as CustomEvent).detail
+  if (!Array.isArray(payload) || !realtimeState.batchId) return
+  for (const evt of payload) {
+    if (evt?.batch_id !== realtimeState.batchId) continue
+    mergeEchoMessages(Array.isArray(evt.messages) ? evt.messages : [])
+  }
 }
 
 // ========== 情绪历史更新 ==========

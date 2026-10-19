@@ -35,15 +35,15 @@ class FakeMessageBuffer:
                 **message_data,
             }
         )
-        return True
+        return len(self.saved_messages)  # 与生产一致：返回新行 rowid（真值语义同 bool）
 
 
 class FakeSentimentService:
     def analyze(self, text):
         return {"polarity": 0, "intensity": 0}
 
-    def analyze_and_cache(self, message_id, text):
-        return {"message_id": message_id, "text": text}
+    def analyze_and_cache(self, message_id, text, result=None):
+        return {"message_id": message_id, "text": text, "result": result}
 
     def is_ready(self):
         return True
@@ -135,6 +135,49 @@ def test_process_message_dedupes_same_runtime_id_when_time_anchor_is_stable():
 
     assert len(buffer.saved_messages) == 1
     assert len(service.seen_message_keys) == 1
+
+
+def test_process_message_fires_push_callback_after_save():
+    """推送通道挂点：save 成功后回调 on_message_saved，payload 带行 id；回调异常不影响落库。"""
+    service, buffer = _make_service()
+    pushed = []
+    service.on_message_saved = lambda batch_id, account_wxid, data: pushed.append(
+        (batch_id, account_wxid, dict(data))
+    )
+    message = SimpleNamespace(
+        hash="push-hash-1",
+        id="push-runtime-1",
+        is_self=False,
+        is_system=False,
+        content="推送测试",
+        type="text",
+        time="12:48",
+        CreateTime="12:48",
+        timestamp=0,
+        visible_index=1,
+    )
+
+    service._process_message(message)
+
+    assert len(pushed) == 1
+    batch_id, account_wxid, payload = pushed[0]
+    assert batch_id == "batch-1"
+    assert account_wxid == "wxid_test"
+    assert payload["id"] == 1  # DB 行 rowid（前端回显去重键）
+    assert payload["content"] == "推送测试"
+    assert payload["sender_attr"] == "friend"
+
+    # 回调抛异常不得影响消息处理链路（已保存即成功）
+    def boom(batch_id, account_wxid, data):
+        raise RuntimeError("push 通道不可用")
+
+    service.on_message_saved = boom
+    message2 = SimpleNamespace(
+        **{**vars(message), "hash": "push-hash-2", "id": "push-runtime-2",
+           "content": "推送测试2"}
+    )
+    service._process_message(message2)
+    assert len(buffer.saved_messages) == 2
 
 
 def test_try_chat_with_passes_expected_display_name_to_provider():

@@ -261,6 +261,13 @@ async function handleCloseChoice(action: 'minimize' | 'exit') {
 // 挂到 window 供后端 evaluate_js 调用（类型声明见 env.d.ts）
 ;(window as any).__chronoHandleCloseRequest = __chronoHandleCloseRequest
 
+// 后端实时消息推送入口（evaluate_js 调用）：转投 CustomEvent，
+// 由 FloatingPanel 监听 chrono:realtime-push 按批次匹配合并上屏
+function __chronoRealtimePush(payload: unknown) {
+  window.dispatchEvent(new CustomEvent('chrono:realtime-push', { detail: payload }))
+}
+;(window as any).__chronoRealtimePush = __chronoRealtimePush
+
 onMounted(() => {
   window.addEventListener('chrono:user-avatar-refresh', handleProfileRefresh)
   window.addEventListener('chrono:wechat-settings-saved', handleWechatSettingsSaved)

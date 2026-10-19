@@ -40,19 +40,49 @@ def start_webview(**kwargs) -> None:
 
 def run_main_window(window, bridge, **start_kwargs) -> None:
     """主窗口生命周期统一入口：注入 Bridge → 挂关闭守卫 → 起事件循环 → Qt 退出清理。
-
     dev（app_dev.py）与生产（app.py）共用此路径，防止两端启动/清理参数悄然分叉。
     """
     from .close_guard import attach_close_guard
     from .qt_teardown import shutdown_qt_webengine_cleanly
 
     def on_started():
-        """窗口启动后，将窗口引用注入 Bridge（供悬浮窗服务使用）"""
+        """窗口启动后，将窗口引用注入 Bridge（供悬浮窗服务使用）与实时推送通道"""
         bridge.set_webview_window(window)
+        attach_realtime_push(window)
 
     attach_close_guard(window, bridge)
     start_webview(func=on_started, **start_kwargs)
     shutdown_qt_webengine_cleanly()
+
+
+def attach_realtime_push(window) -> None:
+    """注入实时消息推送：窗口引用 + monitor「消息保存成功」回调。
+
+    派发走 evaluate_js 后台线程（线程边界见 push.py 模块注释）；挂载失败
+    不影响监听本身——前端 3s 轮询兜底对账。
+    """
+    from ..services.realtime.monitor_service import RealtimeMonitorService
+    from .push import RealtimePushService
+
+    push = RealtimePushService()
+    push.set_window(window)
+
+    def on_message_saved(batch_id: str, account_wxid: str, message_data: dict) -> None:
+        sender = message_data.get("sender_attr")
+        if sender not in ("self", "friend"):
+            return  # system 消息不上回显（与 get_realtime_recent_messages 口径一致）
+        push.push_realtime_messages(batch_id, account_wxid, [{
+            "id": message_data.get("id"),
+            "sender_attr": sender,
+            "content": message_data.get("content") or "",
+            "message_type": message_data.get("message_type") or "text",
+            "timestamp": message_data.get("timestamp") or 0,
+        }])
+
+    try:
+        RealtimeMonitorService().on_message_saved = on_message_saved
+    except Exception as exc:
+        logger.warning("实时推送回调挂载失败（轮询兜底）: %s", exc)
 
 
 def hard_exit_after_webview(exit_code: int = 0) -> None:

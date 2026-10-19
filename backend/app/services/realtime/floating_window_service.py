@@ -285,6 +285,9 @@ class FloatingWindowService:
                     return {'ok': False, 'error': '无法获取悬浮窗句柄'}
                 left, top, right, bottom = win32gui.GetWindowRect(hwnd)
                 scale = self._get_window_scale(hwnd)
+                # 拖动回调保持同步：此处是 GetWindowRect→位移→SetWindowPos 的
+                # 读改写链，异步版下一帧会读到未应用的旧位置累积丢步（与
+                # 其余四处一次性窗口操作加 ASYNCWINDOWPOS 防卡死不同）
                 win32gui.SetWindowPos(
                     hwnd, 0,
                     left + round(dx * scale), top + round(dy * scale),
@@ -328,9 +331,14 @@ class FloatingWindowService:
             final_h = int(h * scale) if scale_height else h
 
             # SWP_NOZORDER: 不改变 Z 序（置顶由 _set_on_top 单独处理）
+            # SWP_ASYNCWINDOWPOS: 本调用来自 bridge/跟踪线程，同步版会把
+            # WM_WINDOWPOSCHANGING 等消息发进主窗口线程并等待处理——主
+            # 线程消息泵被堵时（WebView2 重排/DPI 过渡）永久挂起即整应用
+            # 卡死；异步版按队列 FIFO 保序，连续跟随调用不受影响
             win32gui.SetWindowPos(
                 hwnd, 0, x, y, scaled_w, final_h,
                 win32con.SWP_NOZORDER | win32con.SWP_NOACTIVATE
+                | win32con.SWP_ASYNCWINDOWPOS
             )
             return True
         except Exception as e:
@@ -353,6 +361,7 @@ class FloatingWindowService:
             win32gui.SetWindowPos(
                 hwnd, 0, x, y, w, h,
                 win32con.SWP_NOZORDER | win32con.SWP_NOACTIVATE
+                | win32con.SWP_ASYNCWINDOWPOS
             )
             return True
         except Exception as e:
@@ -417,6 +426,9 @@ class FloatingWindowService:
                 | win32con.SWP_NOSIZE
                 | win32con.SWP_NOZORDER
                 | win32con.SWP_NOACTIVATE
+                # 异步：FRAMECHANGED 同步发 WM_NCCALCSIZE 等消息进主线程，
+                # 主线程消息泵被堵时从 bridge 线程调用会永久挂起（卡死点）
+                | win32con.SWP_ASYNCWINDOWPOS
             )
             _log(f"窗口边框已{'恢复' if decorated else '移除'}")
             return True
@@ -654,6 +666,7 @@ class FloatingWindowService:
                 win32gui.SetWindowPos(
                     hwnd, flag, 0, 0, 0, 0,
                     win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE
+                    | win32con.SWP_ASYNCWINDOWPOS
                 )
                 _log(f"置顶={'开' if on_top else '关'}")
             else:

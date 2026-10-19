@@ -62,6 +62,7 @@ def test_set_window_decorations_toggles_style_bits(monkeypatch):
         WS_EX_CLIENTEDGE=0x00000200,
         WS_EX_STATICEDGE=0x00020000,
         SWP_FRAMECHANGED=0x0020,
+        SWP_ASYNCWINDOWPOS=0x4000,
         SWP_NOMOVE=0x0002,
         SWP_NOSIZE=0x0001,
         SWP_NOZORDER=0x0004,

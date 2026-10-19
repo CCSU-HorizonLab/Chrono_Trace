@@ -118,7 +118,6 @@ def _run_single_session(monitor, chat_name: str, duration_seconds: float, poll_i
 def run_regression(
     first_chat: str,
     second_chat: str,
-    backend: str,
     duration_seconds: float,
     poll_interval: float,
 ) -> dict:
@@ -128,7 +127,6 @@ def run_regression(
     from backend.app.services.realtime.monitor_service import RealtimeMonitorService
 
     monitor = RealtimeMonitorService()
-    original_backend = monitor.get_suggestion_config().get("listener_backend", "auto")
     conn = get_db()
     before_rule_counts = {
         first_chat: conn.execute(
@@ -137,8 +135,7 @@ def run_regression(
     }
     payload = {
         "captured_at": int(time.time()),
-        "requested_backend": backend,
-        "original_backend": original_backend,
+        "provider": "db_watch",
         "first_chat": first_chat,
         "second_chat": second_chat,
         "sessions": [],
@@ -146,10 +143,7 @@ def run_regression(
     }
 
     try:
-        monitor.set_suggestion_config({
-            "listener_backend": backend,
-            "trigger_mode": "semi_auto",
-        })
+        monitor.set_suggestion_config({"trigger_mode": "semi_auto"})
         payload["sessions"].append(
             _run_single_session(monitor, first_chat, duration_seconds, poll_interval)
         )
@@ -159,17 +153,12 @@ def run_regression(
         )
     except Exception as exc:
         payload["errors"].append(str(exc))
-    finally:
-        try:
-            monitor.set_suggestion_config({"listener_backend": original_backend})
-        except Exception as exc:
-            payload["errors"].append(f"restore_backend_failed: {exc}")
 
     payload["summary"] = {
         "session_count": len(payload["sessions"]),
         "all_ready": all((item.get("summary") or {}).get("chat_ready_reached") for item in payload["sessions"]),
-        "all_native_uia": all(
-            "native_uia" in ((item.get("summary") or {}).get("providers_seen") or [])
+        "all_db_watch": all(
+            (item.get("summary") or {}).get("providers_seen") == ["db_watch"]
             for item in payload["sessions"]
         ),
         "all_zero_buffer": all(
@@ -190,7 +179,6 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Regression check for cross-chat realtime listener switching.")
     parser.add_argument("--first-chat", required=True, help="First chat display name")
     parser.add_argument("--second-chat", required=True, help="Second chat display name")
-    parser.add_argument("--backend", default="native_uia", help="Listener backend to validate")
     parser.add_argument("--duration-seconds", type=float, default=6.0, help="How long to observe each chat")
     parser.add_argument("--poll-interval", type=float, default=1.5, help="Seconds between status polls")
     args = parser.parse_args()
@@ -198,7 +186,6 @@ def main() -> int:
     result = run_regression(
         first_chat=args.first_chat,
         second_chat=args.second_chat,
-        backend=args.backend,
         duration_seconds=args.duration_seconds,
         poll_interval=args.poll_interval,
     )

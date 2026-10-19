@@ -43,7 +43,7 @@ def test_summarize_cycle_flags_provider_mismatch_and_duplicate_failure():
         {
             "statuses": [
                 {
-                    "provider": "wxauto",
+                    "provider": "native_uia",
                     "chat_ready": True,
                     "chat_error": "",
                     "polling_alive": True,
@@ -57,7 +57,6 @@ def test_summarize_cycle_flags_provider_mismatch_and_duplicate_failure():
             },
             "errors": [],
         },
-        requested_backend="native_uia",
     )
 
     assert summary["ok"] is False

@@ -1709,9 +1709,6 @@ class Bridge(
                 "batch_id": result.get('batch_id'),
                 "message": result.get('message'),
                 "error": result.get('error'),
-                "uia_recovery_required": result.get('uia_recovery_required', False),
-                "uia_recovery_phase": result.get('uia_recovery_phase', ''),
-                "uia_recovery_prompt": result.get('uia_recovery_prompt', ''),
             }
         except Exception as e:
             import traceback
@@ -1723,37 +1720,6 @@ class Bridge(
                 "error": str(e)
             }
 
-    def run_realtime_uia_recovery(self) -> dict[str, Any]:
-        """Run the pending WeChat UIA recovery flow after the user confirms it in the frontend."""
-        if sys.platform != "win32":
-            return {"ok": False, "code": "unsupported_on_platform", "error": "UIA 界面修复为 Windows 专属能力；Linux 使用 db_watch 数据库监听，无需修复界面。"}
-        try:
-            from ..services.realtime.monitor_service import RealtimeMonitorService
-
-            logger.debug("[Bridge] 执行实时监听 UIA 自动修复")
-            monitor_service = RealtimeMonitorService()
-            result = monitor_service.run_confirmed_uia_recovery()
-            return {
-                "ok": result.get("success", False),
-                "success": result.get("success", False),
-                "message": result.get("message", ""),
-                "error": result.get("error", ""),
-                "final_status": result.get("final_status", ""),
-                "uia_recovery_summary": result.get("uia_recovery_summary", ""),
-                "uia_recovery_actions": result.get("uia_recovery_actions", []),
-                "uia_recovery_aborted": result.get("uia_recovery_aborted", False),
-                "narrator_verification": result.get("narrator_verification", {}),
-            }
-        except Exception as e:
-            import traceback
-            logger.error(f"[Bridge] 执行 UIA 自动修复异常: {e}")
-            traceback.print_exc()
-            return {
-                "ok": False,
-                "success": False,
-                "error": str(e),
-            }
-    
     def stop_realtime_monitor(self, user_chat_history: Optional[list[dict]] = None) -> dict[str, Any]:
         """
         停止实时消息监听
@@ -1828,19 +1794,10 @@ class Bridge(
                 "model_ready": status.get('model_ready', False),
                 "chat_ready": status.get('chat_ready', False),
                 "chat_error": status.get('chat_error', ''),
-                "uia_recovery_required": status.get('uia_recovery_required', False),
-                "uia_recovery_in_progress": status.get('uia_recovery_in_progress', False),
-                "uia_recovery_phase": status.get('uia_recovery_phase', ''),
                 "polling_alive": status.get('polling_alive', True),
                 "provider": status.get('provider', ''),
                 "listener_profile": status.get('listener_profile', ''),
                 "wechat_version": status.get('wechat_version', ''),
-                "uia_recovery_summary": status.get('uia_recovery_summary', ''),
-                "uia_recovery_final_status": status.get('uia_recovery_final_status', ''),
-                "uia_recovery_actions": status.get('uia_recovery_actions', []),
-                "uia_recovery_aborted": status.get('uia_recovery_aborted', False),
-                "uia_recovery_abort_reason": status.get('uia_recovery_abort_reason', ''),
-                "narrator_verification": status.get('narrator_verification', {}),
             }
         except Exception as e:
             logger.error(f"[Bridge] 获取实时监听状态异常: {e}")
@@ -1849,33 +1806,6 @@ class Bridge(
                 "error": str(e),
                 "is_monitoring": False,
                 "message_count": 0
-            }
-
-    def debug_dump_wechat_uia(
-        self,
-        talker_display_name: str = "",
-        max_depth: int = 4,
-        max_nodes: int = 300,
-    ) -> dict[str, Any]:
-        """
-        导出当前微信窗口的 UIA 树和可见消息快照，用于校准监听器。
-        """
-        try:
-            from ..services.realtime.providers.debug_tools import dump_wechat_uia_snapshot
-
-            result = dump_wechat_uia_snapshot(
-                talker_display_name=talker_display_name or "",
-                max_depth=max(1, int(max_depth)),
-                max_nodes=max(50, int(max_nodes)),
-            )
-            return {"ok": True, **result}
-        except Exception as e:
-            logger.error(f"[Bridge] 导出微信 UIA 快照失败: {e}")
-            return {
-                "ok": False,
-                "error": str(e),
-                "messages": [],
-                "tree": {},
             }
 
     def get_realtime_messages(self, batch_id: str, limit: int = 50) -> dict[str, Any]:
@@ -1907,13 +1837,11 @@ class Bridge(
             if len(messages) < int(limit):
                 try:
                     from ..services.realtime.monitor_service import RealtimeMonitorService
-                    from ..services.realtime.providers.native_uia import TIME_LABEL_RE
 
                     baseline_tail = getattr(RealtimeMonitorService(), "_baseline_tail", None) or []
                     if baseline_tail:
-                        # 基线来自 UIA 当前可见列表，其中包含微信的日期/时间分隔线。
-                        # 这些行不是聊天消息，不能并入消息气泡，否则前端会按
-                        # sender_attr != self 误显示为“对方”。
+                        # 基线段只保留真实对话行（system 行不并入消息气泡，
+                        # 否则前端会按 sender_attr != self 误显示为“对方”）。
                         baseline_items = [
                             {
                                 "id": -(idx + 1),  # 负数伪 id 避免与 buffer 冲突
@@ -1927,12 +1855,8 @@ class Bridge(
                             for idx, msg in enumerate(baseline_tail)
                             if str(msg.get("sender_attr") or "").strip().lower() in {"self", "friend"}
                             and str(msg.get("message_type") or "text").strip().lower() != "system"
-                            and not TIME_LABEL_RE.match(str(msg.get("content") or "").strip())
                         ]
-                        messages = [
-                            m for m in (baseline_items + messages)
-                            if not TIME_LABEL_RE.match(str(m.get("content") or "").strip())
-                        ][-int(limit):]
+                        messages = (baseline_items + messages)[-int(limit):]
                 except Exception as exc:
                     logger.debug("[Bridge] 基线尾部并入消息列表跳过: %s", exc)
 
@@ -1965,7 +1889,6 @@ class Bridge(
         """返回批次内最近收到的原始消息（悬浮面板即时回显，不等 LLM 建议）。"""
         try:
             from ..services.realtime.message_buffer import MessageBuffer
-            from ..services.realtime.providers.native_uia import TIME_LABEL_RE
 
             if not str(batch_id or "").strip():
                 return {"ok": False, "error": "缺少 batch_id"}
@@ -1983,7 +1906,6 @@ class Bridge(
                 for row in rows[-limit:]
                 if str(row.get("sender_attr") or "").strip().lower() in {"self", "friend"}
                 and str(row.get("message_type") or "text").strip().lower() != "system"
-                and not TIME_LABEL_RE.match(str(row.get("content") or "").strip())
             ]
             # 新消息不足时并入监听基线尾部（启动前窗口内最近对话）——
             # 用户预期「进入监听能看到前几条聊天数据」，此前基线按设计不落
@@ -2006,7 +1928,6 @@ class Bridge(
                             for idx, msg in enumerate(baseline_tail)
                             if str(msg.get("sender_attr") or "").strip().lower() in {"self", "friend"}
                             and str(msg.get("message_type") or "text").strip().lower() != "system"
-                            and not TIME_LABEL_RE.match(str(msg.get("content") or "").strip())
                         ]
                         items = (baseline_items + items)[-limit:]
                 except Exception as exc:
@@ -2160,12 +2081,8 @@ class Bridge(
         """获取建议配置（按联系人存储，settings 键 suggestion_config:{id}；无联系人/无键回落内置默认）"""
         try:
             from ..services.realtime.monitor_service import load_suggestion_config_for_contact
-            from ..services.realtime.providers.factory import resolve_effective_listener_backend
 
             config = load_suggestion_config_for_contact(int(conversation_id or 0))
-            config["listener_backend"] = resolve_effective_listener_backend(
-                self.settings.get("listener_backend")
-            )
             return {"ok": True, "config": config}
         except Exception as e:
             return {"ok": False, "error": str(e)}
@@ -2229,10 +2146,9 @@ class Bridge(
             return {"ok": False, "error": str(e), "prompts": []}
 
     def set_suggestion_config(self, config: dict[str, Any], conversation_id: int = 0) -> dict[str, Any]:
-        """更新并持久化建议配置（按联系人存储；listener_backend 仍为全局能力项）"""
+        """更新并持久化建议配置（按联系人存储）"""
         try:
             from ..services.realtime.monitor_service import suggestion_config_settings_key
-            from ..services.realtime.providers.factory import normalize_listener_backend
 
             conv_id = int(conversation_id or 0)
             with self._settings_lock:
@@ -2244,8 +2160,6 @@ class Bridge(
                         stored[field] = config[field]
                 if stored:
                     self.settings[key] = stored
-                if 'listener_backend' in config:
-                    self.settings['listener_backend'] = normalize_listener_backend(config['listener_backend'])
                 self._save_settings()
 
             # 热更新：仅当运行中的监听正是该联系人时（别的联系人的配置不打扰在跑的会话）

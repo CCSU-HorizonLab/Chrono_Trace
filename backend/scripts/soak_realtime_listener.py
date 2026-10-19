@@ -61,7 +61,7 @@ def analyze_batch_messages(messages: list[dict]) -> dict:
     }
 
 
-def summarize_cycle(cycle: dict, requested_backend: str) -> dict:
+def summarize_cycle(cycle: dict) -> dict:
     """Evaluate whether a soak cycle stayed healthy enough for replacement use."""
     statuses = cycle.get("statuses") or []
     batch_analysis = cycle.get("batch_analysis") or {}
@@ -69,7 +69,6 @@ def summarize_cycle(cycle: dict, requested_backend: str) -> dict:
     provider_values = [str(status.get("provider") or "") for status in statuses]
     providers_seen = [value for value in provider_values if value]
     unique_providers = sorted(set(providers_seen))
-    requested = str(requested_backend or "").strip().lower()
     ready_samples = [status for status in statuses if status.get("chat_ready")]
     chat_errors = [
         str(status.get("chat_error") or "")
@@ -77,9 +76,7 @@ def summarize_cycle(cycle: dict, requested_backend: str) -> dict:
         if status.get("chat_error")
     ]
     provider_mismatch = bool(
-        requested == "native_uia"
-        and providers_seen
-        and any(value != "native_uia" for value in providers_seen)
+        providers_seen and any(value != "db_watch" for value in providers_seen)
     )
     polling_drops = sum(1 for status in statuses if not status.get("polling_alive", False))
 
@@ -108,7 +105,6 @@ def summarize_cycle(cycle: dict, requested_backend: str) -> dict:
 
 def run_soak(
     chat_name: str,
-    backend: str,
     cycles: int,
     duration_seconds: float,
     poll_interval: float,
@@ -120,18 +116,15 @@ def run_soak(
 
     monitor = RealtimeMonitorService()
     buffer = MessageBuffer()
-    original_backend = monitor.get_suggestion_config().get("listener_backend", "auto")
     payload = {
         "captured_at": int(time.time()),
         "chat_name": chat_name,
-        "requested_backend": backend,
-        "original_backend": original_backend,
+        "provider": "db_watch",
         "cycles": [],
         "errors": [],
     }
 
     try:
-        monitor.set_suggestion_config({"listener_backend": backend})
         for cycle_index in range(1, int(cycles) + 1):
             cycle = {
                 "cycle_index": cycle_index,
@@ -174,16 +167,11 @@ def run_soak(
                     cycle["errors"].append(f"stop_failed: {exc}")
                 if batch_id and not cycle["batch_analysis"]:
                     cycle["batch_analysis"] = analyze_batch_messages(buffer.get_batch_messages(batch_id))
-                cycle["summary"] = summarize_cycle(cycle, requested_backend=backend)
+                cycle["summary"] = summarize_cycle(cycle)
                 cycle["duration_seconds"] = round(time.time() - cycle_started_at, 2)
                 payload["cycles"].append(cycle)
     except Exception as exc:
         payload["errors"].append(str(exc))
-    finally:
-        try:
-            monitor.set_suggestion_config({"listener_backend": original_backend})
-        except Exception as exc:
-            payload["errors"].append(f"restore_backend_failed: {exc}")
 
     payload["summary"] = {
         "cycle_count": len(payload["cycles"]),
@@ -198,7 +186,6 @@ def run_soak(
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run a long-running soak validation for the realtime listener.")
     parser.add_argument("--chat", required=True, help="Chat display name to validate against")
-    parser.add_argument("--backend", default="native_uia", help="Listener backend to validate")
     parser.add_argument("--cycles", type=int, default=2, help="How many start/stop cycles to execute")
     parser.add_argument("--duration-seconds", type=float, default=20.0, help="How long each cycle should run")
     parser.add_argument("--poll-interval", type=float, default=2.0, help="Seconds between status polls")
@@ -206,7 +193,6 @@ def main() -> int:
 
     result = run_soak(
         chat_name=args.chat,
-        backend=args.backend,
         cycles=args.cycles,
         duration_seconds=args.duration_seconds,
         poll_interval=args.poll_interval,

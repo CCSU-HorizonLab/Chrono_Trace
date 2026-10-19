@@ -11,17 +11,13 @@ import re
 from .message_buffer import MessageBuffer
 from .realtime_sentiment_service import RealtimeSentimentService
 from .emotion_state_tracker import EmotionStateTracker
-from .providers.base import UINotAccessibleError
 from .providers.models import build_message_hash, normalize_text
-from .providers.native_uia import TIME_LABEL_RE
-from .providers.factory import normalize_listener_backend
 from .safe_print import safe_print as _print
 from ..wechat.account_settings import get_active_wechat_account_wxid, load_settings_from_file
 
 logger = logging.getLogger(__name__)
 
 
-from .uia_recovery import UiaRecoveryMixin
 from .backfill_matcher import BackfillMatcherMixin
 from .backfill_store import BackfillStoreMixin
 from .suggestion_pipeline import SuggestionPipelineMixin
@@ -57,24 +53,22 @@ def load_suggestion_config_for_contact(conversation_id: int) -> dict:
     return config
 
 
-class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, UiaRecoveryMixin, BackfillMatcherMixin):
+class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, BackfillMatcherMixin):
     """
     实时监听服务
     单例模式,同一时间只监听一个对象
     """
 
-    _UIA_MANUAL_RESTART_GUARD_SECONDS = 180.0
-    
     _instance = None
     _lock = threading.Lock()
-    
+
     def __new__(cls):
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:
                     cls._instance = super().__new__(cls)
         return cls._instance
-    
+
     def __init__(self):
         if not hasattr(self, '_initialized'):
             self.wx = None                      # WeChat实例
@@ -85,17 +79,8 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, UiaRec
             self._current_conversation_id = 0   # 当前监听会话号（按联系人建议配置的键）
             self.is_monitoring = False          # 监听状态
             self._session_generation = 0        # 会话代数：start_monitoring/run_backfill 接管单例时递增（R2）
-            self._chat_ready = False            # 聊天切换是否完成
-            self._chat_error = ''               # 聊天切换出错信息
-            self._chat_ui_inaccessible = False
-            self._uia_recovery_attempts = 0
-            self._last_uia_recovery = None
-            self._uia_recovery_required = False
-            self._uia_recovery_in_progress = False
-            self._uia_recovery_context = {}
-            self._uia_manual_restart_guard_until = 0.0
-            self._uia_manual_restart_guard_reason = ""
-            self._uia_manual_restart_guard_phase = ""
+            self._chat_ready = False            # 聊天定位是否完成
+            self._chat_error = ''               # 聊天定位出错信息
             self._start_time = 0                # 开始监听时间戳
             self._last_known_ts = 0
             self._chat_timed_out = False
@@ -115,14 +100,6 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, UiaRec
             # 实时情感分析服务
             self.sentiment_service = RealtimeSentimentService()
             # 情绪状态追踪器（每次 start_monitoring 时重建）
-            try:
-                settings = load_settings_from_file()
-                self._listener_backend = normalize_listener_backend(
-                    settings.get('listener_backend', 'native_uia')
-                )
-            except Exception as e:
-                self._listener_backend = 'native_uia'
-                _print(f"[RealtimeMonitorService] 获取全局设置失败: {e}")
             # 建议配置按联系人在 start_monitoring 时读取；这里只落内置默认
             # （旧全局键 trigger_mode/intent 已废弃，不再读取）
             self._suggestion_config = dict(SUGGESTION_CONFIG_DEFAULTS)
@@ -166,6 +143,47 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, UiaRec
             _print(f"[RealtimeMonitorService] 解析监听会话号失败: {e}")
             return 0
 
+    def _reset_wechat_instance(self):
+        """重置缓存的微信实例，让下一次重试从干净状态开始。"""
+        if self.wx is not None:
+            try:
+                stop_listening = getattr(self.wx, 'StopListening', None)
+                if callable(stop_listening):
+                    stop_listening()
+            except Exception:
+                pass
+        self.provider = None
+        self.wx = None
+        self._provider_name = ''
+        self._listener_profile = ''
+        self._wechat_version = ''
+
+    def _create_wechat_instance(self):
+        """新建一个实时监听 provider 实例。"""
+        try:
+            from backend.wxauto4 import WeChat
+        except ModuleNotFoundError:
+            from wxauto4 import WeChat
+
+        self._reset_wechat_instance()
+        self.wx = WeChat(start_listener=False)
+        self.provider = getattr(self.wx, '_provider', None)
+        self._provider_name = getattr(self.wx, 'backend_name', '')
+        self._listener_profile = getattr(self.wx, 'listener_profile', '')
+        self._wechat_version = getattr(self.wx, 'wechat_version', '')
+        nickname = getattr(self.wx, 'nickname', '')
+        if nickname:
+            _print(
+                "[RealtimeMonitorService] 监听后端初始化成功, "
+                f"backend={self._provider_name or 'unknown'}, "
+                f"当前账号: {nickname}"
+            )
+        return self.wx
+
+    @staticmethod
+    def _format_listener_init_error(exc: Exception) -> str:
+        return f'监听后端初始化失败，请确认微信已登录且密钥有效: {exc}'
+
     def start_monitoring(
         self, 
         talker_username: str,
@@ -199,24 +217,15 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, UiaRec
         try:
             # 2. 初始化监听后端
             self._reset_wechat_instance()
-            self._uia_recovery_attempts = 0
-            self._last_uia_recovery = None
-            self._uia_recovery_required = False
-            self._uia_recovery_in_progress = False
-            self._uia_recovery_context = {}
             if self.wx is None:
                 _print("[RealtimeMonitorService] 初始化监听后端...")
                 try:
-                    self._create_wechat_instance_with_recovery(phase="initialize")
+                    self._create_wechat_instance()
                 except Exception as e:
                     return {
                         'success': False,
                         'message': '监听后端初始化失败',
                         'error': self._format_listener_init_error(e),
-                        'uia_recovery_required': self._uia_recovery_required,
-                        'uia_recovery_phase': (self._uia_recovery_context or {}).get('phase', ''),
-                        'uia_recovery_stage': (self._uia_recovery_context or {}).get('stage', ''),
-                        'uia_recovery_prompt': self._chat_error,
                     }
             
             # 3. 生成批次ID
@@ -423,9 +432,6 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, UiaRec
             if monitoring_chatroom and not is_system and content:
                 _member_wxid, content = parse_chatroom_message(content)
             message_type = str(getattr(msg, 'type', 'text') or 'text')
-            if not is_system and content and TIME_LABEL_RE.match(content.strip()):
-                is_system = True
-                message_type = 'system'
             sender_attr = 'self' if is_self else 'friend'
             if is_system:
                 sender_attr = 'system'
@@ -616,86 +622,36 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, UiaRec
                 break
 
     def _try_chat_with(self, target_name: str) -> bool:
-        """尝试执行 ChatWith，带 15 秒超时。成功返回 True，失败设置 _chat_error 并返回 False"""
-        self._chat_timed_out = False
-        self._chat_ui_inaccessible = False
+        """定位目标联系人的聊天数据（db_watch：解析联系人并定位消息表）。"""
+        if not self.wx:
+            self._chat_error = '监听后端未初始化'
+            return False
+        expected_name = (self.current_display_name or target_name or "").strip()
+        # db_watch 后端用 return False（不抛异常）表示定位失败：
+        # 返回值必须检查，否则失败被当成功，监听「正常」启动但永远
+        # 抓不到消息且无任何报错
         started_at = time.time()
-        before_info = self._get_foreground_window_info()
-        _print(
-            f"[OpenChat] 调用前前台窗口: hwnd={before_info.get('hwnd')} "
-            f"class={before_info.get('class_name')} title={before_info.get('title')}"
-        )
-
         try:
-            if not self.wx:
-                raise RuntimeError("No realtime provider instance")
-            expected_name = (self.current_display_name or target_name or "").strip()
-            # db_watch 后端用 return False（不抛异常）表示切换失败：
-            # 返回值必须检查，否则失败被当成功，监听「正常」启动但永远
-            # 抓不到消息且无任何报错
             chat_ok = self.wx.ChatWith(target_name, expected_display_name=expected_name)
-            if chat_ok is False:
-                self._chat_error = (
-                    f"切换聊天窗口失败（open_chat 返回 False）"
-                    f"，target='{target_name}'，expected='{expected_name}'"
-                    f"（常见原因：本地库解析不到该联系人或消息表不在任何分片）"
-                )
-                _print(f"[OpenChat] open_chat 返回 False: {self._chat_error}")
-                return False
-            _print(
-                f"[OpenChat] 已调用 provider.open_chat(search='{target_name}', expected='{expected_name}')"
-            )
         except Exception as e:
-            after_info = self._get_foreground_window_info()
-            elapsed = time.time() - started_at
             error_text = str(e)
             self._chat_timed_out = ('timeout' in error_text.lower()) or ('超时' in error_text)
-            self._chat_ui_inaccessible = isinstance(e, UINotAccessibleError) or ('ui_not_accessible' in error_text.lower())
-            if self._chat_ui_inaccessible:
-                self._attempt_auto_recover_shell_only_uia(phase="chat_switch", error_text=error_text)
-                _print(
-                    f"[OpenChat] UIA 不可访问: hwnd={after_info.get('hwnd')} "
-                    f"class={after_info.get('class_name')} title={after_info.get('title')} error={error_text}"
-                )
-                return False
-            error_prefix = '切换聊天窗口超时' if self._chat_timed_out else '切换聊天窗口失败'
+            error_prefix = '定位聊天数据超时' if self._chat_timed_out else '定位聊天数据失败'
             self._chat_error = (
-                f"{error_prefix}（{elapsed:.1f}秒）"
-                f"，target='{target_name}'，原因={error_text}，"
-                f"前台窗口={after_info.get('title') or after_info.get('class_name')}"
+                f"{error_prefix}（{time.time() - started_at:.1f}秒）"
+                f"，target='{target_name}'，原因={error_text}"
             )
-            _print(
-                f"[OpenChat] 失败: hwnd={after_info.get('hwnd')} "
-                f"class={after_info.get('class_name')} title={after_info.get('title')}"
-            )
+            _print(f"[OpenChat] 失败: {self._chat_error}")
             return False
-
-        after_info = self._get_foreground_window_info()
-        elapsed = time.time() - started_at
-        """
-            worker_result = {
-                'ok': False,
-                'error': f'子进程未返回结果(exitcode={chat_process.exitcode})',
-                'elapsed': time.time() - started_at,
-            }
-
-        if not worker_result.get('ok'):
-            elapsed = float(worker_result.get('elapsed') or (time.time() - started_at))
+        if chat_ok is False:
             self._chat_error = (
-                f"切换聊天窗口失败: {worker_result.get('error', '')} "
-                f"(target='{target_name}', elapsed={elapsed:.2f}s)"
+                f"未找到『{expected_name or target_name}』的聊天数据"
+                f"（常见原因：本地库解析不到该联系人或消息表不在任何分片，"
+                f"请核对联系人名或先完成一次历史导入）"
             )
-            _print(
-                f"[ChatWith] 失败后前台窗口: hwnd={after_info.get('hwnd')} "
-                f"class={after_info.get('class_name')} title={after_info.get('title')}"
-            )
+            _print(f"[OpenChat] open_chat 返回 False: {self._chat_error}")
             return False
-
-        """
-        _print(
-            f"[OpenChat] 成功: target='{target_name}', elapsed={elapsed:.2f}s, "
-            f"前台窗口={after_info.get('title') or after_info.get('class_name')}"
-        )
+        _print(f"[OpenChat] 成功: target='{target_name}', elapsed={time.time() - started_at:.2f}s")
         self._chat_error = ''
         return True
 
@@ -799,120 +755,38 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, UiaRec
         return seeded
 
     def _polling_loop(self, session_token: int, stop_event):
-        """轮询线程：先完成聊天切换和模型预加载，再开始抓取消息"""
+        """轮询线程：先完成聊天定位和模型预加载，再开始抓取消息"""
         session_state = self._build_session_state(session_token)
         _print("🔄 轮询线程已启动")
-        
-        # -- 1. 将微信窗口置顶 --
-        self._bring_wechat_to_front()
-        time.sleep(0.35)
-        
-        # -- 2. 切换聊天窗口（带重试循环，最多 3 次） --
-        _print(f"👂 切换到聊天窗口: {session_state.get('display_name')}")
-        MAX_CHAT_RETRIES = 3
-        CHAT_RETRY_DELAY = 5  # 秒
+
+        # -- 1. 定位目标联系人的聊天数据（db_watch：候选名逐一解析） --
+        if not self._session_should_continue(session_state, stop_event):
+            _print("🛑 收到停止信号，轮询线程退出")
+            return
+        _print(f"👂 定位聊天数据: {session_state.get('display_name')}")
         chat_connected = False
         chat_targets = self._build_chatwith_candidates()
         _print(f"[OpenChat] 候选搜索名: {chat_targets}")
-
-        for attempt in range(1, MAX_CHAT_RETRIES + 1):
-            if not self._session_should_continue(session_state, stop_event):
-                _print("🛑 收到停止信号，中止聊天切换重试")
-                return
-            
-            _print(f"🔄 聊天切换尝试 {attempt}/{MAX_CHAT_RETRIES}...")
-            try:
-                if attempt == 1 and self.wx is not None:
-                    _print("[OpenChat] 复用当前监听后端实例进行首次聊天切换")
-                else:
-                    self._create_wechat_instance_with_recovery(phase="chat_retry")
-                self._bring_wechat_to_front()
-                time.sleep(0.4)
-                for target_name in chat_targets:
-                    _print(f"[OpenChat] 本轮尝试搜索名: {target_name}")
-                    if self._try_chat_with(target_name):
-                        _print(f"✅ 已切换到聊天窗口: {target_name}")
-                        chat_connected = True
-                        break
-                    _print(f"⚠️ 第 {attempt} 次聊天切换失败: {self._chat_error}")
-                    if self._chat_ui_inaccessible:
-                        _print("⚠️ 检测到微信 UIA 树当前不可访问，停止本轮其余候选名和后续自动重试")
-                        break
-                    if self._chat_timed_out:
-                        _print("⚠️ 检测到聊天切换超时，停止本轮其余候选名和后续自动重试，避免堆积挂起线程")
-                        break
-                if chat_connected:
+        try:
+            for target_name in chat_targets:
+                _print(f"[OpenChat] 本轮尝试搜索名: {target_name}")
+                if self._try_chat_with(target_name):
+                    _print(f"✅ 已定位聊天数据: {target_name}")
+                    chat_connected = True
                     break
-                if self._chat_timed_out or self._chat_ui_inaccessible:
+                _print(f"⚠️ 聊天定位失败: {self._chat_error}")
+                if self._chat_timed_out:
+                    _print("⚠️ 定位超时，停止其余候选名，避免堆积挂起")
                     break
-            except Exception as e:
-                self._chat_error = f'切换聊天窗口异常: {e}'
-                _print(f"❌ 第 {attempt} 次聊天切换异常: {e}")
-            
-            if self._chat_timed_out or self._chat_ui_inaccessible:
-                break
+        except Exception as e:
+            self._chat_error = f'定位聊天数据异常: {e}'
+            _print(f"❌ 聊天定位异常: {e}")
 
-            if attempt < MAX_CHAT_RETRIES:
-                _print(f"⏳ {CHAT_RETRY_DELAY} 秒后重试...")
-                time.sleep(CHAT_RETRY_DELAY)
-        
-        # 重试 3 次仍失败 → 进入「等待恢复」模式，而不是终止线程
+        # 定位失败即停止（db_watch 的失败=联系人解析不到，等待无意义）
         if not chat_connected:
-            if self._chat_ui_inaccessible:
-                _print("🛑 微信 UIA 树当前不可访问，停止监听线程，不进入等待恢复模式")
-                self.is_monitoring = False
-                return
-            _print(f"⚠️ 初始聊天切换 {MAX_CHAT_RETRIES} 次尝试均失败，进入等待恢复模式...")
-            RECOVERY_INTERVAL = 10  # 每 10 秒重试一次
-            RECOVERY_MAX_ATTEMPTS = 12  # 上限 ~2 分钟：微信停在登录页或聊天窗
-            # 不可用时 ChatWith 永远失败，无限自旋只会刷日志占着线程
-            recovery_attempts = 0
-            while self._session_should_continue(session_state, stop_event):
-                time.sleep(RECOVERY_INTERVAL)
-                recovery_attempts += 1
-                if recovery_attempts >= RECOVERY_MAX_ATTEMPTS:
-                    self._chat_error = (
-                        '聊天窗口持续不可用（微信可能停留在登录界面，或当前界面访问不到聊天列表）。'
-                        '请确认微信已登录并打开对应聊天后，重新开始监听。'
-                    )
-                    self.is_monitoring = False
-                    _print(f"🛑 {self._chat_error}")
-                    return
-                _print("🔄 [等待恢复] 重试聊天切换...")
-                try:
-                    if self.wx is None:
-                        self._create_wechat_instance_with_recovery(phase="chat_recovery_loop")
-                    self._bring_wechat_to_front()
-                    time.sleep(0.4)
-                    for target_name in chat_targets:
-                        _print(f"[OpenChat] [恢复模式] 尝试搜索名: {target_name}")
-                        if self._try_chat_with(target_name):
-                            _print(f"✅ [恢复成功] 已切换到聊天窗口: {target_name}")
-                            chat_connected = True
-                            break
-                        if self._chat_ui_inaccessible:
-                            _print("⚠️ [恢复模式] 微信 UIA 树当前不可访问，停止恢复尝试")
-                            break
-                        if self._chat_timed_out:
-                            _print("⚠️ [恢复模式] 聊天切换超时，停止本轮恢复尝试")
-                            break
-                    if chat_connected:
-                        break
-                    if self._chat_timed_out or self._chat_ui_inaccessible:
-                        break
-                except Exception as e:
-                    _print(f"⚠️ [等待恢复] 聊天切换仍然失败: {e}")
-
-                if self._chat_timed_out or self._chat_ui_inaccessible:
-                    break
-            
-            if not chat_connected:
-                if self._chat_ui_inaccessible:
-                    _print("🛑 微信 UIA 树当前不可访问，轮询线程退出")
-                    self.is_monitoring = False
-                    return
-                _print("🛑 等待恢复被中断（收到停止信号），轮询线程退出")
-                return
+            self.is_monitoring = False
+            _print(f"🛑 {self._chat_error or '聊天数据定位失败'}")
+            return
 
         if not self._session_should_continue(session_state, stop_event):
             _print("🛑 聊天切换完成后检测到会话已停止，轮询线程退出")
@@ -999,38 +873,17 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, UiaRec
             args=(session_state,), daemon=True, name="listen-start-suggestion",
         ).start()
         
-        gdi_fail_count = 0  # GDI 异常连续失败计数（Bug 3）
-        GDI_MAX_CONSECUTIVE = 5  # 连续 GDI 失败上限
-        poll_fail_count = 0  # 非已知类别异常连续失败计数（R1）
+        poll_fail_count = 0  # 异常连续失败计数（R1）
         POLL_MAX_CONSECUTIVE = 10  # 连续失败上限：超过视为监听通道失效（如微信已关闭）
-        
+
         while self._session_should_continue(session_state, stop_event):
             try:
                 if not self.wx or not session_state.get('display_name'):
                     break
-                
-                # 获取当前窗口的所有消息（通过去重逻辑只处理新消息）
-                try:
-                    new_messages = self.wx.GetAllMessage()
-                    gdi_fail_count = 0  # 成功则重置计数
-                    poll_fail_count = 0
-                except Exception as gdi_err:
-                    err_msg = str(gdi_err)
-                    # Bug 3: GDI 截图异常专项捕获
-                    if 'CreateCompatibleDC' in err_msg or 'GDI' in err_msg.upper() or 'ScreenShot' in err_msg:
-                        gdi_fail_count += 1
-                        if gdi_fail_count <= GDI_MAX_CONSECUTIVE:
-                            _print(f"⚠️ GDI 截图异常 ({gdi_fail_count}/{GDI_MAX_CONSECUTIVE}): {err_msg}")
-                            time.sleep(2)  # 等待 GDI 资源释放
-                            continue
-                        else:
-                            self._chat_error = f'GDI 截图连续失败 {gdi_fail_count} 次，消息获取暂时不可用'
-                            _print(f"❌ {self._chat_error}")
-                            gdi_fail_count = 0  # 重置后继续尝试
-                            time.sleep(5)
-                            continue
-                    else:
-                        raise  # 非 GDI 异常，交给外层处理
+
+                # 获取当前聊天的可见消息（通过去重逻辑只处理新消息）
+                new_messages = self.wx.GetAllMessage()
+                poll_fail_count = 0
                 
                 if new_messages:
                     # 处理每条消息
@@ -1056,7 +909,7 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, UiaRec
                 import traceback
                 traceback.print_exc()
                 if poll_fail_count >= POLL_MAX_CONSECUTIVE:
-                    # 连续失败视为监听通道失效（如微信已关闭/UIA 不可访问）：
+                    # 连续失败视为监听通道失效（如微信已退出、数据文件不可读）：
                     # 置错误状态并停止轮询，前端经 get_status 的 chat_error 可见，
                     # 不再无限自旋刷日志（R1）
                     self._chat_error = f'消息轮询连续失败 {poll_fail_count} 次，监听已停止：{e}'
@@ -1664,12 +1517,6 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, UiaRec
             self.seen_message_keys.clear()
             self._last_known_ts = 0
             self._chat_timed_out = False
-            self._chat_ui_inaccessible = False
-            self._uia_recovery_attempts = 0
-            self._last_uia_recovery = None
-            self._uia_recovery_required = False
-            self._uia_recovery_in_progress = False
-            self._uia_recovery_context = {}
             self._resume_mode = 'skip'
             self._stop_event = None
             
@@ -1718,14 +1565,13 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, UiaRec
             message_count = 0
             if self.is_monitoring and self.current_batch_id:
                 message_count = self.message_buffer.get_batch_count(self.current_batch_id, self.current_account_wxid)
-            recovery_snapshot = self._extract_uia_recovery_snapshot()
-            
+
             # 检测轮询线程是否仍然存活
             polling_alive = (
-                self.polling_thread is not None 
+                self.polling_thread is not None
                 and self.polling_thread.is_alive()
             )
-            
+
             return {
                 'is_monitoring': self.is_monitoring,
                 'talker_username': self.current_talker,
@@ -1737,43 +1583,29 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, UiaRec
                 'model_ready': self.sentiment_service.is_ready(),
                 'chat_ready': self._chat_ready,
                 'chat_error': self._chat_error,
-                'uia_recovery_required': self._uia_recovery_required,
-                'uia_recovery_in_progress': self._uia_recovery_in_progress,
-                'uia_recovery_phase': (self._uia_recovery_context or {}).get('phase', ''),
-                'uia_recovery_stage': (self._uia_recovery_context or {}).get('stage', ''),
                 'polling_alive': polling_alive,
                 'provider': self._provider_name or getattr(self.wx, 'backend_name', ''),
                 'listener_profile': self._listener_profile or getattr(self.wx, 'listener_profile', ''),
                 'wechat_version': self._wechat_version or getattr(self.wx, 'wechat_version', ''),
-                'uia_recovery_summary': recovery_snapshot.get('summary', ''),
-                'uia_recovery_final_status': recovery_snapshot.get('final_status', ''),
-                'uia_recovery_actions': recovery_snapshot.get('action_steps', []),
-                'uia_recovery_aborted': recovery_snapshot.get('aborted', False),
-                'uia_recovery_abort_reason': recovery_snapshot.get('abort_reason', ''),
-                'narrator_verification': recovery_snapshot.get('narrator_verification', {}),
             }
-            
+
         except Exception as e:
             logger.error(f"[RealtimeMonitorService] 获取状态失败: {e}")
             return {
                 'is_monitoring': False,
                 'error': str(e)
             }
-    
-    
+
+
     def get_suggestion_config(self) -> dict:
         """获取 AI 建议配置"""
-        config = dict(self._suggestion_config)
-        config['listener_backend'] = self._listener_backend
-        return config
-    
+        return dict(self._suggestion_config)
+
     def set_suggestion_config(self, config: dict):
         """更新 AI 建议配置"""
         for key in ('trigger_mode', 'intent', 'auto_rate_limit', 'engine_type'):
             if key in config:
                 self._suggestion_config[key] = config[key]
-        if 'listener_backend' in config:
-            self._listener_backend = normalize_listener_backend(config['listener_backend'])
         _print(f"[RealtimeMonitorService] 建议配置已更新: {self._suggestion_config}")
 
 

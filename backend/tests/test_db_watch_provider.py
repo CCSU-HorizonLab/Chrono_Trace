@@ -1,7 +1,8 @@
 """db_watch 实时监听 provider 单测（离线：合成加密分片，无真实微信）。
 
 覆盖：初始化密钥校验、跨分片定位 Msg 表、窗口语义（WINDOW/PAGE 翻页）、
-sender 归属（目录名后缀剥离）、local_type 词表映射、源库增量刷新可见。
+sender 归属（目录名后缀剥离）、local_type 词表映射、源库增量刷新可见、
+消息模型哈希与兼容属性。
 """
 from __future__ import annotations
 
@@ -18,6 +19,10 @@ import pytest
 
 from app.services.realtime.providers import db_watch as dbw
 from app.services.realtime.providers.db_watch import DbWatchRealtimeProvider
+from app.services.realtime.providers.models import (
+    RealtimeMessage,
+    build_message_hash,
+)
 from fixtures.wcdb_factory import build_plain_db, encrypt_db
 
 KEY_HEX = "2b" * 32
@@ -26,6 +31,55 @@ MY_PLAIN_NAME = "lishao378"         # name2id 存无后缀真名
 
 ZHANG = "wxid_zhang"
 LI = "wxid_li"
+
+
+def test_build_message_hash_is_stable():
+    first = build_message_hash(
+        "wechat_41x",
+        "friend",
+        "text",
+        "  hello   world ",
+        123,
+        "abc",
+    )
+    second = build_message_hash(
+        "wechat_41x",
+        "friend",
+        "text",
+        "hello world",
+        123,
+        "abc",
+    )
+    third = build_message_hash(
+        "wechat_41x",
+        "friend",
+        "text",
+        "hello world",
+        124,
+        "abc",
+    )
+
+    assert first == second
+    assert first != third
+
+
+def test_realtime_message_exposes_compatibility_properties():
+    msg = RealtimeMessage(
+        runtime_id="r1",
+        sender_attr="self",
+        content="hi",
+        message_type="text",
+        timestamp_label="12:34",
+        timestamp=1234,
+        message_hash="hash1",
+    )
+
+    assert msg.id == "r1"
+    assert msg.hash == "hash1"
+    assert msg.type == "text"
+    assert msg.time == "12:34"
+    assert msg.CreateTime == "12:34"
+    assert msg.is_self is True
 
 
 def _msg_table(username: str) -> str:

@@ -13,14 +13,6 @@ class ProviderInitError(ProviderError):
     """Raised when the provider cannot initialize."""
 
 
-class UINotAccessibleError(ProviderError):
-    """Raised when WeChat UI cannot be inspected reliably."""
-
-
-class UnsupportedWeChatVersionError(ProviderError):
-    """Raised when the current WeChat version is outside the supported matrix."""
-
-
 class RealtimeProvider(ABC):
     """Abstract provider used by RealtimeMonitorService."""
 
@@ -35,10 +27,6 @@ class RealtimeProvider(ABC):
     @abstractmethod
     def initialize(self) -> None:
         """Prepare the provider for use."""
-
-    @abstractmethod
-    def activate_main_window(self) -> bool:
-        """Bring the WeChat window to the foreground."""
 
     @abstractmethod
     def open_chat(self, display_name: str, expected_display_name: str | None = None) -> bool:

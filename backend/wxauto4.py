@@ -5,9 +5,9 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 try:
-    from backend.app.services.realtime.providers.factory import RealtimeProviderFactory
+    from backend.app.services.realtime.providers.db_watch import DbWatchRealtimeProvider
 except ModuleNotFoundError:  # pragma: no cover - compatibility with backend-only test path
-    from app.services.realtime.providers.factory import RealtimeProviderFactory
+    from app.services.realtime.providers.db_watch import DbWatchRealtimeProvider
 
 
 class _ProviderMsgBox:
@@ -32,8 +32,8 @@ class _ProviderChatBox:
 class WeChat:
     """Compatibility wrapper exposing the subset monitor_service relies on."""
 
-    def __init__(self, start_listener: bool = False, backend: str | None = None):
-        self._provider = RealtimeProviderFactory.create(backend=backend)
+    def __init__(self, start_listener: bool = False):
+        self._provider = DbWatchRealtimeProvider()
         self.start_listener = bool(start_listener)
         self._sync_metadata()
 

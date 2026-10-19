@@ -11,7 +11,6 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from app.services.realtime.providers.base import UINotAccessibleError
 from app.services.realtime.monitor_service import RealtimeMonitorService
 
 
@@ -106,16 +105,7 @@ def _make_service() -> tuple[RealtimeMonitorService, FakeMessageBuffer]:
     service.is_monitoring = True
     service._listener_profile = "wechat_405"
     service._monitor_session_token = 1
-    service._uia_recovery_attempts = 0
-    service._last_uia_recovery = None
-    service._uia_recovery_required = False
-    service._uia_recovery_in_progress = False
-    service._uia_recovery_context = {}
-    service._uia_manual_restart_guard_until = 0.0
-    service._uia_manual_restart_guard_reason = ""
-    service._uia_manual_restart_guard_phase = ""
     service._chat_error = ""
-    service._chat_ui_inaccessible = False
     service.seen_hashes.clear()
     service.seen_message_keys.clear()
     service._last_known_ts = 0
@@ -147,31 +137,6 @@ def test_process_message_dedupes_same_runtime_id_when_time_anchor_is_stable():
     assert len(service.seen_message_keys) == 1
 
 
-def test_try_chat_with_marks_uia_tree_inaccessible_with_actionable_error(monkeypatch):
-    service, _buffer = _make_service()
-
-    class BrokenWx:
-        listener_profile = "wechat_41x"
-
-        def ChatWith(self, _target_name, expected_display_name=None):
-            del expected_display_name
-            raise UINotAccessibleError("ui_not_accessible: shell_only")
-
-    service.wx = BrokenWx()
-    service._get_foreground_window_info = lambda: {
-        "hwnd": 1247856,
-        "class_name": "Qt51514QWindowIcon",
-        "title": "微信",
-    }
-    ok = service._try_chat_with("安（备注）")
-
-    assert ok is False
-    assert service._chat_ui_inaccessible is True
-    assert service._uia_recovery_required is True
-    assert "微信 UI 树没有展开" in service._chat_error
-    assert "确认自动修复" in service._chat_error
-
-
 def test_try_chat_with_passes_expected_display_name_to_provider():
     service, _buffer = _make_service()
     service.current_display_name = "安（备注）"
@@ -186,11 +151,6 @@ def test_try_chat_with_passes_expected_display_name_to_provider():
             return True
 
     service.wx = RecordingWx()
-    service._get_foreground_window_info = lambda: {
-        "hwnd": 1247856,
-        "class_name": "Qt51514QWindowIcon",
-        "title": "微信",
-    }
 
     ok = service._try_chat_with("安")
 
@@ -201,238 +161,25 @@ def test_try_chat_with_passes_expected_display_name_to_provider():
     }
 
 
-def test_start_monitoring_returns_friendly_error_when_uia_tree_is_shell_only(monkeypatch):
-    service, _buffer = _make_service()
-    service.is_monitoring = False
-    service.wx = None
-
-    monkeypatch.setattr(service, "_reset_wechat_instance", lambda: None)
-    monkeypatch.setattr(
-        service,
-        "_create_wechat_instance_with_recovery",
-        lambda phase: (_ for _ in ()).throw(UINotAccessibleError("ui_not_accessible: shell_only")),
-    )
-
-    result = service.start_monitoring("", "安（备注）", resume_mode="skip")
-
-    assert result["success"] is False
-    assert result["message"] == "监听后端初始化失败"
-    assert "微信窗口已找到" in result["error"]
-    assert "先完全退出微信" in result["error"]
-    assert "讲述人" in result["error"]
-
-
-def test_create_wechat_instance_with_recovery_marks_recovery_required(monkeypatch):
-    service, _buffer = _make_service()
-
-    def fake_create():
-        raise UINotAccessibleError("ui_not_accessible: shell_only")
-
-    monkeypatch.setattr(service, "_create_wechat_instance", fake_create)
-    try:
-        service._create_wechat_instance_with_recovery("initialize")
-    except UINotAccessibleError:
-        pass
-
-    assert service._uia_recovery_required is True
-    assert service._uia_recovery_context["phase"] == "initialize"
-
-
-def test_attempt_auto_recover_shell_only_uia_marks_confirmation_required():
-    service, _buffer = _make_service()
-
-    ok = service._attempt_auto_recover_shell_only_uia("initialize", "ui_not_accessible: shell_only")
-
-    assert ok is False
-    assert service._uia_recovery_required is True
-    assert service._uia_recovery_context["phase"] == "initialize"
-    assert "确认自动修复" in service._chat_error
-
-
-def test_run_confirmed_uia_recovery_executes_after_confirmation(monkeypatch):
-    service, _buffer = _make_service()
-    service._uia_recovery_required = True
-    service._uia_recovery_context = {
-        "phase": "initialize",
-        "error_text": "ui_not_accessible: shell_only",
-        "stage": "restart",
-    }
-
-    captured = {}
-
-    def fake_recover(**kwargs):
-        captured.update(kwargs)
-        progress_callback = kwargs["progress_callback"]
-        progress_callback("launch_wechat", "正在重新打开微信，请登录...", {})
-        return {
-            "final_probe": {"status": "accessible"},
-            "errors": [],
-        }
-
-    monkeypatch.setattr(
-        "app.services.realtime.providers.recovery.recover_shell_only_wechat_uia",
-        fake_recover,
-    )
-
-    result = service.run_confirmed_uia_recovery()
-
-    assert result["success"] is True
-    assert captured["recovery_mode"] == "relaunch_with_narrator"
-    assert captured["stop_narrator_on_success"] is True
-    assert service._uia_recovery_required is False
-    assert service._uia_recovery_in_progress is False
-    assert service._chat_error == ""
-
-
-def test_run_confirmed_uia_recovery_activate_stage_runs_non_destructive(monkeypatch):
-    """第一段（无破坏激活）：narrator_in_place 模式，不动微信进程。"""
-    service, _buffer = _make_service()
-    service._uia_recovery_required = True
-    service._uia_recovery_context = {
-        "phase": "chat_switch",
-        "error_text": "ui_not_accessible: shell_only",
-        "stage": "activate",
-    }
-
-    captured = {}
-
-    def fake_recover(**kwargs):
-        captured.update(kwargs)
-        return {
-            "final_probe": {"status": "accessible"},
-            "errors": [],
-        }
-
-    monkeypatch.setattr(
-        "app.services.realtime.providers.recovery.recover_shell_only_wechat_uia",
-        fake_recover,
-    )
-
-    result = service.run_confirmed_uia_recovery()
-
-    assert result["success"] is True
-    assert captured["recovery_mode"] == "narrator_in_place"
-    assert "terminate_wechat" not in str(captured)
-
-
-def test_run_confirmed_uia_recovery_activate_failure_arms_restart_stage(monkeypatch):
-    """第一段失败：武装第二段（重启微信）待二次确认，不自动执行。"""
-    service, _buffer = _make_service()
-    service._uia_recovery_required = True
-    service._uia_recovery_context = {
-        "phase": "chat_switch",
-        "error_text": "ui_not_accessible: shell_only",
-        "stage": "activate",
-    }
-
-    monkeypatch.setattr(
-        "app.services.realtime.providers.recovery.recover_shell_only_wechat_uia",
-        lambda **kwargs: {
-            "actions": [{"step": "launch_narrator"}],
-            "final_probe": {"status": "shell_only"},
-            "errors": ["still_shell_only"],
-        },
-    )
-
-    result = service.run_confirmed_uia_recovery()
-
-    assert result["success"] is False
-    assert result["next_stage"] == "restart"
-    assert service._uia_recovery_required is True
-    assert service._uia_recovery_context.get("stage") == "restart"
-    # 未动微信进程 → 不进入「手动重开保护期」
-    assert service._has_active_uia_manual_restart_guard() is False
-    assert "手机上确认登录" in service._chat_error
-
-
-def test_run_confirmed_uia_recovery_enters_manual_restart_guard_after_destructive_failure(monkeypatch):
-    service, _buffer = _make_service()
-    service._uia_recovery_required = True
-    service._uia_recovery_context = {
-        "phase": "initialize",
-        "error_text": "ui_not_accessible: shell_only",
-        "stage": "restart",
-    }
-
-    monkeypatch.setattr(
-        "app.services.realtime.providers.recovery.recover_shell_only_wechat_uia",
-        lambda **kwargs: {
-            "actions": [{"step": "terminate_wechat"}],
-            "final_probe": {"status": "shell_only"},
-            "errors": ["still_shell_only"],
-        },
-    )
-
-    result = service.run_confirmed_uia_recovery()
-
-    assert result["success"] is False
-    assert service._has_active_uia_manual_restart_guard() is True
-    assert "不会再次自动关闭微信" in service._chat_error
-
-
-def test_attempt_auto_recover_shell_only_uia_skips_repeated_close_during_manual_restart_guard():
-    service, _buffer = _make_service()
-    service._uia_manual_restart_guard_until = time.time() + 120
-
-    ok = service._attempt_auto_recover_shell_only_uia("initialize", "ui_not_accessible: shell_only")
-
-    assert ok is False
-    assert service._uia_recovery_required is False
-    assert "不会再次自动关闭微信" in service._chat_error
-
-
-def test_start_monitoring_does_not_reprompt_destructive_recovery_during_manual_restart_guard(monkeypatch):
-    service, _buffer = _make_service()
-    service.is_monitoring = False
-    service.wx = None
-    service._uia_manual_restart_guard_until = time.time() + 120
-
-    monkeypatch.setattr(service, "_reset_wechat_instance", lambda: None)
-
-    def fake_create():
-        raise UINotAccessibleError("ui_not_accessible: shell_only")
-
-    monkeypatch.setattr(service, "_create_wechat_instance", fake_create)
-
-    result = service.start_monitoring("", "安（备注）", resume_mode="skip")
-
-    assert result["success"] is False
-    assert result["uia_recovery_required"] is False
-    assert service._uia_recovery_required is False
-    assert "不会再次自动关闭微信" in result["error"]
-    assert "手动打开并登录微信" in result["error"]
-def test_try_chat_with_retries_after_shell_only_auto_recovery(monkeypatch):
+def test_try_chat_with_reports_error_when_open_chat_returns_false():
+    """db_watch 语义：open_chat 返回 False（联系人解析不到）→ 明确报错不重试。"""
     service, _buffer = _make_service()
     service.current_display_name = "安（备注）"
-    attempts = []
 
-    class BrokenWx:
+    class MissingWx:
         listener_profile = "wechat_41x"
 
         def ChatWith(self, _target_name, expected_display_name=None):
             del expected_display_name
-            attempts.append("broken")
-            raise UINotAccessibleError("ui_not_accessible: shell_only")
+            return False
 
-    class RecoveredWx:
-        listener_profile = "wechat_41x"
-
-        def ChatWith(self, target_name, expected_display_name=None):
-            attempts.append(("recovered", target_name, expected_display_name))
-            return True
-
-    service.wx = BrokenWx()
-    service._get_foreground_window_info = lambda: {
-        "hwnd": 1247856,
-        "class_name": "Qt51514QWindowIcon",
-        "title": "微信",
-    }
+    service.wx = MissingWx()
 
     ok = service._try_chat_with("安")
 
     assert ok is False
-    assert attempts == ["broken"]
-    assert service._uia_recovery_required is True
+    assert "未找到" in service._chat_error
+    assert "安（备注）" in service._chat_error
 
 
 def test_process_message_dedupes_same_runtime_id_even_if_sender_attr_flips():
@@ -814,7 +561,6 @@ def test_polling_loop_only_persists_messages_arriving_after_startup_baseline(mon
         stop_after_calls=3,
     )
 
-    monkeypatch.setattr(service, "_bring_wechat_to_front", lambda: True)
     monkeypatch.setattr(service, "_build_chatwith_candidates", lambda: ["Friend"])
     monkeypatch.setattr(service, "_try_chat_with", lambda target_name: target_name == "Friend")
     monkeypatch.setattr("app.services.realtime.monitor_service.time.sleep", lambda _seconds: None)

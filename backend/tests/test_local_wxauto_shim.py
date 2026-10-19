@@ -14,7 +14,7 @@ WeChat = wxauto4_module.WeChat
 
 
 class FakeProvider:
-    backend_name = "native_uia"
+    backend_name = "db_watch"
     listener_profile = "wechat_41x"
     wechat_version = "4.1.3.0"
     account_name = "tester"
@@ -48,11 +48,11 @@ class FakeProvider:
 
 def test_local_wxauto4_shim_delegates_to_provider(monkeypatch):
     provider = FakeProvider()
-    monkeypatch.setattr(wxauto4_module.RealtimeProviderFactory, "create", lambda backend=None: provider)
+    monkeypatch.setattr(wxauto4_module, "DbWatchRealtimeProvider", lambda: provider)
 
     wx = WeChat(start_listener=False)
 
-    assert wx.backend_name == "native_uia"
+    assert wx.backend_name == "db_watch"
     assert wx.listener_profile == "wechat_41x"
     assert wx.wechat_version == "4.1.3.0"
     assert wx.nickname == "tester"

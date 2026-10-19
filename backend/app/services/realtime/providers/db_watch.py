@@ -58,7 +58,7 @@ def _inotify_available() -> bool:
 _INOTIFY_OK: bool | None = None
 
 
-# local_type → 监听器词表（与 native_uia 的映射保持一致口径）
+# local_type → 监听器词表
 # 微信 V4 的 local_type 高 32 位是 flag（如 25769803825 & 0xFFFFFFFF = 49），
 # 查表前必须先掩码——此前巨型值落默认 "text" 把压缩二进制当文本显示
 LOCAL_TYPE_TO_MESSAGE_TYPE = {

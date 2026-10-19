@@ -1,4 +1,4 @@
-"""Shared message and version models for realtime providers."""
+"""Shared message model for realtime providers."""
 
 from __future__ import annotations
 
@@ -81,14 +81,4 @@ class RealtimeMessage:
     @property
     def is_self(self) -> bool:
         return self.sender_attr == "self"
-
-
-@dataclass(slots=True)
-class WeChatVersionInfo:
-    """Detected WeChat runtime information."""
-
-    version: str = ""
-    listener_profile: str = ""
-    hwnd: int = 0
-    exe_path: str = ""
 

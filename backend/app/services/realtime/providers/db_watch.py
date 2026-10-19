@@ -98,6 +98,7 @@ class DbWatchRealtimeProvider(RealtimeProvider):
         self._watchers: list[EncryptedShardWatcher] = []
         self._my_rowids: dict[int, int | None] = {}  # shard_idx -> name2id rowid
         self._table = ""
+        self._table_shards: list[int] = []  # 含目标消息表的分片下标（查询只走这些）
         self._username = ""
         self._upper_seq = 0
         self._extra_older = 0
@@ -163,18 +164,24 @@ class DbWatchRealtimeProvider(RealtimeProvider):
             logger.warning("[db_watch] 无法解析联系人: %s", display_name)
             return False
         table = "Msg_" + hashlib.md5(username.encode("utf-8")).hexdigest()
-        for idx, watcher in enumerate(self._watchers):
-            row = watcher.connection.execute(
+        # 同一联系人的消息表可散布在多个分片（按消息 id 分片）：全部找出，
+        # 后续 _max_seq 与窗口 SQL 只查这些分片，省掉其余分片的无效查询
+        # （表不存在异常 × 每分片，refresh 后 .dec.db 冷缓存时全是慢盘 IO）
+        table_shards = [
+            idx for idx, watcher in enumerate(self._watchers)
+            if watcher.connection.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
             ).fetchone()
-            if row:
-                self._table = table
-                self._username = username
-                self.current_display_name = display_name
-                self._upper_seq = self._max_seq(table)
-                self._extra_older = 0
-                self._my_rowids = {i: self._resolve_my_rowid(w) for i, w in enumerate(self._watchers)}
-                return True
+        ]
+        if table_shards:
+            self._table = table
+            self._table_shards = table_shards
+            self._username = username
+            self.current_display_name = display_name
+            self._upper_seq = self._max_seq(table)
+            self._extra_older = 0
+            self._my_rowids = {i: self._resolve_my_rowid(w) for i, w in enumerate(self._watchers)}
+            return True
         logger.info("[db_watch] %s 的消息表不存在于任何分片", display_name)
         return False
 
@@ -217,9 +224,9 @@ class DbWatchRealtimeProvider(RealtimeProvider):
 
         limit = self.WINDOW + max(0, self._extra_older)
         rows: list[tuple[int, dict]] = []
-        for idx, watcher in enumerate(self._watchers):
+        for idx in self._table_shards:
             try:
-                cur = watcher.connection.execute(
+                cur = self._watchers[idx].connection.execute(
                     f"SELECT local_id, server_id, local_type, sort_seq, real_sender_id, "
                     f"create_time, message_content FROM [{self._table}] "
                     f"WHERE sort_seq <= ? ORDER BY sort_seq DESC LIMIT ?",
@@ -257,6 +264,7 @@ class DbWatchRealtimeProvider(RealtimeProvider):
             except Exception:
                 pass
         self._watchers = []
+        self._table_shards = []
         self._last_nochange_result = None
 
     # ---------- 内部 ----------
@@ -334,9 +342,9 @@ class DbWatchRealtimeProvider(RealtimeProvider):
 
     def _max_seq(self, table: str) -> int:
         best = 0
-        for watcher in self._watchers:
+        for idx in self._table_shards:
             try:
-                row = watcher.connection.execute(
+                row = self._watchers[idx].connection.execute(
                     f"SELECT MAX(sort_seq) FROM [{table}]"
                 ).fetchone()
                 if row and row[0]:

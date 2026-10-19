@@ -59,7 +59,7 @@ def test_save_message_persists_batch_id(monkeypatch):
         },
     )
 
-    assert ok is True
+    assert ok == 1  # 返回新行 rowid（0=失败，真值语义与原 bool 一致）
 
     row = conn.execute(
         """

@@ -442,10 +442,15 @@ class RealtimeSentimentService:
 
         return results
 
-    def analyze_and_cache(self, message_id: int, text: str):
-        """Analyze one message and cache the result."""
+    def analyze_and_cache(self, message_id: int, text: str, result: dict | None = None):
+        """Analyze one message and cache the result.
+
+        result 传入调用方已算好的分析结果（monitor 逐条路径刚 analyze 过），
+        避免同一条消息跑两遍完整推理（jieba 分词 + ONNX 前向）。
+        """
         try:
-            result = self.analyze(text)
+            if result is None:
+                result = self.analyze(text)
             rules_json = json.dumps(result["rules_applied"], ensure_ascii=False)
             get_db().execute(
                 """

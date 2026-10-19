@@ -22,6 +22,38 @@ class TestRealtimeSentiment:
         return RealtimeSentimentService()
     
     # ========== 基础功能测试 ==========
+
+    def test_analyze_and_cache_reuses_given_result(self, service, monkeypatch):
+        """monitor 逐条路径先 analyze 再缓存：传入结果后不得二次推理。"""
+        calls = []
+        orig_predict = service._model_predict
+
+        def counting_predict(texts):
+            calls.append(1)
+            return orig_predict(texts)
+
+        monkeypatch.setattr(service, "_model_predict", counting_predict)
+
+        result = service.analyze("今天真开心")
+
+        class _FakeConn:
+            def execute(self, *_a, **_k):
+                class _Cur:
+                    @staticmethod
+                    def fetchone():
+                        return None
+                return _Cur()
+
+            @staticmethod
+            def commit():
+                return None
+
+        monkeypatch.setattr(
+            "app.services.realtime.realtime_sentiment_service.get_db", lambda: _FakeConn()
+        )
+        service.analyze_and_cache(message_id=1, text="今天真开心", result=result)
+
+        assert len(calls) == 1  # 只在 analyze 时推理一次
     
     def test_simple_positive(self, service):
         """测试简单正面消息"""

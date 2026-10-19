@@ -900,8 +900,10 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, Backfi
                     if silence_event:
                         self._handle_trigger_events([silence_event], session_state=session_state)
                 
-                # 每1秒检查一次
-                time.sleep(0.3)
+                # 轮询节奏：无变化轮在 provider 内短路（inotify 缓存/stat 短路，
+                # µs 级），50ms 对齐延迟即可压到最低；stat 降级模式下 20Hz×19
+                # 分片×2 文件 fstat 同样可忽略
+                time.sleep(0.05)
                 
             except Exception as e:
                 poll_fail_count += 1
@@ -995,16 +997,17 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, Backfi
                 self.seen_hashes.add(message_hash)
                 return
             
-            # 7. 保存到数据库
-            success = self.message_buffer.save_message(
+            # 7. 保存到数据库（返回新行 rowid：0=失败，真值语义同 bool）
+            message_row_id = self.message_buffer.save_message(
                 batch_id,
                 self.current_account_wxid,
                 talker_username,
                 display_name,
                 message_data
             )
-            
-            if success:
+
+            if message_row_id:
+                message_data['id'] = message_row_id
                 self.seen_message_keys.add(message_key)
                 # 记录哈希
                 if message_hash:
@@ -1018,10 +1021,11 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, Backfi
                         sentiment_result = self.sentiment_service.analyze(
                             str(message_data['content'])
                         )
-                        # 同时缓存到数据库
+                        # 同时缓存到数据库（传入已算好的结果，不再二次推理）
                         self.sentiment_service.analyze_and_cache(
                             message_id=message_hash,
-                            text=str(message_data['content'])
+                            text=str(message_data['content']),
+                            result=sentiment_result,
                         )
                         _print(f"💭 情感分析完成: polarity={sentiment_result.get('polarity')}")
                     except Exception as e:

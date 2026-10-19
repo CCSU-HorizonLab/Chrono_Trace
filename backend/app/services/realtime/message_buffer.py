@@ -58,10 +58,10 @@ class MessageBuffer:
         talker_username: str,
         talker_display_name: str,
         message_data: dict
-    ) -> bool:
+    ) -> int:
         """
         保存单条消息到暂存表
-        
+
         Args:
             batch_id: 批次ID
             talker_username: 对话对象username
@@ -76,9 +76,9 @@ class MessageBuffer:
                     'timestamp': int,
                     'visible_index': int,
                 }
-        
+
         Returns:
-            bool: 是否保存成功
+            int: 新行 id（推送去重键），0=失败——真值语义与原 bool 一致
         """
         with self._lock:
             try:
@@ -121,6 +121,7 @@ class MessageBuffer:
                 ))
                 
                 conn.commit()
+                row_id = int(cursor.lastrowid or 0)
                 try:
                     row = conn.execute(
                         """
@@ -143,13 +144,13 @@ class MessageBuffer:
                         RagIndexQueue.mark_dirty(self._resolve_account_wxid(account_wxid), int(row["id"]))
                 except Exception as rag_e:
                     logger.debug("[MessageBuffer] RAG dirty mark skipped: %s", rag_e)
-                return True
-                
+                return row_id
+
             except Exception as e:
                 _print(f"❌ 数据库保存失败: {e}")
                 import traceback
                 traceback.print_exc()
-                return False
+                return 0
     
     def get_batch_messages(
         self, 

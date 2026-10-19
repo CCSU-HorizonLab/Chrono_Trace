@@ -201,12 +201,23 @@ class ModelMgmtApiMixin:
                     "issue": embedding_diagnosis.get("issue") or "文本向量模型不可用",
                     "can_auto_download": False,
                 })
-            for item in missing_details:
-                item["issue"] = (
-                    f"{item['issue']}（推理为 ONNX 单后端：运行 "
-                    "python backend/scripts/ensure_models_for_export.py --with-export "
-                    "下载源模型并生成 ONNX 产物）"
-                )
+            # 打包版（frozen）：内置 ONNX 缺失只能重装完整安装包——应用内
+            # 下载拉的是 ModelScope 源模型权重，推理单后端只认 onnx 产物，
+            # 下载完依然不可用（假修复）；「运行 python 脚本」文案也只对
+            # 开发态有意义
+            from ...config import IS_FROZEN
+
+            if IS_FROZEN:
+                for item in missing_details:
+                    item["issue"] = "安装包内置模型缺失：请重新下载完整安装包并覆盖安装"
+                    item["can_auto_download"] = False
+            else:
+                for item in missing_details:
+                    item["issue"] = (
+                        f"{item['issue']}（推理为 ONNX 单后端：运行 "
+                        "python backend/scripts/ensure_models_for_export.py --with-export "
+                        "下载源模型并生成 ONNX 产物）"
+                    )
 
             return {
                 "ok": True,
@@ -256,6 +267,19 @@ class ModelMgmtApiMixin:
                     "task_id": None,
                     "models_to_download": [],
                     "status": "completed",
+                }
+
+            # 打包版拒绝应用内下载：下载的是 ModelScope 源模型权重，推理
+            # 单后端只认 onnx 产物——下载完依然缺模型（假修复），还会把
+            # 数百 MB 无用权重写进内置目录（Program Files 下多半还无权限）
+            from ...config import IS_FROZEN
+
+            if IS_FROZEN:
+                return {
+                    "ok": False,
+                    "error": "安装包内置模型缺失时无法通过应用内下载恢复，请重新下载完整安装包并覆盖安装",
+                    "error_code": "BUNDLED_MODEL_MISSING",
+                    "error_detail": "推理为 ONNX 单后端：应用内下载拉取的是源模型权重，不含 onnx 产物",
                 }
 
             # 加 uuid 后缀防撞号：同秒内重复点击下载时按秒生成的 task_id 会互相覆盖

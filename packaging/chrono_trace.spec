@@ -61,7 +61,13 @@ for _model_name in ("bge_small_zh_v15", "sentiment_3class"):
         if _tokenizer.exists():
             datas.append((str(_tokenizer), f"models/{_model_name}/onnx/tokenizer"))
     else:
-        print(f"[chrono_trace.spec] WARNING: missing {_model} (run backend/scripts/export_models_onnx.py first)")
+        # 缺模型必须中止出包：静默出包会在用户机上表现为「缺少分析模型」
+        # 且应用内无从恢复（推理是 ONNX 单后端，ModelScope 下载的是源
+        # 模型权重救不了）——1.5.0 词表缺失静默出包是同款事故
+        raise SystemExit(
+            f"[chrono_trace.spec] FATAL: missing {_model} — "
+            "先运行 backend/scripts/ensure_models_for_export.py --with-export 生成产物"
+        )
 
 
 

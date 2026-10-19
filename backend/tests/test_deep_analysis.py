@@ -149,7 +149,7 @@ class TestBucketSeries:
         assert first["msgCount"] == first["userMsgCount"] + first["otherMsgCount"]
         assert (second["userMsgCount"], second["otherMsgCount"]) == (0, 1)
         assert second["msgCount"] == second["userMsgCount"] + second["otherMsgCount"]
-        assert result["version"] == 3
+        assert result["version"] == 4
 
     def test_uncovered_bucket_keeps_full_count(self, db):
         """缺情感数据的桶：coverage=0、score=None、lowConfidence，msgCount 仍全量。"""

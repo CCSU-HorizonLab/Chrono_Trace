@@ -370,7 +370,7 @@ class DeepAnalysisApiMixin:
             return {"ok": False, "error": str(e)}
 
     def cancel_profile_evolution(self, conversation_id: int, account_wxid: str = "") -> dict:
-        """取消进行中的画像演变（单次最长 4 次 LLM 调用，不能让用户只能干等）。"""
+        """取消进行中的画像演变（一次最多 segments×(1+含我) 次 LLM 调用，不能让用户只能干等）。"""
         running = getattr(self, "_profile_evolution_events", None) or {}
         event = running.get((int(conversation_id or 0), account_wxid or ""))
         if event is None:

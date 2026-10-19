@@ -27,8 +27,10 @@ logger = logging.getLogger(__name__)
 # 序列实时计算无缓存，版本主要用于前端兼容判断与文档口径记录）
 # v2：词云演变 halves→segments（2~6 段可配，默认 4）
 # v3：桶点补分侧全量计数 userMsgCount/otherMsgCount（互动量双柱数据源）
+# v4：词面口径变更随行 bump——pos 白名单过滤（posseg 只留实词）+ 停用词
+#     两轮扩表（词云/群摘要的词口径变了，v3 之后产生的词表不兼容）
 # 海报 story（milestones/chemistry）为纯加性字段，不触碰序列口径——不 +1
-DEEP_ANALYSIS_VERSION = 3
+DEEP_ANALYSIS_VERSION = 4
 
 DEEP_BUCKET_GRANULARITIES = ("day", "week", "month", "year")
 

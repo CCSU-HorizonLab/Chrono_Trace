@@ -20,7 +20,8 @@ export type BadgeInput = {
   activeDays: number
   spanDays: number
   lateNightCount: number | null
-  replyMedian: number | null
+  /** 秒回判据用时（秒）：定向/公开=中位回复；自我版无中位切片以均值近似 */
+  replyQuickSeconds: number | null
   replyCount: number | null
   userRatio: number | null
   topAll: string[]
@@ -38,7 +39,7 @@ export function badgeInputFromIntimate(p: IntimatePosterPayload): BadgeInput {
     activeDays: p.stats.active_days,
     spanDays: p.stats.span_days,
     lateNightCount: p.story?.chemistry.late_night?.count ?? null,
-    replyMedian: p.story?.chemistry.reply_stats?.median ?? null,
+    replyQuickSeconds: p.story?.chemistry.reply_stats?.median ?? null,
     replyCount: p.story?.chemistry.reply_stats?.count ?? null,
     userRatio: p.story?.chemistry.initiator?.user_ratio ?? null,
     topAll: p.top_words.all.map((w) => w.word),
@@ -55,7 +56,7 @@ export function badgeInputFromPublic(p: PublicPosterPayload): BadgeInput {
     activeDays: p.stats.active_days,
     spanDays: p.stats.span_days,
     lateNightCount: p.story?.chemistry.late_night?.count ?? null,
-    replyMedian: p.story?.chemistry.reply_stats?.median ?? null,
+    replyQuickSeconds: p.story?.chemistry.reply_stats?.median ?? null,
     replyCount: p.story?.chemistry.reply_stats?.count ?? null,
     userRatio: p.story?.chemistry.initiator?.user_ratio ?? null,
     topAll: p.top_words.all.map((w) => w.word),
@@ -74,7 +75,8 @@ export function badgeInputFromSelf(p: SelfPosterPayload): BadgeInput {
     activeDays: p.stats.active_days,
     spanDays: p.stats.span_days,
     lateNightCount: p.my_story.late_night_self,
-    replyMedian: p.my_story.reply_self_avg_seconds,
+    // 自我版无中位切片：以均值近似秒回判据（阈值同 120s，非冒充中位）
+    replyQuickSeconds: p.my_story.reply_self_avg_seconds,
     replyCount: null,
     userRatio: null,
     topAll: words,
@@ -106,14 +108,14 @@ export function pickPosterBadge(input: BadgeInput, audience: PosterAudience): Po
     }
   }
 
-  // 2 秒回拍档：中位回复 ≤2 分钟且样本 ≥30 条
-  const median = input.replyMedian
-  if (median != null && median <= 120 && (input.replyCount ?? 0) >= 30) {
+  // 2 秒回拍档：回复用时 ≤2 分钟且样本 ≥30 条（定向/公开判中位，自我版均值近似）
+  const quickSeconds = input.replyQuickSeconds
+  if (quickSeconds != null && quickSeconds <= 120 && (input.replyCount ?? 0) >= 30) {
     return {
       id: 'quick-reply',
       title: '秒回拍档',
       caption: audience === 'intimate'
-        ? `中位回复 ${Math.round(median)} 秒，话题从不断档`
+        ? `中位回复 ${Math.round(quickSeconds)} 秒，话题从不断档`
         : '回复常常不到两分钟，话题从不断档',
     }
   }

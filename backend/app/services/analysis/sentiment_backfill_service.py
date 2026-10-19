@@ -253,7 +253,12 @@ class SentimentBackfillService:
             percent = int(5 + min(done / total_missing, 1.0) * 90) if total_missing else 95
             self._update(task_id, progress_percent=percent, current_step=step)
 
-        # 阶段 B：无 sentiment_cache 行的消息——完整情感+向量分析
+        # 阶段 B：无 sentiment_cache 行的消息——完整情感+向量分析。
+        # 停滞熔断：batch_cache_sentiments 吞掉 DB 异常只记日志（磁盘满/
+        # 锁超时等持续写失败），同一批会被无限重选重嵌——首批 message_id
+        # 无变化即写不进，收工防死循环（否则任务永驻 running，全局单飞
+        # 守卫会拒绝此后所有情感/语义补算与全面分析）
+        prev_first_id = None
         while True:
             if cancel_event.is_set():
                 raise Exception("分析已被用户取消")
@@ -270,6 +275,13 @@ class SentimentBackfillService:
             ).fetchall()
             if not rows:
                 break
+            if rows[0]["id"] == prev_first_id:
+                logger.error(
+                    f"[语义索引补算] 会话 {conversation_id} 批量写入持续失败，"
+                    "提前收尾（缺口保留，环境恢复后续跑）"
+                )
+                break
+            prev_first_id = rows[0]["id"]
             results = service.analyze_batch(
                 [row["content"] for row in rows], include_embeddings=True
             )

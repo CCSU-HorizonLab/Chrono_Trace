@@ -471,6 +471,25 @@ class TestEmbeddingBackfill:
         assert SentimentBackfillService.get_embedding_coverage(1)["embedded"] == 0
         assert len(zero.embedded_texts) == 2  # 只捞了一轮，没有死循环
 
+    def test_stage_b_write_failure_stall_guard(self, db):
+        """阶段 B 写入持续失败（batch_cache_sentiments 吞异常只记日志）：
+        同批复选即熔断收尾，任务不永驻 running、不堵全局单飞守卫。"""
+        seed_messages(db, n=3)
+
+        class _NoWriteService(FakeSentimentService):
+            def batch_cache_sentiments(self, cache_data):
+                pass  # 模拟 DB 写失败被吞：行永远不落库
+
+        service = SentimentBackfillService(
+            orchestrator=object(), sentiment_service=_NoWriteService(db)
+        )
+        service.register_task("t_stall", 1, kind="embedding")
+        result = service.run_embedding_backfill(1, threading.Event(), "t_stall")
+
+        assert result["status"] == "completed"
+        assert len(service._sentiment_service.analyzed_texts) == 3  # 只推理一轮
+        assert service.has_running_task() is False
+
 
 class _QaBridge(HistoryQaApiMixin, DeepAnalysisApiMixin, AffinityApiMixin):
     """问答+补算+好感度三 mixin 组合（生产 Bridge 同构）。"""

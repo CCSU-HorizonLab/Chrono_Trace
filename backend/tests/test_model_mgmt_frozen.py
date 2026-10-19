@@ -1,8 +1,8 @@
-"""打包版模型缺失的行为测试：frozen 态不提供无效下载与误导文案。
+"""打包版模型缺失的行为测试：frozen 态提示重装而非无效下载。
 
-背景：推理是 ONNX 单后端（只认 onnx/ 产物），应用内下载拉的是 ModelScope
-源模型权重——打包版内置模型缺失时下载是假修复，且「运行 python 脚本」
-文案对打包用户无意义。
+背景：推理是 ONNX 单后端（只认 onnx/ 产物），模型随包内置（spec 缺产物
+已禁止出包）——应用内下载拉的是 ModelScope 源模型权重，对谁都无效，
+下载通道已整体移除。
 """
 
 import sys
@@ -72,12 +72,9 @@ class TestMissingModelMessaging:
             assert "python" not in item["issue"]
 
 
-class TestDownloadRejection:
-    def test_frozen_download_rejected(self, no_onnx, monkeypatch):
-        bridge = _make_bridge(monkeypatch, frozen=True)
-        result = bridge.download_analysis_models()
-        assert result["ok"] is False
-        assert result["error_code"] == "BUNDLED_MODEL_MISSING"
-        assert "重新下载完整安装包" in result["error"]
-        # 不得启动下载任务
-        assert "task_id" not in result
+class TestDownloadRemoved:
+    def test_no_download_api_surface(self):
+        """下载通道整体移除：方法不存在（防复活——源模型下载救不了 ONNX 单后端）。"""
+        assert not hasattr(ModelMgmtApiMixin, "download_analysis_models")
+        assert not hasattr(ModelMgmtApiMixin, "get_model_download_progress")
+        assert not hasattr(ModelMgmtApiMixin, "_download_embedding_model")

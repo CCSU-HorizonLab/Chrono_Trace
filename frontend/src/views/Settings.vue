@@ -624,7 +624,6 @@ const ragModel = reactive({
   loading: false,
   checked: false,
   ready: false,
-  downloading: false,
 })
 
 function mergeWechatAccounts(accounts: WechatAccountOption[]) {
@@ -1029,37 +1028,6 @@ async function refreshRagModelStatus() {
   }
 }
 
-async function downloadRagModel() {
-  ragModel.downloading = true
-  try {
-    await bridgeReady()
-    const result = await api.download_analysis_models()
-    if (!result?.ok) {
-      await showDialog('模型下载失败: ' + (result?.error_detail || result?.error || '未知错误'))
-      return
-    }
-    if (result.task_id) {
-      let completed = false
-      for (let attempt = 0; attempt < 900; attempt += 1) {
-        await new Promise((resolve) => window.setTimeout(resolve, 1000))
-        const progress = await api.get_model_download_progress(result.task_id)
-        if (progress?.status === 'completed') {
-          completed = true
-          break
-        }
-        if (progress?.status === 'failed') break
-      }
-      if (!completed) {
-        await showDialog('模型下载未完成，请检查模型目录和日志。')
-      }
-    }
-    await refreshRagModelStatus()
-  } catch (e: any) {
-    await showDialog('模型下载失败: ' + (e?.message || '未知错误'))
-  } finally {
-    ragModel.downloading = false
-  }
-}
 
 async function rebuildRagIndex(item: any) {
   const result = await api.rebuild_rag_index(Number(item.conversation_id), activeAccountWxid.value)

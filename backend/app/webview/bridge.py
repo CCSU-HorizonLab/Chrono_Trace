@@ -77,8 +77,6 @@ class Bridge(
         # 悬浮窗管理服务
         from ..services.realtime.floating_window_service import FloatingWindowService
         self._floating_service = FloatingWindowService()
-        self._model_download_status: dict[str, dict[str, Any]] = {}
-        self._model_download_lock = threading.Lock()
         self._suggestion_streams: dict[str, dict[str, Any]] = {}
         self._suggestion_stream_lock = threading.Lock()
         self._wechat_key_capture_sessions: dict[str, dict[str, Any]] = {}
@@ -189,26 +187,6 @@ class Bridge(
             "active_account_wxid": self._get_active_wechat_account_wxid(),
         }
 
-    def _update_model_download_status(self, task_id: str, **updates: Any) -> None:
-        now_ms = int(time.time() * 1000)
-        with self._model_download_lock:
-            is_new = task_id not in self._model_download_status
-            current = self._model_download_status.get(task_id, {}).copy()
-            if is_new:
-                current["created_at"] = now_ms
-            current["updated_at"] = now_ms
-            current.update(updates)
-            self._model_download_status[task_id] = current
-        if is_new:
-            # 新增条目时顺带清理过期任务，防止长驻进程内存无界增长。
-            # 注意：必须在锁外调用，避免与 _prune_task_dicts 内部加锁形成 ABBA 死锁
-            self._prune_task_dicts()
-
-    def _get_model_download_status(self, task_id: str) -> dict[str, Any]:
-        with self._model_download_lock:
-            status = self._model_download_status.get(task_id)
-        return status.copy() if status else {}
-
     def _update_wechat_import_status(self, task_id: str, **updates: Any) -> None:
         now_ms = int(time.time() * 1000)
         with self._wechat_import_lock:
@@ -305,20 +283,6 @@ class Bridge(
                     expired.append(session_id)
             for session_id in expired:
                 self._wechat_key_capture_sessions.pop(session_id, None)
-
-        with self._model_download_lock:
-            expired = []
-            for task_id, entry in self._model_download_status.items():
-                ts = _entry_ts_ms(entry)
-                if ts is None:
-                    continue
-                status = str(entry.get("status") or "")
-                is_terminal = status in {"completed", "failed", "cancelled"}
-                deadline = terminal_max_age_ms if is_terminal else running_max_age_ms
-                if now_ms - ts > deadline:
-                    expired.append(task_id)
-            for task_id in expired:
-                self._model_download_status.pop(task_id, None)
 
         with self._wechat_import_lock:
             expired = []

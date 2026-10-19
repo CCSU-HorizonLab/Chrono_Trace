@@ -25,8 +25,6 @@ def make_bridge(service) -> Bridge:
     bridge._suggestion_stream_lock = threading.Lock()
     bridge._wechat_key_capture_sessions = {}
     bridge._wechat_key_capture_lock = threading.Lock()
-    bridge._model_download_status = {}
-    bridge._model_download_lock = threading.Lock()
     bridge._resolve_account_wxid = lambda wxid="": "wxid_test"
     bridge._get_wechat_custom_paths = lambda wxid="": {}
     bridge._resolve_wechat_account = lambda wxid="": {}

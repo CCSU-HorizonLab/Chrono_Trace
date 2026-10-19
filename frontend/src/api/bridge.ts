@@ -161,8 +161,6 @@ type PyWebViewApi = {
   // 好感度分析进度
   check_gpu_status: () => Promise<any>
   check_analysis_model_status: () => Promise<any>
-  download_analysis_models: () => Promise<any>
-  get_model_download_progress: (task_id: string) => Promise<any>
   get_affinity_progress: (task_id: string) => Promise<any>
   // 问问微信（历史问答 + 引用溯源）；history 为近期问答（时间升序），支持多轮指代
   ask_history: (

@@ -1976,7 +1976,8 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
                 } else {
                     const errorMessage = e?.message || String(e)
                     if (errorMessage.includes('模型') || errorMessage.includes('MODEL_NOT_FOUND')) {
-                        globalProgressStep.value = '分析失败: 缺少必要模型，请先通过自动下载获取'
+                        // 模型随包内置（开发态由 export 脚本产出），应用内无下载通道
+                        globalProgressStep.value = '分析失败: 缺少必要模型（安装版请重新安装完整安装包；开发版运行 ensure_models_for_export.py）'
                     } else if (errorMessage.includes('依赖') || errorMessage.includes('DEPENDENCY_MISSING')) {
                         globalProgressStep.value = '分析失败: 缺少 Python 依赖，请检查安装'
                     } else if (errorMessage.includes('取消')) {

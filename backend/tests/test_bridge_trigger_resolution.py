@@ -152,8 +152,6 @@ def test_bridge_suggestion_stream_returns_events_and_final_result(monkeypatch):
     # partial Bridge：_prune_task_dicts 会触碰的任务字典与锁（__init__ 未运行）
     bridge._wechat_key_capture_lock = threading.Lock()
     bridge._wechat_key_capture_sessions = {}
-    bridge._model_download_lock = threading.Lock()
-    bridge._model_download_status = {}
     bridge._wechat_import_lock = threading.Lock()
     bridge._wechat_import_tasks = {}
     engine = FakeStreamingEngine()

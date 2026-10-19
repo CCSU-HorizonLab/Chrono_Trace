@@ -10,6 +10,12 @@
   uncertain（质量隔离）/ 用户禁用的事实天然排除；
 - sensitivity='sensitive' 排除：事实进的是远程 LLM prompt，对齐检索
   通道的隐私红线（retriever 同款排除，本地管理页不受影响）；
+- 注入前逐条过 PrivacyRedactor（无连接实例：只做规则替换，占位符按
+  值哈希稳定）——事实存的是未脱敏原文，画像 LLM 链路本身无脱敏环节，
+  而事实层是全时段数据，明文注入等于把暴露面从窗口期扩到全部历史；
+  词表 sensitive 标记只拦得住关键词命中的少数，规则脱敏兜住手机号/
+  证件号/卡号/地址这类硬 PII。脱敏异常丢弃该条（fail-closed：脱不
+  干净的不出网）；
 - rag_enabled 关闭即不注入：用户关掉记忆子系统的预期是记忆内容
   不再参与任何远程交互（affinity/history_qa 同款门控）；
 - 按置信度优先、更新时间次之排序，截断条数防 prompt 膨胀；空白
@@ -63,10 +69,21 @@ def collect_profile_facts(
         logger.debug("[画像事实] 取数降级为空: %s", exc)
         return []
     facts = []
+    # 无连接实例：纯规则替换不落隐私表，占位符按值哈希跨调用稳定
+    from .privacy_redactor import PrivacyRedactor
+
+    redactor = PrivacyRedactor()
     for row in rows:
         # 空白压平为单行：多行事实会破坏【长期记忆事实】的列表结构，
         # 后续行裸露在 prompt 里容易被 LLM 当指令读
         content = " ".join(str(row["content"] or "").split())
+        if not content:
+            continue
+        try:
+            content = redactor.redact(content).redacted_text
+        except Exception as exc:
+            logger.warning("[画像事实] 脱敏失败，丢弃该条不注入: %s", exc)
+            continue
         if not content:
             continue
         facts.append(

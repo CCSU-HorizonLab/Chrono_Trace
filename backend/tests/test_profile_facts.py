@@ -155,6 +155,35 @@ class TestCollectFacts:
         """rag_facts 表不存在（未跑过 RAG 的库）静默降级。"""
         assert collect_profile_facts(isolated_db, "wxid_me", 1) == []
 
+    def test_hard_pii_redacted_before_injection(self, isolated_db):
+        """硬 PII 注入前被规则脱敏换占位符——事实存的是未脱敏原文，画像
+        LLM 链路无脱敏环节，全时段记忆不得明文出网。"""
+        RagStore(isolated_db)
+        seed_fact(isolated_db, "TA 的手机号 13812345678 常联系", confidence=0.9)
+        seed_fact(isolated_db, "普通事实不带 PII", confidence=0.8)
+        isolated_db.commit()
+
+        contents = [f["content"] for f in collect_profile_facts(isolated_db, "wxid_me", 1)]
+        joined = "\n".join(contents)
+        assert "13812345678" not in joined
+        assert "[PHONE_" in joined  # 占位符按值哈希稳定
+        assert "普通事实不带 PII" in contents  # 无 PII 事实原样保留
+
+    def test_redaction_failure_drops_fact(self, isolated_db, monkeypatch):
+        """脱敏异常 fail-closed：丢条不注入，不让未脱敏原文出网。"""
+        RagStore(isolated_db)
+        seed_fact(isolated_db, "事实甲", confidence=0.9)
+        seed_fact(isolated_db, "事实乙", confidence=0.8)
+        isolated_db.commit()
+
+        def _boom(self, text, **kw):
+            raise RuntimeError("redactor down")
+
+        monkeypatch.setattr(
+            "app.services.realtime.privacy_redactor.PrivacyRedactor.redact", _boom
+        )
+        assert collect_profile_facts(isolated_db, "wxid_me", 1) == []
+
 
 class TestRenderBlock:
     def test_render_lines(self):

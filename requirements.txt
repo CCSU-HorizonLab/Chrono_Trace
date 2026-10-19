@@ -18,6 +18,6 @@ pytest>=7.0.0
 modelscope>=1.17.1
 
 # 实时消息监听依赖
-# 实时监听统一使用 pywinauto + native_uia
-# wxauto 已不再作为项目依赖或运行时兜底
+# 实时监听统一走 db_watch（加密库文件级监听），无额外 UI 依赖
+# pywinauto 仅供密钥抓取链路（keys/flow_win）使用
 tokenizers>=0.15.0  # ONNX 后端分词（Rust，无 transformers 依赖）

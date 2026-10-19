@@ -118,15 +118,59 @@ def _collect_child_hwnds(hwnd: int) -> list[int]:
         return []
 
 
+def _set_screen_reader_flag() -> bool:
+    """置系统屏幕阅读器标志（SPI_SETSCREENREADER）并广播变更——讲述人
+    激活微信无障碍树的另一半机制。
+
+    仅发 WM_GETOBJECT 不够：AccessibleObjectFromWindow / ElementFromHandle
+    对没有辅助 provider 的窗口会返回系统默认代理（调用成功是假阳性），
+    而微信这类自绘程序（MMUI）靠屏幕阅读器标志决定是否构建内容树——
+    讲述人启动时置位该标志并广播 WM_SETTINGCHANGE，微信收到后长出树。
+    广播用 SendMessageTimeout + SMTO_ABORTIFHUNG，不因个别窗口无响应卡死。
+    """
+    try:
+        import ctypes
+
+        user32 = ctypes.windll.user32
+        SPI_GETSCREENREADER = 0x0046
+        SPI_SETSCREENREADER = 0x0047
+        SPIF_UPDATEINIFILE = 0x0001
+        HWND_BROADCAST = 0xFFFF
+        WM_SETTINGCHANGE = 0x001A
+        SMTO_ABORTIFHUNG = 0x0002
+
+        already_set = ctypes.c_bool(False)
+        user32.SystemParametersInfoW(
+            SPI_GETSCREENREADER, 0, ctypes.byref(already_set), 0
+        )
+        if already_set.value:
+            return True
+
+        ok = bool(user32.SystemParametersInfoW(
+            SPI_SETSCREENREADER, 1, None, SPIF_UPDATEINIFILE
+        ))
+        # SPIF_SENDCHANGE 的内置广播是同步的，会卡在无响应窗口；改自己
+        # 带超时广播（等价语义，1s 上限）
+        user32.SendMessageTimeoutW(
+            HWND_BROADCAST, WM_SETTINGCHANGE, SPI_SETSCREENREADER, None,
+            SMTO_ABORTIFHUNG, 1000, None,
+        )
+        return ok
+    except Exception as exc:
+        logger.debug("SPI_SETSCREENREADER failed: %s", exc)
+        return False
+
+
 def poke_wechat_accessibility_bridge(hwnd: int) -> bool:
     """以辅助客户端身份向微信发 WM_GETOBJECT，激活 Qt 辅助功能桥。
 
     微信 4.x 是 Qt 程序，Qt 的 accessibility 管理器**惰性激活**——没有
     辅助客户端连接过时，UIA 树只暴露 shell pane（Qt51514QWindowIcon /
     MMUIRenderSubWindowHW），内层消息控件全部枚举不到。「开讲述人」偏方
-    的本质是讲述人作为辅助客户端发 WM_GETOBJECT 让 Qt 加载桥；本函数
-    用 MSAA + UIA 两条客户端路径对主窗口及全部子窗口发出同一请求，
-    无需讲述人、无需重启微信。失败只说明窗口暂无响应，不影响后续流程。
+    的本质是讲述人作为辅助客户端发 WM_GETOBJECT + 置屏幕阅读器标志让
+    Qt/微信加载桥；本函数用 MSAA + UIA 两条客户端路径对主窗口及全部
+    子窗口发出同一请求，并置位屏幕阅读器标志，无需讲述人、无需重启
+    微信。失败只说明窗口暂无响应，不影响后续流程。
     """
     hwnd = int(hwnd or 0)
     if not hwnd:
@@ -134,12 +178,13 @@ def poke_wechat_accessibility_bridge(hwnd: int) -> bool:
     child_hwnds = _collect_child_hwnds(hwnd)
     msaa_ok = any(_msaa_poke(target) for target in [hwnd, *child_hwnds])
     uia_ok = _uia_poke(hwnd)
-    if not (msaa_ok or uia_ok):
+    screen_reader_ok = _set_screen_reader_flag()
+    if not (msaa_ok or uia_ok or screen_reader_ok):
         logger.info(
             "[UIA] WM_GETOBJECT poke 全部失败: hwnd=%d, 子窗口=%d（微信可能无响应或已退出）",
             hwnd, len(child_hwnds),
         )
-    return msaa_ok or uia_ok
+    return msaa_ok or uia_ok or screen_reader_ok
 
 
 def _classify_bubble_midpoint(active_mid: float, width: int) -> str:
@@ -312,12 +357,13 @@ class NativeUIARealtimeProvider(RealtimeProvider):
                 continue
         return result
 
-    def _ensure_accessible_tree(self, attempts: int = 4, delay: float = 0.8) -> None:
+    def _ensure_accessible_tree(self, attempts: int = 6, delay: float = 1.5) -> None:
         """Fail fast when UIA only exposes the outer Qt shell panes.
 
-        检测到 shell-only 时先以 MSAA 客户端身份 poke Qt 辅助桥（详见
+        检测到 shell-only 时先以辅助客户端身份 poke Qt 辅助桥（详见
         poke_wechat_accessibility_bridge），绝大多数情况桥即激活、无需
-        人工开讲述人或重启微信；重试窗口放大到秒级以等桥构建完成。
+        人工开讲述人或重启微信；重试窗口放大到 ~9s——屏幕阅读器标志
+        置位后微信构建内容树需要数秒。
         """
         if self._main_window is None:
             raise UINotAccessibleError("ui_not_accessible: WeChat main window not initialized")
@@ -358,6 +404,12 @@ class NativeUIARealtimeProvider(RealtimeProvider):
             if attempt + 1 < max(1, int(attempts or 1)) and delay > 0:
                 time.sleep(delay)
 
+        # 诊断样本落日志文件：SHELL_ONLY_CLASS_NAMES 可能随微信更新过时
+        # （树有内容但类名全命中壳名单被误判），没有样本无从判断
+        logger.error(
+            "[UIA] 树检查失败: 仅壳层可见, visible=%d, 样本=%s",
+            len(last_visible_descendants), last_visible_descendants[:10],
+        )
         raise UINotAccessibleError(
             "ui_not_accessible: WeChat UIA tree unavailable; only shell panes are visible "
             "(auto WM_GETOBJECT bridge activation failed). "

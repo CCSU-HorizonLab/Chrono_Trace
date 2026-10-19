@@ -164,6 +164,13 @@ class DbWatchRealtimeProvider(RealtimeProvider):
             logger.warning("[db_watch] 无法解析联系人: %s", display_name)
             return False
         table = "Msg_" + hashlib.md5(username.encode("utf-8")).hexdigest()
+        # 定位前全分片刷一遍（stat 未变短路零开销）：新联系人的消息表可能
+        # 建在仅由 reconcile 周期兜底的陈旧分片里，不先刷会扫不到表
+        for watcher in self._watchers:
+            try:
+                watcher.refresh()
+            except Exception as exc:
+                logger.debug("[db_watch] 定位前分片刷新失败: %s", exc)
         # 同一联系人的消息表可散布在多个分片（按消息 id 分片）：全部找出，
         # 后续 _max_seq 与窗口 SQL 只查这些分片，省掉其余分片的无效查询
         # （表不存在异常 × 每分片，refresh 后 .dec.db 冷缓存时全是慢盘 IO）
@@ -210,9 +217,12 @@ class DbWatchRealtimeProvider(RealtimeProvider):
             self._wakeup_event.clear()
 
         any_refreshed = False
-        for watcher in self._watchers:
+        # 只同步刷新目标表所在分片：消息可见性不依赖其余分片（fts/media
+        # 等）——每轮事件同步刷全部会把 fts 的几百 ms 挡在查询前面；
+        # 其余分片的新鲜度由上方 10s reconcile 周期兜底
+        for idx in self._table_shards:
             try:
-                if watcher.refresh():
+                if self._watchers[idx].refresh():
                     any_refreshed = True
             except Exception as exc:
                 logger.debug("[db_watch] 分片刷新失败（沿用旧快照）: %s", exc)

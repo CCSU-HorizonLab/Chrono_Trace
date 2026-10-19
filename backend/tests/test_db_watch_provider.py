@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import time
 import sys
 from pathlib import Path
 
@@ -290,3 +291,24 @@ def test_new_message_visible_after_source_update(provider_env):
 def _extra_insert(local_id: int) -> str:
     return ("INSERT INTO [" + _msg_table(ZHANG) + "] VALUES "
             f"({local_id}, 9999, 1, {local_id}, 1, 1700100, 'live-new');")
+
+
+def test_list_visible_messages_refreshes_only_target_shards(provider_env, monkeypatch):
+    """每轮只同步刷目标表所在分片（fts/media 等不挡查询）；其余分片
+    的新鲜度由 10s reconcile 周期兜底刷新。"""
+    provider, _ = provider_env
+    assert provider.open_chat(ZHANG) is True  # 目标表在分片 0
+
+    calls: list[int] = []
+    for i, w in enumerate(provider._watchers):
+        monkeypatch.setattr(w, "refresh", lambda *a, _i=i, **k: (calls.append(_i), False)[1])
+
+    provider._last_reconcile = time.monotonic()  # 压住 reconcile 周期
+    provider.list_visible_messages()
+    assert calls == [0], "非目标分片不应在每轮被同步刷新"
+
+    # reconcile 周期到达时全部分片都刷（含非目标分片），兜底新鲜度
+    calls.clear()
+    provider._last_reconcile = 0.0
+    provider.list_visible_messages()
+    assert 1 in calls, "reconcile 周期应覆盖非目标分片"

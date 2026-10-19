@@ -92,6 +92,7 @@ class ProfileEvolutionService:
             return cancel_event is not None and cancel_event.is_set()
 
         segment_results: list[dict[str, Any]] = []
+        _t0 = time.monotonic()
         for index, (seg_from, seg_to) in enumerate(spans):
             if _aborted():
                 return self._cancelled(segment_results, from_ts, to_ts, display_name)
@@ -108,7 +109,15 @@ class ProfileEvolutionService:
                     seg_from, seg_to, force, _aborted,
                 )
             segment_results.append(segment)
+            logger.info(
+                "[画像演变] 第 %d/%d 段完成（累计 %.1fs, 会话=%s）",
+                index + 1, len(spans), time.monotonic() - _t0, display_name,
+            )
 
+        logger.info(
+            "[画像演变] 全部完成: %d 段 × %d 画像, 总耗时 %.1fs（每段独立 LLM 调用，串行累加）",
+            len(spans), len(kinds), time.monotonic() - _t0,
+        )
         return {
             "ok": True,
             "from_ts": from_ts,

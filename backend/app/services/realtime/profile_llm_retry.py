@@ -7,9 +7,13 @@ finish_reason 判定、reasoning_content 回退、usage 日志），修 bug 极�
 """
 from __future__ import annotations
 
+import logging
+import time
 from typing import Callable, Optional
 
 MAX_OUTPUT_TOKEN_BUDGET = 32768
+
+logger = logging.getLogger(__name__)
 
 
 def call_profile_llm_with_budget_retry(
@@ -30,8 +34,13 @@ def call_profile_llm_with_budget_retry(
     parse_json / extract_json_candidate 由调用方注入（两个 profiler 的
     解析实现略有差异，保持各自行为不变）。
     """
+    # INFO 级耗时桩：profiler 的 _print 全是 debug，生产日志里画像链路
+    # 完全静默——慢在哪（远程调用/截断重试/解析失败）无从定位
+    started = time.monotonic()
+    attempts = 0
     attempt_budget = initial_budget
     while True:
+        attempts += 1
         payload["max_tokens"] = attempt_budget
         body = post_json(
             url=url,
@@ -66,6 +75,10 @@ def call_profile_llm_with_budget_retry(
 
         parsed = parse_json(content)
         if parsed:
+            logger.info(
+                "[画像LLM] %s 成功: %d 次尝试, 耗时 %.1fs",
+                log_prefix, attempts, time.monotonic() - started,
+            )
             return parsed
 
         completion_tokens = usage.get("completion_tokens") or 0
@@ -74,6 +87,11 @@ def call_profile_llm_with_budget_retry(
             or completion_tokens >= attempt_budget
         )
         if not truncated or attempt_budget >= MAX_OUTPUT_TOKEN_BUDGET:
+            logger.info(
+                "[画像LLM] %s 失败（未解析出 JSON, finish=%s）: %d 次尝试, 耗时 %.1fs",
+                log_prefix, choice.get("finish_reason"), attempts,
+                time.monotonic() - started,
+            )
             return None
         attempt_budget = min(attempt_budget * 2, MAX_OUTPUT_TOKEN_BUDGET)
         log(

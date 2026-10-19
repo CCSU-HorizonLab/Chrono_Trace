@@ -1,6 +1,7 @@
 """历史数据分析服务"""
 from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime, timedelta
+import time
 from ...db.connection import get_db
 from .wordcloud_generator import WordCloudGenerator
 from .preprocessing import PreprocessingService
@@ -164,6 +165,7 @@ class AnalysisService:
         """
         try:
             logger.info(f"[DEBUG] 开始分析: conversation_id={conversation_id}, from={from_date}, to={to_date}")
+            _analyze_t0 = time.time()
             
             # 1. 转换日期为时间戳
             from_ts = int(datetime.strptime(from_date, "%Y-%m-%d").timestamp())
@@ -221,6 +223,10 @@ class AnalysisService:
             
             # 5. 组装返回数据
             # msgCount 使用全量计数（未截断时即预处理统计值），与 timeseries 的全量口径一致
+            logger.info(
+                "[分析] 完成: 会话 %d, %d 条消息（有效 %d）, 耗时 %.1fs",
+                conversation_id, message_count, valid_count, time.time() - _analyze_t0,
+            )
             return {
                 "subject": {
                     "id": subject_info["id"],

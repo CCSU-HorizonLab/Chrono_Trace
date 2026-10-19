@@ -16,6 +16,12 @@
   成本）给两 profiler 注入【长期背景】块：全时段跨度/分年消息量/活跃天数/
   深夜比 + **本次窗口覆盖比**。LLM 同时看到「窗口内的他」与「全时段的他」，
   同 affinity 的 caliber='full_period' 先例（结论以窗口为主，长期数字对照演变）。
+- **长期记忆事实块（v3 起）**：数字层之外的语义补全——`profile_facts
+  .collect_profile_facts` 把 RAG 事实层（全时段、supersede 演变链顶端，
+  confidence 优先取 top 24）注入【长期记忆事实】块。事实是增量抽取早就
+  落库的，注入零新增 LLM 调用；`rag_facts` 表缺失（未跑过 RAG 的库）
+  静默降级不注入。与长期背景块分工：背景给**数字**（量的分布），事实给
+  **语义**（沉淀的具体记忆），窗口样本给**细节**（近端语气）。
 - **custom 指定窗**：`generate_profile(..., from_ts, to_ts)` 闭区间硬边界，**不顺延**
   （顺延会篡改用户指定窗口的语义）；防呆：非正/起点≥终点/终点晚于 now+1 天/
   窗内无文本消息均直接拒绝。**跨度不设上限**——按调用方切分的时窗如实生成
@@ -82,7 +88,7 @@ prompt【基础信息】块带样本时间范围行（rolling 注明顺延，cus
 
 | 常量 | 位置 | 当前值 | 何时 +1 |
 |---|---|---|---|
-| `PROFILE_SNAPSHOT_SCHEMA` | contact_profiler.py / self_profiler.py | 2 | 表结构或画像口径变化——随行落库 `schema_version` 列，读取处过滤；旧结构 DROP 重建，不迁移。v2 = prompt 新增【长期背景】全时段基线块 |
+| `PROFILE_SNAPSHOT_SCHEMA` | contact_profiler.py / self_profiler.py | 3 | 表结构或画像口径变化——随行落库 `schema_version` 列，读取处过滤；旧结构 DROP 重建，不迁移。v2 = 【长期背景】全时段基线块；v3 = 【长期记忆事实】RAG 事实层注入 |
 | `PROFILE_SNAPSHOT_KEEP` | 同上 | 8 | rolling 分组保留条数调整 |
 | `PROFILE_SNAPSHOT_KEEP_CUSTOM` | 同上 | 24 | custom 分组保留条数调整（对齐 list_snapshots 上限，裁剪不得逐出回廊可展示的快照） |
 | `big5_impressions` 表结构 | personality_impression_service.py | v2（window 档位） | window 档位列或唯一键变化——`_ensure_table` PRAGMA 探查缺列即 DROP 重建不迁移（口径见 `docs/analysis/time-depth.md` 大五节） |

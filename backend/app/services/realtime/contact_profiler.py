@@ -67,8 +67,9 @@ PROFILE_TTL = 7 * 86400  # 7 天
 # 处过滤（同 big5 的 prompt_version 机制）：升版后旧口径快照自然失明，
 # 不再以「历史快照」徽标混入新口径结果。
 # v2：prompt 新增【长期背景】全时段基线块（profile_baseline），rolling
-# 对长关系只覆盖尾部的问题在 prompt 层给 LLM 全局坐标。
-PROFILE_SNAPSHOT_SCHEMA = 2
+#     对长关系只覆盖尾部的问题在 prompt 层给 LLM 全局坐标。
+# v3：prompt 新增【长期记忆事实】块（profile_facts，RAG 事实层注入画像）。
+PROFILE_SNAPSHOT_SCHEMA = 3
 
 # 每个分组保留的快照条数上限。rolling 每次续期产生新窗口键快照自然累积，
 # 靠此上限防膨胀；custom 是存档品（画像演变半窗 + 手动指定窗共用分组），
@@ -329,6 +330,13 @@ class ContactProfiler:
             from .profile_baseline import collect_full_period_baseline
             baseline = collect_full_period_baseline(conn, conversation_id, feature_from, feature_to)
 
+            # 长期事实：RAG 事实层是全时段的（supersede 链顶端），注入
+            # 后画像可引用窗口外沉淀的结构化记忆，零新增 LLM 调用
+            from .profile_facts import collect_profile_facts
+            long_term_facts = collect_profile_facts(conn, resolved_account_wxid, conversation_id)
+            if long_term_facts:
+                _print(f"[ContactProfiler] 长期记忆事实: {len(long_term_facts)} 条注入")
+
             # 3. 采样对话轮次
             sample = self._sample_conversation_turns(
                 conn, conversation_id, window_seconds,
@@ -356,7 +364,7 @@ class ContactProfiler:
                     f"{self._fmt_date(sample_from)} 至 {self._fmt_date(sample_to)}"
                     f"（最近滚动窗采样，内容不足时已向更早顺延）"
                 )
-            user_prompt = self._build_profile_prompt(display_name, conv, features, sample, window_desc, baseline)
+            user_prompt = self._build_profile_prompt(display_name, conv, features, sample, window_desc, baseline, long_term_facts)
             _print(f"[ContactProfiler] Prompt 长度: {len(user_prompt)} 字符")
 
             # 5. 调用 LLM，传入预算以动态决定输出额度
@@ -812,6 +820,7 @@ class ContactProfiler:
         sample: list[dict],
         window_desc: str = '',
         baseline: dict | None = None,
+        long_term_facts: list | None = None,
     ) -> str:
         """组装画像生成的 user prompt"""
         parts = []
@@ -832,6 +841,14 @@ class ContactProfiler:
         if baseline:
             from .profile_baseline import render_baseline_block
             block = render_baseline_block(baseline)
+            if block:
+                parts.append("")
+                parts.append(block)
+
+        # 长期记忆事实（全时段结构化记忆，语义层补窗口盲区）
+        if long_term_facts:
+            from .profile_facts import render_facts_block
+            block = render_facts_block(long_term_facts)
             if block:
                 parts.append("")
                 parts.append(block)

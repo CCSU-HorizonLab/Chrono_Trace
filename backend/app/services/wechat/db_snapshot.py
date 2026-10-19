@@ -206,10 +206,13 @@ class EncryptedShardWatcher:
         return self._conn
 
     def close(self) -> None:
+        # 只关连接、清临时残留，不删 sidecar/meta：跨启动复用已解密副本
+        # （停止监听→再启动免 45s+ 全量重解密；错密钥/换库由 _load_meta
+        # 的 key 指纹校验兜住不会误用），与 import_cache 持久口径一致
         with self._lock:
             self._close_conn()
-            for p in (self.out_path, Path(str(self.out_path) + ".tmp"),
-                      self._meta_path(), Path(str(self._meta_path()) + ".tmp"),
+            for p in (Path(str(self.out_path) + ".tmp"),
+                      Path(str(self._meta_path()) + ".tmp"),
                       Path(str(self.out_path) + "-wal"), Path(str(self.out_path) + "-shm")):
                 try:
                     p.unlink(missing_ok=True)

@@ -79,7 +79,13 @@ def test_restart_reuses_without_decrypt(tmp_path):
         assert w2.refresh() is False
     finally:
         w2.close()
-    assert not (cache / "message_0.dec.db.meta.json").exists(), "close 应清理 sidecar"
+    # close 只关连接不删 sidecar：第三次打开仍命中（停止→再启动免全量重解）
+    w3 = EncryptedShardWatcher(src, KEY_HEX, cache)
+    try:
+        assert w3.resumed_from_disk, "close 后 sidecar 应留存可复用"
+    finally:
+        w3.close()
+    assert (cache / "message_0.dec.db.meta.json").exists()
 
 
 def test_restart_after_source_change_updates_incrementally(tmp_path):

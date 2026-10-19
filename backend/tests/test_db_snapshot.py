@@ -66,8 +66,17 @@ def test_initial_decrypt_produces_queryable_view(tmp_path):
         assert watcher.connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
     finally:
         watcher.close()
-    # close 清理解密产物
-    assert not watcher.out_path.exists()
+    # close 只关连接不删 sidecar：重开实例直接复用（resumed_from_disk）
+    assert watcher.out_path.exists()
+    again = EncryptedShardWatcher(src, KEY_HEX, tmp_path / "cache")
+    try:
+        assert again.resumed_from_disk is True
+        rows = again.connection.execute(
+            "SELECT message_content FROM [Msg_test] ORDER BY sort_seq"
+        ).fetchall()
+        assert [r[0] for r in rows] == ["早", "嗯呢", "中午吃啥"]
+    finally:
+        again.close()
 
 
 def test_refresh_short_circuits_when_source_unchanged(tmp_path):

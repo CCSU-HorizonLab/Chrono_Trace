@@ -149,7 +149,7 @@ def restart_wechat_for_key_capture(wait_seconds: float = 30.0) -> dict[str, Any]
     It deliberately does not install a Hook; the caller does that immediately
     after this function returns so the UI can present login instructions.
     """
-    from ...realtime.providers.recovery import (
+    from ..wechat_proc_win import (
         launch_wechat,
         resolve_wechat_launch_path,
         terminate_wechat_processes,

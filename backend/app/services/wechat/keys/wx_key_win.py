@@ -211,7 +211,7 @@ class WeChatKeyProvider:
     def _find_wechat_pid() -> tuple[int | None, str]:
         """Use the existing Windows WeChat detector and resolve its PID."""
         try:
-            from ...realtime.providers.detector import detect_running_wechat
+            from ..wechat_proc_win import detect_running_wechat
             import win32api
             import win32con
             import win32process

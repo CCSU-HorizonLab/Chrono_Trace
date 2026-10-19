@@ -137,12 +137,16 @@
                 </div>
                 <div class="fp-empty-title">
                   <span v-if="realtimeState.isMonitoring && realtimeState.messageCount > 0">正在分析微信对话…</span>
+                  <span v-else-if="realtimeState.isMonitoring && !chatReady">正在连接微信聊天窗口…</span>
                   <span v-else-if="realtimeState.isMonitoring">监听已就绪，等待新消息</span>
                   <span v-else>等待启动监听</span>
                 </div>
                 <div class="fp-empty-desc">
                   <template v-if="realtimeState.isMonitoring && realtimeState.messageCount > 0">
                     已捕获 {{ realtimeState.messageCount }} 条消息，AI 正在生成策略建议（深度思考模型约需 30-60 秒）…
+                  </template>
+                  <template v-else-if="realtimeState.isMonitoring && !chatReady">
+                    正在切换到「{{ contactDisplayName }}」的聊天窗口，完成后自动开始监听…
                   </template>
                   <template v-else-if="realtimeState.isMonitoring">
                     在微信中与「{{ contactDisplayName }}」展开对话，AI 军师将在此实时提供高情商回复与策略指导。
@@ -857,6 +861,9 @@ const realtimeState = reactive({
 })
 
 const chatError = ref('')
+// 后端 chat_ready：聊天切换真正完成才显示「监听已就绪」——启动瞬间
+// is_monitoring 即为真，直接用它会把「正在切窗」误报成「已就绪」
+const chatReady = ref(false)
 const uiaRecoverySummary = ref('')
 const uiaRecoveryFinalStatus = ref('')
 const uiaRecoveryActions = ref<string[]>([])
@@ -1384,7 +1391,17 @@ async function applyMonitoringStatus(status: any) {
   }
 }
 
-async function promptAndRunUiaRecovery(talkerName: string, requestedAccountWxid = ''): Promise<boolean> {
+function buildUiaRecoveryConfirmMessage(stage: string): string {
+  return stage === 'restart'
+    ? '无破坏修复未能恢复微信界面。继续后将关闭并重新启动微信：重启后需要在手机上确认登录。是否继续？'
+    : '检测到微信界面当前不可访问。继续后，程序会尝试无破坏修复：启动 Windows 讲述人并重新激活当前微信窗口（不会关闭微信、不影响登录状态）。若仍未恢复，会再询问是否重启微信。是否继续？'
+}
+
+async function promptAndRunUiaRecovery(
+  talkerName: string,
+  requestedAccountWxid = '',
+  stage: string = 'activate',
+): Promise<boolean> {
   if (uiaRecoveryPromptOpen) {
     return false
   }
@@ -1392,18 +1409,20 @@ async function promptAndRunUiaRecovery(talkerName: string, requestedAccountWxid 
 
   try {
     const confirmed = await showConfirm({
-      title: '确认自动修复',
-      message: '检测到微信界面当前不可访问。继续后，程序会先尝试启动 Windows 讲述人；如果自动启动失败，会提示你手动打开讲述人。等讲述人就绪后，程序再关闭并重新打开微信。是否继续？',
+      title: stage === 'restart' ? '确认重启微信修复' : '确认自动修复',
+      message: buildUiaRecoveryConfirmMessage(stage),
     })
     if (!confirmed) {
       uiaRecoveryPromptSuppressed = true
-      chatError.value = '已取消自动修复。'
+      chatError.value = stage === 'restart' ? '已取消重启修复。' : '已取消自动修复。'
       return false
     }
 
     uiaRecoveryPromptSuppressed = false
     clearUiaRecoveryTelemetry()
-    chatError.value = '已确认自动修复，正在准备关闭微信并启动讲述人...'
+    chatError.value = stage === 'restart'
+      ? '已确认重启修复，正在准备关闭微信并启动讲述人...'
+      : '已确认自动修复，正在打开讲述人并激活微信窗口（不会关闭微信）...'
     let progressTimer: number | null = window.setInterval(async () => {
       try {
         const status = await api.get_realtime_status()
@@ -1419,6 +1438,21 @@ async function promptAndRunUiaRecovery(talkerName: string, requestedAccountWxid 
     try {
       const result = await api.run_realtime_uia_recovery()
       applyUiaRecoveryTelemetry(result)
+      // 第一段（无破坏激活）未恢复：二次确认后走第二段（重启微信）
+      if (!(result.success || result.ok) && result.next_stage === 'restart' && stage !== 'restart') {
+        const confirmedRestart = await showConfirm({
+          title: '确认重启微信修复',
+          message: buildUiaRecoveryConfirmMessage('restart'),
+        })
+        if (confirmedRestart) {
+          // 递归进入第二段前放开弹窗互斥守卫（外层 finally 会再复位，无副作用）
+          uiaRecoveryPromptOpen = false
+          return await promptAndRunUiaRecovery(talkerName, requestedAccountWxid, 'restart')
+        }
+        uiaRecoveryPromptSuppressed = true
+        chatError.value = '已取消重启修复。'
+        return false
+      }
       if (!(result.success || result.ok)) {
         const message = result.error || '自动修复未成功完成。'
         chatError.value = message
@@ -1447,6 +1481,7 @@ async function startPendingMonitoring(talkerName: string, requestedAccountWxid =
   contactAvatar.value = ''
   realtimeState.status = 'searching'
   uiaRecoveryPromptSuppressed = false
+  chatReady.value = false
   chatError.value = '正在准备监听对象...'
 
   const modelsReady = await ensureRealtimeAnalysisModelsReady()
@@ -1477,7 +1512,7 @@ async function startPendingMonitoring(talkerName: string, requestedAccountWxid =
     if (!(result.success || result.ok)) {
       chatError.value = result.error || result.message || '启动监听失败'
       if (allowRecoveryPrompt && result.uia_recovery_required) {
-        return await promptAndRunUiaRecovery(talkerName, requestedAccountWxid)
+        return await promptAndRunUiaRecovery(talkerName, requestedAccountWxid, result.uia_recovery_stage || 'activate')
       }
       return false
     }
@@ -2029,6 +2064,7 @@ function startPolling() {
         applyUiaRecoveryTelemetry(s)
         realtimeState.isMonitoring = s.is_monitoring
         realtimeState.messageCount = s.message_count || 0
+        chatReady.value = !!s.chat_ready
         pollFailCount = 0  // 成功则重置失败计数
 
         // 检测断流：polling_alive 为 false 表示后端轮询线程已死亡
@@ -2057,6 +2093,7 @@ function startPolling() {
           const recovered = await promptAndRunUiaRecovery(
             realtimeState.talkerName,
             activeAccountWxid.value || '',
+            s.uia_recovery_stage || 'activate',
           )
           if (recovered) {
             return

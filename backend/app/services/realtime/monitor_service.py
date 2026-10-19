@@ -215,6 +215,7 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, UiaRec
                         'error': self._format_listener_init_error(e),
                         'uia_recovery_required': self._uia_recovery_required,
                         'uia_recovery_phase': (self._uia_recovery_context or {}).get('phase', ''),
+                        'uia_recovery_stage': (self._uia_recovery_context or {}).get('stage', ''),
                         'uia_recovery_prompt': self._chat_error,
                     }
             
@@ -863,8 +864,20 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, UiaRec
                 return
             _print(f"⚠️ 初始聊天切换 {MAX_CHAT_RETRIES} 次尝试均失败，进入等待恢复模式...")
             RECOVERY_INTERVAL = 10  # 每 10 秒重试一次
+            RECOVERY_MAX_ATTEMPTS = 12  # 上限 ~2 分钟：微信停在登录页或聊天窗
+            # 不可用时 ChatWith 永远失败，无限自旋只会刷日志占着线程
+            recovery_attempts = 0
             while self._session_should_continue(session_state, stop_event):
                 time.sleep(RECOVERY_INTERVAL)
+                recovery_attempts += 1
+                if recovery_attempts >= RECOVERY_MAX_ATTEMPTS:
+                    self._chat_error = (
+                        '聊天窗口持续不可用（微信可能停留在登录界面，或当前界面访问不到聊天列表）。'
+                        '请确认微信已登录并打开对应聊天后，重新开始监听。'
+                    )
+                    self.is_monitoring = False
+                    _print(f"🛑 {self._chat_error}")
+                    return
                 _print("🔄 [等待恢复] 重试聊天切换...")
                 try:
                     if self.wx is None:
@@ -1727,6 +1740,7 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, UiaRec
                 'uia_recovery_required': self._uia_recovery_required,
                 'uia_recovery_in_progress': self._uia_recovery_in_progress,
                 'uia_recovery_phase': (self._uia_recovery_context or {}).get('phase', ''),
+                'uia_recovery_stage': (self._uia_recovery_context or {}).get('stage', ''),
                 'polling_alive': polling_alive,
                 'provider': self._provider_name or getattr(self.wx, 'backend_name', ''),
                 'listener_profile': self._listener_profile or getattr(self.wx, 'listener_profile', ''),

@@ -363,6 +363,75 @@ def test_in_place_recovery_only_reactivates_existing_wechat_and_reprobes(monkeyp
     assert payload["errors"] == []
 
 
+def test_narrator_in_place_recovery_opens_narrator_without_touching_wechat(monkeypatch):
+    """无破坏第一段：开讲述人 + 激活窗口 + 逐轮 poke，全程不杀/不重启微信。"""
+    probes = iter(
+        [
+            {
+                "status": "shell_only",
+                "hwnd": 2468,
+                "exe_path": r"C:\Program Files\Tencent\WeChat\WeChat.exe",
+            },
+            {
+                "status": "shell_only",
+                "hwnd": 2469,  # 窗口重建（如登录页→主窗口），句柄已变
+                "exe_path": r"C:\Program Files\Tencent\WeChat\WeChat.exe",
+            },
+            {
+                "status": "accessible",
+                "hwnd": 2469,
+                "exe_path": r"C:\Program Files\Tencent\WeChat\WeChat.exe",
+            },
+        ]
+    )
+    activation_calls = []
+    poke_calls = []
+
+    monkeypatch.setattr(
+        "app.services.realtime.providers.recovery.probe_wechat_uia",
+        lambda: dict(next(probes)),
+    )
+    monkeypatch.setattr(
+        "app.services.realtime.providers.recovery.activate_wechat_window",
+        lambda hwnd: activation_calls.append(hwnd) or {"ok": True, "hwnd": hwnd},
+    )
+    monkeypatch.setattr(
+        "app.services.realtime.providers.recovery.poke_wechat_accessibility_bridge",
+        lambda hwnd: poke_calls.append(hwnd) or True,
+    )
+    monkeypatch.setattr("app.services.realtime.providers.recovery.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        "app.services.realtime.providers.recovery.terminate_wechat_processes",
+        lambda: (_ for _ in ()).throw(AssertionError("should not terminate wechat in narrator_in_place mode")),
+    )
+    monkeypatch.setattr(
+        "app.services.realtime.providers.recovery.launch_narrator",
+        lambda narrator_path="": {"ok": True, "path": narrator_path, "pid": 100, "launch_method": "popen"},
+    )
+    monkeypatch.setattr(
+        "app.services.realtime.providers.recovery.launch_wechat",
+        lambda exe_path: (_ for _ in ()).throw(AssertionError("should not relaunch wechat in narrator_in_place mode")),
+    )
+
+    payload = recover_shell_only_wechat_uia(
+        recover=True,
+        recovery_mode="narrator_in_place",
+        wait_after_narrator=0,
+        probe_interval=1,  # poke 只在失败探测的间隔里发，0 会把它一并跳过
+        max_probes=3,
+    )
+
+    steps = [action["step"] for action in payload["actions"]]
+    assert payload["recovery_mode"] == "narrator_in_place"
+    assert steps[0] == "launch_narrator"
+    # 重激活用上一轮新鲜句柄（2469），不再拿已失效的 initial（2468）
+    assert activation_calls == [2468, 2469]
+    # 失败探测间隔里逐轮 poke，同样用新鲜句柄
+    assert poke_calls == [2469]
+    assert payload["final_probe"]["status"] == "accessible"
+    assert payload["errors"] == []
+
+
 def test_relaunch_recovery_reports_progress_and_stops_narrator_on_success(monkeypatch):
     probes = iter(
         [

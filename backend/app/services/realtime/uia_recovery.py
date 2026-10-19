@@ -289,12 +289,14 @@ class UiaRecoveryMixin:
         self._uia_recovery_context = {
             "phase": phase,
             "error_text": error_text,
+            "stage": "activate",
         }
         self._chat_error = (
-            "检测到微信 UI 树没有展开。请先确认自动修复；确认后程序会关闭微信、打开讲述人并重新启动微信。"
+            "检测到微信 UI 树没有展开。请先确认自动修复；确认后程序会打开讲述人并激活当前微信窗口"
+            "（不会关闭微信、不影响登录状态），失败时才会再询问是否重启微信。"
         )
         _print(
-            f"[RealtimeMonitorService] 检测到 shell-only UIA，等待用户确认自动修复 "
+            f"[RealtimeMonitorService] 检测到 shell-only UIA，等待用户确认自动修复（第一段：无破坏激活） "
             f"(phase={phase}, error={error_text})"
         )
         return False
@@ -325,9 +327,13 @@ class UiaRecoveryMixin:
                 "error": str(exc),
             }
 
+        stage = str((self._uia_recovery_context or {}).get("stage") or "activate")
         self._uia_recovery_required = False
         self._uia_recovery_in_progress = True
-        self._chat_error = "已确认自动修复，正在准备关闭微信并启动讲述人..."
+        if stage == "restart":
+            self._chat_error = "已确认重启修复，正在准备关闭微信并启动讲述人..."
+        else:
+            self._chat_error = "已确认自动修复，正在打开讲述人并激活微信窗口（不会关闭微信）..."
 
         def on_progress(step: str, message: str, extra: dict) -> None:
             del extra
@@ -335,15 +341,28 @@ class UiaRecoveryMixin:
             _print(f"[RealtimeMonitorService] UIA 自动修复进度[{step}]: {message}")
 
         try:
-            payload = recover_shell_only_wechat_uia(
-                recover=True,
-                recovery_mode="relaunch_with_narrator",
-                wait_after_launch=3.0,
-                probe_interval=3.0,
-                max_probes=20,
-                stop_narrator_on_success=True,
-                progress_callback=on_progress,
-            )
+            if stage == "restart":
+                payload = recover_shell_only_wechat_uia(
+                    recover=True,
+                    recovery_mode="relaunch_with_narrator",
+                    wait_after_launch=3.0,
+                    probe_interval=3.0,
+                    max_probes=20,
+                    stop_narrator_on_success=True,
+                    progress_callback=on_progress,
+                )
+            else:
+                # 第一段（无破坏）：开讲述人 + 激活窗口 + 逐轮 poke 等树，
+                # 全程不碰微信进程与登录态
+                payload = recover_shell_only_wechat_uia(
+                    recover=True,
+                    recovery_mode="narrator_in_place",
+                    manual_narrator_timeout=45.0,
+                    wait_after_narrator=1.5,
+                    probe_interval=3.0,
+                    max_probes=10,
+                    progress_callback=on_progress,
+                )
         except Exception as exc:
             self._uia_recovery_in_progress = False
             self._chat_error = self._build_shell_only_uia_guidance(auto_attempted=True)
@@ -374,6 +393,40 @@ class UiaRecoveryMixin:
             return {
                 "success": True,
                 "message": "自动修复成功",
+                "final_status": final_probe.get("status"),
+                "uia_recovery_summary": recovery_snapshot.get("summary", ""),
+                "uia_recovery_actions": recovery_snapshot.get("action_steps", []),
+                "uia_recovery_aborted": recovery_snapshot.get("aborted", False),
+                "narrator_verification": recovery_snapshot.get("narrator_verification", {}),
+            }
+
+        if stage == "activate" and final_probe.get("status") != "accessible":
+            # 第一段（无破坏激活）未恢复：武装第二段（重启微信）等待用户
+            # 二次确认，不自动执行——重启会打断登录态（重启后需手机确认
+            # 登录），必须显式同意才动微信进程
+            final_status_text = str(final_probe.get("status") or "").strip()
+            self._uia_recovery_required = True
+            self._uia_recovery_in_progress = False
+            self._uia_recovery_context = {
+                "phase": str(payload.get("phase") or ""),
+                "error_text": str(payload.get("source_error") or ""),
+                "stage": "restart",
+            }
+            self._chat_error = (
+                (f"当前检测状态：{final_status_text}。" if final_status_text else "")
+                + "讲述人激活未能恢复微信界面。下一步为完整修复：关闭并重新启动微信"
+                "（重启后需要在手机上确认登录）。是否继续？"
+            )
+            _print(
+                "[RealtimeMonitorService] 无破坏激活未恢复，等待用户确认第二段（重启微信）修复: "
+                f"final_status={final_probe.get('status')}, errors={payload.get('errors')}"
+            )
+            recovery_snapshot = self._extract_uia_recovery_snapshot()
+            return {
+                "success": False,
+                "message": "无破坏激活未恢复，等待确认重启修复",
+                "next_stage": "restart",
+                "error": self._chat_error,
                 "final_status": final_probe.get("status"),
                 "uia_recovery_summary": recovery_snapshot.get("summary", ""),
                 "uia_recovery_actions": recovery_snapshot.get("action_steps", []),
@@ -481,7 +534,10 @@ class UiaRecoveryMixin:
         prefix = ""
         if include_prefix:
             prefix = "微信界面当前不可访问（UIA 树没有展开，只能看到外层壳窗口）。"
-        attempted = "程序已尝试自动修复（关闭微信、打开讲述人并重新启动微信），但仍未恢复。" if auto_attempted else ""
+        attempted = (
+            "程序已尝试自动修复（优先讲述人激活，如已确认重启则微信已重新启动——重启后需在手机上确认登录），但仍未恢复。"
+            if auto_attempted else ""
+        )
         final_status_text = f"当前检测状态：{final_status}。" if final_status else ""
         return (
             f"{prefix}{attempted}{final_status_text}"

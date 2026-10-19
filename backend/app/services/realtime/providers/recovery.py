@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Callable, Iterable
 
 from .detector import detect_running_wechat
-from .native_uia import SHELL_ONLY_CLASS_NAMES
+from .native_uia import SHELL_ONLY_CLASS_NAMES, poke_wechat_accessibility_bridge
 
 WECHAT_PROCESS_NAMES: tuple[str, ...] = (
     "Weixin.exe",
@@ -738,7 +738,55 @@ def recover_shell_only_wechat_uia(
         return payload
 
     normalized_mode = str(recovery_mode or "relaunch_with_narrator").strip().lower()
-    if normalized_mode in {"in_place", "gentle", "non_destructive"}:
+    narrator_in_place = normalized_mode in {"narrator_in_place", "narrator_only"}
+    if normalized_mode in {"in_place", "gentle", "non_destructive"} or narrator_in_place:
+        if narrator_in_place:
+            # 无破坏修复第一段：只开讲述人，不动微信进程。讲述人是持续在场的
+            # 辅助客户端，会反复向微信发 WM_GETOBJECT——渲染子窗口重建后桥也
+            # 会被重新激活，多数 shell-only 场景（最小化/窗口重建后桥失活）
+            # 这一段即可恢复，不必付出重启微信的登录代价
+            emit_progress(
+                "launch_narrator",
+                "正在启动 Windows 讲述人（不会关闭微信）...",
+                {},
+            )
+            narrator_result = launch_narrator(narrator_path=narrator_path)
+            payload["actions"].append(
+                {
+                    "step": "launch_narrator",
+                    **narrator_result,
+                }
+            )
+            if not narrator_result.get("ok"):
+                emit_progress(
+                    "wait_manual_narrator",
+                    "未能自动打开讲述人，可手动打开（快捷键 Win+Ctrl+Enter）；"
+                    "程序会先继续尝试激活微信窗口...",
+                    {},
+                )
+                manual_verification = wait_for_process(
+                    image_name=NARRATOR_PROCESS_NAME,
+                    timeout=float(manual_narrator_timeout or 0.0),
+                    probe_interval=float(manual_narrator_probe_interval or 0.0),
+                )
+                payload["actions"].append(
+                    {
+                        "step": "wait_for_manual_narrator",
+                        "ok": bool(manual_verification.get("verified")),
+                        "verification": manual_verification,
+                    }
+                )
+                if manual_verification.get("verified"):
+                    narrator_result = {
+                        **narrator_result,
+                        "ok": True,
+                        "launch_method": "manual_wait",
+                    }
+            if not narrator_result.get("ok"):
+                payload["errors"].append(str(narrator_result.get("error") or "Failed to launch Narrator"))
+            if wait_after_narrator > 0:
+                time.sleep(wait_after_narrator)
+
         emit_progress(
             "activate_existing_wechat",
             "检测到微信 UI 树没有展开，正在尝试激活当前微信窗口并重新检测...",
@@ -759,13 +807,18 @@ def recover_shell_only_wechat_uia(
 
         final_probe = None
         probe_count = max(1, int(max_probes or 1))
+        current_probe: dict = {}
         for probe_index in range(probe_count):
             if probe_index > 0:
+                # 用上一轮探测到的新鲜句柄（登录页→主窗口切换后 initial
+                # hwnd 已失效），探测不到再退回 initial
                 payload["actions"].append(
                     {
                         "step": "re_activate_wechat_window",
                         "probe_index": probe_index + 1,
-                        **activate_wechat_window(int(initial_probe.get("hwnd") or 0)),
+                        **activate_wechat_window(
+                            int(current_probe.get("hwnd") or initial_probe.get("hwnd") or 0)
+                        ),
                     }
                 )
             current_probe = probe_wechat_uia()
@@ -780,6 +833,11 @@ def recover_shell_only_wechat_uia(
             if current_probe.get("status") == "accessible":
                 break
             if probe_index + 1 < probe_count and probe_interval > 0:
+                # 下一轮探测前再 poke 一把桥（讲述人在场时它也在持续 poke，
+                # 这里兜住讲述人启动失败的场景）
+                poke_wechat_accessibility_bridge(
+                    int(current_probe.get("hwnd") or initial_probe.get("hwnd") or 0)
+                )
                 time.sleep(probe_interval)
 
         payload["final_probe"] = final_probe or probe_wechat_uia()

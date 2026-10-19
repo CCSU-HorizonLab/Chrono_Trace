@@ -255,6 +255,7 @@ def test_run_confirmed_uia_recovery_executes_after_confirmation(monkeypatch):
     service._uia_recovery_context = {
         "phase": "initialize",
         "error_text": "ui_not_accessible: shell_only",
+        "stage": "restart",
     }
 
     captured = {}
@@ -283,12 +284,74 @@ def test_run_confirmed_uia_recovery_executes_after_confirmation(monkeypatch):
     assert service._chat_error == ""
 
 
+def test_run_confirmed_uia_recovery_activate_stage_runs_non_destructive(monkeypatch):
+    """第一段（无破坏激活）：narrator_in_place 模式，不动微信进程。"""
+    service, _buffer = _make_service()
+    service._uia_recovery_required = True
+    service._uia_recovery_context = {
+        "phase": "chat_switch",
+        "error_text": "ui_not_accessible: shell_only",
+        "stage": "activate",
+    }
+
+    captured = {}
+
+    def fake_recover(**kwargs):
+        captured.update(kwargs)
+        return {
+            "final_probe": {"status": "accessible"},
+            "errors": [],
+        }
+
+    monkeypatch.setattr(
+        "app.services.realtime.providers.recovery.recover_shell_only_wechat_uia",
+        fake_recover,
+    )
+
+    result = service.run_confirmed_uia_recovery()
+
+    assert result["success"] is True
+    assert captured["recovery_mode"] == "narrator_in_place"
+    assert "terminate_wechat" not in str(captured)
+
+
+def test_run_confirmed_uia_recovery_activate_failure_arms_restart_stage(monkeypatch):
+    """第一段失败：武装第二段（重启微信）待二次确认，不自动执行。"""
+    service, _buffer = _make_service()
+    service._uia_recovery_required = True
+    service._uia_recovery_context = {
+        "phase": "chat_switch",
+        "error_text": "ui_not_accessible: shell_only",
+        "stage": "activate",
+    }
+
+    monkeypatch.setattr(
+        "app.services.realtime.providers.recovery.recover_shell_only_wechat_uia",
+        lambda **kwargs: {
+            "actions": [{"step": "launch_narrator"}],
+            "final_probe": {"status": "shell_only"},
+            "errors": ["still_shell_only"],
+        },
+    )
+
+    result = service.run_confirmed_uia_recovery()
+
+    assert result["success"] is False
+    assert result["next_stage"] == "restart"
+    assert service._uia_recovery_required is True
+    assert service._uia_recovery_context.get("stage") == "restart"
+    # 未动微信进程 → 不进入「手动重开保护期」
+    assert service._has_active_uia_manual_restart_guard() is False
+    assert "手机上确认登录" in service._chat_error
+
+
 def test_run_confirmed_uia_recovery_enters_manual_restart_guard_after_destructive_failure(monkeypatch):
     service, _buffer = _make_service()
     service._uia_recovery_required = True
     service._uia_recovery_context = {
         "phase": "initialize",
         "error_text": "ui_not_accessible: shell_only",
+        "stage": "restart",
     }
 
     monkeypatch.setattr(

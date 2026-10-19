@@ -18,12 +18,10 @@
           <details class="sug-notice">
             <summary><AlertTriangle :size="14" style="vertical-align: -2px; margin-right: 4px; color: var(--ct-color-warning);" /> 使用须知</summary>
             <ul>
-              <li>确保 Windows 微信已启动并登录。</li>
-              <li><strong>无需强制前台</strong>：窗口允许被其他应用遮挡（但请勿彻底最小化至任务栏）。</li>
+              <li>确保微信已启动并登录（<strong>窗口可在后台运行</strong>，最小化不影响监听）。</li>
               <li>目标对象的昵称必须与微信中显示完全一致（如有备注名，必须输入备注名）。</li>
               <li>当前系统全局仅支持对单一对象进行并行监听。</li>
               <li>需使用微信 4.x 版本（3.9 及更早版本的数据目录不受支持，应用会引导升级）。</li>
-              <li>请监听时不要切换聊天对象，否则会影响监听效果。</li>
             </ul>
           </details>
 

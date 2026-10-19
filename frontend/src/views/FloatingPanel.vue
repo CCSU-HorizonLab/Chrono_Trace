@@ -74,12 +74,6 @@
         <span>连接断开，等待重连…</span>
         <button class="fp-btn-sm warning" @click="retryConnection">重试</button>
       </div>
-      <div v-if="uiaRecoverySummary && !connectionLost" class="fp-banner info">
-        <div class="fp-banner-copy">
-          <span>{{ uiaRecoverySummary }}</span>
-          <span v-if="narratorVerificationText" class="fp-banner-sub">{{ narratorVerificationText }}</span>
-        </div>
-      </div>
       <div v-if="chatError && !connectionLost" class="fp-banner error">
         <span>{{ chatError }}</span>
         <button class="fp-btn-sm warning" @click="exitFloating">重新开始</button>
@@ -137,7 +131,7 @@
                 </div>
                 <div class="fp-empty-title">
                   <span v-if="realtimeState.isMonitoring && realtimeState.messageCount > 0">正在分析微信对话…</span>
-                  <span v-else-if="realtimeState.isMonitoring && !chatReady">正在连接微信聊天窗口…</span>
+                  <span v-else-if="realtimeState.isMonitoring && !chatReady">正在定位聊天记录…</span>
                   <span v-else-if="realtimeState.isMonitoring">监听已就绪，等待新消息</span>
                   <span v-else>等待启动监听</span>
                 </div>
@@ -146,13 +140,13 @@
                     已捕获 {{ realtimeState.messageCount }} 条消息，AI 正在生成策略建议（深度思考模型约需 30-60 秒）…
                   </template>
                   <template v-else-if="realtimeState.isMonitoring && !chatReady">
-                    正在切换到「{{ contactDisplayName }}」的聊天窗口，完成后自动开始监听…
+                    正在查找「{{ contactDisplayName }}」的聊天数据，完成后自动开始监听…
                   </template>
                   <template v-else-if="realtimeState.isMonitoring">
                     在微信中与「{{ contactDisplayName }}」展开对话，AI 军师将在此实时提供高情商回复与策略指导。
                   </template>
                   <template v-else>
-                    请在微信中打开聊天窗口，系统将自动绑定并开启实时军师建议。
+                    请确保微信已登录并保持后台运行，系统将自动绑定并开启实时军师建议。
                   </template>
                 </div>
                 <div class="fp-empty-tip">
@@ -861,15 +855,9 @@ const realtimeState = reactive({
 })
 
 const chatError = ref('')
-// 后端 chat_ready：聊天切换真正完成才显示「监听已就绪」——启动瞬间
-// is_monitoring 即为真，直接用它会把「正在切窗」误报成「已就绪」
+// 后端 chat_ready：聊天定位真正完成才显示「监听已就绪」——启动瞬间
+// is_monitoring 即为真，直接用它会把「正在定位」误报成「已就绪」
 const chatReady = ref(false)
-const uiaRecoverySummary = ref('')
-const uiaRecoveryFinalStatus = ref('')
-const uiaRecoveryActions = ref<string[]>([])
-const narratorVerification = ref<any>(null)
-let uiaRecoveryPromptOpen = false
-let uiaRecoveryPromptSuppressed = false
 
 const llmModels = ref<any[]>([])
 const activeModelId = ref<number | null>(null)
@@ -961,83 +949,6 @@ let suggestionsTimer: any = null
 const START_REQUEST_KEY = 'realtime_start_request'
 const RESUME_THRESHOLD_SECONDS = 300
 const BACKFILL_MAX_SCROLL_ROUNDS = 80
-
-function clearUiaRecoveryTelemetry() {
-  uiaRecoverySummary.value = ''
-  uiaRecoveryFinalStatus.value = ''
-  uiaRecoveryActions.value = []
-  narratorVerification.value = null
-}
-
-function applyUiaRecoveryTelemetry(payload: any, options: { preserveOnMissing?: boolean } = {}) {
-  const preserveOnMissing = options.preserveOnMissing === true
-  const hasSummary = !!payload && Object.prototype.hasOwnProperty.call(payload, 'uia_recovery_summary')
-  const hasFinalStatus = !!payload && (
-    Object.prototype.hasOwnProperty.call(payload, 'uia_recovery_final_status')
-    || Object.prototype.hasOwnProperty.call(payload, 'final_status')
-  )
-  const hasActions = !!payload && Object.prototype.hasOwnProperty.call(payload, 'uia_recovery_actions')
-  const hasNarratorVerification = !!payload && Object.prototype.hasOwnProperty.call(payload, 'narrator_verification')
-
-  if (hasSummary) {
-    uiaRecoverySummary.value = String(payload?.uia_recovery_summary || '').trim()
-  } else if (!preserveOnMissing) {
-    uiaRecoverySummary.value = ''
-  }
-
-  if (hasFinalStatus) {
-    uiaRecoveryFinalStatus.value = String(
-      payload?.uia_recovery_final_status || payload?.final_status || '',
-    ).trim()
-  } else if (!preserveOnMissing) {
-    uiaRecoveryFinalStatus.value = ''
-  }
-
-  if (hasActions) {
-    uiaRecoveryActions.value = Array.isArray(payload?.uia_recovery_actions)
-      ? payload.uia_recovery_actions
-        .map((item: any) => String(item || '').trim())
-        .filter(Boolean)
-      : []
-  } else if (!preserveOnMissing) {
-    uiaRecoveryActions.value = []
-  }
-
-  if (hasNarratorVerification) {
-    narratorVerification.value = payload?.narrator_verification && typeof payload.narrator_verification === 'object'
-      ? payload.narrator_verification
-      : null
-  } else if (!preserveOnMissing) {
-    narratorVerification.value = null
-  }
-}
-
-const narratorVerificationText = computed(() => {
-  const info = narratorVerification.value
-  if (!info || typeof info !== 'object') {
-    return ''
-  }
-  if (info.verified === true) {
-    const pid = Number(info.pid || 0)
-    return '屏幕识别：已启动'
-  }
-  if (info.verified === false || info.status || info.error) {
-    const detail = String(info.error || info.status || '未确认启动').trim()
-    return `讲述人验证：${detail}`
-  }
-  return ''
-})
-
-function buildUiaRecoveryDialogMessage(baseMessage: string) {
-  const lines = [String(baseMessage || '').trim()]
-  if (uiaRecoverySummary.value && uiaRecoverySummary.value !== lines[0]) {
-    lines.push(uiaRecoverySummary.value)
-  }
-  if (narratorVerificationText.value) {
-    lines.push(narratorVerificationText.value)
-  }
-  return lines.filter(Boolean).join('\n')
-}
 
 // ========== 常量 ==========
 const triggerModes = [
@@ -1157,11 +1068,10 @@ const allSuggestions = computed(() => {
 
   // 原始消息回显（微信消息秒级上屏，AI 建议稍后跟进）
   for (const m of liveEchoMessages.value) {
-    // UIA 会返回日期/时间分隔线（sender_attr=system）。它们不是聊天消息，
-    // 不能按“非我方”渲染成对方气泡；后端已过滤，这里保留防御性兜底。
+    // 系统行（撤回/拍一拍等）不是聊天消息，
+    // 不能按“非我方”渲染成对方气泡。
     if (String(m.sender_attr || '').toLowerCase() === 'system'
-      || String(m.message_type || '').toLowerCase() === 'system'
-      || isSystemTimeLabel(m.content)) continue
+      || String(m.message_type || '').toLowerCase() === 'system') continue
     list.push({ ...m, _type: 'live_msg', created_at: m.ts })
   }
 
@@ -1174,14 +1084,6 @@ const allSuggestions = computed(() => {
 
   return list
 })
-
-const SYSTEM_TIME_LABEL_RE = /^(?:(?:\d{4}[-/年]\d{1,2}[-/月]\d{1,2}日?(?:\s*(?:星期[一二三四五六日天]|周[一二三四五六日天]))?\s*)?(?:昨天|前天|今天)?\s*(?:凌晨|早上|上午|中午|下午|傍晚|晚上)?\s*\d{1,2}:\d{2}(?::\d{2})?|(?:昨天|前天|今天|星期[一二三四五六日天]|周[一二三四五六日天])(?:\s*(?:凌晨|早上|上午|中午|下午|傍晚|晚上)?\s*\d{1,2}:\d{2})?|\d{1,2}月\d{1,2}日(?:\s*(?:星期[一二三四五六日天]|周[一二三四五六日天]))?(?:\s*(?:凌晨|早上|上午|中午|下午|傍晚|晚上)?\s*\d{1,2}:\d{2})?)$/
-
-function isSystemTimeLabel(raw: any): boolean {
-  const s = String(raw || '').trim()
-  if (!s || s.length > 36) return false
-  return SYSTEM_TIME_LABEL_RE.test(s)
-}
 
 type ParsedWechatQuote = {
   replyText: string
@@ -1371,7 +1273,6 @@ async function applyMonitoringStatus(status: any) {
   realtimeState.messageCount = status.message_count || 0
   realtimeState.conversationId = Number(status.conversation_id || 0)
   chatError.value = status.chat_error || ''
-  applyUiaRecoveryTelemetry(status, { preserveOnMissing: true })
 
   startPolling()
   loadSuggestionConfig()
@@ -1391,96 +1292,11 @@ async function applyMonitoringStatus(status: any) {
   }
 }
 
-function buildUiaRecoveryConfirmMessage(stage: string): string {
-  return stage === 'restart'
-    ? '无破坏修复未能恢复微信界面。继续后将关闭并重新启动微信：重启后需要在手机上确认登录。是否继续？'
-    : '检测到微信界面当前不可访问。继续后，程序会尝试无破坏修复：启动 Windows 讲述人并重新激活当前微信窗口（不会关闭微信、不影响登录状态）。若仍未恢复，会再询问是否重启微信。是否继续？'
-}
-
-async function promptAndRunUiaRecovery(
-  talkerName: string,
-  requestedAccountWxid = '',
-  stage: string = 'activate',
-): Promise<boolean> {
-  if (uiaRecoveryPromptOpen) {
-    return false
-  }
-  uiaRecoveryPromptOpen = true
-
-  try {
-    const confirmed = await showConfirm({
-      title: stage === 'restart' ? '确认重启微信修复' : '确认自动修复',
-      message: buildUiaRecoveryConfirmMessage(stage),
-    })
-    if (!confirmed) {
-      uiaRecoveryPromptSuppressed = true
-      chatError.value = stage === 'restart' ? '已取消重启修复。' : '已取消自动修复。'
-      return false
-    }
-
-    uiaRecoveryPromptSuppressed = false
-    clearUiaRecoveryTelemetry()
-    chatError.value = stage === 'restart'
-      ? '已确认重启修复，正在准备关闭微信并启动讲述人...'
-      : '已确认自动修复，正在打开讲述人并激活微信窗口（不会关闭微信）...'
-    let progressTimer: number | null = window.setInterval(async () => {
-      try {
-        const status = await api.get_realtime_status()
-        applyUiaRecoveryTelemetry(status)
-        if (status?.chat_error) {
-          chatError.value = status.chat_error
-        }
-      } catch (_e) {
-        // 进度轮询失败时不打断修复流程
-      }
-    }, 1200)
-
-    try {
-      const result = await api.run_realtime_uia_recovery()
-      applyUiaRecoveryTelemetry(result)
-      // 第一段（无破坏激活）未恢复：二次确认后走第二段（重启微信）
-      if (!(result.success || result.ok) && result.next_stage === 'restart' && stage !== 'restart') {
-        const confirmedRestart = await showConfirm({
-          title: '确认重启微信修复',
-          message: buildUiaRecoveryConfirmMessage('restart'),
-        })
-        if (confirmedRestart) {
-          // 递归进入第二段前放开弹窗互斥守卫（外层 finally 会再复位，无副作用）
-          uiaRecoveryPromptOpen = false
-          return await promptAndRunUiaRecovery(talkerName, requestedAccountWxid, 'restart')
-        }
-        uiaRecoveryPromptSuppressed = true
-        chatError.value = '已取消重启修复。'
-        return false
-      }
-      if (!(result.success || result.ok)) {
-        const message = result.error || '自动修复未成功完成。'
-        chatError.value = message
-        await showDialog({
-          title: '请手动修复',
-          message: buildUiaRecoveryDialogMessage(message),
-        })
-        return false
-      }
-    } finally {
-      if (progressTimer !== null) {
-        window.clearInterval(progressTimer)
-        progressTimer = null
-      }
-    }
-
-    return await startPendingMonitoring(talkerName, requestedAccountWxid, false)
-  } finally {
-    uiaRecoveryPromptOpen = false
-  }
-}
-
-async function startPendingMonitoring(talkerName: string, requestedAccountWxid = '', allowRecoveryPrompt = true) {
+async function startPendingMonitoring(talkerName: string, requestedAccountWxid = '') {
   activeAccountWxid.value = requestedAccountWxid || activeAccountWxid.value
   realtimeState.talkerName = talkerName
   contactAvatar.value = ''
   realtimeState.status = 'searching'
-  uiaRecoveryPromptSuppressed = false
   chatReady.value = false
   chatError.value = '正在准备监听对象...'
 
@@ -1498,7 +1314,6 @@ async function startPendingMonitoring(talkerName: string, requestedAccountWxid =
   let progressTimer: number | null = window.setInterval(async () => {
     try {
       const status = await api.get_realtime_status()
-      applyUiaRecoveryTelemetry(status)
       if (status?.chat_error) {
         chatError.value = status.chat_error
       }
@@ -1511,9 +1326,6 @@ async function startPendingMonitoring(talkerName: string, requestedAccountWxid =
     const result = await api.start_realtime_monitor(talkerName, resumeMode, activeAccountWxid.value || undefined)
     if (!(result.success || result.ok)) {
       chatError.value = result.error || result.message || '启动监听失败'
-      if (allowRecoveryPrompt && result.uia_recovery_required) {
-        return await promptAndRunUiaRecovery(talkerName, requestedAccountWxid, result.uia_recovery_stage || 'activate')
-      }
       return false
     }
 
@@ -1586,7 +1398,6 @@ onMounted(async () => {
         await new Promise(r => setTimeout(r, RETRY_DELAY))
       }
       status = await api.get_realtime_status()
-      applyUiaRecoveryTelemetry(status)
       if (status.ok && status.is_monitoring) {
         break
       }
@@ -1604,7 +1415,6 @@ onMounted(async () => {
     realtimeState.batchId = status.batch_id || ''
     realtimeState.messageCount = status.message_count || 0
     realtimeState.conversationId = Number(status.conversation_id || 0)
-    applyUiaRecoveryTelemetry(status)
     // 检查 chat_error
     if (status.chat_error) {
       chatError.value = status.chat_error
@@ -2061,7 +1871,6 @@ function startPolling() {
         batch_id: s.batch_id?.slice(0, 8),
       }))
       if (s.ok) {
-        applyUiaRecoveryTelemetry(s)
         realtimeState.isMonitoring = s.is_monitoring
         realtimeState.messageCount = s.message_count || 0
         chatReady.value = !!s.chat_ready
@@ -2079,25 +1888,6 @@ function startPolling() {
           chatError.value = s.chat_error
         } else if (s.chat_ready) {
           chatError.value = ''
-        }
-        if (!s.uia_recovery_required) {
-          uiaRecoveryPromptSuppressed = false
-        }
-        if (
-          s.uia_recovery_required
-          && !s.uia_recovery_in_progress
-          && !uiaRecoveryPromptOpen
-          && !uiaRecoveryPromptSuppressed
-        ) {
-          notMonitoringCount = 0
-          const recovered = await promptAndRunUiaRecovery(
-            realtimeState.talkerName,
-            activeAccountWxid.value || '',
-            s.uia_recovery_stage || 'activate',
-          )
-          if (recovered) {
-            return
-          }
         }
         if (!s.is_monitoring) {
           notMonitoringCount++
@@ -2605,7 +2395,6 @@ async function retryConnection() {
     await bridgeReady()
     const s = await api.get_realtime_status()
     if (s.ok && s.is_monitoring) {
-      applyUiaRecoveryTelemetry(s)
       realtimeState.isMonitoring = true
       realtimeState.messageCount = s.message_count || 0
       if (s.chat_error) {
@@ -3050,8 +2839,6 @@ async function loadLastThread() {
 .fp-banner { display: flex; justify-content: space-between; align-items: center; padding: 7px 10px; font-size: 11px; font-weight: 500; }
 .fp-banner.error { background: #fef2f2; color: #991b1b; border-bottom: 1px solid #fca5a5; }
 .fp-banner.info { background: #eff6ff; color: #1d4ed8; border-bottom: 1px solid #93c5fd; }
-.fp-banner-copy { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.fp-banner-sub { font-size: 10px; color: rgba(29, 78, 216, 0.8); line-height: 1.35; word-break: break-word; }
 
 /* 2. Compact Insights & Memory Ribbon */
 .fp-insights-strip {

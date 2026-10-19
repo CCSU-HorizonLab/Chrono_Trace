@@ -21,7 +21,7 @@ from .embedding import (
 from .fact_extractor import FactExtractionError, StructuredFactExtractor, normalize_fact_kind
 from .semantic_memory import SemanticFactExtractor
 from .segmenter import RagSegment, RagSegmenter
-from .store import RAG_INDEX_VERSION, RagStore
+from .store import RAG_INDEX_VERSION, RagStore, rag_vector_is_informative
 
 
 logger = logging.getLogger(__name__)
@@ -278,8 +278,9 @@ class RagIndexer:
                 embedding_dim=dim,
             )
             # 零范数向量视为缺失:ONNX 故障窗口期写入过 199 条零向量,
-            # JOIN 能命中但余弦恒 0,不重灌检索会静默失效。
-            if item.get("vector") and any(float(x) != 0.0 for x in item["vector"])
+            # JOIN 能命中但余弦恒 0,不重灌检索会静默失效。判据与自愈门
+            # 计数（count_active_fact_embeddings）共用 rag_vector_is_informative
+            if rag_vector_is_informative(item.get("vector"))
         }
         missing = [item for item in facts if force or int(item["id"]) not in existing]
         written = 0

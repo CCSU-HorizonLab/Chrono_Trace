@@ -56,6 +56,13 @@ def unpack_rag_vector(blob) -> list:
     return []
 
 
+def rag_vector_is_informative(values) -> bool:
+    """零范数向量视为缺失——ONNX 故障窗口会产出全零向量，余弦恒 0，
+    检索静默失效。自愈门计数与回填补选必须共用本判据（此前两处各写
+    一份且只有回填侧判零，恰好漏掉故障窗口会话永不入队自愈）。"""
+    return bool(values) and any(float(x) != 0.0 for x in values)
+
+
 class RagStore:
     """Small SQLite-backed store for RAG documents, vectors, status and logs."""
 
@@ -922,14 +929,16 @@ class RagStore:
         embedding_model: str,
         embedding_dim: int,
     ) -> int:
-        """G5：只数活跃事实的向量，与 count_active_facts 口径对齐。
+        """G5：只数活跃事实的健康向量，与 count_active_facts 口径对齐。
 
         旧口径把 superseded/uncertain/禁用事实遗留的向量也算进来，活跃
-        事实缺向量时 vectors>=facts 会让回填判定误判"已齐"而跳过。
+        事实缺向量时 vectors>=facts 会让回填判定误判"已齐"而跳过；零范数
+        向量（ONNX 故障窗口产物）同样不计——须取回向量逐个判（SQL 层
+        检不出全零），事实量级每会话几百条，Python 侧过一遍可忽略。
         """
-        row = self.conn.execute(
+        rows = self.conn.execute(
             """
-            SELECT COUNT(*) AS count
+            SELECT e.vector_blob AS vector_blob
             FROM rag_fact_embeddings e
             INNER JOIN rag_facts f ON f.id = e.fact_id
             WHERE e.account_wxid=? AND e.conversation_id=?
@@ -937,8 +946,12 @@ class RagStore:
               AND f.status='active' AND f.enabled=1
             """,
             (account_wxid, int(conversation_id), embedding_model, int(embedding_dim)),
-        ).fetchone()
-        return int(row["count"] if row else 0)
+        ).fetchall()
+        return sum(
+            1
+            for row in rows
+            if rag_vector_is_informative(unpack_rag_vector(row["vector_blob"]))
+        )
 
     def list_documents(self, account_wxid: str, conversation_id: int) -> list[dict[str, Any]]:
         rows = self.conn.execute(

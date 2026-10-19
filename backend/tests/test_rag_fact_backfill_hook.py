@@ -142,6 +142,35 @@ class TestCompletionPath:
         assert status["status"] == "ready"
         assert calls == [("wxid_a", 1)]
 
+    def test_enqueues_when_only_zero_norm_vectors(self, monkeypatch):
+        """门与回填共用零范数=缺失判据：ONNX 故障窗口写入过全零向量的
+        会话（自愈原本点名的场景）必须入队，不得被向量行数误判「已齐」。"""
+        conn = _conn()
+        store = RagStore(conn)
+        _seed_conversation(conn)
+        _seed_active_fact(store)
+        store.upsert_fact_embedding(
+            fact_id=1,
+            account_wxid="wxid_a",
+            conversation_id=1,
+            embedding_model=MODEL,
+            embedding_dim=DIM,
+            vector=[0.0] * DIM,
+        )
+        monkeypatch.setattr(
+            "app.services.realtime.rag.indexer.load_rag_settings",
+            lambda: _settings(),
+        )
+        calls = _instrument(monkeypatch)
+
+        status = RagIndexer(store=store, embedding_service=FakeEmbedding()).rebuild_contact_index(
+            account_wxid="wxid_a",
+            conversation_id=1,
+        )
+
+        assert status["status"] == "ready"
+        assert calls == [("wxid_a", 1)]
+
     def test_no_enqueue_when_vectors_complete(self, monkeypatch):
         conn = _conn()
         store = RagStore(conn)

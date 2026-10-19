@@ -18,6 +18,7 @@ import logging
 import re
 import select
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -105,6 +106,7 @@ class DbWatchRealtimeProvider(RealtimeProvider):
         self._inotify_fd: int = -1
         self._inotify_thread: threading.Thread | None = None
         self._last_nochange_result: list | None = None  # 无变化缓存的上一轮消息
+        self._last_reconcile = 0.0  # 上次 WAL 重放兜底时刻（monotonic）
 
     # ---------- 契约实现 ----------
 
@@ -179,6 +181,16 @@ class DbWatchRealtimeProvider(RealtimeProvider):
     def list_visible_messages(self) -> list:
         if not self._table:
             return []
+
+        # 周期性 WAL 重放兜底（撕裂帧被跳过后 stat 不再变化，靠重放自愈）：
+        # 非脏分片在 refresh 内 stat 短路，只有活跃分片付一次快路径开销
+        if time.monotonic() - self._last_reconcile >= 10.0:
+            self._last_reconcile = time.monotonic()
+            for watcher in self._watchers:
+                try:
+                    watcher.refresh(reconcile=True)
+                except Exception as exc:
+                    logger.debug("[db_watch] reconcile 刷新失败: %s", exc)
 
         # inotify 可用时：等事件（毫秒级响应）而非 stat 轮询；
         # 不可用时直接走 stat 轮询路径（每秒被 monitor 调用，行为不变）

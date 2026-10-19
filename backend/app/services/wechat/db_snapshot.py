@@ -13,8 +13,10 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import shutil
 import sqlite3
 import struct
+import threading
 import time
 from pathlib import Path
 
@@ -53,6 +55,11 @@ class EncryptedShardWatcher:
         self._page_hashes: dict[int, str] = {}
         self._conn: sqlite3.Connection | None = None
         self._state: tuple[int, int, int, int] = (0, 0, 0, 0)
+        # refresh/close 互斥锁（必须在首次 refresh 前建好）：两线程并发 refresh
+        # 会因固定 .tmp 路径互相顶掉对方的临时文件 → os.replace Errno 2，
+        # 且被替换的可能是两线程交错写的撕裂文件（实测可致 sidecar 错乱）
+        self._lock = threading.Lock()
+        self._overlay_dirty = False  # WAL 帧有跳过（撕裂帧），待 reconcile 重放
         self.resumed_from_disk = False  # sidecar 命中（跨进程零/增量解密）
         if self._load_meta():
             # 恢复成功：源未变 → refresh 立即 stat 短路（零解密）；
@@ -65,18 +72,65 @@ class EncryptedShardWatcher:
 
     # ---------- 对外接口 ----------
 
-    def refresh(self, force: bool = False) -> bool:
-        """源文件变化时增量刷新解密视图，返回是否刷新。
+    def refresh(self, force: bool = False, reconcile: bool = False) -> bool:
+        """刷新解密视图，返回是否执行了刷新。
 
-        _state 只在刷新完整成功后提交：中途异常（如微信写入瞬间的撕裂页
-        HMAC 失败）保留旧 state，下一轮 stat 仍不同 → 自动重试。此前在
-        开头就提交新 state，一次失败即永久短路（stat 不再变化），新消息
-        从此收不到（实测 12:02 页 11507 异常后监听恒 0 条）。
+        分派：主库 stat 未变 → WAL-only 快路径（拷贝旧快照+重放 -wal 帧）；
+        主库变了 → 全量路径（逐页哈希增量解密）。_state 只在刷新完整成功后
+        提交：中途异常（如微信写入瞬间的撕裂页 HMAC 失败）保留旧 state，
+        下一轮 stat 仍不同 → 自动重试。此前在开头就提交新 state，一次失败
+        即永久短路（stat 不再变化），新消息从此收不到（实测 12:02 页 11507
+        异常后监听恒 0 条）。
+
+        reconcile=True 且上次快路径有跳帧（_overlay_dirty）时，即使 stat
+        未变也重放一次 WAL——撕裂帧被跳过后 stat 不再变化，靠周期性重放
+        兜底（同 PG 主从「持续 WAL 流 + 周期 resync」）。实例锁贯穿全程：
+        stat 判断→tmp 写→replace→state/meta 提交→关连接必须原子。
         """
-        state = self._stat_state()
-        if not force and state == self._state:
+        with self._lock:
+            state = self._stat_state()
+            replay = reconcile and self._overlay_dirty
+            if not force and not replay and state == self._state:
+                return False
+            if (not force and self._page_hashes and self.out_path.exists()
+                    and state[0:2] == self._state[0:2]):
+                return self._refresh_wal_only(state, replay)
+            return self._refresh_full(state, force)
+
+    def _refresh_wal_only(self, state: tuple[int, int, int, int], replay: bool) -> bool:
+        """WAL-only 快路径：主库 stat 未变时跳过全库逐页重读+SHA1。
+
+        主库页全部可信（未被写过），内核级拷贝旧快照后仅叠加 -wal 当前
+        已提交帧——全量路径每次 0.4~0.6s（100MB 重哈希+整文件重写），此处
+        ~0.1s。快路径每次重放全部已提交帧（非增量记进度），只要下一次
+        刷新赶在 checkpoint 前就不漏；checkpoint 必写主库 → 自动回全量
+        路径逐页重 derive，即 checkpoint 节奏（实测 10~70s 一波）就是天然
+        的全库对账点，无需定时强制全量。
+        """
+        tmp_out_path = self.out_path.with_name(self.out_path.name + ".tmp")
+        try:
+            shutil.copyfile(self.out_path, tmp_out_path)
+            with open(tmp_out_path, "r+b") as out:
+                applied, skipped = self._apply_wal(out)
+            # 先关连接再替换：替换瞬间旧连接仍指旧 inode，会继续读旧内容
+            self._close_conn()
+            os.replace(tmp_out_path, self.out_path)
+        except Exception as e:
+            self._discard_tmp(tmp_out_path)
+            logger.warning("[dbwatch] 快路径刷新 %s 失败（保留旧快照，待重试）: %s",
+                           self.src, e)
             return False
 
+        self._state = state
+        # 有跳帧（撕裂/损坏帧解密失败被跳过）→ 标脏，等 reconcile 重放
+        self._overlay_dirty = skipped > 0
+        self._save_meta()
+        logger.debug("[dbwatch] %s WAL 快路径应用 %d 帧（跳过 %d）%s",
+                     self.src.name, applied, skipped, "〔重放〕" if replay else "")
+        return True
+
+    def _refresh_full(self, state: tuple[int, int, int, int], force: bool) -> bool:
+        """全量路径：逐页读主库、密文 sha1 对比增量解密 + WAL 帧合并。"""
         tmp_out_path = self.out_path.with_name(self.out_path.name + ".tmp")
         try:
             with open(self.src, "rb") as f:
@@ -112,7 +166,7 @@ class EncryptedShardWatcher:
                             # 写占位零页，交由 _apply_wal 用帧覆盖修复
                             failed_pages += 1
                             out.write(b"\x00" * PAGE_SIZE)
-                    self._apply_wal(f, out, total_pages)
+                    applied, skipped = self._apply_wal(out)
                     if failed_pages:
                         logger.debug(
                             "[dbwatch] %s: %d/%d 页主库缺帧（占位，待 WAL 覆盖或为无效尾页）",
@@ -120,29 +174,26 @@ class EncryptedShardWatcher:
                         )
                 finally:
                     out.close()
-                # 原子替换仅在页循环 + WAL 合并完整成功后执行：中途异常由
-                # 外层 except 丢弃 .tmp。此前 replace 写在 finally 里无条件
-                # 执行，半截临时文件会覆盖完好的旧快照（malformed 库根源）
+                # 先关连接再替换（见快路径注释）。原子替换仅在页循环 + WAL 合并
+                # 完整成功后执行：中途异常由外层 except 丢弃 .tmp。此前 replace
+                # 写在 finally 里无条件执行，半截临时文件会覆盖完好的旧快照
+                # （malformed 库根源）
+                self._close_conn()
                 os.replace(tmp_out_path, self.out_path)
-        except OSError as e:
-            logger.warning("[dbwatch] 读取 %s 失败: %s", self.src, e)
-            return False
         except Exception as e:
-            # 解密/WAL 合并中途失败：不提交新 state（见上），下一轮自动重试；
-            # 旧快照原封未动（写的是 .tmp），直接丢弃临时文件
-            try:
-                tmp_out_path.unlink(missing_ok=True)
-            except OSError:
-                pass
-            logger.warning("[dbwatch] 刷新 %s 中途失败（保留旧快照，待重试）: %s", self.src, e)
+            # 解密/WAL 合并中途失败：不提交新 state（见 refresh），下一轮自动
+            # 重试；旧快照原封未动（写的是 .tmp），直接丢弃临时文件
+            self._discard_tmp(tmp_out_path)
+            logger.warning("[dbwatch] 刷新 %s 中途失败（保留旧快照，待重试）: %s",
+                           self.src, e)
             return False
 
         # 全量处理成功才提交新 state
         self._state = state
+        self._overlay_dirty = skipped > 0
         self._save_meta()
-        # 连接重建（immutable 只读，避免在解密副本上产生 -shm/-wal）
-        self._close_conn()
-        logger.debug("[dbwatch] %s 刷新 %d 页", self.src.name, changed)
+        logger.debug("[dbwatch] %s 全量刷新 %d 页 / WAL %d 帧（跳过 %d）",
+                     self.src.name, changed, applied, skipped)
         return True
 
     @property
@@ -155,16 +206,24 @@ class EncryptedShardWatcher:
         return self._conn
 
     def close(self) -> None:
-        self._close_conn()
-        for p in (self.out_path, Path(str(self.out_path) + ".tmp"),
-                  self._meta_path(), Path(str(self._meta_path()) + ".tmp"),
-                  Path(str(self.out_path) + "-wal"), Path(str(self.out_path) + "-shm")):
-            try:
-                p.unlink(missing_ok=True)
-            except OSError:
-                pass
+        with self._lock:
+            self._close_conn()
+            for p in (self.out_path, Path(str(self.out_path) + ".tmp"),
+                      self._meta_path(), Path(str(self._meta_path()) + ".tmp"),
+                      Path(str(self.out_path) + "-wal"), Path(str(self.out_path) + "-shm")):
+                try:
+                    p.unlink(missing_ok=True)
+                except OSError:
+                    pass
 
     # ---------- 内部 ----------
+
+    @staticmethod
+    def _discard_tmp(tmp_out_path: Path) -> None:
+        try:
+            tmp_out_path.unlink(missing_ok=True)
+        except OSError:
+            pass
 
     def _meta_path(self) -> Path:
         return Path(str(self.out_path) + ".meta.json")
@@ -296,8 +355,8 @@ class EncryptedShardWatcher:
             data = self._dec.SQLITE_HEADER + data
         return data
 
-    def _apply_wal(self, main_file, out, total_pages: int) -> None:
-        """把 -wal 中的已提交帧覆盖到解密视图（帧 salt 与 wal 头一致才应用）。
+    def _apply_wal(self, out) -> tuple[int, int]:
+        """把 -wal 中的已提交帧覆盖到解密视图，返回 (应用帧数, 跳过帧数)。
 
         WAL 头与帧头字段均为大端序（SQLite 文件格式规定）——此前误用小端解包，
         真实 WAL 的 magic 读为 0x82067F37 导致整段合并在真实文件上从未生效。
@@ -305,21 +364,23 @@ class EncryptedShardWatcher:
         """
         wal_path = Path(str(self.src) + "-wal")
         if not wal_path.exists():
-            return
+            return 0, 0
         try:
             wal = open(wal_path, "rb")
         except OSError:
-            return
+            return 0, 0
+        applied = 0
+        skipped = 0
         try:
             header = wal.read(WAL_HEADER_SIZE)
             if len(header) < WAL_HEADER_SIZE:
-                return
+                return 0, 0
             magic, = struct.unpack_from(">I", header, 0)
             if magic not in (0x377F0682, 0x377F0683):
-                return
+                return 0, 0
             page_size, = struct.unpack_from(">I", header, 8)
             if page_size != PAGE_SIZE:
-                return  # 页大小不符（如 65536 特殊值）：无法按 4096 布局合并
+                return 0, 0  # 页大小不符（如 65536 特殊值）：无法按 4096 布局合并
             salt1, salt2 = struct.unpack_from(">II", header, 16)
 
             frames: list[tuple[int, bytes]] = []
@@ -338,20 +399,28 @@ class EncryptedShardWatcher:
                 if commit_size:
                     last_commit = len(frames)
 
+            # 帧解密不走 _decrypt_raw 的「重读主库」重试通道：帧撕裂时重读到的
+            # 是主库旧页，会把过期内容当帧内容静默应用且无从自愈——帧失败
+            # 必须跳过并标脏，交给 reconcile 周期重放兜底
+            enc_key, mac_key = self._ensure_keys()
             for page_no, raw in frames[:last_commit]:
                 if not (1 <= page_no <= 1_000_000):
                     continue  # 垃圾页号护栏（防 seek 出稀疏巨文件）
                 try:
-                    wal_data = self._decrypt_raw(raw, page_no)
-                except RuntimeError:
-                    continue  # 单帧损坏不拖垮整个合并
+                    wal_data = self._dec.decrypt_page(raw, enc_key, mac_key, page_no - 1)
+                except Exception:
+                    skipped += 1  # 单帧损坏不拖垮整个合并（reconcile 周期重放兜底）
+                    continue
                 out.seek((page_no - 1) * PAGE_SIZE)
                 if page_no == 1:
                     wal_data = self._dec.SQLITE_HEADER + wal_data
                 out.write(wal_data)
                 self._page_hashes[page_no] = hashlib.sha1(raw).hexdigest()
+                applied += 1
+            return applied, skipped
         except (OSError, struct.error) as e:
             logger.debug("[dbwatch] wal 合并中止: %s", e)
+            return applied, skipped
         finally:
             wal.close()
 

@@ -1,13 +1,15 @@
 """db_snapshot（EncryptedShardWatcher）单测：加密库增量解密视图。
 
 覆盖：初始全量解密可查询、stat 短路、源更新增量刷新、
-主库缺帧页占位 + WAL 已提交帧修复、WAL 代际错乱防护、未提交帧不应用。
+主库缺帧页占位 + WAL 已提交帧修复、WAL 代际错乱防护、未提交帧不应用、
+WAL-only 快路径（主库未变不逐页重读）、reconcile 跳帧重放、并发 refresh 串行化。
 """
 from __future__ import annotations
 
 import os
 import sqlite3
 import sys
+import threading
 from pathlib import Path
 
 backend_root = Path(__file__).parent.parent
@@ -185,5 +187,134 @@ def test_wal_uncommitted_frames_are_not_applied(tmp_path):
             watcher.connection.execute(
                 "SELECT message_content FROM [Msg_test] ORDER BY sort_seq"
             ).fetchall()
+    finally:
+        watcher.close()
+
+
+def _v2_frames(data1: bytes, data2: bytes, enc_key: bytes, mac_key: bytes):
+    """构造 v1→v2 的全部差异数据页帧（最后一帧为 commit），与真实 WAL 写入同构。
+
+    跳过页 1（change counter 差异）：WAL 帧里的页 1 不带 salt 前缀，
+    且旧 change counter 不影响 immutable 只读——与既有 WAL 用例同口径。
+    """
+    pages = [p for p in range(2, len(data1) // PAGE + 1)
+             if data1[(p - 1) * PAGE:p * PAGE] != data2[(p - 1) * PAGE:p * PAGE]]
+    assert pages, "fixture 版本无差异页"
+    return [(p, encrypt_page(data2[(p - 1) * PAGE:p * PAGE], enc_key, mac_key, p),
+             idx == len(pages) - 1)
+            for idx, p in enumerate(pages)]
+
+
+def _bump_mtime(path: Path) -> None:
+    st = path.stat()
+    os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns + 2_000_000_000))
+
+
+def test_wal_only_fast_path_when_main_unchanged(tmp_path):
+    """主库 stat 未变、仅 -wal 变化 → 快路径（不逐页重读主库）且新内容可见。"""
+    plain_v1 = build_plain_db(tmp_path / "v1.db", SCHEMA_V1)
+    plain_v2 = build_plain_db(tmp_path / "v2.db", SCHEMA_V1 + EXTRA_ROW)
+    src = tmp_path / "message_0.db"
+    _, enc_key, mac_key = encrypt_db(plain_v1, src, KEY_HEX)
+
+    watcher = EncryptedShardWatcher(src, KEY_HEX, tmp_path / "cache")
+    try:
+        full_calls: list[int] = []
+        orig_full = watcher._refresh_full
+
+        def counting_full(state, force):
+            full_calls.append(1)
+            return orig_full(state, force)
+
+        watcher._refresh_full = counting_full
+
+        frames = _v2_frames(plain_v1.read_bytes(), plain_v2.read_bytes(), enc_key, mac_key)
+        build_wal(tmp_path / "message_0.db-wal", frames)
+
+        assert watcher.refresh() is True
+        assert full_calls == []  # 快路径生效：全量路径未被触碰
+        rows = watcher.connection.execute(
+            "SELECT message_content FROM [Msg_test] ORDER BY sort_seq"
+        ).fetchall()
+        assert [r[0] for r in rows] == ["早", "嗯呢", "中午吃啥", "晚上好"]
+        assert watcher.connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        assert watcher.refresh() is False  # 快路径提交 state 后恢复 stat 短路
+        assert watcher._overlay_dirty is False  # 无跳帧不标脏
+    finally:
+        watcher.close()
+
+
+def test_reconcile_replays_skipped_wal_frames(tmp_path):
+    """撕裂帧被跳过标脏 → stat 不再变化也靠 reconcile 重放自愈；干净后零开销。"""
+    plain_v1 = build_plain_db(tmp_path / "v1.db", SCHEMA_V1)
+    plain_v2 = build_plain_db(tmp_path / "v2.db", SCHEMA_V1 + EXTRA_ROW)
+    data1 = plain_v1.read_bytes()
+    data2 = plain_v2.read_bytes()
+    src = tmp_path / "message_0.db"
+    _, enc_key, mac_key = encrypt_db(plain_v1, src, KEY_HEX)
+    valid_frames = _v2_frames(data1, data2, enc_key, mac_key)
+    torn_frames = [(p, os.urandom(PAGE), commit) for p, _f, commit in valid_frames]
+    wal_path = tmp_path / "message_0.db-wal"
+
+    watcher = EncryptedShardWatcher(src, KEY_HEX, tmp_path / "cache")
+    try:
+        build_wal(wal_path, torn_frames)
+        assert watcher.refresh() is True
+        assert watcher._overlay_dirty is True  # 帧解密全失败 → 标脏
+        rows = watcher.connection.execute(
+            "SELECT count(*) FROM [Msg_test]").fetchone()
+        assert rows[0] == 3  # 帧被跳过，内容停留在 v1
+
+        # wal 内容修复（真实场景：微信写入完成后撕裂页补齐）
+        build_wal(wal_path, valid_frames)
+        _bump_mtime(wal_path)
+        assert watcher.refresh(reconcile=True) is True  # 脏 → 重放
+        rows = watcher.connection.execute(
+            "SELECT message_content FROM [Msg_test] ORDER BY sort_seq"
+        ).fetchall()
+        assert [r[0] for r in rows][-1] == "晚上好"
+        assert watcher._overlay_dirty is False  # 重放无跳帧 → 清脏
+        assert watcher.refresh(reconcile=True) is False  # 干净 → stat 短路零开销
+    finally:
+        watcher.close()
+
+
+def test_concurrent_refresh_is_serialized_by_lock(tmp_path):
+    """两线程并发 refresh（wal 风暴）：实例锁串行化，无撕裂/无异常，快照完好。"""
+    plain_v1 = build_plain_db(tmp_path / "v1.db", SCHEMA_V1)
+    plain_v2 = build_plain_db(tmp_path / "v2.db", SCHEMA_V1 + EXTRA_ROW)
+    data1 = plain_v1.read_bytes()
+    data2 = plain_v2.read_bytes()
+    src = tmp_path / "message_0.db"
+    _, enc_key, mac_key = encrypt_db(plain_v1, src, KEY_HEX)
+    valid_frames = _v2_frames(data1, data2, enc_key, mac_key)
+    torn_frames = [(p, os.urandom(PAGE), commit) for p, _f, commit in valid_frames]
+    wal_path = tmp_path / "message_0.db-wal"
+
+    watcher = EncryptedShardWatcher(src, KEY_HEX, tmp_path / "cache")
+    errors: list[Exception] = []
+
+    def storm(seq):
+        for frames in seq:
+            try:
+                build_wal(wal_path, frames)
+                watcher.refresh()
+            except Exception as exc:  # noqa: BLE001 —— 风暴线程收集一切异常
+                errors.append(exc)
+
+    seq_a = [valid_frames if i % 2 else torn_frames for i in range(30)]
+    seq_b = [torn_frames if i % 2 else valid_frames for i in range(30)]
+    threads = [threading.Thread(target=storm, args=(s,)) for s in (seq_a, seq_b)]
+    try:
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert errors == []
+        # 风暴后快照仍是完好可查的库（此前的竞态会替换出撕裂文件）
+        assert watcher.connection.execute(
+            "PRAGMA integrity_check").fetchone()[0] == "ok"
+        assert watcher.connection.execute(
+            "SELECT count(*) FROM [Msg_test]").fetchone()[0] >= 3
     finally:
         watcher.close()

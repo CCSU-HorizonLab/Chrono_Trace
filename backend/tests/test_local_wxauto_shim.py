@@ -24,6 +24,9 @@ class FakeProvider:
         self.scrolled_up = []
         self.scrolled_down = []
 
+    def initialize(self):
+        return None
+
     def get_hwnd(self):
         return 99
 

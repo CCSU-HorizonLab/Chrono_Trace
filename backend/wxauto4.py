@@ -34,6 +34,9 @@ class WeChat:
 
     def __init__(self, start_listener: bool = False):
         self._provider = DbWatchRealtimeProvider()
+        # 初始化（读账号配置/建分片 watcher）在这里完成，实例即建即用——
+        # 未初始化的 watcher 列表为空，open_chat 会静默找不到任何消息表
+        self._provider.initialize()
         self.start_listener = bool(start_listener)
         self._sync_metadata()
 

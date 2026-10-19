@@ -7,6 +7,7 @@
 import threading
 import logging
 import sys
+from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +51,10 @@ class FloatingWindowService:
         self._wechat_hwnd = None
         self._webview_hwnd = None    # 缓存 PyWebView 的 HWND
         self._tracker = None  # Linux X11 窗口跟踪器（惰性创建）
+        # 窗口样式调用的专职单线程（带超时看门狗，见 _run_win32_with_watchdog）
+        self._win32_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="win32-style"
+        )
 
     def set_webview_window(self, window):
         """设置 PyWebView 窗口引用"""
@@ -417,24 +422,41 @@ class FloatingWindowService:
             if target_style == current_style and target_ex_style == current_ex_style:
                 return True
 
-            win32gui.SetWindowLong(hwnd, win32con.GWL_STYLE, target_style)
-            win32gui.SetWindowLong(hwnd, win32con.GWL_EXSTYLE, target_ex_style)
-            win32gui.SetWindowPos(
-                hwnd, 0, 0, 0, 0, 0,
-                win32con.SWP_FRAMECHANGED
-                | win32con.SWP_NOMOVE
-                | win32con.SWP_NOSIZE
-                | win32con.SWP_NOZORDER
-                | win32con.SWP_NOACTIVATE
-                # 异步：FRAMECHANGED 同步发 WM_NCCALCSIZE 等消息进主线程，
-                # 主线程消息泵被堵时从 bridge 线程调用会永久挂起（卡死点）
-                | win32con.SWP_ASYNCWINDOWPOS
-            )
+            # SetWindowLong 跨线程改样式需要主窗口线程配合处理样式变更
+            # 消息（SWP_ASYNCWINDOWPOS 只保护 SetWindowPos，护不住它）——
+            # 主线程（WebView2 宿主）消息泵被堵时会永久挂起。整段序列
+            # 交给带超时看门狗的专职线程：卡死只损失本次样式切换，
+            # 应用不死、可重试
+            def _apply_style() -> bool:
+                win32gui.SetWindowLong(hwnd, win32con.GWL_STYLE, target_style)
+                win32gui.SetWindowLong(hwnd, win32con.GWL_EXSTYLE, target_ex_style)
+                win32gui.SetWindowPos(
+                    hwnd, 0, 0, 0, 0, 0,
+                    win32con.SWP_FRAMECHANGED
+                    | win32con.SWP_NOMOVE
+                    | win32con.SWP_NOSIZE
+                    | win32con.SWP_NOZORDER
+                    | win32con.SWP_NOACTIVATE
+                    | win32con.SWP_ASYNCWINDOWPOS
+                )
+                return True
+
+            if self._run_win32_with_watchdog(_apply_style) is not True:
+                return False
             _log(f"窗口边框已{'恢复' if decorated else '移除'}")
             return True
         except Exception as e:
             _log(f"切换窗口边框失败: {e}")
             return False
+
+    def _run_win32_with_watchdog(self, func, timeout: float = 2.0):
+        """在专职单线程里执行 Win32 调用并带超时看门狗，超时/异常返回 None。"""
+        try:
+            future = self._win32_executor.submit(func)
+            return future.result(timeout=timeout)
+        except Exception as exc:
+            _log(f"⚠ Win32 窗口调用超时或失败（主线程可能正忙，已跳过本次）: {exc}")
+            return None
 
     def _get_window_scale(self, hwnd=None) -> float:
         """获取窗口 DPI 缩放比例。"""

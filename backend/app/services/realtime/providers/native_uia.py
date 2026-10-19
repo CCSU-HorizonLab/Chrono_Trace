@@ -53,16 +53,8 @@ SHELL_ONLY_CLASS_NAMES = {
 }
 
 
-def poke_wechat_accessibility_bridge(hwnd: int) -> bool:
-    """以 MSAA 客户端身份向微信窗口发 WM_GETOBJECT，激活 Qt 辅助功能桥。
-
-    微信 4.x 是 Qt 程序，Qt 的 accessibility 管理器**惰性激活**——没有
-    辅助客户端连接过时，UIA 树只暴露 shell pane（Qt51514QWindowIcon /
-    MMUIRenderSubWindowHW），内层消息控件全部枚举不到。「开讲述人」偏方
-    的本质是讲述人作为辅助客户端发 WM_GETOBJECT 让 Qt 加载桥；本函数用
-    oleacc.AccessibleObjectFromWindow 发出同一请求，无需讲述人、无需
-    重启微信。失败只说明窗口暂无响应，不影响后续流程。
-    """
+def _msaa_poke(hwnd: int) -> bool:
+    """以 MSAA 客户端身份发 WM_GETOBJECT（IID_IAccessible，OBJID_CLIENT）。"""
     try:
         import ctypes
         from ctypes import POINTER
@@ -77,8 +69,77 @@ def poke_wechat_accessibility_bridge(hwnd: int) -> bool:
         )
         return int(hr) == 0
     except Exception as exc:
-        logger.debug("WM_GETOBJECT poke failed: %s", exc)
+        logger.debug("MSAA poke failed (hwnd=%s): %s", hwnd, exc)
         return False
+
+
+def _uia_poke(hwnd: int) -> bool:
+    """以 UIA 客户端身份查询窗口（ElementFromHandle，讲述人激活桥的同款调用）。
+
+    Qt 5.10+ 的原生 UIA provider（IRawElementProviderSimple 路径）与遗留
+    MSAA 桥相互独立——只 poke MSAA 可能激活了 IAccessible 而 UIA 树
+    依然不展开，两条路都要打通。
+    """
+    try:
+        from comtypes.client import CreateObject, GetModule
+        from ctypes import wintypes
+
+        GetModule("UIAutomationCore.dll")
+        from comtypes.gen.UIAutomationClient import IUIAutomation
+
+        uia = CreateObject(
+            "{ff48dba4-60ef-4201-aa87-54103eef594e}", interface=IUIAutomation
+        )
+        return uia.ElementFromHandle(wintypes.HWND(int(hwnd))) is not None
+    except Exception as exc:
+        logger.debug("UIA poke failed (hwnd=%s): %s", hwnd, exc)
+        return False
+
+
+def _collect_child_hwnds(hwnd: int) -> list[int]:
+    """枚举全部子窗口句柄——内容树挂在 MMUIRenderSubWindowHW 等子窗口上，
+    最小化/恢复后子窗口会被重建，桥的状态按窗口独立，须逐个 poke。"""
+    try:
+        import ctypes
+
+        results: list[int] = []
+
+        @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+        def _on_child(child_hwnd, _lparam):  # noqa: ANN001
+            results.append(int(child_hwnd or 0))
+            return True
+
+        ctypes.windll.user32.EnumChildWindows(
+            ctypes.c_void_p(int(hwnd)), _on_child, None
+        )
+        return results
+    except Exception as exc:
+        logger.debug("EnumChildWindows failed (hwnd=%s): %s", hwnd, exc)
+        return []
+
+
+def poke_wechat_accessibility_bridge(hwnd: int) -> bool:
+    """以辅助客户端身份向微信发 WM_GETOBJECT，激活 Qt 辅助功能桥。
+
+    微信 4.x 是 Qt 程序，Qt 的 accessibility 管理器**惰性激活**——没有
+    辅助客户端连接过时，UIA 树只暴露 shell pane（Qt51514QWindowIcon /
+    MMUIRenderSubWindowHW），内层消息控件全部枚举不到。「开讲述人」偏方
+    的本质是讲述人作为辅助客户端发 WM_GETOBJECT 让 Qt 加载桥；本函数
+    用 MSAA + UIA 两条客户端路径对主窗口及全部子窗口发出同一请求，
+    无需讲述人、无需重启微信。失败只说明窗口暂无响应，不影响后续流程。
+    """
+    hwnd = int(hwnd or 0)
+    if not hwnd:
+        return False
+    child_hwnds = _collect_child_hwnds(hwnd)
+    msaa_ok = any(_msaa_poke(target) for target in [hwnd, *child_hwnds])
+    uia_ok = _uia_poke(hwnd)
+    if not (msaa_ok or uia_ok):
+        logger.info(
+            "[UIA] WM_GETOBJECT poke 全部失败: hwnd=%d, 子窗口=%d（微信可能无响应或已退出）",
+            hwnd, len(child_hwnds),
+        )
+    return msaa_ok or uia_ok
 
 
 def _classify_bubble_midpoint(active_mid: float, width: int) -> str:

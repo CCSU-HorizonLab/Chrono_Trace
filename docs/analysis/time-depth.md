@@ -28,7 +28,7 @@ Analytics 页签「时光深度」，**单聊专属**（群聊无双方情感演
 
 | 常量 | 位置 | 当前值 | 何时 +1 |
 |---|---|---|---|
-| `DEEP_ANALYSIS_VERSION` | `deep_analysis_service.py` | 3 | 桶口径（分桶表达式）或序列点位结构变化。序列实时计算无缓存，版本主要约束前端兼容判断与文档口径记录。v2：词云演变 `halves`→`segments`（2~6 段可配，默认 4）；v3：桶点补 `userMsgCount`/`otherMsgCount` 分侧全量计数、payload 增 `big5_evolution` |
+| `DEEP_ANALYSIS_VERSION` | `deep_analysis_service.py` | 4 | 桶口径（分桶表达式）或序列点位结构变化。序列实时计算无缓存，版本主要约束前端兼容判断与文档口径记录。v2：词云演变 `halves`→`segments`（2~6 段可配，默认 4）；v3：桶点补 `userMsgCount`/`otherMsgCount` 分侧全量计数、payload 增 `big5_evolution`；v4：词面口径变更（pos 白名单过滤 + 停用词两轮扩表，词云/群摘要词表不兼容） |
 | `BIG5_PROMPT_VERSION` | `personality_impression_service.py` | 1 | 大五 prompt 或指标权重结构性变化。旧行自动失效重算（`big5_impressions` 表按版本查询，对齐 `CALIBER_VERSION` 惯例） |
 
 ## 关键口径
@@ -191,9 +191,9 @@ reply_stats 三重剔除（is_abnormal=1 / response_time_seconds NULL / 回消�
 
 | 模板 | 受众 | 可用字段 | 不可见字段 |
 |---|---|---|---|
-| 公开分享（PosterPublicMinimal） | 朋友圈等公开场景 | 聚合数字、合并情绪曲线、双方大五分数、top 词、story 聚合（无身份统计） | 对方姓名/头像/金句原文 |
+| 公开分享（PosterPublicMinimal） | 朋友圈等公开场景 | 聚合数字、合并情绪曲线、双方大五分数、top 词、story 聚合（无身份统计、**零绝对日期**） | 对方姓名/头像/金句原文、story 全部日历日期（里程碑 ts/from_ts/to_ts 与峰值日 date 在投影层剥除——首条消息等里程碑是全会话口径，日期会突破用户所选导出窗） |
 | 自我画像（PosterSelfPortrait） | 想了解自己的人 | 我的消息数、我的曲线/词/大五、my_story 单侧切片（late_night_self/reply_self_avg） | 对方一切数据、金句、story 联合口径 |
-| 定向发送（PosterIntimateDuo） | 仅对方本人 | 全量（姓名、头像、双方曲线、金句卡、story 全量） | —（导出前强制确认弹窗） |
+| 定向发送（PosterIntimateDuo） | 仅对方本人 | 全量（姓名、头像、双方曲线、金句卡、story 全量含日期） | —（导出前强制确认弹窗） |
 
 ### 字体
 

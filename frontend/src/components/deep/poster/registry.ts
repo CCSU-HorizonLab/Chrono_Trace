@@ -67,6 +67,24 @@ export type PosterStory = {
   chemistry: PosterChemistry
 }
 
+/** 公开版里程碑：不带绝对日期——首条消息/关口/沉默期是全会话口径，日期
+ *  会突破用户所选导出窗，公开域组合（首条日期+沉默叙事+峰值日）具强识别性 */
+export type PublicPosterMilestone = Omit<PosterMilestone, 'ts' | 'from_ts' | 'to_ts'>
+
+/** 公开版默契统计：峰值日只留条数不带日历日期（深夜/回复/主动比本就无日期） */
+export type PublicPosterChemistry = {
+  late_night: PosterChemistry['late_night']
+  peak_day: { count: number; self_count: number; other_count: number } | null
+  reply_stats: PosterChemistry['reply_stats']
+  initiator: PosterChemistry['initiator']
+}
+
+/** 公开版故事：时间线只讲事件不讲哪天（定向/自我版保留日期） */
+export type PublicPosterStory = {
+  milestones: PublicPosterMilestone[]
+  chemistry: PublicPosterChemistry
+}
+
 /** 自我版故事切片：仅我的单侧指标——联合事件（主动比/双方中位回复）不进 my 切片 */
 export type MyPosterStory = {
   late_night_self: number | null
@@ -97,8 +115,8 @@ export type PublicPosterPayload = {
   emotion_curve: { bucket: string; points: PosterCurvePoint[] }
   top_words: { all: PosterWord[]; me: PosterWord[]; other: PosterWord[] }
   big5: { me: { scores: PosterBig5Scores } | null; other: { scores: PosterBig5Scores } | null }
-  /** story 全字段为无身份聚合（现状 top_words 双侧与双方大五已在公开域） */
-  story?: PosterStory
+  /** story 聚合字段进公开版但剥绝对日期（类型上拿不到日期字段） */
+  story?: PublicPosterStory
   generated_at: number
 }
 
@@ -127,9 +145,27 @@ export function sanitizeForPublic(payload: IntimatePosterPayload): PublicPosterP
       me: payload.big5?.me ? { scores: payload.big5.me.scores } : null,
       other: payload.big5?.other ? { scores: payload.big5.other.scores } : null,
     },
-    // story 整体进公开版：milestones/深夜/峰值日/回复速度/主动比均为
-    // 无身份聚合统计，与已在公开域的 top_words 双侧同敏感级
-    story: payload.story,
+    // story 聚合字段进公开版，但逐项剥绝对日期：里程碑去 ts/from_ts/to_ts、
+    // 峰值日去 date——公开版零具体日历日期（时间线只讲事件不讲哪天）
+    story: payload.story
+      ? {
+          milestones: payload.story.milestones.map(
+            ({ ts: _ts, from_ts: _fromTs, to_ts: _toTs, ...rest }) => rest,
+          ),
+          chemistry: {
+            late_night: payload.story.chemistry.late_night,
+            peak_day: payload.story.chemistry.peak_day
+              ? {
+                  count: payload.story.chemistry.peak_day.count,
+                  self_count: payload.story.chemistry.peak_day.self_count,
+                  other_count: payload.story.chemistry.peak_day.other_count,
+                }
+              : null,
+            reply_stats: payload.story.chemistry.reply_stats,
+            initiator: payload.story.chemistry.initiator,
+          },
+        }
+      : undefined,
     generated_at: payload.generated_at,
   }
 }

@@ -13,7 +13,7 @@
         <div class="tl-title" :style="{ color: palette.text }">{{ titleOf(item) }}</div>
         <div class="tl-sub" :style="{ color: palette.muted }">{{ subOf(item) }}</div>
       </div>
-      <span class="tl-date" :style="{ color: palette.sub }">{{ dateOf(item) }}</span>
+      <span v-if="dateOf(item)" class="tl-date" :style="{ color: palette.sub }">{{ dateOf(item) }}</span>
     </li>
   </ol>
 </template>
@@ -23,18 +23,23 @@ import type { PosterMilestone } from '../registry'
 import type { StoryPalette } from './palette'
 import { toLocalDateKey } from '@/utils/datetime'
 
+// 日期字段可选：定向版带日期；公开版投影剥掉绝对日期（零具体日历日期
+// 口径），时间线只讲事件不讲哪天
+type TimelineItem = Omit<PosterMilestone, 'ts' | 'from_ts' | 'to_ts'> &
+  Partial<Pick<PosterMilestone, 'ts' | 'from_ts' | 'to_ts'>>
+
 defineProps<{
-  items: PosterMilestone[]
+  items: TimelineItem[]
   palette: StoryPalette
 }>()
 
-function glyphOf(item: PosterMilestone): string {
+function glyphOf(item: TimelineItem): string {
   if (item.kind === 'first_message') return '始'
   if (item.kind === 'count_mark') return '言'
   return '默'
 }
 
-function titleOf(item: PosterMilestone): string {
+function titleOf(item: TimelineItem): string {
   if (item.kind === 'first_message') {
     return item.scope === 'global' ? '初次相遇' : '这段时光的开始'
   }
@@ -45,7 +50,7 @@ function titleOf(item: PosterMilestone): string {
   return '最长的沉默'
 }
 
-function subOf(item: PosterMilestone): string {
+function subOf(item: TimelineItem): string {
   if (item.kind === 'first_message') {
     return item.scope === 'global' ? '你们的第一条消息' : '这段窗口里的第一条消息'
   }
@@ -53,7 +58,7 @@ function subOf(item: PosterMilestone): string {
   return `沉默了 ${item.days ?? 0} 天，然后又聊上了`
 }
 
-function dateOf(item: PosterMilestone): string {
+function dateOf(item: TimelineItem): string {
   const ts = item.kind === 'longest_silence' ? item.from_ts : item.ts
   return ts ? toLocalDateKey(new Date(ts * 1000)) : ''
 }

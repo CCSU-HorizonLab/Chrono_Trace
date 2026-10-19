@@ -105,7 +105,8 @@ const chemCells = computed<StoryStatItem[]>(() => {
   if (rs) {
     cells.push({ num: formatDuration(rs.median ?? rs.avg), label: '回复中位时间' })
   } else if (chem.peak_day) {
-    cells.push({ num: formatCount(chem.peak_day.count), label: `单日最多 · ${chem.peak_day.date}` })
+    // 公开版峰值日不带日历日期（投影层已剥 date 字段），只留条数
+    cells.push({ num: formatCount(chem.peak_day.count), label: '单日消息峰值' })
   }
   if (chem.late_night) {
     cells.push({ num: formatCount(chem.late_night.count), label: '深夜（0-5 点）的消息' })

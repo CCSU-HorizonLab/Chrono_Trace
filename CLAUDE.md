@@ -79,6 +79,7 @@ SQLite（线程本地连接 backend/app/db/connection.py）
 
 ### 关键机制
 
+- **后端→前端推送通道**：实时消息回显不走前端轮询——monitor 落库即经 `webview/push.py`（入队 + sender 线程聚合）`evaluate_js` 调 `window.__chronoRealtimePush`（App.vue 挂载，转投 `chrono:realtime-push` CustomEvent），FloatingPanel 按批次匹配合并；3s 轮询保留作对账兜底。evaluate_js 只能在后台线程调（GUI 线程同步调死锁，见 close_guard 实录）。
 - **Bridge 是唯一前后端边界**：新增前端可调用的 API 必须同时改后端（按 API 域加到 `backend/app/webview/api/*.py` 对应 mixin；导入/监听桥接/建议流等核心域仍在 `bridge.py`）和 `frontend/src/api/bridge.ts`（加 `PyWebViewApi` 类型声明），二者需保持同步。
 - **数据库**：`backend/app/db/schema.sql` 是唯一建表源，`connection.py` 只执行建表——**不维护历史库兼容迁移**，结构变更以版本常量记录（如画像 `PROFILE_SNAPSHOT_SCHEMA`），旧库不做升级（缺列报错，删除重导即可）。唯一例外是画像三表（contact_profiles/self_profiles/big5_impressions）：DDL 内联在各服务 `_ensure_table` 懒建（口径见 `docs/analysis/profile-window.md`）。开发模式数据写入 `backend/data/chrono_trace.db`（打包后 Windows 为 `%LOCALAPPDATA%\ChronoTrace\`，Linux 为 `$XDG_DATA_HOME/ChronoTrace/`，显示名 `APP_NAME` 仍带空格）。
 - **导入 `backend/app/config.py` 有副作用**：模块加载即创建 `backend/data/{logs,models,temp}` 目录并写入 settings 路径。

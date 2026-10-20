@@ -66,7 +66,7 @@ Chrono Trace 是一个基于 `PyWebView + Vue 3 + Python` 的 Windows / Linux �
 
 | 平台 | 产物 | 说明 |
 | --- | --- | --- |
-| Windows 10 / 11 | `ChronoTraceSetup-<版本号>.exe` | 安装版；DirectML 单变体，有独立显卡自动启用 GPU 加速，无卡回退 CPU，免 CUDA |
+| Windows 10 / 11 | `ChronoTraceSetup-<版本号>.exe` | 安装版；DirectML 单变体，独显/核显均自动启用 GPU 加速，无卡回退 CPU，免 CUDA |
 | Linux | `chrono-trace-<版本号>-linux.tar.gz` | 便携包，解压即用；glibc ≥ 2.34，密钥捕获另需系统安装 gdb |
 
 前往 [Releases](../../releases) 页面下载最新版本。
@@ -466,7 +466,7 @@ release\installer\ChronoTraceSetup-版本号.exe
 
 说明：
 
-- 单一安装包：推理栈为 ONNX Runtime（DirectML），免 CUDA 免 PyTorch——有 N/AMD 显卡自动启用 GPU 加速，无显卡回退 CPU，无需任何运行时下载或配置
+- 单一安装包：推理栈为 ONNX Runtime（DirectML），免 CUDA 免 PyTorch——N/AMD 独显或 Intel/AMD 核显均自动启用 GPU 加速（核显下 DML 会话串行化保证稳定），无卡回退 CPU，无需任何运行时下载或配置
 
 ### Linux 打包与使用
 

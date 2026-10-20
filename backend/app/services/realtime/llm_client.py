@@ -313,6 +313,7 @@ class LlmClientMixin:
 
         body = None
         streamed_content = ""
+        dropped_reasoning_effort = False
         for attempt in range(MAX_API_RETRIES + 1):
             start_time = time.time()
             # 记录本轮是否已向前端下发过流式增量：一旦发过，超时就不能再静默从头重试，
@@ -352,6 +353,22 @@ class LlmClientMixin:
                 break
             except urllib.error.HTTPError as e:
                 status_code = getattr(e, "code", None)
+                # 严格网关拒绝默认附加的 reasoning_effort（HTTP 400）时
+                # 摘除后原样重试（含 stream），避免实时建议链路硬失败
+                if (
+                    status_code == 400
+                    and not dropped_reasoning_effort
+                    and "reasoning_effort" in payload
+                ):
+                    try:
+                        err_text = e.read().decode("utf-8", errors="replace")[:500]
+                    except Exception:
+                        err_text = ""
+                    if "reasoning_effort" in err_text.lower():
+                        payload.pop("reasoning_effort")
+                        dropped_reasoning_effort = True
+                        _print("[LLM Engine] ⚠️ HTTP 400 拒绝 reasoning_effort 参数，摘除后重试")
+                        continue
                 if payload.get("stream") and status_code in {400, 404, 422}:
                     _print(f"[LLM Engine] ⚠️ stream 请求被拒绝(HTTP {status_code})，回退非流式")
                     self._emit_stream(

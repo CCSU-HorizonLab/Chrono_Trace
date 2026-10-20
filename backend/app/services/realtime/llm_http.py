@@ -52,6 +52,11 @@ def take_llm_cancel(scope: str, key: int) -> bool:
 # ---------------------------------------------------------------------------
 REASONING_MODEL_TAGS = (
     "reasoner", "deepseek-r1", "-r1", "qwen3", "qwq", "o1", "o3", "thinking",
+    # GLM 4.5+ 为混合推理模型（思考计入 completion），但名字不带思考
+    # 关键词，漏判会吃网关默认思考档（实测画像单次调用 40s+）——按
+    # "glm-4." 带小数点匹配 4.5/4.6/4.7 代际，排除 glm-4-flash 等
+    # 旧非思考命名
+    "glm-4.",
 )
 
 
@@ -89,8 +94,9 @@ def _parse_extra_body(raw: Any) -> dict:
 
 def apply_interactive_fast_mode(payload: dict, model_config: dict) -> dict:
     """交互链路（实时建议/问问微信/群日报/画像）快速模式：开关开启且
-    思考模型未显式指定时附 reasoning_effort:"low"；模型级 extra_body
-    显式配置优先。"""
+    思考模型未显式指定时附 reasoning_effort:"low" 兜底（不附则吃网关
+    默认思考档）；识别经 REASONING_MODEL_TAGS（含 glm-4.5+ 特例），
+    非思考模型不附。模型级 extra_body 显式配置优先。"""
     return _apply_reasoning_effort(
         payload, model_config, "low", interactive_fast_mode_enabled()
     )
@@ -105,7 +111,10 @@ def apply_deep_call_effort(payload: dict, model_config: dict) -> dict:
 
 
 def _apply_reasoning_effort(
-    payload: dict, model_config: dict, effort: str, enabled: bool
+    payload: dict,
+    model_config: dict,
+    effort: str,
+    enabled: bool,
 ) -> dict:
     """就地合并思考量参数：extra_body 显式配置先合入（setdefault 保用户
     值），再按需补默认 reasoning_effort（调用方已显式指定则不动）。"""
@@ -323,6 +332,7 @@ def post_json_with_retries(
 
     log(f"{log_prefix} POST {url}")
 
+    dropped_reasoning_effort = False
     for attempt in range(max_retries + 1):
         if _aborted():
             raise LLMRequestAborted(f"{log_prefix} 请求已被调用方取消")
@@ -338,6 +348,20 @@ def post_json_with_retries(
             return body
         except urllib.error.HTTPError as err:
             status = getattr(err, "code", None)
+            detail = ""
+            # 严格网关对不支持的参数直接 400：默认附加的 reasoning_effort
+            # 被拒时摘掉该参数重试一次，而不是让整条交互链路硬失败
+            if (
+                status == 400
+                and not dropped_reasoning_effort
+                and "reasoning_effort" in payload
+            ):
+                detail = _read_http_error_body(err)
+                if "reasoning_effort" in detail.lower():
+                    payload.pop("reasoning_effort")
+                    dropped_reasoning_effort = True
+                    log(f"{log_prefix} HTTP 400 拒绝 reasoning_effort 参数，摘除后重试")
+                    continue
             if status in retryable_http_status and attempt < max_retries:
                 if _aborted():
                     raise LLMRequestAborted(f"{log_prefix} 请求已被调用方取消") from err
@@ -350,7 +374,8 @@ def post_json_with_retries(
                 time.sleep(delay)
                 continue
 
-            detail = _read_http_error_body(err)
+            if not detail:
+                detail = _read_http_error_body(err)
             if detail:
                 raise RuntimeError(f"LLM HTTP {status} error: {detail}") from err
             raise RuntimeError(f"LLM HTTP {status} error: {err}") from err

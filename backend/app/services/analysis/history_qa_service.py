@@ -641,8 +641,8 @@ class HistoryQAService:
             "max_tokens": 2048,
             "stream": False,
         }
-        # 交互调用快速模式：思考模型附 reasoning_effort:"low"，模型级
-        # extra_body 显式配置优先（详见 llm_http）
+        # 交互调用快速模式：思考模型附 reasoning_effort:"low" 兜底（含
+        # glm-4.5+ 特例），模型级 extra_body 显式配置优先（详见 llm_http）
         apply_interactive_fast_mode(payload, model_config)
 
         # HTTP 跑守护工作线程（在途 socket 无法强断，取消时 bridge 线程

@@ -25,6 +25,9 @@ def test_is_reasoning_model_tags():
     assert is_reasoning_model("Qwen3.5-9B")
     assert is_reasoning_model("deepseek-r1")
     assert is_reasoning_model("qwq-32b")
+    assert is_reasoning_model("glm-4.7")  # GLM 4.5+ 混合推理特例
+    assert is_reasoning_model("glm-4.5-air")
+    assert not is_reasoning_model("glm-4-flash")  # 旧 glm-4 非思考命名不带小数点
     assert not is_reasoning_model("deepseek-chat")
     assert not is_reasoning_model("qwen2.5:7b")
     assert not is_reasoning_model("")
@@ -61,9 +64,11 @@ def test_fast_mode_default_low_for_reasoning_model():
     assert payload["reasoning_effort"] == "low"
 
 
-def test_fast_mode_skips_non_reasoning_model():
-    payload = apply_interactive_fast_mode({}, _config(model_id="deepseek-chat"))
-    assert "reasoning_effort" not in payload
+def test_fast_mode_low_is_fallback_for_reasoning_models_only():
+    """reasoning_effort:"low" 是识别出的思考模型的兜底档：glm-4.7 等
+    混合推理模型（标签特例）命中；明确的非思考模型不附加。"""
+    assert apply_interactive_fast_mode({}, _config(model_id="glm-4.7"))["reasoning_effort"] == "low"
+    assert "reasoning_effort" not in apply_interactive_fast_mode({}, _config(model_id="deepseek-chat"))
 
 
 def test_fast_mode_respects_off_switch(monkeypatch):
@@ -242,6 +247,53 @@ def test_history_qa_payload_carries_fast_mode(monkeypatch):
 # ===== 接线：实时建议（llm_client） =====
 
 
+def test_post_json_drops_reasoning_effort_on_400_rejection():
+    """严格网关 400 拒绝 reasoning_effort 时：摘除参数重试一次后成功。"""
+    import io
+    import urllib.error
+    import urllib.request
+    from app.services.realtime import llm_http
+
+    calls = []
+
+    def fake_urlopen(req, timeout=0, context=None):
+        calls.append(json.loads(req.data.decode("utf-8")))
+        if len(calls) == 1:
+            raise urllib.error.HTTPError(
+                req.full_url, 400,
+                "Unrecognized request argument supplied: reasoning_effort",
+                {"Content-Type": "application/json"},
+                io.BytesIO(
+                    b'{"error": {"message": "Unrecognized request argument supplied: reasoning_effort"}}'
+                ),
+            )
+        ok = urllib.response.addinfourl(
+            io.BytesIO(json.dumps({"choices": [{"message": {"content": "ok"}}]}).encode("utf-8")),
+            {"Content-Type": "application/json"},
+            req.full_url,
+        )
+        ok.code = 200
+        return ok
+
+    orig_urlopen = urllib.request.urlopen
+    urllib.request.urlopen = fake_urlopen
+    try:
+        body = llm_http.post_json_with_retries(
+            url="http://127.0.0.1:11434/v1/chat/completions",
+            payload={"model": "m", "messages": [], "reasoning_effort": "low"},
+            timeout=5,
+            log=lambda *_a, **_k: None,
+            log_prefix="[test]",
+        )
+    finally:
+        urllib.request.urlopen = orig_urlopen
+
+    assert body["choices"][0]["message"]["content"] == "ok"
+    assert len(calls) == 2
+    assert "reasoning_effort" in calls[0]
+    assert "reasoning_effort" not in calls[1]
+
+
 @pytest.fixture
 def engine():
     from app.services.realtime.llm_engine import LLMSuggestionEngine
@@ -293,7 +345,7 @@ def test_suggestion_call_payload_and_nothink_gating(monkeypatch, engine):
     engine._call_api({**base_cfg, "model_id": "qwen3-235b-a22b"}, "测试")
     assert captured["payload"]["messages"][0]["content"].startswith("/no_think")
 
-    # 非思考模型：两个通道都不触发
+    # 非思考模型：不附 reasoning_effort（/no_think 前缀也仅对旧 Qwen3）
     engine._call_api({**base_cfg, "model_id": "deepseek-chat"}, "测试")
     assert "reasoning_effort" not in captured["payload"]
     assert not captured["payload"]["messages"][0]["content"].startswith("/no_think")

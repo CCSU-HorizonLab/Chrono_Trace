@@ -1015,8 +1015,8 @@ class SelfProfiler:
             # 画像必须落在 message.content，不能只生成 reasoning_content。
             'response_format': {'type': 'json_object'},
         }
-        # 交互调用快速模式：思考模型附 reasoning_effort:"low"（压低思考
-        # 量，避免命中「思考耗尽输出预算」），模型级 extra_body 优先
+        # 交互调用快速模式：思考模型附 reasoning_effort:"low" 兜底（含
+        # glm-4.5+ 特例；压低思考量，避免命中「思考耗尽输出预算」），模型级 extra_body 优先
         apply_interactive_fast_mode(payload, model_config)
 
         headers = {}

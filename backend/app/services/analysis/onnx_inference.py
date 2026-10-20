@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from typing import Optional, Sequence
 
@@ -29,6 +30,62 @@ from ..model_paths import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class _DmlSessionGate:
+    """DML 会话创建与推理的读写门。
+
+    Intel 核显等驱动上，一个线程 DML 推理进行中、另一线程并发创建
+    InferenceSession 会触发原生 access violation 直接带崩进程（实时
+    监听启动时情绪基线预热与 RAG 索引并行必现；faulthandler 栈定位
+    于 _create_inference_session / session.run）。稳态（会话已建好）
+    推理保持并发，仅创建瞬间独占：创建等待在途推理收尾，期间新推理
+    在闸口排队。
+    """
+
+    def __init__(self) -> None:
+        self._turnstile = threading.Lock()   # 写者优先闸（防写者饥饿）
+        self._mutex = threading.Lock()       # 保护读者计数
+        self._gate = threading.Lock()        # 实际读写互斥（读者计数>0 或写者持锁）
+        self._readers = 0
+
+    @contextmanager
+    def read(self):
+        with self._turnstile:
+            with self._mutex:
+                self._readers += 1
+                if self._readers == 1:
+                    self._gate.acquire()
+        try:
+            yield
+        finally:
+            with self._mutex:
+                self._readers -= 1
+                if self._readers == 0:
+                    self._gate.release()
+
+    @contextmanager
+    def write(self):
+        with self._turnstile:
+            self._gate.acquire()
+        try:
+            yield
+        finally:
+            self._gate.release()
+
+
+_dml_gate = _DmlSessionGate()
+
+
+def _dml_run_gate(device_tag: str):
+    """DML 会话的推理闸；CPU EP 多线程安全，直接空上下文。
+
+    注意是 write（串行）而非 read（并发）：核显驱动上不仅「建会话 vs
+    推理」会崩，「两个 DML 会话并发 run」同样概率性 access violation
+    （监听链路 2/2 复现）。串行只损失预热/分析的少量并行度，换进程
+    存活。
+    """
+    return _dml_gate.write() if device_tag == "dml" else nullcontext()
 
 EMBEDDING_MAX_LENGTH = 64           # 聊天消息实测 97% ≤64 字（中位 6 字）；
                                     # 动态 padding 下仅影响 3% 长文本，降档
@@ -129,9 +186,16 @@ class _BaseOnnxModel:
         self.max_length = max_length
         so = ort.SessionOptions()
         so.intra_op_num_threads = _resolve_thread_count()
-        self.session = ort.InferenceSession(
-            str(model_path), sess_options=so, providers=effective
-        )
+        if self.device_tag == "dml":
+            # 核显驱动上与在途 DML 推理并发建会话会原生崩（见 _DmlSessionGate）
+            with _dml_gate.write():
+                self.session = ort.InferenceSession(
+                    str(model_path), sess_options=so, providers=effective
+                )
+        else:
+            self.session = ort.InferenceSession(
+                str(model_path), sess_options=so, providers=effective
+            )
         self.input_names = {i.name for i in self.session.get_inputs()}
         self.tokenizer = _load_tokenizer(tokenizer_dir)
         self.tokenizer.enable_truncation(max_length=max_length)
@@ -245,16 +309,17 @@ class OnnxEmbeddingModel(_BaseOnnxModel):
             return result if convert_to_numpy else result.tolist()
         ordered, orig_map = self._plan_sorted_unique_batches(texts, batch_size)
         vectors = []
-        for start in range(0, len(ordered), max(1, batch_size)):
-            chunk = ordered[start : start + max(1, batch_size)]
-            feeds, mask = self._pad_batch(chunk)
-            hidden = self.session.run(None, feeds)[0]  # [b, seq, dim]
-            m = mask[:, :, None].astype(hidden.dtype)
-            pooled = (hidden * m).sum(1) / np.clip(m.sum(1), 1e-9, None)
-            if normalize_embeddings:
-                norms = np.linalg.norm(pooled, axis=1, keepdims=True)
-                pooled = pooled / np.clip(norms, 1e-9, None)
-            vectors.append(pooled)
+        with _dml_run_gate(self.device_tag):
+            for start in range(0, len(ordered), max(1, batch_size)):
+                chunk = ordered[start : start + max(1, batch_size)]
+                feeds, mask = self._pad_batch(chunk)
+                hidden = self.session.run(None, feeds)[0]  # [b, seq, dim]
+                m = mask[:, :, None].astype(hidden.dtype)
+                pooled = (hidden * m).sum(1) / np.clip(m.sum(1), 1e-9, None)
+                if normalize_embeddings:
+                    norms = np.linalg.norm(pooled, axis=1, keepdims=True)
+                    pooled = pooled / np.clip(norms, 1e-9, None)
+                vectors.append(pooled)
         unique_result = np.concatenate(vectors)
         result = unique_result[orig_map]  # 去重摊回 + 还原调用方原序
         return result if convert_to_numpy else result.tolist()
@@ -283,10 +348,11 @@ class OnnxClassifierModel(_BaseOnnxModel):
             return np.zeros((0, 3), dtype=np.float32)
         ordered, orig_map = self._plan_sorted_unique_batches(texts, batch_size)
         outputs = []
-        for start in range(0, len(ordered), max(1, batch_size)):
-            chunk = ordered[start : start + max(1, batch_size)]
-            feeds, _ = self._pad_batch(chunk)
-            outputs.append(self.session.run(None, feeds)[0])  # [b, num_classes]
+        with _dml_run_gate(self.device_tag):
+            for start in range(0, len(ordered), max(1, batch_size)):
+                chunk = ordered[start : start + max(1, batch_size)]
+                feeds, _ = self._pad_batch(chunk)
+                outputs.append(self.session.run(None, feeds)[0])  # [b, num_classes]
         return np.concatenate(outputs)[orig_map]
 
 

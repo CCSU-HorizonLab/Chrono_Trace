@@ -286,7 +286,11 @@ class WeChatPathFinder:
             if cls._looks_like_wechat_user_dir(current):
                 return current.parent if current.parent.exists() else current
 
-            if current.name.lower() in cls.WECHAT_DATA_DIR_NAMES:
+            # 名字命中但实为 3.x 遗留根（如升级后残留在 Documents 的
+            # WeChat Files，而 4.x 装在用户主目录）时不能当 4.x 返回，
+            # 否则后续找不到 db_storage 账号会误报需要升级微信；
+            # 跳过并继续扫兄弟/后续候选（xwechat_files 等）
+            if current.name.lower() in cls.WECHAT_DATA_DIR_NAMES and not cls._is_legacy_v3_root(current):
                 return current
 
             if depth >= max_depth:
@@ -326,7 +330,7 @@ class WeChatPathFinder:
         if discovered:
             return discovered
 
-        if candidate.name.lower() in cls.WECHAT_DATA_DIR_NAMES:
+        if candidate.name.lower() in cls.WECHAT_DATA_DIR_NAMES and not cls._is_legacy_v3_root(candidate):
             return candidate
 
         return None
@@ -604,6 +608,17 @@ class WeChatPathFinder:
                 }
 
         return None
+
+    @classmethod
+    def _is_legacy_v3_root(cls, path: Path) -> bool:
+        """名字像微信数据根、但内部只有 3.9 旧版结构（升级残留）。
+
+        用于名字命中处的防误判：3.x 与 4.x 并存时（如 4.x 装在用户
+        主目录、3.x 残留在 Documents），仅凭目录名命中会把 3.x 根当
+        4.x 数据目录返回。v4 特征（db_storage）优先，纯 4.x 树不会
+        被误判。
+        """
+        return cls._inspect_legacy_v3_root(path) is not None
 
     @classmethod
     def find_legacy_v3_info(cls) -> Optional[Dict[str, Any]]:

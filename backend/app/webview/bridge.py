@@ -1628,6 +1628,17 @@ class Bridge(
 
             logger.debug(f"[DEBUG] 找到 {len(wxid_dirs)} 个 wxid 目录")
 
+            # 并存场景：已定位 4.x，附带所选范围内 3.x 旧数据位置供前端提示。
+            # 按 v4 发现同款候选展开探测，覆盖「选中根目录 / 其 Documents /
+            # 其 WeChat Files」等常见层级
+            legacy_v3 = None
+            for legacy_candidate in WeChatPathFinder._expand_data_dir_candidates(target_dir):
+                legacy_v3 = WeChatPathFinder._inspect_legacy_v3_root(legacy_candidate)
+                if legacy_v3:
+                    break
+            if legacy_v3:
+                result["legacy_v3"] = legacy_v3
+
             for wxid in wxid_dirs:
                 databases = WeChatPathFinder.find_databases(wxid, str(root_dir))
                 result["wxids"].append(wxid)

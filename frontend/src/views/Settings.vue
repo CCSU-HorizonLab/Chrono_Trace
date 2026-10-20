@@ -1201,11 +1201,15 @@ async function scanWeChatDirectory(wechatDir: string) {
       form.wechat_use_custom_path = true
       await onSave()
 
+      const legacyNote = scanResult.legacy_v3?.wechat_dir
+        ? `\n\n同时检测到旧版微信 3.9 数据目录：${scanResult.legacy_v3.wechat_dir}\n已优先使用 4.x 目录，旧版数据不会导入。`
+        : ''
+
       showDialog(`扫描成功！
 找到 ${scannedAccounts.length} 个微信账号
 当前设置为：${nextAccount?.label || nextWxid}
 微信数据根目录：${nextAccount?.wechat_dir || wechatDir}
-可通过上方账号下拉切换不同账号配置。`)
+可通过上方账号下拉切换不同账号配置。${legacyNote}`)
     } else {
       showDialog('未在该目录下找到微信数据（wxid_ 开头的文件夹）')
     }

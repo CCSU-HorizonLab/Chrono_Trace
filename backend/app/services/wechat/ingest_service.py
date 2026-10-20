@@ -59,6 +59,12 @@ class WeChatIngestService:
                     "error": "未找到微信数据目录,请确保微信已安装并登录"
                 }
 
+            # 3.x 与 4.x 并存：直接采用 4.x 目录，同时附带旧数据位置
+            # 供前端提示（旧版结构无法导入，仅作说明，不阻断流程）
+            legacy_v3 = WeChatPathFinder.find_legacy_v3_info()
+            if legacy_v3:
+                paths["legacy_v3"] = legacy_v3
+
             return {
                 "ok": True,
                 "data": paths

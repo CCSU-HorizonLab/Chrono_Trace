@@ -452,3 +452,74 @@ def test_detect_wechat_version_recognizes_v3_structure(tmp_path):
     assert detect_wechat_version(str(v4_dir)) == "v4"
 
     assert detect_wechat_version(str(tmp_path / "not_exists")) == "unknown"
+
+
+# ==================== 3.x 与 4.x 并存 ====================
+
+
+def _make_coexist_layout(tmp_path):
+    """复刻并存布局：3.x 残留在 Documents，4.x 装在用户主目录。"""
+    documents_root = tmp_path / "Documents"
+    v3_root = documents_root / "WeChat Files"
+    _make_v39_user_dir(v3_root)
+
+    v4_root = tmp_path / "xwechat_files"
+    message_dir = v4_root / "wxid_new" / "db_storage" / "message"
+    message_dir.mkdir(parents=True)
+    (message_dir / "message_0.db").write_text("", encoding="utf-8")
+
+    return documents_root, v3_root, v4_root
+
+
+def test_find_wechat_data_path_prefers_v4_when_v3_and_v4_coexist(monkeypatch, tmp_path):
+    documents_root, _v3_root, v4_root = _make_coexist_layout(tmp_path)
+
+    _shield_auto_candidates(monkeypatch, tmp_path, documents_root)
+
+    assert WeChatPathFinder.find_wechat_data_path() == str(v4_root)
+    assert WeChatPathFinder.find_all_wechat_dbs()["current_user"] == "wxid_new"
+
+
+def test_get_wechat_paths_prefers_v4_and_reports_legacy_hint_when_coexist(monkeypatch, tmp_path):
+    documents_root, v3_root, v4_root = _make_coexist_layout(tmp_path)
+
+    _shield_auto_candidates(monkeypatch, tmp_path, documents_root)
+
+    result = WeChatIngestService().get_wechat_paths()
+
+    assert result["ok"] is True
+    assert result["data"]["wechat_dir"] == str(v4_root)
+    assert result["data"]["legacy_v3"]["wechat_dir"] == str(v3_root)
+    assert result["data"]["legacy_v3"]["users"] == ["wxid_old"]
+
+
+def test_bridge_scan_wechat_directory_prefers_v4_under_selected_root(tmp_path):
+    """选中同时含 3.x（Documents 内）与 4.x（主目录）的公共根目录：
+    应定位 4.x 账号，并附带 3.x 旧数据位置，而不是弹升级引导。"""
+    documents_root, v3_root, _v4_root = _make_coexist_layout(tmp_path)
+
+    bridge = Bridge.__new__(Bridge)
+    bridge._settings_lock = __import__('threading').RLock()
+    bridge.settings = {"wechat_accounts": []}
+
+    result = bridge.scan_wechat_directory(str(tmp_path))
+
+    assert result["ok"] is True
+    assert result["wxids"] == ["wxid_new"]
+    assert result["legacy_v3"]["wechat_dir"] == str(v3_root)
+
+
+def test_bridge_scan_wechat_directory_reports_legacy_when_only_v3_under_root(tmp_path):
+    """选中只含 3.x 数据的目录（如 Documents）仍应给出升级引导。"""
+    documents_root, _v3_root, _v4_root = _make_coexist_layout(tmp_path)
+    import shutil
+    shutil.rmtree(_v4_root)
+
+    bridge = Bridge.__new__(Bridge)
+    bridge._settings_lock = __import__('threading').RLock()
+    bridge.settings = {"wechat_accounts": []}
+
+    result = bridge.scan_wechat_directory(str(documents_root))
+
+    assert result["ok"] is False
+    assert result["code"] == "legacy_wechat_v3"

@@ -124,6 +124,7 @@
           </div>
         </div>
         <p v-if="wechatErr" class="error-msg">{{ wechatErr }}</p>
+        <p v-if="wechatWarn" class="warn-msg">{{ wechatWarn }}</p>
         <p v-if="wechatOk" class="success-msg">{{ wechatOk }}</p>
       </div>
 
@@ -335,6 +336,8 @@ const wechatForm = reactive({
 
 const wechatErr = ref('')
 const wechatOk = ref('')
+// 3.x 与 4.x 并存时的旧数据提示（非阻断，仅说明旧版数据不会导入）
+const wechatWarn = ref('')
 const wechatImporting = ref(false)
 const verifying = ref(false)
 const capturingKey = ref(false)
@@ -491,6 +494,7 @@ async function loadWechatAccounts(options: { forceProfiles?: boolean } = {}) {
 async function detectWechatPath(options?: { silent?: boolean; accountWxid?: string }) {
   try {
     const accountWxid = options?.accountWxid || selectedWxid.value || activeAccountWxid.value || undefined
+    wechatWarn.value = ''
     const pathRes = await api.get_wechat_paths(accountWxid)
     if (!pathRes?.ok || !pathRes.data) {
       if (pathRes?.code === 'legacy_wechat_v3') {
@@ -501,6 +505,7 @@ async function detectWechatPath(options?: { silent?: boolean; accountWxid?: stri
       return false
     }
 
+    applyLegacyV3Hint(pathRes.data.legacy_v3)
     pathInfo.value = pathRes.data
     mergeAccounts(await enrichWechatAccountsWithProfiles((pathRes.accounts || pathRes.data.accounts || []) as WechatAccount[]))
 
@@ -529,6 +534,13 @@ async function detectWechatPath(options?: { silent?: boolean; accountWxid?: stri
     console.error('[Home] detectWechatPath failed', error)
     return false
   }
+}
+
+function applyLegacyV3Hint(legacyV3?: { wechat_dir?: string; users?: string[] } | null) {
+  const dir = legacyV3?.wechat_dir || ''
+  if (!dir) return
+  wechatWarn.value = `已定位微信 4.x 数据目录；同时检测到旧版 3.9 数据目录（${dir}），旧版数据不会导入。`
+  addLog(wechatWarn.value)
 }
 
 function legacyV3GuidanceMessage(v3: { wechat_dir?: string; users?: string[] } | null | undefined) {
@@ -1108,6 +1120,7 @@ async function scanAndSetCustomPath(wechatDir: string) {
     }
 
     mergeAccounts(await enrichWechatAccountsWithProfiles((scanResult.accounts || []) as WechatAccount[]))
+    applyLegacyV3Hint(scanResult.legacy_v3)
     const nextWxid = selectedWxid.value || scanResult.accounts[0].wxid
     const databases = scanResult.databases[nextWxid]
     const resolvedAccount = (scanResult.accounts || []).find((account: WechatAccount) => account.wxid === nextWxid)
@@ -1147,6 +1160,7 @@ function resetFlow() {
   manualKeyMode.value = false
   wechatErr.value = ''
   wechatOk.value = ''
+  wechatWarn.value = ''
   importProgress.value = null
   hasImportedBefore.value = false
   incrementInfo.value = null
@@ -1475,6 +1489,12 @@ onUnmounted(() => {
 
 .error-msg {
   color: #ef4444;
+  font-size: 14px;
+  margin: 10px 0;
+}
+
+.warn-msg {
+  color: #b45309;
   font-size: 14px;
   margin: 10px 0;
 }

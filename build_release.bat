@@ -3,7 +3,7 @@ setlocal
 
 cd /d "%~dp0"
 
-echo ==> Chrono Trace one-click packaging
+echo ==^> Chrono Trace one-click packaging
 echo.
 
 powershell -ExecutionPolicy Bypass -File "%~dp0build_release.ps1" %*

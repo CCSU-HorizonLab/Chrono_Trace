@@ -82,17 +82,23 @@ function Resolve-IsccPath {
     $fromPath = Get-Command "ISCC.exe" -ErrorAction SilentlyContinue
     if ($fromPath) { $candidates += $fromPath.Source }
 
-    $localAppData = $env:LOCALAPPDATA
-    if ($localAppData) { $candidates += (Join-Path $localAppData "Programs\Inno Setup 6\ISCC.exe") }
+    # 版本无关探测：Inno Setup 6 及 7+（7 默认装 "Program Files\Inno Setup 7"，
+    # 不在 x86 根下，按 "Inno Setup *" 通配各级安装根匹配）
+    $roots = @($env:LOCALAPPDATA, ${env:ProgramFiles(x86)}, $env:ProgramFiles)
+    foreach ($root in $roots) {
+        if (-not $root -or -not (Test-Path -LiteralPath $root)) { continue }
+        foreach ($base in @($root, (Join-Path $root "Programs"))) {
+            if (-not (Test-Path -LiteralPath $base)) { continue }
+            $candidates += (
+                Get-ChildItem -LiteralPath $base -Filter "Inno Setup *" -Directory -ErrorAction SilentlyContinue |
+                ForEach-Object { Join-Path $_.FullName "ISCC.exe" }
+            )
+        }
+    }
 
-    $programFilesX86 = ${env:ProgramFiles(x86)}
-    if ($programFilesX86) { $candidates += (Join-Path $programFilesX86 "Inno Setup 6\ISCC.exe") }
-
-    $candidates += (Join-Path $env:ProgramFiles "Inno Setup 6\ISCC.exe")
-
-    foreach ($candidate in $candidates | Select-Object -Unique) {
+    foreach ($candidate in ($candidates | Select-Object -Unique)) {
         if ($candidate -and (Test-Path -LiteralPath $candidate)) {
-            return (Resolve-Path $candidate).Path
+            return (Resolve-Path -LiteralPath $candidate).Path
         }
     }
 

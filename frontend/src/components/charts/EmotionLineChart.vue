@@ -576,7 +576,7 @@ function getToneSummary(score: number) {
   gap: 6px;
   padding: 6px 10px;
   border-radius: 999px;
-  background: var(--ct-bg-tertiary);
+  background: var(--ct-bg-sunken);
   color: var(--ct-text-secondary);
   font-size: var(--ct-text-xs);
 }

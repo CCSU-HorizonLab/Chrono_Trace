@@ -134,7 +134,7 @@ onBeforeUnmount(() => {
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  color: var(--ct-text-muted, #94a3b8);
+  color: var(--ct-text-tertiary);
   cursor: help;
   transition: color 0.18s ease, background 0.18s ease;
   outline: none;

@@ -692,36 +692,3 @@ pre code {
   }
 }
 
-/* ============================================================
-   过渡别名块（禁止新增引用；存量改写为规范名，清零后整块删除）。
-   上半：旧真名降级；下半：历史幽灵变量兜底。
-   tokens.smoke.test.mjs 计量本块数量，只减不增。
-   ============================================================ */
-:root {
-  /* 旧真名降级 */
-  --ct-color-primary-light: var(--ct-color-primary-tint);
-  --ct-bg-primary: var(--ct-bg-card);
-  --ct-bg-secondary: var(--ct-bg-sunken);
-  --ct-bg-tertiary: var(--ct-bg-sunken);
-  --ct-bg-elevated: var(--ct-bg-card);
-  --ct-radius-xl: var(--ct-radius-lg);
-  --ct-shadow-xl: var(--ct-shadow-lg);
-  --ct-font-display: var(--ct-font-body);
-
-  /* 幽灵变量兜底 */
-  --ct-bg-1: var(--ct-bg-sunken);
-  --ct-bg-disabled: var(--ct-bg-sunken);
-  --ct-bg-input: var(--ct-bg-card);
-  --ct-bg-muted: var(--ct-bg-hover);
-  --ct-bg-rgb: 250, 249, 247;
-  --ct-bg-surface: var(--ct-bg-card);
-  --ct-border: var(--ct-border-color);
-  --ct-border-hover-color: var(--ct-border-color-hover);
-  --ct-border-subtle: var(--ct-border-color);
-  --ct-color-danger: var(--ct-color-error);
-  --ct-color-info-muted: rgba(90, 75, 196, 0.08);
-  --ct-color-purple-light: var(--ct-color-primary-tint);
-  --ct-radius-2xl: var(--ct-radius-lg);
-  --ct-space-4xl: 64px;
-  --ct-text-muted: var(--ct-text-tertiary);
-}

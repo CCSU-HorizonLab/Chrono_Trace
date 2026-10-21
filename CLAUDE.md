@@ -98,4 +98,14 @@ SQLite（线程本地连接 backend/app/db/connection.py）
 
 ## 前端结构
 
-`frontend/src/views/`：Home / Analytics（对象工作台，页头 FiltersBar 选人一次贯通全页）/ Settings / FloatingPanel（悬浮窗独立页面）。`api/bridge.ts` 封装全部 Bridge 调用，图表用 ECharts，路由 vue-router。无独立状态管理库。面板解剖统一走 `styles/panels.css`（`.panel`/`.panel-head`/`.btn`/`.panel-badge` 等，分析面板不得再自写卡片按钮样式；hover 必须写满 `:not(:disabled)`，否则被 theme.css 全局按钮 hover 盖过）。Analytics 七个页签：关系洞察 / 互动特征 / 内容时间线 / 智能问答 / 时光深度（单聊专属，吸顶工具条锚点导航+全局分段选择器：情绪曲线含分侧互动柱与好感度趋势线/词云分段演变（重点词排行流动图+词云联动高亮，选词按排名方差见 `docs/analysis/time-depth.md`）/大五人格演变（共用分段，分段雷达小多图，逐段可选 AI 增强）/画像分段演变（2~6 段独立选择器，竖排时间线全段卡）/里程碑，组件在 `frontend/src/components/deep/`）/ TA 画像（单聊专属：画像档案（生成入口在画廊头）/我的画像/大五印象（全会话档，与演变面板分工）/分享海报，海报模板注册表 `poster/registry.ts`——公开/自我版经 `sanitizeForPublic`/`sanitizeForSelf` 投影消费，类型上拿不到敏感字段；海报模板节点不引 panels.css 类，html2canvas 对 CSS 变量支持不稳）/ 实时助手（`components/realtime/MonitorControlCard.vue` + 双方画像速览 `persona/ProfileBriefCard.vue`，建议配置按联系人存储）。
+`frontend/src/views/`：Home / Analytics（对象工作台，页头 FiltersBar 选人一次贯通全页）/ Settings / FloatingPanel（悬浮窗独立页面）。`api/bridge.ts` 封装全部 Bridge 调用，图表用 ECharts，路由 vue-router。无独立状态管理库。面板解剖统一走 `styles/panels.css`（`.panel`/`.panel-head`/`.btn`/`.panel-badge` 等，分析面板不得再自写卡片按钮样式；hover 建议 `:not(:disabled)` 守卫禁用语义）。Analytics 七个页签：关系洞察 / 互动特征 / 内容时间线 / 智能问答 / 时光深度（单聊专属，吸顶工具条锚点导航+全局分段选择器：情绪曲线含分侧互动柱与好感度趋势线/词云分段演变（重点词排行流动图+词云联动高亮，选词按排名方差见 `docs/analysis/time-depth.md`）/大五人格演变（共用分段，分段雷达小多图，逐段可选 AI 增强）/画像分段演变（2~6 段独立选择器，竖排时间线全段卡）/里程碑，组件在 `frontend/src/components/deep/`）/ TA 画像（单聊专属：画像档案（生成入口在画廊头）/我的画像/大五印象（全会话档，与演变面板分工）/分享海报，海报模板注册表 `poster/registry.ts`——公开/自我版经 `sanitizeForPublic`/`sanitizeForSelf` 投影消费，类型上拿不到敏感字段；海报模板节点不引 panels.css 类，html2canvas 对 CSS 变量支持不稳）/ 实时助手（`components/realtime/MonitorControlCard.vue` + 双方画像速览 `persona/ProfileBriefCard.vue`，建议配置按联系人存储）。
+
+### 前端视觉规范（墨痕暖白，2026-10 重做）
+
+全局视觉语言只有一套令牌与惯用语，速查与色值见 `docs/frontend-visual-system.md`（改样式先读它）：
+
+- **令牌唯一来源** `styles/theme.css` `:root`：画布暖纸 `--ct-bg-app` / 卡面白 / 沉底 `--ct-bg-sunken`；主色墨紫 `--ct-color-primary`（hover/-tint/-muted/-subtle 成套）；语义色 success 青绿 / warning 琥珀 / error 珊瑚 / info=primary，各配 `-tint`。**样式里不写裸 hex**，例外仅四类：微信拟物与品牌绿、script 内数据色板（chartTheme/词云/热力色带）、tint 底上的可访问性深字、poster 海报群（整区豁免，不引任何 `var(--ct`）。
+- **确立惯用语**（勿自造变体）：状态徽标 = tint 底+语义色字；输入焦点 = border primary + 3px primary-tint 光圈；分段器 = 7% 墨色凹槽 + 白色激活胶囊 + primary 字；开关 ON = primary（非绿）；hover 只变底色/边色**不上浮**；全站零渐变、零彩色投影。
+- **图表单一来源** `components/charts/chartTheme.ts`：数据色板 `CHART_PALETTE`、热力色带 `HEAT_RAMP`、`chrono` 主题与 `chronoAxisBase()`，ECharts 配置一律接它，不散写轴色。
+- **历史别名已清零**：`--ct-bg-secondary`/`--ct-text-muted` 等旧名已删，`tests/tokens.smoke.test.mjs` 守门（未定义令牌/别名回潮/元素选择器皮肤/海报区引变量，四类违规直接红）。
+- **!important 禁用**：全库合法存量仅 3 处（theme.css reduced-motion ×2、WordEvolutionPanel 行内网格覆盖 ×1），新代码零配额。

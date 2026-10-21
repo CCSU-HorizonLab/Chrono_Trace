@@ -212,7 +212,7 @@ const items = computed<TimelineItem[]>(() => {
   align-self: center;
   padding: 2px 10px;
   border-radius: 999px;
-  background: var(--ct-color-primary-light);
+  background: var(--ct-color-primary-tint);
   color: var(--ct-color-primary);
   font-size: var(--ct-text-xs);
   flex-shrink: 0;

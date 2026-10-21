@@ -346,7 +346,7 @@ const handleClose = () => {
 .dialog-container {
   background: var(--ct-bg-card);
   border-radius: var(--ct-radius-lg);
-  box-shadow: var(--ct-shadow-xl);
+  box-shadow: var(--ct-shadow-lg);
   width: 100%;
   max-width: 520px;
   max-height: 90vh;
@@ -510,7 +510,7 @@ const handleClose = () => {
   padding: 4px 8px;
   border: 1px solid var(--ct-border-color);
   border-radius: 6px;
-  background: var(--ct-bg-input, transparent);
+  background: var(--ct-bg-card);
   color: var(--ct-text-primary);
   font-size: 13px;
   text-align: right;
@@ -534,7 +534,7 @@ const handleClose = () => {
 }
 
 .hint-box {
-  background: var(--ct-color-info-muted);
+  background: var(--ct-color-primary-muted);
   border-left: 3px solid var(--ct-color-info);
   border-radius: var(--ct-radius-sm);
   padding: var(--ct-space-sm) var(--ct-space-md);

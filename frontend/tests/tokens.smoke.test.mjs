@@ -1,6 +1,6 @@
 /* 设计令牌冒烟测试（node 原生，无依赖）：
    1) src 全量 var(--ct-*) 引用必须有定义（theme.css :root 或组件局部定义）；
-   2) theme.css 过渡别名块只减不增（ALIAS_CAP 随各页提交递减，清零后删块）；
+   2) 过渡别名已清零（块已删、别名令牌不得再被定义/引用）；
    3) theme.css 不得引入外部字体（离线桌面红线）；
    4) theme.css button 元素选择器只剩中性 reset（元素皮肤退场门禁）；
    5) 海报群（html2canvas 对 CSS 变量支持不稳）零 var(--ct 引用。 */
@@ -14,8 +14,15 @@ const srcRoot = join(dirname(fileURLToPath(import.meta.url)), '..', 'src')
 const themePath = join(srcRoot, 'styles', 'theme.css')
 const posterRoot = join(srcRoot, 'components', 'deep', 'poster')
 
-/** 别名存量上限：只减不增；改写存量后手动调低，清零后删块。 */
-const ALIAS_CAP = 23
+/** 已清退的历史别名：不得再被定义或引用（防回潮守门）。 */
+const RETIRED_ALIASES = [
+  '--ct-color-primary-light', '--ct-bg-primary', '--ct-bg-secondary', '--ct-bg-tertiary',
+  '--ct-bg-elevated', '--ct-radius-xl', '--ct-radius-2xl', '--ct-shadow-xl', '--ct-font-display',
+  '--ct-bg-1', '--ct-bg-disabled', '--ct-bg-input', '--ct-bg-muted', '--ct-bg-rgb',
+  '--ct-bg-surface', '--ct-border', '--ct-border-hover-color', '--ct-border-subtle',
+  '--ct-color-danger', '--ct-color-info-muted', '--ct-color-purple-light',
+  '--ct-space-4xl', '--ct-text-muted',
+]
 
 function walk(dir, exts, out = []) {
   for (const ent of readdirSync(dir, { withFileTypes: true })) {
@@ -51,15 +58,20 @@ test('全部 var(--ct-*) 引用都有定义（无幽灵变量）', () => {
   }
 })
 
-test('过渡别名块只减不增', () => {
+test('过渡别名已清零（不得回潮）', () => {
   const theme = readFileSync(themePath, 'utf8')
-  const marker = theme.indexOf('过渡别名块')
-  assert.ok(marker >= 0, 'theme.css 应有过渡别名块标记注释')
-  const aliasBlock = theme.slice(marker)
-  const count = [...aliasBlock.matchAll(/--ct-[a-z0-9-]+\s*:/g)].length
-  assert.ok(
-    count <= ALIAS_CAP,
-    `过渡别名存量 ${count} 超过上限 ${ALIAS_CAP}——存量改写后手动调低 ALIAS_CAP`
+  assert.ok(!theme.includes('过渡别名块'), '别名块已删除，theme.css 不应再有别名块标记')
+  const revivedDefs = RETIRED_ALIASES.filter((a) => defs.has(a))
+  assert.deepEqual(
+    revivedDefs,
+    [],
+    `别名令牌被重新定义：${revivedDefs.join(', ')}`
+  )
+  const revivedRefs = RETIRED_ALIASES.filter((a) => refs.has(a))
+  assert.deepEqual(
+    revivedRefs,
+    [],
+    `别名令牌被重新引用：${revivedRefs.join(', ')}`
   )
 })
 

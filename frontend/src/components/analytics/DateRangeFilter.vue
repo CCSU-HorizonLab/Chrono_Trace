@@ -113,7 +113,7 @@ function onTo(e: Event) { emit('update:dates', { from: props.dates.from, to: (e.
 }
 
 .granularity-btn.active {
-  background: var(--ct-color-primary-light);
+  background: var(--ct-color-primary-tint);
   color: var(--ct-color-primary);
   border-color: var(--ct-color-primary);
 }
@@ -140,7 +140,7 @@ function onTo(e: Event) { emit('update:dates', { from: props.dates.from, to: (e.
 }
 
 .btn:hover:not(:disabled) {
-  background: var(--ct-color-primary-light);
+  background: var(--ct-color-primary-tint);
   color: var(--ct-color-primary);
   border-color: var(--ct-color-primary);
 }

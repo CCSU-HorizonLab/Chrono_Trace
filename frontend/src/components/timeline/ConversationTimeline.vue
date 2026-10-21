@@ -361,7 +361,7 @@ function formatDuration(seconds: number): string {
 
 <style scoped>
 .conversation-timeline {
-  background: var(--ct-bg-elevated);
+  background: var(--ct-bg-card);
   border-radius: var(--ct-radius-lg);
   padding: var(--ct-space-xl);
   border: 1px solid var(--ct-border-color);
@@ -374,7 +374,7 @@ function formatDuration(seconds: number): string {
   position: sticky;
   top: 0;
   z-index: 20;
-  background: var(--ct-bg-elevated);
+  background: var(--ct-bg-card);
   margin-top: calc(-1 * var(--ct-space-xl));
   padding-top: var(--ct-space-xl);
   padding-bottom: var(--ct-space-md);
@@ -413,7 +413,7 @@ function formatDuration(seconds: number): string {
   margin-bottom: var(--ct-space-md);
   position: sticky;
   top: 73px; /* Allow space for sticky timeline-header */
-  background: var(--ct-bg-elevated);
+  background: var(--ct-bg-card);
   padding: var(--ct-space-sm) 0;
   z-index: 10;
 }
@@ -455,11 +455,11 @@ function formatDuration(seconds: number): string {
   gap: var(--ct-space-md);
   padding: var(--ct-space-md);
   cursor: pointer;
-  background: var(--ct-bg-secondary);
+  background: var(--ct-bg-sunken);
 }
 
 .session-summary:hover {
-  background: var(--ct-bg-tertiary);
+  background: var(--ct-bg-sunken);
 }
 
 .session-time {
@@ -483,7 +483,7 @@ function formatDuration(seconds: number): string {
 
 .session-messages {
   padding: var(--ct-space-md);
-  background: var(--ct-bg-primary);
+  background: var(--ct-bg-card);
   border-top: 1px solid var(--ct-border-color);
   max-height: 400px;
   overflow-y: auto;
@@ -539,7 +539,7 @@ function formatDuration(seconds: number): string {
 }
 
 .message-text {
-  background: var(--ct-bg-secondary);
+  background: var(--ct-bg-sunken);
   padding: var(--ct-space-sm) var(--ct-space-md);
   border-radius: var(--ct-radius-md);
   font-size: var(--ct-text-sm);
@@ -566,11 +566,11 @@ function formatDuration(seconds: number): string {
   align-items: center;
   padding: var(--ct-space-md);
   cursor: pointer;
-  background: var(--ct-bg-secondary);
+  background: var(--ct-bg-sunken);
 }
 
 .session-header:hover {
-  background: var(--ct-bg-tertiary);
+  background: var(--ct-bg-sunken);
 }
 
 .session-title {
@@ -614,7 +614,7 @@ function formatDuration(seconds: number): string {
 }
 
 .bubble-content {
-  background: var(--ct-bg-secondary);
+  background: var(--ct-bg-sunken);
   padding: var(--ct-space-sm) var(--ct-space-md);
   border-radius: var(--ct-radius-lg);
   font-size: var(--ct-text-sm);
@@ -636,7 +636,7 @@ function formatDuration(seconds: number): string {
 }
 
 .stat-card {
-  background: var(--ct-bg-secondary);
+  background: var(--ct-bg-sunken);
   padding: var(--ct-space-lg);
   border-radius: var(--ct-radius-md);
   text-align: center;

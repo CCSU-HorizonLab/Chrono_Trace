@@ -180,7 +180,7 @@ const handleClose = () => {
 .dialog-container {
   background: var(--ct-bg-card);
   border-radius: var(--ct-radius-lg);
-  box-shadow: var(--ct-shadow-xl);
+  box-shadow: var(--ct-shadow-lg);
   width: 100%;
   max-width: 560px;
   max-height: 90vh;
@@ -282,7 +282,7 @@ const handleClose = () => {
 .weight-value {
   font-size: var(--ct-text-sm);
   font-weight: 700;
-  font-family: var(--ct-font-display);
+  font-family: var(--ct-font-body);
 }
 
 /* 关键词部分 */
@@ -405,7 +405,7 @@ const handleClose = () => {
 
 /* 提示框 */
 .hint-box {
-  background: var(--ct-color-info-muted);
+  background: var(--ct-color-primary-muted);
   border-left: 3px solid var(--ct-color-info);
   border-radius: var(--ct-radius-sm);
   padding: var(--ct-space-md);

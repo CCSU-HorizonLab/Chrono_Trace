@@ -183,14 +183,14 @@ watch(
   padding: 10px 14px;
   border: 1px solid var(--ct-border-color);
   border-radius: var(--ct-radius-md);
-  background: var(--ct-bg-surface);
+  background: var(--ct-bg-card);
   cursor: pointer;
   transition: all 0.2s ease;
 }
 
 .template-card.active {
   border-color: var(--ct-color-primary);
-  background: var(--ct-color-primary-light);
+  background: var(--ct-color-primary-tint);
 }
 
 .template-card.sensitive .template-label::after {

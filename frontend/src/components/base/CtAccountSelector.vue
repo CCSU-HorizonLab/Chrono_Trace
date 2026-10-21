@@ -127,24 +127,25 @@ onUnmounted(() => {
   gap: 10px;
   min-width: 220px;
   padding: 10px 14px;
-  background: var(--ct-bg-elevated, #fff);
-  border: 1px solid var(--ct-border-color, #e2e8f0);
-  border-radius: 14px;
-  color: var(--ct-text-primary, #111827);
-  font-size: var(--ct-text-sm, 14px);
-  font-weight: 500;
+  background: var(--ct-bg-card);
+  border: 1px solid var(--ct-border-color);
+  border-radius: var(--ct-radius-lg);
+  color: var(--ct-text-primary);
+  font-size: var(--ct-text-sm);
+  font-weight: var(--ct-font-medium);
   cursor: pointer;
-  transition: all var(--ct-transition-fast, 0.2s);
+  transition: background-color var(--ct-transition-fast) var(--ct-ease-out),
+              border-color var(--ct-transition-fast) var(--ct-ease-out);
 }
 
 .default-trigger:hover {
-  background: var(--ct-bg-hover, #f8fafc);
-  border-color: var(--ct-border-hover-color, #cbd5e1);
+  background: var(--ct-bg-hover);
+  border-color: var(--ct-border-color-hover);
 }
 
 .default-trigger.is-open {
-  box-shadow: 0 0 0 2px rgba(168, 85, 247, 0.15);
-  border-color: var(--ct-color-primary, #a855f7);
+  box-shadow: 0 0 0 3px var(--ct-color-primary-tint);
+  border-color: var(--ct-color-primary);
 }
 
 .trigger-avatar {
@@ -174,16 +175,16 @@ onUnmounted(() => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-size: 11px;
-  color: var(--ct-text-tertiary, #94a3b8);
-  font-family: var(--ct-font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
+  font-size: var(--ct-text-xs);
+  color: var(--ct-text-tertiary);
+  font-family: var(--ct-font-mono);
 }
 
 .trigger-arrow {
   width: 16px;
   height: 16px;
   opacity: 0.6;
-  transition: transform var(--ct-transition-fast, 0.2s);
+  transition: transform var(--ct-transition-fast) var(--ct-ease-out);
 }
 
 .default-trigger.is-open .trigger-arrow {
@@ -195,34 +196,26 @@ onUnmounted(() => {
   top: calc(100% + 8px);
   right: 0;
   width: 260px;
-  background: var(--ct-bg-elevated, #ffffff);
-  backdrop-filter: blur(12px);
-  border: 1px solid var(--ct-border-color, #e2e8f0);
-  border-radius: var(--ct-radius-lg, 12px);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.1), 0 2px 6px rgba(0, 0, 0, 0.04);
+  background: var(--ct-bg-card);
+  border: 1px solid var(--ct-border-color);
+  border-radius: var(--ct-radius-lg);
+  box-shadow: var(--ct-shadow-lg);
   z-index: 9999;
   overflow: hidden;
   display: flex;
   flex-direction: column;
 }
 
-@media (prefers-color-scheme: dark) {
-  .ct-popover-menu {
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.3), 0 2px 6px rgba(0, 0, 0, 0.1);
-  }
-}
-
 .popover-header {
   padding: 12px 16px;
-  border-bottom: 1px solid var(--ct-border-color, #e2e8f0);
-  background: var(--ct-bg-tertiary, #f8fafc);
+  border-bottom: 1px solid var(--ct-border-color);
+  background: var(--ct-bg-sunken);
 }
 
 .popover-title {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--ct-text-secondary, #64748b);
-  text-transform: uppercase;
+  font-size: var(--ct-text-xs);
+  font-weight: var(--ct-font-semibold);
+  color: var(--ct-text-secondary);
   letter-spacing: 0.5px;
 }
 
@@ -246,31 +239,26 @@ onUnmounted(() => {
   align-items: center;
   gap: 12px;
   padding: 10px 12px;
-  border-radius: var(--ct-radius-md, 8px);
+  border-radius: var(--ct-radius-md);
   cursor: pointer;
-  transition: all var(--ct-transition-fast, 0.2s);
+  transition: background-color var(--ct-transition-fast) var(--ct-ease-out);
 }
 
 .account-item:hover {
-  background: var(--ct-bg-hover, #f1f5f9);
+  background: var(--ct-bg-hover);
 }
 
 .account-item.is-active {
-  background: var(--ct-color-primary-light, rgba(168, 85, 247, 0.1));
-  color: var(--ct-color-primary, #a855f7);
-}
-
-.account-item.is-active .account-wxid,
-.account-item.is-active .account-name {
-  color: var(--ct-color-primary, #a855f7);
+  background: var(--ct-color-primary-tint);
 }
 
 .account-item.is-active .account-name {
-  opacity: 0.9;
+  color: var(--ct-color-primary);
 }
 
 .account-item.is-active .account-wxid {
-  opacity: 0.7;
+  color: var(--ct-color-primary);
+  opacity: 0.75;
 }
 
 .account-info {
@@ -282,37 +270,37 @@ onUnmounted(() => {
 }
 
 .account-name {
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--ct-text-sm);
+  font-weight: var(--ct-font-semibold);
   line-height: 1.2;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: var(--ct-text-primary, #111827);
+  color: var(--ct-text-primary);
 }
 
 .account-wxid {
-  font-size: 11px;
-  color: var(--ct-text-tertiary, #94a3b8);
+  font-size: var(--ct-text-xs);
+  color: var(--ct-text-tertiary);
   margin-top: 2px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-family: var(--ct-font-mono);
 }
 
 .account-check {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--ct-color-primary, #a855f7);
+  color: var(--ct-color-primary);
 }
 
 .empty-state {
   padding: 24px;
   text-align: center;
-  font-size: 13px;
-  color: var(--ct-text-secondary, #64748b);
+  font-size: var(--ct-text-sm);
+  color: var(--ct-text-secondary);
 }
 
 @media (max-width: 768px) {

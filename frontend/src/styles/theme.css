@@ -483,6 +483,52 @@ select[multiple] {
   padding-right: var(--ct-space-md);
 }
 
+/* checkbox：input 视觉隐藏 + 自绘框（.ct-checkbox 紧跟 input 摆放） */
+.ct-checkbox-input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.ct-checkbox {
+  width: 18px;
+  height: 18px;
+  border-radius: var(--ct-radius-sm);
+  border: 1.5px solid var(--ct-border-color-hover);
+  background: var(--ct-bg-card);
+  color: transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: background-color var(--ct-transition-fast) var(--ct-ease-out),
+              border-color var(--ct-transition-fast) var(--ct-ease-out),
+              color var(--ct-transition-fast) var(--ct-ease-out);
+}
+
+.ct-checkbox svg {
+  width: 11px;
+  height: 9px;
+  transform: scale(0.75);
+  transition: transform var(--ct-transition-fast) var(--ct-ease-out);
+}
+
+.ct-checkbox-input:checked + .ct-checkbox {
+  background: var(--ct-color-primary);
+  border-color: var(--ct-color-primary);
+  color: var(--ct-text-inverse);
+}
+
+.ct-checkbox-input:checked + .ct-checkbox svg {
+  transform: scale(1);
+}
+
+.ct-checkbox-input:focus-visible + .ct-checkbox {
+  border-color: var(--ct-color-primary);
+  box-shadow: 0 0 0 3px var(--ct-color-primary-tint);
+}
+
 /* 徽标：tint 底非空心 */
 .badge,
 .tag {

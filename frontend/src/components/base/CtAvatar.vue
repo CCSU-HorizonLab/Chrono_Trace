@@ -56,10 +56,9 @@ function handleError() {
   justify-content: center;
   flex-shrink: 0;
   vertical-align: middle;
-  background: linear-gradient(135deg, var(--ct-color-primary-light), var(--ct-color-primary-muted));
+  background: var(--ct-color-primary-tint);
   color: var(--ct-color-primary);
-  font-weight: 700;
-  border: 1px solid var(--ct-color-primary-subtle);
+  font-weight: var(--ct-font-semibold);
   box-sizing: border-box;
 }
 

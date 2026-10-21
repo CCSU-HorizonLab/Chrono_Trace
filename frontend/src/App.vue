@@ -86,8 +86,8 @@
           </p>
 
           <label class="close-confirm-remember">
-            <input type="checkbox" v-model="rememberCloseChoice" />
-            <span class="cc-checkbox-box" aria-hidden="true">
+            <input type="checkbox" class="ct-checkbox-input" v-model="rememberCloseChoice" />
+            <span class="ct-checkbox" aria-hidden="true">
               <svg viewBox="0 0 12 10" fill="none">
                 <path d="M1.5 5.2L4.5 8.2L10.5 1.8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
               </svg>
@@ -100,9 +100,9 @@
         </div>
 
         <div class="close-confirm-actions">
-          <button type="button" class="cc-btn cc-btn--ghost" @click="showCloseDialog = false">取消</button>
+          <button type="button" class="ct-btn ghost" @click="showCloseDialog = false">取消</button>
           <div class="close-confirm-actions-right">
-            <button type="button" class="cc-btn cc-btn--secondary" @click="handleCloseChoice('minimize')">
+            <button type="button" class="ct-btn secondary" @click="handleCloseChoice('minimize')">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <polyline points="4 14 10 14 10 20"></polyline>
                 <polyline points="20 10 14 10 14 4"></polyline>
@@ -111,7 +111,7 @@
               </svg>
               <span>最小化运行</span>
             </button>
-            <button type="button" class="cc-btn cc-btn--primary" @click="handleCloseChoice('exit')">
+            <button type="button" class="ct-btn primary" @click="handleCloseChoice('exit')">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
                 <polyline points="16 17 21 12 16 7"></polyline>
@@ -293,7 +293,7 @@ onUnmounted(() => {
 }
 
 /* ========================================
-   Topbar - Premium Header
+   Topbar - 暖纸玻璃 + 发丝线（墨痕暖白）
    ======================================== */
 
 .ct-topbar {
@@ -302,12 +302,14 @@ onUnmounted(() => {
   justify-content: space-between;
   padding: 0 var(--ct-space-xl);
   height: 64px;
-  background: linear-gradient(100deg, var(--ct-color-primary) 0%, #a855f7 100%);
+  background: rgba(250, 249, 247, 0.86);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--ct-border-color);
   flex-shrink: 0;
   position: sticky;
   top: 0;
   z-index: 1000;
-  box-shadow: var(--ct-shadow-sm);
 }
 
 /* Logo区域 */
@@ -325,53 +327,52 @@ onUnmounted(() => {
 }
 
 .brand-title {
-  font-family: var(--ct-font-display);
+  font-family: var(--ct-font-brand);
   font-size: var(--ct-text-xl);
-  font-weight: 700;
-  color: #fff;
-  text-shadow: 0 1px 2px rgba(0,0,0,0.1);
+  font-weight: var(--ct-font-bold);
+  color: var(--ct-text-primary);
   margin: 0;
   line-height: 1.2;
 }
 
 .brand-tagline {
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.9);
+  font-size: var(--ct-text-xs);
+  color: var(--ct-text-tertiary);
   margin: 0;
   margin-top: 2px;
 }
 
-/* 导航菜单 - 胶囊状 */
+/* 导航菜单 - 沉底胶囊 */
 .ct-menu {
   display: flex;
   align-items: center;
-  gap: var(--ct-space-sm);
-  background: rgba(255, 255, 255, 0.2);
+  gap: var(--ct-space-xs);
+  background: var(--ct-bg-sunken);
   padding: 4px;
   border-radius: var(--ct-radius-full);
-  backdrop-filter: blur(10px);
 }
 
 .menu-item {
   padding: 6px 20px;
   border-radius: var(--ct-radius-full);
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--ct-text-secondary);
   text-decoration: none;
   font-size: var(--ct-text-sm);
-  font-weight: 500;
-  transition: all var(--ct-transition-fast);
+  font-weight: var(--ct-font-medium);
+  transition: color var(--ct-transition-fast) var(--ct-ease-out),
+              background-color var(--ct-transition-fast) var(--ct-ease-out);
 }
 
 .menu-item:hover {
-  color: #fff;
-  background: rgba(255, 255, 255, 0.1);
+  color: var(--ct-text-primary);
+  background: var(--ct-bg-hover);
 }
 
 .menu-item.router-link-active {
-  background: #ffffff;
+  background: var(--ct-bg-card);
   color: var(--ct-color-primary);
-  font-weight: 600;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  font-weight: var(--ct-font-semibold);
+  box-shadow: var(--ct-shadow-sm);
 }
 
 /* 右侧用户区 */
@@ -386,28 +387,25 @@ onUnmounted(() => {
 .avatar-trigger-wrap {
   cursor: pointer;
   border-radius: 50%;
-  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s ease;
+  transition: box-shadow var(--ct-transition-fast) var(--ct-ease-out);
   display: flex;
 }
 
 .avatar-trigger-wrap:hover {
-  transform: scale(1.05);
+  box-shadow: 0 0 0 3px var(--ct-color-primary-tint);
 }
 
 .avatar-trigger-wrap.is-open {
-  transform: scale(0.95);
-  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.5);
+  box-shadow: 0 0 0 3px var(--ct-color-primary-tint), 0 0 0 1px var(--ct-color-primary);
 }
 
 .user-avatar {
-  border: 2px solid rgba(255,255,255,0.3);
-  background: rgba(255, 255, 255, 0.2);
-  color: #fff;
-  box-shadow: 0 6px 16px rgba(76, 29, 149, 0.25);
+  border: 2px solid var(--ct-bg-card);
+  box-shadow: var(--ct-shadow-sm);
 }
 
 .user-avatar.popup-trigger {
-  pointer-events: none; /* Let the wrapper handle clicks */
+  pointer-events: none; /* 让外层 wrap 接管点击 */
 }
 
 /* ========================================
@@ -447,13 +445,13 @@ onUnmounted(() => {
   }
 }
 
-/* 关闭确认对话框 */
+/* 关闭确认对话框（墨痕暖白） */
 .close-confirm-mask {
   position: fixed;
   inset: 0;
   z-index: 3000;
-  background: rgba(15, 23, 42, 0.42);
-  backdrop-filter: blur(5px);
+  background: rgba(27, 25, 36, 0.45);
+  backdrop-filter: blur(2px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -464,11 +462,10 @@ onUnmounted(() => {
 .close-confirm-card {
   width: 428px;
   max-width: 100%;
-  border-radius: 18px;
-  background: #ffffff;
-  color: #1f2430;
-  border: 1px solid rgba(108, 92, 231, 0.14);
-  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.18), 0 4px 16px rgba(108, 92, 231, 0.08);
+  border-radius: var(--ct-radius-lg);
+  background: var(--ct-bg-card);
+  color: var(--ct-text-primary);
+  box-shadow: var(--ct-shadow-lg);
   overflow: hidden;
   animation: cc-pop-in 0.18s cubic-bezier(0.16, 1, 0.3, 1);
 }
@@ -479,8 +476,7 @@ onUnmounted(() => {
   justify-content: space-between;
   gap: 12px;
   padding: 18px 20px 14px;
-  background: linear-gradient(180deg, rgba(108, 92, 231, 0.06) 0%, rgba(108, 92, 231, 0.01) 100%);
-  border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+  border-bottom: 1px solid var(--ct-border-color);
 }
 
 .close-confirm-head-left {
@@ -495,48 +491,46 @@ onUnmounted(() => {
   justify-content: center;
   width: 38px;
   height: 38px;
-  border-radius: 11px;
+  border-radius: var(--ct-radius-md);
   flex-shrink: 0;
-  background: linear-gradient(135deg, #6c5ce7 0%, #8e7cf3 100%);
-  color: #ffffff;
-  box-shadow: 0 6px 14px rgba(108, 92, 231, 0.24);
+  background: var(--ct-color-primary-tint);
+  color: var(--ct-color-primary);
 }
 
 .close-confirm-title {
   margin: 0;
-  font-size: 16px;
-  font-weight: 700;
-  color: #1f2430;
-  letter-spacing: 0.2px;
+  font-size: var(--ct-text-base);
+  font-weight: var(--ct-font-bold);
+  color: var(--ct-text-primary);
   line-height: 1.3;
 }
 
 .close-confirm-sub {
   display: block;
   margin-top: 2px;
-  font-size: 12px;
-  color: #6b7280;
+  font-size: var(--ct-text-xs);
+  color: var(--ct-text-secondary);
 }
 
 .close-confirm-x {
-  width: 30px !important;
-  height: 30px !important;
-  min-height: 30px !important;
-  padding: 0 !important;
-  border-radius: 8px !important;
-  border: none !important;
-  background: transparent !important;
-  color: #64748b !important;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: var(--ct-radius-sm);
+  border: none;
+  background: transparent;
+  color: var(--ct-text-tertiary);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: background-color var(--ct-transition-fast) var(--ct-ease-out),
+              color var(--ct-transition-fast) var(--ct-ease-out);
 }
 
 .close-confirm-x:hover {
-  background: rgba(15, 23, 42, 0.06) !important;
-  color: #1f2430 !important;
+  background: var(--ct-bg-hover);
+  color: var(--ct-text-primary);
 }
 
 .close-confirm-body {
@@ -545,14 +539,14 @@ onUnmounted(() => {
 
 .close-confirm-text {
   margin: 0 0 14px;
-  font-size: 13.5px;
+  font-size: var(--ct-text-sm);
   line-height: 1.68;
-  color: #4b5563;
+  color: var(--ct-text-secondary);
 }
 
 .close-confirm-text strong {
-  color: #1f2430;
-  font-weight: 600;
+  color: var(--ct-text-primary);
+  font-weight: var(--ct-font-semibold);
 }
 
 .close-confirm-remember {
@@ -562,58 +556,16 @@ onUnmounted(() => {
   cursor: pointer;
   user-select: none;
   padding: 11px 13px;
-  border-radius: 12px;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+  border-radius: var(--ct-radius-md);
+  background: var(--ct-bg-sunken);
+  border: 1px solid transparent;
+  transition: background-color var(--ct-transition-fast) var(--ct-ease-out),
+              border-color var(--ct-transition-fast) var(--ct-ease-out);
 }
 
 .close-confirm-remember:hover {
-  background: #f5f3ff;
-  border-color: rgba(108, 92, 231, 0.36);
-}
-
-.close-confirm-remember input[type='checkbox'] {
-  position: absolute;
-  opacity: 0;
-  pointer-events: none;
-}
-
-.cc-checkbox-box {
-  width: 18px;
-  height: 18px;
-  margin-top: 1px;
-  border-radius: 6px;
-  border: 1.5px solid #cbd5e1;
-  background: #ffffff;
-  color: transparent;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  transition: all 0.16s ease;
-}
-
-.cc-checkbox-box svg {
-  width: 11px;
-  height: 9px;
-  transform: scale(0.75);
-  transition: transform 0.16s ease;
-}
-
-.close-confirm-remember:hover .cc-checkbox-box {
-  border-color: #6c5ce7;
-}
-
-.close-confirm-remember input[type='checkbox']:checked + .cc-checkbox-box {
-  background: #6c5ce7;
-  border-color: #6c5ce7;
-  color: #ffffff;
-  box-shadow: 0 2px 6px rgba(108, 92, 231, 0.28);
-}
-
-.close-confirm-remember input[type='checkbox']:checked + .cc-checkbox-box svg {
-  transform: scale(1);
+  background: var(--ct-bg-hover);
+  border-color: var(--ct-border-color-hover);
 }
 
 .cc-remember-copy {
@@ -623,15 +575,15 @@ onUnmounted(() => {
 }
 
 .cc-remember-main {
-  font-size: 13px;
-  font-weight: 600;
-  color: #1f2430;
+  font-size: var(--ct-text-sm);
+  font-weight: var(--ct-font-semibold);
+  color: var(--ct-text-primary);
   line-height: 1.35;
 }
 
 .cc-remember-hint {
-  font-size: 11.5px;
-  color: #6b7280;
+  font-size: var(--ct-text-xs);
+  color: var(--ct-text-tertiary);
   line-height: 1.4;
 }
 
@@ -641,69 +593,14 @@ onUnmounted(() => {
   justify-content: space-between;
   gap: 10px;
   padding: 13px 20px;
-  background: #f8fafc;
-  border-top: 1px solid rgba(15, 23, 42, 0.06);
+  background: var(--ct-bg-sunken);
+  border-top: 1px solid var(--ct-border-color);
 }
 
 .close-confirm-actions-right {
   display: flex;
   align-items: center;
   gap: 8px;
-}
-
-.cc-btn {
-  height: 36px !important;
-  min-height: 36px !important;
-  padding: 0 14px !important;
-  border-radius: 10px !important;
-  font-size: 13px !important;
-  font-weight: 600 !important;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease, transform 0.1s ease, box-shadow 0.16s ease;
-}
-
-.cc-btn:active {
-  transform: scale(0.98);
-}
-
-.cc-btn--ghost {
-  background: transparent !important;
-  color: #64748b !important;
-  border: 1px solid transparent !important;
-}
-
-.cc-btn--ghost:hover {
-  background: rgba(15, 23, 42, 0.06) !important;
-  color: #1f2430 !important;
-}
-
-.cc-btn--secondary {
-  background: #ffffff !important;
-  color: #4f46e5 !important;
-  border: 1px solid rgba(108, 92, 231, 0.34) !important;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
-}
-
-.cc-btn--secondary:hover {
-  background: #f5f3ff !important;
-  border-color: #6c5ce7 !important;
-}
-
-.cc-btn--primary {
-  background: linear-gradient(135deg, #6c5ce7 0%, #5b4bc4 100%) !important;
-  color: #ffffff !important;
-  border: 1px solid transparent !important;
-  box-shadow: 0 6px 16px rgba(108, 92, 231, 0.25);
-}
-
-.cc-btn--primary:hover {
-  background: linear-gradient(135deg, #5f4dd6 0%, #4e3fb3 100%) !important;
-  box-shadow: 0 8px 18px rgba(108, 92, 231, 0.32);
 }
 
 @keyframes cc-fade-in { from { opacity: 0; } to { opacity: 1; } }

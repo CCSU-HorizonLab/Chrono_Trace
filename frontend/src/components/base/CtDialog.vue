@@ -128,10 +128,10 @@
         <!-- 底栏按钮区 -->
         <footer class="ct-dialog-footer">
           <template v-if="isWechatUpgrade">
-            <button type="button" class="ct-dlg-btn secondary" @click="handleConfirm">
+            <button type="button" class="ct-btn ghost" @click="handleConfirm">
               我知道了
             </button>
-            <button type="button" class="ct-dlg-btn wechat-primary" @click="openExternal('https://weixin.qq.com/')">
+            <button type="button" class="ct-btn wechat-primary" @click="openExternal('https://weixin.qq.com/')">
               <span>打开微信官网</span>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M7 17 17 7" />
@@ -140,10 +140,10 @@
             </button>
           </template>
           <template v-else>
-            <button v-if="showCancel" type="button" class="ct-dlg-btn secondary" @click="handleCancel">
+            <button v-if="showCancel" type="button" class="ct-btn ghost" @click="handleCancel">
               {{ cancelText || '取消' }}
             </button>
-            <button type="button" class="ct-dlg-btn primary" :class="effectiveType" @click="handleConfirm">
+            <button type="button" :class="['ct-btn', effectiveType === 'error' ? 'danger' : 'primary']" @click="handleConfirm">
               {{ confirmText || '确定' }}
             </button>
           </template>
@@ -262,9 +262,9 @@ defineExpose({
 .ct-dialog-overlay {
   position: fixed;
   inset: 0;
-  background-color: rgba(15, 23, 42, 0.46);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  background-color: rgba(27, 25, 36, 0.45);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -272,18 +272,15 @@ defineExpose({
 }
 
 .ct-dialog {
-  background: var(--ct-bg-card, #ffffff);
-  border: 1px solid var(--ct-border, #e2e8f0);
-  border-radius: 16px;
-  box-shadow:
-    0 24px 60px rgba(15, 23, 42, 0.24),
-    0 4px 16px rgba(15, 23, 42, 0.06);
+  background: var(--ct-bg-card);
+  border-radius: var(--ct-radius-lg);
+  box-shadow: var(--ct-shadow-lg);
   width: min(440px, calc(100vw - 32px));
   max-height: 84vh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  color: var(--ct-text-primary, #0f172a);
+  color: var(--ct-text-primary);
   animation: ct-dialog-zoom 0.18s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
@@ -298,7 +295,7 @@ defineExpose({
   justify-content: space-between;
   gap: 12px;
   padding: 20px 22px 14px;
-  border-bottom: 1px solid #f1f5f9;
+  border-bottom: 1px solid var(--ct-border-color);
 }
 
 .ct-dialog-head-left {
@@ -311,7 +308,7 @@ defineExpose({
 .ct-dialog-icon {
   width: 40px;
   height: 40px;
-  border-radius: 11px;
+  border-radius: var(--ct-radius-md);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -319,28 +316,24 @@ defineExpose({
 }
 
 .ct-dialog-icon.info {
-  background: linear-gradient(135deg, #f3e8ff, #ede9fe);
-  color: #7c4dff;
-  border: 1px solid rgba(124, 77, 255, 0.18);
+  background: var(--ct-color-info-tint);
+  color: var(--ct-color-info);
 }
 
 .ct-dialog-icon.warning {
-  background: linear-gradient(135deg, #fef3c7, #fde68a);
-  color: #d97706;
-  border: 1px solid rgba(245, 158, 11, 0.24);
+  background: var(--ct-color-warning-tint);
+  color: var(--ct-color-warning);
 }
 
 .ct-dialog-icon.error {
-  background: linear-gradient(135deg, #fee2e2, #fecaca);
-  color: #dc2626;
-  border: 1px solid rgba(239, 68, 68, 0.22);
+  background: var(--ct-color-error-tint);
+  color: var(--ct-color-error);
 }
 
+/* 微信品牌拟物区：绿系自治 */
 .ct-dialog-icon.wechat {
-  background: linear-gradient(135deg, #dcfce7, #bbf7d0);
+  background: rgba(7, 193, 96, 0.12);
   color: #07c160;
-  border: 1px solid rgba(7, 193, 96, 0.25);
-  box-shadow: 0 2px 8px rgba(7, 193, 96, 0.12);
 }
 
 .ct-dialog-title-wrap {
@@ -352,44 +345,43 @@ defineExpose({
 
 .ct-dialog-title {
   margin: 0;
-  font-size: 16px;
-  font-weight: 700;
-  color: #0f172a;
-  letter-spacing: -0.01em;
+  font-size: var(--ct-text-base);
+  font-weight: var(--ct-font-bold);
+  color: var(--ct-text-primary);
 }
 
 .ct-dialog-sub {
-  font-size: 12px;
-  color: #64748b;
+  font-size: var(--ct-text-xs);
+  color: var(--ct-text-secondary);
 }
 
 .ct-dialog-close {
-  width: 30px !important;
-  height: 30px !important;
-  padding: 0 !important;
-  border-radius: 8px !important;
-  border: 1px solid #e2e8f0 !important;
-  background: #f8fafc !important;
-  color: #64748b !important;
-  display: inline-flex !important;
-  align-items: center !important;
-  justify-content: center !important;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: var(--ct-radius-sm);
+  border: none;
+  background: transparent;
+  color: var(--ct-text-tertiary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
   flex-shrink: 0;
-  transition: all 0.15s ease;
+  transition: background-color var(--ct-transition-fast) var(--ct-ease-out),
+              color var(--ct-transition-fast) var(--ct-ease-out);
 }
 
 .ct-dialog-close:hover {
-  background: #fef2f2 !important;
-  color: #ef4444 !important;
-  border-color: #fecaca !important;
+  background: var(--ct-bg-hover);
+  color: var(--ct-text-primary);
 }
 
 /* 正文区 */
 .ct-dialog-body {
   padding: 18px 22px;
-  font-size: 13.5px;
-  color: #475569;
+  font-size: var(--ct-text-sm);
+  color: var(--ct-text-secondary);
   overflow-y: auto;
   line-height: 1.65;
   white-space: pre-wrap;
@@ -406,9 +398,8 @@ defineExpose({
 
 /* 检测到的旧版目录卡片 */
 .wu-path-card {
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-  border-radius: 11px;
+  background: var(--ct-bg-sunken);
+  border-radius: var(--ct-radius-md);
   padding: 10px 13px;
 }
 
@@ -421,26 +412,26 @@ defineExpose({
 }
 
 .wu-path-badge {
-  font-size: 11.5px;
-  font-weight: 600;
+  font-size: var(--ct-text-xs);
+  font-weight: var(--ct-font-semibold);
   padding: 2px 8px;
-  border-radius: 6px;
-  background: #fef3c7;
-  color: #b45309;
+  border-radius: var(--ct-radius-sm);
+  background: var(--ct-color-warning-tint);
+  color: #8F5B14;
 }
 
 .wu-account-tag {
-  font-size: 11.5px;
-  color: #64748b;
+  font-size: var(--ct-text-xs);
+  color: var(--ct-text-secondary);
 }
 
 .wu-path-code {
-  font-family: 'JetBrains Mono', Consolas, monospace;
-  font-size: 12px;
-  color: #1e293b;
-  background: #ffffff;
-  border: 1px solid #e2e8f0;
-  border-radius: 7px;
+  font-family: var(--ct-font-mono);
+  font-size: var(--ct-text-xs);
+  color: var(--ct-color-primary);
+  background: var(--ct-bg-card);
+  border: 1px solid var(--ct-border-color);
+  border-radius: var(--ct-radius-sm);
   padding: 6px 10px;
   word-break: break-all;
 }
@@ -454,31 +445,30 @@ defineExpose({
 
 .wu-reason-text {
   margin: 0;
-  font-size: 13px;
-  color: #475569;
+  font-size: var(--ct-text-sm);
+  color: var(--ct-text-secondary);
   line-height: 1.6;
 }
 
 .wu-reason-text strong {
-  color: #0f172a;
+  color: var(--ct-text-primary);
 }
 
 .wu-steps {
   display: flex;
   flex-direction: column;
   gap: 7px;
-  background: #f8fafc;
-  border-radius: 10px;
+  background: var(--ct-bg-sunken);
+  border-radius: var(--ct-radius-md);
   padding: 10px 12px;
-  border: 1px dashed #cbd5e1;
 }
 
 .wu-step-item {
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  font-size: 12.5px;
-  color: #334155;
+  font-size: var(--ct-text-xs);
+  color: var(--ct-text-secondary);
   line-height: 1.5;
 }
 
@@ -486,10 +476,10 @@ defineExpose({
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  background: #e2e8f0;
-  color: #334155;
+  background: var(--ct-color-primary-tint);
+  color: var(--ct-color-primary);
   font-size: 11px;
-  font-weight: 700;
+  font-weight: var(--ct-font-bold);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -497,37 +487,37 @@ defineExpose({
   margin-top: 1px;
 }
 
-/* 官方快速链接卡片：[微信，是一个生活方式](https://weixin.qq.com/) */
+/* 官方快速链接卡片：[微信，是一个生活方式](https://weixin.qq.com/)（微信品牌绿系自治） */
 .wu-quick-link-card {
   display: flex;
   align-items: center;
   gap: 12px;
   padding: 12px 14px;
-  border-radius: 12px;
-  background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
-  border: 1px solid #86efac;
-  text-decoration: none !important;
+  border-radius: var(--ct-radius-md);
+  background: rgba(7, 193, 96, 0.08);
+  border: 1px solid rgba(7, 193, 96, 0.25);
+  text-decoration: none;
   cursor: pointer;
-  transition: all 0.18s ease;
+  transition: border-color var(--ct-transition-fast) var(--ct-ease-out),
+              box-shadow var(--ct-transition-fast) var(--ct-ease-out);
 }
 
 .wu-quick-link-card:hover {
   border-color: #22c55e;
-  box-shadow: 0 6px 16px rgba(7, 193, 96, 0.14);
-  transform: translateY(-1px);
+  box-shadow: var(--ct-shadow-md);
 }
 
 .wu-link-logo {
   width: 38px;
   height: 38px;
-  border-radius: 10px;
+  border-radius: var(--ct-radius-md);
   background: #07c160;
   color: #ffffff;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  box-shadow: 0 3px 8px rgba(7, 193, 96, 0.25);
+  box-shadow: var(--ct-shadow-sm);
 }
 
 .wu-link-info {
@@ -545,24 +535,24 @@ defineExpose({
 }
 
 .wu-link-title {
-  font-size: 14px;
-  font-weight: 700;
+  font-size: var(--ct-text-sm);
+  font-weight: var(--ct-font-bold);
   color: #065f46;
 }
 
 .wu-link-official {
-  font-size: 10.5px;
-  font-weight: 600;
+  font-size: var(--ct-text-xs);
+  font-weight: var(--ct-font-semibold);
   padding: 1px 6px;
-  border-radius: 999px;
+  border-radius: var(--ct-radius-full);
   background: rgba(7, 193, 96, 0.16);
   color: #047857;
 }
 
 .wu-link-url {
-  font-size: 11.5px;
+  font-size: var(--ct-text-xs);
   color: #059669;
-  font-family: 'JetBrains Mono', Consolas, monospace;
+  font-family: var(--ct-font-mono);
 }
 
 .wu-link-action {
@@ -570,11 +560,11 @@ defineExpose({
   align-items: center;
   gap: 4px;
   padding: 5px 10px;
-  border-radius: 8px;
-  background: #ffffff;
+  border-radius: var(--ct-radius-sm);
+  background: var(--ct-bg-card);
   color: #059669;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--ct-text-xs);
+  font-weight: var(--ct-font-semibold);
   border: 1px solid rgba(7, 193, 96, 0.28);
   flex-shrink: 0;
   white-space: nowrap;
@@ -583,70 +573,20 @@ defineExpose({
 /* 底栏按钮 */
 .ct-dialog-footer {
   padding: 14px 22px 18px;
-  border-top: 1px solid #f1f5f9;
+  border-top: 1px solid var(--ct-border-color);
   display: flex;
   justify-content: flex-end;
   gap: 10px;
-  background: #ffffff;
 }
 
-.ct-dlg-btn {
-  height: 36px !important;
-  padding: 0 16px !important;
-  border-radius: 9px !important;
-  font-size: 13px !important;
-  font-weight: 600 !important;
-  display: inline-flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  gap: 6px !important;
-  cursor: pointer;
-  white-space: nowrap !important;
-  transition: all 0.16s ease;
+/* 微信绿按钮：品牌拟物，覆盖默认主色 */
+.ct-btn.wechat-primary {
+  background: #07c160;
+  color: var(--ct-text-inverse);
 }
 
-.ct-dlg-btn:active {
-  transform: scale(0.98);
-}
-
-.ct-dlg-btn.secondary {
-  background: #ffffff !important;
-  color: #475569 !important;
-  border: 1px solid #cbd5e1 !important;
-}
-
-.ct-dlg-btn.secondary:hover {
-  background: #f8fafc !important;
-  color: #0f172a !important;
-  border-color: #94a3b8 !important;
-}
-
-.ct-dlg-btn.primary {
-  background: #7c4dff !important;
-  color: #ffffff !important;
-  border: 1px solid #6d28d9 !important;
-  box-shadow: 0 4px 12px rgba(124, 77, 255, 0.24) !important;
-}
-
-.ct-dlg-btn.primary:hover {
-  background: #6d28d9 !important;
-}
-
-.ct-dlg-btn.primary.error {
-  background: #ef4444 !important;
-  border-color: #dc2626 !important;
-  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.24) !important;
-}
-
-.ct-dlg-btn.wechat-primary {
-  background: #07c160 !important;
-  color: #ffffff !important;
-  border: 1px solid #059669 !important;
-  box-shadow: 0 4px 12px rgba(7, 193, 96, 0.25) !important;
-}
-
-.ct-dlg-btn.wechat-primary:hover {
-  background: #06ad56 !important;
+.ct-btn.wechat-primary:hover:not(:disabled) {
+  background: #06ad56;
 }
 
 .ct-dialog-fade-enter-active,

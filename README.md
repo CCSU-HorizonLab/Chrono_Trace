@@ -8,12 +8,12 @@
 
 > **English note**: Chrono Trace is a local-first desktop tool for analyzing WeChat (微信) PC 4.x chat data — sentiment & affinity analysis, chat export, real-time LLM reply suggestions, and per-contact long-term memory (RAG). The UI and docs are Chinese-only, as the tool targets WeChat's Chinese ecosystem.
 
-[![Python](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
-[![Vue](https://img.shields.io/badge/Vue-3.x-green.svg)](https://vuejs.org/)
-[![Vite](https://img.shields.io/badge/Vite-5.x-646CFF.svg)](https://vitejs.dev/)
-[![Platform](https://img.shields.io/badge/Platform-Windows%20%2010%2F11%20%7C%20Linux-0078D6.svg)](#环境要求)
-[![Status](https://img.shields.io/badge/Status-v1.4.0-brightgreen.svg)](./docs/release-notes-v1.4.0.md)
-[![License](https://img.shields.io/badge/License-PolyForm%20Noncommercial%201.0.0-blue.svg)](./LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.12-blue.svg?style=flat-square)](https://www.python.org/)
+[![Vue](https://img.shields.io/badge/Vue-3.x-green.svg?style=flat-square)](https://vuejs.org/)
+[![Vite](https://img.shields.io/badge/Vite-5.x-646CFF.svg?style=flat-square)](https://vitejs.dev/)
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%2010%2F11%20%7C%20Linux-0078D6.svg?style=flat-square)](#环境要求)
+[![Status](https://img.shields.io/badge/Status-v1.4.0-brightgreen.svg?style=flat-square)](./docs/release-notes-v1.4.0.md)
+[![License](https://img.shields.io/badge/License-PolyForm%20Noncommercial%201.0.0-blue.svg?style=flat-square)](./LICENSE)
 
 > 镌刻对话年轮，丈量心动间距
 
@@ -42,13 +42,19 @@
 
 ## 项目简介
 
-Chrono Trace 是一个基于 `PyWebView + Vue 3 + Python` 的 Windows / Linux 双平台桌面应用，围绕微信聊天数据提供三条主链路：
+### 💡 为什么你需要 Chrono Trace？
 
-- 历史聊天导入与本地分析
-- 实时监听与 AI 沟通建议
-- 联系人长期记忆（RAG）：事实抽取、演变维护与纠错闭环
+你的微信里，藏着最复杂的人际关系。微信自带的搜索能帮你找到某句话，但无法帮你回答这些“灵魂拷问”：
 
-默认情况下，聊天数据解密、导入、存储和分析都在本机完成。只有在你启用 LLM 建议时，系统才会把生成建议所需的必要上下文发送到你配置的模型接口。
+*   ***“TA 最近是不是对我忽冷忽热？”*** 
+    内置基于大模型的关系评估与风险预警系统，从互动投入、情感共鸣等维度量化打分，帮你读懂对方的真实态度。
+*   ***“遇到难回的消息，怎么接话才能高情商？”***
+    提供悬浮辅助窗与实时监听，结合你们的长期记忆（RAG）提取偏好与雷点，边聊边在屏幕边缘为你生成专属回复建议，告别切屏复制粘贴。
+*   ***“群消息 999+，爬楼太累又怕错过重点？”***
+    一键生成群聊工作台与智能日报，谁在活跃、高频词是什么、今日重点有哪些，一目了然。
+
+**🔒 核心承诺：100% 本地化运行**
+所有数据解析、脱敏与推理由本机完成（配合本地大模型或你配置的 API），聊天记录绝不上传云端，彻底杜绝隐私泄露与封号风险。
 
 本地数据默认写入（安装版）：
 
@@ -77,29 +83,28 @@ Chrono Trace 是一个基于 `PyWebView + Vue 3 + Python` 的 Windows / Linux �
 
 **首页总览** —— 功能入口、账号切换、微信数据导入与运行日志
 
-![首页总览](docs/images/screenshots/home-overview.png)
+![首页总览](docs/images/screenshots/home_page.png)
 
-### 历史分析工作台（历史数据页）
+### TA档案
 
-**关系评估** —— 好感度总分、四维+LLM 雷达图、分维度明细与风险信号卡（关系洞察、问问微信、互动特征、内容与时间线、用户画像回顾页签同屏切换；群聊选中时切换为群聊工作台）
+**关系洞察** —— 好感度总分、四维+LLM 雷达图、分维度明细与风险信号卡（关系洞察、互动特征、内容与时间线、智能问答、时光深度、用户画像、实时助手页签同屏切换；群聊选中时切换为群聊工作台）
 
-![关系评估](docs/images/screenshots/analytics-affinity.png)
+![关系洞察](docs/images/screenshots/data_analyse.png)
 
-### AI 建议
 
-**对象画像与建议策略** —— 联系人画像、聊天风格与关系策略、AI 建议生成配置
+**实时助手** —— 联系人画像、聊天风格与关系策略、AI 建议生成配置、实时建议回复
 
-![对象画像与建议策略](docs/images/screenshots/realtime-suggestions.png)
+![实时助手](docs/images/screenshots/ai_suggestion.png)
 
 ### 设置
 
 **模型配置** —— 供应商/本地推理配置管理、微信数据库路径与密钥管理
 
-![模型配置](docs/images/screenshots/settings-model.png)
+![模型配置](docs/images/screenshots/model_configuration.png)
 
 **联系人记忆 RAG** —— 启用开关、索引状态统计、按联系人索引管理
 
-![联系人记忆 RAG](docs/images/screenshots/settings-rag.png)
+![联系人记忆 RAG](docs/images/screenshots/contact_memory.png)
 
 ## 核心能力
 

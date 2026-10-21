@@ -661,6 +661,7 @@ import {
 } from 'lucide-vue-next'
 import { bridgeReady, api } from '@/api/bridge'
 import * as echarts from 'echarts'
+import { chronoAxisBase } from '@/components/charts/chartTheme'
 import CtAvatar from '@/components/base/CtAvatar.vue'
 import RagFactDialog from '@/components/settings/RagFactDialog.vue'
 import { showConfirm, showDialog } from '@/utils/dialog'
@@ -1576,33 +1577,7 @@ function resizeVisibleCharts() {
 }
 
 function buildChartBaseOption(): echarts.EChartsOption {
-  return {
-    grid: {
-      top: 16,
-      right: 12,
-      bottom: 24,
-      left: 34,
-      containLabel: false,
-    },
-    tooltip: {
-      trigger: 'axis',
-      backgroundColor: '#1e293b',
-      borderColor: '#334155',
-      textStyle: { color: '#f1f5f9', fontSize: 12 },
-    },
-    xAxis: {
-      type: 'category',
-      axisLabel: { fontSize: 10, color: '#94a3b8' },
-      axisLine: { lineStyle: { color: '#334155' } },
-      axisTick: { show: false },
-    },
-    yAxis: {
-      type: 'value',
-      axisLabel: { fontSize: 10, color: '#94a3b8' },
-      splitLine: { lineStyle: { color: '#1e293b', type: 'dashed' } },
-      axisLine: { show: false },
-    },
-  }
+  return chronoAxisBase() as echarts.EChartsOption
 }
 
 function buildMessageFrequencyBuckets() {
@@ -1668,33 +1643,25 @@ function syncCharts() {
       chart.setOption({
         ...buildChartBaseOption(),
         yAxis: {
-          type: 'value',
+          ...(buildChartBaseOption().yAxis as object),
           min: -1,
           max: 1,
           splitNumber: 4,
-          axisLabel: { fontSize: 10, color: '#94a3b8', formatter: '{value}' },
-          splitLine: { lineStyle: { color: '#1e293b', type: 'dashed' } },
-          axisLine: { show: false },
+          axisLabel: { fontSize: 10, formatter: '{value}' },
         },
         xAxis: {
-          type: 'category',
+          ...(buildChartBaseOption().xAxis as object),
           data: times,
-          axisLabel: { fontSize: 10, color: '#94a3b8' },
-          axisLine: { lineStyle: { color: '#334155' } },
-          axisTick: { show: false },
         },
         tooltip: {
           trigger: 'axis',
-          backgroundColor: '#1e293b',
-          borderColor: '#334155',
-          textStyle: { color: '#f1f5f9', fontSize: 12 },
           formatter: (params: any) => {
             const point = params[0]
             const itemData = emotionHistory.value[point.dataIndex]
             const value = Number(point.data || 0)
             const label = value > 0 ? '正面' : value < 0 ? '负面' : '中性'
             const content = itemData?.content?.length > 25 ? `${itemData.content.slice(0, 25)}…` : itemData?.content || ''
-            return `<b>对方情绪</b><br/>时间：${point.name}<br/>情绪：${label} (${value.toFixed(2)})${content ? `<br/><span style="color:#94a3b8">${content}</span>` : ''}`
+            return `<b>对方情绪</b><br/>时间：${point.name}<br/>情绪：${label} (${value.toFixed(2)})${content ? `<br/><span style="color:#9B95A5">${content}</span>` : ''}`
           },
         },
         series: [{
@@ -1703,19 +1670,19 @@ function syncCharts() {
           symbol: 'circle',
           symbolSize: 6,
           data: values,
-          lineStyle: { width: 2.5, color: '#818cf8' },
+          lineStyle: { width: 2.5, color: '#5A4BC4' },
           areaStyle: {
             color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-              { offset: 0, color: 'rgba(129,140,248,0.3)' },
-              { offset: 1, color: 'rgba(129,140,248,0.02)' },
+              { offset: 0, color: 'rgba(90,75,196,0.3)' },
+              { offset: 1, color: 'rgba(90,75,196,0.02)' },
             ]),
           },
           itemStyle: {
             color: (params: any) => {
               const value = Number(params.data || 0)
-              if (value > 0.2) return '#34d399'
-              if (value < -0.2) return '#f87171'
-              return '#94a3b8'
+              if (value > 0.2) return '#2FA39A'
+              if (value < -0.2) return '#E8656F'
+              return '#9B95A5'
             },
           },
         }],
@@ -1734,7 +1701,7 @@ function syncCharts() {
           barWidth: '45%',
           itemStyle: {
             borderRadius: [4, 4, 0, 0],
-            color: '#60a5fa',
+            color: '#5A4BC4',
           },
         }],
       }, true)
@@ -1749,21 +1716,21 @@ function syncCharts() {
       chart.setOption({
         tooltip: {
           trigger: 'item',
-          backgroundColor: '#1e293b',
-          borderColor: '#334155',
-          textStyle: { color: '#f1f5f9', fontSize: 12 },
+          backgroundColor: '#FFFFFF',
+          borderColor: '#E9E5DF',
+          textStyle: { color: '#1B1924', fontSize: 12 },
         },
         series: [{
           type: 'pie',
           radius: ['38%', '68%'],
           center: ['50%', '54%'],
-          label: { color: '#cbd5e1', fontSize: 10 },
+          label: { color: '#5A5566', fontSize: 10 },
           data: distribution,
           itemStyle: {
-            borderColor: 'rgba(15,23,42,0.55)',
+            borderColor: '#FFFFFF',
             borderWidth: 2,
           },
-          color: ['#34d399', '#94a3b8', '#f87171'],
+          color: ['#2FA39A', '#9B95A5', '#E8656F'],
         }],
       }, true)
     }
@@ -1775,19 +1742,19 @@ function syncCharts() {
         xAxis: { ...(buildChartBaseOption().xAxis as object), data: gapData.labels },
         yAxis: {
           ...(buildChartBaseOption().yAxis as object),
-          axisLabel: { fontSize: 10, color: '#94a3b8', formatter: '{value}s' },
+          axisLabel: { fontSize: 10, formatter: '{value}s' },
         },
         series: [{
           type: 'line',
           data: gapData.values,
           smooth: true,
           symbolSize: 5,
-          lineStyle: { width: 2, color: '#f59e0b' },
-          itemStyle: { color: '#fbbf24' },
+          lineStyle: { width: 2, color: '#E0A458' },
+          itemStyle: { color: '#E0A458' },
           areaStyle: {
             color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-              { offset: 0, color: 'rgba(245,158,11,0.26)' },
-              { offset: 1, color: 'rgba(245,158,11,0.03)' },
+              { offset: 0, color: 'rgba(224,164,88,0.26)' },
+              { offset: 1, color: 'rgba(224,164,88,0.03)' },
             ]),
           },
         }],
@@ -1798,24 +1765,24 @@ function syncCharts() {
       chart.setOption({
         tooltip: {
           trigger: 'item',
-          backgroundColor: '#1e293b',
-          borderColor: '#334155',
-          textStyle: { color: '#f1f5f9', fontSize: 12 },
+          backgroundColor: '#FFFFFF',
+          borderColor: '#E9E5DF',
+          textStyle: { color: '#1B1924', fontSize: 12 },
         },
         series: [{
           type: 'pie',
           radius: ['42%', '70%'],
           center: ['50%', '54%'],
-          label: { color: '#cbd5e1', fontSize: 10 },
+          label: { color: '#5A5566', fontSize: 10 },
           data: [
             { value: computedChartStats.value.self_msg_count, name: '我' },
             { value: computedChartStats.value.friend_msg_count, name: '对方' },
           ],
           itemStyle: {
-            borderColor: 'rgba(15,23,42,0.55)',
+            borderColor: '#FFFFFF',
             borderWidth: 2,
           },
-          color: ['#818cf8', '#38bdf8'],
+          color: ['#5A4BC4', '#E0A458'],
         }],
       }, true)
     }
@@ -1828,12 +1795,9 @@ function syncCharts() {
           data: emotionHistory.value.map(point => point.time),
         },
         yAxis: {
-          type: 'value',
+          ...(buildChartBaseOption().yAxis as object),
           min: 0,
           max: 1,
-          axisLabel: { fontSize: 10, color: '#94a3b8' },
-          splitLine: { lineStyle: { color: '#1e293b', type: 'dashed' } },
-          axisLine: { show: false },
         },
         series: [{
           type: 'bar',
@@ -1843,9 +1807,9 @@ function syncCharts() {
             borderRadius: [4, 4, 0, 0],
             color: (params: any) => {
               const value = Number(params.data || 0)
-              if (value >= 0.75) return '#f87171'
-              if (value >= 0.45) return '#fbbf24'
-              return '#60a5fa'
+              if (value >= 0.75) return '#E8656F'
+              if (value >= 0.45) return '#E0A458'
+              return '#5A4BC4'
             },
           },
         }],

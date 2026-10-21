@@ -796,6 +796,7 @@ import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from
 import * as echarts from 'echarts'
 import { bridgeReady, api, type AnalysisDeviceMode } from '@/api/bridge'
 import { analyzeAffinity, getAffinityScores, getAffinityProgress, getRelationshipContext, type AffinityAnalysisResult } from '@/api/affinity'
+import { getScoreColor, HEAT_RAMP, chartPalette } from '@/components/charts/chartTheme'
 
 import FiltersBar from '@/components/analytics/FiltersBar.vue'
 import DateRangeFilter from '@/components/analytics/DateRangeFilter.vue'
@@ -2035,13 +2036,17 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
             if (responseTimeChartInstance) responseTimeChartInstance.dispose()
             responseTimeChartInstance = echarts.init(responseTimeChart.value)
             const data = responseTimeStats.value.distributionKeys.map(k => responseTimeStats.value.distribution![k] || 0)
+            const palette = chartPalette()
+            const hairline = getComputedStyle(document.documentElement).getPropertyValue('--ct-border-color').trim() || '#E9E5DF'
+            const axisText = getComputedStyle(document.documentElement).getPropertyValue('--ct-text-tertiary').trim() || '#9B95A5'
+            const labelText = getComputedStyle(document.documentElement).getPropertyValue('--ct-text-secondary').trim() || '#5A5566'
             responseTimeChartInstance.setOption({
                 backgroundColor: 'transparent',
                 tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
                 grid: { left: '3%', right: '4%', bottom: '3%', top: '10%', containLabel: true },
-                xAxis: { type: 'category', data: responseTimeStats.value.distributionKeys, axisLabel: { color: 'rgba(255,255,255,0.6)', fontSize: 11, interval: 0 } },
-                yAxis: { type: 'value', splitLine: { lineStyle: { color: 'rgba(255,255,255,0.05)', type: 'dashed' } }, axisLabel: { color: 'rgba(255,255,255,0.6)' } },
-                series: [{ type: 'bar', data: data, itemStyle: { borderRadius: [4, 4, 0, 0], color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: '#818cf8' }, { offset: 1, color: '#6366f1' }]) }, label: { show: true, position: 'top', color: 'rgba(255,255,255,0.7)', fontSize: 11 } }]
+                xAxis: { type: 'category', data: responseTimeStats.value.distributionKeys, axisLabel: { color: axisText, fontSize: 11, interval: 0 } },
+                yAxis: { type: 'value', splitLine: { lineStyle: { color: hairline, type: 'dashed' } }, axisLabel: { color: axisText } },
+                series: [{ type: 'bar', data: data, itemStyle: { borderRadius: [4, 4, 0, 0], color: palette[0] }, label: { show: true, position: 'top', color: labelText, fontSize: 11 } }]
             })
         }
 
@@ -2059,9 +2064,8 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
                 backgroundColor: 'transparent',
                 tooltip: {
                     trigger: 'item',
-                    backgroundColor: 'rgba(15, 23, 42, 0.96)',
-                    borderColor: 'rgba(148, 163, 184, 0.18)',
-                    textStyle: { color: '#e2e8f0' },
+                    textStyle: { color: '#1B1924' },
+                    extraCssText: 'background:#FFFFFF;border:1px solid #E9E5DF;box-shadow:0 8px 24px rgba(27,25,36,0.08);',
                     formatter: (params: any) => {
                         const entry = params.data?.entry as ActivityCalendarEntry | undefined
                         if (!entry) return ''
@@ -2081,7 +2085,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
                     max: Math.max(activityCalendar.value.max_activity_score, 1),
                     show: false,
                     inRange: {
-                        color: ['#eef2ff', '#c7d2fe', '#818cf8', '#4f46e5', '#312e81']
+                        color: HEAT_RAMP
                     }
                 },
                 calendar: {
@@ -2093,20 +2097,20 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
                     cellSize: ['auto', 18],
                     splitLine: { show: false },
                     itemStyle: {
-                        color: 'rgba(99, 102, 241, 0.06)',
+                        color: 'rgba(90, 75, 196, 0.06)',
                         borderWidth: 2,
-                        borderColor: '#ffffff'
+                        borderColor: '#FFFFFF'
                     },
                     yearLabel: { show: false },
                     dayLabel: {
                         firstDay: 1,
                         nameMap: ['日', '一', '二', '三', '四', '五', '六'],
-                        color: '#94a3b8',
+                        color: '#9B95A5',
                         margin: 14
                     },
                     monthLabel: {
                         nameMap: 'cn',
-                        color: '#64748b',
+                        color: '#5A5566',
                         fontWeight: 600,
                         margin: 18
                     }
@@ -2121,7 +2125,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
                     emphasis: {
                         itemStyle: {
                             shadowBlur: 8,
-                            shadowColor: 'rgba(79, 70, 229, 0.35)'
+                            shadowColor: 'rgba(90, 75, 196, 0.35)'
                         }
                     }
                 }]
@@ -2132,11 +2136,15 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
             if (!wordCountChart.value) return
             if (wordCountChartInstance) wordCountChartInstance.dispose()
             wordCountChartInstance = echarts.init(wordCountChart.value)
+            const palette = chartPalette()
+            const hairline = getComputedStyle(document.documentElement).getPropertyValue('--ct-border-color').trim() || '#E9E5DF'
+            const axisText = getComputedStyle(document.documentElement).getPropertyValue('--ct-text-tertiary').trim() || '#9B95A5'
+            const labelText = getComputedStyle(document.documentElement).getPropertyValue('--ct-text-secondary').trim() || '#5A5566'
             wordCountChartInstance.setOption({
                 grid: { left: '3%', right: '4%', bottom: '3%', top: '10%', containLabel: true },
-                xAxis: { type: 'category', data: ['我', '对方'], axisLabel: { color: 'rgba(255,255,255,0.6)' } },
-                yAxis: { type: 'value', splitLine: { lineStyle: { color: 'rgba(255,255,255,0.05)', type: 'dashed' } }, axisLabel: { color: 'rgba(255,255,255,0.6)', formatter: (v: number) => `${(v / 1000).toFixed(0)}k` } },
-                series: [{ type: 'bar', data: [{ value: wordCountsStats.value.userCharCount, itemStyle: { color: '#818cf8' } }, { value: wordCountsStats.value.otherCharCount, itemStyle: { color: '#f472b6' } }], barWidth: '40%', label: { show: true, position: 'top', color: 'rgba(255,255,255,0.8)', formatter: (p: any) => formatNumber(p.value) } }]
+                xAxis: { type: 'category', data: ['我', '对方'], axisLabel: { color: axisText } },
+                yAxis: { type: 'value', splitLine: { lineStyle: { color: hairline, type: 'dashed' } }, axisLabel: { color: axisText, formatter: (v: number) => `${(v / 1000).toFixed(0)}k` } },
+                series: [{ type: 'bar', data: [{ value: wordCountsStats.value.userCharCount, itemStyle: { color: palette[0] } }, { value: wordCountsStats.value.otherCharCount, itemStyle: { color: palette[1] } }], barWidth: '40%', label: { show: true, position: 'top', color: labelText, formatter: (p: any) => formatNumber(p.value) } }]
             })
         }
 
@@ -2187,7 +2195,6 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
             } else displayScore.value = 0
         })
 
-        const getScoreColor = (score: number) => { if (score >= 80) return '#10b981'; if (score >= 55) return '#3b82f6'; if (score >= 35) return '#f59e0b'; return '#ef4444' }
         const scrollToDetails = (idSuffix: string) => document.getElementById(`detail-${idSuffix}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
         const handlePreferenceDisabledClick = () => { showKeywordsDialog.value = true }
         function onWordSelect(word: string) { console.debug('selected', word) }

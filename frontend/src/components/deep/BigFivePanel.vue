@@ -243,8 +243,8 @@ watch(() => props.conversationId, () => {
   justify-content: center;
 }
 
-.swatch.me { background: #7c4dff; }
-.swatch.other { background: #d97706; }
+.swatch.me { background: #5A4BC4; }
+.swatch.other { background: #E0A458; }
 
 .dims-col {
   flex: 1 1 320px;
@@ -290,8 +290,8 @@ watch(() => props.conversationId, () => {
   transition: width 0.5s ease;
 }
 
-.dim-fill.me { background: #7c4dff; }
-.dim-fill.other { background: #d97706; }
+.dim-fill.me { background: #5A4BC4; }
+.dim-fill.other { background: #E0A458; }
 
 .dim-base-tick {
   position: absolute;

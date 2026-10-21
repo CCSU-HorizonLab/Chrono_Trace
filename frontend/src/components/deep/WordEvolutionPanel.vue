@@ -152,10 +152,10 @@ function togglePin(word?: string) {
   pinnedWord.value = pinnedWord.value === word ? null : word
 }
 
-// bump 折线配色：静态全部中性灰蓝（身份由行末直标承载），钉选词主紫加粗、
+// bump 折线配色：静态全部中性灰（身份由行末直标承载），钉选词墨紫加粗、
 // 其余淡化——「一词是主角、其余是上下文」的 emphasis 形态，避免 8 色线糊
-const LINE_BASE = '#94a3b8'
-const LINE_PINNED = '#7c4dff'
+const LINE_BASE = '#9B95A5'
+const LINE_PINNED = '#5A4BC4'
 
 const bumpRef = ref<HTMLElement | null>(null)
 let chartInstance: echarts.ECharts | null = null
@@ -164,9 +164,9 @@ let resizeObserver: ResizeObserver | null = null
 function buildOption(): echarts.EChartsOption {
   const css = (name: string, fallback: string) =>
     getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback
-  const textTertiary = css('--ct-text-tertiary', '#94a3b8')
-  const textSecondary = css('--ct-text-secondary', '#475569')
-  const borderColor = css('--ct-border-color', '#e2e8f0')
+  const textTertiary = css('--ct-text-tertiary', '#9B95A5')
+  const textSecondary = css('--ct-text-secondary', '#5A5566')
+  const borderColor = css('--ct-border-color', '#E9E5DF')
   const segLabels = segmentList.value.map((s) => toCompactRange(s.from_ts, s.to_ts))
   const maxRank = Math.max(8, ...bumpWords.value.flatMap((w) => w.ranks.filter((r): r is number => r != null)))
   const hasPin = !!pinnedWord.value

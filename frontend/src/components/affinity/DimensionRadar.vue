@@ -78,14 +78,14 @@ const getOption = (): EChartsOption => {
   const dimensionNames = activeDimensions.map(dim => dim.fullName)
   const weights = activeDimensions.map(dim => dim.weight)
 
-  const primaryColor = getCssVar('--ct-color-primary') || '#5b6be0'
-  const textColor = getCssVar('--ct-text-secondary') || '#666'
-  const splitLineColor = getCssVar('--ct-border-color') || '#eee'
-  const splitAreaColor1 = getCssVar('--ct-bg-secondary') || '#f9fafb'
-  const splitAreaColor2 = getCssVar('--ct-bg-tertiary') || '#f3f4f6'
-  const tooltipBg = getCssVar('--ct-bg-elevated') || 'rgba(255, 255, 255, 0.9)'
-  const tooltipBorder = getCssVar('--ct-border-color') || '#eee'
-  const tooltipText = getCssVar('--ct-text-primary') || '#333'
+  const primaryColor = getCssVar('--ct-color-primary') || '#5A4BC4'
+  const textColor = getCssVar('--ct-text-secondary') || '#5A5566'
+  const splitLineColor = getCssVar('--ct-border-color') || '#E9E5DF'
+  const splitAreaColor1 = getCssVar('--ct-bg-card') || '#FFFFFF'
+  const splitAreaColor2 = getCssVar('--ct-bg-sunken') || '#F3F1ED'
+  const tooltipBg = getCssVar('--ct-bg-card') || '#FFFFFF'
+  const tooltipBorder = getCssVar('--ct-border-color') || '#E9E5DF'
+  const tooltipText = getCssVar('--ct-text-primary') || '#1B1924'
 
   return {
     tooltip: {
@@ -152,7 +152,7 @@ const getOption = (): EChartsOption => {
             areaStyle: {
               color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
                 { offset: 0, color: primaryColor },
-                { offset: 1, color: 'rgba(91, 107, 224, 0.1)' }
+                { offset: 1, color: 'rgba(90, 75, 196, 0.1)' }
               ])
             },
             lineStyle: {

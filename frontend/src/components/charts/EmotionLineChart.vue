@@ -28,8 +28,8 @@
       >
         <defs>
           <linearGradient id="emotion-area-gradient" x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stop-color="#0d9488" stop-opacity="0.28" />
-            <stop offset="100%" stop-color="#0d9488" stop-opacity="0.04" />
+            <stop offset="0%" :stop-color="COMBINED_COLOR" stop-opacity="0.28" />
+            <stop offset="100%" :stop-color="COMBINED_COLOR" stop-opacity="0.04" />
           </linearGradient>
         </defs>
 
@@ -208,15 +208,15 @@ type TimeseriesPoint = {
   lowConfidence?: boolean
 }
 
-// 三线配色经 CVD 校验（dataviz 六检全过，白底）：双方=青绿 / 我=紫 / TA=深琥珀
-// （旧「双方」蓝 #5b8def 与紫正常视觉 ΔE 14.7 <15 硬不过，三线同显时换青绿；
-// 好感度菱形=深蓝，形状+色相双重区分）。我/TA 实体色自 big5Shared 单一来源取
-import { BIG5_COLOR_ME, BIG5_COLOR_OTHER } from '@/components/deep/big5Shared'
+// 三线配色经 CVD 校验（dataviz 六检全过，白底）：双方=青绿 / 我=墨紫 / TA=琥珀
+// （旧「双方」蓝 #5b8def 与墨紫正常视觉 ΔE 14.7 <15 硬不过，三线同显时换青绿；
+// 好感度菱形=珊瑚，形状+色相双重区分）。我/TA/双方实体色自 big5Shared 单一来源取
+import { BIG5_COLOR_ME, BIG5_COLOR_OTHER, BIG5_COLOR_COMBINED } from '@/components/deep/big5Shared'
 
 const ME_COLOR = BIG5_COLOR_ME
 const OTHER_COLOR = BIG5_COLOR_OTHER
-const AFFINITY_COLOR = '#2563eb'
-const COMBINED_COLOR = '#0d9488'
+const AFFINITY_COLOR = '#E8656F'
+const COMBINED_COLOR = BIG5_COLOR_COMBINED
 
 const props = defineProps<{
   timeseries: TimeseriesPoint[]
@@ -409,8 +409,8 @@ const legendItems = computed(() => {
   }
   if (hasSideCounts.value) {
     items.push(
-      { label: '我的消息量', color: 'rgba(124, 77, 255, 0.4)' },
-      { label: 'TA 的消息量', color: 'rgba(217, 119, 6, 0.4)' },
+      { label: '我的消息量', color: 'rgba(90, 75, 196, 0.4)' },
+      { label: 'TA 的消息量', color: 'rgba(224, 164, 88, 0.4)' },
     )
   }
   if (props.affinityPoints?.length) {
@@ -646,35 +646,35 @@ svg {
 }
 
 .message-bar.bar-total {
-  fill: rgba(91, 141, 239, 0.12);
+  fill: rgba(47, 163, 154, 0.12);
   rx: 8px;
 }
 
 .message-bar.bar-total.active {
-  fill: rgba(91, 141, 239, 0.2);
+  fill: rgba(47, 163, 154, 0.2);
 }
 
 .message-bar.bar-me {
-  fill: rgba(124, 77, 255, 0.16);
+  fill: rgba(90, 75, 196, 0.16);
   rx: 3px;
 }
 
 .message-bar.bar-me.active {
-  fill: rgba(124, 77, 255, 0.26);
+  fill: rgba(90, 75, 196, 0.26);
 }
 
 .message-bar.bar-other {
-  fill: rgba(217, 119, 6, 0.14);
+  fill: rgba(224, 164, 88, 0.14);
   rx: 3px;
 }
 
 .message-bar.bar-other.active {
-  fill: rgba(217, 119, 6, 0.24);
+  fill: rgba(224, 164, 88, 0.24);
 }
 
 .affinity-line {
   fill: none;
-  stroke: #2563eb;
+  stroke: #E8656F;
   stroke-width: 2;
   stroke-dasharray: 6 4;
   opacity: 0.75;
@@ -688,24 +688,24 @@ svg {
 
 .point-dot {
   fill: #ffffff;
-  stroke: #0d9488;
+  stroke: #2FA39A;
   stroke-width: 2;
   transition: r 0.18s ease, fill 0.18s ease;
 }
 
 .point-dot.active {
-  fill: #0d9488;
+  fill: #2FA39A;
 }
 
 .affinity-mark {
   fill: #ffffff;
-  stroke: #2563eb;
+  stroke: #E8656F;
   stroke-width: 2;
   pointer-events: all;
 }
 
 .cursor-line {
-  stroke: rgba(91, 141, 239, 0.28);
+  stroke: rgba(90, 75, 196, 0.28);
   stroke-dasharray: 4 4;
 }
 
@@ -713,24 +713,25 @@ svg {
   position: absolute;
   min-width: 170px;
   padding: 10px 12px;
-  border-radius: 12px;
-  background: rgba(15, 23, 42, 0.92);
-  color: #e2e8f0;
-  font-size: 12px;
+  border-radius: var(--ct-radius-md);
+  background: var(--ct-bg-card);
+  border: 1px solid var(--ct-border-color);
+  color: var(--ct-text-primary);
+  font-size: var(--ct-text-xs);
   line-height: 1.6;
   pointer-events: none;
   transform: translate(-50%, -100%);
-  box-shadow: 0 14px 32px rgba(15, 23, 42, 0.22);
+  box-shadow: var(--ct-shadow-lg);
 }
 
 .tooltip-date {
-  color: #ffffff;
-  font-weight: 700;
+  color: var(--ct-text-primary);
+  font-weight: var(--ct-font-bold);
   margin-bottom: 4px;
 }
 
 .tooltip-warn {
-  color: #fbbf24;
+  color: var(--ct-color-warning);
 }
 
 .empty {

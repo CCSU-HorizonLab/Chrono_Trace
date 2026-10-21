@@ -45,12 +45,12 @@
   --ct-color-error-light: #FDEEEE;
   --ct-color-info-light: #EEEBFA;
 
-  /* 数据色板（图表分类色，固定顺序） */
+  /* 数据色板（图表分类色，固定顺序；已过 dataviz 六检：CVD ΔE 8.2、normal 15.8） */
   --ct-chart-1: #5A4BC4;
   --ct-chart-2: #E8656F;
   --ct-chart-3: #2FA39A;
   --ct-chart-4: #E0A458;
-  --ct-chart-5: #8B93A7;
+  --ct-chart-5: #C455D0;
 
   /* 暖调阴影三档 */
   --ct-shadow-sm: 0 1px 2px rgba(27, 25, 36, 0.04);

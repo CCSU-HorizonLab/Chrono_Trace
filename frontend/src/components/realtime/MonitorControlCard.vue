@@ -457,27 +457,26 @@ onBeforeUnmount(() => {
 /* ═══ Command Card ═══ */
 .sug-command-card {
   position: relative; z-index: 10;
-  background: var(--ct-bg-elevated); border: 1px solid var(--ct-border-color);
-  border-radius: var(--ct-radius-xl);
-  transition: border-color var(--ct-transition-normal), box-shadow var(--ct-transition-normal);
+  background: var(--ct-bg-card);
+  border-radius: var(--ct-radius-lg);
+  box-shadow: var(--ct-shadow-sm);
 }
-.sug-command-card:hover { border-color: var(--ct-border-color-hover); box-shadow: var(--ct-shadow-md); }
 .sug-command-card.is-monitoring {
-  border-color: var(--ct-color-success);
-  box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.15), var(--ct-shadow-md);
+  box-shadow: 0 0 0 2px var(--ct-color-success);
 }
 
 .sug-command-hd {
   display: flex; justify-content: space-between; align-items: center;
   padding: var(--ct-space-lg) var(--ct-space-xl);
-  cursor: pointer; user-select: none; transition: background var(--ct-transition-fast);
-  border-radius: var(--ct-radius-xl);
+  cursor: pointer; user-select: none;
+  transition: background var(--ct-transition-fast) var(--ct-ease-out);
+  border-radius: var(--ct-radius-lg);
 }
 .sug-command-hd.is-expanded {
   border-bottom-left-radius: 0;
   border-bottom-right-radius: 0;
 }
-.sug-command-hd:hover { background: var(--ct-bg-secondary); }
+.sug-command-hd:hover { background: var(--ct-bg-hover); }
 .sug-command-title {
   display: flex; align-items: center; gap: var(--ct-space-sm);
   font-weight: 600; font-size: var(--ct-text-base); color: var(--ct-text-primary);
@@ -489,12 +488,12 @@ onBeforeUnmount(() => {
   background: var(--ct-text-tertiary); transition: background var(--ct-transition-normal);
 }
 .sug-status-beacon.active {
-  background: var(--ct-color-success); box-shadow: 0 0 8px rgba(16, 185, 129, 0.6);
+  background: var(--ct-color-success); box-shadow: 0 0 8px rgba(47, 163, 154, 0.6);
   animation: sug-beacon 2s ease-in-out infinite;
 }
 @keyframes sug-beacon {
-  0%, 100% { opacity: 1; box-shadow: 0 0 8px rgba(16, 185, 129, 0.6); }
-  50% { opacity: 0.6; box-shadow: 0 0 16px rgba(16, 185, 129, 0.3); }
+  0%, 100% { opacity: 1; box-shadow: 0 0 8px rgba(47, 163, 154, 0.6); }
+  50% { opacity: 0.6; box-shadow: 0 0 16px rgba(47, 163, 154, 0.3); }
 }
 
 .sug-chevron { color: var(--ct-text-tertiary); transition: transform var(--ct-transition-fast); }
@@ -534,19 +533,19 @@ onBeforeUnmount(() => {
 }
 .sug-target-name:disabled { opacity: 0.5; }
 
-/* 监听按钮 */
+/* 监听按钮：实底墨紫 / 实底珊瑚，无位移无投影 */
 .sug-monitor-btn {
   display: inline-flex; align-items: center; gap: var(--ct-space-sm);
-  padding: 10px 28px; border: none; border-radius: var(--ct-radius-lg);
-  font-weight: 600; font-size: var(--ct-text-sm); cursor: pointer; white-space: nowrap;
-  transition: all var(--ct-transition-fast);
-  background: linear-gradient(135deg, var(--ct-color-primary), #6366f1);
-  color: white; box-shadow: 0 4px 14px rgba(124, 77, 255, 0.25);
+  padding: 10px 28px; border: none; border-radius: var(--ct-radius-md);
+  font-weight: var(--ct-font-semibold); font-size: var(--ct-text-sm); cursor: pointer; white-space: nowrap;
+  transition: background-color var(--ct-transition-fast) var(--ct-ease-out);
+  background: var(--ct-color-primary);
+  color: var(--ct-text-inverse);
 }
-.sug-monitor-btn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(124, 77, 255, 0.35); }
-.sug-monitor-btn.stop { background: linear-gradient(135deg, var(--ct-color-error), #dc2626); box-shadow: 0 4px 14px rgba(239, 68, 68, 0.25); }
-.sug-monitor-btn.stop:hover:not(:disabled) { box-shadow: 0 6px 20px rgba(239, 68, 68, 0.35); }
-.sug-monitor-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+.sug-monitor-btn:hover:not(:disabled) { background: var(--ct-color-primary-hover); }
+.sug-monitor-btn.stop { background: var(--ct-color-error); }
+.sug-monitor-btn.stop:hover:not(:disabled) { background: #D14E58; }
+.sug-monitor-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .sug-btn-icon { font-size: 11px; }
 
 /* Pipeline 进度 */
@@ -573,28 +572,24 @@ onBeforeUnmount(() => {
 
 .sug-error {
   padding: var(--ct-space-sm) var(--ct-space-md);
-  background: var(--ct-color-error-light); color: var(--ct-color-error);
+  background: var(--ct-color-error-tint); color: var(--ct-color-error);
   border-radius: var(--ct-radius-md); font-size: var(--ct-text-sm);
-  border-left: 3px solid var(--ct-color-error);
 }
 
 /* ═══ 建议配置卡 ═══ */
 .sug-panel {
-  position: relative; background: var(--ct-bg-elevated);
-  border: 1px solid var(--ct-border-color); border-radius: var(--ct-radius-xl);
+  position: relative; background: var(--ct-bg-card);
+  border-radius: var(--ct-radius-lg);
+  box-shadow: var(--ct-shadow-sm);
   overflow: hidden; display: flex; flex-direction: column;
-  transition: transform var(--ct-transition-normal) var(--ct-ease-out),
-              box-shadow var(--ct-transition-normal) var(--ct-ease-out),
-              border-color var(--ct-transition-normal);
 }
-.sug-panel:hover { transform: translateY(-3px); box-shadow: var(--ct-shadow-lg); border-color: var(--ct-border-color-hover); }
 
 .sug-panel-accent { height: 3px; width: 100%; flex-shrink: 0; }
-.accent-amber { background: linear-gradient(90deg, #f59e0b, #f97316); }
+.accent-amber { background: var(--ct-color-accent); }
 
 .sug-panel-hd {
   display: flex; align-items: center; gap: var(--ct-space-sm);
-  padding: var(--ct-space-md) var(--ct-space-lg); font-weight: 600;
+  padding: var(--ct-space-md) var(--ct-space-lg); font-weight: var(--ct-font-semibold);
   font-size: var(--ct-text-sm); color: var(--ct-text-primary);
   border-bottom: 1px solid var(--ct-border-color);
 }
@@ -603,25 +598,26 @@ onBeforeUnmount(() => {
 
 .sug-config-body { gap: var(--ct-space-md); }
 .sug-config-head {
-  font-size: var(--ct-text-sm); font-weight: 600; color: var(--ct-text-primary);
+  font-size: var(--ct-text-sm); font-weight: var(--ct-font-semibold); color: var(--ct-text-primary);
   padding: var(--ct-space-xs) var(--ct-space-sm);
-  background: var(--ct-bg-secondary); border-radius: var(--ct-radius-md);
+  background: var(--ct-bg-sunken); border-radius: var(--ct-radius-md);
 }
 .sug-config-group { display: flex; flex-direction: column; gap: var(--ct-space-xs); }
 .sug-seg { display: flex; border-radius: var(--ct-radius-md); overflow: hidden; border: 1px solid var(--ct-border-color); }
 .sug-seg button {
   flex: 1; padding: var(--ct-space-sm); border: none;
-  background: var(--ct-bg-elevated); color: var(--ct-text-secondary);
-  font-size: var(--ct-text-xs); font-weight: 500; cursor: pointer;
-  transition: all var(--ct-transition-fast);
+  background: var(--ct-bg-card); color: var(--ct-text-secondary);
+  font-size: var(--ct-text-xs); font-weight: var(--ct-font-medium); cursor: pointer;
+  transition: background-color var(--ct-transition-fast) var(--ct-ease-out),
+              color var(--ct-transition-fast) var(--ct-ease-out);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 4px;
 }
 .sug-seg button:not(:last-child) { border-right: 1px solid var(--ct-border-color); }
-.sug-seg button.active { background: var(--ct-color-primary); color: white; font-weight: 600; }
-.sug-seg button:hover:not(.active) { background: var(--ct-bg-tertiary); }
+.sug-seg button.active { background: var(--ct-color-primary-tint); color: var(--ct-color-primary); font-weight: var(--ct-font-semibold); }
+.sug-seg button:hover:not(.active) { background: var(--ct-bg-hover); }
 .sug-intent-icon {
   display: inline-flex;
   align-items: center;
@@ -632,7 +628,7 @@ onBeforeUnmount(() => {
   margin: 0;
   padding: var(--ct-space-sm) var(--ct-space-md);
   border-radius: var(--ct-radius-md);
-  background: var(--ct-bg-secondary);
+  background: var(--ct-bg-sunken);
   color: var(--ct-text-tertiary);
   font-size: var(--ct-text-xs);
   line-height: 1.6;

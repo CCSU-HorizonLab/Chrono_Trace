@@ -255,44 +255,44 @@ async function handleGenerate() {
 </script>
 
 <style scoped>
-.ct-modal-overlay {
-  position: fixed; inset: 0; z-index: 3000;
-  background: rgba(10, 12, 18, 0.6);
-  display: flex; align-items: center; justify-content: center;
-}
+/* 遮罩吃全局 .ct-modal-overlay（panels.css），此处只管弹窗本体 */
 .portrait-dialog {
   width: 520px; max-width: 92vw;
-  background: var(--ct-bg-elevated, #1d222c);
-  border-radius: 16px; border: 1px solid var(--ct-border-color);
-  box-shadow: 0 24px 64px rgba(0,0,0,0.45);
+  background: var(--ct-bg-card);
+  border-radius: var(--ct-radius-lg);
+  box-shadow: var(--ct-shadow-lg);
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 .pd-header {
   display: flex; align-items: center; gap: 12px;
   padding: 18px 20px; border-bottom: 1px solid var(--ct-border-color);
 }
 .pd-icon-wrap {
-  width: 40px; height: 40px; border-radius: 12px;
-  background: var(--ct-color-primary-muted); color: var(--ct-color-primary);
+  width: 40px; height: 40px; border-radius: var(--ct-radius-md);
+  background: var(--ct-color-primary-tint); color: var(--ct-color-primary);
   display: flex; align-items: center; justify-content: center; flex-shrink: 0;
 }
-.pd-title { margin: 0; font-size: 17px; font-weight: 600; }
-.pd-subtitle { margin: 2px 0 0; font-size: 12px; color: var(--ct-text-secondary); }
+.pd-title { margin: 0; font-size: var(--ct-text-base); font-weight: var(--ct-font-bold); }
+.pd-subtitle { margin: 2px 0 0; font-size: var(--ct-text-xs); color: var(--ct-text-secondary); }
 .pd-close {
   margin-left: auto; background: none; border: none; cursor: pointer;
-  color: var(--ct-text-secondary); padding: 6px; border-radius: 8px;
+  color: var(--ct-text-tertiary); padding: 6px; border-radius: var(--ct-radius-sm);
+  transition: background-color var(--ct-transition-fast) var(--ct-ease-out),
+              color var(--ct-transition-fast) var(--ct-ease-out);
 }
-.pd-close:hover { background: var(--ct-bg-tertiary); color: var(--ct-text-primary); }
+.pd-close:hover { background: var(--ct-bg-hover); color: var(--ct-text-primary); }
 .pd-panels { display: flex; gap: 12px; padding: 16px 20px; }
 .pd-card {
-  flex: 1; border: 1px solid var(--ct-border-color); border-radius: 12px;
+  flex: 1; border: 1px solid var(--ct-border-color); border-radius: var(--ct-radius-md);
   padding: 14px; transition: opacity 0.15s, border-color 0.15s;
 }
 .pd-card.is-off { opacity: 0.45; }
 .pd-card-toggle { display: flex; align-items: center; gap: 8px; cursor: pointer; margin-bottom: 6px; }
 .pd-toggle-track {
-  width: 34px; height: 20px; border-radius: 999px;
-  background: var(--ct-bg-tertiary); position: relative;
+  width: 34px; height: 20px; border-radius: var(--ct-radius-full);
+  background: var(--ct-bg-sunken); position: relative;
   transition: background 0.15s;
 }
 .pd-toggle-track.on { background: var(--ct-color-primary); }
@@ -301,39 +301,39 @@ async function handleGenerate() {
   border-radius: 50%; background: #fff; transition: left 0.15s;
 }
 .pd-toggle-track.on .pd-toggle-thumb { left: 16px; }
-.pd-card-label { font-size: 13px; font-weight: 600; }
-.pd-card-hint { margin: 0 0 10px; font-size: 11px; color: var(--ct-text-tertiary); }
+.pd-card-label { font-size: var(--ct-text-sm); font-weight: var(--ct-font-semibold); }
+.pd-card-hint { margin: 0 0 10px; font-size: var(--ct-text-xs); color: var(--ct-text-tertiary); }
 .pd-options.disabled { opacity: 0.5; pointer-events: none; }
-.pd-options-label { font-size: 11px; font-weight: 600; color: var(--ct-text-secondary); display: block; margin-bottom: 6px; }
+.pd-options-label { font-size: var(--ct-text-xs); font-weight: var(--ct-font-semibold); color: var(--ct-text-secondary); display: block; margin-bottom: 6px; }
 .pd-chips { display: flex; gap: 6px; flex-wrap: wrap; }
 .pd-chip {
   display: flex; flex-direction: column; align-items: center; gap: 2px;
-  padding: 6px 12px; border-radius: 10px; cursor: pointer;
-  border: 1px solid var(--ct-border-color); background: var(--ct-bg-secondary);
-  transition: all 0.15s;
+  padding: 6px 12px; border-radius: var(--ct-radius-md); cursor: pointer;
+  border: 1px solid var(--ct-border-color); background: var(--ct-bg-sunken);
+  transition: border-color 0.15s, background-color 0.15s;
 }
-.pd-chip.active { border-color: rgba(124,77,255,0.4); background: var(--ct-color-primary-muted); }
-.pd-chip-text { font-size: 12px; font-weight: 600; }
-.pd-chip-tip { font-size: 10px; color: var(--ct-text-tertiary); }
-.pd-est { margin-top: 8px; font-size: 10px; color: var(--ct-text-tertiary); line-height: 1.5; }
+.pd-chip.active { border-color: var(--ct-color-primary); background: var(--ct-color-primary-tint); }
+.pd-chip-text { font-size: var(--ct-text-xs); font-weight: var(--ct-font-semibold); }
+.pd-chip-tip { font-size: var(--ct-text-xs); color: var(--ct-text-tertiary); }
+.pd-est { margin-top: 8px; font-size: var(--ct-text-xs); color: var(--ct-text-tertiary); line-height: 1.5; }
 /* 自定义时间窗（可选）：留空走档位滚动窗，填写则按区间生成 custom 快照 */
 .pd-window {
   padding: 0 20px 14px;
 }
-.pd-window-label { font-size: 11px; font-weight: 600; color: var(--ct-text-secondary); display: block; margin-bottom: 6px; }
+.pd-window-label { font-size: var(--ct-text-xs); font-weight: var(--ct-font-semibold); color: var(--ct-text-secondary); display: block; margin-bottom: 6px; }
 .pd-window-inputs { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .pd-window-inputs input[type="date"] {
-  padding: 5px 10px; border-radius: 8px; font-size: 12px;
-  border: 1px solid var(--ct-border-color); background: var(--ct-bg-secondary);
+  padding: 5px 10px; border-radius: var(--ct-radius-sm); font-size: var(--ct-text-xs);
+  border: 1px solid var(--ct-border-color); background: var(--ct-bg-sunken);
   color: var(--ct-text-primary);
 }
-.pd-window-sep { font-size: 12px; color: var(--ct-text-tertiary); }
+.pd-window-sep { font-size: var(--ct-text-xs); color: var(--ct-text-tertiary); }
 .pd-window-clear {
   background: none; border: none; cursor: pointer; padding: 2px 6px;
-  font-size: 11px; color: var(--ct-text-secondary); border-radius: 6px;
+  font-size: var(--ct-text-xs); color: var(--ct-text-secondary); border-radius: var(--ct-radius-sm);
 }
-.pd-window-clear:hover { color: var(--ct-color-danger, #ef4444); }
-.pd-window-note { margin: 6px 0 0; font-size: 10px; color: var(--ct-text-tertiary); line-height: 1.5; }
+.pd-window-clear:hover { color: var(--ct-color-error); }
+.pd-window-note { margin: 6px 0 0; font-size: var(--ct-text-xs); color: var(--ct-text-tertiary); line-height: 1.5; }
 .pd-footer {
   display: flex; justify-content: flex-end; gap: 10px; align-items: center;
   padding: 14px 20px; border-top: 1px solid var(--ct-border-color);
@@ -341,7 +341,7 @@ async function handleGenerate() {
 /* 生成失败内联提示：弹窗保持打开，避免「秒关无反馈」体感 */
 .pd-error {
   flex: 1; margin: 0; text-align: left;
-  font-size: 12px; color: var(--ct-color-danger, #ef4444);
+  font-size: var(--ct-text-xs); color: var(--ct-color-error);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 /* 生成中图标旋转 */
@@ -354,15 +354,15 @@ async function handleGenerate() {
 }
 .pd-btn {
   display: inline-flex; align-items: center; gap: 6px;
-  padding: 8px 20px; border-radius: 10px; font-size: 13px; font-weight: 600;
+  padding: 8px 20px; border-radius: var(--ct-radius-md); font-size: var(--ct-text-sm); font-weight: var(--ct-font-semibold);
   cursor: pointer; border: 1px solid transparent;
 }
 .pd-btn-ghost { background: transparent; color: var(--ct-text-secondary); border-color: var(--ct-border-color); }
-.pd-btn-ghost:hover { background: var(--ct-bg-tertiary); }
+.pd-btn-ghost:hover { background: var(--ct-bg-hover); }
 /* 生成中的关闭按钮 = 终止操作：用危险色提示后果 */
-.pd-btn-stop { background: transparent; color: var(--ct-color-danger, #ef4444); border-color: rgba(239,68,68,0.4); }
-.pd-btn-stop:hover { background: rgba(239,68,68,0.08); }
-.pd-btn-primary { background: var(--ct-color-primary); color: #fff; }
+.pd-btn-stop { background: transparent; color: var(--ct-color-error); border-color: var(--ct-color-error-tint); }
+.pd-btn-stop:hover { background: var(--ct-color-error-tint); }
+.pd-btn-primary { background: var(--ct-color-primary); color: var(--ct-text-inverse); }
 .pd-btn-primary:hover { background: var(--ct-color-primary-hover); }
 .pd-btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
 .sr-only { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }

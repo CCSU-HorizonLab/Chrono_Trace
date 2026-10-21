@@ -1,15 +1,13 @@
 /* 分析面板共享解剖——时光深度五面板与 TA 画像 BigFivePanel/PosterStudio 统一引用。
-   此前各面板 scoped 里各写一套 .card/.panel-header/.btn，漂移出四套按钮规格、
-   三种徽标、三种图例语言；收敛到本文件为唯一来源。面板私有变体
-   （.seg-btn/.enhance-btn/.retry 等）仍留各自 scoped，scoped 特异性覆盖全局，
-   行为可控。hover 写满 :not(:disabled) 是禁用语义守卫（全局 button 元素皮肤
-   已退场为中性 reset，军备背景不复存在，纪律保留）。 */
+   卡片语言对齐墨痕暖白：无描边、色阶 + 浅投影分层、无 hover 上浮。
+   面板私有变体（.seg-btn/.enhance-btn/.retry 等）仍留各自 scoped，
+   scoped 特异性覆盖全局，行为可控。hover 写满 :not(:disabled) 是禁用
+   语义守卫（全局 button 元素皮肤已退场为中性 reset，纪律保留）。 */
 
 .panel {
-  background: var(--ct-bg-elevated);
-  border: 1px solid var(--ct-border-color);
+  background: var(--ct-bg-card);
   border-radius: var(--ct-radius-lg);
-  box-shadow: var(--ct-shadow-md);
+  box-shadow: var(--ct-shadow-sm);
   padding: var(--ct-space-lg);
   margin-bottom: var(--ct-space-lg);
 }
@@ -43,45 +41,49 @@
   flex-shrink: 0;
 }
 
+/* 徽标：tint 底非空心 */
 .panel-badge {
   padding: 2px 10px;
-  border-radius: 999px;
+  border-radius: var(--ct-radius-full);
   font-size: var(--ct-text-xs);
-  border: 1px solid var(--ct-border-color);
+  background: var(--ct-bg-sunken);
   color: var(--ct-text-secondary);
   white-space: nowrap;
 }
 
 .panel-badge.enhanced {
-  border-color: var(--ct-color-primary);
+  background: var(--ct-color-primary-tint);
   color: var(--ct-color-primary);
 }
 
 .pill {
   padding: 1px 8px;
-  border-radius: 999px;
+  border-radius: var(--ct-radius-full);
   font-size: var(--ct-text-xs);
-  background: var(--ct-bg-tertiary);
+  background: var(--ct-bg-sunken);
   color: var(--ct-text-tertiary);
   white-space: nowrap;
 }
 
+/* 按钮走 ct-btn 圆角档（10px），胶囊留给页签 */
 .btn {
   padding: 5px 12px;
   border: 1px solid var(--ct-border-color);
   background: transparent;
   color: var(--ct-text-secondary);
-  border-radius: 999px;
+  border-radius: var(--ct-radius-md);
   cursor: pointer;
   font-size: var(--ct-text-xs);
-  transition: all var(--ct-transition-fast) ease;
+  transition: border-color var(--ct-transition-fast) var(--ct-ease-out),
+              background-color var(--ct-transition-fast) var(--ct-ease-out),
+              color var(--ct-transition-fast) var(--ct-ease-out);
   white-space: nowrap;
 }
 
 .btn:hover:not(:disabled) {
   border-color: var(--ct-border-color-hover);
+  background: var(--ct-bg-hover);
   color: var(--ct-text-primary);
-  transform: none;
 }
 
 .btn:disabled {
@@ -90,7 +92,7 @@
 }
 
 .btn.active {
-  background: var(--ct-color-primary-light);
+  background: var(--ct-color-primary-tint);
   color: var(--ct-color-primary);
   border-color: var(--ct-color-primary);
 }
@@ -103,6 +105,7 @@
 
 .btn.primary:hover:not(:disabled) {
   background: var(--ct-color-primary-hover);
+  border-color: var(--ct-color-primary-hover);
   color: var(--ct-text-inverse);
 }
 
@@ -192,7 +195,7 @@
   margin-top: var(--ct-space-lg);
 }
 
-/* 胶囊页签 */
+/* 胶囊页签：沉底容器 + active 白卡墨紫字（与顶栏导航同语言） */
 .ct-tabs-capsule {
   display: inline-flex;
   background: var(--ct-bg-sunken);
@@ -211,14 +214,15 @@
   font-size: var(--ct-text-sm);
   font-weight: var(--ct-font-semibold);
   cursor: pointer;
-  transition: all var(--ct-transition-normal);
+  transition: color var(--ct-transition-fast) var(--ct-ease-out),
+              background-color var(--ct-transition-fast) var(--ct-ease-out);
   white-space: nowrap;
 }
 
 .ct-tabs-capsule .menu-item.active {
-  background: var(--ct-color-primary);
-  color: var(--ct-text-inverse);
-  box-shadow: 0 2px 8px rgba(90, 75, 196, 0.28);
+  background: var(--ct-bg-card);
+  color: var(--ct-color-primary);
+  box-shadow: var(--ct-shadow-sm);
 }
 
 .ct-tabs-capsule .menu-item:hover:not(.active) {

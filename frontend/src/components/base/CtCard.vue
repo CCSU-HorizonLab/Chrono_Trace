@@ -23,21 +23,11 @@ const hasHeader = computed(() => !!props.title || !!useSlots().header || !!useSl
 .ct-card {
   display: flex;
   flex-direction: column;
-  background: var(--ct-bg-elevated);
-  border: 1px solid var(--ct-border-color);
+  background: var(--ct-bg-card);
   border-radius: var(--ct-radius-lg);
   box-shadow: var(--ct-shadow-sm);
   color: var(--ct-text-primary);
   padding: var(--ct-space-lg);
-  transition: transform var(--ct-transition-normal) var(--ct-ease-out),
-              box-shadow var(--ct-transition-normal) var(--ct-ease-out),
-              border-color var(--ct-transition-normal) var(--ct-ease-out);
-}
-
-.ct-card:hover {
-  transform: translateY(-4px);
-  box-shadow: var(--ct-shadow-lg);
-  border-color: var(--ct-border-color-hover);
 }
 
 .ct-card-hd {
@@ -47,7 +37,7 @@ const hasHeader = computed(() => !!props.title || !!useSlots().header || !!useSl
   padding-bottom: var(--ct-space-md);
   margin-bottom: var(--ct-space-md);
   border-bottom: 1px solid var(--ct-border-color);
-  font-family: var(--ct-font-display);
+  font-family: var(--ct-font-body);
   font-size: var(--ct-text-lg);
   font-weight: var(--ct-font-semibold);
   color: var(--ct-text-primary);

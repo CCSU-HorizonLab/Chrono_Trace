@@ -1,6 +1,6 @@
 <template>
   <div class="subject-card">
-    <div class="card">
+    <div class="panel">
       <div class="header">
         <CtAvatar class="subject-avatar" :src="subject?.avatar" :name="subject?.name" :size="44" />
         <div class="title">
@@ -30,31 +30,14 @@ defineProps<{ subject?: Subject; hasAnalysis?: boolean }>()
 </script>
 
 <style scoped>
-.card {
-  background: var(--ct-bg-elevated);
-  border: 1px solid var(--ct-border-color);
-  border-radius: var(--ct-radius-lg);
-  box-shadow: var(--ct-shadow-md);
-  padding: var(--ct-space-lg);
-  transition: transform var(--ct-transition-normal) var(--ct-ease-out),
-              box-shadow var(--ct-transition-normal) var(--ct-ease-out),
-              border-color var(--ct-transition-normal) var(--ct-ease-out);
-}
-
-.card:hover {
-  transform: translateY(-2px);
-  box-shadow: var(--ct-shadow-lg);
-  border-color: var(--ct-border-color-hover);
-}
-
+.subject-card .panel { margin-bottom: 0; }
 .header { display: flex; align-items: center; gap: var(--ct-space-md); }
 .subject-avatar { flex-shrink: 0; }
 .title .name { font-size: var(--ct-text-base); font-weight: var(--ct-font-bold); color: var(--ct-text-primary); }
 .title .sub { color: var(--ct-text-secondary); font-size: var(--ct-text-xs); }
 .stats { margin-top: var(--ct-space-md); display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--ct-space-sm); }
 .stat {
-  background: var(--ct-bg-secondary);
-  border: 1px solid var(--ct-border-color);
+  background: var(--ct-bg-sunken);
   border-radius: var(--ct-radius-md);
   padding: var(--ct-space-sm) var(--ct-space-md);
   display: flex;

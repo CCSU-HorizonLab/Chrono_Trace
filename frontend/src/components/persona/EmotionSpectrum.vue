@@ -54,8 +54,7 @@ defineProps({
 .emotion-band {
   padding: 14px 16px;
   border-radius: 18px;
-  background: linear-gradient(180deg, rgba(248, 250, 252, 0.94), rgba(241, 245, 249, 0.92));
-  border: 1px solid rgba(148, 163, 184, 0.14);
+  background: var(--ct-bg-sunken);
 }
 
 .emotion-band-head {

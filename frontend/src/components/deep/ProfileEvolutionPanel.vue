@@ -322,7 +322,7 @@ restoreFromCache()
 }
 
 .error-text {
-  color: var(--ct-color-error, #dc2626);
+  color: var(--ct-color-error, #E8656F);
 }
 
 .empty-state.guide {
@@ -361,7 +361,7 @@ restoreFromCache()
   height: 12px;
   border-radius: 50%;
   border: 2px solid var(--ct-color-primary);
-  background: var(--ct-bg-elevated);
+  background: var(--ct-bg-card);
 }
 
 .row-arrow {
@@ -373,7 +373,7 @@ restoreFromCache()
 }
 
 .segment-card {
-  background: var(--ct-bg-secondary);
+  background: var(--ct-bg-sunken);
   border: 1px solid var(--ct-border-color);
   border-radius: var(--ct-radius-md);
   padding: var(--ct-space-md);
@@ -446,8 +446,8 @@ restoreFromCache()
 }
 
 .tag.unique {
-  border-color: #d97706;
-  color: #d97706;
+  border-color: #8F5B14;
+  color: #8F5B14;
 }
 
 .tag.shared {

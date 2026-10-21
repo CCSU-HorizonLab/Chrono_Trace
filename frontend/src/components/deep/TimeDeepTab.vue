@@ -166,7 +166,7 @@ watch(
   flex-wrap: wrap;
   padding: var(--ct-space-sm) 0;
   margin-bottom: var(--ct-space-sm);
-  background: var(--ct-bg-elevated);
+  background: var(--ct-bg-card);
   border-bottom: 1px solid var(--ct-border-color);
 }
 

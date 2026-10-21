@@ -187,7 +187,7 @@ onUnmounted(stopPolling)
   display: flex;
   align-items: center;
   gap: var(--ct-space-lg);
-  background: var(--ct-bg-elevated);
+  background: var(--ct-bg-card);
   border: 1px solid var(--ct-border-color);
   border-left: 3px solid var(--ct-color-primary);
   border-radius: var(--ct-radius-md);
@@ -221,7 +221,7 @@ onUnmounted(stopPolling)
 
 .coverage-error {
   margin-top: var(--ct-space-xs);
-  color: var(--ct-color-error, #dc2626);
+  color: var(--ct-color-error, #E8656F);
   font-size: var(--ct-text-xs);
 }
 
@@ -229,7 +229,7 @@ onUnmounted(stopPolling)
   margin-top: var(--ct-space-sm);
   height: 6px;
   border-radius: 999px;
-  background: var(--ct-bg-tertiary);
+  background: var(--ct-bg-sunken);
   overflow: hidden;
 }
 

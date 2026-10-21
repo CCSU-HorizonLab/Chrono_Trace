@@ -285,7 +285,7 @@ const emit = defineEmits<{
   (e: 'generate'): void
 }>()
 
-const palette = ['#f97316', '#fb7185', '#f59e0b', '#14b8a6', '#0ea5e9', '#8b5cf6']
+const palette = ['#E8656F', '#E0A458', '#2FA39A', '#5A4BC4', '#C455D0', '#8B93A7']
 
 const hasProfile = computed(() => Boolean(props.profile))
 
@@ -391,25 +391,25 @@ const emotionBands = computed(() => {
     {
       label: '温度感',
       value: positiveAvg || positivity,
-      color: '#fb923c',
+      color: '#E0A458',
       description: positiveAvg ? '对话里的正向情绪更常作为底色出现。' : '基于互动投入推断，这段关系更偏暖色调。'
     },
     {
       label: '稳定感',
       value: clamp01(1 - negativeAvg),
-      color: '#38bdf8',
+      color: '#8B93A7',
       description: negativeAvg ? '低波动说明情绪起伏相对平稳。' : '暂时缺少明显负向样本，整体更像平缓流动。'
     },
     {
       label: '共鸣感',
       value: resonance,
-      color: '#8b5cf6',
+      color: '#5A4BC4',
       description: '结合关系分析结果，反映彼此回应的共振强度。'
     },
     {
       label: '互动主动性',
       value: initiative,
-      color: '#10b981',
+      color: '#2FA39A',
       description: '从会话发起比例推断，对方主动打开话题的倾向。'
     }
   ]
@@ -427,7 +427,7 @@ const milestones = computed<MilestoneItem[]>(() => {
       title: '画像点亮时刻',
       dateLabel: formatUnixDate(props.profileMeta.createdAt),
       body: `AI 首次为 ${props.contactName} 留下这份关系侧写，之后的回廊会围绕它继续生长。`,
-      accent: '#f97316'
+      accent: '#E8656F'
     })
   }
 
@@ -436,7 +436,7 @@ const milestones = computed<MilestoneItem[]>(() => {
       title: '最早留痕',
       dateLabel: formatMsDate(props.activityCalendarSummary.global_first_session_start_time),
       body: '这是全纪录中能追溯到的最早一次完整互动切片。',
-      accent: '#0ea5e9',
+      accent: '#8B93A7',
       anchor: { startMs: props.activityCalendarSummary.global_first_session_start_time }
     })
 
@@ -446,7 +446,7 @@ const milestones = computed<MilestoneItem[]>(() => {
         title: '高密度互动',
         dateLabel: formatMsDate(peakSession.start_time),
         body: `单场互动达到 ${peakSession.message_count} 条消息，是全部历史样本里互动最密集的一次。`,
-        accent: '#8b5cf6',
+        accent: '#5A4BC4',
         anchor: { startMs: peakSession.start_time }
       })
     }
@@ -458,7 +458,7 @@ const milestones = computed<MilestoneItem[]>(() => {
       title: '最早留痕',
       dateLabel: formatMsDate(firstSession.start_time),
       body: '这是当前采样样本中能追溯到的最早一次完整互动切片。',
-      accent: '#0ea5e9',
+      accent: '#8B93A7',
       anchor: { startMs: firstSession.start_time }
     })
 
@@ -467,7 +467,7 @@ const milestones = computed<MilestoneItem[]>(() => {
         title: '高密度互动',
         dateLabel: formatMsDate(peakSession.start_time),
         body: `这场会话记录了 ${peakSession.message_count} 条消息，是当前最近样本里最饱满的一次交谈。`,
-        accent: '#8b5cf6',
+        accent: '#5A4BC4',
         anchor: { startMs: peakSession.start_time }
       })
     }
@@ -481,7 +481,7 @@ const milestones = computed<MilestoneItem[]>(() => {
       title: '情绪高光',
       dateLabel: formatDayLabel(highest.ts),
       body: `这一天的情绪评分达到 ${highest.score.toFixed(2)}，是当前样本中的高光时刻。`,
-      accent: '#10b981',
+      accent: '#2FA39A',
       anchor: dayAnchor(highest.ts)
     })
 
@@ -490,7 +490,7 @@ const milestones = computed<MilestoneItem[]>(() => {
         title: '情绪转折',
         dateLabel: formatDayLabel(lowest.ts),
         body: `这一天的情绪评分降到 ${lowest.score.toFixed(2)}，可能是关系中的敏感节点。`,
-        accent: '#fb7185',
+        accent: '#E8656F',
         anchor: dayAnchor(lowest.ts)
       })
     }
@@ -657,7 +657,7 @@ function formatDayLabel(value: string) {
   padding: 5px 14px;
   border-radius: 999px;
   border: 1px solid var(--ct-border-color);
-  background: var(--ct-bg-secondary);
+  background: var(--ct-bg-sunken);
   color: var(--ct-text-secondary);
   font-size: 12px;
   cursor: pointer;
@@ -747,10 +747,8 @@ function formatDayLabel(value: string) {
   gap: 10px;
   min-height: 360px;
   border-radius: 28px;
-  border: 1px dashed rgba(148, 163, 184, 0.24);
-  background:
-    radial-gradient(circle at top center, rgba(249, 115, 22, 0.08), transparent 34%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(248, 250, 252, 0.9));
+  border: 1px dashed var(--ct-border-color);
+  background: #FBF7EE;
   text-align: center;
 }
 
@@ -803,7 +801,7 @@ function formatDayLabel(value: string) {
   max-height: min(78vh, 720px);
   border-radius: 24px;
   overflow: hidden;
-  background: linear-gradient(165deg, #fffcf5, #fff6ea);
+  background: #FBF7EE;
   border: 1px solid rgba(251, 191, 36, 0.28);
   box-shadow: 0 28px 64px rgba(120, 53, 15, 0.28);
 }

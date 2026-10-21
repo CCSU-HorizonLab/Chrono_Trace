@@ -182,10 +182,8 @@ const layout = computed(() => {
   align-items: center;
   justify-content: center;
   min-height: 360px;
-  background: 
-    linear-gradient(135deg, rgba(255, 255, 255, 0.4) 0%, transparent 100%),
-    radial-gradient(circle at center, rgba(0, 0, 0, 0.015), transparent 75%);
-  border-radius: var(--ct-radius-xl);
+  background: var(--ct-bg-card);
+  border-radius: var(--ct-radius-lg);
   overflow: hidden;
 }
 
@@ -288,13 +286,13 @@ const layout = computed(() => {
   word-wrap: break-word;
   word-break: break-word;
   hyphens: auto;
-  color: color-mix(in srgb, var(--topic-hue) 80%, #2a2a2a);
+  color: color-mix(in srgb, var(--topic-hue) 80%, #1B1924);
 }
 
 .topic-bubble span {
   font-size: clamp(10px, calc(var(--topic-size) * 0.11), 12px);
   line-height: 1.25;
-  color: color-mix(in srgb, var(--topic-hue) 60%, #666);
+  color: color-mix(in srgb, var(--topic-hue) 60%, #5A5566);
   display: -webkit-box;
   -webkit-line-clamp: 2;
   line-clamp: 2;

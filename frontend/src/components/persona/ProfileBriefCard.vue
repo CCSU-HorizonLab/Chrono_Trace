@@ -182,8 +182,8 @@ onMounted(load)
 
 <style scoped>
 .pbc-card {
-  position: relative; background: var(--ct-bg-elevated);
-  border: 1px solid var(--ct-border-color); border-radius: var(--ct-radius-xl);
+  position: relative; background: var(--ct-bg-card);
+  border: 1px solid var(--ct-border-color); border-radius: var(--ct-radius-lg);
   overflow: hidden; display: flex; flex-direction: column;
   transition: transform var(--ct-transition-normal) var(--ct-ease-out),
               box-shadow var(--ct-transition-normal) var(--ct-ease-out),
@@ -192,8 +192,8 @@ onMounted(load)
 .pbc-card:hover { transform: translateY(-3px); box-shadow: var(--ct-shadow-lg); border-color: var(--ct-border-color-hover); }
 
 .pbc-accent { height: 3px; width: 100%; flex-shrink: 0; }
-.is-contact .pbc-accent { background: linear-gradient(90deg, #7c4dff, #6366f1); }
-.is-self .pbc-accent { background: linear-gradient(90deg, #0d9488, #14b8a6); }
+.is-contact .pbc-accent { background: var(--ct-color-primary); }
+.is-self .pbc-accent { background: var(--ct-color-success); }
 
 .pbc-hd {
   display: flex; align-items: center; gap: var(--ct-space-sm);
@@ -219,15 +219,15 @@ onMounted(load)
 .pbc-tag-row { display: flex; flex-wrap: wrap; gap: 6px; }
 .pbc-tag {
   padding: 3px 10px; border-radius: 999px; font-size: var(--ct-text-xs);
-  background: rgba(124, 77, 255, 0.1); color: var(--ct-color-primary);
-  border: 1px solid rgba(124, 77, 255, 0.2);
+  background: var(--ct-color-primary-tint); color: var(--ct-color-primary);
+  border: 1px solid color-mix(in srgb, var(--ct-color-primary) 18%, transparent);
 }
 
 .pbc-detail-list { display: flex; flex-direction: column; gap: var(--ct-space-sm); }
 .pbc-detail-row {
   display: flex; align-items: flex-start; gap: var(--ct-space-sm);
   padding: var(--ct-space-sm); border-radius: var(--ct-radius-md);
-  background: var(--ct-bg-secondary);
+  background: var(--ct-bg-sunken);
 }
 .pbc-detail-icon { color: var(--ct-text-tertiary); flex-shrink: 0; margin-top: 3px; }
 .pbc-detail-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
@@ -249,7 +249,7 @@ onMounted(load)
   background: var(--ct-color-primary); color: white;
   transition: all var(--ct-transition-fast);
 }
-.pbc-action:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(124, 77, 255, 0.3); }
+.pbc-action:hover:not(:disabled) { background: var(--ct-color-primary-hover); }
 
 .pbc-loading { font-size: var(--ct-text-xs); color: var(--ct-text-tertiary); text-align: center; }
 </style>

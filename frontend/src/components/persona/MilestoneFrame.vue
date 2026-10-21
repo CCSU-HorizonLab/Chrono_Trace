@@ -27,7 +27,7 @@ withDefaults(defineProps<{
   accent?: string
   clickable?: boolean
 }>(), {
-  accent: '#fb7185',
+  accent: '#E8656F',
   clickable: false
 })
 
@@ -42,8 +42,7 @@ const emit = defineEmits<{ open: [] }>()
   border-radius: 22px;
   overflow: hidden;
   background:
-    linear-gradient(145deg, rgba(255, 252, 245, 0.98), rgba(255, 247, 237, 0.94)),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.4), transparent);
+    #FBF7EE;
   border: 1px solid rgba(251, 191, 36, 0.22);
   box-shadow: 0 18px 36px rgba(146, 64, 14, 0.12);
 }

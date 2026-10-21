@@ -152,13 +152,13 @@ const axisLabels = computed(() => {
 }
 
 .data-poly.me {
-  stroke: #5A4BC4;
-  fill: #5A4BC4;
+  stroke: var(--ct-chart-1);
+  fill: var(--ct-chart-1);
 }
 
 .data-poly.other {
-  stroke: #E0A458;
-  fill: #E0A458;
+  stroke: var(--ct-chart-4);
+  fill: var(--ct-chart-4);
   fill-opacity: 0.1;
 }
 

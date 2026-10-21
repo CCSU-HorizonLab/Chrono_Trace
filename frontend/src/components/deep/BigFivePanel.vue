@@ -243,8 +243,8 @@ watch(() => props.conversationId, () => {
   justify-content: center;
 }
 
-.swatch.me { background: #5A4BC4; }
-.swatch.other { background: #E0A458; }
+.swatch.me { background: var(--ct-chart-1); }
+.swatch.other { background: var(--ct-chart-4); }
 
 .dims-col {
   flex: 1 1 320px;
@@ -280,7 +280,7 @@ watch(() => props.conversationId, () => {
   flex: 1;
   height: 8px;
   border-radius: 999px;
-  background: var(--ct-bg-tertiary);
+  background: var(--ct-bg-sunken);
   overflow: visible;
 }
 
@@ -290,8 +290,8 @@ watch(() => props.conversationId, () => {
   transition: width 0.5s ease;
 }
 
-.dim-fill.me { background: #5A4BC4; }
-.dim-fill.other { background: #E0A458; }
+.dim-fill.me { background: var(--ct-chart-1); }
+.dim-fill.other { background: var(--ct-chart-4); }
 
 .dim-base-tick {
   position: absolute;
@@ -317,7 +317,7 @@ watch(() => props.conversationId, () => {
 }
 
 .dim-adjust.up {
-  color: #2563eb;
+  color: var(--ct-color-success);
 }
 
 .evidence-box {
@@ -341,7 +341,7 @@ watch(() => props.conversationId, () => {
 }
 
 .evidence-item {
-  background: var(--ct-bg-secondary);
+  background: var(--ct-bg-sunken);
   border: 1px solid var(--ct-border-color);
   border-radius: var(--ct-radius-md);
   padding: var(--ct-space-sm) var(--ct-space-md);
@@ -378,7 +378,7 @@ watch(() => props.conversationId, () => {
 }
 
 .error-text {
-  color: var(--ct-color-error, #dc2626);
+  color: var(--ct-color-error, #E8656F);
   font-size: var(--ct-text-sm);
 }
 

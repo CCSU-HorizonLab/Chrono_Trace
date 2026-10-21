@@ -34,12 +34,7 @@ defineProps<{
 <style scoped>
 .persona-core-card {
   overflow: hidden;
-  background:
-    radial-gradient(circle at top right, rgba(124, 77, 255, 0.12), transparent 45%),
-    radial-gradient(circle at bottom left, rgba(124, 77, 255, 0.08), transparent 45%),
-    var(--ct-bg-secondary);
-  border: 1px solid rgba(124, 77, 255, 0.15); /* primary-subtle */
-  box-shadow: 0 8px 32px rgba(124, 77, 255, 0.06);
+  background: var(--ct-bg-sunken);
 }
 
 .persona-core-shell {
@@ -92,12 +87,11 @@ defineProps<{
   min-height: 38px;
   padding: 0 16px;
   border-radius: 999px;
-  background: rgba(124, 77, 255, 0.08); /* light primary tint */
-  border: 1px solid rgba(124, 77, 255, 0.12);
+  background: var(--ct-color-primary-tint);
+  border: 1px solid color-mix(in srgb, var(--ct-color-primary) 16%, transparent);
   color: var(--ct-color-primary);
   font-size: 13px;
   font-weight: 600;
-  backdrop-filter: blur(8px);
 }
 
 .persona-meta-row {
@@ -112,8 +106,8 @@ defineProps<{
   min-height: 32px;
   padding: 0 12px;
   border-radius: 999px;
-  background: var(--ct-bg-tertiary);
-  border: 1px solid var(--ct-border-subtle);
+  background: var(--ct-bg-sunken);
+  border: 1px solid var(--ct-border-color);
   font-size: 12px;
   color: var(--ct-text-secondary);
 }

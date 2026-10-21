@@ -173,7 +173,7 @@ const items = computed<TimelineItem[]>(() => {
   height: 12px;
   border-radius: 50%;
   border: 2px solid var(--ct-color-primary);
-  background: var(--ct-bg-elevated);
+  background: var(--ct-bg-card);
 }
 
 .dot-longest_silence {

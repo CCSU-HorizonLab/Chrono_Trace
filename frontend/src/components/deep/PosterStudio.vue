@@ -197,8 +197,8 @@ watch(
   content: '仅给对方';
   margin-left: 6px;
   font-size: 10px;
-  color: #b45309;
-  background: #fef3c7;
+  color: #8F5B14;
+  background: var(--ct-color-warning-tint);
   border-radius: 999px;
   padding: 1px 6px;
 }
@@ -218,7 +218,7 @@ watch(
 .preview-shell {
   border: 1px solid var(--ct-border-color);
   border-radius: var(--ct-radius-md);
-  background: var(--ct-bg-secondary);
+  background: var(--ct-bg-sunken);
   padding: var(--ct-space-sm);
   max-height: 560px;
   overflow: auto;
@@ -245,7 +245,7 @@ watch(
 }
 
 .error-text {
-  color: var(--ct-color-error, #dc2626);
+  color: var(--ct-color-error, #E8656F);
   font-size: var(--ct-text-xs);
 }
 

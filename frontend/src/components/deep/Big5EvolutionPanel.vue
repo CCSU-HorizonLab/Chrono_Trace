@@ -215,7 +215,7 @@ watch(() => props.evolution, resetState)
 }
 
 .segment-card {
-  background: var(--ct-bg-secondary);
+  background: var(--ct-bg-sunken);
   border: 1px solid var(--ct-border-color);
   border-radius: var(--ct-radius-md);
   padding: var(--ct-space-sm) var(--ct-space-sm) 0;
@@ -247,7 +247,7 @@ watch(() => props.evolution, resetState)
 }
 
 .card-state.error {
-  color: var(--ct-color-error, #dc2626);
+  color: var(--ct-color-error, #E8656F);
 }
 
 .disclaimer {

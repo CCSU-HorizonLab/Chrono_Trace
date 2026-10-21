@@ -131,7 +131,6 @@ const showLowConfidenceHint = computed(() => {
 <style scoped>
 .sub-score-breakdown {
   background: var(--ct-bg-card);
-  border: 1px solid var(--ct-border-color);
   border-radius: var(--ct-radius-md);
   padding: var(--ct-space-sm);
   box-shadow: var(--ct-shadow-sm);

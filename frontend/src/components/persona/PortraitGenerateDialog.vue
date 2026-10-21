@@ -285,8 +285,9 @@ async function handleGenerate() {
 .pd-close:hover { background: var(--ct-bg-hover); color: var(--ct-text-primary); }
 .pd-panels { display: flex; gap: 12px; padding: 16px 20px; }
 .pd-card {
-  flex: 1; border: 1px solid var(--ct-border-color); border-radius: var(--ct-radius-md);
-  padding: 14px; transition: opacity 0.15s, border-color 0.15s;
+  flex: 1; border-radius: var(--ct-radius-md);
+  background: var(--ct-bg-sunken);
+  padding: 14px; transition: opacity 0.15s;
 }
 .pd-card.is-off { opacity: 0.45; }
 .pd-card-toggle { display: flex; align-items: center; gap: 8px; cursor: pointer; margin-bottom: 6px; }
@@ -308,11 +309,11 @@ async function handleGenerate() {
 .pd-chips { display: flex; gap: 6px; flex-wrap: wrap; }
 .pd-chip {
   display: flex; flex-direction: column; align-items: center; gap: 2px;
-  padding: 6px 12px; border-radius: var(--ct-radius-md); cursor: pointer;
-  border: 1px solid var(--ct-border-color); background: var(--ct-bg-sunken);
-  transition: border-color 0.15s, background-color 0.15s;
+  padding: 6px 12px;
+  border-radius: var(--ct-radius-sm); background: var(--ct-bg-sunken);
+  transition: background-color 0.15s;
 }
-.pd-chip.active { border-color: var(--ct-color-primary); background: var(--ct-color-primary-tint); }
+.pd-chip.active { background: var(--ct-color-primary-tint); }
 .pd-chip-text { font-size: var(--ct-text-xs); font-weight: var(--ct-font-semibold); }
 .pd-chip-tip { font-size: var(--ct-text-xs); color: var(--ct-text-tertiary); }
 .pd-est { margin-top: 8px; font-size: var(--ct-text-xs); color: var(--ct-text-tertiary); line-height: 1.5; }

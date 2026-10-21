@@ -239,7 +239,6 @@ const handleClose = () => {
   background: var(--ct-bg-sunken);
   border-radius: var(--ct-radius-md);
   padding: var(--ct-space-md);
-  border: 1px solid var(--ct-border-color);
 }
 
 .preview-title {

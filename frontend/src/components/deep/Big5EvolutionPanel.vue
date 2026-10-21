@@ -216,7 +216,6 @@ watch(() => props.evolution, resetState)
 
 .segment-card {
   background: var(--ct-bg-sunken);
-  border: 1px solid var(--ct-border-color);
   border-radius: var(--ct-radius-md);
   padding: var(--ct-space-sm) var(--ct-space-sm) 0;
   min-width: 0;

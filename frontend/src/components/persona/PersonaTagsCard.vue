@@ -107,7 +107,6 @@ defineProps<{
   padding: 0 12px;
   border-radius: 999px;
   background: var(--ct-bg-sunken);
-  border: 1px solid var(--ct-border-color);
   font-size: 12px;
   color: var(--ct-text-secondary);
 }

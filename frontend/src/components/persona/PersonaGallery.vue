@@ -700,8 +700,7 @@ function formatDayLabel(value: string) {
   align-items: center;
   gap: 12px;
   padding: 8px 12px;
-  border-radius: 10px;
-  border: 1px solid var(--ct-border-color);
+  border-radius: var(--ct-radius-sm);
   background: rgba(255, 255, 255, 0.9);
   cursor: pointer;
   text-align: left;
@@ -718,7 +717,6 @@ function formatDayLabel(value: string) {
   padding: 1px 8px;
   border-radius: 999px;
   font-size: 10.5px;
-  border: 1px solid var(--ct-border-color);
   color: var(--ct-text-tertiary);
 }
 .snapshot-date { margin-left: auto; color: var(--ct-text-tertiary); font-size: 11px; }

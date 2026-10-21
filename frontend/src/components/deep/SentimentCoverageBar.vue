@@ -188,7 +188,6 @@ onUnmounted(stopPolling)
   align-items: center;
   gap: var(--ct-space-lg);
   background: var(--ct-bg-card);
-  border: 1px solid var(--ct-border-color);
   border-left: 3px solid var(--ct-color-primary);
   border-radius: var(--ct-radius-md);
   padding: var(--ct-space-md) var(--ct-space-lg);

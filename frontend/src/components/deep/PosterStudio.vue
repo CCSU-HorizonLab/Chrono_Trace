@@ -181,15 +181,14 @@ watch(
   gap: 4px;
   text-align: left;
   padding: 10px 14px;
-  border: 1px solid var(--ct-border-color);
   border-radius: var(--ct-radius-md);
   background: var(--ct-bg-card);
+  box-shadow: var(--ct-shadow-sm);
   cursor: pointer;
   transition: all 0.2s ease;
 }
 
 .template-card.active {
-  border-color: var(--ct-color-primary);
   background: var(--ct-color-primary-tint);
 }
 
@@ -216,7 +215,6 @@ watch(
 }
 
 .preview-shell {
-  border: 1px solid var(--ct-border-color);
   border-radius: var(--ct-radius-md);
   background: var(--ct-bg-sunken);
   padding: var(--ct-space-sm);

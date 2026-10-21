@@ -374,7 +374,6 @@ restoreFromCache()
 
 .segment-card {
   background: var(--ct-bg-sunken);
-  border: 1px solid var(--ct-border-color);
   border-radius: var(--ct-radius-md);
   padding: var(--ct-space-md);
   min-width: 0;
@@ -441,7 +440,6 @@ restoreFromCache()
   padding: 2px 10px;
   border-radius: 999px;
   font-size: var(--ct-text-xs);
-  border: 1px solid var(--ct-border-color);
   color: var(--ct-text-secondary);
 }
 

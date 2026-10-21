@@ -429,8 +429,7 @@ defineExpose({
   font-family: var(--ct-font-mono);
   font-size: var(--ct-text-xs);
   color: var(--ct-color-primary);
-  background: var(--ct-bg-card);
-  border: 1px solid var(--ct-border-color);
+  background: var(--ct-bg-sunken);
   border-radius: var(--ct-radius-sm);
   padding: 6px 10px;
   word-break: break-all;

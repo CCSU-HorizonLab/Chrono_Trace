@@ -183,7 +183,6 @@ onMounted(load)
 <style scoped>
 .pbc-card {
   position: relative; background: var(--ct-bg-card);
-  border: 1px solid var(--ct-border-color); border-radius: var(--ct-radius-lg);
   overflow: hidden; display: flex; flex-direction: column;
   transition: transform var(--ct-transition-normal) var(--ct-ease-out),
               box-shadow var(--ct-transition-normal) var(--ct-ease-out),

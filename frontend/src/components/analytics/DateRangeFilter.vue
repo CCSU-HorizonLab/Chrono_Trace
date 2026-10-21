@@ -80,7 +80,6 @@ function onTo(e: Event) { emit('update:dates', { from: props.dates.from, to: (e.
   border-radius: var(--ct-radius-md);
   padding: 12px var(--ct-space-lg);
   margin-bottom: var(--ct-space-lg);
-  border: 1px solid var(--ct-border-color);
   box-shadow: 0 1px 3px rgba(0,0,0,0.05); /* Same as header card */
 }
 

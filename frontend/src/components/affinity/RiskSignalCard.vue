@@ -59,7 +59,6 @@ const summaryClass = computed(() => `summary-${signalClass(props.assessment?.hig
   margin-top: var(--ct-space-md);
   padding: var(--ct-space-md);
   background: var(--ct-bg-card);
-  border: 1px solid var(--ct-border-color);
   border-radius: var(--ct-radius-md);
 }
 

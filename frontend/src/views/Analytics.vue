@@ -3689,7 +3689,6 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   gap: var(--ct-space-md);
   padding: var(--ct-space-lg);
   background: var(--ct-bg-sunken);
-  border: 1px solid var(--ct-border-color);
   border-radius: var(--ct-radius-lg);
   min-height: 0; /* 聊天流在 flex 列内收缩，出滚动条而不是撑破页 */
 }
@@ -3774,7 +3773,6 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
 
 .qa-bubble-ai {
   background: var(--ct-bg-card);
-  border: 1px solid var(--ct-border-color);
   border-bottom-left-radius: 4px;
 }
 

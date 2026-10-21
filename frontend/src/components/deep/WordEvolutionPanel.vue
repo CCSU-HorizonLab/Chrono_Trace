@@ -296,7 +296,6 @@ onUnmounted(() => {
 
 .segment-col {
   background: var(--ct-bg-sunken);
-  border: 1px solid var(--ct-border-color);
   border-radius: var(--ct-radius-md);
   padding: var(--ct-space-md);
   min-width: 0;

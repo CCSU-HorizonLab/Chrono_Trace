@@ -364,7 +364,6 @@ function formatDuration(seconds: number): string {
   background: var(--ct-bg-card);
   border-radius: var(--ct-radius-lg);
   padding: var(--ct-space-xl);
-  border: 1px solid var(--ct-border-color);
 }
 
 .timeline-header {
@@ -439,14 +438,14 @@ function formatDuration(seconds: number): string {
 }
 
 .session-item {
-  border: 1px solid var(--ct-border-color);
   border-radius: var(--ct-radius-md);
   overflow: hidden;
   transition: all var(--ct-transition-fast) var(--ct-ease-out);
 }
 
 .session-item.expanded {
-  border-color: var(--ct-color-primary);
+  box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--ct-color-primary) 30%, transparent),
+              var(--ct-shadow-sm);
 }
 
 .session-summary {
@@ -554,7 +553,6 @@ function formatDuration(seconds: number): string {
 
 /* 会话卡片视图 */
 .session-card {
-  border: 1px solid var(--ct-border-color);
   border-radius: var(--ct-radius-md);
   margin-bottom: var(--ct-space-md);
   overflow: hidden;

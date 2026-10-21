@@ -144,11 +144,11 @@ class WindowApiMixin:
 
         return start_resize(getattr(self, "_webview_window", None), str(edge or ""))
 
-    def window_set_maximized(self, maximized: bool) -> dict[str, Any]:
-        """切换主窗口最大化/还原（状态由前端自持）。"""
-        from ..window_chrome import set_maximized
+    def window_toggle_maximized(self) -> dict[str, Any]:
+        """切换主窗口最大化/还原：按实际窗口状态取反，返回新状态。"""
+        from ..window_chrome import toggle_maximized
 
-        return set_maximized(getattr(self, "_webview_window", None), bool(maximized))
+        return toggle_maximized(getattr(self, "_webview_window", None))
 
     def window_minimize(self) -> dict[str, Any]:
         """主窗口最小化到任务栏。"""

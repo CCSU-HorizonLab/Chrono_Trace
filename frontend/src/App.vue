@@ -60,11 +60,15 @@
     </header>
 
     <!-- 无框窗口边缘缩放热区（悬浮模式下窗口由后端管理，不挂） -->
-    <template v-if="!isFloatingMode">
+    <template v-if="!isFloatingMode && !isMaximized">
       <div class="win-edge win-edge-n" @mousedown.prevent="startResize('n')" />
       <div class="win-edge win-edge-s" @mousedown.prevent="startResize('s')" />
       <div class="win-edge win-edge-w" @mousedown.prevent="startResize('w')" />
       <div class="win-edge win-edge-e" @mousedown.prevent="startResize('e')" />
+      <div class="win-corner win-corner-nw" @mousedown.prevent="startResize('nw')" />
+      <div class="win-corner win-corner-ne" @mousedown.prevent="startResize('ne')" />
+      <div class="win-corner win-corner-sw" @mousedown.prevent="startResize('sw')" />
+      <div class="win-corner win-corner-se" @mousedown.prevent="startResize('se')" />
     </template>
 
     <!-- 主内容区 -->
@@ -260,9 +264,12 @@ function onTitlebarDblclick(e: MouseEvent) {
   toggleMaximized()
 }
 
-function toggleMaximized() {
-  isMaximized.value = !isMaximized.value
-  api.window_set_maximized(isMaximized.value).catch(() => {})
+async function toggleMaximized() {
+  // 按后端查询的实际窗口状态取反并回填——系统级最大化（Win+Up 等）也能自愈
+  try {
+    const res = await api.window_toggle_maximized()
+    if (res?.ok) isMaximized.value = !!res.maximized
+  } catch { /* 桥不可用时保持现状态 */ }
 }
 
 function minimizeApp() {
@@ -502,6 +509,11 @@ onUnmounted(() => {
 .win-edge-s { bottom: 0; left: 8px; right: 8px; height: 6px; cursor: ns-resize; }
 .win-edge-w { left: 0; top: 8px; bottom: 8px; width: 6px; cursor: ew-resize; }
 .win-edge-e { right: 0; top: 8px; bottom: 8px; width: 6px; cursor: ew-resize; }
+.win-corner { position: fixed; z-index: 901; width: 12px; height: 12px; }
+.win-corner-nw { top: 0; left: 0; cursor: nwse-resize; }
+.win-corner-ne { top: 0; right: 0; cursor: nesw-resize; }
+.win-corner-sw { bottom: 0; left: 0; cursor: nesw-resize; }
+.win-corner-se { bottom: 0; right: 0; cursor: nwse-resize; }
 
 .user-avatar.popup-trigger {
   pointer-events: none; /* 让外层 wrap 接管点击 */

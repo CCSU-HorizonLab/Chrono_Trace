@@ -9,14 +9,17 @@
 | `--ct-bg-app` | `#FAF9F7` | 画布：暖纸底 |
 | `--ct-bg-card` | `#FFFFFF` | 卡面 |
 | `--ct-bg-sunken` / `--ct-bg-hover` | `#F3F1ED` | 沉底区 / 通用 hover 底 |
+| `--ct-bg-skeleton` | `#ECE9E3` | 骨架屏微光中段 |
+| `--ct-bg-paper-warm` | `#FBF7EE` | 暖米纸（里程碑卡/画像画廊拟物底） |
 | `--ct-color-primary` | `#5A4BC4` | 主色：墨紫 |
 | `--ct-color-primary-hover` | `#4A3DB0` | 主色 hover |
 | `--ct-color-primary-tint` | `#EEEBFA` | 主色淡底（徽标/选中态底） |
+| `--ct-color-primary-tint-hover` | `#E0DAF5` | 淡底按钮 hover 压深 |
 | `--ct-color-primary-muted` | `rgba(90,75,196,.08)` | 极淡主色底（hover 过渡） |
 | `--ct-color-primary-subtle` | `rgba(90,75,196,.12)` | 淡主色底 |
 | `--ct-color-success` / `-tint` | `#2FA39A` / `#E7F4F2` | 青绿（激活/正向） |
 | `--ct-color-warning` / `-tint` | `#E0A458` / `#FAF0E1` | 琥珀（提醒/中间态） |
-| `--ct-color-error` / `-tint` | `#E8656F` / `#FDEEEE` | 珊瑚（错误/负向） |
+| `--ct-color-error` / `-tint` / `-hover` | `#E8656F` / `#FDEEEE` / `#D14E58` | 珊瑚（错误/负向，hover 压深） |
 | `--ct-color-info` | = primary | info 不单设色 |
 | `--ct-border-color` / `-hover` | `#E9E5DF` / `#DCD6CC` | 发丝线（hover 仅语义处） |
 | `--ct-text-primary/secondary/tertiary` | `#1B1924` / `#5A5566` / `#9B95A5` | 三级墨字 |

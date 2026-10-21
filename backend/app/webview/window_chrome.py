@@ -11,7 +11,8 @@ sys.platform 分支：
   原生标题栏语义（与悬浮窗 floating_window_service.start_drag 同链路）。
 
 最大化/最小化走 pywebview Window 公开 API（window.maximize/restore/minimize），
-两平台一致，最大化状态由前端自持（后端无状态）。
+两平台一致；toggle 前先查实际状态（Qt windowState / Win32 IsZoomed），系统级
+最大化（Win+Up、WM 快捷键）不经前端也能自愈。
 """
 from __future__ import annotations
 
@@ -49,6 +50,22 @@ def _gui_dispatch(fn) -> None:
     d.call.emit(fn)
 
 
+def _gui_call(fn, timeout: float = 2.0):
+    """投递到 GUI 线程执行并同步等回返回值（超时返回 None）。"""
+    import threading
+
+    box = {}
+    done = threading.Event()
+
+    def _wrap():
+        box['r'] = fn()
+        done.set()
+
+    _gui_dispatch(_wrap)
+    done.wait(timeout)
+    return box.get('r')
+
+
 def _qt_view(window):
     """取 pywebview Qt 后端的 BrowserView（QMainWindow），失败返回 None。"""
     try:
@@ -60,12 +77,26 @@ def _qt_view(window):
 
 
 def _win_hwnd(window):
-    """按窗口标题找 Win32 HWND（与悬浮窗 _get_webview_hwnd 同法）。"""
+    """枚举本进程的顶层窗口按标题取 HWND（多实例下 FindWindow 会命中别的实例）。"""
     try:
+        import os
+
         import win32gui
 
         title = getattr(window, 'title', None)
-        return win32gui.FindWindow(None, title) if title else 0
+        if not title:
+            return 0
+        found = []
+
+        def _cb(hwnd, _):
+            if win32gui.GetWindowText(hwnd) == title:
+                _, pid = win32gui.GetWindowThreadProcessId(hwnd)
+                if pid == os.getpid():
+                    found.append(hwnd)
+            return True
+
+        win32gui.EnumWindows(_cb, None)
+        return found[0] if found else 0
     except Exception:
         return 0
 
@@ -118,11 +149,13 @@ def start_resize(window, edge: str) -> dict:
             import win32con
             import win32gui
 
-            hit = {'n': win32con.HTTOP, 's': win32con.HTBOTTOM,
-                   'e': win32con.HTRIGHT, 'w': win32con.HTLEFT,
-                   'ns': win32con.HTTOP, 'se': win32con.HTBOTTOMRIGHT,
-                   'sw': win32con.HTBOTTOMLEFT, 'ne': win32con.HTTOPRIGHT,
-                   'nw': win32con.HTTOPLEFT}.get(edge)
+            # frozenset 键：'ne'/'se' 等组合经 sorted 规范化后顺序不定，按集合命中
+            hit = {
+                frozenset('n'): win32con.HTTOP, frozenset('s'): win32con.HTBOTTOM,
+                frozenset('e'): win32con.HTRIGHT, frozenset('w'): win32con.HTLEFT,
+                frozenset('ne'): win32con.HTTOPRIGHT, frozenset('nw'): win32con.HTTOPLEFT,
+                frozenset('se'): win32con.HTBOTTOMRIGHT, frozenset('sw'): win32con.HTBOTTOMLEFT,
+            }.get(frozenset(edge))
             if hit is None:
                 return {'ok': False, 'error': f'非法边缘: {edge}'}
             hwnd = _win_hwnd(window)
@@ -157,16 +190,38 @@ def start_resize(window, edge: str) -> dict:
         return {'ok': False, 'error': str(e)}
 
 
-def set_maximized(window, maximized: bool) -> dict:
-    """切换最大化/还原（状态由前端自持，此处只执行动作）。"""
+def toggle_maximized(window) -> dict:
+    """查询实际最大化状态并取反（自愈系统级最大化：Win+Up / WM 快捷键不经过前端）。"""
     if window is None:
         return {'ok': False, 'error': '窗口未就绪'}
     try:
-        if maximized:
+        import sys
+
+        current = False
+        if sys.platform == 'win32':
+            import win32gui
+
+            hwnd = _win_hwnd(window)
+            if not hwnd:
+                return {'ok': False, 'error': '无法获取窗口句柄'}
+            current = bool(win32gui.IsZoomed(hwnd))
+        else:
+            view = _qt_view(window)
+            if view is None:
+                return {'ok': False, 'error': 'Qt 视图未就绪'}
+            from qtpy.QtCore import Qt
+
+            def _peek(v=view):
+                return bool(v.windowState() & Qt.WindowState.WindowMaximized)
+
+            current = bool(_gui_call(_peek))
+
+        target = not current
+        if target:
             window.maximize()
         else:
             window.restore()
-        return {'ok': True, 'maximized': bool(maximized)}
+        return {'ok': True, 'maximized': target}
     except Exception as e:
         logger.warning('[WindowChrome] 切换最大化失败: %s', e)
         return {'ok': False, 'error': str(e)}

@@ -42,7 +42,7 @@ const emit = defineEmits<{ open: [] }>()
   border-radius: 22px;
   overflow: hidden;
   background:
-    #FBF7EE;
+    var(--ct-bg-paper-warm);
   border: 1px solid rgba(251, 191, 36, 0.22);
   box-shadow: 0 18px 36px rgba(146, 64, 14, 0.12);
 }

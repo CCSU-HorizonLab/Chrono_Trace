@@ -160,7 +160,7 @@ type PyWebViewApi = {
   // 主窗口无框 chrome（自绘标题栏）
   window_drag_start: () => Promise<any>
   window_start_resize: (edge: string) => Promise<any>
-  window_set_maximized: (maximized: boolean) => Promise<any>
+  window_toggle_maximized: () => Promise<{ ok: boolean; maximized?: boolean; error?: string }>
   window_minimize: () => Promise<any>
   // 好感度分析进度
   check_gpu_status: () => Promise<any>

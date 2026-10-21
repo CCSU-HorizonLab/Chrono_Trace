@@ -544,7 +544,7 @@ onBeforeUnmount(() => {
 }
 .sug-monitor-btn:hover:not(:disabled) { background: var(--ct-color-primary-hover); }
 .sug-monitor-btn.stop { background: var(--ct-color-error); }
-.sug-monitor-btn.stop:hover:not(:disabled) { background: #D14E58; }
+.sug-monitor-btn.stop:hover:not(:disabled) { background: var(--ct-color-error-hover); }
 .sug-monitor-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .sug-btn-icon { font-size: 11px; }
 

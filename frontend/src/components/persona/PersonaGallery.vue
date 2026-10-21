@@ -746,7 +746,7 @@ function formatDayLabel(value: string) {
   min-height: 360px;
   border-radius: 28px;
   border: 1px dashed var(--ct-border-color);
-  background: #FBF7EE;
+  background: var(--ct-bg-paper-warm);
   text-align: center;
 }
 
@@ -799,7 +799,7 @@ function formatDayLabel(value: string) {
   max-height: min(78vh, 720px);
   border-radius: 24px;
   overflow: hidden;
-  background: #FBF7EE;
+  background: var(--ct-bg-paper-warm);
   border: 1px solid rgba(251, 191, 36, 0.28);
   box-shadow: 0 28px 64px rgba(120, 53, 15, 0.28);
 }

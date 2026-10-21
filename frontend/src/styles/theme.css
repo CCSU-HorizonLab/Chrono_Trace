@@ -11,11 +11,14 @@
   --ct-bg-card: #FFFFFF;     /* 卡面 */
   --ct-bg-sunken: #F3F1ED;   /* 沉底（分组底、代码底） */
   --ct-bg-hover: #F3F1ED;    /* 悬停底（与沉底同值，语义分开） */
+  --ct-bg-skeleton: #ECE9E3; /* 骨架屏微光中段（沉底再压深一档） */
+  --ct-bg-paper-warm: #FBF7EE; /* 暖米纸（里程碑卡/画像画廊的拟物底） */
 
   /* 墨紫主色 */
   --ct-color-primary: #5A4BC4;
   --ct-color-primary-hover: #4A3DB0;
   --ct-color-primary-tint: #EEEBFA;            /* 主色淡底 */
+  --ct-color-primary-tint-hover: #E0DAF5;      /* 淡底按钮 hover 压深 */
   --ct-color-primary-muted: rgba(90, 75, 196, 0.08);
   --ct-color-primary-subtle: rgba(90, 75, 196, 0.12);
 
@@ -33,7 +36,7 @@
   /* 语义色（与数据色板同源，各配淡底） */
   --ct-color-success: #2FA39A;  --ct-color-success-tint: #E7F4F2;
   --ct-color-warning: #E0A458;  --ct-color-warning-tint: #FAF0E1;
-  --ct-color-error: #E8656F;    --ct-color-error-tint: #FDEEEE;
+  --ct-color-error: #E8656F;    --ct-color-error-tint: #FDEEEE;  --ct-color-error-hover: #D14E58;
   --ct-color-info: #5A4BC4;     --ct-color-info-tint: #EEEBFA;
 
   /* 旧名兼容（accent = 琥珀强调） */
@@ -387,7 +390,7 @@ button {
   color: var(--ct-text-inverse);
 }
 .ct-btn.danger:hover:not(:disabled) {
-  background: #D14E58;
+  background: var(--ct-color-error-hover);
 }
 
 .ct-btn.accent,
@@ -405,7 +408,7 @@ button {
   color: var(--ct-color-primary);
 }
 .ct-btn.secondary:hover:not(:disabled) {
-  background: #E0DAF5;
+  background: var(--ct-color-primary-tint-hover);
 }
 
 /* 尺寸 */
@@ -613,7 +616,7 @@ select[multiple] {
   background: linear-gradient(
     90deg,
     var(--ct-bg-sunken) 0%,
-    #ECE9E3 50%,
+    var(--ct-bg-skeleton) 50%,
     var(--ct-bg-sunken) 100%
   );
   background-size: 200% 100%;

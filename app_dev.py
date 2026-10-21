@@ -101,7 +101,8 @@ def main():
         wait_for_dev_server(dev_url, timeout_sec=90)
         logger.info(f"dev server 已就绪：{dev_url}")
 
-    window = webview.create_window(DEV_WINDOW_TITLE, url=dev_url, js_api=bridge, frameless=True, width=950, height=800)
+    # easy_drag 关闭：与边缘缩放/自绘标题栏拖动（原生 HTCAPTION）抢事件
+    window = webview.create_window(DEV_WINDOW_TITLE, url=dev_url, js_api=bridge, frameless=True, width=950, height=800, easy_drag=False)
 
     # 启动/关闭守卫/退出清理统一走 gui_backend（Linux 强制 Qt 后端）
     from backend.app.webview.gui_backend import run_main_window, hard_exit_after_webview

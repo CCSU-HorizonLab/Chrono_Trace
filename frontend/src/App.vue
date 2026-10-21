@@ -61,14 +61,14 @@
 
     <!-- 无框窗口边缘缩放热区（悬浮模式下窗口由后端管理，不挂） -->
     <template v-if="!isFloatingMode && !isMaximized">
-      <div class="win-edge win-edge-n" @mousedown.prevent="startResize('n')" />
-      <div class="win-edge win-edge-s" @mousedown.prevent="startResize('s')" />
-      <div class="win-edge win-edge-w" @mousedown.prevent="startResize('w')" />
-      <div class="win-edge win-edge-e" @mousedown.prevent="startResize('e')" />
-      <div class="win-corner win-corner-nw" @mousedown.prevent="startResize('nw')" />
-      <div class="win-corner win-corner-ne" @mousedown.prevent="startResize('ne')" />
-      <div class="win-corner win-corner-sw" @mousedown.prevent="startResize('sw')" />
-      <div class="win-corner win-corner-se" @mousedown.prevent="startResize('se')" />
+      <div class="win-edge win-edge-n" @mousedown.prevent="startResize('n', $event)" />
+      <div class="win-edge win-edge-s" @mousedown.prevent="startResize('s', $event)" />
+      <div class="win-edge win-edge-w" @mousedown.prevent="startResize('w', $event)" />
+      <div class="win-edge win-edge-e" @mousedown.prevent="startResize('e', $event)" />
+      <div class="win-corner win-corner-nw" @mousedown.prevent="startResize('nw', $event)" />
+      <div class="win-corner win-corner-ne" @mousedown.prevent="startResize('ne', $event)" />
+      <div class="win-corner win-corner-sw" @mousedown.prevent="startResize('sw', $event)" />
+      <div class="win-corner win-corner-se" @mousedown.prevent="startResize('se', $event)" />
     </template>
 
     <!-- 主内容区 -->
@@ -280,9 +280,77 @@ function requestClose() {
   __chronoHandleCloseRequest()
 }
 
-function startResize(edge: string) {
-  api.window_start_resize(edge).catch(() => {})
+// ---- 边缘缩放（Windows 前端驱动；Linux 走原生 startSystemResize） ----
+// Windows 的 NC 缩放循环在 WinForms 无框窗上不可靠（详见后端 start_resize），
+// 由 mousemove 逐帧调 window_resize_to，锚定对边、按起始矩形绝对换算防漂移。
+interface ResizeSession {
+  edge: string
+  startX: number
+  startY: number
+  rect: { left: number; top: number; right: number; bottom: number }
+  scale: number
+  rafPending: boolean
+  lastEvent: MouseEvent
 }
+let resizeSession: ResizeSession | null = null
+
+function startResize(edge: string, ev: MouseEvent) {
+  if (resizeSession) return
+  api.window_start_resize(edge).then((res: any) => {
+    if (!res?.ok || res.native || !Array.isArray(res.rect)) return // Linux 原生循环已接管
+    resizeSession = {
+      edge,
+      startX: ev.screenX,
+      startY: ev.screenY,
+      rect: {
+        left: res.rect[0], top: res.rect[1], right: res.rect[2], bottom: res.rect[3],
+      },
+      scale: Number(res.scale) || 1,
+      rafPending: false,
+      lastEvent: ev,
+    }
+    window.addEventListener('mousemove', onResizeMouseMove)
+    window.addEventListener('mouseup', endResizeSession)
+  }).catch(() => {})
+}
+
+function onResizeMouseMove(ev: MouseEvent) {
+  if (!resizeSession) return
+  // 拖拽移出窗口后松开会丢 mouseup：重进时无按键即终止会话，防「悬空缩放」
+  if (!(ev.buttons & 1)) {
+    endResizeSession()
+    return
+  }
+  ev.preventDefault()
+  resizeSession.lastEvent = ev
+  if (resizeSession.rafPending) return
+  resizeSession.rafPending = true
+  requestAnimationFrame(applyResizeFrame)
+}
+
+function applyResizeFrame() {
+  const s = resizeSession
+  if (!s) return
+  s.rafPending = false
+  const dx = Math.round((s.lastEvent.screenX - s.startX) * s.scale)
+  const dy = Math.round((s.lastEvent.screenY - s.startY) * s.scale)
+  let { left, top, right, bottom } = s.rect
+  if (s.edge.includes('e')) right = s.rect.right + dx
+  if (s.edge.includes('w')) left = s.rect.left + dx
+  if (s.edge.includes('s')) bottom = s.rect.bottom + dy
+  if (s.edge.includes('n')) top = s.rect.top + dy
+  // 固定角 = 未被拖动的对角（后端按它回推最小尺寸钳制）
+  const anchor = (s.edge.includes('e') ? 'w' : 'e') + (s.edge.includes('n') ? 's' : 'n')
+  api.window_resize_to(left, top, right - left, bottom - top, anchor).catch(() => {})
+}
+
+function endResizeSession() {
+  resizeSession = null
+  window.removeEventListener('mousemove', onResizeMouseMove)
+  window.removeEventListener('mouseup', endResizeSession)
+}
+
+onUnmounted(() => endResizeSession())
 
 // ---- 关闭按钮确认（后端 close_guard 拦截 X 后调用 window.__chronoHandleCloseRequest）----
 const showCloseDialog = ref(false)

@@ -139,10 +139,23 @@ class WindowApiMixin:
         return start_drag(getattr(self, "_webview_window", None))
 
     def window_start_resize(self, edge: str) -> dict[str, Any]:
-        """无框窗口边缘缩放：edge 为 n/s/e/w（可组合 ne/sw…）。"""
+        """无框窗口边缘缩放：edge 为 n/s/e/w（可组合 ne/sw…）。
+
+        Linux 原生系统缩放（native=True）；Windows 返回当前矩形与 DPI
+        缩放（native=False），由前端 mousemove 逐帧调 window_resize_to。
+        """
         from ..window_chrome import start_resize
 
         return start_resize(getattr(self, "_webview_window", None), str(edge or ""))
+
+    def window_resize_to(self, x: int, y: int, width: int, height: int, anchor: str = "nw") -> dict[str, Any]:
+        """Windows 手动缩放落点（物理像素屏幕坐标；anchor 为固定角）。"""
+        from ..window_chrome import resize_to
+
+        return resize_to(
+            getattr(self, "_webview_window", None),
+            int(x or 0), int(y or 0), int(width or 0), int(height or 0), str(anchor or "nw"),
+        )
 
     def window_toggle_maximized(self) -> dict[str, Any]:
         """切换主窗口最大化/还原：按实际窗口状态取反，返回新状态。"""

@@ -145,44 +145,30 @@ def start_drag(window) -> dict:
         return {'ok': False, 'error': str(e)}
 
 
-def _win_start_size_loop(hwnd, hit: int) -> None:
-    """注入 WM_NCLBUTTONDOWN 启动系统缩放循环（Windows 无框主窗口专用）。
+def _win_dpi_scale(hwnd: int) -> float:
+    """窗口 DPI 缩放（物理/逻辑像素比）；取不到按 100%。"""
+    import ctypes
 
-    两个坑：
-    - 无框窗是 WS_POPUP，没有 WS_THICKFRAME——系统 SC_SIZE 循环对无边框窗
-      静默不动作（HTCAPTION 拖动不受此限制，故标题栏/悬浮窗拖动一直正常）。
-      临时补样式，循环结束还原，静止外观不变。
-    - lParam 必须给屏幕坐标锚点；传 0 时锚在原点，缩放循环拿到退化锚
-      立即退出（拖动循环不吃 lParam，传 0 也能用）。
-    """
-    import win32api
-    import win32con
-    import win32gui
-
-    style = win32gui.GetWindowLong(hwnd, win32con.GWL_STYLE)
-    no_thick = not style & win32con.WS_THICKFRAME
-    if no_thick:
-        win32gui.SetWindowLong(hwnd, win32con.GWL_STYLE, style | win32con.WS_THICKFRAME)
-        win32gui.SetWindowPos(
-            hwnd, 0, 0, 0, 0, 0,
-            win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOZORDER
-            | win32con.SWP_NOACTIVATE | win32con.SWP_FRAMECHANGED,
-        )
     try:
-        x, y = win32gui.GetCursorPos()
-        win32gui.SendMessage(hwnd, win32con.WM_NCLBUTTONDOWN, hit, win32api.MAKELONG(x, y))
-    finally:
-        if no_thick:
-            win32gui.SetWindowLong(hwnd, win32con.GWL_STYLE, style)
-            win32gui.SetWindowPos(
-                hwnd, 0, 0, 0, 0, 0,
-                win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOZORDER
-                | win32con.SWP_NOACTIVATE | win32con.SWP_FRAMECHANGED,
-            )
+        dpi = ctypes.windll.user32.GetDpiForWindow(hwnd)
+        if dpi > 0:
+            return dpi / 96.0
+    except Exception:
+        pass
+    return 1.0
 
 
 def start_resize(window, edge: str) -> dict:
-    """从当前鼠标按下位置启动系统级边缘缩放。edge: n/s/e/w（可组合，如 ne）。"""
+    """启动边缘缩放：Linux 走系统原生循环；Windows 由前端驱动逐帧调 resize_to。
+
+    Windows 不再用 WM_NCLBUTTONDOWN+HT* 的 NC 缩放循环——在 WinForms 无框
+    窗上不可靠（实测：常驻 WS_THICKFRAME 后循环可用，但客户区四边内缩
+    ~7px 破坏全出血 UI；临时补样式再还原则循环运行却不动尺寸）。改为
+    返回当前矩形与 DPI 缩放，前端在 mousemove 里按锚定对边算目标矩形、
+    逐帧调 resize_to——与 easy_drag 移动窗体同款链路，已验证可用。
+
+    edge: n/s/e/w（可组合，如 ne）。
+    """
     if window is None:
         return {'ok': False, 'error': '窗口未就绪'}
     edge = ''.join(sorted(str(edge or '').lower()))
@@ -192,24 +178,18 @@ def start_resize(window, edge: str) -> dict:
         import sys
 
         if sys.platform == 'win32':
-            import win32con
             import win32gui
 
-            # frozenset 键：'ne'/'se' 等组合经 sorted 规范化后顺序不定，按集合命中
-            hit = {
-                frozenset('n'): win32con.HTTOP, frozenset('s'): win32con.HTBOTTOM,
-                frozenset('e'): win32con.HTRIGHT, frozenset('w'): win32con.HTLEFT,
-                frozenset('ne'): win32con.HTTOPRIGHT, frozenset('nw'): win32con.HTTOPLEFT,
-                frozenset('se'): win32con.HTBOTTOMRIGHT, frozenset('sw'): win32con.HTBOTTOMLEFT,
-            }.get(frozenset(edge))
-            if hit is None:
-                return {'ok': False, 'error': f'非法边缘: {edge}'}
             hwnd = _win_hwnd(window)
             if not hwnd:
                 return {'ok': False, 'error': '无法获取窗口句柄'}
-            win32gui.ReleaseCapture()
-            _win_start_size_loop(hwnd, hit)
-            return {'ok': True}
+            l, t, r, b = win32gui.GetWindowRect(hwnd)
+            return {
+                'ok': True,
+                'native': False,          # 前端据此后接 mousemove 手动缩放
+                'rect': [l, t, r, b],     # 物理像素，屏幕坐标
+                'scale': _win_dpi_scale(hwnd),
+            }
 
         view = _qt_view(window)
         if view is None:
@@ -230,9 +210,56 @@ def start_resize(window, edge: str) -> dict:
                 handle.startSystemResize(e)
 
         _gui_dispatch(_do_resize)
-        return {'ok': True}
+        return {'ok': True, 'native': True}
     except Exception as e:
         logger.warning('[WindowChrome] 启动缩放失败: %s', e)
+        return {'ok': False, 'error': str(e)}
+
+
+def resize_to(window, x: int, y: int, width: int, height: int, anchor: str = 'nw') -> dict:
+    """Windows 手动缩放落点：按锚定角钳制最小尺寸后 SetWindowPos。
+
+    anchor 为保持不动的角（nw/ne/sw/se）——缩到最小尺寸时由后端按锚点
+    回推 x/y，前端无需感知钳制。参数均为物理像素屏幕坐标。
+    """
+    if window is None:
+        return {'ok': False, 'error': '窗口未就绪'}
+    try:
+        import sys
+
+        if sys.platform != 'win32':
+            return {'ok': False, 'error': '仅 Windows 使用手动缩放'}
+
+        import win32con
+        import win32gui
+
+        anchor = ''.join(sorted(str(anchor or 'nw').lower()))
+        if not anchor or not set(anchor) <= set('nswe'):
+            anchor = 'nw'
+
+        hwnd = _win_hwnd(window)
+        if not hwnd:
+            return {'ok': False, 'error': '无法获取窗口句柄'}
+        scale = _win_dpi_scale(hwnd)
+        l, t, r, b = win32gui.GetWindowRect(hwnd)
+
+        min_w, min_h = getattr(window, 'min_size', None) or (200, 200)
+        width = max(int(width), int(min_w * scale))
+        height = max(int(height), int(min_h * scale))
+        x, y = int(x), int(y)
+        # 锚定角回推：拖 w/n 边时对面对角不动
+        if 'e' in anchor:
+            x = r - width
+        if 's' in anchor:
+            y = b - height
+
+        win32gui.SetWindowPos(
+            hwnd, 0, x, y, width, height,
+            win32con.SWP_NOZORDER | win32con.SWP_NOACTIVATE,
+        )
+        return {'ok': True}
+    except Exception as e:
+        logger.warning('[WindowChrome] 手动缩放失败: %s', e)
         return {'ok': False, 'error': str(e)}
 
 

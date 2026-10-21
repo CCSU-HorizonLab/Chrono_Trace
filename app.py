@@ -24,7 +24,7 @@ def main():
     # （start_drag 的原生 HTCAPTION 循环）抢事件
     window = webview.create_window(
         PROD_WINDOW_TITLE, url=dist_index, js_api=bridge, frameless=True,
-        width=1080, height=760, min_size=(880, 640), easy_drag=False,
+        width=1200, height=720, min_size=(880, 640), easy_drag=False,
     )
 
     # 启动/关闭守卫/退出清理统一走 gui_backend（Linux 强制 Qt 后端）

@@ -129,3 +129,29 @@ class WindowApiMixin:
             logger.error(f"[Bridge] 移动悬浮窗失败: {e}")
             return {'ok': False, 'error': str(e)}
 
+
+    # ==================== 主窗口无框 chrome（window_chrome.py） ====================
+
+    def window_drag_start(self) -> dict[str, Any]:
+        """自绘标题栏拖拽：从当前鼠标按下位置启动系统级窗口拖动。"""
+        from ..window_chrome import start_drag
+
+        return start_drag(getattr(self, "_webview_window", None))
+
+    def window_start_resize(self, edge: str) -> dict[str, Any]:
+        """无框窗口边缘缩放：edge 为 n/s/e/w（可组合 ne/sw…）。"""
+        from ..window_chrome import start_resize
+
+        return start_resize(getattr(self, "_webview_window", None), str(edge or ""))
+
+    def window_set_maximized(self, maximized: bool) -> dict[str, Any]:
+        """切换主窗口最大化/还原（状态由前端自持）。"""
+        from ..window_chrome import set_maximized
+
+        return set_maximized(getattr(self, "_webview_window", None), bool(maximized))
+
+    def window_minimize(self) -> dict[str, Any]:
+        """主窗口最小化到任务栏。"""
+        from ..window_chrome import minimize
+
+        return minimize(getattr(self, "_webview_window", None))

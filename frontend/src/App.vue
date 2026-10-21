@@ -1,7 +1,12 @@
 <template>
   <div class="ct-layout" :class="{ 'floating-mode': isFloatingMode }">
-    <!-- 顶部导航栏 -->
-    <header class="ct-topbar" v-show="!isFloatingMode">
+    <!-- 顶部导航栏（无框窗口标题栏：空白区拖拽/双击最大化） -->
+    <header
+      class="ct-topbar"
+      v-show="!isFloatingMode"
+      @mousedown="onTitlebarDrag"
+      @dblclick="onTitlebarDblclick"
+    >
       <!-- Logo与标题区域 -->
       <div class="topbar-brand">
         <!-- 暂时取消实际Logo图片或复杂图标，保留文字排版 -->
@@ -18,7 +23,7 @@
         <router-link to="/settings" class="menu-item">设置</router-link>
       </nav>
 
-      <!-- 右侧用户区 -->
+      <!-- 右侧用户区 + 窗口控制 -->
       <div class="topbar-user">
         <CtAccountSelector
           v-if="wechatAccounts.length"
@@ -37,7 +42,7 @@
             </div>
           </template>
         </CtAccountSelector>
-        
+
         <CtAvatar
           v-else
           class="user-avatar"
@@ -45,8 +50,22 @@
           :name="currentUserProfile.name || '我'"
           :size="42"
         />
+
+        <div class="win-controls" @mousedown.stop @dblclick.stop>
+          <button class="win-btn" type="button" title="最小化" @click="minimizeApp">─</button>
+          <button class="win-btn" type="button" title="最大化 / 还原" @click="toggleMaximized">▢</button>
+          <button class="win-btn win-close" type="button" title="关闭" @click="requestClose">✕</button>
+        </div>
       </div>
     </header>
+
+    <!-- 无框窗口边缘缩放热区（悬浮模式下窗口由后端管理，不挂） -->
+    <template v-if="!isFloatingMode">
+      <div class="win-edge win-edge-n" @mousedown.prevent="startResize('n')" />
+      <div class="win-edge win-edge-s" @mousedown.prevent="startResize('s')" />
+      <div class="win-edge win-edge-w" @mousedown.prevent="startResize('w')" />
+      <div class="win-edge win-edge-e" @mousedown.prevent="startResize('e')" />
+    </template>
 
     <!-- 主内容区 -->
     <main class="ct-content" :class="{ 'floating-content': isFloatingMode }">
@@ -223,6 +242,40 @@ watch(() => route.fullPath, () => {
     loadCurrentUserProfile()
   }
 }, { immediate: true })
+
+// ---- 主窗口无框 chrome（拖拽/缩放/最大化由后端 window_chrome 执行）----
+const isMaximized = ref(false)
+
+function onTitlebarDrag(e: MouseEvent) {
+  if (e.button !== 0) return
+  const t = e.target as HTMLElement
+  // 交互件（导航/头像/窗口控制等）不触发拖拽
+  if (t.closest('button, a, input, select, textarea, .topbar-user, [data-no-drag]')) return
+  api.window_drag_start().catch(() => {})
+}
+
+function onTitlebarDblclick(e: MouseEvent) {
+  const t = e.target as HTMLElement
+  if (t.closest('button, a, input, select, textarea, .topbar-user, [data-no-drag]')) return
+  toggleMaximized()
+}
+
+function toggleMaximized() {
+  isMaximized.value = !isMaximized.value
+  api.window_set_maximized(isMaximized.value).catch(() => {})
+}
+
+function minimizeApp() {
+  api.window_minimize().catch(() => {})
+}
+
+function requestClose() {
+  __chronoHandleCloseRequest()
+}
+
+function startResize(edge: string) {
+  api.window_start_resize(edge).catch(() => {})
+}
 
 // ---- 关闭按钮确认（后端 close_guard 拦截 X 后调用 window.__chronoHandleCloseRequest）----
 const showCloseDialog = ref(false)
@@ -403,6 +456,52 @@ onUnmounted(() => {
   border: 2px solid var(--ct-bg-card);
   box-shadow: var(--ct-shadow-sm);
 }
+
+/* 窗口控制按钮（无框标题栏：— ▢ ✕） */
+.win-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: var(--ct-space-sm);
+}
+
+.win-btn {
+  width: 32px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--ct-text-tertiary);
+  border-radius: var(--ct-radius-sm);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color var(--ct-transition-fast) var(--ct-ease-out),
+              color var(--ct-transition-fast) var(--ct-ease-out);
+}
+
+.win-btn:hover:not(:disabled) {
+  background: var(--ct-bg-hover);
+  color: var(--ct-text-primary);
+}
+
+.win-close:hover:not(:disabled) {
+  background: var(--ct-color-error-tint);
+  color: var(--ct-color-error);
+}
+
+/* 无框窗口边缘缩放热区（6px，位于内容之上、弹窗之下） */
+.win-edge {
+  position: fixed;
+  z-index: 900;
+}
+
+.win-edge-n { top: 0; left: 8px; right: 8px; height: 6px; cursor: ns-resize; }
+.win-edge-s { bottom: 0; left: 8px; right: 8px; height: 6px; cursor: ns-resize; }
+.win-edge-w { left: 0; top: 8px; bottom: 8px; width: 6px; cursor: ew-resize; }
+.win-edge-e { right: 0; top: 8px; bottom: 8px; width: 6px; cursor: ew-resize; }
 
 .user-avatar.popup-trigger {
   pointer-events: none; /* 让外层 wrap 接管点击 */

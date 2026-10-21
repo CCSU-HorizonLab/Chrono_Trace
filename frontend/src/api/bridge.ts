@@ -157,6 +157,11 @@ type PyWebViewApi = {
   set_floating_expanded: (expanded: boolean) => Promise<any>
   start_floating_drag: () => Promise<any>
   move_floating_window: (dx: number, dy: number) => Promise<any>
+  // 主窗口无框 chrome（自绘标题栏）
+  window_drag_start: () => Promise<any>
+  window_start_resize: (edge: string) => Promise<any>
+  window_set_maximized: (maximized: boolean) => Promise<any>
+  window_minimize: () => Promise<any>
   // 好感度分析进度
   check_gpu_status: () => Promise<any>
   check_analysis_model_status: () => Promise<any>

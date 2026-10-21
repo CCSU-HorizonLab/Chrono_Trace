@@ -258,6 +258,7 @@ async function handleGenerate() {
 /* 遮罩吃全局 .ct-modal-overlay（panels.css），此处只管弹窗本体 */
 .portrait-dialog {
   width: 520px; max-width: 92vw;
+  max-height: 86vh; /* 小窗口/默认窗下不超出视口，中部面板内部滚动 */
   background: var(--ct-bg-card);
   border-radius: var(--ct-radius-lg);
   box-shadow: var(--ct-shadow-lg);
@@ -283,7 +284,8 @@ async function handleGenerate() {
               color var(--ct-transition-fast) var(--ct-ease-out);
 }
 .pd-close:hover { background: var(--ct-bg-hover); color: var(--ct-text-primary); }
-.pd-panels { display: flex; gap: 12px; padding: 16px 20px; }
+/* 列向 flex 中部滚动：min-height:0 是溢出生效的前提 */
+.pd-panels { display: flex; gap: 12px; padding: 16px 20px; min-height: 0; overflow-y: auto; }
 .pd-card {
   flex: 1; border-radius: var(--ct-radius-md);
   background: var(--ct-bg-sunken);

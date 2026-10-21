@@ -82,6 +82,7 @@ def _win_hwnd(window):
         import os
 
         import win32gui
+        import win32process
 
         title = getattr(window, 'title', None)
         if not title:
@@ -90,14 +91,21 @@ def _win_hwnd(window):
 
         def _cb(hwnd, _):
             if win32gui.GetWindowText(hwnd) == title:
-                _, pid = win32gui.GetWindowThreadProcessId(hwnd)
+                # GetWindowThreadProcessId 在 win32process（win32gui 无此属性，
+                # 误用会被 except 吞成句柄 0，拖动/缩放/最大化整体静默失效）
+                _tid, pid = win32process.GetWindowThreadProcessId(hwnd)
                 if pid == os.getpid():
                     found.append(hwnd)
             return True
 
         win32gui.EnumWindows(_cb, None)
+        if not found:
+            logger.warning(
+                '[WindowChrome] 未找到标题为 %r 的本进程窗口，拖动/缩放/最大化不可用', title
+            )
         return found[0] if found else 0
     except Exception:
+        logger.warning('[WindowChrome] 枚举窗口句柄失败', exc_info=True)
         return 0
 
 
@@ -199,12 +207,13 @@ def toggle_maximized(window) -> dict:
 
         current = False
         if sys.platform == 'win32':
-            import win32gui
+            import ctypes
 
             hwnd = _win_hwnd(window)
             if not hwnd:
                 return {'ok': False, 'error': '无法获取窗口句柄'}
-            current = bool(win32gui.IsZoomed(hwnd))
+            # IsZoomed 不在 pywin32 导出面（实测 312 无此属性），走 ctypes 直调
+            current = bool(ctypes.windll.user32.IsZoomed(hwnd))
         else:
             view = _qt_view(window)
             if view is None:

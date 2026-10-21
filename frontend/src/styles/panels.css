@@ -154,6 +154,8 @@
   border-radius: var(--ct-radius-lg);
   padding: var(--ct-space-xl);
   width: min(480px, 90vw);
+  max-height: 86vh; /* 小窗口下不超出视口 */
+  overflow-y: auto;
   box-shadow: var(--ct-shadow-lg);
   display: flex;
   flex-direction: column;

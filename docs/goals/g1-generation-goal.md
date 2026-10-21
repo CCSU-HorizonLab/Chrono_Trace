@@ -238,16 +238,7 @@
 
 ## 六、任务文件与提交规则
 
-建议后续按以下文件推进：
-
-```text
-docs/goals/g1-generation-goal.md
-docs/goals/g1-00-baseline-tasks.md
-docs/goals/g1-01-context-routing-tasks.md
-docs/goals/g1-02-knowledge-assembly-tasks.md
-docs/goals/g1-03-generation-audit-tasks.md
-docs/goals/g1-04-end-to-end-acceptance-tasks.md
-```
+G1 五轮施工单（g1-00 基线 → g1-04 端到端验收）已全部完成并清理，验收证据见 [g1-e2e-report.md](g1-e2e-report.md)。当时的推进约定保留如下，供后续同类目标参照：
 
 每个任务必须分别记录：
 

@@ -912,10 +912,11 @@ async function batchIndexPending() {
 
 .rc-sort-select {
   border: 1px solid var(--ct-border-color, rgba(0, 0, 0, 0.12));
-  background: var(--ct-bg-1, #fff);
+  background-color: var(--ct-bg-1, #fff);
   color: var(--ct-text-secondary, #555);
   border-radius: 8px;
   padding: 5px 8px;
+  padding-right: 26px;
   font-size: 12px;
   outline: none;
   cursor: pointer;
@@ -1133,10 +1134,11 @@ async function batchIndexPending() {
 
 .rc-select {
   border: 1px solid var(--ct-border-color, rgba(0, 0, 0, 0.12));
-  background: var(--ct-bg-secondary, rgba(0, 0, 0, 0.02));
+  background-color: var(--ct-bg-secondary, rgba(0, 0, 0, 0.02));
   color: var(--ct-text-secondary, #555);
   border-radius: 6px;
   padding: 4px 6px;
+  padding-right: 24px;
   font-size: 12px;
   outline: none;
   cursor: pointer;
@@ -1391,10 +1393,11 @@ async function batchIndexPending() {
 
 .rc-page-size-select {
   border: 1px solid var(--ct-border-color, rgba(0, 0, 0, 0.12));
-  background: var(--ct-bg-1, #fff);
+  background-color: var(--ct-bg-1, #fff);
   color: var(--ct-text-secondary, #555);
   border-radius: 6px;
   padding: 4px 6px;
+  padding-right: 24px;
   font-size: 12px;
   outline: none;
   cursor: pointer;

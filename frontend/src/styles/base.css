@@ -18,13 +18,8 @@ body {
 
 /* layout helpers (legacy sidebar removed) */
 
-/* card */
-.ct-card {
-  background: var(--ct-bg-elevated);
-  border: var(--ct-border);
-  border-radius: var(--ct-radius);
-  box-shadow: var(--ct-shadow);
-}
+/* card skin/button/field 皮肤已并入 theme.css 的 ct-btn 类体系（墨痕暖白），
+   这里只留结构类 */
 
 .ct-card-hd {
   padding: 12px 14px;
@@ -41,56 +36,7 @@ body {
   padding: 14px;
 }
 
-/* button */
-.ct-btn {
-  background: var(--ct-color-primary);
-  color: var(--ct-text-inverse);
-  border: none;
-  padding: 8px 12px;
-  border-radius: 8px;
-  cursor: pointer;
-}
-
-.ct-btn:hover {
-  background: var(--ct-color-accent);
-  color: var(--ct-text-primary);
-}
-
-.ct-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.ct-btn.ghost {
-  background: transparent;
-  color: var(--ct-color-primary);
-  border: 1px solid var(--ct-color-primary);
-}
-
-.ct-btn.ghost:hover {
-  background: var(--ct-color-primary-light);
-}
-
-.ct-btn.text {
-  background: transparent;
-  color: var(--ct-color-primary);
-}
-
-/* field */
-.ct-field {
-  width: 100%;
-  padding: 10px 12px;
-  border-radius: 8px;
-  border: 1px solid var(--ct-border-color);
-  outline: none;
-  background: var(--ct-bg-elevated);
-  color: var(--ct-text);
-}
-
-.ct-field:focus {
-  border-color: var(--ct-color-accent);
-  box-shadow: 0 0 0 3px var(--ct-color-primary-light);
-}
+/* button/field 皮肤并入 theme.css（ct-btn 类体系 + 表单发丝线），此处不再重复 */
 
 /* utilities */
 .gap-8 {

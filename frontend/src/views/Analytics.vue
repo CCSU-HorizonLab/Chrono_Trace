@@ -4142,10 +4142,11 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
 
 .group-days-select {
   padding: 7px 10px;
+  padding-right: 28px;
   font-size: 12px;
   border: 1px solid var(--ct-border-color);
   border-radius: var(--ct-radius-md);
-  background: var(--ct-bg-elevated);
+  background-color: var(--ct-bg-elevated);
   color: var(--ct-text-primary);
   outline: none;
 }

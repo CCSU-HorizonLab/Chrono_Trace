@@ -8,7 +8,9 @@ sys.platform 分支：
   X11 / Wayland 通用；经跨线程 signal（队列连接）投递到 GUI 线程执行
   （pywebview 桥调用在独立线程，不能直接动窗口）。
 - Windows（EdgeChromium/WinForms）：WM_NCLBUTTONDOWN + HTCAPTION/HT*
-  原生标题栏语义（与悬浮窗 floating_window_service.start_drag 同链路）。
+  原生标题栏语义（与悬浮窗 floating_window_service.start_drag 同链路）；
+  边缘缩放经 _win_start_size_loop 临时补 WS_THICKFRAME——无框窗无此样式，
+  系统 SC_SIZE 循环会静默不动作（HTCAPTION 拖动不受此限制）。
 
 最大化/最小化走 pywebview Window 公开 API（window.maximize/restore/minimize），
 两平台一致；toggle 前先查实际状态（Qt windowState / Win32 IsZoomed），系统级
@@ -143,6 +145,42 @@ def start_drag(window) -> dict:
         return {'ok': False, 'error': str(e)}
 
 
+def _win_start_size_loop(hwnd, hit: int) -> None:
+    """注入 WM_NCLBUTTONDOWN 启动系统缩放循环（Windows 无框主窗口专用）。
+
+    两个坑：
+    - 无框窗是 WS_POPUP，没有 WS_THICKFRAME——系统 SC_SIZE 循环对无边框窗
+      静默不动作（HTCAPTION 拖动不受此限制，故标题栏/悬浮窗拖动一直正常）。
+      临时补样式，循环结束还原，静止外观不变。
+    - lParam 必须给屏幕坐标锚点；传 0 时锚在原点，缩放循环拿到退化锚
+      立即退出（拖动循环不吃 lParam，传 0 也能用）。
+    """
+    import win32api
+    import win32con
+    import win32gui
+
+    style = win32gui.GetWindowLong(hwnd, win32con.GWL_STYLE)
+    no_thick = not style & win32con.WS_THICKFRAME
+    if no_thick:
+        win32gui.SetWindowLong(hwnd, win32con.GWL_STYLE, style | win32con.WS_THICKFRAME)
+        win32gui.SetWindowPos(
+            hwnd, 0, 0, 0, 0, 0,
+            win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOZORDER
+            | win32con.SWP_NOACTIVATE | win32con.SWP_FRAMECHANGED,
+        )
+    try:
+        x, y = win32gui.GetCursorPos()
+        win32gui.SendMessage(hwnd, win32con.WM_NCLBUTTONDOWN, hit, win32api.MAKELONG(x, y))
+    finally:
+        if no_thick:
+            win32gui.SetWindowLong(hwnd, win32con.GWL_STYLE, style)
+            win32gui.SetWindowPos(
+                hwnd, 0, 0, 0, 0, 0,
+                win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOZORDER
+                | win32con.SWP_NOACTIVATE | win32con.SWP_FRAMECHANGED,
+            )
+
+
 def start_resize(window, edge: str) -> dict:
     """从当前鼠标按下位置启动系统级边缘缩放。edge: n/s/e/w（可组合，如 ne）。"""
     if window is None:
@@ -170,7 +208,7 @@ def start_resize(window, edge: str) -> dict:
             if not hwnd:
                 return {'ok': False, 'error': '无法获取窗口句柄'}
             win32gui.ReleaseCapture()
-            win32gui.SendMessage(hwnd, win32con.WM_NCLBUTTONDOWN, hit, 0)
+            _win_start_size_loop(hwnd, hit)
             return {'ok': True}
 
         view = _qt_view(window)

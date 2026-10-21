@@ -159,6 +159,7 @@ type PyWebViewApi = {
   move_floating_window: (dx: number, dy: number) => Promise<any>
   // 主窗口无框 chrome（自绘标题栏）
   window_drag_start: () => Promise<any>
+  window_move_to: (x: number, y: number) => Promise<any>
   window_start_resize: (edge: string) => Promise<any>
   window_resize_to: (x: number, y: number, width: number, height: number, anchor?: string) => Promise<any>
   window_toggle_maximized: () => Promise<{ ok: boolean; maximized?: boolean; error?: string }>

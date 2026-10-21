@@ -250,12 +250,69 @@ watch(() => route.fullPath, () => {
 // ---- 主窗口无框 chrome（拖拽/缩放/最大化由后端 window_chrome 执行）----
 const isMaximized = ref(false)
 
+// ---- 标题栏拖动（Windows 前端驱动；Linux 走原生 startSystemMove） ----
+// 同边缘缩放：NC 拖动循环在 WinForms 无框主窗上不动作，由 mousemove 逐帧
+// 调 window_move_to，按起始原点绝对换算防漂移。
+interface DragSession {
+  startX: number
+  startY: number
+  originX: number
+  originY: number
+  scale: number
+  rafPending: boolean
+  lastEvent: MouseEvent
+}
+let dragSession: DragSession | null = null
+
 function onTitlebarDrag(e: MouseEvent) {
   if (e.button !== 0) return
   const t = e.target as HTMLElement
   // 交互件（导航/头像/窗口控制等）不触发拖拽
   if (t.closest('button, a, input, select, textarea, .topbar-user, [data-no-drag]')) return
-  api.window_drag_start().catch(() => {})
+  if (dragSession || resizeSession) return
+  api.window_drag_start().then((res: any) => {
+    if (!res?.ok || res.native || !Array.isArray(res.rect)) return // Linux 原生循环已接管
+    dragSession = {
+      startX: e.screenX,
+      startY: e.screenY,
+      originX: res.rect[0],
+      originY: res.rect[1],
+      scale: Number(res.scale) || 1,
+      rafPending: false,
+      lastEvent: e,
+    }
+    window.addEventListener('mousemove', onDragMouseMove)
+    window.addEventListener('mouseup', endDragSession)
+  }).catch(() => {})
+}
+
+function onDragMouseMove(ev: MouseEvent) {
+  if (!dragSession) return
+  // 移出窗口后松开会丢 mouseup：重进时无按键即终止会话，防「悬空拖动」
+  if (!(ev.buttons & 1)) {
+    endDragSession()
+    return
+  }
+  ev.preventDefault()
+  dragSession.lastEvent = ev
+  if (dragSession.rafPending) return
+  dragSession.rafPending = true
+  requestAnimationFrame(applyDragFrame)
+}
+
+function applyDragFrame() {
+  const s = dragSession
+  if (!s) return
+  s.rafPending = false
+  const dx = Math.round((s.lastEvent.screenX - s.startX) * s.scale)
+  const dy = Math.round((s.lastEvent.screenY - s.startY) * s.scale)
+  api.window_move_to(s.originX + dx, s.originY + dy).catch(() => {})
+}
+
+function endDragSession() {
+  dragSession = null
+  window.removeEventListener('mousemove', onDragMouseMove)
+  window.removeEventListener('mouseup', endDragSession)
 }
 
 function onTitlebarDblclick(e: MouseEvent) {
@@ -350,7 +407,10 @@ function endResizeSession() {
   window.removeEventListener('mouseup', endResizeSession)
 }
 
-onUnmounted(() => endResizeSession())
+onUnmounted(() => {
+  endResizeSession()
+  endDragSession()
+})
 
 // ---- 关闭按钮确认（后端 close_guard 拦截 X 后调用 window.__chronoHandleCloseRequest）----
 const showCloseDialog = ref(false)

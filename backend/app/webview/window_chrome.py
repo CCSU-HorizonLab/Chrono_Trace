@@ -112,22 +112,32 @@ def _win_hwnd(window):
 
 
 def start_drag(window) -> dict:
-    """从当前鼠标按下位置启动系统级窗口拖动。"""
+    """启动窗口拖动：Linux 走系统原生循环；Windows 由前端驱动逐帧调 move_to。
+
+    Windows 主窗口是 WinForms 无框窗，实测 DefWndProc 的 NC 模态循环
+    （HTCAPTION 移动 / HT* 缩放）在其上均不动作——此前「页面拖动能移窗」
+    实为 pywebview easy_drag（页面级 JS 移窗）在干活，easy_drag 关闭后即
+    现形。悬浮窗不受影响（服务自建纯 win32 窗口，NC 循环正常）。改为
+    返回当前矩形与 DPI 缩放，前端 mousemove 逐帧调 move_to。
+    """
     if window is None:
         return {'ok': False, 'error': '窗口未就绪'}
     try:
         import sys
 
         if sys.platform == 'win32':
-            import win32con
             import win32gui
 
             hwnd = _win_hwnd(window)
             if not hwnd:
                 return {'ok': False, 'error': '无法获取窗口句柄'}
-            win32gui.ReleaseCapture()
-            win32gui.SendMessage(hwnd, win32con.WM_NCLBUTTONDOWN, win32con.HTCAPTION, 0)
-            return {'ok': True}
+            l, t, r, b = win32gui.GetWindowRect(hwnd)
+            return {
+                'ok': True,
+                'native': False,          # 前端据此后接 mousemove 手动移窗
+                'rect': [l, t, r, b],     # 物理像素，屏幕坐标
+                'scale': _win_dpi_scale(hwnd),
+            }
 
         view = _qt_view(window)
         if view is None:
@@ -139,9 +149,35 @@ def start_drag(window) -> dict:
                 handle.startSystemMove()
 
         _gui_dispatch(_do_move)
-        return {'ok': True}
+        return {'ok': True, 'native': True}
     except Exception as e:
         logger.warning('[WindowChrome] 启动拖动失败: %s', e)
+        return {'ok': False, 'error': str(e)}
+
+
+def move_to(window, x: int, y: int) -> dict:
+    """Windows 手动移窗落点（物理像素屏幕坐标）。"""
+    if window is None:
+        return {'ok': False, 'error': '窗口未就绪'}
+    try:
+        import sys
+
+        if sys.platform != 'win32':
+            return {'ok': False, 'error': '仅 Windows 使用手动移窗'}
+
+        import win32con
+        import win32gui
+
+        hwnd = _win_hwnd(window)
+        if not hwnd:
+            return {'ok': False, 'error': '无法获取窗口句柄'}
+        win32gui.SetWindowPos(
+            hwnd, 0, int(x), int(y), 0, 0,
+            win32con.SWP_NOSIZE | win32con.SWP_NOZORDER | win32con.SWP_NOACTIVATE,
+        )
+        return {'ok': True}
+    except Exception as e:
+        logger.warning('[WindowChrome] 手动移窗失败: %s', e)
         return {'ok': False, 'error': str(e)}
 
 

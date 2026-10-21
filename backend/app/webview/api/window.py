@@ -133,10 +133,20 @@ class WindowApiMixin:
     # ==================== 主窗口无框 chrome（window_chrome.py） ====================
 
     def window_drag_start(self) -> dict[str, Any]:
-        """自绘标题栏拖拽：从当前鼠标按下位置启动系统级窗口拖动。"""
+        """自绘标题栏拖拽。
+
+        Linux 原生系统拖动（native=True）；Windows 返回当前矩形与 DPI
+        缩放（native=False），由前端 mousemove 逐帧调 window_move_to。
+        """
         from ..window_chrome import start_drag
 
         return start_drag(getattr(self, "_webview_window", None))
+
+    def window_move_to(self, x: int, y: int) -> dict[str, Any]:
+        """Windows 手动移窗落点（物理像素屏幕坐标）。"""
+        from ..window_chrome import move_to
+
+        return move_to(getattr(self, "_webview_window", None), int(x or 0), int(y or 0))
 
     def window_start_resize(self, edge: str) -> dict[str, Any]:
         """无框窗口边缘缩放：edge 为 n/s/e/w（可组合 ne/sw…）。

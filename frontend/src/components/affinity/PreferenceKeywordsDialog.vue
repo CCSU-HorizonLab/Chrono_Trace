@@ -53,7 +53,7 @@
                 placeholder="输入关键词,如:篮球、电影、旅行..."
                 @keyup.enter="addKeyword"
               />
-              <button class="add-btn" @click="addKeyword" :disabled="!newKeyword.trim()">
+              <button class="ct-btn primary ct-btn-sm" @click="addKeyword" :disabled="!newKeyword.trim()">
                 添加
               </button>
             </div>
@@ -70,8 +70,8 @@
           </div>
           
           <div class="dialog-footer">
-            <button class="btn btn-secondary" @click="handleClose">取消</button>
-            <button class="btn btn-primary" @click="handleSave" :disabled="isSaving">
+            <button class="ct-btn ghost" @click="handleClose">取消</button>
+            <button class="ct-btn primary" @click="handleSave" :disabled="isSaving">
               {{ isSaving ? '保存中...' : '保存' }}
             </button>
           </div>
@@ -102,18 +102,18 @@ const currentWeights = computed(() => {
   const hasKeywords = keywords.value.length > 0
   if (hasKeywords) {
     return [
-      { name: '互动投入', weight: '40%', color: '#3b82f6' },
-      { name: '情感共鸣', weight: '35%', color: '#3b82f6' },
-      { name: '亲近信号', weight: '15%', color: '#10b981' },
-      { name: '喜好维度', weight: '10%', color: '#10b981' },
+      { name: '互动投入', weight: '40%', color: '#5A4BC4' },
+      { name: '情感共鸣', weight: '35%', color: '#5A4BC4' },
+      { name: '亲近信号', weight: '15%', color: '#2FA39A' },
+      { name: '喜好维度', weight: '10%', color: '#2FA39A' },
     ]
   } else {
     // 喜好缺席时按在场三维归一（40/35/15 → 44/39/17）
     return [
-      { name: '互动投入', weight: '44%', color: '#3b82f6' },
-      { name: '情感共鸣', weight: '39%', color: '#3b82f6' },
-      { name: '亲近信号', weight: '17%', color: '#10b981' },
-      { name: '喜好维度', weight: '0%', color: '#9ca3af' },
+      { name: '互动投入', weight: '44%', color: '#5A4BC4' },
+      { name: '情感共鸣', weight: '39%', color: '#5A4BC4' },
+      { name: '亲近信号', weight: '17%', color: '#2FA39A' },
+      { name: '喜好维度', weight: '0%', color: '#9B95A5' },
     ]
   }
 })
@@ -178,7 +178,7 @@ const handleClose = () => {
 }
 
 .dialog-container {
-  background: var(--ct-bg-elevated);
+  background: var(--ct-bg-card);
   border-radius: var(--ct-radius-lg);
   box-shadow: var(--ct-shadow-xl);
   width: 100%;
@@ -221,7 +221,7 @@ const handleClose = () => {
 }
 
 .close-btn:hover {
-  background: var(--ct-bg-tertiary);
+  background: var(--ct-bg-sunken);
   color: var(--ct-text-primary);
 }
 
@@ -236,7 +236,7 @@ const handleClose = () => {
 
 /* 权重预览 */
 .weight-preview {
-  background: var(--ct-bg-secondary);
+  background: var(--ct-bg-sunken);
   border-radius: var(--ct-radius-md);
   padding: var(--ct-space-md);
   border: 1px solid var(--ct-border-color);
@@ -270,7 +270,7 @@ const handleClose = () => {
   justify-content: space-between;
   align-items: center;
   padding: var(--ct-space-xs);
-  background: var(--ct-bg-elevated);
+  background: var(--ct-bg-card);
   border-radius: var(--ct-radius-sm);
 }
 
@@ -314,7 +314,7 @@ const handleClose = () => {
   flex-wrap: wrap;
   gap: var(--ct-space-xs);
   padding: var(--ct-space-md);
-  background: var(--ct-bg-secondary);
+  background: var(--ct-bg-sunken);
   border-radius: var(--ct-radius-md);
   min-height: 60px;
 }
@@ -374,8 +374,8 @@ const handleClose = () => {
   font-size: var(--ct-text-sm);
 }
 
-.empty-hint {
-  font-size: var(--ct-text-xs) !important;
+.empty-state .empty-hint {
+  font-size: var(--ct-text-xs);
   color: var(--ct-text-tertiary);
 }
 
@@ -390,7 +390,7 @@ const handleClose = () => {
   padding: var(--ct-space-sm) var(--ct-space-md);
   border: 1px solid var(--ct-border-color);
   border-radius: var(--ct-radius-md);
-  background: var(--ct-bg-elevated);
+  background: var(--ct-bg-card);
   color: var(--ct-text-primary);
   font-size: var(--ct-text-sm);
   outline: none;
@@ -402,28 +402,6 @@ const handleClose = () => {
   box-shadow: 0 0 0 2px var(--ct-color-primary-muted);
 }
 
-.add-btn {
-  padding: var(--ct-space-sm) var(--ct-space-lg);
-  background: var(--ct-color-primary);
-  color: white;
-  border: none;
-  border-radius: var(--ct-radius-md);
-  font-size: var(--ct-text-sm);
-  font-weight: 600;
-  cursor: pointer;
-  transition: all var(--ct-transition-fast);
-  white-space: nowrap;
-}
-
-.add-btn:hover:not(:disabled) {
-  background: var(--ct-color-primary-hover);
-  transform: translateY(-1px);
-}
-
-.add-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
 
 /* 提示框 */
 .hint-box {
@@ -458,39 +436,8 @@ const handleClose = () => {
   border-top: 1px solid var(--ct-border-color);
 }
 
-.btn {
-  padding: var(--ct-space-sm) var(--ct-space-lg);
-  border: none;
-  border-radius: var(--ct-radius-md);
-  font-size: var(--ct-text-sm);
-  font-weight: 600;
-  cursor: pointer;
-  transition: all var(--ct-transition-fast);
-}
 
-.btn-secondary {
-  background: var(--ct-bg-tertiary);
-  color: var(--ct-text-primary);
-}
 
-.btn-secondary:hover {
-  background: var(--ct-bg-secondary);
-}
-
-.btn-primary {
-  background: var(--ct-color-primary);
-  color: white;
-}
-
-.btn-primary:hover:not(:disabled) {
-  background: var(--ct-color-primary-hover);
-  transform: translateY(-1px);
-}
-
-.btn-primary:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
 
 /* 动画 */
 .dialog-fade-enter-active,

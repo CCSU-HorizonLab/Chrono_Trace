@@ -130,7 +130,7 @@ const showLowConfidenceHint = computed(() => {
 
 <style scoped>
 .sub-score-breakdown {
-  background: var(--ct-bg-elevated);
+  background: var(--ct-bg-card);
   border: 1px solid var(--ct-border-color);
   border-radius: var(--ct-radius-md);
   padding: var(--ct-space-sm);
@@ -229,7 +229,7 @@ const showLowConfidenceHint = computed(() => {
 .score-text {
   font-family: var(--ct-font-mono);
   font-weight: 500;
-  color: var(--ct-text-primary) !important;
+  color: var(--ct-text-primary);
   min-width: 28px;
   text-align: right;
 }
@@ -294,7 +294,7 @@ const showLowConfidenceHint = computed(() => {
   gap: 8px;
   align-items: baseline;
   font-size: 12px;
-  color: var(--ct-text-secondary, #64748b);
+  color: var(--ct-text-secondary, #5A5566);
 }
 
 .evidence-month {

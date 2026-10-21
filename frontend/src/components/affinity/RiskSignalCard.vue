@@ -58,7 +58,7 @@ const summaryClass = computed(() => `summary-${signalClass(props.assessment?.hig
 .risk-signal-card {
   margin-top: var(--ct-space-md);
   padding: var(--ct-space-md);
-  background: var(--ct-bg-elevated);
+  background: var(--ct-bg-card);
   border: 1px solid var(--ct-border-color);
   border-radius: var(--ct-radius-md);
 }
@@ -118,7 +118,7 @@ const summaryClass = computed(() => `summary-${signalClass(props.assessment?.hig
   padding: 8px 10px;
   border-radius: var(--ct-radius-sm);
   border-left: 3px solid var(--ct-border-color);
-  background: var(--ct-bg-secondary);
+  background: var(--ct-bg-sunken);
 }
 
 .signal-alert {
@@ -186,7 +186,7 @@ const summaryClass = computed(() => `summary-${signalClass(props.assessment?.hig
   font-style: italic;
   padding: 2px 8px;
   border-radius: var(--ct-radius-sm);
-  background: var(--ct-bg-tertiary);
+  background: var(--ct-bg-sunken);
   color: var(--ct-text-secondary);
 }
 

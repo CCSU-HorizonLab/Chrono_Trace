@@ -76,7 +76,7 @@ function onTo(e: Event) { emit('update:dates', { from: props.dates.from, to: (e.
   flex-wrap: wrap;
   align-items: center;
   gap: var(--ct-space-md);
-  background: var(--ct-bg-elevated);
+  background: var(--ct-bg-card);
   border-radius: var(--ct-radius-md);
   padding: 12px var(--ct-space-lg);
   margin-bottom: var(--ct-space-lg);
@@ -95,7 +95,7 @@ function onTo(e: Event) { emit('update:dates', { from: props.dates.from, to: (e.
   padding: 6px 10px;
   border: 1px solid var(--ct-border-color);
   border-radius: var(--ct-radius-sm);
-  background: var(--ct-bg-input);
+  background: var(--ct-bg-card);
   color: var(--ct-text-primary);
   font-size: 0.9rem;
 }
@@ -130,7 +130,7 @@ function onTo(e: Event) { emit('update:dates', { from: props.dates.from, to: (e.
 .btn {
   padding: 6px 12px;
   border: 1px solid var(--ct-border-color);
-  background: var(--ct-bg-surface);
+  background: var(--ct-bg-card);
   color: var(--ct-text-secondary);
   border-radius: 20px;
   cursor: pointer;

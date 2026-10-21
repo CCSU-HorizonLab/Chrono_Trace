@@ -117,8 +117,8 @@
           </div>
           
           <div class="dialog-footer">
-            <button class="btn btn-secondary" @click="handleClose">取消</button>
-            <button class="btn btn-primary" @click="handleSave" :disabled="isSaving">
+            <button class="ct-btn ghost" @click="handleClose">取消</button>
+            <button class="ct-btn primary" @click="handleSave" :disabled="isSaving">
               {{ isSaving ? '保存中...' : '确认并开始分析' }}
             </button>
           </div>
@@ -344,7 +344,7 @@ const handleClose = () => {
 }
 
 .dialog-container {
-  background: var(--ct-bg-elevated);
+  background: var(--ct-bg-card);
   border-radius: var(--ct-radius-lg);
   box-shadow: var(--ct-shadow-xl);
   width: 100%;
@@ -386,7 +386,7 @@ const handleClose = () => {
 }
 
 .close-btn:hover {
-  background: var(--ct-bg-tertiary);
+  background: var(--ct-bg-sunken);
   color: var(--ct-text-primary);
 }
 
@@ -449,7 +449,7 @@ const handleClose = () => {
   border-radius: var(--ct-radius-md);
   cursor: pointer;
   transition: all var(--ct-transition-fast);
-  background: var(--ct-bg-elevated);
+  background: var(--ct-bg-card);
   text-align: center;
 }
 
@@ -484,7 +484,7 @@ const handleClose = () => {
 .weight-hint {
   font-size: 12px;
   font-weight: normal;
-  color: var(--ct-text-secondary, #64748b);
+  color: var(--ct-text-secondary, #5A5566);
 }
 
 .weight-rows {
@@ -518,7 +518,7 @@ const handleClose = () => {
 
 .weight-pct {
   text-align: right;
-  color: var(--ct-text-secondary, #64748b);
+  color: var(--ct-text-secondary, #5A5566);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
@@ -528,7 +528,7 @@ const handleClose = () => {
   align-items: center;
   gap: 6px;
   font-size: 12px;
-  color: var(--ct-text-secondary, #64748b);
+  color: var(--ct-text-secondary, #5A5566);
   cursor: pointer;
   margin-top: 2px;
 }
@@ -556,39 +556,8 @@ const handleClose = () => {
   border-top: 1px solid var(--ct-border-color);
 }
 
-.btn {
-  padding: var(--ct-space-sm) var(--ct-space-lg);
-  border: none;
-  border-radius: var(--ct-radius-md);
-  font-size: var(--ct-text-sm);
-  font-weight: 600;
-  cursor: pointer;
-  transition: all var(--ct-transition-fast);
-}
 
-.btn-secondary {
-  background: var(--ct-bg-tertiary);
-  color: var(--ct-text-primary);
-}
 
-.btn-secondary:hover {
-  background: var(--ct-bg-secondary);
-}
-
-.btn-primary {
-  background: var(--ct-color-primary);
-  color: white;
-}
-
-.btn-primary:hover:not(:disabled) {
-  background: var(--ct-color-primary-hover);
-  transform: translateY(-1px);
-}
-
-.btn-primary:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
 
 /* 动画 */
 .dialog-fade-enter-active,

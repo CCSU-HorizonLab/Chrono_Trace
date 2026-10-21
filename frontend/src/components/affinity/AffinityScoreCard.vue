@@ -134,22 +134,19 @@ const handleClick = () => {
 
 <style scoped>
 .score-card {
-  background: var(--ct-bg-elevated);
-  border: 1px solid var(--ct-border-color);
-  border-radius: var(--ct-radius-md);
+  background: var(--ct-bg-card);
+  border-radius: var(--ct-radius-lg);
   padding: 1.5rem;
   box-shadow: var(--ct-shadow-sm);
   cursor: pointer;
-  transition: transform var(--ct-transition-fast), box-shadow var(--ct-transition-fast);
+  transition: box-shadow var(--ct-transition-fast);
   display: flex;
   flex-direction: column;
   justify-content: center;
 }
 
 .score-card:hover {
-  transform: translateY(-2px);
   box-shadow: var(--ct-shadow-md);
-  border-color: var(--ct-border-color-hover);
 }
 
 .header {
@@ -171,43 +168,38 @@ const handleClick = () => {
   color: var(--ct-text-primary);
 }
 
+/* 权重徽标：tint 底 + 语义色字（info=墨紫口径） */
 .weight-badge {
   display: inline-flex;
   align-items: center;
-  padding: 4px 12px;
+  padding: 3px 10px;
   border-radius: var(--ct-radius-full);
   font-size: 0.75rem;
   font-weight: 600;
-  background: #3b82f6;
-  color: white;
-  border: 2px solid #2563eb;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  background: var(--ct-color-primary-tint);
+  color: var(--ct-color-primary);
   margin-left: 8px;
 }
 
 .weight-badge.weight-zero {
-  background: #6b7280;
-  border-color: #4b5563;
-  opacity: 0.9;
+  background: var(--ct-bg-sunken);
+  color: var(--ct-text-tertiary);
 }
 
 .weight-badge.bonus-badge {
-  background: linear-gradient(135deg, #f59e0b, #d97706);
-  border-color: #b45309;
-  color: white;
+  background: var(--ct-color-warning-tint);
+  color: #8F5B14;
 }
 
 .weight-badge.bonus-inactive {
-  background: #6b7280;
-  border-color: #4b5563;
-  opacity: 0.9;
+  background: var(--ct-bg-sunken);
+  color: var(--ct-text-tertiary);
 }
 
 .score-text {
   font-size: 2rem;
   font-weight: 700;
   color: var(--score-color);
-  font-family: var(--ct-font-display);
   line-height: 1;
 }
 
@@ -220,7 +212,7 @@ const handleClick = () => {
 
 .progress-container {
   height: 8px;
-  background: var(--ct-bg-tertiary);
+  background: var(--ct-bg-sunken);
   border-radius: var(--ct-radius-full);
   overflow: hidden;
   margin-bottom: var(--ct-space-lg);
@@ -286,14 +278,13 @@ const handleClick = () => {
 
 .score-card.disabled {
   opacity: 0.6;
-  background: var(--ct-bg-secondary);
+  background: var(--ct-bg-sunken);
+  box-shadow: none;
   cursor: not-allowed;
 }
 
 .score-card.disabled:hover {
-  transform: none;
-  box-shadow: var(--ct-shadow-sm);
-  border-color: var(--ct-border-color);
+  box-shadow: none;
 }
 
 .score-card.disabled .score-text,

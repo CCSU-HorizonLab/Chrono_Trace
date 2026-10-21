@@ -35,16 +35,13 @@
   </header>
 
   <div v-if="!hasConversations" class="page-empty-state fade-in">
-    <div class="page-empty-glow page-empty-glow-left"></div>
-    <div class="page-empty-glow page-empty-glow-right"></div>
-
     <div class="page-empty-hero">
       <div class="page-empty-badge">历史分析</div>
 
       <div class="page-empty-illustration" aria-hidden="true">
         <div class="empty-orb empty-orb-main"><FolderArchive :size="36" style="color: var(--ct-color-primary);" /></div>
-        <div class="empty-orb empty-orb-small empty-orb-chat"><MessageSquare :size="20" style="color: #3b82f6;" /></div>
-        <div class="empty-orb empty-orb-small empty-orb-star"><Sparkles :size="18" style="color: #f59e0b;" /></div>
+        <div class="empty-orb empty-orb-small empty-orb-chat"><MessageSquare :size="20" style="color: var(--ct-chart-3);" /></div>
+        <div class="empty-orb empty-orb-small empty-orb-star"><Sparkles :size="18" style="color: var(--ct-chart-4);" /></div>
       </div>
 
       <h2>还没有历史记录</h2>
@@ -207,7 +204,7 @@
         <div class="score-visual">
           <div class="ct-score-ring large">
             <svg viewBox="0 0 120 120" class="circular-chart">
-              <circle class="circle-bg" cx="60" cy="60" r="50" fill="none" stroke="var(--ct-bg-tertiary)" stroke-width="10" />
+              <circle class="circle-bg" cx="60" cy="60" r="50" fill="none" stroke="var(--ct-bg-sunken)" stroke-width="10" />
               <circle class="circle-fill" cx="60" cy="60" r="50" fill="none"
                 stroke="var(--ct-color-primary)" stroke-width="10" stroke-linecap="round"
                 :stroke-dasharray="314.159" :stroke-dashoffset="314.159 * (1 - displayScore / 100)"
@@ -411,8 +408,8 @@
           <div class="initiative-content">
             <div class="donut-chart-box">
               <svg viewBox="0 0 100 100" class="donut-svg">
-                <circle cx="50" cy="50" r="30" fill="transparent" stroke="#82ca9d" stroke-width="20" stroke-dasharray="188.5" stroke-dashoffset="0"></circle>
-                <circle cx="50" cy="50" r="30" fill="transparent" stroke="#8884d8" stroke-width="20" :stroke-dasharray="`${(1 - (initiativeStats.initiativeRate || 0)) * 188.5} 188.5`" stroke-dashoffset="0"></circle>
+                <circle cx="50" cy="50" r="30" fill="transparent" stroke="var(--ct-chart-4)" stroke-width="20" stroke-dasharray="188.5" stroke-dashoffset="0"></circle>
+                <circle cx="50" cy="50" r="30" fill="transparent" stroke="var(--ct-color-primary)" stroke-width="20" :stroke-dasharray="`${(1 - (initiativeStats.initiativeRate || 0)) * 188.5} 188.5`" stroke-dashoffset="0"></circle>
               </svg>
               <div class="donut-legend">
                 <div class="legend-item"><span class="legend-dot purple"></span>我发起 {{ ((1 - (initiativeStats.initiativeRate || 0)) * 100).toFixed(0) }}%</div>
@@ -776,15 +773,15 @@
             <div class="export-success">
               <p>✅ 已导出 {{ exportResult.count }} 条消息</p>
               <p class="export-path">{{ exportResult.path }}</p>
-              <button class="ct-btn-secondary" @click="openExportFolder">打开所在文件夹</button>
+              <button class="ct-btn secondary ct-btn-sm" @click="openExportFolder">打开所在文件夹</button>
             </div>
           </div>
           <div class="pd-footer">
-            <button v-if="!exportResult" class="pd-btn pd-btn-ghost" @click="exportDialogVisible = false">取消</button>
-            <button v-if="!exportResult" class="pd-btn pd-btn-primary" :disabled="exporting" @click="confirmExport">
+            <button v-if="!exportResult" class="ct-btn ghost" @click="exportDialogVisible = false">取消</button>
+            <button v-if="!exportResult" class="ct-btn primary" :disabled="exporting" @click="confirmExport">
               {{ exporting ? '导出中…' : '导出' }}
             </button>
-            <button v-else class="pd-btn pd-btn-primary" @click="exportDialogVisible = false">完成</button>
+            <button v-else class="ct-btn primary" @click="exportDialogVisible = false">完成</button>
           </div>
         </div>
       </div>
@@ -2269,7 +2266,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
             hasConversations, hasFeatures, hasCachedAffinityAnalysis, featureStats, responseTimeStats, initiativeStats, wordCountsStats, displayWordRatioLabel, activityCalendar,
             responseTimeChart, activityCalendarChart, wordCountChart, stats, currentContactName, headerAvatarSrc, hasPreferenceKeywords, allDimensions,
             currentRangeLabel, hasContentAnalysis, analysisStaleNotice, circumference, strokeDashoffset, formatNumber, formatTime, getResponseTimeLabel, getMergedResponseTimeLabel, getResponseTimePercent, onConversationChange, onDatesChange, handleExport, handleStartGlobalAnalysis, handleContextSaved, handleKeywordsUpdated, llmEvidenceNotes,
-            qaHistory, qaInput, qaLoading, qaChatBox, handleAskHistory, handleCancelQa, formatQaTime, copiedQaKey, overallCopied, handleCopyQa, handleCopyOverall,
+            qaHistory, qaInput, qaLoading, qaChatBox, qaIndexingHint, handleAskHistory, handleCancelQa, formatQaTime, copiedQaKey, overallCopied, handleCopyQa, handleCopyOverall,
             isGroupConversation, groupStats, groupStatsLoading, groupSummary, groupSummaryLoading, groupSummaryDays, handleGenerateGroupSummary,
             reportExporting, handleExportReport,
             exportDialogVisible, exportFormat, exporting, exportResult, confirmExport, openExportFolder,
@@ -2288,8 +2285,8 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
 .analytics-page {
   display: flex;
   flex-direction: column;
-  padding: var(--ct-space-md) var(--ct-space-xl) 0 var(--ct-space-xl) !important;
-  gap: var(--ct-space-md) !important;
+  padding: var(--ct-space-md) var(--ct-space-xl) 0 var(--ct-space-xl);
+  gap: var(--ct-space-md);
   height: 100%; /* Will only work if App.vue restricts it, but helps elasticity */
 }
 
@@ -2300,6 +2297,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   z-index: 50;
 }
 
+/* 空态：白卡安静铺陈，插画用 tint 圆，不再用渐变光斑 */
 .page-empty-state {
   position: relative;
   flex: 1;
@@ -2311,36 +2309,10 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   text-align: center;
   gap: 28px;
   padding: clamp(32px, 6vw, 72px);
-  border-radius: 28px;
-  border: 1px solid rgba(124, 77, 255, 0.12);
-  background:
-    radial-gradient(circle at top, rgba(124, 77, 255, 0.14), transparent 34%),
-    radial-gradient(circle at bottom right, rgba(245, 166, 35, 0.12), transparent 28%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(247, 250, 255, 0.94));
-  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.08);
+  border-radius: var(--ct-radius-lg);
+  background: var(--ct-bg-card);
+  box-shadow: var(--ct-shadow-sm);
   overflow: hidden;
-}
-
-.page-empty-glow {
-  position: absolute;
-  width: 280px;
-  height: 280px;
-  border-radius: 999px;
-  filter: blur(42px);
-  opacity: 0.5;
-  pointer-events: none;
-}
-
-.page-empty-glow-left {
-  top: -100px;
-  left: -80px;
-  background: rgba(124, 77, 255, 0.18);
-}
-
-.page-empty-glow-right {
-  right: -110px;
-  bottom: -120px;
-  background: rgba(245, 166, 35, 0.18);
 }
 
 .page-empty-hero {
@@ -2355,17 +2327,14 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
 .page-empty-badge {
   display: inline-flex;
   align-items: center;
-  padding: 8px 14px;
+  padding: 6px 14px;
   margin-bottom: 18px;
-  border-radius: 999px;
-  border: 1px solid rgba(124, 77, 255, 0.16);
-  background: rgba(255, 255, 255, 0.72);
+  border-radius: var(--ct-radius-full);
+  background: var(--ct-color-primary-tint);
   color: var(--ct-color-primary);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: 0.08em;
-  text-transform: uppercase;
-  box-shadow: 0 8px 20px rgba(124, 77, 255, 0.08);
 }
 
 .page-empty-illustration {
@@ -2381,8 +2350,6 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   align-items: center;
   justify-content: center;
   border-radius: 999px;
-  backdrop-filter: blur(10px);
-  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.12);
 }
 
 .empty-orb-main {
@@ -2391,9 +2358,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   width: 92px;
   height: 92px;
   transform: translateX(-50%);
-  background: linear-gradient(135deg, rgba(124, 77, 255, 0.18), rgba(124, 77, 255, 0.08));
-  border: 1px solid rgba(124, 77, 255, 0.14);
-  font-size: 42px;
+  background: var(--ct-color-primary-tint);
 }
 
 .empty-orb-small {
@@ -2405,16 +2370,13 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
 .empty-orb-chat {
   left: 28px;
   top: 72px;
-  background: linear-gradient(135deg, rgba(59, 130, 246, 0.16), rgba(59, 130, 246, 0.08));
-  border: 1px solid rgba(59, 130, 246, 0.14);
+  background: var(--ct-color-success-tint);
 }
 
 .empty-orb-star {
   right: 28px;
   top: 34px;
-  background: linear-gradient(135deg, rgba(245, 166, 35, 0.2), rgba(245, 166, 35, 0.08));
-  border: 1px solid rgba(245, 166, 35, 0.14);
-  color: #b45309;
+  background: var(--ct-color-warning-tint);
 }
 
 .page-empty-state h2 {
@@ -2434,10 +2396,10 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   font-size: var(--ct-text-lg);
 }
 
-.page-empty-hint {
+.page-empty-state .page-empty-hint {
   max-width: 620px;
-  margin-top: var(--ct-space-md) !important;
-  color: var(--ct-text-tertiary) !important;
+  margin-top: var(--ct-space-md);
+  color: var(--ct-text-tertiary);
 }
 
 .page-empty-grid {
@@ -2452,24 +2414,20 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
 .page-empty-card {
   text-align: left;
   padding: 18px 18px 20px;
-  border-radius: 20px;
-  background: rgba(255, 255, 255, 0.82);
-  border: 1px solid rgba(148, 163, 184, 0.16);
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
+  border-radius: var(--ct-radius-md);
+  background: var(--ct-bg-sunken);
 }
 
 .page-empty-card-accent {
-  background: linear-gradient(180deg, rgba(124, 77, 255, 0.08), rgba(255, 255, 255, 0.9));
-  border-color: rgba(124, 77, 255, 0.16);
+  background: var(--ct-color-primary-tint);
 }
 
 .page-empty-card-label {
   display: inline-flex;
   margin-bottom: 10px;
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: 0.08em;
-  text-transform: uppercase;
   color: var(--ct-text-tertiary);
 }
 
@@ -2492,10 +2450,9 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   justify-content: space-between;
   align-items: center;
   padding: var(--ct-space-sm) var(--ct-space-lg);
-  background: var(--ct-bg-secondary);
-  border-radius: var(--ct-radius-2xl);
+  background: var(--ct-bg-card);
+  border-radius: var(--ct-radius-lg);
   box-shadow: var(--ct-shadow-sm);
-  border: 1px solid var(--ct-border-subtle);
   flex-wrap: wrap;
   gap: var(--ct-space-md);
 }
@@ -2517,12 +2474,12 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   width: 48px;
   height: 48px;
   border-radius: var(--ct-radius-full);
-  background: var(--ct-bg-tertiary);
+  background: var(--ct-bg-sunken);
   display: flex;
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  border: 2px solid var(--ct-color-primary-subtle);
+  border: 2px solid var(--ct-color-primary-tint);
 }
 
 .profile-info {
@@ -2553,7 +2510,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
 
 .stat-tag {
   padding: 2px 8px;
-  background: var(--ct-bg-tertiary);
+  background: var(--ct-bg-sunken);
   border-radius: var(--ct-radius-full);
   font-size: var(--ct-text-xs);
   color: var(--ct-text-secondary);
@@ -2567,16 +2524,15 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
 /* --- Global Progress --- */
 .extraction-progress {
   padding: var(--ct-space-md) var(--ct-space-xl);
-  background: var(--ct-bg-secondary);
+  background: var(--ct-bg-card);
   border-radius: var(--ct-radius-md);
   margin-bottom: var(--ct-space-md);
   box-shadow: var(--ct-shadow-sm);
-  border: 1px solid var(--ct-border-subtle);
 }
 
 .progress-bar {
   height: 8px;
-  background: var(--ct-bg-tertiary);
+  background: var(--ct-bg-sunken);
   border-radius: 4px;
   overflow: hidden;
   margin-bottom: 8px;
@@ -2585,6 +2541,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
 .progress-fill {
   height: 100%;
   background: var(--ct-color-primary);
+  border-radius: 4px;
   transition: width 0.3s ease;
 }
 
@@ -2596,8 +2553,8 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
 
 .gpu-badge {
   display: inline-block;
-  background: linear-gradient(135deg, #1f7a8c, #bfdb38);
-  color: #fff;
+  background: var(--ct-color-success-tint);
+  color: var(--ct-color-success);
   font-size: 11px;
   padding: 2px 8px;
   border-radius: 10px;
@@ -2607,7 +2564,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
 
 .cpu-badge {
   display: inline-block;
-  background: var(--ct-bg-tertiary);
+  background: var(--ct-bg-sunken);
   color: var(--ct-text-secondary);
   font-size: 11px;
   padding: 2px 8px;
@@ -2645,10 +2602,10 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   align-items: center;
   justify-content: center;
   text-align: center;
-  padding: var(--ct-space-4xl) var(--ct-space-xl);
-  background: var(--ct-bg-secondary);
-  border-radius: var(--ct-radius-2xl);
-  border: 1px dashed var(--ct-border-subtle);
+  padding: var(--ct-space-3xl) var(--ct-space-xl);
+  background: var(--ct-bg-sunken);
+  border-radius: var(--ct-radius-lg);
+  border: 1px dashed var(--ct-border-color);
   margin-top: var(--ct-space-md);
   flex: 1;
   min-height: 400px;
@@ -2675,7 +2632,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   color: var(--ct-text-tertiary);
   font-size: var(--ct-text-sm);
   font-weight: 400;
-  background: var(--ct-bg-tertiary);
+  background: var(--ct-bg-sunken);
   padding: var(--ct-space-sm) var(--ct-space-xl);
   border-radius: var(--ct-radius-full);
 }
@@ -2684,7 +2641,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   min-height: 280px;
   margin-top: 0;
   padding: var(--ct-space-2xl) var(--ct-space-xl);
-  border-radius: var(--ct-radius-xl);
+  border-radius: var(--ct-radius-lg);
 }
 
 .tab-content .inline-empty-state .empty-icon {
@@ -2754,22 +2711,21 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
 .trend-badge {
   font-size: var(--ct-text-xs);
   padding: 2px 6px;
-  background: var(--ct-bg-tertiary);
+  background: var(--ct-bg-sunken);
   border-radius: var(--ct-radius-sm);
 }
 
 .trend-badge .up { color: var(--ct-color-success); }
 .trend-badge .down { color: var(--ct-color-error); }
 
-/* 分析新鲜度徽标：导入新消息未重分析时提示 */
+/* 分析新鲜度徽标：导入新消息未重分析时提示（warning 深字口径） */
 .stale-badge {
   margin-left: 8px;
   font-size: var(--ct-text-xs);
   padding: 2px 8px;
   border-radius: var(--ct-radius-sm);
-  color: #f0b429;
-  background: rgba(245, 158, 11, 0.12);
-  border: 1px solid rgba(245, 158, 11, 0.3);
+  color: #8F5B14;
+  background: var(--ct-color-warning-tint);
   cursor: help;
 }
 
@@ -2789,10 +2745,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
 
 .ct-score-ring.large .ct-score-num {
   font-size: 48px;
-  background: linear-gradient(135deg, var(--ct-color-primary), #a855f7);
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
+  color: var(--ct-color-primary);
 }
 
 .ct-score-ring.large .ct-score-unit {
@@ -2825,8 +2778,8 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   flex-shrink: 0;
   font-size: var(--ct-text-xs);
   color: var(--ct-text-tertiary);
-  background: var(--ct-bg-secondary);
-  border: 1px solid var(--ct-border-subtle);
+  background: var(--ct-bg-sunken);
+  border: 1px solid var(--ct-border-color);
   border-radius: var(--ct-radius-full);
   padding: 2px 10px;
   cursor: pointer;
@@ -2845,13 +2798,12 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
 
 .analysis-bubble {
   padding: var(--ct-space-md) var(--ct-space-xl);
-  background: var(--ct-bg-tertiary);
+  background: var(--ct-bg-sunken);
   border-radius: var(--ct-radius-md);
   position: relative;
   line-height: 1.6;
   font-size: var(--ct-text-base);
   color: var(--ct-text-secondary);
-  border-left: 4px solid var(--ct-color-primary);
   user-select: text;
   -webkit-user-select: text;
 }
@@ -3010,14 +2962,15 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   border-radius: 50%;
 }
 
-.icon-dot.green { background: #e6f4ea; border-color: #82ca9d; }
-.icon-dot.green .inner-dot { background: #82ca9d; }
+/* 图标点三色槽：青绿/墨紫/珊瑚（数据色板成员，非语义告警） */
+.icon-dot.green { background: var(--ct-color-success-tint); border-color: var(--ct-color-success); }
+.icon-dot.green .inner-dot { background: var(--ct-color-success); }
 
-.icon-dot.purple { background: #f3e8ff; border-color: #8884d8; }
-.icon-dot.purple .inner-dot { background: #8884d8; }
+.icon-dot.purple { background: var(--ct-color-primary-tint); border-color: var(--ct-color-primary); }
+.icon-dot.purple .inner-dot { background: var(--ct-color-primary); }
 
-.icon-dot.orange { background: #fff1f2; border-color: #fca5a5; }
-.icon-dot.orange .inner-dot { background: #fca5a5; }
+.icon-dot.orange { background: var(--ct-color-error-tint); border-color: var(--ct-color-error); }
+.icon-dot.orange .inner-dot { background: var(--ct-color-error); }
 
 .stat-title {
   font-size: var(--ct-text-sm);
@@ -3053,10 +3006,6 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
 .stat-sub {
   font-size: 11px;
   color: var(--ct-text-tertiary);
-}
-
-.trend-down {
-  color: #fbbf24;
 }
 
 .features-row-2 {
@@ -3131,7 +3080,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
 .h-bar-track {
   flex: 1;
   height: 10px;
-  background: linear-gradient(180deg, rgba(136, 132, 216, 0.08), rgba(136, 132, 216, 0.02));
+  background: var(--ct-bg-sunken);
   border-radius: 999px;
   overflow: hidden;
   position: relative;
@@ -3139,7 +3088,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
 
 .h-bar-fill {
   height: 100%;
-  background: linear-gradient(90deg, #7c71df 0%, #9a90ef 100%);
+  background: var(--ct-color-primary);
   border-radius: 999px;
   min-width: 6px;
 }
@@ -3192,16 +3141,14 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   height: 8px;
   border-radius: 50%;
 }
-.legend-dot.purple { background: #8884d8; }
-.legend-dot.green { background: #82ca9d; }
+/* 实体色口径与 big5Shared 一致：我=墨紫、对方=琥珀 */
+.legend-dot.purple { background: var(--ct-color-primary); }
+.legend-dot.green { background: var(--ct-chart-4); }
 
 .initiative-box {
-  background: var(--ct-bg-tertiary);
+  background: var(--ct-bg-sunken);
   padding: 12px 16px;
-  border-radius: 8px;
-  border-left: 2px solid #8884d8;
-  border-top-left-radius: 0;
-  border-bottom-left-radius: 0;
+  border-radius: var(--ct-radius-md);
   max-width: 150px;
 }
 
@@ -3248,8 +3195,9 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   width: 100%;
   border-radius: 6px 6px 0 0;
 }
-.v-bar-fill.purple { background: #8884d8; }
-.v-bar-fill.red { background: #fca5a5; }
+/* 我=墨紫、对方=琥珀（与 donut/大五实体色一致） */
+.v-bar-fill.purple { background: var(--ct-color-primary); }
+.v-bar-fill.red { background: var(--ct-chart-4); }
 
 .v-bar-label {
   font-size: 10px;
@@ -3263,12 +3211,9 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
 }
 
 .word-box {
-  background: var(--ct-bg-tertiary);
+  background: var(--ct-bg-sunken);
   padding: 12px 16px;
-  border-radius: 8px;
-  border-left: 2px solid #8884d8;
-  border-top-left-radius: 0;
-  border-bottom-left-radius: 0;
+  border-radius: var(--ct-radius-md);
   flex: 1;
 }
 
@@ -3319,8 +3264,8 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   align-items: center;
   gap: 10px;
   padding: 10px 12px;
-  border-radius: 12px;
-  background: linear-gradient(180deg, rgba(99, 102, 241, 0.08), rgba(99, 102, 241, 0.03));
+  border-radius: var(--ct-radius-md);
+  background: var(--ct-bg-sunken);
   color: var(--ct-text-secondary);
   font-size: var(--ct-text-sm);
 }
@@ -3349,10 +3294,8 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
 
 .calendar-summary-card {
   margin-bottom: 14px;
-  border-radius: 16px;
-  border: 1px solid rgba(148, 163, 184, 0.14);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(248, 250, 252, 0.88));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  border-radius: var(--ct-radius-md);
+  background: var(--ct-bg-sunken);
   padding: 10px 12px;
 }
 
@@ -3381,7 +3324,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   right: -4px;
   width: 1px;
   height: calc(100% - 16px);
-  background: rgba(148, 163, 184, 0.18);
+  background: var(--ct-border-color);
 }
 
 .calendar-summary-item strong {
@@ -3413,11 +3356,8 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
 }
 
 .calendar-chart-shell {
-  border-radius: 20px;
-  border: 1px solid rgba(148, 163, 184, 0.14);
-  background:
-    radial-gradient(circle at top left, rgba(129, 140, 248, 0.12), transparent 32%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(248, 250, 252, 0.96));
+  border-radius: var(--ct-radius-md);
+  background: var(--ct-bg-sunken);
   padding: 14px 14px 10px;
   overflow-x: auto;
   overflow-y: hidden;
@@ -3445,11 +3385,12 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   border-radius: 4px;
 }
 
-.calendar-legend-scale i:nth-child(1) { background: #eef2ff; }
-.calendar-legend-scale i:nth-child(2) { background: #c7d2fe; }
-.calendar-legend-scale i:nth-child(3) { background: #818cf8; }
-.calendar-legend-scale i:nth-child(4) { background: #4f46e5; }
-.calendar-legend-scale i:nth-child(5) { background: #312e81; }
+/* 与图表 HEAT_RAMP（墨紫 5 步顺序色带）同源，图例即所见 */
+.calendar-legend-scale i:nth-child(1) { background: #F1EEFA; }
+.calendar-legend-scale i:nth-child(2) { background: #D5CFF2; }
+.calendar-legend-scale i:nth-child(3) { background: #ABA0E4; }
+.calendar-legend-scale i:nth-child(4) { background: #7E6BD6; }
+.calendar-legend-scale i:nth-child(5) { background: #5A4BC4; }
 
 .calendar-chart {
   width: 100%;
@@ -3462,9 +3403,9 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   align-items: center;
   justify-content: center;
   min-height: 280px;
-  border-radius: 20px;
-  border: 1px dashed rgba(148, 163, 184, 0.22);
-  background: rgba(248, 250, 252, 0.65);
+  border-radius: var(--ct-radius-md);
+  border: 1px dashed var(--ct-border-color);
+  background: var(--ct-bg-sunken);
   color: var(--ct-text-tertiary);
   font-size: var(--ct-text-sm);
 }
@@ -3541,7 +3482,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   width: 6px;
 }
 .content-timeline-dashboard .timeline-scroll-area::-webkit-scrollbar-thumb {
-  background-color: var(--ct-border-subtle);
+  background-color: var(--ct-border-color);
   border-radius: 3px;
 }
 
@@ -3619,26 +3560,16 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
     .calendar-summary-item:nth-child(4)::after {
         display: none;
     }
-
-    .main-content,
-    .features-grid {
-        grid-template-columns: 1fr;
-    }
-
-    .feature-card.timeline {
-        grid-column: 1;
-    }
 }
 
 @media (max-width: 768px) {
     .analytics-page {
-        padding: var(--ct-space-lg) var(--ct-space-md) !important;
+        padding: var(--ct-space-lg) var(--ct-space-md);
     }
 
     .page-empty-state {
         min-height: 460px;
         gap: 22px;
-        border-radius: 22px;
     }
 
     .page-empty-grid {
@@ -3647,23 +3578,6 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
 
     .page-empty-illustration {
         transform: scale(0.92);
-    }
-
-    .page-header,
-    .feature-actions,
-    .card-header {
-        flex-direction: column;
-        gap: var(--ct-space-md);
-        align-items: stretch;
-    }
-
-    .action-buttons {
-        flex-direction: column;
-    }
-
-    .stats-grid,
-    .response-stats {
-        grid-template-columns: repeat(2, 1fr);
     }
 
     .h-bar-row {
@@ -3697,10 +3611,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
     }
 
     .features-row-1,
-    .features-row-3,
-    .stats-grid,
-    .response-stats,
-    .word-stats-grid {
+    .features-row-3 {
         grid-template-columns: 1fr;
     }
 
@@ -3735,50 +3646,39 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
 /* LLM 关系评估缺席说明（灰字，不阻断其余维度展示） */
 .llm-absent-note {
   font-size: 12px;
-  color: var(--ct-text-secondary, #64748b);
+  color: var(--ct-text-secondary, #5A5566);
   margin: 4px 0 0;
 }
 
-/* 导出弹窗 */
+/* 导出弹窗（白卡解剖：发丝线分区，按钮走 ct-btn 体系） */
 .export-dialog {
   width: 420px; max-width: 92vw;
-  background: var(--ct-bg-elevated, #1d222c);
-  border-radius: 16px; border: 1px solid var(--ct-border-color);
-  box-shadow: 0 24px 64px rgba(0,0,0,0.45);
+  background: var(--ct-bg-card);
+  border-radius: var(--ct-radius-lg);
+  box-shadow: var(--ct-shadow-lg);
   overflow: hidden;
 }
 .export-body { padding: 16px 20px; }
 .export-formats { display: flex; gap: 8px; }
 .export-fmt {
-  flex: 1; padding: 12px 8px; border-radius: 10px; cursor: pointer;
-  border: 1px solid var(--ct-border-color); background: var(--ct-bg-secondary);
+  flex: 1; padding: 12px 8px; border-radius: var(--ct-radius-md); cursor: pointer;
+  border: 1px solid var(--ct-border-color); background: var(--ct-bg-card);
   display: flex; flex-direction: column; align-items: center; gap: 4px;
-  transition: all 0.15s;
+  transition: border-color 0.15s, background-color 0.15s;
 }
-.export-fmt.active { border-color: rgba(108,92,231,0.4); background: rgba(108,92,231,0.08); }
+.export-fmt:hover { border-color: var(--ct-border-color-hover); }
+.export-fmt.active { border-color: var(--ct-color-primary); background: var(--ct-color-primary-tint); }
 .export-fmt-label { font-size: 13px; font-weight: 600; }
 .export-fmt-tip { font-size: 10px; color: var(--ct-text-tertiary); }
 .export-hint { margin-top: 12px; font-size: 11px; color: var(--ct-text-tertiary); line-height: 1.5; }
 .export-success { text-align: center; padding: 12px 0; }
 .export-success p { margin: 4px 0; font-size: 14px; }
 .export-path { font-size: 11px; color: var(--ct-text-tertiary); word-break: break-all; }
-.ct-btn-secondary {
-  margin-top: 8px; padding: 6px 16px; border-radius: 8px; font-size: 12px;
-  background: var(--ct-bg-tertiary); border: 1px solid var(--ct-border-color);
-  color: var(--ct-text-secondary); cursor: pointer;
-}
-.ct-btn-secondary:hover { background: var(--ct-bg-elevated); }
 .pd-header { display: flex; align-items: center; gap: 12px; padding: 18px 20px; border-bottom: 1px solid var(--ct-border-color); }
 .pd-title { margin: 0; font-size: 17px; font-weight: 600; flex: 1; }
-.pd-close { background: none; border: none; cursor: pointer; color: var(--ct-text-secondary); font-size: 16px; padding: 4px 8px; }
-.pd-close:hover { color: var(--ct-text-primary); }
+.pd-close { background: none; border: none; cursor: pointer; color: var(--ct-text-secondary); font-size: 16px; padding: 4px 8px; border-radius: var(--ct-radius-sm); }
+.pd-close:hover { color: var(--ct-text-primary); background: var(--ct-bg-hover); }
 .pd-footer { display: flex; justify-content: flex-end; gap: 10px; padding: 14px 20px; border-top: 1px solid var(--ct-border-color); }
-.pd-btn { padding: 8px 20px; border-radius: 10px; font-size: 13px; font-weight: 600; cursor: pointer; border: 1px solid transparent; }
-.pd-btn-ghost { background: transparent; color: var(--ct-text-secondary); border-color: var(--ct-border-color); }
-.pd-btn-ghost:hover { background: var(--ct-bg-tertiary); }
-.pd-btn-primary { background: var(--ct-color-primary); color: #fff; }
-.pd-btn-primary:hover { background: var(--ct-color-primary-hover); }
-.pd-btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
 .sr-only { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 
 /* --- 问问微信（历史问答·聊天框） --- */
@@ -3788,9 +3688,9 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   flex-direction: column;
   gap: var(--ct-space-md);
   padding: var(--ct-space-lg);
-  background: var(--ct-bg-secondary);
-  border: 1px solid var(--ct-border-subtle);
-  border-radius: var(--ct-radius-2xl);
+  background: var(--ct-bg-sunken);
+  border: 1px solid var(--ct-border-color);
+  border-radius: var(--ct-radius-lg);
   min-height: 0; /* 聊天流在 flex 列内收缩，出滚动条而不是撑破页 */
 }
 
@@ -3817,7 +3717,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
 .qa-indexing-hint {
   margin: 6px 0 0;
   font-size: 12px;
-  color: var(--ct-color-primary, #7c4dff);
+  color: var(--ct-color-primary, #5A4BC4);
 }
 
 /* 聊天流：自带滚动，新消息滚底 */
@@ -3838,7 +3738,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   text-align: center;
   font-size: 13px;
   color: var(--ct-text-tertiary);
-  background: var(--ct-bg-tertiary);
+  background: var(--ct-bg-sunken);
   border-radius: var(--ct-radius-md);
 }
 
@@ -3873,7 +3773,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
 }
 
 .qa-bubble-ai {
-  background: var(--ct-bg-elevated);
+  background: var(--ct-bg-card);
   border: 1px solid var(--ct-border-color);
   border-bottom-left-radius: 4px;
 }
@@ -3914,7 +3814,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   font-size: 13px;
   border: 1px solid var(--ct-border-color);
   border-radius: var(--ct-radius-md);
-  background: var(--ct-bg-elevated);
+  background: var(--ct-bg-card);
   color: var(--ct-text-primary);
   outline: none;
 }
@@ -4092,7 +3992,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   flex: 1;
   height: 5px;
   border-radius: 3px;
-  background: var(--ct-bg-tertiary);
+  background: var(--ct-bg-sunken);
   overflow: hidden;
 }
 
@@ -4129,7 +4029,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   font-size: 11px;
   padding: 2px 8px;
   border-radius: var(--ct-radius-full);
-  background: var(--ct-bg-tertiary);
+  background: var(--ct-bg-sunken);
   color: var(--ct-text-secondary);
 }
 
@@ -4153,14 +4053,14 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   font-size: 12px;
   border: 1px solid var(--ct-border-color);
   border-radius: var(--ct-radius-md);
-  background-color: var(--ct-bg-elevated);
+  background-color: var(--ct-bg-card);
   color: var(--ct-text-primary);
   outline: none;
 }
 
 .group-summary-body {
   padding: var(--ct-space-md);
-  background: var(--ct-bg-tertiary);
+  background: var(--ct-bg-sunken);
   border-radius: var(--ct-radius-md);
 }
 

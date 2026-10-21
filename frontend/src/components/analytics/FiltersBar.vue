@@ -20,7 +20,7 @@
             class="select-input"
           />
           <svg class="select-arrow" :class="{ 'is-open': showDropdown }" width="20" height="20" xmlns="http://www.w3.org/2000/svg">
-            <path d="M5 8l5 5 5-5" stroke="#666" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M5 8l5 5 5-5" stroke="var(--ct-text-tertiary)" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
           <ul v-show="showDropdown" class="dropdown-list">
             <li 
@@ -171,7 +171,7 @@ function onInputFocus() {
 .filters-bar {
   display: flex;
   align-items: center;
-  background: var(--ct-bg-elevated);
+  background: var(--ct-bg-card);
   border-radius: var(--ct-radius-lg);
   box-shadow: var(--ct-shadow-md);
   padding: var(--ct-space-sm) var(--ct-space-md);
@@ -215,7 +215,7 @@ function onInputFocus() {
   padding: 8px 32px 8px 48px;
   border: 1px solid var(--ct-border-color);
   border-radius: var(--ct-radius-md);
-  background: var(--ct-bg-input);
+  background: var(--ct-bg-card);
   font-size: 1rem;
   color: var(--ct-text-primary);
   box-sizing: border-box;
@@ -225,13 +225,13 @@ function onInputFocus() {
 
 .select-input:focus {
   border-color: var(--ct-color-primary);
-  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.1);
+  box-shadow: 0 0 0 2px var(--ct-color-primary-subtle);
 }
 
 .select-input:disabled {
   opacity: 0.6;
   cursor: not-allowed;
-  background-color: var(--ct-bg-disabled);
+  background-color: var(--ct-bg-sunken);
 }
 
 .select-arrow {
@@ -254,7 +254,7 @@ function onInputFocus() {
   right: 0;
   margin-top: 4px;
   padding: 4px 0;
-  background: var(--ct-bg-elevated);
+  background: var(--ct-bg-card);
   border: 1px solid var(--ct-border-color);
   border-radius: var(--ct-radius-md);
   box-shadow: var(--ct-shadow-lg);
@@ -285,7 +285,7 @@ function onInputFocus() {
 }
 
 .dropdown-item.load-more { text-align: center; color: var(--ct-text-secondary); font-size: 12px; cursor: pointer; padding: 8px; }
-.dropdown-item.load-more:hover { background: var(--ct-bg-tertiary); }
+.dropdown-item.load-more:hover { background: var(--ct-bg-sunken); }
 
 .dropdown-item.no-results {
   color: var(--ct-text-secondary);
@@ -293,8 +293,6 @@ function onInputFocus() {
   cursor: default;
   justify-content: center;
 }
-.dropdown-item.load-more { text-align: center; color: var(--ct-text-secondary); font-size: 12px; cursor: pointer; padding: 8px; }
-.dropdown-item.load-more:hover { background: var(--ct-bg-tertiary); }
 
 .dropdown-item.no-results:hover {
   background-color: transparent;
@@ -320,28 +318,26 @@ function onInputFocus() {
   opacity: 0.8;
   flex-shrink: 0;
 }
-/* 分析新鲜度徽标：导入新消息未重分析时提示 */
+/* 分析新鲜度徽标：导入新消息未重分析时提示（warning 深字口径） */
 .dropdown-stale-badge {
   display: inline-block;
   margin-left: 6px;
   padding: 1px 6px;
-  border-radius: 8px;
+  border-radius: var(--ct-radius-full);
   font-size: 10px;
   line-height: 1.4;
-  color: #f0b429;
-  background: rgba(245, 158, 11, 0.12);
-  border: 1px solid rgba(245, 158, 11, 0.3);
+  color: #8F5B14;
+  background: var(--ct-color-warning-tint);
 }
 /* 群聊徽标：与私聊区分，提示四维好感度对群聊意义有限 */
 .dropdown-group-badge {
   display: inline-block;
   margin-left: 6px;
   padding: 1px 6px;
-  border-radius: 8px;
+  border-radius: var(--ct-radius-full);
   font-size: 10px;
   line-height: 1.4;
-  color: #38b2ac;
-  background: rgba(56, 178, 172, 0.12);
-  border: 1px solid rgba(56, 178, 172, 0.3);
+  color: var(--ct-color-success);
+  background: var(--ct-color-success-tint);
 }
 </style>

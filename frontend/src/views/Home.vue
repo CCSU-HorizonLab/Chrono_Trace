@@ -4,7 +4,7 @@
       <h2 class="section-title"><span class="dot pink"></span>关于 Chrono Trace</h2>
       <div class="features-grid">
         <div class="feature-card">
-          <div class="icon-wrap bg-yellow">
+          <div class="icon-wrap">
             <TrendingUp :size="22" />
           </div>
           <div>
@@ -13,7 +13,7 @@
           </div>
         </div>
         <div class="feature-card">
-          <div class="icon-wrap bg-purple">
+          <div class="icon-wrap">
             <Headphones :size="22" />
           </div>
           <div>
@@ -22,7 +22,7 @@
           </div>
         </div>
         <div class="feature-card">
-          <div class="icon-wrap bg-orange">
+          <div class="icon-wrap">
             <Sparkles :size="22" />
           </div>
           <div>
@@ -37,13 +37,14 @@
       <h2 class="section-title"><span class="dot pink"></span>微信数据导入</h2>
 
       <div v-if="incrementInfo" class="increment-banner">
+        <RefreshCw :size="18" class="increment-icon" />
         <div class="increment-copy">
           <strong>检测到微信数据有更新</strong>
           <p>新增大小 {{ formatBytes(incrementInfo.incrementSize) }}，上次导入时间 {{ formatImportTime(incrementInfo.lastImportAt) }}</p>
         </div>
         <div class="increment-actions">
-          <button class="verify-btn" @click.stop.prevent="startImport">立即同步</button>
-          <button class="change-btn" @click.stop.prevent="dismissIncrementBanner">暂不处理</button>
+          <button class="ct-btn secondary ct-btn-sm" @click.stop.prevent="startImport">立即同步</button>
+          <button class="ct-btn ghost ct-btn-sm" @click.stop.prevent="dismissIncrementBanner">暂不处理</button>
         </div>
       </div>
 
@@ -67,7 +68,7 @@
               <FolderOpen :size="16" class="folder-svg" />
               <span class="path-text">{{ (pathInfo && pathInfo.wechat_dir) || customWechatDir || '首次启动将自动检测微信目录...' }}</span>
             </div>
-            <button class="change-btn" @click.stop.prevent="selectCustomPath">更改</button>
+            <button class="ct-btn ghost ct-btn-sm" @click.stop.prevent="selectCustomPath">更改</button>
           </div>
         </div>
 
@@ -87,7 +88,7 @@
               placeholder="db_key_7f8e3a2..."
               type="password"
             />
-            <button class="verify-btn" :disabled="!wechatForm.dbKey.trim() || verifying || wechatImporting" @click.stop.prevent="onVerifyAndUnpack">
+            <button class="ct-btn secondary ct-btn-sm" :disabled="!wechatForm.dbKey.trim() || verifying || wechatImporting" @click.stop.prevent="onVerifyAndUnpack">
               {{ verifying ? '验证中...' : '验证' }}
             </button>
           </div>
@@ -129,19 +130,19 @@
       </div>
 
       <div class="wizard-actions">
-        <button class="btn-primary-large" :disabled="wechatImporting || capturingKey" @click.stop.prevent="startImport">
+        <button class="ct-btn primary ct-btn-lg" :disabled="wechatImporting || capturingKey" @click.stop.prevent="startImport">
           {{ wechatImporting ? '导入中...' : (hasImportedBefore ? '增量导入' : '开始导入') }}
         </button>
         <button
           v-if="hasImportedBefore"
-          class="btn-outline-large"
+          class="ct-btn ghost ct-btn-lg"
           :disabled="wechatImporting || capturingKey"
           title="忽略增量水位重新扫描全部消息库，补齐历史窗口外的消息（如群聊旧记录）"
           @click.stop.prevent="startFullImport"
         >
           全量重扫
         </button>
-        <button class="btn-outline-large" :disabled="wechatImporting || verifying || capturingKey" @click.stop.prevent="resetFlow">重新配置</button>
+        <button class="ct-btn ghost ct-btn-lg" :disabled="wechatImporting || verifying || capturingKey" @click.stop.prevent="resetFlow">重新配置</button>
       </div>
     </div>
 
@@ -247,19 +248,19 @@
             <!-- Actions -->
             <div class="kc-actions">
               <template v-if="keyCaptureStage === 'confirm_restart'">
-                <button class="kc-btn kc-btn-ghost" @click="closeKeyCaptureGuide">取消</button>
-                <button class="kc-btn kc-btn-primary" @click="confirmWechatRestart">关闭并重启微信</button>
+                <button class="ct-btn ghost" @click="closeKeyCaptureGuide">取消</button>
+                <button class="ct-btn primary" @click="confirmWechatRestart">关闭并重启微信</button>
               </template>
               <template v-else-if="keyCaptureStage === 'need_start'">
-                <button class="kc-btn kc-btn-ghost" @click="closeKeyCaptureGuide">关闭</button>
-                <button class="kc-btn kc-btn-primary" @click="openKeyCaptureGuide">重新检测</button>
+                <button class="ct-btn ghost" @click="closeKeyCaptureGuide">关闭</button>
+                <button class="ct-btn primary" @click="openKeyCaptureGuide">重新检测</button>
               </template>
               <template v-else-if="keyCaptureStage === 'fallback'">
-                <button class="kc-btn kc-btn-ghost" @click="closeKeyCaptureGuide">稍后处理</button>
-                <button class="kc-btn kc-btn-primary" @click="enableManualKeyFallback">改用手动输入</button>
+                <button class="ct-btn ghost" @click="closeKeyCaptureGuide">稍后处理</button>
+                <button class="ct-btn primary" @click="enableManualKeyFallback">改用手动输入</button>
               </template>
               <template v-else>
-                <button class="kc-btn kc-btn-ghost" @click="closeKeyCaptureGuide">取消获取</button>
+                <button class="ct-btn ghost" @click="closeKeyCaptureGuide">取消获取</button>
               </template>
             </div>
           </div>
@@ -295,7 +296,8 @@ import {
   ChevronsRight,
   TrendingUp,
   Headphones,
-  Sparkles
+  Sparkles,
+  RefreshCw
 } from 'lucide-vue-next'
 import { bridgeReady, api } from '@/api/bridge'
 import { showConfirm, showDialog } from '@/utils/dialog'
@@ -1244,6 +1246,7 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+/* 特性卡：白卡 + shadow-sm，无 hover 上浮；图标 tile 统一墨紫 tint（三卡无语义差异不配彩虹） */
 .features-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -1251,51 +1254,30 @@ onUnmounted(() => {
 }
 
 .feature-card {
-  background: #f7f9fc;
-  border-radius: 12px;
-  padding: 30px 20px;
+  background: var(--ct-bg-card);
+  border-radius: var(--ct-radius-lg);
+  padding: 26px 20px;
   display: flex;
   align-items: center;
-  gap: 20px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);
-  transition: transform 0.2s;
-}
-
-.feature-card:hover {
-  transform: translateY(-2px);
+  gap: 18px;
+  box-shadow: var(--ct-shadow-sm);
 }
 
 .icon-wrap {
-  width: 48px;
-  height: 48px;
-  border-radius: 50%;
+  width: 46px;
+  height: 46px;
+  border-radius: var(--ct-radius-md);
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  color: #ffffff;
-}
-
-.icon-wrap svg {
-  color: #ffffff;
-  stroke: #ffffff;
-}
-
-.bg-yellow {
-  background: #eab308;
-}
-
-.bg-purple {
-  background: #a855f7;
-}
-
-.bg-orange {
-  background: #f97316;
+  background: var(--ct-color-primary-tint);
+  color: var(--ct-color-primary);
 }
 
 .feature-card h3 {
   margin: 0 0 4px;
-  font-size: 16px;
+  font-size: 15px;
   color: var(--ct-text-primary);
 }
 
@@ -1305,6 +1287,7 @@ onUnmounted(() => {
   color: var(--ct-text-secondary);
 }
 
+/* 导入向导：步骤卡沉底、编号 tint 底、箭头三级灰 */
 .wizard-container {
   display: flex;
   align-items: center;
@@ -1314,8 +1297,8 @@ onUnmounted(() => {
 
 .wizard-step {
   flex: 1;
-  background: #f7f9fc;
-  border-radius: 12px;
+  background: var(--ct-bg-sunken);
+  border-radius: var(--ct-radius-lg);
   padding: 20px;
   min-height: 110px;
   display: flex;
@@ -1328,6 +1311,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
+  color: var(--ct-text-tertiary);
 }
 
 .step-header {
@@ -1340,18 +1324,27 @@ onUnmounted(() => {
 .step-num {
   width: 24px;
   height: 24px;
-  border-radius: 50%;
-  color: #fff;
+  border-radius: var(--ct-radius-full);
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 12px;
-  font-weight: bold;
+  font-weight: var(--ct-font-semibold);
+}
+
+.step-num.bg-purple {
+  background: var(--ct-color-primary-tint);
+  color: var(--ct-color-primary);
+}
+
+.step-num.bg-orange {
+  background: var(--ct-color-warning-tint);
+  color: #8F5B14;
 }
 
 .step-title {
   font-size: 14px;
-  font-weight: 600;
+  font-weight: var(--ct-font-semibold);
   color: var(--ct-text-primary);
 }
 
@@ -1366,53 +1359,22 @@ onUnmounted(() => {
   align-items: center;
 }
 
-.tool-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  background: #f1f5f9;
-  border-radius: 6px;
-  color: var(--ct-text-secondary);
-  border: 1px solid #e2e8f0;
-}
-
-.tool-link:hover {
-  background: #e2e8f0;
-}
-
-.verify-btn,
-.change-btn {
-  padding: 8px 16px;
-  border-radius: 6px;
-  border: 1px solid #e2e8f0;
-  background: #fff;
-  color: var(--ct-color-primary);
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.verify-btn:hover:not(:disabled),
-.change-btn:hover:not(:disabled) {
-  background: #f1f5f9;
-}
-
-.verify-btn:disabled,
-.change-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
+/* 路径展示条：沉底卡上的白卡，色阶分层无描边 */
 .path-display {
   flex: 1;
-  background: #fff;
-  border: 1px solid #e2e8f0;
-  border-radius: 6px;
+  background: var(--ct-bg-card);
+  border-radius: var(--ct-radius-md);
   padding: 8px 12px;
   display: flex;
   align-items: center;
   gap: 8px;
   overflow: hidden;
+  color: var(--ct-text-secondary);
+}
+
+.folder-svg {
+  color: var(--ct-text-tertiary);
+  flex-shrink: 0;
 }
 
 .path-text {
@@ -1425,49 +1387,8 @@ onUnmounted(() => {
 .wizard-actions {
   display: flex;
   justify-content: flex-start;
-  gap: 20px;
+  gap: 16px;
   margin-top: 10px;
-}
-
-.btn-primary-large {
-  background: var(--ct-color-primary);
-  color: #fff;
-  border: none;
-  padding: 12px 60px;
-  border-radius: 30px;
-  font-size: 16px;
-  font-weight: 500;
-  cursor: pointer;
-  box-shadow: 0 4px 12px var(--ct-color-primary-muted);
-}
-
-.btn-primary-large:hover:not(:disabled) {
-  background: var(--ct-color-primary-hover);
-  transform: translateY(-1px);
-}
-
-.btn-primary-large:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.btn-outline-large {
-  background: #fff;
-  color: var(--ct-color-primary);
-  border: 1px solid var(--ct-color-primary-light);
-  padding: 12px 40px;
-  border-radius: 30px;
-  font-size: 16px;
-  cursor: pointer;
-}
-
-.btn-outline-large:hover:not(:disabled) {
-  background: var(--ct-color-primary-light);
-}
-
-.btn-outline-large:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
 }
 
 .status-area {
@@ -1483,44 +1404,52 @@ onUnmounted(() => {
 
 .account-selector-label {
   font-size: 13px;
-  font-weight: 600;
+  font-weight: var(--ct-font-semibold);
   color: var(--ct-text-secondary);
 }
 
 .error-msg {
-  color: #ef4444;
+  color: var(--ct-color-error);
   font-size: 14px;
+  font-weight: var(--ct-font-medium);
   margin: 10px 0;
 }
 
 .warn-msg {
-  color: #b45309;
+  color: #8F5B14;
   font-size: 14px;
+  font-weight: var(--ct-font-medium);
   margin: 10px 0;
 }
 
 .success-msg {
-  color: #10b981;
+  color: var(--ct-color-success);
   font-size: 14px;
+  font-weight: var(--ct-font-medium);
   margin: 10px 0;
 }
 
+/* 增量横幅：warning tint 底全圆角 + 图标（告警条语言） */
 .increment-banner {
   margin: 10px 0 16px;
-  padding: 12px 14px;
-  border-radius: 12px;
-  background: #fff7ed;
-  border: 1px solid #fdba74;
-  color: #9a3412;
+  padding: 12px 16px;
+  border-radius: var(--ct-radius-md);
+  background: var(--ct-color-warning-tint);
+  color: #8F5B14;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
 }
 
+.increment-icon {
+  flex-shrink: 0;
+}
+
 .increment-copy p {
   margin: 6px 0 0;
   font-size: 13px;
+  color: var(--ct-text-secondary);
 }
 
 .increment-actions {
@@ -1535,14 +1464,15 @@ onUnmounted(() => {
 
 .progress-bar {
   height: 6px;
-  background: #e2e8f0;
-  border-radius: 3px;
+  background: var(--ct-border-color);
+  border-radius: var(--ct-radius-full);
   overflow: hidden;
 }
 
 .progress-fill {
   height: 100%;
   background: var(--ct-color-primary);
+  border-radius: var(--ct-radius-full);
   transition: width 0.3s ease;
 }
 
@@ -1553,17 +1483,17 @@ onUnmounted(() => {
   gap: 8px;
   margin-bottom: 4px;
   font-size: 12px;
-  color: var(--ct-text-secondary, #64748b);
+  color: var(--ct-text-secondary);
 }
 
 .phase-badge {
   display: inline-block;
   padding: 1px 8px;
-  border-radius: 10px;
+  border-radius: var(--ct-radius-full);
   font-size: 11px;
   line-height: 1.5;
-  color: #fff;
-  background: var(--ct-color-primary, #6366f1);
+  background: var(--ct-color-primary-tint);
+  color: var(--ct-color-primary);
   white-space: nowrap;
 }
 
@@ -1605,7 +1535,7 @@ onUnmounted(() => {
 }
 
 /* ====================================================
-   微信密钥获取 二级弹窗 (Modern Stepper Dialog)
+   微信密钥获取 二级弹窗：白卡无描边 + tint 语义卡 + ct-btn
 ==================================================== */
 .kc-fade-enter-active,
 .kc-fade-leave-active {
@@ -1655,17 +1585,16 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background: rgba(15, 23, 42, 0.45);
-  backdrop-filter: blur(8px);
+  background: rgba(27, 25, 36, 0.45);
+  backdrop-filter: blur(2px);
 }
 
 .kc-dialog {
   width: min(520px, 94vw);
-  background: #ffffff;
-  border: 1px solid rgba(226, 232, 240, 0.85);
-  border-radius: 20px;
+  background: var(--ct-bg-card);
+  border-radius: var(--ct-radius-lg);
   padding: 24px 26px;
-  box-shadow: 0 25px 60px -12px rgba(15, 23, 42, 0.22), 0 0 0 1px rgba(124, 77, 255, 0.05);
+  box-shadow: var(--ct-shadow-lg);
   display: flex;
   flex-direction: column;
 }
@@ -1686,51 +1615,51 @@ onUnmounted(() => {
 .kc-header-badge {
   width: 44px;
   height: 44px;
-  border-radius: 13px;
-  background: linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%);
-  color: #ffffff;
+  border-radius: var(--ct-radius-md);
+  background: var(--ct-color-primary-tint);
+  color: var(--ct-color-primary);
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  box-shadow: 0 6px 16px -2px rgba(109, 40, 217, 0.35);
 }
 
 .kc-header-text h3 {
   margin: 0;
   font-size: 17px;
-  font-weight: 600;
-  color: var(--ct-text-primary, #0f172a);
+  font-weight: var(--ct-font-semibold);
+  color: var(--ct-text-primary);
 }
 
 .kc-header-text p {
   margin: 4px 0 0;
   font-size: 13px;
-  color: var(--ct-text-secondary, #64748b);
+  color: var(--ct-text-secondary);
   line-height: 1.4;
 }
 
 .kc-close-btn {
   background: transparent;
   border: none;
-  color: #94a3b8;
+  color: var(--ct-text-tertiary);
   cursor: pointer;
   padding: 6px;
-  border-radius: 8px;
+  border-radius: var(--ct-radius-sm);
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.2s ease;
+  transition: background-color var(--ct-transition-fast) var(--ct-ease-out),
+              color var(--ct-transition-fast) var(--ct-ease-out);
   margin-top: -2px;
   margin-right: -4px;
 }
 
 .kc-close-btn:hover {
-  background: #f1f5f9;
-  color: #334155;
+  background: var(--ct-bg-sunken);
+  color: var(--ct-text-primary);
 }
 
-/* Stepper */
+/* Stepper：待办沉底、进行中墨紫实底+tint 光圈、完成青绿 */
 .kc-stepper {
   display: flex;
   align-items: center;
@@ -1750,46 +1679,43 @@ onUnmounted(() => {
 .kc-step-indicator {
   width: 28px;
   height: 28px;
-  border-radius: 50%;
-  background: #f1f5f9;
-  border: 1.5px solid #e2e8f0;
-  color: #94a3b8;
+  border-radius: var(--ct-radius-full);
+  background: var(--ct-bg-sunken);
+  color: var(--ct-text-tertiary);
   font-size: 12px;
-  font-weight: 600;
+  font-weight: var(--ct-font-semibold);
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.25s ease;
+  transition: background-color var(--ct-transition-fast) var(--ct-ease-out),
+              color var(--ct-transition-fast) var(--ct-ease-out);
 }
 
 .kc-step-title {
   font-size: 12px;
-  color: #94a3b8;
-  font-weight: 500;
-  transition: color 0.25s ease;
+  color: var(--ct-text-tertiary);
+  font-weight: var(--ct-font-medium);
+  transition: color var(--ct-transition-fast) var(--ct-ease-out);
 }
 
 .kc-step-item.active .kc-step-indicator {
-  background: var(--ct-color-primary, #7c4dff);
-  border-color: var(--ct-color-primary, #7c4dff);
-  color: #ffffff;
-  box-shadow: 0 0 0 4px rgba(124, 77, 255, 0.18);
+  background: var(--ct-color-primary);
+  color: var(--ct-text-inverse);
+  box-shadow: 0 0 0 3px var(--ct-color-primary-tint);
 }
 
 .kc-step-item.active .kc-step-title {
-  color: var(--ct-color-primary, #7c4dff);
-  font-weight: 600;
+  color: var(--ct-color-primary);
+  font-weight: var(--ct-font-semibold);
 }
 
 .kc-step-item.done .kc-step-indicator {
-  background: #10b981;
-  border-color: #10b981;
-  color: #ffffff;
+  background: var(--ct-color-success);
+  color: var(--ct-text-inverse);
 }
 
 .kc-step-item.done .kc-step-title {
-  color: #10b981;
-  font-weight: 500;
+  color: var(--ct-color-success);
 }
 
 .kc-check-icon {
@@ -1801,15 +1727,16 @@ onUnmounted(() => {
   flex: 1;
   height: 2px;
   margin: 0 10px 18px;
-  background: #e2e8f0;
-  transition: background 0.3s ease;
+  background: var(--ct-border-color);
+  border-radius: var(--ct-radius-full);
+  transition: background-color var(--ct-transition-fast) var(--ct-ease-out);
 }
 
 .kc-step-connector.done {
-  background: #10b981;
+  background: var(--ct-color-success);
 }
 
-/* Card Area */
+/* 状态卡：tint 底无边框，标题不染色，白圆徽章承载语义色 */
 .kc-card-area {
   margin-bottom: 20px;
 }
@@ -1819,30 +1746,26 @@ onUnmounted(() => {
   align-items: flex-start;
   gap: 14px;
   padding: 16px;
-  border-radius: 14px;
+  border-radius: var(--ct-radius-md);
   line-height: 1.5;
 }
 
 .kc-card-content h4 {
   margin: 0 0 4px;
   font-size: 14px;
-  font-weight: 600;
+  font-weight: var(--ct-font-semibold);
+  color: var(--ct-text-primary);
 }
 
 .kc-card-content p {
   margin: 0;
   font-size: 13px;
-  color: var(--ct-text-secondary, #475569);
+  color: var(--ct-text-secondary);
   line-height: 1.5;
 }
 
 .kc-card-loading {
-  background: rgba(124, 77, 255, 0.05);
-  border: 1px solid rgba(124, 77, 255, 0.18);
-}
-
-.kc-card-loading .kc-card-content h4 {
-  color: var(--ct-color-primary, #7c4dff);
+  background: var(--ct-color-info-tint);
 }
 
 .kc-pulse-wrap {
@@ -1859,15 +1782,15 @@ onUnmounted(() => {
 .kc-pulse-core {
   width: 10px;
   height: 10px;
-  border-radius: 50%;
-  background: var(--ct-color-primary, #7c4dff);
+  border-radius: var(--ct-radius-full);
+  background: var(--ct-color-primary);
 }
 
 .kc-pulse-ring {
   position: absolute;
   inset: 0;
-  border-radius: 50%;
-  border: 2px solid var(--ct-color-primary, #7c4dff);
+  border-radius: var(--ct-radius-full);
+  border: 2px solid var(--ct-color-primary);
   animation: kc-pulse 1.8s cubic-bezier(0.24, 0, 0.38, 1) infinite;
 }
 
@@ -1885,98 +1808,44 @@ onUnmounted(() => {
 .kc-card-badge {
   width: 26px;
   height: 26px;
-  border-radius: 50%;
+  border-radius: var(--ct-radius-full);
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
   margin-top: 1px;
+  background: var(--ct-bg-card);
 }
 
 .kc-card-warning {
-  background: #fffbeb;
-  border: 1px solid #fde68a;
-}
-
-.kc-card-warning .kc-card-content h4 {
-  color: #b45309;
+  background: var(--ct-color-warning-tint);
 }
 
 .kc-card-badge.warning {
-  color: #d97706;
+  color: var(--ct-color-warning);
 }
 
 .kc-card-info {
-  background: #f0fdf4;
-  border: 1px solid #bbf7d0;
-}
-
-.kc-card-info .kc-card-content h4 {
-  color: #15803d;
+  background: var(--ct-color-success-tint);
 }
 
 .kc-card-badge.info {
-  color: #16a34a;
+  color: var(--ct-color-success);
 }
 
 .kc-card-error {
-  background: #fef2f2;
-  border: 1px solid #fecaca;
-}
-
-.kc-card-error .kc-card-content h4 {
-  color: #b91c1c;
+  background: var(--ct-color-error-tint);
 }
 
 .kc-card-badge.error {
-  color: #dc2626;
+  color: var(--ct-color-error);
 }
 
-/* Actions */
 .kc-actions {
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: 10px;
-}
-
-.kc-btn {
-  height: 38px;
-  padding: 0 18px;
-  border-radius: 10px;
-  font-size: 13.5px;
-  font-weight: 500;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.2s ease;
-  white-space: nowrap;
-}
-
-.kc-btn-ghost {
-  background: #f8fafc;
-  color: #475569;
-  border: 1px solid #e2e8f0;
-}
-
-.kc-btn-ghost:hover {
-  background: #f1f5f9;
-  color: #0f172a;
-  border-color: #cbd5e1;
-}
-
-.kc-btn-primary {
-  background: var(--ct-color-primary, #7c4dff);
-  color: #ffffff;
-  border: none;
-  box-shadow: 0 4px 12px rgba(124, 77, 255, 0.25);
-}
-
-.kc-btn-primary:hover {
-  background: var(--ct-color-primary-hover, #651fff);
-  box-shadow: 0 6px 16px rgba(124, 77, 255, 0.35);
-  transform: translateY(-1px);
 }
 
 .empty-log {
@@ -1997,6 +1866,7 @@ onUnmounted(() => {
   .icon-wrap {
     width: 36px;
     height: 36px;
+    border-radius: var(--ct-radius-sm);
   }
 
   .icon-wrap svg {
@@ -2029,7 +1899,6 @@ onUnmounted(() => {
 
   .step-arrow {
     padding: 0 4px;
-    transform: none;
   }
 
   .step-arrow svg {
@@ -2049,13 +1918,6 @@ onUnmounted(() => {
     width: 20px;
     height: 20px;
     font-size: 10px;
-  }
-
-  .tool-link,
-  .verify-btn,
-  .change-btn {
-    padding: 4px 8px;
-    font-size: 11px;
   }
 
   .path-display {

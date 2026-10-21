@@ -226,9 +226,93 @@ a:hover {
   padding: var(--ct-space-lg);
 }
 
-/* 按钮：全局皮肤（下一提交降级元素选择器为中性 reset，类体系为准） */
-.ct-btn,
+/* 页面骨架（Home/Settings 共用；自 base.css 迁入） */
+html,
+body,
+#app {
+  min-height: 100%;
+}
+
+.ct-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ct-space-2xl);
+  padding: var(--ct-space-xl);
+  max-width: 1400px;
+  margin: 0 auto;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.home-page {
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+  padding: 40px var(--ct-space-xl);
+  max-width: 1200px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.home-section {
+  display: flex;
+  flex-direction: column;
+}
+
+.section-title {
+  display: flex;
+  align-items: center;
+  font-size: var(--ct-text-lg);
+  font-weight: var(--ct-font-bold);
+  color: var(--ct-text-primary);
+  margin-bottom: 20px;
+}
+
+/* 标题圆点：重映射数据色板 */
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 10px;
+  flex-shrink: 0;
+}
+
+.dot.pink {
+  background-color: var(--ct-chart-2);
+}
+
+.dot.green {
+  background-color: var(--ct-chart-3);
+}
+
+.dot.purple {
+  background-color: var(--ct-chart-1);
+}
+
+.dot.orange {
+  background-color: var(--ct-chart-4);
+}
+
+.ct-grid-1-1 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--ct-space-xl);
+}
+
+@media (max-width: 1024px) {
+  .ct-grid-1-1 {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* 按钮：类体系为唯一皮肤来源，元素选择器只做中性 reset */
 button {
+  font: inherit;
+  cursor: pointer;
+}
+
+.ct-btn {
   font-family: var(--ct-font-body);
   font-weight: var(--ct-font-medium);
   font-size: var(--ct-text-sm);
@@ -248,19 +332,16 @@ button {
   gap: var(--ct-space-sm);
 }
 
-/* hover 只变色，无位移无投影 */
-.ct-btn:hover:not(:disabled),
-button:hover:not(:disabled) {
+/* hover 只变色，无位移无投影；:not(:disabled) 是禁用语义守卫 */
+.ct-btn:hover:not(:disabled) {
   background: var(--ct-color-primary-hover);
 }
 
-.ct-btn:active:not(:disabled),
-button:active:not(:disabled) {
+.ct-btn:active:not(:disabled) {
   background: var(--ct-color-primary-hover);
 }
 
-.ct-btn:disabled,
-button:disabled {
+.ct-btn:disabled {
   opacity: 0.45;
   cursor: not-allowed;
   background: var(--ct-text-tertiary);
@@ -269,92 +350,72 @@ button:disabled {
 
 /* 变体：CtButton 直接转发 variant 名为类（.ghost/.text/.danger），
    旧 .variant-* 写法一并兼容到自然退场 */
-.ct-btn.primary,
-button.primary {
+.ct-btn.primary {
   background: var(--ct-color-primary);
   color: var(--ct-text-inverse);
 }
-.ct-btn.primary:hover:not(:disabled),
-button.primary:hover:not(:disabled) {
+.ct-btn.primary:hover:not(:disabled) {
   background: var(--ct-color-primary-hover);
 }
 
 .ct-btn.ghost,
-button.ghost,
-.ct-btn.variant-ghost,
-button.variant-ghost {
+.ct-btn.variant-ghost {
   background: transparent;
   color: var(--ct-text-secondary);
   border-color: var(--ct-border-color);
 }
 .ct-btn.ghost:hover:not(:disabled),
-button.ghost:hover:not(:disabled),
-.ct-btn.variant-ghost:hover:not(:disabled),
-button.variant-ghost:hover:not(:disabled) {
+.ct-btn.variant-ghost:hover:not(:disabled) {
   background: var(--ct-bg-hover);
   border-color: var(--ct-border-color-hover);
   color: var(--ct-text-primary);
 }
 
 .ct-btn.text,
-button.text,
-.ct-btn.variant-text,
-button.variant-text {
+.ct-btn.variant-text {
   background: transparent;
   color: var(--ct-color-primary);
   padding: var(--ct-space-sm) var(--ct-space-md);
 }
 .ct-btn.text:hover:not(:disabled),
-button.text:hover:not(:disabled),
-.ct-btn.variant-text:hover:not(:disabled),
-button.variant-text:hover:not(:disabled) {
+.ct-btn.variant-text:hover:not(:disabled) {
   background: var(--ct-color-primary-tint);
 }
 
-.ct-btn.danger,
-button.danger {
+.ct-btn.danger {
   background: var(--ct-color-error);
   color: var(--ct-text-inverse);
 }
-.ct-btn.danger:hover:not(:disabled),
-button.danger:hover:not(:disabled) {
+.ct-btn.danger:hover:not(:disabled) {
   background: #D14E58;
 }
 
 .ct-btn.accent,
-button.accent,
-.ct-btn.variant-accent,
-button.variant-accent {
+.ct-btn.variant-accent {
   background: var(--ct-color-accent);
   color: #3D2B0E;
 }
 .ct-btn.accent:hover:not(:disabled),
-button.accent:hover:not(:disabled),
-.ct-btn.variant-accent:hover:not(:disabled),
-button.variant-accent:hover:not(:disabled) {
+.ct-btn.variant-accent:hover:not(:disabled) {
   background: var(--ct-color-accent-hover);
 }
 
-.ct-btn.secondary,
-button.secondary {
+.ct-btn.secondary {
   background: var(--ct-color-primary-tint);
   color: var(--ct-color-primary);
 }
-.ct-btn.secondary:hover:not(:disabled),
-button.secondary:hover:not(:disabled) {
+.ct-btn.secondary:hover:not(:disabled) {
   background: #E0DAF5;
 }
 
 /* 尺寸 */
-.ct-btn-sm,
-button.ct-btn-sm {
+.ct-btn-sm {
   font-size: var(--ct-text-xs);
   padding: var(--ct-space-xs) var(--ct-space-sm);
   border-radius: var(--ct-radius-sm);
 }
 
-.ct-btn-lg,
-button.ct-btn-lg {
+.ct-btn-lg {
   font-size: var(--ct-text-base);
   padding: var(--ct-space-md) var(--ct-space-xl);
 }
@@ -602,7 +663,6 @@ pre code {
   --ct-font-display: var(--ct-font-body);
 
   /* 幽灵变量兜底 */
-  --ct-bg: var(--ct-bg-app);
   --ct-bg-1: var(--ct-bg-sunken);
   --ct-bg-disabled: var(--ct-bg-sunken);
   --ct-bg-input: var(--ct-bg-card);
@@ -615,10 +675,7 @@ pre code {
   --ct-color-danger: var(--ct-color-error);
   --ct-color-info-muted: rgba(90, 75, 196, 0.08);
   --ct-color-purple-light: var(--ct-color-primary-tint);
-  --ct-radius: var(--ct-radius-md);
   --ct-radius-2xl: var(--ct-radius-lg);
-  --ct-shadow: var(--ct-shadow-md);
   --ct-space-4xl: 64px;
-  --ct-text: var(--ct-text-primary);
   --ct-text-muted: var(--ct-text-tertiary);
 }

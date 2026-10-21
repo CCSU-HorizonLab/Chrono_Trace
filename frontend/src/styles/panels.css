@@ -2,8 +2,8 @@
    此前各面板 scoped 里各写一套 .card/.panel-header/.btn，漂移出四套按钮规格、
    三种徽标、三种图例语言；收敛到本文件为唯一来源。面板私有变体
    （.seg-btn/.enhance-btn/.retry 等）仍留各自 scoped，scoped 特异性覆盖全局，
-   行为可控。注意 theme.css 有全局 button:hover:not(:disabled)（实底紫+上浮，
-   特异性 0,2,1），故本文件 hover 必须写满 :not(:disabled) 才能赢。 */
+   行为可控。hover 写满 :not(:disabled) 是禁用语义守卫（全局 button 元素皮肤
+   已退场为中性 reset，军备背景不复存在，纪律保留）。 */
 
 .panel {
   background: var(--ct-bg-elevated);
@@ -128,4 +128,127 @@
   font-size: var(--ct-text-sm);
   padding: var(--ct-space-lg) 0;
   text-align: center;
+}
+
+/* ============================================================
+   以下三组自 base.css 迁入（base.css 已删除）：Teleport 弹窗、
+   胶囊页签、分数环。解剖对齐墨痕暖白。
+   ============================================================ */
+
+.ct-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(27, 25, 36, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+  backdrop-filter: blur(2px);
+}
+
+.ct-modal-dialog {
+  background: var(--ct-bg-card);
+  border-radius: var(--ct-radius-lg);
+  padding: var(--ct-space-xl);
+  width: min(480px, 90vw);
+  box-shadow: var(--ct-shadow-lg);
+  display: flex;
+  flex-direction: column;
+}
+
+.ct-modal-dialog h3,
+.ct-modal-dialog .modal-title {
+  margin: 0 0 var(--ct-space-md);
+  color: var(--ct-text-primary);
+  font-size: var(--ct-text-lg);
+  font-weight: var(--ct-font-semibold);
+}
+
+.ct-modal-dialog .form,
+.ct-modal-dialog .modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ct-space-md);
+}
+
+.ct-modal-dialog .row,
+.ct-modal-dialog .modal-field {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: var(--ct-space-md);
+  align-items: center;
+}
+
+.ct-modal-dialog .lab {
+  color: var(--ct-text-secondary);
+  font-weight: var(--ct-font-medium);
+}
+
+.ct-modal-dialog .modal-actions,
+.ct-modal-dialog .form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--ct-space-sm);
+  margin-top: var(--ct-space-lg);
+}
+
+/* 胶囊页签 */
+.ct-tabs-capsule {
+  display: inline-flex;
+  background: var(--ct-bg-sunken);
+  padding: 6px;
+  border-radius: var(--ct-radius-full);
+  border: none;
+  gap: 4px;
+}
+
+.ct-tabs-capsule .menu-item {
+  padding: 8px 24px;
+  border-radius: var(--ct-radius-full);
+  border: none;
+  background: transparent;
+  color: var(--ct-text-secondary);
+  font-size: var(--ct-text-sm);
+  font-weight: var(--ct-font-semibold);
+  cursor: pointer;
+  transition: all var(--ct-transition-normal);
+  white-space: nowrap;
+}
+
+.ct-tabs-capsule .menu-item.active {
+  background: var(--ct-color-primary);
+  color: var(--ct-text-inverse);
+  box-shadow: 0 2px 8px rgba(90, 75, 196, 0.28);
+}
+
+.ct-tabs-capsule .menu-item:hover:not(.active) {
+  background: var(--ct-bg-hover);
+  color: var(--ct-text-primary);
+}
+
+/* 分数环（Analytics 好感度仪表） */
+.ct-score-ring {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ct-score-ring svg {
+  transform: rotate(-90deg);
+}
+
+.ct-score-text {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+}
+
+.ct-score-num {
+  font-size: var(--ct-text-2xl);
+  font-weight: var(--ct-font-bold);
+  color: var(--ct-text-primary);
+  line-height: 1;
 }

@@ -2,7 +2,8 @@
    1) src 全量 var(--ct-*) 引用必须有定义（theme.css :root 或组件局部定义）；
    2) theme.css 过渡别名块只减不增（ALIAS_CAP 随各页提交递减，清零后删块）；
    3) theme.css 不得引入外部字体（离线桌面红线）；
-   4) 海报群（html2canvas 对 CSS 变量支持不稳）零 var(--ct 引用。 */
+   4) theme.css button 元素选择器只剩中性 reset（元素皮肤退场门禁）；
+   5) 海报群（html2canvas 对 CSS 变量支持不稳）零 var(--ct 引用。 */
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readdirSync, readFileSync } from 'node:fs'
@@ -14,7 +15,7 @@ const themePath = join(srcRoot, 'styles', 'theme.css')
 const posterRoot = join(srcRoot, 'components', 'deep', 'poster')
 
 /** 别名存量上限：只减不增；改写存量后手动调低，清零后删块。 */
-const ALIAS_CAP = 27
+const ALIAS_CAP = 23
 
 function walk(dir, exts, out = []) {
   for (const ent of readdirSync(dir, { withFileTypes: true })) {
@@ -65,6 +66,19 @@ test('过渡别名块只减不增', () => {
 test('theme.css 不引外部字体', () => {
   const theme = readFileSync(themePath, 'utf8')
   assert.ok(!theme.includes('fonts.googleapis'), '离线桌面不得引入 Google Fonts')
+})
+
+test('theme.css 无 button 元素级皮肤选择器', () => {
+  const theme = readFileSync(themePath, 'utf8')
+  // 元素皮肤已退场：唯一允许的形态是中性 reset（font/cursor），其余出现即违规
+  const okReset = /^button \{\n  font: inherit;\n  cursor: pointer;\n\}/m.test(theme)
+  assert.ok(okReset, 'button 元素选择器应只剩中性 reset（font: inherit; cursor: pointer）')
+  const occurrences = theme.match(/\bbutton\b/g) || []
+  assert.equal(
+    occurrences.length,
+    1,
+    `元素名出现 ${occurrences.length} 处，只允许 reset 一处（伪类/组合器/变体选择器均违规）`
+  )
 })
 
 test('海报群零 CSS 变量引用', () => {

@@ -722,9 +722,8 @@ async function batchIndexPending() {
   flex-wrap: wrap;
   gap: 10px;
   padding: 8px 12px;
-  background: var(--ct-bg-secondary, rgba(0, 0, 0, 0.02));
-  border: 1px solid var(--ct-border-color, rgba(0, 0, 0, 0.08));
-  border-radius: 10px;
+  background: var(--ct-bg-sunken);
+  border-radius: var(--ct-radius-lg);
 }
 
 .rc-metric-pills {
@@ -739,43 +738,40 @@ async function batchIndexPending() {
   align-items: center;
   gap: 6px;
   padding: 4px 10px;
-  background: var(--ct-bg-1, #fff);
-  border: 1px solid var(--ct-border-color, rgba(0, 0, 0, 0.08));
-  border-radius: 20px;
-  font-size: 12px;
+  background: var(--ct-bg-card);
+  border-radius: var(--ct-radius-full);
+  font-size: var(--ct-text-xs);
 }
 
 .rc-pill-label {
-  color: var(--ct-text-tertiary, #888);
+  color: var(--ct-text-tertiary);
 }
 
 .rc-pill-val {
   font-weight: 700;
-  color: var(--ct-text-primary, #222);
+  color: var(--ct-text-primary);
+  font-variant-numeric: tabular-nums;
 }
 
 .rc-pill.success {
-  background: rgba(16, 185, 129, 0.08);
-  border-color: rgba(16, 185, 129, 0.2);
+  background: var(--ct-color-success-tint);
 }
 .rc-pill.success .rc-pill-val {
-  color: #10b981;
+  color: var(--ct-color-success);
 }
 
 .rc-pill.warning {
-  background: rgba(245, 158, 11, 0.08);
-  border-color: rgba(245, 158, 11, 0.2);
+  background: var(--ct-color-warning-tint);
 }
 .rc-pill.warning .rc-pill-val {
-  color: #d97706;
+  color: var(--ct-color-warning);
 }
 
 .rc-pill.danger {
-  background: rgba(239, 68, 68, 0.08);
-  border-color: rgba(239, 68, 68, 0.2);
+  background: var(--ct-color-error-tint);
 }
 .rc-pill.danger .rc-pill-val {
-  color: #ef4444;
+  color: var(--ct-color-error);
 }
 
 .rc-header-actions {
@@ -803,25 +799,25 @@ async function batchIndexPending() {
 .rc-search-icon {
   position: absolute;
   left: 10px;
-  color: var(--ct-text-tertiary, #999);
+  color: var(--ct-text-tertiary);
   pointer-events: none;
 }
 
 .rc-search-input {
   width: 100%;
   padding: 7px 28px 7px 30px;
-  border-radius: 8px;
-  border: 1px solid var(--ct-border-color, rgba(0, 0, 0, 0.12));
-  background: var(--ct-bg-1, #fff);
-  color: var(--ct-text-primary, #333);
-  font-size: 13px;
+  border-radius: var(--ct-radius-sm);
+  border: 1px solid var(--ct-border-color);
+  background: var(--ct-bg-card);
+  color: var(--ct-text-primary);
+  font-size: var(--ct-text-sm);
   outline: none;
-  transition: border-color 0.2s, box-shadow 0.2s;
+  transition: border-color var(--ct-transition-fast), box-shadow var(--ct-transition-fast);
 }
 
 .rc-search-input:focus {
-  border-color: var(--ct-color-primary, #6366f1);
-  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+  border-color: var(--ct-color-primary);
+  box-shadow: 0 0 0 3px var(--ct-color-primary-tint);
 }
 
 .rc-search-clear {
@@ -830,7 +826,7 @@ async function batchIndexPending() {
   background: none;
   border: none;
   cursor: pointer;
-  color: var(--ct-text-tertiary, #999);
+  color: var(--ct-text-tertiary);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -838,18 +834,17 @@ async function batchIndexPending() {
   border-radius: 50%;
 }
 .rc-search-clear:hover {
-  background: rgba(0, 0, 0, 0.08);
-  color: var(--ct-text-primary, #333);
+  background: var(--ct-bg-sunken);
+  color: var(--ct-text-primary);
 }
 
 .rc-filter-tabs {
   display: flex;
   align-items: center;
   gap: 4px;
-  background: var(--ct-bg-secondary, rgba(0, 0, 0, 0.03));
+  background: var(--ct-bg-sunken);
   padding: 3px;
-  border-radius: 8px;
-  border: 1px solid var(--ct-border-color, rgba(0, 0, 0, 0.06));
+  border-radius: var(--ct-radius-full);
 }
 
 .rc-filter-tab {
@@ -859,50 +854,49 @@ async function batchIndexPending() {
   border: none;
   background: transparent;
   padding: 4px 10px;
-  border-radius: 6px;
-  font-size: 12px;
-  color: var(--ct-text-secondary, #666);
+  border-radius: var(--ct-radius-full);
+  font-size: var(--ct-text-xs);
+  color: var(--ct-text-secondary);
   cursor: pointer;
-  transition: all 0.15s;
+  transition: color var(--ct-transition-fast), background var(--ct-transition-fast);
   white-space: nowrap;
 }
 
-.rc-filter-tab:hover {
-  color: var(--ct-text-primary, #222);
-  background: rgba(0, 0, 0, 0.03);
+.rc-filter-tab:hover:not(.active) {
+  color: var(--ct-text-primary);
 }
 
 .rc-filter-tab.active {
-  background: var(--ct-bg-1, #fff);
-  color: var(--ct-color-primary, #6366f1);
+  background: var(--ct-bg-card);
+  color: var(--ct-color-primary);
   font-weight: 600;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  box-shadow: var(--ct-shadow-sm);
 }
 
 .tab-badge {
   display: inline-block;
   font-size: 11px;
   padding: 1px 5px;
-  border-radius: 10px;
-  background: rgba(0, 0, 0, 0.06);
-  color: var(--ct-text-secondary, #666);
+  border-radius: var(--ct-radius-full);
+  background: var(--ct-bg-sunken);
+  color: var(--ct-text-secondary);
 }
 
 .tab-badge.green {
-  background: rgba(16, 185, 129, 0.15);
-  color: #0f8f63;
+  background: var(--ct-color-success-tint);
+  color: var(--ct-color-success);
 }
 .tab-badge.amber {
-  background: rgba(245, 158, 11, 0.15);
-  color: #b45309;
+  background: var(--ct-color-warning-tint);
+  color: var(--ct-color-warning);
 }
 .tab-badge.red {
-  background: rgba(239, 68, 68, 0.15);
-  color: #dc2626;
+  background: var(--ct-color-error-tint);
+  color: var(--ct-color-error);
 }
 .tab-badge.gray {
-  background: rgba(107, 114, 128, 0.15);
-  color: #4b5563;
+  background: var(--ct-bg-hover);
+  color: var(--ct-text-secondary);
 }
 
 .rc-sort-wrap {
@@ -911,25 +905,24 @@ async function batchIndexPending() {
 }
 
 .rc-sort-select {
-  border: 1px solid var(--ct-border-color, rgba(0, 0, 0, 0.12));
-  background-color: var(--ct-bg-1, #fff);
-  color: var(--ct-text-secondary, #555);
-  border-radius: 8px;
+  border: 1px solid var(--ct-border-color);
+  background-color: var(--ct-bg-card);
+  color: var(--ct-text-secondary);
+  border-radius: var(--ct-radius-sm);
   padding: 5px 8px;
   padding-right: 26px;
-  font-size: 12px;
+  font-size: var(--ct-text-xs);
   outline: none;
   cursor: pointer;
-  width: auto !important;
-  min-width: 105px !important;
-  max-width: 125px !important;
-  box-sizing: border-box !important;
+  width: auto;
+  min-width: 105px;
+  max-width: 125px;
+  box-sizing: border-box;
 }
 
 /* 列表展示区 */
 .rc-list-container {
   min-height: 200px;
-  border-radius: 12px;
 }
 
 .rc-empty-box {
@@ -938,16 +931,16 @@ async function batchIndexPending() {
   align-items: center;
   justify-content: center;
   padding: 40px 20px;
-  color: var(--ct-text-tertiary, #999);
+  color: var(--ct-text-tertiary);
   gap: 10px;
   text-align: center;
-  border: 1px dashed var(--ct-border-color, rgba(0, 0, 0, 0.12));
-  border-radius: 10px;
+  border: 1px dashed var(--ct-border-color);
+  border-radius: var(--ct-radius-lg);
 }
 
 .rc-empty-hint {
-  font-size: 12px;
-  color: var(--ct-text-tertiary, #aaa);
+  font-size: var(--ct-text-xs);
+  color: var(--ct-text-tertiary);
 }
 
 .rc-list {
@@ -963,27 +956,25 @@ async function batchIndexPending() {
   justify-content: space-between;
   gap: 12px;
   padding: 10px 14px;
-  border: 1px solid var(--ct-border-color, rgba(0, 0, 0, 0.08));
-  border-radius: 10px;
-  background: var(--ct-bg-1, #fff);
-  transition: all 0.15s ease;
+  border: 1px solid transparent;
+  border-radius: var(--ct-radius-md);
+  background: var(--ct-bg-sunken);
+  transition: border-color var(--ct-transition-fast), background var(--ct-transition-fast);
   box-sizing: border-box;
   width: 100%;
   overflow: hidden;
 }
 
 .rc-row:hover {
-  border-color: rgba(99, 102, 241, 0.3);
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.03);
+  border-color: var(--ct-color-primary-subtle);
 }
 
 .rc-row.disabled {
-  opacity: 0.65;
-  background: var(--ct-bg-secondary, rgba(0, 0, 0, 0.02));
+  opacity: 0.6;
 }
 
 .rc-row.errored {
-  border-color: rgba(239, 68, 68, 0.3);
+  border-color: color-mix(in srgb, var(--ct-color-error) 26%, transparent);
 }
 
 /* 左侧：信息列 */
@@ -1015,9 +1006,9 @@ async function batchIndexPending() {
 }
 
 .rc-name {
-  font-size: 14px;
+  font-size: var(--ct-text-sm);
   font-weight: 600;
-  color: var(--ct-text-primary, #1e293b);
+  color: var(--ct-text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1028,7 +1019,7 @@ async function batchIndexPending() {
   align-items: center;
   gap: 4px;
   padding: 2px 7px;
-  border-radius: 12px;
+  border-radius: var(--ct-radius-full);
   font-size: 11px;
   font-weight: 500;
   white-space: nowrap;
@@ -1043,45 +1034,43 @@ async function batchIndexPending() {
 }
 
 .badge-green {
-  background: rgba(16, 185, 129, 0.12);
-  color: #059669;
+  background: var(--ct-color-success-tint);
+  color: var(--ct-color-success);
 }
 .badge-green .badge-dot {
-  background: #10b981;
+  background: var(--ct-color-success);
 }
 
 .badge-blue {
-  background: rgba(108, 92, 231, 0.14);
-  color: #8b7ff0;
-  border: 1px solid rgba(108, 92, 231, 0.3);
+  background: var(--ct-color-primary-tint);
+  color: var(--ct-color-primary);
 }
-
 .badge-blue .badge-dot {
-  background: #6c5ce7;
+  background: var(--ct-color-primary);
 }
 
 .badge-amber {
-  background: rgba(245, 158, 11, 0.12);
-  color: #d97706;
+  background: var(--ct-color-warning-tint);
+  color: var(--ct-color-warning);
 }
 .badge-amber .badge-dot {
-  background: #f59e0b;
+  background: var(--ct-color-warning);
 }
 
 .badge-red {
-  background: rgba(239, 68, 68, 0.12);
-  color: #dc2626;
+  background: var(--ct-color-error-tint);
+  color: var(--ct-color-error);
 }
 .badge-red .badge-dot {
-  background: #ef4444;
+  background: var(--ct-color-error);
 }
 
 .badge-gray {
-  background: rgba(107, 114, 128, 0.12);
-  color: #4b5563;
+  background: var(--ct-bg-hover);
+  color: var(--ct-text-secondary);
 }
 .badge-gray .badge-dot {
-  background: #9ca3af;
+  background: var(--ct-text-tertiary);
 }
 
 .rc-sub-line {
@@ -1089,28 +1078,28 @@ async function batchIndexPending() {
   align-items: center;
   flex-wrap: wrap;
   gap: 4px;
-  font-size: 12px;
-  color: var(--ct-text-tertiary, #888);
+  font-size: var(--ct-text-xs);
+  color: var(--ct-text-tertiary);
   line-height: 1.3;
 }
 
 .rc-dot {
-  color: var(--ct-text-tertiary, #bbb);
+  color: var(--ct-text-tertiary);
 }
 
 .rc-metric-text {
-  color: var(--ct-text-secondary, #555);
+  color: var(--ct-text-secondary);
 }
 
 .rc-time-text {
-  color: var(--ct-text-tertiary, #999);
+  color: var(--ct-text-tertiary);
 }
 
 .rc-error-text {
   display: flex;
   align-items: center;
   gap: 4px;
-  color: #dc2626;
+  color: var(--ct-color-error);
   font-size: 11px;
   margin-top: 2px;
 }
@@ -1133,87 +1122,28 @@ async function batchIndexPending() {
 }
 
 .rc-select {
-  border: 1px solid var(--ct-border-color, rgba(0, 0, 0, 0.12));
-  background-color: var(--ct-bg-secondary, rgba(0, 0, 0, 0.02));
-  color: var(--ct-text-secondary, #555);
-  border-radius: 6px;
+  border: 1px solid var(--ct-border-color);
+  background-color: var(--ct-bg-card);
+  color: var(--ct-text-secondary);
+  border-radius: var(--ct-radius-sm);
   padding: 4px 6px;
   padding-right: 24px;
-  font-size: 12px;
+  font-size: var(--ct-text-xs);
   outline: none;
   cursor: pointer;
-  white-space: nowrap !important;
+  white-space: nowrap;
   word-break: keep-all;
-  flex-shrink: 0 !important;
-  width: 86px !important;
-  min-width: 86px !important;
-  max-width: 86px !important;
-  box-sizing: border-box !important;
-  transition: border-color 0.15s;
+  flex-shrink: 0;
+  width: 86px;
+  min-width: 86px;
+  max-width: 86px;
+  box-sizing: border-box;
+  transition: border-color var(--ct-transition-fast);
 }
 
 .rc-select:hover,
 .rc-select:focus {
-  border-color: var(--ct-color-primary, #7c4dff);
-}
-
-.rc-help-icon {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 17px;
-  height: 17px;
-  border-radius: 50%;
-  color: var(--ct-text-tertiary, #9ca3af);
-  cursor: help;
-  outline: none;
-  transition: color 0.15s, background 0.15s;
-}
-
-.rc-help-icon:hover,
-.rc-help-icon:focus-visible {
-  color: var(--ct-color-primary, #7c4dff);
-  background: rgba(124, 77, 255, 0.12);
-}
-
-.rc-help-tooltip {
-  position: absolute;
-  bottom: calc(100% + 9px);
-  right: -8px;
-  width: 280px;
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: #1e1b4b;
-  color: #f8fafc;
-  font-size: 11.5px;
-  font-weight: 400;
-  line-height: 1.55;
-  box-shadow: 0 10px 28px rgba(30, 27, 75, 0.28);
-  opacity: 0;
-  visibility: hidden;
-  transform: translateY(4px);
-  transition: opacity 0.18s ease, transform 0.18s ease, visibility 0.18s;
-  pointer-events: none;
-  z-index: 400;
-  text-align: left;
-  white-space: normal;
-}
-
-.rc-help-tooltip::after {
-  content: '';
-  position: absolute;
-  top: 100%;
-  right: 11px;
-  border: 5px solid transparent;
-  border-top-color: #1e1b4b;
-}
-
-.rc-help-icon:hover .rc-help-tooltip,
-.rc-help-icon:focus-visible .rc-help-tooltip {
-  opacity: 1;
-  visibility: visible;
-  transform: translateY(0);
+  border-color: var(--ct-color-primary);
 }
 
 /* 直观的联系人启用/禁用拨动开关 */
@@ -1222,33 +1152,28 @@ async function batchIndexPending() {
   align-items: center;
   gap: 5px;
   padding: 3px 8px 3px 5px;
-  border-radius: 999px;
-  border: 1px solid rgba(0, 0, 0, 0.1);
-  background: var(--ct-bg-secondary, rgba(0, 0, 0, 0.04));
-  color: var(--ct-text-secondary, #555);
+  border-radius: var(--ct-radius-full);
+  border: 1px solid transparent;
+  background: var(--ct-bg-hover);
+  color: var(--ct-text-secondary);
   font-size: 11.5px;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.18s ease;
-  white-space: nowrap !important;
-  flex-shrink: 0 !important;
+  transition: background var(--ct-transition-fast), color var(--ct-transition-fast), border-color var(--ct-transition-fast);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .rc-switch-btn.is-on {
-  background: rgba(16, 185, 129, 0.1);
-  border-color: rgba(16, 185, 129, 0.28);
-  color: #059669;
+  background: var(--ct-color-primary-tint);
+  border-color: color-mix(in srgb, var(--ct-color-primary) 22%, transparent);
+  color: var(--ct-color-primary);
 }
 
 .rc-switch-btn.is-off {
-  background: rgba(107, 114, 128, 0.12);
-  border-color: rgba(107, 114, 128, 0.24);
-  color: #6b7280;
-}
-
-.rc-switch-btn:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+  background: var(--ct-bg-hover);
+  border-color: var(--ct-border-color);
+  color: var(--ct-text-tertiary);
 }
 
 .rc-switch-track {
@@ -1256,14 +1181,14 @@ async function batchIndexPending() {
   width: 24px;
   height: 14px;
   border-radius: 999px;
-  background: #9ca3af;
-  transition: background 0.2s ease;
+  background: color-mix(in srgb, var(--ct-text-primary) 22%, transparent);
+  transition: background var(--ct-transition-fast);
   display: inline-flex;
   align-items: center;
 }
 
 .rc-switch-btn.is-on .rc-switch-track {
-  background: #10b981;
+  background: var(--ct-color-primary);
 }
 
 .rc-switch-thumb {
@@ -1272,8 +1197,8 @@ async function batchIndexPending() {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: #ffffff;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  background: var(--ct-bg-card);
+  box-shadow: var(--ct-shadow-sm);
   transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
@@ -1287,23 +1212,23 @@ async function batchIndexPending() {
   justify-content: center;
   gap: 4px;
   border: none;
-  background: var(--ct-bg-secondary, rgba(0, 0, 0, 0.04));
-  color: var(--ct-text-secondary, #555);
+  background: var(--ct-bg-card);
+  color: var(--ct-text-secondary);
   padding: 4px 8px;
-  border-radius: 6px;
-  font-size: 12px;
+  border-radius: var(--ct-radius-sm);
+  font-size: var(--ct-text-xs);
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.15s;
-  white-space: nowrap !important;
+  transition: background var(--ct-transition-fast), color var(--ct-transition-fast), border-color var(--ct-transition-fast);
+  white-space: nowrap;
   word-break: keep-all;
-  flex-shrink: 0 !important;
+  flex-shrink: 0;
   box-sizing: border-box;
 }
 
 .rc-btn:hover:not(:disabled) {
-  background: rgba(0, 0, 0, 0.08);
-  color: var(--ct-text-primary, #111);
+  background: var(--ct-color-primary-muted);
+  color: var(--ct-text-primary);
 }
 
 .rc-btn:disabled {
@@ -1313,46 +1238,47 @@ async function batchIndexPending() {
 
 .rc-btn.mini {
   padding: 4px 8px;
-  font-size: 12px;
+  font-size: var(--ct-text-xs);
 }
 
 .rc-btn.primary {
-  background: var(--ct-color-primary, #6366f1);
+  background: var(--ct-color-primary);
   color: #fff;
 }
 .rc-btn.primary:hover:not(:disabled) {
-  opacity: 0.9;
+  background: var(--ct-color-primary-hover);
+  color: #fff;
 }
 
 .rc-btn.primary.outline {
   background: transparent;
-  border: 1px solid var(--ct-color-primary, #6366f1);
-  color: var(--ct-color-primary, #6366f1);
+  border: 1px solid var(--ct-color-primary);
+  color: var(--ct-color-primary);
 }
 .rc-btn.primary.outline:hover:not(:disabled) {
-  background: rgba(99, 102, 241, 0.08);
+  background: var(--ct-color-primary-muted);
 }
 
 .rc-btn.ghost {
   background: transparent;
-  border: 1px solid var(--ct-border-color, rgba(0, 0, 0, 0.12));
+  border: 1px solid var(--ct-border-color);
 }
 .rc-btn.ghost:hover:not(:disabled) {
-  background: rgba(0, 0, 0, 0.04);
+  background: var(--ct-bg-sunken);
 }
 
 .rc-btn.danger {
-  color: #dc2626;
-  background: rgba(239, 68, 68, 0.06);
+  color: var(--ct-color-error);
+  background: transparent;
 }
 .rc-btn.danger:hover:not(:disabled) {
-  background: rgba(239, 68, 68, 0.15);
-  color: #b91c1c;
+  background: var(--ct-color-error-tint);
+  color: var(--ct-color-error);
 }
 
 .rc-btn.mini.active {
-  color: var(--ct-color-primary, #6366f1);
-  background: rgba(99, 102, 241, 0.1);
+  color: var(--ct-color-primary);
+  background: var(--ct-color-primary-tint);
 }
 
 /* 底部状态与分页条 */
@@ -1363,18 +1289,19 @@ async function batchIndexPending() {
   flex-wrap: wrap;
   gap: 12px;
   padding: 10px 4px 4px 4px;
-  border-top: 1px solid var(--ct-border-color, rgba(0, 0, 0, 0.06));
+  border-top: 1px solid var(--ct-border-color);
 }
 
 .rc-pag-info {
-  font-size: 12px;
-  color: var(--ct-text-tertiary, #888);
+  font-size: var(--ct-text-xs);
+  color: var(--ct-text-tertiary);
 }
 .rc-pag-info strong {
-  color: var(--ct-text-primary, #333);
+  color: var(--ct-text-primary);
+  font-variant-numeric: tabular-nums;
 }
 .rc-total-hint {
-  color: var(--ct-text-tertiary, #aaa);
+  color: var(--ct-text-tertiary);
 }
 
 .rc-pag-controls {
@@ -1387,22 +1314,22 @@ async function batchIndexPending() {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
-  color: var(--ct-text-secondary, #666);
+  font-size: var(--ct-text-xs);
+  color: var(--ct-text-secondary);
 }
 
 .rc-page-size-select {
-  border: 1px solid var(--ct-border-color, rgba(0, 0, 0, 0.12));
-  background-color: var(--ct-bg-1, #fff);
-  color: var(--ct-text-secondary, #555);
-  border-radius: 6px;
+  border: 1px solid var(--ct-border-color);
+  background-color: var(--ct-bg-card);
+  color: var(--ct-text-secondary);
+  border-radius: var(--ct-radius-sm);
   padding: 4px 6px;
   padding-right: 24px;
-  font-size: 12px;
+  font-size: var(--ct-text-xs);
   outline: none;
   cursor: pointer;
-  width: auto !important;
-  box-sizing: border-box !important;
+  width: auto;
+  box-sizing: border-box;
 }
 
 .rc-page-nav {
@@ -1417,17 +1344,18 @@ async function batchIndexPending() {
   justify-content: center;
   width: 28px;
   height: 28px;
-  border-radius: 6px;
-  border: 1px solid var(--ct-border-color, rgba(0, 0, 0, 0.12));
-  background: var(--ct-bg-1, #fff);
-  color: var(--ct-text-secondary, #555);
+  border-radius: var(--ct-radius-sm);
+  border: 1px solid var(--ct-border-color);
+  background: var(--ct-bg-card);
+  color: var(--ct-text-secondary);
   cursor: pointer;
-  transition: all 0.15s;
+  transition: border-color var(--ct-transition-fast), color var(--ct-transition-fast), background var(--ct-transition-fast);
 }
 
 .rc-page-btn:hover:not(:disabled) {
-  border-color: var(--ct-color-primary, #6366f1);
-  color: var(--ct-color-primary, #6366f1);
+  border-color: var(--ct-color-primary);
+  color: var(--ct-color-primary);
+  background: var(--ct-color-primary-muted);
 }
 
 .rc-page-btn:disabled {
@@ -1436,11 +1364,12 @@ async function batchIndexPending() {
 }
 
 .rc-page-num {
-  font-size: 12px;
-  color: var(--ct-text-secondary, #666);
+  font-size: var(--ct-text-xs);
+  color: var(--ct-text-secondary);
   padding: 0 6px;
   min-width: 48px;
   text-align: center;
+  font-variant-numeric: tabular-nums;
 }
 
 /* 旋转动画与微型 Spinner */
@@ -1452,7 +1381,7 @@ async function batchIndexPending() {
   display: inline-block;
   width: 14px;
   height: 14px;
-  border: 2px solid rgba(0, 0, 0, 0.15);
+  border: 2px solid color-mix(in srgb, var(--ct-text-primary) 15%, transparent);
   border-top-color: currentColor;
   border-radius: 50%;
   animation: rc-spin-frames 0.8s linear infinite;

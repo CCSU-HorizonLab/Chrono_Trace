@@ -15,9 +15,9 @@
                 @error="avatarLoadErrors[effectiveContactAvatar] = true"
               />
               <svg v-else class="rfd-head-avatar-svg" viewBox="0 0 36 36" fill="none">
-                <rect width="36" height="36" rx="8" fill="#ede9fe" />
-                <circle cx="18" cy="13" r="5.5" fill="#7c4dff" />
-                <path d="M7 29C7 24.0294 11.0294 20 16 20H20C24.9706 20 29 24.0294 29 29V31C29 32.1046 28.1046 33 27 33H9C7.89543 33 7 32.1046 7 31V29Z" fill="#7c4dff" />
+                <rect width="36" height="36" rx="8" fill="#eeebfa" />
+                <circle cx="18" cy="13" r="5.5" fill="#5a4bc4" />
+                <path d="M7 29C7 24.0294 11.0294 20 16 20H20C24.9706 20 29 24.0294 29 29V31C29 32.1046 28.1046 33 27 33H9C7.89543 33 7 32.1046 7 31V29Z" fill="#5a4bc4" />
               </svg>
             </div>
             <div class="rfd-title-wrap">
@@ -183,7 +183,7 @@
                       @error="avatarLoadErrors[getBubbleAvatar(parseFact(fact).isSelf)] = true"
                     />
                     <svg v-else class="rfd-avatar-svg" viewBox="0 0 36 36" fill="none">
-                      <rect width="36" height="36" rx="3" :fill="parseFact(fact).isSelf ? '#7c4dff' : '#059669'" />
+                      <rect width="36" height="36" rx="3" :fill="parseFact(fact).isSelf ? '#5a4bc4' : '#2fa39a'" />
                       <circle cx="18" cy="13" r="5.5" fill="#ffffff" />
                       <path d="M7 29C7 24.0294 11.0294 20 16 20H20C24.9706 20 29 24.0294 29 29V31C29 32.1046 28.1046 33 27 33H9C7.89543 33 7 32.1046 7 31V29Z" fill="#ffffff" />
                     </svg>
@@ -247,7 +247,7 @@
                       />
                       <!-- 微信经典灰色头像 SVG 兜底 -->
                       <svg v-else class="rfd-avatar-svg" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
-                        <rect width="36" height="36" rx="4" :fill="bubble.isSelf ? '#10b981' : '#dfdfdf'" />
+                        <rect width="36" height="36" rx="4" :fill="bubble.isSelf ? '#2fa39a' : '#dfdfdf'" />
                         <circle cx="18" cy="13" r="5.5" fill="#ffffff" />
                         <path d="M7 29C7 24.0294 11.0294 20 16 20H20C24.9706 20 29 24.0294 29 29V31C29 32.1046 28.1046 33 27 33H9C7.89543 33 7 32.1046 7 31V29Z" fill="#ffffff" />
                       </svg>
@@ -839,9 +839,9 @@ onUnmounted(() => {
   position: fixed;
   inset: 0;
   z-index: 9000;
-  background: rgba(15, 23, 42, 0.48);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  background: rgba(27, 25, 36, 0.45);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -853,12 +853,9 @@ onUnmounted(() => {
   max-height: 86vh;
   display: flex;
   flex-direction: column;
-  background: var(--ct-bg-card, #ffffff);
-  border: 1px solid var(--ct-border, rgba(148, 163, 184, 0.24));
-  border-radius: 16px;
-  box-shadow:
-    0 24px 60px rgba(15, 23, 42, 0.28),
-    0 4px 16px rgba(15, 23, 42, 0.08);
+  background: var(--ct-bg-card);
+  border-radius: var(--ct-radius-lg);
+  box-shadow: var(--ct-shadow-lg);
   overflow: hidden;
   overscroll-behavior: contain;
 }
@@ -869,8 +866,8 @@ onUnmounted(() => {
   align-items: center;
   justify-content: space-between;
   padding: 14px 20px;
-  background: var(--ct-bg-card, #ffffff);
-  border-bottom: 1px solid var(--ct-border, #f1f5f9);
+  background: var(--ct-bg-card);
+  border-bottom: 1px solid var(--ct-border-color);
 }
 .rfd-head-left-box {
   display: flex;
@@ -881,11 +878,10 @@ onUnmounted(() => {
 .rfd-head-avatar {
   width: 38px;
   height: 38px;
-  border-radius: 9px;
+  border-radius: var(--ct-radius-sm);
   overflow: hidden;
   flex-shrink: 0;
-  border: 1px solid rgba(124, 77, 255, 0.18);
-  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.05);
+  border: 1px solid color-mix(in srgb, var(--ct-color-primary) 18%, transparent);
 }
 .rfd-head-avatar-img,
 .rfd-head-avatar-svg {
@@ -908,44 +904,43 @@ onUnmounted(() => {
 .rfd-title {
   font-size: 15.5px;
   font-weight: 700;
-  color: var(--ct-text-primary, #0f172a);
+  color: var(--ct-text-primary);
 }
 .rfd-name-tag {
-  font-size: 12px;
+  font-size: var(--ct-text-xs);
   font-weight: 600;
   padding: 2px 9px;
-  border-radius: 6px;
-  background: #f3f0ff;
-  color: #6d28d9;
+  border-radius: var(--ct-radius-sm);
+  background: var(--ct-color-primary-tint);
+  color: var(--ct-color-primary);
 }
 .rfd-sub {
-  font-size: 12px;
-  color: var(--ct-text-secondary, #64748b);
+  font-size: var(--ct-text-xs);
+  color: var(--ct-text-secondary);
   line-height: 1.4;
 }
 .rfd-sub strong {
-  color: #059669;
+  color: var(--ct-color-success);
   font-weight: 600;
 }
 .rfd-close-btn {
-  width: 32px !important;
-  height: 32px !important;
-  padding: 0 !important;
-  border-radius: 8px !important;
-  border: 1px solid #e2e8f0 !important;
-  background: #f8fafc !important;
-  color: #64748b !important;
-  display: inline-flex !important;
-  align-items: center !important;
-  justify-content: center !important;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: var(--ct-radius-sm);
+  border: none;
+  background: transparent;
+  color: var(--ct-text-tertiary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
   flex-shrink: 0;
-  transition: all 0.15s ease;
+  transition: background var(--ct-transition-fast), color var(--ct-transition-fast);
 }
 .rfd-close-btn:hover {
-  background: #fef2f2 !important;
-  color: #ef4444 !important;
-  border-color: #fecaca !important;
+  background: var(--ct-color-error-tint);
+  color: var(--ct-color-error);
 }
 
 /* 顶部过滤搜索条：严格单行、图标不压字、浅灰底槽分段器、横向刷新按钮 */
@@ -954,8 +949,8 @@ onUnmounted(() => {
   align-items: center;
   gap: 8px;
   padding: 10px 20px;
-  background: var(--ct-bg-surface, #f8fafc);
-  border-bottom: 1px solid var(--ct-border, #e2e8f0);
+  background: var(--ct-bg-sunken);
+  border-bottom: 1px solid var(--ct-border-color);
   flex-wrap: nowrap;
 }
 .rfd-search-box {
@@ -968,48 +963,48 @@ onUnmounted(() => {
 .rfd-search-icon {
   position: absolute;
   left: 10px;
-  color: #94a3b8;
+  color: var(--ct-text-tertiary);
   pointer-events: none;
   z-index: 1;
 }
 .rfd-search-input {
-  width: 100% !important;
-  height: 32px !important;
-  padding: 0 28px 0 32px !important;
-  font-size: 12.5px !important;
-  color: var(--ct-text-primary, #0f172a) !important;
-  background: var(--ct-bg-card, #ffffff) !important;
-  border: 1px solid #cbd5e1 !important;
-  border-radius: 8px !important;
-  outline: none !important;
-  box-sizing: border-box !important;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  width: 100%;
+  height: 32px;
+  padding: 0 28px 0 32px;
+  font-size: 12.5px;
+  color: var(--ct-text-primary);
+  background: var(--ct-bg-card);
+  border: 1px solid var(--ct-border-color);
+  border-radius: var(--ct-radius-sm);
+  outline: none;
+  box-sizing: border-box;
+  transition: border-color var(--ct-transition-fast), box-shadow var(--ct-transition-fast);
 }
 .rfd-search-input:hover {
-  border-color: rgba(124, 77, 255, 0.45) !important;
+  border-color: var(--ct-border-color-hover);
 }
 .rfd-search-input:focus {
-  border-color: #7c4dff !important;
-  box-shadow: 0 0 0 2px rgba(124, 77, 255, 0.12) !important;
+  border-color: var(--ct-color-primary);
+  box-shadow: 0 0 0 3px var(--ct-color-primary-tint);
 }
 .rfd-search-clear {
   position: absolute;
   right: 8px;
-  width: 18px !important;
-  height: 18px !important;
-  padding: 0 !important;
-  display: inline-flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  border: none !important;
-  border-radius: 50% !important;
-  background: rgba(148, 163, 184, 0.22) !important;
-  color: #64748b !important;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ct-text-tertiary);
   cursor: pointer;
 }
 .rfd-search-clear:hover {
-  background: rgba(148, 163, 184, 0.38) !important;
-  color: #0f172a !important;
+  background: var(--ct-bg-sunken);
+  color: var(--ct-text-primary);
 }
 
 /* 浅灰底槽分段器（绝不会两个按钮同时变紫） */
@@ -1018,101 +1013,99 @@ onUnmounted(() => {
   align-items: center;
   padding: 3px;
   height: 32px;
-  background: #e2e8f0;
-  border-radius: 8px;
+  background: color-mix(in srgb, var(--ct-text-primary) 7%, transparent);
+  border-radius: var(--ct-radius-full);
   flex-shrink: 0;
   box-sizing: border-box;
 }
 .rfd-seg-btn {
-  height: 26px !important;
-  padding: 0 10px !important;
-  border-radius: 6px !important;
-  border: none !important;
-  background: transparent !important;
-  color: #475569 !important;
-  font-size: 12px !important;
-  font-weight: 600 !important;
-  display: inline-flex !important;
-  align-items: center !important;
-  gap: 5px !important;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: var(--ct-radius-full);
+  border: none;
+  background: transparent;
+  color: var(--ct-text-secondary);
+  font-size: var(--ct-text-xs);
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   cursor: pointer;
-  white-space: nowrap !important;
-  box-shadow: none !important;
-  transition: all 0.15s ease;
+  white-space: nowrap;
+  transition: color var(--ct-transition-fast), background var(--ct-transition-fast);
 }
 .rfd-seg-btn:hover:not(.active) {
-  color: #0f172a !important;
+  color: var(--ct-text-primary);
 }
 .rfd-seg-btn.active {
-  background: #ffffff !important;
-  color: #6d28d9 !important;
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.1) !important;
+  background: var(--ct-bg-card);
+  color: var(--ct-color-primary);
+  box-shadow: var(--ct-shadow-sm);
 }
 .rfd-seg-count {
   font-size: 11px;
   padding: 0 5px;
-  border-radius: 999px;
-  background: rgba(100, 116, 139, 0.16);
-  color: #475569;
+  border-radius: var(--ct-radius-full);
+  background: color-mix(in srgb, var(--ct-text-primary) 8%, transparent);
+  color: var(--ct-text-secondary);
   line-height: 1.4;
 }
 .rfd-seg-btn.active .rfd-seg-count {
-  background: rgba(109, 40, 217, 0.12);
-  color: #6d28d9;
+  background: var(--ct-color-primary-tint);
+  color: var(--ct-color-primary);
 }
 
 .rfd-select {
-  height: 32px !important;
-  padding: 0 24px 0 10px !important;
-  font-size: 12px !important;
-  font-weight: 500 !important;
-  color: #334155 !important;
-  background-color: #ffffff !important;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") !important;
-  background-repeat: no-repeat !important;
-  background-position: right 7px center !important;
-  appearance: none !important;
-  -webkit-appearance: none !important;
-  border: 1px solid #cbd5e1 !important;
-  border-radius: 8px !important;
-  outline: none !important;
+  height: 32px;
+  padding: 0 24px 0 10px;
+  font-size: var(--ct-text-xs);
+  font-weight: 500;
+  color: var(--ct-text-primary);
+  background-color: var(--ct-bg-card);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239B95A5' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 7px center;
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1px solid var(--ct-border-color);
+  border-radius: var(--ct-radius-sm);
+  outline: none;
   cursor: pointer;
   flex-shrink: 0;
-  width: auto !important;
+  width: auto;
   max-width: 132px;
-  box-sizing: border-box !important;
+  box-sizing: border-box;
 }
 .rfd-select:hover {
-  border-color: rgba(124, 77, 255, 0.45) !important;
+  border-color: var(--ct-border-color-hover);
 }
 .rfd-select:focus {
-  border-color: #7c4dff !important;
-  box-shadow: 0 0 0 2px rgba(124, 77, 255, 0.12) !important;
+  border-color: var(--ct-color-primary);
+  box-shadow: 0 0 0 3px var(--ct-color-primary-tint);
 }
 
 .rfd-refresh-btn {
-  width: auto !important;
-  height: 32px !important;
-  padding: 0 12px !important;
-  border-radius: 8px !important;
-  border: 1px solid #cbd5e1 !important;
-  background: #ffffff !important;
-  color: #334155 !important;
-  font-size: 12px !important;
-  font-weight: 500 !important;
-  display: inline-flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  gap: 5px !important;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: var(--ct-radius-sm);
+  border: 1px solid var(--ct-border-color);
+  background: var(--ct-bg-card);
+  color: var(--ct-text-secondary);
+  font-size: var(--ct-text-xs);
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
   cursor: pointer;
-  white-space: nowrap !important;
-  flex-shrink: 0 !important;
-  transition: all 0.15s ease;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: border-color var(--ct-transition-fast), color var(--ct-transition-fast), background var(--ct-transition-fast);
 }
 .rfd-refresh-btn:hover:not(:disabled) {
-  border-color: #7c4dff !important;
-  color: #7c4dff !important;
-  background: rgba(124, 77, 255, 0.04) !important;
+  border-color: var(--ct-color-primary);
+  color: var(--ct-color-primary);
+  background: var(--ct-color-primary-muted);
 }
 .rfd-refresh-btn:disabled {
   opacity: 0.5;
@@ -1128,19 +1121,19 @@ onUnmounted(() => {
 
 /* 状态提示 */
 .rfd-status {
-  font-size: 13px;
-  color: var(--ct-text-secondary, #64748b);
+  font-size: var(--ct-text-sm);
+  color: var(--ct-text-secondary);
   text-align: center;
   padding: 44px 20px;
   line-height: 1.6;
 }
 .rfd-status.rfd-error {
-  color: #b91c1c;
-  background: rgba(239, 68, 68, 0.05);
+  color: var(--ct-color-error);
+  background: var(--ct-color-error-tint);
 }
 .rfd-hint {
   font-size: 11.5px;
-  color: var(--ct-text-muted, #94a3b8);
+  color: var(--ct-text-tertiary);
 }
 
 /* 记忆列表区 */
@@ -1159,10 +1152,10 @@ onUnmounted(() => {
   justify-content: space-between;
   gap: 12px;
   padding: 10px 22px;
-  background: var(--ct-bg-surface, #f8fafc);
-  border-top: 1px solid var(--ct-border, #e2e8f0);
-  color: var(--ct-text-secondary, #64748b);
-  font-size: 12px;
+  background: var(--ct-bg-sunken);
+  border-top: 1px solid var(--ct-border-color);
+  color: var(--ct-text-secondary);
+  font-size: var(--ct-text-xs);
 }
 .rfd-page-info {
   font-weight: 500;
@@ -1177,50 +1170,49 @@ onUnmounted(() => {
   align-items: center;
   gap: 4px;
   padding: 4px 10px;
-  font-size: 12px;
+  font-size: var(--ct-text-xs);
   font-weight: 500;
-  border: 1px solid var(--ct-border, #cbd5e1);
-  border-radius: 7px;
-  background: var(--ct-bg-card, #ffffff);
-  color: var(--ct-text-primary, #0f172a);
+  border: 1px solid var(--ct-border-color);
+  border-radius: var(--ct-radius-sm);
+  background: var(--ct-bg-card);
+  color: var(--ct-text-primary);
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: border-color var(--ct-transition-fast), color var(--ct-transition-fast), background var(--ct-transition-fast);
 }
 .rfd-page-btn:hover:not(:disabled) {
-  border-color: var(--ct-color-primary, #7c4dff);
-  color: var(--ct-color-primary, #7c4dff);
+  border-color: var(--ct-color-primary);
+  color: var(--ct-color-primary);
+  background: var(--ct-color-primary-muted);
 }
 .rfd-page-btn:disabled {
   opacity: 0.42;
   cursor: not-allowed;
 }
 .rfd-page-num {
-  font-size: 12px;
+  font-size: var(--ct-text-xs);
   font-weight: 600;
-  color: var(--ct-text-primary, #0f172a);
+  color: var(--ct-text-primary);
   padding: 0 4px;
+  font-variant-numeric: tabular-nums;
 }
 .rfd-page-slash {
-  color: var(--ct-text-muted, #94a3b8);
+  color: var(--ct-text-tertiary);
   margin: 0 2px;
 }
 
 /* 单个记忆卡片 */
 .rfd-item {
-  border: 1px solid var(--ct-border-color, #e5e7eb);
-  background: var(--ct-bg-elevated, #ffffff);
-  border-radius: 12px;
+  border: 1px solid transparent;
+  background: var(--ct-bg-sunken);
+  border-radius: var(--ct-radius-lg);
   padding: 12px 14px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
-  transition: all 0.15s ease-in-out;
+  transition: border-color var(--ct-transition-fast);
 }
 .rfd-item:hover {
-  border-color: rgba(124, 77, 255, 0.35);
-  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.05);
+  border-color: var(--ct-color-primary-subtle);
 }
 .rfd-item.disabled {
-  opacity: 0.65;
-  background: var(--ct-bg-secondary, #fafafa);
+  opacity: 0.62;
 }
 
 /* 卡片元信息头 */
@@ -1250,19 +1242,19 @@ onUnmounted(() => {
   align-items: center;
   gap: 5px;
   padding: 2px 8px 2px 4px;
-  border-radius: 999px;
+  border-radius: var(--ct-radius-full);
   font-size: 11px;
   font-weight: 600;
 }
 .rfd-speaker-badge.self {
-  background: rgba(124, 77, 255, 0.1);
-  color: #6d28d9;
-  border: 1px solid rgba(124, 77, 255, 0.25);
+  background: var(--ct-color-primary-tint);
+  color: var(--ct-color-primary);
+  border: 1px solid color-mix(in srgb, var(--ct-color-primary) 22%, transparent);
 }
 .rfd-speaker-badge.contact {
-  background: rgba(16, 185, 129, 0.1);
-  color: #047857;
-  border: 1px solid rgba(16, 185, 129, 0.25);
+  background: var(--ct-color-success-tint);
+  color: var(--ct-color-success);
+  border: 1px solid color-mix(in srgb, var(--ct-color-success) 26%, transparent);
 }
 
 .rfd-badge-avatar {
@@ -1281,62 +1273,61 @@ onUnmounted(() => {
   font-size: 10px;
   font-weight: 600;
   padding: 2px 7px;
-  border-radius: 999px;
+  border-radius: var(--ct-radius-full);
 }
 .rfd-chip.active {
-  color: #059669;
-  background: rgba(16, 185, 129, 0.08);
+  color: var(--ct-color-success);
+  background: var(--ct-color-success-tint);
 }
 .rfd-chip.off {
-  color: #b91c1c;
-  background: rgba(239, 68, 68, 0.08);
+  color: var(--ct-color-error);
+  background: var(--ct-color-error-tint);
 }
 
 .rfd-kind {
   font-size: 11px;
-  color: var(--ct-text-secondary, #4b5563);
-  background: var(--ct-bg-secondary, #f3f4f6);
+  color: var(--ct-text-secondary);
+  background: var(--ct-bg-hover);
   padding: 1px 6px;
-  border-radius: 4px;
+  border-radius: var(--ct-radius-sm);
 }
 .rfd-time {
   font-size: 11px;
-  color: var(--ct-text-tertiary, #9ca3af);
+  color: var(--ct-text-tertiary);
 }
 .rfd-conf {
   font-size: 10.5px;
   font-weight: 500;
   padding: 1px 5px;
-  border-radius: 4px;
+  border-radius: var(--ct-radius-sm);
 }
 .rfd-conf.high {
-  color: #059669;
-  background: rgba(16, 185, 129, 0.08);
+  color: var(--ct-color-success);
+  background: var(--ct-color-success-tint);
 }
 .rfd-conf.med {
-  color: #d97706;
-  background: rgba(245, 158, 11, 0.08);
+  color: var(--ct-color-warning);
+  background: var(--ct-color-warning-tint);
 }
 .rfd-conf.low {
-  color: #6b7280;
-  background: rgba(107, 114, 128, 0.08);
+  color: var(--ct-text-secondary);
+  background: var(--ct-bg-hover);
 }
 .rfd-sens {
   font-size: 10px;
   font-weight: 600;
-  color: #b45309;
-  background: rgba(245, 158, 11, 0.12);
+  color: var(--ct-color-warning);
+  background: var(--ct-color-warning-tint);
   padding: 1px 6px;
-  border-radius: 999px;
+  border-radius: var(--ct-radius-full);
 }
 
 /* 核心陈述卡片 */
 .rfd-statement-box {
   margin-bottom: 8px;
-  padding: 6px 10px;
-  border-left: 3px solid var(--ct-color-primary, #7c4dff);
-  background: var(--ct-bg-secondary, #f9fafb);
-  border-radius: 0 6px 6px 0;
+  padding: 8px 12px;
+  background: var(--ct-color-primary-tint);
+  border-radius: var(--ct-radius-sm);
   display: flex;
   align-items: baseline;
   gap: 2px;
@@ -1345,29 +1336,24 @@ onUnmounted(() => {
   font-size: 15px;
   font-family: Georgia, serif;
   font-weight: bold;
-  color: var(--ct-color-primary, #7c4dff);
+  color: var(--ct-color-primary);
   opacity: 0.6;
 }
 .rfd-statement-text {
   font-size: 13.5px;
   font-weight: 600;
   line-height: 1.5;
-  color: var(--ct-text-primary, #111827);
+  color: var(--ct-text-primary);
   word-break: break-word;
 }
 
-/* 原生微信聊天现场还原窗口 */
+/* 原生微信聊天现场还原窗口（拟物，配色贴近微信本体，不走应用令牌） */
 .rfd-wechat-window {
   margin-top: 8px;
   background: #ededed;
-  border: 1px solid #e0e0e0;
-  border-radius: 8px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: var(--ct-radius-sm);
   overflow: hidden;
-}
-:global(.dark) .rfd-wechat-window,
-:global([data-theme="dark"]) .rfd-wechat-window {
-  background: #191919;
-  border-color: #2e2e2e;
 }
 
 .rfd-wechat-header {
@@ -1375,21 +1361,12 @@ onUnmounted(() => {
   background: rgba(0, 0, 0, 0.03);
   border-bottom: 1px solid rgba(0, 0, 0, 0.05);
 }
-:global(.dark) .rfd-wechat-header,
-:global([data-theme="dark"]) .rfd-wechat-header {
-  background: rgba(255, 255, 255, 0.03);
-  border-bottom-color: rgba(255, 255, 255, 0.05);
-}
 
 .rfd-chat-title {
   font-size: 10.5px;
   font-weight: 600;
   color: #6b7280;
   letter-spacing: 0.2px;
-}
-:global(.dark) .rfd-chat-title,
-:global([data-theme="dark"]) .rfd-chat-title {
-  color: #9ca3af;
 }
 
 .rfd-wechat-body {
@@ -1408,11 +1385,6 @@ onUnmounted(() => {
   padding: 1px 7px;
   border-radius: 4px;
   margin-bottom: 2px;
-}
-:global(.dark) .rfd-chat-time,
-:global([data-theme="dark"]) .rfd-chat-time {
-  color: rgba(255, 255, 255, 0.45);
-  background: rgba(255, 255, 255, 0.08);
 }
 
 /* 消息行 */
@@ -1445,7 +1417,7 @@ onUnmounted(() => {
   background: #dfdfdf;
 }
 .rfd-msg-avatar.self {
-  background: #10b981;
+  background: #2fa39a;
 }
 .rfd-avatar-img {
   width: 100%;
@@ -1477,12 +1449,6 @@ onUnmounted(() => {
   background: #ffffff;
   color: #111827;
 }
-:global(.dark) .rfd-bubble.left,
-:global([data-theme="dark"]) .rfd-bubble.left {
-  background: #2a2a2a;
-  color: #f3f4f6;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
-}
 /* 左侧小三角形尖角 */
 .rfd-bubble.left::before {
   content: '';
@@ -1495,21 +1461,11 @@ onUnmounted(() => {
   border-bottom: 5px solid transparent;
   border-right: 5px solid #ffffff;
 }
-:global(.dark) .rfd-bubble.left::before,
-:global([data-theme="dark"]) .rfd-bubble.left::before {
-  border-right-color: #2a2a2a;
-}
 
 /* 右侧我方气泡（微信绿） */
 .rfd-bubble.right {
   background: #95ec69;
   color: #111827;
-}
-:global(.dark) .rfd-bubble.right,
-:global([data-theme="dark"]) .rfd-bubble.right {
-  background: #2e6638;
-  color: #f3f4f6;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
 }
 /* 右侧小三角形尖角 */
 .rfd-bubble.right::before {
@@ -1523,14 +1479,10 @@ onUnmounted(() => {
   border-bottom: 5px solid transparent;
   border-left: 5px solid #95ec69;
 }
-:global(.dark) .rfd-bubble.right::before,
-:global([data-theme="dark"]) .rfd-bubble.right::before {
-  border-left-color: #2e6638;
-}
 
 /* 记忆锚点高亮 */
 .rfd-bubble.anchor {
-  outline: 1.5px solid #f59e0b;
+  outline: 1.5px solid var(--ct-color-warning);
 }
 .rfd-anchor-badge {
   display: inline-flex;
@@ -1541,37 +1493,32 @@ onUnmounted(() => {
   font-weight: 600;
   padding: 1px 5px;
   border-radius: 3px;
-  background: rgba(245, 158, 11, 0.22);
-  color: #b45309;
+  background: var(--ct-color-warning-tint);
+  color: var(--ct-color-warning);
   vertical-align: middle;
   white-space: nowrap;
-}
-:global(.dark) .rfd-anchor-badge,
-:global([data-theme="dark"]) .rfd-anchor-badge {
-  background: rgba(245, 158, 11, 0.3);
-  color: #fbbf24;
 }
 
 /* 敏感记忆遮罩交互 */
 .rfd-sensitive-mask {
   margin-top: 8px;
   padding: 12px;
-  background: var(--ct-bg-secondary, #f9fafb);
-  border: 1px dashed var(--ct-border-color, #e5e7eb);
-  border-radius: 8px;
-  color: var(--ct-text-tertiary, #9ca3af);
+  background: var(--ct-bg-sunken);
+  border: 1px dashed var(--ct-border-color);
+  border-radius: var(--ct-radius-sm);
+  color: var(--ct-text-tertiary);
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  font-size: 12px;
+  font-size: var(--ct-text-xs);
   cursor: pointer;
-  transition: all 0.15s;
+  transition: border-color var(--ct-transition-fast), color var(--ct-transition-fast), background var(--ct-transition-fast);
 }
 .rfd-sensitive-mask:hover {
-  background: rgba(124, 77, 255, 0.04);
-  color: var(--ct-color-primary, #7c4dff);
-  border-color: var(--ct-color-primary, #7c4dff);
+  background: var(--ct-color-primary-tint);
+  color: var(--ct-color-primary);
+  border-color: var(--ct-color-primary);
 }
 
 /* 底部操作区 */
@@ -1582,42 +1529,45 @@ onUnmounted(() => {
   margin-top: 10px;
 }
 .rfd-btn {
-  border: 1px solid var(--ct-border-color, #e5e7eb);
-  background: var(--ct-bg-secondary, #f9fafb);
-  color: var(--ct-text-secondary, #4b5563);
+  border: 1px solid var(--ct-border-color);
+  background: var(--ct-bg-card);
+  color: var(--ct-text-secondary);
   font-size: 11.5px;
   padding: 4px 12px;
-  border-radius: 6px;
+  border-radius: var(--ct-radius-sm);
   cursor: pointer;
-  transition: all 0.15s;
+  transition: border-color var(--ct-transition-fast), color var(--ct-transition-fast);
 }
 .rfd-btn:hover:not(:disabled) {
-  border-color: var(--ct-color-primary, #7c4dff);
-  color: var(--ct-color-primary, #7c4dff);
+  border-color: var(--ct-color-primary);
+  color: var(--ct-color-primary);
 }
 .rfd-btn.warn {
-  color: #b45309;
-  border-color: rgba(245, 158, 11, 0.35);
-  background: rgba(245, 158, 11, 0.05);
+  color: var(--ct-color-warning);
+  border-color: color-mix(in srgb, var(--ct-color-warning) 45%, transparent);
+  background: var(--ct-color-warning-tint);
 }
 .rfd-btn.warn:hover:not(:disabled) {
-  background: rgba(245, 158, 11, 0.12);
+  border-color: var(--ct-color-warning);
+  color: var(--ct-color-warning);
 }
 .rfd-btn.danger {
-  color: #b91c1c;
-  border-color: rgba(239, 68, 68, 0.35);
-  background: rgba(239, 68, 68, 0.05);
+  color: var(--ct-color-error);
+  border-color: color-mix(in srgb, var(--ct-color-error) 45%, transparent);
+  background: var(--ct-color-error-tint);
 }
 .rfd-btn.danger:hover:not(:disabled) {
-  background: rgba(239, 68, 68, 0.12);
+  border-color: var(--ct-color-error);
+  color: var(--ct-color-error);
 }
 .rfd-btn.restore {
-  color: #059669;
-  border-color: rgba(16, 185, 129, 0.35);
-  background: rgba(16, 185, 129, 0.05);
+  color: var(--ct-color-success);
+  border-color: color-mix(in srgb, var(--ct-color-success) 45%, transparent);
+  background: var(--ct-color-success-tint);
 }
 .rfd-btn.restore:hover:not(:disabled) {
-  background: rgba(16, 185, 129, 0.12);
+  border-color: var(--ct-color-success);
+  color: var(--ct-color-success);
 }
 .rfd-btn:disabled {
   opacity: 0.45;
@@ -1631,15 +1581,15 @@ onUnmounted(() => {
   gap: 8px;
   padding: 10px 22px 12px;
   font-size: 11.5px;
-  color: var(--ct-text-secondary, #64748b);
-  border-top: 1px solid var(--ct-border, #e2e8f0);
-  background: var(--ct-bg-card, #ffffff);
+  color: var(--ct-text-secondary);
+  border-top: 1px solid var(--ct-border-color);
+  background: var(--ct-bg-card);
 }
 .rfd-foot-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--ct-color-primary, #7c4dff);
+  background: var(--ct-color-primary);
   flex-shrink: 0;
 }
 

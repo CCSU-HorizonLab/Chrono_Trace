@@ -28,6 +28,14 @@
       </div>
     </div>
 
+    <!-- 章节面板自取数据（不依赖 deep payload）：deep 加载失败时照常可用 -->
+    <div :id="anchors[0].id" class="anchor-target">
+      <RelationshipChaptersPanel
+        :conversation-id="conversationId"
+        :view-epoch="viewEpoch"
+      />
+    </div>
+
     <div v-if="error" class="panel state-card">
       <div class="state-text">加载失败：{{ error }}</div>
       <button class="btn" @click="load">重试</button>
@@ -39,26 +47,26 @@
     </div>
 
     <template v-else-if="payload">
-      <div :id="anchors[0].id" class="anchor-target">
+      <div :id="anchors[1].id" class="anchor-target">
         <DeepEmotionPanel
           :buckets="payload.buckets || []"
           :granularity="granularity"
           :affinity="payload.affinity_history || null"
         />
       </div>
-      <div :id="anchors[1].id" class="anchor-target">
+      <div :id="anchors[2].id" class="anchor-target">
         <WordEvolutionPanel
           :evolution="payload.wordcloud_evolution || { caliber: 'none', coverage_ratio: 0, segments: [] }"
         />
       </div>
-      <div :id="anchors[2].id" class="anchor-target">
+      <div :id="anchors[3].id" class="anchor-target">
         <Big5EvolutionPanel
           :conversation-id="conversationId"
           :evolution="payload.big5_evolution"
           :view-epoch="viewEpoch"
         />
       </div>
-      <div :id="anchors[3].id" class="anchor-target">
+      <div :id="anchors[4].id" class="anchor-target">
         <ProfileEvolutionPanel
           :conversation-id="conversationId"
           :dates="dates"
@@ -66,7 +74,7 @@
           :contact-name="contactName"
         />
       </div>
-      <div :id="anchors[4].id" class="anchor-target">
+      <div :id="anchors[5].id" class="anchor-target">
         <MilestoneTimeline
           :milestones="payload.milestones || []"
           :turning-points="payload.turning_points || []"
@@ -82,6 +90,7 @@ import { ref, watch } from 'vue'
 import { api } from '@/api/bridge'
 import { BIG5_COLOR_ME, BIG5_COLOR_OTHER } from '@/components/deep/big5Shared'
 import SentimentCoverageBar from '@/components/deep/SentimentCoverageBar.vue'
+import RelationshipChaptersPanel from '@/components/deep/RelationshipChaptersPanel.vue'
 import DeepEmotionPanel from '@/components/deep/DeepEmotionPanel.vue'
 import WordEvolutionPanel from '@/components/deep/WordEvolutionPanel.vue'
 import Big5EvolutionPanel from '@/components/deep/Big5EvolutionPanel.vue'
@@ -106,6 +115,7 @@ const wordSegments = ref(4)
 const segmentOptions = [2, 3, 4, 5, 6]
 
 const anchors = [
+  { id: 'deep-anchor-chapters', label: '章节' },
   { id: 'deep-anchor-emotion', label: '情绪' },
   { id: 'deep-anchor-words', label: '词云' },
   { id: 'deep-anchor-big5', label: '大五' },

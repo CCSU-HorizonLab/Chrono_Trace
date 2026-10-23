@@ -7,22 +7,25 @@
 
 Analytics 页签「时光深度」，**单聊专属**（群聊无双方情感演变语义，
 切群聊自动回退关系洞察）。页签顶部吸顶工具条：面板锚点导航 + 分段选择器
-（词云/大五共用）+ 我/TA 实体图例；五面板纵向长滚（滚动祖先即页签容器）。
+（词云/大五共用）+ 我/TA 实体图例；六面板纵向长滚（滚动祖先即页签容器）。
 在选定时间窗内提供：
 
-1. **双方情绪曲线**：分桶（周/月/年）聚合 sentiment_cache，双方/我/TA 视角或
+1. **关系章节**：统计变点自动分段（消息密度/TA占比/正向率/回复时延），
+   周量柱+章节分界线、周级大五分布带五维五行、章节卡（统计+变化点）。
+   **全会话口径**（不受时间窗/分段选择器影响），自取数据不依赖 deep payload。
+2. **双方情绪曲线**：分桶（周/月/年）聚合 sentiment_cache，双方/我/TA 视角或
    三线同显，滚动窗口加权平滑（默认近 3 桶），消极时段浅红着色、好感度历史
    落点（菱形+虚线）叠加；底部分侧互动柱（我紫/TA 琥珀的全量计数，不依赖
    情感缓存）。
-2. **词云演变**：时间窗均分为 2~6 段（默认 4）对比，双方/我/TA 三视角；
+3. **词云演变**：时间窗均分为 2~6 段（默认 4）对比，双方/我/TA 三视角；
    重点词排行流动图（bump）+ 分段词云联动高亮（选词口径见下节）。
-3. **大五人格演变**：与词云共用分段，每段一张紧凑雷达小多图（我/TA 双色
+4. **大五人格演变**：与词云共用分段，每段一张紧凑雷达小多图（我/TA 双色
    叠加）；本地统计层按段免费演变，每段可选 AI 增强（±15 有界校正）。
-4. **关系阶段叙事**：首条消息、消息量关口、最长沉默期、情绪拐点的时间线。
-5. **画像演变**：时间窗均分 2~6 段（默认 2，独立分段选择器）竖排时间线
+5. **关系阶段叙事**：首条消息、消息量关口、最长沉默期、情绪拐点的时间线。
+6. **画像演变**：时间窗均分 2~6 段（默认 2，独立分段选择器）竖排时间线
    全段卡（左缘竖线+段间↓，段头只标时间区间），见
    `docs/analysis/profile-window.md`。
-6. **大五人格印象（全会话档）+ 分享海报**：已随拆页移至「TA 画像」页签，见下两节。
+7. **大五人格印象（全会话档）+ 分享海报**：已随拆页移至「TA 画像」页签，见下两节。
 
 ## 版本常量与 bump 规则
 
@@ -30,6 +33,7 @@ Analytics 页签「时光深度」，**单聊专属**（群聊无双方情感演
 |---|---|---|---|
 | `DEEP_ANALYSIS_VERSION` | `deep_analysis_service.py` | 4 | 桶口径（分桶表达式）或序列点位结构变化。序列实时计算无缓存，版本主要约束前端兼容判断与文档口径记录。v2：词云演变 `halves`→`segments`（2~6 段可配，默认 4）；v3：桶点补 `userMsgCount`/`otherMsgCount` 分侧全量计数、payload 增 `big5_evolution`；v4：词面口径变更（pos 白名单过滤 + 停用词两轮扩表，词云/群摘要词表不兼容） |
 | `BIG5_PROMPT_VERSION` | `personality_impression_service.py` | 1 | 大五 prompt 或指标权重结构性变化。旧行自动失效重算（`big5_impressions` 表按版本查询，对齐 `CALIBER_VERSION` 惯例） |
+| `CHAPTERS_VERSION` | `relationship_chapters.py` | 1 | 章节检测口径变化（特征集/惩罚系数/吸附半径/留白阈值）。纯统计无落库缓存，版本约束前端兼容判断与口径记录（方案与分期见 `goals/persona-chapters-goal.md`） |
 
 ## 关键口径
 
@@ -155,6 +159,34 @@ Analytics 页签「时光深度」，**单聊专属**（群聊无双方情感演
   late_night/peak_day/reply_stats/initiator，逐字段独立降级 None）；
   核心分镜（开场/里程碑/深夜/峰值日）零依赖分析产物，未分析库也能出故事。
 
+## 关系章节（时光深度首位面板，C1 纯统计层）
+
+均分切段把真转折劈成两半、rolling 窗采样丢掉长会话的头部语料——章节面板
+换时间原语：按行为变点切「自然段落」+ 周级大五分布带。调研依据与 C2-C4
+分期见 `goals/persona-chapters-goal.md`。
+
+- **章节检测**（`relationship_chapters.detect_chapters`，纯函数确定性）：
+  周粒度四信号——消息密度 `log1p(周文本量)`、TA 占比、正向情绪率（双侧
+  合并 sentiment_cache）、回复时延 `log1p(分钟)`（response_times 剔异常、
+  封顶 24h）。逐列 z 归一（零方差列剔除）后 DP 精确最优分段，段数由
+  「SSE + 惩罚×(段数-1)」择优，惩罚 = 2.0×特征维数×ln(周数)——单特征约
+  1.5σ 以上的均值漂移才切一刀，宁缺毋滥。约束：最短 2 周、至多 8 段。
+- **边界吸附**：切出的边界若 ±7 天内有关联里程碑（首条/消息量关口/最长
+  沉默，复用 deep_analysis 口径），展示时间戳吸附到里程碑；周统计不动。
+- **变化归因**：相邻章节各特征均值差按全序列 σ 折算，|Δz| ≥ 0.5 才报
+  （label+方向，中性措辞——升降不预设好坏，不做关系诊断）。
+- **周级大五分布带**：逐周单侧采集语言风格指标（与大五基础层同口径：
+  daily_avg/icebreak_ratio/emoji_exclaim/daily_cv/topic_continuation/
+  情感三样/late_night/empathy_density/词汇多样性/分享密度），经
+  `big5_proxies` 锚点插值+缺席重归一合成五维。**周内单侧文本 < 10 条该侧
+  该周记 None（诚实留白）**；jieba 词指标每侧每周抽样 ≤200 条。分布带只做
+  相对演变叙事，不做绝对测评解读（Fleeson：人格是状态的密度分布）。
+- **周桶锚点**：本地时区周一 00:00；首末之间的空周补零保留（冷却期本身
+  是信号）。`_aggregate_weeks` 的周桶两侧必须各自独立（工厂函数建桶——
+  dict 浅拷贝会让双侧共享 texts 列表，已有测试锁死）。
+- 全会话口径（不收日期窗）；文本总量 < 40 条返回 `insufficient_data`。
+  纯统计零 LLM 无落库缓存，同库重跑结果一致。
+
 ## 分享海报
 
 前端 `html2canvas`（唯一为此新增的前端依赖）合成竖版 720px 长图，
@@ -220,12 +252,12 @@ Name 条款=改名再改字体，原样分发只需附带许可），`styles/fon
 
 - 后端：`services/analysis/{deep_analysis_service, engagement_metrics,
   sentiment_backfill_service, personality_impression_service, big5_proxies,
-  task_registry}.py`、`webview/api/deep_analysis.py`（mixin，13 个方法）
-- 前端：`components/deep/`（TimeDeepTab 及各面板、Big5EvolutionPanel +
-  big5Shared、PosterStudio、`poster/registry.ts`、`poster/badges.ts`、
-  `poster/sections/`（分镜骨架）、三模板、`styles/fonts.css`）、
+  relationship_chapters, task_registry}.py`、`webview/api/deep_analysis.py`（mixin）
+- 前端：`components/deep/`（TimeDeepTab 及各面板、RelationshipChaptersPanel、
+  Big5EvolutionPanel + big5Shared、PosterStudio、`poster/registry.ts`、
+  `poster/badges.ts`、`poster/sections/`（分镜骨架）、三模板、`styles/fonts.css`）、
   `charts/EmotionLineChart.vue`（扩展 perspective/negativeShade/affinityPoints
   与 userMsgCount/otherMsgCount 可选 props，无分侧数回退单柱）
 - 测试：`tests/test_deep_analysis.py`、`test_engagement_metrics.py`、
   `test_sentiment_backfill.py`、`test_big5_impression.py`、
-  `test_share_poster_export.py`
+  `test_relationship_chapters.py`、`test_share_poster_export.py`

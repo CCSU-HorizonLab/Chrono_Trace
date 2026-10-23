@@ -53,6 +53,8 @@ type PyWebViewApi = {
   get_analysis: (params: { conversation_id: number; from: string; to: string }) => Promise<any>
   // 时光深度：分桶情绪演变/词云演变/里程碑（bucket: day/week/month/year；word_segments: 词云分段 2~6 默认 4）
   get_deep_analysis: (conversation_id: number, from: string, to: string, bucket?: string, word_segments?: number) => Promise<any>
+  // 时光深度：关系章节（变点检测分段+周级大五分布，纯统计零 LLM；全会话口径不收日期窗）
+  get_relationship_chapters: (conversation_id: number) => Promise<any>
   // 时光深度：情感补算（sentiment_cache 缺口后台补算，任务+轮询）
   get_sentiment_coverage: (conversation_id: number) => Promise<any>
   start_sentiment_backfill: (conversation_id: number) => Promise<any>

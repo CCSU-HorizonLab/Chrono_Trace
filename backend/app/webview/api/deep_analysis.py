@@ -67,6 +67,27 @@ class DeepAnalysisApiMixin:
             logger.error(f"[Bridge] 获取时光深度数据失败: {e}")
             return {"ok": False, "error": str(e)}
 
+    def get_relationship_chapters(self, conversation_id: int) -> dict:
+        """关系章节：变点检测自动分段 + 周级大五分布（纯统计零 LLM，确定性输出）。
+
+        全会话口径（不收日期窗）；文本不足 40 条返回 insufficient_data。
+        """
+        try:
+            if not conversation_id:
+                return {"ok": False, "error": "缺少参数: conversation_id"}
+            from ...services.analysis.relationship_chapters import (
+                RelationshipChapterService,
+            )
+
+            service = getattr(self, "_chapters_service", None)
+            if service is None:
+                service = RelationshipChapterService()
+                self._chapters_service = service
+            return service.get_chapters(int(conversation_id))
+        except Exception as e:
+            logger.error(f"[Bridge] 获取关系章节失败: {e}")
+            return {"ok": False, "error": str(e)}
+
     # ------------------------------------------------------------------
     # 情感补算（sentiment_cache 缺口 → 后台任务）
     # ------------------------------------------------------------------

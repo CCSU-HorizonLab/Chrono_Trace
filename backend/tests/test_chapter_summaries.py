@@ -17,8 +17,9 @@ import pytest
 
 from app.services.analysis import chapter_summaries as csmod
 from app.services.analysis.chapter_summaries import (
+    CHAPTER_SUMMARY_VERSION,
     MONTH_MAX_MESSAGES,
-    SUMMARY_VERSION,
+    MONTHLY_SUMMARY_VERSION,
     ChapterSummaryService,
     _summary_fp,
 )
@@ -35,7 +36,8 @@ DAY = 86400
 class StubLLM:
     """按 user prompt 内容区分月/章任务；记录全部调用。"""
 
-    def __init__(self, month_reply=None, chapter_reply=None):
+    def __init__(self, month_reply=None, chapter_reply=None,
+                 transition_reply=None, arc_reply=None):
         self.calls = []  # (system, user)
         self.month_reply = month_reply or (
             '{"topics": ["工作", "周末爬山"], "dynamics": "互动平稳，话题以日常为主",'
@@ -43,7 +45,16 @@ class StubLLM:
         )
         self.chapter_reply = chapter_reply or (
             '{"summary": "这段以日常分享为主，双方互动轻松，话题围绕工作与周末安排。",'
-            ' "phase": "熟络升温期"}'
+            ' "phase": "更像熟络升温期"}'
+        )
+        self.transition_reply = transition_reply or (
+            '{"what_changed": "从日常分享转向以工作协调为主",'
+            ' "trigger": "项目启动", "what_stayed": "语气仍轻松",'
+            ' "evidence": ["这段以日常分享为主", "工作"]}'
+        )
+        self.arc_reply = arc_reply or (
+            '{"arc": "整体从日常分享走向深度协作，互动密度先升后稳。",'
+            ' "turning_points": ["第1章→第2章：话题重心转向工作"]}'
         )
         self.on_call = None  # 每次调用后的钩子（测试驱动取消）
 
@@ -55,6 +66,10 @@ class StubLLM:
             return self.month_reply
         if user.startswith("【章节】"):
             return self.chapter_reply
+        if user.startswith("【前章】"):
+            return self.transition_reply
+        if user.startswith("【章节叙事序列】"):
+            return self.arc_reply
         raise AssertionError(f"unexpected user prompt: {user[:60]}")
 
 
@@ -175,12 +190,14 @@ class TestMonthSummaries:
         service = _make_service(conn, monkeypatch, llm=llm)
 
         task_id = _run_sync(service)
-        # 2 月 + 2 章归并 = 4 次 LLM 调用
-        assert len(llm.calls) == 4
+        # 2 月 + 2 章归并 + 1 过渡卡 + 1 全局弧线 = 6 次 LLM 调用
+        assert len(llm.calls) == 6
+        prefixes = [u.split("】", 1)[0] + "】" for _, u in llm.calls]
+        assert prefixes == ["【月份】", "【月份】", "【章节】", "【章节】", "【前章】", "【章节叙事序列】"]
         assert service.get_progress(task_id)["status"] == "completed"
         rows = conn.execute(
             "SELECT month_key FROM chapter_month_summaries WHERE version = ?",
-            (SUMMARY_VERSION,),
+            (MONTHLY_SUMMARY_VERSION,),
         ).fetchall()
         assert len(rows) == 2
         progress = service.get_progress(task_id)
@@ -195,14 +212,15 @@ class TestMonthSummaries:
 
         _seed_month(conn, 2023, 12)  # 新月份
         _run_sync(service)
-        # 新月摘要 1 次 + 章 2 首次可归并（上月无数据被跳过，本月就绪）1 次；
+        # 新月摘要 1 次 + 章 2 首次可归并（上月无数据被跳过，本月就绪）1 次
+        # + 章 1→2 过渡卡 1 次 + 全局弧线 1 次；
         # 核心：已就绪的 11 月不重算，已归并的章 1 指纹命中跳过
         month_calls = [u for _, u in llm.calls if u.startswith("【月份】")]
         assert len(month_calls) == 2
-        assert len(llm.calls) == 4
+        assert len(llm.calls) == 6
         months = conn.execute(
             "SELECT COUNT(*) FROM chapter_month_summaries WHERE version = ?",
-            (SUMMARY_VERSION,),
+            (MONTHLY_SUMMARY_VERSION,),
         ).fetchone()[0]
         assert months == 2
 
@@ -279,6 +297,23 @@ class TestMonthSummaries:
             service.run(1, threading.Event(), task_id)
         # start_task 线程路径同语义：异常被 wrapper 捕获置 failed
 
+    def test_unescaped_inner_quotes_repaired(self, conn, monkeypatch):
+        """真机实录：模型在字符串值里写未转义内嵌双引号（TA以"老师"身份），
+        修复启发式兜住而非整月失败。"""
+        llm = StubLLM(month_reply=(
+            '{"topics": ["论文修改", "项目对接"], "dynamics": "TA以"老师"身份主动推进，'
+            '我配合执行", "highlights": ["春节复工"], "style": "语气正式"}'
+        ))
+        _seed_month(conn, 2023, 11)
+        service = _make_service(conn, monkeypatch, llm=llm)
+        _run_sync(service)
+        row = conn.execute(
+            "SELECT summary_json FROM chapter_month_summaries"
+        ).fetchone()
+        parsed = json.loads(row[0])
+        assert parsed["dynamics"].startswith("TA以")
+        assert "老师" in parsed["dynamics"]
+
 
 # ---------------------------------------------------------------------------
 # 章节归并
@@ -296,7 +331,7 @@ class TestChapterMerge:
         rows = conn.execute(
             "SELECT fingerprint, summary_json FROM chapter_summaries"
             " WHERE version = ? ORDER BY from_ts",
-            (SUMMARY_VERSION,),
+            (CHAPTER_SUMMARY_VERSION,),
         ).fetchall()
         assert len(rows) == 2
         parsed = json.loads(rows[0]["summary_json"])
@@ -327,6 +362,77 @@ class TestChapterMerge:
         assert _summary_fp(
             _month_anchor(2023, 11), _month_anchor(2023, 12) - 5 * DAY,
         ) in fingerprints
+
+
+# ---------------------------------------------------------------------------
+# 过渡卡与全局弧线（C3）
+# ---------------------------------------------------------------------------
+
+class TestTransitionsAndArc:
+
+    def test_transition_evidence_must_be_substring(self, conn, monkeypatch):
+        """验收红线：引文回溯不到输入章叙事的丢弃。"""
+        llm = StubLLM(transition_reply=(
+            '{"what_changed": "话题从日常转向工作", "trigger": "项目启动",'
+            ' "what_stayed": "语气随意",'
+            ' "evidence": ["这段以日常分享为主", "不存在的引文", "工作"]}'
+        ))
+        _seed_month(conn, 2023, 11)
+        _seed_month(conn, 2023, 12)
+        service = _make_service(conn, monkeypatch, llm=llm)
+        _run_sync(service)
+
+        row = conn.execute(
+            "SELECT transition_json FROM chapter_transitions WHERE version = ?",
+            (CHAPTER_SUMMARY_VERSION,),
+        ).fetchone()
+        parsed = json.loads(row["transition_json"])
+        assert parsed["evidence"] == ["这段以日常分享为主", "工作"]  # 捏造引文被滤掉
+
+    def test_transition_fields_and_boundary_columns(self, conn, monkeypatch):
+        llm = StubLLM()
+        _seed_month(conn, 2023, 11)
+        _seed_month(conn, 2023, 12)
+        service = _make_service(conn, monkeypatch, llm=llm)
+        _run_sync(service)
+
+        row = conn.execute(
+            "SELECT from_chapter, to_chapter, transition_json FROM chapter_transitions"
+        ).fetchone()
+        # 边界列 = 前章起点 / 后章终点（载荷层按边界反查章号）
+        assert row["from_chapter"] == _month_anchor(2023, 11)
+        assert row["to_chapter"] == _month_anchor(2024, 1)
+        parsed = json.loads(row["transition_json"])
+        assert parsed["what_changed"] and parsed["trigger"] and parsed["what_stayed"]
+
+    def test_arc_waits_for_all_chapters(self, conn, monkeypatch):
+        """有章缺摘要（沉默章）：弧线不生成，等下次全就绪。"""
+        llm = StubLLM()
+        _seed_month(conn, 2023, 11)  # 章 2 覆盖月无数据 → 摘要缺席
+        service = _make_service(conn, monkeypatch, llm=llm)
+        _run_sync(service)
+        assert conn.execute("SELECT COUNT(*) FROM chapter_arcs").fetchone()[0] == 0
+        assert not any(u.startswith("【章节叙事序列】") for _, u in llm.calls)
+
+        _seed_month(conn, 2023, 12)
+        _run_sync(service)
+        assert conn.execute("SELECT COUNT(*) FROM chapter_arcs").fetchone()[0] == 1
+        arc = json.loads(
+            conn.execute("SELECT arc_json FROM chapter_arcs").fetchone()[0]
+        )
+        assert arc["arc"] and arc["turning_points"]
+
+    def test_rerun_all_fingerprints_hit_zero_calls(self, conn, monkeypatch):
+        """全产物就绪后重跑：月/章/过渡/弧线全指纹命中，零 LLM 调用。"""
+        llm = StubLLM()
+        _seed_month(conn, 2023, 11)
+        _seed_month(conn, 2023, 12)
+        service = _make_service(conn, monkeypatch, llm=llm)
+        _run_sync(service)
+        assert len(llm.calls) == 6
+        _run_sync(service)
+        assert len(llm.calls) == 6
+        assert service.get_progress(service._tasks and next(reversed(service._tasks)))["status"] == "completed"
 
 
 # ---------------------------------------------------------------------------
@@ -372,6 +478,33 @@ class TestTaskPlumbing:
         service = _make_service(conn, monkeypatch)
         assert service.cancel_task("nope")["ok"] is False
 
+    def test_reasoning_model_gets_boosted_max_tokens(self, conn, monkeypatch):
+        """真机实录：reasoning 模型思维链吃光 1024 预算截断月报 JSON。"""
+        from app.services.realtime import llm_http
+
+        captured = {}
+
+        def _fake_post(url, payload, headers=None, **kwargs):
+            captured.update(payload)
+
+            class _Body:  # 最小可解析应答（choices[0].message.content）
+                def get(self, key, default=None):
+                    return ({"choices": [{"message": {"content": '{"topics": [],'
+                                     ' "dynamics": "x", "highlights": [], "style": "y"}'}}]}
+                            ).get(key, default)
+
+            return _Body()
+
+        monkeypatch.setattr(llm_http, "post_json_with_retries", _fake_post)
+        service = ChapterSummaryService()  # 不注入 llm_call：走 _call_llm 真实装配
+        service._model_config = {"model_id": "Qwen3.5-9B", "api_base_url": "http://x/v1"}
+        service._call_llm("sys", "【月份】2024-01\nuser")
+        assert captured["max_tokens"] == 4096
+
+        service._model_config = {"model_id": "gpt-4o-mini", "api_base_url": "http://x/v1"}
+        service._call_llm("sys", "【月份】2024-01\nuser")
+        assert captured["max_tokens"] == 1024
+
 
 # ---------------------------------------------------------------------------
 # 画像注入器（profile_chapter_digest）
@@ -390,10 +523,10 @@ class TestDigestInjection:
             " UNIQUE(conversation_id, fingerprint, version))"
         )
         rows = [
-            (1, "v1:0-100", 0, 100, '{"summary": "初识章", "phase": "初识期"}', SUMMARY_VERSION),
-            (1, "v1:100-200", 100, 200, '{"summary": "熟络章", "phase": "熟络期"}', SUMMARY_VERSION),
-            (1, "v1:old-99", 300, 400, '{"summary": "旧版失明", "phase": "旧"}', SUMMARY_VERSION - 1),
-            (2, "v1:0-100", 0, 100, '{"summary": "别的会话", "phase": ""}', SUMMARY_VERSION),
+            (1, "v1:0-100", 0, 100, '{"summary": "初识章", "phase": "初识期"}', CHAPTER_SUMMARY_VERSION),
+            (1, "v1:100-200", 100, 200, '{"summary": "熟络章", "phase": "熟络期"}', CHAPTER_SUMMARY_VERSION),
+            (1, "v1:old-99", 300, 400, '{"summary": "旧版失明", "phase": "旧"}', CHAPTER_SUMMARY_VERSION - 1),
+            (2, "v1:0-100", 0, 100, '{"summary": "别的会话", "phase": ""}', CHAPTER_SUMMARY_VERSION),
         ]
         for cid, fp, f, t, js, ver in rows:
             conn.execute(

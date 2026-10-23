@@ -192,7 +192,7 @@ Analytics 页签「时光深度」，**单聊专属**（群聊无双方情感演
   「消息数+最新时间戳+版本」指纹缓存，新消息自动失效——13 万条整算
   ~7s 不该每次切页签重付）。
 
-### 章节摘要金字塔（`chapter_summaries.py`，C2）
+### 章节摘要金字塔（`chapter_summaries.py`，C2/C3）
 
 月摘要（`chapter_month_summaries`，本地时区 'YYYY-MM'，单月条数 3000/
 字符 24k 双预算等距抽稀）→ 章节归并（`chapter_summaries`，指纹 =
@@ -200,9 +200,13 @@ Analytics 页签「时光深度」，**单聊专属**（群聊无双方情感演
 不浪费）。任务三件套仿 sentiment_backfill：全局单飞（LLM 串行）、按
 任务独立取消事件、取消保留已落库月、增量跳过已就绪月。远程模型逐条
 过 PrivacyRedactor（全月原文暴露面大于画像窗口样本），构造失败整任务
-阻断（fail-closed）；单条脱敏异常丢条继续。摘要口径 `SUMMARY_VERSION`
-+1 时旧摘要全量失明重算。消费方：画像【关系章节摘要】块
-（rolling 全部章 / custom 窗口交叠章）+ 章节卡展示（summary/phase）。
+阻断（fail-closed）；单条脱敏异常丢条继续。版本分层
+`MONTHLY_SUMMARY_VERSION` / `CHAPTER_SUMMARY_VERSION`（月与章互不牵连
+重算）。C3 叙事层：相邻章过渡卡（`chapter_transitions`，指纹 = 前后章
+指纹拼接；evidence 逐字子串校验，回溯不到输入叙事即丢弃）+ 全局弧线
+（`chapter_arcs`，全部章摘要就绪才生成，转折点带「第N章→第M章」）。
+消费方：画像【关系章节摘要】块（rolling 全部章 / custom 窗口交叠章）
++ 章节面板（章卡 summary/phase、过渡卡穿插、弧线块、「最初→现在」hero）。
 
 ## 分享海报
 

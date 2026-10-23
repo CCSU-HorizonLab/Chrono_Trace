@@ -9,7 +9,7 @@ C1 的章节检测是纯统计层；本模块补语义层——把全量语料�
 - **增量缓存**：月摘要按 (conversation_id, month_key, version) 唯一键
   落库，任务重跑/续跑自动跳过已就绪月；月是稳态单位，新月份才补算
   （验收：首跑 ~30 次调用后增量 1-2 次/月）。
-- **版本失明**：SUMMARY_VERSION +1 时旧月/章摘要自然失明重算（KISS
+- **版本失明**：MONTHLY/CHAPTER_SUMMARY_VERSION 分层，各自 +1 时对应层旧摘要失明重算（KISS
   不迁移）；章节摘要另带章节边界指纹，C1 章节口径变化或边界漂移即
   失明（月摘要不浪费）。
 - **脱敏红线**：远程模型必经 PrivacyRedactor——月摘要输入是全时段
@@ -36,8 +36,13 @@ from .relationship_chapters import CHAPTERS_VERSION
 
 logger = logging.getLogger(__name__)
 
-# 摘要口径版本：月/章 prompt 字段、采样预算、归并规则变化时 +1（旧摘要失明重算）
-SUMMARY_VERSION = 1
+# 摘要口径版本分两层（月与章互不牵连重算）：
+# - 月摘要：prompt 字段/采样预算变化时 +1（v1）
+# - 章节叙事层（章节归并/过渡卡/全局弧线）：叙事 prompt 措辞或结构变化时
+#   +1。v2：章节 phase 措辞约束升级（「更像/偏向」不确定性表达）+ 新增
+#   过渡卡与全局弧线
+MONTHLY_SUMMARY_VERSION = 1
+CHAPTER_SUMMARY_VERSION = 2
 # 单月喂 LLM 的原文预算（字符）：超预算等距抽稀保时间分布
 MONTH_CHAR_BUDGET = 24000
 # 单月条数上限（主力期单月可上万条，先按条抽稀再进字符预算）
@@ -57,12 +62,55 @@ _CHAPTER_SYSTEM_PROMPT = (
     "JSON，不要输出其他文字。"
 )
 
+_TRANSITION_SYSTEM_PROMPT = (
+    "你是关系叙事助手。对比相邻两段关系的章节叙事，生成一张「过渡卡」："
+    "什么变了、由什么引发、什么保持不变。用观察叙事措辞（走远侧词汇"
+    "克制，不下关系结论，不用「挽回/断崖/变质」类诊断词）。直接输出 "
+    "JSON，不要输出其他文字。"
+)
+
+_ARC_SYSTEM_PROMPT = (
+    "你是关系叙事助手。把整段关系的章节叙事串成一条全局弧线，供长期"
+    "画像引用。用观察叙事措辞概括走向与关键转折，不做关系诊断。直接"
+    "输出 JSON，不要输出其他文字。"
+)
+
+
+def _repair_inner_quotes(text: str) -> str:
+    """修复 JSON 字符串值里未转义的内嵌双引号（LLM 高频产物，真机实录：
+    TA以"外号"身份主动推进……）。
+
+    启发式：字符串内部遇 '"' 向后看（跳过空白），下一字符是结构续接符
+    （, } ] :）或文本末尾 → 真闭引号；否则判为字面引号，补反斜杠转义。"""
+    out: List[str] = []
+    in_str = esc = False
+    n = len(text)
+    for i, ch in enumerate(text):
+        if esc:
+            esc = False
+        elif in_str:
+            if ch == "\\":
+                esc = True
+            elif ch == '"':
+                j = i + 1
+                while j < n and text[j] in " \t\r\n":
+                    j += 1
+                if j >= n or text[j] in ",}]:":
+                    in_str = False
+                else:
+                    out.append("\\")
+        elif ch == '"':
+            in_str = True
+        out.append(ch)
+    return "".join(out)
+
 
 def _json_candidates(text: str) -> List[str]:
     """按出现序返回可解析的 JSON 对象串（思考模型真答案在末尾，倒序尝试）。
 
     与 rag/fact_llm 同策略：思考模型把推理写进 content 且会回显模板 JSON，
     「首个 { 到末个 }」跨度必然拼出非法串。"""
+    text = _repair_inner_quotes(text)
     objs: List[str] = []
     depth = 0
     start: Optional[int] = None
@@ -161,7 +209,11 @@ class ChapterSummaryService:
         if self._llm_call is not None:
             return self._llm_call(system_prompt, user_prompt)
 
-        from ..realtime.llm_http import apply_deep_call_effort, post_json_with_retries
+        from ..realtime.llm_http import (
+            apply_deep_call_effort,
+            is_reasoning_model,
+            post_json_with_retries,
+        )
 
         model = self._resolve_model() or {}
         base_url = str(model.get("api_base_url") or "").rstrip("/")
@@ -169,6 +221,9 @@ class ChapterSummaryService:
         api_key = str(model.get("api_key") or "").strip()
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
+        # reasoning 模型思维链吃输出预算（实测 91 月长任务里 1024 截断过月报 JSON），
+        # 沿 llm_client 深链路惯例给 4096（沿 _boost_reasoning_max_tokens 口径）
+        max_tokens = 4096 if is_reasoning_model(str(model.get("model_id") or "")) else 1024
         payload = {
             "model": model.get("model_id"),
             "messages": [
@@ -176,7 +231,7 @@ class ChapterSummaryService:
                 {"role": "user", "content": user_prompt},
             ],
             "temperature": 0.2,
-            "max_tokens": 1024,
+            "max_tokens": max_tokens,
             "stream": False,
         }
         apply_deep_call_effort(payload, model)
@@ -262,6 +317,38 @@ class ChapterSummaryService:
                     from_ts INTEGER NOT NULL,
                     to_ts INTEGER NOT NULL,
                     summary_json TEXT NOT NULL,
+                    version INTEGER NOT NULL,
+                    model_id TEXT NOT NULL DEFAULT '',
+                    created_at INTEGER NOT NULL,
+                    UNIQUE(conversation_id, fingerprint, version)
+                )
+                """,
+            ),
+            (
+                "chapter_transitions",
+                """
+                CREATE TABLE chapter_transitions(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    conversation_id INTEGER NOT NULL,
+                    fingerprint TEXT NOT NULL,
+                    from_chapter INTEGER NOT NULL,
+                    to_chapter INTEGER NOT NULL,
+                    transition_json TEXT NOT NULL,
+                    version INTEGER NOT NULL,
+                    model_id TEXT NOT NULL DEFAULT '',
+                    created_at INTEGER NOT NULL,
+                    UNIQUE(conversation_id, fingerprint, version)
+                )
+                """,
+            ),
+            (
+                "chapter_arcs",
+                """
+                CREATE TABLE chapter_arcs(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    conversation_id INTEGER NOT NULL,
+                    fingerprint TEXT NOT NULL,
+                    arc_json TEXT NOT NULL,
                     version INTEGER NOT NULL,
                     model_id TEXT NOT NULL DEFAULT '',
                     created_at INTEGER NOT NULL,
@@ -436,7 +523,7 @@ class ChapterSummaryService:
                 " VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (conversation_id, month["month_key"], month["from_ts"], month["to_ts"],
                  month["me_count"], month["other_count"], json.dumps(summary, ensure_ascii=False),
-                 SUMMARY_VERSION, str((self._resolve_model() or {}).get("model_id") or ""),
+                 MONTHLY_SUMMARY_VERSION, str((self._resolve_model() or {}).get("model_id") or ""),
                  int(time.time())),
             )
             conn.commit()
@@ -465,15 +552,113 @@ class ChapterSummaryService:
                 "(conversation_id, fingerprint, from_ts, to_ts, summary_json,"
                 " version, model_id, created_at) VALUES (?,?,?,?,?,?,?,?)",
                 (conversation_id, fingerprint, int(chapter["from_ts"]), int(chapter["to_ts"]),
-                 json.dumps(summary, ensure_ascii=False), SUMMARY_VERSION,
+                 json.dumps(summary, ensure_ascii=False), CHAPTER_SUMMARY_VERSION,
                  str((self._resolve_model() or {}).get("model_id") or ""), int(time.time())),
             )
             conn.commit()
+
+        # 5. 相邻章过渡卡（对比式生成；指纹命中跳过；依赖两侧章摘要就绪）
+        transitions_done = self._run_transitions(conn, conversation_id, chapters, task_id)
+        if self._cancelled(task_id):
+            self._update(task_id, status="cancelled", current_step="已取消",
+                         finished_at=time.time())
+            return self.get_progress(task_id)
+
+        # 6. 全局弧线（全部章摘要+过渡就绪才生成；首末边界指纹）
+        if chapters and transitions_done:
+            self._run_arc(conn, conversation_id, chapters, task_id)
 
         self._update(task_id, status="completed", progress_percent=100,
                      current_step="完成", finished_at=time.time())
         logger.info("[章节摘要] 会话 %s 完成（%d 月 / %d 章）", conversation_id, total, len(chapters))
         return self.get_progress(task_id)
+
+    def _run_transitions(self, conn, conversation_id: int, chapters: List[Dict[str, Any]],
+                         task_id: str) -> Optional[int]:
+        """相邻章过渡卡；返回成功生成的对数，取消时返回 None（run 收尾）。"""
+        pairs = list(zip(chapters, chapters[1:]))
+        for pi, (prev_ch, next_ch) in enumerate(pairs):
+            if self._cancelled(task_id):
+                return None
+            fingerprint = f"{_summary_fp(prev_ch['from_ts'], prev_ch['to_ts'])}|{_summary_fp(next_ch['from_ts'], next_ch['to_ts'])}"
+            if self._transition_row(conn, conversation_id, fingerprint):
+                continue
+            prev = self._chapter_summary_row(
+                conn, conversation_id, _summary_fp(prev_ch["from_ts"], prev_ch["to_ts"]))
+            next_ = self._chapter_summary_row(
+                conn, conversation_id, _summary_fp(next_ch["from_ts"], next_ch["to_ts"]))
+            if not prev or not next_:
+                continue
+            self._update(
+                task_id, current_step=f"过渡卡 {pi + 1}/{len(pairs)}",
+                progress_percent=int(95 + 3 * pi / max(len(pairs), 1)),
+            )
+            transition = self._summarize_transition(prev_ch, next_ch, prev, next_)
+            conn.execute(
+                "INSERT OR REPLACE INTO chapter_transitions"
+                "(conversation_id, fingerprint, from_chapter, to_chapter,"
+                " transition_json, version, model_id, created_at) VALUES (?,?,?,?,?,?,?,?)",
+                (conversation_id, fingerprint, int(prev_ch["from_ts"]), int(next_ch["to_ts"]),
+                 json.dumps(transition, ensure_ascii=False), CHAPTER_SUMMARY_VERSION,
+                 str((self._resolve_model() or {}).get("model_id") or ""), int(time.time())),
+            )
+            conn.commit()
+        return len(pairs)
+
+    def _run_arc(self, conn, conversation_id: int, chapters: List[Dict[str, Any]],
+                 task_id: str) -> None:
+        """全局弧线：全部章摘要（+有则过渡卡）→ 一次归并；指纹 = 首末章边界。"""
+        fingerprint = f"arc|{_summary_fp(chapters[0]['from_ts'], chapters[-1]['to_ts'])}"
+        if self._arc_row(conn, conversation_id, fingerprint):
+            return
+        chapter_rows = []
+        for chapter in chapters:
+            summary = self._chapter_summary_row(
+                conn, conversation_id, _summary_fp(chapter["from_ts"], chapter["to_ts"]))
+            if not summary:
+                return  # 有章缺摘要（沉默章等）：弧线不完整，等下次补
+            chapter_rows.append((chapter, summary))
+        self._update(task_id, current_step="全局弧线", progress_percent=99)
+        arc = self._summarize_arc(chapter_rows)
+        conn.execute(
+            "INSERT OR REPLACE INTO chapter_arcs"
+            "(conversation_id, fingerprint, arc_json, version, model_id, created_at)"
+            " VALUES (?,?,?,?,?,?)",
+            (conversation_id, fingerprint, json.dumps(arc, ensure_ascii=False),
+             CHAPTER_SUMMARY_VERSION,
+             str((self._resolve_model() or {}).get("model_id") or ""), int(time.time())),
+        )
+        conn.commit()
+
+    @staticmethod
+    def _transition_row(conn, conversation_id: int, fingerprint: str) -> Optional[dict]:
+        row = conn.execute(
+            "SELECT transition_json FROM chapter_transitions"
+            " WHERE conversation_id = ? AND fingerprint = ? AND version = ?",
+            (conversation_id, fingerprint, CHAPTER_SUMMARY_VERSION),
+        ).fetchone()
+        if not row:
+            return None
+        try:
+            parsed = json.loads(row["transition_json"])
+        except Exception:
+            return None
+        return parsed if isinstance(parsed, dict) else None
+
+    @staticmethod
+    def _arc_row(conn, conversation_id: int, fingerprint: str) -> Optional[dict]:
+        row = conn.execute(
+            "SELECT arc_json FROM chapter_arcs"
+            " WHERE conversation_id = ? AND fingerprint = ? AND version = ?",
+            (conversation_id, fingerprint, CHAPTER_SUMMARY_VERSION),
+        ).fetchone()
+        if not row:
+            return None
+        try:
+            parsed = json.loads(row["arc_json"])
+        except Exception:
+            return None
+        return parsed if isinstance(parsed, dict) else None
 
     # ------------------------------------------------------------------
     # 取数
@@ -516,7 +701,7 @@ class ChapterSummaryService:
         rows = conn.execute(
             "SELECT month_key FROM chapter_month_summaries"
             " WHERE conversation_id = ? AND version = ?",
-            (conversation_id, SUMMARY_VERSION),
+            (conversation_id, MONTHLY_SUMMARY_VERSION),
         ).fetchall()
         return {str(row["month_key"]) for row in rows}
 
@@ -535,7 +720,7 @@ class ChapterSummaryService:
               AND from_ts <= ? AND to_ts >= ?
             ORDER BY month_key
             """,
-            (conversation_id, SUMMARY_VERSION, int(to_ts), int(from_ts)),
+            (conversation_id, MONTHLY_SUMMARY_VERSION, int(to_ts), int(from_ts)),
         ).fetchall()
         out = []
         for row in rows:
@@ -556,7 +741,7 @@ class ChapterSummaryService:
         row = conn.execute(
             "SELECT summary_json FROM chapter_summaries"
             " WHERE conversation_id = ? AND fingerprint = ? AND version = ?",
-            (conversation_id, fingerprint, SUMMARY_VERSION),
+            (conversation_id, fingerprint, CHAPTER_SUMMARY_VERSION),
         ).fetchone()
         if not row:
             return None
@@ -669,11 +854,75 @@ class ChapterSummaryService:
             f"【月报】\n" + "\n".join(month_lines) + "\n\n"
             '请输出 JSON：{"summary": "2~3 句章节叙事：这段关系在做什么、怎么互动、'
             '有什么走向（观察措辞，引用具体话题）", "phase": "阶段一句话'
-            '（如：熟络升温期/平稳陪伴期/疏远冷却期，观察措辞）"}\n'
+            '（如：更像熟络升温期/偏向平稳陪伴期/疏远冷却期——用「更像/偏向」类'
+            '不确定措辞，不下断言）"}\n'
             "约束：只基于月报内容；总字数 ≤160。"
         )
         content = self._call_llm(_CHAPTER_SYSTEM_PROMPT, user_prompt)
         return self._parse_summary(content, {"summary": "", "phase": ""})
+
+    def _summarize_transition(
+        self, prev_ch: Dict[str, Any], next_ch: Dict[str, Any],
+        prev: Dict[str, Any], next_: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """过渡卡：相邻两章对比「什么变了/触发/什么没变」。
+
+        evidence 是可回溯性约束（验收红线）：每条引文必须是输入章摘要
+        文本的子串，否则丢弃——主张不许无中生有（对齐大五增强层
+        evidence_quote 纪律）。"""
+        def _stat_line(ch: Dict[str, Any]) -> str:
+            s = ch["stats"]
+            latency = ""
+            if s.get("latency_hours") is not None:
+                latency = f"，回复约 {s['latency_hours']:.1f} 小时"
+            return (f"{s['texts']} 条/周均 {s['texts'] / max(s['weeks'], 1):.0f} 条"
+                    f"，TA 占比 {_pct(s.get('other_share'))}{latency}")
+
+        changes = "、".join(
+            f"{c['label']}{'↑' if c['direction'] == 'up' else '↓'}"
+            for c in next_ch.get("changes") or []
+        ) or "节奏平稳"
+        prev_text = str(prev.get("summary") or "")
+        next_text = str(next_.get("summary") or "")
+        user_prompt = (
+            f"【前章】{_fmt_range(prev_ch['from_ts'], prev_ch['to_ts'])}"
+            f"（{prev.get('phase') or ''}）：{_stat_line(prev_ch)}\n{prev_text}\n"
+            f"【后章】{_fmt_range(next_ch['from_ts'], next_ch['to_ts'])}"
+            f"（{next_.get('phase') or ''}）：{_stat_line(next_ch)}\n{next_text}\n"
+            f"【统计变化】{changes}\n\n"
+            '请输出 JSON：{"what_changed": "1~2 句：这两段之间最值得注意的差异", '
+            '"trigger": "转折由什么引发（从章摘要中的事件/节奏找；找不到写「未见单一触发事件」）", '
+            '"what_stayed": "1 句：不变的部分", '
+            '"evidence": ["前/后章叙事中的原文短语，每条 ≤20 字，至多 2 条"]}\n'
+            "约束：只基于两章叙事；总字数 ≤140；evidence 必须逐字摘自上文，不得改写。"
+        )
+        content = self._call_llm(_TRANSITION_SYSTEM_PROMPT, user_prompt)
+        fallback = {"what_changed": "", "trigger": "", "what_stayed": "", "evidence": []}
+        parsed = self._parse_summary(content, fallback)
+        # 子串校验：引文回溯不到输入叙事的丢弃（主张必须可回溯）
+        source = f"{prev_text}\n{next_text}"
+        parsed["evidence"] = [
+            e for e in parsed.get("evidence", []) if e and e in source
+        ][:2]
+        return parsed
+
+    def _summarize_arc(self, chapter_rows: List[Tuple[Dict[str, Any], Dict[str, Any]]]) -> Dict[str, Any]:
+        """全局弧线：章叙事序列 → 一段全局走向 + 关键转折（带章号可回溯）。"""
+        lines = []
+        for i, (chapter, summary) in enumerate(chapter_rows, 1):
+            lines.append(
+                f"第{i}章 {_fmt_range(chapter['from_ts'], chapter['to_ts'])}"
+                f"（{summary.get('phase') or ''}）：{summary.get('summary') or ''}"
+            )
+        user_prompt = (
+            "【章节叙事序列】\n" + "\n".join(lines) + "\n\n"
+            '请输出 JSON：{"arc": "3~4 句全局弧线：这段关系整体怎么走过来的、'
+            '节奏与重心如何迁移（观察措辞）", "turning_points": '
+            '["关键转折 ≤3 条，每条以「第N章→第M章」开头并说明转折点"]}\n'
+            "约束：只基于章节叙事；总字数 ≤220。"
+        )
+        content = self._call_llm(_ARC_SYSTEM_PROMPT, user_prompt)
+        return self._parse_summary(content, {"arc": "", "turning_points": []})
 
     @staticmethod
     def _parse_summary(content: str, fallback: Dict[str, Any]) -> Dict[str, Any]:

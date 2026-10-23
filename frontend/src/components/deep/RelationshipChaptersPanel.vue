@@ -45,33 +45,79 @@
         暂未检测到明显的章节变化——整体是一段连续的时光
       </div>
 
-      <!-- 章节卡：竖排时间线，每章一段统计 + 相对前章的变化点 -->
+      <!-- 最初 → 现在：首末章对照 hero（纯前端拼装，单章不成立） -->
+      <div v-if="hero" class="hero-card">
+        <div class="hero-side">
+          <div class="hero-label">最初</div>
+          <div class="hero-range">{{ toCompactRange(hero.first.from_ts, hero.first.to_ts) }}</div>
+          <span v-if="hero.first.phase" class="ch-phase">{{ hero.first.phase }}</span>
+          <div class="hero-stats">周均 {{ perWeek(hero.first) }} 条 · TA {{ pct(hero.first.stats.other_share) }}</div>
+          <div v-if="hero.first.summary" class="hero-summary">{{ hero.first.summary }}</div>
+        </div>
+        <div class="hero-mid">
+          <span class="hero-arrow">→</span>
+          <span class="hero-span">{{ heroSpan }}</span>
+        </div>
+        <div class="hero-side">
+          <div class="hero-label">现在</div>
+          <div class="hero-range">{{ toCompactRange(hero.last.from_ts, hero.last.to_ts) }}</div>
+          <span v-if="hero.last.phase" class="ch-phase">{{ hero.last.phase }}</span>
+          <div class="hero-stats">周均 {{ perWeek(hero.last) }} 条 · TA {{ pct(hero.last.stats.other_share) }}</div>
+          <div v-if="hero.last.summary" class="hero-summary">{{ hero.last.summary }}</div>
+        </div>
+      </div>
+
+      <!-- 章节卡：竖排时间线，每章一段统计 + 相对前章的变化点；
+           相邻章之间插过渡卡（什么变了/触发/什么没变，引文可回溯） -->
       <div class="chapter-list">
-        <div v-for="ch in chapters" :key="ch.index" class="chapter-card">
-          <div class="ch-rail">
-            <span class="ch-no">{{ ch.index + 1 }}</span>
+        <template v-for="item in timeline" :key="item.kind === 'chapter' ? `c${item.ch.index}` : `t${item.t.from_index}`">
+          <div v-if="item.kind === 'chapter'" class="chapter-card">
+            <div class="ch-rail">
+              <span class="ch-no">{{ item.ch.index + 1 }}</span>
+            </div>
+            <div class="ch-body">
+              <div class="ch-head">
+                <span class="ch-range">{{ toCompactRange(item.ch.from_ts, item.ch.to_ts) }}</span>
+                <span v-if="item.ch.phase" class="ch-phase">{{ item.ch.phase }}</span>
+                <span class="ch-weeks">{{ item.ch.stats.weeks }} 周</span>
+              </div>
+              <div class="ch-stats">
+                <span>{{ item.ch.stats.texts }} 条</span>
+                <span>TA 占比 {{ pct(item.ch.stats.other_share) }}</span>
+                <span v-if="item.ch.stats.pos_ratio != null">正向 {{ pct(item.ch.stats.pos_ratio) }}</span>
+                <span v-if="item.ch.stats.latency_hours != null">回复约 {{ latencyText(item.ch.stats.latency_hours) }}</span>
+              </div>
+              <div v-if="item.ch.changes.length" class="ch-changes">
+                <span
+                  v-for="c in item.ch.changes" :key="c.key" class="chg"
+                  :class="c.direction"
+                >{{ c.label }} {{ c.direction === 'up' ? '↑' : '↓' }}</span>
+              </div>
+              <div v-else-if="item.ch.index > 0" class="ch-stable">与前一章相比节奏平稳</div>
+              <div v-if="item.ch.summary" class="ch-summary">{{ item.ch.summary }}</div>
+            </div>
           </div>
-          <div class="ch-body">
-            <div class="ch-head">
-              <span class="ch-range">{{ toCompactRange(ch.from_ts, ch.to_ts) }}</span>
-              <span v-if="ch.phase" class="ch-phase">{{ ch.phase }}</span>
-              <span class="ch-weeks">{{ ch.stats.weeks }} 周</span>
+          <div v-else class="transition-card">
+            <div class="tr-head">第{{ item.t.from_index + 1 }} → {{ item.t.to_index + 1 }}章之间</div>
+            <div class="tr-changed">{{ item.t.what_changed }}</div>
+            <div v-if="item.t.trigger || item.t.what_stayed" class="tr-sub">
+              <span v-if="item.t.trigger">转折 {{ item.t.trigger }}</span>
+              <span v-if="item.t.trigger && item.t.what_stayed"> · </span>
+              <span v-if="item.t.what_stayed">保持 {{ item.t.what_stayed }}</span>
             </div>
-            <div class="ch-stats">
-              <span>{{ ch.stats.texts }} 条</span>
-              <span>TA 占比 {{ pct(ch.stats.other_share) }}</span>
-              <span v-if="ch.stats.pos_ratio != null">正向 {{ pct(ch.stats.pos_ratio) }}</span>
-              <span v-if="ch.stats.latency_hours != null">回复约 {{ latencyText(ch.stats.latency_hours) }}</span>
+            <div v-if="item.t.evidence.length" class="tr-evidence">
+              <span v-for="(e, j) in item.t.evidence" :key="j" class="tr-quote">「{{ e }}」</span>
             </div>
-            <div v-if="ch.changes.length" class="ch-changes">
-              <span
-                v-for="c in ch.changes" :key="c.key" class="chg"
-                :class="c.direction"
-              >{{ c.label }} {{ c.direction === 'up' ? '↑' : '↓' }}</span>
-            </div>
-            <div v-else-if="ch.index > 0" class="ch-stable">与前一章相比节奏平稳</div>
-            <div v-if="ch.summary" class="ch-summary">{{ ch.summary }}</div>
           </div>
+        </template>
+      </div>
+
+      <!-- 全局弧线：全部章节就绪后的一次全局归并（转折点自带章号可回溯） -->
+      <div v-if="arc" class="arc-card">
+        <div class="arc-title">全局弧线</div>
+        <div class="arc-text">{{ arc.arc }}</div>
+        <div v-if="arc.turning_points.length" class="arc-points">
+          <div v-for="(tp, j) in arc.turning_points" :key="j" class="arc-tp">{{ tp }}</div>
         </div>
       </div>
 
@@ -109,6 +155,17 @@ type Chapter = {
   changes: Change[]
 }
 
+type Transition = {
+  from_index: number
+  to_index: number
+  what_changed: string
+  trigger: string
+  what_stayed: string
+  evidence: string[]
+}
+
+type Arc = { arc: string; turning_points: string[] }
+
 type ChaptersPayload = {
   ok: boolean
   message?: string
@@ -122,7 +179,15 @@ type ChaptersPayload = {
     big5: Record<'me' | 'other', Record<string, Array<number | null>>>
   }
   chapters: Chapter[]
-  summary?: { months_total: number; months_ready: number; chapters_ready: number }
+  summary?: {
+    months_total: number
+    months_ready: number
+    chapters_ready: number
+    transitions_ready?: number
+    arc_ready?: boolean
+    transitions?: Transition[]
+    arc?: Arc | null
+  }
 }
 
 const props = defineProps<{
@@ -137,6 +202,54 @@ const error = ref('')
 
 const chapters = computed(() => payload.value?.chapters || [])
 const minSideTexts = 10
+
+// C3 叙事层产物：过渡卡按前章 index 对位插入；弧线整块渲染
+const transitions = computed(() => summaryInfo.value?.transitions || [])
+const arc = computed(() => summaryInfo.value?.arc || null)
+
+type TimelineItem =
+  | { kind: 'chapter'; ch: Chapter }
+  | { kind: 'transition'; t: Transition }
+
+const timeline = computed<TimelineItem[]>(() => {
+  const list = chapters.value
+  const byFrom = new Map(transitions.value.map((t) => [t.from_index, t]))
+  const out: TimelineItem[] = []
+  list.forEach((ch, i) => {
+    out.push({ kind: 'chapter', ch })
+    if (i + 1 < list.length) {
+      const t = byFrom.get(ch.index)
+      if (t && t.to_index === list[i + 1].index) out.push({ kind: 'transition', t })
+    }
+  })
+  return out
+})
+
+// 最初 → 现在 hero：首末章对照，单章不成立
+const hero = computed(() => {
+  const list = chapters.value
+  if (list.length < 2) return null
+  return { first: list[0], last: list[list.length - 1] }
+})
+
+const heroSpan = computed(() => {
+  const h = hero.value
+  return h ? spanText(h.first.from_ts, h.last.to_ts) : ''
+})
+
+function spanText(fromTs: number, toTs: number): string {
+  const days = Math.max(1, Math.round((toTs - fromTs) / 86400))
+  if (days >= 365) {
+    const years = days / 365
+    return `历时 ${years >= 10 ? Math.round(years) : years.toFixed(1).replace(/\.0$/, '')} 年`
+  }
+  if (days >= 60) return `历时 ${Math.round(days / 30)} 个月`
+  return `历时 ${days} 天`
+}
+
+function perWeek(ch: Chapter): number {
+  return Math.round(ch.stats.texts / Math.max(ch.stats.weeks, 1))
+}
 
 const hasAnyBig5 = computed(() => {
   const big5 = payload.value?.weekly?.big5
@@ -177,6 +290,7 @@ const summaryInfo = computed(() => payload.value?.summary)
 const digestBadge = computed(() => {
   const info = summaryInfo.value
   if (!info || !info.months_total || summaryTask.value.running) return ''
+  if (info.arc_ready) return '叙事就绪'
   if (info.months_ready >= info.months_total && info.chapters_ready >= (chapters.value.length || 1)) {
     return '摘要就绪'
   }
@@ -620,6 +734,145 @@ onUnmounted(() => {
   font-size: var(--ct-text-xs);
   line-height: 1.6;
   margin-top: 4px;
+}
+
+/* 最初 → 现在 hero：首末章对照，中间历时箭头 */
+.hero-card {
+  display: flex;
+  gap: var(--ct-space-sm);
+  margin-bottom: var(--ct-space-sm);
+}
+
+.hero-side {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  background: var(--ct-bg-sunken);
+  border-radius: var(--ct-radius-lg);
+  padding: var(--ct-space-sm) var(--ct-space-md);
+}
+
+.hero-label {
+  color: var(--ct-text-tertiary);
+  font-size: var(--ct-text-xs);
+}
+
+.hero-range {
+  color: var(--ct-text-primary);
+  font-size: var(--ct-text-sm);
+  font-weight: var(--ct-font-bold);
+}
+
+.hero-stats {
+  color: var(--ct-text-secondary);
+  font-size: var(--ct-text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.hero-summary {
+  color: var(--ct-text-secondary);
+  font-size: var(--ct-text-xs);
+  line-height: 1.6;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.hero-mid {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+}
+
+.hero-arrow {
+  color: var(--ct-color-primary);
+  font-size: var(--ct-text-lg);
+  line-height: 1;
+}
+
+.hero-span {
+  white-space: nowrap;
+  color: var(--ct-text-tertiary);
+  font-size: var(--ct-text-xs);
+}
+
+/* 过渡卡：相邻章之间的缩小对比卡，缩进对齐章体列（左缘=章序号宽+列间距） */
+.transition-card {
+  margin-left: calc(22px + var(--ct-space-md));
+  background: var(--ct-bg-sunken);
+  border-radius: var(--ct-radius-lg);
+  padding: var(--ct-space-xs) var(--ct-space-md);
+}
+
+.tr-head {
+  color: var(--ct-text-tertiary);
+  font-size: var(--ct-text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.tr-changed {
+  margin-top: 2px;
+  color: var(--ct-text-primary);
+  font-size: var(--ct-text-sm);
+}
+
+.tr-sub {
+  margin-top: 2px;
+  color: var(--ct-text-secondary);
+  font-size: var(--ct-text-xs);
+}
+
+.tr-evidence {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ct-space-md);
+  margin-top: 3px;
+}
+
+/* 引文：逐字摘自章叙事的可回溯证据（后端已做子串校验） */
+.tr-quote {
+  color: var(--ct-text-tertiary);
+  font-size: var(--ct-text-xs);
+}
+
+/* 全局弧线：章节时间线之后的全局归并块，转折点自带章号 */
+.arc-card {
+  margin-top: var(--ct-space-sm);
+  background: var(--ct-bg-sunken);
+  border-radius: var(--ct-radius-lg);
+  padding: var(--ct-space-sm) var(--ct-space-md);
+}
+
+.arc-title {
+  color: var(--ct-text-primary);
+  font-size: var(--ct-text-sm);
+  font-weight: var(--ct-font-bold);
+}
+
+.arc-text {
+  margin-top: 4px;
+  color: var(--ct-text-secondary);
+  font-size: var(--ct-text-sm);
+  line-height: 1.7;
+}
+
+.arc-points {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.arc-tp {
+  color: var(--ct-text-tertiary);
+  font-size: var(--ct-text-xs);
+  line-height: 1.6;
 }
 
 /* 摘要任务进度：细进度条 + 当前步骤（2s 轮询） */

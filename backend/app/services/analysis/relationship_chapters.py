@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import json
 import math
+import sqlite3
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -223,17 +224,21 @@ class RelationshipChapterService:
 
     @staticmethod
     def _summary_status(conversation_id: int, chapters: List[Dict[str, Any]]) -> dict:
-        """章摘要就绪度 + 各章摘要文本（chapter_summaries 任务产物，纯读）。
+        """章摘要就绪度 + 各章摘要/过渡卡/全局弧线（摘要任务产物，纯读）。
 
         表缺失（未跑过摘要任务/旧库）静默降级为全 0。"""
         try:
-            from .chapter_summaries import SUMMARY_VERSION, _summary_fp
+            from .chapter_summaries import (
+                CHAPTER_SUMMARY_VERSION,
+                MONTHLY_SUMMARY_VERSION,
+                _summary_fp,
+            )
 
             conn = get_db()
             month_row = conn.execute(
                 "SELECT COUNT(*) FROM chapter_month_summaries"
                 " WHERE conversation_id = ? AND version = ?",
-                (conversation_id, SUMMARY_VERSION),
+                (conversation_id, MONTHLY_SUMMARY_VERSION),
             ).fetchone()
             total_row = conn.execute(
                 "SELECT COUNT(DISTINCT strftime('%Y-%m', m.timestamp, 'unixepoch',"
@@ -246,7 +251,7 @@ class RelationshipChapterService:
             for row in conn.execute(
                 "SELECT fingerprint, summary_json FROM chapter_summaries"
                 " WHERE conversation_id = ? AND version = ?",
-                (conversation_id, SUMMARY_VERSION),
+                (conversation_id, CHAPTER_SUMMARY_VERSION),
             ).fetchall():
                 try:
                     parsed = json.loads(row[1])
@@ -260,14 +265,88 @@ class RelationshipChapterService:
                 if summary:
                     chapter["summary"] = str(summary.get("summary") or "")
                     chapter["phase"] = str(summary.get("phase") or "")
+
+            try:
+                transitions = RelationshipChapterService._load_transitions(conn, conversation_id, chapters)
+            except sqlite3.OperationalError:  # 表未建（未跑过叙事任务）：过渡缺席，不拖累月/章就绪度
+                transitions = []
+            try:
+                arc = RelationshipChapterService._load_arc(conn, conversation_id, chapters)
+            except sqlite3.OperationalError:
+                arc = None
             return {
                 "months_total": int(total_row[0] or 0),
                 "months_ready": int(month_row[0] or 0),
                 "chapters_ready": sum(1 for ch in chapters if ch.get("summary")),
+                "transitions_ready": len(transitions),
+                "arc_ready": bool(arc),
+                "transitions": transitions,
+                "arc": arc,
             }
         except Exception as exc:
             logger.debug("[关系章节] 摘要状态降级: %s", exc)
-            return {"months_total": 0, "months_ready": 0, "chapters_ready": 0}
+            return {"months_total": 0, "months_ready": 0, "chapters_ready": 0,
+                    "transitions_ready": 0, "arc_ready": False,
+                    "transitions": [], "arc": None}
+
+    @staticmethod
+    def _load_transitions(conn, conversation_id: int, chapters: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """相邻章过渡卡（对比式生成产物），按章序列对位。"""
+        from .chapter_summaries import CHAPTER_SUMMARY_VERSION, _summary_fp
+
+        out: List[Dict[str, Any]] = []
+        for prev_ch, next_ch in zip(chapters, chapters[1:]):
+            fingerprint = (
+                f"{_summary_fp(int(prev_ch['from_ts']), int(prev_ch['to_ts']))}"
+                f"|{_summary_fp(int(next_ch['from_ts']), int(next_ch['to_ts']))}"
+            )
+            row = conn.execute(
+                "SELECT transition_json FROM chapter_transitions"
+                " WHERE conversation_id = ? AND fingerprint = ? AND version = ?",
+                (conversation_id, fingerprint, CHAPTER_SUMMARY_VERSION),
+            ).fetchone()
+            if not row:
+                continue
+            try:
+                parsed = json.loads(row[0])
+            except Exception:
+                continue
+            if isinstance(parsed, dict):
+                out.append({
+                    "from_index": int(prev_ch["index"]),
+                    "to_index": int(next_ch["index"]),
+                    "what_changed": str(parsed.get("what_changed") or ""),
+                    "trigger": str(parsed.get("trigger") or ""),
+                    "what_stayed": str(parsed.get("what_stayed") or ""),
+                    "evidence": [str(e) for e in (parsed.get("evidence") or []) if e][:2],
+                })
+        return out
+
+    @staticmethod
+    def _load_arc(conn, conversation_id: int, chapters: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """全局弧线（首末章边界指纹）。"""
+        from .chapter_summaries import CHAPTER_SUMMARY_VERSION, _summary_fp
+
+        if not chapters:
+            return None
+        fingerprint = f"arc|{_summary_fp(int(chapters[0]['from_ts']), int(chapters[-1]['to_ts']))}"
+        row = conn.execute(
+            "SELECT arc_json FROM chapter_arcs"
+            " WHERE conversation_id = ? AND fingerprint = ? AND version = ?",
+            (conversation_id, fingerprint, CHAPTER_SUMMARY_VERSION),
+        ).fetchone()
+        if not row:
+            return None
+        try:
+            parsed = json.loads(row[0])
+        except Exception:
+            return None
+        if not isinstance(parsed, dict):
+            return None
+        return {
+            "arc": str(parsed.get("arc") or ""),
+            "turning_points": [str(t) for t in (parsed.get("turning_points") or []) if t][:3],
+        }
 
     # ------------------------------------------------------------------
     # 周桶聚合

@@ -230,3 +230,61 @@ class TestRelationshipChapterService:
         # 所有章节时间戳非空（沉默段起点不许是 None）
         for ch in result["chapters"]:
             assert ch["from_ts"] and ch["to_ts"] and ch["from_ts"] <= ch["to_ts"]
+
+
+class TestSummaryStatusDegradation:
+
+    def test_missing_transition_tables_keep_month_readiness(self, conn, service):
+        """真机实录：叙事表未建时，月/章就绪度不许被拖累归零。"""
+        from app.services.analysis.chapter_summaries import (
+            CHAPTER_SUMMARY_VERSION,
+            MONTHLY_SUMMARY_VERSION,
+            _summary_fp,
+        )
+
+        conn.execute(
+            "INSERT INTO conversations(account_wxid, username, display_name)"
+            " VALUES ('wxid_me', 'wxid_ta', 'TA')"
+        )
+        _seed_weeks(conn, 1, [(20, 20)] * 8)
+        conn.executescript(
+            """
+            CREATE TABLE chapter_month_summaries(
+                id INTEGER PRIMARY KEY AUTOINCREMENT, conversation_id INTEGER NOT NULL,
+                month_key TEXT NOT NULL, from_ts INTEGER NOT NULL, to_ts INTEGER NOT NULL,
+                me_count INTEGER NOT NULL DEFAULT 0, other_count INTEGER NOT NULL DEFAULT 0,
+                summary_json TEXT NOT NULL, version INTEGER NOT NULL,
+                model_id TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL,
+                UNIQUE(conversation_id, month_key, version));
+            CREATE TABLE chapter_summaries(
+                id INTEGER PRIMARY KEY AUTOINCREMENT, conversation_id INTEGER NOT NULL,
+                fingerprint TEXT NOT NULL, from_ts INTEGER NOT NULL, to_ts INTEGER NOT NULL,
+                summary_json TEXT NOT NULL, version INTEGER NOT NULL,
+                model_id TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL,
+                UNIQUE(conversation_id, fingerprint, version));
+            """
+        )
+        chapters = service.get_chapters(1)["chapters"]
+        conn.execute(
+            "INSERT INTO chapter_month_summaries(conversation_id, month_key, from_ts,"
+            " to_ts, summary_json, version, created_at) VALUES (1, '2024-01', 0, 1, '{}', ?, 1)",
+            (MONTHLY_SUMMARY_VERSION,),
+        )
+        conn.execute(
+            "INSERT INTO chapter_summaries(conversation_id, fingerprint, from_ts, to_ts,"
+            " summary_json, version, created_at) VALUES (1, ?, ?, ?, ?, ?, 1)",
+            (_summary_fp(chapters[0]["from_ts"], chapters[0]["to_ts"]),
+             chapters[0]["from_ts"], chapters[0]["to_ts"],
+             '{"summary": "日常为主", "phase": "更像熟络期"}', CHAPTER_SUMMARY_VERSION),
+        )
+        conn.commit()
+
+        summary = service.get_chapters(1)["summary"]
+        # chapter_transitions / chapter_arcs 表缺失：降级为缺席，月/章计数原样保留
+        assert summary["months_ready"] == 1
+        assert summary["chapters_ready"] == 1
+        assert summary["transitions_ready"] == 0
+        assert summary["transitions"] == []
+        assert summary["arc_ready"] is False
+        assert summary["arc"] is None
+

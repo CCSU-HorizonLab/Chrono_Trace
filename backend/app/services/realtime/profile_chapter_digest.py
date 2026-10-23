@@ -10,7 +10,7 @@ chapter_summaries 任务产出落库，本模块纯 SQL 读取（零 LLM 调用�
   块的全时段注入语义（rolling 是尾部窗，章节摘要给全局坐标）；
 - custom 指定窗：只注入与窗口有交叠的章节（画像演变各段聚焦自身
   时段，段外章不进 prompt）；
-- 版本过滤 SUMMARY_VERSION（旧口径摘要失明）；
+- 版本过滤 CHAPTER_SUMMARY_VERSION（旧口径摘要失明）；
 - 章摘要存的是 LLM 产出原文，注入前逐条过 PrivacyRedactor 规则脱敏
   （对齐 profile_facts 纪律：全时段数据不过脱敏不出网；脱敏异常丢章
   fail-closed）；
@@ -41,14 +41,14 @@ def collect_chapter_digest(
 ) -> list[dict[str, Any]]:
     """取章节摘要（新版口径），按时间序。rolling（0/0）取全部。"""
     try:
-        from ..analysis.chapter_summaries import SUMMARY_VERSION
+        from ..analysis.chapter_summaries import CHAPTER_SUMMARY_VERSION
 
         if from_ts or to_ts:
             where = ("AND cs.from_ts <= ? AND cs.to_ts >= ?")
-            params: list[Any] = [int(conversation_id), SUMMARY_VERSION, int(to_ts), int(from_ts)]
+            params: list[Any] = [int(conversation_id), CHAPTER_SUMMARY_VERSION, int(to_ts), int(from_ts)]
         else:
             where = ""
-            params = [int(conversation_id), SUMMARY_VERSION]
+            params = [int(conversation_id), CHAPTER_SUMMARY_VERSION]
         rows = conn.execute(
             f"""
             SELECT cs.from_ts, cs.to_ts, cs.summary_json

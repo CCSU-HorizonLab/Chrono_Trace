@@ -55,6 +55,9 @@ type PyWebViewApi = {
   get_deep_analysis: (conversation_id: number, from: string, to: string, bucket?: string, word_segments?: number) => Promise<any>
   // 时光深度：关系章节（变点检测分段+周级大五分布，纯统计零 LLM；全会话口径不收日期窗）
   get_relationship_chapters: (conversation_id: number) => Promise<any>
+  start_chapter_summaries: (conversation_id: number) => Promise<any>
+  get_chapter_summaries_progress: (task_id?: string) => Promise<any>
+  cancel_chapter_summaries: (task_id?: string) => Promise<any>
   // 时光深度：情感补算（sentiment_cache 缺口后台补算，任务+轮询）
   get_sentiment_coverage: (conversation_id: number) => Promise<any>
   start_sentiment_backfill: (conversation_id: number) => Promise<any>

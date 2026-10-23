@@ -69,7 +69,8 @@ PROFILE_TTL = 7 * 86400  # 7 天
 # 与 contact_profiler.PROFILE_SNAPSHOT_SCHEMA 同值同升（两张表同构）。
 # v2：prompt 新增【长期背景】全时段基线块（profile_baseline），与 contact 同批。
 # v3：prompt 新增【长期记忆事实】块（profile_facts，RAG 事实层注入画像）。
-PROFILE_SNAPSHOT_SCHEMA = 3
+# v4：prompt 新增【关系章节摘要】块（profile_chapter_digest，与 contact 同批）。
+PROFILE_SNAPSHOT_SCHEMA = 4
 
 # 每个分组保留的快照条数上限。rolling 每次续期产生新窗口键快照自然累积，
 # 靠此上限防膨胀；custom 是存档品（画像演变半窗 + 手动指定窗共用分组），
@@ -358,6 +359,17 @@ class SelfProfiler:
             if long_term_facts:
                 _print(f"[SelfProfiler] 长期记忆事实: {len(long_term_facts)} 条注入")
 
+            # 章节摘要（profile_chapter_digest）：全量语料的章节叙事，
+            # 对自我画像给关系语境的语义层（rolling 注全部章，custom 只
+            # 注入与窗口交叠的章）
+            from .profile_chapter_digest import collect_chapter_digest
+            chapter_digest = collect_chapter_digest(
+                conn, conversation_id,
+                feature_from if custom_window else 0, feature_to if custom_window else 0,
+            )
+            if chapter_digest:
+                _print(f"[SelfProfiler] 关系章节摘要: {len(chapter_digest)} 章注入")
+
             # 3. 采样对话轮次
             sample = self._sample_conversation_turns(
                 conn, conversation_id, window_seconds,
@@ -385,7 +397,10 @@ class SelfProfiler:
                     f"{self._fmt_date(sample_from)} 至 {self._fmt_date(sample_to)}"
                     f"（最近滚动窗采样，内容不足时已向更早顺延）"
                 )
-            user_prompt = self._build_profile_prompt(display_name, conv, features, sample, window_desc, baseline, long_term_facts)
+            user_prompt = self._build_profile_prompt(
+                display_name, conv, features, sample, window_desc,
+                baseline, long_term_facts, chapter_digest,
+            )
             _print(f"[SelfProfiler] Prompt 长度: {len(user_prompt)} 字符")
 
             # 5. 调用 LLM，传入预算以动态决定输出额度
@@ -863,6 +878,7 @@ class SelfProfiler:
         window_desc: str = '',
         baseline: dict | None = None,
         long_term_facts: list | None = None,
+        chapter_digest: list | None = None,
     ) -> str:
         """组装画像生成的 user prompt"""
         parts = []
@@ -891,6 +907,14 @@ class SelfProfiler:
         if long_term_facts:
             from .profile_facts import render_facts_block
             block = render_facts_block(long_term_facts)
+            if block:
+                parts.append("")
+                parts.append(block)
+
+        # 关系章节摘要（全量语料的章节叙事，语义层补窗口盲区）
+        if chapter_digest:
+            from .profile_chapter_digest import render_chapter_digest_block
+            block = render_chapter_digest_block(chapter_digest)
             if block:
                 parts.append("")
                 parts.append(block)

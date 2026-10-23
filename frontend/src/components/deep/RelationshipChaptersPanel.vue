@@ -9,9 +9,23 @@
       </div>
       <div class="panel-actions">
         <span class="panel-badge">本地统计</span>
+        <span v-if="digestBadge" class="panel-badge">{{ digestBadge }}</span>
+        <span v-if="summaryTask.running" class="sum-progress">
+          <span class="sum-bar"><span class="sum-fill" :style="{ width: summaryTask.percent + '%' }" /></span>
+          <span class="sum-step">{{ summaryTask.step }} {{ summaryTask.percent }}%</span>
+        </span>
+        <button v-if="summaryTask.running" class="btn" @click="cancelSummary">取消</button>
+        <button
+          v-else-if="payload?.ok"
+          class="btn"
+          :disabled="starting"
+          @click="startSummary"
+        >{{ startLabel }}</button>
         <button v-if="error" class="btn" @click="load">重试</button>
       </div>
     </div>
+
+    <div v-if="summaryError" class="sum-error">{{ summaryError }}</div>
 
     <div v-if="error && !payload" class="empty-state">{{ error }}</div>
     <div v-else-if="loading && !payload" class="skeleton sk-chapters" />
@@ -40,6 +54,7 @@
           <div class="ch-body">
             <div class="ch-head">
               <span class="ch-range">{{ toCompactRange(ch.from_ts, ch.to_ts) }}</span>
+              <span v-if="ch.phase" class="ch-phase">{{ ch.phase }}</span>
               <span class="ch-weeks">{{ ch.stats.weeks }} 周</span>
             </div>
             <div class="ch-stats">
@@ -55,6 +70,7 @@
               >{{ c.label }} {{ c.direction === 'up' ? '↑' : '↓' }}</span>
             </div>
             <div v-else-if="ch.index > 0" class="ch-stable">与前一章相比节奏平稳</div>
+            <div v-if="ch.summary" class="ch-summary">{{ ch.summary }}</div>
           </div>
         </div>
       </div>
@@ -79,6 +95,8 @@ type Chapter = {
   week_index: number
   from_ts: number
   to_ts: number
+  summary?: string
+  phase?: string
   stats: {
     texts: number
     me_texts: number
@@ -104,6 +122,7 @@ type ChaptersPayload = {
     big5: Record<'me' | 'other', Record<string, Array<number | null>>>
   }
   chapters: Chapter[]
+  summary?: { months_total: number; months_ready: number; chapters_ready: number }
 }
 
 const props = defineProps<{
@@ -142,6 +161,89 @@ async function load() {
   } finally {
     if (epoch === props.viewEpoch) loading.value = false
   }
+}
+
+// ---------------------------------------------------------------------------
+// 摘要金字塔任务（月摘要→章节归并，后台 LLM）：启动 / 轮询 / 取消。
+// 完成后重拉 payload 拿各章摘要文本；运行中每 2s 轮询进度。
+// ---------------------------------------------------------------------------
+const summaryTask = ref({ running: false, percent: 0, step: '', monthsDone: 0, monthsTotal: 0 })
+const starting = ref(false)
+const summaryError = ref('')
+let pollTimer: number | null = null
+let pollTaskId = ''
+
+const summaryInfo = computed(() => payload.value?.summary)
+const digestBadge = computed(() => {
+  const info = summaryInfo.value
+  if (!info || !info.months_total || summaryTask.value.running) return ''
+  if (info.months_ready >= info.months_total && info.chapters_ready >= (chapters.value.length || 1)) {
+    return '摘要就绪'
+  }
+  return info.months_ready ? `摘要 ${info.months_ready}/${info.months_total} 月` : ''
+})
+const startLabel = computed(() =>
+  summaryInfo.value?.months_ready ? '续算摘要' : '全量摘要',
+)
+
+function stopPoll() {
+  if (pollTimer != null) {
+    window.clearInterval(pollTimer)
+    pollTimer = null
+  }
+}
+
+function poll(taskId: string) {
+  stopPoll()
+  pollTaskId = taskId
+  pollTimer = window.setInterval(async () => {
+    const epoch = props.viewEpoch
+    const res = await api.get_chapter_summaries_progress(taskId).catch(() => null)
+    if (epoch !== props.viewEpoch) {
+      stopPoll()
+      summaryTask.value.running = false
+      return
+    }
+    if (!res?.ok) return
+    summaryTask.value = {
+      running: res.status === 'running',
+      percent: res.progress_percent || 0,
+      step: res.current_step || '',
+      monthsDone: res.months_done || 0,
+      monthsTotal: res.months_total || 0,
+    }
+    if (res.status === 'failed') {
+      summaryError.value = res.error || '摘要任务失败'
+    }
+    if (res.status !== 'running') {
+      stopPoll()
+      load() // 终态刷新：各章摘要文本随 payload 下发
+    }
+  }, 2000)
+}
+
+async function startSummary() {
+  starting.value = true
+  summaryError.value = ''
+  try {
+    const res = await api.start_chapter_summaries(props.conversationId)
+    if (res?.ok && res.task_id) {
+      summaryTask.value.running = true
+      poll(String(res.task_id))
+    } else if (res?.status === 'complete') {
+      await load()
+    } else {
+      summaryError.value = res?.error || '摘要任务启动失败'
+    }
+  } catch (e: any) {
+    summaryError.value = e?.message || '摘要任务启动失败'
+  } finally {
+    starting.value = false
+  }
+}
+
+async function cancelSummary() {
+  await api.cancel_chapter_summaries(pollTaskId || undefined).catch(() => null)
 }
 
 function pct(v: number | null | undefined): string {
@@ -366,9 +468,15 @@ onMounted(() => {
   nextTick(ensureChart)
 })
 
-watch(() => [props.conversationId, props.viewEpoch], load)
+watch(() => [props.conversationId, props.viewEpoch], () => {
+  stopPoll() // 切会话：旧会话的摘要轮询不再有意义（后端任务自身照跑完落库）
+  summaryTask.value = { running: false, percent: 0, step: '', monthsDone: 0, monthsTotal: 0 }
+  summaryError.value = ''
+  load()
+})
 
 onUnmounted(() => {
+  stopPoll()
   resizeObserver?.disconnect()
   resizeObserver = null
   chartInstance?.dispose()
@@ -494,6 +602,61 @@ onUnmounted(() => {
   color: var(--ct-text-tertiary);
   font-size: var(--ct-text-xs);
   margin-top: 2px;
+}
+
+/* 阶段徽标（观察叙事措辞）：tint 底胶囊，与变化点 chips 同惯用语 */
+.ch-phase {
+  padding: 1px 8px;
+  border-radius: var(--ct-radius-full);
+  background: var(--ct-color-primary-tint);
+  color: var(--ct-color-primary);
+  font-size: var(--ct-text-xs);
+  white-space: nowrap;
+}
+
+/* 章节叙事（摘要金字塔产物）：正文次色小字，统计行之下 */
+.ch-summary {
+  color: var(--ct-text-secondary);
+  font-size: var(--ct-text-xs);
+  line-height: 1.6;
+  margin-top: 4px;
+}
+
+/* 摘要任务进度：细进度条 + 当前步骤（2s 轮询） */
+.sum-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ct-space-xs);
+}
+
+.sum-bar {
+  width: 96px;
+  height: 4px;
+  border-radius: var(--ct-radius-full);
+  background: var(--ct-bg-sunken);
+  overflow: hidden;
+}
+
+.sum-fill {
+  display: block;
+  height: 100%;
+  background: var(--ct-color-primary);
+  transition: width 0.4s ease;
+}
+
+.sum-step {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ct-text-tertiary);
+  font-size: var(--ct-text-xs);
+}
+
+.sum-error {
+  margin-bottom: var(--ct-space-sm);
+  color: var(--ct-color-error);
+  font-size: var(--ct-text-xs);
 }
 
 .disclaimer {

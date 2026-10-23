@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import logging
+import json
 import math
 import time
 from typing import Any, Dict, List, Optional, Tuple
@@ -150,43 +151,123 @@ def _new_week(start: int) -> Dict[str, Any]:
 
 
 class RelationshipChapterService:
-    """关系章节：章节检测 + 周级大五分布（读侧纯函数式编排）。"""
+    """关系章节：章节检测 + 周级大五分布（读侧纯函数式编排）。
+
+    实例内缓存：真实库 13 万条整算 ~7s，切页签回来不该重付——按
+    「消息数 + 最新时间戳 + 口径版本」指纹缓存 payload，新消息落库
+    或升版自动失效（纯统计可再生，不落库缓存表，KISS）。
+    """
+
+    def __init__(self):
+        self._cache: Dict[int, Tuple[Tuple[int, int], dict]] = {}
+
+    @staticmethod
+    def _conv_fingerprint(conversation_id: int) -> Optional[Tuple[int, int]]:
+        row = get_db().execute(
+            "SELECT COUNT(*), MAX(timestamp) FROM messages WHERE conversation_id = ?",
+            (conversation_id,),
+        ).fetchone()
+        if not row or not row[0]:
+            return None
+        return (int(row[0]), int(row[1] or 0))
 
     def get_chapters(self, conversation_id: int) -> dict:
         try:
-            rows = self._fetch_text_rows(conversation_id)
-            if len(rows) < MIN_TOTAL_TEXTS:
-                return {"ok": False, "reason": "insufficient_data",
-                        "message": "文本消息不足，暂无法划分章节（需数周以上的对话积累）"}
+            fingerprint = self._conv_fingerprint(conversation_id)
+            cached = self._cache.get(int(conversation_id))
+            if cached and cached[0] == fingerprint and fingerprint is not None:
+                payload = cached[1]
+            else:
+                rows = self._fetch_text_rows(conversation_id)
+                if len(rows) < MIN_TOTAL_TEXTS:
+                    return {"ok": False, "reason": "insufficient_data",
+                            "message": "文本消息不足，暂无法划分章节（需数周以上的对话积累）"}
 
-            weeks = self._aggregate_weeks(rows)
-            self._attach_aux(weeks, conversation_id)
-            weekly_arrays = self._weekly_arrays(weeks)
-            weekly_big5 = self._weekly_big5(weeks)
-            features = self._chapter_features(weeks)
-            starts = detect_chapters(features)
-            chapters = self._build_chapters(
-                conversation_id, weeks, starts, features
-            )
+                weeks = self._aggregate_weeks(rows)
+                self._attach_aux(weeks, conversation_id)
+                weekly_arrays = self._weekly_arrays(weeks)
+                weekly_big5 = self._weekly_big5(weeks)
+                features = self._chapter_features(weeks)
+                starts = detect_chapters(features)
+                chapters = self._build_chapters(
+                    conversation_id, weeks, starts, features
+                )
 
-            from .big5_proxies import DIMENSION_LABELS
+                from .big5_proxies import DIMENSION_LABELS
 
-            return {
-                "ok": True,
-                "version": CHAPTERS_VERSION,
-                "span": {
-                    "from_ts": weeks[0]["first_ts"], "to_ts": weeks[-1]["last_ts"],
-                    "week_count": len(weeks), "week_seconds": WEEK_SECONDS,
-                },
-                "week_starts": [w["start"] for w in weeks],
-                "feature_labels": FEATURE_LABELS,
-                "weekly": {**weekly_arrays, "big5": weekly_big5},
-                "big5_labels": dict(DIMENSION_LABELS),
-                "chapters": chapters,
-            }
+                payload = {
+                    "ok": True,
+                    "version": CHAPTERS_VERSION,
+                    "span": {
+                        "from_ts": weeks[0]["first_ts"], "to_ts": weeks[-1]["last_ts"],
+                        "week_count": len(weeks), "week_seconds": WEEK_SECONDS,
+                    },
+                    "week_starts": [w["start"] for w in weeks],
+                    "feature_labels": FEATURE_LABELS,
+                    "weekly": {**weekly_arrays, "big5": weekly_big5},
+                    "big5_labels": dict(DIMENSION_LABELS),
+                    "chapters": chapters,
+                }
+                if fingerprint is not None:
+                    self._cache[int(conversation_id)] = (fingerprint, payload)
+
+            # 摘要状态每次现查（表轻，缓存外附加：摘要任务跑完无需失效章节缓存）；
+            # chapters 逐章浅拷贝——摘要字段写副本，缓存对象不被调用方突变污染
+            payload = dict(payload)
+            payload["chapters"] = [dict(ch) for ch in payload["chapters"]]
+            payload["summary"] = self._summary_status(int(conversation_id), payload["chapters"])
+            return payload
         except Exception as exc:  # pragma: no cover - 桥层兜底日志
             logger.error("[关系章节] 计算失败: %s", exc, exc_info=True)
             return {"ok": False, "error": str(exc)}
+
+    @staticmethod
+    def _summary_status(conversation_id: int, chapters: List[Dict[str, Any]]) -> dict:
+        """章摘要就绪度 + 各章摘要文本（chapter_summaries 任务产物，纯读）。
+
+        表缺失（未跑过摘要任务/旧库）静默降级为全 0。"""
+        try:
+            from .chapter_summaries import SUMMARY_VERSION, _summary_fp
+
+            conn = get_db()
+            month_row = conn.execute(
+                "SELECT COUNT(*) FROM chapter_month_summaries"
+                " WHERE conversation_id = ? AND version = ?",
+                (conversation_id, SUMMARY_VERSION),
+            ).fetchone()
+            total_row = conn.execute(
+                "SELECT COUNT(DISTINCT strftime('%Y-%m', m.timestamp, 'unixepoch',"
+                " 'localtime')) FROM messages m"
+                " WHERE m.conversation_id = ? AND m.message_type = 1"
+                " AND m.content IS NOT NULL AND TRIM(m.content) != ''",
+                (conversation_id,),
+            ).fetchone()
+            by_fp: Dict[str, dict] = {}
+            for row in conn.execute(
+                "SELECT fingerprint, summary_json FROM chapter_summaries"
+                " WHERE conversation_id = ? AND version = ?",
+                (conversation_id, SUMMARY_VERSION),
+            ).fetchall():
+                try:
+                    parsed = json.loads(row[1])
+                except Exception:
+                    continue
+                if isinstance(parsed, dict):
+                    by_fp[str(row[0])] = parsed
+            for chapter in chapters:
+                fp = _summary_fp(int(chapter["from_ts"]), int(chapter["to_ts"]))
+                summary = by_fp.get(fp)
+                if summary:
+                    chapter["summary"] = str(summary.get("summary") or "")
+                    chapter["phase"] = str(summary.get("phase") or "")
+            return {
+                "months_total": int(total_row[0] or 0),
+                "months_ready": int(month_row[0] or 0),
+                "chapters_ready": sum(1 for ch in chapters if ch.get("summary")),
+            }
+        except Exception as exc:
+            logger.debug("[关系章节] 摘要状态降级: %s", exc)
+            return {"months_total": 0, "months_ready": 0, "chapters_ready": 0}
 
     # ------------------------------------------------------------------
     # 周桶聚合

@@ -40,9 +40,9 @@
 
 ### C2 摘要金字塔（全量语料落地）
 
-- [ ] 月摘要表（仿 sentiment_backfill 增量补算任务）+ 章节摘要 + 单飞/取消/缓存
-- [ ] rolling 画像采样层改「覆盖窗口的章节摘要 + 近端原文」（PROFILE_SNAPSHOT_SCHEMA +1）
-- 验收：2.5 年会话画像生成时 LLM 输入含全部年份的语义摘要；首跑 ~30 次月摘要调用后增量 1-2 次/月
+- [x] `chapter_summaries.py`：月摘要表 + 章节摘要（指纹缓存）+ 任务三件套（全局单飞/取消保留已落月/增量跳过已就绪月）；远程模型逐条过 PrivacyRedactor，构造失败整任务阻断
+- [x] `profile_chapter_digest.py` 注入两 profiler【关系章节摘要】块（rolling 注全部章/custom 只注窗口交叠章），`PROFILE_SNAPSHOT_SCHEMA` 3→4；章节面板头部任务入口（启动/进度/取消）+ 章节卡摘要与阶段徽标
+- 验收 ✅（2026-10-23 真机，会话联系人B 5233 条 / 2024.4~2026.10）：首跑 31 月 + 1 章归并 3.5 分钟完成；章节卡阶段徽标与叙事渲染正常；画像生成日志确认「关系章节摘要: 1 章注入」，标签与全时段叙事一致；增量语义由唯一键+跳过锁死（test_incremental_skips_ready_months）
 
 ### C3 叙事层（演变落地）
 
@@ -63,6 +63,8 @@
 | `CHAPTERS_VERSION` | relationship_chapters.py | 1 | 章节检测口径（特征/惩罚/吸附）变化——前端按版本丢弃旧缓存 |
 | `WEEKLY_MIN_SIDE_TEXTS` | 同上 | 10 | 周级大五留白阈值调整 |
 | `MAX_CHAPTERS` / `MIN_CHAPTER_WEEKS` | 同上 | 8 / 2 | 分段约束调整 |
+| `SUMMARY_VERSION` | chapter_summaries.py | 1 | 月/章摘要 prompt 字段、采样预算、归并规则变化——旧摘要失明重算（月/章表均带版本列） |
+| `PROFILE_SNAPSHOT_SCHEMA` | contact/self_profiler.py | 4 | v4 = 新增【关系章节摘要】注入块（口径详见 profile-window.md） |
 
 - 周桶锚点：本地时区周一 00:00；空周保留（冷却期本身是信号）。
 - 周级大五缺席指标（unanswered/revoke/positive_response 等）不采，按 big5_proxies 点数制重归一——分布带只做相对演变叙事，不做绝对测评解读。

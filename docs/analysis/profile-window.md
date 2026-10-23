@@ -27,6 +27,14 @@
   是记忆内容不参与任何远程交互）；`rag_facts` 表缺失（未跑过 RAG 的库）
   静默降级不注入。与长期背景块分工：背景给**数字**（量的分布），事实给
   **语义**（沉淀的具体记忆），窗口样本给**细节**（近端语气）。
+- **关系章节摘要块（v4 起）**：`profile_chapter_digest.collect_chapter_digest`
+  把章节摘要金字塔产物（`chapter_summaries` 任务：月摘要→章节归并，
+  口径见 `goals/persona-chapters-goal.md`）注入【关系章节摘要】块。
+  rolling 注入全部章节（全时段语义坐标，与长期背景同语义），custom
+  只注入与窗口交叠的章（画像演变各段聚焦自身时段）。注入前逐条过
+  PrivacyRedactor（全时段语义层，纪律同事实块）；表缺失静默降级。
+  四块分工：背景给**数字**、事实给**结构化记忆**、章节摘要给**叙事**、
+  窗口样本给**细节**。
 - **custom 指定窗**：`generate_profile(..., from_ts, to_ts)` 闭区间硬边界，**不顺延**
   （顺延会篡改用户指定窗口的语义）；防呆：非正/起点≥终点/终点晚于 now+1 天/
   窗内无文本消息均直接拒绝。**跨度不设上限**——按调用方切分的时窗如实生成
@@ -93,7 +101,7 @@ prompt【基础信息】块带样本时间范围行（rolling 注明顺延，cus
 
 | 常量 | 位置 | 当前值 | 何时 +1 |
 |---|---|---|---|
-| `PROFILE_SNAPSHOT_SCHEMA` | contact_profiler.py / self_profiler.py | 3 | 表结构或画像口径变化——随行落库 `schema_version` 列，读取处过滤；旧结构 DROP 重建，不迁移。v2 = 【长期背景】全时段基线块；v3 = 【长期记忆事实】RAG 事实层注入 |
+| `PROFILE_SNAPSHOT_SCHEMA` | contact_profiler.py / self_profiler.py | 4 | 表结构或画像口径变化——随行落库 `schema_version` 列，读取处过滤；旧结构 DROP 重建，不迁移。v2 = 【长期背景】全时段基线块；v3 = 【长期记忆事实】RAG 事实层注入；v4 = 【关系章节摘要】章节金字塔注入（profile_chapter_digest） |
 | `PROFILE_SNAPSHOT_KEEP` | 同上 | 8 | rolling 分组保留条数调整 |
 | `PROFILE_SNAPSHOT_KEEP_CUSTOM` | 同上 | 24 | custom 分组保留条数调整（对齐 list_snapshots 上限，裁剪不得逐出回廊可展示的快照） |
 | `big5_impressions` 表结构 | personality_impression_service.py | v2（window 档位） | window 档位列或唯一键变化——`_ensure_table` PRAGMA 探查缺列即 DROP 重建不迁移（口径见 `docs/analysis/time-depth.md` 大五节） |

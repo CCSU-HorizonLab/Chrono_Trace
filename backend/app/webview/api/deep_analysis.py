@@ -89,6 +89,79 @@ class DeepAnalysisApiMixin:
             return {"ok": False, "error": str(e)}
 
     # ------------------------------------------------------------------
+    # 章节摘要金字塔（月摘要 → 章节归并，后台 LLM 任务）
+    # ------------------------------------------------------------------
+
+    def start_chapter_summaries(self, conversation_id: int) -> dict:
+        """启动章节摘要后台任务（月摘要逐月增量，章按指纹归并）。
+
+        全局单飞（LLM 调用串行）；无模型配置 / 远程模型脱敏器不可用
+        直接拒绝。任务进度由 get_chapter_summaries_progress 轮询。
+        """
+        try:
+            if not conversation_id:
+                return {"ok": False, "error": "缺少参数: conversation_id"}
+            from ...services.analysis.chapter_summaries import ChapterSummaryService
+
+            service = getattr(self, "_chapter_summary_service", None)
+            if service is None:
+                # 章节检测走同一服务实例（共享 C1 结果缓存）
+                chapters_service = getattr(self, "_chapters_service", None)
+                if chapters_service is None:
+                    from ...services.analysis.relationship_chapters import (
+                        RelationshipChapterService,
+                    )
+
+                    chapters_service = RelationshipChapterService()
+                    self._chapters_service = chapters_service
+                service = ChapterSummaryService(
+                    chapters_provider=chapters_service.get_chapters,
+                )
+                self._chapter_summary_service = service
+            service.prune_finished()
+            return service.start_task(int(conversation_id))
+        except Exception as e:
+            logger.error(f"[Bridge] 启动章节摘要失败: {e}")
+            return {"ok": False, "error": str(e)}
+
+    def get_chapter_summaries_progress(self, task_id: str = "") -> dict:
+        """查询章节摘要任务进度（running/completed/failed/cancelled）。"""
+        service = getattr(self, "_chapter_summary_service", None)
+        if not service:
+            return {"ok": False, "error": "摘要服务未初始化", "status": "not_found",
+                    "progress_percent": 0, "current_step": "",
+                    "months_done": 0, "months_total": 0}
+        task_id = str(task_id or "")
+        if task_id:
+            progress = service.get_progress(task_id)
+        else:  # 缺省取该服务最新任务（前端轮询不必持有 task_id）
+            with service._lock:
+                latest = next(reversed(service._tasks), None) if service._tasks else None
+            progress = service.get_progress(latest) if latest else None
+        if not progress:
+            return {"ok": False, "error": "摘要任务不存在或已失效", "status": "not_found",
+                    "progress_percent": 0, "current_step": "",
+                    "months_done": 0, "months_total": 0}
+        response = {
+            "ok": True,
+            "status": progress["status"],
+            "progress_percent": progress["progress_percent"],
+            "current_step": progress["current_step"],
+            "months_done": progress.get("months_done", 0),
+            "months_total": progress.get("months_total", 0),
+        }
+        if progress["status"] == "failed":
+            response["error"] = progress.get("error") or "未知错误"
+        return response
+
+    def cancel_chapter_summaries(self, task_id: str = "") -> dict:
+        """取消章节摘要任务（已落库月保留，续跑自动跳过）。"""
+        service = getattr(self, "_chapter_summary_service", None)
+        if not service:
+            return {"ok": False, "error": "摘要服务未初始化"}
+        return service.cancel_task(str(task_id or ""))
+
+    # ------------------------------------------------------------------
     # 情感补算（sentiment_cache 缺口 → 后台任务）
     # ------------------------------------------------------------------
 

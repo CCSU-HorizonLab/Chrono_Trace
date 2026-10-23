@@ -13,6 +13,9 @@ Analytics 页签「时光深度」，**单聊专属**（群聊无双方情感演
 1. **关系章节**：统计变点自动分段（消息密度/TA占比/正向率/回复时延），
    周量柱+章节分界线、周级大五分布带五维五行、章节卡（统计+变化点）。
    **全会话口径**（不受时间窗/分段选择器影响），自取数据不依赖 deep payload。
+   面板头部「全量摘要」入口跑摘要金字塔任务（月摘要→章节归并，LLM 增量
+   缓存），产物注入画像（`profile-window.md` v4 块）并显示在章节卡
+   （摘要叙事+阶段徽标，观察叙事措辞）。
 2. **双方情绪曲线**：分桶（周/月/年）聚合 sentiment_cache，双方/我/TA 视角或
    三线同显，滚动窗口加权平滑（默认近 3 桶），消极时段浅红着色、好感度历史
    落点（菱形+虚线）叠加；底部分侧互动柱（我紫/TA 琥珀的全量计数，不依赖
@@ -185,7 +188,21 @@ Analytics 页签「时光深度」，**单聊专属**（群聊无双方情感演
   是信号）。`_aggregate_weeks` 的周桶两侧必须各自独立（工厂函数建桶——
   dict 浅拷贝会让双侧共享 texts 列表，已有测试锁死）。
 - 全会话口径（不收日期窗）；文本总量 < 40 条返回 `insufficient_data`。
-  纯统计零 LLM 无落库缓存，同库重跑结果一致。
+  纯统计零 LLM 无落库缓存，同库重跑结果一致（服务实例内按
+  「消息数+最新时间戳+版本」指纹缓存，新消息自动失效——13 万条整算
+  ~7s 不该每次切页签重付）。
+
+### 章节摘要金字塔（`chapter_summaries.py`，C2）
+
+月摘要（`chapter_month_summaries`，本地时区 'YYYY-MM'，单月条数 3000/
+字符 24k 双预算等距抽稀）→ 章节归并（`chapter_summaries`，指纹 =
+`v{CHAPTERS_VERSION}:{from}-{to}`，边界漂移/升版即失明重算，月摘要
+不浪费）。任务三件套仿 sentiment_backfill：全局单飞（LLM 串行）、按
+任务独立取消事件、取消保留已落库月、增量跳过已就绪月。远程模型逐条
+过 PrivacyRedactor（全月原文暴露面大于画像窗口样本），构造失败整任务
+阻断（fail-closed）；单条脱敏异常丢条继续。摘要口径 `SUMMARY_VERSION`
++1 时旧摘要全量失明重算。消费方：画像【关系章节摘要】块
+（rolling 全部章 / custom 窗口交叠章）+ 章节卡展示（summary/phase）。
 
 ## 分享海报
 
@@ -252,7 +269,8 @@ Name 条款=改名再改字体，原样分发只需附带许可），`styles/fon
 
 - 后端：`services/analysis/{deep_analysis_service, engagement_metrics,
   sentiment_backfill_service, personality_impression_service, big5_proxies,
-  relationship_chapters, task_registry}.py`、`webview/api/deep_analysis.py`（mixin）
+  relationship_chapters, chapter_summaries, task_registry}.py`、
+  `services/realtime/profile_chapter_digest.py`、`webview/api/deep_analysis.py`（mixin）
 - 前端：`components/deep/`（TimeDeepTab 及各面板、RelationshipChaptersPanel、
   Big5EvolutionPanel + big5Shared、PosterStudio、`poster/registry.ts`、
   `poster/badges.ts`、`poster/sections/`（分镜骨架）、三模板、`styles/fonts.css`）、
@@ -260,4 +278,4 @@ Name 条款=改名再改字体，原样分发只需附带许可），`styles/fon
   与 userMsgCount/otherMsgCount 可选 props，无分侧数回退单柱）
 - 测试：`tests/test_deep_analysis.py`、`test_engagement_metrics.py`、
   `test_sentiment_backfill.py`、`test_big5_impression.py`、
-  `test_relationship_chapters.py`、`test_share_poster_export.py`
+  `test_relationship_chapters.py`、`test_chapter_summaries.py`、`test_share_poster_export.py`

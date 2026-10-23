@@ -29,15 +29,13 @@ logger = logging.getLogger(__name__)
 # v3：桶点补分侧全量计数 userMsgCount/otherMsgCount（互动量双柱数据源）
 # v4：词面口径变更随行 bump——pos 白名单过滤（posseg 只留实词）+ 停用词
 #     两轮扩表（词云/群摘要的词口径变了，v3 之后产生的词表不兼容）
+# v5：分段语义换轨——词云/大五/里程碑从「窗口均分 N 段（word_segments 2~6）」
+#     改为「全会话·章节边界分段」（chapter_spans，见 relationship_chapters）；
+#     日期窗只剩情绪曲线一职，payload 增 chapter_spans
 # 海报 story（milestones/chemistry）为纯加性字段，不触碰序列口径——不 +1
-DEEP_ANALYSIS_VERSION = 4
+DEEP_ANALYSIS_VERSION = 5
 
 DEEP_BUCKET_GRANULARITIES = ("day", "week", "month", "year")
-
-# 词云演变分段数：可选范围与默认值
-DEEP_WORDCLOUD_SEGMENTS_MIN = 2
-DEEP_WORDCLOUD_SEGMENTS_MAX = 6
-DEEP_WORDCLOUD_SEGMENTS_DEFAULT = 4
 
 # 词云演变每段消息上限（超出等距抽样并标记 truncated）
 DEEP_WORDCLOUD_SEGMENT_LIMIT = 15000
@@ -68,25 +66,6 @@ POSTER_AVATAR_MAX_BYTES = 2 * 1024 * 1024  # 头像转 base64 上限
 POSTER_WORDCLOUD_SAMPLE = 2000   # top 词计算的消息抽样上限
 
 
-def split_window_evenly(from_ts: int, to_ts: int, segments: int) -> List[Tuple[int, int]]:
-    """把闭区间 [from_ts, to_ts] 均分为 segments 段，返回各段 (start, end) 闭区间。
-
-    边界 b_i = ((segments - i) * from_ts + i * to_ts) // segments，
-    段 i = [b_i, b_{i+1} - 1]（末段 [b_{n-1}, to_ts]，含终点）——segments=2
-    时第二段起点即 (from_ts + to_ts) // 2，与历史 halves 公式逐点一致。
-    词云演变（N 段可配）与画像演变（固定对半）共用本函数，保证「同窗同分」
-    口径同源。窗口过短时可能产出空段（end < start），由调用方守卫。
-    """
-    bounds = [
-        ((segments - i) * from_ts + i * to_ts) // segments
-        for i in range(segments + 1)
-    ]
-    return [
-        (bounds[i], bounds[i + 1] - 1 if i + 1 < segments else to_ts)
-        for i in range(segments)
-    ]
-
-
 class DeepAnalysisService:
     """时光深度聚合服务（无状态，实时计算不落缓存）"""
 
@@ -104,24 +83,28 @@ class DeepAnalysisService:
         from_ts: int,
         to_ts: int,
         bucket: str = "week",
-        word_segments: int = DEEP_WORDCLOUD_SEGMENTS_DEFAULT,
         marks: Tuple[int, ...] = DEEP_DEFAULT_MARKS,
     ) -> Dict[str, Any]:
-        """组装时光深度 payload：分桶情绪序列 + 拐点 + 词云演变 + 里程碑 + 好感度落点"""
+        """组装时光深度 payload。
+
+        C4 起分段语义统一为「全会话·章节边界」（chapter_spans）：词云/大五/
+        里程碑不再受日期窗与 word_segments 影响；from/to/bucket 只服务情绪
+        曲线（连续时间序列，窗口探索仍有意义）。
+        """
         if bucket not in DEEP_BUCKET_GRANULARITIES:
             return {"ok": False, "error": f"未知分桶粒度: {bucket}"}
-        if not (DEEP_WORDCLOUD_SEGMENTS_MIN <= word_segments <= DEEP_WORDCLOUD_SEGMENTS_MAX):
-            return {
-                "ok": False,
-                "error": f"词云分段数须在 {DEEP_WORDCLOUD_SEGMENTS_MIN}~{DEEP_WORDCLOUD_SEGMENTS_MAX} 之间: {word_segments}",
-            }
 
+        from .relationship_chapters import chapter_spans
+
+        chapter = chapter_spans(conversation_id)
         merged = self._merged_bucket_series(conversation_id, from_ts, to_ts, bucket)
         turning = self._sentiment_turning_points(merged)
-        wordcloud = self._wordcloud_evolution(conversation_id, from_ts, to_ts, word_segments)
-        milestones = self._build_milestones(conversation_id, from_ts, to_ts, marks)
+        wordcloud = self._wordcloud_evolution(conversation_id, chapter["spans"])
+        milestones = self._build_milestones(
+            conversation_id, chapter["full_from"], chapter["full_to"], marks,
+        )
         affinity = self._affinity_history_points(conversation_id, from_ts, to_ts)
-        big5 = self._big5_evolution(conversation_id, from_ts, to_ts, word_segments)
+        big5 = self._big5_evolution(conversation_id, chapter["spans"])
 
         return {
             "ok": True,
@@ -135,6 +118,9 @@ class DeepAnalysisService:
             "milestones": milestones,
             "affinity_history": affinity,
             "big5_evolution": big5,
+            # 章节分段（全会话口径）：里程碑按章分组、面板标注「按章分段」用
+            "chapter_spans": chapter["spans"],
+            "chapters_ok": chapter["ok"],
         }
 
     # ------------------------------------------------------------------
@@ -251,12 +237,17 @@ class DeepAnalysisService:
     def _wordcloud_evolution(
         self,
         conversation_id: int,
-        from_ts: int,
-        to_ts: int,
-        segments: int = DEEP_WORDCLOUD_SEGMENTS_DEFAULT,
+        spans: List[Tuple[int, int]],
     ) -> Dict[str, Any]:
-        """词云分段演变。整个窗口按清洗覆盖率二选一口径，绝不各段混用。"""
-        total = self._count_text_messages(conversation_id, from_ts, to_ts)
+        """词云分段演变（章节边界分段，全会话口径）。
+
+        整个会话按清洗覆盖率二选一口径，绝不各段混用。单段（章节检测
+        不可用/单章会话）时 bump 对比无意义，前端按段数降级展示。
+        """
+        if not spans:
+            return {"caliber": "none", "coverage_ratio": 0.0, "segments": []}
+        full_from, full_to = spans[0][0], spans[-1][1]
+        total = self._count_text_messages(conversation_id, full_from, full_to)
         if not total:
             return {
                 "caliber": "none",
@@ -264,16 +255,7 @@ class DeepAnalysisService:
                 "segments": [],
             }
 
-        window_parts = split_window_evenly(from_ts, to_ts, segments)
-        if any(seg_to < seg_from for seg_from, seg_to in window_parts):
-            return {
-                "caliber": "none",
-                "coverage_ratio": 0.0,
-                "segments": [],
-                "error": f"时间窗太短，无法均分为 {segments} 段",
-            }
-
-        preprocessed_count = self._count_preprocessed_messages(conversation_id, from_ts, to_ts)
+        preprocessed_count = self._count_preprocessed_messages(conversation_id, full_from, full_to)
         coverage_ratio = preprocessed_count / total
         use_cleaned = coverage_ratio >= DEEP_PREPROCESSED_COVERAGE
         caliber = "cleaned" if use_cleaned else "raw"
@@ -282,7 +264,7 @@ class DeepAnalysisService:
             self._wordcloud_gen = WordCloudGenerator()
 
         results = []
-        for seg_from, seg_to in window_parts:
+        for seg_from, seg_to in spans:
             rows, sampled_total = self._load_segment_texts(
                 conversation_id, seg_from, seg_to, use_cleaned,
                 limit=DEEP_WORDCLOUD_SEGMENT_LIMIT,
@@ -514,21 +496,21 @@ class DeepAnalysisService:
         }
 
     def _big5_evolution(
-        self, conversation_id: int, from_ts: int, to_ts: int, segments: int
+        self, conversation_id: int, spans: List[Tuple[int, int]]
     ) -> Dict[str, Any]:
-        """双方大五随分段演变（本地统计层，custom 窗缓存；AI 增强走 enhance 端点）。
+        """双方大五随章节段演变（本地统计层，custom 窗缓存；AI 增强走 enhance 端点）。
 
-        与词云演变共用分段数（word_segments）；每段独立 get_impressions，
-        样本过薄（<30 条/侧）该侧为 None；单段失败降级不炸整个 payload。
+        与词云演变共用章节分段；每段独立 get_impressions，样本过薄
+        （<30 条/侧）该侧为 None；单段失败降级不炸整个 payload。
         """
         from .personality_impression_service import BIG5_MIN_MESSAGES, PersonalityImpressionService
 
         service = PersonalityImpressionService()
         series: List[Dict[str, Any]] = []
-        for seg_from, seg_to in split_window_evenly(from_ts, to_ts, segments):
+        for seg_from, seg_to in spans:
             entry: Dict[str, Any] = {"from_ts": seg_from, "to_ts": seg_to, "me": None, "other": None}
             if seg_to < seg_from:
-                entry["error"] = "时间窗太短，无法均分该段"
+                entry["error"] = "空段"
                 series.append(entry)
                 continue
             try:
@@ -541,7 +523,7 @@ class DeepAnalysisService:
                 entry["error"] = "本段计算失败"
             series.append(entry)
         return {
-            "segments": segments,
+            "segments": len(spans),
             "min_messages": BIG5_MIN_MESSAGES,
             "series": series,
         }
@@ -560,7 +542,7 @@ class DeepAnalysisService:
         curve = self._merged_bucket_series(conversation_id, from_ts, to_ts, "week")
         top_words = self._poster_top_words(conversation_id, from_ts, to_ts)
         quotes = self._poster_quotes(conversation_id, from_ts, to_ts)
-        big5 = self._poster_big5(conversation_id, account_wxid)
+        big5 = self._poster_big5(conversation_id, account_wxid, from_ts, to_ts)
 
         # 故事化分镜数据：里程碑复用深度页签口径；默契统计独立直查、逐字段
         # 降级 None（前端 v-if 跳分镜）。核心分镜零依赖分析产物——未跑分析
@@ -863,19 +845,35 @@ class DeepAnalysisService:
         ]
 
     @staticmethod
-    def _poster_big5(conversation_id: int, account_wxid: str) -> Dict[str, Any]:
-        """读大五缓存（未生成返回 None 字段，不阻塞海报）。"""
-        from .personality_impression_service import PersonalityImpressionService
+    def _poster_big5(conversation_id: int, account_wxid: str, from_ts: int, to_ts: int) -> Dict[str, Any]:
+        """读大五缓存（未生成返回 None 字段，不阻塞海报）。
+
+        窗口与海报其余分镜同口径（from_ts/to_ts）：优先读该窗缓存，
+        miss 时现算本地统计层（纯 SQL 零 LLM）——海报页头印的是窗口
+        日期范围，大五不能再默默用全会话档冒充窗口结论。
+        """
+        from .personality_impression_service import (
+            PersonalityImpressionService, _normalize_window,
+        )
 
         now = int(datetime.now().timestamp())
         service = PersonalityImpressionService()
+        window = _normalize_window(from_ts, to_ts)
         result: Dict[str, Any] = {}
         for subject in ("me", "other"):
             cached = None
             try:
-                cached = service._load_cached(conversation_id, account_wxid, subject, now)
+                cached = service._load_cached(conversation_id, account_wxid, subject, now, window=window)
             except Exception as exc:
                 logger.debug("[海报] 大五缓存读取失败: %s", exc)
+            if cached is None and window[0] == "custom":
+                try:
+                    computed = service.get_impressions(
+                        conversation_id, account_wxid, from_ts=from_ts, to_ts=to_ts
+                    )
+                    cached = (computed or {}).get("subjects", {}).get(subject)
+                except Exception as exc:
+                    logger.debug("[海报] 大五窗口现算失败: %s", exc)
             if cached:
                 # 只带分数与标签，不带证据原文（公开版投影再兜一层）
                 result[subject] = {

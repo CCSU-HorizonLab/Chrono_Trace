@@ -16,10 +16,34 @@ logger = logging.getLogger(__name__)
 PROFILE_CANCEL_SCOPE = "profile_generation"
 
 
-def _format_profile_window(cached: dict) -> dict[str, Any]:
+def _window_coverage(conversation_id, window_from: int, window_to: int):
+    """窗口文本消息占全会话的比例（0~1，3 位小数）——画像徽标惯用语三件套
+    之一（窗口档位 + 覆盖比 + 新鲜度），长关系上「最近 30 天」可能只覆盖
+    个位数百分比，不披露就冒充全貌。查不到会话/出错返回 None（前端不显示）。
+    """
+    if not conversation_id or not window_from or not window_to:
+        return None
+    try:
+        from ...db.connection import get_db
+        row = get_db().execute(
+            "SELECT SUM(CASE WHEN timestamp BETWEEN ? AND ? THEN 1 ELSE 0 END), COUNT(*) "
+            "FROM messages WHERE conversation_id = ? AND message_type = 1 "
+            "AND content IS NOT NULL AND TRIM(content) != ''",
+            (int(window_from), int(window_to), int(conversation_id)),
+        ).fetchone()
+    except Exception:
+        return None
+    total = int(row[1] or 0)
+    if not total:
+        return None
+    return round(int(row[0] or 0) / total, 3)
+
+
+def _format_profile_window(cached: dict, coverage=None) -> dict[str, Any]:
     """把 get_profile 返回的窗口元信息格式化为前端可直接展示的 window 对象。
 
-    rolling → 「最近 N 天」（N 为档位名义窗天数）；custom → 「起 ~ 止」日期区间。
+    rolling → 「最近 N 天」（N 为档位名义窗天数）；custom → 「起 ~ 止」日期区间；
+    coverage_ratio → 窗口文本量占全会话比例（None=未知，前端隐藏该项）。
     """
     from datetime import datetime
 
@@ -32,7 +56,10 @@ def _format_profile_window(cached: dict) -> dict[str, Any]:
         label = f"{fmt(window_from)} ~ {fmt(window_to)}"
     else:
         label = f"最近 {days} 天" if days > 0 else "最近滚动窗"
-    return {'kind': kind, 'from': window_from, 'to': window_to, 'days': days, 'label': label}
+    return {
+        'kind': kind, 'from': window_from, 'to': window_to, 'days': days,
+        'label': label, 'coverage_ratio': coverage,
+    }
 
 
 class ProfileApiMixin:
@@ -67,7 +94,13 @@ class ProfileApiMixin:
                     'profile': cached['profile'],
                     'created_at': cached['created_at'],
                     'expires_at': cached['expires_at'],
-                    'window': _format_profile_window(cached),
+                    'window': _format_profile_window(
+                        cached,
+                        _window_coverage(
+                            cached.get('conversation_id'),
+                            cached.get('window_from'), cached.get('window_to'),
+                        ),
+                    ),
                     'estimated_tokens': estimate.get('estimated_total_tokens', 0),
                 }
             else:
@@ -151,7 +184,13 @@ class ProfileApiMixin:
                     'profile': cached['profile'],
                     'created_at': cached['created_at'],
                     'expires_at': cached['expires_at'],
-                    'window': _format_profile_window(cached),
+                    'window': _format_profile_window(
+                        cached,
+                        _window_coverage(
+                            cached.get('conversation_id'),
+                            cached.get('window_from'), cached.get('window_to'),
+                        ),
+                    ),
                     'estimated_tokens': estimate.get('estimated_total_tokens', 0),
                 }
             else:
@@ -226,7 +265,13 @@ class ProfileApiMixin:
                 window_kind=window_kind,
             )
             for snap in snapshots:
-                snap['window'] = _format_profile_window(snap)
+                snap['window'] = _format_profile_window(
+                    snap,
+                    _window_coverage(
+                        snap.get('conversation_id'),
+                        snap.get('window_from'), snap.get('window_to'),
+                    ),
+                )
             return {'ok': True, 'snapshots': snapshots}
         except Exception as e:
             logger.error(f"[Bridge] 查询画像快照列表失败: {e}")

@@ -2,21 +2,25 @@
   <div class="panel milestone-timeline">
     <div class="panel-head">
       <div class="panel-title">里程碑</div>
-      <div class="panel-sub">首条消息、消息量关口、最长沉默期与情绪拐点，按时间排开</div>
+      <div class="panel-sub">首条消息、消息量关口、最长沉默期与情绪拐点，按章节边界分栏排开（全会话口径）</div>
     </div>
 
-    <div v-if="!items.length" class="empty">所选区间暂无可提取的事件</div>
+    <div v-if="!items.length" class="empty">暂无可提取的事件</div>
     <ol v-else class="timeline">
       <li v-for="(item, index) in items" :key="item.key" class="timeline-item" :class="`kind-${item.kind}`">
-        <span class="dot" :class="`dot-${item.kind}`" />
-        <div class="item-body">
-          <div class="item-title">{{ item.title }}</div>
-          <div class="item-meta">
-            <span>{{ item.when }}</span>
-            <span v-if="item.detail" class="item-detail">{{ item.detail }}</span>
+        <span v-if="item.kind === 'chapter'" class="chapter-flag">{{ item.title }}</span>
+        <span v-if="item.kind === 'chapter'" class="chapter-range">{{ item.when }}</span>
+        <template v-else>
+          <span class="dot" :class="`dot-${item.kind}`" />
+          <div class="item-body">
+            <div class="item-title">{{ item.title }}</div>
+            <div class="item-meta">
+              <span>{{ item.when }}</span>
+              <span v-if="item.detail" class="item-detail">{{ item.detail }}</span>
+            </div>
           </div>
-        </div>
-        <span v-if="index === 0 && items.length > 1" class="first-flag">起点</span>
+          <span v-if="index === 0 && items.length > 1" class="first-flag">起点</span>
+        </template>
       </li>
     </ol>
   </div>
@@ -49,6 +53,8 @@ const props = defineProps<{
   milestones: Milestone[]
   turningPoints: TurningPoint[]
   granularity: string
+  /** 章节边界段（deep payload.chapter_spans）：≥2 章时在时间线插章分界栏 */
+  chapterSpans?: Array<[number, number]>
 }>()
 
 function fmtTs(ts: number): string {
@@ -83,10 +89,26 @@ interface TimelineItem {
   when: string
   detail?: string
   sortTs: number
+  /** 同刻排序：章分界栏先于该时刻的事件（事件属于进入后的那章） */
+  chapterFirst?: boolean
 }
 
 const items = computed<TimelineItem[]>(() => {
   const list: TimelineItem[] = []
+
+  // 章分界栏：里程碑是全会话口径，章边界把整条时间线分栏；单章不插（无分栏可言）
+  const spans = props.chapterSpans || []
+  spans.forEach(([fromTs, toTs], index) => {
+    if (spans.length < 2) return
+    list.push({
+      key: `ch-${index}-${fromTs}`,
+      kind: 'chapter',
+      title: `第 ${index + 1} 章`,
+      when: `${fmtTs(fromTs)} ~ ${fmtTs(toTs)}`,
+      sortTs: fromTs,
+      chapterFirst: true,
+    })
+  })
 
   for (const event of props.milestones || []) {
     if (event.kind === 'first_message') {
@@ -129,7 +151,7 @@ const items = computed<TimelineItem[]>(() => {
     })
   }
 
-  list.sort((a, b) => a.sortTs - b.sortTs)
+  list.sort((a, b) => (a.sortTs - b.sortTs) || (Number(b.chapterFirst || false) - Number(a.chapterFirst || false)))
   return list
 })
 </script>
@@ -216,6 +238,37 @@ const items = computed<TimelineItem[]>(() => {
   color: var(--ct-color-primary);
   font-size: var(--ct-text-xs);
   flex-shrink: 0;
+}
+
+/* 章分界栏：通栏分隔线样式（区别于点事件的圆点行），章号主色+区间次级 */
+.timeline-item.kind-chapter {
+  display: flex;
+  align-items: center;
+  gap: var(--ct-space-sm);
+  padding-top: var(--ct-space-md);
+  margin-top: var(--ct-space-sm);
+  border-top: 1px dashed var(--ct-border-color);
+}
+
+.timeline-item.kind-chapter:first-child {
+  border-top: none;
+  margin-top: 0;
+  padding-top: 0;
+}
+
+.chapter-flag {
+  padding: 2px 12px;
+  border-radius: 999px;
+  background: var(--ct-color-primary-tint);
+  color: var(--ct-color-primary);
+  font-size: var(--ct-text-xs);
+  font-weight: var(--ct-font-bold);
+  flex-shrink: 0;
+}
+
+.chapter-range {
+  color: var(--ct-text-tertiary);
+  font-size: var(--ct-text-xs);
 }
 
 .empty {

@@ -260,6 +260,67 @@ def test_list_snapshots_skips_corrupt_rows(isolated_db, profiler_cls):
     assert [s["profile"] for s in snapshots] == [{"ok": 1}]
 
 
+# ==================== origin 来源列（v5） ====================
+
+@pytest.mark.parametrize("profiler_cls,table", PROFILER_TABLES)
+def test_origin_column_defaults_and_persisted(isolated_db, profiler_cls, table, monkeypatch):
+    """generate_profile 的 origin 透传落库：缺省 ''（滚动/手动指定窗）、
+    演变段 'evolution'——快照列表靠它区分来源，不靠窗口形状猜。"""
+    conn = isolated_db
+    conv_id = seed_conversation(conn)
+    add_msg(conn, conv_id, "窗内的消息内容", 1500)
+    conn.commit()
+    monkeypatch.setattr(
+        profiler_cls, "_call_llm",
+        lambda self, prompt, should_abort=None: {"personality_tags": ["温和"]},
+    )
+
+    profiler_cls().generate_profile(
+        "老朋友", account_wxid="wxid_me", from_ts=1000, to_ts=1600
+    )
+    profiler_cls().generate_profile(
+        "老朋友", account_wxid="wxid_me", from_ts=1000, to_ts=2000, origin="evolution"
+    )
+
+    origins = [
+        row[0] for row in conn.execute(
+            f"SELECT origin FROM {table} ORDER BY created_at"
+        )
+    ]
+    assert origins == ["", "evolution"]
+
+    snapshots = profiler_cls().list_snapshots("老朋友", account_wxid="wxid_me")
+    assert {s["origin"] for s in snapshots} == {"", "evolution"}
+
+
+# ==================== 窗口覆盖比（徽标三件套） ====================
+
+def test_window_coverage_ratio(isolated_db):
+    """窗口文本消息数 / 全会话文本消息数（3 位小数）；非文本与空白不计；
+    查不到会话或缺参返回 None（前端隐藏该项）。"""
+    conn = isolated_db
+    conv_id = seed_conversation(conn)
+    add_msg(conn, conv_id, "窗内消息", 1000)
+    add_msg(conn, conv_id, "窗外的旧消息", 500)
+    conn.execute(
+        "INSERT INTO messages (conversation_id, talker, is_sender, message_type, content, timestamp, created_at)"
+        " VALUES (?, 'wxid_friend', 0, 3, '[图片]', 1200, 1200)",  # 非文本不计
+        (conv_id,),
+    )
+    conn.execute(
+        "INSERT INTO messages (conversation_id, talker, is_sender, message_type, content, timestamp, created_at)"
+        " VALUES (?, 'wxid_friend', 0, 1, '   ', 1300, 1300)",     # 空白不计
+        (conv_id,),
+    )
+    conn.commit()
+
+    from app.webview.api.profile import _window_coverage
+    assert _window_coverage(conv_id, 800, 1100) == 0.5   # 罩 1/2
+    assert _window_coverage(conv_id, 400, 2000) == 1.0   # 全罩
+    assert _window_coverage(999, 0, 100) is None          # 无该会话消息
+    assert _window_coverage(conv_id, 0, 0) is None        # 缺窗参数
+
+
 # ==================== custom 时间窗 ====================
 
 @pytest.mark.parametrize("profiler_cls", [ContactProfiler, SelfProfiler])

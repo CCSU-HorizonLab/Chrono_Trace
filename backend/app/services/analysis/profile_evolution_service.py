@@ -1,15 +1,14 @@
-"""时光深度·画像演变：时间窗均分多段画像对比。
+"""时光深度·画像演变：按章节分段的多段画像对比（C4 统一分段语义）。
 
-切窗与词云演变共用 ``split_window_evenly``（段数 2~6 默认 2——每段是
-独立 LLM 快照，成本随段数线性涨，故独立于词云分段自选）：前三段
-``[b_i, b_{i+1}-1]``、末段含终点闭区间，同窗同分，画像演变与词云
-演变可直接对照。
+分段与词云/大五/里程碑同源 ``relationship_chapters.chapter_spans``
+（全会话·章节边界；检测不可用降级单段），不再有独立分段选择器——
+演变叙事的段就是行为变点切出的自然章，均分切段读不出演变。
 
 分段画像落为 custom 快照（唯一键 (账号, 显示名, 'custom', f, t)），二次
-调用精确键命中即跳过 LLM——增量续跑只补缺的段（换段数切回旧档免费）；
-``force=True`` 无视缓存全部重算。取消事件在每次 generate_profile 调用前
-检查，HTTP 层经 should_abort 在尝试边界退出，已完成段随结果带回
-（已落缓存，重试免费）。
+调用精确键命中即跳过 LLM——增量续跑只补缺的段（章节边界漂移/升版后
+旧均分段快照自然失明，不迁移）；``force=True`` 无视缓存全部重算。取消
+事件在每次 generate_profile 调用前检查，HTTP 层经 should_abort 在尝试
+边界退出，已完成段随结果带回（已落缓存，重试免费）。
 """
 from __future__ import annotations
 
@@ -23,51 +22,28 @@ from ...db.connection import get_db
 # 仅引常量（profiler 无 analysis 模块级依赖，无环）；profiler 实例仍在
 # generate() 内延迟导入，保持 analysis←realtime 单向
 from ..realtime.contact_profiler import PROFILE_SNAPSHOT_SCHEMA
-from .deep_analysis_service import split_window_evenly
 
 logger = logging.getLogger(__name__)
 
-# 分段数界限（前端选择器同域；每段一次 LLM 快照，成本随段数线性涨）
-PROFILE_EVOLUTION_SEGMENTS_MIN = 2
-PROFILE_EVOLUTION_SEGMENTS_MAX = 6
-PROFILE_EVOLUTION_SEGMENTS_DEFAULT = 2
-
 
 class ProfileEvolutionService:
-    """分段画像对比（快照缓存命中增量续跑；可取消）"""
+    """章节分段画像对比（快照缓存命中增量续跑；可取消）"""
 
     def generate(
         self,
         conversation_id: int,
-        from_ts: int,
-        to_ts: int,
         account_wxid: str = "",
         include_self: bool = False,
         force: bool = False,
         cancel_event: Optional[threading.Event] = None,
-        segments: int = PROFILE_EVOLUTION_SEGMENTS_DEFAULT,
     ) -> dict[str, Any]:
         conversation_id = int(conversation_id or 0)
-        from_ts, to_ts = int(from_ts), int(to_ts)
-        try:
-            segments = int(segments)
-        except (TypeError, ValueError):
-            segments = 0
-        if not (PROFILE_EVOLUTION_SEGMENTS_MIN <= segments <= PROFILE_EVOLUTION_SEGMENTS_MAX):
-            return {
-                "ok": False,
-                "error": (
-                    f"分段数需在 {PROFILE_EVOLUTION_SEGMENTS_MIN}"
-                    f"~{PROFILE_EVOLUTION_SEGMENTS_MAX} 之间"
-                ),
-            }
-        # 与词云演变共用切窗公式；任一空段（窗口秒数不足段数）直接拒绝
-        spans = split_window_evenly(from_ts, to_ts, segments)
-        if any(seg_to < seg_from for seg_from, seg_to in spans):
-            return {
-                "ok": False,
-                "error": f"时间窗太短，无法均分为 {segments} 段（至少需 {segments} 天跨度）",
-            }
+
+        from .relationship_chapters import chapter_spans
+
+        spans = chapter_spans(conversation_id)["spans"]
+        if not spans:
+            return {"ok": False, "error": "会话内没有文本消息，无法生成画像"}
 
         from ..realtime.contact_profiler import ContactProfiler
         from ..realtime.self_profiler import SelfProfiler
@@ -95,33 +71,31 @@ class ProfileEvolutionService:
         _t0 = time.monotonic()
         for index, (seg_from, seg_to) in enumerate(spans):
             if _aborted():
-                return self._cancelled(segment_results, from_ts, to_ts, display_name)
+                return self._cancelled(segment_results, display_name)
             segment: dict[str, Any] = {
                 "from_ts": seg_from,
                 "to_ts": seg_to,
-                "label": f"第 {index + 1} 段",
+                "label": f"第 {index + 1} 章",
             }
             for kind, profiler, table in kinds:
                 if _aborted():
-                    return self._cancelled(segment_results, from_ts, to_ts, display_name)
+                    return self._cancelled(segment_results, display_name)
                 segment[kind] = self._segment_profile(
                     profiler, table, display_name, account_wxid,
                     seg_from, seg_to, force, _aborted,
                 )
             segment_results.append(segment)
             logger.info(
-                "[画像演变] 第 %d/%d 段完成（累计 %.1fs, 会话=%s）",
+                "[画像演变] 第 %d/%d 章完成（累计 %.1fs, 会话=%s）",
                 index + 1, len(spans), time.monotonic() - _t0, display_name,
             )
 
         logger.info(
-            "[画像演变] 全部完成: %d 段 × %d 画像, 总耗时 %.1fs（每段独立 LLM 调用，串行累加）",
+            "[画像演变] 全部完成: %d 章 × %d 画像, 总耗时 %.1fs（每章独立 LLM 调用，串行累加）",
             len(spans), len(kinds), time.monotonic() - _t0,
         )
         return {
             "ok": True,
-            "from_ts": from_ts,
-            "to_ts": to_ts,
             "display_name": display_name,
             "segments": segment_results,
             "generated_at": int(time.time()),
@@ -151,7 +125,7 @@ class ProfileEvolutionService:
         force: bool,
         aborted: Callable[[], bool],
     ) -> Optional[dict[str, Any]]:
-        """单段画像：先查 custom 快照精确键，未命中再生成（失败不中断整体）。"""
+        """单章画像：先查 custom 快照精确键，未命中再生成（失败不中断整体）。"""
         if not force:
             cached = self._load_snapshot(table, display_name, account_wxid, seg_from, seg_to)
             if cached is not None:
@@ -162,6 +136,7 @@ class ProfileEvolutionService:
             should_abort=aborted,
             from_ts=seg_from,
             to_ts=seg_to,
+            origin="evolution",
         )
         if aborted():
             return None
@@ -216,14 +191,11 @@ class ProfileEvolutionService:
 
     @staticmethod
     def _cancelled(
-        segment_results: list[dict[str, Any]], from_ts: int, to_ts: int,
-        display_name: str,
+        segment_results: list[dict[str, Any]], display_name: str,
     ) -> dict[str, Any]:
         return {
             "ok": False,
             "cancelled": True,
-            "from_ts": from_ts,
-            "to_ts": to_ts,
             "display_name": display_name,
             "segments": segment_results,
         }

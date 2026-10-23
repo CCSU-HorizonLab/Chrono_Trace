@@ -686,7 +686,6 @@
             :feature-stats="featureStats"
             :sessions="sessions"
             :activity-calendar-summary="activityCalendar.summary"
-            :current-range-label="currentRangeLabel"
             @generate="showPortraitDialog = true"
           />
           <!-- 我的画像：更新画像默认含自我画像，这里让生成结果可见 -->
@@ -1001,10 +1000,6 @@ const showPortraitDialog = ref(false)
             '>1d': ['>1d']
         }
 
-        const currentRangeLabel = computed(() => {
-            if (!dates.from || !dates.to) return '默认近30天，可切换时间范围'
-            return `${dates.from} 至 ${dates.to}`
-        })
         const shouldLoadContentAnalysis = computed(() => {
             return currentTab.value === 'content' || currentTab.value === 'deep' || currentTab.value === 'persona'
         })
@@ -2265,7 +2260,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
             analysisResult, displayScore, showKeywordsDialog, showContextForm, showPortraitDialog, handlePortraitGenerated, isGlobalAnalyzing, isStopping, activeTimer, handleStopAnalysis, globalProgressPercent, globalProgressStep, gpuMode,
             hasConversations, hasFeatures, hasCachedAffinityAnalysis, featureStats, responseTimeStats, initiativeStats, wordCountsStats, displayWordRatioLabel, activityCalendar,
             responseTimeChart, activityCalendarChart, wordCountChart, stats, currentContactName, headerAvatarSrc, hasPreferenceKeywords, allDimensions,
-            currentRangeLabel, hasContentAnalysis, analysisStaleNotice, circumference, strokeDashoffset, formatNumber, formatTime, getResponseTimeLabel, getMergedResponseTimeLabel, getResponseTimePercent, onConversationChange, onDatesChange, handleExport, handleStartGlobalAnalysis, handleContextSaved, handleKeywordsUpdated, llmEvidenceNotes,
+            hasContentAnalysis, analysisStaleNotice, circumference, strokeDashoffset, formatNumber, formatTime, getResponseTimeLabel, getMergedResponseTimeLabel, getResponseTimePercent, onConversationChange, onDatesChange, handleExport, handleStartGlobalAnalysis, handleContextSaved, handleKeywordsUpdated, llmEvidenceNotes,
             qaHistory, qaInput, qaLoading, qaChatBox, qaIndexingHint, handleAskHistory, handleCancelQa, formatQaTime, copiedQaKey, overallCopied, handleCopyQa, handleCopyOverall,
             isGroupConversation, groupStats, groupStatsLoading, groupSummary, groupSummaryLoading, groupSummaryDays, handleGenerateGroupSummary,
             reportExporting, handleExportReport,

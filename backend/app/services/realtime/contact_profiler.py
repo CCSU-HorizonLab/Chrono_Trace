@@ -71,7 +71,9 @@ PROFILE_TTL = 7 * 86400  # 7 天
 # v3：prompt 新增【长期记忆事实】块（profile_facts，RAG 事实层注入画像）。
 # v4：prompt 新增【关系章节摘要】块（profile_chapter_digest，月摘要→章节
 #     归并的全量语料语义层注入画像）。
-PROFILE_SNAPSHOT_SCHEMA = 4
+# v5：新增 origin 列（''=滚动/手动指定窗，'evolution'=画像演变章节段快照），
+#     回看列表按来源区分徽标，不再把演变段混作手动存档。
+PROFILE_SNAPSHOT_SCHEMA = 5
 
 # 每个分组保留的快照条数上限。rolling 每次续期产生新窗口键快照自然累积，
 # 靠此上限防膨胀；custom 是存档品（画像演变半窗 + 手动指定窗共用分组），
@@ -139,7 +141,7 @@ class ContactProfiler:
             resolved_account_wxid = self._resolve_account_wxid(account_wxid)
 
             cursor = conn.execute(
-                'SELECT profile_json, created_at, expires_at, '
+                'SELECT profile_json, created_at, expires_at, conversation_id, '
                 'window_kind, window_from, window_to, budget_level '
                 'FROM contact_profiles '
                 'WHERE account_wxid = ? AND display_name = ? AND window_kind = \'rolling\' '
@@ -157,6 +159,7 @@ class ContactProfiler:
                 'created_at': row['created_at'],
                 'expires_at': row['expires_at'],
                 'expired': now > row['expires_at'],
+                'conversation_id': row['conversation_id'],
                 'window_kind': row['window_kind'],
                 'window_from': row['window_from'],
                 'window_to': row['window_to'],
@@ -174,8 +177,9 @@ class ContactProfiler:
             self._ensure_table(conn)
             resolved_account_wxid = self._resolve_account_wxid(account_wxid)
 
-            sql = ('SELECT id, window_kind, window_from, window_to, budget_level, '
-                   'profile_json, message_sample_count, created_at, expires_at '
+            sql = ('SELECT id, conversation_id, window_kind, window_from, window_to, '
+                   'budget_level, origin, profile_json, message_sample_count, '
+                   'created_at, expires_at '
                    'FROM contact_profiles '
                    'WHERE account_wxid = ? AND display_name = ? AND schema_version = ?')
             params: list = [resolved_account_wxid, display_name, PROFILE_SNAPSHOT_SCHEMA]
@@ -193,10 +197,12 @@ class ContactProfiler:
                     continue  # 损坏/空残行不进列表——回廊不该展示空画像卡
                 snapshots.append({
                     'id': row['id'],
+                    'conversation_id': row['conversation_id'],
                     'window_kind': row['window_kind'],
                     'window_from': row['window_from'],
                     'window_to': row['window_to'],
                     'budget_level': row['budget_level'],
+                    'origin': row['origin'] or '',
                     'message_sample_count': row['message_sample_count'],
                     'created_at': row['created_at'],
                     'expires_at': row['expires_at'],
@@ -261,6 +267,7 @@ class ContactProfiler:
         should_abort: Optional[Callable[[], bool]] = None,
         from_ts: int = 0,
         to_ts: int = 0,
+        origin: str = '',
     ) -> dict:
         """
         生成联系人画像（调 LLM）
@@ -272,6 +279,8 @@ class ContactProfiler:
             from_ts/to_ts: 指定历史时间窗（秒级时间戳，闭区间）；缺省 0
                 为滚动窗模式（now 锚定档位窗，不足向更早顺延）。指定窗口
                 时 budget_level 只决定采样目标量，不再决定回看跨度。
+            origin: 快照来源标记（''=默认，'evolution'=画像演变章节段），
+                回看列表按来源区分徽标
 
         Returns:
             {'ok': True, 'profile': {...}} 或 {'ok': False, 'error': '...'}
@@ -397,6 +406,7 @@ class ContactProfiler:
                 window_from=from_ts if custom_window else feature_from,
                 window_to=to_ts if custom_window else feature_to,
                 budget_level=budget_level,
+                origin=origin,
             )
 
             return {'ok': True, 'profile': profile_data}
@@ -1058,7 +1068,7 @@ class ContactProfiler:
         self, conn, display_name: str, conversation_id: int,
         profile: dict, sample_count: int, features: dict, account_wxid: str,
         window_kind: str = 'rolling', window_from: int = 0, window_to: int = 0,
-        budget_level: str = 'medium',
+        budget_level: str = 'medium', origin: str = '',
     ):
         """保存画像快照（窗口键多快照共存），写后按窗口分组裁剪上限"""
         try:
@@ -1070,9 +1080,9 @@ class ContactProfiler:
             conn.execute(
                 'INSERT OR REPLACE INTO contact_profiles '
                 '(account_wxid, display_name, conversation_id, window_kind, window_from, '
-                'window_to, budget_level, schema_version, profile_json, features_snapshot, '
-                'message_sample_count, token_usage, created_at, expires_at) '
-                'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                'window_to, budget_level, origin, schema_version, profile_json, '
+                'features_snapshot, message_sample_count, token_usage, created_at, expires_at) '
+                'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
                 (
                     account_wxid,
                     display_name,
@@ -1081,6 +1091,7 @@ class ContactProfiler:
                     int(window_from),
                     int(window_to),
                     budget_level,
+                    origin,
                     PROFILE_SNAPSHOT_SCHEMA,
                     json.dumps(profile, ensure_ascii=False),
                     json.dumps(features, ensure_ascii=False),
@@ -1116,7 +1127,7 @@ class ContactProfiler:
         ).fetchone()
         if exists:
             cols = {row[1] for row in conn.execute('PRAGMA table_info(contact_profiles)')}
-            if 'window_kind' in cols and 'schema_version' in cols:
+            if 'window_kind' in cols and 'schema_version' in cols and 'origin' in cols:
                 return  # 已是当前快照结构，零 DDL
             _print("[ContactProfiler] 旧结构画像表，DROP 重建为快照结构，不迁移")
             conn.execute('DROP TABLE contact_profiles')
@@ -1131,6 +1142,7 @@ class ContactProfiler:
                 window_from INTEGER NOT NULL DEFAULT 0,
                 window_to INTEGER NOT NULL DEFAULT 0,
                 budget_level TEXT NOT NULL DEFAULT 'medium',
+                origin TEXT NOT NULL DEFAULT '',
                 schema_version INTEGER NOT NULL DEFAULT {PROFILE_SNAPSHOT_SCHEMA},
                 profile_json TEXT NOT NULL,
                 features_snapshot TEXT,

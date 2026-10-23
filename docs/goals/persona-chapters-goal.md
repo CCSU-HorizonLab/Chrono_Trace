@@ -2,7 +2,7 @@
 
 ## 文档状态
 
-- **阶段**：施工中（C1~C3 已落地，C4 收口待做）
+- **阶段**：已完工（C1~C4 全部落地，2026-10-24；C4 真机目检待补）
 - **建立日期**：2026-10-23
 - **前置**：v2.2.0；画像时间窗口径见 [profile-window.md](../analysis/profile-window.md)、大五口径见 [time-depth.md](../analysis/time-depth.md)
 - **背景**：现有画像系统两大方法性缺陷——①均分切段×独立快照读不出「演变」；②rolling 窗采样对长会话只覆盖尾部（90 天窗罩 8%），全量语料的语义层整层缺席。经联网调研（2026-10-23）确定换时间原语方案。
@@ -52,9 +52,9 @@
 
 ### C4 收口（信息架构统一）
 
-- [ ] 词云/大五/画像/里程碑统一按章节切（替换全局分段选择器与画像演变独立分段）；演变段快照与历史快照来源区分
-- [ ] 合并画像反思 P0：窗口徽标惯用语（窗口+覆盖比+新鲜度）、PersonaGallery 摘伪、大五分带化、海报大五窗口对齐
-- 验收：时光深度只剩一套分段语义；画像页无伪画像内容
+- [x] 词云/大五/画像/里程碑统一按章节切（`chapter_spans` 统一分段源，替换全局分段选择器与画像演变独立分段；`DEEP_ANALYSIS_VERSION` 4→5）；演变段快照 `origin='evolution'` 列与滚动/指定窗区分（`PROFILE_SNAPSHOT_SCHEMA` 4→5）
+- [x] 合并画像反思 P0：窗口徽标惯用语（窗口+覆盖比+新鲜度）、PersonaGallery 摘伪（heroMeta 口径行/快照来源徽标/里程碑与情绪相框口径化）、大五分带化（±15 不确定带+区间文案+语料口径行）、海报大五窗口对齐（custom 窗 miss 现算本地层）
+- 验收（2026-10-24）：时光深度只剩一套分段语义（章节边界，日期窗只剩情绪曲线/好感度落点/海报）；画像页无伪画像内容（覆盖比/新鲜度/来源徽标/区间带全部就位）。三道关全过（build + smoke + pytest 1308 passed）；真机目检待补（当日凌晨桌面不可交互无法开窗，UI 改动均经 vue-tsc 类型检查与既有测试覆盖）
 
 ## 口径与版本常量
 
@@ -65,7 +65,7 @@
 | `MAX_CHAPTERS` / `MIN_CHAPTER_WEEKS` | 同上 | 8 / 2 | 分段约束调整 |
 | `MONTHLY_SUMMARY_VERSION` | chapter_summaries.py | 1 | 月摘要 prompt 字段/采样预算变化——旧月报失明重算（月表带版本列） |
 | `CHAPTER_SUMMARY_VERSION` | chapter_summaries.py | 2 | 章节叙事层（归并/过渡卡/弧线）prompt 措辞或结构变化——旧叙事失明重算；v2 = phase 不确定性措辞 + 过渡卡 + 弧线 |
-| `PROFILE_SNAPSHOT_SCHEMA` | contact/self_profiler.py | 4 | v4 = 新增【关系章节摘要】注入块（口径详见 profile-window.md） |
+| `PROFILE_SNAPSHOT_SCHEMA` | contact/self_profiler.py | 5 | v4 = 新增【关系章节摘要】注入块；v5 = origin 来源列（演变段/滚动/指定窗区分，口径详见 profile-window.md） |
 
 - 周桶锚点：本地时区周一 00:00；空周保留（冷却期本身是信号）。
 - 周级大五缺席指标（unanswered/revoke/positive_response 等）不采，按 big5_proxies 点数制重归一——分布带只做相对演变叙事，不做绝对测评解读。

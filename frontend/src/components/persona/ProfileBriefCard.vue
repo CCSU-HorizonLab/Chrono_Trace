@@ -7,10 +7,10 @@
       <span v-if="contactName" class="pbc-hd-name">{{ contactName }}</span>
     </div>
     <div class="pbc-bd">
-      <!-- 窗口与时效 -->
+      <!-- 窗口与时效：徽标惯用语三件套（窗口档位 + 覆盖比 + 新鲜度） -->
       <div v-if="meta.createdAt || meta.expiresAt || meta.window" class="pbc-date-meta">
-        <span v-if="meta.window?.label">窗口: {{ meta.window.label }}</span>
-        <span v-if="meta.createdAt">生成: {{ formatDate(meta.createdAt) }}</span>
+        <span v-if="meta.window?.label">窗口: {{ meta.window.label }}{{ coverageText }}</span>
+        <span v-if="meta.createdAt">{{ toAgoLabel(meta.createdAt) }}</span>
         <span v-if="meta.expiresAt">过期: {{ formatDate(meta.expiresAt) }}</span>
         <span v-if="meta.expired" class="is-expired">已过期</span>
       </div>
@@ -56,6 +56,7 @@ import {
   Pin, Smile, Target, Type, User, UserPlus,
 } from 'lucide-vue-next'
 import { api } from '@/api/bridge'
+import { toAgoLabel } from '@/utils/datetime'
 
 /**
  * 双方画像简卡：TA 画像 / 我的画像 的紧凑展示（实时助手页双卡、TA 画像页我的画像卡）。
@@ -137,6 +138,13 @@ const detailRows = computed<DetailRow[]>(() => {
 })
 
 const loadingText = computed(() => config.value.loadingText)
+
+/** 窗口覆盖比：窗口文本量占全会话比例——长关系上「最近 30 天」可能只盖住个位数百分比，不披露就冒充全貌 */
+const coverageText = computed(() => {
+  const ratio = meta.value?.window?.coverage_ratio
+  if (typeof ratio !== 'number' || !Number.isFinite(ratio) || ratio <= 0) return ''
+  return `（覆盖 ${Math.round(ratio * 100)}%）`
+})
 
 function formatDate(seconds: number | null): string {
   if (!seconds) return ''

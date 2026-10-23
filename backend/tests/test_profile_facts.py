@@ -243,7 +243,7 @@ class TestPromptInjection:
         assert "【长期记忆事实】" not in captured["prompt"]
 
 
-def test_schema_version_is_v4():
-    # v4 = v3 基础上新增关系章节摘要块（模块级常量，两 profiler 同值同升）
-    assert contact_profiler_mod.PROFILE_SNAPSHOT_SCHEMA == 4
-    assert self_profiler_mod.PROFILE_SNAPSHOT_SCHEMA == 4
+def test_schema_version_is_v5():
+    # v5 = v4 三个注入块基础上新增 origin 来源列（模块级常量，两 profiler 同值同升）
+    assert contact_profiler_mod.PROFILE_SNAPSHOT_SCHEMA == 5
+    assert self_profiler_mod.PROFILE_SNAPSHOT_SCHEMA == 5

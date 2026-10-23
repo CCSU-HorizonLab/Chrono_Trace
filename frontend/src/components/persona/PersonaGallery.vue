@@ -4,7 +4,7 @@
     <div class="gallery-head">
       <div>
         <div class="gallery-title">画像档案</div>
-        <div class="gallery-sub">AI 从聊天记录提炼的长期印象{{ hasProfile ? '，支持历史快照回看' : '' }}</div>
+        <div class="gallery-sub">按所选时间窗提炼的印象{{ hasProfile ? '，支持历史快照回看' : '' }}</div>
       </div>
       <button class="btn primary gallery-generate" :disabled="loading" @click="emit('generate')">
         {{ hasProfile ? '更新画像' : '生成画像' }}
@@ -53,7 +53,9 @@
             @click="viewingSnapshot = snap"
           >
             <span class="snapshot-window">{{ snapshotLabel(snap) }}</span>
-            <span class="snapshot-kind">{{ snap.window_kind === 'custom' ? '指定窗' : '滚动窗' }}</span>
+            <span class="snapshot-kind" :class="{ evolution: snap.origin === 'evolution' }">
+              {{ snap.origin === 'evolution' ? '演变段' : snap.window_kind === 'custom' ? '指定窗' : '滚动窗' }}
+            </span>
             <span class="snapshot-date">生成于 {{ formatUnixDate(snap.created_at) }}</span>
           </button>
         </div>
@@ -136,6 +138,7 @@ import { computed, ref, watch } from 'vue'
 import type { PropType } from 'vue'
 import { Images, Clock } from 'lucide-vue-next'
 import { api } from '@/api/bridge'
+import { toAgoLabel } from '@/utils/datetime'
 import CtCard from '@/components/base/CtCard.vue'
 import PersonaTagsCard from './PersonaTagsCard.vue'
 import TopicUniverse from './TopicUniverse.vue'
@@ -163,6 +166,7 @@ type ProfileWindow = {
   to: number
   days: number
   label: string
+  coverage_ratio?: number | null
 }
 
 type ProfileSnapshot = {
@@ -171,6 +175,7 @@ type ProfileSnapshot = {
   window_from: number
   window_to: number
   budget_level?: string
+  origin?: string
   created_at: number
   expires_at?: number
   profile: PersonaProfile | null
@@ -265,10 +270,6 @@ const props = defineProps({
     type: Object as PropType<any>,
     default: null
   },
-  currentRangeLabel: {
-    type: String,
-    default: ''
-  },
   /** 当前画像的窗口标注（get_contact_profile 的 window 字段） */
   windowInfo: {
     type: Object as PropType<ProfileWindow | null>,
@@ -349,14 +350,21 @@ const heroNote = computed(() => activeProfile.value?.communication_tips || '')
 const heroMeta = computed(() => {
   const items: string[] = []
   if (activeProfile.value?.relationship_note) items.push(activeProfile.value.relationship_note)
-  if (props.analysisResult?.overall_score !== undefined) items.push(`关系评分 ${Math.round(props.analysisResult.overall_score)}%`)
-  if (props.currentRangeLabel) items.push(props.currentRangeLabel)
+  // 好感度是全时段分析产物，无法窗口化——口径必须讲清，不能冒充窗口结论
+  if (props.analysisResult?.overall_score !== undefined) items.push(`全时段好感度 ${Math.round(props.analysisResult.overall_score)}%`)
   if (activeWindowLabel.value && activeCreatedAt.value) {
-    items.push(`基于${activeWindowLabel.value} · 生成于 ${formatUnixDate(activeCreatedAt.value)}`)
+    items.push(`基于${activeWindowLabel.value}${coverageText.value} · ${toAgoLabel(activeCreatedAt.value)}`)
   } else if (activeCreatedAt.value) {
     items.push(`画像生成于 ${formatUnixDate(activeCreatedAt.value)}`)
   }
   return items
+})
+
+/** 窗口覆盖比（窗口文本量占全会话比例）：长关系上「最近 30 天」可能只盖住个位数百分比 */
+const coverageText = computed(() => {
+  const ratio = viewingSnapshot.value?.window?.coverage_ratio ?? props.windowInfo?.coverage_ratio
+  if (typeof ratio !== 'number' || !Number.isFinite(ratio) || ratio <= 0) return ''
+  return ` · 覆盖 ${Math.round(ratio * 100)}%`
 })
 
 const topicBubbles = computed(() => {
@@ -364,15 +372,16 @@ const topicBubbles = computed(() => {
   if (interests.length) {
     return interests.slice(0, 6).map((label, index) => ({
       label,
-      hint: '画像兴趣标签',
+      hint: '画像兴趣标签（所选时间窗）',
       size: 112 - index * 8,
       hue: palette[index % palette.length]
     }))
   }
 
+  // 兴趣标签缺席的兜底：词云来自页面筛选时段，口径与画像窗不同——hint 讲清来源
   return (props.analysis.wordcloud || []).slice(0, 6).map((item, index) => ({
     label: item.word,
-    hint: `关键词热度 ${Math.round(item.weight)}`,
+    hint: `关键词热度 ${Math.round(item.weight)}（页面筛选时段）`,
     size: 112 - index * 8,
     hue: palette[index % palette.length]
   }))
@@ -392,25 +401,29 @@ const emotionBands = computed(() => {
       label: '温度感',
       value: positiveAvg || positivity,
       color: '#E0A458',
-      description: positiveAvg ? '对话里的正向情绪更常作为底色出现。' : '基于互动投入推断，这段关系更偏暖色调。'
+      description: positiveAvg
+        ? '按页面筛选时段统计，正向情绪更常作为底色出现。'
+        : '基于全时段好感度推断，这段关系更偏暖色调。'
     },
     {
       label: '稳定感',
       value: clamp01(1 - negativeAvg),
       color: '#8B93A7',
-      description: negativeAvg ? '低波动说明情绪起伏相对平稳。' : '暂时缺少明显负向样本，整体更像平缓流动。'
+      description: negativeAvg
+        ? '按页面筛选时段统计，低波动说明情绪起伏相对平稳。'
+        : '筛选时段内缺少明显负向样本，整体更像平缓流动。'
     },
     {
       label: '共鸣感',
       value: resonance,
       color: '#5A4BC4',
-      description: '结合关系分析结果，反映彼此回应的共振强度。'
+      description: '基于全时段关系分析，反映彼此回应的共振强度。'
     },
     {
       label: '互动主动性',
       value: initiative,
       color: '#2FA39A',
-      description: '从会话发起比例推断，对方主动打开话题的倾向。'
+      description: '从筛选时段的会话发起比例推断，对方主动打开话题的倾向。'
     }
   ]
 
@@ -435,7 +448,7 @@ const milestones = computed<MilestoneItem[]>(() => {
     items.push({
       title: '最早留痕',
       dateLabel: formatMsDate(props.activityCalendarSummary.global_first_session_start_time),
-      body: '这是全纪录中能追溯到的最早一次完整互动切片。',
+      body: '全部聊天记录中能追溯到的最早一次完整互动切片。',
       accent: '#8B93A7',
       anchor: { startMs: props.activityCalendarSummary.global_first_session_start_time }
     })
@@ -445,7 +458,7 @@ const milestones = computed<MilestoneItem[]>(() => {
       items.push({
         title: '高密度互动',
         dateLabel: formatMsDate(peakSession.start_time),
-        body: `单场互动达到 ${peakSession.message_count} 条消息，是全部历史样本里互动最密集的一次。`,
+        body: `单场互动达到 ${peakSession.message_count} 条消息，是全部聊天记录里互动最密集的一次。`,
         accent: '#5A4BC4',
         anchor: { startMs: peakSession.start_time }
       })
@@ -466,7 +479,7 @@ const milestones = computed<MilestoneItem[]>(() => {
       items.push({
         title: '高密度互动',
         dateLabel: formatMsDate(peakSession.start_time),
-        body: `这场会话记录了 ${peakSession.message_count} 条消息，是当前最近样本里最饱满的一次交谈。`,
+        body: `这场会话记录了 ${peakSession.message_count} 条消息，是当前采样样本里最饱满的一次交谈。`,
         accent: '#5A4BC4',
         anchor: { startMs: peakSession.start_time }
       })
@@ -480,7 +493,7 @@ const milestones = computed<MilestoneItem[]>(() => {
     items.push({
       title: '情绪高光',
       dateLabel: formatDayLabel(highest.ts),
-      body: `这一天的情绪评分达到 ${highest.score.toFixed(2)}，是当前样本中的高光时刻。`,
+      body: `这一天的情绪评分达到 ${highest.score.toFixed(2)}，是页面筛选时段中的高光时刻。`,
       accent: '#2FA39A',
       anchor: dayAnchor(highest.ts)
     })
@@ -489,7 +502,7 @@ const milestones = computed<MilestoneItem[]>(() => {
       items.push({
         title: '情绪转折',
         dateLabel: formatDayLabel(lowest.ts),
-        body: `这一天的情绪评分降到 ${lowest.score.toFixed(2)}，可能是关系中的敏感节点。`,
+        body: `这一天的情绪评分降到 ${lowest.score.toFixed(2)}，可能是关系中的敏感节点（页面筛选时段）。`,
         accent: '#E8656F',
         anchor: dayAnchor(lowest.ts)
       })
@@ -718,6 +731,11 @@ function formatDayLabel(value: string) {
   border-radius: 999px;
   font-size: 10.5px;
   color: var(--ct-text-tertiary);
+}
+/* 演变段快照徽标：tint 底 + primary 字的徽标惯用语，与滚动/指定窗区分 */
+.snapshot-kind.evolution {
+  background: var(--ct-color-primary-tint);
+  color: var(--ct-color-primary);
 }
 .snapshot-date { margin-left: auto; color: var(--ct-text-tertiary); font-size: 11px; }
 .snapshot-empty { font-size: 12px; color: var(--ct-text-tertiary); text-align: center; padding: 6px 0; }

@@ -4,7 +4,7 @@
       <div>
         <div class="panel-title">大五人格演变</div>
         <div class="panel-sub">
-          把时间窗均分为 {{ segmentCount }} 段（与词云演变共用分段），每段一张雷达，看你们各自的语言风格怎么变
+          按关系章节切为 {{ segmentCount }} 章（与词云演变共用分段），每章一张雷达，看你们各自的语言风格怎么变
         </div>
       </div>
       <div class="panel-actions">
@@ -22,15 +22,16 @@
 
     <div v-if="!seriesView.length" class="empty-state">这段时光还没有可统计的大五演变数据</div>
     <div v-else-if="!hasAnyData" class="empty-state">
-      消息量还不足以形成稳定的风格印象（每段每侧约需 {{ minMessages }} 条以上文本）
+      消息量还不足以形成稳定的风格印象（每章每侧约需 {{ minMessages }} 条以上文本）
     </div>
 
     <template v-else>
-      <!-- 分段雷达小多图：段序自左向右即时间序，形状对比承担叙事；
+      <!-- 分章雷达小多图：章序自左向右即时间序，形状对比承担叙事；
            我/TA 图例在页签工具条，缺一侧就只画一侧 -->
       <div class="segments-cards">
         <div v-for="(seg, i) in seriesView" :key="i" class="segment-card">
           <div class="card-head">
+            <span class="card-label">第 {{ i + 1 }} 章</span>
             <span class="card-range">{{ toCompactRange(seg.from_ts, seg.to_ts) }}</span>
             <span v-if="seg.error" class="card-state error">{{ seg.error }}</span>
             <span v-else-if="!(seg.me || seg.other)" class="card-state">样本不足</span>
@@ -44,7 +45,7 @@
       </div>
 
       <div class="disclaimer">
-        语言风格印象随时间的变化，非心理测评；每段独立按该段消息统计，AI 校正为 ±15 以内有界修正
+        语言风格印象随时间的变化，非心理测评；每章独立按该章消息统计，AI 校正为 ±15 以内有界修正
       </div>
     </template>
   </div>
@@ -72,7 +73,7 @@ type SegmentEntry = {
 
 const props = defineProps<{
   conversationId: number
-  /** deep payload 的 big5_evolution 键（series 每段双侧大五或 None） */
+  /** deep payload 的 big5_evolution 键（series 每章双侧大五或 None） */
   evolution: { segments: number; min_messages: number; series: SegmentEntry[] } | null | undefined
   /** 父页视图纪元：切换会话/账号时丢弃过期响应 */
   viewEpoch: number
@@ -87,7 +88,7 @@ const runningWindow = ref<{ from_ts: number; to_ts: number } | null>(null)
 const minMessages = computed(() => props.evolution?.min_messages || 30)
 const segmentCount = computed(() => props.evolution?.segments || 0)
 
-// 本段增强结果覆写层：不深改 props.payload，切换 payload 时随 epoch 清空
+// 本章增强结果覆写层：不深改 props.payload，切换 payload 时随 epoch 清空
 const seriesView = computed<SegmentEntry[]>(() =>
   (props.evolution?.series || []).map((seg, i) => (overrides.value[i] ? { ...seg, ...overrides.value[i] } : seg)),
 )
@@ -100,14 +101,14 @@ function isEnhanced(seg: SegmentEntry): boolean {
 
 const anyEnhanced = computed(() => seriesView.value.some((seg) => !seg.error && isEnhanced(seg)))
 
-// 还存在可增强的段（有数据、无错误、未增强）——全部增强按钮的可用条件
+// 还存在可增强的章（有数据、无错误、未增强）——全部增强按钮的可用条件
 const enhanceable = computed(() =>
   seriesView.value.some((seg) => !seg.error && (seg.me || seg.other) && !isEnhanced(seg)),
 )
 
 const busy = computed(() => enhancingAll.value || busyIndex.value >= 0)
 
-// ---- 逐段 / 全部 AI 增强（顺序逐段，已增强跳过；结果覆写回 series[i]） ----
+// ---- 逐章 / 全部 AI 增强（顺序逐章，已增强跳过；结果覆写回 series[i]） ----
 function applyResult(index: number, result: any) {
   overrides.value = {
     ...overrides.value,
@@ -186,7 +187,7 @@ async function cancelAll() {
   }
 }
 
-// payload 重拉（分段数/时间窗/会话变化）时清覆写与状态
+// payload 重拉（会话变化）时清覆写与状态
 function resetState() {
   overrides.value = {}
   busyIndex.value = -1
@@ -230,10 +231,15 @@ watch(() => props.evolution, resetState)
   flex-wrap: wrap;
 }
 
-.card-range {
-  color: var(--ct-text-primary);
-  font-size: var(--ct-text-xs);
+.card-label {
+  color: var(--ct-color-primary);
   font-weight: var(--ct-font-bold);
+  font-size: var(--ct-text-xs);
+}
+
+.card-range {
+  color: var(--ct-text-secondary);
+  font-size: var(--ct-text-xs);
 }
 
 .card-enhance {

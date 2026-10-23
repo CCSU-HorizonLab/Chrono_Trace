@@ -27,20 +27,21 @@ class DeepAnalysisApiMixin:
         from_date: str,
         to_date: str,
         bucket: str = "week",
-        word_segments: int = 4,
     ) -> dict:
         """获取时光深度聚合数据（分桶情绪序列+覆盖率、拐点、词云演变、里程碑、好感度落点）。
 
         Args:
             conversation_id: 会话ID
-            from_date: 开始日期 "2025-01-01"
-            to_date: 结束日期 "2025-12-31"
+            from_date: 开始日期 "2025-01-01"（情绪曲线窗口）
+            to_date: 结束日期 "2025-12-31"（情绪曲线窗口）
             bucket: 分桶粒度 day/week/month/year（默认 week）
-            word_segments: 词云演变分段数 2~6（默认 4）
 
         Returns:
             {ok, version, bucket, buckets, turning_points, wordcloud_evolution,
-             milestones, affinity_history}
+             milestones, affinity_history, chapter_spans, chapters_ok}
+
+        词云/大五/里程碑按全会话·章节边界分段（payload.chapter_spans），
+        与画像演变同源；日期窗只作用于情绪曲线与好感度落点。
         """
         try:
             if not conversation_id:
@@ -59,7 +60,6 @@ class DeepAnalysisApiMixin:
             service = DeepAnalysisService()
             return service.get_deep_analysis(
                 int(conversation_id), from_ts, to_ts, bucket=bucket,
-                word_segments=int(word_segments),
             )
         except ValueError as e:
             return {"ok": False, "error": f"参数格式错误: {e}"}
@@ -404,35 +404,26 @@ class DeepAnalysisApiMixin:
         return {"ok": True}
 
     # ------------------------------------------------------------------
-    # 画像演变（前后半窗双画像对比，单飞可取消）
+    # 画像演变（章节分段画像对比，单飞可取消）
     # ------------------------------------------------------------------
 
     def generate_profile_evolution(
         self,
         conversation_id: int,
-        from_date: str,
-        to_date: str,
         include_self: bool = False,
         force: bool = False,
         account_wxid: str = "",
-        segments: int = 2,
     ) -> dict:
-        """生成画像演变：时间窗均分 segments 段（2~6 默认 2），分别取/生成 custom 快照画像。
+        """生成画像演变：按章节边界分段（chapter_spans），逐段取/生成 custom 快照画像。
 
-        同会话单飞（一次最多 segments×(1+含我) 次 LLM 调用，重复点击直接拒）；
-        快照缓存精确键命中即跳过 LLM 增量续跑；``force=True`` 全部重算。
+        全会话口径（不收日期窗）；同会话单飞（一次最多 章数×(1+含我) 次
+        LLM 调用，重复点击直接拒）；快照缓存精确键命中即跳过 LLM 增量续跑；
+        ``force=True`` 全部重算。
         """
         try:
             if not conversation_id:
                 return {"ok": False, "error": "缺少参数: conversation_id"}
-            if not from_date or not to_date:
-                return {"ok": False, "error": "缺少日期参数，请先选择时间范围"}
             from ...services.analysis.profile_evolution_service import ProfileEvolutionService
-
-            from_ts = int(datetime.strptime(from_date, "%Y-%m-%d").timestamp())
-            to_ts = int(
-                datetime.strptime(to_date + " 23:59:59", "%Y-%m-%d %H:%M:%S").timestamp()
-            )
 
             key = (int(conversation_id), account_wxid or "")
             # 「已在运行检查 + 注册」临界区持锁（并发双击防双注册互相覆盖取消事件）
@@ -448,12 +439,11 @@ class DeepAnalysisApiMixin:
                 running[key] = cancel_event
             try:
                 return ProfileEvolutionService().generate(
-                    int(conversation_id), from_ts, to_ts,
+                    int(conversation_id),
                     account_wxid=account_wxid or "",
                     include_self=bool(include_self),
                     force=bool(force),
                     cancel_event=cancel_event,
-                    segments=int(segments),
                 )
             finally:
                 running.pop(key, None)
@@ -464,7 +454,7 @@ class DeepAnalysisApiMixin:
             return {"ok": False, "error": str(e)}
 
     def cancel_profile_evolution(self, conversation_id: int, account_wxid: str = "") -> dict:
-        """取消进行中的画像演变（一次最多 segments×(1+含我) 次 LLM 调用，不能让用户只能干等）。"""
+        """取消进行中的画像演变（一次最多 章数×(1+含我) 次 LLM 调用，不能让用户只能干等）。"""
         running = getattr(self, "_profile_evolution_events", None) or {}
         event = running.get((int(conversation_id or 0), account_wxid or ""))
         if event is None:

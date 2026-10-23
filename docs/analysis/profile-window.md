@@ -39,6 +39,15 @@
   （顺延会篡改用户指定窗口的语义）；防呆：非正/起点≥终点/终点晚于 now+1 天/
   窗内无文本消息均直接拒绝。**跨度不设上限**——按调用方切分的时窗如实生成
   （采样量按档位固定，窗口越长画像粒度越粗，由 UI 展示窗口标注，不做硬拦）。
+- **origin 来源列（v5 起）**：`generate_profile(..., origin='')` 透传落库——
+  滚动续期/手动指定窗为 `''`，画像演变各段为 `'evolution'`。快照列表靠该列
+  显示「演变段」徽标，与滚动/指定窗区分来源，不靠窗口形状猜。
+- **窗口徽标惯用语三件套（读时组装）**：窗口档位 label（rolling「最近 N 天」/
+  custom「起 ~ 止」）+ 覆盖比 + 新鲜度。覆盖比 `_window_coverage`
+  （`webview/api/profile.py`，读时 SQL 重算 `窗口文本消息数/全会话文本消息数`，
+  3 位小数，查不到返回 None 前端隐藏）——长关系上「最近 30 天」可能只罩住
+  个位数百分比，不披露就冒充全貌；新鲜度由前端 `toAgoLabel`
+  （`utils/datetime.ts`，N 天前/N 个月前）从 created_at 换算。
 
 ## 数据模型（快照结构 v1）
 
@@ -82,26 +91,27 @@ prompt【基础信息】块带样本时间范围行（rolling 注明顺延，cus
 
 ## 画像演变（ProfileEvolutionService）
 
-切窗与词云演变共用 `split_window_evenly`，**段数独立自选 2~6 默认 2**
-（每段是独立 LLM 快照，成本随段数线性涨，故不跟随词云 N 段）：前三段
-`[b_i, b_{i+1}-1]`、末段含终点闭区间；payload 键 `segments`（v2 曾为
-`halves`+`mid_ts`，破坏性改名与唯一消费方同 commit 收口），标签「第 N 段」。
+切窗自 v5 起 = **`relationship_chapters.chapter_spans` 章节边界**（C4 统一
+分段语义，与词云/大五/里程碑同源；均分切段的 `split_window_evenly` 已删）：
+每段落为 custom 快照（`origin='evolution'`），标签「第 N 章」；1 章会话
+前端隐藏生成入口并提示无演变可对比。段 = 行为变点切出的自然章，均分段
+读不出演变。
 
-- 每段每 kind 先查 custom 快照精确键，命中即跳过 LLM（增量续跑）；换段数
-  切回旧档因精确键命中而免费；`force=True` 全部重算；bridge 层同会话单飞
-  （`_profile_evolution_events`，注册持 `_ONNX_TASK_LOCK`）+ 可取消（取消在
-  每次 generate_profile 前生效，已完成段已落缓存）。
-- 全窗跨度不设上限（与单次 custom 生成同口径，按切分时窗如实分段）；账号
-  解析为空（无活跃账号）直接拒绝，不去掉账号过滤兜底。
-- include_self 默认关（单次桥接最长 segments×(1+含我) 次 LLM 调用）。
-- 标签对比泛化：该段独有（琥珀）/多段共有（中性）——不再按「前/后半段」
-  二分着色。
+- 每段每 kind 先查 custom 快照精确键，命中即跳过 LLM（增量续跑）；章节
+  边界漂移/升版后旧段快照自然失明重算；`force=True` 全部重算；bridge 层
+  同会话单飞（`(conv, account_wxid)` 键，注册持 `_ONNX_TASK_LOCK`）+
+  可取消（取消在每次 generate_profile 前生效，已完成段已落缓存）。
+- 账号解析为空（无活跃账号）直接拒绝，不去掉账号过滤兜底；查询键与生成侧
+  同源解析（`_resolve_account_wxid`），否则生产链路 `account_wxid=""`
+  永远查不中缓存。
+- include_self 默认关（单次桥接最长 章数×(1+含我) 次 LLM 调用）。
+- 标签对比泛化：该段独有（琥珀）/多段共有（中性）。
 
 ## 版本常量
 
 | 常量 | 位置 | 当前值 | 何时 +1 |
 |---|---|---|---|
-| `PROFILE_SNAPSHOT_SCHEMA` | contact_profiler.py / self_profiler.py | 4 | 表结构或画像口径变化——随行落库 `schema_version` 列，读取处过滤；旧结构 DROP 重建，不迁移。v2 = 【长期背景】全时段基线块；v3 = 【长期记忆事实】RAG 事实层注入；v4 = 【关系章节摘要】章节金字塔注入（profile_chapter_digest） |
+| `PROFILE_SNAPSHOT_SCHEMA` | contact_profiler.py / self_profiler.py | 5 | 表结构或画像口径变化——随行落库 `schema_version` 列，读取处过滤；旧结构 DROP 重建，不迁移。v2 = 【长期背景】全时段基线块；v3 = 【长期记忆事实】RAG 事实层注入；v4 = 【关系章节摘要】章节金字塔注入（profile_chapter_digest）；v5 = origin 来源列（演变段/滚动/指定窗区分） |
 | `PROFILE_SNAPSHOT_KEEP` | 同上 | 8 | rolling 分组保留条数调整 |
 | `PROFILE_SNAPSHOT_KEEP_CUSTOM` | 同上 | 24 | custom 分组保留条数调整（对齐 list_snapshots 上限，裁剪不得逐出回廊可展示的快照） |
 | `big5_impressions` 表结构 | personality_impression_service.py | v2（window 档位） | window 档位列或唯一键变化——`_ensure_table` PRAGMA 探查缺列即 DROP 重建不迁移（口径见 `docs/analysis/time-depth.md` 大五节） |
@@ -121,6 +131,7 @@ PrivacyRedactor**（全时段数据 + 事实本来就是结构化短句，规则
   `webview/api/profile.py`（窗口透传 / window 标注 / `list_profile_snapshots`）、
   `webview/api/deep_analysis.py`（`generate_profile_evolution` / `cancel_profile_evolution`）
 - 前端：`components/persona/{PortraitGenerateDialog, PersonaGallery}.vue`（自定义时间窗
-  入口、历史快照回看）、`components/deep/ProfileEvolutionPanel.vue`（独立 2~6
-  分段选择器，切档重置由快照精确键兜底）
-- 测试：`tests/test_profile_snapshots.py`（9 组）、`tests/test_profile_evolution.py`
+  入口、历史快照回看含「演变段」徽标、heroMeta 覆盖比+新鲜度口径行）、
+  `components/persona/ProfileBriefCard.vue`（窗口行三件套）、
+  `components/deep/ProfileEvolutionPanel.vue`（章节分段，切章重置由快照精确键兜底）
+- 测试：`tests/test_profile_snapshots.py`（含 origin/覆盖比）、`tests/test_profile_evolution.py`

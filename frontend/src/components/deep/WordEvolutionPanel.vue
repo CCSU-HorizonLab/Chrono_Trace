@@ -3,7 +3,7 @@
     <div class="panel-head">
       <div>
         <div class="panel-title">词云演变</div>
-        <div class="panel-sub">时间窗均分为 {{ segmentList.length }} 段，对比你们聊得最多的词有什么不同</div>
+        <div class="panel-sub">按关系章节切为 {{ segmentList.length }} 章，对比你们聊得最多的词有什么不同</div>
       </div>
       <div class="panel-actions">
         <div role="group" aria-label="词云视角">
@@ -26,7 +26,7 @@
         <span class="caliber-note">{{ caliberNote }}</span>
       </div>
 
-      <!-- 重点词排行流动（bump）：只挑「排名有变化」的词——泛高频词各段都
+      <!-- 重点词排行流动（bump）：只挑「排名有变化」的词——泛高频词各章都
            靠前、方差为 0 自然沉底，回答的是「什么词起来了、什么沉下去了」 -->
       <div v-if="bumpWords.length" class="bump-block">
         <div class="block-title">
@@ -35,18 +35,22 @@
         </div>
         <div ref="bumpRef" class="bump-chart" />
       </div>
-      <div v-else class="bump-empty">各段高频词很稳定，没有明显流动</div>
+      <div v-else-if="segmentList.length < 2" class="bump-empty">
+        只切出 1 章——词云照常呈现，但没有章间对比可看
+      </div>
+      <div v-else class="bump-empty">各章高频词很稳定，没有明显流动</div>
 
       <div class="segments-grid" :style="{ gridTemplateColumns: `repeat(${segmentList.length}, 1fr)` }">
         <div v-for="(seg, index) in segmentList" :key="index" class="segment-col">
           <div class="seg-head">
+            <span class="seg-label">第 {{ index + 1 }} 章</span>
             <span class="seg-range">{{ toCompactRange(seg.from_ts, seg.to_ts) }}</span>
             <span v-if="seg.truncated" class="pill" title="消息过多，已等距抽样前 1.5 万条">已抽样</span>
           </div>
           <div v-if="currentWords(seg).length" class="seg-cloud">
             <WordCloud :words="currentWords(seg)" :limit="40" :highlight="pinnedWord" @select="togglePin" />
           </div>
-          <div v-else class="seg-empty">这段没有足够的文本</div>
+          <div v-else class="seg-empty">这章没有足够的文本</div>
         </div>
       </div>
     </template>
@@ -96,7 +100,7 @@ const caliberLabel = computed(
   () => ({ cleaned: '清洗口径', raw: '原始文本口径', none: '无数据' } as Record<string, string>)[props.evolution?.caliber] || '未知口径',
 )
 
-// 口径由清洗覆盖率整窗二选一，绝不各段混用（见 docs/analysis/time-depth.md）
+// 口径由清洗覆盖率整窗二选一，绝不各章混用（见 docs/analysis/time-depth.md）
 const caliberNote = computed(() => {
   if (props.evolution?.caliber === 'cleaned') {
     return '已用分析清洗后的文本（去表情/XML/系统消息），词更干净'
@@ -104,14 +108,14 @@ const caliberNote = computed(() => {
   if (props.evolution?.caliber === 'raw') {
     return '该会话尚未全面分析（清洗文本覆盖率 '
       + Math.round((props.evolution?.coverage_ratio || 0) * 100)
-      + '%），各段统一用原始消息文本，保证口径一致'
+      + '%），各章统一用原始消息文本，保证口径一致'
   }
   return ''
 })
 
 // ---------------------------------------------------------------------------
-// 重点词排行流动：各段 words 数组顺序即排名（后端 most_common 序）。
-// weight 是段内归一化 1-100 跨段不可比，选词一律用排名。挑「≥2 段出现
+// 重点词排行流动：各章 words 数组顺序即排名（后端 most_common 序）。
+// weight 是章内归一化 1-100 跨章不可比，选词一律用排名。挑「≥2 章出现
 // 且排名有变化」里排名方差最大的 8 个——有变化才有「流动」故事。
 // ---------------------------------------------------------------------------
 const BUMP_WORD_LIMIT = 8
@@ -144,7 +148,7 @@ const bumpWords = computed<{ word: string; ranks: Array<number | null> }[]>(() =
     .map(({ word, ranks: arr }) => ({ word, ranks: arr }))
 })
 
-// 固定高亮词（点击词/折线切换）：bump 折线与各段词云同时高亮
+// 固定高亮词（点击词/折线切换）：bump 折线与各章词云同时高亮
 const pinnedWord = ref<string | null>(null)
 
 function togglePin(word?: string) {
@@ -177,7 +181,7 @@ function buildOption(): echarts.EChartsOption {
       formatter: (p: any) => {
         const rank = Array.isArray(p.value) ? p.value[1] : p.value
         const seg = segLabels[p.dataIndex] || ''
-        return `${p.seriesName}<br/>${seg}：${rank != null ? `第 ${rank} 名` : '未进该段前 30'}`
+        return `${p.seriesName}<br/>${seg}：${rank != null ? `第 ${rank} 名` : '未进该章前 30'}`
       },
     },
     xAxis: {
@@ -309,10 +313,15 @@ onUnmounted(() => {
   flex-wrap: wrap;
 }
 
-.seg-range {
-  color: var(--ct-text-primary);
+.seg-label {
+  color: var(--ct-color-primary);
   font-weight: var(--ct-font-bold);
   font-size: var(--ct-text-sm);
+}
+
+.seg-range {
+  color: var(--ct-text-secondary);
+  font-size: var(--ct-text-xs);
 }
 
 .seg-empty {

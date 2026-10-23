@@ -51,8 +51,9 @@ type PyWebViewApi = {
   get_conversation_list: (account_wxid?: string) => Promise<any>
   export_chat_records: (conversation_id: number, format?: string, start_date?: string, end_date?: string) => Promise<any>
   get_analysis: (params: { conversation_id: number; from: string; to: string }) => Promise<any>
-  // 时光深度：分桶情绪演变/词云演变/里程碑（bucket: day/week/month/year；word_segments: 词云分段 2~6 默认 4）
-  get_deep_analysis: (conversation_id: number, from: string, to: string, bucket?: string, word_segments?: number) => Promise<any>
+  // 时光深度：分桶情绪演变/里程碑（bucket: day/week/month/year；日期窗只作用情绪曲线，
+  // 词云/大五/里程碑按全会话·章节边界分段，payload.chapter_spans）
+  get_deep_analysis: (conversation_id: number, from: string, to: string, bucket?: string) => Promise<any>
   // 时光深度：关系章节（变点检测分段+周级大五分布，纯统计零 LLM；全会话口径不收日期窗）
   get_relationship_chapters: (conversation_id: number) => Promise<any>
   start_chapter_summaries: (conversation_id: number) => Promise<any>
@@ -68,8 +69,8 @@ type PyWebViewApi = {
   get_big5_impressions: (conversation_id: number, account_wxid?: string, fromTs?: number, toTs?: number) => Promise<any>
   enhance_big5_impressions: (conversation_id: number, account_wxid?: string, fromTs?: number, toTs?: number) => Promise<any>
   cancel_big5_impressions: (conversation_id: number, account_wxid?: string, fromTs?: number, toTs?: number) => Promise<any>
-  // 画像演变（时间窗均分 2~6 段对比；include_self 附带我的画像；force 无视缓存重算）
-  generate_profile_evolution: (conversation_id: number, from: string, to: string, include_self?: boolean, force?: boolean, account_wxid?: string, segments?: number) => Promise<any>
+  // 画像演变（按章节边界分段对比，全会话口径；include_self 附带我的画像；force 无视缓存重算）
+  generate_profile_evolution: (conversation_id: number, include_self?: boolean, force?: boolean, account_wxid?: string) => Promise<any>
   cancel_profile_evolution: (conversation_id: number, account_wxid?: string) => Promise<any>
   // 时光深度：分享海报（前端 html2canvas 合成，PNG 落盘导出目录）
   get_poster_payload: (conversation_id: number, from: string, to: string, account_wxid?: string) => Promise<any>

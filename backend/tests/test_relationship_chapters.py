@@ -288,3 +288,64 @@ class TestSummaryStatusDegradation:
         assert summary["arc_ready"] is False
         assert summary["arc"] is None
 
+
+
+class TestChapterSpans:
+    """C4 统一分段口径：章节可用→章边界段；不可用→全会话单段诚实降级。
+
+    词云/大五/画像演变/里程碑共用 chapter_spans 的段边界。"""
+
+    @pytest.fixture(autouse=True)
+    def _fresh_shared(self, monkeypatch):
+        # 共享服务是模块级单例：测试间清零，防指纹缓存跨内存库串数据
+        monkeypatch.setattr(rcmod, "_SHARED_SERVICE", None)
+
+    @staticmethod
+    def _seed_conv(conn):
+        conn.execute(
+            "INSERT INTO conversations(account_wxid, username, display_name)"
+            " VALUES ('wxid_me', 'wxid_ta', 'TA')"
+        )
+
+    def test_chapters_available_returns_boundaries(self, conn, service):
+        self._seed_conv(conn)
+        # 24 周两水平跳变：可检出 2 章（同 TestRelationshipChapterService 范式）
+        _seed_weeks(conn, 1, [(12, 12)] * 12 + [(40, 40)] * 12)
+
+        result = rcmod.chapter_spans(1)
+        assert result["ok"] is True
+        spans = result["spans"]
+        assert len(spans) == 2
+        # 闭区间、时间单调、段并集即全书范围（章界来自段内首末消息，允许有缝）
+        assert spans[0][0] < spans[0][1] < spans[1][0] < spans[1][1]
+        assert result["full_from"] == spans[0][0]
+        assert result["full_to"] == spans[-1][1]
+
+    def test_insufficient_data_degrades_to_single_full_span(self, conn, service):
+        self._seed_conv(conn)
+        for i in range(MIN_TOTAL_TEXTS - 1):
+            _seed_text(conn, 0, 1, i % 2, BASE_WEEK + i * 600)
+
+        result = rcmod.chapter_spans(1)
+        assert result["ok"] is False
+        assert result["spans"] == [(BASE_WEEK, BASE_WEEK + (MIN_TOTAL_TEXTS - 2) * 600)]
+        assert result["full_from"] == BASE_WEEK
+
+    def test_no_text_messages_empty_spans(self, conn, service):
+        self._seed_conv(conn)
+        result = rcmod.chapter_spans(1)
+        assert result == {"ok": False, "spans": [], "full_from": 0, "full_to": 0}
+
+    def test_detection_error_degrades_to_single_span(self, conn, service, monkeypatch):
+        """检测抛错（如缺表/库异常）：吞掉降级单段，不向上炸调用方。"""
+        self._seed_conv(conn)
+        _seed_text(conn, 0, 1, 0, BASE_WEEK)
+        _seed_text(conn, 0, 1, 1, BASE_WEEK + 3600)
+
+        def boom(self, cid):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(RelationshipChapterService, "get_chapters", boom)
+        result = rcmod.chapter_spans(1)
+        assert result["ok"] is False
+        assert result["spans"] == [(BASE_WEEK, BASE_WEEK + 3600)]

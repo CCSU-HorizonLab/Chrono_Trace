@@ -16,11 +16,8 @@ import app.services.analysis.analysis_service as analysismod
 import app.services.analysis.deep_analysis_service as deepmod
 import app.services.analysis.engagement_metrics as emmod
 import app.services.analysis.personality_impression_service as bimod
-from app.services.analysis.deep_analysis_service import (
-    DEEP_WORDCLOUD_SEGMENTS_DEFAULT,
-    DeepAnalysisService,
-    split_window_evenly,
-)
+import app.services.analysis.relationship_chapters as chaptersmod
+from app.services.analysis.deep_analysis_service import DeepAnalysisService
 
 
 def ts(year, month, day, hour=12):
@@ -54,8 +51,23 @@ def db(monkeypatch):
     # 两模块的顶层 get_db 绑定同样要替换（否则测试会摸到真实开发库）
     monkeypatch.setattr(bimod, "get_db", lambda: conn)
     monkeypatch.setattr(emmod, "get_db", lambda: conn)
+    # 章节分段（chapter_spans）降级路径直查 messages；检测路径在本测试库缺
+    # sessions/response_times 等表会抛错被吞，同样落到降级路径
+    monkeypatch.setattr(chaptersmod, "get_db", lambda: conn)
     yield conn
     conn.close()
+
+
+def use_chapter_spans(monkeypatch, *spans, ok=True):
+    """钉住章节分段（C4 统一口径）：deep/画像演变测试不依赖检测内部，
+    直接给定 (from_ts, to_ts) 闭区间边界。"""
+    monkeypatch.setattr(
+        chaptersmod, "chapter_spans",
+        lambda cid: {
+            "ok": ok, "spans": list(spans),
+            "full_from": spans[0][0], "full_to": spans[-1][1],
+        },
+    )
 
 
 _mid = iter(range(1, 100000))
@@ -149,7 +161,7 @@ class TestBucketSeries:
         assert first["msgCount"] == first["userMsgCount"] + first["otherMsgCount"]
         assert (second["userMsgCount"], second["otherMsgCount"]) == (0, 1)
         assert second["msgCount"] == second["userMsgCount"] + second["otherMsgCount"]
-        assert result["version"] == 4
+        assert result["version"] == 5
 
     def test_uncovered_bucket_keeps_full_count(self, db):
         """缺情感数据的桶：coverage=0、score=None、lowConfidence，msgCount 仍全量。"""
@@ -202,7 +214,9 @@ class TestTurningPoints:
 
 
 class TestMilestones:
-    def test_first_message_global_and_window_scope(self, db):
+    def test_first_message_full_session_scope(self, db):
+        """C4 起里程碑全会话口径：日期窗收窄也不漏全局首条，且不再产出
+        window 首条（全会话窗恒包含全局首条，窗口径留给海报路径）。"""
         msg(db, ts(2024, 5, 1))
         msg(db, ts(2026, 3, 5))
 
@@ -210,8 +224,9 @@ class TestMilestones:
             1, ts(2026, 1, 1), ts(2026, 3, 31), bucket="month"
         )
         firsts = [e for e in result["milestones"] if e["kind"] == "first_message"]
-        scopes = {e["scope"] for e in firsts}
-        assert scopes == {"global", "window"}
+        assert len(firsts) == 1
+        assert firsts[0]["scope"] == "global"
+        assert firsts[0]["ts"] == ts(2024, 5, 1)
 
     def test_count_marks_injected(self, db):
         for i in range(6):
@@ -260,23 +275,34 @@ class TestMilestones:
         assert first["ts"] == ts(2026, 3, 1)
 
 
-class TestWindowSplit:
-    def test_two_segments_match_legacy_halves_formula(self):
-        """N=2 与历史 mid_ts=(from+to)//2 前后切分逐点一致。"""
-        assert split_window_evenly(1000, 2001, 2) == [(1000, 1499), (1500, 2001)]
-        assert split_window_evenly(1000, 2000, 2) == [(1000, 1499), (1500, 2000)]
+class TestChapterSpanDegrade:
+    """C4 统一分段：小数据会话检测不出章节 → 全会话单段诚实降级。"""
 
-    def test_four_segments_even(self):
-        t0, day = 1000, 86400
-        # 前三段 [b_i, b_{i+1}-1]，末段含终点 to_ts
-        expected = [(t0 + i * day, t0 + (i + 1) * day - 1) for i in range(3)]
-        expected.append((t0 + 3 * day, t0 + 4 * day))
-        assert split_window_evenly(t0, t0 + 4 * day, 4) == expected
+    def test_small_conversation_degrades_to_single_full_span(self, db):
+        base = ts(2026, 3, 1)
+        for i in range(4):
+            msg(db, base + i * 60, content="火锅火锅火锅", with_sentiment=False)
 
-    def test_short_window_yields_empty_segment(self):
-        """窗口秒数小于段数时产出空段（end < start），由调用方守卫。"""
-        parts = split_window_evenly(1000, 1002, 4)
-        assert any(end < start for start, end in parts)
+        result = DeepAnalysisService().get_deep_analysis(
+            1, ts(2026, 3, 1), ts(2026, 3, 5), bucket="week"
+        )
+        # payload 携带章节分段：chapters_ok=False + 单段 [min, max]
+        assert result["chapters_ok"] is False
+        assert result["chapter_spans"] == [(base, base + 3 * 60)]
+        segs = result["wordcloud_evolution"]["segments"]
+        assert [(s["from_ts"], s["to_ts"]) for s in segs] == [(base, base + 3 * 60)]
+
+    def test_date_window_no_longer_cuts_wordcloud(self, db):
+        """词云/大五/里程碑全会话口径：日期窗收窄不再截掉词云段。"""
+        for day in (1, 2, 3, 4, 5):
+            msg(db, ts(2026, 3, day), content="火锅火锅火锅", with_sentiment=False)
+
+        narrow = DeepAnalysisService().get_deep_analysis(
+            1, ts(2026, 3, 4), ts(2026, 3, 5), bucket="week"
+        )
+        segs = narrow["wordcloud_evolution"]["segments"]
+        assert len(segs) == 1
+        assert segs[0]["total"] == 5  # 全会话 5 条都在，不受窗口影响
 
 
 class TestSegmentTextSampling:
@@ -303,24 +329,9 @@ class TestWordcloudEvolution:
         assert len(segs) == 1
         return segs[0]
 
-    def test_default_is_four_segments(self, db):
-        """默认 4 段，段边界与切窗工具一致。"""
-        base = ts(2026, 3, 1)
-        for i in range(4):
-            msg(db, base + i * 60, content="火锅火锅火锅", with_sentiment=False)
-
-        result = DeepAnalysisService().get_deep_analysis(
-            1, ts(2026, 3, 1), ts(2026, 3, 5), bucket="week"
-        )
-        segs = result["wordcloud_evolution"]["segments"]
-        assert len(segs) == DEEP_WORDCLOUD_SEGMENTS_DEFAULT == 4
-        assert [(s["from_ts"], s["to_ts"]) for s in segs] == split_window_evenly(
-            ts(2026, 3, 1), ts(2026, 3, 5), 4
-        )
-
     def test_cleaned_caliber_when_fully_preprocessed(self, db):
         """覆盖率 ≥90%：用清洗缓存文本，原始噪声词不出现。"""
-        base = ts(2026, 3, 3, 8)  # 上午：落默认 4 段中的第 2 段
+        base = ts(2026, 3, 3, 8)
         for i in range(4):
             mid = msg(db, base + i * 60, is_sender=i % 2, content="火锅火锅火锅", with_sentiment=False)
             preprocessed(db, mid, "旅行计划讨论")
@@ -350,43 +361,46 @@ class TestWordcloudEvolution:
         words = {w["word"] for w in self._only_segment_with_words(evo)["words"]["all"]}
         assert "火锅" in words
 
-    def test_party_split_across_segments(self, db):
-        """me/other 分视角；默认 4 段各段词集互不串段。"""
-        base = ts(2026, 3, 3)  # 正午：默认 4 段的边界在每日正午，03-03 属第 3 段
-        # 第 3 段（03-03 12:00 起）：我谈旅行，对方谈加班
+    def test_party_split_across_chapter_spans(self, db, monkeypatch):
+        """me/other 分视角；按章节边界切两段，各段词集互不串段。"""
+        base = ts(2026, 3, 2)
+        boundary = ts(2026, 3, 4)
+        use_chapter_spans(monkeypatch, (base, boundary), (boundary + 1, ts(2026, 3, 6)))
+        # 第 1 章：我谈旅行，对方谈加班
         for i in range(3):
             msg(db, base + i * 60, is_sender=1, content="旅行旅行旅行", with_sentiment=False)
             msg(db, base + i * 60 + 30, is_sender=0, content="加班加班加班", with_sentiment=False)
-        # 第 4 段（03-04 12:00 起）
-        late = ts(2026, 3, 4, 18)
+        # 第 2 章
+        late = ts(2026, 3, 5, 18)
         for i in range(3):
             msg(db, late + i * 60, is_sender=1, content="健身健身健身", with_sentiment=False)
             msg(db, late + i * 60 + 30, is_sender=0, content="考试考试考试", with_sentiment=False)
 
         result = DeepAnalysisService().get_deep_analysis(
-            1, ts(2026, 3, 1), ts(2026, 3, 5), bucket="week"
+            1, ts(2026, 3, 1), ts(2026, 3, 8), bucket="week"
         )
         segs = result["wordcloud_evolution"]["segments"]
-        assert len(segs) == 4
-        third, fourth = segs[2], segs[3]
-        third_all = {w["word"] for w in third["words"]["all"]}
-        assert {"旅行", "加班"} <= third_all
-        assert {w["word"] for w in third["words"]["me"]} == {"旅行"}
-        assert {w["word"] for w in third["words"]["other"]} == {"加班"}
-        assert {"健身", "考试"} <= {w["word"] for w in fourth["words"]["all"]}
+        assert len(segs) == 2
+        first, second = segs
+        first_all = {w["word"] for w in first["words"]["all"]}
+        assert {"旅行", "加班"} <= first_all
+        assert {w["word"] for w in first["words"]["me"]} == {"旅行"}
+        assert {w["word"] for w in first["words"]["other"]} == {"加班"}
+        assert {"健身", "考试"} <= {w["word"] for w in second["words"]["all"]}
 
-    def test_two_segments_reproduce_halves_boundary(self, db):
-        """segments=2 复现历史前后半窗边界：中点无缝相接，前后词集按半窗落段。"""
-        base = ts(2026, 3, 3)
+    def test_adjacent_spans_split_words_by_boundary(self, db, monkeypatch):
+        """章边界两侧消息各归各章：边界无缝相接（to+1=from），词集按章落段。"""
+        base = ts(2026, 3, 2)
+        mid = base + 86400
+        use_chapter_spans(monkeypatch, (base, mid), (mid + 1, mid + 86400))
         for i in range(3):
             msg(db, base + i * 60, is_sender=1, content="旅行旅行旅行", with_sentiment=False)
             msg(db, base + i * 60 + 30, is_sender=0, content="加班加班加班", with_sentiment=False)
-        late = ts(2026, 3, 4, 18)  # 窗口正中点之后，归后半窗
         for i in range(3):
-            msg(db, late + i * 60, is_sender=1, content="健身健身健身", with_sentiment=False)
+            msg(db, mid + 3600 + i * 60, is_sender=1, content="健身健身健身", with_sentiment=False)
 
         result = DeepAnalysisService().get_deep_analysis(
-            1, ts(2026, 3, 3), ts(2026, 3, 5), bucket="week", word_segments=2
+            1, base, mid + 86400, bucket="week"
         )
         segs = result["wordcloud_evolution"]["segments"]
         assert len(segs) == 2
@@ -394,20 +408,10 @@ class TestWordcloudEvolution:
         assert {w["word"] for w in segs[0]["words"]["me"]} == {"旅行"}
         assert {w["word"] for w in segs[1]["words"]["me"]} == {"健身"}
 
-    def test_segments_out_of_range_rejected(self, db):
-        result = DeepAnalysisService().get_deep_analysis(
-            1, ts(2026, 3, 1), ts(2026, 3, 5), bucket="week", word_segments=7
-        )
-        assert result["ok"] is False
-        assert "分段" in result["error"]
-
-    def test_short_window_returns_error_not_crash(self, db):
-        """窗口切不出 4 段：返回空段+error，不抛异常。"""
-        msg(db, 1000, content="火锅火锅火锅", with_sentiment=False)
-
-        evo = DeepAnalysisService()._wordcloud_evolution(1, 1000, 1002, 4)
-        assert evo["segments"] == []
-        assert evo["error"]
+    def test_no_text_messages_yields_empty_segments(self, db):
+        """全会话无文本消息：none 口径空段列表，不抛异常。"""
+        evo = DeepAnalysisService()._wordcloud_evolution(1, [(1000, 2000), (2001, 3000)])
+        assert evo == {"caliber": "none", "coverage_ratio": 0.0, "segments": []}
 
     def test_empty_window(self, db):
         result = DeepAnalysisService().get_deep_analysis(
@@ -417,6 +421,7 @@ class TestWordcloudEvolution:
         assert result["buckets"] == []
         assert result["wordcloud_evolution"]["segments"] == []
         assert result["milestones"] == []
+        assert result["chapter_spans"] == []
 
 
 class TestAffinityHistory:
@@ -443,7 +448,7 @@ class TestAffinityHistory:
 
 
 class TestBig5Evolution:
-    """deep payload 的 big5_evolution：段随 word_segments、薄段 None、短窗降级、首开落缓存。"""
+    """deep payload 的 big5_evolution：段随章节边界、薄段 None、空段降级、首开落缓存。"""
 
     @staticmethod
     def _seed_dense(db, start, n_each=40, step=60, content="消息内容"):
@@ -456,29 +461,32 @@ class TestBig5Evolution:
                     (side, f"{content}{i}", start + (i * 2 + side) * step),
                 )
 
-    def test_segments_follow_word_segments(self, db):
-        """段数与边界随 word_segments（与词云共用分段）；双侧均有画像。"""
-        window_from, window_to = ts(2026, 3, 1), ts(2026, 3, 5)
-        self._seed_dense(db, ts(2026, 3, 2, 11))  # 前半窗足量
-        self._seed_dense(db, ts(2026, 3, 4, 11))  # 后半窗足量
+    def test_series_follow_chapter_spans(self, db, monkeypatch):
+        """段数与边界随章节分段（与词云共用分段）；双侧均有画像。"""
+        span_a = (ts(2026, 3, 1), ts(2026, 3, 3))
+        span_b = (span_a[1] + 1, ts(2026, 3, 5))
+        use_chapter_spans(monkeypatch, span_a, span_b)
+        self._seed_dense(db, ts(2026, 3, 2, 11))  # 第 1 章足量
+        self._seed_dense(db, ts(2026, 3, 4, 11))  # 第 2 章足量
 
         result = DeepAnalysisService().get_deep_analysis(
-            1, window_from, window_to, bucket="week", word_segments=2
+            1, ts(2026, 3, 1), ts(2026, 3, 5), bucket="week"
         )
         evo = result["big5_evolution"]
         assert evo["segments"] == 2
         assert evo["min_messages"] == 30
-        assert [(s["from_ts"], s["to_ts"]) for s in evo["series"]] == split_window_evenly(
-            window_from, window_to, 2
-        )
+        assert [(s["from_ts"], s["to_ts"]) for s in evo["series"]] == [span_a, span_b]
         for seg in evo["series"]:
             assert seg["me"] is not None and seg["other"] is not None
             assert "error" not in seg
 
-    def test_thin_segment_subjects_none(self, db):
-        """后半窗每侧不足 30 条：该段 me/other 双 None，前段不受影响。"""
+    def test_thin_segment_subjects_none(self, db, monkeypatch):
+        """第 2 章每侧不足 30 条：该章 me/other 双 None，前章不受影响。"""
+        span_a = (ts(2026, 3, 1), ts(2026, 3, 3))
+        span_b = (span_a[1] + 1, ts(2026, 3, 5))
+        use_chapter_spans(monkeypatch, span_a, span_b)
         self._seed_dense(db, ts(2026, 3, 2, 11))
-        for i in range(10):  # 后半窗薄样本
+        for i in range(10):  # 第 2 章薄样本
             db.execute(
                 "INSERT INTO messages (conversation_id, is_sender, message_type, content, timestamp)"
                 " VALUES (1, ?, 1, '薄样本', ?)",
@@ -486,38 +494,118 @@ class TestBig5Evolution:
             )
 
         result = DeepAnalysisService().get_deep_analysis(
-            1, ts(2026, 3, 1), ts(2026, 3, 5), bucket="week", word_segments=2
+            1, ts(2026, 3, 1), ts(2026, 3, 5), bucket="week"
         )
         first, second = result["big5_evolution"]["series"]
         assert first["me"] is not None and first["other"] is not None
         assert second["me"] is None and second["other"] is None
         assert "error" not in second  # 薄样本是 None 而非错误
 
-    def test_short_window_degrades_not_crash(self, db):
-        """窗口秒数小于段数：空段标 error 降级，payload 不炸。"""
-        evo = DeepAnalysisService()._big5_evolution(1, 1000, 1002, 4)
-        assert len(evo["series"]) == 4
+    def test_empty_span_degrades_not_crash(self, db):
+        """空段（end < start，边界异常）：该段标 error 降级，payload 不炸。"""
+        evo = DeepAnalysisService()._big5_evolution(1, [(1000, 1002), (1002, 1000)])
+        assert len(evo["series"]) == 2
         assert all(s["me"] is None and s["other"] is None for s in evo["series"])
         assert any("error" in s for s in evo["series"])
 
-    def test_first_call_persists_custom_window_cache(self, db):
-        """首开逐段算 local 并落 custom 窗缓存；清空消息后二次调用原样命中。"""
+    def test_first_call_persists_custom_window_cache(self, db, monkeypatch):
+        """首开逐章算 local 并落 custom 窗缓存；清空消息后二次调用原样命中。"""
+        span_a = (ts(2026, 3, 1), ts(2026, 3, 3))
+        span_b = (span_a[1] + 1, ts(2026, 3, 5))
+        use_chapter_spans(monkeypatch, span_a, span_b)
         self._seed_dense(db, ts(2026, 3, 2, 11))
         self._seed_dense(db, ts(2026, 3, 4, 11))
         service = DeepAnalysisService()
         first = service.get_deep_analysis(
-            1, ts(2026, 3, 1), ts(2026, 3, 5), bucket="week", word_segments=2
+            1, ts(2026, 3, 1), ts(2026, 3, 5), bucket="week"
         )
 
         rows = db.execute(
             "SELECT COUNT(*) FROM big5_impressions WHERE window_kind = 'custom' AND source = 'local'"
         ).fetchone()
-        assert rows[0] == 4  # 2 段 × 双侧
+        assert rows[0] == 4  # 2 章 × 双侧
 
         db.execute("DELETE FROM messages")
         second = service.get_deep_analysis(
-            1, ts(2026, 3, 1), ts(2026, 3, 5), bucket="week", word_segments=2
+            1, ts(2026, 3, 1), ts(2026, 3, 5), bucket="week"
         )
         for a, b in zip(first["big5_evolution"]["series"], second["big5_evolution"]["series"]):
             assert a["me"]["scores"] == b["me"]["scores"]
             assert a["other"]["scores"] == b["other"]["scores"]
+
+
+class TestPosterBig5:
+    """海报大五窗口对齐（C4-2）：页头印的是窗口日期，大五读数必须同窗。"""
+
+    @staticmethod
+    def _fake_impression_service(monkeypatch, *, cached, computed=None):
+        """打桩大五服务：cached=(subject→行 or None) 缓存读数；
+        computed 缺省时 get_impressions 抛错（断言未被调用的用例靠它显红）。"""
+        import app.services.analysis.personality_impression_service as bimod
+
+        calls: list[tuple] = []
+
+        class FakeService:
+            def _load_cached(self, conv, account, subject, now, window=None):
+                calls.append(("load", subject, window))
+                return cached.get(subject)
+
+            def get_impressions(self, conv, account_wxid="", force_refresh=False,
+                                from_ts=None, to_ts=None):
+                calls.append(("compute", from_ts, to_ts))
+                if computed is None:
+                    raise AssertionError("custom 窗 miss 不应触发现算")
+                return computed
+
+        monkeypatch.setattr(bimod, "PersonalityImpressionService", FakeService)
+        return calls
+
+    def test_custom_window_miss_computes_local(self, db, monkeypatch):
+        """custom 窗缓存 miss：按海报窗口现算（from_ts/to_ts 透传）。"""
+        computed = {"ok": True, "subjects": {
+            "me": {"source": "local", "scores": {"openness": {"score": 62, "label": "开放"}}},
+            "other": {"source": "local", "scores": {"openness": {"score": 38, "label": "开放"}}},
+        }}
+        calls = self._fake_impression_service(monkeypatch, cached={}, computed=computed)
+
+        result = DeepAnalysisService._poster_big5(1, "wxid_me", 1000, 2000)
+
+        assert all(c == ("compute", 1000, 2000) for c in calls if c[0] == "compute")
+        assert result["me"]["source"] == "local"
+        assert result["me"]["scores"]["openness"] == {"score": 62, "label": "开放"}
+        assert result["other"]["scores"]["openness"]["score"] == 38
+
+    def test_custom_window_hit_skips_compute(self, db, monkeypatch):
+        """窗口缓存双侧命中：不现算，读数原样带回（证据不随海报出网）。"""
+        cached = {
+            "me": {
+                "source": "llm_enhanced",
+                "scores": {"openness": {"score": 70, "label": "开放", "base_score": 60}},
+                "evidence": {"openness": {"quote": "原文证据", "reason": "依据"}},
+            },
+            "other": {
+                "source": "local",
+                "scores": {"openness": {"score": 44, "label": "开放"}},
+            },
+        }
+        calls = self._fake_impression_service(monkeypatch, cached=cached)
+
+        result = DeepAnalysisService._poster_big5(1, "wxid_me", 1000, 2000)
+
+        assert not any(c[0] == "compute" for c in calls)
+        assert result["me"]["scores"]["openness"] == {"score": 70, "label": "开放"}  # 证据/base 剥离
+        assert result["other"]["scores"]["openness"]["score"] == 44
+
+    def test_cached_scores_stripped_to_score_label(self, db, monkeypatch):
+        """缓存行只带 score/label：base_score/adjustment 等内部字段不出网。"""
+        cached = {
+            "me": {"source": "local", "scores": {
+                "neuroticism": {"score": 41, "label": "敏感", "base_score": 50, "adjustment": -9},
+            }},
+            "other": {"source": "local", "scores": {}},
+        }
+        self._fake_impression_service(monkeypatch, cached=cached)
+
+        result = DeepAnalysisService._poster_big5(1, "wxid_me", 1000, 2000)
+
+        assert result["me"]["scores"]["neuroticism"] == {"score": 41, "label": "敏感"}

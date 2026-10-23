@@ -2,8 +2,8 @@
   <div class="time-deep-tab">
     <SentimentCoverageBar :conversation-id="conversationId" @backfilled="load()" />
 
-    <!-- 页签工具条：锚点导航 + 全局分段选择器（驱动词云/大五）+ 实体图例。
-         分段从词云面板上移至此——五面板共用的时间维度不该藏在某个面板头里 -->
+    <!-- 页签工具条：锚点导航 + 实体图例。词云/大五/画像/里程碑统一按章节
+         边界分段（chapter_spans，与章节面板同源），无全局分段选择器 -->
     <div class="deep-toolbar">
       <nav class="anchor-nav" aria-label="时光深度面板导航">
         <button v-for="a in anchors" :key="a.id" class="btn" @click="scrollTo(a.id)">
@@ -11,16 +11,6 @@
         </button>
       </nav>
       <div class="toolbar-right">
-        <div class="seg-picker" role="group" aria-label="分段数">
-          <span class="picker-label">分段</span>
-          <button
-            v-for="n in segmentOptions"
-            :key="n"
-            class="btn"
-            :class="{ active: wordSegments === n }"
-            @click="wordSegments = n"
-          >{{ n }}</button>
-        </div>
         <div class="legend-row">
           <span><span class="swatch" :style="{ background: BIG5_COLOR_ME }" />我</span>
           <span><span class="swatch" :style="{ background: BIG5_COLOR_OTHER }" />TA</span>
@@ -69,8 +59,8 @@
       <div :id="anchors[4].id" class="anchor-target">
         <ProfileEvolutionPanel
           :conversation-id="conversationId"
-          :dates="dates"
           :view-epoch="viewEpoch"
+          :chapter-spans="payload.chapter_spans || []"
           :contact-name="contactName"
         />
       </div>
@@ -79,6 +69,7 @@
           :milestones="payload.milestones || []"
           :turning-points="payload.turning_points || []"
           :granularity="granularity"
+          :chapter-spans="payload.chapter_spans || []"
         />
       </div>
     </template>
@@ -110,9 +101,6 @@ const props = defineProps<{
 const payload = ref<any>(null)
 const loading = ref(false)
 const error = ref('')
-// 词云演变分段数（2~6，默认 4）；工具条选择器改它触发整 payload 重拉（词云与大五共用）
-const wordSegments = ref(4)
-const segmentOptions = [2, 3, 4, 5, 6]
 
 const anchors = [
   { id: 'deep-anchor-chapters', label: '章节' },
@@ -133,7 +121,7 @@ async function load() {
   error.value = ''
   try {
     const result = await api.get_deep_analysis(
-      props.conversationId, props.dates.from, props.dates.to, props.granularity, wordSegments.value,
+      props.conversationId, props.dates.from, props.dates.to, props.granularity,
     )
     if (epoch !== props.viewEpoch) return // 已切走，丢弃过期响应
     if (!result?.ok) {
@@ -152,7 +140,7 @@ async function load() {
 }
 
 watch(
-  () => [props.conversationId, props.dates.from, props.dates.to, props.granularity, props.viewEpoch, wordSegments.value],
+  () => [props.conversationId, props.dates.from, props.dates.to, props.granularity, props.viewEpoch],
   () => { payload.value = null; load() },
   { immediate: true },
 )
@@ -191,18 +179,6 @@ watch(
   align-items: center;
   gap: var(--ct-space-lg);
   flex-wrap: wrap;
-}
-
-.seg-picker {
-  display: flex;
-  align-items: center;
-  gap: var(--ct-space-xs);
-}
-
-.picker-label {
-  color: var(--ct-text-tertiary);
-  font-size: var(--ct-text-xs);
-  margin-right: 2px;
 }
 
 /* 锚点目标预留吸顶工具条高度，标题不被遮 */

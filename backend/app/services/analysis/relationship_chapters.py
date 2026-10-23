@@ -766,3 +766,52 @@ class RelationshipChapterService:
             if gap < best_gap:
                 best, best_gap = ts, gap
         return best if best_gap <= radius else None
+
+
+# ----------------------------------------------------------------------
+# C4 统一分段口径：词云/大五/画像演变/里程碑共用的分段边界（全会话·章节）
+# ----------------------------------------------------------------------
+
+_SHARED_SERVICE: Optional["RelationshipChapterService"] = None
+
+
+def get_shared_chapter_service() -> "RelationshipChapterService":
+    """进程级共享实例：指纹缓存跨调用方生效（桥 / deep payload / 画像演变
+    各自建实例会让同一会话的 13 万条整算重付多次）。"""
+    global _SHARED_SERVICE
+    if _SHARED_SERVICE is None:
+        _SHARED_SERVICE = RelationshipChapterService()
+    return _SHARED_SERVICE
+
+
+def chapter_spans(conversation_id: int) -> Dict[str, Any]:
+    """统一分段边界：章节检测可用 → 章节边界段；不可用（数据不足/出错）→
+    全会话单段（诚实降级：检测不出行为变点就没有「演变对比」可言，
+    但全量段照给——词云/大五仍可呈现，只是无段间对比）。
+
+    返回 {ok, spans: [(from_ts, to_ts) 闭区间...], full_from, full_to}；
+    无任何文本消息时 spans 为空。
+    """
+    conversation_id = int(conversation_id or 0)
+    try:
+        payload = get_shared_chapter_service().get_chapters(conversation_id)
+        chapters = payload.get("chapters") or []
+        if payload.get("ok") and chapters:
+            spans = [(int(c["from_ts"]), int(c["to_ts"])) for c in chapters]
+            return {
+                "ok": True, "spans": spans,
+                "full_from": spans[0][0], "full_to": spans[-1][1],
+            }
+    except Exception as exc:
+        logger.warning("[章节分段] 检测失败降级单段: %s", exc)
+    row = get_db().execute(
+        "SELECT MIN(timestamp), MAX(timestamp) FROM messages"
+        " WHERE conversation_id = ? AND message_type = 1"
+        " AND content IS NOT NULL AND TRIM(content) != ''",
+        (conversation_id,),
+    ).fetchone()
+    if not row or row[0] is None:
+        return {"ok": False, "spans": [], "full_from": 0, "full_to": 0}
+    full_from, full_to = int(row[0]), int(row[1])
+    return {"ok": False, "spans": [(full_from, full_to)],
+            "full_from": full_from, "full_to": full_to}

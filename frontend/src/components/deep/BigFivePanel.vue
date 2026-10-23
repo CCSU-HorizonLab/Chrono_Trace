@@ -39,19 +39,27 @@
             <div v-for="dim in subject.dims" :key="dim.key" class="dim-row">
               <span class="dim-label">{{ dim.label }}</span>
               <div class="dim-track">
+                <!-- 不确定带：有界校正 ±15，真实位置只在此带内——精确点分假装精度 -->
+                <div
+                  v-if="dim.bandFrom !== undefined"
+                  class="dim-band"
+                  :style="{ left: `${dim.bandFrom}%`, width: `${(dim.bandTo || 0) - dim.bandFrom}%` }"
+                />
                 <div
                   class="dim-fill"
                   :class="subject.key"
                   :style="{ width: `${dim.score}%` }"
                 />
                 <div
-                  v-if="dim.baseScore !== undefined && dim.baseScore !== dim.score"
+                  v-if="dim.baseScore !== undefined"
                   class="dim-base-tick"
                   :style="{ left: `${dim.baseScore}%` }"
                   :title="`统计基础分 ${dim.baseScore}`"
                 />
               </div>
-              <span class="dim-score">{{ Math.round(dim.score) }}</span>
+              <span class="dim-score">
+                {{ Math.round(dim.score) }}<template v-if="dim.bandFrom !== undefined"><span class="dim-band-text"> · {{ dim.bandFrom }}-{{ dim.bandTo }}</span></template>
+              </span>
               <span v-if="dim.adjustment" class="dim-adjust" :class="{ up: dim.adjustment > 0 }">
                 {{ dim.adjustment > 0 ? '+' : '' }}{{ dim.adjustment }}
               </span>
@@ -97,7 +105,7 @@ type SubjectPayload = {
 
 const props = defineProps<{ conversationId: number }>()
 
-const payload = ref<{ ok: boolean; source?: string; subjects?: Record<string, SubjectPayload>; disclaimer?: string } | null>(null)
+const payload = ref<{ ok: boolean; source?: string; window?: { kind?: string; from?: number; to?: number }; subjects?: Record<string, SubjectPayload>; disclaimer?: string } | null>(null)
 const loading = ref(false)
 const enhancing = ref(false)
 const error = ref('')
@@ -116,10 +124,19 @@ const isEnhanced = computed(() =>
 )
 const sourceBadgeText = computed(() => (isEnhanced.value ? 'AI 增强' : '本地统计'))
 const sourceBadgeClass = computed(() => (isEnhanced.value ? 'enhanced' : ''))
+/** 语料口径：全会话 or 指定窗——面板默认全会话，缺了这行就分不清语料范围 */
+const windowNote = computed(() => {
+  const win = payload.value?.window
+  if (win?.kind === 'custom' && win.from && win.to) {
+    const fmt = (ts: number) => new Date(ts * 1000).toLocaleDateString('zh-CN')
+    return `，语料：指定窗 ${fmt(win.from)} ~ ${fmt(win.to)}`
+  }
+  return '，语料：全会话'
+})
 const sourceNote = computed(() =>
   isEnhanced.value
-    ? '本地统计 + AI 有界校正（±15 以内），附原文证据'
-    : '纯本地行为统计，无需配置模型；点「AI 校正」可结合原文做有界修正',
+    ? `本地统计 + AI 有界校正（±15 以内），附原文证据${windowNote.value}`
+    : `纯本地行为统计，无需配置模型；点「AI 校正」可结合原文做有界修正${windowNote.value}`,
 )
 const disclaimer = computed(
   () => payload.value?.disclaimer || '语言风格印象，非心理测评；大五为连续维度（0-100），不构成人格结论',
@@ -130,6 +147,9 @@ interface DimRow {
   label: string
   score: number
   baseScore?: number
+  /** 不确定带 [base-15, base+15]（clamp 0-100）：只有 AI 增强行有，纯统计行无 */
+  bandFrom?: number
+  bandTo?: number
   adjustment?: number
 }
 
@@ -142,11 +162,14 @@ const activeSubjects = computed(() => {
     for (const dimKey of DIM_ORDER) {
       const item = subject.scores?.[dimKey]
       if (typeof item?.score !== 'number') continue
+      const baseScore = typeof item.base_score === 'number' ? item.base_score : undefined
       dims.push({
         key: dimKey,
         label: item.label || dimKey,
         score: item.score,
-        baseScore: typeof item.base_score === 'number' ? item.base_score : undefined,
+        baseScore,
+        bandFrom: baseScore !== undefined ? Math.max(0, Math.round(baseScore - 15)) : undefined,
+        bandTo: baseScore !== undefined ? Math.min(100, Math.round(baseScore + 15)) : undefined,
         adjustment: typeof item.adjustment === 'number' ? item.adjustment : undefined,
       })
     }
@@ -293,6 +316,15 @@ watch(() => props.conversationId, () => {
 .dim-fill.me { background: var(--ct-chart-1); }
 .dim-fill.other { background: var(--ct-chart-4); }
 
+/* 不确定带：主体色 12% 淡染的底带，fill 压在其上 */
+.dim-band {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ct-text-tertiary) 18%, transparent);
+}
+
 .dim-base-tick {
   position: absolute;
   top: -3px;
@@ -303,11 +335,16 @@ watch(() => props.conversationId, () => {
 }
 
 .dim-score {
-  width: 2em;
   text-align: right;
+  white-space: nowrap;
   color: var(--ct-text-primary);
   font-size: var(--ct-text-xs);
   font-weight: var(--ct-font-bold);
+}
+
+.dim-band-text {
+  color: var(--ct-text-tertiary);
+  font-weight: var(--ct-font-normal);
 }
 
 .dim-adjust {

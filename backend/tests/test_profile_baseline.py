@@ -141,7 +141,7 @@ class TestPromptInjection:
         assert "【长期背景】" in captured["prompt"]
         assert "本次窗口样本覆盖" in captured["prompt"]
 
-    def test_schema_version_is_v4(self):
-        # 口径变更随行落库：v4 = 长期背景块 + 长期记忆事实块 + 关系章节摘要块（模块级常量，两 profiler 同值同升）
-        assert contact_profiler_mod.PROFILE_SNAPSHOT_SCHEMA == 4
-        assert self_profiler_mod.PROFILE_SNAPSHOT_SCHEMA == 4
+    def test_schema_version_is_v5(self):
+        # 口径变更随行落库：v5 = v4 三个注入块 + origin 来源列（模块级常量，两 profiler 同值同升）
+        assert contact_profiler_mod.PROFILE_SNAPSHOT_SCHEMA == 5
+        assert self_profiler_mod.PROFILE_SNAPSHOT_SCHEMA == 5

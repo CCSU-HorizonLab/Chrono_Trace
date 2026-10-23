@@ -16,3 +16,14 @@ export function toCompactRange(fromTsSeconds: number, toTsSeconds: number): stri
   }
   return `${fmt(fromTsSeconds)} ~ ${fmt(toTsSeconds)}`
 }
+
+// 相对新鲜度（N 天前生成）：画像徽标惯用语三件套之一（窗口档位 + 覆盖比 +
+// 新鲜度），绝对日期不换算就读不出画像是否已陈旧。ProfileBriefCard 与
+// PersonaGallery 共用
+export function toAgoLabel(tsSeconds: number): string {
+  const days = Math.floor((Date.now() / 1000 - tsSeconds) / 86400)
+  if (days <= 0) return '今天生成'
+  if (days === 1) return '1 天前生成'
+  if (days < 30) return `${days} 天前生成`
+  return `${Math.floor(days / 30)} 个月前生成`
+}

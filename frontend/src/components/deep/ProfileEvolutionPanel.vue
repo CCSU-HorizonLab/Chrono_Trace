@@ -4,25 +4,15 @@
       <div>
         <div class="panel-title">画像演变</div>
         <div class="panel-sub">
-          把时间窗均分为 {{ segmentCount }} 段，从上到下逐段生成 TA 的画像，对比印象的变化
+          按关系章节逐章生成 TA 的画像，从上到下对比印象的变化（与章节面板同源分段）
         </div>
       </div>
       <div class="panel-actions">
-        <div class="seg-group" role="group" aria-label="画像分段数">
-          <button
-            v-for="n in segmentOptions"
-            :key="n"
-            class="btn"
-            :class="{ active: segmentCount === n }"
-            :disabled="state === 'generating'"
-            @click="setSegments(n)"
-          >{{ n }} 段</button>
-        </div>
-        <label v-if="state !== 'generating'" class="self-toggle">
+        <label v-if="state !== 'generating' && !singleChapter" class="self-toggle">
           <input v-model="includeSelf" type="checkbox" :disabled="state === 'generating'" />
           包含我的画像
         </label>
-        <button v-if="state === 'idle'" class="btn primary" @click="generate(false)">
+        <button v-if="state === 'idle' && !singleChapter" class="btn primary" @click="generate(false)">
           生成对比
         </button>
         <template v-else-if="state === 'done'">
@@ -37,24 +27,30 @@
     <div v-if="hint" class="hint">{{ hint }}</div>
 
     <div v-if="state === 'generating'" class="state-text">
-      正在为 {{ segmentCount }} 个分段分别生成画像，最多 {{ segmentCount * (includeSelf ? 2 : 1) }} 次 AI 调用；
-      已完成的分段会存为快照，中断后重试免费续跑…
+      正在为 {{ segmentCount }} 个章节分别生成画像，最多 {{ segmentCount * (includeSelf ? 2 : 1) }} 次 AI 调用；
+      已完成的章节会存为快照，中断后重试免费续跑…
     </div>
     <div v-else-if="state === 'error'" class="state-text error-text">{{ error }}</div>
 
+    <div v-else-if="singleChapter && !result" class="empty-state guide">
+      只检测到 1 个章节——没有「演变」可对比。TA 的当前画像请看「TA 画像」页签；
+      会话更久、消息更多后章节检测才可能分出多章
+    </div>
+
     <div v-else-if="state === 'idle' && !result" class="empty-state guide">
-      点「生成对比」按当前时间窗分段生成画像——从最早的段落往下读到最近，看 TA 给你的印象怎么变；
-      已完成的分段会缓存，中断后重试免费续跑
+      点「生成对比」按关系章节分段生成画像——从最早的一章往下读到最近，看 TA 给你的印象怎么变；
+      已完成的章节会缓存，中断后重试免费续跑
     </div>
 
     <template v-if="result && state !== 'generating' && state !== 'error'">
-      <!-- 竖排时间线全段卡：左缘竖线贯穿 + 段间向下箭头，段头只标时间区间 -->
+      <!-- 竖排时间线全章卡：左缘竖线贯穿 + 章间向下箭头，章头标章号与时间区间 -->
       <div class="segments-stack">
         <template v-for="(seg, index) in segmentList" :key="index">
           <div class="segment-row">
             <span class="row-dot" />
             <div class="segment-card">
               <div class="segment-head">
+                <span class="segment-label">{{ seg.label || `第 ${index + 1} 章` }}</span>
                 <span class="segment-range">{{ toCompactRange(seg.from_ts, seg.to_ts) }}</span>
               </div>
 
@@ -122,8 +118,8 @@
       </div>
 
       <div class="tag-legend">
-        <span class="legend-item"><span class="tag unique" />该段独有</span>
-        <span class="legend-item"><span class="tag shared" />各段都有</span>
+        <span class="legend-item"><span class="tag unique" />该章独有</span>
+        <span class="legend-item"><span class="tag shared" />各章都有</span>
       </div>
     </template>
   </div>
@@ -142,9 +138,10 @@ type Segment = { from_ts: number; to_ts: number; label: string; contact?: KindBl
 
 const props = defineProps<{
   conversationId: number
-  dates: { from: string; to: string }
   /** 父页视图纪元：切换会话/账号时 +1，用于丢弃过期响应 */
   viewEpoch: number
+  /** 章节边界段（deep payload.chapter_spans）：单章时隐藏生成入口（无演变可对比） */
+  chapterSpans?: Array<[number, number]>
   contactName?: string
 }>()
 
@@ -152,25 +149,14 @@ const state = ref<'idle' | 'generating' | 'done' | 'error'>('idle')
 const result = ref<{ segments?: Segment[] } | null>(null)
 const error = ref('')
 const hint = ref('')
-// 画像分段独立于词云分段（每段一次 LLM 快照，成本自控），默认 2 段；
-// 重挂先回到该会话上次生成的档位（否则缓存里的结果按原键查不到）
+// 含我标记随会话记忆：重挂先回到该会话上次生成的档（否则缓存按原键查不到）
 const initialSettings = getLastEvolutionSettings(props.conversationId)
 const includeSelf = ref(initialSettings?.self ?? false)
-const segmentCount = ref(initialSettings?.segments ?? 2)
-const segmentOptions = [2, 3, 4, 5, 6]
 
 const segmentList = computed(() => result.value?.segments || [])
-
-function setSegments(n: number) {
-  if (segmentCount.value === n || state.value === 'generating') return
-  segmentCount.value = n
-  // 快照按 (from,to) 精确命中，切档重开生成即回免费档；旧结果清掉防错配
-  state.value = 'idle'
-  result.value = null
-  hint.value = ''
-  error.value = ''
-  restoreFromCache()
-}
+const segmentCount = computed(() => segmentList.value.length || props.chapterSpans?.length || 0)
+// 章节边界已知且只 1 章：诚实降级——单章画像与「TA 画像」页签重复，不值一次 LLM
+const singleChapter = computed(() => (props.chapterSpans?.length ?? 0) === 1)
 
 function textOf(profile: any, key: string): string {
   const value = profile?.[key]
@@ -183,7 +169,7 @@ function listOf(profile: any, key: string): string[] {
 }
 
 function tagRows(index: number): Array<{ name: string; cls: string; title: string }> {
-  // 标签按跨段在场着色：仅本段出现 → 琥珀差异色；多段都有 → 中性色
+  // 标签按跨章在场着色：仅本章出现 → 琥珀差异色；多章都有 → 中性色
   const own = new Set(listOf(segmentList.value[index]?.contact?.profile, 'personality_tags'))
   const elsewhere = new Set<string>()
   segmentList.value.forEach((seg, i) => {
@@ -193,35 +179,27 @@ function tagRows(index: number): Array<{ name: string; cls: string; title: strin
   })
   return [...own].map((name) => {
     if (!elsewhere.has(name)) {
-      return { name, cls: 'unique', title: '仅该段出现' }
+      return { name, cls: 'unique', title: '仅该章出现' }
     }
-    return { name, cls: 'shared', title: '多段都有' }
+    return { name, cls: 'shared', title: '多章都有' }
   })
 }
 
 async function generate(force: boolean) {
-  // 会话一致性守卫：慢响应后到时不能覆盖切走后的面板（画像张冠李戴）。
-  // 日期一并入守卫——生成期间改时间窗，旧窗数据不能落回新日期下
+  // 会话一致性守卫：慢响应后到时不能覆盖切走后的面板（画像张冠李戴）
   const requestConv = props.conversationId
   const requestEpoch = props.viewEpoch
-  const requestFrom = props.dates.from
-  const requestTo = props.dates.to
-  // 记住本次发起的档位：切页回来/切回本会话按原档直接恢复显示
-  rememberEvolutionSettings(requestConv, segmentCount.value, includeSelf.value)
+  // 记住本次发起的含我标记：切页回来/切回本会话按原标记直接恢复显示
+  rememberEvolutionSettings(requestConv, includeSelf.value)
   state.value = 'generating'
   error.value = ''
   hint.value = ''
   try {
-    const res = await runEvolution(
-      requestConv, requestFrom, requestTo, includeSelf.value, force, segmentCount.value,
-    )
-    if (
-      requestConv !== props.conversationId || requestEpoch !== props.viewEpoch
-      || requestFrom !== props.dates.from || requestTo !== props.dates.to
-    ) return
+    const res = await runEvolution(requestConv, includeSelf.value, force)
+    if (requestConv !== props.conversationId || requestEpoch !== props.viewEpoch) return
     if (res?.cancelled) {
       state.value = result.value ? 'done' : 'idle'
-      hint.value = '已取消；已完成的分段已存为快照，重试会续跑'
+      hint.value = '已取消；已完成的章节已存为快照，重试会续跑'
       return
     }
     if (!res?.ok) {
@@ -239,12 +217,9 @@ async function generate(force: boolean) {
     const cachedCount = (res.segments || []).filter(
       (seg: Segment) => seg.contact?.cached || seg.self?.cached,
     ).length
-    if (cachedCount) hint.value = `${cachedCount} 个分段命中历史快照，未重复调用 AI`
+    if (cachedCount) hint.value = `${cachedCount} 个章节命中历史快照，未重复调用 AI`
   } catch (e: any) {
-    if (
-      requestConv !== props.conversationId || requestEpoch !== props.viewEpoch
-      || requestFrom !== props.dates.from || requestTo !== props.dates.to
-    ) return
+    if (requestConv !== props.conversationId || requestEpoch !== props.viewEpoch) return
     state.value = 'error'
     error.value = e?.message || '请求失败'
   }
@@ -260,11 +235,10 @@ async function cancel() {
 }
 
 watch(
-  () => [props.conversationId, props.dates.from, props.dates.to, props.viewEpoch],
+  () => [props.conversationId, props.viewEpoch],
   () => {
-    // 切会话：档位跟着切到该会话上次的生成档，缓存按原键命中直接显示
+    // 切会话：含我标记跟着切到该会话上次的生成档，缓存按原键命中直接显示
     const last = getLastEvolutionSettings(props.conversationId)
-    segmentCount.value = last?.segments ?? 2
     includeSelf.value = last?.self ?? false
     state.value = 'idle'
     result.value = null
@@ -277,10 +251,7 @@ watch(
 // 重挂恢复：在途调用接管等待（完成后照常渲染），已完成则直接显示
 // ——路由切走再切回不再丢结果/丢进度
 function restoreFromCache() {
-  const entry = getCachedEvolution(
-    props.conversationId, props.dates.from, props.dates.to,
-    segmentCount.value, includeSelf.value,
-  )
+  const entry = getCachedEvolution(props.conversationId, includeSelf.value)
   if (entry?.promise) {
     void generate(false)
   } else if (entry?.res) {
@@ -293,11 +264,6 @@ restoreFromCache()
 </script>
 
 <style scoped>
-.seg-group {
-  display: flex;
-  gap: var(--ct-space-xs);
-}
-
 .self-toggle {
   display: inline-flex;
   align-items: center;
@@ -387,10 +353,15 @@ restoreFromCache()
   flex-wrap: wrap;
 }
 
-.segment-range {
-  color: var(--ct-text-primary);
+.segment-label {
+  color: var(--ct-color-primary);
   font-weight: var(--ct-font-bold);
   font-size: var(--ct-text-sm);
+}
+
+.segment-range {
+  color: var(--ct-text-secondary);
+  font-size: var(--ct-text-xs);
 }
 
 /* 全宽卡内 TA/我两块并排（窄屏自动叠放） */

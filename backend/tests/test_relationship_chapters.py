@@ -212,3 +212,21 @@ class TestRelationshipChapterService:
         result = service.get_chapters(999)
         assert result["ok"] is False
         assert result["reason"] == "insufficient_data"
+
+    def test_silence_gap_weeks_filled_and_dated(self, conn, service):
+        """中间静默数周：空周补零进周序列；沉默章起于空周时时间戳仍有值。"""
+        conn.execute(
+            "INSERT INTO conversations(account_wxid, username, display_name)"
+            " VALUES ('wxid_me', 'wxid_ta', 'TA')"
+        )
+        # 周 0-8 有消息，周 9-11 完全静默，周 12 恢复 → 周序列 13 周含 3 个空周
+        _seed_weeks(conn, 1, [(20, 20)] * 9)
+        for k in range(40):
+            _seed_text(conn, 0, 1, k % 2, BASE_WEEK + 12 * WEEK_SECONDS + 3600 + k * 300)
+        result = service.get_chapters(1)
+        assert result["ok"] is True, result
+        assert result["span"]["week_count"] == 13
+        assert sum(result["weekly"]["texts_me"]) == 9 * 20 + 20
+        # 所有章节时间戳非空（沉默段起点不许是 None）
+        for ch in result["chapters"]:
+            assert ch["from_ts"] and ch["to_ts"] and ch["from_ts"] <= ch["to_ts"]

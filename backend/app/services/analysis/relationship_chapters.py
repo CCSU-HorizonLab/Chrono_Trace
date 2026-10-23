@@ -502,12 +502,22 @@ class RelationshipChapterService:
         for seg, (i0, i1) in enumerate(zip(starts, list(starts[1:]) + [len(weeks)])):
             seg_weeks = weeks[i0:i1]
             stats = self._segment_stats(seg_weeks)
+            # 段首/尾可能是沉默期空周（first_ts=None）：跳过空周取首个非空锚点，
+            # 全空段兜底周界——沉默章也必须有可显示的时间范围
+            first_ts = next(
+                (w["first_ts"] for w in seg_weeks if w["first_ts"] is not None),
+                seg_weeks[0]["start"],
+            )
+            last_ts = next(
+                (w["last_ts"] for w in reversed(seg_weeks) if w["last_ts"] is not None),
+                seg_weeks[-1]["start"] + WEEK_SECONDS - 1,
+            )
             chapter = {
                 "index": seg,
                 "week_index": i0,
                 "week_end": i1,
-                "from_ts": seg_weeks[0]["first_ts"],
-                "to_ts": seg_weeks[-1]["last_ts"],
+                "from_ts": first_ts,
+                "to_ts": last_ts,
                 "stats": stats,
                 "changes": [],
             }

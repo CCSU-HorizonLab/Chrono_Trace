@@ -1346,7 +1346,7 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, Backfi
 
         # 缺口已被导入覆盖则不再询问：距上次监听超阈值就弹「是否补全」的
         # 提示，从不检查缺口消息是否已通过增量导入进库——频繁导入的用户
-        # 每次进监听都被打扰（实测：联系人C会话每次必弹）。
+        # 每次进监听都被打扰（实测：某高频会话每次必弹）。
         if checkpoint['should_offer_resume'] and self._checkpoint_gap_covered_by_import(
             checkpoint, resolved_account_wxid
         ):

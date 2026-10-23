@@ -83,7 +83,7 @@ def _seed_conversation(conn):
 
 
 def _seed_active_fact(store):
-    """一条活跃事实（无向量）——联系人B实况的最小复现。"""
+    """一条活跃事实（无向量）——长会话联系人实况的最小复现。"""
     now = int(time.time())
     store.conn.execute(
         """

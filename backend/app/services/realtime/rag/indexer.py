@@ -225,7 +225,7 @@ class RagIndexer:
         事实抽取与向量写入是两条异步链：抽取出的事实可能在 ONNX 故障
         窗口或旧版本时期落下而无向量（事实检索静默退化为文档通道）。
         挂点三处：ensure 的 ready 分支、rebuild 增量跳过路径、rebuild
-        完成路径——联系人B类静默联系人（无监听无建议，ensure 从未被调）
+        完成路径——长尾静默联系人（无监听无建议，ensure 从未被调）
         只能靠后两处在手动重建时自愈。
         """
         if not settings.get("rag_fact_read_enabled"):

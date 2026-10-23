@@ -36,7 +36,7 @@
 - [x] `relationship_chapters.py`：周级指标采集（复用 big5_proxies 锚点插值与缺席重归一）+ `detect_chapters` 纯函数（DP 精确解）+ 里程碑吸附 + 变化归因（相邻段 z 差）
 - [x] 桥 `get_relationship_chapters`；前端 `RelationshipChaptersPanel`（周量图+边界线、大五分布带 5 行、章节卡）挂时光深度首位锚点「章节」
 - [x] 测试 `test_relationship_chapters.py`（纯函数分段正确性 / 周级大五缺席语义 / payload 结构）
-- 验收：合成序列单变点检出误差 ≤3 周；真机会话出 2~6 章、分布带有连续非空周
+- 验收 ✅（2026-10-23 真机，会话 1599 联系人C 131598 条 / 582 周）：合成单变点误差 ≤3 周；真机 7 章（MAX 8 内）时间轴单调、401 天沉默期独立成章；分布带非空周 420/582（我）/396/582（TA）；整算 7.25s
 
 ### C2 摘要金字塔（全量语料落地）
 

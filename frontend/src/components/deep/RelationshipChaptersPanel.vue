@@ -187,6 +187,33 @@ function fmtWeek(ts: number): string {
   return `${d.getMonth() + 1}/${d.getDate()}`
 }
 
+function fmtWeekFull(ts: number): string {
+  const d = new Date(ts * 1000)
+  return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`
+}
+
+// x 轴标签随跨度自适应：582 周标「8/31」毫无信息量——半年内标月/日，
+// 两年半内标每月首周（YY/M），更长只标每年首周（YYYY）
+function axisWeekLabels(weekStarts: number[]): string[] {
+  const n = weekStarts.length
+  if (n <= 27) return weekStarts.map(fmtWeek)
+  const out: string[] = []
+  let last = -1
+  for (const ts of weekStarts) {
+    const d = new Date(ts * 1000)
+    if (n <= 130) {
+      const m = d.getFullYear() * 12 + d.getMonth()
+      out.push(m !== last ? `${String(d.getFullYear()).slice(2)}/${d.getMonth() + 1}` : '')
+      last = m
+    } else {
+      const y = d.getFullYear()
+      out.push(y !== last ? String(y) : '')
+      last = y
+    }
+  }
+  return out
+}
+
 function buildOption(): echarts.EChartsOption | null {
   const data = payload.value
   if (!data?.ok || !data.week_starts.length) return null
@@ -198,7 +225,7 @@ function buildOption(): echarts.EChartsOption | null {
   const borderColor = css('--ct-border-color', '#E9E5DF')
   const bgCard = css('--ct-bg-card', '#FFFFFF')
   const labels = data.big5_labels || {}
-  const categories = data.week_starts.map(fmtWeek)
+  const categories = axisWeekLabels(data.week_starts)
   const boundaries = data.chapters.slice(1).map((c) => ({ xAxis: c.week_index }))
 
   const grids: any[] = []
@@ -289,6 +316,19 @@ function buildOption(): echarts.EChartsOption | null {
       backgroundColor: bgCard, borderColor, padding: [6, 10],
       textStyle: { fontSize: 12, color: css('--ct-text-primary', '#1B1924') },
       axisPointer: { type: 'line', lineStyle: { color: textTertiary, type: 'dashed' } },
+      // category 标签已折叠为年份/月份，tooltip 补完整周首日期；中位线系列无名字不占行
+      formatter: (params: any) => {
+        const arr = Array.isArray(params) ? params : [params]
+        if (!arr.length) return ''
+        const weekIdx = arr[0].dataIndex
+        const rows = arr.filter((p) => p.seriesName).map((p) => {
+          const v = p.value
+          const isVol = p.seriesName === '我' || p.seriesName === 'TA'
+          const text = v == null ? '—' : isVol ? `${Math.round(v)} 条` : v.toFixed(1)
+          return `${p.marker}${p.seriesName}　${text}`
+        })
+        return `<b>${fmtWeekFull(data.week_starts[weekIdx])}</b> 那周<br/>${rows.join('<br/>')}`
+      },
     },
     xAxis: xAxes,
     yAxis: yAxes,

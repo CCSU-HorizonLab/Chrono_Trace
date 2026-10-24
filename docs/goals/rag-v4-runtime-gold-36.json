@@ -139,7 +139,7 @@
     {
       "id": "runtime_fact_18",
       "category": "food_or_place",
-      "query_text": "我邀请宝宝去做什么？",
+      "query_text": "我邀请TA去做什么？",
       "gold_fact_ids": [
         1023
       ],

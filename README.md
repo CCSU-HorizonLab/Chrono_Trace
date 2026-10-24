@@ -91,6 +91,8 @@ Chrono Trace 是一个基于 `PyWebView + Vue 3 + Python` 的 Windows / Linux �
 
 ![模型配置](docs/images/screenshots/settings-model.png)
 
+**联系人记忆 RAG** —— 启用开关、索引状态统计、按联系人索引管理
+
 ## 核心能力
 
 ### 微信数据导入

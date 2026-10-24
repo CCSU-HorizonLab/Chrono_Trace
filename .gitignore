@@ -71,8 +71,16 @@ packaging/generated/
 # Documentation build output
 docs/docs/
 
-# 评测生成产物（backend/scripts/g1_build_review_packet.py 可再生）
+# 评测生成产物（backend/scripts 可再生，不入库）
 docs/goals/g1-review-packet.md
+docs/goals/g1-replay-results.json
+docs/goals/g1-nli-judgments.json
+docs/goals/g1-review-answers.template.json
+docs/goals/g1-e2e-report.md
+docs/goals/rag-v4-runtime-gold-eval-report.json
+
+# 已取代的方案文档与旧评测数据（历史归档不入库）
+docs/archive/
 
 # Temporary documentation and specs
 CARD_FIX*.md

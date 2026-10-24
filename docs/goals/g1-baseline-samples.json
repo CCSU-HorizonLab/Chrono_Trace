@@ -152,7 +152,7 @@
           "邀约话术须像用户本人"
         ],
         "forbidden": [
-          "贴膜/穿衣等无关偏好抢占预算"
+          "生活偏好等无关内容抢占预算"
         ],
         "safety": [
           "话术必须可直接发送",
@@ -281,8 +281,8 @@
         "suggestion_id": 5,
         "suggestion_summary": "跳过寒暄，直接给两个轻量游戏邀约选项",
         "suggestion_speeches": [
-          "今晚打两把Switch？",
-          "某款游戏带我一个，我陪你玩",
+          "今晚打两把游戏？",
+          "那款游戏带我一个，我陪你玩",
           "周末联机，时间你定"
         ],
         "created_at": 1790513953
@@ -937,7 +937,7 @@
         "safety": [
           "核心对象丢失时标记 evidence_redacted_unusable 并剔除"
         ],
-        "annotation_basis": "游戏事实脱敏完整性:游戏名(游戏等专名等)在远程 prompt 中保持可理解"
+        "annotation_basis": "游戏事实脱敏完整性:游戏名等专名在远程 prompt 中保持可理解"
       },
       "expected_annotation": "agent_reviewed_confirmed",
       "baseline": null,

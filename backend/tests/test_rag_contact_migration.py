@@ -60,10 +60,10 @@ def test_rag_store_recovers_utf8_evidence_blob_for_legacy_fact_ranking():
     conn.execute("CREATE TABLE messages (id INTEGER PRIMARY KEY, content TEXT)")
     conn.execute(
         "INSERT INTO messages(id, content) VALUES (?, ?)",
-        (14114, "你就知道天天玩你那个某款游戏2"),
+        (14114, "你就知道天天玩你那个游戏"),
     )
     store = RagStore(conn)
-    assert "某款游戏2" in store.list_fact_evidence_text([14114])
+    assert "你那个游戏" in store.list_fact_evidence_text([14114])
     assert store.list_fact_evidence_text([999999]) == ""
 
 
@@ -73,7 +73,7 @@ def test_fact_retrieval_uses_evidence_topic_when_legacy_content_is_lossy(monkeyp
     conn.execute("CREATE TABLE messages (id INTEGER PRIMARY KEY, content TEXT)")
     conn.execute(
         "INSERT INTO messages(id, content) VALUES (?, ?)",
-        (7, "我们之前玩过某款游戏2"),
+        (7, "我们之前玩过那款游戏"),
     )
     store = RagStore(conn)
     fact_id = store.upsert_fact(
@@ -473,7 +473,7 @@ def test_empty_fact_is_excluded_from_fact_retrieval():
     )
     result = RagRetriever(store=store).retrieve(
         account_wxid="account-a", conversation_id=1,
-        query="一起玩过什么游戏 某款游戏", limit=5,
+        query="一起玩过什么游戏 那款游戏", limit=5,
     )
     assert all(item["content"] for item in result["items"])
 

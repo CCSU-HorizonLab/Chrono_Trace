@@ -198,7 +198,7 @@ P0.4a 质量门清理后事实池仅剩 242 条——原型匹配只够"排坏"�
 - `rag_indexer`：配置开启时自动注入适配器（4 个生产构造点零改动）；短段(<4 条消息)跳过、每轮每联系人 40 段预算、连续失败 3 次中止；LLM 事实过宽松质量门（长度/通用应答/疑问/敏感照查，kind 信号词不查——kind 由模型判定）。
 - `rag_fact_quality.fact_quality_reason` 新增 `require_kind_signal=False` 宽松模式；补 acknowledgement 变体（"好的好的/好滴"）与"哪"字疑问。
 - 配置 `rag_structured_fact_extraction_enabled` 默认关闭，设置页新增「AI 抽取记忆事实」开关（含 Token 消耗提示）。
-- 端到端 smoke（deepseek-flash 远程 + 真实对话）：琐事段正确抽 0 条；游戏话题段抽 6 条全部过质量门、evidence 全真实（含 boundary 类"对方介意别人把某款游戏说成垃圾"、relation_state 类等待信号——P1.1 影子层的直接食粮）。
+- 端到端 smoke（deepseek-flash 远程 + 真实对话）：琐事段正确抽 0 条；游戏话题段抽 6 条全部过质量门、evidence 全真实（含 boundary 类"对方介意别人把在玩的游戏说成垃圾"、relation_state 类等待信号——P1.1 影子层的直接食粮）。
 - 测试 `test_rag_fact_llm.py` 7 用例（prompt 契约/evidence 过滤/远程脱敏/推理回退/宽松门/预算与短段跳过/连续失败中止/入库 llm_shadow）；全量回归 699 passed, 21 skipped。
 
 ### P1.2 `contact_preference` 与安全关系策略 ✅（2026-09-25 槽位级影子层完成；读侧注入同日接通）

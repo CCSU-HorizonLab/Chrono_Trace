@@ -154,7 +154,7 @@ ANNOTATIONS: dict[str, dict[str, Any]] = {
     # ---- 脱敏误伤 ----
     "authored-redaction_misfire-12": _e(
         "memory_qa", "direct_answer", FACTS,
-        "游戏事实脱敏完整性:游戏名(游戏等专名等)在远程 prompt 中保持可理解",
+        "游戏事实脱敏完整性:游戏名等专名在远程 prompt 中保持可理解",
         must_use=["游戏类事实且核心实体未被占位符吃掉"],
         forbidden=["游戏名被 [ADDRESS_xxx] 类占位符替换后仍计为有效注入"],
         safety=["核心对象丢失时标记 evidence_redacted_unusable 并剔除"],

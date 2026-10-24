@@ -37,7 +37,7 @@ _RELATIONSHIP_FACT_KINDS = frozenset(
     {"relationship_boundary", "personal_profile", "event"}
 )
 _GAME_PREF_RE = re.compile(
-    r"游戏|switch|ps\d|steam|xbox|王者|原神|塞尔达|马里奥|路易吉|吃鸡|"
+    r"游戏|switch|ps\d|steam|xbox|王者|原神|吃鸡|"
     r"csgo|lol|联机|开黑|主机|掌机|手游|端游|一起玩|打球|运动|剧本杀|密室",
     re.IGNORECASE,
 )

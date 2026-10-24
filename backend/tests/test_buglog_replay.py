@@ -110,7 +110,7 @@ BUGLOG_RECENT_FIRST = _build_recent_messages(
 )
 
 
-def test_grace_buglog_prompt_focuses_on_latest_topic_shift():
+def test_buglog_prompt_focuses_on_latest_topic_shift():
     engine = LLMSuggestionEngine()
     prompt = engine._build_prompt(
         "topic_cooling",
@@ -126,7 +126,7 @@ def test_grace_buglog_prompt_focuses_on_latest_topic_shift():
     assert "那个直播今天开播" not in recent_block
 
 
-def test_grace_buglog_prompt_keeps_current_game_topic_without_reordering():
+def test_buglog_prompt_keeps_current_game_topic_without_reordering():
     engine = LLMSuggestionEngine()
     prompt = engine._build_prompt(
         "topic_cooling",
@@ -140,7 +140,7 @@ def test_grace_buglog_prompt_keeps_current_game_topic_without_reordering():
     assert recent_block.index("那个直播今天开播") < recent_block.index("就是那个潜水游戏")
 
 
-def test_grace_buglog_prompt_ignores_content_rules(monkeypatch):
+def test_buglog_prompt_ignores_content_rules(monkeypatch):
     engine = LLMSuggestionEngine()
 
     monkeypatch.setattr(
@@ -167,7 +167,7 @@ def test_grace_buglog_prompt_ignores_content_rules(monkeypatch):
     assert "用户倾向于开启新话题而非延续玩笑" not in prompt
 
 
-def test_grace_buglog_dorm_annoyance_window_no_longer_triggers_emotion_shift():
+def test_buglog_dorm_annoyance_window_no_longer_triggers_emotion_shift():
     triggers = _update_tracker_with_friend_window(
         [
             ("这事居然解决了", 1, 0.7, 0.9),
@@ -181,7 +181,7 @@ def test_grace_buglog_dorm_annoyance_window_no_longer_triggers_emotion_shift():
     assert TRIGGER_EMOTION_SHIFT not in [ev.trigger_type for ev in triggers]
 
 
-def test_grace_buglog_part_time_money_window_no_longer_triggers_emotion_shift():
+def test_buglog_part_time_money_window_no_longer_triggers_emotion_shift():
     triggers = _update_tracker_with_friend_window(
         [
             ("前面还挺开心的", 1, 0.8, 0.9),

@@ -84,7 +84,6 @@ AUTHORED_INPUTS: tuple[tuple[str, list[dict[str, str]], str], ...] = (
 )
 
 _TRANSFER_TOKENS = ("转账", "已收款", "已被接收", "红包", "微信转账", "收款")
-_GAME_TOKENS = ("游戏", "switch", "Switch", "PS", "ps5", "王者", "原神", "塞尔达", "马里奥", "路易吉", "某款游戏", "联机", "开黑")
 
 
 def _json(value: Any, default: Any) -> Any:

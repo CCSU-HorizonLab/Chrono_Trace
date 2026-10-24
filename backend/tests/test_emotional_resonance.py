@@ -18,6 +18,11 @@ from app.services.analysis.emotional_resonance_service import EmotionalResonance
 from app.services.analysis.engagement_metrics import EngagementMetrics
 from app.db.connection import get_db
 
+pytestmark = pytest.mark.skipif(
+    not os.environ.get("CHRONO_TEST_USERNAME"),
+    reason="未设置 CHRONO_TEST_USERNAME，跳过真实数据软验证",
+)
+
 
 class TestEmotionalResonanceRealData:
     """使用真实数据测试情感共振率服务"""
@@ -32,30 +37,19 @@ class TestEmotionalResonanceRealData:
 
     @pytest.fixture
     def real_conversation_id(self):
-        """获取真实的会话ID（CHRONO_TEST_USERNAME 指定，缺省跳过）"""
-        username = os.environ.get("CHRONO_TEST_USERNAME", "")
-        if not username:
-            pytest.skip("未设置 CHRONO_TEST_USERNAME，跳过真实数据软验证")
-
+        """获取真实的会话ID（CHRONO_TEST_USERNAME 指定；真实标识不落打印）"""
         db = get_db()
         cursor = db.execute("""
-            SELECT id, username, display_name
+            SELECT id
             FROM conversations
             WHERE username = ?
-        """, (username,))
+        """, (os.environ["CHRONO_TEST_USERNAME"],))
         row = cursor.fetchone()
 
         if not row:
             pytest.skip("数据库中没有找到该微信ID的会话")
 
         conversation_id = row[0]
-        username = row[1]
-        display_name = row[2]
-
-        print(f"\n[数据] 使用真实会话:")
-        print(f"  - 会话ID: {conversation_id}")
-        print(f"  - 用户名: {username}")
-        print(f"  - 显示名: {display_name}")
 
         # 检查消息数量
         cursor = db.execute("""

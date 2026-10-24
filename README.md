@@ -77,29 +77,19 @@ Chrono Trace 是一个基于 `PyWebView + Vue 3 + Python` 的 Windows / Linux �
 
 **首页总览** —— 功能入口、账号切换、微信数据导入与运行日志
 
-![首页总览](docs/images/screenshots/home-overview.png)
-
 ### 历史分析工作台（历史数据页）
 
 **关系评估** —— 好感度总分、四维+LLM 雷达图、分维度明细与风险信号卡（关系洞察、问问微信、互动特征、内容与时间线、用户画像回顾页签同屏切换；群聊选中时切换为群聊工作台）
 
-![关系评估](docs/images/screenshots/analytics-affinity.png)
-
 ### AI 建议
 
 **对象画像与建议策略** —— 联系人画像、聊天风格与关系策略、AI 建议生成配置
-
-![对象画像与建议策略](docs/images/screenshots/realtime-suggestions.png)
 
 ### 设置
 
 **模型配置** —— 供应商/本地推理配置管理、微信数据库路径与密钥管理
 
 ![模型配置](docs/images/screenshots/settings-model.png)
-
-**联系人记忆 RAG** —— 启用开关、索引状态统计、按联系人索引管理
-
-![联系人记忆 RAG](docs/images/screenshots/settings-rag.png)
 
 ## 核心能力
 

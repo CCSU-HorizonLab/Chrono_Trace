@@ -52,7 +52,7 @@
       ],
       "account_wxid": "wxid_anon_account",
       "conversation_id": 91,
-      "display_name": "安（备注）",
+      "display_name": "联系人A",
       "requires_ambiguous_twin": false,
       "expected": {
         "task": "memory_qa",
@@ -135,7 +135,7 @@
       ],
       "account_wxid": "wxid_anon_account",
       "conversation_id": 91,
-      "display_name": "安（备注）",
+      "display_name": "联系人A",
       "requires_ambiguous_twin": false,
       "expected": {
         "task": "invitation_planning",
@@ -158,7 +158,7 @@
           "话术必须可直接发送",
           "不得替用户编造未发生的约定或承诺"
         ],
-        "annotation_basis": "施工单首个目标样例:约安打游戏;上一轮已得到游戏事实答案,本轮给邀约话术(对应真实建议#5)"
+        "annotation_basis": "施工单首个目标样例:约TA打游戏;上一轮已得到游戏事实答案,本轮给邀约话术(对应真实建议#5)"
       },
       "expected_annotation": "agent_reviewed_confirmed",
       "baseline": {
@@ -228,7 +228,7 @@
       ],
       "account_wxid": "wxid_anon_account",
       "conversation_id": 91,
-      "display_name": "安（备注）",
+      "display_name": "联系人A",
       "requires_ambiguous_twin": false,
       "expected": {
         "task": "reply_suggestion",
@@ -622,7 +622,7 @@
       "replay": {},
       "account_wxid": "wxid_anon_account",
       "conversation_id": null,
-      "display_name": "安（备注）",
+      "display_name": "联系人A",
       "review": {
         "reviewer": "third-review-agent",
         "verdict": "agree",
@@ -702,7 +702,7 @@
         ],
         "scope": "ok",
         "must_use": [
-          "会话 91(安)的事实/策略,而非其他联系人"
+          "会话 91(TA)的事实/策略,而非其他联系人"
         ],
         "forbidden": [
           "跨联系人注入"
@@ -718,7 +718,7 @@
       "replay": {},
       "account_wxid": "wxid_anon_account",
       "conversation_id": 91,
-      "display_name": "安（备注）",
+      "display_name": "联系人A",
       "review": {
         "reviewer": "third-review-agent",
         "verdict": "agree",
@@ -764,7 +764,7 @@
       "replay": {},
       "account_wxid": "wxid_anon_account",
       "conversation_id": 91,
-      "display_name": "安（备注）",
+      "display_name": "联系人A",
       "review": {
         "reviewer": "third-review-agent",
         "verdict": "agree",
@@ -814,7 +814,7 @@
       "replay": {},
       "account_wxid": "wxid_anon_account",
       "conversation_id": 91,
-      "display_name": "安（备注）",
+      "display_name": "联系人A",
       "review": {
         "reviewer": "third-review-agent",
         "verdict": "agree",
@@ -856,7 +856,7 @@
       "replay": {},
       "account_wxid": "wxid_anon_account",
       "conversation_id": 91,
-      "display_name": "安（备注）",
+      "display_name": "联系人A",
       "window_override": [
         {
           "id": 1,
@@ -1076,7 +1076,7 @@
       "replay": {},
       "account_wxid": "wxid_anon_account",
       "conversation_id": 91,
-      "display_name": "安（备注）",
+      "display_name": "联系人A",
       "review": {
         "reviewer": "third-review-agent",
         "verdict": "agree",
@@ -1170,7 +1170,7 @@
       "replay": {},
       "account_wxid": "wxid_anon_account",
       "conversation_id": 91,
-      "display_name": "安（备注）",
+      "display_name": "联系人A",
       "review": {
         "reviewer": "third-review-agent",
         "verdict": "agree",

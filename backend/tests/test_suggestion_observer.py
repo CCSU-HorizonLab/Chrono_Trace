@@ -130,7 +130,7 @@ def test_get_suggestion_metrics_uses_latest_terminal_outcome():
         account_wxid="wxid_test",
         event_type=EVENT_SHOWN,
         batch_id="batch-2",
-        display_name="妈",
+        display_name="家人",
         trigger_type="topic_cooling",
         created_at=1010,
     )

@@ -1,7 +1,10 @@
 """情感共振率服务真实数据测试
 
-使用数据库中的真实会话数据进行测试
+针对开发库真实会话的软验证：目标会话经环境变量 CHRONO_TEST_USERNAME
+（联系人 wxid）注入，未设置或库中查不到即跳过——真实标识不入仓库。
 """
+
+import os
 
 import pytest
 import sys
@@ -18,7 +21,7 @@ from app.db.connection import get_db
 
 class TestEmotionalResonanceRealData:
     """使用真实数据测试情感共振率服务"""
-    
+
     @pytest.fixture
     def service(self):
         """创建服务实例"""
@@ -26,20 +29,24 @@ class TestEmotionalResonanceRealData:
         service = EmotionalResonanceService()
         print("[初始化] ✓ 服务实例创建成功")
         return service
-    
+
     @pytest.fixture
     def real_conversation_id(self):
-        """获取真实的会话ID"""
+        """获取真实的会话ID（CHRONO_TEST_USERNAME 指定，缺省跳过）"""
+        username = os.environ.get("CHRONO_TEST_USERNAME", "")
+        if not username:
+            pytest.skip("未设置 CHRONO_TEST_USERNAME，跳过真实数据软验证")
+
         db = get_db()
         cursor = db.execute("""
             SELECT id, username, display_name
             FROM conversations
             WHERE username = ?
-        """, ("wxid_anon_contact_b",))
+        """, (username,))
         row = cursor.fetchone()
 
         if not row:
-            pytest.skip("数据库中没有找到微信ID 'wxid_anon_contact_b' 的会话")
+            pytest.skip("数据库中没有找到该微信ID的会话")
 
         conversation_id = row[0]
         username = row[1]

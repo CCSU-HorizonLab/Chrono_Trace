@@ -1,4 +1,4 @@
-"""Replay prompt snapshots derived from 阿澄's bug.log session."""
+"""Replay prompt snapshots derived from a real bug.log session（对话内容已匿名化改写）。"""
 
 from __future__ import annotations
 
@@ -65,30 +65,30 @@ def _update_tracker_with_friend_window(items: list[tuple[str, int, float, float]
 
 BUGLOG_TOPIC_SHIFT = _build_recent_messages(
     [
-        ("self", "那很爽了"),
-        ("other", "而且都是他们找我交朋友"),
-        ("other", "我可能吸引有钱人"),
-        ("self", "看见你就想扶贫了（）"),
+        ("self", "那确实爽"),
+        ("other", "而且都是别人主动找我玩"),
+        ("other", "我朋友好像都挺有钱"),
+        ("self", "看见你就想接济你了（）"),
         ("self", "动画表情"),
-        ("other", "我会装自己有钱"),
-        ("other", "装不下去了，天天拼好饭"),
-        ("self", "[捂脸]我之前还算能用的有余"),
-        ("self", "买了台NS"),
+        ("other", "我在朋友面前装大方"),
+        ("other", "装不下去了，天天省着花"),
+        ("self", "[捂脸]我之前手头还算宽裕"),
+        ("self", "买了台游戏机"),
         ("self", "完了"),
-        ("self", "每个月都烧光"),
-        ("other", "我也是啊，我把钱all in买中古包"),
-        ("self", "主要是上课也能掏出来玩"),
-        ("other", "下个月才有钱了"),
-        ("self", "[捂脸]我没招了 这个啥鸟ai还在高数"),
+        ("self", "每个月都花光"),
+        ("other", "我也是啊，我把钱都拿去买东西了"),
+        ("self", "主要是随身带着也能玩"),
+        ("other", "下个月才有生活费了"),
+        ("self", "[捂脸]我没招了 这课还挂着"),
         ("self", "图片"),
-        ("other", "我都不学高数了"),
+        ("other", "我都不上那门课了"),
     ]
 )
 
 
 BUGLOG_RECENT_FIRST = _build_recent_messages(
     [
-        ("self", "铁球跑今天开播"),
+        ("self", "那个直播今天开播"),
         ("self", "急死我了"),
         ("self", "看不到"),
         ("self", "我操"),
@@ -96,12 +96,12 @@ BUGLOG_RECENT_FIRST = _build_recent_messages(
         ("self", "真的啊"),
         ("self", "急死了"),
         ("self", "哪里看"),
-        ("self", "网飞"),
-        ("self", "坐等SBR上线"),
+        ("self", "流媒体上"),
+        ("self", "坐等新剧上线"),
         ("self", "[捂脸]你还是那么抽象"),
-        ("self", "上大学了没咋看见你上steam了"),
+        ("self", "上大学了没咋见你上线了"),
         ("other", "玩的少了"),
-        ("self", "现在在玩潜水员"),
+        ("self", "现在在玩那个潜水的"),
         ("self", "找个是？"),
         ("self", "真潜水吗？"),
         ("self", "还是？"),
@@ -119,11 +119,11 @@ def test_grace_buglog_prompt_focuses_on_latest_topic_shift():
     )
     recent_block = _extract_recent_block(prompt)
 
-    assert "我都不学高数了" in recent_block
-    assert "这个啥鸟ai还在高数" in recent_block
-    assert "下个月才有钱了" in recent_block
+    assert "我都不上那门课了" in recent_block
+    assert "这课还挂着" in recent_block
+    assert "下个月才有生活费了" in recent_block
     assert "就是那个潜水游戏" not in recent_block
-    assert "铁球跑今天开播" not in recent_block
+    assert "那个直播今天开播" not in recent_block
 
 
 def test_grace_buglog_prompt_keeps_current_game_topic_without_reordering():
@@ -136,8 +136,8 @@ def test_grace_buglog_prompt_keeps_current_game_topic_without_reordering():
     recent_block = _extract_recent_block(prompt)
 
     assert "就是那个潜水游戏" in recent_block
-    assert "现在在玩潜水员" in recent_block
-    assert recent_block.index("铁球跑今天开播") < recent_block.index("就是那个潜水游戏")
+    assert "现在在玩那个潜水的" in recent_block
+    assert recent_block.index("那个直播今天开播") < recent_block.index("就是那个潜水游戏")
 
 
 def test_grace_buglog_prompt_ignores_content_rules(monkeypatch):
@@ -173,7 +173,7 @@ def test_grace_buglog_dorm_annoyance_window_no_longer_triggers_emotion_shift():
             ("这事居然解决了", 1, 0.7, 0.9),
             ("那还挺顺的", 1, 0.5, 0.9),
             ("还行吧", 1, 0.3, 0.85),
-            ("我很讨厌体育队还有打游戏大吼大叫", -1, -0.7, 0.92),
+            ("我很讨厌吵闹的环境", -1, -0.7, 0.92),
             ("动画表情", 0, 0.0, 0.95),
         ]
     )
@@ -187,7 +187,7 @@ def test_grace_buglog_part_time_money_window_no_longer_triggers_emotion_shift():
             ("前面还挺开心的", 1, 0.8, 0.9),
             ("感觉之后机会还挺多", 1, 0.6, 0.9),
             ("嗯还不错", 1, 0.4, 0.85),
-            ("我打算毕业去兼职赚点小钱", 0, 0.0, 0.95),
+            ("我打算去兼职赚点小钱", 0, 0.0, 0.95),
         ]
     )
 
@@ -214,7 +214,7 @@ def test_list_cached_display_names_deduplicates_rows(monkeypatch):
             return [
                 {"display_name": "阿澄"},
                 {"display_name": "阿澄"},
-                {"display_name": "妈"},
+                {"display_name": "家人"},
                 {"display_name": None},
             ]
 
@@ -224,7 +224,7 @@ def test_list_cached_display_names_deduplicates_rows(monkeypatch):
 
     monkeypatch.setattr(db_connection, "get_db", lambda: _FakeConn())
 
-    assert replay_live.list_cached_display_names() == ["阿澄", "妈"]
+    assert replay_live.list_cached_display_names() == ["阿澄", "家人"]
 
 
 def test_run_multi_evaluation_aggregates_reports(monkeypatch):
@@ -241,8 +241,8 @@ def test_run_multi_evaluation_aggregates_reports(monkeypatch):
                 {"computed_trigger_type": "no_trigger", "speeches": []},
             ],
         },
-        "妈": {
-            "display_name": "妈",
+        "家人": {
+            "display_name": "家人",
             "generated_case_count": 1,
             "no_trigger_case_count": 5,
             "zero_emoji_cases_all_clean": False,
@@ -260,9 +260,9 @@ def test_run_multi_evaluation_aggregates_reports(monkeypatch):
         lambda display_name: reports_by_name[display_name],
     )
 
-    report = replay_live.run_multi_evaluation(["阿澄", "妈", "阿澄"])
+    report = replay_live.run_multi_evaluation(["阿澄", "家人", "阿澄"])
 
-    assert report["display_names"] == ["阿澄", "妈"]
+    assert report["display_names"] == ["阿澄", "家人"]
     assert report["contact_count"] == 2
     assert report["generated_case_count"] == 3
     assert report["no_trigger_case_count"] == 9
@@ -442,8 +442,8 @@ def test_run_real_history_multi_evaluation_aggregates_reports(monkeypatch):
                 },
             ],
         },
-        "妈": {
-            "display_name": "妈",
+        "家人": {
+            "display_name": "家人",
             "mode": "real_history",
             "conversation_id": 2,
             "message_pool_size": 90,
@@ -469,7 +469,7 @@ def test_run_real_history_multi_evaluation_aggregates_reports(monkeypatch):
         lambda display_name, **kwargs: reports_by_name[display_name],
     )
 
-    report = replay_live.run_real_history_multi_evaluation(["阿澄", "妈"])
+    report = replay_live.run_real_history_multi_evaluation(["阿澄", "家人"])
 
     assert report["mode"] == "real_history_multi"
     assert report["contact_count"] == 2

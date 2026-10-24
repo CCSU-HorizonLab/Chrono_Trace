@@ -54,7 +54,7 @@ ANNOTATIONS: dict[str, dict[str, Any]] = {
     ),
     "real-2": _e(
         "invitation_planning", "answer_with_speeches", ALL4,
-        "施工单首个目标样例:约安打游戏;上一轮已得到游戏事实答案,本轮给邀约话术(对应真实建议#5)",
+        "施工单首个目标样例:约TA打游戏;上一轮已得到游戏事实答案,本轮给邀约话术(对应真实建议#5)",
         must_use=["共同游戏/对方游戏偏好类事实", "邀约话术须像用户本人"],
         forbidden=["贴膜/穿衣等无关偏好抢占预算"],
         safety=SAFETY_SENDABLE,
@@ -126,7 +126,7 @@ ANNOTATIONS: dict[str, dict[str, Any]] = {
     "authored-contact_binding-08": _e(
         "reply_suggestion", "suggestion_card", ALL4,
         "正对照:有效显式会话 ID,知识按该联系人注入",
-        must_use=["会话 91(安)的事实/策略,而非其他联系人"],
+        must_use=["会话 91(TA)的事实/策略,而非其他联系人"],
         forbidden=["跨联系人注入"],
         safety=SAFETY_SENDABLE,
     ),

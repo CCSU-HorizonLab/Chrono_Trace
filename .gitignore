@@ -71,6 +71,9 @@ packaging/generated/
 # Documentation build output
 docs/docs/
 
+# 评测生成产物（backend/scripts/g1_build_review_packet.py 可再生）
+docs/goals/g1-review-packet.md
+
 # Temporary documentation and specs
 CARD_FIX*.md
 DARK_MODE_FIX*.md

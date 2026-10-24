@@ -378,7 +378,7 @@ def test_bridge_dismiss_suggestion_records_observation(monkeypatch):
         account_wxid="wxid_test",
         event_type=EVENT_SHOWN,
         batch_id="batch-2",
-        display_name="妈",
+        display_name="家人",
         trigger_type="topic_cooling",
         created_at=1000,
     )
@@ -443,7 +443,7 @@ def test_bridge_get_suggestion_metrics_returns_aggregates(monkeypatch):
         account_wxid="wxid_test",
         event_type=EVENT_SHOWN,
         batch_id="batch-2",
-        display_name="妈",
+        display_name="家人",
         trigger_type="topic_cooling",
         created_at=now - 10,
     )

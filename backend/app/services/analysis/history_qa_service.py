@@ -543,6 +543,12 @@ class HistoryQAService:
     # 放宽到 2s：大索引冷启动首次暖机常超检索器默认 800ms，超时静默
     # 等于记忆槽长期缺席。最坏多等 1.2s，换语义召回完整走完
     RAG_MEMORY_TIMEOUT_MS = 2000
+    # 问答侧事实线比实时链路（settings 默认 0.30）收紧：融合分含
+    # confidence×0.2 与 kind 加分 0.1 的恒定抬升，实测无关事实融合分
+    # 落 0.35-0.40（纯向量余弦仅 0.26-0.31，真命中 0.68+）。实时链路
+    # 0.30 线为 memory_request 低分兜底而设；问答直答没有该语义，
+    # 沿用会放进无关事实，收到 0.42（≈纯向量 0.40，中等相关及以上）
+    RAG_FACT_SCORE_THRESHOLD = 0.42
 
     def _retrieve_rag_memories(
         self,
@@ -580,7 +586,9 @@ class HistoryQAService:
                 timeout_ms=self.RAG_MEMORY_TIMEOUT_MS,
             )
             items = result.get("items") or []
-            decision = RagRelevanceGate().decide(
+            decision = RagRelevanceGate(
+                fact_score_threshold=self.RAG_FACT_SCORE_THRESHOLD
+            ).decide(
                 query=str(question or ""),
                 items=items,
                 strategy=result.get("strategy"),
@@ -591,7 +599,10 @@ class HistoryQAService:
                 degraded_reason=result.get("degrade_reason"),
             )
             if decision.decision not in {"inject", "weak_inject"}:
-                return [], decision.decision == "no_hit"
+                # 检索空手（no_hit）与「有结果但全在阈值线下」（low_score）
+                # 对问答同义——记忆库没有相关记录，都给提示防 LLM 从
+                # 无关消息硬凑；off_topic/超时/降级保持静默
+                return [], decision.decision == "no_hit" or decision.reason == "low_score"
 
             def _content(it: Dict[str, Any]) -> str:
                 # 事实通道平铺 content；文档通道只有嵌套 doc（此前按平铺

@@ -602,16 +602,21 @@ def test_rag_no_hit_hint_when_retrieval_empty(monkeypatch, db):
 
 
 def test_rag_low_score_memories_rejected_by_gate(monkeypatch, db):
-    """非记忆意图问句 + 低分事实（< 0.30）被门控拒：记忆槽不注入。
+    """非记忆意图问句 + 阈值线下事实被拒：记忆槽不注入，改注 no_hit 提示。
+    0.38 能过实时链路 0.30 线但低于问答侧 0.42——融合分含 confidence/
+    kind 恒定抬升，实测无关事实落 0.35-0.40，问答直答必须收紧才能挡住
+    （「她生日是什么时候」注入朋友圈/断联类无关事实的实测复现带）。
     （记忆意图问句按 gate 设计放宽分数门槛，不走本路径。）"""
     seed(db, 1, "她生日是不是快到了", 1700000100)
-    _fake_rag(monkeypatch, ["对方每周三固定打羽毛球"], score=0.1)
+    _fake_rag(monkeypatch, ["对方每周三固定打羽毛球"], score=0.38)
 
     result, http = ask(monkeypatch, db, "她生日是什么时候")
 
     sent = json.dumps(http.calls[0]["payload"], ensure_ascii=False)
     assert "【长期记忆】（从历史聊天提炼" not in sent
-    assert "记忆库中没有与此问题直接相关的可靠记录" not in sent
+    assert "- 对方每周三固定打羽毛球" not in sent
+    # 有检索结果但全在阈值线下：与检索空手同义，注入防硬凑提示
+    assert "记忆库中没有与此问题直接相关的可靠记录" in sent
 
 
 def test_rag_document_channel_content_from_nested_doc(monkeypatch, db):

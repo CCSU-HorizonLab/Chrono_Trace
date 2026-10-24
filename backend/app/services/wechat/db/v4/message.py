@@ -40,6 +40,28 @@ class MessageDBV4(WeChatDBBase):
         self.connections = []
         self._table_columns_cache: Dict[str, Set[str]] = {}
         self._connect_all()
+        self._shard_msg_tables = self._load_shard_msg_tables()
+
+    def _load_shard_msg_tables(self) -> List[Optional[Set[str]]]:
+        """每分片的 Msg_ 表名集合（表定位预映射）。
+
+        此前 get_messages 对每个 username 逐分片试查、表不存在抛
+        OperationalError 才跳下一个——两千会话 × 十几分片产生数万次
+        失败查询。连接后一次 sqlite_master 扫描建立映射，消息查询
+        只落表所在分片；单分片扫描失败置 None 回退逐分片试查语义。
+        """
+        shard_tables: List[Optional[Set[str]]] = []
+        for conn in self.connections:
+            try:
+                shard_tables.append({
+                    row["name"] for row in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Msg_%'"
+                    )
+                })
+            except Exception as exc:
+                logger.warning("[消息读取] 分片表清单扫描失败，回退逐分片试查: %s", exc)
+                shard_tables.append(None)
+        return shard_tables
 
     
     def _build_my_wxid_candidates(self, wxid: Optional[str]) -> List[str]:
@@ -183,9 +205,12 @@ class MessageDBV4(WeChatDBBase):
         """
         table_name = self.get_table_name(username)
         messages = []
-        
-        # 在所有数据库分片中查找
+
+        # 在所有数据库分片中查找（预映射命中才查，映射缺失的分片回退试查）
         for shard_idx, conn in enumerate(self.connections):
+            shard_tables = self._shard_msg_tables[shard_idx]
+            if shard_tables is not None and table_name not in shard_tables:
+                continue
             try:
                 msgs = self._query_messages_from_db(
                     conn, table_name, username, time_range, limit

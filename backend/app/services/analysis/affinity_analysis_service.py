@@ -265,7 +265,7 @@ class AffinityAnalysisService:
             # （不自动建），此处是主动构建入口——分析完成后用户预期记忆
             # 随即可用；联系人画像仍由用户在洞察页手动触发生成。
             try:
-                from ...db.connection import get_db
+                from ...db.connection import get_db, optimize_query_plans
                 from ..realtime.rag.indexer import RagIndexQueue
 
                 row = get_db().execute(
@@ -274,6 +274,8 @@ class AffinityAnalysisService:
                 ).fetchone()
                 if row and str(row["account_wxid"] or "").strip():
                     RagIndexQueue.enqueue(str(row["account_wxid"]), int(conversation_id))
+                # 分析链路大量批写缓存（sentiment/preprocessed），顺手收集
+                optimize_query_plans()
             except Exception as rag_e:
                 logger.debug("[分析完成] 记忆索引构建入队跳过: %s", rag_e)
 

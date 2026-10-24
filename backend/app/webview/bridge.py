@@ -1104,9 +1104,9 @@ class Bridge(
                 try:
                     rag_log_id = getattr(result, 'rag_log_id', None)
                     if rag_log_id:
-                        from ..services.realtime.rag.context_builder import RagContextBuilder
+                        from ..services.realtime.rag.context_builder import get_context_builder
 
-                        RagContextBuilder().attach_log_to_suggestion(rag_log_id, inserted_id)
+                        get_context_builder().attach_log_to_suggestion(rag_log_id, inserted_id)
                 except Exception as rag_log_e:
                     logger.warning(f"[Bridge] RAG 检索日志关联建议失败: {rag_log_e}")
                 try:

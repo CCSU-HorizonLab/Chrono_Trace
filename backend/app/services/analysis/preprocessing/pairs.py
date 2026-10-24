@@ -43,9 +43,12 @@ class PairPreprocessingService:
             embeddings = sentiment_service._get_embeddings_batch(texts, batch_size=32)
 
             similarities: Dict[int, float] = {}
-            for idx in range(len(speech_units) - 1):
-                similarity = float(np.dot(embeddings[idx], embeddings[idx + 1]))
-                similarities[idx] = max(0.0, min(1.0, similarity))
+            matrix = np.asarray(embeddings, dtype=np.float32)
+            # 相邻行点积一次 einsum 算完（此前 N-1 次 np.dot 各自付出
+            # Python 调用与小数组包装开销，万级单元下累积可感）
+            adjacent = np.einsum("ij,ij->i", matrix[:-1], matrix[1:])
+            for idx, similarity in enumerate(adjacent):
+                similarities[idx] = max(0.0, min(1.0, float(similarity)))
 
             return similarities
 

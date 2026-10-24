@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import threading
 import time
 import logging
 from typing import Any
@@ -1606,3 +1607,20 @@ class RagContextBuilder:
             gate_decision=gate_decision,
             strategy=strategy,
         )
+
+
+# ---------------------------------------------------------------------------
+# 线程本地共享实例：建议生成每次 new 全套组件（store+indexer+retriever，
+# store 构造含 8 表 DDL）纯属重复。RagStore.conn 绑定构造线程的
+# get_db() 连接，跨线程复用会共享 sqlite 连接——故按线程缓存，连接
+# 生命周期与 get_db 线程本地连接一致。
+# ---------------------------------------------------------------------------
+_BUILDER_LOCAL = threading.local()
+
+
+def get_context_builder() -> "RagContextBuilder":
+    builder = getattr(_BUILDER_LOCAL, "builder", None)
+    if builder is None:
+        builder = RagContextBuilder()
+        _BUILDER_LOCAL.builder = builder
+    return builder

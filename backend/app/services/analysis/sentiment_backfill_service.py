@@ -254,11 +254,10 @@ class SentimentBackfillService:
             self._update(task_id, progress_percent=percent, current_step=step)
 
         # 阶段 B：无 sentiment_cache 行的消息——完整情感+向量分析。
-        # 停滞熔断：batch_cache_sentiments 吞掉 DB 异常只记日志（磁盘满/
-        # 锁超时等持续写失败），同一批会被无限重选重嵌——首批 message_id
-        # 无变化即写不进，收工防死循环（否则任务永驻 running，全局单飞
-        # 守卫会拒绝此后所有情感/语义补算与全面分析）
-        prev_first_id = None
+        # m.id 水位游标推进（ORDER BY m.id 顺序处理）：写入失败行被
+        # 水位跳过（缺口保留，环境恢复后续跑覆盖查询会再捞到），
+        # 每轮反连接只扫未处理前缀而非全量重扫。
+        cursor_id = 0
         while True:
             if cancel_event.is_set():
                 raise Exception("分析已被用户取消")
@@ -267,21 +266,15 @@ class SentimentBackfillService:
                 SELECT m.id, m.content
                 FROM messages m
                 LEFT JOIN sentiment_cache sc ON sc.message_id = m.id
-                WHERE {text_filter} AND sc.message_id IS NULL
+                WHERE {text_filter} AND sc.message_id IS NULL AND m.id > ?
                 ORDER BY m.id
                 LIMIT ?
                 """,
-                (conversation_id, self._EMBED_BATCH_SIZE),
+                (conversation_id, cursor_id, self._EMBED_BATCH_SIZE),
             ).fetchall()
             if not rows:
                 break
-            if rows[0]["id"] == prev_first_id:
-                logger.error(
-                    f"[语义索引补算] 会话 {conversation_id} 批量写入持续失败，"
-                    "提前收尾（缺口保留，环境恢复后续跑）"
-                )
-                break
-            prev_first_id = rows[0]["id"]
+            cursor_id = rows[-1]["id"]
             results = service.analyze_batch(
                 [row["content"] for row in rows], include_embeddings=True
             )
@@ -298,9 +291,10 @@ class SentimentBackfillService:
             done += len(rows)
             _report("语义索引推理（新消息）")
 
-        # 阶段 A：行在但向量为 NULL 的存量消息——只补嵌入
+        # 阶段 A：行在但向量为 NULL 的存量消息——只补嵌入（水位游标同 B）
         from .sentiment_service import pack_embedding
 
+        cursor_id = 0
         while True:
             if cancel_event.is_set():
                 raise Exception("分析已被用户取消")
@@ -309,14 +303,15 @@ class SentimentBackfillService:
                 SELECT m.id, m.content
                 FROM messages m
                 JOIN sentiment_cache sc ON sc.message_id = m.id
-                WHERE {text_filter} AND sc.embedding_vector IS NULL
+                WHERE {text_filter} AND sc.embedding_vector IS NULL AND m.id > ?
                 ORDER BY m.id
                 LIMIT ?
                 """,
-                (conversation_id, self._EMBED_BATCH_SIZE),
+                (conversation_id, cursor_id, self._EMBED_BATCH_SIZE),
             ).fetchall()
             if not rows:
                 break
+            cursor_id = rows[-1]["id"]
             vectors = service.embed_texts_batch([row["content"] for row in rows])
             updates = [
                 (blob, row["id"])

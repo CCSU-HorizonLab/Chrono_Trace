@@ -3,7 +3,7 @@ import json
 import os
 import time
 import logging
-from typing import Dict, Any, Optional, Callable
+from typing import Dict, Any, Optional, Callable, Tuple
 from .path_finder import WeChatPathFinder
 from .chatroom import (
     is_chatroom_username,
@@ -15,7 +15,7 @@ from .db.v4.contact import ContactDBV4
 from .db.v4.message import MessageDBV4
 from .contact_filters import EXCLUDED_CONTACT_USERNAMES, is_excluded_contact_username
 from .content_codec import decode_message_content
-from ...db.connection import get_db, write_transaction
+from ...db.connection import get_db, write_transaction, optimize_query_plans
 from ..analysis.preprocessing import PreprocessingService
 
 
@@ -681,8 +681,9 @@ class WeChatIngestService:
             if progress_callback:
                 progress_callback("扫描消息表...", 30, 100, {"phase": "scanning"})
 
-            # 预载判重集合（一次 SELECT 替代逐条 OR IGNORE 的 20 万次 execute）
-            existing_keys = self._load_existing_message_keys()
+            # 预载判重集合（一次 SELECT 替代逐条 OR IGNORE 的 20 万次 execute）；
+            # 水位增量时只载读取窗口起点之后的存量行
+            existing_keys = self._load_existing_message_keys(read_range)
 
             # 获取所有对话username
             all_usernames = message_db.get_all_conversation_usernames(include_chatroom=True)
@@ -811,6 +812,9 @@ class WeChatIngestService:
             f" (读取 {t_read:.1f}s / 插入 {t_insert:.1f}s / 总 {time.time() - t_total:.1f}s"
             f"{' / 水位增量' if read_range else ' / 全量'})"
         )
+        if total_messages > 0:
+            # 大批量写入后按需收集查询计划统计（有写入才值得跑）
+            optimize_query_plans()
         logger.debug(f"[DEBUG] Filtered conversations: {skipped_conversations}")
         if failed_conversations:
             # 解密缺口/读取异常等导致的会话级失败（W3）：显式汇总，避免静默缺失
@@ -828,7 +832,7 @@ class WeChatIngestService:
             "watermark_ts": max(watermark_ts, max_seen_ts),
         }
 
-    def _load_existing_message_keys(self) -> set:
+    def _load_existing_message_keys(self, read_range: Optional[Tuple[int, int]] = None) -> set:
         """预载 (conversation_id, local_id, timestamp) 判重集合。
 
         替代此前逐条 OR IGNORE 的 20 万次 execute：一次 SELECT 建立，
@@ -836,12 +840,20 @@ class WeChatIngestService:
         实时行不参与（它们本来就不受唯一索引约束）。
         timestamp 必须进键：微信 V4 分片库 local_id 是分片内自增，
         跨分片同号消息会被旧二元键误判为重复而整片吞掉。
+        水位增量导入时按读取窗口裁剪：窗口外的存量行与新批（同样
+        只在窗口内读取）不可能撞键，百万级库免全表预载。
         """
+        sql = (
+            "SELECT conversation_id, local_id, timestamp FROM messages"
+            " WHERE local_id IS NOT NULL"
+        )
+        params: list = []
+        if read_range is not None:
+            sql += " AND timestamp >= ?"
+            params.append(int(read_range[0]))
         return {
             (row[0], row[1], row[2])
-            for row in get_db().execute(
-                "SELECT conversation_id, local_id, timestamp FROM messages WHERE local_id IS NOT NULL"
-            )
+            for row in get_db().execute(sql, params)
         }
 
     def _insert_message_batch(

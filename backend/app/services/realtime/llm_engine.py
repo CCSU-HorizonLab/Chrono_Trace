@@ -330,10 +330,10 @@ class LLMSuggestionEngine(SuggestionParsingMixin, LlmClientMixin, SuggestionEngi
         )
 
         try:
-            from .rag.context_builder import RagContextBuilder
+            from .rag.context_builder import get_context_builder
 
             self._emit_stream(stream_callback, "stage", stage="rag", message="检索上下文")
-            RagContextBuilder().enrich_context(
+            get_context_builder().enrich_context(
                 context,
                 trigger_type=trigger_type,
                 intent=intent,

@@ -168,6 +168,20 @@ def get_db() -> sqlite3.Connection:
     return DatabaseConnection.get_connection()
 
 
+def optimize_query_plans() -> None:
+    """大批量写入完成后收集查询计划统计（PRAGMA optimize ≈ 按需 ANALYZE）。
+
+    sqlite_stat1 落库持久化，帮助查询计划器在 messages/sentiment_cache
+    等大表上选对索引；失败静默——统计缺失只影响计划质量不影响正确性。
+    """
+    try:
+        db = get_db()
+        db.execute("PRAGMA optimize")
+        db.commit()
+    except Exception:
+        pass
+
+
 @contextmanager
 def write_transaction(db: sqlite3.Connection = None):
     """显式批量写事务。

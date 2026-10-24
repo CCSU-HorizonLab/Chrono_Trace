@@ -536,23 +536,30 @@ def test_cancel_aborts_pending_ask(monkeypatch, db):
 # ===== RAG 长期记忆槽 =====
 
 
-def _fake_rag(monkeypatch, items):
-    """替换 RAG 检索器：返回给定记忆条目；返回 calls 供断言。"""
+def _fake_rag(monkeypatch, items, *, score=0.8, flat=True):
+    """替换 RAG 检索器：返回给定记忆条目（fact_memory 形态，过门控）；
+    返回 calls 供断言。flat=False 模拟文档通道（仅嵌套 doc，无平铺
+    content）。"""
     import app.services.realtime.rag.config as ragcfg
     import app.services.realtime.rag.retriever as retriever_mod
 
     monkeypatch.setattr(ragcfg, "load_rag_settings", lambda: {"rag_enabled": True})
     calls = {}
 
-    class _Retriever:
-        def __init__(self):
-            pass
+    def _item(c):
+        doc = {"doc_type": "fact_memory", "content": c}
+        item = {"doc_type": "fact_memory", "score": score, "doc": doc}
+        if flat:
+            item["content"] = c
+        return item
 
+    class _Retriever:
         def retrieve(self, **kw):
             calls.update(kw)
-            return {"items": [{"content": c} for c in items], "strategy": "facts"}
+            return {"items": [_item(c) for c in items], "strategy": "facts"}
 
-    monkeypatch.setattr(retriever_mod, "RagRetriever", _Retriever)
+    retriever = _Retriever()
+    monkeypatch.setattr(retriever_mod, "get_retriever", lambda: retriever)
     return calls
 
 
@@ -580,6 +587,42 @@ def test_rag_memories_absent_when_retrieval_empty(monkeypatch, db):
 
     sent = json.dumps(http.calls[0]["payload"], ensure_ascii=False)
     assert "【长期记忆】（从历史聊天提炼" not in sent  # 系统提示词规则行除外
+
+
+def test_rag_no_hit_hint_when_retrieval_empty(monkeypatch, db):
+    """检索空手而归：门控判 no_hit，注入「记忆库无此记录」提示防硬凑。"""
+    seed(db, 1, "周末去爬山吧", 1700000100)
+    _fake_rag(monkeypatch, [])
+
+    result, http = ask(monkeypatch, db, "我们聊过爬山吗")
+
+    sent = json.dumps(http.calls[0]["payload"], ensure_ascii=False)
+    assert "记忆库中没有与此问题直接相关的可靠记录" in sent
+    assert "不要从无关聊天记录推断" in sent
+
+
+def test_rag_low_score_memories_rejected_by_gate(monkeypatch, db):
+    """非记忆意图问句 + 低分事实（< 0.30）被门控拒：记忆槽不注入。
+    （记忆意图问句按 gate 设计放宽分数门槛，不走本路径。）"""
+    seed(db, 1, "她生日是不是快到了", 1700000100)
+    _fake_rag(monkeypatch, ["对方每周三固定打羽毛球"], score=0.1)
+
+    result, http = ask(monkeypatch, db, "她生日是什么时候")
+
+    sent = json.dumps(http.calls[0]["payload"], ensure_ascii=False)
+    assert "【长期记忆】（从历史聊天提炼" not in sent
+    assert "记忆库中没有与此问题直接相关的可靠记录" not in sent
+
+
+def test_rag_document_channel_content_from_nested_doc(monkeypatch, db):
+    """文档通道 items 仅嵌套 doc：content 从 doc 取（此前平铺取值静默丢弃）。"""
+    seed(db, 1, "周末去爬山吧", 1700000100)
+    _fake_rag(monkeypatch, ["对方每周三固定打羽毛球"], flat=False)
+
+    result, http = ask(monkeypatch, db, "我们聊过爬山吗")
+
+    sent = json.dumps(http.calls[0]["payload"], ensure_ascii=False)
+    assert "- 对方每周三固定打羽毛球" in sent
 
 
 def test_rag_memories_skipped_when_disabled(monkeypatch, db):
@@ -633,11 +676,11 @@ def test_question_vector_gate_ignores_classifier(monkeypatch):
     monkeypatch.setattr(oi, "has_embedding_model", lambda: True)
     monkeypatch.setattr(oi, "has_onnx_models", lambda: False)
 
-    class _StubEngine:
-        def encode(self, texts, **kw):
+    class _StubService:
+        def embed_texts_batch(self, texts):
             return [[0.1, 0.2, 0.3]]
 
-    monkeypatch.setattr(oi, "get_shared_engine", lambda kind, **kw: _StubEngine())
+    monkeypatch.setattr(hqmod, "_qa_sentiment_service", lambda: _StubService())
     assert hqmod._load_question_vector("你们聊过什么") == [0.1, 0.2, 0.3]
 
     monkeypatch.setattr(oi, "has_embedding_model", lambda: False)

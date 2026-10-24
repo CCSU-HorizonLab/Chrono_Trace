@@ -838,3 +838,20 @@ class RagRetriever:
             return json.loads(doc.get("metadata_json") or "{}")
         except Exception:
             return {}
+
+
+# ---------------------------------------------------------------------------
+# 线程本地共享实例：问答记忆槽每次 new 检索器（含 RagStore 构造 8 表
+# DDL）纯属重复。RagStore.conn 绑定构造线程的 get_db() 连接，跨线程
+# 复用会共享 sqlite 连接——按线程缓存，与 context_builder.
+# get_context_builder 同模式同理由。
+# ---------------------------------------------------------------------------
+_RETRIEVER_LOCAL = threading.local()
+
+
+def get_retriever() -> "RagRetriever":
+    retriever = getattr(_RETRIEVER_LOCAL, "retriever", None)
+    if retriever is None:
+        retriever = RagRetriever()
+        _RETRIEVER_LOCAL.retriever = retriever
+    return retriever

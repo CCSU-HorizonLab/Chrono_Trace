@@ -122,18 +122,38 @@ def _extract_keywords(question: str) -> List[str]:
 
 
 def _load_question_vector(question: str) -> Optional[List[float]]:
-    """问题嵌入（与分析同源 ONNX 引擎；模型不可用时返回 None 走纯关键词）。"""
+    """问题嵌入（与分析/RAG 同源共享漏斗 L1→L2→ONNX；模型不可用返回 None）。
+
+    此前直连 engine.encode 绕过 L1/L2——全仓唯一缓存旁路，且同一
+    retrieval_query 随后在 RAG 记忆槽 retriever.embed_text 再嵌一次
+    （旁路不写缓存故必 miss），每次问答同一文本 2 次 ONNX 推理；入
+    漏斗后跨槽经 L2 归一、重复提问持久命中。服务实例模块级复用：
+    L1 缓存是实例级 dict，每次 new 等于放弃进程内命中。
+    """
     try:
-        from .onnx_inference import get_shared_engine, has_embedding_model
+        from .onnx_inference import has_embedding_model
 
         if not has_embedding_model():
             return None
-        engine = get_shared_engine("embedding")
-        vector = engine.encode([str(question)])
-        return list(vector[0]) if len(vector) else None
+        service = _qa_sentiment_service()
+        vectors = service.embed_texts_batch([str(question)])
+        return list(vectors[0]) if vectors and vectors[0] else None
     except Exception as exc:
         logger.debug("[问问微信] 问题嵌入跳过（向量通道缺席）: %s", exc)
         return None
+
+
+_QA_SENTIMENT_SERVICE = None
+
+
+def _qa_sentiment_service():
+    """问答侧共享 SentimentService（模型懒加载，构造轻；复用保住 L1）。"""
+    global _QA_SENTIMENT_SERVICE
+    if _QA_SENTIMENT_SERVICE is None:
+        from .sentiment_service import SentimentService
+
+        _QA_SENTIMENT_SERVICE = SentimentService()
+    return _QA_SENTIMENT_SERVICE
 
 
 def _filter_citations(answer: str, citations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -197,9 +217,11 @@ class HistoryQAService:
         redacted_turns = self._redact_history_for_remote(
             turns, account_wxid, conversation_id
         )
-        # RAG 长期记忆槽：检索该联系人事实/主题段作背景参考（无索引/
-        # 关闭/检索异常一律返回空，不阻断问答主链路）
-        memories = self._retrieve_rag_memories(account_wxid, conversation_id, retrieval_query)
+        # RAG 长期记忆槽：检索+门控该联系人事实/主题段作背景参考；门控
+        # 全拒且判定 no_hit 时带「记忆库无此记录」提示（防从无关消息硬凑）
+        memories, memory_no_hit = self._retrieve_rag_memories(
+            account_wxid, conversation_id, retrieval_query, turns=turns
+        )
         if memories:
             memories = self._redact_memories_for_remote(
                 memories, account_wxid, conversation_id
@@ -208,6 +230,7 @@ class HistoryQAService:
         answer = self._call_llm(
             conversation_id, redacted_question, redacted,
             memories=memories, history=redacted_turns,
+            memory_no_hit=memory_no_hit,
         )
         citations = [
             {
@@ -522,20 +545,34 @@ class HistoryQAService:
     RAG_MEMORY_TIMEOUT_MS = 2000
 
     def _retrieve_rag_memories(
-        self, account_wxid: str, conversation_id: int, question: str
-    ) -> List[str]:
-        """检索该联系人 RAG 长期记忆（复用实时建议同款检索器+门控）。
+        self,
+        account_wxid: str,
+        conversation_id: int,
+        question: str,
+        turns: Optional[List[Dict[str, str]]] = None,
+    ) -> Tuple[List[str], bool]:
+        """检索并门控该联系人 RAG 长期记忆（复用实时建议同款检索器+门控）。
 
-        任何缺位（未建索引/关闭/超时降级/异常）都返回空列表，问答
-        主链路只靠消息检索照常工作。
+        返回 (memories, no_hit)：no_hit=True 表示检索有结果但全被门控
+        拒——调用方注入「记忆库无此记录」提示，防 LLM 从无关消息硬凑
+        （skip=低质/离题/超时降级则静默，不打扰）。任何缺位（未建索引/
+        关闭/异常）返回 ([], False)，问答主链路只靠消息检索照常工作。
         """
         try:
+            from ..realtime.memory_intent import detect_memory_intent
             from ..realtime.rag.config import load_rag_settings
-            from ..realtime.rag.retriever import RagRetriever
+            from ..realtime.rag.relevance_gate import RagRelevanceGate
+            from ..realtime.rag.retriever import get_retriever
 
             if not load_rag_settings().get("rag_enabled"):
-                return []
-            result = RagRetriever().retrieve(
+                return [], False
+            # 多轮问答：历史问句并入 user_context——指代延续识别
+            # （"上次说的那件事"）能吃到上一问的实词
+            user_context = [
+                {"role": "user", "content": t["question"]} for t in (turns or [])
+            ] + [{"role": "user", "content": str(question or "")}]
+            memory_intent = detect_memory_intent({"user_context": user_context})
+            result = get_retriever().retrieve(
                 account_wxid=account_wxid,
                 conversation_id=int(conversation_id),
                 query=str(question or ""),
@@ -543,15 +580,31 @@ class HistoryQAService:
                 timeout_ms=self.RAG_MEMORY_TIMEOUT_MS,
             )
             items = result.get("items") or []
-            return [
-                str(it.get("content") or "").strip()
-                for it in items
-                if str(it.get("content") or "").strip()
-            ]
+            decision = RagRelevanceGate().decide(
+                query=str(question or ""),
+                items=items,
+                strategy=result.get("strategy"),
+                output_mode="reply",          # 问答是直答不是建议卡
+                trigger_type="memory_search", # 问答即显式记忆查询
+                memory_intent=memory_intent.to_dict(),
+                timed_out=bool(result.get("timed_out")),
+                degraded_reason=result.get("degrade_reason"),
+            )
+            if decision.decision not in {"inject", "weak_inject"}:
+                return [], decision.decision == "no_hit"
+
+            def _content(it: Dict[str, Any]) -> str:
+                # 事实通道平铺 content；文档通道只有嵌套 doc（此前按平铺
+                # 取值，文档通道结果被静默丢弃）
+                doc = it.get("doc") or {}
+                return str(it.get("content") or doc.get("content") or "").strip()
+
+            selected = [c for c in (_content(it) for it in items if it.get("_rag_gate_selected")) if c]
+            return selected, False
         except Exception as exc:
             # 静默吞掉曾让「记忆槽为何一直缺席」无从排查——留 WARNING 现场
             logger.warning("[问问微信] RAG 记忆槽检索失败（按无记忆继续）: %s", exc)
-            return []
+            return [], False
 
     def _redact_memories_for_remote(
         self, memories: List[str], account_wxid: str, conversation_id: int
@@ -591,6 +644,7 @@ class HistoryQAService:
         records: List[Dict[str, Any]],
         memories: Optional[List[str]] = None,
         history: Optional[List[Dict[str, str]]] = None,
+        memory_no_hit: bool = False,
     ) -> str:
         from ..realtime.rag.fact_llm import get_active_model_config
 
@@ -618,6 +672,14 @@ class HistoryQAService:
             memory_block = (
                 "\n\n【长期记忆】（从历史聊天提炼的背景参考，非原文记录）\n"
                 + memory_lines
+            )
+        elif memory_no_hit:
+            # 门控判定检索有结果但无一可靠（低分/离题全拒）——显式告知
+            # 无记录，防模型从无关聊天记录硬凑具体时间/地点/偏好
+            memory_block = (
+                "\n\n【长期记忆】该联系人的记忆库中没有与此问题直接相关"
+                "的可靠记录；不要从无关聊天记录推断具体的时间、地点、"
+                "偏好等事实，没有依据就明说不确定。\n"
             )
         user_prompt = (
             f"【问题】{question}" + history_block + memory_block

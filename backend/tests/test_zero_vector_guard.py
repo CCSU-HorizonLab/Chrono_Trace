@@ -92,3 +92,31 @@ def test_backfill_rewrites_zero_norm_vectors(monkeypatch):
     row = store.conn.execute("SELECT vector_blob FROM rag_fact_embeddings").fetchone()
     vec = pickle.loads(row["vector_blob"])
     assert any(x != 0 for x in vec)
+
+
+def test_backfill_embeds_pure_fact_content(monkeypatch):
+    """回填文本口径与主路径统一：嵌 fact.content，不再拼证据消息文本
+    （v1 拼接口径与检索 query 对齐差，且两路径文本不同致 L2 互不命中）。"""
+    store = _store()
+    store.upsert_fact(
+        account_wxid="a", conversation_id=1, subject="共同",
+        kind="hobby_or_game", content="我们一起玩过某款游戏",
+        evidence_message_ids=[14114],  # 有证据也只嵌 content
+    )
+
+    monkeypatch.setattr(
+        "app.services.realtime.rag.indexer.load_rag_settings",
+        lambda *a, **kw: {"rag_embedding_model": "m", "rag_embedding_dim": 3},
+    )
+
+    captured = []
+
+    class _CaptureEmbedding:
+        def embed_texts(self, texts):
+            captured.extend(list(texts))
+            return [[0.1, 0.2, 0.3] for _ in texts]
+
+    indexer = RagIndexer(store=store, embedding_service=_CaptureEmbedding())
+    result = indexer.backfill_fact_embeddings(account_wxid="a", conversation_id=1)
+    assert result["written"] == 1
+    assert captured == ["我们一起玩过某款游戏"]

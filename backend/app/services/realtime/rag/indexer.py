@@ -58,8 +58,11 @@ class RagIndexer:
     """Build a minimal but useful per-contact RAG index."""
 
     INDEX_VERSION = RAG_INDEX_VERSION
+    # 事实向量嵌入文本口径：v1=content+证据消息拼接（回填路径旧口径，
+    # 与检索 query 对齐差、两路径 L2 互不命中）；v2=统一 fact.content
     SELF_STYLE_LIMIT = 24
     EMBED_BATCH_SIZE = 64
+    FACT_EMBED_TEXT_VERSION = 2
     WRITE_COMMIT_INTERVAL = 64
     # 语义抽取预批嵌入：每块段数（块内候选句合批推理，块间释放向量控内存）
     SEMANTIC_CHUNK_SEGMENTS = 128
@@ -268,7 +271,14 @@ class RagIndexer:
         batch_size: int = 32,
         force: bool = False,
     ) -> dict[str, Any]:
-        """Backfill vectors for legacy active facts without changing fact rows."""
+        """Backfill vectors for legacy active facts without changing fact rows.
+
+        嵌入文本与主路径 _write_fact_embeddings_batch 统一为 fact.content
+        （FACT_EMBED_TEXT_VERSION=2；v1 曾拼证据消息文本——与检索 query
+        语义对齐差，且两路径文本不同致 L2 互相不命中、rebuild 重嵌整批）。
+        存量 v1 口径向量不做主动迁移：检索质量略降但可用，下次 rebuild
+        （rag_facts 全删重建）自然统一。
+        """
         settings = load_rag_settings()
         model = str(settings["rag_embedding_model"])
         dim = int(settings["rag_embedding_dim"])
@@ -292,16 +302,9 @@ class RagIndexer:
         try:
             for offset in range(0, len(missing), max(1, int(batch_size))):
                 chunk = missing[offset:offset + max(1, int(batch_size))]
+                # 与主路径同口径嵌 fact.content——两路径 L2 互相命中
                 vectors = self.embedding_service.embed_texts([
-                    "\n".join(
-                        part for part in (
-                            str(item.get("content") or ""),
-                            self.store.list_fact_evidence_text(
-                                json.loads(item.get("evidence_message_ids_json") or "[]")
-                            ),
-                        ) if part
-                    )
-                    for item in chunk
+                    str(item.get("content") or "") for item in chunk
                 ])
                 if len(vectors) != len(chunk):
                     raise RagEmbeddingUnavailable("事实回填 embedding 数量不一致")

@@ -13,6 +13,7 @@ from typing import Any
 from ....db.connection import get_db
 from ..privacy_redactor import PrivacyRedactor
 from .config import load_rag_settings
+from .vector_utils import cosine
 from .embedding import (
     RagEmbeddingDimensionMismatch,
     RagEmbeddingService,
@@ -1342,17 +1343,7 @@ class RagIndexer:
 
     @staticmethod
     def _cosine(a: list[float], b: list[float]) -> float:
-        import math as _math
-
-        if not a or not b:
-            return 0.0
-        size = min(len(a), len(b))
-        dot = sum(float(a[i]) * float(b[i]) for i in range(size))
-        norm_a = _math.sqrt(sum(float(x) ** 2 for x in a[:size]))
-        norm_b = _math.sqrt(sum(float(x) ** 2 for x in b[:size]))
-        if norm_a <= 0 or norm_b <= 0:
-            return 0.0
-        return dot / (norm_a * norm_b)
+        return cosine(a, b)
 
     def _extract_structured_shadow_facts(
         self,

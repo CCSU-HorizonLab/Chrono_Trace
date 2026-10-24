@@ -15,7 +15,7 @@ from .db.v4.contact import ContactDBV4
 from .db.v4.message import MessageDBV4
 from .contact_filters import EXCLUDED_CONTACT_USERNAMES, is_excluded_contact_username
 from .content_codec import decode_message_content
-from ...db.connection import get_db
+from ...db.connection import get_db, write_transaction
 from ..analysis.preprocessing import PreprocessingService
 
 
@@ -447,83 +447,85 @@ class WeChatIngestService:
         skipped_empty = 0
         avatar_updates = 0
 
-        for contact_dict in contacts_data:
-            username = (contact_dict.get("username") or "").strip()
-            if not username:
-                filtered += 1
-                continue
+        # 单事务批量提交：autocommit 下此前每联系人 2 条独立事务
+        with write_transaction():
+            for contact_dict in contacts_data:
+                username = (contact_dict.get("username") or "").strip()
+                if not username:
+                    filtered += 1
+                    continue
 
-            if is_excluded_contact_username(username, exclude_chatroom=False):
-                filtered += 1
-                continue
+                if is_excluded_contact_username(username, exclude_chatroom=False):
+                    filtered += 1
+                    continue
 
-            avatar_url = (contact_dict.get("avatar_url") or "").strip()
-            if avatar_url:
-                if existing_avatars.get(username, "") != avatar_url:
-                    avatar_updates += 1
-            else:
-                skipped_empty += 1
+                avatar_url = (contact_dict.get("avatar_url") or "").strip()
+                if avatar_url:
+                    if existing_avatars.get(username, "") != avatar_url:
+                        avatar_updates += 1
+                else:
+                    skipped_empty += 1
 
-            try:
-                db.execute(
-                    """
-                    INSERT INTO contacts
-                    (account_wxid, username, nickname, remark, alias, phone, avatar_path, is_friend, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(account_wxid, username) DO UPDATE SET
-                        nickname = excluded.nickname,
-                        remark = excluded.remark,
-                        alias = excluded.alias,
-                        phone = excluded.phone,
-                        avatar_path = CASE
-                            WHEN excluded.avatar_path IS NOT NULL AND TRIM(excluded.avatar_path) != ''
-                                THEN excluded.avatar_path
-                            ELSE contacts.avatar_path
-                        END,
-                        is_friend = excluded.is_friend,
-                        updated_at = excluded.updated_at,
-                        is_deleted = 0
-                """,
-                    (
-                        account_wxid,
-                        username,
-                        contact_dict.get("nickname", ""),
-                        contact_dict.get("remark", ""),
-                        contact_dict.get("alias", ""),
-                        contact_dict.get("phone", ""),
-                        avatar_url or None,
-                        1 if contact_dict.get("is_friend") else 0,
-                        now,
-                        now,
-                    ),
-                )
-                #同步更新 conversations 表的冗余名称字段，确保备注名/昵称变更后显示一致
-                display_name =(
-                    (contact_dict.get("remark")or"").strip()
-                    or (contact_dict.get("nickname")or "").strip()
-                    or username
-                )
-                db.execute(
-                    """
-                    UPDATE conversations
-                    SET display_name = ?,
-                        remark = ?,
-                        nickname = ?,
-                        updated_at = ?
-                    WHERE account_wxid = ? AND username = ? AND platform = 'wechat'
-                """,
-                    (
-                        display_name,
-                        contact_dict.get("remark",""),
-                        contact_dict.get("nickname",""),
-                        now,
-                        account_wxid,
-                        username,
-                    ),
-                )
-                processed += 1
-            except Exception as e:
-                logger.error(f"[DEBUG] 插入联系人失败: {e}")
+                try:
+                    db.execute(
+                        """
+                        INSERT INTO contacts
+                        (account_wxid, username, nickname, remark, alias, phone, avatar_path, is_friend, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(account_wxid, username) DO UPDATE SET
+                            nickname = excluded.nickname,
+                            remark = excluded.remark,
+                            alias = excluded.alias,
+                            phone = excluded.phone,
+                            avatar_path = CASE
+                                WHEN excluded.avatar_path IS NOT NULL AND TRIM(excluded.avatar_path) != ''
+                                    THEN excluded.avatar_path
+                                ELSE contacts.avatar_path
+                            END,
+                            is_friend = excluded.is_friend,
+                            updated_at = excluded.updated_at,
+                            is_deleted = 0
+                    """,
+                        (
+                            account_wxid,
+                            username,
+                            contact_dict.get("nickname", ""),
+                            contact_dict.get("remark", ""),
+                            contact_dict.get("alias", ""),
+                            contact_dict.get("phone", ""),
+                            avatar_url or None,
+                            1 if contact_dict.get("is_friend") else 0,
+                            now,
+                            now,
+                        ),
+                    )
+                    #同步更新 conversations 表的冗余名称字段，确保备注名/昵称变更后显示一致
+                    display_name =(
+                        (contact_dict.get("remark")or"").strip()
+                        or (contact_dict.get("nickname")or "").strip()
+                        or username
+                    )
+                    db.execute(
+                        """
+                        UPDATE conversations
+                        SET display_name = ?,
+                            remark = ?,
+                            nickname = ?,
+                            updated_at = ?
+                        WHERE account_wxid = ? AND username = ? AND platform = 'wechat'
+                    """,
+                        (
+                            display_name,
+                            contact_dict.get("remark",""),
+                            contact_dict.get("nickname",""),
+                            now,
+                            account_wxid,
+                            username,
+                        ),
+                    )
+                    processed += 1
+                except Exception as e:
+                    logger.error(f"[DEBUG] 插入联系人失败: {e}")
 
         db.commit()
         return {
@@ -930,79 +932,92 @@ class WeChatIngestService:
                 now,
             ))
 
-        # 分会话 executemany（插入语句保持 OR IGNORE 兜底并发安全）
-        for rows in rows_by_conv.values():
-            db.executemany("""
-                INSERT OR IGNORE INTO messages
-                (conversation_id, local_id, talker, sender, is_sender, message_type, content, timestamp, source, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'long', ?)
-            """, rows)
+        # 分会话 executemany（插入语句保持 OR IGNORE 兜底并发安全）。
+        # 插入与对账同处一个显式事务：autocommit 下此前是每行一个事务
+        # （executemany 也拆散），132 万行级导入多付数十秒提交开销。
+        with write_transaction():
+            for rows in rows_by_conv.values():
+                db.executemany("""
+                    INSERT OR IGNORE INTO messages
+                    (conversation_id, local_id, talker, sender, is_sender, message_type, content, timestamp, source, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'long', ?)
+                """, rows)
 
-        # 实时与导入消息对账（W1）：实时行不再占用 local_id 后，同一物理消息可能
-        # 同时存在 realtime 行（UIA 分钟级时间戳）与 long 行（微信库精确时间戳）。
-        # 对含实时行的会话，删除已被权威导入数据覆盖（同发送方/类型/内容、±59 秒
-        # 窗口容差）的冗余实时行，避免统计、预处理与 RAG 重复计数。
-        reconciled = 0
-        for conv_id in touched_conversations:
-            realtime_rows = db.execute(
-                """
-                SELECT id, is_sender, message_type, COALESCE(content, '') AS content, timestamp
-                FROM messages
-                WHERE conversation_id = ? AND source IN ('realtime', 'realtime_backfill')
-                """,
-                (conv_id,),
-            ).fetchall()
-            if not realtime_rows:
-                continue
-            long_rows = db.execute(
-                """
-                SELECT id, is_sender, message_type, COALESCE(content, '') AS content, timestamp
-                FROM messages
-                WHERE conversation_id = ? AND source = 'long'
-                """,
-                (conv_id,),
-            ).fetchall()
-
-            # 同（发送方/类型/内容）桶内一对一贪心最近匹配，±59s 容差保留
-            # （UIA 实时行为分钟级时间戳，与微信库精确时间戳天然有偏差）。
-            # 此前 EXISTS + 时间窗允许一条 long 吸收窗口内多条同文 realtime：
-            # 一分钟内连发两条相同文本时，第二条的 realtime 行被第一条的
-            # long 行误删，而它自己的 long 行尚未导入（此后若不再导入，
-            # 该消息永久丢失）。一对一后每条 realtime 只会被「自己的」
-            # long 行覆盖。
-            by_key: dict[tuple, list[tuple]] = {}
-            for row in long_rows:
-                by_key.setdefault(
-                    (row["is_sender"], row["message_type"], row["content"]), []
-                ).append((row["timestamp"], row["id"]))
-            used_long: set[int] = set()
-            matched_ids: list[int] = []
-            for rt in realtime_rows:
-                candidates = by_key.get(
-                    (rt["is_sender"], rt["message_type"], rt["content"])
-                )
-                if not candidates:
+            # 实时与导入消息对账（W1）：实时行不再占用 local_id 后，同一物理消息可能
+            # 同时存在 realtime 行（UIA 分钟级时间戳）与 long 行（微信库精确时间戳）。
+            # 对含实时行的会话，删除已被权威导入数据覆盖（同发送方/类型/内容、±59 秒
+            # 窗口容差）的冗余实时行，避免统计、预处理与 RAG 重复计数。
+            #
+            # 窗口化：只查「本批插入行时间范围 ±60s」的行。匹配容差 ±59s
+            # 决定了窗口外的 realtime 行不可能被本批新 long 行覆盖；此前
+            # 每批全量拉取 touched 会话所有 long 行（跨批累积，132 万条
+            # 导入是十亿行级读取）在对账语义上不必要。
+            reconciled = 0
+            for conv_id, rows in rows_by_conv.items():
+                batch_ts = [row[7] for row in rows]
+                win_start = min(batch_ts) - 60
+                win_end = max(batch_ts) + 60
+                realtime_rows = db.execute(
+                    """
+                    SELECT id, is_sender, message_type, COALESCE(content, '') AS content, timestamp
+                    FROM messages
+                    WHERE conversation_id = ? AND source IN ('realtime', 'realtime_backfill')
+                      AND timestamp BETWEEN ? AND ?
+                    """,
+                    (conv_id, win_start, win_end),
+                ).fetchall()
+                if not realtime_rows:
                     continue
-                best_long_id = None
-                best_dt = None
-                for lts, lid in candidates:
-                    if lid in used_long:
+                long_rows = db.execute(
+                    """
+                    SELECT id, is_sender, message_type, COALESCE(content, '') AS content, timestamp
+                    FROM messages
+                    WHERE conversation_id = ? AND source = 'long'
+                      AND timestamp BETWEEN ? AND ?
+                    """,
+                    (conv_id, win_start, win_end),
+                ).fetchall()
+
+                # 同（发送方/类型/内容）桶内一对一贪心最近匹配，±59s 容差保留
+                # （UIA 实时行为分钟级时间戳，与微信库精确时间戳天然有偏差）。
+                # 此前 EXISTS + 时间窗允许一条 long 吸收窗口内多条同文 realtime：
+                # 一分钟内连发两条相同文本时，第二条的 realtime 行被第一条的
+                # long 行误删，而它自己的 long 行尚未导入（此后若不再导入，
+                # 该消息永久丢失）。一对一后每条 realtime 只会被「自己的」
+                # long 行覆盖。
+                by_key: dict[tuple, list[tuple]] = {}
+                for row in long_rows:
+                    by_key.setdefault(
+                        (row["is_sender"], row["message_type"], row["content"]), []
+                    ).append((row["timestamp"], row["id"]))
+                used_long: set[int] = set()
+                matched_ids: list[int] = []
+                for rt in realtime_rows:
+                    candidates = by_key.get(
+                        (rt["is_sender"], rt["message_type"], rt["content"])
+                    )
+                    if not candidates:
                         continue
-                    dt = abs(lts - rt["timestamp"])
-                    if dt > 59:
-                        continue
-                    if best_dt is None or dt < best_dt:
-                        best_long_id = lid
-                        best_dt = dt
-                if best_long_id is not None:
-                    used_long.add(best_long_id)
-                    matched_ids.append(rt["id"])
-            if matched_ids:
-                db.executemany(
-                    "DELETE FROM messages WHERE id = ?",
-                    [(mid,) for mid in matched_ids],
-                )
-                reconciled += len(matched_ids)
+                    best_long_id = None
+                    best_dt = None
+                    for lts, lid in candidates:
+                        if lid in used_long:
+                            continue
+                        dt = abs(lts - rt["timestamp"])
+                        if dt > 59:
+                            continue
+                        if best_dt is None or dt < best_dt:
+                            best_long_id = lid
+                            best_dt = dt
+                    if best_long_id is not None:
+                        used_long.add(best_long_id)
+                        matched_ids.append(rt["id"])
+                if matched_ids:
+                    db.executemany(
+                        "DELETE FROM messages WHERE id = ?",
+                        [(mid,) for mid in matched_ids],
+                    )
+                    reconciled += len(matched_ids)
         if reconciled:
             logger.info(f"[导入对账] 清理被导入数据覆盖的冗余实时消息 {reconciled} 条")
 
@@ -1051,20 +1066,21 @@ class WeChatIngestService:
             return
 
         db = get_db()
-        for conversation_id, latest_timestamp in touched_conversations.items():
-            db.execute(
-                """
-                UPDATE conversations
-                SET updated_at = MAX(updated_at, ?),
-                    message_count = (
-                        SELECT COUNT(*)
-                        FROM messages
-                        WHERE messages.conversation_id = conversations.id
-                    )
-                WHERE id = ?
-                """,
-                (latest_timestamp, conversation_id)
-            )
+        with write_transaction():
+            for conversation_id, latest_timestamp in touched_conversations.items():
+                db.execute(
+                    """
+                    UPDATE conversations
+                    SET updated_at = MAX(updated_at, ?),
+                        message_count = (
+                            SELECT COUNT(*)
+                            FROM messages
+                            WHERE messages.conversation_id = conversations.id
+                        )
+                    WHERE id = ?
+                    """,
+                    (latest_timestamp, conversation_id)
+                )
         db.commit()
 
     def _auto_preprocess_messages(

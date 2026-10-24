@@ -108,7 +108,6 @@ class InteractionInvestmentService:
         self.timeliness_threshold = timeliness_threshold_seconds
         self.long_text_threshold = long_text_threshold
         self._pair_service = None
-        self._sentiment_service = None
 
     def calculate_scores(
         self,
@@ -449,7 +448,12 @@ class InteractionInvestmentService:
         self,
         speech_units: List[Dict[str, object]]
     ) -> Optional[float]:
-        """计算单个会话内相邻发言单元的平均相似度."""
+        """计算单个会话内交互对（相邻不同发送者）的平均相似度。
+
+        复用主路径 build_interaction_pairs 的口径与嵌入缓存——此前自算
+        「会话内全部相邻单元」（含同方连续）均值，与 interaction_pairs
+        表的相邻跨方对口径不一致，嵌入缺失期前后的分数不可比。
+        """
         if len(speech_units) < 2:
             return None
 
@@ -458,21 +462,12 @@ class InteractionInvestmentService:
             return None
 
         try:
-            sentiment_service = self._get_sentiment_service()
-            sentiment_service._load_embedding_model()
-            if sentiment_service._embedding_model is None:
-                return None
-
-            # 走缓存版批量编码（L1+L2），与主链路共享向量——直调 encode
-            # 会绕过持久缓存（本兜底路径多为重复文本，命中率极高）
-            embeddings = sentiment_service._get_embeddings_batch(texts, batch_size=32)
-
-            import numpy as np
-
-            similarities: List[float] = []
-            for idx in range(len(embeddings) - 1):
-                similarity = float(np.dot(embeddings[idx], embeddings[idx + 1]))
-                similarities.append(max(0.0, min(1.0, similarity)))
+            pairs = self._get_pair_service().build_interaction_pairs(speech_units)
+            similarities = [
+                float(pair["semantic_similarity"])
+                for pair in pairs
+                if pair.get("semantic_similarity") is not None
+            ]
 
             if not similarities:
                 return None
@@ -488,12 +483,6 @@ class InteractionInvestmentService:
             from .preprocessing import PairPreprocessingService
             self._pair_service = PairPreprocessingService()
         return self._pair_service
-
-    def _get_sentiment_service(self):
-        if self._sentiment_service is None:
-            from .sentiment_service import SentimentService
-            self._sentiment_service = SentimentService()
-        return self._sentiment_service
 
     def calculate_active_initiation_score(
         self, stats: PreprocessedStatistics, raw_rate: Optional[float] = None

@@ -2,50 +2,86 @@
 import re
 import json
 import logging
+import string
 import time
 from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
-from ....db.connection import get_db
+from ....db.connection import get_db, write_transaction
 
 logger = logging.getLogger(__name__)
 
+# 清洗口径版本：变化时 message_preprocessed（可再生缓存）整表重建
+CLEANING_VERSION = 2
 
-"""数据预处理服务 - 消息清洗与基础统计
+# 微信方括号占位白名单——只删这些与文本表情。此前 \[.*?\] 吞掉一切
+# 方括号内容（普通文本 "[1]"、"[链接说明]" 同删），词云/字数统计失真；
+# 白名单外的方括号文本保留，漏判的表情留在文本里只是多一个词，无害。
+_WECHAT_PLACEHOLDER_WORDS = (
+    "图片 视频 语音 文件 动画表情 表情 链接 名片 位置 音乐 小程序"
+    " 转账 红包 视频号 拍一拍 聊天记录 引用 收藏 系统消息 系统提示"
+    " 游戏 分享 猜拳 骰子 链接标题 小程序分享 视频通话 语音通话"
+).split()
+_WECHAT_EMOJI_WORDS = (
+    "微笑 呲牙 偷笑 发怒 大哭 色 得意 害羞 闭嘴 睡 尴尬 发呆 思考"
+    " 惊讶 难过 抓狂 吐 愉快 白眼 傲慢 困 惊恐 憨笑 悠闲 咒骂 疑问"
+    " 嘘 晕 敲打 再见 擦汗 抠鼻 鼓掌 坏笑 鄙视 委屈 快哭了 阴险 亲亲"
+    " 可怜 笑脸 生病 脸红 破涕为笑 恐惧 失望 无语 嘿哈 捂脸 奸笑"
+    " 机智 皱眉 耶 吃瓜 加油 汗 天啊 Emm emm 社会 旺柴 好的 打脸"
+    " 哇 翻白眼 666 让我看看 叹气 苦涩 裂开 嘴唇 爱心 心碎 拥抱 强"
+    " 弱 握手 胜利 抱拳 勾引 拳头 OK ok 合十 啤酒 咖啡 蛋糕 玫瑰"
+    " 凋谢 菜刀 炸弹 便便 月亮 太阳 庆祝 发 福 猪头 跳出 跳绳 太极"
+    " 拒绝 敬礼 流泪 翻滚 哈欠 骂 醒了 裂开 笑哭 笑眼 星星 闪电"
+).split()
 
-包含三个服务类:
-1. BasicPreprocessingService - 基础统计收集
-2. PairPreprocessingService - 交互对构建
-3. SessionManager - 会话切分和管理
-"""
-import re
-import json
-import logging
-import time
-from typing import Dict, Any, List, Optional, Tuple
-from datetime import datetime
-from ....db.connection import get_db
 
-
-logger = logging.getLogger(__name__)
 class PreprocessingService:
     """消息预处理服务"""
-    
+
     def __init__(self):
-        pass  # get_db() removed for thread safety
+        self._version_checked = False
+        self._ensure_cleaning_cache_fresh()
         self._compile_patterns()
 
-    
+    def _ensure_cleaning_cache_fresh(self):
+        """清洗口径与缓存版本不一致时整表重建缓存（可再生，不做迁移）。"""
+        if self._version_checked:
+            return
+        self._version_checked = True
+        try:
+            db = get_db()
+            row = db.execute(
+                "SELECT value FROM settings WHERE key = 'cleaning_version'"
+            ).fetchone()
+            if row and str(row[0]) == str(CLEANING_VERSION):
+                return
+            db.execute("DELETE FROM message_preprocessed")
+            db.execute(
+                "INSERT OR REPLACE INTO settings (key, value, updated_at) "
+                "VALUES ('cleaning_version', ?, datetime('now'))",
+                (str(CLEANING_VERSION),),
+            )
+            db.commit()
+            logger.info("[预处理] 清洗口径 v%s，message_preprocessed 缓存已整表重建", CLEANING_VERSION)
+        except Exception as exc:
+            logger.warning("[预处理] 清洗版本校验失败(忽略): %s", exc)
+
     def _compile_patterns(self):
         """编译正则表达式模式（提升性能）"""
         # XML系统消息: <msg>...</msg>
         self.xml_pattern = re.compile(r'<msg>.*?</msg>', re.DOTALL | re.IGNORECASE)
-        
-        # 表情和媒体标签: [表情]、[图片]、[语音]等
-        self.media_pattern = re.compile(r'\[.*?\]')
-        
+
+        # 表情和媒体占位: [图片]、[表情]、[语音]等（白名单，长词在前防
+        # 「动画表情」被「表情」抢先匹配）
+        words = sorted(
+            set(_WECHAT_PLACEHOLDER_WORDS) | set(_WECHAT_EMOJI_WORDS),
+            key=len,
+            reverse=True,
+        )
+        self.media_pattern = re.compile(rf'\[(?:{"|".join(words)})\]')
+
         # 多个连续空白字符
         self.whitespace_pattern = re.compile(r'\s+')
-    
+
     def clean_content(self, content: str) -> Dict[str, Any]:
         """
         清洗单条消息内容
@@ -138,7 +174,7 @@ class PreprocessingService:
         # 词数（使用jieba分词）
         word_count = 0
         try:
-            import jieba
+            import jieba  # noqa: F401
             words = list(jieba.cut(content))
             # 过滤空字符串和纯空格
             word_count = len([w for w in words if w.strip()])
@@ -146,10 +182,10 @@ class PreprocessingService:
             # 如果jieba未安装，使用简单的空格分割
             word_count = len(content.split())
         
-        # 是否包含标点符号
-        import string
+        # 是否包含标点符号（集合成员测试：此前 115 字符字符串线性扫描，
+        # 13 万条 × 平均字数的 O(115) 比较是纯浪费）
         cn_punctuation = '，。！？、；：""''（）【】《》…—·'
-        all_punctuation = string.punctuation + cn_punctuation
+        all_punctuation = set(string.punctuation + cn_punctuation)
         has_punctuation = any(c in all_punctuation for c in content)
         
         return {
@@ -233,18 +269,22 @@ class PreprocessingService:
         
         cleaned_messages = []
         messages_to_cache = []  # 需要写入缓存的消息
-        
+
+        # 一次性批量预取缓存（此前循环内逐条点查，13 万条 = 13 万次语句往返）
+        if use_cache and not force_reprocess:
+            cached_map = self._batch_get_cached_messages([row[0] for row in messages])
+        else:
+            cached_map = {}
+
         # 逐条处理
         for row in messages:
             msg_id = row[0]
             content = row[1]
             is_sender = row[2]
             timestamp = row[3]
-            
+
             # 尝试从缓存读取
-            cached = None
-            if use_cache and not force_reprocess:
-                cached = self._get_cached_message(msg_id)
+            cached = cached_map.get(msg_id)
             
             if cached:
                 # 使用缓存数据
@@ -350,35 +390,64 @@ class PreprocessingService:
             }
         }
     
-    def _get_cached_message(self, message_id: int) -> Optional[Dict[str, Any]]:
-        """从缓存读取预处理结果"""
-        cursor = get_db().execute("""
-            SELECT cleaned_content, char_count, word_count, is_valid, has_xml, has_media
-            FROM message_preprocessed
-            WHERE message_id = ?
-        """, (message_id,))
-        
-        row = cursor.fetchone()
-        if not row:
-            return None
-        
-        return {
-            "cleaned_content": row[0],
-            "char_count": row[1],
-            "word_count": row[2],
-            "is_valid": row[3],
-            "has_xml": row[4],
-            "has_media": row[5]
-        }
-    
+    def _batch_get_cached_messages(self, message_ids: List[int]) -> Dict[int, Dict[str, Any]]:
+        """批量读取预处理缓存（IN 分批 500），替代逐条点查。"""
+        cached: Dict[int, Dict[str, Any]] = {}
+        ids = list(message_ids)
+        for start in range(0, len(ids), 500):
+            chunk = ids[start:start + 500]
+            placeholders = ','.join('?' * len(chunk))
+            cursor = get_db().execute(f"""
+                SELECT message_id, cleaned_content, char_count, word_count,
+                       is_valid, has_xml, has_media
+                FROM message_preprocessed
+                WHERE message_id IN ({placeholders})
+            """, tuple(chunk))
+            for row in cursor.fetchall():
+                cached[int(row[0])] = {
+                    "cleaned_content": row[1],
+                    "char_count": row[2],
+                    "word_count": row[3],
+                    "is_valid": row[4],
+                    "has_xml": row[5],
+                    "has_media": row[6],
+                }
+        return cached
+
     def _batch_cache_messages(self, messages: List[Dict[str, Any]]):
-        """批量写入缓存"""
-        
+        """批量写入缓存（executemany + 单事务；整批失败回退逐条）"""
+        if not messages:
+            return
+
+        rows = [(
+            msg["message_id"],
+            msg["conversation_id"],
+            msg["cleaned_content"],
+            msg["char_count"],
+            msg["word_count"],
+            msg["is_valid"],
+            msg["has_xml"],
+            msg["has_media"],
+            int(time.time()),
+        ) for msg in messages]
+
+        try:
+            with write_transaction():
+                get_db().executemany("""
+                    INSERT OR REPLACE INTO message_preprocessed
+                    (message_id, conversation_id, cleaned_content, char_count, word_count,
+                     is_valid, has_xml, has_media, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, rows)
+            return
+        except Exception as e:
+            logger.error(f"[预处理] 批量缓存 {len(rows)} 条失败，回退逐条: {e}")
+
         for msg in messages:
             try:
                 get_db().execute("""
                     INSERT OR REPLACE INTO message_preprocessed
-                    (message_id, conversation_id, cleaned_content, char_count, word_count, 
+                    (message_id, conversation_id, cleaned_content, char_count, word_count,
                      is_valid, has_xml, has_media, created_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
@@ -394,9 +463,6 @@ class PreprocessingService:
                 ))
             except Exception as e:
                 logger.error(f"[预处理] 缓存消息 {msg['message_id']} 失败: {e}")
-        
-        get_db().commit()
-       # logger.debug(f"[预处理] 已缓存 {len(messages)} 条消息")
     
     def preprocess_message_batch(
         self,

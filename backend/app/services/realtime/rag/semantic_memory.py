@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import math
 import re
 from typing import Any
 
 from .embedding import RagEmbeddingService, RagEmbeddingUnavailable
+from .vector_utils import cosine
 from .fact_quality import (
     SYSTEM_MESSAGE_MARKERS,
     is_usable_shadow_fact,
@@ -420,15 +420,7 @@ class SemanticFactExtractor:
         ]
 
     def _cosine(self, a: list[float], b: list[float]) -> float:
-        if not a or not b:
-            return 0.0
-        size = min(len(a), len(b))
-        dot = sum(float(a[index]) * float(b[index]) for index in range(size))
-        norm_a = math.sqrt(sum(float(a[index]) ** 2 for index in range(size)))
-        norm_b = math.sqrt(sum(float(b[index]) ** 2 for index in range(size)))
-        if norm_a <= 0 or norm_b <= 0:
-            return 0.0
-        return dot / (norm_a * norm_b)
+        return cosine(a, b)
 
     def _is_informative_candidate(self, content: str) -> bool:
         if len(content) < 3:

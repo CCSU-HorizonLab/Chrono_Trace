@@ -11,6 +11,7 @@ import time
 from typing import Any
 
 from .config import load_rag_settings
+from .vector_utils import cosine
 from .embedding import (
     RagEmbeddingDimensionMismatch,
     RagEmbeddingService,
@@ -246,6 +247,7 @@ class RagRetriever:
             return self._empty(started, status, degraded=True, reason="timeout", timed_out=True)
 
         filtered = []
+        timed_out = False
         query_tokens = set(self._tokens(query))
         memory_lookup = self._is_memory_lookup_query(query)
         for item in scored:
@@ -258,7 +260,9 @@ class RagRetriever:
                 if len(query_tokens & doc_tokens) < 2:
                     continue
             if self._timed_out(started, timeout_ms, deadline):
-                return self._empty(started, status, degraded=True, reason="timeout", timed_out=True)
+                # 超时保留已过滤结果，不清空返回（与事实通道同口径）
+                timed_out = True
+                break
             if float(item["score"]) <= 0:
                 continue
             item["score"] = round(float(item["score"]), 4)
@@ -270,9 +274,9 @@ class RagRetriever:
             "items": filtered,
             "strategy": strategy,
             "status": status,
-            "timed_out": False,
-            "degraded": strategy != "vector" or status.get("status") in {"pending", "stale"},
-            "degrade_reason": None if strategy == "vector" else degrade_reason,
+            "timed_out": timed_out,
+            "degraded": timed_out or strategy != "vector" or status.get("status") in {"pending", "stale"},
+            "degrade_reason": "timeout" if timed_out else (None if strategy == "vector" else degrade_reason),
             "elapsed_ms": elapsed_ms,
             "by_type": self._count_by_type(filtered),
         }
@@ -402,9 +406,13 @@ class RagRetriever:
                 timed_out=True,
             )
         items: list[dict[str, Any]] = []
+        timed_out = False
         for fact in facts:
             if self._timed_out(started, timeout_ms, deadline):
-                return self._empty(started, self.store.get_status(account_wxid, conversation_id) or {}, degraded=True, reason="timeout", timed_out=True)
+                # 超时保留已打分结果（按分数截断后返回）——此前直接清空
+                # 返回，数据量增长后表现为「记忆静默失效」而非变慢。
+                timed_out = True
+                break
             if str(fact.get("sensitivity") or "normal") == "sensitive":
                 continue
             content = str(fact.get("content") or "").strip()
@@ -506,9 +514,9 @@ class RagRetriever:
             "items": items,
             "strategy": "facts",
             "status": self.store.get_status(account_wxid, conversation_id) or {},
-            "timed_out": False,
-            "degraded": bool(vector_reason),
-            "degrade_reason": vector_reason,
+            "timed_out": timed_out,
+            "degraded": bool(vector_reason) or timed_out,
+            "degrade_reason": "timeout" if timed_out else vector_reason,
             "elapsed_ms": int((time.perf_counter() - started) * 1000),
             "by_type": {"fact_memory": len(items)} if items else {},
         }
@@ -678,15 +686,7 @@ class RagRetriever:
         return words[:300]
 
     def _cosine(self, a: list[float], b: list[float]) -> float:
-        if not a or not b:
-            return 0.0
-        size = min(len(a), len(b))
-        dot = sum(float(a[index]) * float(b[index]) for index in range(size))
-        norm_a = math.sqrt(sum(float(a[index]) ** 2 for index in range(size)))
-        norm_b = math.sqrt(sum(float(b[index]) ** 2 for index in range(size)))
-        if norm_a <= 0 or norm_b <= 0:
-            return 0.0
-        return dot / (norm_a * norm_b)
+        return cosine(a, b)
 
     def _time_decay(self, doc: dict[str, Any]) -> float:
         try:

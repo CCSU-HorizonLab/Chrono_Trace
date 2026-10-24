@@ -17,11 +17,16 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from ...db.connection import get_db
 from .analysis_service import AnalysisService, sentiment_bucket_expr
+from .preprocessing.cleaning import CLEANING_VERSION
 from .wordcloud_generator import WordCloudGenerator
 
+import json
 import logging
 
 logger = logging.getLogger(__name__)
+
+# 词云缓存版本：分词口径（单遍分词 all=me+other 精确和）或缓存结构变化时 +1
+DEEP_WORDCLOUD_CACHE_VERSION = 2
 
 # 桶口径/序列结构版本：分桶表达式或点位结构变化时 +1（payload 携带，
 # 序列实时计算无缓存，版本主要用于前端兼容判断与文档口径记录）
@@ -260,6 +265,20 @@ class DeepAnalysisService:
         use_cleaned = coverage_ratio >= DEEP_PREPROCESSED_COVERAGE
         caliber = "cleaned" if use_cleaned else "raw"
 
+        # 持久缓存：词云分词是深度页最重的一段（每段上限 15000 条 ×
+        # posseg 全量切词），此前每次打开页面都重算。指纹 = 分段边界 +
+        # 口径 + 消息总数 + 清洗口径版本，任一变化自然失效。
+        cache_key = f"deep_wordcloud_v{DEEP_WORDCLOUD_CACHE_VERSION}_{conversation_id}"
+        fingerprint = {
+            "caliber": caliber,
+            "total": total,
+            "cleaning": CLEANING_VERSION,
+            "spans": [list(span) for span in spans],
+        }
+        cached = self._load_wordcloud_cache(cache_key, fingerprint)
+        if cached is not None:
+            return cached
+
         if self._wordcloud_gen is None:
             self._wordcloud_gen = WordCloudGenerator()
 
@@ -271,28 +290,55 @@ class DeepAnalysisService:
             )
             truncated = sampled_total > DEEP_WORDCLOUD_SEGMENT_LIMIT
 
-            texts = {"all": [], "me": [], "other": []}
-            for is_sender, content in rows:
-                texts["all"].append(content)
-                texts["me" if is_sender == 1 else "other"].append(content)
-
             results.append({
                 "from_ts": seg_from,
                 "to_ts": seg_to,
                 "truncated": truncated,
                 "sampled": len(rows),
                 "total": sampled_total,
-                "words": {
-                    key: self._wordcloud_gen.generate(values, top_n=30)
-                    for key, values in texts.items()
-                },
+                # 单遍分词三口径（all 恒等于 me+other 词频之和；此前
+                # 三路各自拼接整段重切 3 遍）
+                "words": self._wordcloud_gen.generate_by_side(
+                    [(content, is_sender == 1) for is_sender, content in rows],
+                    top_n=30,
+                ),
             })
 
-        return {
+        payload = {
             "caliber": caliber,
             "coverage_ratio": round(coverage_ratio, 3),
             "segments": results,
         }
+        self._save_wordcloud_cache(cache_key, payload, fingerprint)
+        return payload
+
+    @staticmethod
+    def _load_wordcloud_cache(cache_key: str, fingerprint: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        try:
+            row = get_db().execute(
+                "SELECT value FROM settings WHERE key = ?", (cache_key,)
+            ).fetchone()
+            if not row:
+                return None
+            cached = json.loads(row[0])
+            if cached.get("fingerprint") != fingerprint:
+                return None
+            payload = cached.get("payload")
+            return payload if isinstance(payload, dict) and payload.get("segments") else None
+        except Exception as exc:
+            logger.debug("[时光深度] 词云缓存读取失败(忽略): %s", exc)
+            return None
+
+    @staticmethod
+    def _save_wordcloud_cache(cache_key: str, payload: Dict[str, Any], fingerprint: Dict[str, Any]) -> None:
+        try:
+            get_db().execute(
+                "INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now'))",
+                (cache_key, json.dumps({"fingerprint": fingerprint, "payload": payload}, ensure_ascii=False)),
+            )
+            get_db().commit()
+        except Exception as exc:
+            logger.debug("[时光深度] 词云缓存写入失败(忽略): %s", exc)
 
     @staticmethod
     def _count_text_messages(conversation_id: int, from_ts: int, to_ts: int) -> int:

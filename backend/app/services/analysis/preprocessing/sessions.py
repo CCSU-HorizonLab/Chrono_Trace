@@ -254,7 +254,10 @@ class SessionManager:
                     # encode 已 L2 归一：cosine == 裸点积（此前逐对重算 norm 纯浪费）
                     similarity = float(np.dot(vec1, vec2))
                     
-                    if similarity < self.SIMILARITY_THRESHOLD + 0.2:  # 粗筛阈值稍高
+                    # 谷值切分要求 < SIMILARITY_THRESHOLD(0.3)：粗筛阈值
+                    # 收紧到 +0.1，采样间隔 5 内的短谷（两端点相似度抬
+                    # 高时）漏切窗口随之下收窄
+                    if similarity < self.SIMILARITY_THRESHOLD + 0.1:  # 粗筛阈值稍高
                         # 记录需要精细检测的区域
                         start = sample_indices[i]
                         end = sample_indices[i + 1]

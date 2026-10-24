@@ -1,5 +1,6 @@
 """数据库连接与初始化模块"""
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
 
@@ -79,6 +80,12 @@ class DatabaseConnection:
         conn.row_factory = sqlite3.Row  # 支持字典式访问
         conn.execute("PRAGMA busy_timeout = 30000")
         conn.execute("PRAGMA synchronous = NORMAL")
+        # 大库读写性能：默认页缓存 2MB/连接对 GB 级库的会话级扫描明显
+        # 吃紧；mmap 免行拷贝、temp_store=MEMORY 让 GROUP BY/排序的临时
+        # B 树不落盘
+        conn.execute("PRAGMA cache_size = -65536")  # 64MB
+        conn.execute("PRAGMA mmap_size = 268435456")  # 256MB
+        conn.execute("PRAGMA temp_store = MEMORY")
         cls._set_instance(conn, db_path)
 
         try:
@@ -161,6 +168,30 @@ def get_db() -> sqlite3.Connection:
     return DatabaseConnection.get_connection()
 
 
+@contextmanager
+def write_transaction(db: sqlite3.Connection = None):
+    """显式批量写事务。
+
+    连接是 autocommit（isolation_level=None，为消灭挂起事务死锁），不
+    包事务的批写（含 executemany）实际逐语句提交——百万行级导入要额外
+    付出数千万次 WAL 帧追加与写锁获取。批量写点统一走本助手；嵌套调用
+    时并入外层事务，由最外层提交。
+    """
+    if db is None:
+        db = get_db()
+    if db.in_transaction:
+        yield db
+        return
+    db.execute("BEGIN IMMEDIATE")
+    try:
+        yield db
+    except Exception:
+        db.execute("ROLLBACK")
+        raise
+    else:
+        db.execute("COMMIT")
+
+
 def batch_insert(table: str, columns: list, data: list, db: sqlite3.Connection = None) -> int:
     """
     批量插入数据
@@ -183,7 +214,8 @@ def batch_insert(table: str, columns: list, data: list, db: sqlite3.Connection =
     placeholders = ', '.join(['?'] * len(columns))
     sql = f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({placeholders})"
 
-    cursor = db.executemany(sql, data)
+    with write_transaction(db):
+        cursor = db.executemany(sql, data)
     return cursor.rowcount
 
 

@@ -177,6 +177,7 @@ class RagRetriever:
                         embedding_dim=dim,
                     ),
                 }
+                doc_cached["keyword_stats"] = self._keyword_stats(doc_cached["items"])
                 _cache_put(doc_cache_key, doc_cached)
             docs = doc_cached["items"]
         except Exception as exc:
@@ -194,7 +195,9 @@ class RagRetriever:
                         raise RagEmbeddingDimensionMismatch(
                             f"query embedding dimension mismatch: vector={len(query_vector)} configured={dim}"
                         )
-                    scored = self._score_vector_docs(query, query_vector, docs)
+                    scored = self._score_vector_docs(
+                        query, query_vector, docs, doc_cached.get("keyword_stats")
+                    )
                     strategy = "vector"
                 except RagEmbeddingUnavailable:
                     docs, scored, strategy = self._keyword_fallback(
@@ -222,7 +225,7 @@ class RagRetriever:
                     )
                     degrade_reason = "vector_error"
             else:
-                scored = self._score_keyword_docs(query, docs)
+                scored = self._score_keyword_docs(query, docs, doc_cached.get("keyword_stats"))
                 strategy = "keyword_fallback"
                 degrade_reason = "embedding_cold"
         else:
@@ -570,7 +573,7 @@ class RagRetriever:
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str]:
         try:
             docs = self.store.list_documents(account_wxid, conversation_id)
-            return docs, self._score_keyword_docs(query, docs), "keyword_fallback"
+            return docs, self._score_keyword_docs(query, docs, self._keyword_stats(docs)), "keyword_fallback"
         except Exception as exc:
             logger.debug("[RAG Retriever] keyword fallback failed (%s): %s", reason, exc)
             return [], [], "none"
@@ -629,8 +632,12 @@ class RagRetriever:
         query: str,
         query_vector: list[float],
         docs: list[dict[str, Any]],
+        keyword_stats: tuple[dict[int, frozenset], dict[str, int], int] | None = None,
     ) -> list[dict[str, Any]]:
-        keyword_scores = {item["id"]: score for item, score in self._keyword_pairs(query, docs)}
+        keyword_scores = {
+            item["id"]: score
+            for item, score in self._keyword_pairs(query, docs, keyword_stats)
+        }
         vector_scores = self._batch_cosine_scores(
             query_vector, {int(doc["id"]): doc.get("vector") or [] for doc in docs}
         )
@@ -657,9 +664,10 @@ class RagRetriever:
         self,
         query: str,
         docs: list[dict[str, Any]],
+        keyword_stats: tuple[dict[int, frozenset], dict[str, int], int] | None = None,
     ) -> list[dict[str, Any]]:
         scored = []
-        for doc, base_score in self._keyword_pairs(query, docs):
+        for doc, base_score in self._keyword_pairs(query, docs, keyword_stats):
             if base_score <= 0:
                 continue
             score = self._final_score(doc, vector_score=0.0, keyword_score=base_score)
@@ -673,18 +681,58 @@ class RagRetriever:
             )
         return sorted(scored, key=lambda item: item["score"], reverse=True)
 
+    def _keyword_stats(
+        self,
+        docs: list[dict[str, Any]],
+    ) -> tuple[dict[int, frozenset], dict[str, int], int]:
+        """预计算文档侧关键词统计（tokens 集合 + 文档频率 DF）。
+
+        token 展开是 n-gram 爆炸操作，此前每次检索对每 doc 重复 tokenize；
+        现随文档缓存一次算好，检索循环只做集合查询。
+        """
+        tokens_by_id: dict[int, frozenset] = {}
+        df: dict[str, int] = {}
+        for doc in docs:
+            text = f"{doc.get('content') or ''} {doc.get('redacted_content') or ''}"
+            doc_tokens = frozenset(self._tokens(text))
+            tokens_by_id[int(doc["id"])] = doc_tokens
+            for token in doc_tokens:
+                df[token] = df.get(token, 0) + 1
+        return tokens_by_id, df, len(docs)
+
     def _keyword_pairs(
         self,
         query: str,
         docs: list[dict[str, Any]],
+        keyword_stats: tuple[dict[int, frozenset], dict[str, int], int] | None = None,
     ) -> list[tuple[dict[str, Any], float]]:
+        """IDF 加权的词面重叠打分（0-1 尺度不变）。
+
+        旧口径 overlap/max(4,|q|) 把常用字片段与独家实词同权——n-gram
+        展开后「的/可能/我们」类高频组合让字面巧合文档虚高。现按平滑
+        IDF（sklearn 口径 log((1+N)/(1+df))+1，+1 保证 df=N 的全语料
+        token 仍有基础权重，单文档库退化为计数重叠）加权：分子分母
+        同源求和，高频 token 贡献自动衰减、判别性 token 主导分数；
+        阈值（relevance_gate 0.62/0.48）语义兼容——精确匹配趋近 1、
+        字面巧合趋近 0。
+        """
         query_tokens = set(self._tokens(query))
+        if not query_tokens:
+            return [(doc, 0.0) for doc in docs]
+        tokens_by_id, df, n_docs = keyword_stats or self._keyword_stats(docs)
+
+        idf = {
+            token: math.log((1 + n_docs) / (1 + df.get(token, 0))) + 1.0
+            for token in query_tokens
+        }
+        denom = sum(idf.values())
         pairs = []
         for doc in docs:
-            text = f"{doc.get('content') or ''} {doc.get('redacted_content') or ''}"
-            doc_tokens = set(self._tokens(text))
-            overlap = len(query_tokens & doc_tokens)
-            score = overlap / max(4, len(query_tokens)) if query_tokens else 0.0
+            doc_tokens = tokens_by_id.get(int(doc["id"]), frozenset())
+            if denom > 0 and doc_tokens:
+                score = sum(w for token, w in idf.items() if token in doc_tokens) / denom
+            else:
+                score = 0.0
             if query and str(doc.get("content") or "").strip() in query:
                 score += 0.2
             pairs.append((doc, score))

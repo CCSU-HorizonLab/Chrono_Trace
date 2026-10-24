@@ -256,27 +256,18 @@ def test_post_json_drops_reasoning_effort_on_400_rejection():
 
     calls = []
 
-    def fake_urlopen(req, timeout=0, context=None):
-        calls.append(json.loads(req.data.decode("utf-8")))
+    def fake_pooled_request(method, url, *, data, headers, timeout):
+        calls.append(json.loads(data.decode("utf-8")))
         if len(calls) == 1:
-            raise urllib.error.HTTPError(
-                req.full_url, 400,
-                "Unrecognized request argument supplied: reasoning_effort",
-                {"Content-Type": "application/json"},
-                io.BytesIO(
-                    b'{"error": {"message": "Unrecognized request argument supplied: reasoning_effort"}}'
-                ),
+            return (
+                b'{"error": {"message": "Unrecognized request argument supplied: reasoning_effort"}}',
+                400,
+                {},
             )
-        ok = urllib.response.addinfourl(
-            io.BytesIO(json.dumps({"choices": [{"message": {"content": "ok"}}]}).encode("utf-8")),
-            {"Content-Type": "application/json"},
-            req.full_url,
-        )
-        ok.code = 200
-        return ok
+        return (json.dumps({"choices": [{"message": {"content": "ok"}}]}).encode("utf-8"), 200, {})
 
-    orig_urlopen = urllib.request.urlopen
-    urllib.request.urlopen = fake_urlopen
+    orig_pooled = llm_http._pooled_request
+    llm_http._pooled_request = fake_pooled_request
     try:
         body = llm_http.post_json_with_retries(
             url="http://127.0.0.1:11434/v1/chat/completions",
@@ -286,7 +277,7 @@ def test_post_json_drops_reasoning_effort_on_400_rejection():
             log_prefix="[test]",
         )
     finally:
-        urllib.request.urlopen = orig_urlopen
+        llm_http._pooled_request = orig_pooled
 
     assert body["choices"][0]["message"]["content"] == "ok"
     assert len(calls) == 2

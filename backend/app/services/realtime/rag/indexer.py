@@ -106,6 +106,9 @@ class RagIndexer:
         self._llm_extract_watermark_ts: int | None = None
         # P1.5 连续覆盖语义：段失败后冻结水位，后续成功不再越过失败段
         self._llm_extract_round_failed = False
+        # 历史文档向量矩阵的实例级缓存（抽取循环复用，全量重建时 bump 代次）
+        self._related_docs_cache: dict[tuple, tuple] = {}
+        self._related_docs_cache_gen = 0
         if self.structured_fact_extractor is None:
             self.structured_fact_extractor = self._maybe_build_llm_extractor()
 
@@ -379,6 +382,8 @@ class RagIndexer:
                 logger.warning("[RAG Index] busy-queue fallback failed: %s", exc)
             return self.store.get_status(account_wxid, conversation_id) or {}
         active_key = (account_wxid, int(conversation_id))
+        # 重建会删写文档，历史向量缓存随之作废
+        self._related_docs_cache_gen += 1
         with _ACTIVE_LOCK:
             _ACTIVE.add(active_key)
         try:
@@ -1096,6 +1101,7 @@ class RagIndexer:
                 conversation_id=conversation_id,
                 segment=segment,
                 facts=usable,
+                executor=executor,
             )
             self._advance_llm_extract_progress(account_wxid, conversation_id, segment)
             self.store.conn.commit()
@@ -1256,6 +1262,53 @@ class RagIndexer:
     RELATED_HISTORY_MIN_SCORE = 0.62
     RELATED_HISTORY_MAX_MESSAGES = 8
 
+    def _related_docs_matrix(
+        self,
+        account_wxid: str,
+        conversation_id: int,
+        model: str,
+        dim: int,
+    ) -> tuple[list[dict[str, Any]], Any]:
+        """历史 topic/evidence 文档与向量矩阵的实例级缓存。
+
+        抽取循环按时间升序逐段处理，本循环内新写入的文档 source_ts 必
+        然 >= 当前段 start_ts（打分后过滤掉），循环期间缓存无需失效；
+        全量重建入口 bump 代次作废。此前每段全量载入联系人全部文档向
+        量并逐条 Python 余弦——千段级群聊等于千次全量扫描。
+        """
+        key = (self._related_docs_cache_gen, account_wxid, int(conversation_id), model, dim)
+        cached = self._related_docs_cache.get(key)
+        if cached is not None:
+            return cached
+
+        docs = self.store.list_documents_with_vectors(
+            account_wxid, conversation_id, embedding_model=model, embedding_dim=dim
+        )
+        kept: list[dict[str, Any]] = []
+        vectors: list[list[float]] = []
+        for doc in docs:
+            if str(doc.get("doc_type") or "") not in {"topic_segment", "evidence_excerpt"}:
+                continue
+            vector = doc.get("vector") or []
+            if not vector:
+                continue
+            kept.append(doc)
+            vectors.append(vector)
+
+        matrix = None
+        try:
+            import numpy as np
+
+            candidate_matrix = np.asarray(vectors, dtype=np.float32)
+            if candidate_matrix.ndim == 2 and candidate_matrix.shape[1] == dim:
+                matrix = candidate_matrix
+        except Exception:
+            matrix = None
+        entry = (kept, matrix)
+        # 只保留当前代次条目（联系人隔离由 key 保证，代次换轨即换 key）
+        self._related_docs_cache = {key: entry}
+        return entry
+
     def _retrieve_related_history_messages(
         self,
         *,
@@ -1286,20 +1339,20 @@ class RagIndexer:
             query_vector = self.embedding_service.embed_text(query_text)
             if len(query_vector) != dim:
                 return []
-            docs = self.store.list_documents_with_vectors(
-                account_wxid, conversation_id, embedding_model=model, embedding_dim=dim
+            cached_docs, matrix = self._related_docs_matrix(
+                account_wxid, conversation_id, model, dim
             )
+            if matrix is None or not cached_docs:
+                return []
+            import numpy as np
+
+            scores = matrix @ np.asarray(query_vector, dtype=np.float32)
             scored = []
-            for doc in docs:
-                if str(doc.get("doc_type") or "") not in {"topic_segment", "evidence_excerpt"}:
-                    continue
+            for idx, doc in enumerate(cached_docs):
                 # 只要历史：本段及之后时间窗的文档不含指代定义
                 if int(doc.get("source_ts") or 0) >= segment.start_ts:
                     continue
-                vector = doc.get("vector") or []
-                if not vector:
-                    continue
-                score = self._cosine(query_vector, vector)
+                score = float(scores[idx])
                 if score >= self.RELATED_HISTORY_MIN_SCORE:
                     scored.append((score, doc))
             scored.sort(key=lambda pair: -pair[0])
@@ -1448,8 +1501,18 @@ class RagIndexer:
         conversation_id: int,
         segment: RagSegment,
         facts: list[dict[str, Any]],
+        executor: Any = None,
     ) -> None:
-        """Persist structured facts through a conservative maintenance loop."""
+        """Persist structured facts through a conservative maintenance loop.
+
+        融合决策是每 fact 一次的 LLM IO：executor 传入时并发提交、按
+        提交序收敛（批内 facts 互不为候选——候选查询全部发生在本批落库
+        之前，顺序不影响决策）；事实向量循环后一次批量嵌入（此前逐
+        fact 串行融合 + 单条推理，是构建耗时的主体）。
+        """
+        from concurrent.futures import Future
+
+        prepared: list[tuple[dict[str, Any], Any]] = []
         for raw_fact in facts:
             fact = dict(raw_fact)
             fact["kind"] = normalize_fact_kind(fact.get("kind"))
@@ -1460,7 +1523,18 @@ class RagIndexer:
                 fact["subject"],
                 fact["kind"],
             )
-            decisions = self._decide_fact_fusion(fact, candidates)
+            if executor is not None:
+                prepared.append((fact, executor.submit(self._decide_fact_fusion, fact, candidates)))
+            else:
+                prepared.append((fact, self._decide_fact_fusion(fact, candidates)))
+
+        pending_vectors: list[dict[str, Any]] = []
+        for fact, decision_result in prepared:
+            decisions = (
+                decision_result.result()
+                if isinstance(decision_result, Future)
+                else decision_result
+            )
             self._log_fusion_decisions(fact, decisions)
             replacement_ids = [
                 int(item["fact_id"])
@@ -1498,18 +1572,20 @@ class RagIndexer:
                 source_window=fact.get("source_window") or {},
                 summary_method="llm_shadow",
             )
-            self._write_fact_embedding(
-                fact_id=new_id,
-                account_wxid=account_wxid,
-                conversation_id=conversation_id,
-                content=str(fact["content"]),
-            )
+            pending_vectors.append({"id": new_id, "content": str(fact["content"])})
             for old_id in replacement_ids:
                 if old_id != new_id:
                     self.store.supersede_fact(old_id, new_id)
             # G3：多旧一新时单链指针会被循环覆盖只剩最后一个，把完整
             # 被退役列表留档到新事实，演变链审计不因覆盖断链
             self.store.record_supersede_batch(new_id, replacement_ids)
+
+        if pending_vectors:
+            self._write_fact_embeddings_batch(
+                pending_vectors,
+                account_wxid=account_wxid,
+                conversation_id=conversation_id,
+            )
 
     def _write_fact_embeddings_batch(
         self,

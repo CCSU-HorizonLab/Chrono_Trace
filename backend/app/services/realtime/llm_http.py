@@ -1,3 +1,4 @@
+import http.client
 import json
 import re
 import socket
@@ -8,6 +9,7 @@ import random
 import urllib.error
 import urllib.request
 from typing import Any, Callable, Optional
+from urllib.parse import urlparse
 
 
 DEFAULT_RETRYABLE_HTTP_STATUS = {429, 500, 502, 503, 504}
@@ -280,21 +282,80 @@ def build_ssl_context() -> ssl.SSLContext:
     return context
 
 
-def _read_http_error_body(err: urllib.error.HTTPError) -> str:
+# ---------------------------------------------------------------------------
+# 线程本地 keep-alive 连接池：LLM 调用频繁（事实抽取每段一次、融合每
+# fact 一次），此前显式 Connection: close 每次请求重建 TCP+TLS，远程
+# HTTPS 场景每次多付 1-3 个 RTT 握手。连接出错即丢弃（重试路径重建）；
+# 服务端要求关闭时主动断开避免复用坏连接。
+# ---------------------------------------------------------------------------
+_TLS_CONTEXT: Optional[ssl.SSLContext] = None
+_TLS_CONTEXT_LOCK = threading.Lock()
+_CONN_LOCAL = threading.local()
+
+
+def _shared_ssl_context() -> ssl.SSLContext:
+    global _TLS_CONTEXT
+    with _TLS_CONTEXT_LOCK:
+        if _TLS_CONTEXT is None:
+            _TLS_CONTEXT = build_ssl_context()
+        return _TLS_CONTEXT
+
+
+def _pooled_request(
+    method: str,
+    url: str,
+    *,
+    data: Optional[bytes],
+    headers: dict[str, str],
+    timeout: int,
+) -> tuple[bytes, int, dict[str, str]]:
+    """按 (scheme, host, port) 复用线程本地连接发请求。
+
+    返回 (body, status, resp_headers)。连接级异常丢弃连接后重抛——
+    is_retryable_network_error 判定可重试后由重试路径重建连接。
+    """
+    parsed = urlparse(url)
+    pool = getattr(_CONN_LOCAL, "pool", None)
+    if pool is None:
+        pool = {}
+        _CONN_LOCAL.pool = pool
+    key = (parsed.scheme, parsed.hostname, parsed.port)
+
+    def _new_conn() -> http.client.HTTPConnection:
+        if parsed.scheme == "https":
+            return http.client.HTTPSConnection(
+                parsed.hostname, parsed.port, timeout=timeout,
+                context=_shared_ssl_context(),
+            )
+        return http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=timeout)
+
+    conn = pool.get(key)
+    if conn is None:
+        conn = _new_conn()
+        pool[key] = conn
+
+    target = parsed.path or "/"
+    if parsed.query:
+        target = f"{target}?{parsed.query}"
     try:
-        raw = err.read()
+        conn.request(method, target, body=data, headers=headers)
+        resp = conn.getresponse()
+        body = resp.read()
+        resp_headers = {k.lower(): v for k, v in resp.getheaders()}
+        if resp.will_close:
+            pool.pop(key, None)
+            try:
+                conn.close()
+            except Exception:
+                pass
+        return body, int(resp.status), resp_headers
     except Exception:
-        return ""
-
-    if not raw:
-        return ""
-
-    try:
-        text = raw.decode("utf-8", errors="replace").strip()
-    except Exception:
-        return ""
-
-    return text[:500]
+        pool.pop(key, None)
+        try:
+            conn.close()
+        except Exception:
+            pass
+        raise
 
 
 def post_json_with_retries(
@@ -321,14 +382,12 @@ def post_json_with_retries(
     merged_headers = {
         "Content-Type": "application/json",
         "Accept": "application/json",
-        "Connection": "close",
         "User-Agent": "ChronoTrace/1.0",
     }
     if headers:
         merged_headers.update(headers)
 
     retryable_http_status = retryable_http_status or set(DEFAULT_RETRYABLE_HTTP_STATUS)
-    ssl_context = build_ssl_context()
 
     log(f"{log_prefix} POST {url}")
 
@@ -338,47 +397,45 @@ def post_json_with_retries(
             raise LLMRequestAborted(f"{log_prefix} 请求已被调用方取消")
         started_at = time.time()
         try:
-            data = json.dumps(payload).encode("utf-8")
-            req = urllib.request.Request(url, data=data, headers=merged_headers, method="POST")
-            with urllib.request.urlopen(req, timeout=timeout, context=ssl_context) as resp:
-                body = json.loads(resp.read().decode("utf-8"))
-                status = resp.status
+            body_raw, status, resp_headers = _pooled_request(
+                "POST", url,
+                data=json.dumps(payload).encode("utf-8"),
+                headers=merged_headers, timeout=timeout,
+            )
             elapsed = time.time() - started_at
             log(f"{log_prefix} HTTP {status} ({elapsed:.2f}s)")
-            return body
-        except urllib.error.HTTPError as err:
-            status = getattr(err, "code", None)
-            detail = ""
+            if status < 400:
+                return json.loads(body_raw.decode("utf-8"))
+
+            # 4xx/5xx：沿用旧 urllib.error.HTTPError 分支的语义
+            detail = body_raw.decode("utf-8", errors="replace").strip()[:500]
             # 严格网关对不支持的参数直接 400：默认附加的 reasoning_effort
             # 被拒时摘掉该参数重试一次，而不是让整条交互链路硬失败
             if (
                 status == 400
                 and not dropped_reasoning_effort
                 and "reasoning_effort" in payload
+                and "reasoning_effort" in detail.lower()
             ):
-                detail = _read_http_error_body(err)
-                if "reasoning_effort" in detail.lower():
-                    payload.pop("reasoning_effort")
-                    dropped_reasoning_effort = True
-                    log(f"{log_prefix} HTTP 400 拒绝 reasoning_effort 参数，摘除后重试")
-                    continue
+                payload.pop("reasoning_effort")
+                dropped_reasoning_effort = True
+                log(f"{log_prefix} HTTP 400 拒绝 reasoning_effort 参数，摘除后重试")
+                continue
             if status in retryable_http_status and attempt < max_retries:
                 if _aborted():
-                    raise LLMRequestAborted(f"{log_prefix} 请求已被调用方取消") from err
+                    raise LLMRequestAborted(f"{log_prefix} 请求已被调用方取消")
                 delay = compute_retry_delay(
                     attempt,
-                    err.headers.get("Retry-After"),
+                    resp_headers.get("retry-after"),
                     base_retry_delay=base_retry_delay,
                 )
                 log(f"{log_prefix} Retry on HTTP {status} after {delay:.1f}s (attempt {attempt + 1})")
                 time.sleep(delay)
                 continue
 
-            if not detail:
-                detail = _read_http_error_body(err)
             if detail:
-                raise RuntimeError(f"LLM HTTP {status} error: {detail}") from err
-            raise RuntimeError(f"LLM HTTP {status} error: {err}") from err
+                raise RuntimeError(f"LLM HTTP {status} error: {detail}")
+            raise RuntimeError(f"LLM HTTP {status} error: no response body")
         except LLMRequestAborted:
             raise
         except Exception as err:

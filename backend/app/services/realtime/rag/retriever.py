@@ -383,6 +383,7 @@ class RagRetriever:
         query_vector: list[float] = []
         vector_available = False
         vector_reason = None
+        fact_vector_scores: dict[int, float] = {}
         try:
             if self._embedding_is_warm() and query:
                 query_vector = self.embedding_service.embed_text(query)
@@ -391,6 +392,9 @@ class RagRetriever:
                         f"fact query dimension mismatch: vector={len(query_vector)} configured={dim}"
                     )
                 vector_available = True
+                # 向量通道矩阵化：千级事实逐条 _cosine（每次 3×512 次纯
+                # Python 浮点循环）改为一次矩阵乘；失败回退逐条
+                fact_vector_scores = self._batch_cosine_scores(query_vector, vector_by_id)
         except RagEmbeddingUnavailable:
             vector_reason = "embedding_unavailable"
         except RagEmbeddingDimensionMismatch:
@@ -441,7 +445,13 @@ class RagRetriever:
                 if "\u4e00" <= char <= "\u9fff" or char.isalnum()
             }
             char_hits = query_chars & content_chars
-            vector_score = self._cosine(query_vector, vector_by_id.get(int(fact["id"]), [])) if vector_available else 0.0
+            if vector_available:
+                vector_score = fact_vector_scores.get(int(fact["id"]))
+                if vector_score is None:
+                    vector_score = self._cosine(query_vector, vector_by_id.get(int(fact["id"]), []))
+                    fact_vector_scores[int(fact["id"])] = vector_score
+            else:
+                vector_score = 0.0
             if not overlap and not vector_score and not self._char_fallback_ok(char_hits, query_chars):
                 continue
             meaningful_query_tokens = tokens - self.GENERIC_FACT_QUERY_STOPWORDS
@@ -621,9 +631,12 @@ class RagRetriever:
         docs: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
         keyword_scores = {item["id"]: score for item, score in self._keyword_pairs(query, docs)}
+        vector_scores = self._batch_cosine_scores(
+            query_vector, {int(doc["id"]): doc.get("vector") or [] for doc in docs}
+        )
         scored = []
         for doc in docs:
-            cosine = self._cosine(query_vector, doc.get("vector") or [])
+            cosine = vector_scores.get(int(doc["id"]), 0.0)
             keyword_score = keyword_scores.get(doc["id"], 0.0)
             score = self._final_score(
                 doc,
@@ -684,6 +697,30 @@ class RagRetriever:
         for size in (2, 3, 4):
             words.extend(compact[index:index + size] for index in range(max(0, len(compact) - size + 1)))
         return words[:300]
+
+    @staticmethod
+    def _batch_cosine_scores(
+        query_vector: list[float],
+        vectors_by_id: dict[int, list[float]],
+    ) -> dict[int, float]:
+        """一次矩阵乘算完全部余弦（向量已 L2 归一，点积即余弦）。
+
+        维度混杂或空集等无法堆矩阵的场景返回空 dict，调用方回退逐条
+        _cosine（保持语义）。
+        """
+        usable = {kid: vec for kid, vec in vectors_by_id.items() if vec}
+        if not usable or not query_vector:
+            return {}
+        try:
+            import numpy as np
+
+            matrix = np.asarray(list(usable.values()), dtype=np.float32)
+            if matrix.ndim != 2 or matrix.shape[1] != len(query_vector):
+                return {}
+            sims = matrix @ np.asarray(query_vector, dtype=np.float32)
+            return {kid: float(score) for kid, score in zip(usable.keys(), sims)}
+        except Exception:
+            return {}
 
     def _cosine(self, a: list[float], b: list[float]) -> float:
         return cosine(a, b)

@@ -99,15 +99,15 @@ def test_self_profiler_call_llm_retries_ssl_eof_and_succeeds(monkeypatch):
     monkeypatch.setattr("app.db.connection.get_db", lambda: conn)
     monkeypatch.setattr("app.services.realtime.llm_http.time.sleep", lambda _seconds: None)
 
-    def fake_urlopen(req, timeout=0, context=None):
+    def fake_pooled_request(method, url, *, data, headers, timeout):
         attempts["count"] += 1
         if attempts["count"] == 1:
             raise urllib.error.URLError(
                 ssl.SSLEOFError(8, "EOF occurred in violation of protocol")
             )
-        return _DummyResponse()
+        return _DummyResponse().read(), 200, {}
 
-    monkeypatch.setattr("app.services.realtime.llm_http.urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr("app.services.realtime.llm_http._pooled_request", fake_pooled_request)
 
     result = profiler._call_llm("test prompt", 4000)
 
@@ -123,12 +123,12 @@ def test_self_profiler_call_llm_raises_clear_error_after_ssl_retries_exhausted(m
     monkeypatch.setattr("app.db.connection.get_db", lambda: conn)
     monkeypatch.setattr("app.services.realtime.llm_http.time.sleep", lambda _seconds: None)
 
-    def fake_urlopen(req, timeout=0, context=None):
+    def fake_pooled_request(method, url, *, data, headers, timeout):
         raise urllib.error.URLError(
             ssl.SSLEOFError(8, "EOF occurred in violation of protocol")
         )
 
-    monkeypatch.setattr("app.services.realtime.llm_http.urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr("app.services.realtime.llm_http._pooled_request", fake_pooled_request)
 
     try:
         profiler._call_llm("test prompt", 4000)
@@ -150,11 +150,11 @@ def test_self_profiler_reserves_reasoning_budget_and_json_mode_for_hybrid_model(
 
     monkeypatch.setattr("app.db.connection.get_db", lambda: conn)
 
-    def fake_urlopen(req, timeout=0, context=None):
-        captured.update(json.loads(req.data.decode("utf-8")))
-        return _DummyResponse()
+    def fake_pooled_request(method, url, *, data, headers, timeout):
+        captured.update(json.loads(data.decode("utf-8")))
+        return _DummyResponse().read(), 200, {}
 
-    monkeypatch.setattr("app.services.realtime.llm_http.urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr("app.services.realtime.llm_http._pooled_request", fake_pooled_request)
     result = profiler._call_llm("test prompt", 4000)
 
     assert result["typing_style"] == "short"
@@ -171,11 +171,11 @@ def test_self_profiler_keeps_floor_budget_for_normal_model(monkeypatch):
 
     monkeypatch.setattr("app.db.connection.get_db", lambda: conn)
 
-    def fake_urlopen(req, timeout=0, context=None):
-        captured.update(json.loads(req.data.decode("utf-8")))
-        return _DummyResponse()
+    def fake_pooled_request(method, url, *, data, headers, timeout):
+        captured.update(json.loads(data.decode("utf-8")))
+        return _DummyResponse().read(), 200, {}
 
-    monkeypatch.setattr("app.services.realtime.llm_http.urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr("app.services.realtime.llm_http._pooled_request", fake_pooled_request)
     result = profiler._call_llm("test prompt")
 
     assert result["typing_style"] == "short"
@@ -241,16 +241,17 @@ def test_self_profiler_escalates_output_budget_when_output_truncated(monkeypatch
     # 第一次响应不带 finish_reason，靠 completion 撞顶判定截断
     responses = [_QueuedResponse(_truncated_payload(8192)), _QueuedResponse(_ok_payload())]
 
-    def fake_urlopen(req, timeout=0, context=None):
-        payload = json.loads(req.data.decode("utf-8"))
+    def fake_pooled_request(method, url, *, data, headers, timeout):
+        payload = json.loads(data.decode("utf-8"))
         # 全量顺序下前序测试遗留的后台线程也会打 LLM（共享全局 urlopen），
         # 只捕获本用例 prompt 的调用，预算序列不被串扰；外来调用原样放行
         # 由 responses 队列语义保持不变（外来者不属于本用例断言范围）
         if any(str(m.get("content") or "") == "test prompt" for m in payload.get("messages", [])):
             captured_budgets.append(payload["max_tokens"])
-        return responses.pop(0)
+        resp = responses.pop(0)
+        return resp.read(), 200, {}
 
-    monkeypatch.setattr("app.services.realtime.llm_http.urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr("app.services.realtime.llm_http._pooled_request", fake_pooled_request)
     result = profiler._call_llm("test prompt")
 
     assert result["typing_style"] == "short"
@@ -267,16 +268,16 @@ def test_self_profiler_raises_after_output_budget_escalation_exhausted(monkeypat
 
     monkeypatch.setattr("app.db.connection.get_db", lambda: conn)
 
-    def fake_urlopen(req, timeout=0, context=None):
-        payload = json.loads(req.data.decode("utf-8"))
+    def fake_pooled_request(method, url, *, data, headers, timeout):
+        payload = json.loads(data.decode("utf-8"))
         # 全量顺序下前序测试遗留的后台线程也会打 LLM（共享全局 urlopen），
         # 只捕获本用例 prompt 的调用，预算序列不被串扰；外来调用原样放行
         # 由 responses 队列语义保持不变（外来者不属于本用例断言范围）
         if any(str(m.get("content") or "") == "test prompt" for m in payload.get("messages", [])):
             captured_budgets.append(payload["max_tokens"])
-        return _QueuedResponse(_truncated_payload(999, finish_reason="length"))
+        return _QueuedResponse(_truncated_payload(999, finish_reason="length")).read(), 200, {}
 
-    monkeypatch.setattr("app.services.realtime.llm_http.urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr("app.services.realtime.llm_http._pooled_request", fake_pooled_request)
 
     try:
         profiler._call_llm("test prompt")

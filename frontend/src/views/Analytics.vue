@@ -515,6 +515,7 @@
     <DateRangeFilter
       :dates="dates"
       :loading="loading"
+      :all-from="conversationSpan?.from || ''"
       @update:dates="onDatesChange"
       @refresh="loadAnalysis"
       @export="handleExport"
@@ -643,6 +644,7 @@
         :loading="false"
         show-granularity
         :show-export="false"
+        :all-from="conversationSpan?.from || ''"
         :granularity="deepGranularity"
         @update:dates="onDeepDatesChange"
         @update:granularity="deepGranularity = $event"
@@ -667,6 +669,7 @@
         :dates="dates"
         :loading="false"
         :show-export="false"
+        :all-from="conversationSpan?.from || ''"
         @update:dates="onDatesChange"
         @refresh="deepRefreshKey++"
       />
@@ -918,6 +921,9 @@ export default {
         // 章节分段、不吃日期筛选，日期窗只缩放情绪曲线——与其它页签共享 dates
         // 时「默认近30天」会和下方的全量内容打架，故本页签默认全量、独立记忆
         const deepDates = reactive({ from: '', to: '' })
+        // 会话消息真实跨度（首/末条日期）：「全部」快捷键与时光深度默认窗的起点，
+        // 替代 2000-01-01 占位——输入框显示 2000 年会让人以为筛选错了
+        const conversationSpan = ref<{ from: string; to: string } | null>(null)
         const loading = ref(false)
         const loadingSessions = ref(false)
         const error = ref('')
@@ -1320,8 +1326,21 @@ const showPortraitDialog = ref(false)
 
         // 时光深度默认全量（与 DateRangeFilter 的「全部」快捷键同口径）
         function resetDeepDates() {
-            deepDates.from = '2000-01-01'
+            deepDates.from = conversationSpan.value?.from || '2000-01-01'
             deepDates.to = toLocalDateKey(new Date())
+        }
+
+        async function loadConversationSpan(id: number) {
+            try {
+                const res = await api.get_conversation_span(id)
+                const data = res?.data
+                if (!data?.from_date) return
+                conversationSpan.value = { from: data.from_date, to: data.to_date || '' }
+                // 跨度晚到：仅当默认窗还是占位起点时替换（用户已手动缩窗则不动）
+                if (deepDates.from === '2000-01-01') resetDeepDates()
+            } catch {
+                // 查询失败维持占位，不阻塞主链路
+            }
         }
 
         function applyAnalysisDeviceMode(mode: AnalysisDeviceMode) {
@@ -1461,6 +1480,8 @@ const showPortraitDialog = ref(false)
             }
             selectedConversationId.value = id
             setDefaultDates(30, getConversationAnchorDate(id))
+            conversationSpan.value = null
+            void loadConversationSpan(id)
             resetDeepDates()
             hasFeatures.value = false
             analysisResult.value = null

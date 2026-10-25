@@ -78,6 +78,46 @@ class AnalysisReadApiMixin:
                 "error": str(e)
             }
 
+    def get_conversation_span(self, conversation_id: int) -> dict:
+        """
+        获取会话消息时间跨度（首条/末条消息日期）。
+
+        「全部」快捷键与时光深度默认窗用它替代 2000-01-01 占位，
+        让日期输入框显示真实的首消息日期。走 (conversation_id, timestamp)
+        索引，MIN/MAX 微秒级。
+
+        Returns:
+            {"success": True, "data": {"from_date": "2024-03-02", "to_date": "2026-10-20"}}
+            无消息时 data 为 None
+        """
+        try:
+            if not conversation_id:
+                return {"success": False, "error": "缺少参数: conversation_id"}
+            from datetime import datetime
+
+            from ...db.connection import get_db
+
+            row = get_db().execute(
+                "SELECT MIN(timestamp) AS first_ts, MAX(timestamp) AS last_ts"
+                " FROM messages WHERE conversation_id = ?",
+                (conversation_id,),
+            ).fetchone()
+            if not row or row["first_ts"] is None:
+                return {"success": True, "data": None}
+            return {
+                "success": True,
+                "data": {
+                    "from_date": datetime.fromtimestamp(int(row["first_ts"])).strftime("%Y-%m-%d"),
+                    "to_date": datetime.fromtimestamp(int(row["last_ts"])).strftime("%Y-%m-%d"),
+                },
+            }
+        except Exception as e:
+            logger.error(f"[Bridge] 获取会话时间跨度失败: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
+
     def get_session_messages(self, session_id: int) -> dict:
         """
         获取特定会话的消息列表

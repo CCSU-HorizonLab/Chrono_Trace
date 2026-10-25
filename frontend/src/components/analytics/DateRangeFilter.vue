@@ -36,6 +36,8 @@ const props = defineProps<{
   granularity?: string
   /** 导出聊天记录入口：仅内容时间线页需要；deep/persona 页传 false 隐藏死按钮 */
   showExport?: boolean
+  /** 「全部」真实起点（会话首条消息日期）；缺省回退 2000-01-01 占位 */
+  allFrom?: string
 }>()
 
 const emit = defineEmits<{
@@ -63,7 +65,7 @@ function quick(days: number) {
 }
 function quickAll() {
   const to = new Date()
-  const from = new Date(2000, 0, 1)
+  const from = new Date(props.allFrom || '2000-01-01')
   emit('update:dates', { from: fmt(from), to: fmt(to) })
 }
 function onFrom(e: Event) { emit('update:dates', { from: (e.target as HTMLInputElement).value, to: props.dates.to }) }

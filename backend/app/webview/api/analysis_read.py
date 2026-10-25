@@ -252,7 +252,7 @@ class AnalysisReadApiMixin:
                     "user_initiated_sessions": 55,
                     "other_initiated_sessions": 45,
                     "initiative_rate": 0.45,
-                    "interpretation": "对方主动发起45%的会话，您更主动"
+                    "interpretation": "对方发起 45% 的会话——基本对半，谈不上谁更主动"
                 }
             }
         """
@@ -282,12 +282,41 @@ class AnalysisReadApiMixin:
                 }
 
             initiative_rate = row["initiative_rate"]
-            if initiative_rate > 0.5:
-                interpretation = f"对方主动发起{initiative_rate:.1%}的会话，对方更主动"
-            elif initiative_rate < 0.5:
-                interpretation = f"对方主动发起{initiative_rate:.1%}的会话，您更主动"
-            else:
-                interpretation = f"对方主动发起{initiative_rate:.1%}的会话，双方平衡"
+            # 口径：与对半不可区分（二项检验）或效应量可忽略（h<0.2）
+            # 时判「均衡」，不下「谁更主动」的定性；差异显著才分级表述
+            from ...services.analysis.initiative_balance import (
+                BAND_BALANCED,
+                BAND_INSUFFICIENT,
+                BAND_OTHER_DOMINANT,
+                BAND_OTHER_LEANS,
+                BAND_SELF_DOMINANT,
+                BAND_SELF_LEANS,
+                classify_initiative,
+            )
+
+            total_sessions = row["total_sessions"]
+            other_pct = initiative_rate
+            self_pct = 1.0 - initiative_rate
+            band = classify_initiative(
+                total_sessions, row["other_initiated_sessions"]
+            )
+            if band == BAND_INSUFFICIENT:
+                interpretation = (
+                    f"样本还太少（{total_sessions} 场会话），先不下结论"
+                )
+            elif band == BAND_BALANCED:
+                interpretation = (
+                    f"对方发起 {other_pct:.0%} · 您发起 {self_pct:.0%}"
+                    "——基本对半，谈不上谁更主动"
+                )
+            elif band == BAND_OTHER_LEANS:
+                interpretation = f"对方发起 {other_pct:.0%} 的会话，主动性略偏向对方"
+            elif band == BAND_SELF_LEANS:
+                interpretation = f"您发起 {self_pct:.0%} 的会话，主动性略偏向您"
+            elif band == BAND_OTHER_DOMINANT:
+                interpretation = f"对方发起 {other_pct:.0%} 的会话，主动性明显在对方一侧"
+            else:  # BAND_SELF_DOMINANT
+                interpretation = f"您发起 {self_pct:.0%} 的会话，主动性明显在您一侧"
 
             return {
                 "success": True,

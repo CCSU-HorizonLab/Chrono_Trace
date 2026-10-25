@@ -19,6 +19,14 @@ from typing import Any
 
 from .config import load_rag_settings
 from .store import RagStore
+from ...analysis.initiative_balance import (
+    BAND_BALANCED,
+    BAND_OTHER_DOMINANT,
+    BAND_OTHER_LEANS,
+    BAND_SELF_DOMINANT,
+    BAND_SELF_LEANS,
+    classify_initiative,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -81,11 +89,15 @@ def derive_relationship_state(
     total_sessions = int(initiative.get("total_sessions") or 0)
     other_initiated = int(initiative.get("other_initiated") or 0)
 
-    if total_sessions >= 5 and other_initiated / total_sessions >= 0.6:
+    # 双闸门（二项检验 + Cohen's h，见 analysis.initiative_balance）：
+    # 与对半不可区分或效应量可忽略一律「双方均衡」——近对半分
+    # （如 51/49）不再定性谁更主动，显著偏向才给方向
+    band = classify_initiative(total_sessions, other_initiated)
+    if band in (BAND_OTHER_LEANS, BAND_OTHER_DOMINANT):
         initiative_pattern = INITIATIVE_OTHER_DOMINANT
-    elif total_sessions >= 5 and other_initiated / total_sessions <= 0.4:
+    elif band in (BAND_SELF_LEANS, BAND_SELF_DOMINANT):
         initiative_pattern = INITIATIVE_SELF_DOMINANT
-    elif total_sessions >= 5:
+    elif band == BAND_BALANCED:
         initiative_pattern = INITIATIVE_BALANCED
     else:
         initiative_pattern = "样本不足"

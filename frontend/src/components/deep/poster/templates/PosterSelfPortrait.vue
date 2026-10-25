@@ -27,7 +27,8 @@
     </StorySection>
 
     <StorySection v-if="points.length" index="03" title="你的语气曲线" :palette="palette" class="gap">
-      <PosterSparkline :points="points" pick="userScore" :width="624" :height="130" zero-line color="#d97706" />
+      <!-- 宽=海报内容 624 − StorySection 内边距 28×2 − 边框 1×2，溢出会穿出卡片右缘 -->
+      <PosterSparkline :points="points" pick="userScore" :width="566" :height="130" zero-line color="#d97706" />
       <div class="curve-note">向上是更明亮的语气，虚线是平静的分界</div>
     </StorySection>
 

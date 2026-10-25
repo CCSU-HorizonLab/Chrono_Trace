@@ -483,8 +483,10 @@ function buildOption(): echarts.EChartsOption | null {
     const top = GRID_TOP + VOL_H + 14 + di * (BAND_H + BAND_GAP)
     grids.push({ top, left: 44, right: 8, height: BAND_H })
     titles.push({
-      text: labels[dim] || dim, left: 2, top: top + BAND_H / 2 - 8,
-      textStyle: { fontSize: 11, color: textSecondary },
+      // 逐字竖排：分布带行高 46px 只容得下窄列，横排三字会压进 y 轴标签区
+      text: (labels[dim] || dim).split('').join('\n'),
+      left: 4, top: top + 3,
+      textStyle: { fontSize: 11, color: textSecondary, lineHeight: 13 },
     })
     xAxes.push({
       type: 'category', data: categories, gridIndex,

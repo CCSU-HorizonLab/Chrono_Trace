@@ -639,19 +639,19 @@
   <div v-show="currentTab === 'deep' && selectedConversationId" class="tab-content fade-in deep-tab">
     <template v-if="deepActivated && !isGroupConversation">
       <DateRangeFilter
-        :dates="dates"
+        :dates="deepDates"
         :loading="false"
         show-granularity
         :show-export="false"
         :granularity="deepGranularity"
-        @update:dates="onDatesChange"
+        @update:dates="onDeepDatesChange"
         @update:granularity="deepGranularity = $event"
         @refresh="deepRefreshKey++"
       />
       <TimeDeepTab
         :key="`${selectedConversationId}-${deepRefreshKey}`"
         :conversation-id="selectedConversationId"
-        :dates="dates"
+        :dates="deepDates"
         :granularity="deepGranularity"
         :view-epoch="viewEpoch"
         :contact-name="currentContactName"
@@ -914,6 +914,10 @@ export default {
         const selectedConversationId = ref<number | null>(null)
 
         const dates = reactive({ from: '', to: '' })
+        // 时光深度独立时间窗：该页正文（章节/词云/大五/画像/里程碑）按全会话
+        // 章节分段、不吃日期筛选，日期窗只缩放情绪曲线——与其它页签共享 dates
+        // 时「默认近30天」会和下方的全量内容打架，故本页签默认全量、独立记忆
+        const deepDates = reactive({ from: '', to: '' })
         const loading = ref(false)
         const loadingSessions = ref(false)
         const error = ref('')
@@ -1314,6 +1318,12 @@ const showPortraitDialog = ref(false)
             dates.to = toLocalDateKey(to)
         }
 
+        // 时光深度默认全量（与 DateRangeFilter 的「全部」快捷键同口径）
+        function resetDeepDates() {
+            deepDates.from = '2000-01-01'
+            deepDates.to = toLocalDateKey(new Date())
+        }
+
         function applyAnalysisDeviceMode(mode: AnalysisDeviceMode) {
             analysisDeviceMode.value = mode
             gpuMode.value = mode === 'gpu' ? 'gpu' : 'cpu'
@@ -1451,6 +1461,7 @@ const showPortraitDialog = ref(false)
             }
             selectedConversationId.value = id
             setDefaultDates(30, getConversationAnchorDate(id))
+            resetDeepDates()
             hasFeatures.value = false
             analysisResult.value = null
             qaIndexingHint.value = false
@@ -1522,6 +1533,12 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
             dates.from = newDates.from
             dates.to = newDates.to
             loadAnalysis()
+        }
+
+        // TimeDeepTab 自 watch dates 重载情绪曲线，无需在此触发分析
+        function onDeepDatesChange(newDates: { from: string; to: string }) {
+            deepDates.from = newDates.from
+            deepDates.to = newDates.to
         }
 
         const exportDialogVisible = ref(false)
@@ -2232,6 +2249,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
 
         onMounted(async () => {
             if (!dates.from || !dates.to) setDefaultDates(30)
+            if (!deepDates.from || !deepDates.to) resetDeepDates()
             await loadAnalysisDeviceMode()
             await refreshAccountContext()
             await loadConversations()

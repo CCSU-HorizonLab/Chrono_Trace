@@ -42,7 +42,7 @@ BIG5_SAMPLE_TARGET_CHARS = 12000  # 增强层采样语料目标字符数
 BIG5_SAMPLE_TURN_LIMIT = 400     # 采样消息条数上限
 BIG5_TOKENIZE_LIMIT = 5000       # TTR/熵计算的抽样上限（分词代价约束）
 BIG5_MIN_MESSAGES = 30           # 低于该条数不出画像（样本过薄）
-BIG5_RESPONSE_MAX_TOKENS = 2048
+BIG5_RESPONSE_MAX_TOKENS = 4096  # 思考模型思维链计入 completion 预算，2048 会在 JSON 前耗尽截断（对齐 contact_profiler 思考模型下限思路）
 BIG5_TIMEOUT_SECONDS = 90
 
 SUBJECTS = ("me", "other")
@@ -277,16 +277,20 @@ class PersonalityImpressionService:
         api_key = str(model_config.get("api_key") or "").strip()
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
+        # 深度链路思考量定档（同 RAG 事实抽取/关系评估）：思考模型吃网关
+        # 默认档时思维链随 12k 采样语料放大，输出预算在 JSON 落笔前耗尽
+        from ..realtime.llm_http import apply_deep_call_effort
+
         try:
             body = self._http(
                 url=f"{base_url}/chat/completions",
-                payload={
+                payload=apply_deep_call_effort({
                     "model": model_config.get("model_id") or model_config.get("model_name"),
                     "messages": messages,
                     "temperature": 0.2,
                     "max_tokens": BIG5_RESPONSE_MAX_TOKENS,
                     "stream": False,
-                },
+                }, model_config),
                 headers=headers,
                 timeout=BIG5_TIMEOUT_SECONDS,
                 max_retries=1,
@@ -303,6 +307,18 @@ class PersonalityImpressionService:
         content = self._extract_content(body)
         adjustments = self._parse_adjustments(content)
         if adjustments is None:
+            finish = ""
+            try:
+                finish = str((body.get("choices") or [{}])[0].get("finish_reason") or "")
+            except (IndexError, AttributeError):
+                pass
+            logger.warning(
+                "[大五增强] 输出无法解析 finish=%s len=%d head=%s",
+                finish, len(content), content[:400],
+            )
+            if finish == "length":
+                return {"ok": False, "reason": "truncated",
+                        "message": "模型输出被截断（思考量超出预算），请重试"}
             return {"ok": False, "reason": "parse_failed", "message": "模型输出无法解析"}
 
         # 语料按 prompt 渲染形态拼接（含 [我]/[TA] 前缀）：是裸文本的超集，
@@ -709,9 +725,19 @@ class PersonalityImpressionService:
     @staticmethod
     def _extract_content(body: dict) -> str:
         try:
-            return str(body["choices"][0]["message"]["content"] or "")
+            message = body["choices"][0]["message"] or {}
         except (KeyError, IndexError, TypeError):
             return ""
+        # 思考模型把思维链写进 content（实测 Qwen3.5-9B vLLM：思考段 +
+        # </think> + 真答案，同款兼容见 suggestion_parsing._strip_reasoning_text）；
+        # 部分网关思考放 reasoning_content、content 为空——回退取之
+        text = str(message.get("content") or "")
+        if not text:
+            text = str(message.get("reasoning_content") or "")
+        if "</think>" in text:
+            tail = text.rsplit("</think>", 1)[-1].strip()
+            text = tail or text
+        return text
 
     @staticmethod
     def _parse_adjustments(content: str) -> Optional[Dict[str, Dict[str, Any]]]:

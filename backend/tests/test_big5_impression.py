@@ -68,13 +68,25 @@ def seed_sentiment(db, ids, polarities, intensity=0.3):
 
 
 class _FakeHTTP:
-    def __init__(self, content):
+    def __init__(self, content, finish_reason=None):
         self.content = content
+        self.finish_reason = finish_reason
         self.calls = []
 
     def __call__(self, *, url, payload, timeout, log, log_prefix, headers=None, max_retries=3, **kw):
         self.calls.append({"url": url, "payload": payload})
-        return {"choices": [{"message": {"content": self.content}}]}
+        choice = {"message": {"content": self.content}}
+        if self.finish_reason:
+            choice["finish_reason"] = self.finish_reason
+        return {"choices": [choice]}
+
+
+class _ReasoningHTTP(_FakeHTTP):
+    """网关形态：全部输出落 reasoning_content、content 为空。"""
+
+    def __call__(self, **kw):
+        super().__call__(**kw)
+        return {"choices": [{"message": {"content": "", "reasoning_content": self.content}}]}
 
 
 class _FakeRedactor:
@@ -411,6 +423,37 @@ class TestEnhanceLayer:
         assert result["ok"] is False
         assert result["reason"] == "cancelled"
         assert http.calls == []
+
+
+class TestThinkingOutputCompat:
+    """思考模型输出兼容：think 段剥离 / reasoning_content 回退 / 截断归因。"""
+
+    def test_think_segment_stripped(self, db):
+        """content = 思考段 + </think> + JSON（实测 Qwen3.5-9B vLLM 形态）→ 照常解析。
+
+        思考段故意带 { 杂物 }：无剥离时首尾大括号跨段提取必失败。"""
+        seed(db)
+        http = _FakeHTTP("<think>五维逐项评估 { 中间杂物 }</think>\n" + llm_content(adjustment=5))
+        service = make_service(db, http=http, remote=False, model={"api_base_url": "http://x", "model_id": "m"})
+        result = service.enhance(1)
+        assert result["ok"] is True
+
+    def test_empty_content_falls_back_to_reasoning(self, db):
+        """部分网关全部输出落 reasoning_content、content 为空 → 回退可解析。"""
+        seed(db)
+        http = _ReasoningHTTP(llm_content(adjustment=5))
+        service = make_service(db, http=http, remote=False, model={"api_base_url": "http://x", "model_id": "m"})
+        result = service.enhance(1)
+        assert result["ok"] is True
+
+    def test_truncated_reason_distinct(self, db):
+        """finish_reason=length → reason=truncated（引导重试而非笼统解析失败）。"""
+        seed(db)
+        http = _FakeHTTP("<think>思考耗尽预算，JSON 未落笔", finish_reason="length")
+        service = make_service(db, http=http, remote=False, model={"api_base_url": "http://x", "model_id": "m"})
+        result = service.enhance(1)
+        assert result["ok"] is False
+        assert result["reason"] == "truncated"
 
 
 class _BlockingEnhanceService:

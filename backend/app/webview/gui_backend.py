@@ -15,6 +15,37 @@ import sys
 logger = logging.getLogger(__name__)
 
 
+def _patch_qt_feature_permission() -> None:
+    """兜底 pywebview qt.py 权限处理器的枚举 TypeError（上游 6.x 缺陷）。
+
+    pywebview 以 int 调 ``QWebEnginePage.setFeaturePermission``，Qt 绑定
+    （PyQt6/PySide6 6.x）严格枚举校验直接抛 TypeError——槽内未处理异常
+    会触发 qFatal 整进程 abort（任何 navigator.clipboard.write 的权限请求
+    都会带走应用）。在类方法层面做 int→enum 强转兜底；上游修复后补丁
+    不再命中，无害。
+    """
+    try:
+        # 与 pywebview qt.py 同走 qtpy 垫片，保证补到同一个类对象上
+        from qtpy.QtWebEngineWidgets import QWebEnginePage
+    except Exception:
+        return
+    orig = QWebEnginePage.setFeaturePermission
+
+    def _safe(self, security_origin, feature, policy):
+        try:
+            return orig(self, security_origin, feature, policy)
+        except TypeError:
+            enum_policy = QWebEnginePage.PermissionPolicy
+            enum_feature = QWebEnginePage.Feature
+            if not isinstance(policy, enum_policy):
+                policy = enum_policy(policy)
+            if not isinstance(feature, enum_feature):
+                feature = enum_feature(feature)
+            return orig(self, security_origin, feature, policy)
+
+    QWebEnginePage.setFeaturePermission = _safe
+
+
 def start_webview(**kwargs) -> None:
     """按平台启动 webview 事件循环：Linux 显式 qt（导入/启动失败均回退自动探测），其余平台走默认。"""
     import webview
@@ -28,6 +59,7 @@ def start_webview(**kwargs) -> None:
             )
         else:
             logger.info("Linux 强制 pywebview Qt 后端（规避 WebKitGTK 下 storage 为 null）")
+            _patch_qt_feature_permission()
             try:
                 webview.start(gui="qt", **kwargs)
                 return

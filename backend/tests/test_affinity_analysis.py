@@ -270,6 +270,162 @@ class TestAffinityAnalysisService:
         assert "很低" in interpretation
 
 
+class TestRetryLlmRelationship:
+    """补评 AI 关系评估（LLM 维瞬时缺席后的恢复通道）"""
+
+    @pytest.fixture
+    def mock_db(self):
+        mock = MagicMock()
+        mock.execute.return_value.fetchone.return_value = None
+        return mock
+
+    @pytest.fixture
+    def mock_stats(self):
+        from app.services.analysis.preprocessing_orchestrator import PreprocessedStatistics
+
+        stats = PreprocessedStatistics()
+        stats.total_message_count = 1000
+        stats.conversation_duration_days = 30.0
+        stats.average_message_length = 25.0
+        stats.total_sessions = 50
+        stats.sender_initiated_count = 20
+        stats.contact_initiated_count = 30
+        return stats
+
+    @pytest.fixture
+    def service(self, mock_db, mock_stats):
+        """与 TestAffinityAnalysisService 同款 mock 基座（LLM 服务默认 None）"""
+        with patch('app.services.analysis.affinity_analysis_service.get_db', return_value=mock_db), \
+             patch('app.services.analysis.affinity_analysis_service.PreprocessingOrchestrator') as MockPreprocessing, \
+             patch('app.services.analysis.affinity_analysis_service.AffinityConfigService') as MockConfig, \
+             patch('app.services.analysis.affinity_analysis_service.PreferenceCompatibilityService'), \
+             patch('app.services.analysis.affinity_analysis_service.EmotionalResonanceService'), \
+             patch('app.services.analysis.affinity_analysis_service.InteractionInvestmentService'), \
+             patch('app.services.analysis.affinity_analysis_service.ClosenessSignalsService'), \
+             patch('app.services.analysis.affinity_analysis_service.EngagementMetricsService') as MockEngagement, \
+             patch('app.services.analysis.affinity_analysis_service.RiskSignalService') as MockRisk, \
+             patch('app.services.analysis.relationship_llm_service.build_relationship_llm_service', return_value=None):
+            MockPreprocessing.return_value.get_preprocessed_statistics.return_value = mock_stats
+            from app.services.analysis.affinity_config import AffinityConfig
+            MockConfig.return_value.get_config.return_value = AffinityConfig()
+            MockEngagement.return_value.compute.return_value = MagicMock()
+            MockRisk.return_value.assess.return_value = None
+            from app.services.analysis.affinity_analysis_service import AffinityAnalysisService
+            yield AffinityAnalysisService()
+
+    @staticmethod
+    def _cached_result_with_llm_absent():
+        """四个本地维度在场、LLM 维缺席的已完成缓存结果（网络故障现场）"""
+        from app.services.analysis.affinity_analysis_service import (
+            AffinityAnalysisResult,
+            DimensionScore,
+        )
+
+        result = AffinityAnalysisResult()
+        result.conversation_id = 1
+        result.status = "completed"
+        result.overall_score = 60.0
+        result.interaction_investment = DimensionScore(
+            name="互动投入", score=75.0, weight=0.42, weighted_score=31.5,
+            interpretation="投入较高",
+        )
+        result.emotional_resonance = DimensionScore(
+            name="情感共鸣", score=80.0, weight=0.37, weighted_score=29.6,
+            interpretation="共鸣良好",
+        )
+        result.closeness_signals = DimensionScore(
+            name="亲近信号", score=70.0, weight=0.21, weighted_score=14.7,
+            interpretation="亲近信号中等",
+        )
+        result.preference_compatibility = DimensionScore(
+            name="喜好兼容度", score=60.0, weight=0.0, weighted_score=0.0,
+            interpretation="兴趣较契合",
+        )
+        result.llm_relationship = None
+        result.llm_relationship_absent_reason = "LLM 调用失败: [Errno 113] 没有到主机的路由"
+        return result
+
+    def test_retry_fills_llm_dimension_and_rescores(self, service):
+        """补评成功：LLM 维在场、缺席原因清空、总分按五维归一重算、任务可查进度"""
+        cached = self._cached_result_with_llm_absent()
+        service._load_cached_scores = lambda cid: cached
+
+        fake_llm = MagicMock()
+        fake_llm.evaluate.return_value = {
+            "score": 85.0,
+            "sub_scores": {"communication_quality": 88.0, "relationship_warmth": 82.0},
+            "evidence": [{"quote": "在呢", "month": "2024-05"}],
+            "insight": "沟通顺畅",
+            "meta": {"model_name": "test-model"},
+        }
+        with patch(
+            'app.services.analysis.relationship_llm_service.build_relationship_llm_service',
+            return_value=fake_llm,
+        ):
+            result = service.retry_llm_relationship(1, "affinity_llm_1_t1")
+
+        assert result.status == "completed"
+        assert result.llm_relationship is not None
+        assert result.llm_relationship.score == 85.0
+        assert result.llm_relationship_absent_reason is None
+        # LLM 维在场后权重按五维重新归一（0.08 名义权重摊进有效基组）
+        assert result.llm_relationship.weight > 0
+        assert sum(
+            d.weight for d in (
+                result.interaction_investment, result.emotional_resonance,
+                result.closeness_signals, result.preference_compatibility,
+                result.llm_relationship,
+            ) if d
+        ) == pytest.approx(1.0, abs=1e-6)
+        # 风险预警随证据重判（mock assess 被调用且带 llm_result）
+        from app.services.analysis.affinity_analysis_service import RiskSignalService
+        RiskSignalService().assess.assert_called_once()
+        assert service.get_progress("affinity_llm_1_t1") is result
+
+    def test_retry_no_cache_fails_with_guidance(self, service):
+        """无缓存（首析/配置已变更）：failed 且提示走全面分析，不抛异常"""
+        service._load_cached_scores = lambda cid: None
+        result = service.retry_llm_relationship(1, "affinity_llm_1_t2")
+        assert result.status == "failed"
+        assert "全面分析" in result.error
+
+    def test_retry_skipped_when_llm_already_present(self, service):
+        """LLM 维已在场：幂等守卫直接 failed"""
+        cached = self._cached_result_with_llm_absent()
+        cached.llm_relationship = cached.interaction_investment  # 任意在场维度
+        cached.llm_relationship_absent_reason = None
+        service._load_cached_scores = lambda cid: cached
+        result = service.retry_llm_relationship(1, "affinity_llm_1_t3")
+        assert result.status == "failed"
+        assert "已在场" in result.error
+
+    def test_retry_absent_again_reports_reason(self, service):
+        """重评仍缺席（如网络未恢复）：failed 且错误带原因，缺席说明保留"""
+        from app.services.analysis.relationship_llm_service import RelationshipLLMAbsent
+
+        cached = self._cached_result_with_llm_absent()
+        service._load_cached_scores = lambda cid: cached
+        fake_llm = MagicMock()
+        fake_llm.evaluate.side_effect = RelationshipLLMAbsent("网络仍不可达")
+        with patch(
+            'app.services.analysis.relationship_llm_service.build_relationship_llm_service',
+            return_value=fake_llm,
+        ):
+            result = service.retry_llm_relationship(1, "affinity_llm_1_t4")
+        assert result.status == "failed"
+        assert "网络仍不可达" in result.error
+        # 缓存结果不被失败污染：LLM 维仍缺席、原缺席原因保留
+        assert result.llm_relationship is None
+
+    def test_retry_without_llm_config_fails(self, service):
+        """未配置 LLM 模型（fixture 默认 None）：failed 且提示可配置"""
+        cached = self._cached_result_with_llm_absent()
+        service._load_cached_scores = lambda cid: cached
+        result = service.retry_llm_relationship(1, "affinity_llm_1_t5")
+        assert result.status == "failed"
+        assert "未配置" in result.error
+
+
 class TestDimensionScore:
     """测试维度评分数据类"""
 

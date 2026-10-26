@@ -359,6 +359,13 @@ class AffinityApiMixin:
                 if prev_service is not None:
                     running = prev_service.find_running_task(conversation_id)
                     if running:
+                        # 补评任务不能被当作全面分析复用（其结果不含新消息），
+                        # 只能让用户等它结束（补评通常一次 LLM 调用即完）
+                        if running.startswith("affinity_llm_"):
+                            return {
+                                "ok": False,
+                                "error": "AI 关系评估补评进行中，请等待完成后再开始全面分析",
+                            }
                         return {
                             "ok": True,
                             "task_id": running,
@@ -467,6 +474,54 @@ class AffinityApiMixin:
                 "ok": False,
                 "error": str(e)
             }
+
+    def retry_llm_relationship(self, conversation_id: int) -> dict[str, Any]:
+        """补评 AI 关系评估（异步，立即返回 task_id 供轮询）。
+
+        LLM 维因网络抖动等瞬时原因缺席后的恢复通道：复用缓存的四个本地
+        维度（数据未变时它们确定不变），只重跑 LLM 维与汇总装配。与全面
+        分析互斥（复用守卫同款），但无 ONNX 推理不占补算锁。
+        """
+        try:
+            import time as _time
+
+            # 复用守卫：该会话的全面分析仍在运行时拒绝补评（缓存将被覆盖，
+            # 补评结果会一起丢）；不同会话互不影响
+            prev_service = getattr(self, "_affinity_service", None)
+            if prev_service is not None:
+                running = prev_service.find_running_task(int(conversation_id))
+                if running:
+                    return {
+                        "ok": False,
+                        "error": "好感度分析进行中，请等待完成后再补评 AI 关系评估",
+                    }
+
+            AffinityAnalysisService = self._get_fresh_affinity_service_class()
+            service = AffinityAnalysisService()
+            self._affinity_service = service
+
+            task_id = (
+                f"affinity_llm_{conversation_id}_{int(_time.time())}_{uuid.uuid4().hex[:6]}"
+            )
+
+            def _run_retry():
+                try:
+                    service.retry_llm_relationship(int(conversation_id), task_id)
+                except Exception as e:
+                    logger.error(f"[Bridge] 补评 AI 关系评估失败: {e}")
+                    import traceback
+                    traceback.print_exc()
+
+            t = threading.Thread(target=_run_retry, daemon=True)
+            t.start()
+
+            return {"ok": True, "task_id": task_id}
+        except Exception as e:
+            logger.error(f"[Bridge] 补评启动失败: {e}")
+            import traceback
+            traceback.print_exc()
+            return {"ok": False, "error": str(e)}
+
 
     def get_affinity_progress(self, task_id: str) -> dict[str, Any]:
         """

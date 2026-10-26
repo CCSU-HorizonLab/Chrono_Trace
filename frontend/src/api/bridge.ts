@@ -109,6 +109,7 @@ type PyWebViewApi = {
   update_preference_keywords: (conversation_id: number, keywords: any[]) => Promise<any>
   cancel_analysis: () => Promise<any>
   analyze_affinity: (conversation_id: number, force_reanalyze?: boolean, config_overrides?: Record<string, any>) => Promise<any>
+  retry_llm_relationship: (conversation_id: number) => Promise<any>
   get_affinity_scores: (conversation_id: number) => Promise<any>
   // 文件/目录选择
   select_file: (title?: string, file_types?: string) => Promise<any>

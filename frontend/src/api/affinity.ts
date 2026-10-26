@@ -166,6 +166,16 @@ export async function getAffinityProgress(taskId: string): Promise<AffinityProgr
 }
 
 /**
+ * 补评 AI 关系评估（异步，返回 task_id 供轮询）：LLM 维瞬时缺席后的恢复通道，
+ * 复用缓存的本地四维，仅重跑 LLM 维与汇总装配
+ */
+export async function retryLlmRelationship(conversationId: number): Promise<string> {
+    const res = await api.retry_llm_relationship(conversationId)
+    if (!res.ok) throw new Error(res.error || '补评启动失败')
+    return res.task_id
+}
+
+/**
  * Get cached affinity analysis results
  */
 export async function getAffinityScores(conversationId: number): Promise<AffinityAnalysisResult | null> {

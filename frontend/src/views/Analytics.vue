@@ -295,7 +295,13 @@
             :notes="llmEvidenceNotes" />
           <p v-else-if="analysisResult.llm_relationship_absent_reason" class="llm-absent-note">
             AI 关系评估未参与本次评分：{{ analysisResult.llm_relationship_absent_reason }}
+            <button
+              class="btn llm-retry-btn"
+              :disabled="llmRetryRunning"
+              @click="handleRetryLlmRelationship"
+            >{{ llmRetryRunning ? 'AI 评估中…' : '重试 AI 评估' }}</button>
           </p>
+          <p v-if="llmRetryError" class="llm-absent-note">{{ llmRetryError }}</p>
         </div>
       </CtCard>
     </template>
@@ -794,7 +800,7 @@
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import * as echarts from 'echarts'
 import { bridgeReady, api, type AnalysisDeviceMode } from '@/api/bridge'
-import { analyzeAffinity, getAffinityScores, getAffinityProgress, getRelationshipContext, type AffinityAnalysisResult } from '@/api/affinity'
+import { analyzeAffinity, getAffinityScores, getAffinityProgress, getRelationshipContext, retryLlmRelationship, type AffinityAnalysisResult } from '@/api/affinity'
 import { getScoreColor, HEAT_RAMP, chartPalette } from '@/components/charts/chartTheme'
 
 import FiltersBar from '@/components/analytics/FiltersBar.vue'
@@ -958,6 +964,9 @@ export default {
         // 曾分析过但当前结果不可用（缓存版本过期）——空态给"需重新分析"解释
         // 而非伪装成从未分析
         const analysisStaleNotice = ref(false)
+        // AI 关系评估补评（LLM 维瞬时缺席后的重试）：进行中标志 + 最近一次失败原因
+        const llmRetryRunning = ref(false)
+        const llmRetryError = ref('')
         const displayScore = ref(0)
         const showKeywordsDialog = ref(false)
 const showPortraitDialog = ref(false)
@@ -1671,6 +1680,35 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
             }
         }
 
+        /** 补评 AI 关系评估：复用缓存的本地四维，只重跑 LLM 维——网络恢复后
+         * 的重试通道，秒级完成，不动「开始全面分析」主链路 */
+        async function handleRetryLlmRelationship() {
+            if (!selectedConversationId.value || llmRetryRunning.value) return
+            llmRetryRunning.value = true
+            llmRetryError.value = ''
+            const epoch = viewEpoch.value
+            try {
+                const taskId = await retryLlmRelationship(selectedConversationId.value)
+                for (;;) {
+                    await new Promise(r => setTimeout(r, 800))
+                    if (epoch !== viewEpoch.value) return // 已切换联系人，弃追
+                    const prog = await getAffinityProgress(taskId)
+                    if (prog?.status === 'completed') {
+                        if (epoch !== viewEpoch.value) return
+                        analysisResult.value = prog.result ?? analysisResult.value
+                        return
+                    }
+                    if (prog?.status === 'failed' || prog?.status === 'cancelled' || prog?.status === 'not_found') {
+                        throw new Error(prog?.error || 'AI 评估失败')
+                    }
+                }
+            } catch (e: any) {
+                llmRetryError.value = e?.message || 'AI 评估失败'
+            } finally {
+                llmRetryRunning.value = false
+            }
+        }
+
         async function tryLoadExistingFeatures() {
             if (!selectedConversationId.value) return
             const epoch = viewEpoch.value
@@ -2312,7 +2350,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
         return {
             currentTab, conversations, selectedConversationId, dates, loading, loadingSessions, error, analysis, subject, sessions, deepGranularity, deepRefreshKey, deepActivated, deepDates, conversationSpan, onDeepDatesChange, personaActivated, personaDates, onPersonaDatesChange, viewEpoch, handleCancelGroupSummary,
             personaProfile, loadingPersonaProfile, personaProfileMeta, profileRefreshKey, realContactName,
-            analysisResult, displayScore, showKeywordsDialog, showContextForm, showPortraitDialog, handlePortraitGenerated, isGlobalAnalyzing, isStopping, activeTimer, handleStopAnalysis, globalProgressPercent, globalProgressStep, gpuMode,
+            analysisResult, displayScore, llmRetryRunning, llmRetryError, handleRetryLlmRelationship, showKeywordsDialog, showContextForm, showPortraitDialog, handlePortraitGenerated, isGlobalAnalyzing, isStopping, activeTimer, handleStopAnalysis, globalProgressPercent, globalProgressStep, gpuMode,
             hasConversations, hasFeatures, hasCachedAffinityAnalysis, featureStats, responseTimeStats, initiativeStats, wordCountsStats, displayWordRatioLabel, activityCalendar,
             responseTimeChart, activityCalendarChart, wordCountChart, stats, currentContactName, headerAvatarSrc, hasPreferenceKeywords, allDimensions,
             hasContentAnalysis, analysisStaleNotice, circumference, strokeDashoffset, formatNumber, formatTime, getResponseTimeLabel, getMergedResponseTimeLabel, getResponseTimePercent, onConversationChange, onDatesChange, handleExport, handleStartGlobalAnalysis, handleContextSaved, handleKeywordsUpdated, llmEvidenceNotes,
@@ -3698,6 +3736,11 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   font-size: 12px;
   color: var(--ct-text-secondary, #5A5566);
   margin: 4px 0 0;
+}
+
+.llm-retry-btn {
+  margin-left: 10px;
+  vertical-align: middle;
 }
 
 /* 导出弹窗（白卡解剖：发丝线分区，按钮走 ct-btn 体系） */

@@ -348,6 +348,156 @@ class AffinityAnalysisService:
         
         # 重新分析
         return self.analyze(conversation_id, force_reanalyze=True)
+
+    def retry_llm_relationship(
+        self,
+        conversation_id: int,
+        task_id: str,
+    ) -> AffinityAnalysisResult:
+        """仅补评 LLM 关系评估（瞬时故障缺席后的恢复通道）。
+
+        数据与配置未变时四个本地维度是确定性的，直接复用缓存结果，只重跑
+        LLM 维 → 权重归一 + 总分/解释 + 风险预警重判 → 覆盖缓存并追加历史点
+        ——秒级完成，免五分钟全量重跑。守卫失败（无缓存/已在场/未配置）以
+        failed 状态返回（不抛异常），前端经 get_affinity_progress 拿到原因。
+        """
+        result = AffinityAnalysisResult()
+        result.conversation_id = conversation_id
+        result.task_id = task_id
+        result.status = "running"
+        result.current_step = "重评 AI 关系评估..."
+        result.progress_percent = 10
+        self._task_status[task_id] = result
+
+        from .affinity_weights import resolve_dimension_plan
+        from .relationship_llm_service import (
+            RelationshipLLMAbsent,
+            build_relationship_llm_service,
+        )
+
+        try:
+            cached = self._load_cached_scores(conversation_id)
+            if cached is None:
+                result.status = "failed"
+                result.error = "无可复用的好感度缓存（首次分析或配置已变更），请重新运行全面分析"
+                return result
+            if cached.llm_relationship is not None:
+                result.status = "failed"
+                result.error = "AI 关系评估已在场，无需补评"
+                return result
+
+            # 补评任务复用缓存结果对象承载进度与终态（完成后即它落库）
+            result = cached
+            result.task_id = task_id
+            result.status = "running"
+            result.current_step = "重评 AI 关系评估..."
+            result.progress_percent = 10
+            result.error = None
+            self._task_status[task_id] = result
+
+            llm_service = build_relationship_llm_service()
+            if llm_service is None:
+                result.status = "failed"
+                result.error = "未配置 LLM 模型（可在设置页添加）"
+                return result
+
+            config = self._load_config(conversation_id)
+            plan = resolve_dimension_plan(config, llm_available=True)
+            weights = {
+                key: (entry["declared"] if entry["enabled"] else 0.0)
+                for key, entry in plan.items()
+            }
+
+            # LLM 维输入准备（与全量分析同源：关系背景 + 账号 + 投入特征）
+            result.progress_percent = 30
+            result.current_step = "准备评估素材..."
+            llm_context: Dict[str, str] = {}
+            llm_account_wxid = ""
+            try:
+                from .relationship_context_service import RelationshipContextService
+                ctx_obj = RelationshipContextService().get_context(conversation_id)
+                if ctx_obj is not None:
+                    llm_context = {
+                        "relationship_type": str(getattr(ctx_obj, "relationship_type", "") or ""),
+                        "interaction_duration": str(getattr(ctx_obj, "interaction_duration", "") or ""),
+                        "communication_style": str(getattr(ctx_obj, "communication_style", "") or ""),
+                    }
+            except Exception as ctx_e:
+                logger.debug("[关系评估补评] 关系背景读取跳过: %s", ctx_e)
+            try:
+                row = get_db().execute(
+                    "SELECT account_wxid FROM conversations WHERE id = ?",
+                    (int(conversation_id),),
+                ).fetchone()
+                llm_account_wxid = str(row["account_wxid"] or "") if row else ""
+            except Exception as acc_e:
+                logger.debug("[关系评估补评] 账号读取跳过: %s", acc_e)
+
+            metrics = self.engagement_service.compute(conversation_id)
+
+            result.progress_percent = 50
+            result.current_step = "等待 AI 评估返回..."
+            llm_result = llm_service.evaluate(
+                conversation_id,
+                account_wxid=llm_account_wxid,
+                context=llm_context,
+                metrics=metrics,
+            )
+
+            # 装配 LLM 维（与全量路径同构）
+            confidence_meta = dict(llm_result.get("meta") or {})
+            confidence_meta["evidence"] = llm_result.get("evidence") or []
+            result.llm_relationship = DimensionScore(
+                name="AI 关系评估",
+                score=llm_result['score'],
+                weight=weights['llm_relationship'],
+                weighted_score=llm_result['score'] * weights['llm_relationship'],
+                interpretation=llm_result.get('insight') or "LLM 关系评估完成",
+                sub_scores=llm_result['sub_scores'],
+                confidence_meta=confidence_meta,
+            )
+            result.llm_relationship_absent_reason = None
+
+            # 风险预警随 LLM 证据到位重判（此前无证据各信号封顶「留意」）
+            try:
+                stats = self.preprocessing.get_preprocessed_statistics(conversation_id)
+                result.risk_assessment = RiskSignalService().assess(
+                    conversation_id, metrics, stats=stats, llm_result=llm_result
+                )
+            except Exception as risk_e:
+                logger.warning("[风险预警] 补评重判跳过: %s", risk_e)
+
+            # 权重归一 + 总分 + 解释重算（LLM 维在场后归一基组变化）
+            result.progress_percent = 80
+            result.current_step = "重算综合评分..."
+            self._calculate_overall_score(result, config)
+            result.overall_interpretation = self._generate_overall_interpretation(
+                result.overall_score
+            )
+
+            result.status = "completed"
+            result.progress_percent = 100
+            result.current_step = "完成"
+            result.analysis_timestamp = int(time.time())
+            self._save_results(conversation_id, result)
+            logger.info(
+                "[关系评估补评] 完成: %.1f 分 (会话 %s)",
+                result.llm_relationship.score, conversation_id,
+            )
+        except RelationshipLLMAbsent as absent:
+            result.status = "failed"
+            result.error = f"AI 评估仍未成功: {absent}"
+            result.progress_percent = 100
+            result.current_step = "评估失败"
+            logger.info("[关系评估补评] 失败: %s", absent)
+        except Exception as e:
+            result.status = "failed"
+            result.error = str(e)
+            result.progress_percent = 100
+            result.current_step = "评估失败"
+            logger.error("[关系评估补评] 异常: %s", e, exc_info=True)
+        return result
+
     
     def get_progress(self, task_id: str) -> Optional[AffinityAnalysisResult]:
         """

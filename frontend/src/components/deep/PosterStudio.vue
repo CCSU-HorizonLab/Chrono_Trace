@@ -123,6 +123,50 @@ const squareSpec = computed<SquareCardSpec | null>(() => {
   if (!p || !input) return null
   const audience: PosterAudience = activeTemplate.value.audience
   const theme = POSTER_THEMES[audience]
+  // 迷你数字行 + 高频词 chips：受众口径与长图分镜一致（公开联合/自我单侧/定向全量）
+  let miniStats: { num: string; label: string }[] = []
+  let wordChips: string[] = []
+  let wordsLabel = '聊得最多的词'
+  if (audience === 'intimate') {
+    const chem = p.story?.chemistry
+    const rs = chem?.reply_stats
+    miniStats = [
+      { num: `${formatCount(p.stats.span_days)} 天`, label: '跨度' },
+      { num: `${formatCount(p.stats.active_days)} 天`, label: '活跃' },
+      ...(rs
+        ? [{ num: formatDuration(rs.median ?? rs.avg), label: '中位回复' }]
+        : chem?.late_night
+          ? [{ num: formatCount(chem.late_night.count), label: '深夜消息' }]
+          : []),
+    ]
+    wordChips = (p.top_words?.all || []).slice(0, 8).map((w) => w.word)
+    wordsLabel = '你们聊得最多的词'
+  } else if (audience === 'self') {
+    const s = sanitizeForSelf(p)
+    miniStats = [
+      { num: `${formatCount(s.stats.span_days)} 天`, label: '跨度' },
+      { num: `${formatCount(s.stats.active_days)} 天`, label: '活跃' },
+      ...(s.my_story.reply_self_avg_seconds != null
+        ? [{ num: formatDuration(s.my_story.reply_self_avg_seconds), label: '你的平均回复' }]
+        : []),
+    ]
+    wordChips = s.my_words.slice(0, 8).map((w) => w.word)
+    wordsLabel = '你的高频词'
+  } else {
+    const s = sanitizeForPublic(p)
+    const streak = s.activity?.insights.streak_days
+    const chem = s.story?.chemistry
+    miniStats = [
+      { num: `${formatCount(s.stats.span_days)} 天`, label: '跨度' },
+      { num: `${formatCount(s.stats.active_days)} 天`, label: '活跃' },
+      ...(streak != null && streak >= 7
+        ? [{ num: `${streak} 天`, label: '最长连续' }]
+        : chem?.late_night
+          ? [{ num: formatCount(chem.late_night.count), label: '深夜消息' }]
+          : []),
+    ]
+    wordChips = (s.top_words.all || []).slice(0, 8).map((w) => w.word)
+  }
   return {
     bg: theme.bgGradient,
     palette: theme.palette,
@@ -133,6 +177,9 @@ const squareSpec = computed<SquareCardSpec | null>(() => {
     heroNum: formatCount(audience === 'self' ? p.stats.self_count : p.stats.total),
     heroUnit: '条消息',
     heroCaption: `跨度 ${formatCount(p.stats.span_days)} 天 · 其中 ${formatCount(p.stats.active_days)} 天有消息`,
+    miniStats,
+    wordChips,
+    wordsLabel,
     names:
       audience === 'intimate'
         ? { left: p.contact.display_name, right: '我' }
@@ -144,6 +191,12 @@ const squareSpec = computed<SquareCardSpec | null>(() => {
     qr: audience === 'public',
   }
 })
+
+function formatDuration(seconds: number): string {
+  if (seconds < 60) return `${Math.round(seconds)} 秒`
+  if (seconds < 3600) return `${Math.round(seconds / 60)} 分钟`
+  return `${(seconds / 3600).toFixed(1)} 小时`
+}
 
 async function load() {
   // 会话一致性守卫：海报 payload 是重查询，慢响应后到时不能覆盖新会话数据
@@ -194,9 +247,20 @@ async function exportImage(kind: 'long' | 'square') {
     } catch {
       /* 老引擎跳过 */
     }
+    // 零高守卫：模板渲染失败时节点为空，零高画布的 toDataURL 会返回空串
+    // data:, 后端只能误报「仅支持 PNG 图像」——在此给出能定位的错误
+    const height = Math.round(node.getBoundingClientRect().height)
+    if (!height) {
+      exportError.value = '海报内容为空，无法导出（请重试或切换模板）'
+      return
+    }
+    // 超长会话自适应缩放：画布单边过高时部分 WebEngine 后端无法分配画布
+    // （toDataURL 得到空串），按高度把 scale 压到 2 以下保住整图
+    const MAX_CANVAS_SIDE = 7800
+    const scale = Math.min(2, MAX_CANVAS_SIDE / height)
     const canvas = await html2canvas(node, {
       backgroundColor: '#ffffff',
-      scale: 2, // 2 倍分辨率：720px 长图导出 1440px 宽，方卡 1440×1440
+      scale, // 常规 2 倍：720px 长图导出 1440px 宽，方卡 1440×1440
       useCORS: true,
       logging: false,
     })

@@ -662,15 +662,15 @@
   </div>
 
   <!-- TAB: TA 画像（画像档案/大五印象/分享海报，单聊专属；画像演变留在时光深度） -->
-  <!-- 懒激活同上：PosterStudio/大五首次进入才挂载取数；日期筛选共用页级 dates -->
+  <!-- 懒激活同上：PosterStudio/大五首次进入才挂载取数；日期窗独立 personaDates（默认全量） -->
   <div v-show="currentTab === 'persona' && selectedConversationId" class="tab-content fade-in persona-tab">
     <template v-if="personaActivated && !isGroupConversation">
       <DateRangeFilter
-        :dates="dates"
+        :dates="personaDates"
         :loading="false"
         :show-export="false"
         :all-from="conversationSpan?.from || ''"
-        @update:dates="onDatesChange"
+        @update:dates="onPersonaDatesChange"
         @refresh="deepRefreshKey++"
       />
       <div :key="`persona-${selectedConversationId}-${deepRefreshKey}`" class="persona-flow">
@@ -702,7 +702,7 @@
           />
         </div>
         <BigFivePanel :conversation-id="selectedConversationId" />
-        <PosterStudio :conversation-id="selectedConversationId" :dates="dates" :contact-name="currentContactName" />
+        <PosterStudio :conversation-id="selectedConversationId" :dates="personaDates" :contact-name="currentContactName" />
       </div>
     </template>
   </div>
@@ -921,6 +921,9 @@ export default {
         // 章节分段、不吃日期筛选，日期窗只缩放情绪曲线——与其它页签共享 dates
         // 时「默认近30天」会和下方的全量内容打架，故本页签默认全量、独立记忆
         const deepDates = reactive({ from: '', to: '' })
+        // TA 画像同样默认全量：画像/大五印象/海报都是长周期叙事，近 30 天
+        // 窗会把海报 payload 截成一小段；与时光深度各自独立记忆互不影响
+        const personaDates = reactive({ from: '', to: '' })
         // 会话消息真实跨度（首/末条日期）：「全部」快捷键与时光深度默认窗的起点，
         // 替代 2000-01-01 占位——输入框显示 2000 年会让人以为筛选错了
         const conversationSpan = ref<{ from: string; to: string } | null>(null)
@@ -1330,6 +1333,11 @@ const showPortraitDialog = ref(false)
             deepDates.to = toLocalDateKey(new Date())
         }
 
+        function resetPersonaDates() {
+            personaDates.from = conversationSpan.value?.from || '2000-01-01'
+            personaDates.to = toLocalDateKey(new Date())
+        }
+
         async function loadConversationSpan(id: number) {
             try {
                 const res = await api.get_conversation_span(id)
@@ -1338,6 +1346,7 @@ const showPortraitDialog = ref(false)
                 conversationSpan.value = { from: data.from_date, to: data.to_date || '' }
                 // 跨度晚到：仅当默认窗还是占位起点时替换（用户已手动缩窗则不动）
                 if (deepDates.from === '2000-01-01') resetDeepDates()
+                if (personaDates.from === '2000-01-01') resetPersonaDates()
             } catch {
                 // 查询失败维持占位，不阻塞主链路
             }
@@ -1483,6 +1492,7 @@ const showPortraitDialog = ref(false)
             conversationSpan.value = null
             void loadConversationSpan(id)
             resetDeepDates()
+            resetPersonaDates()
             hasFeatures.value = false
             analysisResult.value = null
             qaIndexingHint.value = false
@@ -1560,6 +1570,11 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
         function onDeepDatesChange(newDates: { from: string; to: string }) {
             deepDates.from = newDates.from
             deepDates.to = newDates.to
+        }
+
+        function onPersonaDatesChange(newDates: { from: string; to: string }) {
+            personaDates.from = newDates.from
+            personaDates.to = newDates.to
         }
 
         const exportDialogVisible = ref(false)
@@ -2271,6 +2286,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
         onMounted(async () => {
             if (!dates.from || !dates.to) setDefaultDates(30)
             if (!deepDates.from || !deepDates.to) resetDeepDates()
+            if (!personaDates.from || !personaDates.to) resetPersonaDates()
             await loadAnalysisDeviceMode()
             await refreshAccountContext()
             await loadConversations()
@@ -2294,7 +2310,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
         }
 
         return {
-            currentTab, conversations, selectedConversationId, dates, loading, loadingSessions, error, analysis, subject, sessions, deepGranularity, deepRefreshKey, deepActivated, deepDates, conversationSpan, onDeepDatesChange, personaActivated, viewEpoch, handleCancelGroupSummary,
+            currentTab, conversations, selectedConversationId, dates, loading, loadingSessions, error, analysis, subject, sessions, deepGranularity, deepRefreshKey, deepActivated, deepDates, conversationSpan, onDeepDatesChange, personaActivated, personaDates, onPersonaDatesChange, viewEpoch, handleCancelGroupSummary,
             personaProfile, loadingPersonaProfile, personaProfileMeta, profileRefreshKey, realContactName,
             analysisResult, displayScore, showKeywordsDialog, showContextForm, showPortraitDialog, handlePortraitGenerated, isGlobalAnalyzing, isStopping, activeTimer, handleStopAnalysis, globalProgressPercent, globalProgressStep, gpuMode,
             hasConversations, hasFeatures, hasCachedAffinityAnalysis, featureStats, responseTimeStats, initiativeStats, wordCountsStats, displayWordRatioLabel, activityCalendar,

@@ -26,6 +26,22 @@
       </div>
     </div>
 
+    <!-- 加料层：迷你数字行（上下细线夹住）+ 高频词 chips——方卡不再只有孤零零一个数字 -->
+    <div v-if="miniStats.length || wordChips.length" class="sq-extra">
+      <div v-if="miniStats.length" class="sq-stats" :style="{ borderColor: palette.line }">
+        <div v-for="s in miniStats" :key="s.label" class="sq-stat">
+          <div class="sq-stat-num" :style="{ color: palette.sub }">{{ s.num }}</div>
+          <div class="sq-stat-label" :style="{ color: palette.muted }">{{ s.label }}</div>
+        </div>
+      </div>
+      <div v-if="wordChips.length" class="sq-words">
+        <div class="sq-words-label" :style="{ color: palette.muted }">{{ wordsLabel }}</div>
+        <div class="sq-words-row">
+          <span v-for="(w, i) in wordChips" :key="w" class="sq-word" :style="wordStyle(i)">{{ w }}</span>
+        </div>
+      </div>
+    </div>
+
     <div class="sq-hero">
       <div class="sq-num-row">
         <span class="sq-num" :style="{ color: palette.sub }">{{ heroNum }}</span>
@@ -54,6 +70,8 @@
 import type { StoryPalette } from './sections/palette'
 import type { PosterBadge, SubBadge } from './badges'
 
+export type SquareCardStat = { num: string; label: string }
+
 export type SquareCardSpec = {
   bg: string
   palette: StoryPalette
@@ -63,6 +81,11 @@ export type SquareCardSpec = {
   heroNum: string
   heroUnit: string
   heroCaption: string
+  /** 迷你数字行（跨度/活跃/+1 受众适宜判据），缺席为空数组 */
+  miniStats: SquareCardStat[]
+  /** 高频词 chips（受众口径：公开 all / 自我 me / 定向 all），缺席为空数组 */
+  wordChips: string[]
+  wordsLabel: string
   /** 定向版双人名 / 自我版「我」；公开版无（不指认任何一方） */
   names?: { left: string; right?: string }
   yearText: string
@@ -85,10 +108,22 @@ const names = computed(() => props.spec.names)
 const eyebrow = computed(() => props.spec.eyebrow)
 const badge = computed(() => props.spec.badge)
 const subBadges = computed(() => props.spec.subBadges)
+const miniStats = computed(() => props.spec.miniStats || [])
+const wordChips = computed(() => props.spec.wordChips || [])
+const wordsLabel = computed(() => props.spec.wordsLabel)
 const heroNum = computed(() => props.spec.heroNum)
 const heroUnit = computed(() => props.spec.heroUnit)
 const heroCaption = computed(() => props.spec.heroCaption)
 const yearText = computed(() => props.spec.yearText)
+
+// 词 chips 尺寸递减 + 首词用主色强调（chip 文本本身仍是普通文本色阶）
+const WORD_SIZES = [26, 20, 17, 15, 14, 13, 12, 12]
+function wordStyle(index: number) {
+  return {
+    fontSize: `${WORD_SIZES[index] || 12}px`,
+    color: index === 0 ? props.spec.palette.accent : props.spec.palette.text,
+  }
+}
 </script>
 
 <style scoped>
@@ -144,23 +179,23 @@ const yearText = computed(() => props.spec.yearText)
 }
 
 .sq-eyebrow {
-  margin-top: 26px;
+  margin-top: 18px;
   font-size: 14px;
   letter-spacing: 3px;
 }
 
 .sq-title {
-  margin-top: 12px;
-  font-size: 56px;
+  margin-top: 10px;
+  font-size: 52px;
   font-weight: 800;
   letter-spacing: 8px;
   font-family: 'Smiley Sans', 'PingFang SC', 'Microsoft YaHei', sans-serif;
 }
 
 .sq-caption {
-  margin-top: 14px;
-  font-size: 15px;
-  line-height: 1.7;
+  margin-top: 10px;
+  font-size: 14px;
+  line-height: 1.6;
 }
 
 .sq-chips {
@@ -176,6 +211,59 @@ const yearText = computed(() => props.spec.yearText)
   border-radius: 999px;
   padding: 4px 12px;
   font-size: 13px;
+}
+
+.sq-extra {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* 迷你数字行：上下细线夹住，数字用得意黑保持与大数字同族；
+   居中聚拢 + 固定间距——两格时不会两端贴边中间空荡 */
+.sq-stats {
+  display: flex;
+  justify-content: center;
+  gap: 56px;
+  padding: 12px 6px;
+  border-top: 1px solid;
+  border-bottom: 1px solid;
+}
+
+.sq-stat {
+  text-align: center;
+}
+
+.sq-stat-num {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.2;
+  font-family: 'Smiley Sans', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+}
+
+.sq-stat-label {
+  margin-top: 2px;
+  font-size: 11px;
+}
+
+.sq-words-label {
+  font-size: 11px;
+  letter-spacing: 2px;
+  text-align: center;
+}
+
+.sq-words-row {
+  margin-top: 8px;
+  display: flex;
+  justify-content: center;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  line-height: 1.3;
+}
+
+.sq-word {
+  font-weight: 600;
 }
 
 .sq-hero {

@@ -43,8 +43,8 @@
 
     <StorySection v-if="hasGrid" index="04" title="我们的作息" :palette="palette" class="gap">
       <StoryHeatGrid
-        :counts="activityGrid.counts"
-        :max="activityGrid.max"
+        :counts="activityGrid.all"
+        :max="activityGrid.max_all"
         :palette="palette"
         :ramp="theme.heatRamp"
       />
@@ -174,10 +174,14 @@ const badge = computed(() => pickPosterBadge(badgeInput.value, 'intimate'))
 const subBadges = computed(() => posterSubBadges(badgeInput.value, 'intimate'))
 const rarityLines = computed(() => posterRarityLines(badgeInput.value, 'intimate'))
 
-// 作息格与最活跃年年历（定向版可用全量含日期）
-const activityGrid = computed(() => props.payload.activity?.grid || { counts: [], max: 0 })
-const hasGrid = computed(() => activityGrid.value.counts.length === 7 && activityGrid.value.max > 0)
-const peak = computed(() => (hasGrid.value ? gridPeak(activityGrid.value.counts) : null))
+// 作息格与最活跃年年历（定向版可用全量含日期）。注意定向版吃的是原始
+// payload：grid 形状是 {all, me, max_all, max_me}——counts/max 是公开/自我
+// 版投影后的字段名，在这里拿不到（作息格用合并侧 all）
+const activityGrid = computed(() => props.payload.activity?.grid || null)
+const hasGrid = computed(
+  () => !!activityGrid.value && activityGrid.value.all.length === 7 && activityGrid.value.max_all > 0,
+)
+const peak = computed(() => (hasGrid.value ? gridPeak(activityGrid.value.all) : null))
 const calendar = computed(() => props.payload.activity?.calendar || null)
 const yearTotal = computed(
   () => (calendar.value?.days || []).reduce((sum, d) => sum + d.count, 0),

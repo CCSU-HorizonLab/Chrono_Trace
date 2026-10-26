@@ -41,7 +41,32 @@
       <StoryStatGrid :items="chemCells" :palette="palette" />
     </StorySection>
 
-    <StorySection v-if="quotes.length" index="04" title="那些值得记住的话" :palette="palette" class="gap">
+    <StorySection v-if="hasGrid" index="04" title="我们的作息" :palette="palette" class="gap">
+      <StoryHeatGrid
+        :counts="activityGrid.counts"
+        :max="activityGrid.max"
+        :palette="palette"
+        :ramp="theme.heatRamp"
+      />
+      <div v-if="peak" class="grid-note">最亮的一格是{{ peakSlotText(peak) }}——一周里消息最密的时辰</div>
+    </StorySection>
+
+    <StorySection v-if="calendar" index="05" :title="`最热闹的一年 · ${calendar.year}`" :palette="palette" class="gap">
+      <StoryCalendar
+        :year="calendar.year"
+        :days="calendar.days"
+        :max="calendar.max"
+        :palette="palette"
+        :ramp="theme.heatRamp"
+      />
+      <div class="grid-note">这一年你们聊了 {{ formatCount(yearTotal) }} 句{{ peakDayText }}</div>
+    </StorySection>
+
+    <StorySection v-if="detailCells.length" index="06" title="没意识到的细节" :palette="palette" class="gap">
+      <StoryStatGrid :items="detailCells" :palette="palette" />
+    </StorySection>
+
+    <StorySection v-if="quotes.length" index="07" title="那些值得记住的话" :palette="palette" class="gap">
       <div class="quote-cards">
         <div
           v-for="(quote, index) in quotes"
@@ -55,7 +80,7 @@
       </div>
     </StorySection>
 
-    <StorySection index="05" title="我们各自的词" :palette="palette" class="gap">
+    <StorySection index="08" title="我们各自的词" :palette="palette" class="gap">
       <div class="duo-words">
         <div class="duo-words-col">
           <div class="duo-words-head contact-head">{{ payload.contact.display_name }}</div>
@@ -72,7 +97,7 @@
       </div>
     </StorySection>
 
-    <StorySection v-if="hasBig5" index="06" title="我们的语言风格" :palette="palette" class="gap">
+    <StorySection v-if="hasBig5" index="09" title="我们的语言风格" :palette="palette" class="gap">
       <div class="radar-row">
         <BigFiveRadar :me="big5Me" :other="big5Other" :size="240" />
       </div>
@@ -83,11 +108,17 @@
       </div>
     </StorySection>
 
-    <!-- 称号幕（无序号）：金色大字居中，亮边框模拟星夜里的光 -->
+    <!-- 称号幕（无序号）：金色大字居中，亮边框模拟星夜里的光；副称号成就 + 稀有度话术 -->
     <div class="badge-card">
       <div class="badge-eyebrow">你们的称号</div>
       <div class="badge-title">{{ badge.title }}</div>
       <div class="badge-caption">{{ badge.caption }}</div>
+      <div v-if="subBadges.length" class="badge-chips">
+        <span v-for="sb in subBadges" :key="sb.id" class="badge-chip">{{ '★'.repeat(sb.grade) }} {{ sb.title }}</span>
+      </div>
+      <div v-if="rarityLines.length" class="badge-rarity">
+        <div v-for="(line, i) in rarityLines" :key="i">{{ line }}</div>
+      </div>
     </div>
 
     <div class="footer">
@@ -104,22 +135,30 @@ import StorySection from '@/components/deep/poster/sections/StorySection.vue'
 import StoryBigNumber from '@/components/deep/poster/sections/StoryBigNumber.vue'
 import StoryTimeline from '@/components/deep/poster/sections/StoryTimeline.vue'
 import StoryStatGrid from '@/components/deep/poster/sections/StoryStatGrid.vue'
-import type { StoryPalette, StoryStatItem } from '@/components/deep/poster/sections/palette'
-import { badgeInputFromIntimate, pickPosterBadge } from '@/components/deep/poster/badges'
+import StoryHeatGrid from '@/components/deep/poster/sections/StoryHeatGrid.vue'
+import StoryCalendar from '@/components/deep/poster/sections/StoryCalendar.vue'
+import type { StoryStatItem } from '@/components/deep/poster/sections/palette'
+import { POSTER_THEMES } from '@/components/deep/poster/theme'
+import {
+  formatCount,
+  formatHoursOrDays,
+  gridPeak,
+  peakSlotText,
+} from '@/components/deep/poster/activityShared'
+import {
+  badgeInputFromIntimate,
+  pickPosterBadge,
+  posterRarityLines,
+  posterSubBadges,
+} from '@/components/deep/poster/badges'
 import type { IntimatePosterPayload } from '@/components/deep/poster/registry'
 import { toLocalDateKey } from '@/utils/datetime'
 
 const props = defineProps<{ payload: IntimatePosterPayload }>()
 
-// 星夜调色板：纯色 token（海报节点零 CSS 变量依赖）
-const palette: StoryPalette = {
-  bg: '#141a3e',
-  text: '#f3ecd9',
-  muted: '#b0aacf',
-  accent: '#e8c47a',
-  sub: '#e37f8f',
-  line: '#3a3f6b',
-}
+// 星夜主题（palette/底渐变/热力色带与方卡共用一份，见 poster/theme.ts）
+const theme = POSTER_THEMES.intimate
+const palette = theme.palette
 
 const stats = computed(() => props.payload.stats)
 const milestones = computed(() => props.payload.story?.milestones || [])
@@ -130,7 +169,30 @@ const big5Me = computed(() => props.payload.big5?.me?.scores || null)
 const big5Other = computed(() => props.payload.big5?.other?.scores || null)
 const hasBig5 = computed(() => Boolean(big5Me.value || big5Other.value))
 const contactInitial = computed(() => (props.payload.contact?.display_name || '友').slice(0, 1))
-const badge = computed(() => pickPosterBadge(badgeInputFromIntimate(props.payload), 'intimate'))
+const badgeInput = computed(() => badgeInputFromIntimate(props.payload))
+const badge = computed(() => pickPosterBadge(badgeInput.value, 'intimate'))
+const subBadges = computed(() => posterSubBadges(badgeInput.value, 'intimate'))
+const rarityLines = computed(() => posterRarityLines(badgeInput.value, 'intimate'))
+
+// 作息格与最活跃年年历（定向版可用全量含日期）
+const activityGrid = computed(() => props.payload.activity?.grid || { counts: [], max: 0 })
+const hasGrid = computed(() => activityGrid.value.counts.length === 7 && activityGrid.value.max > 0)
+const peak = computed(() => (hasGrid.value ? gridPeak(activityGrid.value.counts) : null))
+const calendar = computed(() => props.payload.activity?.calendar || null)
+const yearTotal = computed(
+  () => (calendar.value?.days || []).reduce((sum, d) => sum + d.count, 0),
+)
+// 年内最密集的一天（并列取更早）——定向版可带日历日期
+const peakDayText = computed(() => {
+  const days = calendar.value?.days || []
+  let best: { date: string; count: number } | null = null
+  for (const day of days) {
+    if (!best || day.count > best.count) best = day
+  }
+  if (!best || best.count <= 0) return ''
+  const [_, month, day] = best.date.split('-')
+  return `，最密集的一天是 ${Number(month)} 月 ${Number(day)} 日`
+})
 
 const rangeText = computed(
   () => `${fmtDate(props.payload.from_ts)} — ${fmtDate(props.payload.to_ts)}`,
@@ -166,9 +228,32 @@ const chemCells = computed<StoryStatItem[]>(() => {
   return cells
 })
 
-function formatCount(value: number): string {
-  return value >= 10000 ? `${(value / 10000).toFixed(1)} 万` : value.toLocaleString('zh-CN')
-}
+// 没意识到的细节（衍生惊喜指标）：定向版可指认双方
+const detailCells = computed<StoryStatItem[]>(() => {
+  const cells: StoryStatItem[] = []
+  if (peak.value) {
+    cells.push({ num: peakSlotText(peak.value), label: '你们一周里消息最密的时辰' })
+  }
+  const question = props.payload.activity?.insights.question
+  if (question && question.total > 0 && question.questions > 0) {
+    cells.push({
+      num: `${Math.round((question.questions / question.total) * 100)}%`,
+      label: '的消息是提问',
+    })
+  }
+  const streak = props.payload.activity?.insights.streak_days
+  if (streak != null && streak >= 7) {
+    cells.push({ num: `${streak} 天`, label: '最长连续每天都有对话' })
+  }
+  if (stats.value.total >= 10000) {
+    cells.push({
+      num: formatHoursOrDays(stats.value.total * 2),
+      label: '逐条读 2 秒所需的时长',
+      tone: 'sub',
+    })
+  }
+  return cells
+})
 
 function formatDuration(seconds: number): string {
   if (seconds < 60) return `${Math.round(seconds)} 秒`
@@ -299,6 +384,13 @@ function wordSize(index: number): string {
   letter-spacing: 2px;
 }
 
+.grid-note {
+  margin-top: 10px;
+  font-size: 12px;
+  color: #9d97bd;
+  text-align: center;
+}
+
 .quote-cards {
   display: flex;
   flex-direction: column;
@@ -422,6 +514,29 @@ function wordSize(index: number): string {
   font-size: 15px;
   line-height: 1.6;
   color: #f3ecd9;
+}
+
+.badge-chips {
+  margin-top: 16px;
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.badge-chip {
+  border: 1px solid rgba(232, 196, 122, 0.55);
+  color: #e8c47a;
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 13px;
+}
+
+.badge-rarity {
+  margin-top: 14px;
+  font-size: 13px;
+  line-height: 1.9;
+  color: #b0aacf;
 }
 
 .footer {

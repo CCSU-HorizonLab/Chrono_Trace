@@ -26,13 +26,27 @@
       <StoryStatGrid :items="chemCells" :palette="palette" />
     </StorySection>
 
-    <StorySection v-if="points.length" index="04" title="语气的起伏" :palette="palette" class="gap">
+    <StorySection v-if="hasGrid" index="04" title="两个人的作息" :palette="palette" class="gap">
+      <StoryHeatGrid
+        :counts="activityGrid.counts"
+        :max="activityGrid.max"
+        :palette="palette"
+        :ramp="theme.heatRamp"
+      />
+      <div v-if="peak" class="grid-note">最亮的一格是{{ peakSlotText(peak) }}——一周里消息最密的时辰</div>
+    </StorySection>
+
+    <StorySection v-if="detailCells.length" index="05" title="没意识到的细节" :palette="palette" class="gap">
+      <StoryStatGrid :items="detailCells" :palette="palette" />
+    </StorySection>
+
+    <StorySection v-if="points.length" index="06" title="语气的起伏" :palette="palette" class="gap">
       <!-- 宽=海报内容 624 − StorySection 内边距 28×2 − 边框 1×2，溢出会穿出卡片右缘 -->
       <PosterSparkline :points="points" pick="score" :width="566" :height="130" zero-line color="#4f5d9e" />
       <div class="curve-note">向上是更明亮的语气，虚线是平静的分界</div>
     </StorySection>
 
-    <StorySection v-if="topWords.length" index="05" title="聊得最多的词" :palette="palette" class="gap">
+    <StorySection v-if="topWords.length" index="07" title="聊得最多的词" :palette="palette" class="gap">
       <div class="words-cloud">
         <span
           v-for="(word, index) in topWords"
@@ -43,17 +57,23 @@
       </div>
     </StorySection>
 
-    <StorySection v-if="hasBig5" index="06" title="两个人的语言风格" :palette="palette" class="gap">
+    <StorySection v-if="hasBig5" index="08" title="两个人的语言风格" :palette="palette" class="gap">
       <div class="radar-row">
         <BigFiveRadar :me="big5Me" :other="big5Other" :size="240" />
       </div>
     </StorySection>
 
-    <!-- 称号幕（无序号）：靛蓝大字居中收束 -->
+    <!-- 称号幕（无序号）：靛蓝大字居中收束；副称号成就 + 稀有度话术（会话内口径） -->
     <div class="badge-card">
       <div class="badge-eyebrow">这段对话的称号</div>
       <div class="badge-title">{{ badge.title }}</div>
       <div class="badge-caption">{{ badge.caption }}</div>
+      <div v-if="subBadges.length" class="badge-chips">
+        <span v-for="sb in subBadges" :key="sb.id" class="badge-chip">{{ '★'.repeat(sb.grade) }} {{ sb.title }}</span>
+      </div>
+      <div v-if="rarityLines.length" class="badge-rarity">
+        <div v-for="(line, i) in rarityLines" :key="i">{{ line }}</div>
+      </div>
     </div>
 
     <div class="footer">
@@ -71,21 +91,28 @@ import StorySection from '@/components/deep/poster/sections/StorySection.vue'
 import StoryBigNumber from '@/components/deep/poster/sections/StoryBigNumber.vue'
 import StoryTimeline from '@/components/deep/poster/sections/StoryTimeline.vue'
 import StoryStatGrid from '@/components/deep/poster/sections/StoryStatGrid.vue'
-import type { StoryPalette, StoryStatItem } from '@/components/deep/poster/sections/palette'
-import { badgeInputFromPublic, pickPosterBadge } from '@/components/deep/poster/badges'
+import StoryHeatGrid from '@/components/deep/poster/sections/StoryHeatGrid.vue'
+import type { StoryStatItem } from '@/components/deep/poster/sections/palette'
+import { POSTER_THEMES } from '@/components/deep/poster/theme'
+import {
+  formatCount,
+  formatHoursOrDays,
+  gridPeak,
+  peakSlotText,
+} from '@/components/deep/poster/activityShared'
+import {
+  badgeInputFromPublic,
+  pickPosterBadge,
+  posterRarityLines,
+  posterSubBadges,
+} from '@/components/deep/poster/badges'
 import type { PublicPosterPayload, PosterWord } from '@/components/deep/poster/registry'
 
 const props = defineProps<{ payload: PublicPosterPayload }>()
 
-// 浅靛调色板：纯色 token（海报节点零 CSS 变量依赖），单强调色系
-const palette: StoryPalette = {
-  bg: '#ffffff',
-  text: '#2b3245',
-  muted: '#68718a',
-  accent: '#4f5d9e',
-  sub: '#4f5d9e',
-  line: '#dfe3ef',
-}
+// 浅靛主题（palette/底渐变/热力色带与方卡共用一份，见 poster/theme.ts）
+const theme = POSTER_THEMES.public
+const palette = theme.palette
 
 const stats = computed(() => props.payload.stats)
 const milestones = computed(() => props.payload.story?.milestones || [])
@@ -94,8 +121,43 @@ const topWords = computed<PosterWord[]>(() => (props.payload.top_words?.all || [
 const big5Me = computed(() => props.payload.big5?.me?.scores || null)
 const big5Other = computed(() => props.payload.big5?.other?.scores || null)
 const hasBig5 = computed(() => Boolean(big5Me.value || big5Other.value))
-const badge = computed(() => pickPosterBadge(badgeInputFromPublic(props.payload), 'public'))
+const badgeInput = computed(() => badgeInputFromPublic(props.payload))
+const badge = computed(() => pickPosterBadge(badgeInput.value, 'public'))
+const subBadges = computed(() => posterSubBadges(badgeInput.value, 'public'))
+const rarityLines = computed(() => posterRarityLines(badgeInput.value, 'public'))
 const yearText = computed(() => String(new Date(props.payload.generated_at * 1000).getFullYear()))
+
+// 作息格（公开版只有合并格，无绝对日期）
+const activityGrid = computed(() => props.payload.activity?.grid || { counts: [], max: 0 })
+const hasGrid = computed(() => activityGrid.value.counts.length === 7 && activityGrid.value.max > 0)
+const peak = computed(() => (hasGrid.value ? gridPeak(activityGrid.value.counts) : null))
+
+// 没意识到的细节（衍生惊喜指标）：公开版中性措辞，逐项独立降级
+const detailCells = computed<StoryStatItem[]>(() => {
+  const cells: StoryStatItem[] = []
+  if (peak.value) {
+    cells.push({ num: peakSlotText(peak.value), label: '一周里消息最密的时辰' })
+  }
+  const question = props.payload.activity?.insights.question
+  if (question && question.total > 0 && question.questions > 0) {
+    cells.push({
+      num: `${Math.round((question.questions / question.total) * 100)}%`,
+      label: '的消息是提问',
+    })
+  }
+  const streak = props.payload.activity?.insights.streak_days
+  if (streak != null && streak >= 7) {
+    cells.push({ num: `${streak} 天`, label: '最长连续每天都有对话' })
+  }
+  if (stats.value.total >= 10000) {
+    cells.push({
+      num: formatHoursOrDays(stats.value.total * 2),
+      label: '逐条读 2 秒所需的时长',
+      tone: 'sub',
+    })
+  }
+  return cells
+})
 
 // 默契数字格：公开版中性措辞（不指认谁先开口）；缺席各自跳格，全缺整幕隐藏
 const chemCells = computed<StoryStatItem[]>(() => {
@@ -122,10 +184,6 @@ const chemCells = computed<StoryStatItem[]>(() => {
   }
   return cells
 })
-
-function formatCount(value: number): string {
-  return value >= 10000 ? `${(value / 10000).toFixed(1)} 万` : value.toLocaleString('zh-CN')
-}
 
 function formatDuration(seconds: number): string {
   if (seconds < 60) return `${Math.round(seconds)} 秒`
@@ -193,6 +251,13 @@ function wordSize(index: number): string {
   color: #68718a;
 }
 
+.grid-note {
+  margin-top: 10px;
+  font-size: 12px;
+  color: #68718a;
+  text-align: center;
+}
+
 .words-cloud {
   display: flex;
   flex-wrap: wrap;
@@ -244,6 +309,29 @@ function wordSize(index: number): string {
   font-size: 15px;
   line-height: 1.6;
   color: #2b3245;
+}
+
+.badge-chips {
+  margin-top: 16px;
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.badge-chip {
+  border: 1px solid rgba(79, 93, 158, 0.45);
+  color: #4f5d9e;
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 13px;
+}
+
+.badge-rarity {
+  margin-top: 14px;
+  font-size: 13px;
+  line-height: 1.9;
+  color: #68718a;
 }
 
 .footer {

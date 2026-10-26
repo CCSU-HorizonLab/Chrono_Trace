@@ -26,13 +26,38 @@
       <StoryStatGrid :items="dailyCells" :palette="palette" />
     </StorySection>
 
-    <StorySection v-if="points.length" index="03" title="你的语气曲线" :palette="palette" class="gap">
+    <StorySection v-if="hasGrid" index="03" title="你的作息" :palette="palette" class="gap">
+      <StoryHeatGrid
+        :counts="activityGrid.counts"
+        :max="activityGrid.max"
+        :palette="palette"
+        :ramp="theme.heatRamp"
+      />
+      <div v-if="peak" class="grid-note">最亮的一格是{{ peakSlotText(peak) }}——你消息最密的时辰</div>
+    </StorySection>
+
+    <StorySection v-if="calendar" index="04" :title="`你的 ${calendar.year}`" :palette="palette" class="gap">
+      <StoryCalendar
+        :year="calendar.year"
+        :days="calendar.days"
+        :max="calendar.max"
+        :palette="palette"
+        :ramp="theme.heatRamp"
+      />
+      <div class="grid-note">这一年你说了 {{ formatCount(yearTotal) }} 句话，颜色越深聊得越多</div>
+    </StorySection>
+
+    <StorySection v-if="detailCells.length" index="05" title="没意识到的细节" :palette="palette" class="gap">
+      <StoryStatGrid :items="detailCells" :palette="palette" />
+    </StorySection>
+
+    <StorySection v-if="points.length" index="06" title="你的语气曲线" :palette="palette" class="gap">
       <!-- 宽=海报内容 624 − StorySection 内边距 28×2 − 边框 1×2，溢出会穿出卡片右缘 -->
       <PosterSparkline :points="points" pick="userScore" :width="566" :height="130" zero-line color="#d97706" />
       <div class="curve-note">向上是更明亮的语气，虚线是平静的分界</div>
     </StorySection>
 
-    <StorySection v-if="myWords.length" index="04" title="你的词" :palette="palette" class="gap">
+    <StorySection v-if="myWords.length" index="07" title="你的词" :palette="palette" class="gap">
       <div class="words-cloud">
         <span
           v-for="(word, index) in myWords"
@@ -43,7 +68,7 @@
       </div>
     </StorySection>
 
-    <StorySection v-if="myBig5" index="05" title="你的语言风格" :palette="palette" class="gap">
+    <StorySection v-if="myBig5" index="08" title="你的语言风格" :palette="palette" class="gap">
       <div class="big5-row">
         <BigFiveRadar :me="myBig5" :size="220" />
         <div class="big5-bars">
@@ -59,11 +84,17 @@
       <div class="big5-note">语言风格印象，非心理测评</div>
     </StorySection>
 
-    <!-- 称号幕（无序号）：暖橘大字居中，亮边框收束 -->
+    <!-- 称号幕（无序号）：暖橘大字居中，亮边框收束；副称号成就 + 稀有度话术 -->
     <div class="badge-card">
       <div class="badge-eyebrow">你的称号</div>
       <div class="badge-title">{{ badge.title }}</div>
       <div class="badge-caption">{{ badge.caption }}</div>
+      <div v-if="subBadges.length" class="badge-chips">
+        <span v-for="sb in subBadges" :key="sb.id" class="badge-chip">{{ '★'.repeat(sb.grade) }} {{ sb.title }}</span>
+      </div>
+      <div v-if="rarityLines.length" class="badge-rarity">
+        <div v-for="(line, i) in rarityLines" :key="i">{{ line }}</div>
+      </div>
     </div>
 
     <div class="footer">
@@ -80,28 +111,73 @@ import PosterSparkline from '@/components/deep/poster/PosterSparkline.vue'
 import StorySection from '@/components/deep/poster/sections/StorySection.vue'
 import StoryBigNumber from '@/components/deep/poster/sections/StoryBigNumber.vue'
 import StoryStatGrid from '@/components/deep/poster/sections/StoryStatGrid.vue'
-import type { StoryPalette, StoryStatItem } from '@/components/deep/poster/sections/palette'
-import { badgeInputFromSelf, pickPosterBadge } from '@/components/deep/poster/badges'
+import StoryHeatGrid from '@/components/deep/poster/sections/StoryHeatGrid.vue'
+import StoryCalendar from '@/components/deep/poster/sections/StoryCalendar.vue'
+import type { StoryStatItem } from '@/components/deep/poster/sections/palette'
+import { POSTER_THEMES } from '@/components/deep/poster/theme'
+import {
+  formatCount,
+  formatHoursOrDays,
+  gridPeak,
+  peakSlotText,
+} from '@/components/deep/poster/activityShared'
+import {
+  badgeInputFromSelf,
+  pickPosterBadge,
+  posterRarityLines,
+  posterSubBadges,
+} from '@/components/deep/poster/badges'
 import type { SelfPosterPayload } from '@/components/deep/poster/registry'
 
 const props = defineProps<{ payload: SelfPosterPayload }>()
 
-// 暖米调色板：纯色 token（海报节点零 CSS 变量依赖）
-const palette: StoryPalette = {
-  bg: '#fffdf8',
-  text: '#3d2e1e',
-  muted: '#79664c',
-  accent: '#d97706',
-  sub: '#9a3412',
-  line: '#e5d5bd',
-}
+// 暖米主题（palette/底渐变/热力色带与方卡共用一份，见 poster/theme.ts）
+const theme = POSTER_THEMES.self
+const palette = theme.palette
 
 const stats = computed(() => props.payload.stats)
 const points = computed(() => props.payload.my_curve)
 const myWords = computed(() => props.payload.my_words.slice(0, 12))
 const myBig5 = computed(() => props.payload.my_big5)
-const badge = computed(() => pickPosterBadge(badgeInputFromSelf(props.payload), 'self'))
+const badgeInput = computed(() => badgeInputFromSelf(props.payload))
+const badge = computed(() => pickPosterBadge(badgeInput.value, 'self'))
+const subBadges = computed(() => posterSubBadges(badgeInput.value, 'self'))
+const rarityLines = computed(() => posterRarityLines(badgeInput.value, 'self'))
 const yearText = computed(() => String(new Date(props.payload.generated_at * 1000).getFullYear()))
+
+// 我的作息格与我的年历（my_activity 投影已是单侧口径）
+const activityGrid = computed(() => props.payload.my_activity?.grid || { counts: [], max: 0 })
+const hasGrid = computed(() => activityGrid.value.counts.length === 7 && activityGrid.value.max > 0)
+const peak = computed(() => (hasGrid.value ? gridPeak(activityGrid.value.counts) : null))
+const calendar = computed(() => props.payload.my_activity?.calendar || null)
+const yearTotal = computed(() => (calendar.value?.days || []).reduce((sum, d) => sum + d.count, 0))
+
+// 没意识到的细节：全部我的单侧口径
+const detailCells = computed<StoryStatItem[]>(() => {
+  const cells: StoryStatItem[] = []
+  if (peak.value) {
+    cells.push({ num: peakSlotText(peak.value), label: '你一周里消息最密的时辰' })
+  }
+  const question = props.payload.my_activity?.insights.question
+  if (question && question.total > 0 && question.questions > 0) {
+    cells.push({
+      num: `${Math.round((question.questions / question.total) * 100)}%`,
+      label: '你说的消息里是提问的',
+    })
+  }
+  const streak = props.payload.my_activity?.insights.streak_days
+  if (streak != null && streak >= 7) {
+    cells.push({ num: `${streak} 天`, label: '你最长连续都在说话' })
+  }
+  if (stats.value.self_count >= 10000) {
+    cells.push({
+      num: formatHoursOrDays(stats.value.self_count * 2),
+      label: '你的话逐条读 2 秒的时长',
+      tone: 'sub',
+    })
+  }
+  return cells
+})
 
 // 日常数字格：深夜/平均回复来自 my_story 单侧切片，缺席各自跳格
 const dailyCells = computed<StoryStatItem[]>(() => {
@@ -129,10 +205,6 @@ const dimRows = computed(() => {
     score: typeof scores[key]?.score === 'number' ? scores[key]!.score as number : 0,
   }))
 })
-
-function formatCount(value: number): string {
-  return value >= 10000 ? `${(value / 10000).toFixed(1)} 万` : value.toLocaleString('zh-CN')
-}
 
 function formatDuration(seconds: number): string {
   if (seconds < 60) return `${Math.round(seconds)} 秒`
@@ -221,6 +293,13 @@ function wordSize(index: number): string {
   margin-top: 8px;
   font-size: 12px;
   color: #79664c;
+}
+
+.grid-note {
+  margin-top: 10px;
+  font-size: 12px;
+  color: #79664c;
+  text-align: center;
 }
 
 .words-cloud {
@@ -322,6 +401,29 @@ function wordSize(index: number): string {
   font-size: 15px;
   line-height: 1.6;
   color: #3d2e1e;
+}
+
+.badge-chips {
+  margin-top: 16px;
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.badge-chip {
+  border: 1px solid rgba(217, 119, 6, 0.5);
+  color: #d97706;
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 13px;
+}
+
+.badge-rarity {
+  margin-top: 14px;
+  font-size: 13px;
+  line-height: 1.9;
+  color: #79664c;
 }
 
 .footer {

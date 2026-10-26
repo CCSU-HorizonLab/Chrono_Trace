@@ -67,6 +67,36 @@ export type PosterStory = {
   chemistry: PosterChemistry
 }
 
+/** activity 分镜（完整档）：7×24 作息格（all/me 分侧）、最活跃年年历、衍生判据 */
+export type PosterActivity = {
+  grid: { all: number[][]; me: number[][]; max_all: number; max_me: number }
+  /** 窗内最活跃年的逐日计数（绝对日期——公开版投影剥离，自我版只取我的列） */
+  calendar: {
+    year: number
+    days: Array<{ date: string; count: number; self_count: number }>
+    max: number
+  } | null
+  insights: {
+    streak_days: number | null
+    self_streak_days: number | null
+    question: { total: number; questions: number } | null
+    self_question: { total: number; questions: number } | null
+  }
+}
+
+/** 公开版 activity：合并作息格（无绝对日期）+ 联合判据；年历/单侧格类型上拿不到 */
+export type PublicPosterActivity = {
+  grid: { counts: number[][]; max: number }
+  insights: { streak_days: number | null; question: { total: number; questions: number } | null }
+}
+
+/** 自我版 activity：我的作息格 + 我的年历（日期属我本人数据，可带）+ 单侧判据 */
+export type SelfPosterActivity = {
+  grid: { counts: number[][]; max: number }
+  calendar: { year: number; days: Array<{ date: string; count: number }>; max: number } | null
+  insights: { streak_days: number | null; question: { total: number; questions: number } | null }
+}
+
 /** 公开版里程碑：不带绝对日期——首条消息/关口/沉默期是全会话口径，日期
  *  会突破用户所选导出窗，公开域组合（首条日期+沉默叙事+峰值日）具强识别性 */
 export type PublicPosterMilestone = Omit<PosterMilestone, 'ts' | 'from_ts' | 'to_ts'>
@@ -105,6 +135,7 @@ export type IntimatePosterPayload = {
   quotes: { items: Array<{ text: string; is_sender: boolean; ts: number }>; sensitive: true }
   big5: { me: { source: string; scores: PosterBig5Scores } | null; other: { source: string; scores: PosterBig5Scores } | null }
   story?: PosterStory
+  activity?: PosterActivity
   generated_at: number
 }
 
@@ -117,6 +148,8 @@ export type PublicPosterPayload = {
   big5: { me: { scores: PosterBig5Scores } | null; other: { scores: PosterBig5Scores } | null }
   /** story 聚合字段进公开版但剥绝对日期（类型上拿不到日期字段） */
   story?: PublicPosterStory
+  /** activity 只进合并作息格与联合判据（无绝对日期）；年历/单侧格剥离 */
+  activity?: PublicPosterActivity
   generated_at: number
 }
 
@@ -131,6 +164,8 @@ export type SelfPosterPayload = {
   my_words: PosterWord[]
   my_big5: PosterBig5Scores
   my_story: MyPosterStory
+  /** activity 只进我的作息格/我的年历/单侧判据（联合口径不进自我版红线） */
+  my_activity?: SelfPosterActivity
   generated_at: number
 }
 
@@ -166,6 +201,17 @@ export function sanitizeForPublic(payload: IntimatePosterPayload): PublicPosterP
           },
         }
       : undefined,
+    // activity 投影：合并作息格（周几×时辰，无绝对日期）+ 联合判据；
+    // 年历带日历日期、me 格带单侧数据——均在类型层剥离
+    activity: payload.activity
+      ? {
+          grid: { counts: payload.activity.grid.all, max: payload.activity.grid.max_all },
+          insights: {
+            streak_days: payload.activity.insights.streak_days,
+            question: payload.activity.insights.question,
+          },
+        }
+      : undefined,
     generated_at: payload.generated_at,
   }
 }
@@ -190,6 +236,27 @@ export function sanitizeForSelf(payload: IntimatePosterPayload): SelfPosterPaylo
       late_night_self: payload.story?.chemistry.late_night?.self_count ?? null,
       reply_self_avg_seconds: payload.story?.chemistry.reply_stats?.self_avg ?? null,
     },
+    // activity 单侧切片：作息格/年历/判据全部换成我的口径（年历日期属
+    // 我本人数据可保留，count 已映射为 self_count）
+    my_activity: payload.activity
+      ? {
+          grid: { counts: payload.activity.grid.me, max: payload.activity.grid.max_me },
+          calendar: payload.activity.calendar
+            ? {
+                year: payload.activity.calendar.year,
+                days: payload.activity.calendar.days.map((d) => ({
+                  date: d.date,
+                  count: d.self_count,
+                })),
+                max: Math.max(0, ...payload.activity.calendar.days.map((d) => d.self_count)),
+              }
+            : null,
+          insights: {
+            streak_days: payload.activity.insights.self_streak_days,
+            question: payload.activity.insights.self_question,
+          },
+        }
+      : undefined,
     generated_at: payload.generated_at,
   }
 }

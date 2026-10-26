@@ -3,7 +3,7 @@
     <div class="panel-head">
       <div>
         <div class="panel-title">分享海报</div>
-        <div class="panel-sub">把这段时光做成一张竖版长图；不同模板适合不同的分享对象</div>
+        <div class="panel-sub">竖版长图讲故事，方形称号卡抢眼球；不同模板适合不同的分享对象</div>
       </div>
     </div>
 
@@ -34,11 +34,21 @@
       </div>
 
       <div class="export-row">
-        <button class="btn primary" :disabled="exporting" @click="exportPng">
-          {{ exporting ? '正在合成图片…' : '导出 PNG 图片' }}
+        <button class="btn primary" :disabled="exporting" @click="exportImage('long')">
+          {{ exporting ? '正在合成图片…' : '导出长图' }}
+        </button>
+        <button class="btn" :disabled="exporting || !squareSpec" @click="exportImage('square')">
+          导出方卡
         </button>
         <span v-if="exportResultText" class="export-result">{{ exportResultText }}</span>
         <span v-else-if="exportError" class="error-text">{{ exportError }}</span>
+      </div>
+
+      <!-- 方卡离屏渲染台：display:none 会破坏 html2canvas 克隆，固定定位移出视口代替 -->
+      <div v-if="squareSpec" class="square-stage" aria-hidden="true">
+        <div ref="squareRef">
+          <SquareCard :spec="squareSpec" />
+        </div>
       </div>
     </template>
   </div>
@@ -50,12 +60,23 @@ import html2canvas from 'html2canvas'
 import { api } from '@/api/bridge'
 import { showConfirm } from '@/utils/dialog'
 import { toLocalDateKey } from '@/utils/datetime'
+import SquareCard, { type SquareCardSpec } from '@/components/deep/poster/SquareCard.vue'
 import {
   POSTER_TEMPLATES,
   sanitizeForPublic,
   sanitizeForSelf,
   type IntimatePosterPayload,
+  type PosterAudience,
 } from '@/components/deep/poster/registry'
+import { POSTER_THEMES } from '@/components/deep/poster/theme'
+import { formatCount } from '@/components/deep/poster/activityShared'
+import {
+  badgeInputFromIntimate,
+  badgeInputFromPublic,
+  badgeInputFromSelf,
+  pickPosterBadge,
+  posterSubBadges,
+} from '@/components/deep/poster/badges'
 
 const props = defineProps<{
   conversationId: number
@@ -71,6 +92,7 @@ const exporting = ref(false)
 const exportResultText = ref('')
 const exportError = ref('')
 const posterRef = ref<HTMLElement | null>(null)
+const squareRef = ref<HTMLElement | null>(null)
 
 const templates = POSTER_TEMPLATES
 const activeTemplate = computed(
@@ -83,6 +105,41 @@ const activePayload = computed(() => {
   if (activeTemplate.value.audience === 'intimate') return payload.value
   if (activeTemplate.value.audience === 'self') return sanitizeForSelf(payload.value)
   return sanitizeForPublic(payload.value)
+})
+
+// 方卡称号输入与模板同源（同受众投影 → 同一套称号规则，长图与方卡口径一致）
+const badgeInputFor = computed(() => {
+  const p = payload.value
+  if (!p) return null
+  if (activeTemplate.value.audience === 'intimate') return badgeInputFromIntimate(p)
+  if (activeTemplate.value.audience === 'self') return badgeInputFromSelf(sanitizeForSelf(p))
+  return badgeInputFromPublic(sanitizeForPublic(p))
+})
+
+const squareSpec = computed<SquareCardSpec | null>(() => {
+  const p = payload.value
+  const input = badgeInputFor.value
+  if (!p || !input) return null
+  const audience: PosterAudience = activeTemplate.value.audience
+  const theme = POSTER_THEMES[audience]
+  return {
+    bg: theme.bgGradient,
+    palette: theme.palette,
+    eyebrow:
+      audience === 'intimate' ? '你们的称号' : audience === 'self' ? '你的称号' : '这段对话的称号',
+    badge: pickPosterBadge(input, audience),
+    subBadges: posterSubBadges(input, audience),
+    heroNum: formatCount(audience === 'self' ? p.stats.self_count : p.stats.total),
+    heroUnit: '条消息',
+    heroCaption: `跨度 ${formatCount(p.stats.span_days)} 天 · 其中 ${formatCount(p.stats.active_days)} 天有消息`,
+    names:
+      audience === 'intimate'
+        ? { left: p.contact.display_name, right: '我' }
+        : audience === 'self'
+          ? { left: '我' }
+          : undefined,
+    yearText: String(new Date(p.generated_at * 1000).getFullYear()),
+  }
 })
 
 async function load() {
@@ -111,11 +168,11 @@ async function load() {
   }
 }
 
-async function exportPng() {
-  const node = posterRef.value
+async function exportImage(kind: 'long' | 'square') {
+  const node = kind === 'long' ? posterRef.value : squareRef.value
   if (!node || exporting.value) return
 
-  // 定向版包含姓名、头像与聊天摘录：导出前确认
+  // 定向版包含姓名、头像与聊天摘录：导出前确认（长图/方卡同守则）
   if (activeTemplate.value.sensitive) {
     const confirmed = await showConfirm(
       '定向版包含对方姓名、头像与聊天摘录，请确认仅发送给对方本人。',
@@ -136,12 +193,13 @@ async function exportPng() {
     }
     const canvas = await html2canvas(node, {
       backgroundColor: '#ffffff',
-      scale: 2, // 2 倍分辨率，720px 模板导出 1440px 宽
+      scale: 2, // 2 倍分辨率：720px 长图导出 1440px 宽，方卡 1440×1440
       useCORS: true,
       logging: false,
     })
     const dataUrl = canvas.toDataURL('image/png')
-    const name = `时痕${activeTemplate.value.label}_${props.contactName || ''}_${toLocalDateKey(new Date())}.png`
+    const suffix = kind === 'square' ? '方卡' : ''
+    const name = `时痕${activeTemplate.value.label}${suffix}_${props.contactName || ''}_${toLocalDateKey(new Date())}.png`
     const result = await api.save_share_image(dataUrl, name)
     if (!result?.ok) {
       exportError.value = result?.error || '保存失败'
@@ -251,5 +309,14 @@ watch(
   display: flex;
   align-items: center;
   gap: var(--ct-space-md);
+}
+
+/* 方卡离屏渲染台：html2canvas 按节点克隆渲染，不能 display:none；
+   固定定位移出视口即可（节点本身无 transform） */
+.square-stage {
+  position: fixed;
+  left: -10000px;
+  top: 0;
+  pointer-events: none;
 }
 </style>

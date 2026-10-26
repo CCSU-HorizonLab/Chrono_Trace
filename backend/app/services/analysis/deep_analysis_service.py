@@ -598,6 +598,9 @@ class DeepAnalysisService:
             "chemistry": self._poster_chemistry(conversation_id, from_ts, to_ts),
         }
 
+        # 作息/年历/衍生指标：与 story 同窗同口径（activity 分镜数据源）
+        activity = self._poster_activity(conversation_id, from_ts, to_ts)
+
         return {
             "ok": True,
             "version": DEEP_ANALYSIS_VERSION,
@@ -615,6 +618,7 @@ class DeepAnalysisService:
             "quotes": {"items": quotes, "sensitive": True},
             "big5": big5,
             "story": story,
+            "activity": activity,
             "generated_at": int(datetime.now().timestamp()),
         }
 
@@ -819,6 +823,129 @@ class DeepAnalysisService:
             "self_avg": round(float(row[2]), 1) if row[2] is not None else None,
             "other_avg": round(float(row[3]), 1) if row[3] is not None else None,
         }
+
+    # ------------------------------------------------------------------
+    # 海报 activity 分镜（作息热力 / 年历 / 衍生指标）
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _poster_activity(conversation_id: int, from_ts: int, to_ts: int) -> Dict[str, Any]:
+        """作息/年历/衍生指标（activity 分镜数据源）。
+
+        口径与 story 同源（窗内·本地时区·文本消息）。grid 是 7×24「周几×
+        时辰」计数（周一为第 0 行），不含绝对日期——公开版可消费；calendar
+        是窗内最活跃年份的逐日计数（绝对日期，公开版投影层剥离）；insights
+        是称号稀有度与「没意识到的细节」分镜的判据（问句以 ？/? 命中近似）。
+        """
+        base = (
+            "FROM messages WHERE conversation_id = ? AND timestamp BETWEEN ? AND ?"
+            f" AND {_MILESTONE_TEXT_SQL}"
+        )
+
+        # 7×24 作息格（%w 周日=0 → 周一为 0 行换算）
+        rows = get_db().execute(
+            "SELECT CAST(strftime('%w', timestamp, 'unixepoch', 'localtime') AS INTEGER),"
+            " CAST(strftime('%H', timestamp, 'unixepoch', 'localtime') AS INTEGER),"
+            " COUNT(*), SUM(CASE WHEN is_sender = 1 THEN 1 ELSE 0 END)"
+            f" {base} GROUP BY 1, 2",
+            (conversation_id, from_ts, to_ts),
+        ).fetchall()
+        grid_all = [[0] * 24 for _ in range(7)]
+        grid_me = [[0] * 24 for _ in range(7)]
+        for wd, hour, count, me_count in rows:
+            grid_all[(int(wd) + 6) % 7][int(hour)] = int(count or 0)
+            grid_me[(int(wd) + 6) % 7][int(hour)] = int(me_count or 0)
+
+        # 年历：窗内逐日计数，Python 端取最活跃年（并列取更早）
+        day_rows = get_db().execute(
+            "SELECT strftime('%Y', timestamp, 'unixepoch', 'localtime'),"
+            " DATE(timestamp, 'unixepoch', 'localtime'), COUNT(*),"
+            " SUM(CASE WHEN is_sender = 1 THEN 1 ELSE 0 END)"
+            f" {base} GROUP BY 2",
+            (conversation_id, from_ts, to_ts),
+        ).fetchall()
+        calendar = None
+        if day_rows:
+            year_totals: Dict[int, int] = {}
+            for year, _date, count, _me in day_rows:
+                year_totals[int(year)] = year_totals.get(int(year), 0) + int(count or 0)
+            best_year = min(year_totals, key=lambda y: (-year_totals[y], y))
+            days = [
+                {"date": str(date), "count": int(count or 0), "self_count": int(me or 0)}
+                for year, date, count, me in day_rows
+                if int(year) == best_year
+            ]
+            calendar = {
+                "year": best_year,
+                "days": days,
+                "max": max((d["count"] for d in days), default=0),
+            }
+
+        streak_days = DeepAnalysisService._longest_active_streak(
+            conversation_id, from_ts, to_ts, sender=None
+        )
+        self_streak_days = DeepAnalysisService._longest_active_streak(
+            conversation_id, from_ts, to_ts, sender=1
+        )
+
+        # 提问数（全角/半角问号命中即问句近似；分侧给自我版判据）
+        row = get_db().execute(
+            "SELECT COUNT(*),"
+            " SUM(CASE WHEN content LIKE '%？%' OR content LIKE '%?%' THEN 1 ELSE 0 END),"
+            " SUM(CASE WHEN is_sender = 1 THEN 1 ELSE 0 END),"
+            " SUM(CASE WHEN is_sender = 1"
+            " AND (content LIKE '%？%' OR content LIKE '%?%') THEN 1 ELSE 0 END)"
+            f" {base}",
+            (conversation_id, from_ts, to_ts),
+        ).fetchone()
+        total = int(row[0] or 0)
+        question = {"total": total, "questions": int(row[1] or 0)} if total else None
+        self_total = int(row[2] or 0)
+        self_question = (
+            {"total": self_total, "questions": int(row[3] or 0)} if self_total else None
+        )
+
+        return {
+            "grid": {
+                "all": grid_all,
+                "me": grid_me,
+                "max_all": max(max(r) for r in grid_all),
+                "max_me": max(max(r) for r in grid_me),
+            },
+            "calendar": calendar,
+            "insights": {
+                "streak_days": streak_days,
+                "self_streak_days": self_streak_days,
+                "question": question,
+                "self_question": self_question,
+            },
+        }
+
+    @staticmethod
+    def _longest_active_streak(
+        conversation_id: int, from_ts: int, to_ts: int, sender: Optional[int]
+    ) -> Optional[int]:
+        """最长连续活跃天数（distinct 日期上的 gaps-and-islands：连续日期
+        减去行号后落到同一锚点，组大小即连续长度）。sender=1 过滤单侧
+        （自我版判据）；无任何日期返回 None。"""
+        sender_sql = " AND is_sender = 1" if sender == 1 else ""
+        row = get_db().execute(
+            f"""
+            WITH days AS (
+                SELECT DISTINCT DATE(timestamp, 'unixepoch', 'localtime') AS d
+                FROM messages
+                WHERE conversation_id = ? AND timestamp BETWEEN ? AND ?
+                  AND {_MILESTONE_TEXT_SQL}{sender_sql}
+            ),
+            anchored AS (
+                SELECT DATE(d, '-' || (ROW_NUMBER() OVER (ORDER BY d) - 1) || ' days') AS anchor
+                FROM days
+            )
+            SELECT MAX(run) FROM (SELECT COUNT(*) AS run FROM anchored GROUP BY anchor)
+            """,
+            (conversation_id, from_ts, to_ts),
+        ).fetchone()
+        return int(row[0]) if row and row[0] else None
 
     def _poster_top_words(
         self, conversation_id: int, from_ts: int, to_ts: int

@@ -225,19 +225,29 @@ Analytics 页签「时光深度」，**单聊专属**（群聊无双方情感演
 文件名白名单化）。
 
 三模板统一为**故事分镜叙事**（Spotify Wrapped 式：开场 → 编号幕（大数字/
-时间线/默契数字格/曲线/词云/雷达）→ 称号幕（无序号）→ 落款），公共幕骨架
-在 `poster/sections/`（StorySection/StoryBigNumber/StoryTimeline/StoryStatGrid，
-palette 纯色 token 经 props 传入），受众差异内容（双人头像/金句卡/单侧词云）
-留各模板。称号规则是前端纯函数 `poster/badges.ts`（8 规则按序首中 + 兜底，
-文案随受众变——后端下发等于把展示细节塞 payload）。
+时间线/默契数字格/作息热力格/年历/细节格/曲线/词云/雷达）→ 称号幕（无序号）→ 落款），
+公共幕骨架在 `poster/sections/`（StorySection/StoryBigNumber/StoryTimeline/StoryStatGrid/
+StoryHeatGrid/StoryCalendar，palette 纯色 token 经 props 传入），受众差异内容
+（双人头像/金句卡/单侧词云）留各模板。称号规则是前端纯函数 `poster/badges.ts`
+（主称号 8 规则按序首中 + 兜底；副称号 `posterSubBadges` 极值触发全列出、
+★三档分级；稀有度话术 `posterRarityLines` 全部锚定会话内相对事实——本地
+单机无跨用户基准，不编造百分位。文案随受众变，后端下发等于把展示细节塞
+payload）。三模板调色板/底渐变/热力色带统一在 `poster/theme.ts`（方卡共用
+同一份，防两处漂移）；activity 分镜共用纯函数在 `poster/activityShared.ts`。
+
+除长图外另有**方形称号卡**（`poster/SquareCard.vue`，720×720 → 导出
+1440×1440）：主称号+副称号 chips+一条大数字为唯一焦点，朋友圈信息流/
+缩略图友好；与长图共用受众投影与称号输入（口径一致），经 PosterStudio
+「导出方卡」按钮离屏渲染（固定定位移出视口，display:none 会破坏
+html2canvas 克隆）。
 
 ### 三模板基调
 
 | 模板 | 基调 | 分镜 |
 |---|---|---|
-| 定向版（PosterIntimateDuo） | 暗色星夜（#0b1026→#221540，金 #e8c47a） | 双人头像开场 → 大数字 → 时光机 → 默契格 → 金句（衬线）→ 双人词云 → 雷达 → 称号 |
-| 自我版（PosterSelfPortrait） | 暖米（#fdf8f2→#f3e2c8，橘 #d97706） | 「我」头像开场 → 你的大数字 → 日常痕迹格 → 语气曲线（橘线）→ 你的词 → 语言风格（雷达+条形）→ 称号 |
-| 公开版（PosterPublicMinimal） | 浅靛（#ffffff→#eef1f7，靛 #4f5d9e，中性措辞） | 开场句 → 大数字 → 时间线 → 默契格（「有人先开口」不指认）→ 曲线 → 词云 → 雷达 → 称号 |
+| 定向版（PosterIntimateDuo） | 暗色星夜（#0b1026→#221540，金 #e8c47a） | 双人头像开场 → 大数字 → 时光机 → 默契格 → 作息热力格 → 最热闹的一年（年历）→ 细节格 → 金句（衬线）→ 双人词云 → 雷达 → 称号 |
+| 自我版（PosterSelfPortrait） | 暖米（#fdf8f2→#f3e2c8，橘 #d97706） | 「我」头像开场 → 你的大数字 → 日常痕迹格 → 你的作息（我的格）→ 你的 N 年（我的年历）→ 细节格 → 语气曲线（橘线）→ 你的词 → 语言风格（雷达+条形）→ 称号 |
+| 公开版（PosterPublicMinimal） | 浅靛（#ffffff→#eef1f7，靛 #4f5d9e，中性措辞） | 开场句 → 大数字 → 时间线 → 默契格（「有人先开口」不指认）→ 两个人的作息（合并格，无日期）→ 细节格 → 曲线 → 词云 → 雷达 → 称号 |
 
 ### story 口径（与 _poster_stats 同源）
 
@@ -245,6 +255,22 @@ palette 纯色 token 经 props 传入），受众差异内容（双人头像/金
 ('%H',...,'localtime') AS INTEGER) BETWEEN 0 AND 5`（字符串 BETWEEN 会把
 '23' 错配进 0-5 档）；回复中位数无 MEDIAN 用 `LIMIT 2 OFFSET (n-1)/2` 取均值；
 reply_stats 三重剔除（is_abnormal=1 / response_time_seconds NULL / 回消息窗外）。
+
+### activity 口径（作息热力格 / 年历 / 衍生判据）
+
+`_poster_activity` 同窗同文本口径，纯加性字段（不 bump `DEEP_ANALYSIS_VERSION`）：
+
+- **grid**：7×24「周几×时辰」计数（SQLite `%w` 周日=0，Python 端换算周一为
+  第 0 行），`all`/`me` 分侧 + 各自 max；不含绝对日期，公开版可消费。分档
+  阈值（前端）：峰值比例 ≥0.75/0.5/0.3/0.12 → 5~1 档（聊天作息长尾尖峰，
+  低档收得紧才不至糊成一片）；
+- **calendar**：窗内逐日计数（`DATE(...,'localtime')` 分组），Python 端取
+  最活跃年（并列取更早）——「最热闹的一年」；带绝对日期，**公开版投影
+  剥离**，自我版映射为 self_count 单侧；
+- **insights**：最长连续活跃天数（distinct 日期上 gaps-and-islands：连续
+  日期减行号落同锚点，组大小即长度；`self_streak_days` 过滤 `is_sender=1`）
+  + 提问数（`？`/`?` LIKE 命中近似，分侧）——副称号（不缺席者/夜行者/
+  秒回选手/破冰人/长跑搭档/笔耕不辍）与「没意识到的细节」分镜的判据。
 
 ### 脱敏责任边界（模板层硬约束）
 
@@ -254,9 +280,9 @@ reply_stats 三重剔除（is_abnormal=1 / response_time_seconds NULL / 回消�
 
 | 模板 | 受众 | 可用字段 | 不可见字段 |
 |---|---|---|---|
-| 公开分享（PosterPublicMinimal） | 朋友圈等公开场景 | 聚合数字、合并情绪曲线、双方大五分数、top 词、story 聚合（无身份统计、**零绝对日期**） | 对方姓名/头像/金句原文、story 全部日历日期（里程碑 ts/from_ts/to_ts 与峰值日 date 在投影层剥除——首条消息等里程碑是全会话口径，日期会突破用户所选导出窗） |
-| 自我画像（PosterSelfPortrait） | 想了解自己的人 | 我的消息数、我的曲线/词/大五、my_story 单侧切片（late_night_self/reply_self_avg） | 对方一切数据、金句、story 联合口径 |
-| 定向发送（PosterIntimateDuo） | 仅对方本人 | 全量（姓名、头像、双方曲线、金句卡、story 全量含日期） | —（导出前强制确认弹窗） |
+| 公开分享（PosterPublicMinimal） | 朋友圈等公开场景 | 聚合数字、合并情绪曲线、双方大五分数、top 词、story 聚合（无身份统计、**零绝对日期**）、activity 合并作息格+联合判据（周几×时辰与连续天数/提问占比均无日历日期） | 对方姓名/头像/金句原文、story 全部日历日期（里程碑 ts/from_ts/to_ts 与峰值日 date 在投影层剥除——首条消息等里程碑是全会话口径，日期会突破用户所选导出窗）、activity 年历与 me 单侧格 |
+| 自我画像（PosterSelfPortrait） | 想了解自己的人 | 我的消息数、我的曲线/词/大五、my_story 单侧切片（late_night_self/reply_self_avg）、my_activity（我的作息格/我的年历——日期属我本人数据可保留，count 已映射 self_count/单侧判据） | 对方一切数据、金句、story 联合口径 |
+| 定向发送（PosterIntimateDuo） | 仅对方本人 | 全量（姓名、头像、双方曲线、金句卡、story 全量含日期、activity 全量含年历） | —（导出前强制确认弹窗） |
 
 ### 字体
 
@@ -287,7 +313,10 @@ Name 条款=改名再改字体，原样分发只需附带许可），`styles/fon
   `services/realtime/profile_chapter_digest.py`、`webview/api/deep_analysis.py`（mixin）
 - 前端：`components/deep/`（TimeDeepTab 及各面板、RelationshipChaptersPanel、
   Big5EvolutionPanel + big5Shared、PosterStudio、`poster/registry.ts`、
-  `poster/badges.ts`、`poster/sections/`（分镜骨架）、三模板、`styles/fonts.css`）、
+  `poster/badges.ts`、`poster/theme.ts`（三受众调色板/底渐变/热力色带）、
+  `poster/activityShared.ts`、`poster/SquareCard.vue`（方形称号卡）、
+  `poster/sections/`（分镜骨架：Section/BigNumber/Timeline/StatGrid/HeatGrid/Calendar）、
+  三模板、`styles/fonts.css`）、
   `charts/EmotionLineChart.vue`（扩展 perspective/negativeShade/affinityPoints
   与 userMsgCount/otherMsgCount 可选 props，无分侧数回退单柱）
 - 测试：`tests/test_deep_analysis.py`、`test_engagement_metrics.py`、

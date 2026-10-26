@@ -4,6 +4,10 @@
  *
  * 自我版只喂 my 切片（无对方数据）：依赖联合数据的规则（势均力敌/先声
  * 夺人/同频共振/秒回拍档的条数门槛）自然不生效，无需特判。
+ *
+ * 称号体系两档：pickPosterBadge 主称号（首中一条）+ posterSubBadges 副称号
+ * 成就清单（极值触发、★分级）；posterRarityLines 是会话内稀有度话术——
+ * 本地单机无跨用户基准，全部锚定这段对话自身的相对事实，不编造百分位。
  */
 import type {
   IntimatePosterPayload,
@@ -11,6 +15,7 @@ import type {
   PublicPosterPayload,
   SelfPosterPayload,
 } from './registry'
+import { formatCount } from './activityShared'
 
 /** 三种 payload 归一后的称号判定输入（缺席指标为 null，对应规则跳过） */
 export type BadgeInput = {
@@ -27,9 +32,24 @@ export type BadgeInput = {
   topAll: string[]
   topMine: string[]
   topOther: string[]
+  /** 最长连续活跃天数（自我版=我单侧的连续天数） */
+  streakDays: number | null
+  /** 窗内最长沉默期天数（联合事件，自我版恒 null） */
+  silenceDays: number | null
 }
 
 export type PosterBadge = { id: string; title: string; caption: string }
+
+/** 副称号：极值触发的成就徽标，grade=★档（会话内相对口径） */
+export type SubBadge = { id: string; title: string; grade: 1 | 2 | 3; note: string }
+
+/** 里程碑里的最长沉默天数（公开版投影保留 days 剥日期） */
+function silenceDaysFrom(
+  milestones: Array<{ kind: string; days?: number }>,
+): number | null {
+  const hit = milestones.find((m) => m.kind === 'longest_silence')
+  return typeof hit?.days === 'number' ? hit.days : null
+}
 
 export function badgeInputFromIntimate(p: IntimatePosterPayload): BadgeInput {
   return {
@@ -45,6 +65,8 @@ export function badgeInputFromIntimate(p: IntimatePosterPayload): BadgeInput {
     topAll: p.top_words.all.map((w) => w.word),
     topMine: p.top_words.me.map((w) => w.word),
     topOther: p.top_words.other.map((w) => w.word),
+    streakDays: p.activity?.insights.streak_days ?? null,
+    silenceDays: silenceDaysFrom(p.story?.milestones || []),
   }
 }
 
@@ -62,10 +84,12 @@ export function badgeInputFromPublic(p: PublicPosterPayload): BadgeInput {
     topAll: p.top_words.all.map((w) => w.word),
     topMine: p.top_words.me.map((w) => w.word),
     topOther: p.top_words.other.map((w) => w.word),
+    streakDays: p.activity?.insights.streak_days ?? null,
+    silenceDays: silenceDaysFrom(p.story?.milestones || []),
   }
 }
 
-/** 自我版：total 以我的条数计，联合指标（对方侧/主动比/双方中位）全 null */
+/** 自我版：total 以我的条数计，联合指标（对方侧/主动比/双方中位/沉默期）全 null */
 export function badgeInputFromSelf(p: SelfPosterPayload): BadgeInput {
   const words = p.my_words.map((w) => w.word)
   return {
@@ -82,6 +106,8 @@ export function badgeInputFromSelf(p: SelfPosterPayload): BadgeInput {
     topAll: words,
     topMine: words,
     topOther: [],
+    streakDays: p.my_activity?.insights.streak_days ?? null,
+    silenceDays: null,
   }
 }
 
@@ -187,4 +213,108 @@ export function pickPosterBadge(input: BadgeInput, audience: PosterAudience): Po
   }
 
   return { id: 'collector', title: '时光收藏家', caption: '每一段对话，都值得被收藏' }
+}
+
+/** 副称号成就清单：极值触发全列出（非首中），门槛比主称号规则更苛刻——
+ *  主称号是「这段对话是谁」，副称号是「它有多极端」 */
+export function posterSubBadges(input: BadgeInput, audience: PosterAudience): SubBadge[] {
+  const badges: SubBadge[] = []
+  const isSelf = audience === 'self'
+
+  const streak = input.streakDays
+  if (streak != null && streak >= 21) {
+    badges.push({
+      id: 'never-absent',
+      title: '不缺席者',
+      grade: streak >= 180 ? 3 : streak >= 60 ? 2 : 1,
+      note: isSelf ? `你连续 ${streak} 天都在说话` : `连续 ${streak} 天，每天都有对话`,
+    })
+  }
+
+  const late = input.lateNightCount
+  if (late != null && late >= 500) {
+    badges.push({
+      id: 'night-walker',
+      title: '夜行者',
+      grade: late >= 5000 ? 3 : late >= 2000 ? 2 : 1,
+      note: `${formatCount(late)} 条消息发在凌晨 0-5 点`,
+    })
+  }
+
+  const quick = input.replyQuickSeconds
+  if (quick != null && quick <= 90 && (input.replyCount ?? 0) >= 30) {
+    badges.push({
+      id: 'flash-reply',
+      title: '秒回选手',
+      grade: quick <= 20 ? 3 : quick <= 45 ? 2 : 1,
+      note: isSelf
+        ? `平均 ${Math.round(quick)} 秒就回`
+        : `中位 ${Math.round(quick)} 秒就回`,
+    })
+  }
+
+  const ratio = input.userRatio
+  if (!isSelf && ratio != null && (ratio >= 0.7 || ratio <= 0.3)) {
+    const leadShare = Math.round(Math.max(ratio, 1 - ratio) * 100)
+    badges.push({
+      id: 'icebreaker',
+      title: '破冰人',
+      grade: leadShare >= 90 ? 3 : leadShare >= 80 ? 2 : 1,
+      note: audience === 'intimate'
+        ? ratio >= 0.7
+          ? `${leadShare}% 的话题由你先开口`
+          : `${leadShare}% 的话题由 TA 先开口`
+        : `${leadShare}% 的话题由同一个人先开口`,
+    })
+  }
+
+  if (input.spanDays >= 730) {
+    badges.push({
+      id: 'long-haul',
+      title: '长跑搭档',
+      grade: input.spanDays >= 3650 ? 3 : input.spanDays >= 1825 ? 2 : 1,
+      note: `对话跨度 ${formatCount(input.spanDays)} 天`,
+    })
+  }
+
+  const volume = isSelf ? input.selfCount : input.total
+  if (volume >= 10000) {
+    badges.push({
+      id: 'prolific',
+      title: '笔耕不辍',
+      grade: volume >= 100000 ? 3 : volume >= 50000 ? 2 : 1,
+      note: `${formatCount(volume)} 条消息`,
+    })
+  }
+
+  return badges
+}
+
+/** 稀有度话术：锚定会话内相对事实（沉默后重开/体量换算/年头跨度），
+ *  上限 3 条——多了稀释，称号幕要留白 */
+export function posterRarityLines(input: BadgeInput, audience: PosterAudience): string[] {
+  const lines: string[] = []
+
+  const silence = input.silenceDays
+  if (silence != null && silence >= 14) {
+    lines.push(`沉默过 ${Math.round(silence)} 天，后来还有人先开了口`)
+  }
+
+  const volume = audience === 'self' ? input.selfCount : input.total
+  if (volume >= 20000) {
+    const hours = (volume * 2) / 3600
+    const span = hours >= 48 ? `不眠不休 ${(hours / 24).toFixed(1)} 天` : `整整 ${Math.round(hours)} 小时`
+    lines.push(
+      audience === 'self'
+        ? `你写下的 ${formatCount(volume)} 条，逐条读 2 秒要 ${span}`
+        : `${formatCount(volume)} 条消息逐条读 2 秒，要 ${span}`,
+    )
+  }
+
+  const years = Math.floor(input.spanDays / 365)
+  if (years >= 2) {
+    lines.push(`这段对话前后跨越了 ${years} 个年头`)
+  }
+
+  return lines.slice(0, 3)
 }

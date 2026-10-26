@@ -313,3 +313,85 @@ class TestOpenExportFolder:
         result = bridge.open_export_folder()
         assert result["ok"] is True
         assert (tmp_path / "chrono_trace_export").is_dir()
+
+
+class TestPosterActivity:
+    """activity 分镜：7×24 作息格 / 最活跃年年历 / 连续天数与提问数判据。"""
+
+    def _seed_conversation(self, db):
+        db.execute(
+            "INSERT INTO conversations (id, account_wxid, username, display_name)"
+            " VALUES (1, '', 'wxid_a', '小明')"
+        )
+
+    @staticmethod
+    def _insert(db, is_sender, content, ts):
+        db.execute(
+            "INSERT INTO messages (conversation_id, is_sender, message_type, content, timestamp)"
+            " VALUES (1, ?, 1, ?, ?)",
+            (is_sender, content, int(ts)),
+        )
+
+    def test_activity_grid_weekday_hour(self, db):
+        """周三 22 点 3 条（我 2 / TA 1）落 grid[2][22]；周几行以周一为 0。"""
+        self._seed_conversation(db)
+        base = int(datetime(2023, 11, 15, 22, 0, 0).timestamp())  # 周三
+        for i, sender in enumerate((1, 1, 0)):
+            self._insert(db, sender, f"晚上好{i}", base + i * 60)
+        payload = DeepAnalysisService().build_poster_payload(1, 1_699_000_000, 1_701_000_000)
+        grid = payload["activity"]["grid"]
+        assert grid["all"][2][22] == 3  # 周一=0 行 → 周三=2
+        assert grid["me"][2][22] == 2
+        assert grid["max_all"] == 3 and grid["max_me"] == 2
+        # 整格总和与全量文本消息数一致
+        assert sum(sum(row) for row in grid["all"]) == payload["stats"]["total"]
+
+    def test_activity_calendar_picks_busiest_year(self, db):
+        """2023 三条 / 2024 一条 → 年历取 2023，逐日计数带分侧。"""
+        self._seed_conversation(db)
+        self._insert(db, 1, "a", datetime(2023, 12, 1, 10, 0, 0).timestamp())
+        self._insert(db, 0, "b", datetime(2023, 12, 1, 11, 0, 0).timestamp())
+        self._insert(db, 1, "c", datetime(2023, 12, 2, 10, 0, 0).timestamp())
+        self._insert(db, 0, "d", datetime(2024, 1, 5, 10, 0, 0).timestamp())
+        # 显式跨年窗口（默认 1.699e9~1.701e9 全落在 2023-11 内测不出选年）
+        payload = DeepAnalysisService().build_poster_payload(
+            1,
+            int(datetime(2023, 11, 1).timestamp()),
+            int(datetime(2024, 6, 1).timestamp()),
+        )
+        calendar = payload["activity"]["calendar"]
+        assert calendar["year"] == 2023
+        days = {d["date"]: d for d in calendar["days"]}
+        assert days["2023-12-01"] == {"date": "2023-12-01", "count": 2, "self_count": 1}
+        assert days["2023-12-02"]["count"] == 1
+        assert all(d["date"].startswith("2023") for d in calendar["days"])
+        assert calendar["max"] == 2
+
+    def test_activity_insights_streak_and_questions(self, db):
+        """连续 3 天有消息 → streak=3；问号计数分侧（我 2 问 / 全部 3 问）。"""
+        self._seed_conversation(db)
+        # 连续三天：11/15、11/16、11/17（11/16 只有 TA，也算活跃日）
+        self._insert(db, 1, "在吗？", datetime(2023, 11, 15, 10, 0, 0).timestamp())
+        self._insert(db, 0, "嗯", datetime(2023, 11, 16, 10, 0, 0).timestamp())
+        self._insert(db, 1, "明天去哪?", datetime(2023, 11, 17, 10, 0, 0).timestamp())
+        # 断档后的孤岛日（我方提问）不应拉长连续段
+        self._insert(db, 1, "后来呢？", datetime(2023, 11, 25, 10, 0, 0).timestamp())
+        payload = DeepAnalysisService().build_poster_payload(1, 1_699_000_000, 1_701_000_000)
+        insights = payload["activity"]["insights"]
+        assert insights["streak_days"] == 3
+        assert insights["self_streak_days"] == 1  # 我方只有孤岛日相邻不相接（6/1 与 6/3 隔 6/2 但 6/2 非我）
+        assert insights["question"] == {"total": 4, "questions": 3}
+        assert insights["self_question"] == {"total": 3, "questions": 3}
+
+    def test_activity_degrades_empty(self, db):
+        """无消息：grid 全零、calendar/insights 全 None，payload 仍 ok。"""
+        self._seed_conversation(db)
+        payload = DeepAnalysisService().build_poster_payload(1, 1_699_000_000, 1_701_000_000)
+        activity = payload["activity"]
+        assert activity["grid"]["all"] == [[0] * 24 for _ in range(7)]
+        assert activity["grid"]["max_all"] == 0
+        assert activity["calendar"] is None
+        assert activity["insights"] == {
+            "streak_days": None, "self_streak_days": None,
+            "question": None, "self_question": None,
+        }

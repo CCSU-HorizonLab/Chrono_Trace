@@ -241,6 +241,13 @@ payload）。三模板调色板/底渐变/热力色带统一在 `poster/theme.ts
 「导出方卡」按钮离屏渲染（固定定位移出视口，display:none 会破坏
 html2canvas 克隆）。
 
+**落款二维码（仅公开版长图 + 公开版方卡）**：静态资产
+`src/assets/poster/qr-github.svg`（segno 预生成，v5-Q 容错，2.4KB →
+Vite 内联 data URI，html2canvas 完美支持），指向仓库
+`github.com/CCSU-HorizonLab/Chrono_Trace`。两条红线：全局所有海报同一
+静态码、URL 零会话参数（不构成追踪面）；定向/自我版不放（情书里不插
+广告）。换门面 URL 时用 segno 重新生成该资产即可。
+
 ### 三模板基调
 
 | 模板 | 基调 | 分镜 |

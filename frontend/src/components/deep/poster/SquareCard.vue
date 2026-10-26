@@ -35,8 +35,16 @@
     </div>
 
     <div class="sq-footer" :style="{ borderColor: palette.line, color: palette.muted }">
-      <span>由 时痕 Chrono Trace 生成</span>
-      <span>{{ yearText }}</span>
+      <span v-if="spec.qr" class="sq-footer-text">由 时痕 Chrono Trace 生成 · {{ yearText }}</span>
+      <template v-else>
+        <span>由 时痕 Chrono Trace 生成</span>
+        <span>{{ yearText }}</span>
+      </template>
+      <!-- 静态二维码仅公开受众开启（spec.qr）：全局同一 URL、零会话参数 -->
+      <span v-if="spec.qr" class="sq-qr">
+        <img class="sq-qr-img" :src="qrGithub" alt="Chrono Trace GitHub" />
+        <span class="sq-qr-note">扫码了解时痕</span>
+      </span>
     </div>
   </div>
 </template>
@@ -45,6 +53,7 @@
 // 命名导出走普通 script 块：<script setup> 不允许 export 语句
 import type { StoryPalette } from './sections/palette'
 import type { PosterBadge, SubBadge } from './badges'
+import qrGithub from '@/assets/poster/qr-github.svg'
 
 export type SquareCardSpec = {
   bg: string
@@ -58,6 +67,8 @@ export type SquareCardSpec = {
   /** 定向版双人名 / 自我版「我」；公开版无（不指认任何一方） */
   names?: { left: string; right?: string }
   yearText: string
+  /** 落款二维码：仅公开受众开启（静态资产，全局同一 URL 零会话参数） */
+  qr?: boolean
 }
 </script>
 
@@ -184,6 +195,24 @@ defineProps<{ spec: SquareCardSpec }>()
   border-top: 1px solid;
   display: flex;
   justify-content: space-between;
+  align-items: center;
   font-size: 13px;
+}
+
+.sq-qr {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.sq-qr-img {
+  width: 56px;
+  height: 56px;
+  display: block;
+}
+
+.sq-qr-note {
+  margin-top: 2px;
+  font-size: 9px;
 }
 </style>

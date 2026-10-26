@@ -77,8 +77,16 @@
     </div>
 
     <div class="footer">
-      <div>由 时痕 Chrono Trace 生成</div>
-      <div class="footer-year">{{ yearText }}</div>
+      <div class="footer-text">
+        <div>由 时痕 Chrono Trace 生成</div>
+        <div class="footer-year">{{ yearText }}</div>
+      </div>
+      <!-- 静态资产二维码：全局同一 URL、零会话参数，只是「时痕是什么」的入口，
+           不构成追踪面（公开版专属——定向/自我版不放） -->
+      <div class="footer-qr">
+        <img class="qr-img" :src="qrGithub" alt="Chrono Trace GitHub" />
+        <span class="qr-note">扫码了解时痕</span>
+      </div>
     </div>
   </div>
 </template>
@@ -107,6 +115,7 @@ import {
   posterSubBadges,
 } from '@/components/deep/poster/badges'
 import type { PublicPosterPayload, PosterWord } from '@/components/deep/poster/registry'
+import qrGithub from '@/assets/poster/qr-github.svg'
 
 const props = defineProps<{ payload: PublicPosterPayload }>()
 
@@ -340,7 +349,33 @@ function wordSize(index: number): string {
   border-top: 1px solid #dfe3ef;
   display: flex;
   justify-content: space-between;
+  align-items: flex-end;
   color: #8b93a8;
   font-size: 13px;
+}
+
+.footer-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* 二维码 svg 自带白色静区；72px（导出 144px）微信压缩后长按仍可识别 */
+.footer-qr {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.qr-img {
+  width: 72px;
+  height: 72px;
+  display: block;
+}
+
+.qr-note {
+  margin-top: 3px;
+  font-size: 10px;
+  color: #8b93a8;
 }
 </style>

@@ -140,6 +140,8 @@ const squareSpec = computed<SquareCardSpec | null>(() => {
           ? { left: '我' }
           : undefined,
     yearText: String(new Date(p.generated_at * 1000).getFullYear()),
+    // 二维码只随公开受众上方卡：定向/自我版不放
+    qr: audience === 'public',
   }
 })
 

@@ -53,7 +53,6 @@
 // 命名导出走普通 script 块：<script setup> 不允许 export 语句
 import type { StoryPalette } from './sections/palette'
 import type { PosterBadge, SubBadge } from './badges'
-import qrGithub from '@/assets/poster/qr-github.svg'
 
 export type SquareCardSpec = {
   bg: string
@@ -73,7 +72,23 @@ export type SquareCardSpec = {
 </script>
 
 <script setup lang="ts">
-defineProps<{ spec: SquareCardSpec }>()
+import { computed } from 'vue'
+import qrGithub from '@/assets/poster/qr-github.svg'
+
+const props = defineProps<{ spec: SquareCardSpec }>()
+
+// 模板绑定是 spec.* 的纯转发（computed 保响应性；普通 script 块的导入
+// 对模板不可见，qrGithub 必须在 setup 里导入）
+const bg = computed(() => props.spec.bg)
+const palette = computed(() => props.spec.palette)
+const names = computed(() => props.spec.names)
+const eyebrow = computed(() => props.spec.eyebrow)
+const badge = computed(() => props.spec.badge)
+const subBadges = computed(() => props.spec.subBadges)
+const heroNum = computed(() => props.spec.heroNum)
+const heroUnit = computed(() => props.spec.heroUnit)
+const heroCaption = computed(() => props.spec.heroCaption)
+const yearText = computed(() => props.spec.yearText)
 </script>
 
 <style scoped>

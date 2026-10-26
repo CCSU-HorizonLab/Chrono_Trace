@@ -23,7 +23,7 @@
     </StorySection>
 
     <StorySection index="02" title="你的日常痕迹" :palette="palette" class="gap">
-      <StoryStatGrid :items="dailyCells" :palette="palette" />
+      <StoryStatGrid :items="dailyCells" :palette="palette" bento />
     </StorySection>
 
     <StorySection v-if="hasGrid" index="03" title="你的作息" :palette="palette" class="gap">

@@ -23,7 +23,7 @@
     </StorySection>
 
     <StorySection v-if="chemCells.length" index="03" title="两个人的默契" :palette="palette" class="gap">
-      <StoryStatGrid :items="chemCells" :palette="palette" />
+      <StoryStatGrid :items="chemCells" :palette="palette" bento />
     </StorySection>
 
     <StorySection v-if="hasGrid" index="04" title="两个人的作息" :palette="palette" class="gap">

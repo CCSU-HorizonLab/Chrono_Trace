@@ -21,3 +21,17 @@ export function copyText(text: string): boolean {
     document.body.removeChild(textarea)
   }
 }
+
+/** PNG 图像写入剪贴板（海报导出后免开目录直接在聊天框粘贴）。
+ *  图像只有 navigator.clipboard.write 一条路（execCommand 只能复制文本），
+ *  QtWebEngine 等嵌入式环境不可用——调用方按 false 降级，落盘结果不受影响。 */
+export async function copyImageToClipboard(blob: Blob): Promise<boolean> {
+  try {
+    if (!navigator.clipboard || typeof ClipboardItem === 'undefined') return false
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
+    return true
+  } catch (e) {
+    console.warn('[clipboard] 图像复制失败:', e)
+    return false
+  }
+}

@@ -59,6 +59,7 @@ import { computed, ref, watch } from 'vue'
 import html2canvas from 'html2canvas'
 import { api } from '@/api/bridge'
 import { showConfirm } from '@/utils/dialog'
+import { copyImageToClipboard } from '@/utils/clipboard'
 import { toLocalDateKey } from '@/utils/datetime'
 import SquareCard, { type SquareCardSpec } from '@/components/deep/poster/SquareCard.vue'
 import {
@@ -205,7 +206,13 @@ async function exportImage(kind: 'long' | 'square') {
       exportError.value = result?.error || '保存失败'
       return
     }
-    exportResultText.value = `已保存到 ${result.file_path}`
+    // 导出即复制（best-effort）：成功可直接在聊天框粘贴；QtWebEngine 等
+    // 环境不可写图像剪贴板则静默降级，落盘结果不受影响
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'))
+    const copied = blob ? await copyImageToClipboard(blob) : false
+    exportResultText.value = copied
+      ? `已复制到剪贴板，可直接粘贴发送（文件在 ${result.file_path}）`
+      : `已保存到 ${result.file_path}`
     api.open_export_folder().catch(() => {})
   } catch (e: any) {
     exportError.value = e?.message || '图片合成失败'

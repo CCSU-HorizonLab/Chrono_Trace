@@ -33,10 +33,14 @@ class ContactDBV4(WeChatDBBase):
 
     def _connect(self):
         """建立数据库连接（优先复用共享增量快照，免全量重解密）"""
+        import os
         import tempfile
 
         self.temp_db_path = None
         self._owns_snapshot = False  # 标记是否需要 close 时清理临时文件
+        # 回退全量解密的明文库目录：mkdtemp 0700——此前 tempfile.mktemp
+        # 落在共享 /tmp 且文件 0644，任意本地用户可读全部明文联系人库
+        self._temp_dir: str | None = None
         try:
             if self.db_key:
                 # 优先走共享增量快照（首次全量≈原路径，后续增量秒级）
@@ -68,8 +72,10 @@ class ContactDBV4(WeChatDBBase):
 
                 logger.info("[DEBUG ContactDB] ✅ 密钥验证成功")
 
-                # 解密到临时文件
-                self.temp_db_path = tempfile.mktemp(suffix='.db')
+                # 解密到临时文件（私有 0700 目录内，见 _connect 注释）
+                if self._temp_dir is None:
+                    self._temp_dir = tempfile.mkdtemp(prefix="chrono-contact-")
+                self.temp_db_path = os.path.join(self._temp_dir, "contact.db")
                 self._owns_snapshot = True
                 logger.debug(f"[DEBUG ContactDB] 解密到临时文件: {self.temp_db_path}")
 
@@ -247,3 +253,11 @@ class ContactDBV4(WeChatDBBase):
                 logger.debug(f"[DEBUG ContactDB] 已删除临时文件: {self.temp_db_path}")
             except Exception as e:
                 logger.error(f"[DEBUG ContactDB] 删除临时文件失败: {e}")
+            # 私有目录收尾：文件已删则 rmdir 空目录；非空（残留）保留待重启清理
+            temp_dir = getattr(self, "_temp_dir", None)
+            if temp_dir:
+                try:
+                    os.rmdir(temp_dir)
+                except OSError:
+                    pass
+                self._temp_dir = None

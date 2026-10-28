@@ -74,3 +74,54 @@ class TestEmailUrlLandlinePatterns:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestChineseAdjacentBoundaries:
+    """PII 紧贴中文（中文聊天最常见形态）：\\b 对中文失效的回归锁。
+
+    re 的 \\w 含中文，「我身份证110…你记一下」中证|1 之间无词边界，
+    \\b 锚定的 id_card/bank_card/email/url/api_key 整体放行——改用
+    显式字符类环视（只排字母数字）后中文前后均允许命中。
+    """
+
+    def test_id_card_adjacent_chinese_redacted(self):
+        out = _redact("我身份证11010119900307425X你记一下")
+        assert "11010119900307425X" not in out
+        assert "[ID_CARD_" in out
+
+    def test_bank_card_adjacent_chinese_redacted(self):
+        out = _redact("卡号6222020200112233445转给你")
+        assert "6222020200112233445" not in out
+        assert "[BANK_CARD_" in out
+
+    def test_email_adjacent_chinese_redacted(self):
+        out = _redact("我邮箱zhangsan1990@163.com发我")
+        assert "zhangsan1990" not in out
+        assert "[EMAIL_" in out
+
+    def test_url_adjacent_chinese_redacted(self):
+        out = _redact("链接https://pan.baidu.com/s/abc你觉得呢")
+        assert "pan.baidu.com" not in out
+        assert "[URL_" in out
+
+    def test_api_key_adjacent_chinese_redacted(self):
+        out = _redact("密钥sk-abcdefgh12345678给我")
+        assert "sk-abcdefgh12345678" not in out
+        assert "[API_KEY_" in out
+
+    def test_strong_mask_covers_chinese_adjacent_forms(self):
+        masked = PrivacyRedactor().strong_mask("身份证11010119900307425X邮箱a@b.com")
+        assert "11010119900307425X" not in masked
+        assert "a@b.com" not in masked
+
+    def test_long_digit_order_number_not_id_card(self):
+        # 12 位流水号：不足身份证/银行卡长度，不误伤（19 位数字串按
+        # bank_card 存量语义仍脱敏——宁可多脱，此处只锁短号不误伤）
+        out = _redact("流水号123456789012请查收")
+        assert "123456789012" in out
+
+    def test_order_number_suffix_not_address(self):
+        # 「流水号/订单号」的「号」不是门牌号——此前 address 后缀「号楼?」
+        # 的可选「号」分支把「流水号123…」整句当地址吞掉
+        out = _redact("流水号1234567890123456789请查收")
+        assert "流水号" in out and "请查收" in out

@@ -83,9 +83,14 @@ class MessageDBV4(WeChatDBBase):
 
 
         """连接所有数据库分片"""
+        import os
         import tempfile
-        
+
         self.temp_db_paths = []  # 存储临时文件路径
+        # 回退全量解密的明文库目录：mkdtemp 0700——此前 tempfile.mktemp
+        # 落在共享 /tmp 且文件 0644，导入期间任意本地用户可读全部明文
+        # 聊天记录（进程崩溃时永久残留），mktemp 本身还有 TOCTOU 竞态
+        self._temp_dir: str | None = None
 
         try:
             for idx, db_path in enumerate(self.db_paths):
@@ -125,8 +130,10 @@ class MessageDBV4(WeChatDBBase):
 
                     logger.info("[DEBUG MessageDB] ✅ 密钥验证成功")
 
-                    # 解密到临时文件
-                    temp_path = tempfile.mktemp(suffix=f'_message_{idx}.db')
+                    # 解密到临时文件（私有 0700 目录内，见 __init__ 注释）
+                    if self._temp_dir is None:
+                        self._temp_dir = tempfile.mkdtemp(prefix="chrono-msg-")
+                    temp_path = os.path.join(self._temp_dir, f"message_{idx}.db")
                     self.temp_db_paths.append(temp_path)
 
                     logger.debug(f"[DEBUG MessageDB] 解密到: {temp_path}")
@@ -484,3 +491,11 @@ class MessageDBV4(WeChatDBBase):
                     logger.debug(f"[DEBUG MessageDB] 已删除临时文件: {temp_path}")
                 except Exception as e:
                     logger.error(f"[DEBUG MessageDB] 删除临时文件失败: {e}")
+            # 私有目录收尾：文件已删则 rmdir 空目录；非空（残留）保留待重启清理
+            temp_dir = getattr(self, "_temp_dir", None)
+            if temp_dir:
+                try:
+                    os.rmdir(temp_dir)
+                except OSError:
+                    pass
+                self._temp_dir = None

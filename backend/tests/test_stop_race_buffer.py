@@ -158,3 +158,56 @@ def test_poll_abort_finalize_migrates_buffer(test_db):
     assert service.current_batch_id is None
     assert service.current_talker is None
     assert service.current_display_name is None
+
+
+def test_fallback_decrypt_writes_into_private_dir(tmp_path, monkeypatch):
+    """回退全量解密的明文库必须落在 0700 私有目录（不再 /tmp 0644 共享）。"""
+    import os
+    import stat
+    import tempfile as _tf
+    import sys as _sys
+    _sys.path.insert(0, str(Path(__file__).parent))
+
+    created_dirs = []
+    real_mkdtemp = _tf.mkdtemp
+
+    def _spy_mkdtemp(*a, **k):
+        d = real_mkdtemp(*a, **k)
+        created_dirs.append(d)
+        return d
+
+    monkeypatch.setattr("tempfile.mkdtemp", _spy_mkdtemp)
+
+    import app.services.wechat.db.v4.contact as contact_mod
+
+    # 快照分支短路排除：强制走「共享快照不可用 → 回退全量解密」路径
+    import app.services.wechat.snapshot_manager as snap_mod
+    monkeypatch.setattr(
+        snap_mod, "get_snapshot_manager",
+        lambda: (_ for _ in ()).throw(RuntimeError("测试禁用快照")),
+    )
+
+    class _FakeDecryptor:
+        def set_raw_key_map(self, *_a):
+            pass
+
+        def verify_key_from_file(self, *_a):
+            return True
+
+        def decrypt_database(self, src, dst, key):
+            Path(dst).write_bytes(b"decrypted")
+
+    import app.services.wechat.db_decryptor_v2 as dec_mod
+    monkeypatch.setattr(dec_mod, "WeChatDBDecryptorV2", _FakeDecryptor)
+    # contact 模块函数内 import ... from ...db_decryptor_v2 → 打到源模块属性
+
+    db = contact_mod.ContactDBV4(str(tmp_path / "contact.db"), db_key="ab" * 32)
+    try:
+        assert created_dirs, "必须经 mkdtemp 建私有目录"
+        mode = stat.S_IMODE(os.stat(created_dirs[0]).st_mode)
+        assert mode == 0o700
+        assert str(db.temp_db_path).startswith(created_dirs[0])
+        assert not str(db.temp_db_path).startswith(_tf.gettempdir() + "/tmp")
+    finally:
+        db.close()
+    assert not os.path.exists(created_dirs[0]), "close 后私有目录应清理"

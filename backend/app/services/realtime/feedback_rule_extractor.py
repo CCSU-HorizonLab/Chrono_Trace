@@ -223,7 +223,8 @@ class FeedbackRuleExtractor:
             return result
 
         _print("[FeedbackRule] 🔍 偏差较大，启动 LLM 深度对比分析...")
-        rule = self._llm_compare(ai_speeches, user_actual_message)
+        rule = self._llm_compare(ai_speeches, user_actual_message,
+                                 account_wxid=account_wxid)
         if rule:
             self.save_rule(
                 display_name=display_name,
@@ -348,7 +349,8 @@ class FeedbackRuleExtractor:
 
         return rules[:2]
 
-    def _llm_compare(self, ai_speeches: list[str], user_message: str) -> Optional[dict]:
+    def _llm_compare(self, ai_speeches: list[str], user_message: str,
+                     account_wxid: str = "") -> Optional[dict]:
         """调用 LLM 对比分析"""
         try:
             model_config = self._get_active_model()
@@ -366,6 +368,24 @@ class FeedbackRuleExtractor:
                 "表情或语音/图片偏好、口语化程度、是否只做简短肯定。"
                 "不要总结具体聊了什么话题，只提炼下次还能复用的表达规则。"
             )
+
+            # 远程模型发送前脱敏（红线：失败即阻断，不用原文冒进）。
+            # 此处承载用户真实消息原文，曾长期无脱敏明文出网；整段一次
+            # 脱敏保证同一实体多处出现拿到同一占位符，本地模型不出网豁免
+            from .rag.config import is_remote_llm_model
+            if is_remote_llm_model(model_config):
+                try:
+                    from ...db.connection import get_db
+                    from .privacy_redactor import PrivacyRedactor
+                    user_prompt = PrivacyRedactor(get_db()).redact(
+                        user_prompt,
+                        account_wxid=self._resolve_account_wxid(account_wxid),
+                        conversation_id=None,
+                        source_table="feedback_rule_compare",
+                    ).redacted_text
+                except Exception as redact_e:
+                    _print(f"[FeedbackRule] ⚠️ 脱敏失败，按红线阻断远程对比: {redact_e}")
+                    return None
 
             base_url = model_config['api_base_url'].rstrip('/')
             api_key = model_config.get('api_key', '')

@@ -510,3 +510,56 @@ def test_drop_window_edge_per_window_semantics():
     assert RelationshipLLMService._drop_window_edge(recent) == "最老"
     assert RelationshipLLMService._drop_window_edge(conflict) == "最老"
     assert RelationshipLLMService._drop_window_edge(icebreak) == "最老"
+
+
+def test_nan_or_null_scores_raise_absent_not_default(db):
+    """无效分值（NaN/null/缺字段）判缺席，不再静默落默认分。
+
+    此前 _clamp：null→50（编造中位分）、NaN 经 min/max 比较短路→100
+    （虚高满分）——坏输出被包装成正常分数写进缓存与总分。
+    """
+    import math as _math
+
+    def _content_with(score, sub):
+        return json.dumps({
+            "score": score,
+            "sub_scores": {"communication_quality": sub, "relationship_warmth": 70},
+            "evidence": [],
+            "insight": "x",
+        })
+
+    cases = [
+        ("主分 NaN", _content_with(float("nan"), 80)),
+        ("主分 null", _content_with(None, 80)),
+        ("子分 NaN", _content_with(72, float("nan"))),
+        ("子分 null", _content_with(72, None)),
+        ("子分字符串", _content_with(72, "很高")),
+    ]
+    seed_pairs(db)  # evaluate 只读库，一次 seed 全用例复用
+    for label, content in cases:
+        svc = RelationshipLLMService(_model(), http=_FakeHTTP(content), is_remote=lambda m: False)
+        with pytest.raises(RelationshipLLMAbsent, match="无效分值"):
+            svc.evaluate(1)
+
+    # 主分整个键缺失：候选筛选层即拒（消息为「未包含可解析的 JSON」），同判缺席
+    no_score = json.dumps({"sub_scores": {"communication_quality": 80, "relationship_warmth": 70}})
+    svc = RelationshipLLMService(_model(), http=_FakeHTTP(no_score), is_remote=lambda m: False)
+    with pytest.raises(RelationshipLLMAbsent):
+        svc.evaluate(1)
+        # 结果里绝不出现编造的默认分（50）或 NaN 短路满分（100）
+        del svc
+
+
+def test_out_of_range_scores_still_clamped(db):
+    """正常数值越界仍按 [0,100] 截断（原 clamp 语义保留）。"""
+    seed_pairs(db)
+    content = json.dumps({
+        "score": 250,
+        "sub_scores": {"communication_quality": -30, "relationship_warmth": 70},
+        "evidence": [],
+        "insight": "x",
+    })
+    svc = RelationshipLLMService(_model(), http=_FakeHTTP(content), is_remote=lambda m: False)
+    result = svc.evaluate(1)
+    assert result["score"] == 100
+    assert result["sub_scores"]["communication_quality"] == 0

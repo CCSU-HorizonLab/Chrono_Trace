@@ -47,6 +47,13 @@ class FeatureExtractionConfig:
             with open(settings_path, "r", encoding="utf-8") as handle:
                 settings = json.load(handle)
             config_dict = dict(settings.get("feature_extraction", {}))
+            # 未知键剔除：settings.json 用户可编辑、跨版本演进（旧残留/未来
+            # 新字段），原样 cls(**config_dict) 遇未知键即 TypeError 打崩
+            # 整个特征提取与分析链路——静默忽略未知键才是持久配置的正确姿态
+            import dataclasses
+
+            field_names = {f.name for f in dataclasses.fields(cls)}
+            config_dict = {k: v for k, v in config_dict.items() if k in field_names}
             config_dict["analysis_device_mode"] = normalize_analysis_device_mode(
                 config_dict.get("analysis_device_mode", settings.get("analysis_device_mode"))
             )

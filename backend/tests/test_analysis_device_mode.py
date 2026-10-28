@@ -179,3 +179,34 @@ class TestAnalysisDeviceMode:
         assert stats.sender_initiated_count == 1
         assert stats.contact_initiated_count == 2
         orchestrator.session_manager.identify_session_initiators.assert_called_once()
+
+
+class TestFeatureExtractionConfigUnknownKeys:
+    """settings.json 含未知键不得打崩配置加载（历史缺陷：cls(**dict) TypeError）。"""
+
+    def test_unknown_keys_silently_ignored(self, tmp_path, monkeypatch):
+        import json as _json
+
+        settings_file = tmp_path / "settings.json"
+        settings_file.write_text(_json.dumps({
+            "feature_extraction": {
+                "batch_size": 500,
+                "future_field_v2": "whatever",   # 未来版本新增字段
+                "legacy_remnant": [1, 2, 3],      # 旧版本残留
+            },
+        }), encoding="utf-8")
+        monkeypatch.setattr(
+            "app.services.analysis.feature_extraction_config.SETTINGS_PATH",
+            str(settings_file),
+        )
+        config = FeatureExtractionConfig.from_settings()
+        assert config.batch_size == 500
+        assert config.analysis_device_mode == "auto"
+
+    def test_missing_settings_file_falls_back_to_defaults(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "app.services.analysis.feature_extraction_config.SETTINGS_PATH",
+            str(tmp_path / "nonexistent.json"),
+        )
+        config = FeatureExtractionConfig.from_settings()
+        assert config.batch_size == 1000

@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import re
 import time
 from datetime import datetime
@@ -142,6 +143,7 @@ class RelationshipLLMService:
         result: Optional[Dict[str, Any]] = None
         content = ""
         finish_reason = ""
+        last_absent_reason = ""
         for attempt in (1, 2):
             body = self._call_chat(messages)
             content = self._extract_content(body)
@@ -157,7 +159,10 @@ class RelationshipLLMService:
             try:
                 result = self._parse_response(content)
                 break
-            except RelationshipLLMAbsent:
+            except RelationshipLLMAbsent as absent_exc:
+                # 保留具体原因（如「无效分值」）供最终报错——统一替换成
+                # 「未包含可解析的 JSON」会把真实病因误报成解析失败
+                last_absent_reason = str(absent_exc)
                 # WARNING 级留现场：打包版文件日志为 INFO，DEBUG 不落盘，
                 # 偶发失败曾无从诊断（content/reasoning 长度可判 think 分离形态）
                 reasoning_len = 0
@@ -171,8 +176,8 @@ class RelationshipLLMService:
                 )
         if result is None:
             raise RelationshipLLMAbsent(
-                f"LLM 输出未包含可解析的 JSON 评估（已重试，"
-                f"finish={finish_reason or 'unknown'}, len={len(content)}）"
+                f"{last_absent_reason or 'LLM 输出未包含可解析的 JSON 评估'}"
+                f"（已重试，finish={finish_reason or 'unknown'}, len={len(content)}）"
             ) from None
 
         # 推导纪律的事后校验：引文必须真的出现在采样原文里
@@ -648,13 +653,33 @@ class RelationshipLLMService:
         if parsed is None:
             raise RelationshipLLMAbsent("LLM 输出未包含可解析的 JSON 评估")
 
-        def _clamp(value, default=50.0):
-            try:
-                return float(max(0.0, min(100.0, float(value))))
-            except (TypeError, ValueError):
-                return default
+        def _parse_score(value) -> Optional[float]:
+            """LLM 分值解析：缺失/NaN/Inf/非数值 → None。
 
+            此前 _clamp 对无效值静默落默认（null→50；NaN 经 min/max 比较
+            短路得 100）——坏输出被包装成看似正常的分数写进缓存与总分。
+            无效即缺席：Absent 语义下本维不参与归一、可经补评通道重试。
+            """
+            try:
+                num = float(value)
+            except (TypeError, ValueError):
+                return None
+            return num if math.isfinite(num) else None
+
+        score = _parse_score(parsed.get("score"))
         sub_raw = parsed.get("sub_scores") or {}
+        sub_scores = {
+            "communication_quality": _parse_score(sub_raw.get("communication_quality")),
+            "relationship_warmth": _parse_score(sub_raw.get("relationship_warmth")),
+        }
+        if score is None or any(v is None for v in sub_scores.values()):
+            raise RelationshipLLMAbsent(
+                "LLM 评估输出含无效分值（缺失/NaN/非数值），按缺席处理"
+            )
+
+        def _clamp(value: float) -> float:
+            return max(0.0, min(100.0, value))
+
         evidence = []
         for item in (parsed.get("evidence") or [])[:5]:
             if isinstance(item, dict) and item.get("quote"):
@@ -663,11 +688,8 @@ class RelationshipLLMService:
                     "month": str(item.get("month") or ""),
                 })
         return {
-            "score": _clamp(parsed.get("score")),
-            "sub_scores": {
-                "communication_quality": _clamp(sub_raw.get("communication_quality")),
-                "relationship_warmth": _clamp(sub_raw.get("relationship_warmth")),
-            },
+            "score": _clamp(score),
+            "sub_scores": {key: _clamp(val) for key, val in sub_scores.items()},
             "risk_evidence": self._normalize_risk_evidence(parsed.get("risk_evidence")),
             "evidence": evidence,
             "insight": str(parsed.get("insight") or "")[:300],

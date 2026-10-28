@@ -521,7 +521,17 @@ class RagIndexer:
                 self.store.conn.commit()
             else:
                 cleaned_old = 0  # 增量模式不清旧文档
-            docs = self._build_documents(account_wxid, conversation_id, conversation, messages)
+            # 增量时 communication_style 统计必须用全会话样例：messages
+            # 只是新增切片，切片统计会覆写全会话风格摘要（W6）
+            docs = self._build_documents(
+                account_wxid,
+                conversation_id,
+                conversation,
+                messages,
+                full_style_lines=(
+                    self._load_all_style_lines(conversation_id) if incremental else None
+                ),
+            )
             self.store.conn.commit()
             docs.extend(self._load_feedback_documents_for_embedding(account_wxid, conversation_id))
             if not docs:
@@ -718,13 +728,48 @@ class RagIndexer:
         ).fetchall()
         return [dict(row) for row in rows]
 
+    def _load_all_style_lines(self, conversation_id: int) -> list[str]:
+        """全会话本人风格样例行（communication_style 统计输入，W6）。
+
+        增量重建的 messages 只是新增切片——切片统计覆写 source_id 恒定
+        的风格摘要文档会把全会话口径替换成本批几条消息的口径，故增量
+        时统计输入从库里按全会话重取（与 _load_messages 同过滤口径）。
+        """
+        rows = self.store.conn.execute(
+            """
+            SELECT content FROM messages
+            WHERE conversation_id = ?
+              AND message_type = 1
+              AND is_sender = 1
+              AND content IS NOT NULL
+              AND TRIM(content) != ''
+            ORDER BY timestamp ASC, id ASC
+            """,
+            (conversation_id,),
+        ).fetchall()
+        return [
+            self._compact_content(row["content"])
+            for row in rows
+            if self._is_style_sample(row["content"])
+        ]
+
     def _build_documents(
         self,
         account_wxid: str,
         conversation_id: int,
         conversation: dict[str, Any],
         messages: list[dict[str, Any]],
+        full_style_lines: list[str] | None = None,
     ) -> list[dict[str, Any]]:
+        """构建文档载荷。
+
+        full_style_lines：communication_style 统计的输入。增量重建传入
+        messages 只是新增切片——用切片统计覆写 source_id 恒定的
+        communication_style 文档（upsert DO UPDATE）会把全会话风格摘要
+        替换成几条新消息的统计（W6）；调用方增量时应传全会话
+        style_lines（_load_all_style_lines），None 时按传入 messages
+        计算（全量分支，messages 即全会话）。
+        """
         redactor = PrivacyRedactor(self.store.conn)
         docs: list[dict[str, Any]] = []
         sessions = self._load_sessions_reference(conversation_id)
@@ -984,11 +1029,15 @@ class RagIndexer:
                 )
             )
 
-        style_lines = [
-            self._compact_content(msg.get("content"))
-            for msg in messages
-            if int(msg.get("is_sender") or 0) and self._is_style_sample(msg.get("content"))
-        ]
+        style_lines = (
+            full_style_lines
+            if full_style_lines is not None
+            else [
+                self._compact_content(msg.get("content"))
+                for msg in messages
+                if int(msg.get("is_sender") or 0) and self._is_style_sample(msg.get("content"))
+            ]
+        )
         if style_lines:
             communication_style = self._build_communication_style_summary(style_lines, self_messages)
             docs.append(

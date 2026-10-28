@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import sqlite3
 import sys
 import time
@@ -2719,3 +2720,218 @@ def test_backfill_prescreen_filters_smalltalk_keeps_dense_short_segments():
     assert indexer._segment_worth_extraction(
         _seg(["对方说今天也想吃火锅配奶茶，微辣锅底", "好呀就去老地方那家店见面", "周五见，别忘了", "周五见，老地方不见不散"])
     ) is True
+
+
+def test_parse_response_tolerates_null_fields_in_json_object_mode():
+    """json_object 模式常见键存在但值为 null 的响应（W6 抽查缺陷）。
+
+    data.get("k", "") 在值为 null 时返回 None 而非默认值，`.strip()`
+    的 AttributeError 不在 _parse_response 的兜底捕获清单里——会穿透
+    到 llm_engine.generate 令整次建议失败，且绕过全部解析兜底。
+    """
+    engine = LLMSuggestionEngine()
+
+    silent = engine._parse_response(
+        json.dumps(
+            {
+                "thought_process": None,
+                "summary": None,
+                "speeches": None,
+                "reply": None,
+            }
+        ),
+        "auto_hint",
+        "maintain",
+    )
+    assert silent is not None, "全 null 字段不得抛 AttributeError 穿透兜底"
+    assert silent.summary == "[SILENT]"
+    assert silent.speeches == []
+    assert silent.reply is None
+    assert silent.thought_process is None
+
+    active = engine._parse_response(
+        json.dumps(
+            {
+                "thought_process": None,
+                "summary": None,
+                "speeches": ["周六上午去美术馆逛逛怎么样？"],
+                "reply": None,
+            }
+        ),
+        "manual_request",
+        "maintain",
+    )
+    assert active is not None
+    assert active.speeches == ["周六上午去美术馆逛逛怎么样？"]
+    assert active.summary == "已生成可直接发送的话术"
+    assert active.thought_process is None
+
+    pure_chat = engine._parse_response(
+        json.dumps(
+            {
+                "thought_process": "先顺着对方话题",
+                "summary": None,
+                "speeches": None,
+                "reply": "好呀，那就周六见",
+            }
+        ),
+        "manual_request",
+        "maintain",
+    )
+    assert pure_chat is not None
+    assert pure_chat.summary == "[PURE_CHAT]"
+    assert pure_chat.reply == "好呀，那就周六见"
+
+
+def test_incremental_rebuild_keeps_full_conversation_style_summary(monkeypatch):
+    """增量重建不得用新增切片覆写全会话 communication_style 统计（W6）。
+
+    增量分支的 messages 只是摄取游标之后的新增切片，而风格摘要文档
+    source_id 恒定（communication_style:{cid}）、upsert DO UPDATE——
+    切片统计会静默替换全会话口径。断言：增量重建后的文档内容与同期
+    全量重建完全一致。
+    """
+    conn = _conn()
+    store = RagStore(conn)
+    conn.executescript(
+        """
+        CREATE TABLE conversations (
+            id INTEGER PRIMARY KEY,
+            account_wxid TEXT NOT NULL,
+            username TEXT NOT NULL,
+            display_name TEXT,
+            message_count INTEGER DEFAULT 0,
+            updated_at INTEGER DEFAULT 0,
+            is_deleted INTEGER DEFAULT 0
+        );
+        CREATE TABLE messages (
+            id INTEGER PRIMARY KEY,
+            conversation_id INTEGER NOT NULL,
+            is_sender INTEGER NOT NULL,
+            content TEXT,
+            message_type INTEGER NOT NULL,
+            timestamp INTEGER NOT NULL
+        );
+        """
+    )
+    now = int(time.time())
+    conn.execute(
+        """
+        INSERT INTO conversations
+        (id, account_wxid, username, display_name, message_count, updated_at)
+        VALUES (1, 'wxid_a', 'alice', 'Alice', 3, ?)
+        """,
+        (now,),
+    )
+
+    # 旧批：10 条本人长句（~27 字，无疑问无 emoji，25 天前——分数上限
+    # ~4.1：无近 30 天外的加成差异，但长度区间只拿 +0.4）
+    long_lines = [
+        "这周把家里的书架重新整理了一遍，把不看的书装箱收进储藏室了",
+        "上周去城郊爬山，山顶风大但视野特别好，拍了好多照片慢慢挑",
+        "晚上试着做了一次番茄牛腩，炖的时间不够有点硬，下次提前两小时",
+        "最近在看那本讲宋代航运的书，里面画的各种船图比想象中细致得多",
+        "把阳台的花换了批土，剩下几盆多肉挪到窗台内侧过冬比较稳妥",
+        "公司楼下新开了家面包店，早上去买还行，下午基本都卖空了",
+        "周末把自行车链条和刹车都调了一遍，骑起来顺多了就是手上全是油",
+        "帮爸妈把旧手机里的照片导出来存了一份，翻到好多好几年前的",
+        "那天路过以前常去的那家旧书店，招牌换了但里面格局还是老样子",
+        "把手表的电池换了，师傅顺手把表带也洗了一下，亮了不少",
+    ]
+    old_base = now - 25 * 86400
+    old_rows = []
+    for index, text in enumerate(long_lines):
+        old_rows.append((2 * index + 1, 1, text, old_base + index * 600))
+        old_rows.append((2 * index + 2, 0, "听上去不错呀", old_base + index * 600 + 300))
+    conn.executemany(
+        """
+        INSERT INTO messages (id, conversation_id, is_sender, content, message_type, timestamp)
+        VALUES (?, 1, ?, ?, 1, ?)
+        """,
+        old_rows,
+    )
+
+    monkeypatch.setattr(
+        "app.services.realtime.rag.indexer.load_rag_settings",
+        lambda: {
+            "rag_embedding_model": "tingting0514/text2vec-base-chinese",
+            "rag_embedding_dim": 384,
+            "rag_privacy_mode": "balanced",
+        },
+    )
+
+    class ZeroEmbedding:
+        def embed_texts(self, texts):
+            return [[0.0] * 384 for _ in texts]
+
+        def embed_text(self, text):
+            return [0.0] * 384
+
+    indexer = RagIndexer(store=store, embedding_service=ZeroEmbedding())
+
+    # 第一次全量重建：建立摄取游标（增量分支的前提）
+    first = indexer.rebuild_contact_index(account_wxid="wxid_a", conversation_id=1)
+    assert first["status"] == "ready"
+
+    # 新批：8 条本人短句（一小时内——近因 +3 且长度区间 +1.0，分数全部
+    # 高于旧批，两次重建的"近期样例"截断恰好取到同 8 条）+ 对方穿插
+    short_lines = [
+        "明天下午三点出发可以吗？",
+        "我把票订好了呀",
+        "要不要顺路买点水果？",
+        "那我们馆里见哈",
+        "你到哪儿了我等你",
+        "门口那家面馆好吃吗？",
+        "我把导航发给你了",
+        "记得带件薄外套呀",
+    ]
+    new_rows = []
+    next_id = len(old_rows) + 1
+    new_base = now - 3600
+    for index, text in enumerate(short_lines):
+        new_rows.append((next_id, 1, text, new_base + index * 60))
+        next_id += 1
+        new_rows.append((next_id, 0, "好呀好呀", new_base + index * 60 + 30))
+        next_id += 1
+    conn.executemany(
+        """
+        INSERT INTO messages (id, conversation_id, is_sender, content, message_type, timestamp)
+        VALUES (?, 1, ?, ?, 1, ?)
+        """,
+        new_rows,
+    )
+
+    # 第二次重建：命中增量分支（配置不变 + 游标有效）
+    incremental = indexer.rebuild_contact_index(account_wxid="wxid_a", conversation_id=1)
+    assert incremental["status"] == "ready"
+    incremental_doc = conn.execute(
+        """
+        SELECT content FROM rag_documents
+        WHERE conversation_id = 1 AND doc_type = 'communication_style'
+        """
+    ).fetchone()
+    assert incremental_doc is not None, "增量重建必须产出 communication_style 文档"
+
+    # 同期全量重建基准：清游标强制走全量分支
+    conn.execute("UPDATE rag_index_status SET last_message_id = 0 WHERE conversation_id = 1")
+    full = indexer.rebuild_contact_index(account_wxid="wxid_a", conversation_id=1)
+    assert full["status"] == "ready"
+    full_doc = conn.execute(
+        """
+        SELECT content FROM rag_documents
+        WHERE conversation_id = 1 AND doc_type = 'communication_style'
+        """
+    ).fetchone()
+    assert full_doc is not None
+
+    # 核心断言：增量与全量的风格摘要逐字一致（统计口径未被切片覆写）
+    assert incremental_doc["content"] == full_doc["content"]
+
+    # 牙齿：平均长度必须是 10 条长句（~27 字）+ 8 条短句（~9 字）的
+    # 全会话口径（~19.7 字），而非 8 条短句的切片口径（~8.6 字）
+    avg = re.search(r"平均长度 (\d+(?:\.\d+)?) 字", incremental_doc["content"])
+    assert avg is not None
+    assert float(avg.group(1)) > 15, (
+        "增量重建的 communication_style 统计仍是切片口径："
+        f"{incremental_doc['content']}"
+    )

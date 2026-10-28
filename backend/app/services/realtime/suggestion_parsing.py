@@ -688,10 +688,14 @@ class SuggestionParsingMixin:
             if self._is_placeholder_structured_output(data):
                 raise ValueError("模型返回了输出格式占位 JSON")
 
-            thought_process = data.get("thought_process", "").strip()
-            summary = data.get("summary", "").strip()
-            speeches = data.get("speeches", [])
-            reply = data.get("reply", "").strip()
+            # `or ""` 而非默认值：键存在但值为 null（json_object 模式常见）
+            # 时 data.get 返回 None，`.strip()` 抛 AttributeError 不在下方
+            # except 捕获清单里——会穿透到 llm_engine 令整次建议失败，且
+            # 绕过全部解析兜底（_repair/truncated/reasoning fallback）
+            thought_process = str(data.get("thought_process") or "").strip()
+            summary = str(data.get("summary") or "").strip()
+            speeches = data.get("speeches") or []
+            reply = str(data.get("reply") or "").strip()
 
             # 确保 speeches 是合法的列表
             if isinstance(speeches, str):

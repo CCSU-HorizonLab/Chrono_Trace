@@ -327,3 +327,37 @@ def test_concurrent_refresh_is_serialized_by_lock(tmp_path):
             "SELECT count(*) FROM [Msg_test]").fetchone()[0] >= 3
     finally:
         watcher.close()
+
+
+def test_wrong_key_full_failure_keeps_old_snapshot(tmp_path):
+    """密钥错误全页解密失败：refresh 报失败且不落全零快照。
+
+    此前全页失败仍 os.replace 提交零快照并返回成功，state 更新后
+    stat 不变永不重试，下游 open 报 "file is not a database"。
+    """
+    plain = build_plain_db(tmp_path / "plain.db", SCHEMA_V1)
+    src = tmp_path / "message_0.db"
+    encrypt_db(plain, src, KEY_HEX)
+
+    # 先用正确密钥建立完好的旧快照
+    good = EncryptedShardWatcher(src, KEY_HEX, tmp_path / "cache")
+    good.refresh(force=True)
+    snapshot_before = Path(str(good.out_path)).read_bytes()
+    good.close()
+
+    # 换错密钥 + 源库变动（touch mtime 即可触发 stat 变化路径）
+    bad = EncryptedShardWatcher(src, "9f" * 32, tmp_path / "cache2")
+    try:
+        ok = bad.refresh(force=True)
+        assert ok is False  # 全页失败 → 判失败，不报成功
+        # 错密钥 watcher 不应产出全零快照文件
+        assert not bad.out_path.exists()
+    finally:
+        bad.close()
+
+    # 原快照完好未被破坏（另一 cache 目录中的独立副本）
+    again = EncryptedShardWatcher(src, KEY_HEX, tmp_path / "cache")
+    try:
+        assert Path(str(again.out_path)).read_bytes() == snapshot_before
+    finally:
+        again.close()

@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 # inotify 事件掩码（ctypes 直调系统调用，零第三方依赖）
 _IN_MODIFY = 0x00000002
 _IN_CLOSE_WRITE = 0x00000008
+_IN_CREATE = 0x00000100  # 监视懒创建的 -wal 所在目录，文件出现后转挂
 _IN_NONBLOCK = 0o4000  # O_NONBLOCK
 _INOTIFY_EVENT_SIZE = 16  # struct inotify_event 固定头（不含 name）
 
@@ -106,6 +107,8 @@ class DbWatchRealtimeProvider(RealtimeProvider):
         self._wakeup_event = threading.Event()
         self._inotify_fd: int = -1
         self._inotify_thread: threading.Thread | None = None
+        self._pending_wal_checks: list[tuple[int, str]] = []  # (目录 wd, 懒创建的 -wal 路径)
+        self._libc = None  # inotify 用的 libc 句柄（转挂时复用）
         self._last_nochange_result: list | None = None  # 无变化缓存的上一轮消息
         self._last_reconcile = 0.0  # 上次 WAL 重放兜底时刻（monotonic）
 
@@ -294,6 +297,8 @@ class DbWatchRealtimeProvider(RealtimeProvider):
                 logger.warning("[db_watch] inotify_init1 失败: errno={}".format(ctypes.get_errno()))
                 return
             import os as _os
+            self._libc = libc
+            self._pending_wal_checks = []
             watched = 0
             for watcher in self._watchers:
                 for path in (str(watcher.src), str(watcher.src) + "-wal"):
@@ -301,6 +306,16 @@ class DbWatchRealtimeProvider(RealtimeProvider):
                         wd = libc.inotify_add_watch(fd, path.encode(), _IN_MODIFY | _IN_CLOSE_WRITE)
                         if wd >= 0:
                             watched += 1
+                    elif path.endswith("-wal"):
+                        # -wal 由 SQLite 首写懒创建：启动时缺失则监视父目录的
+                        # 创建事件，文件出现后转挂文件级 watch——否则该分片
+                        # 新消息永无通知，毫秒级响应退化为 10s reconcile 兜底
+                        wd = libc.inotify_add_watch(
+                            fd, (_os.path.dirname(path) or ".").encode(), _IN_CREATE
+                        )
+                        if wd >= 0:
+                            watched += 1
+                            self._pending_wal_checks.append((wd, path))
             if watched == 0:
                 _os.close(fd)
                 logger.warning("[db_watch] inotify 无可监听文件，降级为 stat 轮询")
@@ -324,6 +339,7 @@ class DbWatchRealtimeProvider(RealtimeProvider):
                 pass
             self._inotify_fd = -1
         self._inotify_thread = None
+        self._pending_wal_checks = []
 
     def _inotify_loop(self) -> None:
         """inotify 事件循环：select() 无忙等，事件到达设 wakeup_event。"""
@@ -344,12 +360,39 @@ class DbWatchRealtimeProvider(RealtimeProvider):
                     if len(buf) < event_len:
                         break
                     buf = buf[event_len:]
+                # 懒创建的 -wal 出现了：从目录监视转挂为文件级监视
+                if self._pending_wal_checks:
+                    self._adopt_pending_wals()
                 self._wakeup_event.set()
             except Exception:
                 import time as _t
                 _t.sleep(0.5)
                 if self._inotify_fd < 0:
                     return
+
+    def _adopt_pending_wals(self) -> None:
+        """目录创建事件到达后：把已出现的 -wal 转挂为文件级监视。"""
+        import os as _os
+        libc = self._libc
+        if libc is None or self._inotify_fd < 0:
+            return
+        still_pending: list[tuple[int, str]] = []
+        for dir_wd, path in self._pending_wal_checks:
+            if not _os.path.exists(path):
+                still_pending.append((dir_wd, path))
+                continue
+            try:
+                file_wd = libc.inotify_add_watch(
+                    self._inotify_fd, path.encode(), _IN_MODIFY | _IN_CLOSE_WRITE
+                )
+                if file_wd >= 0:
+                    libc.inotify_rm_watch(self._inotify_fd, dir_wd)
+                    logger.info("[db_watch] -wal 已创建，转挂文件级监听: %s", path)
+                    continue  # 转挂成功，不再跟踪
+            except Exception as exc:
+                logger.debug("[db_watch] -wal 转挂失败（沿用目录监视）: %s", exc)
+            still_pending.append((dir_wd, path))
+        self._pending_wal_checks = still_pending
 
     def _max_seq(self, table: str) -> int:
         best = 0

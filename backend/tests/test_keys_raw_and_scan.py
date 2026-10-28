@@ -215,3 +215,56 @@ def test_ingest_verify_raw_keys(encrypted_env):
     assert service._verify_raw_keys(paths, {salt.hex(): enc_key_hex})["ok"] is True
     bad = service._verify_raw_keys(paths, {salt.hex(): "00" * 32})
     assert bad["ok"] is False
+
+
+class TestScanVerdictCoverage:
+    """scan_wechat_raw_keys 判定分级：主库缺密钥判失败回退，非主库缺口可见。"""
+
+    @staticmethod
+    def _patch_scan_env(monkeypatch, salts, found_salts):
+        """打桩扫描环境：db_pages 含 salts，内存扫描只命中 found_salts。"""
+        db_pages = {
+            salt: (b"\x00" * 16, 1, f"C:/x/message/{salt}.db" if i == 0 else f"C:/x/{salt}.db")
+            for i, salt in enumerate(salts)
+        }
+        monkeypatch.setattr(scan_win, "collect_db_pages", lambda _dir: db_pages)
+        monkeypatch.setattr(scan_win, "find_wechat_pids_windows", lambda: [(4242, 0)])
+
+        def _fake_harness(_pid):
+            regions, read_region, read_mem = [], None, None
+            closer = lambda: None
+            return regions, read_region, read_mem, closer
+
+        monkeypatch.setattr(scan_win, "_memory_harness", _fake_harness)
+        monkeypatch.setattr(
+            scan_win, "scan_config_cipher",
+            lambda *_a, **_k: {salt: "aa" * 32 for salt in found_salts},
+        )
+        monkeypatch.setattr(scan_win, "scan_legacy_hex", lambda *_a, **_k: {})
+
+    def test_primary_salt_missing_fails_and_falls_back(self, monkeypatch):
+        """主库（message 目录）salt 未命中：ok=False，链式提取可回退登录捕获。"""
+        self._patch_scan_env(
+            monkeypatch,
+            ["salt_primary", "salt_other"],
+            ["salt_other"],  # 只有非主库命中
+        )
+        result = scan_win.scan_wechat_raw_keys("C:/x")
+        assert result["ok"] is False
+        assert result["code"] == "scan_partial_primary_missing"
+
+    def test_full_coverage_ok_without_partial_flag(self, monkeypatch):
+        self._patch_scan_env(monkeypatch, ["s1", "s2"], ["s1", "s2"])
+        result = scan_win.scan_wechat_raw_keys("C:/x")
+        assert result["ok"] is True
+        assert result["db_key"] == "aa" * 32
+        assert result["partial"] is False
+        assert result["missing_count"] == 0
+
+    def test_secondary_gap_ok_but_visible(self, monkeypatch):
+        """主库命中、非主库缺：放行但 partial=True、缺口计数可见。"""
+        self._patch_scan_env(monkeypatch, ["s1", "s2", "s3"], ["s1"])
+        result = scan_win.scan_wechat_raw_keys("C:/x")
+        assert result["ok"] is True
+        assert result["partial"] is True
+        assert result["missing_count"] == 2

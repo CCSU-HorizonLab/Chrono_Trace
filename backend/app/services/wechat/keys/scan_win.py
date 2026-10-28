@@ -378,12 +378,24 @@ def scan_wechat_raw_keys(wechat_dir: str, timeout_seconds: int = 60,
                 "error": "只读扫描未找到可用密钥（微信版本可能不驻留 Config.Cipher），回退登录捕获"}
 
     primary_salt = _primary_salt(db_pages)
+    if primary_salt not in raw_keys:
+        # 主库（消息库）密钥缺失：核心导入/监听链路必挂——此前只要有任意
+        # 一个库命中即 ok=True，chain_win 据此跳过 wx_key 回退，缺口静默
+        # 留到导入时逐库失败。改判失败让链式提取继续走登录捕获通道
+        return {"ok": False, "code": "scan_partial_primary_missing",
+                "error": f"只读扫描命中 {len(raw_keys)}/{len(db_pages)} 库但缺主库密钥，回退登录捕获",
+                "raw_keys": raw_keys, "pid": hit_pid or pids[0][0]}
+
+    missing = [salt for salt in db_pages if salt not in raw_keys]
     return {
         "ok": True,
-        "db_key": raw_keys.get(primary_salt) or next(iter(raw_keys.values())),
+        "db_key": raw_keys[primary_salt],
         "key_type": "raw",
         "raw_keys": raw_keys,
         "pid": hit_pid or pids[0][0],
+        # 非主库的部分缺口：主库可用即放行，缺口可见（调用方可提示重扫）
+        "partial": bool(missing),
+        "missing_count": len(missing),
     }
 
 

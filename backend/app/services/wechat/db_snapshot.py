@@ -143,6 +143,7 @@ class EncryptedShardWatcher:
                 try:
                     changed = 0
                     failed_pages = 0
+                    page1_failed = False
                     for page_no in range(1, total_pages + 1):
                         raw = f.read(PAGE_SIZE)
                         if len(raw) < PAGE_SIZE:
@@ -165,12 +166,25 @@ class EncryptedShardWatcher:
                             # （checkpoint 前的预扩页/半写页，HMAC 必然失败）：
                             # 写占位零页，交由 _apply_wal 用帧覆盖修复
                             failed_pages += 1
+                            if page_no == 1:
+                                page1_failed = True
                             out.write(b"\x00" * PAGE_SIZE)
                     applied, skipped = self._apply_wal(out)
                     if failed_pages:
                         logger.debug(
                             "[dbwatch] %s: %d/%d 页主库缺帧（占位，待 WAL 覆盖或为无效尾页）",
                             self.src.name, failed_pages, total_pages,
+                        )
+                    # 全零快照守卫：页 1 或全部页解密失败（密钥错/格式突变）
+                    # 而占位零页又未被 WAL 帧覆盖时，产物不可用——此前照样
+                    # os.replace 提交且返回成功，state 更新后 stat 不变永不
+                    # 重试，下游 open 直接 "file is not a database"。改判失败：
+                    # 丢弃 .tmp 保留旧快照，下轮重试
+                    wal_covered = applied > 0
+                    if page1_failed or (failed_pages >= total_pages and not wal_covered):
+                        raise RuntimeError(
+                            f"快照构建异常：页1失败={page1_failed}，"
+                            f"解密失败 {failed_pages}/{total_pages} 页且 WAL 未覆盖"
                         )
                 finally:
                     out.close()

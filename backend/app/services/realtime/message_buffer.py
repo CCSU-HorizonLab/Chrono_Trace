@@ -262,13 +262,21 @@ class MessageBuffer:
             logger.error(f"[MessageBuffer] 获取批次消息数量失败: {e}")
             return 0
     
-    def mark_as_processed(self, batch_id: str, account_wxid: Optional[str] = None) -> int:
+    def mark_as_processed(
+        self,
+        batch_id: str,
+        account_wxid: Optional[str] = None,
+        row_ids: Optional[List[int]] = None,
+    ) -> int:
         """
         标记批次消息为已处理
-        
+
         Args:
             batch_id: 批次ID
-        
+            row_ids: 精确到行 id 列表（None=整批）。按批次 UPDATE 不区分
+                读取边界——迁移读到快照后又竞态写入的新行会被一并误标，
+                从此无人迁移（静默丢消息）；迁移路径必须传读取到的行 id
+
         Returns:
             int: 影响行数
         """
@@ -277,16 +285,27 @@ class MessageBuffer:
                 conn = get_db()
                 cursor = conn.cursor()
                 resolved_account_wxid = self._resolve_account_wxid(account_wxid)
-                
-                cursor.execute('''
-                    UPDATE realtime_message_buffer
-                    SET is_processed = 1
-                    WHERE account_wxid = ? AND batch_id = ?
-                ''', (resolved_account_wxid, batch_id))
-                
+
+                if row_ids is None:
+                    cursor.execute('''
+                        UPDATE realtime_message_buffer
+                        SET is_processed = 1
+                        WHERE account_wxid = ? AND batch_id = ?
+                    ''', (resolved_account_wxid, batch_id))
+                else:
+                    if not row_ids:
+                        return 0
+                    placeholders = ','.join('?' for _ in row_ids)
+                    cursor.execute(f'''
+                        UPDATE realtime_message_buffer
+                        SET is_processed = 1
+                        WHERE account_wxid = ? AND batch_id = ?
+                          AND id IN ({placeholders})
+                    ''', (resolved_account_wxid, batch_id, *row_ids))
+
                 conn.commit()
                 return cursor.rowcount
-                
+
             except Exception as e:
                 logger.error(f"[MessageBuffer] 标记批次为已处理失败: {e}")
                 return 0

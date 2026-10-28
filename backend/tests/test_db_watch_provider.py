@@ -313,3 +313,40 @@ def test_list_visible_messages_refreshes_only_target_shards(provider_env, monkey
     provider._last_reconcile = 0.0
     provider.list_visible_messages()
     assert calls == [0], "reconcile 周期同样只刷目标分片"
+
+
+def test_inotify_adopts_lazily_created_wal(tmp_path):
+    """懒创建的 -wal：目录 IN_CREATE 事件触发后转挂文件级监听。
+
+    此前 _start_inotify 只对启动时已存在的文件注册——-wal 由 SQLite
+    首写懒创建，监听启动时缺失即永无通知，毫秒级响应退化为 10s
+    reconcile 兜底。
+    """
+    import threading
+    import types
+
+    provider = DbWatchRealtimeProvider.__new__(DbWatchRealtimeProvider)
+    provider._wakeup_event = threading.Event()
+    provider._inotify_fd = -1
+    provider._inotify_thread = None
+    provider._pending_wal_checks = []
+    provider._libc = None
+    provider._last_nochange_result = None
+    db_path = tmp_path / "Msg_0.db"
+    db_path.write_bytes(b"placeholder")
+    provider._watchers = [types.SimpleNamespace(src=db_path)]
+
+    provider._start_inotify()
+    try:
+        if provider._inotify_fd < 0:
+            pytest.skip("本环境 inotify 不可用（容器限制），跳过")
+        assert len(provider._pending_wal_checks) == 1  # -wal 缺失 → 目录监视
+
+        # 模拟 SQLite 首写创建 -wal → 目录事件 → 线程转挂
+        (tmp_path / "Msg_0.db-wal").write_bytes(b"w" * 64)
+        deadline = time.time() + 3.0
+        while provider._pending_wal_checks and time.time() < deadline:
+            time.sleep(0.05)
+        assert provider._pending_wal_checks == []
+    finally:
+        provider._stop_inotify()

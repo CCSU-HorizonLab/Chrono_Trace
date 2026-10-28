@@ -240,3 +240,58 @@ class TestStaleHookOnImport:
         ).fetchone()
         assert row["analysis_stale"] == 0, "重复导入不应打脏"
 
+
+
+class TestWatermarkOnFailedConversations:
+    """会话失败与水位推进：失败会话窗口内消息不得被水位越过。"""
+
+    def _run_import(self, monkeypatch, conversations, fail_usernames, watermark_ts=0):
+        from unittest.mock import MagicMock
+        import app.services.wechat.ingest_service as ingest_mod
+
+        fake_db = MagicMock()
+        fake_db.get_all_conversation_usernames.return_value = conversations
+
+        def _get_messages(username, **_kwargs):
+            if username in fail_usernames:
+                raise RuntimeError("页面解密失败")
+            base_ts = 1_700_000_000
+            return [
+                _msg(username, i, f"消息{i}", base_ts + i * 100)
+                for i in range(1, 4)
+            ]
+
+        fake_db.get_messages.side_effect = _get_messages
+        monkeypatch.setattr(ingest_mod, "MessageDBV4", lambda *a, **k: fake_db)
+        service = WeChatIngestService()
+        return service._import_messages_v4(
+            ["/dev/null"], b"k" * 32, "wxid_me", "acct", 0,
+            watermark_ts=watermark_ts,
+        )
+
+    def test_failed_conversation_freezes_watermark(self, monkeypatch, test_db):
+        """有会话失败：水位冻结原值，失败区间留待下轮增量重扫。"""
+        stats = self._run_import(
+            monkeypatch,
+            ["wxid_ok", "wxid_bad"], {"wxid_bad"},
+            watermark_ts=1_699_000_000,
+        )
+        assert stats["failed_conversations"] == 1
+        assert stats["total"] == 3
+        # 成功会话已见最大 ts=1_700_000_300，但失败会话在场 → 不推进
+        assert stats["watermark_ts"] == 1_699_000_000
+
+    def test_watermark_advances_when_all_ok(self, monkeypatch, test_db):
+        """全部成功：水位正常推进到本次最大 create_time。"""
+        stats = self._run_import(
+            monkeypatch, ["wxid_ok", "wxid_ok2"], set(),
+            watermark_ts=1_699_000_000,
+        )
+        assert stats["failed_conversations"] == 0
+        assert stats["watermark_ts"] == 1_700_000_300
+
+    def test_full_import_failure_keeps_zero_watermark(self, monkeypatch, test_db):
+        """首导（水位 0）即有失败：水位保持 0，下轮仍全量窗口重扫。"""
+        stats = self._run_import(monkeypatch, ["wxid_bad"], {"wxid_bad"})
+        assert stats["failed_conversations"] == 1
+        assert stats["watermark_ts"] == 0

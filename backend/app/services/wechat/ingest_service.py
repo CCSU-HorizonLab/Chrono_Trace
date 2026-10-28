@@ -649,6 +649,8 @@ class WeChatIngestService:
         窗口（安全窗覆盖 WAL 延迟/偶发乱序，窗内重扫由判重集合去重）。
         返回 stats 带 watermark_ts = max(水位, 本次见过最大 create_time)，
         只增不减；导入异常时调用方不落库 → 水位不推进 → 下次重扫（安全方向）。
+        会话级失败同样不推进水位（见返回前 failed_conversations 分支）：
+        失败会话窗口内的消息尚未落库，水位越过即被后续增量永久跳过。
         """
         logger.info("[DEBUG] Start importing messages")
         logger.debug(f"[DEBUG] 消息数据库数量: {len(message_db_paths)}")
@@ -823,13 +825,27 @@ class WeChatIngestService:
                 "个别页面解密失败；可关闭微信后重新导入补全）"
             )
 
+        new_watermark = max(watermark_ts, max_seen_ts)
+        if failed_conversations and new_watermark > watermark_ts:
+            # 会话级失败（典型：微信在线写入导致个别页面解密失败）时，
+            # 失败会话在读取窗口内的消息尚未落库——水位若推进越过它们，
+            # 后续增量导入永远读不到，静默丢数据。此处不推进：下轮增量
+            # 重扫整个窗口，成功会话的重复消息由判重集合幂等去重（只费
+            # 读、不丢数据）。此前仅靠日志提示「关闭微信重新导入」自补，
+            # 但水位已越过，普通增量重导补不回来。
+            logger.warning(
+                f"[导入] {failed_conversations} 个对话失败，本次水位不推进"
+                f"（保持 {watermark_ts}）——失败会话窗口内消息待下轮重扫补全"
+            )
+            new_watermark = watermark_ts
+
         return {
             "total": total_messages,
             "conversations": len(conversations_set),
             "skipped": skipped_messages,
             "failed_conversations": failed_conversations,
             # 只增不减；零消息读取（无新聊天）时维持原水位
-            "watermark_ts": max(watermark_ts, max_seen_ts),
+            "watermark_ts": new_watermark,
         }
 
     def _load_existing_message_keys(self, read_range: Optional[Tuple[int, int]] = None) -> set:

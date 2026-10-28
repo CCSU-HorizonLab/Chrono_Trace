@@ -918,11 +918,49 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, Backfi
                     # 置错误状态并停止轮询，前端经 get_status 的 chat_error 可见，
                     # 不再无限自旋刷日志（R1）
                     self._chat_error = f'消息轮询连续失败 {poll_fail_count} 次，监听已停止：{e}'
+                    # 先收尾再停：迁移缓冲 + checkpoint。此前裸退后
+                    # is_monitoring=False，用户再按停止会被「没有监听任务」
+                    # 拒绝——本批消息永久滞留缓冲表无人消费
+                    try:
+                        self._finalize_session_in_thread(session_state)
+                    except Exception as fin_e:
+                        _print(f"⚠️  轮询失效收尾异常: {fin_e}")
                     self.is_monitoring = False
                     break
                 time.sleep(1)
-        
+
         _print("🛑 轮询线程已停止")
+
+    def _finalize_session_in_thread(self, session_state: dict) -> None:
+        """轮询线程侧失效收尾：checkpoint + 迁移缓冲 + 清状态（无 join）。
+
+        与 stop_monitoring 收尾同语义，但在轮询线程自身执行——不能等
+        自己结束，也不做状态拒绝检查（调用点即终局）。
+        """
+        batch_id = self.current_batch_id
+        talker_username = self.current_talker
+        talker_display_name = self.current_display_name
+        if not batch_id:
+            return
+        message_count = self.message_buffer.get_batch_count(batch_id, self.current_account_wxid)
+        self._save_monitor_checkpoint(
+            batch_id, talker_username, talker_display_name, message_count
+        )
+        migrated_count = self._migrate_buffer_to_messages(
+            batch_id, talker_username, talker_display_name
+        )
+        if migrated_count:
+            _print(f"✅ 失效收尾已迁移 {migrated_count} 条消息到历史数据表")
+        self._log_runtime_event('realtime_monitor_abort_finalize', {
+            'batch_id': batch_id,
+            'talker_username': talker_username,
+            'talker_display_name': talker_display_name,
+            'message_count': message_count,
+            'migrated_count': migrated_count,
+        })
+        self.current_batch_id = None
+        self.current_talker = None
+        self.current_display_name = None
     
     def _process_message(
         self,
@@ -1474,17 +1512,50 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, Backfi
             self.is_monitoring = False
             _print("✅ 监听状态已设为 False")
             
-            # 3. 等待轮询线程结束（最多约5秒，给当前轮处理留出收尾时间）
+            # 3. 等待轮询线程结束（软等 5s 给当前轮收尾；仍未结束再硬等 10s——
+            # 回溯/抓取可能拖长。线程未死时数据所有权仍在线程：继续迁移会把
+            # 竞态写入的新消息整批标已处理而无人迁移（静默丢），必须放弃迁移
+            # 让消息留在缓冲表待下轮补全，方向安全）
             if self.polling_thread and self.polling_thread.is_alive():
                 _print("⏳ 等待轮询线程结束...")
                 waited = 0.0
-                while self.polling_thread.is_alive() and waited < 5.0:
+                while self.polling_thread.is_alive() and waited < 15.0:
                     self.polling_thread.join(timeout=0.5)
                     waited += 0.5
                 if self.polling_thread.is_alive():
-                    _print(f"⚠️  轮询线程未在{waited:.1f}秒内结束，继续收尾流程...")
-                else:
-                    _print(f"✅ 轮询线程已结束（等待 {waited:.1f} 秒）")
+                    _print(
+                        f"⚠️  轮询线程 {waited:.1f}s 未结束，跳过本次缓冲迁移"
+                        "（消息已留在暂存表，未被标已处理，不丢数据）"
+                    )
+                    deferred_batch_id = self.current_batch_id
+                    deferred_talker = self.current_talker
+                    deferred_name = self.current_display_name
+                    # 保存 checkpoint：下次开启监听经回溯补全从微信侧重抓窗口消息
+                    try:
+                        deferred_count = self.message_buffer.get_batch_count(
+                            deferred_batch_id, self.current_account_wxid
+                        )
+                        self._save_monitor_checkpoint(
+                            deferred_batch_id, deferred_talker, deferred_name, deferred_count
+                        )
+                    except Exception as cp_e:
+                        _print(f"⚠️  延迟收尾 checkpoint 保存失败: {cp_e}")
+                    self._log_runtime_event('realtime_monitor_stop_deferred', {
+                        'batch_id': deferred_batch_id,
+                        'waited_seconds': waited,
+                    })
+                    self.is_monitoring = False
+                    self.current_batch_id = None
+                    self.current_talker = None
+                    self.current_display_name = None
+                    return {
+                        'success': True,
+                        'batch_id': deferred_batch_id,
+                        'message_count': 0,
+                        'message': f'监听已停止，但轮询线程仍在收尾（等待 {waited:.0f}s），'
+                                   '本批消息未被迁移；已保存回溯点，下次开启监听可自动补全'
+                    }
+                _print(f"✅ 轮询线程已结束（等待 {waited:.1f} 秒）")
             
             # 4. 不调用 RemoveListenChat（避免卡顿）
             if self.wx and self.current_display_name:

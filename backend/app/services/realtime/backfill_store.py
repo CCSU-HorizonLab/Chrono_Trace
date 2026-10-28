@@ -560,6 +560,9 @@ class BackfillStoreMixin:
         buffer_messages = self.message_buffer.get_batch_messages(batch_id, account_wxid=self.current_account_wxid)
         if not buffer_messages:
             return 0
+        # 只标记本次实际读取到的行：读取快照之后轮询线程竞态写入的新行
+        # 若被整批误标，将永远无人迁移（静默丢消息）
+        buffer_row_ids = [int(m["id"]) for m in buffer_messages if m.get("id") is not None]
 
         conn = get_db()
         conversation_id = self._get_or_create_conversation_id(
@@ -645,7 +648,9 @@ class BackfillStoreMixin:
         else:
             conn.commit()
 
-        self.message_buffer.mark_as_processed(batch_id, self.current_account_wxid)
+        self.message_buffer.mark_as_processed(
+            batch_id, self.current_account_wxid, row_ids=buffer_row_ids
+        )
 
         return migrated
 

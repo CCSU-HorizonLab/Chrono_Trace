@@ -515,9 +515,19 @@ class BackfillStoreMixin:
         self._last_known_ts = 0
 
         try:
-            self._create_wechat_instance_with_recovery(phase="backfill")
-            self._bring_wechat_to_front()
-            time.sleep(1.0)
+            # 初始化监听后端（复用 start_monitoring 同款口径）。此前调用
+            # 已删除的 _create_wechat_instance_with_recovery/_bring_wechat_to_front
+            # （UI 自动化时代残留），回溯入口第一步必 AttributeError
+            try:
+                if self.wx is None:
+                    self._create_wechat_instance()
+            except Exception as e:
+                return {
+                    'success': False,
+                    'message': '监听后端初始化失败',
+                    'error': self._format_listener_init_error(e),
+                    'need_reimport': False,
+                }
 
             switched = False
             for target_name in self._build_chatwith_candidates():

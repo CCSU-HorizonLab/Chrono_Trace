@@ -84,7 +84,7 @@ class Bridge(
         self._wechat_import_tasks: dict[str, dict[str, Any]] = {}
         self._wechat_import_lock = threading.Lock()
         self._webview_window = None  # 由 app_dev.py 注入
-        self._analysis_cancel_event = None  # 用于取消好感度分析
+        self._analysis_cancel_events: dict = {}  # task_id -> 取消事件（按任务隔离，W5）
 
         # RAG 队列启动即拉起：回收上次进程遗留的孤儿 indexing 状态
         try:
@@ -2245,17 +2245,23 @@ class Bridge(
                 }
 
             import threading
-            self._analysis_cancel_event = threading.Event()
-
-            # 异步启动：立即返回 task_id，前端轮询 get_extraction_progress
-            # （此前同步阻塞至完成，导致切页丢进度 + 重复发起时后端叠加运行）
             import uuid as _uuid
             task_id = f"extract_{conversation_id}_{int(time.time())}_{_uuid.uuid4().hex[:6]}"
-            cancel_event = self._analysis_cancel_event
+            # 取消事件按 task_id 隔离（W5）：此前共享单事件被后启动的任务
+            # 覆盖，先启动的提取再也停不掉、取消会误停最后启动的那个
+            cancel_event = threading.Event()
+            self._analysis_cancel_events[task_id] = cancel_event
+
+            def _run_extract():
+                try:
+                    service.extract_features(
+                        conversation_id, cancel_event=cancel_event, task_id=task_id
+                    )
+                finally:
+                    self._analysis_cancel_events.pop(task_id, None)
+
             threading.Thread(
-                target=lambda: service.extract_features(
-                    conversation_id, cancel_event=cancel_event, task_id=task_id
-                ),
+                target=_run_extract,
                 daemon=True,
                 name=f"feature-extract-{conversation_id}",
             ).start()

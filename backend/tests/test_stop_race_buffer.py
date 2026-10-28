@@ -146,7 +146,15 @@ def test_poll_abort_finalize_migrates_buffer(test_db):
         "b_abort", "acct", "wxid_b", "对方B", _buffer_msg(2, 1_700_000_200)
     )
 
-    service._finalize_session_in_thread({})
+    # 收尾必须读冻结的 session_state（W5）：收尾期间新会话可能已接管字段
+    session_state = {
+        "session_token": 1,
+        "batch_id": "b_abort",
+        "account_wxid": "acct",
+        "talker_username": "wxid_b",
+        "display_name": "对方B",
+    }
+    service._finalize_session_in_thread(session_state)
 
     # 缓冲消息已迁移入历史表（不再是孤儿行）
     row = get_db().execute(
@@ -158,6 +166,45 @@ def test_poll_abort_finalize_migrates_buffer(test_db):
     assert service.current_batch_id is None
     assert service.current_talker is None
     assert service.current_display_name is None
+
+
+def test_poll_abort_finalize_uses_frozen_state_not_live_fields(test_db):
+    """收尾读冻结 session_state：self.current_* 已被新会话改写时不得错拿（W5）。
+
+    此前读实时 self.current_*——旧会话失效收尾撞上新会话已启动的窗口时，
+    会把新会话的批次迁移/清掉。
+    """
+    from app.services.realtime.monitor_service import RealtimeMonitorService
+
+    RealtimeMonitorService._instance = None
+    service = RealtimeMonitorService()
+    service.current_account_wxid = "acct"
+    service.message_buffer = MessageBuffer()
+    service.message_buffer.save_message(
+        "b_old", "acct", "wxid_old", "旧对象", _buffer_msg(1, 1_700_000_100)
+    )
+
+    # 新会话已接管单例字段（R2 场景：回溯/旧轮询线程仍在收尾）
+    service.current_batch_id = "b_new"
+    service.current_talker = "wxid_new"
+    service.current_display_name = "新对象"
+
+    service._finalize_session_in_thread({
+        "session_token": 1,
+        "batch_id": "b_old",
+        "account_wxid": "acct",
+        "talker_username": "wxid_old",
+        "display_name": "旧对象",
+    })
+
+    # 旧批次被迁移（冻结值），新会话字段不被清理
+    row = get_db().execute(
+        "SELECT COUNT(*) FROM messages WHERE talker = 'wxid_old' AND source = 'realtime'"
+    ).fetchone()
+    assert row[0] == 1
+    assert service.current_batch_id == "b_new", "新会话字段不得被旧收尾清掉"
+    assert service.current_talker == "wxid_new"
+    assert service.current_display_name == "新对象"
 
 
 def test_fallback_decrypt_writes_into_private_dir(tmp_path, monkeypatch):

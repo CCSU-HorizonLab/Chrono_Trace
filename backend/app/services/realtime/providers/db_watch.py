@@ -85,6 +85,21 @@ from ...wechat.content_codec import TYPE_NAME_PLACEHOLDER as NON_TEXT_PLACEHOLDE
 from ...wechat.content_codec import decode_message_content
 
 
+def _drain_inotify_events(buf: bytes) -> bytes:
+    """消化 inotify 事件流，返回剩余不完整字节。
+
+    struct inotify_event：wd[0:4] mask[4:8] cookie[8:12] len[12:16]
+    name[16:16+len]——len 在偏移 12，此前误读 buf[16:20]（name 首 4 字节），
+    带 name 的事件会算出随机 event_len，buf 永不消化、事件流错位（W5）。
+    """
+    while len(buf) >= _INOTIFY_EVENT_SIZE:
+        event_len = _INOTIFY_EVENT_SIZE + int.from_bytes(buf[12:16], "little")
+        if len(buf) < event_len:
+            break
+        buf = buf[event_len:]
+    return buf
+
+
 class DbWatchRealtimeProvider(RealtimeProvider):
     """以加密库文件为数据源的实时监听 provider。"""
 
@@ -355,11 +370,7 @@ class DbWatchRealtimeProvider(RealtimeProvider):
                     break
                 buf += chunk
                 # 解析事件（只需要知道「有事件」而非哪个文件——refresh 全分片 stat）
-                while len(buf) >= _INOTIFY_EVENT_SIZE:
-                    event_len = _INOTIFY_EVENT_SIZE + int.from_bytes(buf[16:20], "little")
-                    if len(buf) < event_len:
-                        break
-                    buf = buf[event_len:]
+                buf = _drain_inotify_events(buf)
                 # 懒创建的 -wal 出现了：从目录监视转挂为文件级监视
                 if self._pending_wal_checks:
                     self._adopt_pending_wals()
@@ -411,26 +422,29 @@ class DbWatchRealtimeProvider(RealtimeProvider):
         name = str(display_name or "").strip()
         if not name:
             return ""
+        # 必须按当前账号过滤：contacts/conversations 均含多账号行，同名
+        # 联系人跨账号存在时不加过滤会把消息表绑到别的账号的人（W5）
+        account = str(self.account_name or "").strip()
         try:
             from ....db.connection import get_db
             conn = get_db()
             row = conn.execute(
                 """
                 SELECT username FROM contacts
-                WHERE (remark = ? OR nickname = ?)
+                WHERE account_wxid = ? AND (remark = ? OR nickname = ?)
                 ORDER BY CASE WHEN remark = ? THEN 0 ELSE 1 END, username ASC LIMIT 1
                 """,
-                (name, name, name),
+                (account, name, name, name),
             ).fetchone()
             if row and row[0]:
                 return str(row[0]).strip()
             row = conn.execute(
                 """
                 SELECT username FROM conversations
-                WHERE display_name = ? OR username = ?
+                WHERE account_wxid = ? AND (display_name = ? OR username = ?)
                 ORDER BY message_count DESC, updated_at DESC LIMIT 1
                 """,
-                (name, name),
+                (account, name, name),
             ).fetchone()
             if row and row[0]:
                 return str(row[0]).strip()

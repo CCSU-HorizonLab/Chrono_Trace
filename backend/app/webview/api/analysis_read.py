@@ -524,18 +524,52 @@ class AnalysisReadApiMixin:
 
             service = self._get_feature_service()
 
-            # 删除旧数据
-            service.delete_analysis_data(conversation_id)
+            # 并发守卫（与 start_feature_extraction 同口径）：同会话已有
+            # 运行中的提取时拒绝——此前此处无守卫直接删旧数据再同步提取，
+            # 会与运行中的任务互相删数据（W5）
+            running_task = service.find_running_task(conversation_id)
+            if running_task:
+                return {
+                    "success": False,
+                    "error": "该会话已有进行中的提取任务，请等待完成后再重新分析",
+                }
 
-            # 重新提取
-            result = service.extract_features(conversation_id)
+            import threading
+            import time as _time
+            import uuid as _uuid
+
+            task_id = f"extract_{conversation_id}_{int(_time.time())}_{_uuid.uuid4().hex[:6]}"
+            # 取消事件按 task_id 隔离（W5，与 start_feature_extraction 共用注册表）
+            cancel_event = threading.Event()
+            self._analysis_cancel_events[task_id] = cancel_event
+
+            def _run_reanalyze():
+                try:
+                    # 删除旧数据 + 重新提取（线程内执行：bridge 调用立即
+                    # 返回，此前同步阻塞至完成会卡住所有后续 bridge 调用）
+                    service.delete_analysis_data(conversation_id)
+                    service.extract_features(
+                        conversation_id, cancel_event=cancel_event, task_id=task_id
+                    )
+                except Exception as e:
+                    logger.error(f"[Bridge] 重新分析线程失败: {e}")
+                    import traceback
+                    traceback.print_exc()
+                finally:
+                    self._analysis_cancel_events.pop(task_id, None)
+
+            threading.Thread(
+                target=_run_reanalyze,
+                daemon=True,
+                name=f"reanalyze-{conversation_id}",
+            ).start()
 
             return {
                 "success": True,
                 "data": {
-                    "task_id": result["task_id"],
-                    "status": "completed",
-                    "message": "Re-analysis completed"
+                    "task_id": task_id,
+                    "status": "started",
+                    "message": "Re-analysis started"
                 }
             }
         except Exception as e:

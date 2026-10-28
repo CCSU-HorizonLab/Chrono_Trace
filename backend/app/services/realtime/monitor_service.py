@@ -935,14 +935,17 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, Backfi
         """轮询线程侧失效收尾：checkpoint + 迁移缓冲 + 清状态（无 join）。
 
         与 stop_monitoring 收尾同语义，但在轮询线程自身执行——不能等
-        自己结束，也不做状态拒绝检查（调用点即终局）。
+        自己结束，也不做状态拒绝检查（调用点即终局）。必须读冻结的
+        session_state 而非实时 self.current_*：收尾期间新会话可能已启动
+        并接管单例字段，读实时值会把新会话的批次迁移/清掉（W5）
         """
-        batch_id = self.current_batch_id
-        talker_username = self.current_talker
-        talker_display_name = self.current_display_name
+        batch_id = session_state.get('batch_id')
+        talker_username = session_state.get('talker_username')
+        talker_display_name = session_state.get('display_name')
+        account_wxid = session_state.get('account_wxid') or self.current_account_wxid
         if not batch_id:
             return
-        message_count = self.message_buffer.get_batch_count(batch_id, self.current_account_wxid)
+        message_count = self.message_buffer.get_batch_count(batch_id, account_wxid)
         self._save_monitor_checkpoint(
             batch_id, talker_username, talker_display_name, message_count
         )
@@ -958,9 +961,12 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, Backfi
             'message_count': message_count,
             'migrated_count': migrated_count,
         })
-        self.current_batch_id = None
-        self.current_talker = None
-        self.current_display_name = None
+        # 仅当仍是本会话（未被新会话接管）才清字段：新会话已启动时
+        # 清掉的是新会话的 current_*（R2 同族）
+        if self.current_batch_id == batch_id:
+            self.current_batch_id = None
+            self.current_talker = None
+            self.current_display_name = None
     
     def _process_message(
         self,

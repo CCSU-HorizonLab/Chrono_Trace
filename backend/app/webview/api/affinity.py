@@ -329,11 +329,15 @@ class AffinityApiMixin:
             }
 
     def cancel_analysis(self) -> dict[str, Any]:
-        """取消正在进行的好感度分析 / 特征提取"""
+        """取消正在进行的好感度分析 / 特征提取（取消全部运行中任务）"""
         try:
-            if self._analysis_cancel_event:
-                self._analysis_cancel_event.set()
-                logger.info("[Bridge] 已发送取消分析信号")
+            # 按 task_id 隔离后此处逐个 set（W5）：此前共享单事件只停得掉
+            # 最后启动的任务，先启动的提取/分析停不掉
+            events = list(getattr(self, "_analysis_cancel_events", {}).values())
+            for event in events:
+                event.set()
+            if events:
+                logger.info("[Bridge] 已发送取消分析信号（%d 个任务）", len(events))
                 return {"ok": True, "message": "已发送取消指令"}
             return {"ok": False, "message": "当前没有正在运行的分析"}
         except Exception as e:
@@ -394,7 +398,6 @@ class AffinityApiMixin:
                     if s.has_running_task()
                 ]
                 self._affinity_services.append(service)
-                self._analysis_cancel_event = threading.Event()
 
                 # 短路判定：无新消息且配置指纹未变 → 直接返回缓存（亚秒级），
                 # 跳过全链路重算。用户点「重新分析」且数据没变时不再白跑
@@ -439,6 +442,10 @@ class AffinityApiMixin:
                 # 保证返回给前端的 task_id 与服务内注册的完全一致，无需 sleep+扫描猜测
                 task_id = f"affinity_{conversation_id}_{int(_time.time())}_{uuid.uuid4().hex[:6]}"
                 service.register_task(task_id, conversation_id)
+                # 取消事件按 task_id 隔离（W5），与 bridge 的特征提取共用
+                # 注册表——此前共享单事件被后启动的任务覆盖，先启动的停不掉
+                cancel_event = threading.Event()
+                self._analysis_cancel_events[task_id] = cancel_event
 
             def _run_analysis():
                 try:
@@ -446,7 +453,7 @@ class AffinityApiMixin:
                         conversation_id,
                         effective_force_reanalyze,
                         config_overrides,
-                        cancel_event=self._analysis_cancel_event,
+                        cancel_event=cancel_event,
                         task_id=task_id,
                     )
                     # 分析完成自动补建 RAG 记忆索引：纯历史分析用户不开
@@ -458,6 +465,8 @@ class AffinityApiMixin:
                     logger.error(f"[Bridge] 异步好感度分析失败: {e}")
                     import traceback
                     traceback.print_exc()
+                finally:
+                    self._analysis_cancel_events.pop(task_id, None)
 
             t = threading.Thread(target=_run_analysis, daemon=True)
             t.start()

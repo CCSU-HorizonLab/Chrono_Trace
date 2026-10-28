@@ -132,3 +132,33 @@ class TestStaleSnapshotGuard:
         assert mgr.get_decrypted_path(
             tmp_path / "message_0.db", "aa" * 32) == watcher.out_path
         assert not watcher.closed
+
+    def test_new_branch_stale_sidecar_rejected(self, tmp_path, monkeypatch):
+        """新建分支同样拒陈旧：sidecar 恢复后增量失败只保留旧快照。
+
+        EncryptedShardWatcher.__init__ 的 refresh 吞错不抛——构造"成功"
+        但磁盘快照可能已领先源很久，不查会把旧快照当当前数据发出。
+        """
+        import app.services.wechat.snapshot_manager as sm
+        import os
+        tolerance = sm.STALE_TOLERANCE_SECONDS
+
+        src = tmp_path / "message_0.db"
+        src.write_bytes(b"encrypted-src")
+        out = tmp_path / "old.dec.db"
+        out.write_bytes(b"old-snapshot")
+
+        class _StaleSidecarWatcher(FakeWatcher):
+            def __init__(self, src_p, key_hex, cache_dir, raw_keys=None):
+                super().__init__(Path(src_p), out)
+                self.resumed_from_disk = True  # sidecar 命中路径
+
+        # 源比磁盘旧快照新 10×容差（上次会话崩溃后源持续被写）
+        now = time.time()
+        os.utime(src, (now - tolerance * 10, now - tolerance * 10))
+        os.utime(out, (now - tolerance * 20, now - tolerance * 20))
+
+        monkeypatch.setattr(sm, "EncryptedShardWatcher", _StaleSidecarWatcher)
+        mgr = SharedSnapshotManager()
+        assert mgr.get_decrypted_path(src, "aa" * 32) is None
+        assert not mgr._watchers, "陈旧 sidecar watcher 不得入缓存"

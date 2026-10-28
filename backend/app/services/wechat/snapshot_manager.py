@@ -77,21 +77,22 @@ class SharedSnapshotManager:
                     logger.warning("[SnapshotManager] 首次解密失败 %s: %s", src_path, exc)
                     return None
             else:
-                # 已有快照：增量刷新（mtime 变化才实际操作，stat 短路零开销）。
-                # 刷新失败不冒进：检查快照陈旧度，源已领先快照超过容差即丢弃
-                # 缓存返回 None（调用方走全量解密兜底）——此前无界返回旧快照，
-                # 导入在旧数据上照常推进水位，窗口内新消息永久丢失
+                # 已有快照：增量刷新（mtime 变化才实际操作，stat 短路零开销）
                 try:
                     watcher.refresh()
                 except Exception as exc:
                     logger.warning("[SnapshotManager] 增量刷新失败 %s: %s", src_path, exc)
-                if self._is_stale(watcher):
-                    logger.warning(
-                        "[SnapshotManager] 快照陈旧（源领先超过 %ds），丢弃重解: %s",
-                        STALE_TOLERANCE_SECONDS, src_path,
-                    )
-                    self._drop_watcher(cache_key, watcher)
-                    return None
+            # 陈旧检查对两个分支统一生效：新建分支 sidecar 恢复后的增量
+            # 刷新失败同样只保留旧快照（refresh 内部吞错返回 False，构造不
+            # 抛），不查会把领先源很久的磁盘旧快照当当前数据交给导入——
+            # 水位照常推进，窗口内新消息永久丢失
+            if self._is_stale(watcher):
+                logger.warning(
+                    "[SnapshotManager] 快照陈旧（源领先超过 %ds），丢弃重解: %s",
+                    STALE_TOLERANCE_SECONDS, src_path,
+                )
+                self._drop_watcher(cache_key, watcher)
+                return None
             return watcher.out_path
 
     def _is_stale(self, watcher: EncryptedShardWatcher) -> bool:

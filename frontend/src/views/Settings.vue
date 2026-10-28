@@ -479,7 +479,7 @@
             </label>
             <label class="row">
               <div class="lab">API Key</div>
-              <input v-model="editingModel.api_key" class="ct-field" type="password" placeholder="本地推理可留空" />
+              <input v-model="editingModel.api_key" class="ct-field" type="password" :placeholder="editingModel.id ? '留空保持原密钥不变' : '本地推理可留空'" />
             </label>
             <label class="row">
               <div class="lab">温度</div>

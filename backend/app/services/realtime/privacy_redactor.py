@@ -131,6 +131,12 @@ class PrivacyRedactor:
         ("id_card", re.compile(r"\b\d{17}[\dXx]\b")),
         ("bank_card", re.compile(r"\b(?:\d[ -]?){16,19}\b")),
         ("phone", re.compile(r"(?<!\d)(?:\+?86[-\s]?)?1[3-9]\d{9}(?!\d)")),
+        # 邮箱/链接/座机：常见 PII 载体（网盘分享链接带提取码、企业座机），
+        # 此前五类模式对其原样放行直发远程。末段 TLD 限字母防误伤 "pkg@1.0"
+        # 类版本号；URL 仅匹配带协议头/www 前缀的串，尾类排除中英标点防吞句读。
+        ("email", re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}\b")),
+        ("url", re.compile(r"(?i)\b(?:https?://|www\.)[^\s<>()\"'，。；、！？）】」』]*")),
+        ("landline", re.compile(r"(?<!\d)(?:0\d{2,3}[-\s]?\d{7,8}|400[-\s]?\d{3,4}[-\s]?\d{3,4})(?!\d)")),
         ("address", re.compile(r"[\u4e00-\u9fa5]{2,}(?:省|市|区|县|镇|乡|路|街|巷|号楼?|单元|室)[\u4e00-\u9fa5A-Za-z0-9\-]{2,30}")),
     )
 

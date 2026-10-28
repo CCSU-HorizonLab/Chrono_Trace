@@ -403,22 +403,90 @@ def _hook_offsets_cached(pid: int) -> list[int]:
     return _cached_offsets[cache_key]
 
 
+def _scrub_secrets(text: str) -> str:
+    """错误文本防御：抹掉任何 64 位十六进制串（passphrase 形状）。
+
+    超时错误历史上把 gdb 输出尾部原样嵌进消息直达 UI 与日志——若密钥
+    恰在其中则明文泄漏。密钥命中路径在本函数之前已返回，走到这里的
+    hex64 一律不是合法结果，抹除无副作用。
+    """
+    return re.sub(r"(?i)\b[0-9a-f]{64}\b", "<hex64已隐去>", text or "")
+
+
+class _GdbSession:
+    """一次 gdb 附加会话：Popen + 持续排空线程 + 累积输出。
+
+    stdout PIPE 缓冲 64KB，此前只在进程退出后读取——多断点高频命中
+    （BP_HIT 行 + gdb 自带断点回显）写满管道会把 gdb 卡死在 write 上，
+    表现为「准备就绪却永远超时」。排空线程持续消费管道，累积文本供
+    增量命中检测与会话结束后的统一分析。
+    """
+
+    def __init__(self, proc: subprocess.Popen):
+        self.proc = proc
+        self.chunks: list[str] = []
+        self.reader = threading.Thread(
+            target=self._drain, daemon=True, name="gdb-output-drain"
+        )
+        self.reader.start()
+
+    def _drain(self) -> None:  # pragma: no cover - 线程侧执行
+        try:
+            for line in self.proc.stdout:
+                self.chunks.append(line)
+        except Exception:
+            pass
+
+    def text(self, drain_timeout: float = 2.0) -> str:
+        """当前累积输出（进程已退出时等排空线程收完 EOF 残余）。"""
+        self.reader.join(timeout=drain_timeout)
+        return "".join(self.chunks)
+
+    def stop(self) -> str:
+        """终止会话（若仍存活）并返回完整输出。"""
+        try:
+            if self.proc.poll() is None:
+                self.proc.kill()
+                self.proc.wait(timeout=5)
+        except Exception:
+            pass
+        return self.text()
+
+    def finish_after_capture(self) -> None:
+        """密钥已打印后的收尾：脚本 print 后随即 detach+quit，先给它
+        自然退出的机会（不打断 detach）；超时才 kill——tracer 死亡时
+        内核会自动恢复被 trace 的进程，微信不受影响。
+        """
+        try:
+            self.proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            try:
+                self.proc.kill()
+                self.proc.wait(timeout=5)
+            except Exception:
+                pass
+        self.reader.join(timeout=2)
+
+
 def capture_passphrase_via_gdb(pid: int, timeout: int = 180) -> str:
     """GDB 断点捕获 passphrase。需要用户在此期间于微信「退出登录并重新登录」。
 
     微信「退出登录」会重启主进程：本函数带 pid 监护——附加中的进程一旦死亡，
     立即寻找新进程并转挂（登录扫码窗口足够完成转挂），确保断点始终在
     「即将执行登录」的进程上。
+
+    密钥三重保险：会话运行中增量检测（不等 gdb 退出）、会话结束输出复查、
+    超时收尾兜底复查——已打印的 passphrase 不因 gdb 卡住/超时而丢失。
     """
     if not shutil.which("gdb"):
         raise RuntimeError("未安装 GDB，请运行: sudo apt install gdb")
 
     deadline = time.monotonic() + max(30, timeout)
     current_pid = pid
-    gdb_proc: subprocess.Popen | None = None
     gdb_outputs: list[str] = []
+    session: _GdbSession | None = None
 
-    def _launch_gdb(target_pid: int) -> subprocess.Popen:
+    def _launch_gdb(target_pid: int) -> _GdbSession:
         exe_link = os.readlink(f"/proc/{target_pid}/exe")
         hook_vas = _hook_offsets_cached(target_pid)
         breakpoint_addrs = [va_to_runtime_addr(target_pid, exe_link, va) for va in hook_vas]
@@ -439,37 +507,36 @@ def capture_passphrase_via_gdb(pid: int, timeout: int = 180) -> str:
         tmpdir = tempfile.mkdtemp(prefix="chrono-key-")
         script_path = pathlib.Path(tmpdir) / "capture.gdb"
         script_path.write_text(script)
-        return subprocess.Popen(
+        proc = subprocess.Popen(
             ["gdb", "-q", "--nx", "-batch", "-x", str(script_path)],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
             preexec_fn=_pdeathsig,
         )
+        return _GdbSession(proc)
 
     try:
         while time.monotonic() < deadline:
-            # 1) 上一轮 gdb 已结束（成功或异常退出）：检查输出
-            if gdb_proc is not None and gdb_proc.poll() is not None:
-                output = gdb_proc.stdout.read() if gdb_proc.stdout else ""
-                gdb_outputs.append(output)
-                match = PASSPHRASE_RE.search(output)
+            # 1) 运行中会话：增量命中检测（密钥打印即返回，不等退出）
+            if session is not None:
+                match = PASSPHRASE_RE.search(session.text(0))
                 if match:
+                    session.finish_after_capture()
+                    session = None
                     logger.info("[LinuxKey] passphrase 捕获成功")
                     return match.group(1).lower()
-                logger.info("[LinuxKey] gdb 会话结束（未捕获），重新附加…")
-                gdb_proc = None
+                # 上一轮 gdb 已结束（成功或异常退出但未打印密钥）：转存输出重挂
+                if session.proc.poll() is not None:
+                    gdb_outputs.append(session.text())
+                    logger.info("[LinuxKey] gdb 会话结束（未捕获），重新附加…")
+                    session = None
 
             # 2) 目标进程死亡（完全退出/重登重启）：清理并等待新进程
             if not _pid_alive(current_pid):
-                if gdb_proc is not None:
-                    gdb_proc.kill()
-                    try:
-                        gdb_outputs.append(gdb_proc.stdout.read() or "")
-                    except Exception:
-                        pass
-                    gdb_proc = None
-                    subprocess.run(["killall", "-9", "gdb"], capture_output=True, timeout=5)
+                if session is not None:
+                    gdb_outputs.append(session.stop())
+                    session = None
                 remaining = deadline - time.monotonic()
                 new_pid = _wait_for_new_wechat_pid(current_pid, timeout=min(30, max(1, remaining)))
                 if new_pid is None:
@@ -481,26 +548,28 @@ def capture_passphrase_via_gdb(pid: int, timeout: int = 180) -> str:
                 logger.info("[LinuxKey] 检测到微信进程重启，转挂新 PID=%s", current_pid)
 
             # 3) 附加当前进程（首次启动与转挂共用）
-            if gdb_proc is None:
-                gdb_proc = _launch_gdb(current_pid)
+            if session is None:
+                session = _launch_gdb(current_pid)
                 time.sleep(1.0)  # 给 gdb 一点附加时间，下一轮再检查状态
 
             time.sleep(0.3)
 
-        # 超时收尾
-        if gdb_proc is not None:
-            gdb_proc.kill()
-            try:
-                gdb_outputs.append(gdb_proc.stdout.read() or "")
-            except Exception:
-                pass
-            subprocess.run(["killall", "-9", "gdb"], capture_output=True, timeout=5)
+        # 超时收尾：终止最后一个会话，输出并入统一分析
+        if session is not None:
+            gdb_outputs.append(session.stop())
+            session = None
     finally:
-        if gdb_proc is not None and gdb_proc.poll() is None:
-            gdb_proc.kill()
-            subprocess.run(["killall", "-9", "gdb"], capture_output=True, timeout=5)
+        # 异常路径（含 KeyboardInterrupt）同样终止会话，不留占用 ptrace 的孤儿 gdb
+        if session is not None:
+            session.stop()
 
     combined = "\n".join(gdb_outputs)
+    # 超时兜底：密钥可能已打印而 gdb 未及退出（管道满/被杀）——先于一切
+    # 错误路径检查，命中即按成功返回
+    match = PASSPHRASE_RE.search(combined)
+    if match:
+        logger.info("[LinuxKey] passphrase 于超时收尾兜底捕获")
+        return match.group(1).lower()
     if "Operation not permitted" in combined or "ptrace" in combined.lower():
         raise RuntimeError(
             "GDB 无法附加微信进程：请执行 echo 0 | sudo tee /proc/sys/kernel/yama/ptrace_scope，"
@@ -508,12 +577,12 @@ def capture_passphrase_via_gdb(pid: int, timeout: int = 180) -> str:
         )
     error_match = CAPTURE_ERROR_RE.search(combined)
     if error_match:
-        raise RuntimeError(f"捕获出错: {error_match.group(1)}")
+        raise RuntimeError(f"捕获出错: {_scrub_secrets(error_match.group(1))}")
     hit_lines = [ln for ln in combined.splitlines() if ln.startswith("BP_HIT")]
     detail = f"（断点命中 {len(hit_lines)} 次：{hit_lines[-3:]}）" if hit_lines else "（断点未命中）"
     raise RuntimeError(
         f"超时未捕获 passphrase。{detail} 请确保在捕获期间于微信中重新登录。"
-        f" gdb 输出尾部: {combined[-400:]}"
+        f" gdb 输出尾部: {_scrub_secrets(combined[-400:])}"
     )
 
 

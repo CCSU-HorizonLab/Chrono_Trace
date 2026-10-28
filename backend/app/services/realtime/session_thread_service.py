@@ -386,6 +386,27 @@ class SessionThreadService:
 
             user_prompt = '\n'.join(parts)
 
+            # 远程模型发送前脱敏（红线：失败即阻断，不用原文冒进）。
+            # 整段一次脱敏保证同一实体多处出现拿到同一占位符；
+            # 本地模型不出网，与 llm_engine 同款边界不脱敏
+            from .rag.config import is_remote_llm_model
+            if is_remote_llm_model(model_config):
+                try:
+                    from ...db.connection import get_db
+                    from .privacy_redactor import PrivacyRedactor
+                    user_prompt = PrivacyRedactor(get_db()).redact(
+                        user_prompt,
+                        account_wxid=self._resolve_account_wxid(""),
+                        conversation_id=None,
+                        source_table="session_thread_summary",
+                    ).redacted_text
+                except Exception as redact_e:
+                    _print(f"[SessionThread] ⚠️ 脱敏失败，按红线阻断远程总结: {redact_e}")
+                    return {
+                        'summary': f'与对方的一次聊天（{len(messages)}条消息）',
+                        'keywords': '',
+                    }
+
             # 调用 LLM
             base_url = model_config['api_base_url'].rstrip('/')
             api_key = model_config.get('api_key', '')

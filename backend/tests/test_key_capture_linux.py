@@ -255,3 +255,133 @@ def test_provider_create_capture_session_shape():
     assert isinstance(session, kcl.LinuxKeyCaptureSession)
     assert session.account_wxid == "wxid_test"
     assert session.timeout_seconds == 60
+
+
+# ============================================================
+# capture_passphrase_via_gdb：管道排空 / 超时兜底 / 错误脱敏
+#
+# 历史缺陷：stdout PIPE 只在 gdb 退出后读取，>64KB 管道缓冲把 gdb
+# 卡死在 write 上（准备就绪却永远超时）；超时路径不复查输出——密钥
+# 已打印仍误报超时；错误消息嵌 combined[-400:] 把密钥明文带进 UI
+# 与日志。以下三用例锁住修复行为。
+# ============================================================
+
+
+# ============================================================
+# capture_passphrase_via_gdb：管道排空 / 超时兜底 / 错误脱敏
+#
+# 历史缺陷：stdout PIPE 只在 gdb 退出后读取，>64KB 管道缓冲把 gdb
+# 卡死在 write 上（准备就绪却永远超时）；超时路径不复查输出——密钥
+# 已打印仍误报超时；错误消息嵌 combined[-400:] 把密钥明文带进 UI
+# 与日志。以下用例锁住修复行为（离线：假 gdb 进程 + 假时钟）。
+# ============================================================
+
+from time import sleep as _real_sleep
+
+import subprocess as _real_subprocess
+
+
+class _FakeTime:
+    """假时钟：monotonic 每调一次 +1s、sleep 即时返回，主循环秒速跑满 deadline。"""
+
+    def __init__(self):
+        self.now = 1000.0
+
+    def monotonic(self):
+        self.now += 1.0
+        return self.now
+
+    def sleep(self, _seconds):
+        return None
+
+
+class _FakeGdbProc:
+    """假 gdb：poll 恒 None（模拟卡住不退出）。
+
+    stdout 迭代器先吐 lines，随后阻塞等待 kill——kill 后再吐
+    post_kill_lines 并 EOF（模拟被 SIGKILL 前刷出最后缓冲）。
+    """
+
+    def __init__(self, lines, post_kill=()):
+        self.killed = False
+        self.returncode = None
+        self._lines = list(lines)
+        self._post_kill = list(post_kill)
+
+    def _stdout_iter(self):
+        for line in self._lines:
+            yield line
+        while not self.killed:
+            _real_sleep(0.002)
+        for line in self._post_kill:
+            yield line
+
+    @property
+    def stdout(self):
+        return self._stdout_iter()
+
+    def poll(self):
+        return None
+
+    def wait(self, timeout=None):
+        raise _real_subprocess.TimeoutExpired(cmd="gdb", timeout=timeout)
+
+    def kill(self):
+        self.killed = True
+        self.returncode = -9
+
+
+def _patch_capture_env(monkeypatch, proc, fake_time):
+    monkeypatch.setattr(kcl.shutil, "which", lambda name: "/usr/bin/gdb")
+    monkeypatch.setattr(kcl.time, "monotonic", fake_time.monotonic)
+    monkeypatch.setattr(kcl.time, "sleep", fake_time.sleep)
+    monkeypatch.setattr(kcl, "_pid_alive", lambda pid: True)
+    monkeypatch.setattr(kcl.os, "readlink", lambda path: "/usr/bin/wechat")
+    monkeypatch.setattr(kcl, "_hook_offsets_cached", lambda pid: [0x44EC100])
+    monkeypatch.setattr(kcl, "va_to_runtime_addr", lambda pid, exe, va: 0x7F000000 + va)
+    monkeypatch.setattr(kcl.subprocess, "Popen", lambda *a, **k: proc)
+
+
+def test_capture_returns_key_while_gdb_still_running(monkeypatch):
+    """密钥已打印而 gdb 卡住不退出：增量命中直接返回，不误报超时。"""
+    key_hex = "ab" * 32
+    proc = _FakeGdbProc([f"BP_HIT rsi=0x1 rdx=0x20\n", f"WECHAT_PASSPHRASE={key_hex}\n"])
+    _patch_capture_env(monkeypatch, proc, _FakeTime())
+    assert kcl.capture_passphrase_via_gdb(4242, timeout=30) == key_hex
+
+
+def test_capture_timeout_salvages_key_from_killed_session(monkeypatch):
+    """超时兜底：密钥仅在 gdb 被 kill 前的最后缓冲里——收尾复查仍须捕获。"""
+    key_hex = "cd" * 32
+    proc = _FakeGdbProc(
+        ["BP_HIT rsi=0x1 rdx=0x20\n"] * 5,
+        post_kill=[f"WECHAT_PASSPHRASE={key_hex}\n"],
+    )
+    _patch_capture_env(monkeypatch, proc, _FakeTime())
+    assert kcl.capture_passphrase_via_gdb(4242, timeout=30) == key_hex
+
+
+def test_capture_timeout_error_scrubs_hex64(monkeypatch):
+    """真超时报错：错误消息里的 gdb 输出尾部必须先抹掉 64 位十六进制串。"""
+    junk_hex = "0f" * 32
+    proc = _FakeGdbProc([f"Breakpoint 1, 0x00007f00: {junk_hex}\n"] * 40)
+    _patch_capture_env(monkeypatch, proc, _FakeTime())
+    with pytest.raises(RuntimeError, match="超时未捕获") as excinfo:
+        kcl.capture_passphrase_via_gdb(4242, timeout=30)
+    # 消息里的 hexdump 垃圾已被打码（密钥形状的串绝不外泄）
+    assert junk_hex not in str(excinfo.value)
+    assert "<hex64已隐去>" in str(excinfo.value)
+
+
+def test_gdb_session_drains_pipe_beyond_64k():
+    """排空线程持续消费：真实子进程写 >64KB 不被管道缓冲卡死。"""
+    code = "import sys\nfor _ in range(4000):\n    sys.stdout.write('x' * 64 + chr(10))\n"
+    proc = _real_subprocess.Popen(
+        [sys.executable, "-c", code],
+        stdout=_real_subprocess.PIPE,
+        stderr=_real_subprocess.STDOUT,
+        text=True,
+    )
+    session = kcl._GdbSession(proc)
+    proc.wait(timeout=10)  # 无排空线程时子进程会在 ~64KB 处阻塞至超时
+    assert len(session.text()) >= 4000 * 65

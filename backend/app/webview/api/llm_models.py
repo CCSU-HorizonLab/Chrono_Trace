@@ -48,8 +48,10 @@ class LlmModelsApiMixin:
             models = []
             for row in cursor.fetchall():
                 m = dict(row)
-                # API Key 脱敏展示：只显示前4和后4个字符
-                key = m.get('api_key') or ''
+                # API Key 脱敏展示：只显示前4和后4个字符。明文仅用于生成
+                # masked 后立即丢弃——bridge 返回值直进前端 JS 上下文，
+                # 明文随列表回传等于密钥进 devtools/内存快照
+                key = m.pop('api_key', None) or ''
                 if len(key) > 10:
                     m['api_key_masked'] = f"{key[:4]}{'*' * (len(key) - 8)}{key[-4:]}"
                 elif key:
@@ -122,9 +124,14 @@ class LlmModelsApiMixin:
                         (1 if model['is_active'] else 0, _time.time(), model['id'])
                     )
                 else:
+                    # 编辑表单不回显密钥：空串即「未重输」，保留原值
+                    # （COALESCE(NULLIF(?, ''), api_key)）；如需彻底清除密钥，
+                    # 删除模型后重建。此前无条件写空串——每次编辑保存都把
+                    # 已配置的密钥静默清空，下次调用 401 才被发现
                     conn.execute(
                         '''UPDATE llm_models SET name = ?, provider = ?, model_id = ?,
-                           api_base_url = ?, api_key = ?, is_active = ?, max_tokens = ?,
+                           api_base_url = ?, api_key = COALESCE(NULLIF(?, ''), api_key),
+                           is_active = ?, max_tokens = ?,
                            temperature = ?, extra_body = ?, updated_at = ? WHERE id = ?''',
                         (model.get('name', ''), model.get('provider', ''), model.get('model_id', ''),
                          model.get('api_base_url', ''), model.get('api_key', ''), 1 if model.get('is_active') else 0,

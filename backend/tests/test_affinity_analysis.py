@@ -368,14 +368,16 @@ class TestRetryLlmRelationship:
         assert result.llm_relationship is not None
         assert result.llm_relationship.score == 85.0
         assert result.llm_relationship_absent_reason is None
-        # LLM 维在场后权重按五维重新归一（0.08 名义权重摊进有效基组）
-        assert result.llm_relationship.weight > 0
+        # LLM 维在场后权重按声明值归一（默认配置无关键词：偏好维缺席，
+        # 分母 0.40+0.35+0.15+0.08=0.98）——缓存里已被归一覆写的本地维
+        # 权重必须先复位为声明值，否则双次归一（0.08/1.08）口径失真
+        assert result.llm_relationship.weight == pytest.approx(0.08 / 0.98, rel=1e-6)
+        assert result.interaction_investment.weight == pytest.approx(0.40 / 0.98, rel=1e-6)
         assert sum(
             d.weight for d in (
                 result.interaction_investment, result.emotional_resonance,
-                result.closeness_signals, result.preference_compatibility,
-                result.llm_relationship,
-            ) if d
+                result.closeness_signals, result.llm_relationship,
+            ) if d and d.weight > 0
         ) == pytest.approx(1.0, abs=1e-6)
         # 风险预警随证据重判（mock assess 被调用且带 llm_result）
         from app.services.analysis.affinity_analysis_service import RiskSignalService

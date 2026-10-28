@@ -408,6 +408,20 @@ class AffinityAnalysisService:
                 for key, entry in plan.items()
             }
 
+            # 缓存里的本地维度权重已被首次分析的归一化原地覆写（在场维和
+            # 恰为 1.0），直接再归一会双次归一（分母 1.0+llm 而非声明和）
+            # ——先按当前声明权重复位，与全量分析的装配口径对齐
+            for dim_key in (
+                "interaction_investment",
+                "emotional_resonance",
+                "closeness_signals",
+                "preference_compatibility",
+            ):
+                dim = getattr(result, dim_key, None)
+                if dim is not None:
+                    dim.weight = weights[dim_key]
+                    dim.weighted_score = dim.score * weights[dim_key]
+
             # LLM 维输入准备（与全量分析同源：关系背景 + 账号 + 投入特征）
             result.progress_percent = 30
             result.current_step = "准备评估素材..."

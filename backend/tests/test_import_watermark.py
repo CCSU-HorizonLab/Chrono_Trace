@@ -42,6 +42,8 @@ class FakeMsgDB:
 
     calls: list[tuple[str, tuple | None]] = []
     data: dict[str, list[dict]] = {}
+    # 分片级读取缺口（W4）：非空时 ingest 必须冻结水位
+    read_errors: list[str] = []
 
     def __init__(self, paths, key, my_wxid=None, raw_keys=None):
         pass
@@ -65,6 +67,7 @@ class FakeMsgDB:
 def fake_msg_db(monkeypatch):
     FakeMsgDB.calls = []
     FakeMsgDB.data = {}
+    FakeMsgDB.read_errors = []
     monkeypatch.setattr(ingest_service, "MessageDBV4", FakeMsgDB)
     return FakeMsgDB
 
@@ -109,6 +112,39 @@ class TestWatermarkReadWindow:
             [], "key", "me", "acct", 0, raw_keys=None, watermark_ts=WM)
         assert stats["total"] == 0
         assert stats["watermark_ts"] == WM
+
+
+class TestShardReadErrorsFreezeWatermark:
+    """分片级读取缺口（W4）：缺口消息未落库，水位必须冻结。
+
+    MessageDBV4 对密钥验证失败/页面解密失败就地 continue 且正常返回，
+    ingest 的 failed_conversations 护栏此前感知不到——水位越过缺口，
+    后续增量永久跳过该窗口。read_errors 非空即冻结水位。
+    """
+
+    def test_shard_gap_freezes_watermark(self, test_db, fake_msg_db):
+        WM = 2_000_000
+        fake_msg_db.data = {"wxid_a": [_msg("wxid_a", 1, "新消息", WM + 500)]}
+        fake_msg_db.read_errors = ["分片#0 密钥验证失败: /x/message_0.db"]
+
+        service = WeChatIngestService()
+        stats = service._import_messages_v4(
+            [], "key", "me", "acct", 0, raw_keys=None, watermark_ts=WM)
+
+        assert stats["watermark_ts"] == WM, "分片缺口存在时水位不得推进"
+        assert stats["shard_read_errors"] == 1, "缺口数应透出供前端提示"
+
+    def test_no_gap_advances_normally(self, test_db, fake_msg_db):
+        WM = 2_000_000
+        fake_msg_db.data = {"wxid_a": [_msg("wxid_a", 1, "新消息", WM + 500)]}
+        fake_msg_db.read_errors = []
+
+        service = WeChatIngestService()
+        stats = service._import_messages_v4(
+            [], "key", "me", "acct", 0, raw_keys=None, watermark_ts=WM)
+
+        assert stats["watermark_ts"] == WM + 500, "无缺口时水位正常推进"
+        assert stats["shard_read_errors"] == 0
 
     def test_incremental_second_import_dedupes(self, test_db, fake_msg_db):
         """二次导入：窗口重扫的旧消息被判重集合跳过，只有新消息插入。"""

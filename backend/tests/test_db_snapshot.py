@@ -361,3 +361,89 @@ def test_wrong_key_full_failure_keeps_old_snapshot(tmp_path):
         assert Path(str(again.out_path)).read_bytes() == snapshot_before
     finally:
         again.close()
+
+
+def test_full_refresh_failure_leaves_page_hashes_untouched(tmp_path):
+    """全量刷新中途失败：内存页哈希不得被本轮新值污染（W4）。
+
+    此前页循环即时写 _page_hashes：失败轮（页1守卫 raise）丢弃 .tmp 保留
+    旧快照，但内存哈希已是新值——下轮「源未变」哈希命中 →
+    _read_decrypted_page 从旧快照拷旧明文，错误被永久固化。
+    """
+    plain_v1 = build_plain_db(tmp_path / "v1.db", SCHEMA_V1)
+    src = tmp_path / "message_0.db"
+    salt, _, _ = encrypt_db(plain_v1, src, KEY_HEX)
+    watcher = EncryptedShardWatcher(src, KEY_HEX, tmp_path / "cache")
+    try:
+        clean_hashes = dict(watcher._page_hashes)
+
+        # 源更新（同盐重加密）
+        plain_v2 = build_plain_db(tmp_path / "v2.db", SCHEMA_V1 + EXTRA_ROW)
+        encrypt_db(plain_v2, src, KEY_HEX, salt=salt)
+        st = src.stat()
+        os.utime(src, ns=(st.st_atime_ns, st.st_mtime_ns + 2_000_000_000))
+
+        # 页1 解密必败 → 全零守卫 raise → 整轮失败
+        real_decrypt = watcher._decrypt_raw
+
+        def _fail_page1(raw, page_no):
+            if page_no == 1:
+                raise RuntimeError("页 1 解密失败（测试注入）")
+            return real_decrypt(raw, page_no)
+
+        watcher._decrypt_raw = _fail_page1
+        assert watcher.refresh() is False
+        assert watcher._page_hashes == clean_hashes, "失败轮不得污染内存页哈希"
+
+        # 解除注入后同源重试：成功且新内容可见（自愈路径）
+        watcher._decrypt_raw = real_decrypt
+        assert watcher.refresh() is True
+        rows = watcher.connection.execute(
+            "SELECT message_content FROM [Msg_test] ORDER BY sort_seq"
+        ).fetchall()
+        assert [r[0] for r in rows] == ["早", "嗯呢", "中午吃啥", "晚上好"]
+    finally:
+        watcher.close()
+
+
+def test_wal_fast_path_failure_leaves_page_hashes_untouched(tmp_path, monkeypatch):
+    """WAL 快路径中途失败：帧页哈希不得即时入内存（W4 同族）。"""
+    plain_v1 = build_plain_db(tmp_path / "v1.db", SCHEMA_V1)
+    plain_v2 = build_plain_db(tmp_path / "v2.db", SCHEMA_V1 + EXTRA_ROW)
+    data1 = plain_v1.read_bytes()
+    data2 = plain_v2.read_bytes()
+    page_no = _diff_page_no(data1, data2)
+
+    src = tmp_path / "message_0.db"
+    salt, enc_key, mac_key = encrypt_db(plain_v1, src, KEY_HEX)
+    watcher = EncryptedShardWatcher(src, KEY_HEX, tmp_path / "cache")
+    try:
+        clean_hashes = dict(watcher._page_hashes)
+        rows_before = [r[0] for r in watcher.connection.execute(
+            "SELECT message_content FROM [Msg_test] ORDER BY sort_seq")]
+
+        # 主库不动、仅挂 -wal（快路径条件：主库 stat 未变），帧已提交
+        frame = encrypt_page(
+            data2[(page_no - 1) * PAGE:page_no * PAGE], enc_key, mac_key, page_no
+        )
+        build_wal(tmp_path / "message_0.db-wal", [(page_no, frame, True)])
+
+        # 注入快路径收尾 os.replace 失败（帧已应用到 .tmp、pending 哈希已暂存）
+        # → 整轮失败。此前帧哈希即时入内存，replace 失败即污染
+        real_replace = os.replace
+
+        def _boom_replace(src_p, dst_p, *a, **k):
+            if str(src_p).endswith(".tmp"):
+                raise OSError("replace 模拟故障（测试注入）")
+            return real_replace(src_p, dst_p, *a, **k)
+
+        monkeypatch.setattr(os, "replace", _boom_replace)
+        assert watcher.refresh() is False
+        monkeypatch.undo()
+        assert watcher._page_hashes == clean_hashes, "快路径失败不得污染页哈希"
+        # 旧快照原封未动
+        rows_after = [r[0] for r in watcher.connection.execute(
+            "SELECT message_content FROM [Msg_test] ORDER BY sort_seq")]
+        assert rows_after == rows_before
+    finally:
+        watcher.close()

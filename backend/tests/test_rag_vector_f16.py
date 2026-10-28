@@ -205,3 +205,43 @@ class TestFactVectors:
         )
         assert len(facts) == 1
         assert all(v == 0.0456 for v in facts[0]["vector"])
+
+
+class TestUpsertDocumentId:
+    """upsert 返回 id 必须是本行真实 id（W4）。
+
+    此前 ON CONFLICT DO UPDATE 走 lastrowid 快路径——该分支 lastrowid
+    是连接级残留（上次任意 INSERT 的 rowid），更新路径返回错 id，向量
+    挂到错误文档。唯一键回读才是真实 id。
+    """
+
+    def test_update_path_returns_real_id_not_stale_lastrowid(self):
+        conn = _conn()
+        store = RagStore(conn)
+        first_id = _seed_document(store)  # 首次 INSERT，建基准行
+        second_id = _seed_document(store, doc_id=2)  # 再插一行，lastrowid 漂移
+        assert second_id != first_id
+        stale_lastrowid = store.conn.execute(
+            "SELECT last_insert_rowid()"
+        ).fetchone()[0]
+        assert stale_lastrowid == second_id, "前置：lastrowid 停在最后一次插入"
+
+        # 同唯一键 upsert（DO UPDATE 分支）：lastrowid 不变（=second_id），
+        # 返回 id 必须仍是 first_id——lastrowid 快路径会错返回 second_id
+        again_id = store.upsert_document(
+            account_wxid="wxid_a",
+            conversation_id=1,
+            doc_type="topic_segment",
+            source_table="messages",
+            source_id="1",
+            source_ts=NOW + 10,
+            content="更新后的内容",
+            redacted_content="更新后的内容",
+            index_version="rag_v3",
+            source_kind="historical",
+        )
+        assert again_id == first_id
+        row = store.conn.execute(
+            "SELECT content FROM rag_documents WHERE id = ?", (first_id,)
+        ).fetchone()
+        assert row["content"] == "更新后的内容"

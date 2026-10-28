@@ -9,8 +9,11 @@
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import threading
+import time
 from pathlib import Path
 
 from .db_snapshot import EncryptedShardWatcher
@@ -18,8 +21,22 @@ from ...config import TEMP_DIR_PATH
 
 logger = logging.getLogger(__name__)
 
+# 快照陈旧容差（秒）：源库比快照新超过该值说明变化长期没能刷进快照
+# （持续撕裂/锁竞争），旧快照不得再当当前数据交给导入——水位会越过缺口
+STALE_TOLERANCE_SECONDS = 60
+
 _MANAGER: "SharedSnapshotManager | None" = None
 _MANAGER_LOCK = threading.Lock()
+
+
+def _key_identity(key_hex: str, raw_keys: dict | None) -> str:
+    """内存缓存键的密钥指纹：key_hex + raw_keys 排序指纹。"""
+    raw_fp = ""
+    if raw_keys:
+        raw_fp = hashlib.sha1(
+            json.dumps(raw_keys, sort_keys=True, ensure_ascii=False).encode("utf-8")
+        ).hexdigest()
+    return f"{str(key_hex or '').strip()}:{raw_fp}"
 
 
 class SharedSnapshotManager:
@@ -38,7 +55,9 @@ class SharedSnapshotManager:
         返回 None 表示解密失败（调用方走原全量路径兜底）。
         """
         src_path = Path(src)
-        cache_key = str(src_path.resolve())
+        # 缓存键必须含密钥指纹：换账号/密钥重捕获后同一路径拿到旧 watcher，
+        # 旧密钥解新数据全 HMAC 失败（磁盘 sidecar 有 key_fp 校验，内存没有）
+        cache_key = f"{src_path.resolve()}|{_key_identity(key_hex, raw_keys)}"
         with self._lock:
             watcher = self._watchers.get(cache_key)
             if watcher is None:
@@ -58,12 +77,41 @@ class SharedSnapshotManager:
                     logger.warning("[SnapshotManager] 首次解密失败 %s: %s", src_path, exc)
                     return None
             else:
-                # 已有快照：增量刷新（mtime 变化才实际操作，stat 短路零开销）
+                # 已有快照：增量刷新（mtime 变化才实际操作，stat 短路零开销）。
+                # 刷新失败不冒进：检查快照陈旧度，源已领先快照超过容差即丢弃
+                # 缓存返回 None（调用方走全量解密兜底）——此前无界返回旧快照，
+                # 导入在旧数据上照常推进水位，窗口内新消息永久丢失
                 try:
                     watcher.refresh()
                 except Exception as exc:
-                    logger.warning("[SnapshotManager] 增量刷新失败 %s（用旧快照）: %s", src_path, exc)
+                    logger.warning("[SnapshotManager] 增量刷新失败 %s: %s", src_path, exc)
+                if self._is_stale(watcher):
+                    logger.warning(
+                        "[SnapshotManager] 快照陈旧（源领先超过 %ds），丢弃重解: %s",
+                        STALE_TOLERANCE_SECONDS, src_path,
+                    )
+                    self._drop_watcher(cache_key, watcher)
+                    return None
             return watcher.out_path
+
+    def _is_stale(self, watcher: EncryptedShardWatcher) -> bool:
+        """源库 mtime 领先快照文件超过容差 → 快照长期未跟上源（持续失败）。
+
+        安静账号源不变时快照也不更新，相对判据不会误伤（区别于绝对年龄）。
+        """
+        try:
+            snap_mtime = watcher.out_path.stat().st_mtime
+            src_mtime = Path(watcher.src).stat().st_mtime
+        except OSError:
+            return True
+        return (src_mtime - snap_mtime) > STALE_TOLERANCE_SECONDS
+
+    def _drop_watcher(self, cache_key: str, watcher: EncryptedShardWatcher) -> None:
+        self._watchers.pop(cache_key, None)
+        try:
+            watcher.close()
+        except Exception:
+            pass
 
     def close_all(self) -> None:
         with self._lock:

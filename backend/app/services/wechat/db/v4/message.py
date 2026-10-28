@@ -39,6 +39,10 @@ class MessageDBV4(WeChatDBBase):
         self._my_wxid_candidates = self._build_my_wxid_candidates(my_wxid)
         self.connections = []
         self._table_columns_cache: Dict[str, Set[str]] = {}
+        # 分片级读取缺口收集（密钥验证失败/页面解密失败/Name2Id 读取失败）。
+        # 此类失败不抛异常打断整段导入，但必须让上层（ingest 水位护栏）
+        # 感知：缺口会话的消息未落库，水位推进越过即永久丢失（W4）
+        self.read_errors: List[str] = []
         self._connect_all()
         self._shard_msg_tables = self._load_shard_msg_tables()
 
@@ -126,6 +130,9 @@ class MessageDBV4(WeChatDBBase):
                     # 验证密钥
                     if not decryptor.verify_key_from_file(db_path, self.db_key):
                         logger.error(f"[WARN] 跳过: 密钥验证失败 {db_path}")
+                        # 整分片缺席必须留痕（W4）：就地 continue 上层无感知，
+                        # 该分片全部会话静默缺失而水位照样推进
+                        self.read_errors.append(f"分片#{idx} 密钥验证失败: {db_path}")
                         continue
 
                     logger.info("[DEBUG MessageDB] ✅ 密钥验证成功")
@@ -228,10 +235,14 @@ class MessageDBV4(WeChatDBBase):
                 continue
             except sqlite3.DatabaseError as e:
                 # 分片含无法解密的页面（解密时已重试并告警）：记录后继续其余分片，
-                # 不再让整段会话被上层静默跳过（W3）
+                # 不再让整段会话被上层静默跳过（W3）；缺口同时进 read_errors，
+                # ingest 据此冻结水位（W4）——否则缺口消息被后续增量永久跳过
                 logger.error(
                     "[消息读取] 分片 #%d 读取 %s 失败（页面解密缺口？）: %s",
                     shard_idx, table_name, e,
+                )
+                self.read_errors.append(
+                    f"分片#{shard_idx} 读取 {username} 失败: {e}"
                 )
                 continue
         
@@ -427,7 +438,7 @@ class MessageDBV4(WeChatDBBase):
         """
         usernames = set()
         
-        for conn in self.connections:
+        for shard_idx, conn in enumerate(self.connections):
             try:
                 cursor = conn.execute("SELECT user_name FROM Name2Id")
                 for row in cursor:
@@ -436,7 +447,14 @@ class MessageDBV4(WeChatDBBase):
                         username, exclude_chatroom=not include_chatroom
                     ):
                         usernames.add(username)
-            except:
+            except sqlite3.DatabaseError as e:
+                # 分片会话清单读失败：该分片全部会话缺席，必须留痕（W4）
+                logger.error(
+                    "[消息读取] 分片 #%d 读取 Name2Id 失败: %s", shard_idx, e
+                )
+                self.read_errors.append(
+                    f"分片#{shard_idx} 读取会话清单失败: {e}"
+                )
                 continue
         
         return list(usernames)

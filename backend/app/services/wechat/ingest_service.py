@@ -826,7 +826,16 @@ class WeChatIngestService:
             )
 
         new_watermark = max(watermark_ts, max_seen_ts)
-        if failed_conversations and new_watermark > watermark_ts:
+        # 分片级读取缺口（密钥验证失败/页面解密失败，W4）：缺口会话的消息
+        # 未落库，水位越过即被后续增量永久跳过——与 failed_conversations
+        # 同口径冻结水位。此前 message_db 就地吞错正常返回，护栏被架空
+        shard_read_errors = len(getattr(message_db, "read_errors", ()) or ())
+        if shard_read_errors:
+            logger.warning(
+                f"[导入] {shard_read_errors} 个分片级读取缺口（密钥验证/页面"
+                "解密失败），本次水位不推进——缺口消息待下轮重扫补全"
+            )
+        if (failed_conversations or shard_read_errors) and new_watermark > watermark_ts:
             # 会话级失败（典型：微信在线写入导致个别页面解密失败）时，
             # 失败会话在读取窗口内的消息尚未落库——水位若推进越过它们，
             # 后续增量导入永远读不到，静默丢数据。此处不推进：下轮增量
@@ -844,6 +853,7 @@ class WeChatIngestService:
             "conversations": len(conversations_set),
             "skipped": skipped_messages,
             "failed_conversations": failed_conversations,
+            "shard_read_errors": shard_read_errors,
             # 只增不减；零消息读取（无新聊天）时维持原水位
             "watermark_ts": new_watermark,
         }

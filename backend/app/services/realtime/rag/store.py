@@ -732,7 +732,7 @@ class RagStore:
         fact_id: int | None = None,
     ) -> int:
         now = _now()
-        cursor = self.conn.execute(
+        self.conn.execute(
             """
             INSERT INTO rag_documents
             (account_wxid, conversation_id, doc_type, source_table, source_id, source_ts,
@@ -775,8 +775,8 @@ class RagStore:
                 now,
             ),
         )
-        if cursor.lastrowid:
-            return int(cursor.lastrowid)
+        # upsert 走 DO UPDATE 分支时 cursor.lastrowid 是连接级残留（上次任意
+        # INSERT 的 rowid），非本行 id——绝不能信，唯一键回读才是真实 id
         row = self.conn.execute(
             """
             SELECT id FROM rag_documents
@@ -786,7 +786,8 @@ class RagStore:
             """,
             (account_wxid, conversation_id, doc_type, source_table, str(source_id)),
         ).fetchone()
-        return int(row["id"])
+        # row[0] 而非 row["id"]：外部可传未设 row_factory 的裸连接
+        return int(row[0])
 
     def upsert_embedding(
         self,

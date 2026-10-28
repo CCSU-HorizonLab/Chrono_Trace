@@ -108,10 +108,14 @@ class EncryptedShardWatcher:
         的全库对账点，无需定时强制全量。
         """
         tmp_out_path = self.out_path.with_name(self.out_path.name + ".tmp")
+        # WAL 帧页哈希暂存：replace 成功后才并入——中途失败时内存哈希若被
+        # 即时写入，下轮全量刷新该页「源未变」哈希命中，会从旧快照拷旧明文
+        # 固化（帧内容从未落盘；W4 同族）
+        pending_hashes: dict[int, str] = {}
         try:
             shutil.copyfile(self.out_path, tmp_out_path)
             with open(tmp_out_path, "r+b") as out:
-                applied, skipped = self._apply_wal(out)
+                applied, skipped = self._apply_wal(out, pending_hashes)
             # 先关连接再替换：替换瞬间旧连接仍指旧 inode，会继续读旧内容
             self._close_conn()
             os.replace(tmp_out_path, self.out_path)
@@ -121,6 +125,7 @@ class EncryptedShardWatcher:
                            self.src, e)
             return False
 
+        self._page_hashes.update(pending_hashes)
         self._state = state
         # 有跳帧（撕裂/损坏帧解密失败被跳过）→ 标脏，等 reconcile 重放
         self._overlay_dirty = skipped > 0
@@ -132,6 +137,11 @@ class EncryptedShardWatcher:
     def _refresh_full(self, state: tuple[int, int, int, int], force: bool) -> bool:
         """全量路径：逐页读主库、密文 sha1 对比增量解密 + WAL 帧合并。"""
         tmp_out_path = self.out_path.with_name(self.out_path.name + ".tmp")
+        # 页哈希全部暂存本地、整轮成功后才替换 self._page_hashes：此前页循环
+        # 即时写入，若本轮中途失败（页1守卫/WAL 异常）丢弃 .tmp 保留旧快照，
+        # 但内存哈希已是新值——下轮「源未变」哈希命中 → _read_decrypted_page
+        # 从旧快照拷旧明文，错误被永久固化且无从自愈（W4）
+        new_hashes: dict[int, str] = dict(self._page_hashes)
         try:
             with open(self.src, "rb") as f:
                 size = os.fstat(f.fileno()).st_size
@@ -154,7 +164,7 @@ class EncryptedShardWatcher:
                             out.write(self._read_decrypted_page(page_no))
                             continue
                         changed += 1
-                        self._page_hashes[page_no] = h
+                        new_hashes[page_no] = h
                         try:
                             data = self._decrypt_raw(raw, page_no)
                             if page_no == 1:
@@ -169,7 +179,7 @@ class EncryptedShardWatcher:
                             if page_no == 1:
                                 page1_failed = True
                             out.write(b"\x00" * PAGE_SIZE)
-                    applied, skipped = self._apply_wal(out)
+                    applied, skipped = self._apply_wal(out, new_hashes)
                     if failed_pages:
                         logger.debug(
                             "[dbwatch] %s: %d/%d 页主库缺帧（占位，待 WAL 覆盖或为无效尾页）",
@@ -202,7 +212,8 @@ class EncryptedShardWatcher:
                            self.src, e)
             return False
 
-        # 全量处理成功才提交新 state
+        # 全量处理成功才提交新 state 与新页哈希
+        self._page_hashes = new_hashes
         self._state = state
         self._overlay_dirty = skipped > 0
         self._save_meta()
@@ -362,7 +373,6 @@ class EncryptedShardWatcher:
             f.seek((page_no - 1) * PAGE_SIZE)
             raw = f.read(PAGE_SIZE)
         raw = raw + b"\x00" * (PAGE_SIZE - len(raw))
-        self._page_hashes[page_no] = hashlib.sha1(raw).hexdigest()
         try:
             data = self._decrypt_raw(raw, page_no)
         except Exception:
@@ -372,8 +382,11 @@ class EncryptedShardWatcher:
             data = self._dec.SQLITE_HEADER + data
         return data
 
-    def _apply_wal(self, out) -> tuple[int, int]:
+    def _apply_wal(self, out, hash_sink: dict[int, str] | None = None) -> tuple[int, int]:
         """把 -wal 中的已提交帧覆盖到解密视图，返回 (应用帧数, 跳过帧数)。
+
+        hash_sink 非 None 时帧页哈希写入该暂存表（调用方整轮成功后才提交），
+        不再即时写 self._page_hashes（中途失败会污染，见 _refresh_full 注释）。
 
         WAL 头与帧头字段均为大端序（SQLite 文件格式规定）——此前误用小端解包，
         真实 WAL 的 magic 读为 0x82067F37 导致整段合并在真实文件上从未生效。
@@ -432,7 +445,8 @@ class EncryptedShardWatcher:
                 if page_no == 1:
                     wal_data = self._dec.SQLITE_HEADER + wal_data
                 out.write(wal_data)
-                self._page_hashes[page_no] = hashlib.sha1(raw).hexdigest()
+                if hash_sink is not None:
+                    hash_sink[page_no] = hashlib.sha1(raw).hexdigest()
                 applied += 1
             return applied, skipped
         except (OSError, struct.error) as e:

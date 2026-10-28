@@ -80,6 +80,11 @@ class DatabaseConnection:
         conn.row_factory = sqlite3.Row  # 支持字典式访问
         conn.execute("PRAGMA busy_timeout = 30000")
         conn.execute("PRAGMA synchronous = NORMAL")
+        # 外键约束（默认关闭）：schema 21 个 FOREIGN KEY ... ON DELETE CASCADE
+        # 此前从未生效——conversation_id 等指向不存在父行的脏插入静默入库。
+        # 全库无删除父行的代码路径（级联不改变现有删除行为），开启只增加
+        # 插入完整性约束（W5）
+        conn.execute("PRAGMA foreign_keys = ON")
         # 大库读写性能：默认页缓存 2MB/连接对 GB 级库的会话级扫描明显
         # 吃紧；mmap 免行拷贝、temp_store=MEMORY 让 GROUP BY/排序的临时
         # B 树不落盘

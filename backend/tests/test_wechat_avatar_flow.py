@@ -300,6 +300,13 @@ def test_analysis_service_excludes_wechat_system_conversations(isolated_db):
 
 
 def test_bridge_word_counts_handles_zero_ratio(isolated_db):
+    # 外键已开启：word_counts.conversation_id 需要真实父行（不得造孤儿）
+    isolated_db.execute(
+        """
+        INSERT INTO conversations (id, account_wxid, username, display_name, platform, created_at, updated_at)
+        VALUES (42, 'wxid_me', 'wxid_x', '某人', 'wechat', 1, 1)
+        """
+    )
     isolated_db.execute(
         """
         INSERT INTO word_counts

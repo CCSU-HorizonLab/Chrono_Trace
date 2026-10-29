@@ -272,7 +272,7 @@ def test_origin_column_defaults_and_persisted(isolated_db, profiler_cls, table, 
     conn.commit()
     monkeypatch.setattr(
         profiler_cls, "_call_llm",
-        lambda self, prompt, should_abort=None: {"personality_tags": ["温和"]},
+        lambda self, prompt, should_abort=None, account_wxid="": {"personality_tags": ["温和"]},
     )
 
     profiler_cls().generate_profile(
@@ -336,7 +336,7 @@ def test_custom_window_samples_hard_boundary(isolated_db, profiler_cls, monkeypa
 
     monkeypatch.setattr(
         profiler_cls, "_call_llm",
-        lambda self, prompt, should_abort=None: {"personality_tags": ["温和"]},
+        lambda self, prompt, should_abort=None, account_wxid="": {"personality_tags": ["温和"]},
     )
     result = profiler_cls().generate_profile(
         "老朋友", account_wxid="wxid_me", from_ts=1000, to_ts=2000
@@ -359,7 +359,7 @@ def test_custom_window_empty_returns_error(isolated_db, monkeypatch):
     conn.commit()
     monkeypatch.setattr(
         ContactProfiler, "_call_llm",
-        lambda self, prompt, should_abort=None: {"personality_tags": []},
+        lambda self, prompt, should_abort=None, account_wxid="": {"personality_tags": []},
     )
     ContactProfiler()._ensure_table(conn)  # 先建表，断言「失败不落快照」才有意义
 

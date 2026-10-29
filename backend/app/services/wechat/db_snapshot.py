@@ -191,9 +191,18 @@ class EncryptedShardWatcher:
                     # 重试，下游 open 直接 "file is not a database"。改判失败：
                     # 丢弃 .tmp 保留旧快照，下轮重试
                     wal_covered = applied > 0
-                    if page1_failed or (failed_pages >= total_pages and not wal_covered):
+                    # 页1 失败的占位零页若已被 WAL 帧覆盖（_apply_wal 对页1
+                    # 补 16B SQLite 头写出），产物完好可用——此前只看
+                    # page1_failed 布尔，把已修复的快照也整轮抛弃（保留过旧
+                    # 快照）。合法页1以非零 SQLite 头开头，前 16B 全零即占位
+                    page1_placeholder = False
+                    if page1_failed:
+                        out.flush()
+                        with open(tmp_out_path, "rb") as probe:
+                            page1_placeholder = probe.read(16) == b"\x00" * 16
+                    if page1_placeholder or (failed_pages >= total_pages and not wal_covered):
                         raise RuntimeError(
-                            f"快照构建异常：页1失败={page1_failed}，"
+                            f"快照构建异常：页1失败且未获 WAL 覆盖={page1_placeholder}，"
                             f"解密失败 {failed_pages}/{total_pages} 页且 WAL 未覆盖"
                         )
                 finally:

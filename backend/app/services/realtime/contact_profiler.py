@@ -393,7 +393,10 @@ class ContactProfiler:
             _print(f"[ContactProfiler] Prompt 长度: {len(user_prompt)} 字符")
 
             # 5. 调用 LLM，传入预算以动态决定输出额度
-            profile_data = self._call_llm(user_prompt, should_abort=should_abort)
+            profile_data = self._call_llm(
+                user_prompt, should_abort=should_abort,
+                account_wxid=resolved_account_wxid,
+            )
 
             _print("[ContactProfiler] ✅ 画像生成成功!")
             _print(f"[ContactProfiler] 标签: {profile_data.get('personality_tags', [])}")
@@ -942,6 +945,7 @@ class ContactProfiler:
     def _call_llm(
         self, user_prompt: str, _legacy_sample_budget: int | None = None,
         should_abort: Optional[Callable[[], bool]] = None,
+        account_wxid: str = "",
     ) -> dict:
         """调用 LLM 生成画像"""
 
@@ -971,6 +975,22 @@ class ContactProfiler:
         if not model_config:
             raise ValueError('未配置激活的 LLM 模型')
         model_config = dict(model_config)
+
+        # 远程模型出网前整段脱敏（红线：聊天样本含原文与联系人姓名，
+        # 失败即阻断，绝不降级发原文；本地模型豁免）
+        from .rag.config import is_remote_llm_model
+        if is_remote_llm_model(model_config):
+            try:
+                from .privacy_redactor import PrivacyRedactor
+                redacted = PrivacyRedactor(conn).redact(
+                    user_prompt,
+                    account_wxid=self._resolve_account_wxid(account_wxid),
+                    conversation_id=None,
+                    source_table="contact_profiler",
+                ).redacted_text
+            except Exception as redact_e:
+                raise RuntimeError(f'脱敏失败，按红线阻断画像远程调用: {redact_e}') from redact_e
+            user_prompt = redacted
 
         # 构造请求
         base_url = model_config['api_base_url'].rstrip('/')

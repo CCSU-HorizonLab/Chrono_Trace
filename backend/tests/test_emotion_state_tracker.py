@@ -121,6 +121,27 @@ class TestNegativeStreak:
         assert len(streak_events) == 1
         assert streak_events[0].context["interaction_intent"] == "decline"
 
+    def test_streak_count_counts_tail_run_only(self):
+        """streak_count 只数尾部连续消极——中途的积极/中性条打断连续。
+
+        窗口旧→新 [-1,-1,0,-1,-1,-1]：触发时尾部连续 3 条，不是全窗 5 条
+        （此前无条件数全窗口消极，把断链也计入 streak）。
+        """
+        tracker = EmotionStateTracker()
+        t = 1000.0
+        seq = [(-1, "唉"), (-1, "烦"), (0, "嗯嗯"), (-1, "又坏了"), (-1, "算了"), (-1, "不管了")]
+        triggers = []
+        for i, (polarity, text) in enumerate(seq):
+            triggers = tracker.update(
+                make_sentiment(polarity),
+                make_message(text, timestamp=int(t + i)),
+                current_time=t + i,
+            )
+
+        streak_events = [ev for ev in triggers if ev.trigger_type == TRIGGER_NEGATIVE_STREAK]
+        assert len(streak_events) == 1
+        assert streak_events[0].context["streak_count"] == 3
+
 
 class TestEmotionShift:
     """情绪突变检测测试"""

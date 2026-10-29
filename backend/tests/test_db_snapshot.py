@@ -200,6 +200,54 @@ def test_wal_uncommitted_frames_are_not_applied(tmp_path):
         watcher.close()
 
 
+def test_page1_failure_repaired_by_wal_frame_is_kept(tmp_path):
+    """主库页1解密失败但 WAL 已提交帧覆盖修复：产物完好，不得整轮抛弃。
+
+    此前守卫只看 page1_failed 布尔——占位零页已被 WAL 帧换成合法页1的
+    可用快照也被 raise 抛掉，保留过旧快照且 state 不更新、永不自愈。
+    """
+    plain_v1 = build_plain_db(tmp_path / "v1.db", SCHEMA_V1)
+    data1 = plain_v1.read_bytes()
+    src = tmp_path / "message_0.db"
+    _, enc_key, mac_key = encrypt_db(plain_v1, src, KEY_HEX)
+    with open(src, "r+b") as f:
+        f.seek(16)
+        f.write(os.urandom(PAGE - 16))  # 毁页1密文但保留 16B salt（密钥派生源）
+
+    # decrypt_page 对页1帧同样跳 16B 前缀（offset=SALT_SIZE）：帧需带 16B
+    # 哑前缀补齐 4096B，_apply_wal 解出 4080B 后再补 16B SQLite 头成整页
+    frame = encrypt_page(data1[0:PAGE], enc_key, mac_key, 1, salt=b"\x00" * 16)
+    build_wal(tmp_path / "message_0.db-wal", [(1, frame, True)])
+
+    watcher = EncryptedShardWatcher(src, KEY_HEX, tmp_path / "cache")
+    try:
+        rows = watcher.connection.execute(
+            "SELECT message_content FROM [Msg_test] ORDER BY sort_seq"
+        ).fetchall()
+        assert [r[0] for r in rows] == ["早", "嗯呢", "中午吃啥"]
+    finally:
+        watcher.close()
+
+
+def test_page1_failure_without_wal_repair_discards_snapshot(tmp_path):
+    """页1解密失败且 WAL 未覆盖：占位零页留在产物里，查询必须报错而非给错数据。"""
+    plain_v1 = build_plain_db(tmp_path / "v1.db", SCHEMA_V1)
+    src = tmp_path / "message_0.db"
+    encrypt_db(plain_v1, src, KEY_HEX)
+    with open(src, "r+b") as f:
+        f.seek(16)
+        f.write(os.urandom(PAGE - 16))  # 保留 salt，仅毁页1密文
+
+    watcher = EncryptedShardWatcher(src, KEY_HEX, tmp_path / "cache")
+    try:
+        with pytest.raises(sqlite3.DatabaseError):
+            watcher.connection.execute(
+                "SELECT message_content FROM [Msg_test] ORDER BY sort_seq"
+            ).fetchall()
+    finally:
+        watcher.close()
+
+
 def _v2_frames(data1: bytes, data2: bytes, enc_key: bytes, mac_key: bytes):
     """构造 v1→v2 的全部差异数据页帧（最后一帧为 commit），与真实 WAL 写入同构。
 

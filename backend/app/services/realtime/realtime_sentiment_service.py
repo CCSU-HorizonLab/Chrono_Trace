@@ -49,7 +49,7 @@ logger = logging.getLogger(__name__)
 class RealtimeSentimentService:
     """Realtime sentiment classification with rule enhancement."""
 
-    def __init__(self, skip_db_init: bool = False):
+    def __init__(self):
         self._model = None
         self._tokenizer = None
         self._device = "cpu"
@@ -57,9 +57,6 @@ class RealtimeSentimentService:
         self._lock = threading.Lock()
         self._model_manager = None
         self._refresh_model_manager()
-
-        if not skip_db_init:
-            self._ensure_table_exists()
 
         self._model_manager.check_and_update_async()
         logger.debug("[实时情感分析] 服务初始化完成")
@@ -88,33 +85,6 @@ class RealtimeSentimentService:
         self._device = "cpu"
         logger.info(f"[实时情感分析] 切换分析设备模式: {normalized_mode}")
         return self._device_mode
-
-    def _ensure_table_exists(self):
-        """Ensure the realtime sentiment cache table exists."""
-        try:
-            get_db().execute(
-                """
-                CREATE TABLE IF NOT EXISTS realtime_sentiment_cache (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    message_id INTEGER NOT NULL UNIQUE,
-                    polarity INTEGER NOT NULL,
-                    intensity REAL NOT NULL,
-                    confidence REAL,
-                    raw_score REAL,
-                    rules_applied TEXT,
-                    created_at INTEGER NOT NULL
-                )
-                """
-            )
-            get_db().execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_realtime_sentiment_message
-                ON realtime_sentiment_cache(message_id)
-                """
-            )
-            get_db().commit()
-        except Exception as exc:
-            logger.error(f"[实时情感分析] 创建表失败: {exc}")
 
     def is_ready(self) -> bool:
         return self._model is not None

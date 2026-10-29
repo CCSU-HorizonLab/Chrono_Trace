@@ -489,15 +489,19 @@ class EmotionStateTracker:
         recent = entries[-3:]
         if all(e['polarity'] == -1 for e in recent):
             latest = recent[-1]
+            # 连续消极条数从最新往回数到第一条非消极为止——中途夹积极条
+            # 会打断连续，此前无条件数全窗口消极把断链也算进 streak
+            streak = 0
+            for entry in reversed(entries):
+                if entry['polarity'] != -1:
+                    break
+                streak += 1
             return TriggerEvent(
                 trigger_type=TRIGGER_NEGATIVE_STREAK,
                 timestamp=now,
                 severity=TRIGGER_SEVERITY[TRIGGER_NEGATIVE_STREAK],
                 context={
-                    'streak_count': sum(
-                        1 for e in reversed(entries)
-                        if e['polarity'] == -1
-                    ),
+                    'streak_count': streak,
                     'avg_intensity': round(
                         sum(e['intensity'] for e in recent) / 3, 3
                     ),

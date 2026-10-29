@@ -141,7 +141,7 @@ class SentimentService:
         if self._realtime_service is None:
             from ..realtime.realtime_sentiment_service import RealtimeSentimentService
 
-            self._realtime_service = RealtimeSentimentService(skip_db_init=True)
+            self._realtime_service = RealtimeSentimentService()
 
         self._realtime_service.configure_device_mode(self._device_mode)
         logger.debug("[情感服务] 实时情感分析服务加载成功")

@@ -36,7 +36,7 @@ class TestAnalysisDeviceMode:
 
     def test_sentiment_service_mode_switch_resets_cached_models(self):
         service = SentimentService()
-        realtime_service = RealtimeSentimentService(skip_db_init=True)
+        realtime_service = RealtimeSentimentService()
         service._embedding_model = object()
         service._embedding_model_path = "cached-path"
         service._realtime_service = realtime_service

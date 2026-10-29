@@ -128,7 +128,7 @@ class TestSentimentServiceOnnx:
         monkeypatch.setenv("CHRONO_INFERENCE_BACKEND", "onnx")
         from app.services.realtime.realtime_sentiment_service import RealtimeSentimentService
 
-        rs = RealtimeSentimentService(skip_db_init=True)
+        rs = RealtimeSentimentService()
         rs._model = None
         result = rs.analyze("这也太烦了吧，不想干了")
         assert result["polarity"] == -1

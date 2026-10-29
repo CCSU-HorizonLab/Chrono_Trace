@@ -1585,8 +1585,11 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, Backfi
                         'batch_id': batch_id,
                         'waited_seconds': waited,
                     })
-                    self.is_monitoring = False
                     if self.current_batch_id == batch_id:
+                        # 仅当仍是本会话才收尾：15s 等待窗内新会话可能已把
+                        # is_monitoring 重新置 True，无条件置 False 会误杀
+                        # 新会话的监听状态（前端从此查不到进行中监听）
+                        self.is_monitoring = False
                         self.current_batch_id = None
                         self.current_talker = None
                         self.current_display_name = None

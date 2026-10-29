@@ -243,11 +243,30 @@ class PrivacyRedactor:
     def strong_mask(self, text: str) -> str:
         """Last-resort local mask. It never preserves sensitive raw values."""
         masked = str(text or "")
+        # 与 redact 同口径的两道防线：作品译名哨兵（否则「星穹铁道」被
+        # 地址模式吃成 [ADDRESS]）与裸路名误报过滤——兜底路径此前裸套
+        # PATTERNS，保护只存在于主路径
+        protected_restore: list[tuple[str, str]] = []
+        for index, fragment in enumerate(PROTECTED_NAME_FRAGMENTS):
+            if fragment and fragment in masked:
+                sentinel = chr(0xF0000 + index) * len(fragment)
+                protected_restore.append((sentinel, fragment))
+                masked = masked.replace(fragment, sentinel)
         for entity_type, pattern in self.PATTERNS:
             if entity_type == "bank_card":
                 masked = pattern.sub(lambda m: "[BANK_CARD]" if len(re.sub(r"\D", "", m.group(0))) >= 16 else m.group(0), masked)
+            elif entity_type == "address":
+                # sub 回调期间 masked 仍指向本条模式作用前的串，偏移一致
+                masked = pattern.sub(
+                    lambda m: m.group(0)
+                    if _address_match_is_false_positive(masked, m.start(), m.end())
+                    else "[ADDRESS]",
+                    masked,
+                )
             else:
                 masked = pattern.sub(f"[{entity_type.upper()}]", masked)
+        for sentinel, fragment in protected_restore:
+            masked = masked.replace(sentinel, fragment)
         if len(masked) > 600:
             masked = masked[:600] + "..."
         return masked

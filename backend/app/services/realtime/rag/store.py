@@ -8,7 +8,7 @@ import pickle
 import time
 from typing import Any
 
-from ....db.connection import get_db
+from ....db.connection import get_db, write_transaction
 from .config import RAG_DEFAULTS
 from .semantic_memory import CONFIDENCE_CEILING, CONFIRMATION_STEP
 
@@ -1039,42 +1039,46 @@ class RagStore:
         调用方负责随后停用该联系人（防止 ensure_contact_index 自动
         重建复活）。
         """
-        self.conn.execute(
-            "DELETE FROM rag_embeddings WHERE account_wxid = ? AND conversation_id = ?",
-            (account_wxid, conversation_id),
-        )
-        cursor = self.conn.execute(
-            "DELETE FROM rag_documents WHERE account_wxid = ? AND conversation_id = ?",
-            (account_wxid, conversation_id),
-        )
-        self.conn.execute(
-            "DELETE FROM rag_fact_embeddings WHERE account_wxid = ? AND conversation_id = ?",
-            (account_wxid, conversation_id),
-        )
-        self.conn.execute(
-            "DELETE FROM rag_facts WHERE account_wxid = ? AND conversation_id = ?",
-            (account_wxid, conversation_id),
-        )
-        self.conn.execute(
-            "DELETE FROM rag_fact_user_feedback WHERE account_wxid = ? AND conversation_id = ?",
-            (account_wxid, conversation_id),
-        )
-        self.conn.execute(
-            "DELETE FROM rag_relationship_state WHERE account_wxid = ? AND conversation_id = ?",
-            (account_wxid, conversation_id),
-        )
-        self.conn.execute(
-            "DELETE FROM rag_contact_preferences WHERE account_wxid = ? AND conversation_id = ?",
-            (account_wxid, conversation_id),
-        )
-        self.conn.execute(
-            "DELETE FROM rag_feedback_policy_signals WHERE account_wxid = ? AND conversation_id = ?",
-            (account_wxid, conversation_id),
-        )
-        self.conn.execute(
-            "DELETE FROM rag_index_status WHERE account_wxid = ? AND conversation_id = ?",
-            (account_wxid, conversation_id),
-        )
+        # 单事务提交：连接是 autocommit，九条 DELETE 逐条提交，中途
+        # 异常/崩溃会留下「文档已删、事实残留」的半清空态——读侧照常
+        # 命中残留数据，与清空语义矛盾
+        with write_transaction(self.conn):
+            self.conn.execute(
+                "DELETE FROM rag_embeddings WHERE account_wxid = ? AND conversation_id = ?",
+                (account_wxid, conversation_id),
+            )
+            cursor = self.conn.execute(
+                "DELETE FROM rag_documents WHERE account_wxid = ? AND conversation_id = ?",
+                (account_wxid, conversation_id),
+            )
+            self.conn.execute(
+                "DELETE FROM rag_fact_embeddings WHERE account_wxid = ? AND conversation_id = ?",
+                (account_wxid, conversation_id),
+            )
+            self.conn.execute(
+                "DELETE FROM rag_facts WHERE account_wxid = ? AND conversation_id = ?",
+                (account_wxid, conversation_id),
+            )
+            self.conn.execute(
+                "DELETE FROM rag_fact_user_feedback WHERE account_wxid = ? AND conversation_id = ?",
+                (account_wxid, conversation_id),
+            )
+            self.conn.execute(
+                "DELETE FROM rag_relationship_state WHERE account_wxid = ? AND conversation_id = ?",
+                (account_wxid, conversation_id),
+            )
+            self.conn.execute(
+                "DELETE FROM rag_contact_preferences WHERE account_wxid = ? AND conversation_id = ?",
+                (account_wxid, conversation_id),
+            )
+            self.conn.execute(
+                "DELETE FROM rag_feedback_policy_signals WHERE account_wxid = ? AND conversation_id = ?",
+                (account_wxid, conversation_id),
+            )
+            self.conn.execute(
+                "DELETE FROM rag_index_status WHERE account_wxid = ? AND conversation_id = ?",
+                (account_wxid, conversation_id),
+            )
         return int(cursor.rowcount or 0)
 
     def set_conversation_enabled(self, account_wxid: str, conversation_id: int, enabled: bool) -> None:

@@ -230,8 +230,20 @@ class MessageDBV4(WeChatDBBase):
                     conn, table_name, username, time_range, limit
                 )
                 messages.extend(msgs)
-            except sqlite3.OperationalError:
-                # 表不存在,尝试下一个数据库
+            except sqlite3.OperationalError as e:
+                if "no such table" in str(e).lower():
+                    # 表不存在（预映射缺失的分片回退试查），尝试下一个数据库
+                    continue
+                # 其余运行时错误（锁/磁盘满/I/O）：与 DatabaseError 同道记录
+                # 缺口——此前一律按表不存在吞掉，ingest 无感知推进水位，
+                # 缺口消息被增量永久跳过（绕过 W4 护栏）
+                logger.error(
+                    "[消息读取] 分片 #%d 读取 %s 失败: %s",
+                    shard_idx, table_name, e,
+                )
+                self.read_errors.append(
+                    f"分片#{shard_idx} 读取 {username} 失败: {e}"
+                )
                 continue
             except sqlite3.DatabaseError as e:
                 # 分片含无法解密的页面（解密时已重试并告警）：记录后继续其余分片，

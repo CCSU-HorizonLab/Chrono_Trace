@@ -2912,6 +2912,20 @@ def test_incremental_rebuild_keeps_full_conversation_style_summary(monkeypatch):
     ).fetchone()
     assert incremental_doc is not None, "增量重建必须产出 communication_style 文档"
 
+    def _style_doc_ids():
+        rows = conn.execute(
+            "SELECT doc_type, source_id FROM rag_documents WHERE conversation_id = 1"
+        ).fetchall()
+        return {
+            (r["doc_type"], r["source_id"])
+            for r in rows
+            if r["doc_type"] in ("self_style_example", "communication_style")
+        }
+
+    # 增量写入的样例文档必须已用与全量一致的 source_id
+    # （style:{rank}:{hash}：排名口径漂移会令每轮增量累积新样例文档）
+    incremental_style_ids = _style_doc_ids()
+
     # 同期全量重建基准：清游标强制走全量分支
     conn.execute("UPDATE rag_index_status SET last_message_id = 0 WHERE conversation_id = 1")
     full = indexer.rebuild_contact_index(account_wxid="wxid_a", conversation_id=1)
@@ -2927,6 +2941,10 @@ def test_incremental_rebuild_keeps_full_conversation_style_summary(monkeypatch):
     # 核心断言：增量与全量的风格摘要逐字一致（统计口径未被切片覆写）
     assert incremental_doc["content"] == full_doc["content"]
 
+    # 样例文档同口径：全量重建（先清后建）产出的样例文档 id 在增量轮
+    # 已全部存在——增量排名与全量一致，不漂移出新 source_id（W6）
+    assert _style_doc_ids() <= incremental_style_ids
+
     # 牙齿：平均长度必须是 10 条长句（~27 字）+ 8 条短句（~9 字）的
     # 全会话口径（~19.7 字），而非 8 条短句的切片口径（~8.6 字）
     avg = re.search(r"平均长度 (\d+(?:\.\d+)?) 字", incremental_doc["content"])
@@ -2935,3 +2953,144 @@ def test_incremental_rebuild_keeps_full_conversation_style_summary(monkeypatch):
         "增量重建的 communication_style 统计仍是切片口径："
         f"{incremental_doc['content']}"
     )
+
+
+def test_incremental_rebuild_with_empty_sample_slice_keeps_style_summary(monkeypatch):
+    """增量批次全为对方消息：风格摘要的样例段与统计不得被空切片清掉（W6）。"""
+    conn = _conn()
+    store = RagStore(conn)
+    conn.executescript(
+        """
+        CREATE TABLE conversations (
+            id INTEGER PRIMARY KEY,
+            account_wxid TEXT NOT NULL,
+            username TEXT NOT NULL,
+            display_name TEXT,
+            message_count INTEGER DEFAULT 0,
+            updated_at INTEGER DEFAULT 0,
+            is_deleted INTEGER DEFAULT 0
+        );
+        CREATE TABLE messages (
+            id INTEGER PRIMARY KEY,
+            conversation_id INTEGER NOT NULL,
+            is_sender INTEGER NOT NULL,
+            content TEXT,
+            message_type INTEGER NOT NULL,
+            timestamp INTEGER NOT NULL
+        );
+        """
+    )
+    now = int(time.time())
+    conn.execute(
+        """
+        INSERT INTO conversations
+        (id, account_wxid, username, display_name, message_count, updated_at)
+        VALUES (1, 'wxid_a', 'alice', 'Alice', 3, ?)
+        """,
+        (now,),
+    )
+    conn.executemany(
+        """
+        INSERT INTO messages (id, conversation_id, is_sender, content, message_type, timestamp)
+        VALUES (?, 1, ?, ?, 1, ?)
+        """,
+        [
+            (1, 1, "明天下午我们一起去逛逛那个新开的市集吧，听说有不少手作摊位", now - 600),
+            (2, 0, "听起来不错呀", now - 500),
+            (3, 1, "那就说定了，我先把位置发给你", now - 400),
+        ],
+    )
+
+    monkeypatch.setattr(
+        "app.services.realtime.rag.indexer.load_rag_settings",
+        lambda: {
+            "rag_embedding_model": "tingting0514/text2vec-base-chinese",
+            "rag_embedding_dim": 384,
+            "rag_privacy_mode": "balanced",
+        },
+    )
+
+    class ZeroEmbedding:
+        def embed_texts(self, texts):
+            return [[0.0] * 384 for _ in texts]
+
+        def embed_text(self, text):
+            return [0.0] * 384
+
+    indexer = RagIndexer(store=store, embedding_service=ZeroEmbedding())
+    assert indexer.rebuild_contact_index(
+        account_wxid="wxid_a", conversation_id=1
+    )["status"] == "ready"
+
+    doc = conn.execute(
+        "SELECT content FROM rag_documents WHERE conversation_id = 1 AND doc_type = 'communication_style'"
+    ).fetchone()
+    assert doc is not None
+    assert "近期高质量样例：那就说定了" in doc["content"], "全量构建后样例段非空"
+
+    # 增量批次只有对方消息（本人空切片）
+    conn.executemany(
+        """
+        INSERT INTO messages (id, conversation_id, is_sender, content, message_type, timestamp)
+        VALUES (?, 1, ?, ?, 1, ?)
+        """,
+        [
+            (4, 0, "好呀好呀，那我看看到时候穿什么", now - 300),
+            (5, 0, "对了你上次说的那家店叫什么来着", now - 200),
+        ],
+    )
+    assert indexer.rebuild_contact_index(
+        account_wxid="wxid_a", conversation_id=1
+    )["status"] == "ready"
+
+    after = conn.execute(
+        "SELECT content FROM rag_documents WHERE conversation_id = 1 AND doc_type = 'communication_style'"
+    ).fetchone()
+    assert after is not None
+    assert "近期高质量样例：那就说定了" in after["content"], (
+        "空样例切片不得覆写掉含完整样例的旧摘要"
+    )
+
+
+def test_clear_conversation_atomic_rollback_on_failure():
+    """补充#1：九条 DELETE 单事务——中途失败整体回滚，不留半清空态。
+
+    连接是 autocommit，此前逐条提交：崩在中间会留下「文档已删、事实
+    残留」的半清空态，读侧照常命中残留数据。
+    """
+    import sqlite3 as _sqlite3
+    import pytest as _pytest
+
+    conn = _conn()
+    store = RagStore(conn)
+    store.upsert_status("wxid_a", 1, status="ready", document_count=1)
+    conn.execute(
+        "INSERT INTO rag_documents (account_wxid, conversation_id, doc_type, content, created_at, updated_at) "
+        "VALUES ('wxid_a', 1, 'topic_segment', '种子文档', 1789900000, 1789900000)"
+    )
+    conn.commit()
+
+    class _BoomConn:
+        """透明代理：命中投毒 DELETE 时注入运行时错误。"""
+
+        def __init__(self, inner, poison):
+            self._inner = inner
+            self._poison = poison
+
+        def execute(self, sql, *args):
+            if self._poison in sql:
+                raise _sqlite3.OperationalError("injected disk I/O error")
+            return self._inner.execute(sql, *args)
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+    failing = RagStore(_BoomConn(conn, "DELETE FROM rag_facts "))
+    with _pytest.raises(_sqlite3.OperationalError):
+        failing.clear_conversation("wxid_a", 1)
+
+    # 先于投毒点执行的两条 DELETE（rag_embeddings/rag_documents）必须回滚
+    n_docs = conn.execute(
+        "SELECT COUNT(*) FROM rag_documents WHERE conversation_id = 1"
+    ).fetchone()[0]
+    assert n_docs == 1, "事务必须整体回滚，不得留下半清空态"

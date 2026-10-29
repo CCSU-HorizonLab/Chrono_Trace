@@ -270,6 +270,31 @@ class TestAffinityAnalysisService:
         assert "很低" in interpretation
 
 
+    def test_analyze_llm_nonabsent_exception_becomes_absent(self, service):
+        """LLM 维非 Absent 异常（如模型输出 sub_scores 为数组的解析异常）
+        必须转缺席，不得炸掉整个四维+LLM 分析（第三轮抽查 W7）。
+
+        旧实现只捕获 RelationshipLLMAbsent：非 Absent 异常从 fut_llm.result()
+        直接向外抛，四个本地维度的结果全部丢弃。
+        """
+        from app.services.analysis.relationship_llm_service import RelationshipLLMAbsent  # noqa: F401 确认可导入
+
+        fake_llm = MagicMock()
+        fake_llm.evaluate.side_effect = ValueError("sub_scores 解析失败: list indices must be integers")
+
+        with patch(
+            'app.services.analysis.relationship_llm_service.build_relationship_llm_service',
+            return_value=fake_llm,
+        ):
+            result = service.analyze(1)  # 修复前此处直接抛 ValueError
+
+        assert result.status == "completed", "本地维度结果不得因 LLM 异常整体报废"
+        assert result.llm_relationship is None
+        assert "评估异常" in (result.llm_relationship_absent_reason or "")
+        assert result.interaction_investment is not None
+        assert result.emotional_resonance is not None
+
+
 class TestRetryLlmRelationship:
     """补评 AI 关系评估（LLM 维瞬时缺席后的恢复通道）"""
 

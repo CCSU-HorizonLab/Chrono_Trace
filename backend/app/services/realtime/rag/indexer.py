@@ -521,15 +521,18 @@ class RagIndexer:
                 self.store.conn.commit()
             else:
                 cleaned_old = 0  # 增量模式不清旧文档
-            # 增量时 communication_style 统计必须用全会话样例：messages
-            # 只是新增切片，切片统计会覆写全会话风格摘要（W6）
+            # 增量时 communication_style 统计与近期样例都必须用全会话
+            # 口径：messages 只是新增切片，切片口径会覆写全会话风格摘要
+            # （统计被替换/空样例批次清空样例段），且切片的样例排名与
+            # 全量不同，style:{index}:{hash} 文档 source_id 漂移导致
+            # 每轮增量累积新样例文档（W6）
             docs = self._build_documents(
                 account_wxid,
                 conversation_id,
                 conversation,
                 messages,
-                full_style_lines=(
-                    self._load_all_style_lines(conversation_id) if incremental else None
+                full_style_messages=(
+                    self._load_all_style_messages(conversation_id) if incremental else None
                 ),
             )
             self.store.conn.commit()
@@ -728,16 +731,18 @@ class RagIndexer:
         ).fetchall()
         return [dict(row) for row in rows]
 
-    def _load_all_style_lines(self, conversation_id: int) -> list[str]:
-        """全会话本人风格样例行（communication_style 统计输入，W6）。
+    def _load_all_style_messages(self, conversation_id: int) -> list[dict[str, Any]]:
+        """全会话本人消息行（communication_style 统计与近期样例的输入，W6）。
 
-        增量重建的 messages 只是新增切片——切片统计覆写 source_id 恒定
-        的风格摘要文档会把全会话口径替换成本批几条消息的口径，故增量
-        时统计输入从库里按全会话重取（与 _load_messages 同过滤口径）。
+        增量重建的 messages 只是新增切片——切片口径覆写 source_id 恒定的
+        风格摘要文档会把全会话统计替换成本批几条的统计；空样例批次还会
+        把「近期高质量样例」段覆写成空。故增量时统计输入与样例选择都从
+        库里按全会话重取（与 _load_messages 同过滤口径，仅限本人消息）。
         """
         rows = self.store.conn.execute(
             """
-            SELECT content FROM messages
+            SELECT id, conversation_id, is_sender, content, timestamp, message_type
+            FROM messages
             WHERE conversation_id = ?
               AND message_type = 1
               AND is_sender = 1
@@ -747,11 +752,7 @@ class RagIndexer:
             """,
             (conversation_id,),
         ).fetchall()
-        return [
-            self._compact_content(row["content"])
-            for row in rows
-            if self._is_style_sample(row["content"])
-        ]
+        return [dict(row) for row in rows]
 
     def _build_documents(
         self,
@@ -759,16 +760,18 @@ class RagIndexer:
         conversation_id: int,
         conversation: dict[str, Any],
         messages: list[dict[str, Any]],
-        full_style_lines: list[str] | None = None,
+        full_style_messages: list[dict[str, Any]] | None = None,
     ) -> list[dict[str, Any]]:
         """构建文档载荷。
 
-        full_style_lines：communication_style 统计的输入。增量重建传入
-        messages 只是新增切片——用切片统计覆写 source_id 恒定的
-        communication_style 文档（upsert DO UPDATE）会把全会话风格摘要
-        替换成几条新消息的统计（W6）；调用方增量时应传全会话
-        style_lines（_load_all_style_lines），None 时按传入 messages
-        计算（全量分支，messages 即全会话）。
+        full_style_messages：communication_style 统计与近期样例选择的
+        输入。增量重建传入的 messages 只是新增切片——切片口径覆写
+        source_id 恒定的 communication_style 文档（upsert DO UPDATE）
+        会把全会话风格摘要替换成几条新消息的统计，空样例批次清空样例
+        段，且切片的样例排名令 style:{index}:{hash} 文档 source_id 漂移
+        每轮累积（W6）。调用方增量时应传全会话本人消息
+        （_load_all_style_messages），None 时按传入 messages 计算
+        （全量分支，messages 即全会话）。
         """
         redactor = PrivacyRedactor(self.store.conn)
         docs: list[dict[str, Any]] = []
@@ -1004,7 +1007,10 @@ class RagIndexer:
                         )
                     )
 
-        self_messages = self._select_style_samples(messages, last_ts=last_ts)
+        # 风格统计与样例选择的口径源：增量时为全会话本人消息，全量时
+        # messages 即全会话——两者必须同源，否则统计与样例段口径漂移
+        style_source_messages = full_style_messages if full_style_messages is not None else messages
+        self_messages = self._select_style_samples(style_source_messages, last_ts=last_ts)
         for index, content in enumerate(self_messages, 1):
             docs.append(
                 self._doc_payload(
@@ -1029,15 +1035,11 @@ class RagIndexer:
                 )
             )
 
-        style_lines = (
-            full_style_lines
-            if full_style_lines is not None
-            else [
-                self._compact_content(msg.get("content"))
-                for msg in messages
-                if int(msg.get("is_sender") or 0) and self._is_style_sample(msg.get("content"))
-            ]
-        )
+        style_lines = [
+            self._compact_content(msg.get("content"))
+            for msg in style_source_messages
+            if int(msg.get("is_sender") or 0) and self._is_style_sample(msg.get("content"))
+        ]
         if style_lines:
             communication_style = self._build_communication_style_summary(style_lines, self_messages)
             docs.append(

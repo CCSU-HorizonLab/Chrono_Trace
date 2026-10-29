@@ -307,3 +307,61 @@ def test_refresh_after_fact_feedback_drops_disabled_evidence(monkeypatch):
 
     # 事实不存在时不抛异常
     assert refresh_after_fact_feedback(store, 999999).get("skipped") == "fact_not_found"
+
+
+def test_evidence_hash_includes_derived_band_key():
+    """W9：派生档位键混入证据指纹。
+
+    此前哈希只含 profile/特征快照/事实集——消息量跨过 300/2000 阈值时
+    closeness_band/stage 变了但画像缓存与事实集可能字节级不变，evidence_hash
+    不变 → ADD-only 影子层拒绝写新版本，持续注入过期档位。
+    """
+    from app.services.realtime.rag.relationship_policy import _evidence_hash
+
+    profile, features = _profile_and_features()
+    low = _evidence_hash(profile, features, [1, 2], derived_key="低频联系/双方均衡|low|双方均衡")
+    same_low = _evidence_hash(profile, features, [1, 2], derived_key="低频联系/双方均衡|low|双方均衡")
+    medium = _evidence_hash(profile, features, [1, 2], derived_key="常规往来/双方均衡|medium|双方均衡")
+
+    assert low == same_low, "同档位（阈值内消息量波动）不得换指纹"
+    assert low != medium, "跨阈值换档位必须换指纹"
+
+
+def test_refresh_crossing_band_threshold_writes_new_version(monkeypatch):
+    """端到端：消息量跨 300 阈值且画像/事实集不变 → 影子必须出新版本。"""
+    conn, store = _store()
+    _seed_boundary_fact(store, confidence=0.66)
+    profile, features = _profile_and_features()
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS conversations (id INTEGER PRIMARY KEY, account_wxid TEXT, message_count INTEGER)"
+    )
+    conn.execute(
+        "INSERT INTO conversations (id, account_wxid, message_count) VALUES (1, 'wxid_a', 250)"
+    )
+
+    monkeypatch.setattr(
+        "app.services.realtime.rag.relationship_policy.load_rag_settings",
+        lambda: {"rag_relationship_policy_shadow_enabled": True},
+    )
+    monkeypatch.setattr(
+        "app.services.realtime.rag.relationship_policy._load_profile_cache",
+        lambda account_wxid, display_name, conn=None: {
+            "profile": profile, "features_snapshot": features,
+        },
+    )
+
+    first = refresh_relationship_state_shadow(
+        store, account_wxid="wxid_a", conversation_id=1, display_name="安",
+    )
+    assert first["changed"] is True
+    assert store.get_latest_relationship_state("wxid_a", 1)["closeness_band"] == "low"
+
+    # 消息量跨阈值（250 → 400），画像与事实集保持不变
+    conn.execute("UPDATE conversations SET message_count = 400 WHERE id = 1")
+    second = refresh_relationship_state_shadow(
+        store, account_wxid="wxid_a", conversation_id=1, display_name="安",
+    )
+    assert second["changed"] is True, "跨档位必须产出新版本行"
+    latest = store.get_latest_relationship_state("wxid_a", 1)
+    assert latest["closeness_band"] == "medium"
+    assert latest["stage"].startswith("常规往来/")

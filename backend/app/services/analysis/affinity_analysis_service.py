@@ -716,6 +716,13 @@ class AffinityAnalysisService:
                     # 真因（网络失败/解析失败等）只在 debug 留完整链，缺席
                     # 本身是正常分支不刷 info 噪音
                     logger.debug("[关系评估] 维度缺席原因", exc_info=absent)
+                except Exception as eval_error:
+                    # 已提交但失败同样转缺席：模型输出结构异常（sub_scores
+                    # 为数组、evidence 为对象等非 Absent 异常）此前从
+                    # result() 直接炸掉整个四维+LLM 分析——四个本地维度
+                    # 的结果全部丢弃，用户点全面分析只得到整体报错
+                    llm_absent_error = eval_error
+                    logger.warning("[关系评估] 评估异常转缺席: %s", eval_error)
         finally:
             pool.shutdown(wait=False, cancel_futures=True)
 
@@ -830,16 +837,18 @@ class AffinityAnalysisService:
             )
         elif llm_absent_error is not None:
             result.llm_relationship = None
-            result.llm_relationship_absent_reason = str(llm_absent_error)
-            logger.info("[关系评估] 缺席: %s", llm_absent_error)
+            # 异常路径（解析失败/输出结构异常等）标注前缀，前端徽章可区分
+            reason = str(llm_absent_error)
+            if not isinstance(llm_absent_error, RelationshipLLMAbsent):
+                reason = f"评估异常: {reason}"
+            result.llm_relationship_absent_reason = reason
+            logger.info("[关系评估] 缺席: %s", reason)
         elif fut_llm is not None:
-            # 已提交但失败：取出异常转缺席（不阻断其余维度）
-            try:
-                fut_llm.result()
-            except Exception as absent_e:
-                result.llm_relationship = None
-                result.llm_relationship_absent_reason = f"评估异常: {absent_e}"
-                logger.info("[关系评估] 缺席: %s", absent_e)
+            # 已完成但返回空载荷：转缺席（不阻断其余维度；异常路径已在
+            # 上方 result() 处捕获转缺席）
+            result.llm_relationship = None
+            result.llm_relationship_absent_reason = "评估返回空结果"
+            logger.info("[关系评估] 缺席: 模型返回空结果")
         else:
             # 三种缺席各自成文，前端徽章可区分（否则卡片与说明同时消失）
             if llm_service is None:

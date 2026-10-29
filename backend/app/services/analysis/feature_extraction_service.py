@@ -102,6 +102,17 @@ class FeatureExtractionService:
                 return tid
         return None
 
+    def register_task(self, task_id: str, message: str = "等待任务启动") -> None:
+        """预注册任务占位：bridge 异步入口在进入 extract_features 之前就让
+        find_running_task 可见——删除阶段与线程启动窗口内并发入口查守卫
+        得 None 会放行，两个任务交错删写同会话数据（W5）。"""
+        self._task_status[task_id] = {
+            "status": "in_progress",
+            "progress": 0.0,
+            "current_step": "Queued",
+            "message": message,
+        }
+
     def extract_features(
         self,
         conversation_id: int,
@@ -326,6 +337,18 @@ class FeatureExtractionService:
 
             batch_insert("sessions", columns, data_tuples, get_db())
             get_db().commit()
+            # 回填数据库生成的会话 id：下游 calculate_word_counts 的按会话
+            # 行依赖真实 session_id——此前 sessions_data 无 id，写出的按会话
+            # 行 session_id 恒 NULL，污染「NULL=整体统计」哨兵语义且按会话
+            # 查询永远为空。delete_analysis_data 已清旧 source='long' 行，
+            # 此处查询即本批，start_time 升序与 sessions_data 构造序一致
+            id_rows = get_db().execute(
+                "SELECT id FROM sessions WHERE conversation_id = ? AND source = 'long' "
+                "ORDER BY start_time ASC, id ASC",
+                (conversation_id,),
+            ).fetchall()
+            for row, item in zip(id_rows, sessions_data):
+                item["id"] = int(row["id"])
 
         #logger.info(f"会话提取完成: {len(sessions_data)}个会话")
         return sessions_data
@@ -739,21 +762,45 @@ class FeatureExtractionService:
             VALUES (?, NULL, ?, ?, ?, ?)
         """, (conversation_id, overall_user_chars, overall_other_chars, overall_ratio, int(time.time())))
 
-        # 3. 按会话统计
+        # 3. 按会话统计：以会话时间窗归属消息（messages 与 sessions 均按
+        # 时间升序，双指针线性扫描）。相邻会话边界消息归后段（左闭右开，
+        # 末段含终点）防止边界双计；空会话不写行——此前此处是恒 (NULL,0,0)
+        # 的占位写入，既污染「NULL=整体统计」哨兵语义又令按会话查询恒空
         session_counts = []
-        for session in sessions:
+        lower = 0
+        total = len(sessions)
+        for pos, session in enumerate(sessions):
+            session_id = session.get("id")
+            if session_id is None:
+                continue
+            start_ts = int(session.get("start_time") or 0)
+            end_ts = int(session.get("end_time") or 0)
+            is_last = pos == total - 1
+            # 跳过本段之前的消息（后续段起点只会更晚，lower 单调推进）
+            while lower < len(messages) and int(messages[lower].get("timestamp") or 0) < start_ts:
+                lower += 1
             session_user_chars = 0
             session_other_chars = 0
-
-            # 从session中获取消息（需要重新查询）
-            # 这里简化处理，使用session的message_count和平均字数估算
-            # 实际项目中应该为每个session单独统计
-
-            session_ratio = session_other_chars / session_user_chars if session_user_chars > 0 else 0
-
+            idx = lower
+            while idx < len(messages):
+                ts = int(messages[idx].get("timestamp") or 0)
+                if ts > end_ts:
+                    break
+                if is_last or ts < end_ts:
+                    char_count = self._get_message_char_count(messages[idx])
+                    if messages[idx].get("is_sender") == 1:
+                        session_user_chars += char_count
+                    else:
+                        session_other_chars += char_count
+                idx += 1
+            if session_user_chars == 0 and session_other_chars == 0:
+                continue
+            session_ratio = (
+                session_other_chars / session_user_chars if session_user_chars > 0 else 0
+            )
             session_counts.append({
                 "conversation_id": conversation_id,
-                "session_id": session.get("id"),
+                "session_id": session_id,
                 "user_char_count": session_user_chars,
                 "other_char_count": session_other_chars,
                 "char_ratio": session_ratio,

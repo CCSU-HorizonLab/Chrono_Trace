@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import logging
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -14,6 +15,11 @@ from ...model_paths import (
     get_embedding_model_repo_id,
 )
 from ...wechat.account_settings import load_settings_from_file
+
+# 嵌入变体迁移的日志出口：此前模块未定义 logger，迁移函数里的
+# logger.info/warning 触发 NameError 被上层 except 吞成「迁移跳过」，
+# 纠正从未落盘也无人知晓
+logger = logging.getLogger(__name__)
 
 
 RAG_DEFAULTS: dict[str, Any] = {

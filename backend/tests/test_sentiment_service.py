@@ -498,3 +498,21 @@ class TestSentimentService:
 if __name__ == "__main__":
     # 运行测试
     pytest.main([__file__, "-v", "-s"])
+
+
+def test_l2_backfill_respects_l1_fifo_cap():
+    """补充#2：L2 命中回填与编码路径共用 FIFO 上限（4000）。
+
+    回填路径此前裸写无上限——重建/重分析场景 L2 全命中时每个唯一
+    文本都驻留内存（768 维 float 列表，十万级文本即数百 MB）。
+    """
+    from app.services.analysis.sentiment_service import SentimentService
+
+    svc = SentimentService()  # 模块级单例工厂（装饰器包装）
+    svc._embedding_cache = {}
+    for i in range(4001):
+        svc._remember_embedding(f"文本{i}", [0.1, 0.2])
+
+    assert len(svc._embedding_cache) == 4000
+    assert "文本0" not in svc._embedding_cache, "最旧条目必须被逐出"
+    assert "文本4000" in svc._embedding_cache

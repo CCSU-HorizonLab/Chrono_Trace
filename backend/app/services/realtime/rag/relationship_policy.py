@@ -198,7 +198,16 @@ def _evidence_hash(
     profile: dict[str, Any] | None,
     features_snapshot: dict[str, Any] | None,
     evidence_fact_ids: list[int],
+    derived_key: str = "",
 ) -> str:
+    """证据指纹：profile/特征快照/事实集 + 派生档位键。
+
+    derived_key 混入由 message_count 阈值派生的字段（stage/closeness_band/
+    initiative_pattern）：消息量跨过 300/2000 阈值时档位必须换版本，而
+    画像缓存与事实集恰在此期间可能字节级不变——此前哈希不含它们，跨阈值
+    后持续注入过期档位。阈值内的消息量波动仍命中同一 derived_key，不产生
+    版本抖动。
+    """
     digest = hashlib.sha256()
     digest.update(
         json.dumps(profile or {}, ensure_ascii=False, sort_keys=True).encode("utf-8")
@@ -211,6 +220,8 @@ def _evidence_hash(
     )
     digest.update(b"\x1f")
     digest.update(",".join(str(i) for i in sorted(evidence_fact_ids)).encode("utf-8"))
+    digest.update(b"\x1f")
+    digest.update(str(derived_key or "").encode("utf-8"))
     return digest.hexdigest()
 
 
@@ -247,6 +258,7 @@ def refresh_relationship_state_shadow(
             profile_cache.get("profile") if profile_cache else None,
             profile_cache.get("features_snapshot") if profile_cache else None,
             draft.evidence_fact_ids,
+            derived_key=f"{draft.stage}|{draft.closeness_band}|{draft.initiative_pattern}",
         )
         result = store.upsert_relationship_state(
             account_wxid=account_wxid,

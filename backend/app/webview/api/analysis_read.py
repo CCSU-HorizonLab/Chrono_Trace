@@ -542,12 +542,15 @@ class AnalysisReadApiMixin:
             # 取消事件按 task_id 隔离（W5，与 start_feature_extraction 共用注册表）
             cancel_event = threading.Event()
             self._analysis_cancel_events[task_id] = cancel_event
+            # 立即注册任务占位：线程内删除阶段（extract_features 步骤 0
+            # 之前的窗口）find_running_task 仍得 None，两道互斥门禁都会
+            # 放行第二个同会话管线交错删写（W5 收尾）
+            service.register_task(task_id, message="准备重新分析")
 
             def _run_reanalyze():
                 try:
-                    # 删除旧数据 + 重新提取（线程内执行：bridge 调用立即
-                    # 返回，此前同步阻塞至完成会卡住所有后续 bridge 调用）
-                    service.delete_analysis_data(conversation_id)
+                    # 删旧数据由 extract_features 步骤 0 统一执行（此前
+                    # 线程内先删一遍属同步时代残留，且放大了无注册窗口）
                     service.extract_features(
                         conversation_id, cancel_event=cancel_event, task_id=task_id
                     )

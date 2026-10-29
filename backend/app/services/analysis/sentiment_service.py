@@ -328,6 +328,17 @@ class SentimentService:
             logger.error(f"[情感服务] 向量生成失败: {exc}")
             return self._fallback_embedding()
 
+    def _remember_embedding(self, text: str, vector: List[float]) -> None:
+        """L1 写入（FIFO 上限 4000）：模型编码与 L2 命中回填共用。
+
+        回填路径此前裸写无上限——重建/重分析场景 L2 全命中时，历史库
+        每个唯一文本都会驻留内存（768 维 float 列表，十万级文本即数百
+        MB），与编码路径的 FIFO 预算不一致。
+        """
+        if len(self._embedding_cache) >= 4000:
+            del self._embedding_cache[next(iter(self._embedding_cache))]
+        self._embedding_cache[text] = vector
+
     def _get_embeddings_batch(self, texts: List[str], batch_size: int = 64) -> List[List[float]]:
         """Encode a batch using the local model's native vector dimension.
 
@@ -370,7 +381,7 @@ class SentimentService:
                     vector = l2_hits.get(text)
                     if vector is not None:
                         results[index] = vector
-                        self._embedding_cache[text] = vector
+                        self._remember_embedding(text, vector)
                     else:
                         remaining_indices.append(index)
                         remaining_texts.append(text)
@@ -399,11 +410,7 @@ class SentimentService:
                         results[original_index] = embedding_list
                         new_vectors.append(embedding_list)
 
-                        if len(self._embedding_cache) >= 4000:
-                            oldest_key = next(iter(self._embedding_cache))
-                            del self._embedding_cache[oldest_key]
-                        self._embedding_cache[uncached_texts[local_index]] = embedding_list
-
+                        self._remember_embedding(uncached_texts[local_index], embedding_list)
                     # L2 落库：模型已加载（gate 在 _embedding_cache_store），零向量
                     # 兜底不会进入此分支；INSERT OR IGNORE 幂等
                     if l2_store is not None:

@@ -74,3 +74,19 @@ def test_strong_mask_still_masks_everything():
     masked = PrivacyRedactor().strong_mask("她家在上海市浦东新区张江路,电话13812345678")
     assert "上海" not in masked
     assert "13812345678" not in masked
+
+
+def test_strong_mask_same_guardrails_as_redact():
+    """W13：兜底路径与 redact 同口径——译名哨兵 + 裸路名误报过滤。
+
+    此前 strong_mask 裸套 PATTERNS：星穹铁道被地址模式吃成 [ADDRESS]、
+    「中路推塔」整句消失，保护只存在于主路径。
+    """
+    # 译名不被地址模式吃掉
+    masked = PrivacyRedactor().strong_mask("我们打星穹铁道模拟宇宙")
+    assert "星穹铁道" in masked
+    assert "[ADDRESS]" not in masked
+    # 裸路名（无居住语境）不判地址
+    assert PrivacyRedactor().strong_mask("现在中路推塔别浪") == "现在中路推塔别浪"
+    # 真实地址仍被打码（守卫不得放松兜底）
+    assert "张江路" not in PrivacyRedactor().strong_mask("她家在上海市浦东新区张江路")

@@ -4,7 +4,7 @@
 
 ## 发布说明
 
-历次发布说明见本目录 `release-notes-v*.md`（最新：[v2.2.0](release-notes-v2.2.0.md)）。
+历次发布说明见本目录 `release-notes-v*.md`（最新：[v2.2.2](release-notes-v2.2.2.md)）。
 
 ## 当前文档
 

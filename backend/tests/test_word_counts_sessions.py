@@ -171,3 +171,41 @@ def test_word_counts_boundary_message_belongs_to_later_session(db):
         service._get_message_char_count({"content": "在忙吗"})
     assert session_rows[22] == expected_later
     assert session_rows[21] == service._get_message_char_count({"content": "早上好呀今天天气不错"})
+
+
+def test_word_counts_strictly_offset_sessions_keep_last_message(db):
+    """W12：真实切分的相邻段彼此错开（end=本段末条消息 ts）。
+
+    此前非末段按 ts<end 收口，把每段最后一条消息排除在任何桶外——
+    N 段系统性丢 N-1 条，按会话合计恒小于整体行。
+    """
+    _seed(db)
+    service = FeatureExtractionService()
+
+    # 严格错开：A 末条消息 3 就在 end_time=BASE+120，B 从 BASE+8h 起
+    db.execute(
+        "INSERT INTO sessions (id, conversation_id, start_time, end_time, message_count, initiator, source, created_at) "
+        "VALUES (31, 1, ?, ?, 3, 'user', 'long', 1)", (BASE, BASE + 120)
+    )
+    db.execute(
+        "INSERT INTO sessions (id, conversation_id, start_time, end_time, message_count, initiator, source, created_at) "
+        "VALUES (32, 1, ?, ?, 3, 'other', 'long', 1)", (BASE + 8 * 3600, BASE + 8 * 3600 + 120)
+    )
+    db.commit()
+
+    service.calculate_word_counts(1, [
+        {"id": 31, "start_time": BASE, "end_time": BASE + 120},
+        {"id": 32, "start_time": BASE + 8 * 3600, "end_time": BASE + 8 * 3600 + 120},
+    ])
+
+    rows = db.execute(
+        "SELECT session_id, user_char_count, other_char_count FROM word_counts "
+        "WHERE conversation_id = 1 AND session_id IS NOT NULL"
+    ).fetchall()
+    overall = db.execute(
+        "SELECT user_char_count, other_char_count FROM word_counts "
+        "WHERE conversation_id = 1 AND session_id IS NULL"
+    ).fetchone()
+    assert sum(int(r["user_char_count"]) for r in rows) == overall["user_char_count"], \
+        "错开段的末条消息不得丢失：按会话合计必须等于整体行"
+    assert sum(int(r["other_char_count"]) for r in rows) == overall["other_char_count"]

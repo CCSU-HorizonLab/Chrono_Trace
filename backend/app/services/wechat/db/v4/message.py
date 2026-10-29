@@ -459,6 +459,19 @@ class MessageDBV4(WeChatDBBase):
                         username, exclude_chatroom=not include_chatroom
                     ):
                         usernames.add(username)
+            except sqlite3.OperationalError as e:
+                if "no such table" in str(e).lower():
+                    # 无 Name2Id 表的结构变体分片：与 get_messages 同款良性
+                    # 豁免——记缺口会触发 ingest 水位冻结，每次「增量」导入
+                    # 都从陈旧水位全窗重扫
+                    continue
+                logger.error(
+                    "[消息读取] 分片 #%d 读取 Name2Id 失败: %s", shard_idx, e
+                )
+                self.read_errors.append(
+                    f"分片#{shard_idx} 读取会话清单失败: {e}"
+                )
+                continue
             except sqlite3.DatabaseError as e:
                 # 分片会话清单读失败：该分片全部会话缺席，必须留痕（W4）
                 logger.error(

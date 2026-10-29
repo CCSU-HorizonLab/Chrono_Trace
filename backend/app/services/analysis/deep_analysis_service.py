@@ -950,13 +950,28 @@ class DeepAnalysisService:
     def _poster_top_words(
         self, conversation_id: int, from_ts: int, to_ts: int
     ) -> Dict[str, Any]:
-        """海报 top 词：双方/我/TA 各前 12（抽样 2000 条约束分词代价）。"""
+        """海报 top 词：双方/我/TA 各前 12。
+
+        按时间序等距抽样（约 2000 条上限，约束分词代价）：此前
+        ORDER BY timestamp DESC 只取窗口尾部，词频系统性偏向近期话题，
+        而海报以「聊得最多的词」全窗措辞呈现；等距跨窗抽取无此偏倚，
+        且结果确定（同一窗口重复生成稳定）。
+        """
         rows = get_db().execute(
-            "SELECT is_sender, content FROM messages "
-            "WHERE conversation_id = ? AND message_type = 1 "
-            "AND timestamp BETWEEN ? AND ? AND content IS NOT NULL AND TRIM(content) != '' "
-            "ORDER BY timestamp DESC LIMIT ?",
-            (conversation_id, from_ts, to_ts, POSTER_WORDCLOUD_SAMPLE),
+            """
+            WITH ranked AS (
+                SELECT is_sender, content,
+                       ROW_NUMBER() OVER (ORDER BY timestamp, id) AS rn,
+                       COUNT(*) OVER () AS total
+                FROM messages
+                WHERE conversation_id = ? AND message_type = 1
+                  AND timestamp BETWEEN ? AND ?
+                  AND content IS NOT NULL AND TRIM(content) != ''
+            )
+            SELECT is_sender, content FROM ranked
+            WHERE (rn - 1) % ((total + ? - 1) / ?) = 0
+            """,
+            (conversation_id, from_ts, to_ts, POSTER_WORDCLOUD_SAMPLE, POSTER_WORDCLOUD_SAMPLE),
         ).fetchall()
         texts = {"all": [], "me": [], "other": []}
 

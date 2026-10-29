@@ -663,3 +663,26 @@ def test_related_context_rendered_for_cross_day_anaphora(monkeypatch):
     assert user_text.index("更早的相关讨论") < user_text.index("上一段结尾") < user_text.index("对话片段")
     # evidence 隔离不受影响（相关消息 id 不在本段）
     assert "[5]" in user_text.split("对话片段")[0]
+
+
+def test_feedback_signals_redact_before_truncate(monkeypatch):
+    """跨 400 字边界的 PII 必须先全量脱敏再截断（远程红线）。
+
+    此前 [:400] 先于 _redact_text 执行——被切断的手机号残段（11 位只剩
+    前 7 位）不再匹配完整 phone 模式，原样随 prompt 出网到远程 LLM。
+    """
+    import re as _re
+
+    from app.services.realtime.privacy_redactor import PrivacyRedactor
+
+    http = _FakeHTTP('{"signals": []}')
+    adapter = _adapter(monkeypatch, http, remote=True, redactor=PrivacyRedactor())
+
+    # 手机号起于第 396 字符：截断到 400 只剩前 7 位
+    original = "甲" * 395 + "13812345678"
+    adapter.extract_feedback_signals(original_speech=original, final_message="好的收到")
+
+    user_text = http.captured["payload"]["messages"][1]["content"]
+    assert _re.search(r"\d{7,}", user_text) is None, "截断残段不得携带未脱敏数字串"
+    # 占位符可能被 [:400] 切掉尾部（切口落在占位符上无泄漏面）
+    assert "[PHON" in user_text, "完整手机号应被脱敏为占位符"

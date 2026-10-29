@@ -42,3 +42,42 @@ def test_runtime_operational_error_records_read_gap(monkeypatch):
     assert repo.get_messages("wxid_x") == []
     assert len(repo.read_errors) == 1
     assert "database is locked" in repo.read_errors[0]
+
+
+def test_name2id_missing_table_is_benign(monkeypatch):
+    """无 Name2Id 表的结构变体分片：良性豁免，不得记缺口冻结水位。"""
+    repo = MessageDBV4.__new__(MessageDBV4)
+    repo.connections = [object()]
+    repo.read_errors = []
+
+    class _Conn:
+        @staticmethod
+        def execute(sql):
+            raise sqlite3.OperationalError("no such table: Name2Id")
+
+    repo.connections = [_Conn]
+
+    # get_all_conversation_usernames 的游标在 conn.execute 上取得
+    class _ConnInstance:
+        def execute(self, sql):
+            raise sqlite3.OperationalError("no such table: Name2Id")
+
+    repo.connections = [_ConnInstance()]
+    assert repo.get_all_conversation_usernames() == []
+    assert repo.read_errors == []
+
+
+def test_name2id_runtime_error_records_gap(monkeypatch):
+    """锁/磁盘满等运行时错误：照旧记缺口（W4 水位护栏可感知）。"""
+
+    class _ConnInstance:
+        def execute(self, sql):
+            raise sqlite3.OperationalError("database is locked")
+
+    repo = MessageDBV4.__new__(MessageDBV4)
+    repo.connections = [_ConnInstance()]
+    repo.read_errors = []
+
+    assert repo.get_all_conversation_usernames() == []
+    assert len(repo.read_errors) == 1
+    assert "database is locked" in repo.read_errors[0]

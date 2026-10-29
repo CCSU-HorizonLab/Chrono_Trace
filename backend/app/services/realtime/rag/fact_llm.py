@@ -305,10 +305,17 @@ class LLMFactExtractorAdapter:
         redactor = self._require_redactor(payload)
 
         def _prepare(text: str, source_id: str) -> str | None:
-            rendered = str(text or "").strip()[:400]
-            if not rendered:
+            stripped = str(text or "").strip()
+            if not stripped:
                 return None
-            return self._redact_text(rendered, redactor, payload, source_id=source_id)
+            # 先全量脱敏再截断：先截断会把跨 400 字边界的 PII 切成残段
+            # （11 位手机号只剩前 7 位），不再匹配完整模式而原样出网——
+            # 违反「发送远程 LLM 前脱敏」红线。截断只可能切到占位符尾部
+            # （无敏感原文），无泄漏面
+            redacted = self._redact_text(
+                stripped, redactor, payload, source_id=source_id
+            )
+            return redacted[:400] if redacted else None
 
         original = _prepare(original_speech, "original")
         final = _prepare(final_message, "final")

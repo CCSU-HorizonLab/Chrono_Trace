@@ -588,3 +588,73 @@ class TestQaEmbeddingTrigger:
         deadline = time.time() + 5
         while backfill.find_running_task(1) and time.time() < deadline:
             time.sleep(0.02)
+
+
+class _FakeAffinitySvc:
+    """守卫视角的服务实例：{conversation_id: running_task_id}。"""
+
+    def __init__(self, tasks=None, progress=None):
+        self._tasks = dict(tasks or {})
+        self._progress = progress or {}
+
+    def find_running_task(self, conversation_id):
+        return self._tasks.get(conversation_id)
+
+    def has_running_task(self):
+        return bool(self._tasks)
+
+    def get_progress(self, task_id):
+        return self._progress.get(task_id)
+
+
+class TestAffinityCrossInstanceGuards:
+    """第四轮抽查 W4：补评/全面分析守卫与进度查询必须跨全部服务实例。"""
+
+    def test_retry_rejected_when_old_instance_running(self):
+        """补评守卫查全部实例：旧实例上的全面分析运行中（已被替换下位）拒绝。
+
+        此前只查当前实例且无条件覆写它——运行中的全面分析从此查不到、
+        互斥被架空，两侧并发写 affinity_scores_{id}。
+        """
+        bridge = _Bridge(
+            affinity=_FakeAffinitySvc(),
+            affinity_list=[_FakeAffinitySvc({8: "affinity_8_x"})],
+        )
+        result = bridge.retry_llm_relationship(8)
+        assert result["ok"] is False
+        assert "好感度分析进行中" in result["error"]
+
+    def test_retry_rejected_when_retry_running_anywhere(self):
+        bridge = _Bridge(
+            affinity=_FakeAffinitySvc({9: "affinity_llm_9_x"}),
+        )
+        result = bridge.retry_llm_relationship(9)
+        assert result["ok"] is False
+        assert "补评进行中" in result["error"]
+
+    def test_analyze_rejected_when_retry_running_on_old_instance(self):
+        """全面分析守卫同样查全部实例：旧实例上补评运行中拒绝启动。"""
+        bridge = _Bridge(
+            affinity=_FakeAffinitySvc(),
+            affinity_list=[_FakeAffinitySvc({8: "affinity_llm_8_x"})],
+        )
+        result = bridge.analyze_affinity(8)
+        assert result["ok"] is False
+        assert "补评进行中" in result["error"]
+
+    def test_progress_found_on_replaced_instance(self):
+        """被替换下位实例上运行中的任务：进度查询跨实例回查不失联。"""
+
+        class _Progress:
+            status = "running"
+            progress_percent = 40
+            current_step = "深度推理"
+
+        old = _FakeAffinitySvc(progress={"affinity_8_x": _Progress()})
+        bridge = _Bridge(affinity=_FakeAffinitySvc(), affinity_list=[old])
+
+        result = bridge.get_affinity_progress("affinity_8_x")
+
+        assert result["ok"] is True
+        assert result["status"] == "running"
+        assert result["progress_percent"] == 40

@@ -132,10 +132,12 @@ class FeatureExtractionService:
         Returns:
             提取结果字典，包含sessions, response_times, initiative_stats, word_counts
         """
-        self._apply_analysis_device_mode()
-
         if task_id is None:
             task_id = f"extract_{conversation_id}_{int(time.time())}"
+        # 注册必须在 _apply_analysis_device_mode 之前：该初始化可达数秒且
+        # 可能抛错（坏 device mode/DML 会话创建失败），若在 try 外抛掉，
+        # bridge 预注册的占位任务永久 in_progress——该会话所有提取/重分析
+        # 请求被守卫永久拒绝，只能重启解锁（W5）
         self._task_status[task_id] = {
             "status": "in_progress",
             "progress": 0.0,
@@ -144,6 +146,9 @@ class FeatureExtractionService:
         }
 
         try:
+            # 设备模式初始化入 try：抛错必须经 except 落 failed 终态
+            self._apply_analysis_device_mode()
+
             # 0. 清理旧数据，防止重复插入
             if cancel_event and cancel_event.is_set(): raise Exception("分析已被用户取消")
             self._update_task_status(task_id, 5, "Clearing old data")
@@ -763,9 +768,13 @@ class FeatureExtractionService:
         """, (conversation_id, overall_user_chars, overall_other_chars, overall_ratio, int(time.time())))
 
         # 3. 按会话统计：以会话时间窗归属消息（messages 与 sessions 均按
-        # 时间升序，双指针线性扫描）。相邻会话边界消息归后段（左闭右开，
-        # 末段含终点）防止边界双计；空会话不写行——此前此处是恒 (NULL,0,0)
-        # 的占位写入，既污染「NULL=整体统计」哨兵语义又令按会话查询恒空
+        # 时间升序，双指针线性扫描）。归属窗口：非末段 [start, next_start)
+        # ——边界归后段（左闭右开），末段 [start, end] 含终点。切分产出的
+        # 段彼此严格错开（end=本段末条消息 ts），非末段若按 ts<end 收口会
+        # 把每段最后一条消息排除在任何桶外（N 段系统性丢 N-1 条）；改用
+        # 下段起点作开区间右端后，边界双计与末条丢失同时消除。空会话不
+        # 写行——此前此处是恒 (NULL,0,0) 的占位写入，既污染「NULL=整体
+        # 统计」哨兵语义又令按会话查询恒空
         session_counts = []
         lower = 0
         total = len(sessions)
@@ -776,6 +785,13 @@ class FeatureExtractionService:
             start_ts = int(session.get("start_time") or 0)
             end_ts = int(session.get("end_time") or 0)
             is_last = pos == total - 1
+            if is_last:
+                window_end, window_closed = end_ts, True
+            else:
+                next_start = int(sessions[pos + 1].get("start_time") or 0)
+                window_end, window_closed = (
+                    (next_start, False) if next_start > start_ts else (end_ts, True)
+                )
             # 跳过本段之前的消息（后续段起点只会更晚，lower 单调推进）
             while lower < len(messages) and int(messages[lower].get("timestamp") or 0) < start_ts:
                 lower += 1
@@ -784,9 +800,9 @@ class FeatureExtractionService:
             idx = lower
             while idx < len(messages):
                 ts = int(messages[idx].get("timestamp") or 0)
-                if ts > end_ts:
+                if ts > window_end:
                     break
-                if is_last or ts < end_ts:
+                if window_closed or ts < window_end:
                     char_count = self._get_message_char_count(messages[idx])
                     if messages[idx].get("is_sender") == 1:
                         session_user_chars += char_count

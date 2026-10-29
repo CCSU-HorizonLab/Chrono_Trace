@@ -609,3 +609,48 @@ class TestPosterBig5:
         result = DeepAnalysisService._poster_big5(1, "wxid_me", 1000, 2000)
 
         assert result["me"]["scores"]["neuroticism"] == {"score": 41, "label": "敏感"}
+
+
+class TestPosterTopWordsSampling:
+    """海报 top 词抽样口径（第四轮 W13）：窗口超上限时按时间序等距抽取。
+
+    此前 ORDER BY timestamp DESC LIMIT 只取窗口尾部，词频系统性偏向
+    近期话题，与海报「聊得最多的词」全窗措辞矛盾；等距抽样首条必中
+    且尾段有代表，首尾两半计数接近。
+    """
+
+    def test_sampling_spans_full_window(self, db):
+        from app.services.analysis.deep_analysis_service import POSTER_WORDCLOUD_SAMPLE
+
+        calls: list[list[str]] = []
+
+        class _RecordingGen:
+            def generate(self, texts, top_n=12):
+                calls.append(list(texts))
+                return {"词": 1}
+
+        # 5000 条 > 抽样上限 2000：stride=ceil(5000/2000)=3，约取 1667 条
+        for i in range(5000):
+            db.execute(
+                "INSERT INTO messages (conversation_id, is_sender, message_type, content, timestamp)"
+                " VALUES (1, ?, 1, ?, ?)",
+                (i % 2, f"msg{i}", 1000 + i),
+            )
+
+        service = DeepAnalysisService.__new__(DeepAnalysisService)
+        service._wordcloud_gen = _RecordingGen()
+
+        service._poster_top_words(1, 0, 100000)
+
+        all_texts = calls[0]  # 第一次调用即 "all" 槽
+        assert len(calls) == 3  # all / me / other
+        assert len(all_texts) <= POSTER_WORDCLOUD_SAMPLE
+        assert len(all_texts) >= 1500  # 等距约 1667 条，留出容差
+        indices = sorted(int(t[3:]) for t in all_texts)
+        assert indices[0] == 0  # 首条必中：窗口起点有代表
+        assert indices[-1] >= 4990  # 尾段有代表（DESC LIMIT 尾部偏倚的对照面）
+        first_half = sum(1 for i in indices if i < 2500)
+        second_half = len(indices) - first_half
+        assert abs(first_half - second_half) <= 40  # 首尾两半均衡
+        me_texts, other_texts = calls[1], calls[2]
+        assert me_texts and other_texts  # 双方槽都拿到样本

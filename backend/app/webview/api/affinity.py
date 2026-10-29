@@ -356,26 +356,27 @@ class AffinityApiMixin:
             # 检查再各自注册，ONNX 推理并发争抢——正是互斥要防的场景。
             # 锁内含模块 reload 与短路判定的几次 DB 读（均亚秒级）。
             with _ONNX_TASK_LOCK:
-                # 复用守卫：旧服务实例上仍有本会话的运行中任务时不重复启动。
-                # 此处必须查旧实例（本方法每次 reload 出新类，新实例看不到旧任务）；
-                # 重复启动会替换取消事件，导致运行中的任务再也停不掉
-                prev_service = getattr(self, "_affinity_service", None)
-                if prev_service is not None:
+                # 复用守卫：查全部实例（含被补评替换下位的旧实例）上本会话
+                # 的运行中任务。此处必须查旧实例（本方法每次 reload 出新
+                # 类，新实例看不到旧任务）；重复启动会替换取消事件，导致
+                # 运行中的任务再也停不掉
+                for prev_service in self._all_affinity_services():
                     running = prev_service.find_running_task(conversation_id)
-                    if running:
-                        # 补评任务不能被当作全面分析复用（其结果不含新消息），
-                        # 只能让用户等它结束（补评通常一次 LLM 调用即完）
-                        if running.startswith("affinity_llm_"):
-                            return {
-                                "ok": False,
-                                "error": "AI 关系评估补评进行中，请等待完成后再开始全面分析",
-                            }
+                    if not running:
+                        continue
+                    # 补评任务不能被当作全面分析复用（其结果不含新消息），
+                    # 只能让用户等它结束（补评通常一次 LLM 调用即完）
+                    if running.startswith("affinity_llm_"):
                         return {
-                            "ok": True,
-                            "task_id": running,
-                            "status": "started",
-                            "message": "已有进行中的好感度分析，已复用",
+                            "ok": False,
+                            "error": "AI 关系评估补评进行中，请等待完成后再开始全面分析",
                         }
+                    return {
+                        "ok": True,
+                        "task_id": running,
+                        "status": "started",
+                        "message": "已有进行中的好感度分析，已复用",
+                    }
 
                 # 互斥守卫：情感补算与全面分析共用 ONNX 推理会话，并发会争抢
                 # 模型资源；补算进行中时拒绝启动分析（补算通常分钟级即完成）
@@ -494,12 +495,18 @@ class AffinityApiMixin:
         try:
             import time as _time
 
-            # 复用守卫：该会话的全面分析仍在运行时拒绝补评（缓存将被覆盖，
-            # 补评结果会一起丢）；不同会话互不影响
-            prev_service = getattr(self, "_affinity_service", None)
-            if prev_service is not None:
-                running = prev_service.find_running_task(int(conversation_id))
+            # 复用守卫：查全部历史实例——本方法与 analyze_affinity 每次
+            # reload 出新类新实例，旧实例上运行中的任务对当前实例不可见。
+            # 此前只查当前实例且无条件覆写它：运行中的全面分析从此查不到、
+            # 互斥按实例生效被整体架空，两侧并发写 affinity_scores_{id}
+            for guard_service in self._all_affinity_services():
+                running = guard_service.find_running_task(int(conversation_id))
                 if running:
+                    if running.startswith("affinity_llm_"):
+                        return {
+                            "ok": False,
+                            "error": "AI 关系评估补评进行中，请稍后再试",
+                        }
                     return {
                         "ok": False,
                         "error": "好感度分析进行中，请等待完成后再补评 AI 关系评估",
@@ -507,7 +514,14 @@ class AffinityApiMixin:
 
             AffinityAnalysisService = self._get_fresh_affinity_service_class()
             service = AffinityAnalysisService()
+            # 与 analyze_affinity 同款登记：替换当前实例前把仍持有运行任务
+            # 的旧实例留在 _affinity_services，供守卫与进度查询跨实例可见
             self._affinity_service = service
+            self._affinity_services = [
+                s for s in getattr(self, "_affinity_services", None) or []
+                if s.has_running_task()
+            ]
+            self._affinity_services.append(service)
 
             task_id = (
                 f"affinity_llm_{conversation_id}_{int(_time.time())}_{uuid.uuid4().hex[:6]}"
@@ -562,6 +576,16 @@ class AffinityApiMixin:
                 }
 
             progress = service.get_progress(task_id)
+            if not progress:
+                # 当前实例没有：回查全部历史实例——补评/再分析会替换当前
+                # 实例，被替换实例上运行中的全面分析不能就此失联（结果
+                # 无人消费但管线仍在烧 ONNX 并写库）
+                for prev in self._all_affinity_services():
+                    if prev is service:
+                        continue
+                    progress = prev.get_progress(task_id)
+                    if progress:
+                        break
             if not progress:
                 # 未注册的 task_id（典型：切会话再分析后 _affinity_service 被
                 # 整体替换，旧任务失联）：必须显式 not_found 让前端停轮询，

@@ -1733,8 +1733,10 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
 
         async function loadActivityCalendar(year?: number) {
             if (!selectedConversationId.value) return
+            const epoch = viewEpoch.value // 写回前复查（F1）：与 loadAnalysis/loadSessions 同口径
             try {
                 const res = await api.get_activity_calendar(selectedConversationId.value, year)
+                if (epoch !== viewEpoch.value) return // 已切换联系人，丢弃过期结果（F1）
                 if (res.success && res.data) {
                     activityCalendar.value = res.data
                     if (currentTab.value === 'features') {

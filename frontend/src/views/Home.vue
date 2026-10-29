@@ -903,7 +903,9 @@ function waitForImportTask(taskId: string): Promise<any> {
             const last = importEtaSamples[importEtaSamples.length - 1]
             const dIdx = last.idx - first.idx
             const dt = last.t - first.t
-            if (dIdx > 0 && dt > 0) etaMs = Math.round(((total - last.idx) / (dIdx / dt)) * 1000)
+            // dt 来自 Date.now() 已是毫秒：(剩余)/(每毫秒推进) 即毫秒，
+            // 再乘 1000 会把预计剩余夸大一千倍
+            if (dIdx > 0 && dt > 0) etaMs = Math.round((total - last.idx) / (dIdx / dt))
           }
         }
         importProgress.value = {

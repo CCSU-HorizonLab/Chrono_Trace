@@ -271,8 +271,11 @@ const dailySessionCount = computed(() => {
 
   return Object.entries(counts)
     .map(([date, count]) => ({ date, count }))
-    .reverse()
+    // 键序承自 groupedByDate 已是降序（最新在前）：先截取最近 7 天，
+    // 再反转成左旧右新的时间轴——此前先 reverse 后 slice 取到的是
+    // 最旧 7 天
     .slice(0, 7)
+    .reverse()
 })
 
 const maxDailyCount = computed(() => {

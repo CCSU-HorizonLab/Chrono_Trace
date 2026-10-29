@@ -242,6 +242,12 @@ class SuggestionPipelineMixin:
             engine = SuggestionEngineFactory.create(
                 self._suggestion_config.get('engine_type', 'llm')
             )
+            # 开场建议已覆盖"当前该说什么";短时间内跳过 silence 类自动触发,
+            # 避免监听刚启动就同时弹出"开场建议+体面降温"两条重复卡片。
+            # 必须在 engine.generate() 之前置位：推理模型 20-40s 延迟窗口内
+            # 抑制不生效，轮询的 silence 冷场提醒恰在此窗口触发重复卡片。
+            # 生成失败时多抑制 60s 无害（无开场卡片也无需降温提醒）
+            self._listen_start_suggestion_at = time.time()
             result = engine.generate('manual_request', intent, ctx)
             if not self._session_is_current(session_state):
                 _print("[RealtimeMonitorService] 已忽略过期会话的开场建议结果")
@@ -253,9 +259,6 @@ class SuggestionPipelineMixin:
                 context=ctx.get('trigger_context', {'source': 'listen_start'}),
             )
             self._save_suggestion_to_db(trigger, result, session_state=session_state)
-            # 开场建议已覆盖"当前该说什么";短时间内跳过 silence 类自动触发,
-            # 避免监听刚启动就同时弹出"开场建议+体面降温"两条重复卡片。
-            self._listen_start_suggestion_at = time.time()
             _print("💡 [开场] 基于最近对话的建议已生成(60s 内抑制 silence 自动触发)")
         except Exception as e:
             _print(f"⚠️ [开场] 生成建议失败: {e}")

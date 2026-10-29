@@ -670,8 +670,11 @@ class BackfillStoreMixin:
         else:
             conn.commit()
 
+        # 标记同样用冻结账号（与读取同口径）：传实时 current_account_wxid
+        # 时收尾窗口切账号会让 UPDATE 匹配 0 行——A 的 buffer 行永久
+        # unprocessed，被后续 checkpoint 回溯反复重扫重插（W5 只修读不修标）
         self.message_buffer.mark_as_processed(
-            batch_id, self.current_account_wxid, row_ids=buffer_row_ids
+            batch_id, resolved_account, row_ids=buffer_row_ids
         )
 
         return migrated

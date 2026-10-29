@@ -433,7 +433,7 @@ def test_wal_fast_path_failure_leaves_page_hashes_untouched(tmp_path, monkeypatc
         real_replace = os.replace
 
         def _boom_replace(src_p, dst_p, *a, **k):
-            if str(src_p).endswith(".tmp"):
+            if ".tmp." in str(src_p):  # 快照临时名已唯一化（pid+线程 id 后缀）
                 raise OSError("replace 模拟故障（测试注入）")
             return real_replace(src_p, dst_p, *a, **k)
 
@@ -447,3 +447,65 @@ def test_wal_fast_path_failure_leaves_page_hashes_untouched(tmp_path, monkeypatc
         assert rows_after == rows_before
     finally:
         watcher.close()
+
+
+def test_tmp_sibling_unique_across_threads_and_close_globs(tmp_path):
+    """W9：临时文件名带 pid+线程 id——跨实例同源并发不再共用固定 .tmp。
+
+    实例锁只防本实例线程；stop 放弃路径的旧 watcher 与新 provider 实例
+    并发刷同一分片时会交错写同一固定 .tmp、os.replace 发布撕裂快照。
+    """
+    plain = build_plain_db(tmp_path / "plain.db", SCHEMA_V1)
+    src = tmp_path / "message_0.db"
+    encrypt_db(plain, src, KEY_HEX)
+    watcher = EncryptedShardWatcher(src, KEY_HEX, tmp_path / "cache")
+    try:
+        main_path = watcher._tmp_sibling(watcher.out_path)
+        assert ".tmp." in main_path.name, "临时名必须唯一化（含 pid+线程 id）"
+
+        other: list = []
+
+        def _in_thread():
+            other.append(watcher._tmp_sibling(watcher.out_path))
+
+        t = threading.Thread(target=_in_thread)
+        t.start()
+        t.join()
+        assert other[0] != main_path, "不同线程的临时名必须互不相同"
+
+        # close 的前缀 glob 清理必须覆盖唯一名残留
+        stale = tmp_path / "cache" / (watcher.out_path.name + f".tmp.{os.getpid()}.999999")
+        stale.write_bytes(b"x")
+        watcher.close()
+        assert not stale.exists()
+    finally:
+        watcher.close()
+
+
+def test_two_instances_refreshing_same_shard_do_not_collide(tmp_path):
+    """同源两实例并发强刷：唯一临时名 + 原子 replace，互不撕裂。"""
+    plain = build_plain_db(tmp_path / "plain.db", SCHEMA_V1)
+    src = tmp_path / "message_0.db"
+    encrypt_db(plain, src, KEY_HEX)
+    a = EncryptedShardWatcher(src, KEY_HEX, tmp_path / "cache")
+    b = EncryptedShardWatcher(src, KEY_HEX, tmp_path / "cache")
+    errors: list = []
+    try:
+        def _force(w):
+            try:
+                w.refresh(force=True)
+            except Exception as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        ta = threading.Thread(target=_force, args=(a,))
+        tb = threading.Thread(target=_force, args=(b,))
+        ta.start()
+        tb.start()
+        ta.join()
+        tb.join()
+
+        assert not errors, f"并发刷新不得抛错: {errors}"
+        assert a.connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    finally:
+        a.close()
+        b.close()

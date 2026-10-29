@@ -2268,6 +2268,10 @@ class Bridge(
             import threading
             import uuid as _uuid
             task_id = f"extract_{conversation_id}_{int(time.time())}_{_uuid.uuid4().hex[:6]}"
+            # 预注册占位（与 reanalyze 同款）：线程启动到 extract_features
+            # 内部注册之间存在守卫空窗——第二个入口查 find_running_task 得
+            # None 放行，两条管线交错 delete_analysis_data+插会话（W5）
+            service.register_task(task_id, message="准备启动特征提取")
             # 取消事件按 task_id 隔离（W5）：此前共享单事件被后启动的任务
             # 覆盖，先启动的提取再也停不掉、取消会误停最后启动的那个
             cancel_event = threading.Event()

@@ -395,3 +395,73 @@ def test_buffer_persists_visible_index_zero(test_db):
     }
     assert by_runtime["rt_0"] == 0
     assert by_runtime["rt_1"] == -1
+
+
+def test_migration_marks_processed_with_frozen_account(test_db):
+    """W2：mark_as_processed 与读取同用冻结账号。
+
+    传实时 current_account_wxid 时收尾窗口切账号，UPDATE 匹配 0 行——
+    A 的 buffer 行永久 unprocessed，被后续 checkpoint 回溯反复重扫重插。
+    """
+    host = _Host()
+    host.current_account_wxid = "acct_new"  # 收尾期间单例已被新账号接管
+    host.message_buffer.save_message("b_fr", "acct_old", "wxid_a", "对方", _buffer_msg(1, 1_700_000_100))
+    host.message_buffer.save_message("b_fr", "acct_old", "wxid_a", "对方", _buffer_msg(2, 1_700_000_200))
+
+    assert host._migrate_buffer_to_messages("b_fr", "wxid_a", "对方", account_wxid="acct_old") == 2
+    assert _unprocessed_ids_for("b_fr", "acct_old") == set(), "冻结账号的行必须被标记已处理"
+
+
+def _unprocessed_ids_for(batch_id, account):
+    return {
+        row[0]
+        for row in get_db().execute(
+            "SELECT id FROM realtime_message_buffer"
+            " WHERE batch_id = ? AND account_wxid = ? AND is_processed = 0",
+            (batch_id, account),
+        )
+    }
+
+
+def test_double_start_rejected_during_initialization_window(test_db):
+    """W10：守卫与置 True 之间隔秒级初始化，双击必须在窗口内互斥。
+
+    此前第二个调用同样过守卫→双会话并存，后者 token 递增令前者静默
+    退出且无人收尾（消息滞留缓冲表永不迁移）。
+    """
+    import threading as _threading
+
+    from app.services.realtime.monitor_service import RealtimeMonitorService
+
+    RealtimeMonitorService._instance = None
+    service = RealtimeMonitorService()
+
+    init_entered = _threading.Event()
+    release_init = _threading.Event()
+
+    def _slow_init():
+        init_entered.set()
+        release_init.wait(timeout=5)
+        raise RuntimeError("初始化失败（注入）")
+
+    service._reset_wechat_instance = lambda: None
+    service._create_wechat_instance = _slow_init
+
+    results = {}
+
+    def _start():
+        results["first"] = service.start_monitoring("wxid_x", "对方")
+
+    t1 = _threading.Thread(target=_start)
+    t1.start()
+    assert init_entered.wait(timeout=5), "第一个调用必须已进入初始化阶段"
+
+    # 初始化窗口内（is_monitoring 已占位）：第二个启动必须被拒
+    second = service.start_monitoring("wxid_y", "对方B")
+    assert second["success"] is False
+    assert "已有监听任务在运行" in second["message"]
+
+    release_init.set()
+    t1.join(timeout=5)
+    assert results["first"]["success"] is False, "初始化失败按失败返回"
+    assert service.is_monitoring is False, "失败路径必须释放启动占位"

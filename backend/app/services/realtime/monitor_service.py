@@ -92,6 +92,9 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, Backfi
             self.stop_polling = False           # 停止轮询标志
             self._stop_event = None
             self._monitor_session_token = 0
+            # 启动互斥锁：start_monitoring 的守卫与置 True 之间隔秒级
+            # 初始化，无锁时双击入口都过守卫→双会话并存
+            self._start_lock = threading.Lock()
             self.emotion_tracker = None
             self.provider = None
             self._provider_name = ''
@@ -209,14 +212,21 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, Backfi
                 'error': str (如果失败)
             }
         """
-        # 1. 检查是否已在监听
-        if self.is_monitoring:
-            return {
-                'success': False,
-                'message': '已有监听任务在运行',
-                'error': f'当前正在监听: {self.current_display_name}'
-            }
-        
+        # 1. 启动互斥（check-then-set 原子化）：守卫与置 True 之间隔约
+        # 60 行秒级初始化（_create_wechat_instance 含快照解密+inotify），
+        # pywebview 每个 JS 调用独立线程——无锁时双击两个调用都过守卫
+        # → 双会话并存，后启动的 session token 递增令前者静默退出且无人
+        # 收尾（其批次消息滞留 realtime_message_buffer 永不迁移）。锁内
+        # 立即占位，失败路径统一在返回前释放
+        with self._start_lock:
+            if self.is_monitoring:
+                return {
+                    'success': False,
+                    'message': '已有监听任务在运行',
+                    'error': f'当前正在监听: {self.current_display_name}'
+                }
+            self.is_monitoring = True  # 占位：初始化期间拦截并发启动
+
         try:
             # 2. 初始化监听后端
             self._reset_wechat_instance()
@@ -225,6 +235,7 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, Backfi
                 try:
                     self._create_wechat_instance()
                 except Exception as e:
+                    self.is_monitoring = False  # 释放启动占位
                     return {
                         'success': False,
                         'message': '监听后端初始化失败',
@@ -275,7 +286,17 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, Backfi
             import time
             self._start_time = int(time.time())
             _print(f"✅ 监听已启动！批次ID: {self.current_batch_id[:8]}...")
-            
+
+            # 记录事件到运行时事件表（在线程启动前：线程一旦启动，失败
+            # 路径不得再释放启动占位——轮询线程会因 is_monitoring=False
+            # 退出且无人收尾）
+            self._log_runtime_event('realtime_monitor_start', {
+                'batch_id': self.current_batch_id,
+                'account_wxid': self.current_account_wxid,
+                'talker_username': resolved_talker_username,
+                'talker_display_name': talker_display_name
+            })
+
             # 5. 启动轮询线程（ChatWith 和模型预加载在线程中异步执行）
             _print("🔄 启动消息轮询线程...")
             self.stop_polling = False
@@ -285,15 +306,7 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, Backfi
                 daemon=True,
             )
             self.polling_thread.start()
-            
-            # 8. 记录事件到运行时事件表
-            self._log_runtime_event('realtime_monitor_start', {
-                'batch_id': self.current_batch_id,
-                'account_wxid': self.current_account_wxid,
-                'talker_username': resolved_talker_username,
-                'talker_display_name': talker_display_name
-            })
-            
+
             return {
                 'success': True,
                 'batch_id': self.current_batch_id,
@@ -304,7 +317,8 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, Backfi
             logger.error(f"[RealtimeMonitorService] 启动监听异常: {e}")
             import traceback
             traceback.print_exc()
-            
+            self.is_monitoring = False  # 释放启动占位（轮询线程未起的失败路径）
+
             return {
                 'success': False,
                 'message': '启动监听失败',

@@ -107,7 +107,7 @@ class EncryptedShardWatcher:
         路径逐页重 derive，即 checkpoint 节奏（实测 10~70s 一波）就是天然
         的全库对账点，无需定时强制全量。
         """
-        tmp_out_path = self.out_path.with_name(self.out_path.name + ".tmp")
+        tmp_out_path = self._tmp_sibling(self.out_path)
         # WAL 帧页哈希暂存：replace 成功后才并入——中途失败时内存哈希若被
         # 即时写入，下轮全量刷新该页「源未变」哈希命中，会从旧快照拷旧明文
         # 固化（帧内容从未落盘；W4 同族）
@@ -136,7 +136,7 @@ class EncryptedShardWatcher:
 
     def _refresh_full(self, state: tuple[int, int, int, int], force: bool) -> bool:
         """全量路径：逐页读主库、密文 sha1 对比增量解密 + WAL 帧合并。"""
-        tmp_out_path = self.out_path.with_name(self.out_path.name + ".tmp")
+        tmp_out_path = self._tmp_sibling(self.out_path)
         # 页哈希全部暂存本地、整轮成功后才替换 self._page_hashes：此前页循环
         # 即时写入，若本轮中途失败（页1守卫/WAL 异常）丢弃 .tmp 保留旧快照，
         # 但内存哈希已是新值——下轮「源未变」哈希命中 → _read_decrypted_page
@@ -236,15 +236,37 @@ class EncryptedShardWatcher:
         # 的 key 指纹校验兜住不会误用），与 import_cache 持久口径一致
         with self._lock:
             self._close_conn()
-            for p in (Path(str(self.out_path) + ".tmp"),
-                      Path(str(self._meta_path()) + ".tmp"),
-                      Path(str(self.out_path) + "-wal"), Path(str(self.out_path) + "-shm")):
+            # 前缀 glob 清理：临时名已带 pid+线程 id（见 _tmp_sibling），
+            # 固定名匹配会漏掉唯一名残留
+            stale_tmps = [
+                *self.cache_dir.glob(self.out_path.name + ".tmp*"),
+                *self.cache_dir.glob(self.out_path.name + ".meta.json.tmp*"),
+            ]
+            for p in stale_tmps:
+                try:
+                    p.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            for p in (Path(str(self.out_path) + "-wal"), Path(str(self.out_path) + "-shm")):
                 try:
                     p.unlink(missing_ok=True)
                 except OSError:
                     pass
 
     # ---------- 内部 ----------
+
+    def _tmp_sibling(self, final_path: Path) -> Path:
+        """final_path 的唯一临时兄弟名（pid+线程 id）。
+
+        实例锁 self._lock 只防本实例的线程；跨实例同源并发（stop 的 15s
+        放弃路径后旧 watcher 仍在刷，新 provider 实例已 __init__ 同一分片）
+        会交错写同一固定 .tmp，os.replace 把撕裂文件发布成快照——正是
+        实例锁注释防线程却没防实例的同一失败。唯一名 + 原子 replace 后
+        每路写入自洽，最后一次 replace 胜出且必是完整文件。
+        """
+        return final_path.with_name(
+            f"{final_path.name}.tmp.{os.getpid()}.{threading.get_ident()}"
+        )
 
     @staticmethod
     def _discard_tmp(tmp_out_path: Path) -> None:
@@ -309,7 +331,7 @@ class EncryptedShardWatcher:
                 "page_hashes": {str(k): v for k, v in self._page_hashes.items()},
             }
             meta_path = self._meta_path()
-            tmp = Path(str(meta_path) + ".tmp")
+            tmp = self._tmp_sibling(meta_path)
             tmp.write_text(json.dumps(payload), encoding="utf-8")
             os.replace(tmp, meta_path)
         except Exception as e:

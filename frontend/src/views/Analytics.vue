@@ -1928,7 +1928,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
                             else if (d.status === 'failed' || d.status === 'cancelled') { clearInterval(activeTimer.value); reject(new Error(d.error || d.message || '分析已取消')) }
                             else if (d.status === 'not_found') { clearInterval(activeTimer.value); reject(new Error('分析任务已过期')) }
                         }
-                    } catch (e) { clearInterval(activeTimer.value); resolve() }
+                    } catch (e) { /* 单次轮询异常继续（与好感度轮询同口径）：瞬时抛错当完成会把半成品特征置为已完成 */ }
                 }, 500)
             })
         }
@@ -1956,11 +1956,16 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
                         globalProgressStep.value = `[深度推理] ${prog.current_step || '分析中...'}`
                         if (prog.status === 'completed') {
                             clearInterval(activeTimer.value)
+                            // 完成分支含多次 await（进度→分数→跟随加载），每次
+                            // 写回前都要复查联系人（F1）：最终轮询在途时切人，
+                            // A 的结果会覆盖 B 的关系洞察页
+                            if (selectedConversationId.value !== analysisConversationId) { resolve(); return }
                             if (prog.result) {
                                 analysisResult.value = prog.result as AffinityAnalysisResult
                             }
 
                             const scores = await getAffinityScores(analysisConversationId)
+                            if (selectedConversationId.value !== analysisConversationId) { resolve(); return }
                             if (
                                 scores &&
                                 (
@@ -2080,12 +2085,14 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
 
         async function loadFeatureData() {
             if (!selectedConversationId.value) return
+            const epoch = viewEpoch.value // 写回前复查（F1）：与 loadAnalysis/loadSessions 同口径
             try {
                 const [rtData, iniData, wcData] = await Promise.all([
                     api.get_response_times(selectedConversationId.value),
                     api.get_initiative_stats(selectedConversationId.value),
                     api.get_word_counts(selectedConversationId.value, false)
                 ])
+                if (epoch !== viewEpoch.value) return // 已切换联系人，丢弃过期结果（F1）
                 if (rtData.success && rtData.data) {
                     const aggregatedDistribution = aggregateResponseTimeDistribution(rtData.data.distribution)
                     responseTimeStats.value = {

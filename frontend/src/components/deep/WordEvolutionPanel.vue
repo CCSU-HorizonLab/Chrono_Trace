@@ -222,7 +222,18 @@ function buildOption(): echarts.EChartsOption {
 // v-if 与数据都可能迟到（骨架→payload、切视角后才有可流动词），init 收进
 // ensureChart 幂等化；watch 用 post flush 保证 bumpRef 已挂载
 function ensureChart() {
-  if (!bumpRef.value || chartInstance || !bumpWords.value.length) return
+  if (!bumpRef.value || !bumpWords.value.length) return
+  // 容器在 v-if 下随 bumpWords 清空而销毁、恢复时重建（双方→我→双方
+  // 切换）：旧实例仍绑已分离节点，幂等守卫直接 return 会让 setOption
+  // 画进孤儿 canvas，图区永久空白——检测到实例 DOM 不是当前容器时
+  // 丢弃重建
+  if (chartInstance && chartInstance.getDom() !== bumpRef.value) {
+    resizeObserver?.disconnect()
+    resizeObserver = null
+    chartInstance.dispose()
+    chartInstance = null
+  }
+  if (chartInstance) return
   chartInstance = echarts.init(bumpRef.value)
   chartInstance.setOption(buildOption())
   chartInstance.on('click', (params: any) => togglePin(params?.seriesName))

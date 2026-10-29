@@ -1951,7 +1951,9 @@ function startPolling() {
                conversationHistory.value.push({ role: 'ai', content: s.reply, ts: Math.floor(toMs(s.created_at)/1000) })
              }
           } else {
-             const parsedSpeeches = typeof s.speeches === 'string' ? JSON.parse(s.speeches) : (s.speeches || [])
+             // 守护解析：一条脏 speeches（截断/非 JSON 旧数据）裸 parse 会
+             // 冒泡中止本 tick 整段建议分拣与后续 emotionSummary 更新
+             const parsedSpeeches = parseSuggestionSpeeches(s.speeches)
              pendingSuggestions.value.push({ ...s, speeches: parsedSpeeches, _expanded: false, _type: 'suggestion' })
              if (s.reply) {
                conversationHistory.value.push({ role: 'ai', content: s.reply, ts: Math.floor(toMs(s.created_at)/1000) })
@@ -2467,7 +2469,9 @@ async function loadLastThread() {
           if (s.summary === '[SILENT]') return
           
           if (s.summary !== '[PURE_CHAT]') {
-             const parsedSpeeches = typeof s.speeches === 'string' ? JSON.parse(s.speeches) : (s.speeches || [])
+             // 守护解析（1137 行助手）：裸 parse 一条脏 JSON 即中止整个
+             // 继承流程，用户重开会话看不到上次记录且无任何提示
+             const parsedSpeeches = parseSuggestionSpeeches(s.speeches)
              loadedSuggs.push({ ...s, speeches: parsedSpeeches, _type: 'suggestion' })
           }
         })

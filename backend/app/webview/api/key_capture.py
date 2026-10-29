@@ -11,7 +11,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-import sys, uuid
+import uuid
 from ...services.wechat.account_settings import update_wechat_account_import_state
 
 class KeyCaptureApiMixin:
@@ -132,21 +132,9 @@ class KeyCaptureApiMixin:
     def get_wechat_key_capture_status(self) -> dict[str, Any]:
         """Inspect whether WeChat is at its login screen or already logged in."""
         try:
-            if sys.platform != "win32":
-                # Linux：无需重启微信，只需「退出登录后重新登录」触发断点
-                from ...services.wechat.keys.gdb_linux import find_linux_wechat_pids
+            from ...services.wechat.keys import inspect_login_state
 
-                pids = find_linux_wechat_pids()
-                return {
-                    "ok": True,
-                    "running": bool(pids),
-                    "login_state": "logged_in" if pids else "not_running",
-                    "processes": [{"pid": p} for p in pids],
-                    "restart_required": False,
-                }
-            from ...services.wechat.keys.flow_win import inspect_wechat_login_state
-
-            return inspect_wechat_login_state()
+            return inspect_login_state()
         except Exception as exc:
             logger.error("[Bridge] inspect WeChat key-capture state failed: %s", exc, exc_info=True)
             return {
@@ -159,18 +147,10 @@ class KeyCaptureApiMixin:
 
     def restart_wechat_for_key_capture(self) -> dict[str, Any]:
         """Restart WeChat for key capture after the frontend obtains confirmation."""
-        if sys.platform != "win32":
-            # Linux 密钥捕获不需要重启微信（静态内存断点等待重新登录即可）
-            return {
-                "ok": True,
-                "restarted": False,
-                "restart_required": False,
-                "message": "Linux 无需重启微信，请在微信中退出登录后重新登录。",
-            }
         try:
-            from ...services.wechat.keys.flow_win import restart_wechat_for_key_capture
+            from ...services.wechat.keys import restart_wechat_for_capture
 
-            return restart_wechat_for_key_capture()
+            return restart_wechat_for_capture()
         except Exception as exc:
             logger.error("[Bridge] restart WeChat for key capture failed: %s", exc, exc_info=True)
             return {

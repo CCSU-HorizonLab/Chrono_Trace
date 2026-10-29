@@ -22,12 +22,13 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from .base import ProviderInitError, RealtimeProvider
+from .base import ProviderError, ProviderInitError, RealtimeProvider
 from .models import RealtimeMessage, build_message_hash
 from ....config import TEMP_DIR_PATH
 from ...wechat.account_settings import get_active_wechat_account, load_settings_from_file
 from ...wechat.db_snapshot import EncryptedShardWatcher
 from ...wechat.path_finder import WeChatPathFinder
+from ...wechat.snapshot_manager import STALE_TOLERANCE_SECONDS
 
 logger = logging.getLogger(__name__)
 
@@ -236,6 +237,7 @@ class DbWatchRealtimeProvider(RealtimeProvider):
             self._wakeup_event.clear()
 
         any_refreshed = False
+        failed_shards: list[int] = []
         # 只同步刷新目标表所在分片：消息可见性不依赖其余分片（fts/media
         # 等）——每轮事件同步刷全部会把 fts 的几百 ms 挡在查询前面；
         # 其余分片的新鲜度由上方 10s reconcile 周期兜底
@@ -243,8 +245,22 @@ class DbWatchRealtimeProvider(RealtimeProvider):
             try:
                 if self._watchers[idx].refresh():
                     any_refreshed = True
+                else:
+                    failed_shards.append(idx)
             except Exception as exc:
+                failed_shards.append(idx)
                 logger.debug("[db_watch] 分片刷新失败（沿用旧快照）: %s", exc)
+        # 陈旧守卫（snapshot_manager._is_stale 的姊妹路径）：刷新失败的
+        # 分片若源库已领先快照超过容差，说明快照长期解不开新数据（微信
+        # 换库重写/密钥变化后每页 HMAC 失败），沿用旧快照监听会永远看不到
+        # 新消息且无任何错误信号——抛错走 monitor 连续失败通道，前端经
+        # chat_error 可见并自动收尾停止
+        for idx in failed_shards:
+            if self._shard_snapshot_stale(idx):
+                raise ProviderError(
+                    f"消息分片 {idx} 快照陈旧（源库持续变化但已超过 {int(STALE_TOLERANCE_SECONDS)}s "
+                    "无法解密，可能微信重新登录更换了密钥）——请重新获取密钥后再开启监听"
+                )
         self._upper_seq = max(self._upper_seq, self._max_seq(self._table))
 
         # inotify 模式下无变化：缓存本轮结果供下次短路
@@ -297,6 +313,21 @@ class DbWatchRealtimeProvider(RealtimeProvider):
         self._last_nochange_result = None
 
     # ---------- 内部 ----------
+
+    def _shard_snapshot_stale(self, idx: int) -> bool:
+        """分片快照陈旧判定（与 SharedSnapshotManager._is_stale 同口径）。
+
+        源库 mtime 领先快照超过容差 → 刷新长期失败/追不上（安静账号
+        源不变时快照也不更新，相对判据不误伤）。源或快照 stat 失败同样
+        视为陈旧（文件被移走/删除）。
+        """
+        watcher = self._watchers[idx]
+        try:
+            snap_mtime = watcher.out_path.stat().st_mtime
+            src_mtime = Path(watcher.src).stat().st_mtime
+        except OSError:
+            return True
+        return (src_mtime - snap_mtime) > STALE_TOLERANCE_SECONDS
 
     # ---------- inotify 文件变化通知 ----------
 

@@ -559,15 +559,27 @@ class BackfillStoreMixin:
                 self._last_known_ts = 0
                 self._reset_wechat_instance()
 
-    def _migrate_buffer_to_messages(self, batch_id: str, talker_username: str, talker_display_name: str) -> int:
-        """Move realtime buffered messages into the historical messages table."""
+    def _migrate_buffer_to_messages(
+        self,
+        batch_id: str,
+        talker_username: str,
+        talker_display_name: str,
+        account_wxid: str | None = None,
+    ) -> int:
+        """Move realtime buffered messages into the historical messages table.
+
+        account_wxid 必须传冻结的会话账号：收尾期间用户可能已切到新账号
+        并开始新监听，读实时 self.current_account_wxid 会拿新账号查旧账号
+        的批次（0 行），旧账号的实时消息永久滞留缓冲表（W5 冻结态不变量）。
+        """
         from ...db.connection import get_db
 
         talker_key = self._get_talker_key(talker_username, talker_display_name)
         if not batch_id or not talker_key:
             return 0
 
-        buffer_messages = self.message_buffer.get_batch_messages(batch_id, account_wxid=self.current_account_wxid)
+        resolved_account = account_wxid or self.current_account_wxid
+        buffer_messages = self.message_buffer.get_batch_messages(batch_id, account_wxid=resolved_account)
         if not buffer_messages:
             return 0
         # 只标记本次实际读取到的行：读取快照之后轮询线程竞态写入的新行

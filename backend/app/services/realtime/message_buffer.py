@@ -115,7 +115,9 @@ class MessageBuffer:
                     message_data.get('message_type', 'text'),
                     message_data.get('timestamp', now),
                     now,
-                    int(message_data.get('visible_index', -1) or -1),
+                    # 0 是合法 visible_index（0 起始枚举），`or -1` 会把它
+                    # 压成 -1 令同秒组最旧消息排序漂移
+                    -1 if message_data.get('visible_index') in (None, '') else int(message_data['visible_index']),
                     batch_id,
                     now
                 ))

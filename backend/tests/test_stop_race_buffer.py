@@ -258,3 +258,140 @@ def test_fallback_decrypt_writes_into_private_dir(tmp_path, monkeypatch):
     finally:
         db.close()
     assert not os.path.exists(created_dirs[0]), "close 后私有目录应清理"
+
+
+def test_stop_join_window_does_not_clobber_newly_started_session(test_db):
+    """stop 的 join 等待窗口内新会话已启动：收尾必须只用冻结快照（W5）。
+
+    旧实现置 is_monitoring=False 后读实时 self.current_* 收尾：迁移/清掉
+    的是新会话批次，且 _reset_wechat_instance 置 wx=None 令新轮询线程立即
+    退出而 is_monitoring 永久卡 True，之后所有 start 被拒直到重启。
+    """
+    import threading
+
+    from app.services.realtime.monitor_service import RealtimeMonitorService
+
+    RealtimeMonitorService._instance = None
+    service = RealtimeMonitorService()
+    service.current_batch_id = "b_old"
+    service.current_talker = "wxid_old"
+    service.current_display_name = "旧对象"
+    service.current_account_wxid = "acct"
+    service.is_monitoring = True
+    service.message_buffer = MessageBuffer()
+    service.message_buffer.save_message(
+        "b_old", "acct", "wxid_old", "旧对象", _buffer_msg(1, 1_700_000_100)
+    )
+
+    calls = {"migrate": [], "checkpoint": [], "reset": 0}
+    service._migrate_buffer_to_messages = lambda *a, **k: (calls["migrate"].append((a, k)), 0)[1]
+    service._save_monitor_checkpoint = lambda *a, **k: calls["checkpoint"].append((a, k))
+    service._reset_wechat_instance = lambda: calls.__setitem__("reset", calls["reset"] + 1)
+    service._log_runtime_event = lambda *a, **k: None
+    service.emotion_tracker = None
+
+    stop_signal = threading.Event()
+
+    def _poll_then_takeover():
+        # stop 先冻结快照再 set stop_event——事件序保证接管发生在快照之后；
+        # 再等 is_monitoring 被 stop 置 False 后才接管，令终态确定
+        stop_signal.wait(timeout=5)
+        deadline = time.time() + 5
+        while service.is_monitoring and time.time() < deadline:
+            time.sleep(0.002)
+        service.current_batch_id = "b_new"
+        service.current_talker = "wxid_new"
+        service.current_display_name = "新对象"
+        service._stop_event = threading.Event()  # 新会话自己的 stop_event
+        service.is_monitoring = True
+
+    service._stop_event = stop_signal
+    service.polling_thread = threading.Thread(target=_poll_then_takeover)
+    service.polling_thread.start()
+
+    result = service.stop_monitoring()
+
+    assert result["success"] is True
+    assert result["batch_id"] == "b_old", "返回的必须是冻结批次"
+    # 迁移/checkpoint 只处理冻结批次与冻结账号
+    assert calls["migrate"][0][0][0] == "b_old"
+    assert calls["migrate"][0][1]["account_wxid"] == "acct"
+    assert calls["checkpoint"][0][0][0] == "b_old"
+    assert calls["checkpoint"][0][1]["account_wxid"] == "acct"
+    # 新会话状态完好：字段未被清、标志未被复原、wx 实例未被重置
+    assert service.current_batch_id == "b_new"
+    assert service.current_talker == "wxid_new"
+    assert service.current_display_name == "新对象"
+    assert service.is_monitoring is True
+    assert calls["reset"] == 0, "新会话接管后不得 _reset_wechat_instance"
+
+
+def test_finalize_passes_frozen_account_to_migration(test_db):
+    """切号后旧会话失效收尾：迁移/checkpoint 必须用冻结账号查批次（W5）。
+
+    实时 self.current_account_wxid 已是新账号——按实时账号查旧账号批次得
+    0 行，旧账号的实时消息将永久滞留缓冲表无人消费。
+    """
+    from app.services.realtime.monitor_service import RealtimeMonitorService
+
+    RealtimeMonitorService._instance = None
+    service = RealtimeMonitorService()
+    service.current_account_wxid = "acct_new"  # 收尾期间用户已切号开新监听
+    service.message_buffer = MessageBuffer()
+    service.message_buffer.save_message(
+        "b_old", "acct_old", "wxid_old", "旧对象", _buffer_msg(1, 1_700_000_100)
+    )
+
+    service._finalize_session_in_thread({
+        "session_token": 1,
+        "batch_id": "b_old",
+        "account_wxid": "acct_old",
+        "talker_username": "wxid_old",
+        "display_name": "旧对象",
+    })
+
+    row = get_db().execute(
+        "SELECT COUNT(*) FROM messages WHERE talker = 'wxid_old' AND source = 'realtime'"
+    ).fetchone()
+    assert row[0] == 1, "冻结账号的批次必须被迁移（实时账号口径会查空批次）"
+
+
+def test_visible_index_zero_preserved_through_prepare(test_db):
+    """W10：visible_index 是 0 起始枚举，合法值 0 不得被 `or` 兜底压成 -1。
+
+    同秒组里 index=0 是最旧一条：压成 -1 后被所有消费方排到最后，
+    组内顺序漂移。
+    """
+    from types import SimpleNamespace
+
+    from app.services.realtime.monitor_service import RealtimeMonitorService
+
+    RealtimeMonitorService._instance = None
+    service = RealtimeMonitorService()
+
+    msg_zero = SimpleNamespace(
+        is_self=True, is_system=False, content="你好", type="text",
+        id="rt_1", visible_index=0, timestamp=1_700_000_100, time=None,
+    )
+    assert service._prepare_visible_messages([msg_zero])[0]["visible_index"] == 0
+
+    msg_missing = SimpleNamespace(
+        is_self=False, is_system=False, content="早", type="text",
+        id="rt_2", visible_index=None, timestamp=1_700_000_200, time=None,
+    )
+    assert service._prepare_visible_messages([msg_missing])[0]["visible_index"] == -1
+
+
+def test_buffer_persists_visible_index_zero(test_db):
+    """W10：暂存表落库——0 存 0（不被 `or -1` 吞），缺失存 -1。"""
+    buffer = MessageBuffer()
+    assert buffer.save_message("b_vi", "acct", "wxid_a", "对方", _buffer_msg(0, 1_700_000_100)) > 0
+    no_index = {k: v for k, v in _buffer_msg(1, 1_700_000_200).items() if k != "visible_index"}
+    assert buffer.save_message("b_vi", "acct", "wxid_a", "对方", no_index) > 0
+
+    by_runtime = {
+        m["runtime_id"]: m["visible_index"]
+        for m in buffer.get_batch_messages("b_vi", account_wxid="acct")
+    }
+    assert by_runtime["rt_0"] == 0
+    assert by_runtime["rt_1"] == -1

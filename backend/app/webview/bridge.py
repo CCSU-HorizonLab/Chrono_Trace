@@ -369,6 +369,12 @@ class Bridge(
             "wechat_dir": wechat_dir or existing.get("wechat_dir") or "",
             "source": source or existing.get("source") or "auto",
             "db_key": db_key or existing.get("db_key") or "",
+            # 捕获态字段必须从已有账号继承：候选缺这些键时 upsert 会用
+            # normalize 的默认值（passphrase/{}/0）覆盖，静默抹掉已捕获
+            # 的 raw 密钥与导入水位，raw key 通道失效且退化为全量重导
+            "key_type": existing.get("key_type") or "passphrase",
+            "raw_keys": existing.get("raw_keys") or {},
+            "import_watermark_ts": int(existing.get("import_watermark_ts") or 0),
             "import_completed": bool(existing.get("import_completed")),
             "last_import_at": existing.get("last_import_at"),
             "last_import_total_size": int(existing.get("last_import_total_size") or 0),
@@ -1849,7 +1855,15 @@ class Bridge(
                 try:
                     from ..services.realtime.monitor_service import RealtimeMonitorService
 
-                    baseline_tail = getattr(RealtimeMonitorService(), "_baseline_tail", None) or []
+                    monitor = RealtimeMonitorService()
+                    # 基线归属守卫：_baseline_tail 属于监听单例的当前批次，
+                    # 前端轮询旧批次（悬浮窗残页/重启恢复）时不得把别的
+                    # 对话的基线并进本批次展示
+                    baseline_tail = (
+                        getattr(monitor, "_baseline_tail", None)
+                        if str(getattr(monitor, "current_batch_id", "") or "") == str(batch_id or "")
+                        else None
+                    ) or []
                     if baseline_tail:
                         # 基线段只保留真实对话行（system 行不并入消息气泡，
                         # 否则前端会按 sender_attr != self 误显示为“对方”）。
@@ -1924,8 +1938,15 @@ class Bridge(
             if len(items) < limit:
                 try:
                     from ..services.realtime.monitor_service import RealtimeMonitorService
+
                     monitor = RealtimeMonitorService()
-                    baseline_tail = getattr(monitor, "_baseline_tail", None) or []
+                    # 基线归属守卫：同 get_realtime_messages——旧批次轮询
+                    # 不得并入单例当前会话（另一对话）的基线尾部
+                    baseline_tail = (
+                        getattr(monitor, "_baseline_tail", None)
+                        if str(getattr(monitor, "current_batch_id", "") or "") == str(batch_id or "")
+                        else None
+                    ) or []
                     if baseline_tail:
                         # 逐条 insert(0) 会把时间序倒置——先组好基线段再整体前置
                         baseline_items = [

@@ -439,7 +439,10 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, Backfi
             if is_system:
                 sender_attr = 'system'
             runtime_id = str(getattr(msg, 'id', '') or '')
-            visible_index = str(getattr(msg, 'visible_index', '') or '')
+            # visible_index 是 0 起始枚举：合法值 0 不能用 `or` 兜底（会
+            # 被压成 -1，同秒组里最旧一条被所有消费方排到最后）
+            raw_visible_index = getattr(msg, 'visible_index', None)
+            visible_index = -1 if raw_visible_index in (None, '') else int(raw_visible_index)
             explicit_timestamp = int(getattr(msg, 'timestamp', 0) or 0)
             timestamp_label = normalize_text(
                 str(getattr(msg, 'time', None) or getattr(msg, 'CreateTime', '') or '')
@@ -947,10 +950,12 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, Backfi
             return
         message_count = self.message_buffer.get_batch_count(batch_id, account_wxid)
         self._save_monitor_checkpoint(
-            batch_id, talker_username, talker_display_name, message_count
+            batch_id, talker_username, talker_display_name, message_count,
+            account_wxid=account_wxid,
         )
         migrated_count = self._migrate_buffer_to_messages(
-            batch_id, talker_username, talker_display_name
+            batch_id, talker_username, talker_display_name,
+            account_wxid=account_wxid,
         )
         if migrated_count:
             _print(f"✅ 失效收尾已迁移 {migrated_count} 条消息到历史数据表")
@@ -1002,7 +1007,9 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, Backfi
             message_type = prepared_message['message_type']
             runtime_id = prepared_message['runtime_id']
             occurrence = str(prepared_message['occurrence'])
-            visible_index = int(prepared_message.get('visible_index', -1) or -1)
+            # 0 是合法 visible_index，不得 `or -1` 兜底（0 起始枚举）
+            raw_visible_index = prepared_message.get('visible_index', -1)
+            visible_index = -1 if raw_visible_index in (None, '') else int(raw_visible_index)
             message_key = prepared_message['message_key']
             resolved_timestamp = int(prepared_message['resolved_timestamp'] or 0)
             dedupe_timestamp = int(prepared_message['dedupe_timestamp'] or 0)
@@ -1239,14 +1246,20 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, Backfi
         talker_username: str,
         talker_display_name: str,
         message_count: int,
+        account_wxid: str | None = None,
     ) -> None:
-        """Persist the last captured non-system message as a resume checkpoint."""
+        """Persist the last captured non-system message as a resume checkpoint.
+
+        account_wxid 传冻结的会话账号：读实时 self._resolve_account_wxid()
+        在收尾期间切号后会拿新账号查旧批次（0 行），checkpoint 因
+        last_message 为空被跳过（W5 冻结态不变量）。
+        """
         talker_key = self._get_talker_key(talker_username, talker_display_name)
         if not talker_key or not batch_id:
             return
 
-        account_wxid = self._resolve_account_wxid()
-        messages = self.message_buffer.get_batch_messages(batch_id, account_wxid=account_wxid)
+        resolved_account = account_wxid or self._resolve_account_wxid()
+        messages = self.message_buffer.get_batch_messages(batch_id, account_wxid=resolved_account)
         last_message = None
         for msg in reversed(messages):
             if msg.get('sender_attr') == 'system':
@@ -1290,7 +1303,7 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, Backfi
                 updated_at = excluded.updated_at
             ''',
             (
-                account_wxid,
+                resolved_account,
                 talker_key,
                 talker_username or None,
                 talker_display_name or talker_key,
@@ -1505,8 +1518,18 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, Backfi
             }
         
         try:
-            _print(f"⏹️  正在停止监听: {self.current_display_name}")
-            
+            # 冻结会话快照（置 is_monitoring=False 之前）：标志放开后
+            # start_monitoring 即可放行新会话，join 等待窗口内新会话会
+            # 换掉 self.current_*——收尾必须只处理本批次的冻结值，且仅在
+            # 仍是本会话时才清理单例状态（否则清掉的是新会话：wx 被
+            # _reset_wechat_instance 置 None 令新轮询线程立刻退出且
+            # is_monitoring 永久卡 True，W5 同族）
+            batch_id = self.current_batch_id
+            talker_username = self.current_talker
+            talker_display_name = self.current_display_name
+            account_wxid = self.current_account_wxid
+            _print(f"⏹️  正在停止监听: {talker_display_name}")
+
             # 1. 停止轮询线程
             self.stop_polling = True
             stop_event = self._stop_event
@@ -1533,30 +1556,29 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, Backfi
                         f"⚠️  轮询线程 {waited:.1f}s 未结束，跳过本次缓冲迁移"
                         "（消息已留在暂存表，未被标已处理，不丢数据）"
                     )
-                    deferred_batch_id = self.current_batch_id
-                    deferred_talker = self.current_talker
-                    deferred_name = self.current_display_name
-                    # 保存 checkpoint：下次开启监听经回溯补全从微信侧重抓窗口消息
+                    # 冻结快照收尾：不读实时 self.current_*（可能已被新会话换掉）
                     try:
                         deferred_count = self.message_buffer.get_batch_count(
-                            deferred_batch_id, self.current_account_wxid
+                            batch_id, account_wxid
                         )
                         self._save_monitor_checkpoint(
-                            deferred_batch_id, deferred_talker, deferred_name, deferred_count
+                            batch_id, talker_username, talker_display_name,
+                            deferred_count, account_wxid=account_wxid,
                         )
                     except Exception as cp_e:
                         _print(f"⚠️  延迟收尾 checkpoint 保存失败: {cp_e}")
                     self._log_runtime_event('realtime_monitor_stop_deferred', {
-                        'batch_id': deferred_batch_id,
+                        'batch_id': batch_id,
                         'waited_seconds': waited,
                     })
                     self.is_monitoring = False
-                    self.current_batch_id = None
-                    self.current_talker = None
-                    self.current_display_name = None
+                    if self.current_batch_id == batch_id:
+                        self.current_batch_id = None
+                        self.current_talker = None
+                        self.current_display_name = None
                     return {
                         'success': True,
-                        'batch_id': deferred_batch_id,
+                        'batch_id': batch_id,
                         'message_count': 0,
                         'message': f'监听已停止，但轮询线程仍在收尾（等待 {waited:.0f}s），'
                                    '本批消息未被迁移；已保存回溯点，下次开启监听可自动补全'
@@ -1564,35 +1586,32 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, Backfi
                 _print(f"✅ 轮询线程已结束（等待 {waited:.1f} 秒）")
             
             # 4. 不调用 RemoveListenChat（避免卡顿）
-            if self.wx and self.current_display_name:
+            if self.wx and talker_display_name:
                 try:
                     _print("⚠️  跳过 RemoveListenChat 调用（避免卡顿）")
                 except Exception as e:
                     _print(f"❌ 移除监听异常: {e}")
-            
-            # 3. 获取消息数量
-            message_count = self.message_buffer.get_batch_count(self.current_batch_id, self.current_account_wxid)
-            
-            # 4. 保存批次ID用于返回
-            batch_id = self.current_batch_id
-            talker_username = self.current_talker
-            talker_display_name = self.current_display_name
+
+            # 3. 获取消息数量（冻结快照，不读实时 current_*）
+            message_count = self.message_buffer.get_batch_count(batch_id, account_wxid)
 
             self._save_monitor_checkpoint(
                 batch_id,
                 talker_username,
                 talker_display_name,
-                message_count
+                message_count,
+                account_wxid=account_wxid,
             )
 
             migrated_count = self._migrate_buffer_to_messages(
                 batch_id,
                 talker_username,
-                talker_display_name
+                talker_display_name,
+                account_wxid=account_wxid,
             )
             if migrated_count:
                 _print(f"✅ 已迁移 {migrated_count} 条消息到历史数据表")
-            
+
             # 5. 记录事件
             self._log_runtime_event('realtime_monitor_stop', {
                 'batch_id': batch_id,
@@ -1601,25 +1620,31 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, Backfi
                 'message_count': message_count,
                 'migrated_count': migrated_count
             })
-            
-            # 6. 清理状态
-            self.current_batch_id = None
-            self.current_talker = None
-            self.current_display_name = None
-            self._current_conversation_id = 0  # 会话号随监听会话一起清（停止后状态不再回报旧会话）
-            self.seen_hashes.clear()
-            self.seen_message_keys.clear()
-            self._last_known_ts = 0
-            self._chat_timed_out = False
-            self._resume_mode = 'skip'
-            self._stop_event = None
-            
-            # 7. 重置情绪追踪器
-            if self.emotion_tracker:
-                self.emotion_tracker.reset()
-                self.emotion_tracker = None
-            self._last_auto_suggestion_time = 0
-            self._reset_wechat_instance()
+
+            # 6. 清理状态——仅当仍是本会话（join 窗口内没有新会话接管）：
+            # 否则清掉的是新会话的批次/去重集/stop_event/情绪追踪器，
+            # 且 _reset_wechat_instance 置 wx=None 会令新轮询线程立即退出
+            # 而 is_monitoring 永久卡 True
+            if self.current_batch_id == batch_id:
+                self.current_batch_id = None
+                self.current_talker = None
+                self.current_display_name = None
+                self._current_conversation_id = 0  # 会话号随监听会话一起清（停止后状态不再回报旧会话）
+                self.seen_hashes.clear()
+                self.seen_message_keys.clear()
+                self._last_known_ts = 0
+                self._chat_timed_out = False
+                self._resume_mode = 'skip'
+                self._stop_event = None
+
+                # 7. 重置情绪追踪器
+                if self.emotion_tracker:
+                    self.emotion_tracker.reset()
+                    self.emotion_tracker = None
+                self._last_auto_suggestion_time = 0
+                self._reset_wechat_instance()
+            else:
+                _print("⏭️ 停止收尾：检测到新监听会话已接管，跳过单例状态清理")
             
             _print(f"✅ 监听已完全停止！累计抓取: {message_count} 条\n")
             

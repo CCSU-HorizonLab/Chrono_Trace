@@ -350,3 +350,33 @@ def test_inotify_adopts_lazily_created_wal(tmp_path):
         assert provider._pending_wal_checks == []
     finally:
         provider._stop_inotify()
+
+
+def test_stale_shard_raises_provider_error(provider_env, monkeypatch):
+    """陈旧守卫：刷新持续失败且源库领先快照超容差 → 抛 ProviderError。
+
+    微信退出重登（salt/密钥变化）后 refresh 每轮全页 HMAC 失败仅返回
+    False——旧实现无限沿用旧快照且无任何错误信号，监听界面永远不再出
+    现新消息。抛错后走 monitor 连续失败通道（chat_error 可见 + 收尾）。
+    """
+    provider, _ = provider_env
+    assert provider.open_chat(ZHANG) is True
+
+    watcher = provider._watchers[provider._table_shards[0]]
+    monkeypatch.setattr(watcher, "refresh", lambda *a, **k: False)  # 模拟持续 HMAC 失败
+    provider._last_reconcile = time.monotonic()  # 压住 reconcile 分支
+
+    from app.services.realtime.providers.base import ProviderError
+
+    # 源比快照新 10×容差：刷新追不上，旧快照不得继续当监听数据源
+    now = time.time()
+    os.utime(watcher.src, (now + 600, now + 600))
+    os.utime(watcher.out_path, (now - 600, now - 600))
+    with pytest.raises(ProviderError, match="快照陈旧"):
+        provider.list_visible_messages()
+
+    # 反向不误伤：快照与源时间接近（安静账号/刚刷新完）→ 沿用旧口径
+    # 返回缓存或查询结果，不抛错
+    os.utime(watcher.src, (now - 60, now - 60))
+    os.utime(watcher.out_path, (now - 10, now - 10))
+    provider.list_visible_messages()

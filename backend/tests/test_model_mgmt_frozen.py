@@ -78,3 +78,28 @@ class TestDownloadRemoved:
         assert not hasattr(ModelMgmtApiMixin, "download_analysis_models")
         assert not hasattr(ModelMgmtApiMixin, "get_model_download_progress")
         assert not hasattr(ModelMgmtApiMixin, "_download_embedding_model")
+
+
+class TestTorchLeftoverWeightsNotReady:
+    """torch 时代残留源权重不参与判活（第四轮备选）。
+
+    diagnose 按 config.json + .safetensors/.bin 判活：残权重在 → issue=None。
+    ONNX 单后端只认 onnx/ 产物——此前据 diagnose 置 ready 误报
+    analysis_available=True，实际推理不可用。
+    """
+
+    def test_leftover_weights_do_not_report_available(self, no_onnx, monkeypatch):
+        bridge = _make_bridge(monkeypatch, frozen=False)
+        bridge._get_sentiment_model_manager = lambda: _FakeManager(None)
+        bridge._diagnose_embedding_model_status = lambda: {
+            "repo_id": "fake/emb", "issue": None, "can_recover": False,
+        }
+
+        result = bridge.check_analysis_model_status()
+
+        assert result["analysis_available"] is False
+        assert result["sentiment_model_ready"] is False
+        assert result["embedding_model_ready"] is False
+        assert result["missing_models"] == ["sentiment", "embedding"]
+        for item in result["missing_details"]:
+            assert "ONNX fp16 产物缺失" in item["issue"]

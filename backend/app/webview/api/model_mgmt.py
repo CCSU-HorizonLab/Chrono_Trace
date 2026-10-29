@@ -166,8 +166,12 @@ class ModelMgmtApiMixin:
             sentiment_diagnosis = sentiment_manager.diagnose_model_status()
             embedding_diagnosis = self._diagnose_embedding_model_status()
 
-            sentiment_model_ready = not sentiment_diagnosis["issue"]
-            embedding_model_ready = not embedding_diagnosis["issue"]
+            # ONNX 单后端：可用性由 ONNX 产物单点决定——diagnose 按 torch 源
+            # 权重（config.json + .safetensors/.bin）判活，残留的旧权重会让
+            # issue=None 而 onnx/ 产物缺失，此前据 diagnose 置 ready 误报
+            # analysis_available=True，实际推理并不可用
+            sentiment_model_ready = onnx_ready
+            embedding_model_ready = onnx_ready
 
             missing_models = []
             missing_details = []
@@ -178,7 +182,8 @@ class ModelMgmtApiMixin:
                     "model_name": "情感分类模型",
                     "model_key": "sentiment",
                     "repo_id": sentiment_diagnosis.get("repo_id"),
-                    "issue": sentiment_diagnosis.get("issue") or "情感分类模型不可用",
+                    "issue": sentiment_diagnosis.get("issue")
+                    or "源模型权重存在但 ONNX fp16 产物缺失，需重新导出 onnx/",
                     "can_auto_download": False,
                 })
 
@@ -188,7 +193,8 @@ class ModelMgmtApiMixin:
                     "model_name": "文本向量模型",
                     "model_key": "embedding",
                     "repo_id": embedding_diagnosis.get("repo_id"),
-                    "issue": embedding_diagnosis.get("issue") or "文本向量模型不可用",
+                    "issue": embedding_diagnosis.get("issue")
+                    or "源模型权重存在但 ONNX fp16 产物缺失，需重新导出 onnx/",
                     "can_auto_download": False,
                 })
             # 打包版（frozen）：内置 ONNX 缺失只能重装完整安装包——应用内

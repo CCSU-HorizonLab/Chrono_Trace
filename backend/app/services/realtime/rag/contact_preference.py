@@ -270,12 +270,12 @@ def _parse_evidence_ids(raw: Any) -> list[int]:
 
 
 def _cosine(a: list[float], b: list[float]) -> float:
-    if not a or not b:
+    if not a or not b or len(a) != len(b):
+        # 宽度不等即不同嵌入变体，不可比——静默截断会产出无意义的相似度
         return 0.0
-    size = min(len(a), len(b))
-    dot = sum(float(a[i]) * float(b[i]) for i in range(size))
-    norm_a = math.sqrt(sum(float(x) ** 2 for x in a[:size]))
-    norm_b = math.sqrt(sum(float(x) ** 2 for x in b[:size]))
+    dot = sum(float(x) * float(y) for x, y in zip(a, b))
+    norm_a = math.sqrt(sum(float(x) ** 2 for x in a))
+    norm_b = math.sqrt(sum(float(x) ** 2 for x in b))
     if norm_a <= 0 or norm_b <= 0:
         return 0.0
     return dot / (norm_a * norm_b)

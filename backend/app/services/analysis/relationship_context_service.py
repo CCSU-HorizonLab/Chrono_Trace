@@ -57,31 +57,6 @@ class RelationshipContext:
     updated_at: int = 0
 
 
-@dataclass
-class AnalysisAdjustments:
-    """基于关系上下文的分析参数调整
-
-    各个维度的校准系数,1.0表示不调整
-    """
-    # 日均消息数期望值乘数（话少内敛的人日均消息低是正常的）
-    daily_message_expectation: float = 1.0
-
-    # 消息长度期望值乘数（话少的人消息短是正常的）
-    message_length_expectation: float = 1.0
-
-    # 专属称呼频率期望乘数（恋人关系下称呼频率基线更高）
-    nickname_expectation: float = 1.0
-
-    # 多媒体使用期望乘数
-    multimedia_expectation: float = 1.0
-
-    # 隐私分享期望乘数（家人/恋人更容易分享隐私）
-    privacy_sharing_expectation: float = 1.0
-
-    # 信任倾诉加分系数（关系越亲密，对方向你倾诉负面情绪加分越高）
-    trust_sharing_bonus_factor: float = 1.0
-
-
 class RelationshipContextService:
     """关系上下文服务"""
 
@@ -198,64 +173,6 @@ class RelationshipContextService:
             "video": float(thresholds["video"]),
             "voice": float(thresholds["voice"]),
         }
-
-    def get_adjustments(self, conversation_id: int) -> AnalysisAdjustments:
-        """
-        根据关系上下文生成分析参数调整
-
-        Args:
-            conversation_id: 会话ID
-
-        Returns:
-            AnalysisAdjustments: 分析参数调整
-        """
-        ctx = self.get_context(conversation_id)
-        adj = AnalysisAdjustments()
-
-        if not ctx:
-            return adj  # 未填写则返回默认值（不做任何调整）
-
-        # ===== 根据沟通风格调整 =====
-        if ctx.communication_style == "reserved":
-            # 话少内敛：降低对消息数量和长度的期望
-            adj.daily_message_expectation = 0.6
-            adj.message_length_expectation = 0.7
-            adj.multimedia_expectation = 0.7
-        elif ctx.communication_style == "talkative":
-            # 话多热情：提高期望基线
-            adj.daily_message_expectation = 1.3
-            adj.message_length_expectation = 1.2
-            adj.multimedia_expectation = 1.2
-
-        # ===== 根据互动时长调整 =====
-        if ctx.interaction_duration == "over_1_year":
-            # 超过1年：日均消息可能自然下降，不应过多扣分
-            adj.daily_message_expectation *= 0.7
-        elif ctx.interaction_duration == "less_1_month":
-            # 不到1个月：期望值应相对保守
-            adj.daily_message_expectation *= 0.8
-
-        # ===== 根据关系类型调整 =====
-        if ctx.relationship_type == "lover":
-            # 恋人：专属称呼和隐私分享期望更高
-            adj.nickname_expectation = 1.5
-            adj.privacy_sharing_expectation = 1.3
-            adj.trust_sharing_bonus_factor = 1.5
-        elif ctx.relationship_type == "crush":
-            # 暧昧对象：信任倾诉加分适中
-            adj.nickname_expectation = 1.2
-            adj.trust_sharing_bonus_factor = 1.3
-        elif ctx.relationship_type == "family":
-            # 家人：隐私分享和信任倾诉较高
-            adj.privacy_sharing_expectation = 1.4
-            adj.trust_sharing_bonus_factor = 1.4
-        elif ctx.relationship_type == "colleague":
-            # 同事：降低亲密行为的期望
-            adj.nickname_expectation = 0.6
-            adj.privacy_sharing_expectation = 0.7
-            adj.trust_sharing_bonus_factor = 0.8
-
-        return adj
 
     @staticmethod
     def get_field_options() -> Dict[str, Any]:

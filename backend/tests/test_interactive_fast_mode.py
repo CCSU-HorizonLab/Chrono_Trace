@@ -238,9 +238,10 @@ def test_history_qa_payload_carries_fast_mode(monkeypatch):
     monkeypatch.setattr(hqmod, "post_json_with_retries", fake_post)
 
     records = [{"message_id": 1, "timestamp": 1700000000, "is_sender": 0, "text": "样本"}]
-    answer = hqmod.HistoryQAService()._call_llm(1, "问什么", records)
+    answer, truncated = hqmod.HistoryQAService()._call_llm(1, "问什么", records)
 
     assert answer == "回答[1]"
+    assert truncated is False
     assert calls[0]["reasoning_effort"] == "low"
 
 

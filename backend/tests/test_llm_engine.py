@@ -204,6 +204,7 @@ def test_relevance_gate_injects_low_score_fact_for_explicit_shared_history_quest
         items=[
             {
                 "doc": {"doc_type": "fact_memory", "sensitivity": "normal", "enabled": 1},
+                "content": "一起玩过 Switch 游戏和桌游",
                 "score": 0.13,
                 "task_relevance_score": 0.04,
             }
@@ -240,6 +241,7 @@ def test_relevance_gate_fact_path_ignores_recent_off_topic_rerank():
         query="她之前提过啥想去的？",
         items=[{
             "doc": {"doc_type": "fact_memory", "sensitivity": "normal"},
+            "content": "之前提过想去大理",
             "score": 0.05,
             "task_relevance_score": 0.0,
             "off_topic_memory": True,
@@ -253,6 +255,92 @@ def test_relevance_gate_fact_path_ignores_recent_off_topic_rerank():
     )
     assert decision.decision == "inject"
     assert decision.reason == "memory_request_match"
+
+
+def test_relevance_gate_memory_request_low_fact_requires_term_overlap():
+    """score×字面双阈值：memory_request 低分事实与查询无实词交集时不
+    注入——此前意图兜底无条件放行，「她生日是什么时候」能带出「她喜欢猫」。"""
+    gate = RagRelevanceGate()
+    decision = gate.decide(
+        query="她生日是什么时候",
+        items=[{
+            "doc": {"doc_type": "fact_memory", "sensitivity": "normal"},
+            "content": "她喜欢猫",
+            "score": 0.13,
+            "task_relevance_score": 0.0,
+        }],
+        strategy="facts",
+        output_mode="reply",
+        trigger_type="manual_request",
+        memory_intent={"mode": "memory_request", "no_hit_eligible": True},
+    )
+    # fact 分支与 memory_request 兜底分支都被字面关卡住：低分全拒
+    assert decision.decision == "skip"
+    assert decision.reason == "low_score"
+
+
+def test_relevance_gate_memory_request_low_fact_passes_with_term_overlap():
+    """双阈值的另一翼：低分但与查询共享实词（生日）的事实照常注入。"""
+    gate = RagRelevanceGate()
+    decision = gate.decide(
+        query="她生日是什么时候",
+        items=[{
+            "doc": {"doc_type": "fact_memory", "sensitivity": "normal"},
+            "content": "她的生日是 3 月 5 日",
+            "score": 0.13,
+            "task_relevance_score": 0.0,
+        }],
+        strategy="facts",
+        output_mode="reply",
+        trigger_type="manual_request",
+        memory_intent={"mode": "memory_request", "no_hit_eligible": True},
+    )
+    assert decision.decision == "inject"
+    assert decision.reason == "memory_request_match"
+
+
+def test_relevance_gate_term_match_is_substring_not_exact_token():
+    """字面命中按子串（与 LIKE 同口径）：查询词被事实里的融合词吞掉时
+    （jieba 把「过生日」「生日礼物」切成整词，精确词集交集为空）仍命中——
+    精确交集会灭掉本分支要保住的正当记忆问句。"""
+    gate = RagRelevanceGate()
+    for content in ("她去年过生日去了海边", "我送了她生日礼物"):
+        decision = gate.decide(
+            query="她生日是什么时候",
+            items=[{
+                "doc": {"doc_type": "fact_memory", "sensitivity": "normal"},
+                "content": content,
+                "score": 0.13,
+                "task_relevance_score": 0.0,
+            }],
+            strategy="facts",
+            output_mode="reply",
+            trigger_type="manual_request",
+            memory_intent={"mode": "memory_request", "no_hit_eligible": True},
+        )
+        assert decision.decision == "inject", content
+        assert decision.reason == "memory_request_match"
+
+
+def test_relevance_gate_high_score_fact_needs_no_term_overlap():
+    """分数过线路径不看字面：语义召回的高分事实（表述不同词）照注入，
+    双阈值只收紧低分兜底，不动已校准的分数线。"""
+    gate = RagRelevanceGate()
+    decision = gate.decide(
+        query="她生日是什么时候",
+        items=[{
+            "doc": {"doc_type": "fact_memory", "sensitivity": "normal"},
+            "content": "她的诞辰是农历四月初八",
+            "score": 0.55,
+            "task_relevance_score": 0.0,
+        }],
+        strategy="facts",
+        output_mode="reply",
+        trigger_type="manual_request",
+        memory_intent={"mode": "none"},
+    )
+    assert decision.decision == "inject"
+    assert decision.reason == "fact_memory_match"
 
 
 def test_relevance_gate_ordinary_fact_uses_single_score_floor():

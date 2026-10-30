@@ -456,6 +456,14 @@ function __chronoRealtimePush(payload: unknown) {
 }
 ;(window as any).__chronoRealtimePush = __chronoRealtimePush
 
+// 问问微信流式增量入口（evaluate_js 调用）：转投 CustomEvent，由
+// Analytics 问答页签监听 chrono:qa-push 按 req_id 匹配打字机上屏；
+// 推送丢失只丢打字机效果，bridge await 返回值仍是终态兜底
+function __chronoQaPush(payload: unknown) {
+  window.dispatchEvent(new CustomEvent('chrono:qa-push', { detail: payload }))
+}
+;(window as any).__chronoQaPush = __chronoQaPush
+
 onMounted(() => {
   window.addEventListener('chrono:user-avatar-refresh', handleProfileRefresh)
   window.addEventListener('chrono:wechat-settings-saved', handleWechatSettingsSaved)

@@ -60,6 +60,15 @@ class RagRelevanceGate:
     # best contact-scoped answer.  Keep ordinary chat on the stricter path.
     MEMORY_SCORE_FLOOR = 0.10
     FACT_SCORE_THRESHOLD = 0.30
+    # 疑问/功能/泛代词：与事实字面命中判定无关（「什么时候」「我们」
+    # 在闲聊事实里也常见），交集前剔除，避免纯泛词碰撞放行无关事实；
+    # 时间泛指（之前/上次等）保留可命中——memory_request 意图已强，
+    # 剔过头会让正当记忆问句的实词全灭
+    QUERY_STOPWORDS = frozenset({
+        "什么", "时候", "怎么", "为什么", "哪天", "哪个", "哪些", "哪里",
+        "如何", "多少", "几号", "告诉", "知道", "记得", "说过", "聊过", "提过",
+        "我们", "你们", "他们",
+    })
 
     def __init__(self, fact_score_threshold: float | None = None):
         if fact_score_threshold is None:
@@ -134,8 +143,11 @@ class RagRelevanceGate:
         if fact_items:
             eligible_facts = [
                 item for item in fact_items
-                if mode == "memory_request"
-                or float(item.get("score") or 0.0) >= self.fact_score_threshold
+                if float(item.get("score") or 0.0) >= self.fact_score_threshold
+                or (
+                    mode == "memory_request"
+                    and self._shares_query_term(query, item)
+                )
             ]
             if eligible_facts:
                 self._mark_selected(eligible_facts)
@@ -162,6 +174,7 @@ class RagRelevanceGate:
                     or (
                         self._doc_type(item) == "fact_memory"
                         and float(item.get("score") or 0.0) >= self.MEMORY_SCORE_FLOOR
+                        and self._shares_query_term(query, item)
                     )
                 )
             ]
@@ -320,6 +333,30 @@ class RagRelevanceGate:
 
     def _task_relevance(self, item: dict[str, Any]) -> float:
         return round(float(item.get("task_relevance_score") or 0.0), 4)
+
+    def _shares_query_term(self, query: str, item: dict[str, Any]) -> bool:
+        """查询实词是否在事实原文中出现（子串包含，与 LIKE 同口径）。
+
+        score×字面双阈值（借鉴 offline-kb 的 coverage 门控）：memory_request
+        意图强但融合分低于线时，事实注入须有字面交集——「她生日是什么
+        时候」不再因意图兜底放进「她喜欢猫」。用子串而非词集精确交集：
+        jieba 会把事实里的融合词切成整词（「过生日」「生日礼物」），
+        精确交集下查询词「生日」被吞，本分支要保住的场景反而全灭。jieba
+        缺库时保守返回 False（宁可走 no_hit 提示，不注入无字面关联的
+        低分事实）。
+        """
+        try:
+            import jieba
+        except Exception:
+            return False
+        query_terms = {
+            w for w in jieba.cut(str(query or ""))
+            if len(w) >= 2 and w not in self.QUERY_STOPWORDS
+        }
+        if not query_terms:
+            return False
+        content = str(item.get("content") or (item.get("doc") or {}).get("content") or "")
+        return any(term in content for term in query_terms)
 
     def _is_off_topic(self, item: dict[str, Any]) -> bool:
         return bool(item.get("off_topic_memory"))

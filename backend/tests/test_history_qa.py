@@ -44,13 +44,15 @@ class _FakeRedactor:
 
 @pytest.fixture(autouse=True)
 def _clear_module_state():
-    """模块级向量缓存与共享取消注册表按测试隔离。"""
+    """模块级向量缓存、在途登记与共享取消注册表按测试隔离。"""
     import app.services.realtime.llm_http as llmhttp
 
     hqmod._VECTOR_CACHE.clear()
+    hqmod._QA_INFLIGHT.clear()
     llmhttp._CANCELLED.clear()
     yield
     hqmod._VECTOR_CACHE.clear()
+    hqmod._QA_INFLIGHT.clear()
     llmhttp._CANCELLED.clear()
 
 
@@ -151,7 +153,7 @@ def test_answer_citation_marks_stripped_cleanly(monkeypatch, db):
 
 
 def test_reasoning_content_not_leaked_as_answer(monkeypatch, db):
-    """思考模型正文为空：不把思维链当回答，明确报错并留现场。"""
+    """思考模型正文为空：不把思维链当回答，降级为检索直出并保留原提示。"""
     seed(db, 1, "样本消息", 1700000100)
 
     class _ThinkingHTTP(_FakeHTTP):
@@ -169,9 +171,12 @@ def test_reasoning_content_not_leaked_as_answer(monkeypatch, db):
     monkeypatch.setattr(hqmod, "post_json_with_retries", _ThinkingHTTP())
     monkeypatch.setattr(hqmod, "_load_question_vector", lambda q: None)
     use_local_model(monkeypatch)
-    with pytest.raises(HistoryQAError) as exc:
-        HistoryQAService().ask(1, "样本")
-    assert "空回答" in str(exc.value)
+    result = HistoryQAService().ask(1, "样本")
+    # 回退检索直出：降级说明含原始提示，思维链绝不进 answer
+    assert result["degraded"] is True
+    assert "空回答" in result["answer"]
+    assert "思维链" not in result["answer"]
+    assert [c["message_id"] for c in result["citations"]] == [1]
 
 
 def test_no_matching_records_raises(monkeypatch, db):
@@ -341,6 +346,97 @@ def test_context_sorted_by_time_and_char_budget(monkeypatch, db):
     assert ts == sorted(ts)
 
 
+# ===== 查询词覆盖率因子 =====
+
+
+def test_coverage_factor_demotes_single_term_collision(monkeypatch, db):
+    """RRF 纯排名轴不罚单关键词碰撞：碰中一个词的最新消息在单路排
+    rank1，能压过多词命中的更相关消息——乘性因子把排序翻回去。"""
+    monkeypatch.setattr(hqmod, "_extract_keywords", lambda q: ["聚会", "蛋糕", "唱歌"])
+    # 碰撞消息时间最新（LIKE 组内第一），只命中 3 个查询词中的「聚会」
+    seed(db, 2, "来聚会吗", 1700000200)
+    seed(db, 1, "上次聚会带了蛋糕还唱歌了", 1700000100)  # 命中全部 3 词
+
+    recs = HistoryQAService()._retrieve(1, "ignored")
+
+    by_id = {r["message_id"]: r for r in recs}
+    # 不乘因子时碰撞消息 RRF 分更高（rank1 vs rank2）；乘后翻转
+    assert by_id[1]["score"] > by_id[2]["score"]
+
+
+def test_coverage_factor_ascii_case_insensitive(monkeypatch, db):
+    """命中口径与 LIKE 一致（ASCII 不分大小写）：Python 侧两边 lower，
+    不能因大小写差异把 coverage 误记 0 白白压分。"""
+    monkeypatch.setattr(hqmod, "_extract_keywords", lambda q: ["iPhone"])
+    seed(db, 1, "新买的 iphone 到了", 1700000100)
+
+    recs = HistoryQAService()._retrieve(1, "ignored")
+
+    assert len(recs) == 1
+    # LIKE 命中（不分大小写）+ coverage 命中 → 因子 1.0，RRF 分原样
+    assert recs[0]["score"] == pytest.approx(1.0 / (hqmod.RRF_K + 1))
+
+
+def test_coverage_factor_skipped_without_keywords(monkeypatch, db):
+    """分词无果（keywords 空）不乘因子：单候选的 RRF 分保持原值。"""
+    monkeypatch.setattr(hqmod, "_extract_keywords", lambda q: [])
+    seed(db, 1, "只有向量通道能召回的消息", 1700000100)
+    db.execute(
+        "INSERT INTO sentiment_cache (message_id, embedding_vector) VALUES (1, ?)",
+        (pickle.dumps([1.0, 0.0]),),
+    )
+    monkeypatch.setattr(hqmod, "_load_question_vector", lambda q: [1.0, 0.0])
+
+    recs = HistoryQAService()._retrieve(1, "ignored")
+
+    assert len(recs) == 1
+    assert recs[0]["score"] == pytest.approx(1.0 / (hqmod.RRF_K + 1))
+
+
+# ===== LLM 失败回退检索直出 =====
+
+
+def test_llm_http_failure_falls_back_to_extractive(monkeypatch, db):
+    """LLM 网络/服务失败不空手：降级为检索直出，引用全量带出（无 [n]
+    可过滤），文本为本地原文——这一问不白费。"""
+    seed(db, 1, "周末去爬山吧", 1700000100)
+    seed(db, 2, "好呀爬山我也去", 1700000200, is_sender=1)
+
+    def _boom(**kw):
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setattr(hqmod, "post_json_with_retries", _boom)
+    monkeypatch.setattr(hqmod, "_load_question_vector", lambda q: None)
+    use_local_model(monkeypatch)
+
+    result = HistoryQAService().ask(1, "爬山")
+
+    assert result["degraded"] is True
+    assert "connection refused" in result["answer"] and "降级" in result["answer"]
+    # 引用不过滤（降级回答没有编号）、时间升序、本地原文
+    assert [c["message_id"] for c in result["citations"]] == [1, 2]
+    assert "周末去爬山吧" in result["citations"][0]["text"]
+
+
+def test_cancelled_question_not_degraded(monkeypatch, db):
+    """用户取消不回退：取消就是不要结果，取消异常原样上抛。"""
+    from app.services.realtime.llm_http import LLMRequestAborted
+
+    seed(db, 1, "样本消息", 1700000100)
+
+    def _cancelled(*a, **kw):
+        raise LLMRequestAborted("本次提问已取消")
+
+    monkeypatch.setattr(hqmod, "run_cancelable", _cancelled)
+    monkeypatch.setattr(hqmod, "post_json_with_retries", lambda **kw: {})
+    monkeypatch.setattr(hqmod, "_load_question_vector", lambda q: None)
+    use_local_model(monkeypatch)
+
+    with pytest.raises(hqmod.HistoryQACancelled) as exc:
+        HistoryQAService().ask(1, "样本")
+    assert "取消" in str(exc.value)
+
+
 # ===== 多轮问答 =====
 
 
@@ -425,15 +521,19 @@ def test_history_normalized_and_capped(monkeypatch, db):
 # ===== 模型门槛与脱敏 =====
 
 
-def test_no_llm_config_raises(monkeypatch, db):
+def test_no_llm_config_falls_back_to_extractive(monkeypatch, db):
+    """未配置模型不空手：降级检索直出，引用带出并引导配置模型。"""
     import app.services.realtime.rag.fact_llm as factllm
 
     monkeypatch.setattr(factllm, "get_active_model_config", lambda: None)
     monkeypatch.setattr(hqmod, "_load_question_vector", lambda q: None)
     seed(db, 1, "样本消息", 1700000100)
-    with pytest.raises(HistoryQAError) as exc:
-        HistoryQAService().ask(1, "样本")
-    assert "LLM" in str(exc.value)
+
+    result = HistoryQAService().ask(1, "样本")
+
+    assert result["degraded"] is True
+    assert "LLM" in result["answer"] and "降级" in result["answer"]
+    assert [c["text"] for c in result["citations"]] == ["样本消息"]
 
 
 def test_remote_model_redacts_before_send(monkeypatch, db):
@@ -690,3 +790,146 @@ def test_question_vector_gate_ignores_classifier(monkeypatch):
 
     monkeypatch.setattr(oi, "has_embedding_model", lambda: False)
     assert hqmod._load_question_vector("你们聊过什么") is None
+
+
+# ===== 流式打字机（on_delta）=====
+
+
+class _FakeStream:
+    """流式桩：逐段回调 on_delta 后返回 (全文, 是否截断)。"""
+
+    def __init__(self, parts=("根据记录 [1]，", "TA 喜欢爬山。"), truncated=False):
+        self.parts = list(parts)
+        self.truncated = truncated
+        self.calls = []
+
+    def __call__(self, *, url, payload, timeout, log, log_prefix, headers=None,
+                 should_abort=None, on_delta=None, **kw):
+        self.calls.append({"url": url, "payload": payload})
+        for part in self.parts:
+            on_delta(part)
+        return "".join(self.parts), self.truncated
+
+
+def test_streaming_deltas_forwarded_and_answer_intact(monkeypatch, db):
+    """on_delta 逐段透传（打字机增量），终态 answer 仍走引用剥离。"""
+    seed(db, 1, "周末去爬山吧，带上防晒", 1700000100)
+    stream = _FakeStream(("根据记录 [1]，", "TA 喜欢爬山。"))
+    monkeypatch.setattr(hqmod, "post_json_stream", stream)
+    monkeypatch.setattr(hqmod, "_load_question_vector", lambda q: None)
+    use_local_model(monkeypatch)
+
+    deltas = []
+    result = HistoryQAService().ask(1, "我们聊过爬山吗", on_delta=deltas.append)
+
+    assert deltas == ["根据记录 [1]，", "TA 喜欢爬山。"]
+    assert result["answer"] == "根据记录，TA 喜欢爬山。"
+    assert result["citations"] and result["citations"][0]["index"] == 1
+    assert stream.calls[0]["payload"].get("stream") is True
+
+
+def test_stream_unsupported_falls_back_to_non_stream(monkeypatch, db):
+    """端点不认 stream：去 stream 字段回退整段请求，回答照常。"""
+    seed(db, 1, "周末去爬山吧，带上防晒", 1700000100)
+
+    def _reject(**kw):
+        raise hqmod.LLMStreamUnsupported("HTTP 400")
+
+    monkeypatch.setattr(hqmod, "post_json_stream", _reject)
+    http = _FakeHTTP(content="整段回答 [1]")
+    monkeypatch.setattr(hqmod, "post_json_with_retries", http)
+    monkeypatch.setattr(hqmod, "_load_question_vector", lambda q: None)
+    use_local_model(monkeypatch)
+
+    deltas = []
+    result = HistoryQAService().ask(1, "我们聊过爬山吗", on_delta=deltas.append)
+
+    assert deltas == []  # 回退路径无打字机
+    assert "整段回答" in result["answer"]
+    assert "stream" not in http.calls[0]["payload"]
+
+
+def test_zero_delta_transient_failure_retries_via_full_path(monkeypatch, db):
+    """零 delta 瞬态失败（429/5xx/连接拒绝）回退整段整段路径——重试回路
+    不因流式缺席（流式层无重试，直接上抛会被降级分支吃成检索直出）。"""
+    seed(db, 1, "周末去爬山吧，带上防晒", 1700000100)
+
+    def _flaky(**kw):
+        raise ConnectionError("LLM network request failed: connection refused")
+
+    monkeypatch.setattr(hqmod, "post_json_stream", _flaky)
+    http = _FakeHTTP(content="重试后完整回答 [1]")
+    monkeypatch.setattr(hqmod, "post_json_with_retries", http)
+    monkeypatch.setattr(hqmod, "_load_question_vector", lambda q: None)
+    use_local_model(monkeypatch)
+
+    result = HistoryQAService().ask(1, "我们聊过爬山吗", on_delta=lambda t: None)
+
+    assert "重试后完整回答" in result["answer"]
+    assert "degraded" not in result  # 没有被吃成检索直出
+    assert http.calls[0]["payload"].get("stream") is not True
+
+
+def test_truncated_stream_marks_result(monkeypatch, db):
+    """流式中途断网已收部分当结果：显式带 truncated 标记（前端提示，
+    不再把缩水答案冒充完整回答）。"""
+    seed(db, 1, "周末去爬山吧，带上防晒", 1700000100)
+    stream = _FakeStream(("回答到一半 [1]",), truncated=True)
+    monkeypatch.setattr(hqmod, "post_json_stream", stream)
+    monkeypatch.setattr(hqmod, "_load_question_vector", lambda q: None)
+    use_local_model(monkeypatch)
+
+    result = HistoryQAService().ask(1, "我们聊过爬山吗", on_delta=lambda t: None)
+
+    assert result["truncated"] is True
+
+
+def test_full_stream_result_has_no_truncated_flag(monkeypatch, db):
+    seed(db, 1, "周末去爬山吧，带上防晒", 1700000100)
+    monkeypatch.setattr(hqmod, "post_json_stream", _FakeStream())
+    monkeypatch.setattr(hqmod, "_load_question_vector", lambda q: None)
+    use_local_model(monkeypatch)
+
+    result = HistoryQAService().ask(1, "我们聊过爬山吗", on_delta=lambda t: None)
+
+    assert "truncated" not in result
+
+
+def test_inflight_guard_preserves_cancel_token(monkeypatch, db):
+    """停止后立即重发的 inflight 守卫：旧请求在途时新 ask 不吞取消标记
+    （旧请求要消费它退出）；无在途时 ask 开头清残留标记（防取消已完成
+    请求的标记毒化下一问）。检索空手抛错走不到 LLM，标记存亡即守卫证词。"""
+    import app.services.realtime.llm_http as llmhttp
+
+    seed(db, 1, "周末去爬山吧，带上防晒", 1700000100)
+    monkeypatch.setattr(hqmod, "_load_question_vector", lambda q: None)
+    use_local_model(monkeypatch)
+
+    # 在途（模拟旧请求还活着）：标记必须原封留给旧请求
+    hqmod._QA_INFLIGHT.add(1)
+    llmhttp.request_llm_cancel(hqmod.QA_CANCEL_SCOPE, 1)
+    with pytest.raises(HistoryQAError):
+        HistoryQAService().ask(1, "跳伞这个话题完全没聊过")
+    assert llmhttp.take_llm_cancel(hqmod.QA_CANCEL_SCOPE, 1) is True  # 未被吞
+
+    # 无在途：ask 开头清残留（旧行为保留）
+    llmhttp.request_llm_cancel(hqmod.QA_CANCEL_SCOPE, 1)
+    with pytest.raises(HistoryQAError):
+        HistoryQAService().ask(1, "跳伞这个话题完全没聊过")
+    assert llmhttp.take_llm_cancel(hqmod.QA_CANCEL_SCOPE, 1) is False  # 已被清
+
+
+def test_without_on_delta_keeps_non_stream_path(monkeypatch, db):
+    """无 on_delta（旧调用/测试直调）：payload stream=False，不进流式层。"""
+    seed(db, 1, "周末去爬山吧，带上防晒", 1700000100)
+
+    def _unexpected(**kw):
+        raise AssertionError("post_json_stream 不应被调用")
+
+    monkeypatch.setattr(hqmod, "post_json_stream", _unexpected)
+    monkeypatch.setattr(hqmod, "_load_question_vector", lambda q: None)
+    use_local_model(monkeypatch)
+
+    result, http = ask(monkeypatch, db, "我们聊过爬山吗")
+    assert http.calls[0]["payload"].get("stream") is False
+    assert result["answer"]

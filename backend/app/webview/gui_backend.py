@@ -94,9 +94,10 @@ def attach_realtime_push(window) -> None:
     不影响监听本身——前端 3s 轮询兜底对账。
     """
     from ..services.realtime.monitor_service import RealtimeMonitorService
-    from .push import RealtimePushService
+    from .push import get_push_service
 
-    push = RealtimePushService()
+    # 单例：问答流式（push_qa_event）与消息回显共用同一 sender 线程
+    push = get_push_service()
     push.set_window(window)
 
     def on_message_saved(batch_id: str, account_wxid: str, message_data: dict) -> None:

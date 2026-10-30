@@ -1,7 +1,9 @@
 """问问微信（历史问答 + 引用溯源）——独立 API 域 mixin。
 
 Bridge 继承此 Mixin；问答为一次性 LLM 调用，沿用画像生成的同步
-调用约定（前端 await + 加载态 + 可取消），不走任务轮询。
+调用约定（前端 await + 加载态 + 可取消），不走任务轮询。带 req_id
+调用时叠加流式：LLM 正文增量经推送通道（chrono:qa-push）实时回传
+打字机，await 返回值仍是唯一终态（推送丢失只丢打字机效果）。
 
 问答成功后顺带探测该会话的语义向量缺口，不足则后台补建（不阻塞
 当次回答）——sentiment_cache.embedding_vector 是问答向量通道的唯一
@@ -31,11 +33,14 @@ class HistoryQaApiMixin:
         conversation_id: int,
         question: str,
         history: list | None = None,
+        req_id: str = "",
     ) -> dict[str, Any]:
         """对当前联系人的聊天记录提问，返回带引用溯源的回答
 
         history：近期问答 [{question, answer}]（时间升序），用于多轮指代；
         service 侧清洗与截断，异常输入按无历史处理。
+        req_id：前端生成的请求标识。提供时 LLM 正文增量经推送通道
+        （chrono:qa-push）实时回传打字机；返回值仍是唯一终态。
 
         Returns:
             {"ok": True, "answer": "...", "citations": [...],
@@ -48,8 +53,21 @@ class HistoryQaApiMixin:
                 HistoryQAService,
             )
 
+            on_delta = None
+            if req_id:
+                def on_delta(text: str) -> None:
+                    from .push import get_push_service
+
+                    get_push_service().push_qa_event({
+                        "type": "delta",
+                        "req_id": str(req_id),
+                        "conversation_id": int(conversation_id),
+                        "text": str(text or ""),
+                    })
+
             result = HistoryQAService().ask(
-                int(conversation_id), str(question or ""), history or []
+                int(conversation_id), str(question or ""), history or [],
+                on_delta=on_delta,
             )
             semantic_indexing = self._maybe_start_embedding_backfill(int(conversation_id))
             return {"ok": True, "semantic_indexing": semantic_indexing, **result}

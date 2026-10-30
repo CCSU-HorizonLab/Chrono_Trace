@@ -571,7 +571,7 @@ class TestQaEmbeddingTrigger:
         import app.services.analysis.history_qa_service as hqmod
 
         class _FakeQA:
-            def ask(self, conv, question, history):
+            def ask(self, conv, question, history, on_delta=None):
                 return {"answer": "好的", "citations": []}
 
         monkeypatch.setattr(hqmod, "HistoryQAService", _FakeQA)

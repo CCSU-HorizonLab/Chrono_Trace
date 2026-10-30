@@ -25,12 +25,14 @@ import pickle
 import re
 import threading
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ...db.connection import get_db
 from ..realtime.llm_http import (
     LLMRequestAborted,
+    LLMStreamUnsupported,
     apply_interactive_fast_mode,
+    post_json_stream,
     post_json_with_retries,
     request_llm_cancel,
     run_cancelable,
@@ -51,6 +53,12 @@ KEYWORD_PER_TERM_LIMIT = 12
 VECTOR_POOL = 40
 TOP_K = 16
 RRF_K = 60
+# 查询词覆盖率乘性因子（借鉴 offline-kb 的 coverage 设计）：融合分乘
+# BASE + (1-BASE)×coverage——「7 个查询词只碰中 1 个」的碰撞候选压到
+# 0.45 倍，多词命中的候选相对上浮。RRF 纯排名轴对此无惩罚：碰巧含
+# 一个高频词的最新消息能在单路排 rank1。只重排不删除，纯向量召回
+# （语义相关但零字面命中，乘到底 0.45）只要 RRF 分尚可仍在 TOP_K 内
+COVERAGE_BASE = 0.45
 MAX_MESSAGE_CHARS = 250
 # 多轮问答：携带的近期问答轮数与单段截断
 HISTORY_TURNS = 3
@@ -104,6 +112,22 @@ CITATION_MARK = re.compile(r"\[(\d+)\]")
 
 class HistoryQAError(Exception):
     """问答失败（无记录/无模型/脱敏阻断等，message 面向用户展示）"""
+
+
+class HistoryQABlocked(HistoryQAError):
+    """脱敏阻断（红线）：失败即阻断，不降级发原文、不回退检索直出。"""
+
+
+class HistoryQACancelled(HistoryQAError):
+    """用户主动取消：不回退检索直出（取消就是不要结果）。"""
+
+
+# 会话级在途登记：取消标记按 (scope, conversation_id) 定址且单消费，
+# 「停止后立即重发」时新 ask 若无条件清残留标记，会吃掉旧请求正等着
+# 消费的取消标记（前端定格先行、后端还在跑）——旧请求跑完整段白烧
+# token。清位只在该会话无在途请求时做；重发场景下旧请求自己消费标记
+_QA_INFLIGHT_LOCK = threading.Lock()
+_QA_INFLIGHT: set = set()
 
 
 def _extract_keywords(question: str) -> List[str]:
@@ -193,13 +217,34 @@ class HistoryQAService:
         conversation_id: int,
         question: str,
         history: Optional[List[Dict[str, str]]] = None,
+        on_delta: Optional[Callable[[str], None]] = None,
     ) -> Dict[str, Any]:
         """多轮问答：history 为近期问答（时间升序，{question, answer}），
-        用于理解「上次说的那件事」类指代并注入检索。"""
+        用于理解「上次说的那件事」类指代并注入检索。
+
+        on_delta：LLM 正文增量回调（打字机）。提供时走流式请求；取消/
+        失败的终态语义不变——前端以 bridge 返回值为准，增量只管过程。"""
+        with _QA_INFLIGHT_LOCK:
+            already_running = int(conversation_id) in _QA_INFLIGHT
+            _QA_INFLIGHT.add(int(conversation_id))
+        try:
+            if not already_running:
+                take_llm_cancel(QA_CANCEL_SCOPE, conversation_id)  # 清上一轮遗留的取消标记
+            return self._ask(conversation_id, question, history, on_delta)
+        finally:
+            with _QA_INFLIGHT_LOCK:
+                _QA_INFLIGHT.discard(int(conversation_id))
+
+    def _ask(
+        self,
+        conversation_id: int,
+        question: str,
+        history: Optional[List[Dict[str, str]]] = None,
+        on_delta: Optional[Callable[[str], None]] = None,
+    ) -> Dict[str, Any]:
         question = str(question or "").strip()
         if not question:
             raise HistoryQAError("请输入问题")
-        take_llm_cancel(QA_CANCEL_SCOPE, conversation_id)  # 清掉上一轮遗留的取消标记
 
         turns = self._normalize_history(history)
         # 检索问句并入上一问：指代消解不了的「那次/他说的那件事」靠
@@ -211,27 +256,8 @@ class HistoryQAService:
         if not records:
             raise HistoryQAError("没有找到与问题相关的聊天记录，试试换个说法或用更具体的关键词")
 
-        redacted_question, redacted = self._redact_for_remote(
-            question, records, account_wxid, conversation_id
-        )
-        redacted_turns = self._redact_history_for_remote(
-            turns, account_wxid, conversation_id
-        )
-        # RAG 长期记忆槽：检索+门控该联系人事实/主题段作背景参考；门控
-        # 全拒且判定 no_hit 时带「记忆库无此记录」提示（防从无关消息硬凑）
-        memories, memory_no_hit = self._retrieve_rag_memories(
-            account_wxid, conversation_id, retrieval_query, turns=turns
-        )
-        if memories:
-            memories = self._redact_memories_for_remote(
-                memories, account_wxid, conversation_id
-            )
-
-        answer = self._call_llm(
-            conversation_id, redacted_question, redacted,
-            memories=memories, history=redacted_turns,
-            memory_no_hit=memory_no_hit,
-        )
+        # 引用全量先建（本地原文）：正常路径按 [n] 过滤为实际引用子集，
+        # LLM 失败回退检索直出时全量带出
         citations = [
             {
                 "index": idx,  # 1 基编号，与回答 [n] 对应
@@ -242,17 +268,60 @@ class HistoryQAService:
             }
             for idx, rec in enumerate(records, start=1)
         ]
+        try:
+            redacted_question, redacted = self._redact_for_remote(
+                question, records, account_wxid, conversation_id
+            )
+            redacted_turns = self._redact_history_for_remote(
+                turns, account_wxid, conversation_id
+            )
+            # RAG 长期记忆槽：检索+门控该联系人事实/主题段作背景参考；门控
+            # 全拒且判定 no_hit 时带「记忆库无此记录」提示（防从无关消息硬凑）
+            memories, memory_no_hit = self._retrieve_rag_memories(
+                account_wxid, conversation_id, retrieval_query, turns=turns
+            )
+            if memories:
+                memories = self._redact_memories_for_remote(
+                    memories, account_wxid, conversation_id
+                )
+            answer, truncated = self._call_llm(
+                conversation_id, redacted_question, redacted,
+                memories=memories, history=redacted_turns,
+                memory_no_hit=memory_no_hit, on_delta=on_delta,
+            )
+        except (HistoryQABlocked, HistoryQACancelled):
+            # 红线阻断与用户取消不回退（取消就是不要结果），原样上抛
+            raise
+        except HistoryQAError as exc:
+            # LLM 层失败（未配置/网络抖动/空回答）不空手——借鉴 offline-kb
+            # 的抽取式兜底：降级为检索直出，引用全量为本地原文，这一问
+            # 不白费，用户仍能翻到相关记录自行核对
+            return {
+                "answer": (
+                    f"模型暂不可用（{exc}），已降级为字面检索直出。"
+                    "以下是与问题最相关的聊天记录，检查模型配置后可重试智能问答："
+                ),
+                "question": question,
+                "contact_name": display_name,
+                "citations": citations,
+                "degraded": True,
+            }
         citations = _filter_citations(answer, citations)
         # 回答正文去 [n] 编号（引用条目单独展示），引用重排为连续序号
         answer = _strip_citation_marks(answer)
         for idx, cite in enumerate(citations, start=1):
             cite["index"] = idx
-        return {
+        result = {
             "answer": answer,
             "question": question,
             "contact_name": display_name,
             "citations": citations,
         }
+        if truncated:
+            # 流式中途断网：已收部分当结果，显式带标记（前端提示「已截断」，
+            # 引用按截断文本实际到达的 [n] 过滤缩水属预期）
+            result["truncated"] = True
+        return result
 
     @staticmethod
     def _normalize_history(history: Any) -> List[Dict[str, str]]:
@@ -286,8 +355,9 @@ class HistoryQAService:
         return str(row[0] or ""), str(row[1] or "")
 
     def _retrieve(self, conversation_id: int, question: str) -> List[Dict[str, Any]]:
-        """关键词 + 向量两路召回，RRF 融合取 TOP_K，按时间升序组上下文。"""
-        keyword_rows = self._keyword_channel(conversation_id, question)
+        """关键词 + 向量两路召回，RRF 融合 × 词覆盖率因子，取 TOP_K，按时间升序组上下文。"""
+        keywords = _extract_keywords(question)
+        keyword_rows = self._keyword_channel(conversation_id, question, keywords)
         vector_rows = self._vector_channel(conversation_id, question)
 
         # RRF：每路按序贡献 1/(K+rank)，两路同名消息得分累加
@@ -306,6 +376,15 @@ class HistoryQAService:
                 )
                 item["score"] += 1.0 / (RRF_K + rank + 1)
 
+        # 词覆盖率乘性因子：与 LIKE 同口径（SQLite LIKE 对 ASCII 不分
+        # 大小写，中文无大小写），子串包含即命中
+        if keywords:
+            terms = [k.lower() for k in keywords]
+            for item in fused.values():
+                text = item["text"].lower()
+                hit = sum(1 for k in terms if k in text)
+                item["score"] *= COVERAGE_BASE + (1.0 - COVERAGE_BASE) * hit / len(terms)
+
         ranked = sorted(fused.values(), key=lambda r: r["score"], reverse=True)[:TOP_K]
         # 无需字符预算裁剪：硬上界 = TOP_K × MAX_MESSAGE_CHARS（16×250=4000），
         # 常量大幅上调时再引入预算逻辑（曾有按相关度丢弃的装填分支，
@@ -316,7 +395,9 @@ class HistoryQAService:
         ranked.sort(key=lambda r: r["timestamp"])
         return ranked
 
-    def _keyword_channel(self, conversation_id: int, question: str) -> List[Dict[str, Any]]:
+    def _keyword_channel(
+        self, conversation_id: int, question: str, keywords: Optional[List[str]] = None
+    ) -> List[Dict[str, Any]]:
         """逐关键词各自取最近 N 条命中后合并去重（单语句 UNION ALL）。
 
         单条 OR 查询全局 LIMIT 的老做法下，高频词（「我们」「聊天」）
@@ -324,8 +405,10 @@ class HistoryQAService:
         进不了池——这正是「问问微信答非所问」的主要来源。逐词取数
         合成一条 UNION ALL 语句执行：语义与逐词循环查询完全一致，
         但只占一次 DB 往返，不再串行跑最多 8 次查询。
+        keywords 由 _retrieve 传入（分词一次两处用）；None 时自提取。
         """
-        keywords = _extract_keywords(question)
+        if keywords is None:
+            keywords = _extract_keywords(question)
         if not keywords:
             return []
         # SQLite 复合语句不接受括号臂，每词的 LIMIT 须内嵌为 FROM 子查询
@@ -510,7 +593,7 @@ class HistoryQAService:
                     source_id=source_id,
                 )
             except Exception as exc:
-                raise HistoryQAError(f"脱敏失败，本次提问已阻断：{exc}") from exc
+                raise HistoryQABlocked(f"脱敏失败，本次提问已阻断：{exc}") from exc
             redacted.append(result.redacted_text)
         return redacted
 
@@ -656,7 +739,10 @@ class HistoryQAService:
         memories: Optional[List[str]] = None,
         history: Optional[List[Dict[str, str]]] = None,
         memory_no_hit: bool = False,
-    ) -> str:
+        on_delta: Optional[Callable[[str], None]] = None,
+    ) -> Tuple[str, bool]:
+        """返回 (正文, 是否截断)。截断 = 流式中途断网已收部分被当结果——
+        调用方带出标记，前端显式提示而非把缩水答案当完整回答。"""
         from ..realtime.rag.fact_llm import get_active_model_config
 
         model_config = get_active_model_config()
@@ -712,33 +798,67 @@ class HistoryQAService:
             ],
             "temperature": 0.3,
             "max_tokens": 2048,
-            "stream": False,
+            # 打字机输出走 SSE；端点不认 stream / 零 delta 瞬态失败时流式
+            # 层抛回，此处回退整段（自带重试与 reasoning_effort 摘参），
+            # 打字机缺席但回答照常
+            "stream": on_delta is not None,
         }
         # 交互调用快速模式：思考模型附 reasoning_effort:"low" 兜底（含
         # glm-4.5+ 特例），模型级 extra_body 显式配置优先（详见 llm_http）
         apply_interactive_fast_mode(payload, model_config)
+
+        def _post_full() -> Dict[str, Any]:
+            return post_json_with_retries(
+                url=f"{base_url}/chat/completions",
+                payload=payload,
+                headers=headers,
+                timeout=LLM_TIMEOUT,
+                max_retries=LLM_MAX_RETRIES,
+                should_abort=abort.is_set,
+                log=logger.debug,
+                log_prefix="[问问微信]",
+            )
+
+        truncated = False
+
+        def _post() -> Dict[str, Any]:
+            nonlocal truncated
+            if on_delta is None:
+                return _post_full()
+            try:
+                content, truncated = post_json_stream(
+                    url=f"{base_url}/chat/completions",
+                    payload=payload,
+                    headers=headers,
+                    timeout=LLM_TIMEOUT,
+                    should_abort=abort.is_set,
+                    on_delta=on_delta,
+                    log=logger.debug,
+                    log_prefix="[问问微信]",
+                )
+            except Exception as exc:
+                # 零 delta 的任何失败（端点不认 stream / 429、5xx、连接
+                # 拒绝、首字节前超时）都回退整段：流式层无重试，瞬态抖动
+                # 若直接上抛会被降级分支吃成检索直出，白白丢掉一次完整
+                # 回答——post_json_with_retries 的重试回路在这里接手
+                logger.info("[问问微信] 流式失败回退整段请求（%s）", exc)
+                payload.pop("stream", None)
+                return _post_full()
+            # 包装成非流式响应形状，后续提取逻辑单点
+            return {"choices": [{"message": {"content": content}}], "usage": {}}
 
         # HTTP 跑守护工作线程（在途 socket 无法强断，取消时 bridge 线程
         # 立即返回，工作线程经 should_abort 在尝试边界自行退出）
         abort = threading.Event()
         try:
             body = run_cancelable(
-                lambda: post_json_with_retries(
-                    url=f"{base_url}/chat/completions",
-                    payload=payload,
-                    headers=headers,
-                    timeout=LLM_TIMEOUT,
-                    max_retries=LLM_MAX_RETRIES,
-                    should_abort=abort.is_set,
-                    log=logger.debug,
-                    log_prefix="[问问微信]",
-                ),
+                _post,
                 cancelled=lambda: take_llm_cancel(QA_CANCEL_SCOPE, conversation_id),
                 on_cancel=abort.set,
                 cancel_message="本次提问已取消",
             )
         except LLMRequestAborted as exc:
-            raise HistoryQAError(str(exc)) from exc
+            raise HistoryQACancelled(str(exc)) from exc
         except Exception as exc:
             logger.error("[问问微信] LLM 调用失败: %s", exc)
             raise HistoryQAError(f"模型调用失败：{exc}") from exc
@@ -748,7 +868,7 @@ class HistoryQAService:
             raise HistoryQAError(
                 "模型返回了空回答，请重试；若用的是纯思考模式模型，请在模型设置中关闭"
             )
-        return content
+        return content, truncated
 
     @staticmethod
     def _extract_content(body: Dict[str, Any]) -> str:

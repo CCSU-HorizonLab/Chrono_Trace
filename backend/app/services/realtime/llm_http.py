@@ -21,6 +21,10 @@ class LLMRequestAborted(RuntimeError):
     """调用方请求中止（外部取消信号，不视为网络失败）。"""
 
 
+class LLMStreamUnsupported(RuntimeError):
+    """服务器拒绝流式请求（网关/私有部署不认 stream=true）。"""
+
+
 # ---------------------------------------------------------------------------
 # 交互式 LLM 调用取消注册表：bridge 层置位（scope, key），HTTP 跑守护工作
 # 线程，主线程轮询命中即抛 LLMRequestAborted 立即返回——在途 socket 无法
@@ -455,3 +459,137 @@ def post_json_with_retries(
             ) from err
 
     raise RuntimeError("LLM API did not return a response body")
+
+
+def _open_stream_connection(
+    url: str, data: bytes, headers: dict[str, str], timeout: int
+) -> tuple[http.client.HTTPConnection, http.client.HTTPResponse]:
+    """裸 http.client 直连（与非流式 _pooled_request 同网络路径：不读
+    HTTP(S)_PROXY 系统代理，SSE 不经代理缓冲/截断），响应可按行迭代。"""
+    parsed = urlparse(url)
+    if parsed.scheme == "https":
+        conn: http.client.HTTPConnection = http.client.HTTPSConnection(
+            parsed.hostname, parsed.port, timeout=timeout,
+            context=_shared_ssl_context(),
+        )
+    else:
+        conn = http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=timeout)
+    target = parsed.path or "/"
+    if parsed.query:
+        target = f"{target}?{parsed.query}"
+    conn.request("POST", target, body=data, headers=headers)
+    return conn, conn.getresponse()
+
+
+def post_json_stream(
+    *,
+    url: str,
+    payload: dict[str, Any],
+    timeout: int,
+    log: Callable[[str], None],
+    log_prefix: str,
+    headers: Optional[dict[str, str]] = None,
+    should_abort: Optional[Callable[[], bool]] = None,
+    on_delta: Callable[[str], None],
+) -> tuple[str, bool]:
+    """流式 POST（OpenAI 兼容 SSE）：content 增量实时回调，返回 (完整正文, 是否截断)。
+
+    与 post_json_with_retries 的分工：交互式问答的打字机输出，不做重试
+    ——零 delta 失败抛回调用方回退非流式整段（那边自带重试）；已有
+    delta 后网络中断返回 (已收部分, True) 截断结果。should_abort 命中
+    （用户取消）同样返回已收部分后退出：取消语义下调用方已抛
+    LLMRequestAborted，该返回值无人消费，仅保证工作线程及时收尾。
+
+    SSE 行流即天然节流的 abort 检查点：兼容端点逐 token 发行，行间隔
+    亚秒级，与既有取消机制的轮询间隔同量级。reasoning_content 增量不
+    回调——思维链不给用户（与调用方空回答哲学一致）。
+
+    200 却回普通 JSON（半兼容网关忽略 stream 参数）的兜底：零 delta
+    时把跳过的非 data: 行拼回整体 json 解析——打字机缺席但答案不丢。
+    """
+    merged_headers = {
+        "Content-Type": "application/json",
+        "Accept": "text/event-stream",
+        "User-Agent": "ChronoTrace/1.0",
+    }
+    if headers:
+        merged_headers.update(headers)
+
+    log(f"{log_prefix} POST(stream) {url}")
+    parts: list[str] = []
+    skipped: list[str] = []  # 非 data: 行（200 假流式时的 JSON 兜底原料）
+    truncated = False
+    conn: Optional[http.client.HTTPConnection] = None
+    try:
+        conn, resp = _open_stream_connection(
+            url, json.dumps(payload).encode("utf-8"), merged_headers, timeout
+        )
+        if resp.status >= 400:
+            detail = resp.read().decode("utf-8", errors="replace").strip()[:300]
+            # 4xx 属「端点不认 stream」（网关 400/404/422 常见）→ 抛专用
+            # 信号交调用方回退非流式。但 400 且 body 提及 reasoning_effort
+            # 是严格网关拒思考量参数（post_json_with_retries 的摘参重试
+            # 场景），须走普通失败→整段回退，不能误诊为流式不支持
+            if (
+                resp.status in {400, 404, 422}
+                and "reasoning_effort" not in detail.lower()
+            ):
+                raise LLMStreamUnsupported(f"HTTP {resp.status}: {detail}")
+            raise RuntimeError(f"LLM HTTP {resp.status} error: {detail}")
+        for raw_line in resp:
+            if should_abort is not None and should_abort():
+                truncated = True
+                break
+            try:
+                line = raw_line.decode("utf-8").strip()
+            except Exception:
+                continue
+            if not line:
+                continue
+            if not line.startswith("data:"):
+                skipped.append(line)
+                continue
+            data = line[5:].strip()
+            if data == "[DONE]":
+                break
+            try:
+                chunk = json.loads(data)
+            except Exception:
+                continue
+            choices = chunk.get("choices") or []
+            if not choices:
+                continue
+            text = (choices[0].get("delta") or {}).get("content") or ""
+            if text:
+                parts.append(str(text))
+                try:
+                    on_delta(str(text))
+                except Exception as exc:
+                    # 回调链异常（推送侧故障）不得冒充网络截断：记日志继续
+                    log(f"{log_prefix} on_delta 回调失败（不影响流读取）: {exc}")
+    except LLMStreamUnsupported:
+        raise
+    except Exception as err:
+        if not parts:
+            raise  # 零 delta：调用方回退非流式（自带重试）
+        truncated = True
+        log(f"{log_prefix} 流式中断，按截断结果返回已收 {len(''.join(parts))} 字符: {describe_network_error(err)}")
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    content = "".join(parts)
+    if not content and skipped and not truncated:
+        try:
+            body = json.loads("".join(skipped))
+            content = str(
+                ((body.get("choices") or [{}])[0].get("message") or {}).get("content")
+                or ""
+            )
+            if content:
+                log(f"{log_prefix} 端点 200 回普通 JSON（忽略 stream 参数），整体解析兜底")
+        except Exception:
+            pass
+    return content, truncated

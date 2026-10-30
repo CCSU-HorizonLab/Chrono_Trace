@@ -176,11 +176,13 @@ type PyWebViewApi = {
   check_gpu_status: () => Promise<any>
   check_analysis_model_status: () => Promise<any>
   get_affinity_progress: (task_id: string) => Promise<any>
-  // 问问微信（历史问答 + 引用溯源）；history 为近期问答（时间升序），支持多轮指代
+  // 问问微信（历史问答 + 引用溯源）；history 为近期问答（时间升序），支持多轮指代；
+  // req_id 提供时 LLM 正文增量经 chrono:qa-push 事件实时回传（打字机）
   ask_history: (
     conversation_id: number,
     question: string,
-    history?: Array<{ question: string; answer: string }>
+    history?: Array<{ question: string; answer: string }>,
+    req_id?: string
   ) => Promise<any>
   cancel_history_qa: (conversation_id: number) => Promise<any>
   // 群聊统计与日报

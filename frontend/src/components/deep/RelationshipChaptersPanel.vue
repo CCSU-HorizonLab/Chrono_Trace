@@ -133,7 +133,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import * as echarts from 'echarts'
 import { api } from '@/api/bridge'
 import { toCompactRange } from '@/utils/datetime'
-import { BIG5_COLOR_ME, BIG5_COLOR_OTHER, BIG5_DIM_ORDER } from './big5Shared'
+import { BIG5_COLOR_ME, BIG5_COLOR_OTHER, BIG5_DIM_ORDER, BIG5_DIM_TEXT } from './big5Shared'
 
 type Change = { key: string; label: string; direction: 'up' | 'down'; delta: number }
 type Chapter = {
@@ -430,6 +430,77 @@ function axisWeekLabels(weekStarts: number[]): string[] {
   return out
 }
 
+// ---------------------------------------------------------------------------
+// tooltip 内嵌大五雷达：与下方「大五人格演变」的 BigFiveRadar 同构（三层五边形
+// 网格 + 我紫/TA琥珀双侧多边形，TA 画下层、我叠上），轴标签旁附本周数值
+// （tspan 着实体色，与头部实体圆点互为图例）——形状看走势、数字可对读。
+// 样本薄的周整侧缺席（后端按周按侧记 None），缺哪侧就少画哪侧多边形与数值。
+// ---------------------------------------------------------------------------
+const RADAR_W = 260
+const RADAR_H = 168
+const RADAR_R = 56
+const RADAR_LABEL_OFFSET = 12
+
+function tooltipRadarSvg(
+  meVals: Array<number | null>,
+  otherVals: Array<number | null>,
+  gridColor: string,
+  textColor: string,
+): string {
+  const cx = RADAR_W / 2
+  const cy = RADAR_H / 2
+  const angleAt = (i: number) => -Math.PI / 2 + (i * 2 * Math.PI) / 5
+  const point = (i: number, ratio: number) => ({
+    x: cx + RADAR_R * ratio * Math.cos(angleAt(i)),
+    y: cy + RADAR_R * ratio * Math.sin(angleAt(i)),
+  })
+  const polygon = (ratios: number[]) =>
+    ratios
+      .map((r, i) => {
+        const p = point(i, r)
+        return `${p.x.toFixed(1)},${p.y.toFixed(1)}`
+      })
+      .join(' ')
+  const rings = [1 / 3, 2 / 3, 1]
+    .map((r) => `<polygon points="${polygon(BIG5_DIM_ORDER.map(() => r))}" fill="none" stroke="${gridColor}"/>`)
+    .join('')
+  const axisLines = BIG5_DIM_ORDER.map((_, i) => {
+    const p = point(i, 1)
+    return `<line x1="${cx}" y1="${cy}" x2="${p.x.toFixed(1)}" y2="${p.y.toFixed(1)}" stroke="${gridColor}" stroke-opacity="0.7"/>`
+  }).join('')
+  // 缺席侧（全 null）不画多边形；个别维 null 按 0 收到中心（与 BigFiveRadar 同语义）
+  const sidePoly = (vals: Array<number | null>, color: string, fillOpacity: number) =>
+    vals.every((v) => v == null)
+      ? ''
+      : `<polygon points="${polygon(
+          vals.map((v) => (v == null ? 0 : Math.max(0, Math.min(100, v)) / 100)),
+        )}" fill="${color}" fill-opacity="${fillOpacity}" stroke="${color}" stroke-width="2"/>`
+  const labels = BIG5_DIM_ORDER.map((dim, i) => {
+    const a = angleAt(i)
+    const lx = cx + (RADAR_R + RADAR_LABEL_OFFSET) * Math.cos(a)
+    const ly = cy + (RADAR_R + RADAR_LABEL_OFFSET) * Math.sin(a) + 3.5
+    const anchor = Math.abs(Math.cos(a)) < 0.3 ? 'middle' : Math.cos(a) > 0 ? 'start' : 'end'
+    const nums: string[] = []
+    if (meVals[i] != null)
+      nums.push(`<tspan fill="${BIG5_COLOR_ME}" font-size="9"> ${Math.round(meVals[i] as number)}</tspan>`)
+    if (otherVals[i] != null)
+      nums.push(`<tspan fill="${BIG5_COLOR_OTHER}" font-size="9"> ${Math.round(otherVals[i] as number)}</tspan>`)
+    return (
+      `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" text-anchor="${anchor}" fill="${textColor}" font-size="10">` +
+      `${BIG5_DIM_TEXT[dim]}${nums.join('')}</text>`
+    )
+  }).join('')
+  return (
+    `<svg viewBox="0 0 ${RADAR_W} ${RADAR_H}" width="${RADAR_W}" height="${RADAR_H}" style="display:block">` +
+    rings +
+    axisLines +
+    sidePoly(otherVals, BIG5_COLOR_OTHER, 0.1) +
+    sidePoly(meVals, BIG5_COLOR_ME, 0.12) +
+    labels +
+    '</svg>'
+  )
+}
+
 function buildOption(): echarts.EChartsOption | null {
   const data = payload.value
   if (!data?.ok || !data.week_starts.length) return null
@@ -532,20 +603,31 @@ function buildOption(): echarts.EChartsOption | null {
     tooltip: {
       trigger: 'axis',
       backgroundColor: bgCard, borderColor, padding: [6, 10],
+      confine: true, // 内嵌雷达后 tooltip 变宽，不许溢出画布
       textStyle: { fontSize: 12, color: css('--ct-text-primary', '#1B1924') },
       axisPointer: { type: 'line', lineStyle: { color: textTertiary, type: 'dashed' } },
-      // category 标签已折叠为年份/月份，tooltip 补完整周首日期；中位线系列无名字不占行
+      // category 标签已折叠为年份/月份，tooltip 补完整周首日期；周量折进头部一行
+      // （实体圆点兼作雷达数值的图例），大五以雷达呈现——同下方大五演变的形式
       formatter: (params: any) => {
         const arr = Array.isArray(params) ? params : [params]
         if (!arr.length) return ''
         const weekIdx = arr[0].dataIndex
-        const rows = arr.filter((p) => p.seriesName).map((p) => {
-          const v = p.value
-          const isVol = p.seriesName === '我' || p.seriesName === 'TA'
-          const text = v == null ? '—' : isVol ? `${Math.round(v)} 条` : v.toFixed(1)
-          return `${p.marker}${p.seriesName}　${text}`
-        })
-        return `<b>${fmtWeekFull(data.week_starts[weekIdx])}</b> 那周<br/>${rows.join('<br/>')}`
+        const dot = (color: string) =>
+          `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${color};margin:0 4px 1px 0;vertical-align:middle"></span>`
+        const textsMe = data.weekly.texts_me[weekIdx] ?? 0
+        const textsOther = data.weekly.texts_other[weekIdx] ?? 0
+        const head =
+          `<b>${fmtWeekFull(data.week_starts[weekIdx])}</b> 那周` +
+          `<div style="margin:2px 0 4px">${dot(BIG5_COLOR_ME)}我 ${Math.round(textsMe)} 条` +
+          `<span style="margin-left:12px">${dot(BIG5_COLOR_OTHER)}TA ${Math.round(textsOther)} 条</span></div>`
+        const meVals = BIG5_DIM_ORDER.map((d) => data.weekly.big5?.me?.[d]?.[weekIdx] ?? null)
+        const otherVals = BIG5_DIM_ORDER.map((d) => data.weekly.big5?.other?.[d]?.[weekIdx] ?? null)
+        if (!meVals.some((v) => v != null) && !otherVals.some((v) => v != null)) {
+          return hasAnyBig5.value
+            ? `${head}<div style="color:${textTertiary}">该周单侧文本样本薄，无大五读数</div>`
+            : head
+        }
+        return head + tooltipRadarSvg(meVals, otherVals, borderColor, textSecondary)
       },
     },
     xAxis: xAxes,

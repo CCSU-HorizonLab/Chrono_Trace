@@ -44,6 +44,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { BIG5_DIM_ORDER, BIG5_DIM_TEXT } from './big5Shared'
 
 type DimensionScore = { score: number | null; label?: string }
 type Scores = Record<string, DimensionScore>
@@ -56,17 +57,14 @@ const props = defineProps<{
   compact?: boolean
 }>()
 
-// 维度顺序固定（雷达轴序即类别序，不随数据重排）
+// 维度顺序与轴短标签固定（雷达轴序即类别序，不随数据重排），单源 big5Shared
 const size = computed(() => props.size || 260)
 const center = computed(() => size.value / 2)
 const padding = computed(() => (props.compact ? 24 : 34))
 const radius = computed(() => size.value / 2 - padding.value)
 
-const DIM_ORDER = ['openness', 'extraversion', 'agreeableness', 'conscientiousness', 'neuroticism']
-const DIM_TEXT = ['开放', '外向', '宜人', '尽责', '神经质']
-
 const axes = computed(() =>
-  DIM_ORDER.map((_, index) => {
+  BIG5_DIM_ORDER.map((_, index) => {
     const angle = -Math.PI / 2 + (index * 2 * Math.PI) / 5
     return {
       x: center.value + radius.value * Math.cos(angle),
@@ -86,7 +84,7 @@ function pointAt(index: number, ratio: number) {
 }
 
 function polygonPoints(ratio: number): string {
-  return DIM_ORDER.map((_, index) => {
+  return BIG5_DIM_ORDER.map((_, index) => {
     const p = pointAt(index, ratio)
     return `${p.x},${p.y}`
   }).join(' ')
@@ -95,7 +93,7 @@ function polygonPoints(ratio: number): string {
 function scoresPoints(scores?: Scores | null): string | null {
   if (!scores) return null
   const points: string[] = []
-  DIM_ORDER.forEach((dim, index) => {
+  BIG5_DIM_ORDER.forEach((dim, index) => {
     const value = scores[dim]?.score
     const ratio = typeof value === 'number' ? Math.max(0, Math.min(100, value)) / 100 : 0
     const p = pointAt(index, ratio)
@@ -109,12 +107,12 @@ const otherPoints = computed(() => scoresPoints(props.other))
 
 const axisLabels = computed(() => {
   const offset = props.compact ? 13 : 18
-  return DIM_TEXT.map((text, index) => {
+  return BIG5_DIM_ORDER.map((dim, index) => {
     const angle = -Math.PI / 2 + (index * 2 * Math.PI) / 5
     const x = center.value + (radius.value + offset) * Math.cos(angle)
     const y = center.value + (radius.value + offset) * Math.sin(angle) + 4
     const anchor = Math.abs(Math.cos(angle)) < 0.3 ? 'middle' : Math.cos(angle) > 0 ? 'start' : 'end'
-    return { text, x, y, anchor }
+    return { text: BIG5_DIM_TEXT[dim], x, y, anchor }
   })
 })
 </script>

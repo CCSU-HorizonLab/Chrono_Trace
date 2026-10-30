@@ -13,3 +13,13 @@ export const BIG5_DIM_ORDER = [
 export const BIG5_COLOR_ME = '#5A4BC4'
 export const BIG5_COLOR_OTHER = '#E0A458'
 export const BIG5_COLOR_COMBINED = '#2FA39A'
+
+// 轴短标签（雷达类视图共用）：BigFiveRadar 分段小多图与关系章节 tooltip 雷达
+// 的单一来源——轴序即 BIG5_DIM_ORDER，标签与其对位
+export const BIG5_DIM_TEXT: Record<string, string> = {
+  openness: '开放',
+  extraversion: '外向',
+  agreeableness: '宜人',
+  conscientiousness: '尽责',
+  neuroticism: '神经质',
+}

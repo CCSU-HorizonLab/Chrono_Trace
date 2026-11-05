@@ -133,7 +133,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import * as echarts from 'echarts'
 import { api } from '@/api/bridge'
 import { toCompactRange } from '@/utils/datetime'
-import { BIG5_COLOR_ME, BIG5_COLOR_OTHER, BIG5_DIM_ORDER, BIG5_DIM_TEXT } from './big5Shared'
+import { BIG5_COLOR_ME, BIG5_COLOR_OTHER, BIG5_DIM_ORDER, BIG5_DIM_TEXT, big5LabelPos, big5PointAt } from './big5Shared'
 
 type Change = { key: string; label: string; direction: 'up' | 'down'; delta: number }
 type Chapter = {
@@ -449,11 +449,7 @@ function tooltipRadarSvg(
 ): string {
   const cx = RADAR_W / 2
   const cy = RADAR_H / 2
-  const angleAt = (i: number) => -Math.PI / 2 + (i * 2 * Math.PI) / 5
-  const point = (i: number, ratio: number) => ({
-    x: cx + RADAR_R * ratio * Math.cos(angleAt(i)),
-    y: cy + RADAR_R * ratio * Math.sin(angleAt(i)),
-  })
+  const point = (i: number, ratio: number) => big5PointAt(cx, cy, RADAR_R, i, ratio)
   const polygon = (ratios: number[]) =>
     ratios
       .map((r, i) => {
@@ -476,10 +472,10 @@ function tooltipRadarSvg(
           vals.map((v) => (v == null ? 0 : Math.max(0, Math.min(100, v)) / 100)),
         )}" fill="${color}" fill-opacity="${fillOpacity}" stroke="${color}" stroke-width="2"/>`
   const labels = BIG5_DIM_ORDER.map((dim, i) => {
-    const a = angleAt(i)
-    const lx = cx + (RADAR_R + RADAR_LABEL_OFFSET) * Math.cos(a)
-    const ly = cy + (RADAR_R + RADAR_LABEL_OFFSET) * Math.sin(a) + 3.5
-    const anchor = Math.abs(Math.cos(a)) < 0.3 ? 'middle' : Math.cos(a) > 0 ? 'start' : 'end'
+    const pos = big5LabelPos(cx, cy, RADAR_R, RADAR_LABEL_OFFSET, i)
+    const lx = pos.x
+    const ly = pos.y + 3.5
+    const anchor = pos.anchor
     const nums: string[] = []
     if (meVals[i] != null)
       nums.push(`<tspan fill="${BIG5_COLOR_ME}" font-size="9"> ${Math.round(meVals[i] as number)}</tspan>`)

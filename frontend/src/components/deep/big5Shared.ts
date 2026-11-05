@@ -23,3 +23,32 @@ export const BIG5_DIM_TEXT: Record<string, string> = {
   conscientiousness: '尽责',
   neuroticism: '神经质',
 }
+
+// 五边形雷达极坐标几何（BigFiveRadar 与关系章节 tooltip 雷达单源）：
+// 轴 index 的角度从正上方（-π/2）起按轴数顺时针均分
+export function big5AxisAngle(index: number): number {
+  return -Math.PI / 2 + (index * 2 * Math.PI) / BIG5_DIM_ORDER.length
+}
+
+/** 轴 index 上 ratio（0~1，1=外圈）的点坐标 */
+export function big5PointAt(
+  cx: number, cy: number, r: number, index: number, ratio: number,
+): { x: number; y: number } {
+  const angle = big5AxisAngle(index)
+  return {
+    x: cx + r * ratio * Math.cos(angle),
+    y: cy + r * ratio * Math.sin(angle),
+  }
+}
+
+/** 轴标签锚点（径向 offset 处）；y 的基线微调（+4/+3.5）由调用方自加 */
+export function big5LabelPos(
+  cx: number, cy: number, r: number, offset: number, index: number,
+): { x: number; y: number; anchor: 'start' | 'middle' | 'end' } {
+  const angle = big5AxisAngle(index)
+  return {
+    x: cx + (r + offset) * Math.cos(angle),
+    y: cy + (r + offset) * Math.sin(angle),
+    anchor: Math.abs(Math.cos(angle)) < 0.3 ? 'middle' : Math.cos(angle) > 0 ? 'start' : 'end',
+  }
+}

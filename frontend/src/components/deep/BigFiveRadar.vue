@@ -44,7 +44,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { BIG5_DIM_ORDER, BIG5_DIM_TEXT } from './big5Shared'
+import { BIG5_DIM_ORDER, BIG5_DIM_TEXT, big5LabelPos, big5PointAt } from './big5Shared'
 
 type DimensionScore = { score: number | null; label?: string }
 type Scores = Record<string, DimensionScore>
@@ -64,23 +64,13 @@ const padding = computed(() => (props.compact ? 24 : 34))
 const radius = computed(() => size.value / 2 - padding.value)
 
 const axes = computed(() =>
-  BIG5_DIM_ORDER.map((_, index) => {
-    const angle = -Math.PI / 2 + (index * 2 * Math.PI) / 5
-    return {
-      x: center.value + radius.value * Math.cos(angle),
-      y: center.value + radius.value * Math.sin(angle),
-    }
-  }),
+  BIG5_DIM_ORDER.map((_, index) => big5PointAt(center.value, center.value, radius.value, index, 1)),
 )
 
 const gridLayers = [1, 2, 3]
 
 function pointAt(index: number, ratio: number) {
-  const angle = -Math.PI / 2 + (index * 2 * Math.PI) / 5
-  return {
-    x: center.value + radius.value * ratio * Math.cos(angle),
-    y: center.value + radius.value * ratio * Math.sin(angle),
-  }
+  return big5PointAt(center.value, center.value, radius.value, index, ratio)
 }
 
 function polygonPoints(ratio: number): string {
@@ -108,11 +98,8 @@ const otherPoints = computed(() => scoresPoints(props.other))
 const axisLabels = computed(() => {
   const offset = props.compact ? 13 : 18
   return BIG5_DIM_ORDER.map((dim, index) => {
-    const angle = -Math.PI / 2 + (index * 2 * Math.PI) / 5
-    const x = center.value + (radius.value + offset) * Math.cos(angle)
-    const y = center.value + (radius.value + offset) * Math.sin(angle) + 4
-    const anchor = Math.abs(Math.cos(angle)) < 0.3 ? 'middle' : Math.cos(angle) > 0 ? 'start' : 'end'
-    return { text: BIG5_DIM_TEXT[dim], x, y, anchor }
+    const pos = big5LabelPos(center.value, center.value, radius.value, offset, index)
+    return { text: BIG5_DIM_TEXT[dim], x: pos.x, y: pos.y + 4, anchor: pos.anchor }
   })
 })
 </script>

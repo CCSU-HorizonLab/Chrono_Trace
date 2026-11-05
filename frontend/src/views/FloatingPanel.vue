@@ -665,6 +665,7 @@ import { chronoAxisBase } from '@/components/charts/chartTheme'
 import CtAvatar from '@/components/base/CtAvatar.vue'
 import RagFactDialog from '@/components/settings/RagFactDialog.vue'
 import { showConfirm, showDialog } from '@/utils/dialog'
+import { escapeHtml } from '@/utils/escapeHtml'
 import { safeGetItem, safeRemoveItem, safeSetItem } from '@/utils/safeStorage'
 import { copyText } from '@/utils/clipboard'
 
@@ -1663,7 +1664,7 @@ function syncCharts() {
             const label = value > 0 ? '正面' : value < 0 ? '负面' : '中性'
             const raw = itemData?.content?.length > 25 ? `${itemData.content.slice(0, 25)}…` : itemData?.content || ''
             // 聊天原文经 HTML 转义后再拼 tooltip（ECharts 按 HTML 渲染，防注入）
-            const content = raw.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+            const content = escapeHtml(raw)
             return `<b>对方情绪</b><br/>时间：${point.name}<br/>情绪：${label} (${value.toFixed(2)})${content ? `<br/><span style="color:#9B95A5">${content}</span>` : ''}`
           },
         },

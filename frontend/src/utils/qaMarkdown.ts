@@ -10,14 +10,7 @@
  * （打字机过程中就要像引用的样子），统一走本渲染器即可。
  */
 
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
-}
+import { escapeHtml } from './escapeHtml'
 
 /** 行内标记：加粗与引用上标（在已转义文本上做，标记字符不含 HTML 语义） */
 function renderInline(text: string): string {

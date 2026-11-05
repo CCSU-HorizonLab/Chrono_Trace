@@ -55,9 +55,12 @@ class HistoryQaApiMixin:
 
             on_delta = None
             if req_id:
-                def on_delta(text: str) -> None:
-                    from .push import get_push_service
+                # 推送服务解析一次绑定进闭包——回调每个 token 走一次
+                # import 机制是纯热路径开销。push 在 app/webview/ 下，
+                # mixin 在 app/webview/api/ 下，须上溯两级
+                from ..push import get_push_service
 
+                def on_delta(text: str) -> None:
                     get_push_service().push_qa_event({
                         "type": "delta",
                         "req_id": str(req_id),

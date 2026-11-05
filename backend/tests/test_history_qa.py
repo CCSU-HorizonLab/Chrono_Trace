@@ -18,6 +18,7 @@ from app.services.analysis.history_qa_service import (
     HistoryQAError,
     HistoryQAService,
 )
+from app.services.realtime.llm_http import LLMStreamUnsupported
 
 
 class _FakeHTTP:
@@ -44,15 +45,17 @@ class _FakeRedactor:
 
 @pytest.fixture(autouse=True)
 def _clear_module_state():
-    """模块级向量缓存、在途登记与共享取消注册表按测试隔离。"""
+    """模块级向量缓存、会话门闩与共享取消注册表按测试隔离。"""
     import app.services.realtime.llm_http as llmhttp
 
     hqmod._VECTOR_CACHE.clear()
-    hqmod._QA_INFLIGHT.clear()
+    hqmod._QA_CONV_LOCKS.clear()
+    hqmod._QA_LAST_ASK_START.clear()
     llmhttp._CANCELLED.clear()
     yield
     hqmod._VECTOR_CACHE.clear()
-    hqmod._QA_INFLIGHT.clear()
+    hqmod._QA_CONV_LOCKS.clear()
+    hqmod._QA_LAST_ASK_START.clear()
     llmhttp._CANCELLED.clear()
 
 
@@ -701,6 +704,74 @@ def test_rag_no_hit_hint_when_retrieval_empty(monkeypatch, db):
     assert "不要从无关聊天记录推断" in sent
 
 
+def test_rag_memory_refs_returned_with_fact_ids(monkeypatch, db):
+    """结构化记忆引用随终态返回：fact 通道 ref_id=事实主键（前端就地
+    纠错的锚点），content 为本地原文；检索空手不带该字段。"""
+    seed(db, 1, "周末去爬山吧，带上防晒", 1700000100)
+    import app.services.realtime.rag.config as ragcfg
+    import app.services.realtime.rag.retriever as retriever_mod
+
+    monkeypatch.setattr(ragcfg, "load_rag_settings", lambda: {"rag_enabled": True})
+
+    def _item(fid, content):
+        return {
+            "document_id": fid,
+            "doc_type": "fact_memory",
+            "content": content,
+            "score": 0.9,
+            "as_of": 1700000500,
+            "fact_confidence": 0.7,
+            "doc": {"id": fid, "doc_type": "fact_memory", "content": content},
+        }
+
+    class _Retriever:
+        def __init__(self, items):
+            self._items = items
+
+        def retrieve(self, **kw):
+            return {"items": self._items, "strategy": "facts"}
+
+    monkeypatch.setattr(
+        retriever_mod, "get_retriever", lambda: _Retriever([_item(11, "对方每周三固定打羽毛球")])
+    )
+    result, _ = ask(monkeypatch, db, "我们聊过爬山吗")
+    refs = result.get("memory_refs")
+    assert refs and len(refs) == 1
+    assert refs[0]["ref_id"] == 11
+    assert refs[0]["source"] == "fact_memory"
+    assert refs[0]["content"] == "对方每周三固定打羽毛球"
+    assert refs[0]["as_of"] == 1700000500
+    assert refs[0]["confidence"] == 0.7
+
+    # 文档通道命中的 fact_memory：ref_id 取 rag_documents.fact_id 外键，
+    # 不得取 doc.id（文档主键，跨表会改错事实）；fact_id 挂不上时为 0
+    def _doc_item(doc_id, fact_id, content):
+        return {
+            "doc": {
+                "id": doc_id,
+                "fact_id": fact_id,
+                "doc_type": "fact_memory",
+                "content": content,
+            },
+            "score": 0.9,
+        }
+
+    monkeypatch.setattr(
+        retriever_mod,
+        "get_retriever",
+        lambda: _Retriever([_doc_item(500, 33, "对方不吃香菜"), _doc_item(501, None, "对方养了猫")]),
+    )
+    result_doc, _ = ask(monkeypatch, db, "我们聊过爬山吗")
+    doc_refs = {ref["content"]: ref["ref_id"] for ref in result_doc.get("memory_refs") or []}
+    assert doc_refs.get("对方不吃香菜") == 33
+    assert doc_refs.get("对方养了猫") == 0
+
+    # 空检索：终态不带 memory_refs 字段
+    monkeypatch.setattr(retriever_mod, "get_retriever", lambda: _Retriever([]))
+    result2, _ = ask(monkeypatch, db, "我们聊过爬山吗")
+    assert "memory_refs" not in result2
+
+
 def test_rag_low_score_memories_rejected_by_gate(monkeypatch, db):
     """非记忆意图问句 + 阈值线下事实被拒：记忆槽不注入，改注 no_hit 提示。
     0.38 能过实时链路 0.30 线但低于问答侧 0.42——融合分含 confidence/
@@ -833,7 +904,7 @@ def test_stream_unsupported_falls_back_to_non_stream(monkeypatch, db):
     seed(db, 1, "周末去爬山吧，带上防晒", 1700000100)
 
     def _reject(**kw):
-        raise hqmod.LLMStreamUnsupported("HTTP 400")
+        raise LLMStreamUnsupported("HTTP 400")
 
     monkeypatch.setattr(hqmod, "post_json_stream", _reject)
     http = _FakeHTTP(content="整段回答 [1]")
@@ -895,28 +966,96 @@ def test_full_stream_result_has_no_truncated_flag(monkeypatch, db):
     assert "truncated" not in result
 
 
-def test_inflight_guard_preserves_cancel_token(monkeypatch, db):
-    """停止后立即重发的 inflight 守卫：旧请求在途时新 ask 不吞取消标记
-    （旧请求要消费它退出）；无在途时 ask 开头清残留标记（防取消已完成
-    请求的标记毒化下一问）。检索空手抛错走不到 LLM，标记存亡即守卫证词。"""
+def test_ask_serializes_per_conversation_and_clears_stale_token(monkeypatch):
+    """同会话串行门闩：旧请求退出前新 ask 等待（取消标记属主明确——
+    并发双 ask 共享单消费标记时，谁先到轮询点谁被杀，方向恰好反了）；
+    旧请求退出后新 ask 清残留标记再起步。检索空手抛错走不到 LLM，
+    标记存亡即守卫证词。"""
+    import threading
+
     import app.services.realtime.llm_http as llmhttp
 
-    seed(db, 1, "周末去爬山吧，带上防晒", 1700000100)
+    # 线程安全连接：新 ask 跑在工作线程，主线程 fixture 连接跨线程即炸
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    for ddl in (
+        "CREATE TABLE conversations (id INTEGER PRIMARY KEY, account_wxid TEXT,"
+        " username TEXT, display_name TEXT)",
+        "CREATE TABLE messages (id INTEGER PRIMARY KEY, conversation_id INT,"
+        " message_type INT, is_sender INT, content TEXT, timestamp INT)",
+    ):
+        conn.execute(ddl)
+    conn.execute("INSERT INTO conversations VALUES (1, 'wxid_me', 'wxid_a', '阿明')")
+    monkeypatch.setattr(hqmod, "get_db", lambda: conn)
     monkeypatch.setattr(hqmod, "_load_question_vector", lambda q: None)
     use_local_model(monkeypatch)
 
-    # 在途（模拟旧请求还活着）：标记必须原封留给旧请求
-    hqmod._QA_INFLIGHT.add(1)
-    llmhttp.request_llm_cancel(hqmod.QA_CANCEL_SCOPE, 1)
-    with pytest.raises(HistoryQAError):
-        HistoryQAService().ask(1, "跳伞这个话题完全没聊过")
-    assert llmhttp.take_llm_cancel(hqmod.QA_CANCEL_SCOPE, 1) is True  # 未被吞
+    # 旧请求在途（持有会话门闩）：新 ask 必须等待而非并行抢跑
+    gate = threading.Lock()
+    gate.acquire()
+    with hqmod._QA_INFLIGHT_LOCK:
+        hqmod._QA_CONV_LOCKS[1] = gate
+    llmhttp.request_llm_cancel(hqmod.QA_CANCEL_SCOPE, 1)  # 用户点了停止
 
-    # 无在途：ask 开头清残留（旧行为保留）
-    llmhttp.request_llm_cancel(hqmod.QA_CANCEL_SCOPE, 1)
+    outcome: dict = {}
+
+    def _second_ask():
+        try:
+            HistoryQAService().ask(1, "跳伞这个话题完全没聊过")
+            outcome["error"] = None
+        except HistoryQAError as exc:
+            outcome["error"] = str(exc)
+
+    worker = threading.Thread(target=_second_ask)
+    worker.start()
+    worker.join(0.3)
+    assert worker.is_alive()  # 门闩被旧请求持有：新 ask 仍在等待
+    # 旧请求消费取消标记退出、释放门闩
+    assert llmhttp.take_llm_cancel(hqmod.QA_CANCEL_SCOPE, 1) is True
+    gate.release()
+    worker.join(2)
+    assert not worker.is_alive()
+    # 起步后检索空手照常报错（未被已消费的旧标记毒化）
+    assert outcome.get("error")
+
+    # 无在途：ask 开头清「上一轮起步前注册」的死残留（防毒化下一问）；
+    # 直接注入早于一切真实请求的时间戳构造该残留
+    llmhttp._CANCELLED[(hqmod.QA_CANCEL_SCOPE, 1)] = 1.0
     with pytest.raises(HistoryQAError):
         HistoryQAService().ask(1, "跳伞这个话题完全没聊过")
     assert llmhttp.take_llm_cancel(hqmod.QA_CANCEL_SCOPE, 1) is False  # 已被清
+
+
+def test_ask_keeps_stop_registered_after_previous_round_start(monkeypatch):
+    """入口清残留只清上一轮起步前注册的标记：排队等锁/前端预检窗口里
+    对本轮点的停止（晚于上一轮起步注册）不得被入口清位吞掉——否则用户
+    停止后重发，新一轮照样跑完整段 LLM 才发现被取消过。检索空手抛错
+    走不到 LLM 轮询点，标记存亡即守卫证词。"""
+    import app.services.realtime.llm_http as llmhttp
+
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    for ddl in (
+        "CREATE TABLE conversations (id INTEGER PRIMARY KEY, account_wxid TEXT,"
+        " username TEXT, display_name TEXT)",
+        "CREATE TABLE messages (id INTEGER PRIMARY KEY, conversation_id INT,"
+        " message_type INT, is_sender INT, content TEXT, timestamp INT)",
+    ):
+        conn.execute(ddl)
+    conn.execute("INSERT INTO conversations VALUES (1, 'wxid_me', 'wxid_a', '阿明')")
+    monkeypatch.setattr(hqmod, "get_db", lambda: conn)
+    monkeypatch.setattr(hqmod, "_load_question_vector", lambda q: None)
+    use_local_model(monkeypatch)
+
+    # 第一轮：起步后检索空手退出（_QA_LAST_ASK_START 记录本轮起点）
+    with pytest.raises(HistoryQAError):
+        HistoryQAService().ask(1, "跳伞这个话题完全没聊过")
+
+    # 前端预检窗口里的停止：注册时刻晚于上一轮起步
+    llmhttp.request_llm_cancel(hqmod.QA_CANCEL_SCOPE, 1)
+
+    # 新一轮入口不得吞掉该标记（before 界限按上一轮起点切分）
+    with pytest.raises(HistoryQAError):
+        HistoryQAService().ask(1, "跳伞这个话题完全没聊过")
+    assert llmhttp.take_llm_cancel(hqmod.QA_CANCEL_SCOPE, 1) is True  # 存活到轮询点
 
 
 def test_without_on_delta_keeps_non_stream_path(monkeypatch, db):

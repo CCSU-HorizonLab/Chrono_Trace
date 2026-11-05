@@ -30,7 +30,6 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from ...db.connection import get_db
 from ..realtime.llm_http import (
     LLMRequestAborted,
-    LLMStreamUnsupported,
     apply_interactive_fast_mode,
     post_json_stream,
     post_json_with_retries,
@@ -122,12 +121,16 @@ class HistoryQACancelled(HistoryQAError):
     """用户主动取消：不回退检索直出（取消就是不要结果）。"""
 
 
-# 会话级在途登记：取消标记按 (scope, conversation_id) 定址且单消费，
-# 「停止后立即重发」时新 ask 若无条件清残留标记，会吃掉旧请求正等着
-# 消费的取消标记（前端定格先行、后端还在跑）——旧请求跑完整段白烧
-# token。清位只在该会话无在途请求时做；重发场景下旧请求自己消费标记
+# 会话级串行门闩：取消标记按 (scope, conversation_id) 定址且单消费，
+# 并发的两个 ask 共享一枚标记时，谁的轮询点先到谁消费——「停止后立即
+# 重发」会把用户刚发的新问题杀掉而旧问题跑完（方向恰好反了）。串行后
+# 标记属主明确：新请求等旧请求真正退出，再清残留标记自己起步
 _QA_INFLIGHT_LOCK = threading.Lock()
-_QA_INFLIGHT: set = set()
+_QA_CONV_LOCKS: dict = {}
+# 各会话最近一轮 ask 的起步时刻：入口清残留只清早于它的标记——晚于它
+# 注册的是用户在排队等锁/前端预检窗口里对本轮点的停止，须留给轮询点
+# 消费（take_llm_cancel 的 before 界限，见 llm_http）
+_QA_LAST_ASK_START: Dict[int, float] = {}
 
 
 def _extract_keywords(question: str) -> List[str]:
@@ -141,8 +144,25 @@ def _extract_keywords(question: str) -> List[str]:
         words = [w.strip() for w in jieba.cut(text)]
     except Exception:
         words = text.split(" ")
-    # 单字与纯符号无区分度：只留 >=2 字的实词片段
-    return [w for w in words if w and len(w) >= 2][:8]
+    # 停用词与 RAG 门控同一份表（延迟导入：问答不硬依赖 realtime 包路径）
+    try:
+        from ..realtime.rag.relevance_gate import RagRelevanceGate
+
+        stopwords = RagRelevanceGate.QUERY_STOPWORDS
+    except Exception:
+        stopwords = frozenset()
+    # 单字/纯符号无区分度；去重保序——重复词只会重复命中同一批 LIKE
+    # 行，还挤占 8 个检索槽位
+    seen: set = set()
+    kept: List[str] = []
+    for w in words:
+        if len(w) < 2 or w in stopwords or w in seen:
+            continue
+        seen.add(w)
+        kept.append(w)
+        if len(kept) >= 8:
+            break
+    return kept
 
 
 def _load_question_vector(question: str) -> Optional[List[float]]:
@@ -223,17 +243,22 @@ class HistoryQAService:
         用于理解「上次说的那件事」类指代并注入检索。
 
         on_delta：LLM 正文增量回调（打字机）。提供时走流式请求；取消/
-        失败的终态语义不变——前端以 bridge 返回值为准，增量只管过程。"""
+        失败的终态语义不变——前端以 bridge 返回值为准，增量只管过程。
+
+        同会话串行：重发等在途请求退出后再起步（见 _QA_CONV_LOCKS 注释）。"""
+        key = int(conversation_id)
         with _QA_INFLIGHT_LOCK:
-            already_running = int(conversation_id) in _QA_INFLIGHT
-            _QA_INFLIGHT.add(int(conversation_id))
-        try:
-            if not already_running:
-                take_llm_cancel(QA_CANCEL_SCOPE, conversation_id)  # 清上一轮遗留的取消标记
+            gate = _QA_CONV_LOCKS.get(key)
+            if gate is None:
+                gate = threading.Lock()
+                _QA_CONV_LOCKS[key] = gate
+        with gate:
+            # 只清上一轮起步前注册的残留（上一轮没消费到的死标记）；
+            # 晚于上一轮起步的停止意图属本轮，交给轮询点生效
+            prev_start = _QA_LAST_ASK_START.get(key)
+            take_llm_cancel(QA_CANCEL_SCOPE, conversation_id, before=prev_start)
+            _QA_LAST_ASK_START[key] = time.time()
             return self._ask(conversation_id, question, history, on_delta)
-        finally:
-            with _QA_INFLIGHT_LOCK:
-                _QA_INFLIGHT.discard(int(conversation_id))
 
     def _ask(
         self,
@@ -277,12 +302,14 @@ class HistoryQAService:
             )
             # RAG 长期记忆槽：检索+门控该联系人事实/主题段作背景参考；门控
             # 全拒且判定 no_hit 时带「记忆库无此记录」提示（防从无关消息硬凑）
-            memories, memory_no_hit = self._retrieve_rag_memories(
+            memory_refs, memory_no_hit = self._retrieve_rag_memories(
                 account_wxid, conversation_id, retrieval_query, turns=turns
             )
-            if memories:
+            memories: List[str] = []
+            if memory_refs:
+                # 远程模型只见脱敏副本；memory_refs（本地原文）随终态返回
                 memories = self._redact_memories_for_remote(
-                    memories, account_wxid, conversation_id
+                    [m["content"] for m in memory_refs], account_wxid, conversation_id
                 )
             answer, truncated = self._call_llm(
                 conversation_id, redacted_question, redacted,
@@ -317,6 +344,10 @@ class HistoryQAService:
             "contact_name": display_name,
             "citations": citations,
         }
+        if memory_refs:
+            # 参考记忆溯源：AI 本轮回答实际采用的结构化记忆（敏感事实在
+            # 检索层已被排除，不会出现在这里）
+            result["memory_refs"] = memory_refs
         if truncated:
             # 流式中途断网：已收部分当结果，显式带标记（前端提示「已截断」，
             # 引用按截断文本实际到达的 [n] 过滤缩水属预期）
@@ -639,13 +670,15 @@ class HistoryQAService:
         conversation_id: int,
         question: str,
         turns: Optional[List[Dict[str, str]]] = None,
-    ) -> Tuple[List[str], bool]:
+    ) -> Tuple[List[Dict[str, Any]], bool]:
         """检索并门控该联系人 RAG 长期记忆（复用实时建议同款检索器+门控）。
 
-        返回 (memories, no_hit)：no_hit=True 表示检索有结果但全被门控
-        拒——调用方注入「记忆库无此记录」提示，防 LLM 从无关消息硬凑
-        （skip=低质/离题/超时降级则静默，不打扰）。任何缺位（未建索引/
-        关闭/异常）返回 ([], False)，问答主链路只靠消息检索照常工作。
+        返回 (memory_refs, no_hit)：refs 为结构化引用（content 本地原文，
+        供前端「参考记忆」展示与就地纠错；发给远程 LLM 的文本由调用方
+        另行走脱敏副本）。no_hit=True 表示检索有结果但全被门控拒——调用
+        方注入「记忆库无此记录」提示，防 LLM 从无关消息硬凑（skip=低质/
+        离题/超时降级则静默，不打扰）。任何缺位（未建索引/关闭/异常）
+        返回 ([], False)，问答主链路只靠消息检索照常工作。
         """
         try:
             from ..realtime.memory_intent import detect_memory_intent
@@ -693,8 +726,32 @@ class HistoryQAService:
                 doc = it.get("doc") or {}
                 return str(it.get("content") or doc.get("content") or "").strip()
 
-            selected = [c for c in (_content(it) for it in items if it.get("_rag_gate_selected")) if c]
-            return selected, False
+            # 结构化引用：content 为本地原文（远程 LLM 只见脱敏副本）；
+            # fact_memory 的 ref_id 是 rag_facts 主键——前端就地纠错的锚点
+            refs: List[Dict[str, Any]] = []
+            for it in items:
+                if not it.get("_rag_gate_selected"):
+                    continue
+                content = _content(it)
+                if not content:
+                    continue
+                doc = it.get("doc") or {}
+                doc_type = str(it.get("doc_type") or doc.get("doc_type") or "unknown")
+                # ref_id 一律是 rag_facts 主键（纠错按钮的锚点）：事实通道
+                # 平铺 document_id；文档通道取 rag_documents.fact_id 外键，
+                # 不取 doc.id——那是文档主键，跨表喂给 set_fact_feedback
+                # 会改错对象。fact_id 挂不上（影子层关闭）时为 0，前端不渲染按钮
+                refs.append(
+                    {
+                        "content": content,
+                        "source": doc_type,
+                        "ref_id": int(it.get("document_id") or doc.get("fact_id") or 0),
+                        "subject": str(it.get("subject") or ""),
+                        "as_of": it.get("as_of") or doc.get("source_ts"),
+                        "confidence": it.get("fact_confidence"),
+                    }
+                )
+            return refs, False
         except Exception as exc:
             # 静默吞掉曾让「记忆槽为何一直缺席」无从排查——留 WARNING 现场
             logger.warning("[问问微信] RAG 记忆槽检索失败（按无记忆继续）: %s", exc)

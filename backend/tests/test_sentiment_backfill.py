@@ -589,6 +589,38 @@ class TestQaEmbeddingTrigger:
         while backfill.find_running_task(1) and time.time() < deadline:
             time.sleep(0.02)
 
+    def test_ask_history_with_req_id_streams_via_push(self, db, monkeypatch):
+        """带 req_id 的调用形态（前端 runAsk 每次都传）：流式回调绑定推送
+        服务。此前 mixin 里 `from .push import ...` 层级错，100% 导入失败
+        被 except 吞成 {ok: False}——不带 req_id 的旧用例走不到该分支，
+        全绿测试恰好盖住这个 P0。"""
+        import app.services.analysis.history_qa_service as hqmod
+        import app.webview.push as push_mod
+
+        seen_events: list = []
+
+        class _FakePush:
+            def push_qa_event(self, event):
+                seen_events.append(event)
+
+        monkeypatch.setattr(push_mod, "get_push_service", lambda: _FakePush())
+
+        class _FakeQA:
+            def ask(self, conv, question, history, on_delta=None):
+                if on_delta:
+                    on_delta("你好")
+                return {"answer": "你好", "citations": []}
+
+        monkeypatch.setattr(hqmod, "HistoryQAService", _FakeQA)
+
+        result = _QaBridge().ask_history(1, "在吗", req_id="req-1")
+
+        assert result["ok"] is True
+        assert seen_events, "增量必须经推送服务回传"
+        assert seen_events[0]["type"] == "delta"
+        assert seen_events[0]["req_id"] == "req-1"
+        assert seen_events[0]["text"] == "你好"
+
 
 class _FakeAffinitySvc:
     """守卫视角的服务实例：{conversation_id: running_task_id}。"""

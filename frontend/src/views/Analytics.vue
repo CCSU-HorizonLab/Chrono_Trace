@@ -613,7 +613,7 @@
                   <span class="qa-typing-hint">正在检索聊天记录并生成回答...</span>
                 </div>
                 <template v-else>
-                  <div class="qa-bubble-text qa-md" @click="handleCiteClick" v-html="renderQaAnswer(item.answer)"></div>
+                  <div class="qa-bubble-text qa-md" @click="handleCiteClick" v-html="renderQaEntryAnswer(item)"></div>
                   <span v-if="item.streaming" class="qa-stream-cursor" aria-hidden="true"></span>
                 </template>
                 <span v-if="item.stopped" class="qa-stopped-badge">已停止</span>
@@ -640,6 +640,33 @@
                       <span class="qa-citation-idx">[{{ cite.index }}]</span>
                       <span class="qa-citation-meta">{{ formatQaTime(cite.timestamp) }} · {{ cite.is_sender ? '我' : currentContactName }}</span>
                       <span class="qa-citation-text">"{{ cite.text }}"</span>
+                    </div>
+                  </details>
+                  <details v-if="item.memoryRefs && item.memoryRefs.length" class="qa-citations-fold qa-memory-fold">
+                    <summary class="qa-citations-title">参考记忆（{{ item.memoryRefs.length }} 条）· 可就地纠错</summary>
+                    <div v-for="(mem, mIdx) in item.memoryRefs" :key="mIdx" class="qa-citation-row qa-memory-row">
+                      <span class="qa-memory-kind" :class="{ fact: mem.source === 'fact_memory' }">
+                        {{ mem.source === 'fact_memory' ? '事实' : '话题' }}
+                      </span>
+                      <span class="qa-citation-text">"{{ mem.content }}"</span>
+                      <span v-if="mem.as_of" class="qa-citation-meta">{{ formatQaTime(mem.as_of) }}</span>
+                      <template v-if="mem.source === 'fact_memory' && mem.ref_id">
+                        <span v-if="qaMemoryFeedback[mem.ref_id]" class="qa-memory-done">
+                          {{ qaMemoryFeedback[mem.ref_id] === 'inaccurate' ? '已标记不准确' : '已忘记' }}
+                        </span>
+                        <template v-else>
+                          <button
+                            class="text-action-btn qa-memory-btn"
+                            :disabled="qaMemoryBusy[mem.ref_id]"
+                            @click="handleMemoryFeedback(mem, 'inaccurate')"
+                          >不准确</button>
+                          <button
+                            class="text-action-btn qa-memory-btn"
+                            :disabled="qaMemoryBusy[mem.ref_id]"
+                            @click="handleMemoryFeedback(mem, 'forget')"
+                          >忘记</button>
+                        </template>
+                      </template>
                     </div>
                   </details>
                 </template>
@@ -1171,10 +1198,13 @@ const showPortraitDialog = ref(false)
 
         // ===== 问问微信（历史问答 + 引用溯源·聊天框：流式打字机）=====
         type QaCitation = { index: number; message_id: number; timestamp: number; is_sender: number; text: string }
+        // 参考记忆溯源：AI 本轮实际采用的 RAG 记忆（fact 通道 ref_id=事实主键，
+        // 可就地纠错；文档通道只读展示）
+        type QaMemoryRef = { content: string; source: string; ref_id: number; subject?: string; as_of?: number | null; confidence?: number | null }
         // streaming：LLM 增量在途；stopped：用户点停已定格部分文本；error：内联错误（可重试）；
         // degraded：LLM 失败降级检索直出；truncated：流式中途断网已收部分当结果
         type QaEntry = {
-            id: number; question: string; answer: string; citations: QaCitation[]
+            id: number; question: string; answer: string; citations: QaCitation[]; memoryRefs?: QaMemoryRef[]
             streaming?: boolean; stopped?: boolean; error?: string; reqId?: string
             degraded?: boolean; truncated?: boolean
         }
@@ -1289,6 +1319,18 @@ const showPortraitDialog = ref(false)
             handleAskHistory()
         }
 
+        // 回答 HTML 渲染缓存：流式期间每帧全列表重渲染，历史条目 answer
+        // 不变不得重跑 markdown 解析（按条目对象 WeakMap，answer 变更自动失效）
+        const qaAnswerCache = new WeakMap<QaEntry, { answer: string; html: string }>()
+        function renderQaEntryAnswer(item: QaEntry): string {
+            let cached = qaAnswerCache.get(item)
+            if (!cached || cached.answer !== item.answer) {
+                cached = { answer: item.answer, html: renderQaAnswer(item.answer) }
+                qaAnswerCache.set(item, cached)
+            }
+            return cached.html
+        }
+
         // 流式增量（chrono:qa-push，App.vue 转投 CustomEvent）：按 req_id
         // 匹配在途气泡；已定格（停止/终态）的气泡丢弃迟到增量。增量经
         // rAF 尾随节流提交——token 级直写会让每 16ms 数次全组件重渲染
@@ -1316,6 +1358,12 @@ const showPortraitDialog = ref(false)
             qaStreamBuffer = ''
             qaStreamEntry = null
         }
+
+        // 停止时零文本被移除的在途条目：完整答案返回时回收（token 已花，
+        // 答案不静默丢）。凭证存 reqId 原始字符串——条目对象经 reactive 数组
+        // find 取出是代理，与 runAsk 闭包里的裸对象 === 恒不相等；清空对话/
+        // 重发新问后旧条目不得复活成幽灵回答（配 qaReqId 纪元守卫双重确认）
+        let qaStoppedReqId: string | null = null
 
         function handleQaPush(e: Event) {
             const payload = (e as CustomEvent).detail
@@ -1357,22 +1405,31 @@ const showPortraitDialog = ref(false)
                 }
                 await bridgeReady()
                 // 多轮：带上最近 3 轮可作上下文的问答——本条在途、失败、
-                // 停止半截、降级通知（那不是模型答的）都不算有效答案
+                // 停止半截、降级通知（那不是模型答的）都不算有效答案。
+                // 排除本条用 reqId 原始值：数组元素经 reactive 取出是代理，
+                // 与闭包裸对象 !== 恒真，本条混进历史轮会带空答案占坑
                 const history = qaHistory.value
-                    .filter(e => e !== entry && e.answer && !e.error && !e.stopped && !e.degraded && !e.truncated)
+                    .filter(e => e.reqId !== reqId && e.answer && !e.error && !e.stopped && !e.degraded && !e.truncated)
                     .slice(-3)
                     .map(e => ({ question: e.question, answer: e.answer }))
                 const res = await api.ask_history(conversationId, question, history, reqId)
                 if (conversationId !== selectedConversationId.value) return // 已切换联系人，丢弃过期回答
                 if (res?.ok) {
-                    // 取消竞态：点停后完整答案恰已返回——完整答案优先于停止定格；
-                    // 停止时零文本被移除的条目也回收插回（token 已花，答案不静默丢）
-                    if (qaHistory.value.indexOf(entry) < 0) qaHistory.value.push(entry)
+                    // 取消竞态：点停后完整答案恰已返回——完整答案优先于停止定格
                     entry.answer = String(res.answer || entry.answer)
                     entry.citations = Array.isArray(res.citations) ? res.citations : []
+                    entry.memoryRefs = Array.isArray(res.memory_refs) ? res.memory_refs : []
                     entry.stopped = false
                     entry.degraded = res.degraded === true
                     entry.truncated = res.truncated === true
+                    // 停止时零文本被移除的条目回收插回（token 已花，答案不静默丢）；
+                    // 纪元守卫防清空对话/停止后重发的旧条目复活成幽灵回答
+                    if (qaHistory.value.indexOf(entry) < 0) {
+                        if (qaStoppedReqId && qaStoppedReqId === reqId && qaReqId === reqId) {
+                            qaHistory.value.push(entry)
+                        }
+                    }
+                    if (qaStoppedReqId === reqId) qaStoppedReqId = null
                     // 后台语义索引懒补在途（不轮询：下次提问自然用上新索引）
                     qaIndexingHint.value = res.semantic_indexing === true
                 } else {
@@ -1384,7 +1441,9 @@ const showPortraitDialog = ref(false)
             } finally {
                 entry.streaming = false
                 entry.reqId = ''
-                dropQaStreamBuffer() // 终态后未提交缓冲一律作废（答案以返回值为准）
+                // 终态后未提交缓冲一律作废（答案以返回值为准）；纪元已易主时
+                // 缓冲属新请求的流，不得误清（对齐下方 qaReqId 守卫）
+                if (qaReqId === reqId) dropQaStreamBuffer()
                 // 纪元守卫：停止后立即重发时 qaReqId 已易主，旧请求的收尾
                 // 不得熄灭新请求的 loading 态
                 if (qaReqId === reqId) {
@@ -1396,7 +1455,9 @@ const showPortraitDialog = ref(false)
 
         async function handleAskHistory() {
             const question = qaInput.value.trim()
-            if (!question || qaLoading.value) return
+            // 守卫与 runAsk 同口径先过再清输入：无会话等被拒场景下输入
+            // 不被吞（runAsk 静默 return 无气泡留档，问题就丢了）
+            if (!question || qaLoading.value || !selectedConversationId.value) return
             qaInput.value = '' // 发送即清空（失败已有问题气泡留档，错误条内联重试）
             nextTick(autoGrowQaInput)
             await runAsk(question)
@@ -1433,6 +1494,7 @@ const showPortraitDialog = ref(false)
                 } else {
                     const idx = qaHistory.value.indexOf(entry)
                     if (idx >= 0) qaHistory.value.splice(idx, 1)
+                    qaStoppedReqId = String(entry.reqId || '') // 零文本移除：完整答案返回时按 reqId 回收
                 }
             }
             qaLoading.value = false
@@ -1447,6 +1509,27 @@ const showPortraitDialog = ref(false)
         function handleClearQa() {
             if (qaLoading.value) handleStopQa()
             qaHistory.value = []
+            qaStoppedReqId = null // 清空意图优先：被移除条目不得借回收复活
+        }
+
+        // 参考记忆就地纠错：问答现场直接「不准确/忘记」，与记忆管理弹窗同接口；
+        // 反馈按事实主键全局去重（同一事实多处引用一次纠错全部生效）
+        const qaMemoryFeedback = reactive<Record<number, 'inaccurate' | 'forget'>>({})
+        const qaMemoryBusy = reactive<Record<number, boolean>>({})
+
+        async function handleMemoryFeedback(ref: QaMemoryRef, action: 'inaccurate' | 'forget') {
+            const fid = Number(ref.ref_id || 0)
+            if (!fid || qaMemoryFeedback[fid] || qaMemoryBusy[fid]) return
+            qaMemoryBusy[fid] = true
+            try {
+                await bridgeReady()
+                const res = await api.set_fact_feedback(fid, action)
+                if (res?.ok) qaMemoryFeedback[fid] = action
+            } catch {
+                // 失败保持可重试，不打断问答流
+            } finally {
+                qaMemoryBusy[fid] = false
+            }
         }
 
         // 引用上标可点：展开本气泡的引用溯源并滚到可见
@@ -1675,6 +1758,7 @@ const showPortraitDialog = ref(false)
             conversations.value = []
             analysisResult.value = null
             qaHistory.value = []
+            qaStoppedReqId = null // 账号切换整页换血：停止回收登记一并作废
             qaIndexingHint.value = false
             hasFeatures.value = false
             analysis.timeseries = []
@@ -2572,6 +2656,10 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
             window.removeEventListener('resize', handleResize)
             window.removeEventListener('chrono:wechat-account-changed', handleAccountChanged)
             window.removeEventListener('chrono:qa-push', handleQaPush)
+            // 在途问答随页面离去取消（对齐切联系人路径；离开后推送无人接、token 白烧）
+            if (qaLoading.value && selectedConversationId.value) {
+                api.cancel_history_qa(selectedConversationId.value).catch(() => {})
+            }
             if (activeTimer.value) { clearInterval(activeTimer.value); activeTimer.value = null } // F2：卸载时停止分析轮询
             responseTimeChartInstance?.dispose(); activityCalendarChartInstance?.dispose(); wordCountChartInstance?.dispose()
         })
@@ -2589,7 +2677,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
             hasConversations, hasFeatures, hasCachedAffinityAnalysis, featureStats, responseTimeStats, initiativeStats, wordCountsStats, displayWordRatioLabel, activityCalendar,
             responseTimeChart, activityCalendarChart, wordCountChart, stats, currentContactName, headerAvatarSrc, hasPreferenceKeywords, allDimensions,
             hasContentAnalysis, analysisStaleNotice, circumference, strokeDashoffset, formatNumber, formatTime, getResponseTimeLabel, getMergedResponseTimeLabel, getResponseTimePercent, onConversationChange, onDatesChange, handleExport, handleStartGlobalAnalysis, handleContextSaved, handleKeywordsUpdated, llmEvidenceNotes,
-            qaHistory, qaInput, qaLoading, qaChatBox, qaIndexingHint, qaInputEl, qaInputFocused, qaSuggestions, renderQaAnswer, handleAskHistory, handleQaEnter, autoGrowQaInput, handlePickSuggestion, handleStopQa, handleClearQa, handleRetryQa, handleRegenerateQa, handleCiteClick, handleQaScroll, formatQaTime, copiedQaKey, overallCopied, handleCopyQa, handleCopyOverall,
+            qaHistory, qaInput, qaLoading, qaChatBox, qaIndexingHint, qaInputEl, qaInputFocused, qaSuggestions, renderQaEntryAnswer, handleAskHistory, handleQaEnter, autoGrowQaInput, handlePickSuggestion, handleStopQa, handleClearQa, handleRetryQa, handleRegenerateQa, handleCiteClick, handleQaScroll, formatQaTime, copiedQaKey, overallCopied, handleCopyQa, handleCopyOverall,
             isGroupConversation, groupStats, groupStatsLoading, groupSummary, groupSummaryLoading, groupSummaryDays, handleGenerateGroupSummary,
             reportExporting, handleExportReport,
             exportDialogVisible, exportFormat, exporting, exportResult, confirmExport, openExportFolder,
@@ -4380,6 +4468,36 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   word-break: break-word;
   user-select: text;
   -webkit-user-select: text;
+}
+
+/* 参考记忆行：kind 徽标 + 陈述 + 就地纠错按钮（与记忆管理弹窗同接口） */
+.qa-memory-kind {
+  flex-shrink: 0;
+  padding: 0 6px;
+  border-radius: var(--ct-radius-full);
+  font-size: 10px;
+  color: var(--ct-text-tertiary);
+  background: var(--ct-bg-hover);
+}
+
+.qa-memory-kind.fact {
+  color: var(--ct-color-primary);
+  background: var(--ct-color-primary-tint);
+}
+
+.qa-memory-btn {
+  flex-shrink: 0;
+  font-size: 11px;
+}
+
+.qa-memory-btn:not(:disabled):hover {
+  color: var(--ct-color-error);
+}
+
+.qa-memory-done {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--ct-text-tertiary);
 }
 
 /* 加载占位：打字点 + 进度文案（气泡内独立 div，display:flex 自带） */

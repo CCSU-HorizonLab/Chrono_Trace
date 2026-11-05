@@ -110,7 +110,6 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, Backfi
             # （旧全局键 trigger_mode/intent 已废弃，不再读取）
             self._suggestion_config = dict(SUGGESTION_CONFIG_DEFAULTS)
             self._last_auto_suggestion_time = 0
-            self._listen_start_suggestion_at = 0
             try:
                 self.current_account_wxid = get_active_wechat_account_wxid(load_settings_from_file())
             except Exception:
@@ -752,6 +751,8 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, Backfi
                             # sentiment 附到基线尾部——bridge 合并基线给前端时，
                             # 图表统计/情绪历史才能拿到极性信号（否则比例恒 N/A）
                             msg['sentiment'] = sentiment
+                            # 基线是历史消息：只填窗口不判定触发，否则旧消息
+                            # 用墙钟烧掉冷却戳，压制开监听后的真实触发
                             self.emotion_tracker.update(
                                 sentiment,
                                 {
@@ -759,6 +760,7 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, Backfi
                                     'sender_attr': msg.get('sender_attr'),
                                     'timestamp': int(msg.get('timestamp') or 0),
                                 },
+                                detect_triggers=False,
                             )
                         except Exception as sent_e:
                             # 单条失败不阻断——降级中性占位
@@ -767,10 +769,15 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, Backfi
                                 msg['sentiment'],
                                 {'content': content, 'sender_attr': msg.get('sender_attr'),
                                  'timestamp': int(msg.get('timestamp') or 0)},
+                                detect_triggers=False,
                             )
                     _print(f"✅ 情绪基线预热完成（{len(warmup_texts)} 条真实分析）")
             except Exception as exc:
                 _print(f"⚠️ 情绪基线预热失败: {exc}")
+            # 旧静默基线（超阈值）是监听启动前的产物，开场建议已覆盖，
+            # 不作为本次会话的 silence 起点；预热失败也要收尾（旧时间戳
+            # 同样污染 silence）
+            self.emotion_tracker.mark_baseline_warmup_complete()
         self._last_known_ts = 0
         return seeded
 

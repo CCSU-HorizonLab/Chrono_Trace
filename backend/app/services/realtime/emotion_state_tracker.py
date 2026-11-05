@@ -118,6 +118,8 @@ NONVERBAL_CONTENT_MARKERS = (
     "[图片]",
 )
 PERFUNCTORY_MAX_SPAN_SECONDS = 180
+# silence 判定阈值（秒）：对方最后一条消息距今超过该值才视为静默
+SILENCE_THRESHOLD_SECONDS = 600
 PERFUNCTORY_MAX_CONTENT_LENGTH = 4
 PERFUNCTORY_MAX_ABS_INTENSITY = 0.25
 PERFUNCTORY_ACK_MARKERS = {
@@ -261,6 +263,7 @@ class EmotionStateTracker:
         sentiment_result: dict,
         message_data: dict,
         current_time: float | None = None,
+        detect_triggers: bool = True,
     ) -> list[TriggerEvent]:
         """
         更新滑动窗口并检测触发条件
@@ -280,6 +283,8 @@ class EmotionStateTracker:
                     'timestamp': int
                 }
             current_time: 当前时间戳（测试注入用），默认 time.time()
+            detect_triggers: False 时只填充窗口不判定触发（基线预热用，
+                旧消息不得烧掉冷却戳压制随后的真实触发）
 
         Returns:
             触发的事件列表（可能为空）
@@ -324,6 +329,9 @@ class EmotionStateTracker:
         self._last_message_time = msg_time
         self._silence_detected = False  # 收到新消息，重置 silence 标记
 
+        if not detect_triggers:
+            return []
+
         # 执行所有检测
         triggers: list[TriggerEvent] = []
 
@@ -353,6 +361,24 @@ class EmotionStateTracker:
 
         return triggers
 
+    def mark_baseline_warmup_complete(self, current_time: float | None = None) -> None:
+        """
+        基线预热收尾：旧静默时钟作废或截断到收尾时刻。
+
+        监听启动前的旧静默是开场建议的领地（重开话题）：超阈值的直接
+        作废（首轮轮询不得误触发「长时间不回」）；阈值内的截断到收尾
+        时刻——静默只测会话内，否则 420~540s 年龄带会在启动后 60~180s
+        触发，与刚生成的开场建议重复成两张卡片。
+        """
+        now = current_time or time.time()
+        if self._last_message_time is None:
+            return
+        if now - self._last_message_time > SILENCE_THRESHOLD_SECONDS:
+            self._last_message_time = None
+            self._silence_detected = False
+        else:
+            self._last_message_time = now
+
     def check_silence(self, current_time: float | None = None) -> TriggerEvent | None:
         """
         检测长时间未收到消息（由轮询循环周期性调用）
@@ -372,7 +398,7 @@ class EmotionStateTracker:
             return None
 
         elapsed = now - self._last_message_time
-        if elapsed > 600:  # 10 分钟
+        if elapsed > SILENCE_THRESHOLD_SECONDS:
             if self._can_trigger(TRIGGER_SILENCE, now):
                 self._silence_detected = True
                 self._last_trigger_times[TRIGGER_SILENCE] = now
@@ -581,7 +607,6 @@ class EmotionStateTracker:
                 'window_span_seconds': round(span_seconds, 1),
             }
         )
-        return None
 
     def _check_perfunctory(self, now: float) -> TriggerEvent | None:
         """

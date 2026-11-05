@@ -2,7 +2,6 @@
 
 import os
 import sys
-import time
 
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -103,36 +102,6 @@ def test_report_scan_regex_covers_new_wording():
     assert any(v["sample_id"] == "s1" for v in check["violations"])
 
 
-# ---- 缺陷 4:开场建议后 60s 内 silence 触发被抑制 ----------------------------
-
-def test_listen_start_cooldown_suppresses_silence(monkeypatch):
-    from app.services.realtime.monitor_service import RealtimeMonitorService
-
-    service = RealtimeMonitorService.__new__(RealtimeMonitorService)
-    service._listen_start_suggestion_at = time.time()
-    service._suggestion_config = {"trigger_mode": "semi_auto", "intent": "maintain", "engine_type": "llm"}
-    service._monitor_session_token = 1
-    service._last_auto_suggestion_time = 0
-
-    class _Trigger:
-        trigger_type = "silence"
-        severity = "low"
-        context = {}
-
-    generated = []
-    monkeypatch.setattr(
-        "app.services.realtime.suggestion_engine.SuggestionEngineFactory.create",
-        lambda engine_type: generated.append(1),
-    )
-    monkeypatch.setattr(
-        service, "_build_session_state", lambda token: {"session_token": 1, "batch_id": "b", "display_name": "x"},
-    )
-    monkeypatch.setattr(service, "_session_is_current", lambda state: True)
-    monkeypatch.setattr(service, "_resolve_account_wxid", lambda raw: "wxid_a")
-    service._handle_trigger_events([_Trigger()])
-    assert generated == []  # 冷却窗内 silence 被跳过,未触发生成
-
-    # 冷却窗外(61 秒前)恢复触发
-    service._listen_start_suggestion_at = time.time() - 61
-    service._handle_trigger_events([_Trigger()])
-    assert len(generated) == 1
+# 缺陷 4（开场建议后 60s silence 冷却）已随基线时钟截断（516fad7）成为
+# 死代码移除：静默只测会话内，最早也要预热收尾 +600s 才触发，开场
+# 窗口内不存在 silence，无需冷却分支——回归见 test_emotion_state_tracker

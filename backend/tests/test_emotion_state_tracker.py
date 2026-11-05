@@ -720,5 +720,96 @@ class TestPerformance:
         assert elapsed_ms < 50, f"单次 update 耗时 {elapsed_ms:.3f}ms，超过 50ms 限制"
 
 
+class TestBaselineWarmup:
+    """基线预热（detect_triggers=False）与静默基线收尾测试"""
+
+    def test_warmup_fills_window_without_triggering_or_burning_cooldown(self):
+        """预热只填窗口：不触发事件、不盖冷却戳——否则旧消息用墙钟烧掉
+        冷却，压制开监听后的真实触发（漏触发根因）"""
+        tracker = EmotionStateTracker()
+        t = 1000.0
+
+        for i in range(3):
+            triggers = tracker.update(
+                make_sentiment(-1, -0.7),
+                make_message("真的好烦", timestamp=int(t + i)),
+                current_time=t + i,
+                detect_triggers=False,
+            )
+            assert triggers == []
+
+        assert len(tracker.window) == 3
+        # 预热 3 连消极后，第一条实时消极消息（构成第 4 连）应立刻可触发
+        live_triggers = tracker.update(
+            make_sentiment(-1, -0.7),
+            make_message("烦死了", timestamp=int(t + 3)),
+            current_time=t + 3,
+        )
+        assert any(ev.trigger_type == TRIGGER_NEGATIVE_STREAK for ev in live_triggers)
+
+    def test_warmup_stale_baseline_discarded_from_silence_clock(self):
+        """超阈值旧基线（监听前已沉默）不得作为 silence 起点：
+        首轮轮询立即误触发「长时间不回」"""
+        tracker = EmotionStateTracker()
+        t = 1000.0
+
+        tracker.update(
+            make_sentiment(0),
+            make_message("我先忙去了", timestamp=int(t)),
+            current_time=t,
+            detect_triggers=False,
+        )
+        # 30 分钟后才开监听：旧静默是开场建议的领地
+        tracker.mark_baseline_warmup_complete(current_time=t + 1800)
+
+        assert tracker.check_silence(current_time=t + 1810) is None
+
+    def test_warmup_fresh_baseline_keeps_silence_clock(self):
+        """阈值内新鲜基线（对方真的刚说完话）静默时钟从收尾时刻起算"""
+        tracker = EmotionStateTracker()
+        t = 1000.0
+
+        tracker.update(
+            make_sentiment(0),
+            make_message("等我回来看", timestamp=int(t)),
+            current_time=t,
+            detect_triggers=False,
+        )
+        tracker.mark_baseline_warmup_complete(current_time=t + 30)
+
+        # 未到阈值不触发；超阈值即触发（从收尾时刻起算）
+        assert tracker.check_silence(current_time=t + 500) is None
+        event = tracker.check_silence(current_time=t + 660)
+        assert event is not None
+
+    def test_warmup_band_baseline_truncated_to_session_clock(self):
+        """420~540s 年龄带（如 500s）截断到收尾时刻：静默只测会话内——
+        否则启动后 100s 就触发，与刚生成的开场建议重复成两张卡片"""
+        tracker = EmotionStateTracker()
+        t = 1000.0
+
+        tracker.update(
+            make_sentiment(0),
+            make_message("回头再说", timestamp=int(t)),
+            current_time=t,
+            detect_triggers=False,
+        )
+        # 基线年龄 500s：不超阈值（不作废）但在逃逸带内
+        tracker.mark_baseline_warmup_complete(current_time=t + 500)
+
+        # 启动后 110s（旧基线直通时的触发点）不得触发
+        assert tracker.check_silence(current_time=t + 610) is None
+        # 会话内静默满阈值才触发
+        event = tracker.check_silence(current_time=t + 1110)
+        assert event is not None
+        assert event.trigger_type == TRIGGER_SILENCE
+
+    def test_warmup_complete_without_messages_is_noop(self):
+        """空窗口（预热失败/无基线）收尾不应抛错"""
+        tracker = EmotionStateTracker()
+        tracker.mark_baseline_warmup_complete(current_time=1000.0)
+        assert tracker.check_silence(current_time=2000.0) is None
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

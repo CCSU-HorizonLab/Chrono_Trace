@@ -31,23 +31,32 @@ class LLMStreamUnsupported(RuntimeError):
 # 强断，由 should_abort 在尝试边界退出（history_qa / group_summary 共用）。
 # ---------------------------------------------------------------------------
 _CANCEL_LOCK = threading.Lock()
-_CANCELLED: set = set()
+_CANCELLED: dict = {}  # (scope, key) -> 注册时刻；消费可按时间界限区分残留与新意图
 
 
 def request_llm_cancel(scope: str, key: int) -> None:
     """标记取消某个进行中的交互式调用（下一次轮询点生效）。"""
     with _CANCEL_LOCK:
-        _CANCELLED.add((str(scope), int(key)))
+        _CANCELLED[(str(scope), int(key))] = time.time()
 
 
-def take_llm_cancel(scope: str, key: int) -> bool:
-    """消费取消标记（存在即清除并返回 True）。"""
+def take_llm_cancel(scope: str, key: int, before: float | None = None) -> bool:
+    """消费取消标记（存在即清除并返回 True）。
+
+    before：只消费注册时刻早于 before 的标记（上一轮请求退出时没消费
+    到的残留）；晚于 before 注册的是用户对本轮/上一轮的停止意图——
+    排队等锁或前端预检窗口里点的停止不能被入口清位吞掉，留给轮询点
+    消费。None 无条件消费（realtime 链路原语义）。
+    """
     with _CANCEL_LOCK:
         token = (str(scope), int(key))
-        if token in _CANCELLED:
-            _CANCELLED.discard(token)
-            return True
-        return False
+        registered = _CANCELLED.get(token)
+        if registered is None:
+            return False
+        if before is not None and registered >= before:
+            return False
+        _CANCELLED.pop(token, None)
+        return True
 
 
 # ---------------------------------------------------------------------------
@@ -305,6 +314,27 @@ def _shared_ssl_context() -> ssl.SSLContext:
         return _TLS_CONTEXT
 
 
+def _build_connection(
+    parsed: Any, timeout: int
+) -> http.client.HTTPConnection:
+    """按 URL 组件建裸连接（不读 HTTP(S)_PROXY 系统代理）：https 共享
+    TLS 上下文。连接池与非流式/流式路径共用同一网络行为。"""
+    if parsed.scheme == "https":
+        return http.client.HTTPSConnection(
+            parsed.hostname, parsed.port, timeout=timeout,
+            context=_shared_ssl_context(),
+        )
+    return http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=timeout)
+
+
+def _request_target(parsed: Any) -> str:
+    """path+query 合成 http.client 要求的单个 target 字符串。"""
+    target = parsed.path or "/"
+    if parsed.query:
+        target = f"{target}?{parsed.query}"
+    return target
+
+
 def _pooled_request(
     method: str,
     url: str,
@@ -325,24 +355,13 @@ def _pooled_request(
         _CONN_LOCAL.pool = pool
     key = (parsed.scheme, parsed.hostname, parsed.port)
 
-    def _new_conn() -> http.client.HTTPConnection:
-        if parsed.scheme == "https":
-            return http.client.HTTPSConnection(
-                parsed.hostname, parsed.port, timeout=timeout,
-                context=_shared_ssl_context(),
-            )
-        return http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=timeout)
-
     conn = pool.get(key)
     if conn is None:
-        conn = _new_conn()
+        conn = _build_connection(parsed, timeout)
         pool[key] = conn
 
-    target = parsed.path or "/"
-    if parsed.query:
-        target = f"{target}?{parsed.query}"
     try:
-        conn.request(method, target, body=data, headers=headers)
+        conn.request(method, _request_target(parsed), body=data, headers=headers)
         resp = conn.getresponse()
         body = resp.read()
         resp_headers = {k.lower(): v for k, v in resp.getheaders()}
@@ -467,17 +486,8 @@ def _open_stream_connection(
     """裸 http.client 直连（与非流式 _pooled_request 同网络路径：不读
     HTTP(S)_PROXY 系统代理，SSE 不经代理缓冲/截断），响应可按行迭代。"""
     parsed = urlparse(url)
-    if parsed.scheme == "https":
-        conn: http.client.HTTPConnection = http.client.HTTPSConnection(
-            parsed.hostname, parsed.port, timeout=timeout,
-            context=_shared_ssl_context(),
-        )
-    else:
-        conn = http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=timeout)
-    target = parsed.path or "/"
-    if parsed.query:
-        target = f"{target}?{parsed.query}"
-    conn.request("POST", target, body=data, headers=headers)
+    conn = _build_connection(parsed, timeout)
+    conn.request("POST", _request_target(parsed), body=data, headers=headers)
     return conn, conn.getresponse()
 
 
@@ -558,6 +568,25 @@ def post_json_stream(
                 continue
             choices = chunk.get("choices") or []
             if not choices:
+                # 200 流内嵌 error 事件（one-api/new-api/vLLM 额度耗尽或
+                # 上游故障的常见形态）：零 delta 时抛出——调用方回退非流式
+                # 整段请求，真实错误（欠费/网关故障）可重试可展示，静默
+                # 吞掉会让「可成功的问答」被空回答文案打发；已有 delta 的
+                # 中途错误按截断收尾（与网络中断同契约）
+                stream_error = chunk.get("error")
+                if stream_error:
+                    error_detail = (
+                        str(stream_error.get("message") or stream_error)
+                        if isinstance(stream_error, dict)
+                        else str(stream_error)
+                    )[:300]
+                    if parts:
+                        truncated = True
+                        log(
+                            f"{log_prefix} 流内错误事件，按截断返回已收 {len(''.join(parts))} 字符: {error_detail}"
+                        )
+                        break
+                    raise RuntimeError(f"LLM stream error event: {error_detail}")
                 continue
             text = (choices[0].get("delta") or {}).get("content") or ""
             if text:

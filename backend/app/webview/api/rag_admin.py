@@ -328,7 +328,7 @@ class RagAdminApiMixin:
             rows = conn.execute(
                 f"""
                 SELECT id, subject, kind, content, as_of, confidence, sensitivity, enabled,
-                       evidence_message_ids_json
+                       evidence_message_ids_json, supersedes_fact_id
                 FROM rag_facts
                 WHERE account_wxid = ? AND conversation_id = ? AND status = 'active'
                   {kind_clause} {enabled_clause}
@@ -469,6 +469,8 @@ class RagAdminApiMixin:
                         "user_action": feedback.get(int(row["id"])),
                         "evidence_messages": fact_evidence_msgs,
                         "evidence_excerpts": [m["text"] for m in fact_evidence_msgs],
+                        # 演变链入口徽标：非空表示该说法有被融合 UPDATE 取代的旧版本
+                        "supersedes_fact_id": row["supersedes_fact_id"],
                     }
                 )
             return {
@@ -562,6 +564,56 @@ class RagAdminApiMixin:
             return result
         except Exception as e:
             logger.error(f"[Bridge] 记忆反馈失败: {e}")
+            return {"ok": False, "error": str(e)}
+
+    def get_fact_evolution(self, fact_id: int, account_wxid: str = "") -> dict[str, Any]:
+        """查单条事实的 supersede 演变链（最旧 → 当前），只读。
+
+        事实融合 UPDATE 退役旧说法、新说法指向旧版本；此接口把整条链
+        还原成时间线供「演变历史」展开。fact_id 全局自增，跨账号访问
+        按不存在处理；sensitive 节点与 get_rag_log_detail 同款深度防御，
+        只回 sensitive 标记不回原文。account_wxid 与 get_contact_facts
+        同口径：记忆弹窗按作用域账号传参，缺省回落当前激活账号。
+        """
+        try:
+            from ...db.connection import get_db
+            from ...services.realtime.rag.store import RagStore
+
+            conn = get_db()
+            store = RagStore(conn)
+            chain = store.get_fact_chain(int(fact_id))
+            if not chain:
+                return {"ok": False, "error": "fact_not_found"}
+            resolved_account = self._resolve_account_wxid(account_wxid)
+            if str(chain[0].get("account_wxid") or "") != resolved_account:
+                return {"ok": False, "error": "fact_not_found"}
+
+            entry_id = int(fact_id)
+            nodes = []
+            for item in chain:
+                sensitive = str(item.get("sensitivity") or "normal") == "sensitive"
+                nodes.append(
+                    {
+                        "id": int(item["id"]),
+                        "subject": item["subject"],
+                        "kind": item["kind"],
+                        "content": "" if sensitive else item["content"],
+                        "sensitive": sensitive,
+                        "status": item["status"],
+                        "as_of": item["as_of"],
+                        "confidence": item["confidence"],
+                        "updated_at": item["updated_at"],
+                        "is_current": int(item["id"]) == entry_id,
+                    }
+                )
+            return {
+                "ok": True,
+                "fact_id": entry_id,
+                "conversation_id": int(chain[0].get("conversation_id") or 0),
+                "nodes": nodes,
+            }
+        except Exception as e:
+            logger.error(f"[Bridge] 记忆演变链查询失败: {e}")
             return {"ok": False, "error": str(e)}
 
     def get_rag_status(self, account_wxid: str = "", limit: int = 1000) -> dict[str, Any]:

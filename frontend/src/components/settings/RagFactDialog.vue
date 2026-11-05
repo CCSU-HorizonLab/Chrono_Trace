@@ -212,6 +212,53 @@
               <span class="rfd-quote-mark">”</span>
             </div>
 
+            <!-- 演变历史：融合 UPDATE 取代过旧说法的事实，展开整条链（旧→新，只读） -->
+            <div v-if="fact.supersedes_fact_id" class="rfd-evo">
+              <button type="button" class="rfd-evo-toggle" @click="toggleEvolution(fact)">
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2.2"
+                  stroke-linecap="round"
+                  :style="{ transform: evolutionOpen[fact.id] ? 'rotate(90deg)' : '' }"
+                >
+                  <path d="m9 18 6-6-6-6" />
+                </svg>
+                <span>{{ evolutionOpen[fact.id] ? '收起演变历史' : '演变历史' }}</span>
+                <span v-if="evolutionNodes[fact.id]" class="rfd-evo-count">{{ evolutionNodes[fact.id].length }} 版</span>
+              </button>
+              <div v-if="evolutionOpen[fact.id]" class="rfd-evo-list">
+                <div v-if="evolutionLoading[fact.id]" class="rfd-evo-empty">正在拉取这条记忆的演变链…</div>
+                <div v-else-if="evolutionFailed[fact.id]" class="rfd-evo-empty">演变链拉取失败，收起后重新展开可重试</div>
+                <template v-else-if="(evolutionNodes[fact.id] || []).length">
+                  <div
+                    v-for="node in evolutionNodes[fact.id]"
+                    :key="node.id"
+                    class="rfd-evo-node"
+                    :class="{ current: node.is_current }"
+                  >
+                    <span class="rfd-evo-dot"></span>
+                    <div class="rfd-evo-body">
+                      <div class="rfd-evo-meta">
+                        <span class="rfd-evo-speaker">{{ parseFact(node as unknown as RagFact).isSelf ? '我' : (displayName || '对方') }}</span>
+                        <span v-if="node.as_of" class="rfd-evo-time">{{ formatDate(node.as_of) }}</span>
+                        <span v-if="node.confidence != null" class="rfd-evo-conf">置信 {{ Math.round((node.confidence ?? 0) * 100) }}%</span>
+                        <span class="rfd-evo-state" :class="node.is_current ? 'cur' : 'old'">
+                          {{ node.is_current ? '当前说法' : '已被取代' }}
+                        </span>
+                      </div>
+                      <div v-if="node.sensitive" class="rfd-evo-text masked">敏感记忆已保护，内容不展示</div>
+                      <div v-else class="rfd-evo-text">“{{ parseFact(node as unknown as RagFact).statement }}”</div>
+                    </div>
+                  </div>
+                </template>
+                <div v-else class="rfd-evo-empty">演变链已失效（旧版本被清理）</div>
+              </div>
+            </div>
+
             <!-- 微信对话现场还原窗口 -->
             <div v-if="!fact.sensitive || revealed[fact.id]" class="rfd-wechat-window">
               <div class="rfd-wechat-header">
@@ -367,6 +414,21 @@ type RagFact = {
   user_action?: string | null
   evidence_messages?: EvidenceMessage[]
   evidence_excerpts?: string[]
+  /** 演变链入口：非空表示该说法由融合 UPDATE 取代过旧版本，可展开历史 */
+  supersedes_fact_id?: number | null
+}
+
+type EvolutionNode = {
+  id: number
+  subject?: string | null
+  kind?: string | null
+  content: string
+  sensitive: boolean
+  status?: string | null
+  as_of?: number | null
+  confidence?: number | null
+  updated_at?: number | null
+  is_current: boolean
 }
 
 type ChatBubbleItem = {
@@ -442,6 +504,12 @@ const kinds = ref<{ kind: string; count: number }[]>([])
 const busy = reactive<Record<number, boolean>>({})
 const revealed = reactive<Record<number, boolean>>({})
 const avatarLoadErrors = reactive<Record<string, boolean>>({})
+// 演变历史展开态：节点按 fact_id 懒加载，facts 重拉后随 load() 清空
+const evolutionOpen = reactive<Record<number, boolean>>({})
+const evolutionNodes = reactive<Record<number, EvolutionNode[]>>({})
+const evolutionLoading = reactive<Record<number, boolean>>({})
+// 拉取失败标记：瞬时失败是可重试态，不能渲染成「链已失效」终态诊断
+const evolutionFailed = reactive<Record<number, boolean>>({})
 let loadSequence = 0
 
 const effectiveContactAvatar = computed(() => contactAvatar.value || props.avatarUrl || '')
@@ -672,6 +740,10 @@ async function load(targetPage = page.value) {
   const requestId = ++loadSequence
   loading.value = true
   error.value = ''
+  // 事实列表重拉：旧演变链可能已过期，展开态、缓存与失败标记一并清空
+  for (const key of Object.keys(evolutionOpen)) delete evolutionOpen[Number(key)]
+  for (const key of Object.keys(evolutionNodes)) delete evolutionNodes[Number(key)]
+  for (const key of Object.keys(evolutionFailed)) delete evolutionFailed[Number(key)]
   try {
     // 若当前未获取到用户头像，主动调用当前用户 profile
     if (!userAvatar.value && !props.userAvatarUrl) {
@@ -766,6 +838,32 @@ function goToPage(targetPage: number) {
   if (loading.value || targetPage < 1 || targetPage > totalPages.value) return
   keyword.value = ''
   load(targetPage)
+}
+
+async function toggleEvolution(fact: RagFact) {
+  const id = fact.id
+  if (evolutionLoading[id]) return // 在途防双击双发
+  if (!evolutionOpen[id] && !evolutionNodes[id]) {
+    evolutionLoading[id] = true
+    delete evolutionFailed[id]
+    try {
+      // 账号与列表接口同口径：弹窗作用域账号优先（否则跨账号查看时
+      // 后端回落激活账号比对，恒判 fact_not_found）
+      const res = await api.get_fact_evolution(id, props.accountWxid || resolvedAccount.value || '')
+      // ok:true 才缓存（空链也是有效终态）；失败不缓存并标失败态——
+      // 收起再展开即重试，占位文案与「链已失效」终态分开
+      if (res?.ok && Array.isArray(res.nodes)) {
+        evolutionNodes[id] = res.nodes as EvolutionNode[]
+      } else {
+        evolutionFailed[id] = true
+      }
+    } catch {
+      evolutionFailed[id] = true
+    } finally {
+      evolutionLoading[id] = false
+    }
+  }
+  evolutionOpen[id] = !evolutionOpen[id]
 }
 
 async function feedback(fact: RagFact, action: 'inaccurate' | 'forget' | 'restore') {
@@ -1282,6 +1380,131 @@ onUnmounted(() => {
 .rfd-chip.off {
   color: var(--ct-color-error);
   background: var(--ct-color-error-tint);
+}
+
+/* ---- 演变历史（supersede 链时间线，旧→新只读） ---- */
+.rfd-evo {
+  margin: 8px 0 2px;
+}
+
+.rfd-evo-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border: none;
+  border-radius: var(--ct-radius-sm);
+  background: transparent;
+  color: var(--ct-color-primary);
+  font-size: var(--ct-text-xs);
+  cursor: pointer;
+  transition: background var(--ct-transition-fast);
+}
+
+.rfd-evo-toggle:hover {
+  background: var(--ct-color-primary-tint);
+}
+
+.rfd-evo-toggle svg {
+  transition: transform var(--ct-transition-fast);
+}
+
+.rfd-evo-count {
+  color: var(--ct-text-tertiary);
+}
+
+.rfd-evo-list {
+  margin-top: 6px;
+  padding: 8px 10px 8px 14px;
+  background: var(--ct-bg-sunken);
+  border-radius: var(--ct-radius-sm);
+}
+
+.rfd-evo-node {
+  position: relative;
+  padding: 0 0 10px 14px;
+}
+
+.rfd-evo-node:last-child {
+  padding-bottom: 2px;
+}
+
+.rfd-evo-node::before {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 12px;
+  bottom: -2px;
+  width: 1px;
+  background: var(--ct-border-color);
+}
+
+.rfd-evo-node:last-child::before {
+  display: none;
+}
+
+.rfd-evo-dot {
+  position: absolute;
+  left: 0;
+  top: 5px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ct-text-tertiary);
+}
+
+.rfd-evo-node.current .rfd-evo-dot {
+  background: var(--ct-color-primary);
+}
+
+.rfd-evo-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 10px;
+  color: var(--ct-text-tertiary);
+}
+
+.rfd-evo-speaker {
+  font-weight: 600;
+  color: var(--ct-text-secondary);
+}
+
+.rfd-evo-state {
+  padding: 1px 7px;
+  border-radius: var(--ct-radius-full);
+  font-size: 10px;
+}
+
+.rfd-evo-state.cur {
+  color: var(--ct-color-primary);
+  background: var(--ct-color-primary-tint);
+}
+
+.rfd-evo-state.old {
+  color: var(--ct-text-tertiary);
+  background: var(--ct-bg-hover);
+}
+
+.rfd-evo-text {
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--ct-text-tertiary);
+  line-height: 1.5;
+}
+
+.rfd-evo-node.current .rfd-evo-text {
+  color: var(--ct-text-primary);
+}
+
+.rfd-evo-text.masked {
+  font-style: italic;
+}
+
+.rfd-evo-empty {
+  font-size: 11px;
+  color: var(--ct-text-tertiary);
 }
 
 .rfd-kind {

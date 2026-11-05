@@ -1652,6 +1652,91 @@ class RagStore:
         ).fetchall()
         return {int(r["fact_id"]): str(r["action"]) for r in rows}
 
+    def list_denied_fact_vectors(
+        self,
+        account_wxid: str,
+        conversation_id: int,
+        *,
+        embedding_model: str,
+        embedding_dim: int,
+    ) -> list[dict[str, Any]]:
+        """用户标记「不准确」的事实及其向量（抽取回路负样本锚点）。
+
+        deny 墓碑只压同 content 复活（UNIQUE 约束），换措辞的语义重复
+        要靠向量相似度拦。向量缺失（legacy/未建向量）的事实不返回，
+        守卫届时自然退化为不拦截，绝不阻断抽取主链路。
+        """
+        rows = self.conn.execute(
+            """
+            SELECT f.id AS fact_id, f.content, fb.reason AS deny_reason, e.vector_blob
+            FROM rag_fact_user_feedback fb
+            INNER JOIN rag_facts f ON f.id = fb.fact_id
+            INNER JOIN rag_fact_embeddings e ON e.fact_id = f.id
+            WHERE fb.account_wxid = ? AND fb.conversation_id = ?
+              AND fb.action = 'inaccurate'
+              AND e.embedding_model = ? AND e.embedding_dim = ?
+            """,
+            (account_wxid, int(conversation_id), embedding_model, int(embedding_dim)),
+        ).fetchall()
+        items: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                vector = unpack_rag_vector(row["vector_blob"])
+            except Exception:
+                continue
+            if vector:
+                items.append(
+                    {
+                        "fact_id": int(row["fact_id"]),
+                        "content": str(row["content"]),
+                        "deny_reason": str(row["deny_reason"] or "").strip() or None,
+                        "vector": vector,
+                    }
+                )
+        return items
+
+    def get_fact_chain(self, fact_id: int, max_depth: int = 20) -> list[dict[str, Any]] | None:
+        """沿 supersedes_fact_id 回溯事实演变链，返回旧→新有序节点列表。
+
+        融合 UPDATE 会把旧版标记 superseded、新版 supersedes_fact_id 指向旧版；
+        指针异常成环或超深度时止步（防死循环），事实不存在返回 None。
+        """
+        row = self.conn.execute(
+            """
+            SELECT id, account_wxid, conversation_id, subject, kind, content, status,
+                   as_of, confidence, sensitivity, enabled, supersedes_fact_id, updated_at
+            FROM rag_facts WHERE id = ?
+            """,
+            (int(fact_id),),
+        ).fetchone()
+        if row is None:
+            return None
+        chain: list[dict[str, Any]] = [dict(row)]
+        seen = {int(row["id"])}
+        cursor = row
+        for _ in range(max_depth):
+            prev_id = cursor["supersedes_fact_id"]
+            if prev_id is None:
+                break
+            prev_id = int(prev_id)
+            if prev_id in seen:
+                break
+            prev = self.conn.execute(
+                """
+                SELECT id, account_wxid, conversation_id, subject, kind, content, status,
+                       as_of, confidence, sensitivity, enabled, supersedes_fact_id, updated_at
+                FROM rag_facts WHERE id = ?
+                """,
+                (prev_id,),
+            ).fetchone()
+            if prev is None:
+                break
+            chain.append(dict(prev))
+            seen.add(prev_id)
+            cursor = prev
+        chain.reverse()
+        return chain
+
     # ---- P1.1 关系状态影子层 ----
 
     def upsert_relationship_state(self, **payload: Any) -> dict[str, Any]:

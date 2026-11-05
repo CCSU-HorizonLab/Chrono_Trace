@@ -88,6 +88,7 @@ type PyWebViewApi = {
   get_rag_log_detail: (log_id: number) => Promise<any>
   get_contact_facts: (conversation_id: number, account_wxid?: string, limit?: number, offset?: number, sort?: string, kind?: string, enabled?: boolean) => Promise<any>
   set_fact_feedback: (fact_id: number, action: string, reason?: string) => Promise<any>
+  get_fact_evolution: (fact_id: number, account_wxid?: string) => Promise<any>
   rebuild_rag_index: (conversation_id: number, account_wxid?: string) => Promise<any>
   clear_rag_index: (conversation_id: number, account_wxid?: string) => Promise<any>
   backfill_all_rag_extraction: (account_wxid?: string) => Promise<any>

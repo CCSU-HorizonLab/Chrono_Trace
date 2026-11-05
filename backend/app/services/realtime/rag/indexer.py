@@ -89,6 +89,14 @@ class RagIndexer:
     # P1.6 融合候选上限：候选过多时 decisions 响应变长易截断（真实库
     # 出现 invalid JSON/no JSON 多为 max_tokens 截断），按置信度取前 N
     FACT_FUSION_CANDIDATE_LIMIT = 12
+    # 用户纠错下渗：新抽取与已否认（inaccurate）事实的向量相似度阈值。
+    # BGE 同义改写实测 0.9+、无关句地板 0.26-0.35，0.85 取保守侧
+    DENIED_FACT_SIMILARITY = 0.85
+    # 两级漏斗第二级：0.70~0.85 边界带（如「对虾过敏」vs「不能吃海鲜」，
+    # 概念泛化相似度不过硬线）不做本地拦截，把对应负样本注入该事实的
+    # 融合 prompt 交给 LLM 判定，命中才注入——绝大多数调用 prompt 不变长
+    DENIED_FACT_LLM_RECALL = 0.70
+    DENIED_FACT_PROMPT_LIMIT = 5
 
     def __init__(
         self,
@@ -1548,6 +1556,86 @@ class RagIndexer:
             facts=usable,
         )
 
+    def _filter_denied_facts(
+        self,
+        facts: list[dict[str, Any]],
+        *,
+        account_wxid: str,
+        conversation_id: int,
+    ) -> list[dict[str, Any]]:
+        """下渗用户纠错（两级漏斗的第一级）。
+
+        同文本复活已被 UNIQUE+墓碑压住；这里拦换措辞的语义重复
+        （「对虾过敏」vs「吃虾会过敏」，≥0.85 硬拦）——但仅限用户没留
+        否认理由的否认：留了理由的纠正句与新事实天然高相似（「记错了，
+        是蟹过敏」vs「对方对虾过敏」），第一级无理由可辨方向，须降级进
+        边界带交第二级融合决策（prompt 带理由自会判「与纠正一致」）。
+        0.70~0.85 边界带不拦，在幸存 fact 上附加 ``_denied_refs``（供
+        融合 prompt 注入负样本）。无否认/向量缺失/嵌入不可用一律原样
+        放行——守卫永不阻断抽取主链路。
+        """
+        if not facts:
+            return facts
+        try:
+            settings = load_rag_settings()
+            denied = self.store.list_denied_fact_vectors(
+                account_wxid,
+                conversation_id,
+                embedding_model=str(settings["rag_embedding_model"]),
+                embedding_dim=int(settings["rag_embedding_dim"]),
+            )
+        except Exception:
+            return facts
+        if not denied:
+            return facts
+        try:
+            vectors = self.embedding_service.embed_texts(
+                [str(f.get("content") or "") for f in facts]
+            )
+        except Exception as exc:
+            logger.warning("[RAG Denied-Guard] 嵌入不可用，本轮放行: %s", exc)
+            return facts
+        if len(vectors) != len(facts):
+            return facts
+        kept: list[dict[str, Any]] = []
+        for fact, vector in zip(facts, vectors):
+            best_hit = None
+            best_score = 0.0
+            boundary_refs: list[dict[str, Any]] = []
+            for item in denied:
+                if len(item["vector"]) != len(vector):
+                    continue
+                score = self._cosine(vector, item["vector"])
+                if score >= self.DENIED_FACT_SIMILARITY and score >= best_score:
+                    if item.get("deny_reason"):
+                        # 带理由的否认不硬拦：纠正句与原句天然高相似，
+                        # 方向只有第二级（带理由的融合决策）能辨
+                        boundary_refs.append({**item, "_sim_score": score})
+                    else:
+                        best_hit, best_score = item, score
+                elif score >= self.DENIED_FACT_LLM_RECALL:
+                    boundary_refs.append({**item, "_sim_score": score})
+            if best_hit is not None:
+                logger.info(
+                    "[RAG Denied-Guard] 拦截与已否认事实相似的抽取（denied fact=%s「%s」）",
+                    best_hit["fact_id"],
+                    str(best_hit["content"])[:60],
+                )
+                continue
+            if boundary_refs:
+                # 边界带：交给融合决策（_write_structured_facts 会取出注入）；
+                # 相似度降序——截断到 PROMPT_LIMIT 时优先保最像的负样本
+                boundary_refs.sort(key=lambda it: it["_sim_score"], reverse=True)
+                kept.append(
+                    {
+                        **fact,
+                        "_denied_refs": boundary_refs[: self.DENIED_FACT_PROMPT_LIMIT],
+                    }
+                )
+            else:
+                kept.append(fact)
+        return kept
+
     def _write_structured_facts(
         self,
         *,
@@ -1566,9 +1654,19 @@ class RagIndexer:
         """
         from concurrent.futures import Future
 
+        # 用户纠错下渗（第一级）：与「不准确」事实语义相似的抽取拦在融合前
+        # （省 LLM 决策调用），边界带附 _denied_refs 交给融合决策（第二级），
+        # 无否认/嵌入不可用时原样放行
+        facts = self._filter_denied_facts(
+            facts, account_wxid=account_wxid, conversation_id=conversation_id
+        )
+        if not facts:
+            return
+
         prepared: list[tuple[dict[str, Any], Any]] = []
         for raw_fact in facts:
             fact = dict(raw_fact)
+            denied_refs = fact.pop("_denied_refs", [])
             fact["kind"] = normalize_fact_kind(fact.get("kind"))
             fact["subject"] = str(fact.get("subject") or "").strip()
             candidates = self.store.list_active_facts_by_subject_kind(
@@ -1578,9 +1676,11 @@ class RagIndexer:
                 fact["kind"],
             )
             if executor is not None:
-                prepared.append((fact, executor.submit(self._decide_fact_fusion, fact, candidates)))
+                prepared.append(
+                    (fact, executor.submit(self._decide_fact_fusion, fact, candidates, denied_refs))
+                )
             else:
-                prepared.append((fact, self._decide_fact_fusion(fact, candidates)))
+                prepared.append((fact, self._decide_fact_fusion(fact, candidates, denied_refs)))
 
         pending_vectors: list[dict[str, Any]] = []
         for fact, decision_result in prepared:
@@ -1590,6 +1690,14 @@ class RagIndexer:
                 else decision_result
             )
             self._log_fusion_decisions(fact, decisions)
+            # 两级漏斗第二级命中：LLM 判定新事实是对已否认说法的重述，
+            # 丢弃（用户已说过这条不对，换措辞也不能复活）
+            if any(item["action"] == "DENY" for item in decisions):
+                logger.info(
+                    "[RAG Denied-Guard] 融合决策 DENY：新事实被判为已否认说法的重述，丢弃「%s」",
+                    str(fact.get("content") or "")[:60],
+                )
+                continue
             replacement_ids = [
                 int(item["fact_id"])
                 for item in decisions
@@ -1722,43 +1830,55 @@ class RagIndexer:
         self,
         fact: dict[str, Any],
         candidates: list[dict[str, Any]],
+        denied_refs: list[dict[str, Any]] | None = None,
     ) -> list[dict[str, Any]]:
         """Return safe fusion decisions; any model uncertainty becomes ADD."""
-        if not candidates or self.structured_fact_extractor is None:
+        denied_refs = denied_refs or []
+        if self.structured_fact_extractor is None:
+            return []
+        # 无 active 候选但有否认负样本时仍需决策：被否认的事实已 disabled
+        # 不在候选里，若直接放行 ADD，换措辞的重述会在无候选路径复活
+        if not candidates and not denied_refs:
             return []
         # 候选按置信度排序后截断，防止 decisions 响应过长被 max_tokens 截断
         fusion_candidates = candidates[: self.FACT_FUSION_CANDIDATE_LIMIT]
+        # 负样本注入与 denied_ids 同源同截断——prompt 里没出现的否认 id
+        # 不该校验放行（模型不可能对没给的事实输出 DENY）
+        denied_prompt_refs = denied_refs[: self.DENIED_FACT_PROMPT_LIMIT]
         try:
-            prompt = json.dumps(
-                {
-                    "task": "maintain_atomic_contact_facts",
-                    "new_fact": fact,
-                    "active_candidates": [
-                        {
-                            "fact_id": item["id"],
-                            "content": item["content"],
-                            "confidence": item["confidence"],
-                            "evidence_message_ids": json.loads(item.get("evidence_message_ids_json") or "[]"),
-                        }
-                        for item in fusion_candidates
-                    ],
-                    "max_tokens": 2048,
-                    "contract": {
-                        "output": {"decisions": [{"fact_id": "integer", "action": "ADD|UPDATE|INVALIDATE|MERGE|NOOP"}]},
-                        "meaning": {
-                            "ADD": "unrelated old fact; keep it and add the new fact",
-                            "UPDATE": "new fact corrects, qualifies, or replaces old fact",
-                            "INVALIDATE": "new fact makes old fact no longer valid",
-                            "MERGE": "same fact expressed again; merge evidence without adding",
-                            "NOOP": "no state change for this candidate",
-                        },
-                    },
-                },
-                ensure_ascii=False,
-            )
+            # 注意：动作协议（ADD/UPDATE/.../DENY 的含义）全在
+            # fact_llm.FACT_FUSION_SYSTEM_PROMPT，payload 只传数据键——
+            # 这里曾写过 contract 字段，但适配器渲染消息时不读它，纯死重量
+            payload: dict[str, Any] = {
+                "task": "maintain_atomic_contact_facts",
+                "new_fact": fact,
+                "active_candidates": [
+                    {
+                        "fact_id": item["id"],
+                        "content": item["content"],
+                        "confidence": item["confidence"],
+                        "evidence_message_ids": json.loads(item.get("evidence_message_ids_json") or "[]"),
+                    }
+                    for item in fusion_candidates
+                ],
+                "max_tokens": 2048,
+            }
+            if denied_prompt_refs:
+                payload["denied_facts"] = [
+                    {
+                        "fact_id": item["fact_id"],
+                        "content": item["content"],
+                        "user_reason": item.get("deny_reason"),
+                    }
+                    for item in denied_prompt_refs
+                ]
+            prompt = json.dumps(payload, ensure_ascii=False)
             return self.structured_fact_extractor.decide_fusion(
                 prompt,
                 candidate_ids={int(item["id"]) for item in fusion_candidates},
+                denied_ids={int(item["fact_id"]) for item in denied_prompt_refs},
+                # 纠错路径逐条跳过保合法 DENY；普通路径整批作废防幻觉
+                strict_batch=not denied_prompt_refs,
             )
         except Exception as exc:
             logger.warning("[RAG Fact Fusion] invalid/failed decision; falling back to ADD: %s", exc)

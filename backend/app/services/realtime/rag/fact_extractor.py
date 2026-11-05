@@ -52,7 +52,7 @@ def normalize_fact_kind(kind: Any) -> str:
 class StructuredFactExtractor:
     ALLOWED_STATUS = {"active", "superseded", "uncertain"}
     REQUIRED = {"subject", "kind", "content"}
-    FUSION_ACTIONS = {"ADD", "UPDATE", "INVALIDATE", "MERGE", "NOOP"}
+    FUSION_ACTIONS = {"ADD", "UPDATE", "INVALIDATE", "MERGE", "NOOP", "DENY"}
 
     def __init__(self, llm_call: Callable[[str], Any] | None = None):
         self.llm_call = llm_call
@@ -107,15 +107,36 @@ class StructuredFactExtractor:
             "source_window": item.get("source_window") or {},
         }
 
-    def decide_fusion(self, prompt: str, *, candidate_ids: set[int]) -> list[dict[str, Any]]:
+    def decide_fusion(
+        self,
+        prompt: str,
+        *,
+        candidate_ids: set[int],
+        denied_ids: set[int] = frozenset(),
+        strict_batch: bool = True,
+    ) -> list[dict[str, Any]]:
         """Ask the injected model how one incoming fact relates to old facts.
 
         This intentionally validates a much narrower contract than extraction.
         Callers treat any parsing or validation problem as ADD, because an
         accidental supersede loses useful active memory from the read side.
+
+        denied_ids 是用户标记「不准确」的事实：它们不在 active 候选里，
+        唯一合法的动作是 DENY（新事实是对已否认说法的重述，丢弃新事实）。
+
+        strict_batch：任一决策条目非法即抛错废整批（调用方整批回退
+        ADD）——普通融合路径的防幻觉护栏：id 脱靶/动作越界说明模型在
+        瞎编，同批幸存的 UPDATE 同样不可信，整批作废才安全。带
+        denied_refs 的纠错路径传 False：逐条跳过（该事实回落 ADD），
+        保住同批合法 DENY——整批作废会让换措辞的否认重述趁虚复活。
         """
         if self.llm_call is None:
             raise FactExtractionError("fact fusion requires an llm_call")
+
+        def _reject(reason: str) -> None:
+            if strict_batch:
+                raise FactExtractionError(reason)
+
         raw = self.llm_call(prompt)
         if isinstance(raw, str):
             try:
@@ -131,16 +152,33 @@ class StructuredFactExtractor:
         seen: set[int] = set()
         for item in decisions:
             if not isinstance(item, dict):
-                raise FactExtractionError("fact fusion decision must be an object")
+                _reject("fact fusion decision is not an object")
+                continue
             try:
                 fact_id = int(item.get("fact_id"))
-            except (TypeError, ValueError) as exc:
-                raise FactExtractionError("fact fusion decision requires numeric fact_id") from exc
+            except (TypeError, ValueError):
+                _reject("fact fusion decision has invalid fact_id")
+                continue
             action = str(item.get("action") or "").upper()
-            if fact_id not in candidate_ids or fact_id in seen:
-                raise FactExtractionError("fact fusion decision references an invalid candidate")
-            if action not in self.FUSION_ACTIONS:
-                raise FactExtractionError("fact fusion decision has an invalid action")
+            if fact_id in seen:
+                _reject(f"duplicate fact fusion decision for #{fact_id}")
+                continue
+            if fact_id in denied_ids:
+                # 否认事实只能被 DENY 引用——它已 disabled，不是维护对象
+                if action != "DENY":
+                    _reject(f"denied fact #{fact_id} only accepts DENY")
+                    continue
+            elif fact_id in candidate_ids:
+                # DENY 只指向否认事实；对 active 候选输出 DENY 是模型混淆
+                if action == "DENY":
+                    _reject(f"DENY targets active candidate #{fact_id}")
+                    continue
+                if action not in self.FUSION_ACTIONS:
+                    _reject(f"unknown fact fusion action {action!r} for #{fact_id}")
+                    continue
+            else:
+                _reject(f"fact fusion decision targets unknown fact #{fact_id}")
+                continue
             seen.add(fact_id)
             validated.append(
                 {

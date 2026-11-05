@@ -75,13 +75,24 @@ FACT_FUSION_SYSTEM_PROMPT = """你是一个联系人记忆事实维护器。对�
 - MERGE：同一事实被再次表达，合并证据即可，不新增
 - NOOP：无法判断关联，旧事实保持不变
 
+用户否认过的说法（denied_facts，仅在载荷出现时生效）：
+用户曾把某条旧记忆标记为「不准确」，它已从候选中移除。若新事实是对某条
+否认说法的重述——包括概念泛化或收窄（"对虾过敏"→"不能吃海鲜"，海鲜
+涵盖虾，同一禁忌）——对该 denied fact 的 fact_id 输出一条 DENY，新事实
+将被丢弃。以下情况不是重述，正常走候选决策或新增：
+- 新事实与用户的纠正（user_reason）一致：用户说"记错了，是蟹过敏"，
+  那么"对方对蟹过敏"是新事实的正确版本，绝不 DENY
+- 同一主题但方向相反的演进（如脱敏治疗后可以少量吃虾）：是状态变化，
+  不是重述
+- 与否认说法主题无关：忽略即可
+
 判断要点：
 - 同一主题的立场变化是演变不是并存：应 UPDATE 或 INVALIDATE，让记忆形成"以前→现在"的演变链
 - 主题（涉及的人/事物/对象）不同就 ADD；宁可多保留，不要误推翻
 - 只是措辞不同、含义相同 → MERGE
 
 输出严格 JSON：
-{"decisions": [{"fact_id": 候选旧事实的id, "action": "ADD|UPDATE|INVALIDATE|MERGE|NOOP", "reason": "一句话理由"}]}"""
+{"decisions": [{"fact_id": 旧事实或否认事实的id, "action": "ADD|UPDATE|INVALIDATE|MERGE|NOOP|DENY", "reason": "一句话理由"}]}"""
 
 
 FACT_FEEDBACK_EXTRACTION_PROMPT = """你是一个聊天建议反馈分析器。用户收到一条 AI 生成的回复建议后，没有直接采用，而是改写后发送。请从"原始建议"与"用户实际发送"的差异中，推断值得长期记住的偏好信号。
@@ -257,13 +268,30 @@ class LLMFactExtractorAdapter:
             candidate_lines.append(
                 f"[{fact_id}] {_redact(item.get('content'), source_id=str(fact_id))}"
             )
+        denied_facts = payload.get("denied_facts") or []
+        denied_lines = []
+        for item in denied_facts:
+            fact_id = int(item.get("fact_id") or 0)
+            reason = str(item.get("user_reason") or "").strip()
+            suffix = f"（用户纠正：{reason}）" if reason else ""
+            denied_lines.append(
+                f"[{fact_id}] {_redact(item.get('content'), source_id=str(fact_id))}{suffix}"
+            )
         user_prompt = (
             "新抽取的事实：\n"
             + "\n".join(new_lines)
             + "\n\n候选旧事实（[fact_id] 内容）：\n"
             + ("\n".join(candidate_lines) if candidate_lines else "（无）")
-            + "\n\n请对每条候选旧事实输出决策 JSON。"
         )
+        if denied_lines:
+            user_prompt += (
+                "\n\n用户已否认的说法（曾标记不准确，[fact_id] 内容）：\n"
+                + "\n".join(denied_lines)
+                + "\n\n请对每条候选旧事实输出决策 JSON；若新事实是对某条已否认说法的"
+                "重述（含概念泛化或收窄），对该 fact_id 输出一条 DENY。"
+            )
+        else:
+            user_prompt += "\n\n请对每条候选旧事实输出决策 JSON。"
         messages = [
             {"role": "system", "content": FACT_FUSION_SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},

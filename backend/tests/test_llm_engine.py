@@ -259,7 +259,9 @@ def test_relevance_gate_fact_path_ignores_recent_off_topic_rerank():
 
 def test_relevance_gate_memory_request_low_fact_requires_term_overlap():
     """score×字面双阈值：memory_request 低分事实与查询无实词交集时不
-    注入——此前意图兜底无条件放行，「她生日是什么时候」能带出「她喜欢猫」。"""
+    注入——此前意图兜底无条件放行，「她生日是什么时候」能带出「她喜欢猫」。
+    拒绝 reason 用 memory_low_confidence 而非 low_score：向量分说明记忆
+    库有相关内容只是置信度不足，问答侧不得把它当「无记录」向用户断言。"""
     gate = RagRelevanceGate()
     decision = gate.decide(
         query="她生日是什么时候",
@@ -274,9 +276,10 @@ def test_relevance_gate_memory_request_low_fact_requires_term_overlap():
         trigger_type="manual_request",
         memory_intent={"mode": "memory_request", "no_hit_eligible": True},
     )
-    # fact 分支与 memory_request 兜底分支都被字面关卡住：低分全拒
+    # fact 分支与 memory_request 兜底分支都被字面关卡住：低分全拒且不认「无记录」
     assert decision.decision == "skip"
-    assert decision.reason == "low_score"
+    assert decision.reason == "memory_low_confidence"
+    assert decision.no_hit_eligible is False
 
 
 def test_relevance_gate_memory_request_low_fact_passes_with_term_overlap():

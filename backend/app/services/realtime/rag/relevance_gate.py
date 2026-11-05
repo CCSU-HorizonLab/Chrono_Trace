@@ -282,6 +282,25 @@ class RagRelevanceGate:
                 "off_topic",
             )
 
+        # 记忆问句的盲区：事实落在地板线与阈值线之间（向量相关但与问句
+        # 无字面交集，如「她忌口什么」vs「对方对虾过敏」）——不注入防
+        # 噪声，但也不能断言「记忆库没有相关记录」：问答侧把 low_score
+        # 当无记录处理会向用户撒谎。换独立 reason 令下游静默。
+        if mode == "memory_request" and any(
+            float(item.get("score") or 0.0) >= self.MEMORY_SCORE_FLOOR
+            for item in fact_items
+        ):
+            return RagGateDecision(
+                "skip",
+                "memory_low_confidence",
+                top_score,
+                False,
+                (),
+                best_task_score,
+                off_topic_count,
+                str(top.get("rerank_reason") or ""),
+            )
+
         return RagGateDecision(
             "skip",
             "low_score",
@@ -334,28 +353,45 @@ class RagRelevanceGate:
     def _task_relevance(self, item: dict[str, Any]) -> float:
         return round(float(item.get("task_relevance_score") or 0.0), 4)
 
+    def _query_terms(self, query: str) -> frozenset:
+        """查询实词集（jieba 分词，停用词剔除后 ≥2 字）。
+
+        同一问句在两分支逐条重切是纯浪费，按问句缓存于本次判定
+        （gate 对象即用即弃，生命周期=一次 decide）。词统一小写（与
+        _shares_query_term 的小写原文口径配对）。jieba 缺库返回
+        空集——下游保守拒绝。
+        """
+        key = str(query or "")
+        if getattr(self, "_terms_query", None) == key:
+            return self._terms_cache
+        try:
+            import jieba
+            terms = frozenset(
+                w.lower() for w in jieba.cut(key)
+                if len(w) >= 2 and w.lower() not in self.QUERY_STOPWORDS
+            )
+        except Exception:
+            terms = frozenset()
+        self._terms_query = key
+        self._terms_cache = terms
+        return terms
+
     def _shares_query_term(self, query: str, item: dict[str, Any]) -> bool:
-        """查询实词是否在事实原文中出现（子串包含，与 LIKE 同口径）。
+        """查询实词是否在事实原文中出现（子串包含，与 LIKE 同口径——
+        两侧 lower，英文词大小写不齐不误拒）。
 
         score×字面双阈值（借鉴 offline-kb 的 coverage 门控）：memory_request
         意图强但融合分低于线时，事实注入须有字面交集——「她生日是什么
         时候」不再因意图兜底放进「她喜欢猫」。用子串而非词集精确交集：
         jieba 会把事实里的融合词切成整词（「过生日」「生日礼物」），
         精确交集下查询词「生日」被吞，本分支要保住的场景反而全灭。jieba
-        缺库时保守返回 False（宁可走 no_hit 提示，不注入无字面关联的
-        低分事实）。
+        缺库/实词集为空时保守返回 False（宁可走 no_hit 提示，不注入无
+        字面关联的低分事实——放行空集等于意图兜底放进全部低分事实）。
         """
-        try:
-            import jieba
-        except Exception:
-            return False
-        query_terms = {
-            w for w in jieba.cut(str(query or ""))
-            if len(w) >= 2 and w not in self.QUERY_STOPWORDS
-        }
+        query_terms = self._query_terms(query)
         if not query_terms:
             return False
-        content = str(item.get("content") or (item.get("doc") or {}).get("content") or "")
+        content = str(item.get("content") or (item.get("doc") or {}).get("content") or "").lower()
         return any(term in content for term in query_terms)
 
     def _is_off_topic(self, item: dict[str, Any]) -> bool:

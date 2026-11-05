@@ -221,14 +221,16 @@
                 </div>
               </div>
 
-              <!-- Fallback / Error -->
+              <!-- Fallback / Error：按后端 code 附诊断指引（未知失败回落原文） -->
               <div v-else-if="keyCaptureStage === 'fallback' || keyCaptureError" class="kc-card kc-card-error">
                 <div class="kc-card-badge error">
                   <AlertCircle :size="20" />
                 </div>
                 <div class="kc-card-content">
-                  <h4>{{ keyCaptureError || '自动获取密钥未能完成' }}</h4>
-                  <p>未能自动捕获到密钥，您可以切换到手动输入数据库密钥，或稍后重试。</p>
+                  <h4>{{ keyCaptureDiagnosis?.title || keyCaptureError || '自动获取密钥未能完成' }}</h4>
+                  <p v-if="keyCaptureDiagnosis" class="kc-diagnosis-hint">{{ keyCaptureDiagnosis.hint }}</p>
+                  <p v-else>未能自动捕获到密钥，您可以切换到手动输入数据库密钥，或稍后重试。</p>
+                  <p v-if="keyCaptureDiagnosis && keyCaptureError && keyCaptureError !== keyCaptureDiagnosis.title" class="kc-diagnosis-raw">{{ keyCaptureError }}</p>
                 </div>
               </div>
 
@@ -257,7 +259,8 @@
               </template>
               <template v-else-if="keyCaptureStage === 'fallback'">
                 <button class="ct-btn ghost" @click="closeKeyCaptureGuide">稍后处理</button>
-                <button class="ct-btn primary" @click="enableManualKeyFallback">改用手动输入</button>
+                <button class="ct-btn ghost" @click="enableManualKeyFallback">改用手动输入</button>
+                <button class="ct-btn primary" @click="retryKeyCapture">重试自动获取</button>
               </template>
               <template v-else>
                 <button class="ct-btn ghost" @click="closeKeyCaptureGuide">取消获取</button>
@@ -300,6 +303,7 @@ import {
   RefreshCw
 } from 'lucide-vue-next'
 import { bridgeReady, api } from '@/api/bridge'
+import { diagnoseKeyCapture } from './keyCaptureDiagnosis'
 import { showConfirm, showDialog } from '@/utils/dialog'
 import CtAccountSelector from '@/components/base/CtAccountSelector.vue'
 import { clearWechatAccountProfileCache, enrichWechatAccountsWithProfiles, getWechatAccountDisplayName } from '@/utils/wechatAccounts'
@@ -348,6 +352,7 @@ const keyCaptureDialogOpen = ref(false)
 const keyCaptureStage = ref('checking')
 const keyCaptureMessage = ref('正在检查微信登录状态。')
 const keyCaptureError = ref('')
+const keyCaptureCode = ref('')
 const keyCaptureSessionId = ref('')
 let keyCapturePollTimer: ReturnType<typeof setTimeout> | null = null
 const importProgress = ref<ImportProgress>(null)
@@ -776,12 +781,22 @@ function closeKeyCaptureGuide() {
   importProgress.value = null
 }
 
-function showKeyCaptureFailure(message: string) {
+// 密钥提取失败诊断：查表在 ./keyCaptureDiagnosis，未知 code 回落原文案
+const keyCaptureDiagnosis = computed(() => diagnoseKeyCapture(keyCaptureCode.value))
+
+function showKeyCaptureFailure(message: string, code = '') {
   stopKeyCapturePolling()
   keyCaptureStage.value = 'fallback'
   keyCaptureError.value = message
+  keyCaptureCode.value = String(code || '')
   keyCaptureMessage.value = '自动获取没有完成，可以切换到手动输入数据库密钥。'
-  addLog(`自动获取数据库密钥失败：${message}`)
+  addLog(`自动获取数据库密钥失败：${message}${code ? `（code=${code}）` : ''}`)
+}
+
+function retryKeyCapture() {
+  keyCaptureError.value = ''
+  keyCaptureCode.value = ''
+  openKeyCaptureGuide()
 }
 
 function enableManualKeyFallback() {
@@ -800,7 +815,7 @@ async function startKeyCaptureSession() {
 
   const result = await api.start_wechat_db_key_capture(selectedWxid.value || undefined, 120)
   if (!result?.ok || !result.session_id) {
-    showKeyCaptureFailure(result?.error || '数据库密钥监听安装失败。')
+    showKeyCaptureFailure(result?.error || '数据库密钥监听安装失败。', result?.code)
     return
   }
 
@@ -835,7 +850,7 @@ async function pollKeyCaptureSession() {
       return
     }
     if (result?.status === 'failed' || result?.status === 'timed_out') {
-      showKeyCaptureFailure(result?.error || result?.message || '数据库密钥获取失败。')
+      showKeyCaptureFailure(result?.error || result?.message || '数据库密钥获取失败。', result?.code)
       return
     }
     keyCaptureStage.value = result?.status === 'hook_ready' ? 'hook_ready' : 'capturing'
@@ -945,7 +960,7 @@ async function confirmWechatRestart() {
   try {
     const restarted = await api.restart_wechat_for_key_capture()
     if (!restarted?.ok) {
-      showKeyCaptureFailure(restarted?.error || '微信重启失败。')
+      showKeyCaptureFailure(restarted?.error || '微信重启失败。', restarted?.code)
       return
     }
     keyCaptureMessage.value = '微信已启动到登录窗口，正在安装数据库密钥监听。'
@@ -1764,6 +1779,19 @@ onUnmounted(() => {
   font-size: 13px;
   color: var(--ct-text-secondary);
   line-height: 1.5;
+}
+
+/* 失败诊断行：行动指引为主文、后端原文降为次要补充 */
+.kc-card-content .kc-diagnosis-hint {
+  margin-top: 2px;
+  color: var(--ct-text-primary);
+}
+
+.kc-card-content .kc-diagnosis-raw {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--ct-text-tertiary);
+  word-break: break-all;
 }
 
 .kc-card-loading {

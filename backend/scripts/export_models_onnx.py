@@ -110,7 +110,15 @@ def export_one(model_dir: Path, out_dir: Path, model_type: str, int8: bool = Fal
     # 嵌入 int8（含 per-channel）实测崩坏（cosine 0.37-0.70）不可用，
     # 分类器 int8 也未达门槛（见模块 docstring）。
     # 精度择优（CPU 实测）：嵌入 fp32 快 32%——发行产物即上面导出的
-    # fp32，跳过 fp16 转换；分类器 fp16 反快 14%——仍转换
+    # fp32，跳过 fp16 转换；分类器 fp16 反快 14%——仍转换。
+    # 2026-11 复测修正（i7-8665U / ORT 1.30 / CPU EP，生产同款推理形态）：
+    # ① 分类器 fp32 反超 fp16（短文本 89.6 vs 74.0、长拼接 24.4 vs 16.7
+    #    条/s，+21%/+46%）——旧「fp16 反快 14%」已环境反转；fp16 仍保留：
+    #    包体积 205 vs 409MB，且 DML 设备模式下 fp16 原生对齐，切 fp32 待议
+    # ② ORT transformers 离线优化器（onnxruntime.transformers.optimizer，
+    #    opt_level 1/2/99）对本模型全档位负优化（短 -9~-15%、长 -17~-21%，
+    #    argmax 全档 100% 无损）——运行时 load 已自动做基础/扩展融合，离线
+    #    融合产物反而干扰 MLAS kernel 选择，弃用勿再试
     if model_type == "embedding":
         print("[量化] 嵌入产物为 fp32（CPU 实测更快），跳过 fp16 转换")
     else:

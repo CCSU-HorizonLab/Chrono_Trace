@@ -28,6 +28,14 @@ from .sentiment_rules import (
     is_transition_word,
 )
 
+# 词典 emoji 单 regex 探针：绝大多数消息不含任何词典 emoji，一次 search
+# 失配（C 速）即可跳过 ~130 项逐个 in 扫描（13 万条冷跑的可感 Python 税）；
+# 命中时仍走原序循环，输出顺序语义与逐项扫描完全一致
+_EMOJI_HINT_RE = (
+    re.compile("|".join(re.escape(e) for e in EMOJI_SENTIMENT))
+    if EMOJI_SENTIMENT else None
+)
+
 
 def singleton(cls):
     instances = {}
@@ -129,9 +137,10 @@ class RealtimeSentimentService:
             }
 
         emojis = []
-        for emoji, info in EMOJI_SENTIMENT.items():
-            if emoji in text:
-                emojis.append({"emoji": emoji, "info": info})
+        if _EMOJI_HINT_RE is None or _EMOJI_HINT_RE.search(text):
+            for emoji, info in EMOJI_SENTIMENT.items():
+                if emoji in text:
+                    emojis.append({"emoji": emoji, "info": info})
 
         if words is None:
             words = jieba.lcut(text)

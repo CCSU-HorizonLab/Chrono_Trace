@@ -242,6 +242,60 @@ def test_split_sessions_non_sampling_takes_vectorized_path():
     assert len(sessions) == 4, f"语义切分错误：期望 4 组，实得 {len(sessions)}"
 
 
+def test_sentiment_cross_batch_dedup_reuses_and_caches_all():
+    """跨批文本去重：同文本只过一次分类器，结果逐字段一致，且
+    sentiment_cache 仍逐 message_id 落库（问答向量通道按条写）。"""
+    from app.services.analysis.preprocessing_orchestrator import PreprocessingOrchestrator
+
+    class _FakeSentiment:
+        def __init__(self):
+            self.analyzed = []
+            self.embedded = []
+            self.cached = []
+            self._counter = 0
+
+        def has_local_embedding_model(self):
+            return True
+
+        def batch_get_sentiment_from_cache(self, ids):
+            return {}  # 全冷：无 sentiment_cache 命中
+
+        def analyze_batch(self, texts, include_embeddings=False):
+            out = []
+            for text in texts:
+                self._counter += 1  # 唯一序号：若重复文本二次进分类器即穿帮
+                out.append({
+                    "polarity": 1,
+                    "intensity": float(self._counter),
+                    "embedding": [float(self._counter)],
+                })
+            self.analyzed.extend(texts)
+            return out
+
+        def embed_texts_batch(self, texts):
+            self.embedded.extend(texts)
+            return [[0.5] for _ in texts]
+
+        def batch_cache_sentiments(self, cache_data):
+            self.cached.extend(cache_data)
+
+    orch = PreprocessingOrchestrator()
+    fake = _FakeSentiment()
+    orch.sentiment_service = fake
+
+    # 1000 条同文本 → 2 个批次，第二批的"好"应全部走记忆表
+    messages = [{"id": i, "message_type": 1, "content": "好"} for i in range(1, 1001)]
+    orch._ensure_sentiment_analysis(1, messages)
+
+    assert fake.analyzed == ["好"], "同文本批内+跨批只应过一次分类器"
+    assert len(fake.cached) == 1000, "sentiment_cache 必须逐 message_id 写"
+    assert all(row["polarity"] == 1 for row in fake.cached)
+    # 重复文本情感复用首现结果（intensity 恒为首批的 1.0，不随后续计数漂移）
+    assert all(row["intensity"] == 1.0 for row in fake.cached)
+    # 批内重复与第二批全部走嵌入补查通道（按唯一文本各查一次）
+    assert fake.embedded == ["好"]
+
+
 if __name__ == "__main__":
     print("\n🚀 开始测试预处理模块")
     print("="*60)

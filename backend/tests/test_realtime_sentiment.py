@@ -292,6 +292,31 @@ class TestRealtimeSentiment:
             print(f"  置信度: {result['confidence']}")
 
 
+def test_emoji_probe_matches_plain_scan():
+    """emoji 单 regex 探针与逐项 in 扫描输出完全一致（含顺序语义）。
+
+    探针是纯性能短路（绝大多数消息不含词典 emoji），命中文本仍走
+    原序循环——等价性由本用例锁定，防止将来换成 regex 提取时悄悄改序。
+    """
+    from app.services.realtime.sentiment_rules import EMOJI_SENTIMENT
+
+    service = RealtimeSentimentService()
+    samples = [
+        "今天开心😊😊",
+        "没有任何表情的普通句子",
+        "😂🤣连发再😀",
+        "句尾一个❤️",
+        "边缘:,、。文本",
+    ]
+    for text in samples:
+        expected = [
+            {"emoji": emoji, "info": info}
+            for emoji, info in EMOJI_SENTIMENT.items()
+            if emoji in text
+        ]
+        assert service._preprocess(text)["emojis"] == expected, text
+
+
 if __name__ == '__main__':
     # 直接运行测试
     service = RealtimeSentimentService()

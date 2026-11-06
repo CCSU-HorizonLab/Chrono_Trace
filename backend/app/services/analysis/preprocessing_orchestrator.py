@@ -5,7 +5,7 @@ import logging
 import time
 import threading
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from ...db.connection import get_db
 from .feature_extraction_config import FeatureExtractionConfig
@@ -254,6 +254,11 @@ class PreprocessingOrchestrator:
         # 为唯一数据源。可用性门保护——缺嵌入模型时 include_embeddings=False
         # 落 NULL（不写零向量），情感极性照常产出
         include_embeddings = self.sentiment_service.has_local_embedding_model()
+        # 跨批文本去重：同文本情感结果确定一致（推理是文本的纯函数），
+        # 重复率实测 ~21%（"好/嗯/哦"类高频短句跨批反复出现）。重复文本
+        # 情感直接复用、嵌入补查（本跑已嵌过，L1/L2 命中为主），不再重
+        # 复过分类器；sentiment_cache 仍逐 message_id 落库
+        text_sentiments: Dict[str, Tuple[int, float]] = {}
 
         for start in range(0, total_to_analyze, batch_size):
             if cancel_event and cancel_event.is_set():
@@ -262,10 +267,38 @@ class PreprocessingOrchestrator:
 
             batch_index = start // batch_size + 1
             batch_msgs = messages_to_analyze[start:start + batch_size]
-            texts = [msg["content"] or "" for msg in batch_msgs]
-            batch_results = self.sentiment_service.analyze_batch(
-                texts, include_embeddings=include_embeddings
-            )
+            batch_results: List[Optional[Dict[str, Any]]] = [None] * len(batch_msgs)
+            # 批内去重 + 跨批复用：text → 批内全部出现位置（保序唯一）
+            positions_by_text: Dict[str, List[int]] = {}
+            for pos, msg in enumerate(batch_msgs):
+                positions_by_text.setdefault(msg["content"] or "", []).append(pos)
+
+            fresh_texts = [t for t in positions_by_text if t not in text_sentiments]
+            dup_texts = [t for t in positions_by_text if t in text_sentiments]
+
+            if fresh_texts:
+                fresh_results = self.sentiment_service.analyze_batch(
+                    fresh_texts, include_embeddings=include_embeddings
+                )
+                for text, result in zip(fresh_texts, fresh_results):
+                    text_sentiments[text] = (result["polarity"], result["intensity"])
+                    for pos in positions_by_text[text]:
+                        batch_results[pos] = {
+                            "polarity": result["polarity"],
+                            "intensity": result["intensity"],
+                            "embedding": result.get("embedding"),
+                        }
+
+            if dup_texts:
+                dup_embeddings = self.sentiment_service.embed_texts_batch(dup_texts)
+                for text, embedding in zip(dup_texts, dup_embeddings):
+                    polarity, intensity = text_sentiments[text]
+                    for pos in positions_by_text[text]:
+                        batch_results[pos] = {
+                            "polarity": polarity,
+                            "intensity": intensity,
+                            "embedding": embedding,
+                        }
 
             cache_data = []
             for msg, result in zip(batch_msgs, batch_results):

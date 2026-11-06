@@ -8,6 +8,8 @@ content_codec 的各解码分支（入库归一由 ingest 链路在写入时完�
 import os
 import sys
 
+import pytest
+
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -20,6 +22,13 @@ from app.services.wechat.content_codec import (
 
 ZSTD_BLOB = ZSTD_MAGIC + b"\x00\x01\x02junkpayload"
 
+try:
+    import zstandard
+
+    _HAS_ZSTD = True
+except ImportError:
+    _HAS_ZSTD = False
+
 
 class TestDecodeMessageContent:
     def test_none_returns_empty(self):
@@ -27,6 +36,19 @@ class TestDecodeMessageContent:
 
     def test_zstd_blob_type1_gives_compressed_text_placeholder(self):
         assert decode_message_content(ZSTD_BLOB, 1) == "[压缩消息]"
+
+    @pytest.mark.skipif(not _HAS_ZSTD, reason="环境缺 zstandard")
+    def test_zstd_compressed_text_roundtrip(self):
+        """合法 zstd 长文本（真实场景：29~352 字消息压缩通道）→ 解出原文。"""
+        plain = "N2940 的功耗确实非常低，很适合无风扇设计，日常轻负载更省电。" * 3
+        blob = zstandard.ZstdCompressor().compress(plain.encode("utf-8"))
+        assert decode_message_content(blob, 1) == plain
+
+    @pytest.mark.skipif(not _HAS_ZSTD, reason="环境缺 zstandard")
+    def test_zstd_decompress_binary_looking_gives_placeholder(self):
+        """合法 zstd 但解出乱码（如压缩的媒体 BLOB 误入 type=1）→ 仍占位。"""
+        blob = zstandard.ZstdCompressor().compress(("\x00\x01" * 40).encode("utf-8"))
+        assert decode_message_content(blob, 1) == "[压缩消息]"
 
     def test_zstd_blob_unmasked_type_masks_first(self):
         # local_type 高 32 位带 flag：6*2^32+49 掩码后应为 49（链接/小程序）

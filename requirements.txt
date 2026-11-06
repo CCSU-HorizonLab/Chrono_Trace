@@ -21,3 +21,4 @@ modelscope>=1.17.1
 # 实时监听统一走 db_watch（加密库文件级监听），无额外 UI 依赖
 # pywinauto 仅供密钥抓取链路（keys/flow_win）使用
 tokenizers>=0.15.0  # ONNX 后端分词（Rust，无 transformers 依赖）
+zstandard>=0.23.0

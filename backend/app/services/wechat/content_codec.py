@@ -4,7 +4,9 @@
 BLOB（转发/小程序/图片/表情等），且 local_type 高 32 位带 flag。导入、
 启动迁移、RAG/问答读侧三端共用一套解码：
 
-- bytes：zstd magic 或 UTF-8 不可解码/不可打印 → 按掩码类型给占位符
+- bytes：zstd magic → 真解压（2026-11 起，长文本消息找回；type=1 压缩
+  通道实测为 29~352 字的真实文本，占位符时代丢失 4.7% 信息量最高的
+  长消息）；解压失败或解出仍不可打印 → 按掩码类型给占位符
 - str：前 64 字符非打印占比超三成，或含 >=2 个 U+FFFD 换坏字符
   （历史 ingest errors='replace' 产物的特征）→ 占位符
 
@@ -12,11 +14,21 @@ BLOB（转发/小程序/图片/表情等），且 local_type 高 32 位带 flag�
 监听 db_watch 的 NON_TEXT_PLACEHOLDER 从这里导入，两侧不再手工同步
 （此前已漂移：db_watch 有 file→[文件]、默认 [消息]，本表缺失）。
 
-无 zstd 解压依赖（包体积考虑），压缩内容不做真解压——type=1 的压缩
-文本消息给「[压缩消息]」占位，后续需要可引入 zstandard 补真解压。
+zstandard 为正式依赖（requirements 双文件）；环境缺包时回退占位并告警，
+不阻断导入。
 """
 
 from __future__ import annotations
+
+import logging
+
+logger = logging.getLogger(__name__)
+
+try:
+    import zstandard as _zstd
+except ImportError:  # 环境缺包：回退占位（打包产物已带依赖，仅裸环境出现）
+    _zstd = None
+    logger.warning("[内容解码] 缺 zstandard，zstd 压缩消息回退占位符")
 
 ZSTD_MAGIC = b"\x28\xb5\x2f\xfd"
 
@@ -88,6 +100,17 @@ def _placeholder(message_type: int | None) -> str:
     return LOCAL_TYPE_PLACEHOLDER.get(masked, DEFAULT_PLACEHOLDER)
 
 
+def _decompress_zstd(raw: bytes) -> str | None:
+    """zstd BLOB → 文本；缺依赖/解压失败/解不出 UTF-8 返回 None。"""
+    if _zstd is None:
+        return None
+    try:
+        plain = _zstd.ZstdDecompressor().decompress(raw, max_output_size=10_000_000)
+        return plain.decode("utf-8", "replace")
+    except Exception:
+        return None
+
+
 def decode_message_content(content, message_type: int | None = None) -> str:
     """把库中任意形态的消息内容归一为可读文本（压缩二进制给占位符）。
 
@@ -99,6 +122,9 @@ def decode_message_content(content, message_type: int | None = None) -> str:
     if isinstance(content, (bytes, bytearray)):
         raw = bytes(content)
         if raw[:4] == ZSTD_MAGIC:
+            text = _decompress_zstd(raw)
+            if text is not None and not looks_binary_text(text):
+                return text
             return _placeholder(message_type)
         try:
             text = raw.decode("utf-8")

@@ -174,7 +174,7 @@ def test_split_sessions_cancel_event_interrupts_embedding():
     class _StubEmbed:
         _embedding_model = object()  # 已加载态，跳过模型加载
 
-        def _get_embeddings_batch(self, texts, **kwargs):
+        def _get_embeddings_matrix(self, texts, **kwargs):
             raise AssertionError("取消后不应继续编码")
 
     sm._sentiment_service = _StubEmbed()
@@ -205,10 +205,14 @@ def test_split_sessions_non_sampling_takes_vectorized_path():
         def __init__(self):
             self.batch_calls = 0
 
-        def _get_embeddings_batch(self, texts, **kwargs):
+        def _get_embeddings_matrix(self, texts, **kwargs):
             self.batch_calls += 1
+            import numpy as _np
             # 同话题→[1,0] / 换话题→[0,1]，模拟 L2 归一输出
-            return [[1.0, 0.0] if t.startswith("同") else [0.0, 1.0] for t in texts]
+            return _np.asarray(
+                [[1.0, 0.0] if t.startswith("同") else [0.0, 1.0] for t in texts],
+                dtype=_np.float32,
+            )
 
     fake = _StubEmbed()
     sm = SessionManager()

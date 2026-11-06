@@ -516,3 +516,107 @@ def test_l2_backfill_respects_l1_fifo_cap():
     assert len(svc._embedding_cache) == 4000
     assert "文本0" not in svc._embedding_cache, "最旧条目必须被逐出"
     assert "文本4000" in svc._embedding_cache
+
+
+class TestEmbeddingsMatrix:
+    """矩阵出口：L1/L2/encode 三级缓存链的向量化语义。"""
+
+    DIM = 16
+
+    class _FakeEncoder:
+        """确定性假编码器：seed=文本序号 → 正态向量 L2 归一。"""
+
+        def __init__(self, dim):
+            import numpy as np
+
+            self._np = np
+            self._dim = dim
+
+        def encode(self, texts, normalize_embeddings=True, show_progress_bar=False, batch_size=32):
+            import hashlib
+
+            np = self._np
+            vectors = []
+            for text in texts:
+                seed = int(hashlib.sha1(str(text).encode("utf-8")).hexdigest()[:12], 16)
+                rng = np.random.default_rng(seed)
+                vec = rng.normal(size=self._dim).astype(np.float32)
+                if normalize_embeddings:
+                    norm = float(np.linalg.norm(vec))
+                    if norm > 0:
+                        vec = vec / norm
+                vectors.append(vec)
+            return vectors
+
+    @pytest.fixture
+    def svc(self):
+        from app.services.analysis.sentiment_service import SentimentService
+
+        service = SentimentService()
+        service._embedding_model = self._FakeEncoder(self.DIM)
+        service._embedding_load_failed = False
+        service._embedding_dimension = self.DIM
+        service._embedding_device = "cpu"
+        service._embedding_model_path = None
+        service._embedding_cache.clear()
+        # L2 落真实库会污染用户 embedding_cache：断开（矩阵语义不依赖落库）
+        service._embedding_cache_store = lambda: None
+        yield service
+        service._embedding_cache.clear()
+        # 单例工厂：实例属性阴影必须摘除，防泄漏到后续测试
+        service.__dict__.pop("_embedding_cache_store", None)
+        service._embedding_model = None
+        service._embedding_dimension = None
+
+    def test_matrix_shape_order_and_readonly(self, svc):
+        """矩阵形状/行序对齐输入/float32/只读（误写抛错不静默）。"""
+        import numpy as np
+
+        texts = ["第一条", "", "第三条"]
+        matrix = svc._get_embeddings_matrix(texts)
+        assert matrix.shape == (3, self.DIM)
+        assert matrix.dtype == np.float32
+        assert not matrix.flags.writeable
+        # 空文本行 = 零向量兜底；非空行与单条编码逐元素一致
+        assert not matrix[1].any()
+        single = svc._get_embeddings_matrix(["第一条"])
+        assert np.array_equal(matrix[0], single[0])
+
+    def test_l1_second_call_bit_identical(self, svc):
+        """同文本二次取矩阵逐字节一致（L1 复用只读行，无重复装箱）。"""
+        first = svc._get_embeddings_matrix(["重复文本A", "重复文本B"])
+        second = svc._get_embeddings_matrix(["重复文本A", "重复文本B"])
+        assert first.tobytes() == second.tobytes()
+        # L1 行本身只读
+        assert not svc._embedding_cache["重复文本A"].flags.writeable
+
+    def test_list_shell_matches_matrix(self, svc):
+        """list 出口薄壳与矩阵逐元素一致（analyze_batch 问答向量通道）。"""
+        import numpy as np
+
+        texts = ["壳层对照甲", "壳层对照乙"]
+        rows = svc._get_embeddings_batch(texts)
+        matrix = svc._get_embeddings_matrix(texts)
+        assert all(isinstance(r, list) for r in rows)
+        assert np.array_equal(np.asarray(rows, dtype=np.float32), matrix)
+
+    def test_pack_embedding_ndarray_matches_list_bytes(self):
+        """pack_embedding ndarray 快路径与 list 路径 pickle 字节一致。"""
+        import pickle
+
+        import numpy as np
+
+        from app.services.analysis.sentiment_service import pack_embedding
+
+        values = [0.5, -0.25, 0.0, 0.125]
+        from_list = pack_embedding(values)
+        from_array = pack_embedding(np.asarray(values, dtype=np.float32))
+        assert from_list == from_array
+        assert np.array_equal(pickle.loads(from_list), np.asarray(values, dtype=np.float16))
+        # 只读 ndarray（L1 行形态）同样走快路径
+        readonly = np.asarray(values, dtype=np.float32)
+        readonly.setflags(write=False)
+        assert pack_embedding(readonly) == from_list
+        # 零向量/None 落 None 口径不变
+        assert pack_embedding(np.zeros(4, dtype=np.float32)) is None
+        assert pack_embedding(None) is None

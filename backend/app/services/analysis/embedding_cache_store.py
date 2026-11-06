@@ -23,6 +23,11 @@ from typing import Iterable, List, Optional, Sequence
 from ...db.connection import get_db
 from ...config import SETTINGS_PATH
 
+try:  # onnxruntime 环境必有 numpy；缺库时 ndarray 出口不可用（旧路径仍通）
+    import numpy as _np
+except Exception:  # pragma: no cover
+    _np = None
+
 logger = logging.getLogger(__name__)
 
 _BATCH_IN_SIZE = 500  # SQLite IN 参数上限防御（与 sentiment_cache 批查同款）
@@ -92,11 +97,13 @@ class EmbeddingCacheStore:
     def enabled(self) -> bool:
         return self._enabled
 
-    def batch_lookup(self, texts: Sequence[str]) -> dict[str, List[float]]:
+    def batch_lookup(self, texts: Sequence[str], as_arrays: bool = False) -> dict:
         """批量查缓存：返回 {text: vector}；未命中/维度不符的文本不在结果里。
 
-        维度校验防御：库里可能残留旧宽度向量（模型切换但 sha1 撞库等极端
-        情况），对齐 sentiment_cache 的 miss-then-recompute 语义。
+        as_arrays=True 时向量为 frombuffer 只读 float32 ndarray（矩阵出口
+        零装箱直连）；默认 False 出 list，旧出口语义不变。维度校验防御：
+        库里可能残留旧宽度向量（模型切换但 sha1 撞库等极端情况），对齐
+        sentiment_cache 的 miss-then-recompute 语义。
         """
         if not self._enabled or not texts:
             return {}
@@ -108,7 +115,7 @@ class EmbeddingCacheStore:
         if not wanted:
             return {}
 
-        found: dict[str, List[float]] = {}
+        found: dict = {}
         conn = get_db()
         keys = list(wanted.keys())
         for start in range(0, len(keys), _BATCH_IN_SIZE):
@@ -132,15 +139,15 @@ class EmbeddingCacheStore:
                     continue
                 blob = row["vector"]
                 try:
-                    # np.frombuffer 零拷贝视图 + 一次 tolist：比 struct.unpack
-                    # 逐元素装箱快 2-3×（暖跑主路径的固定税）。
-                    # dtype 显式小端 '<f4' 与写入侧 struct.pack("<Nf") 对齐，
-                    # 不依赖平台字节序
-                    vector = np.frombuffer(blob, dtype="<f4").tolist()
+                    # np.frombuffer 零拷贝视图：比 struct.unpack 逐元素装箱
+                    # 快 2-3×（暖跑主路径的固定税）。dtype 显式小端 '<f4'
+                    # 与写入侧 struct.pack("<Nf") 对齐，不依赖平台字节序
+                    vector = np.frombuffer(blob, dtype="<f4")
                 except Exception:
                     continue
                 if len(vector) == self._dim:
-                    found[wanted[row["content_sha1"]]] = vector
+                    text = wanted[row["content_sha1"]]
+                    found[text] = vector if as_arrays else vector.tolist()
         return found
 
     def batch_store(self, texts: Sequence[str], vectors: Sequence[Sequence[float]]) -> int:
@@ -152,14 +159,23 @@ class EmbeddingCacheStore:
         import struct
 
         for text, vector in zip(texts, vectors):
-            if not text or not text.strip() or not vector:
-                continue  # 空文本不落库
+            if not text or not text.strip() or vector is None or len(vector) == 0:
+                continue  # 空文本/空向量不落库
             if len(vector) != self._dim:
                 continue
-            if not any(vector):
-                continue  # 全零向量是模型缺失时的兜底产物，禁止毒化缓存
+            # 全零向量是模型缺失时的兜底产物，禁止毒化缓存
+            if _np is not None and isinstance(vector, _np.ndarray):
+                if not _np.any(vector):
+                    continue
+            elif not any(vector):
+                continue
             try:
-                blob = struct.pack(f"<{len(vector)}f", *vector)
+                if _np is not None and isinstance(vector, _np.ndarray):
+                    # ndarray 快路径（矩阵出口行）：tobytes 一次成块，
+                    # 免 512 个 np.float32 标量逐个过 struct 装箱
+                    blob = _np.ascontiguousarray(vector, dtype="<f4").tobytes()
+                else:
+                    blob = struct.pack(f"<{len(vector)}f", *vector)
             except Exception:
                 continue
             rows.append((content_sha1(text), self._model, self._device, self._dim, blob, now))

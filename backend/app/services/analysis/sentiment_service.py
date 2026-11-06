@@ -39,6 +39,12 @@ def pack_embedding(embedding) -> Optional[bytes]:
     """
     if embedding is None:
         return None
+    if _np is not None and isinstance(embedding, _np.ndarray):
+        # ndarray 快路径（矩阵出口行）：跳过逐元素 float() 装箱；
+        # astype(float16) 与 asarray(list, float16) 同舍入，pickle 字节一致
+        if embedding.size == 0 or not _np.any(embedding):
+            return None
+        return pickle.dumps(embedding.astype(_np.float16))
     values = [float(v) for v in embedding]
     if not any(values):
         return None
@@ -77,7 +83,8 @@ class SentimentService:
         self._embedding_device = "cpu"
         self._embedding_model_path: Optional[str] = None
         self._device_mode = FeatureExtractionConfig.from_settings().analysis_device_mode
-        self._embedding_cache: Dict[str, List[float]] = {}
+        self._embedding_cache: Dict[str, Any] = {}  # 值为只读 float32 ndarray 行（见 _remember_embedding）
+        self._l2_store: Optional[EmbeddingCacheStore] = None  # 记忆化句柄，模型/维度变化时重置
         self._lock = threading.Lock()
 
         try:
@@ -121,6 +128,7 @@ class SentimentService:
         self._embedding_load_failed = False
         self._embedding_dimension = None
         self._embedding_cache.clear()
+        self._l2_store = None  # 设备/模型随模式重建，L2 identity 失效
         self._embedding_device = "cpu"
         self._embedding_model_path = None
         try:
@@ -176,6 +184,7 @@ class SentimentService:
                 self._embedding_model = engine
                 self._embedding_device = engine.device_tag
                 self._embedding_load_failed = False
+                self._l2_store = None  # 新引擎可能换变体：L2 identity 随加载重建
                 self._set_embedding_dimension_from_model()
                 logger.info(
                     "[情感服务] ONNX 嵌入模型已加载 (device=%s, providers=%s)",
@@ -201,6 +210,7 @@ class SentimentService:
         if self._embedding_dimension not in {None, dimension}:
             # Avoid mixing old projected vectors with a newly loaded model.
             self._embedding_cache.clear()
+            self._l2_store = None  # L2 identity 含 dim，随维度失效
         self._embedding_dimension = dimension
 
     def _fallback_embedding(self) -> List[float]:
@@ -328,49 +338,80 @@ class SentimentService:
             logger.error(f"[情感服务] 向量生成失败: {exc}")
             return self._fallback_embedding()
 
-    def _remember_embedding(self, text: str, vector: List[float]) -> None:
+    def _remember_embedding(self, text: str, vector) -> None:
         """L1 写入（FIFO 上限 4000）：模型编码与 L2 命中回填共用。
 
-        回填路径此前裸写无上限——重建/重分析场景 L2 全命中时，历史库
-        每个唯一文本都会驻留内存（768 维 float 列表，十万级文本即数百
-        MB），与编码路径的 FIFO 预算不一致。
+        行统一存只读 float32 ndarray（numpy 可用时）：矩阵出口零装箱复用；
+        write=False 让误写当场抛错而非静默脏缓存。回填路径此前裸写无上
+        限——重建/重分析场景 L2 全命中时，历史库每个唯一文本都会驻留内
+        存（十万级文本即数百 MB），与编码路径的 FIFO 预算不一致。
         """
+        if _np is not None:
+            if not isinstance(vector, _np.ndarray):
+                vector = _np.asarray(vector, dtype=_np.float32)
+            vector.setflags(write=False)
         if len(self._embedding_cache) >= 4000:
             del self._embedding_cache[next(iter(self._embedding_cache))]
         self._embedding_cache[text] = vector
 
     def _get_embeddings_batch(self, texts: List[str], batch_size: int = 64) -> List[List[float]]:
-        """Encode a batch using the local model's native vector dimension.
+        """list 出口薄壳：内部统一走矩阵路径（L1/L2/encode 缓存链单点）。"""
+        if not texts:
+            return []
+        if _np is None:  # 无 onnxruntime 环境：无模型，全零兜底（不 new 依赖）
+            self._load_embedding_model()
+            return [self._fallback_embedding() for _ in texts]
+        return [row.tolist() for row in self._get_embeddings_matrix(texts, batch_size=batch_size)]
+
+    def _get_embeddings_matrix(self, texts: List[str], batch_size: int = 64) -> "_np.ndarray":
+        """矩阵出口：与 list 出口同一条 L1/L2/encode 缓存链，返回
+        (len(texts), dim) 的 float32 只读矩阵（行序对齐输入）。
 
         三级缓存：L1 内存 dict（进程内）→ L2 embedding_cache 表（跨进程，
         键=content_sha1+model+device）→ 模型 encode。重复分析/增量导入后
         重分析只嵌新文本（嵌入占分析耗时 99%）。
+
+        相似度消费侧（会话切分/交互对）直连 einsum：此前 list 出口每行
+        dim 个 float 装箱（L2 tolist / encode tolist）再被消费侧 asarray
+        拆箱，8 万单元热跑 ≈ 8000 万元素往返，是相似度阶段的纯开销大头。
         """
+        if _np is None:
+            raise RuntimeError("[情感服务] 嵌入矩阵出口依赖 numpy")
         if not texts:
-            return []
+            return _np.zeros((0, self._embedding_dimension or 0), dtype=_np.float32)
 
         self._load_embedding_model()
-        results: List[Optional[List[float]]] = [None] * len(texts)
+        dim = self._embedding_dimension
+        fallback_row: Optional["_np.ndarray"] = None
+
+        def zero_row() -> "_np.ndarray":
+            nonlocal fallback_row
+            if fallback_row is None:
+                fallback_row = _np.zeros(dim or EMBEDDING_MODEL_DIM, dtype=_np.float32)
+            return fallback_row
+
+        rows: List[Optional["_np.ndarray"]] = [None] * len(texts)
         uncached_indices: List[int] = []
         uncached_texts: List[str] = []
 
         for index, text in enumerate(texts):
             if not text or not text.strip():
-                results[index] = self._fallback_embedding()
+                rows[index] = zero_row()
             elif (
                 text in self._embedding_cache
-                and len(self._embedding_cache[text]) == self._embedding_dimension
+                and len(self._embedding_cache[text]) == dim
             ):
-                results[index] = self._embedding_cache[text]
+                rows[index] = self._embedding_cache[text]
             else:
                 uncached_indices.append(index)
                 uncached_texts.append(text)
 
-        # L2 持久缓存：命中回填 L1（后续同文本内存级命中）
+        # L2 持久缓存：命中回填 L1（后续同文本内存级命中）；
+        # as_arrays 直出 frombuffer 只读视图，免去每行 dim 个 float 装箱
         l2_store = self._embedding_cache_store()
         if l2_store is not None and uncached_texts:
             try:
-                l2_hits = l2_store.batch_lookup(uncached_texts)
+                l2_hits = l2_store.batch_lookup(uncached_texts, as_arrays=True)
             except Exception as exc:
                 logger.debug("[情感服务] 嵌入 L2 查询失败（忽略）: %s", exc)
                 l2_hits = {}
@@ -380,7 +421,7 @@ class SentimentService:
                 for index, text in zip(uncached_indices, uncached_texts):
                     vector = l2_hits.get(text)
                     if vector is not None:
-                        results[index] = vector
+                        rows[index] = vector
                         self._remember_embedding(text, vector)
                     else:
                         remaining_indices.append(index)
@@ -392,7 +433,7 @@ class SentimentService:
             try:
                 if self._embedding_model is None:
                     for index in uncached_indices:
-                        results[index] = self._fallback_embedding()
+                        rows[index] = zero_row()
                 else:
                     with self._lock:
                         embeddings = self._embedding_model.encode(
@@ -401,16 +442,17 @@ class SentimentService:
                             show_progress_bar=False,
                             batch_size=batch_size,
                         )
+                    encoded = _np.asarray(embeddings, dtype=_np.float32)
+                    self._set_embedding_dimension(int(encoded.shape[1]))
 
-                    new_vectors: List[List[float]] = []
+                    new_vectors: List["_np.ndarray"] = []
                     for local_index, original_index in enumerate(uncached_indices):
-                        embedding_list = embeddings[local_index].tolist()
-                        self._set_embedding_dimension(len(embedding_list))
+                        row = encoded[local_index]
+                        row.setflags(write=False)
+                        rows[original_index] = row
+                        new_vectors.append(row)
 
-                        results[original_index] = embedding_list
-                        new_vectors.append(embedding_list)
-
-                        self._remember_embedding(uncached_texts[local_index], embedding_list)
+                        self._remember_embedding(uncached_texts[local_index], row)
                     # L2 落库：模型已加载（gate 在 _embedding_cache_store），零向量
                     # 兜底不会进入此分支；INSERT OR IGNORE 幂等
                     if l2_store is not None:
@@ -421,27 +463,38 @@ class SentimentService:
             except Exception as exc:
                 logger.error(f"[情感服务] 批量向量生成失败: {exc}")
                 for index in uncached_indices:
-                    if results[index] is None:
-                        results[index] = self._fallback_embedding()
+                    if rows[index] is None:
+                        rows[index] = zero_row()
 
-        return [item if item is not None else self._fallback_embedding() for item in results]
+        # np.zeros 兜底 None 行（全路径应已填满，防御口径与旧 list 出口一致）
+        matrix = _np.zeros((len(texts), dim or EMBEDDING_MODEL_DIM), dtype=_np.float32)
+        for index, row in enumerate(rows):
+            if row is not None:
+                matrix[index] = row
+        matrix.setflags(write=False)
+        return matrix
 
     def _embedding_cache_store(self) -> Optional[EmbeddingCacheStore]:
-        """L2 持久缓存句柄。
+        """L2 持久缓存句柄（模型加载后记忆化，失效点见重置处）。
 
         模型未加载/加载失败时返回 None——此路径产出的是零向量兜底，
         读写 L2 都会毒化缓存（把「无模型跑过一次」固化成假命中）。
+        记忆化：相似度链路分块调用数千次，此前每次构造都读 settings.json
+        解析模型变体（repo_id/dim），8 万单元实测白付 13s。
         """
         if self._embedding_model is None or self._embedding_load_failed:
             return None
+        if self._l2_store is not None:
+            return self._l2_store
         # 维度与模型名跟随激活变体：L2 键含 repo_id，切模型自动隔离旧向量
         dim = self._embedding_dimension or get_embedding_model_dim() or EMBEDDING_MODEL_DIM
         try:
-            return EmbeddingCacheStore(
+            self._l2_store = EmbeddingCacheStore(
                 get_embedding_model_repo_id(), self._embedding_device, dim
             )
         except Exception:
-            return None
+            self._l2_store = None
+        return self._l2_store
 
     def cache_sentiment_result(
         self,

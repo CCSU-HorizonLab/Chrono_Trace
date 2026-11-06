@@ -39,11 +39,11 @@ class PairPreprocessingService:
             texts = [(unit.get("content") or "").strip() for unit in speech_units]
             # 走缓存版批量编码（L1 内存 + L2 embedding_cache 表）——
             # 此前直调 model.encode 绕过缓存，与 split_sessions 同跑内
-            # 对相同 unit 文本各嵌一遍（冷跑双倍全量编码的主因）
-            embeddings = sentiment_service._get_embeddings_batch(texts, batch_size=32)
+            # 对相同 unit 文本各嵌一遍（冷跑双倍全量编码的主因）。
+            # 矩阵出口直连 einsum，免去 list 装箱 + asarray 拆箱往返
+            matrix = sentiment_service._get_embeddings_matrix(texts, batch_size=32)
 
             similarities: Dict[int, float] = {}
-            matrix = np.asarray(embeddings, dtype=np.float32)
             # 相邻行点积一次 einsum 算完（此前 N-1 次 np.dot 各自付出
             # Python 调用与小数组包装开销，万级单元下累积可感）
             adjacent = np.einsum("ij,ij->i", matrix[:-1], matrix[1:])

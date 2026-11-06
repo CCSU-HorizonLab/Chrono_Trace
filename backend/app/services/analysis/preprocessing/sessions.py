@@ -229,13 +229,14 @@ class SessionManager:
                 logger.debug(f"[会话管理器] 第一阶段：粗采样 {len(sample_texts)} 个文本...")
 
                 # 分块编码采样文本：单次全量 encode 不可中断也无进度（82k 消息
-                # 首跑实测采样集 ~1.6 万条，整段无回调致 UI 长时间冻结）
-                sample_embeddings: List[Any] = []
+                # 首跑实测采样集 ~1.6 万条，整段无回调致 UI 长时间冻结）。
+                # 矩阵出口按块拼合，行序与 sample_indices 对齐
+                sample_chunks: List[Any] = []
                 SAMPLE_CHUNK = 256
                 for cs in range(0, len(sample_texts), SAMPLE_CHUNK):
                     self._raise_if_cancelled()
                     chunk = sample_texts[cs:cs + SAMPLE_CHUNK]
-                    sample_embeddings.extend(self._sentiment_service._get_embeddings_batch(
+                    sample_chunks.append(self._sentiment_service._get_embeddings_matrix(
                         chunk,
                         batch_size=64,  # 采样分块可用更大批次
                     ))
@@ -245,6 +246,7 @@ class SessionManager:
                             progress_cb(min(0.6, 0.6 * (cs + len(chunk)) / max(1, len(sample_texts))))
                         except Exception:
                             pass
+                sample_embeddings = np.concatenate(sample_chunks) if sample_chunks else np.zeros((0, 0), dtype=np.float32)
                 
                 # 找出候选切分区域（相似度较低的区域）
                 candidate_regions = []
@@ -279,7 +281,7 @@ class SessionManager:
                         except Exception:
                             pass
                     region_texts = [(speech_units[i].get("content") or "").strip() for i in range(start, end + 1)]
-                    region_embeddings = self._sentiment_service._get_embeddings_batch(
+                    region_embeddings = self._sentiment_service._get_embeddings_matrix(
                         region_texts,
                         batch_size=64,
                     )
@@ -302,26 +304,29 @@ class SessionManager:
                 # 分块编码：每块之间检查取消信号——单次全量 encode 不可中断
                 # （实测 1400+ 条约 3 分钟），取消要等整块跑完才能生效
                 # 走缓存版批量编码：特征提取与好感度两阶段的同文本
-                # 发言单元直接命中缓存（此前直调模型导致双倍全量编码）
+                # 发言单元直接命中缓存（此前直调模型导致双倍全量编码）。
+                # 矩阵出口按块拼合，免去 list 装箱 + asarray 拆箱往返
                 embed_service = self._sentiment_service
-                all_embeddings: List[Any] = []
+                chunk_matrices: List[Any] = []
                 CHUNK = 128
                 for chunk_start in range(0, len(texts), CHUNK):
                     self._raise_if_cancelled()
                     chunk = texts[chunk_start:chunk_start + CHUNK]
-                    all_embeddings.extend(embed_service._get_embeddings_batch(chunk))
+                    chunk_matrices.append(embed_service._get_embeddings_matrix(chunk))
                     if progress_cb:
                         try:
                             progress_cb(min(1.0, (chunk_start + len(chunk)) / max(1, len(texts))))
                         except Exception:
                             pass
-                embeddings = all_embeddings
 
                 # 批量计算所有相邻相似度（矩阵乘向量化）：
                 # encode 已 L2 归一 → cosine == 相邻行点积；此前逐对循环
                 # ×(np.dot + 2×np.linalg.norm + 新建 ndarray)，万级单元下
                 # 是可观的纯 Python 开销
-                matrix = np.asarray(embeddings, dtype=np.float32)
+                matrix = (
+                    np.concatenate(chunk_matrices) if len(chunk_matrices) > 1
+                    else (chunk_matrices[0] if chunk_matrices else np.zeros((0, 0), dtype=np.float32))
+                )
                 if matrix.ndim == 2 and len(matrix) > 1:
                     dots = np.einsum("ij,ij->i", matrix[:-1], matrix[1:])
                     similarities = [float(d) for d in dots]

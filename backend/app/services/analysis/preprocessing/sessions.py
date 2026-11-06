@@ -238,7 +238,7 @@ class SessionManager:
                     chunk = sample_texts[cs:cs + SAMPLE_CHUNK]
                     sample_chunks.append(self._sentiment_service._get_embeddings_matrix(
                         chunk,
-                        batch_size=64,  # 采样分块可用更大批次
+                        batch_size=32,  # 实测批大小 32 近优：64 反而 -7%（见 sentiment_service 默认值注释）
                     ))
                     if progress_cb:
                         try:
@@ -284,7 +284,7 @@ class SessionManager:
                     region_texts = [(speech_units[i].get("content") or "").strip() for i in range(start, end + 1)]
                     region_embeddings = self._sentiment_service._get_embeddings_matrix(
                         region_texts,
-                        batch_size=64,
+                        batch_size=32,
                     )
 
                     # 相邻行点积一次 einsum 算完（encode 已 L2 归一，cosine

@@ -261,7 +261,10 @@ class _BaseOnnxModel:
 
 def _resolve_thread_count() -> int:
     """CPU EP 线程数：物理核优先（与 torch 路径同一调优结论——逻辑核全开
-    超线程争抢反而降吞吐，实测管线 163.9s vs 108.2s 的主因就是这里）。"""
+    超线程争抢反而降吞吐，实测管线 163.9s vs 108.2s 的主因就是这里）。
+    2026-11 复测（i7-8665U 4C8T，长度聚批真实语料）：CHRONO_ONNX_THREADS
+    2/4/8 下分类器 56/76/68 条/s、嵌入 617/487（4/8）条/s——物理核数 4
+    双模型一致最优，逻辑核全开 -10~20%，结论维持。"""
     env = os.environ.get("CHRONO_ONNX_THREADS")
     if env and env.isdigit() and int(env) > 0:
         return int(env)
@@ -342,6 +345,9 @@ class OnnxClassifierModel(_BaseOnnxModel):
             device_mode, CLASSIFIER_MAX_LENGTH,
         )
 
+    # 批大小 32：i7-8665U 实测（长度聚批后真实语料 1200 条，线程 4）bs
+    # 16/32/64/128 = 76/76/71/66 条/s——32 已近优，更大批次单调劣化
+    # （argmax 全档一致 100%），勿再调大
     def predict_logits(self, texts: Sequence[str], batch_size: int = 32) -> np.ndarray:
         texts = [str(t) for t in texts]
         if not texts:

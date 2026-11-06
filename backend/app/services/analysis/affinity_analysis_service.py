@@ -15,7 +15,7 @@ import threading
 import math
 import hashlib
 from dataclasses import dataclass, asdict, field
-from typing import Any, Dict, Optional
+from typing import Any, Dict, NamedTuple, Optional
 
 from ...db.connection import get_db
 from .task_registry import is_running
@@ -36,6 +36,22 @@ logger = logging.getLogger(__name__)
 class AnalysisCancelled(Exception):
     """分析被用户取消"""
     pass
+
+
+# LLM 评估中 sentinel：本地四维已落库、AI 评估仍在跑。写入
+# llm_relationship_absent_reason——部分结果与终态共用同一存储格式，
+# 靠它区分「评估中」与最终缺席真因；bridge 读出口据此归一残留文案
+LLM_EVALUATING_REASON = "AI 关系评估进行中"
+
+
+class _LocalDimOutcome(NamedTuple):
+    """本地四维完成后的 LLM 阶段素材（_calculate_local_dimensions 返回）。"""
+
+    llm_service: Any            # None = LLM 维不在场（未配置/构建失败）
+    weights: Dict[str, float]   # 声明权重计划（未归一）
+    metrics: EngagementMetrics  # 投入特征（四维+LLM+风险的公共输入）
+    llm_context: Dict[str, str]
+    llm_account_wxid: str
 
 
 @dataclass
@@ -80,7 +96,10 @@ class AffinityAnalysisResult:
     analysis_caliber: int = 0
     
     # 状态
-    status: str = "pending"  # pending, running, completed, failed
+    # llm_pending 为内存任务态（本地四维已出、AI 评估进行中）：
+    # task_registry 按终态集合判运行，非终态自动被互斥/复用守卫视为运行中；
+    # 存储态恒为 completed（见 _save_results），部分/终态靠 sentinel 区分
+    status: str = "pending"  # pending, running, llm_pending, completed, failed, cancelled
     progress_percent: int = 0
     current_step: str = ""
     error: Optional[str] = None
@@ -221,25 +240,70 @@ class AffinityAnalysisService:
             )
             logger.info("[好感度分析] 步骤 2/5: 预处理完成")
             
-            # 4. 计算各维度
+            # 4. 计算本地四维（LLM 维延后到本地结果落库后单独评估）
             result.current_step = "计算维度评分"
             self._check_cancelled(cancel_event)
             result.progress_percent = 40
             logger.info("[好感度分析] 步骤 3/5: 计算四大维度评分...")
-            self._calculate_all_dimensions(result, conversation_id, stats, config, cancel_event)
-            
-            # 5. 计算综合评分
+            local = self._calculate_local_dimensions(
+                result, conversation_id, stats, config, cancel_event
+            )
+
+            # 5. 本地口径综合评分（LLM 缺席时按在场四维归一）
             self._check_cancelled(cancel_event)
             result.current_step = "计算综合评分"
             result.progress_percent = 80
             logger.info("[好感度分析] 步骤 4/5: 计算综合评分...")
             self._calculate_overall_score(result, config)
-            
-            # 6. 生成解释
             result.overall_interpretation = self._generate_overall_interpretation(
                 result.overall_score
             )
-            
+
+            if local.llm_service is not None and local.weights.get('llm_relationship', 0.0) > 0:
+                # ——本地终态：部分结果先落库（无历史行），前端渐进显示——
+                result.llm_relationship = None
+                result.llm_relationship_absent_reason = LLM_EVALUATING_REASON
+                result.status = "llm_pending"
+                result.progress_percent = 85
+                result.current_step = "本地维度完成，AI 关系评估进行中..."
+                result.analysis_timestamp = int(time.time())
+                self._save_results(conversation_id, result, record_history=False)
+                # 本地完成点：清 stale + 记忆索引入队（本地四维已覆盖全部
+                # 消息；RAG 嵌入推理与 LLM 远程等待天然并行，记忆更早可用）
+                self._on_local_complete(conversation_id)
+                # 取消发生在部分落库之后：缓存保留部分结果（sentinel +
+                # 前端重试按钮可补齐），状态置 cancelled
+                self._check_cancelled(cancel_event)
+
+                logger.info("[好感度分析] 本地维度完成，AI 关系评估开始 (会话 %s)", conversation_id)
+                result.current_step = "等待 AI 关系评估返回..."
+                llm_result, absent_reason = self._evaluate_llm_dimension(
+                    local.llm_service,
+                    conversation_id,
+                    account_wxid=local.llm_account_wxid,
+                    context=local.llm_context,
+                    metrics=local.metrics,
+                    cancel_event=cancel_event,
+                )
+                if llm_result is not None:
+                    # 本地维 weight 已被上面的归一原地覆写（在场维和恰为
+                    # 1.0），先复位再装配，防双次归一
+                    self._reset_dimension_weights(result, local.weights)
+                    self._finalize_with_llm(result, config, local.metrics, llm_result, local.weights)
+                else:
+                    result.llm_relationship = None
+                    result.llm_relationship_absent_reason = absent_reason or "评估返回空结果"
+                    logger.info("[关系评估] 缺席: %s", result.llm_relationship_absent_reason)
+            else:
+                # 三种缺席各自成文，前端徽章可区分（否则卡片与说明同时消失）
+                if local.llm_service is None:
+                    result.llm_relationship_absent_reason = "未配置 LLM 模型（可在设置页添加）"
+                elif not bool(getattr(config, "llm_relationship_enabled", True)):
+                    result.llm_relationship_absent_reason = "已在关系配置中关闭 AI 评估"
+                else:
+                    result.llm_relationship_absent_reason = "AI 评估权重为 0，未参与本次评分"
+                self._on_local_complete(conversation_id)
+
             # 完成
             result.status = "completed"
             self._check_cancelled(cancel_event)
@@ -249,35 +313,9 @@ class AffinityAnalysisService:
             result.analysis_duration_ms = int((time.time() - start_time) * 1000)
             result.cache_version = self.CACHE_SCHEMA_VERSION
 
-            # 7. 保存结果
+            # 6. 保存结果（终态：含 LLM 在场或缺席真因；历史点只在此落）
             logger.info("[好感度分析] 步骤 5/5: 保存结果...")
             self._save_results(conversation_id, result)
-
-            # 全流程终点：清 stale + 快照消息集规模（此后 UI「待更新」消失）
-            try:
-                from .analysis_state import mark_analysis_complete
-
-                mark_analysis_complete(conversation_id)
-            except Exception as state_e:
-                logger.debug("[分析状态] 完成标记跳过: %s", state_e)
-
-            # 全面分析完成点：构建该联系人记忆索引。导入后默认冷构建
-            # （不自动建），此处是主动构建入口——分析完成后用户预期记忆
-            # 随即可用；联系人画像仍由用户在洞察页手动触发生成。
-            try:
-                from ...db.connection import get_db, optimize_query_plans
-                from ..realtime.rag.indexer import RagIndexQueue
-
-                row = get_db().execute(
-                    "SELECT account_wxid FROM conversations WHERE id = ? LIMIT 1",
-                    (conversation_id,),
-                ).fetchone()
-                if row and str(row["account_wxid"] or "").strip():
-                    RagIndexQueue.enqueue(str(row["account_wxid"]), int(conversation_id))
-                # 分析链路大量批写缓存（sentiment/preprocessed），顺手收集
-                optimize_query_plans()
-            except Exception as rag_e:
-                logger.debug("[分析完成] 记忆索引构建入队跳过: %s", rag_e)
 
             logger.info(
                 f"好感度分析完成: {result.overall_score:.1f} 分, "
@@ -408,19 +446,9 @@ class AffinityAnalysisService:
                 for key, entry in plan.items()
             }
 
-            # 缓存里的本地维度权重已被首次分析的归一化原地覆写（在场维和
-            # 恰为 1.0），直接再归一会双次归一（分母 1.0+llm 而非声明和）
-            # ——先按当前声明权重复位，与全量分析的装配口径对齐
-            for dim_key in (
-                "interaction_investment",
-                "emotional_resonance",
-                "closeness_signals",
-                "preference_compatibility",
-            ):
-                dim = getattr(result, dim_key, None)
-                if dim is not None:
-                    dim.weight = weights[dim_key]
-                    dim.weighted_score = dim.score * weights[dim_key]
+            # 缓存里的本地维度权重已被首次分析的归一化原地覆写，先复位
+            # （与全量分析共用同一 helper，防双次归一）
+            self._reset_dimension_weights(result, weights)
 
             # LLM 维输入准备（与全量分析同源：关系背景 + 账号 + 投入特征）
             result.progress_percent = 30
@@ -458,36 +486,8 @@ class AffinityAnalysisService:
                 metrics=metrics,
             )
 
-            # 装配 LLM 维（与全量路径同构）
-            confidence_meta = dict(llm_result.get("meta") or {})
-            confidence_meta["evidence"] = llm_result.get("evidence") or []
-            result.llm_relationship = DimensionScore(
-                name="AI 关系评估",
-                score=llm_result['score'],
-                weight=weights['llm_relationship'],
-                weighted_score=llm_result['score'] * weights['llm_relationship'],
-                interpretation=llm_result.get('insight') or "LLM 关系评估完成",
-                sub_scores=llm_result['sub_scores'],
-                confidence_meta=confidence_meta,
-            )
-            result.llm_relationship_absent_reason = None
-
-            # 风险预警随 LLM 证据到位重判（此前无证据各信号封顶「留意」）
-            try:
-                stats = self.preprocessing.get_preprocessed_statistics(conversation_id)
-                result.risk_assessment = RiskSignalService().assess(
-                    conversation_id, metrics, stats=stats, llm_result=llm_result
-                )
-            except Exception as risk_e:
-                logger.warning("[风险预警] 补评重判跳过: %s", risk_e)
-
-            # 权重归一 + 总分 + 解释重算（LLM 维在场后归一基组变化）
-            result.progress_percent = 80
-            result.current_step = "重算综合评分..."
-            self._calculate_overall_score(result, config)
-            result.overall_interpretation = self._generate_overall_interpretation(
-                result.overall_score
-            )
+            # 装配 + 风险重判 + 归一重算（与全量路径共用同一 helper）
+            self._finalize_with_llm(result, config, metrics, llm_result, weights)
 
             result.status = "completed"
             result.progress_percent = 100
@@ -562,7 +562,7 @@ class AffinityAnalysisService:
         if cancel_event and cancel_event.is_set():
             raise AnalysisCancelled("分析已被用户取消")
 
-    def _calculate_all_dimensions(
+    def _calculate_local_dimensions(
         self,
         result: AffinityAnalysisResult,
         conversation_id: int,
@@ -570,16 +570,18 @@ class AffinityAnalysisService:
         config: AffinityConfig,
         cancel_event: Optional[threading.Event] = None
     ):
-        """计算所有维度评分"""
+        """计算四个本地维度评分，返回 LLM 阶段所需素材（_LocalDimOutcome）。
+
+        LLM 维不再与本地维并跑——本地结果是确定性的秒级计算，先出先
+        落库先显示；LLM 单次远程调用 ~100s 由 analyze() 在本地终态后
+        单独评估（见 _evaluate_llm_dimension）。
+        """
 
         # 解析五维权重计划（config 覆盖默认；缺席维度 declared 置 0）。
         # LLM 维可用性 = 激活模型存在（构造不发起网络调用；真正的调用
         # 失败在维度计算期按缺席处理，归一时自动剔除）
         from .affinity_weights import resolve_dimension_plan
-        from .relationship_llm_service import (
-            RelationshipLLMAbsent,
-            build_relationship_llm_service,
-        )
+        from .relationship_llm_service import build_relationship_llm_service
         # probe 容错：测试/异常环境下构建失败按"无 LLM"处理，不影响主流程
         try:
             llm_service = build_relationship_llm_service()
@@ -596,18 +598,16 @@ class AffinityAnalysisService:
             for key, entry in plan.items()
         }
 
-        # ===== 维度并行计算 =====
+        # ===== 本地维度并行计算 =====
         # 各维度全部只读（无共享可写状态、get_db 线程本地、WAL 多读者
-        # 并发安全），此前严格串行——LLM 维 90s 网络等待白白阻塞其余本地
-        # 维度。改为线程池并行，维度阶段耗时 → max(单维)。
-        # 进度展示取舍：并行期间不逐维跳进度（多线程写 result 会竞态），
-        # 汇总装配阶段再顺序推进锚点。
+        # 并发安全）。进度展示取舍：并行期间不逐维跳进度（多线程写
+        # result 会竞态），汇总装配阶段再顺序推进锚点。
         self._check_cancelled(cancel_event)
         result.progress_percent = 45
-        result.current_step = "并行计算维度评分（投入/共鸣/亲近/喜好/AI评估）..."
-        logger.info("[好感度分析] 维度并行计算开始...")
+        result.current_step = "并行计算维度评分（投入/共鸣/亲近/喜好）..."
+        logger.info("[好感度分析] 本地维度并行计算开始...")
 
-        # LLM 维前置准备（主线程完成后即提交，网络等待与其他维度重叠）
+        # LLM 维前置素材（与本地维度并行准备，供本地终态后的单独评估用）
         llm_context: Dict[str, str] = {}
         llm_account_wxid = ""
         if llm_service is not None and weights.get('llm_relationship', 0.0) > 0:
@@ -644,9 +644,7 @@ class AffinityAnalysisService:
 
         from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait as futures_wait
 
-        # 取消响应：此前 with 块 exit 的 shutdown(wait=True) 会等满全部维度
-        # （LLM 维最长 90s），且维度任务不感知取消事件——用户点停止后要
-        # 干等整段。改为 0.5s 轮询取消信号 + 任一维度异常立即退出 +
+        # 取消响应：0.5s 轮询取消信号 + 任一维度异常立即退出 +
         # shutdown(cancel_futures=True) 丢弃未启动任务；已运行维度任务
         # 只读（无共享可写状态），放其自然跑完即回收
         pool = ThreadPoolExecutor(max_workers=4)
@@ -671,22 +669,8 @@ class AffinityAnalysisService:
             fut_preference = pool.submit(
                 self.preference_service.calculate_scores, conversation_id, stats
             )
-            fut_llm = None
-            if llm_service is not None and weights.get('llm_relationship', 0.0) > 0:
-                fut_llm = pool.submit(
-                    llm_service.evaluate,
-                    conversation_id,
-                    account_wxid=llm_account_wxid,
-                    context=llm_context,
-                    metrics=metrics,
-                )
 
-            pending = {
-                f for f in (
-                    fut_resonance, fut_investment, fut_closeness,
-                    fut_preference, fut_llm,
-                ) if f is not None
-            }
+            pending = {fut_resonance, fut_investment, fut_closeness, fut_preference}
             while pending:
                 done, pending = futures_wait(
                     pending, timeout=0.5, return_when=FIRST_EXCEPTION
@@ -694,35 +678,16 @@ class AffinityAnalysisService:
                 # 取消信号 ≤0.5s 内生效，不再等维度自然结束
                 self._check_cancelled(cancel_event)
                 for f in done:
-                    # 维度异常立即重放退出；LLM 维缺席是正常分支，由下方特判
-                    if f is not fut_llm and f.exception() is not None:
+                    # 维度异常立即重放退出（本地维没有"正常失败"分支）
+                    if f.exception() is not None:
                         f.result()
 
             # 走到这里全部 future 已完成，result() 即取即得。
             # 异常（含取消）原样在主线程重放。
-            # LLM 维例外：缺席（样本不足/脱敏不可用/超时等）是正常分支，
-            # 在此捕获转 None，装配阶段按缺席处理——否则会杀死整个分析
             resonance_result = fut_resonance.result()
             investment_result = fut_investment.result()
             closeness_result = fut_closeness.result()
             preference_result = fut_preference.result()
-            llm_result = None
-            llm_absent_error: Optional[BaseException] = None
-            if fut_llm is not None:
-                try:
-                    llm_result = fut_llm.result()
-                except RelationshipLLMAbsent as absent:
-                    llm_absent_error = absent
-                    # 真因（网络失败/解析失败等）只在 debug 留完整链，缺席
-                    # 本身是正常分支不刷 info 噪音
-                    logger.debug("[关系评估] 维度缺席原因", exc_info=absent)
-                except Exception as eval_error:
-                    # 已提交但失败同样转缺席：模型输出结构异常（sub_scores
-                    # 为数组、evidence 为对象等非 Absent 异常）此前从
-                    # result() 直接炸掉整个四维+LLM 分析——四个本地维度
-                    # 的结果全部丢弃，用户点全面分析只得到整体报错
-                    llm_absent_error = eval_error
-                    logger.warning("[关系评估] 评估异常转缺席: %s", eval_error)
         finally:
             pool.shutdown(wait=False, cancel_futures=True)
 
@@ -817,58 +782,181 @@ class AffinityAnalysisService:
             raw_bonus,
         )
 
-        # LLM 关系评估装配（缺席不阻断：权重归一自动剔除该维）
-        if llm_result is not None:
-            confidence_meta = dict(llm_result.get("meta") or {})
-            confidence_meta["evidence"] = llm_result.get("evidence") or []
-            result.llm_relationship = DimensionScore(
-                name="AI 关系评估",
-                score=llm_result['score'],
-                weight=weights['llm_relationship'],
-                weighted_score=llm_result['score'] * weights['llm_relationship'],
-                interpretation=llm_result.get('insight') or "LLM 关系评估完成",
-                sub_scores=llm_result['sub_scores'],
-                confidence_meta=confidence_meta,
-            )
-            logger.info(
-                "LLM 关系评估完成: %.1f分 (模型: %s)",
-                llm_result['score'],
-                (llm_result.get("meta") or {}).get("model_name", ""),
-            )
-        elif llm_absent_error is not None:
-            result.llm_relationship = None
-            # 异常路径（解析失败/输出结构异常等）标注前缀，前端徽章可区分
-            reason = str(llm_absent_error)
-            if not isinstance(llm_absent_error, RelationshipLLMAbsent):
-                reason = f"评估异常: {reason}"
-            result.llm_relationship_absent_reason = reason
-            logger.info("[关系评估] 缺席: %s", reason)
-        elif fut_llm is not None:
-            # 已完成但返回空载荷：转缺席（不阻断其余维度；异常路径已在
-            # 上方 result() 处捕获转缺席）
-            result.llm_relationship = None
-            result.llm_relationship_absent_reason = "评估返回空结果"
-            logger.info("[关系评估] 缺席: 模型返回空结果")
-        else:
-            # 三种缺席各自成文，前端徽章可区分（否则卡片与说明同时消失）
-            if llm_service is None:
-                result.llm_relationship_absent_reason = "未配置 LLM 模型（可在设置页添加）"
-            elif not bool(getattr(config, "llm_relationship_enabled", True)):
-                result.llm_relationship_absent_reason = "已在关系配置中关闭 AI 评估"
-            else:
-                result.llm_relationship_absent_reason = "AI 评估权重为 0，未参与本次评分"
-
-        # 风险预警（独立模块）：LLM 证据缺席时各信号封顶「留意」
+        # 风险预警第一跳（独立模块）：LLM 证据缺席时各信号封顶「留意」，
+        # LLM 到位后由 _finalize_with_llm 带证据重判
         try:
             result.risk_assessment = RiskSignalService().assess(
-                conversation_id, metrics, stats=stats, llm_result=llm_result
+                conversation_id, metrics, stats=stats, llm_result=None
             )
         except Exception as risk_e:
             logger.warning("[风险预警] 判定跳过: %s", risk_e)
             result.risk_assessment = None
 
         result.progress_percent = 79
-    
+        return _LocalDimOutcome(
+            llm_service=llm_service,
+            weights=weights,
+            metrics=metrics,
+            llm_context=llm_context,
+            llm_account_wxid=llm_account_wxid,
+        )
+
+    def _evaluate_llm_dimension(
+        self,
+        llm_service: Any,
+        conversation_id: int,
+        account_wxid: str,
+        context: Dict[str, str],
+        metrics: EngagementMetrics,
+        cancel_event: Optional[threading.Event] = None,
+    ) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
+        """LLM 关系评估：子线程跑远程调用，任务线程 0.5s 轮询取消。
+
+        同步直调会让取消/「跳过 AI 评估」卡满整个远程调用（~100s），
+        沿用本地维并行的 futures 形态——取消立即抛 AnalysisCancelled，
+        在途 HTTP 由 daemon 线程自然跑完后丢弃。缺席（样本不足/脱敏
+        不可用/超时等 Absent，或输出结构异常）统一转 (None, 文案)，
+        不杀死已完成的本地结果。
+
+        返回 (llm_result, absent_reason)：二者互斥；全 None 时空载荷。
+        """
+        from .relationship_llm_service import RelationshipLLMAbsent
+        from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait as futures_wait
+
+        pool = ThreadPoolExecutor(max_workers=1)
+        try:
+            fut = pool.submit(
+                llm_service.evaluate,
+                conversation_id,
+                account_wxid=account_wxid,
+                context=context,
+                metrics=metrics,
+            )
+            pending = {fut}
+            while pending:
+                done, pending = futures_wait(
+                    pending, timeout=0.5, return_when=FIRST_EXCEPTION
+                )
+                self._check_cancelled(cancel_event)
+
+            try:
+                llm_result = fut.result()
+            except RelationshipLLMAbsent as absent:
+                # 真因（网络失败/解析失败等）只在 debug 留完整链，缺席
+                # 本身是正常分支不刷 info 噪音
+                logger.debug("[关系评估] 维度缺席原因", exc_info=absent)
+                return None, str(absent)
+            except Exception as eval_error:
+                # 非 Absent 异常同样转缺席：模型输出结构异常（sub_scores
+                # 为数组、evidence 为对象等）不应炸掉整个分析——本地四维
+                # 结果全部丢弃，用户点全面分析只得到整体报错
+                logger.warning("[关系评估] 评估异常转缺席: %s", eval_error)
+                return None, f"评估异常: {eval_error}"
+            if not llm_result:
+                return None, "评估返回空结果"
+            return llm_result, None
+        finally:
+            pool.shutdown(wait=False)
+
+    @staticmethod
+    def _reset_dimension_weights(
+        result: AffinityAnalysisResult, weights: Dict[str, float]
+    ) -> None:
+        """本地维度权重复位为声明值。
+
+        部分结果落库前 _calculate_overall_score 已把 weight 原地归一
+        （在场维和恰为 1.0），LLM 到位后直接再归一会双次归一（分母
+        1.0+llm 而非声明和）——先复位，与全量分析的装配口径对齐。
+        """
+        for dim_key in (
+            "interaction_investment",
+            "emotional_resonance",
+            "closeness_signals",
+            "preference_compatibility",
+        ):
+            dim = getattr(result, dim_key, None)
+            if dim is not None:
+                dim.weight = weights[dim_key]
+                dim.weighted_score = dim.score * weights[dim_key]
+
+    def _finalize_with_llm(
+        self,
+        result: AffinityAnalysisResult,
+        config: AffinityConfig,
+        metrics: EngagementMetrics,
+        llm_result: Dict[str, Any],
+        weights: Dict[str, float],
+    ) -> None:
+        """LLM 维装配 → 风险预警带证据重判 → 权重归一+总分+解释。
+
+        全量分析与 retry_llm_relationship 补评共用（单一事实来源）；
+        调用前须先 _reset_dimension_weights 复位本地维权重。
+        """
+        confidence_meta = dict(llm_result.get("meta") or {})
+        confidence_meta["evidence"] = llm_result.get("evidence") or []
+        result.llm_relationship = DimensionScore(
+            name="AI 关系评估",
+            score=llm_result['score'],
+            weight=weights['llm_relationship'],
+            weighted_score=llm_result['score'] * weights['llm_relationship'],
+            interpretation=llm_result.get('insight') or "LLM 关系评估完成",
+            sub_scores=llm_result['sub_scores'],
+            confidence_meta=confidence_meta,
+        )
+        result.llm_relationship_absent_reason = None
+        logger.info(
+            "LLM 关系评估完成: %.1f分 (模型: %s)",
+            llm_result['score'],
+            (llm_result.get("meta") or {}).get("model_name", ""),
+        )
+
+        # 风险预警随 LLM 证据到位重判（此前无证据各信号封顶「留意」）
+        try:
+            stats = self.preprocessing.get_preprocessed_statistics(result.conversation_id)
+            result.risk_assessment = RiskSignalService().assess(
+                result.conversation_id, metrics, stats=stats, llm_result=llm_result
+            )
+        except Exception as risk_e:
+            logger.warning("[风险预警] 重判跳过: %s", risk_e)
+
+        # 权重归一 + 总分 + 解释重算（LLM 维在场后归一基组变化）
+        self._calculate_overall_score(result, config)
+        result.overall_interpretation = self._generate_overall_interpretation(
+            result.overall_score
+        )
+
+    def _on_local_complete(self, conversation_id: int) -> None:
+        """本地维度完成点：清 stale + 快照消息集 + 记忆索引入队。
+
+        提前到 LLM 阶段之前——本地四维已覆盖全部消息（stale 徽标是
+        消息覆盖属性，LLM 维不改变覆盖面）；RAG 嵌入推理与 LLM 远程
+        等待天然并行，记忆更早可用。
+        """
+        try:
+            from .analysis_state import mark_analysis_complete
+
+            mark_analysis_complete(conversation_id)
+        except Exception as state_e:
+            logger.debug("[分析状态] 完成标记跳过: %s", state_e)
+
+        # 全面分析完成点：构建该联系人记忆索引。导入后默认冷构建
+        # （不自动建），此处是主动构建入口——分析完成后用户预期记忆
+        # 随即可用；联系人画像仍由用户在洞察页手动触发生成。
+        try:
+            from ...db.connection import get_db, optimize_query_plans
+            from ..realtime.rag.indexer import RagIndexQueue
+
+            row = get_db().execute(
+                "SELECT account_wxid FROM conversations WHERE id = ? LIMIT 1",
+                (conversation_id,),
+            ).fetchone()
+            if row and str(row["account_wxid"] or "").strip():
+                RagIndexQueue.enqueue(str(row["account_wxid"]), int(conversation_id))
+            # 分析链路大量批写缓存（sentiment/preprocessed），顺手收集
+            optimize_query_plans()
+        except Exception as rag_e:
+            logger.debug("[分析完成] 记忆索引构建入队跳过: %s", rag_e)
+
     def _calculate_overall_score(
         self,
         result: AffinityAnalysisResult,
@@ -1069,8 +1157,18 @@ class AffinityAnalysisService:
         }, sort_keys=True, ensure_ascii=False)
         return hashlib.sha1(fingerprint_payload.encode("utf-8")).hexdigest()[:12]
 
-    def _save_results(self, conversation_id: int, result: AffinityAnalysisResult):
-        """保存分析结果到数据库"""
+    def _save_results(
+        self,
+        conversation_id: int,
+        result: AffinityAnalysisResult,
+        record_history: bool = True,
+    ):
+        """保存分析结果到数据库。
+
+        record_history=False 用于本地维度先行的部分结果落库：一次全面
+        分析只在终态保存落一行历史（趋势比较最近两行，同次运行自比
+        会污染涨跌口径），部分结果不落行。
+        """
         try:
             cache_updated_at = int(time.time())
             result.cache_version = self.CACHE_SCHEMA_VERSION
@@ -1095,7 +1193,11 @@ class AffinityAnalysisService:
                 "analysis_timestamp": result.analysis_timestamp,
                 "analysis_duration_ms": result.analysis_duration_ms,
                 "task_id": result.task_id,
-                "status": result.status,
+                # 存储态恒为 completed：部分结果（LLM 评估中 sentinel）与
+                # 终态都是可展示结果，靠 absent_reason 区分；内存任务态
+                # llm_pending 不进存储——_load_cached_scores 只认 completed，
+                # 写进去切人/重启后部分结果会被整体拒绝
+                "status": "completed",
                 "cache_version": result.cache_version,
                 "cache_updated_at": result.cache_updated_at,
                 "analysis_caliber": self.CALIBER_VERSION,
@@ -1113,19 +1215,20 @@ class AffinityAnalysisService:
             get_db().commit()
             logger.debug(f"分析结果已保存 (会话 {conversation_id})")
 
-            # 历史分数落库（只增不删；失败不影响主流程）
-            try:
-                from .affinity_history import record_score_history
+            # 历史分数落库（只增不删；部分结果不落行，失败不影响主流程）
+            if record_history:
+                try:
+                    from .affinity_history import record_score_history
 
-                stats = self.preprocessing.get_preprocessed_statistics(conversation_id)
-                record_score_history(
-                    conversation_id,
-                    result,
-                    stats=stats,
-                    config_snapshot={"config_fingerprint": config_fingerprint},
-                )
-            except Exception as hist_e:
-                logger.debug(f"[历史分数] 落库跳过: {hist_e}")
+                    stats = self.preprocessing.get_preprocessed_statistics(conversation_id)
+                    record_score_history(
+                        conversation_id,
+                        result,
+                        stats=stats,
+                        config_snapshot={"config_fingerprint": config_fingerprint},
+                    )
+                except Exception as hist_e:
+                    logger.debug(f"[历史分数] 落库跳过: {hist_e}")
 
         except Exception as e:
             logger.error(f"保存分析结果失败: {e}")

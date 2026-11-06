@@ -556,10 +556,11 @@ class AffinityApiMixin:
         Returns:
             {
                 "ok": True,
-                "status": "running" | "completed" | "failed",
+                "status": "running" | "llm_pending" | "completed" | "failed",
                 "progress_percent": 40,
                 "current_step": "计算维度评分",
-                "result": {...}  // 仅当 status == "completed" 时返回完整结果
+                "result": {...}  // completed 或 llm_pending（本地四维已出、
+                                 // AI 评估进行中的部分结果）时返回完整结果
             }
         """
         try:
@@ -605,8 +606,8 @@ class AffinityApiMixin:
                 "current_step": progress.current_step
             }
 
-            # 分析完成时，返回完整结果
-            if progress.status == "completed":
+            # 分析完成或本地阶段就绪时，返回完整结果（前端渐进渲染部分结果）
+            if progress.status in ("completed", "llm_pending"):
                 response["result"] = asdict(progress)
 
             # 分析失败时，返回错误信息
@@ -631,9 +632,27 @@ class AffinityApiMixin:
 
             # 只读路径不 reload（此前每次打开联系人页都重编译 7 个分析
             # 模块+重建正则/词库，纯浪费；热重载语义仅分析写入路径需要）
-            from ...services.analysis.affinity_analysis_service import AffinityAnalysisService
+            from ...services.analysis.affinity_analysis_service import (
+                LLM_EVALUATING_REASON,
+                AffinityAnalysisService,
+            )
             service = AffinityAnalysisService()
             result = service.get_scores(conversation_id)
+
+            # 残留「评估中」sentinel 的归一：应用在 AI 评估期间退出/崩溃会
+            # 留下部分结果缓存——无运行任务（含挂在历史实例上的）时改写为
+            # 可重试口径，现有重试按钮直接补齐；评估仍在跑则保持原样
+            if (
+                result is not None
+                and result.llm_relationship is None
+                and result.llm_relationship_absent_reason == LLM_EVALUATING_REASON
+            ):
+                busy = any(
+                    inst.find_running_task(int(conversation_id))
+                    for inst in self._all_affinity_services()
+                )
+                if not busy:
+                    result.llm_relationship_absent_reason = "上次 AI 评估未完成，可点击重试补齐"
 
             freshness = {"stale": False, "pending_message_count": 0}
             try:

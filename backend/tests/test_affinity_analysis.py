@@ -12,6 +12,8 @@ from unittest.mock import MagicMock, patch, PropertyMock
 # 添加项目路径
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
+from app.webview.api.affinity import AffinityApiMixin  # noqa: E402
+
 
 class TestAffinityAnalysisService:
     """测试好感度分析编排器"""
@@ -479,12 +481,353 @@ class TestAffinityAnalysisResult:
     def test_result_defaults(self):
         """测试默认值"""
         from app.services.analysis.affinity_analysis_service import AffinityAnalysisResult
-        
+
         result = AffinityAnalysisResult()
-        
+
         assert result.overall_score == 0.0
         assert result.status == "pending"
         assert result.progress_percent == 0
+
+
+def _fake_llm_payload(score=72.0):
+    """LLM 关系评估的正常返回载荷（与 relationship_llm_service 契约一致）"""
+    return {
+        "score": score,
+        "insight": "整体关系积极，互动稳定",
+        "sub_scores": {"communication": 75.0, "trust": 70.0},
+        "evidence": ["对方主动分享日常"],
+        "meta": {"model_name": "test-model"},
+    }
+
+
+class TestProgressiveTwoPhase:
+    """本地四维先行、LLM 评估后补的双阶段编排"""
+
+    @pytest.fixture
+    def mock_db(self):
+        mock = MagicMock()
+        mock.execute.return_value.fetchone.return_value = None
+        return mock
+
+    @pytest.fixture
+    def mock_stats(self):
+        from app.services.analysis.preprocessing_orchestrator import PreprocessedStatistics
+
+        stats = PreprocessedStatistics()
+        stats.total_message_count = 1000
+        stats.conversation_duration_days = 30.0
+        stats.average_message_length = 25.0
+        stats.total_sessions = 50
+        stats.sender_initiated_count = 20
+        stats.contact_initiated_count = 30
+        return stats
+
+    @pytest.fixture
+    def service(self, mock_db, mock_stats):
+        """与 TestAffinityAnalysisService 同款可跑通 analyze 的 mock 基座
+        （LLM 服务默认 None，测试内按需 patch 成 fake_llm）"""
+        with patch('app.services.analysis.affinity_analysis_service.get_db', return_value=mock_db), \
+             patch('app.services.analysis.affinity_analysis_service.PreprocessingOrchestrator') as MockPreprocessing, \
+             patch('app.services.analysis.affinity_analysis_service.AffinityConfigService') as MockConfig, \
+             patch('app.services.analysis.affinity_analysis_service.PreferenceCompatibilityService') as MockPreference, \
+             patch('app.services.analysis.affinity_analysis_service.EmotionalResonanceService') as MockResonance, \
+             patch('app.services.analysis.affinity_analysis_service.InteractionInvestmentService') as MockInvestment, \
+             patch('app.services.analysis.affinity_analysis_service.ClosenessSignalsService') as MockCloseness, \
+             patch('app.services.analysis.affinity_analysis_service.EngagementMetricsService') as MockEngagement, \
+             patch('app.services.analysis.affinity_analysis_service.RiskSignalService') as MockRisk, \
+             patch('app.services.analysis.relationship_llm_service.build_relationship_llm_service', return_value=None):
+
+            MockPreprocessing.return_value.orchestrate_preprocessing.return_value = mock_stats
+            MockPreprocessing.return_value.get_preprocessed_statistics.return_value = mock_stats
+            from app.services.analysis.affinity_config import AffinityConfig
+            MockConfig.return_value.get_config.return_value = AffinityConfig()
+
+            MockResonance.return_value.calculate_overall_resonance.return_value = {
+                'overall_score': 80.0,
+                'interpretation': '共鸣良好',
+                'sub_scores': {k: 80.0 for k in (
+                    'bidirectional_positive_response', 'polarity_consistency',
+                    'intensity_matching', 'valence_balance', 'perfunctory_reply',
+                    'empathy_recognition', 'negative_resolution',
+                )},
+                'bonus_scores': {'base_resonance_score': 80.0},
+            }
+            MockCloseness.return_value.calculate_overall_closeness.return_value = {
+                'overall_score': 70.0,
+                'interpretation': '亲近信号中等',
+                'sub_scores': {k: 50.0 for k in (
+                    'address_term_evolution', 'late_night_engagement', 'active_coverage',
+                    'greeting_initiation', 'icebreaking', 'community_expression',
+                )},
+                'bonus_scores': {'total_bonus': 5.0},
+                'confidence_meta': {},
+            }
+
+            from app.services.analysis.interaction_investment_service import InteractionInvestmentResult
+            investment_result = InteractionInvestmentResult()
+            investment_result.overall_score = 75.0
+            investment_result.interpretation = "投入较高"
+            investment_result.confidence_meta = {}
+            MockInvestment.return_value.calculate_scores.return_value = investment_result
+
+            from app.services.analysis.preference_compatibility_service import PreferenceCompatibilityResult
+            preference_result = PreferenceCompatibilityResult()
+            preference_result.overall_score = 60.0
+            preference_result.interpretation = "兴趣较契合"
+            MockPreference.return_value.calculate_scores.return_value = preference_result
+
+            MockEngagement.return_value.compute.return_value = MagicMock()
+            MockRisk.return_value.assess.return_value = None
+
+            from app.services.analysis.affinity_analysis_service import AffinityAnalysisService
+            yield AffinityAnalysisService()
+
+    def _settings_saves(self, mock_db):
+        """按顺序取出全部 settings 主缓存写入的 JSON dict"""
+        saves = []
+        for call in mock_db.execute.call_args_list:
+            if "INSERT OR REPLACE INTO settings" in call.args[0]:
+                saves.append(json.loads(call.args[1][1]))
+        return saves
+
+    def test_partial_save_then_final(self, service, mock_db):
+        """LLM 在场：本地终态先落部分结果（sentinel + 存储态 completed），
+        LLM 返回后覆盖为终态——evaluate 被调时应观察到 llm_pending 任务态"""
+        from app.services.analysis.affinity_analysis_service import LLM_EVALUATING_REASON
+
+        observed = {}
+
+        def evaluate(conv_id, **kw):
+            task = next(iter(service._task_status.values()))
+            observed["status"] = task.status
+            observed["absent"] = task.llm_relationship_absent_reason
+            return _fake_llm_payload()
+
+        fake_llm = MagicMock()
+        fake_llm.evaluate.side_effect = evaluate
+        with patch(
+            'app.services.analysis.relationship_llm_service.build_relationship_llm_service',
+            return_value=fake_llm,
+        ):
+            result = service.analyze(1, force_reanalyze=True)
+
+        # 阶段 2 起跑时的任务态：llm_pending + sentinel（供前端渐进渲染）
+        assert observed["status"] == "llm_pending"
+        assert observed["absent"] == LLM_EVALUATING_REASON
+        # 终态
+        assert result.status == "completed"
+        assert result.llm_relationship is not None
+        assert result.llm_relationship.score == 72.0
+        assert result.llm_relationship_absent_reason is None
+
+        # 两次主缓存写入：部分（sentinel/无 LLM/权重本地归一）→ 终态（LLM 在场）
+        saves = self._settings_saves(mock_db)
+        assert len(saves) == 2
+        assert saves[0]["status"] == "completed"          # 存储态恒为 completed
+        assert saves[0]["llm_relationship"] is None
+        assert saves[0]["llm_relationship_absent_reason"] == LLM_EVALUATING_REASON
+        assert saves[1]["llm_relationship"] is not None
+        assert saves[1]["llm_relationship_absent_reason"] is None
+
+    def test_partial_save_skips_history_final_records_once(self, service, mock_db):
+        """一次全面分析只在终态保存落一行历史（部分结果不落，防趋势自比）"""
+        fake_llm = MagicMock()
+        fake_llm.evaluate.return_value = _fake_llm_payload()
+        with patch(
+            'app.services.analysis.relationship_llm_service.build_relationship_llm_service',
+            return_value=fake_llm,
+        ), patch(
+            'app.services.analysis.affinity_history.record_score_history'
+        ) as mock_history:
+            service.analyze(1, force_reanalyze=True)
+
+        assert mock_history.call_count == 1
+
+    def test_on_local_complete_fires_once(self, service):
+        """清 stale + 记忆索引入队在本地完成点恰触发一次（LLM 在场与否同口径）"""
+        fake_llm = MagicMock()
+        fake_llm.evaluate.return_value = _fake_llm_payload()
+        for llm_mock in (fake_llm, None):
+            for tid in list(service._task_status):
+                service._task_status.pop(tid, None)
+            with patch(
+                'app.services.analysis.relationship_llm_service.build_relationship_llm_service',
+                return_value=llm_mock,
+            ), patch.object(
+                type(service), '_on_local_complete'
+            ) as mock_local_complete:
+                service.analyze(2, force_reanalyze=True)
+
+            assert mock_local_complete.call_count == 1
+
+    def test_on_local_complete_enqueues_rag_when_account_known(self, service, mock_db):
+        """账号可查时本地完成点入队记忆索引（其余跳过条件属 bridge 侧）"""
+        row = MagicMock()
+        row.__getitem__.side_effect = lambda k: "wxid_acc" if k == "account_wxid" else ""
+        mock_db.execute.return_value.fetchone.return_value = row
+        with patch('app.db.connection.get_db', return_value=mock_db), \
+             patch('app.db.connection.optimize_query_plans'), \
+             patch('app.services.analysis.analysis_state.mark_analysis_complete'), \
+             patch('app.services.realtime.rag.indexer.RagIndexQueue.enqueue') as mock_enqueue:
+            service._on_local_complete(5)
+
+        mock_enqueue.assert_called_once_with("wxid_acc", 5)
+
+    def test_llm_absent_error_still_saves_final(self, service, mock_db):
+        """评估异常转缺席：部分结果照落，终态带真因文案与历史行"""
+        fake_llm = MagicMock()
+        fake_llm.evaluate.side_effect = RuntimeError("输出结构异常")
+        with patch(
+            'app.services.analysis.relationship_llm_service.build_relationship_llm_service',
+            return_value=fake_llm,
+        ):
+            result = service.analyze(1, force_reanalyze=True)
+
+        assert result.status == "completed"
+        assert result.llm_relationship is None
+        assert "评估异常" in (result.llm_relationship_absent_reason or "")
+        saves = self._settings_saves(mock_db)
+        assert len(saves) == 2
+        assert "评估异常" in saves[1]["llm_relationship_absent_reason"]
+
+    def test_cancel_during_llm_phase_keeps_partial_result(self, service, mock_db):
+        """评估中取消：状态 cancelled，部分结果留在缓存（可经补评恢复）"""
+        import threading
+        import time as _time
+
+        cancel_event = threading.Event()
+
+        def evaluate(conv_id, **kw):
+            cancel_event.set()       # 模拟用户在远程调用期间点停止
+            _time.sleep(0.3)         # 在途调用，孤儿线程自然跑完丢弃
+            return _fake_llm_payload()
+
+        fake_llm = MagicMock()
+        fake_llm.evaluate.side_effect = evaluate
+        with patch(
+            'app.services.analysis.relationship_llm_service.build_relationship_llm_service',
+            return_value=fake_llm,
+        ):
+            result = service.analyze(1, force_reanalyze=True, cancel_event=cancel_event)
+
+        assert result.status == "cancelled"
+        # 恰一次主缓存写入 = 部分结果（终态保存未到达）
+        saves = self._settings_saves(mock_db)
+        assert len(saves) == 1
+        assert saves[0]["llm_relationship"] is None
+        assert saves[0]["llm_relationship_absent_reason"] is not None
+
+    def test_without_llm_skips_pending_state(self, service, mock_db):
+        """LLM 不在场：不经过 llm_pending/部分落库，直接终态一次保存"""
+        save_calls = []
+
+        orig_save = service._save_results
+
+        def spy_save(conv_id, result, record_history=True):
+            save_calls.append((result.status, record_history))
+            return orig_save(conv_id, result, record_history=record_history)
+
+        service._save_results = spy_save
+        service.analyze(1, force_reanalyze=True)
+
+        assert save_calls == [("completed", True)]
+
+
+class _FakeProgressService:
+    """bridge 进度查询的最小桩：直接返回预置任务结果"""
+
+    def __init__(self, progress):
+        self._progress = progress
+
+    def get_progress(self, task_id):
+        return self._progress
+
+
+class _AffinityBridge(AffinityApiMixin):
+    """组合好感度 mixin 的直调桥（生产 Bridge 同构）"""
+
+    def __init__(self, service=None, services=None):
+        if service is not None:
+            self._affinity_service = service
+        if services is not None:
+            self._affinity_services = services
+
+
+class TestAffinityBridgeProgressive:
+    """bridge 层：llm_pending 带部分结果 + 残留 sentinel 归一"""
+
+    def test_progress_carries_result_on_llm_pending(self):
+        from app.services.analysis.affinity_analysis_service import AffinityAnalysisResult
+
+        progress = AffinityAnalysisResult()
+        progress.status = "llm_pending"
+        progress.progress_percent = 85
+        progress.overall_score = 70.0
+
+        bridge = _AffinityBridge(service=_FakeProgressService(progress))
+        response = bridge.get_affinity_progress("t1")
+
+        assert response["ok"] is True
+        assert response["status"] == "llm_pending"
+        assert response["result"]["overall_score"] == 70.0
+
+    def test_scores_normalizes_stale_sentinel_when_idle(self):
+        """评估中退出/崩溃的残留 sentinel：无运行任务时改写为可重试口径"""
+        from app.services.analysis.affinity_analysis_service import (
+            LLM_EVALUATING_REASON,
+            AffinityAnalysisResult,
+        )
+
+        cached = AffinityAnalysisResult()
+        cached.conversation_id = 1
+        cached.llm_relationship = None
+        cached.llm_relationship_absent_reason = LLM_EVALUATING_REASON
+
+        fake_service = MagicMock()
+        fake_service.get_scores.return_value = cached
+        fake_service.find_running_task.return_value = None
+
+        module = "app.services.analysis.affinity_analysis_service"
+        with patch(f"{module}.AffinityAnalysisService", return_value=fake_service), patch(
+            "app.services.analysis.analysis_state.get_analysis_freshness",
+            return_value={"stale": False, "pending_message_count": 0},
+        ), patch(
+            "app.services.analysis.affinity_history.compute_trend", return_value={}
+        ):
+            response = _AffinityBridge(service=fake_service).get_affinity_scores(1)
+
+        assert response["ok"] is True
+        assert response["result"]["llm_relationship_absent_reason"] == "上次 AI 评估未完成，可点击重试补齐"
+
+    def test_scores_keeps_sentinel_while_running(self):
+        """评估仍在跑（任务挂在任一实例上）：sentinel 原样，前端经进度通道渲染"""
+        from app.services.analysis.affinity_analysis_service import (
+            LLM_EVALUATING_REASON,
+            AffinityAnalysisResult,
+        )
+
+        cached = AffinityAnalysisResult()
+        cached.conversation_id = 1
+        cached.llm_relationship = None
+        cached.llm_relationship_absent_reason = LLM_EVALUATING_REASON
+
+        idle_service = MagicMock()
+        idle_service.get_scores.return_value = cached
+        idle_service.find_running_task.return_value = None
+        busy_service = MagicMock()
+        busy_service.find_running_task.return_value = "affinity_1_running"
+
+        module = "app.services.analysis.affinity_analysis_service"
+        with patch(f"{module}.AffinityAnalysisService", return_value=idle_service), patch(
+            "app.services.analysis.analysis_state.get_analysis_freshness",
+            return_value={"stale": False, "pending_message_count": 0},
+        ), patch(
+            "app.services.analysis.affinity_history.compute_trend", return_value={}
+        ):
+            bridge = _AffinityBridge(service=idle_service, services=[busy_service])
+            response = bridge.get_affinity_scores(1)
+
+        assert response["result"]["llm_relationship_absent_reason"] == LLM_EVALUATING_REASON
 
 
 if __name__ == "__main__":

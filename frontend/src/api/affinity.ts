@@ -113,7 +113,7 @@ export interface AffinityAnalysisResult {
     task_id: string
     cache_version: number
     cache_updated_at: number
-    status: 'pending' | 'running' | 'completed' | 'failed'
+    status: 'pending' | 'running' | 'llm_pending' | 'completed' | 'failed' | 'cancelled'
     progress_percent: number
     current_step: string
     error?: string
@@ -137,7 +137,7 @@ export interface AffinityConfig {
 /** 进度查询结果 */
 export interface AffinityProgressResult {
     ok: boolean
-    status: 'pending' | 'running' | 'completed' | 'failed'
+    status: 'pending' | 'running' | 'llm_pending' | 'completed' | 'failed' | 'cancelled'
     progress_percent: number
     current_step: string
     result?: AffinityAnalysisResult

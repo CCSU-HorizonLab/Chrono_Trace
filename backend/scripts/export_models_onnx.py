@@ -3,11 +3,18 @@
 产出（models/<name>/onnx/）：
   model.onnx        fp32 基准
   model.fp16.onnx   半精度（发行产物——int8 动态量化对该模型精度崩坏，实测 cosine 0.37-0.70，弃用）
+  model.int8.onnx   分类器 int8 实验产物（--int8 显式开启，不发行——见下方结论）
   tokenizer/        原样复制 HF tokenizer 文件
+
+分类器 int8 动态量化门槛验收（2026-11，i7-8665U，会话 1599 真实语料 3000 条，
+对 fp16 生产基线）：吞吐 1.56× 达标，但 argmax 一致率 per-tensor 95.3% /
+per-channel 94.1% / 排除末层 MatMul 仍 95.3%——精度损失分布于各层非尾部
+集中，98% 门槛无路可达，弃用。复评时跑 export --int8 + verify --int8。
 
 用法：
   python export_models_onnx.py                # 全部模型
   python export_models_onnx.py --only embedding
+  python export_models_onnx.py --int8         # 分类器额外产 int8 实验件
 """
 import argparse
 import shutil
@@ -20,7 +27,21 @@ sys.path.insert(0, str(backend_dir))
 TOKENIZER_FILES = ("tokenizer.json", "tokenizer_config.json", "vocab.txt", "special_tokens_map.json")
 
 
-def export_one(model_dir: Path, out_dir: Path, model_type: str) -> None:
+def quantize_classifier_int8(fp32_path: Path, out_path: Path) -> None:
+    """分类器 int8 动态量化（只量化 MatMul 权重，per-tensor——门槛验收
+    变体实测里精度最好的一个，结论见模块 docstring，未达 98% 不发行）。"""
+    from onnxruntime.quantization import quantize_dynamic, QuantType
+
+    quantize_dynamic(
+        str(fp32_path), str(out_path),
+        weight_type=QuantType.QInt8,
+        per_channel=False,
+        op_types_to_quantize=["MatMul"],
+    )
+    print(f"[量化] int8 → {out_path} ({out_path.stat().st_size / 1e6:.0f}MB)")
+
+
+def export_one(model_dir: Path, out_dir: Path, model_type: str, int8: bool = False) -> None:
     import torch
     from transformers import AutoModel, AutoTokenizer
 
@@ -86,7 +107,8 @@ def export_one(model_dir: Path, out_dir: Path, model_type: str) -> None:
     print(f"[导出] {model_dir.name} fp32 → {onnx_path} ({onnx_path.stat().st_size / 1e6:.0f}MB)")
 
     # fp16 半精度：对该 BERT 权重分布精度无损（实测 cosine=1.0）；
-    # int8（含 per-channel）实测崩坏（cosine 0.37-0.70）不可用。
+    # 嵌入 int8（含 per-channel）实测崩坏（cosine 0.37-0.70）不可用，
+    # 分类器 int8 也未达门槛（见模块 docstring）。
     # 精度择优（CPU 实测）：嵌入 fp32 快 32%——发行产物即上面导出的
     # fp32，跳过 fp16 转换；分类器 fp16 反快 14%——仍转换
     if model_type == "embedding":
@@ -101,6 +123,8 @@ def export_one(model_dir: Path, out_dir: Path, model_type: str) -> None:
         )
         onnx.save(fp16_model, str(fp16_path))
         print(f"[量化] fp16 → {fp16_path} ({fp16_path.stat().st_size / 1e6:.0f}MB)")
+        if int8:
+            quantize_classifier_int8(onnx_path, out_dir / "model.int8.onnx")
 
     # tokenizer 原样复制 + 生成 fast tokenizer.json（运行时 tokenizers 直读，
     # 无 vocab.txt-only 模型也免 transformers 依赖）
@@ -118,6 +142,7 @@ def export_one(model_dir: Path, out_dir: Path, model_type: str) -> None:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--only", choices=["embedding", "sentiment"], default=None)
+    parser.add_argument("--int8", action="store_true", help="分类器额外产 int8 实验件（门槛验收用）")
     args = parser.parse_args()
 
     from app.services.model_paths import (
@@ -136,7 +161,7 @@ def main():
         if not model_dir.exists():
             print(f"[跳过] {name}: 模型目录不存在 {model_dir}")
             continue
-        export_one(model_dir, model_dir / "onnx", mtype)
+        export_one(model_dir, model_dir / "onnx", mtype, int8=args.int8)
 
 
 if __name__ == "__main__":

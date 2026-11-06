@@ -7,6 +7,9 @@
 
 用法：
   python verify_onnx_equivalence.py [--sample 2000] [--fp32]（跑 fp32 对照）
+  python verify_onnx_equivalence.py --int8   （分类器 int8 门槛：argmax≥98% 且吞吐≥1.3×，
+                                               对 fp16 生产基线，无需 torch。2026-11 实测
+                                               吞吐 1.56× 过 / argmax 95.3% 不过 → 弃用）
 """
 import argparse
 import sqlite3
@@ -89,10 +92,15 @@ class OnnxEmbedder:
 
 class OnnxClassifier:
     def __init__(self, model_path: Path):
+        import os
+
         import onnxruntime as ort
 
+        # 与生产同款线程配置（physical cores），两侧一致保证吞吐比公平
+        so = ort.SessionOptions()
+        so.intra_op_num_threads = max(1, (os.cpu_count() or 4) // 2)
         self.session = ort.InferenceSession(
-            str(model_path), providers=["CPUExecutionProvider"]
+            str(model_path), sess_options=so, providers=["CPUExecutionProvider"]
         )
 
     def argmax(self, texts: list[str], tokenizer) -> np.ndarray:
@@ -118,11 +126,72 @@ class OnnxClassifier:
         return np.concatenate(preds)
 
 
+def run_int8_classifier_gate(sample: int) -> int:
+    """分类器 int8 门槛：argmax 一致率≥98% 且吞吐≥1.3×（对 fp16 生产基线）。"""
+    from app.db.connection import DatabaseConnection
+
+    DatabaseConnection.initialize(str(Path(__file__).parent.parent / "data/chrono_trace.db"))
+
+    from app.services.model_paths import SENTIMENT_MODEL_DIRNAME, get_model_root_dir
+    from app.services.analysis.onnx_inference import _load_tokenizer
+
+    sent_dir = get_model_root_dir() / SENTIMENT_MODEL_DIRNAME / "onnx"
+    int8_path = sent_dir / "model.int8.onnx"
+    if not int8_path.exists():
+        print(f"[缺件] {int8_path} 不存在，先跑 export_models_onnx.py --int8")
+        return 1
+
+    texts = [t for t in sample_texts(sample) if t and t.strip()]
+    print(f"[采样] {len(texts)} 条文本")
+
+    tokenizer = _load_tokenizer(sent_dir / "tokenizer")
+    tokenizer.enable_truncation(max_length=128)
+
+    def timed(model_path: Path, tag: str):
+        clf = OnnxClassifier(model_path)
+        clf.argmax(texts[:256], tokenizer)  # 预热
+        best = None
+        preds = None
+        for _ in range(2):
+            t0 = time.perf_counter()
+            preds = clf.argmax(texts, tokenizer)
+            el = time.perf_counter() - t0
+            best = el if best is None else min(best, el)
+        rate = len(texts) / best
+        print(f"  {tag}: {best:.2f}s  {rate:.1f} texts/s")
+        return preds, rate
+
+    print("== 分类器 int8 门槛 ==")
+    preds_fp16, rate_fp16 = timed(sent_dir / "model.fp16.onnx", "fp16（生产基线）")
+    preds_int8, rate_int8 = timed(int8_path, "int8")
+    agree = (preds_fp16 == preds_int8).mean()
+    ratio = rate_int8 / rate_fp16
+    print(f"  argmax 一致率={agree:.4f}  吞吐比={ratio:.2f}x")
+
+    gates = {
+        "分类一致率≥0.98": agree >= 0.98,
+        "吞吐比≥1.3": ratio >= 1.3,
+    }
+    print("\n== 门槛 ==")
+    all_pass = True
+    for name, ok in gates.items():
+        print(f"  {'✅' if ok else '❌'} {name}")
+        all_pass &= ok
+    verdict = "[+] 全部通过（采纳：加载候选加 int8 优先 + bump CACHE_SCHEMA_VERSION）" if all_pass \
+        else "[!] 未达标（弃用：删除 int8 件，保留 fp16 发行）"
+    print(verdict)
+    return 0 if all_pass else 1
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--sample", type=int, default=2000)
     parser.add_argument("--fp32", action="store_true", help="跑 fp32 onnx 对照")
+    parser.add_argument("--int8", action="store_true", help="分类器 int8 门槛（fp16 基线，无需 torch）")
     args = parser.parse_args()
+
+    if args.int8:
+        sys.exit(run_int8_classifier_gate(args.sample))
 
     from app.db.connection import DatabaseConnection
 

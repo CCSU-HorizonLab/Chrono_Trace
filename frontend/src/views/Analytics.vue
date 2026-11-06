@@ -19,16 +19,19 @@
       </div>
 
       <div v-if="selectedConversationId" class="header-actions-group">
-        <CtButton variant="ghost" @click="showContextForm = true" :disabled="isGlobalAnalyzing">关系信息</CtButton>
-        <CtButton variant="ghost" @click="showKeywordsDialog = true" :disabled="isGlobalAnalyzing">配置喜好</CtButton>
+        <CtButton variant="ghost" @click="showContextForm = true" :disabled="isGlobalAnalyzing || llmPhase === 'running'">关系信息</CtButton>
+        <CtButton variant="ghost" @click="showKeywordsDialog = true" :disabled="isGlobalAnalyzing || llmPhase === 'running'">配置喜好</CtButton>
         <CtButton v-if="!isGroupConversation && analysisResult" variant="ghost" :loading="reportExporting" @click="handleExportReport">
           导出体检报告
         </CtButton>
-        <CtButton variant="primary" @click="handleStartGlobalAnalysis" :loading="isGlobalAnalyzing && !isStopping" class="btn-full-analysis">
-          {{ isGlobalAnalyzing ? "分析中..." : (hasCachedAffinityAnalysis ? "重新全面分析" : "开始全面分析") }}
+        <CtButton variant="primary" @click="handleStartGlobalAnalysis" :loading="isGlobalAnalyzing && !isStopping" :disabled="llmPhase === 'running'" class="btn-full-analysis">
+          {{ isGlobalAnalyzing ? "分析中..." : (llmPhase === 'running' ? "AI 评估中..." : (hasCachedAffinityAnalysis ? "重新全面分析" : "开始全面分析")) }}
         </CtButton>
         <CtButton v-if="isGlobalAnalyzing" variant="danger" @click="handleStopAnalysis" :loading="isStopping" class="btn-stop-analysis" style="margin-left: 8px;">
           停止
+        </CtButton>
+        <CtButton v-if="llmPhase === 'running'" variant="danger" @click="handleSkipLlmEvaluation" :loading="isStopping" class="btn-stop-analysis" style="margin-left: 8px;">
+          跳过 AI 评估
         </CtButton>
       </div>
     </div>
@@ -177,19 +180,24 @@
       </template>
     </div>
 
-    <!-- Analyzing State -->
-    <div v-if="isGlobalAnalyzing" class="empty-state">
+    <!-- Analyzing State（部分结果到达前占位；重分析期间旧结果保留在下方） -->
+    <div v-if="isGlobalAnalyzing && !analysisResult" class="empty-state">
       <div class="empty-icon spinning"><Loader2 :size="56" class="spin-icon" style="color: var(--ct-color-primary);" /></div>
       <p>正在分析中，请耐心等待...</p>
       <p class="empty-hint" style="display: inline-flex; align-items: center; gap: 6px;"><Lightbulb :size="14" style="color: var(--ct-color-info); flex-shrink: 0;" /> 我们正在处理特征提取和模型推理</p>
     </div>
 
-    <!-- Affinity Verdict Band + Detail Columns -->
-    <template v-if="analysisResult && !isGlobalAnalyzing">
+    <!-- Affinity Verdict Band + Detail Columns（渐进渲染：llm_pending 部分结果先显示） -->
+    <template v-if="analysisResult">
       <!-- 结论带：总分（多少）→ 雷达（形状）→ 解读（含义），从左到右一眼读完 -->
       <CtCard class="verdict-band">
         <div class="score-header">
           <span class="score-title">总体好感度</span>
+          <span
+            v-if="llmPhase === 'running'"
+            class="llm-phase-badge"
+            title="AI 关系评估完成后总分小幅更新"
+          ><Loader2 :size="12" class="spin-icon" /> AI 评估中</span>
           <div class="trend-badge" v-if="analysisResult.score_trend != null"
             :title="analysisResult.analysis_caliber ? '与上次分析的分数差（同评分口径）' : '与上次分析的分数差'">
             较上次 <span :class="analysisResult.score_trend >= 0 ? 'up' : 'down'">{{ analysisResult.score_trend > 0 ? '↑' : '↓' }}{{ Math.abs(analysisResult.score_trend).toFixed(1) }} 分</span>
@@ -230,6 +238,7 @@
             <div class="analysis-bubble">
               <p>{{ analysisResult.overall_interpretation }}</p>
             </div>
+            <p v-if="llmPhase === 'running'" class="llm-pending-note">总分暂按本地四维归一口径，AI 评估完成后小幅更新</p>
           </div>
         </div>
       </CtCard>
@@ -265,6 +274,10 @@
               :max-score="100"
               :weight="analysisResult.llm_relationship.weight"
               :interpretation="analysisResult.llm_relationship.interpretation" />
+            <div v-else-if="llmPhase === 'running'" class="llm-pending-card span-full">
+              <div class="llm-pending-head"><Loader2 :size="16" class="spin-icon" /> AI 关系评估 · 评估中…</div>
+              <p>本地四维已完成，AI 正在通读聊天记录生成关系评估</p>
+            </div>
           </div>
         </div>
 
@@ -293,7 +306,7 @@
           <SubScoreBreakdown v-if="analysisResult.llm_relationship" title="AI 关系评估"
             :sub-scores="analysisResult.llm_relationship.sub_scores"
             :notes="llmEvidenceNotes" />
-          <p v-else-if="analysisResult.llm_relationship_absent_reason" class="llm-absent-note">
+          <p v-else-if="analysisResult.llm_relationship_absent_reason && llmPhase !== 'running'" class="llm-absent-note">
             AI 关系评估未参与本次评分：{{ analysisResult.llm_relationship_absent_reason }}
             <button
               class="btn llm-retry-btn"
@@ -316,14 +329,14 @@
       <p class="empty-hint" style="display: inline-flex; align-items: center; gap: 6px;"><Lightbulb :size="14" style="color: var(--ct-color-info); flex-shrink: 0;" /> 互动特征包含：回响响应分布、主动性分析、话语权比例等客观指标</p>
     </div>
 
-    <!-- Analyzing State -->
-    <div v-if="isGlobalAnalyzing" class="empty-state">
+    <!-- Analyzing State（特征提取阶段完成即放开本页签） -->
+    <div v-if="isGlobalAnalyzing && !hasFeatures" class="empty-state">
       <div class="empty-icon spinning"><Loader2 :size="56" class="spin-icon" style="color: var(--ct-color-primary);" /></div>
       <p>正在分析中，请耐心等待...</p>
       <p class="empty-hint" style="display: inline-flex; align-items: center; gap: 6px;"><Lightbulb :size="14" style="color: var(--ct-color-info); flex-shrink: 0;" /> 我们正在处理特征提取和模型推理</p>
     </div>
 
-    <div v-if="hasFeatures && !isGlobalAnalyzing" class="features-layout">
+    <div v-if="hasFeatures" class="features-layout">
       <!-- Row 1: 4 small stat cards -->
       <div class="features-row-1">
         <CtCard class="feature-stat-card">
@@ -874,6 +887,7 @@ import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from
 import * as echarts from 'echarts'
 import { bridgeReady, api, type AnalysisDeviceMode } from '@/api/bridge'
 import { analyzeAffinity, getAffinityScores, getAffinityProgress, getRelationshipContext, retryLlmRelationship, type AffinityAnalysisResult } from '@/api/affinity'
+import { resolveAffinityPollAction } from '@/utils/affinityPoll'
 import { getScoreColor, HEAT_RAMP, chartPalette } from '@/components/charts/chartTheme'
 
 import FiltersBar from '@/components/analytics/FiltersBar.vue'
@@ -1035,6 +1049,9 @@ export default {
         const stats = ref<{ totalMessages: number; avgSentiment: number; activeDays: number; sessionCount: number } | null>(null)
         
         const analysisResult = ref<AffinityAnalysisResult | null>(null)
+        // AI 关系评估阶段机：本地四维先行渲染后 LLM 仍在评估（running）→
+        // 终态按 llm_relationship 在场与否置 done/absent；idle = 未在评估
+        const llmPhase = ref<'idle' | 'running' | 'done' | 'absent'>('idle')
         // 曾分析过但当前结果不可用（缓存版本过期）——空态给"需重新分析"解释
         // 而非伪装成从未分析
         const analysisStaleNotice = ref(false)
@@ -1757,6 +1774,7 @@ const showPortraitDialog = ref(false)
             selectedConversationId.value = null
             conversations.value = []
             analysisResult.value = null
+            llmPhase.value = 'idle'
             qaHistory.value = []
             qaStoppedReqId = null // 账号切换整页换血：停止回收登记一并作废
             qaIndexingHint.value = false
@@ -1812,6 +1830,7 @@ const showPortraitDialog = ref(false)
             resetPersonaDates()
             hasFeatures.value = false
             analysisResult.value = null
+            llmPhase.value = 'idle'
             qaIndexingHint.value = false
             qaHistory.value = [] // 问答记录按联系人隔离（F1 同源）
             groupSummary.value = null
@@ -1819,7 +1838,14 @@ const showPortraitDialog = ref(false)
             loadPersonaProfile(id)
             loadSessions()
             tryLoadExistingFeatures()
-            tryLoadAffinityScores()
+            void tryLoadAffinityScores().then(() => {
+                // 切走时 AI 评估仍在后台跑：切回后接续轮询到终态（部分结果已由
+                // tryLoadAffinityScores 显示，时序在其后避免被 idle 覆写）
+                const saved = loadAnalysisResume()
+                if (saved && saved.conversationId === id && saved.phase === 'affinity' && saved.taskId) {
+                    resumeLlmEvaluation(saved.taskId, id)
+                }
+            })
             if (shouldLoadContentAnalysis.value) {
                 loadAnalysis()
             }
@@ -1971,6 +1997,9 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
                 if (epoch !== viewEpoch.value) return // 已切换联系人（F1）
                 if (scores && scores.cache_version >= 4) {
                     analysisResult.value = scores
+                    // LLM 评估仍在跑的 sentinel（缺席文案"AI 关系评估进行中"）
+                    // 由切回接续轮询覆写为 running，此处先按终态缺席口径
+                    llmPhase.value = scores.llm_relationship ? 'done' : 'absent'
                 } else {
                     analysisResult.value = null
                     // 有历史趋势记录却无当前结果 = 结果因版本更新过期（后端
@@ -2004,6 +2033,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
                     if (prog?.status === 'completed') {
                         if (epoch !== viewEpoch.value) return
                         analysisResult.value = prog.result ?? analysisResult.value
+                        llmPhase.value = analysisResult.value?.llm_relationship ? 'done' : 'absent'
                         return
                     }
                     if (prog?.status === 'failed' || prog?.status === 'cancelled' || prog?.status === 'not_found') {
@@ -2128,6 +2158,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
         const handleStartGlobalAnalysis = async () => {
             if (!selectedConversationId.value) return
             if (isGlobalAnalyzing.value) return
+            if (llmPhase.value === 'running') return // AI 评估在途：防改配置后重跑造成口径错位
             if (analysisLaunchPending.value || isGlobalAnalyzing.value) return
             analysisLaunchPending.value = true
             try {
@@ -2218,6 +2249,38 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
             }
         }
 
+        /** AI 评估阶段跳过：本地四维已显示，取消只终止 LLM 远程调用——
+         * 轮询捕获 cancelled 后保留部分结果并给出可重试口径 */
+        async function handleSkipLlmEvaluation() {
+            if (llmPhase.value !== 'running' || isStopping.value) return
+            isStopping.value = true
+            try {
+                await bridgeReady()
+                if (api.cancel_analysis) {
+                    await api.cancel_analysis()
+                }
+            } catch (e) {
+                console.error("跳过 AI 评估失败", e)
+                isStopping.value = false
+            }
+        }
+
+        /** 切回仍有 AI 评估在跑的联系人：接续轮询到终态（部分结果已显示，
+         * 不再走 isGlobalAnalyzing 全程进度条） */
+        function resumeLlmEvaluation(taskId: string, conversationId: number) {
+            llmPhase.value = 'running'
+            void waitForAffinityTask(taskId, conversationId)
+                .catch(() => { /* 终态失败：部分结果保留，重试按钮可补齐 */ })
+                .finally(() => {
+                    const cur = loadAnalysisResume()
+                    if (cur && cur.conversationId === conversationId && cur.taskId === taskId) {
+                        clearAnalysisResume()
+                    }
+                    cancelCurrentAnalysis = null
+                    isStopping.value = false
+                })
+        }
+
         // 轮询特征提取任务直到终态（供正常发起与跨页面恢复共用）
         function waitForExtractionTask(taskId: string, analysisConversationId: number): Promise<void> {
             return new Promise<void>((resolve, reject) => {
@@ -2243,9 +2306,10 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
             })
         }
 
-        // 轮询好感度任务直到终态（完成时落结果并刷新跟随数据）
+        // 轮询好感度任务直到终态（llm_pending 先行渲染部分结果，完成时落终态并刷新跟随数据）
         function waitForAffinityTask(affinityTaskId: string, analysisConversationId: number): Promise<void> {
             return new Promise<void>((resolve, reject) => {
+                let progressiveShown = false // llm_pending 只消费一次，防 500ms 轮询反复触发动画/跟随加载
                 cancelCurrentAnalysis = () => reject(new Error('分析已取消'))
                 activeTimer.value = setInterval(async () => {
                     try {
@@ -2255,17 +2319,32 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
                             return
                         }
                         const prog = await getAffinityProgress(affinityTaskId)
-                        // 失败/失效先于 ok 门控分派：否则 not_found（ok:false）
-                        // 会落空导致 500ms 死轮询、分析按钮永久卡住
-                        if (!prog.ok) {
-                            clearInterval(activeTimer.value)
-                            reject(new Error(prog.error || '分析任务已失效'))
+                        const action = resolveAffinityPollAction(prog, progressiveShown)
+                        if (action.kind === 'continue') {
+                            globalProgressPercent.value = 50 + prog.progress_percent * 0.5
+                            globalProgressStep.value = `[深度推理] ${prog.current_step || '分析中...'}`
                             return
                         }
-                        globalProgressPercent.value = 50 + prog.progress_percent * 0.5
-                        globalProgressStep.value = `[深度推理] ${prog.current_step || '分析中...'}`
-                        if (prog.status === 'completed') {
-                            clearInterval(activeTimer.value)
+                        if (action.kind === 'progressive') {
+                            // 本地四维已落库：渐进接管——进度条让位、结果区先显示部分
+                            // 结果，跟随数据提前加载，AI 评估状态由 llmPhase 表达
+                            progressiveShown = true
+                            if (selectedConversationId.value !== analysisConversationId) { resolve(); return }
+                            if (prog.result) analysisResult.value = prog.result as AffinityAnalysisResult
+                            llmPhase.value = 'running'
+                            isGlobalAnalyzing.value = false
+                            const followUpTasks = [
+                                loadSessions(),
+                                loadActivityCalendar(activityCalendar.value.year)
+                            ]
+                            if (shouldLoadContentAnalysis.value) {
+                                followUpTasks.unshift(loadAnalysis())
+                            }
+                            void Promise.all(followUpTasks)
+                            return
+                        }
+                        clearInterval(activeTimer.value)
+                        if (action.kind === 'complete') {
                             // 完成分支含多次 await（进度→分数→跟随加载），每次
                             // 写回前都要复查联系人（F1）：最终轮询在途时切人，
                             // A 的结果会覆盖 B 的关系洞察页
@@ -2273,6 +2352,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
                             if (prog.result) {
                                 analysisResult.value = prog.result as AffinityAnalysisResult
                             }
+                            llmPhase.value = analysisResult.value?.llm_relationship ? 'done' : 'absent'
 
                             const scores = await getAffinityScores(analysisConversationId)
                             if (selectedConversationId.value !== analysisConversationId) { resolve(); return }
@@ -2285,17 +2365,29 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
                             ) {
                                 analysisResult.value = scores
                             }
-                            const followUpTasks = [
-                                loadSessions(),
-                                loadActivityCalendar(activityCalendar.value.year)
-                            ]
-                            if (shouldLoadContentAnalysis.value) {
-                                followUpTasks.unshift(loadAnalysis())
+                            if (!progressiveShown) {
+                                // 未经过 llm_pending（无 LLM 阶段/秒级完成）：跟随加载在此补齐
+                                const followUpTasks = [
+                                    loadSessions(),
+                                    loadActivityCalendar(activityCalendar.value.year)
+                                ]
+                                if (shouldLoadContentAnalysis.value) {
+                                    followUpTasks.unshift(loadAnalysis())
+                                }
+                                await Promise.all(followUpTasks)
                             }
-                            await Promise.all(followUpTasks)
                             resolve()
-                        } else if (prog.status === 'failed' || prog.status === 'cancelled') {
-                            clearInterval(activeTimer.value); reject(new Error(prog.error || '分析已取消'))
+                        } else if (action.kind === 'cancelled-partial') {
+                            // 取消发生在 AI 评估阶段：保留已显示的本地四维部分结果，
+                            // 缺席文案改为可重试口径（缓存里仍是"评估中" sentinel）
+                            analysisResult.value = {
+                                ...analysisResult.value!,
+                                llm_relationship_absent_reason: '已跳过 AI 评估，可点击重试补齐'
+                            } as AffinityAnalysisResult
+                            llmPhase.value = 'absent'
+                            resolve()
+                        } else {
+                            reject(new Error(action.message))
                         }
                     } catch (e) { }
                 }, 500)
@@ -2673,7 +2765,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
         return {
             currentTab, conversations, selectedConversationId, dates, loading, loadingSessions, error, analysis, subject, sessions, deepGranularity, deepRefreshKey, deepActivated, deepDates, conversationSpan, onDeepDatesChange, personaActivated, personaDates, onPersonaDatesChange, viewEpoch, handleCancelGroupSummary,
             personaProfile, loadingPersonaProfile, personaProfileMeta, profileRefreshKey, realContactName,
-            analysisResult, displayScore, llmRetryRunning, llmRetryError, handleRetryLlmRelationship, showKeywordsDialog, showContextForm, showPortraitDialog, handlePortraitGenerated, isGlobalAnalyzing, isStopping, activeTimer, handleStopAnalysis, globalProgressPercent, globalProgressStep, gpuMode,
+            analysisResult, displayScore, llmRetryRunning, llmRetryError, handleRetryLlmRelationship, showKeywordsDialog, showContextForm, showPortraitDialog, handlePortraitGenerated, isGlobalAnalyzing, isStopping, activeTimer, handleStopAnalysis, llmPhase, handleSkipLlmEvaluation, globalProgressPercent, globalProgressStep, gpuMode,
             hasConversations, hasFeatures, hasCachedAffinityAnalysis, featureStats, responseTimeStats, initiativeStats, wordCountsStats, displayWordRatioLabel, activityCalendar,
             responseTimeChart, activityCalendarChart, wordCountChart, stats, currentContactName, headerAvatarSrc, hasPreferenceKeywords, allDimensions,
             hasContentAnalysis, analysisStaleNotice, circumference, strokeDashoffset, formatNumber, formatTime, getResponseTimeLabel, getMergedResponseTimeLabel, getResponseTimePercent, onConversationChange, onDatesChange, handleExport, handleStartGlobalAnalysis, handleContextSaved, handleKeywordsUpdated, llmEvidenceNotes,
@@ -4064,6 +4156,50 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
 .llm-retry-btn {
   margin-left: 10px;
   vertical-align: middle;
+}
+
+/* AI 评估中渐进徽标（状态徽标惯用语：tint 底 + 主色字，info=primary） */
+.llm-phase-badge {
+  margin-left: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--ct-text-xs);
+  padding: 2px 8px;
+  border-radius: var(--ct-radius-sm);
+  color: var(--ct-color-primary);
+  background: var(--ct-color-primary-tint);
+}
+
+/* 渐进期间定性注解：总分口径说明（AI 到位后小幅更新） */
+.llm-pending-note {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--ct-text-tertiary);
+}
+
+/* AI 关系评估占位卡：与 AffinityScoreCard 同位，评估完成后原位替换 */
+.llm-pending-card {
+  border: 1px dashed var(--ct-border-color);
+  border-radius: var(--ct-radius-md);
+  padding: 18px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  justify-content: center;
+}
+.llm-pending-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ct-text-primary);
+}
+.llm-pending-card p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ct-text-tertiary);
 }
 
 /* 导出弹窗（白卡解剖：发丝线分区，按钮走 ct-btn 体系） */

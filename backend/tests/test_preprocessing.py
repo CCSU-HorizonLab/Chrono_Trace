@@ -242,6 +242,55 @@ def test_split_sessions_non_sampling_takes_vectorized_path():
     assert len(sessions) == 4, f"语义切分错误：期望 4 组，实得 {len(sessions)}"
 
 
+def test_split_sessions_sampling_takes_vectorized_path():
+    """>1000 单元走采样分支：粗筛与区域精细检测都必须 einsum 一次性
+    算完——此前两段逐对 np.dot 循环（采样集 ~1.6 万点）是纯 Python 开销，
+    向量化后被 np.einsum 取代。回退探针锁定不退回逐对计算。"""
+    from app.services.analysis.preprocessing import SessionManager
+
+    class _StubEmbed:
+        _embedding_model = object()
+
+        def __init__(self):
+            self.matrix_calls = 0
+
+        def _get_embeddings_matrix(self, texts, **kwargs):
+            self.matrix_calls += 1
+            import numpy as _np
+            # 同话题→[1,0] / 换话题→[0,1]，模拟 L2 归一输出
+            return _np.asarray(
+                [[1.0, 0.0] if t.startswith("同") else [0.0, 1.0] for t in texts],
+                dtype=_np.float32,
+            )
+
+    fake = _StubEmbed()
+    sm = SessionManager()
+    sm._sentiment_service = fake
+
+    fallback = []
+    orig = sm.calculate_semantic_similarity
+    sm.calculate_semantic_similarity = lambda a, b: (fallback.append(a), 0.0)[1]
+
+    units = [
+        {
+            "id": i,
+            "content": "同话题续聊" if (i // 25) % 2 == 0 else "换话题新开",
+            "start_timestamp": 1700000000 + i * 90,
+            "end_timestamp": 1700000000 + i * 90 + 60,
+            "is_sender": i % 2,
+            "message_count": 2,
+        }
+        for i in range(1001)
+    ]  # >1000 单元 → 采样分支（粗筛 einsum + 区域精细 einsum）
+
+    sessions = sm.split_sessions(units)
+
+    assert fake.matrix_calls >= 1, "未走批量编码路径"
+    assert not fallback, f"向量化失败回退逐对计算 {len(fallback)} 次"
+    # 每 25 个单元一个话题块 → 40 块、39 个切分点（时间间隔 90s 不触发强制切分）
+    assert len(sessions) == 40, f"采样切分错误：期望 40 组，实得 {len(sessions)}"
+
+
 def test_sentiment_cross_batch_dedup_reuses_and_caches_all():
     """跨批文本去重：同文本只过一次分类器，结果逐字段一致，且
     sentiment_cache 仍逐 message_id 落库（问答向量通道按条写）。"""

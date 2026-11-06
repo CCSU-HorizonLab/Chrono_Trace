@@ -248,14 +248,15 @@ class SessionManager:
                             pass
                 sample_embeddings = np.concatenate(sample_chunks) if sample_chunks else np.zeros((0, 0), dtype=np.float32)
                 
-                # 找出候选切分区域（相似度较低的区域）
+                # 找出候选切分区域（相似度较低的区域）：相邻行点积一次
+                # einsum 算完（encode 已 L2 归一，cosine == 裸点积；此前
+                # 1.6 万采样点逐对 np.dot 各自付 Python 调用开销）
                 candidate_regions = []
-                for i in range(len(sample_indices) - 1):
-                    vec1 = sample_embeddings[i]
-                    vec2 = sample_embeddings[i + 1]
-                    # encode 已 L2 归一：cosine == 裸点积（此前逐对重算 norm 纯浪费）
-                    similarity = float(np.dot(vec1, vec2))
-                    
+                if len(sample_embeddings) > 1:
+                    sample_dots = np.einsum("ij,ij->i", sample_embeddings[:-1], sample_embeddings[1:])
+                else:
+                    sample_dots = []
+                for i, similarity in enumerate(sample_dots):
                     # 谷值切分要求 < SIMILARITY_THRESHOLD(0.3)：粗筛阈值
                     # 收紧到 +0.1，采样间隔 5 内的短谷（两端点相似度抬
                     # 高时）漏切窗口随之下收窄
@@ -285,13 +286,15 @@ class SessionManager:
                         region_texts,
                         batch_size=64,
                     )
-                    
-                    for i in range(len(region_embeddings) - 1):
-                        vec1 = region_embeddings[i]
-                        vec2 = region_embeddings[i + 1]
-                        # encode 已 L2 归一：cosine == 裸点积（此前逐对重算 norm 纯浪费）
-                        similarity = float(np.dot(vec1, vec2))
-                        similarities[start + i] = similarity
+
+                    # 相邻行点积一次 einsum 算完（encode 已 L2 归一，cosine
+                    # == 裸点积；此前候选区域逐对 np.dot 各自付 Python 调
+                    # 用开销），切片写回与逐对循环 similarities[start+i] 等价
+                    if len(region_embeddings) > 1:
+                        region_dots = np.einsum(
+                            "ij,ij->i", region_embeddings[:-1], region_embeddings[1:]
+                        )
+                        similarities[start:start + len(region_dots)] = [float(d) for d in region_dots]
                 
                 logger.info("[会话管理器] 精细检测完成")
                 

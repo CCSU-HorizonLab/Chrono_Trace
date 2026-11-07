@@ -1,10 +1,10 @@
 """情感模型再生成全链（模型生成与打包解耦的唯一入口）。
 
-任何机器一条命令：本地聊天数据 + 指定 LLM 教师 → 打标 → 蒸馏训练 →
-验收 → 安装为本地情感模型（HF 源 + ONNX 产物 + 代际档案）。打包
-（build_release*）只消费 backend/data/models/ 目录，不再关心模型怎么来；
-其他机器获取默认版走 ensure_models_for_export.py（ModelScope 拉取后本地
-导出），本脚本只负责「重新做蒸馏」这条个性化路径。
+任何机器一条命令：**本机微信聊天数据**（该机器 chrono_trace.db 里已导入
+的消息，现场采样，不是复用别机的既有标签）+ 指定 LLM 教师打标 → 蒸馏
+训练 → 验收 → 安装为本地情感模型（HF 源 + ONNX 产物 + 代际档案）。
+打包（build_release*）只消费 backend/data/models/ 目录；模型发行产物
+随 git 仓库分发，本脚本负责「重新做蒸馏」这条个性化/换代路径。
 
 依赖：torch/transformers/onnx 全栈（本仓库 .venv-model-export 即该环境）；
 runtime venv（onnxruntime-only）跑不了训练，脚本启动即自检。
@@ -13,12 +13,13 @@ runtime venv（onnxruntime-only）跑不了训练，脚本启动即自检。
   python regen_sentiment_model.py \\
       --llm-base http://192.168.103.112:8004/v1 --llm-key token-abc123 \\
       --llm-model Qwen3.5-9B
-  python regen_sentiment_model.py --skip-label          # 复用 v2_labels.jsonl
+  python regen_sentiment_model.py --skip-label          # 复用本机 v2_labels.jsonl
   可选：--train-n 60000 --epochs 4 --tag v3-ctx-20261108 --no-code-tag
 
-流程：ensure_base（hf-mirror 拉 hfl/rbt3 基座）→ prepare（LLM 打标，
-断点续传）→ train → evaluate（报告口径，旧模型缺席自动跳过）→ install
-（换入 models/sentiment_3class）→ export（ONNX）→ 代际档案 + 同步
+流程：ensure_base（hf-mirror 拉 hfl/rbt3 基座）→ prepare（读本机
+chrono_trace.db 采样训练/留出实例 → LLM 打标，断点续传）→ train →
+evaluate（报告口径，旧模型缺席自动跳过）→ install（换入
+models/sentiment_3class）→ export（ONNX）→ 代际档案 + 同步
 model_paths.SENTIMENT_MODEL_TAG（缓存重置与 ensure 代际门的锚点）。
 """
 import argparse
@@ -145,13 +146,16 @@ def main():
     import distill_sentiment_v2 as v2
 
     ensure_base(v2.BASE_DIR)
+    v2.TRAIN_N = args.train_n     # 采样上限（数据不足时自然取全部）
 
     if args.skip_label:
         if not v2.JSONL_PATH.exists():
             sys.exit(f"[数据] {v2.JSONL_PATH} 不存在——--skip-label 需要先打过标")
         print(f"[数据] 复用既有标签 {v2.JSONL_PATH}")
     else:
-        v2.cmd_prepare()          # 增量断点续传：已标注 key 自动跳过
+        # 现场采样：读本机 chrono_trace.db 已导入的微信消息（同联系人前
+        # 3 条上文口径），LLM 打标断点续传——已标注 key 自动跳过
+        v2.cmd_prepare()
 
     if not v2.DATASET_PATH.exists():
         sys.exit(f"[数据] 缺 {v2.DATASET_PATH}——先完成打标（去掉 --skip-label）")
@@ -176,9 +180,10 @@ def main():
     if not args.no_code_tag:
         patch_code_tag(tag)
     print(
-        "[完成] 模型已生成并安装。发布为默认版本：\n"
-        "       python backend/scripts/push_sentiment_model.py --token <ModelScope令牌>\n"
-        "       （未上传前，其他机器 ensure_models_for_export.py 会因远端旧代报错——设计行为）"
+        "[完成] 模型已生成并安装。发布为默认版本（随 git 仓库分发）：\n"
+        "       git add backend/data/models/sentiment_3class/ "
+        "backend/app/services/model_paths.py && git commit\n"
+        "       （发行产物 + 代际档案 + 代码 tag 一并提交；其他机器 git pull 即得）"
     )
 
 

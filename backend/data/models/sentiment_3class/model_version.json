@@ -1,0 +1,5 @@
+{
+  "version": "v2-ctx-20261107",
+  "updated_at": "2026-11-07T21:30:00",
+  "lineage": "distill v2：Qwen3.5-9B 教师打标 68000 条（含 839 补齐）→ rbt3 学生 3L×768 38M 参数；前 3 条同会话上文 ctx 口径；留出一致率 0.8616，neg 召回 0.531；训练脚本 backend/scripts/distill_sentiment_v2.py，标签数据 backend/data/distill/v2_labels.jsonl（本地留档不进仓库）"
+}

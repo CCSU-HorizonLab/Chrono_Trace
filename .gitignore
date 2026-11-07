@@ -32,7 +32,19 @@ release/
 *.db
 *.sqlite
 *.sqlite3
-backend/data
+backend/data/*
+# 情感模型发行产物随仓库分发（git 为默认渠道，clone 即得、免重导出）：
+# 只放行 fp16 onnx + tokenizer + 代际档案；HF 源权重与 fp32 中间产物
+# 由 regen_sentiment_model.py 在本机再生，不进 git（防历史膨胀）
+!backend/data/models/
+backend/data/models/*
+!backend/data/models/sentiment_3class/
+backend/data/models/sentiment_3class/*
+!backend/data/models/sentiment_3class/model_version.json
+!backend/data/models/sentiment_3class/onnx/
+backend/data/models/sentiment_3class/onnx/*
+!backend/data/models/sentiment_3class/onnx/model.fp16.onnx
+!backend/data/models/sentiment_3class/onnx/tokenizer/
 
 # Temporary and backup files
 *.backup

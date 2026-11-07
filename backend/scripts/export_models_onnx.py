@@ -194,8 +194,11 @@ def main():
     for name, model_dir, mtype in jobs:
         if args.only and name != args.only:
             continue
-        if not model_dir.exists():
-            print(f"[跳过] {name}: 模型目录不存在 {model_dir}")
+        if not (model_dir / "config.json").exists():
+            print(
+                f"[跳过] {name}: 无 HF 源模型（{model_dir}）——git 布局下 "
+                "onnx 发行产物随仓库分发无需源；重生成走 regen_sentiment_model.py"
+            )
             continue
         export_one(model_dir, model_dir / "onnx", mtype, int8=args.int8)
         if name == "sentiment":

@@ -16,6 +16,21 @@ backend_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(backend_dir))
 
 
+def _sentiment_generation_stale(model_dir: Path, expected_tag: str) -> bool:
+    """本地情感模型代际是否落后：model_version.json 缺失 / 无 version 键 /
+    与代码期望不符，均视为来源不明或过期（真值只有权重自己知道）。"""
+    version_file = model_dir / "model_version.json"
+    if not version_file.exists():
+        return True
+    try:
+        import json
+
+        version = json.loads(version_file.read_text(encoding="utf-8")).get("version")
+    except Exception:
+        return True
+    return version != expected_tag
+
+
 def ensure_source_model(repo_id: str, model_dir: Path) -> bool:
     """源 torch 模型存在即真；缺失则从 ModelScope 下载（temp 目录落盘后原子换入）。"""
     if (model_dir / "config.json").exists():
@@ -65,13 +80,40 @@ def main():
         (SENTIMENT_MODEL_REPO_ID, root / SENTIMENT_MODEL_DIRNAME, "model.fp16.onnx"),
     ]
 
-    if all((d / "onnx" / product).exists() for _, d, product in jobs):
-        print("[模型] 发行产物已存在，跳过下载与导出")
+    # 情感模型代际门：发行产物存在≠代际正确——旧模型产物齐全时文件名
+    # 判据会放行，v2 代码配 v1 权重静默劣化。model_version.json 的
+    # version 与代码期望（model_paths.SENTIMENT_MODEL_TAG）不符或档案
+    # 缺失，均视为来源不明/过期，强制重新获取
+    from app.services.model_paths import SENTIMENT_MODEL_TAG
+
+    sentiment_dir = root / SENTIMENT_MODEL_DIRNAME
+    sentiment_stale = _sentiment_generation_stale(sentiment_dir, SENTIMENT_MODEL_TAG)
+
+    if (
+        all((d / "onnx" / product).exists() for _, d, product in jobs)
+        and not sentiment_stale
+    ):
+        print("[模型] 发行产物已存在且代际一致，跳过下载与导出")
         return
+    if sentiment_stale:
+        print(f"[模型] 本地情感模型代际落后于代码期望（{SENTIMENT_MODEL_TAG}），强制重新获取")
 
     for repo_id, model_dir, _product in jobs:
+        if model_dir == sentiment_dir and sentiment_stale:
+            print(f"[模型] 删除代际落后的本地目录: {model_dir}")
+            shutil.rmtree(model_dir, ignore_errors=True)
         if not ensure_source_model(repo_id, model_dir):
             raise SystemExit(f"模型获取失败: {repo_id}")
+
+    # 远端代际复核：ModelScope 还是旧代时到此为止——继续导出只会给旧
+    # 权重盖上新代际章（export 的补档逻辑只在档案缺失时动笔），必须
+    # 先上传新版再跑本脚本
+    if _sentiment_generation_stale(sentiment_dir, SENTIMENT_MODEL_TAG):
+        raise SystemExit(
+            f"ModelScope 仓库 {SENTIMENT_MODEL_REPO_ID} 仍是旧代情感模型"
+            f"（期望 {SENTIMENT_MODEL_TAG}）：请先将新版模型连同其 "
+            "model_version.json 上传后重试"
+        )
 
     if args.with_export:
         import subprocess

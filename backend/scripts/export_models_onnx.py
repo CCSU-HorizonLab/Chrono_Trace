@@ -147,6 +147,34 @@ def export_one(model_dir: Path, out_dir: Path, model_type: str, int8: bool = Fal
     print(f"[tokenizer] {len(list(tok_dir.iterdir()))} 个文件 → {tok_dir}")
 
 
+def write_version_file_if_absent(model_dir: Path) -> None:
+    """代际档案随权重走：model_version.json 已存在则不动（版本号属于权重
+    本身——下载来的保留远端代际，本地蒸馏的保留训练时代际，导出动作
+    无权改写）；缺失才按代码期望代际补档（本地蒸馏产物放置后首导出的
+    常规路径）。ensure 脚本据此文件比对代际，防旧模型被误当新版导出"""
+    import datetime
+    import json
+
+    from app.services.model_paths import SENTIMENT_MODEL_TAG
+
+    version_file = model_dir / "model_version.json"
+    if version_file.exists():
+        print(f"[版本] 沿用既有代际档案: {version_file}")
+        return
+    version_file.write_text(
+        json.dumps(
+            {
+                "version": SENTIMENT_MODEL_TAG,
+                "updated_at": datetime.datetime.now().isoformat(timespec="seconds"),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    print(f"[版本] 补写代际档案 {version_file}（version={SENTIMENT_MODEL_TAG}）")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--only", choices=["embedding", "sentiment"], default=None)
@@ -170,6 +198,8 @@ def main():
             print(f"[跳过] {name}: 模型目录不存在 {model_dir}")
             continue
         export_one(model_dir, model_dir / "onnx", mtype, int8=args.int8)
+        if name == "sentiment":
+            write_version_file_if_absent(model_dir)
 
 
 if __name__ == "__main__":

@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 from ...db.connection import DatabaseConnection, get_db
 from ..model_paths import (
     EMBEDDING_MODEL_DIM,
+    SENTIMENT_MODEL_TAG,
     get_embedding_model_dir,
     get_embedding_model_dim,
     get_embedding_model_repo_id,
@@ -75,9 +76,10 @@ logger = logging.getLogger(__name__)
 class SentimentService:
     """Batch sentiment + embedding service used by historical analysis."""
 
-    # 情感模型换代标记：换模型/换输入口径时更新此串，进程首次用到本服务
-    # 即把旧口径的情感缓存整批作废（KISS：DROP 重建，不迁移）。
-    MODEL_TAG = "v2-ctx-20261107"
+    # 情感模型换代标记：换模型/换输入口径时更新 SENTIMENT_MODEL_TAG
+    # （model_paths 单一来源，export/ensure 脚本同源消费），进程首次用到
+    # 本服务即把旧口径的情感缓存整批作废（KISS：DROP 重建，不迁移）。
+    MODEL_TAG = SENTIMENT_MODEL_TAG
 
     def __init__(self):
         self._realtime_service = None

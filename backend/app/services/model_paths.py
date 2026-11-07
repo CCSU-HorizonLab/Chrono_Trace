@@ -27,6 +27,12 @@ EMBEDDING_MODEL_DIM = 768
 SENTIMENT_MODEL_DIRNAME = "sentiment_3class"
 EMBEDDING_MODEL_DIRNAME = "text2vec_base_chinese"
 
+#: 情感模型代际标识（权重 + 输入口径的联合身份）。三处消费同一值：
+#: SentimentService.MODEL_TAG（缓存重置）、export 脚本（model_version.json
+#: 随权重落档，get_local_version 读 version 键）、ensure 脚本（代际比对，
+#: 本地/远端落后即拒绝导出防旧模型混入）。换代 = 改这里 + 重训 + 上传
+SENTIMENT_MODEL_TAG = "v2-ctx-20261107"
+
 #: 嵌入模型变体注册表：dirname/repo_id/维度。L2 嵌入缓存按 repo_id 隔离，
 #: RAG 按模型名+维度触发全量重建——切换变体自动隔离旧向量，无需迁移
 EMBEDDING_VARIANTS: dict[str, dict] = {

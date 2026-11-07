@@ -2,8 +2,14 @@
 
 ## 打包流程
 
-当前正式打包链路分三步：
+当前正式打包链路分四步：
 
+0. 模型前置校验（build 脚本自动执行 `backend/scripts/ensure_models_for_export.py`）：
+   **情感模型发行产物随 git 仓库分发**（`backend/data/models/sentiment_3class/`
+   下的 fp16 onnx + tokenizer + `model_version.json` 在 gitignore 白名单内），
+   clone 即得、代际落后（version ≠ `model_paths.SENTIMENT_MODEL_TAG`）即中止
+   并指路 git pull / `regen_sentiment_model.py`；**嵌入模型**（bge）源缺失时
+   首次构建自动从 ModelScope（官方仓库）下载并导出
 1. 将前端构建到 `frontend/webdist`
 2. 使用 `packaging/chrono_trace.spec` 通过 PyInstaller 打包 `app.py`
 3. 使用 `packaging/ChronoTrace.iss` 通过 Inno Setup 生成安装包
@@ -118,24 +124,22 @@ release\build\
 
 ## 包体积构成（当前：模型内置）
 
-推理栈切换 ONNX 后，安装包**内置 fp16 模型**（约 409MB 原始 / ~300MB 压缩后），换取新装机开箱即用：
+安装包**内置 ONNX 推理产物**（换取新装机开箱即用）：嵌入 bge fp32 ~91MB +
+情感 v2 fp16 ~74MB + tokenizer ≈ **170MB**（v2 蒸馏模型上线后，情感部分较旧
+教师 154MB 减半；总体积口径随下次实际出包更新——此前 ~400MB 为旧教师时代实测）。
 
 | 项 | 旧 torch 版 | 当前 ONNX 版 |
 |---|---|---|
-| 安装包 | ~190MB（不含模型） | ~400MB（含模型） |
+| 安装包 | ~190MB（不含模型） | 含模型（v2 时代较 ~400MB 再减重） |
 | 首次运行 | 需下载 1.17GB 模型 | 无下载，直接可用 |
-| 用户总获取量 | ~1.36GB | ~400MB |
 
 ### 备选：小安装包方案（未实施，视需求启用）
 
-若更在意安装包体积，可改为「首次运行时只下载 ONNX 产物」：
-
-1. 把 `backend/data/models/<name>/onnx/` 两个目录上传到对应 ModelScope 仓库
-   （`tingting0514/text2vec-base-chinese`、`tingting0514/chrono-trace-sentiment`）
-2. 打包侧：删掉两个 spec 里的 onnx datas（安装包回到 ~100-150MB）
-3. 运行时：`ensure_models_for_export.py` 的下载逻辑改为应用内触发，
-   `snapshot_download(..., allow_patterns=["onnx/*"])` 只拉 ~409MB（避免整仓库 1.2GB）
-4. 回退开关：ModelScope 下载失败时仍可手动放置 onnx 目录
+若更在意安装包体积，可改为「首次运行时只下载 ONNX 产物」：删掉两个 spec 里
+的 onnx datas，运行时按需拉取。注意：情感模型默认分发渠道已是 **git 仓库**
+（clone 即得），该方案启用时需另行设计运行时拉取渠道——自建 ModelScope 仓库
+（`tingting0514/chrono-trace-sentiment`）是历史渠道，已停更（token 失效），
+当前仅保留 `push_sentiment_model.py` 作为可选发布工具。
 
 ## 推荐用法
 

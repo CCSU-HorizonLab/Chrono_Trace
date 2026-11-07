@@ -43,8 +43,10 @@ datas += collect_data_files("webview")
 datas += collect_data_files("jieba")
 datas += copy_metadata("pywebview")
 datas += safe_copy_metadata("modelscope")
-# ONNX 模型内置（阶段 B：安装包捆绑 fp16 产物，免运行时下载）；
-# 由 build 脚本在打包前运行 backend/scripts/export_models_onnx.py 生成
+# ONNX 模型内置（阶段 B：安装包捆绑 fp16 产物，免运行时下载）。
+# 情感产物随 git 仓库分发（clone 即得，代际门见 ensure 脚本）；嵌入产物
+# 由 build 脚本调 backend/scripts/ensure_models_for_export.py 首次构建时
+# 下载源模型并导出
 _MODELS_ROOT = PROJECT_ROOT / "backend" / "data" / "models"
 # 双平台统一 bge（6.3× 提速、fp16 无损；公开中文基准不输 text2vec，
 # 参数仅 1/4）——与 chrono_trace_linux.spec 同清单，默认变体直接命中。
@@ -66,7 +68,8 @@ for _model_name in ("bge_small_zh_v15", "sentiment_3class"):
         # 模型权重救不了）——1.5.0 词表缺失静默出包是同款事故
         raise SystemExit(
             f"[chrono_trace.spec] FATAL: missing {_model} — "
-            "先运行 backend/scripts/ensure_models_for_export.py --with-export 生成产物"
+            "情感产物随 git 分发（先 git pull），嵌入产物运行 "
+            "backend/scripts/ensure_models_for_export.py --with-export 生成"
         )
 
 

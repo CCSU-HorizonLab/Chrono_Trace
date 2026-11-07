@@ -109,18 +109,11 @@ setup_venv() {
     log "打包环境未变化，复用 $VENV_DIR"
   fi
 }
-# ---------- ONNX 模型导出（打包前置：产物缺失时用独立 export 环境生成） ----------
+# ---------- ONNX 模型校验/导出（打包前置） ----------
 ensure_onnx_models() {
-  echo "==> ONNX 模型（首次构建自动从 ModelScope 下载源模型并导出）"
+  echo "==> ONNX 模型（情感产物随 git 仓库分发；嵌入源模型首次构建自动下载）"
   local models_root="backend/data/models"
-  # 与 spec 内置清单对齐：Linux 只打 bge + sentiment（text2vec 不进包）
-  if [ -f "$models_root/bge_small_zh_v15/onnx/model.onnx" ] && \
-     [ -f "$models_root/sentiment_3class/onnx/model.fp16.onnx" ]; then
-    echo "ONNX 产物已存在，跳过下载与导出。"
-    return
-  fi
-
-  # torch 仅作导出工具（独立环境，不进产物）；modelscope 按需下载源模型
+  # torch 仅作导出工具（独立环境，不进产物）；modelscope 按需下载嵌入源模型
   local export_venv=".venv-model-export"
   if [ ! -x "$export_venv/bin/python" ]; then
     echo "创建模型导出环境 ($export_venv)..."
@@ -128,7 +121,16 @@ ensure_onnx_models() {
     "$export_venv/bin/pip" install --quiet -i https://pypi.tuna.tsinghua.edu.cn/simple torch --extra-index-url https://download.pytorch.org/whl/cpu
     "$export_venv/bin/pip" install --quiet -i https://pypi.tuna.tsinghua.edu.cn/simple "transformers>=4.30" "onnx>=1.15" "onnxruntime>=1.17" onnxconverter-common "modelscope>=1.17"
   fi
-  "$export_venv/bin/python" backend/scripts/ensure_models_for_export.py --with-export
+
+  # ensure 是唯一权威（不按文件名本地短路——那会绕过情感模型代际门）：
+  # 情感产物缺失/代际落后即中止并指路 git pull / regen；嵌入源按需补齐
+  "$export_venv/bin/python" backend/scripts/ensure_models_for_export.py || return 1
+
+  # 嵌入发行产物缺失（首次构建/清理后）才全量导出；情感产物随 git 分发，
+  # export 对无 HF 源的模型自动跳过
+  if [ ! -f "$models_root/bge_small_zh_v15/onnx/model.onnx" ]; then
+    "$export_venv/bin/python" backend/scripts/ensure_models_for_export.py --with-export || return 1
+  fi
 }
 
 ensure_onnx_models

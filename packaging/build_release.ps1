@@ -212,21 +212,16 @@ finally {
     Pop-Location
 }
 
-# ---------- ONNX model export (pre-packaging; uses isolated export venv when artifacts missing) ----------
+# ---------- ONNX model check/export (pre-packaging; isolated export venv) ----------
 function Ensure-OnnxModels {
     Write-Host ""
-    Write-Host "==> ONNX models (auto download from ModelScope on first build, then export)" -ForegroundColor Cyan
+    Write-Host "==> ONNX models (sentiment ships with git; embedding source auto-downloads on first build)" -ForegroundColor Cyan
     $ensureScript = Join-Path $ProjectRoot "backend\scripts\ensure_models_for_export.py"
     $modelsRoot = Join-Path $ProjectRoot "backend\data\models"
-    $fp16a = Join-Path $modelsRoot "bge_small_zh_v15\onnx\model.onnx"
-    $fp16b = Join-Path $modelsRoot "sentiment_3class\onnx\model.fp16.onnx"
-    if ((Test-Path $fp16a) -and (Test-Path $fp16b)) {
-        Write-Host "ONNX artifacts already exist, skipping download and export."
-        return
-    }
+    $bgeOnnx = Join-Path $modelsRoot "bge_small_zh_v15\onnx\model.onnx"
 
     # torch is used only as an export tool (isolated venv, never bundled into
-    # the installer); modelscope downloads the source models on demand.
+    # the installer); modelscope downloads the embedding source model on demand.
     $exportVenv = Join-Path $ProjectRoot ".venv-model-export"
     $exportPython = Join-Path $exportVenv "Scripts\python.exe"
     if (-not (Test-Path $exportPython)) {
@@ -239,8 +234,18 @@ function Ensure-OnnxModels {
         & $exportPython -m pip install --quiet -i https://pypi.tuna.tsinghua.edu.cn/simple "transformers>=4.30" "onnx>=1.15" "onnxruntime>=1.17" onnxconverter-common "modelscope>=1.17"
         Assert-LastExitCode "export venv deps"
     }
-    & $exportPython $ensureScript --with-export
-    Assert-LastExitCode "ONNX model ensure/export"
+
+    # ensure 是唯一权威（不按文件名本地短路——那会绕过情感模型代际门）：
+    # 情感产物缺失/代际落后即中止并指路 git pull / regen；嵌入源按需补齐
+    & $exportPython $ensureScript
+    Assert-LastExitCode "ONNX model check"
+
+    # 嵌入发行产物缺失（首次构建/清理后）才全量导出；情感产物随 git 分发，
+    # export 对无 HF 源的模型自动跳过
+    if (-not (Test-Path $bgeOnnx)) {
+        & $exportPython $ensureScript --with-export
+        Assert-LastExitCode "ONNX model export"
+    }
 }
 Ensure-OnnxModels
 

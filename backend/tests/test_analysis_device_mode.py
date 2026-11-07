@@ -126,7 +126,9 @@ class TestAnalysisDeviceMode:
         # 整体替换而非在共享单例上打补丁：全量顺序下遗留后台线程
         # （RAG worker 等）会调单例同名方法，污染 mock 计数（实测 10+ 次）
         orchestrator.sentiment_service = MagicMock(
-            batch_get_sentiment_from_cache=MagicMock(return_value={1: {"polarity": 1}}),
+            batch_get_sentiment_from_cache=MagicMock(
+                return_value={1: {"polarity": 1, "ctx_used": ""}}
+            ),
             analyze_batch=MagicMock(return_value=[{"polarity": 0, "intensity": 0.0, "embedding": [0.0] * 384}]),
             batch_cache_sentiments=MagicMock(),
             has_local_embedding_model=MagicMock(return_value=True),
@@ -141,7 +143,7 @@ class TestAnalysisDeviceMode:
 
         orchestrator.sentiment_service.batch_get_sentiment_from_cache.assert_called_once_with([1, 2])
         orchestrator.sentiment_service.analyze_batch.assert_called_once_with(
-            ["miss"], include_embeddings=True
+            ["miss"], include_embeddings=True, contexts=["cached"]
         )
         orchestrator.sentiment_service.batch_cache_sentiments.assert_called_once()
 

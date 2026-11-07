@@ -33,7 +33,7 @@ def db(monkeypatch):
     )
     conn.execute(
         "CREATE TABLE sentiment_cache (message_id INTEGER UNIQUE, polarity INT, "
-        "intensity REAL, embedding_vector BLOB, created_at INT)"
+        "intensity REAL, embedding_vector BLOB, ctx_used TEXT, created_at INT)"
     )
     monkeypatch.setattr(bfmod, "get_db", lambda: conn)
     monkeypatch.setattr(orchmod, "get_db", lambda: conn)
@@ -75,13 +75,16 @@ class FakeSentimentService:
 
     def batch_get_sentiment_from_cache(self, message_ids):
         rows = self.db.execute(
-            "SELECT message_id FROM sentiment_cache WHERE message_id IN "
+            "SELECT message_id, ctx_used FROM sentiment_cache WHERE message_id IN "
             f"({','.join('?' * len(message_ids))})",
             message_ids,
         ).fetchall()
-        return {row["message_id"]: {"polarity": 1, "intensity": 0.1} for row in rows}
+        return {
+            row["message_id"]: {"polarity": 1, "intensity": 0.1, "ctx_used": row["ctx_used"]}
+            for row in rows
+        }
 
-    def analyze_batch(self, texts, include_embeddings=False):
+    def analyze_batch(self, texts, include_embeddings=False, contexts=None):
         self.analyzed_texts.extend(texts)
         self.include_embeddings_seen.append(bool(include_embeddings))
         embedding = [0.7, 0.8, 0.9] if include_embeddings else None
@@ -97,10 +100,10 @@ class FakeSentimentService:
         for item in cache_data:
             self.db.execute(
                 "INSERT OR REPLACE INTO sentiment_cache"
-                " (message_id, polarity, intensity, embedding_vector, created_at)"
-                " VALUES (?, ?, ?, ?, 1)",
+                " (message_id, polarity, intensity, embedding_vector, ctx_used, created_at)"
+                " VALUES (?, ?, ?, ?, ?, 1)",
                 (item["message_id"], item["polarity"], item["intensity"],
-                 pack_embedding(item.get("embedding"))),
+                 pack_embedding(item.get("embedding")), item.get("ctx_used")),
             )
         self.db.commit()
         self.cached_ids.extend(item["message_id"] for item in cache_data)
@@ -155,10 +158,14 @@ class TestCoverage:
 
 class TestRunBackfill:
     def test_only_missing_messages_analyzed(self, db):
-        """已缓存消息跳过；补算后缓存全覆盖。"""
+        """已缓存消息跳过；补算后缓存全覆盖。
+
+        预置行带 ctx_used=''（首条消息无上文，指纹一致才跳过）——
+        无指纹的行按新口径视为过期，会被重算。"""
         ids = seed_messages(db, n=6)
         db.execute(
-            "INSERT INTO sentiment_cache (message_id, polarity, intensity, created_at) VALUES (?, -1, 0.8, 1)",
+            "INSERT INTO sentiment_cache (message_id, polarity, intensity, ctx_used, created_at)"
+            " VALUES (?, -1, 0.8, '', 1)",
             (ids[0],),
         )
         db.commit()

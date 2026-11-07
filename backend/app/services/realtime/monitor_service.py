@@ -11,6 +11,7 @@ import re
 from .message_buffer import MessageBuffer
 from .realtime_sentiment_service import RealtimeSentimentService
 from .emotion_state_tracker import EmotionStateTracker
+from .sentiment_context import CTX_N, build_contexts, context_string
 from .providers.models import build_message_hash, normalize_text
 from .safe_print import safe_print as _print
 from ..wechat.account_settings import get_active_wechat_account_wxid, load_settings_from_file
@@ -77,6 +78,7 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, Backfi
             self.current_display_name = None    # 当前监听对象显示名
             self.current_account_wxid = ""
             self._current_conversation_id = 0   # 当前监听会话号（按联系人建议配置的键）
+            self._ctx_window = []               # 情感 ctx 滚动窗口（start_monitoring 播种/清零）
             self.is_monitoring = False          # 监听状态
             self._session_generation = 0        # 会话代数：start_monitoring/run_backfill 接管单例时递增（R2）
             self._chat_ready = False            # 聊天定位是否完成
@@ -273,6 +275,7 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, Backfi
             # 创建情绪追踪器
             self.emotion_tracker = EmotionStateTracker()
             self._baseline_tail = []  # 会话隔离：旧会话基线不得泄入新会话显示
+            self._ctx_window = []    # 情感 ctx 口径滚动窗口（前至多 3 条文本，见 sentiment_context）
             _print("[RealtimeMonitorService] 情绪追踪器已创建")
             
             _print(f"[RealtimeMonitorService] 开始监听: {talker_display_name} (batch_id: {self.current_batch_id})")
@@ -745,9 +748,12 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, Backfi
 
                 if warmup_texts:
                     _print(f"🌡️ 情绪基线预热: {len(warmup_texts)} 条消息跑情感模型…")
-                    for msg, content in zip(warmup_msgs, warmup_texts):
+                    warm_contexts = build_contexts(warmup_texts)
+                    # 预热完把窗口播种给后续实时消息（基线即最近历史）
+                    self._ctx_window = warmup_texts[-CTX_N:]
+                    for msg, content, wctx in zip(warmup_msgs, warmup_texts, warm_contexts):
                         try:
-                            sentiment = self.sentiment_service.analyze(content)
+                            sentiment = self.sentiment_service.analyze(content, context=wctx)
                             # sentiment 附到基线尾部——bridge 合并基线给前端时，
                             # 图表统计/情绪历史才能拿到极性信号（否则比例恒 N/A）
                             msg['sentiment'] = sentiment
@@ -1103,9 +1109,14 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, Backfi
                 triggers = []
                 if sender_attr != 'system' and message_data['content'] and str(message_data['content']).strip():
                     try:
+                        is_text_msg = str(message_type) == 'text'
+                        # ctx 口径：上文取会话滚动窗口（前至多 3 条文本，任意发送者）
+                        live_ctx = context_string(self._ctx_window) if is_text_msg else ""
                         sentiment_result = self.sentiment_service.analyze(
-                            str(message_data['content'])
+                            str(message_data['content']), context=live_ctx
                         )
+                        if is_text_msg:
+                            self._ctx_window = (self._ctx_window + [str(message_data['content'])])[-CTX_N:]
                         # 同时缓存到数据库（传入已算好的结果，不再二次推理）
                         self.sentiment_service.analyze_and_cache(
                             message_id=message_hash,
@@ -1656,6 +1667,7 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, Backfi
                 self._current_conversation_id = 0  # 会话号随监听会话一起清（停止后状态不再回报旧会话）
                 self.seen_hashes.clear()
                 self.seen_message_keys.clear()
+                self._ctx_window = []
                 self._last_known_ts = 0
                 self._chat_timed_out = False
                 self._resume_mode = 'skip'

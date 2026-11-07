@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from ...db.connection import get_db
+from ...db.connection import DatabaseConnection, get_db
 from ..model_paths import (
     EMBEDDING_MODEL_DIM,
     get_embedding_model_dir,
@@ -75,6 +75,10 @@ logger = logging.getLogger(__name__)
 class SentimentService:
     """Batch sentiment + embedding service used by historical analysis."""
 
+    # 情感模型换代标记：换模型/换输入口径时更新此串，进程首次用到本服务
+    # 即把旧口径的情感缓存整批作废（KISS：DROP 重建，不迁移）。
+    MODEL_TAG = "v2-ctx-20261107"
+
     def __init__(self):
         self._realtime_service = None
         self._embedding_model = None
@@ -87,10 +91,36 @@ class SentimentService:
         self._l2_store: Optional[EmbeddingCacheStore] = None  # 记忆化句柄，模型/维度变化时重置
         self._lock = threading.Lock()
 
+        self._purge_stale_sentiment_caches()
         try:
             self._load_realtime_service()
         except Exception as exc:
             logger.error(f"[情感服务] 实时情感分析服务预加载失败: {exc}")
+
+    def _purge_stale_sentiment_caches(self) -> None:
+        """模型口径变更 → 作废两张情感缓存（sentiment_cache 归下次全面分析重建，
+        realtime_sentiment_cache 归监听增量重建）。sentiment_cache 直接 DROP
+        重走 schema：换代常伴随结构变化（如 ctx_used 列），DELETE 绕不过缺列。
+        失败不阻断服务（下次进程再试）。"""
+        try:
+            db = get_db()
+            row = db.execute(
+                "SELECT value FROM settings WHERE key = 'sentiment_model_tag'"
+            ).fetchone()
+            if row and row["value"] == self.MODEL_TAG:
+                return
+            db.execute("DROP TABLE IF EXISTS sentiment_cache")
+            db.execute("DELETE FROM realtime_sentiment_cache")
+            db.execute(
+                "INSERT OR REPLACE INTO settings (key, value, updated_at) "
+                "VALUES ('sentiment_model_tag', ?, ?)",
+                (self.MODEL_TAG, int(time.time())),
+            )
+            db.commit()
+            DatabaseConnection._create_tables()
+            logger.info("[情感缓存] 模型口径变更（%s），已重置情感缓存待重建", self.MODEL_TAG)
+        except Exception as exc:
+            logger.warning("[情感缓存] 口径标记检查失败: %s", exc)
 
     def has_local_embedding_model(self) -> bool:
         """Return whether the embedding model is available locally (ONNX fp32)."""
@@ -256,13 +286,16 @@ class SentimentService:
             }
 
     def analyze_batch(
-        self, texts: List[str], include_embeddings: bool = False
+        self, texts: List[str], include_embeddings: bool = False,
+        contexts: Optional[List[Optional[str]]] = None,
     ) -> List[Dict[str, Any]]:
         """Analyze a batch of texts.
 
         include_embeddings 由调用方决定：预处理编排器在嵌入模型可用时传
         True（问答向量通道以本表 embedding_vector 为唯一数据源）；缺模型
         时 False 落 NULL。相似度特征走 pairs 自己的 L2 嵌入缓存，不经本表。
+        contexts 与 texts 对位（v2 ctx 口径，见 sentiment_context），嵌入
+        仍按消息本体文本计算。
         """
         if not texts:
             return []
@@ -279,7 +312,7 @@ class SentimentService:
             safe_texts.append(text)
 
         self._load_realtime_service()
-        sentiment_results = self._realtime_service.analyze_batch(safe_texts)
+        sentiment_results = self._realtime_service.analyze_batch(safe_texts, contexts=contexts)
         embeddings = (
             self._get_embeddings_batch(safe_texts)
             if include_embeddings
@@ -584,7 +617,7 @@ class SentimentService:
                 placeholders = ",".join("?" * len(batch_ids))
                 cursor = db.execute(
                     f"""
-                    SELECT message_id, polarity, intensity
+                    SELECT message_id, polarity, intensity, ctx_used
                     FROM sentiment_cache
                     WHERE message_id IN ({placeholders})
                     """,
@@ -594,10 +627,12 @@ class SentimentService:
                 for row in cursor.fetchall():
                     # 存在性即有效：不 SELECT 向量列（旧库十万行 768 维
                     # torch pickle 的反序列化纯浪费），极性/强度是唯一
-                    # 被消费的字段（pairs 直读 SQL、orchestrator 只判跳过）
+                    # 被消费的字段（pairs 直读 SQL、orchestrator 判跳过
+                    # 时另比 ctx_used——上文变了要重算）
                     results[row[0]] = {
                         "polarity": row[1],
                         "intensity": row[2],
+                        "ctx_used": row[3],
                         "embedding": None,
                     }
         except Exception as exc:
@@ -623,14 +658,15 @@ class SentimentService:
                         result["intensity"],
                         pack_embedding(embedding),
                         now,
+                        result.get("ctx_used"),
                     )
                 )
 
             db.executemany(
                 """
                 INSERT OR REPLACE INTO sentiment_cache
-                (message_id, polarity, intensity, embedding_vector, created_at)
-                VALUES (?, ?, ?, ?, ?)
+                (message_id, polarity, intensity, embedding_vector, created_at, ctx_used)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 batch_data,
             )

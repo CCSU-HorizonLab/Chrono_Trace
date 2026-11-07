@@ -17,6 +17,7 @@ from ..analysis.feature_extraction_config import (
 )
 from ..model_manager import ModelManager
 from ..model_paths import SENTIMENT_MODEL_REPO_ID, get_sentiment_model_dir
+from .sentiment_context import compose_input
 from .sentiment_rules import (
     EMOJI_SENTIMENT,
     contains_sarcasm,
@@ -229,12 +230,13 @@ class RealtimeSentimentService:
         exps = np.exp(shifted)
         return (exps / exps.sum()).tolist()
 
-    def _model_predict(self, text: str) -> Dict[str, Any]:
-        """Run one forward pass for one text."""
+    def _model_predict(self, text: str, context: Optional[str] = None) -> Dict[str, Any]:
+        """Run one forward pass for one text（context=上文串，v2 ctx 口径）."""
         try:
             self._load_model()
+            model_input = compose_input(context or "", text)
             with self._lock:
-                logits = self._model.predict_logits([text])[0]
+                logits = self._model.predict_logits([model_input])[0]
             return self._result_from_probs(self._softmax_numpy(logits))
         except Exception as exc:
             logger.error(f"[实时情感分析] 模型推理失败: {exc}")
@@ -245,12 +247,19 @@ class RealtimeSentimentService:
                 "probabilities": [0.33, 0.34, 0.33],
             }
 
-    def _model_predict_batch(self, texts: List[str], batch_size: int = 32) -> List[Dict[str, Any]]:
-        """Run batched ONNX inference for multiple texts."""
+    def _model_predict_batch(
+        self, texts: List[str], batch_size: int = 32,
+        contexts: Optional[List[Optional[str]]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Run batched ONNX inference for multiple texts（contexts 对位同 texts）."""
         try:
             self._load_model()
+            model_inputs = [
+                compose_input(contexts[i] or "", t) if contexts and i < len(contexts) else t
+                for i, t in enumerate(texts)
+            ]
             with self._lock:
-                logits_batch = self._model.predict_logits(texts, batch_size=batch_size)
+                logits_batch = self._model.predict_logits(model_inputs, batch_size=batch_size)
             return [
                 self._result_from_probs(self._softmax_numpy(row)) for row in logits_batch
             ]
@@ -338,8 +347,8 @@ class RealtimeSentimentService:
             "rules_applied": rules_applied,
         }
 
-    def analyze(self, text: str) -> Dict[str, Any]:
-        """Analyze one chat message."""
+    def analyze(self, text: str, context: Optional[str] = None) -> Dict[str, Any]:
+        """Analyze one chat message（context=同会话上文串，见 sentiment_context）."""
         preprocess_result = self._preprocess(text)
         if not preprocess_result["cleaned_text"]:
             return {
@@ -353,11 +362,17 @@ class RealtimeSentimentService:
         # 归一差异，分词结果等价）
         shared_words = jieba.lcut(text) if text and text.strip() else []
         features = self._extract_features(preprocess_result["cleaned_text"], words=shared_words)
-        model_result = self._model_predict(preprocess_result["cleaned_text"])
+        model_result = self._model_predict(preprocess_result["cleaned_text"], context=context)
         return self._apply_rules(model_result, preprocess_result, features)
 
-    def analyze_batch(self, texts: List[str]) -> List[Dict[str, Any]]:
-        """Analyze many chat messages using batched model inference."""
+    def analyze_batch(
+        self, texts: List[str], contexts: Optional[List[Optional[str]]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Analyze many chat messages using batched model inference.
+
+        contexts 与 texts 对位：模型输入按 ctx 口径拼接（sentiment_context），
+        规则层仍只看消息本体文本。
+        """
         if not texts:
             return []
 
@@ -398,7 +413,11 @@ class RealtimeSentimentService:
 
         model_results_map: Dict[int, Dict[str, Any]] = {}
         if valid_texts:
-            batch_model_results = self._model_predict_batch(valid_texts)
+            valid_contexts = (
+                [contexts[i] if i < len(contexts) else None for i in valid_indices]
+                if contexts else None
+            )
+            batch_model_results = self._model_predict_batch(valid_texts, contexts=valid_contexts)
             for local_index, original_index in enumerate(valid_indices):
                 if local_index < len(batch_model_results):
                     model_results_map[original_index] = batch_model_results[local_index]
@@ -421,7 +440,10 @@ class RealtimeSentimentService:
 
         return results
 
-    def analyze_and_cache(self, message_id: int, text: str, result: dict | None = None):
+    def analyze_and_cache(
+        self, message_id: int, text: str, result: dict | None = None,
+        context: Optional[str] = None,
+    ):
         """Analyze one message and cache the result.
 
         result 传入调用方已算好的分析结果（monitor 逐条路径刚 analyze 过），
@@ -429,7 +451,7 @@ class RealtimeSentimentService:
         """
         try:
             if result is None:
-                result = self.analyze(text)
+                result = self.analyze(text, context=context)
             rules_json = json.dumps(result["rules_applied"], ensure_ascii=False)
             get_db().execute(
                 """

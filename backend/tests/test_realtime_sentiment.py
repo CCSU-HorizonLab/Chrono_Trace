@@ -28,9 +28,9 @@ class TestRealtimeSentiment:
         calls = []
         orig_predict = service._model_predict
 
-        def counting_predict(texts):
+        def counting_predict(text, context=None):
             calls.append(1)
-            return orig_predict(texts)
+            return orig_predict(text, context=context)
 
         monkeypatch.setattr(service, "_model_predict", counting_predict)
 

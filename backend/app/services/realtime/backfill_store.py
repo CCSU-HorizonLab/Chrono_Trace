@@ -10,6 +10,7 @@ import time
 
 from .providers.models import build_message_hash
 from .safe_print import safe_print as _print
+from .sentiment_context import CTX_N, context_string
 
 logger = logging.getLogger(__name__)
 
@@ -234,6 +235,8 @@ class BackfillStoreMixin:
             return 0
 
         merged = 0
+        # ctx 口径滚动窗口：回溯批按恢复顺序（时间序）前滚，只计文本消息
+        ctx_texts: list[str] = []
         for message_data in messages:
             message_hash = message_data.get('message_hash')
             if message_hash and self.message_buffer.message_exists(message_hash, self.current_account_wxid):
@@ -254,14 +257,18 @@ class BackfillStoreMixin:
             if message_hash:
                 self.seen_hashes.add(message_hash)
                 content = str(message_data.get('content') or '').strip()
+                is_text_msg = str(message_data.get('message_type') or 'text') == 'text'
                 if message_data.get('sender_attr') != 'system' and content:
                     try:
                         self.sentiment_service.analyze_and_cache(
                             message_id=message_hash,
                             text=content,
+                            context=context_string(ctx_texts) if is_text_msg else "",
                         )
                     except Exception as e:
                         _print(f"[Backfill] 情感缓存失败: {e}")
+                if is_text_msg and content:
+                    ctx_texts = (ctx_texts + [content])[-CTX_N:]
 
         return merged
 

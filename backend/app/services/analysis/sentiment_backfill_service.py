@@ -15,6 +15,7 @@ import time
 from typing import Any, Dict, Optional
 
 from ...db.connection import get_db
+from ..realtime.sentiment_context import context_string
 
 from .task_registry import TERMINAL_STATUSES, is_running
 
@@ -254,29 +255,64 @@ class SentimentBackfillService:
             self._update(task_id, progress_percent=percent, current_step=step)
 
         # 阶段 B：无 sentiment_cache 行的消息——完整情感+向量分析。
-        # m.id 水位游标推进（ORDER BY m.id 顺序处理）：写入失败行被
-        # 水位跳过（缺口保留，环境恢复后续跑覆盖查询会再捞到），
+        # (timestamp, id) 水位游标推进（时间序处理，与全面分析口径同源）：
+        # 写入失败行被水位跳过（缺口保留，环境恢复后续跑覆盖查询会再捞到），
         # 每轮反连接只扫未处理前缀而非全量重扫。
-        cursor_id = 0
+        cursor_ts, cursor_id = 0, 0
         while True:
             if cancel_event.is_set():
                 raise Exception("分析已被用户取消")
             rows = get_db().execute(
                 f"""
-                SELECT m.id, m.content
+                SELECT m.id, m.content, m.timestamp
                 FROM messages m
                 LEFT JOIN sentiment_cache sc ON sc.message_id = m.id
-                WHERE {text_filter} AND sc.message_id IS NULL AND m.id > ?
-                ORDER BY m.id
+                WHERE {text_filter} AND sc.message_id IS NULL
+                  AND (m.timestamp, m.id) > (?, ?)
+                ORDER BY m.timestamp, m.id
                 LIMIT ?
                 """,
-                (conversation_id, cursor_id, self._EMBED_BATCH_SIZE),
+                (conversation_id, cursor_ts, cursor_id, self._EMBED_BATCH_SIZE),
             ).fetchall()
             if not rows:
                 break
-            cursor_id = rows[-1]["id"]
+            cursor_ts, cursor_id = rows[-1]["timestamp"], rows[-1]["id"]
+            # ctx 口径（sentiment_context 单一来源）：上文 = 同会话时间序
+            # 前至多 3 条文本消息。窗口必须取全量文本消息（含已缓存/空
+            # 内容，均入窗）——只用缺行自身滚窗会漏掉区间内已缓存消息，
+            # ctx_used 指纹与全面分析不一致而被整体重算
+            first_ts, first_id = rows[0]["timestamp"], rows[0]["id"]
+            seed_rows = get_db().execute(
+                """
+                SELECT content FROM messages
+                WHERE conversation_id = ? AND message_type = 1
+                  AND (timestamp, id) < (?, ?)
+                ORDER BY timestamp DESC, id DESC
+                LIMIT 3
+                """,
+                (conversation_id, first_ts, first_id),
+            ).fetchall()
+            ctx_texts = [row["content"] or "" for row in reversed(seed_rows)]
+            range_rows = get_db().execute(
+                """
+                SELECT id, content FROM messages
+                WHERE conversation_id = ? AND message_type = 1
+                  AND (timestamp, id) >= (?, ?) AND (timestamp, id) <= (?, ?)
+                ORDER BY timestamp, id
+                """,
+                (conversation_id, first_ts, first_id, cursor_ts, cursor_id),
+            ).fetchall()
+            missing_ids = {row["id"] for row in rows}
+            analyze_rows, analyze_ctx = [], []
+            for row in range_rows:
+                if row["id"] in missing_ids:
+                    analyze_rows.append(row)
+                    analyze_ctx.append(context_string(ctx_texts))
+                ctx_texts.append(row["content"] or "")
             results = service.analyze_batch(
-                [row["content"] for row in rows], include_embeddings=True
+                [row["content"] for row in analyze_rows],
+                include_embeddings=True,
+                contexts=analyze_ctx,
             )
             service.batch_cache_sentiments([
                 {
@@ -284,8 +320,9 @@ class SentimentBackfillService:
                     "polarity": result["polarity"],
                     "intensity": result["intensity"],
                     "embedding": result.get("embedding"),
+                    "ctx_used": analyze_ctx[pos],
                 }
-                for row, result in zip(rows, results)
+                for pos, (row, result) in enumerate(zip(analyze_rows, results))
             ])
             filled += len(rows)
             done += len(rows)

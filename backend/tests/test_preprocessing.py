@@ -299,6 +299,7 @@ def test_sentiment_cross_batch_dedup_reuses_and_caches_all():
     class _FakeSentiment:
         def __init__(self):
             self.analyzed = []
+            self.contexts_seen = []
             self.embedded = []
             self.cached = []
             self._counter = 0
@@ -309,7 +310,7 @@ def test_sentiment_cross_batch_dedup_reuses_and_caches_all():
         def batch_get_sentiment_from_cache(self, ids):
             return {}  # 全冷：无 sentiment_cache 命中
 
-        def analyze_batch(self, texts, include_embeddings=False):
+        def analyze_batch(self, texts, include_embeddings=False, contexts=None):
             out = []
             for text in texts:
                 self._counter += 1  # 唯一序号：若重复文本二次进分类器即穿帮
@@ -319,6 +320,7 @@ def test_sentiment_cross_batch_dedup_reuses_and_caches_all():
                     "embedding": [float(self._counter)],
                 })
             self.analyzed.extend(texts)
+            self.contexts_seen.extend(contexts or [None] * len(texts))
             return out
 
         def embed_texts_batch(self, texts):
@@ -332,16 +334,20 @@ def test_sentiment_cross_batch_dedup_reuses_and_caches_all():
     fake = _FakeSentiment()
     orch.sentiment_service = fake
 
-    # 1000 条同文本 → 2 个批次，第二批的"好"应全部走记忆表
+    # 1000 条同文本 → ctx 口径下唯一输入是 4 种（上文 0/1/2/3+ 条"好"各一种），
+    # 第 4 条起上文稳定为 3×"好"，997 条同输入只过一次分类器
     messages = [{"id": i, "message_type": 1, "content": "好"} for i in range(1, 1001)]
     orch._ensure_sentiment_analysis(1, messages)
 
-    assert fake.analyzed == ["好"], "同文本批内+跨批只应过一次分类器"
+    assert fake.analyzed == ["好", "好", "好", "好"], \
+        "ctx 口径同文本只有 4 种完整输入（上文 0/1/2/3 条），各过一次分类器"
+    assert fake.contexts_seen == ["", "好", "好 / 好", "好 / 好 / 好"]
     assert len(fake.cached) == 1000, "sentiment_cache 必须逐 message_id 写"
     assert all(row["polarity"] == 1 for row in fake.cached)
-    # 重复文本情感复用首现结果（intensity 恒为首批的 1.0，不随后续计数漂移）
-    assert all(row["intensity"] == 1.0 for row in fake.cached)
-    # 批内重复与第二批全部走嵌入补查通道（按唯一文本各查一次）
+    # 同输入复用首现结果：第 4 条起 intensity 恒为 4.0，不随后续计数漂移
+    assert fake.cached[0]["intensity"] == 1.0
+    assert all(row["intensity"] == 4.0 for row in fake.cached[3:])
+    # 批内重复与第二批全部走嵌入补查通道（按唯一输入各查一次文本）
     assert fake.embedded == ["好"]
 
 

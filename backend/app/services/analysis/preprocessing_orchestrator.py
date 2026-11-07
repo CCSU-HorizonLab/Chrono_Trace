@@ -17,6 +17,7 @@ from .preprocessing import (
     SessionManager,
 )
 from .sentiment_service import SentimentService
+from ..realtime.sentiment_context import compose_input, context_string
 
 
 logger = logging.getLogger(__name__)
@@ -235,15 +236,30 @@ class PreprocessingOrchestrator:
     ):
         text_messages = [msg for msg in messages if msg["message_type"] == 1]
         all_ids = [msg["id"] for msg in text_messages]
+        # ctx 口径：每条的上文 = 同会话前至多 3 条文本消息（与训练同源，
+        # 见 realtime/sentiment_context）。messages 已按时间序取回，逐条
+        # 前滚累积即可。
+        ctx_by_id: Dict[int, str] = {}
+        _prev_texts: List[str] = []
+        for msg in text_messages:
+            ctx_by_id[msg["id"]] = context_string(_prev_texts)
+            _prev_texts.append(msg["content"] or "")
         cached_results = self.sentiment_service.batch_get_sentiment_from_cache(all_ids)
-        messages_to_analyze = [msg for msg in text_messages if msg["id"] not in cached_results]
+        # ctx_used 指纹比对：增量乱序回填会改变部分消息的上文，旧缓存口径
+        # 不一致即重算——这是「增量=全量」等价性的兜底（见增量等价测试）
+        messages_to_analyze = [
+            msg for msg in text_messages
+            if msg["id"] not in cached_results
+            or cached_results[msg["id"]].get("ctx_used") != ctx_by_id[msg["id"]]
+        ]
+        hit_count = len(all_ids) - len(messages_to_analyze)
 
         if not messages_to_analyze:
             logger.info("[预处理] 情感分析缓存命中，无需重新计算")
             return
 
         logger.info(
-            f"[预处理] 需要分析 {len(messages_to_analyze)} 条消息 (缓存命中 {len(cached_results)}/{len(all_ids)})"
+            f"[预处理] 需要分析 {len(messages_to_analyze)} 条消息 (缓存命中 {hit_count}/{len(all_ids)})"
         )
 
         total_to_analyze = len(messages_to_analyze)
@@ -254,11 +270,11 @@ class PreprocessingOrchestrator:
         # 为唯一数据源。可用性门保护——缺嵌入模型时 include_embeddings=False
         # 落 NULL（不写零向量），情感极性照常产出
         include_embeddings = self.sentiment_service.has_local_embedding_model()
-        # 跨批文本去重：同文本情感结果确定一致（推理是文本的纯函数），
-        # 重复率实测 ~21%（"好/嗯/哦"类高频短句跨批反复出现）。重复文本
-        # 情感直接复用、嵌入补查（本跑已嵌过，L1/L2 命中为主），不再重
-        # 复过分类器；sentiment_cache 仍逐 message_id 落库
-        text_sentiments: Dict[str, Tuple[int, float]] = {}
+        # 跨批输入去重：ctx 口径下模型输入是「上文 [SEP] 文本」的函数——
+        # 同文本不同上文必须分开推理（v2 的设计点），去重键从文本改为
+        # 完整输入。纯文本完全一致的复用仍命中（重复率降但仍有）；
+        # 嵌入只看文本本体，跨输入复用由嵌入 L1/L2 缓存吸收
+        input_sentiments: Dict[str, Tuple[int, float]] = {}
 
         for start in range(0, total_to_analyze, batch_size):
             if cancel_event and cancel_event.is_set():
@@ -268,32 +284,41 @@ class PreprocessingOrchestrator:
             batch_index = start // batch_size + 1
             batch_msgs = messages_to_analyze[start:start + batch_size]
             batch_results: List[Optional[Dict[str, Any]]] = [None] * len(batch_msgs)
-            # 批内去重 + 跨批复用：text → 批内全部出现位置（保序唯一）
-            positions_by_text: Dict[str, List[int]] = {}
+            # 批内去重 + 跨批复用：完整输入 → 批内全部出现位置（保序唯一）
+            positions_by_input: Dict[str, List[int]] = {}
+            input_meta: Dict[str, Tuple[str, str]] = {}   # 输入 → (文本, 上文)
             for pos, msg in enumerate(batch_msgs):
-                positions_by_text.setdefault(msg["content"] or "", []).append(pos)
+                content = msg["content"] or ""
+                ctx = ctx_by_id.get(msg["id"], "")
+                key = compose_input(ctx, content)
+                positions_by_input.setdefault(key, []).append(pos)
+                input_meta[key] = (content, ctx)
 
-            fresh_texts = [t for t in positions_by_text if t not in text_sentiments]
-            dup_texts = [t for t in positions_by_text if t in text_sentiments]
+            fresh_inputs = [k for k in positions_by_input if k not in input_sentiments]
+            dup_inputs = [k for k in positions_by_input if k in input_sentiments]
 
-            if fresh_texts:
+            if fresh_inputs:
                 fresh_results = self.sentiment_service.analyze_batch(
-                    fresh_texts, include_embeddings=include_embeddings
+                    [input_meta[k][0] for k in fresh_inputs],
+                    include_embeddings=include_embeddings,
+                    contexts=[input_meta[k][1] for k in fresh_inputs],
                 )
-                for text, result in zip(fresh_texts, fresh_results):
-                    text_sentiments[text] = (result["polarity"], result["intensity"])
-                    for pos in positions_by_text[text]:
+                for key, result in zip(fresh_inputs, fresh_results):
+                    input_sentiments[key] = (result["polarity"], result["intensity"])
+                    for pos in positions_by_input[key]:
                         batch_results[pos] = {
                             "polarity": result["polarity"],
                             "intensity": result["intensity"],
                             "embedding": result.get("embedding"),
                         }
 
-            if dup_texts:
-                dup_embeddings = self.sentiment_service.embed_texts_batch(dup_texts)
-                for text, embedding in zip(dup_texts, dup_embeddings):
-                    polarity, intensity = text_sentiments[text]
-                    for pos in positions_by_text[text]:
+            if dup_inputs:
+                dup_embeddings = self.sentiment_service.embed_texts_batch(
+                    [input_meta[k][0] for k in dup_inputs]
+                )
+                for key, embedding in zip(dup_inputs, dup_embeddings):
+                    polarity, intensity = input_sentiments[key]
+                    for pos in positions_by_input[key]:
                         batch_results[pos] = {
                             "polarity": polarity,
                             "intensity": intensity,
@@ -307,6 +332,7 @@ class PreprocessingOrchestrator:
                     "polarity": result["polarity"],
                     "intensity": result["intensity"],
                     "embedding": result.get("embedding"),
+                    "ctx_used": ctx_by_id.get(msg["id"], ""),
                 })
 
             self.sentiment_service.batch_cache_sentiments(cache_data)

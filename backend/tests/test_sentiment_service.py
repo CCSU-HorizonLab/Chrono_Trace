@@ -48,6 +48,7 @@ class TestSentimentService:
                 polarity INTEGER NOT NULL,
                 intensity REAL NOT NULL,
                 embedding_vector BLOB,
+                ctx_used TEXT,
                 created_at INTEGER NOT NULL,
                 FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
             )

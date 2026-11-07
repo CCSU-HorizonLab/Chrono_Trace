@@ -90,8 +90,8 @@ def _dml_run_gate(device_tag: str):
 EMBEDDING_MAX_LENGTH = 64           # 聊天消息实测 97% ≤64 字（中位 6 字）；
                                     # 动态 padding 下仅影响 3% 长文本，降档
                                     # 只省注意力计算不伤短消息精度
-CLASSIFIER_MAX_LENGTH = 128         # 情感三分类输入同为聊天消息，512 是
-                                    # transformers 时代遗留的保守值
+CLASSIFIER_MAX_LENGTH = 160         # v2 学生 ctx 口径：上文(≤3×60字)+消息，
+                                    # 实测输入 p50=56/均长 67，160 截断仅 3.2%
 
 
 def resolve_inference_backend() -> str:

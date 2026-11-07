@@ -343,6 +343,9 @@ CREATE TABLE IF NOT EXISTS sentiment_cache (
     intensity REAL NOT NULL,                     -- -1.0 到 1.0
     embedding_vector BLOB,                       -- 384维向量 (序列化为字节)
     created_at INTEGER NOT NULL,                 -- 缓存时间戳
+    ctx_used TEXT,                               -- 分析时的上文串（ctx 口径指纹；
+                                                 -- 与当前上文不一致即重算，见
+                                                 -- sentiment_context/preprocessing_orchestrator）
     FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE,
     CHECK (polarity IN (-1, 0, 1)),
     CHECK (intensity >= -1.0 AND intensity <= 1.0)

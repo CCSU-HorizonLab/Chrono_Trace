@@ -34,7 +34,6 @@ from ..services.analysis.feature_extraction_config import (
 )
 from ..services.model_paths import (
     EMBEDDING_MODEL_DIM,
-    EMBEDDING_MODEL_REPO_ID,
     MODEL_ROOT_DIR_KEY,
     get_default_model_root_dir,
     get_embedding_model_dir,
@@ -100,16 +99,6 @@ class Bridge(
         """加载设置"""
         with self._settings_lock:
             self.settings = load_settings_from_file(self.settings_file)
-            # 启动期一次性 RAG 嵌入变体迁移（settings 旧元组 vs 激活变体，
-            # 命中即落盘更正并触发按联系人懒重建）；读路径的内存改写不落盘
-            try:
-                from ..services.realtime.rag.config import (
-                    persist_rag_variant_migration_if_needed,
-                )
-
-                persist_rag_variant_migration_if_needed()
-            except Exception as migrate_e:
-                logger.debug("[设置] RAG 嵌入变体迁移跳过: %s", migrate_e)
             self.settings["analysis_device_mode"] = normalize_analysis_device_mode(
                 self.settings.get("analysis_device_mode", ANALYSIS_DEVICE_MODE_AUTO)
             )
@@ -1332,18 +1321,10 @@ class Bridge(
             if bool_key in payload:
                 payload[bool_key] = bool(payload[bool_key])
         if "rag_embedding_dim" in payload:
-            from ..services.model_paths import get_embedding_model_dim, get_embedding_model_repo_id
-
-            active_dim = get_embedding_model_dim() or EMBEDDING_MODEL_DIM
             try:
-                payload["rag_embedding_dim"] = int(payload["rag_embedding_dim"] or active_dim)
+                payload["rag_embedding_dim"] = int(payload["rag_embedding_dim"] or EMBEDDING_MODEL_DIM)
             except (TypeError, ValueError):
-                payload["rag_embedding_dim"] = active_dim
-            if (
-                payload.get("rag_embedding_model") == get_embedding_model_repo_id()
-                and payload["rag_embedding_dim"] == 384
-            ):
-                payload["rag_embedding_dim"] = active_dim
+                payload["rag_embedding_dim"] = EMBEDDING_MODEL_DIM
         if (
             payload.get("rag_allow_remote_embedding")
             and payload.get("rag_remote_context_redaction") is False
@@ -1394,15 +1375,6 @@ class Bridge(
                         set_active_wechat_account(self.settings, target_wxid)
 
             self.settings.update(payload)
-            # 嵌入变体迁移守卫：合并后的最终态若仍是旧变体元组（UI 提交
-            # 旧值/部分键合并残留），落盘前统一更正为当前变体，防止把已
-            # 迁移的 settings.json 冲回死锁态（幂等，remote 不受影响）
-            try:
-                from ..services.realtime.rag.config import migrate_stale_variant_tuple
-
-                migrate_stale_variant_tuple(self.settings)
-            except Exception as guard_e:
-                logger.debug("[设置] 嵌入变体迁移守卫跳过: %s", guard_e)
             self._save_settings()
             response = {
                 "saved": True,

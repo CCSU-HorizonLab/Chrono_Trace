@@ -48,9 +48,8 @@ datas += safe_copy_metadata("modelscope")
 # 由 build 脚本调 backend/scripts/ensure_models_for_export.py 首次构建时
 # 下载源模型并导出
 _MODELS_ROOT = PROJECT_ROOT / "backend" / "data" / "models"
-# bge-small 是激活嵌入变体（6.3× 提速，fp32 产物 91MB）；
-# 打包只内置 bge，variant 回退链兜底（model_paths.resolve_embedding_variant
-# 会自动选有产物的变体）。text2vec 不再进包，省 148MB。
+# bge-small 是唯一嵌入模型（6.3× 提速，fp32 产物 91MB）；
+# text2vec 变体与回退链已移除，不再进包（省 148MB）。
 for _model_name in ("bge_small_zh_v15", "sentiment_3class"):
     # 只打发行所需文件——按精度实测择优（嵌入 fp32：bge CPU 快 32%；
     # 分类器 fp16：反快 14%），弃用的 int8/pc8 实验产物不进包

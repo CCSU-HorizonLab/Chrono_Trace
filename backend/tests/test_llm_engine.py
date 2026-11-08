@@ -24,16 +24,16 @@ from app.services.realtime.rag.store import RAG_INDEX_VERSION, RagStore
 
 
 def _active_embedding_repo() -> str:
-    """检索夹具跟随激活嵌入变体（迁移后 settings/引擎均为当前变体口径）。"""
-    from app.services.model_paths import get_embedding_model_repo_id
+    """检索夹具与本地引擎同源（model_paths 常量）。"""
+    from app.services.model_paths import EMBEDDING_MODEL_REPO_ID
 
-    return get_embedding_model_repo_id()
+    return EMBEDDING_MODEL_REPO_ID
 
 
 def _active_embedding_dim() -> int:
-    from app.services.model_paths import get_embedding_model_dim
+    from app.services.model_paths import EMBEDDING_MODEL_DIM
 
-    return get_embedding_model_dim()
+    return EMBEDDING_MODEL_DIM
 
 
 def _conn():
@@ -48,75 +48,11 @@ def test_rag_defaults_are_privacy_preserving():
     assert settings["rag_enabled"] is True
     assert settings["rag_remote_context_redaction"] is True
     assert settings["rag_allow_remote_embedding"] is False
-    # 默认模型名/维度跟随激活变体（本机 bge-small=512；text2vec 变体激活时为 768）
-    from app.services.model_paths import get_embedding_model_dim, get_embedding_model_repo_id
+    # 默认模型名/维度与本地嵌入引擎同源（bge-small=512）
+    from app.services.model_paths import EMBEDDING_MODEL_DIM, EMBEDDING_MODEL_REPO_ID
 
-    assert settings["rag_embedding_model"] == get_embedding_model_repo_id()
-    assert settings["rag_embedding_dim"] == get_embedding_model_dim()
-
-
-def test_rag_defaults_migrate_legacy_384_projection_for_default_model():
-    settings = apply_rag_defaults(
-        {
-            "rag_embedding_model": "tingting0514/text2vec-base-chinese",
-            "rag_embedding_dim": 384,
-        }
-    )
-    # 旧默认标签+384 → 迁移到当前激活变体的标签与维度（隔离机制触发重建）
-    from app.services.model_paths import get_embedding_model_dim, get_embedding_model_repo_id
-
-    assert settings["rag_embedding_model"] == get_embedding_model_repo_id()
-    assert settings["rag_embedding_dim"] == get_embedding_model_dim()
-
-
-def test_rag_variant_tuple_migration_rewrites_stale_local_pair():
-    """变体迁移：local provider 的旧变体元组（text2vec/768）→ 当前激活变体。"""
-    from app.services.model_paths import get_embedding_model_dim, get_embedding_model_repo_id
-    from app.services.realtime.rag.config import migrate_stale_variant_tuple
-
-    settings = {
-        "rag_embedding_provider": "local",
-        "rag_embedding_model": "tingting0514/text2vec-base-chinese",
-        "rag_embedding_dim": 768,
-    }
-    # 本机激活 bge 时应改写；若本机激活的恰是 text2vec 则元组相等无需改写
-    resolved = (get_embedding_model_repo_id(settings), get_embedding_model_dim(settings))
-    changed = migrate_stale_variant_tuple(settings)
-    if resolved != ("tingting0514/text2vec-base-chinese", 768):
-        assert changed is True
-        assert (settings["rag_embedding_model"], settings["rag_embedding_dim"]) == resolved
-    else:
-        assert changed is False  # 对应变体仍激活：不动
-
-
-def test_rag_variant_tuple_migration_skips_remote_provider():
-    """remote provider 的同款元组是远端模型名，绝不迁移。"""
-    from app.services.realtime.rag.config import migrate_stale_variant_tuple
-
-    settings = {
-        "rag_embedding_provider": "remote",
-        "rag_embedding_model": "tingting0514/text2vec-base-chinese",
-        "rag_embedding_dim": 768,
-    }
-    assert migrate_stale_variant_tuple(settings) is False
-    assert settings["rag_embedding_model"] == "tingting0514/text2vec-base-chinese"
-    assert settings["rag_embedding_dim"] == 768
-
-
-def test_apply_rag_defaults_migrates_stale_variant_tuple():
-    """归一化全链路：旧变体元组随 load 路径自动更正（死锁态自愈入口）。"""
-    from app.services.model_paths import get_embedding_model_dim, get_embedding_model_repo_id
-
-    settings = apply_rag_defaults(
-        {
-            "rag_embedding_provider": "local",
-            "rag_embedding_model": "tingting0514/text2vec-base-chinese",
-            "rag_embedding_dim": 768,
-        }
-    )
-    resolved = (get_embedding_model_repo_id(settings), get_embedding_model_dim(settings))
-    if resolved != ("tingting0514/text2vec-base-chinese", 768):
-        assert (settings["rag_embedding_model"], settings["rag_embedding_dim"]) == resolved
+    assert settings["rag_embedding_model"] == EMBEDDING_MODEL_REPO_ID
+    assert settings["rag_embedding_dim"] == EMBEDDING_MODEL_DIM
 
 
 def test_remote_llm_detection_uses_actual_host_not_provider_label():

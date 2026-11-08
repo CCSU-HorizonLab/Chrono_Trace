@@ -1,7 +1,7 @@
-"""model_paths 变体与打包内置目录解析测试。
+"""model_paths 打包内置目录解析测试。
 
 回归背景：Linux spec 改为只内置 bge 后，normalize_model_root_dir 判
-「安装包内置模型」仍写死检查 text2vec 目录——bge-only 打包版会绕过
+「安装包内置模型」曾写死检查旧嵌入目录——bge-only 打包版会绕过
 内置目录（包里 46M 模型找不到，运行时转用户数据目录/下载）。
 """
 import sys
@@ -33,22 +33,11 @@ def _make_variant_products(bundled_root: Path, dirname: str) -> None:
 
 
 def test_frozen_bge_only_bundle_uses_bundled_dir(frozen_env):
-    """Linux 包形态：只内置 bge——必须命中内置目录（此前 text2vec 写死检查致绕过）。"""
+    """打包形态：只内置 bge——必须命中内置目录（此前写死检查旧嵌入目录致绕过）。"""
     mp, bundled_root = frozen_env
     _make_variant_products(bundled_root, "bge_small_zh_v15")
 
     assert Path(mp.normalize_model_root_dir(None)) == bundled_root.resolve()
-    # 默认变体 bge 直接命中，无回退
-    assert mp.resolve_embedding_variant({}) == "bge_small_zh_v15"
-
-
-def test_frozen_text2vec_only_bundle_uses_bundled_dir(frozen_env):
-    """Windows 包形态：只内置 text2vec——内置目录同样命中，默认 bge 缺产物回退 text2vec。"""
-    mp, bundled_root = frozen_env
-    _make_variant_products(bundled_root, "text2vec_base_chinese")
-
-    assert Path(mp.normalize_model_root_dir(None)) == bundled_root.resolve()
-    assert mp.resolve_embedding_variant({}) == "text2vec_base_chinese"
 
 
 def test_frozen_custom_dir_with_models_wins_over_bundle(frozen_env, tmp_path):

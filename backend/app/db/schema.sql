@@ -365,7 +365,7 @@ CREATE TABLE IF NOT EXISTS embedding_cache (
     content_sha1 TEXT NOT NULL,              -- sha1(text utf-8)
     model TEXT NOT NULL,                     -- EMBEDDING_MODEL_REPO_ID
     device TEXT NOT NULL,                    -- 解析后设备 'cpu'|'cuda'（auto 漂移不入键）
-    dim INTEGER NOT NULL,                    -- 模型原生维度（随嵌入变体：bge 512 / text2vec 768）
+    dim INTEGER NOT NULL,                    -- 模型原生维度（bge-small 512）
     vector BLOB NOT NULL,                    -- float32 little-endian 原始字节（非 pickle 非 fp16）
     created_at INTEGER NOT NULL,
     UNIQUE(content_sha1, model, device)  -- 此 UNIQUE 自动建索引，L2 批查(sha1 IN + model + device)直接命中；已有两轮审查误判缺索引
@@ -1042,6 +1042,6 @@ INSERT OR IGNORE INTO settings (key, value, updated_at) VALUES
     ('rag_remote_context_redaction', '1', strftime('%s', 'now')),
     ('rag_allow_remote_embedding', '0', strftime('%s', 'now')),
     ('rag_embedding_provider', 'local', strftime('%s', 'now')),
-    ('rag_embedding_model', 'tingting0514/text2vec-base-chinese', strftime('%s', 'now')),
-    ('rag_embedding_dim', '384', strftime('%s', 'now')),
+    ('rag_embedding_model', 'BAAI/bge-small-zh-v1.5', strftime('%s', 'now')),
+    ('rag_embedding_dim', '512', strftime('%s', 'now')),
     ('rag_privacy_mode', 'balanced', strftime('%s', 'now'));

@@ -58,12 +58,12 @@ class TestEmbeddingEngine:
             ["今天心情不错", "这个方案还要改", ""],
             batch_size=8, normalize_embeddings=True, show_progress_bar=False,
         )
-        from app.services.model_paths import get_embedding_model_dim
-        assert vecs.shape == (3, get_embedding_model_dim() or 768)
+        from app.services.model_paths import EMBEDDING_MODEL_DIM
+        assert vecs.shape == (3, EMBEDDING_MODEL_DIM)
         norms = (vecs * vecs).sum(1) ** 0.5
         assert abs(norms[0] - 1.0) < 1e-3, "归一化后范数应为 1"
-        from app.services.model_paths import get_embedding_model_dim
-        assert engine.get_sentence_embedding_dimension() == (get_embedding_model_dim() or 768)
+        from app.services.model_paths import EMBEDDING_MODEL_DIM
+        assert engine.get_sentence_embedding_dimension() == (EMBEDDING_MODEL_DIM)
 
     def test_shared_engine_cached(self):
         a = onnx_inference.get_shared_engine("embedding", device_mode="cpu")
@@ -117,12 +117,12 @@ class TestSentimentServiceOnnx:
         svc._embedding_load_failed = False
         svc._load_embedding_model()
         assert type(svc._embedding_model).__name__ == "OnnxEmbeddingModel"
-        from app.services.model_paths import get_embedding_model_dim
-        assert svc._embedding_dimension == (get_embedding_model_dim() or 768)
+        from app.services.model_paths import EMBEDDING_MODEL_DIM
+        assert svc._embedding_dimension == (EMBEDDING_MODEL_DIM)
         assert svc._embedding_device in ("cpu", "cuda", "dml")
         vectors = svc._get_embeddings_batch(["测试句一", "测试句二"], batch_size=8)
-        from app.services.model_paths import get_embedding_model_dim
-        assert len(vectors) == 2 and len(vectors[0]) == (get_embedding_model_dim() or 768)
+        from app.services.model_paths import EMBEDDING_MODEL_DIM
+        assert len(vectors) == 2 and len(vectors[0]) == (EMBEDDING_MODEL_DIM)
 
     def test_realtime_classifier_onnx(self, monkeypatch):
         monkeypatch.setenv("CHRONO_INFERENCE_BACKEND", "onnx")

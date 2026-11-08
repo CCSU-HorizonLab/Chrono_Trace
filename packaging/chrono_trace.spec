@@ -49,8 +49,8 @@ datas += safe_copy_metadata("modelscope")
 # 下载源模型并导出
 _MODELS_ROOT = PROJECT_ROOT / "backend" / "data" / "models"
 # 双平台统一 bge（6.3× 提速、fp16 无损；公开中文基准不输 text2vec，
-# 参数仅 1/4）——与 chrono_trace_linux.spec 同清单，默认变体直接命中。
-# 变体机制保留：质量有诉求时可导出 text2vec 产物配置切回。
+# 参数仅 1/4）——与 chrono_trace_linux.spec 同清单。嵌入模型唯一，
+# 无变体注册表/回退链（text2vec 变体已移除）。
 for _model_name in ("bge_small_zh_v15", "sentiment_3class"):
     # 只打发行所需文件——按精度实测择优（嵌入 fp32：bge CPU 快 32%；
     # 分类器 fp16：反快 14%），弃用的 int8/pc8 实验产物不进包

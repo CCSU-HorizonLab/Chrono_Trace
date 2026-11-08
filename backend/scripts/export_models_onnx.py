@@ -182,14 +182,13 @@ def main():
     args = parser.parse_args()
 
     from app.services.model_paths import (
-        SENTIMENT_MODEL_DIRNAME, get_embedding_variant_info, get_model_root_dir,
+        EMBEDDING_MODEL_DIRNAME, SENTIMENT_MODEL_DIRNAME, get_model_root_dir,
     )
 
-    # 嵌入导出跟随激活变体（默认 bge；text2vec 需产物时先在 settings 配置变体）
-    _emb = get_embedding_variant_info()
+    root = get_model_root_dir()
     jobs = [
-        ("embedding", get_model_root_dir() / _emb["dirname"], "embedding"),
-        ("sentiment", get_model_root_dir() / SENTIMENT_MODEL_DIRNAME, "classification"),
+        ("embedding", root / EMBEDDING_MODEL_DIRNAME, "embedding"),
+        ("sentiment", root / SENTIMENT_MODEL_DIRNAME, "classification"),
     ]
     for name, model_dir, mtype in jobs:
         if args.only and name != args.only:

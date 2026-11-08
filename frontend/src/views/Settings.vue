@@ -587,8 +587,8 @@ const form = reactive<{
   rag_enabled: true,
   rag_remote_context_redaction: true,
   rag_allow_remote_embedding: false,
-  rag_embedding_model: 'tingting0514/text2vec-base-chinese',
-  rag_embedding_dim: 768,
+  rag_embedding_model: 'BAAI/bge-small-zh-v1.5',
+  rag_embedding_dim: 512,
   rag_fact_read_enabled: true,
   rag_structured_fact_extraction_enabled: false,
   rag_relationship_policy_shadow_enabled: false,
@@ -775,8 +775,8 @@ async function onLoad() {
       form.rag_enabled = Boolean(s.rag_enabled)
       form.rag_remote_context_redaction = s.rag_remote_context_redaction !== false
       form.rag_allow_remote_embedding = Boolean(s.rag_allow_remote_embedding)
-      form.rag_embedding_model = String(s.rag_embedding_model || 'tingting0514/text2vec-base-chinese')
-      form.rag_embedding_dim = Number(s.rag_embedding_dim || 768)
+      form.rag_embedding_model = String(s.rag_embedding_model || 'BAAI/bge-small-zh-v1.5')
+      form.rag_embedding_dim = Number(s.rag_embedding_dim || 512)
       form.rag_fact_read_enabled = s.rag_fact_read_enabled !== false
       form.rag_structured_fact_extraction_enabled = Boolean(s.rag_structured_fact_extraction_enabled)
       form.rag_relationship_policy_shadow_enabled = Boolean(s.rag_relationship_policy_shadow_enabled)

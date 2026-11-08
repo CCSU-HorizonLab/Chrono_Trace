@@ -115,8 +115,6 @@ def has_embedding_model() -> bool:
 
 def _onnx_path(kind: str, fp32: bool = False) -> Path:
     name = "model.onnx" if fp32 else "model.fp16.onnx"
-    # 嵌入模型目录跟随变体（bge/text2vec 切换）；此前用硬编码常量
-    # EMBEDDING_MODEL_DIRNAME，变体机制被完全绕过
     if kind == "embedding":
         return get_embedding_model_dir() / "onnx" / name
     return get_model_root_dir() / SENTIMENT_MODEL_DIRNAME / "onnx" / name
@@ -368,11 +366,7 @@ _engine_cache: dict[str, _BaseOnnxModel] = {}
 
 def get_shared_engine(kind: str, device_mode: str = "auto") -> _BaseOnnxModel:
     """进程内共享 session（204MB 模型加载一次）。"""
-    from ..model_paths import get_embedding_variant_info
-
-    variant = get_embedding_variant_info()["dirname"] if kind == "embedding" else ""
-    # 键含嵌入变体：切换模型后取新 session，旧变体实例交由 GC
-    key = f"{kind}:{variant}:{device_tag_of(resolve_providers(device_mode)[1])}"
+    key = f"{kind}:{device_tag_of(resolve_providers(device_mode)[1])}"
     with _engine_lock:
         if key not in _engine_cache:
             cls = OnnxEmbeddingModel if kind == "embedding" else OnnxClassifierModel

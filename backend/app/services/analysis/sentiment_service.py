@@ -11,10 +11,9 @@ from typing import Any, Dict, List, Optional
 from ...db.connection import DatabaseConnection, get_db
 from ..model_paths import (
     EMBEDDING_MODEL_DIM,
+    EMBEDDING_MODEL_REPO_ID,
     SENTIMENT_MODEL_TAG,
     get_embedding_model_dir,
-    get_embedding_model_dim,
-    get_embedding_model_repo_id,
 )
 from .embedding_cache_store import EmbeddingCacheStore
 from .feature_extraction_config import (
@@ -524,11 +523,11 @@ class SentimentService:
             return None
         if self._l2_store is not None:
             return self._l2_store
-        # 维度与模型名跟随激活变体：L2 键含 repo_id，切模型自动隔离旧向量
-        dim = self._embedding_dimension or get_embedding_model_dim() or EMBEDDING_MODEL_DIM
+        # L2 键含 repo_id：换模型自动隔离旧向量
+        dim = self._embedding_dimension or EMBEDDING_MODEL_DIM
         try:
             self._l2_store = EmbeddingCacheStore(
-                get_embedding_model_repo_id(), self._embedding_device, dim
+                EMBEDDING_MODEL_REPO_ID, self._embedding_device, dim
             )
         except Exception:
             self._l2_store = None

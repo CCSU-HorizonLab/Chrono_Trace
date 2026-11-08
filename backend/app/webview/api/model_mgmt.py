@@ -12,12 +12,12 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-from ...services.model_paths import EMBEDDING_VARIANTS, MODEL_ROOT_DIR_KEY, SENTIMENT_MODEL_DIRNAME, SENTIMENT_MODEL_REPO_ID, get_embedding_model_dir, get_embedding_model_repo_id, get_model_root_dir, get_sentiment_model_dir, normalize_model_root_dir
+from ...services.model_paths import EMBEDDING_MODEL_DIRNAME, EMBEDDING_MODEL_REPO_ID, MODEL_ROOT_DIR_KEY, SENTIMENT_MODEL_DIRNAME, SENTIMENT_MODEL_REPO_ID, get_embedding_model_dir, get_model_root_dir, get_sentiment_model_dir, normalize_model_root_dir
 
 
 def _embedding_dir_names() -> list[str]:
-    """全部嵌入变体目录名（迁移/清点用——本机可能存在任一变体产物）。"""
-    return [v["dirname"] for v in EMBEDDING_VARIANTS.values()]
+    """嵌入模型目录名（模型位置迁移用）。"""
+    return [EMBEDDING_MODEL_DIRNAME]
 
 
 class ModelMgmtApiMixin:
@@ -36,7 +36,7 @@ class ModelMgmtApiMixin:
 
         diagnosis = ModelManager(
             model_dir=str(get_embedding_model_dir(self.settings)),
-            repo_id=get_embedding_model_repo_id(self.settings),
+            repo_id=EMBEDDING_MODEL_REPO_ID,
         ).diagnose_model_status()
         diagnosis["can_recover"] = True
         return diagnosis

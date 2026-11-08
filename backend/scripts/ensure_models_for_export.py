@@ -64,15 +64,14 @@ def main():
     args = parser.parse_args()
 
     from app.services.model_paths import (
+        EMBEDDING_MODEL_DIRNAME,
+        EMBEDDING_MODEL_REPO_ID,
         SENTIMENT_MODEL_DIRNAME,
         SENTIMENT_MODEL_TAG,
-        get_embedding_variant_info,
         get_model_root_dir,
     )
 
     root = get_model_root_dir()
-    # 嵌入源模型跟随激活变体（spec 双平台均内置 bge；text2vec 仅按需）
-    _emb = get_embedding_variant_info()
 
     # 情感模型随 git 仓库分发（onnx 发行产物 + model_version.json 入库）：
     # 产物缺失或代际落后（version ≠ model_paths.SENTIMENT_MODEL_TAG）时
@@ -92,15 +91,14 @@ def main():
             "或 regen_sentiment_model.py 本机重生成"
         )
 
-    # 嵌入源模型仍从 ModelScope 按需补（官方 BAAI / text2vec 仓库，
-    # 非自建历史仓库，无换代错位问题）；产物判据按发行文件名（嵌入定死
-    # fp32=model.onnx），与 build_release*/spec 收集口径一致
-    emb_dir = root / _emb["dirname"]
+    # 嵌入源模型从 ModelScope 官方仓库按需补；产物判据按发行文件名
+    # （嵌入定死 fp32=model.onnx），与 build_release*/spec 收集口径一致
+    emb_dir = root / EMBEDDING_MODEL_DIRNAME
     if not (emb_dir / "onnx" / "model.onnx").exists():
         if not (emb_dir / "config.json").exists():
-            print(f"[模型] 嵌入源模型缺失，从 ModelScope 下载 {_emb['repo_id']} ...")
-        if not ensure_source_model(_emb["repo_id"], emb_dir):
-            raise SystemExit(f"模型获取失败: {_emb['repo_id']}")
+            print(f"[模型] 嵌入源模型缺失，从 ModelScope 下载 {EMBEDDING_MODEL_REPO_ID} ...")
+        if not ensure_source_model(EMBEDDING_MODEL_REPO_ID, emb_dir):
+            raise SystemExit(f"模型获取失败: {EMBEDDING_MODEL_REPO_ID}")
     else:
         print("[模型] 发行产物就绪（情感=git 分发 + 嵌入产物在位），无需下载导出")
 

@@ -6,6 +6,7 @@ pywinauto>=0.6.8
 jieba>=0.42.1
 numpy>=1.24.0
 pycryptodome>=3.20.0
+zstandard>=0.23.0
 packaging/vendor/wx_key-2.1.1-cp312-cp312-win_amd64.whl
 pyinstaller==6.19.0
 onnxruntime-directml>=1.17.0

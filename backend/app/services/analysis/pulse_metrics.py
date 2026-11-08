@@ -173,7 +173,8 @@ def greeting_rhythm(conversation_id: int, from_ts: int, to_ts: int) -> Dict[str,
 
 def monthly_overview(conversation_id: int, now: int) -> Dict[str, Any]:
     """本月速览：消息数/字数/深夜次数/早安晚安天（当月自然月，messages
-    直聚合；深夜口径同 deep 海报 0-5 点本地时区）。"""
+    直聚合；深夜口径同 deep 海报 0-4 点本地时区——5 点归清晨，
+    不与早安窗的 5-10 点共享边界）。"""
     from ...db.connection import get_db
 
     db = get_db()
@@ -182,9 +183,9 @@ def monthly_overview(conversation_id: int, now: int) -> Dict[str, Any]:
         """
         SELECT COUNT(*),
                SUM(CASE WHEN CAST(strftime('%H', timestamp, 'unixepoch', 'localtime')
-                                AS INTEGER) BETWEEN 0 AND 5 THEN 1 ELSE 0 END),
+                                AS INTEGER) BETWEEN 0 AND 4 THEN 1 ELSE 0 END),
                SUM(CASE WHEN CAST(strftime('%H', timestamp, 'unixepoch', 'localtime')
-                                AS INTEGER) BETWEEN 0 AND 5 AND is_sender = 1
+                                AS INTEGER) BETWEEN 0 AND 4 AND is_sender = 1
                           THEN 1 ELSE 0 END)
         FROM messages
         WHERE conversation_id = ? AND timestamp >= ?
@@ -218,7 +219,7 @@ def window_activity(conversation_id: int, from_ts: int, to_ts: int) -> Dict[str,
         SELECT COUNT(*),
                SUM(CASE WHEN is_sender = 1 THEN 1 ELSE 0 END),
                SUM(CASE WHEN CAST(strftime('%H', timestamp, 'unixepoch', 'localtime')
-                                AS INTEGER) BETWEEN 0 AND 5 THEN 1 ELSE 0 END)
+                                AS INTEGER) BETWEEN 0 AND 4 THEN 1 ELSE 0 END)
         FROM messages
         WHERE conversation_id = ? AND timestamp >= ? AND timestamp < ?
         """,
@@ -353,7 +354,21 @@ def template_verdict(
     initiative: Optional[Dict[str, Any]],
     response_recent: Optional[Dict[str, Any]],
 ) -> str:
-    """LLM 缺席时的本地判读句：温度趋势 + 主动天平 + 回应节奏 三段拼接。"""
+    """LLM 缺席时的本地判读句：温度趋势 + 主动天平 + 回应节奏 三段拼接。
+
+    主动天平与互动特征页同一分带（classify_initiative 双闸门：二项检验
+    + Cohen's h）——此前这里另设 60/40 裸阈值，两页对同一段数据会给出
+    不同定性（分析页说均衡、脉搏说你在推动）。"""
+    from .initiative_balance import (
+        BAND_BALANCED,
+        BAND_INSUFFICIENT,
+        BAND_OTHER_DOMINANT,
+        BAND_OTHER_LEANS,
+        BAND_SELF_DOMINANT,
+        BAND_SELF_LEANS,
+        classify_initiative,
+    )
+
     parts: List[str] = []
     if temperature:
         line = f"关系温度 {round(temperature['score'])}（{temperature['label']}）"
@@ -363,12 +378,22 @@ def template_verdict(
         parts.append(line + "。")
     if initiative and initiative.get("me_pct") is not None:
         me = initiative["me_pct"]
-        if me >= 60:
-            parts.append(f"对话多由你发起（{me:.0f}%），关系目前由你在推动。")
-        elif me <= 40:
-            parts.append(f"对话多由 TA 发起（{100 - me:.0f}%），TA 的主动性更高。")
-        else:
+        band = classify_initiative(
+            int(initiative.get("total_sessions") or 0),
+            int(initiative.get("other_initiated") or 0),
+        )
+        if band == BAND_INSUFFICIENT:
+            parts.append("会话场次还少，话题发起的主动天平先不下结论。")
+        elif band == BAND_BALANCED:
             parts.append("双方话题发起较为均衡。")
+        elif band == BAND_SELF_LEANS:
+            parts.append(f"话题发起略偏你（{me:.0f}%），关系目前多由你在推动。")
+        elif band == BAND_SELF_DOMINANT:
+            parts.append(f"对话多由你发起（{me:.0f}%），关系目前由你在推动。")
+        elif band == BAND_OTHER_LEANS:
+            parts.append(f"话题发起略偏 TA（{100 - me:.0f}%），TA 的主动性更高。")
+        else:  # BAND_OTHER_DOMINANT
+            parts.append(f"对话多由 TA 发起（{100 - me:.0f}%），TA 的主动性更高。")
     if response_recent:
         ta = response_recent.get("ta_to_me_median_min")
         me = response_recent.get("me_to_ta_median_min")

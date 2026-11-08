@@ -152,13 +152,16 @@ def extract_builtin_placeholders(text: str) -> List[str]:
 # 聚合与快照
 # ----------------------------------------------------------------------
 
-def _conversation_fingerprint(conversation_id: int) -> Tuple[int, int]:
-    """(消息数, 最大时间戳)——全会话口径，任何导入/实时新消息都会变。"""
+def _conversation_fingerprint(conversation_id: int) -> Tuple[int, int, int]:
+    """(消息数, id 总和, 最大时间戳)——全会话口径，任何导入/实时新消息
+    都会变；id 总和兜「等量删插」（删一条旧消息再插一条同时间戳新消息，
+    计数与 max 都不变，内容和分布却已换了）。"""
     row = _get_db().execute(
-        "SELECT COUNT(*), COALESCE(MAX(timestamp), 0) FROM messages WHERE conversation_id = ?",
+        "SELECT COUNT(*), COALESCE(SUM(id), 0), COALESCE(MAX(timestamp), 0)"
+        " FROM messages WHERE conversation_id = ?",
         (conversation_id,),
     ).fetchone()
-    return int(row[0]), int(row[1])
+    return int(row[0]), int(row[1]), int(row[2])
 
 
 def _month_of(ts: int) -> str:
@@ -308,10 +311,10 @@ def _snapshot_key(conversation_id: int) -> str:
 
 def get_emoji_stats(conversation_id: int, force_refresh: bool = False) -> Dict[str, Any]:
     """读表情统计快照；fingerprint 失效（或首次/强制）整算并落 settings。"""
-    count, max_ts = _conversation_fingerprint(conversation_id)
+    count, id_sum, max_ts = _conversation_fingerprint(conversation_id)
     if count == 0:
         return {"ok": False, "reason": "no_messages"}
-    fp = f"{EMOJI_STATS_VERSION}:{count}:{max_ts}"
+    fp = f"{EMOJI_STATS_VERSION}:{count}:{id_sum}:{max_ts}"
     db = _get_db()
     if not force_refresh:
         row = db.execute(

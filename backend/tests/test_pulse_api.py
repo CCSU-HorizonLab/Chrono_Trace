@@ -271,26 +271,62 @@ class TestWarningFromRisk:
 
 class TestTemplateVerdict:
     def test_three_segments(self):
+        # 100 场 80/20：双闸门全过（p<0.05、h≈0.64>0.5）→ 明显你主导；
+        # 小样本（10 场 7/3）检验不过会判均衡——裸阈值 60/40 已废
         text = template_verdict(
             {"score": 62, "label": "温热", "delta": -2.5},
-            {"me_pct": 70, "total_sessions": 10, "user_initiated": 7, "other_initiated": 3},
+            {"me_pct": 80, "total_sessions": 100, "user_initiated": 80, "other_initiated": 20},
             {"me_to_ta_median_min": 30, "ta_to_me_median_min": 5,
              "me_count": 3, "ta_count": 3},
         )
         assert "关系温度 62（温热）" in text
         assert "下降 2.5 分" in text
-        assert "对话多由你发起（70%）" in text
+        assert "对话多由你发起（80%）" in text
         assert "TA 回你" in text and "更快" in text
+
+    def test_initiative_bands_follow_double_gate(self):
+        # 65/35 大样本：显著但仅小效应（h≈0.30<0.5）→ 略偏你
+        text = template_verdict(
+            None,
+            {"me_pct": 65, "total_sessions": 100, "user_initiated": 65, "other_initiated": 35},
+            None,
+        )
+        assert "略偏你（65%）" in text and "多由你在推动" in text
+        # 100 场 52/48：检验不显著 → 均衡（原裸阈值 41% 会说 TA 多发起
+        # ——近对半一律均衡）
+        text = template_verdict(
+            None,
+            {"me_pct": 52, "total_sessions": 100, "user_initiated": 52, "other_initiated": 48},
+            None,
+        )
+        assert "双方话题发起较为均衡" in text
+        # 大样本 TA 主导（20/80，h≈0.64）→ 明显 TA
+        text = template_verdict(
+            None,
+            {"me_pct": 20, "total_sessions": 100, "user_initiated": 20, "other_initiated": 80},
+            None,
+        )
+        assert "对话多由 TA 发起（80%）" in text
 
     def test_balanced_and_empty(self):
         text = template_verdict(
             None,
-            {"me_pct": 50, "total_sessions": 4, "user_initiated": 2, "other_initiated": 2},
+            {"me_pct": 50, "total_sessions": 100, "user_initiated": 52, "other_initiated": 48},
             {"me_to_ta_median_min": 5, "ta_to_me_median_min": 5, "me_count": 2, "ta_count": 2},
         )
         assert "双方话题发起较为均衡" in text
         assert "双方回复节奏相当" in text
         assert template_verdict(None, None, None) == ""
+
+    def test_insufficient_sessions_no_verdict(self):
+        # 场次不足（<5）：先不下结论，不硬给方向
+        text = template_verdict(
+            None,
+            {"me_pct": 75, "total_sessions": 4, "user_initiated": 3, "other_initiated": 1},
+            None,
+        )
+        assert "先不下结论" in text
+        assert "你发起" not in text
 
 
 # ----------------------------------------------------------------------

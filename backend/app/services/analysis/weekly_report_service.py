@@ -234,7 +234,9 @@ def llm_report(snapshot: Dict[str, Any]) -> Optional[str]:
             log_prefix="[关系周报]",
         )
         message = (body.get("choices") or [{}])[0].get("message") or {}
-        content = str(message.get("content") or message.get("reasoning_content") or "").strip()
+        # 不兜底 reasoning_content：思维链是模型自言自语不是正文，当判读
+        # 交付会输出半成品推理草稿；content 空就交给模板版（调用方兜底）
+        content = str(message.get("content") or "").strip()
         # 部分部署把思考段以 <think>…</think> 内联进 content，剥掉再交付
         if "<think>" in content:
             content = re.sub(r"<think>.*?</think>", "", content, flags=re.S).strip()

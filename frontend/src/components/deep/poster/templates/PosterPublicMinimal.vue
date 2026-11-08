@@ -181,7 +181,7 @@ const chemCells = computed<StoryStatItem[]>(() => {
     cells.push({ num: formatCount(chem.peak_day.count), label: '单日消息峰值' })
   }
   if (chem.late_night) {
-    cells.push({ num: formatCount(chem.late_night.count), label: '深夜（0-5 点）的消息' })
+    cells.push({ num: formatCount(chem.late_night.count), label: '深夜（0-4 点）的消息' })
   }
   const ratio = chem.initiator?.user_ratio
   if (ratio != null) {

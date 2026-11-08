@@ -708,7 +708,7 @@ class DeepAnalysisService:
         """
         chemistry: Dict[str, Any] = {}
 
-        # 深夜档（本地 0~5 点）
+        # 深夜档（本地 0~4 点：5 点归清晨，早安窗从 5 点起不共享边界）
         row = get_db().execute(
             f"""
             SELECT COUNT(*), SUM(CASE WHEN is_sender = 1 THEN 1 ELSE 0 END)
@@ -716,7 +716,7 @@ class DeepAnalysisService:
             WHERE conversation_id = ? AND timestamp BETWEEN ? AND ?
                 AND {_MILESTONE_TEXT_SQL}
                 AND CAST(strftime('%H', timestamp, 'unixepoch', 'localtime') AS INTEGER)
-                    BETWEEN 0 AND 5
+                    BETWEEN 0 AND 4
             """,
             (conversation_id, from_ts, to_ts),
         ).fetchone()

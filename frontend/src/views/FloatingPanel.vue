@@ -1491,8 +1491,8 @@ async function exitFloating() {
   } catch (e) {
     console.error('退出悬浮模式失败:', e)
   }
-  // 跳转回对象工作台（实时助手 tab 所在页）
-  router.push('/analytics')
+  // 跳转回智囊页（实时助手模式所在页，重设计批 4 迁移）
+  router.push('/copilot')
 }
 
 async function startFloatingDrag(event: MouseEvent) {
@@ -1524,7 +1524,7 @@ async function startFloatingDrag(event: MouseEvent) {
   window.addEventListener('mouseup', stop, { once: true })
 }
 
-/** 仅退回对象工作台（不停止监听，用于状态恢复失败时） */
+/** 仅退回智囊页（不停止监听，用于状态恢复失败时） */
 async function goBackToSuggestions() {
   stopPolling()
   try {
@@ -1533,7 +1533,7 @@ async function goBackToSuggestions() {
   } catch (e) {
     console.error('退出悬浮模式失败:', e)
   }
-  router.push('/analytics')
+  router.push('/copilot')
 }
 
 // ========== ECharts 图表 ==========

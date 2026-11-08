@@ -65,12 +65,12 @@ def collect_full_period_baseline(
     ).fetchall()
     baseline["yearly"] = [(r["year"], int(r["cnt"])) for r in yearly]
 
-    # 深夜占比（0-5 点；CAST 整数比较——字符串 BETWEEN 会把 '23' 错配进档）
+    # 深夜占比（0-4 点，5 点归清晨；CAST 整数比较——字符串 BETWEEN 会把 '23' 错配进档）
     late = conn.execute(
         f"""
         SELECT COUNT(*) AS cnt FROM messages
         WHERE conversation_id = ? AND {_TEXT_SQL}
-          AND CAST(strftime('%H', timestamp, 'unixepoch', 'localtime') AS INTEGER) BETWEEN 0 AND 5
+          AND CAST(strftime('%H', timestamp, 'unixepoch', 'localtime') AS INTEGER) BETWEEN 0 AND 4
         """,
         (conversation_id,),
     ).fetchone()
@@ -110,7 +110,7 @@ def render_baseline_block(baseline: dict) -> str:
     if baseline.get("yearly"):
         lines.append("- 分年消息量: " + " / ".join(f"{y} 年 {c} 条" for y, c in baseline["yearly"]))
     if baseline.get("late_night_ratio") is not None:
-        lines.append(f"- 深夜（0-5 点）消息占比: {baseline['late_night_ratio']:.0%}")
+        lines.append(f"- 深夜（0-4 点）消息占比: {baseline['late_night_ratio']:.0%}")
     cov = baseline.get("window_coverage")
     if cov is not None:
         lines.append(

@@ -109,7 +109,7 @@ class TestCollectBaseline:
         })
         assert block.startswith("【长期背景】")
         assert "2024 年 1830 条 / 2025 年 2100 条" in block
-        assert "深夜（0-5 点）消息占比: 12%" in block
+        assert "深夜（0-4 点）消息占比: 12%" in block
         assert "全时段的 10%（436/4506 条）" in block
 
 

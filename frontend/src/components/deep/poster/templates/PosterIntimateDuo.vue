@@ -219,7 +219,7 @@ const chemCells = computed<StoryStatItem[]>(() => {
     })
   }
   if (chem.late_night) {
-    cells.push({ num: formatCount(chem.late_night.count), label: '深夜（0-5 点）消息', tone: 'sub' })
+    cells.push({ num: formatCount(chem.late_night.count), label: '深夜（0-4 点）消息', tone: 'sub' })
   }
   const ratio = chem.initiator?.user_ratio
   if (ratio != null) {

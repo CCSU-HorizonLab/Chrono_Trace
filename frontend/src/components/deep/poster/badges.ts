@@ -122,7 +122,7 @@ export function pickPosterBadge(input: BadgeInput, audience: PosterAudience): Po
   const late = input.lateNightCount
   if (late != null && ((total > 0 && late / total >= 0.08) || late >= 300)) {
     if (audience === 'self') {
-      return { id: 'night-owl', title: '深夜守望者', caption: `凌晨 0-5 点，你说过 ${late} 句话` }
+      return { id: 'night-owl', title: '深夜守望者', caption: `凌晨 0-4 点，你说过 ${late} 句话` }
     }
     const ratioText = total > 0 ? `，占全部对话的 ${pct(late / total)}%` : ''
     return {
@@ -237,7 +237,7 @@ export function posterSubBadges(input: BadgeInput, audience: PosterAudience): Su
       id: 'night-walker',
       title: '夜行者',
       grade: late >= 5000 ? 3 : late >= 2000 ? 2 : 1,
-      note: `${formatCount(late)} 条消息发在凌晨 0-5 点`,
+      note: `${formatCount(late)} 条消息发在凌晨 0-4 点`,
     })
   }
 

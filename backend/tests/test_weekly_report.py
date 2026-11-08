@@ -232,3 +232,45 @@ class TestLlmReport:
         )
         assert out == "本周温度 35，较上周回落。"
         assert "think" not in out
+
+    def test_reasoning_content_not_fallback(self, monkeypatch):
+        # content 空时不得拿思维链当正文交付（推理草稿不是判读），
+        # 交给模板版兜底
+        captured = {}
+
+        def _fake_post(**kwargs):
+            captured.update(kwargs.get("payload") or {})
+            return {
+                "choices": [
+                    {"message": {"role": "assistant", "content": "",
+                                 "reasoning_content": "先看总分 35，再看……"}}
+                ]
+            }
+
+        monkeypatch.setattr(
+            "app.services.realtime.rag.fact_llm.get_active_model_config",
+            lambda: {"model_id": "gpt-x", "api_base_url": "http://x/v1", "api_key": ""},
+        )
+        monkeypatch.setattr(
+            "app.services.realtime.llm_http.post_json_with_retries", _fake_post
+        )
+        assert wrs.llm_report({"deltas": {}, "week_now": {"messages": 3}}) is None
+
+    def test_prompt_only_stats_no_names_or_quotes(self):
+        # 周报 prompt 只喂统计指标：姓名/消息原文即便混进 snapshot 也不得
+        # 进入远程请求（聚合数字无脱敏必要，红线靠「不出现」保证）
+        snapshot = {
+            "deltas": {"overall": 66.0, "overall_delta": -2.0, "dims": {"interaction_investment": 60.0}},
+            "week_now": {"messages": 210, "me_pct": 55.0, "late_night": 3},
+            "week_prev": {"messages": 180},
+            "response_recent": {"ta_to_me_median_min": 12, "me_to_ta_median_min": 30},
+            "response_prev": {},
+            "initiative": {"me_pct": 62.0, "total_sessions": 90},
+            # 敏感字段混入（防御性断言的靶子）
+            "display_name": "阿明",
+            "quote": "这是我们的聊天原文",
+        }
+        prompt = wrs._render_prompt(snapshot)
+        assert "阿明" not in prompt
+        assert "聊天原文" not in prompt
+        assert "66" in prompt and "210" in prompt  # 统计数字在场

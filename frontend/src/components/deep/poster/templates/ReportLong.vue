@@ -237,7 +237,7 @@ const volumeCells = computed<StoryStatItem[]>(() => {
   if (report.value.streak_days != null && report.value.streak_days >= 3)
     cells.push({ num: `${report.value.streak_days} 天`, label: '最长连续不断聊' })
   const late = story.value?.chemistry.late_night
-  if (late) cells.push({ num: formatCount(late.count), label: '深夜（0-5 点）的消息' })
+  if (late) cells.push({ num: formatCount(late.count), label: '深夜（0-4 点）的消息' })
   return cells
 })
 

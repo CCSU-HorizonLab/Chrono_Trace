@@ -186,7 +186,7 @@ const dailyCells = computed<StoryStatItem[]>(() => {
     { num: myTopWord.value, label: '你最常说的词' },
   ]
   const late = props.payload.my_story.late_night_self
-  if (late != null) cells.push({ num: formatCount(late), label: '你的深夜（0-5 点）消息' })
+  if (late != null) cells.push({ num: formatCount(late), label: '你的深夜（0-4 点）消息' })
   const reply = props.payload.my_story.reply_self_avg_seconds
   if (reply != null) cells.push({ num: formatDuration(reply), label: '你的平均回复时间' })
   return cells

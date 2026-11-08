@@ -186,6 +186,20 @@ class TestSnapshotCache:
         ta_keys = {i["key"] for i in snap["top_ta"]["unicode"]}
         assert "🥰" in ta_keys
 
+    def test_equal_delete_insert_invalidates(self, db):
+        # 等量删插：删一条旧消息再插一条同时间戳新消息，计数与 max 都
+        # 不变——指纹带 SUM(id) 兜底，缓存必须失效重算
+        ts = int(time.time()) - 100
+        _msg(db, 1, 1, "😂", ts)
+        ess.get_emoji_stats(1)
+        db.execute("DELETE FROM messages WHERE conversation_id = 1")
+        _msg(db, 0, 1, "🥰", ts)  # 同计数、同 max_ts，内容已换
+        db.commit()
+        snap = ess.get_emoji_stats(1)
+        ta_keys = {i["key"] for i in snap["top_ta"]["unicode"]}
+        me_keys = {i["key"] for i in snap["top_me"]["unicode"]}
+        assert "🥰" in ta_keys and "😂" not in me_keys
+
     def test_force_refresh(self, db):
         _msg(db, 1, 1, "😂", int(time.time()))
         ess.get_emoji_stats(1)

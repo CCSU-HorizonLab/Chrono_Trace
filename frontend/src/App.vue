@@ -16,11 +16,12 @@
         </div>
       </div>
 
-      <!-- 居中导航菜单：重设计批1-2——脉搏(新首页) / 时光(时间轴叙事) / 数据 / 分析 / 设置 -->
+      <!-- 居中导航菜单：重设计批1-4——脉搏(新首页) / 时光(时间轴叙事) / 数据 / 智囊(对话式AI) / 分析 / 设置 -->
       <nav class="ct-menu">
         <router-link to="/" class="menu-item">脉搏</router-link>
         <router-link to="/timeline" class="menu-item">时光</router-link>
         <router-link to="/import" class="menu-item">数据</router-link>
+        <router-link to="/copilot" class="menu-item">智囊</router-link>
         <router-link to="/analytics" class="menu-item">分析</router-link>
         <router-link to="/settings" class="menu-item">设置</router-link>
       </nav>

@@ -193,6 +193,8 @@ type PyWebViewApi = {
     req_id?: string
   ) => Promise<any>
   cancel_history_qa: (conversation_id: number) => Promise<any>
+  // 陪练（智囊页）：贴 TA 的消息 → 三温度档回复方向+后果预判；取消同问答 scope
+  rehearse_reply: (conversation_id: number, received_text: string) => Promise<any>
   // 群聊统计与日报
   get_group_stats: (conversation_id: number, start?: number, end?: number) => Promise<any>
   generate_group_summary: (conversation_id: number, days?: number) => Promise<any>

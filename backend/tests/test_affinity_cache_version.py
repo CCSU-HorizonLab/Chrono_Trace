@@ -65,9 +65,9 @@ def test_outdated_affinity_cache_is_ignored(monkeypatch):
 
 
 def test_version_constants_pinned_to_current_caliber():
-    """口径 5 = 六维重组为四维 + LLM；缓存 13 = 结果 JSON 字段换名。"""
-    assert AffinityAnalysisService.CACHE_SCHEMA_VERSION == 13
-    assert AffinityAnalysisService.CALIBER_VERSION == 5
+    """口径 6 = 情感引擎 v2 换代；缓存 14 = v2 极性口径（旧 blob 不复用）。"""
+    assert AffinityAnalysisService.CACHE_SCHEMA_VERSION == 14
+    assert AffinityAnalysisService.CALIBER_VERSION == 6
 
 
 def test_saved_affinity_cache_round_trips_with_version(monkeypatch):

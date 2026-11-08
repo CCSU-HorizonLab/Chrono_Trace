@@ -13,6 +13,7 @@ from ..analysis.feature_extraction_config import (
     FeatureExtractionConfig,
     normalize_analysis_device_mode,
 )
+from ..model_paths import SENTIMENT_MODEL_TAG
 from .sentiment_context import compose_input
 from .sentiment_rules import (
     EMOJI_SENTIMENT,
@@ -60,7 +61,15 @@ class RealtimeSentimentService:
         self._device = "cpu"
         self._device_mode = FeatureExtractionConfig.from_settings().analysis_device_mode
         self._lock = threading.Lock()
+        self._purge_stale_realtime_cache()
         logger.debug("[实时情感分析] 服务初始化完成")
+
+    def _purge_stale_realtime_cache(self) -> None:
+        """模型口径变更时重置实时情感缓存（与历史链共用 purge_stale_sentiment_caches：
+        只跑实时监听、从不触发历史分析的进程，换代后同样要作废旧口径行）。"""
+        from ..analysis.sentiment_service import purge_stale_sentiment_caches
+
+        purge_stale_sentiment_caches(SENTIMENT_MODEL_TAG)
 
     def configure_device_mode(self, device_mode: Optional[str]) -> str:
         """Change target device mode and rebuild model lazily if needed."""

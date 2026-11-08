@@ -23,10 +23,12 @@ from ..realtime.sentiment_context import compose_input, context_string
 logger = logging.getLogger(__name__)
 
 # 预处理算法版本号：凡是会影响 preprocessing_stats 统计口径的算法/常量变更，
-# 必须将此版本 +1（当前为 2，v1 是无版本号的旧 key）。
+# 必须将此版本 +1（v1 是无版本号的旧 key）。
 # 例如调整 MERGE_TIME_THRESHOLD / TIME_GAP_THRESHOLD / SLEEP_END_HOUR 等切分、
 # 合并常量或统计逻辑时。版本进入缓存 key，旧 key 读不到即自然失效重算。
-PREPROCESSING_ALGO_VERSION = 2
+# 3 = 情感引擎 v2 换代（v2-ctx-20261107）：模型 tag 纳入口径，
+#     interaction_pairs / 会话统计以 v2 极性重建，不与 v1 缓存混存
+PREPROCESSING_ALGO_VERSION = 3
 
 
 def _step_elapsed(start_time: float) -> str:

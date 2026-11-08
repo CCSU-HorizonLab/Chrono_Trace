@@ -68,6 +68,34 @@ def singleton(cls):
 logger = logging.getLogger(__name__)
 
 
+def purge_stale_sentiment_caches(model_tag: str) -> None:
+    """模型口径变更 → 作废两张情感缓存（sentiment_cache 归下次全面分析重建，
+    realtime_sentiment_cache 归监听增量重建）。两张表都 DROP 重走 schema：
+    换代常伴随结构变化（如 ctx_used 列），DELETE 绕不过缺列。
+    历史链（SentimentService）与监听链（RealtimeSentimentService）首次
+    初始化都会调用——只跑监听不跑历史分析的进程也要作废旧口径行，
+    否则 v1/v2 行经 message_query JOIN 混读。失败不阻断（下次进程再试）。"""
+    try:
+        db = get_db()
+        row = db.execute(
+            "SELECT value FROM settings WHERE key = 'sentiment_model_tag'"
+        ).fetchone()
+        if row and row["value"] == model_tag:
+            return
+        db.execute("DROP TABLE IF EXISTS sentiment_cache")
+        db.execute("DROP TABLE IF EXISTS realtime_sentiment_cache")
+        db.execute(
+            "INSERT OR REPLACE INTO settings (key, value, updated_at) "
+            "VALUES ('sentiment_model_tag', ?, ?)",
+            (model_tag, int(time.time())),
+        )
+        db.commit()
+        DatabaseConnection._create_tables()
+        logger.info("[情感缓存] 模型口径变更（%s），已重置情感缓存待重建", model_tag)
+    except Exception as exc:
+        logger.warning("[情感缓存] 口径标记检查失败: %s", exc)
+
+
 @singleton
 class SentimentService:
     """Batch sentiment + embedding service used by historical analysis."""
@@ -89,36 +117,11 @@ class SentimentService:
         self._l2_store: Optional[EmbeddingCacheStore] = None  # 记忆化句柄，模型/维度变化时重置
         self._lock = threading.Lock()
 
-        self._purge_stale_sentiment_caches()
+        purge_stale_sentiment_caches(self.MODEL_TAG)
         try:
             self._load_realtime_service()
         except Exception as exc:
             logger.error(f"[情感服务] 实时情感分析服务预加载失败: {exc}")
-
-    def _purge_stale_sentiment_caches(self) -> None:
-        """模型口径变更 → 作废两张情感缓存（sentiment_cache 归下次全面分析重建，
-        realtime_sentiment_cache 归监听增量重建）。sentiment_cache 直接 DROP
-        重走 schema：换代常伴随结构变化（如 ctx_used 列），DELETE 绕不过缺列。
-        失败不阻断服务（下次进程再试）。"""
-        try:
-            db = get_db()
-            row = db.execute(
-                "SELECT value FROM settings WHERE key = 'sentiment_model_tag'"
-            ).fetchone()
-            if row and row["value"] == self.MODEL_TAG:
-                return
-            db.execute("DROP TABLE IF EXISTS sentiment_cache")
-            db.execute("DELETE FROM realtime_sentiment_cache")
-            db.execute(
-                "INSERT OR REPLACE INTO settings (key, value, updated_at) "
-                "VALUES ('sentiment_model_tag', ?, ?)",
-                (self.MODEL_TAG, int(time.time())),
-            )
-            db.commit()
-            DatabaseConnection._create_tables()
-            logger.info("[情感缓存] 模型口径变更（%s），已重置情感缓存待重建", self.MODEL_TAG)
-        except Exception as exc:
-            logger.warning("[情感缓存] 口径标记检查失败: %s", exc)
 
     def has_local_embedding_model(self) -> bool:
         """Return whether the embedding model is available locally (ONNX fp32)."""

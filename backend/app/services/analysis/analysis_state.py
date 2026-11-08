@@ -3,9 +3,10 @@
 设计要点：
 - **stale 的真源是写入钩子**，不是 max(messages.timestamp) 对比——OR IGNORE
   全跳过的重复导入（rowcount==0 不进 touched_conversations）不该误报；
-- 打脏时顺手删除 settings 的 preprocessing_stats_v2_{id} 缓存行——该缓存
+- 打脏时顺手删除 settings 的 preprocessing_stats_v{ALGO}_{id} 缓存行——该缓存
   此前无消息集维度失效条件，导入新消息后非 force 路径会吐旧统计（既有
-  bug，此处一并修复）；
+  bug，此处一并修复）；前缀随 PREPROCESSING_ALGO_VERSION 派生，bump 后
+  打脏仍删得到当前版本的缓存行；
 - 完成点（特征提取/好感度分析成功尾部）写 stale=0 + 快照两列。
 """
 from __future__ import annotations
@@ -14,10 +15,11 @@ import logging
 from typing import Iterable, Optional
 
 from ...db.connection import get_db
+from .preprocessing_orchestrator import PREPROCESSING_ALGO_VERSION
 
 logger = logging.getLogger(__name__)
 
-_STATS_KEY_PREFIX = "preprocessing_stats_v2_"
+_STATS_KEY_PREFIX = f"preprocessing_stats_v{PREPROCESSING_ALGO_VERSION}_"
 
 
 def mark_conversations_stale(conversation_ids: Iterable[int]) -> None:

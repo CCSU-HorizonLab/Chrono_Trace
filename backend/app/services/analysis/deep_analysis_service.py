@@ -37,8 +37,10 @@ DEEP_WORDCLOUD_CACHE_VERSION = 2
 # v5：分段语义换轨——词云/大五/里程碑从「窗口均分 N 段（word_segments 2~6）」
 #     改为「全会话·章节边界分段」（chapter_spans，见 relationship_chapters）；
 #     日期窗只剩情绪曲线一职，payload 增 chapter_spans
+# v6：情感引擎 v2 换代（v2-ctx-20261107）——情绪桶/好感点/情感类 payload
+#     以 v2 极性重建，v1 时代行按版本过滤自然失效
 # 海报 story（milestones/chemistry）为纯加性字段，不触碰序列口径——不 +1
-DEEP_ANALYSIS_VERSION = 5
+DEEP_ANALYSIS_VERSION = 6
 
 DEEP_BUCKET_GRANULARITIES = ("day", "week", "month", "year")
 

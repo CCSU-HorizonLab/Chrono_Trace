@@ -108,10 +108,11 @@ class AffinityAnalysisResult:
 class AffinityAnalysisService:
     """好感度分析编排器"""
 
-    CACHE_SCHEMA_VERSION = 13
+    CACHE_SCHEMA_VERSION = 14
     # 口径版本：评分口径结构性变化时 +1（落历史行与缓存，跨口径趋势不可比）
     # 5 = 六维重组为四维 + LLM（互动投入/情感共鸣/亲近信号/喜好兼容度）
-    CALIBER_VERSION = 5
+    # 6 = 情感引擎 v2（v2-ctx-20261107）：情感共鸣维极性换代，跨代分不可比
+    CALIBER_VERSION = 6
     NEUTRAL_OVERALL_BASELINE = 35.0
     OVERALL_SESSION_CONFIDENCE_TARGET = 30
     OVERALL_ACTIVE_DAY_CONFIDENCE_TARGET = 30

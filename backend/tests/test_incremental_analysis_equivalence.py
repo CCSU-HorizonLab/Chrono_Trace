@@ -31,6 +31,7 @@ from app.services.analysis.analysis_state import (
 )
 from app.services.analysis.embedding_cache_store import EmbeddingCacheStore
 from app.services.analysis.feature_extraction_service import FeatureExtractionService
+from app.services.analysis.preprocessing_orchestrator import PREPROCESSING_ALGO_VERSION
 from app.services.analysis.sentiment_service import SentimentService
 
 FAKE_DIM = 32
@@ -329,7 +330,9 @@ def snapshot(conversation_id):
             return None
         return _strip_volatile(json.loads(row["value"]))
 
-    snap["preprocessing_stats"] = _settings_json(f"preprocessing_stats_v2_{conversation_id}")
+    snap["preprocessing_stats"] = _settings_json(
+        f"preprocessing_stats_v{PREPROCESSING_ALGO_VERSION}_{conversation_id}"
+    )
     snap["affinity_scores"] = _settings_json(f"affinity_scores_{conversation_id}")
     return snap
 
@@ -558,7 +561,7 @@ class TestIncrementalEquivalence:
         run_pipeline(conv)
 
         conn = get_db()
-        key = f"preprocessing_stats_v2_{conv}"
+        key = f"preprocessing_stats_v{PREPROCESSING_ALGO_VERSION}_{conv}"
         assert conn.execute(
             "SELECT 1 FROM settings WHERE key = ?", (key,)
         ).fetchone(), "分析后应有统计缓存行"

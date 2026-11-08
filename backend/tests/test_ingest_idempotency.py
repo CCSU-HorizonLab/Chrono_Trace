@@ -18,6 +18,7 @@ backend_root = Path(__file__).parent.parent
 sys.path.insert(0, str(backend_root))
 
 from app.db.connection import DatabaseConnection, get_db
+from app.services.analysis.preprocessing_orchestrator import PREPROCESSING_ALGO_VERSION
 from app.services.wechat.ingest_service import WeChatIngestService
 
 
@@ -199,7 +200,7 @@ class TestStaleHookOnImport:
         conv = _conv_id("wxid_a")
 
         db = get_db()
-        key = f"preprocessing_stats_v2_{conv}"
+        key = f"preprocessing_stats_v{PREPROCESSING_ALGO_VERSION}_{conv}"
         db.execute(
             "INSERT INTO settings (key, value, updated_at) VALUES (?, '{}', 1)", (key,)
         )

@@ -29,7 +29,7 @@ class _Dim:
 @dataclass
 class _Result:
     overall_score: float = 60.0
-    analysis_caliber: int = 5
+    analysis_caliber: int = 6
     analysis_duration_ms: int = 1200
     interaction_investment: _Dim = field(default_factory=lambda: _Dim(50, 0.4, 20))
     emotional_resonance: _Dim = field(default_factory=lambda: _Dim(70, 0.35, 24.5))
@@ -79,7 +79,7 @@ def test_record_inserts_row_with_caliber_and_full_subscores_json(db):
     record_score_history(1, _Result(overall_score=66.5), stats=_Stats(),
                          config_snapshot={"config_fingerprint": "abc"})
     row = db.execute("SELECT * FROM affinity_scores").fetchone()
-    assert row["analysis_version"] == 5
+    assert row["analysis_version"] == 6
     assert row["overall_score"] == 66.5
     assert row["message_count"] == 500
     import json

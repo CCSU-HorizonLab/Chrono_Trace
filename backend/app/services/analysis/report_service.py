@@ -30,7 +30,8 @@ REPORT_VERSION = 1
 
 # 专属梗挖掘参数
 REPORT_MEME_SAMPLE = 2000  # 候选挖掘的等距抽样上限（与海报 top 词同量级）
-REPORT_MEME_MIN_SAMPLE_HITS = 5  # 样本内出现次数门槛（圈候选）
+REPORT_MEME_MIN_SAMPLE_HITS = 3  # 样本内出现次数门槛（圈候选；抽样率 4%~25% 稀释严重，
+# 阈值高了候选全灭——精度交给全窗精确计数把守）
 REPORT_MEME_MIN_TOTAL = 8  # 全窗精确计数门槛（入榜 + 公开版安全冗余）
 REPORT_MEME_TOP = 10
 REPORT_MEME_CANDIDATES = 24  # 送精确计数的候选数上限
@@ -221,6 +222,10 @@ class ReportService:
                         counter[phrase] += 1
 
         for raw in texts:
+            # 转发卡片（【淘宝】/【闲鱼】+ 链接）是外部样板文，不是你们俩的梗——
+            # 实测会把「点击链接」「淘宝搜索」顶进候选并过计数门槛
+            if raw.lstrip().startswith("【") or "http" in raw:
+                continue
             run: List[str] = []
             for pair in pseg.cut(gen._prepare_text(raw)):
                 if _accept(pair.word):

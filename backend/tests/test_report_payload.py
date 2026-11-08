@@ -183,6 +183,20 @@ class TestMemeMining:
         memes = ReportService()._mine_memes(1, base - _DAY, base + _DAY)
         assert all(m["count"] >= rmod.REPORT_MEME_MIN_TOTAL for m in memes)
 
+    def test_forwarded_share_cards_not_memes(self, db):
+        # 【淘宝】/【闲鱼】转发卡片是外部样板文：样板短语复现再多也不是你们的梗
+        base = _local_noon("2026-03-01 08:00:00")
+        for i in range(10):
+            _msg(db, i % 2, f"【淘宝】大促价保 https://e.tb.cn/x{i} 点击链接领券", base + i * 120)
+        # 同窗有真梗在聊（确保过滤只去卡片、不误伤正常挖掘）
+        for i in range(10):
+            _msg(db, i % 2, f"干饭大王又赢了{i}", base + 3600 + i * 120)
+        db.commit()
+        memes = ReportService()._mine_memes(1, base - _DAY, base + _DAY)
+        texts = [m["text"] for m in memes]
+        assert not any("链接" in t or "淘宝" in t or "大促" in t for t in texts), texts
+        assert any(t == "干饭大王" for t in texts), texts
+
 
 class TestRhythmAndEmoji:
     def test_greeting_rhythm_day_boundaries(self, db):

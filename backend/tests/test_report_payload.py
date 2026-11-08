@@ -1,6 +1,7 @@
 """年度报告/纪念册数据服务测试（docs/product-redesign-2026-11.md §6.2）。
 
-窗口口径聚合 / 专属梗两段式挖掘 / 早安晚安节奏 / 好感温度封皮降级。
+窗口口径聚合 / 专属梗两段式挖掘 / 早安晚安节奏 / 好感温度封皮降级；
+§4.3 画像页的梗词典与镜像对照统计（同夹具）。
 夹具与 test_share_poster_export 同款（真形表 + get_db 打桩）。
 """
 
@@ -196,6 +197,90 @@ class TestMemeMining:
         texts = [m["text"] for m in memes]
         assert not any("链接" in t or "淘宝" in t or "大促" in t for t in texts), texts
         assert any(t == "干饭大王" for t in texts), texts
+
+
+class TestMemeDictionary:
+    def test_dictionary_wider_than_report_and_full_span(self, db):
+        # 13 个互不包含的复现短语：报告页取 10，词典（上限 24）应收 ≥11，
+        # 且跨度 = 全会话（首条→末条消息时间戳）
+        base = _local_noon("2026-03-01 08:00:00")
+        phrases = [
+            "干饭大王", "电影周末", "奶茶火锅", "地铁末班", "猫咪午睡", "代码上线",
+            "考试结束", "演唱会门票", "外卖到了", "旅游计划", "游戏开黑", "加班深夜", "下雨回家",
+        ]
+        ts = base
+        for k, phrase in enumerate(phrases):
+            for _ in range(8):
+                _msg(db, 1, phrase, ts)
+            ts += 3600  # 首短语在窗头、末短语在 13 小时后（全会话跨度内）
+        db.commit()
+        service = ReportService()
+        out = service.meme_dictionary(1)
+        assert out["ok"] is True
+        texts = [m["text"] for m in out["items"]]
+        assert len(texts) >= 11 and len(texts) <= rmod.REPORT_MEME_DICT_TOP
+        assert set(texts) <= set(phrases)
+        # 全会话跨度：from/to 即首末文本消息时间戳（每短语 8 条同刻，末刻 = base+12h）
+        assert out["from_ts"] == base
+        assert out["to_ts"] == base + 12 * 3600
+
+    def test_dictionary_empty_conversation(self, db):
+        db.execute("INSERT INTO messages (conversation_id, is_sender, content, timestamp) VALUES (1, 1, '', 100)")
+        db.commit()
+        assert ReportService().meme_dictionary(1)["ok"] is False
+
+
+class TestMirrorStats:
+    def test_sides_and_directions(self, db):
+        # 方向口径：reply 的 is_sender 决定侧别——TA 回我（=0）进 ta，我回 TA（=1）进 me
+        base = _local_noon("2026-03-01 12:00:00")
+        msgs = [
+            (1, 1, "在吗", base),           # m1 我发
+            (2, 0, "嗯", base + 60),        # m2 TA 回（60s → ta）
+            (3, 1, "干嘛呢", base + 100),   # m3 我发
+            (4, 0, "没事", base + 220),     # m4 TA 回（120s → ta）
+            (5, 0, "睡了？", base + 300),   # m5 TA 发
+            (6, 1, "马上", base + 330),     # m6 我回（30s → me）
+        ]
+        for mid, sender, content, ts in msgs:
+            db.execute(
+                "INSERT INTO messages (id, conversation_id, is_sender, message_type, content, timestamp)"
+                " VALUES (?, 1, ?, 1, ?, ?)",
+                (mid, sender, content, ts),
+            )
+        for sent, reply, secs, abnormal in [(1, 2, 60, 0), (3, 4, 120, 0), (5, 6, 30, 0), (4, 5, 999, 1)]:
+            db.execute(
+                "INSERT INTO response_times (conversation_id, sent_message_id, reply_message_id,"
+                " response_time_seconds, is_abnormal, created_at) VALUES (1, ?, ?, ?, ?, 1)",
+                (sent, reply, secs, abnormal),
+            )
+        for initiator in ("user", "user", "user", "other"):
+            db.execute(
+                "INSERT INTO sessions (conversation_id, start_time, end_time, message_count,"
+                " initiator, created_at) VALUES (1, 1, 2, 3, ?, 1)",
+                (initiator,),
+            )
+        db.commit()
+
+        from app.webview.api.analysis_read import AnalysisReadApiMixin
+
+        res = AnalysisReadApiMixin().get_mirror_stats(1)
+        assert res["ok"] is True
+        # ta 侧：[60, 120] 中位数取上中位（与 get_response_time_stats 同口径）
+        assert res["reply"]["ta"] == {"count": 2, "avg": 90.0, "median": 120.0}
+        assert res["reply"]["me"] == {"count": 1, "avg": 30.0, "median": 30.0}
+        assert res["initiative"] == {"total": 4, "me": 3, "ta": 1}
+        # 字数：我 = 在吗(2)+干嘛呢(3)+马上(2)；TA = 嗯(1)+没事(2)+睡了？(3)
+        assert res["volume"] == {"me_chars": 7, "ta_chars": 6}
+
+    def test_empty_conversation_ok(self, db):
+        from app.webview.api.analysis_read import AnalysisReadApiMixin
+
+        res = AnalysisReadApiMixin().get_mirror_stats(1)
+        assert res["ok"] is True
+        assert res["reply"]["me"]["count"] == 0 and res["reply"]["ta"]["count"] == 0
+        assert res["initiative"] == {"total": 0, "me": 0, "ta": 0}
+        assert res["volume"] == {"me_chars": 0, "ta_chars": 0}
 
 
 class TestRhythmAndEmoji:

@@ -79,6 +79,10 @@ type PyWebViewApi = {
   // 年度报告/纪念册（§6.2 传播产线）：窗口 payload（温度封面/总量/词云/
   // 专属梗/表情/里程碑/节奏），REPORT_TEMPLATES 模板组消费
   get_report_payload: (conversation_id: number, from: string, to: string, account_wxid?: string) => Promise<any>
+  // 专属梗词典（§4.3 画像页）：全会话跨度挖掘，条目比报告页宽
+  get_meme_dictionary: (conversation_id: number) => Promise<any>
+  // 镜像对照统计（§4.3 画像页）：回复速度/开场主动/字数投入的我↔TA 分侧聚合
+  get_mirror_stats: (conversation_id: number) => Promise<any>
   save_share_image: (image_data: string, file_name?: string) => Promise<any>
   open_export_folder: () => Promise<any>
   generate_suggestion: (intent: string, context: Record<string, any>) => Promise<any>

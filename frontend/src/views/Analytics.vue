@@ -11,7 +11,7 @@
           <div class="name-row">
             <h1 class="profile-name">{{ currentContactName || '选择一位联系人' }}</h1>
             <div class="contact-selector-wrap">
-              <FiltersBar :conversations="conversations" :selected-conversation-id="selectedConversationId" :loading="loading"
+              <FiltersBar :conversations="conversations" :selected-conversation-id="selectedConversationId"
                 @update:conversation-id="onConversationChange" />
             </div>
           </div>
@@ -92,9 +92,7 @@
         @click="currentTab = 'affinity'">关系洞察</button>
       <button class="menu-item" :class="{ active: currentTab === 'features' }"
         @click="currentTab = 'features'">互动特征</button>
-      <!-- 时光深度/内容时间线已迁独立时光页（重设计批2）；TA 画像单聊专属（1:1 语义） -->
-      <button v-if="!isGroupConversation" class="menu-item" :class="{ active: currentTab === 'persona' }"
-        @click="currentTab = 'persona'">TA 画像</button>
+      <!-- 时光深度/内容时间线已迁独立时光页（批2）；TA 画像三件已迁画像页镜像双栏（批6） -->
     </div>
   </div>
 
@@ -520,64 +518,11 @@
   </div>
 
   <!-- TAB: History QA (问问微信·聊天框：流式打字机 + 引用溯源 + 底部输入 + 滚底) -->
-  <!-- TAB: TA 画像（画像档案/大五印象/分享海报，单聊专属；画像演变在独立时光页） -->
-  <!-- 懒激活同上：PosterStudio/大五首次进入才挂载取数；日期窗独立 personaDates（默认全量） -->
-  <div v-show="currentTab === 'persona' && selectedConversationId" class="tab-content fade-in persona-tab">
-    <template v-if="personaActivated && !isGroupConversation">
-      <DateRangeFilter
-        :dates="personaDates"
-        :loading="false"
-        :show-export="false"
-        :all-from="conversationSpan?.from || ''"
-        @update:dates="onPersonaDatesChange"
-        @refresh="deepRefreshKey++"
-      />
-      <div :key="`persona-${selectedConversationId}-${deepRefreshKey}`" class="persona-flow">
-        <!-- 画像档案（生成入口在画廊头部） -->
-        <div class="persona-tab-shell">
-          <PersonaGallery
-            :loading="loadingPersonaProfile"
-            :contact-name="currentContactName"
-            :conversation-id="selectedConversationId"
-            :profile="personaProfile"
-            :profile-meta="personaProfileMeta"
-            :window-info="personaProfileMeta.window"
-            :account-wxid="activeAccountWxid || ''"
-            :analysis="analysis"
-            :analysis-result="analysisResult"
-            :feature-stats="featureStats"
-            :sessions="sessions"
-            :activity-calendar-summary="activityCalendar.summary"
-            @generate="showPortraitDialog = true"
-          />
-          <!-- 我的画像：更新画像默认含自我画像，这里让生成结果可见 -->
-          <ProfileBriefCard
-            kind="self"
-            class="persona-self-card"
-            :contact-name="realContactName"
-            :account-wxid="activeAccountWxid || ''"
-            :refresh-key="profileRefreshKey"
-            @generate="showPortraitDialog = true"
-          />
-        </div>
-        <BigFivePanel :conversation-id="selectedConversationId" />
-        <PosterStudio :conversation-id="selectedConversationId" :dates="personaDates" :contact-name="currentContactName" />
-      </div>
-    </template>
-  </div>
+  <!-- TA 画像三件（画像档案/大五/海报）已迁独立画像页镜像双栏（重设计批6） -->
 
   <!-- Dialogs -->
   <PreferenceKeywordsDialog v-if="selectedConversationId" v-model="showKeywordsDialog"
     :conversation-id="selectedConversationId" @updated="handleKeywordsUpdated" />
-  <PortraitGenerateDialog
-    :visible="showPortraitDialog"
-    :display-name="currentContactName"
-    :account-wxid="activeAccountWxid || undefined"
-    :show-self-panel="true"
-    :cancel-key="selectedConversationId || 0"
-    @close="showPortraitDialog = false"
-    @generated="handlePortraitGenerated"
-  />
   <RelationshipContextForm v-if="selectedConversationId" v-model="showContextForm"
     :conversation-id="selectedConversationId" @saved="handleContextSaved" />
 </section>
@@ -632,11 +577,9 @@ import { resolveAffinityPollAction } from '@/utils/affinityPoll'
 import { getScoreColor, HEAT_RAMP, chartPalette } from '@/components/charts/chartTheme'
 
 import FiltersBar from '@/components/analytics/FiltersBar.vue'
-import DateRangeFilter from '@/components/analytics/DateRangeFilter.vue'
 
 import AffinityScoreCard from '@/components/affinity/AffinityScoreCard.vue'
 import RiskSignalCard from '@/components/affinity/RiskSignalCard.vue'
-import PortraitGenerateDialog from '@/components/persona/PortraitGenerateDialog.vue'
 import { copyText } from '@/utils/clipboard'
 import DimensionRadar from '@/components/affinity/DimensionRadar.vue'
 import SubScoreBreakdown from '@/components/affinity/SubScoreBreakdown.vue'
@@ -644,14 +587,10 @@ import PreferenceKeywordsDialog from '@/components/affinity/PreferenceKeywordsDi
 import RelationshipContextForm from '@/components/affinity/RelationshipContextForm.vue'
 import CtCard from '@/components/base/CtCard.vue'
 import CtButton from '@/components/base/CtButton.vue'
-import PersonaGallery from '@/components/persona/PersonaGallery.vue'
-import ProfileBriefCard from '@/components/persona/ProfileBriefCard.vue'
 import { showDialog, showConfirm } from '@/utils/dialog'
 import { safeGetItem, safeRemoveItem, safeSetItem } from '@/utils/safeStorage'
 import { toLocalDateKey } from '@/utils/datetime'
 import CtAvatar from '@/components/base/CtAvatar.vue'
-import BigFivePanel from '@/components/deep/BigFivePanel.vue'
-import PosterStudio from '@/components/deep/PosterStudio.vue'
 import {
   FolderArchive,
   MessageSquare,
@@ -664,26 +603,6 @@ import {
 
 type Conversation = { id: number; name: string; username: string; message_count: number; last_message_time: string; avatar?: string; conversation_type?: 'private' | 'group' }
 type Session = { id: number; start_time: number; end_time: number; duration: number; message_count: number; initiator: string; messages: any[] }
-type TimeseriesPoint = {
-    ts: string
-    score: number
-    positive?: number
-    neutral?: number
-    negative?: number
-    msgCount?: number
-    userScore?: number
-    otherScore?: number
-}
-type SubjectStats = { msgCount: number; avgScore: number; maxDay?: string; minDay?: string }
-type Subject = { id?: string | number; name: string; avatar?: string; stats?: SubjectStats }
-type Analysis = { subject?: Subject; timeseries: TimeseriesPoint[]; wordcloud: { word: string; weight: number }[] }
-type ContactProfile = {
-    personality_tags?: string[]
-    chat_style?: string
-    interests?: string[]
-    relationship_note?: string
-    communication_tips?: string
-}
 type ActivityCalendarEntry = {
     date: string
     message_count: number
@@ -723,17 +642,12 @@ type ActivityCalendarData = {
 
 export default {
     components: {
-        FiltersBar, DateRangeFilter,
-        AffinityScoreCard, DimensionRadar, SubScoreBreakdown, RiskSignalCard,         PreferenceKeywordsDialog, RelationshipContextForm, CtCard, CtButton, PersonaGallery, CtAvatar,
-        FolderArchive, MessageSquare, Sparkles, BarChart3, TrendingUp, Loader2, Lightbulb, PortraitGenerateDialog,
-        BigFivePanel, PosterStudio, ProfileBriefCard
+        FiltersBar,
+        AffinityScoreCard, DimensionRadar, SubScoreBreakdown, RiskSignalCard, PreferenceKeywordsDialog, RelationshipContextForm, CtCard, CtButton, CtAvatar,
+        FolderArchive, MessageSquare, Sparkles, BarChart3, TrendingUp, Loader2, Lightbulb
     },
     setup() {
         const currentTab = ref('affinity')
-        // 时光深度/内容时间线页签已迁独立时光页（重设计批2）；刷新纪元仍供 TA 画像重挂载
-        const deepRefreshKey = ref(0)
-        // TA 画像懒激活：首次进入才挂载 PersonaGallery/大五/海报（免无谓取数）
-        const personaActivated = ref(false)
         const activeAccountWxid = ref('')
 
         // Core State
@@ -741,30 +655,8 @@ export default {
         const selectedConversationId = ref<number | null>(null)
 
         const dates = reactive({ from: '', to: '' })
-        // TA 画像默认全量：画像/大五印象/海报都是长周期叙事，近 30 天
-        // 窗会把海报 payload 截成一小段
-        const personaDates = reactive({ from: '', to: '' })
-        // 会话消息真实跨度（首/末条日期）：「全部」快捷键与时光深度默认窗的起点，
-        // 替代 2000-01-01 占位——输入框显示 2000 年会让人以为筛选错了
-        const conversationSpan = ref<{ from: string; to: string } | null>(null)
-        const loading = ref(false)
         const loadingSessions = ref(false)
-        const error = ref('')
-        const analysis = reactive<Analysis>({ timeseries: [], wordcloud: [] })
-        const subject = ref<Subject | undefined>(undefined)
         const sessions = ref<Session[]>([])
-        const personaProfile = ref<ContactProfile | null>(null)
-        // 画像简卡（实时助手双卡 + TA 画像页我的画像卡）的刷新键：生成完成后 +1
-        const profileRefreshKey = ref(0)
-        const loadingPersonaProfile = ref(false)
-        const personaProfileMeta = reactive({
-            createdAt: null as number | null,
-            expiresAt: null as number | null,
-            expired: false,
-            estimatedTokens: 0,
-            // 当前画像的窗口标注（rolling→「最近 N 天」/ custom→「起 ~ 止」）
-            window: null as { kind: string; from: number; to: number; days: number; label: string } | null
-        })
         const responseTimeChart = ref<HTMLDivElement | null>(null)
         const activityCalendarChart = ref<HTMLDivElement | null>(null)
         const wordCountChart = ref<HTMLDivElement | null>(null)
@@ -772,8 +664,6 @@ export default {
         let activityCalendarChartInstance: echarts.ECharts | null = null
         let wordCountChartInstance: echarts.ECharts | null = null
 
-        const stats = ref<{ totalMessages: number; avgSentiment: number; activeDays: number; sessionCount: number } | null>(null)
-        
         const analysisResult = ref<AffinityAnalysisResult | null>(null)
         // AI 关系评估阶段机：本地四维先行渲染后 LLM 仍在评估（running）→
         // 终态按 llm_relationship 在场与否置 done/absent；idle = 未在评估
@@ -786,7 +676,6 @@ export default {
         const llmRetryError = ref('')
         const displayScore = ref(0)
         const showKeywordsDialog = ref(false)
-const showPortraitDialog = ref(false)
         const showContextForm = ref(false)
         const analysisLaunchPending = ref(false)
         const isGlobalAnalyzing = ref(false)
@@ -839,16 +728,6 @@ const showPortraitDialog = ref(false)
             '>1d': ['>1d']
         }
 
-        const shouldLoadContentAnalysis = computed(() => {
-            return currentTab.value === 'persona'
-        })
-        const hasContentAnalysis = computed(() => {
-            return Boolean(subject.value?.stats && (
-                (subject.value.stats.msgCount || 0) > 0 ||
-                analysis.wordcloud.length > 0 ||
-                analysis.timeseries.length > 0
-            ))
-        })
         const hasConversations = computed(() => conversations.value.length > 0)
         const currentConversation = computed(() => {
             if (!selectedConversationId.value) return undefined
@@ -858,8 +737,6 @@ const showPortraitDialog = ref(false)
         const currentContactName = computed(() => {
             return currentConversation.value?.name || '选择联系人'
         })
-        // 画像简卡取数用真实名（未选人为空串触发组件空态守卫，不发占位名「选择联系人」去后端）
-        const realContactName = computed(() => currentConversation.value?.name || '')
         const isGroupConversation = computed(() => {
             return currentConversation.value?.conversation_type === 'group'
         })
@@ -922,15 +799,7 @@ const showPortraitDialog = ref(false)
                 // 取消失败不打断（后端请求会自行超时返回）
             }
         }
-        const headerAvatarSrc = computed(() => {
-            const currentId = selectedConversationId.value
-            const subjectId = subject.value?.id
-            const subjectMatchesSelection = currentId != null && subjectId != null && Number(subjectId) === Number(currentId)
-            if (subjectMatchesSelection && subject.value?.avatar) {
-                return subject.value.avatar
-            }
-            return currentConversation.value?.avatar || ''
-        })
+        const headerAvatarSrc = computed(() => currentConversation.value?.avatar || '')
 
         const hasPreferenceKeywords = computed(() => {
             const preference = analysisResult.value?.preference_compatibility
@@ -1057,24 +926,6 @@ const showPortraitDialog = ref(false)
             dates.to = toLocalDateKey(to)
         }
 
-        function resetPersonaDates() {
-            personaDates.from = conversationSpan.value?.from || '2000-01-01'
-            personaDates.to = toLocalDateKey(new Date())
-        }
-
-        async function loadConversationSpan(id: number) {
-            try {
-                const res = await api.get_conversation_span(id)
-                const data = res?.data
-                if (!data?.from_date) return
-                conversationSpan.value = { from: data.from_date, to: data.to_date || '' }
-                // 跨度晚到：仅当默认窗还是占位起点时替换（用户已手动缩窗则不动）
-                if (personaDates.from === '2000-01-01') resetPersonaDates()
-            } catch {
-                // 查询失败维持占位，不阻塞主链路
-            }
-        }
-
         function applyAnalysisDeviceMode(mode: AnalysisDeviceMode) {
             analysisDeviceMode.value = mode
             gpuMode.value = mode === 'gpu' ? 'gpu' : 'cpu'
@@ -1130,17 +981,6 @@ const showPortraitDialog = ref(false)
             }
         }
 
-        function refreshSummaryStats() {
-            const timeseries = analysis.timeseries || []
-            const totalSentiment = timeseries.reduce((sum: number, p: any) => sum + (p.score || 0), 0)
-            stats.value = {
-                totalMessages: subject.value?.stats?.msgCount || 0,
-                avgSentiment: timeseries.length ? parseFloat((totalSentiment / timeseries.length).toFixed(2)) : 0,
-                activeDays: timeseries.length,
-                sessionCount: sessions.value.length
-            }
-        }
-
         async function loadConversations() {
             try {
                 await bridgeReady()
@@ -1166,11 +1006,7 @@ const showPortraitDialog = ref(false)
             analysisResult.value = null
             llmPhase.value = 'idle'
             hasFeatures.value = false
-            analysis.timeseries = []
-            analysis.wordcloud = []
-            subject.value = undefined
             sessions.value = []
-            stats.value = null
             activityCalendar.value = {
                 year: new Date().getFullYear(),
                 years: [],
@@ -1207,16 +1043,11 @@ const showPortraitDialog = ref(false)
             }
             selectedConversationId.value = id
             setDefaultDates(30, getConversationAnchorDate(id))
-            conversationSpan.value = null
-            void loadConversationSpan(id)
-            resetDeepDates()
-            resetPersonaDates()
             hasFeatures.value = false
             analysisResult.value = null
             llmPhase.value = 'idle'
             groupSummary.value = null
             loadGroupStats()
-            loadPersonaProfile(id)
             loadSessions()
             tryLoadExistingFeatures()
             void tryLoadAffinityScores().then(() => {
@@ -1227,72 +1058,6 @@ const showPortraitDialog = ref(false)
                     resumeLlmEvaluation(saved.taskId, id)
                 }
             })
-            if (shouldLoadContentAnalysis.value) {
-                loadAnalysis()
-            }
-        }
-
-        function resetPersonaProfile() {
-            personaProfile.value = null
-            personaProfileMeta.createdAt = null
-            personaProfileMeta.expiresAt = null
-            personaProfileMeta.expired = false
-            personaProfileMeta.estimatedTokens = 0
-            personaProfileMeta.window = null
-        }
-
-        function handlePortraitGenerated() {
-  // 画像生成完成后刷新画像数据（画廊走 loadPersonaProfile，简卡走 refreshKey）
-  profileRefreshKey.value++
-  if (typeof loadPersonaProfile === 'function') loadPersonaProfile()
-}
-
-async function loadPersonaProfile(conversationId = selectedConversationId.value || undefined) {
-            if (!conversationId) {
-                resetPersonaProfile()
-                return
-            }
-
-            const conversation = conversations.value.find((item) => item.id === conversationId)
-            const displayName = conversation?.name
-            // 画像档案随 TA 画像页签单聊限定：群聊不取画像（展示层与数据层同口径）
-            if (!displayName || conversation?.conversation_type === 'group') {
-                resetPersonaProfile()
-                return
-            }
-
-            loadingPersonaProfile.value = true
-            const epoch = viewEpoch.value
-            try {
-                const res = await api.get_contact_profile(displayName, activeAccountWxid.value || undefined)
-                if (epoch !== viewEpoch.value) return // 已切换联系人，丢弃过期结果（F1）
-                if (res.ok && res.has_profile) {
-                    personaProfile.value = res.profile || null
-                    personaProfileMeta.createdAt = res.created_at || null
-                    personaProfileMeta.expiresAt = res.expires_at || null
-                    personaProfileMeta.expired = Boolean(res.expired)
-                    personaProfileMeta.estimatedTokens = Number(res.estimated_tokens || 0)
-                    personaProfileMeta.window = res.window || null
-                } else {
-                    resetPersonaProfile()
-                    personaProfileMeta.estimatedTokens = Number(res?.estimated_tokens || 0)
-                }
-            } catch (e) {
-                if (epoch === viewEpoch.value) resetPersonaProfile()
-            } finally {
-                if (epoch === viewEpoch.value) loadingPersonaProfile.value = false
-            }
-        }
-
-        function onDatesChange(newDates: { from: string; to: string }) {
-            dates.from = newDates.from
-            dates.to = newDates.to
-            loadAnalysis()
-        }
-
-        function onPersonaDatesChange(newDates: { from: string; to: string }) {
-            personaDates.from = newDates.from
-            personaDates.to = newDates.to
         }
 
         const exportDialogVisible = ref(false)
@@ -1446,7 +1211,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
 
         async function loadActivityCalendar(year?: number) {
             if (!selectedConversationId.value) return
-            const epoch = viewEpoch.value // 写回前复查（F1）：与 loadAnalysis/loadSessions 同口径
+            const epoch = viewEpoch.value // 写回前复查（F1）：与 loadSessions 同口径
             try {
                 const res = await api.get_activity_calendar(selectedConversationId.value, year)
                 if (epoch !== viewEpoch.value) return // 已切换联系人，丢弃过期结果（F1）
@@ -1458,25 +1223,6 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
                     }
                 }
             } catch (e) { console.error(e) }
-        }
-
-        async function loadAnalysis() {
-            if (!selectedConversationId.value) return
-            const epoch = viewEpoch.value
-            loading.value = true
-            error.value = ''
-            try {
-                await bridgeReady()
-                const res = await api.get_analysis({ conversation_id: selectedConversationId.value, from: dates.from, to: dates.to })
-                if (epoch !== viewEpoch.value) return // 已切换联系人（F1）
-                if (res.error) { error.value = res.error; return }
-                analysis.timeseries = res?.timeseries ?? []
-                analysis.wordcloud = res?.wordcloud ?? []
-                subject.value = res?.subject ?? subject.value
-                refreshSummaryStats()
-            } catch (e: any) {
-                error.value = e?.message || '加载失败'
-            } finally { loading.value = false }
         }
 
         async function loadSessions() {
@@ -1494,7 +1240,6 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
                         end_time: s.end_time * 1000,
                         duration: (s.end_time || 0) - (s.start_time || 0)
                     }))
-                    refreshSummaryStats()
                 }
             } catch (e) { console.error(e) } finally { loadingSessions.value = false }
         }
@@ -1708,14 +1453,10 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
                             if (prog.result) analysisResult.value = prog.result as AffinityAnalysisResult
                             llmPhase.value = 'running'
                             isGlobalAnalyzing.value = false
-                            const followUpTasks = [
+                            void Promise.all([
                                 loadSessions(),
                                 loadActivityCalendar(activityCalendar.value.year)
-                            ]
-                            if (shouldLoadContentAnalysis.value) {
-                                followUpTasks.unshift(loadAnalysis())
-                            }
-                            void Promise.all(followUpTasks)
+                            ])
                             return
                         }
                         clearInterval(activeTimer.value)
@@ -1742,14 +1483,10 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
                             }
                             if (!progressiveShown) {
                                 // 未经过 llm_pending（无 LLM 阶段/秒级完成）：跟随加载在此补齐
-                                const followUpTasks = [
+                                await Promise.all([
                                     loadSessions(),
                                     loadActivityCalendar(activityCalendar.value.year)
-                                ]
-                                if (shouldLoadContentAnalysis.value) {
-                                    followUpTasks.unshift(loadAnalysis())
-                                }
-                                await Promise.all(followUpTasks)
+                                ])
                             }
                             resolve()
                         } else if (action.kind === 'cancelled-partial') {
@@ -1862,7 +1599,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
 
         async function loadFeatureData() {
             if (!selectedConversationId.value) return
-            const epoch = viewEpoch.value // 写回前复查（F1）：与 loadAnalysis/loadSessions 同口径
+            const epoch = viewEpoch.value // 写回前复查（F1）：与 loadSessions 同口径
             try {
                 const [rtData, iniData, wcData] = await Promise.all([
                     api.get_response_times(selectedConversationId.value),
@@ -2032,17 +1769,6 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
                     if (activityCalendar.value.entries.length) renderActivityCalendar()
                 }
             }
-            if (newVal === 'persona' && selectedConversationId.value) {
-                loadAnalysis()
-                personaActivated.value = true
-            }
-        })
-
-        // 切到群聊时 TA 画像/实时助手页签隐藏：若正处于该页签则回退关系洞察（群聊工作台）
-        watch(isGroupConversation, (isGroup) => {
-            if (isGroup && currentTab.value === 'persona') {
-                currentTab.value = 'affinity'
-            }
         })
 
         watch(() => analysisResult.value, (newVal) => {
@@ -2101,7 +1827,6 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
 
         onMounted(async () => {
             if (!dates.from || !dates.to) setDefaultDates(30)
-            if (!personaDates.from || !personaDates.to) resetPersonaDates()
             await loadAnalysisDeviceMode()
             await refreshAccountContext()
             await loadConversations()
@@ -2125,18 +1850,17 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
         }
 
         return {
-            currentTab, conversations, selectedConversationId, dates, loading, loadingSessions, error, analysis, subject, sessions, deepRefreshKey, conversationSpan, personaActivated, personaDates, onPersonaDatesChange, viewEpoch, handleCancelGroupSummary,
-            personaProfile, loadingPersonaProfile, personaProfileMeta, profileRefreshKey, realContactName,
-            analysisResult, displayScore, llmRetryRunning, llmRetryError, handleRetryLlmRelationship, showKeywordsDialog, showContextForm, showPortraitDialog, handlePortraitGenerated, isGlobalAnalyzing, isStopping, activeTimer, handleStopAnalysis, llmPhase, handleSkipLlmEvaluation, globalProgressPercent, globalProgressStep, gpuMode,
+            currentTab, conversations, selectedConversationId, dates, loadingSessions, sessions, viewEpoch, handleCancelGroupSummary,
+            analysisResult, displayScore, llmRetryRunning, llmRetryError, handleRetryLlmRelationship, showKeywordsDialog, showContextForm, isGlobalAnalyzing, isStopping, activeTimer, handleStopAnalysis, llmPhase, handleSkipLlmEvaluation, globalProgressPercent, globalProgressStep, gpuMode,
             hasConversations, hasFeatures, hasCachedAffinityAnalysis, featureStats, responseTimeStats, initiativeStats, wordCountsStats, displayWordRatioLabel, activityCalendar,
-            responseTimeChart, activityCalendarChart, wordCountChart, stats, currentContactName, headerAvatarSrc, hasPreferenceKeywords, allDimensions,
-            hasContentAnalysis, analysisStaleNotice, circumference, strokeDashoffset, formatNumber, formatTime, getResponseTimeLabel, getMergedResponseTimeLabel, getResponseTimePercent, onConversationChange, onDatesChange, handleExport, handleStartGlobalAnalysis, handleContextSaved, handleKeywordsUpdated, llmEvidenceNotes,
+            responseTimeChart, activityCalendarChart, wordCountChart, currentContactName, headerAvatarSrc, hasPreferenceKeywords, allDimensions,
+            analysisStaleNotice, circumference, strokeDashoffset, formatNumber, formatTime, getResponseTimeLabel, getMergedResponseTimeLabel, getResponseTimePercent, onConversationChange, handleExport, handleStartGlobalAnalysis, handleContextSaved, handleKeywordsUpdated, llmEvidenceNotes,
             overallCopied, handleCopyOverall,
             isGroupConversation, groupStats, groupStatsLoading, groupSummary, groupSummaryLoading, groupSummaryDays, handleGenerateGroupSummary,
             reportExporting, handleExportReport,
             exportDialogVisible, exportFormat, exporting, exportResult, confirmExport, openExportFolder,
             activeAccountWxid,
-            getScoreColor, scrollToDetails, handlePreferenceDisabledClick, loadAnalysis, loadSessions, handleActivityYearChange
+            getScoreColor, scrollToDetails, handlePreferenceDisabledClick, loadSessions, handleActivityYearChange
         }
     }
 }
@@ -2531,11 +2255,6 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   overflow-y: auto;
 }
 
-/* TA 画像页整页滚：此前 shell 内部自滚，下方大五/海报被 flex 挤压成矮条 */
-.tab-content.persona-tab {
-  overflow-y: auto;
-}
-
 .tab-content.affinity-tab .affinity-dashboard {
   flex: 0 0 auto;
 }
@@ -2758,22 +2477,6 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
   flex-direction: column;
   gap: var(--ct-space-xl);
   margin-top: var(--ct-space-md);
-}
-
-.persona-flow {
-  display: flex;
-  flex-direction: column;
-  gap: var(--ct-space-lg);
-}
-
-/* 滚动已上提到 .tab-content.persona-tab，shell 只做排布不再自滚 */
-.persona-tab-shell {
-  margin-top: var(--ct-space-md);
-  padding-bottom: var(--ct-space-xl);
-}
-
-.persona-self-card {
-  margin-top: var(--ct-space-lg);
 }
 
 /* 图标点三色槽：青绿/墨紫/珊瑚（数据色板成员，非语义告警） */

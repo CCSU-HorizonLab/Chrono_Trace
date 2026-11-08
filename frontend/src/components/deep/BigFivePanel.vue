@@ -7,6 +7,8 @@
       </div>
       <div class="panel-actions">
         <span class="panel-badge" :class="sourceBadgeClass">{{ sourceBadgeText }}</span>
+        <!-- 大五降为一张卡（§4.3）：逐段演变去时光页时间轴看 -->
+        <router-link to="/timeline" class="btn">查看演变</router-link>
         <button v-if="!enhancing" class="btn enhance-btn" :disabled="loading" @click="enhance">
           AI 校正
         </button>

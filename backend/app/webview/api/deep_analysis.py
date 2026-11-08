@@ -542,6 +542,18 @@ class DeepAnalysisApiMixin:
             logger.error(f"[Bridge] 获取报告数据失败: {e}")
             return {"ok": False, "error": str(e)}
 
+    def get_meme_dictionary(self, conversation_id: int) -> dict:
+        """专属梗词典（画像页）：全会话跨度挖掘，条目比报告页宽。"""
+        try:
+            if not conversation_id:
+                return {"ok": False, "error": "缺少参数: conversation_id"}
+            from ...services.analysis.report_service import ReportService
+
+            return ReportService().meme_dictionary(int(conversation_id))
+        except Exception as e:
+            logger.error(f"[Bridge] 获取梗词典失败: {e}")
+            return {"ok": False, "error": str(e)}
+
     def save_share_image(self, image_data: str, file_name: str = "") -> dict:
         """保存 html2canvas 合成的 PNG 到导出目录（chrono_trace_export）。
 

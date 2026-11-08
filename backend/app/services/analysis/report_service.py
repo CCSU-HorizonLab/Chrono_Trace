@@ -35,6 +35,7 @@ REPORT_MEME_MIN_SAMPLE_HITS = 3  # 样本内出现次数门槛（圈候选；抽
 REPORT_MEME_MIN_TOTAL = 8  # 全窗精确计数门槛（入榜 + 公开版安全冗余）
 REPORT_MEME_TOP = 10
 REPORT_MEME_CANDIDATES = 24  # 送精确计数的候选数上限
+REPORT_MEME_DICT_TOP = 24  # 词典条目上限（画像页常驻陈列，比报告页宽）
 
 REPORT_EMOJI_TOP = 8  # 表情页每侧 Top 榜长度（unicode+内置合并）
 
@@ -139,10 +140,38 @@ class ReportService:
     # 专属梗挖掘
     # ------------------------------------------------------------------
 
+    def meme_dictionary(self, conversation_id: int) -> Dict[str, Any]:
+        """专属梗词典（画像页）：全会话跨度挖掘，比报告页多给条目——
+        词典是「关系独有性」的常驻陈列，不随报告窗口收窄。"""
+        from ...db.connection import get_db
+
+        row = get_db().execute(
+            """
+            SELECT MIN(timestamp), MAX(timestamp) FROM messages
+            WHERE conversation_id = ? AND message_type = 1
+                AND content IS NOT NULL AND TRIM(content) != ''
+            """,
+            (conversation_id,),
+        ).fetchone()
+        if not row or row[0] is None:
+            return {"ok": False, "error": "会话没有文本消息，还谈不上梗"}
+        items = self._mine_memes(
+            conversation_id, row[0], row[1], top=REPORT_MEME_DICT_TOP
+        )
+        return {"ok": True, "items": items, "from_ts": int(row[0]), "to_ts": int(row[1])}
+
     def _mine_memes(
-        self, conversation_id: int, from_ts: int, to_ts: int
+        self,
+        conversation_id: int,
+        from_ts: int,
+        to_ts: int,
+        top: int = REPORT_MEME_TOP,
     ) -> List[Dict[str, Any]]:
-        candidates = self._meme_candidates(conversation_id, from_ts, to_ts)
+        # 词典要多条目：候选池随 top 同步放宽（报告默认 10 条 / 候选 24 不变）
+        candidates = self._meme_candidates(
+            conversation_id, from_ts, to_ts,
+            candidates=max(REPORT_MEME_CANDIDATES, top * 2),
+        )
         verified: List[Dict[str, Any]] = []
         for phrase, _sample_hits in candidates:
             # 高频候选已入榜的子串/母串不再入榜（「笑死」与「笑死我了」取其一）
@@ -151,7 +180,7 @@ class ReportService:
             count, me = self._count_phrase(conversation_id, from_ts, to_ts, phrase)
             if count >= REPORT_MEME_MIN_TOTAL:
                 verified.append({"text": phrase, "count": count, "me": me, "ta": count - me})
-            if len(verified) >= REPORT_MEME_TOP:
+            if len(verified) >= top:
                 break
         return verified
 
@@ -181,7 +210,11 @@ class ReportService:
         return [r[0] if isinstance(r[0], str) else str(r[0] or "") for r in rows]
 
     def _meme_candidates(
-        self, conversation_id: int, from_ts: int, to_ts: int
+        self,
+        conversation_id: int,
+        from_ts: int,
+        to_ts: int,
+        candidates: int = REPORT_MEME_CANDIDATES,
     ) -> List[Tuple[str, int]]:
         """抽样分词挖候选短语：相邻实词 2-3 词组合（拼接后 2~8 字），
         样本内 ≥5 次。只圈候选不报数——数字留给全窗精确计数。
@@ -240,7 +273,7 @@ class ReportService:
 
         return [
             (phrase, hits)
-            for phrase, hits in counter.most_common(REPORT_MEME_CANDIDATES)
+            for phrase, hits in counter.most_common(candidates)
             if hits >= REPORT_MEME_MIN_SAMPLE_HITS
         ]
 

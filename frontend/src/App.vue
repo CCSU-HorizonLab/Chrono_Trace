@@ -20,6 +20,7 @@
       <nav class="ct-menu">
         <router-link to="/" class="menu-item">脉搏</router-link>
         <router-link to="/timeline" class="menu-item">时光</router-link>
+        <router-link to="/persona" class="menu-item">画像</router-link>
         <router-link to="/import" class="menu-item">数据</router-link>
         <router-link to="/copilot" class="menu-item">智囊</router-link>
         <router-link to="/analytics" class="menu-item">分析</router-link>

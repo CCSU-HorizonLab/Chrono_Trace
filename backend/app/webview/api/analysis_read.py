@@ -5,7 +5,7 @@ Bridge 继承此 Mixin，方法名不变、前端 API 面与测试零破坏。
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -632,5 +632,82 @@ class AnalysisReadApiMixin:
             return {"ok": True}
         except Exception as e:
             logger.error(f"[Bridge] 取消群日报失败: {e}")
+            return {"ok": False, "error": str(e)}
+
+    def get_mirror_stats(self, conversation_id: int) -> dict:
+        """画像页镜像对照：我/TA 同指标同量纲并排的原料（对照句统计直出）。
+
+        回复速度分侧：response_times 每行是一问一答，方向由「回复消息的
+        is_sender」决定——is_sender=1 是我在回 TA（me），=0 是 TA 在回我（ta）。
+        主动性/字数直接读 sessions 与 messages（不依赖跑过分析，画像页随时可看）。
+        """
+        try:
+            if not conversation_id:
+                return {"ok": False, "error": "缺少参数: conversation_id"}
+            from ...db.connection import get_db
+
+            db = get_db()
+
+            reply: Dict[str, Any] = {}
+            for side, key in ((1, "me"), (0, "ta")):
+                rows = db.execute(
+                    """
+                    SELECT rt.response_time_seconds
+                    FROM response_times rt
+                    JOIN messages m ON m.id = rt.reply_message_id
+                    WHERE rt.conversation_id = ? AND rt.is_abnormal = 0
+                        AND rt.response_time_seconds IS NOT NULL
+                        AND m.is_sender = ?
+                    ORDER BY rt.response_time_seconds
+                    """,
+                    (conversation_id, side),
+                ).fetchall()
+                times = [float(r[0]) for r in rows]
+                if times:
+                    reply[key] = {
+                        "count": len(times),
+                        "avg": round(sum(times) / len(times), 1),
+                        "median": round(times[len(times) // 2], 1),
+                    }
+                else:
+                    reply[key] = {"count": 0, "avg": None, "median": None}
+
+            initiative = {"total": 0, "me": 0, "ta": 0}
+            for initiator, n in db.execute(
+                """
+                SELECT initiator, COUNT(*) FROM sessions
+                WHERE conversation_id = ? GROUP BY initiator
+                """,
+                (conversation_id,),
+            ).fetchall():
+                initiative["total"] += n
+                if initiator == "user":
+                    initiative["me"] += n
+                else:
+                    initiative["ta"] += n
+
+            volume = {"me_chars": 0, "ta_chars": 0}
+            for sender, chars in db.execute(
+                """
+                SELECT is_sender, SUM(LENGTH(content)) FROM messages
+                WHERE conversation_id = ? AND message_type = 1
+                    AND content IS NOT NULL AND TRIM(content) != ''
+                GROUP BY is_sender
+                """,
+                (conversation_id,),
+            ).fetchall():
+                if sender == 1:
+                    volume["me_chars"] = int(chars or 0)
+                else:
+                    volume["ta_chars"] = int(chars or 0)
+
+            return {
+                "ok": True,
+                "reply": reply,
+                "initiative": initiative,
+                "volume": volume,
+            }
+        except Exception as e:
+            logger.error(f"[Bridge] 获取镜像对照统计失败: {e}")
             return {"ok": False, "error": str(e)}
 

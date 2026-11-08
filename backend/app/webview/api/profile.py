@@ -16,6 +16,13 @@ logger = logging.getLogger(__name__)
 # 返回「已取消」，HTTP 工作线程经 should_abort 在尝试边界自行退出
 PROFILE_CANCEL_SCOPE = "profile_generation"
 
+# 同 key 串行门闩（与问答/群日报同款）：取消标记单消费，无门闩时并发
+# 同 key 两轮会互相毒化——后轮入口的清残留把前轮在途时刚注册的停止
+# 意图吞掉（12d2f71 引入的回归），串行后标记属主明确。画像后台续期
+# 线程（generation_context）直接调 profiler 绕开本注册表，不取此门闩
+_PROFILE_INFLIGHT_LOCK = threading.Lock()
+_PROFILE_LOCKS: dict = {}
+
 
 def _window_coverage(conversation_id, window_from: int, window_to: int):
     """窗口文本消息占全会话的比例（0~1，3 位小数）——画像徽标惯用语三件套
@@ -284,18 +291,32 @@ class ProfileApiMixin:
 
     def _run_profile_cancelable(self, run, cancel_key: int, log_prefix: str) -> dict[str, Any]:
         """画像生成跑守护工作线程并轮询取消标记（在途 socket 无法强断，
-        HTTP 经 should_abort 在尝试边界退出；结果被丢弃）。"""
+        HTTP 经 should_abort 在尝试边界退出；结果被丢弃）。同 key 串行
+        （门闩语义见 _PROFILE_LOCKS 注释）——拿锁后清死残留再起步。"""
+        from ...services.realtime.llm_http import take_llm_cancel
+
+        key = int(cancel_key or 0)
+        if not key:
+            # 无取消键（历史调用点）无从定址门闩，也无可清的标记：直跑
+            return self._run_profile_worker(run, key, log_prefix)
+        with _PROFILE_INFLIGHT_LOCK:
+            gate = _PROFILE_LOCKS.get(key)
+            if gate is None:
+                gate = threading.Lock()
+                _PROFILE_LOCKS[key] = gate
+        with gate:
+            # 拿锁瞬间之前注册的取消一律是死残留（指向的生成已退出，如弹窗
+            # 关闭晚了半拍），清掉防毒化本轮；拿锁之后注册的才是本轮停止
+            take_llm_cancel(PROFILE_CANCEL_SCOPE, key, before=time.time())
+            return self._run_profile_worker(run, key, log_prefix)
+
+    def _run_profile_worker(self, run, key: int, log_prefix: str) -> dict[str, Any]:
         from ...services.realtime.llm_http import (
             LLMRequestAborted,
             run_cancelable,
             take_llm_cancel,
         )
 
-        key = int(cancel_key or 0)
-        if key:
-            # 入口时刻之前注册的取消一律是死残留（指向的生成已退出，如弹窗
-            # 关闭晚了半拍），清掉防毒化下一轮；入口之后注册的才是本轮停止
-            take_llm_cancel(PROFILE_CANCEL_SCOPE, key, before=time.time())
         abort = threading.Event()
         try:
             return run_cancelable(

@@ -247,3 +247,115 @@ def test_summary_range_follows_days_param(monkeypatch, db):
     result = GroupSummaryService().generate_group_summary(1, days=7)
     assert result["degraded"] is True
     assert http.calls == []
+
+
+def test_serial_gate_orders_rounds_and_protects_inflight_cancel():
+    """同群串行门闩：①同群互斥（A 在途时 B 不得进入）②A 在 gate 内的
+    轮询点能消费到停止意图——门闩保证 B 的入口清残留在 A 真正退出后才
+    执行，碰不到 A 的活标记（12d2f71 无门闩回归：B 入口 take(before=now)
+    直接清掉在途标记，用户的停止丢失，A 陪跑全程）。"""
+    import threading
+
+    import app.services.realtime.llm_http as llmhttp
+
+    svc = GroupSummaryService()
+    a_inside = threading.Event()
+    a_saw_cancel = threading.Event()
+    b_inside = threading.Event()
+    release_a = threading.Event()
+
+    def a():
+        with svc._serial_gate(1):
+            a_inside.set()
+            # A 的轮询点（同 run_cancelable 主循环语义）：等停止意图
+            deadline = time.time() + 5
+            while time.time() < deadline:
+                if llmhttp.take_llm_cancel(gsmod.GS_CANCEL_SCOPE, 1):
+                    a_saw_cancel.set()
+                    break
+                time.sleep(0.01)
+            release_a.wait(5)  # 保持 gate 持有直到测试放行（保证 B 的排队窗口）
+
+    def b():
+        with svc._serial_gate(1):
+            b_inside.set()
+
+    ta = threading.Thread(target=a)
+    ta.start()
+    assert a_inside.wait(2), "A 未进入门闩"
+    llmhttp.request_llm_cancel(gsmod.GS_CANCEL_SCOPE, 1)  # 用户：停止在途的 A
+
+    tb = threading.Thread(target=b)
+    tb.start()
+    assert not b_inside.wait(0.3), "A 在途时 B 不得进入门闩（同群串行）"
+    assert a_saw_cancel.wait(1), "A 的停止意图被 B 入口的清残留吞掉"
+    release_a.set()
+    assert b_inside.wait(2), "A 退出后 B 应进入门闩"
+    ta.join(5)
+    tb.join(5)
+
+
+def test_summary_serializes_same_group(monkeypatch):
+    """同群日报串行（走完整 generate 链路）：A 在 LLM 阶段阻塞时，同群
+    B 不得触达 LLM；A 退出后 B 才起步。无门闩时 B 会直接并发进入。"""
+    import threading
+
+    import app.services.realtime.rag.fact_llm as factllm
+
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    conn.execute(
+        "CREATE TABLE conversations (id INTEGER PRIMARY KEY, conversation_type TEXT,"
+        " display_name TEXT, account_wxid TEXT)"
+    )
+    conn.execute(
+        "CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, conversation_id INT,"
+        " message_type INT, is_sender INT, sender TEXT, content TEXT, timestamp INT)"
+    )
+    conn.execute("INSERT INTO conversations VALUES (1, 'group', '爬山群', 'wxid_me')")
+    for i in range(10):
+        conn.execute(
+            "INSERT INTO messages (conversation_id, message_type, is_sender, sender,"
+            " content, timestamp) VALUES (1, 1, 0, '阿强', ?, ?)",
+            (f"样本消息{i}", NOW - i),
+        )
+    monkeypatch.setattr(gsmod, "get_db", lambda: conn)
+    monkeypatch.setattr(
+        factllm,
+        "get_active_model_config",
+        lambda: {"api_base_url": "http://127.0.0.1:11434/v1", "model_id": "qwen", "api_key": ""},
+    )
+
+    a_in_llm = threading.Event()
+    b_in_llm = threading.Event()
+    release_a = threading.Event()
+    state = {"round": 0}
+
+    def post(*, should_abort=None, **kw):
+        state["round"] += 1
+        if state["round"] == 1:
+            a_in_llm.set()
+            release_a.wait(5)  # A 持门闩阻塞在 LLM 阶段
+            return {"choices": [{"message": {"content": "A的日报"}}]}
+        b_in_llm.set()
+        return {"choices": [{"message": {"content": "B的日报"}}]}
+
+    monkeypatch.setattr(gsmod, "post_json_with_retries", post)
+    outcome = {}
+
+    def run(tag):
+        outcome[tag] = GroupSummaryService().generate_group_summary(1, days=1)
+
+    ta = threading.Thread(target=run, args=("a",))
+    ta.start()
+    assert a_in_llm.wait(2), "A 未进入 LLM 阶段"
+    tb = threading.Thread(target=run, args=("b",))
+    tb.start()
+    assert not b_in_llm.wait(0.3), "A 在途时同群 B 不得触达 LLM（串行门闩）"
+    release_a.set()
+    assert b_in_llm.wait(2), "A 退出后 B 应进入 LLM 阶段"
+    ta.join(5)
+    tb.join(5)
+
+    assert outcome["a"]["summary"] == "A的日报"
+    assert outcome["b"]["summary"] == "B的日报"
+    conn.close()

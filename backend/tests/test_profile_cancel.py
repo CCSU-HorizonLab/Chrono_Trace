@@ -78,3 +78,45 @@ def test_profiler_passes_should_abort_into_http(monkeypatch):
 
     assert captured["should_abort"]() is True
     conn.close()
+
+
+def test_bridge_serializes_generation_per_key():
+    """同 key 串行门闩：A 在途时 B 不得起步，A 退出后 B 才进入。
+
+    无门闩并发下（12d2f71 回归形态），后轮入口的清残留会与前轮在途
+    的停止意图竞速——单槽标记无属主，这是概率性互杀，链路级无法确定
+    性复现；串行性是它的确定性替身：B 排队等 A 真正退出，入口清残留
+    就永远只碰死标记（语义直测见 test_group_summary 的 gate 用例）。
+    """
+    from app.webview.api.profile import ProfileApiMixin
+
+    a_inside = threading.Event()
+    b_inside = threading.Event()
+    release_a = threading.Event()
+    out = {}
+
+    def gen_a(_abort):
+        a_inside.set()
+        release_a.wait(5)  # A 在途（持门闩）
+        return {"ok": True, "which": "A"}
+
+    def gen_b(_abort):
+        b_inside.set()
+        return {"ok": True, "which": "B"}
+
+    def run(gen, tag):
+        out[tag] = ProfileApiMixin()._run_profile_cancelable(gen, 42, log_prefix=f"[{tag}]")
+
+    ta = threading.Thread(target=run, args=(gen_a, "a"))
+    ta.start()
+    assert a_inside.wait(2), "A 未起步"
+    tb = threading.Thread(target=run, args=(gen_b, "b"))
+    tb.start()
+    assert not b_inside.wait(0.3), "A 在途时 B 不得起步（同 key 串行门闩）"
+    release_a.set()
+    assert b_inside.wait(2), "A 退出后 B 应起步"
+    ta.join(5)
+    tb.join(5)
+
+    assert out["a"] == {"ok": True, "which": "A"}
+    assert out["b"] == {"ok": True, "which": "B"}

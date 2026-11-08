@@ -13,7 +13,8 @@ import re
 import threading
 import time
 from collections import Counter, defaultdict
-from typing import Any, Dict, List, Optional, Tuple
+from contextlib import contextmanager
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from ...db.connection import get_db
 from .stopwords import CHAT_STOP_WORDS, CONTENT_POS_TAGS
@@ -42,6 +43,13 @@ GS_CANCEL_SCOPE = "group_summary"
 
 # 高频词停用：单一来源见 stopwords.py（与词云共用，防两套口径漂移）
 STOP_WORDS = CHAT_STOP_WORDS
+
+# 同群串行门闩（与问答 _QA_CONV_LOCKS 同款）：取消标记按 (scope, 群)
+# 定址且单消费，无门闩时并发同群两轮会互相毒化——后轮入口的清残留把
+# 前轮在途时刚注册的停止意图吞掉（12d2f71 引入的回归），串行后标记
+# 属主明确：新一轮等在途轮真正退出，再清死残留自己起步
+_GS_INFLIGHT_LOCK = threading.Lock()
+_GS_CONV_LOCKS: dict = {}
 
 SUMMARY_SYSTEM_PROMPT = """你是群聊观察助手。根据【群聊记录】生成一份群日报，用中文分点输出，每点一行，总长不超过 300 字：
 
@@ -193,16 +201,32 @@ class GroupSummaryService:
 
     # ---- 日报 ----
 
+    @contextmanager
+    def _serial_gate(self, conversation_id: int) -> Iterator[None]:
+        """同群串行门闩：拿锁瞬间清死残留、拿锁之后注册的才是本轮停止
+        意图（语义与 history_qa_service._serial_gate 一致，详见
+        _GS_CONV_LOCKS 注释）。"""
+        key = int(conversation_id)
+        with _GS_INFLIGHT_LOCK:
+            gate = _GS_CONV_LOCKS.get(key)
+            if gate is None:
+                gate = threading.Lock()
+                _GS_CONV_LOCKS[key] = gate
+        with gate:
+            take_llm_cancel(GS_CANCEL_SCOPE, conversation_id, before=time.time())
+            yield
+
     def generate_group_summary(self, conversation_id: int, days: int = 7) -> Dict[str, Any]:
-        """近 N 天群日报：按日分段截断组 prompt，LLM 总结；无模型降级为仅统计。
+        """近 N 天群日报：同群串行（取消标记属主明确，见 _GS_CONV_LOCKS）。"""
+        with self._serial_gate(conversation_id):
+            return self._generate_group_summary(conversation_id, days)
+
+    def _generate_group_summary(self, conversation_id: int, days: int = 7) -> Dict[str, Any]:
+        """日报主体：按日分段截断组 prompt，LLM 总结；无模型降级为仅统计。
 
         统计与分段共用一次范围扫描（大群避免全表扫两遍）。
         """
         account_wxid = self._require_group(conversation_id)
-        # 入口时刻之前注册的取消一律是死残留（指向的请求已退出，如任务
-        # 完成后才点的取消/页面离开的 cancel）——清掉防毒化本轮；入口
-        # 之后注册的才是对本轮的停止意图，留给轮询点生效
-        take_llm_cancel(GS_CANCEL_SCOPE, conversation_id, before=time.time())
         days = max(1, min(int(days or 7), 30))
         now = int(time.time())
         rows = self._fetch_range_rows(conversation_id, now - days * 86400, now)

@@ -76,8 +76,14 @@
         />
       </div>
 
-      <!-- 里程碑：首条/关口/最长沉默 + 情绪拐点（章分界栏） -->
+      <!-- 表情博物馆：双方 Top 榜 + 节奏 + 自定义表情墙（§6.1） -->
       <div :id="anchors[3].id" class="anchor-target">
+        <div v-if="emojiLoading && !emojiStats" class="panel"><div class="skeleton sk-line" /></div>
+        <EmojiMuseumPanel v-else :stats="emojiStats" />
+      </div>
+
+      <!-- 里程碑：首条/关口/最长沉默 + 情绪拐点（章分界栏） -->
+      <div :id="anchors[4].id" class="anchor-target">
         <MilestoneTimeline
           :milestones="deepPayload.milestones || []"
           :turning-points="deepPayload.turning_points || []"
@@ -87,7 +93,7 @@
       </div>
 
       <!-- 深钻折叠：大五演变 / 画像演变（批2 从页签降为折叠入口，工程层保留） -->
-      <div :id="anchors[4].id" class="panel tl-drill anchor-target">
+      <div :id="anchors[5].id" class="panel tl-drill anchor-target">
         <button class="btn tl-drill-toggle" :aria-expanded="showDrill" @click="showDrill = !showDrill">
           深钻：大五人格演变 · 画像分段演变 {{ showDrill ? '▴' : '▾' }}
         </button>
@@ -128,6 +134,7 @@ import WordEvolutionPanel from '@/components/deep/WordEvolutionPanel.vue'
 import MilestoneTimeline from '@/components/deep/MilestoneTimeline.vue'
 import Big5EvolutionPanel from '@/components/deep/Big5EvolutionPanel.vue'
 import ProfileEvolutionPanel from '@/components/deep/ProfileEvolutionPanel.vue'
+import EmojiMuseumPanel from '@/components/deep/EmojiMuseumPanel.vue'
 import { toCompactRange } from '@/utils/datetime'
 
 type Conversation = { id: number; name: string; username: string; avatar?: string; conversation_type?: 'private' | 'group' }
@@ -144,6 +151,9 @@ const deepError = ref('')
 // 章节 payload（年份轴需要 span 与 chapters；由面板 load 后经 emit 回传）
 const chaptersPayload = ref<any>(null)
 const showDrill = ref(false)
+// 表情博物馆（§6.1）：独立快照接口，首算秒级/后续走缓存
+const emojiStats = ref<any>(null)
+const emojiLoading = ref(false)
 
 const currentConversation = computed(() => conversations.value.find((c) => c.id === selectedConversationId.value))
 const isGroup = computed(() => currentConversation.value?.conversation_type === 'group')
@@ -152,6 +162,7 @@ const anchors = [
   { id: 'tl-anchor-chapters', label: '章节' },
   { id: 'tl-anchor-emotion', label: '情绪' },
   { id: 'tl-anchor-words', label: '词云' },
+  { id: 'tl-anchor-emoji', label: '表情' },
   { id: 'tl-anchor-milestones', label: '里程碑' },
   { id: 'tl-anchor-drill', label: '深钻' },
 ]
@@ -243,7 +254,25 @@ function onConversationChange(id: number) {
   chaptersPayload.value = null
   const epoch = ++viewEpoch
   deepPayload.value = null
+  emojiStats.value = null
   void loadDeep(epoch)
+  void loadEmoji(epoch)
+}
+
+async function loadEmoji(epoch: number = viewEpoch) {
+  const id = selectedConversationId.value
+  if (!id) return
+  emojiLoading.value = true
+  try {
+    await bridgeReady()
+    const res = await api.get_emoji_stats(id)
+    if (epoch !== viewEpoch) return
+    emojiStats.value = res?.ok ? res : null
+  } catch {
+    if (epoch === viewEpoch) emojiStats.value = null
+  } finally {
+    if (epoch === viewEpoch) emojiLoading.value = false
+  }
 }
 
 async function loadDeep(epoch: number = viewEpoch) {

@@ -64,6 +64,8 @@ type PyWebViewApi = {
   start_sentiment_backfill: (conversation_id: number) => Promise<any>
   get_sentiment_backfill_progress: (task_id: string) => Promise<any>
   cancel_sentiment_backfill: (task_id?: string) => Promise<any>
+  // 表情博物馆（§6.1）：双方 Top/月度演变/小时节奏/自定义表情墙（快照缓存，fingerprint 失效整算）
+  get_emoji_stats: (conversation_id: number, force_refresh?: boolean) => Promise<any>
   // 时光深度：大五人格印象（本地基础层永远可用；LLM 增强层 ±15 有界校正）
   // 可选 fromTs/toTs（秒级闭区间）为时间窗——大五演变面板按段取数，须与段边界一致；缺省全会话
   get_big5_impressions: (conversation_id: number, account_wxid?: string, fromTs?: number, toTs?: number) => Promise<any>

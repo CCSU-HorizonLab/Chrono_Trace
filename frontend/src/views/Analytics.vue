@@ -92,13 +92,9 @@
         @click="currentTab = 'affinity'">关系洞察</button>
       <button class="menu-item" :class="{ active: currentTab === 'features' }"
         @click="currentTab = 'features'">互动特征</button>
-      <button class="menu-item" :class="{ active: currentTab === 'content' }"
-        @click="currentTab = 'content'">内容时间线</button>
       <button class="menu-item" :class="{ active: currentTab === 'qa' }"
         @click="currentTab = 'qa'">智能问答</button>
-      <!-- 时光深度 / TA 画像：均单聊专属（情绪演变与画像都是 1:1 语义） -->
-      <button v-if="!isGroupConversation" class="menu-item" :class="{ active: currentTab === 'deep' }"
-        @click="currentTab = 'deep'">时光深度</button>
+      <!-- 时光深度/内容时间线已迁独立时光页（重设计批2）；TA 画像单聊专属（1:1 语义） -->
       <button v-if="!isGroupConversation" class="menu-item" :class="{ active: currentTab === 'persona' }"
         @click="currentTab = 'persona'">TA 画像</button>
       <!-- 实时助手同单聊限定：监听对象/建议配置都是 1:1 语义 -->
@@ -528,56 +524,7 @@
     </div>
   </div>
 
-  <!-- TAB 3: Content & Timeline -->
-  <div v-show="currentTab === 'content' && selectedConversationId" class="tab-content fade-in">
-    <DateRangeFilter
-      :dates="dates"
-      :loading="loading"
-      :all-from="conversationSpan?.from || ''"
-      @update:dates="onDatesChange"
-      @refresh="loadAnalysis"
-      @export="handleExport"
-    />
-
-    <div class="ct-grid-1-1 affinity-dashboard content-timeline-dashboard">
-      <div class="col-main">
-        <div class="main-content">
-          <CtCard title="情感走势图" class="chart-card">
-            <div v-if="analysis.timeseries.length === 0" class="empty-state inline-empty-state">
-              <div class="empty-icon">-</div>
-              <p>趋势数据暂未生成</p>
-              <p class="empty-hint">当前时间范围内缺少足够的情感样本，可以尝试扩大日期范围。</p>
-            </div>
-            <EmotionLineChart v-else :timeseries="analysis.timeseries" />
-          </CtCard>
-          <CtCard title="关键词云" class="chart-card">
-            <div v-if="analysis.wordcloud.length === 0" class="empty-state inline-empty-state">
-              <div class="empty-icon">-</div>
-              <p>当前时间范围内没有可用文本消息</p>
-              <p class="empty-hint">可以切换到近30天、半年或全部历史查看。</p>
-            </div>
-            <WordCloud v-else :words="analysis.wordcloud" @select="onWordSelect" />
-          </CtCard>
-        </div>
-      </div>
-      <div class="col-side">
-        <div class="subject-section">
-          <SubjectCard :subject="subject" :has-analysis="hasContentAnalysis" />
-        </div>
-        <div class="ct-card timeline-section-card">
-          <div class="section-header">
-            <h3>对话时间线</h3>
-            <p class="section-subtitle">按时间顺序展开的交流记录</p>
-          </div>
-          <div class="timeline-scroll-area">
-            <ConversationTimeline :sessions="sessions" :loading="loadingSessions" />
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- TAB 4: History QA (问问微信·聊天框：流式打字机 + 引用溯源 + 底部输入 + 滚底) -->
+  <!-- TAB: History QA (问问微信·聊天框：流式打字机 + 引用溯源 + 底部输入 + 滚底) -->
   <div v-show="currentTab === 'qa' && selectedConversationId" class="tab-content fade-in">
     <div class="qa-shell">
       <div class="qa-header">
@@ -723,36 +670,7 @@
     </div>
   </div>
 
-  <!-- TAB: 时光深度（时间窗长期演变：情绪曲线/词云演变/画像演变/里程碑，单聊专属） -->
-  <!-- v-if 懒激活：首次进入页签才挂载重计算面板（词云 jieba×2、全量扫描×2）， -->
-  <!-- 从不打开则零开销；激活后保持挂载（v-show 切换不重复请求）。加 -->
-  <!-- !isGroupConversation：切群聊立即卸载——v-show 只隐藏不卸载，挂着的 -->
-  <!-- watch 会对群聊 id 发起重载荷并把"对方=全群"的画像写进 big5 缓存 -->
-  <div v-show="currentTab === 'deep' && selectedConversationId" class="tab-content fade-in deep-tab">
-    <template v-if="deepActivated && !isGroupConversation">
-      <DateRangeFilter
-        :dates="deepDates"
-        :loading="false"
-        show-granularity
-        :show-export="false"
-        :all-from="conversationSpan?.from || ''"
-        :granularity="deepGranularity"
-        @update:dates="onDeepDatesChange"
-        @update:granularity="deepGranularity = $event"
-        @refresh="deepRefreshKey++"
-      />
-      <TimeDeepTab
-        :key="`${selectedConversationId}-${deepRefreshKey}`"
-        :conversation-id="selectedConversationId"
-        :dates="deepDates"
-        :granularity="deepGranularity"
-        :view-epoch="viewEpoch"
-        :contact-name="currentContactName"
-      />
-    </template>
-  </div>
-
-  <!-- TAB: TA 画像（画像档案/大五印象/分享海报，单聊专属；画像演变留在时光深度） -->
+  <!-- TAB: TA 画像（画像档案/大五印象/分享海报，单聊专属；画像演变在独立时光页） -->
   <!-- 懒激活同上：PosterStudio/大五首次进入才挂载取数；日期窗独立 personaDates（默认全量） -->
   <div v-show="currentTab === 'persona' && selectedConversationId" class="tab-content fade-in persona-tab">
     <template v-if="personaActivated && !isGroupConversation">
@@ -892,10 +810,6 @@ import { getScoreColor, HEAT_RAMP, chartPalette } from '@/components/charts/char
 import FiltersBar from '@/components/analytics/FiltersBar.vue'
 import DateRangeFilter from '@/components/analytics/DateRangeFilter.vue'
 import MonitorControlCard from '@/components/realtime/MonitorControlCard.vue'
-import SubjectCard from '@/components/analytics/SubjectCard.vue'
-import EmotionLineChart from '@/components/charts/EmotionLineChart.vue'
-import WordCloud from '@/components/charts/WordCloud.vue'
-import ConversationTimeline from '@/components/timeline/ConversationTimeline.vue'
 
 import AffinityScoreCard from '@/components/affinity/AffinityScoreCard.vue'
 import RiskSignalCard from '@/components/affinity/RiskSignalCard.vue'
@@ -914,7 +828,6 @@ import { showDialog, showConfirm } from '@/utils/dialog'
 import { safeGetItem, safeRemoveItem, safeSetItem } from '@/utils/safeStorage'
 import { toLocalDateKey } from '@/utils/datetime'
 import CtAvatar from '@/components/base/CtAvatar.vue'
-import TimeDeepTab from '@/components/deep/TimeDeepTab.vue'
 import BigFivePanel from '@/components/deep/BigFivePanel.vue'
 import PosterStudio from '@/components/deep/PosterStudio.vue'
 import {
@@ -988,19 +901,16 @@ type ActivityCalendarData = {
 
 export default {
     components: {
-        FiltersBar, DateRangeFilter, SubjectCard, EmotionLineChart, WordCloud, ConversationTimeline,
+        FiltersBar, DateRangeFilter,
         AffinityScoreCard, DimensionRadar, SubScoreBreakdown, RiskSignalCard,         PreferenceKeywordsDialog, RelationshipContextForm, CtCard, CtButton, PersonaGallery, CtAvatar,
-        FolderArchive, MessageSquare, Sparkles, BarChart3, TrendingUp, Loader2, Lightbulb, PortraitGenerateDialog, TimeDeepTab,
+        FolderArchive, MessageSquare, Sparkles, BarChart3, TrendingUp, Loader2, Lightbulb, PortraitGenerateDialog,
         BigFivePanel, PosterStudio, ProfileBriefCard,
         MonitorControlCard
     },
     setup() {
         const currentTab = ref('affinity')
-        // 时光深度：分桶粒度（周/月/年）与手动刷新纪元（+1 强制 TimeDeepTab 重挂载重取）
-        const deepGranularity = ref('week')
+        // 时光深度/内容时间线页签已迁独立时光页（重设计批2）；刷新纪元仍供 TA 画像重挂载
         const deepRefreshKey = ref(0)
-        // 时光深度懒激活：首次进入该页签才置 true，面板随 v-if 挂载
-        const deepActivated = ref(false)
         // TA 画像懒激活：首次进入才挂载 PersonaGallery/大五/海报（免无谓取数）
         const personaActivated = ref(false)
         const activeAccountWxid = ref('')
@@ -1010,12 +920,8 @@ export default {
         const selectedConversationId = ref<number | null>(null)
 
         const dates = reactive({ from: '', to: '' })
-        // 时光深度独立时间窗：该页正文（章节/词云/大五/画像/里程碑）按全会话
-        // 章节分段、不吃日期筛选，日期窗只缩放情绪曲线——与其它页签共享 dates
-        // 时「默认近30天」会和下方的全量内容打架，故本页签默认全量、独立记忆
-        const deepDates = reactive({ from: '', to: '' })
-        // TA 画像同样默认全量：画像/大五印象/海报都是长周期叙事，近 30 天
-        // 窗会把海报 payload 截成一小段；与时光深度各自独立记忆互不影响
+        // TA 画像默认全量：画像/大五印象/海报都是长周期叙事，近 30 天
+        // 窗会把海报 payload 截成一小段
         const personaDates = reactive({ from: '', to: '' })
         // 会话消息真实跨度（首/末条日期）：「全部」快捷键与时光深度默认窗的起点，
         // 替代 2000-01-01 占位——输入框显示 2000 年会让人以为筛选错了
@@ -1113,7 +1019,7 @@ const showPortraitDialog = ref(false)
         }
 
         const shouldLoadContentAnalysis = computed(() => {
-            return currentTab.value === 'content' || currentTab.value === 'deep' || currentTab.value === 'persona'
+            return currentTab.value === 'persona'
         })
         const hasContentAnalysis = computed(() => {
             return Boolean(subject.value?.stats && (
@@ -1659,12 +1565,6 @@ const showPortraitDialog = ref(false)
             dates.to = toLocalDateKey(to)
         }
 
-        // 时光深度默认全量（与 DateRangeFilter 的「全部」快捷键同口径）
-        function resetDeepDates() {
-            deepDates.from = conversationSpan.value?.from || '2000-01-01'
-            deepDates.to = toLocalDateKey(new Date())
-        }
-
         function resetPersonaDates() {
             personaDates.from = conversationSpan.value?.from || '2000-01-01'
             personaDates.to = toLocalDateKey(new Date())
@@ -1677,7 +1577,6 @@ const showPortraitDialog = ref(false)
                 if (!data?.from_date) return
                 conversationSpan.value = { from: data.from_date, to: data.to_date || '' }
                 // 跨度晚到：仅当默认窗还是占位起点时替换（用户已手动缩窗则不动）
-                if (deepDates.from === '2000-01-01') resetDeepDates()
                 if (personaDates.from === '2000-01-01') resetPersonaDates()
             } catch {
                 // 查询失败维持占位，不阻塞主链路
@@ -1906,12 +1805,6 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
             dates.from = newDates.from
             dates.to = newDates.to
             loadAnalysis()
-        }
-
-        // TimeDeepTab 自 watch dates 重载情绪曲线，无需在此触发分析
-        function onDeepDatesChange(newDates: { from: string; to: string }) {
-            deepDates.from = newDates.from
-            deepDates.to = newDates.to
         }
 
         function onPersonaDatesChange(newDates: { from: string; to: string }) {
@@ -2656,20 +2549,15 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
                     if (activityCalendar.value.entries.length) renderActivityCalendar()
                 }
             }
-            if ((newVal === 'content' || newVal === 'deep' || newVal === 'persona') && selectedConversationId.value) {
+            if (newVal === 'persona' && selectedConversationId.value) {
                 loadAnalysis()
-            }
-            if (newVal === 'deep') {
-                deepActivated.value = true
-            }
-            if (newVal === 'persona') {
                 personaActivated.value = true
             }
         })
 
-        // 切到群聊时时光深度/TA 画像/实时助手页签隐藏：若正处于该页签则回退关系洞察（群聊工作台）
+        // 切到群聊时 TA 画像/实时助手页签隐藏：若正处于该页签则回退关系洞察（群聊工作台）
         watch(isGroupConversation, (isGroup) => {
-            if (isGroup && (currentTab.value === 'deep' || currentTab.value === 'persona' || currentTab.value === 'realtime')) {
+            if (isGroup && (currentTab.value === 'persona' || currentTab.value === 'realtime')) {
                 currentTab.value = 'affinity'
             }
         })
@@ -2688,7 +2576,6 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
 
         const scrollToDetails = (idSuffix: string) => document.getElementById(`detail-${idSuffix}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
         const handlePreferenceDisabledClick = () => { showKeywordsDialog.value = true }
-        function onWordSelect(word: string) { console.debug('selected', word) }
         function handleResize() { responseTimeChartInstance?.resize(); activityCalendarChartInstance?.resize(); wordCountChartInstance?.resize() }
 
         // 跨页面恢复：重挂组件时若存在未完成的分析任务，接续轮询而非重新分析
@@ -2731,7 +2618,6 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
 
         onMounted(async () => {
             if (!dates.from || !dates.to) setDefaultDates(30)
-            if (!deepDates.from || !deepDates.to) resetDeepDates()
             if (!personaDates.from || !personaDates.to) resetPersonaDates()
             await loadAnalysisDeviceMode()
             await refreshAccountContext()
@@ -2762,7 +2648,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
         }
 
         return {
-            currentTab, conversations, selectedConversationId, dates, loading, loadingSessions, error, analysis, subject, sessions, deepGranularity, deepRefreshKey, deepActivated, deepDates, conversationSpan, onDeepDatesChange, personaActivated, personaDates, onPersonaDatesChange, viewEpoch, handleCancelGroupSummary,
+            currentTab, conversations, selectedConversationId, dates, loading, loadingSessions, error, analysis, subject, sessions, deepRefreshKey, conversationSpan, personaActivated, personaDates, onPersonaDatesChange, viewEpoch, handleCancelGroupSummary,
             personaProfile, loadingPersonaProfile, personaProfileMeta, profileRefreshKey, realContactName,
             analysisResult, displayScore, llmRetryRunning, llmRetryError, handleRetryLlmRelationship, showKeywordsDialog, showContextForm, showPortraitDialog, handlePortraitGenerated, isGlobalAnalyzing, isStopping, activeTimer, handleStopAnalysis, llmPhase, handleSkipLlmEvaluation, globalProgressPercent, globalProgressStep, gpuMode,
             hasConversations, hasFeatures, hasCachedAffinityAnalysis, featureStats, responseTimeStats, initiativeStats, wordCountsStats, displayWordRatioLabel, activityCalendar,
@@ -2773,7 +2659,7 @@ async function loadPersonaProfile(conversationId = selectedConversationId.value 
             reportExporting, handleExportReport,
             exportDialogVisible, exportFormat, exporting, exportResult, confirmExport, openExportFolder,
             activeAccountWxid,
-            getScoreColor, scrollToDetails, handlePreferenceDisabledClick, onWordSelect, loadAnalysis, loadSessions, handleActivityYearChange
+            getScoreColor, scrollToDetails, handlePreferenceDisabledClick, loadAnalysis, loadSessions, handleActivityYearChange
         }
     }
 }

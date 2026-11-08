@@ -95,6 +95,9 @@
               </div>
               <div v-else-if="item.ch.index > 0" class="ch-stable">与前一章相比节奏平稳</div>
               <div v-if="item.ch.summary" class="ch-summary">{{ item.ch.summary }}</div>
+              <div v-if="chapterWords(item.ch).length" class="ch-words">
+                <span v-for="w in chapterWords(item.ch)" :key="w.word" class="ch-word">{{ w.word }}</span>
+              </div>
             </div>
           </div>
           <div v-else class="transition-card">
@@ -194,7 +197,11 @@ const props = defineProps<{
   conversationId: number
   /** 父页视图纪元：切换会话/账号时丢弃过期响应 */
   viewEpoch: number
+  /** 章内高频词切片（时光页传入：wordcloud_evolution.segments，按章节窗匹配） */
+  wordSegments?: Array<{ from_ts: number; to_ts: number; words: { all: Array<{ word: string; weight: number }> } }>
 }>()
+
+const emit = defineEmits<{ (e: 'chapters-loaded', payload: any): void }>()
 
 const payload = ref<ChaptersPayload | null>(null)
 const loading = ref(false)
@@ -237,6 +244,24 @@ const heroSpan = computed(() => {
   return h ? spanText(h.first.from_ts, h.last.to_ts) : ''
 })
 
+// 章内高频词：词云分段与章节分段同源（chapter_spans），窗中心最近匹配，top8
+function chapterWords(ch: Chapter): Array<{ word: string; weight: number }> {
+  const segs = props.wordSegments
+  if (!segs?.length) return []
+  const mid = (ch.from_ts + ch.to_ts) / 2
+  let best: { from_ts: number; to_ts: number; words: { all: Array<{ word: string; weight: number }> } } | null = null
+  let bestDist = Infinity
+  for (const seg of segs) {
+    const segMid = (seg.from_ts + seg.to_ts) / 2
+    const dist = Math.abs(segMid - mid)
+    if (dist < bestDist) {
+      bestDist = dist
+      best = seg
+    }
+  }
+  return best?.words?.all?.slice(0, 8) || []
+}
+
 function spanText(fromTs: number, toTs: number): string {
   const days = Math.max(1, Math.round((toTs - fromTs) / 86400))
   if (days >= 365) {
@@ -268,6 +293,7 @@ async function load() {
     const result = await api.get_relationship_chapters(props.conversationId)
     if (epoch !== props.viewEpoch) return
     payload.value = result
+    emit('chapters-loaded', result)
   } catch (e: any) {
     if (epoch !== props.viewEpoch) return
     error.value = e?.message || '请求失败'
@@ -814,6 +840,22 @@ onUnmounted(() => {
   font-size: var(--ct-text-xs);
   line-height: 1.6;
   margin-top: 4px;
+}
+
+/* 章内高频词 chips：这段时光的关键词（词云分段同源切片） */
+.ch-words {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.ch-word {
+  padding: 1px 9px;
+  border-radius: 999px;
+  font-size: var(--ct-text-xs);
+  color: var(--ct-color-primary);
+  background: var(--ct-color-primary-subtle);
 }
 
 /* 最初 → 现在 hero：首末章对照，中间历时箭头 */

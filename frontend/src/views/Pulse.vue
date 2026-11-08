@@ -32,19 +32,32 @@
       </div>
 
       <template v-else>
-        <!-- 关系判读横幅：一句话先给答案（P1），LLM 优先本地兜底 -->
+        <!-- 关系判读横幅：一句话先给答案（P1），周报（AI）＞上次 AI 评估＞本地周报＞本地判读 -->
         <div class="panel pulse-verdict">
           <div class="panel-head">
             <span class="panel-title">关系判读</span>
-            <span class="panel-badge" :class="overview.verdict?.source === 'llm' ? 'enhanced' : ''">
-              {{ overview.verdict?.source === 'llm' ? 'AI 判读' : '本地判读' }}
+            <span class="panel-badge" :class="bannerVerdict.isAi ? 'enhanced' : ''">
+              {{ bannerVerdict.label }}
+              <template v-if="llmUpgrading">· 生成中…</template>
             </span>
             <span v-if="overview.professional.analysis_stale" class="pulse-stale-badge"
               :title="overview.professional.pending_message_count ? `有 ${overview.professional.pending_message_count} 条新消息未纳入当前指标` : '消息集已变化，建议重新分析'">
               {{ overview.professional.pending_message_count ? `${overview.professional.pending_message_count} 条新消息待分析` : '结果待更新' }}
             </span>
+            <button v-if="weekly" class="btn weekly-toggle" :aria-expanded="showWeekly" @click="showWeekly = !showWeekly">
+              展开周报 {{ showWeekly ? '▴' : '▾' }}
+            </button>
           </div>
-          <p class="verdict-text">{{ overview.verdict?.text }}</p>
+          <p class="verdict-text">{{ bannerVerdict.text }}</p>
+          <div v-if="showWeekly && weekly" class="weekly-detail">
+            <p class="weekly-verdict">{{ weekly.verdict }}</p>
+            <p class="weekly-meta">
+              {{ weekly.source === 'llm' ? 'AI 周报' : '本地周报' }} · {{ weekly.week_start }} 那周 · 更新于 {{ fmtDate(weekly.updated_at) }}
+              <button v-if="llmConfigured && weekly.source === 'template' && !llmUpgrading"
+                class="btn weekly-regen" @click="upgradeWeekly()">AI 解读本周</button>
+              <span v-if="llmUpgrading" class="weekly-upgrading">AI 周报生成中，稍后自动更新…</span>
+            </p>
+          </div>
         </div>
 
         <!-- 三联直白指标卡（P2 门面） -->
@@ -207,7 +220,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import * as echarts from 'echarts'
 import { AlertTriangle, Loader2 } from 'lucide-vue-next'
 import { bridgeReady, api } from '@/api/bridge'
-import { getPulseOverview, type PulseOverview } from '@/api/pulse'
+import { getPulseOverview, getWeeklyReport, requestWeeklyLlm, type PulseOverview, type WeeklyReport } from '@/api/pulse'
 import { chartPalette } from '@/components/charts/chartTheme'
 import FiltersBar from '@/components/analytics/FiltersBar.vue'
 import DimensionRadar from '@/components/affinity/DimensionRadar.vue'
@@ -225,9 +238,31 @@ const overview = ref<PulseOverview | null>(null)
 const showPro = ref(false)
 let viewEpoch = 0 // 切人后丢弃在途异步结果（Analytics 同款代数守卫）
 
+// ---------- 关系周报（判读横幅正源：AI 周报 > 上次 AI 评估 > 本地周报 > 本地判读） ----------
+
+const weekly = ref<WeeklyReport | null>(null)
+const llmConfigured = ref(false)
+const llmUpgrading = ref(false)
+const showWeekly = ref(false)
+
 const currentConversation = computed(() => conversations.value.find((c) => c.id === selectedConversationId.value))
 const isGroup = computed(() => currentConversation.value?.conversation_type === 'group')
 const pro = computed<Record<string, any>>(() => overview.value?.professional?.result ?? {})
+
+const bannerVerdict = computed(() => {
+    const w = weekly.value
+    const v = overview.value?.verdict
+    if (w?.source === 'llm') return { text: w.verdict, label: 'AI 周报', isAi: true }
+    if (v?.source === 'llm') return { text: v.text, label: 'AI 判读', isAi: true }
+    if (w) return { text: w.verdict, label: '本地周报', isAi: false }
+    if (v) return { text: v.text, label: '本地判读', isAi: false }
+    return { text: '', label: '', isAi: false }
+})
+
+function fmtDate(ts: number): string {
+    const d = new Date(ts * 1000)
+    return `${d.getMonth() + 1}月${d.getDate()}日 ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
 const allDimensions = computed(() => ({
     interaction_investment: pro.value.interaction_investment ?? null,
     emotional_resonance: pro.value.emotional_resonance ?? null,
@@ -321,6 +356,48 @@ async function loadOverview(id: number) {
     } finally {
         if (epoch === viewEpoch) loadingOverview.value = false
     }
+    void loadWeekly(id, epoch) // 周报不阻塞首屏（无基线会话无周报）
+}
+
+async function loadWeekly(id: number, epoch: number) {
+    weekly.value = null
+    showWeekly.value = false
+    llmUpgrading.value = false
+    try {
+        const res = await getWeeklyReport(id)
+        if (epoch !== viewEpoch) return
+        llmConfigured.value = !!res.llm_configured
+        if (!res.ok || !res.report) return
+        weekly.value = res.report
+        // 本地周报 + 已配 LLM → 自动后台升级一次（轮询直到 AI 版或超时）
+        if (res.report.source === 'template' && res.llm_configured) {
+            void upgradeWeekly(id, epoch)
+        }
+    } catch { /* 周报缺位不阻塞脉搏 */ }
+}
+
+async function upgradeWeekly(id: number = selectedConversationId.value!, epoch: number = viewEpoch) {
+    if (!id || llmUpgrading.value) return
+    llmUpgrading.value = true
+    try {
+        await requestWeeklyLlm(id)
+    } catch {
+        llmUpgrading.value = false
+        return
+    }
+    for (let i = 0; i < 9; i++) {
+        await new Promise((r) => setTimeout(r, 10000))
+        if (epoch !== viewEpoch) return // 已切人/卸载，放弃轮询
+        try {
+            const res = await getWeeklyReport(id)
+            if (epoch !== viewEpoch) return
+            if (res.ok && res.report) {
+                weekly.value = res.report
+                if (res.report.source === 'llm') break
+            }
+        } catch { /* 继续等 */ }
+    }
+    if (epoch === viewEpoch) llmUpgrading.value = false
 }
 
 // ---------- 温度微线（好感历史，同口径） ----------
@@ -377,7 +454,10 @@ function disposeSpark() {
 watch(() => overview.value?.temperature?.trend_line, () => { nextTick(renderSpark) })
 
 onMounted(() => { void loadConversations() })
-onUnmounted(disposeSpark)
+onUnmounted(() => {
+    viewEpoch++ // 让周报轮询等在途循环失效
+    disposeSpark()
+})
 </script>
 
 <style scoped>
@@ -438,6 +518,45 @@ onUnmounted(disposeSpark)
     background: var(--ct-color-warning-tint);
     border-radius: 999px;
     padding: 2px 10px;
+}
+
+.weekly-toggle {
+    margin-left: auto;
+    font-size: var(--ct-text-xs);
+    padding: 3px 10px;
+}
+
+.weekly-detail {
+    margin-top: 10px;
+    padding: 10px 12px;
+    background: var(--ct-bg-sunken);
+    border-radius: var(--ct-radius-md);
+}
+
+.weekly-verdict {
+    margin: 0;
+    font-size: var(--ct-text-sm);
+    line-height: 1.75;
+    color: var(--ct-text-primary);
+}
+
+.weekly-meta {
+    margin: 8px 0 0;
+    font-size: var(--ct-text-xs);
+    color: var(--ct-text-tertiary);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.weekly-regen {
+    font-size: var(--ct-text-xs);
+    padding: 2px 10px;
+}
+
+.weekly-upgrading {
+    color: var(--ct-text-tertiary);
 }
 
 /* ---------- 三联指标卡 ---------- */

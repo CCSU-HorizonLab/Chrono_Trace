@@ -37,6 +37,8 @@ const router = createRouter({
   routes: [
     // 脉搏页 = 新首页（重设计批1）：一屏回答「我们现在怎么样」；数据导入挪至 /import
     { path: '/', component: lazy(() => import('@/views/Pulse.vue')) },
+    // 时光页（重设计批2）：一条滚动时间轴的叙事——章节骨架 + 情绪/词云/里程碑 + 深钻折叠
+    { path: '/timeline', component: lazy(() => import('@/views/Timeline.vue')) },
     { path: '/import', component: lazy(() => import('@/views/Home.vue')) },
     { path: '/analytics', component: lazy(() => import('@/views/Analytics.vue')) },
     { path: '/settings', component: lazy(() => import('@/views/Settings.vue')) },

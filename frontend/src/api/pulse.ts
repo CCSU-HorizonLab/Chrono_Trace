@@ -86,3 +86,27 @@ export async function getPulseOverview(conversationId: number): Promise<PulseOve
     if (!res.ok) throw new Error(res.error || '获取脉搏概览失败')
     return res as PulseOverview
 }
+
+/** 关系周报（本周一条；后端无则同步落模板版） */
+export interface WeeklyReport {
+    week_start: string
+    verdict: string
+    source: 'llm' | 'template'
+    snapshot: Record<string, any>
+    updated_at: number
+}
+
+export interface WeeklyReportRes {
+    ok: boolean
+    report: WeeklyReport | null
+    llm_configured: boolean
+}
+
+export async function getWeeklyReport(conversationId: number): Promise<WeeklyReportRes> {
+    return await api.get_weekly_report(conversationId)
+}
+
+/** 请求把本周周报升级为 LLM 版（后台生成，轮询 getWeeklyReport 直到 source=llm） */
+export async function requestWeeklyLlm(conversationId: number): Promise<{ ok: boolean; started: boolean; reason?: string }> {
+    return await api.request_weekly_llm(conversationId)
+}

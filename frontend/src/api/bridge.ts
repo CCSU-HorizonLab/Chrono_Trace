@@ -114,6 +114,9 @@ type PyWebViewApi = {
   get_affinity_scores: (conversation_id: number) => Promise<any>
   // 脉搏页：门面指标聚合（指标直白化层，只翻译不新算）
   get_pulse_overview: (conversation_id: number) => Promise<any>
+  // 关系周报：读本周（无则同步落模板版）；LLM 升级后台跑，前端轮询读取
+  get_weekly_report: (conversation_id: number) => Promise<any>
+  request_weekly_llm: (conversation_id: number) => Promise<any>
   // 文件/目录选择
   select_file: (title?: string, file_types?: string) => Promise<any>
   select_directory: (title?: string) => Promise<any>

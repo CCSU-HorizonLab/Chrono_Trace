@@ -318,7 +318,7 @@ Name 条款=改名再改字体，原样分发只需附带许可），`styles/fon
   sentiment_backfill_service, personality_impression_service, big5_proxies,
   relationship_chapters, chapter_summaries, task_registry}.py`、
   `services/realtime/profile_chapter_digest.py`、`webview/api/deep_analysis.py`（mixin）
-- 前端：`components/deep/`（TimeDeepTab 及各面板、RelationshipChaptersPanel、
+- 前端：`views/Timeline.vue` 与 `components/deep/`（RelationshipChaptersPanel、
   Big5EvolutionPanel + big5Shared、PosterStudio、`poster/registry.ts`、
   `poster/badges.ts`、`poster/theme.ts`（三受众调色板/底渐变/热力色带）、
   `poster/activityShared.ts`、`poster/SquareCard.vue`（方形称号卡）、

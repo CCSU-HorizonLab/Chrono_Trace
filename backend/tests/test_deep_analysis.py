@@ -654,3 +654,70 @@ class TestPosterTopWordsSampling:
         assert abs(first_half - second_half) <= 40  # 首尾两半均衡
         me_texts, other_texts = calls[1], calls[2]
         assert me_texts and other_texts  # 双方槽都拿到样本
+
+
+# ----------------------------------------------------------------------
+# Bridge mixin：空日期 = 全会话口径兜底（时光页传 '' ''）
+# ----------------------------------------------------------------------
+
+class TestBridgeEmptyDatesFullSession:
+    @pytest.fixture(autouse=True)
+    def _bridge_db(self, db, monkeypatch):
+        # mixin 兜底分支的 get_db 从 app.db.connection 源头延迟导入，
+        # 单独打桩（fixture 的 db 只覆盖了服务层模块绑定）
+        monkeypatch.setattr("app.db.connection.get_db", lambda: db)
+
+    def test_empty_dates_fallback_to_first_last_message(self, db, monkeypatch):
+        from app.webview.api.deep_analysis import DeepAnalysisApiMixin
+
+        msg(db, ts(2024, 3, 5), content="三月的第一句话")
+        msg(db, ts(2024, 4, 10), content="四月的最后一句话")
+        db.commit()
+
+        captured = {}
+
+        class _StubService:
+            def get_deep_analysis(self, cid, from_ts_, to_ts_, bucket="week"):
+                captured.update(cid=cid, from_ts=from_ts_, to_ts=to_ts_, bucket=bucket)
+                return {"ok": True, "buckets": []}
+
+        monkeypatch.setattr(deepmod, "DeepAnalysisService", _StubService)
+        res = DeepAnalysisApiMixin().get_deep_analysis(1, "", "", "week")
+
+        assert res["ok"] is True
+        assert captured["cid"] == 1 and captured["bucket"] == "week"
+        # 首末消息各自的当地日界：from 当日 00:00，to 含当日全天 23:59:59
+        assert captured["from_ts"] == int(datetime(2024, 3, 5, 0, 0, 0).timestamp())
+        assert captured["to_ts"] == int(datetime(2024, 4, 10, 23, 59, 59).timestamp())
+
+    def test_no_text_messages_rejected_without_service_call(self, db, monkeypatch):
+        from app.webview.api.deep_analysis import DeepAnalysisApiMixin
+
+        msg(db, ts(2024, 3, 5), content="", message_type=100)  # 非文本/空内容不计
+        db.commit()
+
+        def _boom(*a, **k):
+            raise AssertionError("无文本消息不应触达服务层")
+
+        monkeypatch.setattr(deepmod, "DeepAnalysisService", _boom)
+        res = DeepAnalysisApiMixin().get_deep_analysis(1, "", "", "week")
+
+        assert res["ok"] is False
+        assert "无文本消息" in res["error"]
+
+    def test_explicit_dates_pass_through_unchanged(self, db, monkeypatch):
+        from app.webview.api.deep_analysis import DeepAnalysisApiMixin
+
+        captured = {}
+
+        class _StubService:
+            def get_deep_analysis(self, cid, from_ts_, to_ts_, bucket="week"):
+                captured.update(from_ts=from_ts_, to_ts=to_ts_)
+                return {"ok": True}
+
+        monkeypatch.setattr(deepmod, "DeepAnalysisService", _StubService)
+        res = DeepAnalysisApiMixin().get_deep_analysis(1, "2024-01-01", "2024-06-30", "month")
+
+        assert res["ok"] is True
+        assert captured["from_ts"] == int(datetime(2024, 1, 1, 0, 0, 0).timestamp())
+        assert captured["to_ts"] == int(datetime(2024, 6, 30, 23, 59, 59).timestamp())

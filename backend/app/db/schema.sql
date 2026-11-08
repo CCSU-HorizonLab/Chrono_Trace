@@ -730,6 +730,25 @@ CREATE TABLE IF NOT EXISTS affinity_scores (
 
 CREATE INDEX IF NOT EXISTS idx_affinity_scores_conversation ON affinity_scores(conversation_id, created_at DESC);
 
+-- ========================================
+-- 20.5 关系周报表（docs/product-redesign-2026-11.md §6.4）
+-- ========================================
+-- 每周一条趋势判读：LLM 生成（配模型时）或本地模板拼接，供脉搏页横幅
+-- 与「展开周报」。UPSERT 键 = 会话 + 周起点（周一 00:00），LLM 版完成后
+-- 覆盖同周模板版。
+CREATE TABLE IF NOT EXISTS weekly_reports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id INTEGER NOT NULL,
+    week_start TEXT NOT NULL,                   -- ISO 日期（周一），自然键之一
+    verdict TEXT NOT NULL,                      -- 判读正文（3-5 句）
+    source TEXT NOT NULL CHECK (source IN ('llm', 'template')),  -- 生成通道
+    snapshot_json TEXT,                         -- 输入指标快照（展开周报的依据展示）
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    UNIQUE(conversation_id, week_start),
+    FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+);
+
 
 -- ========================================
 -- 21. 实时 AI 建议表

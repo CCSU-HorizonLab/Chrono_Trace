@@ -47,7 +47,19 @@ class DeepAnalysisApiMixin:
             if not conversation_id:
                 return {"ok": False, "error": "缺少参数: conversation_id"}
             if not from_date or not to_date:
-                return {"ok": False, "error": "缺少日期参数"}
+                # 时光页传空 = 全会话口径：按首末文本消息兜底日期窗
+                # （窗只作用于情绪曲线与好感度落点，词云/里程碑本就全会话）
+                from ...db.connection import get_db
+                row = get_db().execute(
+                    """SELECT MIN(timestamp), MAX(timestamp) FROM messages
+                       WHERE conversation_id = ? AND message_type = 1
+                         AND content IS NOT NULL AND TRIM(content) != ''""",
+                    (int(conversation_id),),
+                ).fetchone()
+                if not row or row[0] is None:
+                    return {"ok": False, "error": "该会话暂无文本消息，无时光数据"}
+                from_date = datetime.fromtimestamp(int(row[0])).strftime("%Y-%m-%d")
+                to_date = datetime.fromtimestamp(int(row[1])).strftime("%Y-%m-%d")
 
             # 日期口径与 get_analysis 一致：闭区间（to 含当日全天）
             from_ts = int(datetime.strptime(from_date, "%Y-%m-%d").timestamp())

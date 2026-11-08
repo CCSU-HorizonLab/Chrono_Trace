@@ -11,17 +11,18 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import app.webview.api.pulse as pulse_mod
-from app.webview.api.pulse import (
-    PulseApiMixin,
-    _directional_response_medians,
-    _fmt_minutes,
-    _medians_to_minutes,
-    _monthly_overview,
-    _temperature_label,
-    _template_verdict,
-    _trend_line,
-    _warning_from_risk,
+from app.services.analysis.pulse_metrics import (
+    directional_response_medians,
+    month_start_ts,
+    fmt_minutes,
+    medians_to_minutes,
+    monthly_overview,
+    temperature_label,
+    template_verdict,
+    trend_line,
+    warning_from_risk,
 )
+from app.webview.api.pulse import PulseApiMixin
 
 _DAY = 86400
 
@@ -88,21 +89,21 @@ def _insert_rt(db, msg_id, is_sender, ts, seconds, abnormal=0):
 
 class TestTemperatureLabel:
     def test_boundaries(self):
-        assert _temperature_label(75) == "炽热"
-        assert _temperature_label(74.9) == "温热"
-        assert _temperature_label(60) == "温热"
-        assert _temperature_label(59.9) == "温和"
-        assert _temperature_label(45) == "温和"
-        assert _temperature_label(44.9) == "转凉"
-        assert _temperature_label(30) == "转凉"
-        assert _temperature_label(0) == "冰点"
+        assert temperature_label(75) == "炽热"
+        assert temperature_label(74.9) == "温热"
+        assert temperature_label(60) == "温热"
+        assert temperature_label(59.9) == "温和"
+        assert temperature_label(45) == "温和"
+        assert temperature_label(44.9) == "转凉"
+        assert temperature_label(30) == "转凉"
+        assert temperature_label(0) == "冰点"
 
 
 class TestFmtMinutes:
     def test_segments(self):
-        assert "秒" in _fmt_minutes(0.5)
-        assert _fmt_minutes(5) == "5 分钟"
-        assert _fmt_minutes(90) == "1.5 小时"
+        assert "秒" in fmt_minutes(0.5)
+        assert fmt_minutes(5) == "5 分钟"
+        assert fmt_minutes(90) == "1.5 小时"
 
 
 # ----------------------------------------------------------------------
@@ -118,7 +119,7 @@ class TestDirectionalResponseMedians:
         # TA 回我：4 条（偶数）→ 排序 [30,60,90,600] 中间两值 (60+90)/2 = 75
         for i, sec in enumerate([30, 90, 60, 600], start=11):
             _insert_rt(db, i, 0, now - 100, sec)
-        stats = _directional_response_medians(1, now - _DAY, now)
+        stats = directional_response_medians(1, now - _DAY, now)
         assert stats["me_to_ta_median_sec"] == 120
         assert stats["ta_to_me_median_sec"] == pytest.approx(75)
         assert stats["me_count"] == 3
@@ -129,7 +130,7 @@ class TestDirectionalResponseMedians:
         _insert_rt(db, 1, 1, now - 100, 60)
         _insert_rt(db, 2, 1, now - 100, 999999, abnormal=1)  # 异常剔除
         _insert_rt(db, 3, 1, now - 100, None)  # NULL 剔除
-        stats = _directional_response_medians(1, now - _DAY, now)
+        stats = directional_response_medians(1, now - _DAY, now)
         assert stats["me_count"] == 1
         assert stats["me_to_ta_median_sec"] == 60
         assert stats["ta_count"] == 0
@@ -137,11 +138,11 @@ class TestDirectionalResponseMedians:
 
     def test_empty_window(self, db):
         now = int(time.time())
-        assert _directional_response_medians(1, now - _DAY, now) is None
+        assert directional_response_medians(1, now - _DAY, now) is None
 
     def test_minutes_conversion(self):
-        assert _medians_to_minutes(None) is None
-        out = _medians_to_minutes(
+        assert medians_to_minutes(None) is None
+        out = medians_to_minutes(
             {"me_to_ta_median_sec": 90, "ta_to_me_median_sec": None,
              "me_count": 2, "ta_count": 0}
         )
@@ -156,7 +157,7 @@ class TestDirectionalResponseMedians:
 class TestMonthlyOverview:
     def test_aggregation_and_month_boundary(self, db):
         now = int(time.time())
-        month_start = pulse_mod._month_start_ts(now)
+        month_start = month_start_ts(now)
         # 当月内一条深夜（03:00 本地）+ 一条白天；上月一条不计
         lt = time.localtime(now)
         late = int(time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, 3, 0, 0, 0, 0, -1)))
@@ -182,7 +183,7 @@ class TestMonthlyOverview:
             "INSERT INTO message_preprocessed(message_id, conversation_id,"
             " char_count, is_valid) VALUES (99, 1, 999, 1)"
         )
-        out = _monthly_overview(1, now)
+        out = monthly_overview(1, now)
         assert out["messages"] == len(in_month)
         assert out["chars"] == sum(10 * i for i in range(1, len(in_month) + 1))
         # 深夜条数：03:00 那条若已入月则计 1，12:00 不计
@@ -198,7 +199,7 @@ class TestMonthlyOverview:
             "INSERT INTO message_preprocessed(message_id, conversation_id,"
             " char_count, is_valid) VALUES (1, 1, 555, 0)"
         )
-        out = _monthly_overview(1, now)
+        out = monthly_overview(1, now)
         assert out["messages"] == 1
         assert out["chars"] == 0
 
@@ -215,7 +216,7 @@ class TestTrendLine:
                 " overall_score, created_at) VALUES (1, ?, ?, ?)",
                 (ver, score, ts),
             )
-        line = _trend_line(1, caliber=6)
+        line = trend_line(1, caliber=6)
         # 只取 caliber 6，按 created_at 升序（同刻按插入序稳定）
         assert [s for _, s in line] == [50, 55, 60]
 
@@ -226,8 +227,8 @@ class TestWarningFromRisk:
             "highest_level": "未见异常",
             "signals": {"hot_cold": {"label": "忽冷忽热", "level": "未见异常", "note": "n"}},
         }
-        assert _warning_from_risk(risk) is None
-        assert _warning_from_risk(None) is None
+        assert warning_from_risk(risk) is None
+        assert warning_from_risk(None) is None
 
     def test_alert_keeps_only_abnormal_signals(self):
         risk = {
@@ -238,18 +239,18 @@ class TestWarningFromRisk:
                 "warm_then_cold": {"label": "先热后冷", "level": "未见异常", "note": "n"},
             },
         }
-        out = _warning_from_risk(risk)
+        out = warning_from_risk(risk)
         assert out["level"] == "预警"
         assert [it["label"] for it in out["items"]] == ["忽冷忽热", "单方面付出"]
 
     def test_mismatch_highest_but_no_items(self):
         # highest 非正常但 signals 全空 → 不输出（防御：不占焦虑空间）
-        assert _warning_from_risk({"highest_level": "预警", "signals": {}}) is None
+        assert warning_from_risk({"highest_level": "预警", "signals": {}}) is None
 
 
 class TestTemplateVerdict:
     def test_three_segments(self):
-        text = _template_verdict(
+        text = template_verdict(
             {"score": 62, "label": "温热", "delta": -2.5},
             {"me_pct": 70, "total_sessions": 10, "user_initiated": 7, "other_initiated": 3},
             {"me_to_ta_median_min": 30, "ta_to_me_median_min": 5,
@@ -261,14 +262,14 @@ class TestTemplateVerdict:
         assert "TA 回你" in text and "更快" in text
 
     def test_balanced_and_empty(self):
-        text = _template_verdict(
+        text = template_verdict(
             None,
             {"me_pct": 50, "total_sessions": 4, "user_initiated": 2, "other_initiated": 2},
             {"me_to_ta_median_min": 5, "ta_to_me_median_min": 5, "me_count": 2, "ta_count": 2},
         )
         assert "双方话题发起较为均衡" in text
         assert "双方回复节奏相当" in text
-        assert _template_verdict(None, None, None) == ""
+        assert template_verdict(None, None, None) == ""
 
 
 # ----------------------------------------------------------------------
@@ -349,7 +350,7 @@ class TestGetPulseOverview:
         assert out["professional"]["result"]["overall_score"] == 62.0
         assert out["professional"]["absent_reason"] is None
 
-    def test_template_verdict_fallback(self, db):
+    def testtemplate_verdict_fallback(self, db):
         stub = _Stub(_base_payload(result=_full_result(absent_reason="未配置 LLM")))
         out = stub.get_pulse_overview(1)
         assert out["verdict"]["source"] == "template"

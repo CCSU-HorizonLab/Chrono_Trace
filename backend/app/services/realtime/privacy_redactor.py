@@ -147,6 +147,38 @@ class PrivacyRedactor:
     def __init__(self, conn: Any | None = None):
         self.conn = conn
 
+    @classmethod
+    def _detect_matches(cls, scan: str) -> list[tuple[int, int, str, str]]:
+        """模式扫描的单一来源：返回 (start, end, 类型, 原文)，含误报守卫
+        （银行卡位数、地址假阳性）。redact() 与 detect_entities() 共用。"""
+        matches: list[tuple[int, int, str, str]] = []
+        for entity_type, pattern in cls.PATTERNS:
+            for match in pattern.finditer(scan):
+                value = match.group(0)
+                if entity_type == "bank_card":
+                    digits = re.sub(r"\D", "", value)
+                    if len(digits) < 16:
+                        continue
+                if entity_type == "address" and _address_match_is_false_positive(
+                    scan, match.start(), match.end()
+                ):
+                    continue
+                matches.append((match.start(), match.end(), entity_type, value))
+        return matches
+
+    @classmethod
+    def detect_entities(cls, text: str) -> dict[str, list[str]]:
+        """模式级实体检测（无占位符、无持久化副作用）：返回 {类型: [原文]}。
+
+        供「只问有没有、不改文本」的场合（年报梗短语进公开版的安全性
+        判定等）。与 redact() 同源模式与同款误报守卫；redact() 额外做的
+        受保护片段哨兵在此不做——检测因此只会更保守（多报无害）。
+        """
+        found: dict[str, list[str]] = {}
+        for _start, _end, entity_type, value in cls._detect_matches(str(text or "")):
+            found.setdefault(entity_type, []).append(value)
+        return found
+
     def redact(
         self,
         text: str,
@@ -177,19 +209,7 @@ class PrivacyRedactor:
 
         redacted = scan_text
 
-        matches: list[tuple[int, int, str, str]] = []
-        for entity_type, pattern in self.PATTERNS:
-            for match in pattern.finditer(scan_text):
-                value = match.group(0)
-                if entity_type == "bank_card":
-                    digits = re.sub(r"\D", "", value)
-                    if len(digits) < 16:
-                        continue
-                if entity_type == "address" and _address_match_is_false_positive(
-                    scan_text, match.start(), match.end()
-                ):
-                    continue
-                matches.append((match.start(), match.end(), entity_type, value))
+        matches = self._detect_matches(scan_text)
 
         # 重叠消解：多个模式的匹配区间可能交叠（如地址模式的尾段会吞掉紧跟其后的电话号码），
         # 直接按原始偏移逐个切片替换会把已写入的占位符再次切开，产出损坏文本。

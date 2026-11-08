@@ -50,6 +50,12 @@ AVATAR_HISTORY_TURN_CHARS = 400
 # 微信内置表情码（[呲牙]/[破涕为笑]…）：中文 1-6 字方括号形态
 _EMOJI_CODE = re.compile(r"\[[一-龥]{1,6}\]")
 _CJK_WORD = re.compile(r"^[一-龥]{2,}$")
+# 高频词的功能词类黑名单（jieba 词性）：代词/连词/介词/助词/副词/数词/
+# 量词/时间词/方位词/区别词——「我们/什么/这个」这类词堆满 Top 也带不来
+# 口吻信息。刻意不套词云的 CONTENT_POS_TAGS 白名单、也不套 CHAT_STOP_WORDS：
+# 两者为内容词设计，会把语气词/叹词（嗯嗯/哈哈——分身最想要的口头禅）
+# 整类滤掉；黑名单口径正好相反，只杀功能词、保留语气特征。
+_VOICE_FUNC_POS = frozenset("rcpudmqtfbz")
 
 
 class AvatarChatService:
@@ -97,36 +103,47 @@ class AvatarChatService:
             )
 
         profile = self._load_profile(conversation_id)
-        memory_refs, _ = self._qa._retrieve_rag_memories(
+        memory_refs, memory_no_hit = self._qa._retrieve_rag_memories(
             account_wxid, conversation_id,
             f"{turns[-1]['content'] if turns else ''} {message}".strip()
             if turns else message,
         )
 
-        # 四路素材统一过批量脱敏（红线同问答：任何一条失败即阻断）——
-        # 画像/原话样本/记忆都含真实细节，与用户消息同一出口
+        # 五路素材统一过批量脱敏（红线同问答：任何一条失败即阻断）——
+        # 姓名/画像/语气高频词与表情/原话样本/记忆都含真实细节，与用户
+        # 消息同一出口。高频词是人名/称呼的高发形态（≥2 字纯中文），
+        # 绝不经红线直发远程；表情码方括号形态可嵌自定义称呼，同样过检
         quotes = [q["text"] for q in voice["quotes"]]
         profile_texts = self._profile_redact_units(profile)
+        voice_words = "、".join(voice["top_words"])
+        voice_emojis = "".join(voice["top_emojis"])
         pairs = (
             [(message, "avatar_message")]
             + [(t["content"], f"avatar_history_{i}") for i, t in enumerate(turns, 1)]
+            + [(display_name, "avatar_name")]
             + [(text, f"avatar_profile_{i}") for i, text in enumerate(profile_texts, 1)]
+            + [(voice_words, "avatar_voice_words")]
+            + [(voice_emojis, "avatar_voice_emojis")]
             + [(q, f"avatar_quote_{i}") for i, q in enumerate(quotes, 1)]
             + [(m["content"], f"avatar_memory_{i}") for i, m in enumerate(memory_refs, 1)]
         )
         texts = self._qa._redact_batch_for_remote(
-            pairs, account_wxid, conversation_id
+            pairs, account_wxid, conversation_id, source_table="avatar_chat"
         )
         it = iter(texts)
         redacted_message = next(it)
         redacted_turns = [{"role": t["role"], "content": next(it)} for t in turns]
+        redacted_name = next(it)
         redacted_profile_texts = [next(it) for _ in profile_texts]
+        redacted_words = next(it)
+        redacted_emojis = next(it)
         redacted_quotes = [next(it) for _ in quotes]
         redacted_memories = [next(it) for _ in memory_refs]
 
         system_prompt = self._build_system_prompt(
-            display_name, redacted_profile_texts if profile else None,
-            voice, redacted_quotes, redacted_memories,
+            redacted_name, redacted_profile_texts if profile else None,
+            voice, redacted_words, redacted_emojis,
+            redacted_quotes, redacted_memories, memory_no_hit,
         )
         messages = (
             [{"role": "system", "content": system_prompt}]
@@ -184,14 +201,17 @@ class AvatarChatService:
         median_len = lens[len(lens) // 2]
         short_ratio = sum(1 for n in lens if n <= VOICE_SHORT_LEN) / len(lens)
 
-        # 高频词：jieba 分词后留 ≥2 字纯中文词（语气词/称呼/口头禅都在这层）
+        # 高频词：jieba 词性分词后留 ≥2 字纯中文的非功能词（语气词/称呼/
+        # 口头禅都在这层；功能词类黑名单见 _VOICE_FUNC_POS 注释）
         import jieba
+        import jieba.posseg as pseg
 
         jieba.setLogLevel(60)
         word_counter: Dict[str, int] = {}
         for _, text in texts:
-            for w in jieba.lcut(text):
-                if _CJK_WORD.match(w):
+            for pair in pseg.cut(text):
+                w = pair.word
+                if _CJK_WORD.match(w) and pair.flag[0] not in _VOICE_FUNC_POS:
                     word_counter[w] = word_counter.get(w, 0) + 1
         top_words = [
             w for w, _ in sorted(
@@ -277,10 +297,16 @@ class AvatarChatService:
         display_name: str,
         profile_units: Optional[List[str]],
         voice: Dict[str, Any],
+        voice_words: str,
+        voice_emojis: str,
         quotes: List[str],
         memories: List[str],
+        memory_no_hit: bool = False,
     ) -> str:
-        """人格系统提示词：身份边界 + 三路素材 + 口吻规则。"""
+        """人格系统提示词：身份边界 + 三路素材 + 口吻规则。
+
+        入参一律是脱敏副本（display_name/voice_words/voice_emojis 调用方
+        已过批量脱敏；voice 仅取中位句长/短句比等无敏感数值）。"""
         parts = [
             f"你在扮演微信聊天里的「{display_name}」——一个基于真实聊天记录"
             "的 AI 模拟，不是本人。用户是和你聊过很多天的微信好友，你们正在"
@@ -296,15 +322,10 @@ class AvatarChatService:
             f"- 中位句长 {voice.get('median_len')} 字，{short_pct}% 的消息不超过"
             f"{VOICE_SHORT_LEN} 字——回复保持相近长度，像微信聊天不像作文"
         ]
-        if voice.get("top_words"):
-            lines.append(
-                "- 高频词（自然带出，不堆砌）：" + "、".join(voice["top_words"])
-            )
-        if voice.get("top_emojis"):
-            lines.append(
-                "- 常用表情（偶尔用，不是每句都带）："
-                + "".join(voice["top_emojis"])
-            )
+        if voice_words:
+            lines.append("- 高频词（自然带出，不堆砌）：" + voice_words)
+        if voice_emojis:
+            lines.append("- 常用表情（偶尔用，不是每句都带）：" + voice_emojis)
         parts.append("\n\n【TA 的语气档案】（真实消息统计）\n" + "\n".join(lines))
         if quotes:
             parts.append(
@@ -315,6 +336,14 @@ class AvatarChatService:
             parts.append(
                 "\n\n【相关记忆】（长期记忆库中与此话题相关的事实）\n"
                 + "\n".join(f"- {m}" for m in memories)
+            )
+        elif memory_no_hit:
+            # 同问答 no_hit 反幻觉提示：温度 0.7 的口吻生成恰恰最容易
+            # 硬凑事实——检索有结果但全被门控拒时显式告知无可靠记录
+            parts.append(
+                "\n\n【相关记忆】长期记忆库中没有与此话题直接相关的可靠"
+                "记录；具体的时间、地点、事件没依据就说不记得，不要从"
+                "原话样本或语气里推断。\n"
             )
         parts.append(
             "\n\n规则：\n"

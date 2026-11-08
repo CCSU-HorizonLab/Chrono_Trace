@@ -174,6 +174,17 @@ def test_voice_sample_empty_conversation(db):
     assert voice["sample_count"] == 0 and voice["quotes"] == []
 
 
+def test_voice_top_words_drop_function_words(db):
+    """高频词按词性黑名单滤功能词：代词/时间词堆不成口吻档案——
+    「我们」「今天」不得进 Top，内容词照常保留。"""
+    for i in range(40):
+        seed(db, 5000 + i, "我们今天去爬山", 1700000000 + i)
+    voice = AvatarChatService()._sample_voice(1)
+    assert "我们" not in voice["top_words"]
+    assert "今天" not in voice["top_words"]
+    assert "爬山" in voice["top_words"]
+
+
 # ===== 主链路 =====
 
 
@@ -244,6 +255,21 @@ def test_chat_without_profile_degrades(monkeypatch, db):
     assert "【TA 的语气档案】" in system  # 降级仍有口吻锚点
 
 
+def test_chat_memory_no_hit_adds_antihallucination(monkeypatch, db):
+    """检索有结果但全被门控拒（no_hit）时，系统提示词显式告知无可靠
+    记录——温度 0.7 的口吻生成最需要反幻觉锚点（同问答口径）。"""
+    seed_voice(db)
+    svc, llm = make_service(monkeypatch, db)
+    use_local_model(monkeypatch)
+    monkeypatch.setattr(
+        svc._qa, "_retrieve_rag_memories", lambda *a, **kw: ([], True)
+    )
+    svc.chat(1, "还记得上次吗")
+    system = llm.calls[0]["messages"][0]["content"]
+    assert "没有与此话题直接相关的可靠记录" in system
+    assert "不要从" in system
+
+
 def test_stale_profile_schema_ignored(monkeypatch, db):
     seed_voice(db)
     db.execute(
@@ -312,9 +338,10 @@ def test_remote_redacts_all_materials(monkeypatch, db):
     ])
 
     seen = "".join(redactor.texts)
-    # 用户消息/历史/画像/原话样本/RAG 记忆全部过检
+    # 用户消息/历史/姓名/画像/语气高频词与表情/原话样本/RAG 记忆全部过检
     for fragment in ("手机号 13800001111", "历史里也有", "爱提13800001111", "记忆 13800001111"):
         assert fragment in seen, fragment
+    assert "阿明" in seen  # display_name 不再明文进 prompt
     assert any("嗯嗯好呀" in t or "爬山去吗" in t for t in redactor.texts)
 
 

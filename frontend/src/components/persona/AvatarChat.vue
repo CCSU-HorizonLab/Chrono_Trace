@@ -50,6 +50,8 @@
               <span v-if="item.stopped" class="av-state-badge">已停止</span>
               <span v-if="item.truncated" class="av-state-badge">已截断（网络中断，回复不完整）</span>
               <div v-if="!item.streaming" class="av-actions">
+                <!-- 逐条边界标注：截图/复制件脱离页头横幅后仍可辨认非本人 -->
+                <span class="av-ai-tag">AI 模拟</span>
                 <button
                   class="text-action-btn"
                   :class="{ copied: copiedKey === `a-${item.id}` }"
@@ -602,7 +604,18 @@ watch(() => props.conversationId, () => {
 
 .av-actions {
   display: flex;
+  align-items: center;
   gap: 8px;
+}
+
+/* 逐条边界标注：tint 底+琥珀字（状态徽标惯用语，不抢回复内容） */
+.av-ai-tag {
+  font-size: 10px;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: var(--ct-radius-sm);
+  background: var(--ct-color-warning-tint);
+  color: #8A6117;
 }
 
 .av-input-row {

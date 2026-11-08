@@ -147,6 +147,7 @@ REHEARSAL_SYSTEM_PROMPT = """你是微信回复参谋。用户收到对方一条
 
 规则：
 - draft 要像本人发微信的口吻：口语、短句、可用表情；禁止 AI 腔与书面语
+- draft 只依据背景资料组织话术：不要编造没发生过的具体事件、约定或理由
 - 背景资料不足以判断对方偏好的，direction 里明说依据不足，不要编造
 - 三档草稿之间要有明显温差，不要写成三句差不多的话"""
 
@@ -358,6 +359,7 @@ class HistoryQAService:
             + [(m["content"], f"rehearsal_memory_{i}") for i, m in enumerate(memory_refs, 1)],
             account_wxid,
             conversation_id,
+            source_table="rehearsal",
         )
         redacted_received = texts[0]
         redacted_recent = [
@@ -799,12 +801,14 @@ class HistoryQAService:
         pairs: List[Tuple[str, str]],
         account_wxid: str,
         conversation_id: int,
+        source_table: str = "history_qa",
     ) -> List[str]:
         """批量脱敏核心：pairs 为 (文本, source_id)。
 
         本地模型原样返回；远程模型逐条过 PrivacyRedactor，任何一条
         失败即整体阻断（红线：不降级发原文）。问题/记录/历史问答/长期
-        记忆四个入口共用本方法，阻断规则单点维护。
+        记忆/陪练/分身全部素材入口共用本方法，阻断规则单点维护；
+        source_table 标注调用域（审计可区分 avatar_chat/rehearsal）。
         """
         from ..realtime.rag.config import is_remote_llm_model
         from ..realtime.rag.fact_llm import get_active_model_config
@@ -825,7 +829,7 @@ class HistoryQAService:
                     text,
                     account_wxid=account_wxid,
                     conversation_id=conversation_id,
-                    source_table="history_qa",
+                    source_table=source_table,
                     source_id=source_id,
                 )
             except Exception as exc:

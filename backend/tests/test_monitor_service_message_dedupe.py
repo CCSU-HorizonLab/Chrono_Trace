@@ -182,7 +182,7 @@ def test_process_message_fires_push_callback_after_save():
 
 def test_try_chat_with_passes_expected_display_name_to_provider():
     service, _buffer = _make_service()
-    service.current_display_name = "安（备注）"
+    service.current_display_name = "同事甲（备注）"
     captured = {}
 
     class RecordingWx:
@@ -200,14 +200,14 @@ def test_try_chat_with_passes_expected_display_name_to_provider():
     assert ok is True
     assert captured == {
         "target_name": "安",
-        "expected_display_name": "安（备注）",
+        "expected_display_name": "同事甲（备注）",
     }
 
 
 def test_try_chat_with_reports_error_when_open_chat_returns_false():
     """db_watch 语义：open_chat 返回 False（联系人解析不到）→ 明确报错不重试。"""
     service, _buffer = _make_service()
-    service.current_display_name = "安（备注）"
+    service.current_display_name = "同事甲（备注）"
 
     class MissingWx:
         listener_profile = "wechat_41x"
@@ -222,7 +222,7 @@ def test_try_chat_with_reports_error_when_open_chat_returns_false():
 
     assert ok is False
     assert "未找到" in service._chat_error
-    assert "安（备注）" in service._chat_error
+    assert "同事甲（备注）" in service._chat_error
 
 
 def test_process_message_dedupes_same_runtime_id_even_if_sender_attr_flips():

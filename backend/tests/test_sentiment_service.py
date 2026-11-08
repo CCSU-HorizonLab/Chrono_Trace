@@ -70,8 +70,6 @@ class TestSentimentService:
             "analyze_batch",
             "batch_cache_sentiments",
             "batch_get_sentiment_from_cache",
-            "get_sentiment_from_cache",
-            "cache_sentiment_result",
         ):
             if attr_name in getattr(service, "__dict__", {}):
                 delattr(service, attr_name)
@@ -348,31 +346,6 @@ class TestSentimentService:
 
     # ========== 缓存测试 ==========
 
-    def test_cache_sentiment_result(self, service):
-        """测试写入情感分析缓存"""
-        message_id = 99999  # 测试用的消息ID
-        text = "测试缓存功能"
-
-        result = service.analyze_sentiment(text)
-
-        # 写入缓存
-        service.cache_sentiment_result(
-            message_id=message_id,
-            conversation_id=1,
-            **result
-        )
-
-        # 读取缓存
-        cached = service.get_sentiment_from_cache(message_id)
-
-        assert cached is not None, "缓存读取失败"
-        assert cached["polarity"] == result["polarity"]
-        assert cached["intensity"] == result["intensity"]
-        # float16 紧凑存储引入 ~1e-3 量化差：同数量级即可
-        assert len(cached["embedding"]) == len(result["embedding"])
-        for a, b in zip(cached["embedding"], result["embedding"]):
-            assert abs(a - b) < 2e-3
-
     def test_batch_cache_sentiments(self, service):
         """测试批量写入缓存"""
         results = [
@@ -396,13 +369,13 @@ class TestSentimentService:
         service.batch_cache_sentiments(results)
 
         # 验证第一条缓存
-        cached1 = service.get_sentiment_from_cache(10001)
+        cached1 = service.batch_get_sentiment_from_cache([10001])[10001]
         assert cached1 is not None
         assert cached1["polarity"] == 1
         assert cached1["intensity"] == 0.8
 
         # 验证第二条缓存
-        cached2 = service.get_sentiment_from_cache(10002)
+        cached2 = service.batch_get_sentiment_from_cache([10002])[10002]
         assert cached2 is not None
         assert cached2["polarity"] == -1
         assert cached2["intensity"] == -0.6
@@ -452,7 +425,7 @@ class TestSentimentService:
             "SELECT embedding_vector FROM sentiment_cache WHERE message_id = 10002"
         ).fetchone()[0]
         assert zero is None, "零向量不得写实"
-        assert service.get_sentiment_from_cache(10002) is None
+        assert service.batch_get_sentiment_from_cache([10002])[10002]["embedding"] is None
 
     # ========== 边界情况测试 ==========
 

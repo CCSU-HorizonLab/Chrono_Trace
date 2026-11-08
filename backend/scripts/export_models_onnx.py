@@ -150,29 +150,17 @@ def export_one(model_dir: Path, out_dir: Path, model_type: str, int8: bool = Fal
 def write_version_file_if_absent(model_dir: Path) -> None:
     """代际档案随权重走：model_version.json 已存在则不动（版本号属于权重
     本身——下载来的保留远端代际，本地蒸馏的保留训练时代际，导出动作
-    无权改写）；缺失才按代码期望代际补档（本地蒸馏产物放置后首导出的
-    常规路径）。ensure 脚本据此文件比对代际，防旧模型被误当新版导出"""
-    import datetime
-    import json
-
-    from app.services.model_paths import SENTIMENT_MODEL_TAG
-
+    无权改写）；**缺失即报错拒绝导出**——档案只能由 regen_sentiment_model
+    随权重一起写（带 lineage），导出侧补写等于给无档案的旧权重伪造当代
+    代际、绕过 ensure 门（1866f6a 前的漏洞形态）"""
     version_file = model_dir / "model_version.json"
     if version_file.exists():
         print(f"[版本] 沿用既有代际档案: {version_file}")
         return
-    version_file.write_text(
-        json.dumps(
-            {
-                "version": SENTIMENT_MODEL_TAG,
-                "updated_at": datetime.datetime.now().isoformat(timespec="seconds"),
-            },
-            ensure_ascii=False,
-            indent=2,
-        ),
-        encoding="utf-8",
+    raise SystemExit(
+        f"[版本] {version_file} 缺失：拒绝导出（防旧权重被补写当代 tag 绕过代际门）。"
+        "正规产物经 git 分发（git pull）或 regen_sentiment_model.py 一条龙生成。"
     )
-    print(f"[版本] 补写代际档案 {version_file}（version={SENTIMENT_MODEL_TAG}）")
 
 
 def main():

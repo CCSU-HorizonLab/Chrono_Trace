@@ -7,8 +7,8 @@ v1（BERT 教师→MiniRBT-H256，脚本已删，结论存档于 git 历史）�
 v2 换口径（用户已授权：自有数据、内网 LLM，试验不限隐私）：
   教师 = Qwen3.5-9B（qwen3.8-flash-next，llama-server /v1，enable_thinking
   必须关，否则 reasoning 吃满输出）；快测随机 40 条对旧教师一致率 72.5%，
-  分歧抽样 LLM 判定全面更准（旧教师 neut 的「连不上了/这么清纯/有目标
-  不断努力」等被正确标 neg/pos）。
+  分歧抽样 LLM 判定全面更准（旧教师误标中性的语境依赖短句被正确改标
+  neg/pos，分歧样例留档本地不引原文）。
   学生 = hfl/rbt3（3 层×768，38M，词表与教师同 21128 标准 BERT 词表）。
   上下文 = 打标/学生输入/生产推理三口径统一为「前 3 条会话上下文拼接」
   （ablation：6.2% 标签变化且大半变得更准；单条判断在语境依赖消息上
@@ -47,8 +47,9 @@ STUDENT_PATH = DISTILL_DIR / "v2_student.pt"
 V1_STUDENT_PATH = DISTILL_DIR / "student.pt"
 OLD_TEACHER_DIR = backend_dir / "data" / "models" / "sentiment_3class"
 
-LLM_BASE = os.environ.get("CHRONO_V2_LLM_BASE", "http://192.168.103.112:8004/v1")
-LLM_KEY = os.environ.get("CHRONO_V2_LLM_KEY", "token-abc123")
+# 内网端点不入库：默认空，label 子命令须显式提供 CHRONO_V2_LLM_BASE/KEY
+LLM_BASE = os.environ.get("CHRONO_V2_LLM_BASE", "")
+LLM_KEY = os.environ.get("CHRONO_V2_LLM_KEY", "")
 LLM_MODEL = os.environ.get("CHRONO_V2_LLM_MODEL", "Qwen3.5-9B")
 
 MAX_LENGTH = 160          # ctx（3×60 字符≈90-120 token）+ 消息本体

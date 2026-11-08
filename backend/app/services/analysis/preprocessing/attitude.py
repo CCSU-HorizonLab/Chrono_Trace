@@ -1,11 +1,6 @@
 """态度倾向统计（AttitudeStatistics + AttitudePreprocessingService）。（拆分自原 preprocessing_service.py）"""
-import re
-import json
 import logging
-import time
-from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
-from ....db.connection import get_db
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +57,7 @@ class AttitudePreprocessingService:
         Args:
             keyword_lib: 关键词库实例(可选,默认取进程级共享实例)
         """
-        from ..keyword_libraries import KeywordLibraries, get_shared_keyword_libraries
+        from ..keyword_libraries import get_shared_keyword_libraries
         from ..holiday_library import HolidayLibrary
 
         self.keyword_lib = keyword_lib or get_shared_keyword_libraries()

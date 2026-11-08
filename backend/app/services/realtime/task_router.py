@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from .memory_intent import _looks_like_history_question, _looks_like_relationship_question

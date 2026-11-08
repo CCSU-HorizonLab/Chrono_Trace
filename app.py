@@ -1,5 +1,3 @@
-import os
-
 import webview
 import logging
 from backend.app.webview.bridge import Bridge

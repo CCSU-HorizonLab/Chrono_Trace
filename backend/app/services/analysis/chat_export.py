@@ -9,7 +9,7 @@ import csv
 import html as html_module
 import io
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 # 群成员气泡配色（按 sender 哈希取色，保证同一成员颜色稳定）
 _MEMBER_COLORS = [
@@ -98,7 +98,7 @@ def format_html(messages: list[dict[str, Any]], conversation_name: str) -> str:
             if sender not in color_map:
                 color_map[sender] = _MEMBER_COLORS[len(color_map) % len(_MEMBER_COLORS)]
             align = "left"
-            bubble = f"other" if not msg.get("sender") else "member"
+            bubble = "other" if not msg.get("sender") else "member"
             color = color_map[sender]
             name_html = f'<div class="sender" style="color:{color}">{html_module.escape(sender)}</div>'
         rows.append(f'''<div class="msg {align}">
@@ -143,4 +143,4 @@ def _clean_content(msg: dict[str, Any]) -> str:
         from ..wechat.chatroom import parse_chatroom_message
         _, content = parse_chatroom_message(content)
         return content
-    return _TYPE_LABELS.get(msg_type, f"[消息]") if not content else content
+    return _TYPE_LABELS.get(msg_type, "[消息]") if not content else content

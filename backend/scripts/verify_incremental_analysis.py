@@ -15,7 +15,6 @@
 同设备同模型下浮点列预期精确相等（float32 往返 bit 级一致）。
 """
 import argparse
-import json
 import shutil
 import sqlite3
 import sys
@@ -206,8 +205,7 @@ def main():
 
         # 1) 主副本：冷跑
         main_db = copy_database(src, tmp / "main")
-        from app.db.connection import DatabaseConnection
-
+        
         clear_analysis_state(main_db)
         timings["① 冷跑（全清）"] = run_analysis(main_db, args.conversation_id)
         cold_snap = snapshot_tables(main_db, args.conversation_id)

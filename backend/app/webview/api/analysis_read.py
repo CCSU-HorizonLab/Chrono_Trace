@@ -329,7 +329,6 @@ class AnalysisReadApiMixin:
                 BAND_INSUFFICIENT,
                 BAND_OTHER_DOMINANT,
                 BAND_OTHER_LEANS,
-                BAND_SELF_DOMINANT,
                 BAND_SELF_LEANS,
                 classify_initiative,
             )

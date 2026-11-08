@@ -10,8 +10,6 @@ from typing import Any, Dict, List, Optional
 import jieba
 from ...db.connection import get_db
 from ..analysis.feature_extraction_config import (
-    ANALYSIS_DEVICE_MODE_CPU,
-    ANALYSIS_DEVICE_MODE_GPU,
     FeatureExtractionConfig,
     normalize_analysis_device_mode,
 )

@@ -1,11 +1,7 @@
 """会话切分与管理：睡眠/时间间隔/语义相似度三段式（SessionManager）。（拆分自原 preprocessing_service.py）"""
-import re
-import json
 import logging
-import time
 import numpy as np
-from typing import Dict, Any, List, Optional, Tuple
-from datetime import datetime
+from typing import Dict, Any, List
 from ....db.connection import get_db
 
 logger = logging.getLogger(__name__)

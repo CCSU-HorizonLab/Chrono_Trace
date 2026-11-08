@@ -1,7 +1,6 @@
 """Historical sentiment analysis service."""
 
 import logging
-import os
 import pickle
 import threading
 import time
@@ -17,8 +16,6 @@ from ..model_paths import (
 )
 from .embedding_cache_store import EmbeddingCacheStore
 from .feature_extraction_config import (
-    ANALYSIS_DEVICE_MODE_CPU,
-    ANALYSIS_DEVICE_MODE_GPU,
     FeatureExtractionConfig,
     normalize_analysis_device_mode,
 )

@@ -199,7 +199,6 @@ def replay_sample(
 
     from app.services.realtime.generation_context import assemble_generation_context
     from app.services.realtime.llm_engine import LLMSuggestionEngine
-    from app.services.realtime.rag.context_builder import RagContextBuilder
 
     engine = LLMSuggestionEngine()
     model_config = engine._get_active_model()

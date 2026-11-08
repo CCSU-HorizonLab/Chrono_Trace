@@ -2,7 +2,6 @@ from typing import Any, Optional
 import json
 import os
 import logging
-import sys
 import threading
 import time
 import re
@@ -1970,7 +1969,6 @@ class Bridge(
 
             suggestions = []
             for row in cursor.fetchall():
-                import json
                 try:
                     from ..services.realtime.suggestion_observer import mark_suggestion_viewed
 
@@ -2055,31 +2053,6 @@ class Bridge(
         except Exception as e:
             logger.error(f"[Bridge] 关闭建议失败: {e}")
             return {"ok": False, "error": str(e)}
-
-    def get_suggestion_metrics(self, days: int = 7, account_wxid: str = "") -> dict[str, Any]:
-        """Return aggregated suggestion observation metrics for recent days."""
-        try:
-            from ..db.connection import get_db
-            from ..services.realtime.suggestion_observer import get_suggestion_metrics
-
-            normalized_days = max(1, int(days or 7))
-            conn = get_db()
-            metrics = get_suggestion_metrics(
-                conn,
-                account_wxid=self._resolve_account_wxid(account_wxid),
-                days=normalized_days,
-            )
-            return {
-                "ok": True,
-                "metrics": metrics,
-            }
-        except Exception as e:
-            logger.error(f"[Bridge] 获取建议指标失败: {e}")
-            return {
-                "ok": False,
-                "error": str(e),
-                "metrics": {},
-            }
 
     def get_suggestion_config(self, conversation_id: int = 0) -> dict[str, Any]:
         """获取建议配置（按联系人存储，settings 键 suggestion_config:{id}；无联系人/无键回落内置默认）"""

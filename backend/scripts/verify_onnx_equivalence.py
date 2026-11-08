@@ -12,7 +12,6 @@
                                                吞吐 1.56× 过 / argmax 95.3% 不过 → 弃用）
 """
 import argparse
-import sqlite3
 import sys
 import time
 from pathlib import Path

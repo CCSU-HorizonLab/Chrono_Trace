@@ -84,7 +84,6 @@ def resolve_conversation(db_path: str, account_wxid: str, conversation_id: int |
 
 
 def apply_rollback(db_path: str, account_wxid: str, conversation_id: int, *, mode: str, disable: bool, enable: bool, yes: bool) -> None:
-    from app.db.connection import DatabaseConnection
     from app.services.realtime.rag.store import RagStore
 
     if not yes:
@@ -127,7 +126,6 @@ def apply_rollback(db_path: str, account_wxid: str, conversation_id: int, *, mod
 
 
 def main() -> int:
-    root = Path(__file__).resolve().parents[2]
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", default=str(Path(__file__).resolve().parents[1] / "data" / "chrono_trace.db"))
     parser.add_argument("--account", required=True, help="account_wxid")

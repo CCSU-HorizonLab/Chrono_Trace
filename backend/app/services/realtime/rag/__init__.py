@@ -6,9 +6,3 @@
 （relationship_policy/contact_preference）、语义记忆（semantic_memory）。
 配置见 config.py（fact_kind_hints.json / fact_quality_patterns.json 随包分发）。
 """
-from .config import load_rag_settings  # noqa: F401
-from .context_builder import RagContextBuilder, RagQueryBuilder  # noqa: F401
-from .indexer import RagIndexQueue, RagIndexer  # noqa: F401
-from .relevance_gate import RagRelevanceGate  # noqa: F401
-from .retriever import RagRetriever  # noqa: F401
-from .store import RagStore  # noqa: F401

@@ -1,10 +1,7 @@
 """交互对构建：发言单元/你来我往配对/响应时长（PairPreprocessingService）。（拆分自原 preprocessing_service.py）"""
-import re
 import json
 import logging
-import time
-from typing import Dict, Any, List, Optional, Tuple
-from datetime import datetime
+from typing import Dict, Any, List, Tuple
 from ....db.connection import get_db
 
 logger = logging.getLogger(__name__)

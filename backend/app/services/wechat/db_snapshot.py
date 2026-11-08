@@ -17,7 +17,6 @@ import shutil
 import sqlite3
 import struct
 import threading
-import time
 from pathlib import Path
 
 from .db_decryptor_v2 import WeChatDBDecryptorV2

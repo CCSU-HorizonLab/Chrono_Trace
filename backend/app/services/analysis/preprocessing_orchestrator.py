@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from ...db.connection import get_db
 from .feature_extraction_config import FeatureExtractionConfig
-from .keyword_libraries import KeywordLibraries, get_shared_keyword_libraries
+from .keyword_libraries import get_shared_keyword_libraries
 from .preprocessing import (
     AttitudePreprocessingService,
     BasicPreprocessingService,
@@ -174,11 +174,11 @@ class PreprocessingOrchestrator:
         try:
             from .feature_extraction_service import take_recent_split
 
-            cached_units, cached_sessions = take_recent_split(
+            _, cached_sessions = take_recent_split(
                 conversation_id, expected_message_count=len(messages)
             )
         except Exception:
-            cached_units, cached_sessions = None, None
+            cached_sessions = None
         if cached_sessions is not None:
             sessions = cached_sessions
             logger.info(

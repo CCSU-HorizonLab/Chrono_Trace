@@ -76,13 +76,3 @@ __all__ = [
     "create_key_provider", "create_capture_session",
     "inspect_login_state", "restart_wechat_for_capture",
 ]
-
-# 便捷再导出（keys.gdb_linux 等仍可直接 from-import）
-if sys.platform != "win32":  # win32 分支由 Windows 测试覆盖
-    from .gdb_linux import (  # noqa: F401
-        LinuxKeyCaptureSession,
-        LinuxWeChatKeyProvider,
-        find_linux_wechat_pids,
-    )
-else:  # pragma: windows
-    from .wx_key_win import WeChatKeyCaptureSession, WeChatKeyProvider  # noqa: F401

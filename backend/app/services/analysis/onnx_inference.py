@@ -23,7 +23,6 @@ from typing import Optional, Sequence
 import numpy as np
 
 from ..model_paths import (
-    EMBEDDING_MODEL_DIRNAME,
     SENTIMENT_MODEL_DIRNAME,
     get_embedding_model_dir,
     get_model_root_dir,

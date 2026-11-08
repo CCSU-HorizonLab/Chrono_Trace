@@ -12,7 +12,10 @@ import re
 import time
 import urllib.request
 import urllib.error
-from typing import Any, Callable, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional
+
+if TYPE_CHECKING:
+    from .style_constraints import StyleConstraints
 
 from .providers.models import normalize_text
 from .recent_window import KIND_TRANSFER_EVENT, purify_recent_window, transfer_event_line

@@ -130,7 +130,6 @@ class EmbeddingCacheStore:
                 """,
                 (*chunk, self._model, self._device),
             ).fetchall()
-            import struct
 
             import numpy as np
 

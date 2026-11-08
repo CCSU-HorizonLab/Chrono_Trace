@@ -42,6 +42,7 @@ from ..services.model_paths import (
 
 logger = logging.getLogger(__name__)
 from .api.affinity import AffinityApiMixin
+from .api.pulse import PulseApiMixin
 from .api.rag_admin import RagAdminApiMixin
 from .api.key_capture import KeyCaptureApiMixin
 from .api.llm_models import LlmModelsApiMixin
@@ -55,7 +56,7 @@ from .api.deep_analysis import DeepAnalysisApiMixin
 
 
 class Bridge(
-    AffinityApiMixin, RagAdminApiMixin, KeyCaptureApiMixin,
+    AffinityApiMixin, PulseApiMixin, RagAdminApiMixin, KeyCaptureApiMixin,
     LlmModelsApiMixin, AnalysisReadApiMixin, WindowApiMixin,
     GpuApiMixin, ModelMgmtApiMixin, ProfileApiMixin, HistoryQaApiMixin,
     DeepAnalysisApiMixin,

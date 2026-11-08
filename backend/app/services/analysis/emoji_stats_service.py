@@ -165,8 +165,12 @@ def _month_of(ts: int) -> str:
     return time.strftime("%Y-%m", time.localtime(ts))
 
 
-def collect_emoji_stats(conversation_id: int) -> Dict[str, Any]:
-    """单次全量扫描聚合。行量级 = 会话全部消息，emoji 命中只占少数。"""
+def collect_emoji_stats(
+    conversation_id: int, from_ts: int = 0, to_ts: int = 0
+) -> Dict[str, Any]:
+    """单次扫描聚合。默认全会话（快照缓存路径）；传 from_ts/to_ts 走窗口
+    口径（年度报告/纪念册按年/区间取表情页，不落缓存按需现算）。
+    行量级 = 扫描范围全部消息，emoji 命中只占少数。"""
     top: Dict[Tuple[int, str, str], int] = defaultdict(int)  # (is_sender, kind, key) -> n
     months: Dict[str, Dict[str, int]] = defaultdict(lambda: {"me": 0, "ta": 0})
     hourly: List[int] = [0] * 24
@@ -174,11 +178,21 @@ def collect_emoji_stats(conversation_id: int) -> Dict[str, Any]:
     custom_last: Dict[str, int] = {}
     total_messages = 0
 
+    window_sql = ""
+    params: List[Any] = [conversation_id]
+    if from_ts:
+        window_sql += " AND timestamp >= ?"
+        params.append(int(from_ts))
+    if to_ts:
+        window_sql += " AND timestamp <= ?"
+        params.append(int(to_ts))
+
     pre = _placeholder_re()
     cur = _get_db().execute(
         "SELECT is_sender, message_type, COALESCE(content, ''), timestamp"
-        " FROM messages WHERE conversation_id = ? AND content != '' ORDER BY timestamp",
-        (conversation_id,),
+        " FROM messages WHERE conversation_id = ? AND content != ''"
+        f"{window_sql} ORDER BY timestamp",
+        tuple(params),
     )
     for is_sender, mtype, content, ts in cur:
         total_messages += 1

@@ -517,6 +517,31 @@ class DeepAnalysisApiMixin:
             logger.error(f"[Bridge] 获取海报数据失败: {e}")
             return {"ok": False, "error": str(e)}
 
+    def get_report_payload(
+        self, conversation_id: int, from_date: str, to_date: str, account_wxid: str = ""
+    ) -> dict:
+        """组装年度报告/纪念册数据（§6.2：温度封面/总量/词云/专属梗/
+        表情/里程碑/节奏，窗口口径按需现算）。"""
+        try:
+            if not conversation_id:
+                return {"ok": False, "error": "缺少参数: conversation_id"}
+            if not from_date or not to_date:
+                return {"ok": False, "error": "缺少日期参数，请先选择时间范围"}
+            from ...services.analysis.report_service import ReportService
+
+            from_ts = int(datetime.strptime(from_date, "%Y-%m-%d").timestamp())
+            to_ts = int(
+                datetime.strptime(to_date + " 23:59:59", "%Y-%m-%d %H:%M:%S").timestamp()
+            )
+            return ReportService().build_report_payload(
+                int(conversation_id), from_ts, to_ts, account_wxid or ""
+            )
+        except ValueError as e:
+            return {"ok": False, "error": f"参数格式错误: {e}"}
+        except Exception as e:
+            logger.error(f"[Bridge] 获取报告数据失败: {e}")
+            return {"ok": False, "error": str(e)}
+
     def save_share_image(self, image_data: str, file_name: str = "") -> dict:
         """保存 html2canvas 合成的 PNG 到导出目录（chrono_trace_export）。
 

@@ -127,9 +127,53 @@ def medians_to_minutes(stats: Optional[Dict[str, Any]]) -> Optional[Dict[str, An
     }
 
 
+def greeting_rhythm(conversation_id: int, from_ts: int, to_ts: int) -> Dict[str, int]:
+    """早安晚安节奏（§6.5）：每日首条落在 5-10 点 = 早安天，末条落在
+    22-23 点 = 晚安天，各附我发起数。自然日口径（本地时区），不过滤消息
+    类型——表情开场也是开场。"""
+    from ...db.connection import get_db
+
+    row = get_db().execute(
+        """
+        WITH ranked AS (
+            SELECT is_sender, timestamp,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY DATE(timestamp, 'unixepoch', 'localtime')
+                       ORDER BY timestamp, id) AS rn_first,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY DATE(timestamp, 'unixepoch', 'localtime')
+                       ORDER BY timestamp DESC, id DESC) AS rn_last
+            FROM messages
+            WHERE conversation_id = ? AND timestamp >= ? AND timestamp <= ?
+        )
+        SELECT
+            SUM(CASE WHEN rn_first = 1 AND CAST(strftime('%H', timestamp,
+                     'unixepoch', 'localtime') AS INTEGER) BETWEEN 5 AND 10
+                     THEN 1 ELSE 0 END),
+            SUM(CASE WHEN rn_first = 1 AND CAST(strftime('%H', timestamp,
+                     'unixepoch', 'localtime') AS INTEGER) BETWEEN 5 AND 10
+                     AND is_sender = 1 THEN 1 ELSE 0 END),
+            SUM(CASE WHEN rn_last = 1 AND CAST(strftime('%H', timestamp,
+                     'unixepoch', 'localtime') AS INTEGER) >= 22
+                     THEN 1 ELSE 0 END),
+            SUM(CASE WHEN rn_last = 1 AND CAST(strftime('%H', timestamp,
+                     'unixepoch', 'localtime') AS INTEGER) >= 22
+                     AND is_sender = 1 THEN 1 ELSE 0 END)
+        FROM ranked
+        """,
+        (conversation_id, from_ts, to_ts),
+    ).fetchone()
+    return {
+        "morning_days": int(row[0] or 0),
+        "morning_by_me": int(row[1] or 0),
+        "night_days": int(row[2] or 0),
+        "night_by_me": int(row[3] or 0),
+    }
+
+
 def monthly_overview(conversation_id: int, now: int) -> Dict[str, Any]:
-    """本月速览：消息数/字数/深夜次数（当月自然月，messages 直聚合；
-    深夜口径同 deep 海报 0-5 点本地时区）。"""
+    """本月速览：消息数/字数/深夜次数/早安晚安天（当月自然月，messages
+    直聚合；深夜口径同 deep 海报 0-5 点本地时区）。"""
     from ...db.connection import get_db
 
     db = get_db()
@@ -161,6 +205,7 @@ def monthly_overview(conversation_id: int, now: int) -> Dict[str, Any]:
         "chars": int(char_row[0] or 0),
         "late_night": int(row[1] or 0),
         "late_night_by_me": int(row[2] or 0),
+        **greeting_rhythm(conversation_id, start, now),
     }
 
 

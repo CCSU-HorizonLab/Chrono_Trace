@@ -203,6 +203,27 @@ class TestMonthlyOverview:
         assert out["messages"] == 1
         assert out["chars"] == 0
 
+    def test_greeting_rhythm_in_overview(self, db):
+        # 当月一天：我 8:00 开场（早安天+我发起）、TA 23:00 收尾（晚安天）
+        now = int(time.time())
+        lt = time.localtime(now)
+        d = min(max(lt.tm_mday, 1), 28)  # 落在当月内的安全日
+        morning = int(time.mktime((lt.tm_year, lt.tm_mon, d, 8, 0, 0, 0, 0, -1)))
+        night = int(time.mktime((lt.tm_year, lt.tm_mon, d, 23, 0, 0, 0, 0, -1)))
+        if night > now:  # 当天 23:00 未到：用前一天
+            morning -= _DAY
+            night -= _DAY
+        db.executemany(
+            "INSERT INTO messages(id, conversation_id, is_sender, timestamp)"
+            " VALUES (?, 1, ?, ?)",
+            [(1, 1, morning), (2, 0, night)],
+        )
+        out = monthly_overview(1, now)
+        assert out["morning_days"] == 1
+        assert out["morning_by_me"] == 1
+        assert out["night_days"] == 1
+        assert out["night_by_me"] == 0
+
 
 # ----------------------------------------------------------------------
 # 趋势线 / 预警 / 模板判读

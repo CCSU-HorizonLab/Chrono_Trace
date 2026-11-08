@@ -143,6 +143,16 @@ class TestCollectStats:
         snap = ess.collect_emoji_stats(1)
         assert snap["scanned_messages"] == 5
 
+    def test_window_excludes_outside(self, db):
+        # 年度报告/纪念册按窗口取表情页：窗口外的消息不进榜不计数
+        self._seed(db)
+        t0 = int(time.time()) - 86400 * 40
+        snap = ess.collect_emoji_stats(1, from_ts=t0 - 3600, to_ts=t0 + 3600)
+        assert snap["scanned_messages"] == 3
+        me_unicode = {i["key"]: i["count"] for i in snap["top_me"]["unicode"]}
+        assert me_unicode["😂"] == 2  # 窗口内两条 😂
+        assert snap["custom_anonymous"]["me"] == 0  # [表情] 在窗口外（t1）
+
 
 class TestSnapshotCache:
     def test_first_call_computes_and_caches(self, db):

@@ -60,7 +60,6 @@ def setup_logging(level=logging.INFO, console_only=False):
     # 抑制第三方库的冗余日志
     logging.getLogger("transformers").setLevel(logging.ERROR)
     logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
-    logging.getLogger("modelscope").setLevel(logging.ERROR)
     logging.getLogger("filelock").setLevel(logging.WARNING)
     logging.getLogger("jieba").setLevel(logging.ERROR)
     logging.getLogger("urllib3").setLevel(logging.WARNING)

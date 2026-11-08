@@ -22,9 +22,11 @@ sys.path.insert(0, str(backend_dir))
 
 from app.services.model_paths import (  # noqa: E402
     SENTIMENT_MODEL_DIRNAME,
-    SENTIMENT_MODEL_REPO_ID,
     get_model_root_dir,
 )
+
+#: 发布目标：自建 ModelScope 仓库（历史渠道，token 失效暂不可用）
+SENTIMENT_MODEL_REPO_ID = "tingting0514/chrono-trace-sentiment"
 
 #: 进远端的文件（HF 源格式 + 代际档案）；onnx/ 为各机器本地导出产物
 PUSH_FILES = (

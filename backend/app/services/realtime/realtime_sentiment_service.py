@@ -15,8 +15,6 @@ from ..analysis.feature_extraction_config import (
     FeatureExtractionConfig,
     normalize_analysis_device_mode,
 )
-from ..model_manager import ModelManager
-from ..model_paths import SENTIMENT_MODEL_REPO_ID, get_sentiment_model_dir
 from .sentiment_context import compose_input
 from .sentiment_rules import (
     EMOJI_SENTIMENT,
@@ -64,23 +62,7 @@ class RealtimeSentimentService:
         self._device = "cpu"
         self._device_mode = FeatureExtractionConfig.from_settings().analysis_device_mode
         self._lock = threading.Lock()
-        self._model_manager = None
-        self._refresh_model_manager()
-
-        self._model_manager.check_and_update_async()
         logger.debug("[实时情感分析] 服务初始化完成")
-
-    def _refresh_model_manager(self):
-        desired_model_dir = str(get_sentiment_model_dir())
-        if (
-            self._model_manager is None
-            or str(self._model_manager.model_dir) != desired_model_dir
-            or self._model_manager.repo_id != SENTIMENT_MODEL_REPO_ID
-        ):
-            self._model_manager = ModelManager(
-                model_dir=desired_model_dir,
-                repo_id=SENTIMENT_MODEL_REPO_ID,
-            )
 
     def configure_device_mode(self, device_mode: Optional[str]) -> str:
         """Change target device mode and rebuild model lazily if needed."""

@@ -12,7 +12,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-from ...services.model_paths import EMBEDDING_MODEL_DIRNAME, EMBEDDING_MODEL_REPO_ID, MODEL_ROOT_DIR_KEY, SENTIMENT_MODEL_DIRNAME, SENTIMENT_MODEL_REPO_ID, get_embedding_model_dir, get_model_root_dir, get_sentiment_model_dir, normalize_model_root_dir
+from ...services.model_paths import EMBEDDING_MODEL_DIRNAME, EMBEDDING_MODEL_REPO_ID, MODEL_ROOT_DIR_KEY, SENTIMENT_MODEL_DIRNAME, get_embedding_model_dir, get_model_root_dir, get_sentiment_model_dir, normalize_model_root_dir
 
 
 def _embedding_dir_names() -> list[str]:
@@ -21,15 +21,14 @@ def _embedding_dir_names() -> list[str]:
 
 
 class ModelMgmtApiMixin:
-    """分析模型状态与下载管理"""
+    """分析模型状态管理"""
 
-    def _get_sentiment_model_manager(self):
-        from ...services.model_manager import ModelManager
-
-        return ModelManager(
-            model_dir=str(get_sentiment_model_dir(self.settings)),
-            repo_id=SENTIMENT_MODEL_REPO_ID,
-        )
+    def _sentiment_missing_diagnosis(self) -> dict[str, Any]:
+        """情感产物缺失诊断：随 git 仓库分发，无远端仓库可指。"""
+        return {
+            "repo_id": "",
+            "issue": "ONNX fp16 产物缺失：情感模型随 git 仓库分发（先 git pull）",
+        }
 
     def _diagnose_embedding_model_status(self) -> dict[str, Any]:
         from ...services.model_manager import ModelManager
@@ -162,8 +161,7 @@ class ModelMgmtApiMixin:
                     "backend": "onnx",
                 }
 
-            sentiment_manager = self._get_sentiment_model_manager()
-            sentiment_diagnosis = sentiment_manager.diagnose_model_status()
+            sentiment_diagnosis = self._sentiment_missing_diagnosis()
             embedding_diagnosis = self._diagnose_embedding_model_status()
 
             # ONNX 单后端：可用性由 ONNX 产物单点决定——diagnose 按 torch 源
@@ -182,8 +180,7 @@ class ModelMgmtApiMixin:
                     "model_name": "情感分类模型",
                     "model_key": "sentiment",
                     "repo_id": sentiment_diagnosis.get("repo_id"),
-                    "issue": sentiment_diagnosis.get("issue")
-                    or "源模型权重存在但 ONNX fp16 产物缺失，需重新导出 onnx/",
+                    "issue": sentiment_diagnosis.get("issue"),
                     "can_auto_download": False,
                 })
 

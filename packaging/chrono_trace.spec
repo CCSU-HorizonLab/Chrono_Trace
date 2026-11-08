@@ -1,7 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 import os
-from importlib.metadata import PackageNotFoundError
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy_metadata
@@ -20,14 +19,6 @@ if not FRONTEND_DIST_DIR.exists():
     )
 
 
-def safe_copy_metadata(package_name: str):
-    try:
-        return copy_metadata(package_name)
-    except PackageNotFoundError:
-        print(f"[chrono_trace.spec] metadata not found for optional package: {package_name}")
-        return []
-
-
 datas = [
     (str(PROJECT_ROOT / "backend" / "app" / "db" / "schema.sql"), "backend/app/db"),
     (str(FRONTEND_DIST_DIR), "frontend/webdist"),
@@ -42,7 +33,6 @@ if BUILD_INFO_FILE.exists():
 datas += collect_data_files("webview")
 datas += collect_data_files("jieba")
 datas += copy_metadata("pywebview")
-datas += safe_copy_metadata("modelscope")
 # ONNX 模型内置（阶段 B：安装包捆绑 fp16 产物，免运行时下载）。
 # 情感产物随 git 仓库分发（clone 即得，代际门见 ensure 脚本）；嵌入产物
 # 由 build 脚本调 backend/scripts/ensure_models_for_export.py 首次构建时
@@ -78,11 +68,7 @@ for _model_name in ("bge_small_zh_v15", "sentiment_3class"):
 hiddenimports = [
     "webview",
     "wx_key",
-    "modelscope",
-    "modelscope.hub",
-    "modelscope.hub.snapshot_download",
 ]
-hiddenimports += collect_submodules("modelscope.hub")
 # SciPy 1.18 vendors array-api-compat under a private package.  Recent
 # transformers imports sklearn.metrics during lazy loading, which reaches
 # this module through SciPy.  PyInstaller cannot reliably discover the

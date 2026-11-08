@@ -19,14 +19,6 @@ sys.path.insert(0, str(backend_dir))
 from app.webview.api.model_mgmt import ModelMgmtApiMixin
 
 
-class _FakeManager:
-    def __init__(self, issue):
-        self._issue = issue
-
-    def diagnose_model_status(self):
-        return {"repo_id": "fake/repo", "issue": self._issue}
-
-
 class _FakeBridge(ModelMgmtApiMixin):
     def __init__(self):
         self.settings = {}
@@ -34,9 +26,6 @@ class _FakeBridge(ModelMgmtApiMixin):
 
     def _save_settings(self):
         pass
-
-    def _get_sentiment_model_manager(self):
-        return _FakeManager("模型目录不存在: /fake/sentiment_3class")
 
     def _diagnose_embedding_model_status(self):
         return {"repo_id": "fake/emb", "issue": "模型目录不存在: /fake/bge", "can_recover": True}
@@ -90,7 +79,6 @@ class TestTorchLeftoverWeightsNotReady:
 
     def test_leftover_weights_do_not_report_available(self, no_onnx, monkeypatch):
         bridge = _make_bridge(monkeypatch, frozen=False)
-        bridge._get_sentiment_model_manager = lambda: _FakeManager(None)
         bridge._diagnose_embedding_model_status = lambda: {
             "repo_id": "fake/emb", "issue": None, "can_recover": False,
         }

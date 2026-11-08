@@ -15,7 +15,8 @@ MODEL_ROOT_DIR_KEY = "model_root_dir"
 
 logger = logging.getLogger(__name__)
 
-SENTIMENT_MODEL_REPO_ID = "tingting0514/chrono-trace-sentiment"
+# 情感模型不再有 ModelScope 远端（历史仓库停更于 v1）；发行产物随 git
+# 仓库分发，发布工具 push_sentiment_model.py 自带目标仓库 ID
 # 嵌入模型唯一：BAAI/bge-small-zh-v1.5（24M 参数、512 维，官方仓库）。
 # 旧 text2vec-base-chinese（768 维，自建镜像）变体与注册表/回退链已移除
 EMBEDDING_MODEL_REPO_ID = "BAAI/bge-small-zh-v1.5"

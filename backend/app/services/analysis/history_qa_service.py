@@ -159,13 +159,9 @@ REHEARSAL_MAX_TOKENS = 1024
 # 会话级串行门闩：取消标记按 (scope, conversation_id) 定址且单消费，
 # 并发的两个 ask 共享一枚标记时，谁的轮询点先到谁消费——「停止后立即
 # 重发」会把用户刚发的新问题杀掉而旧问题跑完（方向恰好反了）。串行后
-# 标记属主明确：新请求等旧请求真正退出，再清残留标记自己起步
+# 标记属主明确：新请求等旧请求真正退出，再清死残留标记自己起步
 _QA_INFLIGHT_LOCK = threading.Lock()
 _QA_CONV_LOCKS: dict = {}
-# 各会话最近一轮 ask 的起步时刻：入口清残留只清早于它的标记——晚于它
-# 注册的是用户在排队等锁/前端预检窗口里对本轮点的停止，须留给轮询点
-# 消费（take_llm_cancel 的 before 界限，见 llm_http）
-_QA_LAST_ASK_START: Dict[int, float] = {}
 
 
 def _extract_keywords(question: str) -> List[str]:
@@ -294,9 +290,10 @@ class HistoryQAService:
     def _serial_gate(self, conversation_id: int) -> Iterator[None]:
         """同会话串行门闩：问答与陪练共用（同取消 scope，一次只有一个在途）。
 
-        只清上一轮起步前注册的残留（上一轮没消费到的死标记）；晚于上一轮
-        起步的停止意图属本轮，交给轮询点生效（take_llm_cancel 的 before
-        界限，见 llm_http 与 _QA_CONV_LOCKS 注释）。
+        拿锁瞬间之前注册的取消标记一律是死残留（指向的请求要么已消费、
+        要么早已退出——如前端离开页面 onUnmounted 的无条件 cancel），
+        入口清掉防毒化本轮；拿锁之后注册的才是对本轮的停止意图，交给
+        轮询点生效（take_llm_cancel 的 before 界限，见 llm_http）。
         """
         key = int(conversation_id)
         with _QA_INFLIGHT_LOCK:
@@ -305,9 +302,7 @@ class HistoryQAService:
                 gate = threading.Lock()
                 _QA_CONV_LOCKS[key] = gate
         with gate:
-            prev_start = _QA_LAST_ASK_START.get(key)
-            take_llm_cancel(QA_CANCEL_SCOPE, conversation_id, before=prev_start)
-            _QA_LAST_ASK_START[key] = time.time()
+            take_llm_cancel(QA_CANCEL_SCOPE, conversation_id, before=time.time())
             yield
 
     def ask(

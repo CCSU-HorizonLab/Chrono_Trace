@@ -48,12 +48,10 @@ def _clear_module_state():
 
     hqmod._VECTOR_CACHE.clear()
     hqmod._QA_CONV_LOCKS.clear()
-    hqmod._QA_LAST_ASK_START.clear()
     llmhttp._CANCELLED.clear()
     yield
     hqmod._VECTOR_CACHE.clear()
     hqmod._QA_CONV_LOCKS.clear()
-    hqmod._QA_LAST_ASK_START.clear()
     llmhttp._CANCELLED.clear()
 
 

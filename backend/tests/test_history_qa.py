@@ -50,12 +50,10 @@ def _clear_module_state():
 
     hqmod._VECTOR_CACHE.clear()
     hqmod._QA_CONV_LOCKS.clear()
-    hqmod._QA_LAST_ASK_START.clear()
     llmhttp._CANCELLED.clear()
     yield
     hqmod._VECTOR_CACHE.clear()
     hqmod._QA_CONV_LOCKS.clear()
-    hqmod._QA_LAST_ASK_START.clear()
     llmhttp._CANCELLED.clear()
 
 
@@ -1025,11 +1023,11 @@ def test_ask_serializes_per_conversation_and_clears_stale_token(monkeypatch):
     assert llmhttp.take_llm_cancel(hqmod.QA_CANCEL_SCOPE, 1) is False  # 已被清
 
 
-def test_ask_keeps_stop_registered_after_previous_round_start(monkeypatch):
-    """入口清残留只清上一轮起步前注册的标记：排队等锁/前端预检窗口里
-    对本轮点的停止（晚于上一轮起步注册）不得被入口清位吞掉——否则用户
-    停止后重发，新一轮照样跑完整段 LLM 才发现被取消过。检索空手抛错
-    走不到 LLM 轮询点，标记存亡即守卫证词。"""
+def test_ask_clears_stale_stop_registered_after_previous_round_exit(monkeypatch):
+    """停止意图不跨轮传递：上一轮退出后注册的取消（如用户停止后主动
+    重发、或前端离开页面 onUnmounted 的无条件 cancel）是死残留，新
+    一轮入口必须清掉——否则新问题会被「本次提问已取消」误杀。检索
+    空手抛错走不到 LLM 轮询点，标记存亡即守卫证词。"""
     import app.services.realtime.llm_http as llmhttp
 
     conn = sqlite3.connect(":memory:", check_same_thread=False)
@@ -1045,17 +1043,17 @@ def test_ask_keeps_stop_registered_after_previous_round_start(monkeypatch):
     monkeypatch.setattr(hqmod, "_load_question_vector", lambda q: None)
     use_local_model(monkeypatch)
 
-    # 第一轮：起步后检索空手退出（_QA_LAST_ASK_START 记录本轮起点）
+    # 第一轮：起步后检索空手退出
     with pytest.raises(HistoryQAError):
         HistoryQAService().ask(1, "跳伞这个话题完全没聊过")
 
-    # 前端预检窗口里的停止：注册时刻晚于上一轮起步
+    # 上一轮已退出后注册的停止：死残留（无在途请求可指）
     llmhttp.request_llm_cancel(hqmod.QA_CANCEL_SCOPE, 1)
 
-    # 新一轮入口不得吞掉该标记（before 界限按上一轮起点切分）
+    # 新一轮入口清掉残留，不被毒化
     with pytest.raises(HistoryQAError):
         HistoryQAService().ask(1, "跳伞这个话题完全没聊过")
-    assert llmhttp.take_llm_cancel(hqmod.QA_CANCEL_SCOPE, 1) is True  # 存活到轮询点
+    assert llmhttp.take_llm_cancel(hqmod.QA_CANCEL_SCOPE, 1) is False  # 已被入口清掉
 
 
 def test_without_on_delta_keeps_non_stream_path(monkeypatch, db):

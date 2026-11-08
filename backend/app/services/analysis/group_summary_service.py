@@ -39,9 +39,6 @@ MAX_SUMMARY_CHARS = 7000
 LLM_TIMEOUT = 60
 LLM_MAX_RETRIES = 1
 GS_CANCEL_SCOPE = "group_summary"
-# 各会话最近一轮生成的起步时刻：入口清残留只清早于它的标记（同
-# history_qa_service._QA_LAST_ASK_START，理由见 llm_http.take_llm_cancel）
-_GS_LAST_START: Dict[int, float] = {}
 
 # 高频词停用：单一来源见 stopwords.py（与词云共用，防两套口径漂移）
 STOP_WORDS = CHAT_STOP_WORDS
@@ -202,9 +199,10 @@ class GroupSummaryService:
         统计与分段共用一次范围扫描（大群避免全表扫两遍）。
         """
         account_wxid = self._require_group(conversation_id)
-        # 只清上一轮起步前注册的残留；排队/预检窗口里对本轮的停止留给轮询点
-        take_llm_cancel(GS_CANCEL_SCOPE, conversation_id, before=_GS_LAST_START.get(int(conversation_id)))
-        _GS_LAST_START[int(conversation_id)] = time.time()
+        # 入口时刻之前注册的取消一律是死残留（指向的请求已退出，如任务
+        # 完成后才点的取消/页面离开的 cancel）——清掉防毒化本轮；入口
+        # 之后注册的才是对本轮的停止意图，留给轮询点生效
+        take_llm_cancel(GS_CANCEL_SCOPE, conversation_id, before=time.time())
         days = max(1, min(int(days or 7), 30))
         now = int(time.time())
         rows = self._fetch_range_rows(conversation_id, now - days * 86400, now)

@@ -15,9 +15,6 @@ logger = logging.getLogger(__name__)
 # 生成中关闭弹窗 → cancel_profile_generation 置位 → run_cancelable 立即
 # 返回「已取消」，HTTP 工作线程经 should_abort 在尝试边界自行退出
 PROFILE_CANCEL_SCOPE = "profile_generation"
-# 各 key 最近一轮生成的起步时刻：入口清残留只清早于它的标记（同
-# history_qa_service._QA_LAST_ASK_START，理由见 llm_http.take_llm_cancel）
-_PROFILE_LAST_START: dict = {}
 
 
 def _window_coverage(conversation_id, window_from: int, window_to: int):
@@ -296,9 +293,9 @@ class ProfileApiMixin:
 
         key = int(cancel_key or 0)
         if key:
-            # 只清上一轮起步前注册的残留；排队/预检窗口里对本轮的停止留给轮询点
-            take_llm_cancel(PROFILE_CANCEL_SCOPE, key, before=_PROFILE_LAST_START.get(key))
-            _PROFILE_LAST_START[key] = time.time()
+            # 入口时刻之前注册的取消一律是死残留（指向的生成已退出，如弹窗
+            # 关闭晚了半拍），清掉防毒化下一轮；入口之后注册的才是本轮停止
+            take_llm_cancel(PROFILE_CANCEL_SCOPE, key, before=time.time())
         abort = threading.Event()
         try:
             return run_cancelable(

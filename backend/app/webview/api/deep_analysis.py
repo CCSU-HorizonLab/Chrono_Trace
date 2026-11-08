@@ -187,6 +187,20 @@ class DeepAnalysisApiMixin:
             logger.error(f"[Bridge] 查询情感覆盖率失败: {e}")
             return {"ok": False, "error": str(e)}
 
+    def get_emoji_stats(self, conversation_id: int, force_refresh: bool = False) -> dict:
+        """表情包统计（§6.1）：双方 Top 榜/月度演变/小时节奏/自定义表情墙。
+
+        快照缓存在 settings（fingerprint 失效整算），14 万条消息首算秒级、
+        后续打开走缓存。
+        """
+        try:
+            from ...services.analysis.emoji_stats_service import get_emoji_stats
+
+            return get_emoji_stats(int(conversation_id), force_refresh=bool(force_refresh))
+        except Exception as e:
+            logger.error(f"[Bridge] 表情统计失败: {e}")
+            return {"ok": False, "error": str(e)}
+
     def start_sentiment_backfill(self, conversation_id: int) -> dict:
         """启动情感补算后台任务（立即返回 task_id 供轮询）。
 

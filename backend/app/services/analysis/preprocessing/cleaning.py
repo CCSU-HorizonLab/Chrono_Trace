@@ -31,6 +31,10 @@ _WECHAT_EMOJI_WORDS = (
     " 拒绝 敬礼 流泪 翻滚 哈欠 骂 醒了 裂开 笑哭 笑眼 星星 闪电"
 ).split()
 
+# 公开别名：表情统计（emoji_stats_service）按同一词表识别文本占位表情，
+# 词表口径变化只改这一处（清洗与统计自动同步）
+EMOJI_PLACEHOLDER_WORDS = _WECHAT_EMOJI_WORDS
+
 
 class PreprocessingService:
     """消息预处理服务"""

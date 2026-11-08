@@ -1,35 +1,12 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
-import { defineAsyncComponent, h } from 'vue'
 
-const Loading = {
-  name: 'RouteLoading',
-  render() { return h('div', { style: 'padding:16px;color:#666' }, '正在加载…') }
-}
-
-const ErrorComp = {
-  name: 'RouteError',
-  props: { error: Object, retry: Function },
-  setup(props: any) {
-    return () => h('div', { style: 'padding:16px;color:#b00020;display:flex;gap:8px;align-items:center' }, [
-      h('span', '页面加载失败'),
-      h('button', { class: 'ct-btn', onClick: props.retry }, '重试')
-    ])
-  }
-}
-
-// 关键修复：不要使用 @vite-ignore 的字符串路径；改为直接传入静态字符串的动态 import，让 Vite 进行依赖分析与打包。
+// 关键修复：路由组件必须是裸 () => import()（返回 Promise）——Vue Router
+// 对 defineAsyncComponent 包装有明确警告，且 dev 下导航解析不可靠：
+// 组件 chunk 已加载但视图停在旧页（实测同文档 hash 导航可复现）。
+// loading/error 兜底组件不进路由层（router 不支持），页面级加载态由
+// 各视图自持；vite 依赖分析要求静态字符串的动态 import。
 function lazy(loader: () => Promise<any>) {
-  return defineAsyncComponent({
-    loader,
-    loadingComponent: Loading,
-    errorComponent: ErrorComp,
-    delay: 200,
-    timeout: 15000,
-    onError(error, retry, fail, attempts) {
-      if (/fetch|network|timeout/i.test(String(error)) && attempts <= 2) retry()
-      else fail()
-    }
-  })
+  return () => loader()
 }
 
 const router = createRouter({
@@ -41,6 +18,8 @@ const router = createRouter({
     { path: '/timeline', component: lazy(() => import('@/views/Timeline.vue')) },
     // 画像页（重设计批6）：镜像双栏——TA 画像/大五/专属梗词典 ↔ 我的画像/镜像对照，底部海报工坊
     { path: '/persona', component: lazy(() => import('@/views/Persona.vue')) },
+    // 分身对话页（重设计批7）：画像页入口 → 全屏对话（画像+语气采样+记忆的 TA 模拟）
+    { path: '/persona/avatar', component: lazy(() => import('@/views/PersonaAvatar.vue')) },
     // 智囊页（重设计批4）：对话式统一 AI——问答/陪练/实时三模式
     { path: '/copilot', component: lazy(() => import('@/views/Copilot.vue')) },
     { path: '/import', component: lazy(() => import('@/views/Home.vue')) },

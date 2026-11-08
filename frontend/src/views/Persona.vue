@@ -42,6 +42,19 @@
           <BigFivePanel :conversation-id="selectedConversationId" />
         </div>
         <MemeDictionaryPanel :conversation-id="selectedConversationId" />
+        <!-- AI 分身入口（§6.3）：画像+语气采样+记忆的 TA 模拟，全屏对话页承接 -->
+        <div class="panel avatar-entry">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">AI 分身</div>
+              <div class="panel-sub">以 {{ currentContactName }} 的语气聊聊看——画像缺席时按语气与记忆作答</div>
+            </div>
+            <div class="panel-actions">
+              <router-link class="btn primary" :to="{ path: '/persona/avatar', query: { cid: String(selectedConversationId) } }">开始对话</router-link>
+            </div>
+          </div>
+          <p class="avatar-entry-note">这是基于聊天记录的 AI 模拟，不是本人；模拟止于应用内对话。</p>
+        </div>
       </div>
 
       <div class="mirror-col">
@@ -387,5 +400,13 @@ onMounted(loadConversations)
 .persona-group-actions {
   display: flex;
   gap: 10px;
+}
+
+/* 分身入口卡：边界说明一行小字（全屏对话页有常驻横幅，这里轻量带过） */
+.avatar-entry-note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--ct-text-tertiary);
 }
 </style>

@@ -468,6 +468,13 @@ function __chronoQaPush(payload: unknown) {
 }
 ;(window as any).__chronoQaPush = __chronoQaPush
 
+// AI 分身流式增量入口（evaluate_js 调用）：与问答通道同构，由分身
+// 对话页监听 chrono:avatar-push 按 req_id 匹配打字机上屏
+function __chronoAvatarPush(payload: unknown) {
+  window.dispatchEvent(new CustomEvent('chrono:avatar-push', { detail: payload }))
+}
+;(window as any).__chronoAvatarPush = __chronoAvatarPush
+
 onMounted(() => {
   window.addEventListener('chrono:user-avatar-refresh', handleProfileRefresh)
   window.addEventListener('chrono:wechat-settings-saved', handleWechatSettingsSaved)

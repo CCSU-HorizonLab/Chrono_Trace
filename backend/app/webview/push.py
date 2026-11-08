@@ -12,6 +12,9 @@ monitor 轮询线程只入队（绝不阻塞采集循环）；常驻 sender 线�
 - qa：问问微信流式增量。前端入口 window.__chronoQaPush（转投
   chrono:qa-push CustomEvent），Analytics 问答页签按 req_id 匹配打字机
   上屏；推送丢失只丢打字机效果，bridge await 返回值仍是终态对账兜底。
+- avatar：AI 分身流式增量（画像页·分身聊天）。前端入口
+  window.__chronoAvatarPush（转投 chrono:avatar-push CustomEvent），与
+  qa 同构，按 req_id 匹配打字机。
 
 进程单例（get_push_service）：gui_backend 启动时注入 window，bridge 侧
 （问答流式回调）直接取用，不经 bridge 实例传递状态。
@@ -29,10 +32,11 @@ logger = logging.getLogger(__name__)
 # realtime payload 是 JSON 数组：[{batch_id, account_wxid, messages:[{id,
 # sender_attr, content, message_type, timestamp}]}]，消息形状与
 # bridge.get_realtime_recent_messages 返回项一致，前端零转换合并。
-# qa payload 是 JSON 数组：[{type:"delta", req_id, conversation_id, text}]
+# qa/avatar payload 是 JSON 数组：[{type:"delta", req_id, conversation_id, text}]
 _JS_DISPATCHES = {
     "realtime": "window.__chronoRealtimePush && window.__chronoRealtimePush({payload})",
     "qa": "window.__chronoQaPush && window.__chronoQaPush({payload})",
+    "avatar": "window.__chronoAvatarPush && window.__chronoAvatarPush({payload})",
 }
 
 
@@ -68,6 +72,13 @@ class RealtimePushService:
         if not event:
             return
         self._queue.put({"channel": "qa", "payload": event})
+        self._ensure_sender()
+
+    def push_avatar_event(self, event: dict) -> None:
+        """AI 分身流式增量（bridge 工作线程调用）：与问答通道同构。"""
+        if not event:
+            return
+        self._queue.put({"channel": "avatar", "payload": event})
         self._ensure_sender()
 
     def _ensure_sender(self) -> None:

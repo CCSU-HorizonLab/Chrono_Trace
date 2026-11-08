@@ -114,6 +114,65 @@ class HistoryQaApiMixin:
             logger.error(f"[Bridge] 回复陪练失败: {e}")
             return {"ok": False, "error": str(e)}
 
+    def ask_avatar_chat(
+        self,
+        conversation_id: int,
+        message: str,
+        history: list | None = None,
+        req_id: str = "",
+    ) -> dict[str, Any]:
+        """AI 分身（画像页·分身聊天）：以 TA 的口吻进行模拟对话。
+
+        与问答同构：带 req_id 时 LLM 增量经推送通道（chrono:avatar-push）
+        实时回传打字机，await 返回值是唯一终态。history 为此前轮次
+        （时间升序，{role: 'user'|'assistant', content}）。
+
+        Returns:
+            {"ok": True, "reply": "...", "profile_used": bool,
+             "voice": {"sample_count": int, "median_len": int}}
+            失败时 {"ok": False, "error": "..."}（error 面向用户展示）
+        """
+        try:
+            from ...services.analysis.avatar_chat_service import AvatarChatService
+            from ...services.analysis.history_qa_service import HistoryQAError
+
+            on_delta = None
+            if req_id:
+                from ..push import get_push_service
+
+                def _on_delta(text: str) -> None:
+                    get_push_service().push_avatar_event({
+                        "type": "delta",
+                        "req_id": str(req_id),
+                        "conversation_id": int(conversation_id),
+                        "text": str(text or ""),
+                    })
+
+                on_delta = _on_delta
+
+            result = AvatarChatService().chat(
+                int(conversation_id), str(message or ""), history or [],
+                on_delta=on_delta,
+            )
+            return {"ok": True, **result}
+        except HistoryQAError as e:
+            return {"ok": False, "error": str(e)}
+        except Exception as e:
+            logger.error(f"[Bridge] AI 分身对话失败: {e}")
+            return {"ok": False, "error": f"分身对话失败：{e}"}
+
+    def cancel_avatar_chat(self, conversation_id: int) -> dict[str, Any]:
+        """取消该联系人进行中的分身对话（与问答/陪练共用取消注册表，
+        同会话串行门闩下不会互相踩踏）。"""
+        try:
+            from ...services.analysis.history_qa_service import request_cancel
+
+            request_cancel(int(conversation_id))
+            return {"ok": True}
+        except Exception as e:
+            logger.error(f"[Bridge] 取消分身对话失败: {e}")
+            return {"ok": False, "error": str(e)}
+
     def _maybe_start_embedding_backfill(self, conversation_id: int) -> bool:
         """问答成功后探测向量缺口，不足则后台补建语义索引。
 

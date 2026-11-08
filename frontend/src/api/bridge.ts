@@ -202,6 +202,16 @@ type PyWebViewApi = {
   cancel_history_qa: (conversation_id: number) => Promise<any>
   // 陪练（智囊页）：贴 TA 的消息 → 三温度档回复方向+后果预判；取消同问答 scope
   rehearse_reply: (conversation_id: number, received_text: string) => Promise<any>
+  // AI 分身（画像页·分身聊天）：以 TA 的口吻模拟对话（画像+语气采样+相关记忆）；
+  // history 为此前轮次（时间升序，{role:'user'|'assistant', content}）；
+  // req_id 提供时增量经 chrono:avatar-push 事件实时回传（打字机）
+  ask_avatar_chat: (
+    conversation_id: number,
+    message: string,
+    history?: Array<{ role: string; content: string }>,
+    req_id?: string
+  ) => Promise<any>
+  cancel_avatar_chat: (conversation_id: number) => Promise<any>
   // 群聊统计与日报
   get_group_stats: (conversation_id: number, start?: number, end?: number) => Promise<any>
   generate_group_summary: (conversation_id: number, days?: number) => Promise<any>

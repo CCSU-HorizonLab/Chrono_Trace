@@ -143,6 +143,8 @@
             <strong>{{ fmtChars(overview.monthly.chars) }}</strong> 字
             <template v-if="overview.monthly.late_night > 0"> · 深夜对话 <strong>{{ overview.monthly.late_night }}</strong> 次<span
               v-if="overview.monthly.late_night_by_me > 0">（你发起 {{ overview.monthly.late_night_by_me }} 次）</span></template>
+            <template v-if="(overview.monthly.morning_days || 0) > 0"> · 早安 <strong>{{ overview.monthly.morning_days }}</strong> 天</template>
+            <template v-if="(overview.monthly.night_days || 0) > 0"> · 晚安 <strong>{{ overview.monthly.night_days }}</strong> 天</template>
           </p>
         </div>
 

@@ -56,11 +56,10 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import html2canvas from 'html2canvas'
 import { api } from '@/api/bridge'
 import { showConfirm } from '@/utils/dialog'
-import { copyImageToClipboard } from '@/utils/clipboard'
 import { toLocalDateKey } from '@/utils/datetime'
+import { exportNodeAsPng } from '@/components/deep/poster/exportNode'
 import SquareCard, { type SquareCardSpec } from '@/components/deep/poster/SquareCard.vue'
 import {
   POSTER_TEMPLATES,
@@ -240,48 +239,17 @@ async function exportImage(kind: 'long' | 'square') {
   exportError.value = ''
   exportResultText.value = ''
   try {
-    // 等捆绑字体就绪再截图——只堵「首次切模板立即导出」烘焙出回退字体的
-    // 竞态；老引擎无 document.fonts 时跳过（@font-face 的 block 期已兜底）
-    try {
-      await document.fonts?.ready
-    } catch {
-      /* 老引擎跳过 */
-    }
-    // 零高守卫：模板渲染失败时节点为空，零高画布的 toDataURL 会返回空串
-    // data:, 后端只能误报「仅支持 PNG 图像」——在此给出能定位的错误
-    const height = Math.round(node.getBoundingClientRect().height)
-    if (!height) {
-      exportError.value = '海报内容为空，无法导出（请重试或切换模板）'
-      return
-    }
-    // 超长会话自适应缩放：画布单边过高时部分 WebEngine 后端无法分配画布
-    // （toDataURL 得到空串），按高度把 scale 压到 2 以下保住整图
-    const MAX_CANVAS_SIDE = 7800
-    const scale = Math.min(2, MAX_CANVAS_SIDE / height)
-    const canvas = await html2canvas(node, {
-      backgroundColor: '#ffffff',
-      scale, // 常规 2 倍：720px 长图导出 1440px 宽，方卡 1440×1440
-      useCORS: true,
-      logging: false,
-    })
-    const dataUrl = canvas.toDataURL('image/png')
     const suffix = kind === 'square' ? '方卡' : ''
     const name = `时痕${activeTemplate.value.label}${suffix}_${props.contactName || ''}_${toLocalDateKey(new Date())}.png`
-    const result = await api.save_share_image(dataUrl, name)
-    if (!result?.ok) {
-      exportError.value = result?.error || '保存失败'
+    const result = await exportNodeAsPng(node, name)
+    if (!result.ok) {
+      exportError.value = result.error
       return
     }
-    // 导出即复制（best-effort）：成功可直接在聊天框粘贴；QtWebEngine 等
-    // 环境不可写图像剪贴板则静默降级，落盘结果不受影响
-    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'))
-    const copied = blob ? await copyImageToClipboard(blob) : false
-    exportResultText.value = copied
+    exportResultText.value = result.copied
       ? `已复制到剪贴板，可直接粘贴发送（文件在 ${result.file_path}）`
       : `已保存到 ${result.file_path}`
     api.open_export_folder().catch(() => {})
-  } catch (e: any) {
-    exportError.value = e?.message || '图片合成失败'
   } finally {
     exporting.value = false
   }

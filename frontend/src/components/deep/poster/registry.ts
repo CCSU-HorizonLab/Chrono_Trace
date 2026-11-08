@@ -11,6 +11,8 @@ import type { Component } from 'vue'
 import PosterPublicMinimal from './templates/PosterPublicMinimal.vue'
 import PosterIntimateDuo from './templates/PosterIntimateDuo.vue'
 import PosterSelfPortrait from './templates/PosterSelfPortrait.vue'
+import ReportPublicLong from './templates/ReportPublicLong.vue'
+import ReportIntimateLong from './templates/ReportIntimateLong.vue'
 
 export type PosterWord = { word: string; weight: number }
 
@@ -180,39 +182,45 @@ export function sanitizeForPublic(payload: IntimatePosterPayload): PublicPosterP
       me: payload.big5?.me ? { scores: payload.big5.me.scores } : null,
       other: payload.big5?.other ? { scores: payload.big5.other.scores } : null,
     },
-    // story 聚合字段进公开版，但逐项剥绝对日期：里程碑去 ts/from_ts/to_ts、
-    // 峰值日去 date——公开版零具体日历日期（时间线只讲事件不讲哪天）
-    story: payload.story
-      ? {
-          milestones: payload.story.milestones.map(
-            ({ ts: _ts, from_ts: _fromTs, to_ts: _toTs, ...rest }) => rest,
-          ),
-          chemistry: {
-            late_night: payload.story.chemistry.late_night,
-            peak_day: payload.story.chemistry.peak_day
-              ? {
-                  count: payload.story.chemistry.peak_day.count,
-                  self_count: payload.story.chemistry.peak_day.self_count,
-                  other_count: payload.story.chemistry.peak_day.other_count,
-                }
-              : null,
-            reply_stats: payload.story.chemistry.reply_stats,
-            initiator: payload.story.chemistry.initiator,
-          },
-        }
-      : undefined,
+    // story 聚合字段进公开版，但逐项剥绝对日期（投影逻辑与报告共用）
+    story: payload.story ? projectStoryPublic(payload.story) : undefined,
     // activity 投影：合并作息格（周几×时辰，无绝对日期）+ 联合判据；
     // 年历带日历日期、me 格带单侧数据——均在类型层剥离
-    activity: payload.activity
-      ? {
-          grid: { counts: payload.activity.grid.all, max: payload.activity.grid.max_all },
-          insights: {
-            streak_days: payload.activity.insights.streak_days,
-            question: payload.activity.insights.question,
-          },
-        }
-      : undefined,
+    activity: payload.activity ? projectActivityPublic(payload.activity) : undefined,
     generated_at: payload.generated_at,
+  }
+}
+
+/** story 公开投影（海报与年度报告共用）：里程碑去绝对日期、峰值日去
+ *  日历日期——公开域零具体日历日期，时间线只讲事件不讲哪天 */
+function projectStoryPublic(story: PosterStory): PublicPosterStory {
+  return {
+    milestones: story.milestones.map(
+      ({ ts: _ts, from_ts: _fromTs, to_ts: _toTs, ...rest }) => rest,
+    ),
+    chemistry: {
+      late_night: story.chemistry.late_night,
+      peak_day: story.chemistry.peak_day
+        ? {
+            count: story.chemistry.peak_day.count,
+            self_count: story.chemistry.peak_day.self_count,
+            other_count: story.chemistry.peak_day.other_count,
+          }
+        : null,
+      reply_stats: story.chemistry.reply_stats,
+      initiator: story.chemistry.initiator,
+    },
+  }
+}
+
+/** activity 公开投影（海报与年度报告共用）：合并作息格 + 联合判据 */
+function projectActivityPublic(activity: PosterActivity): PublicPosterActivity {
+  return {
+    grid: { counts: activity.grid.all, max: activity.grid.max_all },
+    insights: {
+      streak_days: activity.insights.streak_days,
+      question: activity.insights.question,
+    },
   }
 }
 
@@ -297,5 +305,103 @@ export const POSTER_TEMPLATES: PosterTemplate[] = [
     audience: 'intimate',
     sensitive: true,
     component: PosterIntimateDuo,
+  },
+]
+
+// ----------------------------------------------------------------------
+// 年度报告 / 纪念册（§6.2 传播产线）：与海报共用注册表形态与脱敏
+// 投影机制，独立成组——ReportStudio 消费，不进 PosterStudio 模板行
+// ----------------------------------------------------------------------
+
+/** 专属梗：复现短语 + 精确计数（出现在多少条消息里，分侧） */
+export type ReportMeme = { text: string; count: number; me: number; ta: number }
+
+/** 表情页条目：unicode 簇原样 / builtin 为 `[呲牙]` 式词（前端映射回 emoji） */
+export type ReportEmojiItem = { key: string; kind: 'unicode' | 'builtin'; count: number }
+
+export type ReportEmoji = {
+  top_me: ReportEmojiItem[]
+  top_ta: ReportEmojiItem[]
+  custom_count: number
+  peak_label: string
+}
+
+/** 早安晚安节奏（§6.5，与本月速览同口径） */
+export type ReportRhythm = {
+  morning_days: number
+  morning_by_me: number
+  night_days: number
+  night_by_me: number
+}
+
+/** 报告独有分镜数据：全部聚合口径（无原文引用），公开版整体放行 */
+export type ReportExtras = {
+  chars: number
+  temperature: { score: number; label: string } | null
+  memes: ReportMeme[]
+  emoji: ReportEmoji | null
+  rhythm: ReportRhythm
+  streak_days: number | null
+}
+
+/** 定向版报告 payload：敏感字段仅 contact（封面姓名/头像） */
+export type IntimateReportPayload = {
+  ok: boolean
+  kind: 'report'
+  version: number
+  conversation_id: number
+  from_ts: number
+  to_ts: number
+  contact: { display_name: string; avatar: string | null; sensitive: true }
+  stats: PosterStats
+  top_words: { all: PosterWord[]; me: PosterWord[]; other: PosterWord[] }
+  story?: PosterStory
+  report: ReportExtras
+  generated_at: number
+}
+
+/** 公开版报告：无 contact；story 剥日期与海报同口径；report 分镜为聚合
+ *  口径（词频短语/表情计数/天数）整体放行——梗短语与词云同级，非原文 */
+export type PublicReportPayload = {
+  version: number
+  from_ts: number
+  to_ts: number
+  stats: PosterStats
+  top_words: { all: PosterWord[]; me: PosterWord[]; other: PosterWord[] }
+  story?: PublicPosterStory
+  report: ReportExtras
+  generated_at: number
+}
+
+/** 唯一的公开版报告构造入口：白名单投影（类型上拿不到 contact） */
+export function sanitizeReportForPublic(payload: IntimateReportPayload): PublicReportPayload {
+  return {
+    version: payload.version,
+    from_ts: payload.from_ts,
+    to_ts: payload.to_ts,
+    stats: payload.stats,
+    top_words: payload.top_words,
+    story: payload.story ? projectStoryPublic(payload.story) : undefined,
+    report: payload.report,
+    generated_at: payload.generated_at,
+  }
+}
+
+export const REPORT_TEMPLATES: PosterTemplate[] = [
+  {
+    id: 'report-public',
+    label: '公开版',
+    description: '「我们的年份故事」七幕长图：无姓名头像原文，适合朋友圈',
+    audience: 'public',
+    sensitive: false,
+    component: ReportPublicLong,
+  },
+  {
+    id: 'report-intimate',
+    label: '定向版',
+    description: '双方姓名与温度封皮的完整版，仅适合发给对方',
+    audience: 'intimate',
+    sensitive: true,
+    component: ReportIntimateLong,
   },
 ]

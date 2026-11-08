@@ -18,9 +18,18 @@
   </div>
 
   <template v-if="selectedConversationId && !isGroup">
-    <!-- 全局年份轴：会话跨度按年分格 + 章节色块（时间轴叙事的视觉锚） -->
+    <!-- 全局年份轴：会话跨度按年分格 + 章节色块（时间轴叙事的视觉锚）；
+         拖选轴段生成区间纪念册（§6.2 产线入口），页脚一键年度报告 -->
     <div v-if="chaptersPayload?.ok && years.length" class="panel tl-year-axis" aria-label="年份总览">
-      <div class="axis-track">
+      <div
+        ref="axisTrackRef"
+        class="axis-track"
+        :class="{ selecting: isSelecting }"
+        @pointerdown="onAxisPointerDown"
+        @pointermove="onAxisPointerMove"
+        @pointerup="onAxisPointerUp"
+        @pointercancel="clearSelection"
+      >
         <template v-for="year in years" :key="year.label">
           <div class="axis-year" :style="{ flexGrow: Math.max(1, year.spanDays) }">
             <span class="axis-year-label">{{ year.label }}</span>
@@ -29,8 +38,26 @@
         <div v-for="(blk, i) in chapterBlocks" :key="'b' + i" class="axis-block"
           :style="{ left: blk.leftPct + '%', width: blk.widthPct + '%', background: blk.color }"
           :title="`第 ${blk.index + 1} 章 · ${blk.range} · ${blk.weeks} 周`" />
+        <!-- 拖选高亮：左右压暗 + 选区亮带 -->
+        <template v-if="selBand">
+          <div class="axis-mask" :style="{ right: 100 - selBand.leftPct + '%' }" />
+          <div class="axis-mask" :style="{ left: selBand.leftPct + selBand.widthPct + '%' }" />
+          <div class="axis-sel" :style="{ left: selBand.leftPct + '%', width: selBand.widthPct + '%' }" />
+        </template>
       </div>
       <div class="axis-caption">现在 →</div>
+
+      <!-- 框选确认浮层：区间 + 天数 + 生成纪念册 -->
+      <div v-if="pendingRange && !isSelecting" class="axis-popover">
+        <span class="axis-popover-range">{{ pendingRange.from }} ~ {{ pendingRange.to }} · {{ pendingRange.days }} 天</span>
+        <button class="btn primary" @click="confirmAlbum">生成纪念册</button>
+        <button class="btn" @click="clearSelection">取消</button>
+      </div>
+
+      <div class="axis-foot">
+        <button class="btn tl-report-btn" :disabled="!spanRange" @click="openYearReport">生成年度报告</button>
+        <span class="axis-hint">或在轴上横向拖选一段，生成任意时段的纪念册</span>
+      </div>
     </div>
 
     <!-- 吸顶锚点工具条（沿时光深度口径：章节为叙事骨架） -->
@@ -119,6 +146,17 @@
     <p>时光叙事按单聊口径组织。群聊请去分析工作台查看群聊摘要与互动统计。</p>
     <router-link to="/analytics" class="btn">去分析工作台 →</router-link>
   </div>
+
+  <!-- 年度报告/纪念册工坊（§6.2 传播产线） -->
+  <ReportStudio
+    v-if="reportRange && selectedConversationId"
+    :conversation-id="selectedConversationId"
+    :contact-name="currentConversation?.name || currentConversation?.username"
+    :from="reportRange.from"
+    :to="reportRange.to"
+    :kind="reportRange.kind"
+    @close="reportRange = null"
+  />
 </section>
 </template>
 
@@ -135,7 +173,8 @@ import MilestoneTimeline from '@/components/deep/MilestoneTimeline.vue'
 import Big5EvolutionPanel from '@/components/deep/Big5EvolutionPanel.vue'
 import ProfileEvolutionPanel from '@/components/deep/ProfileEvolutionPanel.vue'
 import EmojiMuseumPanel from '@/components/deep/EmojiMuseumPanel.vue'
-import { toCompactRange } from '@/utils/datetime'
+import ReportStudio from '@/components/deep/ReportStudio.vue'
+import { toCompactRange, toLocalDateKey } from '@/utils/datetime'
 
 type Conversation = { id: number; name: string; username: string; avatar?: string; conversation_type?: 'private' | 'group' }
 
@@ -219,6 +258,99 @@ function onChaptersLoaded(payload: any) {
   chaptersPayload.value = payload
 }
 
+// ---------- 产线入口：年度报告一键 + 轴段拖选纪念册（§6.2） ----------
+
+const axisTrackRef = ref<HTMLElement | null>(null)
+const isSelecting = ref(false)
+let dragFromPct = 0
+let dragToPct = 0
+// 已松手的框选区间（浮层确认态）：null = 无选区
+const pendingRange = ref<{ from: string; to: string; days: number } | null>(null)
+// 工坊打开窗口（kind: year 一键年度报告 / album 框选纪念册）
+const reportRange = ref<{ from: string; to: string; kind: 'year' | 'album' } | null>(null)
+
+const selBand = computed(() => {
+  if (!isSelecting.value && !pendingRange.value) return null
+  const left = Math.min(dragFromPct, dragToPct)
+  const right = Math.max(dragFromPct, dragToPct)
+  if (right - left <= 0.2) return null
+  return { leftPct: left, widthPct: right - left }
+})
+
+function axisPctOf(e: PointerEvent): number {
+  const track = axisTrackRef.value
+  if (!track) return 0
+  const rect = track.getBoundingClientRect()
+  return Math.min(100, Math.max(0, ((e.clientX - rect.left) / rect.width) * 100))
+}
+
+function pctToTs(pct: number): number {
+  const r = spanRange.value!
+  return Math.round(r.from + (pct / 100) * (r.to - r.from))
+}
+
+function onAxisPointerDown(e: PointerEvent) {
+  if (!spanRange.value || e.button !== 0) return
+  ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+  isSelecting.value = true
+  pendingRange.value = null
+  dragFromPct = dragToPct = axisPctOf(e)
+}
+
+function onAxisPointerMove(e: PointerEvent) {
+  if (!isSelecting.value) return
+  dragToPct = axisPctOf(e)
+}
+
+function onAxisPointerUp() {
+  if (!isSelecting.value) return
+  isSelecting.value = false
+  const r = spanRange.value
+  if (!r) return
+  const fromTs = pctToTs(Math.min(dragFromPct, dragToPct))
+  const toTs = pctToTs(Math.max(dragFromPct, dragToPct))
+  const days = Math.round((toTs - fromTs) / 86400)
+  // 轻点（<14 天）视为误触不清浮层直接清选区
+  if (days < 14) {
+    clearSelection()
+    return
+  }
+  pendingRange.value = {
+    from: toLocalDateKey(new Date(fromTs * 1000)),
+    to: toLocalDateKey(new Date(toTs * 1000)),
+    days,
+  }
+}
+
+function clearSelection() {
+  isSelecting.value = false
+  pendingRange.value = null
+}
+
+function confirmAlbum() {
+  const pending = pendingRange.value
+  if (!pending) return
+  reportRange.value = { from: pending.from, to: pending.to, kind: 'album' }
+  clearSelection()
+}
+
+// 一键年度报告：跨度内最晚的一个自然年（交集不足整年也如实按交集出）
+function openYearReport() {
+  const r = spanRange.value
+  if (!r) return
+  const year = new Date(r.to * 1000).getFullYear()
+  const yearStart = Math.round(new Date(year, 0, 1).getTime() / 1000)
+  const yearEnd = Math.round(new Date(year + 1, 0, 1).getTime() / 1000) - 1
+  const fromTs = Math.max(r.from, yearStart)
+  const toTs = Math.min(r.to, yearEnd)
+  if (toTs - fromTs < 14 * 86400) return
+  reportRange.value = {
+    from: toLocalDateKey(new Date(fromTs * 1000)),
+    to: toLocalDateKey(new Date(toTs * 1000)),
+    kind: 'year',
+  }
+}
+
 // ---------- 加载 ----------
 
 async function loadConversations() {
@@ -252,6 +384,8 @@ function onConversationChange(id: number) {
   selectedConversationId.value = id
   showDrill.value = false
   chaptersPayload.value = null
+  clearSelection()
+  reportRange.value = null
   const epoch = ++viewEpoch
   deepPayload.value = null
   emojiStats.value = null
@@ -359,6 +493,13 @@ onMounted(() => { void loadConversations() })
   background: var(--ct-bg-sunken);
   border-radius: var(--ct-radius-md);
   overflow: hidden;
+  cursor: ew-resize;
+  touch-action: none;
+  user-select: none;
+}
+
+.axis-track.selecting {
+  cursor: grabbing;
 }
 
 .axis-year {
@@ -386,6 +527,28 @@ onMounted(() => { void loadConversations() })
   border-radius: 3px;
   opacity: 0.85;
   cursor: default;
+  pointer-events: none;
+}
+
+/* 拖选高亮：选区亮带 + 两侧压暗（指针交互期间即时反馈） */
+.axis-mask {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  background: var(--ct-color-primary-tint);
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.axis-sel {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-left: 2px solid var(--ct-color-primary);
+  border-right: 2px solid var(--ct-color-primary);
+  background: var(--ct-color-primary-tint);
+  pointer-events: none;
 }
 
 .axis-caption {
@@ -393,6 +556,37 @@ onMounted(() => { void loadConversations() })
   font-size: var(--ct-text-xs);
   color: var(--ct-text-tertiary);
   padding-right: 14px;
+}
+
+/* 框选确认浮层：骑在选区上方（锚定面板右侧，避免溢出屏幕） */
+.axis-popover {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: 6px 12px 0;
+  font-size: var(--ct-text-xs);
+  color: var(--ct-text-secondary);
+}
+
+.axis-popover-range {
+  font-variant-numeric: tabular-nums;
+}
+
+.axis-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 12px 0;
+}
+
+.tl-report-btn {
+  flex: none;
+}
+
+.axis-hint {
+  font-size: var(--ct-text-xs);
+  color: var(--ct-text-tertiary);
 }
 
 /* ---------- 吸顶工具条 ---------- */

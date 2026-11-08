@@ -76,6 +76,9 @@ type PyWebViewApi = {
   cancel_profile_evolution: (conversation_id: number, account_wxid?: string) => Promise<any>
   // 时光深度：分享海报（前端 html2canvas 合成，PNG 落盘导出目录）
   get_poster_payload: (conversation_id: number, from: string, to: string, account_wxid?: string) => Promise<any>
+  // 年度报告/纪念册（§6.2 传播产线）：窗口 payload（温度封面/总量/词云/
+  // 专属梗/表情/里程碑/节奏），REPORT_TEMPLATES 模板组消费
+  get_report_payload: (conversation_id: number, from: string, to: string, account_wxid?: string) => Promise<any>
   save_share_image: (image_data: string, file_name?: string) => Promise<any>
   open_export_folder: () => Promise<any>
   generate_suggestion: (intent: string, context: Record<string, any>) => Promise<any>

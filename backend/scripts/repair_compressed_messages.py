@@ -13,6 +13,13 @@ decode_message_content 真解压（导入/监听新消息自动生效），本�
   sentiment_cache             ← 修复行删除（旧占位的 neu 记录作废）
   message_preprocessed        ← 修复行删除（清洗缓存重建）
   embedding_cache             ← 不动（sha1(text) 键控，新文本自动 miss）
+  conversations.analysis_stale=1 + preprocessing_stats 缓存行删除（口径同
+    analysis_state——原地改内容不换 id，缓存感知不到，必须显式打脏）
+  词云持久缓存 deep_wordcloud_v* 按会话删除（指纹不含内容，不会自然失效）
+  RAG 派生层按会话清：documents/embeddings/facts/fact_embeddings/
+    fact_user_feedback/index_status（游标行删除 → 下次索引全量重建该会话；
+    策略层 relationship_state/contact_preferences 保留——与消息文本无
+    派生关系，repair 不动用户可策划数据）
 
 用法：python repair_compressed_messages.py [--dry-run]
 """
@@ -25,6 +32,8 @@ from pathlib import Path
 backend_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(backend_dir))
 
+from app.services.analysis.deep_analysis_service import DEEP_WORDCLOUD_CACHE_VERSION  # noqa: E402
+from app.services.analysis.preprocessing_orchestrator import PREPROCESSING_ALGO_VERSION  # noqa: E402
 from app.services.wechat.content_codec import decode_message_content  # noqa: E402
 
 CHRONO_DB = backend_dir / "data" / "chrono_trace.db"
@@ -36,10 +45,10 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true", help="只统计不写库")
     args = parser.parse_args()
 
-    chrono = sqlite3.connect(str(CHRONO_DB))
+    chrono = sqlite3.connect(str(CHRONO_DB), timeout=30)  # busy_timeout：应用运行时执行防撞锁
     chrono.row_factory = sqlite3.Row
     pending = chrono.execute(
-        "SELECT id, talker, local_id, timestamp FROM messages "
+        "SELECT id, talker, local_id, timestamp, conversation_id FROM messages "
         "WHERE content = '[压缩消息]' AND local_id IS NOT NULL"
     ).fetchall()
     print(f"[chrono] 待修复占位行 {len(pending)}")
@@ -94,7 +103,31 @@ def main() -> int:
         ph = ",".join("?" * len(fix_ids))
         chrono.execute(f"DELETE FROM sentiment_cache WHERE message_id IN ({ph})", fix_ids)
         chrono.execute(f"DELETE FROM message_preprocessed WHERE message_id IN ({ph})", fix_ids)
+
+        # 派生层失效：原地 UPDATE 不换消息 id，RAG 游标/词云指纹/
+        # preprocessing_stats 缓存都感知不到内容变化，按会话显式打脏清理
+        fix_id_set = set(fix_ids)
+        conv_ids = sorted({r["conversation_id"] for r in pending if r["id"] in fix_id_set})
+        conv_ph = ",".join("?" * len(conv_ids))
+        chrono.execute(
+            f"UPDATE conversations SET analysis_stale = 1 WHERE id IN ({conv_ph})",
+            conv_ids,
+        )
+        stats_keys = [f"preprocessing_stats_v{PREPROCESSING_ALGO_VERSION}_{c}" for c in conv_ids]
+        wordcloud_keys = [f"deep_wordcloud_v{DEEP_WORDCLOUD_CACHE_VERSION}_{c}" for c in conv_ids]
+        key_ph = ",".join("?" * (len(stats_keys) + len(wordcloud_keys)))
+        chrono.execute(
+            f"DELETE FROM settings WHERE key IN ({key_ph})", stats_keys + wordcloud_keys
+        )
+        for table in (
+            "rag_documents", "rag_embeddings", "rag_facts", "rag_fact_embeddings",
+            "rag_fact_user_feedback", "rag_index_status",
+        ):
+            chrono.execute(
+                f"DELETE FROM {table} WHERE conversation_id IN ({conv_ph})", conv_ids
+            )
         chrono.commit()
+        print(f"[失效] {len(conv_ids)} 个会话已打脏并清分析缓存/词云/RAG 派生层")
     print(f"[结果] {'（dry-run）' if args.dry_run else ''}修复 {fixed} / 未找回 {missed}"
           f"（分片缺表或对不上时间戳的保留占位）")
     for path, conn in shards:

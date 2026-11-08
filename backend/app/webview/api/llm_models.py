@@ -90,7 +90,6 @@ class LlmModelsApiMixin:
             from ...db.connection import get_db
 
             conn = get_db()
-            now = int(_time.time())
 
             extra_body = str(model.get('extra_body') or '').strip()
             if extra_body:

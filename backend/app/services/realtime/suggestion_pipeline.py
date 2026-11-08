@@ -142,7 +142,6 @@ class SuggestionPipelineMixin:
         
         try:
             intent = self._suggestion_config.get('intent', 'maintain')
-            account_wxid = self._resolve_account_wxid(session_state.get('account_wxid'))
 
             trigger_type, trigger_context = self._select_full_auto_trigger(runtime_triggers)
             if not trigger_type:

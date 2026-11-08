@@ -123,16 +123,9 @@ def run_regression(
 ) -> dict:
     sys.stdout.reconfigure(encoding="utf-8")
 
-    from backend.app.db.connection import get_db
     from backend.app.services.realtime.monitor_service import RealtimeMonitorService
 
     monitor = RealtimeMonitorService()
-    conn = get_db()
-    before_rule_counts = {
-        first_chat: conn.execute(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='contact_rules'"
-        ).fetchone()[0]
-    }
     payload = {
         "captured_at": int(time.time()),
         "provider": "db_watch",

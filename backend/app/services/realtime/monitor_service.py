@@ -768,7 +768,7 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, Backfi
                                 },
                                 detect_triggers=False,
                             )
-                        except Exception as sent_e:
+                        except Exception:
                             # 单条失败不阻断——降级中性占位
                             msg['sentiment'] = {'polarity': 0, 'intensity': 0.0, 'confidence': 0.0, 'rules_applied': []}
                             self.emotion_tracker.update(

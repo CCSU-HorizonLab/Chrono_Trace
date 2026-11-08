@@ -439,7 +439,6 @@ class RagRetriever:
             # Score canonical fact text and evidence text independently.  A
             # long evidence window must not dilute an exact topic token by
             # inflating the denominator; use the stronger of the two hints.
-            fact_tokens = content_tokens | evidence_tokens
             overlap = max(len(tokens & content_tokens), len(tokens & evidence_tokens))
             compact_content = re.sub(r"\s+", "", f"{content} {evidence_text}")
             content_chars = {

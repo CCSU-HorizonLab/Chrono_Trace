@@ -673,7 +673,6 @@ class RagContextBuilder:
         rag_retrieved = not bool(result.get("timed_out"))
         retrieved_hit_count = len(result.get("items") or [])
         hit_count = len(items)
-        degrade_reason = str(result.get("degrade_reason") or "")
         no_hit_guard = bool(rag_retrieved and gate_decision.decision == "no_hit")
         if gate_decision.decision in {"inject", "weak_inject"} and not items:
             effective_gate_decision = RagGateDecision(

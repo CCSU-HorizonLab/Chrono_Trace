@@ -25,7 +25,8 @@ class RagAdminApiMixin:
             from ...services.realtime.rag.store import RagStore
 
             conn = get_db()
-            store = RagStore(conn)
+            # 只读路径也走一次建表：空库/全新安装时保证「查无此行」而非 no such table
+            RagStore(conn)
 
             row = conn.execute(
                 "SELECT * FROM rag_retrieval_logs WHERE id = ?", (int(log_id),)

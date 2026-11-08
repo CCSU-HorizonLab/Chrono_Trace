@@ -38,7 +38,7 @@ def mark_conversations_stale(conversation_ids: Iterable[int]) -> None:
         # 既有 bug 修复：preprocessing_stats 缓存不随消息集变化失效
         conn.execute(
             "DELETE FROM settings WHERE key IN ("
-            + ",".join([f"?"] * len(ids)) + ")",
+            + ",".join(["?"] * len(ids)) + ")",
             [f"{_STATS_KEY_PREFIX}{cid}" for cid in ids],
         )
         conn.commit()

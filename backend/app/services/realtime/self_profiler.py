@@ -1080,8 +1080,10 @@ class SelfProfiler:
         post = post_json_with_retries
         if should_abort is not None:
             # 弹窗关闭取消：should_abort 传入 HTTP 层，在尝试边界中止
-            def post(**kw):
+            def _post(**kw):
                 return post_json_with_retries(should_abort=should_abort, **kw)
+
+            post = _post
 
         parsed = call_profile_llm_with_budget_retry(
             url=url,

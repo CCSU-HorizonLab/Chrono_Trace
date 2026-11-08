@@ -116,7 +116,6 @@ def mine_retrieval_log_scenarios(conn, redactor, *, conversation_id, days, limit
 
 
 def mine_memory_reference_scenarios(conn, redactor, *, conversation_id, days, limit, terms):
-    placeholders = ",".join("?" for _ in terms)
     rows = conn.execute(
         f"""
         SELECT m.id, m.conversation_id, c.account_wxid AS account_wxid, m.is_sender, m.content,

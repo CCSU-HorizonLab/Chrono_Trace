@@ -490,8 +490,6 @@ class AnalysisService:
         Returns:
             会话列表
         """
-        service = self._get_feature_service()
-
         # 从数据库查询会话
         cursor = get_db().execute("""
             SELECT id, conversation_id, start_time, end_time, message_count, initiator, source

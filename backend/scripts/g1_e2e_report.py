@@ -405,7 +405,7 @@ def build_report(samples_path: Path, results_path: Path, judgments_path: Path) -
     if nli_stale:
         lines.append("- ⚠️ **判定已过期**:判定时的输出指纹与当前回放结果不一致,须重跑 `g1_nli_judge.py` 后本节才有效。")
     lines.append("- 说明:建议话术多为新措辞,unknown 占多数是预期分布;关键红线是 contradicted=0(输出不得与已发送事实冲突)。")
-    lines.append(f"- 证据来源:回放结果内冻结的 `context_snapshot.sent_evidence`(不再事后重读数据库)")
+    lines.append("- 证据来源:回放结果内冻结的 `context_snapshot.sent_evidence`(不再事后重读数据库)")
     lines.append("- 状态:`model_judged_pending_human`")
     lines.append("")
 

@@ -193,7 +193,6 @@ def cmd_prepare() -> None:
                     pass
         log(f"断点续传：已有 {len(done)} 条标签")
 
-    by_key = {s["key"]: s for s in train + holdout}
     pending = [s for s in train + holdout if s["key"] not in done]
     log(f"待打标 {len(pending)} 条（并发 {CONCURRENCY}，预估 "
         f"{len(pending) / 2.3 / 3600:.1f}h）")

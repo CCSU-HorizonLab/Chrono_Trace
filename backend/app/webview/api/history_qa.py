@@ -60,13 +60,15 @@ class HistoryQaApiMixin:
                 # mixin 在 app/webview/api/ 下，须上溯两级
                 from ..push import get_push_service
 
-                def on_delta(text: str) -> None:
+                def _on_delta(text: str) -> None:
                     get_push_service().push_qa_event({
                         "type": "delta",
                         "req_id": str(req_id),
                         "conversation_id": int(conversation_id),
                         "text": str(text or ""),
                     })
+
+                on_delta = _on_delta
 
             result = HistoryQAService().ask(
                 int(conversation_id), str(question or ""), history or [],

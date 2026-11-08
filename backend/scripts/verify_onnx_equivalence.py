@@ -233,7 +233,7 @@ def main():
     sim_o = (onnx_vecs[:-1] * onnx_vecs[1:]).sum(1)
     agree = ((sim_t < 0.5) == (sim_o < 0.5)).mean()
     max_gap = float(np.abs(np.sort(sim_t) - np.sort(sim_o)).max())
-    print(f"== 边界判定（<0.5）==")
+    print("== 边界判定（<0.5）==")
     print(f"  一致率={agree:.4f}  相似度最大漂移={max_gap:.4f}")
 
     # ---- 情感分类一致率
@@ -255,7 +255,7 @@ def main():
     onnx_clf = OnnxClassifier(sent_dir / suffix)
     preds_onnx = onnx_clf.argmax(sent_texts, onnx_emb.tokenizer)
     clf_agree = (preds_pt == preds_onnx).mean()
-    print(f"== 情感三分类 ==")
+    print("== 情感三分类 ==")
     print(f"  argmax 一致率={clf_agree:.4f}  ({len(sent_texts)} 条)")
 
     # ---- 门槛判定

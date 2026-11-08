@@ -112,6 +112,8 @@ type PyWebViewApi = {
   analyze_affinity: (conversation_id: number, force_reanalyze?: boolean, config_overrides?: Record<string, any>) => Promise<any>
   retry_llm_relationship: (conversation_id: number) => Promise<any>
   get_affinity_scores: (conversation_id: number) => Promise<any>
+  // 脉搏页：门面指标聚合（指标直白化层，只翻译不新算）
+  get_pulse_overview: (conversation_id: number) => Promise<any>
   // 文件/目录选择
   select_file: (title?: string, file_types?: string) => Promise<any>
   select_directory: (title?: string) => Promise<any>

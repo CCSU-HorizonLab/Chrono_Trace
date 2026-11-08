@@ -16,10 +16,11 @@
         </div>
       </div>
 
-      <!-- 居中导航菜单：对象工作台口径——首页 / TA 档案 / 设置 -->
+      <!-- 居中导航菜单：重设计批1——脉搏(新首页) / 数据 / 分析 / 设置 -->
       <nav class="ct-menu">
-        <router-link to="/" class="menu-item">首页</router-link>
-        <router-link to="/analytics" class="menu-item">TA 档案</router-link>
+        <router-link to="/" class="menu-item">脉搏</router-link>
+        <router-link to="/import" class="menu-item">数据</router-link>
+        <router-link to="/analytics" class="menu-item">分析</router-link>
         <router-link to="/settings" class="menu-item">设置</router-link>
       </nav>
 

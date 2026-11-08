@@ -35,7 +35,9 @@ function lazy(loader: () => Promise<any>) {
 const router = createRouter({
   history: createWebHashHistory(),
   routes: [
-    { path: '/', component: lazy(() => import('@/views/Home.vue')) },
+    // 脉搏页 = 新首页（重设计批1）：一屏回答「我们现在怎么样」；数据导入挪至 /import
+    { path: '/', component: lazy(() => import('@/views/Pulse.vue')) },
+    { path: '/import', component: lazy(() => import('@/views/Home.vue')) },
     { path: '/analytics', component: lazy(() => import('@/views/Analytics.vue')) },
     { path: '/settings', component: lazy(() => import('@/views/Settings.vue')) },
     { path: '/floating', component: lazy(() => import('@/views/FloatingPanel.vue')) }

@@ -1,9 +1,9 @@
-"""问问微信（历史问答 + 引用溯源）——独立 API 域 mixin。
+"""问问微信（历史问答 + 引用溯源）与回复陪练——独立 API 域 mixin。
 
-Bridge 继承此 Mixin；问答为一次性 LLM 调用，沿用画像生成的同步
-调用约定（前端 await + 加载态 + 可取消），不走任务轮询。带 req_id
-调用时叠加流式：LLM 正文增量经推送通道（chrono:qa-push）实时回传
-打字机，await 返回值仍是唯一终态（推送丢失只丢打字机效果）。
+Bridge 继承此 Mixin；问答与陪练均为一次性 LLM 调用，沿用画像生成的
+同步调用约定（前端 await + 加载态 + 可取消），不走任务轮询。问答带
+req_id 调用时叠加流式：LLM 正文增量经推送通道（chrono:qa-push）实时
+回传打字机，await 返回值仍是唯一终态（推送丢失只丢打字机效果）。
 
 问答成功后顺带探测该会话的语义向量缺口，不足则后台补建（不阻塞
 当次回答）——sentiment_cache.embedding_vector 是问答向量通道的唯一
@@ -91,6 +91,27 @@ class HistoryQaApiMixin:
             return {"ok": True}
         except Exception as e:
             logger.error(f"[Bridge] 取消历史问答失败: {e}")
+            return {"ok": False, "error": str(e)}
+
+    def rehearse_reply(self, conversation_id: int, received_text: str) -> dict[str, Any]:
+        """陪练（智囊页陪练模式）：贴一段 TA 发来的消息，返回三个温度档
+        回复方向与后果预判。
+
+        与问答共用会话串行门闩与取消 scope（cancel_history_qa 同一入口）；
+        一次性 LLM 调用，同步返回（前端 await + 加载态）。
+
+        Returns:
+            {"ok": True, "options": [{tone, label, direction, draft,
+             consequence}, ...]}（固定 steady→closer→cooler 序）
+            失败时 {"ok": False, "error": "..."}（error 面向用户展示）
+        """
+        try:
+            from ...services.analysis.history_qa_service import HistoryQAService
+
+            result = HistoryQAService().rehearse(int(conversation_id), received_text)
+            return result
+        except Exception as e:
+            logger.error(f"[Bridge] 回复陪练失败: {e}")
             return {"ok": False, "error": str(e)}
 
     def _maybe_start_embedding_backfill(self, conversation_id: int) -> bool:

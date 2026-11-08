@@ -1,6 +1,6 @@
-"""问问微信：当前联系人历史自然语言问答（混合检索 + LLM 引用溯源）。
+"""问问微信 + 回复陪练：当前联系人的两类对话式 AI（智囊页问答/陪练模式）。
 
-检索两路 RRF 融合：
+问答：混合检索 + LLM 引用溯源。检索两路 RRF 融合：
 - 关键词通道：jieba 分词后在 messages.content 上 LIKE 匹配
 - 向量通道：问题嵌入与 sentiment_cache.embedding_vector 暴力余弦
   （复用联系人记忆索引落库的嵌入缓存，未建索引时该通道静默缺席；
@@ -10,22 +10,29 @@
 英文问题经分词退化后的片段只构成字面召回、不构成语义对齐保证——
 微信记录以中文为绝对主体，跨语检索刻意不做。
 
+陪练（rehearse）：贴一段 TA 发来的消息 → 三个温度档（稳一稳/进一步/
+缓一缓）回复方向 + 后果预判。上下文三路：近期对话窗口、消息本身为
+查询的语义相关历史、RAG 长期记忆。
+
 远程模型发送前问题与聊天记录逐条过 PrivacyRedactor（失败即阻断，
 绝不降级发原文——问题里常直接含手机号/真实姓名，同样不能外发）；
-回答要求带 [n] 引用编号，citations 按 [n] 过滤为实际引用子集，
+问答回答要求带 [n] 引用编号，citations 按 [n] 过滤为实际引用子集，
 引用原文（仅本地展示，不外发）随结果返回。
 
 LLM 调用为交互式：短超时少重试，且支持取消（request_cancel 置位，
-bridge 线程轮询后立即返回，在途请求在工作线程退出）。
+bridge 线程轮询后立即返回，在途请求在工作线程退出）。问答与陪练
+共用会话级串行门闩与取消 scope——同会话一次只有一个在途请求。
 """
 from __future__ import annotations
 
+import json
 import logging
 import pickle
 import re
 import threading
 import time
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from contextlib import contextmanager
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
 from ...db.connection import get_db
 from ..realtime.llm_http import (
@@ -119,6 +126,34 @@ class HistoryQABlocked(HistoryQAError):
 
 class HistoryQACancelled(HistoryQAError):
     """用户主动取消：不回退检索直出（取消就是不要结果）。"""
+
+
+# ---------------------------------------------------------------------------
+# 陪练模式（智囊页）：贴一段收到的消息 → 三个温度档回复方向 + 后果预判
+# ---------------------------------------------------------------------------
+
+# 温度三档固定口径（重设计 §4.4「2-3 个不同温度的回复方向及后果预判」）
+REHEARSAL_TONES = ("steady", "closer", "cooler")
+
+REHEARSAL_SYSTEM_PROMPT = """你是微信回复参谋。用户收到对方一条消息不知怎么回，你依据背景资料给出 3 个不同温度的回复方向。
+
+温度三档固定（tone 只能取这三个值）：
+- steady 稳一稳：接住话题但不推进，最不容易出错
+- closer 进一步：在稳的基础上带一点主动，小幅升温
+- cooler 缓一缓：礼貌回应但保留空间，适当降温
+
+只输出一个 JSON 对象，不要输出其他文字：
+{"options": [{"tone": "steady", "label": "四字以内档名", "direction": "这个方向怎么拿捏（一句话）", "draft": "可直接参考的回复草稿，口语短句，六十字以内", "consequence": "这么回之后关系的可能走向（一句话）"}]}
+
+规则：
+- draft 要像本人发微信的口吻：口语、短句、可用表情；禁止 AI 腔与书面语
+- 背景资料不足以判断对方偏好的，direction 里明说依据不足，不要编造
+- 三档草稿之间要有明显温差，不要写成三句差不多的话"""
+
+# 陪练近期对话窗口：时间近邻语境优先于全历史检索（「怎么回」先看刚才聊到哪）
+REHEARSAL_RECENT_LIMIT = 20
+# 陪练一次调用的输出预算：三档 JSON 结构化文本
+REHEARSAL_MAX_TOKENS = 1024
 
 
 # 会话级串行门闩：取消标记按 (scope, conversation_id) 定址且单消费，
@@ -229,8 +264,51 @@ def _clip_text(text: str) -> str:
     return text[: MAX_MESSAGE_CHARS - 1] + "…"
 
 
+def _extract_json_object(text: str) -> Optional[Dict[str, Any]]:
+    """从模型输出中尽力提取一个可解析的 JSON 对象（陪练三档卡解析用）。
+
+    与 realtime/suggestion_parsing 同思路的轻量版：剥离 ```json 代码围栏
+    与思考模型的前后杂文字，取首个 { 到末个 } 的跨度解析；任何失败返回
+    None（调用方按可重试错误处理，不猜结构）。
+    """
+    cleaned = str(text or "").strip()
+    if "```json" in cleaned:
+        cleaned = cleaned.split("```json", 1)[1]
+        cleaned = cleaned.split("```", 1)[0]
+    elif cleaned.startswith("```") and cleaned.endswith("```"):
+        cleaned = cleaned[3:-4] if len(cleaned) > 7 else ""
+    start, end = cleaned.find("{"), cleaned.rfind("}")
+    if start < 0 or end <= start:
+        return None
+    try:
+        obj = json.loads(cleaned[start : end + 1])
+    except json.JSONDecodeError:
+        return None
+    return obj if isinstance(obj, dict) else None
+
+
 class HistoryQAService:
     """联系人历史问答：检索 → 脱敏 → LLM → 引用回填。"""
+
+    @contextmanager
+    def _serial_gate(self, conversation_id: int) -> Iterator[None]:
+        """同会话串行门闩：问答与陪练共用（同取消 scope，一次只有一个在途）。
+
+        只清上一轮起步前注册的残留（上一轮没消费到的死标记）；晚于上一轮
+        起步的停止意图属本轮，交给轮询点生效（take_llm_cancel 的 before
+        界限，见 llm_http 与 _QA_CONV_LOCKS 注释）。
+        """
+        key = int(conversation_id)
+        with _QA_INFLIGHT_LOCK:
+            gate = _QA_CONV_LOCKS.get(key)
+            if gate is None:
+                gate = threading.Lock()
+                _QA_CONV_LOCKS[key] = gate
+        with gate:
+            prev_start = _QA_LAST_ASK_START.get(key)
+            take_llm_cancel(QA_CANCEL_SCOPE, conversation_id, before=prev_start)
+            _QA_LAST_ASK_START[key] = time.time()
+            yield
 
     def ask(
         self,
@@ -246,19 +324,151 @@ class HistoryQAService:
         失败的终态语义不变——前端以 bridge 返回值为准，增量只管过程。
 
         同会话串行：重发等在途请求退出后再起步（见 _QA_CONV_LOCKS 注释）。"""
-        key = int(conversation_id)
-        with _QA_INFLIGHT_LOCK:
-            gate = _QA_CONV_LOCKS.get(key)
-            if gate is None:
-                gate = threading.Lock()
-                _QA_CONV_LOCKS[key] = gate
-        with gate:
-            # 只清上一轮起步前注册的残留（上一轮没消费到的死标记）；
-            # 晚于上一轮起步的停止意图属本轮，交给轮询点生效
-            prev_start = _QA_LAST_ASK_START.get(key)
-            take_llm_cancel(QA_CANCEL_SCOPE, conversation_id, before=prev_start)
-            _QA_LAST_ASK_START[key] = time.time()
+        with self._serial_gate(conversation_id):
             return self._ask(conversation_id, question, history, on_delta)
+
+    def rehearse(
+        self, conversation_id: int, received_text: str
+    ) -> Dict[str, Any]:
+        """陪练：贴一段 TA 发来的消息，给出三个温度档回复方向与后果预判。
+
+        上下文三路（全走脱敏副本发远程）：近期对话窗口（时间近邻语境）、
+        以消息本身为查询的语义相关历史（「TA 这类话以前怎么接的」）、
+        RAG 长期记忆（沟通习惯背景）。与 ask 共用会话串行门闩和取消
+        scope——同会话一次只有一个在途请求。"""
+        with self._serial_gate(conversation_id):
+            return self._rehearse(conversation_id, received_text)
+
+    def _rehearse(self, conversation_id: int, received_text: str) -> Dict[str, Any]:
+        received_text = str(received_text or "").strip()
+        if not received_text:
+            raise HistoryQAError("请先粘贴 TA 发来的消息")
+        account_wxid, display_name = self._load_conversation(conversation_id)
+
+        recent = self._recent_window(conversation_id, REHEARSAL_RECENT_LIMIT)
+        recent_ids = {rec["message_id"] for rec in recent}
+        related = [
+            rec
+            for rec in self._retrieve(conversation_id, received_text)
+            if rec["message_id"] not in recent_ids
+        ]
+        memory_refs, _ = self._retrieve_rag_memories(
+            account_wxid, conversation_id, received_text
+        )
+
+        # 四路输入统一过批量脱敏（红线同 ask：任何一条失败即阻断）
+        texts = self._redact_batch_for_remote(
+            [(received_text, "rehearsal_received")]
+            + [(rec["text"], str(rec["message_id"])) for rec in recent + related]
+            + [(m["content"], f"rehearsal_memory_{i}") for i, m in enumerate(memory_refs, 1)],
+            account_wxid,
+            conversation_id,
+        )
+        redacted_received = texts[0]
+        redacted_recent = [
+            {**rec, "text": t} for rec, t in zip(recent, texts[1 : 1 + len(recent)])
+        ]
+        redacted_related = [
+            {**rec, "text": t}
+            for rec, t in zip(related, texts[1 + len(recent) : 1 + len(recent) + len(related)])
+        ]
+        redacted_memories = texts[1 + len(recent) + len(related) :]
+
+        user_prompt = self._build_rehearsal_prompt(
+            redacted_received, redacted_recent, redacted_related, redacted_memories
+        )
+        content, _ = self._post_llm_chat(
+            conversation_id,
+            [
+                {"role": "system", "content": REHEARSAL_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.5,
+            max_tokens=REHEARSAL_MAX_TOKENS,
+            log_prefix="[回复陪练]",
+        )
+        options = self._normalize_rehearsal_options(_extract_json_object(content))
+        if not options:
+            raise HistoryQAError("模型返回的回复方向无法解析，请重试")
+        return {"ok": True, "contact_name": display_name, "options": options}
+
+    def _recent_window(
+        self, conversation_id: int, limit: int
+    ) -> List[Dict[str, Any]]:
+        """该会话最近 N 条文本消息（时间升序），近期语境的直取通道。"""
+        rows = get_db().execute(
+            "SELECT id, timestamp, is_sender, content FROM messages"
+            " WHERE conversation_id = ? AND message_type = 1"
+            " AND length(content) > 0"
+            " ORDER BY timestamp DESC LIMIT ?",
+            (conversation_id, limit),
+        ).fetchall()
+        records = [self._row_to_record(row) for row in reversed(rows)]
+        for rec in records:
+            rec["text"] = _clip_text(rec["text"])
+        return records
+
+    @staticmethod
+    def _build_rehearsal_prompt(
+        received: str,
+        recent: List[Dict[str, Any]],
+        related: List[Dict[str, Any]],
+        memories: List[str],
+    ) -> str:
+        def _line(rec: Dict[str, Any]) -> str:
+            when = time.strftime("%m-%d %H:%M", time.localtime(rec["timestamp"]))
+            who = "我" if rec["is_sender"] == 1 else "TA"
+            return f"{when} {who}: {rec['text']}"
+
+        parts = [f"【TA 的消息】{received}"]
+        if recent:
+            parts.append("【近期对话】（时间正序）\n" + "\n".join(map(_line, recent)))
+        if related:
+            parts.append(
+                "【相关历史】（与这条消息语义相近的更早对话，供参考 TA 的习惯）\n"
+                + "\n".join(map(_line, related))
+            )
+        if memories:
+            parts.append(
+                "【长期记忆】（从历史聊天提炼的背景参考）\n"
+                + "\n".join(f"- {m}" for m in memories)
+            )
+        if len(parts) == 1:
+            parts.append("（没有可用的背景资料，仅凭这条消息本身判断）")
+        parts.append("请给出 3 个温度档的回复方向。")
+        return "\n\n".join(parts)
+
+    @staticmethod
+    def _normalize_rehearsal_options(
+        obj: Optional[Dict[str, Any]],
+    ) -> List[Dict[str, str]]:
+        """LLM 输出 → 固定三档序的干净结构：非法 tone 丢弃、字段裁剪、
+        重复档取首个。输出顺序不可信（模型可能先给 cooler），按
+        REHEARSAL_TONES 固定序重排，前端渲染顺序稳定。"""
+        raw = obj.get("options") if isinstance(obj, dict) else None
+        if not isinstance(raw, list):
+            return []
+        clipped: Dict[str, Dict[str, str]] = {}
+        limits = {"label": 8, "direction": 80, "draft": 120, "consequence": 80}
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            tone = str(item.get("tone") or "").strip()
+            if tone not in REHEARSAL_TONES or tone in clipped:
+                continue
+            entry = {
+                field: str(item.get(field) or "").strip()[: cap]
+                for field, cap in limits.items()
+            }
+            # draft 是用户真正要用的东西，空草稿的档位没有意义
+            if not entry["draft"]:
+                continue
+            if not entry["label"]:
+                entry["label"] = {"steady": "稳一稳", "closer": "进一步", "cooler": "缓一缓"}[tone]
+            clipped[tone] = entry
+        return [
+            {"tone": tone, **clipped[tone]} for tone in REHEARSAL_TONES if tone in clipped
+        ]
 
     def _ask(
         self,
@@ -800,12 +1010,6 @@ class HistoryQAService:
     ) -> Tuple[str, bool]:
         """返回 (正文, 是否截断)。截断 = 流式中途断网已收部分被当结果——
         调用方带出标记，前端显式提示而非把缩水答案当完整回答。"""
-        from ..realtime.rag.fact_llm import get_active_model_config
-
-        model_config = get_active_model_config()
-        if not model_config:
-            raise HistoryQAError("未配置 LLM 模型，请先在设置中启用")
-
         lines = []
         for idx, rec in enumerate(records, start=1):
             when = time.strftime("%Y-%m-%d %H:%M", time.localtime(rec["timestamp"]))
@@ -840,6 +1044,38 @@ class HistoryQAService:
             + "\n\n【聊天记录】\n" + "\n".join(lines)
         )
 
+        return self._post_llm_chat(
+            conversation_id,
+            [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.3,
+            max_tokens=2048,
+            on_delta=on_delta,
+        )
+
+    def _post_llm_chat(
+        self,
+        conversation_id: int,
+        messages: List[Dict[str, str]],
+        *,
+        temperature: float,
+        max_tokens: int,
+        on_delta: Optional[Callable[[str], None]] = None,
+        log_prefix: str = "[问问微信]",
+    ) -> Tuple[str, bool]:
+        """问答/陪练共用的交互式 LLM 调用骨架：模型配置校验 → 组包 →
+        流式（可选）→ 守护线程 + 同 scope 取消 → 正文提取。
+
+        返回 (正文, 是否截断)。截断 = 流式中途断网已收部分被当结果——
+        调用方带出标记，前端显式提示而非把缩水答案当完整回答。"""
+        from ..realtime.rag.fact_llm import get_active_model_config
+
+        model_config = get_active_model_config()
+        if not model_config:
+            raise HistoryQAError("未配置 LLM 模型，请先在设置中启用")
+
         base_url = str(model_config.get("api_base_url") or "").rstrip("/")
         if not base_url:
             raise HistoryQAError("LLM 模型缺少 API 地址配置")
@@ -849,12 +1085,9 @@ class HistoryQAService:
             headers["Authorization"] = f"Bearer {api_key}"
         payload = {
             "model": model_config.get("model_id"),
-            "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
-            "temperature": 0.3,
-            "max_tokens": 2048,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
             # 打字机输出走 SSE；端点不认 stream / 零 delta 瞬态失败时流式
             # 层抛回，此处回退整段（自带重试与 reasoning_effort 摘参），
             # 打字机缺席但回答照常
@@ -873,7 +1106,7 @@ class HistoryQAService:
                 max_retries=LLM_MAX_RETRIES,
                 should_abort=abort.is_set,
                 log=logger.debug,
-                log_prefix="[问问微信]",
+                log_prefix=log_prefix,
             )
 
         truncated = False
@@ -891,14 +1124,14 @@ class HistoryQAService:
                     should_abort=abort.is_set,
                     on_delta=on_delta,
                     log=logger.debug,
-                    log_prefix="[问问微信]",
+                    log_prefix=log_prefix,
                 )
             except Exception as exc:
                 # 零 delta 的任何失败（端点不认 stream / 429、5xx、连接
                 # 拒绝、首字节前超时）都回退整段：流式层无重试，瞬态抖动
                 # 若直接上抛会被降级分支吃成检索直出，白白丢掉一次完整
                 # 回答——post_json_with_retries 的重试回路在这里接手
-                logger.info("[问问微信] 流式失败回退整段请求（%s）", exc)
+                logger.info("%s 流式失败回退整段请求（%s）", log_prefix, exc)
                 payload.pop("stream", None)
                 return _post_full()
             # 包装成非流式响应形状，后续提取逻辑单点
@@ -917,7 +1150,7 @@ class HistoryQAService:
         except LLMRequestAborted as exc:
             raise HistoryQACancelled(str(exc)) from exc
         except Exception as exc:
-            logger.error("[问问微信] LLM 调用失败: %s", exc)
+            logger.error("%s LLM 调用失败: %s", log_prefix, exc)
             raise HistoryQAError(f"模型调用失败：{exc}") from exc
 
         content = self._extract_content(body or {})

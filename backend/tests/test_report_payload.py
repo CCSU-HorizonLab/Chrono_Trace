@@ -126,6 +126,25 @@ class TestBuildReportPayload:
         out = ReportService().build_report_payload(1, base - _DAY, base + _DAY)
         assert out["report"]["temperature"] == {"score": 82, "label": "炽热"}
 
+    def test_temperature_window_cutoff(self, db):
+        # 窗口口径：历史纪念册印「截至窗口结束」的温度——窗后跑的新分析
+        # 不得穿透进旧窗口（此前取全会话最新，纪念册会印今天的温度）
+        base = _local_noon("2026-03-01 12:00:00")
+        _msg(db, 1, "聊一句", base)
+        db.execute(
+            "INSERT INTO affinity_scores (conversation_id, overall_score,"
+            " analysis_version, created_at) VALUES (1, 66.0, 1, ?), (1, 90.0, 1, ?)",
+            (base - 100, base + 10 * 86400),
+        )
+        db.commit()
+        out = ReportService().build_report_payload(1, base - _DAY, base + _DAY)
+        assert out["report"]["temperature"] == {"score": 66, "label": "温热"}
+        # 窗口内从未分析过（仅窗后有行）→ 降级 None，封面只讲天数
+        db.execute("DELETE FROM affinity_scores WHERE created_at < ?", (base,))
+        db.commit()
+        out = ReportService().build_report_payload(1, base - _DAY, base + _DAY)
+        assert out["report"]["temperature"] is None
+
     def test_temperature_none_without_analysis(self, db):
         base = _local_noon("2026-03-01 12:00:00")
         _msg(db, 1, "聊一句", base)
@@ -197,6 +216,33 @@ class TestMemeMining:
         texts = [m["text"] for m in memes]
         assert not any("链接" in t or "淘宝" in t or "大促" in t for t in texts), texts
         assert any(t == "干饭大王" for t in texts), texts
+
+
+class TestMemePublicSafety:
+    def test_entity_bearing_phrase_marked_unsafe(self):
+        # 含实体形短语（手机/地址/链接）标 public_safe=False——公开版投影
+        # 据此滤除；正常绰号梗不受影响
+        memes = [
+            {"text": "干饭大王", "count": 20, "me": 10, "ta": 10},
+            {"text": "打到13800001111去", "count": 9, "me": 5, "ta": 4},
+            {"text": "望京路88号院", "count": 8, "me": 4, "ta": 4},
+        ]
+        out = ReportService._mark_meme_public_safety(memes)
+        by_text = {m["text"]: m["public_safe"] for m in out}
+        assert by_text["干饭大王"] is True
+        assert by_text["打到13800001111去"] is False
+        assert by_text["望京路88号院"] is False
+
+    def test_detection_failure_fails_closed(self, monkeypatch):
+        # 检测抛错按不安全处理（红线方向从严），不得把未检测条目放行
+        def _boom(text):
+            raise RuntimeError("redactor down")
+
+        monkeypatch.setattr(
+            "app.services.realtime.privacy_redactor.PrivacyRedactor.detect_entities", _boom
+        )
+        out = ReportService._mark_meme_public_safety([{"text": "干饭大王"}])
+        assert out[0]["public_safe"] is False
 
 
 class TestMemeDictionary:

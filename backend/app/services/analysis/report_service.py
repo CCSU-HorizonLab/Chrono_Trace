@@ -65,8 +65,10 @@ class ReportService:
         }
         report = {
             "chars": self._window_chars(conversation_id, from_ts, to_ts),
-            "temperature": self._temperature(conversation_id),
-            "memes": self._mine_memes(conversation_id, from_ts, to_ts),
+            "temperature": self._temperature(conversation_id, to_ts),
+            "memes": self._mark_meme_public_safety(
+                self._mine_memes(conversation_id, from_ts, to_ts)
+            ),
             "emoji": self._window_emoji(conversation_id, from_ts, to_ts),
             "rhythm": self._rhythm(conversation_id, from_ts, to_ts),
             "streak_days": deep._longest_active_streak(conversation_id, from_ts, to_ts, None),
@@ -112,10 +114,11 @@ class ReportService:
         return int(row[0] or 0)
 
     @staticmethod
-    def _temperature(conversation_id: int) -> Optional[Dict[str, Any]]:
-        """封面关系温度：好感度历史表最新总分 + 分段话术（与脉搏折线同源
-        的轻量读法；未分析降级 None，封面只讲天数——报告不应因没跑过
-        分析而拒发）。"""
+    def _temperature(conversation_id: int, to_ts: int) -> Optional[Dict[str, Any]]:
+        """封面关系温度：好感度历史表「截至窗口结束」的最新总分 + 分段
+        话术（与脉搏折线同源的轻量读法）。窗口口径——历史纪念册印当时
+        的温度，而不是今天的最新分析；窗口内从未分析降级 None，封面只
+        讲天数（报告不应因没跑过分析而拒发）。"""
         from ...db.connection import get_db
         from .pulse_metrics import temperature_label
 
@@ -123,10 +126,10 @@ class ReportService:
             row = get_db().execute(
                 """
                 SELECT overall_score FROM affinity_scores
-                WHERE conversation_id = ?
+                WHERE conversation_id = ? AND created_at <= ?
                 ORDER BY created_at DESC, id DESC LIMIT 1
                 """,
-                (conversation_id,),
+                (conversation_id, int(to_ts)),
             ).fetchone()
         except Exception as exc:
             logger.debug("[报告] 好感度读取失败，封面温度降级: %s", exc)
@@ -139,6 +142,22 @@ class ReportService:
     # ------------------------------------------------------------------
     # 专属梗挖掘
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _mark_meme_public_safety(memes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """梗条目加 public_safe 标记：短语过 PrivacyRedactor 模式级实体
+        检测（手机号/地址/链接等），检出即 False——公开版投影按此过滤。
+        绰号形短语无自动甄别手段，公开分享前由用户把关（定向版不受
+        影响）；检测异常按不安全处理（红线方向从严）。"""
+        from ..realtime.privacy_redactor import PrivacyRedactor
+
+        for item in memes:
+            try:
+                item["public_safe"] = not PrivacyRedactor.detect_entities(item["text"])
+            except Exception as exc:
+                logger.warning("[报告] 梗安全性检测失败（按不安全处理）: %s", exc)
+                item["public_safe"] = False
+        return memes
 
     def meme_dictionary(self, conversation_id: int) -> Dict[str, Any]:
         """专属梗词典（画像页）：全会话跨度挖掘，比报告页多给条目——

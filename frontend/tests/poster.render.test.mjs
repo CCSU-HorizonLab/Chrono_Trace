@@ -71,6 +71,51 @@ try {
       assert.ok(html.includes('条消息'), `${name} 稀疏渲染缺少大数字分镜`)
     }
   })
+
+  // ---------------- 年度报告 / 纪念册 ----------------
+
+  const report = await probe.renderReport()
+  const { REPORT_SENSITIVE_MARKERS } = probe
+
+  test('年报定向版渲染包含各幕锚点与敏感字段（反衬公开版断言）', () => {
+    const html = report.intimate
+    for (const anchor of ['我们的', '只有你们懂的梗', '表情包往来', '走过的刻度', '关系温度', '给 测试联系人']) {
+      assert.ok(html.includes(anchor), `intimate 报告缺少锚点「${anchor}」`)
+    }
+    for (const marker of REPORT_SENSITIVE_MARKERS) {
+      assert.ok(html.includes(marker), `intimate 报告应包含「${marker}」`)
+    }
+    assert.ok(html.includes('2021.06 - 2023.11'), 'intimate 封面应印日期段')
+    assert.ok(html.length > 2500, `intimate 报告渲染产物异常短（${html.length}）`)
+  })
+
+  test('年报公开版（自选窗口）零敏感串：无姓名/温度/日期段/不安全梗', () => {
+    const html = report.publicCustom
+    for (const anchor of ['有这样一段对话', '纪念册', '只有你们懂的梗', '含个人信息的内容已滤除', '扫码了解时痕']) {
+      assert.ok(html.includes(anchor), `public 报告缺少锚点「${anchor}」`)
+    }
+    for (const marker of REPORT_SENSITIVE_MARKERS) {
+      assert.ok(!html.includes(marker), `public 报告泄漏敏感串「${marker}」`)
+    }
+    // 安全梗保留、不安全梗（public_safe: false）被投影滤除
+    assert.ok(html.includes('笑死我了'), 'public 报告应保留安全梗')
+    assert.ok(html.includes('小笨蛋'), 'public 报告应保留安全梗')
+    // 公开版封面只讲跨度天数，不印日期段
+    assert.ok(html.includes('902 天'), 'public 纪念册封面应印「902 天」跨度')
+    assert.ok(html.length > 2500, `public 报告渲染产物异常短（${html.length}）`)
+  })
+
+  test('年报公开版（年度窗口）封面大字是年份，落款只留生成年份', () => {
+    const html = report.publicYear
+    assert.ok(html.includes('年度报告'), '年度窗口应判为年度报告')
+    assert.ok(html.includes('2025'), '年度报封面大字应为年份 2025')
+    // 期间标签分派：自选窗口走「N 天」（见上一用例），年度窗口走年份大字
+    // 落款零具体日历日期：只有生成年份，无 YYYY-MM-DD / 月份段
+    assert.ok(!/\d{4}-\d{2}-\d{2}/.test(html), 'public 报告落款泄漏完整日期')
+    for (const marker of REPORT_SENSITIVE_MARKERS) {
+      assert.ok(!html.includes(marker), `public 年度报告泄漏敏感串「${marker}」`)
+    }
+  })
 } finally {
   await server.close()
 }

@@ -314,7 +314,14 @@ export const POSTER_TEMPLATES: PosterTemplate[] = [
 // ----------------------------------------------------------------------
 
 /** 专属梗：复现短语 + 精确计数（出现在多少条消息里，分侧） */
-export type ReportMeme = { text: string; count: number; me: number; ta: number }
+export type ReportMeme = {
+  text: string
+  count: number
+  me: number
+  ta: number
+  /** 后端实体检测标记（含手机号/地址等则 false）；公开版投影据此过滤 */
+  public_safe?: boolean
+}
 
 /** 表情页条目：unicode 簇原样 / builtin 为 `[呲牙]` 式词（前端映射回 emoji） */
 export type ReportEmojiItem = { key: string; kind: 'unicode' | 'builtin'; count: number }
@@ -360,29 +367,50 @@ export type IntimateReportPayload = {
   generated_at: number
 }
 
-/** 公开版报告：无 contact；story 剥日期与海报同口径；report 分镜为聚合
- *  口径（词频短语/表情计数/天数）整体放行——梗短语与词云同级，非原文 */
+/** 公开版 report 分镜：温度封皮是定向版专属（模板文案明示）；梗只保留
+ *  无实体检出的条目，标记本身在投影时剥除（公开域拿不到判定依据） */
+export type PublicReportExtras = Omit<ReportExtras, 'temperature' | 'memes'> & {
+  memes: Omit<ReportMeme, 'public_safe'>[]
+}
+
+/** 公开版报告：无 contact；零绝对日期（海报同红线，a357923 口径）——
+ *  期间标签在投影时定死：年度报显示年份（年份即报告主题），自选窗口
+ *  纪念册只讲跨度天数；story 剥日期与海报同口径 */
 export type PublicReportPayload = {
   version: number
-  from_ts: number
-  to_ts: number
+  is_year_window: boolean
+  /** 投影时算好的封面大字：年份或「N 天」（模板不再持有日期） */
+  period_label: string
   stats: PosterStats
   top_words: { all: PosterWord[]; me: PosterWord[]; other: PosterWord[] }
   story?: PublicPosterStory
-  report: ReportExtras
+  report: PublicReportExtras
   generated_at: number
 }
 
-/** 唯一的公开版报告构造入口：白名单投影（类型上拿不到 contact） */
+/** 唯一的公开版报告构造入口：白名单投影（类型上拿不到 contact/日期/温度） */
 export function sanitizeReportForPublic(payload: IntimateReportPayload): PublicReportPayload {
+  const from = new Date(payload.from_ts * 1000)
+  const to = new Date(payload.to_ts * 1000)
+  const isYearWindow =
+    from.getFullYear() === to.getFullYear() &&
+    to.getTime() - from.getTime() > 300 * 86400 * 1000
+  const { temperature: _temperature, ...reportRest } = payload.report
   return {
     version: payload.version,
-    from_ts: payload.from_ts,
-    to_ts: payload.to_ts,
+    is_year_window: isYearWindow,
+    period_label: isYearWindow
+      ? String(from.getFullYear())
+      : `${payload.stats.span_days} 天`,
     stats: payload.stats,
     top_words: payload.top_words,
     story: payload.story ? projectStoryPublic(payload.story) : undefined,
-    report: payload.report,
+    report: {
+      ...reportRest,
+      memes: (payload.report.memes || [])
+        .filter((m) => m.public_safe !== false)
+        .map(({ public_safe: _flag, ...rest }) => rest),
+    },
     generated_at: payload.generated_at,
   }
 }

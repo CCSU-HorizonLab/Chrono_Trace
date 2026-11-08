@@ -13,10 +13,13 @@ import {
   sanitizeForPublic,
   sanitizeForSelf,
   type IntimatePosterPayload,
+  type IntimateReportPayload,
 } from '../src/components/deep/poster/registry'
 import PosterPublicMinimal from '../src/components/deep/poster/templates/PosterPublicMinimal.vue'
 import PosterSelfPortrait from '../src/components/deep/poster/templates/PosterSelfPortrait.vue'
 import PosterIntimateDuo from '../src/components/deep/poster/templates/PosterIntimateDuo.vue'
+import ReportPublicLong from '../src/components/deep/poster/templates/ReportPublicLong.vue'
+import ReportIntimateLong from '../src/components/deep/poster/templates/ReportIntimateLong.vue'
 import SquareCard from '../src/components/deep/poster/SquareCard.vue'
 import { POSTER_THEMES } from '../src/components/deep/poster/theme'
 import { formatCount } from '../src/components/deep/poster/activityShared'
@@ -202,3 +205,91 @@ export async function renderSparse(): Promise<Record<string, string>> {
 
 /** fixture 内嵌的敏感串：公开/自我版 HTML 不得出现（脱敏红线断言用） */
 export const SENSITIVE_MARKERS = [CONTACT_NAME, QUOTE_TEXT] as const
+
+// ----------------------------------------------------------------------
+// 年度报告 / 纪念册：定向版给完整 payload，公开版模板内部走
+// sanitizeReportForPublic 投影（生产同路径——探针喂原始 payload 即测投影）
+// ----------------------------------------------------------------------
+
+const UNSAFE_MEME = '望京路88号' // 含实体形短语，后端会标 public_safe: false
+const TEMP_LABEL = '炽热'
+
+/** 自选跨年窗口（纪念册）：定向版封面印日期段「2021.06 - 2023.11」，
+ *  公开版投影只剩「N 天」跨度与滤标后的梗 */
+function reportPayload(): IntimateReportPayload {
+  return {
+    ok: true,
+    kind: 'report',
+    version: 1,
+    conversation_id: 1,
+    from_ts: 1622505600, // 2021-06-01
+    to_ts: 1700448000, // 2023-11-20
+    contact: { display_name: CONTACT_NAME, avatar: null, sensitive: true },
+    stats: { total: 40530, self_count: 21010, other_count: 19520, active_days: 684, span_days: 902 },
+    top_words: {
+      all: [
+        { word: '哈哈哈哈', weight: 99 },
+        { word: '好的', weight: 80 },
+        { word: '嗯嗯', weight: 60 },
+      ],
+      me: [{ word: '收到', weight: 90 }],
+      other: [{ word: '晚安', weight: 95 }],
+    },
+    story: fullPayload().story,
+    report: {
+      chars: 512340,
+      temperature: { score: 82, label: TEMP_LABEL },
+      memes: [
+        { text: '笑死我了', count: 87, me: 41, ta: 46, public_safe: true },
+        { text: '小笨蛋', count: 64, me: 12, ta: 52, public_safe: true },
+        { text: UNSAFE_MEME, count: 31, me: 20, ta: 11, public_safe: false },
+      ],
+      emoji: {
+        top_me: [
+          { key: '[呲牙]', kind: 'builtin', count: 812 },
+          { key: '😂', kind: 'unicode', count: 233 },
+        ],
+        top_ta: [
+          { key: '[捂脸]', kind: 'builtin', count: 745 },
+          { key: '🥰', kind: 'unicode', count: 198 },
+        ],
+        custom_count: 1204,
+        peak_label: '晚上十点后',
+      },
+      rhythm: { morning_days: 214, morning_by_me: 120, night_days: 189, night_by_me: 99 },
+      streak_days: 45,
+    },
+    generated_at: 1730000000,
+  }
+}
+
+/** 年度窗口（整 2025 年）：公开版封面大字允许留年份（年份即报告主题） */
+function reportPayloadYear(): IntimateReportPayload {
+  return {
+    ...reportPayload(),
+    from_ts: 1735689600, // 2025-01-01
+    to_ts: 1766630400, // 2025-12-25
+    stats: { ...reportPayload().stats, span_days: 358 },
+  }
+}
+
+/** 年报渲染：定向版 + 公开版（自选窗口/年度窗口），键名即断言锚点 */
+export async function renderReport(): Promise<Record<string, string>> {
+  const [intimate, publicCustom, publicYear] = await Promise.all([
+    render(h(ReportIntimateLong, { payload: reportPayload() })),
+    render(h(ReportPublicLong, { payload: reportPayload() })),
+    render(h(ReportPublicLong, { payload: reportPayloadYear() })),
+  ])
+  return { intimate, publicCustom, publicYear }
+}
+
+/** 年报 fixture 的敏感串：公开版 HTML 不得出现（姓名/温度标签/日期段/
+ *  不安全梗/峰值日历日）；年份大字不在其列（报告主题） */
+export const REPORT_SENSITIVE_MARKERS = [
+  CONTACT_NAME,
+  TEMP_LABEL,
+  UNSAFE_MEME,
+  '2021.06',
+  '2023.11',
+  '2020-05-20',
+] as const

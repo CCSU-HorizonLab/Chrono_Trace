@@ -78,7 +78,9 @@
             </span>
           </div>
         </div>
-        <div class="meme-note" :style="{ color: palette.muted }">按出现次数排序，出自你们的聊天原文</div>
+        <div class="meme-note" :style="{ color: palette.muted }">
+          {{ isIntimate ? '按出现次数排序，出自你们的聊天原文' : '按出现次数排序（含个人信息的内容已滤除）' }}
+        </div>
       </StorySection>
       <div class="page-no" :style="{ color: palette.muted }">{{ pageNo('memes') }} / {{ pages.length }}</div>
     </section>
@@ -157,6 +159,7 @@ import type {
   IntimateReportPayload,
   PublicReportPayload,
   ReportEmojiItem,
+  ReportExtras,
 } from '../registry'
 import qrGithub from '@/assets/poster/qr-github.svg'
 
@@ -172,25 +175,39 @@ const palette = computed(() => theme.value.palette)
 const stats = computed(() => props.payload.stats)
 const report = computed(() => props.payload.report)
 const story = computed(() => props.payload.story)
-const temperature = computed(() => report.value.temperature)
+// 温度封皮是定向版专属：公开投影无此字段（类型上拿不到），运行时兜底 null
+const temperature = computed(
+  () => (report.value as ReportExtras).temperature ?? null,
+)
 const memes = computed(() => report.value.memes || [])
 const contact = computed(
   () => (props.payload as IntimateReportPayload).contact || { display_name: '', avatar: null },
 )
 const avatarPair = computed(() => contact.value.display_name || contact.value.avatar)
 
-// 封面期间标签：整年窗口 → 年度报告 + 年份大字；跨年区间 → 纪念册 + 日期段
-const from = new Date(props.payload.from_ts * 1000)
-const to = new Date(props.payload.to_ts * 1000)
-const isYearWindow = computed(
-  () => from.getFullYear() === to.getFullYear() && to.getTime() - from.getTime() > 300 * 86400 * 1000,
-)
+// 封面期间标签：整年窗口 → 年度报告 + 年份大字；跨年区间 → 纪念册 + 日期段。
+// 公开版零绝对日期（投影时剥除）：期间标签用投影算好的 period_label，
+// 窗口形态用 is_year_window——模板不再持有 from_ts/to_ts
+const from = 'from_ts' in props.payload ? new Date(props.payload.from_ts * 1000) : null
+const to = 'to_ts' in props.payload ? new Date(props.payload.to_ts * 1000) : null
+const isYearWindow = computed(() => {
+  if (from && to) {
+    return (
+      from.getFullYear() === to.getFullYear() &&
+      to.getTime() - from.getTime() > 300 * 86400 * 1000
+    )
+  }
+  return (props.payload as PublicReportPayload).is_year_window
+})
 const kindLabel = computed(() => (isYearWindow.value ? '年度报告' : '纪念册'))
-const periodLabel = computed(() =>
-  isYearWindow.value
-    ? String(from.getFullYear())
-    : `${from.getFullYear()}.${String(from.getMonth() + 1).padStart(2, '0')} - ${to.getFullYear()}.${String(to.getMonth() + 1).padStart(2, '0')}`,
-)
+const periodLabel = computed(() => {
+  if (from && to) {
+    return isYearWindow.value
+      ? String(from.getFullYear())
+      : `${from.getFullYear()}.${String(from.getMonth() + 1).padStart(2, '0')} - ${to.getFullYear()}.${String(to.getMonth() + 1).padStart(2, '0')}`
+  }
+  return (props.payload as PublicReportPayload).period_label
+})
 
 // 可见幕序列：缺数据的幕整页跳过，页码随之重排
 const pages = computed(() => {
@@ -272,7 +289,12 @@ const rhythmLine = computed(() => {
   return parts.join(' · ')
 })
 
-const generatedDate = computed(() => toLocalDateKey(new Date(props.payload.generated_at * 1000)))
+// 落款日期：公开域零具体日历日期（a357923 口径，与海报公开版 yearText 同
+// 处理）——只留生成年份；定向版保留完整日期
+const generatedDate = computed(() => {
+  const d = new Date(props.payload.generated_at * 1000)
+  return isIntimate.value ? toLocalDateKey(d) : String(d.getFullYear())
+})
 
 function wordSize(index: number): string {
   const scale = [34, 28, 24, 21, 19, 17, 16, 15, 14, 13, 12, 12, 12, 12]

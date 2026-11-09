@@ -33,12 +33,21 @@ const browser = await chromium.launch({
 })
 
 // 视口与既有截图规格一致（1200×780 @1x）
-async function newPage() {
-  const context = await browser.newContext({ viewport: { width: 1200, height: 780 }, deviceScaleFactor: 1 })
+async function newPage(beforeInit, height = 780) {
+  const context = await browser.newContext({ viewport: { width: 1200, height }, deviceScaleFactor: 1 })
+  if (beforeInit) await context.addInitScript(beforeInit)
   await context.addInitScript(mockBridgeInit)
   const page = await context.newPage()
   page.on('pageerror', (e) => console.log(`  ⚠ pageerror: ${String(e).slice(0, 160)}`))
   return { page, close: () => context.close() }
+}
+
+// 通过 FiltersBar 选中联系人（与 run-e2e.mjs 同路径）
+async function pickContact(page, name) {
+  await page.locator('.conversation-select').first().click()
+  await sleep(300)
+  await page.locator('.dropdown-item').filter({ hasText: name }).first().click()
+  await sleep(1000)
 }
 
 async function open(path, settle = 1800) {
@@ -55,28 +64,36 @@ async function shot(page, name) {
 }
 
 try {
-  // —— 脉搏（重设计后新增：首页判读速览）——
+  // —— 首次引导（空库四步向导，批1：直落脉搏前的导入引导）——
   {
-    const { page, close } = await open('/#/')
-    await page.getByText('专业', { exact: false }).first().click().catch(() => {}) // 展开专业视图，图更丰满
-    await sleep(600)
+    const { page, close } = await newPage('window.__E2E_EMPTY_DB = true')
+    await page.goto(`${BASE}/#/`, { waitUntil: 'domcontentloaded' })
+    await page.waitForSelector('#app *', { timeout: 10000 })
+    await page.getByText('欢迎使用 Chrono Trace', { exact: false }).first().waitFor({ timeout: 12000 })
+    await sleep(1200)
+    await shot(page, 'onboarding')
+    await close()
+  }
+
+  // —— 脉搏（首页判读速览，专业视图折叠）——
+  {
+    const { page, close } = await open('/#/', 2200)
     await shot(page, 'pulse')
     await close()
   }
 
-  // —— 数据页 ——
+  // —— 脉搏·专业视图（批3：原分析工作台并入）——高视口让结论带+四维卡+风险预警同框 ——
   {
-    const { page, close } = await open('/#/import')
-    await shot(page, 'home')
-    await close()
-  }
-
-  // —— 分析页：关系洞察（默认页签）——
-  {
-    const { page, close } = await open('/#/analytics')
+    const { page, close } = await newPage(null, 1100)
+    await page.goto(`${BASE}/#/`, { waitUntil: 'domcontentloaded' })
+    await page.waitForSelector('#app *', { timeout: 10000 })
+    await sleep(2200)
+    await page.locator('.pulse-pro-toggle').click()
     await page.getByText('互动投入', { exact: false }).first().waitFor({ timeout: 9000 })
-    await sleep(600)
-    await shot(page, 'analytics-affinity')
+    await page.locator('.verdict-band').evaluate((el) => el.scrollIntoView({ block: 'start' }))
+    await page.evaluate(() => window.scrollBy(0, -48)) // 结论带卡头标题完整露出（scrollIntoView 贴顶会切半标题行）
+    await sleep(1000)
+    await shot(page, 'pulse-pro')
     await close()
   }
 
@@ -96,6 +113,17 @@ try {
     await page.locator('.tl-drill-toggle').click() // 展开大五/画像折叠区
     await sleep(1800)
     await shot(page, 'deep-big5')
+    await close()
+  }
+
+  // —— 时光·群聊工作台（批4：发言统计+日报，自分析页迁入）——
+  {
+    const { page, close } = await open('/#/timeline', 2000)
+    await pickContact(page, '周末徒步群')
+    await page.getByText('群聊发言统计', { exact: false }).first().waitFor({ timeout: 9000 })
+    await page.locator('.group-workbench').scrollIntoViewIfNeeded()
+    await sleep(800)
+    await shot(page, 'timeline-group')
     await close()
   }
 
@@ -121,11 +149,12 @@ try {
     await close()
   }
 
-  // —— 设置 ——
+  // —— 设置（批2：收进右上角齿轮抽屉，默认组=数据与账号，内嵌导入面板）——
   {
-    const { page, close } = await open('/#/settings')
-    await page.getByText('演示本地模型', { exact: false }).first().waitFor({ timeout: 9000 })
-    await sleep(600)
+    const { page, close } = await open('/#/', 2000)
+    await page.locator('.settings-trigger').click()
+    await page.getByText('微信数据导入', { exact: false }).first().waitFor({ timeout: 9000 })
+    await sleep(800)
     await shot(page, 'settings')
     await close()
   }

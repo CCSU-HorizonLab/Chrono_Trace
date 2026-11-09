@@ -1573,6 +1573,17 @@ onUnmounted(() => {
   flex-direction: column;
 }
 
+/* 维卡主列优先：对半分时 col-main ~480px、维卡 232px，四字标题+徽标+分数挤到断行；风险预警无需半宽 */
+.affinity-dashboard {
+  grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr);
+}
+
+@media (max-width: 1024px) {
+  .affinity-dashboard {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* 结论带：高度由内容决定，不再镜像右列被拉伸（原先空白的根源） */
 .verdict-band {
   margin-bottom: 0;

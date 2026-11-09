@@ -32,9 +32,6 @@
         <button v-if="interpClamped" class="interp-btn" @click.stop="interpExpanded = !interpExpanded">
           {{ interpExpanded ? '收起' : '展开全部' }}
         </button>
-        <button class="interp-btn" :class="{ copied: interpCopied }" @click.stop="handleCopy">
-          {{ interpCopied ? '已复制' : '复制' }}
-        </button>
       </div>
     </div>
   </div>
@@ -42,7 +39,6 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { copyText } from '@/utils/clipboard'
 
 const props = defineProps<{
   title: string
@@ -77,8 +73,6 @@ const emit = defineEmits(['click', 'disabled-click'])
 const interpEl = ref<HTMLElement | null>(null)
 const interpExpanded = ref(false)
 const interpClamped = ref(false)
-const interpCopied = ref(false)
-let copyTimer: ReturnType<typeof setTimeout> | null = null
 
 // 折行截断检测：line-clamp 下 scrollHeight 仍是全文高度
 const detectClamp = async () => {
@@ -109,19 +103,11 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   resizeObserver?.disconnect()
-  if (copyTimer) clearTimeout(copyTimer)
 })
 watch(() => props.interpretation, () => {
   interpExpanded.value = false
   void detectClamp()
 })
-
-const handleCopy = () => {
-  if (!copyText(props.interpretation || '')) return
-  interpCopied.value = true
-  if (copyTimer) clearTimeout(copyTimer)
-  copyTimer = setTimeout(() => { interpCopied.value = false }, 2000)
-}
 
 const handleClick = () => {
   if (isDisabled.value) {

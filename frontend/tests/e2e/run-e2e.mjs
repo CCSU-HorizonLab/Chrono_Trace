@@ -96,6 +96,21 @@ specs.push({
       await expectText(page, '互动投入', { timeout: 9000, label: '脉搏-专业视图四维卡' })
       await expectText(page, '喜好兼容度', { label: '脉搏-专业视图第四维卡' })
       await expectText(page, '关系整体温热', { label: '脉搏-定性分析文案' })
+      // 分析文字原生选择：可拖选复制（Ctrl+C），点击别处取消高亮
+      const bubbleSel = await page.evaluate(() => {
+        const el = document.querySelector('.analysis-bubble')
+        if (!el) return null
+        const range = document.createRange()
+        range.selectNodeContents(el)
+        const sel = window.getSelection()
+        sel.removeAllRanges()
+        sel.addRange(range)
+        return { userSelect: getComputedStyle(el).userSelect, len: sel.toString().length }
+      })
+      ok(bubbleSel && bubbleSel.userSelect !== 'none' && bubbleSel.len > 0, '脉搏-定性分析文字可选中')
+      await page.locator('.qualitative-head h3').click()
+      const bubbleCollapsed = await page.evaluate(() => window.getSelection().isCollapsed)
+      ok(bubbleCollapsed, '脉搏-点击别处取消文字选区')
       // 互动特征页签（canvas 只有活跃日历一张，其余为 CSS/SVG 图）
       await page.locator('.ct-tabs-capsule .menu-item').filter({ hasText: '互动特征' }).first().click()
       await sleep(600)
@@ -191,6 +206,18 @@ specs.push({
     await qa.press('Enter')
     await expectText(page, '稳定期', { timeout: 12000, label: '智囊-问答打字机内容' })
     await expectText(page, '引用溯源', { timeout: 9000, label: '智囊-引用溯源折叠条在场' })
+    // 问答回答文字原生可选中（复制按钮已撤，走 Ctrl+C 原生路径）
+    const qaSel = await page.evaluate(() => {
+      const el = document.querySelector('.qa-md')
+      if (!el) return null
+      const range = document.createRange()
+      range.selectNodeContents(el)
+      const sel = window.getSelection()
+      sel.removeAllRanges()
+      sel.addRange(range)
+      return getComputedStyle(el).userSelect !== 'none' && sel.toString().length > 0
+    })
+    ok(qaSel === true, '智囊-问答回答文字可选中')
     // 陪练页签（分段器按钮）→ 贴 TA 消息 → 生成三温度档
     await page.locator('.copilot-modes .menu-item').filter({ hasText: '陪练' }).first().click()
     await sleep(500)
@@ -198,6 +225,21 @@ specs.push({
     await ta.fill('这周加班有点多，可能来不了')
     await page.getByRole('button', { name: '给我三个方向' }).click()
     await expectText(page, '温和回应', { timeout: 9000, label: '智囊-陪练三温度档' })
+    // 陪练草稿文字原生可选中
+    const draftSel = await page.evaluate(() => {
+      const el = document.querySelector('.rehearse-draft')
+      if (!el) return null
+      const range = document.createRange()
+      range.selectNodeContents(el)
+      const sel = window.getSelection()
+      sel.removeAllRanges()
+      sel.addRange(range)
+      return getComputedStyle(el).userSelect !== 'none' && sel.toString().length > 0
+    })
+    ok(draftSel === true, '智囊-陪练草稿文字可选中')
+    // 文字复制按钮全站撤除（原生选择+Ctrl+C 替代）
+    const copyBtns = await page.getByRole('button', { name: '复制', exact: true }).count()
+    ok(copyBtns === 0, `智囊-无文字复制按钮（实际 ${copyBtns}）`)
     // 群聊 → 陪练/实时置灰（分段器 disabled），问答仍可用
     await page.locator('.copilot-modes .menu-item').filter({ hasText: '问答' }).first().click()
     await pickContact(page, '周末徒步群')

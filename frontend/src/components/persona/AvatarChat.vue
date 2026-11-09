@@ -50,15 +50,8 @@
               <span v-if="item.stopped" class="av-state-badge">已停止</span>
               <span v-if="item.truncated" class="av-state-badge">已截断（网络中断，回复不完整）</span>
               <div v-if="!item.streaming" class="av-actions">
-                <!-- 逐条边界标注：截图/复制件脱离页头横幅后仍可辨认非本人 -->
+                <!-- 逐条边界标注：截图分享后脱离页头横幅仍可辨认非本人 -->
                 <span class="av-ai-tag">AI 模拟</span>
-                <button
-                  class="text-action-btn"
-                  :class="{ copied: copiedKey === `a-${item.id}` }"
-                  @click="handleCopy(item.reply, `a-${item.id}`)"
-                >
-                  {{ copiedKey === `a-${item.id}` ? '已复制' : '复制' }}
-                </button>
                 <button
                   v-if="idx === msgs.length - 1 && !loading"
                   class="text-action-btn"
@@ -116,7 +109,6 @@
  */
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { api, bridgeReady } from '@/api/bridge'
-import { copyText } from '@/utils/clipboard'
 
 const props = defineProps<{
   conversationId: number
@@ -176,17 +168,6 @@ function handleScroll() {
 function maybeScroll() {
   if (!autoScroll.value) return
   scrollToBottom()
-}
-
-// ===== 复制（带瞬时反馈）=====
-const copiedKey = ref('')
-let copyTimer: ReturnType<typeof setTimeout> | null = null
-
-function handleCopy(text: string, key: string) {
-  if (!copyText(text)) return
-  copiedKey.value = key
-  if (copyTimer) clearTimeout(copyTimer)
-  copyTimer = setTimeout(() => { copiedKey.value = '' }, 2000)
 }
 
 function handlePickSuggestion(text: string) {
@@ -382,10 +363,6 @@ watch(() => props.conversationId, () => {
   border-color: var(--ct-color-primary);
 }
 
-.text-action-btn.copied {
-  color: var(--ct-color-success);
-  border-color: var(--ct-color-success);
-}
 
 .av-shell {
   flex: 1;

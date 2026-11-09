@@ -54,13 +54,6 @@
               <template v-if="!item.streaming">
                 <div class="qa-actions">
                   <button
-                    class="text-action-btn qa-copy-btn"
-                    :class="{ copied: copiedQaKey === `a-${item.id}` }"
-                    @click="handleCopyQa(item.answer, `a-${item.id}`)"
-                  >
-                    {{ copiedQaKey === `a-${item.id}` ? '已复制' : '复制' }}
-                  </button>
-                  <button
                     v-if="idx === qaHistory.length - 1 && !qaLoading"
                     class="text-action-btn"
                     @click="handleRegenerateQa"
@@ -152,7 +145,6 @@
  */
 import { computed, nextTick, onUnmounted, reactive, ref, watch } from 'vue'
 import { api, bridgeReady } from '@/api/bridge'
-import { copyText } from '@/utils/clipboard'
 import { renderQaAnswer } from '@/utils/qaMarkdown'
 
 const props = defineProps<{
@@ -213,22 +205,6 @@ function formatQaTime(ts: number): string {
         year: 'numeric', month: '2-digit', day: '2-digit',
         hour: '2-digit', minute: '2-digit',
     })
-}
-
-// ===== 文本复制（带瞬时反馈）=====
-const copiedQaKey = ref('')
-let copyFeedbackTimer: ReturnType<typeof setTimeout> | null = null
-
-function flashCopied(key: string) {
-    copiedQaKey.value = key
-    if (copyFeedbackTimer) clearTimeout(copyFeedbackTimer)
-    copyFeedbackTimer = setTimeout(() => {
-        copiedQaKey.value = ''
-    }, 2000)
-}
-
-function handleCopyQa(text: string, key: string) {
-    if (copyText(text)) flashCopied(key)
 }
 
 // 空态建议问题：通用记忆问句模板（点击填入输入框），不动输入焦点外的任何状态
@@ -536,10 +512,6 @@ onUnmounted(() => {
   border-color: var(--ct-color-primary);
 }
 
-.text-action-btn.copied {
-  color: var(--ct-color-success);
-  border-color: var(--ct-color-success);
-}
 /* --- 问问微信（历史问答·聊天框） --- */
 .qa-shell {
   flex: 1;
@@ -783,7 +755,6 @@ onUnmounted(() => {
   gap: 6px;
 }
 
-.qa-copy-btn,
 .qa-actions .text-action-btn {
   align-self: flex-start;
 }

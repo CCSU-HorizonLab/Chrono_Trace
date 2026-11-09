@@ -115,9 +115,6 @@
             <div class="qualitative-analysis">
               <div class="qualitative-head">
                 <h3>定性分析</h3>
-                <button class="text-action-btn" :class="{ copied: overallCopied }" @click="handleCopyOverall">
-                  {{ overallCopied ? '已复制' : '复制' }}
-                </button>
               </div>
               <div class="analysis-bubble">
                 <p>{{ analysisResult.overall_interpretation }}</p>
@@ -442,7 +439,6 @@ import PreferenceKeywordsDialog from '@/components/affinity/PreferenceKeywordsDi
 import RelationshipContextForm from '@/components/affinity/RelationshipContextForm.vue'
 import CtCard from '@/components/base/CtCard.vue'
 import CtButton from '@/components/base/CtButton.vue'
-import { copyText } from '@/utils/clipboard'
 import { showDialog, showConfirm } from '@/utils/dialog'
 import { safeGetItem, safeRemoveItem, safeSetItem } from '@/utils/safeStorage'
 import { BarChart3, TrendingUp, Loader2, Lightbulb } from 'lucide-vue-next'
@@ -554,19 +550,6 @@ const responseTimeBucketGroups: Record<string, string[]> = {
 }
 
 const hasCachedAffinityAnalysis = computed(() => Boolean(analysisResult.value))
-
-// ===== 文本复制（定性分析，带瞬时反馈）=====
-const overallCopied = ref(false)
-let copyFeedbackTimer: ReturnType<typeof setTimeout> | null = null
-
-function handleCopyOverall() {
-    const text = analysisResult.value?.overall_interpretation || ''
-    if (copyText(text)) {
-        overallCopied.value = true
-        if (copyFeedbackTimer) clearTimeout(copyFeedbackTimer)
-        copyFeedbackTimer = setTimeout(() => { overallCopied.value = false }, 2000)
-    }
-}
 
 const allDimensions = computed(() => {
     if (!analysisResult.value) return {}
@@ -1383,7 +1366,6 @@ onUnmounted(() => {
     window.removeEventListener('resize', handleResize)
     window.removeEventListener('chrono:run-analysis', handleRunAnalysisEvent)
     if (activeTimer.value) { clearInterval(activeTimer.value); activeTimer.value = null } // F2：卸载时停止分析轮询
-    if (copyFeedbackTimer) clearTimeout(copyFeedbackTimer)
     activityCalendarChartInstance?.dispose()
 })
 </script>
@@ -1664,29 +1646,6 @@ onUnmounted(() => {
   align-items: center;
   justify-content: space-between;
   gap: var(--ct-space-sm);
-}
-
-/* 通用小文本操作按钮（复制等） */
-.text-action-btn {
-  flex-shrink: 0;
-  font-size: var(--ct-text-xs);
-  color: var(--ct-text-tertiary);
-  background: var(--ct-bg-sunken);
-  border: 1px solid var(--ct-border-color);
-  border-radius: var(--ct-radius-full);
-  padding: 2px 10px;
-  cursor: pointer;
-  transition: color 0.15s, border-color 0.15s;
-}
-
-.text-action-btn:hover {
-  color: var(--ct-color-primary);
-  border-color: var(--ct-color-primary);
-}
-
-.text-action-btn.copied {
-  color: var(--ct-color-success);
-  border-color: var(--ct-color-success);
 }
 
 .analysis-bubble {

@@ -1,27 +1,3 @@
-/** 剪贴板复制（QtWebEngine 嵌入式环境兼容）。 */
-
-export function copyText(text: string): boolean {
-  // navigator.clipboard API 在 QtWebEngine 嵌入式浏览器中不可靠（需要安全上下文
-  // 且实现可能闪退渲染进程）——沿用 document.execCommand('copy') 传统方案
-  const textarea = document.createElement('textarea')
-  textarea.value = text
-  textarea.style.cssText = 'position:fixed;left:-9999px;top:-9999px;opacity:0;'
-  document.body.appendChild(textarea)
-  try {
-    textarea.focus()
-    textarea.select()
-    const ok = document.execCommand('copy')
-    if (!ok) console.warn('[clipboard] 复制失败（execCommand 返回 false）')
-    return ok
-  } catch (e) {
-    console.error('[clipboard] 复制异常:', e)
-    return false
-  } finally {
-    // 异常路径同样清掉离屏节点，反复失败不积累 DOM 残留
-    document.body.removeChild(textarea)
-  }
-}
-
 /** PNG 图像写入剪贴板（海报导出后免开目录直接在聊天框粘贴）。
  *  图像只有 navigator.clipboard.write 一条路（execCommand 只能复制文本），
  *  QtWebEngine 等嵌入式环境不可用——调用方按 false 降级，落盘结果不受影响。 */

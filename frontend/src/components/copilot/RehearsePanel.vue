@@ -47,11 +47,6 @@
         </header>
         <div class="rehearse-draft-box">
           <p class="rehearse-draft">{{ opt.draft }}</p>
-          <button
-            class="text-action-btn rehearse-copy"
-            :class="{ copied: copiedTone === opt.tone }"
-            @click="handleCopy(opt)"
-          >{{ copiedTone === opt.tone ? '已复制' : '复制' }}</button>
         </div>
         <p class="rehearse-consequence"><span class="rehearse-consequence-tag">可能走向</span>{{ opt.consequence }}</p>
       </article>
@@ -69,7 +64,6 @@
  */
 import { ref, watch } from 'vue'
 import { api } from '@/api/bridge'
-import { copyText } from '@/utils/clipboard'
 
 const props = defineProps<{
   conversationId: number
@@ -89,8 +83,6 @@ const inputFocused = ref(false)
 const loading = ref(false)
 const error = ref('')
 const options = ref<RehearseOption[]>([])
-const copiedTone = ref('')
-let copyTimer: ReturnType<typeof setTimeout> | null = null
 
 async function handleRehearse() {
   const text = receivedText.value.trim()
@@ -122,14 +114,6 @@ async function handleCancel() {
     await api.cancel_history_qa(props.conversationId)
   } catch {
     // 取消失败不打断（后端请求会自行超时返回）
-  }
-}
-
-function handleCopy(opt: RehearseOption) {
-  if (copyText(opt.draft)) {
-    copiedTone.value = opt.tone
-    if (copyTimer) clearTimeout(copyTimer)
-    copyTimer = setTimeout(() => { copiedTone.value = '' }, 2000)
   }
 }
 
@@ -306,8 +290,6 @@ watch(() => props.conversationId, () => {
   word-break: break-word;
 }
 
-.rehearse-copy { flex: none; font-size: 11px; padding: 0; background: transparent; border: none; }
-.rehearse-copy:not(:disabled):hover { background: transparent; }
 
 .rehearse-consequence {
   margin: 0;

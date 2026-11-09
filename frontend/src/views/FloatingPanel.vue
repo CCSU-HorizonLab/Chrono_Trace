@@ -180,14 +180,6 @@
                 </details>
                 <div v-for="(sp, i) in s.speeches" :key="i" class="fp-speech-item">
                   <span class="fp-speech-text">{{ sp }}</span>
-                  <!-- 复制反馈键含 id 兜底：手动建议无 s.id，裸用会撞 "undefined-0" -->
-                  <button
-                    class="fp-btn-copy"
-                    :class="{ copied: copiedSpeechKey === `${s.id || s._tempId}-${i}` }"
-                    @click="handleCopySpeech(sp, s, i)"
-                  >
-                    {{ copiedSpeechKey === `${s.id || s._tempId}-${i}` ? '已复制' : '复制' }}
-                  </button>
                 </div>
                 <div v-if="getRagBadge(s.rag_context)" class="fp-rag-row">
                   <span
@@ -667,7 +659,6 @@ import RagFactDialog from '@/components/settings/RagFactDialog.vue'
 import { showConfirm, showDialog } from '@/utils/dialog'
 import { escapeHtml } from '@/utils/escapeHtml'
 import { safeGetItem, safeRemoveItem, safeSetItem } from '@/utils/safeStorage'
-import { copyText } from '@/utils/clipboard'
 
 const router = useRouter()
 
@@ -2250,15 +2241,6 @@ function isSuggestionExpanded(s: any): boolean {
   return expandedIds.value.has(String(s.id || 'manual'))
 }
 
-const copiedSpeechKey = ref('')
-let speechCopyTimer: ReturnType<typeof setTimeout> | null = null
-
-function handleCopySpeech(text: string, s: any, index: number) {
-  if (!copyText(text)) return
-  copiedSpeechKey.value = `${s.id || s._tempId}-${index}`
-  if (speechCopyTimer) clearTimeout(speechCopyTimer)
-  speechCopyTimer = setTimeout(() => { copiedSpeechKey.value = '' }, 2000)
-}
 
 function getRagBadge(ragContext: RagContextSummary | undefined | null): RagContextSummary | null {
   if (!ragContext || ragContext.state === 'hidden' || !ragContext.label) return null
@@ -3051,9 +3033,6 @@ async function loadLastThread() {
 .fp-cot-txt { user-select: text; -webkit-user-select: text; font-size: 12px; line-height: 1.6; color: var(--ct-text-secondary); margin-top: 8px; border-top: 1px dashed var(--ct-border-color); padding-top: 8px; white-space: pre-wrap; }
 .fp-speech-item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: var(--ct-bg-card); border-radius: var(--ct-radius-md); margin-bottom: 8px; box-shadow: var(--ct-shadow-sm); }
 .fp-speech-text { font-size: 13px; line-height: 1.6; color: var(--ct-text-primary); flex: 1; user-select: text; -webkit-user-select: text; }
-.fp-btn-copy { font-size: 11px; font-weight: 500; color: var(--ct-text-secondary); background: var(--ct-bg-sunken); border: 1px solid var(--ct-border-color); padding: 4px 10px; border-radius: var(--ct-radius-sm); cursor: pointer; transition: all 0.2s; flex-shrink: 0; }
-.fp-btn-copy:hover { color: var(--ct-color-primary); border-color: var(--ct-color-primary); background: var(--ct-color-primary-tint); }
-.fp-btn-copy.copied { color: var(--ct-color-success); border-color: var(--ct-color-success); }
 .fp-rag-row { display: flex; justify-content: flex-end; margin-top: 8px; min-height: 18px; }
 .fp-rag-badge { display: inline-flex; align-items: center; max-width: 100%; min-height: 18px; padding: 2px 7px; border-radius: var(--ct-radius-sm); border: 1px solid var(--ct-border-color); background: var(--ct-bg-sunken); color: var(--ct-text-tertiary); font-size: 10.5px; line-height: 1.2; font-weight: 600; white-space: nowrap; }
 .fp-rag-badge.referenced { color: var(--ct-color-primary); border-color: color-mix(in srgb, var(--ct-color-primary) 28%, transparent); background: var(--ct-color-primary-tint); }

@@ -35,6 +35,12 @@
 
     <div v-if="!buckets.length" class="empty-state">所选区间暂无消息</div>
     <template v-else>
+      <!-- 情感覆盖缺口提示条（灰底列的成因）：模型换代清缓存或未分析过 → 就地补算 -->
+      <SentimentCoverageBar
+        v-if="conversationId"
+        :conversation-id="conversationId"
+        @backfilled="$emit('backfilled')"
+      />
       <EmotionLineChart
         :timeseries="smoothedBuckets"
         :perspective="perspective"
@@ -52,6 +58,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import EmotionLineChart from '@/components/charts/EmotionLineChart.vue'
+import SentimentCoverageBar from '@/components/deep/SentimentCoverageBar.vue'
 import { toLocalDateKey } from '@/utils/datetime'
 
 type Bucket = {
@@ -78,7 +85,10 @@ const props = defineProps<{
   buckets: Bucket[]
   granularity: string
   affinity: AffinityHistory
+  conversationId?: number
 }>()
+
+const emit = defineEmits<{ (e: 'backfilled'): void }>()
 
 const perspective = ref<'combined' | 'me' | 'other' | 'all'>('combined')
 const perspectiveOptions = [

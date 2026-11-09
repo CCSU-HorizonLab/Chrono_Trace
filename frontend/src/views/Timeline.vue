@@ -93,6 +93,8 @@
           :buckets="deepPayload.buckets || []"
           granularity="week"
           :affinity="deepPayload.affinity_history || null"
+          :conversation-id="selectedConversationId || undefined"
+          @backfilled="loadDeep()"
         />
       </div>
 

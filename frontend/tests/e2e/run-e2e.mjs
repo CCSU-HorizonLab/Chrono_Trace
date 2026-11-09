@@ -126,6 +126,9 @@ specs.push({
     await expectText(page, '初识与熟络', { timeout: 9000, label: '时光-关系章节' })
     await expectText(page, '😂', { timeout: 9000, label: '时光-表情博物馆 Top' })
     await expectText(page, '第 1 章', { timeout: 9000, label: '时光-词云演变章节卡' })
+    // 情感覆盖缺口提示条（模型换代清缓存/未分析过的会话 → 就地补算入口）
+    await expectSelector(page, '.coverage-bar', { timeout: 9000, label: '时光-情感补算提示条在场' })
+    await expectText(page, '情感数据覆盖', { label: '时光-补算覆盖率文案' })
     await expectSelector(page, 'canvas', { timeout: 9000, label: '时光-ECharts canvas 渲染' })
     await page.locator('.menu-item, [role="tab"], button').filter({ hasText: '里程碑' }).first().click().catch(() => {})
     await sleep(700)

@@ -384,7 +384,7 @@ export function mockBridgeInit() {
     },
     start_chapter_summaries: async () => ({ ok: true, task_id: 'e2e-chapters' }),
     get_chapter_summaries_progress: async () => ({ ok: true, status: 'completed', done: 2, total: 2 }),
-    get_sentiment_coverage: async () => ({ ok: true, coverage_ratio: 0.436, cached: 1400, total: 3210 }),
+    get_sentiment_coverage: async () => ({ ok: true, ratio: 0.436, cached: 1400, total: 3210, missing: 1810, need_backfill: true }),
     get_emoji_stats: async (cid) => { await wait(50); return emojiSnapshot(cid) },
     get_big5_impressions: async () => big5Impressions,
     enhance_big5_impressions: async () => ({ ok: false, error: '未配置 LLM' }),

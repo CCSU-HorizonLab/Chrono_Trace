@@ -77,6 +77,12 @@ Chrono Trace 是一个基于 `PyWebView + Vue 3 + Python` 的 Windows / Linux �
 
 主导航七页：**脉搏**（首页判读速览）/ **时光** / **画像** / **数据** / **智囊** / **分析** / **设置**，另有悬浮窗独立页面。
 
+### 脉搏（首页判读速览）
+
+![脉搏](docs/images/screenshots/pulse.png)
+
+本周互动摘要、关系温度、主动天平与回应温度三联指标卡，月度速览与冷淡预警；「专业视图」折叠展开四维明细与风险信号。
+
 ### 数据（导入与联系人总览）
 
 ![数据页](docs/images/screenshots/home.png)

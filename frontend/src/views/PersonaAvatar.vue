@@ -13,7 +13,7 @@
   <div v-else-if="!loading" class="panel avatar-empty">
     <div class="panel-head"><span class="panel-title">AI 分身</span></div>
     <p class="avatar-empty-text">还没有可以对话的聊天记录。</p>
-    <router-link to="/import" class="btn primary">去导入微信数据</router-link>
+    <button type="button" class="btn primary" @click="openSettingsTab('account')">去导入微信数据</button>
   </div>
 
   <template v-if="selectedConversationId && !isGroup">
@@ -43,6 +43,7 @@
 </template>
 
 <script setup lang="ts">
+import { openSettingsTab } from '@/utils/settingsBus'
 import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { bridgeReady, api } from '@/api/bridge'

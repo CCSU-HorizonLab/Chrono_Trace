@@ -63,10 +63,10 @@ async function pickContact(page, name) {
 const specs = []
 
 specs.push({
-  name: 'nav-七页导航',
+  name: 'nav-主导航',
   url: '/#/',
   run: async (page) => {
-    for (const item of ['脉搏', '时光', '画像', '数据', '智囊', '分析', '设置']) {
+    for (const item of ['脉搏', '时光', '画像', '智囊', '分析']) {
       await page.locator('.menu-item', { hasText: item }).click()
       await sleep(600)
       const active = await page.locator('.menu-item.router-link-active, .menu-item.active').first().textContent().catch(() => '')
@@ -236,22 +236,26 @@ specs.push({
 })
 
 specs.push({
-  name: 'import-数据导入页',
-  url: '/#/import',
+  name: 'settings-设置抽屉',
+  url: '/#/',
   run: async (page) => {
-    await expectText(page, '演示账号', { label: '导入-账号卡' })
+    // 齿轮入口 → 抽屉四组页签 → 默认组（数据与账号）内嵌导入面板
+    await page.locator('.settings-trigger').click()
+    await sleep(800)
+    await expectText(page, '数据与账号', { timeout: 9000, label: '抽屉-数据与账号组' })
+    await expectText(page, '模型与计算', { label: '抽屉-模型与计算组' })
+    await expectText(page, '微信数据导入', { timeout: 9000, label: '抽屉-导入面板在场' })
     const body = await page.textContent('body')
-    ok(/增量导入|已导入/.test(body || ''), '导入-完成状态（增量入口在场）')
-  },
-})
-
-specs.push({
-  name: 'settings-设置页',
-  url: '/#/settings',
-  run: async (page) => {
-    await expectText(page, '演示本地模型', { timeout: 9000, label: '设置-LLM 模型列表' })
-    const body = await page.textContent('body')
-    ok(/模型|缓存|隐私/.test(body || ''), '设置-分区渲染')
+    ok(/增量导入|已导入/.test(body || ''), '抽屉-导入完成状态（增量入口在场）')
+    // 模型组：LLM 列表渲染
+    await page.locator('.sd-tabs button').filter({ hasText: '模型与计算' }).click()
+    await sleep(600)
+    await expectText(page, '演示本地模型', { timeout: 9000, label: '抽屉-LLM 模型列表' })
+    await expectText(page, '联系人记忆', { label: '抽屉-记忆组在场' })
+    // 关闭
+    await page.locator('.sd-close').click()
+    await sleep(400)
+    ok((await page.locator('.sd-drawer').count()) === 0, '抽屉-关闭后收起')
   },
 })
 

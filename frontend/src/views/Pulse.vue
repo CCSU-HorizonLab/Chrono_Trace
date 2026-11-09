@@ -15,7 +15,7 @@
   <div v-else-if="!loading" class="panel pulse-empty">
     <div class="panel-head"><span class="panel-title">关系脉搏</span></div>
     <p class="pulse-empty-text">还没有可分析的聊天记录。</p>
-    <router-link to="/import" class="btn primary pulse-empty-cta">去导入微信数据</router-link>
+    <button type="button" class="btn primary pulse-empty-cta" @click="openSettingsTab('account')">去导入微信数据</button>
   </div>
 
   <template v-if="selectedConversationId && !isGroup">
@@ -218,6 +218,7 @@
 </template>
 
 <script setup lang="ts">
+import { openSettingsTab } from '@/utils/settingsBus'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import * as echarts from 'echarts'
 import { AlertTriangle, Loader2 } from 'lucide-vue-next'

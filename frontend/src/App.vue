@@ -16,19 +16,20 @@
         </div>
       </div>
 
-      <!-- 居中导航菜单：脉搏(首页判读) / 时光(时间轴叙事) / 画像(单聊镜像) / 数据 / 智囊(对话式AI) / 分析 / 设置 -->
+      <!-- 导航收敛批2：数据/设置收进右侧齿轮抽屉（分析页批4解散后菜单终态为四页） -->
       <nav class="ct-menu">
         <router-link to="/" class="menu-item">脉搏</router-link>
         <router-link to="/timeline" class="menu-item">时光</router-link>
         <router-link to="/persona" class="menu-item">画像</router-link>
-        <router-link to="/import" class="menu-item">数据</router-link>
         <router-link to="/copilot" class="menu-item">智囊</router-link>
         <router-link to="/analytics" class="menu-item">分析</router-link>
-        <router-link to="/settings" class="menu-item">设置</router-link>
       </nav>
 
-      <!-- 右侧用户区 + 窗口控制 -->
+      <!-- 右侧用户区 + 设置抽屉入口 + 窗口控制 -->
       <div class="topbar-user">
+        <button class="settings-trigger" title="设置" @click="openSettings()">
+          <SettingsIcon :size="20" />
+        </button>
         <CtAccountSelector
           v-if="wechatAccounts.length"
           :modelValue="activeAccountWxid"
@@ -84,6 +85,9 @@
 
     <!-- 首次引导（空库触发，四步向导直落脉搏） -->
     <OnboardingWizard :visible="onboardingVisible" @close="onboardingVisible = false" />
+
+    <!-- 设置抽屉（数据与账号/模型与计算/联系人记忆/杂项维护） -->
+    <SettingsDrawer :visible="settingsVisible" :initial-tab="settingsTab" @close="settingsVisible = false" />
   </div>
   <!-- 关闭按钮确认对话框（close_guard 拦截 X 点击后触发） -->
   <teleport to="body">
@@ -163,6 +167,8 @@ import { bridgeReady, api } from '@/api/bridge'
 import CtAvatar from '@/components/base/CtAvatar.vue'
 import CtAccountSelector from '@/components/base/CtAccountSelector.vue'
 import OnboardingWizard from '@/components/onboarding/OnboardingWizard.vue'
+import SettingsDrawer from '@/components/settings/SettingsDrawer.vue'
+import { Settings as SettingsIcon } from 'lucide-vue-next'
 import { clearWechatAccountProfileCache, enrichWechatAccountsWithProfiles } from '@/utils/wechatAccounts'
 import { safeGetItem } from '@/utils/safeStorage'
 
@@ -482,6 +488,18 @@ function __chronoAvatarPush(payload: unknown) {
 
 // 首次引导：空库（无账号或无会话）且本次会话未跳过时触发四步向导
 const onboardingVisible = ref(false)
+
+// 设置抽屉：空态 CTA/监听卡等入口经 chrono:open-settings 直投对应组
+const settingsVisible = ref(false)
+const settingsTab = ref('')
+function openSettings(tab = '') {
+  settingsTab.value = tab
+  settingsVisible.value = true
+}
+function handleOpenSettingsEvent(e: Event) {
+  const tab = (e as CustomEvent).detail?.tab || ''
+  openSettings(tab)
+}
 async function maybeShowOnboarding() {
   if (safeGetItem('chrono_onboarding_dismissed', window.sessionStorage)) return
   try {
@@ -495,12 +513,14 @@ async function maybeShowOnboarding() {
 onMounted(() => {
   window.addEventListener('chrono:user-avatar-refresh', handleProfileRefresh)
   window.addEventListener('chrono:wechat-settings-saved', handleWechatSettingsSaved)
+  window.addEventListener('chrono:open-settings', handleOpenSettingsEvent)
   void loadWechatAccounts().then(() => void maybeShowOnboarding())
 })
 
 onUnmounted(() => {
   window.removeEventListener('chrono:user-avatar-refresh', handleProfileRefresh)
   window.removeEventListener('chrono:wechat-settings-saved', handleWechatSettingsSaved)
+  window.removeEventListener('chrono:open-settings', handleOpenSettingsEvent)
 })
 
 </script>
@@ -606,6 +626,26 @@ onUnmounted(() => {
   justify-content: flex-end;
   gap: var(--ct-space-md);
   width: 300px;
+}
+
+/* 设置抽屉入口（齿轮）：与账号头像同区的元功能按钮 */
+.settings-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: var(--ct-radius-md);
+  background: transparent;
+  color: var(--ct-text-secondary);
+  cursor: pointer;
+  transition: background-color var(--ct-transition-fast) var(--ct-ease-out), color var(--ct-transition-fast) var(--ct-ease-out);
+}
+
+.settings-trigger:hover {
+  background: var(--ct-bg-hover);
+  color: var(--ct-text-primary);
 }
 
 .avatar-trigger-wrap {

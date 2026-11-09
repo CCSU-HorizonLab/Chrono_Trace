@@ -13,7 +13,7 @@
   <div v-else-if="!loading" class="panel persona-empty">
     <div class="panel-head"><span class="panel-title">TA 是谁 · 我是谁</span></div>
     <p class="persona-empty-text">还没有可以画像的聊天记录。</p>
-    <router-link to="/import" class="btn primary persona-empty-cta">去导入微信数据</router-link>
+    <button type="button" class="btn primary persona-empty-cta" @click="openSettingsTab('account')">去导入微信数据</button>
   </div>
 
   <template v-if="selectedConversationId && !isGroup">
@@ -104,6 +104,7 @@
 </template>
 
 <script setup lang="ts">
+import { openSettingsTab } from '@/utils/settingsBus'
 import { computed, onMounted, reactive, ref } from 'vue'
 import { bridgeReady, api } from '@/api/bridge'
 import { getAffinityScores } from '@/api/affinity'

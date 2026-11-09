@@ -49,13 +49,13 @@
 
       <h2>还没有历史记录</h2>
       <p class="page-empty-lead">当前还没有可分析的聊天会话，但这个页面不该再是空白的。</p>
-      <p class="page-empty-hint">先去<router-link to="/import" style="color: var(--ct-color-primary); text-decoration: underline;">数据页</router-link>导入微信数据，完成后这里会自动显示联系人、分析入口和时间线内容。</p>
+      <p class="page-empty-hint">先在<button type="button" style="color: var(--ct-color-primary); text-decoration: underline; background: none; border: none; padding: 0; cursor: pointer;" @click="openSettingsTab('account')">设置 · 数据</button>中导入微信数据，完成后这里会自动显示联系人、分析入口和时间线内容。</p>
     </div>
 
     <div class="page-empty-grid">
       <div class="page-empty-card">
         <span class="page-empty-card-label">下一步</span>
-        <strong>去<router-link to="/import" style="color: var(--ct-color-primary); text-decoration: underline;">数据页</router-link>导入聊天数据</strong>
+        <strong>去<button type="button" style="color: var(--ct-color-primary); text-decoration: underline; background: none; border: none; padding: 0; cursor: pointer;" @click="openSettingsTab('account')">设置 · 数据</button>导入聊天数据</strong>
         <p>导入完成后，历史记录页会自动恢复完整展示。</p>
       </div>
 
@@ -569,6 +569,7 @@
 </template>
 
 <script lang="ts">
+import { openSettingsTab } from '@/utils/settingsBus'
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import * as echarts from 'echarts'
 import { bridgeReady, api, type AnalysisDeviceMode } from '@/api/bridge'

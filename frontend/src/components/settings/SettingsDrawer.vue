@@ -1,23 +1,38 @@
 <template>
-  <section class="home-page">
-    <div class="home-section">
-      <h2 class="section-title ct-page-title">
-        <div style="display:flex;align-items:center; gap: 8px;">
-          <SettingsIcon :size="20" class="title-icon-svg" />
-          <span>通用设置</span>
-        </div>
-        <div class="auto-save-status glass-pill" style="margin-left: auto;">
-          <span v-if="saving" class="saving">
-            <span class="spinner"></span> 保存中...
-          </span>
-          <span v-else-if="lastSaveTime" class="saved" style="display: inline-flex; align-items: center; gap: 4px;"><CheckCircle2 :size="14" />已保存 {{ lastSaveTime }}</span>
-          <span v-else class="idle" style="display: inline-flex; align-items: center; gap: 4px;"><Sparkles :size="14" />自动保存已启用</span>
-        </div>
-      </h2>
+  <Teleport to="body">
+    <Transition name="sd-slide">
+      <div v-if="visible" class="sd-mask" @click.self="close">
+        <aside class="sd-drawer" role="dialog" aria-modal="true" aria-label="设置">
+          <header class="sd-head">
+            <h2>
+              <SettingsIcon :size="20" class="title-icon-svg" />
+              <span>设置</span>
+            </h2>
+            <div class="auto-save-status glass-pill">
+              <span v-if="saving" class="saving">
+                <span class="spinner"></span> 保存中...
+              </span>
+              <span v-else-if="lastSaveTime" class="saved" style="display: inline-flex; align-items: center; gap: 4px;"><CheckCircle2 :size="14" />已保存 {{ lastSaveTime }}</span>
+              <span v-else class="idle" style="display: inline-flex; align-items: center; gap: 4px;"><Sparkles :size="14" />自动保存已启用</span>
+            </div>
+            <button class="sd-close" title="关闭设置" @click="close"><X :size="18" /></button>
+          </header>
 
-      <div class="grid">
+          <!-- 分段器：四组（视觉规范——7% 墨色凹槽 + 白色激活胶囊 + primary 字） -->
+          <nav class="sd-tabs">
+            <button
+              v-for="t in tabs"
+              :key="t.key"
+              :class="{ active: activeTab === t.key }"
+              @click="activeTab = t.key"
+            >{{ t.label }}</button>
+          </nav>
+
+          <div class="sd-body">
+            <ImportPanel v-if="activeTab === 'account'" class="sd-import" />
+            <div class="grid">
       <!-- 模型配置（合并原通用配置 + LLM 模型管理） -->
-      <CtCard title="模型配置">
+      <CtCard v-if="activeTab === 'model'" title="模型配置">
         <template #header>
           <div style="display: flex; align-items: center; gap: 8px;">
             <Bot :size="18" style="color: var(--ct-color-primary);" />
@@ -116,7 +131,7 @@
       </CtCard>
 
       <!-- 微信数据库路径配置 -->
-      <CtCard title="微信数据库路径">
+      <CtCard v-if="activeTab === 'account'" title="微信数据库路径">
         <div class="form">
           <div class="hint-box info">
             <p style="display: flex; align-items: flex-start; gap: 6px;"><Lightbulb :size="16" style="flex-shrink: 0; margin-top: 2px;" /><span><strong>提示:</strong>如果自动检测的微信路径不正确,可以在此手动指定数据库文件位置</span></p>
@@ -168,7 +183,7 @@
         </div>
       </CtCard>
 
-      <CtCard title="联系人记忆" class="rag-card-full">
+      <CtCard v-if="activeTab === 'memory'" title="联系人记忆" class="rag-card-full">
         <div class="form">
           <div class="hint-box info">
             <p><strong>关于记忆与隐私：</strong>聊天记录的记忆提炼与本地检索完全在设备离线运行（无需远程 API，不消耗 Token）。仅在向远程大模型请求“AI建议”时会注入相关记忆，默认开启脱敏以保护真实姓名与电话等隐私。</p>
@@ -263,7 +278,7 @@
         </div>
       </CtCard>
 
-      <CtCard title="杂项维护">
+      <CtCard v-if="activeTab === 'misc'" title="杂项维护">
         <template #header>
           <div style="display: flex; align-items: center; gap: 8px;">
             <Wrench :size="18" style="color: var(--ct-color-primary);" />
@@ -333,7 +348,7 @@
       </CtCard>
 
       <!-- 计算设备设置 -->
-      <CtCard title="分析计算设备">
+      <CtCard v-if="activeTab === 'model'" title="分析计算设备">
         <template #header>
           <div style="display: flex; align-items: center; gap: 8px;">
             <Cpu :size="18" style="color: var(--ct-color-primary);" />
@@ -505,7 +520,10 @@
         </div>
       </div>
     </Teleport>
-  </section>
+        </aside>
+      </div>
+    </Transition>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
@@ -524,13 +542,44 @@ import {
   Clock,
   Download,
   Wrench,
-  Cpu
+  Cpu,
+  X
 } from 'lucide-vue-next'
 import { bridgeReady, api, type AnalysisDeviceMode, type WechatAccount } from '@/api/bridge'
 import CtCard from '@/components/base/CtCard.vue'
 import CtField from '@/components/base/CtField.vue'
 import CtButton from '@/components/base/CtButton.vue'
 import CtAccountSelector from '@/components/base/CtAccountSelector.vue'
+import ImportPanel from '@/components/data/ImportPanel.vue'
+
+// 抽屉形态（导航收敛批2）：数据与账号 / 模型与计算 / 联系人记忆 / 杂项维护
+const props = defineProps<{ visible: boolean; initialTab?: string }>()
+const emit = defineEmits<{ (e: 'close'): void }>()
+
+const tabs = [
+  { key: 'account', label: '数据与账号' },
+  { key: 'model', label: '模型与计算' },
+  { key: 'memory', label: '联系人记忆' },
+  { key: 'misc', label: '杂项维护' },
+]
+const activeTab = ref(props.initialTab || 'account')
+
+function close() {
+  emit('close')
+}
+
+// 打开时定位组（空态 CTA「去导入」/监听卡「配置模型」等入口直投对应组）
+watch(() => props.initialTab, (t) => { if (t) activeTab.value = t })
+
+// 数据懒加载：抽屉常驻挂载，首次打开才拉配置（替代原路由页 onMounted）
+let loaded = false
+watch(() => props.visible, (v) => {
+  if (!v || loaded) return
+  loaded = true
+  onLoad()
+  loadLLMModels()
+  loadGpuInfo()
+})
 import CtHelpTip from '@/components/base/CtHelpTip.vue'
 import RagContactManager from '@/components/settings/RagContactManager.vue'
 import { showDialog, showConfirm } from '@/utils/dialog'
@@ -1531,22 +1580,111 @@ watch(() => editingModel.provider, (p) => {
 
 onMounted(() => {
   window.addEventListener('chrono:wechat-account-changed', handleGlobalAccountChanged)
-  onLoad()
-  loadLLMModels()
-  loadGpuInfo()
 })
 </script>
 
 <style scoped>
 /* 整体布局 */
-.grid { 
-  display: grid; 
-  grid-template-columns: repeat(2, minmax(0, 1fr)); 
-  grid-auto-flow: row dense;
-  gap: 24px; 
-  max-width: 1560px; 
+/* 抽屉壳：右侧滑出，遮罩暖纸半透明 */
+.sd-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 1500;
+  background: rgba(0, 0, 0, 0.32);
+  display: flex;
+  justify-content: flex-end;
+}
+
+.sd-drawer {
+  width: min(720px, 94vw);
+  height: 100%;
+  background: var(--ct-bg-app);
+  display: flex;
+  flex-direction: column;
+  box-shadow: var(--ct-shadow-lg);
+}
+
+.sd-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid var(--ct-border-color);
+}
+
+.sd-head h2 {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 17px;
+}
+
+.sd-head .auto-save-status { margin-left: auto; }
+
+.sd-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: var(--ct-radius-md);
+  background: transparent;
+  color: var(--ct-text-secondary);
+  cursor: pointer;
+}
+
+.sd-close:hover { background: var(--ct-bg-hover); color: var(--ct-text-primary); }
+
+/* 分段器：7% 墨色凹槽 + 白色激活胶囊 + primary 字 */
+.sd-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 12px 20px 0;
+  padding: 4px;
+  border-radius: var(--ct-radius-lg);
+  background: var(--ct-bg-sunken);
+}
+
+.sd-tabs button {
+  flex: 1;
+  padding: 7px 12px;
+  border: none;
+  border-radius: var(--ct-radius-md);
+  background: transparent;
+  color: var(--ct-text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background-color var(--ct-transition-fast) var(--ct-ease-out), color var(--ct-transition-fast) var(--ct-ease-out);
+}
+
+.sd-tabs button.active {
+  background: var(--ct-bg-card);
+  color: var(--ct-color-primary);
+  font-weight: var(--ct-font-medium);
+  box-shadow: var(--ct-shadow-sm);
+}
+
+.sd-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px 24px;
+}
+
+.sd-import { margin-bottom: 20px; }
+
+.sd-slide-enter-active { transition: opacity 0.2s ease; }
+.sd-slide-enter-active .sd-drawer { transition: transform 0.25s var(--ct-ease-out); }
+.sd-slide-enter-from { opacity: 0; }
+.sd-slide-enter-from .sd-drawer { transform: translateX(24px); }
+
+/* 抽屉窄容器：卡片单列纵排 */
+.grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 24px;
   width: 100%;
-  margin: 0 auto; 
   align-items: stretch;
 }
 

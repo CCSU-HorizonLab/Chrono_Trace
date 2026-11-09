@@ -123,6 +123,7 @@
 <script setup lang="ts">
 import { ref, watch, onMounted, onBeforeUnmount, computed, reactive } from 'vue'
 import { useRouter } from 'vue-router'
+import { openSettingsTab } from '@/utils/settingsBus'
 import { AlertTriangle, Flame, Scale, Snowflake } from 'lucide-vue-next'
 import { bridgeReady, api } from '@/api/bridge'
 import { safeRemoveItem, safeSetItem } from '@/utils/safeStorage'
@@ -244,7 +245,7 @@ async function ensureRealtimeAnalysisModelsReadyBeforeFloating(): Promise<boolea
 
 function goToSettings() {
   showLlmWarningDialog.value = false
-  router.push('/settings')
+  openSettingsTab('model')
 }
 
 // 启动监听：真正启动在悬浮窗，这里只写请求 + 进入悬浮模式

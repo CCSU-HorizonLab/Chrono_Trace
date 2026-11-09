@@ -81,6 +81,9 @@
         <router-view />
       </div>
     </main>
+
+    <!-- 首次引导（空库触发，四步向导直落脉搏） -->
+    <OnboardingWizard :visible="onboardingVisible" @close="onboardingVisible = false" />
   </div>
   <!-- 关闭按钮确认对话框（close_guard 拦截 X 点击后触发） -->
   <teleport to="body">
@@ -159,7 +162,9 @@ import { useRoute } from 'vue-router'
 import { bridgeReady, api } from '@/api/bridge'
 import CtAvatar from '@/components/base/CtAvatar.vue'
 import CtAccountSelector from '@/components/base/CtAccountSelector.vue'
+import OnboardingWizard from '@/components/onboarding/OnboardingWizard.vue'
 import { clearWechatAccountProfileCache, enrichWechatAccountsWithProfiles } from '@/utils/wechatAccounts'
+import { safeGetItem } from '@/utils/safeStorage'
 
 const route = useRoute()
 
@@ -475,10 +480,22 @@ function __chronoAvatarPush(payload: unknown) {
 }
 ;(window as any).__chronoAvatarPush = __chronoAvatarPush
 
+// 首次引导：空库（无账号或无会话）且本次会话未跳过时触发四步向导
+const onboardingVisible = ref(false)
+async function maybeShowOnboarding() {
+  if (safeGetItem('chrono_onboarding_dismissed', window.sessionStorage)) return
+  try {
+    const convs = await api.get_conversation_list()
+    const noAccounts = !wechatAccounts.value.length
+    const noConvs = !convs?.ok || !(convs.conversations?.length)
+    if (noAccounts || noConvs) onboardingVisible.value = true
+  } catch { /* 检测失败不打扰用户 */ }
+}
+
 onMounted(() => {
   window.addEventListener('chrono:user-avatar-refresh', handleProfileRefresh)
   window.addEventListener('chrono:wechat-settings-saved', handleWechatSettingsSaved)
-  loadWechatAccounts()
+  void loadWechatAccounts().then(() => void maybeShowOnboarding())
 })
 
 onUnmounted(() => {

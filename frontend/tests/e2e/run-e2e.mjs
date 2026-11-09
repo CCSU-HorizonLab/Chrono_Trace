@@ -222,6 +222,20 @@ specs.push({
 })
 
 specs.push({
+  name: 'onboarding-首次引导向导',
+  url: '/#/',
+  beforeInit: 'window.__E2E_EMPTY_DB = true',
+  run: async (page) => {
+    await expectText(page, '欢迎使用 Chrono Trace', { timeout: 12000, label: '向导-标题' })
+    await expectText(page, '标记重要的人', { label: '向导-四步指示' })
+    await expectText(page, '确认数据目录', { label: '向导-导入面板在场' })
+    await page.getByText('暂时跳过', { exact: false }).first().click()
+    await sleep(600)
+    ok((await page.locator('.ob-overlay').count()) === 0, '向导-跳过后关闭')
+  },
+})
+
+specs.push({
   name: 'import-数据导入页',
   url: '/#/import',
   run: async (page) => {
@@ -290,6 +304,7 @@ async function main() {
 
     for (const spec of specs) {
       const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
+      if (spec.beforeInit) await context.addInitScript(spec.beforeInit)
       await context.addInitScript(mockBridgeInit)
       const page = await context.newPage()
       const pageErrors = []

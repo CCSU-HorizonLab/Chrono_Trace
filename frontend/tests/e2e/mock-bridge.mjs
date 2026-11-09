@@ -307,12 +307,13 @@ export function mockBridgeInit() {
     get_settings: async () => settings,
     get_current_user_profile: async () => ({ ok: true, profile: null }),
     set_settings: async () => ({ ok: true }),
-    get_wechat_accounts: async () => ({ ok: true, accounts: settings.wechat_accounts }),
+    // __E2E_EMPTY_DB 标志供首次引导用例模拟空库
+    get_wechat_accounts: async () => ({ ok: true, accounts: window.__E2E_EMPTY_DB ? [] : settings.wechat_accounts }),
     set_active_wechat_account: async () => ({ ok: true }),
     get_wechat_paths: async () => ({ ok: true, paths: { wechat_dir: '/home/demo/xwechat_files', current_user: 'e2e_wxid' } }),
     detect_wechat_import_increment: async () => ({ ok: true, has_increment: false, new_files: [] }),
 
-    get_conversation_list: async () => ({ ok: true, conversations }),
+    get_conversation_list: async () => ({ ok: true, conversations: window.__E2E_EMPTY_DB ? [] : conversations }),
     get_conversation_span: async () => ({ success: true, data: { from_date: '2025-10-02', to_date: '2026-11-07' } }),
 
     get_pulse_overview: async (cid) => {

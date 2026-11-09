@@ -82,6 +82,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { api } from '@/api/bridge'
 import FiltersBar from '@/components/analytics/FiltersBar.vue'
+import { sharedContactId as selectedConversationId } from '@/utils/contactScope'
 import MonitorControlCard from '@/components/realtime/MonitorControlCard.vue'
 import ProfileBriefCard from '@/components/persona/ProfileBriefCard.vue'
 import QaChat from '@/components/copilot/QaChat.vue'
@@ -98,7 +99,6 @@ const modes: Array<{ key: Mode; label: string; singleChat?: boolean }> = [
 const mode = ref<Mode>('qa')
 const conversations = ref<any[]>([])
 const loadingConversations = ref(false)
-const selectedConversationId = ref<number | null>(null)
 const activeAccountWxid = ref('')
 const profileRefreshKey = ref(0) // 画像简卡刷新键（预留：实时页生成完成后 +1
 

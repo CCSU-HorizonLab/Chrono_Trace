@@ -108,6 +108,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { bridgeReady, api } from '@/api/bridge'
 import { getAffinityScores } from '@/api/affinity'
 import FiltersBar from '@/components/analytics/FiltersBar.vue'
+import { sharedContactId as selectedConversationId } from '@/utils/contactScope'
 import CtAvatar from '@/components/base/CtAvatar.vue'
 import PersonaGallery from '@/components/persona/PersonaGallery.vue'
 import ProfileBriefCard from '@/components/persona/ProfileBriefCard.vue'
@@ -124,7 +125,6 @@ type Conversation = { id: number; name: string; username: string; avatar?: strin
  * 右我（我的画像/镜像对照/短板提示），底部海报工坊。单聊专属。 */
 
 const conversations = ref<Conversation[]>([])
-const selectedConversationId = ref<number | null>(null)
 const loading = ref(false)
 let viewEpoch = 0 // 切人后丢弃在途异步结果（Analytics/Pulse 同款代数守卫）
 
@@ -161,8 +161,8 @@ function resetGalleryState() {
   posterDates.to = toLocalDateKey(new Date())
 }
 
-async function onConversationChange(id: number) {
-  if (selectedConversationId.value === id) return
+async function onConversationChange(id: number, force = false) {
+  if (!force && selectedConversationId.value === id) return
   selectedConversationId.value = id
   const epoch = ++viewEpoch
   resetGalleryState()
@@ -283,6 +283,9 @@ async function loadConversations() {
         // 默认选首个单聊（画像单聊专属，群聊不该是落地态）
         const first = conversations.value.find((c) => c.conversation_type !== 'group')
         if (first) onConversationChange(first.id)
+      } else if (selectedConversationId.value) {
+        // 跨页共享选人：绕过同 id 早退，驱动本页首次加载
+        onConversationChange(selectedConversationId.value, true)
       }
     }
   } catch (e) {

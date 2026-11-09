@@ -225,6 +225,7 @@ import { bridgeReady, api } from '@/api/bridge'
 import { getPulseOverview, getWeeklyReport, requestWeeklyLlm, type PulseOverview, type WeeklyReport } from '@/api/pulse'
 import { chartPalette } from '@/components/charts/chartTheme'
 import FiltersBar from '@/components/analytics/FiltersBar.vue'
+import { sharedContactId as selectedConversationId } from '@/utils/contactScope'
 import DimensionRadar from '@/components/affinity/DimensionRadar.vue'
 import AffinityScoreCard from '@/components/affinity/AffinityScoreCard.vue'
 import RiskSignalCard from '@/components/affinity/RiskSignalCard.vue'
@@ -233,7 +234,6 @@ import CtAvatar from '@/components/base/CtAvatar.vue'
 type Conversation = { id: number; name: string; username: string; avatar?: string; conversation_type?: 'private' | 'group' }
 
 const conversations = ref<Conversation[]>([])
-const selectedConversationId = ref<number | null>(null)
 const loading = ref(false)
 const loadingOverview = ref(false)
 const overview = ref<PulseOverview | null>(null)
@@ -326,6 +326,9 @@ async function loadConversations() {
                 onConversationChange(conversations.value[0].id)
             } else if (!conversations.value.length) {
                 selectedConversationId.value = null
+            } else {
+                // 跨页共享选人：绕过同 id 早退，驱动本页首次加载
+                onConversationChange(selectedConversationId.value, true)
             }
         }
     } catch (e) {
@@ -335,8 +338,8 @@ async function loadConversations() {
     }
 }
 
-function onConversationChange(id: number) {
-    if (selectedConversationId.value === id) return
+function onConversationChange(id: number, force = false) {
+    if (!force && selectedConversationId.value === id) return
     selectedConversationId.value = id
     showPro.value = false
     void loadOverview(id)

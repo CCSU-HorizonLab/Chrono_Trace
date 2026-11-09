@@ -577,6 +577,7 @@ import { resolveAffinityPollAction } from '@/utils/affinityPoll'
 import { getScoreColor, HEAT_RAMP, chartPalette } from '@/components/charts/chartTheme'
 
 import FiltersBar from '@/components/analytics/FiltersBar.vue'
+import { sharedContactId as selectedConversationId } from '@/utils/contactScope'
 
 import AffinityScoreCard from '@/components/affinity/AffinityScoreCard.vue'
 import RiskSignalCard from '@/components/affinity/RiskSignalCard.vue'
@@ -652,7 +653,6 @@ export default {
 
         // Core State
         const conversations = ref<Conversation[]>([])
-        const selectedConversationId = ref<number | null>(null)
 
         const dates = reactive({ from: '', to: '' })
         const loadingSessions = ref(false)
@@ -995,6 +995,9 @@ export default {
                         onConversationChange(conversations.value[0].id)
                     } else if (conversations.value.length === 0) {
                         selectedConversationId.value = null
+                    } else {
+                        // 跨页共享选人：带着已有选中进入本页，驱动首次加载
+                        onConversationChange(selectedConversationId.value)
                     }
                 }
             } catch (e: any) { console.error('加载联系人失败', e) }

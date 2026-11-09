@@ -165,6 +165,7 @@ import { computed, onMounted, ref } from 'vue'
 import { bridgeReady, api } from '@/api/bridge'
 import { chartPalette } from '@/components/charts/chartTheme'
 import FiltersBar from '@/components/analytics/FiltersBar.vue'
+import { sharedContactId as selectedConversationId } from '@/utils/contactScope'
 import CtAvatar from '@/components/base/CtAvatar.vue'
 import RelationshipChaptersPanel from '@/components/deep/RelationshipChaptersPanel.vue'
 import DeepEmotionPanel from '@/components/deep/DeepEmotionPanel.vue'
@@ -179,7 +180,6 @@ import { toCompactRange, toLocalDateKey } from '@/utils/datetime'
 type Conversation = { id: number; name: string; username: string; avatar?: string; conversation_type?: 'private' | 'group' }
 
 const conversations = ref<Conversation[]>([])
-const selectedConversationId = ref<number | null>(null)
 const loading = ref(false)
 let viewEpoch = 0 // 切人后代数守卫（丢弃在途异步）
 
@@ -370,6 +370,9 @@ async function loadConversations() {
       }
       if (conversations.value.length && !selectedConversationId.value) {
         onConversationChange(conversations.value[0].id)
+      } else if (selectedConversationId.value) {
+        // 跨页共享选人：绕过同 id 早退，驱动本页首次加载
+        onConversationChange(selectedConversationId.value, true)
       }
     }
   } catch (e) {
@@ -379,8 +382,8 @@ async function loadConversations() {
   }
 }
 
-function onConversationChange(id: number) {
-  if (selectedConversationId.value === id) return
+function onConversationChange(id: number, force = false) {
+  if (!force && selectedConversationId.value === id) return
   selectedConversationId.value = id
   showDrill.value = false
   chaptersPayload.value = null

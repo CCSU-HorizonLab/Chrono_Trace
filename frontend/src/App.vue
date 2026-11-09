@@ -16,7 +16,7 @@
         </div>
       </div>
 
-      <!-- 居中导航菜单：重设计批1-4——脉搏(新首页) / 时光(时间轴叙事) / 数据 / 智囊(对话式AI) / 分析 / 设置 -->
+      <!-- 居中导航菜单：脉搏(首页判读) / 时光(时间轴叙事) / 画像(单聊镜像) / 数据 / 智囊(对话式AI) / 分析 / 设置 -->
       <nav class="ct-menu">
         <router-link to="/" class="menu-item">脉搏</router-link>
         <router-link to="/timeline" class="menu-item">时光</router-link>

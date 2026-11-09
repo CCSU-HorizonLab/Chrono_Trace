@@ -83,10 +83,9 @@
 
   <!-- 群聊：画像单聊专属（1:1 语义） -->
   <div v-else-if="selectedConversationId && isGroup" class="panel persona-group-hint">
-    <p>画像是单聊专属——两个人之间的镜像。群聊成员画像与互动统计在时光页与分析工作台。</p>
+    <p>画像是单聊专属——两个人之间的镜像。群聊发言统计与日报在时光页。</p>
     <div class="persona-group-actions">
       <router-link to="/timeline" class="btn">去时光页 →</router-link>
-      <router-link to="/analytics" class="btn">去分析工作台 →</router-link>
     </div>
   </div>
 

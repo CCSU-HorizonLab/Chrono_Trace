@@ -249,13 +249,19 @@ export function mockBridgeInit() {
     },
     llm_configured: false,
   }
+  // 后端 group_summary_service 契约：members 按消息数排序 + my_rank + active_hours + top_words
   const groupStats = {
     ok: true, conversation_id: 3,
-    total_messages: 12877, active_members: 23,
-    top_speakers: [
-      { name: '老周', count: 2811 }, { name: '林晚', count: 1930 }, { name: '阿凯', count: 1544 },
+    total_messages: 7705, total_chars: 147700,
+    members: [
+      { name: '老周', message_count: 2811, char_count: 52100, share: 0.3650 },
+      { name: '林晚', message_count: 1930, char_count: 39800, share: 0.2505 },
+      { name: '阿凯', message_count: 1544, char_count: 31200, share: 0.2003 },
+      { name: '我', message_count: 1420, char_count: 24600, share: 0.1843 },
     ],
-    hourly: Array.from({ length: 24 }, (_, h) => (h >= 9 && h <= 22 ? 4 : 1)),
+    my_rank: 4,
+    active_hours: Object.fromEntries(Array.from({ length: 24 }, (_, h) => [String(h), h >= 9 && h <= 22 ? 40 : 4])),
+    top_words: [{ word: '徒步', count: 312 }, { word: '周六', count: 208 }, { word: '拼车', count: 154 }],
   }
   const settings = {
     ok: true,
@@ -512,7 +518,12 @@ export function mockBridgeInit() {
     stop_realtime_monitor: async () => ({ ok: true }),
 
     get_group_stats: async () => groupStats,
-    generate_group_summary: async () => ({ ok: true, task_id: 'e2e-gs' }),
+    // 后端契约：同步返回 {ok, summary, days, degraded}（LLM 不可用走 degraded 分支）
+    generate_group_summary: async () => ({
+      ok: true, days: 7, degraded: false,
+      summary: '本周群里主要在约周六的徒步路线与拼车安排，老周承担了大部分话题发起，整体氛围轻松。',
+    }),
+    cancel_group_summary: async () => ({ ok: true }),
     get_latest_thread: async () => ({ ok: true, thread: null }),
     load_thread_context: async () => ({ ok: true }),
 

@@ -8,7 +8,7 @@
       <FiltersBar :conversations="conversations" :selected-conversation-id="selectedConversationId" :loading="loading"
         @update:conversation-id="onConversationChange" />
     </div>
-    <router-link v-if="selectedConversationId" to="/analytics" class="btn tl-goto-analytics">分析工作台 →</router-link>
+    <button v-if="selectedConversationId" type="button" class="btn tl-export-btn" @click="handleExport">导出聊天记录</button>
   </header>
 
   <div v-else-if="!loading" class="panel tl-empty">
@@ -141,11 +141,104 @@
     </template>
   </template>
 
-  <!-- 群聊：时光叙事是单聊主视角，群聊指路群摘要 -->
-  <div v-else-if="selectedConversationId && isGroup" class="panel tl-hint">
-    <p>时光叙事按单聊口径组织。群聊请去分析工作台查看群聊摘要与互动统计。</p>
-    <router-link to="/analytics" class="btn">去分析工作台 →</router-link>
+  <!-- 群聊：时光叙事是单聊主视角，群聊给群摘要工作台（发言统计+日报，批4自分析页迁入） -->
+  <div v-else-if="selectedConversationId && isGroup" class="group-workbench fade-in">
+    <CtCard class="group-stats-card" title="群聊发言统计">
+      <div v-if="groupStatsLoading" class="group-empty">统计加载中...</div>
+      <template v-else-if="groupStats && groupStats.members && groupStats.members.length">
+        <div class="group-overview">
+          <span>文本消息 <strong>{{ groupStats.total_messages }}</strong> 条</span>
+          <span>发言成员 <strong>{{ groupStats.members.length }}</strong> 人</span>
+          <span v-if="groupStats.my_rank">我的发言排名 <strong>第 {{ groupStats.my_rank }}</strong></span>
+          <span v-else>我未在统计范围内发言</span>
+        </div>
+        <div class="group-member-table">
+          <div class="group-member-row group-member-head">
+            <span class="gm-name">成员</span>
+            <span class="gm-count">消息数</span>
+            <span class="gm-share">占比</span>
+            <span class="gm-chars">字数</span>
+          </div>
+          <div v-for="m in groupStats.members.slice(0, 20)" :key="m.name" class="group-member-row" :class="{ me: m.name === '我' }">
+            <span class="gm-name">{{ m.name }}</span>
+            <span class="gm-count">{{ m.message_count }}</span>
+            <span class="gm-share">
+              <span class="gm-share-bar"><i :style="{ width: (m.share * 100).toFixed(1) + '%' }"></i></span>
+              <em>{{ (m.share * 100).toFixed(1) }}%</em>
+            </span>
+            <span class="gm-chars">{{ m.char_count }}</span>
+          </div>
+        </div>
+        <div v-if="groupStats.top_words && groupStats.top_words.length" class="group-top-words">
+          <span class="gtw-title">高频词</span>
+          <span v-for="w in groupStats.top_words.slice(0, 15)" :key="w.word" class="gtw-chip">{{ w.word }} ×{{ w.count }}</span>
+        </div>
+        <p class="group-note">成员名为导入时解析的显示短名；群聊暂不提供成员关系分析。</p>
+      </template>
+      <p v-else class="group-empty">暂无群聊消息或统计失败。</p>
+    </CtCard>
+
+    <CtCard class="group-summary-card" title="群聊日报">
+      <div class="group-summary-controls">
+        <select v-model.number="groupSummaryDays" class="group-days-select" :disabled="groupSummaryLoading">
+          <option :value="1">近 1 天</option>
+          <option :value="7">近 7 天</option>
+          <option :value="30">近 30 天</option>
+        </select>
+        <CtButton variant="primary" :loading="groupSummaryLoading" :disabled="groupSummaryLoading" @click="handleGenerateGroupSummary">
+          {{ groupSummaryLoading ? '生成中...' : '生成日报' }}
+        </CtButton>
+        <CtButton v-if="groupSummaryLoading" variant="ghost" @click="handleCancelGroupSummary">取消</CtButton>
+      </div>
+      <div v-if="groupSummary" class="group-summary-body">
+        <p v-if="groupSummary.degraded" class="group-summary-degraded">{{ groupSummary.degraded_reason }}</p>
+        <p v-else class="group-summary-text">{{ groupSummary.summary }}</p>
+      </div>
+      <p v-else class="group-summary-hint">
+        由 LLM 汇总近期主要话题、群氛围与值得注意的互动；未配置模型时仅提供左侧统计。
+      </p>
+    </CtCard>
   </div>
+
+  <!-- 导出聊天记录弹窗（批4自分析页迁入，单聊群聊皆可导） -->
+  <Teleport to="body">
+    <div v-if="exportDialogVisible" class="ct-modal-overlay" @click.self="exportDialogVisible = false">
+      <div class="export-dialog">
+        <div class="pd-header">
+          <h3 class="pd-title">导出聊天记录</h3>
+          <button class="pd-close" @click="exportDialogVisible = false">✕</button>
+        </div>
+        <div v-if="!exportResult" class="export-body">
+          <div class="export-formats">
+            <label v-for="opt in [
+              { value: 'txt', label: 'TXT 纯文本', tip: '打印/备忘录' },
+              { value: 'csv', label: 'CSV 表格', tip: 'Excel/分析' },
+              { value: 'html', label: 'HTML 聊天页', tip: '分享/存档' },
+            ]" :key="opt.value" class="export-fmt" :class="{ active: exportFormat === opt.value }">
+              <input type="radio" :value="opt.value" v-model="exportFormat" class="sr-only" />
+              <span class="export-fmt-label">{{ opt.label }}</span>
+              <span class="export-fmt-tip">{{ opt.tip }}</span>
+            </label>
+          </div>
+          <div class="export-hint">导出当前选中联系人的全部聊天记录（含日期范围筛选）。</div>
+        </div>
+        <div v-else class="export-body">
+          <div class="export-success">
+            <p>✅ 已导出 {{ exportResult.count }} 条消息</p>
+            <p class="export-path">{{ exportResult.path }}</p>
+            <button class="ct-btn secondary ct-btn-sm" @click="openExportFolder">打开所在文件夹</button>
+          </div>
+        </div>
+        <div class="pd-footer">
+          <button v-if="!exportResult" class="ct-btn ghost" @click="exportDialogVisible = false">取消</button>
+          <button v-if="!exportResult" class="ct-btn primary" :disabled="exporting" @click="confirmExport">
+            {{ exporting ? '导出中…' : '导出' }}
+          </button>
+          <button v-else class="ct-btn primary" @click="exportDialogVisible = false">完成</button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
 
   <!-- 年度报告/纪念册工坊（§6.2 传播产线） -->
   <ReportStudio
@@ -162,12 +255,15 @@
 
 <script setup lang="ts">
 import { openSettingsTab } from '@/utils/settingsBus'
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { bridgeReady, api } from '@/api/bridge'
 import { chartPalette } from '@/components/charts/chartTheme'
 import FiltersBar from '@/components/analytics/FiltersBar.vue'
 import { sharedContactId as selectedConversationId } from '@/utils/contactScope'
 import CtAvatar from '@/components/base/CtAvatar.vue'
+import CtCard from '@/components/base/CtCard.vue'
+import CtButton from '@/components/base/CtButton.vue'
+import { showDialog } from '@/utils/dialog'
 import RelationshipChaptersPanel from '@/components/deep/RelationshipChaptersPanel.vue'
 import DeepEmotionPanel from '@/components/deep/DeepEmotionPanel.vue'
 import WordEvolutionPanel from '@/components/deep/WordEvolutionPanel.vue'
@@ -178,7 +274,7 @@ import EmojiMuseumPanel from '@/components/deep/EmojiMuseumPanel.vue'
 import ReportStudio from '@/components/deep/ReportStudio.vue'
 import { toCompactRange, toLocalDateKey } from '@/utils/datetime'
 
-type Conversation = { id: number; name: string; username: string; avatar?: string; conversation_type?: 'private' | 'group' }
+type Conversation = { id: number; name: string; username: string; avatar?: string; last_message_time?: string; conversation_type?: 'private' | 'group' }
 
 const conversations = ref<Conversation[]>([])
 const loading = ref(false)
@@ -197,6 +293,132 @@ const emojiLoading = ref(false)
 
 const currentConversation = computed(() => conversations.value.find((c) => c.id === selectedConversationId.value))
 const isGroup = computed(() => currentConversation.value?.conversation_type === 'group')
+
+// ---------- 群聊工作台（发言统计 + 日报，批4自分析页迁入） ----------
+
+type GroupMemberStat = { name: string; message_count: number; char_count: number; share: number }
+type GroupStats = { total_messages: number; members: GroupMemberStat[]; my_rank: number | null; top_words: Array<{ word: string; count: number }> }
+const groupStats = ref<GroupStats | null>(null)
+const groupStatsLoading = ref(false)
+const groupSummary = ref<{ summary: string; degraded: boolean; degraded_reason?: string } | null>(null)
+const groupSummaryLoading = ref(false)
+const groupSummaryDays = ref(7)
+
+async function loadGroupStats() {
+  if (!isGroup.value || !selectedConversationId.value) {
+    groupStats.value = null
+    return
+  }
+  const conversationId = selectedConversationId.value
+  groupStatsLoading.value = true
+  try {
+    await bridgeReady()
+    const res = await api.get_group_stats(conversationId)
+    if (conversationId !== selectedConversationId.value) return // 已切换联系人（F1）
+    groupStats.value = res?.ok ? res : null
+  } catch {
+    groupStats.value = null
+  } finally {
+    groupStatsLoading.value = false
+  }
+}
+
+async function handleGenerateGroupSummary() {
+  if (!selectedConversationId.value || groupSummaryLoading.value) return
+  groupSummaryLoading.value = true
+  const conversationId = selectedConversationId.value
+  try {
+    await bridgeReady()
+    const res = await api.generate_group_summary(conversationId, groupSummaryDays.value)
+    if (conversationId !== selectedConversationId.value) return // 已切换联系人（F1）
+    if (res?.ok) {
+      groupSummary.value = res
+    } else {
+      const msg = String(res?.error || '日报生成失败，请重试')
+      if (!msg.includes('已取消')) showDialog(msg) // 主动取消不弹错误
+    }
+  } catch (e: any) {
+    showDialog(e?.message || '日报生成异常')
+  } finally {
+    groupSummaryLoading.value = false
+  }
+}
+
+async function handleCancelGroupSummary() {
+  if (!groupSummaryLoading.value || !selectedConversationId.value) return
+  try {
+    await bridgeReady()
+    await api.cancel_group_summary(selectedConversationId.value)
+  } catch {
+    // 取消失败不打断（后端请求会自行超时返回）
+  }
+}
+
+// ---------- 导出聊天记录（批4自分析页迁入，页头入口单聊群聊皆可导） ----------
+
+const dates = reactive({ from: '', to: '' })
+const exportDialogVisible = ref(false)
+const exportFormat = ref<'txt' | 'csv' | 'html'>('txt')
+const exporting = ref(false)
+const exportResult = ref<{ path: string; count: number } | null>(null)
+
+function getConversationAnchorDate(conversationId?: number | null): Date {
+  const conversation = conversations.value.find(c => c.id === conversationId)
+  const rawLastMessageTime = conversation?.last_message_time?.trim()
+  if (rawLastMessageTime) {
+    const parsed = new Date(rawLastMessageTime.replace(' ', 'T'))
+    if (!Number.isNaN(parsed.getTime())) return parsed
+  }
+  return new Date()
+}
+
+function setDefaultDates(days = 7, anchorDate?: Date) {
+  const to = anchorDate ? new Date(anchorDate) : new Date()
+  const from = new Date(to)
+  from.setDate(to.getDate() - (days - 1))
+  // 用本地时区日期键，避免 toISOString() 的 UTC 日期在东八区凌晨少一天
+  dates.from = toLocalDateKey(from)
+  dates.to = toLocalDateKey(to)
+}
+
+function handleExport() {
+  if (!selectedConversationId.value) {
+    showDialog('请先选择联系人。')
+    return
+  }
+  exportResult.value = null
+  exportDialogVisible.value = true
+}
+
+async function confirmExport() {
+  if (exporting.value || !selectedConversationId.value) return
+  exporting.value = true
+  try {
+    await bridgeReady()
+    const res = await api.export_chat_records(
+      selectedConversationId.value,
+      exportFormat.value,
+      dates.from || undefined,
+      dates.to || undefined,
+    )
+    if (res.ok) {
+      exportResult.value = { path: res.file_path, count: res.record_count }
+    } else {
+      showDialog(res.error || '导出失败')
+    }
+  } catch (e: any) {
+    showDialog(e?.message || '导出异常')
+  } finally {
+    exporting.value = false
+  }
+}
+
+function openExportFolder() {
+  if (!exportResult.value) return
+  // open_external_url 只放行 http/https（目录会被静默拒绝），走专用目录打开
+  api.open_export_folder()
+    .catch(() => {})
+}
 
 const anchors = [
   { id: 'tl-anchor-chapters', label: '章节' },
@@ -385,16 +607,22 @@ async function loadConversations() {
 
 function onConversationChange(id: number, force = false) {
   if (!force && selectedConversationId.value === id) return
+  if (groupSummaryLoading.value && selectedConversationId.value) {
+    api.cancel_group_summary(selectedConversationId.value).catch(() => {})
+  }
   selectedConversationId.value = id
   showDrill.value = false
   chaptersPayload.value = null
   clearSelection()
   reportRange.value = null
+  groupSummary.value = null
+  setDefaultDates(30, getConversationAnchorDate(id))
   const epoch = ++viewEpoch
   deepPayload.value = null
   emojiStats.value = null
   void loadDeep(epoch)
   void loadEmoji(epoch)
+  void loadGroupStats()
 }
 
 async function loadEmoji(epoch: number = viewEpoch) {
@@ -468,12 +696,11 @@ onMounted(() => { void loadConversations() })
   white-space: nowrap;
 }
 
-.tl-goto-analytics {
+.tl-export-btn {
   flex-shrink: 0;
-  text-decoration: none;
 }
 
-.tl-empty-text, .tl-hint p {
+.tl-empty-text {
   color: var(--ct-text-secondary);
   font-size: var(--ct-text-base);
 }
@@ -648,4 +875,210 @@ onMounted(() => { void loadConversations() })
 .state-text {
   color: var(--ct-color-error);
 }
+
+/* ---------- 群聊工作台（批4自分析页迁入） ---------- */
+.group-workbench {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: var(--ct-space-md);
+  align-items: start;
+}
+
+.group-stats-card,
+.group-summary-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.group-overview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ct-space-lg);
+  font-size: 12px;
+  color: var(--ct-text-secondary);
+}
+
+.group-overview strong {
+  color: var(--ct-text-primary);
+  font-family: var(--ct-font-mono);
+}
+
+.group-member-table {
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+}
+
+.group-member-row {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) 70px minmax(0, 2fr) 70px;
+  gap: 8px;
+  align-items: center;
+  padding: 5px 6px;
+  border-bottom: 1px solid var(--ct-border-color);
+  color: var(--ct-text-secondary);
+}
+
+.group-member-row:last-child {
+  border-bottom: none;
+}
+
+.group-member-head {
+  color: var(--ct-text-tertiary);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.group-member-row.me .gm-name {
+  color: var(--ct-color-primary);
+  font-weight: 600;
+}
+
+.gm-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gm-count,
+.gm-chars {
+  text-align: right;
+  font-family: var(--ct-font-mono);
+}
+
+.gm-share {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gm-share-bar {
+  flex: 1;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--ct-bg-sunken);
+  overflow: hidden;
+}
+
+.gm-share-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--ct-color-primary);
+}
+
+.gm-share em {
+  font-style: normal;
+  font-size: 11px;
+  font-family: var(--ct-font-mono);
+  color: var(--ct-text-tertiary);
+  min-width: 44px;
+  text-align: right;
+}
+
+.group-top-words {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.gtw-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ct-text-tertiary);
+}
+
+.gtw-chip {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: var(--ct-radius-full);
+  background: var(--ct-bg-sunken);
+  color: var(--ct-text-secondary);
+}
+
+.group-note,
+.group-empty,
+.group-summary-hint {
+  margin: 0;
+  font-size: 11px;
+  color: var(--ct-text-tertiary);
+}
+
+.group-summary-controls {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.group-days-select {
+  padding: 7px 10px;
+  padding-right: 28px;
+  font-size: 12px;
+  border: 1px solid var(--ct-border-color);
+  border-radius: var(--ct-radius-md);
+  background-color: var(--ct-bg-card);
+  color: var(--ct-text-primary);
+  outline: none;
+}
+
+.group-summary-body {
+  padding: var(--ct-space-md);
+  background: var(--ct-bg-sunken);
+  border-radius: var(--ct-radius-md);
+}
+
+.group-summary-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.8;
+  color: var(--ct-text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.group-summary-degraded {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--ct-color-warning);
+}
+
+@media (max-width: 768px) {
+  .group-workbench {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ---------- 导出弹窗（白卡解剖：发丝线分区，按钮走 ct-btn 体系） ---------- */
+.export-dialog {
+  width: 420px; max-width: 92vw;
+  background: var(--ct-bg-card);
+  border-radius: var(--ct-radius-lg);
+  box-shadow: var(--ct-shadow-lg);
+  overflow: hidden;
+}
+.export-body { padding: 16px 20px; }
+.export-formats { display: flex; gap: 8px; }
+.export-fmt {
+  flex: 1; padding: 12px 8px; border-radius: var(--ct-radius-md); cursor: pointer;
+  border: 1px solid var(--ct-border-color); background: var(--ct-bg-card);
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  transition: border-color 0.15s, background-color 0.15s;
+}
+.export-fmt:hover { border-color: var(--ct-border-color-hover); }
+.export-fmt.active { border-color: var(--ct-color-primary); background: var(--ct-color-primary-tint); }
+.export-fmt-label { font-size: 13px; font-weight: 600; }
+.export-fmt-tip { font-size: 10px; color: var(--ct-text-tertiary); }
+.export-hint { margin-top: 12px; font-size: 11px; color: var(--ct-text-tertiary); line-height: 1.5; }
+.export-success { text-align: center; padding: 12px 0; }
+.export-success p { margin: 4px 0; font-size: 14px; }
+.export-path { font-size: 11px; color: var(--ct-text-tertiary); word-break: break-all; }
+.pd-header { display: flex; align-items: center; gap: 12px; padding: 18px 20px; border-bottom: 1px solid var(--ct-border-color); }
+.pd-title { margin: 0; font-size: 17px; font-weight: 600; flex: 1; }
+.pd-close { background: none; border: none; cursor: pointer; color: var(--ct-text-secondary); font-size: 16px; padding: 4px 8px; border-radius: var(--ct-radius-sm); }
+.pd-close:hover { color: var(--ct-text-primary); background: var(--ct-bg-hover); }
+.pd-footer { display: flex; justify-content: flex-end; gap: 10px; padding: 14px 20px; border-top: 1px solid var(--ct-border-color); }
+.sr-only { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 </style>

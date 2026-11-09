@@ -22,8 +22,8 @@ const router = createRouter({
     { path: '/persona/avatar', component: lazy(() => import('@/views/PersonaAvatar.vue')) },
     // 智囊页（重设计批4）：对话式统一 AI——问答/陪练/实时三模式
     { path: '/copilot', component: lazy(() => import('@/views/Copilot.vue')) },
-    // 数据导入已收进设置抽屉（导航收敛批2）、设置不再是路由页；/import /settings 已删除
-    { path: '/analytics', component: lazy(() => import('@/views/Analytics.vue')) },
+    // 数据导入已收进设置抽屉（批2）、分析页已解散（批4：单聊工作台并入脉搏专业视图、
+    // 群聊工作台迁时光页）；/import /settings /analytics 已删除
     { path: '/floating', component: lazy(() => import('@/views/FloatingPanel.vue')) }
   ]
 })

@@ -694,18 +694,18 @@ async function ensureRealtimeAnalysisModelsReady(): Promise<boolean> {
     }
 
     const detailLines = buildMissingModelLines(modelStatus)
-    const shouldGoAnalytics = await showConfirm({
+    const shouldGoPulse = await showConfirm({
       title: '缺少分析模型',
       message:
         `检测到当前分析模型未安装完整：\n${detailLines}\n\n` +
-        '实时监听依赖情绪分析模型。请先前往“历史数据”页面，选择联系人后点击一次“开始分析”，按提示完成模型安装。\n\n' +
-        '现在跳转到历史数据页面吗？',
+        '实时监听依赖情绪分析模型。请先前往“脉搏”页专业视图，选择联系人后点击一次“开始全面分析”，按提示完成模型安装。\n\n' +
+        '现在跳转到脉搏页面吗？',
     })
 
-    chatError.value = '缺少分析模型，请先前往历史数据页面完成安装'
+    chatError.value = '缺少分析模型，请先前往脉搏页完成安装'
 
-    if (shouldGoAnalytics) {
-      await router.push('/analytics')
+    if (shouldGoPulse) {
+      await router.push('/')
     }
     return false
   } catch (e) {
@@ -714,9 +714,9 @@ async function ensureRealtimeAnalysisModelsReady(): Promise<boolean> {
       title: '无法检查分析模型',
       message:
         `分析模型状态检查失败: ${errorMessage}\n\n` +
-        '请先前往“历史数据”页面尝试开始分析；如果仍失败，再检查模型文件和 Python 依赖是否完整。',
+        '请先前往“脉搏”页专业视图尝试开始全面分析；如果仍失败，再检查模型文件和 Python 依赖是否完整。',
     })
-    chatError.value = '分析模型状态检查失败，请先前往历史数据页面检查安装'
+    chatError.value = '分析模型状态检查失败，请先前往脉搏页检查安装'
     return false
   }
 }

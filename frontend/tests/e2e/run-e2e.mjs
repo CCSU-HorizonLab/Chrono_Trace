@@ -66,12 +66,15 @@ specs.push({
   name: 'nav-主导航',
   url: '/#/',
   run: async (page) => {
-    for (const item of ['脉搏', '时光', '画像', '智囊', '分析']) {
+    // 批4：分析页解散，导航终态四页
+    for (const item of ['脉搏', '时光', '画像', '智囊']) {
       await page.locator('.menu-item', { hasText: item }).click()
       await sleep(600)
       const active = await page.locator('.menu-item.router-link-active, .menu-item.active').first().textContent().catch(() => '')
       ok(active?.trim() === item, `导航切换到「${item}」并激活`)
     }
+    const navCount = await page.locator('.ct-menu .menu-item').count()
+    ok(navCount === 4, `导航恰四项（实际 ${navCount}）`)
   },
 })
 
@@ -85,12 +88,19 @@ specs.push({
     await expectText(page, '回应', { label: '脉搏-回应温度卡' })
     await expectText(page, '留意', { label: '脉搏-冷淡预警' })
     await expectText(page, '↓1.2', { label: '脉搏-温度趋势句' })
-    // 专业视图折叠层展开
+    // 专业视图折叠层展开（批3：分析工作台并入脉搏专业视图；原分析页断言并入于此）
     const pro = page.getByText('专业', { exact: false }).first()
     if (await pro.count()) {
       await pro.click().catch(() => {})
-      await sleep(400)
-      await expectText(page, '互动投入', { label: '脉搏-专业视图四维' })
+      await sleep(600)
+      await expectText(page, '互动投入', { timeout: 9000, label: '脉搏-专业视图四维卡' })
+      await expectText(page, '喜好兼容度', { label: '脉搏-专业视图第四维卡' })
+      await expectText(page, '关系整体温热', { label: '脉搏-定性分析文案' })
+      // 互动特征页签（canvas 只有活跃日历一张，其余为 CSS/SVG 图）
+      await page.locator('.ct-tabs-capsule .menu-item').filter({ hasText: '互动特征' }).first().click()
+      await sleep(600)
+      await expectSelector(page, '.h-bar-row', { timeout: 9000, label: '脉搏-响应时间分布条形图' })
+      await expectSelector(page, '.feature-calendar-card canvas', { timeout: 9000, label: '脉搏-活跃日历图表' })
     } else {
       ok(false, '脉搏-专业视图入口')
     }
@@ -121,6 +131,16 @@ specs.push({
     await sleep(700)
     await expectText(page, '条消息', { timeout: 9000, label: '时光-里程碑内容' })
     await expectText(page, '生成年度报告', { label: '时光-报告产线入口' })
+    // 群聊工作台（批4：自分析页迁入——发言统计+日报）；页头导出按钮在场
+    await expectSelector(page, '.tl-export-btn', { label: '时光-导出聊天记录入口' })
+    await pickContact(page, '周末徒步群')
+    await sleep(900)
+    await expectText(page, '群聊发言统计', { timeout: 9000, label: '时光-群聊统计卡' })
+    await expectText(page, '我的发言排名', { label: '时光-群聊排名行' })
+    await expectText(page, '老周', { label: '时光-群聊成员表' })
+    // 生成日报（mock 同步返回 summary）
+    await page.getByRole('button', { name: '生成日报' }).click()
+    await expectText(page, '徒步路线', { timeout: 9000, label: '时光-群聊日报内容' })
   },
 })
 
@@ -186,33 +206,13 @@ specs.push({
 })
 
 specs.push({
-  name: 'analytics-分析页',
-  url: '/#/analytics',
-  run: async (page) => {
-    await sleep(800)
-    await expectText(page, '72', { label: '分析-总分' })
-    await expectText(page, '互动投入', { timeout: 9000, label: '分析-四维卡' })
-    // 互动特征页签（注意：响应时间/主动性/字数是纯 CSS/SVG 图，页签内 canvas
-    // 只有活跃日历一张；页面首个 canvas 是隐藏 tab 里 v-show 遮住的雷达图，不可用）
-    await page.locator('.ct-tabs-capsule .menu-item').filter({ hasText: '互动特征' }).first().click()
-    await sleep(600)
-    await expectSelector(page, '.h-bar-row', { timeout: 9000, label: '分析-响应时间分布条形图' })
-    await expectSelector(page, '.feature-calendar-card canvas', { timeout: 9000, label: '分析-活跃日历图表' })
-    // 关系洞察页签 + 风险卡
-    await page.locator('.ct-tabs-capsule .menu-item').filter({ hasText: '关系洞察' }).first().click()
-    await sleep(600)
-    await expectText(page, '留意', { timeout: 9000, label: '分析-风险预警卡' })
-  },
-})
-
-specs.push({
   name: 'crosspage-跨页选人同步',
-  url: '/#/analytics',
+  url: '/#/copilot',
   run: async (page) => {
     await sleep(800)
-    // 分析页选非默认联系人（陈默），切页后各页 FiltersBar 应跟随同一人
+    // 智囊页选非默认联系人（陈默），切页后各页 FiltersBar 应跟随同一人
     await pickContact(page, '陈默')
-    for (const item of ['时光', '画像', '脉搏', '智囊']) {
+    for (const item of ['时光', '画像', '脉搏']) {
       await page.locator('.menu-item', { hasText: item }).click()
       await sleep(900)
       const ph = await page.locator('.select-input').first().getAttribute('placeholder')

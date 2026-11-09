@@ -179,8 +179,8 @@
 
   <!-- 群聊：好感引擎口径外，指路群摘要 -->
   <div v-else-if="selectedConversationId && isGroup" class="panel pulse-hint">
-    <p>群聊不在关系脉搏的口径内。去分析工作台查看群聊摘要与互动统计。</p>
-    <router-link to="/analytics" class="btn">去分析工作台 →</router-link>
+    <p>群聊不在关系脉搏的口径内。去时光页查看群聊摘要与互动统计。</p>
+    <router-link to="/timeline" class="btn">去时光页 →</router-link>
   </div>
 </section>
 </template>

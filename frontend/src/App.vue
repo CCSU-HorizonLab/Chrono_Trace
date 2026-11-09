@@ -16,13 +16,12 @@
         </div>
       </div>
 
-      <!-- 导航收敛批2：数据/设置收进右侧齿轮抽屉（分析页批4解散后菜单终态为四页） -->
+      <!-- 导航收敛批2：数据/设置收进右侧齿轮抽屉；批4：分析页解散，菜单终态四页 -->
       <nav class="ct-menu">
         <router-link to="/" class="menu-item">脉搏</router-link>
         <router-link to="/timeline" class="menu-item">时光</router-link>
         <router-link to="/persona" class="menu-item">画像</router-link>
         <router-link to="/copilot" class="menu-item">智囊</router-link>
-        <router-link to="/analytics" class="menu-item">分析</router-link>
       </nav>
 
       <!-- 右侧用户区 + 设置抽屉入口 + 窗口控制 -->

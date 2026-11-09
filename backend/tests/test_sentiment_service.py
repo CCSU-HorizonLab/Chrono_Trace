@@ -593,3 +593,76 @@ class TestEmbeddingsMatrix:
         # 零向量/None 落 None 口径不变
         assert pack_embedding(np.zeros(4, dtype=np.float32)) is None
         assert pack_embedding(None) is None
+
+
+class TestPurgeStaleCaches:
+    """换代清缓存的 tag/结构双校验。
+
+    11-07 下午工作区形态曾把 v2 tag 写库而 ctx_used 列当晚才进 schema：
+    这批库 tag 匹配即跳过 purge，旧表结构固化 → 写入必失败。
+    修复后 tag 匹配仍校验表结构，缺列自愈重置。
+    """
+
+    TAG = "v9-test"
+
+    @pytest.fixture
+    def db(self, monkeypatch):
+        from types import SimpleNamespace
+
+        from app.db.connection import DatabaseConnection
+        from app.services.analysis import sentiment_service as mod
+
+        conn = sqlite3.connect(":memory:", check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        # _create_tables 桩：重放真实 schema.sql 到内存库（避免连开发真库）
+        schema_sql = DatabaseConnection._load_schema_sql()
+        conn.executescript(schema_sql)
+        monkeypatch.setattr(mod, "get_db", lambda: conn)
+        monkeypatch.setattr(
+            mod, "DatabaseConnection",
+            SimpleNamespace(_create_tables=lambda: conn.executescript(schema_sql)),
+        )
+        self.mod = mod
+        yield conn
+        conn.close()
+
+    def _downgrade_table(self, conn):
+        """模拟 11-07 旧结构库：sentiment_cache 无 ctx_used 列"""
+        conn.execute("DROP TABLE sentiment_cache")
+        conn.execute(
+            "CREATE TABLE sentiment_cache (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "message_id INTEGER UNIQUE, polarity INTEGER, intensity REAL, "
+            "embedding_vector BLOB, created_at INTEGER)"
+        )
+        conn.execute(
+            "INSERT INTO sentiment_cache (message_id, polarity, intensity, created_at) "
+            "VALUES (100, 1, 0.5, 0)"
+        )
+
+    def test_tag_mismatch_resets_and_rebuilds(self, db):
+        self.mod.purge_stale_sentiment_caches(self.TAG)
+        assert db.execute("SELECT COUNT(*) FROM sentiment_cache").fetchone()[0] == 0
+        row = db.execute(
+            "SELECT value FROM settings WHERE key = 'sentiment_model_tag'"
+        ).fetchone()
+        assert row["value"] == self.TAG
+        cols = {r[1] for r in db.execute("PRAGMA table_info(sentiment_cache)")}
+        assert "ctx_used" in cols  # 重建走 schema，新结构在场
+
+    def test_tag_match_fresh_schema_keeps_rows(self, db):
+        self.mod.purge_stale_sentiment_caches(self.TAG)
+        db.execute(
+            "INSERT INTO sentiment_cache (message_id, polarity, intensity, created_at) "
+            "VALUES (101, 1, 0.5, 0)"
+        )
+        db.commit()
+        self.mod.purge_stale_sentiment_caches(self.TAG)  # tag 匹配+结构新 → 跳过
+        assert db.execute("SELECT COUNT(*) FROM sentiment_cache").fetchone()[0] == 1
+
+    def test_tag_match_stale_schema_selfheals(self, db):
+        self.mod.purge_stale_sentiment_caches(self.TAG)
+        self._downgrade_table(db)
+        self.mod.purge_stale_sentiment_caches(self.TAG)  # tag 匹配但缺列 → 自愈
+        cols = {r[1] for r in db.execute("PRAGMA table_info(sentiment_cache)")}
+        assert "ctx_used" in cols
+        assert db.execute("SELECT COUNT(*) FROM sentiment_cache").fetchone()[0] == 0

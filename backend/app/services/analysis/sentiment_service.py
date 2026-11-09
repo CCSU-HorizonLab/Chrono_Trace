@@ -68,6 +68,14 @@ def singleton(cls):
 logger = logging.getLogger(__name__)
 
 
+def _sentiment_cache_schema_stale(db) -> bool:
+    """v2 tag 曾早于 ctx_used 列落库（11-07 下午工作区形态启动过的库 tag 已
+    写而表无此列）→ 写入必失败且 purge 因 tag 匹配永远跳过。tag 匹配不
+    代表结构匹配：表在场而缺列即待重置（表不在场归常规建表路径，不算）。"""
+    cols = {row[1] for row in db.execute("PRAGMA table_info(sentiment_cache)")}
+    return bool(cols) and "ctx_used" not in cols
+
+
 def purge_stale_sentiment_caches(model_tag: str) -> None:
     """模型口径变更 → 作废两张情感缓存（sentiment_cache 归下次全面分析重建，
     realtime_sentiment_cache 归监听增量重建）。两张表都 DROP 重走 schema：
@@ -80,7 +88,7 @@ def purge_stale_sentiment_caches(model_tag: str) -> None:
         row = db.execute(
             "SELECT value FROM settings WHERE key = 'sentiment_model_tag'"
         ).fetchone()
-        if row and row["value"] == model_tag:
+        if row and row["value"] == model_tag and not _sentiment_cache_schema_stale(db):
             return
         db.execute("DROP TABLE IF EXISTS sentiment_cache")
         db.execute("DROP TABLE IF EXISTS realtime_sentiment_cache")

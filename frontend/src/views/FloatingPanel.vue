@@ -3030,9 +3030,9 @@ async function loadLastThread() {
 .fp-card-bd { padding: 0 12px 12px; border-top: 1px solid var(--ct-border-color); padding-top: 12px; background: var(--ct-bg-sunken); }
 .fp-cot { background: var(--ct-bg-card); border-radius: var(--ct-radius-md); padding: 10px; margin-bottom: 12px; }
 .fp-cot summary { font-size: 11px; color: var(--ct-text-secondary); cursor: pointer; user-select: none; font-weight: 600; outline: none; }
-.fp-cot-txt { user-select: text; -webkit-user-select: text; font-size: 12px; line-height: 1.6; color: var(--ct-text-secondary); margin-top: 8px; border-top: 1px dashed var(--ct-border-color); padding-top: 8px; white-space: pre-wrap; }
+.fp-cot-txt { font-size: 12px; line-height: 1.6; color: var(--ct-text-secondary); margin-top: 8px; border-top: 1px dashed var(--ct-border-color); padding-top: 8px; white-space: pre-wrap; }
 .fp-speech-item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: var(--ct-bg-card); border-radius: var(--ct-radius-md); margin-bottom: 8px; box-shadow: var(--ct-shadow-sm); }
-.fp-speech-text { font-size: 13px; line-height: 1.6; color: var(--ct-text-primary); flex: 1; user-select: text; -webkit-user-select: text; }
+.fp-speech-text { font-size: 13px; line-height: 1.6; color: var(--ct-text-primary); flex: 1; }
 .fp-rag-row { display: flex; justify-content: flex-end; margin-top: 8px; min-height: 18px; }
 .fp-rag-badge { display: inline-flex; align-items: center; max-width: 100%; min-height: 18px; padding: 2px 7px; border-radius: var(--ct-radius-sm); border: 1px solid var(--ct-border-color); background: var(--ct-bg-sunken); color: var(--ct-text-tertiary); font-size: 10.5px; line-height: 1.2; font-weight: 600; white-space: nowrap; }
 .fp-rag-badge.referenced { color: var(--ct-color-primary); border-color: color-mix(in srgb, var(--ct-color-primary) 28%, transparent); background: var(--ct-color-primary-tint); }
@@ -3110,7 +3110,7 @@ async function loadLastThread() {
 .fp-bubble.ai-user .fp-bubble-time { color: rgba(255, 255, 255, 0.82); }
 .fp-bubble.ai-assistant .fp-bubble-time { color: var(--ct-color-primary); opacity: 0.7; }
 
-.fp-bubble-txt { font-size: 13.5px; line-height: 1.55; word-break: break-word; white-space: pre-wrap; user-select: text; -webkit-user-select: text; cursor: text; }
+.fp-bubble-txt { font-size: 13.5px; line-height: 1.55; word-break: break-word; white-space: pre-wrap; cursor: text; }
 .fp-bubble .fp-rag-row { margin-top: 7px; }
 
 /* 仿微信 4.0 引用消息块（左侧竖线 + 浅灰底 + 默认两行省略，点击展开全文） */

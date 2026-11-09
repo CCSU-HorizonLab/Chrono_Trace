@@ -1656,8 +1656,6 @@ onUnmounted(() => {
   line-height: 1.6;
   font-size: var(--ct-text-base);
   color: var(--ct-text-secondary);
-  user-select: text;
-  -webkit-user-select: text;
 }
 
 /* Dimension Cards Grid */

@@ -657,8 +657,6 @@ onUnmounted(() => {
   line-height: 1.7;
   white-space: pre-wrap;
   word-break: break-word;
-  user-select: text;
-  -webkit-user-select: text;
   color: var(--ct-text-primary);
 }
 
@@ -764,8 +762,6 @@ onUnmounted(() => {
   font-size: 13px;
   line-height: 1.7;
   word-break: break-word;
-  user-select: text;
-  -webkit-user-select: text;
   color: var(--ct-text-primary);
 }
 
@@ -880,8 +876,6 @@ onUnmounted(() => {
   color: var(--ct-text-secondary);
   font-style: italic;
   word-break: break-word;
-  user-select: text;
-  -webkit-user-select: text;
 }
 
 /* 参考记忆行：kind 徽标 + 陈述 + 就地纠错按钮（与记忆管理弹窗同接口） */

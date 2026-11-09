@@ -155,6 +155,13 @@ body {
   font-variant-numeric: tabular-nums; /* 表格/数字对齐；大数字展示另用品牌字体 */
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  /* QtWebEngine 定制 UA 样式表给 body 设了带 !important 的
+     -webkit-user-select:none（全站继承禁选，作者普通规则压不住），必须
+     同级 !important 覆盖恢复原生选择；Chrome 等浏览器无此 UA 规则，声明
+     同为 no-op。交互控件的局部禁选（年份轴/拖拽区等）是子元素自身规则，
+     不受继承值影响 */
+  user-select: text !important;
+  -webkit-user-select: text !important;
   margin: 0;
   padding: 0;
 }

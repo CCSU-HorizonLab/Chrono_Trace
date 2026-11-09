@@ -225,8 +225,6 @@ const handleClick = () => {
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
-  user-select: text;
-  -webkit-user-select: text;
 }
 
 .interpretation.expanded {

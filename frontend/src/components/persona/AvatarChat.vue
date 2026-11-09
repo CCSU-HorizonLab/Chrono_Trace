@@ -493,8 +493,6 @@ watch(() => props.conversationId, () => {
   line-height: 1.7;
   white-space: pre-wrap;
   word-break: break-word;
-  user-select: text;
-  -webkit-user-select: text;
   color: var(--ct-text-primary);
 }
 

@@ -469,13 +469,15 @@ export function mockBridgeInit() {
         },
       },
     }),
+    // overall 是对象（后端 analysis_read 契约：字数统计+interpretation），高频词条走 get_analysis 的 wordcloud
     get_word_counts: async () => ({
       success: true,
-      data: { overall: [{ word: '徒步', count: 312 }, { word: '哈哈哈', count: 208 }, { word: '加班', count: 154 }] },
+      data: { overall: { user_char_count: 15200, other_char_count: 21400, char_ratio: 1.41, interpretation: '对方投入的字数是您的1.41倍' }, by_session: [] },
     }),
+    // initiative_rate 是对方发起占比（后端 feature_extraction 契约：other_initiated/total，0-1 小数）
     get_initiative_stats: async () => ({
       success: true,
-      data: { total_sessions: 214, user_initiated_sessions: 135, other_initiated_sessions: 79, initiative_rate: 63.1, interpretation: '对话多由你发起' },
+      data: { total_sessions: 214, user_initiated_sessions: 135, other_initiated_sessions: 79, initiative_rate: 0.369, interpretation: '对方主动发起36.9%的会话' },
     }),
     get_response_times: async () => ({
       success: true,

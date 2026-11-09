@@ -8,7 +8,6 @@
       <FiltersBar :conversations="conversations" :selected-conversation-id="selectedConversationId" :loading="loading"
         @update:conversation-id="onConversationChange" />
     </div>
-    <router-link v-if="selectedConversationId" to="/analytics" class="btn pulse-goto-analytics">分析工作台 →</router-link>
   </header>
 
   <!-- 无数据空态：指路数据页（不再是控制台首屏） -->
@@ -24,11 +23,12 @@
     </div>
 
     <template v-if="overview">
-      <!-- 未分析：第一次分析的引导（P1 答案优先，先给入口再谈指标） -->
+      <!-- 未分析：第一次分析的引导（P1 答案优先，先给入口再谈指标）。
+           CTA 直投分析工作台（常驻专业视图内），进度由顶部细条全程可见 -->
       <div v-if="!overview.analyzed" class="panel pulse-empty-analysis">
         <div class="panel-head"><span class="panel-title">关系判读</span></div>
         <p class="pulse-empty-text">还没有分析过你们的聊天记录，先跑一次全面分析，脉搏页才有话可说。</p>
-        <router-link to="/analytics" class="btn primary pulse-empty-cta">开始全面分析</router-link>
+        <button type="button" class="btn primary pulse-empty-cta" @click="runAnalysisNow">开始全面分析</button>
       </div>
 
       <template v-else>
@@ -40,10 +40,11 @@
               {{ bannerVerdict.label }}
               <template v-if="llmUpgrading">· 生成中…</template>
             </span>
-            <span v-if="overview.professional.analysis_stale" class="pulse-stale-badge"
-              :title="overview.professional.pending_message_count ? `有 ${overview.professional.pending_message_count} 条新消息未纳入当前指标` : '消息集已变化，建议重新分析'">
+            <button v-if="overview.professional.analysis_stale" type="button" class="pulse-stale-badge"
+              :title="overview.professional.pending_message_count ? `有 ${overview.professional.pending_message_count} 条新消息未纳入当前指标，点击重新分析` : '消息集已变化，点击重新分析'"
+              @click="runAnalysisNow">
               {{ overview.professional.pending_message_count ? `${overview.professional.pending_message_count} 条新消息待分析` : '结果待更新' }}
-            </span>
+            </button>
             <button v-if="weekly" class="btn weekly-toggle" :aria-expanded="showWeekly" @click="showWeekly = !showWeekly">
               展开周报 {{ showWeekly ? '▴' : '▾' }}
             </button>
@@ -161,51 +162,18 @@
           </ul>
         </div>
 
-        <!-- 专业视图折叠（P2：深度内里降一屏，不删） -->
-        <div class="panel pulse-pro">
-          <button class="btn pulse-pro-toggle" :aria-expanded="showPro" @click="showPro = !showPro">
-            专业视图 {{ showPro ? '▴' : '▾' }}
-          </button>
-          <div v-show="showPro" class="pulse-pro-body">
-            <div class="pulse-pro-grid">
-              <div class="pro-main">
-                <DimensionRadar :dimension-scores="allDimensions" />
-                <div class="dimension-cards-grid">
-                  <AffinityScoreCard v-if="pro.interaction_investment" title="互动投入"
-                    :score="pro.interaction_investment.score" :max-score="100"
-                    :weight="pro.interaction_investment.weight"
-                    :interpretation="pro.interaction_investment.interpretation" />
-                  <AffinityScoreCard v-if="pro.emotional_resonance" title="情感共鸣"
-                    :score="pro.emotional_resonance.score" :max-score="100"
-                    :weight="pro.emotional_resonance.weight"
-                    :interpretation="pro.emotional_resonance.interpretation" />
-                  <AffinityScoreCard v-if="pro.closeness_signals" title="亲近信号"
-                    :score="pro.closeness_signals.score" :max-score="100"
-                    :weight="pro.closeness_signals.weight"
-                    :interpretation="pro.closeness_signals.interpretation" />
-                  <AffinityScoreCard v-if="pro.preference_compatibility" title="喜好兼容度"
-                    :score="pro.preference_compatibility.score" :max-score="100"
-                    :weight="pro.preference_compatibility.weight"
-                    :interpretation="pro.preference_compatibility.interpretation"
-                    :is-bonus="!(pro.preference_compatibility.weight > 0)"
-                    :bonus-value="pro.preference_compatibility.bonus_scores?.preference_bonus" />
-                  <AffinityScoreCard v-if="pro.llm_relationship" class="span-full" title="AI 关系评估"
-                    :score="pro.llm_relationship.score" :max-score="100"
-                    :weight="pro.llm_relationship.weight"
-                    :interpretation="pro.llm_relationship.interpretation" />
-                </div>
-                <p v-if="overview.professional.absent_reason" class="pro-absent-note">
-                  AI 关系评估未参与本次评分：{{ overview.professional.absent_reason }}
-                </p>
-              </div>
-              <div class="pro-side">
-                <RiskSignalCard :assessment="pro.risk_assessment" />
-              </div>
-            </div>
-            <router-link to="/analytics" class="btn pulse-goto-analytics pro-link">权重配置 · 重试 AI 评估 · 维度拆解，去分析工作台 →</router-link>
-          </div>
-        </div>
       </template>
+
+      <!-- 专业视图折叠（P2 深度内里降一屏）：分析工作台常驻挂载（v-show 保
+           轮询/接续活性），未分析时也可由引导卡 CTA / 新鲜度徽标直接触发 -->
+      <div class="panel pulse-pro">
+        <button class="btn pulse-pro-toggle" :aria-expanded="showPro" @click="showPro = !showPro">
+          专业视图 {{ showPro ? '▴' : '▾' }}
+        </button>
+        <div v-show="showPro" class="pulse-pro-body">
+          <AnalysisWorkbench :conversation-id="selectedConversationId" @analysis-completed="onAnalysisCompleted" />
+        </div>
+      </div>
     </template>
   </template>
 
@@ -226,10 +194,8 @@ import { bridgeReady, api } from '@/api/bridge'
 import { getPulseOverview, getWeeklyReport, requestWeeklyLlm, type PulseOverview, type WeeklyReport } from '@/api/pulse'
 import { chartPalette } from '@/components/charts/chartTheme'
 import FiltersBar from '@/components/analytics/FiltersBar.vue'
+import AnalysisWorkbench from '@/components/analytics/AnalysisWorkbench.vue'
 import { sharedContactId as selectedConversationId } from '@/utils/contactScope'
-import DimensionRadar from '@/components/affinity/DimensionRadar.vue'
-import AffinityScoreCard from '@/components/affinity/AffinityScoreCard.vue'
-import RiskSignalCard from '@/components/affinity/RiskSignalCard.vue'
 import CtAvatar from '@/components/base/CtAvatar.vue'
 
 type Conversation = { id: number; name: string; username: string; avatar?: string; conversation_type?: 'private' | 'group' }
@@ -250,7 +216,6 @@ const showWeekly = ref(false)
 
 const currentConversation = computed(() => conversations.value.find((c) => c.id === selectedConversationId.value))
 const isGroup = computed(() => currentConversation.value?.conversation_type === 'group')
-const pro = computed<Record<string, any>>(() => overview.value?.professional?.result ?? {})
 
 const bannerVerdict = computed(() => {
     const w = weekly.value
@@ -266,13 +231,18 @@ function fmtDate(ts: number): string {
     const d = new Date(ts * 1000)
     return `${d.getMonth() + 1}月${d.getDate()}日 ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
-const allDimensions = computed(() => ({
-    interaction_investment: pro.value.interaction_investment ?? null,
-    emotional_resonance: pro.value.emotional_resonance ?? null,
-    closeness_signals: pro.value.closeness_signals ?? null,
-    preference_compatibility: pro.value.preference_compatibility ?? null,
-    llm_relationship: pro.value.llm_relationship ?? null,
-}))
+
+// ---------- 分析触发（引导卡 CTA / 新鲜度徽标 → 常驻专业视图内的工作台） ----------
+
+function runAnalysisNow() {
+    if (!selectedConversationId.value) return
+    window.dispatchEvent(new CustomEvent('chrono:run-analysis', { detail: { conversationId: selectedConversationId.value } }))
+}
+
+function onAnalysisCompleted() {
+    // 工作台终态（完成/部分结果/补评完成）：刷新门面层概览与周报
+    if (selectedConversationId.value) void loadOverview(selectedConversationId.value)
+}
 
 // ---------- 直白化格式化（口径全部来自后端，这里只做展示层换算） ----------
 
@@ -505,11 +475,6 @@ onUnmounted(() => {
     text-overflow: ellipsis;
 }
 
-.pulse-goto-analytics {
-    flex-shrink: 0;
-    text-decoration: none;
-}
-
 /* ---------- 判读横幅 ---------- */
 .pulse-verdict .verdict-text {
     margin: 2px 0 0;
@@ -522,8 +487,15 @@ onUnmounted(() => {
     font-size: var(--ct-text-xs);
     color: var(--ct-color-warning);
     background: var(--ct-color-warning-tint);
+    border: none;
     border-radius: 999px;
     padding: 2px 10px;
+    cursor: pointer;
+}
+
+.pulse-stale-badge:hover {
+    background: var(--ct-color-warning);
+    color: #FFFFFF;
 }
 
 .weekly-toggle {
@@ -751,7 +723,7 @@ onUnmounted(() => {
     color: var(--ct-color-warning);
 }
 
-/* ---------- 专业视图折叠 ---------- */
+/* ---------- 专业视图折叠（内嵌分析工作台，样式随组件自包含） ---------- */
 .pulse-pro-toggle { width: 100%; }
 
 .pulse-pro-body {
@@ -760,35 +732,6 @@ onUnmounted(() => {
     flex-direction: column;
     gap: 14px;
 }
-
-.pulse-pro-grid {
-    display: grid;
-    grid-template-columns: 1fr 320px;
-    gap: 16px;
-    align-items: start;
-}
-
-.pro-main {
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-}
-
-.dimension-cards-grid {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 12px;
-}
-
-.span-full { grid-column: 1 / -1; }
-
-.pro-absent-note {
-    margin: 0;
-    font-size: var(--ct-text-sm);
-    color: var(--ct-text-tertiary);
-}
-
-.pro-link { align-self: flex-start; text-decoration: none; }
 
 /* ---------- 空态 / 提示 ---------- */
 .pulse-empty,
@@ -822,6 +765,5 @@ onUnmounted(() => {
 
 @media (max-width: 960px) {
     .pulse-metrics { grid-template-columns: 1fr; }
-    .pulse-pro-grid { grid-template-columns: 1fr; }
 }
 </style>

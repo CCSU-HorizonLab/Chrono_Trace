@@ -32,15 +32,21 @@ def cleanup_proc_tree(proc: subprocess.Popen):
             except Exception:
                 pass
         else:
+            # 整组信号（start_frontend_dev 已 start_new_session 成组）：只杀
+            # npm 这个 pid 会留 vite 孤儿占 5173，下次启动检测到端口直接
+            # 挂载旧实例——watch 失效时会一直服务旧源码且 HMR 静默不工作
+            pgid = None
             try:
-                proc.send_signal(signal.SIGINT)
+                pgid = os.getpgid(proc.pid)
+                os.killpg(pgid, signal.SIGINT)
                 proc.wait(timeout=3)
             except Exception:
                 pass
-            try:
-                proc.kill()
-            except Exception:
-                pass
+            if pgid is not None:
+                try:
+                    os.killpg(pgid, signal.SIGKILL)  # 组已全退时 ESRCH，吞掉
+                except Exception:
+                    pass
     except Exception:
         pass
 
@@ -62,8 +68,12 @@ def wait_for_dev_server(url: str, timeout_sec: int = 60, interval_sec: float = 0
 def start_frontend_dev(cwd_path: str):
     if os.name == 'nt':
         cmd = ["cmd", "/c", "npm", "run", "dev"]
+        popen_kwargs = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
     else:
         cmd = ["npm", "run", "dev"]
+        # 独立进程组：cleanup_proc_tree 走 killpg 整组清理（见其注释），
+        # 否则 npm 退出后 vite 成孤儿占 5173
+        popen_kwargs = {"start_new_session": True}
 
     return subprocess.Popen(
         cmd,
@@ -71,7 +81,7 @@ def start_frontend_dev(cwd_path: str):
         stdout=None,
         stderr=None,
         shell=False,
-        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0,
+        **popen_kwargs,
     )
 
 

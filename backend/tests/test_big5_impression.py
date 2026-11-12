@@ -29,7 +29,8 @@ def db(monkeypatch):
     conn.row_factory = sqlite3.Row
     conn.execute(
         "CREATE TABLE messages (id INTEGER PRIMARY KEY, conversation_id INT, "
-        "is_sender INT, message_type INT DEFAULT 1, content TEXT, timestamp INT)"
+        "is_sender INT, message_type INT DEFAULT 1, content TEXT, timestamp INT, "
+        "sender TEXT)"
     )
     conn.execute(
         "CREATE TABLE sentiment_cache (message_id INTEGER UNIQUE, polarity INT, "
@@ -629,3 +630,140 @@ class TestWindowedImpressions:
         # 重建后只剩本次新算的 local 行（旧 v1 行随 DROP 消失）
         count = db.execute("SELECT COUNT(*) FROM big5_impressions").fetchone()
         assert count[0] == 2
+
+
+class _FakeClock:
+    """bimod 命名空间的可控时钟：time() 受控，其余属性转发真 time 模块。"""
+
+    def __init__(self):
+        self.now = 1_700_000_000
+
+    def time(self):
+        return self.now
+
+    def __getattr__(self, name):
+        return getattr(time, name)
+
+
+class TestGroupMemberImpressions:
+    """群聊成员级基础层：sender 短名聚合、me=is_sender 1、门槛、缓存。"""
+
+    @staticmethod
+    def _seed_group(db, conversation_id=7, start_ts=1_700_000_000):
+        """我 40 条 + 阿珍 40 条 + 阿强 40 条（三方轮转交错，保证每人都有
+        话题延续机会）+ 路人 5 条（不足门槛）。"""
+        speakers = ((1, None), (0, "阿珍"), (0, "阿强"))
+        for i in range(40):
+            for slot, (side, sender) in enumerate(speakers):
+                db.execute(
+                    "INSERT INTO messages (conversation_id, is_sender, message_type,"
+                    " content, timestamp, sender) VALUES (?, ?, 1, ?, ?, ?)",
+                    (conversation_id, side, f"群聊内容{i}-{slot}",
+                     start_ts + i * 600 + slot * 200, sender),
+                )
+        for i in range(5):
+            db.execute(
+                "INSERT INTO messages (conversation_id, is_sender, message_type,"
+                " content, timestamp, sender) VALUES (?, 0, 1, ?, ?, ?)",
+                (conversation_id, f"路过{i}", start_ts + 40000 + i * 600, "路人"),
+            )
+        db.commit()
+
+    def test_aggregation_gates_and_renormalized_scores(self, db):
+        """分侧聚合、门槛拒出、无情感缓存下五维仍全有分（重归一）。"""
+        self._seed_group(db)
+        payload = PersonalityImpressionService().get_group_member_impressions(7)
+        assert payload["ok"] is True
+        by_name = {m["name"]: m for m in payload["members"]}
+        assert set(by_name) == {"我", "阿珍", "阿强", "路人"}
+        counts = [m["sample_count"] for m in payload["members"]]
+        assert counts == sorted(counts, reverse=True)
+        # 我/阿珍/阿强出画像：无 sentiment_cache 仍五维全有分（在场重归一）
+        for name in ("我", "阿珍", "阿强"):
+            item = by_name[name]
+            assert item["available"] is True
+            for dim in DIMENSIONS:
+                assert item["big5"]["scores"][dim]["score"] is not None
+        # 路人不足 30 条：不出画像只报样本量
+        assert by_name["路人"]["available"] is False
+        assert by_name["路人"]["big5"] is None
+        assert by_name["路人"]["sample_count"] == 5
+
+    def test_subject_cache_keys_me_and_member(self, db):
+        """「我」落 me 键、成员落 member:{短名} 键，不与单聊 other 撞。"""
+        self._seed_group(db)
+        PersonalityImpressionService().get_group_member_impressions(7)
+        subjects = {
+            r[0] for r in db.execute(
+                "SELECT DISTINCT subject FROM big5_impressions WHERE conversation_id = 7"
+            )
+        }
+        assert subjects == {"me", "member:阿珍", "member:阿强"}
+
+    def test_cache_hit_and_force_refresh(self, db, monkeypatch):
+        """30 天 TTL 内二次调用走缓存（created_at 不变），force_refresh 重算。"""
+        clock = _FakeClock()
+        monkeypatch.setattr(bimod, "time", clock)
+        self._seed_group(db)
+        service = PersonalityImpressionService()
+        first = service.get_group_member_impressions(7)
+        first_zh = next(m for m in first["members"] if m["name"] == "阿珍")
+
+        # 加新消息 + 推进 5 秒（未过 TTL）：画像分数走缓存原样复用，
+        # sample_count 是现算的（新消息计入）
+        for i in range(40):
+            db.execute(
+                "INSERT INTO messages (conversation_id, is_sender, message_type,"
+                " content, timestamp, sender) VALUES (7, 0, 1, ?, ?, '阿珍')",
+                (f"追加{i}", 1_700_100_000 + i * 600),
+            )
+        db.commit()
+        clock.now += 5
+        second = service.get_group_member_impressions(7)
+        second_zh = next(m for m in second["members"] if m["name"] == "阿珍")
+        assert second_zh["sample_count"] == 80
+        # 命中缓存行：created_at 是首调落库时刻（现算结果无此缓存元数据）
+        assert second_zh["big5"]["created_at"] == 1_700_000_000
+        assert second_zh["big5"]["scores"] == first_zh["big5"]["scores"]
+
+        clock.now += 1
+        service.get_group_member_impressions(7, force_refresh=True)
+        row = db.execute(
+            "SELECT created_at FROM big5_impressions WHERE conversation_id = 7"
+            " AND subject = 'member:阿珍' AND source = 'local'"
+        ).fetchone()
+        assert row[0] == 1_700_000_006
+
+    def test_member_sentiment_joins_by_sender(self, db):
+        """成员情感子指标按 sender 过滤：只吃自己的 sentiment 行，不串侧。"""
+        self._seed_group(db)
+        # 阿珍的消息全部正向高强度，阿强全部负向低强度
+        zh_ids = [
+            r[0] for r in db.execute(
+                "SELECT id FROM messages WHERE conversation_id = 7 AND sender = '阿珍'"
+            ).fetchall()
+        ]
+        qiang_ids = [
+            r[0] for r in db.execute(
+                "SELECT id FROM messages WHERE conversation_id = 7 AND sender = '阿强'"
+            ).fetchall()
+        ]
+        for mid in zh_ids:
+            db.execute(
+                "INSERT OR REPLACE INTO sentiment_cache (message_id, polarity, intensity, created_at)"
+                " VALUES (?, 1, 0.9, 1)", (mid,))
+        for mid in qiang_ids:
+            db.execute(
+                "INSERT OR REPLACE INTO sentiment_cache (message_id, polarity, intensity, created_at)"
+                " VALUES (?, -1, 0.1, 1)", (mid,))
+        db.commit()
+        payload = PersonalityImpressionService().get_group_member_impressions(7)
+        by_name = {m["name"]: m for m in payload["members"]}
+        zh_ind = by_name["阿珍"]["big5"]["indicators"]
+        qiang_ind = by_name["阿强"]["big5"]["indicators"]
+        assert zh_ind["negative_ratio"] == 0.0
+        assert qiang_ind["negative_ratio"] == 1.0
+        # 全同强度 → 方差 0；正负比按极性分侧（1.0 vs 0.0）证明 sender 过滤
+        assert zh_ind["intensity_variance"] == 0.0
+        assert zh_ind["pos_neg_ratio"] == 1.0
+        assert qiang_ind["pos_neg_ratio"] == 0.0

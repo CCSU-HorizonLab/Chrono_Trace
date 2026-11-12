@@ -161,21 +161,35 @@
             <span class="gm-share">占比</span>
             <span class="gm-chars">字数</span>
           </div>
-          <div v-for="m in groupStats.members.slice(0, 20)" :key="m.name" class="group-member-row" :class="{ me: m.name === '我' }">
-            <span class="gm-name">{{ m.name }}</span>
-            <span class="gm-count">{{ m.message_count }}</span>
-            <span class="gm-share">
-              <span class="gm-share-bar"><i :style="{ width: (m.share * 100).toFixed(1) + '%' }"></i></span>
-              <em>{{ (m.share * 100).toFixed(1) }}%</em>
-            </span>
-            <span class="gm-chars">{{ m.char_count }}</span>
-          </div>
+          <template v-for="m in groupStats.members.slice(0, 20)" :key="m.name">
+            <div class="group-member-row gm-clickable" :class="{ me: m.name === '我' }" @click="toggleMemberBig5(m.name)">
+              <span class="gm-name">{{ m.name }}</span>
+              <span class="gm-count">{{ m.message_count }}</span>
+              <span class="gm-share">
+                <span class="gm-share-bar"><i :style="{ width: (m.share * 100).toFixed(1) + '%' }"></i></span>
+                <em>{{ (m.share * 100).toFixed(1) }}%</em>
+              </span>
+              <span class="gm-chars">{{ m.char_count }}</span>
+            </div>
+            <div v-if="expandedMember === m.name" class="gm-big5">
+              <div v-if="memberBig5Loading" class="gm-big5-hint">大五画像计算中...</div>
+              <template v-else-if="memberBig5For(m.name)?.available">
+                <div class="gm-b5-row" v-for="dim in memberBig5Dims(m.name)" :key="dim.label">
+                  <span class="gm-b5-label">{{ dim.label }}</span>
+                  <span class="gm-b5-track"><i :style="{ width: (dim.score ?? 0) + '%' }"></i></span>
+                  <span class="gm-b5-score">{{ Math.round(dim.score ?? 0) }}</span>
+                </div>
+                <p class="gm-big5-note">本地统计印象（样本 {{ memberBig5For(m.name)?.sample_count }} 条），非心理测评</p>
+              </template>
+              <p v-else class="gm-big5-hint">样本 {{ memberBig5For(m.name)?.sample_count ?? '—' }} 条，不足 30 条暂不出画像</p>
+            </div>
+          </template>
         </div>
         <div v-if="groupStats.top_words && groupStats.top_words.length" class="group-top-words">
           <span class="gtw-title">高频词</span>
           <span v-for="w in groupStats.top_words.slice(0, 15)" :key="w.word" class="gtw-chip">{{ w.word }} ×{{ w.count }}</span>
         </div>
-        <p class="group-note">成员名为导入时解析的显示短名；群聊暂不提供成员关系分析。</p>
+        <p class="group-note">成员名为导入时解析的显示短名（同名合并）；点击成员行看大五印象。</p>
       </template>
       <p v-else class="group-empty">暂无群聊消息或统计失败。</p>
     </CtCard>
@@ -300,13 +314,51 @@ const isGroup = computed(() => currentConversation.value?.conversation_type === 
 
 type GroupMemberStat = { name: string; message_count: number; char_count: number; share: number }
 type GroupStats = { total_messages: number; members: GroupMemberStat[]; my_rank: number | null; top_words: Array<{ word: string; count: number }> }
+type GroupMemberBig5 = { name: string; sample_count: number; available: boolean; big5: { scores?: Record<string, { label?: string; score: number | null }> } | null }
 const groupStats = ref<GroupStats | null>(null)
 const groupStatsLoading = ref(false)
 const groupSummary = ref<{ summary: string; degraded: boolean; degraded_reason?: string } | null>(null)
 const groupSummaryLoading = ref(false)
 const groupSummaryDays = ref(7)
+const memberBig5 = ref<GroupMemberBig5[] | null>(null)
+const memberBig5Loading = ref(false)
+const expandedMember = ref<string | null>(null)
+
+function memberBig5For(name: string): GroupMemberBig5 | undefined {
+  return memberBig5.value?.find(item => item.name === name)
+}
+
+function memberBig5Dims(name: string): Array<{ label: string; score: number | null }> {
+  const scores = memberBig5For(name)?.big5?.scores
+  if (!scores) return []
+  return Object.values(scores)
+    .filter((d): d is { label: string; score: number } => !!d && typeof d.score === 'number' && !!d.label)
+}
+
+async function toggleMemberBig5(name: string) {
+  if (expandedMember.value === name) {
+    expandedMember.value = null
+    return
+  }
+  expandedMember.value = name
+  if (memberBig5.value || memberBig5Loading.value || !selectedConversationId.value) return
+  memberBig5Loading.value = true
+  const conversationId = selectedConversationId.value
+  try {
+    await bridgeReady()
+    const res = await api.get_group_member_big5(conversationId)
+    if (conversationId !== selectedConversationId.value) return // 已切换联系人（F1）
+    memberBig5.value = res?.ok && Array.isArray(res.members) ? res.members : []
+  } catch {
+    memberBig5.value = []
+  } finally {
+    memberBig5Loading.value = false
+  }
+}
 
 async function loadGroupStats() {
+  memberBig5.value = null
+  expandedMember.value = null
   if (!isGroup.value || !selectedConversationId.value) {
     groupStats.value = null
     return
@@ -977,6 +1029,70 @@ onMounted(() => { void loadConversations() })
   color: var(--ct-text-tertiary);
   min-width: 44px;
   text-align: right;
+}
+
+.group-member-row.gm-clickable {
+  cursor: pointer;
+}
+
+.group-member-row.gm-clickable:hover {
+  background: var(--ct-bg-sunken);
+}
+
+.gm-big5 {
+  padding: 8px 10px 10px;
+  border-bottom: 1px solid var(--ct-border-color);
+  background: var(--ct-bg-sunken);
+}
+
+.gm-big5:last-child {
+  border-bottom: none;
+}
+
+.gm-b5-row {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr) 32px;
+  gap: 8px;
+  align-items: center;
+  padding: 2px 0;
+  font-size: 11px;
+  color: var(--ct-text-secondary);
+}
+
+.gm-b5-label {
+  white-space: nowrap;
+}
+
+.gm-b5-track {
+  height: 5px;
+  border-radius: 3px;
+  background: var(--ct-border-color);
+  overflow: hidden;
+}
+
+.gm-b5-track i {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--ct-color-primary);
+}
+
+.gm-b5-score {
+  text-align: right;
+  font-family: var(--ct-font-mono);
+  color: var(--ct-text-primary);
+}
+
+.gm-big5-note {
+  margin: 6px 0 0;
+  font-size: 10px;
+  color: var(--ct-text-tertiary);
+}
+
+.gm-big5-hint {
+  margin: 0;
+  font-size: 11px;
+  color: var(--ct-text-tertiary);
 }
 
 .group-top-words {

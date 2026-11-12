@@ -204,6 +204,154 @@ class PersonalityImpressionService:
             result[subject] = computed
         return result
 
+    def get_group_member_impressions(
+        self,
+        conversation_id: int,
+        account_wxid: str = "",
+        force_refresh: bool = False,
+    ) -> Dict[str, Any]:
+        """群聊成员级大五基础层（纯本地统计，full 窗口 + 30 天缓存）。
+
+        聚合键 = sender 显示短名（is_sender=1 → 「我」，缓存键沿用 me，
+        其余 member:{短名}）。微信 4.x 无群成员花名册，同名短名合并统计
+        （显示名本身有损，接受）。样本 < BIG5_MIN_MESSAGES 的成员
+        available=false 只报样本量。LLM 增强二期（source 字段已预留）。
+        """
+        now = int(time.time())
+        rows = self._fetch_conversation_rows(conversation_id)
+
+        def _decode(value: Any) -> str:
+            if value is None:
+                return ""
+            if isinstance(value, bytes):
+                return value.decode("utf-8", errors="replace")
+            return str(value)
+
+        grouped: Dict[str, List[Tuple[int, str]]] = {}
+        timeline: List[Tuple[int, str]] = []
+        for row in rows:
+            text = _decode(row[1]).strip()
+            if not text:
+                continue
+            if int(row[0] or 0) == 1:
+                name = "我"
+            else:
+                name = _decode(row[3]).strip() or "未知成员"
+            entry = (int(row[2] or 0), text)
+            grouped.setdefault(name, []).append(entry)
+            timeline.append((entry[0], name))
+
+        members: List[Dict[str, Any]] = []
+        for name, entries in grouped.items():
+            subject = "me" if name == "我" else f"member:{name}"
+            data = None
+            if not force_refresh:
+                data = self._load_cached(
+                    conversation_id, account_wxid, subject, now, only_source="local"
+                )
+            if data is None:
+                data = self._compute_group_local(
+                    conversation_id, subject, name, entries, timeline
+                )
+                if data is not None:
+                    self._save_cache(
+                        conversation_id, account_wxid, subject, data, "local", None
+                    )
+            members.append({
+                "name": name,
+                "sample_count": len(entries),
+                "available": data is not None,
+                "big5": data,
+            })
+        members.sort(key=lambda m: -m["sample_count"])
+        return {
+            "ok": True,
+            "source": "local",
+            "members": members,
+            "disclaimer": "语言风格印象，非心理测评；大五为连续维度（0-100），不构成人格结论",
+        }
+
+    def _compute_group_local(
+        self,
+        conversation_id: int,
+        subject: str,
+        name: str,
+        entries: List[Tuple[int, str]],
+        timeline: List[Tuple[int, str]],
+    ) -> Optional[Dict[str, Any]]:
+        """群聊成员基础层：单聊指标体系的子集口径。
+
+        缺席（单聊二元对话对设计，群聊无定义，重归一机制自动剔除）：
+        icebreak_ratio / unanswered_rate / daily_cv / revoke_rate。
+        topic_continuation 的「对方」重定义为该成员之外任何人的最新发言；
+        active_days 取该成员有发言的自然日数（非会话全跨度）。
+        """
+        own_texts = [t for _, t in entries]
+        if len(own_texts) < BIG5_MIN_MESSAGES:
+            return None
+        is_me = subject == "me"
+        late_night = sum(
+            1 for ts, _ in entries if 0 <= time.localtime(ts).tm_hour < 6
+        )
+
+        reply_hits = 0
+        reply_chances = 0
+        last_other_ts: Optional[int] = None
+        for ts, who in timeline:
+            if who == name:
+                if last_other_ts is not None:
+                    reply_chances += 1
+                    if ts - last_other_ts <= 1800:
+                        reply_hits += 1
+                    last_other_ts = None
+            else:
+                last_other_ts = ts
+
+        raw: Dict[str, Optional[float]] = self._text_static_indicators(
+            own_texts, late_night
+        )
+        active_days = len({
+            time.strftime("%Y-%m-%d", time.localtime(ts)) for ts, _ in entries
+        })
+        raw["daily_avg"] = round(len(own_texts) / max(active_days, 1), 3)
+        raw["topic_continuation"] = (
+            round(reply_hits / reply_chances, 4) if reply_chances else None
+        )
+
+        side_flag = 1 if is_me else 0
+        sender = None if is_me else name
+        intensity_variance, negative_ratio, pos_neg_ratio = self._sentiment_indicators(
+            conversation_id, side_flag, sender=sender
+        )
+        raw["intensity_variance"] = intensity_variance
+        raw["negative_ratio"] = negative_ratio
+        raw["pos_neg_ratio"] = pos_neg_ratio
+        raw["positive_response_rate"] = self._positive_response_rate(
+            conversation_id, side_flag, sender=sender
+        )
+        raw["share_density"] = self._group_share_density(
+            conversation_id, name, is_me, len(own_texts)
+        )
+
+        scores = compute_big5_base(raw)
+        return {"source": "local", "scores": scores, "indicators": raw}
+
+    @staticmethod
+    def _group_share_density(
+        conversation_id: int, name: str, is_me: bool, own_count: int
+    ) -> float:
+        """群聊成员分享密度：该成员图片/视频/链接 ÷ 文本数（full 窗口）。"""
+        if is_me:
+            where, args = "is_sender = 1", [conversation_id]
+        else:
+            where, args = "is_sender = 0 AND sender = ?", [conversation_id, name]
+        row = get_db().execute(
+            "SELECT COUNT(*) FROM messages WHERE conversation_id = ? AND " + where
+            + " AND (message_type IN (3, 43) OR (message_type = 1 AND content LIKE '%http%'))",
+            args,
+        ).fetchone()
+        return round(int(row[0] or 0) / own_count, 4)
+
     def enhance(
         self,
         conversation_id: int,
@@ -371,14 +519,15 @@ class PersonalityImpressionService:
         from_ts: Optional[int] = None,
         to_ts: Optional[int] = None,
     ):
-        """全量文本消息行（双侧）。大会话十万级，双侧采集共用一次查询。"""
+        """全量文本消息行（双侧，sender 供群聊成员聚合）。大会话十万级，
+        双侧采集共用一次查询。"""
         window_sql = ""
         window_args: list = []
         if from_ts is not None or to_ts is not None:
             window_sql = " AND timestamp BETWEEN ? AND ?"
             window_args = [int(from_ts or 0), int(to_ts or _WINDOW_MAX_TS)]
         return get_db().execute(
-            "SELECT is_sender, content, timestamp FROM messages "
+            "SELECT is_sender, content, timestamp, sender FROM messages "
             f"WHERE conversation_id = ? AND message_type = 1{window_sql} "
             "ORDER BY timestamp ASC, id ASC",
             (conversation_id, *window_args),
@@ -441,12 +590,8 @@ class PersonalityImpressionService:
             conversation_id, side_flag, from_ts, to_ts
         )
 
-        # 词法子指标：表情/感叹/叠词密度、TTR、话题熵（抽样约束分词代价）
-        emoji_hits = sum(1 for text in own_texts if _EMOJI_EXCLAIM_PATTERN.search(text))
-        sample_texts = own_texts[:BIG5_TOKENIZE_LIMIT]
-        ttr, entropy = self._lexical_indicators(sample_texts)
-
-        empathy_density = self._empathy_density(own_texts)
+        # 纯文本子指标（单聊/群聊成员共用 helper）
+        raw = self._text_static_indicators(own_texts, late_night)
 
         # 分享密度：图片/视频/链接 ÷ 文本
         share_window_sql = ""
@@ -497,20 +642,33 @@ class PersonalityImpressionService:
         return {
             "daily_avg": round(daily_avg, 3),
             "icebreak_ratio": round(icebreak_ratio, 4) if icebreak_ratio is not None else None,
-            "emoji_exclaim_density": round(emoji_hits / len(own_texts), 4),
             "unanswered_rate": round(unanswered_rate, 4),
             "daily_cv": round(metrics.daily_cv_active, 4) if metrics.daily_cv_active is not None else None,
             "topic_continuation": round(reply_hits / reply_chances, 4) if reply_chances else None,
             "intensity_variance": intensity_variance,
             "negative_ratio": negative_ratio,
-            "late_night_ratio": round(late_night / len(own_texts), 4),
             "revoke_rate": round(revoke_rate, 4),
             "pos_neg_ratio": round(pos_neg_ratio, 4) if pos_neg_ratio is not None else None,
             "positive_response_rate": positive_response_rate,
-            "empathy_density": empathy_density,
+            "share_density": round(share_count / len(own_texts), 4),
+            **raw,
+        }
+
+    @classmethod
+    def _text_static_indicators(
+        cls, own_texts: List[str], late_night_count: int
+    ) -> Dict[str, Optional[float]]:
+        """纯文本子指标（单聊侧/群聊成员共用）：表情感叹叠词密度、深夜占比、
+        共情密度、TTR、话题熵。分词抽样约束见 BIG5_TOKENIZE_LIMIT。"""
+        total = len(own_texts)
+        emoji_hits = sum(1 for text in own_texts if _EMOJI_EXCLAIM_PATTERN.search(text))
+        ttr, entropy = cls._lexical_indicators(own_texts[:BIG5_TOKENIZE_LIMIT])
+        return {
+            "emoji_exclaim_density": round(emoji_hits / total, 4),
+            "late_night_ratio": round(late_night_count / total, 4),
+            "empathy_density": cls._empathy_density(own_texts),
             "ttr": ttr,
             "topic_entropy": entropy,
-            "share_density": round(share_count / len(own_texts), 4),
         }
 
     @staticmethod
@@ -519,11 +677,13 @@ class PersonalityImpressionService:
         side_flag: int,
         from_ts: Optional[int] = None,
         to_ts: Optional[int] = None,
+        sender: Optional[str] = None,
     ) -> Optional[float]:
         """正向回应率：本方「30 分钟内回应对方」的消息中正向消息占比。
 
         近似口径：本方消息且此前 30 分钟内出现过对方消息即视为回应；
-        依赖 sentiment_cache，缺缓存返回 None。
+        依赖 sentiment_cache，缺缓存返回 None。sender 非空 = 群聊成员版
+        （peer = 我 + 其他成员；me 侧 is_sender=1 判定已足够）。
 
         两侧时间线各拉一次（对方侧只要时间戳），升序归并一次线性判定：
         存在对方消息落在 [m.ts-1800, m.ts] ⟺ 最近一条不晚于 m.ts 的对方
@@ -536,22 +696,35 @@ class PersonalityImpressionService:
         if from_ts is not None or to_ts is not None:
             window_sql = " AND m.timestamp BETWEEN ? AND ?"
             window_args = [int(from_ts or 0), int(to_ts or _WINDOW_MAX_TS)]
+        sender_sql = ""
+        mine_args = [conversation_id, side_flag]
+        if sender is not None:
+            sender_sql = " AND m.sender = ?"
+            mine_args.append(sender)
         mine = db.execute(
             "SELECT m.timestamp, sc.polarity FROM messages m "
             "JOIN sentiment_cache sc ON sc.message_id = m.id "
-            "WHERE m.conversation_id = ? AND m.is_sender = ? AND m.message_type = 1 "
-            f"{window_sql} ORDER BY m.timestamp",
-            (conversation_id, side_flag, *window_args),
+            "WHERE m.conversation_id = ? AND m.is_sender = ? AND m.message_type = 1"
+            f"{sender_sql}{window_sql} ORDER BY m.timestamp",
+            (*mine_args, *window_args),
         ).fetchall()
         if not mine:
             return None
         peer_window_sql = window_sql.replace("m.timestamp", "timestamp")
+        if sender is not None:
+            # 非「该成员」的消息皆 peer：含我（is_sender=1）、其他成员、
+            # sender 为空的未知归属行（NULL 三值逻辑显式放行）
+            peer_sql = "(is_sender != 0 OR sender IS NULL OR sender != ?)"
+            peer_args = [conversation_id, sender]
+        else:
+            peer_sql = "is_sender != ?"
+            peer_args = [conversation_id, side_flag]
         peer_ts = [
             int(r[0]) for r in db.execute(
                 "SELECT timestamp FROM messages "
-                "WHERE conversation_id = ? AND is_sender != ?"
+                f"WHERE conversation_id = ? AND {peer_sql}"
                 f"{peer_window_sql} ORDER BY timestamp",
-                (conversation_id, side_flag, *window_args),
+                (*peer_args, *window_args),
             ).fetchall()
         ]
         responded = 0
@@ -577,18 +750,25 @@ class PersonalityImpressionService:
         side_flag: int,
         from_ts: Optional[int] = None,
         to_ts: Optional[int] = None,
+        sender: Optional[str] = None,
     ) -> Tuple[Optional[float], Optional[float], Optional[float]]:
-        """本方情感子指标：intensity 方差 / 负面占比 / 正负比（缺缓存全 None）。"""
+        """本方情感子指标：intensity 方差 / 负面占比 / 正负比（缺缓存全 None）。
+        sender 非空 = 群聊成员版过滤（me 侧 is_sender=1 判定已足够）。"""
         window_sql = ""
         window_args: list = []
         if from_ts is not None or to_ts is not None:
             window_sql = " AND m.timestamp BETWEEN ? AND ?"
             window_args = [int(from_ts or 0), int(to_ts or _WINDOW_MAX_TS)]
+        sender_sql = ""
+        args = [conversation_id, side_flag]
+        if sender is not None:
+            sender_sql = " AND m.sender = ?"
+            args.append(sender)
         rows = get_db().execute(
             "SELECT sc.polarity, sc.intensity FROM sentiment_cache sc "
             "JOIN messages m ON sc.message_id = m.id "
-            f"WHERE m.conversation_id = ? AND m.is_sender = ?{window_sql}",
-            (conversation_id, side_flag, *window_args),
+            f"WHERE m.conversation_id = ? AND m.is_sender = ?{sender_sql}{window_sql}",
+            (*args, *window_args),
         ).fetchall()
         if not rows:
             return None, None, None

@@ -31,7 +31,8 @@ def db(monkeypatch):
     conn.row_factory = sqlite3.Row
     conn.execute(
         "CREATE TABLE messages (id INTEGER PRIMARY KEY, conversation_id INT, "
-        "is_sender INT, message_type INT DEFAULT 1, content TEXT, timestamp INT)"
+        "is_sender INT, message_type INT DEFAULT 1, content TEXT, timestamp INT, "
+        "sender TEXT)"
     )
     conn.execute(
         "CREATE TABLE sentiment_cache (message_id INTEGER UNIQUE, polarity INT, "

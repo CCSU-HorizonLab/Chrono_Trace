@@ -603,6 +603,21 @@ class AnalysisReadApiMixin:
             logger.error(f"[Bridge] 群聊统计失败: {e}")
             return {"ok": False, "error": f"群聊统计失败：{e}"}
 
+    def get_group_member_big5(self, conversation_id: int) -> dict:
+        """群聊成员级大五画像（纯本地统计基础层，30 天缓存；样本过薄的
+        成员 available=false 只报样本量）"""
+        try:
+            from ...services.analysis.personality_impression_service import (
+                PersonalityImpressionService,
+            )
+
+            return PersonalityImpressionService().get_group_member_impressions(
+                int(conversation_id)
+            )
+        except Exception as e:
+            logger.error(f"[Bridge] 群聊成员大五失败: {e}")
+            return {"ok": False, "error": f"群聊成员大五失败：{e}"}
+
     def generate_group_summary(self, conversation_id: int, days: int = 7) -> dict:
         """生成群聊日报（近 N 天分段 + LLM 总结；无模型时降级为仅统计）"""
         try:

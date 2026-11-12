@@ -42,6 +42,7 @@ BIG5_SAMPLE_TARGET_CHARS = 12000  # 增强层采样语料目标字符数
 BIG5_SAMPLE_TURN_LIMIT = 400     # 采样消息条数上限
 BIG5_TOKENIZE_LIMIT = 5000       # TTR/熵计算的抽样上限（分词代价约束）
 BIG5_MIN_MESSAGES = 30           # 低于该条数不出画像（样本过薄）
+BIG5_GROUP_COMPUTE_LIMIT = 30    # 群聊成员画像计算上限（发言量 Top N ∪ 我，大群分词成本约束）
 BIG5_RESPONSE_MAX_TOKENS = 4096  # 思考模型思维链计入 completion 预算，2048 会在 JSON 前耗尽截断（对齐 contact_profiler 思考模型下限思路）
 BIG5_TIMEOUT_SECONDS = 90
 
@@ -214,8 +215,9 @@ class PersonalityImpressionService:
 
         聚合键 = sender 显示短名（is_sender=1 → 「我」，缓存键沿用 me，
         其余 member:{短名}）。微信 4.x 无群成员花名册，同名短名合并统计
-        （显示名本身有损，接受）。样本 < BIG5_MIN_MESSAGES 的成员
-        available=false 只报样本量。LLM 增强二期（source 字段已预留）。
+        （显示名本身有损，接受）。只对发言量 Top BIG5_GROUP_COMPUTE_LIMIT
+        ∪ 「我」计算画像（大群分词成本约束），样本 < BIG5_MIN_MESSAGES
+        的成员 available=false 只报样本量。LLM 增强二期（预留 source）。
         """
         now = int(time.time())
         rows = self._fetch_conversation_rows(conversation_id)
@@ -228,7 +230,6 @@ class PersonalityImpressionService:
             return str(value)
 
         grouped: Dict[str, List[Tuple[int, str]]] = {}
-        timeline: List[Tuple[int, str]] = []
         for row in rows:
             text = _decode(row[1]).strip()
             if not text:
@@ -237,37 +238,42 @@ class PersonalityImpressionService:
                 name = "我"
             else:
                 name = _decode(row[3]).strip() or "未知成员"
-            entry = (int(row[2] or 0), text)
-            grouped.setdefault(name, []).append(entry)
-            timeline.append((entry[0], name))
+            grouped.setdefault(name, []).append((int(row[2] or 0), text))
+
+        # 样本量降序；计算名单 = Top N ∪ 我（其余成员不跑分词与画像）
+        ranked = sorted(grouped.items(), key=lambda kv: -len(kv[1]))
+        compute_limit = {
+            name for name, _ in ranked[:BIG5_GROUP_COMPUTE_LIMIT]
+        } | {"我"}
 
         members: List[Dict[str, Any]] = []
-        for name, entries in grouped.items():
+        for name, entries in ranked:
             subject = "me" if name == "我" else f"member:{name}"
             data = None
-            if not force_refresh:
-                data = self._load_cached(
-                    conversation_id, account_wxid, subject, now, only_source="local"
-                )
-            if data is None:
-                data = self._compute_group_local(
-                    conversation_id, subject, name, entries, timeline
-                )
-                if data is not None:
-                    self._save_cache(
-                        conversation_id, account_wxid, subject, data, "local", None
+            if name in compute_limit:
+                if not force_refresh:
+                    data = self._load_cached(
+                        conversation_id, account_wxid, subject, now, only_source="local"
                     )
+                if data is None:
+                    data = self._compute_group_local(
+                        conversation_id, subject, name, entries
+                    )
+                    if data is not None:
+                        self._save_cache(
+                            conversation_id, account_wxid, subject, data, "local", None
+                        )
             members.append({
                 "name": name,
                 "sample_count": len(entries),
                 "available": data is not None,
                 "big5": data,
             })
-        members.sort(key=lambda m: -m["sample_count"])
         return {
             "ok": True,
             "source": "local",
             "members": members,
+            "compute_limit": BIG5_GROUP_COMPUTE_LIMIT,
             "disclaimer": "语言风格印象，非心理测评；大五为连续维度（0-100），不构成人格结论",
         }
 
@@ -277,14 +283,15 @@ class PersonalityImpressionService:
         subject: str,
         name: str,
         entries: List[Tuple[int, str]],
-        timeline: List[Tuple[int, str]],
     ) -> Optional[Dict[str, Any]]:
         """群聊成员基础层：单聊指标体系的子集口径。
 
         缺席（单聊二元对话对设计，群聊无定义，重归一机制自动剔除）：
-        icebreak_ratio / unanswered_rate / daily_cv / revoke_rate。
-        topic_continuation 的「对方」重定义为该成员之外任何人的最新发言；
-        active_days 取该成员有发言的自然日数（非会话全跨度）。
+        icebreak_ratio / unanswered_rate / daily_cv / revoke_rate /
+        topic_continuation——群聊消息流密集使「他人最新发言后接话」
+        几乎必然（实测全员饱和 100，区分度崩塌），缺席后尽责性整维
+        无在场子指标而置 None（诚实缺维）。active_days 取该成员有发言
+        的自然日数（非会话全跨度）。
         """
         own_texts = [t for _, t in entries]
         if len(own_texts) < BIG5_MIN_MESSAGES:
@@ -294,19 +301,6 @@ class PersonalityImpressionService:
             1 for ts, _ in entries if 0 <= time.localtime(ts).tm_hour < 6
         )
 
-        reply_hits = 0
-        reply_chances = 0
-        last_other_ts: Optional[int] = None
-        for ts, who in timeline:
-            if who == name:
-                if last_other_ts is not None:
-                    reply_chances += 1
-                    if ts - last_other_ts <= 1800:
-                        reply_hits += 1
-                    last_other_ts = None
-            else:
-                last_other_ts = ts
-
         raw: Dict[str, Optional[float]] = self._text_static_indicators(
             own_texts, late_night
         )
@@ -314,9 +308,6 @@ class PersonalityImpressionService:
             time.strftime("%Y-%m-%d", time.localtime(ts)) for ts, _ in entries
         })
         raw["daily_avg"] = round(len(own_texts) / max(active_days, 1), 3)
-        raw["topic_continuation"] = (
-            round(reply_hits / reply_chances, 4) if reply_chances else None
-        )
 
         side_flag = 1 if is_me else 0
         sender = None if is_me else name

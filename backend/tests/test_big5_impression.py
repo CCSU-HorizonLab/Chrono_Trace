@@ -670,7 +670,8 @@ class TestGroupMemberImpressions:
         db.commit()
 
     def test_aggregation_gates_and_renormalized_scores(self, db):
-        """分侧聚合、门槛拒出、无情感缓存下五维仍全有分（重归一）。"""
+        """分侧聚合、门槛拒出、无情感缓存下四维有分（重归一）、尽责性
+        群聊口径诚实缺维（topic_continuation 群聊饱和失真已移除）。"""
         self._seed_group(db)
         payload = PersonalityImpressionService().get_group_member_impressions(7)
         assert payload["ok"] is True
@@ -678,16 +679,44 @@ class TestGroupMemberImpressions:
         assert set(by_name) == {"我", "阿珍", "阿强", "路人"}
         counts = [m["sample_count"] for m in payload["members"]]
         assert counts == sorted(counts, reverse=True)
-        # 我/阿珍/阿强出画像：无 sentiment_cache 仍五维全有分（在场重归一）
         for name in ("我", "阿珍", "阿强"):
             item = by_name[name]
             assert item["available"] is True
             for dim in DIMENSIONS:
-                assert item["big5"]["scores"][dim]["score"] is not None
+                if dim == "conscientiousness":
+                    # 群聊无可靠代理：整维 None（非失真满分）
+                    assert item["big5"]["scores"][dim]["score"] is None
+                else:
+                    assert item["big5"]["scores"][dim]["score"] is not None
         # 路人不足 30 条：不出画像只报样本量
         assert by_name["路人"]["available"] is False
         assert by_name["路人"]["big5"] is None
         assert by_name["路人"]["sample_count"] == 5
+
+    def test_compute_limit_covers_top_and_me(self, db, monkeypatch):
+        """计算名单 = 发言量 Top N ∪ 我：限额外的足量成员不计算。"""
+        monkeypatch.setattr(bimod, "BIG5_GROUP_COMPUTE_LIMIT", 2)
+        for i in range(80):
+            db.execute(
+                "INSERT INTO messages (conversation_id, is_sender, message_type,"
+                " content, timestamp, sender) VALUES (7, 0, 1, ?, ?, ?)",
+                (f"多话{i}", 1_700_000_000 + i * 600, "话痨"),
+            )
+        for i in range(20):
+            db.execute(
+                "INSERT INTO messages (conversation_id, is_sender, message_type,"
+                " content, timestamp, sender) VALUES (7, 0, 1, ?, ?, ?)",
+                (f"补充{i}", 1_700_100_000 + i * 600, "阿珍"),
+            )
+        db.commit()
+        self._seed_group(db)  # 我/阿珍/阿强 各 40 条（阿珍合计 60）
+        payload = PersonalityImpressionService().get_group_member_impressions(7)
+        by_name = {m["name"]: m for m in payload["members"]}
+        assert by_name["话痨"]["available"] is True      # Top1（80 条）
+        assert by_name["阿珍"]["available"] is True      # Top2（60 条）
+        assert by_name["我"]["available"] is True        # 40 条但强制纳入
+        assert by_name["阿强"]["available"] is False     # Top3 落榜：样本足量但不计算
+        assert by_name["阿强"]["sample_count"] == 40
 
     def test_subject_cache_keys_me_and_member(self, db):
         """「我」落 me 键、成员落 member:{短名} 键，不与单聊 other 撞。"""

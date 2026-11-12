@@ -174,14 +174,18 @@
             <div v-if="expandedMember === m.name" class="gm-big5">
               <div v-if="memberBig5Loading" class="gm-big5-hint">大五画像计算中...</div>
               <template v-else-if="memberBig5For(m.name)?.available">
-                <div class="gm-b5-row" v-for="dim in memberBig5Dims(m.name)" :key="dim.label">
+                <div class="gm-b5-row" :class="{ na: dim.score === null }" v-for="dim in memberBig5Dims(m.name)" :key="dim.label">
                   <span class="gm-b5-label">{{ dim.label }}</span>
-                  <span class="gm-b5-track"><i :style="{ width: (dim.score ?? 0) + '%' }"></i></span>
-                  <span class="gm-b5-score">{{ Math.round(dim.score ?? 0) }}</span>
+                  <span class="gm-b5-track"><i v-if="dim.score !== null" :style="{ width: dim.score + '%' }"></i></span>
+                  <span class="gm-b5-score">{{ dim.score === null ? '—' : Math.round(dim.score) }}</span>
                 </div>
-                <p class="gm-big5-note">本地统计印象（样本 {{ memberBig5For(m.name)?.sample_count }} 条），非心理测评</p>
+                <p class="gm-big5-note">本地统计印象（样本 {{ memberBig5For(m.name)?.sample_count }} 条），非心理测评；「—」为群聊语境无可靠统计代理的维度</p>
               </template>
-              <p v-else class="gm-big5-hint">样本 {{ memberBig5For(m.name)?.sample_count ?? '—' }} 条，不足 30 条暂不出画像</p>
+              <p v-else class="gm-big5-hint">
+                {{ (memberBig5For(m.name)?.sample_count ?? 0) >= 30
+                  ? '发言量未入计算范围（仅统计发言最多的前 30 名与「我」）'
+                  : `样本 ${memberBig5For(m.name)?.sample_count ?? '—'} 条，不足 30 条暂不出画像` }}
+              </p>
             </div>
           </template>
         </div>
@@ -332,7 +336,7 @@ function memberBig5Dims(name: string): Array<{ label: string; score: number | nu
   const scores = memberBig5For(name)?.big5?.scores
   if (!scores) return []
   return Object.values(scores)
-    .filter((d): d is { label: string; score: number } => !!d && typeof d.score === 'number' && !!d.label)
+    .filter((d): d is { label: string; score: number | null } => !!d && !!d.label)
 }
 
 async function toggleMemberBig5(name: string) {
@@ -1081,6 +1085,11 @@ onMounted(() => { void loadConversations() })
   text-align: right;
   font-family: var(--ct-font-mono);
   color: var(--ct-text-primary);
+}
+
+.gm-b5-row.na .gm-b5-label,
+.gm-b5-row.na .gm-b5-score {
+  color: var(--ct-text-tertiary);
 }
 
 .gm-big5-note {

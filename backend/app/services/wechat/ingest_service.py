@@ -691,6 +691,19 @@ class WeChatIngestService:
             all_usernames = message_db.get_all_conversation_usernames(include_chatroom=True)
             logger.debug(f"[DEBUG] Found conversations: {len(all_usernames)}")
 
+            # 群成员显示名映射（wxid→备注/昵称）：有群聊会话才构建。
+            # 失败仅降级回 wxid 短名兜底，不阻断导入
+            chatroom_names: dict = {}
+            if any(is_chatroom_username(u) for u in all_usernames) and databases.get("contact") and db_key:
+                try:
+                    name_db = ContactDBV4(databases["contact"], db_key, raw_keys=raw_keys)
+                    try:
+                        chatroom_names = name_db.get_display_name_map()
+                    finally:
+                        name_db.close()
+                except Exception as exc:
+                    logger.warning("[导入] 群成员显示名映射加载失败（回退 wxid 短名）: %s", exc)
+
             # 会话总数先推给前端：进度条不必等首个会话处理完才有 x/y
             if progress_callback and all_usernames:
                 progress_callback(
@@ -754,7 +767,8 @@ class WeChatIngestService:
                                 account_wxid,
                                 conversation_cache,
                                 touched_conversations,
-                                existing_keys=existing_keys
+                                existing_keys=existing_keys,
+                                chatroom_names=chatroom_names
                             )
                             t_insert += time.time() - t0
                             total_messages += batch_stats["inserted"]
@@ -769,7 +783,8 @@ class WeChatIngestService:
                             account_wxid,
                             conversation_cache,
                             touched_conversations,
-                            existing_keys=existing_keys
+                            existing_keys=existing_keys,
+                            chatroom_names=chatroom_names
                         )
                         t_insert += time.time() - t0
                         total_messages += batch_stats["inserted"]
@@ -889,12 +904,15 @@ class WeChatIngestService:
         conversation_cache: dict[str, int],
         touched_conversations: dict[int, int],
         existing_keys: Optional[set] = None,
+        chatroom_names: Optional[dict] = None,
     ) -> Dict[str, int]:  # pyright: ignore[reportMissingTypeArgument]
         """批量插入消息（内存判重 + 分会话 executemany）。
 
         existing_keys 由调用方在导入全程预载一次并传递（跨批去重）；
-        None 时本调用自载（直接调用/测试场景）。返回 inserted/skipped
-        语义与旧逐条路径一致；touched 仅含有新插入的会话。
+        None 时本调用自载（直接调用/测试场景）。chatroom_names 为群
+        成员 wxid→显示名映射，sender 记显示名（备注/昵称）而非 wxid
+        短名。返回 inserted/skipped 语义与旧逐条路径一致；touched 仅
+        含有新插入的会话。
         """
         inserted = 0
         skipped = 0
@@ -957,7 +975,9 @@ class WeChatIngestService:
                 # 情感/事实抽取/出网 prompt 全链路；群内发送者记入 sender
                 member_wxid, content = parse_chatroom_message(content)
                 if member_wxid:
-                    sender_label = resolve_chatroom_display_name(member_wxid) or sender_label
+                    sender_label = resolve_chatroom_display_name(
+                        member_wxid, name_map=chatroom_names
+                    ) or sender_label
             rows_by_conv.setdefault(conversation_id, []).append((
                 conversation_id,
                 local_id,

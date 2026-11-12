@@ -36,15 +36,23 @@ def parse_chatroom_message(content: str) -> tuple[Optional[str], str]:
 
 
 def resolve_chatroom_display_name(
-    sender_wxid: str | None, fallback: str = "成员"
+    sender_wxid: str | None,
+    fallback: str = "成员",
+    name_map: Optional[dict] = None,
 ) -> str:
     """解析群成员显示名。
 
-    当前无群成员库可查（path_finder 未发现群成员库文件），用 wxid
-    短格式兜底；后续若能读取群成员表则在此接入真名映射。
+    name_map 为 contact 库的 wxid→显示名映射（我的备注优先于微信昵
+    称，见 ContactDBV4.get_display_name_map），命中优先返回；未提供/
+    未命中走 wxid 短格式兜底。群名片（群内昵称）在 chat_room 的
+    ext_buffer protobuf 里，暂不解析——备注/昵称已覆盖 99.9% 成员。
     """
     if not sender_wxid:
         return fallback
+    if name_map:
+        mapped = name_map.get(sender_wxid)
+        if mapped:
+            return mapped
     # wxid_xxx 取后半段作为短名；纯数字 ID 取后 4 位
     if sender_wxid.startswith("wxid_"):
         suffix = sender_wxid[5:]

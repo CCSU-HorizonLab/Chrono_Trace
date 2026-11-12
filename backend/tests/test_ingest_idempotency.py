@@ -296,3 +296,53 @@ class TestWatermarkOnFailedConversations:
         stats = self._run_import(monkeypatch, ["wxid_bad"], {"wxid_bad"})
         assert stats["failed_conversations"] == 1
         assert stats["watermark_ts"] == 0
+
+
+class TestChatroomDisplayName:
+    """群成员 sender 显示名：contact 昵称映射优先、wxid 短名兜底。"""
+
+    def test_name_map_hit_stores_display_name(self, test_db):
+        """映射命中：sender 记备注/昵称（真名），消息内容剥前缀。"""
+        service = WeChatIngestService()
+        batch = [
+            _msg("123@chatroom", 1, "wxid_abc123:\n群里说句话", 1_700_000_100),
+        ]
+        cache, touched = {}, {}
+        service._insert_message_batch(
+            batch, "acct", cache, touched,
+            chatroom_names={"wxid_abc123": "张三"},
+        )
+        row = get_db().execute(
+            "SELECT sender, content FROM messages WHERE conversation_id = ?",
+            (_conv_id("123@chatroom"),),
+        ).fetchone()
+        assert row[0] == "张三"
+        assert row[1] == "群里说句话"
+
+    def test_name_map_miss_falls_back_to_wxid_short(self, test_db):
+        """映射未命中/未提供：wxid 短名兜底（原行为不变）。"""
+        service = WeChatIngestService()
+        batch = [
+            _msg("123@chatroom", 1, "wxid_abc123:\n没映射", 1_700_000_100),
+            _msg("123@chatroom", 2, "wxid_def456:\n有空映射", 1_700_000_200),
+        ]
+        service._insert_message_batch(
+            batch, "acct", {}, {},
+            chatroom_names={"wxid_def456": "李四"},
+        )
+        senders = [
+            r[0] for r in get_db().execute(
+                "SELECT sender FROM messages WHERE conversation_id = ? ORDER BY local_id",
+                (_conv_id("123@chatroom"),),
+            )
+        ]
+        assert senders == ["abc123", "李四"]
+
+    def test_resolve_display_name_priority(self):
+        """纯函数：map 命中 > wxid 短名 > 纯数字短号兜底 > fallback。"""
+        from app.services.wechat.chatroom import resolve_chatroom_display_name
+
+        assert resolve_chatroom_display_name("wxid_x1", name_map={"wxid_x1": "备注名"}) == "备注名"
+        assert resolve_chatroom_display_name("wxid_x1") == "x1"
+        assert resolve_chatroom_display_name("987654321") == "成员4321"
+        assert resolve_chatroom_display_name(None) == "成员"

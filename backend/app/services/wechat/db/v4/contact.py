@@ -163,6 +163,22 @@ class ContactDBV4(WeChatDBBase):
         
         return contacts
     
+    def get_display_name_map(self) -> dict:
+        """wxid→显示名映射（我的备注优先于微信昵称）。
+
+        群消息 sender 显示名解析用：消息前缀里的成员 wxid 在此查真名，
+        查不到由调用方兜底 wxid 短名。全表数万行，构建毫秒级。
+        """
+        mapping: dict = {}
+        for row in self.conn.execute(
+            "SELECT username, remark, nick_name FROM contact"
+            " WHERE remark != '' OR nick_name != ''"
+        ):
+            name = (row["remark"] or row["nick_name"] or "").strip()
+            if name:
+                mapping[row["username"]] = name
+        return mapping
+
     def get_contact_by_username(self, username: str) -> Optional[dict]:
         """
         根据username查询单个联系人

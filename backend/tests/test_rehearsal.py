@@ -64,7 +64,7 @@ def db(monkeypatch):
     )
     conn.execute(
         "CREATE TABLE messages (id INTEGER PRIMARY KEY, conversation_id INT,"
-        " message_type INT, is_sender INT, content TEXT, timestamp INT)"
+        " message_type INT, is_sender INT, content TEXT, timestamp INT, sender TEXT)"
     )
     conn.execute(
         "CREATE TABLE sentiment_cache (message_id INTEGER PRIMARY KEY,"
@@ -248,3 +248,51 @@ class TestRehearse:
         )
         with pytest.raises(HistoryQAError, match="阻断"):
             HistoryQAService().rehearse(1, "在吗")
+
+# ===== 人格背景注入（第四路素材：TA 大五 + 我的语气统计）=====
+
+
+class TestPersonaContext:
+    def _seed_rich(self, db):
+        """双方各 40 条（够大五门槛与语气门槛），我方埋独特原话暗号。"""
+        for i in range(40):
+            seed(db, 1000 + i * 2, f"TA 消息内容{i}", 1_700_000_000 + i * 120, is_sender=0)
+            seed(db, 1001 + i * 2, "独特原话暗号句" if i == 0 else f"我的消息内容{i}",
+                 1_700_000_000 + i * 120 + 60, is_sender=1)
+        db.commit()
+
+    @staticmethod
+    def _patch_persona_dbs(monkeypatch, db):
+        import app.services.analysis.personality_impression_service as bimod
+        import app.services.analysis.avatar_chat_service as avmod
+
+        monkeypatch.setattr(bimod, "get_db", lambda: db)
+        monkeypatch.setattr(avmod, "get_db", lambda: db)
+
+    def test_persona_context_stats_only(self, db, monkeypatch):
+        """两路统计素材齐备：大五+语气都在场，且只注入统计不含原话。"""
+        self._seed_rich(db)
+        self._patch_persona_dbs(monkeypatch, db)
+        ctx = HistoryQAService()._build_persona_context(1, "wxid_me")
+        assert ctx is not None
+        assert "【人格背景】" in ctx
+        assert "TA 的大五" in ctx
+        assert "我的表达风格" in ctx
+        assert "独特原话暗号句" not in ctx  # quotes 原话不入 prompt
+
+    def test_persona_injected_into_rehearsal_prompt(self, db, monkeypatch):
+        """集成：陪练 user prompt 带人格背景段（本地模型免脱敏路径）。"""
+        self._seed_rich(db)
+        self._patch_persona_dbs(monkeypatch, db)
+        _, http = rehearse(monkeypatch, db, "周末有空吗")
+        user_content = http.calls[0]["payload"]["messages"][1]["content"]
+        assert "【人格背景】" in user_content
+        assert "我的表达风格" in user_content
+
+    def test_persona_absent_graceful(self, db, monkeypatch):
+        """空会话两路全缺席：无该段，陪练照常出三档。"""
+        self._patch_persona_dbs(monkeypatch, db)
+        result, http = rehearse(monkeypatch, db, "在吗")
+        assert result["ok"] is True
+        user_content = http.calls[0]["payload"]["messages"][1]["content"]
+        assert "【人格背景】" not in user_content

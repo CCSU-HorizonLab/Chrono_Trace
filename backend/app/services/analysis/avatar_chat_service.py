@@ -172,23 +172,24 @@ class AvatarChatService:
 
     # ---- 人格素材 ----
 
-    def _sample_voice(self, conversation_id: int) -> Dict[str, Any]:
-        """TA 语气采样：近窗文本消息实时统计（纯本地，毫秒级）。
+    def _sample_voice(self, conversation_id: int, side: int = 0) -> Dict[str, Any]:
+        """语气采样：近窗文本消息实时统计（纯本地，毫秒级）。
 
-        返回 {"sample_count", "median_len", "short_ratio", "top_words",
-        "top_emojis", "quotes"}；quotes 为等距抽样的原话（含 message_id，
-        供上层脱敏与调试溯源）。
+        side=0 取 TA 侧（分身人格素材）、1 取我侧（陪练注入我的表达
+        风格）。返回 {"sample_count", "median_len", "short_ratio",
+        "top_words", "top_emojis", "quotes"}；quotes 为等距抽样的原话
+        （含 message_id，供上层脱敏与调试溯源）。
         """
         conn = get_db()
         rows = conn.execute(
             """
             SELECT id, content FROM messages
             WHERE conversation_id = ?
-              AND is_sender = 0 AND message_type = 1
+              AND is_sender = ? AND message_type = 1
               AND content IS NOT NULL AND TRIM(content) != ''
             ORDER BY timestamp DESC LIMIT ?
             """,
-            (int(conversation_id), VOICE_SAMPLE_LIMIT),
+            (int(conversation_id), int(side), VOICE_SAMPLE_LIMIT),
         ).fetchall()
         texts = [(int(r[0]), str(r[1]).strip()) for r in rows]
         if not texts:

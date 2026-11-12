@@ -147,6 +147,8 @@ REHEARSAL_SYSTEM_PROMPT = """你是微信回复参谋。用户收到对方一条
 
 规则：
 - draft 要像本人发微信的口吻：口语、短句、可用表情；禁止 AI 腔与书面语
+- 【人格背景】给了我的表达风格时，draft 贴合该风格（句长/高频词/表情习惯）；
+  给了 TA 的大五印象时，措辞温度与分寸参考其性格倾向
 - draft 只依据背景资料组织话术：不要编造没发生过的具体事件、约定或理由
 - 背景资料不足以判断对方偏好的，direction 里明说依据不足，不要编造
 - 三档草稿之间要有明显温差，不要写成三句差不多的话"""
@@ -371,8 +373,10 @@ class HistoryQAService:
         ]
         redacted_memories = texts[1 + len(recent) + len(related) :]
 
+        # 第四路素材：TA 大五印象 + 我的语气统计（本地统计产物，免脱敏）
+        persona = self._build_persona_context(conversation_id, account_wxid)
         user_prompt = self._build_rehearsal_prompt(
-            redacted_received, redacted_recent, redacted_related, redacted_memories
+            redacted_received, redacted_recent, redacted_related, redacted_memories, persona
         )
         content, _ = self._post_llm_chat(
             conversation_id,
@@ -405,12 +409,62 @@ class HistoryQAService:
             rec["text"] = _clip_text(rec["text"])
         return records
 
+    def _build_persona_context(
+        self, conversation_id: int, account_wxid: str
+    ) -> Optional[str]:
+        """陪练第四路素材：TA 的大五统计印象 + 我的语气统计特征。
+
+        两路均为本地统计产物（分数/密度/高频词，无原话原文）——统计
+        产物非隐私原文，不走脱敏；单路失败或样本过薄即跳过该路，两路
+        都缺席返回 None（整段省略，退回纯对话背景）。延迟导入避免
+        与 avatar_chat_service（骨架借用本服务）循环依赖。
+        """
+        parts: List[str] = []
+        try:
+            from .personality_impression_service import PersonalityImpressionService
+
+            base = PersonalityImpressionService()._local_base(
+                conversation_id, account_wxid
+            )
+            other = base.get("other")
+            dims = [
+                f"{item.get('label', dim)}{round(item['score'])}"
+                for dim, item in (other.get("scores") or {}).items()
+                if item and item.get("score") is not None
+            ]
+            if dims:
+                parts.append(
+                    f"- TA 的大五：{'、'.join(dims)}（连续维度分 0-100）"
+                )
+        except Exception as exc:
+            logger.debug("[回复陪练] 大五素材缺席: %s", exc)
+        try:
+            from .avatar_chat_service import AvatarChatService
+
+            voice = AvatarChatService()._sample_voice(conversation_id, side=1)
+            if voice and voice.get("sample_count", 0) >= 30:
+                bits = [
+                    f"中位句长 {voice['median_len']} 字",
+                    f"短句占 {int(voice['short_ratio'] * 100)}%",
+                ]
+                if voice.get("top_words"):
+                    bits.append("高频词 " + "/".join(voice["top_words"][:6]))
+                if voice.get("top_emojis"):
+                    bits.append("常用表情 " + "".join(voice["top_emojis"][:3]))
+                parts.append("- 我的表达风格：" + "，".join(bits))
+        except Exception as exc:
+            logger.debug("[回复陪练] 语气素材缺席: %s", exc)
+        if not parts:
+            return None
+        return "【人格背景】（本地统计印象，非测评结论）\n" + "\n".join(parts)
+
     @staticmethod
     def _build_rehearsal_prompt(
         received: str,
         recent: List[Dict[str, Any]],
         related: List[Dict[str, Any]],
         memories: List[str],
+        persona: Optional[str] = None,
     ) -> str:
         def _line(rec: Dict[str, Any]) -> str:
             when = time.strftime("%m-%d %H:%M", time.localtime(rec["timestamp"]))
@@ -430,6 +484,8 @@ class HistoryQAService:
                 "【长期记忆】（从历史聊天提炼的背景参考）\n"
                 + "\n".join(f"- {m}" for m in memories)
             )
+        if persona:
+            parts.append(persona)
         if len(parts) == 1:
             parts.append("（没有可用的背景资料，仅凭这条消息本身判断）")
         parts.append("请给出 3 个温度档的回复方向。")

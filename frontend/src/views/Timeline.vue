@@ -17,7 +17,7 @@
     <button type="button" class="btn primary tl-empty-cta" @click="openSettingsTab('account')">去导入微信数据</button>
   </div>
 
-  <template v-if="selectedConversationId && !isGroup">
+  <template v-if="conversationResolved && !isGroup">
     <!-- 全局年份轴：会话跨度按年分格 + 章节色块（时间轴叙事的视觉锚）；
          拖选轴段生成区间纪念册（§6.2 产线入口），页脚一键年度报告 -->
     <div v-if="chaptersPayload?.ok && years.length" class="panel tl-year-axis" aria-label="年份总览">
@@ -144,7 +144,7 @@
   </template>
 
   <!-- 群聊：时光叙事是单聊主视角，群聊给群摘要工作台（发言统计+日报，批4自分析页迁入） -->
-  <div v-else-if="selectedConversationId && isGroup" class="group-workbench fade-in">
+  <div v-else-if="conversationResolved && isGroup" class="group-workbench fade-in">
     <CtCard class="group-stats-card" title="群聊发言统计">
       <div v-if="groupStatsLoading" class="group-empty">统计加载中...</div>
       <template v-else-if="groupStats && groupStats.members && groupStats.members.length">
@@ -313,6 +313,9 @@ const emojiLoading = ref(false)
 
 const currentConversation = computed(() => conversations.value.find((c) => c.id === selectedConversationId.value))
 const isGroup = computed(() => currentConversation.value?.conversation_type === 'group')
+// 选人是跨页共享 ref，切页瞬间即有值；会话列表异步返回前类型未知——
+// 未解析窗口不渲染任何选人分支，避免群聊被误判成单聊、单聊区闪现一瞬
+const conversationResolved = computed(() => currentConversation.value != null)
 
 // ---------- 群聊工作台（发言统计 + 日报，批4自分析页迁入） ----------
 

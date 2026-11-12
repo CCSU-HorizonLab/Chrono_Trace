@@ -17,7 +17,7 @@
     <button type="button" class="btn primary pulse-empty-cta" @click="openSettingsTab('account')">去导入微信数据</button>
   </div>
 
-  <template v-if="selectedConversationId && !isGroup">
+  <template v-if="conversationResolved && !isGroup">
     <div v-if="loadingOverview && !overview" class="panel pulse-loading-panel">
       <Loader2 :size="18" class="spin-icon" /> 正在读取关系脉搏…
     </div>
@@ -178,7 +178,7 @@
   </template>
 
   <!-- 群聊：好感引擎口径外，指路群摘要 -->
-  <div v-else-if="selectedConversationId && isGroup" class="panel pulse-hint">
+  <div v-else-if="conversationResolved && isGroup" class="panel pulse-hint">
     <p>群聊不在关系脉搏的口径内。去时光页查看群聊摘要与互动统计。</p>
     <router-link to="/timeline" class="btn">去时光页 →</router-link>
   </div>
@@ -216,6 +216,9 @@ const showWeekly = ref(false)
 
 const currentConversation = computed(() => conversations.value.find((c) => c.id === selectedConversationId.value))
 const isGroup = computed(() => currentConversation.value?.conversation_type === 'group')
+// 选人是跨页共享 ref，切页瞬间即有值；会话列表异步返回前类型未知——
+// 未解析窗口不渲染任何选人分支，避免群聊被误判成单聊、单聊区闪现一瞬
+const conversationResolved = computed(() => currentConversation.value != null)
 
 const bannerVerdict = computed(() => {
     const w = weekly.value

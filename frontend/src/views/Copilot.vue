@@ -15,7 +15,7 @@
           :key="m.key"
           class="menu-item"
           :class="{ active: mode === m.key }"
-          :disabled="m.singleChat && isGroupConversation"
+          :disabled="m.singleChat && (!conversationResolved || isGroupConversation)"
           :title="m.singleChat && isGroupConversation ? '单聊专属' : ''"
           @click="switchMode(m.key)"
         >{{ m.label }}</button>
@@ -34,11 +34,11 @@
         :contact-name="currentContactName"
       />
       <RehearsePanel
-        v-if="mode === 'rehearse' && !isGroupConversation"
+        v-if="mode === 'rehearse' && conversationResolved && !isGroupConversation"
         :conversation-id="selectedConversationId"
         :contact-name="currentContactName"
       />
-      <div v-show="mode === 'realtime' && !isGroupConversation" class="copilot-realtime">
+      <div v-show="mode === 'realtime' && conversationResolved && !isGroupConversation" class="copilot-realtime">
         <MonitorControlCard
           :conversation-id="selectedConversationId"
           :contact-name="currentContactName"
@@ -109,6 +109,11 @@ const currentContactName = computed(
 )
 const isGroupConversation = computed(
   () => conversations.value.find((c: any) => c.id === selectedConversationId.value)?.conversation_type === 'group',
+)
+// 选人是跨页共享 ref，切页瞬间即有值；会话列表异步返回前群聊与否未知——
+// 未解析窗口把单聊专属模式一并置灰/拦渲染，避免群聊短暂可点陪练再弹回
+const conversationResolved = computed(
+  () => conversations.value.some((c: any) => c.id === selectedConversationId.value),
 )
 
 function switchMode(m: Mode) {

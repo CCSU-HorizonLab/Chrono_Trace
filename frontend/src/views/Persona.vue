@@ -16,7 +16,7 @@
     <button type="button" class="btn primary persona-empty-cta" @click="openSettingsTab('account')">去导入微信数据</button>
   </div>
 
-  <template v-if="selectedConversationId && !isGroup">
+  <template v-if="conversationResolved && !isGroup">
     <!-- 镜像双栏：左 TA 的镜像 / 右 我的镜像（同指标同量纲并排） -->
     <div class="mirror-grid">
       <div class="mirror-col">
@@ -82,7 +82,7 @@
   </template>
 
   <!-- 群聊：画像单聊专属（1:1 语义） -->
-  <div v-else-if="selectedConversationId && isGroup" class="panel persona-group-hint">
+  <div v-else-if="conversationResolved && isGroup" class="panel persona-group-hint">
     <p>画像是单聊专属——两个人之间的镜像。群聊发言统计与日报在时光页。</p>
     <div class="persona-group-actions">
       <router-link to="/timeline" class="btn">去时光页 →</router-link>
@@ -135,6 +135,9 @@ const profileRefreshKey = ref(0)
 const currentConversation = computed(() => conversations.value.find((c) => c.id === selectedConversationId.value) || null)
 const currentContactName = computed(() => currentConversation.value?.name || currentConversation.value?.username || '')
 const isGroup = computed(() => currentConversation.value?.conversation_type === 'group')
+// 选人是跨页共享 ref，切页瞬间即有值；会话列表异步返回前类型未知——
+// 未解析窗口不渲染任何选人分支，避免群聊被误判成单聊、单聊区闪现一瞬
+const conversationResolved = computed(() => currentConversation.value != null)
 
 // ---------- 画廊素材（PersonaGallery 消费的同款口径，全会话跨度） ----------
 

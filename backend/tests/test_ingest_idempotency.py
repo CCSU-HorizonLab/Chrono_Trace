@@ -346,3 +346,48 @@ class TestChatroomDisplayName:
         assert resolve_chatroom_display_name("wxid_x1") == "x1"
         assert resolve_chatroom_display_name("987654321") == "成员4321"
         assert resolve_chatroom_display_name(None) == "成员"
+
+class TestChatroomUsernamePrefix:
+    """自定义微信号前缀（非 wxid_ 形态）：剥前缀 + 映射解析显示名。"""
+
+    def test_username_prefix_stripped_and_mapped(self, test_db):
+        """`wwmilk:\\n内容` 前缀剥除，sender 记映射昵称。"""
+        service = WeChatIngestService()
+        batch = [_msg("123@chatroom", 10, "wwmilk:\n这个可以有", 1_700_000_100)]
+        service._insert_message_batch(
+            batch, "acct", {}, {},
+            chatroom_names={"wwmilk": "机智SOLO"},
+        )
+        row = get_db().execute(
+            "SELECT sender, content FROM messages WHERE local_id = 10"
+        ).fetchone()
+        assert row[0] == "机智SOLO"
+        assert row[1] == "这个可以有"
+
+    def test_sender_without_prefix_also_mapped(self, test_db):
+        """无前缀消息（sender 来自 Name2id 反查的 username）也过映射。"""
+        service = WeChatIngestService()
+        batch = [
+            _msg("123@chatroom", 11, "系统提示文本", 1_700_000_200),
+        ]
+        batch[0]["sender"] = "lwj780123"
+        service._insert_message_batch(
+            batch, "acct", {}, {},
+            chatroom_names={"lwj780123": "刘文江"},
+        )
+        row = get_db().execute(
+            "SELECT sender FROM messages WHERE local_id = 11"
+        ).fetchone()
+        assert row[0] == "刘文江"
+
+    def test_prefix_regex_forms(self):
+        """三种前缀形态识别；普通文本不误伤。"""
+        from app.services.wechat.chatroom import parse_chatroom_message
+
+        assert parse_chatroom_message("wxid_abc123:\n你好")[0] == "wxid_abc123"
+        assert parse_chatroom_message("wwmilk:\n这个可以有") == ("wwmilk", "这个可以有")
+        assert parse_chatroom_message("qq454709763:\n哦哦") == ("qq454709763", "哦哦")
+        assert parse_chatroom_message("-987654:\n嗯")[0] == "-987654"
+        # 无前缀正文原样返回（不以 :\n 结尾形态开头的文本不受影响）
+        sid, text = parse_chatroom_message("就一句话")
+        assert sid is None and text == "就一句话"

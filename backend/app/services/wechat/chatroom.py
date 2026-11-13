@@ -10,9 +10,11 @@ import re
 from typing import Optional
 
 
-# 群消息前缀：`wxid_xxx:\n` 或 `wxid_xxx: \n`（偶尔有无空白变体）
+# 群消息前缀三种形态：`wxid_xxx:\n`（未设微信号用户）、自定义微信号
+# （字母开头 6-20 位，如 `wwmilk:\n`）、纯数字 ID。后两种此前未识别，
+# 导致内容带前缀入库污染词频/情感，sender 停留在 username 形态
 _CHATROOM_PREFIX = re.compile(
-    r"^(wxid_[a-zA-Z0-9_]+|-?\d{5,})\s*:\s*\n", re.ASCII
+    r"^(wxid_[a-zA-Z0-9_]+|[a-zA-Z][-_a-zA-Z0-9]{5,19}|-?\d{5,})\s*:\s*\n", re.ASCII
 )
 
 
@@ -22,10 +24,12 @@ def is_chatroom_username(username: str | None) -> bool:
 
 
 def parse_chatroom_message(content: str) -> tuple[Optional[str], str]:
-    """剥离群消息 'wxid:\\n' 前缀。
+    """剥离群消息 '发送者ID:\\n' 前缀（wxid_/微信号/纯数字三形态）。
 
     Returns:
-        (sender_wxid, clean_content)；无前缀时 sender_wxid 为 None。
+        (sender_id, clean_content)；无前缀时 sender_id 为 None。sender_id
+        为消息前缀里的原始 ID（wxid_xxx 或 username），由调用方经
+        contact 昵称映射解析显示名。
     """
     if not content:
         return None, content or ""

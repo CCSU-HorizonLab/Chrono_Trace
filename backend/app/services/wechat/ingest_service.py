@@ -316,6 +316,7 @@ class WeChatIngestService:
                     progress_callback,
                     raw_keys=raw_keys,
                     watermark_ts=watermark_in,
+                    contact_db_path=databases.get("contact") or "",
                 )
 
                 stats["inserted_messages"] = message_stats["total"]
@@ -642,6 +643,7 @@ class WeChatIngestService:
         progress_callback: Optional[Callable] = None,
         raw_keys: Optional[Dict] = None,
         watermark_ts: int = 0,
+        contact_db_path: str = "",
     ) -> Dict:
         """导入消息(V4版本)
 
@@ -694,9 +696,9 @@ class WeChatIngestService:
             # 群成员显示名映射（wxid→备注/昵称）：有群聊会话才构建。
             # 失败仅降级回 wxid 短名兜底，不阻断导入
             chatroom_names: dict = {}
-            if any(is_chatroom_username(u) for u in all_usernames) and databases.get("contact") and db_key:
+            if any(is_chatroom_username(u) for u in all_usernames) and contact_db_path and db_key:
                 try:
-                    name_db = ContactDBV4(databases["contact"], db_key, raw_keys=raw_keys)
+                    name_db = ContactDBV4(contact_db_path, db_key, raw_keys=raw_keys)
                     try:
                         chatroom_names = name_db.get_display_name_map()
                     finally:
@@ -978,6 +980,10 @@ class WeChatIngestService:
                     sender_label = resolve_chatroom_display_name(
                         member_wxid, name_map=chatroom_names
                     ) or sender_label
+                elif sender_label and chatroom_names:
+                    # 无前缀（系统消息/撤回回执等）时 sender 来自 Name2Id
+                    # 反查的 username——同样过映射转显示名
+                    sender_label = chatroom_names.get(sender_label) or sender_label
             rows_by_conv.setdefault(conversation_id, []).append((
                 conversation_id,
                 local_id,

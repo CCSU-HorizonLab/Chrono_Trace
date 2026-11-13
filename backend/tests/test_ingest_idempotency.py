@@ -384,10 +384,26 @@ class TestChatroomUsernamePrefix:
         """三种前缀形态识别；普通文本不误伤。"""
         from app.services.wechat.chatroom import parse_chatroom_message
 
+        roster = {"wwmilk", "qq454709763", "-987654", "987654321"}
+        # wxid_ 形态特异，无条件剥
         assert parse_chatroom_message("wxid_abc123:\n你好")[0] == "wxid_abc123"
-        assert parse_chatroom_message("wwmilk:\n这个可以有") == ("wwmilk", "这个可以有")
-        assert parse_chatroom_message("qq454709763:\n哦哦") == ("qq454709763", "哦哦")
-        assert parse_chatroom_message("-987654:\n嗯")[0] == "-987654"
+        # 字母自定义号/纯数字形态有歧义，命中花名册才剥
+        assert parse_chatroom_message("wwmilk:\n这个可以有", roster) == ("wwmilk", "这个可以有")
+        assert parse_chatroom_message("qq454709763:\n哦哦", roster) == ("qq454709763", "哦哦")
+        assert parse_chatroom_message("-987654:\n嗯", roster)[0] == "-987654"
         # 无前缀正文原样返回（不以 :\n 结尾形态开头的文本不受影响）
         sid, text = parse_chatroom_message("就一句话")
         assert sid is None and text == "就一句话"
+
+    def test_prefix_requires_roster_for_ambiguous_forms(self):
+        """字母/纯数字前缀未命中花名册（或未提供）：不剥，正文原样。"""
+        from app.services.wechat.chatroom import parse_chatroom_message
+
+        roster = {"wwmilk"}
+        # 白名单不含：Warning:/日期/手机号形态是普通正文，不可误伤
+        assert parse_chatroom_message("Warning:\n系统警告正文", roster) == (None, "Warning:\n系统警告正文")
+        assert parse_chatroom_message("20261113:\n那天记得", roster)[0] is None
+        assert parse_chatroom_message("13800001111:\n打这个号码", roster)[0] is None
+        # 白名单缺席（contact 库降级）：歧义形态一律不剥，wxid_ 仍工作
+        assert parse_chatroom_message("wwmilk:\n这个可以有")[0] is None
+        assert parse_chatroom_message("wxid_abc123:\n你好")[0] == "wxid_abc123"

@@ -23,8 +23,15 @@ def is_chatroom_username(username: str | None) -> bool:
     return "@chatroom" in (username or "").strip().lower()
 
 
-def parse_chatroom_message(content: str) -> tuple[Optional[str], str]:
+def parse_chatroom_message(
+    content: str, known_ids: Optional[set] = None
+) -> tuple[Optional[str], str]:
     """剥离群消息 '发送者ID:\\n' 前缀（wxid_/微信号/纯数字三形态）。
+
+    字母自定义微信号/纯数字 ID 形态与普通正文有歧义（`Warning:\\n注意`、
+    `13800001111:\\n号码`、`20261113:\\n日期`），必须命中 known_ids 花名册
+    （contact 全量 username 键集）才剥；wxid_ 形态特异无条件剥。宁可漏剥
+    前缀残留，不可误伤正文。
 
     Returns:
         (sender_id, clean_content)；无前缀时 sender_id 为 None。sender_id
@@ -35,7 +42,10 @@ def parse_chatroom_message(content: str) -> tuple[Optional[str], str]:
         return None, content or ""
     match = _CHATROOM_PREFIX.match(content)
     if match:
-        return match.group(1), content[match.end():]
+        sid = match.group(1)
+        if not sid.startswith("wxid_") and not (known_ids and sid in known_ids):
+            return None, content
+        return sid, content[match.end():]
     return None, content
 
 

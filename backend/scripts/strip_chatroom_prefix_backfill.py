@@ -6,8 +6,15 @@ sender 停留在 username 形态。正则修复后新导入自然正确，本脚
 存量库（重导不会更新已判重的行，必须就地 UPDATE）。
 
 口径与导入侧完全一致（chatroom.parse_chatroom_message + 昵称映射），
-仅处理群聊（@chatroom 会话）非本人消息；情感缓存/RAG 索引等衍生缓存
-按既有指纹机制自动失效重算，无需处理。
+仅处理群聊（@chatroom 会话）非本人消息。
+
+衍生缓存不会因 UPDATE 自动失效，--apply 时本脚本按会话显式清理
+（可再生缓存，删后由下次分析/索引全量重建）：
+- sentiment_cache：主键 message_id 存在即命中，旧行是带前缀文本的错值；
+- emoji_stats_v1_{id} 快照（settings）：指纹 count:id_sum:max_ts 对
+  等量 UPDATE 有盲区，旧快照继续命中；
+- RAG 五表 + rag_index_status：游标 last_message_id 只进不退，
+  已扫过的旧行永不重扫——会话级删除使其回到 pending 全量重建。
 
 用法：
     python backend/scripts/strip_chatroom_prefix_backfill.py [--apply]
@@ -16,21 +23,16 @@ sender 停留在 username 形态。正则修复后新导入自然正确，本脚
 """
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-
-import sqlite3  # noqa: E402
 
 from app.db.connection import get_db  # noqa: E402
 from app.services.wechat.chatroom import (  # noqa: E402
     parse_chatroom_message,
     resolve_chatroom_display_name,
 )
-
-BATCH = 2000
 
 
 def load_name_map() -> dict:
@@ -65,6 +67,19 @@ def load_name_map() -> dict:
         db.close()
 
 
+def invalidate_derived_caches(con, gid: int) -> None:
+    """有行的 UPDATE 才调用：会话级衍生缓存失效（见模块 docstring）。"""
+    con.execute(
+        "DELETE FROM sentiment_cache WHERE message_id IN"
+        " (SELECT id FROM messages WHERE conversation_id = ?)",
+        (gid,),
+    )
+    con.execute("DELETE FROM settings WHERE key = ?", (f"emoji_stats_v1_{gid}",))
+    for table in ("rag_embeddings", "rag_fact_embeddings",
+                  "rag_documents", "rag_facts", "rag_index_status"):
+        con.execute(f"DELETE FROM {table} WHERE conversation_id = ?", (gid,))
+
+
 def main() -> None:
     apply = "--apply" in sys.argv
     name_map = load_name_map()
@@ -81,6 +96,7 @@ def main() -> None:
     print(f"群聊会话 {len(group_ids)} 个")
 
     total = scanned = content_fixed = sender_fixed = 0
+    known_ids = set(name_map) or None  # 前缀剥离白名单（同导入侧口径）
     for gid in group_ids:
         rows = con.execute(
             "SELECT id, content, sender FROM messages WHERE conversation_id = ?",
@@ -92,7 +108,7 @@ def main() -> None:
             text = content or ""
             new_sender = sender or ""
             new_content = text
-            sid, stripped = parse_chatroom_message(text)
+            sid, stripped = parse_chatroom_message(text, known_ids=known_ids)
             if sid is not None:
                 scanned += 1
                 new_content = stripped
@@ -110,6 +126,8 @@ def main() -> None:
                 "UPDATE messages SET sender = ?, content = ? WHERE id = ?",
                 updates,
             )
+            # UPDATE 与缓存失效同事务：要么都生效要么都不
+            invalidate_derived_caches(con, gid)
             con.commit()  # type: ignore[attr-defined]
         if updates:
             print(f"  会话 {gid}: 待更新 {len(updates)} 行")

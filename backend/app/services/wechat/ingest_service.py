@@ -925,6 +925,9 @@ class WeChatIngestService:
         # 收集新消息：会话确保仅 cache miss 时执行（每 talker 一次，
         # 此前在 per-message 循环里跑了 20 万次）
         rows_by_conv: dict[int, list] = {}
+        # 前缀剥离白名单：contact 全量 username 键集（字母自定义号/纯数字
+        # 形态有歧义，命中花名册才剥；wxid_ 形态特异不需白名单）
+        known_ids = set(chatroom_names) if chatroom_names else None
         now = int(time.time())
         for msg in messages:
             talker = msg.get('talker')
@@ -975,7 +978,7 @@ class WeChatIngestService:
             if is_chatroom_username(talker):
                 # 群消息存储前剥离 'wxid_xxx:\n' 前缀：不剥离会污染词频/
                 # 情感/事实抽取/出网 prompt 全链路；群内发送者记入 sender
-                member_wxid, content = parse_chatroom_message(content)
+                member_wxid, content = parse_chatroom_message(content, known_ids=known_ids)
                 if member_wxid:
                     sender_label = resolve_chatroom_display_name(
                         member_wxid, name_map=chatroom_names

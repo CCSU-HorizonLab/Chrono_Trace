@@ -333,6 +333,10 @@ class DeepAnalysisApiMixin:
         try:
             if not conversation_id:
                 return {"ok": False, "error": "缺少参数: conversation_id"}
+            from . import conversation_is_group
+
+            if conversation_is_group(int(conversation_id)):
+                return {"ok": False, "error": "大五画像仅支持单聊（群聊走成员画像）"}
             from ...services.analysis.personality_impression_service import (
                 PersonalityImpressionService,
             )
@@ -373,6 +377,10 @@ class DeepAnalysisApiMixin:
         try:
             if not conversation_id:
                 return {"ok": False, "error": "缺少参数: conversation_id"}
+            from . import conversation_is_group
+
+            if conversation_is_group(int(conversation_id)):
+                return {"ok": False, "error": "大五增强仅支持单聊（群聊走成员画像）"}
             from ...services.analysis.personality_impression_service import (
                 PersonalityImpressionService,
             )

@@ -106,6 +106,10 @@ class HistoryQaApiMixin:
             失败时 {"ok": False, "error": "..."}（error 面向用户展示）
         """
         try:
+            from . import conversation_is_group
+
+            if conversation_is_group(int(conversation_id)):
+                return {"ok": False, "error": "陪练仅支持单聊会话"}
             from ...services.analysis.history_qa_service import HistoryQAService
 
             result = HistoryQAService().rehearse(int(conversation_id), received_text)
@@ -133,6 +137,10 @@ class HistoryQaApiMixin:
             失败时 {"ok": False, "error": "..."}（error 面向用户展示）
         """
         try:
+            from . import conversation_is_group
+
+            if conversation_is_group(int(conversation_id)):
+                return {"ok": False, "error": "AI 分身仅支持单聊会话"}
             from ...services.analysis.avatar_chat_service import AvatarChatService
             from ...services.analysis.history_qa_service import HistoryQAError
 

@@ -35,7 +35,7 @@ from .engagement_metrics import EngagementMetricsService
 
 logger = logging.getLogger(__name__)
 
-BIG5_PROMPT_VERSION = 1          # prompt/指标权重结构性变化 +1，旧行自动失效
+BIG5_PROMPT_VERSION = 2          # prompt/指标权重结构性变化 +1，旧行自动失效（v2：撤饱和失真的话题延续指标）
 BIG5_LLM_ADJUST_LIMIT = 15       # LLM 校正上界（绝对分）
 BIG5_TTL_SECONDS = 30 * 86400    # 缓存 30 天
 BIG5_SAMPLE_TARGET_CHARS = 12000  # 增强层采样语料目标字符数

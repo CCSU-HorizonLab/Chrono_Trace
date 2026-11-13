@@ -182,9 +182,9 @@
                 <p class="gm-big5-note">本地统计印象（样本 {{ memberBig5For(m.name)?.sample_count }} 条），非心理测评；「—」为群聊语境无可靠统计代理的维度</p>
               </template>
               <p v-else class="gm-big5-hint">
-                {{ (memberBig5For(m.name)?.sample_count ?? 0) >= 30
-                  ? '发言量未入计算范围（仅统计发言最多的前 30 名与「我」）'
-                  : `样本 ${memberBig5For(m.name)?.sample_count ?? '—'} 条，不足 30 条暂不出画像` }}
+                {{ (memberBig5For(m.name)?.sample_count ?? 0) >= memberBig5Limit
+                  ? `发言量未入计算范围（仅统计发言最多的前 ${memberBig5Limit} 名与「我」）`
+                  : `样本 ${memberBig5For(m.name)?.sample_count ?? '—'} 条，不足 ${memberBig5Limit} 条暂不出画像` }}
               </p>
             </div>
           </template>
@@ -328,6 +328,7 @@ const groupSummary = ref<{ summary: string; degraded: boolean; degraded_reason?:
 const groupSummaryLoading = ref(false)
 const groupSummaryDays = ref(7)
 const memberBig5 = ref<GroupMemberBig5[] | null>(null)
+const memberBig5Limit = ref(30) // 计算名单上限（后端 compute_limit，未到时显示默认）
 const memberBig5Loading = ref(false)
 const expandedMember = ref<string | null>(null)
 
@@ -356,6 +357,7 @@ async function toggleMemberBig5(name: string) {
     const res = await api.get_group_member_big5(conversationId)
     if (conversationId !== selectedConversationId.value) return // 已切换联系人（F1）
     memberBig5.value = res?.ok && Array.isArray(res.members) ? res.members : []
+    memberBig5Limit.value = res?.compute_limit ?? 30
   } catch {
     memberBig5.value = []
   } finally {

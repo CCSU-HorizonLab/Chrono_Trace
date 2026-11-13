@@ -238,7 +238,7 @@
       </Transition>
     </Teleport>
 
-    <div class="import-section">
+    <div class="import-section logs-section">
       <h2 class="section-title"><span class="dot green"></span>运行日志</h2>
       <div class="log-container">
         <div v-if="!logs.length" class="empty-log">暂无日志</div>
@@ -1450,6 +1450,11 @@ onUnmounted(() => {
 
 .log-container {
   padding-left: 20px;
+}
+
+/* 日志区与上方导入按钮组拉开间距（.import-section 本身无纵向 margin） */
+.logs-section {
+  margin-top: 24px;
 }
 
 .log-list {

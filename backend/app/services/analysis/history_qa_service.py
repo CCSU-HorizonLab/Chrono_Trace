@@ -354,11 +354,26 @@ class HistoryQAService:
             account_wxid, conversation_id, received_text
         )
 
+        # 第四路素材：TA 大五印象 + 我的语气统计。高频词/表情是原文
+        # 消息的词级切片（人名/称呼高发形态），与消息同过批量脱敏
+        # 红线（分身路径同口径）；纯数字统计（分数/句长/占比）无隐私面
+        materials = self._collect_persona_materials(conversation_id, account_wxid)
+        persona_pairs = (
+            [
+                (materials.get("words") or "", "rehearsal_persona_words"),
+                (materials.get("emojis") or "", "rehearsal_persona_emojis"),
+            ]
+            if materials
+            else []
+        )
+        persona_pairs = [(t, sid) for t, sid in persona_pairs if t]
+
         # 四路输入统一过批量脱敏（红线同 ask：任何一条失败即阻断）
         texts = self._redact_batch_for_remote(
             [(received_text, "rehearsal_received")]
             + [(rec["text"], str(rec["message_id"])) for rec in recent + related]
-            + [(m["content"], f"rehearsal_memory_{i}") for i, m in enumerate(memory_refs, 1)],
+            + [(m["content"], f"rehearsal_memory_{i}") for i, m in enumerate(memory_refs, 1)]
+            + persona_pairs,
             account_wxid,
             conversation_id,
             source_table="rehearsal",
@@ -371,10 +386,12 @@ class HistoryQAService:
             {**rec, "text": t}
             for rec, t in zip(related, texts[1 + len(recent) : 1 + len(recent) + len(related)])
         ]
-        redacted_memories = texts[1 + len(recent) + len(related) :]
+        redacted_memories = texts[
+            1 + len(recent) + len(related) : len(texts) - len(persona_pairs)
+        ]
+        redacted_persona_words = texts[len(texts) - len(persona_pairs) :]
 
-        # 第四路素材：TA 大五印象 + 我的语气统计（本地统计产物，免脱敏）
-        persona = self._build_persona_context(conversation_id, account_wxid)
+        persona = self._assemble_persona_context(materials, redacted_persona_words)
         user_prompt = self._build_rehearsal_prompt(
             redacted_received, redacted_recent, redacted_related, redacted_memories, persona
         )
@@ -409,17 +426,18 @@ class HistoryQAService:
             rec["text"] = _clip_text(rec["text"])
         return records
 
-    def _build_persona_context(
+    def _collect_persona_materials(
         self, conversation_id: int, account_wxid: str
-    ) -> Optional[str]:
-        """陪练第四路素材：TA 的大五统计印象 + 我的语气统计特征。
+    ) -> Optional[Dict[str, Any]]:
+        """收集陪练第四路素材的原始部件。
 
-        两路均为本地统计产物（分数/密度/高频词，无原话原文）——统计
-        产物非隐私原文，不走脱敏；单路失败或样本过薄即跳过该路，两路
-        都缺席返回 None（整段省略，退回纯对话背景）。延迟导入避免
-        与 avatar_chat_service（骨架借用本服务）循环依赖。
+        返回 {big5, voice, words, emojis}——big5/voice 为纯数字统计
+        （无隐私面，直拼），words/emojis 为原文词级切片（人名/称呼
+        高发，必须由调用方过批量脱敏后再用）；单路失败或样本过薄跳
+        过该路，全缺席返回 None。延迟导入避免与 avatar_chat_service
+        （骨架借用本服务）循环依赖。
         """
-        parts: List[str] = []
+        materials: Dict[str, Any] = {}
         try:
             from .personality_impression_service import PersonalityImpressionService
 
@@ -433,9 +451,7 @@ class HistoryQAService:
                 if item and item.get("score") is not None
             ]
             if dims:
-                parts.append(
-                    f"- TA 的大五：{'、'.join(dims)}（连续维度分 0-100）"
-                )
+                materials["big5"] = "、".join(dims)
         except Exception as exc:
             logger.debug("[回复陪练] 大五素材缺席: %s", exc)
         try:
@@ -443,17 +459,40 @@ class HistoryQAService:
 
             voice = AvatarChatService()._sample_voice(conversation_id, side=1)
             if voice and voice.get("sample_count", 0) >= 30:
-                bits = [
-                    f"中位句长 {voice['median_len']} 字",
-                    f"短句占 {int(voice['short_ratio'] * 100)}%",
-                ]
+                materials["voice"] = (
+                    f"中位句长 {voice['median_len']} 字，"
+                    f"短句占 {int(voice['short_ratio'] * 100)}%"
+                )
                 if voice.get("top_words"):
-                    bits.append("高频词 " + "/".join(voice["top_words"][:6]))
+                    materials["words"] = "/".join(voice["top_words"][:6])
                 if voice.get("top_emojis"):
-                    bits.append("常用表情 " + "".join(voice["top_emojis"][:3]))
-                parts.append("- 我的表达风格：" + "，".join(bits))
+                    materials["emojis"] = "".join(voice["top_emojis"][:3])
         except Exception as exc:
             logger.debug("[回复陪练] 语气素材缺席: %s", exc)
+        return materials or None
+
+    @staticmethod
+    def _assemble_persona_context(
+        materials: Optional[Dict[str, Any]], redacted_words_emojis: List[str]
+    ) -> Optional[str]:
+        """把素材部件组装成【人格背景】段。
+
+        redacted_words_emojis 为 words/emojis 经批量脱敏后的副本（与
+        persona_pairs 同序；本地模型即原文）。
+        """
+        if not materials:
+            return None
+        parts: List[str] = []
+        if materials.get("big5"):
+            parts.append(f"- TA 的大五：{materials['big5']}（连续维度分 0-100）")
+        it = iter(redacted_words_emojis)
+        if materials.get("voice") or materials.get("words") or materials.get("emojis"):
+            bits = [materials["voice"]] if materials.get("voice") else []
+            if materials.get("words"):
+                bits.append("高频词 " + next(it))
+            if materials.get("emojis"):
+                bits.append("常用表情 " + next(it))
+            parts.append("- 我的表达风格：" + "，".join(bits))
         if not parts:
             return None
         return "【人格背景】（本地统计印象，非测评结论）\n" + "\n".join(parts)

@@ -6,7 +6,8 @@ sender 停留在 username 形态。正则修复后新导入自然正确，本脚
 存量库（重导不会更新已判重的行，必须就地 UPDATE）。
 
 口径与导入侧完全一致（chatroom.parse_chatroom_message + 昵称映射），
-仅处理群聊（@chatroom 会话）非本人消息。
+仅处理群聊（@chatroom 会话）非本人消息。花名册为全账号合并
+（chatroom.load_contact_name_map），多账号库每账号 contact.db 都参与。
 
 衍生缓存不会因 UPDATE 自动失效，--apply 时本脚本按会话显式清理
 （可再生缓存，删后由下次分析/索引全量重建）：
@@ -14,7 +15,13 @@ sender 停留在 username 形态。正则修复后新导入自然正确，本脚
 - emoji_stats_v1_{id} 快照（settings）：指纹 count:id_sum:max_ts 对
   等量 UPDATE 有盲区，旧快照继续命中；
 - RAG 五表 + rag_index_status：游标 last_message_id 只进不退，
-  已扫过的旧行永不重扫——会话级删除使其回到 pending 全量重建。
+  已扫过的旧行永不重扫——会话级删除使其回到 pending 全量重建；
+- chapter_summaries 等四表：指纹为时间范围键，对内容 UPDATE 完全
+  盲——同会话级删除重算。
+
+连接为 autocommit（connection.py isolation_level=None）：失效语句紧随
+UPDATE 逐条即时生效，不存在跨语句事务；中断可直接重跑（幂等，已清洗
+行不再命中）。
 
 用法：
     python backend/scripts/strip_chatroom_prefix_backfill.py [--apply]
@@ -30,41 +37,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.db.connection import get_db  # noqa: E402
 from app.services.wechat.chatroom import (  # noqa: E402
+    load_contact_name_map,
     parse_chatroom_message,
     resolve_chatroom_display_name,
 )
-
-
-def load_name_map() -> dict:
-    """wxid/username→显示名映射：账号密钥解密 contact.db（同导入链路）。"""
-    import json
-
-    from app.services.wechat.account_settings import build_custom_paths
-    from app.services.wechat.db.v4.contact import ContactDBV4
-
-    settings = json.loads(
-        (Path(__file__).parent.parent / "data" / "settings.json").read_text("utf-8")
-    )
-    accounts = settings.get("wechat_accounts") or []
-    acc = next((a for a in accounts if a.get("passphrase") or a.get("db_key")), None)
-    if not acc:
-        print("!! settings.json 无可用账号密钥，映射为空（仅剥前缀不改 sender）")
-        return {}
-    paths = build_custom_paths(acc) or {}
-    wechat_dir, wxid = paths.get("wechat_dir"), paths.get("current_user")
-    if not wechat_dir or not wxid:
-        print("!! 账号缺 wechat_dir/wxid，映射为空")
-        return {}
-    contact_path = Path(wechat_dir) / wxid / "db_storage" / "contact" / "contact.db"
-    if not contact_path.is_file():
-        print(f"!! contact.db 不存在: {contact_path}")
-        return {}
-    key = acc.get("passphrase") or acc.get("db_key")
-    db = ContactDBV4(str(contact_path), key, raw_keys=acc.get("raw_keys") or None)
-    try:
-        return db.get_display_name_map()
-    finally:
-        db.close()
 
 
 def invalidate_derived_caches(con, gid: int) -> None:
@@ -75,14 +51,23 @@ def invalidate_derived_caches(con, gid: int) -> None:
         (gid,),
     )
     con.execute("DELETE FROM settings WHERE key = ?", (f"emoji_stats_v1_{gid}",))
+    tables = {
+        r[0] for r in con.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        )
+    }
     for table in ("rag_embeddings", "rag_fact_embeddings",
-                  "rag_documents", "rag_facts", "rag_index_status"):
-        con.execute(f"DELETE FROM {table} WHERE conversation_id = ?", (gid,))
+                  "rag_documents", "rag_facts", "rag_index_status",
+                  "chapter_summaries", "chapter_month_summaries",
+                  "chapter_transitions", "chapter_arcs"):
+        # chapter 四表为懒建：库可能从未建过，跳过不存在的表
+        if table in tables:
+            con.execute(f"DELETE FROM {table} WHERE conversation_id = ?", (gid,))
 
 
 def main() -> None:
     apply = "--apply" in sys.argv
-    name_map = load_name_map()
+    name_map = load_contact_name_map()
     print(f"昵称映射 {len(name_map)} 条；模式: {'实跑' if apply else 'dry-run'}")
 
     con = get_db()
@@ -126,9 +111,8 @@ def main() -> None:
                 "UPDATE messages SET sender = ?, content = ? WHERE id = ?",
                 updates,
             )
-            # UPDATE 与缓存失效同事务：要么都生效要么都不
+            # autocommit：上面 UPDATE 已即时落盘；失效语句紧随其后逐条生效
             invalidate_derived_caches(con, gid)
-            con.commit()  # type: ignore[attr-defined]
         if updates:
             print(f"  会话 {gid}: 待更新 {len(updates)} 行")
 

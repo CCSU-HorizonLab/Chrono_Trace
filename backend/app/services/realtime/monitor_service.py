@@ -429,7 +429,11 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, Backfi
 
     def _prepare_visible_messages(self, visible_messages: list) -> list[dict]:
         """Normalize one visible snapshot so dedupe can survive runtime_id churn."""
-        from ..wechat.chatroom import is_chatroom_username, parse_chatroom_message
+        from ..wechat.chatroom import (
+            get_contact_roster,
+            is_chatroom_username,
+            parse_chatroom_message,
+        )
 
         # 监听群聊时剥离 wxid 前缀：与导入侧同口径——否则实时行与导入行
         # 内容不相等，对账永不命中、实时行成为永久重复，且前缀继续
@@ -437,6 +441,8 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, Backfi
         monitoring_chatroom = is_chatroom_username(
             getattr(self, 'current_talker', '') or ''
         ) or is_chatroom_username(getattr(self, 'current_display_name', '') or '')
+        # 前缀剥离白名单（同导入侧口径）：花名册进程级缓存，keys 视图零拷贝
+        roster_keys = get_contact_roster().keys() if monitoring_chatroom else None
         listener_profile = normalize_text(
             self._listener_profile or getattr(self.wx, 'listener_profile', '') or 'unknown'
         )
@@ -449,7 +455,9 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, Backfi
             is_system = getattr(msg, 'is_system', False)
             content = str(getattr(msg, 'content', '') or '')
             if monitoring_chatroom and not is_system and content:
-                _member_wxid, content = parse_chatroom_message(content)
+                _member_wxid, content = parse_chatroom_message(
+                    content, known_ids=roster_keys
+                )
             message_type = str(getattr(msg, 'type', 'text') or 'text')
             sender_attr = 'self' if is_self else 'friend'
             if is_system:

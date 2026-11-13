@@ -6,8 +6,12 @@ wxid 以冒号换行前缀嵌在内容里。全链路此前无任何地方剥离
 """
 from __future__ import annotations
 
+import logging
 import re
+from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 # 群消息前缀三种形态：`wxid_xxx:\n`（未设微信号用户）、自定义微信号
@@ -74,3 +78,57 @@ def resolve_chatroom_display_name(
     if sender_wxid.isdigit() and len(sender_wxid) > 4:
         return f"成员{sender_wxid[-4:]}"
     return sender_wxid
+
+
+def load_contact_name_map() -> dict:
+    """全账号合并的 username→显示名映射（各账号 contact.db 解密）。
+
+    花名册白名单（键集，见 parse_chatroom_message）与群成员显示名解
+    析两用，全表数万行构建毫秒级。单账号失败跳过、全部失败返回空
+    dict——调用方按花名册缺席降级（歧义前缀不剥，仅 wxid_ 形态仍工作）。
+    """
+    import json
+
+    from .account_settings import build_custom_paths, default_settings_path, get_wechat_accounts
+    from .db.v4.contact import ContactDBV4
+
+    try:
+        settings = json.loads(default_settings_path().read_text("utf-8"))
+    except (OSError, ValueError) as e:
+        logger.warning("花名册加载失败（settings 不可读）: %s", e)
+        return {}
+    merged: dict = {}
+    for acc in get_wechat_accounts(settings):
+        key = str(acc.get("db_key") or "").strip()
+        if not key and not acc.get("raw_keys"):
+            continue
+        paths = build_custom_paths(acc) or {}
+        wechat_dir, wxid = paths.get("wechat_dir"), paths.get("current_user")
+        if not wechat_dir or not wxid:
+            continue
+        contact_path = Path(wechat_dir) / wxid / "db_storage" / "contact" / "contact.db"
+        if not contact_path.is_file():
+            continue
+        try:
+            db = ContactDBV4(str(contact_path), key, raw_keys=acc.get("raw_keys") or None)
+            try:
+                merged.update(db.get_display_name_map())
+            finally:
+                db.close()
+        except Exception as e:  # 解密失败不拖垮整体：跳过该账号
+            logger.warning("花名册加载失败（跳过账号 %s）: %s", wxid, e)
+    return merged
+
+
+_ROSTER_CACHE: Optional[dict] = None
+
+
+def get_contact_roster() -> dict:
+    """进程级缓存花名册：监听每快照/导出每消息解密一次 contact.db 不可接受。
+
+    好友圈在进程生命周期内变化极小，不设失效；导入侧每次全量重建不走缓存。
+    """
+    global _ROSTER_CACHE
+    if _ROSTER_CACHE is None:
+        _ROSTER_CACHE = load_contact_name_map()
+    return _ROSTER_CACHE

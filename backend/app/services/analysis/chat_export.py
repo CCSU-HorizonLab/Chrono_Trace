@@ -139,8 +139,10 @@ def _clean_content(msg: dict[str, Any]) -> str:
     content = str(msg.get("content") or "").strip()
     msg_type = int(msg.get("message_type") or 1)
     if msg_type == 1:
-        # 群消息可能有 wxid:\n 前缀（旧数据未剥离时兜底）
-        from ..wechat.chatroom import parse_chatroom_message
-        _, content = parse_chatroom_message(content)
+        # 群消息可能有 wxid:\n 前缀（旧数据未剥离时兜底）；白名单同
+        # 导入侧口径，花名册进程级缓存
+        from ..wechat.chatroom import get_contact_roster, parse_chatroom_message
+        roster = get_contact_roster()
+        _, content = parse_chatroom_message(content, known_ids=roster.keys() if roster else None)
         return content
     return _TYPE_LABELS.get(msg_type, "[消息]") if not content else content

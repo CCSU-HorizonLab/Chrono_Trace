@@ -633,6 +633,32 @@ def test_json_candidates_no_json_returns_empty():
     assert LLMFactExtractorAdapter._json_candidates("没有任何对象") == []
 
 
+def test_json_candidates_repairs_loose_cjk_quotes():
+    """裸引号修复：中文称呼内嵌未转义双引号（真库实测 Qwen3.5 形态，
+    如 对方称呼我为"勇哥"）不再让整段 JSON 丢弃。"""
+    from app.services.realtime.rag.fact_llm import LLMFactExtractorAdapter
+
+    raw = (
+        '{"facts": [{"subject": "对方", "kind": "relation_state", '
+        '"content": "对方称呼我为"勇哥"", "confidence": 0.9, '
+        '"sensitivity": "normal"}]}'
+    )
+    candidates = LLMFactExtractorAdapter._json_candidates(raw)
+    assert candidates, "裸引号候选应被启发式修复救回"
+    facts = json.loads(candidates[-1])["facts"]
+    assert facts[0]["content"] == "对方称呼我为“勇哥”"
+
+
+def test_repair_loose_quotes_keeps_valid_json_untouched():
+    """合法 JSON（空串值、英文已转义、乱码键）不误伤不掩盖。"""
+    from app.services.realtime.rag.fact_llm import LLMFactExtractorAdapter
+
+    ok = '{"facts": [{"content": "", "note": "he said \\"ok\\" then"}]}'
+    assert LLMFactExtractorAdapter._repair_loose_quotes(ok) is None
+    broken = '{"facts": [{"subj"ct": "x"}]}'
+    assert LLMFactExtractorAdapter._repair_loose_quotes(broken) is None
+
+
 def test_related_context_rendered_for_cross_day_anaphora(monkeypatch):
     """p1.7 检索增强上下文：跨天代指（"这玩意"）的历史定义处进入 prompt。"""
     payload = json.dumps(

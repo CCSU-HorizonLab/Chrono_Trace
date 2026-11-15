@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any, Callable
 
 from ..llm_http import apply_deep_call_effort, post_json_with_retries
@@ -471,7 +472,10 @@ class LLMFactExtractorAdapter:
             try:
                 json.loads(candidate)
             except Exception:
-                continue
+                repaired = LLMFactExtractorAdapter._repair_loose_quotes(candidate)
+                if repaired is None:
+                    continue
+                candidate = repaired
             parsed_ok.append(candidate)
         if not parsed_ok:
             return []
@@ -481,6 +485,32 @@ class LLMFactExtractorAdapter:
             if tail_ok:
                 return tail_ok
         return parsed_ok
+
+    # CJK/中文标点字符类：修复只动 CJK 包夹的成对裸引号
+    _CJK = r"一-鿿、-〿！-～"
+    _PAIR_RHS = _CJK + '",\\]}'
+    _RE_LOOSE_PAIR = re.compile(
+        rf'(?<=[{_CJK}])"([^"{{}}]*[{_CJK}][^"{{}}]*)"(?=[{_PAIR_RHS}])'
+    )
+
+    @classmethod
+    def _repair_loose_quotes(cls, candidate: str) -> str | None:
+        """中文语境裸双引号修复：试探式，修完能 parse 才返回。
+
+        Qwen 系输出事实 JSON 偶发不转义内嵌引号（称呼/绰号场景，如
+        "content": "对方称呼我为"勇哥""），严格 JSON 必炸致整段丢弃。
+        只修「左 CJK + 引号 + 无引号内容 + 引号 + 右 CJK/结构符」的
+        成对裸引号（→“”）——键名等 ASCII 语境与合法结构引号不匹配；
+        修复后 json.loads 仍是最终裁判，修不好返回 None 不掩盖。
+        """
+        repaired = cls._RE_LOOSE_PAIR.sub("“\\1”", candidate)
+        if repaired == candidate:
+            return None
+        try:
+            json.loads(repaired)
+        except Exception:
+            return None
+        return repaired
 
     def _parse_facts(self, content: str) -> list[dict[str, Any]]:
         candidates = self._json_candidates(content)

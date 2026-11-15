@@ -158,9 +158,11 @@ class RagAdminApiMixin:
                 try:
                     fb_rows = conn.execute(
                         f"""
-                        SELECT fact_id, action FROM rag_fact_user_feedback
-                        WHERE fact_id IN ({placeholders})
-                        ORDER BY updated_at ASC, id ASC
+                        SELECT fb.fact_id, fb.action FROM rag_fact_user_feedback fb
+                        WHERE fb.fact_id IN ({placeholders})
+                          AND fb.id = (SELECT MAX(id) FROM rag_fact_user_feedback fb2
+                                       WHERE fb2.fact_id = fb.fact_id)
+                          AND fb.action != 'restore'
                         """,
                         fact_ids,
                     ).fetchall()

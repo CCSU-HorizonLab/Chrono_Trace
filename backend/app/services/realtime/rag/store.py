@@ -298,9 +298,18 @@ class RagStore:
                 fact_id INTEGER NOT NULL,
                 action TEXT NOT NULL,
                 reason TEXT,
-                created_at INTEGER NOT NULL,
-                UNIQUE(fact_id)
+                created_at INTEGER NOT NULL
             )
+            """
+        )
+        # 事件流（append-only，无 UNIQUE(fact_id)）：完整保留纠错历史供
+        # Paper 1「跨会话再犯率」评测——同一事实可被反复纠错/恢复，最新
+        # 事件（MAX(id)）决定当前态；旧 schema 有 UNIQUE 的库写入会报错，
+        # 删除该表重建即可
+        self.conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_rag_fact_feedback_fact
+            ON rag_fact_user_feedback(fact_id, id)
             """
         )
         self.conn.execute(
@@ -1316,10 +1325,13 @@ class RagStore:
             fact_id = int(row[0])
         # 用户显式标记过「不准确/忘记」的事实是墓碑：重扫导致的 upsert
         # 不得把 enabled 复位（否则被删除的记忆会“诈尸”重新参与建议）。
+        # 事件流口径：最新事件是墓碑动作才压（restore 之后不压）。
         tombstone = self.conn.execute(
-            "SELECT 1 FROM rag_fact_user_feedback WHERE fact_id = ?", (fact_id,)
+            "SELECT action FROM rag_fact_user_feedback"
+            " WHERE fact_id = ? ORDER BY id DESC LIMIT 1",
+            (fact_id,),
         ).fetchone()
-        if tombstone:
+        if tombstone and tombstone["action"] != "restore":
             self.conn.execute(
                 "UPDATE rag_facts SET enabled = 0, updated_at = ? WHERE id = ?",
                 (now, fact_id),
@@ -1598,6 +1610,7 @@ class RagStore:
         """Mark a fact as user-rejected (inaccurate/forget) with a tombstone.
 
         墓碑保证增量索引重扫不会把该事实重新启用；同时立即退出检索。
+        事件追加不覆盖（append-only）：完整纠错历史是再犯率评测的原料。
         """
         if action not in {"inaccurate", "forget"}:
             return {"ok": False, "error": "invalid_action"}
@@ -1612,8 +1625,6 @@ class RagStore:
             INSERT INTO rag_fact_user_feedback
             (account_wxid, conversation_id, fact_id, action, reason, created_at)
             VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(fact_id) DO UPDATE SET
-              action=excluded.action, reason=excluded.reason, created_at=excluded.created_at
             """,
             (
                 row["account_wxid"],
@@ -1628,25 +1639,42 @@ class RagStore:
         return {"ok": True, "fact_id": int(fact_id), "action": action}
 
     def restore_fact(self, fact_id: int) -> dict[str, Any]:
-        """Remove the tombstone and re-enable a user-rejected fact."""
+        """Re-enable a user-rejected fact（追加 restore 事件，不删历史）."""
         row = self.conn.execute(
             "SELECT id FROM rag_facts WHERE id = ?", (int(fact_id),)
         ).fetchone()
         if row is None:
             return {"ok": False, "error": "fact_not_found"}
-        self.conn.execute(
-            "DELETE FROM rag_fact_user_feedback WHERE fact_id = ?", (int(fact_id),)
-        )
+        info = self.conn.execute(
+            """
+            SELECT account_wxid, conversation_id FROM rag_fact_user_feedback
+            WHERE fact_id = ? ORDER BY id DESC LIMIT 1
+            """,
+            (int(fact_id),),
+        ).fetchone()
+        if info is not None:
+            self.conn.execute(
+                """
+                INSERT INTO rag_fact_user_feedback
+                (account_wxid, conversation_id, fact_id, action, reason, created_at)
+                VALUES (?, ?, ?, 'restore', '', ?)
+                """,
+                (info["account_wxid"], info["conversation_id"], int(fact_id), _now()),
+            )
         self.set_fact_enabled(int(fact_id), True)
         return {"ok": True, "fact_id": int(fact_id), "action": "restore"}
 
     def list_fact_user_feedback(
         self, account_wxid: str, conversation_id: int
     ) -> dict[int, str]:
+        """当前处于被纠错态的事实（最新事件非 restore 才算）。"""
         rows = self.conn.execute(
             """
-            SELECT fact_id, action FROM rag_fact_user_feedback
-            WHERE account_wxid = ? AND conversation_id = ?
+            SELECT fb.fact_id, fb.action FROM rag_fact_user_feedback fb
+            WHERE fb.account_wxid = ? AND fb.conversation_id = ?
+              AND fb.id = (SELECT MAX(id) FROM rag_fact_user_feedback fb2
+                           WHERE fb2.fact_id = fb.fact_id)
+              AND fb.action != 'restore'
             """,
             (account_wxid, int(conversation_id)),
         ).fetchall()
@@ -1674,6 +1702,8 @@ class RagStore:
             INNER JOIN rag_fact_embeddings e ON e.fact_id = f.id
             WHERE fb.account_wxid = ? AND fb.conversation_id = ?
               AND fb.action = 'inaccurate'
+              AND fb.id = (SELECT MAX(id) FROM rag_fact_user_feedback fb2
+                           WHERE fb2.fact_id = fb.fact_id)
               AND e.embedding_model = ? AND e.embedding_dim = ?
             """,
             (account_wxid, int(conversation_id), embedding_model, int(embedding_dim)),

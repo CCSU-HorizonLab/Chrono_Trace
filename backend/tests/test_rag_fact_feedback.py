@@ -61,7 +61,9 @@ def test_forget_tombstone_survives_reindex_upsert():
     assert store.count_active_facts("wxid_a", 1) == 0
 
     tombstone = conn.execute(
-        "SELECT action FROM rag_fact_user_feedback WHERE fact_id = ?", (fact_id,)
+        "SELECT action FROM rag_fact_user_feedback WHERE fact_id = ?"
+        " ORDER BY id DESC LIMIT 1",
+        (fact_id,),
     ).fetchone()
     assert tombstone["action"] == "forget"
 
@@ -78,7 +80,9 @@ def test_inaccurate_feedback_marks_and_disables():
     ).fetchone()
     assert row["enabled"] == 0
     fb = conn.execute(
-        "SELECT action, reason FROM rag_fact_user_feedback WHERE fact_id = ?", (fact_id,)
+        "SELECT action, reason FROM rag_fact_user_feedback WHERE fact_id = ?"
+        " ORDER BY id DESC LIMIT 1",
+        (fact_id,),
     ).fetchone()
     assert fb["action"] == "inaccurate"
     assert "蟹" in fb["reason"]
@@ -94,16 +98,40 @@ def test_restore_removes_tombstone_and_reenables():
 
     row = conn.execute("SELECT enabled FROM rag_facts WHERE id = ?", (fact_id,)).fetchone()
     assert row["enabled"] == 1
-    assert (
-        conn.execute(
-            "SELECT COUNT(*) FROM rag_fact_user_feedback WHERE fact_id = ?", (fact_id,)
-        ).fetchone()[0]
-        == 0
-    )
+    # 事件流：restore 是追加事件非删除——历史保留、最新事件为 restore
+    events = conn.execute(
+        "SELECT action FROM rag_fact_user_feedback WHERE fact_id = ? ORDER BY id",
+        (fact_id,),
+    ).fetchall()
+    assert [e["action"] for e in events] == ["inaccurate", "restore"]
+    assert fact_id not in store.list_fact_user_feedback("wxid_a", 1)
     # 恢复后重扫不再被压制
     _upsert_fact(store)
     row = conn.execute("SELECT enabled FROM rag_facts WHERE id = ?", (fact_id,)).fetchone()
     assert row["enabled"] == 1
+
+
+def test_feedback_event_stream_keeps_full_history():
+    """同一事实反复纠错/恢复：事件全保留，消费方一律按最新事件取态。"""
+    conn, store = _store()
+    fact_id = _upsert_fact(store)
+    store.set_fact_user_feedback(fact_id, "inaccurate", reason="记错了")
+    store.restore_fact(fact_id)
+    store.set_fact_user_feedback(fact_id, "forget")
+
+    events = conn.execute(
+        "SELECT action FROM rag_fact_user_feedback WHERE fact_id = ? ORDER BY id",
+        (fact_id,),
+    ).fetchall()
+    assert [e["action"] for e in events] == ["inaccurate", "restore", "forget"]
+
+    # 当前态 = 最新事件（forget）；denied 向量只认最新 inaccurate，
+    # restore 之后的 forget 不参与语义拦截（口径与单事件时代一致）
+    assert store.list_fact_user_feedback("wxid_a", 1) == {fact_id: "forget"}
+    denied = store.list_denied_fact_vectors(
+        "wxid_a", 1, embedding_model="test-m", embedding_dim=4
+    )
+    assert denied == []
 
 
 def test_invalid_action_and_missing_fact_rejected():

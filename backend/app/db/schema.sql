@@ -1064,3 +1064,18 @@ INSERT OR IGNORE INTO settings (key, value, updated_at) VALUES
     ('rag_embedding_model', 'BAAI/bge-small-zh-v1.5', strftime('%s', 'now')),
     ('rag_embedding_dim', '512', strftime('%s', 'now')),
     ('rag_privacy_mode', 'balanced', strftime('%s', 'now'));
+
+-- 问答真实问法留档：评测集「真实问法分布」的原料。source: qa=问答 /
+-- avatar=AI 分身 / rehearse=陪练贴入；ok=该次请求终态，note 记失败/取消
+-- 摘要。纯本地行为流（query 原文不出设备），留档失败不阻断问答主链路。
+CREATE TABLE IF NOT EXISTS qa_query_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at INTEGER NOT NULL,
+    conversation_id INTEGER NOT NULL,
+    source TEXT NOT NULL DEFAULT 'qa',
+    query_text TEXT NOT NULL,
+    ok INTEGER NOT NULL DEFAULT 1,
+    note TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_qa_query_log_conv
+ON qa_query_log(conversation_id, created_at DESC);

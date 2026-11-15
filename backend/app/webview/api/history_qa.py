@@ -25,6 +25,30 @@ EMBEDDING_BACKFILL_RATIO = 0.8
 EMBEDDING_BACKFILL_MIN_MISSING = 50
 
 
+def _log_qa_query(
+    source: str, conversation_id, query: str, ok: bool, note: str = ""
+) -> None:
+    """问答真实问法留档（qa_query_log 表）：评测集「真实问法分布」的
+    原料，从落地当天起开始积累。失败静默——留档绝不阻断问答主链路。"""
+    try:
+        from ...db.connection import get_db
+
+        get_db().execute(
+            "INSERT INTO qa_query_log"
+            " (created_at, conversation_id, source, query_text, ok, note)"
+            " VALUES (strftime('%s','now'), ?, ?, ?, ?, ?)",
+            (
+                int(conversation_id or 0),
+                source,
+                str(query or "")[:2000],
+                1 if ok else 0,
+                str(note or "")[:500],
+            ),
+        )
+    except Exception:  # noqa: BLE001
+        logger.debug("qa_query_log 留档失败（忽略）", exc_info=True)
+
+
 class HistoryQaApiMixin:
     """问问微信：当前联系人历史自然语言问答"""
 
@@ -75,11 +99,14 @@ class HistoryQaApiMixin:
                 on_delta=on_delta,
             )
             semantic_indexing = self._maybe_start_embedding_backfill(int(conversation_id))
+            _log_qa_query("qa", conversation_id, question, ok=True)
             return {"ok": True, "semantic_indexing": semantic_indexing, **result}
         except HistoryQAError as e:
+            _log_qa_query("qa", conversation_id, question, ok=False, note=str(e))
             return {"ok": False, "error": str(e)}
         except Exception as e:
             logger.error(f"[Bridge] 历史问答失败: {e}")
+            _log_qa_query("qa", conversation_id, question, ok=False, note=str(e))
             return {"ok": False, "error": f"问答失败：{e}"}
 
     def cancel_history_qa(self, conversation_id: int) -> dict[str, Any]:
@@ -113,9 +140,11 @@ class HistoryQaApiMixin:
             from ...services.analysis.history_qa_service import HistoryQAService
 
             result = HistoryQAService().rehearse(int(conversation_id), received_text)
+            _log_qa_query("rehearse", conversation_id, received_text, ok=bool(result.get("ok")))
             return result
         except Exception as e:
             logger.error(f"[Bridge] 回复陪练失败: {e}")
+            _log_qa_query("rehearse", conversation_id, received_text, ok=False, note=str(e))
             return {"ok": False, "error": str(e)}
 
     def ask_avatar_chat(
@@ -162,11 +191,14 @@ class HistoryQaApiMixin:
                 int(conversation_id), str(message or ""), history or [],
                 on_delta=on_delta,
             )
+            _log_qa_query("avatar", conversation_id, message, ok=True)
             return {"ok": True, **result}
         except HistoryQAError as e:
+            _log_qa_query("avatar", conversation_id, message, ok=False, note=str(e))
             return {"ok": False, "error": str(e)}
         except Exception as e:
             logger.error(f"[Bridge] AI 分身对话失败: {e}")
+            _log_qa_query("avatar", conversation_id, message, ok=False, note=str(e))
             return {"ok": False, "error": f"分身对话失败：{e}"}
 
     def cancel_avatar_chat(self, conversation_id: int) -> dict[str, Any]:

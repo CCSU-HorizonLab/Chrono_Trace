@@ -1128,26 +1128,39 @@ class WeChatIngestService:
         }
 
     def _refresh_conversation_stats(self, touched_conversations: dict[int, int]) -> None:
-        """Refresh denormalized counters for conversations touched by the import."""
-        if not touched_conversations:
-            return
+        """Refresh denormalized counters after the import.
 
+        count 列可再生，走全表失配重算：touched-only 增量会让刷新逻辑上线前
+        导入、此后无新增的历史会话永远停在初始 0——特征提取圈会话
+        （message_count > 0）与分析新鲜度判定（current < analyzed）随之失真。
+        走 idx_messages_conversation 覆盖索引，百万消息库亚秒级。
+        """
         db = get_db()
         with write_transaction():
             for conversation_id, latest_timestamp in touched_conversations.items():
                 db.execute(
                     """
                     UPDATE conversations
-                    SET updated_at = MAX(updated_at, ?),
-                        message_count = (
-                            SELECT COUNT(*)
-                            FROM messages
-                            WHERE messages.conversation_id = conversations.id
-                        )
+                    SET updated_at = MAX(updated_at, ?)
                     WHERE id = ?
                     """,
                     (latest_timestamp, conversation_id)
                 )
+            db.execute(
+                """
+                UPDATE conversations
+                SET message_count = (
+                    SELECT COUNT(*)
+                    FROM messages
+                    WHERE messages.conversation_id = conversations.id
+                )
+                WHERE message_count IS NOT (
+                    SELECT COUNT(*)
+                    FROM messages
+                    WHERE messages.conversation_id = conversations.id
+                )
+                """
+            )
         db.commit()
 
     def _auto_preprocess_messages(

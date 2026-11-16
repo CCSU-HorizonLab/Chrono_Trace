@@ -131,3 +131,29 @@ def test_import_wechat_data_reports_current_totals_and_incremental_counts(monkey
         "skipped": 99,
         "import_watermark_ts": 0,
     }
+
+
+def test_refresh_conversation_stats_heals_stale_counts_without_touch(isolated_db):
+    """零插入（全判重/空 touched）导入也要自愈历史失真 count——
+    touched-only 时代遗留的 0 计数会漏出特征提取与新鲜度判定。"""
+    conv = isolated_db.execute(
+        """
+        INSERT INTO conversations (account_wxid, username, display_name, platform, created_at, updated_at, message_count)
+        VALUES ('wxid_me', 'wxid_friend', '老友', 'wechat', 1, 10, 0)
+        """
+    ).lastrowid
+    isolated_db.execute(
+        """
+        INSERT INTO messages (conversation_id, local_id, talker, sender, is_sender, message_type, content, timestamp, source, created_at)
+        VALUES (?, 1, 'wxid_friend', NULL, 0, 1, '在吗', 10, 'long', 10),
+               (?, 2, 'wxid_friend', NULL, 0, 1, '嗯嗯', 11, 'long', 11)
+        """,
+        (conv, conv),
+    )
+
+    WeChatIngestService()._refresh_conversation_stats({})
+
+    healed = isolated_db.execute(
+        "SELECT message_count FROM conversations WHERE id = ?", (conv,)
+    ).fetchone()[0]
+    assert healed == 2

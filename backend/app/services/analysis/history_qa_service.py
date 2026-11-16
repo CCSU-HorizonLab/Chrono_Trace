@@ -31,6 +31,7 @@ import pickle
 import re
 import threading
 import time
+import weakref
 from contextlib import contextmanager
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
@@ -163,8 +164,10 @@ REHEARSAL_MAX_TOKENS = 1024
 # 并发的两个 ask 共享一枚标记时，谁的轮询点先到谁消费——「停止后立即
 # 重发」会把用户刚发的新问题杀掉而旧问题跑完（方向恰好反了）。串行后
 # 标记属主明确：新请求等旧请求真正退出，再清死残留标记自己起步
+# 弱值表防无界：临界区在用时 with frame 持强引用，退出即蒸发——
+# 重叠的临界区永远共享同一枚活锁，无泄漏
 _QA_INFLIGHT_LOCK = threading.Lock()
-_QA_CONV_LOCKS: dict = {}
+_QA_CONV_LOCKS: "weakref.WeakValueDictionary[int, threading.Lock]" = weakref.WeakValueDictionary()
 
 
 def _extract_keywords(question: str) -> List[str]:

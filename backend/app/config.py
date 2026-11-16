@@ -67,7 +67,14 @@ DEV_DATA_DIR_PATH = SOURCE_ROOT_PATH / "backend" / "data"
 
 
 def _resolve_user_data_dir() -> Path:
-    """解析用户数据目录（打包写系统数据目录，开发模式写仓库内 backend/data）"""
+    """解析用户数据目录（打包写系统数据目录，开发模式写仓库内 backend/data）
+
+    CHRONO_TRACE_DATA_DIR 环境变量显式覆盖（演示库截图/隔离测试用）：
+    库、settings、logs/temp 全部落到该目录，与真实数据完全隔离。
+    """
+    env_dir = os.environ.get("CHRONO_TRACE_DATA_DIR", "").strip()
+    if env_dir:
+        return Path(env_dir).expanduser().resolve()
     if not IS_FROZEN:
         return DEV_DATA_DIR_PATH
     return _local_appdata_root() / USER_DATA_DIR_NAME

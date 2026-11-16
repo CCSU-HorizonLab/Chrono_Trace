@@ -626,7 +626,7 @@ class TestWindowedImpressions:
         assert payload["ok"] is True
 
         cols = {r[1] for r in db.execute("PRAGMA table_info(big5_impressions)")}
-        assert {"window_kind", "window_from", "window_to"} <= cols
+        assert {"window_kind", "window_from", "window_to", "decision_style_json"} <= cols
         # 重建后只剩本次新算的 local 行（旧 v1 行随 DROP 消失）
         count = db.execute("SELECT COUNT(*) FROM big5_impressions").fetchone()
         assert count[0] == 2

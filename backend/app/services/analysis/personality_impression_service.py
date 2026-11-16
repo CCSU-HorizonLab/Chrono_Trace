@@ -35,7 +35,7 @@ from .engagement_metrics import EngagementMetricsService
 
 logger = logging.getLogger(__name__)
 
-BIG5_PROMPT_VERSION = 2          # prompt/指标权重结构性变化 +1，旧行自动失效（v2：撤饱和失真的话题延续指标）
+BIG5_PROMPT_VERSION = 3          # prompt/指标权重结构性变化 +1，旧行自动失效（v3：决策风格块入缓存；v2：撤饱和失真的话题延续指标）
 BIG5_LLM_ADJUST_LIMIT = 15       # LLM 校正上界（绝对分）
 BIG5_TTL_SECONDS = 30 * 86400    # 缓存 30 天
 BIG5_SAMPLE_TARGET_CHARS = 12000  # 增强层采样语料目标字符数
@@ -1012,6 +1012,9 @@ class PersonalityImpressionService:
             "scores": enhanced_scores,
             "evidence": evidence,
             "indicators": base.get("indicators"),
+            # 决策风格与大五 LLM 增强独立（GDMS 增强段另议，规划 §3.1-3），
+            # 增强行透传 local 块保证缓存命中路径不缺字段
+            "decision_style": base.get("decision_style"),
         }
 
     # ------------------------------------------------------------------
@@ -1026,10 +1029,10 @@ class PersonalityImpressionService:
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'big5_impressions'"
         ).fetchone()
         if row:
-            # 表 v1（无 window 档位列）DROP 重建不迁移：本地层重算免费，
-            # 增强层需重新点按钮（KISS，沿画像三表先例）
+            # 表 v1（无 window 档位列）/ v2（无 decision_style_json）DROP 重建
+            # 不迁移：本地层重算免费，增强层需重新点按钮（KISS，沿画像三表先例）
             cols = {r[1] for r in conn.execute("PRAGMA table_info(big5_impressions)")}
-            if "window_kind" not in cols:
+            if "window_kind" not in cols or "decision_style_json" not in cols:
                 conn.execute("DROP TABLE big5_impressions")
                 conn.commit()
             else:
@@ -1050,6 +1053,7 @@ class PersonalityImpressionService:
                 base_scores_json TEXT,
                 evidence_json TEXT,
                 indicators_json TEXT,
+                decision_style_json TEXT,
                 model_name TEXT,
                 created_at INTEGER NOT NULL,
                 expires_at INTEGER NOT NULL,
@@ -1080,8 +1084,9 @@ class PersonalityImpressionService:
             (conversation_id, account_wxid, subject, source, prompt_version,
              window_kind, window_from, window_to,
              scores_json, base_scores_json, evidence_json, indicators_json,
+             decision_style_json,
              model_name, created_at, expires_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 int(conversation_id), account_wxid, subject, source, BIG5_PROMPT_VERSION,
@@ -1093,6 +1098,8 @@ class PersonalityImpressionService:
                 ) if source == "llm_enhanced" else None,
                 json.dumps(payload.get("evidence"), ensure_ascii=False) if source == "llm_enhanced" else None,
                 json.dumps(payload.get("indicators"), ensure_ascii=False),
+                json.dumps(payload.get("decision_style"), ensure_ascii=False)
+                if payload.get("decision_style") is not None else None,
                 model_name,
                 now, now + BIG5_TTL_SECONDS,
             ),
@@ -1117,7 +1124,8 @@ class PersonalityImpressionService:
         sources = (only_source,) if only_source else ("llm_enhanced", "local")
         for source in sources:
             row = conn.execute(
-                "SELECT scores_json, evidence_json, indicators_json, model_name, created_at "
+                "SELECT scores_json, evidence_json, indicators_json, decision_style_json,"
+                " model_name, created_at "
                 "FROM big5_impressions WHERE conversation_id = ? AND account_wxid = ? "
                 "AND subject = ? AND source = ? AND prompt_version = ? AND expires_at > ? "
                 "AND window_kind = ? AND window_from = ? AND window_to = ?",
@@ -1136,7 +1144,8 @@ class PersonalityImpressionService:
                 "source": source,
                 "scores": scores,
                 "indicators": json.loads(row[2]) if row[2] else None,
-                "created_at": int(row[4] or 0),
+                "decision_style": json.loads(row[3]) if row[3] else None,
+                "created_at": int(row[5] or 0),
             }
             if source == "llm_enhanced":
                 payload["evidence"] = json.loads(row[1]) if row[1] else {}

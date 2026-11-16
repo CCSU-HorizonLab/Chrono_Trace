@@ -176,14 +176,14 @@ export async function retryLlmRelationship(conversationId: number): Promise<stri
 }
 
 /**
- * Get cached affinity analysis results
+ * 原始响应 → 展示结果整形（纯函数）：附加分析新鲜度与历史趋势
+ * （趋势跨口径不可比时 score_trend 为空）。需要 result/history 等
+ * 全量字段的调用方（如工作台的过期探测）拿 raw 自行整形，
+ * 避免同端点二次请求。
  */
-export async function getAffinityScores(conversationId: number): Promise<AffinityAnalysisResult | null> {
-    const res = await api.get_affinity_scores(conversationId)
-    if (!res.ok) throw new Error(res.error || 'Failed to get scores')
-    if (!res.result) return null
-    // 附加分析新鲜度与历史趋势（趋势跨口径不可比时 score_trend 为空）
-    const history = (res as any).history || {}
+export function shapeAffinityResult(res: any): AffinityAnalysisResult | null {
+    if (!res?.result) return null
+    const history = res.history || {}
     return {
         ...res.result,
         analysis_stale: Boolean(res.analysis_stale),
@@ -191,6 +191,15 @@ export async function getAffinityScores(conversationId: number): Promise<Affinit
         score_trend: history.comparable ? (history.score_trend ?? null) : null,
         last_analysis_at: history.last_analysis_at ?? null,
     }
+}
+
+/**
+ * Get cached affinity analysis results
+ */
+export async function getAffinityScores(conversationId: number): Promise<AffinityAnalysisResult | null> {
+    const res = await api.get_affinity_scores(conversationId)
+    if (!res.ok) throw new Error(res.error || 'Failed to get scores')
+    return shapeAffinityResult(res)
 }
 
 /**

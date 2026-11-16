@@ -427,7 +427,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import * as echarts from 'echarts'
 import { bridgeReady, api, type AnalysisDeviceMode } from '@/api/bridge'
-import { analyzeAffinity, getAffinityScores, getAffinityProgress, getRelationshipContext, retryLlmRelationship, type AffinityAnalysisResult } from '@/api/affinity'
+import { analyzeAffinity, getAffinityScores, getAffinityProgress, getRelationshipContext, retryLlmRelationship, shapeAffinityResult, type AffinityAnalysisResult } from '@/api/affinity'
 import { resolveAffinityPollAction } from '@/utils/affinityPoll'
 import { HEAT_RAMP } from '@/components/charts/chartTheme'
 
@@ -673,8 +673,11 @@ async function tryLoadAffinityScores() {
     const epoch = viewEpoch.value
     analysisStaleNotice.value = false
     try {
-        const scores = await getAffinityScores(props.conversationId)
+        // 单次取原始响应就地整形（旧实现先走包装层、过期时再探测性
+        // 二次请求同端点——历史趋势字段首次响应里本来就有）
+        const raw: any = await api.get_affinity_scores(props.conversationId)
         if (epoch !== viewEpoch.value) return // 已切换联系人（F1）
+        const scores = raw?.ok ? shapeAffinityResult(raw) : null
         if (scores && scores.cache_version >= 4) {
             analysisResult.value = scores
             // LLM 评估仍在跑的 sentinel（缺席文案"AI 关系评估进行中"）
@@ -684,13 +687,10 @@ async function tryLoadAffinityScores() {
             analysisResult.value = null
             // 有历史趋势记录却无当前结果 = 结果因版本更新过期（后端
             // cache_version 门槛拦截），给用户解释而非"从未分析"空态
-            try {
-                const raw: any = await api.get_affinity_scores(props.conversationId)
-                const hist = raw?.ok ? (raw.history || {}) : {}
-                analysisStaleNotice.value = Boolean(
-                    !raw?.result && (hist.last_analysis_at || (hist.score_trend || []).length)
-                )
-            } catch { /* 探测失败按未分析处理 */ }
+            const hist = raw?.history || {}
+            analysisStaleNotice.value = Boolean(
+                !raw?.result && (hist.last_analysis_at || (hist.score_trend || []).length)
+            )
         }
     } catch (e) {
         analysisResult.value = null

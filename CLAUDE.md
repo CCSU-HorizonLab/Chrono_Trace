@@ -48,6 +48,10 @@ cd frontend && npm run build
 # 生产模式（需先构建前端）
 python app.py
 
+# 虚构演示库（对外截图/复现包必须用它，真实库界面含真实姓名）
+python backend/scripts/make_demo_db.py            # 生成 backend/data/demo_home（seed/anchor 可复现）
+CHRONO_TRACE_DATA_DIR=backend/data/demo_home python app_dev.py   # 隔离启动：库/设置/日志全在 demo_home
+
 # 后端测试（在仓库根目录运行；两种导入约定都兼容）
 pytest backend/tests/
 

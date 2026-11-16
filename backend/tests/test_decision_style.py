@@ -131,3 +131,54 @@ def test_min_messages_threshold_boundary():
     assert b["confidence"] == "normal"
     b2 = channel_b_scores({"help_seeking": 20.0}, message_count=199)
     assert b2["confidence"] == "insufficient_sample"
+
+
+# ---- service 层集成：大五采集管道顺带产出决策风格块 ----
+
+def test_local_base_includes_decision_style(monkeypatch):
+    """_compute_local 返回带 decision_style 块：词表密度采集 + 双通道合成
+    在大五同一条采集路径上完成（不另扫库）。"""
+    import sqlite3
+
+    import app.services.analysis.engagement_metrics as emmod
+    import app.services.analysis.personality_impression_service as bimod
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        "CREATE TABLE messages (id INTEGER PRIMARY KEY, conversation_id INT, "
+        "is_sender INT, message_type INT DEFAULT 1, content TEXT, timestamp INT, "
+        "sender TEXT)"
+    )
+    conn.execute(
+        "CREATE TABLE sentiment_cache (message_id INTEGER UNIQUE, polarity INT, "
+        "intensity REAL, created_at INT)"
+    )
+    monkeypatch.setattr(bimod, "get_db", lambda: conn)
+    monkeypatch.setattr(emmod, "get_db", lambda: conn)
+
+    # 我方消息一半含求助词 → help_seeking 密度显著；对方消息中性
+    start = 1_700_000_000
+    for i in range(210):
+        for side in (1, 0):
+            mine = "你觉得呢，帮我看看这个怎么选" if side == 1 and i % 2 == 0 else f"消息内容{i}"
+            conn.execute(
+                "INSERT INTO messages (conversation_id, is_sender, message_type,"
+                " content, timestamp) VALUES (1, ?, 1, ?, ?)",
+                (side, mine, start + (i * 2 + side) * 600),
+            )
+    conn.commit()
+
+    service = bimod.PersonalityImpressionService()
+    computed = service._compute_local(1, "me")
+    assert computed is not None
+    ds = computed["decision_style"]
+    assert ds["channel_b"]["signals"]["help_seeking"]["used"] is True
+    assert ds["channel_b"]["signals"]["help_seeking"]["value"] > 0
+    # 大五分在场 → 通道 A 正常置信；combined 含五维
+    assert ds["channel_a"]["confidence"] in ("normal", "reduced")
+    assert set(ds["combined"]["dimensions"]) == set(GDMS_DIMENSIONS)
+    assert ds["disclaimer"]
+    # 对方侧无求助词 → 行为分不参与修正
+    computed_other = service._compute_local(1, "other")
+    assert computed_other["decision_style"]["channel_b"]["signals"]["help_seeking"]["value"] == 0

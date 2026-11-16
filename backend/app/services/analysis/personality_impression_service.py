@@ -490,19 +490,50 @@ class PersonalityImpressionService:
         self, conversation_id: int, subject: str, metrics=None, rows=None,
         from_ts: Optional[int] = None, to_ts: Optional[int] = None,
     ) -> Optional[Dict[str, Any]]:
-        """单侧基础层：子指标采集 + big5_proxies 合成。样本过薄返回 None。
+        """单侧基础层：子指标采集 + big5_proxies 合成 + 决策风格（GDMS）。
 
-        可选时间窗下传内层情感/回应/分享密度查询（rows 已窗化时不重复过滤）。
+        样本过薄返回 None。可选时间窗下传内层情感/回应/分享密度查询
+        （rows 已窗化时不重复过滤）。决策风格共用大五采集的文本与
+        深夜占比（通道 A 输入 = 本层大五分；通道 B 词表密度另采）。
         """
-        raw = self._collect_raw_indicators(conversation_id, subject, metrics, rows, from_ts, to_ts)
-        if raw is None:
+        collected = self._collect_raw_indicators(
+            conversation_id, subject, metrics, rows, from_ts, to_ts
+        )
+        if collected is None:
             return None
+        raw, own_texts = collected
         scores = compute_big5_base(raw)
         return {
             "source": "local",
             "scores": scores,
             "indicators": raw,
+            "decision_style": self._compute_decision_style_block(scores, raw, own_texts),
         }
+
+    @staticmethod
+    def _compute_decision_style_block(
+        scores: Dict[str, Any], raw: Dict[str, Optional[float]], own_texts: List[str]
+    ) -> Dict[str, Any]:
+        """决策风格（GDMS 双通道）：大五分 + 决策语言信号密度。
+
+        记忆行为（承诺兑现/改主意）暂不接入——待 rag_facts 覆盖充分后
+        由调用方查 rag_store 聚合并传入（combine 的 memory_behaviors
+        空 dict 优雅降级，建设期常态）。
+        """
+        from .decision_style import BIG5_KEYS
+        from .decision_style import collect_signal_densities, compute_decision_style
+
+        flat_big5 = {
+            dim: (scores.get(dim) or {}).get("score") for dim in BIG5_KEYS
+        }
+        densities = collect_signal_densities(own_texts)
+        # 深夜占比直供（时间戳口径，与词表密度分开采集）
+        late_ratio = raw.get("late_night_ratio")
+        if late_ratio is not None:
+            densities["late_night"] = late_ratio
+        return compute_decision_style(
+            flat_big5, densities, message_count=len(own_texts)
+        )
 
     @staticmethod
     def _fetch_conversation_rows(
@@ -532,8 +563,12 @@ class PersonalityImpressionService:
         rows=None,
         from_ts: Optional[int] = None,
         to_ts: Optional[int] = None,
-    ) -> Optional[Dict[str, Optional[float]]]:
-        """采集单侧原始子指标（me → is_sender=1 / other → is_sender=0）。"""
+    ) -> Optional[Tuple[Dict[str, Optional[float]], List[str]]]:
+        """采集单侧原始子指标（me → is_sender=1 / other → is_sender=0）。
+
+        返回 (raw, own_texts)：文本列表供决策语言信号采集（大五子指标
+        dict 保持纯 float 口径，不混入决策信号）。
+        """
         side_flag = 1 if subject == "me" else 0
         if rows is None:
             rows = self._fetch_conversation_rows(conversation_id, from_ts, to_ts)
@@ -643,7 +678,7 @@ class PersonalityImpressionService:
             "positive_response_rate": positive_response_rate,
             "share_density": round(share_count / len(own_texts), 4),
             **raw,
-        }
+        }, own_texts
 
     @classmethod
     def _text_static_indicators(

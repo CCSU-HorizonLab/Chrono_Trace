@@ -33,7 +33,7 @@ GDMS_DIMENSION_LABELS = {
 }
 
 # 大五维键与 big5_proxies.DIMENSIONS 同源（延迟导入避免环，见 z_standardize）
-_BIG5_KEYS = ("extraversion", "conscientiousness", "neuroticism", "agreeableness", "openness")
+BIG5_KEYS = ("extraversion", "conscientiousness", "neuroticism", "agreeableness", "openness")
 
 # 通道 A 参照群体先验：(均值, SD)。占位常量——待捐赠数据实测分布替换
 REF_POPULATION: Dict[str, Tuple[float, float]] = {
@@ -45,7 +45,7 @@ REF_POPULATION: Dict[str, Tuple[float, float]] = {
 }
 
 # 通道 A 线性映射先验（第一版，来源见模块 docstring）
-# 键序 = _BIG5_KEYS（E/C/N/A/O），单位：GDMS 分 / 大五 z 分
+# 键序 = BIG5_KEYS（E/C/N/A/O），单位：GDMS 分 / 大五 z 分
 _MAPPING_PRIORS: Dict[str, Dict[str, float]] = {
     "rational": {
         "conscientiousness": 0.26, "agreeableness": 0.17, "neuroticism": -0.15,
@@ -141,7 +141,7 @@ def _band_label(score: float) -> str:
 def z_standardize(big5_scores: Dict[str, Optional[float]]) -> Dict[str, Optional[float]]:
     """大五 0-100 分 → 参照先验 z 分。缺席维返回 None（映射段按在场维降置信）。"""
     out: Dict[str, Optional[float]] = {}
-    for key in _BIG5_KEYS:
+    for key in BIG5_KEYS:
         score = big5_scores.get(key)
         if score is None or not isinstance(score, (int, float)):
             out[key] = None
@@ -156,7 +156,7 @@ def _map_dimension(dim: str, z_scores: Dict[str, Optional[float]]) -> Optional[f
 
     缺席大五维按零贡献处理（等效于该维取参照均值）；全缺席返回 None。
     """
-    present = [k for k in _BIG5_KEYS if z_scores.get(k) is not None]
+    present = [k for k in BIG5_KEYS if z_scores.get(k) is not None]
     if not present:
         return None
     weighted = sum(
@@ -176,7 +176,7 @@ def channel_a_scores(big5_scores: Dict[str, Optional[float]]) -> Dict[str, Any]:
     3 维以上缺席 = "low"（各维结果回退先验均值 50）。
     """
     z = z_standardize(big5_scores)
-    missing = [k for k in _BIG5_KEYS if z.get(k) is None]
+    missing = [k for k in BIG5_KEYS if z.get(k) is None]
     confidence = "normal" if not missing else ("reduced" if len(missing) <= 2 else "low")
     out: Dict[str, Any] = {"confidence": confidence, "missing_big5": missing}
     for dim in GDMS_DIMENSIONS:
@@ -308,6 +308,25 @@ def combine_channels(
             "adjust_notes": note,
         }
     return combined
+
+
+def collect_signal_densities(texts: List[str]) -> Dict[str, float]:
+    """词表信号密度采集（每千条文本消息命中条数）——纯函数，输入文本列表。
+
+    late_night 不在此（占比口径按时间戳采集，复用大五层的
+    late_night_ratio，不重复扫词表）。分析型路径非实时，朴素包含判断
+    即可（10 万条 × 词表 ≈ 秒级）。
+    """
+    total = len(texts)
+    if total == 0:
+        return {}
+    out: Dict[str, float] = {}
+    for key, spec in _SIGNAL_SPECS.items():
+        if not spec["enabled"] or not spec["patterns"]:
+            continue
+        hits = sum(1 for text in texts for pattern in spec["patterns"] if pattern in text)
+        out[key] = round(hits * 1000.0 / total, 4)
+    return out
 
 
 def compute_decision_style(

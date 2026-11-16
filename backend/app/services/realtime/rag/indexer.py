@@ -82,6 +82,10 @@ class RagIndexer:
     # 回补并发：LLM 调用是纯 IO 等待（单次 1-30s），3 路并发约 3 倍
     # 吞吐；写库与水位推进在主线程按提交序串行，语义不变
     LLM_EXTRACT_CONCURRENCY = 3
+    # future.result() 等待上限：单次调用 120s 超时 × 重试若干次的上界。
+    # 底层 socket 超时在网络切换后的黑洞连接上未必救场（实测挂 16h），
+    # 这层兜底把「无限等」收敛为段失败——冻结水位下轮重试
+    FUTURE_RESULT_TIMEOUT_S = 900
     # P1.5 断点续抽版本：抽取 prompt/质量门变化时递增，水位失效全量重抽
     # p1.6：游戏内购买排除+购买代词差例强化（P1.6 T11）
     # p1.7：消费类原型降级（LLM-only）+ 检索增强上下文（跨天代指还原）
@@ -1141,7 +1145,7 @@ class RagIndexer:
             """等最旧的调用完成并按序落库；返回该段是否实际抽取。"""
             segment, prompt, prev_tail_snapshot, future = pending.popleft()
             try:
-                facts = future.result()
+                facts = future.result(timeout=self.FUTURE_RESULT_TIMEOUT_S)
                 self._llm_extract_consecutive_failures = 0
             except Exception as exc:
                 self._llm_extract_consecutive_failures += 1
@@ -1160,13 +1164,26 @@ class RagIndexer:
                     require_kind_signal=False,
                 ) is None
             ]
-            self._write_structured_facts(
-                account_wxid=account_wxid,
-                conversation_id=conversation_id,
-                segment=segment,
-                facts=usable,
-                executor=executor,
-            )
+            # 落库与抽取同等纳入段失败语义：融合 future 超时（网关半开
+            # 连接会让底层 read 无限挂起，socket 超时未必救场——网络
+            # 切换后的黑洞连接实测一挂 16 小时）抛出后冻结水位下轮重试，
+            # 而不是让 worker 永久卡死在一枚 future 上
+            try:
+                self._write_structured_facts(
+                    account_wxid=account_wxid,
+                    conversation_id=conversation_id,
+                    segment=segment,
+                    facts=usable,
+                    executor=executor,
+                )
+            except Exception as exc:
+                self._llm_extract_consecutive_failures += 1
+                self._llm_extract_round_failed = True
+                logger.warning(
+                    "[RAG Fact Shadow] backfill persist failed (%s/3): %s",
+                    self._llm_extract_consecutive_failures, exc,
+                )
+                return False
             self._advance_llm_extract_progress(account_wxid, conversation_id, segment)
             self.store.conn.commit()
             return True
@@ -1687,7 +1704,7 @@ class RagIndexer:
         pending_vectors: list[dict[str, Any]] = []
         for fact, decision_result in prepared:
             decisions = (
-                decision_result.result()
+                decision_result.result(timeout=self.FUTURE_RESULT_TIMEOUT_S)
                 if isinstance(decision_result, Future)
                 else decision_result
             )

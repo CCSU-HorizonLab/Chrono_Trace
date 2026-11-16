@@ -923,7 +923,9 @@ class RagIndexer:
                         account_wxid=account_wxid,
                         conversation_id=conversation_id,
                         subject=fact.subject,
-                        kind=fact.memory_kind,
+                        # 原型键是旧口径（plan_or_appointment 等）：不归一会让
+                        # 影子行与 LLM 行按 kind 分家，融合候选查询永远错肩
+                        kind=normalize_fact_kind(fact.memory_kind),
                         content=fact.content,
                         status="active",
                         as_of=int(fact.source_ts or segment.end_ts),

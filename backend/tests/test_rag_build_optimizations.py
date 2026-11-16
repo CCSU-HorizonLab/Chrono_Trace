@@ -130,11 +130,16 @@ def test_semantic_split_matches_legacy_extract(monkeypatch):
 
     indexer._build_documents("wxid_me", 1, conversation, messages)
 
-    # 兼容入口逐段重算（同桩向量 → 确定性），全集口径应与预批路径一致
+    # 兼容入口逐段重算（同桩向量 → 确定性），全集口径应与预批路径一致；
+    # 落库路径统一过 kind 归一（原型键 → 规范键），期望侧同口径
     segments = RagSegmenter().segment(messages, conversation_id=1, sessions=[])
     legacy = SemanticFactExtractor(_StubEmbedding(), RagSegmenter())
     expected = {
-        (f.memory_kind, f.source_window_start_ts, f.source_window_end_ts)
+        (
+            idxmod.normalize_fact_kind(f.memory_kind),
+            f.source_window_start_ts,
+            f.source_window_end_ts,
+        )
         for seg in segments
         for f in legacy.extract(seg)
     }
@@ -338,3 +343,24 @@ def test_indexed_contact_stays_visible_beyond_recency_limit(monkeypatch):
     ready_in_items = [i for i in ids if result["items"][ids.index(i)]["status"] == "ready"]
     assert result["ready_count"] == len(ready_in_items)  # 徽标与列表口径一致
     conn.close()
+
+
+def test_shadow_fact_kinds_normalized_on_upsert(monkeypatch):
+    """影子语义路径落库 kind 必须归一：原型键（plan_or_appointment 等）
+    直接入库会与 LLM 行按 kind 分家，融合候选查询永远错肩。"""
+    from app.services.realtime.rag.fact_extractor import (
+        CANONICAL_FACT_KINDS, _KIND_ALIASES,
+    )
+
+    embed = _StubEmbedding()
+    indexer = _make_indexer(monkeypatch, embed)
+    messages = _synthetic_messages(60)
+    conversation = {"display_name": "测试联系人", "username": "wxid_t", "message_count": len(messages)}
+
+    indexer._build_documents("wxid_me", 1, conversation, messages)
+
+    assert indexer._facts_rows, "影子开关开启时应捕获到语义事实落库"
+    for row in indexer._facts_rows:
+        assert row["kind"] in CANONICAL_FACT_KINDS, (
+            f"落库 kind 未归一: {row['kind']}（别名应映射为 {_KIND_ALIASES.get(row['kind'])}）"
+        )

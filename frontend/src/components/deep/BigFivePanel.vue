@@ -82,6 +82,45 @@
         </div>
       </div>
 
+      <!-- 决策风格倾向（GDMS 五维）：与大五同一条采集管道顺带产出——
+           通道 A 大五映射为基线（刻度线），通道 B 决策语言信号做 ±10 有界修正 -->
+      <div v-if="gdmsSubjects.length" class="ds-section">
+        <div class="ds-head">
+          <div class="ds-title">决策风格倾向</div>
+          <div class="ds-sub">大五映射为基线，决策语言信号做有界修正（±10）</div>
+        </div>
+        <div class="ds-body">
+          <div v-for="subject in gdmsSubjects" :key="subject.key" class="ds-group">
+            <div class="dim-group-title">{{ subject.key === 'me' ? '我' : 'TA' }}</div>
+            <div v-for="dim in subject.dims" :key="dim.key" class="dim-row">
+              <span class="dim-label">{{ dim.label }}</span>
+              <div class="dim-track">
+                <div class="dim-fill" :class="subject.key" :style="{ width: `${dim.score}%` }" />
+                <div
+                  v-if="dim.base !== undefined"
+                  class="dim-base-tick"
+                  :style="{ left: `${dim.base}%` }"
+                  :title="`大五映射基线 ${dim.base}`"
+                />
+              </div>
+              <span class="dim-score">
+                {{ Math.round(dim.score) }}<span class="dim-band-text"> · {{ dim.band }}</span>
+              </span>
+              <span
+                v-if="dim.adjust !== undefined"
+                class="dim-adjust"
+                :class="{ up: dim.adjust > 0 }"
+                :title="dim.notes ? `修正来源：${dim.notes}` : undefined"
+              >
+                {{ dim.adjust > 0 ? '+' : '' }}{{ dim.adjust }}
+              </span>
+            </div>
+            <div v-if="subject.note" class="ds-note">{{ subject.note }}</div>
+          </div>
+        </div>
+        <div v-if="dsDisclaimer" class="ds-disclaimer">{{ dsDisclaimer }}</div>
+      </div>
+
       <div class="disclaimer">{{ disclaimer }}</div>
     </template>
   </div>
@@ -98,11 +137,26 @@ type DimScore = {
   base_score?: number
   adjustment?: number
 }
+type GdmsDim = {
+  label?: string
+  score?: number
+  band?: string
+  base?: number
+  adjust?: number
+  adjust_notes?: string[]
+}
+type DecisionStylePayload = {
+  channel_a?: { confidence?: string }
+  channel_b?: { confidence?: string }
+  combined?: { dimensions?: Record<string, GdmsDim> }
+  disclaimer?: string
+} | null
 type SubjectPayload = {
   source: string
   scores: Record<string, DimScore>
   evidence?: Record<string, { quote: string; reason: string }>
   indicators?: Record<string, number | null> | null
+  decision_style?: DecisionStylePayload
 } | null
 
 const props = defineProps<{ conversationId: number }>()
@@ -185,6 +239,58 @@ const activeSubjects = computed(() => {
     list.push({ key, dims, evidenceList, expanded: evidenceExpanded[key] === true })
   }
   return list
+})
+
+// 决策风格（GDMS）：只消费 combined 五维；基线刻度=通道 A 大五映射，修正=通道 B 信号
+const GDMS_ORDER = ['rational', 'intuitive', 'dependent', 'avoidant', 'spontaneous']
+
+interface GdmsRow {
+  key: string
+  label: string
+  score: number
+  band: string
+  base?: number
+  adjust?: number
+  notes?: string
+}
+
+const gdmsSubjects = computed(() => {
+  const list: Array<{ key: 'me' | 'other'; dims: GdmsRow[]; note: string }> = []
+  for (const key of ['me', 'other'] as const) {
+    const subject = key === 'me' ? me.value : other.value
+    const ds = subject?.decision_style
+    const combined = ds?.combined?.dimensions
+    if (!combined) continue
+    const dims: GdmsRow[] = []
+    for (const dimKey of GDMS_ORDER) {
+      const item = combined[dimKey]
+      if (typeof item?.score !== 'number') continue
+      dims.push({
+        key: dimKey,
+        label: item.label || dimKey,
+        score: item.score,
+        band: item.band || '',
+        base: typeof item.base === 'number' ? item.base : undefined,
+        adjust: typeof item.adjust === 'number' && item.adjust !== 0 ? item.adjust : undefined,
+        notes: (item.adjust_notes || []).join('、') || undefined,
+      })
+    }
+    if (!dims.length) continue
+    const notes: string[] = []
+    if (ds?.channel_a?.confidence === 'low') notes.push('大五维度缺席过多，基线回退中性先验')
+    else if (ds?.channel_b?.confidence === 'insufficient_sample') notes.push('决策语言样本不足 200 条，仅按大五映射')
+    list.push({ key, dims, note: notes.join('；') })
+  }
+  return list
+})
+
+const dsDisclaimer = computed(() => {
+  if (!gdmsSubjects.value.length) return ''
+  return (
+    me.value?.decision_style?.disclaimer
+    || other.value?.decision_style?.disclaimer
+    || ''
+  )
 })
 
 async function load() {
@@ -405,6 +511,49 @@ watch(() => props.conversationId, () => {
 
 .disclaimer {
   margin-top: var(--ct-space-md);
+  color: var(--ct-text-tertiary);
+  font-size: var(--ct-text-xs);
+}
+
+/* 决策风格（GDMS）段：行内条形复用上方 dim-* 惯用语，只定义分区与排布 */
+.ds-section {
+  margin-top: var(--ct-space-lg);
+  padding-top: var(--ct-space-md);
+  border-top: 1px solid var(--ct-border-color);
+}
+
+.ds-title {
+  color: var(--ct-text-primary);
+  font-weight: var(--ct-font-bold);
+  font-size: var(--ct-text-sm);
+}
+
+.ds-sub {
+  margin-top: 2px;
+  color: var(--ct-text-tertiary);
+  font-size: var(--ct-text-xs);
+}
+
+.ds-body {
+  margin-top: var(--ct-space-md);
+  display: flex;
+  gap: var(--ct-space-lg);
+  flex-wrap: wrap;
+}
+
+.ds-group {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+.ds-note {
+  margin-top: var(--ct-space-xs);
+  color: var(--ct-text-tertiary);
+  font-size: var(--ct-text-xs);
+}
+
+.ds-disclaimer {
+  margin-top: var(--ct-space-sm);
   color: var(--ct-text-tertiary);
   font-size: var(--ct-text-xs);
 }

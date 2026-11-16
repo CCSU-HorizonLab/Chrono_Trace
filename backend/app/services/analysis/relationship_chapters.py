@@ -154,13 +154,19 @@ def _new_week(start: int) -> Dict[str, Any]:
 class RelationshipChapterService:
     """关系章节：章节检测 + 周级大五分布（读侧纯函数式编排）。
 
-    实例内缓存：真实库 13 万条整算 ~7s，切页签回来不该重付——按
-    「消息数 + 最新时间戳 + 口径版本」指纹缓存 payload，新消息落库
-    或升版自动失效（纯统计可再生，不落库缓存表，KISS）。
+    两级缓存：真实大库（5.5 万条）周级大五整算 20-50s，重启后首开
+    时光页不该重付——内存实例缓存之上加 settings 表持久层（与词云
+    持久缓存同一惯例），按「消息数 + 最新时间戳 + 口径版本」指纹
+    失效：新消息落库或 CHAPTERS_VERSION 升版自动重算（纯统计可再生，
+    失效即弃，无迁移负担）。
     """
 
     def __init__(self):
         self._cache: Dict[int, Tuple[Tuple[int, int], dict]] = {}
+
+    @staticmethod
+    def _persist_key(conversation_id: int) -> str:
+        return f"chapters_v{CHAPTERS_VERSION}_{int(conversation_id)}"
 
     @staticmethod
     def _conv_fingerprint(conversation_id: int) -> Optional[Tuple[int, int]]:
@@ -172,6 +178,51 @@ class RelationshipChapterService:
             return None
         return (int(row[0]), int(row[1] or 0))
 
+    def _load_persisted(
+        self, conversation_id: int, fingerprint: Optional[Tuple[int, int]]
+    ) -> Optional[dict]:
+        if fingerprint is None:
+            return None
+        try:
+            row = get_db().execute(
+                "SELECT value FROM settings WHERE key = ?",
+                (self._persist_key(conversation_id),),
+            ).fetchone()
+            if not row:
+                return None
+            cached = json.loads(row[0])
+            if cached.get("fingerprint") != {
+                "count": fingerprint[0], "max_ts": fingerprint[1],
+            }:
+                return None
+            payload = cached.get("payload")
+            return payload if isinstance(payload, dict) and payload.get("ok") else None
+        except Exception as exc:
+            logger.debug("[关系章节] 持久缓存读取失败(忽略): %s", exc)
+            return None
+
+    def _save_persisted(
+        self, conversation_id: int, fingerprint: Tuple[int, int], payload: dict
+    ) -> None:
+        try:
+            get_db().execute(
+                "INSERT OR REPLACE INTO settings (key, value, updated_at)"
+                " VALUES (?, ?, datetime('now'))",
+                (
+                    self._persist_key(conversation_id),
+                    json.dumps(
+                        {
+                            "fingerprint": {"count": fingerprint[0], "max_ts": fingerprint[1]},
+                            "payload": payload,
+                        },
+                        ensure_ascii=False,
+                    ),
+                ),
+            )
+            get_db().commit()
+        except Exception as exc:
+            logger.debug("[关系章节] 持久缓存写入失败(忽略): %s", exc)
+
     def get_chapters(self, conversation_id: int) -> dict:
         try:
             fingerprint = self._conv_fingerprint(conversation_id)
@@ -179,38 +230,44 @@ class RelationshipChapterService:
             if cached and cached[0] == fingerprint and fingerprint is not None:
                 payload = cached[1]
             else:
-                rows = self._fetch_text_rows(conversation_id)
-                if len(rows) < MIN_TOTAL_TEXTS:
-                    return {"ok": False, "reason": "insufficient_data",
-                            "message": "文本消息不足，暂无法划分章节（需数周以上的对话积累）"}
-
-                weeks = self._aggregate_weeks(rows)
-                self._attach_aux(weeks, conversation_id)
-                weekly_arrays = self._weekly_arrays(weeks)
-                weekly_big5 = self._weekly_big5(weeks)
-                features = self._chapter_features(weeks)
-                starts = detect_chapters(features)
-                chapters = self._build_chapters(
-                    conversation_id, weeks, starts, features
-                )
-
-                from .big5_proxies import DIMENSION_LABELS
-
-                payload = {
-                    "ok": True,
-                    "version": CHAPTERS_VERSION,
-                    "span": {
-                        "from_ts": weeks[0]["first_ts"], "to_ts": weeks[-1]["last_ts"],
-                        "week_count": len(weeks), "week_seconds": WEEK_SECONDS,
-                    },
-                    "week_starts": [w["start"] for w in weeks],
-                    "feature_labels": FEATURE_LABELS,
-                    "weekly": {**weekly_arrays, "big5": weekly_big5},
-                    "big5_labels": dict(DIMENSION_LABELS),
-                    "chapters": chapters,
-                }
-                if fingerprint is not None:
+                persisted = self._load_persisted(conversation_id, fingerprint)
+                if persisted is not None:
+                    payload = persisted
                     self._cache[int(conversation_id)] = (fingerprint, payload)
+                else:
+                    rows = self._fetch_text_rows(conversation_id)
+                    if len(rows) < MIN_TOTAL_TEXTS:
+                        return {"ok": False, "reason": "insufficient_data",
+                                "message": "文本消息不足，暂无法划分章节（需数周以上的对话积累）"}
+
+                    weeks = self._aggregate_weeks(rows)
+                    self._attach_aux(weeks, conversation_id)
+                    weekly_arrays = self._weekly_arrays(weeks)
+                    weekly_big5 = self._weekly_big5(weeks)
+                    features = self._chapter_features(weeks)
+                    starts = detect_chapters(features)
+                    chapters = self._build_chapters(
+                        conversation_id, weeks, starts, features
+                    )
+
+                    from .big5_proxies import DIMENSION_LABELS
+
+                    payload = {
+                        "ok": True,
+                        "version": CHAPTERS_VERSION,
+                        "span": {
+                            "from_ts": weeks[0]["first_ts"], "to_ts": weeks[-1]["last_ts"],
+                            "week_count": len(weeks), "week_seconds": WEEK_SECONDS,
+                        },
+                        "week_starts": [w["start"] for w in weeks],
+                        "feature_labels": FEATURE_LABELS,
+                        "weekly": {**weekly_arrays, "big5": weekly_big5},
+                        "big5_labels": dict(DIMENSION_LABELS),
+                        "chapters": chapters,
+                    }
+                    if fingerprint is not None:
+                        self._cache[int(conversation_id)] = (fingerprint, payload)
+                        self._save_persisted(int(conversation_id), fingerprint, payload)
 
             # 摘要状态每次现查（表轻，缓存外附加：摘要任务跑完无需失效章节缓存）；
             # chapters 逐章浅拷贝——摘要字段写副本，缓存对象不被调用方突变污染

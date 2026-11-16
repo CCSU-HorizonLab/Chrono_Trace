@@ -349,3 +349,48 @@ class TestChapterSpans:
         result = rcmod.chapter_spans(1)
         assert result["ok"] is False
         assert result["spans"] == [(BASE_WEEK, BASE_WEEK + 3600)]
+
+
+class TestPersistedCache:
+    """两级缓存持久层：重启（新实例）不重付整算，指纹变了自动重算。"""
+
+    def test_persisted_hit_skips_recompute_and_invalidates_on_new_message(
+        self, conn, service, monkeypatch
+    ):
+        conn.execute(
+            "CREATE TABLE settings(key TEXT PRIMARY KEY, value TEXT, updated_at TEXT)"
+        )
+        _seed_weeks(conn, 1, [(8, 8)] * 6)
+        first = service.get_chapters(1)
+        assert first["ok"]
+        # 整算后结果落 settings 表（键含口径版本）
+        key = service._persist_key(1)
+        row = conn.execute(
+            "SELECT value FROM settings WHERE key = ?", (key,)
+        ).fetchone()
+        assert row is not None
+
+        # 新实例（模拟应用重启）：持久命中即返回，不触发整算
+        orig_weekly_big5 = RelationshipChapterService._weekly_big5
+
+        def boom(self, weeks):
+            raise AssertionError("持久命中不应触发周级大五整算")
+
+        monkeypatch.setattr(RelationshipChapterService, "_weekly_big5", boom)
+        fresh = RelationshipChapterService()
+        second = fresh.get_chapters(1)
+        assert second["ok"]
+        assert second["span"] == first["span"]
+        assert fresh._cache[1][0] == fresh._conv_fingerprint(1)  # 已提升进内存层
+
+        # 新消息落库 → 指纹失效 → 重算并覆盖持久行（只还原被测方法，
+        # 不动夹具的 get_db 重定向——undo 会把内存库打穿到真实库）
+        monkeypatch.setattr(RelationshipChapterService, "_weekly_big5", orig_weekly_big5)
+        _seed_text(conn, 0, 1, 0, BASE_WEEK + 6 * WEEK_SECONDS + 3600)
+        third = RelationshipChapterService().get_chapters(1)
+        assert third["ok"]
+        assert third["span"]["week_count"] == second["span"]["week_count"] + 1
+        new_row = conn.execute(
+            "SELECT value FROM settings WHERE key = ?", (key,)
+        ).fetchone()[0]
+        assert new_row != row[0]

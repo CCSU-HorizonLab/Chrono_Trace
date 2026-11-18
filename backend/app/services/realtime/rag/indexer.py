@@ -1128,6 +1128,7 @@ class RagIndexer:
         self._llm_extract_round_failed = False
         self._llm_extract_budget_limit = self.LLM_EXTRACT_BACKFILL_BUDGET
         self._init_llm_extract_progress(account_wxid, conversation_id)
+        watermark_before = int(self._llm_extract_watermark_ts or 0)
         messages = self._load_messages(conversation_id)
         if not messages:
             return 0
@@ -1249,8 +1250,13 @@ class RagIndexer:
             logger.info(
                 "[RAG Index] llm extraction backfill: %s segments (conv=%s)", extracted, conversation_id
             )
-            # 仍有欠账且本轮有推进 → 自动续轮（队列 worker 下一轮继续，
-            # 无需用户反复点重建；水位无推进时不续，防失败死循环）
+        # 仍有欠账且本轮水位有推进 → 自动续轮（队列 worker 下一轮继续，
+        # 无需用户反复点重建）。续轮看水位而非 LLM 产出：预筛轮（全短段/
+        # 无价值段）extracted=0 但水位在走，失败轮（连续异常冻结水位）
+        # 无推进不续，防失败死循环。黑洞连接挂死事故中各会话以失败轮收
+        # 尾——extracted=0 即不再入队，网络恢复后欠账会话无人捡起。
+        advanced = int(self._llm_extract_watermark_ts or 0) > watermark_before
+        if extracted or advanced:
             try:
                 status_now = self.store.get_status(account_wxid, conversation_id) or {}
                 msg_wm = int(status_now.get("message_watermark_ts") or 0)

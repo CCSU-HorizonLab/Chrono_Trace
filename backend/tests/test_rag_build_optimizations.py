@@ -364,3 +364,110 @@ def test_shadow_fact_kinds_normalized_on_upsert(monkeypatch):
         assert row["kind"] in CANONICAL_FACT_KINDS, (
             f"落库 kind 未归一: {row['kind']}（别名应映射为 {_KIND_ALIASES.get(row['kind'])}）"
         )
+
+
+class _StubExtractor:
+    """LLM 结构化抽取桩：可注入失败，记录调用。"""
+
+    def __init__(self, fail: bool = False):
+        self.calls = 0
+        self.fail = fail
+
+    def extract(self, prompt):
+        self.calls += 1
+        if self.fail:
+            raise RuntimeError("stub gateway unavailable")
+        return []
+
+
+def _make_backfill_indexer(monkeypatch, extractor) -> RagIndexer:
+    """内存库 + 水位表桩，专测 _backfill_llm_extraction 的续轮行为。"""
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        "CREATE TABLE messages (id INT, conversation_id INT, is_sender INT, "
+        "content TEXT, timestamp INT, message_type INT)"
+    )
+    conn.execute(
+        "CREATE TABLE rag_index_status (account_wxid TEXT, conversation_id INT, "
+        "status TEXT, fact_extract_watermark_ts INT, fact_extract_prompt_version TEXT, "
+        "message_watermark_ts INT)"
+    )
+    conn.execute(
+        "INSERT INTO rag_index_status VALUES ('acc', 1, 'indexing', 0, "
+        f"'{RagIndexer.FACT_EXTRACT_PROMPT_VERSION}', 9999999999)"
+    )
+
+    class _Store:
+        pass
+
+    store = _Store()
+    store.conn = conn
+
+    def _get_status(account_wxid, conversation_id):
+        row = conn.execute(
+            "SELECT * FROM rag_index_status WHERE account_wxid=? AND conversation_id=?",
+            (account_wxid, conversation_id),
+        ).fetchone()
+        return dict(row) if row else {}
+
+    def _set_progress(account_wxid, conversation_id, watermark_ts, prompt_version):
+        conn.execute(
+            "UPDATE rag_index_status SET fact_extract_watermark_ts=?, "
+            "fact_extract_prompt_version=? WHERE account_wxid=? AND conversation_id=?",
+            (watermark_ts, prompt_version, account_wxid, conversation_id),
+        )
+
+    store.get_status = _get_status
+    store.set_fact_extract_progress = _set_progress
+
+    indexer = RagIndexer.__new__(RagIndexer)
+    indexer.store = store
+    indexer.structured_fact_extractor = extractor
+    indexer.segmenter = RagSegmenter()
+    return indexer
+
+
+def test_backfill_requeues_on_prefilter_only_progress(monkeypatch):
+    """预筛轮续轮：全短段一轮 extracted=0 但水位推进，仍欠账必须再入队。
+
+    挂死事故复盘：续轮条件曾绑在 LLM 产出上，预筛轮/失败轮一律
+    extracted=0 → 不再入队，会话 ready + 欠账挂死，网络恢复后无人捡起。
+    """
+    extractor = _StubExtractor()
+    indexer = _make_backfill_indexer(monkeypatch, extractor)
+    # 每小时 1 条消息：切段后每段 1 条（<4 全短段），整轮零 LLM 调用
+    base = 1_700_000_000
+    rows = [
+        (i + 1, 1, i % 2, "在吗", base + i * 3600, 1) for i in range(30)
+    ]
+    indexer.store.conn.executemany("INSERT INTO messages VALUES (?,?,?,?,?,?)", rows)
+
+    enqueued: list[tuple] = []
+    monkeypatch.setattr(RagIndexQueue, "enqueue", lambda a, c: enqueued.append((a, c)))
+
+    extracted = indexer._backfill_llm_extraction("acc", 1)
+
+    assert extracted == 0
+    assert extractor.calls == 0, "短段轮不应产生 LLM 调用"
+    assert enqueued == [("acc", 1)], "水位推进过且仍欠账 → 必须续轮入队"
+
+
+def test_backfill_no_requeue_when_watermark_frozen(monkeypatch):
+    """失败轮不续：连续失败冻结水位，续轮会造成失败死循环。"""
+    extractor = _StubExtractor(fail=True)
+    indexer = _make_backfill_indexer(monkeypatch, extractor)
+    # 1 分钟间隔 30 条：一个长段（≥4 条）会送 LLM（桩抛异常）
+    base = 1_700_000_000
+    rows = [
+        (i + 1, 1, i % 2, "聊聊这周的安排和打算", base + i * 60, 1) for i in range(30)
+    ]
+    indexer.store.conn.executemany("INSERT INTO messages VALUES (?,?,?,?,?,?)", rows)
+
+    enqueued: list[tuple] = []
+    monkeypatch.setattr(RagIndexQueue, "enqueue", lambda a, c: enqueued.append((a, c)))
+
+    indexer._backfill_llm_extraction("acc", 1)
+
+    assert extractor.calls >= 1, "长段应已提交 LLM（桩失败）"
+    assert enqueued == [], "水位冻结的失败轮不得续轮"

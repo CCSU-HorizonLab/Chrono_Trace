@@ -277,14 +277,14 @@ class KeywordLibraries:
         if isinstance(text, bytes):
             try:
                 text = text.decode('utf-8', errors='replace')
-            except:
+            except Exception:
                 return False
-        
+
         # 确保是字符串
         if not isinstance(text, str):
             try:
                 text = str(text)
-            except:
+            except Exception:
                 return False
 
         # 使用正则表达式优化（带进程级缓存：同样的关键词组只编译一次）

@@ -377,7 +377,8 @@ class SessionThreadService:
                     if isinstance(speeches, str):
                         try:
                             speeches = json.loads(speeches)
-                        except:
+                        except Exception:
+                            logger.debug("建议记录 speeches 非法 JSON，按原文单条处理", exc_info=True)
                             speeches = [speeches]
                     if summary:
                         parts.append(f"  背景摘要: {summary[:50]}")

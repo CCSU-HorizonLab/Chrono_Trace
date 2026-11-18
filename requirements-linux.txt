@@ -12,6 +12,7 @@ QtPy>=2.0  # pywebview Qt 后端/窗口 chrome 走 qtpy 垫片
 pycryptodome>=3.20.0  # 纯 Python 实现的 SQLCipher 4 解密
 jieba>=0.42.1
 numpy>=1.24.0
+requests>=2.31.0  # app_dev.py 探测 Vite dev server
 pytest>=7.0.0
 
 # 悬浮窗 X11 跟随（可选；Wayland 下自动降级为固定档位）

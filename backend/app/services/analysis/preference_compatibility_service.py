@@ -186,8 +186,8 @@ class PreferenceCompatibilityService:
                     if msg_ids:
                         unit_msg_map[unit[0]] = msg_ids
                         all_msg_ids.extend(msg_ids)
-                except:
-                    pass
+                except Exception:
+                    logger.debug("发言单元 speeches 非法 JSON，跳过 unit=%s", unit[0])
             
             # 批量查询消息内容（分块 IN：SQLite 单语句变量上限 32766）
             msg_content_map = {}
@@ -206,7 +206,7 @@ class PreferenceCompatibilityService:
                     if isinstance(content, bytes):
                         try:
                             content = content.decode('utf-8', errors='replace')
-                        except:
+                        except Exception:
                             content = ""
                     msg_content_map[row[0]] = content or ""
             

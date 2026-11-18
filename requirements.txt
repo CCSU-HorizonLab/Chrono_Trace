@@ -4,9 +4,11 @@ pywin32>=305
 pywinauto>=0.6.8
 jieba>=0.42.1
 numpy>=1.24.0
+requests>=2.31.0  # app_dev.py 探测 Vite dev server
 
 # 微信数据库解密依赖
 pycryptodome>=3.20.0  # 纯 Python 实现的 SQLCipher 4 解密
+# 相对路径 wheel：须在仓库根目录执行 pip install -r
 ./packaging/vendor/wx_key-2.1.1-cp312-cp312-win_amd64.whl
 
 # 好感度分析依赖 (002-affinity-analysis)

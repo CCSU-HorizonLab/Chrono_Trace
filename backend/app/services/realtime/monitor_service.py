@@ -1783,8 +1783,9 @@ class RealtimeMonitorService(SuggestionPipelineMixin, BackfillStoreMixin, Backfi
             if self.wx:
                 try:
                     self.wx.StopListening()
-                except:
-                    pass
+                except Exception:
+                    # shutdown 路径资源释放失败必须可见，不能静默吞掉
+                    logger.debug("StopListening 关闭失败（wx 实例可能已失效）", exc_info=True)
             
             logger.debug("[RealtimeMonitorService] 服务已关闭")
             

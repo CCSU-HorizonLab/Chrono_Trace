@@ -100,8 +100,8 @@ setup_venv() {
   if [[ $need_install -eq 1 ]]; then
     log "安装打包依赖（推理栈为 ONNX，无 torch）…"
     # 清华镜像：默认 PyPI 在弱网下实测 87KB/s（116MB 轮子要 20 分钟+），
-    # 与模型导出环境（ensure_onnx_models）保持同源
-    local pip_index=(-i https://pypi.tuna.tsinghua.edu.cn/simple)
+    # 与模型导出环境（ensure_onnx_models）保持同源；可用 CHRONO_PIP_INDEX 覆盖
+    local pip_index=(-i "${CHRONO_PIP_INDEX:-https://pypi.tuna.tsinghua.edu.cn/simple}")
     "$VENV_DIR/bin/python" -m pip install "${pip_index[@]}" --upgrade pip
     "$VENV_DIR/bin/python" -m pip install "${pip_index[@]}" -r "$REQUIREMENTS_PATH"
     echo "$requirements_hash" > "$hash_file"
@@ -118,8 +118,8 @@ ensure_onnx_models() {
   if [ ! -x "$export_venv/bin/python" ]; then
     echo "创建模型导出环境 ($export_venv)..."
     python3 -m venv "$export_venv"
-    "$export_venv/bin/pip" install --quiet -i https://pypi.tuna.tsinghua.edu.cn/simple torch --extra-index-url https://download.pytorch.org/whl/cpu
-    "$export_venv/bin/pip" install --quiet -i https://pypi.tuna.tsinghua.edu.cn/simple "transformers>=4.30" "onnx>=1.15" "onnxruntime>=1.17" onnxconverter-common "modelscope>=1.17"
+    "$export_venv/bin/pip" install --quiet -i "${CHRONO_PIP_INDEX:-https://pypi.tuna.tsinghua.edu.cn/simple}" torch --extra-index-url https://download.pytorch.org/whl/cpu
+    "$export_venv/bin/pip" install --quiet -i "${CHRONO_PIP_INDEX:-https://pypi.tuna.tsinghua.edu.cn/simple}" "transformers>=4.30" "onnx>=1.15" "onnxruntime>=1.17" onnxconverter-common "modelscope>=1.17"
   fi
 
   # ensure 是唯一权威（不按文件名本地短路——那会绕过情感模型代际门）：
@@ -138,9 +138,10 @@ ensure_onnx_models
 setup_venv
 
 # ---------- build_info（变体标识进产物，runtime_overrides 读取） ----------
+# generated_at 与 Windows 侧（build_release.ps1 Get-Date ToString("s")）统一 ISO 字符串
 mkdir -p packaging/generated release
-printf '{"variant": "linux", "build_mode": "%s", "generated_at": %d}\n' \
-  "$BUILD_MODE" "$(date +%s)" > "$BUILD_INFO_PATH"
+printf '{"variant": "linux", "build_mode": "%s", "generated_at": "%s"}\n' \
+  "$BUILD_MODE" "$(date -Is)" > "$BUILD_INFO_PATH"
 
 # ---------- PyInstaller ----------
 log "PyInstaller 打包…"
@@ -162,9 +163,14 @@ DIST_DIR="$RELEASE_ROOT/pyinstaller-linux/ChronoTrace"
 # 故只对大体积、耐裁的 .so 手工裁符号：torch/Qt 主力收益在此。
 # 排除 scipy*/numpy* 的 vendored 库与其余小文件。
 log "选择性 strip 大体积 .so…"
+# 失败不中断构建（strip 失败的 .so 保持原样，仅体积偏大），但必须逐个暴露
 find "$DIST_DIR/_internal" -type f -name "*.so*" -size +5M \
   ! -path "*scipy*" ! -path "*numpy*" ! -path "*OpenBLAS*" ! -path "*openblas*" \
-  -exec strip --strip-unneeded {} \; 2>/dev/null || true
+  -print0 | while IFS= read -r -d '' so; do
+    if ! strip --strip-unneeded "$so" 2>/dev/null; then
+      echo "[strip] warning: strip 失败（保留原文件继续）: $so"
+    fi
+  done
 
 # ---------- tar.gz + .desktop ----------
 log "生成 tar.gz 与 .desktop…"

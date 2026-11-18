@@ -280,10 +280,12 @@ function Ensure-OnnxModels {
         Write-Host "Creating model export venv (.venv-model-export)..."
         python -m venv $exportVenv
         Assert-LastExitCode "export venv create"
-        # CN mirror: PyPI official host times out on this build machine
-        & $exportPython -m pip install --quiet -i https://pypi.tuna.tsinghua.edu.cn/simple torch
+        # CN mirror: PyPI official host times out on this build machine.
+        # Override with $env:CHRONO_PIP_INDEX if a different mirror is needed.
+        $pipIndex = if ($env:CHRONO_PIP_INDEX) { $env:CHRONO_PIP_INDEX } else { "https://pypi.tuna.tsinghua.edu.cn/simple" }
+        & $exportPython -m pip install --quiet -i $pipIndex torch
         Assert-LastExitCode "export venv torch"
-        & $exportPython -m pip install --quiet -i https://pypi.tuna.tsinghua.edu.cn/simple "transformers>=4.30" "onnx>=1.15" "onnxruntime>=1.17" onnxconverter-common "modelscope>=1.17"
+        & $exportPython -m pip install --quiet -i $pipIndex "transformers>=4.30" "onnx>=1.15" "onnxruntime>=1.17" onnxconverter-common "modelscope>=1.17"
         Assert-LastExitCode "export venv deps"
     }
 

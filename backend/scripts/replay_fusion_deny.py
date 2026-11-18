@@ -89,7 +89,7 @@ def main() -> int:
             "confidence": 0.8,
             "evidence_message_ids": [],
         }
-        decisions = indexer._decide_fact_fusion(fact, [], [scenario["denied"]])
+        decisions = indexer._decide_fact_fusion_batch([fact], [], [scenario["denied"]])[0]
         actions = sorted({item["action"] for item in decisions}) or ["ADD"]
         actual = "DENY" if "DENY" in actions else "ADD"
         ok = actual == scenario["expected"]

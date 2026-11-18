@@ -392,7 +392,7 @@ def test_below_recall_band_keeps_fact_without_refs(monkeypatch):
 
 
 class _StubFusionExtractor:
-    """decide_fusion 桩：记录 prompt/入参，回放固定决策。"""
+    """decide_fusion 桩：记录 prompt/入参，回放固定决策（归到 fact_index 0）。"""
 
     def __init__(self, decisions):
         self._decisions = decisions
@@ -401,12 +401,14 @@ class _StubFusionExtractor:
         self.last_strict_batch = None
 
     def decide_fusion(
-        self, prompt, *, candidate_ids, denied_ids=frozenset(), strict_batch=True
+        self, prompt, *, fact_count, candidate_ids, denied_ids=frozenset(), strict_batch=True
     ):
         self.prompts.append(prompt)
         self.last_denied_ids = set(denied_ids)
         self.last_strict_batch = strict_batch
-        return [dict(item) for item in self._decisions]
+        grouped = [[] for _ in range(fact_count)]
+        grouped[0].extend(dict(item) for item in self._decisions)
+        return grouped
 
 
 def _fusion_segment():
@@ -481,16 +483,17 @@ def test_deny_refs_injected_into_fusion_prompt():
         {"fact_id": 777, "content": "对方对虾过敏", "deny_reason": "记错了，是蟹过敏"}
     ]
 
-    indexer._decide_fact_fusion(_fusion_fact(), candidates, denied_refs)
+    indexer._decide_fact_fusion_batch([_fusion_fact()], candidates, denied_refs)
 
     assert len(extractor.prompts) == 1
     payload = json.loads(extractor.prompts[0])
+    assert payload["new_facts"][0]["ref"] == "n0"  # 批形状：k=1 也是 new_facts 数组
     assert payload["denied_facts"][0]["user_reason"] == "记错了，是蟹过敏"
     assert "contract" not in payload  # 协议死重量已删：适配器不读它
     assert extractor.last_denied_ids == {777}
     assert extractor.last_strict_batch is False
     # 无负样本时不注入 denied_facts，且走整批作废的严格校验（防幻觉护栏）
-    indexer._decide_fact_fusion(_fusion_fact(), candidates, [])
+    indexer._decide_fact_fusion_batch([_fusion_fact()], candidates, [])
     payload_plain = json.loads(extractor.prompts[-1])
     assert "denied_facts" not in payload_plain
     assert extractor.last_denied_ids == set()
@@ -502,31 +505,33 @@ def test_fusion_contract_deny_validation():
     active 候选输出 DENY、对否认事实输出其他动作的单条剔除不废整批
     （同批合法 DENY 必须存活，否则换措辞的否认重述趁虚复活）。"""
     extractor = StructuredFactExtractor(
-        lambda _prompt: {"decisions": [{"fact_id": 9, "action": "DENY"}]}
+        lambda _prompt: {"decisions": [{"fact_index": 0, "fact_id": 9, "action": "DENY"}]}
     )
-    decisions = extractor.decide_fusion("{}", candidate_ids={1, 2}, denied_ids={9})
-    assert decisions == [{"fact_id": 9, "action": "DENY", "reason": ""}]
+    decisions = extractor.decide_fusion("{}", fact_count=1, candidate_ids={1, 2}, denied_ids={9})
+    assert decisions == [[{"fact_id": 9, "action": "DENY", "reason": ""}]]
 
     # DENY 指向 active 候选（混淆）与否认事实输出 UPDATE（非维护对象）：
     # 剔除这两条，同批合法 DENY/UPDATE 保留
     mixed = StructuredFactExtractor(
         lambda _prompt: {
             "decisions": [
-                {"fact_id": 1, "action": "DENY", "reason": "混淆"},
-                {"fact_id": 9, "action": "UPDATE", "reason": "混淆"},
-                {"fact_id": 9, "action": "DENY", "reason": "重述"},
-                {"fact_id": 2, "action": "UPDATE", "reason": "演进"},
-                {"fact_id": 77, "action": "ADD", "reason": "未知候选"},
-                {"action": "NOOP", "reason": "缺 fact_id"},
+                {"fact_index": 0, "fact_id": 1, "action": "DENY", "reason": "混淆"},
+                {"fact_index": 0, "fact_id": 9, "action": "UPDATE", "reason": "混淆"},
+                {"fact_index": 0, "fact_id": 9, "action": "DENY", "reason": "重述"},
+                {"fact_index": 0, "fact_id": 2, "action": "UPDATE", "reason": "演进"},
+                {"fact_index": 0, "fact_id": 77, "action": "ADD", "reason": "未知候选"},
+                {"fact_index": 0, "action": "NOOP", "reason": "缺 fact_id"},
             ]
         }
     )
     decisions = mixed.decide_fusion(
-        "{}", candidate_ids={1, 2}, denied_ids={9}, strict_batch=False
+        "{}", fact_count=1, candidate_ids={1, 2}, denied_ids={9}, strict_batch=False
     )
     assert decisions == [
-        {"fact_id": 9, "action": "DENY", "reason": "重述"},
-        {"fact_id": 2, "action": "UPDATE", "reason": "演进"},
+        [
+            {"fact_id": 9, "action": "DENY", "reason": "重述"},
+            {"fact_id": 2, "action": "UPDATE", "reason": "演进"},
+        ]
     ]
 
 
@@ -539,17 +544,17 @@ def test_fusion_strict_batch_invalidates_whole_batch():
     from app.services.realtime.rag.fact_extractor import FactExtractionError
 
     for garbage in (
-        [{"fact_id": 77, "action": "ADD", "reason": "id 脱靶"}],  # 未知候选
-        [{"fact_id": 1, "action": "DENY", "reason": "无否认却 DENY"}],  # 越界动作
-        [{"fact_id": 1, "action": "REPLACE", "reason": "动作不存在"}],
-        [{"action": "NOOP", "reason": "缺 fact_id"}],
+        [{"fact_index": 0, "fact_id": 77, "action": "ADD", "reason": "id 脱靶"}],  # 未知候选
+        [{"fact_index": 0, "fact_id": 1, "action": "DENY", "reason": "无否认却 DENY"}],  # 越界动作
+        [{"fact_index": 0, "fact_id": 1, "action": "REPLACE", "reason": "动作不存在"}],
+        [{"fact_index": 0, "action": "NOOP", "reason": "缺 fact_id"}],
         [
-            {"fact_id": 1, "action": "NOOP", "reason": "先到"},
-            {"fact_id": 1, "action": "ADD", "reason": "重复 id"},
+            {"fact_index": 0, "fact_id": 1, "action": "NOOP", "reason": "先到"},
+            {"fact_index": 0, "fact_id": 1, "action": "ADD", "reason": "重复 id"},
         ],
     ):
         extractor = StructuredFactExtractor(
             lambda _prompt, g=garbage: {"decisions": g}
         )
         with pytest.raises(FactExtractionError):
-            extractor.decide_fusion("{}", candidate_ids={1, 2})
+            extractor.decide_fusion("{}", fact_count=1, candidate_ids={1, 2})

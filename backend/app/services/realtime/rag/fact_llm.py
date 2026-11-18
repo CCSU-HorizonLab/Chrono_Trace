@@ -7,7 +7,7 @@ contact_profiler 的模型配置读取与 post_json_with_retries 基础设施。
 - 远程模型发送前逐条消息脱敏（PrivacyRedactor）；脱敏器不可用时阻断
   整段发送（抛 FactRedactionUnavailable），绝不降级为发原文；本地模型
   发原文。
-- 载荷同时承载抽取（messages -> facts）与融合（new_fact/active_candidates
+- 载荷同时承载抽取（messages -> facts）与融合（new_facts 批/active_candidates
   -> decisions）两种任务，适配器按任务特征分流到各自的 prompt 协议。
 - evidence_message_ids 只保留载荷中出现的真实消息 ID（防幻觉引用）。
 - 连续失败由调用方（indexer）计数中止；本适配器每次调用独立重试。
@@ -67,23 +67,29 @@ content 必须是自包含的完整陈述句，把口语中的代词和省略还
 没有可抽取事实时输出 {"facts": []}。"""
 
 
-FACT_FUSION_SYSTEM_PROMPT = """你是一个联系人记忆事实维护器。对话中新抽取了一条关于对方或用户的事实，请判断它与每条已有旧事实的关系，输出维护决策。
+FACT_FUSION_SYSTEM_PROMPT = """你是一个联系人记忆事实维护器。对话中新抽取了若干条关于对方或用户的事实（载荷以 n0、n1、… 编号），请判断每条新事实与每条已有旧事实的关系，输出维护决策。
 
-决策含义（对每条候选旧事实必须各给一条）：
-- ADD：旧事实与新事实主题无关，保留旧事实，新事实作为新增
+决策含义（每条新事实 × 每条候选旧事实各给一条，fact_index 为该决策所属新事实的编号）：
+- ADD：旧事实与该新事实主题无关，保留旧事实，新事实作为新增
 - UPDATE：新事实修正、细化或取代旧事实——同一主题的信息演变，如旧事实是"对方不喜欢X"，新事实是"对方因为Y对X改观了，现在喜欢"
 - INVALIDATE：新事实说明旧事实已不再成立
 - MERGE：同一事实被再次表达，合并证据即可，不新增
 - NOOP：无法判断关联，旧事实保持不变
 
+新事实彼此之间（fact_id 形如 "n1" 的批内引用）：仅判断是否重复。新事实
+来自同一段对话，彼此不存在时间演变，只能全部输出 MERGE（同义换措辞，
+如"对方喜欢玩A"与"对方是A游戏玩家"）或省略不输出（不重复）。绝不
+要对批内引用输出 UPDATE/INVALIDATE/DENY。发现 n_i 与 n_j 重复时，输出
+一条 {"fact_index": i, "fact_id": "n_j", "action": "MERGE"} 即可，方向任选。
+
 用户否认过的说法（denied_facts，仅在载荷出现时生效）：
-用户曾把某条旧记忆标记为「不准确」，它已从候选中移除。若新事实是对某条
-否认说法的重述——包括概念泛化或收窄（"对虾过敏"→"不能吃海鲜"，海鲜
-涵盖虾，同一禁忌）——对该 denied fact 的 fact_id 输出一条 DENY，新事实
-将被丢弃。以下情况不是重述，正常走候选决策或新增：
+用户曾把某条旧记忆标记为「不准确」，它已从候选中移除。若某条新事实是对
+某条否认说法的重述——包括概念泛化或收窄（"对虾过敏"→"不能吃海鲜"，海鲜
+涵盖虾，同一禁忌）——对该 denied fact 的 fact_id 输出一条 DENY（fact_index
+为该新事实的编号），该新事实将被丢弃。以下情况不是重述，正常走候选决策或新增：
 - 新事实与用户的纠正（user_reason）一致：用户说"记错了，是蟹过敏"，
   那么"对方对蟹过敏"是新事实的正确版本，绝不 DENY
-- 同一主题但方向相反的演进（如脱敏治疗后可以少量吃虾）：是状态变化，
+- 同一主题但方向相反的演进（如脱敏治疗后可以少量尝试）：是状态变化，
   不是重述
 - 与否认说法主题无关：忽略即可
 
@@ -93,7 +99,7 @@ FACT_FUSION_SYSTEM_PROMPT = """你是一个联系人记忆事实维护器。对�
 - 只是措辞不同、含义相同 → MERGE
 
 输出严格 JSON：
-{"decisions": [{"fact_id": 旧事实或否认事实的id, "action": "ADD|UPDATE|INVALIDATE|MERGE|NOOP|DENY", "reason": "一句话理由"}]}"""
+{"decisions": [{"fact_index": 新事实编号(0起), "fact_id": 旧事实/否认事实的数字id 或 批内引用"n加编号", "action": "ADD|UPDATE|INVALIDATE|MERGE|NOOP|DENY", "reason": "一句话理由"}]}"""
 
 
 FACT_FEEDBACK_EXTRACTION_PROMPT = """你是一个聊天建议反馈分析器。用户收到一条 AI 生成的回复建议后，没有直接采用，而是改写后发送。请从"原始建议"与"用户实际发送"的差异中，推断值得长期记住的偏好信号。
@@ -144,10 +150,10 @@ class LLMFactExtractorAdapter:
 
     @staticmethod
     def _is_fusion_payload(payload: dict[str, Any]) -> bool:
-        """融合任务特征：显式 task 标记或 new_fact/active_candidates 协议键。"""
+        """融合任务特征：显式 task 标记或 new_facts/active_candidates 协议键。"""
         return (
             str(payload.get("task") or "") == "maintain_atomic_contact_facts"
-            or "new_fact" in payload
+            or "new_facts" in payload
             or bool(payload.get("active_candidates"))
         )
 
@@ -246,23 +252,26 @@ class LLMFactExtractorAdapter:
     # ---- fusion (P1.5 T2) ----
 
     def _fusion_call(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """渲染融合 prompt（新事实 + 候选旧事实）并解析 decisions 协议。
+        """渲染融合 prompt（new_facts 批 + 候选旧事实）并解析 decisions 协议。
 
         解析失败向上抛 ValueError，由 StructuredFactExtractor.decide_fusion
         / indexer 按安全回退 ADD 处理——融合异常只 ADD 不误推翻。
         """
         redactor = self._require_redactor(payload)
-        new_fact = payload.get("new_fact") or {}
+        new_facts = payload.get("new_facts") or []
         candidates = payload.get("active_candidates") or []
 
         def _redact(text: Any, source_id: str) -> str:
             rendered = self._redact_text(str(text or ""), redactor, payload, source_id=source_id)
             return rendered if rendered is not None else "（脱敏失败，内容已丢弃）"
 
-        new_lines = [
-            f"主题/对象：{_redact(new_fact.get('content'), source_id='new_fact')}",
-            f"subject：{new_fact.get('subject', '')} kind：{new_fact.get('kind', '')}",
-        ]
+        new_lines = []
+        for item in new_facts:
+            ref = str(item.get("ref") or "")
+            new_lines.append(
+                f"[{ref}] {_redact(item.get('content'), source_id=ref)}"
+                f"（subject：{item.get('subject', '')} kind：{item.get('kind', '')}）"
+            )
         candidate_lines = []
         for item in candidates:
             fact_id = int(item.get("fact_id") or 0)
@@ -279,7 +288,7 @@ class LLMFactExtractorAdapter:
                 f"[{fact_id}] {_redact(item.get('content'), source_id=str(fact_id))}{suffix}"
             )
         user_prompt = (
-            "新抽取的事实：\n"
+            "新抽取的事实（[ref] 内容）：\n"
             + "\n".join(new_lines)
             + "\n\n候选旧事实（[fact_id] 内容）：\n"
             + ("\n".join(candidate_lines) if candidate_lines else "（无）")
@@ -288,11 +297,11 @@ class LLMFactExtractorAdapter:
             user_prompt += (
                 "\n\n用户已否认的说法（曾标记不准确，[fact_id] 内容）：\n"
                 + "\n".join(denied_lines)
-                + "\n\n请对每条候选旧事实输出决策 JSON；若新事实是对某条已否认说法的"
-                "重述（含概念泛化或收窄），对该 fact_id 输出一条 DENY。"
+                + "\n\n请对每条新事实与每条候选旧事实输出决策 JSON；若某条新事实是对"
+                "某条已否认说法的重述（含概念泛化或收窄），对该 fact_id 输出一条 DENY。"
             )
         else:
-            user_prompt += "\n\n请对每条候选旧事实输出决策 JSON。"
+            user_prompt += "\n\n请对每条新事实与每条候选旧事实输出决策 JSON。"
         messages = [
             {"role": "system", "content": FACT_FUSION_SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},

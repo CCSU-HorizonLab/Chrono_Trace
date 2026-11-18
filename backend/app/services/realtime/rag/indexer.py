@@ -93,6 +93,12 @@ class RagIndexer:
     # P1.6 融合候选上限：候选过多时 decisions 响应变长易截断（真实库
     # 出现 invalid JSON/no JSON 多为 max_tokens 截断），按置信度取前 N
     FACT_FUSION_CANDIDATE_LIMIT = 12
+    # 融合攒批：同段同 (subject,kind) 桶的新事实合一次调用（候选共享、
+    # 批内互判 MERGE-only 去重）。批大小受输出 token 预算约束：
+    # k × 候选数 × 每决策 token ≤ 预算，预算按 max_tokens=3072 留余量
+    FUSION_BATCH_FACTS = 3
+    FUSION_OUTPUT_TOKEN_BUDGET = 2450
+    FUSION_TOKENS_PER_DECISION = 50
     # 用户纠错下渗：新抽取与已否认（inaccurate）事实的向量相似度阈值。
     # BGE 同义改写实测 0.9+、无关句地板 0.26-0.35，0.85 取保守侧
     DENIED_FACT_SIMILARITY = 0.85
@@ -1672,10 +1678,11 @@ class RagIndexer:
     ) -> None:
         """Persist structured facts through a conservative maintenance loop.
 
-        融合决策是每 fact 一次的 LLM IO：executor 传入时并发提交、按
-        提交序收敛（批内 facts 互不为候选——候选查询全部发生在本批落库
-        之前，顺序不影响决策）；事实向量循环后一次批量嵌入（此前逐
-        fact 串行融合 + 单条推理，是构建耗时的主体）。
+        融合决策按 (subject,kind) 桶攒批：同桶新事实合一次 LLM 调用
+        （候选一次查询共享），批内互判 MERGE-only 去重——同段新事实之间
+        没有时间演变，只可能是重复；被吸收者的证据并集进代表，由代表走
+        候选落地。跨批/跨桶事实互不为候选——候选查询全部发生在本批落库
+        之前，顺序不影响决策；事实向量循环后一次批量嵌入。
         """
         from concurrent.futures import Future
 
@@ -1688,84 +1695,178 @@ class RagIndexer:
         if not facts:
             return
 
-        prepared: list[tuple[dict[str, Any], Any]] = []
+        # 规范化 + 同段内容精确去重（抽取器偶发同义同文重复输出，零成本
+        # 拦在 LLM 前）+ 按 (subject,kind) 桶分组
+        buckets: dict[tuple[str, str], list[tuple[dict[str, Any], list[dict[str, Any]]]]] = {}
+        dedup: dict[tuple[str, str, str], dict[str, Any]] = {}
         for raw_fact in facts:
             fact = dict(raw_fact)
             denied_refs = fact.pop("_denied_refs", [])
             fact["kind"] = normalize_fact_kind(fact.get("kind"))
             fact["subject"] = str(fact.get("subject") or "").strip()
-            candidates = self.store.list_active_facts_by_subject_kind(
-                account_wxid,
-                conversation_id,
-                fact["subject"],
-                fact["kind"],
-            )
-            if executor is not None:
-                prepared.append(
-                    (fact, executor.submit(self._decide_fact_fusion, fact, candidates, denied_refs))
+            content_key = re.sub(r"\s+", "", str(fact.get("content") or ""))
+            key = (fact["subject"], fact["kind"], content_key)
+            if key in dedup:
+                kept = dedup[key]
+                kept["evidence_message_ids"] = list(dict.fromkeys(
+                    list(kept.get("evidence_message_ids") or [])
+                    + list(fact.get("evidence_message_ids") or [])
+                ))
+                kept["confidence"] = max(
+                    float(kept.get("confidence") or 0.0),
+                    float(fact.get("confidence") or 0.0),
                 )
-            else:
-                prepared.append((fact, self._decide_fact_fusion(fact, candidates, denied_refs)))
+                continue
+            dedup[key] = fact
+            buckets.setdefault((fact["subject"], fact["kind"]), []).append((fact, denied_refs))
+
+        # 桶 → 候选查询一次 → k 保险丝切片成批 → 提交（executor 传入时
+        # 并发、按提交序收敛）。k 受输出 token 预算约束：k × 候选数 ×
+        # 每决策 token ≤ 预算（截断后的候选数才是真实输出规模）
+        prepared: list[tuple[list[dict[str, Any]], int, Any]] = []
+        for (subject, kind), items in buckets.items():
+            candidates = self.store.list_active_facts_by_subject_kind(
+                account_wxid, conversation_id, subject, kind
+            )
+            eff_candidates = len(candidates[: self.FACT_FUSION_CANDIDATE_LIMIT])
+            k = max(1, min(
+                self.FUSION_BATCH_FACTS,
+                self.FUSION_OUTPUT_TOKEN_BUDGET
+                // (max(1, eff_candidates) * self.FUSION_TOKENS_PER_DECISION),
+            ))
+            for i in range(0, len(items), k):
+                chunk = [f for f, _ in items[i : i + k]]
+                # 批内 denied 负样本按 fact_id 并集（截断留 _decide 侧）
+                denied_merged: list[dict[str, Any]] = []
+                seen_denied: set[int] = set()
+                for _, refs in items[i : i + k]:
+                    for ref in refs:
+                        if ref.get("fact_id") not in seen_denied:
+                            seen_denied.add(ref.get("fact_id"))
+                            denied_merged.append(ref)
+                if executor is not None:
+                    prepared.append((
+                        chunk,
+                        len(candidates),
+                        executor.submit(self._decide_fact_fusion_batch, chunk, candidates, denied_merged),
+                    ))
+                else:
+                    prepared.append((
+                        chunk,
+                        len(candidates),
+                        self._decide_fact_fusion_batch(chunk, candidates, denied_merged),
+                    ))
 
         pending_vectors: list[dict[str, Any]] = []
-        for fact, decision_result in prepared:
-            decisions = (
+        for chunk, candidate_total, decision_result in prepared:
+            grouped = (
                 decision_result.result(timeout=self.FUTURE_RESULT_TIMEOUT_S)
                 if isinstance(decision_result, Future)
                 else decision_result
             )
-            self._log_fusion_decisions(fact, decisions)
-            # 两级漏斗第二级命中：LLM 判定新事实是对已否认说法的重述，
-            # 丢弃（用户已说过这条不对，换措辞也不能复活）
-            if any(item["action"] == "DENY" for item in decisions):
+            for fact, decisions in zip(chunk, grouped):
+                self._log_fusion_decisions(fact, decisions)
+
+            # 批内互判归并：MERGE 指向 "n{j}" 建组，代表取组内最小 index
+            # （互判是等价关系，方向任选不影响归并结果）
+            rep = list(range(len(chunk)))
+
+            def _find(x: int) -> int:
+                while rep[x] != x:
+                    rep[x] = rep[rep[x]]
+                    x = rep[x]
+                return x
+
+            for i, decisions in enumerate(grouped):
+                for item in decisions:
+                    fid = item.get("fact_id")
+                    if item.get("action") == "MERGE" and isinstance(fid, str) and str(fid).startswith("n"):
+                        ri, rj = _find(i), _find(int(str(fid)[1:]))
+                        if ri != rj:
+                            rep[max(ri, rj)] = min(ri, rj)
+            # 组内任一成员被判 DENY（否认重述）→ 整组丢弃：用户纠错的
+            # 优先级高于记忆保全，吸收不能让否认说法借代表复活
+            denied_groups = {
+                _find(i)
+                for i, decisions in enumerate(grouped)
+                if any(item["action"] == "DENY" for item in decisions)
+            }
+            absorbed: dict[int, list[dict[str, Any]]] = {}
+            for i in range(len(chunk)):
+                r = _find(i)
+                if r != i:
+                    absorbed.setdefault(r, []).append(chunk[i])
+            if len(chunk) > 1:
                 logger.info(
-                    "[RAG Denied-Guard] 融合决策 DENY：新事实被判为已否认说法的重述，丢弃「%s」",
-                    str(fact.get("content") or "")[:60],
+                    "[RAG Fusion Batch] conv=%s facts=%d candidates=%d intra_merged=%d",
+                    conversation_id, len(chunk), candidate_total, len(absorbed),
                 )
-                continue
-            replacement_ids = [
-                int(item["fact_id"])
-                for item in decisions
-                if item["action"] in {"UPDATE", "INVALIDATE"}
-            ]
-            merge_ids = [int(item["fact_id"]) for item in decisions if item["action"] == "MERGE"]
 
-            # A pure semantic duplicate augments the old fact rather than
-            # creating another active spelling of the same memory.
-            if merge_ids and not replacement_ids:
-                self.store.merge_fact_evidence(
-                    merge_ids[0],
+            for i, (fact, decisions) in enumerate(zip(chunk, grouped)):
+                if _find(i) in denied_groups:
+                    logger.info(
+                        "[RAG Denied-Guard] 融合决策 DENY：新事实被判为已否认说法的重述，丢弃「%s」",
+                        str(fact.get("content") or "")[:60],
+                    )
+                    continue
+                if _find(i) != i:
+                    continue  # 被吸收者：不单独落库，证据已并入代表
+                members = absorbed.get(i) or []
+                if members:
+                    evidence = list(fact.get("evidence_message_ids") or [])
+                    confidence = float(fact.get("confidence") or 0.0)
+                    for member in members:
+                        evidence.extend(member.get("evidence_message_ids") or [])
+                        confidence = max(confidence, float(member.get("confidence") or 0.0))
+                    fact["evidence_message_ids"] = list(dict.fromkeys(evidence))
+                    fact["confidence"] = confidence
+                replacement_ids = [
+                    int(item["fact_id"])
+                    for item in decisions
+                    if item["action"] in {"UPDATE", "INVALIDATE"}
+                ]
+                merge_ids = [
+                    int(item["fact_id"])
+                    for item in decisions
+                    if item["action"] == "MERGE" and not isinstance(item["fact_id"], str)
+                ]
+
+                # A pure semantic duplicate augments the old fact rather than
+                # creating another active spelling of the same memory.
+                if merge_ids and not replacement_ids:
+                    self.store.merge_fact_evidence(
+                        merge_ids[0],
+                        confidence=float(fact.get("confidence") or 0.0),
+                        evidence_message_ids=list(fact.get("evidence_message_ids") or []),
+                    )
+                    continue
+
+                # G8：LLM 抽取的 status 字段不透传——退役（superseded/uncertain）
+                # 只能由融合维护或用户反馈触发，模型输出一句 status 会把无后继
+                # 的 active 事实静默退役，演变链从此断头。
+                new_id = self.store.upsert_fact(
+                    account_wxid=account_wxid,
+                    conversation_id=conversation_id,
+                    subject=fact["subject"],
+                    kind=fact["kind"],
+                    content=fact["content"],
+                    status="active",
+                    as_of=fact.get("as_of") or segment.end_ts,
+                    valid_from=fact.get("valid_from") or segment.start_ts,
+                    valid_to=fact.get("valid_to") or segment.end_ts,
                     confidence=float(fact.get("confidence") or 0.0),
+                    sensitivity=fact.get("sensitivity") or "normal",
                     evidence_message_ids=list(fact.get("evidence_message_ids") or []),
+                    source_window=fact.get("source_window") or {},
+                    summary_method="llm_shadow",
                 )
-                continue
-
-            # G8：LLM 抽取的 status 字段不透传——退役（superseded/uncertain）
-            # 只能由融合维护或用户反馈触发，模型输出一句 status 会把无后继
-            # 的 active 事实静默退役，演变链从此断头。
-            new_id = self.store.upsert_fact(
-                account_wxid=account_wxid,
-                conversation_id=conversation_id,
-                subject=fact["subject"],
-                kind=fact["kind"],
-                content=fact["content"],
-                status="active",
-                as_of=fact.get("as_of") or segment.end_ts,
-                valid_from=fact.get("valid_from") or segment.start_ts,
-                valid_to=fact.get("valid_to") or segment.end_ts,
-                confidence=float(fact.get("confidence") or 0.0),
-                sensitivity=fact.get("sensitivity") or "normal",
-                evidence_message_ids=list(fact.get("evidence_message_ids") or []),
-                source_window=fact.get("source_window") or {},
-                summary_method="llm_shadow",
-            )
-            pending_vectors.append({"id": new_id, "content": str(fact["content"])})
-            for old_id in replacement_ids:
-                if old_id != new_id:
-                    self.store.supersede_fact(old_id, new_id)
-            # G3：多旧一新时单链指针会被循环覆盖只剩最后一个，把完整
-            # 被退役列表留档到新事实，演变链审计不因覆盖断链
-            self.store.record_supersede_batch(new_id, replacement_ids)
+                pending_vectors.append({"id": new_id, "content": str(fact["content"])})
+                for old_id in replacement_ids:
+                    if old_id != new_id:
+                        self.store.supersede_fact(old_id, new_id)
+                # G3：多旧一新时单链指针会被循环覆盖只剩最后一个，把完整
+                # 被退役列表留档到新事实，演变链审计不因覆盖断链
+                self.store.record_supersede_batch(new_id, replacement_ids)
 
         if pending_vectors:
             self._write_fact_embeddings_batch(
@@ -1851,63 +1952,100 @@ class RagIndexer:
         except Exception as exc:
             logger.warning("[RAG Fact Vector] write failed; keyword fallback remains active: %s", exc)
 
-    def _decide_fact_fusion(
+    def _decide_fact_fusion_batch(
         self,
-        fact: dict[str, Any],
+        facts: list[dict[str, Any]],
         candidates: list[dict[str, Any]],
         denied_refs: list[dict[str, Any]] | None = None,
-    ) -> list[dict[str, Any]]:
-        """Return safe fusion decisions; any model uncertainty becomes ADD."""
+    ) -> list[list[dict[str, Any]]]:
+        """Return safe fusion decisions per fact; uncertainty becomes ADD.
+
+        降级梯：整批失败（网络/解析/校验废批）→ 拆逐条重试 → 单条仍失败
+        回退 ADD（空决策）。逐条也是批形状（k=1），不存在单事实旧协议。
+        """
+        try:
+            return self._decide_fact_fusion_once(facts, candidates, denied_refs)
+        except Exception as exc:
+            if len(facts) == 1:
+                logger.warning("[RAG Fact Fusion] invalid/failed decision; falling back to ADD: %s", exc)
+                return [[]]
+            logger.warning("[RAG Fact Fusion] batch failed (%d facts), retrying per-fact: %s", len(facts), exc)
+            grouped: list[list[dict[str, Any]]] = []
+            for fact in facts:
+                try:
+                    grouped.append(self._decide_fact_fusion_once([fact], candidates, denied_refs)[0])
+                except Exception as exc2:
+                    logger.warning("[RAG Fact Fusion] per-fact retry failed; falling back to ADD: %s", exc2)
+                    grouped.append([])
+            return grouped
+
+    def _decide_fact_fusion_once(
+        self,
+        facts: list[dict[str, Any]],
+        candidates: list[dict[str, Any]],
+        denied_refs: list[dict[str, Any]] | None = None,
+    ) -> list[list[dict[str, Any]]]:
+        """One fusion LLM call for the whole batch; returns per-fact decisions."""
         denied_refs = denied_refs or []
         if self.structured_fact_extractor is None:
-            return []
+            return [[] for _ in facts]
         # 无 active 候选但有否认负样本时仍需决策：被否认的事实已 disabled
         # 不在候选里，若直接放行 ADD，换措辞的重述会在无候选路径复活
         if not candidates and not denied_refs:
-            return []
+            return [[] for _ in facts]
         # 候选按置信度排序后截断，防止 decisions 响应过长被 max_tokens 截断
         fusion_candidates = candidates[: self.FACT_FUSION_CANDIDATE_LIMIT]
         # 负样本注入与 denied_ids 同源同截断——prompt 里没出现的否认 id
         # 不该校验放行（模型不可能对没给的事实输出 DENY）
         denied_prompt_refs = denied_refs[: self.DENIED_FACT_PROMPT_LIMIT]
-        try:
-            # 注意：动作协议（ADD/UPDATE/.../DENY 的含义）全在
-            # fact_llm.FACT_FUSION_SYSTEM_PROMPT，payload 只传数据键——
-            # 这里曾写过 contract 字段，但适配器渲染消息时不读它，纯死重量
-            payload: dict[str, Any] = {
-                "task": "maintain_atomic_contact_facts",
-                "new_fact": fact,
-                "active_candidates": [
-                    {
-                        "fact_id": item["id"],
-                        "content": item["content"],
-                        "confidence": item["confidence"],
-                        "evidence_message_ids": json.loads(item.get("evidence_message_ids_json") or "[]"),
-                    }
-                    for item in fusion_candidates
-                ],
-                "max_tokens": 2048,
-            }
-            if denied_prompt_refs:
-                payload["denied_facts"] = [
-                    {
-                        "fact_id": item["fact_id"],
-                        "content": item["content"],
-                        "user_reason": item.get("deny_reason"),
-                    }
-                    for item in denied_prompt_refs
-                ]
-            prompt = json.dumps(payload, ensure_ascii=False)
-            return self.structured_fact_extractor.decide_fusion(
-                prompt,
-                candidate_ids={int(item["id"]) for item in fusion_candidates},
-                denied_ids={int(item["fact_id"]) for item in denied_prompt_refs},
-                # 纠错路径逐条跳过保合法 DENY；普通路径整批作废防幻觉
-                strict_batch=not denied_prompt_refs,
+        # 注意：动作协议（ADD/UPDATE/.../DENY 的含义、批内 MERGE-only 互判）
+        # 全在 fact_llm.FACT_FUSION_SYSTEM_PROMPT，payload 只传数据键
+        payload: dict[str, Any] = {
+            "task": "maintain_atomic_contact_facts",
+            "new_facts": [
+                {
+                    "ref": f"n{i}",
+                    "subject": fact.get("subject"),
+                    "kind": fact.get("kind"),
+                    "content": fact.get("content"),
+                    "confidence": fact.get("confidence"),
+                }
+                for i, fact in enumerate(facts)
+            ],
+            "active_candidates": [
+                {
+                    "fact_id": item["id"],
+                    "content": item["content"],
+                    "confidence": item["confidence"],
+                    "evidence_message_ids": json.loads(item.get("evidence_message_ids_json") or "[]"),
+                }
+                for item in fusion_candidates
+            ],
+            "max_tokens": 3072,
+        }
+        if denied_prompt_refs:
+            payload["denied_facts"] = [
+                {
+                    "fact_id": item["fact_id"],
+                    "content": item["content"],
+                    "user_reason": item.get("deny_reason"),
+                }
+                for item in denied_prompt_refs
+            ]
+        prompt = json.dumps(payload, ensure_ascii=False)
+        grouped = self.structured_fact_extractor.decide_fusion(
+            prompt,
+            fact_count=len(facts),
+            candidate_ids={int(item["id"]) for item in fusion_candidates},
+            denied_ids={int(item["fact_id"]) for item in denied_prompt_refs},
+            # 纠错路径逐条跳过保合法 DENY；普通路径整批作废防幻觉
+            strict_batch=not denied_prompt_refs,
+        )
+        if len(grouped) != len(facts):  # 防御：分组长度契约被破坏即视为失败
+            raise FactExtractionError(
+                f"decide_fusion grouped {len(grouped)} decisions for {len(facts)} facts"
             )
-        except Exception as exc:
-            logger.warning("[RAG Fact Fusion] invalid/failed decision; falling back to ADD: %s", exc)
-            return []
+        return grouped
 
     @staticmethod
     def _log_fusion_decisions(fact: dict[str, Any], decisions: list[dict[str, Any]]) -> None:

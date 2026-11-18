@@ -537,7 +537,7 @@ def test_structured_fact_fusion_supersedes_conflicting_fact_and_keeps_audit_chai
     def llm(prompt):
         payload = json.loads(prompt)
         assert payload["task"] == "maintain_atomic_contact_facts"
-        return {"decisions": [{"fact_id": old_id, "action": "UPDATE"}]}
+        return {"decisions": [{"fact_index": 0, "fact_id": old_id, "action": "UPDATE"}]}
 
     indexer = RagIndexer(store=store, structured_fact_extractor=StructuredFactExtractor(llm))
     indexer._write_structured_facts(
@@ -568,7 +568,7 @@ def test_structured_fact_fusion_merges_duplicate_evidence_without_new_fact():
 
     def llm(prompt):
         payload = json.loads(prompt)
-        return {"decisions": [{"fact_id": old_id, "action": "MERGE"}]}
+        return {"decisions": [{"fact_index": 0, "fact_id": old_id, "action": "MERGE"}]}
 
     RagIndexer(store=store, structured_fact_extractor=StructuredFactExtractor(llm))._write_structured_facts(
         account_wxid="account-a", conversation_id=1, segment=_maintenance_segment(), facts=[{
@@ -611,16 +611,16 @@ def test_structured_fact_fusion_contract_accepts_all_maintenance_actions():
     extractor = StructuredFactExtractor(
         lambda _prompt: {
             "decisions": [
-                {"fact_id": 1, "action": "ADD"},
-                {"fact_id": 2, "action": "UPDATE"},
-                {"fact_id": 3, "action": "INVALIDATE"},
-                {"fact_id": 4, "action": "MERGE"},
-                {"fact_id": 5, "action": "NOOP"},
+                {"fact_index": 0, "fact_id": 1, "action": "ADD"},
+                {"fact_index": 0, "fact_id": 2, "action": "UPDATE"},
+                {"fact_index": 0, "fact_id": 3, "action": "INVALIDATE"},
+                {"fact_index": 0, "fact_id": 4, "action": "MERGE"},
+                {"fact_index": 0, "fact_id": 5, "action": "NOOP"},
             ]
         }
     )
-    decisions = extractor.decide_fusion("{}", candidate_ids={1, 2, 3, 4, 5})
-    assert [item["action"] for item in decisions] == [
+    grouped = extractor.decide_fusion("{}", fact_count=1, candidate_ids={1, 2, 3, 4, 5})
+    assert [item["action"] for item in grouped[0]] == [
         "ADD", "UPDATE", "INVALIDATE", "MERGE", "NOOP"
     ]
 

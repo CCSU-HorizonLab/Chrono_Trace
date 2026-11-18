@@ -2,7 +2,8 @@
 
 此前生产适配器把融合 payload 当抽取 payload 处理（要求 facts 协议），
 decisions 永远解析失败 → 45 次日志回退 ADD，MERGE/UPDATE/INVALIDATE
-从未执行。本组测试验证融合决策真正驱动维护循环。
+从未执行。本组测试验证融合决策真正驱动维护循环。攒批版（2026-11）：
+同桶新事实合一次调用，decisions 带 fact_index；批内互判 MERGE-only 去重。
 """
 
 import json
@@ -70,19 +71,28 @@ def _seed_old_fact(store, *, content="对方不喜欢吃香菜", kind="preferenc
     )
 
 
-def _fusion_aware_llm(new_fact_content, decisions_for):
-    """抽取返回 new_fact_content；融合按 decisions_for(fact_ids) 出决策。"""
+def _fusion_aware_llm(new_fact_content, decisions_for, intra_merge=()):
+    """抽取返回 new_fact_content；融合按 decisions_for(fact_ids) 出决策。
+
+    intra_merge: 批内互判对列表 [(i, j)]，表示 n_i 判与 n_j 重复（MERGE）。
+    """
 
     def llm(prompt):
         payload = json.loads(prompt)
-        if payload.get("task") == "maintain_atomic_contact_facts" or "new_fact" in payload:
+        if payload.get("task") == "maintain_atomic_contact_facts" or "new_facts" in payload:
             candidates = payload.get("active_candidates") or []
-            return {
-                "decisions": [
-                    {"fact_id": item["fact_id"], **decisions_for(item)}
-                    for item in candidates
-                ]
-            }
+            new_facts = payload.get("new_facts") or []
+            decisions = [
+                {"fact_index": fi, "fact_id": item["fact_id"], **decisions_for(item)}
+                for fi in range(len(new_facts))
+                for item in candidates
+            ]
+            decisions.extend(
+                {"fact_index": i, "fact_id": f"n{j}", "action": "MERGE", "reason": "批内重复"}
+                for i, j in intra_merge
+                if i < len(new_facts) and j < len(new_facts)
+            )
+            return {"decisions": decisions}
         return {
             "facts": [
                 {
@@ -191,7 +201,7 @@ def test_fusion_failure_falls_back_to_add_only(monkeypatch):
 
     def broken_fusion_llm(prompt):
         payload = json.loads(prompt)
-        if payload.get("task") == "maintain_atomic_contact_facts" or "new_fact" in payload:
+        if payload.get("task") == "maintain_atomic_contact_facts" or "new_facts" in payload:
             raise ValueError("fusion endpoint down")
         return {
             "facts": [
@@ -298,11 +308,13 @@ def test_fusion_candidates_capped_by_confidence(monkeypatch):
 
     def llm(prompt):
         payload = json.loads(prompt)
-        if payload.get("task") == "maintain_atomic_contact_facts" or "new_fact" in payload:
+        if payload.get("task") == "maintain_atomic_contact_facts" or "new_facts" in payload:
             seen["candidates"] = payload.get("active_candidates") or []
+            new_facts = payload.get("new_facts") or []
             return {
                 "decisions": [
-                    {"fact_id": item["fact_id"], "action": "ADD", "reason": "-"}
+                    {"fact_index": fi, "fact_id": item["fact_id"], "action": "ADD", "reason": "-"}
+                    for fi in range(len(new_facts))
                     for item in seen["candidates"]
                 ]
             }
@@ -331,3 +343,234 @@ def test_fusion_candidates_capped_by_confidence(monkeypatch):
         account_wxid="wxid_a", conversation_id=1, segment=segment
     )
     assert len(seen["candidates"]) == indexer.FACT_FUSION_CANDIDATE_LIMIT
+
+
+def _multi_fact_llm(facts_out, decisions_for, intra_merge=(), fail_first_batch=False):
+    """抽取一次返回多条事实；融合按 fact_index 分组出决策（批协议桩）。"""
+    state = {"fusion_calls": 0, "batch_sizes": []}
+
+    def llm(prompt):
+        payload = json.loads(prompt)
+        if payload.get("task") == "maintain_atomic_contact_facts" or "new_facts" in payload:
+            state["fusion_calls"] += 1
+            new_facts = payload.get("new_facts") or []
+            state["batch_sizes"].append(len(new_facts))
+            if fail_first_batch and state["fusion_calls"] == 1:
+                raise ValueError("batch endpoint down")
+            candidates = payload.get("active_candidates") or []
+            decisions = [
+                {"fact_index": fi, "fact_id": item["fact_id"], **decisions_for(item, fi)}
+                for fi in range(len(new_facts))
+                for item in candidates
+            ]
+            decisions.extend(
+                {"fact_index": i, "fact_id": f"n{j}", "action": "MERGE", "reason": "批内重复"}
+                for i, j in intra_merge
+                if i < len(new_facts) and j < len(new_facts)
+            )
+            return {"decisions": decisions}
+        return {"facts": facts_out}
+
+    llm.state = state
+    return llm
+
+
+def test_intra_batch_merge_dedupes_same_segment_facts(monkeypatch):
+    """攒批互判：同段同桶两条换措辞重复 → 只落一条，证据并集置信取 max。"""
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    store = RagStore(conn)
+    _seed_old_fact(store, content="对方不喜欢吃香菜")  # 无关候选，保融合调用发生
+    llm = _multi_fact_llm(
+        [
+            {"subject": "对方", "kind": "preference", "content": "对方喜欢玩怪物猎人",
+             "confidence": 0.8, "evidence_message_ids": [1]},
+            {"subject": "对方", "kind": "preference", "content": "对方是怪物猎人系列玩家",
+             "confidence": 0.9, "evidence_message_ids": [2]},
+        ],
+        lambda item, fi: {"action": "ADD", "reason": "-"},
+        intra_merge=[(0, 1)],
+    )
+    indexer = _indexer(store, llm)
+    monkeypatch.setattr(
+        "app.services.realtime.rag.indexer.load_rag_settings",
+        lambda: {"rag_fact_shadow_enabled": False},
+    )
+    now = 1790000000
+    segment = _segment(
+        now, [(1, 0, "我一直在玩怪猎"), (2, 0, "出了新作必买"), (3, 1, "老玩家了"), (4, 1, "哈哈")]
+    )
+    indexer._extract_structured_shadow_facts(
+        account_wxid="wxid_a", conversation_id=1, segment=segment
+    )
+
+    assert llm.state["fusion_calls"] == 1  # 同桶两条一次调用
+    rows = conn.execute(
+        "SELECT * FROM rag_facts WHERE status='active' AND content IN"
+        " ('对方喜欢玩怪物猎人', '对方是怪物猎人系列玩家')"
+    ).fetchall()
+    assert len(rows) == 1  # 批内去重只落代表
+    rep = rows[0]
+    assert rep["content"] == "对方喜欢玩怪物猎人"  # 代表 = 先出现（index 小）
+    assert json.loads(rep["evidence_message_ids_json"]) == [1, 2]  # 被吸收者证据并入
+    assert rep["confidence"] == 0.9  # 置信取 max
+
+
+def test_intra_batch_group_dropped_when_any_member_denied(monkeypatch):
+    """组内任一成员被判 DENY → 整组丢弃：纠错红线优先，吸收不能让否认说法借代表复活。
+
+    直调 _write_structured_facts（带 _denied_refs）聚焦组丢语义，绕开两级
+    漏斗的向量相似度前置（Noop 嵌入下边界带不可构造）。
+    """
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    store = RagStore(conn)
+    denied_id = store.upsert_fact(
+        account_wxid="wxid_a", conversation_id=1, subject="对方", kind="preference",
+        content="对方不能吃海鲜", confidence=0.7, evidence_message_ids=[9],
+        summary_method="llm_shadow",
+    )
+    conn.execute("UPDATE rag_facts SET status='inaccurate', enabled=0 WHERE id=?", (denied_id,))
+    conn.commit()
+
+    def llm(prompt):
+        payload = json.loads(prompt)
+        if payload.get("task") == "maintain_atomic_contact_facts" or "new_facts" in payload:
+            return {
+                "decisions": [
+                    {"fact_index": 0, "fact_id": denied_id, "action": "DENY", "reason": "重述"},
+                    # f1 与 f0 批内重复 → 同组；组内任一 DENY 整组丢
+                    {"fact_index": 1, "fact_id": "n0", "action": "MERGE", "reason": "批内重复"},
+                ]
+            }
+        raise AssertionError("extraction not expected in this test")
+
+    indexer = _indexer(store, llm)
+    monkeypatch.setattr(
+        indexer, "_filter_denied_facts", lambda facts, **kw: facts
+    )
+    now = 1790000000
+    segment = _segment(now, [(1, 0, "别点海鲜我过敏"), (2, 1, "好")])
+    indexer._write_structured_facts(
+        account_wxid="wxid_a",
+        conversation_id=1,
+        segment=segment,
+        facts=[
+            {"subject": "对方", "kind": "preference", "content": "对方吃海鲜会过敏",
+             "confidence": 0.8, "evidence_message_ids": [1],
+             "_denied_refs": [{"fact_id": denied_id, "content": "对方不能吃海鲜", "deny_reason": ""}]},
+            {"subject": "对方", "kind": "preference", "content": "对方点菜避开海鲜",
+             "confidence": 0.7, "evidence_message_ids": [2]},
+        ],
+    )
+    n = conn.execute(
+        "SELECT COUNT(*) n FROM rag_facts WHERE status='active' AND enabled=1"
+    ).fetchone()
+    assert n["n"] == 0  # 整组丢弃，无新落库
+
+
+def test_batch_sized_by_token_budget_fuse(monkeypatch):
+    """k 保险丝：12 候选 × 50 tokens → k=3；同桶 7 条事实切成 3+3+1 三批。"""
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    store = RagStore(conn)
+    for i in range(12):
+        _seed_old_fact(store, content=f"对方的既有事实{i}")
+    facts_out = [
+        {"subject": "对方", "kind": "preference", "content": f"对方的新事实编号{i}",
+         "confidence": 0.8, "evidence_message_ids": [i]}
+        for i in range(7)
+    ]
+    llm = _multi_fact_llm(facts_out, lambda item, fi: {"action": "ADD", "reason": "-"})
+    indexer = _indexer(store, llm)
+    monkeypatch.setattr(
+        "app.services.realtime.rag.indexer.load_rag_settings",
+        lambda: {"rag_fact_shadow_enabled": False},
+    )
+    now = 1790000000
+    segment = _segment(now, [(1, 0, f"事实{i}") for i in range(7)] + [(8, 1, "好的")])
+    indexer._extract_structured_shadow_facts(
+        account_wxid="wxid_a", conversation_id=1, segment=segment
+    )
+    assert llm.state["batch_sizes"] == [3, 3, 1]
+    n = conn.execute(
+        "SELECT COUNT(*) n FROM rag_facts WHERE content LIKE '对方的新事实%'"
+    ).fetchone()
+    assert n["n"] == 7  # 全部落库（对候选全 ADD）
+
+
+def test_batch_failure_degrades_to_per_fact_retry(monkeypatch):
+    """降级梯：整批调用失败 → 拆逐条重试（k=1 也是批形状）→ 全部落库。"""
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    store = RagStore(conn)
+    _seed_old_fact(store, content="对方不喜欢吃香菜")  # 无关候选，保融合调用发生
+    llm = _multi_fact_llm(
+        [
+            {"subject": "对方", "kind": "preference", "content": "对方喜欢爬山",
+             "confidence": 0.8, "evidence_message_ids": [1]},
+            {"subject": "对方", "kind": "preference", "content": "对方常去城郊徒步",
+             "confidence": 0.7, "evidence_message_ids": [2]},
+        ],
+        lambda item, fi: {"action": "ADD", "reason": "-"},
+        fail_first_batch=True,
+    )
+    indexer = _indexer(store, llm)
+    monkeypatch.setattr(
+        "app.services.realtime.rag.indexer.load_rag_settings",
+        lambda: {"rag_fact_shadow_enabled": False},
+    )
+    now = 1790000000
+    segment = _segment(now, [(1, 0, "周末爬山去"), (2, 0, "城郊走起"), (3, 1, "好"), (4, 1, "嗯")])
+    indexer._extract_structured_shadow_facts(
+        account_wxid="wxid_a", conversation_id=1, segment=segment
+    )
+    # 第一次批调用失败 + 两次逐条重试
+    assert llm.state["fusion_calls"] == 3
+    assert llm.state["batch_sizes"] == [2, 1, 1]
+    n = conn.execute(
+        "SELECT COUNT(*) n FROM rag_facts WHERE status='active' AND content IN"
+        " ('对方喜欢爬山', '对方常去城郊徒步')"
+    ).fetchone()
+    assert n["n"] == 2  # 逐条重试成功，两条都落库
+
+
+def test_decide_fusion_batch_validates_intra_refs():
+    """校验层：fact_index 越界/批内 UPDATE/自引用均废批；合法批内 MERGE 放行。"""
+    from app.services.realtime.rag.fact_extractor import FactExtractionError
+    import pytest
+
+    extractor = StructuredFactExtractor(lambda prompt: prompt)
+
+    def _run(decisions, fact_count=2, candidates={1}, strict=True):
+        return extractor.decide_fusion(
+            json.dumps({"decisions": decisions}),
+            fact_count=fact_count,
+            candidate_ids=candidates,
+            strict_batch=strict,
+        )
+
+    # 合法：候选决策 + 批内 MERGE
+    grouped = _run([
+        {"fact_index": 0, "fact_id": 1, "action": "UPDATE", "reason": "-"},
+        {"fact_index": 0, "fact_id": "n1", "action": "MERGE", "reason": "重复"},
+    ])
+    assert grouped[0][0]["action"] == "UPDATE"
+    assert grouped[0][1]["fact_id"] == "n1"  # 批内引用原样透传给落地侧
+    assert grouped[1] == []
+
+    # 批内引用只允许 MERGE/NOOP
+    with pytest.raises(FactExtractionError):
+        _run([{"fact_index": 0, "fact_id": "n1", "action": "UPDATE", "reason": "-"}])
+    # 自引用与越界
+    with pytest.raises(FactExtractionError):
+        _run([{"fact_index": 0, "fact_id": "n0", "action": "MERGE", "reason": "-"}])
+    with pytest.raises(FactExtractionError):
+        _run([{"fact_index": 2, "fact_id": 1, "action": "ADD", "reason": "-"}], fact_count=2)
+    # 非 strict：非法条目跳过、合法条目幸存（纠错路径语义）
+    grouped = _run(
+        [{"fact_index": 0, "fact_id": "n1", "action": "UPDATE", "reason": "-"},
+         {"fact_index": 1, "fact_id": 1, "action": "ADD", "reason": "-"}],
+        strict=False,
+    )
+    assert grouped == [[], [{"fact_id": 1, "action": "ADD", "reason": "-"}]]

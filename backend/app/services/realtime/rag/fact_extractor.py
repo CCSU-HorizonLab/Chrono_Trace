@@ -111,15 +111,24 @@ class StructuredFactExtractor:
         self,
         prompt: str,
         *,
+        fact_count: int,
         candidate_ids: set[int],
         denied_ids: set[int] = frozenset(),
         strict_batch: bool = True,
-    ) -> list[dict[str, Any]]:
-        """Ask the injected model how one incoming fact relates to old facts.
+    ) -> list[list[dict[str, Any]]]:
+        """Ask the injected model how each incoming fact relates to old facts.
 
-        This intentionally validates a much narrower contract than extraction.
-        Callers treat any parsing or validation problem as ADD, because an
-        accidental supersede loses useful active memory from the read side.
+        批协议：一次载荷含 fact_count 条新事实（ref "n0".."n{k-1}"），返回
+        与新事实等长的决策分组——decisions[i] 是第 i 条新事实对候选/否认/
+        批内其他新事实的决策列表。This intentionally validates a much
+        narrower contract than extraction. Callers treat any parsing or
+        validation problem as ADD, because an accidental supersede loses
+        useful active memory from the read side.
+
+        fact_id 白名单三类：active 候选（数字 id，六决策）、否认事实
+        （数字 id，仅 DENY）、批内新事实引用（"n{j}" 字符串，仅 MERGE/
+        NOOP——同段新事实之间没有时间演变，只能判重复；自引用 j==i 与
+        越界 j>=fact_count 均非法）。
 
         denied_ids 是用户标记「不准确」的事实：它们不在 active 候选里，
         唯一合法的动作是 DENY（新事实是对已否认说法的重述，丢弃新事实）。
@@ -148,43 +157,68 @@ class StructuredFactExtractor:
         decisions = raw.get("decisions")
         if not isinstance(decisions, list):
             raise FactExtractionError("fact fusion response requires decisions")
-        validated: list[dict[str, Any]] = []
-        seen: set[int] = set()
+        grouped: list[list[dict[str, Any]]] = [[] for _ in range(fact_count)]
+        seen: set[tuple[int, int | str]] = set()
         for item in decisions:
             if not isinstance(item, dict):
                 _reject("fact fusion decision is not an object")
                 continue
             try:
-                fact_id = int(item.get("fact_id"))
+                fact_index = int(item.get("fact_index"))
             except (TypeError, ValueError):
-                _reject("fact fusion decision has invalid fact_id")
+                _reject("fact fusion decision has invalid fact_index")
+                continue
+            if not 0 <= fact_index < fact_count:
+                _reject(f"fact fusion decision has out-of-range fact_index {fact_index}")
                 continue
             action = str(item.get("action") or "").upper()
-            if fact_id in seen:
-                _reject(f"duplicate fact fusion decision for #{fact_id}")
-                continue
-            if fact_id in denied_ids:
-                # 否认事实只能被 DENY 引用——它已 disabled，不是维护对象
-                if action != "DENY":
-                    _reject(f"denied fact #{fact_id} only accepts DENY")
+            raw_id = item.get("fact_id")
+            if isinstance(raw_id, str) and raw_id.startswith("n"):
+                # 批内新事实引用：同段无演变，仅允许重复判定
+                try:
+                    peer = int(raw_id[1:])
+                except (TypeError, ValueError):
+                    _reject(f"fact fusion decision has invalid intra-batch ref {raw_id!r}")
                     continue
-            elif fact_id in candidate_ids:
-                # DENY 只指向否认事实；对 active 候选输出 DENY 是模型混淆
-                if action == "DENY":
-                    _reject(f"DENY targets active candidate #{fact_id}")
+                if peer == fact_index or not 0 <= peer < fact_count:
+                    _reject(f"intra-batch ref {raw_id!r} must point at another fact in range")
                     continue
-                if action not in self.FUSION_ACTIONS:
-                    _reject(f"unknown fact fusion action {action!r} for #{fact_id}")
+                if action not in {"MERGE", "NOOP"}:
+                    _reject(f"intra-batch ref only accepts MERGE/NOOP, got {action!r}")
                     continue
+                key = (fact_index, raw_id)
             else:
-                _reject(f"fact fusion decision targets unknown fact #{fact_id}")
-                continue
-            seen.add(fact_id)
-            validated.append(
+                try:
+                    fact_id = int(raw_id)
+                except (TypeError, ValueError):
+                    _reject("fact fusion decision has invalid fact_id")
+                    continue
+                if (fact_index, fact_id) in seen:
+                    _reject(f"duplicate fact fusion decision for #{fact_id}")
+                    continue
+                if fact_id in denied_ids:
+                    # 否认事实只能被 DENY 引用——它已 disabled，不是维护对象
+                    if action != "DENY":
+                        _reject(f"denied fact #{fact_id} only accepts DENY")
+                        continue
+                elif fact_id in candidate_ids:
+                    # DENY 只指向否认事实；对 active 候选输出 DENY 是模型混淆
+                    if action == "DENY":
+                        _reject(f"DENY targets active candidate #{fact_id}")
+                        continue
+                    if action not in self.FUSION_ACTIONS:
+                        _reject(f"unknown fact fusion action {action!r} for #{fact_id}")
+                        continue
+                else:
+                    _reject(f"fact fusion decision targets unknown fact #{fact_id}")
+                    continue
+                key = (fact_index, fact_id)
+            seen.add(key)
+            grouped[fact_index].append(
                 {
-                    "fact_id": fact_id,
+                    "fact_id": raw_id if isinstance(raw_id, str) else fact_id,
                     "action": action,
                     "reason": str(item.get("reason") or "").strip()[:200],
                 }
             )
-        return validated
+        return grouped

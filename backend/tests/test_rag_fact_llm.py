@@ -534,18 +534,21 @@ def test_remote_model_without_redactor_blocks_segment(monkeypatch):
 
 
 def test_adapter_routes_fusion_payload_to_fusion_prompt(monkeypatch):
-    """T2：融合任务（new_fact/active_candidates）走 decisions 协议。"""
+    """T2：融合任务（new_facts 批/active_candidates）走 decisions 协议。"""
     payload = json.dumps(
         {
             "task": "maintain_atomic_contact_facts",
             "account_wxid": "wxid_a",
             "conversation_id": 1,
-            "new_fact": {
-                "subject": "对方",
-                "kind": "preference",
-                "content": "对方以前不吃香菜，现在因为一起吃过几次改观了，开始喜欢吃了",
-                "confidence": 0.8,
-            },
+            "new_facts": [
+                {
+                    "ref": "n0",
+                    "subject": "对方",
+                    "kind": "preference",
+                    "content": "对方以前不吃香菜，现在因为一起吃过几次改观了，开始喜欢吃了",
+                    "confidence": 0.8,
+                },
+            ],
             "active_candidates": [
                 {
                     "fact_id": 501,
@@ -566,8 +569,8 @@ def test_adapter_routes_fusion_payload_to_fusion_prompt(monkeypatch):
     llm_output = json.dumps(
         {
             "decisions": [
-                {"fact_id": 501, "action": "UPDATE", "reason": "同一食物偏好的立场演变"},
-                {"fact_id": 502, "action": "ADD", "reason": "主题无关"},
+                {"fact_index": 0, "fact_id": 501, "action": "UPDATE", "reason": "同一食物偏好的立场演变"},
+                {"fact_index": 0, "fact_id": 502, "action": "ADD", "reason": "主题无关"},
             ]
         },
         ensure_ascii=False,
@@ -580,7 +583,11 @@ def test_adapter_routes_fusion_payload_to_fusion_prompt(monkeypatch):
     sent = http.captured["payload"]["messages"]
     assert "记忆事实维护器" in sent[0]["content"]
     assert sent[0]["content"] == FACT_FUSION_SYSTEM_PROMPT
-    assert "改观" in sent[1]["content"] and "[501] 对方不喜欢吃香菜" in sent[1]["content"]
+    assert (
+        "改观" in sent[1]["content"]
+        and "[n0]" in sent[1]["content"]
+        and "[501] 对方不喜欢吃香菜" in sent[1]["content"]
+    )
     assert result["decisions"][0]["action"] == "UPDATE"
     assert result["decisions"][0]["fact_id"] == 501
 
@@ -589,7 +596,9 @@ def test_fusion_response_without_decisions_raises(monkeypatch):
     payload = json.dumps(
         {
             "task": "maintain_atomic_contact_facts",
-            "new_fact": {"subject": "对方", "kind": "preference", "content": "对方喜欢徒步"},
+            "new_facts": [
+                {"ref": "n0", "subject": "对方", "kind": "preference", "content": "对方喜欢徒步"},
+            ],
             "active_candidates": [{"fact_id": 9, "content": "对方喜欢爬山", "confidence": 0.7}],
         },
         ensure_ascii=False,

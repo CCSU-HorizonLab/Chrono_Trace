@@ -416,11 +416,10 @@ def test_intra_batch_merge_dedupes_same_segment_facts(monkeypatch):
     assert rep["confidence"] == 0.9  # 置信取 max
 
 
-def test_intra_batch_group_dropped_when_any_member_denied(monkeypatch):
-    """组内任一成员被判 DENY → 整组丢弃：纠错红线优先，吸收不能让否认说法借代表复活。
-
-    直调 _write_structured_facts（带 _denied_refs）聚焦组丢语义，绕开两级
-    漏斗的向量相似度前置（Noop 嵌入下边界带不可构造）。
+def test_denied_marked_fact_dropped_on_deny(monkeypatch):
+    """带 denied 边界带负样本的事实拆单条批后，判 DENY 重述 → 丢弃不落库。
+    （拆批后 DENY 只出现在单条批，原「组内任一 DENY 整组丢」自然退化
+    为自身丢弃——与旧单事实协议行为一致。）
     """
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
@@ -439,8 +438,6 @@ def test_intra_batch_group_dropped_when_any_member_denied(monkeypatch):
             return {
                 "decisions": [
                     {"fact_index": 0, "fact_id": denied_id, "action": "DENY", "reason": "重述"},
-                    # f1 与 f0 批内重复 → 同组；组内任一 DENY 整组丢
-                    {"fact_index": 1, "fact_id": "n0", "action": "MERGE", "reason": "批内重复"},
                 ]
             }
         raise AssertionError("extraction not expected in this test")
@@ -459,18 +456,16 @@ def test_intra_batch_group_dropped_when_any_member_denied(monkeypatch):
             {"subject": "对方", "kind": "preference", "content": "对方吃海鲜会过敏",
              "confidence": 0.8, "evidence_message_ids": [1],
              "_denied_refs": [{"fact_id": denied_id, "content": "对方不能吃海鲜", "deny_reason": ""}]},
-            {"subject": "对方", "kind": "preference", "content": "对方点菜避开海鲜",
-             "confidence": 0.7, "evidence_message_ids": [2]},
         ],
     )
     n = conn.execute(
         "SELECT COUNT(*) n FROM rag_facts WHERE status='active' AND enabled=1"
     ).fetchone()
-    assert n["n"] == 0  # 整组丢弃，无新落库
+    assert n["n"] == 0  # DENY 重述丢弃，无新落库
 
 
-def test_batch_sized_by_token_budget_fuse(monkeypatch):
-    """k 保险丝：12 候选 × 50 tokens → k=3；同桶 7 条事实切成 3+3+1 三批。"""
+def test_batch_capped_at_fusion_batch_facts(monkeypatch):
+    """批上限：FUSION_BATCH_FACTS=3；同桶 7 条事实切成 3+3+1 三批。"""
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     store = RagStore(conn)
@@ -574,3 +569,126 @@ def test_decide_fusion_batch_validates_intra_refs():
         strict=False,
     )
     assert grouped == [[], [{"fact_id": 1, "action": "ADD", "reason": "-"}]]
+
+
+def test_absorbed_member_decisions_inherited_by_representative(monkeypatch):
+    """回归（审计）：互判方向任选时全部决策可能挂被吸收者名下——
+    其数字目标决策必须并入代表执行，否则 UPDATE 落空新旧并存。"""
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    store = RagStore(conn)
+    old_id = _seed_old_fact(store, content="对方不喜欢吃香菜")
+
+    state = {"calls": 0}
+
+    def llm(prompt):
+        payload = json.loads(prompt)
+        if payload.get("task") == "maintain_atomic_contact_facts" or "new_facts" in payload:
+            state["calls"] += 1
+            # 全部决策挂在 f1 名下：互判 MERGE（f1 与 n0 重复）+ UPDATE 旧事实
+            return {
+                "decisions": [
+                    {"fact_index": 1, "fact_id": "n0", "action": "MERGE", "reason": "批内重复"},
+                    {"fact_index": 1, "fact_id": old_id, "action": "UPDATE", "reason": "立场演变"},
+                ]
+            }
+        return {
+            "facts": [
+                {"subject": "对方", "kind": "preference", "content": "对方喜欢玩怪物猎人",
+                 "confidence": 0.8, "evidence_message_ids": [1]},
+                {"subject": "对方", "kind": "preference", "content": "对方是怪物猎人系列玩家",
+                 "confidence": 0.9, "evidence_message_ids": [2]},
+            ]
+        }
+
+    indexer = _indexer(store, llm)
+    monkeypatch.setattr(
+        "app.services.realtime.rag.indexer.load_rag_settings",
+        lambda: {"rag_fact_shadow_enabled": False},
+    )
+    now = 1790000000
+    segment = _segment(now, [(1, 0, "我一直在玩怪猎"), (2, 0, "老玩家了"), (3, 1, "好"), (4, 1, "嗯")])
+    indexer._extract_structured_shadow_facts(
+        account_wxid="wxid_a", conversation_id=1, segment=segment
+    )
+
+    old = conn.execute("SELECT * FROM rag_facts WHERE id = ?", (old_id,)).fetchone()
+    assert old["status"] == "superseded" and old["enabled"] == 0  # UPDATE 经代表执行
+    new_rows = conn.execute(
+        "SELECT * FROM rag_facts WHERE status='active' AND content IN"
+        " ('对方喜欢玩怪物猎人', '对方是怪物猎人系列玩家')"
+    ).fetchall()
+    assert len(new_rows) == 1  # 批内去重只落代表
+    assert new_rows[0]["supersedes_fact_id"] == old_id
+
+
+def test_denied_refs_facts_split_out_of_batches(monkeypatch):
+    """回归（审计）：带 denied 边界带负样本的事实单独成批——独享
+    DENIED_FACT_PROMPT_LIMIT 预算与逐条跳过语义，不混进攒批被并集截断。"""
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    store = RagStore(conn)
+    _seed_old_fact(store, content="对方不喜欢吃香菜")
+
+    def llm(prompt):
+        payload = json.loads(prompt)
+        if payload.get("task") == "maintain_atomic_contact_facts" or "new_facts" in payload:
+            return {"decisions": []}
+        return {
+            "facts": [
+                {"subject": "对方", "kind": "preference", "content": "对方吃海鲜会过敏",
+                 "confidence": 0.8, "evidence_message_ids": [1]},
+                {"subject": "对方", "kind": "preference", "content": "对方喜欢爬山",
+                 "confidence": 0.7, "evidence_message_ids": [2]},
+                {"subject": "对方", "kind": "preference", "content": "对方常去城郊徒步",
+                 "confidence": 0.6, "evidence_message_ids": [3]},
+            ]
+        }
+
+    llm.state = {"batch_sizes": [], "denied_seen": []}
+    orig_llm = llm
+
+    def tracking_llm(prompt):
+        payload = json.loads(prompt)
+        if payload.get("task") == "maintain_atomic_contact_facts" or "new_facts" in payload:
+            llm.state["batch_sizes"].append(len(payload.get("new_facts") or []))
+            llm.state["denied_seen"].append(bool(payload.get("denied_facts")))
+            return {"decisions": []}
+        return orig_llm(payload)
+
+    indexer = _indexer(store, tracking_llm)
+    monkeypatch.setattr(indexer, "_filter_denied_facts", lambda facts, **kw: facts)
+    now = 1790000000
+    segment = _segment(now, [(1, 0, "海鲜过敏"), (2, 0, "爬山"), (3, 0, "徒步"), (4, 1, "好")])
+    indexer._write_structured_facts(
+        account_wxid="wxid_a",
+        conversation_id=1,
+        segment=segment,
+        facts=[
+            {"subject": "对方", "kind": "preference", "content": "对方吃海鲜会过敏",
+             "confidence": 0.8, "evidence_message_ids": [1],
+             "_denied_refs": [{"fact_id": 777, "content": "对方不能吃海鲜", "deny_reason": ""}]},
+            {"subject": "对方", "kind": "preference", "content": "对方喜欢爬山",
+             "confidence": 0.7, "evidence_message_ids": [2]},
+            {"subject": "对方", "kind": "preference", "content": "对方常去城郊徒步",
+             "confidence": 0.6, "evidence_message_ids": [3]},
+        ],
+    )
+    # 带 refs 的事实单条批（且载荷带 denied_facts）；干净事实攒成一批
+    assert llm.state["batch_sizes"] == [1, 2]
+    assert llm.state["denied_seen"] == [True, False]
+
+
+def test_decide_fusion_rejects_non_int_fact_index():
+    """回归（审计）：fact_index 宽松 int() 会把 1.0/true 静默取整错挂——严格拒。"""
+    from app.services.realtime.rag.fact_extractor import FactExtractionError
+    import pytest
+
+    extractor = StructuredFactExtractor(lambda prompt: prompt)
+    for bad in (1.0, True, "0"):
+        with pytest.raises(FactExtractionError):
+            extractor.decide_fusion(
+                json.dumps({"decisions": [{"fact_index": bad, "fact_id": 1, "action": "ADD"}]}),
+                fact_count=2,
+                candidate_ids={1},
+            )

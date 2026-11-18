@@ -163,14 +163,13 @@ class StructuredFactExtractor:
             if not isinstance(item, dict):
                 _reject("fact fusion decision is not an object")
                 continue
-            try:
-                fact_index = int(item.get("fact_index"))
-            except (TypeError, ValueError):
-                _reject("fact fusion decision has invalid fact_index")
+            # 严格 int（拒 float/bool/str）：宽松 int() 会把幻觉值 1.0/true
+            # 静默取整归到错误的新事实名下，与「id 脱靶即废批」口径不一致
+            raw_index = item.get("fact_index")
+            if not isinstance(raw_index, int) or isinstance(raw_index, bool) or not 0 <= raw_index < fact_count:
+                _reject(f"fact fusion decision has invalid fact_index {raw_index!r}")
                 continue
-            if not 0 <= fact_index < fact_count:
-                _reject(f"fact fusion decision has out-of-range fact_index {fact_index}")
-                continue
+            fact_index = raw_index
             action = str(item.get("action") or "").upper()
             raw_id = item.get("fact_id")
             if isinstance(raw_id, str) and raw_id.startswith("n"):

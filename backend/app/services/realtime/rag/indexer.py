@@ -94,11 +94,9 @@ class RagIndexer:
     # 出现 invalid JSON/no JSON 多为 max_tokens 截断），按置信度取前 N
     FACT_FUSION_CANDIDATE_LIMIT = 12
     # 融合攒批：同段同 (subject,kind) 桶的新事实合一次调用（候选共享、
-    # 批内互判 MERGE-only 去重）。批大小受输出 token 预算约束：
-    # k × 候选数 × 每决策 token ≤ 预算，预算按 max_tokens=3072 留余量
+    # 批内互判 MERGE-only 去重）。批上限控制失败半径与注意力稀释——
+    # 输出规模已由「候选截断 + 只输出有动作条目」收敛，无需按 token 预算缩批
     FUSION_BATCH_FACTS = 3
-    FUSION_OUTPUT_TOKEN_BUDGET = 2450
-    FUSION_TOKENS_PER_DECISION = 50
     # 用户纠错下渗：新抽取与已否认（inaccurate）事实的向量相似度阈值。
     # BGE 同义改写实测 0.9+、无关句地板 0.26-0.35，0.85 取保守侧
     DENIED_FACT_SIMILARITY = 0.85
@@ -1720,42 +1718,35 @@ class RagIndexer:
             dedup[key] = fact
             buckets.setdefault((fact["subject"], fact["kind"]), []).append((fact, denied_refs))
 
-        # 桶 → 候选查询一次 → k 保险丝切片成批 → 提交（executor 传入时
-        # 并发、按提交序收敛）。k 受输出 token 预算约束：k × 候选数 ×
-        # 每决策 token ≤ 预算（截断后的候选数才是真实输出规模）
+        # 桶 → 候选查询一次 → 切片成批 → 提交（executor 传入时并发、按提交
+        # 序收敛）。批上限即 FUSION_BATCH_FACTS：候选截断 12 与「只输出有
+        # 动作条目」下输出规模已收敛，无需再按 token 预算缩批
         prepared: list[tuple[list[dict[str, Any]], int, Any]] = []
         for (subject, kind), items in buckets.items():
             candidates = self.store.list_active_facts_by_subject_kind(
                 account_wxid, conversation_id, subject, kind
             )
-            eff_candidates = len(candidates[: self.FACT_FUSION_CANDIDATE_LIMIT])
-            k = max(1, min(
-                self.FUSION_BATCH_FACTS,
-                self.FUSION_OUTPUT_TOKEN_BUDGET
-                // (max(1, eff_candidates) * self.FUSION_TOKENS_PER_DECISION),
-            ))
-            for i in range(0, len(items), k):
-                chunk = [f for f, _ in items[i : i + k]]
-                # 批内 denied 负样本按 fact_id 并集（截断留 _decide 侧）
-                denied_merged: list[dict[str, Any]] = []
-                seen_denied: set[int] = set()
-                for _, refs in items[i : i + k]:
-                    for ref in refs:
-                        if ref.get("fact_id") not in seen_denied:
-                            seen_denied.add(ref.get("fact_id"))
-                            denied_merged.append(ref)
-                if executor is not None:
-                    prepared.append((
+
+            def _submit(chunk, cands, denied_merged, _executor=executor):
+                if _executor is not None:
+                    return (
                         chunk,
-                        len(candidates),
-                        executor.submit(self._decide_fact_fusion_batch, chunk, candidates, denied_merged),
-                    ))
+                        len(cands),
+                        _executor.submit(self._decide_fact_fusion_batch, chunk, cands, denied_merged),
+                    )
+                return (chunk, len(cands), self._decide_fact_fusion_batch(chunk, cands, denied_merged))
+
+            # denied 边界带负样本的事实单独成批：独享 DENIED_FACT_PROMPT_LIMIT
+            # 预算与逐条跳过语义（strict_batch=False）——混进攒批会并集截断
+            # 砍掉靠后事实的负样本，且令全批失去防幻觉严格校验
+            batchable: list[dict[str, Any]] = []
+            for fact, refs in items:
+                if refs:
+                    prepared.append(_submit([fact], candidates, refs))
                 else:
-                    prepared.append((
-                        chunk,
-                        len(candidates),
-                        self._decide_fact_fusion_batch(chunk, candidates, denied_merged),
-                    ))
+                    batchable.append(fact)
+            for i in range(0, len(batchable), self.FUSION_BATCH_FACTS):
+                prepared.append(_submit(batchable[i : i + self.FUSION_BATCH_FACTS], candidates, []))
 
         pending_vectors: list[dict[str, Any]] = []
         for chunk, candidate_total, decision_result in prepared:
@@ -1784,18 +1775,14 @@ class RagIndexer:
                         ri, rj = _find(i), _find(int(str(fid)[1:]))
                         if ri != rj:
                             rep[max(ri, rj)] = min(ri, rj)
-            # 组内任一成员被判 DENY（否认重述）→ 整组丢弃：用户纠错的
-            # 优先级高于记忆保全，吸收不能让否认说法借代表复活
-            denied_groups = {
-                _find(i)
-                for i, decisions in enumerate(grouped)
-                if any(item["action"] == "DENY" for item in decisions)
-            }
-            absorbed: dict[int, list[dict[str, Any]]] = {}
+            # DENY（否认重述）→ 丢弃：用户纠错的优先级高于记忆保全。
+            # 拆批后 denied 批恒为单条（自身丢弃）；干净批无 denied_ids，
+            # DENY 会被校验层拦下，不在此路径出现
+            absorbed: dict[int, list[int]] = {}
             for i in range(len(chunk)):
                 r = _find(i)
                 if r != i:
-                    absorbed.setdefault(r, []).append(chunk[i])
+                    absorbed.setdefault(r, []).append(i)
             if len(chunk) > 1:
                 logger.info(
                     "[RAG Fusion Batch] conv=%s facts=%d candidates=%d intra_merged=%d",
@@ -1803,23 +1790,39 @@ class RagIndexer:
                 )
 
             for i, (fact, decisions) in enumerate(zip(chunk, grouped)):
-                if _find(i) in denied_groups:
+                if any(item["action"] == "DENY" for item in decisions):
                     logger.info(
                         "[RAG Denied-Guard] 融合决策 DENY：新事实被判为已否认说法的重述，丢弃「%s」",
                         str(fact.get("content") or "")[:60],
                     )
                     continue
                 if _find(i) != i:
-                    continue  # 被吸收者：不单独落库，证据已并入代表
+                    continue  # 被吸收者：不单独落库，证据与决策已并入代表
                 members = absorbed.get(i) or []
                 if members:
                     evidence = list(fact.get("evidence_message_ids") or [])
                     confidence = float(fact.get("confidence") or 0.0)
-                    for member in members:
-                        evidence.extend(member.get("evidence_message_ids") or [])
-                        confidence = max(confidence, float(member.get("confidence") or 0.0))
+                    for mi in members:
+                        evidence.extend(chunk[mi].get("evidence_message_ids") or [])
+                        confidence = max(confidence, float(chunk[mi].get("confidence") or 0.0))
                     fact["evidence_message_ids"] = list(dict.fromkeys(evidence))
                     fact["confidence"] = confidence
+                    # 被吸收者的数字目标决策并入代表（代表已有同目标优先）：
+                    # 互判 MERGE 方向任选，全部决策可能挂在被吸收者名下——
+                    # 丢弃会让 UPDATE 落空（新旧并存）、MERGE 落空（双拼写），
+                    # 正是攒批要防的重复形态。批内字符串引用不并入（建组已消费）
+                    owned = {
+                        item["fact_id"]
+                        for item in decisions
+                        if not isinstance(item["fact_id"], str)
+                    }
+                    for mi in members:
+                        for item in grouped[mi]:
+                            fid = item["fact_id"]
+                            if isinstance(fid, str) or fid in owned:
+                                continue
+                            decisions.append(item)
+                            owned.add(fid)
                 replacement_ids = [
                     int(item["fact_id"])
                     for item in decisions
@@ -2021,7 +2024,8 @@ class RagIndexer:
                 }
                 for item in fusion_candidates
             ],
-            "max_tokens": 3072,
+            # max_tokens 不下发：适配器对融合/抽取统一 6144 兜底，
+            # 「只输出有动作条目 + reason 15 字」下实际输出远低于上限
         }
         if denied_prompt_refs:
             payload["denied_facts"] = [

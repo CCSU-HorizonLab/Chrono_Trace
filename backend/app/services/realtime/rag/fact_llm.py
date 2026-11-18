@@ -69,12 +69,15 @@ content 必须是自包含的完整陈述句，把口语中的代词和省略还
 
 FACT_FUSION_SYSTEM_PROMPT = """你是一个联系人记忆事实维护器。对话中新抽取了若干条关于对方或用户的事实（载荷以 n0、n1、… 编号），请判断每条新事实与每条已有旧事实的关系，输出维护决策。
 
-决策含义（每条新事实 × 每条候选旧事实各给一条，fact_index 为该决策所属新事实的编号）：
-- ADD：旧事实与该新事实主题无关，保留旧事实，新事实作为新增
+决策含义（fact_index 为该决策所属新事实的编号）：
 - UPDATE：新事实修正、细化或取代旧事实——同一主题的信息演变，如旧事实是"对方不喜欢X"，新事实是"对方因为Y对X改观了，现在喜欢"
 - INVALIDATE：新事实说明旧事实已不再成立
 - MERGE：同一事实被再次表达，合并证据即可，不新增
-- NOOP：无法判断关联，旧事实保持不变
+- DENY：新事实是对某条已否认说法的重述（仅当载荷出现 denied_facts 时使用）
+
+只对需要上述维护动作的候选输出决策；主题无关、无需动作的候选不要输出
+（未提及即默认保留旧事实、新事实正常新增）。必须逐条检查全部候选，确认
+确无关联才跳过——漏掉一条 UPDATE 会让新旧说法并存。reason 不超过 15 字。
 
 新事实彼此之间（fact_id 形如 "n1" 的批内引用）：仅判断是否重复。新事实
 来自同一段对话，彼此不存在时间演变，只能全部输出 MERGE（同义换措辞，
@@ -95,11 +98,11 @@ FACT_FUSION_SYSTEM_PROMPT = """你是一个联系人记忆事实维护器。对�
 
 判断要点：
 - 同一主题的立场变化是演变不是并存：应 UPDATE 或 INVALIDATE，让记忆形成"以前→现在"的演变链
-- 主题（涉及的人/事物/对象）不同就 ADD；宁可多保留，不要误推翻
+- 主题（涉及的人/事物/对象）不同就跳过；宁可多保留，不要误推翻
 - 只是措辞不同、含义相同 → MERGE
 
-输出严格 JSON：
-{"decisions": [{"fact_index": 新事实编号(0起), "fact_id": 旧事实/否认事实的数字id 或 批内引用"n加编号", "action": "ADD|UPDATE|INVALIDATE|MERGE|NOOP|DENY", "reason": "一句话理由"}]}"""
+输出严格 JSON（decisions 只含有动作的条目，无动作时输出空数组）：
+{"decisions": [{"fact_index": 新事实编号(0起), "fact_id": 旧事实/否认事实的数字id 或 批内引用"n加编号", "action": "UPDATE|INVALIDATE|MERGE|DENY", "reason": "不超过15字"}]}"""
 
 
 FACT_FEEDBACK_EXTRACTION_PROMPT = """你是一个聊天建议反馈分析器。用户收到一条 AI 生成的回复建议后，没有直接采用，而是改写后发送。请从"原始建议"与"用户实际发送"的差异中，推断值得长期记住的偏好信号。
@@ -297,11 +300,15 @@ class LLMFactExtractorAdapter:
             user_prompt += (
                 "\n\n用户已否认的说法（曾标记不准确，[fact_id] 内容）：\n"
                 + "\n".join(denied_lines)
-                + "\n\n请对每条新事实与每条候选旧事实输出决策 JSON；若某条新事实是对"
+                + "\n\n请逐条检查每条新事实与每条候选旧事实，仅对需要维护动作"
+                "（UPDATE/INVALIDATE/MERGE）的候选输出决策 JSON；若某条新事实是对"
                 "某条已否认说法的重述（含概念泛化或收窄），对该 fact_id 输出一条 DENY。"
             )
         else:
-            user_prompt += "\n\n请对每条新事实与每条候选旧事实输出决策 JSON。"
+            user_prompt += (
+                "\n\n请逐条检查每条新事实与每条候选旧事实，仅对需要维护动作"
+                "（UPDATE/INVALIDATE/MERGE）的候选输出决策 JSON，无关候选不要输出。"
+            )
         messages = [
             {"role": "system", "content": FACT_FUSION_SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},

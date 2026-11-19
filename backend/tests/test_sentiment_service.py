@@ -381,18 +381,19 @@ class TestSentimentService:
         assert cached2["intensity"] == -0.6
 
     def test_pack_embedding_compact_and_zero_guard(self):
-        """pack_embedding：float16 ndarray pickle（体积约半）；全零/None 落 None。"""
+        """pack_embedding：float16 裸字节（体积约半）；全零/None 落 None。"""
         import pickle
 
         import numpy as np
 
         from app.services.analysis.sentiment_service import pack_embedding
+        from app.services.vector_codec import VECTOR_MAGIC
 
-        vec = [round((i % 97) * 0.01, 3) for i in range(512)]  # 真实宽度，pickle 头占比才不失真
+        vec = [round((i % 97) * 0.01, 3) for i in range(512)]  # 真实宽度，体积对比才不失真
         blob = pack_embedding(vec)
-        restored = pickle.loads(blob)
-        assert isinstance(restored, np.ndarray)
-        assert restored.dtype == np.float16 and len(restored) == 512
+        assert blob[:4] == VECTOR_MAGIC
+        restored = np.frombuffer(blob[4:], dtype=np.float16)
+        assert len(restored) == 512
         f32_blob = pickle.dumps(np.asarray(vec, dtype=np.float32))
         assert len(blob) < len(f32_blob) * 0.75, "紧凑存储应约减半"
         assert pack_embedding(None) is None
@@ -400,11 +401,10 @@ class TestSentimentService:
 
     def test_batch_cache_writes_float16_and_zero_null(self, service):
         """批量写入：紧凑 BLOB 落库、零向量落 NULL（读回 None）。"""
-        import pickle
-
         import numpy as np
 
         import app.services.analysis.sentiment_service as sm
+        from app.services.vector_codec import VECTOR_MAGIC
 
         results = [
             {"message_id": 10001, "polarity": 1, "intensity": 0.8,
@@ -418,8 +418,8 @@ class TestSentimentService:
         blob = conn.execute(
             "SELECT embedding_vector FROM sentiment_cache WHERE message_id = 10001"
         ).fetchone()[0]
-        restored = pickle.loads(blob)
-        assert isinstance(restored, np.ndarray) and restored.dtype == np.float16
+        assert blob[:4] == VECTOR_MAGIC
+        assert len(np.frombuffer(blob[4:], dtype=np.float16)) == 3
 
         zero = conn.execute(
             "SELECT embedding_vector FROM sentiment_cache WHERE message_id = 10002"
@@ -574,9 +574,7 @@ class TestEmbeddingsMatrix:
         assert np.array_equal(np.asarray(rows, dtype=np.float32), matrix)
 
     def test_pack_embedding_ndarray_matches_list_bytes(self):
-        """pack_embedding ndarray 快路径与 list 路径 pickle 字节一致。"""
-        import pickle
-
+        """pack_embedding ndarray 快路径与 list 路径裸字节一致。"""
         import numpy as np
 
         from app.services.analysis.sentiment_service import pack_embedding
@@ -585,7 +583,9 @@ class TestEmbeddingsMatrix:
         from_list = pack_embedding(values)
         from_array = pack_embedding(np.asarray(values, dtype=np.float32))
         assert from_list == from_array
-        assert np.array_equal(pickle.loads(from_list), np.asarray(values, dtype=np.float16))
+        assert np.array_equal(
+            np.frombuffer(from_list[4:], dtype=np.float16), np.asarray(values, dtype=np.float16)
+        )
         # 只读 ndarray（L1 行形态）同样走快路径
         readonly = np.asarray(values, dtype=np.float32)
         readonly.setflags(write=False)

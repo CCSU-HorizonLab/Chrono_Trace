@@ -1,8 +1,9 @@
-"""RAG 向量 float16 紧凑存储测试（写侧换新 + 读侧双 dtype 兼容）。
+"""RAG 向量 float16 裸字节存储测试（vector_codec 统一格式）。
 
-rag_embeddings/rag_fact_embeddings 原存 pickle float64 list（512 维
-4624B/条），只做余弦排序无阈值边界翻转问题，f16 缩一半。存量 float64
-行不迁移，读侧 coerce 继续可读；用户手动重建索引即全量换新。
+rag_embeddings/rag_fact_embeddings 原存 pickle（float64 list / f16
+ndarray），只做余弦排序无阈值边界翻转问题，f16 裸字节（CTV1 魔数）
+缩一半以上。历史 pickle 行读侧按缺失返回 []，存量用
+backend/scripts/convert_vector_blob.py 一次性就地转换。
 """
 
 import math
@@ -16,6 +17,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 
 from app.services.realtime.rag.store import RagStore, pack_rag_vector, unpack_rag_vector
+from app.services.vector_codec import VECTOR_MAGIC
 
 
 MODEL = "test/embed-model"
@@ -59,27 +61,24 @@ def _seed_fact(store):
 
 
 class TestPackUnpack:
-    def test_pack_writes_f16_ndarray_half_size(self):
+    def test_pack_writes_f16_raw_bytes_half_size(self):
         vector = [0.0123 + i * 1e-5 for i in range(DIM)]
         blob = pack_rag_vector(vector)
 
         import numpy as np
 
-        loaded = pickle.loads(blob)
-        assert isinstance(loaded, np.ndarray)
-        assert loaded.dtype == np.float16
-        # float64 list pickle 4624B → f16 ndarray 应缩一半以上
+        assert blob[:4] == VECTOR_MAGIC
+        loaded = np.frombuffer(blob[4:], dtype=np.float16)
+        assert len(loaded) == DIM
+        # float64 list pickle 4624B → f16 裸字节应缩一半以上
         assert len(blob) < len(pickle.dumps([float(v) for v in vector])) * 0.6
 
-    def test_unpack_returns_list_for_both_formats(self):
-        import numpy as np
-
+    def test_unpack_new_format_and_legacy_missing(self):
         new_blob = pack_rag_vector([0.1] * DIM)
-        old_blob = pickle.dumps([0.1] * DIM)  # 存量 float64 list
+        old_blob = pickle.dumps([0.1] * DIM)  # 历史 pickle 行
 
-        assert isinstance(unpack_rag_vector(new_blob), list)
-        assert isinstance(unpack_rag_vector(old_blob), list)
         assert len(unpack_rag_vector(new_blob)) == DIM
+        assert unpack_rag_vector(old_blob) == []  # 历史行按缺失处理
 
     def test_roundtrip_cosine_preserved(self):
         """余弦排序保真：f16 相对误差 ~1e-3，相似度损失远小于排序间隔。"""
@@ -118,14 +117,15 @@ class TestDocumentVectors:
         )
         store.conn.commit()
 
-        # 底层落的是 f16 ndarray
+        # 底层落的是 CTV1 魔数 + f16 裸字节
         blob = conn.execute(
             "SELECT vector_blob FROM rag_embeddings WHERE document_id = ?", (doc_id,)
         ).fetchone()["vector_blob"]
 
         import numpy as np
 
-        assert isinstance(pickle.loads(blob), np.ndarray)
+        assert blob[:4] == VECTOR_MAGIC
+        assert len(np.frombuffer(blob[4:], dtype=np.float16)) == DIM
 
         # 读出口是 list，数值在 f16 精度内
         docs = store.list_documents_with_vectors(
@@ -136,8 +136,8 @@ class TestDocumentVectors:
         assert isinstance(vector, list) and len(vector) == DIM
         assert all(abs(v - 0.0123) < 1e-4 for v in vector)
 
-    def test_legacy_float64_rows_still_readable(self):
-        """存量行（float64 list pickle）不迁移，读侧原样返回。"""
+    def test_legacy_pickle_rows_read_as_missing(self):
+        """历史 pickle 行读侧按缺失处理（vector=[]），留待重建/转换。"""
         conn = _conn()
         store = RagStore(conn)
         doc_id = _seed_document(store)
@@ -156,9 +156,7 @@ class TestDocumentVectors:
             "wxid_a", 1, embedding_model=MODEL, embedding_dim=DIM
         )
         assert len(docs) == 1
-        vector = docs[0]["vector"]
-        assert isinstance(vector, list) and len(vector) == DIM
-        assert all(v == 0.0123 for v in vector)  # 老行 bit 级不变
+        assert docs[0]["vector"] == []
 
 
 class TestFactVectors:
@@ -185,7 +183,7 @@ class TestFactVectors:
         # backfill 的零向量判定按 float 迭代，f16 往返后非零事实不应误判
         assert any(float(x) != 0.0 for x in vector)
 
-    def test_legacy_float64_rows_still_readable(self):
+    def test_legacy_pickle_rows_read_as_missing(self):
         conn = _conn()
         store = RagStore(conn)
         fact_id = _seed_fact(store)
@@ -204,7 +202,7 @@ class TestFactVectors:
             "wxid_a", 1, embedding_model=MODEL, embedding_dim=DIM
         )
         assert len(facts) == 1
-        assert all(v == 0.0456 for v in facts[0]["vector"])
+        assert facts[0]["vector"] == []
 
 
 class TestUpsertDocumentId:

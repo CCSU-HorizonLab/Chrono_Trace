@@ -1,7 +1,6 @@
 """Historical sentiment analysis service."""
 
 import logging
-import pickle
 import threading
 import time
 from pathlib import Path
@@ -14,40 +13,39 @@ from ..model_paths import (
     SENTIMENT_MODEL_TAG,
     get_embedding_model_dir,
 )
+from ..vector_codec import pack_vector_f16
 from .embedding_cache_store import EmbeddingCacheStore
 from .feature_extraction_config import (
     FeatureExtractionConfig,
     normalize_analysis_device_mode,
 )
 
-try:  # onnxruntime 环境必有 numpy；缺库退化为准旧格式的 list pickle
+try:  # onnxruntime 环境必有 numpy；缺库时 ndarray 快路径跳过（list 路径仍通）
     import numpy as _np
 except Exception:  # pragma: no cover
     _np = None
 
 
 def pack_embedding(embedding) -> Optional[bytes]:
-    """向量 → float16 ndarray pickle（512 维 2KB→1KB）；全零向量落 None。
+    """向量 → float16 裸字节（vector_codec 统一格式，512 维约 1KB）；
+    全零向量落 None。
 
     sentiment_cache.embedding_vector 是问答向量通道的唯一数据源，按条数
     线性胀库（5 万条 float32≈100MB），float16 无损减半。全零落 None：
     模型加载失败期的零向量兜底写实了会毒化余弦排序。读出口（问答
-    _load_vector_cache / 本服务单行读）双 dtype 兼容，旧行无迁移。
+    _load_vector_cache）非本格式的历史 pickle 行按缺失跳过。
     """
     if embedding is None:
         return None
     if _np is not None and isinstance(embedding, _np.ndarray):
-        # ndarray 快路径（矩阵出口行）：跳过逐元素 float() 装箱；
-        # astype(float16) 与 asarray(list, float16) 同舍入，pickle 字节一致
+        # ndarray 快路径（矩阵出口行）：跳过逐元素 float() 装箱
         if embedding.size == 0 or not _np.any(embedding):
             return None
-        return pickle.dumps(embedding.astype(_np.float16))
+        return pack_vector_f16(embedding)
     values = [float(v) for v in embedding]
     if not any(values):
         return None
-    if _np is None:
-        return pickle.dumps(values)
-    return pickle.dumps(_np.asarray(values, dtype=_np.float16))
+    return pack_vector_f16(values)
 
 
 

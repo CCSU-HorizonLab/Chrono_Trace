@@ -2,7 +2,6 @@
 
 import json
 import os
-import pickle
 import sqlite3
 import sys
 import threading
@@ -19,6 +18,7 @@ from app.services.analysis.history_qa_service import (
     HistoryQAService,
 )
 from app.services.realtime.llm_http import LLMStreamUnsupported
+from app.services.vector_codec import pack_vector_f16
 
 
 class _FakeHTTP:
@@ -198,11 +198,11 @@ def test_vector_channel_ranks_by_cosine_and_skips_dim_mismatch(monkeypatch, db):
     seed(db, 2, "看电影去不去", 1700000200)
     db.execute(
         "INSERT INTO sentiment_cache VALUES (1, 1, 0.5, ?, 1)",
-        (pickle.dumps([1.0, 0.0, 0.0]),),
+        (pack_vector_f16([1.0, 0.0, 0.0]),),
     )
     db.execute(
         "INSERT INTO sentiment_cache VALUES (2, 0, 0.0, ?, 1)",
-        (pickle.dumps([0.0, 1.0]),),  # 旧模型宽度，应跳过
+        (pack_vector_f16([0.0, 1.0]),),  # 旧模型宽度，应跳过
     )
     monkeypatch.setattr(hqmod, "_load_question_vector", lambda q: [0.9, 0.1, 0.0])
 
@@ -216,24 +216,24 @@ def test_vector_channel_ranks_by_cosine_and_skips_dim_mismatch(monkeypatch, db):
     assert ids == [1]  # 只有维度匹配且相关的消息入选
 
 
-def test_vector_channel_reads_float16_and_legacy_rows(monkeypatch, db):
-    """float16 紧凑行与旧 float32 list 行同桶参与排序（读出口双 dtype 兼容）。"""
-    import numpy as np
+def test_vector_channel_skips_legacy_pickle_rows(monkeypatch, db):
+    """新格式行参与排序；历史 pickle 行按缺失跳过（不炸不脏桶）。"""
+    import pickle
 
     seed(db, 1, "我喜欢吃火锅", 1700000100)
     seed(db, 2, "看电影去不去", 1700000200)
     db.execute(
         "INSERT INTO sentiment_cache VALUES (1, 1, 0.5, ?, 1)",
-        (pickle.dumps(np.asarray([1.0, 0.0, 0.0], dtype=np.float16)),),
+        (pack_vector_f16([1.0, 0.0, 0.0]),),
     )
     db.execute(
         "INSERT INTO sentiment_cache VALUES (2, 0, 0.0, ?, 1)",
-        (pickle.dumps([0.9, 0.1, 0.0]),),  # 旧 float32 list 行
+        (pickle.dumps([0.9, 0.1, 0.0]),),  # 历史 pickle 行，按缺失跳过
     )
     monkeypatch.setattr(hqmod, "_load_question_vector", lambda q: [1.0, 0.0, 0.0])
 
     entry = HistoryQAService()._load_vector_cache(1)
-    assert len(entry["by_dim"][3]["metas"]) == 2  # 同宽双双入桶
+    assert len(entry["by_dim"][3]["metas"]) == 1  # 只有新格式行入桶
 
     http = _FakeHTTP()
     monkeypatch.setattr(hqmod, "post_json_with_retries", http)
@@ -241,27 +241,27 @@ def test_vector_channel_reads_float16_and_legacy_rows(monkeypatch, db):
     result = HistoryQAService().ask(1, "吃的偏好")
 
     ids = [c["message_id"] for c in result["citations"]]
-    assert ids == [1]  # 新旧格式同场竞技，余弦最相关者胜出
+    assert ids == [1]  # 唯一新格式行胜出
 
 
 def test_vector_cache_reuses_deserialization_and_rebuilds_on_change(monkeypatch, db):
     seed(db, 1, "我喜欢吃火锅", 1700000100)
     db.execute(
         "INSERT INTO sentiment_cache VALUES (1, 1, 0.5, ?, 1)",
-        (pickle.dumps([1.0, 0.0]),),
+        (pack_vector_f16([1.0, 0.0]),),
     )
     svc = HistoryQAService()
     entry1 = svc._load_vector_cache(1)
     assert entry1["by_dim"][2]["metas"][0]["message_id"] == 1
 
     calls = {"n": 0}
-    real_loads = pickle.loads
+    real_unpack = hqmod.unpack_vector_f16
 
     def counting(buf):
         calls["n"] += 1
-        return real_loads(buf)
+        return real_unpack(buf)
 
-    monkeypatch.setattr(hqmod.pickle, "loads", counting)
+    monkeypatch.setattr(hqmod, "unpack_vector_f16", counting)
 
     # 指纹未变：直接复用缓存，不再反序列化任何向量
     entry2 = svc._load_vector_cache(1)
@@ -272,7 +272,7 @@ def test_vector_cache_reuses_deserialization_and_rebuilds_on_change(monkeypatch,
     seed(db, 2, "看电影去不去", 1700000200)
     db.execute(
         "INSERT INTO sentiment_cache VALUES (2, 0, 0.0, ?, 1)",
-        (pickle.dumps([0.0, 1.0]),),
+        (pack_vector_f16([0.0, 1.0]),),
     )
     entry3 = svc._load_vector_cache(1)
     assert calls["n"] >= 1
@@ -284,7 +284,7 @@ def test_vector_cache_not_poisoned_by_transient_fetch_failure(monkeypatch, db):
     seed(db, 1, "我喜欢吃火锅", 1700000100)
     db.execute(
         "INSERT INTO sentiment_cache VALUES (1, 1, 0.5, ?, 1)",
-        (pickle.dumps([1.0, 0.0]),),
+        (pack_vector_f16([1.0, 0.0]),),
     )
     svc = HistoryQAService()
     real_get_db = hqmod.get_db
@@ -384,7 +384,7 @@ def test_coverage_factor_skipped_without_keywords(monkeypatch, db):
     seed(db, 1, "只有向量通道能召回的消息", 1700000100)
     db.execute(
         "INSERT INTO sentiment_cache (message_id, embedding_vector) VALUES (1, ?)",
-        (pickle.dumps([1.0, 0.0]),),
+        (pack_vector_f16([1.0, 0.0]),),
     )
     monkeypatch.setattr(hqmod, "_load_question_vector", lambda q: [1.0, 0.0])
 

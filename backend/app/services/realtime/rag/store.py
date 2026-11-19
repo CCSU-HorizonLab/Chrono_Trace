@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import json
 import logging
-import pickle
 import time
 from typing import Any
 
 from ....db.connection import get_db, write_transaction
+from ...vector_codec import pack_vector_f16, unpack_vector_f16
 from .config import RAG_DEFAULTS
 from .semantic_memory import CONFIDENCE_CEILING, CONFIRMATION_STEP
 
@@ -25,35 +25,19 @@ def _now() -> int:
 
 
 def pack_rag_vector(vector) -> bytes:
-    """向量 → float16 ndarray pickle（512 维 4624B→2336B，缩一半）。
+    """向量 → float16 裸字节（vector_codec 统一格式，512 维约 1KB）。
 
     rag 向量只做余弦排序（无阈值边界翻转问题），f16 精度足够——与
     L2 embedding_cache 的 float32 刻意保守不同（那边要 bit 级一致）。
-    纯 Python 环境（无 numpy）退回 list pickle，即旧格式。
     """
-    values = [float(item) for item in vector]
-    try:
-        import numpy as np
-    except Exception:
-        return pickle.dumps(values)
-    return pickle.dumps(np.asarray(values, dtype=np.float16))
+    return pack_vector_f16(vector)
 
 
 def unpack_rag_vector(blob) -> list:
-    """读侧双 dtype 兼容：float16 ndarray（新行）→ float32 list；
-    旧 float64 list（存量行）原样返回。消费方（retriever 余弦、
-    backfill 零向量判定）全部按 list 迭代，不做迁移。
-    """
-    value = pickle.loads(blob)
-    try:
-        import numpy as np
-    except Exception:
-        return value if isinstance(value, list) else []
-    if isinstance(value, np.ndarray):
-        return value.astype(np.float32).tolist()
-    if isinstance(value, list):
-        return value
-    return []
+    """读侧统一 vector_codec：历史 pickle 行按缺失返回 []，由嵌入
+    补算路径重建。消费方（retriever 余弦、backfill 零向量判定）
+    全部按 list 迭代。"""
+    return unpack_vector_f16(blob)
 
 
 def rag_vector_is_informative(values) -> bool:

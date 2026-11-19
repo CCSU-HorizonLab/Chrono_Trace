@@ -1,7 +1,6 @@
 """零向量防护回归:ONNX 故障窗口期写入的零向量曾使检索静默失效。"""
 
 import os
-import pickle
 import sqlite3
 import sys
 from types import SimpleNamespace
@@ -14,7 +13,8 @@ from app.services.realtime.rag.embedding import (
     RagEmbeddingUnavailable,
 )
 from app.services.realtime.rag.indexer import RagIndexer
-from app.services.realtime.rag.store import RagStore
+from app.services.realtime.rag.store import RagStore, unpack_rag_vector
+from app.services.vector_codec import pack_vector_f16
 
 
 def _store():
@@ -70,12 +70,12 @@ def test_backfill_rewrites_zero_norm_vectors(monkeypatch):
         account_wxid="a", conversation_id=1, subject="共同",
         kind="hobby_or_game", content="我们一起玩过某款游戏",
     )
-    # 直接落一条零向量(绕过守卫模拟历史脏数据)
+    # 直接落一条零向量(绕过守卫模拟历史脏数据，用 vector_codec 新格式)
     store.conn.execute(
         "INSERT INTO rag_fact_embeddings (fact_id, account_wxid, conversation_id, "
         "embedding_model, embedding_dim, embedding_provider, vector_blob, created_at) "
         "SELECT id, 'a', 1, 'm', 3, 'local', ?, 0 FROM rag_facts LIMIT 1",
-        (pickle.dumps([0.0, 0.0, 0.0]),),
+        (pack_vector_f16([0.0, 0.0, 0.0]),),
     )
     store.conn.commit()
 
@@ -90,7 +90,7 @@ def test_backfill_rewrites_zero_norm_vectors(monkeypatch):
     assert fake.calls >= 1
 
     row = store.conn.execute("SELECT vector_blob FROM rag_fact_embeddings").fetchone()
-    vec = pickle.loads(row["vector_blob"])
+    vec = unpack_rag_vector(row["vector_blob"])
     assert any(x != 0 for x in vec)
 
 

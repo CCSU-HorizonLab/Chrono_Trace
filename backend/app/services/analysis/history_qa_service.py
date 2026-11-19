@@ -27,13 +27,14 @@ from __future__ import annotations
 
 import json
 import logging
-import pickle
 import re
 import threading
 import time
 import weakref
 from contextlib import contextmanager
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
+
+from ..vector_codec import unpack_vector_f16
 
 from ...db.connection import get_db
 from ..realtime.llm_http import (
@@ -823,12 +824,10 @@ class HistoryQAService:
         by_dim: Dict[int, Dict[str, Any]] = {}
         for row in rows:
             try:
-                cached = pickle.loads(row[4])
+                cached = unpack_vector_f16(row[4])
             except Exception:
                 continue
-            if _np is not None and isinstance(cached, _np.ndarray):
-                cached = cached.astype(_np.float32).tolist()  # float16 紧凑行
-            if not isinstance(cached, list) or not cached:
+            if not cached:
                 continue
             bucket = by_dim.setdefault(len(cached), {"vectors": [], "metas": []})
             bucket["vectors"].append(cached)
